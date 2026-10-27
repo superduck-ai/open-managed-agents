@@ -11,28 +11,21 @@ import { useEffect, type ReactNode } from 'react';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { I18nProvider, type Locale } from '../../shared/i18n';
 import { setConsoleRequestContext } from '../../shared/api/client';
+import { Toaster } from '../../shared/ui/sonner';
 import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
+import { consoleResourceListLimit } from '../../shared/console-list';
 import { resetTestDom } from '../../test/setup';
 import { BatchesPage, DashboardPage, FilesPage, SkillDetailPage, SkillsPage } from './DashboardPage';
 
 const testingLibrary = await import('@testing-library/react');
-const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
 
 const originalFetch = globalThis.fetch;
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(globalThis.navigator, 'clipboard');
 const originalCreateObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
 const originalRevokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
 const originalConfirm = window.confirm;
-
-function selectOption(name: string) {
-  const option = screen.getByRole('option', { name });
-  fireEvent.pointerDown(option);
-  fireEvent.mouseDown(option);
-  fireEvent.pointerUp(option);
-  fireEvent.mouseUp(option);
-  fireEvent.click(option);
-}
 
 afterEach(() => {
   cleanup();
@@ -44,39 +37,60 @@ afterEach(() => {
 });
 
 describe('Dashboard i18n', () => {
+  test.each(['en', 'zh-CN'] as const)(
+    'prioritizes workspace resource links instead of static financial and model examples in %s',
+    (locale) => {
+      resetTestDom('https://oma.duck.ai/dashboard');
+      renderDashboardPage(<DashboardPage section="dashboard" />, { id: 'wrkspc_team', name: 'Team' }, locale);
+      for (const [label, path] of [
+        [locale === 'en' ? /^Agents/ : /^智能体/, 'agents'],
+        [locale === 'en' ? /^Sessions/ : /^会话/, 'sessions'],
+        [locale === 'en' ? /^LLM models/ : /^LLM 模型/, 'llm-models'],
+        [locale === 'en' ? /^Environments/ : /^环境/, 'environments'],
+        [locale === 'en' ? /^Credential vaults/ : /^凭据保险库/, 'vaults'],
+      ] as const) {
+        expect(screen.getByRole('link', { name: label }).getAttribute('href')).toBe(`/workspaces/wrkspc_team/${path}`);
+      }
+      expect(
+        screen.getByRole('link', { name: locale === 'en' ? 'Create agent' : '创建智能体' }).getAttribute('href'),
+      ).toBe('/workspaces/wrkspc_team/agents/new');
+      expect(screen.getByText('Team')).toBeTruthy();
+      expect(screen.queryByText('Fable 5')).toBeNull();
+      expect(screen.queryByText('$1.00')).toBeNull();
+      expect(screen.queryByText(/\$500/)).toBeNull();
+      expect(screen.queryByText(locale === 'en' ? 'Credit balance' : '信用余额')).toBeNull();
+      expect(screen.queryByText(locale === 'en' ? 'Example models' : '模型示例')).toBeNull();
+    },
+  );
+
   test('renders dashboard and playground chrome in Chinese', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default');
     const dashboard = renderDashboardPage(<DashboardPage section="dashboard" />, undefined, 'zh-CN');
 
     await waitFor(() => expect(document.documentElement.lang).toBe('zh-CN'));
-    expect(screen.getByRole('heading', { name: '早上好，test' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '概览' })).toBeTruthy();
+    expect(screen.getByText('默认')).toBeTruthy();
+    expect(screen.queryByText('Default')).toBeNull();
     const getApiKey = screen.getByRole('link', { name: '获取 API 密钥' });
     expect(getApiKey.getAttribute('href')).toBe('/settings/workspaces/default/keys');
     expect(getApiKey.dataset.slot).toBe('button');
     const docsLink = screen.getByRole('link', { name: '查看文档' });
-    expect(docsLink.getAttribute('href')).toBe('https://oma.mintlify.site/docs/zh/overview');
-    expect(screen.getByRole('link', { name: '比较模型' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/zh/api/models/list-models',
-    );
-    expect(screen.getByRole('link', { name: '构建 Agent' }).dataset.slot).toBe('button');
-    expect(screen.getByText('本月支出')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '模型' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '资源' })).toBeTruthy();
+    expect(docsLink.getAttribute('href')).toBe('https://oma.mintlifysite.com/docs/zh/overview');
+    expect(screen.getByRole('link', { name: '创建智能体' }).dataset.slot).toBe('button');
+    expect(screen.getByRole('heading', { name: '智能体' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '会话' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '工作区资源' })).toBeTruthy();
 
     dashboard.unmount();
 
     renderDashboardPage(<DashboardPage section="playground" />, undefined, 'zh-CN');
 
     expect(screen.getByRole('heading', { name: 'Playground' })).toBeTruthy();
-    expect(screen.getByText('配置')).toBeTruthy();
-    expect(screen.getByText('开始对话以预览 Claude 的响应。')).toBeTruthy();
-    const messageInput = screen.getByLabelText('消息');
-    expect(messageInput).toBeTruthy();
-    expect((messageInput as HTMLElement).dataset.slot).toBe('input-group-control');
-    const messageComposer = (messageInput as HTMLElement).closest('[data-slot="input-group"]');
-    expect(messageComposer).toBeTruthy();
-    expect(screen.getByPlaceholderText('向 Claude 发送消息...')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '发送' })).toBeTruthy();
+    expect(screen.getByText('Playground 尚未接入模型服务。')).toBeTruthy();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: '发送' })).toBeNull();
+    expect(screen.getByRole('link', { name: '打开工作台' }).getAttribute('href')).toBe('/workbench');
   });
 
   test('links the English dashboard to the corresponding OMA documentation pages', () => {
@@ -84,10 +98,10 @@ describe('Dashboard i18n', () => {
     renderDashboardPage(<DashboardPage section="dashboard" />);
 
     expect(screen.getByRole('link', { name: 'Explore docs' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/en/overview',
+      'https://oma.mintlifysite.com/docs/en/overview',
     );
-    expect(screen.getByRole('link', { name: 'Compare models' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/en/api/models/list-models',
+    expect(screen.getByRole('link', { name: /^LLM models/ }).getAttribute('href')).toBe(
+      '/workspaces/default/llm-models',
     );
   });
 
@@ -103,7 +117,7 @@ describe('Dashboard i18n', () => {
 
     expect(await screen.findByRole('heading', { name: '文件' })).toBeTruthy();
     expect(screen.getByRole('region', { name: '文件列表' })).toBeTruthy();
-    expect(await screen.findByText('Default 工作区还没有上传文件。')).toBeTruthy();
+    expect(await screen.findByText('向默认工作区上传文件后，文件会显示在这里。')).toBeTruthy();
     expect(screen.getByRole('button', { name: '上一页' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '下一页' })).toBeTruthy();
 
@@ -124,7 +138,8 @@ describe('Dashboard i18n', () => {
     expect(await screen.findByRole('heading', { name: '技能' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '创建技能' })).toBeTruthy();
     expect(screen.getByRole('region', { name: '技能列表' })).toBeTruthy();
-    expect(await screen.findByText('Default 工作区还没有创建技能。')).toBeTruthy();
+    expect(await screen.findByText('还没有技能')).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'ID' })).toBeNull();
 
     skills.unmount();
     resetTestDom('https://oma.duck.ai/workspaces/default/batches');
@@ -138,108 +153,59 @@ describe('Dashboard i18n', () => {
 
     expect(await screen.findByRole('heading', { name: '批处理' })).toBeTruthy();
     expect(screen.getByRole('region', { name: '批处理列表' })).toBeTruthy();
-    expect(await screen.findByText('Default 工作区还没有创建批处理。')).toBeTruthy();
+    expect(await screen.findByText('默认工作区暂无批处理。')).toBeTruthy();
   });
 
-  test('renders Claude Code and manage sections in Chinese', () => {
+  test('preserves Claude Code usage in Chinese', () => {
     resetTestDom('https://oma.duck.ai/claude-code/usage');
-    const claudeCode = renderDashboardPage(<DashboardPage section="claude-code-usage" />, undefined, 'zh-CN');
+    renderDashboardPage(<DashboardPage section="claude-code-usage" />, undefined, 'zh-CN');
 
     expect(screen.getByRole('heading', { name: 'Claude Code 用量' })).toBeTruthy();
-    expect(screen.getByText('席位')).toBeTruthy();
-    expect(screen.getByText('暂无 Claude Code 用量')).toBeTruthy();
-
-    claudeCode.unmount();
-    resetTestDom('https://oma.duck.ai/settings/service-accounts');
-    const serviceAccounts = renderDashboardPage(<DashboardPage section="service-accounts" />, undefined, 'zh-CN');
-
-    expect(screen.getByRole('heading', { name: '服务账号' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '创建服务账号' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '还没有服务账号' })).toBeTruthy();
-
-    serviceAccounts.unmount();
-    resetTestDom('https://oma.duck.ai/security');
-    renderDashboardPage(<DashboardPage section="security" />, undefined, 'zh-CN');
-
-    expect(screen.getByRole('heading', { name: '安全' })).toBeTruthy();
-    expect(screen.getByRole('switch', { name: '管理员多因素认证' })).toBeTruthy();
-    expect(screen.queryByText('暂无安全警报')).toBeNull();
+    expect(screen.queryByText('席位')).toBeNull();
+    expect(screen.getByText('Claude Code 用量尚未接入。')).toBeTruthy();
+    expect(screen.queryByText('—')).toBeNull();
+    expect(screen.queryByText('0')).toBeNull();
   });
 
-  test('uses standard Claude Code settings actions', async () => {
+  test.each(['en', 'zh-CN'] as const)('does not simulate saved Claude Code permissions in %s', (locale) => {
     resetTestDom('https://oma.duck.ai/claude-code/settings');
-
-    renderDashboardPage(<DashboardPage section="claude-code-settings" />);
-
-    expect(screen.getByRole('heading', { name: 'Claude Code settings' })).toBeTruthy();
-    const manage = screen.getByRole('link', { name: 'Manage' });
-    expect(manage.getAttribute('href')).toBe('/settings/members');
-    expect(manage.dataset.slot).toBe('button');
-    expect(screen.getByText('Current default: Members with a Claude Code seat')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Configure' }));
-
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Configure workspace permissions' })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('combobox', { name: 'Default access' }));
-    selectOption('Disabled by default');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Disabled by default')).toBeTruthy();
+    renderDashboardPage(<DashboardPage section="claude-code-settings" />, undefined, locale);
+    const viewMembers = screen.getByRole('link', { name: locale === 'en' ? 'View members' : '查看成员' });
+    expect(viewMembers.getAttribute('href')).toBe('/settings/members');
+    expect(
+      screen.getByText(locale === 'en' ? 'Claude Code settings are not connected.' : 'Claude Code 设置尚未接入。'),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: locale === 'en' ? 'Configure' : '配置' })).toBeNull();
+    expect(screen.queryByRole('button', { name: locale === 'en' ? 'Save' : '保存' })).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
   });
 
-  test('uses standard rate limit notice actions', () => {
-    resetTestDom('https://oma.duck.ai/limits');
-
-    renderDashboardPage(<DashboardPage section="limits" />);
-
-    expect(screen.getByRole('heading', { name: 'Rate limits' })).toBeTruthy();
-    const monitorUsage = screen.getByRole('link', { name: 'Monitor rate limit usage' });
-    expect(monitorUsage.getAttribute('href')).toBe('/usage/limits');
-    expect(monitorUsage.dataset.slot).toBe('button');
-    const contactSales = screen.getByRole('link', { name: 'Contact sales' });
-    expect(contactSales.getAttribute('href')).toBe('https://www.anthropic.com/contact-sales');
-    expect(contactSales.getAttribute('target')).toBe('_blank');
-    expect(contactSales.getAttribute('rel')).toBe('noreferrer');
-    expect(contactSales.dataset.slot).toBe('button');
+  test.each(['en', 'zh-CN'] as const)('shows unavailable services without ineffective actions in %s', (locale) => {
+    for (const [section, message] of [
+      ['tags', locale === 'en' ? 'Tag management is not connected.' : '标签管理尚未接入。'],
+      ['billing', locale === 'en' ? 'Billing information is not connected.' : '账单信息尚未接入。'],
+    ]) {
+      resetTestDom(`https://oma.duck.ai/${section}`);
+      const page = renderDashboardPage(<DashboardPage section={section} />, undefined, locale);
+      expect(screen.getByText(message)).toBeTruthy();
+      expect(screen.queryByRole('button')).toBeNull();
+      expect(screen.queryByText('0')).toBeNull();
+      if (section === 'billing')
+        expect(screen.getByRole('heading', { name: locale === 'en' ? 'Billing' : '账单' })).toBeTruthy();
+      page.unmount();
+    }
   });
 
-  test('uses shared button links on security actions', () => {
-    resetTestDom('https://oma.duck.ai/security');
-
-    renderDashboardPage(<DashboardPage section="security" />);
-
-    const viewLogs = screen.getByRole('link', { name: 'View logs' });
-    expect(viewLogs.getAttribute('href')).toBe('/logs');
-    expect(viewLogs.dataset.slot).toBe('button');
-    const manageMembers = screen.getByRole('link', { name: 'Manage' });
-    expect(manageMembers.getAttribute('href')).toBe('/members');
-    expect(manageMembers.dataset.slot).toBe('button');
-  });
-
-  test('uses the shared organization members surface on the manage members route', async () => {
+  test('directs default workspace member management to organization settings', async () => {
     resetTestDom('https://oma.duck.ai/members');
     const api = mockOrganizationMembersApi();
-
-    renderDashboardPage(
-      <DashboardPage section="members" />,
-      undefined,
-      'en',
-      makeAuthContextValue({
-        memberships: [{ role: 'admin' }],
-      }),
+    renderDashboardPage(<DashboardPage section="members" />);
+    expect(await screen.findByRole('heading', { name: 'Members' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Go to organization settings' }).getAttribute('href')).toBe(
+      '/settings/members',
     );
-
-    expect(await screen.findByRole('heading', { name: 'Members 2' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Invite' })).toBeTruthy();
-    expect(screen.queryByRole('link', { name: 'Invite' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'More actions' })).toBeTruthy();
-    expect(screen.getByText('pending@example.com')).toBeTruthy();
-    expect(screen.getByText('admin@example.local')).toBeTruthy();
-    expect(api.requests).toContain('/api/console/organizations/org_test_uuid/members');
-    expect(api.requests).toContain('/api/console/organizations/org_test_uuid/invites?status=pending');
+    expect(screen.queryByRole('button', { name: 'Invite' })).toBeNull();
+    expect(api.requests).toEqual([]);
   });
 
   test('uses the shared workspace webhooks surface on the manage webhooks route', async () => {
@@ -253,8 +219,8 @@ describe('Dashboard i18n', () => {
     renderDashboardPage(<DashboardPage section="webhooks" />);
 
     expect(await screen.findByRole('heading', { name: 'Webhooks' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add webhook endpoint' })).toBeTruthy();
-    expect(await screen.findByText('No webhook endpoints have been created for Default.')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Add webhook endpoint' }).length).toBeGreaterThan(0);
+    expect(await screen.findByText('No webhook endpoints yet')).toBeTruthy();
     expect(
       screen.queryByText('Create an endpoint to receive event notifications from Open Managed Agents.'),
     ).toBeNull();
@@ -263,158 +229,11 @@ describe('Dashboard i18n', () => {
     expect(api.requests[0]?.headers.get('x-workspace-id')).toBe(defaultWorkspace.id);
   });
 
-  test('uses standard service account dialog, tabs, and menu actions', async () => {
-    resetTestDom('https://oma.duck.ai/service-accounts');
-
-    renderDashboardPage(<DashboardPage section="service-accounts" />);
-
-    expect(screen.getByRole('heading', { name: 'Service accounts' })).toBeTruthy();
-    expect(screen.getByRole('tablist')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Create service account' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'No service accounts yet' })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Create service account' }));
-
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'CI deploy bot' } });
-    fireEvent.change(screen.getByLabelText('Description'), {
-      target: { value: 'Publishes production builds' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    const serviceAccountsTable = screen.getByRole('table', { name: 'Service accounts' });
-    expect(serviceAccountsTable).toBeTruthy();
-    expect(serviceAccountsTable.closest('[data-slot="card"]')).toBeNull();
-    expect(screen.getByText('CI deploy bot')).toBeTruthy();
-    expect(screen.getByText('svcacc_local_0001')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive' }));
-
-    const archiveDialog = screen.getByRole('alertdialog');
-    fireEvent.click(within(archiveDialog).getByRole('button', { name: 'Archive' }));
-
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(screen.getByRole('heading', { name: 'No service accounts yet' })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Archived' }));
-    expect(screen.getByText('CI deploy bot')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-
-    const deleteDialog = screen.getByRole('alertdialog');
-    fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Delete' }));
-
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(screen.getByRole('heading', { name: 'No archived service accounts' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Show active service accounts' })).toBeTruthy();
-  });
-
-  test('uses standard privacy controls switches, tooltips, and configure dialogs', async () => {
-    resetTestDom('https://oma.duck.ai/privacy-controls');
-
-    renderDashboardPage(<DashboardPage section="privacy-controls" />);
-
-    expect(screen.getByRole('heading', { name: 'Privacy controls' })).toBeTruthy();
-    expect(screen.getByRole('switch', { name: 'Training data' })).toBeTruthy();
-    expect(screen.getByRole('switch', { name: 'Sensitive metadata redaction' })).toBeTruthy();
-    expect(screen.getByText('Current default: Excluded from training')).toBeTruthy();
-    expect(screen.getByText('Current default: Admins only')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('switch', { name: 'Training data' }));
-    expect(screen.getByText('Current default: Eligible for training')).toBeTruthy();
-
-    expect(
-      screen.getByRole('button', {
-        name: 'Applies to new prompts, attachments, and outputs created after this default changes.',
-      }),
-    ).toBeTruthy();
-
-    const configureButtons = () => screen.getAllByRole('button', { name: 'Configure' });
-
-    fireEvent.click(configureButtons()[0]);
-
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Configure activity retention' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Retention window' }));
-    selectOption('1 year');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: 1 year')).toBeTruthy();
-
-    fireEvent.click(configureButtons()[1]);
-    expect(screen.getByRole('heading', { name: 'Configure export access' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Export access' }));
-    selectOption('Disabled');
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Admins only')).toBeTruthy();
-
-    fireEvent.click(configureButtons()[1]);
-    fireEvent.click(screen.getByRole('combobox', { name: 'Export access' }));
-    selectOption('Disabled');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Disabled')).toBeTruthy();
-  });
-
-  test('uses standard security controls switches, links, and configure dialogs', async () => {
-    resetTestDom('https://oma.duck.ai/security');
-
-    renderDashboardPage(<DashboardPage section="security" />);
-
-    expect(screen.getByRole('heading', { name: 'Security' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'View logs' }).getAttribute('href')).toBe('/logs');
-    expect(screen.getByRole('link', { name: 'Manage' }).getAttribute('href')).toBe('/members');
-    expect(screen.getByRole('switch', { name: 'Admin multi-factor authentication' })).toBeTruthy();
-    expect(screen.getByText('Current default: Required for admins and billing members')).toBeTruthy();
-    expect(screen.getByText('Current default: Every 24 hours')).toBeTruthy();
-    expect(screen.getByText('Current default: Admins only')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('switch', { name: 'Admin multi-factor authentication' }));
-    expect(screen.getByText('Current default: Optional for admins and billing members')).toBeTruthy();
-
-    const configureButtons = () => screen.getAllByRole('button', { name: 'Configure' });
-
-    fireEvent.click(configureButtons()[0]);
-
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Configure session reauthentication' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Reauthentication window' }));
-    selectOption('Every 7 days');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Every 7 days')).toBeTruthy();
-
-    fireEvent.click(configureButtons()[1]);
-    expect(screen.getByRole('heading', { name: 'Configure security activity visibility' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Visibility' }));
-    selectOption('All members');
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Admins only')).toBeTruthy();
-
-    fireEvent.click(configureButtons()[1]);
-    fireEvent.click(screen.getByRole('combobox', { name: 'Visibility' }));
-    selectOption('Admins and billing');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('Current default: Admins and billing')).toBeTruthy();
-  });
-
-  test('uses shared shadcn card chrome for dashboard home and Claude Code usage', () => {
+  test('uses shared cards for available dashboard resources and an empty state for disconnected usage', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
     const dashboard = renderDashboardPage(<DashboardPage section="dashboard" />);
 
-    for (const label of ['Fable 5', 'Advisor tool']) {
+    for (const label of ['Agents', 'LLM models']) {
       const card = screen.getByText(label).closest('[data-slot="card"]') as HTMLElement | null;
       expect(card).toBeTruthy();
       expect(card?.className.includes('surface-card')).toBe(false);
@@ -424,17 +243,25 @@ describe('Dashboard i18n', () => {
     resetTestDom('https://oma.duck.ai/claude-code/usage');
     renderDashboardPage(<DashboardPage section="claude-code-usage" />);
 
-    const seatsCard = screen.getByText('Seats').closest('[data-slot="card"]') as HTMLElement | null;
-    expect(seatsCard).toBeTruthy();
-    expect(seatsCard?.className.includes('surface-card')).toBe(false);
+    expect(screen.queryByText('Seats')).toBeNull();
+    expect(document.querySelector('[data-slot=card]')).toBeNull();
 
     const emptyState = screen
-      .getByText('No Claude Code usage yet')
+      .getByText('Claude Code usage is not connected.')
       .closest('[data-slot="empty"]') as HTMLElement | null;
     expect(emptyState).toBeTruthy();
     expect(emptyState?.className.includes('surface-card')).toBe(false);
-    expect(emptyState?.className.includes('border-dashed')).toBe(true);
   });
+  test.each(['limits', 'service-accounts', 'privacy-controls', 'security'])(
+    'retired workspace setting %s cannot expose simulated actions',
+    (section) => {
+      resetTestDom(`https://oma.duck.ai/${section}`);
+      renderDashboardPage(<DashboardPage section={section} />);
+      expect(screen.getByText('This page has been retired')).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Back to app' }).getAttribute('href')).toBe('/dashboard');
+      expect(screen.queryByRole('button')).toBeNull();
+    },
+  );
 });
 
 describe('Files page', () => {
@@ -463,7 +290,7 @@ describe('Files page', () => {
 
     renderFilesPage();
 
-    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    expect(await screen.findByText('Upload files to the Default workspace to see them here.')).toBeTruthy();
     const file = new File(['session input'], 'session-input.txt', { type: 'text/plain' });
     fireEvent.change(await screen.findByLabelText('Choose files to upload'), { target: { files: [file] } });
 
@@ -512,7 +339,7 @@ describe('Files page', () => {
 
     renderFilesPage();
 
-    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    expect(await screen.findByText('Upload files to the Default workspace to see them here.')).toBeTruthy();
     const file = new File(['session input'], 'session-input.txt', { type: 'text/plain' });
     fireEvent.change(await screen.findByLabelText('Choose files to upload'), { target: { files: [file] } });
 
@@ -626,7 +453,10 @@ describe('Files page', () => {
     expect(screen.queryByText('second-page.txt')).toBeNull();
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
     expect(
-      requests.filter((request) => request.method === 'GET' && request.url === '/v1/files?beta=true&limit=20').length,
+      requests.filter(
+        (request) =>
+          request.method === 'GET' && request.url === `/v1/files?beta=true&limit=${consoleResourceListLimit}`,
+      ).length,
     ).toBeGreaterThanOrEqual(2);
   });
 
@@ -657,10 +487,10 @@ describe('Files page', () => {
     renderFilesPage();
 
     expect(await screen.findByRole('heading', { name: 'Files' })).toBeTruthy();
+    expect(await screen.findByText('report.json')).toBeTruthy();
     for (const heading of ['ID', 'Name', 'Size', 'Created']) {
       expect(screen.getByText(heading)).toBeTruthy();
     }
-    expect(await screen.findByText('report.json')).toBeTruthy();
     expect(screen.getByText('321 B')).toBeTruthy();
     expect(screen.getByText('file_...23456789')).toBeTruthy();
     expect(screen.queryByRole('link', { name: /View Docs/i })).toBeNull();
@@ -670,7 +500,7 @@ describe('Files page', () => {
 
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith('file_abc123456789'));
     expect((screen.getByRole('button', { name: 'Download report.json' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(requests[0]?.url).toBe('/v1/files?beta=true&limit=20');
+    expect(requests[0]?.url).toBe(`/v1/files?beta=true&limit=${consoleResourceListLimit}`);
     expect(requests[0]?.headers.get('anthropic-beta')).toBe('files-api-2025-04-14');
     expect(requests[0]?.headers.get('x-workspace-id')).toBe('default');
   });
@@ -780,9 +610,11 @@ describe('Files page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
     expect(await screen.findByText('second.md')).toBeTruthy();
-    expect(requests.some((request) => request.url === '/v1/files?beta=true&limit=20&after_id=file_page_one')).toBe(
-      true,
-    );
+    expect(
+      requests.some(
+        (request) => request.url === `/v1/files?beta=true&limit=${consoleResourceListLimit}&after_id=file_page_one`,
+      ),
+    ).toBe(true);
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -797,8 +629,9 @@ describe('Files page', () => {
 
     renderFilesPage();
 
-    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
+    expect(await screen.findByText('Upload files to the Default workspace to see them here.')).toBeTruthy();
     expect(screen.queryByText('import anthropic')).toBeNull();
+    expect(screen.queryByRole('columnheader')).toBeNull();
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Next page' }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -815,15 +648,15 @@ describe('Files page', () => {
     renderFilesPage();
 
     // `asdf` is not a known workspace, so the name falls back to the route id.
-    expect(await screen.findByText('No files have been uploaded to the asdf workspace.')).toBeTruthy();
+    expect(await screen.findByText('Upload files to the asdf workspace to see them here.')).toBeTruthy();
 
     // Navigating to the default workspace must update the name even though the
     // active workspace context is unchanged — this is the regression for the
     // useLocation-driven scope.
     window.history.pushState(null, '', 'https://oma.duck.ai/workspaces/default/files');
 
-    expect(await screen.findByText('No files have been uploaded to the Default workspace.')).toBeTruthy();
-    expect(screen.queryByText('No files have been uploaded to the asdf workspace.')).toBeNull();
+    expect(await screen.findByText('Upload files to the Default workspace to see them here.')).toBeTruthy();
+    expect(screen.queryByText('Upload files to the asdf workspace to see them here.')).toBeNull();
   });
 
   test('renders the standardized files error row and retries successfully', async () => {
@@ -863,16 +696,93 @@ describe('Files page', () => {
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.getByText('Files could not be loaded.')).toBeTruthy();
     expect(screen.getByText('Files service is unavailable.')).toBeTruthy();
+    expect(screen.queryByRole('columnheader')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByText('recovered.txt')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toBeTruthy();
     expect(screen.queryByText('Files service is unavailable.')).toBeNull();
     expect(requests).toHaveLength(2);
   });
 });
 
 describe('Skills page', () => {
+  for (const kind of ['skill', 'version'] as const) {
+    test(`protects pending ${kind} deletion and preserves the failed confirmation through cancellation`, async () => {
+      resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+      const skill = {
+        id: 'skill_confirm',
+        type: 'skill',
+        display_title: 'Research delete target',
+        latest_version: '1',
+        source: 'custom',
+        created_at: '2026-10-25T00:00:00Z',
+        updated_at: '2026-10-25T00:00:00Z',
+      };
+      mockSkillsApi((url) =>
+        url.includes('/versions?')
+          ? {
+              data: [
+                {
+                  id: 'version_confirm',
+                  type: 'skill_version',
+                  skill_id: skill.id,
+                  version: '1',
+                  name: skill.display_title,
+                  directory: 'research',
+                  description: 'Research notes',
+                  created_at: skill.created_at,
+                },
+              ],
+              has_more: false,
+            }
+          : url.includes('/skill_confirm?')
+            ? skill
+            : { data: [skill], has_more: false },
+      );
+      const fetchApi = globalThis.fetch;
+      let deleteCalls = 0;
+      let finishDelete: (response: Response) => void = () => {};
+      globalThis.fetch = ((input, init) => {
+        if (init?.method === 'DELETE') {
+          deleteCalls++;
+          return new Promise<Response>((resolve) => {
+            finishDelete = resolve;
+          });
+        }
+        return fetchApi(input, init);
+      }) as typeof fetch;
+      if (kind === 'version') {
+        renderSkillDetailPage(skill.id);
+        fireEvent.click(await screen.findByRole('button', { name: 'Delete version 1', exact: true }));
+      } else {
+        renderSkillsPage();
+        fireEvent.click(await screen.findByRole('button', { name: 'Actions', exact: true }));
+        fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete', exact: true }));
+      }
+      const dialog = await screen.findByRole('alertdialog', {
+        name: kind === 'skill' ? 'Delete skill?' : 'Delete version?',
+      });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete', exact: true }));
+      await waitFor(() => expect(deleteCalls).toBe(1));
+      expect(within(dialog).getByRole('button', { name: 'Cancel', exact: true })).toHaveProperty('disabled', true);
+      fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+      expect(screen.getByRole('alertdialog')).toBe(dialog);
+      await act(async () =>
+        finishDelete(Response.json({ error: { message: 'Delete could not complete' } }, { status: 503 })),
+      );
+      await within(dialog).findByText('Delete could not complete');
+      expect(document.activeElement).toBe(within(dialog).getByRole('alert'));
+      expect(within(dialog).getByText(kind === 'skill' ? skill.display_title : '1', { exact: true })).toBeTruthy();
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel', exact: true }));
+      expect(dialog.hasAttribute('data-closed')).toBe(true);
+      expect(dialog.textContent).toContain('Delete could not complete');
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+      expect(deleteCalls).toBe(1);
+    });
+  }
+
   test('renders skills in the platform list shape and opens the query-param drawer', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const clipboardWrite = mock(async (_value: string) => undefined);
@@ -910,7 +820,7 @@ describe('Skills page', () => {
           next_page: null,
         };
       }
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -943,7 +853,7 @@ describe('Skills page', () => {
 
     expect(await screen.findByRole('heading', { name: 'Skills' })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Create skill/i })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'ID' })).toBeTruthy();
+    expect(await screen.findByRole('columnheader', { name: 'ID' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Name' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Source' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Latest version' })).toBeTruthy();
@@ -954,7 +864,7 @@ describe('Skills page', () => {
     expect(screen.getByText('Jul 8, 2026')).toBeTruthy();
     expect(screen.getByText('Feb 3, 2026')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Actions' })).toHaveLength(1);
-    expect(requests[0]?.url).toBe('/v1/skills?beta=true&limit=100');
+    expect(requests[0]?.url).toBe(`/v1/skills?beta=true&limit=${consoleResourceListLimit}`);
     expect(requests[0]?.headers.get('anthropic-beta')).toBe('skills-2025-10-02');
     expect(requests[0]?.headers.get('x-workspace-id')).toBe('default');
 
@@ -1057,16 +967,22 @@ describe('Skills page', () => {
     renderSkillsPage();
 
     expect((await screen.findAllByText('frontend-design')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByLabelText('Page 1')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
-    expect(await screen.findByText('product-self-knowledge')).toBeTruthy();
-    expect(requests.some((request) => request.url === '/v1/skills?beta=true&limit=100&page=cursor_two')).toBe(true);
+    expect((await screen.findAllByText('product-self-knowledge')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByLabelText('Page 2')).toBeTruthy();
+    expect(
+      requests.some(
+        (request) => request.url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}&page=cursor_two`,
+      ),
+    ).toBe(true);
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
 
     expect((await screen.findAllByText('frontend-design')).length).toBeGreaterThanOrEqual(1);
-    await waitFor(() => expect(screen.queryByText('product-self-knowledge')).toBeNull());
+    await waitFor(() => expect(screen.queryAllByText('product-self-knowledge')).toHaveLength(0));
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -1098,10 +1014,130 @@ describe('Skills page', () => {
     expect(requests).toHaveLength(1);
   });
 
+  test('blocks dismissal during a skill upload and keeps the selection after failure', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    mockSkillsApi(() => ({ data: [], has_more: false, next_page: null }));
+    const mockedFetch = globalThis.fetch;
+    let uploadCalls = 0;
+    let finishRequest: (response: Response) => void = () => {};
+    globalThis.fetch = (input, init) =>
+      init?.method === 'POST'
+        ? new Promise<Response>((resolve) => {
+            uploadCalls++;
+            finishRequest = resolve;
+          })
+        : mockedFetch(input, init);
+    renderSkillsPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Create skill' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Create skill' });
+    const file = new File(['example archive bytes'], 'research.zip', { type: 'application/zip' });
+    fireEvent.change(dialog.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    await within(dialog).findByText('research.zip');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create skill', exact: true }));
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Close' }).hasAttribute('disabled')).toBe(true),
+    );
+    expect(within(dialog).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true);
+    expect(within(dialog).getByRole('button', { name: 'Remove upload' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+    expect(screen.getByRole('dialog')).toBe(dialog);
+    finishRequest(Response.json({ error: { type: 'api_error', message: 'Example upload failed' } }, { status: 500 }));
+    await within(dialog).findByText('Example upload failed');
+    expect(within(dialog).getByText('research.zip')).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Create skill', exact: true })).toHaveProperty('disabled', false);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create skill', exact: true }));
+    await waitFor(() => expect(uploadCalls).toBe(2));
+    finishRequest(Response.json({ error: { type: 'api_error', message: 'Second upload failed' } }, { status: 500 }));
+    await within(dialog).findByText('Second upload failed');
+    expect(document.activeElement).toBe(within(dialog).getByRole('alert'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Create skill' }));
+    expect(within(await screen.findByRole('dialog')).queryByText('research.zip')).toBeNull();
+  });
+
+  test('keeps a selected update package through cancellation and clears it before reopening', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    mockSkillsApi(() => ({
+      data: [
+        {
+          id: 'skill_cancel',
+          type: 'skill',
+          display_title: 'Research',
+          latest_version: '1',
+          source: 'custom',
+          created_at: '2026-10-25T00:00:00Z',
+          updated_at: '2026-10-25T00:00:00Z',
+        },
+      ],
+      has_more: false,
+    }));
+    renderSkillsPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions', exact: true }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Update', exact: true }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(dialog.querySelector('input[type="file"]')!, {
+      target: { files: [new File(['zip bytes'], 'research.zip', { type: 'application/zip' })] },
+    });
+    await within(dialog).findByText('research.zip');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel', exact: true }));
+    expect(dialog.hasAttribute('data-closed')).toBe(true);
+    expect(dialog.textContent).toContain('research.zip');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Actions', exact: true }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Update', exact: true }));
+    expect(within(await screen.findByRole('dialog')).queryByText('research.zip')).toBeNull();
+  });
+
+  test('retries a failed version directory without showing a false empty description', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills/skill_versions');
+    let attempts = 0;
+    const skill = {
+      id: 'skill_versions',
+      type: 'skill',
+      display_title: 'Research',
+      latest_version: '1',
+      source: 'custom',
+      created_at: '2026-10-25T00:00:00Z',
+      updated_at: '2026-10-25T00:00:00Z',
+    };
+    const requests = mockSkillsApi((url) => {
+      if (url.includes('/versions?')) {
+        attempts++;
+        return attempts === 1
+          ? Response.json({ error: { message: 'Version directory unavailable' } }, { status: 503 })
+          : {
+              data: [
+                {
+                  id: 'version_1',
+                  type: 'skill_version',
+                  skill_id: skill.id,
+                  version: '1',
+                  name: 'Research',
+                  directory: 'research',
+                  description: 'Recovered version description',
+                  created_at: skill.created_at,
+                },
+              ],
+              has_more: false,
+            };
+      }
+      return url.includes('/skill_versions?') ? skill : { data: [skill], has_more: false };
+    });
+    renderSkillDetailPage(skill.id);
+    await screen.findByText('Version directory unavailable');
+    expect(screen.queryByText('No description provided.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close', exact: true })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry', exact: true }));
+    await screen.findByText('Recovered version description');
+    expect(attempts).toBe(2);
+    expect(requests.every((request) => request.method === 'GET')).toBe(true);
+  });
+
   test('creates a skill from a single archive upload', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return { data: [], has_more: false, next_page: null };
       }
       if (url === '/v1/skills?beta=true') {
@@ -1154,7 +1190,7 @@ describe('Skills page', () => {
 
     fireEvent.change(input, { target: { files: [file] } });
     expect(await screen.findByText('emoji-translator.zip')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create skill' }));
 
     await waitFor(() =>
       expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(
@@ -1173,7 +1209,7 @@ describe('Skills page', () => {
   test('surfaces duplicate create errors without posting a new version', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -1218,7 +1254,7 @@ describe('Skills page', () => {
     fireEvent.change(input, { target: { files: [file] } });
     expect(await screen.findByText('emoji-translator.zip')).toBeTruthy();
     expect(screen.queryByText(/already exists/)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create skill' }));
 
     await waitFor(() =>
       expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(
@@ -1242,7 +1278,7 @@ describe('Skills page', () => {
   test('blocks empty skill archive uploads before posting', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [],
           has_more: false,
@@ -1261,14 +1297,16 @@ describe('Skills page', () => {
     fireEvent.change(input, { target: { files: [file] } });
 
     expect(await screen.findByText('Skill package files cannot be empty.')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (within(screen.getByRole('dialog')).getByRole('button', { name: 'Create skill' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(false);
   });
 
   test('updates a custom skill from the action menu', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -1308,7 +1346,7 @@ describe('Skills page', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['zip bytes'], 'emoji-translator.zip', { type: 'application/zip' });
     fireEvent.change(input, { target: { files: [file] } });
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Update' }));
 
     await waitFor(() =>
       expect(
@@ -1324,7 +1362,7 @@ describe('Skills page', () => {
   test('deletes a custom skill atomically from the skill endpoint', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -1351,7 +1389,7 @@ describe('Skills page', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Actions' }));
     fireEvent.click(await screen.findByText('Delete'));
-    expect(await screen.findByText('Confirm deleting emoji-translator')).toBeTruthy();
+    expect(await screen.findByRole('alertdialog', { name: 'Delete skill?' })).toBeTruthy();
     const deleteButtons = screen.getAllByRole('button', { name: 'Delete' });
     fireEvent.click(deleteButtons[deleteButtons.length - 1]);
 
@@ -1369,7 +1407,7 @@ describe('Skill detail page', () => {
   test('renders the selected skill in the query-param drawer', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills/frontend-design');
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -1447,7 +1485,7 @@ describe('Skill detail page', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills/frontend-design');
     let attempt = 0;
     const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills?beta=true&limit=100') {
+      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [
             {
@@ -1521,6 +1559,65 @@ describe('Skill detail page', () => {
 });
 
 describe('Batches page', () => {
+  test('keeps first-page loading feedback free of unavailable table controls', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/batches');
+    globalThis.fetch = mock(() => new Promise<Response>(() => {})) as typeof fetch;
+    renderBatchesPage();
+
+    expect(screen.getByText('Loading batches...')).toBeTruthy();
+    expect(screen.queryByRole('columnheader')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Previous page' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Next page' })).toBeNull();
+  });
+
+  test('offers retry without table chrome on a first-page failure and restores columns after recovery', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/batches');
+    let failed = true;
+    mockMessageBatchesApi(() =>
+      failed
+        ? new Response(JSON.stringify({ error: { message: 'Batch service unavailable' } }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        : { data: [makeBatch()], has_more: false },
+    );
+    renderBatchesPage();
+
+    expect(await screen.findByText('Batch service unavailable')).toBeTruthy();
+    expect(screen.queryByRole('columnheader')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Previous page' })).toBeNull();
+    failed = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('button', { name: 'msgbatch_test' })).toBeTruthy();
+    expect(screen.getAllByRole('columnheader')).toHaveLength(4);
+  });
+
+  test('omits empty first-page controls while preserving navigation out of an empty later page', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/batches');
+    mockMessageBatchesApi(() => ({ data: [], has_more: false }));
+    const empty = renderBatchesPage();
+    expect(await screen.findByText('No batches have been created in the Default workspace.')).toBeTruthy();
+    expect(screen.queryByRole('columnheader')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Next page' })).toBeNull();
+    empty.unmount();
+
+    mockMessageBatchesApi((url) =>
+      url.includes('after_id=msgbatch_test')
+        ? { data: [], has_more: false }
+        : { data: [makeBatch()], has_more: true, last_id: 'msgbatch_test' },
+    );
+    renderBatchesPage();
+    expect(await screen.findByRole('button', { name: 'msgbatch_test' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('No batches have been created in the Default workspace.')).toBeTruthy();
+    expect(screen.queryByRole('columnheader')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+    expect(await screen.findByRole('button', { name: 'msgbatch_test' })).toBeTruthy();
+    expect(screen.getAllByRole('columnheader')).toHaveLength(4);
+  });
+
   test('renders the standardized batch detail error alert and retries successfully', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/batches?batch=msgbatch_detail');
     let attempt = 0;
@@ -1530,7 +1627,7 @@ describe('Batches page', () => {
       results_url: 'https://oma.duck.ai/v1/messages/batches/msgbatch_detail/results',
     });
     const requests = mockMessageBatchesApi((url) => {
-      if (url === '/v1/messages/batches?beta=true&limit=20') {
+      if (url === `/v1/messages/batches?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [batch],
           has_more: false,
@@ -1583,7 +1680,7 @@ describe('Batches page', () => {
       results_url: 'https://oma.duck.ai/v1/messages/batches/msgbatch_done/results',
     });
     const requests = mockMessageBatchesApi((url) => {
-      if (url === '/v1/messages/batches?beta=true&limit=20') {
+      if (url === `/v1/messages/batches?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [endedBatch],
           has_more: false,
@@ -1606,6 +1703,7 @@ describe('Batches page', () => {
     renderBatchesPage();
 
     expect(await screen.findByRole('heading', { name: 'Batches' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'msgbatch_done' })).toBeTruthy();
     for (const heading of ['ID', 'Status', 'Requests', 'Created']) {
       expect(screen.getByText(heading)).toBeTruthy();
     }
@@ -1619,7 +1717,7 @@ describe('Batches page', () => {
     const detailCopyButton = within(detailPanel).getByRole('button', { name: 'Copy msgbatch_done' });
     expect((detailCopyButton as HTMLElement).style.opacity).toBe('1');
     expect(screen.queryByText('Copy the template below to set up your first batch:')).toBeNull();
-    expect(requests[0]?.url).toBe('/v1/messages/batches?beta=true&limit=20');
+    expect(requests[0]?.url).toBe(`/v1/messages/batches?beta=true&limit=${consoleResourceListLimit}`);
     expect(requests[0]?.headers.get('anthropic-beta')).toBe('message-batches-2024-09-24');
     expect(requests[0]?.headers.get('anthropic-version')).toBe('2023-06-01');
     expect(requests[0]?.headers.get('x-workspace-id')).toBe('default');
@@ -1699,7 +1797,10 @@ describe('Batches page', () => {
 
     expect(await screen.findByRole('button', { name: 'msgbatch_page_two' })).toBeTruthy();
     expect(
-      requests.some((request) => request.url === '/v1/messages/batches?beta=true&limit=20&after_id=msgbatch_page_one'),
+      requests.some(
+        (request) =>
+          request.url === `/v1/messages/batches?beta=true&limit=${consoleResourceListLimit}&after_id=msgbatch_page_one`,
+      ),
     ).toBe(true);
     expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(false);
   });
@@ -1709,7 +1810,7 @@ describe('Batches page', () => {
     const inProgressBatch = makeBatch({ id: 'msgbatch_progress', processing_status: 'in_progress' });
     const endedBatch = makeBatch({ id: 'msgbatch_done', processing_status: 'ended' });
     const requests = mockMessageBatchesApi((url, method) => {
-      if (url === '/v1/messages/batches?beta=true&limit=20') {
+      if (url === `/v1/messages/batches?beta=true&limit=${consoleResourceListLimit}`) {
         return {
           data: [inProgressBatch, endedBatch],
           has_more: false,
@@ -1844,7 +1945,10 @@ function renderDashboardPage(
         <I18nProvider initialLocale={locale}>
           <AuthContext.Provider value={authValue}>
             <WorkspaceContext.Provider value={value}>
-              <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+              <QueryClientProvider client={queryClient}>
+                <Toaster closeButton toastOptions={{ closeButtonAriaLabel: 'Close' }} />
+                {children}
+              </QueryClientProvider>
             </WorkspaceContext.Provider>
           </AuthContext.Provider>
         </I18nProvider>

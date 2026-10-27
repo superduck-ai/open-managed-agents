@@ -24,7 +24,7 @@ func TestNormalizeFileSpecRejectsInvalidInput(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := NormalizeFileSpec(test.fileID, "data.csv", test.source, test.mountPath); err == nil {
+			if _, err := NormalizeFileSpec(test.fileID, test.source, test.mountPath); err == nil {
 				t.Fatal("NormalizeFileSpec() succeeded")
 			}
 		})
@@ -68,15 +68,15 @@ func TestParseStoredFileSpecRejectsNonCanonicalPayload(t *testing.T) {
 func TestFileSpecBuildsCanonicalMount(t *testing.T) {
 	t.Parallel()
 
-	spec, err := NormalizeFileSpec("file_test", "report.csv", nil, nil)
+	spec, err := NormalizeFileSpec("file_test", nil, nil)
 	if err != nil {
 		t.Fatalf("NormalizeFileSpec(): %v", err)
 	}
-	if spec.fileID != "file_test" || spec.mountPath != "/uploads/report.csv" {
+	if spec.fileID != "file_test" || spec.mountPath != "/uploads/file_test" {
 		t.Fatalf("spec = %#v", spec)
 	}
 
-	raw := json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/uploads/report.csv"}`)
+	raw := json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/uploads/file_test"}`)
 	stored, err := ParseStoredFileSpec(raw)
 	if err != nil {
 		t.Fatalf("ParseStoredFileSpec(): %v", err)
@@ -91,20 +91,9 @@ func TestFileSpecBuildsCanonicalMount(t *testing.T) {
 	}
 	if mount.ResourceID != "sesrsc_test" ||
 		mount.FileID != "file_test" ||
-		mount.MountPath != "/uploads/report.csv" ||
-		mount.Path != "/uploads/report.csv" {
+		mount.MountPath != "/uploads/file_test" ||
+		mount.Path != "/uploads/file_test" {
 		t.Fatalf("mount = %#v", mount)
-	}
-}
-
-func TestDefaultGitHubRepositoryMountPath(t *testing.T) {
-	t.Parallel()
-
-	if got := DefaultGitHubRepositoryMountPath("://invalid"); got != "/workspace/repository" {
-		t.Fatalf("invalid repository URL mount path = %q", got)
-	}
-	if got := DefaultGitHubRepositoryMountPath("https://github.com/example/widgets.git"); got != "/workspace/widgets" {
-		t.Fatalf("default repository mount path = %q", got)
 	}
 }
 

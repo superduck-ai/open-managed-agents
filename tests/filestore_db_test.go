@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -39,16 +41,17 @@ func TestSessionNamespaceUsesResourcesAndFiles(t *testing.T) {
 			count(*) filter (where table_name = 'files'
 				and column_name = any($2::text[])),
 			count(*) filter (where table_name in ('session_resources', 'files')
-				and column_name = any($3::text[]))
+				and (column_name = any($3::text[])
+                    or (table_name = 'files' and column_name = 'source_file_uuid')))
 		from information_schema.columns
 		where table_schema = current_schema()
-	`, []string{"path", "parent_path", "file_uuid", "file_ownership", "expires_at"},
+	`, []string{"path", "parent_path", "file_uuid", "source_file_uuid", "file_ownership", "expires_at"},
 		[]string{"detected_mime_type", "metadata", "authorization_metadata", "tags", "md5", "s3_etag", "s3_version_id"},
-		[]string{"attached", "cataloged", "namespace_role", "filesystem_uuid", "source_file_uuid", "session_file_external_id", "skill_version_uuid", "skill_source", "skill_id", "skill_size_bytes", "skill_sha256", "skill_s3_bucket", "skill_s3_key"},
+		[]string{"attached", "cataloged", "namespace_role", "filesystem_uuid", "session_file_external_id", "skill_version_uuid", "skill_source", "skill_id", "skill_size_bytes", "skill_sha256", "skill_s3_bucket", "skill_s3_key"},
 	).Scan(&resourceColumns, &fileColumns, &forbiddenColumns); err != nil {
 		t.Fatalf("query unified namespace columns: %v", err)
 	}
-	if resourceColumns != 5 || fileColumns != 7 || forbiddenColumns != 0 {
+	if resourceColumns != 6 || fileColumns != 7 || forbiddenColumns != 0 {
 		t.Fatalf("unified columns = resources %d files %d forbidden %d", resourceColumns, fileColumns, forbiddenColumns)
 	}
 }
@@ -139,6 +142,7 @@ func TestCreateSessionRejectsFileResourcesAboveDBLimit(t *testing.T) {
 				ResourceExternalID: resourceID,
 				FileExternalID:     fmt.Sprintf("file_limit_%03d", index),
 				Path:               fmt.Sprintf("/uploads/db-limit/file-%03d.txt", index),
+				MountPath:          fmt.Sprintf("/uploads/db-limit/file-%03d.txt", index),
 			},
 		})
 	}
@@ -1440,7 +1444,7 @@ func filestoreSessionCreateInput(organizationUUID, workspaceUUID, apiKeyUUID str
 			AgentVersion:          1,
 			AgentSnapshot:         json.RawMessage(`{}`),
 			Metadata:              json.RawMessage(`{}`),
-			VaultIDs:              json.RawMessage(`[]`),
+			VaultIDs:              []string{},
 			Status:                "idle",
 			Usage:                 json.RawMessage(`{}`),
 			Stats:                 json.RawMessage(`{}`),

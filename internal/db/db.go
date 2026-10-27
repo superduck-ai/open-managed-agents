@@ -23,22 +23,27 @@ import (
 )
 
 var (
-	ErrNotFound                 = platform.ErrNotFound
-	ErrInvalidState             = errors.New("invalid state")
-	ErrPreconditionFailed       = errors.New("precondition failed")
-	ErrDuplicate                = errors.New("duplicate")
-	ErrVersionConflict          = errors.New("version conflict")
-	ErrIncompleteSecretEnvelope = errors.New("incomplete vault credential secret envelope")
-	ErrWorkerEpochMismatch      = errors.New("worker epoch mismatch")
-	ErrWorkerNotRegistered      = errors.New("worker not registered")
-	ErrWorkerLeaseExpired       = errors.New("worker lease expired")
-	ErrStorageLimitExceeded     = errors.New("storage limit exceeded")
-	ErrStorageUsageUnderflow    = errors.New("storage usage underflow")
-	ErrLimitExceeded            = errors.New("limit exceeded")
-	ErrFileInUse                = errors.New("file is in use")
-	ErrFileReferenceNotFound    = errors.New("file reference not found")
-	ErrStaleSchedule            = errors.New("stale deployment schedule")
-	ErrWorkspaceArchived        = errors.New("workspace archived")
+	ErrNotFound                       = platform.ErrNotFound
+	ErrInvalidState                   = errors.New("invalid state")
+	ErrSessionInputPaused             = errors.New("session input is paused; resolve pending tools or budget first")
+	ErrSessionInterruptTargetInvalid  = errors.New("interrupt target is terminated or invalid")
+	ErrSessionInputConflict           = errors.New("session cannot accept input")
+	ErrSessionToolConfirmationInvalid = errors.New("tool confirmation requires a pending ask event")
+	ErrInvalidCursor                  = errors.New("invalid page cursor")
+	ErrPreconditionFailed             = errors.New("precondition failed")
+	ErrDuplicate                      = errors.New("duplicate")
+	ErrVersionConflict                = errors.New("version conflict")
+	ErrIncompleteSecretEnvelope       = errors.New("incomplete vault credential secret envelope")
+	ErrWorkerEpochMismatch            = errors.New("worker epoch mismatch")
+	ErrWorkerNotRegistered            = errors.New("worker not registered")
+	ErrWorkerLeaseExpired             = errors.New("worker lease expired")
+	ErrStorageLimitExceeded           = errors.New("storage limit exceeded")
+	ErrStorageUsageUnderflow          = errors.New("storage usage underflow")
+	ErrLimitExceeded                  = errors.New("limit exceeded")
+	ErrFileInUse                      = errors.New("file is in use")
+	ErrFileReferenceNotFound          = errors.New("file reference not found")
+	ErrStaleSchedule                  = errors.New("stale deployment schedule")
+	ErrWorkspaceArchived              = errors.New("workspace archived")
 )
 
 type DB struct {
@@ -75,6 +80,14 @@ const (
 	`
 	legacyTableExistsQuery = `select to_regclass($1) is not null`
 )
+
+func OpenExisting(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, error) {
+	pool, err := openPool(ctx, cfg.Database.URL)
+	if err != nil {
+		return nil, err
+	}
+	return newDB(pool, logger), nil
+}
 
 func Open(ctx context.Context, cfg config.Config, logger *slog.Logger) (*DB, error) {
 	pool, err := openPool(ctx, cfg.Database.URL)
@@ -148,6 +161,13 @@ func (d *DB) Close() {
 // Callers must not close it or use it for application queries.
 func (d *DB) SQLDB() *sql.DB {
 	return d.mapperDB.SQLDB()
+}
+
+// ListenerPool exposes the existing pool for integration-owned LISTEN connections.
+// Callers must not close it or use it for application queries. Stop integrations
+// before DB.Close so their dedicated listener connections are also closed.
+func (d *DB) ListenerPool() *pgxpool.Pool {
+	return d.pool
 }
 
 func EnsureDatabase(ctx context.Context, databaseURL string) error {
@@ -372,7 +392,18 @@ func (d *DB) Migrate(ctx context.Context) error {
 	if err := runGooseMigrations(ctx, standardDB); err != nil {
 		return err
 	}
-	return dropForeignKeyConstraints(ctx, standardDB)
+	if err := dropForeignKeyConstraints(ctx, standardDB); err != nil {
+		return err
+	}
+	for {
+		count, err := d.BackfillUsageRecords(ctx, 500)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return nil
+		}
+	}
 }
 
 func (d *DB) DropForeignKeyConstraints(ctx context.Context) error {
@@ -416,41 +447,30 @@ func dropForeignKeyConstraints(ctx context.Context, database *sql.DB) error {
 	return nil
 }
 
-func (d *DB) Seed(ctx context.Context, seedAPIKeys []config.SeedAPIKey) error {
+func (d *DB) Seed(ctx context.Context, bootstrap config.BootstrapConfig) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		organizationMapper := NewAdminOrganizationMapper(executor)
 		workspaceMapper := NewAdminWorkspaceMapper(executor)
 		userMapper := NewAdminUserMapper(executor)
-		memberMapper := NewAdminWorkspaceMemberMapper(executor)
 		apiKeyMapper := NewAdminAPIKeyMapper(executor)
 
 		if _, err := organizationMapper.LockSeed(ctx); err != nil {
 			return err
 		}
-		organizationUUID, err := organizationMapper.SeedDefault(ctx, "workspace_default", "default")
+		organizationUUID, err := organizationMapper.SeedDefault(ctx, bootstrap.WorkspaceExternalID, bootstrap.OrganizationName)
 		if err != nil {
 			return err
 		}
-		workspaceUUID, err := workspaceMapper.SeedDefault(ctx, "workspace_default", organizationUUID, "default")
+		workspaceUUID, err := workspaceMapper.SeedDefault(ctx, bootstrap.WorkspaceExternalID, organizationUUID, bootstrap.WorkspaceName)
 		if err != nil {
 			return err
 		}
-		userUUID, err := userMapper.SeedDefault(ctx, "user_default", organizationUUID, "admin@example.local", "Local Admin")
+		userUUID, err := userMapper.SeedDefault(ctx, bootstrap.UserExternalID, organizationUUID, bootstrap.UserEmail, bootstrap.UserName)
 		if err != nil {
-			return err
-		}
-		if err := memberMapper.SeedDefault(ctx, seedAdminWorkspaceMemberParams{
-			ExternalID:          "wmem_default",
-			OrganizationUUID:    organizationUUID,
-			WorkspaceUUID:       workspaceUUID,
-			WorkspaceExternalID: "workspace_default",
-			UserUUID:            userUUID,
-			UserExternalID:      "user_default",
-		}); err != nil {
 			return err
 		}
 
-		for _, key := range seedAPIKeys {
+		for _, key := range bootstrap.SeedAPIKeys {
 			if strings.TrimSpace(key.ExternalID) == "" || key.Key == "" {
 				return errors.New("seed api keys must include external_id and key")
 			}

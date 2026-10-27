@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,11 +12,14 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
@@ -25,17 +29,25 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	}
 	var agentID string
 	var version int
+	var modelOverride json.RawMessage
+	var systemOverride json.RawMessage
+	var toolsOverride json.RawMessage
+	var mcpServersOverride json.RawMessage
+	var skillsOverride json.RawMessage
 	if json.Unmarshal(raw, &agentID) != nil {
-		var object struct {
-			Type    string `json:"type"`
-			ID      string `json:"id"`
-			Version *int   `json:"version"`
-		}
+		var object sessionAgentReference
 		if err := json.Unmarshal(raw, &object); err != nil {
 			return db.Agent{}, nil, errors.New("agent must be a string or object")
 		}
-		if object.Type != "" && object.Type != "agent" {
-			return db.Agent{}, nil, errors.New("agent.type must be agent")
+		if err := object.validateType(); err != nil {
+			return db.Agent{}, nil, err
+		}
+		if object.Type == "agent_with_overrides" {
+			modelOverride = object.Model
+			systemOverride = object.System
+			toolsOverride = object.Tools
+			mcpServersOverride = object.MCPServers
+			skillsOverride = object.Skills
 		}
 		agentID = object.ID
 		if object.Version != nil {
@@ -64,37 +76,64 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	if agent.ArchivedAt != nil {
 		return db.Agent{}, nil, errors.New("agent must not be archived")
 	}
-	snapshot, err := agentsnapshot.FromAgent(agent)
+	effective, err := h.applySessionModelOverride(r, principal, agent, modelOverride)
+	if err != nil {
+		return db.Agent{}, nil, err
+	}
+	effective, err = applySessionSystemOverride(effective, systemOverride)
+	if err != nil {
+		return db.Agent{}, nil, err
+	}
+	effective, err = applySessionConfigurationOverrides(effective, toolsOverride, mcpServersOverride, skillsOverride)
+	if err != nil {
+		return db.Agent{}, nil, err
+	}
+	snapshot, err := agentsnapshot.Resolve(r.Context(), h.db, effective)
 	if err != nil {
 		return db.Agent{}, nil, err
 	}
 	return agent, snapshot, nil
 }
 
-func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, raw json.RawMessage) (json.RawMessage, error) {
-	if httpapi.IsJSONNull(raw) {
-		return json.RawMessage(`[]`), nil
-	}
-	var ids []string
-	if err := json.Unmarshal(raw, &ids); err != nil {
-		return nil, errors.New("vault_ids must be an array of strings")
+func (h *Handler) normalizeVaultIDs(r *http.Request, principal auth.Principal, raw json.RawMessage) ([]string, error) {
+	ids, err := parseSessionVaultIDs(raw)
+	if err != nil {
+		return nil, err
 	}
 	for _, id := range ids {
-		if strings.TrimSpace(id) == "" {
-			return nil, errors.New("vault_ids must contain non-empty strings")
-		}
 		vault, err := h.db.GetVault(r.Context(), principal.WorkspaceUUID, id)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
-				return nil, fmt.Errorf("vault not found: %s", id)
+				return nil, vaultNotFound(id, err)
 			}
-			return nil, err
+			return nil, internalError("Could not validate Vault binding", err)
 		}
 		if vault.ArchivedAt != nil {
 			return nil, fmt.Errorf("vault is archived: %s", id)
 		}
 	}
-	return httpapi.MarshalRaw(ids)
+	return ids, nil
+}
+
+func parseSessionVaultIDs(raw json.RawMessage) ([]string, error) {
+	if httpapi.IsJSONNull(raw) {
+		return []string{}, nil
+	}
+	var ids []string
+	if err := json.Unmarshal(raw, &ids); err != nil {
+		return nil, errors.New("vault_ids must be an array of strings")
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			return nil, errors.New("vault_ids must contain non-empty strings")
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("Duplicate vault_id '%s'.", id)
+		}
+		seen[id] = true
+	}
+	return ids, nil
 }
 
 func (h *Handler) resourcesFromCreate(
@@ -111,14 +150,18 @@ func (h *Handler) resourcesFromCreate(
 	if err := json.Unmarshal(raw, &items); err != nil {
 		return nil, errors.New("resources must be an array")
 	}
+	if len(items) > sessioncontract.MaxResources {
+		return nil, fmt.Errorf("resources may contain at most %d entries", sessioncontract.MaxResources)
+	}
 	resources := make([]normalizedSessionResource, 0, len(items))
 	session := db.Session{
 		ExternalID:       sessionID,
 		OrganizationUUID: principal.OrganizationUUID,
 		WorkspaceUUID:    principal.WorkspaceUUID,
 	}
+	attachSet := sessionresource.NewMemoryAttachSet()
 	for i := range items {
-		resource, err := h.resourceFromRequest(r, session, &items[i], now)
+		resource, err := h.resourceFromRequest(r, session, &items[i], now, attachSet)
 		if err != nil {
 			return nil, err
 		}
@@ -135,6 +178,7 @@ func (h *Handler) resourceFromRequest(
 	session db.Session,
 	body *sessionResourceRequest,
 	now time.Time,
+	attachSet *sessionresource.MemoryAttachSet,
 ) (normalizedSessionResource, error) {
 	resourceType, err := parseRequiredRawString(body.Type, "type")
 	if err != nil {
@@ -144,18 +188,18 @@ func (h *Handler) resourceFromRequest(
 	if err != nil {
 		return normalizedSessionResource{}, err
 	}
-	var secret json.RawMessage
-	var normalizedFileSpec *sessionresource.FileSpec
 	var githubRepository *db.SessionResourceGitHubRepository
 	var memoryStore *db.SessionResourceMemoryStore
+	var secret json.RawMessage
+	var normalizedFileSpec *sessionresource.FileSpec
+	var gitSpec *sessionresource.GitRepositorySpec
 	switch resourceType {
 	case sessionresource.FileType:
 		fileID, err := sessionresource.ParseFileID(body.FileID)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		file, err := h.db.GetFile(r.Context(), session.WorkspaceUUID, fileID)
-		if err != nil {
+		if _, err := h.db.GetFile(r.Context(), session.WorkspaceUUID, fileID); err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				return normalizedSessionResource{}, db.ErrFileReferenceNotFound
 			}
@@ -163,7 +207,6 @@ func (h *Handler) resourceFromRequest(
 		}
 		fileSpec, err := sessionresource.NormalizeFileSpec(
 			fileID,
-			file.Filename,
 			body.Source,
 			body.MountPath,
 		)
@@ -171,44 +214,36 @@ func (h *Handler) resourceFromRequest(
 			return normalizedSessionResource{}, err
 		}
 		normalizedFileSpec = &fileSpec
-	case "github_repository":
-		url, err := parseRequiredRawString(body.URL, "url")
+	case sessionresource.GitRepositoryType:
+		spec, err := sessionresource.NormalizeGitRepositorySpec(body.URL, body.MountPath, body.Checkout)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		mountPath, err := optionalStringWithDefault(
-			body.MountPath,
-			sessionresource.DefaultGitHubRepositoryMountPath(url),
-			"mount_path",
-		)
+		token, err := sessionresource.ParseGitTokenInput(body.AuthorizationToken)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		githubRepository = &db.SessionResourceGitHubRepository{URL: url, MountPath: mountPath}
-		if len(body.Checkout) > 0 && !httpapi.IsJSONNull(body.Checkout) {
-			githubRepository.Checkout = append(json.RawMessage(nil), body.Checkout...)
-		}
-	case "memory_store":
-		memoryStoreID, err := parseRequiredRawString(body.MemoryStoreID, "memory_store_id")
+		secret, err = sessionresource.EncryptGitToken(r.Context(), h.secretService, secrets.ResourceBinding{
+			OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
+		}, token)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		store, err := h.db.GetMemoryStore(r.Context(), session.WorkspaceUUID, memoryStoreID)
+		githubRepository = &db.SessionResourceGitHubRepository{URL: spec.URL, MountPath: spec.MountPath}
+		if spec.Checkout != nil {
+			githubRepository.Checkout, err = json.Marshal(spec.Checkout)
+			if err != nil {
+				return normalizedSessionResource{}, err
+			}
+		}
+
+		gitSpec = &spec
+	case sessionresource.MemoryStoreType:
+		fields, err := h.memoryStorePayload(r.Context(), session, body, attachSet, resourceID)
 		if err != nil {
-			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: err}
+			return normalizedSessionResource{}, err
 		}
-		if store.ArchivedAt != nil {
-			return normalizedSessionResource{}, resourceReferenceError{ResourceType: "memory_store", ResourceID: memoryStoreID, Err: db.ErrInvalidState}
-		}
-		memoryStore = &db.SessionResourceMemoryStore{
-			UUID:         store.UUID,
-			ExternalID:   store.ExternalID,
-			Access:       optionalResourceString(body.Access),
-			Description:  optionalResourceString(body.Description),
-			Instructions: optionalResourceString(body.Instructions),
-			MountPath:    optionalResourceString(body.MountPath),
-			Name:         optionalResourceString(body.Name),
-		}
+		memoryStore = &db.SessionResourceMemoryStore{ExternalID: fields.MemoryStoreID, Access: new(string(fields.Access)), Description: new(fields.Description), Instructions: new(fields.Instructions), MountPath: new(fields.MountPath), Name: new(fields.Name)}
 	default:
 		return normalizedSessionResource{}, errors.New("resource type must be file, github_repository, or memory_store")
 	}
@@ -220,25 +255,15 @@ func (h *Handler) resourceFromRequest(
 			WorkspaceUUID:     session.WorkspaceUUID,
 			SessionExternalID: session.ExternalID,
 			ResourceType:      resourceType,
-			SecretPayload:     secret,
 			GitHubRepository:  githubRepository,
 			MemoryStore:       memoryStore,
+			SecretPayload:     secret,
 			CreatedAt:         now,
 			UpdatedAt:         now,
 		},
 		fileSpec: normalizedFileSpec,
+		gitSpec:  gitSpec,
 	}, nil
-}
-
-func optionalResourceString(raw json.RawMessage) *string {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return nil
-	}
-	var value string
-	if json.Unmarshal(raw, &value) != nil {
-		return nil
-	}
-	return &value
 }
 
 func normalizeInputEvent(
@@ -246,6 +271,7 @@ func normalizeInputEvent(
 	raw json.RawMessage,
 	now time.Time,
 ) (db.SessionEvent, json.RawMessage, bool, error) {
+	now = eventTime(now)
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return db.SessionEvent{}, nil, false, errors.New("event must be an object")
@@ -262,8 +288,13 @@ func normalizeInputEvent(
 		return db.SessionEvent{}, nil, false, err
 	}
 	payload["id"] = eventID
-	payload["processed_at"] = now.Format(time.RFC3339)
-	payload["created_at"] = httpapi.FormatTime(now)
+	payload["processed_at"] = formatEventTime(now)
+	processedAt := now
+	if eventType == "user.message" || eventType == "user.tool_confirmation" {
+		payload["processed_at"] = nil
+		processedAt = time.Time{}
+	}
+	delete(payload, "created_at")
 	var threadExternalID *string
 	if value, ok := payload["session_thread_id"].(string); ok && strings.TrimSpace(value) != "" {
 		value = strings.TrimSpace(value)
@@ -308,7 +339,7 @@ func normalizeInputEvent(
 		ThreadExternalID:  threadExternalID,
 		EventType:         eventType,
 		Payload:           payloadRaw,
-		ProcessedAt:       now,
+		ProcessedAt:       processedAt,
 		CreatedAt:         now,
 	}, session.OutcomeEvaluations, outcomesChanged, nil
 }
@@ -321,7 +352,10 @@ func validatePublicInputEvent(eventType string, payload map[string]any) error {
 	var err error
 	switch eventType {
 	case "user.message":
-		err = validateContentBlocks(payload, "content", true)
+		err = validateUserMessageContent(payload)
+		if err == nil {
+			err = validateMessageMedia(payload)
+		}
 	case "system.message":
 		err = validateContentBlocks(payload, "content", true)
 	case "user.interrupt":
@@ -341,6 +375,19 @@ func validatePublicInputEvent(eventType string, payload map[string]any) error {
 	return validateSessionThreadIDPayload(payload)
 }
 
+func validateUserMessageContent(payload map[string]any) error {
+	if err := validateContentBlocks(payload, "content", true); err != nil {
+		return err
+	}
+	for _, item := range payload["content"].([]any) {
+		block := item.(map[string]any)
+		if block["type"] == "text" && strings.TrimSpace(block["text"].(string)) == "" {
+			return errors.New("content text must be non-empty and not whitespace-only")
+		}
+	}
+	return nil
+}
+
 func validateToolConfirmationPayload(payload map[string]any) error {
 	if requiredStringValue(payload, "tool_use_id") == "" {
 		return errors.New("tool_use_id is required")
@@ -353,6 +400,12 @@ func validateToolConfirmationPayload(payload map[string]any) error {
 		if _, ok := payload["deny_message"].(string); !ok && payload["deny_message"] != nil {
 			return errors.New("deny_message must be a string")
 		}
+	}
+	if _, ok := payload["updated_input"]; ok {
+		return errors.New("updated_input is not supported on user.tool_confirmation")
+	}
+	if _, ok := payload["answers"]; ok {
+		return errors.New("answers is not supported on user.tool_confirmation")
 	}
 	return nil
 }
@@ -417,11 +470,51 @@ func validateContentBlocks(payload map[string]any, field string, required bool) 
 		if !ok {
 			return fmt.Errorf("%s items must be objects", field)
 		}
-		if requiredStringValue(block, "type") == "" {
-			return fmt.Errorf("%s item type is required", field)
+		switch block["type"] {
+		case "text":
+			text, ok := block["text"].(string)
+			if !ok || text == "" {
+				return fmt.Errorf("%s text must be non-empty", field)
+			}
+		case "image", "document":
+			if err := validateContentSource(block); err != nil {
+				return fmt.Errorf("%s %w", field, err)
+			}
+		case "search_result":
+			if required {
+				return fmt.Errorf("%s item type is not accepted", field)
+			}
+		default:
+			return fmt.Errorf("%s item type is not accepted", field)
 		}
 	}
 	return nil
+}
+
+func validateContentSource(block map[string]any) error {
+	source, ok := block["source"].(map[string]any)
+	if !ok {
+		return errors.New("source is required")
+	}
+	switch source["type"] {
+	case "base64":
+		if requiredStringValue(source, "data") != "" && requiredStringValue(source, "media_type") != "" {
+			return nil
+		}
+	case "url":
+		if requiredStringValue(source, "url") != "" {
+			return nil
+		}
+	case "file":
+		if requiredStringValue(source, "file_id") != "" {
+			return nil
+		}
+	case "text":
+		if block["type"] == "document" && requiredStringValue(source, "data") != "" && source["media_type"] == "text/plain" {
+			return nil
+		}
+	}
+	return errors.New("source is invalid")
 }
 
 func requiredStringValue(payload map[string]any, field string) string {
@@ -447,15 +540,29 @@ func appendOutcomeEvaluation(raw json.RawMessage, outcomeID string, maxIteration
 	return httpapi.MarshalRaw(outcomes)
 }
 
-func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sessionResponse, error) {
+// responseFromSession renders a session API response. refreshUsage controls
+// whether the live usage aggregate is recomputed: single-session reads pass
+// true for freshness, list routes pass false to avoid a per-row aggregation
+// over session_events (the stored usage projection is kept fresh by budget
+// enforcement after every persisted batch).
+func (h *Handler) responseFromSession(r *http.Request, session db.Session, refreshUsage bool) (sessionResponse, error) {
 	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return sessionResponse{}, err
+	}
+	usage := httpapi.RawOr(session.Usage, `{}`)
+	if refreshUsage {
+		totals, err := h.db.SumSessionUsageTotals(r.Context(), session.WorkspaceUUID, session.ExternalID)
+		if err != nil {
+			return sessionResponse{}, fmt.Errorf("sum session usage: %w", err)
+		}
+		usage = sessionUsageJSON(totals, session.Budget)
 	}
 	return sessionResponse{
 		ID:                 session.ExternalID,
 		Agent:              httpapi.RawOr(session.AgentSnapshot, `{}`),
 		ArchivedAt:         httpapi.OptionalTime(session.ArchivedAt),
+		Budget:             jsonx.Default(session.Budget, "null"),
 		CreatedAt:          httpapi.FormatTime(session.CreatedAt),
 		DeploymentID:       session.DeploymentID,
 		EnvironmentID:      session.EnvironmentExternalID,
@@ -467,8 +574,8 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 		Title:              session.Title,
 		Type:               "session",
 		UpdatedAt:          httpapi.FormatTime(session.UpdatedAt),
-		Usage:              httpapi.RawOr(session.Usage, `{}`),
-		VaultIDs:           httpapi.RawOr(session.VaultIDs, `[]`),
+		Usage:              usage,
+		VaultIDs:           append([]string{}, session.VaultIDs...),
 	}, nil
 }
 
@@ -480,12 +587,22 @@ func responseFromThread(thread db.SessionThread) threadResponse {
 		CreatedAt:      httpapi.FormatTime(thread.CreatedAt),
 		ParentThreadID: thread.ParentThreadExternalID,
 		SessionID:      thread.SessionExternalID,
-		Stats:          httpapi.RawOr(thread.Stats, `{}`),
+		Stats:          threadMetricResponse(thread.Stats, thread.StatsInitialized),
 		Status:         thread.Status,
 		Type:           "session_thread",
 		UpdatedAt:      httpapi.FormatTime(thread.UpdatedAt),
-		Usage:          httpapi.RawOr(thread.Usage, `{}`),
+		Usage:          threadMetricResponse(thread.Usage, thread.UsageInitialized),
 	}
+}
+
+func (h *Handler) responseFromThreadWithUsage(ctx context.Context, workspaceUUID, sessionExternalID string, thread db.SessionThread) (threadResponse, error) {
+	response := responseFromThread(thread)
+	totals, err := h.db.SumSessionThreadUsageTotals(ctx, workspaceUUID, sessionExternalID, thread.ExternalID)
+	if err != nil {
+		return threadResponse{}, fmt.Errorf("sum session thread usage: %w", err)
+	}
+	response.Usage = sessionUsageJSON(totals, nil)
+	return response, nil
 }
 
 func resourcesToResponses(resources []db.SessionResource) []json.RawMessage {
@@ -530,4 +647,11 @@ func setOptionalResourceField(payload map[string]any, name string, value *string
 	if value != nil {
 		payload[name] = *value
 	}
+}
+
+func threadMetricResponse(raw json.RawMessage, initialized bool) json.RawMessage {
+	if !initialized {
+		return json.RawMessage(`null`)
+	}
+	return httpapi.RawOr(raw, `{}`)
 }

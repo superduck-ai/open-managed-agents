@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="MCPTunnelMapper">
+    <sql id="columns">
+        uuid, external_id, organization_uuid, workspace_uuid, display_name, domain,
+        created_at, updated_at, archived_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="mcpTunnelRow">
+        INSERT INTO mcp_tunnels (
+            uuid, external_id, organization_uuid, workspace_uuid, display_name, domain,
+            created_at, updated_at
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID},
+            #{params.WorkspaceUUID}, #{params.DisplayName}, #{params.Domain},
+            #{params.CreatedAt}, #{params.CreatedAt}
+        )
+        RETURNING <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="mcpTunnelRow">
+        SELECT <include refid="columns"/>
+        FROM mcp_tunnels
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+    </select>
+
+    <select id="FindByDomain" resultType="mcpTunnelRow">
+        SELECT <include refid="columns"/>
+        FROM mcp_tunnels
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND domain = #{domain}
+    </select>
+
+    <select id="FindActiveForUpdate" resultType="mcpTunnelRow">
+        SELECT <include refid="columns"/>
+        FROM mcp_tunnels
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND archived_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="ListPage" resultType="mcpTunnelRow">
+        SELECT <include refid="columns"/>
+        FROM mcp_tunnels
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        <if test="!params.IncludeArchived">AND archived_at IS NULL</if>
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.Limit}
+        OFFSET #{params.Offset}
+    </select>
+
+    <update id="ArchiveByExternalID" result="returning" resultType="mcpTunnelRow">
+        UPDATE mcp_tunnels
+        SET archived_at = COALESCE(archived_at, NOW()),
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        RETURNING <include refid="columns"/>
+    </update>
+</mapper>

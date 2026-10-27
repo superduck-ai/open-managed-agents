@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="TranscriptArchiveMapper">
+ <sql id="columns">uuid, external_id, organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id,
+ from_sequence_num, to_sequence_num, event_count, codec, bucket, object_key, size_bytes, raw_bytes, sha256, state, created_at, updated_at</sql>
+ <sql id="scope">organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID} AND code_session_uuid = #{scope.CodeSessionUUID}</sql>
+ <select id="LockScope" result="scalar">SELECT pg_advisory_xact_lock(hashtextextended(#{key}, 0)) IS NULL AS locked</select>
+ <select id="Overlaps" result="scalar">
+ SELECT EXISTS (SELECT 1 FROM transcript_archives WHERE organization_uuid = #{archive.OrganizationUUID}
+ AND workspace_uuid = #{archive.WorkspaceUUID} AND code_session_uuid = #{archive.CodeSessionUUID}
+ AND state &lt;&gt; 'deleting' AND from_sequence_num &lt;= #{archive.ToSequence} AND to_sequence_num &gt;= #{archive.FromSequence})
+ </select>
+ <insert id="Insert" result="exec">
+ INSERT INTO transcript_archives (uuid, external_id, organization_uuid, workspace_uuid, code_session_uuid, code_session_external_id,
+ from_sequence_num, to_sequence_num, event_count, codec, bucket, object_key, size_bytes, raw_bytes, sha256)
+ VALUES (#{archive.UUID}, #{archive.ExternalID}, #{archive.OrganizationUUID}, #{archive.WorkspaceUUID}, #{archive.CodeSessionUUID}, #{archive.CodeSessionExternalID},
+ #{archive.FromSequence}, #{archive.ToSequence}, #{archive.EventCount}, #{archive.Codec}, #{archive.Bucket}, #{archive.Key}, #{archive.Size}, #{archive.RawBytes}, #{archive.SHA256,sensitive=true})
+ </insert>
+ <update id="Attach" result="rows">
+ UPDATE transcript_archives SET state = 'attached', updated_at = now()
+ WHERE <include refid="scope"/> AND uuid = #{archiveUUID} AND state = 'pending' AND created_at &gt; now() - interval '24 hours'
+ </update>
+ <select id="FindByRange" result="optional" resultType="transcriptArchiveRow">
+ SELECT <include refid="columns"/> FROM transcript_archives
+ WHERE <include refid="scope"/> AND from_sequence_num = #{fromSequence} AND state &lt;&gt; 'deleting'
+ </select>
+ <select id="ListBySession" resultType="transcriptArchiveRow">
+ SELECT <include refid="columns"/> FROM transcript_archives WHERE <include refid="scope"/>
+ AND from_sequence_num &gt; #{after} AND state &lt;&gt; 'deleting'
+ <if test="attachedOnly">AND state = 'attached'</if>
+ ORDER BY from_sequence_num LIMIT #{limit}
+ </select>
+ <select id="LockAttached" result="optional" resultType="transcriptArchiveRow">
+ SELECT <include refid="columns"/> FROM transcript_archives
+ WHERE <include refid="scope"/> AND uuid = #{archiveUUID} AND state = 'attached' FOR SHARE
+ </select>
+ <select id="HasAttachedCovering" result="scalar">
+ SELECT EXISTS (SELECT 1 FROM transcript_archives WHERE <include refid="scope"/>
+ AND uuid = #{archiveUUID} AND state = 'attached' AND #{sequence} BETWEEN from_sequence_num AND to_sequence_num)
+ </select>
+ <update id="ClaimCleanup" result="returning" resultType="transcriptArchiveRow">
+ WITH candidates AS (SELECT uuid, organization_uuid, workspace_uuid FROM transcript_archives
+ WHERE state = 'pending' AND updated_at &lt; now() - interval '24 hours'
+ ORDER BY updated_at, uuid LIMIT #{limit} FOR UPDATE SKIP LOCKED)
+ UPDATE transcript_archives a SET state = 'deleting', updated_at = now()
+ WHERE EXISTS (SELECT 1 FROM candidates c WHERE c.uuid = a.uuid AND c.organization_uuid = a.organization_uuid AND c.workspace_uuid = a.workspace_uuid)
+ RETURNING <include refid="columns"/>
+ </update>
+</mapper>

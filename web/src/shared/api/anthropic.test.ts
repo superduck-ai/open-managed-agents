@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { anthropicApi, anthropicBaseURL, anthropicBetaApi, setAnthropicClientForTest } from './anthropic';
+import { anthropicApi, anthropicBaseURL, anthropicBetaApi, setAnthropicClientForTest, toPlainPage } from './anthropic';
 import { setConsoleRequestContext } from './client';
 import { resetTestDom } from '../../test/setup';
 
@@ -13,6 +13,62 @@ afterEach(() => {
 });
 
 describe('anthropicBetaApi', () => {
+  test('渠道请求保留路径、方法、请求体与鉴权上下文', async () => {
+    setConsoleRequestContext({ organizationUuid: 'org_test', workspaceId: 'other', csrfToken: 'csrf' });
+    const requests: { url: URL; init: RequestInit | undefined }[] = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: new URL(String(input), 'https://oma.duck.ai'), init });
+      return init?.method === 'DELETE' ? new Response(null, { status: 204 }) : Response.json({ data: [] });
+    }) as typeof fetch;
+    for (const method of ['GET', 'POST', 'PATCH', 'DELETE'] as const) {
+      const body = method === 'POST' || method === 'PATCH' ? { enabled: true } : undefined;
+      await anthropicBetaApi.agents.channels('agent/test', 'workspace_test', '/ch1', method, body);
+      const { url, init } = requests.at(-1)!;
+      expect(url.pathname).toBe('/v1/agents/agent%2Ftest/channels/ch1');
+      expect(url.searchParams.get('beta')).toBe('true');
+      expect(init?.method).toBe(method);
+      expect(init?.credentials).toBe('include');
+      const headers = new Headers(init?.headers);
+      expect(headers.get('x-workspace-id')).toBe('workspace_test');
+      expect(headers.get('x-organization-uuid')).toBe('org_test');
+      expect(headers.get('x-csrf-token')).toBe('csrf');
+      expect(headers.get('anthropic-beta')).toBe('managed-agents-2026-04-01');
+      if (body) expect(JSON.parse(String(init?.body))).toEqual(body);
+      else expect(init?.body).toBeUndefined();
+    }
+  });
+
+  test('uses prebuild routes while preserving workspace scope and string job IDs', async () => {
+    const requests: { url: URL; init: RequestInit | undefined }[] = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: new URL(String(input), 'https://oma.duck.ai'), init });
+      return init?.method === 'POST' ? new Response(null, { status: 202 }) : Response.json({ build: null });
+    }) as typeof fetch;
+    setConsoleRequestContext({ organizationUuid: 'org_test', csrfToken: 'csrf' });
+    const api = anthropicBetaApi.environments.prebuild;
+    const jobId = '9007199254740993';
+    expect(await api.retrieve('env/test', 'workspace_prebuild')).toEqual({ build: null });
+    await api.start('env/test', 'workspace_prebuild');
+    await api.cancel('env/test', 'workspace_prebuild', { job_id: jobId });
+    await api.logs('env/test', 'workspace_prebuild', { stage: 'image', job_id: jobId, cursor: 'tail' });
+
+    expect(requests.map(({ url }) => url.pathname)).toEqual([
+      '/v1/environments/env%2Ftest/prebuild',
+      '/v1/environments/env%2Ftest/prebuild',
+      '/v1/environments/env%2Ftest/prebuild/cancel',
+      '/v1/environments/env%2Ftest/prebuild/logs',
+    ]);
+    for (const { url, init } of requests) {
+      expect(url.searchParams.get('beta')).toBe('true');
+      expect(new Headers(init?.headers).get('x-workspace-id')).toBe('workspace_prebuild');
+      expect(new Headers(init?.headers).get('x-organization-uuid')).toBe('org_test');
+      if (init?.method === 'POST') expect(new Headers(init.headers).get('x-csrf-token')).toBe('csrf');
+    }
+    expect(JSON.parse(String(requests[2].init?.body))).toEqual({ job_id: jobId });
+    expect(requests[3].url.searchParams.get('job_id')).toBe(jobId);
+    expect(requests[3].url.searchParams.get('cursor')).toBe('tail');
+  });
+
   test('lists models through the v1 SDK boundary with the requested workspace', async () => {
     let capturedInput: RequestInfo | URL = '';
     let capturedInit: RequestInit | undefined;
@@ -117,6 +173,7 @@ describe('anthropicBetaApi', () => {
     setConsoleRequestContext({
       organizationUuid: 'org_test_uuid',
       workspaceId: 'wrkspc_test_uuid',
+      csrfToken: 'csrf_test_token',
     });
 
     const file = new File(['skill archive'], 'emoji-translator.zip', { type: 'application/zip' });
@@ -133,6 +190,7 @@ describe('anthropicBetaApi', () => {
     expect(headers.get('anthropic-beta')).toBe('skills-2025-10-02');
     expect(headers.get('x-organization-uuid')).toBe('org_test_uuid');
     expect(headers.get('x-workspace-id')).toBe('wrkspc_test_uuid');
+    expect(headers.get('x-csrf-token')).toBe('csrf_test_token');
     expect(headers.get('x-api-key')).toBeNull();
     expect(headers.get('authorization')).toBeNull();
     expect(version.skill_id).toBe('skill_123');
@@ -180,5 +238,17 @@ describe('anthropicBetaApi', () => {
       code: 'api_error',
       message: 'This workspace has no LLM provider configured',
     });
+  });
+
+  test('copies total_count from the raw page body', () => {
+    expect(
+      toPlainPage({
+        data: [{ id: 'agent_1' }],
+        next_page: 'cursor',
+        body: { total_count: 24 },
+      }).total_count,
+    ).toBe(24);
+    expect(toPlainPage({ data: [], total_count: 0 }).total_count).toBe(0);
+    expect(toPlainPage({ data: [], body: { total_count: -1 } }).total_count).toBeUndefined();
   });
 });

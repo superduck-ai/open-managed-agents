@@ -65,6 +65,7 @@ type sessionResourceFileRow struct {
 	S3VersionID           *string    `db:"s3_version_id"`
 	ExpiresAt             *time.Time `db:"expires_at"`
 	FileUUID              *string    `db:"file_uuid"`
+	SourceFileUUID        *string    `db:"source_file_uuid"`
 	FileOwnership         *string    `db:"file_ownership"`
 	CreatedAt             time.Time  `db:"created_at"`
 	UpdatedAt             time.Time  `db:"updated_at"`
@@ -94,6 +95,7 @@ func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 		Path:                  row.Path,
 		ParentPath:            row.ParentPath,
 		FileUUID:              row.FileUUID,
+		SourceFileUUID:        row.SourceFileUUID,
 		FileOwnership:         fileOwnership,
 		SizeBytes:             row.SizeBytes,
 		MediaType:             row.MediaType,

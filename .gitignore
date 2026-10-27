@@ -1,4 +1,8 @@
 # OS/editor noise
+/.codex/*
+!/.codex/environments/
+/.codex/environments/*
+!/.codex/environments/environment.toml
 .DS_Store
 Thumbs.db
 .idea/
@@ -10,6 +14,8 @@ Thumbs.db
 # Local environment and secrets
 .env
 .env.*
+/.verify-be.local.json
+.verify-chat.local.json
 /config/config.yaml
 /config/config.local.yaml
 /deploy/docker-compose/oma-server.local.yaml
@@ -21,6 +27,7 @@ Thumbs.db
 *.tmp
 tmp/
 temp/
+.run/
 
 # Go build/test artifacts
 /bin/
@@ -31,6 +38,10 @@ temp/
 *.prof
 coverage.out
 coverage.html
+
+# Python acceptance helpers
+__pycache__/
+*.pyc
 
 # Frontend dependencies and build artifacts
 node_modules/
@@ -71,3 +82,16 @@ CLAUDE.local.md
 AGENTS.override.md
 .grok/
 .worktrees/
+/herdr/
+.verify-be.cloud.local.yaml
+
+/oma-brain-dsh/node_modules/
+/oma-brain-dsh/dist/
+/oma-brain-dsh/coverage/
+/oma-brain-dsh/.dsh/
+/oma-brain-dsh/.run/
+/oma-brain-dsh/*.bun-build
+/oma-brain-dsh/*.tsbuildinfo
+/oma-brain-dsh/.env
+/oma-brain-dsh/.env.*
+!/oma-brain-dsh/.env.example

@@ -17,40 +17,6 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-func patchSessionAgent(current json.RawMessage, raw json.RawMessage) (json.RawMessage, error) {
-	var snapshot map[string]any
-	if err := json.Unmarshal(current, &snapshot); err != nil || snapshot == nil {
-		return nil, errors.New("stored session agent is invalid")
-	}
-	var patch map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &patch); err != nil {
-		return nil, errors.New("agent must be an object")
-	}
-	if rawServers, ok := patch["mcp_servers"]; ok {
-		if httpapi.IsJSONNull(rawServers) {
-			snapshot["mcp_servers"] = []any{}
-		} else {
-			var servers any
-			if err := json.Unmarshal(rawServers, &servers); err != nil {
-				return nil, errors.New("agent.mcp_servers must be an array")
-			}
-			snapshot["mcp_servers"] = servers
-		}
-	}
-	if rawTools, ok := patch["tools"]; ok {
-		if httpapi.IsJSONNull(rawTools) {
-			snapshot["tools"] = []any{}
-		} else {
-			var tools any
-			if err := json.Unmarshal(rawTools, &tools); err != nil {
-				return nil, errors.New("agent.tools must be an array")
-			}
-			snapshot["tools"] = tools
-		}
-	}
-	return httpapi.MarshalRaw(snapshot)
-}
-
 func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
 		return "", fmt.Errorf("%s is required", name)
@@ -82,17 +48,6 @@ func nullableStringFromRaw(raw json.RawMessage, name string) (*string, error) {
 		return nil, fmt.Errorf("%s must be a string or null", name)
 	}
 	return &value, nil
-}
-
-func optionalStringWithDefault(raw json.RawMessage, fallback, name string) (string, error) {
-	if len(raw) == 0 || httpapi.IsJSONNull(raw) {
-		return fallback, nil
-	}
-	value, err := parseRequiredRawString(raw, name)
-	if err != nil {
-		return "", err
-	}
-	return value, nil
 }
 
 func validateMetadataEntries(metadata map[string]string) error {
@@ -145,6 +100,9 @@ func primaryToolProjectionHidden(event db.SessionEvent, hiddenToolUseIDs map[str
 }
 
 func primaryOrphanToolProjectionUseID(event db.SessionEvent) string {
+	if event.EventType == "user.tool_confirmation" {
+		return ""
+	}
 	var payload map[string]any
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return ""
@@ -206,18 +164,41 @@ func isToolResultOrConfirmationEvent(eventType string) bool {
 }
 
 func sessionEventPayloadForResponse(event db.SessionEvent, threadID string) json.RawMessage {
-	return eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID)
+	if threadID == "" && event.ThreadExternalID != nil {
+		threadID = *event.ThreadExternalID
+	}
+	return eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID)
 }
 
-func eventPayloadForResponse(payloadRaw json.RawMessage, createdAt, processedAt time.Time, threadID string) json.RawMessage {
+func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, threadID string) json.RawMessage {
 	var payload map[string]any
 	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
 		return payloadRaw
 	}
-	changed := ensureSessionEventTimeField(payload, "created_at", createdAt)
-	changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
-	if strings.TrimSpace(threadID) != "" && !hasSessionThreadOwnerField(payload) {
-		payload["session_thread_id"] = strings.TrimSpace(threadID)
+	_, changed := payload["created_at"]
+	delete(payload, "created_at")
+	if payload["type"] == "agent.thinking" {
+		_, hasContent := payload["content"]
+		_, hasMessage := payload["message"]
+		if hasContent || hasMessage {
+			delete(payload, "content")
+			delete(payload, "message")
+			changed = true
+		}
+	}
+	if payload["type"] == "user.message" || payload["type"] == "user.tool_confirmation" {
+		if processedAt.IsZero() {
+			payload["processed_at"] = nil
+		} else {
+			payload["processed_at"] = formatEventTime(processedAt)
+		}
+		changed = true
+	} else {
+		changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
+	}
+	threadMessage := payload["type"] == "agent.thread_message_sent" || payload["type"] == "agent.thread_message_received"
+	if threadID != "" && (threadMessage || !hasSessionThreadOwnerField(payload)) && payload["session_thread_id"] != threadID {
+		payload["session_thread_id"] = threadID
 		changed = true
 	}
 	if !changed {
@@ -248,14 +229,19 @@ func ensureSessionEventTimeField(payload map[string]any, field string, value tim
 			return false
 		}
 	}
-	payload[field] = httpapi.FormatTime(value)
+	payload[field] = formatEventTime(value)
 	return true
 }
 
-func parseOrder(r *http.Request) (string, error) {
+// Event times keep PostgreSQL's microsecond precision so live payloads match history.
+func eventTime(t time.Time) time.Time { return t.UTC().Truncate(time.Microsecond) }
+
+func formatEventTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+
+func parseOrder(r *http.Request, defaultOrder string) (string, error) {
 	raw := strings.TrimSpace(r.URL.Query().Get("order"))
 	if raw == "" {
-		return "desc", nil
+		return defaultOrder, nil
 	}
 	if raw != "asc" && raw != "desc" {
 		return "", errors.New("order must be asc or desc")
@@ -319,8 +305,15 @@ func encodeSessionCursor(session db.Session) string {
 	return encodeCursor(session.CreatedAt, session.UUID)
 }
 
-func encodeEventCursor(event db.SessionEvent) string {
-	return encodeCursor(event.CreatedAt, event.UUID)
+// The server resolves the event's processing position from its ID.
+type eventCursor struct {
+	ExternalID string `json:"external_id"`
+	Order      string `json:"order"`
+}
+
+func encodeEventCursor(event db.SessionEvent, order string) string {
+	data, _ := json.Marshal(eventCursor{ExternalID: event.ExternalID, Order: order})
+	return base64.RawURLEncoding.EncodeToString(data)
 }
 
 func encodeThreadCursor(thread db.SessionThread) string {
@@ -340,12 +333,26 @@ func decodeSessionCursor(raw string) (*db.SessionPageCursor, error) {
 	return &db.SessionPageCursor{CreatedAt: *createdAt, UUID: resourceUUID}, nil
 }
 
-func decodeEventCursor(raw string) (*db.SessionEventPageCursor, error) {
-	createdAt, resourceUUID, err := decodeCursor(raw)
-	if err != nil || createdAt == nil {
-		return nil, err
+func decodeEventCursor(raw, order string) (*db.SessionEventPageCursor, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
 	}
-	return &db.SessionEventPageCursor{CreatedAt: *createdAt, UUID: resourceUUID}, nil
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, errors.New("page cursor is invalid")
+	}
+	var payload eventCursor
+	if err := json.Unmarshal(data, &payload); err != nil || payload.ExternalID == "" {
+		return nil, errors.New("page cursor is invalid")
+	}
+	// Cursors issued before order binding used the default ascending order.
+	if payload.Order == "" {
+		payload.Order = "asc"
+	}
+	if (payload.Order != "asc" && payload.Order != "desc") || payload.Order != order {
+		return nil, errors.New("page cursor order does not match request order")
+	}
+	return &db.SessionEventPageCursor{ExternalID: payload.ExternalID}, nil
 }
 
 func decodeThreadCursor(raw string) (*db.SessionThreadPageCursor, error) {

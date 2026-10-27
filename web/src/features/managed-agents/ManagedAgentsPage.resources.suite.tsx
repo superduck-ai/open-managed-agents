@@ -1,28 +1,29 @@
 import { expect, test } from 'bun:test';
 import {
   ManagedAgentsPage,
-  WorkspaceContext,
+  act,
   agentResponse,
   cleanup,
-  codeBlockContaining,
-  createAgentRequestFixture,
-  expectPageTextToContain,
   fireEvent,
   mock,
-  mockAgentsApi,
   mockManagedResourceApi,
   render,
   renderManagedAgentsPage,
   resetTestDom,
   screen,
+  addMemoryStoreResource,
   selectManagedComboboxOption,
   serverAgent,
   sessionStatusValuesFromUrl,
-  setAgentConfigEditorValue,
+  sseFrame,
+  streamResponse,
   waitFor,
   within,
-  workspaceContextValue,
 } from './ManagedAgentsPage.test-utils';
+import { managedEntityListLimit } from './api';
+import { SessionNestedPanel } from './resources/detail';
+import { objectRecord } from './utils';
+import { SessionCreateDialog } from './sessions/SessionCreateDialog';
 
 function requestUrl(input: RequestInfo | URL) {
   return typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -32,7 +33,33 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit) {
   return init?.method ?? (input instanceof Request ? input.method : 'GET');
 }
 
+function appendRowPastPage<T>(rows: T[], create: (index: number, hidden: boolean) => T) {
+  const hiddenIndex = managedEntityListLimit - rows.length;
+  for (let index = 0; index <= hiddenIndex; index += 1) {
+    rows.push(create(index, index === hiddenIndex));
+  }
+}
+
+async function confirmFirstRowAction(menuName: string, confirmName: string) {
+  fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]);
+  fireEvent.click(screen.getByRole('menuitem', { name: menuName }));
+  const dialog = await screen.findByRole('alertdialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: confirmName }));
+}
+
 export function registerManagedAgentsResourceTests() {
+  test('shows session event processing time without a created_at field', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<SessionNestedPanel session={api.resources.sessions[0]} workspaceId="default" refreshKey={0} />);
+
+    const eventType = await screen.findByText('session.status_running');
+    const row = eventType.closest('tr');
+    expect(row).not.toBeNull();
+    expect(within(row!).getAllByRole('cell')[1].textContent).not.toBe('—');
+    expect(screen.getByRole('columnheader', { name: 'Time' })).toBeTruthy();
+  });
+
   test('renders managed resource rows from the real v1 resource endpoints', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
@@ -47,7 +74,7 @@ export function registerManagedAgentsResourceTests() {
 
     for (const [section, rowText] of sections) {
       cleanup();
-      render(<ManagedAgentsPage section={section} />);
+      renderManagedAgentsPage(section);
       expect(await screen.findByText(rowText)).toBeTruthy();
       expect(screen.queryByText('This local console mock keeps creation client-side for now.')).toBeNull();
       expect(screen.getByRole('button', { name: 'Previous page' }).className.includes('bg-secondary')).toBe(false);
@@ -78,8 +105,12 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByText('Session one')).toBeTruthy();
     expect(screen.getAllByText('运行中').length).toBeGreaterThan(0);
-    expect(screen.getByRole('checkbox', { name: '全选所有行' })).toBeTruthy();
-    expect(screen.getByRole('checkbox', { name: '选择 Session one' })).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: '全选所有行' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: '选择 Session one' })).toBeNull();
+    expect(screen.getByRole('columnheader', { name: '输入 / 输出 Token' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '费用' })).toBeTruthy();
+    expect(screen.getByText('1.2k / 56')).toBeTruthy();
+    expect(screen.getByText(/US\$0\.0123/)).toBeTruthy();
     expect(screen.getByText(/分钟前$/)).toBeTruthy();
 
     cleanup();
@@ -135,6 +166,53 @@ export function registerManagedAgentsResourceTests() {
     const alert = await screen.findByRole('alert');
     expect(alert.dataset.slot).toBe('alert');
     expect(alert.textContent).toContain('environment list failed');
+  });
+
+  test.each([
+    ['deployments', 'deployments', 'No deployments yet'],
+    ['memory-stores', 'memory_stores', 'No memory stores yet'],
+  ] as const)('does not report an empty %s list after a failed request', async (section, resource, emptyTitle) => {
+    resetTestDom(`https://oma.duck.ai/workspaces/default/${section}`);
+    mockManagedResourceApi();
+    const fetchResource = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).startsWith(`/v1/${resource}?`) && requestMethod(input, init) === 'GET') {
+        return Response.json({ error: { message: 'resource list unavailable' } }, { status: 500 });
+      }
+      return fetchResource(input, init);
+    }) as typeof fetch;
+    renderManagedAgentsPage(section);
+    expect((await screen.findByRole('alert')).textContent).toContain('resource list unavailable');
+    expect(screen.queryByText(emptyTitle)).toBeNull();
+  });
+
+  test('keeps credential load failures distinct from an empty vault', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults/vlt_one123456');
+    mockManagedResourceApi();
+    const fetchResource = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).includes('/credentials?')) {
+        return Response.json({ error: { message: 'Credentials unavailable' } }, { status: 503 });
+      }
+      return fetchResource(input, init);
+    });
+    renderManagedAgentsPage('credential-vaults');
+
+    expect(await screen.findByText('Credentials unavailable')).toBeTruthy();
+    expect(screen.queryByText('No credentials yet')).toBeNull();
+  });
+
+  test('keeps a single empty vault action outside the table', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults/vlt_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.vaultCredentials.vlt_one123456 = [];
+    renderManagedAgentsPage('credential-vaults');
+
+    const empty = await screen.findByText('No credentials yet');
+    expect(empty.closest('[data-slot="table-container"]')).toBeNull();
+    const actions = screen.getAllByRole('button', { name: 'Add credential' });
+    expect(actions).toHaveLength(1);
+    expect(actions.every((button) => button.closest('[data-slot="table-container"]') === null)).toBe(true);
   });
 
   test('uses shared vault credential row actions with confirmation dialogs', async () => {
@@ -200,10 +278,9 @@ export function registerManagedAgentsResourceTests() {
     expect(within(dialog).getByRole('button', { name: 'Create memory store' })).toBeTruthy();
   });
 
-  test('renders the official-style session detail trace workspace', async () => {
+  test('renders the new session viewer with a persistent six-tab inspector', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
-    window.localStorage.removeItem('oma.sessionDetail.showArchivedLanes');
-    const api = mockManagedResourceApi();
+    mockManagedResourceApi();
     const clipboardWrites: string[] = [];
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -216,54 +293,168 @@ export function registerManagedAgentsResourceTests() {
 
     renderManagedAgentsPage('sessions');
 
+    const viewer = await screen.findByTestId('session-viewer');
+    const page = screen.getByTestId('session-detail-page');
+    const sessionHeader = screen.getByTestId('session-detail-header');
+    const sessionHeaderUtilityRow = screen.getByTestId('session-detail-header-utility-row');
+    expect(page.className).toContain('@container');
+    expect(sessionHeader.className).toContain('@min-[640px]:px-6');
+    expect(sessionHeader.className).toContain('@min-[1024px]:px-8');
+    expect(sessionHeader.className).not.toContain('sm:px-');
+    expect(sessionHeaderUtilityRow.className).toContain('@min-[768px]:grid-cols-[minmax(0,1fr)_auto]');
+    expect(sessionHeaderUtilityRow.className).toContain('items-center');
+    expect(sessionHeaderUtilityRow.className).not.toContain('md:grid-cols-');
+    expect(within(sessionHeaderUtilityRow).getByRole('navigation', { name: 'Breadcrumb' })).toBeTruthy();
+    expect(within(sessionHeaderUtilityRow).getByRole('button', { name: 'Actions' })).toBeTruthy();
+    expect(screen.getByTestId('session-minimap-rail').className).toBe('relative');
+    const inspector = within(viewer).getByTestId('session-inspector');
+    const inspectorTabs = within(inspector).getByRole('tablist', { name: 'Session inspector' });
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Session' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Events' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Tools' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Resources' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Threads' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Traces' })).toBeTruthy();
+    expect(inspector.className).toContain('overflow-hidden');
+    expect(inspectorTabs.className).toContain('h-8');
+    expect(inspectorTabs.className).toContain('overflow-x-auto');
+    expect(inspectorTabs.className).toContain('overflow-y-hidden');
+    expect(within(inspector).queryByRole('button', { name: 'Inspector options' })).toBeNull();
+    const overviewScrollArea = inspector.querySelector('[data-slot="scroll-area"]');
+    expect(overviewScrollArea).toBeTruthy();
+    expect(overviewScrollArea?.querySelector('[data-slot="scroll-area-viewport"]')).toBeTruthy();
+    expect(overviewScrollArea?.querySelector('[data-slot="scroll-area-content"]')).toBeTruthy();
+    expect(screen.queryByRole('tablist', { name: 'Session workspace' })).toBeNull();
+    const transcriptPane = within(viewer).getByTestId('session-transcript-pane');
+    expect(transcriptPane).toBeTruthy();
+
+    const sessionToolbar = within(viewer).getByTestId('session-trace-toolbar');
+    const copiedAgentText = "I'll start by unzipping the dataset, then prepare the unified CSV files.";
+    expect(await within(transcriptPane).findByText(copiedAgentText)).toBeTruthy();
+    fireEvent.change(within(sessionToolbar).getByLabelText('Filter events'), {
+      target: { value: '/workspace/prepare.py' },
+    });
+    expect(within(transcriptPane).queryByText(copiedAgentText)).toBeNull();
+    fireEvent.click(within(sessionToolbar).getByRole('button', { name: 'Copy all' }));
+    await waitFor(() => expect(clipboardWrites.some((value) => value.includes(copiedAgentText))).toBe(true));
+    expect(await screen.findByText('Full transcript copied')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy current view' }));
+    await waitFor(() => expect(clipboardWrites.length).toBe(2));
+    expect(clipboardWrites.at(-1)).toContain('/workspace/prepare.py');
+    expect(clipboardWrites.at(-1)).not.toContain(copiedAgentText);
+    fireEvent.click(within(sessionToolbar).getByRole('button', { name: 'Clear filter' }));
+
+    const closeInspectorButton = within(inspector).getByRole('button', { name: 'Close inspector' });
+    closeInspectorButton.focus();
+    fireEvent.click(closeInspectorButton);
+    const inspectorViewport = inspector.closest('[data-session-trace-inspector-viewport]');
+    expect(within(viewer).getByTestId('session-inspector')).toBe(inspector);
+    expect(inspectorViewport?.classList.contains('hidden')).toBe(true);
+    const openInspectorButton = within(viewer).getByRole('button', { name: 'Session inspector' });
+    expect(document.activeElement).toBe(openInspectorButton);
+    fireEvent.click(openInspectorButton);
+    expect(within(viewer).getByTestId('session-inspector')).toBe(inspector);
+    expect(inspectorViewport?.classList.contains('hidden')).toBe(false);
+    expect(document.activeElement).toBe(closeInspectorButton);
+  });
+
+  test('renders the official session chrome and workspace layout', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    window.localStorage.removeItem('oma.sessionDetail.showArchivedLanes');
+    mockManagedResourceApi();
+
+    renderManagedAgentsPage('sessions');
+
     const page = await screen.findByTestId('session-detail-page');
+    expect(page.className).toContain('w-full');
+    expect(page.className).not.toContain('mx-auto');
     expect(page.className).not.toContain('max-w-');
-    expect(page.firstElementChild?.getAttribute('data-slot')).toBe('breadcrumb');
-    const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    const sessionHeader = screen.getByTestId('session-detail-header');
+    expect(page.firstElementChild).toBe(sessionHeader);
+    const breadcrumb = within(sessionHeader).getByRole('navigation', { name: 'Breadcrumb' });
     expect(breadcrumb.dataset.slot).toBe('breadcrumb');
     const sessionsLink = within(breadcrumb).getByRole('link', { name: 'Sessions' });
     expect(sessionsLink.getAttribute('href')).toBe('/workspaces/default/sessions');
     expect(sessionsLink.querySelector('svg')).toBeNull();
     expect(breadcrumb.querySelector('[data-slot="breadcrumb-page"]')?.textContent).toBe('sesn_one123456');
     expect(screen.getByRole('heading', { name: 'Session one' })).toBeTruthy();
-    expect(screen.getAllByText('Running')[0]?.className).toContain('bg-emerald-500/10');
-    expect(screen.getByText('Ecommerce Basket Analysis Agent')).toBeTruthy();
-    expect(screen.getByText('1 file')).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Transcript' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'All events' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Copy all' })).toBeTruthy();
-    const workspaceTabs = screen.getByRole('tablist', { name: 'Session workspace' });
-    expect(workspaceTabs.parentElement?.className).not.toContain('overflow-x-auto');
-    expect(within(workspaceTabs).getByRole('tab', { name: 'Events' })).toBeTruthy();
-    expect(within(workspaceTabs).getByRole('tab', { name: /Resources/ })).toBeTruthy();
-    expect(within(workspaceTabs).getByRole('tab', { name: 'Agent' })).toBeTruthy();
-    expect(within(workspaceTabs).getByRole('tab', { name: 'Environment' })).toBeTruthy();
-    expect(within(workspaceTabs).getByRole('tab', { name: 'Credentials' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Actions' }).className).toContain('h-8');
+    const statusPill = await waitFor(() => within(sessionHeader).getByText('Idle'));
+    expect(statusPill.dataset.slot).toBe('badge');
+    expect(statusPill.className).toContain('bg-secondary');
+    const agentLink = await screen.findByRole('link', { name: 'Ecommerce Basket Analysis Agent' });
+    expect(agentLink.getAttribute('href')).toBe('/workspaces/default/agents/agent_option123456');
+    expect(screen.getAllByText('Ecommerce Basket Analysis Agent').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('1 file')).toBeNull();
+    const sessionToolbar = screen.getByTestId('session-trace-toolbar');
+    expect(within(sessionToolbar).queryByRole('tab', { name: 'Transcript' })).toBeNull();
+    expect(within(sessionToolbar).queryByRole('tab', { name: 'Debug' })).toBeNull();
+    expect(within(sessionToolbar).queryByRole('button', { name: 'All events' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy all' }).className).toContain('size-8');
+    const traceSearch = screen.getByLabelText('Filter events').closest('[data-slot="input-group"]');
+    expect(traceSearch?.className).toContain('w-44');
+    expect(traceSearch?.className).toContain('@min-[640px]:w-56');
+    expect(traceSearch?.className).not.toContain('sm:w-56');
+    expect(traceSearch?.className).not.toContain('lg:w-72');
+    const sessionMinimapRail = screen.getByTestId('session-minimap-rail');
+    for (const chromeRow of [sessionHeader, sessionToolbar]) {
+      expect(chromeRow.className).toContain('px-4');
+      expect(chromeRow.className).toContain('@min-[640px]:px-6');
+      expect(chromeRow.className).toContain('@min-[1024px]:px-8');
+    }
+    expect(sessionToolbar.className).toContain('min-h-10');
+    expect(sessionToolbar.querySelector('.overflow-x-auto')).toBeNull();
+    expect(sessionMinimapRail.className).toBe('relative');
+    expect(screen.getByTestId('events-minimap').className).toContain('px-8');
+    expect(screen.getByTestId('events-minimap').className).toContain('overflow:clip_visible');
+    const minimapViewport = screen.getByTestId('session-minimap-viewport');
+    expect(minimapViewport.style.paddingTop).toBe('8px');
+    expect(minimapViewport.style.paddingBottom).toBe('4px');
+    const viewer = screen.getByTestId('session-viewer');
+    const inspector = within(viewer).getByTestId('session-inspector');
+    const inspectorTabs = within(inspector).getByRole('tablist', { name: 'Session inspector' });
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Session' }).getAttribute('aria-selected')).toBe('true');
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Events' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Tools' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Resources' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Threads' })).toBeTruthy();
+    expect(screen.queryByRole('tablist', { name: 'Session workspace' })).toBeNull();
+    expect(within(inspector).getByText('Environment')).toBeTruthy();
+    expect(within(inspector).getByText('Option environment')).toBeTruthy();
+    expect(within(inspector).getByText('Vault one')).toBeTruthy();
     expect(screen.getByRole('textbox', { name: 'Message' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Stop session' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeTruthy();
     const messageComposer = screen.getByTestId('session-message-composer');
     expect(messageComposer.className).not.toContain('border-t');
     expect(messageComposer.querySelector('[data-slot="input-group"]')).toBeTruthy();
+    expect(screen.getByTestId('session-message-composer-column').className).toContain('max-w-[720px]');
     expect(messageComposer.textContent).not.toContain('Enter to send');
     expect(screen.getByTestId('events-tab')).toBeTruthy();
-    expect(screen.getByTestId('events-tab').dataset.slot).toBe('card');
-    expect(screen.getByTestId('events-tab').hasAttribute('data-session-workspace-card')).toBe(true);
+    expect(screen.getByTestId('events-tab').dataset.slot).toBeUndefined();
+    expect(screen.getByTestId('events-tab').hasAttribute('data-session-workspace-card')).toBe(false);
     expect(screen.getByTestId('events-tab').className).toContain('h-full');
-    expect(screen.getByTestId('events-tab').className).toContain('border-border');
-    expect(screen.getByTestId('events-tab').className).toContain('ring-0');
     expect(screen.getByTestId('events-tab').className).not.toContain('bg-secondary');
-    expect(screen.getByTestId('events-tab').closest('[data-slot="tabs-content"]')).toBeTruthy();
+    expect(screen.getByTestId('events-tab').closest('[data-slot="tabs-content"]')).toBeNull();
     expect(screen.getByTestId('session-trace-shell').className).not.toContain('bg-card');
     expect(screen.getByTestId('session-trace-shell').className).toContain('flex-1');
     expect(screen.getByTestId('session-trace-shell').className).not.toContain('dvh');
-    expect(screen.getByTestId('session-trace-list-pane').className).toContain('overflow-x-hidden');
-    expect(screen.getByTestId('session-trace-list-pane').className).toContain('px-4');
+    const traceListPane = screen.getByTestId('session-trace-list-pane');
+    expect(traceListPane.className).toContain('overflow-x-hidden');
+    expect(traceListPane.className).toContain('px-4');
+    expect(traceListPane.getAttribute('tabindex')).toBe('0');
+    expect((await screen.findByTestId('session-trace-column')).className).toContain('max-w-[720px]');
+    expect(screen.queryByTestId('session-trace-detail')).toBeNull();
     expect(screen.getByTestId('events-minimap')).toBeTruthy();
     const laneTabStrip = screen.getByTestId('lane-tab-strip');
     expect(laneTabStrip).toBeTruthy();
     expect(laneTabStrip.className).toContain('px-4');
     const laneTabList = within(laneTabStrip).getByRole('tablist', { name: 'Session threads' });
+    const laneTabScroller = laneTabList.closest('.overflow-x-auto');
     expect(laneTabList.dataset.slot).toBe('tabs-list');
+    expect(laneTabScroller?.classList.contains('scrollbar-none')).toBe(true);
+    expect(laneTabScroller?.classList.contains('subtle-scrollbar')).toBe(false);
     expect(screen.getByRole('tab', { name: 'reporter' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'analyst' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'forecaster' })).toBeTruthy();
@@ -273,73 +464,42 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByRole('button', { name: '+1 archived' }).dataset.slot).toBe('toggle');
     expect(screen.queryByRole('tab', { name: 'archived' })).toBeNull();
     expect(screen.queryByRole('tab', { name: /sthr_orp/ })).toBeNull();
-    expect(screen.queryByText('(Bash completed with no output)')).toBeNull();
-    expect(screen.queryByText('Starting Claude Code')).toBeNull();
-    expect(screen.queryByText('Model request start')).toBeNull();
-    expect(document.querySelector('[data-event-id^="evt_agent_tool_subagent-"]')).toBeNull();
-    expect(await screen.findByText('Data Analysis Task - orders')).toBeTruthy();
-    const minimap = screen.getByTestId('events-minimap');
-    const minimapTicks = minimap.querySelectorAll<HTMLElement>('[data-timeline-tick-id]');
-    const minimapRows = minimap.querySelectorAll<HTMLElement>('[data-lane-index]');
-    expect(minimapRows.length).toBe(4);
-    expect(within(minimap).queryByText('Orchestrator')).toBeNull();
-    expect(minimap.className).toContain('oma-session-timeline');
-    expect(minimap.className).toContain('px-0');
-    expect(minimapRows[0].className).toContain('oma-session-timeline-track-active');
-    expect(minimapRows[0].className).toContain('h-7');
-    expect(minimapRows[0].className).not.toContain('border');
-    const minimapTrack = minimap.firstElementChild?.firstElementChild as HTMLDivElement | null;
-    expect(minimapTrack).toBeTruthy();
-    minimapTrack.getBoundingClientRect = () => ({
-      x: 0,
-      y: 0,
-      left: 0,
-      top: 0,
-      right: 1000,
-      bottom: 80,
-      width: 1000,
-      height: 80,
-      toJSON: () => ({}),
-    });
-    fireEvent.pointerEnter(minimapRows[1]);
-    await waitFor(() => expect(minimapRows[1].className).toContain('oma-session-timeline-track-hover'));
-    expect(minimapRows[1].className).toContain('h-7');
-    const secondLaneTick = minimapRows[1].querySelector<HTMLElement>('[data-timeline-tick-id]');
-    expect(secondLaneTick).toBeTruthy();
-    const hoverPct = Number.parseFloat(secondLaneTick!.style.left) + Number.parseFloat(secondLaneTick!.style.width) / 2;
-    fireEvent.mouseMove(minimapTrack, { clientX: hoverPct * 10, clientY: 260 });
-    expect(minimapRows[1].className).toContain('oma-session-timeline-track-hover');
-    await waitFor(() => expect(document.querySelector('[id^="session-timeline-tooltip-"]')).toBeTruthy());
-    fireEvent.pointerLeave(minimapRows[1], { relatedTarget: minimap });
-    await waitFor(() => expect(minimapRows[1].className).toContain('oma-session-timeline-track-inactive'));
-    await waitFor(() => expect(document.querySelector('[id^="session-timeline-tooltip-"]')).toBeNull());
-    expect(minimapRows[1].className).toContain('h-7');
-    expect(minimapTicks.length).toBeGreaterThan(6);
-    expect(minimapTicks[0].style.left.endsWith('%')).toBe(true);
-    expect(Number.parseFloat(minimapTicks[0].style.width)).toBeGreaterThanOrEqual(0.4);
-    expect(screen.getByText("I'll start by unzipping the dataset, then prepare the unified CSV files.")).toBeTruthy();
+  });
+
+  test('renders transcript rows and opens event details in the inspector', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    window.localStorage.removeItem('oma.sessionDetail.showArchivedLanes');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('sessions');
+
+    expect(
+      await screen.findByText("I'll start by unzipping the dataset, then prepare the unified CSV files."),
+    ).toBeTruthy();
     const agentPrepareRow = document.querySelector(
       '[data-event-id^="evt_agent_prepare-"][data-entry-kind="message"]',
     ) as HTMLElement;
-    expect(agentPrepareRow.querySelector('[data-transcript-header]')?.className).toContain('px-4');
-    expect(agentPrepareRow?.textContent).toContain('18.2k');
-    expect(agentPrepareRow?.textContent).toContain('425');
+    expect(agentPrepareRow.querySelector('p')?.closest('button')).toBeNull();
+    const agentPrepareIteration = agentPrepareRow.closest('[data-transcript-iteration]') as HTMLElement;
+    expect(agentPrepareIteration?.textContent).toContain('18.2k');
+    expect(agentPrepareIteration?.textContent).toContain('425');
     expect(screen.getAllByText('Bash').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('Write')).toBeTruthy();
     expect(document.querySelector('[data-entry-kind="tool_call"]')).toBeTruthy();
     expect(document.querySelector('[data-entry-kind="tool_batch"]')).toBeTruthy();
     const toolBatchRow = document.querySelector('[data-entry-kind="tool_batch"]') as HTMLElement;
-    expect(within(toolBatchRow).getByText('Tool')).toBeTruthy();
+    expect(toolBatchRow.querySelector('[data-transcript-tool-row]')).toBeTruthy();
+    expect(within(toolBatchRow).queryByText('Tool')).toBeNull();
     expect(within(toolBatchRow).queryByText('Tools')).toBeNull();
-    expect(toolBatchRow?.textContent).toContain('Read, Glob');
+    expect(within(toolBatchRow).getByText('Read')).toBeTruthy();
+    expect(within(toolBatchRow).getByText('Glob')).toBeTruthy();
     expect(toolBatchRow?.textContent).not.toContain('2 tool calls');
-    expect(screen.getByText('1 queued message')).toBeTruthy();
     expect(screen.getByText('Queued warmup request')).toBeTruthy();
     const queuedRow = document.querySelector(
       '[data-event-id^="evt_user_queued-"][data-entry-kind="message"]',
     ) as HTMLElement;
     expect(queuedRow).toBeTruthy();
-    expect(queuedRow.querySelector('[data-cds="ShimmerText"]')?.textContent).toContain('Queued warmup request');
+    expect(within(queuedRow).getByText('Queued')).toBeTruthy();
+    expect(queuedRow.textContent).toContain('Queued warmup request');
     expect(within(queuedRow).queryByText('Generating')).toBeNull();
     expect(screen.getAllByTestId('session-meta-strip').length).toBeGreaterThan(0);
     expect(screen.getByText('unzip /mnt/session/uploads/orders.zip -d /workspace/data/')).toBeTruthy();
@@ -347,12 +507,9 @@ export function registerManagedAgentsResourceTests() {
       '[data-event-id^="evt_tool_unzip-"][data-display-kind="command"]',
     ) as HTMLElement;
     expect(unzipRow?.textContent).toContain('unzip /mnt/session/uploads/orders.zip -d /workspace/data/');
-    const toolBadge = within(unzipRow).getByText('Tool').parentElement;
-    expect(toolBadge?.className).toContain('h-5');
-    expect(toolBadge?.className).toContain('rounded-md');
-    expect(toolBadge?.className).toContain('text-[10px]');
-    expect(toolBadge?.className).toContain('bg-accent');
-    expect(toolBadge?.hasAttribute('aria-hidden')).toBe(false);
+    const compactToolRow = unzipRow.querySelector('[data-transcript-tool-row]');
+    expect(compactToolRow?.className).toContain('h-6');
+    expect(compactToolRow?.className).toContain('rounded-md');
     expect(within(unzipRow).getByText('Bash')).toBeTruthy();
     expect(unzipRow?.textContent).not.toContain('805 / 0');
     expect(screen.getByText('Result')).toBeTruthy();
@@ -362,11 +519,13 @@ export function registerManagedAgentsResourceTests() {
     expect(toolDetail.getAttribute('data-placement')).toBe('side');
     expect(toolDetail.className).not.toContain('bg-secondary');
     expect(toolDetail.className).not.toContain('min-h-[420px]');
-    expect(toolDetail.textContent).toContain('Tool result');
-    expect(toolDetail.textContent).toContain('Archive extracted.');
+    expect(screen.getByRole('tab', { name: 'Events' }).getAttribute('aria-selected')).toBe('true');
+    expect(toolDetail.textContent).toContain('agent.tool_use');
+    expect(toolDetail.textContent).toContain('unzip /mnt/session/uploads/orders.zip -d /workspace/data/');
     fireEvent.click(within(toolDetail).getByRole('button', { name: 'Close detail panel' }));
-    expect(screen.getByText('/workspace/prepare.py')).toBeTruthy();
-    expect(screen.getByText('cd /workspace && python3 prepare.py')).toBeTruthy();
+    const transcriptPane = within(screen.getByTestId('session-transcript-pane'));
+    expect(transcriptPane.getByText('/workspace/prepare.py')).toBeTruthy();
+    expect(transcriptPane.getByText('cd /workspace && python3 prepare.py')).toBeTruthy();
     expect(screen.getAllByText('Subagent').length).toBeGreaterThanOrEqual(1);
     const coordinatorSubagentSentRow = document.querySelector(
       '[data-event-id^="evt_thread_message_sent-"]',
@@ -381,9 +540,9 @@ export function registerManagedAgentsResourceTests() {
     expect(document.querySelector('[data-event-id^="evt_subagent_reporter-"]')).toBeNull();
     expect(document.querySelector('[data-event-id^="evt_subagent_analyst-"]')).toBeNull();
     expect(document.querySelector('[data-event-id^="evt_subagent_forecaster-"]')).toBeNull();
-    expect(screen.queryByText('Reporter is summarizing order cohorts.')).toBeNull();
+    expect(transcriptPane.queryByText('Reporter is summarizing order cohorts.')).toBeNull();
     expect(screen.queryByText('{"command":"unzip /mnt/session/uploads/orders.zip -d /workspace/data/"}')).toBeNull();
-    const resultPreview = screen.getByText(/^Verification with/);
+    const resultPreview = transcriptPane.getByText(/^Verification with/);
     const resultRow = resultPreview.closest('[data-slot="toggle"]');
     expect(resultRow?.className).toContain('h-9');
     expect(resultPreview.className).toContain('truncate');
@@ -397,17 +556,31 @@ export function registerManagedAgentsResourceTests() {
     expect(resultRow?.textContent).not.toContain('Japanese (ja)');
     fireEvent.click(resultPreview);
     const resultDetail = await screen.findByTestId('session-trace-detail');
-    const markdown = within(resultDetail).getByTestId('session-trace-markdown');
-    expect(markdown.querySelector('ul')?.textContent).toContain('.bashrc');
-    expect(markdown.querySelector('table')?.textContent).toContain('Chinese Simplified');
-    expect(markdown.querySelector('strong')?.textContent).toBe('你好，世界');
-    expect(markdown.querySelector('code')?.textContent).toBe('Glob("*")');
+    expect(within(resultDetail).getByTestId('session-trace-code-block')).toBeTruthy();
+    expect(resultDetail.textContent).toContain('Verification with');
+    expect(resultDetail.textContent).toContain('Japanese (ja)');
     fireEvent.click(within(resultDetail).getByRole('button', { name: 'Close detail panel' }));
+  });
+
+  test('loads archived lanes and switches the visible transcript lane', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    window.localStorage.removeItem('oma.sessionDetail.showArchivedLanes');
+    const api = mockManagedResourceApi();
+    renderManagedAgentsPage('sessions');
+
+    await screen.findByText('Data Analysis Task - orders');
+    const sessionToolbar = screen.getByTestId('session-trace-toolbar');
+    const transcriptPane = within(screen.getByTestId('session-transcript-pane'));
 
     await waitFor(() =>
       expect(api.requests.some((request) => request.url === '/v1/sessions/sesn_one123456?beta=true')).toBe(true),
     );
-    expect(api.requests.some((request) => request.url.startsWith('/v1/files?'))).toBe(false);
+    const fileRequests = api.requests.filter((request) => request.url.startsWith('/v1/files?'));
+    expect(fileRequests.length).toBeGreaterThan(0);
+    for (const request of fileRequests) {
+      expect(new URL(request.url, 'https://oma.duck.ai').searchParams.get('scope_id')).toBe('sesn_one123456');
+      expect(request.headers['x-workspace-id']).toBe('default');
+    }
     expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/resources?'))).toBe(
       false,
     );
@@ -440,15 +613,15 @@ export function registerManagedAgentsResourceTests() {
       const archivedRow = document.querySelector('[data-event-id^="evt_archived-"]') as HTMLElement | null;
       expect(archivedRow?.textContent).toContain('Archived thread details.');
     });
-    expect(screen.getByTestId('session-event-detail-panel').textContent).toContain('Archived thread details.');
     fireEvent.click(screen.getByRole('tab', { name: 'Orchestrator' }));
     await waitFor(() => expect(new URL(window.location.href).searchParams.get('lane')).toBeNull());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open search filter' }));
-    fireEvent.change(screen.getByLabelText('Filter events'), { target: { value: 'unzip' } });
-    expect(screen.getByText("I'll start by unzipping the dataset, then prepare the unified CSV files.")).toBeTruthy();
-    expect(screen.queryByText('Reporter is summarizing order cohorts.')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
+    fireEvent.change(within(sessionToolbar).getByLabelText('Filter events'), { target: { value: 'unzip' } });
+    expect(
+      transcriptPane.getByText("I'll start by unzipping the dataset, then prepare the unified CSV files."),
+    ).toBeTruthy();
+    expect(transcriptPane.queryByText('Reporter is summarizing order cohorts.')).toBeNull();
+    fireEvent.click(within(sessionToolbar).getByRole('button', { name: 'Clear filter' }));
     const visibleToolRows = () => Array.from(document.querySelectorAll<HTMLElement>('[data-entry-kind="tool_call"]'));
     expect(visibleToolRows().some((row) => row.textContent?.includes('Weather Service'))).toBe(false);
 
@@ -456,13 +629,13 @@ export function registerManagedAgentsResourceTests() {
     await waitFor(() => expect(new URL(window.location.href).searchParams.get('lane')).toBe('sthr_reporter123456'));
     const reporterSubagentRow = document.querySelector('[data-event-id^="evt_subagent_reporter-"]') as HTMLElement;
     expect(reporterSubagentRow?.textContent).toContain('reporter');
-    expect(screen.getByText('Reporter is summarizing order cohorts.')).toBeTruthy();
+    expect(transcriptPane.getByText('Reporter is summarizing order cohorts.')).toBeTruthy();
     expect(visibleToolRows().some((row) => row.textContent?.includes('Weather Service'))).toBe(true);
-    expect(screen.queryByText('Analyst is calculating basket lift.')).toBeNull();
+    expect(transcriptPane.queryByText('Analyst is calculating basket lift.')).toBeNull();
 
     fireEvent.click(screen.getByRole('tab', { name: 'forecaster' }));
-    expect(screen.getByText('Forecaster is projecting reorder risk.')).toBeTruthy();
-    expect(screen.queryByText('Reporter is summarizing order cohorts.')).toBeNull();
+    expect(transcriptPane.getByText('Forecaster is projecting reorder risk.')).toBeTruthy();
+    expect(transcriptPane.queryByText('Reporter is summarizing order cohorts.')).toBeNull();
 
     fireEvent.click(screen.getByRole('tab', { name: 'reporter' }));
     expect(screen.getAllByText('Reporter is summarizing order cohorts.').length).toBeGreaterThanOrEqual(1);
@@ -470,89 +643,97 @@ export function registerManagedAgentsResourceTests() {
     const reporterAgentRow = document.querySelector(
       '[data-event-id^="evt_reporter-"][data-entry-kind="message"]',
     ) as HTMLElement;
-    expect(reporterAgentRow?.textContent).toContain('7.2k');
-    expect(reporterAgentRow?.textContent).toContain('168');
-    expect(screen.queryByText('7223 input → 168 output')).toBeNull();
+    const reporterIteration = reporterAgentRow.closest('[data-transcript-iteration]') as HTMLElement;
+    expect(reporterIteration?.textContent).toContain('7.2k');
+    expect(reporterIteration?.textContent).toContain('168');
+    expect(transcriptPane.queryByText('7223 input → 168 output')).toBeNull();
     expect(document.querySelector('[data-event-id^="evt_reporter_span-"][data-display-kind="metric"]')).toBeNull();
+  });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Debug' }));
-    expect(screen.getByText('7223 input → 168 output')).toBeTruthy();
-    const modelRow = document.querySelector(
-      '[data-event-id^="evt_reporter_span-"][data-display-kind="metric"]',
-    ) as HTMLElement;
-    const modelBadge = within(modelRow).getByText('span.model…end').parentElement;
-    expect(modelBadge?.className).toContain('ring-1');
-    expect(modelBadge?.className).toContain('bg-transparent');
-    const debugUserRow = document.querySelector(
-      '[data-event-id^="evt_reporter-"][data-entry-kind="debug"]',
-    ) as HTMLElement;
-    const debugBadge = within(debugUserRow).getByText('agent.message').parentElement;
-    expect(debugBadge?.className).toContain('rounded-md');
-    expect(debugBadge?.className).toContain('text-[10px]');
-    const deltasButton = within(debugUserRow).getByRole('button', { name: 'Deltas' });
-    expect(deltasButton.dataset.slot).toBe('button');
-    expect(deltasButton.getAttribute('title')).toBeNull();
-    const deltasTooltipTrigger = deltasButton.parentElement;
-    expect(deltasTooltipTrigger?.dataset.slot).toBe('tooltip-trigger');
-    fireEvent.mouseEnter(deltasTooltipTrigger as HTMLElement);
-    await waitFor(() =>
-      expect(document.querySelector('[data-slot="tooltip-content"]')?.textContent).toContain('Open deltas'),
-    );
-    fireEvent.mouseLeave(deltasTooltipTrigger as HTMLElement);
-    await waitFor(() => expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull());
-    fireEvent.click(deltasButton);
+  test('inspects lane events and exposes session actions', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    window.localStorage.removeItem('oma.sessionDetail.showArchivedLanes');
+    mockManagedResourceApi();
+    const clipboardWrites: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: mock(async (value: string) => {
+          clipboardWrites.push(value);
+        }),
+      },
+    });
+    renderManagedAgentsPage('sessions');
+
+    await screen.findByText('Data Analysis Task - orders');
+    const inspector = screen.getByTestId('session-inspector');
+    const transcriptPane = within(screen.getByTestId('session-transcript-pane'));
+    fireEvent.click(screen.getByRole('tab', { name: 'reporter' }));
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('lane')).toBe('sthr_reporter123456'));
+
+    fireEvent.click(within(inspector).getByRole('tab', { name: 'Events' }));
+    expect(within(inspector).queryByRole('button', { name: 'All events' })).toBeNull();
+    const inspectorEventsHeader = within(inspector).getByTestId('session-inspector-events-header');
+    expect(inspectorEventsHeader.textContent).toContain('Event');
+    expect(inspectorEventsHeader.textContent).toContain('Preview');
+    expect(inspectorEventsHeader.textContent).toContain('Time');
+    const modelEventRow = inspector.querySelector<HTMLElement>('[data-event-id="evt_reporter_span"]');
+    expect(modelEventRow?.textContent).toContain('span.model_request_end');
+    const reporterEventRow = () => inspector.querySelector<HTMLElement>('[data-event-id="evt_reporter"]');
+    expect(reporterEventRow()).toBeTruthy();
+    fireEvent.click(reporterEventRow() as HTMLElement);
     const debugDetail = await screen.findByTestId('session-trace-detail');
-    expect(within(debugDetail).getByText('Content')).toBeTruthy();
-    expect(within(debugDetail).getByText('Deltas')).toBeTruthy();
-    expect(debugDetail.textContent).toContain('No deltas captured.');
+    expect(debugDetail.textContent).toContain('"type": "agent.message"');
+    expect(within(debugDetail).getByRole('tab', { name: 'Deltas' }).getAttribute('aria-disabled')).toBe('true');
+    expect(
+      within(debugDetail).getByLabelText(
+        'Deltas are only captured for messages streamed live in this browser tab — they are not stored in history.',
+      ).tabIndex,
+    ).toBe(0);
     const debugSearchParams = new URL(window.location.href).searchParams;
-    expect(debugSearchParams.get('segment')).toBe('debug');
+    expect(debugSearchParams.get('segment')).toBeNull();
     expect(debugSearchParams.get('event')).toBe('evt_reporter');
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
-    await waitFor(() =>
-      expect(screen.getAllByText('Reporter is summarizing order cohorts.').length).toBeGreaterThan(0),
-    );
     const selectedReporterRow = document.querySelector(
       '[data-event-id^="evt_reporter-"][data-entry-kind="message"]',
     ) as HTMLElement;
-    expect(selectedReporterRow.querySelector('[data-transcript-header]')?.getAttribute('data-slot')).toBe('toggle');
-    expect(selectedReporterRow.querySelector('[data-transcript-header]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(selectedReporterRow.querySelector('button')).toBeTruthy();
+    expect(selectedReporterRow.querySelector('[data-transcript-message-body]')?.className).toContain(
+      '!bg-session-selected',
+    );
+    expect(
+      selectedReporterRow.querySelector('[data-transcript-message-body]')?.classList.contains('ring-foreground'),
+    ).toBe(false);
     expect(new URL(window.location.href).searchParams.get('event')).toBe('evt_reporter');
-    fireEvent.click(screen.getByRole('tab', { name: 'Debug' }));
-    const debugUserRowAfterMapping = document.querySelector(
-      '[data-event-id^="evt_reporter-"][data-entry-kind="debug"]',
-    ) as HTMLElement;
-    const debugBadgeAfterMapping = within(debugUserRowAfterMapping).getByText('agent.message').parentElement;
-    expect(debugBadgeAfterMapping?.className).not.toContain('rounded-full');
-    expect(within(debugUserRowAfterMapping).getByText('Deltas')).toBeTruthy();
-    fireEvent.click(debugUserRowAfterMapping.querySelector('[data-transcript-header]') as HTMLElement);
+    fireEvent.click(within(debugDetail).getByRole('button', { name: 'Close detail panel' }));
+    fireEvent.click(reporterEventRow() as HTMLElement);
     const detail = await screen.findByTestId('session-trace-detail');
     expect(detail.getAttribute('data-placement')).toBe('side');
     expect(within(detail).getByTestId('session-trace-code-block').textContent).toContain('sthr_reporter123456');
     fireEvent.click(within(detail).getByRole('button', { name: 'Close detail panel' }));
 
-    fireEvent.click(
-      (
-        document.querySelector('[data-event-id^="evt_reporter-"][data-entry-kind="debug"]') as HTMLElement
-      ).querySelector('[data-transcript-header]') as HTMLElement,
-    );
+    fireEvent.click(reporterEventRow() as HTMLElement);
     expect((await screen.findByTestId('session-trace-detail')).getAttribute('data-placement')).toBe('side');
     fireEvent.pointerDown(screen.getByTestId('session-trace-list-pane'));
+    expect(screen.getByTestId('session-trace-detail')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByTestId('session-trace-detail')).toBeNull());
+    fireEvent.keyDown(screen.getByTestId('session-trace-list-pane'), { key: 'Home' });
+    expect(await screen.findByTestId('session-trace-detail')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
     fireEvent.click(screen.getByRole('tab', { name: 'analyst' }));
-    expect(screen.queryByText(/session\.thread_status_running/)).toBeNull();
-    expect(screen.queryByText(/sevt_thread_running/)).toBeNull();
-    expect(screen.getByText('Thinking...')).toBeTruthy();
-    expect(
-      document.querySelector('[data-event-id^="evt_analyst_thinking-"][data-display-kind="thinking"]'),
-    ).toBeTruthy();
-    expect(screen.queryByText('Reviewing basket pair frequencies.')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /Thinking\.\.\./ }));
+    expect(transcriptPane.queryByText(/session\.thread_status_running/)).toBeNull();
+    expect(transcriptPane.queryByText(/sevt_thread_running/)).toBeNull();
+    const analystThinkingRow = document.querySelector(
+      '[data-event-id^="evt_analyst_thinking-"][data-display-kind="thinking"]',
+    ) as HTMLElement;
+    expect(analystThinkingRow).toBeTruthy();
+    expect(analystThinkingRow.textContent).toContain('Thought');
+    expect(transcriptPane.queryByText('Reviewing basket pair frequencies.')).toBeNull();
+    fireEvent.click(analystThinkingRow);
     const thinkingDetail = await screen.findByTestId('session-trace-detail');
     expect(thinkingDetail.getAttribute('data-placement')).toBe('side');
-    expect(within(thinkingDetail).getByText('Reviewing basket pair frequencies.')).toBeTruthy();
+    expect(thinkingDetail.textContent).toContain('Reviewing basket pair frequencies.');
     fireEvent.click(screen.getByRole('tab', { name: 'reporter' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy all' }));
@@ -578,9 +759,101 @@ export function registerManagedAgentsResourceTests() {
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete session/i })).toBeNull());
   });
 
-  test('sends messages and exposes the session resources, agent, environment, and vaults', async () => {
+  test('keeps the selected session trace in the URL', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
-    const api = mockManagedResourceApi();
+    mockManagedResourceApi();
+    const managedFetch = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      if (url === '/api/organizations/org_test/observability/dashboard') {
+        return new Response(JSON.stringify({ version: 1, tabs: [], queries: [] }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.startsWith('/api/organizations/org_test/observability/traces/trace_session_1?')) {
+        return new Response(
+          JSON.stringify({
+            trace_id: 'trace_session_1',
+            data_as_of: '2026-08-17T00:00:00Z',
+            truncated: false,
+            spans: [
+              {
+                span_id: 'span_1',
+                parent_span_id: '',
+                kind: 'server',
+                name: 'claude-code interaction',
+                start_time: '2026-08-17T00:00:00Z',
+                end_time: '2026-08-17T00:00:01Z',
+                duration_ms: 1000,
+                status: 'ok',
+                attributes: {},
+              },
+            ],
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url.startsWith('/api/organizations/org_test/observability/traces?')) {
+        return new Response(
+          JSON.stringify({
+            data_as_of: '2026-08-17T00:00:00Z',
+            has_more: false,
+            items: [
+              {
+                trace_id: 'trace_session_1',
+                session_id: 'sesn_one123456',
+                start_time: '2026-08-17T00:00:00Z',
+                duration_ms: 1000,
+                tokens: 42,
+                llm_calls: 1,
+                tool_calls: 0,
+                status: 'ok',
+              },
+            ],
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return managedFetch(input, init);
+    }) as unknown as typeof fetch;
+
+    renderManagedAgentsPage('sessions');
+    fireEvent.click(await screen.findByRole('tab', { name: 'Traces' }));
+    fireEvent.click(await screen.findByText('trace_session_1'));
+
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBe('trace_session_1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBeNull());
+
+    fireEvent.click(screen.getByText('trace_session_1'));
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBe('trace_session_1'));
+    fireEvent.click(within(screen.getByTestId('session-inspector')).getByRole('tab', { name: 'Session' }));
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBeNull());
+  });
+
+  test('shows the disabled state for session traces when observability is off', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('sessions');
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Traces' }));
+
+    expect(await screen.findByText('Observability is not enabled')).toBeTruthy();
+  });
+
+  test('sends messages and exposes session context through the six-tab inspector', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi({
+      agent: {
+        version: 3,
+        tools: [
+          {
+            type: 'agent_toolset_20260401',
+            default_config: { permission_policy: { type: 'always_ask' } },
+          },
+        ],
+      },
+    });
     renderManagedAgentsPage('sessions');
 
     const composer = await screen.findByRole('textbox', { name: 'Message' });
@@ -610,50 +883,83 @@ export function registerManagedAgentsResourceTests() {
       ).toBe(true),
     );
 
-    const workspaceTabs = screen.getByRole('tablist', { name: 'Session workspace' });
-    fireEvent.click(within(workspaceTabs).getByRole('tab', { name: /Resources/ }));
-    expect((await screen.findByText('Mounted resources')).closest('[data-session-workspace-card]')).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'Name' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'Type' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'File ID' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'Mount path' })).toBeTruthy();
-    expect(await screen.findByText('source-orders.zip')).toBeTruthy();
-    expect(screen.getByText('file_orders123456')).toBeTruthy();
+    const inspector = screen.getByTestId('session-inspector');
+    const inspectorTabs = within(inspector).getByRole('tablist', { name: 'Session inspector' });
+    fireEvent.click(within(inspectorTabs).getByRole('tab', { name: 'Resources' }));
+    const resourcesFilter = within(inspector).getByLabelText('Filter resources');
+    expect(resourcesFilter.closest('[data-slot="input-group"]')).toBeTruthy();
+    expect(within(inspector).getByRole('columnheader', { name: 'Path' })).toBeTruthy();
+    expect(within(inspector).getByRole('columnheader', { name: 'Size' })).toBeTruthy();
     expect(screen.getByText('/uploads/orders.zip')).toBeTruthy();
     expect(
       api.requests.some(
         (request) => request.url === '/v1/files/file_orders123456?beta=true' && request.method === 'GET',
       ),
     ).toBe(true);
-    expect(api.requests.some((request) => request.url.startsWith('/v1/files?'))).toBe(false);
+    const fileRequests = api.requests.filter((request) => request.url.startsWith('/v1/files?'));
+    expect(fileRequests.length).toBeGreaterThan(0);
+    for (const request of fileRequests) {
+      expect(new URL(request.url, 'https://oma.duck.ai').searchParams.get('scope_id')).toBe('sesn_one123456');
+      expect(request.headers['x-workspace-id']).toBe('default');
+    }
     expect(
       api.requests.some(
         (request) => request.url.startsWith('/v1/sessions/sesn_one123456/resources?') && request.method === 'GET',
       ),
     ).toBe(false);
 
-    fireEvent.click(within(workspaceTabs).getByRole('tab', { name: 'Agent' }));
-    const agentHeadings = await screen.findAllByText('Ecommerce Basket Analysis Agent');
-    expect(agentHeadings.length).toBeGreaterThan(0);
-    expect(agentHeadings.some((heading) => heading.closest('[data-session-workspace-card]'))).toBe(true);
-    expect(screen.getByText('v3')).toBeTruthy();
-    expect(screen.getByText('MCPs and tools')).toBeTruthy();
+    fireEvent.click(within(inspectorTabs).getByRole('tab', { name: 'Session' }));
+    const inspectorEntityLinks = [
+      within(inspector).getByRole('link', { name: 'Ecommerce Basket Analysis Agent' }),
+      within(inspector).getByRole('link', { name: 'Option environment' }),
+      within(inspector).getByRole('link', { name: 'Vault one' }),
+    ];
+    inspectorEntityLinks.forEach((link) => {
+      expect(link.classList.contains('underline')).toBe(true);
+      expect(link.className).toContain('focus-visible:ring');
+    });
 
-    fireEvent.click(within(workspaceTabs).getByRole('tab', { name: 'Environment' }));
-    const environmentHeadings = await screen.findAllByText('Option environment');
-    expect(environmentHeadings.length).toBeGreaterThan(0);
-    expect(environmentHeadings.some((heading) => heading.closest('[data-session-workspace-card]'))).toBe(true);
-    expect(screen.getByText('Limited')).toBeTruthy();
+    fireEvent.click(within(inspectorTabs).getByRole('tab', { name: 'Tools' }));
+    await selectManagedComboboxOption(inspector, 'Scope', 'Current thread');
+    expect(within(inspector).getByRole('columnheader', { name: 'Permission' })).toBeTruthy();
+    const bashToolRow = within(inspector).getByText('bash').closest('tr');
+    expect(bashToolRow).toBeTruthy();
+    const bashToolCells = within(bashToolRow as HTMLTableRowElement).getAllByRole('cell');
+    expect(bashToolCells[1]?.textContent).toBe('Always ask');
+    expect(bashToolCells[2]?.textContent).toBe('2');
+    expect(bashToolCells[3]?.textContent).toBe('0');
+    expect(bashToolCells[4]?.textContent).toBe('4.0s');
+    expect(inspector.textContent).toContain('10 tools, 5 used, 6 calls');
+    expect(within(inspector).getByText('Overview')).toBeTruthy();
+    expect(within(inspector).getByText('Total time in tools')).toBeTruthy();
 
-    fireEvent.click(within(workspaceTabs).getByRole('tab', { name: 'Credentials' }));
-    expect((await screen.findByText('Session credentials')).closest('[data-session-workspace-card]')).toBeTruthy();
-    expect(screen.getByText('Vault one')).toBeTruthy();
-    expect(screen.getByText('Vault credential one')).toBeTruthy();
-    expect(screen.getByText('Static bearer token')).toBeTruthy();
-    expect(screen.getByText(/Secret values are never shown here/)).toBeTruthy();
+    fireEvent.click(within(inspectorTabs).getByRole('tab', { name: 'Threads' }));
+    expect(within(inspector).getByRole('columnheader', { name: 'Context' })).toBeTruthy();
+    expect(within(inspector).getByText('Context usage')).toBeTruthy();
   });
 
-  test('refreshes session resources from Get Session only when the Resources tab is clicked', async () => {
+  test('shows memory store snapshot name and id in the session resources table', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].resources.push({
+      id: 'sesrsc_memory123456',
+      type: 'memory_store',
+      created_at: new Date().toISOString(),
+      name: 'Attach snapshot store',
+      memory_store_id: 'memstore_one123456',
+      mount_path: '/mnt/memory/test',
+    });
+    renderManagedAgentsPage('sessions');
+
+    const inspector = await screen.findByTestId('session-inspector');
+    const inspectorTabs = within(inspector).getByRole('tablist', { name: 'Session inspector' });
+    fireEvent.click(within(inspectorTabs).getByRole('tab', { name: 'Resources' }));
+    expect(await screen.findByText('Attach snapshot store')).toBeTruthy();
+    expect(screen.getByText('memstore_one123456')).toBeTruthy();
+    expect(screen.getByText('/mnt/memory/test')).toBeTruthy();
+  });
+
+  test('refreshes session resources after sending and when the Resources tab is clicked', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'idle';
@@ -677,43 +983,21 @@ export function registerManagedAgentsResourceTests() {
     }));
     const fetchSessionEvents = globalThis.fetch;
     let staleReadAfterPost = false;
-    let messagePosted = false;
-    let outputAdded = false;
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(input);
       const method = requestMethod(input, init);
       if (url === '/v1/sessions/sesn_one123456/events?beta=true' && method === 'POST') {
         const response = await fetchSessionEvents(input, init);
         staleReadAfterPost = true;
-        messagePosted = true;
-        return response;
-      }
-      if (messagePosted && url.startsWith('/v1/sessions/sesn_one123456/events/stream?') && method === 'GET') {
         const now = new Date().toISOString();
-        if (!outputAdded) {
-          api.resources.sessions[0].resources.push({
-            id: 'sesrsc_report123456',
-            type: 'file',
-            created_at: now,
-            file_id: 'file_report123456',
-            mount_path: '/outputs/report.csv',
-          });
-          outputAdded = true;
-        }
-        const frames = [
-          { id: 'evt_running_after_send', type: 'session.status_running', created_at: now },
-          {
-            id: 'evt_agent_reply_after_send',
-            type: 'agent.message',
-            created_at: now,
-            processed_at: now,
-            content: [{ type: 'text', text: 'Agent reply arrived live.' }],
-          },
-          { id: 'evt_idle_after_send', type: 'session.status_idle', created_at: now },
-        ]
-          .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-          .join('');
-        return new Response(frames, { headers: { 'Content-Type': 'text/event-stream' } });
+        api.resources.sessions[0].resources.push({
+          id: 'sesrsc_report123456',
+          type: 'file',
+          created_at: now,
+          file_id: 'file_report123456',
+          mount_path: '/outputs/report.csv',
+        });
+        return response;
       }
       if (staleReadAfterPost && url.startsWith('/v1/sessions/sesn_one123456/events?') && method === 'GET') {
         staleReadAfterPost = false;
@@ -740,16 +1024,27 @@ export function registerManagedAgentsResourceTests() {
 
       await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe(''));
       expect(await screen.findByText('Render this message immediately.')).toBeTruthy();
-      expect(await screen.findByText('Agent reply arrived live.')).toBeTruthy();
-      expect(api.requests.filter((request) => request.url === sessionURL)).toHaveLength(initialSessionRequestCount);
-      const workspaceTabs = screen.getByRole('tablist', { name: 'Session workspace' });
-      fireEvent.click(within(workspaceTabs).getByRole('tab', { name: /Resources/ }));
-      expect(await screen.findByText('file_report123456')).toBeTruthy();
-      expect(await screen.findByText('/outputs/report.csv')).toBeTruthy();
-      expect(api.requests.filter((request) => request.url === sessionURL).length).toBeGreaterThan(
-        initialSessionRequestCount,
+      await waitFor(() =>
+        expect(api.requests.filter((request) => request.url === sessionURL).length).toBeGreaterThan(
+          initialSessionRequestCount,
+        ),
       );
-      expect(api.requests.some((request) => request.url.startsWith('/v1/files?'))).toBe(false);
+      const beforeResourcesRequestCount = api.requests.filter((request) => request.url === sessionURL).length;
+      const inspector = screen.getByTestId('session-inspector');
+      const inspectorTabs = within(inspector).getByRole('tablist', { name: 'Session inspector' });
+      fireEvent.click(within(inspectorTabs).getByRole('tab', { name: 'Resources' }));
+      expect(await screen.findByText('/outputs/report.csv')).toBeTruthy();
+      await waitFor(() =>
+        expect(api.requests.filter((request) => request.url === sessionURL).length).toBeGreaterThan(
+          beforeResourcesRequestCount,
+        ),
+      );
+      const fileRequests = api.requests.filter((request) => request.url.startsWith('/v1/files?'));
+      expect(fileRequests.length).toBeGreaterThan(0);
+      for (const request of fileRequests) {
+        expect(new URL(request.url, 'https://oma.duck.ai').searchParams.get('scope_id')).toBe('sesn_one123456');
+        expect(request.headers['x-workspace-id']).toBe('default');
+      }
     } finally {
       globalThis.fetch = fetchSessionEvents;
     }
@@ -790,7 +1085,7 @@ export function registerManagedAgentsResourceTests() {
       const resourcesTab = screen.getByRole('tab', { name: /Resources/ });
       fireEvent.click(resourcesTab);
 
-      expect(await screen.findByText('file_new_output123456')).toBeTruthy();
+      expect(await screen.findByText('/outputs/new-output.txt')).toBeTruthy();
       expect(screen.getAllByText('Running').length).toBeGreaterThan(0);
 
       failResourceRefresh = true;
@@ -801,7 +1096,7 @@ export function registerManagedAgentsResourceTests() {
     }
   });
 
-  test('renders transcript idle gaps with the original striped separator', async () => {
+  test('renders transcript idle gaps with the Claude-style neutral separator', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     window.localStorage.removeItem('oma.sessionDetail.showArchivedLanes');
     const api = mockManagedResourceApi();
@@ -836,6 +1131,11 @@ export function registerManagedAgentsResourceTests() {
         created_at: new Date(base + 4_000).toISOString(),
       },
       {
+        id: 'evt_idle_gap_running',
+        type: 'session.status_running',
+        created_at: new Date(base + 86_000).toISOString(),
+      },
+      {
         id: 'evt_idle_gap_user_after',
         type: 'user.message',
         created_at: new Date(base + 88_000).toISOString(),
@@ -848,15 +1148,17 @@ export function registerManagedAgentsResourceTests() {
     expect(await screen.findByText('Continue after the idle gap.')).toBeTruthy();
     const idleGapRow = document.querySelector('[data-entry-kind="idle_gap"]') as HTMLElement;
     expect(idleGapRow).toBeTruthy();
-    expect(idleGapRow.className).toContain('oma-session-idle-gap');
-    expect(idleGapRow.querySelector('.oma-session-idle-gap-stripes')).toBeTruthy();
-    expect(idleGapRow.textContent).toContain('Session idle');
+    expect(idleGapRow.getAttribute('aria-label')).toContain('Session idle for');
+    expect(idleGapRow.querySelector('[data-idle-gap-stripes]')).toBeNull();
+    expect(idleGapRow.querySelector('time')).toBeTruthy();
+    expect(idleGapRow.querySelectorAll('.border-t-\\[0\\.5px\\]')).toHaveLength(2);
     const minimap = screen.getByTestId('events-minimap');
     const minimapRows = minimap.querySelectorAll<HTMLElement>('[data-lane-index]');
     expect(minimapRows.length).toBe(2);
-    const idleTimelineTick = minimapRows[0].querySelector<HTMLElement>('[data-timeline-tick-type="status_idle"]');
-    expect(idleTimelineTick).toBeTruthy();
-    expect(Number.parseFloat(idleTimelineTick!.style.width)).toBeGreaterThan(20);
+    expect(minimapRows[0].querySelector('[data-timeline-tick-type="status_idle"]')).toBeNull();
+    const idleWindow = minimapRows[0].querySelector<HTMLElement>('[data-minimap-idle-window]');
+    expect(idleWindow).toBeTruthy();
+    expect(Number.parseFloat(idleWindow!.style.width)).toBeGreaterThan(0);
   });
 
   test('restores the session detail lane from the URL query', async () => {
@@ -882,9 +1184,12 @@ export function registerManagedAgentsResourceTests() {
     mockManagedResourceApi();
     renderManagedAgentsPage('sessions');
 
-    const missingAlert = await screen.findByRole('alert');
-    expect(missingAlert.dataset.slot).toBe('alert');
-    expect(missingAlert.textContent).toContain('not found');
+    expect(await screen.findByRole('heading', { name: 'Session not found' })).toBeTruthy();
+    expect(screen.getByText(/Session sesn_missing123456 was not found/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Back to sessions' }).getAttribute('href')).toBe(
+      '/workspaces/default/sessions',
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
 
     cleanup();
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
@@ -916,11 +1221,21 @@ export function registerManagedAgentsResourceTests() {
     expect(mutationAlert.textContent).toContain('forced delete failure');
   });
 
-  test('folds tool confirmations into transcript tool rows while keeping debug audit events', async () => {
+  test('folds tool confirmations into transcript tool rows while keeping Inspector audit events', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'idle';
-    api.resources.sessionThreads = [];
+    api.resources.sessionThreads = [
+      {
+        id: 'sthr_root_worker123456',
+        type: 'session_thread',
+        role: 'orchestrator',
+        parent_thread_id: null,
+        archived_at: null,
+        created_at: new Date(Date.now() - 45_000).toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ];
     api.resources.sessionThreadEvents = {};
     const base = Date.now() - 60_000;
     api.resources.sessionEvents = [
@@ -958,9 +1273,17 @@ export function registerManagedAgentsResourceTests() {
       {
         id: 'evt_tool_allow_confirmation',
         type: 'user.tool_confirmation',
+        session_thread_id: 'sthr_root_worker123456',
         created_at: new Date(base + 2_500).toISOString(),
         tool_use_id: 'evt_tool_allow',
         result: 'allow',
+      },
+      {
+        id: 'evt_tool_allow_result',
+        type: 'agent.tool_result',
+        created_at: new Date(base + 2_750).toISOString(),
+        tool_use_id: 'evt_tool_allow',
+        content: 'Build completed',
       },
       {
         id: 'evt_tool_denied',
@@ -1020,11 +1343,13 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
     expect(await screen.findByText('npm test -- --watch=false')).toBeTruthy();
+    expect(screen.queryByTestId('session-tool-approval-card')).toBeNull();
+    expect(screen.queryByTestId('session-questionnaire-card')).toBeNull();
     const singleLaneMinimap = screen.getByTestId('events-minimap');
     expect(singleLaneMinimap.querySelectorAll('[data-lane-index]').length).toBe(0);
-    const singleLaneTrack = singleLaneMinimap.querySelector<HTMLElement>('.oma-session-timeline-track-active');
+    const singleLaneTrack = singleLaneMinimap.querySelector<HTMLElement>('[data-minimap-track-state="active"]');
     expect(singleLaneTrack).toBeTruthy();
-    expect(singleLaneTrack?.className).toContain('h-9');
+    expect(singleLaneTrack?.className).toContain('h-7');
     expect(singleLaneTrack?.className).toContain('rounded');
     expect(singleLaneTrack?.querySelectorAll('[data-timeline-tick-id]').length).toBeGreaterThan(2);
     const waitingRow = document.querySelector(
@@ -1044,32 +1369,33 @@ export function registerManagedAgentsResourceTests() {
     ) as HTMLElement;
     const batchRow = document.querySelector('[data-entry-kind="tool_batch"]') as HTMLElement;
 
-    expect(waitingRow.textContent).toContain('awaiting approval');
+    expect(waitingRow.textContent).toContain('Awaiting approval');
     expect(policyObjectWaitingRow.textContent).toContain('echo permission policy');
-    expect(policyObjectWaitingRow.textContent).toContain('awaiting approval');
+    expect(policyObjectWaitingRow.textContent).toContain('Awaiting approval');
     expect(allowedRow.textContent).toContain('npm run build');
-    expect(allowedRow.textContent).not.toContain('awaiting approval');
-    expect(deniedRow.textContent).toContain('denied');
+    expect(allowedRow.textContent).not.toContain('Awaiting approval');
+    expect(deniedRow.textContent).toContain('Denied');
     expect(deniedRow.textContent).toContain(' Github  Search Repositories');
     expect(requiresActionWaitingRow.textContent).toContain('Beijing');
-    expect(requiresActionWaitingRow.textContent).toContain('awaiting approval');
+    expect(requiresActionWaitingRow.textContent).toContain('Awaiting approval');
     expect(screen.queryByText('Needs owner approval')).toBeNull();
-    expect(batchRow.textContent).toContain('Read, Glob');
+    expect(batchRow.textContent).toContain('Read');
+    expect(batchRow.textContent).toContain('Glob');
     expect(screen.getByText('I will inspect both files before editing.')).toBeTruthy();
-    expect(document.querySelector('[data-event-id^="evt_tool_batch_read-"][data-entry-kind="tool_call"]')).toBeNull();
-    expect(document.querySelector('[data-event-id^="evt_tool_batch_glob-"][data-entry-kind="tool_call"]')).toBeNull();
+    expect(document.querySelector('[data-event-id^="evt_tool_batch_read-"][data-entry-kind="tool_call"]')).toBeTruthy();
+    expect(document.querySelector('[data-event-id^="evt_tool_batch_glob-"][data-entry-kind="tool_call"]')).toBeTruthy();
 
     fireEvent.click(deniedRow.querySelector('[data-transcript-header]') as HTMLElement);
     const deniedDetail = await screen.findByTestId('session-trace-detail');
-    expect(within(deniedDetail).getByText('Tool confirmation')).toBeTruthy();
-    expect(deniedDetail.textContent).toContain('Needs owner approval');
+    expect(deniedDetail.textContent).toContain('agent.mcp_tool_use');
+    expect(deniedDetail.textContent).toContain('private repository scan');
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Debug' }));
-    const confirmationDebugRow = document.querySelector(
-      '[data-event-id^="evt_tool_deny_confirmation-"][data-entry-kind="debug"]',
-    ) as HTMLElement;
-    expect(confirmationDebugRow).toBeTruthy();
-    expect(confirmationDebugRow.textContent).toContain('Tool confirmation submitted.');
+    fireEvent.click(screen.getByRole('tab', { name: 'Events' }));
+    const confirmationEventRow = document.querySelector('[data-event-id="evt_tool_deny_confirmation"]') as HTMLElement;
+    expect(confirmationEventRow).toBeTruthy();
+    expect(confirmationEventRow.textContent).toContain('user.tool_confirmation');
+    fireEvent.click(confirmationEventRow);
+    expect((await screen.findByTestId('session-trace-detail')).textContent).toContain('Needs owner approval');
   });
 
   test('keeps subagent tool confirmations on the originating lane', async () => {
@@ -1131,7 +1457,7 @@ export function registerManagedAgentsResourceTests() {
         id: 'evt_reporter_shared_confirmation',
         type: 'user.tool_confirmation',
         session_thread_id: 'sthr_reporter123456',
-        tool_use_id: 'toolu_shared_permission',
+        tool_use_id: 'evt_reporter_shared_permission',
         created_at: new Date(base + 2_500).toISOString(),
         result: 'deny',
         deny_message: 'Reporter cannot call external weather',
@@ -1140,6 +1466,7 @@ export function registerManagedAgentsResourceTests() {
         id: 'evt_subagent_approval_idle',
         type: 'session.status_idle',
         created_at: new Date(base + 3_000).toISOString(),
+        stop_reason: { type: 'requires_action', event_ids: ['evt_main_shared_permission'] },
       },
     ];
 
@@ -1154,7 +1481,9 @@ export function registerManagedAgentsResourceTests() {
       expect(mainRow).toBeTruthy();
     });
     expect(mainRow?.textContent).toContain('/workspace/main.txt');
-    expect(mainRow?.textContent).toContain('awaiting approval');
+    expect(mainRow?.textContent).toContain('Awaiting approval');
+    expect(await screen.findByTestId('session-tool-approval-card')).toBeTruthy();
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.queryByText('Paris')).toBeNull();
     expect(screen.queryByText('Reporter cannot call external weather')).toBeNull();
 
@@ -1169,7 +1498,11 @@ export function registerManagedAgentsResourceTests() {
       expect(reporterRow).toBeTruthy();
     });
     expect(reporterRow?.textContent).toContain('Paris');
-    expect(reporterRow?.textContent).toContain('denied');
+    expect(reporterRow?.textContent).toContain('Denied');
+    expect(screen.queryByTestId('session-tool-approval-card')).toBeNull();
+    expect(screen.queryByTestId('tool-allow-button')).toBeNull();
+    expect(screen.queryByTestId('tool-deny-button')).toBeNull();
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
     expect(
       Array.from(document.querySelectorAll<HTMLElement>('[data-entry-kind="tool_call"]')).filter((row) =>
         row.textContent?.includes('Paris'),
@@ -1180,15 +1513,175 @@ export function registerManagedAgentsResourceTests() {
 
     fireEvent.click(reporterRow?.querySelector('[data-transcript-header]') as HTMLElement);
     const reporterDetail = await screen.findByTestId('session-trace-detail');
-    expect(within(reporterDetail).getByText('Tool confirmation')).toBeTruthy();
-    expect(reporterDetail.textContent).toContain('Reporter cannot call external weather');
+    expect(reporterDetail.textContent).toContain('agent.mcp_tool_use');
+    expect(reporterDetail.textContent).toContain('Paris');
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Debug' }));
-    const confirmationDebugRow = document.querySelector(
-      '[data-event-id^="evt_reporter_shared_confirmation-"][data-entry-kind="debug"]',
+    fireEvent.click(screen.getByRole('tab', { name: 'Events' }));
+    const confirmationEventRow = document.querySelector(
+      '[data-event-id="evt_reporter_shared_confirmation"]',
     ) as HTMLElement;
-    expect(confirmationDebugRow).toBeTruthy();
-    expect(confirmationDebugRow.textContent).toContain('Tool confirmation submitted.');
+    expect(confirmationEventRow).toBeTruthy();
+    expect(confirmationEventRow.textContent).toContain('user.tool_confirmation');
+    fireEvent.click(confirmationEventRow);
+    expect((await screen.findByTestId('session-trace-detail')).textContent).toContain(
+      'Reporter cannot call external weather',
+    );
+    fireEvent.click(screen.getByRole('tab', { name: 'Orchestrator' }));
+    expect((await screen.findByTestId('session-tool-approval-card')).textContent).toContain('/workspace/main.txt');
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
+  });
+
+  test('allows approving and denying tool permissions from the transcript tool body and disables composer', async () => {
+    for (const result of ['allow', 'deny'] as const) {
+      cleanup();
+      resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+      const api = mockManagedResourceApi();
+      api.resources.sessions[0].status = 'idle';
+      const base = Date.now() - 60_000;
+      api.resources.sessionEvents = [
+        {
+          id: 'evt_user_action_msg',
+          type: 'user.message',
+          created_at: new Date(base).toISOString(),
+          content: [{ type: 'text', text: 'Please write file' }],
+        },
+        {
+          id: 'evt_tool_write_ask',
+          type: 'agent.tool_use',
+          created_at: new Date(base + 1_000).toISOString(),
+          name: 'Write',
+          evaluated_permission: 'ask',
+          input: { file_path: '/workspace/demo.ts', content: 'console.log("hello");' },
+        },
+        {
+          id: 'evt_tool_write_idle',
+          type: 'session.status_idle',
+          created_at: new Date(base + 1_001).toISOString(),
+          stop_reason: { type: 'requires_action', event_ids: ['evt_tool_write_ask'] },
+        },
+      ];
+
+      renderManagedAgentsPage('sessions');
+
+      expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
+      const approval = await screen.findByTestId('session-tool-approval-card');
+      expect(approval.closest('[data-slot="collapsible-content"]')).toBeNull();
+      expect(approval.closest('[data-testid="session-pending-action"]')).toBeTruthy();
+      expect(approval.closest('[data-entry-kind="tool_call"]')).toBeNull();
+      expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
+
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Filter events' }), {
+        target: { value: 'no matching event' },
+      });
+      expect(await screen.findByText('No events match the current filters.')).toBeTruthy();
+      expect(screen.getByTestId('session-tool-approval-card')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
+
+      fireEvent.click(screen.getByTestId(result === 'allow' ? 'tool-allow-button' : 'tool-deny-button'));
+
+      await waitFor(() => {
+        const confirmationEvent = api.resources.sessionEvents.find(
+          (event) =>
+            event.type === 'user.tool_confirmation' &&
+            event.tool_use_id === 'evt_tool_write_ask' &&
+            event.result === result,
+        );
+        expect(confirmationEvent).toBeTruthy();
+      });
+      await waitFor(() => expect(screen.queryByTestId('session-tool-approval-card')).toBeNull());
+    }
+  });
+
+  test('renders AskUserQuestion questionnaire in session detail and sends answers with question ids', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'idle';
+    const base = Date.now() - 60_000;
+    api.resources.sessionEvents = [
+      {
+        id: 'evt_user_ask_start',
+        type: 'user.message',
+        created_at: new Date(base).toISOString(),
+        content: [{ type: 'text', text: 'Ask me a question' }],
+      },
+      {
+        id: 'evt_tool_ask_question',
+        type: 'agent.custom_tool_use',
+        created_at: new Date(base + 1_000).toISOString(),
+        name: 'AskUserQuestion',
+        input: {
+          questions: [
+            {
+              id: 'color',
+              header: 'Color',
+              question: 'Which verification color should I use?',
+              options: [
+                { label: 'Blue', description: 'Sky blue' },
+                { label: 'Green', description: 'Grass green' },
+              ],
+              multi_select: false,
+            },
+          ],
+        },
+      },
+      {
+        id: 'evt_tool_ask_idle',
+        type: 'session.status_idle',
+        created_at: new Date(base + 1_001).toISOString(),
+        stop_reason: { type: 'requires_action', event_ids: ['evt_tool_ask_question'] },
+      },
+    ];
+
+    renderManagedAgentsPage('sessions');
+
+    expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
+    const questionnaire = await screen.findByTestId('session-questionnaire-card');
+    expect(questionnaire.closest('[data-slot="collapsible-content"]')).toBeNull();
+    expect(questionnaire.closest('[data-testid="session-pending-action"]')).toBeTruthy();
+    expect((screen.getByLabelText('Message') as HTMLTextAreaElement).disabled).toBe(true);
+    expect(screen.getByText('Which verification color should I use?')).toBeTruthy();
+    expect(screen.getByText('Blue')).toBeTruthy();
+    expect(screen.getByText('Green')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close inspector' }));
+    const blueOption = await within(questionnaire).findByRole('radio', { name: /Blue/ });
+    fireEvent.click(blueOption);
+
+    const confirmButton = await screen.findByRole('button', { name: 'Confirm' });
+    expect(confirmButton).toBeTruthy();
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      const resultEvent = api.resources.sessionEvents.find(
+        (event) => event.type === 'user.custom_tool_result' && event.custom_tool_use_id === 'evt_tool_ask_question',
+      );
+      expect(resultEvent).toBeTruthy();
+      expect(resultEvent?.is_error).toBe(false);
+      const content = objectRecord(Array.isArray(resultEvent?.content) ? resultEvent.content[0] : null);
+      expect(JSON.parse(String(content.text))).toEqual({
+        answers: [{ id: 'color', selected: ['Blue'] }],
+      });
+    });
+    await waitFor(() => expect(screen.queryByTestId('session-questionnaire-card')).toBeNull());
+
+    cleanup();
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const denyApi = mockManagedResourceApi();
+    denyApi.resources.sessions[0].status = 'idle';
+    denyApi.resources.sessionEvents = structuredClone(api.resources.sessionEvents).filter(
+      (event) => event.type !== 'user.custom_tool_result',
+    );
+    renderManagedAgentsPage('sessions');
+    expect(await screen.findByTestId('session-questionnaire-card')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('questionnaire-deny-button'));
+    await waitFor(() => {
+      const resultEvent = denyApi.resources.sessionEvents.find(
+        (event) => event.type === 'user.custom_tool_result' && event.custom_tool_use_id === 'evt_tool_ask_question',
+      );
+      expect(resultEvent).toBeTruthy();
+      expect(resultEvent?.is_error).toBe(true);
+      expect(resultEvent?.content).toBeUndefined();
+    });
   });
 
   test('keeps transcript tool batches scoped to each lane', async () => {
@@ -1274,6 +1767,14 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
     await waitFor(() =>
+      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
+        true,
+      ),
+    );
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.includes('/threads/sthr_reporter123456/stream?'))).toBe(true),
+    );
+    await waitFor(() =>
       expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?'))).toBe(true),
     );
     await waitFor(() =>
@@ -1283,15 +1784,48 @@ export function registerManagedAgentsResourceTests() {
         ),
       ).toBe(true),
     );
-    await waitFor(() =>
-      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
-        true,
-      ),
+    const urls = api.requests.map((request) => request.url);
+    expect(urls.findIndex((url) => url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBeLessThan(
+      urls.findIndex((url) => url.startsWith('/v1/sessions/sesn_one123456/events?')),
     );
-    expect(api.requests.some((request) => request.url.includes('/threads/sthr_reporter123456/stream?'))).toBe(false);
+    expect(urls.findIndex((url) => url.includes('/threads/sthr_reporter123456/stream?'))).toBeLessThan(
+      urls.findIndex((url) => url.includes('/threads/sthr_reporter123456/events?')),
+    );
   });
 
-  test('does not subscribe to session streams when running metadata has completed history', async () => {
+  test('Refresh rescans events while a live session stream stays open', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'running';
+    const fetchResource = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).includes('/stream?')) {
+        return new Response(
+          new ReadableStream({
+            start(stream) {
+              init?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+            },
+          }),
+          { headers: { 'Content-Type': 'text/event-stream' } },
+        );
+      }
+      return fetchResource(input, init);
+    });
+
+    renderManagedAgentsPage('sessions');
+    await screen.findByTestId('session-detail-page');
+    const eventRequests = () =>
+      api.requests.filter((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?')).length;
+    await waitFor(() => expect(eventRequests()).toBeGreaterThan(0));
+    const beforeRefresh = eventRequests();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Refresh' }));
+
+    await waitFor(() => expect(eventRequests()).toBeGreaterThan(beforeRefresh));
+  });
+
+  test('keeps the primary session stream open when running metadata has completed history', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'running';
@@ -1310,14 +1844,48 @@ export function registerManagedAgentsResourceTests() {
         ),
       ).toBe(true),
     );
-    expect(api.requests.some((request) => request.url.includes('/stream?'))).toBe(false);
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
+        true,
+      ),
+    );
   });
 
-  test('does not subscribe to session streams after an idle session detail loads', async () => {
+  test('keeps the primary session stream open after an idle session detail loads', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     api.resources.sessions[0].status = 'idle';
     api.resources.sessions[0].updated_at = new Date(Date.now() - 40_000).toISOString();
+    const fetchSessionEvents = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const response = await fetchSessionEvents(input, init);
+      if (url.startsWith('/v1/sessions/sesn_one123456/events/stream?') && requestMethod(input, init) === 'GET') {
+        const createdAt = new Date().toISOString();
+        return streamResponse(
+          [
+            sseFrame('session.status_running', {
+              id: 'evt_idle_live_running',
+              type: 'session.status_running',
+              created_at: createdAt,
+            }),
+            sseFrame('agent.message', {
+              id: 'evt_idle_live_agent',
+              type: 'agent.message',
+              created_at: createdAt,
+              processed_at: createdAt,
+              content: [{ type: 'text', text: 'Agent reply arrived live.' }],
+            }),
+            sseFrame('session.status_idle', {
+              id: 'evt_idle_live_idle',
+              type: 'session.status_idle',
+              created_at: createdAt,
+            }),
+          ].join(''),
+        );
+      }
+      return response;
+    });
 
     renderManagedAgentsPage('sessions');
 
@@ -1332,7 +1900,12 @@ export function registerManagedAgentsResourceTests() {
         ),
       ).toBe(true),
     );
-    expect(api.requests.some((request) => request.url.includes('/stream?'))).toBe(false);
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events/stream?'))).toBe(
+        true,
+      ),
+    );
+    expect(await screen.findByText('Agent reply arrived live.')).toBeTruthy();
   });
 
   test('does not subscribe to session streams after a terminated session detail loads', async () => {
@@ -1357,6 +1930,39 @@ export function registerManagedAgentsResourceTests() {
     expect(api.requests.some((request) => request.url.includes('/stream?'))).toBe(false);
   });
 
+  test('keeps deleted session metadata terminal when cached history is stale', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'deleted';
+    api.resources.sessions[0].archived_at = null;
+
+    renderManagedAgentsPage('sessions');
+
+    expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url.startsWith('/v1/sessions/sesn_one123456/events?'))).toBe(true),
+    );
+    expect(api.requests.some((request) => request.url.includes('/stream?'))).toBe(false);
+    expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).disabled).toBe(true);
+  });
+
+  test('allows a cached deleted event to archive terminated session metadata', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.sessions[0].status = 'terminated';
+    api.resources.sessions[0].archived_at = null;
+    api.resources.sessionEvents.push({
+      id: 'evt_session_deleted',
+      type: 'session.deleted',
+      created_at: new Date(Date.now() + 1000).toISOString(),
+    });
+
+    renderManagedAgentsPage('sessions');
+
+    expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
+    expect(await screen.findByText('Archived')).toBeTruthy();
+  });
+
   test('renders session detail controls in Chinese', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     mockManagedResourceApi();
@@ -1364,20 +1970,23 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByTestId('session-detail-page')).toBeTruthy();
     expect(screen.getByRole('link', { name: '会话' })).toBeTruthy();
-    expect(screen.getAllByText('运行中').length).toBeGreaterThan(0);
-    expect(screen.getByRole('tab', { name: '转录' })).toBeTruthy();
-    const workspaceTabs = screen.getByRole('tablist', { name: '会话工作区' });
-    expect(within(workspaceTabs).getByRole('tab', { name: '事件' })).toBeTruthy();
-    expect(within(workspaceTabs).getByRole('tab', { name: /资源/ })).toBeTruthy();
-    expect(within(workspaceTabs).getByRole('tab', { name: '智能体' })).toBeTruthy();
-    expect(within(workspaceTabs).getByRole('tab', { name: '环境' })).toBeTruthy();
-    expect(within(workspaceTabs).getByRole('tab', { name: '凭据' })).toBeTruthy();
+    expect((await screen.findAllByText('空闲')).length).toBeGreaterThan(0);
+    const inspectorTabs = screen.getByRole('tablist', { name: '会话检查器' });
+    expect(within(inspectorTabs).getByRole('tab', { name: '会话' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: '事件' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: '工具' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: '资源' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: '线程' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: '转录' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: '调试' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '全部事件' })).toBeNull();
+    fireEvent.click(within(inspectorTabs).getByRole('tab', { name: '事件' }));
+    expect(screen.queryByRole('button', { name: '全部事件' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '关闭检查器' }));
     expect(screen.getByRole('textbox', { name: '消息' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '全部事件' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '复制全部' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '刷新' })).toBeTruthy();
-
     fireEvent.click(screen.getByRole('button', { name: '操作' }));
+    expect(screen.getByRole('menuitem', { name: '刷新' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: '复制会话 ID' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: '复制当前视图' })).toBeTruthy();
   });
@@ -1389,8 +1998,31 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByRole('heading', { name: 'Vault one' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '凭据保险库' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '添加凭据' })).toBeTruthy();
-    expect(screen.getByText('供关联此保险库的 Agent 使用的凭据。')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: '添加凭据' }).length).toBeGreaterThan(0);
+    await screen.findByText('Vault credential one');
+    expect(screen.getByPlaceholderText('按 ID 查找凭据')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '认证' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '概览' })).toBeNull();
+    expect(screen.queryByText('供关联此保险库的 Agent 使用的凭据。')).toBeNull();
+  });
+
+  test('renders CMA-style vault credential detail chrome', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults/vlt_one123456');
+    mockManagedResourceApi();
+    renderManagedAgentsPage('credential-vaults');
+
+    const heading = await screen.findByRole('heading', { name: 'Vault one' });
+    const header = heading.closest('header') as HTMLElement;
+    expect(within(header).getByText('Active')).toBeTruthy();
+    expect(within(header).getByText('vlt_one123456')).toBeTruthy();
+    expect(within(header).getByRole('button', { name: 'Add credential' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Overview' })).toBeNull();
+    await screen.findByText('Vault credential one');
+    expect(screen.getByPlaceholderText('Find credential by ID')).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'Status All' })).toBeNull();
+    expect(screen.getByRole('columnheader', { name: 'Auth' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Updated' })).toBeTruthy();
+    expect(await screen.findByText('Vault credential one')).toBeTruthy();
   });
 
   test('renders memory store details in natural Chinese', async () => {
@@ -1679,6 +2311,282 @@ export function registerManagedAgentsResourceTests() {
     expect(createRequest?.body?.resources).toEqual([]);
   });
 
+  test('adds a memory store from the same resource menu as files', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add resource' }));
+    expect(screen.getByRole('menuitem', { name: 'File' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Memory store' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Memory store' }));
+    expect(within(dialog).getByRole('combobox', { name: 'Memory store' })).toBeTruthy();
+    expect(within(dialog).getByRole('combobox', { name: 'Access' })).toBeTruthy();
+    expect(within(dialog).getByLabelText('Instructions (optional)')).toBeTruthy();
+    expect((within(dialog).getByLabelText('Instructions (optional)') as HTMLInputElement).placeholder).toBe(
+      'Tell the agent what this store contains and when to use it.',
+    );
+    expect(within(dialog).queryByRole('radio', { name: 'Read only' })).toBeNull();
+  });
+
+  test('loads memory stores beyond the first list page into the session attach picker', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const now = new Date().toISOString();
+    const api = mockManagedResourceApi({ memoryStoresPageSize: 5 });
+    for (let index = 2; index <= 6; index += 1) {
+      api.resources.memoryStores.push({
+        id: `memstore_${index}23456789012`,
+        archived_at: null,
+        created_at: now,
+        description: `Memory ${index}`,
+        name: `Memory ${index}`,
+        type: 'memory_store',
+        updated_at: now,
+      });
+    }
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Paged memory session' } });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    await addMemoryStoreResource(dialog, 'Memory 6');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.resources).toEqual([
+      {
+        type: 'memory_store',
+        memory_store_id: 'memstore_623456789012',
+        access: 'read_write',
+      },
+    ]);
+    expect(
+      api.requests.filter((request) => request.url.startsWith('/v1/memory_stores?') && request.method === 'GET').length,
+    ).toBeGreaterThan(1);
+  });
+
+  test('stays on the session list when creating a session fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    const baseFetch = globalThis.fetch;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input) === '/v1/sessions?beta=true' && requestMethod(input, init) === 'POST') {
+        return new Response(JSON.stringify({ error: { message: 'session create failed' } }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    expect(await within(dialog).findByText('session create failed')).toBeTruthy();
+    expect(window.location.pathname).toBe('/workspaces/default/sessions');
+    expect(screen.getByRole('dialog', { name: 'Create session' })).toBeTruthy();
+    expect(screen.getByRole('heading', { hidden: true, name: 'Sessions' })).toBeTruthy();
+  });
+
+  test('finds an exact session ID outside the current page and previews a row without navigating', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.sessions, (index, hidden) => ({
+      ...api.resources.sessions[0],
+      id: `sesn_page${index}`,
+      title: hidden ? 'Session beyond first page' : `Session page ${index}`,
+    }));
+    const remote = api.resources.sessions.at(-1)!;
+    render(<ManagedAgentsPage section="sessions" />);
+    await screen.findByText('Session one');
+    const headers = screen.getAllByRole('columnheader').map((header) => header.textContent);
+    expect(headers.slice(0, 7)).toEqual(['ID', 'Name', 'Status', 'Agent', 'Cost', 'Tokens in / out', 'Created']);
+    expect(screen.queryByText(remote.title)).toBeNull();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: remote.id } });
+    await screen.findByText(remote.title);
+    expect(api.requests.some((request) => request.url.startsWith(`/v1/sessions/${remote.id}?`))).toBe(true);
+    const row = screen.getByText(remote.title).closest('tr')!;
+    fireEvent.click(within(row).getByRole('cell', { name: 'Running' }));
+    expect(await screen.findByRole('dialog', { name: remote.title })).toBeTruthy();
+    expect(window.location.pathname).toBe('/workspaces/default/sessions');
+  });
+
+  test('keeps SVG controls and portaled actions out of the session row preview', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+    const row = (await screen.findByText('Session one')).closest('tr')!;
+    const agentIcon = row.querySelector('a[href*="/agents/"] svg')!;
+    agentIcon.closest('a')!.addEventListener('click', (event) => event.preventDefault());
+    fireEvent(agentIcon, new window.MouseEvent('click', { bubbles: true, ctrlKey: true, cancelable: true }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(window.location.pathname).toBe('/workspaces/default/sessions');
+    fireEvent.click(within(row).getByRole('button', { name: 'Copy sesn_one123456' }).querySelector('svg')!);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: 'More actions' }).querySelector('svg')!);
+    expect(screen.getByRole('menuitem', { name: 'Edit session' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit session' });
+    expect(screen.queryByRole('dialog', { name: 'Session one' })).toBeNull();
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  });
+
+  test('synchronizes exact session ID results after editing, archiving, and deleting', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.sessions, (index, hidden) => ({
+      ...api.resources.sessions[0],
+      id: `sesn_mutation${index}`,
+      vault_ids: [],
+      resources: [],
+      title: hidden ? 'Remote mutation session' : `Session mutation ${index}`,
+    }));
+    const remote = api.resources.sessions.at(-1)!;
+    render(<ManagedAgentsPage section="sessions" />);
+    await screen.findByText('Session one');
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: remote.id } });
+    await screen.findByText(remote.title);
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit session' });
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Updated remote session' } });
+    await waitFor(() =>
+      expect((within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    await act(async () => fireEvent.submit(dialog.querySelector('form')!));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(await screen.findByText('Updated remote session')).toBeTruthy();
+    expect(screen.queryByText(remote.title)).toBeNull();
+    expect(api.resources.sessions.at(-1)!.title).toBe('Updated remote session');
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive session' }));
+    const archiveConfirmation = await screen.findByRole('alertdialog');
+    await act(async () => fireEvent.click(within(archiveConfirmation).getByRole('button', { name: 'Archive' })));
+    expect(await screen.findByText('Archived')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Edit session' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'Archive session' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'View session' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete session' }));
+    const confirmation = await screen.findByRole('alertdialog');
+    await act(async () => fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete' })));
+    await waitFor(() => expect(screen.queryByText('Updated remote session')).toBeNull());
+    expect(await screen.findByText('No matching sessions')).toBeTruthy();
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe(remote.id);
+  });
+
+  test('resets the session list filters from an empty search result', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+    await screen.findByText('Session one');
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'no matching title' } });
+    expect(screen.getByText('No matching sessions')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('');
+  });
+
+  test('keeps session creation open and submits only once while the request is pending', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    let resolveSubmit: () => void = () => {};
+    const pending = new Promise<void>((resolve) => {
+      resolveSubmit = resolve;
+    });
+    const onSubmit = mock(async () => pending);
+    const onClose = mock(() => {});
+    render(<SessionCreateDialog title="Create session" workspaceId="default" onSubmit={onSubmit} onClose={onClose} />);
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    await waitFor(() =>
+      expect((within(dialog).getByRole('button', { name: 'Create session' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+    expect(within(dialog).getByLabelText(/Title/).getAttribute('maxlength')).toBe('500');
+    expect(
+      within(dialog)
+        .getByRole('link', { name: /Manage environments/ })
+        .getAttribute('target'),
+    ).toBe('_blank');
+    const form = within(dialog).getByTestId('session-create-form');
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect((within(dialog).getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(onClose).not.toHaveBeenCalled();
+    resolveSubmit();
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Create session' })).toBeTruthy());
+  });
+
+  test('previews a session in a sheet and opens its conversation without changing the list on preview', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+    await screen.findByText('Session one');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Quick view' })[0]);
+    const preview = await screen.findByRole('dialog', { name: 'Session one' });
+    expect(window.location.pathname).toBe('/workspaces/default/sessions');
+    expect(within(preview).getByRole('heading', { name: 'Conversation preview' })).toBeTruthy();
+    await within(preview).findByText('你好，世界');
+    expect(within(preview).getByRole('button', { name: `Copy ${api.resources.sessions[0].id}` }).textContent).toContain(
+      api.resources.sessions[0].id,
+    );
+    fireEvent.click(within(preview).getByRole('button', { name: 'Open conversation' }));
+    await waitFor(() =>
+      expect(window.location.pathname).toBe(`/workspaces/default/sessions/${api.resources.sessions[0].id}`),
+    );
+    expect(new URLSearchParams(window.location.search).get('interactive')).toBe('true');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  test('opens the created session detail after the list create succeeds', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeTruthy();
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Opened session' } });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/sessions/sesn_created123456'));
+    expect(new URLSearchParams(window.location.search).get('interactive')).toBe('true');
+    expect(screen.queryByRole('dialog', { name: 'Create session' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Sessions' })).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Opened session' })).toBeTruthy();
+  });
+
   test('creates a session with selected agent and environment references', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();
@@ -1688,36 +2596,56 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Create session' });
-    fireEvent.change(within(dialog).getByLabelText('Title'), { target: { value: 'Console session' } });
-    expect(within(dialog).getByText('Mount files into the session uploads directory.')).toBeTruthy();
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Console session' } });
+    expect(within(dialog).getByText('Mount files, Git repositories, or memory stores into the session.')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add resource' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'File' }));
     const createSessionButton = within(dialog).getByRole('button', { name: 'Create session' });
-    const fileIdInput = within(dialog).getByLabelText('File ID');
-    const mountPathInput = within(dialog).getByLabelText('Mount path');
+    const fileIdInput = within(dialog).getByRole('combobox', { name: 'File ID' });
+    const mountPathInput = within(dialog).getByLabelText('Mount path (optional)');
     expect(fileIdInput.hasAttribute('required')).toBe(true);
-    expect(mountPathInput.hasAttribute('required')).toBe(true);
+    expect(mountPathInput.hasAttribute('required')).toBe(false);
+    expect(within(dialog).getByText('/mnt/session/uploads/').classList.contains('text-foreground')).toBe(true);
     expect(createSessionButton.hasAttribute('disabled')).toBe(true);
 
-    fireEvent.change(fileIdInput, { target: { value: 'file_input123456' } });
-    expect(createSessionButton.hasAttribute('disabled')).toBe(true);
-    fireEvent.change(mountPathInput, {
-      target: { value: '/workspace/input.txt' },
-    });
-    expect(createSessionButton.hasAttribute('disabled')).toBe(true);
-    expect(within(dialog).getByText('Enter a path relative to /uploads')).toBeTruthy();
-
-    fireEvent.change(mountPathInput, {
-      target: { value: 'input.txt' },
-    });
-    expect(within(dialog).getByText('Available at /mnt/session/uploads/input.txt')).toBeTruthy();
-    expect(within(dialog).getByRole('link', { name: 'Manage files' }).getAttribute('href')).toBe(
-      '/workspaces/default/files',
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.url === '/v1/files?beta=true&limit=1000')).toBe(true),
     );
+    fireEvent.keyDown(fileIdInput, { key: 'ArrowDown' });
+    expect(await screen.findByRole('option', { name: 'input.txt (108 B)' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'image.png (251 KB)' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'NL2SQL report.md (30 KB)' })).toBeTruthy();
+    expect(fileIdInput.classList.contains('pl-3')).toBe(true);
+    expect(fileIdInput.closest('[data-slot="card"]')?.classList.contains('mx-px')).toBe(true);
+    expect(fileIdInput.closest('[data-slot="input-group"]')?.hasAttribute('data-popup-open')).toBe(true);
+    expect(document.querySelector('[data-slot="combobox-empty"]')?.classList.contains('empty:p-0')).toBe(true);
+    fireEvent.change(fileIdInput, { target: { value: 'file_image' } });
+    expect(screen.getByRole('option', { name: 'image.png (251 KB)' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'input.txt (108 B)' })).toBeNull();
+    fireEvent.change(fileIdInput, { target: { value: 'input' } });
+    fireEvent.click(await screen.findByRole('option', { name: 'input.txt (108 B)' }));
+    expect(mountPathInput.getAttribute('placeholder')).toBe('input.txt');
     await waitFor(() =>
       expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
     );
     await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
+    expect(createSessionButton.hasAttribute('disabled')).toBe(false);
+    fireEvent.change(mountPathInput, {
+      target: { value: '/workspace/input.txt' },
+    });
+    expect(createSessionButton.hasAttribute('disabled')).toBe(true);
+
+    fireEvent.change(mountPathInput, {
+      target: { value: 'input.txt' },
+    });
+    expect(createSessionButton.hasAttribute('disabled')).toBe(false);
+    fireEvent.change(mountPathInput, { target: { value: '   ' } });
+    expect(mountPathInput.getAttribute('aria-invalid')).toBe('false');
+    expect(createSessionButton.hasAttribute('disabled')).toBe(false);
+    expect(within(dialog).getByText('Files are mounted in the container under /mnt/session/uploads/.')).toBeTruthy();
+    expect(within(dialog).getByRole('link', { name: 'Manage files' }).getAttribute('href')).toBe(
+      '/workspaces/default/files',
+    );
     expect(within(dialog).getByRole('combobox', { name: 'Environment' }).textContent).toContain('Option environment');
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
@@ -1737,10 +2665,137 @@ export function registerManagedAgentsResourceTests() {
       {
         type: 'file',
         file_id: 'file_input123456',
-        mount_path: '/input.txt',
       },
     ]);
     expect(createRequest?.headers['x-workspace-id']).toBe('default');
+  });
+
+  test('creates a session with CMA-style vault picker and credential summary', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    expect(api.requests.some((request) => /\/v1\/vaults\/[^/?]+\/credentials\?beta=true/.test(request.url))).toBe(
+      false,
+    );
+    expect(
+      within(dialog)
+        .getByRole('link', { name: /Manage credential vaults/ })
+        .getAttribute('href'),
+    ).toBe('/workspaces/default/vaults');
+    expect(within(dialog).getByRole('combobox', { name: /Credential vaults/ }).textContent).toContain('Add vault');
+    await selectManagedComboboxOption(dialog, /Credential vaults/, /Vault one/);
+    await waitFor(() =>
+      expect(api.requests.some((request) => /\/v1\/vaults\/[^/?]+\/credentials\?beta=true/.test(request.url))).toBe(
+        true,
+      ),
+    );
+    expect(await screen.findByText('Vault credential one')).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Remove Vault one' })).toBeTruthy();
+    const createButton = within(dialog).getByRole('button', { name: 'Create session' });
+    expect(createButton.hasAttribute('disabled')).toBe(true);
+    const vaultAck = within(dialog).getByRole('checkbox', {
+      name: /I own or am authorized to use this vault/,
+    });
+    expect(within(dialog).getByText(/I understand this means this agent can assume the identity/)).toBeTruthy();
+    fireEvent.click(vaultAck);
+    await waitFor(() => expect(createButton.hasAttribute('disabled')).toBe(false));
+
+    fireEvent.click(createButton);
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.vault_ids).toEqual(['vlt_one123456']);
+  });
+
+  test('resets vault authorization when the selected vault set changes', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    await selectManagedComboboxOption(dialog, /Credential vaults/, /Vault one/);
+    const createButton = within(dialog).getByRole('button', { name: 'Create session' });
+    const vaultAck = within(dialog).getByRole('checkbox', {
+      name: /I own or am authorized to use this vault/,
+    });
+    fireEvent.click(vaultAck);
+    await waitFor(() => expect(createButton.hasAttribute('disabled')).toBe(false));
+    expect((vaultAck as HTMLButtonElement).getAttribute('aria-checked') ?? vaultAck.getAttribute('data-state')).toMatch(
+      /true|checked/,
+    );
+
+    await selectManagedComboboxOption(dialog, /Credential vaults/, /Vault two/);
+    await waitFor(() => expect(createButton.hasAttribute('disabled')).toBe(true));
+    expect((vaultAck as HTMLButtonElement).getAttribute('aria-checked') ?? vaultAck.getAttribute('data-state')).toMatch(
+      /false|unchecked/,
+    );
+    expect(within(dialog).getByRole('button', { name: 'Remove Vault one' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Remove Vault two' })).toBeTruthy();
+  });
+
+  test('validates graphical and custom schedules before submitting the cron payload', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="deployments" />);
+    await screen.findByText('Deployment one');
+    fireEvent.click(screen.getByRole('button', { name: 'Create deployment' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create deployment' });
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Scheduled triage' } });
+    await selectManagedComboboxOption(dialog, 'Agent', 'Option agent');
+    await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
+    fireEvent.change(within(dialog).getByLabelText('Initial message'), { target: { value: 'Summarize tickets.' } });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Scheduled' }));
+    expect(within(dialog).getByText('Next 5 runs')).toBeTruthy();
+    expect(dialog.querySelectorAll('time')).toHaveLength(5);
+    await selectManagedComboboxOption(dialog, 'Frequency', 'Weekly');
+    await selectManagedComboboxOption(dialog, 'On', 'Friday');
+    fireEvent.click(within(dialog).getByLabelText('At'));
+    const timePicker = await screen.findByRole('dialog', { name: 'Choose time' });
+    await selectManagedComboboxOption(timePicker, 'Hour (24h)', '16');
+    await selectManagedComboboxOption(timePicker, 'Minute', '30');
+    fireEvent.click(within(timePicker).getByRole('button', { name: 'Done' }));
+    expect(within(dialog).getByText('30 16 * * 5')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Edit cron' }));
+    fireEvent.change(within(dialog).getByLabelText('Cron expression'), { target: { value: 'invalid' } });
+    expect(within(dialog).getByRole('alert').textContent).toContain('five-field');
+    expect(within(dialog).getByRole('button', { name: 'Create deployment' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText('Cron expression'), { target: { value: '*/15 9-17 * * 1-5' } });
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Manual' }));
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Scheduled' }));
+    expect(within(dialog).getByLabelText('Cron expression').getAttribute('value')).toBe('*/15 9-17 * * 1-5');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create deployment' }));
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/deployments?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const request = api.requests.find(
+      (request) => request.url === '/v1/deployments?beta=true' && request.method === 'POST',
+    );
+    expect(request?.body?.schedule).toEqual({
+      type: 'cron',
+      expression: '*/15 9-17 * * 1-5',
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
   });
 
   test('renders the official-style create deployment dialog and submits deployment payload', async () => {
@@ -1755,9 +2810,9 @@ export function registerManagedAgentsResourceTests() {
     expect(dialog.dataset.slot).toBe('dialog-content');
     expect(dialog.className.includes('bg-secondary')).toBe(false);
     expect(dialog.className.includes('bg-popover')).toBe(true);
-    expect(within(dialog).getByText('Deploy an agent with a trigger, environment, and credentials.')).toBeTruthy();
+    expect(within(dialog).queryByText('Deploy an agent with a trigger, environment, and credentials.')).toBeNull();
     expect(within(dialog).queryByLabelText('Description')).toBeNull();
-    expect(within(dialog).queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(false);
     expect(within(dialog).getByRole('link', { name: 'Manage agents (opens in new tab)' }).getAttribute('href')).toBe(
       '/workspaces/default/agents',
     );
@@ -1773,10 +2828,10 @@ export function registerManagedAgentsResourceTests() {
       target: { value: 'Summarize support tickets.' },
     });
     await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
-    await selectManagedComboboxOption(dialog, /Credential vaults/, 'Vault one');
-    await selectManagedComboboxOption(dialog, /Memory stores/, 'Memory one');
-    await selectManagedComboboxOption(dialog, 'Trigger', 'Manual');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+    await selectManagedComboboxOption(dialog, /Credential vaults/, /Vault one/);
+    await addMemoryStoreResource(dialog, 'Memory one');
+    expect(within(dialog).getByRole('tab', { name: 'Manual' }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create deployment' }));
 
     await waitFor(() =>
       expect(
@@ -1790,7 +2845,9 @@ export function registerManagedAgentsResourceTests() {
     expect(createRequest?.body?.agent).toBe('agent_option123456');
     expect(createRequest?.body?.environment_id).toBe('env_option123456');
     expect(createRequest?.body?.vault_ids).toEqual(['vlt_one123456']);
-    expect(createRequest?.body?.resources).toEqual([{ type: 'memory_store', memory_store_id: 'memstore_one123456' }]);
+    expect(createRequest?.body?.resources).toEqual([
+      { type: 'memory_store', memory_store_id: 'memstore_one123456', access: 'read_write' },
+    ]);
     expect(createRequest?.body?.initial_events).toEqual([
       {
         type: 'user.message',
@@ -1798,6 +2855,192 @@ export function registerManagedAgentsResourceTests() {
       },
     ]);
     expect(createRequest?.body?.schedule).toBeNull();
+  });
+
+  test('blocks session submit when memory instructions exceed 4096 code points', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    await addMemoryStoreResource(dialog, 'Memory one');
+    fireEvent.change(within(dialog).getByLabelText('Instructions (optional)'), { target: { value: 'a'.repeat(4097) } });
+    expect((within(dialog).getByRole('button', { name: 'Create session' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+    expect(api.requests.some((request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST')).toBe(
+      false,
+    );
+  });
+
+  test('creates a session with a read/write memory store and instructions', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create session' });
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Memory session' } });
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Agent' }).textContent).toContain('Option agent'),
+    );
+    await addMemoryStoreResource(dialog, 'Memory one');
+    fireEvent.change(within(dialog).getByLabelText('Instructions (optional)'), { target: { value: '有新偏好就更新' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create session' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/sessions?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.resources).toEqual([
+      {
+        type: 'memory_store',
+        memory_store_id: 'memstore_one123456',
+        access: 'read_write',
+        instructions: '有新偏好就更新',
+      },
+    ]);
+    expect(JSON.stringify(createRequest?.body?.resources)).not.toContain('mount_path');
+  });
+
+  test('submits exactly 500 instruction code points and read-only access on a deployment', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="deployments" />);
+
+    expect(await screen.findByText('Deployment one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create deployment' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create deployment' });
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Memory deployment' } });
+    await selectManagedComboboxOption(dialog, 'Agent', 'Option agent');
+    fireEvent.change(within(dialog).getByLabelText('Initial message'), { target: { value: 'Run with memory.' } });
+    await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
+    await addMemoryStoreResource(dialog, 'Memory one');
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Manual' }));
+    const instructions = 'a'.repeat(4096);
+    fireEvent.change(within(dialog).getByLabelText('Instructions (optional)'), { target: { value: instructions } });
+    await selectManagedComboboxOption(dialog, 'Access', 'Read only');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create deployment' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/deployments?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/deployments?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.resources).toEqual([
+      {
+        type: 'memory_store',
+        memory_store_id: 'memstore_one123456',
+        access: 'read_only',
+        instructions,
+      },
+    ]);
+  });
+
+  test('creates a deployment without memory resources when no store is selected', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="deployments" />);
+
+    expect(await screen.findByText('Deployment one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create deployment' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create deployment' });
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'No memory deployment' } });
+    await selectManagedComboboxOption(dialog, 'Agent', 'Option agent');
+    fireEvent.change(within(dialog).getByLabelText('Initial message'), { target: { value: 'No store attached.' } });
+    await selectManagedComboboxOption(dialog, 'Environment', 'Option environment');
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Manual' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create deployment' }));
+
+    await waitFor(() =>
+      expect(
+        api.requests.some((request) => request.url === '/v1/deployments?beta=true' && request.method === 'POST'),
+      ).toBe(true),
+    );
+    const createRequest = api.requests.find(
+      (request) => request.url === '/v1/deployments?beta=true' && request.method === 'POST',
+    );
+    expect(createRequest?.body?.resources).toEqual([]);
+  });
+
+  test('does not write back server memory fields when saving an edited deployment', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/deployments/dep_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.deployments[0] = {
+      ...api.resources.deployments[0],
+      initial_events: [{ type: 'user.message', content: [{ type: 'text', text: 'Summarize updates.' }] }],
+      resources: [
+        {
+          type: 'memory_store',
+          memory_store_id: 'memstore_one123456',
+          access: 'read_write',
+          instructions: 'keep',
+          mount_path: '/mnt/memory/user-preferences',
+          name: 'snapshot name',
+          description: 'snapshot description',
+        },
+      ],
+    };
+    render(<ManagedAgentsPage section="deployments" />);
+
+    expect(await screen.findByRole('heading', { name: 'Deployment one' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit deployment' });
+    const save = within(dialog).getByRole('button', { name: 'Save changes' });
+    await waitFor(() => expect(save.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(save);
+
+    await waitFor(() =>
+      expect(
+        api.requests.some(
+          (request) => request.url === '/v1/deployments/dep_one123456?beta=true' && request.method === 'POST',
+        ),
+      ).toBe(true),
+    );
+    const updateRequest = api.requests.find(
+      (request) => request.url === '/v1/deployments/dep_one123456?beta=true' && request.method === 'POST',
+    );
+    expect(updateRequest?.body).not.toHaveProperty('resources');
+  });
+
+  test('hides platform MEMORY.md from the memory store tree', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/memory-stores/memstore_one123456?memory=mem_one123456');
+    const api = mockManagedResourceApi();
+    api.resources.memories.unshift({
+      id: 'mem_platform123456',
+      content: 'platform policy',
+      content_sha256: 'memory-hash-platform',
+      content_size_bytes: 15,
+      created_at: new Date().toISOString(),
+      memory_store_id: 'memstore_one123456',
+      memory_version_id: 'memver_platform123456',
+      path: '/MEMORY.md',
+      type: 'memory',
+      updated_at: new Date().toISOString(),
+    });
+    render(<ManagedAgentsPage section="memory-stores" />);
+
+    expect(await screen.findByRole('heading', { name: 'Memory one' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '/project/brief.md' })).toBeTruthy();
+    expect(screen.queryByText('MEMORY.md')).toBeNull();
+    expect(screen.queryByRole('button', { name: /MEMORY\.md/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add memory' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add memory' });
+    fireEvent.change(within(dialog).getByLabelText('Path'), { target: { value: '/MEMORY.md' } });
+    fireEvent.change(within(dialog).getByLabelText('Content'), { target: { value: 'should not submit' } });
+    expect((within(dialog).getByRole('button', { name: 'Add memory' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   test('opens deployment agent and status filters and refetches the list with the selected values', async () => {
@@ -1861,12 +3104,13 @@ export function registerManagedAgentsResourceTests() {
     expect(
       api.requests.some(
         (request) =>
-          request.url === '/v1/deployments?beta=true&limit=5&include_archived=true' && request.method === 'GET',
+          request.url === `/v1/deployments?beta=true&limit=${managedEntityListLimit}&include_archived=true` &&
+          request.method === 'GET',
       ),
     ).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status All' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Paused' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status All' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Paused' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -1881,8 +3125,8 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.queryByText('Deployment one')).toBeNull();
     expect(screen.queryByText('Archived deployment')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status Paused' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'All' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status Paused' }));
+    fireEvent.click(screen.getByRole('option', { name: 'All' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -1894,8 +3138,8 @@ export function registerManagedAgentsResourceTests() {
       expect(params.get('include_archived')).toBe('true');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Agent All' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Server agent' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Agent All' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Server agent' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -1928,7 +3172,7 @@ export function registerManagedAgentsResourceTests() {
       updated_at: archivedAt,
     });
 
-    render(<ManagedAgentsPage section="environments" />);
+    renderManagedAgentsPage('environments');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
     expect(await screen.findByText('Archived environment')).toBeTruthy();
@@ -1941,15 +3185,13 @@ export function registerManagedAgentsResourceTests() {
       expect(params.get('include_archived')).toBe('true');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status All' }));
-    const statusMenu = screen
-      .getByRole('menuitemradio', { name: 'All' })
-      .closest('[data-slot="dropdown-menu-content"]');
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status All' }));
+    const statusMenu = screen.getByRole('option', { name: 'All' }).closest('[data-slot="select-content"]');
     expect(statusMenu?.className).toContain('bg-popover');
     expect(statusMenu?.className.includes('bg-secondary')).toBe(false);
-    expect(screen.getByRole('menuitemradio', { name: 'All' })).toBeTruthy();
-    expect(screen.getByRole('menuitemradio', { name: 'Active' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Active' }));
+    expect(screen.getByRole('option', { name: 'All' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Active' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('option', { name: 'Active' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -1971,10 +3213,8 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByText('Deployment one')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status All' }));
-    const filterMenu = screen
-      .getByRole('menuitemradio', { name: 'All' })
-      .closest('[data-slot="dropdown-menu-content"]');
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status All' }));
+    const filterMenu = screen.getByRole('option', { name: 'All' }).closest('[data-slot="select-content"]');
     expect(filterMenu?.className).toContain('bg-popover');
     expect(filterMenu?.className.includes('bg-secondary')).toBe(false);
 
@@ -2006,10 +3246,10 @@ export function registerManagedAgentsResourceTests() {
     render(<ManagedAgentsPage section="sessions" />);
 
     expect(await screen.findByText('Session one')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Created All time' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Agent All' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /deployment All/i })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Status Active' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Created All time' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Agent All' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: /deployment All/i })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Status Active' })).toBeTruthy();
     await waitFor(() => {
       const latestRequest = api.requests
         .filter((request) => request.url.startsWith('/v1/sessions?') && request.method === 'GET')
@@ -2019,8 +3259,8 @@ export function registerManagedAgentsResourceTests() {
       expect(new URL(latestRequest!.url, 'https://oma.duck.ai').searchParams.get('include_archived')).toBe('false');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Status Active' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Terminated' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status Active' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Terminated' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -2033,8 +3273,8 @@ export function registerManagedAgentsResourceTests() {
     expect(await screen.findByText('Server session')).toBeTruthy();
     expect(screen.queryByText('Session one')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Agent All' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Server agent' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Agent All' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Server agent' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -2046,8 +3286,8 @@ export function registerManagedAgentsResourceTests() {
       expect(params.get('include_archived')).toBe('true');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /deployment All/i }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'dep_server123456' }));
+    fireEvent.click(screen.getByRole('combobox', { name: /deployment All/i }));
+    fireEvent.click(screen.getByRole('option', { name: 'dep_server123456' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -2058,8 +3298,8 @@ export function registerManagedAgentsResourceTests() {
       expect(params.get('deployment_id')).toBe('dep_server123456');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Created All time' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Last 30 days' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Created All time' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Last 30 days' }));
 
     await waitFor(() => {
       const latestRequest = api.requests
@@ -2076,12 +3316,13 @@ export function registerManagedAgentsResourceTests() {
   test('archives and deletes resources from row action menus', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments');
     const api = mockManagedResourceApi();
-    render(<ManagedAgentsPage section="environments" />);
+    renderManagedAgentsPage('environments');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
-    fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive environment' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status All' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Active' }));
+    await waitFor(() => expect(screen.queryByRole('option', { name: 'Active' })).toBeNull());
+    await confirmFirstRowAction('Archive', 'Archive');
 
     await waitFor(() =>
       expect(api.requests.some((request) => request.url === '/v1/environments/env_one123456/archive?beta=true')).toBe(
@@ -2107,6 +3348,136 @@ export function registerManagedAgentsResourceTests() {
     await waitFor(() => expect(screen.queryByText('Memory one')).toBeNull());
   });
 
+  test('shows the next session after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.sessions, (index, hidden) => ({
+      ...api.resources.sessions[0],
+      id: `sesn_extra_${index}`,
+      title: hidden ? 'Session overflow' : `Session extra ${index}`,
+      status: 'idle',
+    }));
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect(screen.queryByText('Session overflow')).toBeNull();
+    await confirmFirstRowAction('Delete session', 'Delete');
+
+    expect(await screen.findByText('Session overflow')).toBeTruthy();
+    expect(screen.queryByText('Session one')).toBeNull();
+  });
+
+  test('returns to the previous session page after deleting the last row on the last page', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.sessions, (index, hidden) => ({
+      ...api.resources.sessions[0],
+      id: `sesn_extra_${index}`,
+      title: hidden ? 'Session overflow' : `Session extra ${index}`,
+      status: 'idle',
+    }));
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('Session overflow')).toBeTruthy();
+    await confirmFirstRowAction('Delete session', 'Delete');
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    expect(screen.queryByText('Session overflow')).toBeNull();
+  });
+
+  test('keeps a successful session delete when the refill request fails', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+
+    expect(await screen.findByText('Session one')).toBeTruthy();
+    api.resources.failSessionList = true;
+    await confirmFirstRowAction('Delete session', 'Delete');
+
+    expect(await screen.findByText('Session deleted')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Session one')).toBeNull());
+    expect(screen.getByRole('alert').textContent).toContain('list failed');
+  });
+
+  test('shows the next deployment after archiving one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/deployments');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.deployments, (index, hidden) => ({
+      ...api.resources.deployments[0],
+      id: `dep_extra_${index}`,
+      name: hidden ? 'Deployment overflow' : `Deployment extra ${index}`,
+      status: 'active',
+    }));
+    render(<ManagedAgentsPage section="deployments" />);
+
+    expect(await screen.findByText('Deployment one')).toBeTruthy();
+    expect(screen.queryByText('Deployment overflow')).toBeNull();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status All' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Active' }));
+    expect(await screen.findByText('Deployment one')).toBeTruthy();
+    expect(screen.queryByText('Deployment overflow')).toBeNull();
+    await confirmFirstRowAction('Archive deployment', 'Archive');
+
+    expect(await screen.findByText('Deployment overflow')).toBeTruthy();
+    expect(screen.queryByText('Deployment one')).toBeNull();
+  });
+
+  test('shows the next environment after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.environments, (index, hidden) => ({
+      ...api.resources.environments[0],
+      id: `env_extra_${index}`,
+      name: hidden ? 'Environment overflow' : `Environment extra ${index}`,
+    }));
+    renderManagedAgentsPage('environments');
+
+    expect(await screen.findByText('Environment one')).toBeTruthy();
+    expect(screen.queryByText('Environment overflow')).toBeNull();
+    await confirmFirstRowAction('Delete', 'Delete');
+
+    expect(await screen.findByText('Environment overflow')).toBeTruthy();
+    expect(screen.queryByText('Environment one')).toBeNull();
+  });
+
+  test('shows the next vault after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/vaults');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.vaults, (index, hidden) => ({
+      ...api.resources.vaults[0],
+      id: `vlt_extra_${index}`,
+      display_name: hidden ? 'Vault overflow' : `Vault extra ${index}`,
+    }));
+    render(<ManagedAgentsPage section="credential-vaults" />);
+
+    expect(await screen.findByText('Vault one')).toBeTruthy();
+    expect(screen.queryByText('Vault overflow')).toBeNull();
+    await confirmFirstRowAction('Delete vault', 'Delete');
+
+    expect(await screen.findByText('Vault overflow')).toBeTruthy();
+    expect(screen.queryByText('Vault one')).toBeNull();
+  });
+
+  test('shows the next memory store after deleting one when more than a page exists', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/memory-stores');
+    const api = mockManagedResourceApi();
+    appendRowPastPage(api.resources.memoryStores, (index, hidden) => ({
+      ...api.resources.memoryStores[0],
+      id: `memstore_extra_${index}`,
+      name: hidden ? 'Memory overflow' : `Memory extra ${index}`,
+    }));
+    render(<ManagedAgentsPage section="memory-stores" />);
+
+    expect(await screen.findByText('Memory one')).toBeTruthy();
+    expect(screen.queryByText('Memory overflow')).toBeNull();
+    await confirmFirstRowAction('Delete memory store', 'Delete');
+
+    expect(await screen.findByText('Memory overflow')).toBeTruthy();
+    expect(screen.queryByText('Memory one')).toBeNull();
+  });
+
   test('uses the shared delete confirmation dialog on environment detail pages', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     mockManagedResourceApi();
@@ -2116,19 +3487,14 @@ export function registerManagedAgentsResourceTests() {
       'header',
     ) as HTMLElement;
     expect(within(detailHeader).getByText('Cloud')).toBeTruthy();
-    expect(within(detailHeader).getByText('Active').className).toContain('status-success');
+    expect(within(detailHeader).queryByText('Active')).toBeNull();
     const breadcrumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
     expect(breadcrumb.dataset.slot).toBe('breadcrumb');
     expect(within(breadcrumb).getByRole('link', { name: 'Environments' }).getAttribute('href')).toBe(
       '/workspaces/default/environments',
     );
     expect(breadcrumb.querySelector('[data-slot="breadcrumb-page"]')?.textContent).toBe('Environment one');
-    const overviewSection = screen.getByRole('heading', { name: 'Overview' }).closest('section');
-    const overviewCard = overviewSection?.querySelector('[data-slot="card"]') as HTMLElement | null;
-    expect(overviewCard).toBeTruthy();
-    const overviewGrid = overviewCard?.querySelector('dl') as HTMLElement | null;
-    expect(overviewGrid?.className).toContain('bg-border');
-    expect(overviewGrid?.className.includes('bg-secondary')).toBe(false);
+    expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     const detailActionMenu = screen
       .getByRole('menuitem', { name: 'Archive' })
@@ -2137,38 +3503,27 @@ export function registerManagedAgentsResourceTests() {
     expect(detailActionMenu?.className.includes('bg-secondary')).toBe(false);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
-    const deleteDialog = await screen.findByRole('alertdialog', { name: /Delete environment/i });
-    expect(deleteDialog.textContent).toContain('Environment one will be permanently removed from this workspace.');
+    const deleteDialog = await screen.findByRole('alertdialog', { name: /Delete.*environment/i });
+    expect(deleteDialog.textContent).toContain(
+      'This will permanently delete the selected environments. This action cannot be undone.',
+    );
     fireEvent.click(within(deleteDialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete environment/i })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete.*environment/i })).toBeNull());
   });
 
-  test('uses shared card chrome for environment inline editor sections', async () => {
+  test('groups environment inline editor sections without nested cards', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     mockManagedResourceApi();
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-
-    const networkingSection = screen.getByRole('heading', { name: 'Networking' }).closest('section');
-    const packagesSection = screen.getByRole('heading', { name: 'Packages' }).closest('section');
-    const metadataSection = screen.getByRole('heading', { name: 'Metadata' }).closest('section');
-
-    const networkingCard = networkingSection?.querySelector('[data-slot="card"]') as HTMLElement | null;
-    const packagesCard = packagesSection?.querySelector('[data-slot="card"]') as HTMLElement | null;
-    const metadataCard = metadataSection?.querySelector('[data-slot="card"]') as HTMLElement | null;
-
-    expect(networkingCard).toBeTruthy();
-    expect(networkingCard?.className).toContain('bg-card');
-    expect(packagesCard).toBeTruthy();
-    expect(packagesCard?.className).toContain('bg-card');
-    expect(metadataCard).toBeTruthy();
-    expect(metadataCard?.className).toContain('bg-card');
-
-    expect(screen.getByRole('combobox', { name: 'Type' }).className).not.toContain('bg-secondary');
-    expect(screen.getByRole('combobox', { name: 'Package manager' }).className).not.toContain('bg-secondary');
-    expect(screen.getByRole('textbox', { name: 'Package value 1' }).className).not.toContain('bg-secondary');
+    for (const name of ['General', 'Networking', 'Packages', 'Metadata']) {
+      const section = screen.getByRole('heading', { name }).closest('section');
+      expect(section).toBeTruthy();
+      expect(section?.querySelector('[data-slot="card"]')).toBeNull();
+    }
+    expect(screen.getByRole('radiogroup', { name: 'Network access' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Remove httpx==1.0.0' })).toBeTruthy();
     expect(screen.getByRole('textbox', { name: 'Metadata key 1' }).className).not.toContain('bg-secondary');
     expect(screen.getByRole('textbox', { name: 'Metadata value 1' }).className).not.toContain('bg-secondary');
   });
@@ -2181,7 +3536,7 @@ export function registerManagedAgentsResourceTests() {
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '环境' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '概览' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '基本信息' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '网络访问' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '软件包' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '元数据' })).toBeTruthy();
@@ -2210,13 +3565,15 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    const nameInput = screen.getByRole('textbox', { name: 'Environment name' });
+    const nameInput = screen.getByRole('textbox', { name: 'Name' });
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
     fireEvent.change(nameInput, { target: { value: 'Environment Updated' } });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
-      target: { value: 'httpx==2.0.0' },
-    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Python packages' }));
+    const packageInput = screen.getByRole('textbox', { name: 'Python packages to add' });
+    fireEvent.change(packageInput, { target: { value: 'httpx==2.0.0' } });
+    fireEvent.keyDown(packageInput, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Python packages to add' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Remove httpx==1.0.0' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'Team' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), { target: { value: 'Runtime' } });
     const addMetadataButton = screen.getByRole('button', { name: 'Add metadata entry' });
@@ -2225,9 +3582,9 @@ export function registerManagedAgentsResourceTests() {
     }
     expect((addMetadataButton as HTMLButtonElement).disabled).toBe(true);
 
-    const form = screen.getByRole('button', { name: 'Save changes' }).closest('form') as HTMLFormElement;
+    const form = screen.getByRole('button', { name: 'Save' }).closest('form') as HTMLFormElement;
     fireEvent.submit(form);
-    expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Discard' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.submit(form);
     expect(await screen.findByRole('heading', { name: 'Environment Updated' })).toBeTruthy();
     const updateRequests = api.requests.filter(
@@ -2240,7 +3597,7 @@ export function registerManagedAgentsResourceTests() {
       networking: { type: 'unrestricted' },
       packages: { pip: ['httpx==2.0.0'] },
     });
-    expect(screen.getAllByText('Environment updated')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     expect(window.dispatchEvent(new window.Event('beforeunload', { cancelable: true }))).toBe(true);
   });
 
@@ -2250,12 +3607,11 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'Team' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), { target: { value: 'Runtime' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Remove metadata row 1' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Owner' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByRole('heading', { name: 'Metadata' })).toBeTruthy();
     const updateRequest = api.requests.find(
@@ -2263,8 +3619,14 @@ export function registerManagedAgentsResourceTests() {
     );
     expect(updateRequest?.body?.metadata).toEqual({ Owner: null, Team: 'Runtime' });
     const metadataSection = screen.getByRole('heading', { name: 'Metadata' }).closest('section');
-    expect(metadataSection?.textContent).toContain('Team');
-    expect(metadataSection?.textContent).toContain('Runtime');
+    expect(
+      (within(metadataSection as HTMLElement).getByRole('textbox', { name: 'Metadata key 1' }) as HTMLInputElement)
+        .value,
+    ).toBe('Team');
+    expect(
+      (within(metadataSection as HTMLElement).getByRole('textbox', { name: 'Metadata value 1' }) as HTMLInputElement)
+        .value,
+    ).toBe('Runtime');
     expect(metadataSection?.textContent).not.toContain('Owner');
     expect(metadataSection?.textContent).not.toContain('Platform');
   });
@@ -2279,11 +3641,10 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
       target: { value: 'Environment with flag' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByRole('heading', { name: 'Environment with flag' })).toBeTruthy();
     const updateRequest = api.requests.find(
@@ -2292,7 +3653,10 @@ export function registerManagedAgentsResourceTests() {
     expect(updateRequest?.body?.metadata).toEqual({});
     expect(api.resources.environments[0]?.metadata).toEqual({ Flag: '', Owner: 'Platform' });
     const metadataSection = screen.getByRole('heading', { name: 'Metadata' }).closest('section');
-    expect(metadataSection?.textContent).toContain('Flag');
+    expect(
+      (within(metadataSection as HTMLElement).getByRole('textbox', { name: 'Metadata key 1' }) as HTMLInputElement)
+        .value,
+    ).toBe('Flag');
   });
 
   test('preserves Metadata key whitespace as part of PATCH identity', async () => {
@@ -2305,12 +3669,11 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 1' }), { target: { value: 'updated' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'FOO' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), { target: { value: 'right' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByRole('heading', { name: 'Metadata' })).toBeTruthy();
     const updateRequest = api.requests.find(
@@ -2320,24 +3683,20 @@ export function registerManagedAgentsResourceTests() {
     expect(api.resources.environments[0]?.metadata).toEqual({ ' FOO': 'updated', FOO: 'right' });
   });
 
-  test('allows payload-equivalent Environment edits to close without confirmation', async () => {
+  test('allows payload-equivalent Environment edits to navigate without confirmation', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     mockManagedResourceApi();
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    const packageInput = screen.getByRole('textbox', { name: 'Package value 1' }) as HTMLInputElement;
-    fireEvent.change(packageInput, { target: { value: `  ${packageInput.value}  ` } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add package' }));
+    const nameInput = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: `  ${nameInput.value}  ` } });
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    fireEvent.click(screen.getByRole('link', { name: 'Environments' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/environments'));
     expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
+    expect(await screen.findByText('Environment one')).toBeTruthy();
   });
 
   test('exits environment editing after archiving from the detail page', async () => {
@@ -2346,8 +3705,7 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
       target: { value: 'Environment changed' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
@@ -2364,8 +3722,8 @@ export function registerManagedAgentsResourceTests() {
         'This environment is read-only. Its configuration and work queue remain available for reference.',
       ),
     ).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Edit' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    expect((screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement).readOnly).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
   });
 
   test('renders archived environments as localized read-only details', async () => {
@@ -2379,7 +3737,7 @@ export function registerManagedAgentsResourceTests() {
     renderManagedAgentsPage('environments', 'zh-CN');
 
     expect(await screen.findByText('此环境为只读状态。其配置和工作队列仍可供查看。')).toBeTruthy();
-    expect((screen.getByRole('button', { name: '编辑' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('textbox', { name: '名称' }) as HTMLInputElement).readOnly).toBe(true);
     expect(screen.getByRole('heading', { name: '网络访问' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '软件包' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '元数据' })).toBeTruthy();
@@ -2391,7 +3749,7 @@ export function registerManagedAgentsResourceTests() {
       'true',
     );
     fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
-    const deleteDialog = await screen.findByRole('alertdialog', { name: /删除环境/ });
+    const deleteDialog = await screen.findByRole('alertdialog', { name: /删除.*环境/ });
     fireEvent.click(within(deleteDialog).getByRole('button', { name: '删除' }));
     await waitFor(() =>
       expect(
@@ -2402,44 +3760,44 @@ export function registerManagedAgentsResourceTests() {
     );
   });
 
-  test('closes an environment creation dialog without confirmation for payload-equivalent description whitespace', async () => {
+  test('leaves environment creation without confirmation for payload-equivalent description whitespace', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments');
     mockManagedResourceApi();
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create environment' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Description' }), { target: { value: '   ' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Create environment' }));
+    await screen.findByRole('heading', { name: 'Create environment' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Description (optional)' }), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
+    await waitFor(() => expect(window.location.pathname).toBe('/workspaces/default/environments'));
     expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create environment' })).toBeNull());
+    expect(await screen.findByText('Environment one')).toBeTruthy();
   });
 
-  test('keeps environment creation fields and default payload unchanged in Chinese', async () => {
+  test('localizes environment creation and submits its default network policy only once', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments');
     const api = mockManagedResourceApi();
     renderManagedAgentsPage('environments', 'zh-CN');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
     expect(screen.getAllByText('云端').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('活跃').length).toBeGreaterThan(0);
-    expect(document.body.textContent).toContain('现在');
-    fireEvent.click(screen.getByRole('button', { name: '创建环境' }));
-    const dialog = screen.getByRole('dialog', { name: '创建环境' });
-    expect(within(dialog).getByText('创建可供 Agent 工具复用的云端容器模板。')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '更新时间' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('link', { name: '创建环境' }));
+    await screen.findByRole('heading', { name: '创建环境' });
+    const dialog = screen.getByRole('button', { name: '创建环境' }).closest('form') as HTMLFormElement;
     fireEvent.change(within(dialog).getByRole('textbox', { name: '名称' }), { target: { value: '中文环境' } });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: '描述' }), { target: { value: '用于测试' } });
-    expect(within(dialog).getByRole('textbox', { name: '托管类型' })).toBeTruthy();
-    expect(within(dialog).queryByText('网络访问')).toBeNull();
-    expect(within(dialog).queryByText('软件包')).toBeNull();
-    expect(within(dialog).queryByText('元数据')).toBeNull();
+    fireEvent.change(within(dialog).getByRole('textbox', { name: '描述 （可选）' }), { target: { value: '用于测试' } });
+    expect(within(dialog).getByText('云端')).toBeTruthy();
+    expect(within(dialog).getByRole('heading', { name: '网络访问' })).toBeTruthy();
+    expect(within(dialog).getByRole('heading', { name: '软件包' })).toBeTruthy();
+    expect(within(dialog).getByRole('heading', { name: '元数据' })).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
     const discardDialog = await screen.findByRole('alertdialog', { name: '放弃未保存的更改？' });
     fireEvent.click(within(discardDialog).getByRole('button', { name: '继续编辑' }));
 
-    const form = within(dialog).getByRole('button', { name: '创建' }).closest('form') as HTMLFormElement;
+    const form = within(dialog).getByRole('button', { name: '创建环境' }).closest('form') as HTMLFormElement;
     fireEvent.submit(form);
     fireEvent.submit(form);
     await waitFor(() =>
@@ -2451,7 +3809,6 @@ export function registerManagedAgentsResourceTests() {
     expect(request?.body).toMatchObject({
       name: '中文环境',
       description: '用于测试',
-      scope: 'organization',
       metadata: {},
       config: {
         type: 'cloud',
@@ -2495,11 +3852,13 @@ export function registerManagedAgentsResourceTests() {
     expect(within(row).getAllByRole('cell')[2].textContent).toBe('Scheduled');
   });
 
-  test('renders the dreaming loading panel', () => {
+  test('shows dreaming as unavailable without a permanent loading claim', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/dreams');
     render(<ManagedAgentsPage section="dreams" />);
 
     expect(screen.getByRole('heading', { name: 'Dreaming' })).toBeTruthy();
-    expect(screen.getByText('Captured Dreaming assets are loading.')).toBeTruthy();
+    expect(screen.getByText('Dreaming is not connected.')).toBeTruthy();
+    expect(screen.queryByText('Captured Dreaming assets are loading.')).toBeNull();
+    expect(screen.queryByRole('progressbar')).toBeNull();
   });
 }

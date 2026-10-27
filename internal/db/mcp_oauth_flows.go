@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 type MCPOAuthFlow struct {
@@ -26,22 +28,27 @@ type MCPOAuthFlow struct {
 	Resource                  string
 	Scope                     string
 	ClientID                  string
-	ClientSecret              string
+	ClientCredentialSource    string
 	TokenEndpointAuthMethod   string
-	CodeVerifier              string
 	CodeChallengeMethod       string
-	Status                    string
-	CredentialExternalID      string
-	ErrorCode                 string
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
-	ExpiresAt                 time.Time
-	CompletedAt               *time.Time
+	// SecretEnvelope holds sealed client_secret (when source=sealed) and code_verifier.
+	SecretEnvelope       *secrets.Envelope
+	Status               string
+	CredentialExternalID string
+	ErrorCode            string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	ExpiresAt            time.Time
+	CompletedAt          *time.Time
 }
 
 func (d *DB) CreateMCPOAuthFlow(ctx context.Context, flow MCPOAuthFlow) (MCPOAuthFlow, error) {
 	mapper := NewMCPOAuthFlowMapper(d.mapperDB)
-	row, err := mapper.Insert(ctx, mcpOAuthFlowInsertParams(flow))
+	params, err := mcpOAuthFlowInsertParams(flow)
+	if err != nil {
+		return MCPOAuthFlow{}, err
+	}
+	row, err := mapper.Insert(ctx, params)
 	if err != nil {
 		return MCPOAuthFlow{}, err
 	}
@@ -81,7 +88,11 @@ func (d *DB) FailMCPOAuthFlow(ctx context.Context, externalID, errorCode string,
 	return nil
 }
 
-func mcpOAuthFlowInsertParams(flow MCPOAuthFlow) insertMCPOAuthFlowParams {
+func mcpOAuthFlowInsertParams(flow MCPOAuthFlow) (insertMCPOAuthFlowParams, error) {
+	if err := requireCompleteSecretEnvelope(flow.SecretEnvelope); err != nil {
+		return insertMCPOAuthFlowParams{}, err
+	}
+	ciphertext, nonce, wrappedDEK, formatVersion, keyProvider, keyVersion := vaultCredentialSecretColumns(flow.SecretEnvelope)
 	return insertMCPOAuthFlowParams{
 		UUID:                      flow.UUID,
 		ExternalID:                flow.ExternalID,
@@ -103,14 +114,19 @@ func mcpOAuthFlowInsertParams(flow MCPOAuthFlow) insertMCPOAuthFlowParams {
 		Resource:                  flow.Resource,
 		Scope:                     flow.Scope,
 		ClientID:                  flow.ClientID,
-		ClientSecret:              flow.ClientSecret,
+		ClientCredentialSource:    flow.ClientCredentialSource,
 		TokenEndpointAuthMethod:   flow.TokenEndpointAuthMethod,
-		CodeVerifier:              flow.CodeVerifier,
 		CodeChallengeMethod:       flow.CodeChallengeMethod,
+		Ciphertext:                ciphertext,
+		Nonce:                     nonce,
+		WrappedDEK:                wrappedDEK,
+		FormatVersion:             formatVersion,
+		KeyProvider:               keyProvider,
+		KeyVersion:                keyVersion,
 		Status:                    flow.Status,
 		CreatedAt:                 flow.CreatedAt,
 		ExpiresAt:                 flow.ExpiresAt,
-	}
+	}, nil
 }
 
 func (r mcpOAuthFlowRow) flow() MCPOAuthFlow {
@@ -118,7 +134,7 @@ func (r mcpOAuthFlowRow) flow() MCPOAuthFlow {
 	if r.UserUUID.Valid {
 		userUUID = r.UserUUID.String
 	}
-	return MCPOAuthFlow{
+	flow := MCPOAuthFlow{
 		UUID:                      r.UUID,
 		ExternalID:                r.ExternalID,
 		OrganizationUUID:          r.OrganizationUUID,
@@ -139,9 +155,8 @@ func (r mcpOAuthFlowRow) flow() MCPOAuthFlow {
 		Resource:                  r.Resource,
 		Scope:                     r.Scope,
 		ClientID:                  r.ClientID,
-		ClientSecret:              r.ClientSecret,
+		ClientCredentialSource:    r.ClientCredentialSource,
 		TokenEndpointAuthMethod:   r.TokenEndpointAuthMethod,
-		CodeVerifier:              r.CodeVerifier,
 		CodeChallengeMethod:       r.CodeChallengeMethod,
 		Status:                    r.Status,
 		CredentialExternalID:      r.CredentialExternalID,
@@ -151,4 +166,30 @@ func (r mcpOAuthFlowRow) flow() MCPOAuthFlow {
 		ExpiresAt:                 r.ExpiresAt,
 		CompletedAt:               r.CompletedAt,
 	}
+	if len(r.Ciphertext) > 0 || len(r.Nonce) > 0 || len(r.WrappedDEK) > 0 ||
+		(r.FormatVersion.Valid && r.FormatVersion.Int32 != 0) ||
+		(r.KeyProvider.Valid && r.KeyProvider.String != "") ||
+		(r.KeyVersion.Valid && r.KeyVersion.Int64 != 0) {
+		formatVersion := 0
+		if r.FormatVersion.Valid {
+			formatVersion = int(r.FormatVersion.Int32)
+		}
+		keyProvider := ""
+		if r.KeyProvider.Valid {
+			keyProvider = r.KeyProvider.String
+		}
+		keyVersion := int64(0)
+		if r.KeyVersion.Valid {
+			keyVersion = r.KeyVersion.Int64
+		}
+		flow.SecretEnvelope = &secrets.Envelope{
+			Ciphertext:    append([]byte(nil), r.Ciphertext...),
+			Nonce:         append([]byte(nil), r.Nonce...),
+			WrappedDEK:    append([]byte(nil), r.WrappedDEK...),
+			FormatVersion: formatVersion,
+			KeyProvider:   keyProvider,
+			KeyVersion:    keyVersion,
+		}
+	}
+	return flow
 }

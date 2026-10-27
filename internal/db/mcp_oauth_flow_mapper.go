@@ -29,10 +29,15 @@ type mcpOAuthFlowRow struct {
 	Resource                  string         `db:"resource"`
 	Scope                     string         `db:"scope"`
 	ClientID                  string         `db:"client_id"`
-	ClientSecret              string         `db:"client_secret"`
+	ClientCredentialSource    string         `db:"client_credential_source"`
 	TokenEndpointAuthMethod   string         `db:"token_endpoint_auth_method"`
-	CodeVerifier              string         `db:"code_verifier"`
 	CodeChallengeMethod       string         `db:"code_challenge_method"`
+	Ciphertext                []byte         `db:"ciphertext"`
+	Nonce                     []byte         `db:"nonce"`
+	WrappedDEK                []byte         `db:"wrapped_dek"`
+	FormatVersion             sql.NullInt32  `db:"format_version"`
+	KeyProvider               sql.NullString `db:"key_provider"`
+	KeyVersion                sql.NullInt64  `db:"key_version"`
 	Status                    string         `db:"status"`
 	CredentialExternalID      string         `db:"credential_external_id"`
 	ErrorCode                 string         `db:"error_code"`
@@ -63,10 +68,15 @@ type insertMCPOAuthFlowParams struct {
 	Resource                  string
 	Scope                     string
 	ClientID                  string
-	ClientSecret              string
+	ClientCredentialSource    string
 	TokenEndpointAuthMethod   string
-	CodeVerifier              string
 	CodeChallengeMethod       string
+	Ciphertext                []byte
+	Nonce                     []byte
+	WrappedDEK                []byte
+	FormatVersion             *int32
+	KeyProvider               *string
+	KeyVersion                *int64
 	Status                    string
 	CreatedAt                 time.Time
 	ExpiresAt                 time.Time

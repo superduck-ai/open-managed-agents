@@ -22,8 +22,8 @@ API 密钥请求必须携带 `anthropic-version: 2023-06-01`，并在 `anthropic
 - 字符串形式的 Agent 引用固定到最新版本；对象形式必须包含 `type: "agent"` 和 `id`，省略 `version` 时同样固定到最新版本。
 - 元数据最多包含 16 个键；每个键最多 64 个字符，每个值最多 512 个字符。
 - `user.message.content` 是至少包含一个受支持内容块的数组；`system.message` 只接受至少一个文本块，最多出现一次，并且必须作为最后一个事件紧跟在 `user.message` 之后；`user.define_outcome.rubric` 必须是文件或文本评分标准对象。
-- GitHub 资源必须提供只写的 `authorization_token`；Memory Store 的 `instructions` 必须是最多 4096 个字符的字符串。
-- File 资源响应会省略内部字段 `source`，并把 `mount_path` 统一映射到 `/uploads` 命名空间；请求未传 `mount_path` 时默认使用 `/uploads/<filename>`（文件名缺失时回退到 `file_id`），显式传入的挂载路径也映射为 `/uploads/<相对路径>`，与 Session 资源响应一致。
+- GitHub 资源必须提供只写的 `authorization_token`；Memory Store 的 `instructions` 必须是最多 4096 个 Unicode 码点的字符串，超限返回 `400` 且不截断。
+- File 资源响应会省略内部字段 `source`，并把 `mount_path` 统一映射到 `/uploads` 命名空间；请求未传 `mount_path` 时默认使用 `/uploads/<file_id>`，对应 Sandbox 路径 `/mnt/session/uploads/<file_id>`，显式传入的挂载路径也映射为 `/uploads/<相对路径>`，与 Session 资源响应一致。
 - 创建或更新 Deployment 时引用不存在的 File 返回 `404 not_found_error`。
 - Deployment 更新请求中的元数据使用字符串（包括空字符串）新增或覆盖键，使用键级别的 `null` 删除键。
 - Deployment 更新请求拒绝整个字段为 `metadata: null`；省略 `metadata` 时保留原值，传入 `{}` 时不做修改。
@@ -51,39 +51,61 @@ API 密钥请求必须携带 `anthropic-version: 2023-06-01`，并在 `anthropic
 
 公开合同没有说明的模糊行为保持不变，包括 `limit=0`、`schedule:null`、默认列表顺序，以及未记录的错误状态和幂等行为。
 
+## Agent 归档的 Webhook 边界
+
+`ArchiveAgentTx` 和 `Store.ArchiveAgent` 返回资源、changed 与 error。Agent 的条件归档只修改首次归档的记录，重复归档不刷新 Agent 时间戳；未命中时在同一 Yourbatis 事务内按 workspace 重读。无论 Agent 是否已归档，都继续保留既有 Deployment 级联及 River schedule 清理流程。任一后续步骤失败会整体回滚，Store 不返回有效 changed。
+
+Agent Handler 仅在 Store 整体提交成功且 Agent 实际改变时发送 `agent.archived`，不额外发送 updated；Store 在同一事务成功后，为实际归档的 Deployment 分别发送 `deployment.archived`。通知入队在事务之外，失败只记录日志。Agent 归档产生的一组 Deployment 通知共用 5 秒期限，定时 occurrence 的 Run、Deployment 与 Session 通知也共用 5 秒期限（包含租户信息查询）；超时停止剩余通知，不能把已提交业务重新报告为失败。`tests/agent_webhooks_test.go` 覆盖 Deployment 更新及 River schedule 删除故障回滚、并发归档、带计划/不带计划资源、实际通知及 SDK 验签。
+
+## 创建 Session 的 Webhook 通知
+
+手动和定时运行都由 `Deployment Store` 在现有事务提交成功、实际创建 Session 后发送 `session.status_idled`。共享 Enqueuer 在 River worker 启动前完成注入，按 Session 的 workspace 选择订阅；HTTP Handler 不再自行发送创建通知。
+
+创建主线程不产生 `session.thread_created` / `session.thread_idled`，初始 `user.define_outcome` 不产生 `session.outcome_evaluation_ended`；真实子线程及评估结束仍走 Session 事件入口。失败运行、事务回滚、归档分支、过期或重复定时任务不新增通知；独立手动运行各自通知。Session 创建只入队规范的 `session.status_idled`；全局兼容的 `session.created` / `session.pending` Webhook 入队已移除，Session 内部事件流不受影响。
+
+Deployment / Deployment Run 的资源通知见下文，沿用既有公开响应和调度事务。通知准备或入队失败不改变已成功提交的业务结果，业务写入与 Webhook 入队尚未原子化。`tests/deployment_webhooks_test.go` 使用真实 River worker 验证定时创建、重复 occurrence 与 SDK 验签；归档分支另通过 Store occurrence 入口验证。
+
 ## Scheduled Deployment 执行
 
-OMA 使用 River `v0.42.0` 持久执行 schedule。River 官方 migrator 在应用 PostgreSQL database 的 `public` schema 中创建并升级 `river_job`、`river_queue`、`river_leader`、`river_notification` 和 `river_migration`；应用表仍由 Goose 管理。`river_migration` 持久记录已应用版本，进程启动只检查并应用缺失版本，不会重建 River 表。`cmd/migrate up` 和开发环境自动迁移会使用同一个数据库连接配置，依次推进两套 migration。River 内部表的 DDL 不复制到应用 migration，避免升级 River 时出现两套 schema 定义。
+OMA 使用 River `v0.46.0`（当前替换为 `superduck-ai/river v0.46.0-oma-v0.0.1`）持久执行 schedule。River 官方 migrator 在应用 PostgreSQL database 的 `public` schema 中创建并升级 `river_job`、`river_periodic_job`、`river_queue`、`river_leader`、`river_notification` 和 `river_migration`；应用表仍由 Goose 管理。`river_migration` 持久记录已应用版本，进程启动只检查并应用缺失版本，不会重建 River 表。`cmd/migrate up` 和开发环境自动迁移会使用同一个数据库连接配置，依次推进两套 migration。River 内部表的 DDL 不复制到应用 migration，避免升级 River 时出现两套 schema 定义。
 
 Cron 统一由 `github.com/robfig/cron/v3` 解析和计算：
 
-- Deployment schedule 使用五段 POSIX Cron 和必填的 IANA timezone；由 `robfig/cron/v3` 解析。DOW 接受 `0-7`，`7` 在解析前映射为 Sunday（`0`）。`L/W/#/?/@` 等扩展语法被拒绝；解析失败时返回参数错误。
+- Deployment schedule 使用五段 POSIX Cron 和必填的 IANA timezone；由 `robfig/cron/v3` 解析。DOW 接受 `0-7`，`7` 在解析前映射为 Sunday（`0`）。`L/W/#/?/@` 等扩展语法被拒绝；解析失败或 `Next` 返回零值（无未来执行时刻）时，创建和更新请求返回 HTTP 400 参数错误。
 - `upcoming_runs_at` 返回最多五个名义 UTC 时刻，不再使用 366 天扫描上限，因此闰日计划有效。
 - spring-forward 不存在的墙上时刻不触发；fall-back 重复的墙上时刻触发两次。
 - River Job 插入时把 Cron 名义 occurrence 写入 Job args；不增加私有 jitter 算法。
 
-每个 active 且未归档、schedule 非空的 Deployment 对应一个 River Periodic Job，Periodic Job ID 使用 Deployment ID。Deployment 表是配置真源，只持久化 `schedule`，不保存应用自行推进的下一次游标或额外调度版本。Job 携带注册时的 schedule 快照；worker 读取 Deployment 后以当时的执行配置作为本次 occurrence 快照，最终事务锁行后确认 Deployment 仍为 active、schedule 和执行配置均未变化。
+每个 active 且未归档、schedule 非空的 Deployment 对应 `river_periodic_job` 中一个 Durable Periodic Job，ID 使用 Deployment ID。Deployment 表是配置真源，River 持久化并推进 `next_run_at`；应用不另建调度游标或版本表。Job 携带注册时的 schedule 快照；worker 读取 Deployment 后以当时的执行配置作为本次 occurrence 快照，最终事务锁行后确认 Deployment 仍为 active、schedule 和执行配置均未变化。
 
-每个应用实例启动时从 Deployment 表加载 Periodic Jobs，并每 10 秒从数据库同步一次 registry。这样所有执行实例最终持有相同配置，进程重启不会丢失 schedule，pause/archive/清空 schedule 会移除 Periodic Job，unpause 或修改 schedule 会重新注册。同步完成前已经投递的 Job 会由 worker 根据当前状态和 schedule 快照跳过。单条确定性的存量 schedule 错误记录后跳过，数据库不可用等全局基础设施错误仍使启动失败。
+River client 和 migrator 由 `internal/riverjobs` 组装。Deployment 和 sandbox_lifecycle 共用一个 client 和现有连接池。启动先创建 `deployments.Store` 并注册两类 worker，再创建 client，依次调用 `lifecycle.Configure` 与 `store.Configure`，最后启动 client 和 HTTP server。`Store.Configure(client)` 只注入共享 client，不访问数据库；HTTP 与 worker 启动前完成注入，未配置时 Store 拒绝写操作。沙箱的 `lifecycle.Configure` 仍注册全集群固定的一条 sweep 调度。
 
-River 的 leader election 保证只有 leader 根据 Cron 推进并投递 Periodic Job，应用不计算、持久化或插入“下一条 Job”。插入 Periodic Job 时把当时的 Cron occurrence 写入 Job args；worker 只用这个字段作为名义时刻。River 重试会改写 `river_job.scheduled_at` 为下次重试时间，不能当 occurrence 用。暂停或停机期间不补跑历史 occurrence，恢复注册后直接等待 Cron 的下一次。River 开源 Periodic Jobs 的调度状态主要在 leader 内存中，官方不承诺强持久性，leader 切换的极短窗口可能跳过一次 occurrence；需要严格不漏的调度时应采用 River Pro durable periodic jobs，而不是在应用层恢复一套游标链。
+`internal/db` 不依赖 River，也不持有调度 client 或 logger。它保留业务 Mapper、Get/List 方法和事务内写入方法：资源层通过 `DB.DeploymentTransaction` 获取当前 `*yourbatis.Tx`，传给 DB 的 `...Tx` 写入方法；River 直接使用该事务的 `SQLTx()`，提交和回滚仍统一由 Yourbatis 管理，不另建事务包装类型。事务句柄不暴露 Yourbatis DB，不得逃逸到回调外或由调用方提交、回滚。`deployments.Store` 负责 Create/Update/Pause/Unpause/Archive、定时执行和 Agent 归档的调度同步。Agent handler 只调用 `Store.ArchiveAgent`，关联 Deployment 的遍历与调度删除由 Store 在同一事务内完成，不注册事务 hook。`internal/deploymentjobs` 保留 cron、Args 和 UpsertOpts 合同。
+
+`UpdateDeployment` 在事务内锁定业务行并返回 schedule 是否变化；无关字段更新不调用 River。启动时不比较已有 River 记录的配置，也不覆盖它的暂停状态、选项或调度游标；MaxAttempts/Priority 使用 River 默认值。
+
+创建或修改 schedule，以及 pause、unpause、archive、自动暂停和根 Agent 归档时，Deployment 状态与 Durable Periodic Job 在同一个 PostgreSQL 事务中写入或删除；River 写入失败会回滚业务状态。
+
+Deployment 无历史调度迁移需求，启动不扫描或补注册 Deployment 调度。新调度由 HTTP 写入事务创建；已有记录的恢复、到期投递和 `next_run_at` 推进由 River 负责。
+
+River 的 leader election 保证多实例中只有 leader 原子推进 Durable Periodic Job 并投递 occurrence，leader 退出后其他实例接管同一条持久化记录。插入 Job 时把当时的 Cron occurrence 写入 Job args；worker 只用这个字段作为名义时刻。River 重试会改写 `river_job.scheduled_at` 为下次重试时间，不能当 occurrence 用。全部实例停机或 leader 切换导致 schedule overdue 时，River 最多补一个 occurrence，并把 `next_run_at` 直接推进到当前时间之后，不逐条重放所有错过时刻。pause 会删除 durable row；unpause 在同一事务内锁行，仅在 `paused → active` 时注册恢复后的下一个 Cron occurrence，因此不补暂停期间的任务。对已经 active 的 Deployment 重复 unpause 返回当前记录，不写 River，也不重置已到期的调度游标。
 
 ```mermaid
 sequenceDiagram
     participant API as Deployment API
     participant AppDB as Deployment config
-    participant Registry as River Periodic Jobs
+    participant Durable as river_periodic_job
     participant Leader as River leader
     participant Worker as Scheduled worker
 
-    API->>AppDB: 提交 schedule 或状态
-    AppDB-->>Registry: 各实例启动加载并每 10 秒同步配置
-    Leader->>Registry: 按 Cron 计算下一 occurrence
+    API->>AppDB: 事务写 Deployment
+    API->>Durable: 同一事务 upsert/delete schedule
+    Leader->>Durable: 原子领取并推进 next_run_at
     Leader->>Worker: 投递 args 中带名义 occurrence 的 Job
     Worker->>AppDB: 锁定 Deployment，校验 active 与 schedule 快照
     Worker->>AppDB: 同一事务写 Run、Session 与 Deployment 状态
 	Worker-->>Leader: 返回结果，由 River 完成或重试当前 Job
-    Note over Leader,Worker: 下一次投递继续由 River Periodic Jobs 推进
+    Note over Durable,Leader: leader 切换后继续读取同一持久化游标
 ```
 
 `deployment_runs.trigger_type` 区分 manual 与 schedule，`scheduled_at` 保存 schedule Run 的名义时刻；部分唯一索引 `(deployment_uuid, scheduled_at) WHERE trigger_type = 'schedule'` 是 River at-least-once 下的最终幂等边界。API 的 `trigger_context` 由这两列生成，数据库不重复保存同义 JSON。Run 只表示 Session 创建成功或失败，不跟踪 Session 后续执行。
@@ -99,9 +121,31 @@ sequenceDiagram
 
 组织级最多保留 1,000 个未归档且 schedule 非空的 Deployment。创建以及从无 schedule 更新为有 schedule 时进行 best-effort 计数检查；并发请求可能短暂越过限制，不额外引入 organization 锁或配额计数器。
 
+Deployment/River 的可重复验收入口为 `just verify-be deployment doctor`，随后执行 `lifecycle`、`retry`、`idempotency`、`restart`。它们通过真实 PostgreSQL/River 的异步执行验证 API Run、事务副作用、自动退避、耗尽终态、依赖失败暂停、重复 occurrence 与旧调度拒绝；重启场景在业务提交前后 SIGKILL 独立 River 进程，再等待真实 rescuer 恢复。重启测试显式缩短 timeout/rescue 至 10s/15s，不等待生产默认一小时，也不把 Session 后续模型执行算作 Deployment Run 的终态。完整场景和边界见 [Deployment 功能地图](../../../.agents/skills/verify-be/features/deployment.md)。
+
 主要参考资料：
 
 - <https://platform.claude.com/docs/en/api/beta/deployments>
 - <https://platform.claude.com/docs/en/api/beta/deployment_runs>
 - <https://platform.claude.com/docs/en/managed-agents/scheduled-deployments>
 - <https://riverqueue.com/docs/periodic-jobs>
+
+
+## Deployment Webhook 资源通知
+
+共享 Store 在 Deployment/River 计划整体事务成功后发送 created、updated、paused、unpaused、archived；具体触发条件与 38 项目录（含三项预留）见 [Webhook 设计](../webhook-subscriptions.md)。Update 在既有行锁内比较实际配置，只在属性改变时写入；无变化更新不改 updated_at。替换 resources 时，同一位置的 Git token 若与已保存凭据相同则复用已有密文，避免随机加密导致误判变更；真实替换或移除凭据仍产生 updated。直接 Archive 为条件写入并返回 changed，重复归档不改时间戳但不跳过原计划清理。Pause 在锁内识别 active → paused；重复同原因暂停不写入，修改已有暂停原因仍保留但不重复发 paused。Unpause 使用已有 resumed 标记。
+
+Agent 归档仍在同一事务处理 Agent、所有实际归档的 Deployment 及 River 计划，事务成功后分别通知；已归档 Agent 仍执行原有下游级联。定时归档和自动暂停沿用 occurrence 幂等检查，只有成功事务通知。无计划 Deployment 同样支持资源事件；Run 和 last_run_at 变化不产生 deployment.updated。没有公开 Deployment 删除入口，deployment.deleted 作为可保存的预留订阅开放，但当前没有产生入口、不发送通知，归档也不发送 deleted，不为 Webhook 新增路由或数据库列。
+
+租户标识来自资源的 workspace 查询，不依赖 HTTP 请求。日志不含资源配置、secret 或初始事件内容。资源事务与 Webhook 入队仍有非原子边界，入队失败不改变已提交操作的响应。
+
+
+## 定时 Run Webhook 通知
+
+`ApplyScheduledOccurrenceTx` 返回实际插入的 Run；Store 仅在包含 Session、Run、Deployment 状态与 River 计划的整体事务成功后，连续入队 deployment_run.started 与 succeeded/failed，使用相同 Run external ID。无 Run 的归档分支返回空结果；回滚、过期与重复 occurrence 不通知。手动运行不产生 Run Webhook。
+
+维持一次事务完成 Session 创建结果的模型，没有新的 running 状态或中间事务；started 是提交后发出的逻辑开始通知，不提供实时创建进度。succeeded 不跟踪 Session 后续模型执行，failed 仅表示已落库的业务失败，不用于数据库/进程错误；后者继续由 River 重试。payload 只有类型、Run ID、租户标识；事件不保证投递顺序，资源提交与入队仍非原子化。
+
+## Webhook 队列迁移（2026-09-29）
+
+共享 Enqueuer 在 Deployment/River 与 HTTP 生产入口启动前注入 JetStream 发布组件；Deployment 事务、Session/Run 通知时机保持不变。通知经匹配订阅 UUID 发布到独立 WorkQueue，不再写 webhook_delivery jobs。一次 Enqueue 查询/发布最长 5 秒、允许部分成功；发布失败记录日志，不将已经提交的业务重新报告失败。事务提交与发布仍非原子，迁移不引入 Deployment outbox。升级及消息边界见 [Webhook 设计](../webhook-subscriptions.md)。

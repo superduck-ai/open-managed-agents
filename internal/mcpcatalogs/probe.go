@@ -195,6 +195,30 @@ func probeError(code, message string) *ProbeError {
 	return &ProbeError{Code: code, Message: message}
 }
 
+func normalizeCatalogTools(tools []CatalogTool) ([]CatalogTool, error) {
+	if len(tools) > maxCatalogTools {
+		return nil, probeError("response_too_large", "The MCP server returned too many tools.")
+	}
+	result := make([]CatalogTool, 0, len(tools))
+	seenNames := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		name := strings.TrimSpace(tool.Name)
+		if name == "" || runeCount(name) > maxToolNameRunes {
+			return nil, probeError("invalid_response", "The MCP server returned an invalid tool name.")
+		}
+		if _, duplicate := seenNames[name]; duplicate {
+			return nil, probeError("invalid_response", "The MCP server returned duplicate tool names.")
+		}
+		seenNames[name] = struct{}{}
+		result = append(result, CatalogTool{
+			Name:        name,
+			Title:       truncateRunes(strings.TrimSpace(tool.Title), maxToolTitleRunes),
+			Description: truncateRunes(strings.TrimSpace(tool.Description), maxDescriptionRunes),
+		})
+	}
+	return result, nil
+}
+
 func runeCount(value string) int { return len([]rune(value)) }
 
 func truncateRunes(value string, max int) string {

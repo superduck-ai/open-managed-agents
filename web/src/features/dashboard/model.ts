@@ -1,8 +1,10 @@
 import type { ComponentType } from 'react';
 import { useLocation } from '@tanstack/react-router';
 import { copyText } from '@/shared/lib/clipboard';
+import { downloadApiFile } from '../../shared/api/file-download';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
-import { filesRequestHeaders, messageBatchesRequestHeaders, skillsRequestHeaders } from '../../shared/api/client';
+import { messageBatchesRequestHeaders, skillsRequestHeaders } from '../../shared/api/client';
+import { consoleResourceListLimit } from '../../shared/console-list';
 import type { useI18n } from '../../shared/i18n';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
@@ -24,6 +26,7 @@ export type FilesListResponse = {
   has_more: boolean;
   first_id?: string | null;
   last_id?: string | null;
+  total_count?: number;
 };
 
 export type FilesPageCursor = {
@@ -57,6 +60,7 @@ export type MessageBatchesListResponse = {
   has_more: boolean;
   first_id?: string | null;
   last_id?: string | null;
+  total_count?: number;
 };
 
 export type MessageBatchesPageCursor = {
@@ -89,6 +93,7 @@ export type SkillsListResponse = {
   data: ConsoleSkill[];
   has_more: boolean;
   next_page?: string | null;
+  total_count?: number;
 };
 
 export type SkillVersionsListResponse = {
@@ -106,10 +111,6 @@ export type EnrichedConsoleSkill = ConsoleSkill & {
 export type EnrichedSkillsListResponse = Omit<SkillsListResponse, 'data'> & {
   data: EnrichedConsoleSkill[];
 };
-
-const filesPageLimit = 20;
-const messageBatchesPageLimit = 20;
-const skillsPageLimit = 100;
 
 function workspaceRequestHeaders(workspaceId: string) {
   const headers = new Headers();
@@ -134,7 +135,7 @@ export function useDashboardWorkspaceScope() {
 
 export function listFiles(cursor: FilesPageCursor, workspaceId: string) {
   const params: Record<string, string | number> = {
-    limit: filesPageLimit,
+    limit: consoleResourceListLimit,
   };
   if (cursor.afterId) {
     params.after_id = cursor.afterId;
@@ -151,7 +152,7 @@ export function uploadFile(file: File, workspaceId: string) {
 
 export function listMessageBatches(cursor: MessageBatchesPageCursor, workspaceId: string) {
   const params: Record<string, string | number> = {
-    limit: messageBatchesPageLimit,
+    limit: consoleResourceListLimit,
   };
   if (cursor.afterId) {
     params.after_id = cursor.afterId;
@@ -175,7 +176,7 @@ export function cancelMessageBatch(batchId: string, workspaceId: string) {
 
 export async function listSkills(pageToken: string | undefined, workspaceId: string): Promise<SkillsListResponse> {
   const params: Record<string, string | number> = {
-    limit: skillsPageLimit,
+    limit: consoleResourceListLimit,
   };
   if (pageToken) {
     params.page = pageToken;
@@ -313,11 +314,11 @@ export function formatBatchStatus(status: string, msg?: ReturnType<typeof useI18
 export function batchStatusClass(status: string) {
   switch (status) {
     case 'ended':
-      return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+      return 'bg-[var(--success-bg)] text-[var(--success)]';
     case 'in_progress':
       return 'bg-secondary text-secondary-foreground';
     case 'canceling':
-      return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
+      return 'bg-[var(--warning-bg)] text-[var(--warning)]';
     default:
       return 'bg-secondary text-muted-foreground';
   }
@@ -334,9 +335,12 @@ export function formatBatchRequestProgress(batch: ConsoleMessageBatch) {
 export function batchRequestProgressClass(batch: ConsoleMessageBatch) {
   const totalRequests = countBatchRequests(batch.request_counts);
   if (totalRequests > 0 && batch.request_counts.succeeded === totalRequests) {
-    return 'bg-emerald-500';
+    return 'bg-[var(--success)]';
   }
-  return 'bg-destructive';
+  if (batch.request_counts.errored > 0 || batch.request_counts.expired > 0) {
+    return 'bg-destructive';
+  }
+  return 'bg-muted-foreground';
 }
 
 export function canCancelBatch(batch: ConsoleMessageBatch) {
@@ -370,7 +374,7 @@ export function formatRelativeTime(value: string, locale = 'en', lessThanMinuteL
   }).format(timestamp);
 }
 
-export function formatBatchDateTime(value?: string | null) {
+export function formatBatchDateTime(value?: string | null, locale = 'en') {
   if (!value) {
     return '-';
   }
@@ -378,7 +382,7 @@ export function formatBatchDateTime(value?: string | null) {
   if (!Number.isFinite(timestamp)) {
     return value;
   }
-  return new Intl.DateTimeFormat('en', {
+  return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     year: new Date(timestamp).getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
@@ -407,23 +411,8 @@ export function errorMessage(error: unknown) {
 
 export { copyText };
 
-export async function downloadFile(file: ConsoleFile, workspaceId: string) {
-  const response = await fetch(`/v1/files/${encodeURIComponent(file.id)}/content?beta=true`, {
-    headers: filesRequestHeaders(workspaceRequestHeaders(workspaceId)),
-    credentials: 'include',
-  });
-  if (!response.ok) {
-    throw new Error('File could not be downloaded.');
-  }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = file.filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+export function downloadFile(file: ConsoleFile, workspaceId: string) {
+  return downloadApiFile(file, workspaceId);
 }
 
 export async function downloadMessageBatchResults(batch: ConsoleMessageBatch, workspaceId: string) {

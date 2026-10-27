@@ -2,7 +2,9 @@ package codesessions
 
 import (
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +18,24 @@ func TestPublicPayloadsFromWorkerEventRejectsTypeSpecificSchemaMismatch(t *testi
 	}, json.RawMessage(`{"type":"result","uuid":"result-uuid","duration_ms":"invalid"}`))
 	if !errors.Is(err, ErrProtocol) {
 		t.Fatalf("publicPayloadsFromWorkerEvent() error = %v, want ErrProtocol", err)
+	}
+}
+
+func TestPublicPayloadsFromWorkerAssistantErrorIsDiagnostic(t *testing.T) {
+	for _, errorType := range []string{"unknown", "authentication_failed", "rate_limit"} {
+		t.Run(errorType, func(t *testing.T) {
+			raw := mustRawJSON(t, map[string]any{
+				"type": "assistant", "uuid": "assistant-error", "error": errorType,
+				"message": map[string]any{"content": []map[string]string{{"type": "text", "text": "API Error: private upstream details"}}},
+			})
+			payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{EventType: "assistant", CreatedAt: time.Now().UTC()}, raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok || len(payloads) != 0 {
+				t.Fatalf("assistant error became public content: %s", payloads)
+			}
+		})
 	}
 }
 
@@ -149,7 +169,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 			"id":   "msg_assistant_blocks",
 			"role": "assistant",
 			"content": []any{
-				map[string]any{"type": "thinking", "thinking": "plan"},
+				map[string]any{"type": "thinking", "thinking": "plan", "signature": "signature-secret"},
 				map[string]any{"type": "text", "text": "starting"},
 				map[string]any{
 					"type":  "tool_use",
@@ -167,10 +187,14 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 		t.Fatal("publicPayloadsFromWorkerEvent ok = false, want true")
 	}
 	objects := decodePublicPayloads(t, payloads)
-	if got, want := len(objects), 3; got != want {
+	if got, want := len(objects), 2; got != want {
 		t.Fatalf("payload count = %d, want %d: %#v", got, want, objects)
 	}
-	wantTypes := []string{"agent.thinking", "agent.message", "agent.tool_use"}
+	if strings.Contains(string(payloads[0]), "plan") || strings.Contains(string(payloads[0]), "signature-secret") || objects[0]["content"] != nil || objects[0]["message"] != nil {
+		t.Fatalf("thinking status exposed content: %s", payloads[0])
+	}
+
+	wantTypes := []string{"agent.thinking", "agent.message"}
 	for index, wantType := range wantTypes {
 		if objects[index]["type"] != wantType {
 			t.Fatalf("payload[%d] type = %q, want %q; payload=%#v", index, objects[index]["type"], wantType, objects[index])
@@ -184,14 +208,6 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeAssistantBlocks(t *testing.T) {
 	}
 	if got, want := objects[1]["id"], maevents.StableAssistantEventID("csev_test", "msg_assistant_blocks", 1, "agent.message"); got != want {
 		t.Fatalf("message id = %q, want %q", got, want)
-	}
-	toolPayload := objects[2]
-	if toolPayload["tool_use_id"] != "tool_translate" || toolPayload["name"] != "Agent" || toolPayload["tool_name"] != "Agent" {
-		t.Fatalf("tool payload missing tool fields: %#v", toolPayload)
-	}
-	input, ok := toolPayload["input"].(map[string]any)
-	if !ok || input["description"] != "Translate to Chinese" {
-		t.Fatalf("tool payload input = %#v", toolPayload["input"])
 	}
 }
 
@@ -358,82 +374,55 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeUserToolResults(t *testing.T) {
 	if len(toolObjects) != 1 {
 		t.Fatalf("plain tool_result payload count = %d, want 1: %#v", len(toolObjects), toolObjects)
 	}
-	if toolObjects[0]["type"] != "agent.tool_result" || toolObjects[0]["tool_use_id"] != "tool_bash" {
+	if toolObjects[0]["type"] != "agent.tool_result" || toolObjects[0]["tool_use_id"] != maevents.ToolUseEventID("csev_test", "tool_bash", "") {
 		t.Fatalf("plain tool_result mapped payload = %#v", toolObjects[0])
+	}
+	if _, ok := toolObjects[0]["raw_tool_result"]; ok {
+		t.Fatalf("plain tool_result leaked provider payload: %#v", toolObjects[0])
 	}
 	if _, ok := toolObjects[0]["from_session_thread_id"]; ok {
 		t.Fatalf("plain tool_result should not carry subagent thread id: %#v", toolObjects[0])
 	}
 }
 
-func TestPublicPayloadsFromWorkerEventMapsClaudeResultToModelSpansAndIdle(t *testing.T) {
-	createdAt := time.Date(2026, 6, 16, 1, 11, 0, 0, time.UTC)
-	payloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
-		ExternalID:     "csev_result",
-		EventType:      "result",
-		IdempotencyKey: "result_event",
-		CreatedAt:      createdAt,
-	}, mustRawJSON(t, map[string]any{
-		"type":            "result",
-		"uuid":            "result-uuid",
-		"created_at":      "2026-06-16T01:11:00Z",
-		"stop_reason":     "end_turn",
-		"duration_ms":     float64(9000),
-		"duration_api_ms": float64(12000),
-		"result":          "Done.",
-		"usage": map[string]any{
-			"input_tokens":  float64(1),
-			"output_tokens": float64(866),
-		},
-		"modelUsage": map[string]any{
-			"claude-sonnet-4-6": map[string]any{
-				"inputTokens":  float64(1),
-				"outputTokens": float64(866),
-			},
-		},
-	}))
-	if err != nil {
-		t.Fatalf("result mapping returned error: %v", err)
-	}
-	if !ok {
-		t.Fatal("result mapping ok = false, want true")
-	}
-	objects := decodePublicPayloads(t, payloads)
-	wantTypes := []string{"span.model_request_start", "span.model_request_end", "session.status_idle"}
-	if len(objects) != len(wantTypes) {
-		t.Fatalf("result payload count = %d, want %d: %#v", len(objects), len(wantTypes), objects)
-	}
-	for index, wantType := range wantTypes {
-		if objects[index]["type"] != wantType {
-			t.Fatalf("result payload[%d] type = %q, want %q: %#v", index, objects[index]["type"], wantType, objects[index])
+func TestPublicWorkerDiagnosticsDoNotBecomeMessages(t *testing.T) {
+	for _, raw := range []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"system","subtype":"hook_started"}`,
+		`{"type":"system","subtype":"hook_response","exit_code":1}`,
+	} {
+		var header workerPayloadHeader
+		if err := json.Unmarshal([]byte(raw), &header); err != nil {
+			t.Fatal(err)
 		}
+		payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: header.Type}, json.RawMessage(raw))
+		if err != nil || ok || len(payloads) != 0 {
+			t.Fatalf("diagnostic leaked: %s: %s %v", raw, payloads, err)
+		}
+		childPayloads, err := publicPayloadsFromInternalSubagentEvent("cse_test", db.CodeSessionInternalEvent{Payload: json.RawMessage(raw)}, "sthr_child")
+		if err != nil || len(childPayloads) != 0 {
+			t.Fatalf("child diagnostic leaked: %s: %s %v", raw, childPayloads, err)
+		}
+
 	}
-	startedAt, err := time.Parse(time.RFC3339Nano, objects[0]["created_at"].(string))
-	if err != nil {
-		t.Fatalf("parse model start created_at: %v", err)
+	payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "result"}, json.RawMessage(`{"type":"result","is_error":true,"subtype":"error_max_turns","result":"private credentials","errors":["private credentials"]}`))
+	if err != nil || !ok || len(payloads) != 2 {
+		t.Fatalf("error event: %s %v", payloads, err)
 	}
-	endedAt, err := time.Parse(time.RFC3339Nano, objects[1]["created_at"].(string))
-	if err != nil {
-		t.Fatalf("parse model end created_at: %v", err)
+	object := decodePublicPayloads(t, payloads)[0]
+	if object["type"] != "session.error" || object["result"] != nil || object["errors"] != nil {
+		t.Fatalf("unsafe error: %s", payloads)
 	}
-	if !startedAt.Before(endedAt) {
-		t.Fatalf("model start should be before end: start=%s end=%s", startedAt, endedAt)
+	idle := decodePublicPayloads(t, payloads)[1]
+	if idle["type"] != "session.status_idle" || idle["stop_reason"].(map[string]any)["type"] != "retries_exhausted" {
+		t.Fatalf("failed turn idle = %#v", idle)
 	}
-	if objects[1]["model"] != "claude-sonnet-4-6" {
-		t.Fatalf("model_request_end model = %#v", objects[1])
+	if idle["id"] == object["id"] {
+		t.Fatal("error and idle share an event ID")
 	}
-	if _, ok := objects[1]["model_usage"].(map[string]any); !ok {
-		t.Fatalf("model_request_end missing model_usage: %#v", objects[1])
-	}
-	if objects[1]["model_request_start_id"] != objects[0]["id"] {
-		t.Fatalf("model_request_end model_request_start_id = %#v, want start id %#v", objects[1]["model_request_start_id"], objects[0]["id"])
-	}
-	if objects[2]["result"] != "Done." {
-		t.Fatalf("status idle should preserve result payload: %#v", objects[2])
-	}
-	stopReason, ok := objects[2]["stop_reason"].(map[string]any)
-	if !ok || stopReason["type"] != "end_turn" {
-		t.Fatalf("status idle stop_reason = %#v, want {type:end_turn}", objects[2]["stop_reason"])
+	errorPayload := object["error"].(map[string]any)
+	if errorPayload["message"] != "Agent reached the maximum number of turns." {
+		t.Fatalf("missing failure category: %v", errorPayload)
 	}
 }
 
@@ -530,6 +519,19 @@ func TestPublicPayloadFromWorkerEventNormalizesIdleStopReasonVariants(t *testing
 	}
 }
 
+func TestPublicPayloadsFromWorkerEventIgnoresNonAgentTasks(t *testing.T) {
+	for _, taskType := range []string{"local_bash", "local_workflow", "monitor_mcp", "dream", "unknown", ""} {
+		t.Run(taskType, func(t *testing.T) {
+			payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "system"}, mustRawJSON(t, map[string]any{
+				"type": "system", "subtype": "task_started", "task_id": "task", "tool_use_id": "tool", "task_type": taskType,
+			}))
+			if err != nil || ok || len(payloads) != 0 {
+				t.Fatalf("non-agent task produced public events: %s, ok=%t, err=%v", payloads, ok, err)
+			}
+		})
+	}
+}
+
 func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 	startPayloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
 		ExternalID:     "csev_task_started",
@@ -540,6 +542,7 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 		"type":        "system",
 		"uuid":        "system-task-started",
 		"subtype":     "task_started",
+		"task_type":   "local_agent",
 		"task_id":     "abc123",
 		"tool_use_id": "tool_translate",
 		"description": "Translate to Japanese",
@@ -594,12 +597,28 @@ func TestPublicPayloadsFromWorkerEventMapsClaudeTaskLifecycle(t *testing.T) {
 	if len(doneObjects) != 1 || doneObjects[0]["type"] != "session.thread_status_idle" {
 		t.Fatalf("task_notification payloads = %#v", doneObjects)
 	}
-	if doneObjects[0]["session_thread_id"] != expectedThreadID {
+	if doneObjects[0]["session_thread_id"] != nil {
 		t.Fatalf("thread_status_idle payload = %#v", doneObjects[0])
 	}
 	stopReason, ok := doneObjects[0]["stop_reason"].(map[string]any)
-	if !ok || stopReason["type"] != "completed" || stopReason["detail"] != "Translate to Japanese" {
+	if !ok || stopReason["type"] != "end_turn" {
 		t.Fatalf("stop_reason = %#v", doneObjects[0]["stop_reason"])
+	}
+	stoppedPayloads, ok, err := publicPayloadsFromWorkerEvent("csev_test", db.CodeSessionEvent{
+		ExternalID: "csev_task_stopped", EventType: "system", IdempotencyKey: "task_stopped",
+	}, mustRawJSON(t, map[string]any{
+		"type": "system", "uuid": "system-task-stopped", "subtype": "task_notification",
+		"task_id": "abc123", "tool_use_id": "tool_translate", "status": "stopped",
+	}))
+	if err != nil || !ok {
+		t.Fatalf("stopped task_notification: ok=%v err=%v", ok, err)
+	}
+	stoppedObjects := decodePublicPayloads(t, stoppedPayloads)
+	if len(stoppedObjects) != 1 || stoppedObjects[0]["type"] != "session.thread_status_terminated" || stoppedObjects[0]["session_thread_id"] != nil {
+		t.Fatalf("stopped task_notification payloads = %#v", stoppedObjects)
+	}
+	if _, hasReason := stoppedObjects[0]["stop_reason"]; hasReason {
+		t.Fatalf("terminated thread has stop_reason: %#v", stoppedObjects[0])
 	}
 }
 
@@ -627,4 +646,82 @@ func mustRawJSON(t *testing.T, value any) json.RawMessage {
 
 func ptrString(value string) *string {
 	return &value
+}
+
+func TestAssistantRequestAndThreadReferencesSurviveBlockSplitting(t *testing.T) {
+	payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "assistant", CreatedAt: time.Now()}, json.RawMessage(`{"type":"assistant","uuid":"answer","request_id":"sevt_request","parent_tool_use_id":"tool_parent","message":{"id":"msg_answer","content":[{"type":"thinking","thinking":"work"},{"type":"text","text":"done"}]}}`))
+	if err != nil || !ok || len(payloads) != 2 {
+		t.Fatalf("payloads=%s, ok=%v, err=%v", payloads, ok, err)
+	}
+	for _, payload := range decodePublicPayloads(t, payloads) {
+		if payload["model_request_start_id"] != "sevt_request" || payload["_owner_session_thread_id"] != maevents.ClaudeTaskThreadID("cse_test", "tool_parent") {
+			t.Fatalf("lost correlation: %v", payload)
+		}
+	}
+}
+
+func TestCompactionPreservesThreadWithoutDiagnostics(t *testing.T) {
+	candidates := systemPublicPayloadCandidates("cse_compaction", map[string]any{"parent_tool_use_id": "tool_child", "summary": "private"}, workerSystemOutputPayload{Subtype: "compact_boundary"})
+	if len(candidates) != 1 || candidates[0].payload["type"] != "agent.thread_context_compacted" || candidates[0].payload["_owner_session_thread_id"] != maevents.ClaudeTaskThreadID("cse_compaction", "tool_child") {
+		t.Fatalf("compaction scope: %+v", candidates)
+	}
+	if len(candidates[0].payload) != 2 {
+		t.Fatalf("diagnostic fields leaked: %+v", candidates[0].payload)
+	}
+}
+
+func TestSuccessfulResultEndsTurnWithoutLeakingText(t *testing.T) {
+	for _, subtype := range []string{"", "success", "cancelled"} {
+		raw := mustRawJSON(t, map[string]any{"type": "result", "uuid": "completed", "subtype": subtype, "is_error": false, "result": "private credentials"})
+		payloads, ok, err := publicPayloadsFromWorkerEvent("cse_test", db.CodeSessionEvent{EventType: "result", IdempotencyKey: "completed", CreatedAt: time.Now().UTC()}, raw)
+		if err != nil || !ok || len(payloads) != 1 {
+			t.Fatalf("completed result: %s %v", payloads, err)
+		}
+		event := decodePublicPayloads(t, payloads)[0]
+		if event["type"] != "session.status_idle" || event["stop_reason"].(map[string]any)["type"] != "end_turn" || strings.Contains(string(payloads[0]), "private credentials") {
+			t.Fatalf("invalid completed result: %s", payloads)
+		}
+		prepared, err := prepareWorkerOutputEvent("cse_test", workerOutputEvent{Payload: raw}, time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := prepared.(preparedPublicAction); !ok {
+			t.Fatalf("successful result treated as failure: %T", prepared)
+		}
+	}
+}
+
+func TestInternalSubagentToolResultUsesPublicToolResultContract(t *testing.T) {
+	payloads, err := publicPayloadsFromInternalSubagentEvent("cse_test", db.CodeSessionInternalEvent{Payload: json.RawMessage(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool_child","is_error":true,"content":"denied"}]}}`)}, "sthr_child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects := decodePublicPayloads(t, payloads)
+	if len(objects) != 1 || objects[0]["type"] != "agent.tool_result" || objects[0]["tool_use_id"] != maevents.ToolUseEventID("cse_test", "tool_child", "sthr_child") || objects[0]["is_error"] != true {
+		t.Fatalf("child result violates public tool contract: %#v", objects)
+	}
+}
+
+func TestInternalSubagentAssistantPreservesModelRequestCorrelation(t *testing.T) {
+	for _, field := range []string{"requestId", "request_id"} {
+		t.Run(field, func(t *testing.T) {
+			raw := mustRawJSON(t, map[string]any{
+				"type": "assistant", "uuid": "transcript-uuid", field: "sevt_request",
+				"message": map[string]any{"id": "transcript-message", "content": []map[string]string{{"type": "text", "text": "child reply"}}},
+			})
+			payloads, err := publicPayloadsFromInternalSubagentEvent("cse_test", db.CodeSessionInternalEvent{Payload: raw}, "sthr_child")
+			if err != nil || len(payloads) != 1 {
+				t.Fatalf("mapped payloads = %s, error = %v", payloads, err)
+			}
+			var mapped struct {
+				RequestID string `json:"model_request_start_id"`
+			}
+			if err := jsonv2.Unmarshal(payloads[0], &mapped); err != nil {
+				t.Fatal(err)
+			}
+			if mapped.RequestID != "sevt_request" {
+				t.Fatalf("request identity = %q, want sevt_request", mapped.RequestID)
+			}
+		})
+	}
 }

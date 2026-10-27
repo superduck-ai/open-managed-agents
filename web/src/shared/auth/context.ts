@@ -1,9 +1,10 @@
 import { createContext, useContext } from 'react';
-import type { AuthAccount, BootstrapResponse } from './api';
+import type { AuthAccount, BootstrapResponse, PlatformAccess } from './api';
 
-export type AuthStatus = 'loading' | 'authenticated' | 'anonymous';
+export type AuthStatus = 'loading' | 'authenticated' | 'anonymous' | 'error';
 
 export type AuthContextValue = {
+  platformAccess?: PlatformAccess;
   account: AuthAccount | null;
   status: AuthStatus;
   csrfToken?: string;

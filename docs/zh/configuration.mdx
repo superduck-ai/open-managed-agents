@@ -27,6 +27,9 @@ database:
 redis:
   url: redis://localhost:6379
 
+nats:
+  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
+
 storage:
   type: s3
   s3:
@@ -44,8 +47,8 @@ LLM Provider 是工作区数据，不属于进程配置。服务启动后，在�
 ## 主要配置分组
 
 <AccordionGroup>
-  <Accordion title="server、database 和 redis">
-    配置监听地址、PostgreSQL 连接和平台会话存储。生产环境默认不自动迁移数据库。
+  <Accordion title="server、database、redis 和 nats">
+    配置监听地址、PostgreSQL 连接、平台会话存储和必需的 NATS JetStream 连接。`nats.url` 接受逗号分隔的种子节点 URL；配置多个集群节点可避免启动依赖单台服务器。生产环境默认不自动迁移数据库。
   </Accordion>
   <Accordion title="storage">
     配置 S3 兼容对象存储、bucket、容量限制和 path-style 访问。文件、技能与批处理结果依赖该存储。
@@ -57,7 +60,7 @@ LLM Provider 是工作区数据，不属于进程配置。服务启动后，在�
     配置沙箱回调 URL、OTLP 文件日志、JWT 签名私钥和可选的上游代理 CA。
   </Accordion>
   <Accordion title="vault 和 webhook">
-    配置密钥库主 KEK，以及 Webhook 端点、签名密钥、重试和 worker 行为。
+    配置密钥库主 KEK，以及 Webhook 重试和 Worker 行为。端点地址、签名密钥属于 workspace 订阅；JetStream 保留期与容量在 nats.webhook_stream 下配置。
   </Accordion>
 </AccordionGroup>
 
@@ -69,10 +72,58 @@ LLM Provider 是工作区数据，不属于进程配置。服务启动后，在�
 just generate-code-session-jwt-key \
   config/secrets/code-session-jwt-ed25519.pem
 
+# 只导出需要添加到 GitHub SSH Signing Keys 的公钥
+just print-code-session-signing-public-key \
+  config/secrets/code-session-jwt-ed25519.pem
+
 just generate-vault-kek \
   config/secrets/vault-kek
 ```
 
+Code Session JWT 私钥同时用于 CCRv2 Git 提交签名。要让 GitHub 显示 `Verified`，请保持该私钥稳定，将上述命令输出添加为 GitHub SSH Signing Key，并确保环境现有的 Git 提交邮箱已在同一账号验证。私钥轮换后需要同步更新 GitHub Signing Key。
+
 <Note>
   仓库中的 `docs/configuration-reference.yaml` 记录全部已接受字段和安全示例值；`config/config.example.yaml` 是日常开发使用的最小示例。
 </Note>
+
+## 模型供应商默认目录
+
+`llm_provider_presets_file` 指定独立 JSON 文件，路径相对于当前 YAML 文件。可将仓库中的 `internal/config/model-provider-presets.json` 复制为部署目录里的 `model-provider-presets.json`，再配置：
+
+```yaml
+llm_provider_presets_file: ./model-provider-presets.json
+```
+
+```json
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "gateway",
+      "name": "Gateway",
+      "api_backend": "chat_completions",
+      "base_url": "https://gateway.example.com",
+      "models": []
+    }
+  ]
+}
+```
+
+可追加公司自己的供应商。供应商可配置 `order`：非负安全整数，越小越靠前，缺省为 0，相同值按文件顺序。内置条目使用 10、20、30 等数值，内部 AI 网关设为 0 即排在最前。协议仅支持 `messages` 和 `chat_completions`；`models` 可为空。每个模型支持 `id`、可选 `name`、`context_window`、`max_output_tokens` 和 `input_modalities`，数组顺序就是默认顺序。不要放 API 密钥或组织私有信息，未知字段会被拒绝。
+
+供应商目录是部署配置，只供控制台读取。添加连接时发现或编辑的模型仅保存到当前组织默认连接或工作区连接，不写回供应商 JSON。已保存连接使用独立的数据库快照，不会被目录变化自动修改。目录无需写权限；显式配置的文件缺失或不合法时启动失败，未配置路径使用内置目录。不要在部署级共享目录中放入组织私有信息。
+
+### 初始化已知供应商
+
+在仓库根目录运行：
+
+```bash
+./scripts/init-model-provider-presets.sh --dry-run
+./scripts/init-model-provider-presets.sh config/model-provider-presets.json
+```
+
+脚本从与服务内置目录相同的 JSON 初始化独立文件，包含 DeepSeek API、Kimi Coding、智谱 GLM Coding Plan、MiniMax 国内/国际、OpenAI 和 Anthropic。模型名、容量和输入类型来自 DeepSeek Harness 的已安装 pi-ai 目录快照；不保存套餐价格、密钥或登录状态。现有目标文件（包括符号链接）保持原样，重复执行不会覆盖后续配置的模型、排序和公司网关。需要补充条目时编辑已有 JSON。
+
+Coding Plan 必须使用对应套餐的密钥，普通 API 密钥与套餐密钥可能不通用。DeepSeek API 不冒充 DeepSeek 账号订阅登录。Kimi 使用 `https://api.kimi.com/coding`，MiniMax 使用国内 `https://api.minimaxi.com/anthropic` 或国际 `https://api.minimax.io/anthropic`。智谱采用官方 `https://open.bigmodel.cn/api/anthropic` 兼容入口；DeepSeek Harness 自身使用的 `/api/coding/paas/v4` OpenAI 入口不直接复制到 OMA，因为 OMA 的请求路径会追加 `/v1`。套餐权益、账号授权、配额和厂商请求兼容行为不属于此初始化脚本。
+
+参考：[Kimi Code 官方文档](https://www.kimi.com/code/docs/)、[智谱 GLM Coding Plan 官方配置](https://docs.bigmodel.cn/cn/coding-plan/tool/claude)、[DeepSeek API 模型目录](https://api-docs.deepseek.com/quick_start/pricing)。模型目录可能随厂商变更，可在控制台获取当前账号可用模型后保存。

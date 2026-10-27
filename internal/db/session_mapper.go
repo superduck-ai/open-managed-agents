@@ -2,6 +2,9 @@ package db
 
 import (
 	"context"
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -14,39 +17,81 @@ type sessionMetadataPatchParams struct {
 	MetadataPatch     []byte
 }
 
+type sessionVaultIDs []string
+
+func (ids *sessionVaultIDs) Scan(source any) error {
+	if source == nil {
+		*ids = sessionVaultIDs{}
+		return nil
+	}
+
+	var raw []byte
+	switch value := source.(type) {
+	case []byte:
+		raw = value
+	case string:
+		raw = []byte(value)
+	default:
+		return fmt.Errorf("scan session vault_ids: unsupported source type %T", source)
+	}
+
+	var decoded []string
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return fmt.Errorf("scan session vault_ids: %w", err)
+	}
+	if decoded == nil {
+		decoded = []string{}
+	}
+	*ids = decoded
+	return nil
+}
+
+func (ids sessionVaultIDs) Value() (driver.Value, error) {
+	if ids == nil {
+		return []byte(`[]`), nil
+	}
+	return json.Marshal([]string(ids))
+}
+
 type sessionRow struct {
-	UUID                  string     `db:"uuid"`
-	ExternalID            string     `db:"external_id"`
-	OrganizationUUID      string     `db:"organization_uuid"`
-	WorkspaceUUID         string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID   string     `db:"created_by_api_key_uuid"`
-	EnvironmentUUID       string     `db:"environment_uuid"`
-	EnvironmentExternalID string     `db:"environment_external_id"`
-	AgentUUID             string     `db:"agent_uuid"`
-	AgentExternalID       string     `db:"agent_external_id"`
-	AgentVersion          int        `db:"agent_version"`
-	AgentSnapshot         []byte     `db:"agent_snapshot"`
-	DeploymentUUID        *string    `db:"deployment_uuid"`
-	DeploymentID          *string    `db:"deployment_external_id"`
-	Title                 *string    `db:"title"`
-	Metadata              []byte     `db:"metadata"`
-	VaultIDs              []byte     `db:"vault_ids"`
-	Status                string     `db:"status"`
-	Usage                 []byte     `db:"usage"`
-	Stats                 []byte     `db:"stats"`
-	OutcomeEvaluations    []byte     `db:"outcome_evaluations"`
-	CreatedAt             time.Time  `db:"created_at"`
-	UpdatedAt             time.Time  `db:"updated_at"`
-	ArchivedAt            *time.Time `db:"archived_at"`
-	DeletedAt             *time.Time `db:"deleted_at"`
+	Activity              sessionActivityProjection `db:"activity"`
+	UUID                  string                    `db:"uuid"`
+	ExternalID            string                    `db:"external_id"`
+	OrganizationUUID      string                    `db:"organization_uuid"`
+	WorkspaceUUID         string                    `db:"workspace_uuid"`
+	CreatedByAPIKeyUUID   *string                   `db:"created_by_api_key_uuid"`
+	EnvironmentUUID       string                    `db:"environment_uuid"`
+	EnvironmentExternalID string                    `db:"environment_external_id"`
+	AgentUUID             string                    `db:"agent_uuid"`
+	AgentExternalID       string                    `db:"agent_external_id"`
+	AgentVersion          int                       `db:"agent_version"`
+	AgentSnapshot         []byte                    `db:"agent_snapshot"`
+	DeploymentUUID        *string                   `db:"deployment_uuid"`
+	DeploymentID          *string                   `db:"deployment_external_id"`
+	Title                 *string                   `db:"title"`
+	Metadata              []byte                    `db:"metadata"`
+	RuntimeUserUUID       *string                   `db:"runtime_user_uuid"`
+	VaultIDs              sessionVaultIDs           `db:"vault_ids"`
+	Status                string                    `db:"status"`
+	Budget                []byte                    `db:"budget"`
+	BudgetReachedAt       *time.Time                `db:"budget_reached_at"`
+	BudgetRemovedAt       *time.Time                `db:"budget_removed_at"`
+	Usage                 []byte                    `db:"usage"`
+	Stats                 []byte                    `db:"stats"`
+	OutcomeEvaluations    []byte                    `db:"outcome_evaluations"`
+	CreatedAt             time.Time                 `db:"created_at"`
+	UpdatedAt             time.Time                 `db:"updated_at"`
+	ArchivedAt            *time.Time                `db:"archived_at"`
+	DeletedAt             *time.Time                `db:"deleted_at"`
 }
 
 type sessionWriteParams struct {
+	RuntimeUserUUID       *string
 	UUID                  string
 	ExternalID            string
 	OrganizationUUID      string
 	WorkspaceUUID         string
-	CreatedByAPIKeyUUID   string
+	CreatedByAPIKeyUUID   *string
 	EnvironmentUUID       string
 	EnvironmentExternalID string
 	AgentUUID             string
@@ -57,8 +102,9 @@ type sessionWriteParams struct {
 	DeploymentID          *string
 	Title                 *string
 	Metadata              []byte
-	VaultIDs              []byte
+	VaultIDs              sessionVaultIDs
 	Status                string
+	Budget                []byte
 	Usage                 []byte
 	Stats                 []byte
 	OutcomeEvaluations    []byte
@@ -66,12 +112,15 @@ type sessionWriteParams struct {
 }
 
 type sessionUpdateParams struct {
-	WorkspaceUUID string
-	ExternalID    string
-	AgentSnapshot []byte
-	Title         *string
-	Metadata      []byte
-	UpdatedAt     time.Time
+	WorkspaceUUID   string
+	ExternalID      string
+	AgentSnapshot   []byte
+	Title           *string
+	Metadata        []byte
+	Budget          []byte
+	BudgetReachedAt *time.Time
+	BudgetRemovedAt *time.Time
+	UpdatedAt       time.Time
 }
 
 type sessionPageMapperParams struct {
@@ -93,12 +142,16 @@ type sessionPageMapperParams struct {
 
 // SessionMapper contains queries whose primary table is sessions.
 type SessionMapper interface {
+	IsRetired(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (bool, error)
+	AddUsage(ctx context.Context, workspaceUUID, sessionUUID, threadUUID string, usage SessionUsageIncrement) (sessionRow, error)
 	Insert(ctx context.Context, params sessionWriteParams) (sessionRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, bool, error)
 	FindByUUID(ctx context.Context, workspaceUUID, sessionUUID string) (sessionRow, bool, error)
 	UpdateByExternalID(ctx context.Context, params sessionUpdateParams) (sessionRow, error)
 	PatchMetadata(ctx context.Context, workspaceUUID, sessionExternalID string, metadataPatch []byte) (sessionRow, error)
 	SetOutcomeEvaluations(ctx context.Context, workspaceUUID, sessionExternalID string, evaluations []byte) (sessionRow, error)
+	SetUsage(ctx context.Context, workspaceUUID, sessionExternalID string, usage []byte) (int64, error)
+	SetBudgetReached(ctx context.Context, workspaceUUID, sessionExternalID string, reachedAt time.Time) (int64, error)
 	SetStatus(ctx context.Context, workspaceUUID, sessionExternalID, status string) (int64, error)
 	Archive(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)
 	SoftDelete(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, error)

@@ -1,9 +1,12 @@
+//go:build integration
+
 package db
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"strings"
@@ -26,8 +29,8 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	ctx := context.Background()
 	standardDB := newIsolatedSessionResourceMigrationTestDatabase(t, ctx, databaseURL)
 	provider := newMigrationTestProvider(t, standardDB)
-	if _, err := provider.UpTo(ctx, 48); err != nil {
-		t.Fatalf("migrate ownership fixture database to 48: %v", err)
+	if _, err := provider.UpTo(ctx, 104); err != nil {
+		t.Fatalf("migrate ownership fixture database to 104: %v", err)
 	}
 	if _, err := standardDB.ExecContext(ctx, sessionFileOwnershipMigrationFixtureSQL); err != nil {
 		t.Fatalf("seed ownership migration fixture: %v", err)
@@ -40,7 +43,7 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break referenced File workspace: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 54); err == nil {
+	if _, err := provider.UpTo(ctx, 105); err == nil {
 		t.Fatal("ownership migration accepted a cross-workspace File reference")
 	}
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
@@ -59,7 +62,7 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break referenced Resource backing path: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 54); err == nil {
+	if _, err := provider.UpTo(ctx, 105); err == nil {
 		t.Fatal("ownership migration accepted an inconsistent referenced Resource payload")
 	}
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
@@ -78,7 +81,7 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break owned File Session scope: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 54); err == nil {
+	if _, err := provider.UpTo(ctx, 105); err == nil {
 		t.Fatal("ownership migration accepted an owned File scoped to another Session")
 	}
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
@@ -107,7 +110,7 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("seed mixed referenced/owned File: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 54); err == nil {
+	if _, err := provider.UpTo(ctx, 105); err == nil {
 		t.Fatal("ownership migration accepted a File shared by owned and referenced Resources")
 	}
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
@@ -117,8 +120,8 @@ func TestSessionResourceFileOwnershipMigration(t *testing.T) {
 		t.Fatalf("remove mixed ownership fixture: %v", err)
 	}
 
-	if _, err := provider.UpTo(ctx, 54); err != nil {
-		t.Fatalf("migrate ownership fixture database to 54: %v", err)
+	if _, err := provider.UpTo(ctx, 105); err != nil {
+		t.Fatalf("migrate ownership fixture database to 105: %v", err)
 	}
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", true)
 	rows, err := standardDB.QueryContext(ctx, `
@@ -168,14 +171,14 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 	ctx := context.Background()
 	standardDB := newIsolatedSessionResourceMigrationTestDatabase(t, ctx, databaseURL)
 	provider := newMigrationTestProvider(t, standardDB)
-	if _, err := provider.UpTo(ctx, 48); err != nil {
-		t.Fatalf("migrate payload fixture database to 48: %v", err)
+	if _, err := provider.UpTo(ctx, 104); err != nil {
+		t.Fatalf("migrate payload fixture database to 104: %v", err)
 	}
 	if _, err := standardDB.ExecContext(ctx, sessionFileOwnershipMigrationFixtureSQL); err != nil {
 		t.Fatalf("seed payload migration base fixture: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 54); err != nil {
-		t.Fatalf("migrate payload fixture database to 54: %v", err)
+	if _, err := provider.UpTo(ctx, 105); err != nil {
+		t.Fatalf("migrate payload fixture database to 105: %v", err)
 	}
 	if _, err := standardDB.ExecContext(ctx, sessionResourcePayloadMigrationFixtureSQL); err != nil {
 		t.Fatalf("seed explicit Resource payload fixture: %v", err)
@@ -188,7 +191,7 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break referenced File payload path: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 55); err == nil {
+	if _, err := provider.UpTo(ctx, 106); err == nil {
 		t.Fatal("payload removal migration accepted an inconsistent referenced File payload")
 	}
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", true)
@@ -208,7 +211,7 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break Memory Store payload reference: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 55); err == nil {
+	if _, err := provider.UpTo(ctx, 106); err == nil {
 		t.Fatal("payload removal migration accepted a missing Memory Store reference")
 	}
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", true)
@@ -221,8 +224,8 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 		t.Fatalf("restore Memory Store payload reference: %v", err)
 	}
 
-	if _, err := provider.UpTo(ctx, 55); err != nil {
-		t.Fatalf("migrate payload fixture database to 55: %v", err)
+	if _, err := provider.UpTo(ctx, 106); err != nil {
+		t.Fatalf("migrate payload fixture database to 106: %v", err)
 	}
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", false)
 	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "memory_store_uuid", true)
@@ -263,6 +266,8 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 		t.Fatalf("migrated File mount paths = (%q, %q, %v)", inputMountPath, outputMountPath, skillMountPath)
 	}
 
+	assertSessionResourceMapperAfterPayloadRemoval(t, ctx, standardDB)
+
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatalf("reverse payload removal migration: %v", err)
 	}
@@ -290,6 +295,61 @@ func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
 		restoredMemoryStoreID != "mem_payload" ||
 		restoredFileMountPath != "/uploads/input.txt" {
 		t.Fatalf("restored payload fields = (%q, %q, %q)", restoredRepositoryType, restoredMemoryStoreID, restoredFileMountPath)
+	}
+}
+
+func assertSessionResourceMapperAfterPayloadRemoval(t *testing.T, ctx context.Context, database *sql.DB) {
+	t.Helper()
+	mapperDB := yourbatis.NewDB(database, yourbatis.DialectPostgres)
+	err := mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewSessionResourceMapper(executor)
+		const workspaceUUID = "20000000-0000-0000-0000-000000000001"
+		const sessionID = "sesn_file_ownership"
+		mountPath := "/uploads/runtime.txt"
+		resource, err := mapper.Insert(ctx, sessionResourceWriteParams{
+			UUID: "50000000-0000-0000-0000-000000000020", ExternalID: "sesrsc_runtime_ownership",
+			OrganizationUUID: "10000000-0000-0000-0000-000000000001", WorkspaceUUID: workspaceUUID,
+			SessionExternalID: sessionID, ResourceType: SessionResourceTypeFile, MountPath: &mountPath, CreatedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		_, err = mapper.BindSessionFileResource(ctx, sessionFileResourceBindingParams{
+			ResourceUUID: resource.UUID, WorkspaceUUID: workspaceUUID, SessionUUID: resource.SessionUUID,
+			FileUUID: "60000000-0000-0000-0000-000000000020", FileExternalID: "file_runtime_instance",
+			SourceFileUUID: "60000000-0000-0000-0000-000000000001", EntryPath: mountPath, ParentPath: "/uploads", MountPath: mountPath, UpdatedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		found, err := mapper.FindByExternalID(ctx, workspaceUUID, sessionID, resource.ExternalID)
+		if err != nil {
+			return err
+		}
+		projected := found.resource()
+		if projected.File == nil || projected.File.FileID != "file_runtime_instance" || projected.File.Ownership != SessionResourceFileOwnershipReferenced {
+			t.Fatalf("bound input = %+v", projected)
+		}
+		count, err := mapper.CountSessionMemoryStoresByStoreID(ctx, workspaceUUID, sessionID, "mem_payload")
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			t.Fatalf("memory resource count = %d", count)
+		}
+		_, err = mapper.SoftDeleteSessionResource(ctx, workspaceUUID, sessionID, resource.ExternalID)
+		if err != nil {
+			return err
+		}
+		fileMapper := NewFileMapper(executor)
+		if _, err = fileMapper.GetFileByUUID(ctx, workspaceUUID, "60000000-0000-0000-0000-000000000020"); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("retired input instance lookup error = %v", err)
+		}
+		_, err = fileMapper.GetFileByUUID(ctx, workspaceUUID, "60000000-0000-0000-0000-000000000001")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("explicit resource mapper after migration: %v", err)
 	}
 }
 
@@ -416,6 +476,12 @@ const sessionFileOwnershipMigrationFixtureSQL = `
 		 '40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
 		 'skill_archive', null, '/skills/demo', '/skills',
 		 '60000000-0000-0000-0000-000000000003');
+ insert into files (uuid, external_id, workspace_uuid, filename, mime_type, size_bytes, sha256, s3_bucket, s3_key, downloadable, scope_type, scope_id)
+ select '60000000-0000-0000-0000-000000000004', 'file_instance_ownership', workspace_uuid, filename, mime_type, size_bytes, sha256, s3_bucket, s3_key, downloadable, 'session', 'sesn_file_ownership'
+ from files where external_id = 'file_source_ownership';
+ update session_resources set source_file_uuid = file_uuid, file_uuid = '60000000-0000-0000-0000-000000000004', payload = jsonb_set(payload, '{file_id}', '"file_instance_ownership"')
+ where external_id = 'sesrsc_input_ownership';
+
 `
 
 const sessionResourcePayloadMigrationFixtureSQL = `
@@ -461,7 +527,7 @@ const migrationBackfillFixtureSQL = `
 	values ('10000000-0000-0000-0000-000000000001', 'org_migration_184', 'migration 184');
 
 	insert into workspaces (uuid, external_id, organization_id, name)
-	select '20000000-0000-0000-0000-000000000001', 'workspace_migration_184', id, 'migration 184'
+	select '20000000-0000-0000-0000-000000000001', 'workspace_migration_184', id, 'default'
 	from organizations where external_id = 'org_migration_184';
 
 	insert into api_keys (uuid, external_id, workspace_id, key_hash)
@@ -642,16 +708,7 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("open migration database: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	standardDB := stdlib.OpenDBFromPool(pool)
-	t.Cleanup(func() { _ = standardDB.Close() })
-
-	provider := newMigrationTestProvider(t, standardDB)
+	ctx, standardDB, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
 	if _, err := provider.UpTo(ctx, 33); err != nil {
 		t.Fatalf("migrate fixture database to 33: %v", err)
 	}
@@ -661,6 +718,10 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 34); err != nil {
 		t.Fatalf("create legacy Input projection: %v", err)
 	}
+	assertSessionResourceTenantMigration(t, ctx, standardDB, provider)
+	if _, err := provider.UpTo(ctx, 46); err != nil {
+		t.Fatalf("migrate fixture database to 46: %v", err)
+	}
 	if _, err := standardDB.ExecContext(ctx, `
 		update filestore_entries
 		set managed_resource_uuid = '50000000-0000-0000-0000-000000000099'
@@ -668,8 +729,8 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break legacy Input reference: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 36); err == nil {
-		t.Fatal("migration accepted an unresolved legacy Input reference")
+	if _, err := provider.UpTo(ctx, 47); err == nil || !strings.Contains(err.Error(), "cannot unify Session namespace") {
+		t.Fatalf("unresolved legacy Input reference guard: %v", err)
 	}
 	var oldTableExists bool
 	if err := standardDB.QueryRowContext(ctx, `select to_regclass('filestore_entries') is not null`).Scan(&oldTableExists); err != nil {
@@ -686,8 +747,8 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 		t.Fatalf("restore legacy Input reference: %v", err)
 	}
 
-	if _, err := provider.UpTo(ctx, 36); err != nil {
-		t.Fatalf("migrate fixture database to 36: %v", err)
+	if _, err := provider.UpTo(ctx, 47); err != nil {
+		t.Fatalf("migrate fixture database to 47: %v", err)
 	}
 	if _, err := standardDB.ExecContext(ctx, `
 		update session_resources
@@ -696,8 +757,8 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("break legacy Skill Version reference: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 37); err == nil {
-		t.Fatal("migration accepted an unresolved active Skill Version reference")
+	if _, err := provider.UpTo(ctx, 48); err == nil || !strings.Contains(err.Error(), "cannot snapshot Session skills") {
+		t.Fatalf("unresolved active Skill Version reference guard: %v", err)
 	}
 	var skillVersionUUID string
 	if err := standardDB.QueryRowContext(ctx, `
@@ -717,17 +778,29 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("restore legacy Skill Version reference: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 37); err != nil {
-		t.Fatalf("migrate fixture database to 37: %v", err)
+	if _, err := provider.UpTo(ctx, 48); err != nil {
+		t.Fatalf("migrate fixture database to 104: %v", err)
+	}
+	assertUnifiedMigrationState(t, ctx, standardDB)
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("migrate fixture database to current schema: %v", err)
+	}
+	assertSessionResourceRuntimeWriteAfterUUIDMigration(t, ctx, standardDB)
+}
+
+func assertSessionResourceTenantMigration(t *testing.T, ctx context.Context, standardDB *sql.DB, provider *goose.Provider) {
+	t.Helper()
+	if _, err := provider.UpTo(ctx, 41); err != nil {
+		t.Fatalf("migrate fixture database to 41: %v", err)
 	}
 	if _, err := standardDB.ExecContext(ctx, `
 		update session_resources
 		set organization_id = 0
-		where path = '/skills/migration-skill'
+		where external_id = 'sesrsc_input_migration_184'
 	`); err != nil {
 		t.Fatalf("break Session Resource tenant reference: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 38); err == nil {
+	if _, err := provider.UpTo(ctx, 42); err == nil {
 		t.Fatal("migration accepted an invalid Session Resource tenant chain")
 	}
 	if _, err := standardDB.ExecContext(ctx, `
@@ -735,15 +808,14 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 		set organization_id = session.organization_id
 		from sessions session
 		where session.id = resource.session_id
-			and resource.path = '/skills/migration-skill'
+			and resource.external_id = 'sesrsc_input_migration_184'
 	`); err != nil {
 		t.Fatalf("restore Session Resource tenant reference: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 38); err != nil {
+	if _, err := provider.UpTo(ctx, 42); err != nil {
 		t.Fatalf("migrate Session Resource tenant references to UUID: %v", err)
 	}
 
-	assertUnifiedMigrationState(t, ctx, standardDB)
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatalf("roll back Session Resource tenant UUID migration: %v", err)
 	}
@@ -755,13 +827,12 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 	`).Scan(&restoredWorkspaceID, &restoredSessionID); err != nil {
 		t.Fatalf("load restored Session Resource internal IDs: %v", err)
 	}
-	if _, err := provider.Up(ctx); err != nil {
+	if restoredWorkspaceID <= 0 || restoredSessionID <= 0 {
+		t.Fatalf("invalid restored internal IDs: %d, %d", restoredWorkspaceID, restoredSessionID)
+	}
+	if _, err := provider.UpTo(ctx, 42); err != nil {
 		t.Fatalf("reapply Session Resource tenant UUID migration: %v", err)
 	}
-	if _, err := provider.UpTo(ctx, 45); err != nil {
-		t.Fatalf("migrate Session runtime tenant references to UUID: %v", err)
-	}
-	assertSessionResourceRuntimeWriteAfterUUIDMigration(t, ctx, standardDB)
 }
 
 func TestEnvironmentWorkSessionUUIDMigration(t *testing.T) {
@@ -871,6 +942,68 @@ func TestEnvironmentWorkSessionUUIDMigration(t *testing.T) {
 			assertMigrationColumnExists(t, ctx, database, "environment_work", "session_uuid", false)
 		})
 	}
+}
+
+func TestSessionInputProcessedAtMigrationRepairsAppliedSchema(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+	if _, err := provider.UpTo(ctx, 65); err != nil {
+		t.Fatalf("migrate fixture database to 65: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `ALTER TABLE session_events ALTER COLUMN processed_at SET NOT NULL`); err != nil {
+		t.Fatalf("recreate applied-schema drift: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO goose_db_version (version_id, is_applied) VALUES (66, true)`); err != nil {
+		t.Fatalf("recreate migration history: %v", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("migrate drifted database: %v", err)
+	}
+	var nullable bool
+	if err := database.QueryRowContext(ctx, `SELECT NOT attnotnull FROM pg_attribute WHERE attrelid = 'session_events'::regclass AND attname = 'processed_at'`).Scan(&nullable); err != nil {
+		t.Fatalf("inspect processed_at: %v", err)
+	}
+	if !nullable {
+		t.Fatal("session_events.processed_at must allow queued inputs")
+	}
+}
+
+func TestSessionInputProcessedAtMigrationRejectsUnprocessedInputs(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, databaseURL)
+	if _, err := provider.UpTo(ctx, 67); err != nil {
+		t.Fatalf("migrate fixture database to 67: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO session_events (uuid, external_id, organization_uuid, workspace_uuid, session_uuid, session_external_id, event_type, payload, processed_at, created_at)
+		VALUES
+		('60000000-0000-0000-0000-000000000001', 'sevt_queued', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.message', '{}', NULL, NOW()),
+		('60000000-0000-0000-0000-000000000002', 'sevt_unprocessed_tool', '10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', 'sesn_migration', 'user.tool_result', '{}', NULL, NOW())
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err == nil {
+		t.Fatal("migration discarded queued input")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_queued'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err == nil {
+		t.Fatal("migration discarded unprocessed tool result")
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM session_events WHERE external_id = 'sevt_unprocessed_tool'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 69); err != nil {
+		t.Fatalf("migrate resolved input history: %v", err)
+	}
+	assertMigrationColumnNullable(t, ctx, database, "session_events", "processed_at", "NO")
 }
 
 func newIsolatedMigrationTestDatabase(
@@ -1044,7 +1177,8 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 	}
 	createdAt := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
 	mapperDB := yourbatis.NewDB(database, yourbatis.DialectPostgres, yourbatis.WithDatabaseID("postgres"))
-	created, err := createSessionResource(ctx, mapperDB, SessionResource{
+	databaseAPI := &DB{mapperDB: mapperDB}
+	created, err := databaseAPI.CreateSessionResource(ctx, CreateSessionResourceInput{Resource: SessionResource{
 		UUID:              "50000000-0000-0000-0000-000000000099",
 		ExternalID:        "sesrsc_runtime_after_uuid_migration",
 		OrganizationUUID:  organizationUUID,
@@ -1056,7 +1190,7 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 			MountPath: "/workspace/repository",
 		},
 		CreatedAt: createdAt,
-	})
+	}})
 	if err != nil {
 		t.Fatalf("create Session Resource after UUID migration: %v", err)
 	}
@@ -1184,9 +1318,7 @@ func assertUnifiedMigrationState(t *testing.T, ctx context.Context, database *sq
 		from session_resources resource
 		join files file
 			on file.uuid = resource.file_uuid
-		join workspaces workspace
-			on workspace.id = file.workspace_id
-			and workspace.uuid = resource.workspace_uuid
+			and file.workspace_uuid = resource.workspace_uuid
 		where resource.path = '/skills/migration-skill'
 	`).Scan(
 		&skillResourceUUID,

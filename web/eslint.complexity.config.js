@@ -32,11 +32,7 @@ const legacyComplexityBudgets = [
   },
   {
     max: 28,
-    files: [
-      'src/features/managed-agents/agents/detail.tsx',
-      'src/features/settings/WorkloadIdentitySettingsPage.tsx',
-      'src/features/workbench/editor.tsx',
-    ],
+    files: ['src/features/managed-agents/agents/detail.tsx', 'src/features/workbench/editor.tsx'],
   },
   {
     max: 29,
@@ -49,10 +45,6 @@ const legacyComplexityBudgets = [
   {
     max: 32,
     files: ['src/features/managed-agents/sessions/sessionDetailModel.ts'],
-  },
-  {
-    max: 33,
-    files: ['src/features/settings/AdminKeysSettingsPage.tsx'],
   },
   {
     max: 36,

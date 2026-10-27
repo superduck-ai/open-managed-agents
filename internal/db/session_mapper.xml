@@ -1,5 +1,38 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <mapper namespace="SessionMapper">
+    <select id="IsRetired" resultType="bool">
+        SELECT EXISTS (
+            SELECT 1 FROM sessions
+            WHERE organization_uuid = #{organizationUUID}
+            AND workspace_uuid = #{workspaceUUID}
+            AND uuid = #{sessionUUID}
+            AND (archived_at IS NOT NULL OR deleted_at IS NOT NULL OR status = 'terminated')
+        )
+    </select>
+    <sql id="usageIncrement">
+        usage || jsonb_strip_nulls(jsonb_build_object(
+            'input_tokens', COALESCE(CAST(usage-&gt;&gt;'input_tokens' AS bigint), 0) + #{usage.InputTokens},
+            'output_tokens', COALESCE(CAST(usage-&gt;&gt;'output_tokens' AS bigint), 0) + #{usage.OutputTokens},
+            'cache_read_input_tokens', COALESCE(CAST(usage-&gt;&gt;'cache_read_input_tokens' AS bigint), 0) + #{usage.CacheReadInputTokens}
+        ))
+        <if test="usage.CacheCreation5mInputTokens != nil || usage.CacheCreation1hInputTokens != nil">
+        || jsonb_build_object('cache_creation', COALESCE(usage-&gt;'cache_creation', CAST('{}' AS jsonb)) || jsonb_strip_nulls(jsonb_build_object(
+          'ephemeral_5m_input_tokens', COALESCE(CAST(usage-&gt;'cache_creation'-&gt;&gt;'ephemeral_5m_input_tokens' AS bigint), 0) + #{usage.CacheCreation5mInputTokens},
+          'ephemeral_1h_input_tokens', COALESCE(CAST(usage-&gt;'cache_creation'-&gt;&gt;'ephemeral_1h_input_tokens' AS bigint), 0) + #{usage.CacheCreation1hInputTokens}
+        )))
+        </if>
+    </sql>
+    <update id="AddUsage" result="returning" resultType="sessionRow">
+        WITH thread_usage AS (
+            UPDATE session_threads
+            SET usage = <include refid="usageIncrement"/>
+            WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{threadUUID}
+            AND session_uuid = #{sessionUUID}
+        )
+        UPDATE sessions SET usage = <include refid="usageIncrement"/>
+        WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{sessionUUID}
+RETURNING <include refid="columns"/>
+    </update>
     <sql id="columns">
         uuid,
         external_id,
@@ -15,11 +48,16 @@
         deployment_uuid,
         deployment_external_id,
         title,
-        metadata,
+        metadata - '_oma_runtime_user_uuid' AS metadata,
+        metadata->>'_oma_runtime_user_uuid' AS runtime_user_uuid,
         vault_ids,
         status,
+        budget,
+        budget_reached_at,
+        budget_removed_at,
         usage,
         stats,
+        oma_session_activity_projection(workspace_uuid,uuid,NULL,NOW(),usage,stats) AS activity,
         outcome_evaluations,
         created_at,
         updated_at,
@@ -32,15 +70,17 @@
             uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
             environment_uuid, environment_external_id, agent_uuid, agent_external_id,
             agent_version, agent_snapshot, deployment_uuid, deployment_external_id,
-            title, metadata, vault_ids, status, usage, stats, outcome_evaluations,
+            title, metadata, vault_ids, status, budget, usage, stats, outcome_evaluations,
             created_at, updated_at
         ) VALUES (
             #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
             #{params.CreatedByAPIKeyUUID}, #{params.EnvironmentUUID}, #{params.EnvironmentExternalID},
             #{params.AgentUUID}, #{params.AgentExternalID}, #{params.AgentVersion},
             CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb), #{params.DeploymentUUID},
-            #{params.DeploymentID}, #{params.Title}, CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            #{params.DeploymentID}, #{params.Title}, (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid')
+                || jsonb_strip_nulls(jsonb_build_object('_oma_runtime_user_uuid', CAST(#{params.RuntimeUserUUID} AS text))),
             CAST(#{params.VaultIDs,sensitive=true} AS jsonb), #{params.Status},
+            CAST(#{params.Budget,sensitive=true} AS jsonb),
             CAST(#{params.Usage,sensitive=true} AS jsonb), CAST(#{params.Stats,sensitive=true} AS jsonb),
             CAST(#{params.OutcomeEvaluations,sensitive=true} AS jsonb), #{params.CreatedAt}, #{params.CreatedAt}
         )
@@ -67,20 +107,30 @@
         UPDATE sessions
         SET agent_snapshot = CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
             title = #{params.Title},
-            metadata = CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            metadata = (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid')
+                || jsonb_strip_nulls(jsonb_build_object('_oma_runtime_user_uuid', metadata->'_oma_runtime_user_uuid')),
+            budget = CAST(#{params.Budget,sensitive=true} AS jsonb),
+            budget_reached_at = #{params.BudgetReachedAt},
+            budget_removed_at = #{params.BudgetRemovedAt},
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
         AND deleted_at IS NULL
         AND archived_at IS NULL
         AND status = 'idle'
+        AND (title IS DISTINCT FROM #{params.Title}
+            OR budget IS DISTINCT FROM CAST(#{params.Budget,sensitive=true} AS jsonb)
+            OR budget_reached_at IS DISTINCT FROM #{params.BudgetReachedAt}
+            OR budget_removed_at IS DISTINCT FROM #{params.BudgetRemovedAt}
+            OR agent_snapshot IS DISTINCT FROM CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb)
+            OR (metadata - '_oma_runtime_user_uuid') IS DISTINCT FROM (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid'))
         RETURNING <include refid="columns"/>
     </update>
 
     <update id="PatchMetadata" result="returning" resultType="sessionRow">
         UPDATE sessions
         SET metadata = COALESCE(metadata, CAST('{}' AS jsonb))
-                || CAST(#{metadataPatch,sensitive=true} AS jsonb),
+                || (CAST(#{metadataPatch,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid'),
             updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{sessionExternalID}
@@ -98,6 +148,25 @@
         RETURNING <include refid="columns"/>
     </update>
 
+    <update id="SetUsage" result="rows">
+        UPDATE sessions
+        SET usage = CAST(#{usage,sensitive=true} AS jsonb),
+            updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+    </update>
+
+    <update id="SetBudgetReached" result="rows">
+        UPDATE sessions
+        SET budget_reached_at = #{reachedAt}, updated_at = NOW()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{sessionExternalID}
+        AND deleted_at IS NULL
+        AND budget IS NOT NULL
+        AND budget_reached_at IS NULL
+    </update>
+
     <update id="SetStatus" result="rows">
         UPDATE sessions
         SET status = #{status}, updated_at = NOW()
@@ -113,6 +182,7 @@
         AND external_id = #{sessionExternalID}
         AND deleted_at IS NULL
         AND status NOT IN ('running', 'rescheduling')
+        AND archived_at IS NULL
         RETURNING <include refid="columns"/>
     </update>
 
@@ -197,7 +267,7 @@
     <update id="MergeMetadata" result="rows">
         UPDATE sessions
         SET metadata = COALESCE(metadata, CAST('{}' AS jsonb))
-                || CAST(#{params.MetadataPatch,sensitive=true} AS jsonb),
+                || (CAST(#{params.MetadataPatch,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid'),
             updated_at = NOW()
         WHERE organization_uuid = #{params.OrganizationUUID}
         AND workspace_uuid = #{params.WorkspaceUUID}

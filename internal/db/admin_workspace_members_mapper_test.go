@@ -23,7 +23,7 @@ func TestAdminWorkspaceMemberMapperInsert(t *testing.T) {
 		WorkspaceExternalID: "wrkspc_mapper",
 		UserUUID:            "33333333-3333-4333-8333-333333333333",
 		UserExternalID:      "user_mapper",
-		WorkspaceRole:       "workspace_developer",
+		WorkspaceRole:       "workspace_user",
 		CreatedAt:           createdAt,
 	}
 
@@ -231,7 +231,7 @@ func adminWorkspaceMemberMapperTestRow(userExternalID string, createdAt time.Tim
 		"wrkspc_mapper",
 		"33333333-3333-4333-8333-333333333333",
 		userExternalID,
-		"workspace_developer",
+		"workspace_user",
 		createdAt,
 		createdAt,
 	}

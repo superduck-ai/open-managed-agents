@@ -47,7 +47,7 @@ stateDiagram-v2
 - `Versions` 展示版本号、创建时间、`Latest` badge。
 - custom version 提供删除按钮；builtin version 只读。
 
-关闭 drawer 会移除 query param，并把旧的 `/skills/{id}` 入口归一回 `/skills`；浏览器前进/后退通过 `popstate` 同步 UI 状态。
+关闭 drawer 先完成220ms的Sheet退出，保留当前技能及版本内容；退出完成后再移除 query param，并把旧的 `/skills/{id}` 入口归一回 `/skills`；浏览器前进/后退通过 `popstate` 同步 UI 状态。
 
 ## Agent detail 展示
 
@@ -106,13 +106,19 @@ Builtin skill 和 builtin version 不显示删除入口；后端仍会强制返�
 SuperDuck 手动验收覆盖：
 
 - Skills list：列、source badge、pagination、builtin/custom actions 差异。
-- Create empty state：dropzone、8MB 文案、disabled Continue。
-- Create file state：archive summary、check icon、remove upload、enabled Continue。
+- Create empty state：dropzone、8MB 文案、disabled Create skill。
+- Create file state：archive summary、check icon、remove upload、enabled Create skill。
 - Create duplicate custom title：发送 `POST /v1/skills?beta=true` 后展示后端冲突错误，不发送 versions endpoint。
 - Drawer：query param、description、versions、close。
 - Agent detail：`skills` 空态显示 `No skills configured.`；非空态展示紧凑 skills 列表，默认只包含可读名称、原始 `skill_id` 和版本信息；跟随鼠标的 hover 浮窗展示 source、created / updated 时间和 metadata 状态。
 - Actions menu：custom Update/Delete，builtin 无 menu。
 - Update empty state：说明文案和 dropzone。
 - Update success：dialog 关闭，drawer 版本列表刷新。
-- Delete confirm：标题、描述、Cancel/Delete。
+- Delete confirm：简洁标题、正文中完整目标名称、Cancel/Delete；短屏固定标题和操作，目标及错误在正文内换行滚动；失败将错误聚焦至可见区域。退出期间保留待删除技能名称和错误，父页面清空选择后不显示空名称。处理中拒绝 Escape，失败保留当前确认，下一次打开使用新技能和当前错误状态。版本删除确认独立成组件，保留原版本号及错误至退出完成；已有独立隔离样本对照，不代表真实版本删除链路已验收。
 - Console errors 和 `/v1/skills` network 请求。
+
+上传弹窗在退出完成后清理文件选择、错误及文件输入，避免淡出时闪回空上传区。提交中关闭、取消和移除上传均禁用，并拒绝 Escape；失败保留已选文件及错误。上传成功后立即保留接口返回的结果并关闭弹窗；`onUploaded` 在 Base UI 的退出完成回调中执行，再打开新技能详情或刷新版本列表，避免上传弹窗与新详情同时切入。API 请求与 payload 不变，不使用定时器延迟。
+
+## 列表 ID 展示
+
+技能列表 ID 交给共享 CopyIdCell 按单元格宽度截断一次，不先生成含省略号的字符串再由 CSS 二次截断。复制和可访问标签仍使用完整 ID；详情侧栏的紧凑身份展示不受影响。

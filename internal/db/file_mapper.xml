@@ -13,20 +13,24 @@
                 FROM session_resources owner
                 WHERE owner.file_uuid = files.uuid
                     AND owner.workspace_uuid = files.workspace_uuid
-                    AND (
-                        owner.file_ownership = 'owned'
-                        OR owner.resource_type = 'skill_archive'
-                    )
+                    AND (owner.file_ownership IN ('owned', 'referenced') OR owner.resource_type = 'skill_archive')
             )
             OR EXISTS (
                 SELECT 1
                 FROM session_resources owner
+                JOIN sessions session ON session.uuid = owner.session_uuid
+                    AND session.workspace_uuid = owner.workspace_uuid
+                    AND session.deleted_at IS NULL
                 WHERE owner.file_uuid = files.uuid
                     AND owner.workspace_uuid = files.workspace_uuid
-                    AND owner.file_ownership = 'owned'
                     AND owner.deleted_at IS NULL
                     AND (owner.expires_at IS NULL OR owner.expires_at &gt; now())
-                    AND left(owner.path, char_length('/outputs/')) = '/outputs/'
+                    AND (
+                        (owner.source_file_uuid IS NOT NULL AND owner.file_ownership = 'referenced'
+                            AND left(owner.path, char_length('/uploads/')) = '/uploads/')
+                        OR (owner.file_ownership = 'owned'
+                            AND left(owner.path, char_length('/outputs/')) = '/outputs/')
+                    )
             )
         )
     </sql>
@@ -37,13 +41,16 @@
                 resource.file_uuid, resource.workspace_uuid, resource.session_external_id,
                 resource.created_at, resource.uuid
             FROM session_resources resource
+            JOIN sessions session ON session.uuid = resource.session_uuid
+                AND session.workspace_uuid = resource.workspace_uuid
+                AND session.deleted_at IS NULL
             WHERE resource.workspace_uuid = #{params.WorkspaceUUID}
                 AND resource.session_external_id = #{params.ScopeID}
                 AND resource.resource_type = 'file'
                 AND resource.deleted_at IS NULL
                 AND (resource.expires_at IS NULL OR resource.expires_at &gt; now())
                 AND (
-                    (resource.file_ownership = 'referenced'
+                    (resource.source_file_uuid IS NOT NULL AND resource.file_ownership = 'referenced'
                         AND left(resource.path, char_length('/uploads/')) = '/uploads/')
                     OR (resource.file_ownership = 'owned'
                         AND left(resource.path, char_length('/outputs/')) = '/outputs/')
@@ -76,22 +83,50 @@
             <include refid="visibleFilePredicate"/>
     </select>
 
+    <sql id="sessionAttachmentResource">
+        SELECT 1
+        FROM session_resources resource
+        WHERE resource.file_uuid = file.uuid
+            AND resource.workspace_uuid = file.workspace_uuid
+            AND resource.session_uuid = #{sessionUUID}
+            AND resource.resource_type = 'file'
+            AND resource.file_ownership = 'owned'
+            AND resource.deleted_at IS NULL
+            AND left(resource.path, char_length('/uploads/message_attachments/')) = '/uploads/message_attachments/'
+    </sql>
+
+    <select id="GetSessionAttachmentFileByPath" resultType="fileRecordRow">
+        SELECT file.uuid, file.external_id, file.workspace_uuid, file.filename, file.mime_type,
+            file.size_bytes, file.sha256, file.s3_bucket, file.s3_key, file.downloadable,
+            file.scope_type, file.scope_id, file.created_by_api_key_uuid, file.created_at
+        FROM files file
+        WHERE file.workspace_uuid = #{workspaceUUID}
+            AND file.deleted_at IS NULL
+            AND EXISTS (
+                <include refid="sessionAttachmentResource"/>
+                AND resource.path = #{entryPath}
+            )
+    </select>
+
+    <select id="GetSessionAttachmentFile" resultType="fileRecordRow">
+        SELECT file.uuid, file.external_id, file.workspace_uuid, file.filename, file.mime_type,
+            file.size_bytes, file.sha256, file.s3_bucket, file.s3_key, file.downloadable,
+            file.scope_type, file.scope_id, file.created_by_api_key_uuid, file.created_at
+        FROM files file
+        WHERE file.workspace_uuid = #{workspaceUUID}
+            AND file.external_id = #{fileExternalID}
+            AND file.deleted_at IS NULL
+            AND EXISTS (
+                <include refid="sessionAttachmentResource"/>
+            )
+    </select>
+
     <select id="GetFileForShare" resultType="fileRecordRow">
         SELECT <include refid="fileColumns"/>
         FROM files
         WHERE workspace_uuid = #{workspaceUUID}
             AND external_id = #{fileExternalID}
             AND deleted_at IS NULL
-            AND NOT EXISTS (
-                SELECT 1
-                FROM session_resources owner
-                WHERE owner.workspace_uuid = files.workspace_uuid
-                    AND owner.file_uuid = files.uuid
-                    AND (
-                        owner.file_ownership = 'owned'
-                        OR owner.resource_type = 'skill_archive'
-                    )
-            )
         FOR SHARE
     </select>
 
@@ -252,8 +287,18 @@
             SELECT 1
             FROM session_resources resource
             WHERE resource.workspace_uuid = #{workspaceUUID}
-                AND resource.file_uuid = #{fileUUID}
+                AND (resource.file_uuid = #{fileUUID} OR resource.source_file_uuid = #{fileUUID})
                 AND resource.deleted_at IS NULL
+        ) AS referenced
+    </select>
+
+    <select id="HasMountedSourceReference" result="scalar">
+        SELECT EXISTS (
+            SELECT 1 FROM session_resources input
+            JOIN session_resources source ON source.file_uuid = input.source_file_uuid
+                AND source.workspace_uuid = input.workspace_uuid
+            WHERE input.workspace_uuid = #{workspaceUUID}
+                AND source.uuid = #{resourceUUID} AND input.deleted_at IS NULL
         ) AS referenced
     </select>
 
@@ -281,7 +326,6 @@
         WHERE resource.uuid = #{params.ResourceUUID}
         AND resource.workspace_uuid = #{params.WorkspaceUUID}
         AND resource.session_uuid = #{params.SessionUUID}
-        AND resource.file_ownership = 'owned'
         )
     </update>
 
@@ -351,51 +395,4 @@
         AND session.deleted_at IS NULL
     </insert>
 
-    <insert id="EnqueueObjectCleanupJob" result="exec">
-        INSERT INTO jobs (external_id, workspace_uuid, type, status, payload)
-        VALUES (
-            concat('job_', replace(CAST(gen_random_uuid() AS text), '-', '')),
-            #{workspaceUUID}, 'object_cleanup', 'pending', CAST(#{payload} AS jsonb)
-        )
-    </insert>
-
-    <update id="LeaseObjectCleanupJobs" result="returning" resultType="objectCleanupJobRow">
-        WITH next_jobs AS (
-            SELECT uuid
-            FROM jobs
-            WHERE type = 'object_cleanup'
-                AND run_after &lt;= now()
-                AND (
-                    status IN ('pending', 'retry')
-                    OR (status = 'running' AND locked_until &lt; now())
-                )
-            ORDER BY run_after, created_at
-            LIMIT #{limit}
-            FOR UPDATE SKIP LOCKED
-        )
-        UPDATE jobs j
-        SET status = 'running', locked_by = #{workerID},
-            locked_until = now() + interval '1 minute', updated_at = now()
-        FROM next_jobs
-        WHERE j.uuid = next_jobs.uuid
-        RETURNING j.uuid, j.external_id, j.workspace_uuid,
-            COALESCE(j.payload-&gt;&gt;'bucket', '') AS bucket,
-            COALESCE(j.payload-&gt;&gt;'key', '') AS object_key,
-            COALESCE(j.payload-&gt;&gt;'file_id', '') AS file_external_id,
-            j.attempts
-    </update>
-
-    <update id="CompleteObjectCleanupJob" result="exec">
-        UPDATE jobs
-        SET status = 'completed', locked_by = NULL, locked_until = NULL, updated_at = now()
-        WHERE uuid = #{jobUUID} AND type = 'object_cleanup'
-    </update>
-
-    <update id="FailObjectCleanupJob" result="exec">
-        UPDATE jobs
-        SET status = #{params.Status}, locked_by = NULL, locked_until = NULL,
-            run_after = #{params.RunAfter}, updated_at = now(), attempts = #{params.Attempts},
-            payload = payload || jsonb_build_object('last_error', CAST(#{params.Reason} AS text))
-        WHERE uuid = #{params.JobUUID} AND type = 'object_cleanup'
-    </update>
 </mapper>

@@ -7,18 +7,20 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 )
 
 func newTestService(t *testing.T) *secrets.Service {
 	t.Helper()
-	kek, err := secrets.GenerateKEK()
+	kek, err := localkeys.GenerateKEK()
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	svc, err := secrets.NewLocalService(context.Background(), kek)
+	svcProvider, err := localkeys.New(localkeys.KeyMaterial{KEK: kek}, nil)
 	if err != nil {
 		t.Fatalf("build service: %v", err)
 	}
+	svc := secrets.NewService(svcProvider)
 	return svc
 }
 
@@ -66,26 +68,6 @@ func TestOpenTamperAndAADFailClosed(t *testing.T) {
 	}
 }
 
-func TestLocalKeyProviderRejectsBadMaterial(t *testing.T) {
-	if _, err := secrets.NewLocalKeyProvider(secrets.LocalKeyMaterial{Version: 1, KEK: make([]byte, 16)}, nil); err == nil {
-		t.Fatal("short KEK must fail")
-	}
-	kek, err := secrets.GenerateKEK()
-	if err != nil {
-		t.Fatalf("generate KEK: %v", err)
-	}
-	other, err := secrets.GenerateKEK()
-	if err != nil {
-		t.Fatalf("generate other KEK: %v", err)
-	}
-	if _, err := secrets.NewLocalKeyProvider(
-		secrets.LocalKeyMaterial{Version: 2, KEK: kek},
-		[]secrets.LocalKeyMaterial{{Version: 2, KEK: other}},
-	); err == nil {
-		t.Fatal("decrypt_only colliding with current version must fail")
-	}
-}
-
 func TestSealOpenRoundTrip(t *testing.T) {
 	svc := newTestService(t)
 	binding := secrets.Binding{OrganizationUUID: "org-1", WorkspaceUUID: "ws-2", VaultExternalID: "vlt_1", CredentialExternalID: "cred_1"}
@@ -104,44 +86,83 @@ func TestSealOpenRoundTrip(t *testing.T) {
 	}
 }
 
-func TestDecryptOnlyOpensOldKeyVersionWithoutRewrap(t *testing.T) {
-	v1, err := secrets.GenerateKEK()
+func TestTunnelEnvelopeBindsEveryIdentityField(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	binding := secrets.TunnelBinding{
+		OrganizationUUID: "11111111-1111-1111-1111-111111111111",
+		WorkspaceUUID:    "22222222-2222-2222-2222-222222222222",
+		TunnelExternalID: "tunnel_0123456789abcdef0123456789abcdef",
+		TokenExternalID:  "ttkn_example",
+	}
+	envelope, err := svc.SealTunnel(ctx, binding, []byte("connector-secret"))
 	if err != nil {
-		t.Fatalf("generate v1 KEK: %v", err)
+		t.Fatalf("SealTunnel: %v", err)
 	}
-	v2, err := secrets.GenerateKEK()
-	if err != nil {
-		t.Fatalf("generate v2 KEK: %v", err)
+	mutations := []struct {
+		name    string
+		binding secrets.TunnelBinding
+	}{
+		{name: "organization", binding: secrets.TunnelBinding{OrganizationUUID: "other", WorkspaceUUID: binding.WorkspaceUUID, TunnelExternalID: binding.TunnelExternalID, TokenExternalID: binding.TokenExternalID}},
+		{name: "workspace", binding: secrets.TunnelBinding{OrganizationUUID: binding.OrganizationUUID, WorkspaceUUID: "other", TunnelExternalID: binding.TunnelExternalID, TokenExternalID: binding.TokenExternalID}},
+		{name: "tunnel", binding: secrets.TunnelBinding{OrganizationUUID: binding.OrganizationUUID, WorkspaceUUID: binding.WorkspaceUUID, TunnelExternalID: "tunnel_fedcba9876543210fedcba9876543210", TokenExternalID: binding.TokenExternalID}},
+		{name: "token", binding: secrets.TunnelBinding{OrganizationUUID: binding.OrganizationUUID, WorkspaceUUID: binding.WorkspaceUUID, TunnelExternalID: binding.TunnelExternalID, TokenExternalID: "ttkn_other"}},
 	}
-	binding := secrets.Binding{OrganizationUUID: "org-1", WorkspaceUUID: "ws-2", VaultExternalID: "vlt_1", CredentialExternalID: "cred_1"}
-	plaintext := []byte(`{"token":"rotate-me"}`)
-
-	oldSvc, err := secrets.NewLocalServiceWithKeys(context.Background(), secrets.LocalKeyMaterial{Version: 1, KEK: v1}, nil)
-	if err != nil {
-		t.Fatalf("build v1 service: %v", err)
-	}
-	env := mustSeal(t, oldSvc, binding, plaintext)
-
-	rotated, err := secrets.NewLocalServiceWithKeys(context.Background(),
-		secrets.LocalKeyMaterial{Version: 2, KEK: v2},
-		[]secrets.LocalKeyMaterial{{Version: 1, KEK: v1}},
-	)
-	if err != nil {
-		t.Fatalf("build rotated service: %v", err)
-	}
-	got, err := rotated.Open(context.Background(), binding, env)
-	if err != nil || !bytes.Equal(got, plaintext) {
-		t.Fatalf("Open old envelope after rotation: %v got %q", err, got)
-	}
-	if fresh := mustSeal(t, rotated, binding, []byte("new")); fresh.KeyVersion != 2 {
-		t.Fatalf("fresh seal key_version = %d, want 2", fresh.KeyVersion)
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			if _, err := svc.OpenTunnel(ctx, mutation.binding, envelope); err == nil {
+				t.Fatal("OpenTunnel succeeded with a changed binding")
+			}
+		})
 	}
 
-	currentOnly, err := secrets.NewLocalServiceWithKeys(context.Background(), secrets.LocalKeyMaterial{Version: 2, KEK: v2}, nil)
+	plaintext, err := svc.OpenTunnel(ctx, binding, envelope)
 	if err != nil {
-		t.Fatalf("build current-only service: %v", err)
+		t.Fatalf("OpenTunnel: %v", err)
 	}
-	if _, err := currentOnly.Open(context.Background(), binding, env); err == nil {
-		t.Fatal("Open old envelope without decrypt_only succeeded")
+	if got, want := string(plaintext), "connector-secret"; got != want {
+		t.Fatalf("plaintext = %q, want %q", got, want)
+	}
+}
+
+// observedProvider retains the DEK slice only so the test can inspect its cleanup.
+type observedProvider struct {
+	dek  []byte
+	fail bool
+}
+
+func (*observedProvider) Name() string { return "observed" }
+func (p *observedProvider) WrapDEK(_ context.Context, dek []byte) (secrets.WrappedKey, error) {
+	p.dek = dek
+	return secrets.WrappedKey{Ciphertext: bytes.Clone(dek), KeyVersion: 1}, nil
+}
+func (p *observedProvider) UnwrapDEK(_ context.Context, w secrets.WrappedKey) ([]byte, error) {
+	p.dek = bytes.Clone(w.Ciphertext)
+	if p.fail {
+		return p.dek, errors.New("unwrap failure")
+	}
+	return p.dek, nil
+}
+
+func TestServiceWipesDEK(t *testing.T) {
+	for _, fail := range []bool{true, false} {
+		p := &observedProvider{fail: fail}
+		svc := secrets.NewService(p)
+		b := secrets.Binding{OrganizationUUID: "o", WorkspaceUUID: "w", VaultExternalID: "v", CredentialExternalID: "c"}
+		env := mustSeal(t, svc, b, []byte("secret"))
+		if !bytes.Equal(p.dek, make([]byte, 32)) {
+			t.Fatal("Seal retained a plaintext DEK")
+		}
+		plain, err := svc.Open(t.Context(), b, env)
+		if fail {
+			if err == nil || plain != nil {
+				t.Fatal("unwrap failure returned plaintext")
+			}
+		} else if err != nil || string(plain) != "secret" {
+			t.Fatalf("roundtrip failed: %v", err)
+		}
+		if !bytes.Equal(p.dek, make([]byte, 32)) {
+			t.Fatalf("Open retained a plaintext DEK (provider failure: %t)", fail)
+		}
 	}
 }

@@ -1,29 +1,17 @@
 import { type ApiError } from '../../../shared/api/client';
-import { useFormatters, useI18n } from '../../../shared/i18n';
-import { cn } from '../../../shared/lib/utils';
-import { Button } from '../../../shared/ui/button';
-import {
-  CopyIdCell,
-  DataTableCell,
-  DataTableRow,
-  MoreActionsButton,
-  dataTableClassName,
-  dataTableHeaderCellClassName,
-  dataTableHeaderRowClassName,
-} from '../../../shared/ui/data-table-interactions';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '../../../shared/ui/dropdown-menu';
+import { useI18n } from '../../../shared/i18n';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
-import { useWorkspace } from '../../../shared/workspaces/context';
-import { Archive, ChevronLeft, ChevronRight, Plus, Search, TriangleAlert } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
 import {
-  agentsListLimit,
-  archiveAgent,
+  ResourceListPagination,
+  resourceListPageCount,
+  resourceListTotalCount,
+} from '../../../shared/ui/resource-list-pagination';
+import { useWorkspace } from '../../../shared/workspaces/context';
+import { Search, TriangleAlert } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { consoleResourceListLimit } from '../../../shared/console-list';
+import {
   createAgent,
   defaultAgentFilters,
   exactAgentIdPattern,
@@ -32,15 +20,12 @@ import {
   searchAgentsByName,
 } from '../api';
 import {
-  AgentFilterDropdown,
   AgentsEmptyState,
   AgentsListState,
-  AgentStatusBadge,
   ConfirmAgentsArchiveDialog,
   CreateResourceDialog,
   EmptyState,
   ManagedErrorAlert,
-  ManagedSearchField,
   ManagedWarningAlert,
 } from '../components/common';
 import {
@@ -48,8 +33,6 @@ import {
   createdFilterOptionsFor,
   managedColumnLabel,
   resourceCreateLabel,
-  resourceDescription,
-  resourceEmptyAction,
   resourceSearchPlaceholder,
   resourceTitle,
   statusFilterLabel,
@@ -65,16 +48,14 @@ import {
   type PageCursor,
   type ResourceConfig,
 } from '../types';
-import { agentDetailHref, errorMessage, handleInternalLinkClick } from '../utils';
-import { CreateAgentDialog } from './create-dialog';
-import {
-  agentMatchesClientFilters,
-  agentModelName,
-  compactAgentId,
-  emptyAgents,
-  relativeTime,
-  rowFromAgent,
-} from './model';
+import { errorMessage, navigateToInternalHref } from '../utils';
+import { AgentCreatePage } from './AgentCreatePage';
+import { agentCreateHref } from './creation-route';
+import { AgentListTable } from './AgentListTable';
+import { AgentListHeader } from './AgentListHeader';
+import { AgentListOverlays } from './AgentListOverlays';
+import { agentMatchesClientFilters, emptyAgents, rowFromAgent } from './model';
+import { archiveAgentBatch } from './archive';
 
 export { AgentDetailPage } from './detail';
 export {
@@ -86,6 +67,30 @@ export {
 } from './model';
 export { BUILT_IN_AGENT_TOOLSETS } from './tools/model';
 
+function scopedAgentTotalCount(
+  state: { workspaceId: string; requestKey: string; totalCount: number | null },
+  workspaceId: string,
+  requestKey: string,
+) {
+  if (state.workspaceId !== workspaceId || state.requestKey !== requestKey) {
+    return null;
+  }
+  return state.totalCount;
+}
+
+function agentListPager(
+  mode: AgentLoadMode,
+  historyLength: number,
+  localPage: number,
+  listTotalCount: number | null,
+  loadedCount: number,
+) {
+  return {
+    currentPage: mode === 'search' ? localPage + 1 : historyLength + 1,
+    totalPages: resourceListPageCount(mode === 'list' ? listTotalCount : loadedCount, consoleResourceListLimit),
+  };
+}
+
 export function AgentsResourcePage({
   config,
   routeWorkspaceId,
@@ -94,15 +99,16 @@ export function AgentsResourcePage({
   routeWorkspaceId?: string;
 }) {
   const { msg } = useI18n();
-  const formatters = useFormatters();
-  const { activeWorkspaceId } = useWorkspace();
+  const { activeWorkspaceId, orgUuid } = useWorkspace();
   const workspaceId = routeWorkspaceId || activeWorkspaceId;
+  const [quickViewAgentId, setQuickViewAgentId] = useState<string | null>(null);
+  const [sessionAgent, setSessionAgent] = useState<AgentApiResponse | null>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [createdFilter, setCreatedFilter] = useState<AgentCreatedFilter>(defaultAgentFilters.created);
   const [statusFilter, setStatusFilter] = useState<AgentStatusFilter>(defaultAgentFilters.status);
   const [openFilterMenu, setOpenFilterMenu] = useState<AgentFilterMenu | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(
+  const [createOpen, setCreateOpen] = useState(
     () =>
       config.section === 'agents' &&
       typeof window !== 'undefined' &&
@@ -134,6 +140,7 @@ export function AgentsResourcePage({
     history: PageCursor[];
     nextPage: PageCursor;
     localPage: number;
+    totalCount: number | null;
   }>({
     workspaceId: '',
     requestKey: '',
@@ -141,6 +148,7 @@ export function AgentsResourcePage({
     history: [],
     nextPage: null,
     localPage: 0,
+    totalCount: null,
   });
   const isAgentsPage = config.section === 'agents';
   const normalizedSearch = debouncedSearch.trim();
@@ -178,6 +186,7 @@ export function AgentsResourcePage({
     agentPageState.workspaceId === workspaceId && agentPageState.requestKey === agentRequestKey
       ? agentPageState.localPage
       : 0;
+  const agentListTotalCount = scopedAgentTotalCount(agentPageState, workspaceId, agentRequestKey);
   const agentsFromApi = remoteAgents ?? emptyAgents;
   const agentRowsFromApi = useMemo(() => agentsFromApi.map(rowFromAgent), [agentsFromApi]);
   const rows = isAgentsPage ? agentRowsFromApi : (config.rows ?? []);
@@ -195,10 +204,9 @@ export function AgentsResourcePage({
   );
   const displayedAgents =
     agentLoadMode === 'search'
-      ? visibleAgents.slice(agentLocalPage * agentsListLimit, (agentLocalPage + 1) * agentsListLimit)
+      ? visibleAgents.slice(agentLocalPage * consoleResourceListLimit, (agentLocalPage + 1) * consoleResourceListLimit)
       : visibleAgents;
   const title = resourceTitle(config, msg);
-  const description = resourceDescription(config, msg);
   const createLabel = resourceCreateLabel(config, msg);
   const searchPlaceholder = resourceSearchPlaceholder(config, msg);
   const createdOptions = createdFilterOptionsFor(msg);
@@ -207,7 +215,9 @@ export function AgentsResourcePage({
   const searchResultsTruncated = agentLoadMode === 'search' && remoteAgentsTruncated;
   const hasPreviousAgentsPage = agentLoadMode === 'search' ? agentLocalPage > 0 : Boolean(agentPageHistory.length);
   const hasNextAgentsPage =
-    agentLoadMode === 'search' ? (agentLocalPage + 1) * agentsListLimit < visibleAgents.length : Boolean(agentNextPage);
+    agentLoadMode === 'search'
+      ? (agentLocalPage + 1) * consoleResourceListLimit < visibleAgents.length
+      : Boolean(agentNextPage);
 
   useEffect(() => {
     if (previousWorkspaceIdRef.current === workspaceId) {
@@ -217,12 +227,14 @@ export function AgentsResourcePage({
     setRemoteAgentsState({ workspaceId, requestKey: '', mode: 'list', data: null, truncated: false });
     setOpenFilterMenu(null);
     setConfirmArchiveAgentIds(null);
+    setQuickViewAgentId(null);
+    setSessionAgent(null);
     setArchiveError(null);
     setArchivingIds(new Set());
   }, [workspaceId]);
 
   useEffect(() => {
-    if (!dialogOpen || typeof window === 'undefined') {
+    if (!createOpen || typeof window === 'undefined') {
       return;
     }
     const url = new URL(window.location.href);
@@ -231,7 +243,7 @@ export function AgentsResourcePage({
     }
     url.searchParams.delete('create_agent');
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
-  }, [dialogOpen]);
+  }, [createOpen]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search), 300);
@@ -257,17 +269,17 @@ export function AgentsResourcePage({
     const request =
       agentLoadMode === 'retrieve'
         ? retrieveAgent(normalizedSearch, requestWorkspaceId)
-            .then((agent) => ({ data: [agent], next_page: null, truncated: false }))
+            .then((agent) => ({ data: [agent], next_page: null, truncated: false, total_count: 1 }))
             .catch((error: unknown) => {
               const apiError = error as ApiError;
               if (apiError?.status === 404) {
-                return { data: [], next_page: null, truncated: false };
+                return { data: [], next_page: null, truncated: false, total_count: 0 };
               }
               throw error;
             })
         : agentLoadMode === 'search'
           ? searchAgentsByName(requestWorkspaceId, normalizedSearch, agentListFilters)
-          : listAgents(requestWorkspaceId, pageCursor, agentListFilters).then((page) => ({
+          : listAgents(requestWorkspaceId, pageCursor, agentListFilters, consoleResourceListLimit).then((page) => ({
               ...page,
               truncated: false,
             }));
@@ -293,6 +305,7 @@ export function AgentsResourcePage({
             nextPage: page.next_page ?? null,
             localPage:
               current.workspaceId === requestWorkspaceId && current.requestKey === requestKey ? current.localPage : 0,
+            totalCount: resourceListTotalCount(page.total_count),
           }));
         }
       })
@@ -314,6 +327,7 @@ export function AgentsResourcePage({
               current.workspaceId === requestWorkspaceId && current.requestKey === requestKey ? current.history : [],
             nextPage: null,
             localPage: 0,
+            totalCount: null,
           }));
         }
       });
@@ -340,6 +354,7 @@ export function AgentsResourcePage({
       history: [],
       nextPage: null,
       localPage: 0,
+      totalCount: null,
     });
     setArchiveError(null);
   };
@@ -370,6 +385,7 @@ export function AgentsResourcePage({
       history: [],
       nextPage: null,
       localPage: 0,
+      totalCount: null,
     });
   };
 
@@ -383,6 +399,7 @@ export function AgentsResourcePage({
       history: [],
       nextPage: null,
       localPage: 0,
+      totalCount: null,
     });
   };
 
@@ -414,6 +431,7 @@ export function AgentsResourcePage({
         history: [],
         nextPage: agentNextPage,
         localPage: agentLocalPage + 1,
+        totalCount: agentListTotalCount,
       });
       setArchiveError(null);
       return;
@@ -428,6 +446,7 @@ export function AgentsResourcePage({
       history: [...agentPageHistory, agentPageCursor],
       nextPage: null,
       localPage: 0,
+      totalCount: agentListTotalCount,
     });
     setArchiveError(null);
   };
@@ -444,6 +463,7 @@ export function AgentsResourcePage({
         history: [],
         nextPage: agentNextPage,
         localPage: agentLocalPage - 1,
+        totalCount: agentListTotalCount,
       });
       setArchiveError(null);
       return;
@@ -458,6 +478,7 @@ export function AgentsResourcePage({
       history: agentPageHistory.slice(0, -1),
       nextPage: null,
       localPage: 0,
+      totalCount: agentListTotalCount,
     });
     setArchiveError(null);
   };
@@ -491,10 +512,46 @@ export function AgentsResourcePage({
     setArchiveError(null);
     setArchivingIds((current) => new Set([...current, ...ids]));
     try {
-      await Promise.all(ids.map((id) => archiveAgent(id, workspaceId)));
-      removeArchivedAgents(ids);
-    } catch (error) {
-      setArchiveError(errorMessage(error));
+      const { archivedIds, error: archiveFailure } = await archiveAgentBatch(ids, workspaceId);
+      setArchiveError(archiveFailure);
+      if (!archivedIds.length) {
+        return;
+      }
+      if (agentLoadMode === 'list' && statusFilter !== 'all') {
+        try {
+          let cursor = agentPageCursor;
+          let history = agentPageHistory;
+          let page = await listAgents(workspaceId, cursor, agentListFilters, consoleResourceListLimit);
+          if ((page.data ?? []).length === 0 && history.length > 0) {
+            cursor = history[history.length - 1];
+            history = history.slice(0, -1);
+            page = await listAgents(workspaceId, cursor, agentListFilters, consoleResourceListLimit);
+          }
+          setRemoteAgentsState({
+            workspaceId,
+            requestKey: agentRequestKey,
+            mode: 'list',
+            data: page.data ?? [],
+            truncated: false,
+          });
+          setAgentPageState((current) =>
+            current.workspaceId === workspaceId && current.requestKey === agentRequestKey
+              ? {
+                  ...current,
+                  cursor,
+                  history,
+                  nextPage: page.next_page ?? null,
+                  totalCount: resourceListTotalCount(page.total_count),
+                }
+              : current,
+          );
+        } catch (error) {
+          removeArchivedAgents(archivedIds);
+          setArchiveError(archiveFailure ?? errorMessage(error));
+        }
+      } else {
+        removeArchivedAgents(archivedIds);
+      }
     } finally {
       setArchivingIds((current) => {
         const next = new Set(current);
@@ -522,55 +579,32 @@ export function AgentsResourcePage({
     setConfirmArchiveAgentIds(null);
   };
 
-  const renderAgentActionMenu = (agent: AgentApiResponse, archiving: boolean) => (
-    <div className="flex justify-end">
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <MoreActionsButton
-              label={msg('managedAgents.common.moreActions', 'More actions')}
-              disabled={archiving}
-              className="disabled:cursor-wait"
-            />
-          }
-        />
-        <DropdownMenuContent align="end" className="w-[164px]">
-          <DropdownMenuItem
-            disabled={archiving || Boolean(agent.archived_at)}
-            onClick={() => requestArchiveAgents([agent.id])}
-          >
-            <Archive className="size-4" aria-hidden />
-            {msg('managedAgents.agents.archiveAgent', 'Archive agent')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
+  if (isAgentsPage && createOpen) {
+    return (
+      <AgentCreatePage workspaceId={workspaceId} onCreate={handleCreateAgent} onClose={() => setCreateOpen(false)} />
+    );
+  }
 
   return (
     <section className="min-h-[calc(100vh-48px)] text-foreground">
-      <header className="mb-5 flex items-start justify-between gap-6">
-        <div>
-          <h1 className="text-[28px] font-semibold leading-tight text-foreground">{title}</h1>
-          <p className="mt-2 text-[15px] leading-5 text-muted-foreground">{description}</p>
-        </div>
-        {createLabel ? (
-          <Button type="button" className="h-9 shrink-0" onClick={() => setDialogOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            {createLabel}
-          </Button>
-        ) : null}
-      </header>
+      <AgentListHeader
+        title={title}
+        createLabel={createLabel}
+        onCreate={() => {
+          setCreateOpen(true);
+          if (isAgentsPage) navigateToInternalHref(agentCreateHref(workspaceId));
+        }}
+      />
 
       <div className="mb-7 flex flex-wrap items-center gap-2">
-        <ManagedSearchField
+        <ResourceSearchField
           id={`${config.section}-search`}
           value={search}
           placeholder={searchPlaceholder}
           prefix={config.searchPrefix}
           onChange={handleSearchChange}
         />
-        <AgentFilterDropdown
+        <ResourceFilterDropdown
           label={msg('managedAgents.filters.created', 'Created')}
           valueLabel={createdFilterLabel(createdFilter, msg)}
           options={createdOptions}
@@ -581,7 +615,7 @@ export function AgentsResourcePage({
           onOpenChange={setOpenFilterMenu}
           onSelect={handleCreatedFilterChange}
         />
-        <AgentFilterDropdown
+        <ResourceFilterDropdown
           label={msg('managedAgents.filters.status', 'Status')}
           valueLabel={statusFilterLabel(statusFilter, msg)}
           options={statusOptions}
@@ -618,91 +652,16 @@ export function AgentsResourcePage({
             onAction={retryAgentsLoad}
           />
         ) : isAgentsPage ? (
-          <Table className={dataTableClassName}>
-            <TableHeader>
-              <TableRow className={dataTableHeaderRowClassName}>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[185px]')}>
-                  {managedColumnLabel('ID', msg)}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-auto')}>
-                  {managedColumnLabel('Name', msg)}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[210px]')}>
-                  {managedColumnLabel('Model', msg)}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[120px]')}>
-                  {managedColumnLabel('Status', msg)}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[150px]')}>
-                  {managedColumnLabel('Created', msg)}
-                </TableHead>
-                <TableHead className={cn(dataTableHeaderCellClassName, 'w-[150px]')}>
-                  {managedColumnLabel('Last updated', msg)}
-                </TableHead>
-                <TableHead
-                  className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
-                  aria-label={managedColumnLabel('Actions', msg)}
-                />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {remoteAgents === null ? (
-                <TableRow className="border-0 hover:bg-transparent">
-                  <TableCell colSpan={7} className="h-[280px] text-center text-sm text-muted-foreground">
-                    {msg('managedAgents.agents.loading', 'Loading agents...')}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                displayedAgents.map((agent) => {
-                  const archiving = archivingIds.has(agent.id);
-                  const detailHref = agentDetailHref(workspaceId, agent.id);
-                  return (
-                    <DataTableRow key={agent.id}>
-                      <DataTableCell edge="start">
-                        <CopyIdCell
-                          value={agent.id}
-                          ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: agent.id })}
-                          className="gap-1.5"
-                        >
-                          <a
-                            href={detailHref}
-                            className="truncate font-mono text-[13px] text-foreground underline-offset-4 hover:underline"
-                            onClick={(event) => handleInternalLinkClick(event, detailHref)}
-                          >
-                            {compactAgentId(agent.id)}
-                          </a>
-                        </CopyIdCell>
-                      </DataTableCell>
-                      <DataTableCell className="truncate text-foreground">
-                        <a
-                          href={detailHref}
-                          className="underline-offset-4 hover:underline"
-                          onClick={(event) => handleInternalLinkClick(event, detailHref)}
-                        >
-                          {agent.name || msg('managedAgents.agents.untitled', 'Untitled agent')}
-                        </a>
-                      </DataTableCell>
-                      <DataTableCell className="truncate font-mono text-[13px] text-muted-foreground">
-                        {agentModelName(agent.model)}
-                      </DataTableCell>
-                      <DataTableCell className="truncate">
-                        <AgentStatusBadge archived={Boolean(agent.archived_at)} />
-                      </DataTableCell>
-                      <DataTableCell className="truncate text-muted-foreground">
-                        {relativeTime(agent.created_at, formatters.relativeTime)}
-                      </DataTableCell>
-                      <DataTableCell className="truncate text-muted-foreground">
-                        {relativeTime(agent.updated_at, formatters.relativeTime)}
-                      </DataTableCell>
-                      <DataTableCell edge="end" className="px-2">
-                        {renderAgentActionMenu(agent, archiving)}
-                      </DataTableCell>
-                    </DataTableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+          <AgentListTable
+            agents={displayedAgents}
+            loading={remoteAgents === null}
+            workspaceId={workspaceId}
+            archivingIds={archivingIds}
+            quickViewAgentId={quickViewAgentId}
+            onQuickView={setQuickViewAgentId}
+            onStartSession={setSessionAgent}
+            onArchive={requestArchiveAgents}
+          />
         ) : (
           <Table className="table-fixed border-collapse text-left">
             <TableHeader>
@@ -712,7 +671,7 @@ export function AgentsResourcePage({
                     {column ? (
                       managedColumnLabel(column, msg)
                     ) : (
-                      <span className="block size-4 rounded border border-border" aria-hidden />
+                      <span className="block size-4 rounded border-[0.5px] border-border" aria-hidden />
                     )}
                   </TableHead>
                 ))}
@@ -726,7 +685,7 @@ export function AgentsResourcePage({
                       {column ? (
                         row[column]
                       ) : (
-                        <span className="block size-4 rounded border border-border" aria-hidden />
+                        <span className="block size-4 rounded border-[0.5px] border-border" aria-hidden />
                       )}
                     </TableCell>
                   ))}
@@ -743,49 +702,41 @@ export function AgentsResourcePage({
               <AgentsEmptyState
                 trueEmpty={!hasActiveAgentFilters}
                 truncated={searchResultsTruncated}
-                trueEmptyActionLabel={
-                  resourceEmptyAction(config, msg) ?? msg('managedAgents.agents.emptyAction', 'Get started with agents')
-                }
-                onCreate={() => setDialogOpen(true)}
                 onReset={resetAgentFilters}
               />
             )
           : !visibleRows.length && <EmptyState config={config} />}
       </div>
 
-      <div className="mt-9 flex items-center gap-2">
-        <Button
-          type="button"
-          disabled={!hasPreviousAgentsPage}
-          variant="outline"
-          size="icon-lg"
-          aria-label={msg('pagination.previousPage', 'Previous page')}
-          onClick={goToPreviousAgentsPage}
-        >
-          <ChevronLeft className="size-4" aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          disabled={!hasNextAgentsPage}
-          variant="outline"
-          size="icon-lg"
-          aria-label={msg('pagination.nextPage', 'Next page')}
-          onClick={goToNextAgentsPage}
-        >
-          <ChevronRight className="size-4" aria-hidden />
-        </Button>
-      </div>
+      <ResourceListPagination
+        {...agentListPager(
+          agentLoadMode,
+          agentPageHistory.length,
+          agentLocalPage,
+          agentListTotalCount,
+          visibleAgents.length,
+        )}
+        canPrevious={hasPreviousAgentsPage}
+        canNext={hasNextAgentsPage}
+        onPrevious={goToPreviousAgentsPage}
+        onNext={goToNextAgentsPage}
+      />
 
-      {dialogOpen && createLabel ? (
-        config.section === 'agents' ? (
-          <CreateAgentDialog
-            workspaceId={workspaceId}
-            onClose={() => setDialogOpen(false)}
-            onCreate={handleCreateAgent}
-          />
-        ) : (
-          <CreateResourceDialog title={createLabel} onClose={() => setDialogOpen(false)} />
-        )
+      {createOpen && createLabel ? (
+        <CreateResourceDialog title={createLabel} onClose={() => setCreateOpen(false)} />
+      ) : null}
+
+      {isAgentsPage ? (
+        <AgentListOverlays
+          key={workspaceId}
+          workspaceId={workspaceId}
+          orgUuid={orgUuid}
+          agents={displayedAgents}
+          quickViewAgentId={quickViewAgentId}
+          sessionAgent={sessionAgent}
+          onSelect={setQuickViewAgentId}
+          onStartSession={setSessionAgent}
+        />
       ) : null}
 
       {isAgentsPage && confirmArchiveAgentIds?.length ? (

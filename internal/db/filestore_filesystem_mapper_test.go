@@ -83,7 +83,7 @@ func TestFilestoreFilesystemMapperBuildsLifecycleQueries(t *testing.T) {
 		SessionUUID:          "00000000-0000-0000-0000-000000000006",
 		OrganizationUUID:     "00000000-0000-0000-0000-000000000002",
 		WorkspaceUUID:        workspaceUUID,
-		CreatedByAPIKeyUUID:  "00000000-0000-0000-0000-000000000005",
+		CreatedByAPIKeyUUID:  nullableString("00000000-0000-0000-0000-000000000005"),
 		CreatedAt:            createdAt,
 	}
 	tests := []struct {

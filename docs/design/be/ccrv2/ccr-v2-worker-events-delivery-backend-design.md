@@ -1,501 +1,340 @@
-# CCR v2 Worker Events Delivery ACK 后端实现设计
+# CCR v2 Worker 入站投递后端设计
 
-> 本文记录 `POST /v1/code/sessions/{session_id}/worker/events/delivery` 的当前后端实现：API 契约、请求 body 处理、ACK 落库规则、没有 `received` 时的语义，以及服务端重发路径。
->
-> 相关契约文档：[`ccr-v2-api-worker-events-delivery.md`](ccr-v2-api-worker-events-delivery.md)。
-> epoch 语义：[`ccr-v2-epoch-design.md`](ccr-v2-epoch-design.md)。
+> 2026-09-10 修复：控制回应使用独立的可靠投递名额，避免与正在等待它的任务循环等待。
 
----
+## 目标
 
-## 1. 结论
+Code Session 入站事件直接发布到共享 JetStream Stream，并通过每 Session 两个独立 durable consumer
+实现 at-least-once、各通道内串行消费。PostgreSQL 不保存入站消息、发布记录或 delivery 状态；Redis 只保存
+短期 ACK subject；大 payload 放入对象存储。
 
-`/worker/events/delivery` 不是 worker 输出事件接口，而是 worker 对服务端通过 SSE 推送的 `client_event` 做**应用层 ACK**。
+核心不变量：
 
-服务端不能把 SSE 写出成功当成 worker 已收到。当前实现区分以下状态：
+- 普通入站请求只有获得 JetStream PubAck 后才成功；
+- activation 只有在 initialize 和完整启动历史全部获得 PubAck 后才切换 active；
+- 同一 Code Session 的直接发布与 termination 通过 Code Session 行锁串行；
+- 两个 consumer 均使用服务端默认 `MaxAckPending`；逐条按序拉取，执行端按事件 ID 去重并管理输入顺序；
+- `control_response` 和 `control_request/interrupt` 进入回应通道，不受任务的未完成 ACK 阻塞；
+- worker epoch 的强一致来源仍是 PostgreSQL；
+- Redis 丢失、API 重启或 SSE 断开只造成重投；
+- `processed` 是唯一完成 ACK，`received` 与 `processing` 只延长处理窗口。
 
-| 状态 | 含义 |
-|---|---|
-| `queued` | 事件已入库，尚未尝试写给 worker |
-| `sent` | 服务端已把 SSE frame 写出，但 worker 尚未 ACK |
-| `received` | worker SSETransport 已收到 client_event |
-| `processing` | worker 已消费该命令并开始处理 |
-| `processed` | worker 已处理完成，后续不应重发 |
+```mermaid
+sequenceDiagram
+    participant Producer
+    participant PG as PostgreSQL
+    participant JS as JetStream
+    participant API as SSE/API instance
+    participant Redis
+    participant Worker
 
-当前后端实现已经落地：
-
-- delivery handler 解析并校验 `updates`。
-- ACK 在事务内校验当前 `worker_epoch`。
-- ACK 只接受已经由当前 epoch stream 写出并标记为 `sent` 的事件。
-- 状态按 `sent < received < processing < processed` 单调推进。
-- unknown、queued、旧 epoch 或未被当前 epoch 发送过的 ACK 不报错，计入 `ignored`。
-- 成功响应返回 `ok/applied/ignored`。
-
----
-
-## 2. API 契约
-
-### 2.1 Endpoint
-
-| 项 | 值 |
-|---|---|
-| Method | `POST` |
-| URL | `/v1/code/sessions/{session_id}/worker/events/delivery` |
-| 方向 | worker -> server |
-| 调用方 | Claude Code `CCRClient.reportDelivery()` |
-| 鉴权 | `Authorization: Bearer <session_access_token>` |
-
-### 2.2 Headers
-
-| Header | 必填 | 说明 |
-|---|---|---|
-| `Authorization` | 是 | `Bearer <session_access_token>` |
-| `Content-Type` | 是 | `application/json` |
-| `anthropic-version` | 是 | `2023-06-01` |
-| `User-Agent` | 否 | Claude Code 客户端会带 |
-
-### 2.3 Body
-
-```jsonc
-{
-  "worker_epoch": 1,
-  "updates": [
-    {
-      "event_id": "5e34a4de-456f-4bb5-ba2c-152cf71d3fa1",
-      "status": "processing"
-    }
-  ]
-}
+    Producer->>PG: 锁定 active Code Session
+    Producer->>JS: Publish(stable Nats-Msg-Id)
+    JS-->>Producer: PubAck
+    Producer->>PG: 释放行锁
+    Producer-->>Producer: success
+    API->>JS: durable pull, batch=1
+    JS-->>API: envelope + Stream sequence + ACK subject
+    API->>Redis: 写 session + epoch + event_id 映射
+    API-->>Worker: flush SSE client_event
+    Worker->>API: received / processing
+    API->>JS: InProgress
+    API->>Redis: refresh TTL
+    Worker->>API: processed
+    API->>PG: 锁定 Code Session 并校验当前 epoch
+    API->>JS: DoubleAck
+    API->>Redis: 删除映射
+    API->>PG: 同事务更新活跃时间并释放行锁
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `worker_epoch` | integer 或 string integer | 是 | 当前 worker epoch；必须是正 int64；`0` 是未注册 sentinel，不合法 |
-| `updates` | array | 是 | 批量 ACK，长度 `1..64` |
-| `updates[].event_id` | string | 是 | 被 ACK 的 `client_event` ID |
-| `updates[].status` | enum | 是 | `received`、`processing`、`processed` |
+## 直接发布与 PostgreSQL 边界
 
-> Claude Code 客户端对象内部可能以 `0` 初始化 epoch，但实际写请求必须先通过 `/worker/register` 获得 `1+` 的 epoch。服务端 HTTP parser 和 DB ownership helper 都拒绝 `0`。
+系统没有 `event_outbox`，也不使用 `last_inbound_sequence_num`。普通发布在 Yourbatis 事务中锁定
+Code Session，确认状态为 active，然后在锁内直接 Publish 并等待 PubAck。事务不写入站数据；它只
+防止 termination 在状态检查与 PubAck 之间清空 subject。
+payload 转换、cleanup job 提交和 S3 上传都在该事务之前完成；进入事务后只校验状态并发布。
+整个请求的发布流程最多 1 分钟，确定未尝试发布的对象在退出事务后加速清理。
 
-### 2.4 Response
+公开 Send Events 已经先把事件提交到 `session_events`。若随后 Publish 失败，API 返回 503，但
+服务端没有后台补发记录。调用方必须重试。存在 payload UUID 或 request ID 时，服务端据此派生稳定
+`csev_* Nats-Msg-Id`；PubAck 已成功但响应丢失时，JetStream 在配置允许的去重窗口内去重，默认 24 小时。无稳定 ID 的调用
+被视为新事件。
 
-成功响应：
+activation 是例外的启动编排：先短事务锁定 Session 与 initializing Code Session 并读取完整历史，
+释放锁后准备所有对象，再重新加锁核对历史和 metadata 快照。快照改变则重新准备；未改变才逐条
+Publish initialize 和历史，并在全部 PubAck 后更新 active。部分发布、模糊 PubAck 或最终 PG commit
+失败都让状态保持 initializing；稳定 message ID 允许安全重试。activation 不等待 worker 消费。
+
+此方案不提供 PostgreSQL 与 JetStream 的原子提交，也不保证并发生产请求按照 `session_events`
+提交顺序获得 Code Session 发布锁。若需要服务端自主恢复或严格复现并发提交顺序，需要重新引入持久
+发布日志或单写者调度。
+
+## Stream 与顺序
+
+`OMA_WORKER_INBOUND` 捕获 `oma.worker.inbound.v2.>`，使用 `WorkQueuePolicy`、file storage、
+`nats.worker_event_stream` 可配置 `max_bytes`、`max_age`、`replicas`、`max_msg_size`，
+默认分别为 256 MiB（`1 << 28`）、`0s`、3、1 MiB；字段省略时各自使用默认值。
+固定使用 `DiscardNew`。duplicate window 默认 24 小时，非零 MaxAge 更短时同步缩短。
+启动时创建或更新 Stream，各 API 实例须使用一致配置；完整取值限制见 [运行配置](../runtime-configuration.md)。
+非零 MaxAge 会自动删除到期的未 ACK 消息，下面依赖应用过期清理的保证只适用于默认 `MaxAge=0`。
+
+每个 Code Session 使用两条互不重叠的 subject，各创建一个精确过滤的 durable pull consumer：
+
+- 任务：`oma.worker.inbound.v2.<code-session-id>`，consumer 为 `oma_worker_<code-session-id>`；
+- 回应：`oma.worker.inbound.v2.<code-session-id>.reply`，consumer 为 `oma_worker_<code-session-id>_reply`。
+
+`internal/workerevents/lanes.go` 集中定义分类。`control_response`（包括审批和已转换的自定义工具结果）
+及 `control_request` 中 subtype 为 `interrupt` 的消息进入回应通道；initialize、启动历史、用户输入
+和未知类型留在任务通道，不把所有 control_request 放行。
+
+公共工具确认和自定义工具结果继续使用已有的控制回应转换。本次修复只改变投递通道；
+`control_request/interrupt` 指已经转换成 Worker 协议的中断消息。公共 `user.interrupt`
+到该协议的转换属于独立问题，不在本次修复范围内，不能据此声称停止按钮已经修复。
+
+两路分别拉取、通过同一个有界 Subscription 交给原 SSE 单写入循环。两路未完成消息数量均由服务端默认 `MaxAckPending` 限制。控制回应保留独立通道，不能被普通输入窗口耗尽阻塞。两个 consumer 使用：
+
+- `DeliverAll`；
+- `AckExplicit`；
+- `MaxAckPending`：不显式指定，当前 NATS 2.14.6 默认 1000；
+- `MaxDeliver=-1`；
+- backoff 为 1 分钟、5 分钟、15 分钟，之后保持 15 分钟；
+- 单次 pull batch 为 1。
+
+SSE 断开只关闭当前 pull subscription，不删除 consumer。新的 API 实例重新绑定同名 consumer 后继续
+未 ACK 消息。
+
+envelope 存储时的 `sequence_num` 为 0；消费时以 JetStream metadata 的 Stream sequence 覆盖它。
+该 sequence 标识共享 Stream 的存储位置，单个 Session 可以有间断，跨通道的 SSE 发送顺序允许
+非单调：例如用户输入 seq=2、排队输入 seq=3、审批回应 seq=4，可以按 2、4、3 发送。不能按最大
+已见序号丢弃较小但尚未处理的输入；重连仍由各 durable consumer 的 ACK 状态决定重投，
+`from_sequence_num` 和 `Last-Event-ID` 不参与完成判定。Worker 使用稳定 event ID 做业务幂等。
+
+### 与 PR #340 的关系及方案选择
+
+PR #340 将未完成消息的唯一可靠存储收敛到 JetStream，只有 Worker 上报 `processed` 才 ACK。
+原来的单通道 `MaxAckPending=1` 由此形成循环等待：任务等待审批回应才完成，而审批回应必须等
+任务完成 ACK 才能投递。自动批准也需要把回应送回 Worker，因此同样受影响。
+
+本次保留 #340 的持久化、完成 ACK、epoch fencing 和每路限流，只拆开存在依赖的两类消息。
+提高为任意有限窗口仍可能被排队输入占满；改成无限窗口则允许全部输入提前进入 Worker，改变
+任务串行和故障隔离语义。真实 Worker 实验中，无限窗口下 20 条排队输入在原任务完成前进入下一次
+模型请求；坏 payload 对照实验也显示后续输入可以越过未确认的坏消息。因此采用两路各一条，
+既让回应解除等待，又保留用户输入的背压。不提前 ACK，也不重新引入 PostgreSQL outbox。
+
+## Envelope
 
 ```json
 {
-  "ok": true,
-  "applied": 1,
-  "ignored": 0
-}
-```
-
-| 状态码 | 语义 |
-|---|---|
-| `200` | 请求已处理；部分 update 可能被计入 `ignored` |
-| `400` | JSON、`worker_epoch`、`updates` 或 `status` 非法 |
-| `401` / `403` | 鉴权失败 |
-| `404` | code session 不存在 |
-| `409` | `worker_epoch` 与当前 session epoch 不一致 |
-| `429` | 限流；客户端会读取 `Retry-After` |
-| `5xx` | 服务端错误；客户端会无限重试 |
-
-客户端不消费响应体，只看 HTTP status。未知 `event_id`、queued 事件 ACK、旧发送 epoch ACK 不返回 4xx/5xx，否则 Claude Code 的 delivery uploader 会无限重试并堵住 ACK 队列。
-
----
-
-## 3. 请求 Body 处理
-
-handler 路径：
-
-```text
-handleCodeSessionWorkerDelivery
-  -> requireWorkerEpochBody
-  -> decodeCodeSessionWorkerDeliveryPayload
-  -> DB.ApplyCodeSessionWorkerDeliveryUpdates
-```
-
-解析规则：
-
-1. body 必须是 JSON object。
-2. `worker_epoch` 必须存在；接受 JSON integer 或 string integer。
-3. `worker_epoch` 必须是正 int64；`0`、负数、小数、非数字字符串返回 `400`。
-4. `updates` 必须存在，必须是非空数组。
-5. `updates` 长度最多 64。
-6. 每个 update 的 `event_id` trim 后必须非空。
-7. 每个 update 的 `status` trim 后必须是 `received | processing | processed`。
-8. `sent` 不是 worker ACK 状态，delivery body 中出现 `sent` 会返回 `400`。
-
-例如请求：
-
-```json
-{
-  "worker_epoch": 1,
-  "updates": [
-    {
-      "event_id": "5e34a4de-456f-4bb5-ba2c-152cf71d3fa1",
-      "status": "processing"
-    }
-  ]
-}
-```
-
-当前 epoch 匹配且该事件已经由 epoch 1 的 SSE stream 标记为 `sent` 时，服务端会：
-
-- 将状态至少推进到 `processing`。
-- 补齐 `received_at` 和 `processing_at`。
-- 设置 `last_delivery_update_at`。
-- 返回 `applied = 1`。
-
-如果事件不存在、仍是 `queued`、或曾由旧 epoch 标记为 `sent`，服务端返回 `200`，但该 update 计入 `ignored`。
-
----
-
-## 4. event_id 关联规则
-
-服务端推给 worker 的 SSE envelope 必须保证：
-
-```text
-StreamClientEvent.event_id = payload.uuid
-```
-
-原因：
-
-| ACK 类型 | TS 端 event_id 来源 |
-|---|---|
-| `received` | SSE frame 的 `event.event_id` |
-| `processing` / `processed` | command lifecycle 的 `uuid` |
-
-如果 SSE `event_id` 使用内部行 ID（例如 `csev_...`），而 lifecycle 使用 payload `uuid`，服务端会看到两条互不相关的状态：`received(csev_...)` 和 `processed(uuid)`。
-
-当前后端规则：
-
-1. canonical event id 使用 `code_session_inbound_events.payload_uuid`。
-2. `writeCodeSessionWorkerSSEEvent()` 输出 envelope 时，`event_id` 优先取 `payload_uuid`。
-3. 如果历史/异常事件没有 `payload_uuid`，fallback 到内部 `external_id`。
-4. delivery ACK 落库查找时，先按 `payload_uuid = event_id`，找不到再按 `external_id = event_id` 兼容。
-
----
-
-## 5. 数据模型
-
-delivery ACK 字段通过 goose migration `internal/db/migrations/00007_add_code_session_inbound_delivery_ack.sql` 添加，不修改已应用 migration。
-
-```sql
-alter table code_session_inbound_events
-  add column if not exists delivery_worker_epoch bigint,
-  add column if not exists received_at timestamptz,
-  add column if not exists processing_at timestamptz,
-  add column if not exists processed_at timestamptz,
-  add column if not exists last_delivery_attempt_at timestamptz,
-  add column if not exists last_delivery_update_at timestamptz,
-  add column if not exists delivery_attempts integer not null default 0;
-
-create index if not exists code_session_inbound_events_payload_uuid_v1_idx
-  on code_session_inbound_events (code_session_uuid, payload_uuid, sequence_num asc)
-  where deleted_at is null and payload_uuid is not null;
-
-create index if not exists code_session_inbound_events_unprocessed_v1_idx
-  on code_session_inbound_events (code_session_external_id, sequence_num asc)
-  where deleted_at is null and delivery_status <> 'processed';
-```
-
-字段语义：
-
-| 字段 | 语义 |
-|---|---|
-| `delivery_worker_epoch` | 最近一次成功写出/ACK 对应的 worker epoch |
-| `sent_at` | 第一次标记为 sent 的时间 |
-| `received_at` | 第一次收到 received 或更高状态 ACK 的时间 |
-| `processing_at` | 第一次收到 processing 或 processed ACK 的时间 |
-| `processed_at` | 第一次收到 processed ACK 的时间 |
-| `last_delivery_attempt_at` | 最近一次 SSE 写出并标记 sent 的时间 |
-| `last_delivery_update_at` | 最近一次接受 delivery ACK 的时间 |
-| `delivery_attempts` | SSE 写出尝试计数 |
-
-`delivery_status` 允许值：
-
-```text
-queued | sent | received | processing | processed
-```
-
----
-
-## 6. Delivery Handler 落库流程
-
-### 6.1 epoch 校验
-
-`ApplyCodeSessionWorkerDeliveryUpdates(ctx, sessionID, epoch, updates)` 在 DB transaction 内完成：
-
-1. `epoch <= 0` 直接返回 epoch mismatch，HTTP 层映射为非法或冲突。
-2. `select code_sessions ... for update` 锁定当前 code session。
-3. session 不存在返回 `404`。
-4. request `worker_epoch != current_worker_epoch` 返回 `409`。
-5. epoch 匹配才继续批量处理 ACK。
-
-### 6.2 ACK 接受门槛
-
-每个 update 会先查事件：
-
-1. 按 `payload_uuid = event_id` 查找，按 `sequence_num asc` 取第一条并 `for update`。
-2. 找不到则按内部 `external_id = event_id` fallback。
-3. 仍找不到则 `ignored++`。
-
-匹配到事件后，只有同时满足以下条件才会应用 ACK：
-
-```text
-event.delivery_worker_epoch == request.worker_epoch
-and delivery_status >= sent
-```
-
-因此：
-
-| 场景 | 当前行为 |
-|---|---|
-| event 不存在 | `ignored++` |
-| event 仍是 `queued`，还没被当前 stream 写出 | `ignored++` |
-| event 是旧 epoch 写出的 `sent/received/processing` | `ignored++` |
-| event 已被当前 epoch 写出并标记 `sent` 或更高 | 应用 ACK |
-
-这个门槛避免 worker 伪造或误报未投递事件，也避免旧 worker 的迟到 ACK 推进当前 epoch 的事件状态。
-
-### 6.3 状态推进
-
-状态顺序：
-
-```text
-sent < received < processing < processed
-```
-
-更新规则：
-
-| 收到 status | 后端动作 |
-|---|---|
-| `received` | 设置 `received_at = coalesce(received_at, now())`，状态至少推进到 `received` |
-| `processing` | 隐含 `received`，设置 `received_at` 和 `processing_at`，状态至少推进到 `processing` |
-| `processed` | 隐含 `received + processing`，设置三类时间戳，状态推进到 `processed` |
-
-同一 epoch 内状态只能单调前进。低状态 ACK 晚到时不会回退 `delivery_status`，但只要通过接受门槛，仍计入 `applied` 并刷新 `last_delivery_update_at`。
-
-成功应用时：
-
-```text
-applied += 1
-delivery_worker_epoch = request.worker_epoch
-last_delivery_update_at = now()
-code_sessions.last_worker_activity_at = now()
-```
-
-delivery ACK 不续租 `worker_lease_expires_at`；续租仍只由 heartbeat 负责。
-
----
-
-## 7. 没有 received 时怎么处理
-
-如果服务端写出 SSE 后没有收到 `received`：
-
-1. 事件保持 `delivery_status = sent`。
-2. 不把它当成完成，也不立即在同一条健康 SSE 连接上重复发送。
-3. 如果后续收到 `processing` 或 `processed`，反推该事件已 `received` 并补齐 `received_at`。
-4. 当前实现未加入专门的 lag metric；后续可以记录 `sent` 后长时间无 ACK 的 log/metric。
-5. lease 级别的不健康判断仍交给 heartbeat/lease；delivery ACK 本身不续租。
-
-核心原则：
-
-```text
-sent != received
-没有 received = 尚未被 worker 应用层确认
-但不能在健康连接内无脑重发，避免制造重复 prompt
-```
-
----
-
-## 8. 服务端如何重发
-
-重发不通过 delivery 端点。delivery 只是 ACK 写入口。
-
-服务端重发发生在：
-
-```http
-GET /v1/code/sessions/{session_id}/worker/events/stream
-```
-
-也就是重新把 `code_session_inbound_events` 包装成 `event: client_event` SSE frame 写给 worker。
-
-### 8.1 SSE frame
-
-```text
-id: 12
-event: client_event
-data: {
-  "event_id": "5e34a4de-456f-4bb5-ba2c-152cf71d3fa1",
-  "sequence_num": 12,
+  "version": 2,
+  "code_session_id": "cse_...",
+  "event_id": "csev_...",
+  "payload_event_id": "stable-payload-uuid",
+  "sequence_num": 42,
   "event_type": "user",
-  "payload": { ... }
+  "event_subtype": "",
+  "payload": {},
+  "expires_at": "2026-10-04T00:00:00Z"
 }
 ```
 
-`event_id` 必须稳定，重发时不能生成新的 ID。当前实现的 SSE `id` 使用 `sequence_num`，body 里的 `event_id` 优先使用 `payload_uuid`。
+`event_id` 是稳定 transport ID。`payload_event_id` 存在时，SSE 和 delivery API 优先使用它；
+否则使用 transport ID。worker 必须对这个可见 ID 做业务幂等。
 
-### 8.2 stream 建连与 cursor
+## Redis ACK 定位
 
-`handleCodeSessionWorkerEventsStream` 当前顺序：
-
-1. ingress token 鉴权。
-2. 确认 code session 存在。
-3. 可选解析并校验 `worker_epoch` query/header；请求未显式携带时，使用已认证 session-ingress JWT 中的正 `worker_epoch`。
-4. 解析 `from_sequence_num` 或 `Last-Event-ID`。
-5. cursor 非法时直接返回 `400`，不会把 worker 标记为 connected。
-6. 如果显式参数或 JWT claim 解析出当前 epoch，调用 `MarkCodeSessionWorkerConnectedForEpoch`。
-7. 写 SSE headers，进入 polling loop。
-8. stream 退出时用 epoch 条件调用 `MarkCodeSessionWorkerDisconnectedForEpoch`。
-
-只有旧版 JWT 本身也没有 `worker_epoch` 时，stream 才保持 legacy 兼容：只读 queued events，不刷新连接状态。managed-agent 实际建立 SSE 时可以不在 URL 重复传 epoch；其 JWT claim 会让该连接进入 epoch-scoped delivery/replay 路径。
-
-### 8.3 写出后的状态
-
-epoch-scoped SSE 写出成功后调用 `MarkCodeSessionInboundEventSentForEpoch`：
+SSE flush 前写入：
 
 ```text
-delivery_status = case when queued then sent else delivery_status end
-sent_at = coalesce(sent_at, now())
-delivery_worker_epoch = current_worker_epoch
-last_delivery_attempt_at = now()
-delivery_attempts = delivery_attempts + 1
+code_session + worker_epoch + event_id -> ACK subject + cleanup_job_id
 ```
 
-不得标记为 `received` 或 `processed`。
+TTL 为 20 分钟。`received` 和 `processing` 向 ACK subject 发送 InProgress 并刷新 TTL；
+delivery 批次在同一个 Yourbatis 事务中锁定 Code Session 并校验 PostgreSQL epoch，锁内查询
+Redis、执行 InProgress 或 DoubleAck、维护 Redis key，并通过该事务更新 worker 活跃时间。
+因此凭证轮换、register 和 recovery 的 epoch 更新必须等确认结束；若它们先完成，旧 epoch
+在读取 Redis 前即被拒绝。整个事务（含外部 ACK 等待）最多等待 5 秒，避免故障无限阻塞接管。
+`processed` 成功后的大 payload 清理调度放在释放锁后，不能在回调中通过另一 DB 连接更新 jobs。
+JetStream ACK 不随 PG 事务回滚；若 ACK 已确认但后续 PG 操作失败，消息仍已完成，不能撤销 ACK。
 
-注意当前顺序是**先写 SSE frame，再标记 sent**。如果写出后 mark 失败，stream 会继续处理；若失败原因是 epoch mismatch，旧 stream 直接停止。
+Redis 写失败时不 flush SSE，消息保持未 ACK。Redis key 丢失或过期时 delivery update 计入
+`ignored`；consumer 之后重投并建立新映射。Redis 不能决定消息完成，也不能替代 PostgreSQL 的
+lifecycle 或 epoch fence。
+SSE 写失败不删除映射：旧连接的写失败可能晚于重连重投，不能抹掉新 ACK subject；未 flush 的映射
+本身不会 ACK 消息，保留到 TTL 即可。worker 的 processing 应早于首次 1 分钟 ACK 窗口，建议每
+20–30 秒一次；20 分钟 TTL 不是处理心跳间隔。
 
-### 8.4 同一 epoch 普通重连
+## 大 payload
 
-Claude Code SSETransport 会发送：
+原始 payload 超过 16 MiB 时在存储前拒绝，与 hydrate 的大小上限一致。实现按原始 payload 的实际字节数判断 32 KiB（32768 bytes）阈值；严格超过时：
+
+1. 创建最迟在 `expires_at` 执行的 object cleanup job；
+2. 把原始 payload 上传到租户隔离 key；
+3. key 使用 Code Session、稳定 event ID 和随机 cleanup job ID，避免重试对象相互覆盖；
+4. envelope 改存 key、size、SHA-256 与 cleanup job ID；
+5. 发布前由 Broker 校验最终 envelope 不超过配置的 `max_msg_size`，默认 1 MiB。
+
+SSE 读取时限制为声明长度加一字节，并校验对象报告大小、实际大小和 SHA-256。缺失、截断、篡改或
+读取失败都不发送、不 ACK；本次 SSE 读取失败会结束连接，未 ACK 消息保留以便重投。PubAck 失败可能是模糊成功，
+所以不立即清理对象。processed 后加速清理；否则最迟 30 天清理。
+确定未尝试发布的对象可以加速清理。清理调度在行锁事务外使用不继承请求取消的 5 秒上下文；失败
+只告警，由上传前已提交的到期任务兜底，不能依赖已经取消的请求完成清理。
+
+对象清理任务仍存于通用 `jobs` 表，由 `internal/db/object_cleanup_jobs.go` 和独立的
+`ObjectCleanupJobMapper` 负责入队、定时调度、提前执行、领取、完成和失败重试。
+文件删除与入站 payload offload 共用这条访问链；`FileMapper` 不再承载这些任务 SQL。
+本次拆分不改变表结构、DB 公共方法或任务执行语义，也不合并独立的 filestore 清理流程。
+
+## 30 天逻辑期限
+
+JetStream 不使用 `MaxAge` 静默删除。每个 envelope 带 `expires_at`，应用每分钟扫描 Stream。
+发现过期消息时先提交 Code Session 终止与凭证撤销，再删除两路 durable consumer、按两个精确 subject 清空消息、
+加速关联对象清理并输出 Error 日志。PG 失败时不得先 TERM、ACK 或 purge；consumer 删除失败时
+不得先 purge，否则会丢失下一轮扫描的重试依据。该批次任何终止/清理失败都不推进扫描游标。
+两个 subject 的 purge 不构成原子操作；第二路失败时返回错误，重复调用可完成清理。
+若触发清理的过期消息已被第一路 purge 移除，未清理的另一路仍由其自身 `expires_at` 兜底，
+不能把“不推进扫描游标”理解为保证下一轮立即重试该 Session 的全部清理。
+
+扫描按 subject 查找实际存储的下一条消息，一轮最多 512 条，已 ACK 的序号空洞不占扫描预算。
+坏 JSON、版本/身份/期限无效时告警，并继续检查其他 Session。坏消息本身不 ACK；以可信 subject
+定位其 Session，以 JetStream 存储时间加 30 天作为兜底期限，不使用损坏 envelope 的对象引用。
+PG 记录已不存在时直接清理对应队列，不执行空租户 UUID 的终止 SQL。毒消息不能被跳过并继续执行
+同一通道的后续消息；消息过期则终止整个 Code Session。
+
+## 故障语义
+
+- active 状态检查失败：不发布；
+- Publish 或容量失败：请求 503，不自动补发；
+- PubAck 响应丢失：调用方以稳定 message ID 重试，JetStream 去重；
+- activation 部分发布：状态仍 initializing，重试补齐并去重；
+- Redis 丢失：delivery ignored，之后重投；
+- S3 校验失败：不 ACK，阻塞该 Session 同通道的后续消息；
+- worker 断线：durable consumer 保留；
+- 30 天到期：整个 Code Session 终止并清空消息；
+- termination 与正在发布的请求竞争：两者通过 Code Session 行锁确定先后。
+
+## API 与兼容
+
+只保留：
 
 ```text
-from_sequence_num=<lastSequenceNum>
-Last-Event-ID: <lastSequenceNum>
+GET  /v1/code/sessions/{code_session_id}/worker/events/stream
+POST /v1/code/sessions/{code_session_id}/worker/events/delivery
 ```
 
-epoch-scoped stream 使用本地 `lastSentSequence` 从 cursor 开始推进，每个 polling loop 只查询并写出 `sequence_num > lastSentSequence` 的事件，避免同一条健康连接反复发送同一事件。
+旧 poll 路由移除。`from_sequence_num` 与 `Last-Event-ID` 只做非负整数兼容校验，不改变 durable
+consumer ACK floor。
 
-查询约束：
+## 验收
 
-```sql
-select e.*
-from code_session_inbound_events e
-where e.code_session_external_id = $1
-  and e.sequence_num > $3
-  and e.delivery_status <> 'processed'
-  and not (
-    e.delivery_status = 'sent'
-    and e.delivery_worker_epoch is null
-    and e.received_at is null
-    and e.processing_at is null
-    and e.processed_at is null
-  )
-  and e.deleted_at is null
-  and cs.deleted_at is null
-  and cs.current_worker_epoch = $2
-  and cs.current_worker_epoch > 0
-order by e.sequence_num asc;
+- activation 与普通发布都等待 PubAck；
+- 模糊 PubAck 的稳定 ID 重试只保留一条消息；
+- per-session 两个 durable consumer 重连并保持服务端默认未 ACK 上限；
+- 空闲或阻塞时关闭订阅、任一路解码失败，均会结束两路读取并释放 NATS 订阅，保留未 ACK 消息；
+- 第二路 purge 失败后可幂等重试，残留消息仍受自身到期规则覆盖；
+- Stream sequence 正确写入 SSE；控制回应越过排队输入，含重连后的较小序号输入仍可完成；
+- 真实 Worker 手动/自动 allow、deny、中断和未知 request ID 回应不形成循环等待；
+- Redis 丢失、epoch 接管、InProgress 与 DoubleAck；
+- 32 KiB 边界、外置 payload 加载（loadOffloadedPayload）完整性和清理；
+- 30 天到期终止与 subject 清理；
+- schema 不含旧入站表、outbox 表或 PG 入站 sequence；
+- 旧 poll 路由不可用，idle-stop 后新输入触发恢复。
+
+## 升级边界
+
+### Session 永久结束与 consumer 自动回收
+
+Session 归档、删除或整体 `terminated` 的事务按 Session → Worker 的既有锁顺序完成状态转换，并终止租户范围内所有关联 Code Session（包括历史实例），清除 token/lease、推进 epoch。DB 仅返回关联 Code Session ID，不注入清理回调，也不创建 River 清理任务。归档和整体终止保留公开历史；删除沿用软删除合同。Agent 归档不会触发此清理，也不会终止其已有 Session。
+
+事件写入路径由状态应用返回“Session 本次进入 terminated”的结果，批次汇总该结果。整批事件及派生事件写完后，仅在批末状态仍为 terminated 时，事务编排显式终止关联 Worker。事务失败返回空结果，不能向上层泄漏未提交的清理 ID。直接设置状态也返回已退休 ID，重复终态不再次推进 epoch。部署创建入口在同一事务内新建 Session，此时尚无关联 Worker，因此不执行 Worker 退休查询。幂等重放和重复终态不再次推进 epoch；仅 Thread 终止不触发，除非派生出整个 Session 的终止转换。
+
+Session 级状态事件仍按批内顺序更新主 Thread。`terminated → running` 批次以 running 结束，保留 Worker 与 epoch；不能因主 Thread 在批次中途变为 terminated 而丢弃后续 Session 级事件。已终止 Thread 的 Thread 级状态事件仍被忽略，归档 Session 的事件写入仍被拒绝。`TestSessionTerminationBatchKeepsActiveWorkers` 同时检查 Session、主 Thread 与 Worker epoch。
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Service
+    participant PG
+    participant NATS
+    Client->>Service: archive / delete / terminate Session
+    Service->>PG: 终止关联 Code Session、撤销凭证、推进 epoch
+    PG-->>Service: 提交并返回关联 Code Session ID
+    Service->>NATS: 删除 task/reply consumer，purge 精确 subject
+    alt 清理失败或超时
+        NATS-->>Service: 错误
+        Service->>Service: 记录告警
+        Note over NATS: consumer 由 InactiveThreshold 回收
+    end
+    Service-->>Client: 状态变更成功
 ```
 
-如果查询返回 0 行，DB 层仍会再次校验当前 epoch；新 register bump 后，旧 stream 会停止。
+上层在事务提交后直接调用 Code Session 服务清理 NATS，两路 consumer 和精确 subject 均由 `PurgeSession` 处理。整个 ID 列表共享独立的五秒超时，不继承请求取消。单个 ID 清理失败时记录告警并继续处理其他 ID；达到超时后停止。清理失败不会回滚已经提交的 Session 状态。重复归档可以再次尝试清理，清理不存在的 NATS 资源安全，不 purge 共享 Stream 或其他 Session。
 
-### 8.5 新 epoch 接管
+该路径不持久化清理意图，也不承诺失败后或进程重启后的自动重试。原 `session_archive_cleanup` River worker、队列和 DB 回调已删除。若开发环境保留旧版本的清理任务，需要另行处理，这个版本不会执行这些任务。
 
-新 worker register 后，`current_worker_epoch` 增加。新 epoch 的 SSE stream 会重放未 `processed` 且满足查询条件的事件：
+epoch 在永久结束事务内推进，已有 Worker SSE 会按既有一秒校验间隔退出，旧凭证无法重新订阅或注册。订阅创建后、发出 HTTP 200 前再次检查 epoch。订阅结束时先停止读取，再用组织、工作区和 Session UUID 检查父 Session，包括软删除记录。仅确认父 Session 已归档、删除或整体终止时直接清理，检查与清理共享五秒超时。查询失败只告警，不清理可能仍活跃的 replacement；记录不存在也不视为永久结束。订阅创建失败但已经留下 consumer 时也执行此检查。无父 Session 的独立 Code Session 不执行此路径。
 
-| 状态 | 是否重放 |
-|---|---|
-| `queued` | 是 |
-| `sent` | 是，但排除 legacy sent/null epoch/no ACK 形态 |
-| `received` | 是 |
-| `processing` | 是 |
-| `processed` | 否 |
+旧请求可能在初次清理后重建 consumer，订阅关闭时的检查覆盖正常退出窗口。进程在重建后崩溃、查询失败或 purge 失败时，consumer 依赖 NATS `InactiveThreshold` 回收。此参数只回收 consumer，不能保证同步删除未 ACK 消息；默认 `StreamMaxAge=0` 下残留消息仍依赖既有逻辑到期扫描，不承诺五分钟内 purge。归档与旧消息处理并发仍受既有 epoch/Session 锁保护，不承诺跨系统瞬时原子删除。常规断连、idle/paused、Worker replacement 与 Agent archive 不触发永久结束清理；Redis ACK key 沿用 TTL。
 
-当前实现没有单独的 delivery cutover marker；它直接排除以下 legacy 形态：
+普通单测覆盖失败告警、继续处理、超时停止以及请求取消后仍尝试清理。真实 PostgreSQL/NATS 集成测试覆盖清理失败后状态保持提交、历史实例清理、重复归档、其他 subject 保留、已有 Worker stream 失效、延迟订阅重建后的清理及普通 replacement 保留 consumer；`chat reliability` 验证真实 Worker 完成后的公开归档与两路 consumer 删除。测试存在不代表已执行，需要按用户要求运行相关真实回归。
 
-```text
-delivery_status = 'sent'
-and delivery_worker_epoch is null
-and received_at is null
-and processing_at is null
-and processed_at is null
+旧 subject 中可能已有被任务阻塞的控制回应。仅增加新 consumer 不会自动移动这些存量消息。
+本次不提供存量迁移，也不自动恢复或删除旧对话，由用户另行处理。删除保留既有执行中禁止删除、尚未开始执行的已接收输入可取消的限制；本次不改变删除限制，也不包含停止按钮修复。
+新版本发布的控制回应使用独立通道。
+
+部署时先停止旧 API 实例，再启动新版本，避免旧实例继续写入旧 subject，或将 `.reply` subject
+当作无效消息清理。不支持新旧版本混跑；此要求与是否迁移存量消息无关。
+
+真实 Worker 验收统一使用 `tests/liveworker`。先以测试配置在 `127.0.0.1:18080` 启动独立 OMA API，
+再运行：
+
+```sh
+LIVE_WORKER_REAL_CLAUDE=1 LIVE_WORKER_API_URL=http://127.0.0.1:18080 CONFIG_FILE=/path/to/test-config.yaml go test ./tests/liveworker -run '^TestRealWorkerControlDelivery$' -count=1 -v
 ```
 
-这能避免升级后把旧实现中已 `sent`、但没有 epoch/ACK 字段的历史事件重新当作新 prompt 发送。代价是：如果新代码路径产生同形态数据，也会被排除。因此新的 epoch-scoped stream 必须在写出后使用 `MarkCodeSessionInboundEventSentForEpoch` 写入 `delivery_worker_epoch`，不能继续走 legacy mark sent。
+测试连接真实 OMA API、PostgreSQL、Redis、JetStream，使用真实 Worker，只替换模型输出。
+七种场景覆盖手动/自动 allow 与 deny、规范协议中断、未知 request ID 回应和纯文本任务。
+手动批准还在等待审批时及批准后分别断开 SSE，证明更大序号的回应被处理后，较小序号的排队输入
+仍能在重连后作为独立任务执行。中断与未知回应通过生产入队服务注入；不验证公共停止按钮。
+需要本地已有 sandbox 镜像和 Docker，可通过 `OMA_WORKER_CONTROL_IMAGE` 固定镜像。
+测试不应指向生产或有用户正在工作的环境，结束后停止专用测试 API 和依赖。
 
-这条约束也适用于 pause/resume：旧 SSE 连接可能在 Sandbox 真正冻结前抢先写出刚入队的消息。如果连接使用 managed-agent JWT，即使 URL 没有 `worker_epoch`，服务端也必须从 claim 取得 epoch 并记录 `delivery_worker_epoch`；resume 后的新连接才能把未 ACK 的 `sent` 事件重放，而不会把它误认成历史 legacy 事件永久跳过。
 
----
+`nats.worker_event_stream.consumer_inactive_threshold` 默认 `5m`，必须为正数。两路 consumer 在创建或订阅时设置该阈值。后端启动不扫描或更新存量 consumer；旧配置在下次订阅时更新，开发环境中不再使用的旧 consumer 可另行清理。所有 API 实例必须同步配置，避免相互覆盖。
 
-## 9. 兼容性与边界
+阈值衡量 consumer 的拉取活动，不衡量 Session idle 时长。仍在 Fetch 的 Worker 保持 consumer。沙箱 idle timeout 沿用现有回收流程，Worker 停止后由 NATS 处理无活动 consumer。待 ACK 的消息和 BackOff 会延后回收，`5m` 不表示断线后精确五分钟删除。
 
-- 不要求修改 Claude Code TS 客户端。
-- `processed` 可直接从 `sent/received` 跳过 `processing`，因为 TS 里部分路径会直接上报 completed。
-- `replBridgeTransport` 当前可能在收到 SSE 后立即上报 `received + processed`，后端按终态幂等处理。
-- legacy WebSocket transport 已移除；旧 HTTP poll 路径仍保持现有“写出即 sent”行为，可靠 delivery/replay 只约束 CCR v2 SSE worker stream。
-- delivery ACK 不作为 lease 续租信号；worker 活性仍以 heartbeat/lease 为准。
-- 当前还没有专门的 ignored ACK metric；如需运营可观测性，后续应加安全截断 event id 的日志或指标。
+临时 consumer 回收不 purge subject。WorkQueue 保留未 ACK 消息，下一次订阅按 DeliverAll 重建 consumer，使用原 event ID 投递。已 ACK 消息已从 Stream 移除。在途消息可再次投递，Worker 必须按 event ID 保持处理幂等；该机制不提供跨进程工具副作用的 exactly-once 保证。旧 SSE 退出仅停止本地 Fetch，禁止删除新连接共享的 consumer。
 
----
+新增验收覆盖两路 consumer 真实过期、未 ACK 消息及 ID 保留、重建后 ACK 排空、活跃 pull 与旧连接关闭不误删；删除/整体终态的事务回滚、历史 Worker 清理、软删除后的晚订阅补偿与子线程归档保留父会话队列。
 
-## 10. 当前实现映射
 
-| 模块 | 当前实现 |
-|---|---|
-| Route | `internal/codesessions/ingress.go` 注册 `/worker/events/delivery` |
-| Handler | `handleCodeSessionWorkerDelivery` |
-| Body parser | `requireWorkerEpochBody` + `decodeCodeSessionWorkerDeliveryPayload` |
-| DB ACK | `ApplyCodeSessionWorkerDeliveryUpdates` |
-| ACK event lookup | `getCodeSessionInboundDeliveryEventTx` |
-| SSE stream | `handleCodeSessionWorkerEventsStream` + `streamCodeSessionWorkerEvents` |
-| mark sent | `MarkCodeSessionInboundEventSentForEpoch` |
-| replay query | `ListCodeSessionInboundEventsForWorkerStream` |
-| migration | `internal/db/migrations/00007_add_code_session_inbound_delivery_ack.sql` |
+## 回合完成信号
 
----
+Worker 运行状态和公开回合完成分别处理。`PUT worker` 上报 idle 只更新运行状态，不能结束公开回合。
+所有执行端通过已有 CCRv2 `result` 结束回合，不需要额外 header 或 worker binding 能力开关。
+成功结果产生 `idle/end_turn`，失败结果产生脱敏的 session.error 和 `idle/retries_exhausted`；
+执行端将已确认的用户取消上报为非失败 result，产生 end_turn，并保留 user.interrupt。后端不从历史推断取消或改判失败 result。重复 result 复用现有事件 ID 去重，
+旧 worker 继续受 epoch 校验约束，待处理输入继续使用现有队列规则。
 
-## 11. 测试覆盖
+普通回合有待处理用户消息时，后端保留连续 running，不提前发布 idle。当前线程在本次 running 或 rescheduled 之后已有处理完成的 user.interrupt，且中断不晚于 result 时，待处理消息不能抑制旧回合的 idle/end_turn。下一条消息随后开始新回合。该判断限定工作区、会话和线程，不使用旧回合、其他范围、未处理或已删除的中断，也不改变 result 的成功或失败类别。
 
-已有相关测试覆盖：
+`TestInterruptedTurnIdleBoundaryPostgres` 在隔离 PostgreSQL schema 中验证上述边界及普通排队行为；Mapper 合同单测验证 SQL 的租户条件和参数绑定。
 
-1. body 校验：
-   - 缺 `worker_epoch`；
-   - `worker_epoch` 为 `0`、负数、小数、非数字字符串；
-   - 缺 `updates`、空数组、超过 64；
-   - 缺 `event_id`、非法 `status`。
+发送端顺序为消息及工具结果、model span end、result、输入 processed ACK。worker idle 可以迟到或
+重投，不影响下一轮的公开状态。具体投影和中断回归见 `tests/session_worker_terminal_test.go` 与
+`tests/session_worker_interrupt_test.go`。
 
-2. ACK 状态：
-   - `received -> processing -> processed` 正常推进；
-   - `processing` 隐含 `received`；
-   - `processed` 隐含 `received + processing`；
-   - 重复 ACK 幂等；
-   - 低状态晚到不回退；
-   - unknown `event_id` 返回 200 且 `ignored = 1`；
-   - queued 事件 ACK 被忽略；
-   - 旧发送 epoch 的 ACK 被忽略。
 
-3. event_id 对齐：
-   - SSE frame 的 `event_id` 等于 payload `uuid`；
-   - delivery 可按 `payload_uuid` 匹配；
-   - fallback 到内部 `external_id` 可用。
+### 普通空闲会话的中断接受
 
-4. epoch：
-   - 当前 epoch 的 delivery 成功；
-   - 旧 epoch 返回 409；
-   - `worker_epoch = 0` 返回 400，DB ownership helper 直接收到 0 时返回 epoch mismatch。
+普通 idle 主线程没有运行中的 Worker 或待确认工具时，公开 `user.interrupt` 返回 200 并记录已处理的事件，保持会话 idle，不产生模型请求或工具调用。此行为按 INT007 用户裁决与 Qoder 实测对齐，不将其描述为 CMA 对普通 idle Session HTTP 状态的明确规定。
 
-5. 重发：
-   - SSE 写出后只变成 `sent`；
-   - 新 epoch stream 重放未 `processed` 事件；
-   - `processed` 事件不重放；
-   - 同一 epoch 普通重连只返回 `sequence_num > from_sequence_num` 的未完成事件；
-   - legacy `sent + delivery_worker_epoch is null + no ACK timestamps` 事件不会在 epoch-scoped stream 中重放；
-   - invalid replay cursor 返回 `400`，且不会把 worker 标记为 connected。
+接收事务在 Session/Worker 锁内判断空操作，并通过 `SessionEventChanges.SettledInputEventIDs` 将决定传给公开 API。事件继续参与响应、历史和 SSE；`WorkerInputEvents()` 只从 Worker 投递集合排除这些中断，不修改公开事件集合，也不排除后续用户消息。纯空操作不会重置 Worker 的 idle_since，不恢复沙箱，不将延迟中断投递给后续任务。运行中和等待工具确认的中断仍按原流程投递，归档和已终止等拒绝规则不变。对子线程不根据主线程的 idle 状态推断空操作。
 
-相关验证命令：
+普通单测覆盖空闲接受、原拒绝边界、待处理工具不误判为空操作，以及过滤投递时保留下一条用户消息和原公开证据。真实 INT007 使用两个平台公开 events.send、原始 SSE、完整 history 与 10s 状态观察验证，不以本地单测替代平台结果。
 
-```bash
-go test ./internal/db ./internal/codesessions ./tests -run 'TestCodeSessionWorker' -count=1 -v
-```
+## Tool completion settles its pending permission (2026-10-18)
+
+A public agent.tool_result or agent.mcp_tool_result ends its corresponding invocation, including an approval cancelled by user.interrupt. Under the existing Session then Worker locks, the same Yourbatis transaction removes only the matching permission request and its legacy mirror, resolving the public call ID or provider-derived alias within the owning thread. Other calls, threads and unrelated metadata remain intact. Unknown or already settled results do not write metadata. Failed persistence aborts the batch without changing local worker state.
+
+Subsequent idle events in that transaction use the settled metadata. Once the last pending approval is cancelled, a completed end_turn must not be rewritten to stale requires_action. Remaining pending calls retain their IDs and action details. Regression coverage includes cancellation, matching and foreign-thread references, concurrent pending calls, aliases, duplicate settlement and persistence errors. Real CHAT INT013 validates the public interrupt, cancelled result, final idle and cleanup.

@@ -28,10 +28,18 @@ function errorResponse(message: string, status = 400) {
 
 async function openDirtyEnvironmentEditor() {
   expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-  fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
     target: { value: 'Environment changed' },
   });
+}
+
+async function replacePythonPackage(previous: string, next: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Add Python packages' }));
+  const input = screen.getByRole('textbox', { name: 'Python packages to add' });
+  fireEvent.change(input, { target: { value: next } });
+  fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+  await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Python packages to add' })).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: `Remove ${previous}` }));
 }
 
 export function registerManagedAgentsEnvironmentFailureTests() {
@@ -49,8 +57,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     renderManagedAgentsPage('environments', 'zh-CN');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
-    fireEvent.change(screen.getByRole('textbox', { name: '环境名称' }), { target: { value: '服务器校验' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '名称' }), { target: { value: '服务器校验' } });
     const knownErrors = [
       ['Environment name already exists', '已存在同名环境。'],
       ['name is required', '请输入环境名称。'],
@@ -67,14 +74,14 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     ] as const;
     for (const [message, expected] of knownErrors) {
       responseMessage = message;
-      fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
+      fireEvent.click(screen.getByRole('button', { name: '保存' }));
       expect(await screen.findByText(expected)).toBeTruthy();
     }
 
     responseMessage = 'upstream exploded';
-    fireEvent.click(screen.getByRole('button', { name: '保存更改' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
     expect(await screen.findByText('无法保存环境。 服务器详情：upstream exploded')).toBeTruthy();
-    expect((screen.getByRole('textbox', { name: '环境名称' }) as HTMLInputElement).value).toBe('服务器校验');
+    expect((screen.getByRole('textbox', { name: '名称' }) as HTMLInputElement).value).toBe('服务器校验');
   });
 
   test('rejects invalid Environment edits before sending an update', async () => {
@@ -83,33 +90,30 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), { target: { value: '   ' } });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
-      target: { value: 'x'.repeat(256) },
-    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '   ' } });
+    await replacePythonPackage('httpx==1.0.0', 'x'.repeat(256));
     fireEvent.click(screen.getByRole('button', { name: 'Add metadata entry' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'Owner' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(screen.getByText('Enter an environment name.')).toBeTruthy();
     expect(screen.getByText('Each package token must be 255 UTF-8 bytes or fewer.')).toBeTruthy();
     expect(screen.getAllByText('Metadata keys must be unique.')).toHaveLength(2);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'New key' } });
     expect(screen.getByText('Enter a metadata value, or remove the row to delete this entry.')).toBeTruthy();
 
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), { target: { value: 'Valid name' } });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Package value 1' }), {
-      target: { value: '包'.repeat(86) },
-    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Valid name' } });
+    await replacePythonPackage('x'.repeat(256), '包'.repeat(86));
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), {
       target: { value: '键'.repeat(22) },
     });
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), {
       target: { value: '值'.repeat(171) },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(screen.getByText('Each package token must be 255 UTF-8 bytes or fewer.')).toBeTruthy();
     expect(screen.getByText('Metadata keys must be between 1 and 64 UTF-8 bytes.')).toBeTruthy();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), { target: { value: 'New key' } });
     expect(screen.getByText('Metadata values must be 512 UTF-8 bytes or fewer.')).toBeTruthy();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata key 2' }), {
@@ -118,7 +122,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     fireEvent.change(screen.getByRole('textbox', { name: 'Metadata value 2' }), {
       target: { value: 'valid' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(screen.getByText('Metadata keys must be between 1 and 64 UTF-8 bytes.')).toBeTruthy();
     expect(
       api.requests.some(
@@ -127,7 +131,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     ).toBe(false);
   });
 
-  test('guards dirty Environment edits across cancel and ordinary internal navigation', async () => {
+  test('guards dirty Environment edits during beforeunload and internal navigation', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments/env_one123456');
     mockManagedResourceApi();
     renderManagedAgentsPage('environments');
@@ -201,18 +205,15 @@ export function registerManagedAgentsEnvironmentFailureTests() {
         to: '/workspaces/$workspaceId/environments',
         params: { workspaceId: 'default' },
       });
-    const canceledNavigation = navigateToList();
+    void navigateToList();
 
     let discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
     await act(async () => {
       fireEvent.click(within(discardDialog).getByRole('button', { name: 'Continue editing' }));
-      await canceledNavigation;
     });
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull());
     expect(router.history.location.pathname).toBe(detailHref);
-    expect((screen.getByRole('textbox', { name: 'Environment name' }) as HTMLInputElement).value).toBe(
-      'Environment changed',
-    );
+    expect((screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement).value).toBe('Environment changed');
 
     void navigateToList();
     discardDialog = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
@@ -226,15 +227,14 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Environment name' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
       target: { value: 'Environment changed' },
     });
     expect(fireEvent.click(screen.getByRole('link', { name: 'Environments' }), { metaKey: true })).toBe(true);
     expect(screen.queryByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeNull();
   });
 
-  test('keeps Environment creation open and disables close controls while saving', async () => {
+  test('keeps the Environment creation page locked while saving', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/environments');
     mockManagedResourceApi();
     const baseFetch = globalThis.fetch;
@@ -247,15 +247,18 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     renderManagedAgentsPage('environments');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('link', { name: 'Create environment' }));
+    await screen.findByRole('heading', { name: 'Create environment' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Pending create' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
-    const dialog = screen.getByRole('dialog', { name: 'Create environment' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Pending create' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
 
-    expect((within(dialog).getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((within(dialog).getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Saving...' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('textbox', { name: 'Name' }).closest('fieldset')?.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('link', { name: 'Environments' }));
     fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.getByRole('dialog', { name: 'Create environment' })).toBeTruthy();
+    expect(window.location.pathname).toBe('/workspaces/default/environments/new');
+    expect(screen.getByRole('heading', { name: 'Create environment' })).toBeTruthy();
   });
 
   test('localizes Environment list, load, and work operation failures', async () => {
@@ -306,11 +309,12 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     renderManagedAgentsPage('environments', 'zh-CN');
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
+    fireEvent.click(screen.getByRole('link', { name: '创建环境' }));
+    await screen.findByRole('heading', { name: '创建环境' });
+    fireEvent.change(screen.getByRole('textbox', { name: '名称' }), { target: { value: '失败环境' } });
     fireEvent.click(screen.getByRole('button', { name: '创建环境' }));
-    const dialog = screen.getByRole('dialog', { name: '创建环境' });
-    fireEvent.change(within(dialog).getByRole('textbox', { name: '名称' }), { target: { value: '失败环境' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建' }));
-    expect(await within(dialog).findByText('无法创建环境。')).toBeTruthy();
+    expect(await screen.findByText('无法创建环境。')).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: '名称' }) as HTMLInputElement).value).toBe('失败环境');
   });
 
   test('localizes the Environment archive operation failure', async () => {
@@ -327,7 +331,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: '更多操作' })[0]);
-    fireEvent.click(screen.getByRole('menuitem', { name: '归档环境' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '归档' }));
     fireEvent.click(screen.getByRole('button', { name: '归档' }));
     expect(await screen.findByText('无法归档环境。')).toBeTruthy();
   });
@@ -346,7 +350,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
 
     expect(await screen.findByText('Environment one')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: '更多操作' })[0]);
-    fireEvent.click(screen.getByRole('menuitem', { name: '删除环境' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
     fireEvent.click(screen.getByRole('button', { name: '删除' }));
     expect(await screen.findByText('无法删除环境。')).toBeTruthy();
   });
@@ -366,7 +370,7 @@ export function registerManagedAgentsEnvironmentFailureTests() {
     expect(await screen.findByRole('heading', { name: 'Environment one' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '更多操作' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
-    const dialog = await screen.findByRole('alertdialog', { name: /删除环境/ });
+    const dialog = await screen.findByRole('alertdialog', { name: /删除.*环境/ });
     fireEvent.click(within(dialog).getByRole('button', { name: '删除' }));
     expect(await screen.findByText('此环境仍有活跃工作项，无法删除。')).toBeTruthy();
   });

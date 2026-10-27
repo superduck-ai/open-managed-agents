@@ -1,13 +1,17 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nats-io/nats.go/jetstream"
 	"image"
 	"image/color"
 	"image/png"
@@ -29,23 +33,35 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
+	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 )
 
 const defaultTestKey = config.DefaultAPIKey
 const onePixelGIFBase64 = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
 
 type testApp struct {
+	webhookQueue         *webhooks.Queue
+	webhookStream        jetstream.Stream
 	cfg                  config.Config
 	db                   *db.DB
+	deployments          *deploymentsapi.Store
+	deploymentJobs       *river.Client[*sql.Tx]
 	pool                 *pgxpool.Pool
 	store                storage.ObjectStore
 	sessions             *platformsession.MemoryStore
@@ -53,9 +69,66 @@ type testApp struct {
 	filestoreCredentials *filestore.TokenCredentials
 	vaultSecrets         *secrets.Service
 	sandboxTimeouts      *recordingSandboxTimeoutExtender
+	workerEvents         *workerevents.MemoryBroker
 	server               *httptest.Server
 	baseURL              string
 	client               *http.Client
+}
+
+// newCodeSessionService 统一测试里 codesessions.Service 的构造方式；
+// broker 或 acks 传 nil 时回退到 testApp 默认的内存 broker 与 ACK store。
+func newCodeSessionService(app *testApp, broker workerevents.Broker, acks workerevents.AckStore) *codesessions.Service {
+	if broker == nil {
+		broker = app.workerEvents
+	}
+	return codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).
+		WithWorkerEventBroker(broker).
+		WithWorkerEventState(acks, app.store)
+}
+
+func listQueuedCodeSessionInboundEvents(app *testApp, codeSessionID string) ([]db.CodeSessionEvent, error) {
+	envelopes := app.workerEvents.Pending(codeSessionID)
+	events := make([]db.CodeSessionEvent, len(envelopes))
+	for i, envelope := range envelopes {
+		var payloadUUID *string
+		if envelope.PayloadEventID != "" {
+			value := envelope.PayloadEventID
+			payloadUUID = &value
+		}
+		events[i] = db.CodeSessionEvent{
+			ExternalID: envelope.EventID, CodeSessionExternalID: envelope.CodeSessionID,
+			SequenceNum: envelope.SequenceNum, EventType: envelope.EventType,
+			EventSubtype: envelope.EventSubtype, PayloadUUID: payloadUUID, Payload: envelope.Payload,
+		}
+	}
+	return events, nil
+}
+
+func countQueuedCodeSessionInboundEvents(app *testApp, codeSessionID, eventType, payloadNeedle string) int {
+	count := 0
+	for _, envelope := range app.workerEvents.Pending(codeSessionID) {
+		if envelope.EventType == eventType && (payloadNeedle == "" || bytes.Contains(envelope.Payload, []byte(payloadNeedle))) {
+			count++
+		}
+	}
+	return count
+}
+
+func queueRawCodeSessionInboundEvent(t *testing.T, app *testApp, codeSessionID string, payload json.RawMessage) workerevents.EnvelopeV1 {
+	t.Helper()
+	codeSession, found, err := app.db.GetCodeSession(context.Background(), codeSessionID)
+	if err != nil || !found {
+		t.Fatalf("load Code Session %s = (%t, %v)", codeSessionID, found, err)
+	}
+	service := newCodeSessionService(app, nil, nil)
+	if err := service.QueueRawPublicSessionEvents(context.Background(), codeSession, []json.RawMessage{payload}); err != nil {
+		t.Fatalf("queue Code Session inbound event: %v", err)
+	}
+	pending := app.workerEvents.Pending(codeSessionID)
+	if len(pending) == 0 {
+		t.Fatal("queued Code Session inbound event is missing")
+	}
+	return pending[len(pending)-1]
 }
 
 type sandboxTimeoutCall struct {
@@ -67,6 +140,30 @@ type recordingSandboxTimeoutExtender struct {
 	mu    sync.Mutex
 	calls []sandboxTimeoutCall
 	err   error
+}
+
+type acceptingEmailCodeStore struct{}
+
+func (acceptingEmailCodeStore) Issue(context.Context, platformauth.EmailCodeIssue) error {
+	return nil
+}
+
+func (acceptingEmailCodeStore) Check(context.Context, string, string) error {
+	return nil
+}
+
+func (acceptingEmailCodeStore) Consume(context.Context, string, string) error {
+	return nil
+}
+
+func (acceptingEmailCodeStore) Revoke(context.Context, string, string) error {
+	return nil
+}
+
+type discardLoginCodeSender struct{}
+
+func (discardLoginCodeSender) SendLoginCode(context.Context, string, string) error {
+	return nil
 }
 
 func (e *recordingSandboxTimeoutExtender) SetTimeout(_ context.Context, sandboxID string, timeout time.Duration) error {
@@ -109,10 +206,11 @@ type metadataResponse struct {
 }
 
 type pageResponse struct {
-	Data    []metadataResponse `json:"data"`
-	HasMore bool               `json:"has_more"`
-	FirstID *string            `json:"first_id"`
-	LastID  *string            `json:"last_id"`
+	Data     []metadataResponse `json:"data"`
+	HasMore  bool               `json:"has_more"`
+	FirstID  *string            `json:"first_id"`
+	LastID   *string            `json:"last_id"`
+	NextPage *string            `json:"next_page"`
 }
 
 type platformUploadResponse struct {
@@ -399,11 +497,6 @@ func TestFilesAPI(t *testing.T) {
 		assertError(t, resp, http.StatusUnauthorized, "authentication_error")
 	})
 
-	t.Run("failure missing beta header", func(t *testing.T) {
-		resp := app.do(t, http.MethodGet, "/v1/files?beta=true", nil, defaultTestKey, false, "")
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
-	})
-
 	t.Run("failure non multipart upload", func(t *testing.T) {
 		resp := app.do(t, http.MethodPost, "/v1/files?beta=true", bytes.NewBufferString(`{"file":"nope"}`), defaultTestKey, true, "application/json")
 		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
@@ -587,9 +680,9 @@ func TestFilesAPI(t *testing.T) {
 		}
 	})
 
-	t.Run("success docs api files paths without beta query", func(t *testing.T) {
+	t.Run("success docs api files paths without beta header or query", func(t *testing.T) {
 		body, contentType := multipartBody(t, "docs-path.txt", "text/plain", []byte("docs path upload"), false)
-		resp := app.do(t, http.MethodPost, "/v1/files", body, defaultTestKey, true, contentType)
+		resp := app.do(t, http.MethodPost, "/v1/files", body, defaultTestKey, false, contentType)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("upload docs path status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -598,7 +691,7 @@ func TestFilesAPI(t *testing.T) {
 		decodeJSON(t, resp.Body, &uploaded)
 		defer deleteFile(t, app, uploaded.ID)
 
-		resp = app.do(t, http.MethodGet, "/v1/files?limit=20", nil, defaultTestKey, true, "")
+		resp = app.do(t, http.MethodGet, "/v1/files?limit=20", nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("list docs path status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -609,7 +702,7 @@ func TestFilesAPI(t *testing.T) {
 			t.Fatalf("list docs path did not include uploaded file %s: %+v", uploaded.ID, page.Data)
 		}
 
-		resp = app.do(t, http.MethodGet, "/v1/files/"+uploaded.ID, nil, defaultTestKey, true, "")
+		resp = app.do(t, http.MethodGet, "/v1/files/"+uploaded.ID, nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("retrieve docs path status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -626,7 +719,7 @@ func TestFilesAPI(t *testing.T) {
 			softDeleteFile(t, app, downloadableID)
 			_ = app.store.Delete(context.Background(), objectKey, storage.DeleteOptions{})
 		}()
-		resp = app.do(t, http.MethodGet, "/v1/files/"+downloadableID+"/content", nil, defaultTestKey, true, "")
+		resp = app.do(t, http.MethodGet, "/v1/files/"+downloadableID+"/content", nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("download docs path status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -635,7 +728,7 @@ func TestFilesAPI(t *testing.T) {
 			t.Fatalf("download docs path content = %q, want %q", got, content)
 		}
 
-		resp = app.do(t, http.MethodDelete, "/v1/files/"+uploaded.ID, nil, defaultTestKey, true, "")
+		resp = app.do(t, http.MethodDelete, "/v1/files/"+uploaded.ID, nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("delete docs path status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -1004,7 +1097,6 @@ func newS3ObjectStore(t *testing.T, override *config.Config) (storage.ObjectStor
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSession.OTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}
@@ -1027,12 +1119,16 @@ func newTestAppWithStore(t *testing.T, override *config.Config, store storage.Ob
 
 func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store storage.ObjectStore, logger *slog.Logger) *testApp {
 	t.Helper()
+	return newTestAppWithSecrets(t, override, store, logger, nil)
+}
+
+func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.ObjectStore, logger *slog.Logger, vaultSecrets *secrets.Service) *testApp {
+	t.Helper()
 	ctx := context.Background()
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.CodeSession.OTLPFileLogEnabled = false
 	if override != nil {
 		cfg = *override
 	}
@@ -1044,11 +1140,22 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("migrate database: %v", err)
 	}
-	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
+	if err := riverjobs.Migrate(ctx, database, logger); err != nil {
+		database.Close()
+		t.Fatalf("migrate River: %v", err)
+	}
+	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
 		database.Close()
 		t.Fatalf("seed database: %v", err)
 	}
 	platformSessions := platformsession.NewMemoryStore()
+	platformAuth := platformauth.NewEmailProvider(
+		database,
+		acceptingEmailCodeStore{},
+		discardLoginCodeSender{},
+		[]byte("01234567890123456789012345678901"),
+		logger.With("component", "platform_auth"),
+	)
 	credentials, err := codesessions.NewSessionCredentials(cfg)
 	if err != nil {
 		database.Close()
@@ -1063,32 +1170,62 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		database.Close()
 		t.Fatalf("ensure object store bucket: %v", err)
 	}
-	kek, err := secrets.GenerateKEK()
+	if vaultSecrets == nil {
+		kek, err := localkeys.GenerateKEK()
+		if err != nil {
+			database.Close()
+			t.Fatalf("generate vault KEK: %v", err)
+		}
+		vaultSecretsProvider, err := localkeys.New(localkeys.KeyMaterial{KEK: kek}, nil)
+		clear(kek)
+		if err != nil {
+			database.Close()
+			t.Fatalf("create vault secrets service: %v", err)
+		}
+		vaultSecrets = secrets.NewService(vaultSecretsProvider)
+	}
+	webhookQueue, webhookStream := newWebhookTestQueue(t, cfg.Webhook)
+	webhookEnqueuer := webhooks.NewEnqueuer(database, webhookQueue, logger)
+	deploymentStore := deploymentsapi.NewStore(database, logger).WithEventPayloadStorage(store).WithWebhooks(webhookEnqueuer)
+	workers := river.NewWorkers()
+	deploymentsapi.RegisterWorkers(workers, deploymentStore)
+	deploymentJobs, err := riverjobs.NewClient(database, logger, workers, map[string]river.QueueConfig{
+		deploymentjobs.Queue: {MaxWorkers: 10},
+	})
 	if err != nil {
 		database.Close()
-		t.Fatalf("generate vault KEK: %v", err)
+		t.Fatalf("create deployment schedule client: %v", err)
 	}
-	vaultSecrets, err := secrets.NewLocalService(ctx, kek)
-	if err != nil {
-		database.Close()
-		t.Fatalf("create vault secrets service: %v", err)
-	}
+	deploymentStore.Configure(deploymentJobs)
 	pool := openTestPool(t, cfg)
 	sandboxTimeouts := &recordingSandboxTimeoutExtender{}
+	workerEvents := workerevents.NewMemory()
+	brainClaims, err := codesessions.LoadBrainClaimAuthenticator(cfg.CodeSession.BrainClaimTokenFile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(api.NewServer(api.ServerDeps{
 		Config:                 cfg,
 		DB:                     database,
+		Deployments:            deploymentStore,
+		WebhookEnqueuer:        webhookEnqueuer,
 		ObjectStore:            store,
 		Logger:                 logger,
 		PlatformStore:          platformSessions,
+		PlatformAuth:           platformAuth,
 		CodeSessionCredentials: credentials,
+		BrainClaims:            brainClaims,
 		SandboxTimeoutExtender: sandboxTimeouts,
+		WorkerEventBroker:      workerEvents,
 		FilestoreCredentials:   filestoreCredentials,
 		VaultSecrets:           vaultSecrets,
 	}))
 	app := &testApp{
+		webhookQueue: webhookQueue, webhookStream: webhookStream,
 		cfg:                  cfg,
 		db:                   database,
+		deployments:          deploymentStore,
+		deploymentJobs:       deploymentJobs,
 		pool:                 pool,
 		store:                store,
 		sessions:             platformSessions,
@@ -1096,6 +1233,7 @@ func newTestAppWithStoreAndLogger(t *testing.T, override *config.Config, store s
 		filestoreCredentials: filestoreCredentials,
 		vaultSecrets:         vaultSecrets,
 		sandboxTimeouts:      sandboxTimeouts,
+		workerEvents:         workerEvents,
 		server:               server,
 		baseURL:              server.URL,
 		client:               server.Client(),
@@ -1141,6 +1279,14 @@ func seedTestLLMProviderForWorkspace(
 	if err != nil {
 		t.Fatalf("generate test LLM provider ID: %v", err)
 	}
+	existing, err := app.db.ListLLMProviders(context.Background(), organizationUUID, workspaceUUID)
+	if err != nil {
+		t.Fatalf("list test LLM providers: %v", err)
+	}
+	slugs := make([]string, 0, len(existing))
+	for _, provider := range existing {
+		slugs = append(slugs, provider.Slug)
+	}
 	now := time.Now().UTC()
 	provider := db.LLMProvider{
 		UUID:             uuid.NewV4().String(),
@@ -1148,9 +1294,10 @@ func seedTestLLMProviderForWorkspace(
 		OrganizationUUID: organizationUUID,
 		WorkspaceUUID:    workspaceUUID,
 		Name:             name,
+		Slug:             llmproviders.NextDefaultSlug(slugs),
 		BaseURL:          baseURL,
 		APIKeyLast4:      apiKey[len(apiKey)-4:],
-		ModelIDs:         append([]string(nil), modelIDs...),
+		Models:           db.LLMModels{}.WithIDs(modelIDs),
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -1181,6 +1328,16 @@ func clearTestLLMProviders(t *testing.T, app *testApp) {
 		); err != nil {
 			t.Fatalf("delete test LLM provider %s: %v", provider.ExternalID, err)
 		}
+	}
+	organization, err := app.db.GetOrganizationLLMProvider(context.Background(), ids.OrganizationUUID)
+	if errors.Is(err, db.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("load organization LLM provider: %v", err)
+	}
+	if err := app.db.DeleteLLMProvider(context.Background(), ids.OrganizationUUID, "", organization.ExternalID); err != nil {
+		t.Fatalf("delete organization LLM provider: %v", err)
 	}
 }
 
@@ -1356,7 +1513,7 @@ func deleteFile(t *testing.T, app *testApp, fileID string) {
 
 func listFiles(t *testing.T, app *testApp, query string) pageResponse {
 	t.Helper()
-	resp := app.do(t, http.MethodGet, "/v1/files?beta=true&"+query, nil, defaultTestKey, true, "")
+	resp := app.do(t, http.MethodGet, "/v1/files?"+query, nil, defaultTestKey, false, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -1552,6 +1709,7 @@ func imageConfig(t *testing.T, content []byte) (int, int) {
 }
 
 type fakeStore struct {
+	uploadErr      error
 	bucket         string
 	objects        map[string]fakeObject
 	getOverride    storage.Object
@@ -1573,6 +1731,9 @@ func (s *fakeStore) Ensure(context.Context) error {
 }
 
 func (s *fakeStore) Upload(_ context.Context, key string, body io.Reader, options storage.UploadOptions) (storage.UploadResult, error) {
+	if s.uploadErr != nil {
+		return storage.UploadResult{}, s.uploadErr
+	}
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return storage.UploadResult{}, err

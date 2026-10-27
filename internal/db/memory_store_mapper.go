@@ -12,7 +12,7 @@ type memoryStoreRow struct {
 	ExternalID          string     `db:"external_id"`
 	OrganizationUUID    string     `db:"organization_uuid"`
 	WorkspaceUUID       string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID *string    `db:"created_by_api_key_uuid"`
 	Name                string     `db:"name"`
 	Description         string     `db:"description"`
 	Metadata            []byte     `db:"metadata"`
@@ -27,7 +27,7 @@ type insertMemoryStoreParams struct {
 	ExternalID          string
 	OrganizationUUID    string
 	WorkspaceUUID       string
-	CreatedByAPIKeyUUID string
+	CreatedByAPIKeyUUID *string
 	Name                string
 	Description         string
 	Metadata            []byte
@@ -59,7 +59,7 @@ type listMemoryStoresParams struct {
 type MemoryStoreMapper interface {
 	Insert(ctx context.Context, params insertMemoryStoreParams) (memoryStoreRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (memoryStoreRow, error)
-	FindByOrganizationAndExternalID(ctx context.Context, organizationUUID, externalID string) (memoryStoreRow, error)
+	FindByExternalIDs(ctx context.Context, workspaceUUID string, externalIDs []string) ([]memoryStoreRow, error)
 	FindForUpdate(ctx context.Context, workspaceUUID, externalID string) (memoryStoreRow, error)
 	UpdateByExternalID(ctx context.Context, params updateMemoryStoreParams) (memoryStoreRow, error)
 	ArchiveByExternalID(ctx context.Context, workspaceUUID, externalID string) (memoryStoreRow, error)

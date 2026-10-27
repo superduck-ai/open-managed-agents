@@ -164,16 +164,22 @@
     </update>
 
     <update id="SoftDeleteBySession" result="rows">
-        UPDATE session_resources
-        SET deleted_at = COALESCE(deleted_at, NOW()), updated_at = NOW()
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND session_external_id = #{sessionExternalID}
-        AND file_ownership IS DISTINCT FROM 'owned'
-        AND (
-            (resource_type = 'file' AND file_ownership = 'referenced')
-            OR resource_type IN ('github_repository', 'memory_store')
+        WITH target AS (
+            SELECT uuid, file_uuid, source_file_uuid, workspace_uuid
+            FROM session_resources
+            WHERE workspace_uuid = #{workspaceUUID}
+                AND session_external_id = #{sessionExternalID}
+                AND (file_ownership = 'referenced' OR resource_type IN ('github_repository', 'memory_store')) AND deleted_at IS NULL
+        ), retired_files AS (
+            UPDATE files file SET deleted_at = now()
+            FROM target
+            WHERE file.uuid = target.file_uuid AND file.workspace_uuid = target.workspace_uuid
+                AND target.source_file_uuid IS NOT NULL AND file.deleted_at IS NULL
         )
-        AND deleted_at IS NULL
+        UPDATE session_resources resource
+        SET deleted_at = now(), updated_at = now()
+        FROM target
+        WHERE resource.uuid = target.uuid AND resource.workspace_uuid = target.workspace_uuid
     </update>
     <select id="CountSessionFileResources" result="scalar">
         SELECT count(*) AS resource_count
@@ -181,8 +187,17 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND session_external_id = #{sessionExternalID}
         AND resource_type = #{resourceType}
-        AND file_ownership = 'referenced'
+        AND (resource_type &lt;&gt; 'file' OR file_ownership = 'referenced')
         AND deleted_at IS NULL
+    </select>
+    <select id="CountSessionMemoryStoresByStoreID" result="scalar">
+        SELECT count(*) AS resource_count
+        FROM session_resources
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND resource_type = 'memory_store'
+        AND deleted_at IS NULL
+        AND memory_store_uuid = (SELECT uuid FROM memory_stores WHERE memory_stores.workspace_uuid = session_resources.workspace_uuid AND external_id = #{memoryStoreID})
     </select>
 
     <select id="FindMountConflict" result="optional" resultType="string">
@@ -203,18 +218,52 @@
     </select>
 
     <update id="BindSessionFileResource" result="returning" resultType="sessionResourceRow">
-        UPDATE session_resources
+        WITH instance AS (
+            INSERT INTO files (
+                uuid, external_id, workspace_uuid, filename, mime_type, size_bytes, sha256,
+                s3_bucket, s3_key, downloadable, scope_type, scope_id, created_by_api_key_uuid,
+                created_at, detected_mime_type, metadata, authorization_metadata, tags,
+                md5, s3_etag, s3_version_id
+            )
+            SELECT #{params.FileUUID}, #{params.FileExternalID}, source.workspace_uuid,
+                source.filename, source.mime_type, source.size_bytes, source.sha256,
+                source.s3_bucket, source.s3_key, source.downloadable, 'session', session.external_id,
+                session.created_by_api_key_uuid, #{params.UpdatedAt}, source.detected_mime_type,
+                source.metadata, source.authorization_metadata, source.tags, source.md5,
+                source.s3_etag, source.s3_version_id
+            FROM files source
+            JOIN sessions session ON session.uuid = #{params.SessionUUID}
+                AND session.workspace_uuid = #{params.WorkspaceUUID}
+                AND session.deleted_at IS NULL AND session.archived_at IS NULL
+            WHERE source.uuid = #{params.SourceFileUUID}
+                AND source.workspace_uuid = #{params.WorkspaceUUID} AND source.deleted_at IS NULL
+            RETURNING uuid, external_id
+        )
+        UPDATE session_resources resource
         SET path = #{params.EntryPath}, parent_path = #{params.ParentPath},
-        mount_path = #{params.MountPath}, file_uuid = #{params.FileUUID},
-        file_ownership = 'referenced',
-        updated_at = #{params.UpdatedAt}
-        WHERE uuid = #{params.ResourceUUID}
-        AND workspace_uuid = #{params.WorkspaceUUID}
-        AND session_uuid = #{params.SessionUUID}
-        AND file_ownership IS NULL
-        AND deleted_at IS NULL
-        RETURNING
-        <include refid="sessionResourceColumns"/>
+            file_uuid = instance.uuid,
+            source_file_uuid = COALESCE((
+                SELECT parent.source_file_uuid FROM session_resources parent
+                WHERE parent.workspace_uuid = #{params.WorkspaceUUID}
+                    AND parent.file_uuid = #{params.SourceFileUUID}
+                    AND parent.source_file_uuid IS NOT NULL AND parent.deleted_at IS NULL
+            ), #{params.SourceFileUUID}),
+            mount_path = #{params.MountPath}, file_ownership = 'referenced',
+            updated_at = #{params.UpdatedAt}
+        FROM instance
+        WHERE resource.uuid = #{params.ResourceUUID}
+            AND resource.workspace_uuid = #{params.WorkspaceUUID}
+            AND resource.session_uuid = #{params.SessionUUID}
+            AND resource.deleted_at IS NULL
+        RETURNING resource.uuid, resource.external_id, resource.organization_uuid, resource.workspace_uuid, resource.session_uuid,
+        resource.session_external_id, resource.resource_type, resource.secret_payload,
+        CAST(NULL AS text) AS file_external_id,
+        CAST(NULL AS text) AS file_path,
+        CAST(NULL AS text) AS file_ownership,
+        resource.github_repository_url, resource.github_repository_checkout, resource.mount_path,
+        resource.memory_store_uuid, CAST(NULL AS text) AS memory_store_external_id,
+        resource.memory_access, resource.memory_description, resource.memory_instructions, resource.memory_name,
+        resource.created_at, resource.updated_at, resource.deleted_at
     </update>
 
     <select id="GetSessionResourceForMutation" resultType="sessionResourceRow">
@@ -234,12 +283,23 @@
     </select>
 
     <update id="SoftDeleteSessionResource" result="rows">
-        UPDATE session_resources
+        WITH target AS (
+            SELECT uuid, file_uuid, source_file_uuid, workspace_uuid
+            FROM session_resources
+            WHERE workspace_uuid = #{workspaceUUID}
+                AND session_external_id = #{sessionExternalID}
+                AND external_id = #{resourceExternalID}
+                AND (file_ownership = 'referenced' OR resource_type IN ('github_repository', 'memory_store')) AND deleted_at IS NULL
+        ), retired_files AS (
+            UPDATE files file SET deleted_at = now()
+            FROM target
+            WHERE file.uuid = target.file_uuid AND file.workspace_uuid = target.workspace_uuid
+                AND target.source_file_uuid IS NOT NULL AND file.deleted_at IS NULL
+        )
+        UPDATE session_resources resource
         SET deleted_at = now(), updated_at = now()
-        WHERE workspace_uuid = #{workspaceUUID}
-        AND session_external_id = #{sessionExternalID}
-        AND external_id = #{resourceExternalID}
-        AND deleted_at IS NULL
+        FROM target
+        WHERE resource.uuid = target.uuid AND resource.workspace_uuid = target.workspace_uuid
     </update>
 
     <insert id="InsertDirectory" result="returning" resultType="int64">
@@ -463,4 +523,30 @@
         AND session.workspace_uuid = #{params.WorkspaceUUID}
         AND session.deleted_at IS NULL
     </insert>
+
+    <select id="ListMemoryMountsByFilesystem" resultType="sessionMemoryMountRow">
+        SELECT
+            session.external_id AS session_external_id,
+            COALESCE(store.external_id, '') AS memory_store_external_id,
+            COALESCE(resource.memory_access, '') AS access,
+            COALESCE(resource.mount_path, '') AS mount_path,
+            store.uuid AS memory_store_uuid,
+            store.archived_at,
+            store.deleted_at
+        FROM filestore_filesystems filesystem
+        JOIN sessions session
+            ON session.uuid = filesystem.session_uuid
+            AND session.workspace_uuid = filesystem.workspace_uuid
+        JOIN session_resources resource
+            ON resource.session_uuid = session.uuid
+            AND resource.workspace_uuid = filesystem.workspace_uuid
+            AND resource.deleted_at IS NULL
+            AND resource.resource_type = 'memory_store'
+        LEFT JOIN memory_stores store
+            ON store.uuid = resource.memory_store_uuid
+            AND store.workspace_uuid = filesystem.workspace_uuid
+        WHERE filesystem.workspace_uuid = #{workspaceUUID}
+        AND filesystem.uuid = #{filesystemUUID}
+        AND filesystem.deleted_at IS NULL
+    </select>
 </mapper>

@@ -10,24 +10,69 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
 // 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
+	sandboxProvisioner     SandboxProvisioner
+	eventPayloads          *eventpayload.Store
 	db                     *db.DB
 	credentials            *SessionCredentials
 	logger                 *slog.Logger
 	sink                   PublicEventSink
 	sandboxTimeoutExtender SandboxTimeoutExtender
 	sandboxTimeout         time.Duration
+	workerEvents           workerevents.Broker
+	workerEventAcks        workerevents.AckStore
+	workerEventObjects     storage.ObjectStore
+	billing                *billing.Calculator
+	attachments            SessionAttachmentStore
+}
+
+func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
+	if s == nil || len(codeSessionIDs) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	s.purgeWorkerEvents(ctx, codeSessionIDs)
+}
+
+func (s *Service) purgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
+	for _, codeSessionID := range codeSessionIDs {
+		if err := s.workerEvents.PurgeSession(ctx, codeSessionID); err != nil {
+			s.logger.WarnContext(ctx, "purge retired worker events", "code_session_id", codeSessionID, "error", err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func (s *Service) reclaimClosedSubscription(codeSession db.CodeSession) {
+	if codeSession.SessionUUID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	retired, err := s.db.IsSessionRetired(ctx, codeSession.OrganizationUUID, codeSession.WorkspaceUUID, codeSession.SessionUUID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "check closed worker session", "code_session_id", codeSession.ExternalID, "error", err)
+		return
+	}
+	if retired {
+		s.purgeWorkerEvents(ctx, []string{codeSession.ExternalID})
+	}
 }
 
 func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials, logger *slog.Logger) *Service {
@@ -36,7 +81,32 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 		panic("codesessions: session credentials are required")
 	}
 	logger = logging.LoggerOrDefault(logger)
-	return &Service{db: database, credentials: credentials, logger: logger}
+	broker := workerevents.NewMemory()
+	return &Service{
+		eventPayloads: eventpayload.New(database, nil),
+		db:            database, credentials: credentials, logger: logger,
+		workerEvents: broker, workerEventAcks: workerevents.NewMemoryAcknowledgementStore(),
+	}
+}
+
+// WithWorkerEventBroker wires the live transport copy of durable inbound events.
+func (s *Service) WithWorkerEventBroker(broker workerevents.Broker) *Service {
+	if s != nil && broker != nil {
+		s.workerEvents = broker
+	}
+	return s
+}
+
+func (s *Service) WithWorkerEventState(acks workerevents.AckStore, objects storage.ObjectStore) *Service {
+	if s == nil {
+		return s
+	}
+	if acks != nil {
+		s.workerEventAcks = acks
+	}
+	s.workerEventObjects = objects
+	s.eventPayloads = eventpayload.New(s.db, objects)
+	return s
 }
 
 // WithSandboxTimeoutExtender wires the provider lifecycle operation used to
@@ -48,6 +118,24 @@ func (s *Service) WithSandboxTimeoutExtender(extender SandboxTimeoutExtender, ti
 	s.sandboxTimeoutExtender = extender
 	s.sandboxTimeout = timeout
 	return s
+}
+
+// WithBilling wires the model list-price calculator used to write the
+// billing payload on synthesized span.model_request_end events.
+func (s *Service) WithBilling(calculator *billing.Calculator) *Service {
+	if s == nil {
+		return s
+	}
+	s.billing = calculator
+	return s
+}
+
+// Billing exposes the model list-price calculator for budget validation.
+func (s *Service) Billing() *billing.Calculator {
+	if s == nil {
+		return nil
+	}
+	return s.billing
 }
 
 func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Session, events []db.SessionEvent) error {
@@ -65,43 +153,63 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 		return nil
 	}
 	payloads := make([]json.RawMessage, 0, len(events))
+	queued := false
 	for _, event := range events {
-		if !shouldForwardPublicEventToWorker(event.EventType) {
+		if !maevents.IsPublicWorkerInputEvent(event.EventType) {
 			continue
 		}
-		if event.EventType == "user.tool_confirmation" {
-			handled, err := s.queueControlResponseForToolConfirmation(ctx, codeSession, event)
-			if err != nil {
-				return err
-			}
-			if handled {
-				continue
-			}
+		handled := false
+		var controlErr error
+		switch event.EventType {
+		case "user.tool_confirmation":
+			handled, controlErr = s.queueControlResponseForToolConfirmation(ctx, codeSession, event)
+		case "user.custom_tool_result":
+			handled, controlErr = s.queueControlResponseForCustomToolResult(ctx, codeSession, event)
+		case "user.tool_result":
+			handled, controlErr = s.queueControlResponseForSelfHostedToolResult(ctx, codeSession, event)
 		}
-		payload, err := workerPayloadForPublicEvent(codeSession.ExternalID, event.Payload, event.ProcessedAt)
+		if controlErr != nil {
+			return controlErr
+		}
+		if handled {
+			queued = true
+			continue
+		}
+		payload, err := s.publicWorkerPayload(ctx, codeSession, event)
 		if err != nil {
-			s.logger.ErrorContext(ctx, "convert public session event to code session payload", "session_id", session.ExternalID, "event_id", event.ExternalID, "error", err)
-			continue
+			return fmt.Errorf("convert public session event %s: %w", event.ExternalID, err)
 		}
 		payloads = append(payloads, payload)
 	}
-	if len(payloads) == 0 {
+	if len(payloads) == 0 && !queued {
 		return nil
 	}
-	if err := s.QueueRawPublicSessionEvents(ctx, codeSession, payloads); err != nil {
-		return err
+	if len(payloads) > 0 {
+		if err := s.QueueRawPublicSessionEvents(ctx, codeSession, payloads); err != nil {
+			return err
+		}
 	}
 	return s.resumeSandboxForCodeSession(ctx, codeSession)
 }
 
 func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession db.CodeSession) error {
-	if s.sandboxTimeoutExtender == nil {
+	if s.sandboxTimeoutExtender == nil || usesBrainClaimTransport(codeSession) {
 		return nil
 	}
+
+	external, err := s.selfHostedCodeSession(ctx, codeSession.ExternalID)
+	if err != nil {
+		return err
+	}
+	if external {
+		return nil
+	}
+
 	sandbox, err := s.db.GetResumableEnvironmentSandboxForCodeSession(ctx, codeSession.ExternalID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			return nil
+			_, err = s.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, "", nil)
+			return err
 		}
 		return err
 	}
@@ -148,40 +256,20 @@ func (s *Service) QueueRawPublicSessionEvents(ctx context.Context, codeSession d
 	if s == nil || len(payloads) == 0 {
 		return nil
 	}
-	// 持久化队列是事件投递边界：CCR v2 SSE 和保留的 HTTP poll 都从
-	// 持久化入站队列消费事件。
+	ctx, cancel := context.WithTimeout(ctx, workerPublicationTimeout)
+	defer cancel()
+	batch := &inboundPublicationBatch{service: s}
+	defer batch.cleanupUnpublished(ctx)
 	for _, payload := range payloads {
-		_, duplicate, err := s.appendInboundPayload(ctx, codeSession.ExternalID, payload, "public-session")
+		prepared, err := s.prepareInboundEvent(ctx, codeSession, payload, "public-session", "")
 		if err != nil {
 			return err
 		}
-		if duplicate {
-			continue
-		}
+		batch.events = append(batch.events, prepared)
 	}
-	return nil
-}
-
-func (s *Service) QueueRawCodeSessionEvents(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage, source string) error {
-	if s == nil || len(payloads) == 0 {
-		return nil
-	}
-	source = strings.TrimSpace(source)
-	if source == "" {
-		source = "code-session-api"
-	}
-	// 不得通过进程内 push 绕过持久化队列。CCR v2 投递必须校验 epoch，
-	// 并且在 worker 被替换后仍可重放。
-	for _, payload := range payloads {
-		_, duplicate, err := s.appendInboundPayload(ctx, codeSession.ExternalID, payload, source)
-		if err != nil {
-			return err
-		}
-		if duplicate {
-			continue
-		}
-	}
-	return nil
+	return s.db.WithLockedActiveCodeSession(ctx, codeSession.ExternalID, "", func(db.CodeSession) error {
+		return batch.publish(ctx)
+	})
 }
 
 func (s *Service) AppendWorkerEvent(ctx context.Context, route CodeSessionStreamRoute, raw json.RawMessage) error {
@@ -306,7 +394,7 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 		return prepared, nil
 	}
 	if input.Ephemeral {
-		if meta.EventType == "stream_event" {
+		if meta.EventType == "stream_event" || maevents.IsStreamDelta(meta.EventType) {
 			return preparedStreamAction{payload: payload}, nil
 		}
 		return preparedNoopAction{}, nil
@@ -321,6 +409,7 @@ func prepareWorkerOutputEvent(codeSessionID string, input workerOutputEvent, now
 	if !ok {
 		return preparedNoopAction{}, nil
 	}
+
 	return preparedPublicAction{payloads: publicPayloads}, nil
 }
 
@@ -339,41 +428,28 @@ func prepareWorkerControlAction(payload json.RawMessage, meta EventMetadata) (pr
 }
 
 func (s *Service) applyWorkerOutputEvents(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, workerOutputEvents []preparedWorkerOutputEvent) error {
-	for index := 0; index < len(workerOutputEvents); {
-		if _, ok := workerOutputEvents[index].(preparedStreamAction); ok {
-			payloads := leadingWorkerStreamPayloads(workerOutputEvents[index:])
-			s.publishWorkerStreamPayloads(ctx, route, workerEpoch, payloads)
-			index += len(payloads)
+	for _, workerOutputEvent := range workerOutputEvents {
+		if stream, ok := workerOutputEvent.(preparedStreamAction); ok {
+			// Publish previews independently so an ingress batch cannot become one
+			// oversized broker message or cause unrelated previews to fail together.
+			s.publishWorkerStreamPayload(ctx, route, workerEpoch, stream.payload)
 			continue
 		}
-		if err := s.applyNonStreamWorkerOutputEvent(ctx, route.CodeSessionID, workerOutputEvents[index]); err != nil {
+		if err := s.applyNonStreamWorkerOutputEvent(ctx, route.CodeSessionID, workerEpoch, workerOutputEvent); err != nil {
 			return err
 		}
-		index++
 	}
 	return nil
 }
 
-func leadingWorkerStreamPayloads(workerOutputEvents []preparedWorkerOutputEvent) []json.RawMessage {
-	payloads := make([]json.RawMessage, 0, len(workerOutputEvents))
-	for _, workerOutputEvent := range workerOutputEvents {
-		stream, ok := workerOutputEvent.(preparedStreamAction)
-		if !ok {
-			break
-		}
-		payloads = append(payloads, stream.payload)
-	}
-	return payloads
-}
-
-func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessionID string, workerOutputEvent preparedWorkerOutputEvent) error {
+func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessionID string, workerEpoch int64, workerOutputEvent preparedWorkerOutputEvent) error {
 	switch prepared := workerOutputEvent.(type) {
 	case preparedNoopAction:
 		return nil
 	case preparedKeepAliveAction:
 		return nil
 	case preparedControlAction:
-		return s.handleToolPermissionRequest(ctx, codeSessionID, &prepared.request, prepared.metadata)
+		return s.handleToolPermissionRequest(ctx, codeSessionID, workerEpoch, &prepared.request, prepared.metadata)
 	case preparedPublicAction:
 		return s.publishWorkerPublicPayloads(ctx, codeSessionID, prepared.payloads)
 	default:
@@ -381,12 +457,12 @@ func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessi
 	}
 }
 
-func (s *Service) publishWorkerStreamPayloads(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, payloads []json.RawMessage) {
-	if len(payloads) == 0 || s.sink == nil {
+func (s *Service) publishWorkerStreamPayload(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, payload json.RawMessage) {
+	if len(payload) == 0 || s.sink == nil {
 		return
 	}
-	if err := s.sink.PublishCodeSessionStreamEvents(ctx, route, workerEpoch, payloads); err != nil {
-		s.logger.WarnContext(ctx, "publish worker stream preview", "code_session_id", route.CodeSessionID, "worker_epoch", workerEpoch, "event_count", len(payloads), "error", err)
+	if err := s.sink.PublishCodeSessionStreamEvent(ctx, route, workerEpoch, payload); err != nil {
+		s.logger.WarnContext(ctx, "publish worker stream preview", "code_session_id", route.CodeSessionID, "worker_epoch", workerEpoch, "error", err)
 	}
 }
 
@@ -403,9 +479,14 @@ func transientWorkerEvent(meta EventMetadata, createdAt time.Time) db.CodeSessio
 	}
 }
 
-func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSession, configRaw json.RawMessage, now time.Time) error {
+func (s *Service) prepareInitializeEvent(
+	ctx context.Context,
+	codeSession db.CodeSession,
+	configRaw json.RawMessage,
+	now time.Time,
+) (preparedInboundEvent, error) {
 	configObject := rawObject(configRaw)
-	requestID := "initialize_" + strings.ReplaceAll(uuid.NewV4().String(), "-", "")
+	requestID := "initialize_" + strings.TrimPrefix(codeSession.ExternalID, "cse_")
 	request := map[string]any{
 		"subtype": "initialize",
 	}
@@ -417,7 +498,7 @@ func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSessio
 	}
 	payload, err := marshalRaw(map[string]any{
 		"type":       "control_request",
-		"uuid":       uuid.NewV4().String(),
+		"uuid":       controlResponseUUID(codeSession.ExternalID, "initialize"),
 		"session_id": codeSession.ExternalID,
 		"created_at": formatTime(now),
 		"timestamp":  formatTime(now),
@@ -425,42 +506,20 @@ func (s *Service) queueInitialize(ctx context.Context, codeSession db.CodeSessio
 		"request":    request,
 	})
 	if err != nil {
-		return err
+		return preparedInboundEvent{}, err
 	}
-	_, _, err = s.appendInboundPayload(ctx, codeSession.ExternalID, payload, "internal")
-	return err
+	return s.prepareInboundEvent(ctx, codeSession, payload, "internal", "initialize")
 }
 
-func (s *Service) appendInboundPayload(ctx context.Context, codeSessionID string, payload json.RawMessage, source string) (db.CodeSessionEvent, bool, error) {
-	input, err := newInboundEventInput(codeSessionID, payload, source)
-	if err != nil {
-		return db.CodeSessionEvent{}, false, err
+func (s *Service) publishPreparedInboundEvent(ctx context.Context, prepared preparedInboundEvent) error {
+	if err := s.workerEvents.Publish(ctx, prepared.messageID, prepared.envelope); err != nil {
+		// A failed PubAck is ambiguous: JetStream may already have persisted the
+		// event. Keep any referenced object until logical expiry so a redelivery
+		// can still load its offloaded payload, and let the caller retry with the
+		// same message ID.
+		return workerEventUnavailable(err)
 	}
-	return s.db.AppendCodeSessionInboundEvent(ctx, codeSessionID, input)
-}
-
-func newInboundEventInput(codeSessionID string, payload json.RawMessage, source string) (db.AppendCodeSessionEventInput, error) {
-	meta, err := BuildEventMetadata(codeSessionID, "inbound", payload)
-	if err != nil {
-		return db.AppendCodeSessionEventInput{}, err
-	}
-	eventID, err := ids.New("csev_")
-	if err != nil {
-		return db.AppendCodeSessionEventInput{}, err
-	}
-	return db.AppendCodeSessionEventInput{
-		ExternalID:     eventID,
-		EventType:      meta.EventType,
-		EventSubtype:   meta.EventSubtype,
-		PayloadUUID:    meta.PayloadUUID,
-		RequestID:      meta.RequestID,
-		Payload:        meta.Payload,
-		PayloadHash:    meta.PayloadHash,
-		IdempotencyKey: meta.IdempotencyKey,
-		DeliveryStatus: "queued",
-		Source:         strings.TrimSpace(source),
-		CreatedAt:      time.Now().UTC(),
-	}, nil
+	return nil
 }
 
 func (s *Service) publishWorkerPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {
@@ -485,6 +544,10 @@ func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID strin
 	if s.sink == nil {
 		return nil
 	}
+	payloads, err = s.enrichSubagentLifecycle(ctx, codeSession, payloads)
+	if err != nil {
+		return err
+	}
 	return s.sink.PublishCodeSessionEvents(ctx, codeSession, payloads)
 }
 
@@ -506,7 +569,7 @@ func (s *Service) publishSubagentInternalEvents(ctx context.Context, codeSession
 	payloads := make([]json.RawMessage, 0, 32)
 	afterSequence := int64(0)
 	for {
-		events, hasMore, err := s.db.ListCodeSessionInternalEventsPage(ctx, db.ListCodeSessionInternalEventsPageParams{
+		events, hasMore, err := s.eventPayloads.ListCodeSessionInternalEventsPage(ctx, db.ListCodeSessionInternalEventsPageParams{
 			WorkspaceUUID:         codeSession.WorkspaceUUID,
 			CodeSessionExternalID: codeSession.ExternalID,
 			Subagents:             true,
@@ -550,44 +613,6 @@ func (s *Service) PublishSubagentInternalEvents(ctx context.Context, codeSession
 	return s.publishSubagentInternalEvents(ctx, codeSession)
 }
 
-func (s *Service) subagentThreadMappings(ctx context.Context, codeSession db.CodeSession) (map[string]string, error) {
-	events, _, err := s.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-		WorkspaceUUID:     codeSession.WorkspaceUUID,
-		SessionExternalID: codeSession.SessionExternalID,
-		PrimaryOnly:       true,
-		Limit:             500,
-		Order:             "asc",
-		Types:             []string{"session.thread_created"},
-	})
-	if err != nil {
-		return nil, err
-	}
-	threadByAgent := make(map[string]string)
-	for _, event := range events {
-		object := rawObject(event.Payload)
-		threadID := strings.TrimSpace(stringField(object, "session_thread_id"))
-		if threadID == "" {
-			continue
-		}
-		for _, key := range []string{"task_id", "agent_id", "agentId"} {
-			agentID := strings.TrimSpace(stringField(object, key))
-			if agentID != "" {
-				threadByAgent[agentID] = threadID
-			}
-		}
-	}
-	return threadByAgent, nil
-}
-
-func shouldForwardPublicEventToWorker(eventType string) bool {
-	switch eventType {
-	case "user.message", "user.interrupt", "user.tool_confirmation", "user.tool_result", "user.custom_tool_result":
-		return true
-	default:
-		return false
-	}
-}
-
 func isPublicWorkerOutputEvent(eventType string) bool {
 	return maevents.IsWorkerOutputEvent(eventType) || maevents.IsStreamDelta(eventType)
 }
@@ -623,3 +648,6 @@ func derivedPrimarySessionEventID(codeSessionID, eventID, eventType string) stri
 func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
+
+// EventPayloadStore shares durable event storage with the public session handler.
+func (s *Service) EventPayloadStore() *eventpayload.Store { return s.eventPayloads }

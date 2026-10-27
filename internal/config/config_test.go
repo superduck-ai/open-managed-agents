@@ -21,6 +21,13 @@ database:
   url: postgresql://test/database
 redis:
   url: redis://test:6379
+nats:
+  url: nats://test:4222
+auth:
+  smtp:
+    addr: smtp.example.com:587
+    username: sender@example.com
+    password: test-password
 storage:
   type: s3
   s3:
@@ -43,10 +50,28 @@ const (
 type dockerComposeTestFile struct {
 	Services struct {
 		OMAServer struct {
-			Ports   []string                  `yaml:"ports"`
-			Volumes []dockerComposeTestVolume `yaml:"volumes"`
+			DependsOn map[string]dockerComposeTestDependency `yaml:"depends_on"`
+			Ports     []string                               `yaml:"ports"`
+			Volumes   []dockerComposeTestVolume              `yaml:"volumes"`
 		} `yaml:"oma-server"`
+		NATS  dockerComposeTestNATSService `yaml:"nats"`
+		NATS2 dockerComposeTestNATSService `yaml:"nats-2"`
+		NATS3 dockerComposeTestNATSService `yaml:"nats-3"`
 	} `yaml:"services"`
+}
+
+type dockerComposeTestDependency struct {
+	Condition string `yaml:"condition"`
+}
+
+type dockerComposeTestNATSService struct {
+	Image       string   `yaml:"image"`
+	Command     []string `yaml:"command"`
+	Ports       []string `yaml:"ports"`
+	Volumes     []string `yaml:"volumes"`
+	Healthcheck struct {
+		Test []string `yaml:"test"`
+	} `yaml:"healthcheck"`
 }
 
 type dockerComposeTestVolume struct {
@@ -75,6 +100,13 @@ database:
   url: postgresql://yaml/database
 redis:
   url: redis://yaml:6379
+nats:
+  url: nats://yaml:4222
+auth:
+  smtp:
+    addr: smtp.example.com:587
+    username: sender@example.com
+    password: test-password
 storage:
   type: s3
   s3:
@@ -91,13 +123,12 @@ batch:
   worker_concurrency: 7
   upstream_timeout: 45s
 code_session:
-  otlp_log_root: runtime/otlp
   jwt_signing_private_key_file: ${CONFIG_TEST_HOME}/jwt.pem
+  upstream_proxy_mitm_enabled: false
+observability:
+  content_capture_enabled: false
 webhook:
-  endpoint_url: https://example.com/webhooks
-  signing_key: yaml-signing-key
-  event_types:
-    - session.created
+  timeout: 10s
 bootstrap:
   workspace_name: yaml-workspace
 `)
@@ -120,20 +151,231 @@ bootstrap:
 	if cfg.Batch.WorkerConcurrency != 7 || cfg.Batch.UpstreamTimeout != 45*time.Second {
 		t.Fatalf("unexpected batch config: concurrency=%d timeout=%s", cfg.Batch.WorkerConcurrency, cfg.Batch.UpstreamTimeout)
 	}
-	if cfg.CodeSession.OTLPFileLogEnabled {
-		t.Fatal("CodeSession.OTLPFileLogEnabled = true, want production default false")
-	}
-	if cfg.CodeSession.OTLPLogRoot != filepath.Join(root, "config", "runtime", "otlp") {
-		t.Fatalf("CodeSession.OTLPLogRoot = %q, want config-relative path", cfg.CodeSession.OTLPLogRoot)
-	}
 	if cfg.CodeSession.JWTSigningPrivateKeyFile != filepath.Join(root, "home", "jwt.pem") {
 		t.Fatalf("CodeSession.JWTSigningPrivateKeyFile = %q, want expanded path", cfg.CodeSession.JWTSigningPrivateKeyFile)
+	}
+	if cfg.Observability.ContentCaptureEnabled {
+		t.Fatalf("unexpected observability content policy: %#v", cfg.Observability)
 	}
 	if !cfg.Webhook.WorkerEnabled {
 		t.Fatal("Webhook.WorkerEnabled = false, want derived true")
 	}
 	if cfg.Bootstrap.WorkspaceName != "yaml-workspace" {
 		t.Fatalf("Bootstrap.WorkspaceName = %q, want yaml-workspace", cfg.Bootstrap.WorkspaceName)
+	}
+}
+
+func TestLoadEnvironmentPrebuildYAML(t *testing.T) {
+	prepareLoadTest(t)
+	contents := `
+e2b:
+  api_url: https://cubesandbox.example
+  api_key: key
+environment_prebuilds:
+  enabled: true
+  image:
+    base_image: " registry:5000/team/base:stable@sha256:` + strings.Repeat("a", 64) + ` "
+    flow:
+      pipeline_url: " https://aliyun-flow.example/pipelines/1/ "
+      token: " token "
+  template:
+    network:
+      dns_servers: [" 10.0.0.2 "]
+      allow_outbound_cidrs: [" 10.0.0.0/8 "]
+      deny_outbound_cidrs: [" 169.254.0.0/16 "]
+      allow_internet: false
+      inject_egress_ca: false
+    registry_auth:
+      username: " user "
+      password: " password "
+`
+	for _, tc := range []struct{ name, from, to, field string }{
+		{"zero timeout", "  enabled: true", "  enabled: true\n  timeout: 0s", "environment_prebuilds.timeout"},
+		{"negative timeout", "  enabled: true", "  enabled: true\n  timeout: -1s", "environment_prebuilds.timeout"},
+		{"empty disk size", "  template:", "  template:\n    disk_size: \" \"", "environment_prebuilds.template.disk_size"},
+		{"pipeline URL", "https://aliyun-flow.example", "http://aliyun-flow.example", "environment_prebuilds.image.flow.pipeline_url"},
+		{"template URL", "https://cubesandbox.example", "http://cubesandbox.example", "e2b.api_url"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadConfigTestYAML(t, strings.Replace(contents, tc.from, tc.to, 1))
+			if err == nil || !strings.HasPrefix(err.Error(), tc.field+" ") {
+				t.Fatalf("error = %v, want error for %s", err, tc.field)
+			}
+		})
+	}
+	cfg, err := loadConfigTestYAML(t, contents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.EnvironmentPrebuilds
+	if c.Timeout != time.Hour || c.Template.DiskSize != "20G" {
+		t.Fatalf("defaults: timeout=%s disk_size=%q", c.Timeout, c.Template.DiskSize)
+	}
+	if got := c.Image.Repository(); got != "registry:5000/team/base" {
+		t.Fatalf("image repository = %q, want registry:5000/team/base", got)
+	}
+	if c.Template.Network.AllowInternet || c.Template.Network.InjectEgressCA {
+		t.Fatal("explicit false network options must override defaults")
+	}
+	if c.Template.RegistryAuth.Password != " password " {
+		t.Fatal("registry password must preserve whitespace")
+	}
+	if c.Image.Flow.PipelineURL != "https://aliyun-flow.example/pipelines/1" || c.Image.Flow.Token != "token" || c.Template.RegistryAuth.Username != "user" {
+		t.Fatal("prebuild fields were not normalized")
+	}
+	if c.Template.Network.DNSServers[0] != "10.0.0.2" || c.Template.Network.AllowOutboundCIDRs[0] != "10.0.0.0/8" || c.Template.Network.DenyOutboundCIDRs[0] != "169.254.0.0/16" {
+		t.Fatal("network addresses were not normalized")
+	}
+	taggedImageConfig := strings.Replace(contents, "@sha256:"+strings.Repeat("a", 64), "", 1)
+	taggedImageConfig = strings.Replace(taggedImageConfig, "  enabled: true", "  enabled: true\n  timeout: 1s", 1)
+	cfg, err = loadConfigTestYAML(t, taggedImageConfig)
+	if err != nil || cfg.EnvironmentPrebuilds.Timeout != time.Second {
+		t.Fatalf("positive timeout override was not accepted: %v", err)
+	}
+	if cfg.EnvironmentPrebuilds.Image.BaseImage != "registry:5000/team/base:stable" || cfg.EnvironmentPrebuilds.Image.Repository() != "registry:5000/team/base" {
+		t.Fatal("tagged base image was not preserved or its repository was incorrect")
+	}
+}
+
+func TestLoadDefaultsObservabilitySignalPolicy(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, "")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Observability.Enabled || !cfg.Observability.ContentCaptureEnabled {
+		t.Fatalf("unexpected default observability policy: %#v", cfg.Observability)
+	}
+	if cfg.Observability.Backend != ObservabilityBackendOpenObserve {
+		t.Fatalf("Observability.Backend = %q, want %q", cfg.Observability.Backend, ObservabilityBackendOpenObserve)
+	}
+	if cfg.Observability.OpenObserve.Query.Timeout != 15*time.Second {
+		t.Fatalf("OpenObserve.Query.Timeout = %s, want 15s", cfg.Observability.OpenObserve.Query.Timeout)
+	}
+}
+
+func TestLoadKeepsContentCaptureEnabledWhenObservabilityIsPartial(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, `
+observability:
+  enabled: false
+`)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Observability.ContentCaptureEnabled {
+		t.Fatalf("ContentCaptureEnabled = false, want default true when omitted: %#v", cfg.Observability)
+	}
+}
+
+func TestValidateObservabilityConfigOpenObserveBaseURL(t *testing.T) {
+	cfg := enabledOpenObserveConfig()
+	tests := []struct {
+		baseURL   string
+		wantError bool
+	}{
+		{baseURL: "http://openobserve:5080"},
+		{baseURL: "openobserve:5080", wantError: true},
+		{baseURL: "ftp://openobserve:5080", wantError: true},
+		{baseURL: "http://user@openobserve:5080", wantError: true},
+		{baseURL: "http://openobserve:5080?debug=true", wantError: true},
+		{baseURL: "http://openobserve:5080#fragment", wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.baseURL, func(t *testing.T) {
+			cfg.OpenObserve.BaseURL = test.baseURL
+			err := validateObservabilityConfig(cfg)
+			if (err != nil) != test.wantError {
+				t.Fatalf("validateObservabilityConfig() error = %v, wantError %v", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestValidateObservabilityConfigRejectsUnsupportedBackend(t *testing.T) {
+	cfg := enabledOpenObserveConfig()
+	cfg.Backend = "clickhouse"
+	err := validateObservabilityConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "observability.backend") {
+		t.Fatalf("validateObservabilityConfig() error = %v, want backend error", err)
+	}
+}
+
+func TestValidateObservabilityConfigRequiresQueryBlock(t *testing.T) {
+	t.Run("missing query username", func(t *testing.T) {
+		cfg := enabledOpenObserveConfig()
+		cfg.OpenObserve.Query.Username = ""
+		err := validateObservabilityConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "observability.openobserve.query.username") {
+			t.Fatalf("validateObservabilityConfig() error = %v, want query.username error", err)
+		}
+	})
+	t.Run("non-positive query timeout", func(t *testing.T) {
+		cfg := enabledOpenObserveConfig()
+		cfg.OpenObserve.Query.Timeout = 0
+		err := validateObservabilityConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "observability.openobserve.query.timeout") {
+			t.Fatalf("validateObservabilityConfig() error = %v, want query.timeout error", err)
+		}
+	})
+}
+
+func enabledOpenObserveConfig() ObservabilityConfig {
+	return ObservabilityConfig{
+		Enabled: true,
+		Backend: ObservabilityBackendOpenObserve,
+		OpenObserve: OpenObserveConfig{
+			BaseURL:      "http://openobserve:5080",
+			Organization: "oma",
+			LogsStream:   "logs",
+			TracesStream: "traces",
+			Ingestion:    BackendCredentialsConfig{Username: "ingest", Password: "ingest-secret"},
+			Query:        BackendQueryConfig{Username: "query", Password: "query-secret", Timeout: 15 * time.Second},
+		},
+	}
+}
+
+func TestValidateCodeSessionSandboxAPIBaseURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		environment string
+		config      CodeSessionConfig
+		enabled     bool
+		wantError   bool
+	}{
+		{name: "observability disabled with no URL", environment: EnvironmentProd},
+		{name: "missing URL", environment: EnvironmentProd, enabled: true, wantError: true},
+		{name: "invalid URL with observability disabled", environment: EnvironmentProd, config: CodeSessionConfig{SandboxAPIBaseURL: "openobserve.local"}, wantError: true},
+		{name: "production HTTPS", environment: EnvironmentProd, config: CodeSessionConfig{SandboxAPIBaseURL: "https://oma.example"}, enabled: true},
+		{name: "production HTTP rejected with observability disabled", environment: EnvironmentProd, config: CodeSessionConfig{SandboxAPIBaseURL: "http://oma.internal"}, wantError: true},
+		{name: "development HTTP", environment: EnvironmentDev, config: CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:38080"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateCodeSessionSandboxAPIBaseURL(test.environment, test.config, test.enabled)
+			if (err != nil) != test.wantError {
+				t.Fatalf("validateCodeSessionSandboxAPIBaseURL() error = %v, wantError %v", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestValidateTunnelPublicBaseURL(t *testing.T) {
+	t.Parallel()
+	for _, invalid := range []string{
+		"oma.example.com", "ftp://oma.example.com", "https://user:secret@oma.example.com",
+		"https://oma.example.com/v1", "https://oma.example.com?tenant=one", "https://oma.example.com?",
+		"https://oma.example.com#", " https://oma.example.com",
+		"http://127.0.0.1:0", "http://127.0.0.1:65536",
+	} {
+		if err := validateTunnelPublicBaseURL(invalid); err == nil {
+			t.Fatalf("validateTunnelPublicBaseURL(%q) accepted invalid origin", invalid)
+		}
+	}
+	for _, valid := range []string{"", "https://oma.example.com", "http://127.0.0.1:38080", "https://oma.example.com/", "http://127.0.0.1:1", "http://127.0.0.1:65535"} {
+		if err := validateTunnelPublicBaseURL(valid); err != nil {
+			t.Fatalf("validateTunnelPublicBaseURL(%q): %v", valid, err)
+		}
 	}
 }
 
@@ -145,18 +387,13 @@ env: prod
 database:
   url: postgresql://yaml/database
   auto_migrate: false
-code_session:
-  otlp_file_log_enabled: false
 webhook:
-  endpoint_url: https://example.com/webhooks
-  signing_key: yaml-signing-key
   worker_enabled: true
 `)
 	t.Setenv("CONFIG_FILE", configPath)
 	t.Setenv("APP_ENV", "dev")
 	t.Setenv("DATABASE_URL", "postgresql://environment/database")
 	t.Setenv("DB_AUTO_MIGRATE", "true")
-	t.Setenv("CODE_SESSION_OTLP_FILE_LOG_ENABLED", "true")
 	t.Setenv("WEBHOOK_WORKER_ENABLED", "false")
 
 	cfg, err := Load()
@@ -166,8 +403,55 @@ webhook:
 	if cfg.Env != "prod" || cfg.Database.URL != "postgresql://yaml/database" {
 		t.Fatalf("environment changed YAML: env=%q database=%q", cfg.Env, cfg.Database.URL)
 	}
-	if cfg.Database.AutoMigrate || cfg.CodeSession.OTLPFileLogEnabled || !cfg.Webhook.WorkerEnabled {
-		t.Fatalf("environment changed YAML booleans: auto_migrate=%t otlp=%t webhook=%t", cfg.Database.AutoMigrate, cfg.CodeSession.OTLPFileLogEnabled, cfg.Webhook.WorkerEnabled)
+	if cfg.Database.AutoMigrate || !cfg.Webhook.WorkerEnabled {
+		t.Fatalf("environment changed YAML booleans: auto_migrate=%t webhook=%t", cfg.Database.AutoMigrate, cfg.Webhook.WorkerEnabled)
+	}
+}
+
+func TestLoadNormalizesSMTPConfig(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, `
+auth:
+  smtp:
+    addr: " smtp.example.com:587 "
+    username: " sender@example.com "
+`)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Auth.SMTP.Addr != "smtp.example.com:587" || cfg.Auth.SMTP.Username != "sender@example.com" {
+		t.Fatalf("SMTP config was not normalized: addr=%q username=%q", cfg.Auth.SMTP.Addr, cfg.Auth.SMTP.Username)
+	}
+}
+
+func TestLoadNormalizesE2BConfig(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, `
+e2b:
+  api_key: " e2b_test "
+  access_token: " access-token "
+  domain: " e2b.example.test "
+  api_url: " https://api.example.test "
+  sandbox_url: " https://sandbox.example.test "
+  template: " managed-agent "
+`)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.E2B.APIKey != "e2b_test" || cfg.E2B.AccessToken != "access-token" ||
+		cfg.E2B.Domain != "e2b.example.test" || cfg.E2B.APIURL != "https://api.example.test" ||
+		cfg.E2B.SandboxURL != "https://sandbox.example.test" || cfg.E2B.Template != "managed-agent" {
+		t.Fatalf("E2B config was not normalized: %+v", cfg.E2B)
+	}
+}
+
+func TestValidateAuthConfigAllowsOmittedSMTP(t *testing.T) {
+	if err := validateAuthConfig(EnvironmentDev, AuthConfig{}); err != nil {
+		t.Fatalf("validateAuthConfig() error = %v, want omitted SMTP accepted", err)
+	}
+	partial := AuthConfig{SMTP: EmailSMTPConfig{Addr: "smtp.example.com:587"}}
+	if err := validateAuthConfig(EnvironmentDev, partial); err == nil {
+		t.Fatal("validateAuthConfig() error = nil, want partial SMTP rejected")
 	}
 }
 
@@ -178,11 +462,7 @@ func TestLoadYAMLExplicitDynamicDefaults(t *testing.T) {
 env: prod
 database:
   auto_migrate: true
-code_session:
-  otlp_file_log_enabled: true
 webhook:
-  endpoint_url: https://example.com/webhooks
-  signing_key: yaml-signing-key
   worker_enabled: false
 `)
 	t.Setenv("CONFIG_FILE", configPath)
@@ -191,8 +471,8 @@ webhook:
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if !cfg.Database.AutoMigrate || !cfg.CodeSession.OTLPFileLogEnabled || cfg.Webhook.WorkerEnabled {
-		t.Fatalf("explicit YAML values were not preserved: auto_migrate=%t otlp=%t webhook=%t", cfg.Database.AutoMigrate, cfg.CodeSession.OTLPFileLogEnabled, cfg.Webhook.WorkerEnabled)
+	if !cfg.Database.AutoMigrate || cfg.Webhook.WorkerEnabled {
+		t.Fatalf("explicit YAML values were not preserved: auto_migrate=%t webhook=%t", cfg.Database.AutoMigrate, cfg.Webhook.WorkerEnabled)
 	}
 }
 
@@ -202,9 +482,15 @@ func TestLoadYAMLRejectsUnknownField(t *testing.T) {
 		overrides string
 		wantField string
 	}{
+		{name: "provider field", overrides: "web_tools:\n  search_provider: deepseek\n  providers:\n    deepseek:\n      api_key: private-test-key\n      api_kye: typo\n", wantField: "api_kye"},
 		{name: "regular field", overrides: "database:\n  urll: postgresql://typo/database\n", wantField: "urll"},
 		{name: "removed process upstream", overrides: "anthropic_upstream:\n  api_key: leftover\n", wantField: "anthropic_upstream"},
+		{name: "removed SDK fixture configuration", overrides: "sdk_fixtures:\n  api_key: leftover\n", wantField: "sdk_fixtures"},
+		{name: "removed NATS enable flag", overrides: "nats:\n  enabled: false\n", wantField: "enabled"},
+		{name: "removed Claude version", overrides: "environment_runner:\n  claude_agent_version: 2.1.251\n", wantField: "claude_agent_version"},
 		{name: "optional list item field", overrides: "bootstrap:\n  seed_api_keys:\n    - external_idd: typo\n      key: secret\n", wantField: "external_idd"},
+		// D7 迁移后废弃的平铺凭据键不得被静默接受。
+		{name: "retired flat openobserve key", overrides: "observability:\n  openobserve:\n    ingestion_username: leftover\n", wantField: "ingestion_username"},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -227,6 +513,12 @@ func TestLoadYAMLRequiresDeploymentFields(t *testing.T) {
 		{name: "server address", overrides: "server:\n  addr: \"\"", wantError: "server.addr is required"},
 		{name: "database URL", overrides: "database:\n  url: \"\"", wantError: "database.url is required"},
 		{name: "Redis URL", overrides: "redis:\n  url: \"\"", wantError: "redis.url is required"},
+		{name: "NATS URL", overrides: "nats:\n  url: \"\"", wantError: "nats.url is required"},
+		{name: "brain claim token file", overrides: "environment_runner:\n  agent_mode: brain", wantError: "code_session.brain_claim_token_file is required"},
+		{name: "email SMTP address", overrides: "auth:\n  smtp:\n    addr: smtp.example.com", wantError: "auth.smtp.addr must include a host and port"},
+		{name: "email SMTP host", overrides: "auth:\n  smtp:\n    addr: :465", wantError: "auth.smtp.addr must include a host and port"},
+		{name: "email SMTP port", overrides: "auth:\n  smtp:\n    addr: 'smtp.example.com:'", wantError: "auth.smtp.addr must include a host and port"},
+		{name: "email SMTP password", overrides: "auth:\n  smtp:\n    password: \"\"", wantError: "auth.smtp.password is required"},
 		{name: "storage type", overrides: "storage:\n  type: \"\"", wantError: "storage.type is required"},
 		{name: "S3 endpoint", overrides: "storage:\n  s3:\n    endpoint: \"\"", wantError: "storage.s3.endpoint is required"},
 		{name: "S3 bucket", overrides: "storage:\n  s3:\n    bucket: \"\"", wantError: "storage.s3.bucket is required"},
@@ -272,6 +564,8 @@ func TestLoadYAMLRejectsNullAndNonPositiveValues(t *testing.T) {
 		overrides string
 		wantPath  string
 	}{
+		{name: "provider entry", overrides: "web_tools:\n  providers:\n    deepseek: null\n", wantPath: "web_tools.providers.deepseek"},
+		{name: "provider key", overrides: "web_tools:\n  providers:\n    deepseek:\n      api_key: null\n", wantPath: "web_tools.providers.deepseek.api_key"},
 		{name: "optional boolean", overrides: "database:\n  auto_migrate: null\n", wantPath: "database.auto_migrate"},
 		{name: "optional list", overrides: "bootstrap:\n  seed_api_keys: null\n", wantPath: "bootstrap.seed_api_keys"},
 		{name: "optional list item", overrides: "bootstrap:\n  seed_api_keys:\n    - null\n", wantPath: "bootstrap.seed_api_keys.[0]"},
@@ -293,6 +587,7 @@ func TestLoadYAMLRejectsNullAndNonPositiveValues(t *testing.T) {
 			t.Fatalf("Load() error = %v, want positive-value error", err)
 		}
 	})
+
 }
 
 func TestLoadYAMLSeedAPIKeyPresence(t *testing.T) {
@@ -302,8 +597,11 @@ func TestLoadYAMLSeedAPIKeyPresence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
-		if len(cfg.Bootstrap.SeedAPIKeys) != 2 {
-			t.Fatalf("Bootstrap.SeedAPIKeys = %#v, want two derived defaults", cfg.Bootstrap.SeedAPIKeys)
+		if len(cfg.Bootstrap.SeedAPIKeys) != 1 {
+			t.Fatalf("Bootstrap.SeedAPIKeys = %#v, want only the normal bootstrap key", cfg.Bootstrap.SeedAPIKeys)
+		}
+		if cfg.Bootstrap.SeedAPIKeys[0] != (SeedAPIKey{ExternalID: cfg.Bootstrap.APIKeyExternalID, Key: DefaultAPIKey}) {
+			t.Fatalf("unexpected default seed key: %#v", cfg.Bootstrap.SeedAPIKeys)
 		}
 	})
 
@@ -356,9 +654,8 @@ func TestDockerComposeKeepsSecretsOutOfTrackedTemplate(t *testing.T) {
 	}
 	cfg := loadValidatedConfigTestFile(t, configPath)
 	secretValues := map[string]string{
-		"e2b.api_key":         cfg.E2B.APIKey,
-		"e2b.access_token":    cfg.E2B.AccessToken,
-		"webhook.signing_key": cfg.Webhook.SigningKey,
+		"e2b.api_key":      cfg.E2B.APIKey,
+		"e2b.access_token": cfg.E2B.AccessToken,
 	}
 	for name, value := range secretValues {
 		if strings.TrimSpace(value) != "" {
@@ -417,6 +714,18 @@ func TestDockerComposeDeclaresDevelopmentCredentialPosture(t *testing.T) {
 	if strings.TrimSpace(cfg.CodeSession.JWTSigningPrivateKeyFile) != "" {
 		t.Fatalf("Compose development jwt_signing_private_key_file = %q, want process-local ephemeral key", cfg.CodeSession.JWTSigningPrivateKeyFile)
 	}
+	if !cfg.Observability.Enabled || !cfg.Observability.ContentCaptureEnabled {
+		t.Fatalf("Compose observability enabled/content_capture_enabled = %t/%t, want true/true", cfg.Observability.Enabled, cfg.Observability.ContentCaptureEnabled)
+	}
+	if cfg.Observability.Backend != ObservabilityBackendOpenObserve {
+		t.Fatalf("Compose observability backend = %q, want %q", cfg.Observability.Backend, ObservabilityBackendOpenObserve)
+	}
+	if cfg.Observability.OpenObserve.Ingestion.Username != "root@example.com" || cfg.Observability.OpenObserve.Query.Username != "root@example.com" {
+		t.Fatalf("Compose OpenObserve usernames = %q/%q, want local root account", cfg.Observability.OpenObserve.Ingestion.Username, cfg.Observability.OpenObserve.Query.Username)
+	}
+	if cfg.Observability.OpenObserve.Ingestion.Password != "Complexpass#123" || cfg.Observability.OpenObserve.Query.Password != "Complexpass#123" {
+		t.Fatal("Compose OpenObserve passwords must match the local docker-compose default")
+	}
 }
 
 func TestDockerComposeSandboxCallbackUsesPublishedAPIPort(t *testing.T) {
@@ -435,6 +744,70 @@ func TestDockerComposeSandboxCallbackUsesPublishedAPIPort(t *testing.T) {
 	compose := loadDockerComposeTestFile(t)
 	if !slices.Contains(compose.Services.OMAServer.Ports, "38080:8080") {
 		t.Fatalf("Compose oma-server ports = %v, want 38080:8080 callback mapping", compose.Services.OMAServer.Ports)
+	}
+}
+
+func TestDockerComposeNATSJetStreamTopology(t *testing.T) {
+	configPath, err := filepath.Abs(filepath.Join("..", "..", dockerComposeTemplatePath))
+	if err != nil {
+		t.Fatalf("resolve Docker Compose config path: %v", err)
+	}
+	cfg := loadValidatedConfigTestFile(t, configPath)
+	wantURL := "nats://nats:4222,nats://nats-2:4222,nats://nats-3:4222"
+	if cfg.NATS.URL != wantURL {
+		t.Fatalf("Compose NATS URL = %q, want three cluster seeds", cfg.NATS.URL)
+	}
+
+	compose := loadDockerComposeTestFile(t)
+	natsServices := []struct {
+		name        string
+		service     dockerComposeTestNATSService
+		serverName  string
+		clientPort  string
+		monitorPort string
+		volume      string
+	}{
+		{name: "nats", service: compose.Services.NATS, serverName: "nats-1", clientPort: "4222", monitorPort: "8222", volume: "natsdata:/data"},
+		{name: "nats-2", service: compose.Services.NATS2, serverName: "nats-2", clientPort: "4223", monitorPort: "8223", volume: "natsdata2:/data"},
+		{name: "nats-3", service: compose.Services.NATS3, serverName: "nats-3", clientPort: "4224", monitorPort: "8224", volume: "natsdata3:/data"},
+	}
+	for _, item := range natsServices {
+		if item.service.Image != "docker.io/library/nats:2.14.6-alpine" {
+			t.Fatalf("Compose %s image = %q, want pinned official image", item.name, item.service.Image)
+		}
+		for _, option := range []string{
+			"--name=" + item.serverName,
+			"--jetstream",
+			"--store_dir=/data",
+			"--http_port=8222",
+			"--cluster_name=oma-nats",
+			"--cluster=nats://0.0.0.0:6222",
+		} {
+			if !slices.Contains(item.service.Command, option) {
+				t.Fatalf("Compose %s command = %v, missing %q", item.name, item.service.Command, option)
+			}
+		}
+		for _, port := range []string{
+			"127.0.0.1:" + item.clientPort + ":4222",
+			"127.0.0.1:" + item.monitorPort + ":8222",
+		} {
+			if !slices.Contains(item.service.Ports, port) {
+				t.Fatalf("Compose %s ports = %v, missing loopback mapping %q", item.name, item.service.Ports, port)
+			}
+		}
+		if !slices.Contains(item.service.Volumes, item.volume) {
+			t.Fatalf("Compose %s volumes = %v, want independent JetStream storage %q", item.name, item.service.Volumes, item.volume)
+		}
+		if !strings.Contains(strings.Join(item.service.Healthcheck.Test, " "), "js-enabled-only=true") {
+			t.Fatalf("Compose %s healthcheck = %v, want JetStream readiness check", item.name, item.service.Healthcheck.Test)
+		}
+	}
+
+	for _, serviceName := range []string{"nats", "nats-2", "nats-3"} {
+		dependency, ok := compose.Services.OMAServer.DependsOn[serviceName]
+		if !ok || dependency.Condition != "service_healthy" {
+			t.Fatalf("Compose oma-server dependency %q = %+v, want service_healthy", serviceName, dependency)
+		}
 	}
 }
 
@@ -542,61 +915,6 @@ func TestLoadDatabaseAutoMigrateOverride(t *testing.T) {
 	})
 }
 
-func TestLoadCodeSessionOTLPFileLogDefaults(t *testing.T) {
-	t.Run("development enabled", func(t *testing.T) {
-		prepareLoadTest(t)
-
-		cfg, err := loadConfigTestYAML(t, "")
-		if err != nil {
-			t.Fatalf("load config: %v", err)
-		}
-		if !cfg.CodeSession.OTLPFileLogEnabled {
-			t.Fatal("CodeSessionOTLPFileLogEnabled = false, want true")
-		}
-		wantLogRoot := filepath.Join(filepath.Dir(os.Getenv(configFileEnv)), "logs")
-		if cfg.CodeSession.OTLPLogRoot != wantLogRoot {
-			t.Fatalf("CodeSessionOTLPLogRoot = %q, want %q", cfg.CodeSession.OTLPLogRoot, wantLogRoot)
-		}
-		if cfg.CodeSession.OTLPLogBodyPreviewBytes != 256*1024 {
-			t.Fatalf("CodeSessionOTLPLogBodyPreviewBytes = %d, want %d", cfg.CodeSession.OTLPLogBodyPreviewBytes, 256*1024)
-		}
-	})
-
-	t.Run("production disabled", func(t *testing.T) {
-		prepareLoadTest(t)
-		cfg, err := loadConfigTestYAML(t, "env: prod\n")
-		if err != nil {
-			t.Fatalf("load config: %v", err)
-		}
-		if cfg.CodeSession.OTLPFileLogEnabled {
-			t.Fatal("CodeSessionOTLPFileLogEnabled = true, want false")
-		}
-	})
-}
-
-func TestLoadCodeSessionOTLPFileLogOverrides(t *testing.T) {
-	prepareLoadTest(t)
-	cfg, err := loadConfigTestYAML(t, `
-env: prod
-code_session:
-  otlp_file_log_enabled: true
-  otlp_log_root: /tmp/custom-otlp
-  otlp_log_body_preview_bytes: 1024
-`)
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	if !cfg.CodeSession.OTLPFileLogEnabled {
-		t.Fatal("CodeSessionOTLPFileLogEnabled = false, want true")
-	}
-	if cfg.CodeSession.OTLPLogRoot != "/tmp/custom-otlp" {
-		t.Fatalf("CodeSessionOTLPLogRoot = %q, want /tmp/custom-otlp", cfg.CodeSession.OTLPLogRoot)
-	}
-	if cfg.CodeSession.OTLPLogBodyPreviewBytes != 1024 {
-		t.Fatalf("CodeSessionOTLPLogBodyPreviewBytes = %d, want 1024", cfg.CodeSession.OTLPLogBodyPreviewBytes)
-	}
-}
-
 func TestLoadCodeSessionUpstreamProxySSRFProtectionOverride(t *testing.T) {
 	prepareLoadTest(t)
 
@@ -622,7 +940,7 @@ func TestLoadCodeSessionUpstreamProxySSRFProtectionOverride(t *testing.T) {
 func TestLoadCodeSessionUpstreamProxyMITMRejectsInvalidCAKey(t *testing.T) {
 	t.Run("MITM enabled without private key", func(t *testing.T) {
 		prepareLoadTest(t)
-		if _, err := loadConfigTestYAML(t, "code_session:\n  upstream_proxy_mitm_enabled: true\n"); err == nil {
+		if _, err := loadConfigTestYAML(t, "code_session:\n  upstream_proxy_ca_key_file: \"\"\n"); err == nil {
 			t.Fatal("Load() error = nil, want missing stable CA private key error")
 		}
 	})
@@ -647,10 +965,21 @@ func TestLoadCodeSessionUpstreamProxyMITMRejectsInvalidCAKey(t *testing.T) {
 }
 
 func TestLoadCodeSessionUpstreamProxyMITMConfiguration(t *testing.T) {
+	t.Run("MITM enabled by default", func(t *testing.T) {
+		prepareLoadTest(t)
+		cfg, err := loadConfigTestYAML(t, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.CodeSession.UpstreamProxyMITMEnabled {
+			t.Fatal("MITM must be enabled when the setting is omitted")
+		}
+	})
+
 	t.Run("MITM disabled ignores dormant private key path", func(t *testing.T) {
 		prepareLoadTest(t)
 		missingKeyFile := filepath.Join(t.TempDir(), "missing-key.pem")
-		cfg, err := loadConfigTestYAML(t, fmt.Sprintf("code_session:\n  upstream_proxy_ca_key_file: %q\n", missingKeyFile))
+		cfg, err := loadConfigTestYAML(t, fmt.Sprintf("code_session:\n  upstream_proxy_mitm_enabled: false\n  upstream_proxy_ca_key_file: %q\n", missingKeyFile))
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
@@ -676,14 +1005,14 @@ func TestLoadCodeSessionUpstreamProxyMITMConfiguration(t *testing.T) {
 func TestLoadVaultMasterKeyContract(t *testing.T) {
 	t.Run("at most one KEK source", func(t *testing.T) {
 		prepareLoadTest(t)
-		if _, err := loadConfigTestYAML(t, "vault:\n  master_key:\n    kek: aaaa\n    kek_file: /tmp/k\n"); err == nil || !strings.Contains(err.Error(), "at most one of vault.master_key.kek") {
+		if _, err := loadConfigTestYAML(t, "vault:\n  master_key:\n    kek: aaaa\n    kek_file: /tmp/k\n"); err == nil || !strings.Contains(err.Error(), "at most one of vault.master_key.local.kek") {
 			t.Fatalf("Load() error = %v, want at-most-one KEK error", err)
 		}
 	})
 
 	t.Run("current KEK is required", func(t *testing.T) {
 		prepareLoadTest(t)
-		if _, err := loadConfigTestYAML(t, "vault:\n  master_key:\n    kek: \"\"\n    kek_file: \"\"\n"); err == nil || !strings.Contains(err.Error(), "vault.master_key.kek or kek_file is required") {
+		if _, err := loadConfigTestYAML(t, "vault:\n  master_key:\n    kek: \"\"\n    kek_file: \"\"\n"); err == nil || !strings.Contains(err.Error(), "vault.master_key.local.kek or kek_file is required") {
 			t.Fatalf("Load() error = %v, want required KEK error", err)
 		}
 	})
@@ -711,11 +1040,11 @@ func TestLoadVaultMasterKeyContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() error = %v, want nil", err)
 		}
-		if cfg.Vault.MasterKey.EffectiveVersion() != 2 {
-			t.Fatalf("EffectiveVersion() = %d, want 2", cfg.Vault.MasterKey.EffectiveVersion())
+		if cfg.Vault.MasterKey.Local.EffectiveVersion() != 2 {
+			t.Fatalf("EffectiveVersion() = %d, want 2", cfg.Vault.MasterKey.Local.EffectiveVersion())
 		}
-		if len(cfg.Vault.MasterKey.DecryptOnly) != 1 || cfg.Vault.MasterKey.DecryptOnly[0].Version != 1 {
-			t.Fatalf("DecryptOnly = %+v, want one entry at version 1", cfg.Vault.MasterKey.DecryptOnly)
+		if len(cfg.Vault.MasterKey.Local.DecryptOnly) != 1 || cfg.Vault.MasterKey.Local.DecryptOnly[0].Version != 1 {
+			t.Fatalf("DecryptOnly = %+v, want one entry at version 1", cfg.Vault.MasterKey.Local.DecryptOnly)
 		}
 	})
 }
@@ -745,6 +1074,7 @@ func loadConfigTestYAML(t *testing.T, contents string) (Config, error) {
 func writeConfigTestYAML(t *testing.T, path, overrides string) {
 	t.Helper()
 	base := decodeConfigTestYAML(t, requiredConfigTestYAML)
+	base["code_session"] = map[string]any{"upstream_proxy_ca_key_file": writeConfigTestFile(t, filepath.Join(t.TempDir(), "upstream-proxy-ca.pem"))}
 	mergeConfigTestMappings(base, decodeConfigTestYAML(t, overrides))
 	contents, err := yaml.Marshal(base)
 	if err != nil {
@@ -822,6 +1152,7 @@ func loadValidatedConfigTestFile(t *testing.T, configPath string) Config {
 	if err := resolveConfigPaths(&cfg, filepath.Dir(configPath)); err != nil {
 		t.Fatalf("resolve config paths for %q: %v", configPath, err)
 	}
+	cfg.CodeSession.UpstreamProxyCAKeyFile = writeConfigTestFile(t, filepath.Join(t.TempDir(), "template-ca.pem"))
 	if err := validate(cfg); err != nil {
 		t.Fatalf("validate config %q: %v", configPath, err)
 	}
@@ -857,4 +1188,35 @@ func unsetEnv(t *testing.T, key string) {
 			_ = os.Unsetenv(key)
 		}
 	})
+}
+
+func TestAllowedEmailDomains(t *testing.T) {
+	for _, domain := range []string{"", "@example.org", "*.example.org", "example.org/evil", "example..org", "-example.org", "example.org.", "user@example.org"} {
+		t.Run(domain, func(t *testing.T) {
+			if err := validateAuthConfig(EnvironmentDev, AuthConfig{AllowedEmailDomains: []string{domain}}); err == nil {
+				t.Fatal("invalid domain accepted")
+			}
+		})
+	}
+	t.Run("normalize configured domains", func(t *testing.T) {
+		prepareLoadTest(t)
+		cfg, err := loadConfigTestYAML(t, "auth:\n  allowed_email_domains: [' EXAMPLE.ORG ', 'Subsidiary.Example']\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(cfg.Auth.AllowedEmailDomains, []string{"example.org", "subsidiary.example"}) {
+			t.Fatalf("domains = %v", cfg.Auth.AllowedEmailDomains)
+		}
+	})
+}
+
+func TestLoadWebToolsAPIKey(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, "web_tools:\n  search_provider: deepseek\n  providers:\n    deepseek:\n      api_key: private-test-key\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebTools.SearchProvider != "deepseek" || cfg.WebTools.Providers["deepseek"].APIKey != "private-test-key" {
+		t.Fatal("API key was not preserved")
+	}
 }

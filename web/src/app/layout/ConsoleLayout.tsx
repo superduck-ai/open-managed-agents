@@ -1,3 +1,10 @@
+import { AppearanceMenuRow } from './AppearanceMenuRow';
+import { BrandLogo } from '@/shared/brand/BrandLogo';
+import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
+import { OrganizationMenu } from '../../features/organizations/OrganizationMenu';
+import { PlatformAdminMenuItem } from '../../features/platform-admin/PlatformAdminMenuItem';
+import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
+import { useOrganizations } from '../../shared/organizations/context';
 import {
   ArrowLeft,
   BookOpen,
@@ -6,24 +13,22 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
-  Gauge,
+  Cpu,
   Globe2,
-  KeyRound,
   ListTree,
-  LockKeyhole,
   LogOut,
   Palette,
   Plus,
   Settings,
-  Shield,
   UsersRound,
-  WalletCards,
+  UserRound,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import {
   useCallback,
   useEffect,
   forwardRef,
+  useRef,
   useState,
   type AnchorHTMLAttributes,
   type MouseEvent,
@@ -32,6 +37,7 @@ import {
 import clsx from 'clsx';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import { Collapsible, CollapsibleContent } from '@/shared/ui/collapsible';
 import {
   Sidebar as AppSidebar,
   SidebarContent as AppSidebarContent,
@@ -50,6 +56,7 @@ import {
   SidebarMenuSubItem,
   SidebarProvider,
   SidebarRail,
+  SidebarTrigger,
   useSidebar,
 } from '@/shared/ui/sidebar';
 import {
@@ -69,19 +76,26 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { useAuth } from '../../shared/auth/context';
 import type { AuthAccount } from '../../shared/auth/api';
-import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
 import { useWorkspace } from '../../shared/workspaces/context';
 import type { Workspace } from '../../shared/workspaces/api';
 import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDialog';
 import {
   buildCreateWorkspaceInput,
+  workspaceMcpTunnelsPath,
   workspaceApiKeysPath,
   workspaceColor,
   workspaceIdFromPath,
   workspaceWebhooksPath,
 } from '../../shared/workspaces/presentation';
 import { useI18n, useLocale } from '../../shared/i18n';
-import { consoleNavigation, settingsNavigation, type NavLinkItem } from './navigation';
+import { accountRoleLabel, membershipRoleForOrganization } from '../../shared/permissions/roles';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
+import {
+  personalSettingsNavigation,
+  settingsNavigation,
+  visibleConsoleNavigation,
+  type NavLinkItem,
+} from './navigation';
 
 type ConsoleShellProps = {
   account?: AuthAccount | null;
@@ -96,7 +110,7 @@ type ShellLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> & {
   href: string;
   onNavigate?: NavigateHandler;
 };
-const interactiveMotionClass = 'transition-colors duration-200 ease-snappy-out motion-reduce:transition-none';
+const interactiveMotionClass = 'transition-colors duration-150 ease-out motion-reduce:transition-none';
 
 const ShellLink = forwardRef<HTMLAnchorElement, ShellLinkProps>(function ShellLink(
   { href, onNavigate, onClick, target, children, ...props },
@@ -132,6 +146,7 @@ export function ConsoleLayout() {
   const { account, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { activeWorkspaceId } = useWorkspace();
 
   const handleNavigate = useCallback(
     async (href: string) => {
@@ -147,19 +162,31 @@ export function ConsoleLayout() {
 
   return (
     <ConsoleShell account={account} currentPath={location.pathname} onLogout={handleLogout} onNavigate={handleNavigate}>
-      <Outlet />
+      <Outlet key={workspaceIdFromPath(location.pathname) || activeWorkspaceId} />
     </ConsoleShell>
   );
 }
 
 export function ConsoleShell({ account, currentPath = '/', children, onLogout, onNavigate }: ConsoleShellProps) {
   const isWide = isWideConsolePath(currentPath);
+  const isSessionWorkspace = isSessionDetailPath(currentPath);
+  const isQuickstart = /^(?:\/quickstart|\/workspaces\/[^/]+\/agent-quickstart)\/?$/.test(currentPath);
   const { msg } = useI18n();
 
   return (
     <SidebarProvider defaultOpen>
       <ConsoleSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
-      <SidebarInset className="min-h-screen text-foreground">
+      <SidebarInset
+        className={clsx(
+          'text-foreground',
+          isSessionWorkspace && 'session-route-theme',
+          isSessionWorkspace
+            ? 'h-svh min-h-0 overflow-hidden'
+            : isQuickstart
+              ? 'h-dvh min-h-0 overflow-hidden'
+              : 'min-h-screen',
+        )}
+      >
         <ShellMobileBar
           title={msg('app.productName', 'Open Managed Agents')}
           toggleLabel={msg('common.expand', 'Expand')}
@@ -167,7 +194,18 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
           href="/dashboard"
           onNavigate={onNavigate}
         />
-        <div className={clsx(isWide ? 'px-6 py-6 lg:px-8' : 'mx-auto max-w-[928px] px-6 py-12 lg:px-0')}>
+        <div
+          data-session-workspace-shell={isSessionWorkspace ? '' : undefined}
+          className={clsx(
+            isSessionWorkspace
+              ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:py-6 [@media(max-height:600px)]:overflow-y-auto [&>[data-testid=session-detail-page]]:!h-full [&>[data-testid=session-detail-page]]:!min-h-0 [@media(max-height:600px)]:[&>[data-testid=session-detail-page]]:!min-h-[640px] [&>[data-testid=session-detail-page]]:!overflow-hidden'
+              : isQuickstart
+                ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-[clamp(0.75rem,2dvh,1.5rem)] sm:px-6 lg:px-8'
+                : isWide
+                  ? 'min-w-0 px-6 py-6 lg:px-8'
+                  : 'mx-auto min-w-0 w-full max-w-[928px] px-6 py-12 lg:px-0',
+          )}
+        >
           {children}
         </div>
       </SidebarInset>
@@ -185,16 +223,21 @@ export function SettingsShell({
   onNavigate,
 }: SettingsShellProps) {
   const { msg } = useI18n();
+  const personal = isPersonalSettingsPath(currentPath);
 
   return (
     <SidebarProvider defaultOpen>
       <SettingsSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
       <SidebarInset className="min-h-screen text-foreground">
         <ShellMobileBar
-          title={msg('account.organizationSettings', 'Organization settings')}
+          title={
+            personal
+              ? msg('account.personalSettings', 'Personal settings')
+              : msg('account.organizationSettings', 'Organization settings')
+          }
           toggleLabel={msg('common.expand', 'Expand')}
           activeToggleLabel={msg('common.collapse', 'Collapse')}
-          href="/settings/organization"
+          href={personal ? '/settings/profile' : '/settings/organization'}
           onNavigate={onNavigate}
         />
         <div className="px-6 py-6 lg:px-8">{children}</div>
@@ -205,20 +248,13 @@ export function SettingsShell({
 
 function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Omit<ConsoleShellProps, 'children'>) {
   const { msg } = useI18n();
-  const { activeWorkspaceId, orgUuid, selectWorkspace, workspaces } = useWorkspace();
+  const { activeWorkspaceId, selectWorkspace, workspaces } = useWorkspace();
   const { setOpen, state } = useSidebar();
   const collapsed = state === 'collapsed';
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    Build: true,
-    'Managed Agents': true,
-    Analytics: true,
-    'Claude Code': true,
-    Manage: true,
-  });
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => initialSidebarGroupExpansion(currentPath));
+  const expandedForPath = useRef(currentPath);
   const routeWorkspaceId = workspaceIdFromPath(currentPath);
-  const navigationItems = canManageLLMProviders(account, orgUuid)
-    ? consoleNavigation
-    : consoleNavigation.filter((item) => item.type !== 'link' || item.href !== '/llm-models');
+  const navigationItems = visibleConsoleNavigation();
 
   useEffect(() => {
     if (!routeWorkspaceId || routeWorkspaceId === activeWorkspaceId) {
@@ -229,14 +265,26 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
     }
   }, [activeWorkspaceId, routeWorkspaceId, selectWorkspace, workspaces]);
 
+  useEffect(() => {
+    if (expandedForPath.current === currentPath) {
+      return;
+    }
+    expandedForPath.current = currentPath;
+    const labels = activeSidebarGroupLabels(currentPath);
+    if (labels.length === 0) {
+      return;
+    }
+    setExpanded((current) => openSidebarGroups(current, labels));
+  }, [currentPath]);
+
   return (
     <AppSidebar
       collapsible="icon"
-      className="border-r border-sidebar-border"
+      className="border-r-[0.5px] border-sidebar-border"
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
-      <AppSidebarContent className="sidebar-scroll-area px-2 py-2" data-sidebar-scroll-area="true">
+      <AppSidebarContent className="scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
             <nav aria-label={msg('nav.consoleNavigation', 'Console navigation')}>
@@ -255,7 +303,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
                   }
 
                   const Icon = item.icon;
-                  const isOpen = expanded[item.label] ?? true;
+                  const isOpen = expanded[item.label] ?? false;
                   const groupActive = item.children.some((child) => isActivePath(currentPath, child.href));
 
                   return (
@@ -280,37 +328,41 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
                         {collapsed ? null : (
                           <>
                             <span className="flex-1 truncate">{msg(item.labelId, item.label)}</span>
-                            {isOpen ? (
-                              <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
-                            ) : (
-                              <ChevronRight className="size-3.5 text-muted-foreground" aria-hidden />
-                            )}
+                            <ChevronRight
+                              className={clsx(
+                                'size-3.5 text-muted-foreground transition-transform duration-[220ms] ease-out motion-reduce:transition-none',
+                                isOpen && 'rotate-90',
+                              )}
+                              aria-hidden
+                            />
                           </>
                         )}
                       </SidebarMenuButton>
-                      {!collapsed && isOpen ? (
-                        <SidebarMenuSub>
-                          {item.children.map((child) => (
-                            <SidebarMenuSubItem key={child.href}>
-                              <SidebarMenuSubButton
-                                render={
-                                  <ShellLink
-                                    href={navigationHref(child.href, activeWorkspaceId)}
-                                    onNavigate={onNavigate}
-                                  />
-                                }
-                                isActive={isActivePath(currentPath, child.href)}
-                                className={interactiveMotionClass}
-                              >
-                                <span className="flex-1 truncate">{msg(child.labelId, child.label)}</span>
-                                {child.badge ? (
-                                  <Badge>{child.badgeId ? msg(child.badgeId, child.badge) : child.badge}</Badge>
-                                ) : null}
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
-                        </SidebarMenuSub>
-                      ) : null}
+                      <Collapsible open={!collapsed && isOpen}>
+                        <CollapsibleContent>
+                          <SidebarMenuSub>
+                            {item.children.map((child) => (
+                              <SidebarMenuSubItem key={child.href}>
+                                <SidebarMenuSubButton
+                                  render={
+                                    <ShellLink
+                                      href={navigationHref(child.href, activeWorkspaceId)}
+                                      onNavigate={onNavigate}
+                                    />
+                                  }
+                                  isActive={isActivePath(currentPath, child.href)}
+                                  className={interactiveMotionClass}
+                                >
+                                  <span className="flex-1 truncate">{msg(child.labelId, child.label)}</span>
+                                  {child.badge ? (
+                                    <Badge>{child.badgeId ? msg(child.badgeId, child.badge) : child.badge}</Badge>
+                                  ) : null}
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            ))}
+                          </SidebarMenuSub>
+                        </CollapsibleContent>
+                      </Collapsible>
                     </SidebarMenuItem>
                   );
                 })}
@@ -337,15 +389,17 @@ function SettingsSidebar({
   const { msg } = useI18n();
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
+  const personal = isPersonalSettingsPath(currentPath);
+  const navigation = personal ? personalSettingsNavigation : settingsNavigation;
 
   return (
     <AppSidebar
       collapsible="icon"
-      className="border-r border-sidebar-border"
+      className="border-r-[0.5px] border-sidebar-border"
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
-      <AppSidebarContent className="sidebar-scroll-area px-2 py-2" data-sidebar-scroll-area="true">
+      <AppSidebarContent className="scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
             <SidebarMenu>
@@ -366,12 +420,14 @@ function SettingsSidebar({
         <SidebarGroup className="mt-2 p-0">
           <SidebarGroupLabel className="gap-2 px-2 text-sidebar-foreground">
             <Settings className="size-4" aria-hidden />
-            {msg('account.organizationSettings', 'Organization settings')}
+            {personal
+              ? msg('account.personalSettings', 'Personal settings')
+              : msg('account.organizationSettings', 'Organization settings')}
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <nav aria-label={msg('nav.settingsNavigation', 'Settings navigation')}>
               <SidebarMenu>
-                {settingsNavigation.map((item) => (
+                {navigation.map((item) => (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
                       render={<ShellLink href={item.href} onNavigate={onNavigate} />}
@@ -419,7 +475,7 @@ function ShellMobileBar({
   }
 
   return (
-    <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:hidden">
+    <div className="sticky top-0 z-20 flex shrink-0 items-center gap-3 border-b-[0.5px] border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:hidden">
       <Button
         type="button"
         variant="ghost"
@@ -433,44 +489,85 @@ function ShellMobileBar({
       <ShellLink
         href={href}
         onNavigate={onNavigate}
-        className="min-w-0 truncate text-sm font-semibold tracking-[-0.01em] text-foreground"
+        className="flex min-w-0 items-center gap-3 text-sm font-semibold tracking-[-0.01em] text-foreground"
       >
-        {title}
+        <BrandLogo decorative className="h-6 w-[72px]" />
+        <span className="truncate">{title}</span>
       </ShellLink>
     </div>
   );
 }
 
 function ShellSidebarHeader({ currentPath, onNavigate }: { currentPath: string; onNavigate?: NavigateHandler }) {
+  const { state, isMobile } = useSidebar();
+  const { msg } = useI18n();
+  const compact = state === 'collapsed' && !isMobile;
+  const toggleLabel = compact ? msg('common.expand', 'Expand') : msg('common.collapse', 'Collapse');
+
   return (
     <AppSidebarHeader>
+      <div className={clsx('flex h-12 items-center', compact ? 'justify-center' : 'justify-between')}>
+        {!compact && (
+          <ShellLink
+            href="/dashboard"
+            onNavigate={onNavigate}
+            aria-label="Open Managed Agents"
+            className="flex h-12 min-w-0 flex-1 items-center rounded-md px-2 outline-none focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-ring"
+          >
+            <BrandLogo decorative className="h-7 w-[83px]" />
+          </ShellLink>
+        )}
+        {!isMobile && (
+          <SidebarTrigger
+            aria-label={toggleLabel}
+            aria-expanded={!compact}
+            title={toggleLabel}
+            className="text-muted-foreground hover:text-foreground"
+          />
+        )}
+      </div>
       <WorkspaceSwitcher currentPath={currentPath} onNavigate={onNavigate} />
     </AppSidebarHeader>
   );
 }
 
 function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; onNavigate?: NavigateHandler }) {
+  const confirmation = useScopeConfirmation();
+  const organizations = useOrganizations();
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const { isMobile, state } = useSidebar();
   const collapsed = state === 'collapsed';
-  const { workspaces, activeWorkspace, activeWorkspaceId, selectWorkspace, isLoading, createWorkspace } =
-    useWorkspace();
+  const {
+    canManageWorkspaces,
+    workspaces,
+    activeWorkspace,
+    activeWorkspaceId,
+    selectWorkspace,
+    isLoading,
+    createWorkspace,
+  } = useWorkspace();
 
-  const handleSelect = (workspace: Workspace) => {
-    selectWorkspace(workspace.id);
+  const handleSelect = async (workspace: Workspace) => {
     setOpen(false);
-    void navigateToMatchingWorkspacePath(currentPath, workspace.id, onNavigate);
+    if (workspace.id === activeWorkspaceId) return;
+    if (organizations) {
+      confirmation.request(() => selectWorkspace(workspace.id));
+      return;
+    }
+    await navigateToMatchingWorkspacePath(currentPath, workspace.id, onNavigate);
+    selectWorkspace(workspace.id);
   };
 
   const handleCreate = async (name: string, displayColor: string) => {
     const created = await createWorkspace(buildCreateWorkspaceInput(name, displayColor));
-    await navigateToMatchingWorkspacePath(currentPath, created.id, onNavigate);
+    if (!organizations) await navigateToMatchingWorkspacePath(currentPath, created.id, onNavigate);
   };
 
   return (
     <SidebarMenu>
+      {confirmation.dialog}
       <SidebarMenuItem>
         <DropdownMenu open={open} onOpenChange={setOpen}>
           <DropdownMenuTrigger
@@ -484,17 +581,17 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                   interactiveMotionClass,
                   collapsed ? 'justify-center' : 'justify-start',
                 )}
-                aria-label={activeWorkspace.name}
+                aria-label={localizedWorkspaceName(activeWorkspace.name, msg)}
               />
             }
           >
-            <span className="grid aspect-square size-8 shrink-0 place-items-center rounded-lg border border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground">
+            <span className="grid aspect-square size-8 shrink-0 place-items-center rounded-lg border-[0.5px] border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground">
               <Box className="size-4" style={{ color: workspaceColor(activeWorkspace) }} aria-hidden />
             </span>
             {collapsed ? null : (
               <>
                 <span className="grid min-w-0 flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">{activeWorkspace.name}</span>
+                  <span className="truncate font-semibold">{localizedWorkspaceName(activeWorkspace.name, msg)}</span>
                   <span className="truncate text-xs text-sidebar-foreground/70">
                     {msg('settings.workspaces.workspace', 'Workspace')}
                   </span>
@@ -521,32 +618,47 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                     className="gap-2 p-2"
                     onClick={() => handleSelect(workspace)}
                   >
-                    <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background text-muted-foreground">
+                    <span className="grid size-6 shrink-0 place-items-center rounded-md border-[0.5px] bg-background text-muted-foreground">
                       <Box className="size-4" style={{ color: workspaceColor(workspace) }} aria-hidden />
                     </span>
-                    <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+                    <span className="min-w-0 flex-1 truncate">{localizedWorkspaceName(workspace.name, msg)}</span>
                     <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
                   </DropdownMenuItem>
                 ))}
               </div>
             </DropdownMenuGroup>
 
-            <DropdownMenuSeparator />
-
-            <DropdownMenuItem
-              className="gap-2 p-2"
-              onClick={() => {
-                setOpen(false);
-                setCreateOpen(true);
-              }}
-            >
-              <span className="grid size-6 shrink-0 place-items-center rounded-md border bg-background">
-                <Plus className="size-4" aria-hidden />
-              </span>
-              <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
-                {msg('workspace.create.title', 'Create workspace')}
-              </span>
-            </DropdownMenuItem>
+            {canManageWorkspaces ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="gap-2 p-2"
+                  onClick={() => {
+                    setOpen(false);
+                    confirmation.request(() => setCreateOpen(true));
+                  }}
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md border-[0.5px] bg-background">
+                    <Plus className="size-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
+                    {msg('workspace.create.title', 'Create workspace')}
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="gap-2 p-2"
+                  render={<ShellLink href="/settings/workspaces" onNavigate={onNavigate} />}
+                  onClick={() => setOpen(false)}
+                >
+                  <span className="grid size-6 shrink-0 place-items-center rounded-md border-[0.5px] bg-background">
+                    <Settings className="size-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground">
+                    {msg('workspace.manage.title', 'Manage workspaces')}
+                  </span>
+                </DropdownMenuItem>
+              </>
+            ) : null}
 
             {isLoading ? (
               <div className="px-3 pt-2 text-xs text-muted-foreground">
@@ -615,7 +727,7 @@ function SidebarFooter({
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
-            render={<a href="https://oma.mintlify.site/" target="_blank" rel="noreferrer" />}
+            render={<a href="https://oma.mintlifysite.com/" target="_blank" rel="noreferrer" />}
             tooltip={msg('nav.documentation', 'Documentation')}
             className={interactiveMotionClass}
             aria-label={collapsed ? msg('nav.documentation', 'Documentation') : undefined}
@@ -630,7 +742,14 @@ function SidebarFooter({
   );
 }
 
+function isPersonalSettingsPath(path: string) {
+  return path === '/settings/profile' || path === '/settings/appearance';
+}
+
 function SettingsNavigationIcon({ href }: { href: string }) {
+  if (href === '/settings/profile') {
+    return <UserRound className="size-4" aria-hidden />;
+  }
   if (href === '/settings/appearance') {
     return <Palette className="size-4" aria-hidden />;
   }
@@ -640,27 +759,11 @@ function SettingsNavigationIcon({ href }: { href: string }) {
   if (href === '/settings/members') {
     return <UsersRound className="size-4" aria-hidden />;
   }
+  if (href === '/settings/llm') {
+    return <Cpu className="size-4" aria-hidden />;
+  }
   if (href === '/settings/workspaces') {
     return <Box className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/billing') {
-    return <WalletCards className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/limits') {
-    return <Gauge className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/api-keys' || href === '/settings/admin-keys') {
-    return <KeyRound className="size-4" aria-hidden />;
-  }
-  if (href === '/settings/service-accounts') {
-    return <LockKeyhole className="size-4" aria-hidden />;
-  }
-  if (
-    href === '/settings/workload-identity' ||
-    href === '/settings/privacy-controls' ||
-    href === '/settings/identity-and-access'
-  ) {
-    return <Shield className="size-4" aria-hidden />;
   }
   return <Settings className="size-4" aria-hidden />;
 }
@@ -680,7 +783,8 @@ export function AccountMenu({
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const identity = getIdentity(account);
-  const { activeWorkspace } = useWorkspace();
+  const { activeWorkspace, orgUuid } = useWorkspace();
+  const organizationRole = membershipRoleForOrganization(account?.memberships, orgUuid);
   const { locale, setLocale, supportedLocales: locales } = useLocale();
   const { msg } = useI18n();
 
@@ -722,15 +826,22 @@ export function AccountMenu({
               />
             }
           >
-            <span className="grid size-8 place-items-center rounded-md border border-sidebar-border bg-sidebar-accent/40 text-sidebar-foreground">
+            <span className="grid size-8 place-items-center rounded-md border-[0.5px] border-sidebar-border bg-sidebar-accent/40 text-sidebar-foreground">
               <Building2 className="size-4" aria-hidden />
             </span>
             {collapsed ? null : (
               <>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-sidebar-foreground">{identity.name}</span>
-                  <span className="block truncate text-xs text-sidebar-foreground/70">
-                    {msg('account.subtitle', 'Admin · {workspaceName}', { workspaceName: activeWorkspace.name })}
+                  <span className="flex min-w-0 items-center gap-2 text-xs text-sidebar-foreground/70">
+                    <span className="shrink-0">
+                      {activeWorkspace.effective_role
+                        ? accountRoleLabel(activeWorkspace.effective_role, msg)
+                        : organizationRole
+                          ? accountRoleLabel(organizationRole, msg)
+                          : msg('account.role.unknown', 'Member')}
+                    </span>
+                    <span className="truncate">{localizedWorkspaceName(activeWorkspace.name, msg)}</span>
                   </span>
                 </span>
                 <ChevronDown className="size-4 text-sidebar-foreground/70" aria-hidden />
@@ -748,19 +859,8 @@ export function AccountMenu({
               <DropdownMenuLabel className="truncate px-3 py-2 text-xs">{identity.email}</DropdownMenuLabel>
             </DropdownMenuGroup>
 
-            <DropdownMenuRadioGroup value={activeWorkspace.id}>
-              <DropdownMenuRadioItem
-                value={activeWorkspace.id}
-                closeOnClick={false}
-                className="h-12 items-start gap-3 px-3 py-2.5 text-foreground"
-              >
-                <Building2 className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{activeWorkspace.name}</span>
-                  <span className="block text-xs text-muted-foreground">{msg('account.apiPlan', 'API plan')}</span>
-                </span>
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
+            <OrganizationMenu />
+            <PlatformAdminMenuItem onNavigate={handleMenuNavigation} />
 
             <DropdownMenuSeparator />
 
@@ -773,6 +873,21 @@ export function AccountMenu({
                 {msg('account.organizationSettings', 'Organization settings')}
               </span>
             </DropdownMenuItem>
+
+            {personalSettingsNavigation
+              .filter((item) => item.href !== '/settings/appearance')
+              .map((item) => (
+                <DropdownMenuItem
+                  key={item.href}
+                  className="h-8 gap-3 px-3"
+                  onClick={() => void handleMenuNavigation(item.href)}
+                >
+                  <SettingsNavigationIcon href={item.href} />
+                  <span className="min-w-0 flex-1 truncate">{msg(item.labelId, item.label)}</span>
+                </DropdownMenuItem>
+              ))}
+
+            <AppearanceMenuRow />
 
             <DropdownMenuSub>
               <DropdownMenuSubTrigger openOnHover className="h-8 gap-3 px-3">
@@ -827,6 +942,7 @@ const managedAgentPathByHref: Record<string, string> = {
   '/quickstart': 'agent-quickstart',
   '/agents': 'agents',
   '/sessions': 'sessions',
+  '/observability': 'observability',
   '/deployments': 'deployments',
   '/environments': 'environments',
   '/credential-vaults': 'vaults',
@@ -834,20 +950,63 @@ const managedAgentPathByHref: Record<string, string> = {
   '/dreams': 'dreams',
 };
 
+const workspaceSettingsResourceByHref: Record<string, string> = {
+  '/api-keys': 'keys',
+  '/webhooks': 'webhooks',
+  '/mcp-tunnels': 'mcp-tunnels',
+};
+
 const workspaceBuildPathByHref: Record<string, string> = {
   '/llm-models': 'llm-models',
   '/playground': 'playground',
   '/files': 'files',
   '/skills': 'skills',
+  '/mcp-servers': 'mcp-servers',
   '/batches': 'batches',
 };
 
+function activeSidebarGroupLabels(currentPath: string) {
+  return visibleConsoleNavigation().flatMap((item) => {
+    if (item.type !== 'group' || !item.children.some((child) => isActivePath(currentPath, child.href))) {
+      return [];
+    }
+    return [item.label];
+  });
+}
+
+function initialSidebarGroupExpansion(currentPath: string) {
+  const expanded: Record<string, boolean> = { 'Managed Agents': true };
+  for (const label of activeSidebarGroupLabels(currentPath)) {
+    expanded[label] = true;
+  }
+  return expanded;
+}
+
+function openSidebarGroups(current: Record<string, boolean>, labels: string[]) {
+  let changed = false;
+  const next = { ...current };
+  for (const label of labels) {
+    if (next[label]) {
+      continue;
+    }
+    next[label] = true;
+    changed = true;
+  }
+  return changed ? next : current;
+}
+
 function navigationHref(href: string, workspaceId: string) {
+  if (href === '/cost' || href === '/logs') {
+    return workspaceSwitchPath(href, workspaceId);
+  }
   if (href === '/api-keys') {
     return workspaceApiKeysPath(workspaceId);
   }
   if (href === '/webhooks') {
     return workspaceWebhooksPath(workspaceId);
+  }
+  if (href === '/mcp-tunnels') {
+    return workspaceMcpTunnelsPath(workspaceId);
   }
 
   const buildPath = workspaceBuildPathByHref[href];
@@ -864,40 +1023,7 @@ function navigationHref(href: string, workspaceId: string) {
 }
 
 async function navigateToMatchingWorkspacePath(currentPath: string, workspaceId: string, onNavigate?: NavigateHandler) {
-  const encodedWorkspaceId = encodeURIComponent(workspaceId || 'default');
-  let nextPath: string | undefined;
-
-  if (currentPath === '/api-keys') {
-    nextPath = workspaceApiKeysPath(workspaceId);
-  } else if (currentPath === '/webhooks') {
-    nextPath = workspaceWebhooksPath(workspaceId);
-  } else {
-    for (const [href, buildPath] of Object.entries(workspaceBuildPathByHref)) {
-      if (currentPath === href) {
-        nextPath = `/workspaces/${encodedWorkspaceId}/${buildPath}`;
-        break;
-      }
-    }
-
-    for (const [href, managedPath] of Object.entries(managedAgentPathByHref)) {
-      if (!nextPath && currentPath === href) {
-        nextPath = `/workspaces/${encodedWorkspaceId}/${managedPath}`;
-        break;
-      }
-    }
-  }
-
-  nextPath ??= currentPath
-    .replace(/^\/settings\/workspaces\/[^/]+\/keys/, workspaceApiKeysPath(workspaceId))
-    .replace(/^\/settings\/workspaces\/[^/]+\/webhooks/, workspaceWebhooksPath(workspaceId))
-    .replace(
-      /^\/workspaces\/[^/]+\/(llm-models|playground|files|skills|batches)/,
-      `/workspaces/${encodedWorkspaceId}/$1`,
-    )
-    .replace(
-      /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|deployments|environments|vaults|memory-stores|dreams)/,
-      `/workspaces/${encodedWorkspaceId}/$1`,
-    );
+  const nextPath = workspaceSwitchPath(currentPath, workspaceId);
 
   if (nextPath === currentPath) {
     return;
@@ -926,11 +1052,9 @@ function isActivePath(currentPath: string, href: string) {
   if (href === '/dashboard') {
     return currentPath === '/' || currentPath === '/dashboard';
   }
-  if (href === '/api-keys') {
-    return currentPath === '/api-keys' || /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath);
-  }
-  if (href === '/webhooks') {
-    return currentPath === '/webhooks' || /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath);
+  const workspaceSettingsResource = workspaceSettingsResourceByHref[href];
+  if (workspaceSettingsResource) {
+    return isWorkspaceSettingsNavActive(currentPath, href, workspaceSettingsResource);
   }
   if (href === '/usage') {
     return currentPath === '/usage';
@@ -968,21 +1092,28 @@ function isActivePath(currentPath: string, href: string) {
 
 function isWideConsolePath(currentPath: string) {
   return (
-    currentPath === '/api-keys' ||
+    ['/api-keys', '/members', '/settings/members'].includes(currentPath) ||
     /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath) ||
     currentPath === '/webhooks' ||
     /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath) ||
+    isMcpTunnelsPath(currentPath) ||
     isBuildPath(currentPath) ||
     isAnalyticsPath(currentPath) ||
     isManagedAgentsPath(currentPath)
   );
 }
 
+function isSessionDetailPath(currentPath: string) {
+  return /^\/workspaces\/[^/]+\/sessions\/[^/]+\/?$/.test(currentPath);
+}
+
 function isBuildPath(currentPath: string) {
   return (
-    ['/workbench', '/llm-models', '/playground', '/files', '/skills', '/batches'].includes(currentPath) ||
+    ['/workbench', '/llm-models', '/playground', '/files', '/skills', '/mcp-servers', '/batches'].includes(
+      currentPath,
+    ) ||
     currentPath.startsWith('/workbench/') ||
-    /^\/workspaces\/[^/]+\/(?:llm-models|playground|files|skills|batches)(\/|$)/.test(currentPath)
+    /^\/workspaces\/[^/]+\/(?:llm-models|playground|files|skills|mcp-servers|batches)(\/|$)/.test(currentPath)
   );
 }
 
@@ -993,19 +1124,29 @@ function isAnalyticsPath(currentPath: string) {
   );
 }
 
+function isMcpTunnelsPath(currentPath: string) {
+  return /^\/settings\/workspaces\/[^/]+\/mcp-tunnels(\/|$)/.test(currentPath);
+}
+
+function isWorkspaceSettingsNavActive(currentPath: string, href: string, resource: string) {
+  const canonicalPath = new RegExp(`^/settings/workspaces/[^/]+/${resource}`).test(currentPath);
+  return href === '/mcp-tunnels' ? canonicalPath : currentPath === href || canonicalPath;
+}
+
 function isManagedAgentsPath(currentPath: string) {
   return (
     [
       '/quickstart',
       '/agents',
       '/sessions',
+      '/observability',
       '/deployments',
       '/environments',
       '/credential-vaults',
       '/memory-stores',
       '/dreams',
     ].includes(currentPath) ||
-    /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|deployments|environments|vaults|memory-stores|dreams)(\/|$)/.test(
+    /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|observability|deployments|environments|vaults|memory-stores|dreams)(\/|$)/.test(
       currentPath,
     )
   );

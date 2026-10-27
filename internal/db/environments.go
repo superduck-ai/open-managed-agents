@@ -24,6 +24,7 @@ type Environment struct {
 	Scope               *string
 	Provider            string
 	ResolvedTemplate    string
+	BuildJobID          *int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	ArchivedAt          *time.Time
@@ -40,6 +41,8 @@ type ListEnvironmentsPageParams struct {
 	Limit           int
 	Cursor          *EnvironmentPageCursor
 	IncludeArchived bool
+	ArchivedOnly    bool
+	Search          string
 }
 
 type EnvironmentKey struct {
@@ -144,28 +147,14 @@ func (d *DB) GetEnvironment(ctx context.Context, workspaceUUID string, externalI
 	return row.environment(), nil
 }
 
-func (d *DB) UpdateEnvironment(ctx context.Context, workspaceUUID string, externalID string, next Environment) (Environment, error) {
-	params := environmentWriteParamsFrom(next)
-	params.WorkspaceUUID = workspaceUUID
-	params.ExternalID = externalID
-	mapper := NewEnvironmentMapper(d.mapperDB)
-	row, err := mapper.UpdateByExternalID(ctx, params)
-	if isUniqueViolation(err) {
-		return Environment{}, ErrDuplicate
-	}
-	if err != nil {
-		return Environment{}, mapNoRows(err)
-	}
-	return row.environment(), nil
-}
-
-func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, error) {
+func (d *DB) ArchiveEnvironment(ctx context.Context, workspaceUUID string, externalID string) (Environment, bool, error) {
 	mapper := NewEnvironmentMapper(d.mapperDB)
 	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
-	if err != nil {
-		return Environment{}, mapNoRows(err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return row.environment(), err == nil, err
 	}
-	return row.environment(), nil
+	current, loadErr := d.GetEnvironment(ctx, workspaceUUID, externalID)
+	return current, false, loadErr
 }
 
 func (d *DB) DeleteEnvironment(ctx context.Context, workspaceUUID string, externalID string) error {
@@ -466,19 +455,51 @@ func (d *DB) EnvironmentWorkStats(ctx context.Context, workspaceUUID string, env
 }
 
 func (d *DB) CreateEnvironmentSandbox(ctx context.Context, sandbox EnvironmentSandbox) (EnvironmentSandbox, error) {
-	mapper := NewEnvironmentSandboxMapper(d.mapperDB)
-	row, err := mapper.Insert(ctx, environmentSandboxWriteParamsFrom(sandbox))
-	if err != nil {
-		return EnvironmentSandbox{}, err
-	}
-	return row.sandbox(), nil
+	var result EnvironmentSandbox
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewEnvironmentSandboxMapper(executor)
+		if sandbox.WorkUUID != nil && sandbox.WorkExternalID != nil {
+			work, err := NewEnvironmentWorkMapper(executor).LockByExternalID(ctx, sandbox.WorkspaceUUID, sandbox.EnvironmentExternalID, *sandbox.WorkExternalID)
+			if err != nil {
+				return mapNoRows(err)
+			}
+			if work.OrganizationUUID != sandbox.OrganizationUUID || work.UUID != *sandbox.WorkUUID {
+				return ErrNotFound
+			}
+			if work.State == "stopped" || work.State == "stopping" {
+				return ErrInvalidState
+			}
+			current, found, err := mapper.FindPendingForWork(ctx, sandbox.OrganizationUUID, sandbox.WorkspaceUUID, work.UUID)
+			if err != nil {
+				return err
+			}
+			if found {
+				result = current.sandbox()
+				return nil
+			}
+		}
+		row, err := mapper.Insert(ctx, environmentSandboxWriteParamsFrom(sandbox))
+		result = row.sandbox()
+		return err
+	})
+	return result, err
+}
+
+func (d *DB) GetPendingEnvironmentSandboxForWork(ctx context.Context, work EnvironmentWork) (EnvironmentSandbox, bool, error) {
+	row, found, err := NewEnvironmentSandboxMapper(d.mapperDB).FindPendingForWork(ctx, work.OrganizationUUID, work.WorkspaceUUID, work.UUID)
+	return row.sandbox(), found, err
 }
 
 func (d *DB) UpdateEnvironmentSandboxState(ctx context.Context, workspaceUUID string, externalID, state string, providerSandboxID *string, lastError *string, stoppedAt *time.Time) error {
-	mapper := NewEnvironmentSandboxMapper(d.mapperDB)
-	return mapper.UpdateState(ctx, environmentSandboxStateParams{
-		WorkspaceUUID: workspaceUUID, ExternalID: externalID, State: state,
-		ProviderSandboxID: providerSandboxID, LastError: lastError, StoppedAt: stoppedAt,
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewEnvironmentSandboxMapper(executor)
+		if _, _, err := mapper.LockOwnerSession(ctx, workspaceUUID, externalID); err != nil {
+			return err
+		}
+		return mapper.UpdateState(ctx, environmentSandboxStateParams{
+			WorkspaceUUID: workspaceUUID, ExternalID: externalID, State: state,
+			ProviderSandboxID: providerSandboxID, LastError: lastError, StoppedAt: stoppedAt,
+		})
 	})
 }
 
@@ -567,10 +588,10 @@ func matchesExpectedHeartbeat(latest *time.Time, expected string, format func(ti
 func environmentWriteParamsFrom(env Environment) environmentWriteParams {
 	return environmentWriteParams{
 		UUID: env.UUID, ExternalID: env.ExternalID, OrganizationUUID: env.OrganizationUUID,
-		WorkspaceUUID: env.WorkspaceUUID, CreatedByAPIKeyUUID: env.CreatedByAPIKeyUUID,
+		WorkspaceUUID: env.WorkspaceUUID, CreatedByAPIKeyUUID: nullableString(env.CreatedByAPIKeyUUID),
 		Name: env.Name, Description: env.Description,
 		Config: agentJSONArg(env.Config), Metadata: agentJSONArg(env.Metadata),
-		Scope: env.Scope, Provider: env.Provider, ResolvedTemplate: env.ResolvedTemplate,
+		BuildJobID: env.BuildJobID, Scope: env.Scope, Provider: env.Provider, ResolvedTemplate: env.ResolvedTemplate,
 		CreatedAt: env.CreatedAt, UpdatedAt: env.UpdatedAt,
 	}
 }
@@ -579,6 +600,7 @@ func environmentPageParams(params ListEnvironmentsPageParams) environmentPageMap
 	return environmentPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, FetchLimit: params.Limit + 1,
 		Cursor: params.Cursor, IncludeArchived: params.IncludeArchived,
+		ArchivedOnly: params.ArchivedOnly, Search: params.Search,
 	}
 }
 
@@ -630,9 +652,9 @@ func environmentWorkFromRows(rows []environmentWorkMapperRow) []EnvironmentWork 
 func (r environmentMapperRow) environment() Environment {
 	return Environment{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		Name: r.Name, Description: r.Description, Config: bytes.Clone(r.Config), Metadata: bytes.Clone(r.Metadata),
-		Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
+		BuildJobID: r.BuildJobID, Scope: r.Scope, Provider: r.Provider, ResolvedTemplate: r.ResolvedTemplate,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }

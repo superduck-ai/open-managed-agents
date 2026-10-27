@@ -1,5 +1,8 @@
 # Session 生成文件下载（#261）与 Get Session 文件资源回填（#258）
 
+2026-10-16 的输入实例合同补充见 [Filestore Session 输入实例升级](./filestore.md#session-输入实例升级)：Input Resource 的 payload 与 Files 列表现在返回每次 attach 独立创建的实例 ID，原上传 ID 保持不变。下文关于 #258 中 Input“保持现状”的描述记录当时的输出下载改动范围，不再表示当前 Input 与 Source File 共用 ID。
+
+
 > 状态：实现方案（已评审）
 > 关联：issue #261、#258；上游 #259（session files/resources 对齐）已合并
 > 前置：`docs/design/be/filestore.md`（Session Resource/File 统一持久化契约）
@@ -10,15 +13,19 @@
 官方 Claude Managed Agents Files 契约（managed-agents/files.md + environments.md 实测）：
 
 - **上传的文件**：`POST /v1/files` 上传 → `resources: [{type:"file", file_id, mount_path}]` 挂载，`mount_path` 映射到 sandbox `/mnt/session/uploads/<mount_path>`（OMA 用 `/mnt/user-data/uploads` 的等价实现）。官方文档**未明文** `downloadable` 字段；OMA #248 曾把上传文件改成可下载被**撤销**，说明**官方实际行为**是上传文件不可下载（下载返回 400）
-- **agent 生成的输出文件**：写入 **`/mnt/session/outputs/`**（OMA 的 sandbox 内路径为 `/mnt/user-data/outputs`，公开路径统一为 `/outputs/`），通过 `GET /v1/files?scope_id=<session_id>` 列出、`GET /v1/files/{id}/content` 下载
+- **agent 生成的输出文件**：写入 **`/mnt/session/outputs/`**，公开路径统一为 `/outputs/`，通过 `GET /v1/files?scope_id=<session_id>` 列出、`GET /v1/files/{id}/content` 下载。OMA 保留 `/mnt/user-data/outputs` 作为实际 FUSE 挂载点，标准路径通过软链访问同一挂载。
 
-**路径映射（OMA 与官方一致的关键）**：OMA 的 `visibleFilePredicate` 判定的是 **filestore namespace 公开路径 `/outputs/`**，与 sandbox 内路径（`/mnt/user-data/outputs`）无关；sandbox 内 `user-data` 挂载到公开 `/outputs/`，system prompt 引导写 `/mnt/user-data/outputs/<relative-path>`。这是 sandbox 内部实现差异，不是 API 契约差异。
+**路径映射**：OMA 的 `visibleFilePredicate` 判定的是 **filestore namespace 公开路径 `/outputs/`**。Runner 在启动 rclone 前创建 `/mnt/session/outputs` → `/mnt/user-data/outputs` 软链；system prompt 引导写标准路径。两个 sandbox 路径使用同一个 FUSE mount 和缓存，不复制文件，也不新增异步扫描或索引任务。
 
-### 路径差异溯源：为什么 OMA 用 `/mnt/user-data/outputs` 而不是官方的 `/mnt/session/outputs/`
+FILE-API-002 的真实失败中，Write 成功写入 `/mnt/session/outputs/...` 并自然结束，但 10 秒独立观察窗内 Files 列表为空。旧启动代码只挂载 `/mnt/user-data/outputs`，标准目录写入不会经过 Filestore，不能靠增加列表等待时间修正。此处补齐标准目录映射；旧失败报告保留，修复后的真实列出和下载结果仍须独立复测。
+
+别名准备可重复执行，接受目标一致的现有软链；允许用软链替换空目录。若标准路径已有普通文件、非空目录或指向其他目标的软链，则停止启动并进入既有 Sandbox 失败清理，不覆盖已有数据。回归测试执行真实 shell 命令验证冲突保护、路径转义、重复启动及写入同一目录；`files.generated` 的真实 Worker fixture 改用标准输出路径，需用户授权后运行。
+
+### 历史挂载路径溯源
 
 | 项 | 官方 | OMA |
 |---|---|---|
-| 路径 | `/mnt/session/outputs/` | `/mnt/user-data/outputs` |
+| 路径 | `/mnt/session/outputs/` | 标准路径同左，软链到 `/mnt/user-data/outputs` |
 | 性质 | 纯约定（官方自管容器，无需区分卷） | E2B 沙箱**持久化用户数据卷**挂载点 |
 | 写入方 | agent 工具（write/bash） | 同上 |
 | 公开契约 | `/outputs/` + `files.list(scope_id)` + `download` | 与官方一致 |
@@ -37,7 +44,7 @@ sandboxUserDataMountPath  = "/mnt/user-data"
 2. **a45eaf5 / 88a9858（xgxgx，07-28，environment packages provisioning）**：沿用该路径
 3. **7c121af（xgxgx，08-18，#259）**：`environment_manager.go:38` 明确「写入 `/mnt/user-data/outputs` 的文件投影为公开 `/outputs/`」并进入 Files API Catalog
 
-**为什么不用官方路径**：官方路径是**纯约定**（官方自己管理容器，路径不影响持久化）；OMA 因 E2B 沙箱需要**持久化卷承载 rclone 挂载与输出文件**，才引入 `/mnt/user-data` 命名空间。**这是实现层差异，不是契约差异**——OMA 的公开 API（`/outputs/` + `scope_id` 列表 + 下载）与官方完全一致；差异只在沙箱内部 agent 被引导写入的路径名。**本方案不改变该路径**（下载侧只看公开 `/outputs/` + `files` 表，不感知沙箱内路径）。
+`/mnt/user-data` 的历史挂载位置继续保留，但调用者可直接使用标准 `/mnt/session/outputs/`。下载侧只看公开 `/outputs/` 与 Files 记录，不感知 sandbox 内软链。
 
 OMA 现状：
 
@@ -249,3 +256,16 @@ GET 与 DELETE 不对称是**有意保留**的：输出文件的生命周期属�
 - **单资源接口返回 Output Resource**（已随本 PR 修复）：`GET /v1/sessions/{id}/resources/{rid}` 使用与 `List` 相同的 JOIN 与显式 ownership 可见性条件，`file_id` 同批取出（原 sub-issue #266 已关闭）。`PATCH`/`DELETE` 的语义见「改动 3」
 - 不让输出文件计入写入侧的 `MaxFileResources` 配额（会让 agent 写满后 `/outputs/` 写入失败，失败语义需穿过 rclone FUSE，另行设计）；本期改为读取侧截断，见「改动 2」
 - 不给 `resources[]` 加分页（官方 session 对象里 `resources` 是裸数组，分页会偏离官方形状）
+
+
+## 自托管环境的资源边界（2026-10-18）
+
+Session 创建时使用目标 Environment 配置校验资源类型。`self_hosted` 仅接受
+`memory_store`，显式 `file` 或 `github_repository` 资源返回 400
+`invalid_request_error`，在创建 Session 和文件实例前结束。已有自托管 Session
+动态添加 File 也执行同一限制。Cloud 资源规则、Memory 校验和空 Session 创建保持原行为。
+
+依据本地 CMA `self-hosted-sandboxes.md` 的 Session resources 合同。普通回归覆盖
+Cloud 的三类资源、自托管 Memory/空资源允许、File/GitHub 拒绝；Files 真实 EXT001
+另验证创建挂载拒绝及空自托管 Session 上的动态 File 添加拒绝。文件应由调用者在
+自托管 worker 中自行暂存，不能借用 Cloud 文件挂载流程。

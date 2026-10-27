@@ -1,0 +1,86 @@
+import { useI18n } from '../../shared/i18n';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '../../shared/auth/context';
+import { returnToFromSearch } from '../../shared/auth/redirects';
+import { Button } from '../../shared/ui/button';
+import { invitationReturnTo, listInvitations } from './api';
+
+export function InvitationEntryGate() {
+  const { status, account } = useAuth();
+  const location = useLocation();
+  if (location.pathname === '/platform-admin' || location.pathname.startsWith('/platform-admin/')) return <Outlet />;
+  if (status !== 'authenticated' || !account) return <Outlet />;
+  return (
+    <AuthenticatedInvitationEntry key={account.uuid} accountUuid={account.uuid}>
+      <Outlet />
+    </AuthenticatedInvitationEntry>
+  );
+}
+
+function AuthenticatedInvitationEntry({ accountUuid, children }: { accountUuid: string; children: ReactNode }) {
+  const { msg } = useI18n();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [checked, setChecked] = useState(location.pathname === '/invites');
+  const redirecting = useRef(false);
+  const [navigationError, setNavigationError] = useState(false);
+  const invitations = useQuery({
+    queryKey: ['invitations', accountUuid],
+    queryFn: listInvitations,
+    enabled: !checked,
+    retry: false,
+    refetchOnMount: 'always',
+  });
+  useEffect(() => {
+    if (checked || redirecting.current || !invitations.isFetchedAfterMount || invitations.isFetching) return;
+    if (invitations.isError) return;
+    if (!invitations.data?.data.length) {
+      setChecked(true);
+      return;
+    }
+    redirecting.current = true;
+    const target = location.pathname === '/login' ? returnToFromSearch(location.searchStr) : location.href;
+    void navigate({ to: '/invites', search: { returnTo: invitationReturnTo(target) }, replace: true })
+      .then(() => setChecked(true))
+      .catch(() => {
+        redirecting.current = false;
+        setNavigationError(true);
+      });
+  }, [
+    checked,
+    invitations.isFetchedAfterMount,
+    invitations.isFetching,
+    invitations.isError,
+    invitations.data,
+    location,
+    navigate,
+  ]);
+
+  if (checked) return children;
+  if (invitations.isError || navigationError)
+    return (
+      <main className="grid min-h-screen place-items-center bg-background p-6 text-foreground">
+        <div role="alert" className="space-y-4 text-center">
+          <p>{msg('invitations.checkFailed', 'Organization invitations could not be checked.')}</p>
+          <Button
+            onClick={() => {
+              setNavigationError(false);
+              void invitations.refetch();
+            }}
+          >
+            {msg('common.retry', 'Retry')}
+          </Button>
+          <Button variant="ghost" onClick={() => setChecked(true)}>
+            {msg('invitations.continueToConsole', 'Continue to console')}
+          </Button>
+        </div>
+      </main>
+    );
+  return (
+    <main role="status" className="grid min-h-screen place-items-center bg-background text-foreground">
+      {msg('invitations.checking', 'Checking organization invitations…')}
+    </main>
+  );
+}

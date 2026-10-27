@@ -8,22 +8,25 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper SessionThreadMapper -sql ./session_thread_mapper.xml -out ./session_thread_mapper.sqlmap.gen.go -dialect postgres
 
 type sessionThreadRow struct {
-	UUID                   string     `db:"uuid"`
-	ExternalID             string     `db:"external_id"`
-	OrganizationUUID       string     `db:"organization_uuid"`
-	WorkspaceUUID          string     `db:"workspace_uuid"`
-	SessionUUID            string     `db:"session_uuid"`
-	SessionExternalID      string     `db:"session_external_id"`
-	ParentThreadUUID       *string    `db:"parent_thread_uuid"`
-	ParentThreadExternalID *string    `db:"parent_thread_external_id"`
-	AgentSnapshot          []byte     `db:"agent_snapshot"`
-	Status                 string     `db:"status"`
-	Usage                  []byte     `db:"usage"`
-	Stats                  []byte     `db:"stats"`
-	CreatedAt              time.Time  `db:"created_at"`
-	UpdatedAt              time.Time  `db:"updated_at"`
-	ArchivedAt             *time.Time `db:"archived_at"`
-	DeletedAt              *time.Time `db:"deleted_at"`
+	Activity               sessionActivityProjection `db:"activity"`
+	UUID                   string                    `db:"uuid"`
+	ExternalID             string                    `db:"external_id"`
+	OrganizationUUID       string                    `db:"organization_uuid"`
+	WorkspaceUUID          string                    `db:"workspace_uuid"`
+	SessionUUID            string                    `db:"session_uuid"`
+	SessionExternalID      string                    `db:"session_external_id"`
+	ParentThreadUUID       *string                   `db:"parent_thread_uuid"`
+	ParentThreadExternalID *string                   `db:"parent_thread_external_id"`
+	AgentSnapshot          []byte                    `db:"agent_snapshot"`
+	Status                 string                    `db:"status"`
+	StatsInitialized       bool                      `db:"stats_initialized"`
+	UsageInitialized       bool                      `db:"usage_initialized"`
+	Usage                  []byte                    `db:"usage"`
+	Stats                  []byte                    `db:"stats"`
+	CreatedAt              time.Time                 `db:"created_at"`
+	UpdatedAt              time.Time                 `db:"updated_at"`
+	ArchivedAt             *time.Time                `db:"archived_at"`
+	DeletedAt              *time.Time                `db:"deleted_at"`
 }
 
 type sessionThreadWriteParams struct {
@@ -37,6 +40,8 @@ type sessionThreadWriteParams struct {
 	ParentThreadExternalID *string
 	AgentSnapshot          []byte
 	Status                 string
+	StatsInitialized       bool
+	UsageInitialized       bool
 	Usage                  []byte
 	Stats                  []byte
 	CreatedAt              time.Time
@@ -47,6 +52,7 @@ type sessionThreadPageMapperParams struct {
 	SessionExternalID string
 	FetchLimit        int
 	Cursor            *SessionThreadPageCursor
+	Statuses          []string
 }
 
 // SessionThreadMapper contains queries whose primary table is session_threads.
@@ -54,6 +60,7 @@ type SessionThreadMapper interface {
 	Insert(ctx context.Context, params sessionThreadWriteParams) (sessionThreadRow, error)
 	InsertIfAbsent(ctx context.Context, params sessionThreadWriteParams) (sessionThreadRow, bool, error)
 	FindPrimary(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionThreadRow, error)
+	FindPrimaryExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (string, bool, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, threadExternalID string) (sessionThreadRow, error)
 	ListPage(ctx context.Context, params sessionThreadPageMapperParams) ([]sessionThreadRow, error)
 	List(ctx context.Context, workspaceUUID, sessionExternalID string) ([]sessionThreadRow, error)

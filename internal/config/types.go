@@ -1,52 +1,118 @@
 package config
 
-import "time"
-
-const (
-	EnvironmentDev  = "dev"
-	EnvironmentProd = "prod"
-	StorageTypeS3   = "s3"
+import (
+	"time"
 )
 
+const (
+	EnvironmentDev                  = "dev"
+	EnvironmentProd                 = "prod"
+	StorageTypeS3                   = "s3"
+	ObservabilityBackendOpenObserve = "openobserve"
+)
+
+type ChannelBridgeConfig struct {
+	URL   string `yaml:"url"`
+	Token string `yaml:"token"`
+}
+
 type Config struct {
-	Env               string                  `yaml:"env"`
-	Server            ServerConfig            `yaml:"server"`
-	Database          DatabaseConfig          `yaml:"database"`
-	Redis             RedisConfig             `yaml:"redis"`
-	Storage           StorageConfig           `yaml:"storage"`
-	Batch             BatchConfig             `yaml:"batch"`
-	E2B               E2BConfig               `yaml:"e2b"`
-	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
-	CodeSession       CodeSessionConfig       `yaml:"code_session"`
-	Webhook           WebhookConfig           `yaml:"webhook"`
-	Vault             VaultConfig             `yaml:"vault"`
-	Bootstrap         BootstrapConfig         `yaml:"bootstrap"`
-	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
+	ChannelBridge          ChannelBridgeConfig       `yaml:"channel_bridge"`
+	LLMProviderPresetsFile string                    `yaml:"llm_provider_presets_file"`
+	WebTools               WebToolsConfig            `yaml:"web_tools"`
+	EnvironmentPackages    EnvironmentPackageConfig  `yaml:"environment_packages"`
+	EnvironmentPrebuilds   EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	TranscriptArchive      TranscriptArchiveConfig   `yaml:"transcript_archive"`
+	Env                    string                    `yaml:"env"`
+	Server                 ServerConfig              `yaml:"server"`
+	Database               DatabaseConfig            `yaml:"database"`
+	Redis                  RedisConfig               `yaml:"redis"`
+	NATS                   NATSConfig                `yaml:"nats"`
+	Auth                   AuthConfig                `yaml:"auth"`
+	Tunnel                 TunnelConfig              `yaml:"tunnel"`
+	Storage                StorageConfig             `yaml:"storage"`
+	Batch                  BatchConfig               `yaml:"batch"`
+	SandboxLifecycle       SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
+	E2B                    E2BConfig                 `yaml:"e2b"`
+	EnvironmentRunner      EnvironmentRunnerConfig   `yaml:"environment_runner"`
+	CodeSession            CodeSessionConfig         `yaml:"code_session"`
+	Observability          ObservabilityConfig       `yaml:"observability"`
+	Webhook                WebhookConfig             `yaml:"webhook"`
+	Vault                  VaultConfig               `yaml:"vault"`
+	Bootstrap              BootstrapConfig           `yaml:"bootstrap"`
 }
 
-// VaultConfig configures at-rest encryption for vault credential secrets.
+type WebToolsConfig struct {
+	SearchProvider string                           `yaml:"search_provider"`
+	Providers      map[string]WebToolProviderConfig `yaml:"providers"`
+}
+
+type WebToolProviderConfig struct {
+	APIKey string `yaml:"api_key"`
+}
+
+// VaultConfig configures at-rest encryption for vault credential secrets and
+// optional Platform OAuth Clients used during vault MCP OAuth enrollment.
 type VaultConfig struct {
-	MasterKey MasterKeyConfig `yaml:"master_key"`
+	MasterKey            MasterKeyConfig             `yaml:"master_key"`
+	PlatformOAuthClients []PlatformOAuthClientConfig `yaml:"platform_oauth_clients"`
 }
 
-// MasterKeyConfig supplies the key-encryption key (KEK) that wraps per-secret
-// DEKs. Exactly one of Kek or KekFile must be set (required in every env, same
-// as storage.s3 access keys). KekFile holds the same base64 text as Kek but
-// read from a mounted file (mirroring the
-// code_session.jwt_signing_private_key_file discipline).
-//
-// Version identifies the current wrap key (defaults to 1 when unset/0).
-// DecryptOnly holds older KEKs that may still open existing envelopes; Seal
-// always uses the current key. There is no rewrap step.
+// PlatformOAuthClientConfig is one deployment-owned OAuth client bound to an
+// exact mcp_server_url. When vault-auth/start has no BYO client_id, a matching
+// entry supplies client_id/client_secret before falling back to DCR.
+type PlatformOAuthClientConfig struct {
+	MCPServerURL string `yaml:"mcp_server_url"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+}
+
+// MasterKeyConfig selects the provider that wraps per-secret DEKs. An omitted
+// provider preserves the local KEK configuration and rotation contract.
 type MasterKeyConfig struct {
+	Provider       string                `yaml:"provider"`
+	Local          *LocalKeyConfig       `yaml:"local,omitempty"`
+	AliyunKMS      *AliyunKMSConfig      `yaml:"aliyun_kms,omitempty"`
+	HashicorpVault *HashicorpVaultConfig `yaml:"hashicorp_vault,omitempty"`
+}
+
+// LocalKeyConfig holds the current KEK and keys retained for decrypting old envelopes.
+type LocalKeyConfig struct {
 	Kek         string                 `yaml:"kek"`
 	KekFile     string                 `yaml:"kek_file"`
 	Version     int64                  `yaml:"version"`
 	DecryptOnly []DecryptOnlyKeyConfig `yaml:"decrypt_only"`
 }
 
+type HashicorpVaultConfig struct {
+	Address      string `yaml:"address"`
+	TransitMount string `yaml:"transit_mount"`
+	KeyName      string `yaml:"key_name"`
+	TokenFile    string `yaml:"token_file"`
+	Token        string `yaml:"token,omitempty"`
+	CAFile       string `yaml:"ca_file,omitempty"`
+}
+
+// AliyunKMSConfig contains deployment inputs, never key material. Empty access
+// keys select the official SDK workload identity providers (ACK RRSA first, then ECS RAM).
+type AliyunKMSConfig struct {
+	Endpoint        string `yaml:"endpoint"`
+	KeyID           string `yaml:"key_id"`
+	AccessKeyID     string `yaml:"access_key_id"`
+	AccessKeySecret string `yaml:"access_key_secret"`
+	SecurityToken   string `yaml:"security_token"`
+}
+
+// EffectiveProvider preserves existing local deployments when provider is unset.
+func (m MasterKeyConfig) EffectiveProvider() string {
+	if m.Provider == "" {
+		return "local"
+	}
+	return m.Provider
+}
+
 // DecryptOnlyKeyConfig is a prior KEK retained only for Open. Version is
-// required and must not collide with the current master_key.version.
+// required and must not collide with the current master_key.local.version.
 type DecryptOnlyKeyConfig struct {
 	Version int64  `yaml:"version"`
 	Kek     string `yaml:"kek"`
@@ -54,7 +120,8 @@ type DecryptOnlyKeyConfig struct {
 }
 
 type ServerConfig struct {
-	Addr string `yaml:"addr"`
+	Addr            string `yaml:"addr"`
+	DiagnosticsAddr string `yaml:"diagnostics_addr"`
 }
 
 type DatabaseConfig struct {
@@ -64,6 +131,58 @@ type DatabaseConfig struct {
 
 type RedisConfig struct {
 	URL string `yaml:"url"`
+}
+
+type WorkerEventStreamConfig struct {
+	ConsumerInactiveThreshold time.Duration `yaml:"consumer_inactive_threshold"`
+	MaxBytes                  int64         `yaml:"max_bytes"`
+	MaxAge                    time.Duration `yaml:"max_age"`
+	Replicas                  int           `yaml:"replicas"`
+	MaxMsgSize                int32         `yaml:"max_msg_size"`
+}
+
+type WebhookStreamConfig struct {
+	MaxBytes int64         `yaml:"max_bytes"`
+	MaxAge   time.Duration `yaml:"max_age"`
+	Replicas int           `yaml:"replicas"`
+}
+
+type NATSConfig struct {
+	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
+	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL               string                  `yaml:"url"`
+	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
+}
+
+type AuthConfig struct {
+	AllowedEmailDomains []string        `yaml:"allowed_email_domains"`
+	SMTP                EmailSMTPConfig `yaml:"smtp"`
+	ConsoleURL          string          `yaml:"console_url"`
+}
+
+type EmailSMTPConfig struct {
+	Addr     string `yaml:"addr"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+type TunnelConfig struct {
+	PublicBaseURL       string                    `yaml:"public_base_url"`
+	DomainSuffix        string                    `yaml:"domain_suffix"`
+	PollTimeout         time.Duration             `yaml:"poll_timeout"`
+	RequestTimeout      time.Duration             `yaml:"request_timeout"`
+	PresenceTTL         time.Duration             `yaml:"presence_ttl"`
+	TombstoneTTL        time.Duration             `yaml:"tombstone_ttl"`
+	CommandStream       TunnelCommandStreamConfig `yaml:"command_stream"`
+	MaxBodyBytes        int64                     `yaml:"max_body_bytes"`
+	MaxHeaderBytes      int64                     `yaml:"max_header_bytes"`
+	MaxHeaderValueBytes int64                     `yaml:"max_header_value_bytes"`
+}
+
+type TunnelCommandStreamConfig struct {
+	MaxBytes int64 `yaml:"max_bytes"`
+	MaxMsgs  int64 `yaml:"max_msgs"`
 }
 
 type StorageConfig struct {
@@ -95,31 +214,38 @@ type BatchConfig struct {
 }
 
 type E2BConfig struct {
-	APIKey         string        `yaml:"api_key"`
-	AccessToken    string        `yaml:"access_token"`
-	Domain         string        `yaml:"domain"`
-	APIURL         string        `yaml:"api_url"`
-	SandboxURL     string        `yaml:"sandbox_url"`
-	Debug          bool          `yaml:"debug"`
-	Template       string        `yaml:"template"`
-	RequestTimeout time.Duration `yaml:"request_timeout"`
-	SandboxTimeout time.Duration `yaml:"sandbox_timeout"`
+	LocalPortLookup  bool          `yaml:"local_port_lookup"`
+	LocalServiceHost string        `yaml:"local_service_host"`
+	APIKey           string        `yaml:"api_key"`
+	AccessToken      string        `yaml:"access_token"`
+	Domain           string        `yaml:"domain"`
+	APIURL           string        `yaml:"api_url"`
+	SandboxURL       string        `yaml:"sandbox_url"`
+	Debug            bool          `yaml:"debug"`
+	Template         string        `yaml:"template"`
+	RequestTimeout   time.Duration `yaml:"request_timeout"`
+	SandboxTimeout   time.Duration `yaml:"sandbox_timeout"`
 }
 
 type EnvironmentRunnerConfig struct {
+	BrainSandboxPrewarm     bool          `yaml:"brain_sandbox_prewarm"`
+	AgentMode               string        `yaml:"agent_mode"`
+	SandboxMCPPort          int           `yaml:"sandbox_mcp_port"`
+	SandboxMCPPath          string        `yaml:"sandbox_mcp_path"`
 	Enabled                 bool          `yaml:"enabled"`
 	Concurrency             int           `yaml:"concurrency"`
 	PackageProvisionTimeout time.Duration `yaml:"package_provision_timeout"`
 	ManagerPath             string        `yaml:"manager_path"`
-	ClaudeAgentVersion      string        `yaml:"claude_agent_version"`
 	ClaudePath              string        `yaml:"claude_path"`
+	// GitSSHtoHTTPSHosts lists extra hosts whose SSH remotes are rewritten to
+	// HTTPS via GIT_CONFIG insteadOf (scp-like git@host: and ssh://git@host/).
+	// github.com is always included by the environment-manager launcher.
+	// After config Load/validate, entries are trimmed and lower-cased in place.
+	GitSSHtoHTTPSHosts []string `yaml:"git_ssh_to_https_hosts"`
 }
 
 type CodeSessionConfig struct {
 	SandboxAPIBaseURL        string `yaml:"sandbox_api_base_url"`
-	OTLPFileLogEnabled       bool   `yaml:"otlp_file_log_enabled"`
-	OTLPLogRoot              string `yaml:"otlp_log_root"`
-	OTLPLogBodyPreviewBytes  int    `yaml:"otlp_log_body_preview_bytes"`
 	JWTSigningPrivateKeyFile string `yaml:"jwt_signing_private_key_file"`
 	// UpstreamProxyMITMEnabled 开启后，CCR CONNECT 会在服务端终止客户端 TLS，按 HTTP 转发，再独立验证真实上游 TLS。
 	UpstreamProxyMITMEnabled bool `yaml:"upstream_proxy_mitm_enabled"`
@@ -127,17 +253,54 @@ type CodeSessionConfig struct {
 	// MITM 开启后，服务启动时读取私钥并在内存中签发根证书；私钥绝不能进入 sandbox。
 	UpstreamProxyCAKeyFile string `yaml:"upstream_proxy_ca_key_file"`
 	// UpstreamProxyDisableSSRFProtection 是仅供本地 fake-IP/TUN 排障使用的危险开关；生产环境必须保持 false。
-	UpstreamProxyDisableSSRFProtection bool `yaml:"upstream_proxy_disable_ssrf_protection"`
+	UpstreamProxyDisableSSRFProtection bool   `yaml:"upstream_proxy_disable_ssrf_protection"`
+	BrainClaimTokenFile                string `yaml:"brain_claim_token_file"`
+}
+
+type ObservabilityConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// ContentCaptureEnabled defaults to true. It authorizes prompt originals,
+	// model output, and tool input/output payloads to enter the observability
+	// store. Set false to keep structural telemetry only (spans, durations,
+	// tokens, tool names).
+	ContentCaptureEnabled bool                    `yaml:"content_capture_enabled"`
+	OTLP                  ObservabilityOTLPConfig `yaml:"otlp"`
+	Backend               string                  `yaml:"backend"`
+	OpenObserve           OpenObserveConfig       `yaml:"openobserve"`
+}
+
+type OpenObserveConfig struct {
+	BaseURL      string                   `yaml:"base_url"`
+	Organization string                   `yaml:"organization"`
+	LogsStream   string                   `yaml:"logs_stream"`
+	TracesStream string                   `yaml:"traces_stream"`
+	Ingestion    BackendCredentialsConfig `yaml:"ingestion"`
+	Query        BackendQueryConfig       `yaml:"query"`
+}
+
+type BackendCredentialsConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+type BackendQueryConfig struct {
+	Username string        `yaml:"username"`
+	Password string        `yaml:"password"`
+	Timeout  time.Duration `yaml:"timeout"`
+}
+
+type ObservabilityOTLPConfig struct {
+	MaxRequestBytes int64         `yaml:"max_request_bytes"`
+	ForwardTimeout  time.Duration `yaml:"forward_timeout"`
 }
 
 type WebhookConfig struct {
-	EndpointURL   string        `yaml:"endpoint_url"`
-	SigningKey    string        `yaml:"signing_key"`
-	EventTypes    []string      `yaml:"event_types"`
-	WorkerEnabled bool          `yaml:"worker_enabled"`
-	Timeout       time.Duration `yaml:"timeout"`
-	MaxAttempts   int           `yaml:"max_attempts"`
-	AllowInsecure bool          `yaml:"allow_insecure"`
+	Concurrency         int           `yaml:"concurrency"`
+	WorkerEnabled       bool          `yaml:"worker_enabled"`
+	Timeout             time.Duration `yaml:"timeout"`
+	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`
+	MaxAttempts         int           `yaml:"max_attempts"`
+	AllowInsecure       bool          `yaml:"allow_insecure"`
 }
 
 type BootstrapConfig struct {
@@ -146,29 +309,33 @@ type BootstrapConfig struct {
 	OrganizationName    string       `yaml:"organization_name"`
 	WorkspaceExternalID string       `yaml:"workspace_external_id"`
 	UserExternalID      string       `yaml:"user_external_id"`
+	UserEmail           string       `yaml:"user_email"`
+	UserName            string       `yaml:"user_name"`
 	APIKeyExternalID    string       `yaml:"api_key_external_id"`
-}
-
-type SDKFixtureConfig struct {
-	FileID            string `yaml:"file_id"`
-	BatchID           string `yaml:"batch_id"`
-	AgentID           string `yaml:"agent_id"`
-	ReferenceAgentID  string `yaml:"reference_agent_id"`
-	EnvironmentID     string `yaml:"environment_id"`
-	WorkID            string `yaml:"work_id"`
-	SessionID         string `yaml:"session_id"`
-	SessionResourceID string `yaml:"session_resource_id"`
-	SessionThreadID   string `yaml:"session_thread_id"`
-	SessionEventID    string `yaml:"session_event_id"`
-	SkillID           string `yaml:"skill_id"`
-	SkillVersion      string `yaml:"skill_version"`
-	DeploymentID      string `yaml:"deployment_id"`
-	DeploymentRunID   string `yaml:"deployment_run_id"`
-	APIKey            string `yaml:"api_key"`
-	APIKeyExternalID  string `yaml:"api_key_external_id"`
 }
 
 type SeedAPIKey struct {
 	ExternalID string `yaml:"external_id"`
 	Key        string `yaml:"key"`
+}
+
+// SandboxLifecycleConfig controls long-idle managed sandbox reclamation.
+type SandboxLifecycleConfig struct {
+	Enabled     bool          `yaml:"enabled"`
+	DryRun      bool          `yaml:"dry_run"`
+	IdleTimeout time.Duration `yaml:"idle_timeout"`
+}
+
+type TranscriptArchiveConfig struct {
+	Enabled               bool          `yaml:"enabled"`
+	DryRun                bool          `yaml:"dry_run"`
+	TerminalSweepEnabled  bool          `yaml:"terminal_sweep_enabled"`
+	BoundarySweepEnabled  bool          `yaml:"boundary_sweep_enabled"`
+	HardDeleteEnabled     bool          `yaml:"hard_delete_enabled"`
+	TerminalDwell         time.Duration `yaml:"terminal_dwell"`
+	ArchiveMinAge         time.Duration `yaml:"archive_min_age"`
+	SoftDeleteWindow      time.Duration `yaml:"soft_delete_window"`
+	TargetSegmentRawBytes int           `yaml:"target_segment_raw_bytes"`
+	DeleteBatchRows       int           `yaml:"delete_batch_rows"`
+	MaxRowsPerJob         int           `yaml:"max_rows_per_job"`
 }

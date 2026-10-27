@@ -25,8 +25,9 @@ type preparedDeploymentExecution struct {
 
 func prepareDeploymentExecution(
 	deployment db.Deployment,
-	createdByAPIKeyUUID string,
+	createdByAPIKeyUUID, runtimeUserUUID string,
 	now time.Time,
+	memoryStores map[string]db.MemoryStore,
 ) (preparedDeploymentExecution, error) {
 	sessionID, threadID, workID, runID, err := newRunIDs()
 	if err != nil {
@@ -36,9 +37,13 @@ func prepareDeploymentExecution(
 	if err != nil {
 		return preparedDeploymentExecution{}, err
 	}
-	resources, err := sessionResourcesFromDeployment(deployment, now)
+	resources, err := sessionResourcesFromDeployment(sessionID, deployment, now, memoryStores)
 	if err != nil {
 		return preparedDeploymentExecution{}, err
+	}
+	vaultIDs, err := jsonx.Decode[[]string](jsonx.Default(deployment.VaultIDs, `[]`))
+	if err != nil {
+		return preparedDeploymentExecution{}, fmt.Errorf("decode deployment vault_ids: %w", err)
 	}
 	deploymentID := deployment.ExternalID
 	return preparedDeploymentExecution{
@@ -49,11 +54,13 @@ func prepareDeploymentExecution(
 				UUID: uuid.NewV4().String(), ExternalID: sessionID,
 				OrganizationUUID: deployment.OrganizationUUID, WorkspaceUUID: deployment.WorkspaceUUID,
 				CreatedByAPIKeyUUID: createdByAPIKeyUUID,
+				RuntimeUserUUID:     runtimeUserUUID,
 				EnvironmentUUID:     deployment.EnvironmentUUID, EnvironmentExternalID: deployment.EnvironmentExternalID,
 				AgentUUID: deployment.AgentUUID, AgentExternalID: deployment.AgentExternalID,
 				AgentVersion: deployment.AgentVersion, AgentSnapshot: deployment.AgentSnapshot,
 				DeploymentUUID: &deployment.UUID, DeploymentID: &deploymentID,
-				Metadata: jsonx.Default(deployment.Metadata, `{}`), VaultIDs: jsonx.Default(deployment.VaultIDs, `[]`),
+				Metadata: jsonx.Default(deployment.Metadata, `{}`), VaultIDs: vaultIDs,
+				Budget: deployment.Budget,
 				Status: "idle", Usage: json.RawMessage(`{}`), Stats: json.RawMessage(`{}`),
 				OutcomeEvaluations: outcomes, CreatedAt: now, UpdatedAt: now,
 			},

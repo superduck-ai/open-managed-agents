@@ -12,6 +12,7 @@ import (
 func (h *Handler) RegisterV1Routes(router chi.Router) {
 	h.registerRuntimeRoutes(router)
 	h.registerCodeSessionRoutes(router)
+	h.registerBrainClaimRoutes(router)
 	// HTTP session_ingress 校验签名 token 与请求路径；CCR v2 的 worker epoch/lease
 	// 约束由对应 /worker/* handler 的状态机执行。
 	h.registerSessionIngressRoutes(router)
@@ -22,6 +23,10 @@ func (h *Handler) RegisterV2Routes(router chi.Router) {
 	h.registerSessionIngressRoutes(router)
 	router.Get("/sessions/{code_session_id}", h.handleSessionContext)
 	router.Handle("/ccr-sessions/{code_session_id}/mcp", http.HandlerFunc(h.handleMCPProxy))
+	router.Post("/ccr-sessions/{code_session_id}/sandbox/mcp", h.handleSandboxMCP)
+	router.Post("/ccr-sessions/{code_session_id}/web/search", h.handleWebSearch)
+	router.Post("/ccr-sessions/{code_session_id}/web/fetch", h.handleWebFetch)
+	router.Handle("/ccr-sessions/{code_session_id}/mcp/*", http.HandlerFunc(h.handleNamedMCPProxy))
 }
 
 func (h *Handler) registerRuntimeRoutes(router chi.Router) {
@@ -35,11 +40,16 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 	// code-session ID 只在资源根路径声明一次；worker 作为该 session 的子资源注册，
 	// 避免通过字符串拼接重复完整路径，并让后续资源级中间件可以挂载在明确的 chi 子路由上。
 	router.Route("/code/sessions/{code_session_id}", func(sessionRouter chi.Router) {
-		sessionRouter.Get("/", h.errorAdapter.Wrap(h.handleCodeSessionHTTPPoll))
 		sessionRouter.Post("/", h.handleSessionIngressPersistence)
 		sessionRouter.Put("/", h.handleSessionIngressPersistence)
+		// The former root GET poll endpoint is intentionally unavailable. Keep a
+		// resource-scoped method response so it cannot fall through to the generic
+		// /v1 API-key authentication fallback.
+		sessionRouter.MethodNotAllowed(handleRemovedCodeSessionPoll)
+		sessionRouter.Post("/sign-commit", h.errorAdapter.Wrap(h.handleSignCommit))
 		sessionRouter.Route("/worker", func(workerRouter chi.Router) {
 			workerRouter.Get("/", h.handleGetCodeSessionWorker)
+			workerRouter.Get("/subagent-threads/{thread_id}", h.handleGetCodeSessionSubagentThread)
 			workerRouter.Put("/", h.handlePutCodeSessionWorker)
 			workerRouter.HandleFunc("/internal-events", h.handleCodeSessionWorkerInternalEvents)
 			workerRouter.Get("/events/stream", h.handleCodeSessionWorkerEventsStream)
@@ -50,8 +60,14 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 			workerRouter.Post("/heartbeat", h.handleCodeSessionWorkerHeartbeat)
 			workerRouter.Post("/otlp/metrics", h.handleCodeSessionWorkerOTLP)
 			workerRouter.Post("/otlp/logs", h.handleCodeSessionWorkerOTLP)
+			workerRouter.Post("/otlp/v1/logs", h.handleCodeSessionWorkerOTLP)
+			workerRouter.Post("/otlp/v1/traces", h.handleCodeSessionWorkerOTLP)
 		})
 	})
+}
+
+func handleRemovedCodeSessionPoll(w http.ResponseWriter, r *http.Request) {
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusMethodNotAllowed, "method_not_allowed_error", "Method not allowed"))
 }
 
 func (h *Handler) registerSessionIngressRoutes(router chi.Router) {

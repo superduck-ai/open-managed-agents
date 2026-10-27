@@ -292,7 +292,8 @@ func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceUUID 
 // 可信身份和授权范围。
 //
 // 它从指定 Workspace 中查找 Active Session，并确认 Session、Organization、Workspace、
-// 创建 Session 的 API key 和用户，以及 Filestore filesystem 属于同一条有效的归属链。
+// 服务端保存的运行用户，以及 Filestore filesystem 属于同一条有效的归属链。
+// 仅未保存运行用户的旧 Session 通过真实创建 API key 查找用户；失效用户不会回退。
 // Session 必须未终止、未归档、未删除，Workspace 必须未归档，用户和 filesystem
 // 也必须仍然有效。查询结果还包含当前的组织 taints 和 Workspace CMEK 状态，供
 // Runner 写入 token；这些安全字段来自数据库，不接受客户端提供的值。

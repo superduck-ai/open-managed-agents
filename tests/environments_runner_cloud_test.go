@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -14,7 +16,6 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
@@ -36,7 +37,6 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 	store := newFakeStore("runner-cloud-bucket")
 	app := newTestAppWithStore(t, &cfg, store)
@@ -185,10 +185,10 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if codeSession.PermissionMode != "bypassPermissions" {
 		t.Fatalf("local code session permission mode = %q", codeSession.PermissionMode)
 	}
-	if codeSession.Model != "claude-opus-4-8" {
+	if codeSession.Model != "default/claude-opus-4-8" {
 		t.Fatalf("local code session model = %q, want agent model unchanged", codeSession.Model)
 	}
-	queued, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
+	queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
 	if err != nil {
 		t.Fatalf("list queued inbound events: %v", err)
 	}
@@ -203,29 +203,17 @@ func TestEnvironmentRunnerLaunchesManagedAgentCloudSession(t *testing.T) {
 	if initializeRequest["systemPrompt"] != "You are a concise coding assistant." {
 		t.Fatalf("initialize systemPrompt = %q", initializeRequest["systemPrompt"])
 	}
-	const expectedManagedAgentEnvironmentPrompt = `# Managed-agent environment
-
-These rules describe the current sandbox environment and do not replace your assigned role.
-
-## Uploaded inputs
-
-- A public/API path /uploads/<relative-path> is available inside the sandbox at /mnt/session/uploads/<relative-path>. Use the sandbox path when accessing the file; do not try to open /uploads/... inside the sandbox.
-- If the user provides a public/API path /uploads/<relative-path>, use /mnt/session/uploads/<relative-path> inside the sandbox. Never form /mnt/session/uploads/uploads/<relative-path>.
-- /mnt/session/uploads is read-only. Do not modify files under this directory.
-- Mandatory lookup order: for every filename or relative file path mentioned by the user, check /mnt/session/uploads before the working directory, even if the user does not say the file was uploaded. Never run a working-directory-only search first.
-- First try the exact sandbox path /mnt/session/uploads/<user-provided-relative-path>. If only a filename is known or that exact path is absent, search recursively with Glob using path /mnt/session/uploads and pattern **/<filename>. Omitting path searches only the working directory and does not satisfy this rule.
-- Search the working directory only after the uploads check finds no match. Do not report a file missing until both locations have been checked in this order.
-- Uploaded filenames and paths are authoritative. Use an exact path when provided; otherwise, use only a path returned by inspecting /mnt/session/uploads. If multiple files match, ask the user which one to use.
-- Never guess, truncate, rename, or reconstruct an uploaded input path. Do not infer an upload path from metadata such as a file ID.
-
-## Output deliverables
-
-- /mnt/user-data/outputs is read-write. Write every file intended as a user-facing session output to /mnt/user-data/outputs/<relative-path>.
-- A file written there is surfaced at the corresponding public/API path /outputs/<relative-path>. Do not write to /outputs/... inside the sandbox.
-- Files written outside /mnt/user-data/outputs are working files and are not surfaced as session outputs.
-- Keep normal repository and source-code edits in the repository working directory. Do not redirect them to /mnt/user-data/outputs; only exported, user-facing deliverables belong there.`
-	if initializeRequest["appendSystemPrompt"] != expectedManagedAgentEnvironmentPrompt {
-		t.Fatalf("initialize appendSystemPrompt = %q", initializeRequest["appendSystemPrompt"])
+	appendSystemPrompt, _ := initializeRequest["appendSystemPrompt"].(string)
+	for _, want := range []string{
+		"# Managed-agent environment",
+		"/mnt/session/uploads | read-only",
+		"/mnt/user-data/outputs | read-write",
+		"## Persistence",
+		"## Network",
+	} {
+		if !strings.Contains(appendSystemPrompt, want) {
+			t.Fatalf("initialize appendSystemPrompt missing %q: %q", want, appendSystemPrompt)
+		}
 	}
 	var initial map[string]any
 	if err := json.Unmarshal(queued[1].Payload, &initial); err != nil {
@@ -268,7 +256,7 @@ These rules describe the current sandbox environment and do not replace your ass
 		"ANTHROPIC_DEFAULT_SONNET_MODEL",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
 	} {
-		if startupEnvironment[key] != "claude-opus-4-8" {
+		if startupEnvironment[key] != "default/claude-opus-4-8" {
 			t.Fatalf("%s = %q, want agent model unchanged", key, startupEnvironment[key])
 		}
 	}
@@ -289,7 +277,7 @@ These rules describe the current sandbox environment and do not replace your ass
 	if len(provider.rcloneLaunches) != 1 {
 		t.Fatalf("rclone launches = %d, want 1", len(provider.rcloneLaunches))
 	}
-	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup", "environment-manager"}; !slices.Equal(got, want) {
+	if got, want := provider.operations, []string{"outputs-alias", "rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup", "environment-manager"}; !slices.Equal(got, want) {
 		t.Fatalf("sandbox operation order = %#v, want %#v", got, want)
 	}
 	if len(provider.writes) != 1 || provider.writes[0].path != "/tmp/rclone-mount-config.json" {
@@ -309,6 +297,9 @@ These rules describe the current sandbox environment and do not replace your ass
 	if err := json.Unmarshal(provider.writes[0].data, &rcloneConfig); err != nil {
 		t.Fatalf("decode rclone config: %v", err)
 	}
+	if len(rcloneConfig.Mounts) != 5 {
+		t.Fatalf("rclone mounts = %d, want 5 without memory stores", len(rcloneConfig.Mounts))
+	}
 	for _, mount := range rcloneConfig.Mounts {
 		if mount.AuthToken == "" || strings.Contains(provider.rcloneLaunches[0].command, mount.AuthToken) {
 			t.Fatal("rclone token is empty or leaked into command text")
@@ -316,6 +307,9 @@ These rules describe the current sandbox environment and do not replace your ass
 		claims, verifyErr := app.filestoreCredentials.Verify(mount.AuthToken)
 		if verifyErr != nil {
 			t.Fatalf("verify rclone token for %s: %v", mount.Source, verifyErr)
+		}
+		if mount.Source == "/memory" || mount.Destination == "/mnt/memory" {
+			t.Fatalf("parent /mnt/memory must not be a filestore mount: %#v", mount)
 		}
 		if mount.Source == "/outputs" {
 			if mount.Readonly || claims.Readonly != nil {
@@ -352,8 +346,8 @@ These rules describe the current sandbox environment and do not replace your ass
 // TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation 对应 #189：
 // Session 已可发消息，但 Code Session 在 Runner 后半段才创建。
 // 在 provider.Create 时发送（prepare 已完成、Code Session 尚不存在）：
-// 消息应进入 session_events，且 Runner 结束后也应出现在 code_session_inbound_events
-// （initialize 之后）。修复前该窗口内只有 session_events，inbound 往往只有 initialize。
+// 消息应进入 session_events，且 Runner 结束后也应直接发布到 JetStream
+// （initialize 之后）。修复前该窗口内只有 session_events，worker 往往只能看到 initialize。
 func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := config.Load()
@@ -369,7 +363,7 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 	env := createEnvironment(t, app, `{"name":"runner-startup-message-`+strings.ReplaceAll(time.Now().Format("150405.000000000"), ".", "")+`"}`)
 	defer cleanupEnvironmentRows(t, app.pool, env.ID)
 	session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+`}`)
-	defer deleteSession(t, app, session.ID)
+	defer cleanupSession(t, app, session.ID)
 
 	const prompt = "startup-window message must reach inbound"
 	ids := getDefaultDBIDs(t, app.pool)
@@ -406,7 +400,7 @@ func TestEnvironmentRunnerDeliversMessageAcceptedBeforeCodeSessionCreation(t *te
 	if err != nil {
 		t.Fatalf("load Code Session after runner startup: %v", err)
 	}
-	queued, err := app.db.ListQueuedCodeSessionInboundEvents(ctx, codeSession.ExternalID)
+	queued, err := listQueuedCodeSessionInboundEvents(app, codeSession.ExternalID)
 	if err != nil {
 		t.Fatalf("list queued inbound events: %v", err)
 	}
@@ -587,7 +581,6 @@ func runPackageEnvironment(t *testing.T, testCase packageRunnerCase) (*recording
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.EnvironmentRunner.PackageProvisionTimeout = cfgPackageProvisionTimeoutForTest
 	cfg.E2B.Template = "fake-template"
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-package-bucket"))
@@ -728,7 +721,7 @@ func TestEnvironmentRunnerKillsSandboxWhenRcloneReadyFails(t *testing.T) {
 	if !processed {
 		t.Fatal("runner did not process queued session work")
 	}
-	if got, want := provider.operations, []string{"rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup"}; !slices.Equal(got, want) {
+	if got, want := provider.operations, []string{"outputs-alias", "rclone-config-write", "rclone-config-chmod", "rclone-start", "rclone-ready", "rclone-config-cleanup"}; !slices.Equal(got, want) {
 		t.Fatalf("sandbox operation order = %#v, want %#v", got, want)
 	}
 	if len(provider.launches) != 0 {
@@ -840,7 +833,6 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 
 	store := newFakeStore("runner-cloud-skills-bucket")
@@ -930,6 +922,28 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 		strings.Contains(provider.launches[0].command, "$HOME/.claude/skills") {
 		t.Fatalf("sandbox command should not install managed agent skills directly: launches=%v", provider.launches)
 	}
+	deleteSkill(t, app, skill.ID)
+	codeSession, err := app.db.GetCodeSessionBySessionExternalID(ctx, filesystem.WorkspaceUUID, session.ID)
+	if err != nil {
+		t.Fatalf("load skill session runtime: %v", err)
+	}
+	queued, err := app.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, provider.sandboxID, errors.New("sandbox removed"))
+	if err != nil || !queued {
+		t.Fatalf("queue skill session recovery = (%t, %v)", queued, err)
+	}
+	replacement := &recordingRunnerProvider{sandboxID: "sandbox-runner-skills-replacement"}
+	runUntilSandboxCreated(t, ctx, newManagedAgentRunner(t, app, replacement, cfg), replacement)
+	recoveredArchives, err := app.db.ListSessionSkillArchiveResources(ctx, filesystem.WorkspaceUUID, filesystem.UUID)
+	if err != nil {
+		t.Fatalf("list recovered skill archives: %v", err)
+	}
+	if !reflect.DeepEqual(recoveredArchives, archiveEntries) {
+		t.Fatalf("sandbox recovery changed skill snapshots: before=%+v after=%+v", archiveEntries, recoveredArchives)
+	}
+	if len(replacement.launches) != 1 {
+		t.Fatalf("replacement launches = %d, want one", len(replacement.launches))
+	}
+	assertSingleActiveRecoveredCodeSession(t, app, session.ID)
 }
 
 func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T) {
@@ -942,7 +956,6 @@ func TestEnvironmentRunnerProjectsSkillsWithoutDownloadingArchives(t *testing.T)
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 
 	store := newFakeStore("runner-cloud-missing-resolver-bucket")
@@ -1028,7 +1041,6 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-network-order-bucket"))
@@ -1037,7 +1049,8 @@ func TestEnvironmentRunnerResolvesLimitedNetworkWithManagedAgentMCPHosts(t *test
 	agent := createAgent(t, app, `{
 		"model":"claude-opus-4-8",
 		"name":"Runner MCP Network Agent",
-		"mcp_servers":[{"type":"url","name":"notion","url":"https://mcp.notion.com/mcp"}]
+		"mcp_servers":[{"type":"url","name":"notion","url":"https://mcp.notion.com/mcp"}],
+		"tools":[{"type":"mcp_toolset","mcp_server_name":"notion"}]
 	}`)
 	defer archiveAgent(t, app, agent.ID)
 	environment := createEnvironment(t, app, `{
@@ -1119,7 +1132,6 @@ func TestEnvironmentRunnerClearsStaleMCPHosts(t *testing.T) {
 			cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 			cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 			cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-			cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 			cfg.E2B.Template = "fake-template"
 
 			app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-stale-mcp-bucket"))
@@ -1208,7 +1220,6 @@ func TestEnvironmentRunnerDoesNotCreateCodeSessionWhenResolveFails(t *testing.T)
 	cfg.CodeSession.SandboxAPIBaseURL = "http://code-session-sandbox.example.test"
 	cfg.EnvironmentRunner.ManagerPath = "/usr/local/bin/environment-manager"
 	cfg.EnvironmentRunner.ClaudePath = "/opt/claude-code/bin/claude"
-	cfg.EnvironmentRunner.ClaudeAgentVersion = "2.1.120"
 	cfg.E2B.Template = "fake-template"
 
 	app := newTestAppWithStore(t, &cfg, newFakeStore("runner-cloud-resolve-failure-bucket"))
@@ -1319,7 +1330,7 @@ func newManagedAgentRunner(
 		DB:              app.db,
 		Provider:        provider,
 		Config:          cfg,
-		CodeSessions:    codesessions.NewServiceWithCredentials(app.db, app.credentials, nil),
+		CodeSessions:    newCodeSessionService(app, nil, nil),
 		Skills:          skillsapi.NewRuntimeResolver(app.db),
 		FilestoreTokens: app.filestoreCredentials,
 	})
@@ -1376,8 +1387,15 @@ func (p *recordingRunnerProvider) WriteFile(_ context.Context, sandboxID, path s
 		path:      path,
 		data:      append([]byte(nil), data...),
 	})
-	p.operations = append(p.operations, "rclone-config-write")
-	if p.failOperation == "rclone-config-write" {
+	operation := "write:" + path
+	switch path {
+	case "/tmp/rclone-mount-config.json":
+		operation = "rclone-config-write"
+	case "/mnt/memory/MEMORY.md":
+		operation = "memory-markdown-write"
+	}
+	p.operations = append(p.operations, operation)
+	if p.failOperation == operation {
 		return p.runCommandFailure
 	}
 	return nil
@@ -1411,6 +1429,10 @@ func (p *recordingRunnerProvider) RunCommand(_ context.Context, sandboxID string
 	switch {
 	case request.Command == "'/usr/local/bin/environment-manager' provision-packages --protocol v1 --stdin":
 		operation = "command:provision"
+	case strings.HasPrefix(request.Command, "mkdir -p ") && strings.Contains(request.Command, "/mnt/memory"):
+		operation = "memory-root-mkdir"
+	case strings.HasPrefix(request.Command, "mkdir -p ") && strings.Contains(request.Command, "/mnt/session/outputs"):
+		operation = "outputs-alias"
 	case strings.HasPrefix(request.Command, "chmod 0600 "):
 		operation = "rclone-config-chmod"
 	case strings.HasPrefix(request.Command, "rm -f ") && strings.Contains(request.Command, "rclone-mount-config.json"):

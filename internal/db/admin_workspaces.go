@@ -7,6 +7,7 @@ import (
 )
 
 type AdminWorkspace struct {
+	IsDefault        bool            `db:"is_default"`
 	UUID             string          `db:"uuid"`
 	ExternalID       string          `db:"external_id"`
 	OrganizationUUID string          `db:"organization_uuid"`
@@ -31,22 +32,27 @@ type ListAdminWorkspacesParams struct {
 
 func (d *DB) CreateAdminWorkspace(ctx context.Context, workspace AdminWorkspace) (AdminWorkspace, error) {
 	mapper := NewAdminWorkspaceMapper(d.mapperDB)
-	created, err := mapper.Insert(ctx, insertAdminWorkspaceParams{
+	created, err := mapper.Insert(ctx, workspaceInsertParams(workspace))
+	if isUniqueViolation(err) {
+		return AdminWorkspace{}, ErrDuplicate
+	}
+	return created, err
+}
+
+func workspaceInsertParams(workspace AdminWorkspace) insertAdminWorkspaceParams {
+	return insertAdminWorkspaceParams{
 		UUID:             workspace.UUID,
 		ExternalID:       workspace.ExternalID,
 		OrganizationUUID: workspace.OrganizationUUID,
 		Name:             workspace.Name,
+		IsDefault:        workspace.IsDefault,
 		CreatedAt:        workspace.CreatedAt,
 		CompartmentID:    workspace.CompartmentID,
 		DisplayColor:     workspace.DisplayColor,
 		DataResidency:    workspace.DataResidency,
 		ExternalKeyID:    workspace.ExternalKeyID,
 		Tags:             workspace.Tags,
-	})
-	if isUniqueViolation(err) {
-		return AdminWorkspace{}, ErrDuplicate
 	}
-	return created, err
 }
 
 func (d *DB) GetAdminWorkspace(ctx context.Context, organizationUUID, externalID string) (AdminWorkspace, error) {

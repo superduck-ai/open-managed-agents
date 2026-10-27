@@ -3,7 +3,9 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"time"
@@ -74,7 +76,7 @@ func (d *DB) CreateAgent(ctx context.Context, agent Agent, versionExternalID str
 			UUID:                agent.UUID,
 			ExternalID:          agent.ExternalID,
 			WorkspaceUUID:       agent.WorkspaceUUID,
-			CreatedByAPIKeyUUID: agent.CreatedByAPIKeyUUID,
+			CreatedByAPIKeyUUID: nullableString(agent.CreatedByAPIKeyUUID),
 			Config:              newAgentConfigParams(agent),
 			CreatedAt:           agent.CreatedAt,
 		})
@@ -183,17 +185,16 @@ func isNullJSON(raw json.RawMessage) bool {
 	return value == nil
 }
 
-func (d *DB) ArchiveAgent(ctx context.Context, workspaceUUID string, externalID string) (Agent, error) {
-	var archived Agent
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		row, err := NewAgentMapper(executor).ArchiveByExternalID(ctx, workspaceUUID, externalID)
-		if err != nil {
-			return mapNoRows(err)
-		}
-		archived = row.agent()
-		return NewDeploymentMapper(executor).ArchiveByRootAgent(ctx, workspaceUUID, externalID)
-	})
-	return archived, err
+func (d *DB) ArchiveAgentTx(ctx context.Context, tx *yourbatis.Tx, workspaceUUID, externalID string) (Agent, bool, error) {
+	mapper := NewAgentMapper(tx)
+	row, err := mapper.ArchiveByExternalID(ctx, workspaceUUID, externalID)
+	if errors.Is(err, sql.ErrNoRows) {
+		row, err = mapper.FindByExternalID(ctx, workspaceUUID, externalID)
+		current, loadErr := agentFromRow(row, err)
+		return current, false, loadErr
+	}
+	archived, err := agentFromRow(row, err)
+	return archived, err == nil, err
 }
 
 func (d *DB) ListAgentsPage(ctx context.Context, params ListAgentsPageParams) ([]Agent, bool, error) {

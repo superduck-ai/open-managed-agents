@@ -1,3 +1,5 @@
+//go:build integration
+
 package db
 
 import (
@@ -69,7 +71,7 @@ func TestConsoleInviteMapperPostgreSQL(t *testing.T) {
 			ExternalID:       "invite_other_org",
 			OrganizationUUID: otherOrganizationUUID,
 			Email:            "other@example.com",
-			Role:             "developer",
+			Role:             "user",
 			InvitedAt:        invitedAt,
 			ExpiresAt:        invitedAt.Add(21 * 24 * time.Hour),
 		})
@@ -91,12 +93,32 @@ func TestConsoleInviteMapperPostgreSQL(t *testing.T) {
 		}
 	})
 
+	t.Run("默认列表排除拒绝记录，显式 deleted 保留", func(t *testing.T) {
+		execMapperFixtureSQL(t, ctx, tx, `INSERT INTO organization_invites (external_id, organization_uuid, email, role, status, invited_at, expires_at)
+			VALUES ('invite_declined_filter', $1, 'declined@example.com', 'developer', 'declined', NOW(), NOW() + INTERVAL '1 hour')`, otherOrganizationUUID)
+		for _, status := range []string{"", "pending", "accepted", "expired"} {
+			rows, err := mapper.List(ctx, otherOrganizationUUID, status, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range rows {
+				if row.ID == "invite_declined_filter" {
+					t.Fatalf("%q 列表包含已拒绝邀请", status)
+				}
+			}
+		}
+		rows, err := mapper.List(ctx, otherOrganizationUUID, "deleted", 100)
+		if err != nil || len(rows) != 1 || rows[0].ID != "invite_declined_filter" {
+			t.Fatalf("显式 deleted 未包含已拒绝邀请：%+v %v", rows, err)
+		}
+	})
+
 	t.Run("success creates filters resends and deletes invites", func(t *testing.T) {
 		created, createErr := mapper.Insert(ctx, insertConsoleInviteParams{
 			ExternalID:       "invite_pending",
 			OrganizationUUID: organizationUUID,
 			Email:            "pending@example.com",
-			Role:             "billing",
+			Role:             "user",
 			InvitedAt:        invitedAt,
 			ExpiresAt:        time.Now().UTC().Add(21 * 24 * time.Hour),
 		})
@@ -107,9 +129,9 @@ func TestConsoleInviteMapperPostgreSQL(t *testing.T) {
 			INSERT INTO organization_invites (
 				external_id, organization_uuid, email, role, status, invited_at, expires_at, deleted_at
 			) VALUES
-				('invite_expired', $1, 'expired@example.com', 'developer', 'pending', $2, NOW() - INTERVAL '1 hour', NULL),
-				('invite_accepted', $1, 'accepted@example.com', 'developer', 'accepted', $2, NOW() + INTERVAL '1 hour', NULL),
-				('invite_deleted', $1, 'deleted@example.com', 'developer', 'deleted', $2, NOW() + INTERVAL '1 hour', NOW())
+				('invite_expired', $1, 'expired@example.com', 'user', 'pending', $2, NOW() - INTERVAL '1 hour', NULL),
+				('invite_accepted', $1, 'accepted@example.com', 'user', 'accepted', $2, NOW() + INTERVAL '1 hour', NULL),
+				('invite_deleted', $1, 'deleted@example.com', 'user', 'deleted', $2, NOW() + INTERVAL '1 hour', NOW())
 		`, organizationUUID, invitedAt.Add(-time.Hour))
 
 		for _, test := range []struct {

@@ -3,10 +3,21 @@ package sessions
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
+
+var errSessionAgentUpdateObjectRequired = errors.New("agent update must be an object")
+var errSessionAgentUpdateUnsupportedFields = errors.New("only tools and mcp_servers can be updated in an existing session")
+var errStoredSessionAgentInvalid = errors.New("stored session agent is invalid")
+var errInvalidSessionAgentType = errors.New("agent.type must be agent or agent_with_overrides")
+var errInvalidSessionSystemOverride = errors.New("agent.system override must be a string of at most 100000 characters or null")
+var errSessionOverrideModelsUnavailable = errors.New("workspace model configuration is unavailable")
+var errSessionOverrideModelNotConfigured = errors.New("session override model is not configured for this workspace")
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)
@@ -16,8 +27,13 @@ func internalError(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, cause)
 }
 
-func sessionsBetaRequired() error {
-	return apperr.New(apperr.InvalidArgument, "Sessions API requires beta=true", nil)
+func queueCodeSessionEventsError(cause error) error {
+	// code session service 已将传输失败包装为 Unavailable 应用错误，直接透传
+	// 保持 503 语义，不再二次解释 sentinel。
+	if errors.Is(cause, codesessions.ErrWorkerEventUnavailable) {
+		return cause
+	}
+	return internalError("Could not queue events for the code session worker", cause)
 }
 
 func sessionRouteNotFound() error {
@@ -61,6 +77,9 @@ func resourceNotFound(resourceID string, cause error) error {
 }
 
 func mapResourceBuildError(err error) error {
+	if errors.Is(err, sessionresource.ErrGitTokenCrypto) {
+		return internalError("Could not secure Git resource token", err)
+	}
 	if mapped, ok := mapFileResourcePersistenceError(err); ok {
 		return mapped
 	}
@@ -68,10 +87,10 @@ func mapResourceBuildError(err error) error {
 	if !errors.As(err, &refErr) {
 		return invalidRequest(err)
 	}
-	if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrNotFound) {
+	if refErr.ResourceType == sessionresource.MemoryStoreType && errors.Is(refErr.Err, db.ErrNotFound) {
 		return memoryStoreNotFound(refErr.ResourceID, err)
 	}
-	if refErr.ResourceType == "memory_store" && errors.Is(refErr.Err, db.ErrInvalidState) {
+	if refErr.ResourceType == sessionresource.MemoryStoreType && errors.Is(refErr.Err, db.ErrInvalidState) {
 		return apperr.New(apperr.InvalidArgument, "memory store must not be archived", err)
 	}
 	return internalError(
@@ -89,6 +108,18 @@ func mapSessionLoadError(err error, sessionID string) error {
 	}
 	if errors.Is(err, db.ErrInvalidState) {
 		return apperr.New(apperr.InvalidArgument, "session state does not allow this operation", err)
+	}
+	if errors.Is(err, db.ErrSessionInterruptTargetInvalid) {
+		return invalidRequest(err)
+	}
+	if errors.Is(err, db.ErrSessionToolConfirmationInvalid) {
+		return invalidRequest(err)
+	}
+	if errors.Is(err, db.ErrSessionInputPaused) {
+		return invalidRequest(err)
+	}
+	if errors.Is(err, db.ErrSessionInputConflict) {
+		return apperr.New(apperr.Conflict, "Session cannot accept this input now", err)
 	}
 	return internalError("Session operation failed", fmt.Errorf("session %q operation: %w", sessionID, err))
 }
@@ -108,12 +139,23 @@ func mapFileResourcePersistenceError(err error) (error, bool) {
 	if errors.Is(err, db.ErrFilestorePathExists) {
 		return apperr.New(apperr.Conflict, "File resource mount_path conflicts with the session filesystem", err), true
 	}
+	var memoryLimitErr *db.SessionMemoryStoreLimitError
+	if errors.As(err, &memoryLimitErr) {
+		return invalidRequest(memoryLimitErr), true
+	}
+	var memoryDuplicateErr *db.SessionMemoryStoreDuplicateError
+	if errors.As(err, &memoryDuplicateErr) {
+		return invalidRequest(memoryDuplicateErr), true
+	}
 	return nil, false
 }
 
 func mapThreadLoadError(err error, threadID string) error {
 	if errors.Is(err, db.ErrNotFound) {
 		return threadNotFound(threadID, err)
+	}
+	if errors.Is(err, db.ErrInvalidState) {
+		return invalidRequest(errors.New("thread must be idle or terminated to archive"))
 	}
 	return internalError("Thread operation failed", fmt.Errorf("thread %q operation: %w", threadID, err))
 }
@@ -127,4 +169,45 @@ func mapResourceLoadError(err error, resourceID string) error {
 
 func streamingUnsupported() error {
 	return internalError("Streaming is not supported", errors.New("response writer does not implement http.Flusher"))
+}
+
+func gitTokenUpdateRequiredError() error {
+	return invalidRequest(errors.New("authorization_token must be provided when updating a Git resource"))
+}
+
+type resourceReferenceError = sessionresource.ReferenceError
+
+func invalidSessionCreateBody(err error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return apperr.New(apperr.RequestTooLarge, "Request body exceeds maximum size", err)
+	}
+	return invalidRequest(err)
+}
+
+func unsupportedSelfHostedResource(environmentID, resourceType string) error {
+	return invalidRequest(fmt.Errorf("environment %s is self-hosted; %s resources are not supported", environmentID, resourceType))
+}
+
+func invalidResourceEnvironmentConfig(cause error) error {
+	return internalError("Could not validate session resources", fmt.Errorf("decode resource environment config: %w", cause))
+}
+
+func resourceEnvironmentLoadError(environmentID string, cause error) error {
+	if errors.Is(cause, db.ErrNotFound) {
+		return environmentNotFound(environmentID, cause)
+	}
+	return internalError("Could not validate session resources", fmt.Errorf("load resource environment %q: %w", environmentID, cause))
+}
+
+func vaultNotFound(vaultID string, cause error) error {
+	return apperr.New(apperr.NotFound, fmt.Sprintf("Vault '%s' was not found.", vaultID), cause)
+}
+
+func mapVaultBindingError(err error) error {
+	var applicationError *apperr.Error
+	if errors.As(err, &applicationError) {
+		return err
+	}
+	return invalidRequest(err)
 }

@@ -18,7 +18,7 @@ flowchart LR
   Draft -->|有语义变化且校验通过| Update["POST /v1/agents/{id}?beta=true"]
 ```
 
-- 支持的标准配置默认进入 `Rendered`；合法但含未知旧字段、未知工具类型或无法安全映射的数据默认进入 `Raw`，并禁用 `Rendered`，避免静默丢字段。
+- 支持的标准配置默认进入 `Rendered`；合法但含未知旧字段、未知工具类型、重复 toolset 或无法安全映射的数据默认进入 `Raw`，并禁用 `Rendered`，避免静默丢字段。
 - Rendered 和 Raw 共享同一份 Edit Draft。进入 Raw 或切换 YAML/JSON 时均从 Draft 重新序列化，不做文本级转换。
 - Raw 语法或顶层 schema 无效时不污染最后合法 Draft，并阻止切换格式、切回 Rendered及保存。
 - Rendered 允许表单处于临时无效状态，错误在底部操作区展示；修正前禁止保存，不会自动切换到 Raw。
@@ -33,13 +33,29 @@ flowchart LR
 
 ## 字段与组件复用
 
-- General、Multiagent、Skills、Tools 复用 Create Agent 的 `AgentConfigRenderedEditor`，因此搜索、多选、版本固定、MCP Directory 图标、权限聚合和 Custom Tool 校验保持一致。
+- General、Multiagent、Skills、Tools 复用 Create Agent 的 `AgentConfigRenderedEditor`，因此搜索、多选、版本固定、MCP Directory/工作区候选页签、权限聚合和 Custom Tool 校验保持一致。
 - 编辑既有模型 ID 时保留 `model.speed`；已有 `self`、固定 Agent 版本和固定 Skill 版本会展示并保留。
-- MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新。
-- 内置工具只展示 `bash`、`read`、`write`、`edit`、`glob`、`grep`；Raw 可继续保留后端合同允许的其他既有配置。
+- MCP Server 与对应 `mcp_toolset` 的添加和删除继续保持原子更新；新增自定义 MCP 只能从当前工作区未删除的 MCP 配置目录中选择，选择时把名称与 URL 复制到新 Agent 版本，不保存目录项 ID。
+- 既有 Agent 中不属于当前工作区 MCP 配置目录的历史配置仍可在 Rendered 中回显、保存和移除；管理目录项修改或删除不回写已有 Agent 版本。
+- Rendered 不提供新增 Custom Tool 的入口，但继续允许编辑和移除已有 Custom Tool，Raw 往返不丢失其定义。
+- Tunnel 也复用 Create 的内联 Channel 配置：多/零
+  实时 Channel 的待确认卡片阻止 Save 和切换 Raw；已配置 Channel 只在 Apply 或选择有效建议后原子迁移 server/toolset
+  引用，保留既有权限和其他字段，并对已连接 Tunnel 重新发现工具。
+- 内置工具回显当前 9 项可选工具，与创建页和 Agent API 合同一致；未显式配置时 `ask_user_question` 默认关闭，用户可以主动开启。Brain 的 `web_search` / `web_fetch` 在 oma-server 执行，外部 Claude Code 的 `WebFetch` 仍按客户端工具处理，不启用 Messages API 的模型服务端同名工具。Rendered 与 Raw 均支持内置 `web_search`；Web 工具域名策略和 Fetch 内容预算保留在配置中。
 
 ## 布局与验收
 
 - Edit 与 Create 共用 `880px` 最大宽度、近全高滚动区、`220px + 控件列` 的桌面布局和固定底栏；窄屏回退单列。
-- 组件测试覆盖默认 Rendered、Raw YAML/JSON、无改动禁用保存、并发失败保留 Draft、固定引用与模型修饰项保留、旧配置回退 Raw。
+- 组件测试覆盖默认 Rendered、Raw YAML/JSON、无改动禁用保存、并发失败保留 Draft、固定引用与模型修饰项保留、
+  Tunnel Channel 待确认阻断与原子迁移，以及旧配置回退 Raw。
 - 纯函数测试覆盖 Rendered 兼容性判断，避免未来扩展 schema 时误将不可表达的配置带入表单。
+
+
+## 详情与编辑的视觉约定
+
+- 详情页采用12px元数据、14px正文与区块标题、24px页面标题，以字重和留白建立层级。长标题和描述可换行，窄屏操作区另起一行。
+- 详情和快速查看共用AgentToolsSection，按工具卡实际容器宽度切换列布局，32rem以下说明另起一行，权限标签右对齐；不按浏览器宽度强迫窄侧栏使用三列。
+- 工具卡保留原有圆角，以0.5px内侧轮廓避免裁切；局部结构边界和中性键盘焦点均为0.5px。箭头保留220ms ease-out、颜色150ms，减少动态效果时取消过渡。
+- 关联会话表格保留可读列宽，名称列显式保留200px，横向滚动只发生在表格容器中，不让固定列挤出零宽度名称列。
+- Raw模式由外层提供唯一“Agent配置”标题，共享原始编辑器只提供格式选择、复制和代码编辑；Create与Edit同时适用。
+- 本批真实样本覆盖配置、工具、版本菜单、关联会话、部署空状态、编辑Rendered/Raw和快速查看的桌面明暗及390px浅色。没有保存、刷新MCP目录或运行资源；非空技能/部署、错误/权限、英文和原生缩放仍待验收。

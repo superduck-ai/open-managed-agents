@@ -2,98 +2,95 @@ package environments
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 type managedAgentRuntimeResources struct {
-	sources []json.RawMessage
-	workDir string
+	runtimeSkills     []skillsapi.RuntimeSkill
+	workerTransport   string
+	sources           []json.RawMessage
+	workDir           string
+	memoryMounts      []memoryRuntimeMount
+	environmentConfig json.RawMessage
 }
 
 type gitRepositoryRuntimeSource struct {
-	Type      string          `json:"type"`
-	URL       string          `json:"url"`
-	MountPath string          `json:"mount_path"`
-	Checkout  json.RawMessage `json:"checkout,omitempty"`
+	Type      string                   `json:"type"`
+	GitInfo   gitRepositoryRuntimeInfo `json:"git_info"`
+	MountPath string                   `json:"mount_path"`
 }
 
-type memoryStoreRuntimeSource struct {
-	Type          string  `json:"type"`
-	MemoryStoreID string  `json:"memory_store_id"`
-	Access        *string `json:"access,omitempty"`
-	Description   *string `json:"description,omitempty"`
-	Instructions  *string `json:"instructions,omitempty"`
-	MountPath     *string `json:"mount_path,omitempty"`
-	Name          *string `json:"name,omitempty"`
+type gitRepositoryRuntimeInfo struct {
+	Type string `json:"type"`
+	Repo string `json:"repo"`
+	URL  string `json:"url"`
+	Ref  string `json:"ref,omitempty"`
 }
 
-func resolveManagedAgentRuntimeResources(resources []db.SessionResource) managedAgentRuntimeResources {
+// resolveManagedAgentRuntimeResources excludes tokens; the outbound proxy injects credentials.
+func resolveManagedAgentRuntimeResources(resources []db.SessionResource) (managedAgentRuntimeResources, error) {
 	resolved := managedAgentRuntimeResources{
 		sources: make([]json.RawMessage, 0, len(resources)),
 		workDir: defaultEnvironmentWorkDir,
 	}
 	var workDirResource *db.SessionResource
+	var gitSpecs []sessionresource.GitRepositorySpec
 	for index := range resources {
 		resource := &resources[index]
 		switch resource.ResourceType {
-		case "github_repository":
-			repository := resource.GitHubRepository
-			if repository == nil {
-				continue
+		case sessionresource.GitRepositoryType:
+			spec, err := sessionresource.StoredGitRepositorySpec(resource.GitHubRepository)
+			if err != nil {
+				return managedAgentRuntimeResources{}, fmt.Errorf("git resource %s: %w", resource.ExternalID, err)
 			}
-			runtimeRepository := *repository
-			runtimeRepository.URL = strings.TrimSpace(runtimeRepository.URL)
-			runtimeRepository.MountPath = strings.TrimSpace(runtimeRepository.MountPath)
-			if runtimeRepository.MountPath != "" &&
-				(workDirResource == nil || repositoryAttachedBefore(*resource, *workDirResource)) {
+			gitSpecs = append(gitSpecs, spec)
+			// Use the earliest attached repository, independent of query order.
+			if workDirResource == nil || repositoryAttachedBefore(*resource, *workDirResource) {
 				workDirResource = resource
-				resolved.workDir = runtimeRepository.MountPath
+				resolved.workDir = spec.MountPath
 			}
-			source, ok := gitRepositoryRuntimeSourceJSON(runtimeRepository)
-			if ok {
-				resolved.sources = append(resolved.sources, source)
+			// The EM wire contract uses the existing string ref. Preserve the
+			// public branch intent with a fully qualified ref to avoid tag ambiguity.
+			var ref string
+			if spec.Checkout != nil {
+				ref = spec.Checkout.SHA
+				if spec.Checkout.Type == "branch" {
+					ref = "refs/heads/" + spec.Checkout.Name
+				}
 			}
-		case "memory_store":
-			if source, ok := memoryStoreRuntimeSourceJSON(resource.MemoryStore); ok {
-				resolved.sources = append(resolved.sources, source)
+			repositoryURL, _ := url.Parse(spec.URL)
+			source, err := json.Marshal(gitRepositoryRuntimeSource{
+				Type: "git_repository",
+				GitInfo: gitRepositoryRuntimeInfo{
+					// URL-based resources use a generic Git type; signing requires it,
+					// while EM uses the explicit URL to access the repository.
+					Type: "git",
+					Repo: strings.TrimPrefix(repositoryURL.Path, "/"), URL: spec.URL, Ref: ref,
+				},
+				MountPath: spec.MountPath,
+			})
+			if err != nil {
+				return managedAgentRuntimeResources{}, err
 			}
+			resolved.sources = append(resolved.sources, source)
+		case sessionresource.MemoryStoreType:
+			mount, ok := memoryRuntimeMountFromResource(resource.MemoryStore)
+			if !ok {
+				return managedAgentRuntimeResources{}, fmt.Errorf("memory resource %s: %w", resource.ExternalID, errMemorySnapshotInvalid)
+			}
+			resolved.memoryMounts = append(resolved.memoryMounts, mount)
 		}
 	}
-	return resolved
-}
-
-func gitRepositoryRuntimeSourceJSON(payload db.SessionResourceGitHubRepository) (json.RawMessage, bool) {
-	if payload.URL == "" || payload.MountPath == "" {
-		return nil, false
+	if err := sessionresource.ValidateGitRepositoryConflicts(gitSpecs); err != nil {
+		return managedAgentRuntimeResources{}, err
 	}
-	if len(payload.Checkout) > 0 && !json.Valid(payload.Checkout) {
-		payload.Checkout = nil
-	}
-	raw, err := json.Marshal(gitRepositoryRuntimeSource{
-		Type:      "git_repository",
-		URL:       payload.URL,
-		MountPath: payload.MountPath,
-		Checkout:  payload.Checkout,
-	})
-	return raw, err == nil
-}
-
-func memoryStoreRuntimeSourceJSON(memoryStore *db.SessionResourceMemoryStore) (json.RawMessage, bool) {
-	if memoryStore == nil || memoryStore.ExternalID == "" {
-		return nil, false
-	}
-	raw, err := json.Marshal(memoryStoreRuntimeSource{
-		Type:          "memory_store",
-		MemoryStoreID: memoryStore.ExternalID,
-		Access:        memoryStore.Access,
-		Description:   memoryStore.Description,
-		Instructions:  memoryStore.Instructions,
-		MountPath:     memoryStore.MountPath,
-		Name:          memoryStore.Name,
-	})
-	return raw, err == nil
+	return resolved, nil
 }
 
 func repositoryAttachedBefore(candidate, current db.SessionResource) bool {

@@ -17,7 +17,7 @@ import { TableCell, TableRow } from '@/shared/ui/table';
 
 export const dataTableClassName = 'table-fixed border-separate border-spacing-y-px text-left';
 export const dataTableHeaderRowClassName = 'border-0 text-muted-foreground hover:bg-transparent';
-export const dataTableHeaderCellClassName = 'h-10 px-3 text-muted-foreground';
+export const dataTableHeaderCellClassName = 'h-10 px-3 text-xs text-muted-foreground';
 
 const DataTableRowHoverContext = createContext(false);
 
@@ -68,7 +68,7 @@ export function DataTableCell({ edge, className, ...props }: DataTableCellProps)
   return (
     <TableCell
       className={cn(
-        'oma-data-table-cell h-10 px-3 align-middle transition-colors',
+        'oma-data-table-cell h-10 px-3 align-middle transition-colors duration-250 ease-out motion-reduce:transition-none',
         edge === 'start' && 'rounded-l-lg',
         edge === 'end' && 'rounded-r-lg',
         className,
@@ -76,6 +76,10 @@ export function DataTableCell({ edge, className, ...props }: DataTableCellProps)
       {...props}
     />
   );
+}
+
+export function DataTableResourceLink({ className, ...props }: ComponentProps<'a'>) {
+  return <a className={cn('underline-offset-4 hover:underline focus-visible:underline', className)} {...props} />;
 }
 
 export function CopyIdCell({

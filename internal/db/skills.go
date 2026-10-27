@@ -2,12 +2,14 @@ package db
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
 
-const skillDisplayTitleUniqueIndex = "skills_workspace_display_title_active_key"
+var ErrSkillHasVersions = errors.New("skill has versions")
+var ErrSkillLastVersion = errors.New("cannot delete the only skill version")
 
 type Skill struct {
 	UUID                string
@@ -42,12 +44,14 @@ type SkillVersion struct {
 }
 
 type ListSkillsPageParams struct {
+	OnlyVersioned bool
 	WorkspaceUUID string
 	Limit         int
 	Offset        int
 }
 
 type ListSkillVersionsPageParams struct {
+	OldestFirst     bool
 	WorkspaceUUID   string
 	SkillExternalID string
 	Limit           int
@@ -62,7 +66,7 @@ func (e *SkillDisplayTitleConflictError) Error() string {
 	return "skill display_title conflicts with an existing skill"
 }
 
-func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version SkillVersion) (Skill, SkillVersion, error) {
+func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version SkillVersion, allowDuplicateTitle bool) (Skill, SkillVersion, error) {
 	if skill.DisplayTitle == nil {
 		return Skill{}, SkillVersion{}, ErrInvalidState
 	}
@@ -71,27 +75,29 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		skillMapper := NewSkillMapper(executor)
 		versionMapper := NewSkillVersionMapper(executor)
-		_, found, txErr := skillMapper.FindExternalIDByDisplayTitle(ctx, skill.WorkspaceUUID, *skill.DisplayTitle)
-		if txErr != nil {
-			return txErr
+		if lockErr := skillMapper.LockWorkspace(ctx, skill.WorkspaceUUID); lockErr != nil {
+			return lockErr
 		}
-		if found {
-			return &SkillDisplayTitleConflictError{DisplayTitle: *skill.DisplayTitle}
+		if !allowDuplicateTitle {
+			_, found, lookupErr := skillMapper.FindExternalIDByDisplayTitle(ctx, skill.WorkspaceUUID, *skill.DisplayTitle)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			if found {
+				return &SkillDisplayTitleConflictError{DisplayTitle: *skill.DisplayTitle}
+			}
 		}
 
 		row, txErr := skillMapper.Insert(ctx, insertSkillParams{
 			UUID:                skill.UUID,
 			ExternalID:          skill.ExternalID,
 			WorkspaceUUID:       skill.WorkspaceUUID,
-			CreatedByAPIKeyUUID: skill.CreatedByAPIKeyUUID,
+			CreatedByAPIKeyUUID: nullableString(skill.CreatedByAPIKeyUUID),
 			DisplayTitle:        skill.DisplayTitle,
 			LatestVersion:       version.Version,
 			CreatedAt:           skill.CreatedAt,
 		})
 		if txErr != nil {
-			if isUniqueViolationOnConstraint(txErr, skillDisplayTitleUniqueIndex) {
-				return &SkillDisplayTitleConflictError{DisplayTitle: *skill.DisplayTitle}
-			}
 			return txErr
 		}
 		createdSkill = row.skill()
@@ -151,7 +157,7 @@ func (d *DB) ListSkillsPage(ctx context.Context, params ListSkillsPageParams) ([
 		params.Offset = 0
 	}
 	mapper := NewSkillMapper(d.mapperDB)
-	rows, err := mapper.ListPage(ctx, params.WorkspaceUUID, params.Limit+1, params.Offset)
+	rows, err := mapper.ListPage(ctx, params.WorkspaceUUID, params.Limit+1, params.Offset, params.OnlyVersioned)
 	if err != nil {
 		return nil, false, err
 	}
@@ -188,7 +194,7 @@ func (d *DB) ListSkillVersionsPage(ctx context.Context, params ListSkillVersions
 		return nil, false, mapNoRows(err)
 	}
 	versionMapper := NewSkillVersionMapper(d.mapperDB)
-	rows, err := versionMapper.ListPageBySkillUUID(ctx, params.WorkspaceUUID, skillUUID, params.Limit+1, params.Offset)
+	rows, err := versionMapper.ListPageBySkillUUID(ctx, params.WorkspaceUUID, skillUUID, params.Limit+1, params.Offset, params.OldestFirst)
 	if err != nil {
 		return nil, false, err
 	}
@@ -200,7 +206,7 @@ func (d *DB) ListSkillVersionsPage(ctx context.Context, params ListSkillVersions
 	return versions, hasMore, nil
 }
 
-func (d *DB) SoftDeleteSkill(ctx context.Context, workspaceUUID string, externalID string) (Skill, []SkillVersion, error) {
+func (d *DB) SoftDeleteSkill(ctx context.Context, workspaceUUID string, externalID string, allowVersions bool) (Skill, []SkillVersion, error) {
 	var deletedSkill Skill
 	var versions []SkillVersion
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
@@ -217,6 +223,9 @@ func (d *DB) SoftDeleteSkill(ctx context.Context, workspaceUUID string, external
 			return txErr
 		}
 		versions = skillVersionsFromMapperRows(versionRows)
+		if !allowVersions && len(versions) > 0 {
+			return ErrSkillHasVersions
+		}
 		if txErr = versionMapper.SoftDeleteBySkillUUID(ctx, workspaceUUID, skill.UUID); txErr != nil {
 			return txErr
 		}
@@ -227,7 +236,7 @@ func (d *DB) SoftDeleteSkill(ctx context.Context, workspaceUUID string, external
 	return deletedSkill, versions, err
 }
 
-func (d *DB) SoftDeleteSkillVersion(ctx context.Context, workspaceUUID string, skillExternalID, version string) (SkillVersion, *string, error) {
+func (d *DB) SoftDeleteSkillVersion(ctx context.Context, workspaceUUID string, skillExternalID, version string, allowEmpty bool) (SkillVersion, *string, error) {
 	var deletedVersion SkillVersion
 	var latestVersion *string
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
@@ -237,6 +246,16 @@ func (d *DB) SoftDeleteSkillVersion(ctx context.Context, workspaceUUID string, s
 		skill, txErr := skillFromMapperRow(row, txErr)
 		if txErr != nil {
 			return txErr
+		}
+
+		if !allowEmpty {
+			versions, listErr := versionMapper.ListBySkillUUID(ctx, workspaceUUID, skill.UUID)
+			if listErr != nil {
+				return listErr
+			}
+			if len(versions) == 1 && versions[0].Version == version {
+				return ErrSkillLastVersion
+			}
 		}
 
 		versionRow, txErr := versionMapper.SoftDeleteByVersion(ctx, workspaceUUID, skill.UUID, version)
@@ -271,7 +290,7 @@ func insertSkillVersion(ctx context.Context, mapper SkillVersionMapper, version 
 		S3Key:               version.S3Key,
 		SizeBytes:           version.SizeBytes,
 		SHA256:              version.SHA256,
-		CreatedByAPIKeyUUID: version.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: nullableString(version.CreatedByAPIKeyUUID),
 		CreatedAt:           version.CreatedAt,
 	})
 	return skillVersionFromMapperRow(row, err)
@@ -312,7 +331,7 @@ func (r skillRow) skill() Skill {
 		UUID:                r.UUID,
 		ExternalID:          r.ExternalID,
 		WorkspaceUUID:       r.WorkspaceUUID,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		DisplayTitle:        r.DisplayTitle,
 		LatestVersion:       r.LatestVersion,
 		Source:              r.Source,
@@ -337,7 +356,7 @@ func (r skillVersionRow) version() SkillVersion {
 		S3Key:               r.S3Key,
 		SizeBytes:           r.SizeBytes,
 		SHA256:              r.SHA256,
-		CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
 		CreatedAt:           r.CreatedAt,
 		DeletedAt:           r.DeletedAt,
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
+	"github.com/superduck-ai/yourbatis"
 )
 
 func (d *DB) ListConsoleInvites(ctx context.Context, orgUUID string, status string, limit int) ([]platform.ConsoleInvite, error) {
@@ -62,12 +63,16 @@ func (d *DB) ResendConsoleInvite(ctx context.Context, orgUUID string, inviteID s
 		return platform.ConsoleInvite{}, platform.ErrNotFound
 	}
 	now := time.Now().UTC()
-	mapper := NewConsoleInviteMapper(d.mapperDB)
-	row, err := mapper.ResendByExternalID(ctx, resendConsoleInviteParams{
-		OrganizationUUID: orgUUID,
-		ExternalID:       inviteID,
-		InvitedAt:        now,
-		ExpiresAt:        now.Add(21 * 24 * time.Hour),
+	var row consoleInviteRow
+	err := d.withInvitationOrganizationLock(ctx, orgUUID, func(executor yourbatis.Executor) error {
+		var err error
+		row, err = NewConsoleInviteMapper(executor).ResendByExternalID(ctx, resendConsoleInviteParams{
+			OrganizationUUID: orgUUID,
+			ExternalID:       inviteID,
+			InvitedAt:        now,
+			ExpiresAt:        now.Add(21 * 24 * time.Hour),
+		})
+		return err
 	})
 	if err != nil {
 		return platform.ConsoleInvite{}, mapNoRows(err)
@@ -79,12 +84,25 @@ func (d *DB) DeleteConsoleInvite(ctx context.Context, orgUUID string, inviteID s
 	if d == nil || d.mapperDB == nil || orgUUID == "" || inviteID == "" {
 		return platform.ConsoleInvite{}, platform.ErrNotFound
 	}
-	mapper := NewConsoleInviteMapper(d.mapperDB)
-	row, err := mapper.SoftDeleteByExternalID(ctx, orgUUID, inviteID)
+	var row consoleInviteRow
+	err := d.withInvitationOrganizationLock(ctx, orgUUID, func(executor yourbatis.Executor) error {
+		var err error
+		row, err = NewConsoleInviteMapper(executor).SoftDeleteByExternalID(ctx, orgUUID, inviteID)
+		return err
+	})
 	if err != nil {
 		return platform.ConsoleInvite{}, mapNoRows(err)
 	}
 	return row.invite(), nil
+}
+
+func (d *DB) withInvitationOrganizationLock(ctx context.Context, org string, change func(yourbatis.Executor) error) error {
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		if _, err := NewOrganizationMemberMapper(executor).LockOrganization(ctx, org); err != nil {
+			return mapNoRows(err)
+		}
+		return change(executor)
+	})
 }
 
 func (r consoleInviteRow) invite() platform.ConsoleInvite {

@@ -1,9 +1,10 @@
+import { AgentChannels } from '../channels/AgentChannels';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, AlertDescription, AlertTitle } from '../../../shared/ui/alert';
 import { Badge } from '../../../shared/ui/badge';
 import { Button, ButtonLink } from '../../../shared/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../shared/ui/card';
+import { Card } from '../../../shared/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import {
   Dialog,
@@ -17,8 +18,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../../../shared/ui/dropdown-menu';
@@ -48,9 +47,6 @@ import { agentEditConfig, agentEditSaveErrorMessage, buildAgentUpdateInput } fro
 import {
   archiveAgent,
   createAgentDetailDeployment,
-  createAgentDetailSession,
-  getAgentSessionAnalyticsOverview,
-  getAgentSessionAnalyticsTimeseries,
   listAgentDetailDeployments,
   listAgentDetailSessions,
   listAgentVersions,
@@ -61,6 +57,7 @@ import {
   type AgentSkillApiResponse,
 } from '../api';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
+import { ResourceNotFound, useResourceMissingCopy } from '../components/resource-not-found';
 import { CopyButton } from '../components/CodeBlocks';
 import { ConfirmAgentsArchiveDialog, StatusPill } from '../components/common';
 import { managedColumnLabel } from '../labels';
@@ -71,29 +68,17 @@ import {
   localizedEntityStatusLabel,
   ManagedEntityDialog,
 } from '../resources/ManagedResources';
-import { numericValueFromKeys, stringValueFromKeys } from '../sessions/SessionDetailPage';
 import {
   type AgentApiResponse,
   type AgentDetailCreatedFilter,
   type AgentDetailStatusFilter,
   type AgentDetailTab,
   type AgentDetailVersionFilter,
-  type AgentSessionAnalyticsOverview,
-  type AgentSessionAnalyticsTimeseries,
-  type AnalyticsMetricBucket,
   type DeploymentApiResponse,
   type PageCursor,
   type SessionApiResponse,
 } from '../types';
-import {
-  agentDetailHref,
-  compactEntityId,
-  copyText,
-  errorMessage,
-  managedEntityDetailHref,
-  objectRecord,
-  titleCase,
-} from '../utils';
+import { agentDetailHref, compactEntityId, copyText, errorMessage, objectRecord } from '../utils';
 import {
   agentDetailDeploymentFromSearch,
   agentDetailSessionCreatedFromSearch,
@@ -108,18 +93,11 @@ import {
   agentSkillRequestedVersion,
   agentSkillSnapshotSource,
   agentSkillSnapshotTitle,
-  emptyAgentSessionAnalyticsOverview,
   ensureArray,
   formatAgentSkillSource,
-  formatDecimal,
   formatDetailDate,
-  formatDurationSeconds,
   formatInteger,
-  formatPercent,
   latestAgentVersion,
-  metricQuantile,
-  metricTotal,
-  metricValue,
   relativeTime,
   sessionTokenUsage,
   sessionVersionLabel,
@@ -127,12 +105,14 @@ import {
   uniqueVersionNumbers,
   writeAgentSessionFiltersToUrl,
 } from './model';
+import { ObservabilityPage } from '../../observability/ObservabilityPage';
 import { AgentToolsSection } from './tools/AgentToolsSection';
 import { hasConfiguredAgentTools } from './tools/model';
 import { listCreateAgentModels } from './create-dialog-api';
 import { CreateDialogConfigEditor } from './create-dialog-config-editor';
 import { AgentConfigRenderedEditor } from './create-dialog-rendered';
 import { useAgentEditDraft } from './use-agent-edit-draft';
+import { AgentStartSessionDialog } from './AgentStartSessionDialog';
 
 export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string; routeWorkspaceId?: string }) {
   const { msg, locale } = useI18n();
@@ -282,18 +262,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
   }
 
   if (!agent || loadError) {
-    return (
-      <section className="min-h-[calc(100vh-48px)] text-foreground">
-        <ManagedDetailBreadcrumb
-          listHref={listHref}
-          listLabel={msg('managedAgents.agents.title', 'Agents')}
-          currentLabel={msg('common.error', 'Error')}
-        />
-        <AgentDetailErrorAlert className="mt-6 max-w-xl">
-          {loadError || `Agent not found: ${agentId}`}
-        </AgentDetailErrorAlert>
-      </section>
-    );
+    return <AgentNotFound agentId={agentId} listHref={listHref} loadError={loadError} />;
   }
 
   return (
@@ -306,9 +275,9 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
       />
 
       <header className="mb-7 flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1 basis-full sm:basis-0">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="truncate text-[28px] font-semibold leading-tight text-foreground">
+            <h1 className="min-w-0 break-words text-2xl font-semibold leading-tight text-foreground">
               {agent.name || msg('managedAgents.agents.untitled', 'Untitled agent')}
             </h1>
             <StatusPill>
@@ -321,13 +290,12 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
               aria-label={msg('common.copyId', 'Copy ID')}
               variant="outline"
               size="xs"
-              className="max-w-[360px] font-sans text-[13px] text-foreground"
+              className="max-w-full font-sans text-xs sm:max-w-[360px] text-foreground"
               onClick={() => void copyText(agent.id)}
             >
               <Copy className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
               <span className="truncate">{agent.id}</span>
             </Button>
-            <span className="text-muted-foreground/70">.</span>
             <span>
               {msg('managedAgents.common.lastUpdatedAt', 'Last updated {date}', {
                 date: formatDetailDate(agent.updated_at, locale),
@@ -335,7 +303,9 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
             </span>
           </div>
           {agent.description ? (
-            <p className="mt-3 max-w-[920px] text-[15px] leading-5 text-muted-foreground">{agent.description}</p>
+            <p className="mt-3 max-w-[920px] break-words text-sm leading-5 text-muted-foreground">
+              {agent.description}
+            </p>
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -400,42 +370,48 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
         <TabsList
           variant="line"
           aria-label={msg('managedAgents.agents.detail.sections', 'Agent detail sections')}
-          className="mb-6 h-auto w-full justify-start gap-6 rounded-none border-b border-border p-0"
+          className="mb-6 h-auto w-full justify-start gap-6 rounded-none border-b-[0.5px] border-border p-0"
         >
           <TabsTrigger
             value="config"
-            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-px"
+            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-[0.5px]"
           >
             {msg('managedAgents.common.agent', 'Agent')}
           </TabsTrigger>
           <TabsTrigger
             value="sessions"
-            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-px"
+            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-[0.5px]"
           >
             {msg('managedAgents.sessions.title', 'Sessions')}
           </TabsTrigger>
           <TabsTrigger
             value="deployments"
-            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-px"
+            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-[0.5px]"
           >
             {msg('managedAgents.deployments.title', 'Deployments')}
           </TabsTrigger>
           <TabsTrigger
             value="observability"
-            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-px"
+            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-[0.5px]"
           >
-            <span className="inline-flex items-center gap-2">
-              {msg('managedAgents.observability.title', 'Observability')}
-              <Badge
-                variant="secondary"
-                className="h-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none text-secondary-foreground"
-              >
-                {msg('common.new', 'New')}
-              </Badge>
-            </span>
+            {msg('managedAgents.observability.title', 'Observability')}
+          </TabsTrigger>
+          <TabsTrigger
+            value="channels"
+            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-[0.5px]"
+          >
+            {msg('managedAgents.channels.title', 'Channels')}
           </TabsTrigger>
         </TabsList>
 
+        <TabsContent value="channels" className="mt-0">
+          <AgentChannels
+            key={`${workspaceId}:${agent.id}`}
+            agentId={agent.id}
+            workspaceId={workspaceId}
+            canEdit={canEdit}
+          />
+        </TabsContent>
         <TabsContent value="config" className="mt-0">
           {detailTab === 'config' ? (
             configLoadError ? (
@@ -481,7 +457,9 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
         </TabsContent>
 
         <TabsContent value="observability" className="mt-0">
-          {detailTab === 'observability' ? <AgentObservabilityTab agentId={agent.id} orgUuid={orgUuid} /> : null}
+          {detailTab === 'observability' ? (
+            <ObservabilityPage key={workspaceId} scope={{ kind: 'agent', agentId: agent.id }} />
+          ) : null}
         </TabsContent>
       </Tabs>
 
@@ -489,31 +467,14 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
         <AgentEditDialog
           agent={agentEditSource(configAgent, agent)}
           baselineVersion={agent.version}
+          orgUuid={orgUuid}
           workspaceId={workspaceId}
           onClose={() => setEditOpen(false)}
           onSaved={handleSaved}
         />
       ) : null}
       {startSessionOpen ? (
-        <ManagedEntityDialog
-          section="sessions"
-          title={msg('managedAgents.sessions.createLabel', 'Create session')}
-          lockedAgent={agent}
-          workspaceId={workspaceId}
-          onClose={() => setStartSessionOpen(false)}
-          onSubmit={async (values) => {
-            const session = await createAgentDetailSession(agent, values, workspaceId);
-            setStartSessionOpen(false);
-            toast.success(msg('managedAgents.sessions.toastCreated', 'Session started'));
-            window.history.pushState(
-              null,
-              '',
-              `${managedEntityDetailHref(workspaceId, 'sessions', session.id)}?interactive=true`,
-            );
-            const event = typeof PopStateEvent === 'function' ? new PopStateEvent('popstate') : new Event('popstate');
-            window.dispatchEvent(event);
-          }}
-        />
+        <AgentStartSessionDialog agent={agent} workspaceId={workspaceId} onClose={() => setStartSessionOpen(false)} />
       ) : null}
       {confirmArchiveOpen ? (
         <ConfirmAgentsArchiveDialog
@@ -627,7 +588,7 @@ export function AgentConfigTab({
       </div>
 
       <AgentDetailSection title={msg('analytics.table.model', 'Model')}>
-        <div className="flex items-center gap-2 font-sans text-[15px] leading-6 text-foreground">
+        <div className="flex items-center gap-2 font-sans text-sm leading-6 text-foreground">
           {agentModelName(agent.model) || '-'}
           {fastModel ? (
             <Badge
@@ -641,7 +602,7 @@ export function AgentConfigTab({
       </AgentDetailSection>
 
       <AgentDetailSection title={msg('managedAgents.agents.detail.systemPrompt', 'System prompt')}>
-        <pre className="subtle-scrollbar max-h-[360px] overflow-auto rounded-lg border border-border bg-muted px-4 py-3 font-sans text-[13px] leading-5 text-foreground whitespace-pre-wrap">
+        <pre className="subtle-scrollbar max-h-[360px] overflow-auto rounded-lg border-[0.5px] border-border bg-muted px-4 py-3 font-sans text-sm leading-5 text-foreground whitespace-pre-wrap break-words">
           <code className="font-sans">
             {agent.system || msg('managedAgents.agents.detail.noSystemPrompt', 'No system prompt configured.')}
           </code>
@@ -696,7 +657,7 @@ function SkillVersionBadges({ requestedVersion, msg }: { requestedVersion: strin
     <div className="mt-1 flex flex-wrap gap-1.5">
       <Badge
         variant="outline"
-        className="h-auto rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground bg-muted/30"
+        className="h-auto rounded-md px-1.5 py-0.5 text-xs font-medium text-muted-foreground bg-muted/30"
       >
         {isLatest ? msg('skills.versions.latest', 'Latest') : `v${requestedVersion}`}
       </Badge>
@@ -742,7 +703,7 @@ function AgentSkillsList({
 
   return (
     <Card className="gap-0 overflow-hidden py-0">
-      <div className="divide-y divide-border">
+      <div className="divide-y-[0.5px] divide-border">
         {skillRows.map((skill) => {
           const isExpanded = expandedSkillKey === skill.key;
           return (
@@ -752,27 +713,27 @@ function AgentSkillsList({
               onOpenChange={(open) => setExpandedSkillKey(open ? skill.key : null)}
               className="bg-card"
             >
-              <div className="group/row flex items-center justify-between bg-card hover:bg-muted/50 transition-colors">
+              <div className="group/row flex items-center justify-between bg-card hover:bg-muted/50 transition-colors duration-150 ease-out motion-reduce:transition-none">
                 <CollapsibleTrigger
                   type="button"
                   aria-label={msg('managedAgents.agents.detail.skillSummary', '{name} skill summary', {
                     name: skill.displayTitle,
                   })}
-                  className="flex h-auto flex-1 items-center gap-4 px-4 py-3 text-left text-sm font-normal text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                  className="flex h-auto flex-1 items-center gap-4 px-4 py-3 text-left text-sm font-normal text-foreground focus-visible:ring-[0.5px] focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <span className="grid size-10 place-items-center rounded-lg border border-border bg-secondary text-foreground">
+                    <span className="grid size-10 place-items-center rounded-lg border-[0.5px] border-border bg-secondary text-foreground">
                       <Sparkles className="size-5 text-primary" aria-hidden />
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="truncate text-sm font-semibold text-foreground">{skill.displayTitle}</span>
-                        <span className="hidden text-[11px] text-muted-foreground sm:inline">
+                        <span className="hidden text-xs text-muted-foreground sm:inline">
                           (<code className="truncate font-mono">{skill.idLabel}</code>)
                         </span>
                         <Badge
                           variant="secondary"
-                          className="h-auto rounded-md px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground bg-secondary/80"
+                          className="h-auto rounded-md px-1.5 py-0.5 text-xs font-normal text-muted-foreground bg-secondary/80"
                         >
                           {formatAgentSkillSource(skill.source)}
                         </Badge>
@@ -783,7 +744,7 @@ function AgentSkillsList({
                 </CollapsibleTrigger>
                 <div className="flex shrink-0 items-center gap-2 pr-4">
                   {skill.copyId ? (
-                    <div className="opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity duration-150">
+                    <div className="opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity duration-150 ease-out motion-reduce:transition-none">
                       <CopyButton
                         value={skill.copyId}
                         label={msg('managedAgents.agents.detail.copySkillId', 'Copy skill ID')}
@@ -794,11 +755,17 @@ function AgentSkillsList({
                     type="button"
                     className="grid size-8 place-items-center rounded-md hover:bg-accent text-muted-foreground/70"
                   >
-                    <ChevronDown className={clsx('size-4 transition', isExpanded && 'rotate-180')} aria-hidden />
+                    <ChevronDown
+                      className={clsx(
+                        'size-4 transition-transform duration-220 ease-out motion-reduce:transition-none',
+                        isExpanded && 'rotate-180',
+                      )}
+                      aria-hidden
+                    />
                   </CollapsibleTrigger>
                 </div>
               </div>
-              <CollapsibleContent className="border-t border-border bg-muted/30">
+              <CollapsibleContent className="border-t-[0.5px] border-border bg-muted/30">
                 <div className="px-5 py-4">
                   <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 text-xs leading-5">
                     <div className="flex flex-col gap-1">
@@ -871,7 +838,7 @@ function AgentSkillsList({
                             {msg('managedAgents.agents.detail.skillMetadataUnavailable', 'Metadata unavailable')}
                           </span>
                         ) : (
-                          <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                          <span className="text-success font-medium">
                             {msg('managedAgents.agents.detail.skillMetadataAvailable', 'Resolved')}
                           </span>
                         )}
@@ -885,7 +852,7 @@ function AgentSkillsList({
         })}
       </div>
       {loading ? (
-        <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
+        <div className="border-t-[0.5px] border-border px-4 py-2 text-xs text-muted-foreground">
           {msg('managedAgents.agents.detail.resolvingSkillMetadata', 'Resolving skill metadata...')}
         </div>
       ) : null}
@@ -907,7 +874,7 @@ export function AgentDetailSection({
   return (
     <section>
       <div className="mb-3 flex items-start justify-between gap-4">
-        <h2 className="text-base font-semibold leading-6 text-foreground">{title}</h2>
+        <h2 className="text-sm font-semibold leading-6 text-foreground">{title}</h2>
         {action}
       </div>
       {description ? <p className={clsx('text-sm text-muted-foreground', children && 'mb-3')}>{description}</p> : null}
@@ -1087,30 +1054,27 @@ export function AgentSessionsTab({
 
       {loadError ? <AgentDetailErrorAlert className="mb-4 max-w-xl">{loadError}</AgentDetailErrorAlert> : null}
 
-      <Card className="gap-0 py-0">
-        <table className="w-full table-fixed text-left text-sm">
+      <Card className="gap-0 overflow-x-auto py-0">
+        <table className="w-full min-w-[900px] table-fixed text-left text-sm">
           <thead>
-            <tr className="border-b border-border text-muted-foreground">
-              <th className="h-10 w-[48px] px-3 font-medium">
-                <span className="block size-4 rounded border border-border" aria-hidden />
-              </th>
-              <th className="h-10 w-[210px] px-3 font-medium">{managedColumnLabel('ID', msg)}</th>
+            <tr className="border-b-[0.5px] border-border text-muted-foreground">
+              <th className="h-10 w-[176px] px-3 font-medium">{managedColumnLabel('ID', msg)}</th>
               <th className="h-10 px-3 font-medium">{managedColumnLabel('Name', msg)}</th>
-              <th className="h-10 w-[150px] px-3 font-medium">{managedColumnLabel('Status', msg)}</th>
-              <th className="h-10 w-[130px] px-3 font-medium">
+              <th className="h-10 w-[112px] px-3 font-medium">{managedColumnLabel('Status', msg)}</th>
+              <th className="h-10 w-[80px] px-3 font-medium">
                 {msg('managedAgents.agents.detail.version', 'Version')}
               </th>
-              <th className="h-10 w-[150px] px-3 font-medium">
+              <th className="h-10 w-[144px] px-3 font-medium">
                 {msg('managedAgents.sessions.tokensInOut', 'Tokens in / out')}
               </th>
-              <th className="h-10 w-[180px] px-3 font-medium">{managedColumnLabel('Created', msg)}</th>
-              <th className="h-10 w-[48px] px-2 font-medium" aria-label={managedColumnLabel('Actions', msg)} />
+              <th className="h-10 w-[132px] px-3 font-medium">{managedColumnLabel('Created', msg)}</th>
+              <th className="h-10 w-[64px] px-2 font-medium" aria-label={managedColumnLabel('Actions', msg)} />
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={8} className="h-32 px-4 text-center text-muted-foreground">
+                <td colSpan={7} className="h-32 px-4 text-center text-muted-foreground">
                   {msg('managedAgents.sessions.loading', 'Loading sessions...')}
                 </td>
               </tr>
@@ -1118,11 +1082,8 @@ export function AgentSessionsTab({
               sessions.map((session) => {
                 const usage = sessionTokenUsage(session);
                 return (
-                  <tr key={session.id} className="border-b border-border text-foreground last:border-b-0">
-                    <td className="h-11 px-3 align-middle">
-                      <span className="block size-4 rounded border border-border" aria-hidden />
-                    </td>
-                    <td className="h-11 truncate px-3 align-middle font-sans text-[13px] text-foreground">
+                  <tr key={session.id} className="border-b-[0.5px] border-border text-foreground last:border-b-0">
+                    <td className="h-11 truncate px-3 align-middle font-sans text-xs text-foreground">
                       {compactEntityId(session.id)}
                     </td>
                     <td className="h-11 truncate px-3 align-middle">{session.title || '-'}</td>
@@ -1136,7 +1097,7 @@ export function AgentSessionsTab({
                     <td className="h-11 px-3 align-middle text-muted-foreground">
                       {relativeTime(session.created_at, formatters.relativeTime)}
                     </td>
-                    <td className="h-11 px-2 align-middle">
+                    <td className="h-11 px-2 text-right align-middle">
                       <ButtonLink
                         href={`/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(session.id)}`}
                         variant="ghost"
@@ -1152,7 +1113,7 @@ export function AgentSessionsTab({
               })
             ) : (
               <tr>
-                <td colSpan={8} className="h-36 px-4 text-center text-muted-foreground">
+                <td colSpan={7} className="h-36 px-4 text-center text-muted-foreground">
                   <strong className="block text-foreground">
                     {msg('managedAgents.sessions.noSessionsForAgent', 'No sessions yet')}
                   </strong>
@@ -1313,7 +1274,7 @@ export function AgentDeploymentsTab({
       {loading || loadError || deployments.length ? (
         <div className="mb-5 flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold leading-6 text-foreground">
+            <h2 className="text-sm font-semibold leading-6 text-foreground">
               {msg('managedAgents.deployments.title', 'Deployments')}
             </h2>
             <p className="mt-1 text-sm leading-5 text-muted-foreground">
@@ -1338,7 +1299,7 @@ export function AgentDeploymentsTab({
             {msg('managedAgents.deployments.loading', 'Loading deployments...')}
           </div>
         ) : deployments.length ? (
-          <div className="divide-y divide-border">
+          <div className="divide-y-[0.5px] divide-border">
             {deployments.map((deployment) => (
               <Collapsible
                 key={deployment.id}
@@ -1349,7 +1310,7 @@ export function AgentDeploymentsTab({
                 <CollapsibleTrigger
                   type="button"
                   aria-controls={`agent-deployment-panel-${deployment.id}`}
-                  className="grid h-auto w-full grid-cols-[minmax(0,1.3fr)_120px_150px_150px_32px] items-center gap-4 px-4 py-3 text-left text-sm font-normal text-foreground transition-colors hover:bg-muted focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                  className="grid h-auto w-full grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1.3fr)_120px_150px_150px_32px] items-center gap-4 px-4 py-3 text-left text-sm font-normal text-foreground transition-colors duration-150 ease-out motion-reduce:transition-none hover:bg-muted focus-visible:ring-[0.5px] focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
                 >
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{deployment.name || deployment.id}</span>
@@ -1362,13 +1323,16 @@ export function AgentDeploymentsTab({
                   </span>
                   <ChevronDown
                     className={clsx(
-                      'size-4 justify-self-end text-muted-foreground/70 transition',
+                      'size-4 justify-self-end text-muted-foreground/70 transition-transform duration-220 ease-out motion-reduce:transition-none',
                       expandedDeploymentId === deployment.id && 'rotate-180',
                     )}
                     aria-hidden
                   />
                 </CollapsibleTrigger>
-                <CollapsibleContent id={`agent-deployment-panel-${deployment.id}`} className="border-t border-border">
+                <CollapsibleContent
+                  id={`agent-deployment-panel-${deployment.id}`}
+                  className="border-t-[0.5px] border-border"
+                >
                   <div className="px-4 py-4">
                     <AgentDeploymentDetailPanel
                       deployment={deployment}
@@ -1383,10 +1347,10 @@ export function AgentDeploymentsTab({
           </div>
         ) : (
           <div className="flex min-h-[280px] flex-col items-center justify-center px-4 py-12 text-center">
-            <span className="grid size-11 place-items-center rounded-full border border-border bg-secondary text-muted-foreground">
+            <span className="grid size-11 place-items-center rounded-full border-[0.5px] border-border bg-secondary text-muted-foreground">
               <CalendarClock className="size-5" aria-hidden />
             </span>
-            <h3 className="mt-4 text-base font-semibold text-foreground">
+            <h3 className="mt-4 text-sm font-semibold text-foreground">
               {msg('managedAgents.deployments.noDeployments', 'No deployments')}
             </h3>
             <p className="mt-1 max-w-[420px] text-sm leading-5 text-muted-foreground">
@@ -1518,177 +1482,24 @@ export function AgentDeploymentDetailPanel({
   );
 }
 
-export function AgentObservabilityTab({ agentId, orgUuid }: { agentId: string; orgUuid?: string }) {
-  const { msg, locale } = useI18n();
-  const [overview, setOverview] = useState<AgentSessionAnalyticsOverview | null>(null);
-  const [timeseries, setTimeseries] = useState<AgentSessionAnalyticsTimeseries | null>(null);
-  const [loading, setLoading] = useState(Boolean(orgUuid));
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [groupBy, setGroupBy] = useState('agent_version');
-  const groupByOptions = [
-    { value: 'agent_version', label: msg('managedAgents.observability.groupByAgentVersion', 'Agent version') },
-    { value: 'outcome_category', label: msg('managedAgents.observability.groupByOutcomeCategory', 'Outcome category') },
-    { value: 'had_error', label: msg('managedAgents.observability.groupByHadError', 'Had error') },
-  ];
-  const selectedGroupBy = groupByOptions.find((option) => option.value === groupBy) ?? groupByOptions[0];
-
-  useEffect(() => {
-    if (!orgUuid) {
-      setOverview(emptyAgentSessionAnalyticsOverview());
-      setTimeseries({ data: [] });
-      setLoading(false);
-      return;
-    }
-    let active = true;
-    setLoading(true);
-    void Promise.all([
-      getAgentSessionAnalyticsOverview(orgUuid, agentId),
-      getAgentSessionAnalyticsTimeseries(orgUuid, agentId, groupBy),
-    ])
-      .then(([overviewPayload, timeseriesPayload]) => {
-        if (!active) {
-          return;
-        }
-        setOverview(overviewPayload);
-        setTimeseries(timeseriesPayload);
-        setLoadError(null);
-        setLoading(false);
-      })
-      .catch((error: unknown) => {
-        if (!active) {
-          return;
-        }
-        setOverview(emptyAgentSessionAnalyticsOverview());
-        setTimeseries({ data: [] });
-        setLoadError(errorMessage(error));
-        setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [agentId, groupBy, orgUuid]);
-
-  const data = overview ?? emptyAgentSessionAnalyticsOverview();
-  const timeRows = timeseries?.data ?? timeseries?.data_points ?? [];
-  const hasTimeseries = timeRows.length > 0;
-  const toolCounts = data.tool_call_counts ?? {};
-  const stopReasonCounts = data.stop_reason_counts ?? {};
-
+function AgentNotFound({
+  agentId,
+  listHref,
+  loadError,
+}: {
+  agentId: string;
+  listHref: string;
+  loadError: string | null;
+}) {
+  const { msg } = useI18n();
+  const copy = useResourceMissingCopy(loadError, 'agent', agentId);
   return (
-    <div className="space-y-5">
-      {loadError ? (
-        <AgentDetailErrorAlert className="max-w-xl">
-          {msg('managedAgents.observability.loadError', "Couldn't load usage analytics.")} {loadError}
-        </AgentDetailErrorAlert>
-      ) : null}
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <AgentMetricCard
-          title={msg('managedAgents.observability.sessions', 'Sessions')}
-          value={loading ? '...' : formatInteger(metricValue(data.sessions_count))}
-        />
-        <AgentMetricCard
-          title={msg('managedAgents.observability.errorRate', 'Error rate')}
-          value={loading ? '...' : formatPercent(metricValue(data.error_rate))}
-        />
-        <AgentMetricCard
-          title={msg('managedAgents.observability.totalInputTokens', 'Total input tokens')}
-          value={loading ? '...' : formatInteger(metricTotal(data.input_tokens))}
-        />
-        <AgentMetricCard
-          title={msg('managedAgents.observability.totalOutputTokens', 'Total output tokens')}
-          value={loading ? '...' : formatInteger(metricTotal(data.output_tokens))}
-        />
-      </div>
-
-      <Card className="gap-0 py-0">
-        <CardHeader className="flex flex-wrap items-start justify-between gap-3 border-b border-border py-3">
-          <div>
-            <CardTitle>{msg('managedAgents.observability.sessionActivity', 'Session activity')}</CardTitle>
-            {data.data_as_of ? (
-              <CardDescription className="mt-1 text-xs">
-                {msg('managedAgents.observability.dataAsOf', 'Data as of {date}', {
-                  date: formatDetailDate(data.data_as_of, locale),
-                })}
-              </CardDescription>
-            ) : null}
-          </div>
-          <Select<string>
-            value={groupBy}
-            items={groupByOptions}
-            onValueChange={(nextValue) => {
-              if (nextValue !== null) {
-                setGroupBy(nextValue);
-              }
-            }}
-          >
-            <SelectTrigger
-              aria-label={msg('managedAgents.observability.groupBy', 'Group by')}
-              className="h-9 border-border px-3 text-sm text-foreground"
-            >
-              <span className="text-muted-foreground">{msg('managedAgents.observability.groupBy', 'Group by')}</span>
-              <SelectValue>{selectedGroupBy.label}</SelectValue>
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
-              {groupByOptions.map((option) => (
-                <SelectItem key={option.value} value={option.value} label={option.label}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </CardHeader>
-        <CardContent className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
-          {loading ? (
-            msg('managedAgents.observability.loading', 'Loading analytics...')
-          ) : hasTimeseries ? (
-            <AgentTimeseriesPreview rows={timeRows} groupBy={groupBy} />
-          ) : (
-            msg('managedAgents.observability.noSessionActivity', 'No session activity in this range')
-          )}
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <AgentQuantileCard
-          title={msg('managedAgents.observability.turns', 'Turns')}
-          metric={data.turns_per_session}
-          suffix={msg('managedAgents.observability.perSession', 'per session')}
-          formatValue={formatDecimal}
-        />
-        <AgentQuantileCard
-          title={msg('managedAgents.observability.activeTime', 'Active time')}
-          metric={data.active_time}
-          suffix=""
-          formatValue={formatDurationSeconds}
-        />
-        <AgentQuantileCard
-          title={msg('managedAgents.observability.inputTokens', 'Input tokens')}
-          metric={data.input_tokens_per_session}
-          suffix={msg('managedAgents.observability.perSession', 'per session')}
-          formatValue={formatInteger}
-        />
-        <AgentQuantileCard
-          title={msg('managedAgents.observability.outputTokens', 'Output tokens')}
-          metric={data.output_tokens_per_session}
-          suffix={msg('managedAgents.observability.perSession', 'per session')}
-          formatValue={formatInteger}
-        />
-      </div>
-
-      <div className="grid gap-5 lg:grid-cols-2">
-        <AgentAnalyticsBreakdown
-          title={msg('managedAgents.observability.toolUsage', 'Tool usage')}
-          values={toolCounts}
-          emptyLabel={msg('managedAgents.observability.noToolUsage', 'No tool calls in this range')}
-        />
-        <AgentAnalyticsBreakdown
-          title={msg('managedAgents.observability.stopReasons', 'Stop reasons')}
-          values={stopReasonCounts}
-          emptyLabel={msg('managedAgents.observability.noStopReasons', 'No stop reasons in this range')}
-        />
-      </div>
-    </div>
+    <ResourceNotFound
+      title={copy.title}
+      sentence={copy.sentence}
+      backHref={listHref}
+      backLabel={msg('managedAgents.agents.backToList', 'Back to agents')}
+    />
   );
 }
 
@@ -1713,12 +1524,14 @@ function AgentDetailErrorAlert({
 export function AgentEditDialog({
   agent,
   baselineVersion,
+  orgUuid,
   workspaceId,
   onClose,
   onSaved,
 }: {
   agent: AgentApiResponse;
   baselineVersion: number;
+  orgUuid?: string;
   workspaceId: string;
   onClose: () => void;
   onSaved: (agent: AgentApiResponse) => void;
@@ -1728,6 +1541,7 @@ export function AgentEditDialog({
   const editDraft = useAgentEditDraft(initialConfig);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [mcpTunnelChannelPending, setMcpTunnelChannelPending] = useState(false);
   const modelsQuery = useQuery({
     queryKey: ['agent-config', 'models', workspaceId],
     queryFn: () => listCreateAgentModels(workspaceId),
@@ -1745,7 +1559,7 @@ export function AgentEditDialog({
   const renderedValidationError = editDraft.view === 'rendered' ? editDraft.renderedDraftError : null;
 
   const submit = useCallback(async () => {
-    if (submitting || editDraft.rawError || renderedValidationError || !isDirty) {
+    if (submitting || editDraft.rawError || renderedValidationError || mcpTunnelChannelPending || !isDirty) {
       return;
     }
 
@@ -1758,7 +1572,17 @@ export function AgentEditDialog({
       setSaveError(agentEditSaveErrorMessage(submitError));
       setSubmitting(false);
     }
-  }, [agent.id, currentUpdate, editDraft.rawError, isDirty, onSaved, renderedValidationError, submitting, workspaceId]);
+  }, [
+    agent.id,
+    currentUpdate,
+    editDraft.rawError,
+    isDirty,
+    mcpTunnelChannelPending,
+    onSaved,
+    renderedValidationError,
+    submitting,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1771,8 +1595,19 @@ export function AgentEditDialog({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [submit]);
 
-  const displayedError = saveError ?? renderedValidationError;
-  const saveDisabled = submitting || Boolean(editDraft.rawError) || Boolean(renderedValidationError) || !isDirty;
+  const pendingTunnelError = mcpTunnelChannelPending
+    ? msg(
+        'managedAgents.agents.createDialog.mcpTunnelChannelPending',
+        'Finish choosing a Tunnel channel before continuing.',
+      )
+    : null;
+  const displayedError = saveError ?? renderedValidationError ?? pendingTunnelError;
+  const saveDisabled =
+    submitting ||
+    Boolean(editDraft.rawError) ||
+    Boolean(renderedValidationError) ||
+    mcpTunnelChannelPending ||
+    !isDirty;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -1798,7 +1633,7 @@ export function AgentEditDialog({
           </DialogClose>
 
           <DialogHeader className="px-[23px] pt-[19px] pr-14">
-            <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
+            <DialogTitle className="text-2xl font-semibold leading-8 text-foreground">
               {msg('managedAgents.agents.editDialog.title', 'Edit agent')}
             </DialogTitle>
             <DialogDescription className="mt-1 text-sm leading-5 text-muted-foreground">
@@ -1810,8 +1645,8 @@ export function AgentEditDialog({
           </DialogHeader>
 
           <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto px-[23px]">
-            <div className="mt-6 flex items-center justify-between border-b border-border pb-4">
-              <h2 className="text-base font-semibold">
+            <div className="mt-6 flex items-center justify-between border-b-[0.5px] border-border pb-4">
+              <h2 className="text-sm font-semibold">
                 {msg('managedAgents.agents.createDialog.agentConfig', 'Agent config')}
               </h2>
               <Tabs
@@ -1822,7 +1657,9 @@ export function AgentEditDialog({
                   <TabsTrigger value="rendered" disabled={Boolean(editDraft.renderedError)}>
                     {msg('managedAgents.agents.createDialog.rendered', 'Rendered')}
                   </TabsTrigger>
-                  <TabsTrigger value="raw">{msg('managedAgents.agents.createDialog.raw', 'Raw')}</TabsTrigger>
+                  <TabsTrigger value="raw" disabled={mcpTunnelChannelPending}>
+                    {msg('managedAgents.agents.createDialog.raw', 'Raw')}
+                  </TabsTrigger>
                 </TabsList>
               </Tabs>
             </div>
@@ -1840,9 +1677,11 @@ export function AgentEditDialog({
                   </AgentDetailErrorAlert>
                 ) : null}
                 <AgentConfigRenderedEditor
+                  orgUuid={orgUuid}
                   workspaceId={workspaceId}
                   draft={editDraft.renderedDraft}
                   modelOptions={modelsQuery.data ?? []}
+                  onPendingTunnelChange={setMcpTunnelChannelPending}
                   onChange={(next) => {
                     setSaveError(null);
                     editDraft.setRenderedDraft(next);
@@ -1877,7 +1716,7 @@ export function AgentEditDialog({
             )}
           </div>
 
-          <div className="flex min-h-16 items-center justify-between gap-4 border-t border-border px-[23px] py-3">
+          <div className="flex min-h-16 items-center justify-between gap-4 border-t-[0.5px] border-border px-[23px] py-3">
             {displayedError ? <p className="line-clamp-2 text-sm text-destructive">{displayedError}</p> : <span />}
             <Button
               type="button"
@@ -1900,6 +1739,40 @@ export function AgentEditDialog({
   );
 }
 
+function AgentDetailSelect<Value extends string>({
+  label,
+  valueLabel,
+  options,
+  value,
+  onSelect,
+}: {
+  label: string;
+  valueLabel?: string;
+  options: Array<{ value: Value; label: string }>;
+  value: Value;
+  onSelect: (value: Value) => void;
+}) {
+  return (
+    <Select<Value>
+      value={value}
+      items={options}
+      onValueChange={(nextValue) => nextValue !== null && onSelect(nextValue)}
+    >
+      <SelectTrigger aria-label={valueLabel ? `${label} ${valueLabel}` : label} className="h-9 max-w-full gap-2 px-3">
+        {valueLabel ? <span className="text-muted-foreground">{label}</span> : null}
+        <SelectValue className="max-w-[180px] font-medium text-foreground">{valueLabel ?? label}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value} label={option.label}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function AgentVersionDropdown({
   label,
   versions,
@@ -1913,28 +1786,16 @@ export function AgentVersionDropdown({
   latestVersion: number;
   onSelect: (version: number) => void;
 }) {
-  const options = uniqueVersionNumbers(versions, latestVersion);
-
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button type="button" variant="outline" size="lg" className="gap-2 text-sm font-medium text-foreground" />
-        }
-      >
-        {label}
-        <ChevronDown className="size-4 text-muted-foreground/70" aria-hidden />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={8} className="w-[190px]">
-        <DropdownMenuRadioGroup value={String(activeVersion)} onValueChange={(version) => onSelect(Number(version))}>
-          {options.map((version) => (
-            <DropdownMenuRadioItem key={version} value={String(version)} className="h-9 pl-3 pr-8 text-sm">
-              v{version}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <AgentDetailSelect
+      label={label}
+      value={String(activeVersion)}
+      options={uniqueVersionNumbers(versions, latestVersion).map((version) => ({
+        value: String(version),
+        label: `v${version}`,
+      }))}
+      onSelect={(version) => onSelect(Number(version))}
+    />
   );
 }
 
@@ -1948,35 +1809,19 @@ export function AgentVersionFilterDropdown({
   onSelect: (value: AgentDetailVersionFilter) => void;
 }) {
   const { msg } = useI18n();
-  const latest = latestAgentVersion(versions, null);
-  const options = uniqueVersionNumbers(versions, latest);
-  const valueLabel = value ? `v${value}` : msg('common.all', 'All');
-
+  const all = msg('common.all', 'All');
+  const options = uniqueVersionNumbers(versions, latestAgentVersion(versions, null));
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={<Button type="button" variant="outline" size="lg" className="gap-2 text-sm text-muted-foreground" />}
-      >
-        <span>{msg('managedAgents.agents.detail.version', 'Version')}</span>
-        <span className="font-medium text-foreground">{valueLabel}</span>
-        <ChevronDown className="size-4 text-muted-foreground/70" aria-hidden />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={8} className="w-[180px]">
-        <DropdownMenuRadioGroup
-          value={value === null ? 'all' : String(value)}
-          onValueChange={(nextValue) => onSelect(nextValue === 'all' ? null : Number(nextValue))}
-        >
-          <DropdownMenuRadioItem value="all" className="h-9 pl-3 pr-8 text-sm">
-            {msg('common.all', 'All')}
-          </DropdownMenuRadioItem>
-          {options.map((version) => (
-            <DropdownMenuRadioItem key={version} value={String(version)} className="h-9 pl-3 pr-8 text-sm">
-              v{version}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <AgentDetailSelect
+      label={msg('managedAgents.agents.detail.version', 'Version')}
+      valueLabel={value ? `v${value}` : all}
+      value={value === null ? 'all' : String(value)}
+      options={[
+        { value: 'all', label: all },
+        ...options.map((version) => ({ value: String(version), label: `v${version}` })),
+      ]}
+      onSelect={(nextValue) => onSelect(nextValue === 'all' ? null : Number(nextValue))}
+    />
   );
 }
 
@@ -1996,31 +1841,16 @@ export function AgentDetailCreatedFilterDropdown({
     { value: 'last_7_days', label: msg('managedAgents.filters.last7Days', 'Last 7 days') },
     { value: 'last_30_days', label: msg('managedAgents.filters.last30Days', 'Last 30 days') },
   ];
-  const label =
-    options.find((option) => option.value === value)?.label ?? msg('managedAgents.filters.allTime', 'All time');
-
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={<Button type="button" variant="outline" size="lg" className="gap-2 text-sm text-muted-foreground" />}
-      >
-        <span>{msg('managedAgents.filters.created', 'Created')}</span>
-        <span className="font-medium text-foreground">{label}</span>
-        <ChevronDown className="size-4 text-muted-foreground/70" aria-hidden />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={8} className="w-[220px]">
-        <DropdownMenuRadioGroup
-          value={value}
-          onValueChange={(nextValue) => onSelect(nextValue as AgentDetailCreatedFilter)}
-        >
-          {options.map((option) => (
-            <DropdownMenuRadioItem key={option.value} value={option.value} className="h-9 pl-3 pr-8 text-sm">
-              {option.label}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <AgentDetailSelect
+      label={msg('managedAgents.filters.created', 'Created')}
+      valueLabel={
+        options.find((option) => option.value === value)?.label ?? msg('managedAgents.filters.allTime', 'All time')
+      }
+      value={value}
+      options={options}
+      onSelect={onSelect}
+    />
   );
 }
 
@@ -2036,41 +1866,20 @@ export function AgentDeploymentFilterDropdown({
   onSelect: (value: string) => void;
 }) {
   const { msg } = useI18n();
+  const all = msg('common.all', 'All');
   const selected = deployments.find((deployment) => deployment.id === value);
-  const valueLabel = value ? selected?.name || compactEntityId(value) : msg('common.all', 'All');
-
+  const valueLabel = value ? selected?.name || compactEntityId(value) : all;
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={<Button type="button" variant="outline" size="lg" className="gap-2 text-sm text-muted-foreground" />}
-      >
-        <span>{msg('managedAgents.deployments.kind', 'Deployment')}</span>
-        <span className="max-w-[180px] truncate font-medium text-foreground">
-          {loading ? msg('common.loading', 'Loading...') : valueLabel}
-        </span>
-        <ChevronDown className="size-4 text-muted-foreground/70" aria-hidden />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={8} className="w-[260px]">
-        <DropdownMenuRadioGroup
-          value={value || 'all'}
-          onValueChange={(nextValue) => onSelect(nextValue === 'all' ? '' : nextValue)}
-        >
-          <DropdownMenuRadioItem value="all" className="h-9 pl-3 pr-8 text-sm">
-            {msg('common.all', 'All')}
-          </DropdownMenuRadioItem>
-          {deployments.map((deployment) => (
-            <DropdownMenuRadioItem key={deployment.id} value={deployment.id} className="h-9 pl-3 pr-8 text-sm">
-              <span className="min-w-0 truncate">{deployment.name || deployment.id}</span>
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-        {!deployments.length && !loading ? (
-          <div className="px-3 py-2 text-sm text-muted-foreground">
-            {msg('managedAgents.deployments.noDeployments', 'No deployments')}
-          </div>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <AgentDetailSelect
+      label={msg('managedAgents.deployments.kind', 'Deployment')}
+      valueLabel={loading ? msg('common.loading', 'Loading...') : valueLabel}
+      value={value || 'all'}
+      options={[
+        { value: 'all', label: all },
+        ...deployments.map((deployment) => ({ value: deployment.id, label: deployment.name || deployment.id })),
+      ]}
+      onSelect={(nextValue) => onSelect(nextValue === 'all' ? '' : nextValue)}
+    />
   );
 }
 
@@ -2090,152 +1899,13 @@ export function AgentStatusFilterDropdown({
     { value: 'rescheduling', label: msg('managedAgents.sessions.statusRescheduling', 'Rescheduling') },
     { value: 'terminated', label: msg('managedAgents.sessions.statusTerminated', 'Terminated') },
   ];
-  const label = options.find((option) => option.value === value)?.label ?? msg('common.all', 'All');
-
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={<Button type="button" variant="outline" size="lg" className="gap-2 text-sm text-muted-foreground" />}
-      >
-        <span>{managedColumnLabel('Status', msg)}</span>
-        <span className="font-medium text-foreground">{label}</span>
-        <ChevronDown className="size-4 text-muted-foreground/70" aria-hidden />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={8} className="w-[200px]">
-        <DropdownMenuRadioGroup
-          value={value}
-          onValueChange={(nextValue) => onSelect(nextValue as AgentDetailStatusFilter)}
-        >
-          {options.map((option) => (
-            <DropdownMenuRadioItem key={option.value} value={option.value} className="h-9 pl-3 pr-8 text-sm">
-              {option.label}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-export function AgentMetricCard({ title, value }: { title: string; value: ReactNode }) {
-  return (
-    <Card className="gap-0 py-0">
-      <CardContent className="py-3">
-        <div className="text-xs font-medium text-muted-foreground">{title}</div>
-        <div className="mt-2 text-2xl font-semibold leading-8 text-foreground">{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
-
-export function AgentQuantileCard({
-  title,
-  metric,
-  suffix,
-  formatValue,
-}: {
-  title: string;
-  metric?: AnalyticsMetricBucket;
-  suffix: string;
-  formatValue: (value: number) => string;
-}) {
-  const quantileOptions = ['p50', 'p90', 'p95'] as const;
-  const [quantile, setQuantile] = useState<'p50' | 'p90' | 'p95'>('p50');
-
-  return (
-    <Card className="gap-0 py-0">
-      <CardContent className="py-3">
-        <Tabs
-          value={quantile}
-          onValueChange={(nextValue) => setQuantile(nextValue as 'p50' | 'p90' | 'p95')}
-          className="gap-0"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-base font-semibold text-foreground">{title}</div>
-            <TabsList aria-label={title} className="h-8 rounded-lg p-0.5">
-              {quantileOptions.map((option) => (
-                <TabsTrigger key={option} value={option} className="h-7 rounded-md px-2 text-xs">
-                  {option}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </div>
-          {quantileOptions.map((option) => {
-            const value = metricQuantile(metric, option);
-            return (
-              <TabsContent key={option} value={option} className="mt-8">
-                <div className="text-2xl font-semibold leading-8 text-foreground">
-                  {value ? formatValue(value) : '-'}
-                </div>
-                {suffix ? <div className="mt-1 text-sm text-muted-foreground">{suffix}</div> : null}
-              </TabsContent>
-            );
-          })}
-        </Tabs>
-      </CardContent>
-    </Card>
-  );
-}
-
-export function AgentTimeseriesPreview({ rows, groupBy }: { rows: Array<Record<string, unknown>>; groupBy: string }) {
-  const maxValue = Math.max(1, ...rows.map((row) => numericValueFromKeys(row, ['sessions_count', 'count', 'value'])));
-  return (
-    <div className="flex h-full w-full max-w-[720px] items-end justify-center gap-2 px-4 pb-4">
-      {rows.slice(-24).map((row, index) => {
-        const value = numericValueFromKeys(row, ['sessions_count', 'count', 'value']);
-        const height = Math.max(8, Math.round((value / maxValue) * 190));
-        const label =
-          stringValueFromKeys(row, ['outcome_category', 'agent_version', 'date', 'time_bucket']) ||
-          `${groupBy} ${index + 1}`;
-        return (
-          <div key={`${label}-${index}`} className="flex min-w-0 flex-1 flex-col items-center gap-2">
-            <div className="w-full rounded-t bg-accent" style={{ height }} title={`${label}: ${value}`} />
-            <span className="max-w-full truncate text-[10px] text-muted-foreground/70">{value}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-export function AgentAnalyticsBreakdown({
-  title,
-  values,
-  emptyLabel,
-}: {
-  title: string;
-  values: Record<string, unknown>;
-  emptyLabel: string;
-}) {
-  const entries = Object.entries(values)
-    .map(([label, value]) => [label, metricValue(typeof value === 'number' ? value : objectRecord(value))] as const)
-    .filter(([, value]) => Number.isFinite(value) && value > 0);
-  const total = entries.reduce((sum, [, value]) => sum + value, 0);
-  return (
-    <Card className="gap-0 py-0">
-      <CardHeader className="border-b border-border py-3">
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 py-4">
-        {entries.length ? (
-          entries.map(([label, value]) => {
-            const pct = total ? (value / total) * 100 : 0;
-            return (
-              <div key={label}>
-                <div className="mb-1 flex items-center justify-between gap-3 text-sm">
-                  <span className="truncate text-foreground">{titleCase(label.replace(/_/g, ' '))}</span>
-                  <span className="text-muted-foreground">{formatInteger(value)}</span>
-                </div>
-                <div className="h-2 rounded-full bg-secondary">
-                  <div className="h-2 rounded-full bg-accent" style={{ width: `${Math.max(2, pct)}%` }} />
-                </div>
-              </div>
-            );
-          })
-        ) : (
-          <div className="py-8 text-center text-sm text-muted-foreground">{emptyLabel}</div>
-        )}
-      </CardContent>
-    </Card>
+    <AgentDetailSelect
+      label={managedColumnLabel('Status', msg)}
+      valueLabel={options.find((option) => option.value === value)?.label ?? msg('common.all', 'All')}
+      value={value}
+      options={options}
+      onSelect={onSelect}
+    />
   );
 }

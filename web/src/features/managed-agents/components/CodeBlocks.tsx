@@ -9,12 +9,11 @@ import json from 'highlight.js/lib/languages/json';
 import python from 'highlight.js/lib/languages/python';
 import typescript from 'highlight.js/lib/languages/typescript';
 import yamlLanguage from 'highlight.js/lib/languages/yaml';
-import { Check, Copy } from 'lucide-react';
-import { useState } from 'react';
 import { templateBody, templateTitle } from '../labels';
-import { looksLikeJson } from '../sessions/SessionDetailPage';
+import { looksLikeJson } from '../sessions/sessionTraceModel';
 import { type AgentTemplate, type CodeFormat, type HighlightLanguage } from '../types';
-import { copyText } from '../utils';
+
+export { CopyButton } from '../../../shared/ui/copy-button';
 
 hljs.registerLanguage('bash', bash);
 
@@ -44,7 +43,7 @@ export function SyntaxCodeBlock({
     <pre
       data-testid="session-trace-code-block"
       className={clsx(
-        'rounded-lg border border-border bg-muted p-3 font-mono text-[13px] leading-[19px] text-foreground whitespace-pre-wrap break-words overflow-x-hidden',
+        'rounded-lg border-[0.5px] border-border bg-muted p-3 font-mono text-xs leading-[18px] text-foreground whitespace-pre-wrap break-words overflow-x-hidden',
         maxHeightClassName ? 'subtle-scrollbar overflow-y-auto' : 'overflow-visible',
         maxHeightClassName,
       )}
@@ -221,30 +220,6 @@ export function FormatSelect({
   );
 }
 
-export function CopyButton({ value, label }: { value: string; label: string }) {
-  const { msg } = useI18n();
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    await copyText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 900);
-  };
-
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-sm"
-      aria-label={copied ? msg('common.copied', 'Copied') : label}
-      className="text-foreground hover:bg-accent hover:text-foreground"
-      onClick={handleCopy}
-    >
-      {copied ? <Check className="size-4" aria-hidden /> : <Copy className="size-4" aria-hidden />}
-    </Button>
-  );
-}
-
 export function NumberedCodeBlock({ code, format }: { code: string; format: CodeFormat }) {
   return (
     <pre className="min-w-full whitespace-pre-wrap break-words font-mono text-[13px] leading-[19px] text-foreground">
@@ -290,7 +265,7 @@ export function TemplateCard({ template, onClick }: { template: AgentTemplate; o
       type="button"
       variant="ghost"
       aria-label={label}
-      className="h-[136px] min-h-[136px] w-full self-start flex-col items-start justify-start gap-0 overflow-hidden whitespace-normal rounded-lg border border-border bg-card p-3 text-left shadow-xs transition-[border-color,background-color,box-shadow] hover:border-ring/40 hover:bg-accent/40 hover:shadow-sm"
+      className="h-[136px] min-h-[136px] w-full self-start flex-col items-start justify-start gap-0 overflow-hidden whitespace-normal rounded-lg border-[0.5px] border-border bg-card p-3 text-left shadow-xs transition-[border-color,background-color,box-shadow] hover:border-ring/40 hover:bg-accent/40 hover:shadow-sm"
       onClick={onClick}
     >
       <div className="line-clamp-2 w-full min-w-0 text-[15px] font-medium leading-5 text-foreground">{title}</div>
@@ -302,7 +277,7 @@ export function TemplateCard({ template, onClick }: { template: AgentTemplate; o
             return (
               <span
                 key={tag.label}
-                className={clsx('grid size-5 place-items-center rounded-full border border-border', tag.tone)}
+                className={clsx('grid size-5 place-items-center rounded-full border-[0.5px] border-border', tag.tone)}
                 title={tag.label}
               >
                 <Icon className="size-3" aria-hidden />
@@ -311,7 +286,7 @@ export function TemplateCard({ template, onClick }: { template: AgentTemplate; o
           })}
           {hiddenTagCount > 0 ? (
             <span
-              className="grid h-5 min-w-5 place-items-center rounded-full border border-border bg-secondary px-1.5 text-[10px] font-medium leading-none text-secondary-foreground"
+              className="grid h-5 min-w-5 place-items-center rounded-full border-[0.5px] border-border bg-secondary px-1.5 text-[12px] font-medium leading-none text-secondary-foreground"
               title={hiddenTagTitle}
             >
               +{hiddenTagCount}

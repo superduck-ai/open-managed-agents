@@ -1,0 +1,200 @@
+{
+  "backend": "openobserve",
+  "queries": [
+    {
+      "query_ref": "overview.active_sessions",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    COUNT(DISTINCT CASE WHEN _timestamp >= {start_us} THEN service_oma_session_id END) AS current,\n    COUNT(DISTINCT CASE WHEN _timestamp < {start_us} THEN service_oma_session_id END) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND 1=1\n)"
+    },
+    {
+      "query_ref": "overview.interactions",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    COUNT(CASE WHEN _timestamp >= {start_us} THEN 1 END) AS current,\n    COUNT(CASE WHEN _timestamp < {start_us} THEN 1 END) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.interaction'\n)"
+    },
+    {
+      "query_ref": "overview.token_total",
+      "stream_type": "metrics",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    SUM(CASE WHEN _timestamp >= {start_us} THEN value ELSE 0 END) AS current,\n    SUM(CASE WHEN _timestamp < {start_us} THEN value ELSE 0 END) AS previous\n  FROM claude_code_token_usage\n  WHERE {scope} AND 1=1\n)"
+    },
+    {
+      "query_ref": "overview.cost_estimated",
+      "stream_type": "metrics",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    SUM(CASE WHEN _timestamp >= {start_us} THEN value ELSE 0 END) AS current,\n    SUM(CASE WHEN _timestamp < {start_us} THEN value ELSE 0 END) AS previous\n  FROM claude_code_cost_usage\n  WHERE {scope} AND 1=1\n)"
+    },
+    {
+      "query_ref": "overview.ttft_avg",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    AVG(CASE WHEN _timestamp >= {start_us} THEN CAST(ttft_ms AS DOUBLE) END) AS current,\n    AVG(CASE WHEN _timestamp < {start_us} THEN CAST(ttft_ms AS DOUBLE) END) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.llm_request' AND success = 'true' AND ttft_ms IS NOT NULL\n)"
+    },
+    {
+      "query_ref": "overview.session_error_rate",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    COUNT(DISTINCT CASE WHEN _timestamp >= {start_us} AND success = 'false' THEN service_oma_session_id END) * 100.0\n      / NULLIF(COUNT(DISTINCT CASE WHEN _timestamp >= {start_us} THEN service_oma_session_id END), 0) AS current,\n    COUNT(DISTINCT CASE WHEN _timestamp < {start_us} AND success = 'false' THEN service_oma_session_id END) * 100.0\n      / NULLIF(COUNT(DISTINCT CASE WHEN _timestamp < {start_us} THEN service_oma_session_id END), 0) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND 1=1\n)"
+    },
+    {
+      "query_ref": "overview.session_turns_percentiles",
+      "stream_type": "traces",
+      "sql": "SELECT 'p50' AS name, approx_percentile_cont(CAST(turns AS DOUBLE), 0.50) AS value, CAST(NULL AS TIMESTAMP) AS timestamp\nFROM (\n  SELECT service_oma_session_id, COUNT(*) AS turns\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.interaction'\n  GROUP BY service_oma_session_id\n) AS per_session\nUNION ALL\nSELECT 'p90' AS name, approx_percentile_cont(CAST(turns AS DOUBLE), 0.90) AS value, CAST(NULL AS TIMESTAMP) AS timestamp\nFROM (\n  SELECT service_oma_session_id, COUNT(*) AS turns\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.interaction'\n  GROUP BY service_oma_session_id\n) AS per_session\nUNION ALL\nSELECT 'p95' AS name, approx_percentile_cont(CAST(turns AS DOUBLE), 0.95) AS value, CAST(NULL AS TIMESTAMP) AS timestamp\nFROM (\n  SELECT service_oma_session_id, COUNT(*) AS turns\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.interaction'\n  GROUP BY service_oma_session_id\n) AS per_session\nUNION ALL\nSELECT 'p50' AS name, approx_percentile_cont(CAST(turns AS DOUBLE), 0.50) AS value, bucket_ts AS timestamp\nFROM (\n  SELECT histogram(_timestamp, '{bucket_interval}') AS bucket_ts, service_oma_session_id, COUNT(*) AS turns\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.interaction'\n  GROUP BY bucket_ts, service_oma_session_id\n) AS per_bucket\nGROUP BY bucket_ts\nUNION ALL\nSELECT 'p90' AS name, approx_percentile_cont(CAST(turns AS DOUBLE), 0.90) AS value, bucket_ts AS timestamp\nFROM (\n  SELECT histogram(_timestamp, '{bucket_interval}') AS bucket_ts, service_oma_session_id, COUNT(*) AS turns\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.interaction'\n  GROUP BY bucket_ts, service_oma_session_id\n) AS per_bucket\nGROUP BY bucket_ts\nUNION ALL\nSELECT 'p95' AS name, approx_percentile_cont(CAST(turns AS DOUBLE), 0.95) AS value, bucket_ts AS timestamp\nFROM (\n  SELECT histogram(_timestamp, '{bucket_interval}') AS bucket_ts, service_oma_session_id, COUNT(*) AS turns\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.interaction'\n  GROUP BY bucket_ts, service_oma_session_id\n) AS per_bucket\nGROUP BY bucket_ts"
+    },
+    {
+      "query_ref": "overview.session_tokens_percentiles",
+      "stream_type": "metrics",
+      "sql": "SELECT 'p50' AS name, approx_percentile_cont(CAST(tokens AS DOUBLE), 0.50) AS value, CAST(NULL AS TIMESTAMP) AS timestamp\nFROM (\n  SELECT oma_session_id, SUM(value) AS tokens\n  FROM claude_code_token_usage\n  WHERE {scope} AND 1=1\n  GROUP BY oma_session_id\n) AS per_session\nUNION ALL\nSELECT 'p90' AS name, approx_percentile_cont(CAST(tokens AS DOUBLE), 0.90) AS value, CAST(NULL AS TIMESTAMP) AS timestamp\nFROM (\n  SELECT oma_session_id, SUM(value) AS tokens\n  FROM claude_code_token_usage\n  WHERE {scope} AND 1=1\n  GROUP BY oma_session_id\n) AS per_session\nUNION ALL\nSELECT 'p95' AS name, approx_percentile_cont(CAST(tokens AS DOUBLE), 0.95) AS value, CAST(NULL AS TIMESTAMP) AS timestamp\nFROM (\n  SELECT oma_session_id, SUM(value) AS tokens\n  FROM claude_code_token_usage\n  WHERE {scope} AND 1=1\n  GROUP BY oma_session_id\n) AS per_session\nUNION ALL\nSELECT 'p50' AS name, approx_percentile_cont(CAST(tokens AS DOUBLE), 0.50) AS value, bucket_ts AS timestamp\nFROM (\n  SELECT histogram(_timestamp, '{bucket_interval}') AS bucket_ts, oma_session_id, SUM(value) AS tokens\n  FROM claude_code_token_usage\n  WHERE {scope} AND 1=1\n  GROUP BY bucket_ts, oma_session_id\n) AS per_bucket\nGROUP BY bucket_ts\nUNION ALL\nSELECT 'p90' AS name, approx_percentile_cont(CAST(tokens AS DOUBLE), 0.90) AS value, bucket_ts AS timestamp\nFROM (\n  SELECT histogram(_timestamp, '{bucket_interval}') AS bucket_ts, oma_session_id, SUM(value) AS tokens\n  FROM claude_code_token_usage\n  WHERE {scope} AND 1=1\n  GROUP BY bucket_ts, oma_session_id\n) AS per_bucket\nGROUP BY bucket_ts\nUNION ALL\nSELECT 'p95' AS name, approx_percentile_cont(CAST(tokens AS DOUBLE), 0.95) AS value, bucket_ts AS timestamp\nFROM (\n  SELECT histogram(_timestamp, '{bucket_interval}') AS bucket_ts, oma_session_id, SUM(value) AS tokens\n  FROM claude_code_token_usage\n  WHERE {scope} AND 1=1\n  GROUP BY bucket_ts, oma_session_id\n) AS per_bucket\nGROUP BY bucket_ts"
+    },
+    {
+      "query_ref": "overview.session_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       'sessions' AS series,\n       COUNT(DISTINCT service_oma_session_id) AS value\nFROM oma_claude_code\nWHERE {scope} AND 1=1\nGROUP BY timestamp"
+    },
+    {
+      "query_ref": "overview.llm_request_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       'requests' AS series,\n       COUNT(*) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request'\nGROUP BY timestamp\nUNION ALL\nSELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       'failure_rate' AS series,\n       COUNT(CASE WHEN success = 'false' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request'\nGROUP BY timestamp"
+    },
+    {
+      "query_ref": "overview.token_trend",
+      "stream_type": "metrics",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       type AS series,\n       SUM(value) AS value\nFROM claude_code_token_usage\nWHERE {scope} AND 1=1\nGROUP BY timestamp, type"
+    },
+    {
+      "query_ref": "overview.interaction_duration_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       'avg_ms' AS series,\n       AVG(CAST(interaction_duration_ms AS DOUBLE)) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.interaction'\nGROUP BY timestamp"
+    },
+    {
+      "query_ref": "overview.model_stats",
+      "stream_type": "traces",
+      "sql": "SELECT model AS name,\n       SUM((COALESCE(CAST(input_tokens AS BIGINT), 0) + COALESCE(CAST(output_tokens AS BIGINT), 0) + COALESCE(CAST(cache_read_tokens AS BIGINT), 0) + COALESCE(CAST(cache_creation_tokens AS BIGINT), 0))) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request'\nGROUP BY model\nORDER BY value DESC"
+    },
+    {
+      "query_ref": "overview.tool_top",
+      "stream_type": "traces",
+      "sql": "SELECT tool_name AS name,\n       COUNT(*) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.tool'\nGROUP BY tool_name\nORDER BY value DESC\nLIMIT 10"
+    },
+    {
+      "query_ref": "model.requests",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    COUNT(CASE WHEN _timestamp >= {start_us} THEN 1 END) AS current,\n    COUNT(CASE WHEN _timestamp < {start_us} THEN 1 END) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\n)"
+    },
+    {
+      "query_ref": "model.duration_avg",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    AVG(CASE WHEN _timestamp >= {start_us} THEN CAST(duration_ms AS DOUBLE) END) AS current,\n    AVG(CASE WHEN _timestamp < {start_us} THEN CAST(duration_ms AS DOUBLE) END) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\n)"
+    },
+    {
+      "query_ref": "model.failure_rate",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    COUNT(CASE WHEN _timestamp >= {start_us} AND success = 'false' THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN _timestamp >= {start_us} THEN 1 END), 0) AS current,\n    COUNT(CASE WHEN _timestamp < {start_us} AND success = 'false' THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN _timestamp < {start_us} THEN 1 END), 0) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\n)"
+    },
+    {
+      "query_ref": "model.token_total",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    SUM(CASE WHEN _timestamp >= {start_us} THEN (COALESCE(CAST(input_tokens AS BIGINT), 0) + COALESCE(CAST(output_tokens AS BIGINT), 0) + COALESCE(CAST(cache_read_tokens AS BIGINT), 0) + COALESCE(CAST(cache_creation_tokens AS BIGINT), 0)) ELSE 0 END) AS current,\n    SUM(CASE WHEN _timestamp < {start_us} THEN (COALESCE(CAST(input_tokens AS BIGINT), 0) + COALESCE(CAST(output_tokens AS BIGINT), 0) + COALESCE(CAST(cache_read_tokens AS BIGINT), 0) + COALESCE(CAST(cache_creation_tokens AS BIGINT), 0)) ELSE 0 END) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\n)"
+    },
+    {
+      "query_ref": "model.ttft_avg",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    AVG(CASE WHEN _timestamp >= {start_us} THEN CAST(ttft_ms AS DOUBLE) END) AS current,\n    AVG(CASE WHEN _timestamp < {start_us} THEN CAST(ttft_ms AS DOUBLE) END) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.llm_request' AND success = 'true' AND ttft_ms IS NOT NULL AND {model_filter}\n)"
+    },
+    {
+      "query_ref": "model.cost_estimated",
+      "stream_type": "metrics",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    SUM(CASE WHEN _timestamp >= {start_us} THEN value ELSE 0 END) AS current,\n    SUM(CASE WHEN _timestamp < {start_us} THEN value ELSE 0 END) AS previous\n  FROM claude_code_cost_usage\n  WHERE {scope} AND {model_filter}\n)"
+    },
+    {
+      "query_ref": "model.token_distribution",
+      "stream_type": "traces",
+      "sql": "SELECT model AS name,\n       SUM((COALESCE(CAST(input_tokens AS BIGINT), 0) + COALESCE(CAST(output_tokens AS BIGINT), 0) + COALESCE(CAST(cache_read_tokens AS BIGINT), 0) + COALESCE(CAST(cache_creation_tokens AS BIGINT), 0))) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\nGROUP BY model\nORDER BY value DESC"
+    },
+    {
+      "query_ref": "model.token_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       model AS series,\n       SUM((COALESCE(CAST(input_tokens AS BIGINT), 0) + COALESCE(CAST(output_tokens AS BIGINT), 0) + COALESCE(CAST(cache_read_tokens AS BIGINT), 0) + COALESCE(CAST(cache_creation_tokens AS BIGINT), 0))) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\nGROUP BY timestamp, model"
+    },
+    {
+      "query_ref": "model.token_per_request_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       model AS series,\n       SUM((COALESCE(CAST(input_tokens AS BIGINT), 0) + COALESCE(CAST(output_tokens AS BIGINT), 0) + COALESCE(CAST(cache_read_tokens AS BIGINT), 0) + COALESCE(CAST(cache_creation_tokens AS BIGINT), 0))) * 1.0 / NULLIF(COUNT(*), 0) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\nGROUP BY timestamp, model"
+    },
+    {
+      "query_ref": "model.request_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       model AS series,\n       COUNT(*) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\nGROUP BY timestamp, model"
+    },
+    {
+      "query_ref": "model.request_latency_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       concat(model, ' · avg') AS series,\n       AVG(CAST(duration_ms AS DOUBLE)) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\nGROUP BY timestamp, model\nUNION ALL\nSELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       concat(model, ' · p95') AS series,\n       approx_percentile_cont(CAST(duration_ms AS DOUBLE), 0.95) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\nGROUP BY timestamp, model\nUNION ALL\nSELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       concat(model, ' · p99') AS series,\n       approx_percentile_cont(CAST(duration_ms AS DOUBLE), 0.99) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\nGROUP BY timestamp, model"
+    },
+    {
+      "query_ref": "model.error_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       concat(model, ' · errors') AS series,\n       COUNT(CASE WHEN success = 'false' THEN 1 END) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\nGROUP BY timestamp, model\nUNION ALL\nSELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       concat(model, ' · failure_rate') AS series,\n       COUNT(CASE WHEN success = 'false' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\nGROUP BY timestamp, model"
+    },
+    {
+      "query_ref": "model.stats_table",
+      "stream_type": "traces",
+      "sql": "SELECT model AS model,\n       SUM(COALESCE(CAST(input_tokens AS BIGINT), 0)) AS input_tokens,\n       SUM(COALESCE(CAST(output_tokens AS BIGINT), 0)) AS output_tokens,\n       SUM(COALESCE(CAST(cache_read_tokens AS BIGINT), 0)) AS cache_read_tokens,\n       SUM(COALESCE(CAST(cache_creation_tokens AS BIGINT), 0)) AS cache_creation_tokens,\n       SUM((COALESCE(CAST(input_tokens AS BIGINT), 0) + COALESCE(CAST(output_tokens AS BIGINT), 0) + COALESCE(CAST(cache_read_tokens AS BIGINT), 0) + COALESCE(CAST(cache_creation_tokens AS BIGINT), 0))) AS token_total,\n       COUNT(*) AS requests,\n       COUNT(CASE WHEN success = 'false' THEN 1 END) AS errors,\n       COUNT(CASE WHEN success = 'false' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) AS failure_rate,\n       AVG(CAST(duration_ms AS DOUBLE)) AS avg_duration_ms,\n       approx_percentile_cont(CAST(duration_ms AS DOUBLE), 0.95) AS p95_duration_ms,\n       approx_percentile_cont(CAST(duration_ms AS DOUBLE), 0.99) AS p99_duration_ms,\n       AVG(CASE WHEN success = 'true' AND ttft_ms IS NOT NULL THEN CAST(ttft_ms AS DOUBLE) END) AS avg_ttft_ms\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.llm_request' AND {model_filter}\nGROUP BY model\nORDER BY token_total DESC"
+    },
+    {
+      "query_ref": "tool.calls",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    COUNT(CASE WHEN _timestamp >= {start_us} THEN 1 END) AS current,\n    COUNT(CASE WHEN _timestamp < {start_us} THEN 1 END) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.tool' AND {tool_filter}\n)"
+    },
+    {
+      "query_ref": "tool.duration_avg",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    AVG(CASE WHEN _timestamp >= {start_us} THEN CAST(duration_ms AS DOUBLE) END) AS current,\n    AVG(CASE WHEN _timestamp < {start_us} THEN CAST(duration_ms AS DOUBLE) END) AS previous\n  FROM oma_claude_code\n  WHERE {scope} AND operation_name = 'claude_code.tool' AND {tool_filter}\n)"
+    },
+    {
+      "query_ref": "tool.errors",
+      "stream_type": "traces",
+      "sql": "SELECT current, previous,\n       (current - previous) * 100.0 / NULLIF(previous, 0) AS change_percent\nFROM (\n  SELECT\n    COUNT(CASE WHEN p._timestamp >= {start_us} AND e.success = 'false' THEN 1 END) AS current,\n    COUNT(CASE WHEN p._timestamp < {start_us} AND e.success = 'false' THEN 1 END) AS previous\n  FROM oma_claude_code p\nLEFT JOIN oma_claude_code e\n  ON e.reference_parent_span_id = p.span_id\n AND e.operation_name = 'claude_code.tool.execution'\n AND {scope:e}\nWHERE {scope:p} AND p.operation_name = 'claude_code.tool' AND {tool_filter:p}\n)"
+    },
+    {
+      "query_ref": "tool.calls_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       'calls' AS series,\n       COUNT(*) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.tool' AND {tool_filter}\nGROUP BY timestamp"
+    },
+    {
+      "query_ref": "tool.duration_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       'avg_ms' AS series,\n       AVG(CAST(duration_ms AS DOUBLE)) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.tool' AND {tool_filter}\nGROUP BY timestamp"
+    },
+    {
+      "query_ref": "tool.errors_trend",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(p._timestamp, '{bucket_interval}') AS timestamp,\n       'errors' AS series,\n       COUNT(CASE WHEN e.success = 'false' THEN 1 END) AS value\nFROM oma_claude_code p\nLEFT JOIN oma_claude_code e\n  ON e.reference_parent_span_id = p.span_id\n AND e.operation_name = 'claude_code.tool.execution'\n AND {scope:e}\nWHERE {scope:p} AND p.operation_name = 'claude_code.tool' AND {tool_filter:p}\nGROUP BY timestamp"
+    },
+    {
+      "query_ref": "tool.stats_table",
+      "stream_type": "traces",
+      "sql": "SELECT p.tool_name AS tool_name,\n       COUNT(DISTINCT p.span_id) AS calls,\n       COUNT(CASE WHEN e.success = 'false' THEN 1 END) AS errors,\n       AVG(CAST(p.duration_ms AS DOUBLE)) AS avg_duration_ms,\n       approx_percentile_cont(CAST(p.duration_ms AS DOUBLE), 0.95) AS p95_duration_ms,\n       MAX(CAST(p.duration_ms AS DOUBLE)) AS max_duration_ms\nFROM oma_claude_code p\nLEFT JOIN oma_claude_code e\n  ON e.reference_parent_span_id = p.span_id\n AND e.operation_name = 'claude_code.tool.execution'\n AND {scope:e}\nWHERE {scope:p} AND p.operation_name = 'claude_code.tool' AND {tool_filter:p}\nGROUP BY p.tool_name\nORDER BY calls DESC"
+    },
+    {
+      "query_ref": "trace.trend.count",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       'traces' AS series,\n       COUNT(DISTINCT trace_id) AS value\nFROM oma_claude_code\nWHERE {scope} AND 1=1\nGROUP BY timestamp"
+    },
+    {
+      "query_ref": "trace.trend.interaction_duration",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       'avg_ms' AS series,\n       AVG(CAST(interaction_duration_ms AS DOUBLE)) AS value\nFROM oma_claude_code\nWHERE {scope} AND operation_name = 'claude_code.interaction'\nGROUP BY timestamp"
+    },
+    {
+      "query_ref": "trace.trend.errors",
+      "stream_type": "traces",
+      "sql": "SELECT histogram(_timestamp, '{bucket_interval}') AS timestamp,\n       'errors' AS series,\n       COUNT(DISTINCT CASE WHEN operation_name IN ('claude_code.llm_request', 'claude_code.tool.execution') AND success = 'false' THEN trace_id END) AS value\nFROM oma_claude_code\nWHERE {scope} AND 1=1\nGROUP BY timestamp"
+    },
+    {
+      "query_ref": "trace.list",
+      "stream_type": "traces",
+      "sql": "SELECT trace_id,\n       MAX(service_oma_session_id) AS session_id,\n       MAX(service_oma_agent_id) AS agent_id,\n       MIN(start_time) AS start_time,\n       MAX(CASE WHEN operation_name = 'claude_code.interaction'\n                THEN CAST(interaction_duration_ms AS DOUBLE) END) AS duration_ms,\n       SUM(CASE WHEN operation_name = 'claude_code.llm_request' THEN\n             (COALESCE(CAST(input_tokens AS BIGINT), 0) + COALESCE(CAST(output_tokens AS BIGINT), 0) + COALESCE(CAST(cache_read_tokens AS BIGINT), 0) + COALESCE(CAST(cache_creation_tokens AS BIGINT), 0))\n           ELSE 0 END) AS tokens,\n       COUNT(CASE WHEN operation_name = 'claude_code.llm_request' THEN 1 END) AS llm_calls,\n       COUNT(CASE WHEN operation_name = 'claude_code.tool' THEN 1 END) AS tool_calls,\n       MAX(CASE WHEN operation_name IN ('claude_code.llm_request', 'claude_code.tool.execution')\n                 AND success = 'false' THEN 1 ELSE 0 END) AS has_error,\n       MAX(CASE WHEN operation_name = 'claude_code.interaction'\n                THEN substr(CAST(user_prompt AS VARCHAR), 1, 240) END) AS input,\n       MAX(CASE WHEN operation_name = 'claude_code.llm_request' AND success = 'true'\n                THEN concat(lpad(CAST(start_time AS VARCHAR), 24, '0'), substr(CAST(response_model_output AS VARCHAR), 1, 240)) END) AS output\nFROM oma_claude_code\nWHERE {scope} AND {trace_id_filter}\nGROUP BY trace_id\n{status_having}\nORDER BY start_time DESC\nLIMIT 51 OFFSET {offset}"
+    },
+    {
+      "query_ref": "trace.detail",
+      "stream_type": "traces",
+      "sql": "SELECT *\nFROM oma_claude_code\nWHERE {scope} AND trace_id = {trace_id}\nORDER BY start_time ASC"
+    }
+  ]
+}

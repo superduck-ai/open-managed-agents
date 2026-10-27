@@ -75,6 +75,7 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{externalID}
         AND deleted_at IS NULL
+        AND archived_at IS NULL
         RETURNING <include refid="columns"/>
     </update>
 
@@ -109,6 +110,12 @@
         <if test="!params.IncludeArchived">AND archived_at IS NULL</if>
         <if test="params.Cursor != nil">
             AND (created_at, uuid) &lt; (#{params.Cursor.CreatedAt}, #{params.Cursor.UUID})
+            AND EXISTS (
+                SELECT 1 FROM vaults AS cursor_vault
+                WHERE cursor_vault.workspace_uuid = #{params.WorkspaceUUID}
+                AND cursor_vault.uuid = #{params.Cursor.UUID}
+                AND cursor_vault.created_at = #{params.Cursor.CreatedAt}
+            )
         </if>
         ORDER BY created_at DESC, uuid DESC
         LIMIT #{params.Limit}

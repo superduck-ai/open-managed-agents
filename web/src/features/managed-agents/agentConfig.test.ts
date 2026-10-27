@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   agentTemplates,
+  agentEditSaveErrorMessage,
   blankAgentTemplate,
   createDialogAgentConfig,
   createDialogTemplateConfigs,
@@ -12,6 +13,21 @@ import {
 } from './agentConfig';
 
 describe('localized create-agent template configs', () => {
+  test('disables AskUserQuestion in new Agent templates', () => {
+    for (const config of Object.values(createDialogTemplateConfigs)) {
+      expect(config.tools[0]).toEqual({
+        type: 'agent_toolset_20260401',
+        configs: [
+          {
+            name: 'ask_user_question',
+            enabled: false,
+            permission_policy: { type: 'always_allow' },
+          },
+        ],
+      });
+    }
+  });
+
   test('keeps the English and Chinese template catalogs structurally aligned', () => {
     expect(Object.keys(createDialogTemplateConfigsZh).sort()).toEqual(Object.keys(createDialogTemplateConfigs).sort());
 
@@ -120,4 +136,11 @@ describe('localized create-agent template configs', () => {
     expect(config.metadata).toEqual({ source: 'description' });
     expect(createDialogTemplateConfigsZh.blank.metadata).toBeUndefined();
   });
+});
+
+test('edit saves preserve server domain field errors', () => {
+  expect(agentEditSaveErrorMessage({ status: 400, message: 'allowed_domains.0: Invalid domain format' })).toBe(
+    'allowed_domains.0: Invalid domain format',
+  );
+  expect(agentEditSaveErrorMessage({ status: 409, message: 'conflict' })).toContain('updated elsewhere');
 });

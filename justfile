@@ -19,29 +19,65 @@ init-compose-config:
       install -m 600 "$compose_template" "$compose_local"; \
       echo "created $compose_local with mode 0600"; \
     fi
+  @mkdir -p -m 700 config/secrets
+  @if [[ ! -e config/secrets/upstream-proxy-ca-key.pem && ! -L config/secrets/upstream-proxy-ca-key.pem ]]; then ./scripts/generate-upstream-proxy-ca-key.sh config/secrets/upstream-proxy-ca-key.pem; fi
 
-# Restart backend in foreground. server.addr comes from config/config.yaml; PORT selects the listener to stop.
-server: generate
+server:
   PORT="${PORT:-38080}" ./scripts/restart-server.sh
 
-# Restart backend in foreground. server.addr comes from config/config.yaml; PORT selects the listener to stop.
-restart-server: generate
+restart-server:
   PORT="${PORT:-38080}" ./scripts/restart-server.sh
+
+restart:
+  ./scripts/restart-dev.sh
+
+# Initialize the worktree development environment (name derived from the worktree).
+dev-init *args:
+  ./scripts/dev-init.sh {{ args }}
+
+# Tear down the bound environment, or every orphaned one with --orphans; destructive, requires --yes.
+dev-teardown *args:
+  ./scripts/generate-go.sh --cached
+  go run ./cmd/dev-init teardown {{ args }}
+
+dev-recycle *args:
+  ./scripts/dev-recycle.sh {{ args }}
+
+# Show the current worktree environment binding, addresses and init state.
+slot-info *args:
+  ./scripts/generate-go.sh --cached
+  go run ./cmd/dev-init slot-info {{ args }}
+
+# Restart the Brain (oma-brain-dsh) in foreground using the bound environment when present.
+restart-brain:
+  ./oma-brain-dsh/scripts/restart.sh
 
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just web
 # Only stops listeners from this checkout; uses the next port when another checkout/process owns the requested port.
 web:
-  PORT="${PORT:-5173}" HOST="${HOST:-127.0.0.1}" API_PORT="${API_PORT:-38080}" VITE_API_PROXY_TARGET="${VITE_API_PROXY_TARGET:-http://127.0.0.1:${API_PORT:-38080}}" ./scripts/restart-web.sh
+  ./scripts/restart-web.sh
 
 # Restart frontend Vite dev server in foreground. Override with: PORT=4173 API_PORT=18080 just restart-web
 # Only stops listeners from this checkout; uses the next port when another checkout/process owns the requested port.
 restart-web:
-  PORT="${PORT:-5173}" HOST="${HOST:-127.0.0.1}" API_PORT="${API_PORT:-38080}" VITE_API_PROXY_TARGET="${VITE_API_PROXY_TARGET:-http://127.0.0.1:${API_PORT:-38080}}" ./scripts/restart-web.sh
+  ./scripts/restart-web.sh
 
 # Restart weather MCP server in foreground. Override with: PORT=39091 WEATHER_MCP_PATH=/custom just weather-mcp
 
-test: generate
-  go test ./... -count=1
+[positional-arguments]
+test target="./..." *args: generate
+  go test -count=1 "$@"
+
+[positional-arguments]
+test-integration target="./..." *args: generate
+  go test -tags=integration -count=1 "$@"
+
+verify-be *args:
+  ./.agents/skills/verify-be/scripts/verify-be {{args}}
+
+# Real E2B Memory Store lifetime. Skips without e2b.api_key. Uses config/config.yaml when present.
+test-e2e-memory-sandbox: generate
+  if [[ -z "${CONFIG_FILE:-}" && -f config/config.yaml ]]; then export CONFIG_FILE="$PWD/config/config.yaml"; fi; go test ./tests -tags e2e -count=1 -timeout 25m -run 'TestMemorySandbox'
 
 # Regenerate DB mappers with the version pinned by go.mod's tool directive.
 generate-yourbatis-mappers:
@@ -49,7 +85,7 @@ generate-yourbatis-mappers:
 
 # Run the repository's configured Go static-analysis and formatting checks.
 lint: generate
-  golangci-lint run --config .golangci.yml ./...
+  ./scripts/golangci-lint.sh run --config .golangci.yml ./...
 
 dead-code: generate
   ./scripts/go-dead-code.sh
@@ -65,6 +101,10 @@ generate-code-session-jwt-key output:
 
 test-generate-code-session-jwt-key:
   ./scripts/tests/generate-code-session-jwt-key_test.sh
+
+# Print the OpenSSH signing public key for GitHub without exposing the private key.
+print-code-session-signing-public-key private_key_file: generate
+  @go run ./cmd/code-session-signing-public-key "{{ private_key_file }}"
 
 # Generate the stable CCRv2 MITM CA key. Example: just generate-upstream-proxy-ca-key config/secrets/upstream-proxy-ca-key.pem
 generate-upstream-proxy-ca-key output:

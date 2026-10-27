@@ -23,7 +23,7 @@ import (
 const (
 	// OAuth-compatible token 只在 OMA 内部代理中使用，不代表 Anthropic 官方 OAuth token。
 	oauthCompatibleTokenPrefix = "sk-ant-oat01-"
-	// session-ingress token 在前缀后承载 Ed25519 JWT，供 worker、relay 和 upstream proxy 使用。
+	// session-ingress token 在前缀后承载 Ed25519 JWT，供 worker、relay、MCP Gateway 和 upstream proxy 使用。
 	sessionIngressTokenPrefix = "sk-ant-si-"
 	sessionIngressIssuer      = "session-ingress"
 	sessionIngressAudience    = "anthropic-api"
@@ -42,6 +42,7 @@ type SessionCredentialClaims struct {
 	Role             string `json:"role"`
 	AccountEmail     string `json:"account_email,omitempty"`
 	WorkerEpoch      int64  `json:"worker_epoch,omitempty"`
+	SandboxUUID      string `json:"sandbox_uuid,omitempty"`
 }
 
 // SessionCredentialIdentity 是签发输入；调用方必须从 active code session 数据库记录构造。
@@ -128,9 +129,19 @@ func readSessionCredentialPrivateKey(path string) (ed25519.PrivateKey, error) {
 	return privateKey, nil
 }
 
-// Issue 签发带 sk-ant-si- 前缀的 Ed25519 JWT。JWT 不设置独立 expiry；携带
-// worker_epoch 的 managed-agent 凭证会在 HTTP 鉴权和 worker 注册时回查当前 epoch。
 func (c *SessionCredentials) Issue(identity SessionCredentialIdentity) (string, error) {
+	return c.issue(identity, "")
+}
+
+func (c *SessionCredentials) IssueSandbox(identity SessionCredentialIdentity, sandboxUUID string) (string, error) {
+	if sandboxUUID == "" {
+		return "", errSandboxCredentialUnbound
+	}
+	identity.WorkerEpoch = 0
+	return c.issue(identity, sandboxUUID)
+}
+
+func (c *SessionCredentials) issue(identity SessionCredentialIdentity, sandboxUUID string) (string, error) {
 	if c == nil || len(c.privateKey) == 0 {
 		return "", errors.New("code-session credential signer is not configured")
 	}
@@ -160,19 +171,31 @@ func (c *SessionCredentials) Issue(identity SessionCredentialIdentity) (string, 
 		Role:             "worker",
 		AccountEmail:     strings.TrimSpace(identity.AccountEmail),
 		WorkerEpoch:      identity.WorkerEpoch,
+		SandboxUUID:      sandboxUUID,
+	}
+	if sandboxUUID != "" {
+		claims.Role = "sandbox"
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
 	// golang-jwt 默认设置 typ=JWT；这里额外写入可验证的公钥标识。
 	token.Header["kid"] = c.kid
 	signed, err := token.SignedString(c.privateKey)
 	if err != nil {
-		return "", fmt.Errorf("sign code-session ingress token: %w", err)
+		return "", fmt.Errorf("sign session ingress token: %w", err)
 	}
 	return sessionIngressTokenPrefix + signed, nil
 }
 
 // Verify 固定 EdDSA、kid、issuer、audience 和时间约束，返回已完成结构校验的 claims。
 func (c *SessionCredentials) Verify(rawToken string) (SessionCredentialClaims, error) {
+	return c.verify(rawToken, "worker")
+}
+
+func (c *SessionCredentials) VerifySandbox(rawToken string) (SessionCredentialClaims, error) {
+	return c.verify(rawToken, "sandbox")
+}
+
+func (c *SessionCredentials) verify(rawToken, role string) (SessionCredentialClaims, error) {
 	if c == nil || len(c.publicKey) == 0 {
 		return SessionCredentialClaims{}, errors.New("code-session credential verifier is not configured")
 	}
@@ -207,7 +230,7 @@ func (c *SessionCredentials) Verify(rawToken string) (SessionCredentialClaims, e
 	if !token.Valid {
 		return SessionCredentialClaims{}, errors.New("verify session ingress token: token is invalid")
 	}
-	if err := validateSessionCredentialClaims(claims); err != nil {
+	if err := validateSessionCredentialClaims(claims, role); err != nil {
 		return SessionCredentialClaims{}, err
 	}
 	return claims, nil
@@ -235,7 +258,7 @@ func validateSessionCredentialIdentity(identity SessionCredentialIdentity) error
 	return nil
 }
 
-func validateSessionCredentialClaims(claims SessionCredentialClaims) error {
+func validateSessionCredentialClaims(claims SessionCredentialClaims, role string) error {
 	identity := SessionCredentialIdentity{
 		SessionID:        claims.SessionID,
 		PublicSessionID:  claims.PublicSessionID,
@@ -249,8 +272,11 @@ func validateSessionCredentialClaims(claims SessionCredentialClaims) error {
 		return err
 	}
 	// sub 必须与 session_id 重合，application/role 则把 token 限定为 CCR worker 凭证。
-	if claims.Subject != claims.SessionID || claims.ID == "" || claims.Application != "ccr" || claims.Role != "worker" {
+	if claims.Subject != claims.SessionID || claims.ID == "" || claims.Application != "ccr" || claims.Role != role {
 		return errors.New("invalid session ingress token claims")
+	}
+	if (role == "worker" && claims.SandboxUUID != "") || (role == "sandbox" && (claims.SandboxUUID == "" || claims.WorkerEpoch != 0)) {
+		return errSandboxCredentialScope
 	}
 	return nil
 }

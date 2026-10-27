@@ -1,5 +1,5 @@
 import Anthropic, { APIError, type Uploadable } from '@anthropic-ai/sdk';
-import { getConsoleRequestContext, type ApiError } from './client';
+import { getConsoleRequestContext, getScopeSignal, reportApiAuthFailure, type ApiError } from './client';
 
 type AnthropicHeaderValue = string | null;
 type AnthropicHeaders = Record<string, AnthropicHeaderValue>;
@@ -16,6 +16,10 @@ type PageLike<T> = {
   last_id?: string | null;
   next_page?: string | null;
   prefixes?: unknown[];
+  total_count?: unknown;
+  body?: {
+    total_count?: unknown;
+  };
 };
 
 export type AnthropicPageResponse<T> = {
@@ -25,6 +29,7 @@ export type AnthropicPageResponse<T> = {
   last_id?: string | null;
   next_page?: string | null;
   prefixes?: unknown[];
+  total_count?: number;
 };
 
 let cachedClient: Anthropic | null = null;
@@ -107,6 +112,9 @@ export function anthropicRequestHeaders(context: AnthropicRequestContext = {}): 
   if (activeContext.workspaceId) {
     headers['x-workspace-id'] = activeContext.workspaceId;
   }
+  if (activeContext.csrfToken) {
+    headers['x-csrf-token'] = activeContext.csrfToken;
+  }
   return headers;
 }
 
@@ -133,13 +141,27 @@ export function toPlainPage<T>(page: PageLike<T>): AnthropicPageResponse<T> {
   if ('prefixes' in page) {
     response.prefixes = page.prefixes ?? [];
   }
+  const totalCount = finiteCount(page.total_count) ?? finiteCount(page.body?.total_count);
+  if (totalCount !== undefined) {
+    response.total_count = totalCount;
+  }
   return response;
 }
 
+function finiteCount(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
 async function sdkCall<T>(operation: () => Promise<T>): Promise<T> {
+  const signal = getScopeSignal();
+  const context = getConsoleRequestContext();
   try {
-    return await operation();
+    const result = await operation();
+    signal.throwIfAborted();
+    return result;
   } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof APIError) reportApiAuthFailure(error.status, context);
     throw normalizeSdkError(error);
   }
 }
@@ -193,8 +215,16 @@ export const anthropicApi = {
 
 export const anthropicBetaApi = {
   files: {
-    list<T>(params: Record<string, unknown>, workspaceId?: string) {
-      return sdkPage<T>(() => getAnthropicClient().beta.files.list(params, requestOptions(workspaceId)));
+    download(fileId: string, workspaceId?: string) {
+      return sdkCall(() => getAnthropicClient().beta.files.download(fileId, {}, requestOptions(workspaceId)));
+    },
+    list<T>(params: Record<string, unknown>, workspaceId?: string, signal?: AbortSignal) {
+      return sdkPage<T>(() =>
+        getAnthropicClient().beta.files.list(params, {
+          ...requestOptions(workspaceId),
+          ...(signal ? { signal: AbortSignal.any([signal, getScopeSignal()]) } : {}),
+        }),
+      );
     },
     retrieveMetadata<T>(fileId: string, workspaceId?: string) {
       return sdkCall(() =>
@@ -280,6 +310,24 @@ export const anthropicBetaApi = {
     },
   },
   agents: {
+    channels<T>(
+      agentId: string,
+      workspaceId: string,
+      suffix = '',
+      method: 'GET' | 'POST' | 'PATCH' | 'DELETE' = 'GET',
+      body?: unknown,
+    ) {
+      return sdkCall(() =>
+        getAnthropicClient().request<T>({
+          path: `/v1/agents/${encodeURIComponent(agentId)}/channels${suffix}`,
+          method: ({ GET: 'get', POST: 'post', PATCH: 'patch', DELETE: 'delete' } as const)[method],
+          query: { beta: true },
+          headers: { ...anthropicRequestHeaders({ workspaceId }), 'anthropic-beta': 'managed-agents-2026-04-01' },
+          signal: getScopeSignal(),
+          ...(body === undefined ? {} : { body }),
+        }),
+      );
+    },
     create<T>(params: Record<string, unknown>, workspaceId?: string) {
       return sdkCall(() =>
         getAnthropicClient().beta.agents.create(sdkParams(params), requestOptions(workspaceId)),
@@ -353,6 +401,23 @@ export const anthropicBetaApi = {
       },
     },
     resources: {
+      update<T>(sessionId: string, resourceId: string, authorizationToken: string, workspaceId?: string) {
+        return sdkCall(() =>
+          getAnthropicClient().beta.sessions.resources.update(
+            resourceId,
+            {
+              session_id: sessionId,
+              authorization_token: authorizationToken,
+            },
+            requestOptions(workspaceId),
+          ),
+        ) as Promise<T>;
+      },
+      add<T>(sessionId: string, params: Record<string, unknown>, workspaceId?: string) {
+        return sdkCall(() =>
+          getAnthropicClient().beta.sessions.resources.add(sessionId, sdkParams(params), requestOptions(workspaceId)),
+        ) as Promise<T>;
+      },
       list<T>(sessionId: string, params: Record<string, unknown>, workspaceId?: string) {
         return sdkPage<T>(() =>
           getAnthropicClient().beta.sessions.resources.list(sessionId, params, requestOptions(workspaceId)),
@@ -395,6 +460,48 @@ export const anthropicBetaApi = {
       return sdkCall(() =>
         getAnthropicClient().beta.environments.delete(environmentId, {}, requestOptions(workspaceId)),
       ) as Promise<T>;
+    },
+    prebuild: {
+      retrieve<T>(environmentId: string, workspaceId: string, signal?: AbortSignal) {
+        return sdkCall(() =>
+          getAnthropicClient().get<T>(`/v1/environments/${encodeURIComponent(environmentId)}/prebuild`, {
+            ...requestOptions(workspaceId),
+            query: { beta: true },
+            signal,
+          }),
+        );
+      },
+      start(environmentId: string, workspaceId: string) {
+        return sdkCall(() =>
+          getAnthropicClient().post<void>(`/v1/environments/${encodeURIComponent(environmentId)}/prebuild`, {
+            ...requestOptions(workspaceId),
+            query: { beta: true },
+          }),
+        );
+      },
+      cancel(environmentId: string, workspaceId: string, body: { job_id: string }) {
+        return sdkCall(() =>
+          getAnthropicClient().post<void>(`/v1/environments/${encodeURIComponent(environmentId)}/prebuild/cancel`, {
+            ...requestOptions(workspaceId),
+            query: { beta: true },
+            body,
+          }),
+        );
+      },
+      logs<T>(
+        environmentId: string,
+        workspaceId: string,
+        params: { stage: string; job_id: string; cursor: string },
+        signal?: AbortSignal,
+      ) {
+        return sdkCall(() =>
+          getAnthropicClient().get<T>(`/v1/environments/${encodeURIComponent(environmentId)}/prebuild/logs`, {
+            ...requestOptions(workspaceId),
+            query: { beta: true, ...params },
+            signal,
+          }),
+        );
+      },
     },
     work: {
       list<T>(environmentId: string, params: Record<string, unknown>, workspaceId?: string) {

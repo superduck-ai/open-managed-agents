@@ -2,11 +2,32 @@ package db
 
 import (
 	"context"
+	"database/sql/driver"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
+
+func TestSessionThreadMapperPrimaryExternalID(t *testing.T) {
+	for _, found := range []bool{false, true} {
+		response := mapperTestResponse{columns: []string{"external_id"}}
+		if found {
+			response.rows = [][]driver.Value{{"sthr_primary"}}
+		}
+		executor := newMapperTestExecutor(t, response)
+		id, gotFound, err := NewSessionThreadMapper(executor).FindPrimaryExternalID(t.Context(), "workspace", "session")
+		if err != nil || gotFound != found || (found && id != "sthr_primary") {
+			t.Fatalf("primary identity = %q, %t, %v", id, gotFound, err)
+		}
+		assertMapperTestExecution(t, executor, "SessionThreadMapper.FindPrimaryExternalID", yourbatis.StatementSelect, []any{"workspace", "session"})
+		want := "SELECT external_id FROM session_threads WHERE workspace_uuid = $1 AND session_external_id = $2 AND parent_thread_uuid IS NULL AND deleted_at IS NULL ORDER BY created_at ASC, uuid ASC LIMIT 1"
+		if got := strings.Join(strings.Fields(executor.bound.SQL), " "); got != want {
+			t.Fatalf("primary identity SQL = %s", got)
+		}
+	}
+}
 
 func TestSessionMapperFindByExternalIDNotFound(t *testing.T) {
 	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid"}})
@@ -33,10 +54,10 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	mountPath := "/workspace/repository"
 	sessionParams := sessionWriteParams{
 		UUID: "session-uuid", ExternalID: "ses_test", OrganizationUUID: "organization-uuid",
-		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: "api-key-uuid",
+		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: nullableString("api-key-uuid"),
 		EnvironmentUUID: "environment-uuid", EnvironmentExternalID: "env_test",
 		AgentUUID: "agent-uuid", AgentExternalID: "agent_test", AgentVersion: 1,
-		AgentSnapshot: []byte(`{}`), Metadata: []byte(`{}`), VaultIDs: []byte(`[]`),
+		AgentSnapshot: []byte(`{}`), Metadata: []byte(`{}`), VaultIDs: sessionVaultIDs{},
 		Status: "idle", Usage: []byte(`{}`), Stats: []byte(`{}`), OutcomeEvaluations: []byte(`[]`),
 		CreatedAt: now,
 	}
@@ -54,7 +75,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	eventParams := sessionEventWriteParams{
 		UUID: "event-uuid", ExternalID: "event_test", OrganizationUUID: "organization-uuid",
 		WorkspaceUUID: "workspace-uuid", SessionUUID: "session-uuid", SessionExternalID: "ses_test",
-		EventType: "message", Payload: []byte(`{"type":"message"}`), ProcessedAt: now, CreatedAt: now,
+		EventType: "message", Payload: []byte(`{"type":"message"}`), ProcessedAt: &now, CreatedAt: now,
 	}
 
 	tests := []mapperBuilderContract{
@@ -66,12 +87,12 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.CreatedByAPIKeyUUID", "params.EnvironmentUUID", "params.EnvironmentExternalID",
 				"params.AgentUUID", "params.AgentExternalID", "params.AgentVersion", "params.AgentSnapshot",
-				"params.DeploymentUUID", "params.DeploymentID", "params.Title", "params.Metadata",
-				"params.VaultIDs", "params.Status", "params.Usage", "params.Stats",
+				"params.DeploymentUUID", "params.DeploymentID", "params.Title", "params.Metadata", "params.RuntimeUserUUID",
+				"params.VaultIDs", "params.Status", "params.Budget", "params.Usage", "params.Stats",
 				"params.OutcomeEvaluations", "params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{
-				"params.AgentSnapshot", "params.Metadata", "params.VaultIDs", "params.Usage",
+				"params.AgentSnapshot", "params.Metadata", "params.VaultIDs", "params.Budget", "params.Usage",
 				"params.Stats", "params.OutcomeEvaluations",
 			},
 			wantSQLFragments: []string{"INSERT INTO sessions", "CAST($11 AS jsonb)", "RETURNING", "uuid, external_id"},
@@ -91,7 +112,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.SessionUUID", "params.SessionExternalID", "params.ParentThreadUUID",
 				"params.ParentThreadExternalID", "params.AgentSnapshot", "params.Status",
-				"params.Usage", "params.Stats", "params.CreatedAt", "params.CreatedAt",
+				"params.Usage", "params.Stats", "params.StatsInitialized", "params.Status", "params.WorkspaceUUID", "params.SessionUUID", "params.ExternalID", "params.ParentThreadUUID", "params.UsageInitialized", "params.WorkspaceUUID", "params.SessionUUID", "params.ExternalID", "params.ParentThreadUUID", "params.CreatedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.AgentSnapshot", "params.Usage", "params.Stats"},
 			wantSQLFragments:           []string{"WITH inserted AS", "ON CONFLICT", "FROM inserted"},
@@ -118,7 +139,7 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.SessionUUID", "params.SessionExternalID", "params.ThreadUUID",
-				"params.ThreadExternalID", "params.EventType", "params.Payload",
+				"params.ThreadExternalID", "params.EventType", "params.Payload", "params.PayloadBlobUUID", "params.ToolUseID",
 				"params.ProcessedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.Payload"},
@@ -129,6 +150,53 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.wantID, func(t *testing.T) { assertMapperBuilderContract(t, test) })
 	}
+}
+
+func TestSessionVaultIDsJSONBoundary(t *testing.T) {
+	t.Run("rejects invalid JSON", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan([]byte(`{"not":"an array"}`)); err == nil {
+			t.Fatal("Scan() error = nil")
+		}
+	})
+
+	t.Run("rejects unsupported source", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan(42); err == nil {
+			t.Fatal("Scan() error = nil")
+		}
+	})
+
+	t.Run("scans JSON array", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan([]byte(`["vlt_one","vlt_two"]`)); err != nil {
+			t.Fatalf("Scan(): %v", err)
+		}
+		if len(ids) != 2 || ids[0] != "vlt_one" || ids[1] != "vlt_two" {
+			t.Fatalf("Scan() = %v", ids)
+		}
+	})
+
+	t.Run("canonicalizes null", func(t *testing.T) {
+		var ids sessionVaultIDs
+		if err := ids.Scan(nil); err != nil {
+			t.Fatalf("Scan(): %v", err)
+		}
+		if ids == nil || len(ids) != 0 {
+			t.Fatalf("Scan() = %#v, want non-nil empty slice", ids)
+		}
+	})
+
+	t.Run("writes JSON array", func(t *testing.T) {
+		value, err := (sessionVaultIDs{"vlt_one", "vlt_two"}).Value()
+		if err != nil {
+			t.Fatalf("Value(): %v", err)
+		}
+		raw, ok := value.([]byte)
+		if !ok || string(raw) != `["vlt_one","vlt_two"]` {
+			t.Fatalf("Value() = %#v", value)
+		}
+	})
 }
 
 func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
@@ -146,12 +214,12 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 
 	eventBound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
 		WorkspaceUUID: "workspace-uuid", SessionExternalID: "ses_test", PrimaryOnly: true,
-		FetchLimit: 21, Cursor: &SessionEventPageCursor{CreatedAt: now, UUID: "event-uuid"},
+		FetchLimit: 21, Cursor: &SessionEventPageCursor{ExternalID: "event-id"},
 		Types: []string{"message", "result"},
 	})
 	assertMapperSQLContains(t, eventBound, "parent_thread_uuid IS NULL")
 	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
-	assertMapperSQLContains(t, eventBound, "ORDER BY created_at ASC, uuid ASC")
+	assertMapperSQLContains(t, eventBound, `ORDER BY COALESCE(session_events.processed_at, session_events.created_at) ASC, id ASC`)
 
 	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
 		yourbatis.DialectPostgres,
@@ -163,14 +231,49 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	assertMapperSQLContains(t, toolUseBound, "e.event_type IN ( $3 , $4 )")
 	assertMapperSQLContains(t, toolUseBound, ") IN ( $5 , $6 )")
 
-	permissionRequestBound := buildSessionEventMapperFindLatestToolPermissionRequest(
-		yourbatis.DialectPostgres,
-		"workspace-uuid",
-		"ses_test",
-		"tool-use-id",
-	)
-	assertMapperSQLContains(t, permissionRequestBound, "event_type IN ('agent.tool_use', 'agent.mcp_tool_use')")
-	assertMapperSQLContains(t, permissionRequestBound, "external_id = $3 OR payload->>'tool_use_id' = $4")
+}
+
+func TestSessionEventMapperLatestStatus(t *testing.T) {
+	for _, threadID := range []string{"sthr_primary", ""} {
+		bound := buildSessionEventMapperFindLatestStatus(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", threadID)
+		names := []string{"workspaceUUID", "sessionExternalID"}
+		fragments := []string{"workspace_uuid = $1", "session_external_id = $2", "deleted_at IS NULL", "ORDER BY id DESC LIMIT 1"}
+		if threadID != "" {
+			names = append(names, "threadID")
+			fragments = append(fragments, "payload->>'session_thread_id' = $3", "'session.thread_status_idle'")
+		} else {
+			fragments = append(fragments, "'session.status_idle'")
+		}
+		assertMapperBuilderContract(t, mapperBuilderContract{
+			statement: sessionEventMapperFindLatestStatusStatement, bound: bound,
+			wantID: "SessionEventMapper.FindLatestStatus", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: names, wantSQLFragments: fragments,
+		})
+	}
+}
+
+func TestSessionEventMapperFindAssistantEchoKeys(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperFindAssistantEchoKeysStatement,
+		bound:     buildSessionEventMapperFindAssistantEchoKeys(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", "sevt_request", "worker"),
+		wantID:    "SessionEventMapper.FindAssistantEchoKeys", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "requestID", "source"},
+		wantSQLFragments:  []string{"FROM session_events", "payload->>'model_request_start_id' = $3", "payload->>'_echo_source' = $4", "payload->>'_echo_key' IS NOT NULL"},
+	})
+}
+
+func TestSessionEventMapperCreatedAtParametersFilterProcessingTime(t *testing.T) {
+	now := time.Now().UTC()
+	bound := buildSessionEventMapperListPage(yourbatis.DialectPostgres, sessionEventPageMapperParams{
+		WorkspaceUUID: "workspace", SessionExternalID: "session", FetchLimit: 20,
+		CreatedAtGT: &now, CreatedAtGTE: &now, CreatedAtLT: &now, CreatedAtLTE: &now,
+	})
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperListPageStatement, bound: bound,
+		wantID: "SessionEventMapper.ListPage", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"params.WorkspaceUUID", "params.SessionExternalID", "params.CreatedAtGT", "params.CreatedAtGTE", "params.CreatedAtLT", "params.CreatedAtLTE", "params.FetchLimit"},
+		wantSQLFragments:  []string{"processed_at > $3", "processed_at >= $4", "processed_at < $5", "processed_at <= $6"},
+	})
 }
 
 func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
@@ -204,5 +307,47 @@ func TestSessionTableMappersPropagateExecutionErrors(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.statementID, func(t *testing.T) { assertMapperExecutionError(t, test) })
+	}
+}
+
+func TestSessionEventCursorExistsMapper(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperCursorExistsStatement,
+		bound:     buildSessionEventMapperCursorExists(yourbatis.DialectPostgres, "workspace", "session", "event"),
+		wantID:    "SessionEventMapper.CursorExists", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "eventExternalID"},
+		wantSQLFragments:  []string{"SELECT EXISTS", "workspace_uuid = $1", "session_external_id = $2", "external_id = $3"},
+	})
+}
+
+func TestSessionEventMapperLatestTurnStart(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: sessionEventMapperFindLatestTurnStartStatement,
+		bound:     buildSessionEventMapperFindLatestTurnStart(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", "sthr_primary"),
+		wantID:    "SessionEventMapper.FindLatestTurnStart", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "threadID"},
+		wantSQLFragments:  []string{"workspace_uuid = $1", "session_external_id = $2", "payload->>'session_thread_id' = $3", "deleted_at IS NULL", "'session.thread_status_running'", "'session.thread_status_rescheduled'", "ORDER BY id DESC LIMIT 1"},
+	})
+}
+
+func TestSessionEventQueueMapperContracts(t *testing.T) {
+	now := time.Now().UTC()
+	for _, contract := range []mapperBuilderContract{
+		{
+			statement: sessionEventMapperHasInputBlockingIdleStatement,
+			bound:     buildSessionEventMapperHasInputBlockingIdle(yourbatis.DialectPostgres, "workspace", "session", "thread", now),
+			wantID:    "SessionEventMapper.HasInputBlockingIdle", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "threadID", "workspaceUUID", "sessionExternalID", "threadID", "at", "workspaceUUID", "sessionExternalID", "threadID"},
+			wantSQLFragments:  []string{"workspace_uuid = $1", "session_external_id = $2", "thread_external_id = $3", "processed_at IS NULL", "deleted_at IS NULL", "interrupted.event_type = 'user.interrupt'", "interrupted.processed_at <= $7", "started.payload->>'session_thread_id' = $10", "ORDER BY started.id DESC LIMIT 1", "AS blocks_idle"},
+		},
+		{
+			statement: sessionEventMapperMarkInputProcessedStatement,
+			bound:     buildSessionEventMapperMarkInputProcessed(yourbatis.DialectPostgres, "workspace", "session", "event", now),
+			wantID:    "SessionEventMapper.MarkInputProcessed", wantKind: yourbatis.StatementSelect,
+			wantArgumentNames: []string{"processedAt", "workspaceUUID", "sessionExternalID", "eventExternalID"},
+			wantSQLFragments:  []string{"UPDATE session_events SET processed_at = $1", "workspace_uuid = $2", "session_external_id = $3", "external_id = $4", "event_type IN ('user.message', 'user.tool_confirmation')", "processed_at IS NULL", "RETURNING"},
+		},
+	} {
+		assertMapperBuilderContract(t, contract)
 	}
 }

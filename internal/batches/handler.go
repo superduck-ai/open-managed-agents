@@ -134,10 +134,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	if !ok {
 		return batchAuthenticationRequired()
 	}
-	if h.isOfficialSDKFixture(principal) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, h.cfg.SDKFixtures.BatchID, "in_progress"))
-		return nil
-	}
+
 	body, err := httpapi.DecodeObjectBodyAs[createRequest](w, r, h.cfg.Batch.MaxBodyBytes)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
@@ -150,7 +147,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	if err != nil {
 		return invalidRequest(err)
 	}
-	if err := h.validateConfiguredModels(
+	if err := h.normalizeConfiguredModels(
 		r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, body, requestModels,
 	); err != nil {
 		return err
@@ -203,28 +200,37 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, isBeta bool, be
 	return nil
 }
 
-func (h *Handler) validateConfiguredModels(
+func (h *Handler) normalizeConfiguredModels(
 	ctx context.Context,
 	organizationUUID, workspaceUUID string,
 	body *createRequest,
 	requestModels []string,
 ) error {
-	modelIDs, err := llmproviders.ListModelIDs(ctx, h.db, organizationUUID, workspaceUUID)
+	catalog, err := llmproviders.LoadCatalog(ctx, h.db, organizationUUID, workspaceUUID)
 	if err != nil {
 		return configuredModelError(err)
 	}
-	configured := make(map[string]struct{}, len(modelIDs))
-	for _, modelID := range modelIDs {
-		configured[modelID] = struct{}{}
-	}
+	return normalizeBatchModels(catalog, body, requestModels)
+}
+
+func normalizeBatchModels(catalog llmproviders.Catalog, body *createRequest, requestModels []string) error {
 	for index, modelID := range requestModels {
-		if _, ok := configured[modelID]; !ok {
+		selected, err := catalog.Lookup(modelID)
+		if errors.Is(err, llmproviders.ErrAmbiguousModel) {
+			return invalidRequest(fmt.Errorf("params for custom_id %s: %w", body.Requests[index].CustomID, err))
+		}
+		if err != nil {
 			return invalidRequest(fmt.Errorf(
 				"params for custom_id %s: model %q is not configured for this workspace",
 				body.Requests[index].CustomID,
 				modelID,
 			))
 		}
+		params, err := llmproviders.ReplaceRequestModel(body.Requests[index].Params, selected.QualifiedModelID())
+		if err != nil {
+			return invalidRequest(fmt.Errorf("params for custom_id %s: %w", body.Requests[index].CustomID, err))
+		}
+		body.Requests[index].Params = params
 	}
 	return nil
 }
@@ -304,12 +310,7 @@ func validateParams(raw json.RawMessage) error {
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if h.isOfficialSDKFixture(principal) {
-		batch := h.fixtureBatchResponse(r, h.cfg.SDKFixtures.BatchID, "in_progress")
-		first := batch.ID
-		httpapi.WriteJSON(w, http.StatusOK, listResponse{Data: []messageBatchResponse{batch}, FirstID: &first, LastID: &first})
-		return nil
-	}
+
 	limit, err := parseLimit(r)
 	if err != nil {
 		return invalidRequest(err)
@@ -356,10 +357,6 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, batchID strin
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) && h.isOfficialSDKFixtureID(principal, batchID) {
-			httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, batchID, "ended"))
-			return nil
-		}
 		if errors.Is(err, db.ErrNotFound) {
 			return messageBatchNotFound(batchID, err)
 		}
@@ -371,10 +368,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, batchID strin
 
 func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, batchID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if h.isOfficialSDKFixtureID(principal, batchID) {
-		httpapi.WriteJSON(w, http.StatusOK, h.fixtureBatchResponse(r, batchID, "canceling"))
-		return nil
-	}
+
 	record, err := h.db.CancelMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -393,10 +387,7 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request, batchID string)
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if h.isOfficialSDKFixtureID(principal, batchID) {
-		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": batchID, "type": "message_batch_deleted"})
-		return nil
-	}
+
 	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -427,12 +418,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, batchID string)
 
 func (h *Handler) results(w http.ResponseWriter, r *http.Request, batchID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if h.isOfficialSDKFixtureID(principal, batchID) {
-		w.Header().Set("Content-Type", "application/x-jsonl")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"custom_id":"req_1","result":{"type":"succeeded","message":null}}` + "\n"))
-		return
-	}
+
 	record, err := h.db.GetMessageBatch(r.Context(), principal.WorkspaceUUID, batchID)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -567,38 +553,6 @@ func resultsExpired(record db.MessageBatch, days int) bool {
 		return false
 	}
 	return time.Since(record.CreatedAt) > time.Duration(days)*24*time.Hour
-}
-
-func (h *Handler) isOfficialSDKFixture(principal auth.Principal) bool {
-	return principal.APIKeyExternalID == h.cfg.SDKFixtures.APIKeyExternalID
-}
-
-func (h *Handler) isOfficialSDKFixtureID(principal auth.Principal, batchID string) bool {
-	return h.isOfficialSDKFixture(principal) && batchID == h.cfg.SDKFixtures.BatchID
-}
-
-func (h *Handler) fixtureBatchResponse(r *http.Request, id string, status string) messageBatchResponse {
-	created := time.Unix(0, 0).UTC()
-	expires := created.Add(24 * time.Hour)
-	var endedAt *string
-	var resultsURL *string
-	counts := requestCounts{Processing: 1}
-	if status == "ended" {
-		endedAt = formatOptionalTime(&created)
-		value := strings.TrimRight(httpapi.RequestBaseURL(r), "/") + "/v1/messages/batches/" + id + "/results"
-		resultsURL = &value
-		counts = requestCounts{Succeeded: 1}
-	}
-	return messageBatchResponse{
-		ID:               id,
-		Type:             "message_batch",
-		ProcessingStatus: status,
-		RequestCounts:    counts,
-		CreatedAt:        formatTime(created),
-		ExpiresAt:        formatTime(expires),
-		EndedAt:          endedAt,
-		ResultsURL:       resultsURL,
-	}
 }
 
 func valueOrEmpty(value *string) string {

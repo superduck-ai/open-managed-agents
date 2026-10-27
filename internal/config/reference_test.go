@@ -15,12 +15,18 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 	examplePath := repositoryFilePath(t, "config", "config.example.yaml")
 	got := configDocumentPaths(t, examplePath)
 	want := []string{
+		"code_session",
+		"code_session.upstream_proxy_ca_key_file",
+		"code_session.upstream_proxy_disable_ssrf_protection",
+		"code_session.upstream_proxy_mitm_enabled",
 		"database",
 		"database.url",
 		"e2b",
 		"e2b.api_key",
 		"e2b.api_url",
 		"env",
+		"nats",
+		"nats.url",
 		"redis",
 		"redis.url",
 		"server",
@@ -34,10 +40,13 @@ func TestConfigExampleContainsOnlyCommonFields(t *testing.T) {
 		"storage.s3.region",
 		"storage.s3.secret_access_key",
 		"storage.type",
+		"tunnel",
+		"tunnel.public_base_url",
 		"vault",
 		"vault.master_key",
-		"vault.master_key.kek",
-		"vault.master_key.version",
+		"vault.master_key.local",
+		"vault.master_key.local.kek",
+		"vault.master_key.local.version",
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
@@ -55,6 +64,13 @@ func TestConfigurationReferenceCoversConfigYAMLContract(t *testing.T) {
 	want := sortedConfigPaths(wantSet)
 	if !slices.Equal(got, want) {
 		t.Fatalf("configuration reference fields =\n%s\nwant Config YAML contract =\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestConfigurationReferenceHasNoPackageSources(t *testing.T) {
+	cfg := loadValidatedConfigTestFile(t, repositoryFilePath(t, "docs", "configuration-reference.yaml"))
+	if !cfg.EnvironmentPackages.Empty() {
+		t.Fatal("configuration reference must not configure package sources")
 	}
 }
 

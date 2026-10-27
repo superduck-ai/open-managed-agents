@@ -1,9 +1,16 @@
 import { consoleApi } from '../api/client';
 
 export type Workspace = {
+  is_default?: boolean;
+  effective_role?: string;
+  role_source?: string;
+  external_id?: string;
+  archived_at?: string | null;
   id: string;
   type: 'workspace';
   name: string;
+  created_at?: string;
+  api_keys_count?: number;
   display_color?: string;
   color?: string;
   data_residency?: {
@@ -50,6 +57,7 @@ export type UpdateWorkspaceApiKeyStatusInput = {
 
 export const defaultWorkspace: Workspace = {
   id: 'default',
+  is_default: true,
   type: 'workspace',
   name: 'Default',
   display_color: '#9B87F5',
@@ -61,8 +69,15 @@ export const defaultWorkspace: Workspace = {
   },
 };
 
-export function listConsoleWorkspaces(orgUuid: string) {
-  return consoleApi<Workspace[]>(`/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces`);
+export function listConsoleWorkspaces(orgUuid: string, includeArchived = false) {
+  return consoleApi<Workspace[]>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces${includeArchived ? '?include_archived=true' : ''}`,
+    {
+      context: { organizationUuid: orgUuid },
+    },
+  ).then((workspaces) =>
+    workspaces.map((workspace) => (workspace.is_default ? { ...workspace, name: defaultWorkspace.name } : workspace)),
+  );
 }
 
 export function createConsoleWorkspace(orgUuid: string, input: CreateWorkspaceInput) {
@@ -70,6 +85,24 @@ export function createConsoleWorkspace(orgUuid: string, input: CreateWorkspaceIn
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+export async function updateConsoleWorkspace(
+  orgUuid: string,
+  workspaceId: string,
+  input: { name: string; display_color: string },
+) {
+  return consoleApi<Workspace>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}`,
+    { method: 'PATCH', body: JSON.stringify(input) },
+  );
+}
+
+export async function archiveConsoleWorkspace(orgUuid: string, workspaceId: string) {
+  return consoleApi<Workspace>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/archive`,
+    { method: 'POST' },
+  );
 }
 
 export function listWorkspaceApiKeys(orgUuid: string, workspaceId: string) {

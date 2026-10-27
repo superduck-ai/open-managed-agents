@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -6,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 )
 
 func TestConsoleMembersAPI(t *testing.T) {
@@ -58,14 +62,14 @@ func TestConsoleMembersAPI(t *testing.T) {
 	})
 
 	t.Run("success update and delete member", func(t *testing.T) {
-		updateResp := app.doPlatformConsole(t, http.MethodPost, path+"/"+memberID, []byte(`{"role":"developer"}`), cookies)
+		updateResp := app.doPlatformConsole(t, http.MethodPost, path+"/"+memberID, []byte(`{"role":"user"}`), cookies)
 		defer updateResp.Body.Close()
 		if updateResp.StatusCode != http.StatusOK {
 			t.Fatalf("update status = %d, want 200: %s", updateResp.StatusCode, readAll(t, updateResp.Body))
 		}
 		var updated map[string]any
 		decodeJSON(t, updateResp.Body, &updated)
-		if updated["id"] != memberID || updated["role"] != "developer" {
+		if updated["id"] != memberID || updated["role"] != "user" {
 			t.Fatalf("updated member mismatch: %#v", updated)
 		}
 
@@ -106,6 +110,9 @@ func (a *testApp) doPlatformConsole(t *testing.T, method string, path string, bo
 	}
 	for _, cookie := range cookies {
 		req.AddCookie(cookie)
+	}
+	if sessionCookie := responseCookie(cookies, "sessionKey"); sessionCookie != nil {
+		req.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken(sessionCookie.Value))
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {

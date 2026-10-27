@@ -1,0 +1,1265 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { QueryClient } from '@tanstack/react-query';
+import { setAnthropicClientForTest } from '@/shared/api/anthropic';
+import { type SessionDetailEventCache } from './types';
+import {
+  addSessionFileResource,
+  postSessionToolConfirmation,
+  listMemoryStoreOptions,
+  listSessionFileOptions,
+  listSessionFiles,
+  mergeSessionEventCache,
+  mergeSessionEventsById,
+  mergeSessionStreamFrame,
+  reconcileIncompleteSessionStreamEvents,
+  sessionDetailDeltaFrames,
+  sessionDetailEventCacheKey,
+  sessionDetailScopeEvents,
+  sessionIncompleteStreamEventIds,
+  sessionStreamingMessageFromStart,
+  sessionThreadListSignature,
+  syncSessionEventHistory,
+} from './api';
+import { sessionEventUpdateTimestamp, sessionEventLaneId } from './sessions/sessionDetailModel';
+import {
+  buildSessionEventEntries,
+  sessionCanonicalDisplayEvent,
+  sessionEventTimestamp,
+  sessionSubagentThreadId,
+  sessionSubagentName,
+} from './sessions/sessionTraceModel';
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  setAnthropicClientForTest(null);
+});
+
+describe('managed agents API', () => {
+  test('sends structured question answers inside the standard custom tool result content', async () => {
+    let sent: Record<string, unknown> = {};
+    globalThis.fetch = (async (_input, init) => {
+      sent = JSON.parse(String(init?.body));
+      return Response.json({ data: [] });
+    }) as typeof fetch;
+    const questionAnswers = [{ id: 'color', selected: ['Blue'], custom: 'Green' }];
+    await postSessionToolConfirmation(
+      'sesn_question',
+      {
+        toolUseId: 'sevt_call',
+        result: 'allow',
+        customTool: true,
+        answers: { answers: questionAnswers },
+        sessionThreadId: 'sthr_child',
+      },
+      'workspace_test',
+    );
+    expect(sent).toEqual({
+      events: [
+        {
+          type: 'user.custom_tool_result',
+          custom_tool_use_id: 'sevt_call',
+          is_error: false,
+          session_thread_id: 'sthr_child',
+          content: [{ type: 'text', text: JSON.stringify({ answers: questionAnswers }) }],
+        },
+      ],
+    });
+  });
+
+  test('thread metadata repair changes the refresh signature without creating another lane', () => {
+    const thread = {
+      id: 'sthr_child',
+      type: 'session_thread',
+      parent_thread_id: 'sthr_parent',
+      created_at: '2026-10-12T00:00:00Z',
+      updated_at: '2026-10-12T00:00:00Z',
+    };
+    expect(sessionThreadListSignature([thread])).not.toBe(
+      sessionThreadListSignature([
+        { ...thread, updated_at: '2026-10-12T00:00:01Z', agent: { id: 'agent_child', version: 1 } },
+      ]),
+    );
+  });
+  test('session event timestamp uses processed_at without created_at', () => {
+    expect(sessionEventTimestamp({ id: 'sevt_message', processed_at: '2026-08-26T13:13:00Z' })).toBe(
+      Date.parse('2026-08-26T13:13:00Z'),
+    );
+    const preview = {
+      id: 'sevt_preview',
+      type: 'agent.message',
+      processed_at: null,
+      created_at: '2026-08-26T13:13:00Z',
+    };
+    expect(sessionEventTimestamp(preview)).toBe(0);
+    expect(sessionEventUpdateTimestamp(preview, '2026-08-26T13:14:00Z')).toBe('2026-08-26T13:14:00Z');
+  });
+
+  test('stream preview does not invent an event creation timestamp', () => {
+    const preview = sessionStreamingMessageFromStart(
+      { type: 'event_start', event: { id: 'sevt_preview', type: 'agent.message' } },
+      '',
+    );
+    expect(preview).not.toHaveProperty('created_at');
+  });
+
+  test('serialized canonical events do not restore created_at', () => {
+    const event = sessionCanonicalDisplayEvent({
+      id: 'sevt_wrapper',
+      type: 'system.message',
+      content: JSON.stringify({ type: 'session.status_idle', created_at: '2026-08-26T13:13:00Z' }),
+      processed_at: '2026-08-26T13:14:00Z',
+    });
+    expect(event).toMatchObject({ type: 'session.status_idle', processed_at: '2026-08-26T13:14:00Z' });
+    expect(event).not.toHaveProperty('created_at');
+  });
+
+  test('refresh history sync scans from the first page without clearing cached events', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const cachedEvents = Array.from({ length: 500 }, (_, index) => ({
+      id: `sevt_${index}`,
+      type: 'user.message',
+      processed_at: '2026-08-26T13:13:00Z',
+    }));
+    queryClient.setQueryData(sessionDetailEventCacheKey(workspaceId, sessionId), {
+      events: cachedEvents,
+      syncedThrough: 'old-cursor',
+      historyComplete: true,
+    });
+    const requestedPages: string[] = [];
+    globalThis.fetch = async (input) => {
+      const page = new URL(String(input), 'https://oma.duck.ai').searchParams.get('page') ?? '';
+      requestedPages.push(page);
+      const data = page
+        ? [{ id: 'sevt_500', type: 'agent.message', processed_at: '2026-08-26T13:13:01Z' }]
+        : [{ id: 'sevt_late', type: 'agent.message', processed_at: '2026-08-26T13:12:59Z' }, ...cachedEvents];
+      return new Response(JSON.stringify({ data, next_page: page ? null : 'new-cursor' }));
+    };
+
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'refresh' });
+
+    expect(requestedPages).toEqual(['', 'new-cursor']);
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toContain(
+      'sevt_late',
+    );
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).length).toBe(502);
+  });
+
+  test('reset history sync replaces cached events and preview frames', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'sevt_preview', type: 'agent.message' },
+    });
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          data: [{ id: 'sevt_history', type: 'user.message', processed_at: '2026-08-26T13:13:00Z' }],
+          next_page: null,
+        }),
+      );
+
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'reset' });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_history',
+    ]);
+    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+  });
+
+  test('a failed older scan cannot mark a completed history scan incomplete', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    let releaseFirst: ((response: Response) => void) | undefined;
+    let requests = 0;
+    globalThis.fetch = async () => {
+      requests += 1;
+      if (requests === 1) {
+        return new Promise<Response>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      return new Response(JSON.stringify({ data: [{ id: 'sevt_new', type: 'user.message' }], next_page: null }));
+    };
+
+    const first = syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'refresh' });
+    const second = syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'refresh' });
+    const startedTogether = requests;
+    releaseFirst?.(new Response('temporary failure', { status: 500 }));
+    await expect(first).rejects.toThrow('Could not list session events (500)');
+    await second;
+
+    const cache = queryClient.getQueryData<SessionDetailEventCache>(sessionDetailEventCacheKey(workspaceId, sessionId));
+    expect(startedTogether).toBe(1);
+    expect(requests).toBe(2);
+    expect(cache?.historyComplete).toBe(true);
+    expect(cache?.events.map((event) => event.id)).toEqual(['sevt_new']);
+  });
+
+  test('an interrupted refresh scan lets a terminated session reload missing history', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const cacheKey = sessionDetailEventCacheKey(workspaceId, sessionId);
+    queryClient.setQueryData(cacheKey, {
+      events: [{ id: 'sevt_old', type: 'user.message', processed_at: '2026-08-26T13:13:00Z' }],
+      syncedThrough: null,
+      historyComplete: true,
+    });
+    const attempt = new AbortController();
+    let requests = 0;
+    globalThis.fetch = async (_input, init) => {
+      requests += 1;
+      if (requests === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: 'sevt_old', type: 'user.message', processed_at: '2026-08-26T13:13:00Z' },
+            { id: 'sevt_final', type: 'agent.message', processed_at: '2026-08-26T13:13:01Z' },
+          ],
+          next_page: null,
+        }),
+      );
+    };
+
+    const interrupted = syncSessionEventHistory({
+      queryClient,
+      workspaceId,
+      sessionId,
+      mode: 'refresh',
+      signal: attempt.signal,
+    });
+    attempt.abort(new Error('session terminated'));
+    await expect(interrupted).rejects.toThrow('session terminated');
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'resume' });
+
+    expect(requests).toBe(2);
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_old',
+      'sevt_final',
+    ]);
+  });
+
+  test('an interrupted later page restarts history so its order stays authoritative', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const attempt = new AbortController();
+    const pages: string[] = [];
+    let requests = 0;
+    globalThis.fetch = async (input, init) => {
+      const page = new URL(String(input), 'https://oma.duck.ai').searchParams.get('page') ?? '';
+      pages.push(page);
+      requests += 1;
+      if (requests === 2) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: page ? 'sevt_final' : 'sevt_first',
+              type: 'agent.message',
+              processed_at: page ? '2026-08-26T13:13:01Z' : '2026-08-26T13:13:00Z',
+            },
+          ],
+          next_page: page ? null : 'next',
+        }),
+      );
+    };
+
+    const interrupted = syncSessionEventHistory({
+      queryClient,
+      workspaceId,
+      sessionId,
+      mode: 'refresh',
+      signal: attempt.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    attempt.abort(new Error('session terminated'));
+    await expect(interrupted).rejects.toThrow('session terminated');
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'resume' });
+
+    expect(pages).toEqual(['', 'next', '', 'next']);
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_first',
+      'sevt_final',
+    ]);
+  });
+
+  test('model request end removes only its unfinished previews', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    for (const id of ['sevt_done', 'sevt_unfinished', 'sevt_other']) {
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+        type: 'event_start',
+        event: { id, type: 'agent.message' },
+      });
+    }
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_done',
+      type: 'agent.message',
+      processed_at: '2026-08-26T13:13:00Z',
+      content: [{ type: 'text', text: 'Done' }],
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_end',
+      type: 'span.model_request_end',
+      event_ids: ['sevt_done', 'sevt_unfinished'],
+      processed_at: '2026-08-26T13:13:01Z',
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_done',
+      'sevt_other',
+      'sevt_end',
+    ]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_other']);
+  });
+
+  test.each(['', 'sthr_child'])('late previews cannot revive ended model output in scope %s', (threadId) => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    for (const type of ['agent.message', 'agent.thinking']) {
+      const eventId = `sevt_failed_${type}`;
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        id: `sevt_end_${type}`,
+        type: 'span.model_request_end',
+        event_ids: [eventId],
+        is_error: true,
+        processed_at: '2026-08-26T13:13:01Z',
+      });
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        type: 'event_start',
+        event: { id: eventId, type },
+      });
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        type: 'event_delta',
+        event_id: eventId,
+        delta: { type: 'content_delta', index: 0, content: { type: 'text', text: 'late partial' } },
+      });
+      expect(
+        sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [threadId]).some((event) => event.id === eventId),
+      ).toBe(false);
+      expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [threadId])[eventId]).toBeUndefined();
+      const otherScope = threadId ? '' : 'sthr_other';
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, otherScope, {
+        type: 'event_start',
+        event: { id: eventId, type },
+      });
+      expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [otherScope])[eventId]).toBeDefined();
+    }
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+      type: 'event_start',
+      event: { id: 'sevt_next', type: 'agent.message' },
+    });
+    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [threadId]).sevt_next).toBeDefined();
+  });
+
+  test('model request end in a child thread does not remove a primary preview', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const eventId = 'sevt_shared';
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: eventId, type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, 'sthr_child', {
+      type: 'event_start',
+      event: { id: eventId, type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, 'sthr_child', {
+      id: 'sevt_end',
+      type: 'span.model_request_end',
+      event_ids: [eventId],
+      processed_at: '2026-08-26T13:13:00Z',
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      eventId,
+    ]);
+    expect(
+      sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['sthr_child']).map((event) => event.id),
+    ).toEqual(['sevt_end']);
+  });
+
+  test('replaces a same-ID streaming preview with the complete final message', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const eventId = 'sevt_answer';
+    const otherId = 'sevt_other';
+    const createdAt = '2026-08-26T13:13:00Z';
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      created_at: createdAt,
+      event: { id: eventId, type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_delta',
+      event_id: eventId,
+      delta: { type: 'content_delta', index: 0, content: { type: 'text', text: 'Part' } },
+    });
+    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])[eventId]?.message.content).toEqual([
+      { type: 'text', text: 'Part' },
+    ]);
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: otherId, type: 'agent.message' },
+    });
+
+    const final = {
+      id: eventId,
+      type: 'agent.message',
+      created_at: createdAt,
+      processed_at: createdAt,
+      content: [{ type: 'text', text: 'Complete answer' }],
+    };
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', final);
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      eventId,
+      otherId,
+    ]);
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toEqual(final);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      created_at: createdAt,
+      event: { id: eventId, type: 'agent.message' },
+    });
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      eventId,
+      otherId,
+    ]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
+  });
+
+  test('history sync replaces a same-ID preview after reconnecting', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const eventId = 'sevt_answer';
+    const otherId = 'sevt_other';
+    const final = {
+      id: eventId,
+      type: 'agent.message',
+      created_at: '2026-08-26T13:13:00Z',
+      processed_at: '2026-08-26T13:13:01Z',
+      content: [{ type: 'text', text: 'Complete answer' }],
+    };
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: eventId, type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_delta',
+      event_id: eventId,
+      delta: { type: 'content_delta', index: 0, content: { type: 'text', text: 'Part' } },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: otherId, type: 'agent.message' },
+    });
+    globalThis.fetch = async () => new Response(JSON.stringify({ data: [final], next_page: null }));
+
+    await syncSessionEventHistory({ queryClient, workspaceId, sessionId, mode: 'refresh' });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      eventId,
+      otherId,
+    ]);
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toEqual(final);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
+  });
+
+  test('does not match a final message to a different preview ID', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const createdAt = '2026-08-26T13:13:00Z';
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      processed_at: createdAt,
+      event: { id: 'sevt_preview', type: 'agent.message' },
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toMatchObject({
+      id: 'sevt_preview',
+      processed_at: null,
+      is_streaming: true,
+    });
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_final',
+      type: 'agent.message',
+      processed_at: createdAt,
+      content: [{ type: 'text', text: 'Final answer' }],
+    });
+
+    const visibleBeforeIdle = buildSessionEventEntries(
+      sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']),
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+    expect(visibleBeforeIdle.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_preview',
+      'sevt_final',
+    ]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_preview']);
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_idle',
+      type: 'session.status_idle',
+      created_at: createdAt,
+      processed_at: createdAt,
+      result: 'Final answer',
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_preview',
+      'sevt_final',
+      'sevt_idle',
+    ]);
+  });
+
+  test('keeps a streaming message in its turn when idle arrives before the final event', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const startAt = '2026-08-26T13:13:00Z';
+    const messageAt = '2026-08-26T13:13:01Z';
+    const idleAt = '2026-08-26T13:13:05Z';
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_model_start',
+      type: 'span.model_request_start',
+      created_at: startAt,
+      processed_at: startAt,
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      created_at: messageAt,
+      event: { id: 'sevt_preview', type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_idle',
+      type: 'session.status_idle',
+      created_at: idleAt,
+      processed_at: idleAt,
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_model_start',
+      'sevt_preview',
+      'sevt_idle',
+    ]);
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_preview',
+      type: 'agent.message',
+      created_at: messageAt,
+      processed_at: idleAt,
+      content: [{ type: 'text', text: 'Final answer' }],
+    });
+
+    const events = sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']);
+    expect(events.map((event) => event.id)).toEqual(['sevt_model_start', 'sevt_preview', 'sevt_idle']);
+
+    const entries = buildSessionEventEntries(events, 'transcript', Date.parse(startAt), undefined, {
+      platformTranscriptFiltering: true,
+    });
+    const message = entries.find((entry) => entry.kind === 'message');
+    expect(message?.bracketStartMs).toBe(Date.parse(startAt));
+    expect(message?.bracketEndMs).toBe(Date.parse(idleAt));
+  });
+
+  test('does not reconcile a thinking preview with a final agent message', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const createdAt = '2026-08-26T13:13:00Z';
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      created_at: createdAt,
+      processed_at: createdAt,
+      event: { id: 'sevt_thinking_preview', type: 'agent.thinking' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_final',
+      type: 'agent.message',
+      created_at: createdAt,
+      processed_at: createdAt,
+      content: [{ type: 'text', text: 'Final answer' }],
+    });
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_thinking_preview',
+      'sevt_final',
+    ]);
+  });
+
+  test('reconciles an incomplete preview after idle history sync', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    const createdAt = '2026-08-26T13:13:00Z';
+
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      created_at: createdAt,
+      event: { id: 'sevt_preview', type: 'agent.message' },
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'sevt_idle',
+      type: 'session.status_idle',
+      created_at: createdAt,
+      processed_at: createdAt,
+    });
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'sevt_preview',
+              type: 'agent.message',
+              created_at: createdAt,
+              processed_at: createdAt,
+              content: [{ type: 'text', text: 'Final answer' }],
+            },
+            {
+              id: 'sevt_idle',
+              type: 'session.status_idle',
+              created_at: createdAt,
+              processed_at: createdAt,
+            },
+          ],
+          next_page: null,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch;
+
+    await reconcileIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId);
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_preview',
+      'sevt_idle',
+    ]);
+    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+  });
+
+  test('keeps incomplete previews when idle history sync fails', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'sevt_preview', type: 'agent.message' },
+    });
+    globalThis.fetch = (async () => new Response('Unavailable', { status: 503 })) as typeof fetch;
+
+    await expect(reconcileIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId)).rejects.toBeDefined();
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_preview',
+    ]);
+  });
+
+  test('only reconciles previews that existed when idle arrived', async () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'sevt_stale', type: 'agent.message' },
+    });
+    const stalePreviewIds = sessionIncompleteStreamEventIds(queryClient, workspaceId, sessionId);
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'sevt_new', type: 'agent.message' },
+    });
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: [], next_page: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+
+    await reconcileIncompleteSessionStreamEvents(queryClient, workspaceId, sessionId, '', undefined, stalePreviewIds);
+
+    expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).map((event) => event.id)).toEqual([
+      'sevt_new',
+    ]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_new']);
+  });
+
+  test('preserves a same-timestamp user turn before its agent error', () => {
+    const createdAt = '2026-08-28T01:01:29Z';
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_3qzvoDj1lEhf4xsGJoTHSxjA',
+          type: 'user.message',
+          created_at: createdAt,
+          processed_at: createdAt,
+          content: [{ type: 'text', text: '帮我把这个信息写成一个txt文件。' }],
+        },
+        {
+          id: 'sevt_7ab0bf46aa79a2d26bfdce33c3e2e400',
+          type: 'agent.message',
+          created_at: createdAt,
+          processed_at: createdAt,
+          content: [{ type: 'text', text: 'An error occurred while executing Claude Code.' }],
+        },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_3qzvoDj1lEhf4xsGJoTHSxjA',
+      'sevt_7ab0bf46aa79a2d26bfdce33c3e2e400',
+    ]);
+  });
+
+  test('preserves backend event order when timestamps run backwards', () => {
+    const events = [
+      {
+        id: 'sevt_user_inserted_first',
+        type: 'user.message',
+        created_at: '2026-08-28T01:01:30Z',
+        content: [{ type: 'text', text: 'First by database id' }],
+      },
+      {
+        id: 'sevt_agent_inserted_second',
+        type: 'agent.message',
+        created_at: '2026-08-28T01:01:29Z',
+        content: [{ type: 'text', text: 'Second by database id' }],
+      },
+    ];
+
+    expect(mergeSessionEventsById(events).map((event) => event.id)).toEqual([
+      'sevt_user_inserted_first',
+      'sevt_agent_inserted_second',
+    ]);
+    expect(
+      buildSessionEventEntries(events, 'transcript', Date.parse('2026-08-28T01:01:29Z'), undefined, {
+        platformTranscriptFiltering: true,
+      }).map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id)),
+    ).toEqual(['sevt_user_inserted_first', 'sevt_agent_inserted_second']);
+  });
+
+  test('keeps content-block entries at their source event position', () => {
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_user_first',
+          type: 'user.message',
+          created_at: '2026-08-28T01:01:30Z',
+          content: [{ type: 'text', text: 'First' }],
+        },
+        {
+          id: 'sevt_agent_blocks',
+          type: 'agent.message',
+          created_at: '2026-08-28T01:01:31Z',
+          content: [
+            { type: 'thinking', thinking: 'Working' },
+            { type: 'tool_use', id: 'toolu_read', name: 'Read', input: { path: '/workspace/file.txt' } },
+          ],
+        },
+        {
+          id: 'sevt_user_second',
+          type: 'user.message',
+          created_at: '2026-08-28T01:01:32Z',
+          content: [{ type: 'text', text: 'Second' }],
+        },
+      ],
+      'transcript',
+      Date.parse('2026-08-28T01:01:30Z'),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_user_first',
+      'sevt_agent_blocks-thinking-0',
+      'toolu_read',
+      'sevt_user_second',
+    ]);
+  });
+
+  test('replaces cached events without moving them and appends new events in arrival order', () => {
+    const first = mergeSessionEventCache(undefined, [
+      {
+        id: 'sevt_first',
+        type: 'user.message',
+        created_at: '2026-08-28T01:01:30Z',
+        processed_at: null,
+        is_streaming: true,
+        content: 'draft',
+      },
+      { id: 'sevt_second', type: 'agent.message', created_at: '2026-08-28T01:01:29Z', content: 'second' },
+    ]);
+    const updated = mergeSessionEventCache(first, [
+      {
+        id: 'sevt_first',
+        type: 'user.message',
+        created_at: '2026-08-28T01:01:30Z',
+        processed_at: '2026-08-28T01:01:30Z',
+        content: 'final',
+      },
+      { id: 'sevt_third', type: 'session.status_idle', created_at: '2026-08-28T01:01:28Z' },
+    ]);
+
+    expect(updated.events.map((event) => event.id)).toEqual(['sevt_first', 'sevt_second', 'sevt_third']);
+    expect(updated.events[0]?.content).toBe('final');
+  });
+
+  test('omits an idle result that duplicates an agent message with the same timestamp', () => {
+    const createdAt = '2026-08-26T13:13:00Z';
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_idle',
+          type: 'session.status_idle',
+          created_at: createdAt,
+          processed_at: createdAt,
+          result: 'Final answer',
+        },
+        {
+          id: 'sevt_agent',
+          type: 'agent.message',
+          created_at: createdAt,
+          processed_at: createdAt,
+          content: [{ type: 'text', text: 'Final answer' }],
+        },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_agent',
+    ]);
+  });
+
+  test('does not reorder a non-duplicate idle result around an agent message', () => {
+    const createdAt = '2026-08-26T13:13:00Z';
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_idle',
+          type: 'session.status_idle',
+          created_at: createdAt,
+          result: 'Run completed',
+        },
+        {
+          id: 'sevt_agent',
+          type: 'agent.message',
+          created_at: createdAt,
+          content: [{ type: 'text', text: 'Final answer' }],
+        },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_idle',
+      'sevt_agent',
+    ]);
+  });
+
+  test('keeps a tool batch at the position of its first tool call', () => {
+    const entries = buildSessionEventEntries(
+      [
+        { id: 'sevt_model_start', type: 'span.model_request_start', created_at: '2026-08-28T01:01:29Z' },
+        {
+          id: 'sevt_tool_first',
+          type: 'agent.tool_use',
+          created_at: '2026-08-28T01:01:30Z',
+          name: 'Read',
+          input: { path: '/workspace/first.txt' },
+        },
+        {
+          id: 'sevt_agent_between_tools',
+          type: 'agent.message',
+          created_at: '2026-08-28T01:01:31Z',
+          content: [{ type: 'text', text: 'Between tool calls' }],
+        },
+        {
+          id: 'sevt_tool_second',
+          type: 'agent.tool_use',
+          created_at: '2026-08-28T01:01:32Z',
+          name: 'Read',
+          input: { path: '/workspace/second.txt' },
+        },
+        {
+          id: 'sevt_model_end',
+          type: 'span.model_request_end',
+          created_at: '2026-08-28T01:01:33Z',
+          model_request_start_id: 'sevt_model_start',
+        },
+      ],
+      'transcript',
+      Date.parse('2026-08-28T01:01:29Z'),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => entry.kind)).toEqual(['tool_batch', 'message']);
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_tool_first',
+      'sevt_agent_between_tools',
+    ]);
+  });
+
+  test('keeps a generic result that matches the preceding agent message', () => {
+    const createdAt = '2026-08-26T13:13:00Z';
+    const entries = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_agent',
+          type: 'agent.message',
+          created_at: createdAt,
+          content: [{ type: 'text', text: 'Final answer' }],
+        },
+        { id: 'sevt_result', type: 'result', created_at: '2026-08-26T13:13:01Z', result: 'Final answer' },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(entries.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_agent',
+      'sevt_result',
+    ]);
+  });
+
+  test('deduplicates idle results only within the current turn across either arrival order', () => {
+    const createdAt = '2026-08-26T13:13:00Z';
+    const agentThenIdle = buildSessionEventEntries(
+      [
+        { id: 'sevt_agent', type: 'agent', created_at: createdAt, content: [{ type: 'text', text: 'Final answer' }] },
+        {
+          id: 'sevt_idle',
+          type: 'session.status_idle',
+          created_at: '2026-08-26T13:13:01Z',
+          result: 'Final answer',
+        },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+    const idleThenAgent = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_idle_first',
+          type: 'session.status_idle',
+          created_at: createdAt,
+          result: 'Final answer',
+        },
+        {
+          id: 'sevt_agent_after_idle',
+          type: 'agent.message',
+          created_at: createdAt,
+          content: [{ type: 'text', text: 'Final answer' }],
+        },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+    const separateTurns = buildSessionEventEntries(
+      [
+        {
+          id: 'sevt_agent_message',
+          type: 'agent.message',
+          created_at: createdAt,
+          content: [{ type: 'text', text: 'Earlier answer' }],
+        },
+        { id: 'sevt_user', type: 'user', created_at: '2026-08-26T13:13:01Z', content: 'Follow-up' },
+        {
+          id: 'sevt_idle_after_user',
+          type: 'session.status_idle',
+          created_at: '2026-08-26T13:13:02Z',
+          result: 'Earlier answer',
+        },
+      ],
+      'transcript',
+      Date.parse(createdAt),
+      undefined,
+      { platformTranscriptFiltering: true },
+    );
+
+    expect(agentThenIdle.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_agent',
+    ]);
+    expect(idleThenAgent.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_agent_after_idle',
+    ]);
+    expect(separateTurns.map((entry) => ('traceEntry' in entry ? entry.traceEntry.rawEventId : entry.id))).toEqual([
+      'sevt_agent_message',
+      'sevt_user',
+      'sevt_idle_after_user',
+    ]);
+  });
+
+  test('loads every workspace file page for session resource options', async () => {
+    const firstPage = Array.from({ length: 1000 }, (_, index) => fileMetadata(index));
+    const finalFile = fileMetadata(1000);
+    const requestedAfterIds: Array<string | null> = [];
+    globalThis.fetch = (async (input) => {
+      const url = new URL(requestURL(input), 'http://127.0.0.1');
+      const afterId = url.searchParams.get('after_id');
+      requestedAfterIds.push(afterId);
+      const response = afterId
+        ? { data: [finalFile], first_id: finalFile.id, has_more: false, last_id: finalFile.id }
+        : {
+            data: firstPage,
+            first_id: firstPage[0]?.id,
+            has_more: true,
+            last_id: firstPage.at(-1)?.id,
+          };
+      return new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    setAnthropicClientForTest(null);
+
+    const page = await listSessionFileOptions('workspace_123');
+
+    expect(requestedAfterIds).toEqual([null, 'file_999']);
+    expect(page.data).toHaveLength(1001);
+    expect(page.data.at(-1)?.id).toBe('file_1000');
+    expect(page).toMatchObject({ first_id: 'file_0', has_more: false, last_id: 'file_1000' });
+  });
+
+  test('rejects a repeating cursor in scoped file pagination', async () => {
+    let count = 0;
+    globalThis.fetch = (async () =>
+      Response.json({ data: [], has_more: true, last_id: ++count % 2 ? 'file_a' : 'file_b' })) as typeof fetch;
+    await expect(listSessionFiles('sesn_scope', 'workspace_123')).rejects.toThrow(
+      'Files API pagination did not return a new cursor',
+    );
+    expect(count).toBe(3);
+  });
+
+  test('loads every scoped file page with workspace headers, beta and an abort signal', async () => {
+    const requests: { url: URL; init?: RequestInit }[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(requestURL(input), 'http://127.0.0.1');
+      requests.push({ url, init });
+      return Response.json(
+        url.searchParams.get('after_id')
+          ? { data: [{ id: 'file_last', downloadable: true }], has_more: false, last_id: 'file_last' }
+          : { data: [{ id: 'file_first', downloadable: true }], has_more: true, last_id: 'file_first' },
+      );
+    }) as typeof fetch;
+    const controller = new AbortController();
+    const page = await listSessionFiles('sesn_scope', 'workspace_123', controller.signal);
+    expect(page.data.map((file) => file.id)).toEqual(['file_first', 'file_last']);
+    expect(requests.map(({ url }) => url.searchParams.get('after_id'))).toEqual([null, 'file_first']);
+    for (const { url, init } of requests) {
+      expect(url.searchParams.get('scope_id')).toBe('sesn_scope');
+      expect(url.searchParams.get('beta')).toBe('true');
+      expect(new Headers(init?.headers).get('x-workspace-id')).toBe('workspace_123');
+      expect(new Headers(init?.headers).get('anthropic-beta')).toContain('files-api-2025-04-14');
+      expect(new Headers(init?.headers).get('anthropic-beta')).toContain('managed-agents-2026-04-01');
+      expect(url.searchParams.has('betas')).toBe(false);
+      expect(init?.credentials).toBe('include');
+      expect(init?.signal).toBeDefined();
+    }
+  });
+
+  test('loads every memory store page for session attach options', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => memoryStore(index));
+    const extraStore = memoryStore(100);
+    const requestedPages: Array<string | null> = [];
+    const requestedLimits: string[] = [];
+    globalThis.fetch = (async (input) => {
+      const url = new URL(requestURL(input), 'http://127.0.0.1');
+      requestedPages.push(url.searchParams.get('page'));
+      requestedLimits.push(url.searchParams.get('limit') ?? '');
+      const response = url.searchParams.get('page')
+        ? { data: [extraStore], next_page: null }
+        : { data: firstPage, next_page: 'memory_100' };
+      return new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    setAnthropicClientForTest(null);
+
+    const page = await listMemoryStoreOptions('workspace_123');
+
+    expect(requestedLimits).toEqual(['100', '100']);
+    expect(requestedPages).toEqual([null, 'memory_100']);
+    expect(page.data).toHaveLength(101);
+    expect(page.data.at(-1)?.id).toBe('memstore_100');
+    expect(page.next_page).toBeNull();
+  });
+
+  test('adds a file through the session resource endpoint', async () => {
+    let capturedInput: RequestInfo | URL = '';
+    let capturedInit: RequestInit | undefined;
+    globalThis.fetch = (async (input, init) => {
+      capturedInput = input;
+      capturedInit = init;
+      return new Response(
+        JSON.stringify({
+          id: 'sesrsc_123',
+          created_at: '2026-08-30T00:00:00Z',
+          file_id: 'file_123',
+          mount_path: '/reports/input.csv',
+          type: 'file',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
+    setAnthropicClientForTest(null);
+
+    await addSessionFileResource(
+      'sesn_123',
+      { fileId: ' file_123 ', mountPath: ' reports/input.csv ' },
+      'workspace_123',
+    );
+
+    expect(requestURL(capturedInput)).toBe('/v1/sessions/sesn_123/resources?beta=true');
+    expect(JSON.parse(String(capturedInit?.body))).toEqual({
+      file_id: 'file_123',
+      mount_path: '/reports/input.csv',
+      type: 'file',
+    });
+    expect(new Headers(capturedInit?.headers).get('x-workspace-id')).toBe('workspace_123');
+  });
+});
+
+function requestURL(input: RequestInfo | URL) {
+  return typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+}
+
+function fileMetadata(index: number) {
+  return {
+    id: `file_${index}`,
+    created_at: '2026-08-24T00:00:00Z',
+    filename: `file-${index}.txt`,
+    mime_type: 'text/plain',
+    size_bytes: index,
+    type: 'file' as const,
+  };
+}
+
+function memoryStore(index: number) {
+  return {
+    id: `memstore_${index}`,
+    archived_at: null,
+    created_at: '2026-08-24T00:00:00Z',
+    description: `Store ${index}`,
+    name: `Memory ${index}`,
+    type: 'memory_store' as const,
+    updated_at: '2026-08-24T00:00:00Z',
+  };
+}
+
+test('keeps both thread message perspectives and separates owner from peer', () => {
+  const queryClient = new QueryClient();
+  const primary = [
+    {
+      id: 'task-primary',
+      uuid: 'task',
+      type: 'agent.thread_message_sent',
+      session_thread_id: 'primary',
+      to_session_thread_id: 'child',
+      to_agent_name: 'worker',
+      agent_name: 'lead',
+      content: [],
+    },
+    {
+      id: 'report-primary',
+      uuid: 'report',
+      type: 'agent.thread_message_received',
+      session_thread_id: 'primary',
+      from_session_thread_id: 'child',
+      from_agent_name: 'worker',
+      agent_name: 'lead',
+      content: [],
+    },
+  ];
+  const child = [
+    {
+      id: 'task-child',
+      uuid: 'task',
+      original_event_id: 'task-primary',
+      type: 'agent.thread_message_received',
+      session_thread_id: 'child',
+      from_session_thread_id: 'primary',
+      from_agent_name: 'lead',
+      agent_name: 'worker',
+      content: [],
+    },
+    {
+      id: 'report-child',
+      uuid: 'report',
+      original_event_id: 'report-primary',
+      type: 'agent.thread_message_sent',
+      session_thread_id: 'child',
+      to_session_thread_id: 'primary',
+      to_agent_name: 'lead',
+      agent_name: 'worker',
+      content: [],
+    },
+  ];
+  for (const [threadId, events] of [
+    ['', primary],
+    ['child', child],
+  ] as const) {
+    queryClient.setQueryData(
+      sessionDetailEventCacheKey('workspace', 'session', threadId),
+      mergeSessionEventCache(undefined, [...events]),
+    );
+  }
+  const events = sessionDetailScopeEvents(queryClient, 'workspace', 'session', ['', 'child']);
+  expect(events.map((event) => event.id)).toEqual(['task-primary', 'report-primary', 'task-child', 'report-child']);
+  expect(events.map((event) => event.session_thread_id)).toEqual(['primary', 'primary', 'child', 'child']);
+  expect(events.map(sessionSubagentThreadId)).toEqual(['child', 'child', 'primary', 'primary']);
+  expect(events.map(sessionSubagentName)).toEqual(['worker', 'worker', 'lead', 'lead']);
+  const lanes = new Map([
+    ['primary', 'main'],
+    ['child', 'child'],
+  ]);
+  expect(events.map((event) => sessionEventLaneId(event, lanes))).toEqual(['main', 'main', 'child', 'child']);
+  queryClient.clear();
+});

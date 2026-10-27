@@ -1,20 +1,18 @@
-import { AlertCircle, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '@/shared/lib/utils';
-import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
+import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
 import { Badge } from '@/shared/ui/badge';
-import { Button, ButtonLink } from '@/shared/ui/button';
+import { ButtonLink } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/shared/ui/empty';
 import { Field, FieldLabel } from '@/shared/ui/field';
-import { Pagination, PaginationContent, PaginationItem } from '@/shared/ui/pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import type { IconComponent } from './model';
 
 export function ConsolePageFrame({
   title,
-  icon: Icon,
   description,
   eyebrow,
   meta,
@@ -22,7 +20,6 @@ export function ConsolePageFrame({
   children,
 }: {
   title: string;
-  icon: IconComponent;
   description?: string;
   eyebrow?: string;
   meta?: ReactNode;
@@ -31,24 +28,13 @@ export function ConsolePageFrame({
 }) {
   return (
     <section className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-secondary">
-            <Icon className="size-5 text-muted-foreground" aria-hidden />
-          </div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-[28px] font-semibold leading-tight text-foreground">{title}</h1>
-              {eyebrow ? <Badge>{eyebrow}</Badge> : null}
-            </div>
-            {description ? (
-              <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
-            ) : null}
-            {meta ? <div className="mt-3">{meta}</div> : null}
-          </div>
-        </div>
-        {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
-      </div>
+      <ResourcePageHeader
+        title={title}
+        description={description}
+        actions={actions}
+        titleAdornment={eyebrow ? <Badge>{eyebrow}</Badge> : undefined}
+      />
+      {meta ? <div>{meta}</div> : null}
       {children}
     </section>
   );
@@ -88,151 +74,32 @@ export function BackLink({ href, label }: { href: string; label: string }) {
   );
 }
 
+export { CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from '@/shared/ui/resource-table';
+
 export function EmptyState({
   icon: Icon,
   title,
   body,
-  action,
+  children,
 }: {
   icon: IconComponent;
   title: string;
-  body: string;
-  action?: string;
+  body?: string;
+  children?: ReactNode;
 }) {
   return (
-    <Empty className="min-h-[260px] rounded-lg border border-dashed border-border bg-card px-6 py-12">
+    <Empty className="min-h-[260px] px-6 py-12">
       <EmptyHeader>
-        <EmptyMedia
-          variant="icon"
-          className="size-12 rounded-full border border-border bg-secondary text-muted-foreground"
-        >
+        <EmptyMedia variant="icon">
           <Icon className="size-5" aria-hidden />
         </EmptyMedia>
         <EmptyTitle>
-          <h2 className="text-[20px] font-semibold leading-7 text-foreground">{title}</h2>
+          <h2 className="text-lg font-semibold leading-7 text-foreground">{title}</h2>
         </EmptyTitle>
-        <EmptyDescription className="max-w-[520px] text-muted-foreground">{body}</EmptyDescription>
+        {body ? <EmptyDescription className="max-w-[520px] text-muted-foreground">{body}</EmptyDescription> : null}
       </EmptyHeader>
-      {action ? (
-        <EmptyContent>
-          <Button type="button" variant="outline" size="lg">
-            <RefreshCw className="size-4" aria-hidden />
-            {action}
-          </Button>
-        </EmptyContent>
-      ) : null}
+      {children ? <EmptyContent>{children}</EmptyContent> : null}
     </Empty>
-  );
-}
-
-export function CursorPagination({
-  previousLabel,
-  nextLabel,
-  updatingLabel,
-  canPrevious,
-  canNext,
-  isUpdating,
-  onPrevious,
-  onNext,
-}: {
-  previousLabel: string;
-  nextLabel: string;
-  updatingLabel: string;
-  canPrevious: boolean;
-  canNext: boolean;
-  isUpdating: boolean;
-  onPrevious: () => void;
-  onNext: () => void;
-}) {
-  return (
-    <div className="mt-5 flex items-center gap-2">
-      <Pagination className="mx-0 w-auto justify-start">
-        <PaginationContent>
-          <PaginationItem>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={previousLabel}
-              className="text-muted-foreground"
-              disabled={!canPrevious}
-              onClick={onPrevious}
-            >
-              <ChevronLeft className="size-4" aria-hidden />
-            </Button>
-          </PaginationItem>
-          <PaginationItem>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={nextLabel}
-              className="text-muted-foreground"
-              disabled={!canNext}
-              onClick={onNext}
-            >
-              <ChevronRight className="size-4" aria-hidden />
-            </Button>
-          </PaginationItem>
-        </PaginationContent>
-      </Pagination>
-      {isUpdating ? <span className="ml-2 text-xs text-muted-foreground/70">{updatingLabel}</span> : null}
-    </div>
-  );
-}
-
-export function TableLoadingRow({ colSpan, label }: { colSpan: number; label: string }) {
-  return (
-    <TableRow className="border-b border-border">
-      <TableCell colSpan={colSpan} className="h-24 px-3 py-6 text-sm text-muted-foreground">
-        <span className="inline-flex items-center gap-2">
-          <RefreshCw className="size-3.5 animate-spin" aria-hidden />
-          {label}
-        </span>
-      </TableCell>
-    </TableRow>
-  );
-}
-
-export function TableErrorRow({
-  colSpan,
-  title,
-  message,
-  retryLabel,
-  onRetry,
-}: {
-  colSpan: number;
-  title: string;
-  message: string;
-  retryLabel: string;
-  onRetry: () => void;
-}) {
-  return (
-    <TableRow className="border-b border-border">
-      <TableCell colSpan={colSpan} className="h-28 px-3 py-6">
-        <Alert variant="destructive" className="max-w-xl">
-          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <AlertTitle>{title}</AlertTitle>
-          <AlertDescription>
-            <p>{message}</p>
-            <Button type="button" size="sm" variant="outline" className="mt-3" onClick={onRetry}>
-              <RefreshCw className="size-3.5" aria-hidden />
-              {retryLabel}
-            </Button>
-          </AlertDescription>
-        </Alert>
-      </TableCell>
-    </TableRow>
-  );
-}
-
-export function TableEmptyRow({ colSpan, children }: { colSpan: number; children: ReactNode }) {
-  return (
-    <TableRow className="border-b border-border">
-      <TableCell colSpan={colSpan} className="h-24 px-3 py-6 text-sm text-muted-foreground">
-        {children}
-      </TableCell>
-    </TableRow>
   );
 }
 
@@ -248,10 +115,10 @@ export function DataTable({ columns, rows }: { columns: string[]; rows: string[]
   return (
     <DataTableCard>
       <Table className="min-w-full text-left">
-        <TableHeader className="text-xs text-muted-foreground/70">
-          <TableRow className="border-b border-border hover:bg-transparent">
+        <TableHeader className="text-xs text-muted-foreground">
+          <TableRow className="border-b-[0.5px] border-border hover:bg-transparent">
             {columns.map((column) => (
-              <TableHead key={column} className="px-5 py-3 text-muted-foreground/70">
+              <TableHead key={column} className="px-5 py-3 text-muted-foreground">
                 {column}
               </TableHead>
             ))}
@@ -259,7 +126,7 @@ export function DataTable({ columns, rows }: { columns: string[]; rows: string[]
         </TableHeader>
         <TableBody>
           {rows.map((row) => (
-            <TableRow key={row.join('|')} className="border-b border-border text-foreground last:border-0">
+            <TableRow key={row.join('|')} className="border-b-[0.5px] border-border text-foreground last:border-0">
               {row.map((cell, index) => (
                 <TableCell key={`${cell}-${index}`} className="px-5 py-4 align-top">
                   {cell}
@@ -320,7 +187,7 @@ export function MetricTile({ title, value }: { title: string; value: string }) {
         <CardTitle className="text-sm font-medium text-foreground">{title}</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
-        <div className="mt-5 text-[30px] font-semibold leading-none text-foreground">{value}</div>
+        <div className="mt-5 text-2xl font-semibold leading-none text-foreground">{value}</div>
       </CardContent>
     </Card>
   );

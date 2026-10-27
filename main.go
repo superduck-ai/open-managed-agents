@@ -11,24 +11,39 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
 	"github.com/superduck-ai/open-managed-agents/internal/cleanup"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/deployments"
+	"github.com/superduck-ai/open-managed-agents/internal/diagnostics"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/invitations"
+	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
+	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
+	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
+	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
-	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
+	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
+	"github.com/superduck-ai/open-managed-agents/internal/webtools"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
 func main() {
@@ -44,11 +59,17 @@ func main() {
 func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	context.AfterFunc(ctx, stop)
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	closeDiagnostics, err := diagnostics.Start(cfg.Server.DiagnosticsAddr, os.Getenv("OMA_DIAGNOSTICS_LISTENER_FD"), logger.With("component", "diagnostics"))
+	if err != nil {
+		return fmt.Errorf("start diagnostics: %w", err)
+	}
+	defer func() { _ = closeDiagnostics() }()
 
 	database, err := db.Open(ctx, cfg, logger.With("component", "database"))
 	if err != nil {
@@ -60,26 +81,43 @@ func run(logger *slog.Logger) error {
 		if err := database.Migrate(ctx); err != nil {
 			return fmt.Errorf("migrate database: %w", err)
 		}
-		if err := deployments.MigrateRiver(ctx, database, logger.With("component", "deployment_scheduler")); err != nil {
+		if err := riverjobs.Migrate(ctx, database, logger.With("component", "river_jobs")); err != nil {
 			return fmt.Errorf("migrate River: %w", err)
 		}
 	} else {
 		logger.Info("database auto migration disabled", "env", cfg.Env)
 	}
-	if err := database.Seed(ctx, cfg.Bootstrap.SeedAPIKeys); err != nil {
+	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
 		return fmt.Errorf("seed database: %w", err)
 	}
+	syncModelPrices(ctx, database, logger)
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {
 		return fmt.Errorf("open redis client: %w", err)
 	}
 	defer redisClient.Close()
 	platformSessions := platformsession.NewRedisStore(redisClient)
-	sessionEventBus, err := sessionfanout.NewRedis(ctx, redisClient, logger.With("component", "session_event_bus"))
+	platformAuthProvider := platformauth.New(cfg.Auth, database, redisClient, logger.With("component", "platform_auth"))
+	natsConnection, err := natsclient.Open(ctx, cfg.NATS, logger.With("component", "nats"))
+	if err != nil {
+		return fmt.Errorf("open nats client: %w", err)
+	}
+	defer func() {
+		if err := natsConnection.Drain(); err != nil {
+			logger.Warn("drain nats connection", "error", err)
+			natsConnection.Close()
+		}
+	}()
+	sessionEventBus, err := sessionfanout.NewNATS(ctx, natsConnection, logger.With("component", "session_event_bus"))
 	if err != nil {
 		return fmt.Errorf("open session event fanout: %w", err)
 	}
 	defer sessionEventBus.Close()
+	workerEventBroker, err := workerevents.NewJetStream(ctx, natsConnection, cfg.NATS.WorkerEventStream)
+	if err != nil {
+		return fmt.Errorf("open worker event broker: %w", err)
+	}
+	logger.Info("nats messaging ready", "jetstream", true)
 
 	storageClient, err := storage.New(cfg.Storage)
 	if err != nil {
@@ -92,10 +130,17 @@ func run(logger *slog.Logger) error {
 	if err := objectStore.Ensure(ctx); err != nil {
 		return fmt.Errorf("ensure object store bucket: %w", err)
 	}
-	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
-	codeSessionCredentials, err := codesessions.NewSessionCredentials(cfg)
+	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel, tunnels.NewPayloadStore(database, objectStore), tunnels.NewRequestBindings(redisClient, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
 	if err != nil {
-		return fmt.Errorf("load code-session credentials: %w", err)
+		return fmt.Errorf("open tunnel broker: %w", err)
+	}
+	defer tunnelBroker.Close()
+
+	workerEventAcks := workerevents.NewRedisAckStore(redisClient)
+	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
+	codeRuntime, err := loadCodeRuntime(cfg)
+	if err != nil {
+		return err
 	}
 	// Filestore 与 code-session ingress 使用独立的 claims 与验证器；
 	// 生产环境可共用同一 Ed25519 私钥文件，但两种 token 绝不互相代用。
@@ -103,11 +148,11 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load filestore credentials: %w", err)
 	}
-	vaultSecrets, err := buildVaultSecretsService(ctx, cfg)
+	vaultSecrets, err := secretservice.New(cfg.Vault.MasterKey)
 	if err != nil {
 		return fmt.Errorf("load vault secrets service: %w", err)
 	}
-	filestoreService := filestore.NewService(cfg, database, objectStore)
+	filestoreService := filestore.NewService(cfg, database, database, objectStore)
 	cleanup.NewWorker(database, storageClient, 30*time.Second, logger.With("component", "cleanup")).Start(ctx)
 	// 常规资源共享默认 bucket；清理任务通过 client 按各自持久化的 bucket 选择对象存储。
 	filestore.NewCleanupWorker(database, storageClient, logger.With("component", "filestore_cleanup")).Start(ctx)
@@ -119,12 +164,19 @@ func run(logger *slog.Logger) error {
 		logger.With("component", "batches"),
 	).Start(ctx)
 	environmentLogger := logger.With("component", "environment_runner")
-	sandboxProvider := e2bruntime.NewProvider(cfg.E2B)
+	sandboxProvider := e2bruntime.NewProvider(cfg.E2B, cfg.EnvironmentPackages.RegistryHosts()...)
+	// runner 与 worker-event 过期处置共享同一个 code-session Service，
+	// 过期策略只存在一份实现。
+	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeRuntime.credentials, environmentLogger).
+		WithWorkerEventBroker(workerEventBroker).
+		WithWorkerEventState(workerEventAcks, objectStore).
+		WithSessionAttachments(filestoreService)
+	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,
 		Provider:        sandboxProvider,
 		Config:          cfg,
-		CodeSessions:    codesessions.NewServiceWithCredentials(database, codeSessionCredentials, environmentLogger),
+		CodeSessions:    runnerCodeSessions,
 		Skills:          skillsapi.NewRuntimeResolver(database),
 		FilestoreTokens: filestoreCredentials,
 		Logger:          environmentLogger,
@@ -132,22 +184,53 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create environment runner: %w", err)
 	}
-	environmentRunner.Start(ctx)
-	webhooks.NewWorker(database, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
-	deploymentScheduler, err := deployments.NewDeploymentScheduler(
-		database,
-		logger.With("component", "deployment_scheduler"),
-	)
+	stopRunner := environmentRunner.Start(ctx)
+	defer stopRunner()
+	webhookQueue, err := webhooks.NewQueue(ctx, natsConnection, cfg.NATS.WebhookStream, cfg.Webhook)
 	if err != nil {
-		return fmt.Errorf("create deployment scheduler: %w", err)
+		return fmt.Errorf("open webhook queue: %w", err)
 	}
-	if err := deploymentScheduler.Start(ctx); err != nil {
+	webhookEnqueuer := webhooks.NewEnqueuer(database, webhookQueue, logger.With("component", "webhooks"))
+	stopWebhookWorker, err := webhooks.NewWorker(database, webhookQueue, cfg.Webhook, logger.With("component", "webhook_worker")).Start(ctx)
+	if err != nil {
+		return fmt.Errorf("start webhook worker: %w", err)
+	}
+	defer stopWebhookWorker()
+	workers := river.NewWorkers()
+	queues := jobQueues(workers, database, cfg, logger, platformAuthProvider.VerifiedLoginEnabled())
+	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
+	prebuilds.Register(workers)
+	deploymentStore := deployments.NewStore(database, logger.With("component", "deployments")).
+		WithEventPayloadStorage(objectStore).WithWebhooks(webhookEnqueuer)
+	deployments.RegisterWorkers(workers, deploymentStore)
+	lifecycle := environments.NewSandboxLifecycle(database, sandboxProvider,
+		cfg.SandboxLifecycle, logger.With("component", "sandbox_lifecycle"))
+	lifecycle.Register(workers)
+	transcripts, err := transcriptretention.New(database, objectStore, cfg.TranscriptArchive, logger.With("component", "transcript-archive"))
+	if err != nil {
+		return fmt.Errorf("create transcript archive service: %w", err)
+	}
+	transcripts.Register(workers)
+
+	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers, queues)
+	if err != nil {
+		return fmt.Errorf("create River client: %w", err)
+	}
+	if err := lifecycle.Configure(ctx, jobClient); err != nil {
+		return fmt.Errorf("configure sandbox lifecycle: %w", err)
+	}
+	if err := transcripts.Configure(ctx, jobClient); err != nil {
+		return fmt.Errorf("configure transcript archive: %w", err)
+	}
+	deploymentStore.Configure(jobClient)
+	prebuilds.Configure(jobClient)
+	if err := jobClient.Start(ctx); err != nil {
 		return fmt.Errorf("start deployment scheduler: %w", err)
 	}
 	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := deploymentScheduler.Stop(stopCtx); err != nil {
+		if err := jobClient.Stop(stopCtx); err != nil {
 			logger.Error("stop deployment scheduler", "error", err)
 		}
 	}()
@@ -155,17 +238,31 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			InvitationJobs:         jobClient,
+			Prebuilds:              prebuilds,
+			SandboxLifecycle:       lifecycle,
 			Config:                 cfg,
 			DB:                     database,
+			Deployments:            deploymentStore,
+			WebhookEnqueuer:        webhookEnqueuer,
 			ObjectStore:            objectStore,
 			Logger:                 logger,
 			PlatformStore:          platformSessions,
-			CodeSessionCredentials: codeSessionCredentials,
+			PlatformAuth:           platformAuthProvider,
+			CodeSessionCredentials: codeRuntime.credentials,
+			BrainClaims:            codeRuntime.claims,
+			WebTools:               codeRuntime.web,
 			SandboxTimeoutExtender: sandboxProvider,
+			SandboxProvisioner:     environmentRunner,
 			FilestoreCredentials:   filestoreCredentials,
 			FilestoreService:       filestoreService,
 			VaultSecrets:           vaultSecrets,
+			Redis:                  redisClient,
 			SessionEventBus:        sessionEventBus,
+			WorkerEventBroker:      workerEventBroker,
+			TunnelBroker:           tunnelBroker,
+			TunnelPresence:         tunnels.NewConnectorPresence(redisClient, cfg.Tunnel.PresenceTTL),
+			WorkerEventAcks:        workerEventAcks,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,
@@ -173,19 +270,41 @@ func run(logger *slog.Logger) error {
 		IdleTimeout:       2 * time.Minute,
 	}
 
+	return serveHTTP(ctx, server, logger)
+}
+
+func jobQueues(workers *river.Workers, database *db.DB, cfg config.Config, logger *slog.Logger, invitationsEnabled bool) map[string]river.QueueConfig {
+	queues := map[string]river.QueueConfig{
+		environments.PrebuildQueue:         {MaxWorkers: 4},
+		deploymentjobs.Queue:               {MaxWorkers: 10},
+		environments.SandboxLifecycleQueue: {MaxWorkers: 4},
+		transcriptretention.Queue:          {MaxWorkers: 2},
+	}
+	if invitationsEnabled {
+		queues[platformadmin.DeliveryQueue] = river.QueueConfig{MaxWorkers: 4}
+		platformadmin.RegisterDeliveryWorker(workers, database, invitations.NewMailer(cfg.Auth, database, logger.With("component", "platform_invitation_mail")))
+	}
+	return queues
+}
+
+func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) error {
+	listener, err := listeners.Open(server.Addr, os.Getenv("OMA_HTTP_LISTENER_FD"))
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
+	defer listener.Close()
+	server.Handler = httpapi.WithStreamShutdown(ctx, server.Handler)
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("claude api server listening", "addr", cfg.Server.Addr)
-		errCh <- server.ListenAndServe()
+		logger.Info("claude api server listening", "addr", server.Addr)
+		errCh <- server.Serve(listener)
 	}()
 
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutdown server: %w", err)
-		}
+		return shutdownHTTP(shutdownCtx, server)
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve: %w", err)
@@ -194,30 +313,42 @@ func run(logger *slog.Logger) error {
 	return nil
 }
 
-// buildVaultSecretsService loads the vault KEK ring and returns the envelope
-// encryption service. The current KEK comes from config (kek base64 or
-// kek_file); optional decrypt_only entries keep older versions openable after
-// rotation without rewrap. A configured KEK is required in every env.
-func buildVaultSecretsService(ctx context.Context, cfg config.Config) (*secrets.Service, error) {
-	mk := cfg.Vault.MasterKey
-	kek, err := secrets.ResolveKEK(mk.Kek, mk.KekFile)
+func syncModelPrices(ctx context.Context, database *db.DB, logger *slog.Logger) {
+	if err := pricing.Sync(ctx, database); err != nil {
+		logger.Warn("sync model prices", "source", "openrouter", "error", err)
+	}
+	if err := pricing.SyncNarrows(ctx, database); err != nil {
+		logger.Warn("sync model prices", "source", "narrows", "error", err)
+	}
+}
+
+func shutdownHTTP(ctx context.Context, server *http.Server) error {
+	if err := server.Shutdown(ctx); err != nil {
+		return errors.Join(fmt.Errorf("shutdown server: %w", err), server.Close())
+	}
+	return nil
+}
+
+type codeRuntime struct {
+	credentials *codesessions.SessionCredentials
+	claims      codesessions.BrainClaimAuthenticator
+	web         *webtools.Client
+}
+
+func loadCodeRuntime(cfg config.Config) (codeRuntime, error) {
+	var runtime codeRuntime
+	var err error
+	runtime.credentials, err = codesessions.NewSessionCredentials(cfg)
 	if err != nil {
-		return nil, err
+		return runtime, fmt.Errorf("load code-session credentials: %w", err)
 	}
-	current := secrets.LocalKeyMaterial{
-		Version: mk.EffectiveVersion(),
-		KEK:     kek,
+	runtime.claims, err = codesessions.LoadBrainClaimAuthenticator(cfg.CodeSession.BrainClaimTokenFile)
+	if err != nil {
+		return runtime, fmt.Errorf("load brain claim token: %w", err)
 	}
-	decryptOnly := make([]secrets.LocalKeyMaterial, 0, len(mk.DecryptOnly))
-	for i, entry := range mk.DecryptOnly {
-		resolved, err := secrets.ResolveKEK(entry.Kek, entry.KekFile)
-		if err != nil {
-			return nil, fmt.Errorf("vault.master_key.decrypt_only[%d]: %w", i, err)
-		}
-		decryptOnly = append(decryptOnly, secrets.LocalKeyMaterial{
-			Version: entry.Version,
-			KEK:     resolved,
-		})
+	runtime.web, err = webtools.Load(cfg.WebTools)
+	if err != nil {
+		return runtime, fmt.Errorf("load web tools: %w", err)
 	}
-	return secrets.NewLocalServiceWithKeys(ctx, current, decryptOnly)
+	return runtime, nil
 }

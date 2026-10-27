@@ -28,6 +28,7 @@ const (
 
 type filestoreDatabase interface {
 	GetFilestoreFilesystem(context.Context, string, string) (db.FilestoreFilesystem, error)
+	GetFilestoreFilesystemBySession(context.Context, string, string) (db.FilestoreFilesystem, error)
 	GetSessionResourceFile(context.Context, string, string, string) (db.SessionResourceFile, error)
 	ListSessionResourceFilesPage(context.Context, db.ListSessionResourceFilesPageParams) (db.SessionResourceFilePage, error)
 	ListSessionSkillArchiveResources(context.Context, string, string) ([]db.SessionResourceFile, error)
@@ -60,23 +61,30 @@ type readFileResult struct {
 }
 
 // NewService 创建 Filestore 业务服务。
-func NewService(cfg config.Config, database filestoreDatabase, store storage.ObjectStore) *Service {
+func NewService(cfg config.Config, database filestoreDatabase, memories memoryFilestoreStore, store storage.ObjectStore) *Service {
 	persistent := &persistentPathBackend{db: database, store: store}
 	skills := &skillArchivePathBackend{
 		db:    database,
 		store: store,
 		cache: newSkillArchiveCache(defaultSkillArchiveCacheEntries),
 	}
-	return &Service{
+	service := &Service{
 		cfg:   cfg,
 		db:    database,
 		store: store,
 		now:   time.Now,
-		paths: pathRouter{
-			persistent: persistent,
-			readOnly:   []readOnlyPathBackend{skills},
-		},
 	}
+	memory := &memoryPathBackend{
+		memories: memories,
+		store:    store,
+		now:      func() time.Time { return service.now() },
+	}
+	service.paths = pathRouter{
+		persistent: persistent,
+		memory:     memory,
+		readOnly:   []readOnlyPathBackend{skills},
+	}
+	return service
 }
 
 // ListDirectory 按路径与内部 ID 的稳定顺序列出目录，使用键集游标避免 offset 分页漂移。
@@ -112,8 +120,12 @@ func (s *Service) MakeDirectory(ctx context.Context, principal Principal, reques
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
-	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationSinglePath, request.Path)
+	if apiErr != nil {
 		return directoryResponse{}, apiErr
+	}
+	if backend != nil {
+		return backend.makeDirectory(ctx, principal, filesystem, request)
 	}
 	entry, err := s.db.MakeFilestoreDirectory(ctx, db.MakeFilestoreDirectoryInput{
 		WorkspaceUUID:  principal.WorkspaceUUID,
@@ -137,8 +149,12 @@ func (s *Service) RemoveDirectory(ctx context.Context, principal Principal, requ
 	if apiErr != nil {
 		return apiErr
 	}
-	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationSinglePath, request.Path)
+	if apiErr != nil {
 		return apiErr
+	}
+	if backend != nil {
+		return backend.removeDirectory(ctx, principal, filesystem, request)
 	}
 	_, err := s.db.RemoveFilestoreDirectory(ctx, db.RemoveFilestoreDirectoryInput{
 		WorkspaceUUID:  principal.WorkspaceUUID,
@@ -166,8 +182,12 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	if apiErr := s.paths.authorizeMutation(params.Path); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationSinglePath, params.Path)
+	if apiErr != nil {
 		return fileResponse{}, apiErr
+	}
+	if backend != nil {
+		return backend.createFile(ctx, principal, filesystem, params, body)
 	}
 	if apiErr := s.requireParentDirectory(ctx, principal.WorkspaceUUID, filesystem.UUID, params.Path); apiErr != nil {
 		return fileResponse{}, apiErr
@@ -196,7 +216,7 @@ func (s *Service) CreateFile(ctx context.Context, principal Principal, params cr
 			return result, mapBlobstoreError("upload file", err)
 		}
 		if s.cfg.Storage.MaxFileBytes > 0 && upload.Size > s.cfg.Storage.MaxFileBytes {
-			return result, &apiError{Status: http.StatusRequestEntityTooLarge, Code: "resource_exhausted", Message: "File exceeds maximum size"}
+			return result, fileTooLargeError(nil)
 		}
 		return result, nil
 	})
@@ -252,8 +272,12 @@ func (s *Service) CopyFile(ctx context.Context, principal Principal, request cop
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationFileTransfer, request.Source, request.Destination)
+	if apiErr != nil {
 		return fileResponse{}, apiErr
+	}
+	if backend != nil {
+		return backend.copyFile(ctx, principal, filesystem, request)
 	}
 	source, err := s.db.GetSessionResourceFile(ctx, principal.WorkspaceUUID, filesystem.UUID, request.Source)
 	if err != nil {
@@ -325,8 +349,12 @@ func (s *Service) MoveFile(ctx context.Context, principal Principal, request cop
 	if apiErr != nil {
 		return fileResponse{}, apiErr
 	}
-	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationFileTransfer, request.Source, request.Destination)
+	if apiErr != nil {
 		return fileResponse{}, apiErr
+	}
+	if backend != nil {
+		return backend.moveFile(ctx, principal, filesystem, request)
 	}
 	result, err := s.db.MoveFilestoreFile(ctx, db.MoveFilestoreFileInput{
 		WorkspaceUUID:     principal.WorkspaceUUID,
@@ -361,7 +389,7 @@ func (s *Service) MoveDirectory(ctx context.Context, principal Principal, reques
 	if apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
-	if apiErr := s.paths.authorizeMutation(request.Source, request.Destination); apiErr != nil {
+	if _, apiErr := s.paths.mutationBackendFor(mutationDirectoryTransfer, request.Source, request.Destination); apiErr != nil {
 		return directoryResponse{}, apiErr
 	}
 	result, err := s.db.MoveFilestoreDirectory(ctx, db.MoveFilestoreDirectoryInput{
@@ -399,8 +427,12 @@ func (s *Service) RemoveFile(ctx context.Context, principal Principal, request p
 	if apiErr != nil {
 		return apiErr
 	}
-	if apiErr := s.paths.authorizeMutation(request.Path); apiErr != nil {
+	backend, apiErr := s.paths.mutationBackendFor(mutationSinglePath, request.Path)
+	if apiErr != nil {
 		return apiErr
+	}
+	if backend != nil {
+		return backend.removeFile(ctx, principal, filesystem, request)
 	}
 	_, err := s.db.RemoveFilestoreFile(ctx, db.RemoveSessionResourceFileInput{
 		WorkspaceUUID:  principal.WorkspaceUUID,
@@ -724,38 +756,6 @@ func stringValue(value *string) string {
 		return ""
 	}
 	return *value
-}
-
-func mapDatabaseErrorOrNil(operation string, err error) *apiError {
-	if err == nil {
-		return nil
-	}
-	return mapDatabaseError(operation, err)
-}
-
-func mapDatabaseError(operation string, err error) *apiError {
-	switch {
-	case errors.Is(err, db.ErrFilestoreParentMissing):
-		return failedPreconditionWithCause("parent directory does not exist", err)
-	case errors.Is(err, db.ErrNotFound):
-		return notFound("resource does not exist")
-	case errors.Is(err, db.ErrFilestorePathExists), errors.Is(err, db.ErrDuplicate):
-		return &apiError{Status: http.StatusConflict, Code: "already_exists", Message: "destination already exists", Cause: err}
-	case errors.Is(err, db.ErrFilestoreNotFile):
-		return failedPreconditionWithCause("path is not a file", err)
-	case errors.Is(err, db.ErrFilestoreNotDirectory):
-		return failedPreconditionWithCause("path is not a directory", err)
-	case errors.Is(err, db.ErrFilestoreDirectoryNotEmpty):
-		return failedPreconditionWithCause("directory is not empty", err)
-	case errors.Is(err, db.ErrFilestoreInvalidMove), errors.Is(err, db.ErrPreconditionFailed):
-		return &apiError{Status: http.StatusBadRequest, Code: "invalid_argument", Message: "request violates a filestore precondition", Cause: err}
-	case errors.Is(err, db.ErrStorageLimitExceeded):
-		return &apiError{Status: http.StatusForbidden, Code: "resource_exhausted", Message: "Workspace storage limit exceeded", Cause: err}
-	case errors.Is(err, db.ErrVersionConflict):
-		return &apiError{Status: http.StatusConflict, Code: "conflict", Message: "resource changed concurrently", Cause: err}
-	default:
-		return internalError(operation, err)
-	}
 }
 
 func mapBlobstoreError(operation string, err error) *apiError {

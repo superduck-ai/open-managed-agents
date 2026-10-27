@@ -2,10 +2,12 @@ package logging
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConsoleHandlerFormatsHTTPLine(t *testing.T) {
@@ -25,7 +27,10 @@ func TestConsoleHandlerFormatsHTTPLine(t *testing.T) {
 		"clientKind", "api",
 	)
 
-	line := stripANSI(strings.TrimSpace(buf.String()))
+	line := strings.TrimSpace(buf.String())
+	if strings.Contains(line, "\x1b[") {
+		t.Fatalf("non-terminal http log contains ANSI escape codes: %q", line)
+	}
 	if !strings.Contains(line, " [api] GET 200 12.3ms /v1/files ") {
 		t.Fatalf("unexpected http log line: %q", line)
 	}
@@ -33,6 +38,25 @@ func TestConsoleHandlerFormatsHTTPLine(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Fatalf("http log line missing %q: %q", want, line)
 		}
+	}
+}
+
+func TestConsoleHandlerFormatsGenericLineWithoutANSI(t *testing.T) {
+	var buf bytes.Buffer
+	handler := NewConsoleHandler(&buf, slog.LevelInfo)
+	record := slog.NewRecord(
+		time.Date(2026, time.August, 28, 10, 55, 41, 447000000, time.UTC),
+		slog.LevelError,
+		"request failed",
+		0,
+	)
+
+	if err := handler.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	if got, want := strings.TrimSpace(buf.String()), "10:55:41.447 ERROR request failed"; got != want {
+		t.Fatalf("log line = %q, want %q", got, want)
 	}
 }
 
@@ -49,16 +73,4 @@ func TestLoggerOrDefault(t *testing.T) {
 			t.Fatal("LoggerOrDefault(nil) did not return slog.Default()")
 		}
 	})
-}
-
-func stripANSI(s string) string {
-	replacer := strings.NewReplacer(
-		ansiReset, "",
-		ansiRed, "",
-		ansiGreen, "",
-		ansiYellow, "",
-		ansiCyan, "",
-		ansiGray, "",
-	)
-	return replacer.Replace(s)
 }

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EventPayloadBlobMapper">
+ <sql id="columns">uuid, external_id, organization_uuid, workspace_uuid, bucket, object_key, size_bytes, sha256</sql>
+ <insert id="Insert" result="exec">
+ INSERT INTO event_payload_blobs (uuid, external_id, organization_uuid, workspace_uuid, bucket, object_key, size_bytes, sha256)
+ VALUES (#{blob.UUID}, #{blob.ExternalID}, #{blob.OrganizationUUID}, #{blob.WorkspaceUUID}, #{blob.Bucket}, #{blob.Key}, #{blob.Size}, #{blob.SHA256,sensitive=true})
+ </insert>
+ <select id="Find" resultType="eventPayloadBlobRow">
+ SELECT <include refid="columns"/> FROM event_payload_blobs
+ WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{blobUUID} AND state = 'attached'
+ </select>
+ <update id="Attach" result="rows">
+ UPDATE event_payload_blobs SET state = 'attached', updated_at = now()
+ WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{blobUUID}
+ AND state = 'pending' AND created_at &gt; now() - interval '24 hours'
+ </update>
+ <update id="ClaimCleanup" result="returning" resultType="eventPayloadBlobRow">
+ WITH candidates AS (
+ SELECT b.uuid FROM event_payload_blobs b
+ WHERE b.state IN ('pending', 'attached') AND b.updated_at &lt; now() - interval '24 hours'
+ AND NOT EXISTS (SELECT 1 FROM session_events e WHERE e.workspace_uuid = b.workspace_uuid AND e.payload_blob_uuid = b.uuid AND e.deleted_at IS NULL)
+ AND NOT EXISTS (SELECT 1 FROM code_session_internal_events e WHERE e.workspace_uuid = b.workspace_uuid AND e.payload_blob_uuid = b.uuid AND e.deleted_at IS NULL)
+ ORDER BY b.updated_at, b.uuid LIMIT #{limit} FOR UPDATE OF b SKIP LOCKED
+ )
+ UPDATE event_payload_blobs SET state = 'deleting', updated_at = now()
+ WHERE uuid IN (SELECT uuid FROM candidates)
+ RETURNING <include refid="columns"/>
+ </update>
+</mapper>

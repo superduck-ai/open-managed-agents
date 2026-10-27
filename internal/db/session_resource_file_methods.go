@@ -9,8 +9,6 @@ func (entry *SessionResourceFile) ReferencesSourceFile() bool {
 		entry.FileOwnership == SessionResourceFileOwnershipReferenced
 }
 
-// OwnsFile 表示该普通 File 节点承担 Filestore 计费和对象清理责任。
-// 未知或缺失 ownership 必须失败关闭，不能回退为“非 referenced 即 owned”。
 func (entry *SessionResourceFile) OwnsFile() bool {
 	return entry != nil &&
 		entry.Kind == SessionResourceFileKindFile &&

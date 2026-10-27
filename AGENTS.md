@@ -3,9 +3,17 @@
 ## 本地重启脚本
 
 - 在仓库根目录使用 `just restart-server` 重启本地后端服务，地址为 `127.0.0.1:38080`。
-- `just restart-server` 会调用 `./scripts/restart-server.sh`，杀掉所有监听 `PORT`（默认 `38080`）的进程，等待端口释放，必要时升级为 `kill -9`，然后以前台方式执行 `go run .`；监听地址由 `config/config.yaml` 的 `server.addr` 决定。
+- `just restart-server` 会调用 `./scripts/restart-server.sh`；未绑定环境时按 `PORT`（默认 `38080`）停止旧监听进程，并使用 `.run/config.yaml`。绑定环境使用下节的归属检查、动态端口和生成配置规则，最后以前台方式运行服务；绑定环境先构建二进制，再在机器级锁内完成端口分配和开始监听，未绑定环境继续执行 `go run .`。
 - 仅在 `server.addr` 已改为其他端口时，才使用 `PORT=... just restart-server` 指定需要释放的对应端口。
 - 如果修改了 `web/` 下的前端代码，在使用浏览器或 SuperDuck 验证前，也要从仓库根目录执行 `just restart-web` 重启前端开发服务器。该命令会调用 `./scripts/restart-web.sh`，只停止当前仓库路径启动的 Vite 监听进程；如果目标端口被其他路径的进程占用，则保留该进程并自动选择后续可用端口以前台方式启动前端。
+
+## 多 worktree 开发环境
+
+- 使用 `just dev-init` 统一准备依赖、hook、生成文件和当前 worktree 的开发环境，默认读取 `.run/dev-init.yaml`，也支持显式指定路径；默认入口自动补齐首次缺失的配置与本地密钥，已有配置和密钥不覆盖，已绑定环境缺少输入时报错。人工配置位于 `.run/config.yaml`、`.run/dev-init.yaml` 与 `.run/secrets/`；LLM provider 配置和凭证在本机 `~/.oma-dev/model-providers.yaml` 共享，凭证直接填写 `api_key`，文件权限为 `0600`，由各 worktree 的初始化文件显式引用，`config/` 只提供模板。环境身份是 worktree 派生的名字（`.run/env.json`），不是编号；`--update` 显式更新已登记资源的可修改配置；`just slot-info [-json]` 查看绑定、地址与初始化状态（`-json` 供自动化读取）；`just dev-teardown --yes` 显式回收本环境，仅删除绑定和 `.run/generated/`，保留人工配置、本地密钥与共享 LLM 配置；`--orphans` 回收已删除 worktree 留下的资源。设计见 `docs/design/development-worktree-environments.md`。
+- 使用 `just dev-recycle --yes` 依次停止三个本地服务、删除本环境 Compose 容器和 volume、清理 alias、登记与生成状态；可从同一 clone 的其他 checkout 使用 `--worktree /absolute/path` 指定目标。保留 worktree 目录、Git 登记、源码改动、人工配置、本地私钥和共享 LLM 配置，允许主 checkout、锁定或有未提交改动的 worktree。外部流程仅在命令成功后删除 worktree；服务停止或 Compose 清理失败时保留环境登记供重试。不要并发初始化、重启与回收。
+- 绑定后 `.run/env.json` 与 `.run/generated/` 生效：`just restart-server`、`just restart-web` 与 `just restart-brain` 只读取生成的 `.run/generated/config.yaml`；监听端口每次启动动态探测（写入 `state.json` 的 runtime），重启脚本先停旧实例再探测新端口；基础设施为每环境一个 compose 栈（`docker compose -p oma-<name> -f deploy/docker-compose/dev-env.yaml`，含 pg/redis/nats/minio/e2b-local；e2b-local 需 OrbStack 或 Linux host 网络，`set-runtime` 自动复用健康栈或重建）；三个入口拒绝使用未完成初始化的环境。
+- 对外访问统一走 portless（`--no-tls` 纯 HTTP，首次需 `sudo portless proxy start --no-tls`）：重启入口自动注册 `oma-<name>-api` / `oma-<name>-web` 静态 alias，浏览器和服务间使用 `http://oma-<name>-{api,web}.localhost`（Vite 代理目标直连后端 loopback 端口避免二次经过代理触发 loop guard；DSH `OMA_API_URL` 按名字解析）；未安装 portless 时绑定环境拒绝启动，未绑定 worktree 保持原端口语义。
+- 绑定后端口被其他 worktree 或进程占用时报错，不会停止对方服务；未绑定的 worktree 保持原有重启语义。
 
 ## GitHub PR 提交身份
 
@@ -37,6 +45,10 @@
 - 前端使用 ESLint modified cyclomatic complexity，新代码上限为 20。`web/eslint.complexity.config.js` 中列出的历史热点以当前测量上限作为 ratchet，修改这些文件时不得提高预算，并应优先通过拆分纯函数、数据映射或展示组件降低预算。
 - 不要通过 `nolint`、ESLint disable 注释、忽略新增生产文件或提高复杂度阈值来绕过失败。确需调整预算时，必须同时说明无法拆分的边界原因，并更新 `docs/design/development-complexity-guardrails.md`。
 - pre-commit 和 `.github/workflows/complexity.yml` 都调用仓库固定的复杂度配置；本地验收入口为 `just complexity`。
+
+## 代码注释
+
+- 禁止代码注释。
 
 ## 命名规范
 
@@ -147,8 +159,8 @@
 - 使用 Yourbatis 的资源按以下职责拆分文件，不要把对上层暴露的 DB API、业务编排、Mapper 声明、XML SQL 和生成代码混放在同一个文件中：
   - `xxxxs.go`：承载 `DB` 对上层暴露的公共方法、领域参数与结果类型，以及事务、错误映射、分页和其他业务编排；不要在这里声明 Yourbatis Mapper interface 或 `go:generate` 入口。
   - `xxx_mapper.go`：承载 Yourbatis Mapper interface、Mapper 专属的查询参数与数据库行类型，以及对应的 `//go:generate go tool sqlmapgen ...` 生成入口；不要在这里实现 `DB` 对上层暴露的业务方法。
-  - `xxx.xml`：只承载该 Mapper 的 SQL、动态 SQL、公共 SQL fragment 和结果映射；XML `namespace` 必须与 Mapper interface 名一致，statement `id` 必须与 Mapper 方法名一一对应。
-  - `xxx.sqlmap.gen.go`：由 `sqlmapgen` 生成，禁止手工编辑且不纳入版本控制；修改 Mapper interface 或 XML 后必须重新运行 `go generate ./...` 验证生成结果。
+  - `xxx_mapper.xml`：只承载该 Mapper 的 SQL、动态 SQL、公共 SQL fragment 和结果映射；XML `namespace` 必须与 Mapper interface 名一致，statement `id` 必须与 Mapper 方法名一一对应。
+  - `xxx_mapper.sqlmap.gen.go`：由 `sqlmapgen` 生成，禁止手工编辑且不纳入版本控制；修改 Mapper interface 或 XML 后必须重新运行 `go generate ./...` 验证生成结果。
 - 上述文件应放在同一个资源 package 和目录中，并使用一致的 `xxx` 资源前缀，使 Go Mapper、XML 与生成输出可以直接对应；一个生成入口只负责一个 Mapper interface 和一个 XML 文件。
 
 ## PostgreSQL Schema 规则
@@ -168,14 +180,28 @@
 
 ## 测试要求
 
+- Agent 不得自动运行 `verify-be`。只有用户明确要求时才可执行，包括 doctor、test、功能场景和性能基线；修改代码、修复问题、提交或更新 PR 本身不构成运行授权。本节的静态检查和普通单测要求仍然适用。
+- 用户要求真实集成验证时，按改动影响选择最小场景集合。同一批改动完成后统一运行，不在每次中间编辑后重复执行；整域或全量回归及性能基线比较按用户指定范围执行。
+- 获得运行要求后，使用项目的 [verify-be Skill](.agents/skills/verify-be/SKILL.md)，阅读相关功能地图，并先运行对应 domain 的 doctor。不因 Skill 列出了全部场景而每次全量运行。未运行时说明未覆盖范围。
+- Transcript 的归档、导出、还原、物理删除、pending 回收和对象完整性按功能地图选择相关场景；五个场景用于完整 Transcript 验收。这些场景覆盖真实 PostgreSQL/MinIO、维护 CLI 与进程内服务调用，不代表 River 定时调度、自动重试或生产性能验证。
+- 聊天会话的输入投递、Worker 协议、工具确认、模型代理、SSE、历史恢复、跨实例交付和 Runner 启动按受影响行为选择场景；场景范围和性能基线流程维护在 Skill 中。
+- Files 的上传、元数据、下载、删除、租户隔离、对象存储和清理按功能地图选择相关场景；九个本地功能场景用于完整 Files 验收。`files generated` 需要真实 Worker 镜像与 FUSE，运行前使用 `just verify-be files doctor generated`；其他 Files 场景不要求 Worker。云端适配器验证使用显式私有配置，缺少配置必须报告 blocked，不能以本地模拟结果代替。
+- Memory store、Filestore 读写、挂载权限、跨会话生命周期和对象清理按功能地图选择相关场景；完整验收运行 `integrity`、`isolation`、`cleanup`、`lifecycle`、`filestore`。真实挂载另运行 `just verify-be memory doctor mounts` 与 `just verify-be memory mounts`；前五个场景无需 Worker。清理重试由测试显式驱动，不代表后台重试时序验收。
+- 聊天验证使用现有 Go CLI，不另写临时编排脚本或重新引入 Python。生成、构建和质量检查与验证串行执行，验证期间不修改源码。此验证不替代本节要求的静态检查和单测。
+- 执行了 `verify-be` 时，交付列出实际运行的场景、结果、`report.json` / `report.md` 路径和未覆盖范围；性能比较同时给出基准提交和报告。skip、缺少依赖、未完成、清理失败或不兼容基线均不能报告为通过，不得更新基线或放宽阈值掩盖退化。
+
 - 测试组织顺序应先写失败场景，再写成功场景。
-- `*.gen.go` 不纳入版本控制；干净 checkout 在直接运行 Go 编译、测试或静态分析前先执行 `./scripts/generate-go.sh`（先清空 `internal/db/**/*.sqlmap.gen.go`，再 `go generate ./internal/db`，避免已删除 Mapper 的残留生成文件参与编译）。仓库标准 `just` 命令会自动完成生成。
+- `*.gen.go` 不纳入版本控制；干净 checkout 在直接运行 Go 编译、测试或静态分析前先执行 `./scripts/generate-go.sh`（先清空 `internal/db/**/*.sqlmap.gen.go`，再 `go generate ./internal/db`，避免已删除 Mapper 的残留生成文件参与编译）。测试、静态检查、CI 和 Docker 构建继续使用无参数的全量生成入口。`just server`、`just restart-server` 和直接调用重启脚本使用 `./scripts/generate-go.sh --cached`；只有输入与生成产物的路径和内容摘要均一致时才跳过生成。缓存位于当前 worktree 的 `tmp/go-generation/`，两个模式共用文件锁；生成失败或中断后不得保留有效缓存。生成检查在停止旧服务前执行。
 - 修改 `web/` 下的文件后，运行 `just web-format-check`，确保 Prettier 格式门禁通过。
 - 修改 Go 代码后，运行 `just lint`；该命令使用仓库根目录的 `.golangci.yml` 执行与 CI 相同的静态分析和格式检查。
-- 修改 schema 或 handler 后，运行 `just test`（等价于先生成 Go 源码，再运行 `go test ./... -count=1`）。
+- 默认运行 `just test`：先生成 Go 源码，再运行不带集成标签的 `go test ./... -count=1`，只执行普通单测。普通单测可以使用进程内 fake、miniredis、嵌入式 NATS 和临时本地 HTTP/TCP 端点，不得连接配置中的数据库、对象存储、Redis 或其他外部服务。
+- `tests/` 下的 API/数据库/生命周期测试，以及 `internal/` 中依赖真实 PostgreSQL、Redis、S3 或外部 SDK/CLI 的测试必须显式使用 `integration` build tag；同文件混有单测时先拆分，保留单测在默认构建中。测试辅助代码应放在实际使用它的构建范围内。
+- 集成回归使用独立命令 `just test-integration`，等价于生成源码后运行 `go test -tags=integration ./... -count=1`；它包含普通单测及显式启用的集成测试。定向运行示例为 `just test-integration ./tests -run '^TestFilesAPI$'`。使用隔离测试配置与依赖，不得因为本地依赖恰好可用就让默认单测执行集成测试。
+- 修改 schema 或 handler 后默认运行 `just test` 并补充或更新相关回归，不再自动执行整个集成包或全仓集成。需要定向集成验证时，用 `just test-integration` 显式选择最小范围；整域或全量回归按用户指定范围执行。未执行时明确说明集成覆盖未验证，不把单测通过称为全量通过。此命令不构成运行 `verify-be` 的授权。
+- Go lint 和死代码检查启用 `integration` 标签，只编译与分析集成测试源码，不执行测试；不得因测试分层降低静态检查覆盖。现有 `e2e`、`e2b_integration` 与 verify-be 场景仍通过各自显式入口触发。
 - 做真实 E2E 时，先将测试配置的 `server.addr` 设为 `127.0.0.1:18080` 并用 `CONFIG_FILE=/path/to/test-config.yaml go run .` 启动本地服务，再以 `TEST_API_BASE_URL=http://127.0.0.1:18080` 和 `sk-ant-local-default` 运行 SDK 测试。
 - 自定义 SDK E2E 覆盖：
-  - Go：`go test ./tests -run TestGoSDKFilesE2E -count=1 -v`
+  - Go：`just test-integration ./tests -run TestGoSDKFilesE2E -v`
   - Python：在官方 Python SDK virtualenv 中运行 `tests/e2e/python/files_e2e.py`。
 - 官方 SDK files resource 测试：
   - Go SDK：`go test -run 'TestBetaFile' -count=1 -v`

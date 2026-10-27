@@ -1,5 +1,5 @@
 # Minimal Open Managed Agents configuration for normal local development.
-# Copy this file to config/config.yaml and protect it because it may contain secrets.
+# Copy this file to .run/config.yaml and protect it because it may contain secrets.
 # See docs/configuration-reference.yaml for every supported optional field.
 
 env: dev
@@ -13,6 +13,25 @@ database:
 
 redis:
   url: redis://localhost:6379
+
+# Worker event、Webhook 和 MCP Tunnel 共用 JetStream 集群的 seed URL；多个 URL 用于启动期故障转移，
+# connect_timeout / drain_timeout 等可选字段见 docs/configuration-reference.yaml。
+nats:
+  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
+  # Webhook defaults: 256 MiB / 24h / 3 replicas. Single-node: webhook_stream.replicas: 1.
+
+# Stable origin used in locally generated MCP Tunnel URLs. Keep this aligned
+# with the browser-reachable server address when changing server.addr.
+tunnel:
+  public_base_url: http://127.0.0.1:38080
+
+# Optional SMTP email verification. When omitted, any non-empty verification
+# code is accepted. Configure all three fields together for real email delivery.
+# auth:
+#   smtp:
+#     addr: smtp.example.com:587
+#     username: sender@example.com
+#     password: replace-me
 
 storage:
   type: s3
@@ -28,12 +47,36 @@ e2b:
   api_key: ""
   api_url: ""
 
+# Optional deployment package sources: see docs/configuration-reference.yaml.
+# Omit environment_packages to retain image sources and deny private CONNECT targets.
+
+# Optional: extra hosts for SSH→HTTPS rewrite in environment-manager
+# (github.com is always built-in). See docs/configuration-reference.yaml.
+# environment_runner:
+#   brain_sandbox_prewarm: false
+#   git_ssh_to_https_hosts:
+#     - gitlab.xxxxx.cn
+
+code_session:
+  upstream_proxy_disable_ssrf_protection: true
+  upstream_proxy_mitm_enabled: true
+  upstream_proxy_ca_key_file: ./secrets/upstream-proxy-ca-key.pem
+
 vault:
   master_key:
-    # Required in every env. Example:
-    #   just generate-vault-kek config/secrets/vault-kek
-    # then set kek_file: secrets/vault-kek
-    # or paste the printed base64 into kek.
-    # Documentation placeholder only — replace before real use.
-    version: 1
-    kek: "rFF/9K42dW9xtX3zvE3rm6HzJshGCVntS62F2884M78="
+    local:
+      # Required in every env. Example:
+      #   just generate-vault-kek config/secrets/vault-kek
+      # then set kek_file: secrets/vault-kek
+      # or paste the printed base64 into kek.
+      # Documentation placeholder only — replace before real use.
+      version: 1
+      kek: "rFF/9K42dW9xtX3zvE3rm6HzJshGCVntS62F2884M78="
+  # Optional Platform OAuth Clients (exact mcp_server_url match). When
+  # vault-auth/start omits BYO client_id, a hit supplies platform client
+  # credentials before DCR. Do not commit real client_secret values.
+  # See docs/configuration-reference.yaml for the full platform_oauth_clients shape.
+  # platform_oauth_clients:
+  #   - mcp_server_url: "https://api.githubcopilot.com/mcp/"
+  #     client_id: "Iv23..."
+  #     client_secret: "..."

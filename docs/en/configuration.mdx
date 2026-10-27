@@ -27,6 +27,9 @@ database:
 redis:
   url: redis://localhost:6379
 
+nats:
+  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
+
 storage:
   type: s3
   s3:
@@ -44,8 +47,8 @@ LLM Providers are workspace data, not process configuration. Add one or more Pro
 ## Main configuration groups
 
 <AccordionGroup>
-  <Accordion title="server, database, and redis">
-    Configure the listen address, PostgreSQL connection, and platform session storage. Production mode does not automatically migrate the database by default.
+  <Accordion title="server, database, redis, and nats">
+    Configure the listen address, PostgreSQL connection, platform session storage, and the required NATS JetStream connection. `nats.url` accepts comma-separated seed URLs; provide multiple cluster nodes so startup does not depend on one server. Production mode does not automatically migrate the database by default.
   </Accordion>
   <Accordion title="storage">
     Configure S3-compatible storage, the bucket, capacity limits, and path-style access. Files, skills, and batch results depend on this storage.
@@ -57,7 +60,7 @@ LLM Providers are workspace data, not process configuration. Add one or more Pro
     Configure the sandbox callback URL, OTLP file logs, JWT signing key, and optional upstream proxy CA.
   </Accordion>
   <Accordion title="vault and webhook">
-    Configure the vault master KEK, webhook endpoint, signing key, retries, and worker behavior.
+    Configure the vault master KEK and Webhook retries/worker behavior. Endpoint URLs and signing keys belong to workspace subscriptions; JetStream retention and capacity are configured under nats.webhook_stream.
   </Accordion>
 </AccordionGroup>
 
@@ -69,10 +72,32 @@ For production, mount stable private keys through read-only secrets. Never bake 
 just generate-code-session-jwt-key \
   config/secrets/code-session-jwt-ed25519.pem
 
+# Export only the public key to add to GitHub SSH Signing Keys
+just print-code-session-signing-public-key \
+  config/secrets/code-session-jwt-ed25519.pem
+
 just generate-vault-kek \
   config/secrets/vault-kek
 ```
 
+The Code Session JWT key also signs CCRv2 Git commits. For GitHub to display `Verified`, keep this private key stable, add the command output as a GitHub SSH Signing Key, and ensure the environment's existing Git commit email is verified by the same account. After rotating the private key, update the GitHub Signing Key as well.
+
 <Note>
   `docs/configuration-reference.yaml` contains every accepted field with safe example values. `config/config.example.yaml` is the smaller template for daily development.
 </Note>
+
+## Model supplier defaults
+
+Set `llm_provider_presets_file: ./model-provider-presets.json` in the server YAML. Relative paths resolve against that YAML file. Copy `internal/config/model-provider-presets.json` from the repository as a starting point, then add suppliers as needed.
+
+The JSON schema is `{"version":1,"providers":[{"id":"gateway","name":"Gateway","api_backend":"chat_completions","base_url":"https://gateway.example.com","models":[]}]}`. Supported backends are `messages` and `chat_completions`. Models may be empty and support `id`, optional `name`, `context_window`, `max_output_tokens`, and `input_modalities`. Array order is the default display order. Credentials and unknown fields are rejected.
+
+The Console only reads this deployment configuration. Discovered or edited models are saved to the current organization default connection or workspace connection; saving a connection never writes to the supplier JSON. Saved connections retain independent database snapshots. The catalog requires no write permission. A missing or invalid explicit file fails startup; omitting the path uses the built-in catalog. Do not put organization-private data in this shared deployment catalog.
+
+### Initialize known suppliers
+
+Run `./scripts/init-model-provider-presets.sh --dry-run` to preview, then `./scripts/init-model-provider-presets.sh config/model-provider-presets.json` to initialize a catalog. Existing files and symlinks are preserved, including locally configured model lists. The initializer uses the same JSON as the embedded catalog and contains no credentials.
+
+Supplier `order` is a nonnegative safe integer, ascending, defaulting to zero. Equal priorities retain file order. Built-ins use 10, 20, 30 and so on; set an internal gateway to zero to place it first. This orders supplier choices, not individual model rows. Model display names are optional and fall back to IDs.
+
+Presets include DeepSeek API, Kimi Coding, GLM Coding Plan, MiniMax China/international, OpenAI and Anthropic. Model metadata follows the installed DeepSeek Harness/pi-ai catalog snapshot. Kimi, GLM and MiniMax use Anthropic-compatible endpoints; GLM uses `https://open.bigmodel.cn/api/anthropic` because OMA appends `/v1` and cannot directly use Harness's `/api/coding/paas/v4` OpenAI endpoint. Supply the appropriate plan credentials through the Console. The script does not implement subscription login, quota accounting or provider-specific runtime adapters.

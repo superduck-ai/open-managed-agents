@@ -3,6 +3,7 @@ package vaults
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -13,6 +14,147 @@ import (
 // runtime callers may map it differently when the upstream credential is
 // unavailable.
 var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; resubmit the secret")
+
+// ErrMCPOAuthReauthorizationRequired indicates that the stored OAuth grant can no
+// longer be used. It remains active to keep matching requests fail-closed.
+var ErrMCPOAuthReauthorizationRequired = errors.New("MCP OAuth credentials require reauthorization")
+
+// InjectionPublicMessage exposes the recovery action without leaking private causes.
+func InjectionPublicMessage(err error) string {
+	if errors.Is(err, ErrMCPOAuthReauthorizationRequired) {
+		return ErrMCPOAuthReauthorizationRequired.Error()
+	}
+	return InjectionUnavailablePublicMessage
+}
+
+// ErrInjectionRejected is the MITM MCP inject fail-closed sentinel: the request
+// host is covered by a vault credential but no injectable credential could be used.
+// Transport adapters match with errors.Is and must not invent a second wording
+// for the client-facing message — use InjectionPublicMessage.
+var ErrInjectionRejected = errors.New("vault credential injection rejected")
+
+// ErrUpstreamAuthenticationRejected marks a candidate set whose every credential
+// was actually rejected by upstream HTTP 401. Local resolution failures do not
+// carry this marker; MCP adapters may distinguish authentication from outage.
+var ErrUpstreamAuthenticationRejected = errors.New("upstream rejected all matching credentials")
+
+// InjectionUnavailablePublicMessage is the client-safe text for MITM 502
+// when MCP credential injection rejects.
+const InjectionUnavailablePublicMessage = "MCP upstream credentials are unavailable"
+
+// ErrMITMRequiredForEnvCredentials is returned at Session mount when active
+// Environment Variable Credentials are attached but upstream proxy MITM is off.
+var ErrMITMRequiredForEnvCredentials = errors.New("upstream proxy MITM is required for environment variable credentials")
+
+// ErrSubstitutionRejected is the upstream-proxy fail-closed sentinel when
+// Egress Secret Substitution or Git Smart HTTP Authorization cannot proceed.
+var ErrSubstitutionRejected = errors.New("vault environment variable substitution rejected")
+
+// ErrGitResourceAuthorizationRejected marks a failed repository-scoped lookup
+// or secret decryption; callers must not forward an unauthenticated fallback.
+var ErrGitResourceAuthorizationRejected = errors.New("git repository authorization rejected")
+
+var errAmbiguousGitResource = errors.New("multiple credentials for the same Git repository")
+
+func gitResourceAuthorizationRejected(cause error) error {
+	return fmt.Errorf("%w: %w", ErrGitResourceAuthorizationRejected, cause)
+}
+
+// SubstitutionUnavailablePublicMessage is the client-safe text for MITM 502
+// when Egress Secret Substitution or Git Smart HTTP Authorization rejects a request.
+const SubstitutionUnavailablePublicMessage = "Environment variable credentials are unavailable"
+
+// SubstitutionBodyTooLargePublicMessage is the client-safe text for MITM 502
+// when body injection is enabled but the request body exceeds the snapshot buffer.
+const SubstitutionBodyTooLargePublicMessage = "Request body exceeds 32 MiB; environment variable body substitution cannot be applied"
+
+// SubstitutionPublicMessage returns the MITM 502 text for a substitution rejection.
+func SubstitutionPublicMessage(err error) string {
+	if errors.Is(err, errSnapshotRequestBodyTooLarge) {
+		return SubstitutionBodyTooLargePublicMessage
+	}
+	return SubstitutionUnavailablePublicMessage
+}
+
+var (
+	errOAuthRefreshLeaseRedisRequired = errors.New("redis client is required for oauth refresh lease")
+	errOAuthRefreshLeaseLost          = errors.New("mcp oauth refresh lease lost")
+	errMCPOAuthRefreshUnavailable     = errors.New("mcp_oauth refresh unavailable")
+	errCredentialStoreUnavailable     = errors.New("credential store is unavailable")
+)
+
+func injectionRejected(cause error) error {
+	if cause == nil {
+		return ErrInjectionRejected
+	}
+	return fmt.Errorf("%w: %w", ErrInjectionRejected, cause)
+}
+
+func substitutionRejected(cause error) error {
+	if cause == nil {
+		return ErrSubstitutionRejected
+	}
+	return fmt.Errorf("%w: %w", ErrSubstitutionRejected, cause)
+}
+
+func missingCredential() error {
+	return errors.New("missing credential")
+}
+
+func incompleteMCPOAuthSecret() error {
+	return errors.New("mcp_oauth secret payload is incomplete")
+}
+
+func emptyMCPOAuthAuth() error {
+	return errors.New("empty mcp_oauth auth")
+}
+
+func credentialAuthNotMCPOAuth() error {
+	return errors.New("credential auth is not mcp_oauth")
+}
+
+func mcpOAuthServerURLRequired() error {
+	return errors.New("mcp_oauth auth mcp_server_url is required")
+}
+
+func mcpServerURLUserinfoNotAllowed() error {
+	return errors.New("auth.mcp_server_url must not contain userinfo")
+}
+
+func credentialTypeNotInjectable(authType string) error {
+	return fmt.Errorf("credential type %q is not injectable", authType)
+}
+
+func tokenEndpointAuthMissingSecret(method string) error {
+	return fmt.Errorf("%s selected without client secret", method)
+}
+
+func unsupportedTokenAuthMethod(method string) error {
+	return fmt.Errorf("unsupported token auth method %q", method)
+}
+
+type oauthTokenEndpointError struct{ status int }
+
+func (e oauthTokenEndpointError) Error() string {
+	return fmt.Sprintf("token endpoint status %d", e.status)
+}
+
+func tokenEndpointStatus(status int) error { return oauthTokenEndpointError{status: status} }
+
+var errMCPOAuthRefreshTokenMissing = fmt.Errorf("%w: refresh token is missing", errMCPOAuthRefreshUnavailable)
+
+func permanentOAuthRefreshFailure(err error) bool {
+	if errors.Is(err, errMCPOAuthRefreshTokenMissing) {
+		return true
+	}
+	var endpointError oauthTokenEndpointError
+	return errors.As(err, &endpointError) && endpointError.status >= 400 && endpointError.status < 500 &&
+		endpointError.status != http.StatusRequestTimeout && endpointError.status != http.StatusTooManyRequests
+}
+
+func tokenEndpointMissingAccessToken() error {
+	return errors.New("token endpoint returned no access_token")
+}
 
 func invalidRequest(err error) error {
 	return apperr.New(apperr.InvalidArgument, err.Error(), err)
@@ -85,4 +227,12 @@ func credentialSecretError(err error, internalMessage string) error {
 		return apperr.New(apperr.InvalidArgument, ErrMissingSecretEnvelope.Error(), err)
 	}
 	return internalError(internalMessage, err)
+}
+
+func immutableCredentialServerURL() error {
+	return errors.New("auth.mcp_server_url is immutable")
+}
+
+func invalidVaultCreateMetadata() error {
+	return errors.New("metadata must be an object with string values")
 }

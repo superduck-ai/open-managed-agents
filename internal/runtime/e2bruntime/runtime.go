@@ -55,13 +55,15 @@ type Provider interface {
 }
 
 type E2BProvider struct {
-	cfg config.E2BConfig
+	cfg          config.E2BConfig
+	packageHosts []string
+	serviceHosts serviceHostCache
 }
 
 const defaultSandboxTimeout = 30 * time.Second
 
-func NewProvider(cfg config.E2BConfig) *E2BProvider {
-	return &E2BProvider{cfg: cfg}
+func NewProvider(cfg config.E2BConfig, packageHosts ...string) *E2BProvider {
+	return &E2BProvider{cfg: cfg, packageHosts: append([]string(nil), packageHosts...)}
 }
 
 func ConnectionOptsFromConfig(cfg config.E2BConfig) e2b.ConnectionOpts {
@@ -98,7 +100,7 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 		resolved.Envs["ANTHROPIC_WORK_ID"] = work.ExternalID
 	}
 
-	network, allowInternet, err := resolveNetwork(env.Config, work)
+	network, allowInternet, err := resolveNetwork(env.Config, work, p.packageHosts)
 	if err != nil {
 		return Resolution{}, err
 	}
@@ -108,7 +110,7 @@ func (p *E2BProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (Res
 }
 
 func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork, resolved Resolution) (Sandbox, error) {
-	if strings.TrimSpace(p.cfg.APIKey) == "" && !p.cfg.Debug {
+	if p.cfg.APIKey == "" && !p.cfg.Debug {
 		return Sandbox{}, errors.New("e2b.api_key is required to create a sandbox")
 	}
 	if strings.TrimSpace(resolved.Template) == "" {
@@ -141,15 +143,24 @@ func (p *E2BProvider) Create(ctx context.Context, env db.Environment, work *db.E
 	return Sandbox{ID: sandbox.SandboxID}, nil
 }
 
+// Kill deletes by ID without Connect: paused sandboxes must not resume merely
+// to be reclaimed.
 func (p *E2BProvider) Kill(ctx context.Context, sandboxID string) error {
-	if strings.TrimSpace(sandboxID) == "" {
+	if sandboxID == "" {
 		return nil
 	}
-	sandbox, err := p.connect(ctx, sandboxID)
-	if err != nil {
-		return err
+	requestTimeoutMs := int(p.cfg.RequestTimeout / time.Millisecond)
+	debug := p.cfg.Debug
+	opts := &e2b.SandboxApiOpts{
+		ApiKey: p.cfg.APIKey, Domain: p.cfg.Domain, ApiUrl: p.cfg.APIURL, Debug: &debug, RequestTimeoutMs: &requestTimeoutMs,
 	}
-	return sandbox.Kill(ctx, nil)
+	if p.cfg.AccessToken != "" {
+		opts.Headers = map[string]string{"Authorization": "Bearer " + p.cfg.AccessToken}
+	}
+	// The SDK maps a provider 404 to (false, nil); an already absent sandbox
+	// satisfies the same deletion postcondition as a successful DELETE.
+	_, err := e2b.Kill(ctx, sandboxID, opts)
+	return err
 }
 
 // SetTimeout renews the provider-side sandbox lifetime from the time of this
@@ -464,7 +475,7 @@ func (p *E2BProvider) sandboxTimeout() time.Duration {
 	return defaultSandboxTimeout
 }
 
-func resolveNetwork(raw json.RawMessage, work *db.EnvironmentWork) (*e2b.SandboxNetworkOpts, bool, error) {
+func resolveNetwork(raw json.RawMessage, work *db.EnvironmentWork, packageHosts []string) (*e2b.SandboxNetworkOpts, bool, error) {
 	if len(raw) == 0 {
 		return nil, true, nil
 	}
@@ -482,6 +493,7 @@ func resolveNetwork(raw json.RawMessage, work *db.EnvironmentWork) (*e2b.Sandbox
 	hosts := config.AllowedHostPatterns()
 	if config.AllowPackageManagers {
 		hosts = append(hosts, networkpolicy.PackageManagerHosts()...)
+		hosts = append(hosts, packageHosts...)
 	}
 	if config.AllowMCPServers {
 		mcpAllowedHosts, err := mcpAllowedHostsFromWork(work)

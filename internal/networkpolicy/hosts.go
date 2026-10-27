@@ -46,6 +46,24 @@ func ValidateAllowedHost(entry string) error {
 	return err
 }
 
+// AllowsHost reports whether host:port matches any allowed_hosts entry using
+// Environment networking hostname/wildcard semantics. An empty list never matches.
+// Invalid entries fail closed.
+func AllowsHost(allowedHosts []string, host string, port string) (bool, error) {
+	entries, err := parseConfigAllowedHosts(allowedHosts)
+	if err != nil {
+		return false, err
+	}
+	normalized, err := NormalizeHost(host)
+	if err != nil {
+		return false, nil
+	}
+	if !validAllowedPort(port) {
+		return false, nil
+	}
+	return newHostMatcher(entries).match(normalized, port), nil
+}
+
 func parseAllowedHost(entry string) (allowedHost, error) {
 	if strings.Contains(entry, "://") || strings.Contains(entry, "/") {
 		return allowedHost{}, errAllowedHost
@@ -116,7 +134,7 @@ func validAllowedPort(port string) bool {
 	return err == nil && value >= 1 && value <= 65535
 }
 
-// NormalizeHost 对 allowlist、metadata、MCP URL 与 CONNECT target 使用同一套
+// NormalizeHost 对网络 allowlist、metadata 与 CONNECT target 使用同一套
 // canonicalization 规则。
 func NormalizeHost(raw string) (string, error) {
 	host := strings.ToLower(strings.TrimSpace(raw))
@@ -235,4 +253,19 @@ func (n *hostMatcherNode) matchesExact(port string) bool {
 
 func (n *hostMatcherNode) matchesWildcard(port string) bool {
 	return n.rules[""].wildcard || n.rules[port].wildcard
+}
+
+func MCPHostKey(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	normalized, err := NormalizeHost(raw)
+	if err != nil {
+		return "", err
+	}
+	if _, err := netip.ParseAddr(raw); err == nil {
+		return strings.ToLower(raw), nil
+	}
+	if strings.HasSuffix(raw, ".") {
+		normalized += "."
+	}
+	return normalized, nil
 }

@@ -1,6 +1,8 @@
 import { useI18n } from '../../../shared/i18n';
-import { Bot, BriefcaseBusiness, Cloud, Database, LockKeyhole, MessageCircle } from 'lucide-react';
-import { type ReactNode } from 'react';
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '../../../shared/ui/empty';
+import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
+import { Bot, Brain, BriefcaseBusiness, Cloud, Database, LockKeyhole, MessageCircle } from 'lucide-react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { AgentDetailPage, AgentsResourcePage } from '../agents/AgentsResourcePage';
 import { CompactChip, StatusPill } from '../components/common';
 import { SessionDetailPage } from '../sessions/SessionDetailPage';
@@ -84,7 +86,10 @@ export const agentRows: Array<Record<string, ReactNode>> = [
   },
 ];
 
-export const resourceConfigs: Record<Exclude<ManagedAgentSection, 'quickstart' | 'dreams'>, ResourceConfig> = {
+export const resourceConfigs: Record<
+  Exclude<ManagedAgentSection, 'quickstart' | 'dreams' | 'observability'>,
+  ResourceConfig
+> = {
   agents: {
     section: 'agents',
     title: 'Agents',
@@ -94,21 +99,21 @@ export const resourceConfigs: Record<Exclude<ManagedAgentSection, 'quickstart' |
     filters: ['Created  All time', 'Status  Active'],
     columns: ['ID', 'Name', 'Model', 'Status', 'Created', 'Last updated'],
     emptyTitle: 'No agents yet',
-    emptyAction: 'Get started with agents',
+    emptyBody: 'Create an agent to start building managed workflows.',
     emptyIcon: Bot,
     rows: agentRows,
   },
   sessions: {
     section: 'sessions',
     title: 'Sessions',
-    description: 'Trace and debug Claude Managed Agents sessions.',
+    description: 'Trace and debug Open Managed Agents sessions.',
     createLabel: 'Create session',
     searchPrefix: 'ID',
     searchPlaceholder: 'Search by session ID',
     filters: ['Created  All time', 'Agent  All', 'Deployment  All', 'Status  Active'],
-    columns: ['', 'ID', 'Name', 'Status', 'Agent', 'Created'],
+    columns: ['ID', 'Name', 'Status', 'Agent', 'Cost', 'Tokens in / out', 'Created'],
     emptyTitle: 'No sessions yet',
-    emptyBody: 'Sessions will appear here once created through the API.',
+    emptyBody: 'Create a session to trace and debug it here.',
     emptyIcon: MessageCircle,
   },
   deployments: {
@@ -120,7 +125,7 @@ export const resourceConfigs: Record<Exclude<ManagedAgentSection, 'quickstart' |
     filters: ['Agent  All', 'Status  All'],
     columns: ['ID', 'Name', 'Status', 'Agent', 'Trigger', 'Created'],
     emptyTitle: 'No deployments yet',
-    emptyBody: 'Deployments will appear after an agent is deployed.',
+    emptyBody: 'Create a deployment to bind an agent to credentials, an environment, and a schedule.',
     emptyIcon: BriefcaseBusiness,
     rows: deploymentRows,
   },
@@ -157,10 +162,23 @@ export const resourceConfigs: Record<Exclude<ManagedAgentSection, 'quickstart' |
     filters: ['Created  All time', 'Status  Active'],
     columns: ['', 'ID', 'Name', 'Status', 'Created'],
     emptyTitle: 'No memory stores yet',
-    emptyBody: 'Memory stores give agents persistent, cross-session memory.',
+    emptyBody: 'Create a memory store to give agents persistent, cross-session memory.',
     emptyIcon: Database,
   },
 };
+
+function useWindowPathname(enabled: boolean) {
+  const [pathname, setPathname] = useState(currentPathname);
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    const syncPathname = () => setPathname(currentPathname());
+    window.addEventListener('popstate', syncPathname);
+    return () => window.removeEventListener('popstate', syncPathname);
+  }, [enabled]);
+  return pathname;
+}
 
 export function ManagedResourcePage({
   config,
@@ -169,9 +187,11 @@ export function ManagedResourcePage({
   config: ResourceConfig;
   routeWorkspaceId?: string;
 }) {
+  const trackedPathname = useWindowPathname(config.section === 'sessions');
+  const pathname = config.section === 'sessions' ? trackedPathname : currentPathname();
   if (config.section !== 'agents') {
     const entityConfig = config as ResourceConfig & { section: ManagedEntitySection };
-    const detailId = managedEntityIdFromPath(entityConfig.section);
+    const detailId = managedEntityIdFromPath(entityConfig.section, pathname);
     if (detailId) {
       if (entityConfig.section === 'sessions') {
         return <SessionDetailPage config={entityConfig} sessionId={detailId} />;
@@ -181,7 +201,7 @@ export function ManagedResourcePage({
     return <ManagedEntitiesPage config={entityConfig} />;
   }
 
-  const agentId = managedAgentIdFromPath(currentPathname());
+  const agentId = managedAgentIdFromPath(pathname);
   if (agentId) {
     return <AgentDetailPage agentId={agentId} routeWorkspaceId={routeWorkspaceId} />;
   }
@@ -193,15 +213,15 @@ export function DreamingPage() {
   const { msg } = useI18n();
   return (
     <section className="min-h-[calc(100vh-48px)] text-foreground">
-      <h1 className="text-[32px] font-semibold leading-tight text-foreground">
-        {msg('managedAgents.dreams.title', 'Dreaming')}
-      </h1>
-      <p className="mt-3 text-[15px] text-foreground">
-        {msg('managedAgents.dreams.description', 'Review recent sessions to verify memory and surface new learnings.')}
-      </p>
-      <div className="mt-9 rounded-lg border border-border bg-popover px-6 py-6 text-[15px] text-foreground">
-        {msg('managedAgents.dreams.loading', 'Captured Dreaming assets are loading.')}
-      </div>
+      <ResourcePageHeader title={msg('managedAgents.dreams.title', 'Dreaming')} contentGap="content" />
+      <Empty className="min-h-[260px] py-12">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Brain className="size-5" aria-hidden />
+          </EmptyMedia>
+          <EmptyTitle>{msg('managedAgents.dreams.unavailable', 'Dreaming is not connected.')}</EmptyTitle>
+        </EmptyHeader>
+      </Empty>
     </section>
   );
 }

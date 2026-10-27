@@ -1,0 +1,246 @@
+package workerevents
+
+import (
+	"net"
+	"net/url"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/config"
+
+	server "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+)
+
+var testStreamConfig = config.WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3}
+
+func TestJetStreamBrokerRejectsInsufficientReplicas(t *testing.T) {
+	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
+	connection := connectNATS(t, srv.ClientURL())
+	if _, err := NewJetStream(t.Context(), connection, testStreamConfig); err == nil {
+		t.Fatal("NewJetStream() error = nil, want three-replica stream failure")
+	}
+}
+
+func TestJetStreamBrokerAppliesConfiguredLimits(t *testing.T) {
+	srv := runNATSServer(t, server.Options{Host: "127.0.0.1", Port: -1, JetStream: true, StoreDir: t.TempDir()})
+	connection := connectNATS(t, srv.ClientURL())
+	for _, capacity := range []int64{2 << 20, 4 << 20} {
+		broker, err := NewJetStream(t.Context(), connection, config.WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: capacity, MaxMsgSize: 1024, MaxAge: time.Hour, Replicas: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stream, err := broker.js.Stream(t.Context(), StreamName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := stream.Info(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Config.MaxBytes != capacity || info.Config.Replicas != 1 || info.Config.MaxMsgSize != 1024 || info.Config.MaxAge != time.Hour || info.Config.Duplicates != time.Hour {
+			t.Fatalf("stream config = %#v, want capacity %d and one replica", info.Config, capacity)
+		}
+		oversized := EventEnvelope("csess_config", "event_large", "", "user.message", "", []byte(`"`+strings.Repeat("x", 1024)+`"`), time.Now().Add(time.Hour))
+		if err := broker.Publish(t.Context(), "oversized", oversized); err == nil || !strings.Contains(err.Error(), "limit is 1024") {
+			t.Fatalf("Publish() error = %v, want configured message limit", err)
+		}
+		envelope := EventEnvelope("csess_config", "event_config", "", "user.message", "", []byte(`{}`), time.Now().Add(time.Hour))
+		if err := broker.Publish(t.Context(), strconv.FormatInt(capacity, 10), envelope); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestJetStreamBrokerDeliversOrderedInputsBeforeAckAndKeepsDurableConsumer(t *testing.T) {
+	servers := runNATSCluster(t)
+	publisherConnection := connectNATS(t, servers[0].ClientURL())
+	subscriberConnection := connectNATS(t, servers[1].ClientURL())
+	publisher, err := NewJetStream(t.Context(), publisherConnection, testStreamConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscriber, err := NewJetStream(t.Context(), subscriberConnection, testStreamConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionID := "csess_test"
+	subscription, err := subscriber.Subscribe(t.Context(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := EventEnvelope(sessionID, "csev_test", "payload-test", "user.message", "", []byte(`{"text":"hello"}`), time.Now().Add(time.Hour))
+	if err := publisher.Publish(t.Context(), "message-1", envelope); err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.Publish(t.Context(), "message-1", envelope); err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.Publish(t.Context(), "message-other", EventEnvelope("csess_other", "csev_other", "", "user.message", "", []byte(`{}`), time.Now().Add(time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	second := EventEnvelope(sessionID, "csev_second", "payload-second", "user.message", "", []byte(`{"text":"second"}`), time.Now().Add(time.Hour))
+	if err := publisher.Publish(t.Context(), "message-2", second); err != nil {
+		t.Fatal(err)
+	}
+
+	first := receiveWorkerDelivery(t, subscription)
+	if first.Envelope.EventID != envelope.EventID || string(first.Envelope.Payload) != string(envelope.Payload) || first.Envelope.SequenceNum != 1 {
+		t.Fatalf("delivery = %#v, want first stream sequence", first.Envelope)
+	}
+	delivered := receiveWorkerDelivery(t, subscription)
+	if delivered.Envelope.EventID != second.EventID || delivered.Envelope.SequenceNum != 3 {
+		t.Fatalf("second delivery before first ACK = %#v", delivered.Envelope)
+	}
+	if err := subscriber.InProgress(t.Context(), first.AckSubject); err != nil {
+		t.Fatal(err)
+	}
+	if err := subscriber.DoubleAck(t.Context(), first.AckSubject); err != nil {
+		t.Fatal(err)
+	}
+	if err := subscriber.DoubleAck(t.Context(), delivered.AckSubject); err != nil {
+		t.Fatal(err)
+	}
+	if err := subscription.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	js, err := jetstream.New(subscriberConnection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := js.Consumer(t.Context(), StreamName, consumerName(sessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumerInfo, err := consumer.Info(t.Context())
+	if err != nil || consumerInfo.Config.MaxAckPending != server.JsDefaultMaxAckPending {
+		t.Fatalf("consumer must use the server default pending window: %+v %v", consumerInfo, err)
+	}
+	stream, err := js.Stream(t.Context(), StreamName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := stream.Info(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Config.Replicas != 3 || info.Config.Retention != jetstream.WorkQueuePolicy ||
+		info.Config.Discard != jetstream.DiscardNew || info.Config.MaxAge != 0 ||
+		info.Config.MaxBytes != 1<<28 || info.Config.MaxMsgSize != 1<<20 ||
+		info.Config.Duplicates != 24*time.Hour || info.Config.Storage != jetstream.FileStorage {
+		t.Fatalf("stream config = %#v", info.Config)
+	}
+	if info.State.Consumers != 2 {
+		t.Fatalf("consumer count = %d, want durable consumer", info.State.Consumers)
+	}
+}
+
+func runNATSCluster(t *testing.T) []*server.Server {
+	t.Helper()
+	const count = 3
+	ports := make([]int, count)
+	for i := range ports {
+		ports[i] = freePort(t)
+	}
+	servers := make([]*server.Server, 0, count)
+	for i := 0; i < count; i++ {
+		routes := make([]*url.URL, 0, count-1)
+		for j, port := range ports {
+			if i == j {
+				continue
+			}
+			route, err := url.Parse("nats-route://127.0.0.1:" + fmtInt(port))
+			if err != nil {
+				t.Fatal(err)
+			}
+			routes = append(routes, route)
+		}
+		srv := runNATSServer(t, server.Options{
+			ServerName: "worker-events-" + fmtInt(i+1), Host: "127.0.0.1", Port: -1, JetStream: true,
+			StoreDir: filepath.Join(t.TempDir(), fmtInt(i)),
+			Cluster:  server.ClusterOpts{Name: "worker-events-test", Host: "127.0.0.1", Port: ports[i]},
+			Routes:   routes,
+		})
+		servers = append(servers, srv)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		ready := false
+		for _, srv := range servers {
+			ready = ready || (srv.JetStreamIsLeader() && len(srv.JetStreamClusterPeers()) == count)
+		}
+		if ready {
+			return servers
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	for _, srv := range servers {
+		t.Logf("server=%s routes=%d clustered=%t leader=%t peers=%v", srv.Name(), srv.NumRoutes(), srv.JetStreamIsClustered(), srv.JetStreamIsLeader(), srv.JetStreamClusterPeers())
+	}
+	t.Fatal("NATS cluster routes did not converge")
+	return nil
+}
+
+func runNATSServer(t *testing.T, options server.Options) *server.Server {
+	t.Helper()
+	if options.JetStreamMaxStore == 0 {
+		options.JetStreamMaxStore = 32 << 30
+	}
+	srv, err := server.NewServer(&options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Start()
+	t.Cleanup(srv.Shutdown)
+	if !srv.ReadyForConnections(5 * time.Second) {
+		t.Fatal("NATS server not ready")
+	}
+	return srv
+}
+
+func connectNATS(t *testing.T, serverURL string) *nats.Conn {
+	t.Helper()
+	connection, err := nats.Connect(serverURL, nats.ReconnectBufSize(-1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(connection.Close)
+	return connection
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
+func fmtInt(value int) string { return strconv.Itoa(value) }
+
+func receiveWorkerDelivery(t *testing.T, subscription Subscription) Delivery {
+	t.Helper()
+	select {
+	case delivery, open := <-subscription.Messages():
+		if !open {
+			t.Fatal("worker event subscription closed")
+		}
+		return delivery
+	case err := <-subscription.Errors():
+		t.Fatalf("worker event subscription: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for worker event")
+	}
+	return Delivery{}
+}

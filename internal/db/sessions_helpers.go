@@ -3,6 +3,7 @@ package db
 import (
 	"bytes"
 	"context"
+	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
@@ -61,7 +62,7 @@ func insertSessionTx(
 	for _, resourceInput := range input.Resources {
 		resource := sessionResourceWithFileMount(resourceInput.Resource, resourceInput.FileMount)
 		resource.SessionExternalID = session.ExternalID
-		created, createErr := createSessionResource(ctx, executor, resource)
+		created, createErr := insertSessionResourceWithLockedSessionTx(ctx, executor, resource)
 		if createErr != nil {
 			return Session{}, SessionThread{}, nil, EnvironmentWork{}, createErr
 		}
@@ -86,11 +87,17 @@ func insertSessionTx(
 	return session, thread, resources, workRow.work(), nil
 }
 
-func createSessionResource(
+// insertSessionResourceWithLockedSessionTx checks invariants and inserts a resource.
+// The executor must belong to the transaction that either holds the owning
+// Session row lock or has just inserted that Session.
+func insertSessionResourceWithLockedSessionTx(
 	ctx context.Context,
 	executor yourbatis.Executor,
 	resource SessionResource,
 ) (SessionResource, error) {
+	if err := enforceSessionMemoryResourceInvariantsTx(ctx, executor, resource); err != nil {
+		return SessionResource{}, err
+	}
 	mapper := NewSessionResourceMapper(executor)
 	row, err := mapper.Insert(ctx, sessionResourceWriteParameters(resource))
 	if err != nil {
@@ -105,76 +112,20 @@ func createSessionResource(
 	return created, nil
 }
 
-func insertSessionEventsTx(
-	ctx context.Context,
-	executor yourbatis.Executor,
-	session Session,
-	events []SessionEvent,
-	ignoreExisting bool,
-) ([]SessionEvent, error) {
-	threadMapper := NewSessionThreadMapper(executor)
-	eventMapper := NewSessionEventMapper(executor)
-	primaryRow, err := threadMapper.FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
-	if err != nil {
-		return nil, mapNoRows(err)
-	}
-	primary := primaryRow.thread()
-
-	created := make([]SessionEvent, 0, len(events))
-	for _, event := range events {
-		event.OrganizationUUID = session.OrganizationUUID
-		event.WorkspaceUUID = session.WorkspaceUUID
-		event.SessionUUID = session.UUID
-		event.SessionExternalID = session.ExternalID
-		if event.ThreadExternalID == nil {
-			event.ThreadUUID = &primary.UUID
-			threadExternalID := primary.ExternalID
-			event.ThreadExternalID = &threadExternalID
-		} else {
-			threadRow, findErr := threadMapper.FindByExternalID(
-				ctx,
-				session.WorkspaceUUID,
-				session.ExternalID,
-				*event.ThreadExternalID,
-			)
-			if findErr != nil {
-				return nil, mapNoRows(findErr)
-			}
-			thread := threadRow.thread()
-			event.ThreadUUID = &thread.UUID
-		}
-
-		params := sessionEventWriteParameters(event)
-		if ignoreExisting {
-			row, found, insertErr := eventMapper.InsertIfAbsent(ctx, params)
-			if insertErr != nil {
-				return nil, insertErr
-			}
-			if found {
-				created = append(created, row.event())
-			}
-			continue
-		}
-		row, insertErr := eventMapper.Insert(ctx, params)
-		if insertErr != nil {
-			return nil, insertErr
-		}
-		created = append(created, row.event())
-	}
-	return created, nil
-}
-
 func sessionWriteParameters(session Session) sessionWriteParams {
 	return sessionWriteParams{
-		UUID: session.UUID, ExternalID: session.ExternalID,
+		RuntimeUserUUID: nullableString(session.RuntimeUserUUID),
+		UUID:            session.UUID, ExternalID: session.ExternalID,
 		OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
-		CreatedByAPIKeyUUID: session.CreatedByAPIKeyUUID, EnvironmentUUID: session.EnvironmentUUID,
+		CreatedByAPIKeyUUID: nullableString(session.CreatedByAPIKeyUUID), EnvironmentUUID: session.EnvironmentUUID,
 		EnvironmentExternalID: session.EnvironmentExternalID, AgentUUID: session.AgentUUID,
 		AgentExternalID: session.AgentExternalID, AgentVersion: session.AgentVersion,
 		AgentSnapshot: agentJSONArg(session.AgentSnapshot), DeploymentUUID: session.DeploymentUUID,
 		DeploymentID: session.DeploymentID, Title: session.Title, Metadata: agentJSONArg(session.Metadata),
-		VaultIDs: agentJSONArg(session.VaultIDs), Status: session.Status, Usage: agentJSONArg(session.Usage),
-		Stats: agentJSONArg(session.Stats), OutcomeEvaluations: agentJSONArg(session.OutcomeEvaluations),
+		VaultIDs: append(sessionVaultIDs{}, session.VaultIDs...), Status: session.Status,
+		Budget: agentJSONArg(session.Budget),
+		Usage:  agentJSONArg(session.Usage),
+		Stats:  agentJSONArg(session.Stats), OutcomeEvaluations: agentJSONArg(session.OutcomeEvaluations),
 		CreatedAt: session.CreatedAt,
 	}
 }
@@ -185,6 +136,7 @@ func sessionThreadWriteParameters(thread SessionThread) sessionThreadWriteParams
 		WorkspaceUUID: thread.WorkspaceUUID, SessionUUID: thread.SessionUUID,
 		SessionExternalID: thread.SessionExternalID, ParentThreadUUID: thread.ParentThreadUUID,
 		ParentThreadExternalID: thread.ParentThreadExternalID, AgentSnapshot: agentJSONArg(thread.AgentSnapshot),
+		StatsInitialized: thread.StatsInitialized, UsageInitialized: thread.UsageInitialized,
 		Status: thread.Status, Usage: agentJSONArg(thread.Usage), Stats: agentJSONArg(thread.Stats),
 		CreatedAt: thread.CreatedAt,
 	}
@@ -230,12 +182,17 @@ func sessionResourceWithFileMount(resource SessionResource, mount *SessionFileMo
 }
 
 func sessionEventWriteParameters(event SessionEvent) sessionEventWriteParams {
+	var processedAt *time.Time
+	if !event.ProcessedAt.IsZero() {
+		processedAt = &event.ProcessedAt
+	}
 	return sessionEventWriteParams{
 		UUID: event.UUID, ExternalID: event.ExternalID, OrganizationUUID: event.OrganizationUUID,
 		WorkspaceUUID: event.WorkspaceUUID, SessionUUID: event.SessionUUID,
 		SessionExternalID: event.SessionExternalID, ThreadUUID: event.ThreadUUID,
 		ThreadExternalID: event.ThreadExternalID, EventType: event.EventType,
-		Payload: agentJSONArg(event.Payload), ProcessedAt: event.ProcessedAt, CreatedAt: event.CreatedAt,
+		PayloadBlobUUID: event.PayloadBlobUUID, ToolUseID: event.ToolUseID,
+		Payload: agentJSONArg(event.Payload), ProcessedAt: processedAt, CreatedAt: event.CreatedAt,
 	}
 }
 
@@ -295,12 +252,15 @@ func sessionEventsFromRows(rows []sessionEventRow) []SessionEvent {
 func (r sessionRow) session() Session {
 	return Session{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: r.CreatedByAPIKeyUUID,
+		WorkspaceUUID: r.WorkspaceUUID, CreatedByAPIKeyUUID: stringFromNullable(r.CreatedByAPIKeyUUID),
+		RuntimeUserUUID: stringFromNullable(r.RuntimeUserUUID),
 		EnvironmentUUID: r.EnvironmentUUID, EnvironmentExternalID: r.EnvironmentExternalID,
 		AgentUUID: r.AgentUUID, AgentExternalID: r.AgentExternalID, AgentVersion: r.AgentVersion,
 		AgentSnapshot: bytes.Clone(r.AgentSnapshot), DeploymentUUID: r.DeploymentUUID,
 		DeploymentID: r.DeploymentID, Title: r.Title, Metadata: bytes.Clone(r.Metadata),
-		VaultIDs: bytes.Clone(r.VaultIDs), Status: r.Status, Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
+		VaultIDs: append([]string{}, r.VaultIDs...), Status: r.Status,
+		Budget: bytes.Clone(r.Budget), BudgetReachedAt: r.BudgetReachedAt, BudgetRemovedAt: r.BudgetRemovedAt,
+		Usage: r.Activity.usage(r.Usage), Stats: r.Activity.stats(r.Stats),
 		OutcomeEvaluations: bytes.Clone(r.OutcomeEvaluations), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
@@ -311,7 +271,8 @@ func (r sessionThreadRow) thread() SessionThread {
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ParentThreadUUID: r.ParentThreadUUID, ParentThreadExternalID: r.ParentThreadExternalID,
-		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Status: r.Status, Usage: bytes.Clone(r.Usage), Stats: bytes.Clone(r.Stats),
+		StatsInitialized: r.StatsInitialized, UsageInitialized: r.UsageInitialized,
+		AgentSnapshot: bytes.Clone(r.AgentSnapshot), Status: r.Status, Usage: r.Activity.usage(r.Usage), Stats: r.Activity.stats(r.Stats),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ArchivedAt: r.ArchivedAt, DeletedAt: r.DeletedAt,
 	}
 }
@@ -353,11 +314,16 @@ func (r sessionResourceRow) resource() SessionResource {
 }
 
 func (r sessionEventRow) event() SessionEvent {
+	var processedAt time.Time
+	if r.ProcessedAt != nil {
+		processedAt = *r.ProcessedAt
+	}
 	return SessionEvent{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ThreadUUID: r.ThreadUUID, ThreadExternalID: r.ThreadExternalID, EventType: r.EventType,
-		Payload: bytes.Clone(r.Payload), ProcessedAt: r.ProcessedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
+		PayloadBlobUUID: r.PayloadBlobUUID, ToolUseID: r.ToolUseID,
+		Payload: bytes.Clone(r.Payload), ProcessedAt: processedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
 	}
 }
 
@@ -366,7 +332,11 @@ func (tx ManagedAgentActivationTx) LockSessionForEvents(
 	workspaceUUID string,
 	sessionExternalID string,
 ) (Session, error) {
-	row, found, err := tx.sessionMapper.LockSessionForEvents(ctx, workspaceUUID, sessionExternalID)
+	return lockSessionForEvents(ctx, tx.sessionMapper, workspaceUUID, sessionExternalID)
+}
+
+func lockSessionForEvents(ctx context.Context, mapper SessionMapper, workspaceUUID, sessionID string) (Session, error) {
+	row, found, err := mapper.LockSessionForEvents(ctx, workspaceUUID, sessionID)
 	if err != nil {
 		return Session{}, err
 	}

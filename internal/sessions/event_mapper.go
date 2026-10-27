@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -40,18 +41,9 @@ func (h *Handler) streamDeltaEventFromCodeSessionPayload(ctx context.Context, se
 	if eventID == "" {
 		eventID = stableCodeSessionEventID(codeSessionID, raw)
 	}
-	payload["id"] = eventID
-	if sessionPayloadString(payload, "uuid") == "" {
-		payload["uuid"] = eventID
-	}
 	createdAt := now
-	if rawCreatedAt := firstSessionPayloadString(payload, "created_at", "timestamp"); rawCreatedAt != "" {
-		if parsed, err := time.Parse(time.RFC3339Nano, rawCreatedAt); err == nil {
-			createdAt = parsed.UTC()
-		}
-	}
-	if sessionPayloadString(payload, "created_at") == "" {
-		payload["created_at"] = httpapi.FormatTime(createdAt)
+	for _, field := range []string{"id", "uuid", "created_at", "processed_at", "timestamp"} {
+		delete(payload, field)
 	}
 	threadID := streamDeltaOwnerThreadID(payload)
 	delete(payload, "owner_session_thread_id")
@@ -119,20 +111,25 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 		eventID = stableCodeSessionEventID(codeSessionID, raw)
 		payload["id"] = eventID
 	}
+	if err := h.populateThreadStatus(ctx, session, eventType, payload); err != nil {
+		return nil, err
+	}
 	processedAt := now
 	if rawProcessedAt, ok := payload["processed_at"].(string); ok && strings.TrimSpace(rawProcessedAt) != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(rawProcessedAt)); err == nil {
 			processedAt = parsed.UTC()
 		}
 	}
-	payload["processed_at"] = httpapi.FormatTime(processedAt)
+	processedAt = eventTime(processedAt)
+	payload["processed_at"] = formatEventTime(processedAt)
 	createdAt := processedAt
 	if rawCreatedAt, ok := payload["created_at"].(string); ok && strings.TrimSpace(rawCreatedAt) != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(rawCreatedAt)); err == nil {
 			createdAt = parsed.UTC()
 		}
 	}
-	payload["created_at"] = httpapi.FormatTime(createdAt)
+	createdAt = eventTime(createdAt)
+	delete(payload, "created_at")
 	if err := h.populateThreadCoordinationAgentNames(ctx, session, eventType, payload); err != nil {
 		return nil, err
 	}
@@ -147,6 +144,7 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			return nil, err
 		}
 		events = append(events, db.SessionEvent{
+			StatusThreadID:    sessionPayloadString(payload, "session_thread_id"),
 			UUID:              uuid.NewV4().String(),
 			ExternalID:        spec.EventID,
 			OrganizationUUID:  session.OrganizationUUID,
@@ -154,11 +152,24 @@ func (h *Handler) sessionEventsFromCodeSessionPayload(ctx context.Context, sessi
 			SessionUUID:       session.UUID,
 			SessionExternalID: session.ExternalID,
 			ThreadExternalID:  spec.OwnerThreadID,
-			EventType:         eventType,
+			EventType:         sessionPayloadString(spec.Payload, "type"),
 			Payload:           payloadRaw,
 			ProcessedAt:       processedAt,
 			CreatedAt:         createdAt,
 		})
+		if eventType == "span.model_request_end" {
+			var usage struct {
+				ModelUsage codesessions.ModelRequestUsage `json:"model_usage"`
+			}
+			if err := json.Unmarshal(payloadRaw, &usage); err != nil {
+				return nil, err
+			}
+			increment := &db.SessionUsageIncrement{InputTokens: usage.ModelUsage.InputTokens, OutputTokens: usage.ModelUsage.OutputTokens, CacheReadInputTokens: usage.ModelUsage.CacheReadInputTokens}
+			if cache := usage.ModelUsage.CacheCreation; cache != nil {
+				increment.CacheCreation5mInputTokens, increment.CacheCreation1hInputTokens = cache.Ephemeral5mInputTokens, cache.Ephemeral1hInputTokens
+			}
+			events[len(events)-1].UsageIncrement = increment
+		}
 	}
 	return events, nil
 }
@@ -229,7 +240,7 @@ func (h *Handler) inferOwnerSessionThreadID(ctx context.Context, session db.Sess
 	if len(candidates) == 0 {
 		return "", nil
 	}
-	events, _, err := h.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
+	events, _, err := h.eventPayloads.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
 		WorkspaceUUID:     session.WorkspaceUUID,
 		SessionExternalID: session.ExternalID,
 		PrimaryOnly:       true,
@@ -306,6 +317,9 @@ func (h *Handler) sessionEventCopySpecs(ctx context.Context, session db.Session,
 		}
 		return h.dualSessionEventCopySpecs(codeSessionID, eventType, eventID, payload, threadID, true), nil
 	}
+	if eventType == "agent.thread_message_sent" || eventType == "agent.thread_message_received" {
+		return h.threadMessageCopySpecs(ctx, session, codeSessionID, eventType, eventID, payload)
+	}
 	if maevents.IsPrimaryCoordinationEvent(eventType) {
 		return []sessionEventCopySpec{newSessionEventCopySpec(eventID, payload, nil, false)}, nil
 	}
@@ -329,6 +343,8 @@ func (h *Handler) dualSessionEventCopySpecs(codeSessionID, eventType, eventID st
 	primaryPayload := copySessionEventPayload(payload)
 	primaryPayload["session_thread_id"] = threadID
 	primaryEventID := derivedSessionEventID(codeSessionID, eventID, eventType, "primary")
+	threadPayload["primary_event_id"] = primaryEventID
+	primaryPayload["original_event_id"] = eventID
 	return []sessionEventCopySpec{
 		newSessionEventCopySpec(eventID, threadPayload, &threadID, false),
 		newSessionEventCopySpec(primaryEventID, primaryPayload, nil, true),
@@ -451,7 +467,7 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 	} else if err != nil && !errors.Is(err, db.ErrNotFound) {
 		return err
 	}
-	agentSnapshot, err := sessionThreadAgentSnapshot(payload)
+	agentSnapshot, err := sessionThreadAgentSnapshot(payload, session.AgentSnapshot)
 	if err != nil {
 		return err
 	}
@@ -477,8 +493,11 @@ func (h *Handler) ensureSessionThread(ctx context.Context, session db.Session, t
 	return err
 }
 
-func sessionThreadAgentSnapshot(payload map[string]any) (json.RawMessage, error) {
+func sessionThreadAgentSnapshot(payload map[string]any, parent json.RawMessage) (json.RawMessage, error) {
 	if agent, ok := payload["agent"].(map[string]any); ok && agent != nil {
+		if agent["type"] == "inline" {
+			return inlineSessionThreadAgentSnapshot(agent, parent)
+		}
 		return httpapi.MarshalRaw(agent)
 	}
 	agentName := sessionPayloadString(payload, "agent_name")
@@ -499,4 +518,19 @@ func sessionPayloadString(payload map[string]any, name string) string {
 func stableCodeSessionEventID(codeSessionID string, raw json.RawMessage) string {
 	sum := sha256.Sum256([]byte(codeSessionID + "\x00" + strings.TrimSpace(string(raw))))
 	return "sevt_" + hex.EncodeToString(sum[:16])
+}
+
+func (h *Handler) populateThreadStatus(ctx context.Context, session db.Session, eventType string, payload map[string]any) error {
+	if _, ok := maevents.ThreadStatus(eventType); ok {
+		threadID := sessionPayloadString(payload, "session_thread_id")
+		if threadID == "" {
+			primary, err := h.ensurePrimarySessionThread(ctx, session)
+			if err != nil {
+				return err
+			}
+			threadID = primary.ExternalID
+			payload["session_thread_id"] = threadID
+		}
+	}
+	return nil
 }

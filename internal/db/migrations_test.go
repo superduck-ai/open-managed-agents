@@ -6,6 +6,46 @@ import (
 	"testing"
 )
 
+func TestMigrationVersionsAreUnique(t *testing.T) {
+	entries, err := fs.ReadDir(embeddedMigrations, "migrations")
+	if err != nil {
+		t.Fatalf("read migrations: %v", err)
+	}
+
+	filesByVersion := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		separator := strings.IndexByte(name, '_')
+		if entry.IsDir() || separator < 1 || !strings.HasSuffix(name, ".sql") {
+			continue
+		}
+
+		version := name[:separator]
+		if existing, found := filesByVersion[version]; found {
+			t.Fatalf("migration version %s is used by both %s and %s", version, existing, name)
+		}
+		filesByVersion[version] = name
+	}
+}
+
+func TestRemoveMCPServerArchivingMigrationKeepsReversibleSchemaChange(t *testing.T) {
+	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00071_remove_mcp_server_archiving.sql")
+	if err != nil {
+		t.Fatalf("read MCP Server archiving removal migration: %v", err)
+	}
+
+	contents := strings.ToLower(string(migration))
+	for _, fragment := range []string{
+		"alter table mcp_servers",
+		"drop column if exists archived_at",
+		"add column if not exists archived_at timestamptz",
+	} {
+		if !strings.Contains(contents, fragment) {
+			t.Fatalf("MCP Server archiving removal migration does not contain %q", fragment)
+		}
+	}
+}
+
 func TestSnapshotSessionSkillsMigrationSkipsExistingFiles(t *testing.T) {
 	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00048_snapshot_session_skills.sql")
 	if err != nil {
@@ -42,8 +82,8 @@ func TestSessionResourceMigrationsPreserveMainHistory(t *testing.T) {
 		"00051_remove_code_session_outbound_events.sql",
 		"00052_use_session_uuid_for_environment_work.sql",
 		"00053_add_workspace_llm_providers.sql",
-		"00054_add_session_resource_file_ownership.sql",
-		"00055_remove_session_resource_payload.sql",
+		"00054_seal_mcp_oauth_flow_secrets.sql",
+		"00055_allow_keyless_resource_creators.sql",
 	}
 
 	entries, err := fs.ReadDir(embeddedMigrations, "migrations")

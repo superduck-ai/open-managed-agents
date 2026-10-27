@@ -1,0 +1,19 @@
+{
+  "bun": "1.4.2",
+  "dsh": "0.2.1-alpha.2",
+  "files": {
+    "bin/oma-brain-dsh": "e09e4fb45a2fcdfa2b664f1dadc1e4c9704e6ecd443e22a1973635d84881c1a2",
+    "bun.lock": "54207abfea1e0c362e82e0b1c2161b91393b3e8666638467c397adc31799864c",
+    "dist/main.js": "d327c5679066b73b0c5f0a2393fb7dcb4e06fce707844f57a0c5d549704fd13b",
+    "package.json": "148cc686f4b5df7902d5b322a516fe4a0ace16bae3522ae96a60c3197f908ea4",
+    "src/api.ts": "3abb4d6c6b6808c47088ce4bdfd9fd35b3a7d5d925d937e6538775e3ac38099f",
+    "src/main.ts": "2e526fc3cd9a065bdcff76a08fdd10a1bb5a15d6b1caa63a95391b6646a2ab1d",
+    "src/mcp.ts": "05c511f999fd6da18addb029b9cf0d51fcf6714ec08aecd884ea6f02f2a55cf4",
+    "src/model.ts": "3c5dfca313c45adf638dfe35d28b2b6bd8d2db812c7c9789b983f609e3f12573",
+    "src/persistence.ts": "1d40a22becb25ceacabc13fb36f339e16de9efd6c457a47024b06980fd655f58",
+    "src/plugin.ts": "61604d88ac68825de4684f7a4936af017a2c74c179d163c5e53733186ee222e7",
+    "src/protocol.ts": "6b73da460f70efc8559614843002edf50f74583d0848899424d4f35b3b0bb62e",
+    "src/session.ts": "f4be891d7e670b7f3c2342244a36addcbf478bfbb4f7a3d16ddd89a96365fcc7",
+    "src/transport.ts": "a3438b9dd33d868e2ae1ef0f783105f91400e4ee4e6cfac831916b1c35f19540"
+  }
+}

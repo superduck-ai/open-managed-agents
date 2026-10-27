@@ -9,14 +9,20 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 
 	"github.com/go-chi/chi/v5"
 )
 
+func (h *Handler) WithSandboxReclaimer(reclaimer sandboxReclaimer) *Handler {
+	h.sandboxReclaims = reclaimer
+	return h
+}
+
 // NewHandler 要求显式注入与 environment runner 和 code-session HTTP Handler 共用的 Service，
 // 并把自身注册为公开事件 sink；这样 worker 输出会进入同一 session stream，而不会落到另一份 Service 状态。
-func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesessions.Service, webhookEvents webhookEnqueuer, eventBus sessionfanout.EventBus, logger *slog.Logger) *Handler {
+func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesessions.Service, webhookEvents webhookEnqueuer, eventBus sessionfanout.EventBus, secretService *secrets.Service, logger *slog.Logger) *Handler {
 	if codeSessionService == nil {
 		panic("sessions: code-session service is required")
 	}
@@ -25,15 +31,17 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 		eventBus = sessionfanout.NewLocal()
 	}
 	h := &Handler{
-		cfg:          cfg,
-		db:           database,
-		codeSessions: codeSessionService,
-		webhooks:     webhookEvents,
-		logger:       logger,
-		errorAdapter: httpapi.NewErrorAdapter(logger),
-		streams:      newStreamHub(),
-		eventBus:     eventBus,
-		previews:     newWorkerPreviewConverter(),
+		secretService: secretService,
+		eventPayloads: codeSessionService.EventPayloadStore(),
+		cfg:           cfg,
+		db:            database,
+		codeSessions:  codeSessionService,
+		webhooks:      webhookEvents,
+		logger:        logger,
+		errorAdapter:  httpapi.NewErrorAdapter(logger),
+		streams:       newStreamHub(),
+		eventBus:      eventBus,
+		previews:      newWorkerPreviewConverter(),
 	}
 	eventBus.Register(h.receiveFanout, h.resetFanout)
 	codeSessionService.SetPublicEventSink(h)
@@ -61,6 +69,7 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 			r.Delete("/{resource_id}", wrap(h.deleteResourceRoute))
 		})
 		r.Route("/threads", func(r chi.Router) {
+			r.Use(h.requireThreadBeta)
 			r.Get("/", wrap(h.listThreadsRoute))
 			r.Get("/{thread_id}", wrap(h.retrieveThreadRoute))
 			r.Post("/{thread_id}/archive", wrap(h.archiveThreadRoute))
@@ -73,10 +82,6 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("beta") != "true" {
-		h.errorAdapter.Write(w, r, sessionsBetaRequired())
-		return
-	}
 	h.router.ServeHTTP(w, r)
 }
 

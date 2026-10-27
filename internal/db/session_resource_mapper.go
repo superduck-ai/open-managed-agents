@@ -11,9 +11,11 @@ type SessionResourceMapper interface {
 	Insert(ctx context.Context, params sessionResourceWriteParams) (sessionResourceRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (sessionResourceRow, error)
 	List(ctx context.Context, workspaceUUID, sessionExternalID string, maxOutputResources int) ([]sessionResourceRow, error)
+	ListMemoryMountsByFilesystem(ctx context.Context, workspaceUUID, filesystemUUID string) ([]sessionMemoryMountRow, error)
 	UpdateGitHubRepositorySecret(ctx context.Context, params sessionResourceUpdateParams) (sessionResourceRow, error)
 	SoftDeleteBySession(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error)
 	CountSessionFileResources(ctx context.Context, workspaceUUID, sessionExternalID, resourceType string) (int, error)
+	CountSessionMemoryStoresByStoreID(ctx context.Context, workspaceUUID, sessionExternalID, memoryStoreID string) (int, error)
 	FindMountConflict(ctx context.Context, params sessionResourcePathParams) (string, bool, error)
 	BindSessionFileResource(ctx context.Context, params sessionFileResourceBindingParams) (sessionResourceRow, error)
 	GetSessionResourceForMutation(ctx context.Context, workspaceUUID, sessionExternalID, resourceExternalID string) (sessionResourceRow, error)
@@ -62,6 +64,16 @@ type sessionResourceRow struct {
 	DeletedAt          *time.Time `db:"deleted_at"`
 }
 
+type sessionMemoryMountRow struct {
+	SessionExternalID     string     `db:"session_external_id"`
+	MemoryStoreExternalID string     `db:"memory_store_external_id"`
+	Access                string     `db:"access"`
+	MountPath             string     `db:"mount_path"`
+	MemoryStoreUUID       *string    `db:"memory_store_uuid"`
+	ArchivedAt            *time.Time `db:"archived_at"`
+	DeletedAt             *time.Time `db:"deleted_at"`
+}
+
 type sessionResourceWriteParams struct {
 	UUID               string
 	ExternalID         string
@@ -95,14 +107,16 @@ type sessionResourcePathParams struct {
 }
 
 type sessionFileResourceBindingParams struct {
-	EntryPath     string
-	ParentPath    string
-	MountPath     string
-	FileUUID      string
-	UpdatedAt     time.Time
-	ResourceUUID  string
-	WorkspaceUUID string
-	SessionUUID   string
+	SourceFileUUID string
+	FileExternalID string
+	EntryPath      string
+	ParentPath     string
+	MountPath      string
+	FileUUID       string
+	UpdatedAt      time.Time
+	ResourceUUID   string
+	WorkspaceUUID  string
+	SessionUUID    string
 }
 
 type sessionResourceDirectoryInsertParams struct {

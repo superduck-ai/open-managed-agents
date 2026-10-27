@@ -13,9 +13,14 @@ import {
   dataTableHeaderRowClassName,
 } from '@/shared/ui/data-table-interactions';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
-import { toast, Toaster } from '@/shared/ui/sonner';
+import { toast } from '@/shared/ui/sonner';
 import { useI18n } from '../../shared/i18n';
-import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
+import { ResourceListState } from '@/shared/ui/resource-list-state';
+import { consoleResourceListLimit } from '@/shared/console-list';
+import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
+import { resourceListPageCount } from '@/shared/ui/resource-list-pagination';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
+import { CursorPagination, TableErrorRow, TableLoadingRow } from './frame';
 import {
   downloadFile,
   errorMessage,
@@ -32,7 +37,8 @@ import {
 export function FilesPage() {
   const { msg } = useI18n();
   const queryClient = useQueryClient();
-  const { workspaceId, workspaceName } = useDashboardWorkspaceScope();
+  const { workspaceId, workspaceName: workspaceNameToken } = useDashboardWorkspaceScope();
+  const workspaceName = localizedWorkspaceName(workspaceNameToken, msg);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCursors, setPageCursors] = useState<FilesPageCursor[]>([{}]);
   const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
@@ -130,37 +136,27 @@ export function FilesPage() {
 
   return (
     <>
-      <Toaster
-        position="top-right"
-        duration={2200}
-        closeButton
-        toastOptions={{ closeButtonAriaLabel: msg('common.close', 'Close') }}
-      />
-      <ConsolePageFrame
-        title={msg('files.title', 'Files')}
-        icon={FileText}
-        description={msg(
-          'files.description',
-          "Only files from the {workspaceName} workspace are shown. To see another workspace's files, select a workspace.",
-          { workspaceName },
-        )}
-        actions={
-          <>
-            <input
-              ref={uploadInputRef}
-              className="sr-only"
-              type="file"
-              multiple
-              aria-label={msg('files.upload.inputAria', 'Choose files to upload')}
-              onChange={(event) => void handleUpload(event)}
-            />
-            <Button type="button" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
-              <Upload aria-hidden />
-              {uploading ? msg('files.upload.uploading', 'Uploading...') : msg('files.upload.action', 'Upload files')}
-            </Button>
-          </>
-        }
-      >
+      <section>
+        <ResourcePageHeader
+          contentGap="content"
+          title={msg('files.title', 'Files')}
+          actions={
+            <>
+              <input
+                ref={uploadInputRef}
+                className="sr-only"
+                type="file"
+                multiple
+                aria-label={msg('files.upload.inputAria', 'Choose files to upload')}
+                onChange={(event) => void handleUpload(event)}
+              />
+              <Button type="button" size="lg" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
+                <Upload aria-hidden />
+                {uploading ? msg('files.upload.uploading', 'Uploading...') : msg('files.upload.action', 'Upload files')}
+              </Button>
+            </>
+          }
+        />
         <FilesTable
           files={files}
           workspaceName={workspaceName}
@@ -169,13 +165,15 @@ export function FilesPage() {
           error={filesQuery.error}
           canPrevious={pageIndex > 0 && !filesQuery.isFetching}
           canNext={Boolean(response?.has_more && lastId) && !filesQuery.isFetching}
+          currentPage={pageIndex + 1}
+          totalPages={resourceListPageCount(response?.total_count, consoleResourceListLimit)}
           downloadingFileId={downloadingFileId}
           onRetry={() => void filesQuery.refetch()}
           onPrevious={goPrevious}
           onNext={goNext}
           onDownload={(file) => void handleDownload(file)}
         />
-      </ConsolePageFrame>
+      </section>
     </>
   );
 }
@@ -188,6 +186,8 @@ function FilesTable({
   error,
   canPrevious,
   canNext,
+  currentPage,
+  totalPages,
   downloadingFileId,
   onRetry,
   onPrevious,
@@ -201,17 +201,20 @@ function FilesTable({
   error: unknown;
   canPrevious: boolean;
   canNext: boolean;
+  currentPage: number;
+  totalPages: number | null;
   downloadingFileId: string | null;
   onRetry: () => void;
   onPrevious: () => void;
   onNext: () => void;
   onDownload: (file: ConsoleFile) => void;
 }) {
-  const { msg } = useI18n();
+  const { msg, locale } = useI18n();
+  const showRows = !isLoading && !error && files.length > 0;
 
   return (
     <section aria-label={msg('files.listAria', 'Files list')} className="overflow-x-auto">
-      <Table className={cn('min-w-[920px]', dataTableClassName)}>
+      <Table className={cn(dataTableClassName, showRows ? 'min-w-[920px]' : 'min-w-full [&_td]:whitespace-normal')}>
         <colgroup>
           <col className="w-[18%]" />
           <col className="w-[49%]" />
@@ -219,15 +222,17 @@ function FilesTable({
           <col className="w-[15%]" />
           <col className="w-[7%]" />
         </colgroup>
-        <TableHeader>
-          <TableRow className={dataTableHeaderRowClassName}>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.id', 'ID')}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.name', 'Name')}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.size', 'Size')}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.created', 'Created')}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName} aria-label={msg('common.actions', 'Actions')} />
-          </TableRow>
-        </TableHeader>
+        {showRows ? (
+          <TableHeader>
+            <TableRow className={dataTableHeaderRowClassName}>
+              <TableHead className={dataTableHeaderCellClassName}>{msg('common.id', 'ID')}</TableHead>
+              <TableHead className={dataTableHeaderCellClassName}>{msg('common.name', 'Name')}</TableHead>
+              <TableHead className={dataTableHeaderCellClassName}>{msg('common.size', 'Size')}</TableHead>
+              <TableHead className={dataTableHeaderCellClassName}>{msg('common.created', 'Created')}</TableHead>
+              <TableHead className={dataTableHeaderCellClassName} aria-label={msg('common.actions', 'Actions')} />
+            </TableRow>
+          </TableHeader>
+        ) : null}
         <TableBody>
           {isLoading ? (
             <TableLoadingRow colSpan={5} label={msg('files.loading', 'Loading files...')} />
@@ -239,13 +244,7 @@ function FilesTable({
               retryLabel={msg('common.retry', 'Retry')}
               onRetry={onRetry}
             />
-          ) : files.length === 0 ? (
-            <TableEmptyRow colSpan={5}>
-              {msg('files.empty', 'No files have been uploaded to the {workspaceName} workspace.', {
-                workspaceName,
-              })}
-            </TableEmptyRow>
-          ) : (
+          ) : files.length === 0 ? null : (
             files.map((file) => (
               <DataTableRow key={file.id}>
                 <DataTableCell edge="start">
@@ -255,9 +254,11 @@ function FilesTable({
                     ariaLabel={msg('files.copyAria', 'Copy {fileId}', { fileId: file.id })}
                   />
                 </DataTableCell>
-                <DataTableCell className="truncate">{file.filename}</DataTableCell>
+                <DataTableCell className="break-words whitespace-normal">{file.filename}</DataTableCell>
                 <DataTableCell className="text-muted-foreground">{formatBytes(file.size_bytes)}</DataTableCell>
-                <DataTableCell className="text-muted-foreground">{formatRelativeTime(file.created_at)}</DataTableCell>
+                <DataTableCell className="text-muted-foreground">
+                  {formatRelativeTime(file.created_at, locale, msg('common.justNow', 'just now'))}
+                </DataTableCell>
                 <DataTableCell edge="end" className="text-right">
                   <RowIconButton
                     label={msg('files.downloadAria', 'Download {filename}', { filename: file.filename })}
@@ -272,12 +273,22 @@ function FilesTable({
         </TableBody>
       </Table>
 
+      {!isLoading && !error && files.length === 0 ? (
+        <ResourceListState
+          icon={FileText}
+          title={msg('files.emptyTitle', 'No files yet')}
+          body={msg('files.empty', 'Upload files to the {workspaceName} workspace to see them here.', {
+            workspaceName,
+          })}
+        />
+      ) : null}
+
       <CursorPagination
-        previousLabel={msg('pagination.previousPage', 'Previous page')}
-        nextLabel={msg('pagination.nextPage', 'Next page')}
         updatingLabel={msg('common.updating', 'Updating...')}
         canPrevious={canPrevious}
         canNext={canNext}
+        currentPage={currentPage}
+        totalPages={totalPages}
         isUpdating={isFetching && !isLoading}
         onPrevious={onPrevious}
         onNext={onNext}

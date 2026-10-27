@@ -44,7 +44,7 @@ type insertAgentParams struct {
 	UUID                string
 	ExternalID          string
 	WorkspaceUUID       string
-	CreatedByAPIKeyUUID string
+	CreatedByAPIKeyUUID *string
 	Config              agentConfigParams
 	CreatedAt           time.Time
 }

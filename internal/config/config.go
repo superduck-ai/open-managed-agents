@@ -3,14 +3,17 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/mail"
+	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
-const (
-	DefaultAPIKey             = "sk-ant-local-default"
-	OfficialSDKResourceAPIKey = "my-anthropic-api-key"
-)
+const DefaultAPIKey = "sk-ant-local-default"
 
 func Load() (Config, error) {
 	configPath, found, err := findConfigFile()
@@ -25,8 +28,26 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	for i, domain := range cfg.Auth.AllowedEmailDomains {
+		cfg.Auth.AllowedEmailDomains[i] = strings.ToLower(strings.TrimSpace(domain))
+	}
+	cfg.Auth.SMTP.Addr = strings.TrimSpace(cfg.Auth.SMTP.Addr)
+	cfg.Auth.SMTP.Username = strings.TrimSpace(cfg.Auth.SMTP.Username)
+	cfg.Auth.ConsoleURL = strings.TrimSpace(cfg.Auth.ConsoleURL)
+	cfg.E2B.APIKey = strings.TrimSpace(cfg.E2B.APIKey)
+	cfg.E2B.AccessToken = strings.TrimSpace(cfg.E2B.AccessToken)
+	cfg.E2B.Domain = strings.TrimSpace(cfg.E2B.Domain)
+	cfg.E2B.APIURL = strings.TrimSpace(cfg.E2B.APIURL)
+	cfg.E2B.SandboxURL = strings.TrimSpace(cfg.E2B.SandboxURL)
+	cfg.E2B.Template = strings.TrimSpace(cfg.E2B.Template)
+
+	normalizeEnvironmentPrebuildConfig(&cfg.EnvironmentPrebuilds)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
+		return Config{}, err
+	}
+	_, err = ReadLLMProviderPresetCatalog(cfg.LLMProviderPresetsFile)
+	if err != nil {
 		return Config{}, err
 	}
 	if err := validate(cfg); err != nil {
@@ -51,6 +72,27 @@ func validate(cfg Config) error {
 	if strings.TrimSpace(cfg.Redis.URL) == "" {
 		return errors.New("redis.url is required")
 	}
+	if strings.TrimSpace(cfg.NATS.URL) == "" {
+		return errors.New("nats.url is required")
+	}
+	if err := validateBrainRuntimeConfig(cfg.EnvironmentRunner, cfg.CodeSession); err != nil {
+		return err
+	}
+	if err := validateNATSStreams(cfg.NATS); err != nil {
+		return err
+	}
+	if err := validateBootstrapConfig(cfg.Bootstrap); err != nil {
+		return err
+	}
+	if err := validateAuthConfig(cfg.Env, cfg.Auth); err != nil {
+		return err
+	}
+	if err := validateEnvironmentPrebuildConfig(cfg.EnvironmentPrebuilds, cfg.E2B); err != nil {
+		return err
+	}
+	if err := validateEnvironmentPackageConfig(cfg.EnvironmentPackages); err != nil {
+		return err
+	}
 	if strings.TrimSpace(cfg.Storage.Type) == "" {
 		return errors.New("storage.type is required")
 	}
@@ -72,59 +114,312 @@ func validate(cfg Config) error {
 	if err := validatePositiveValues(cfg); err != nil {
 		return err
 	}
-	if err := validateVaultMasterKey(cfg.Vault); err != nil {
+	if err := ValidateTranscriptArchive(cfg.TranscriptArchive); err != nil {
+		return err
+	}
+	if err := validateTunnelDomainSuffix(cfg.Tunnel.DomainSuffix); err != nil {
+		return err
+	}
+	if err := validateTunnelPublicBaseURL(cfg.Tunnel.PublicBaseURL); err != nil {
+		return err
+	}
+	if err := ValidateMasterKey(cfg.Vault.MasterKey); err != nil {
+		return err
+	}
+	if err := validateObservabilityConfig(cfg.Observability); err != nil {
+		return err
+	}
+	if err := validateCodeSessionSandboxAPIBaseURL(cfg.Env, cfg.CodeSession, cfg.Observability.Enabled); err != nil {
+		return err
+	}
+	if err := validatePlatformOAuthClients(cfg.Vault.PlatformOAuthClients); err != nil {
+		return err
+	}
+	if err := validateGitSSHtoHTTPSHosts(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts); err != nil {
 		return err
 	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)
 }
 
-func (m MasterKeyConfig) inlineKEKSet() bool {
+func validateNATSStreams(cfg NATSConfig) error {
+	if err := validateWebhookStream(cfg.WebhookStream); err != nil {
+		return err
+	}
+	return validateWorkerEventStream(cfg.WorkerEventStream)
+}
+
+func validateBootstrapConfig(cfg BootstrapConfig) error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "bootstrap.workspace_name", value: cfg.WorkspaceName},
+		{name: "bootstrap.organization_name", value: cfg.OrganizationName},
+		{name: "bootstrap.workspace_external_id", value: cfg.WorkspaceExternalID},
+		{name: "bootstrap.user_external_id", value: cfg.UserExternalID},
+		{name: "bootstrap.user_email", value: cfg.UserEmail},
+		{name: "bootstrap.user_name", value: cfg.UserName},
+		{name: "bootstrap.api_key_external_id", value: cfg.APIKeyExternalID},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("%s is required", field.name)
+		}
+	}
+	address, err := mail.ParseAddress(cfg.UserEmail)
+	if err != nil || address.Address != cfg.UserEmail {
+		return errors.New("bootstrap.user_email must be a valid email address")
+	}
+	return nil
+}
+
+func validateAuthConfig(environment string, cfg AuthConfig) error {
+	for _, domain := range cfg.AllowedEmailDomains {
+		valid, _ := regexp.MatchString(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`, domain)
+		if !valid || len(domain) > 253 {
+			return errors.New("auth.allowed_email_domains must contain exact email domains without @ or wildcards")
+		}
+	}
+
+	if cfg.ConsoleURL != "" {
+		u, err := url.Parse(cfg.ConsoleURL)
+		if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+			return errors.New("auth.console_url must be an HTTP(S) origin without userinfo, path, query or fragment")
+		}
+		switch u.Scheme {
+		case "https":
+		case "http":
+			if environment != EnvironmentDev {
+				return errors.New("auth.console_url must use HTTPS outside env dev")
+			}
+		default:
+			return errors.New("auth.console_url must be an HTTP(S) origin without userinfo, path, query or fragment")
+		}
+	}
+	if cfg.SMTP.Addr == "" && cfg.SMTP.Username == "" && cfg.SMTP.Password == "" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(cfg.SMTP.Addr)
+	if err != nil || host == "" || port == "" {
+		return errors.New("auth.smtp.addr must include a host and port")
+	}
+	address, err := mail.ParseAddress(cfg.SMTP.Username)
+	if err != nil || address.Address != cfg.SMTP.Username {
+		return errors.New("auth.smtp.username must be a valid email address")
+	}
+	if strings.TrimSpace(cfg.SMTP.Password) == "" {
+		return errors.New("auth.smtp.password is required")
+	}
+	return nil
+}
+
+// FindPlatformOAuthClient returns the registry entry whose mcp_server_url
+// exactly matches (after TrimSpace) the given MCP server URL.
+func FindPlatformOAuthClient(clients []PlatformOAuthClientConfig, mcpServerURL string) (PlatformOAuthClientConfig, bool) {
+	want := strings.TrimSpace(mcpServerURL)
+	if want == "" {
+		return PlatformOAuthClientConfig{}, false
+	}
+	for _, client := range clients {
+		if strings.TrimSpace(client.MCPServerURL) == want {
+			client.MCPServerURL = want
+			client.ClientID = strings.TrimSpace(client.ClientID)
+			client.ClientSecret = strings.TrimSpace(client.ClientSecret)
+			return client, true
+		}
+	}
+	return PlatformOAuthClientConfig{}, false
+}
+
+func validatePlatformOAuthClients(clients []PlatformOAuthClientConfig) error {
+	seen := make(map[string]struct{}, len(clients))
+	for i, client := range clients {
+		prefix := fmt.Sprintf("vault.platform_oauth_clients[%d]", i)
+		mcpURL := strings.TrimSpace(client.MCPServerURL)
+		clientID := strings.TrimSpace(client.ClientID)
+		if mcpURL == "" {
+			return fmt.Errorf("%s.mcp_server_url is required", prefix)
+		}
+		if clientID == "" {
+			return fmt.Errorf("%s.client_id is required", prefix)
+		}
+		if _, ok := seen[mcpURL]; ok {
+			return fmt.Errorf("%s.mcp_server_url %q is duplicated", prefix, mcpURL)
+		}
+		seen[mcpURL] = struct{}{}
+	}
+	return nil
+}
+
+// validateGitSSHtoHTTPSHosts validates and normalizes hosts in place (trim + lower-case).
+// The slice header is shared with Config after YAML load, so Load observes the rewrite.
+func validateGitSSHtoHTTPSHosts(hosts []string) error {
+	seen := make(map[string]struct{}, len(hosts))
+	for i, raw := range hosts {
+		prefix := fmt.Sprintf("environment_runner.git_ssh_to_https_hosts[%d]", i)
+		host := strings.ToLower(strings.TrimSpace(raw))
+		if host == "" {
+			return fmt.Errorf("%s is empty", prefix)
+		}
+		if err := validateGitSSHtoHTTPSHost(host); err != nil {
+			return fmt.Errorf("%s: %w", prefix, err)
+		}
+		if _, ok := seen[host]; ok {
+			return fmt.Errorf("%s %q is duplicated", prefix, host)
+		}
+		seen[host] = struct{}{}
+		hosts[i] = host
+	}
+	return nil
+}
+
+// validateGitSSHtoHTTPSHost accepts only bare DNS hostnames: dot-separated
+// labels of [a-z0-9-], each starting and ending with an alphanumeric.
+// Callers must pass already lower-cased hostnames.
+func validateGitSSHtoHTTPSHost(host string) error {
+	if host == "" {
+		return errors.New("must be a bare hostname")
+	}
+	for _, label := range strings.Split(host, ".") {
+		if err := validateGitSSHtoHTTPSHostLabel(label); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateGitSSHtoHTTPSHostLabel(label string) error {
+	if label == "" {
+		return errors.New("must be a bare hostname")
+	}
+	for i := 0; i < len(label); i++ {
+		c := label[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c == '-' && i > 0 && i < len(label)-1:
+		default:
+			return errors.New("must be a bare hostname")
+		}
+	}
+	return nil
+}
+
+func validateTunnelPublicBaseURL(value string) error {
+	if value == "" {
+		return nil
+	}
+	if strings.TrimSpace(value) != value {
+		return errors.New("tunnel.public_base_url must not contain surrounding whitespace")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" || parsed.Hostname() == "" {
+		return errors.New("tunnel.public_base_url must be an absolute HTTP(S) origin")
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(value, "#") || (parsed.Path != "" && parsed.Path != "/") {
+		return errors.New("tunnel.public_base_url must be an absolute HTTP(S) origin")
+	}
+	if port := parsed.Port(); port != "" {
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			return errors.New("tunnel.public_base_url port must be between 1 and 65535")
+		}
+	}
+	return nil
+}
+
+func validateTunnelDomainSuffix(value string) error {
+	if value == "" {
+		return errors.New("tunnel.domain_suffix is required")
+	}
+	if value != strings.ToLower(value) || strings.TrimSpace(value) != value || len(value) > 253 {
+		return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+				return errors.New("tunnel.domain_suffix must be a lowercase DNS name")
+			}
+		}
+	}
+	return nil
+}
+
+func (m LocalKeyConfig) inlineKEKSet() bool {
 	return strings.TrimSpace(m.Kek) != ""
 }
 
-func (m MasterKeyConfig) fileKEKSet() bool {
+func (m LocalKeyConfig) fileKEKSet() bool {
 	return strings.TrimSpace(m.KekFile) != ""
 }
 
 // KEKConfigured reports whether either inline kek or kek_file is set.
-func (m MasterKeyConfig) KEKConfigured() bool {
+func (m LocalKeyConfig) KEKConfigured() bool {
 	return m.inlineKEKSet() || m.fileKEKSet()
 }
 
 // EffectiveVersion returns the current wrap key version. Unset/0 defaults to 1
 // so single-key deployments need not declare version explicitly.
-func (m MasterKeyConfig) EffectiveVersion() int64 {
+func (m LocalKeyConfig) EffectiveVersion() int64 {
 	if m.Version == 0 {
 		return 1
 	}
 	return m.Version
 }
 
-// validateVaultMasterKey enforces the vault KEK input contract: exactly one of
-// kek / kek_file on the current key (required in every env, same as S3 keys),
-// at most one source on each decrypt_only entry, and unique positive versions
-// that do not collide with the current wrap version.
-func validateVaultMasterKey(cfg VaultConfig) error {
-	mk := cfg.MasterKey
+func ValidateMasterKey(mk MasterKeyConfig) error {
+	selected := mk.EffectiveProvider()
+	switch selected {
+	case "local", "aliyun_kms", "hashicorp_vault":
+	default:
+		return errors.New("unsupported vault.master_key.provider")
+	}
+	for _, provider := range []struct {
+		name       string
+		configured bool
+		validate   func(MasterKeyConfig) error
+	}{
+		{"local", mk.Local != nil, validateLocalMasterKey},
+		{"aliyun_kms", mk.AliyunKMS != nil, validateAliyunKMSMasterKey},
+		{"hashicorp_vault", mk.HashicorpVault != nil, validateHashicorpVaultMasterKey},
+	} {
+		if provider.configured || provider.name == selected {
+			if err := provider.validate(mk); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateLocalMasterKey requires one KEK source per key and unique positive
+// decrypt-only versions that do not collide with the current wrap version.
+func validateLocalMasterKey(mk MasterKeyConfig) error {
+	local := mk.Local
+	if local == nil {
+		return errors.New("vault.master_key.local is required")
+	}
 	switch {
-	case mk.inlineKEKSet() && mk.fileKEKSet():
-		return errors.New("configure at most one of vault.master_key.kek or kek_file")
-	case !mk.KEKConfigured():
-		return errors.New("vault.master_key.kek or kek_file is required")
+	case local.inlineKEKSet() && local.fileKEKSet():
+		return errors.New("configure at most one of vault.master_key.local.kek or kek_file")
+	case !local.KEKConfigured():
+		return errors.New("vault.master_key.local.kek or kek_file is required")
 	}
-	if mk.Version < 0 {
-		return errors.New("vault.master_key.version must be >= 0")
+	if local.Version < 0 {
+		return errors.New("vault.master_key.local.version must be >= 0")
 	}
-	currentVersion := mk.EffectiveVersion()
+	currentVersion := local.EffectiveVersion()
 	seen := map[int64]struct{}{currentVersion: {}}
-	for i, entry := range mk.DecryptOnly {
-		prefix := fmt.Sprintf("vault.master_key.decrypt_only[%d]", i)
+	for i, entry := range local.DecryptOnly {
+		prefix := fmt.Sprintf("vault.master_key.local.decrypt_only[%d]", i)
 		if entry.Version <= 0 {
 			return fmt.Errorf("%s.version must be a positive integer", prefix)
 		}
 		if _, ok := seen[entry.Version]; ok {
 			if entry.Version == currentVersion {
-				return fmt.Errorf("%s.version %d collides with vault.master_key.version", prefix, entry.Version)
+				return fmt.Errorf("%s.version %d collides with vault.master_key.local.version", prefix, entry.Version)
 			}
 			return fmt.Errorf("%s.version %d is duplicated", prefix, entry.Version)
 		}
@@ -141,13 +436,67 @@ func validateVaultMasterKey(cfg VaultConfig) error {
 	return nil
 }
 
+func validateAliyunKMSMasterKey(mk MasterKeyConfig) error {
+	if mk.AliyunKMS == nil || mk.AliyunKMS.Endpoint == "" || mk.AliyunKMS.KeyID == "" {
+		return errors.New("vault.master_key.aliyun_kms.endpoint and key_id are required")
+	}
+	if (mk.AliyunKMS.AccessKeyID == "") != (mk.AliyunKMS.AccessKeySecret == "") || (mk.AliyunKMS.SecurityToken != "" && mk.AliyunKMS.AccessKeyID == "") {
+		return errors.New("vault.master_key.aliyun_kms: access_key_id and access_key_secret must be configured together; security_token requires both")
+	}
+	return nil
+}
+
+func validateHashicorpVaultMasterKey(mk MasterKeyConfig) error {
+	v := mk.HashicorpVault
+	if v == nil || strings.TrimSpace(v.Address) == "" || strings.TrimSpace(v.KeyName) == "" {
+		return errors.New("vault.master_key.hashicorp_vault: address and key_name are required")
+	}
+	if (strings.TrimSpace(v.Token) == "") == (strings.TrimSpace(v.TokenFile) == "") {
+		return errors.New("vault.master_key.hashicorp_vault: configure exactly one of token or token_file")
+	}
+	return nil
+}
+
+// validateCodeSessionSandboxAPIBaseURL 校验 sandbox 回连 OMA 的地址
+// （启动 payload 里的 startup_context.api_base_url）。常规会话流量走
+// environment-manager relay，不依赖该地址，所以平时可以为空；但开启
+// observability 后 worker 要用它拼 OTLP 导出 endpoint 把遥测送回 OMA，
+// 为空会导致 sandbox 内导出静默失败、数据永远不到达，因此升级为启动期硬错误。
+func validateCodeSessionSandboxAPIBaseURL(environment string, cfg CodeSessionConfig, observabilityEnabled bool) error {
+	baseURL := strings.TrimSpace(cfg.SandboxAPIBaseURL)
+	if baseURL == "" {
+		if observabilityEnabled {
+			return errors.New("code_session.sandbox_api_base_url is required when observability.enabled is true")
+		}
+		return nil
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return errors.New("code_session.sandbox_api_base_url must be an absolute HTTP(S) URL")
+	}
+	if environment == EnvironmentProd && parsed.Scheme != "https" {
+		return errors.New("code_session.sandbox_api_base_url must use HTTPS in production")
+	}
+	return nil
+}
+
 func validatePositiveValues(cfg Config) error {
 	checks := []struct {
 		name  string
 		valid bool
 	}{
 		{name: "storage.max_file_bytes", valid: cfg.Storage.MaxFileBytes > 0},
+		{name: "nats.connect_timeout", valid: cfg.NATS.ConnectTimeout > 0},
+		{name: "nats.drain_timeout", valid: cfg.NATS.DrainTimeout > 0},
 		{name: "storage.workspace_limit_bytes", valid: cfg.Storage.WorkspaceLimitBytes > 0},
+		{name: "tunnel.poll_timeout", valid: cfg.Tunnel.PollTimeout > 0 && cfg.Tunnel.PollTimeout <= 30*time.Second},
+		{name: "tunnel.request_timeout", valid: cfg.Tunnel.RequestTimeout >= time.Second && cfg.Tunnel.RequestTimeout <= 10*time.Minute},
+		{name: "tunnel.presence_ttl", valid: cfg.Tunnel.PresenceTTL > 0},
+		{name: "tunnel.tombstone_ttl", valid: cfg.Tunnel.TombstoneTTL > 0},
+		{name: "tunnel.command_stream.max_bytes", valid: cfg.Tunnel.CommandStream.MaxBytes > 0},
+		{name: "tunnel.max_body_bytes", valid: cfg.Tunnel.MaxBodyBytes > 0},
+		{name: "tunnel.max_header_bytes", valid: cfg.Tunnel.MaxHeaderBytes > 0},
+		{name: "tunnel.max_header_value_bytes", valid: cfg.Tunnel.MaxHeaderValueBytes > 0},
 		{name: "batch.worker_concurrency", valid: cfg.Batch.WorkerConcurrency > 0},
 		{name: "batch.max_requests", valid: cfg.Batch.MaxRequests > 0},
 		{name: "batch.max_body_bytes", valid: cfg.Batch.MaxBodyBytes > 0},
@@ -157,17 +506,66 @@ func validatePositiveValues(cfg Config) error {
 		{name: "batch.job_lease_heartbeat_interval", valid: cfg.Batch.JobLeaseHeartbeatInterval > 0},
 		{name: "batch.expiry_sweep_interval", valid: cfg.Batch.ExpirySweepInterval > 0},
 		{name: "e2b.request_timeout", valid: cfg.E2B.RequestTimeout > 0},
+		{name: "sandbox_lifecycle.idle_timeout", valid: cfg.SandboxLifecycle.IdleTimeout > 0},
 		{name: "e2b.sandbox_timeout", valid: cfg.E2B.SandboxTimeout > 0},
 		{name: "environment_runner.concurrency", valid: cfg.EnvironmentRunner.Concurrency > 0},
 		{name: "environment_runner.package_provision_timeout", valid: cfg.EnvironmentRunner.PackageProvisionTimeout > 0},
-		{name: "code_session.otlp_log_body_preview_bytes", valid: cfg.CodeSession.OTLPLogBodyPreviewBytes > 0},
+		{name: "observability.otlp.max_request_bytes", valid: cfg.Observability.OTLP.MaxRequestBytes > 0},
+		{name: "observability.otlp.forward_timeout", valid: cfg.Observability.OTLP.ForwardTimeout > 0},
+		{name: "webhook.concurrency", valid: cfg.Webhook.Concurrency > 0},
 		{name: "webhook.timeout", valid: cfg.Webhook.Timeout > 0},
 		{name: "webhook.max_attempts", valid: cfg.Webhook.MaxAttempts > 0},
+		{name: "webhook.failure_disable_after", valid: cfg.Webhook.FailureDisableAfter > 0},
 	}
 	for _, check := range checks {
 		if !check.valid {
 			return fmt.Errorf("%s must be greater than zero", check.name)
 		}
+	}
+	if cfg.Tunnel.CommandStream.MaxMsgs != -1 && cfg.Tunnel.CommandStream.MaxMsgs <= 0 {
+		return errors.New("tunnel.command_stream.max_msgs must be -1 or greater than zero")
+	}
+	return nil
+}
+
+func validateObservabilityConfig(cfg ObservabilityConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	switch strings.TrimSpace(cfg.Backend) {
+	case ObservabilityBackendOpenObserve:
+		return validateOpenObserveConfig(cfg.OpenObserve)
+	default:
+		return fmt.Errorf("observability.backend must be %q when observability.enabled is true", ObservabilityBackendOpenObserve)
+	}
+}
+
+func validateOpenObserveConfig(cfg OpenObserveConfig) error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "observability.openobserve.base_url", value: cfg.BaseURL},
+		{name: "observability.openobserve.organization", value: cfg.Organization},
+		{name: "observability.openobserve.logs_stream", value: cfg.LogsStream},
+		{name: "observability.openobserve.traces_stream", value: cfg.TracesStream},
+		{name: "observability.openobserve.ingestion.username", value: cfg.Ingestion.Username},
+		{name: "observability.openobserve.ingestion.password", value: cfg.Ingestion.Password},
+		{name: "observability.openobserve.query.username", value: cfg.Query.Username},
+		{name: "observability.openobserve.query.password", value: cfg.Query.Password},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("%s is required when observability.enabled is true", field.name)
+		}
+	}
+	if cfg.Query.Timeout <= 0 {
+		return errors.New("observability.openobserve.query.timeout must be greater than zero")
+	}
+	baseURL, err := url.Parse(strings.TrimSpace(cfg.BaseURL))
+	if err != nil || baseURL.Host == "" || (baseURL.Scheme != "http" && baseURL.Scheme != "https") ||
+		baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		return errors.New("observability.openobserve.base_url must be an absolute HTTP(S) URL without userinfo, query, or fragment")
 	}
 	return nil
 }

@@ -26,10 +26,11 @@ type credentialAuthVariant interface {
 }
 
 type mcpOAuthCredentialAuth struct {
-	Type         credentialAuthType `json:"type"`
-	MCPServerURL string             `json:"mcp_server_url"`
-	ExpiresAt    *string            `json:"expires_at,omitempty"`
-	Refresh      *mcpOAuthRefresh   `json:"refresh,omitempty"`
+	Type                   credentialAuthType `json:"type"`
+	MCPServerURL           string             `json:"mcp_server_url"`
+	ClientCredentialSource string             `json:"client_credential_source,omitempty"`
+	ExpiresAt              *string            `json:"expires_at,omitempty"`
+	Refresh                *mcpOAuthRefresh   `json:"refresh,omitempty"`
 }
 
 func (*mcpOAuthCredentialAuth) credentialAuthVariant() {}
@@ -54,9 +55,11 @@ type staticBearerCredentialAuth struct {
 func (*staticBearerCredentialAuth) credentialAuthVariant() {}
 
 type environmentVariableCredentialAuth struct {
-	Type       credentialAuthType       `json:"type"`
-	SecretName string                   `json:"secret_name"`
-	Networking credentialAuthNetworking `json:"networking"`
+	Type              credentialAuthType          `json:"type"`
+	SecretName        string                      `json:"secret_name"`
+	Placeholder       string                      `json:"placeholder"`
+	Networking        credentialAuthNetworking    `json:"networking"`
+	InjectionLocation credentialInjectionLocation `json:"injection_location"`
 }
 
 func (*environmentVariableCredentialAuth) credentialAuthVariant() {}
@@ -107,4 +110,22 @@ func decodeCredentialAuth(raw []byte) (credentialAuth, error) {
 		return credentialAuth{}, err
 	}
 	return auth, nil
+}
+
+func decodeMCPOAuthCredentialAuth(raw []byte) (*mcpOAuthCredentialAuth, error) {
+	if len(raw) == 0 {
+		return nil, emptyMCPOAuthAuth()
+	}
+	auth, err := decodeCredentialAuth(raw)
+	if err != nil {
+		return nil, err
+	}
+	value, ok := auth.value.(*mcpOAuthCredentialAuth)
+	if !ok || value == nil {
+		return nil, credentialAuthNotMCPOAuth()
+	}
+	if value.MCPServerURL == "" {
+		return nil, mcpOAuthServerURLRequired()
+	}
+	return value, nil
 }

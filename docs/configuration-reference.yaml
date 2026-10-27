@@ -1,3 +1,5 @@
+llm_provider_presets_file: ""
+
 # Open Managed Agents complete process-configuration reference.
 #
 # This file documents every YAML field accepted by internal/config.Config. It is
@@ -10,6 +12,8 @@ env: dev
 
 server:
   addr: 127.0.0.1:38080
+  # Empty disables profiles. If enabled, use a literal loopback IP on a separate port.
+  diagnostics_addr: ""
 
 database:
   url: postgresql://claude:123456@localhost:5432/claude_api?sslmode=disable
@@ -18,6 +22,64 @@ database:
 
 redis:
   url: redis://localhost:6379
+
+nats:
+  # One or more comma-separated seed URLs. Configure multiple nodes for startup failover.
+  url: nats://localhost:4222,nats://localhost:4223,nats://localhost:4224
+  connect_timeout: 5s
+  drain_timeout: 10s
+  # Dedicated webhook queue; independent from the endpoint failure window.
+  webhook_stream:
+    max_bytes: 268435456
+    max_age: 24h
+    replicas: 3 # Set 1 for a single-node JetStream deployment.
+  worker_event_stream:
+    consumer_inactive_threshold: 5m
+    max_bytes: 268435456
+    max_age: 0s
+    replicas: 3
+    max_msg_size: 1048576
+
+# Optional. Omit the entire auth.smtp block to accept any non-empty verification
+# code without sending email. Configure every SMTP field together for real email.
+auth:
+  allowed_email_domains: []
+  # 邀请邮件按钮使用的控制台 HTTPS origin；未配置时只创建站内邀请。
+  console_url: ""
+  smtp:
+    # Required host:port. Surrounding whitespace is removed during loading.
+    addr: smtp.example.com:587
+    # Required email address used for SMTP authentication and as the sender.
+    username: sender@example.com
+    # Required. The verification-code HMAC key is derived from this password,
+    # so there is no separate email-login secret to configure.
+    password: replace-me
+
+tunnel:
+  # Stable externally reachable OMA origin used in canonical MCP URLs and to
+  # recognize Tunnel targets inside the Managed Agent Runtime Gateway.
+  public_base_url: ""
+  # Claude-compatible hostname metadata. The reserved default is intentionally
+  # non-resolving; configure a real suffix only with matching wildcard DNS/TLS.
+  domain_suffix: tunnel.invalid
+  poll_timeout: 30s
+  request_timeout: 2m
+  presence_ttl: 60s
+  # Local completion receipts expire at the request deadline plus this TTL.
+  # Immutable bindings live for request_timeout + tombstone_ttl after creation.
+  tombstone_ttl: 5m
+  # Commands stream limits; max_msgs=-1 means no message-count limit.
+  # A positive max_msgs rejects new commands when the stream reaches that count.
+  # The defaults are 513 MiB per NATS node (R3) and unlimited messages.
+  command_stream:
+    max_bytes: 537919488
+    max_msgs: -1
+  # Immutable bindings use Redis SET NX PX, up to 4 KiB per record.
+  # Bindings and local waiters have no separate request-count admission limit.
+  # Only NATS envelopes exceeding 2 MiB offload their bodies; no 32 KiB threshold.
+  max_body_bytes: 16777216
+  max_header_bytes: 32768
+  max_header_value_bytes: 8192
 
 storage:
   type: s3
@@ -46,70 +108,158 @@ e2b:
   api_key: ""
   access_token: ""
   domain: ""
+  # E2B API 地址；Provider 会将它显式传给 SDK，为空时沿用 SDK 的环境变量或默认值。
   api_url: ""
   sandbox_url: ""
   debug: false
   template: managed-agent-sandbox
   request_timeout: 60s
   sandbox_timeout: 30s
+  local_port_lookup: false
+  local_service_host: ""
 
 environment_runner:
   enabled: true
   concurrency: 2
   package_provision_timeout: 2m
   manager_path: /usr/local/bin/environment-manager
-  claude_agent_version: 2.1.120
   claude_path: /opt/claude-code/bin/claude
+  agent_mode: ""
+  brain_sandbox_prewarm: false
+  sandbox_mcp_port: 3001
+  sandbox_mcp_path: /mcp
+  # Extra hosts rewritten from SSH remotes to HTTPS (in addition to built-in github.com).
+  # Bare DNS hostnames only (labels [a-z0-9-], no leading/trailing hyphen); each adds git@host: and ssh://git@host/ → https://host/.
+  git_ssh_to_https_hosts: []
+  # Example:
+  # git_ssh_to_https_hosts:
+  #   - gitlab.xxxx.cn
 
 code_session:
   # Set when a sandbox must call this service through a specific reachable URL.
+  # Required when observability.enabled is true: workers derive their OTLP
+  # export endpoints from this URL, so telemetry silently stops without it.
   sandbox_api_base_url: ""
   # Derived default: true for dev and false for prod.
-  otlp_file_log_enabled: true
-  otlp_log_root: logs
-  otlp_log_body_preview_bytes: 262144
-  # Required in prod; dev creates an in-memory key when this is empty.
+  # Required in prod; also signs CCRv2 Git commits. Dev creates an in-memory key when empty.
   jwt_signing_private_key_file: ""
-  upstream_proxy_mitm_enabled: false
+  upstream_proxy_mitm_enabled: true
   # Required only when upstream_proxy_mitm_enabled is true.
   upstream_proxy_ca_key_file: ""
   # Dangerous local fake-IP/TUN diagnostic switch; keep false in production.
   upstream_proxy_disable_ssrf_protection: false
+  # Required when environment_runner.agent_mode is brain. The file holds the
+  # shared fleet token (at least 32 characters) that oma-brain-dsh sends to
+  # POST /v1/code/brain/claims; mount it like the JWT signing key.
+  brain_claim_token_file: ""
+
+observability:
+  enabled: false
+  # Content capture sends prompt originals, model output, and tool input/output
+  # (which may include source code, command output, and secrets) to the
+  # observability store. It is enabled by default when observability is on; set
+  # false to keep structure-only telemetry (spans, durations, tokens, tool names).
+  content_capture_enabled: true
+  otlp:
+    max_request_bytes: 16777216
+    forward_timeout: 8s
+  backend: openobserve
+  openobserve:
+    base_url: http://openobserve:5080
+    organization: oma
+    logs_stream: oma_claude_code
+    traces_stream: oma_claude_code
+    ingestion:
+      username: ""
+      password: ""
+    query:
+      username: ""
+      password: ""
+      timeout: 15s
 
 webhook:
-  endpoint_url: ""
-  signing_key: ""
-  event_types:
-    - session.created
-  # Derived default: true only when endpoint_url and signing_key are both set.
-  worker_enabled: false
+  concurrency: 10
+  # Delivery uses workspace subscriptions only. Set false to pause this instance.
+  worker_enabled: true
   timeout: 10s
-  max_attempts: 10
+  # JetStream consumption opportunities, including the first; not guaranteed HTTP sends.
+  max_attempts: 3
+  # Positive duration; checked on failures, reset by a successful delivery or explicit enable.
+  failure_disable_after: 24h
+  # Webhooks connect directly; HTTP_PROXY/HTTPS_PROXY are not used.
+  # Verify direct egress before upgrading a proxy-dependent deployment.
   allow_insecure: false
 
 vault:
   master_key:
-    # Base64-encoded 32-byte key-encryption key. Exactly one of kek or kek_file
-    # must be set in every env (same discipline as storage.s3 access keys).
-    # Generate with: just generate-vault-kek config/secrets/vault-kek
-    # then set kek_file, or paste the printed base64 into kek.
-    # The value below is a documentation placeholder only — replace before deploy.
-    kek: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
-    # Same base64 KEK read from a mounted file; mirrors the
-    # code_session.jwt_signing_private_key_file mount discipline.
-    kek_file: ""
-    # Current wrap key version persisted on new envelopes as key_version.
-    # Omit or 0 defaults to 1.
-    version: 2
-    # Prior KEKs retained only for Open after rotation (no rewrap). Keep this
-    # list empty until you rotate; then move the old current here with its
-    # original version (must be lower than the new current version). The entry
-    # below is a schema placeholder for the configuration contract — replace
-    # with a real prior KEK after rotation, or use decrypt_only: [].
-    decrypt_only:
-      - version: 1
-        kek: "AgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICE="
-        kek_file: ""
+    # Selects new writes; omitted defaults to local. Also supports aliyun_kms and hashicorp_vault.
+    # Every configured block is enabled for reads selected by the stored key_provider.
+    # Retain old provider blocks and keys until their historical envelopes are retired.
+    # Remove unused blocks from the deployed config; all present blocks are validated.
+    provider: local
+    # Configured Transit can read historical envelopes even when another provider handles writes.
+    hashicorp_vault:
+      # A reverse proxy, if used, must forward /v1/<mount>/* unchanged to Vault.
+      # HTTPS verifies the certificate using the OS/container trust store.
+      # Local development permits HTTP only for loopback, localhost or host vault.
+      address: "https://vault.example.com"
+      # Defaults to transit; this is an API mount path, not a filesystem path.
+      transit_mount: "transit"
+      key_name: "oma-dek"
+      # Externally issued/renewed token. Reopened on each operation so atomic
+      # replacement takes effect without restarting OMA. No login or renewal.
+      token_file: "/run/secrets/vault-token"
+      # Alternative to token_file. Configure exactly one; inline changes require restart.
+      token: ""
+      # Optional PEM CA bundle added to system trust for this client at startup.
+      # Relative paths resolve against the configuration directory; TLS verification stays on.
+      ca_file: ""
+    # Configured KMS can read historical envelopes even when another provider handles writes.
+    # A failed operation never falls back to another provider.
+    aliyun_kms:
+      # Required host or HTTPS origin without path; use your private gateway.
+      # TLS certificate verification stays enabled.
+      # DEBUG=1 or app is allowed; exact dara/tea/credential flags enable unsafe SDK logs
+      # and must be removed before starting the process.
+      endpoint: "kst-example.cryptoservice.kms.aliyuncs.com"
+      # CMK ID or acs:kms:<region>:<account>:key/<key-id> ARN; no aliases.
+      key_id: "key-example"
+      # Empty selects the workload identity: ACK RRSA when OIDC env vars are set, else ECS RAM.
+      # For explicit AK credentials set both. Never commit real credentials.
+      access_key_id: ""
+      access_key_secret: ""
+      # Optional for explicit temporary STS credentials; requires both AK fields.
+      security_token: ""
+    # Legacy flat local fields are accepted on input, but cannot coexist with local.
+    local:
+      # Base64-encoded 32-byte key-encryption key. Exactly one of kek or kek_file
+      # must be set whenever this local block is present, including for historical reads.
+      # Generate with: just generate-vault-kek config/secrets/vault-kek
+      # then set kek_file, or paste the printed base64 into kek.
+      # The value below is a documentation placeholder only — replace before deploy.
+      kek: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
+      # Same base64 KEK read from a mounted file; mirrors the
+      # code_session.jwt_signing_private_key_file mount discipline.
+      kek_file: ""
+      # Current wrap key version persisted on new envelopes as key_version.
+      # Omit or 0 defaults to 1.
+      version: 2
+      # Prior KEKs retained only for Open after rotation (no rewrap). Keep this
+      # list empty until you rotate; then move the old current here with its
+      # original version (must be lower than the new current version). The entry
+      # below is a schema placeholder for the configuration contract — replace
+      # with a real prior KEK after rotation, or use decrypt_only: [].
+      decrypt_only:
+        - version: 1
+          kek: "AgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICE="
+          kek_file: ""
+  # Deployment-owned OAuth clients for vault MCP OAuth enrollment. Exact
+  # mcp_server_url match only. BYO client_id on vault-auth/start overrides.
+  # Inline client_secret is accepted for local/dev; do not commit secrets.
+  platform_oauth_clients:
+    - mcp_server_url: "https://api.githubcopilot.com/mcp/"
+      client_id: "Iv23liEXAMPLE"
+      client_secret: "replace-me"
 
 bootstrap:
   seed_api_keys:
@@ -119,22 +269,93 @@ bootstrap:
   organization_name: default
   workspace_external_id: workspace_default
   user_external_id: user_default
+  user_email: admin@example.local
+  user_name: Local Admin
   api_key_external_id: api_key_default
 
-sdk_fixtures:
-  file_id: file_id
-  batch_id: message_batch_id
-  agent_id: agent_011CZkYpogX7uDKUyvBTophP
-  reference_agent_id: agent_011CZkYqphY8vELVzwCUpqiQ
-  environment_id: env_011CZkZ9X2dpNyB7HsEFoRfW
-  work_id: work_id
-  session_id: sesn_011CZkZAtmR3yMPDzynEDxu7
-  session_resource_id: sesrsc_011CZkZBJq5dWxk9fVLNcPht
-  session_thread_id: sthr_011CZkZVWa6oIjw0rgXZpnBt
-  session_event_id: sevt_011CZkZbF9oBV2h6c7qWZfnE
-  skill_id: skill_id
-  skill_version: version
-  deployment_id: deployment_id
-  deployment_run_id: deployment_run_id
-  api_key: my-anthropic-api-key
-  api_key_external_id: api_key_official_sdk_resource_tests
+# Long-idle managed sandbox reclamation. Disable dry_run to delete sandbox local state.
+sandbox_lifecycle:
+  enabled: true
+  dry_run: true
+  idle_timeout: 24h
+
+environment_packages:
+  npm:
+    registry: ""
+    scoped_registries: {}
+    # Example: {"@example": "https://registry.example.internal/npm/"}
+  pip:
+    index_url: ""
+    # Example: "https://packages.example.internal/pypi/simple/"
+  go:
+    proxy: ""
+    # Example: "https://packages.example.internal/goproxy/"
+  cargo:
+    registries: {}
+    # Example: {example: "https://packages.example.internal/cargo/index/"}
+  gem:
+    sources: []
+    # Example: ["https://packages.example.internal/rubygems/"]
+
+# Copy this section into the active OMA configuration. Disabled by default.
+# Template creation uses the existing e2b.api_url and e2b.api_key.
+# Registry push credentials stay in the image pipeline's private variables.
+environment_prebuilds:
+  enabled: false
+  timeout: 1h
+  image:
+    # Must name its registry host explicitly, with an optional tag or digest.
+    # A registry-less reference such as "team/base:base" is rejected: Docker
+    # resolves it against docker.io instead of the configured registry.
+    base_image: "registry.example.com/example/managed-agent-sandbox:base"
+    flow:
+      # The full Aliyun Flow pipeline API URL, without the /runs suffix.
+      pipeline_url: "https://openapi-rdc.aliyuncs.com/oapi/v1/flow/organizations/REPLACE_WITH_ORG/pipelines/REPLACE_WITH_PIPELINE"
+      token: ""
+  template:
+    disk_size: "20G"
+    cpu: 0 # Millicores; 0 uses the cluster default.
+    memory: 0 # MiB; 0 uses the cluster default.
+    network:
+      dns_servers: [] # IP addresses, e.g. ["10.0.0.2"].
+      allow_outbound_cidrs: [] # e.g. ["10.0.0.0/8"].
+      deny_outbound_cidrs: [] # e.g. ["169.254.0.0/16"].
+      allow_internet: true
+      inject_egress_ca: true
+    # Optional private registry pull credentials, sent only to CubeSandbox over HTTPS.
+    registry_auth:
+      username: ""
+      password: ""
+    # TCP ports exposed by prebuilt templates. Include envd (49983) and
+    # environment_runner.sandbox_mcp_port so the runner can reach the sandbox.
+    exposed_ports: [3001, 49983]
+    # Template readiness probe port; must be listed in exposed_ports.
+    probe_port: 49983
+    # Upper bounds for Environment config.resources. 0 keeps that resource at the
+    # deployment default above and rejects per-environment overrides.
+    max_resources:
+      cpu: 0 # Millicores, e.g. 8000.
+      memory: 0 # MiB, e.g. 16384.
+      disk: 0 # GiB, e.g. 100.
+
+# Private transcript archives reuse storage.s3.bucket. No fixed object TTL on this prefix.
+transcript_archive:
+  enabled: false
+  dry_run: true
+  terminal_sweep_enabled: true
+  boundary_sweep_enabled: false
+  hard_delete_enabled: false
+  terminal_dwell: 24h
+  archive_min_age: 168h
+  soft_delete_window: 336h
+  target_segment_raw_bytes: 8388608
+  delete_batch_rows: 500
+  max_rows_per_job: 50000
+
+# 飞书渠道桥接服务；令牌仅用于 OMA 到桥接服务的内部调用。
+channel_bridge:
+  url: ""
+  token: ""
+web_tools:
+  search_provider: ""
+  providers: {}

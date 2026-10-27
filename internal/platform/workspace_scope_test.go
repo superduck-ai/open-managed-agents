@@ -38,7 +38,7 @@ func TestResolveWorkspaceScopeAcceptsUUIDAndExternalID(t *testing.T) {
 	}
 }
 
-func TestResolveWorkspaceScopeUsesDefaultCompatibilityPrecedence(t *testing.T) {
+func TestResolveWorkspaceScopeUsesDefaultMarker(t *testing.T) {
 	now := time.Now().UTC()
 	workspaces := []ConsoleWorkspace{
 		{
@@ -55,6 +55,7 @@ func TestResolveWorkspaceScopeUsesDefaultCompatibilityPrecedence(t *testing.T) {
 		{
 			UUID:       "00000000-0000-4000-8000-000000000001",
 			ExternalID: "workspace_default",
+			IsDefault:  true,
 			CreatedAt:  now,
 		},
 	}

@@ -134,17 +134,3 @@ func TestPrepareWorkerOutputEventsBuildsActions(t *testing.T) {
 		t.Fatalf("prepared[3] = %#v, want preparedPublicAction", prepared[3])
 	}
 }
-
-func TestLeadingWorkerStreamPayloadsStopsAtNonStreamEvent(t *testing.T) {
-	actions := []preparedWorkerOutputEvent{
-		preparedStreamAction{payload: json.RawMessage(`{"sequence":1}`)},
-		preparedStreamAction{payload: json.RawMessage(`{"sequence":2}`)},
-		preparedPublicAction{payloads: []json.RawMessage{json.RawMessage(`{"type":"agent.message"}`)}},
-		preparedStreamAction{payload: json.RawMessage(`{"sequence":3}`)},
-	}
-
-	payloads := leadingWorkerStreamPayloads(actions)
-	if len(payloads) != 2 || string(payloads[0]) != `{"sequence":1}` || string(payloads[1]) != `{"sequence":2}` {
-		t.Fatalf("leadingWorkerStreamPayloads() = %q, want first two stream payloads", payloads)
-	}
-}

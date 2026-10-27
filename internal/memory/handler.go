@@ -26,24 +26,23 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/memorypath"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 
 	"github.com/go-chi/chi/v5"
-	"golang.org/x/text/unicode/norm"
 )
 
 const (
-	maxMemoryBodySize     = 1 << 20
-	maxMemoryContentBytes = 102400
-	maxMemoryPathBytes    = 1024
+	maxMemoryBodySize = 1 << 20
 )
 
 type Handler struct {
-	cfg    config.Config
-	db     *db.DB
-	logger *slog.Logger
-	store  storage.ObjectStore
-	router chi.Router
+	webhooks webhookEnqueuer
+	cfg      config.Config
+	db       *db.DB
+	logger   *slog.Logger
+	store    storage.ObjectStore
+	router   chi.Router
 }
 
 type storePageResponse struct {
@@ -234,6 +233,7 @@ func (h *Handler) createStore(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, "Could not create memory store")
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "memory_store.created", created.ExternalID, created.CreatedAt)
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(created))
 }
 
@@ -295,23 +295,12 @@ func (h *Handler) retrieveStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) retrieveStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	record, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(record))
-}
-
-func (h *Handler) memoryStoreForRead(ctx context.Context, principal auth.Principal, storeID string) (db.MemoryStore, error) {
-	record, err := h.db.GetMemoryStore(ctx, principal.WorkspaceUUID, storeID)
-	if err == nil {
-		return record, nil
-	}
-	if !errors.Is(err, db.ErrNotFound) || principal.CredentialType != auth.CredentialTypePlatformSession {
-		return db.MemoryStore{}, err
-	}
-	return h.db.GetMemoryStoreByExternalID(ctx, principal.OrganizationUUID, storeID)
 }
 
 func (h *Handler) updateStoreRoute(w http.ResponseWriter, r *http.Request) {
@@ -393,10 +382,13 @@ func (h *Handler) archiveStoreRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) archiveStore(w http.ResponseWriter, r *http.Request, storeID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, err := h.db.ArchiveMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
+	record, changed, err := h.db.ArchiveMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
+	}
+	if changed {
+		h.enqueueWebhook(r.Context(), principal, "memory_store.archived", record.ExternalID, *record.ArchivedAt)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromStore(record))
 }
@@ -412,8 +404,9 @@ func (h *Handler) deleteStore(w http.ResponseWriter, r *http.Request, storeID st
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
 	}
+	h.enqueueWebhook(r.Context(), principal, "memory_store.deleted", storeID, time.Now().UTC())
 	for _, ref := range refs {
-		h.deleteObjectOrEnqueue(r.Context(), ref)
+		h.deleteQueuedObject(r.Context(), ref)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"id": storeID, "type": "memory_store_deleted"})
 }
@@ -444,7 +437,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	if err := validateMemoryPath(path); err != nil {
+	if err := memorypath.Validate(path); err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
@@ -494,7 +487,7 @@ func (h *Handler) createMemory(w http.ResponseWriter, r *http.Request, storeID s
 		ContentSHA256:    &contentSHA,
 		S3Bucket:         ptrString(h.store.Name()),
 		S3Key:            &objectKey,
-		CreatedBy:        apiActor(principal),
+		CreatedBy:        principalActor(principal),
 		CreatedAt:        now,
 	})
 	if err != nil {
@@ -534,8 +527,8 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	pathPrefix := strings.TrimSpace(r.URL.Query().Get("path_prefix"))
-	if err := validatePathPrefix(pathPrefix); err != nil {
+	pathPrefix, err := parseMemoryListPrefix(r)
+	if err != nil {
 		writeBadRequest(w, r, err)
 		return
 	}
@@ -549,7 +542,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 			writeBadRequest(w, r, errors.New("order_by must be path when depth is set"))
 			return
 		}
-		store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+		store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 		if err != nil {
 			h.writeStoreLoadError(w, r, err, storeID)
 			return
@@ -562,7 +555,7 @@ func (h *Handler) listMemories(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -666,7 +659,7 @@ func (h *Handler) retrieveMemory(w http.ResponseWriter, r *http.Request, storeID
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -733,33 +726,11 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			h.writeMemoryLoadError(w, r, err, storeID, memoryID)
 			return
 		}
-		targetPath := record.Path
-		if pathPresent {
-			targetPath = path
-		}
 		targetContent := ""
 		targetContentKnown := false
 		if contentPresent {
 			targetContent = content
 			targetContentKnown = true
-		}
-		targetSHA := record.ContentSHA256
-		if contentPresent {
-			targetSHA = sha256Hex([]byte(content))
-		}
-		if expectedHash != nil && record.ContentSHA256 != *expectedHash && record.Path == targetPath && record.ContentSHA256 == targetSHA {
-			httpapi.WriteJSON(w, http.StatusOK, h.responseFromMemoryWithKnownContent(record, view, content))
-			return
-		}
-		if record.Path == targetPath && record.ContentSHA256 == targetSHA {
-			resp, err := h.responseFromMemory(r.Context(), record, view)
-			if err != nil {
-				h.logger.ErrorContext(r.Context(), "read memory no-op content", "memory_id", memoryID, "key", record.S3Key, "error", err)
-				writeAPIError(w, r, "Could not read memory content")
-				return
-			}
-			httpapi.WriteJSON(w, http.StatusOK, resp)
-			return
 		}
 
 		if !contentPresent {
@@ -778,7 +749,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			return
 		}
 		versionUUID := uuid.NewV4().String()
-		objectKey := memoryObjectKey(principal.WorkspaceUUID, store.UUID, record.UUID, versionUUID)
+		objectKey := db.MemoryContentObjectKey(principal.WorkspaceUUID, store.UUID, record.UUID, versionUUID)
 		contentBytes := []byte(targetContent)
 		contentSHA := sha256Hex(contentBytes)
 		if _, err := h.store.Upload(r.Context(), objectKey, bytes.NewReader(contentBytes), storage.UploadOptions{Size: int64(len(contentBytes)), ContentType: "text/plain; charset=utf-8"}); err != nil {
@@ -801,7 +772,7 @@ func (h *Handler) updateMemory(w http.ResponseWriter, r *http.Request, storeID, 
 			S3Key:                 objectKey,
 			ExpectedContentSHA256: expectedHash,
 			BaseVersionExternalID: record.CurrentVersionExternalID,
-			Actor:                 apiActor(principal),
+			Actor:                 principalActor(principal),
 			Now:                   time.Now().UTC(),
 		})
 		if errors.Is(err, db.ErrVersionConflict) {
@@ -861,7 +832,7 @@ func (h *Handler) deleteMemory(w http.ResponseWriter, r *http.Request, storeID, 
 		VersionUUID:           uuid.NewV4().String(),
 		VersionExternalID:     versionID,
 		ExpectedContentSHA256: expected,
-		Actor:                 apiActor(principal),
+		Actor:                 principalActor(principal),
 		Now:                   time.Now().UTC(),
 	}); err != nil {
 		h.writeMemoryMutationError(w, r, err, storeID, memoryID)
@@ -909,7 +880,7 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, storeID s
 		writeBadRequest(w, r, errors.New("operation must be created, modified, or deleted"))
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -959,7 +930,7 @@ func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, storeI
 		writeBadRequest(w, r, err)
 		return
 	}
-	store, err := h.memoryStoreForRead(r.Context(), principal, storeID)
+	store, err := h.db.GetMemoryStore(r.Context(), principal.WorkspaceUUID, storeID)
 	if err != nil {
 		h.writeStoreLoadError(w, r, err, storeID)
 		return
@@ -984,7 +955,7 @@ func (h *Handler) redactVersionRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) redactVersion(w http.ResponseWriter, r *http.Request, storeID, versionID string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	record, ref, err := h.db.RedactMemoryVersion(r.Context(), principal.WorkspaceUUID, storeID, versionID, apiActor(principal), time.Now().UTC())
+	record, ref, err := h.db.RedactMemoryVersion(r.Context(), principal.WorkspaceUUID, storeID, versionID, principalActor(principal), time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidState) {
 			writeBadRequest(w, r, errors.New("cannot redact the active memory version"))
@@ -994,7 +965,7 @@ func (h *Handler) redactVersion(w http.ResponseWriter, r *http.Request, storeID,
 		return
 	}
 	if ref != nil {
-		h.deleteObjectOrEnqueue(r.Context(), *ref)
+		h.deleteQueuedObject(r.Context(), *ref)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, responseFromVersionRecord(record, nil))
 }
@@ -1039,7 +1010,7 @@ func (h *Handler) readObjectContent(ctx context.Context, key string, expectedSiz
 		return "", err
 	}
 	defer object.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(object.Body, maxMemoryContentBytes+1))
+	data, err := io.ReadAll(io.LimitReader(object.Body, db.MaxMemoryContentBytes+1))
 	if err != nil {
 		return "", err
 	}
@@ -1060,12 +1031,8 @@ func (h *Handler) newMemoryObjectIDs(workspaceUUID, storeUUID string) (memoryID,
 	}
 	memoryUUID = uuid.NewV4().String()
 	versionUUID = uuid.NewV4().String()
-	objectKey = memoryObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID)
+	objectKey = db.MemoryContentObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID)
 	return memoryID, versionID, memoryUUID, versionUUID, objectKey, nil
-}
-
-func memoryObjectKey(workspaceUUID, storeUUID, memoryUUID, versionUUID string) string {
-	return fmt.Sprintf("workspaces/%s/memory_stores/%s/memories/%s/versions/%s/content", workspaceUUID, storeUUID, memoryUUID, versionUUID)
 }
 
 func (h *Handler) cleanupUploadedObjectAfterMetadataFailure(ctx context.Context, ref db.ObjectRef) {
@@ -1078,11 +1045,17 @@ func (h *Handler) deleteObjectOrEnqueue(ctx context.Context, ref db.ObjectRef) {
 	if ref.Key == "" {
 		return
 	}
-	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{}); err != nil {
+	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{AllVersions: true}); err != nil {
 		h.logger.ErrorContext(ctx, "delete memory object", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", err)
 		if enqueueErr := h.db.EnqueueObjectCleanupResourceJob(ctx, ref.WorkspaceUUID, ref.Bucket, ref.Key, ref.ResourceType, ref.ResourceID); enqueueErr != nil {
 			h.logger.ErrorContext(ctx, "enqueue memory object cleanup", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", enqueueErr)
 		}
+	}
+}
+
+func (h *Handler) deleteQueuedObject(ctx context.Context, ref db.ObjectRef) {
+	if err := h.store.Delete(ctx, ref.Key, storage.DeleteOptions{AllVersions: true}); err != nil {
+		h.logger.WarnContext(ctx, "memory object cleanup deferred", "resource_type", ref.ResourceType, "resource_id", ref.ResourceID, "key", ref.Key, "error", err)
 	}
 }
 
@@ -1093,7 +1066,7 @@ func responseFromStore(record db.MemoryStore) storeResponse {
 	}
 	return storeResponse{
 		ID:          record.ExternalID,
-		CreatedAt:   formatTime(record.CreatedAt),
+		CreatedAt:   record.CreatedAt.UTC().Format(time.RFC3339Nano),
 		Name:        record.Name,
 		Type:        "memory_store",
 		UpdatedAt:   formatTime(record.UpdatedAt),
@@ -1121,7 +1094,7 @@ func responseFromMemoryRecord(record db.Memory, content *string) memoryResponse 
 func responseFromVersionRecord(record db.MemoryVersion, content *string) versionResponse {
 	return versionResponse{
 		ID:               record.ExternalID,
-		CreatedAt:        formatTime(record.CreatedAt),
+		CreatedAt:        record.CreatedAt.UTC().Format(time.RFC3339Nano),
 		MemoryID:         record.MemoryExternalID,
 		MemoryStoreID:    record.MemoryStoreExternalID,
 		Operation:        record.Operation,
@@ -1153,9 +1126,12 @@ func optionalActor(actor *db.MemoryActor) *actorResponse {
 	return &value
 }
 
-func apiActor(principal auth.Principal) db.MemoryActor {
+func principalActor(principal auth.Principal) db.MemoryActor {
+	if principal.CredentialType == auth.CredentialTypePlatformSession {
+		return db.MemoryActor{Type: "user_actor", UserID: principal.UserExternalID}
+	}
 	return db.MemoryActor{
-		Type:             "api_actor",
+		Type:             db.MemoryActorTypeAPI,
 		APIKeyUUID:       principal.APIKeyUUID,
 		APIKeyExternalID: principal.APIKeyExternalID,
 	}
@@ -1242,7 +1218,7 @@ func parseRequiredContent(raw json.RawMessage, name string) (string, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", fmt.Errorf("%s must be a string", name)
 	}
-	if len([]byte(value)) > maxMemoryContentBytes {
+	if len([]byte(value)) > db.MaxMemoryContentBytes {
 		return "", fmt.Errorf("%s must be at most 102400 bytes", name)
 	}
 	return value, nil
@@ -1259,7 +1235,7 @@ func parseOptionalContent(raw json.RawMessage, name string) (string, bool, error
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", false, fmt.Errorf("%s must be a string", name)
 	}
-	if len([]byte(value)) > maxMemoryContentBytes {
+	if len([]byte(value)) > db.MaxMemoryContentBytes {
 		return "", false, fmt.Errorf("%s must be at most 102400 bytes", name)
 	}
 	return value, true, nil
@@ -1273,7 +1249,7 @@ func parseOptionalMemoryPath(raw json.RawMessage, name string) (string, bool, er
 	if err != nil {
 		return "", false, err
 	}
-	if err := validateMemoryPath(path); err != nil {
+	if err := memorypath.Validate(path); err != nil {
 		return "", false, err
 	}
 	return path, true, nil
@@ -1382,74 +1358,6 @@ func validateDescription(value string) error {
 	return nil
 }
 
-func validateMemoryPath(path string) error {
-	if path == "" || len([]byte(path)) > maxMemoryPathBytes {
-		return errors.New("path must be between 1 and 1024 bytes")
-	}
-	if !utf8.ValidString(path) {
-		return errors.New("path must be valid UTF-8")
-	}
-	if !strings.HasPrefix(path, "/") {
-		return errors.New("path must start with /")
-	}
-	if path == "/" {
-		return errors.New("path must contain at least one segment")
-	}
-	if strings.Contains(path, "//") || strings.HasSuffix(path, "/") {
-		return errors.New("path must not contain empty segments")
-	}
-	if !norm.NFC.IsNormalString(path) {
-		return errors.New("path must be NFC-normalized")
-	}
-	for _, r := range path {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return errors.New("path must not contain control or format characters")
-		}
-	}
-	for _, segment := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
-		if segment == "." || segment == ".." {
-			return errors.New("path must not contain . or .. segments")
-		}
-	}
-	return nil
-}
-
-func validatePathPrefix(pathPrefix string) error {
-	if pathPrefix == "" {
-		return nil
-	}
-	if len([]byte(pathPrefix)) > maxMemoryPathBytes {
-		return errors.New("path_prefix must be at most 1024 bytes")
-	}
-	if !utf8.ValidString(pathPrefix) {
-		return errors.New("path_prefix must be valid UTF-8")
-	}
-	if !strings.HasPrefix(pathPrefix, "/") {
-		return errors.New("path_prefix must start with /")
-	}
-	if !norm.NFC.IsNormalString(pathPrefix) {
-		return errors.New("path_prefix must be NFC-normalized")
-	}
-	if strings.Contains(pathPrefix, "//") {
-		return errors.New("path_prefix must not contain empty segments")
-	}
-	for _, r := range pathPrefix {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return errors.New("path_prefix must not contain control or format characters")
-		}
-	}
-	trimmed := strings.Trim(pathPrefix, "/")
-	if trimmed == "" {
-		return nil
-	}
-	for _, segment := range strings.Split(trimmed, "/") {
-		if segment == "." || segment == ".." {
-			return errors.New("path_prefix must not contain . or .. segments")
-		}
-	}
-	return nil
-}
-
 func parseView(r *http.Request, fallback string) (string, error) {
 	raw := strings.TrimSpace(r.URL.Query().Get("view"))
 	if raw == "" {
@@ -1503,8 +1411,11 @@ func parseOptionalDepth(r *http.Request) (*int, error) {
 		return nil, nil
 	}
 	value, err := strconv.Atoi(raw)
-	if err != nil || value < 1 {
-		return nil, errors.New("depth must be at least 1")
+	if err != nil || value < 0 || value > 1 {
+		return nil, errInvalidMemoryDepth
+	}
+	if value == 0 {
+		return nil, nil
 	}
 	return &value, nil
 }
@@ -1666,7 +1577,8 @@ func requireAPIKey(w http.ResponseWriter, r *http.Request) (auth.Principal, bool
 	}
 	if principal.CredentialType != "" &&
 		principal.CredentialType != auth.CredentialTypeAPIKey &&
-		principal.CredentialType != auth.CredentialTypePlatformSession {
+		principal.CredentialType != auth.CredentialTypePlatformSession &&
+		principal.CredentialType != auth.CredentialTypeWorkToken {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "API key authentication required"))
 		return auth.Principal{}, false
 	}
@@ -1791,6 +1703,10 @@ func (h *Handler) writeMemoryMutationError(w http.ResponseWriter, r *http.Reques
 	}
 	if errors.Is(err, db.ErrInvalidState) {
 		writeBadRequest(w, r, errors.New("memory store must not be archived"))
+		return
+	}
+	if errors.Is(err, db.ErrLimitExceeded) {
+		writeMemorySpecificError(w, r, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("Memory store may contain at most %d memories", db.MaxMemoryItemsPerStore), nil)
 		return
 	}
 	if errors.Is(err, db.ErrNotFound) {

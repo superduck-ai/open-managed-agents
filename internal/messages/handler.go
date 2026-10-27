@@ -9,11 +9,15 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/metering"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
 // requestHeadersToRemove 包含 hop-by-hop header、调用方凭证和不可由 sandbox 伪造的租户 header。
@@ -50,10 +54,12 @@ var responseHeadersToRemove = map[string]struct{}{
 
 // Handler 校验顶层 model 后按原样转发请求体。
 type Handler struct {
-	database *db.DB
-	secrets  *secrets.Service
-	client   *http.Client
-	logger   *slog.Logger
+	fileObjects  storage.ObjectStore
+	codeSessions *codesessions.Service
+	database     *db.DB
+	secrets      *secrets.Service
+	client       *http.Client
+	logger       *slog.Logger
 }
 
 // flushingResponseWriter 在每次复制一块响应后主动 flush，避免 SSE 被 net/http 缓冲。
@@ -63,13 +69,22 @@ type flushingResponseWriter struct {
 }
 
 // NewHandler 创建复用连接池的 Messages 代理 handler。
-func NewHandler(database *db.DB, secretService *secrets.Service, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, secretService *secrets.Service, codeSessionService *codesessions.Service, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	return &Handler{database: database, secrets: secretService, client: llmproviders.NewHTTPClient(0), logger: logger}
+	return &Handler{codeSessions: codeSessionService, database: database, secrets: secretService, client: llmproviders.NewHTTPClient(0), logger: logger}
+}
+
+func (h *Handler) WithMetering(calculator *billing.Calculator) *Handler {
+	h.client.Transport = &metering.Transport{Base: h.client.Transport, Store: h.database, Calculator: calculator, Source: "api", Logger: h.logger}
+	return h
 }
 
 // Create 处理 canonical POST /v1/messages，并以有界内存完成请求校验和响应流式转发。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
+	h.create(w, r, llmproviders.Messages)
+}
+
+func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string) {
 	// 鉴权已由 API middleware 完成；这里只确认 Principal 存在，避免 handler 被错误地裸挂载。
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
@@ -104,13 +119,38 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		h.writeProviderError(w, r, err)
 		return
 	}
-	target, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", r.URL.RawQuery)
+	if err := upstream.RequireBackend(backend); err != nil {
+		httpapi.WriteError(w, r, backendMismatchError())
+		return
+	}
+	if backend == llmproviders.Messages {
+		resolvedBody, fileErr := h.managedFileReferences(r.Context(), principal, body)
+		if fileErr != nil {
+			httpapi.WriteError(w, r, fileErr)
+			return
+		}
+		body = resolvedBody
+	}
+	path := "/v1/messages"
+	if backend == llmproviders.ChatCompletions {
+		if err := validateChatRequest(body); err != nil {
+			httpapi.WriteError(w, r, invalidRequestError(err))
+			return
+		}
+		path = "/v1/chat/completions"
+	}
+	body, err = llmproviders.ReplaceRequestModel(body, upstream.ModelID)
+	if err != nil {
+		httpapi.WriteError(w, r, invalidRequestError(err))
+		return
+	}
+	target, err := llmproviders.Endpoint(upstream.BaseURL, path, r.URL.RawQuery)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "build messages upstream endpoint", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
-	upstreamRequest, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(body))
+	upstreamRequest, err := http.NewRequestWithContext(metering.WithModel(r.Context(), upstream.QualifiedModelID), http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "build messages upstream request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
@@ -119,17 +159,22 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	upstreamRequest.ContentLength = int64(len(body))
 	// 先清除客户端鉴权和租户 header，再注入只存在于 OMA 服务端的真实上游 key。
 	upstreamRequest.Header = sanitizedRequestHeaders(r.Header)
-	llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)
-	upstreamResponse, err := h.client.Do(upstreamRequest)
+	if backend == llmproviders.ChatCompletions {
+		upstream.ApplyHeaders(upstreamRequest.Header)
+	} else {
+		llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)
+	}
+	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "proxy messages upstream request", "error", err)
-		httpapi.WriteError(w, r, upstreamUnavailableError())
+		if errors.Is(err, db.ErrSessionBudgetReached) {
+			w.Header().Set("X-Should-Retry", "false")
+		} else {
+			h.logger.ErrorContext(r.Context(), "start model request", "error", err)
+		}
+		httpapi.WriteError(w, r, modelRequestStartError(err))
 		return
 	}
-	defer upstreamResponse.Body.Close()
-	if err := writeProxyResponse(w, upstreamResponse); err != nil && r.Context().Err() == nil {
-		h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
-	}
+	h.proxyModelRequest(w, r, upstreamRequest, request)
 }
 
 func (h *Handler) writeProviderError(w http.ResponseWriter, r *http.Request, err error) {

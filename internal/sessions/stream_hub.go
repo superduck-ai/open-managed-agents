@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 
 	"github.com/go-chi/chi/v5"
@@ -42,10 +43,12 @@ func (sessionEventDelivery) implStreamDelivery() {}
 func (streamResetDelivery) implStreamDelivery()  {}
 
 type streamConnection struct {
-	threadID         string
-	primaryThread    bool
-	streamDeltaTypes map[string]struct{}
-	activePreviewIDs map[string]struct{}
+	threadID           string
+	primaryThread      bool
+	streamDeltaTypes   map[string]struct{}
+	activePreviewIDs   map[string]struct{}
+	finishedPreviewIDs map[string]struct{}
+	replayedEventIDs   map[string]struct{}
 }
 
 func newStreamHub() *streamHub {
@@ -93,10 +96,13 @@ func (h *streamHub) broadcastToSession(workspaceUUID, sessionID string, delivery
 	}
 }
 
-func (h *streamHub) reset() {
+func (h *streamHub) resetSession(sessionID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for id, sub := range h.subscribers {
+		if sub.sessionID != sessionID {
+			continue
+		}
 		h.enqueue(id, sub, streamResetDelivery{})
 	}
 }
@@ -112,10 +118,11 @@ func (h *streamHub) enqueue(id int64, sub *subscriber, delivery streamDelivery) 
 
 func newStreamConnection(threadID string, primaryThread bool, streamDeltaTypes map[string]struct{}) *streamConnection {
 	return &streamConnection{
-		threadID:         threadID,
-		primaryThread:    primaryThread,
-		streamDeltaTypes: streamDeltaTypes,
-		activePreviewIDs: make(map[string]struct{}),
+		threadID:           threadID,
+		primaryThread:      primaryThread,
+		streamDeltaTypes:   streamDeltaTypes,
+		activePreviewIDs:   make(map[string]struct{}),
+		finishedPreviewIDs: make(map[string]struct{}),
 	}
 }
 
@@ -135,7 +142,17 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		return false
 	}
 	if maevents.IsPublicSessionHistoryEvent(event.EventType) {
+		if _, replayed := c.replayedEventIDs[event.ExternalID]; replayed {
+			return false
+		}
 		delete(c.activePreviewIDs, event.ExternalID)
+		// Only preview subscribers can receive late deltas, so only they remember finished previews.
+		if len(c.streamDeltaTypes) > 0 {
+			for _, id := range previewsFinishedBy(event) {
+				c.finishedPreviewIDs[id] = struct{}{}
+				delete(c.activePreviewIDs, id)
+			}
+		}
 		return true
 	}
 	if !maevents.IsStreamDelta(event.EventType) {
@@ -145,6 +162,9 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 		return false
 	}
 	previewType, previewID := streamPreviewTarget(event)
+	if _, finished := c.finishedPreviewIDs[previewID]; finished {
+		return false
+	}
 	if event.EventType == previewEventDelta && previewID == "" {
 		// Legacy event_delta payloads predate preview lifecycle IDs. They cannot
 		// be correlated with an event_start, so retain their previous opt-in
@@ -163,6 +183,24 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 	}
 	_, active := c.activePreviewIDs[previewID]
 	return active
+}
+
+// A request end retires only its own previews, including ones whose start arrives after the end.
+func previewsFinishedBy(event sessionStreamEvent) []string {
+	switch event.EventType {
+	case "agent.message", "agent.thinking":
+		return []string{event.ExternalID}
+	case "span.model_request_end", "system.message":
+		var end struct {
+			EventIDs []string `json:"event_ids"`
+		}
+		if json.Unmarshal(event.Payload, &end) != nil {
+			return nil
+		}
+		return end.EventIDs
+	default:
+		return nil
+	}
 }
 
 func (c *streamConnection) matches(event sessionStreamEvent) bool {
@@ -188,10 +226,7 @@ func (h *Handler) StreamEvents(w http.ResponseWriter, r *http.Request, sessionID
 func (h *Handler) streamThreadEventsRoute(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
 	threadID := chi.URLParam(r, "thread_id")
-	if h.isFixtureThread(r, sessionID, threadID) {
-		h.streamEvents(w, r, sessionID, threadID, false)
-		return
-	}
+
 	if _, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead); err != nil {
 		h.errorAdapter.Write(w, r, err)
 		return
@@ -205,6 +240,9 @@ func (h *Handler) streamThreadEventsRoute(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID, threadID string, primaryThread bool) {
+	ctx, cancel := httpapi.StreamContext(r.Context())
+	defer cancel()
+	r = r.WithContext(ctx)
 	session, err := h.authorizeSession(r, sessionID, sessionAccessEventsRead)
 	if err != nil {
 		h.errorAdapter.Write(w, r, err)
@@ -236,12 +274,30 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		h.errorAdapter.Write(w, r, internalError("Could not subscribe to session event stream", err))
 		return
 	}
-	defer h.streams.unsubscribe(subID)
+	defer func() {
+		h.streams.unsubscribe(subID)
+		if err := h.eventBus.Unsubscribe(session.ExternalID); err != nil {
+			h.logger.WarnContext(r.Context(), "unsubscribe session event stream", "session_id", session.ExternalID, "error", err)
+		}
+	}()
 	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
+	cursorID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	replay, err := h.loadStreamReplay(r.Context(), session.WorkspaceUUID, sessionID, connection, cursorID)
+	if err != nil {
+		h.errorAdapter.Write(w, r, err)
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	fmt.Fprint(w, ": connected\n\n")
+	for _, event := range replay {
+		if connection.accepts(event) {
+			writeSSE(w, event, subscribeThreadID)
+		}
+	}
+	connection.rememberReplay(cursorID, replay)
 	flusher.Flush()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -260,6 +316,9 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 			if accepted {
 				writeSSE(w, event, subscribeThreadID)
 				flusher.Flush()
+			}
+			if event.EventType == "session.deleted" {
+				return
 			}
 		}
 	}
@@ -283,8 +342,22 @@ func requestedStreamDeltaTypes(r *http.Request) (map[string]struct{}, error) {
 }
 
 func writeSSE(w http.ResponseWriter, event sessionStreamEvent, threadID string) {
+	isPreview := maevents.IsStreamDelta(event.EventType)
+	eventID := event.ExternalID
+	if isPreview {
+		_, eventID = streamPreviewTarget(event)
+	}
+	if (isPreview || maevents.IsPublicSessionHistoryEvent(event.EventType)) && eventID != "" && !strings.ContainsAny(eventID, "\r\n\x00") {
+		fmt.Fprintf(w, "id: %s\n", eventID)
+	} else if isPreview {
+		fmt.Fprint(w, "id:\n")
+	}
 	fmt.Fprintf(w, "event: %s\n", event.EventType)
-	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.CreatedAt, event.ProcessedAt, threadID))
+	if isPreview {
+		fmt.Fprintf(w, "data: %s\n\n", event.Payload)
+		return
+	}
+	fmt.Fprintf(w, "data: %s\n\n", eventPayloadForResponse(event.Payload, event.ProcessedAt, threadID))
 }
 
 func streamPreviewTarget(event sessionStreamEvent) (string, string) {

@@ -52,13 +52,13 @@
         AND deleted_at IS NULL
     </select>
 
-    <select id="FindByOrganizationAndExternalID" resultType="memoryStoreRow">
-        SELECT
-        <include refid="columns"/>
+    <select id="FindByExternalIDs" resultType="memoryStoreRow">
+        SELECT <include refid="columns"/>
         FROM memory_stores
-        WHERE organization_uuid = #{organizationUUID}
-        AND external_id = #{externalID}
+        WHERE workspace_uuid = #{workspaceUUID}
         AND deleted_at IS NULL
+        AND external_id IN
+        <foreach collection="externalIDs" item="externalID" open="(" separator="," close=")">#{externalID}</foreach>
     </select>
 
     <select id="FindForUpdate" resultType="memoryStoreRow">
@@ -91,6 +91,7 @@
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{externalID}
         AND deleted_at IS NULL
+        AND archived_at IS NULL
         RETURNING
         <include refid="columns"/>
     </update>

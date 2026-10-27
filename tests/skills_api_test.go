@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -17,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
@@ -69,14 +70,20 @@ func TestSkillsAPI(t *testing.T) {
 	defer cleanupBuiltinSkillRows(t, app.pool)
 	seedBuiltinSkill(t, app, store, "xlsx", "20260203")
 
-	t.Run("failure missing beta header", func(t *testing.T) {
+	t.Run("success stable endpoint without beta header", func(t *testing.T) {
 		resp := doSkillRequest(t, app, http.MethodGet, "/v1/skills?beta=true", nil, defaultTestKey, false, "")
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("list status: %d", resp.StatusCode)
+		}
+		resp.Body.Close()
 	})
 
-	t.Run("failure missing beta query", func(t *testing.T) {
+	t.Run("success legacy endpoint without beta query", func(t *testing.T) {
 		resp := doSkillRequest(t, app, http.MethodGet, "/v1/skills", nil, defaultTestKey, true, "")
-		assertError(t, resp, http.StatusBadRequest, "invalid_request_error")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("list status: %d", resp.StatusCode)
+		}
+		resp.Body.Close()
 	})
 
 	t.Run("failure non multipart upload", func(t *testing.T) {
@@ -384,7 +391,7 @@ func TestSkillsAPI(t *testing.T) {
 			t.Fatalf("latest_version after delete = %s, want %s", afterDeleteVersion.LatestVersion, firstVersion.Version)
 		}
 
-		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("delete skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -413,7 +420,7 @@ func TestSkillsAPI(t *testing.T) {
 		}
 		defer cleanupApp.pool.Exec(context.Background(), `delete from jobs where payload->>'key' = $1`, objectKey)
 
-		resp := doSkillRequest(t, cleanupApp, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, true, "")
+		resp := doSkillRequest(t, cleanupApp, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("delete cleanup skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -468,66 +475,73 @@ func TestSkillsAPI(t *testing.T) {
 		assertError(t, resp, http.StatusForbidden, "permission_error")
 	})
 
-	t.Run("success official sdk fixture compatibility", func(t *testing.T) {
+	t.Run("success SDK multipart lifecycle persists resources", func(t *testing.T) {
 		body, contentType := skillMultipartBody(t, "display_title", []skillUploadFile{
-			{FieldName: "files[]", Filename: "anonymous_file", Content: "Example data"},
+			{FieldName: "files[]", Filename: "sdk-skill/SKILL.md", Content: "---\nname: sdk-skill\ndescription: SDK upload\n---\n\n# SDK Skill"},
 		})
-		resp := doSkillRequest(t, app, http.MethodPost, "/v1/skills?beta=true", body, config.OfficialSDKResourceAPIKey, true, contentType)
+		resp := doSkillRequest(t, app, http.MethodPost, "/v1/skills?beta=true", body, defaultTestKey, true, contentType)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official create status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 		var created skillAPIResponse
 		decodeJSON(t, resp.Body, &created)
-		if created.ID != app.cfg.SDKFixtures.SkillID {
-			t.Fatalf("official create id = %s, want %s", created.ID, app.cfg.SDKFixtures.SkillID)
+		if created.ID == "" || created.LatestVersion == "" {
+			t.Fatalf("create must return persisted ID and version: %+v", created)
 		}
 
-		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official retrieve status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 
-		officialList := listSkillsWithKey(t, app, "source=source&page=page&limit=0", config.OfficialSDKResourceAPIKey)
+		officialList := listSkillsWithKey(t, app, "source=source&limit=1", defaultTestKey)
 		if len(officialList.Data) != 0 {
 			t.Fatalf("official unknown source list = %+v, want empty", officialList)
 		}
 
+		time.Sleep(time.Millisecond)
 		versionBody, versionContentType := skillMultipartBody(t, "", []skillUploadFile{
-			{FieldName: "files[]", Filename: "anonymous_file", Content: "Example data"},
+			{FieldName: "files[]", Filename: "sdk-skill/SKILL.md", Content: "---\nname: sdk-skill\ndescription: SDK upload\n---\n\n# SDK Skill"},
 		})
-		resp = doSkillRequest(t, app, http.MethodPost, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"/versions?beta=true", versionBody, config.OfficialSDKResourceAPIKey, true, versionContentType)
+		resp = doSkillRequest(t, app, http.MethodPost, "/v1/skills/"+created.ID+"/versions?beta=true", versionBody, defaultTestKey, true, versionContentType)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official create version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 
-		officialVersions := listSkillVersionsWithKey(t, app, app.cfg.SDKFixtures.SkillID, "page=page&limit=0", config.OfficialSDKResourceAPIKey)
-		if len(officialVersions.Data) != 1 || officialVersions.Data[0].Version != app.cfg.SDKFixtures.SkillVersion {
+		var secondVersion skillVersionAPIResponse
+		decodeJSON(t, resp.Body, &secondVersion)
+		if secondVersion.SkillID != created.ID || secondVersion.Version == created.LatestVersion {
+			t.Fatalf("version was not created: %+v", secondVersion)
+		}
+
+		officialVersions := listSkillVersionsWithKey(t, app, created.ID, "limit=10", defaultTestKey)
+		if len(officialVersions.Data) != 2 || officialVersions.Data[1].Version != secondVersion.Version {
 			t.Fatalf("official versions = %+v", officialVersions)
 		}
 
-		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"/versions/"+app.cfg.SDKFixtures.SkillVersion+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+created.ID+"/versions/"+secondVersion.Version+"?beta=true", nil, defaultTestKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official retrieve version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 
-		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"/versions/"+app.cfg.SDKFixtures.SkillVersion+"/content?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodGet, "/v1/skills/"+created.ID+"/versions/"+secondVersion.Version+"/content?beta=true", nil, defaultTestKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official download version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
-		assertZipContains(t, readAll(t, resp.Body), "fixture-skill/SKILL.md")
+		assertZipContains(t, readAll(t, resp.Body), "sdk-skill/SKILL.md")
 
-		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"/versions/"+app.cfg.SDKFixtures.SkillVersion+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+created.ID+"/versions/"+secondVersion.Version+"?beta=true", nil, defaultTestKey, true, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official delete version status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
 		}
 
-		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+app.cfg.SDKFixtures.SkillID+"?beta=true", nil, config.OfficialSDKResourceAPIKey, true, "")
+		resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+created.ID+"?beta=true", nil, defaultTestKey, false, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("official delete skill status = %d, want 200: %s", resp.StatusCode, readAll(t, resp.Body))
@@ -564,8 +578,8 @@ func TestSkillsDisplayTitleSchema(t *testing.T) {
 		t.Fatalf("query skills display_title unique index: %v", err)
 	}
 	normalizedIndexDef := strings.ToLower(indexDef)
-	if !strings.Contains(normalizedIndexDef, "display_title") || !strings.Contains(normalizedIndexDef, "where (deleted_at is null)") {
-		t.Fatalf("skills display_title index = %s, want active display_title unique index", indexDef)
+	if strings.Contains(normalizedIndexDef, "unique") || !strings.Contains(normalizedIndexDef, "display_title") || !strings.Contains(normalizedIndexDef, "where (deleted_at is null)") {
+		t.Fatalf("skills display_title index = %s, want non-unique active display_title lookup index", indexDef)
 	}
 	if strings.Contains(normalizedIndexDef, "display_title is not null") {
 		t.Fatalf("skills display_title index = %s, should not depend on nullable display_title predicate", indexDef)
@@ -777,12 +791,7 @@ func createNamedSkill(t *testing.T, app *testApp, displayTitle, directory string
 func newSkillsPaginationTestApp(t *testing.T) (*testApp, *fakeStore) {
 	t.Helper()
 	store := newFakeStore("skills-pagination-bucket-" + uniqueSkillSuffix())
-	app := newTestAppWithStore(t, nil, store)
-	cleanupBuiltinSkillRows(t, app.pool)
-	t.Cleanup(func() {
-		cleanupBuiltinSkillRows(t, app.pool)
-		app.close()
-	})
+	app := newPayloadIntegrationApp(t, store)
 	return app, store
 }
 
@@ -792,7 +801,7 @@ func uniqueSkillSuffix() string {
 
 func deleteSkill(t *testing.T, app *testApp, skillID string) {
 	t.Helper()
-	resp := doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+skillID+"?beta=true", nil, defaultTestKey, true, "")
+	resp := doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+skillID+"?beta=true", nil, defaultTestKey, false, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("delete skill cleanup status = %d: %s", resp.StatusCode, readAll(t, resp.Body))

@@ -14,11 +14,13 @@
         agent_snapshot,
         name,
         description,
-        metadata,
+        metadata - '_oma_runtime_user_uuid' AS metadata,
+        metadata->>'_oma_runtime_user_uuid' AS runtime_user_uuid,
         initial_events,
         resources,
         resource_secrets,
         vault_ids,
+        budget,
         schedule,
         last_run_at,
         status,
@@ -49,6 +51,7 @@
             resources,
             resource_secrets,
             vault_ids,
+            budget,
             schedule,
             last_run_at,
             status,
@@ -69,11 +72,13 @@
             CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
             #{params.Name},
             #{params.Description},
-            CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid')
+                || jsonb_strip_nulls(jsonb_build_object('_oma_runtime_user_uuid', CAST(#{params.RuntimeUserUUID} AS text))),
             CAST(#{params.InitialEvents,sensitive=true} AS jsonb),
             CAST(#{params.Resources,sensitive=true} AS jsonb),
             CAST(#{params.ResourceSecrets,sensitive=true} AS jsonb),
             CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
+            CAST(#{params.Budget,sensitive=true} AS jsonb),
             CAST(#{params.Schedule,sensitive=true} AS jsonb),
             #{params.LastRunAt},
             #{params.Status},
@@ -123,11 +128,13 @@
             agent_snapshot = CAST(#{params.AgentSnapshot,sensitive=true} AS jsonb),
             name = #{params.Name},
             description = #{params.Description},
-            metadata = CAST(#{params.Metadata,sensitive=true} AS jsonb),
+            metadata = (CAST(#{params.Metadata,sensitive=true} AS jsonb) - '_oma_runtime_user_uuid')
+                || jsonb_strip_nulls(jsonb_build_object('_oma_runtime_user_uuid', metadata->'_oma_runtime_user_uuid')),
             initial_events = CAST(#{params.InitialEvents,sensitive=true} AS jsonb),
             resources = CAST(#{params.Resources,sensitive=true} AS jsonb),
             resource_secrets = CAST(#{params.ResourceSecrets,sensitive=true} AS jsonb),
             vault_ids = CAST(#{params.VaultIDs,sensitive=true} AS jsonb),
+            budget = CAST(#{params.Budget,sensitive=true} AS jsonb),
             <if test="params.ScheduleChanged">
                 schedule = CAST(#{params.Schedule,sensitive=true} AS jsonb),
             </if>
@@ -145,12 +152,12 @@
             updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND external_id = #{externalID}
-        AND deleted_at IS NULL
+        AND deleted_at IS NULL AND archived_at IS NULL
         RETURNING
         <include refid="columns"/>
     </update>
 
-	<update id="ArchiveByRootAgent" result="exec">
+	<update id="ArchiveByRootAgent" result="returning" resultType="DeploymentSchedule">
 		UPDATE deployments
 		SET archived_at = COALESCE(archived_at, NOW()),
 			updated_at = NOW()
@@ -158,6 +165,7 @@
 		AND agent_external_id = #{agentExternalID}
 		AND archived_at IS NULL
 		AND deleted_at IS NULL
+		RETURNING workspace_uuid, external_id, schedule
 	</update>
 
     <update id="PauseByExternalID" result="returning" resultType="deploymentMapperRow">
@@ -185,15 +193,6 @@
         RETURNING
         <include refid="columns"/>
     </update>
-
-	<select id="ListActiveSchedules" resultType="DeploymentSchedule">
-		SELECT workspace_uuid, external_id, schedule
-		FROM deployments
-		WHERE status = 'active'
-		AND archived_at IS NULL
-		AND deleted_at IS NULL
-		AND schedule IS NOT NULL
-	</select>
 
 	<update id="PauseAfterScheduledRun" result="rows">
 		UPDATE deployments

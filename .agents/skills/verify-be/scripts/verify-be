@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+cd -- "$root"
+mkdir -p tmp/bin
+./scripts/generate-go.sh
+go build -o tmp/bin/verify-be ./cmd/verify-be
+exec tmp/bin/verify-be "$@"

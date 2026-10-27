@@ -18,9 +18,16 @@ import {
 } from '../../../shared/ui/dropdown-menu';
 import { toast } from '../../../shared/ui/sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
+import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
+import {
+  ResourceListPagination,
+  resourceListPageCount,
+  resourceListTotalCount,
+} from '../../../shared/ui/resource-list-pagination';
+import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { useWorkspace } from '../../../shared/workspaces/context';
-import { Archive, ChevronLeft, ChevronRight, Copy, Pencil, Play, Plus, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Archive, Copy, Pencil, Play, Plus, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { agentDetailStatusValues } from '../agents/model';
 import {
   archiveManagedEntity,
@@ -28,19 +35,13 @@ import {
   deleteManagedEntity,
   listAgents,
   listManagedEntities,
+  managedEntityListLimit,
   pauseDeployment,
   runDeployment,
   unpauseDeployment,
   updateManagedEntity,
 } from '../api';
-import {
-  AgentFilterDropdown,
-  AgentSelectionCheckbox,
-  ConfirmEntityDialog,
-  EmptyState,
-  ManagedErrorAlert,
-  ManagedSearchField,
-} from '../components/common';
+import { AgentSelectionCheckbox, ConfirmEntityDialog, EmptyState, ManagedErrorAlert } from '../components/common';
 import {
   entityActionLabel,
   entityKindLabel,
@@ -66,14 +67,41 @@ import {
   type ResourceConfig,
   type SessionApiResponse,
 } from '../types';
-import { compactEntityId, copyText, errorMessage, handleInternalLinkClick, managedEntityDetailHref } from '../utils';
+import {
+  compactEntityId,
+  copyText,
+  errorMessage,
+  handleInternalLinkClick,
+  managedEntityDetailHref,
+  navigateToInternalHref,
+} from '../utils';
+import { DeploymentEmptyState } from './deployment-list';
+import { SessionQuickView } from '../sessions/SessionQuickView';
+import { SessionListContent } from '../sessions/SessionListContent';
+import { SessionListHeader } from '../sessions/SessionListHeader';
+import { useSessionIdSearch } from '../sessions/useSessionIdSearch';
 import { ManagedEntityDialog } from './dialogs';
 import { useManagedEntityCells } from './environment-list';
 import { managedEntityErrorMessage } from './environment-model';
 import { columnWidth, entityAgentId, entityAgentLabel, entityDisplayName, entityStatusLabel } from './model';
 
 type ManagedFilterMenu = 'agent' | 'created' | 'deployment' | 'status';
+const managedEntityTableWidths: Record<ManagedEntitySection, string> = {
+  sessions: 'min-w-[1080px]',
+  environments: 'min-w-[1080px]',
+  'credential-vaults': 'min-w-[760px]',
+  'memory-stores': 'min-w-[760px]',
+  deployments: 'min-w-[960px]',
+};
 type DeploymentStatusFilter = NonNullable<ManagedEntityListFilters['status']>;
+type ManagedEntityPageState = {
+  workspaceId: string;
+  section: ManagedEntitySection;
+  cursor: PageCursor;
+  history: PageCursor[];
+  nextPage: PageCursor;
+  totalCount: number | null;
+};
 
 function defaultGenericStatusFilter(section: ManagedEntitySection): AgentStatusFilter {
   switch (section) {
@@ -87,10 +115,66 @@ function defaultGenericStatusFilter(section: ManagedEntitySection): AgentStatusF
   }
 }
 
+function currentManagedEntityPageState(
+  state: ManagedEntityPageState,
+  workspaceId: string,
+  section: ManagedEntitySection,
+) {
+  if (state.workspaceId === workspaceId && state.section === section) {
+    return state;
+  }
+  return { cursor: null, history: [], nextPage: null, totalCount: null };
+}
+
+function withEntityPageResult(
+  current: ManagedEntityPageState,
+  workspaceId: string,
+  section: ManagedEntitySection,
+  pageCursor: PageCursor,
+  nextPage: PageCursor,
+  totalCount: number | null,
+): ManagedEntityPageState {
+  const sameScope = current.workspaceId === workspaceId && current.section === section;
+  return {
+    workspaceId,
+    section,
+    cursor: pageCursor,
+    history: sameScope ? current.history : [],
+    nextPage,
+    totalCount,
+  };
+}
+
+function entityMutationDropsListRow(
+  action: 'archive' | 'delete',
+  section: ManagedEntitySection,
+  filters: ManagedEntityListFilters | undefined,
+  deploymentStatus: DeploymentStatusFilter,
+) {
+  if (action === 'delete') {
+    return true;
+  }
+  if (section === 'deployments') {
+    return deploymentStatus !== 'all';
+  }
+  return filters?.includeArchived !== true;
+}
+
+function managedFilterValueLabel(
+  options: ReadonlyArray<{ value: string; label: string }>,
+  value: string,
+  fallback: string,
+) {
+  return options.find((option) => option.value === value)?.label ?? fallback;
+}
+
 export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { section: ManagedEntitySection } }) {
   const { msg } = useI18n();
   const { activeWorkspaceId } = useWorkspace();
   const [search, setSearch] = useState('');
+  const [previewSession, setPreviewSession] = useState<{ workspaceId: string; session: SessionApiResponse } | null>(
+    null,
+  );
   const [entities, setEntities] = useState<ManagedEntityApiResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -116,34 +200,22 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
   const [sessionAgentFilter, setSessionAgentFilter] = useState('');
   const [sessionDeploymentFilter, setSessionDeploymentFilter] = useState('');
   const [sessionStatusFilter, setSessionStatusFilter] = useState<AgentDetailStatusFilter>('active');
-  const [entityPageState, setEntityPageState] = useState<{
-    workspaceId: string;
-    section: ManagedEntitySection;
-    cursor: PageCursor;
-    history: PageCursor[];
-    nextPage: PageCursor;
-  }>({
+  const [entityPageState, setEntityPageState] = useState<ManagedEntityPageState>({
     workspaceId: '',
     section: config.section,
     cursor: null,
     history: [],
     nextPage: null,
+    totalCount: null,
   });
-  const entityPageCursor =
-    entityPageState.workspaceId === activeWorkspaceId && entityPageState.section === config.section
-      ? entityPageState.cursor
-      : null;
-  const entityPageHistory =
-    entityPageState.workspaceId === activeWorkspaceId && entityPageState.section === config.section
-      ? entityPageState.history
-      : [];
-  const entityNextPage =
-    entityPageState.workspaceId === activeWorkspaceId && entityPageState.section === config.section
-      ? entityPageState.nextPage
-      : null;
+  const currentPage = currentManagedEntityPageState(entityPageState, activeWorkspaceId, config.section);
+  const entityPageCursor = currentPage.cursor;
+  const entityPageHistory = currentPage.history;
+  const entityNextPage = currentPage.nextPage;
   const title = resourceTitle(config, msg);
   const description = resourceDescription(config, msg);
   const createLabel = resourceCreateLabel(config, msg);
+  const createTriggerRef = useRef<HTMLButtonElement>(null);
   const searchPlaceholder = resourceSearchPlaceholder(config, msg);
   const managedEntityListFilters = useMemo<ManagedEntityListFilters | undefined>(() => {
     switch (config.section) {
@@ -267,29 +339,45 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     }
     return options;
   }, [entities, msg, sessionDeploymentFilter]);
-  const createdFilterValueLabel =
-    createdFilterOptions.find((option) => option.value === createdFilter)?.label ??
-    msg('managedAgents.filters.allTime', 'All time');
-  const deploymentAgentValueLabel =
-    deploymentAgentFilterOptions.find((option) => option.value === deploymentAgentFilter)?.label ??
-    msg('common.all', 'All');
-  const deploymentStatusValueLabel =
-    deploymentStatusFilterOptions.find((option) => option.value === deploymentStatusFilter)?.label ??
-    msg('common.all', 'All');
-  const genericStatusValueLabel =
-    genericStatusFilterOptions.find((option) => option.value === genericStatusFilter)?.label ??
-    msg('common.all', 'All');
-  const sessionAgentValueLabel =
-    sessionAgentFilterOptions.find((option) => option.value === sessionAgentFilter)?.label ?? msg('common.all', 'All');
-  const sessionDeploymentValueLabel =
-    sessionDeploymentFilterOptions.find((option) => option.value === sessionDeploymentFilter)?.label ??
-    msg('common.all', 'All');
-  const sessionStatusValueLabel =
-    sessionStatusFilterOptions.find((option) => option.value === sessionStatusFilter)?.label ??
-    msg('managedAgents.sessions.statusActive', 'Active');
+  const createdFilterValueLabel = managedFilterValueLabel(
+    createdFilterOptions,
+    createdFilter,
+    msg('managedAgents.filters.allTime', 'All time'),
+  );
+  const deploymentAgentValueLabel = managedFilterValueLabel(
+    deploymentAgentFilterOptions,
+    deploymentAgentFilter,
+    msg('common.all', 'All'),
+  );
+  const deploymentStatusValueLabel = managedFilterValueLabel(
+    deploymentStatusFilterOptions,
+    deploymentStatusFilter,
+    msg('common.all', 'All'),
+  );
+  const genericStatusValueLabel = managedFilterValueLabel(
+    genericStatusFilterOptions,
+    genericStatusFilter,
+    msg('common.all', 'All'),
+  );
+  const sessionAgentValueLabel = managedFilterValueLabel(
+    sessionAgentFilterOptions,
+    sessionAgentFilter,
+    msg('common.all', 'All'),
+  );
+  const sessionDeploymentValueLabel = managedFilterValueLabel(
+    sessionDeploymentFilterOptions,
+    sessionDeploymentFilter,
+    msg('common.all', 'All'),
+  );
+  const sessionStatusValueLabel = managedFilterValueLabel(
+    sessionStatusFilterOptions,
+    sessionStatusFilter,
+    msg('managedAgents.sessions.statusActive', 'Active'),
+  );
 
   useEffect(() => {
     setCreatedFilter('all_time');
+    setPreviewSession(null);
     setDeploymentAgentOptions([]);
     setDeploymentAgentFilter('');
     setDeploymentStatusFilter('all');
@@ -347,28 +435,25 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         const page = await listManagedEntities(config.section, activeWorkspaceId, pageCursor, managedEntityListFilters);
         if (active) {
           setEntities(page.data ?? []);
-          setEntityPageState((current) => ({
-            workspaceId: activeWorkspaceId,
-            section: config.section,
-            cursor: pageCursor,
-            history:
-              current.workspaceId === activeWorkspaceId && current.section === config.section ? current.history : [],
-            nextPage: page.next_page ?? null,
-          }));
+          setEntityPageState((current) =>
+            withEntityPageResult(
+              current,
+              activeWorkspaceId,
+              config.section,
+              pageCursor,
+              page.next_page ?? null,
+              resourceListTotalCount(page.total_count),
+            ),
+          );
           setLoading(false);
         }
       } catch (error) {
         if (active) {
           setEntities([]);
           setLoadError(managedEntityErrorMessage(config.section, error, 'list', msg));
-          setEntityPageState((current) => ({
-            workspaceId: activeWorkspaceId,
-            section: config.section,
-            cursor: pageCursor,
-            history:
-              current.workspaceId === activeWorkspaceId && current.section === config.section ? current.history : [],
-            nextPage: null,
-          }));
+          setEntityPageState((current) =>
+            withEntityPageResult(current, activeWorkspaceId, config.section, pageCursor, null, null),
+          );
           setLoading(false);
         }
       }
@@ -407,6 +492,17 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         .includes(normalized);
     });
   }, [config.section, deploymentAgentFilter, deploymentStatusFilter, entities, search]);
+  const sessionIdSearch = useSessionIdSearch(
+    activeWorkspaceId,
+    search,
+    config.section === 'sessions',
+    entities.some((entity) => entity.id === search.trim()),
+  );
+  const sessionListEntities = sessionIdSearch.handled
+    ? sessionIdSearch.session
+      ? [sessionIdSearch.session]
+      : []
+    : (visibleEntities as SessionApiResponse[]);
   const visibleEntityIds = useMemo(() => visibleEntities.map((entity) => entity.id), [visibleEntities]);
   const hasSelectionColumn = config.columns.some((column) => !column);
   const allVisibleEntitiesSelected =
@@ -452,6 +548,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       cursor: null,
       history: [],
       nextPage: null,
+      totalCount: null,
     });
   };
 
@@ -508,7 +605,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     switch (filter) {
       case 'Created  All time':
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-created`}
             label={msg('managedAgents.filters.created', 'Created')}
             valueLabel={createdFilterValueLabel}
@@ -523,7 +620,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         );
       case 'Agent  All':
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-agent`}
             label={msg('managedAgents.common.agent', 'Agent')}
             valueLabel={config.section === 'sessions' ? sessionAgentValueLabel : deploymentAgentValueLabel}
@@ -540,7 +637,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
         );
       case 'Deployment  All':
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-deployment`}
             label={msg('managedAgents.deployments.kind', 'Deployment')}
             valueLabel={sessionDeploymentValueLabel}
@@ -556,7 +653,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       case 'Status  Active':
         if (config.section === 'sessions') {
           return (
-            <AgentFilterDropdown
+            <ResourceFilterDropdown
               key={`${config.section}-status`}
               label={msg('managedAgents.filters.status', 'Status')}
               valueLabel={sessionStatusValueLabel}
@@ -571,7 +668,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           );
         }
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-status`}
             label={msg('managedAgents.filters.status', 'Status')}
             valueLabel={genericStatusValueLabel}
@@ -587,7 +684,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       case 'Status  All':
         if (config.section === 'deployments') {
           return (
-            <AgentFilterDropdown
+            <ResourceFilterDropdown
               key={`${config.section}-status`}
               label={msg('managedAgents.filters.status', 'Status')}
               valueLabel={deploymentStatusValueLabel}
@@ -602,7 +699,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
           );
         }
         return (
-          <AgentFilterDropdown
+          <ResourceFilterDropdown
             key={`${config.section}-status`}
             label={msg('managedAgents.filters.status', 'Status')}
             valueLabel={genericStatusValueLabel}
@@ -630,6 +727,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       cursor: entityNextPage,
       history: [...entityPageHistory, entityPageCursor],
       nextPage: null,
+      totalCount: currentPage.totalCount,
     });
   };
 
@@ -643,6 +741,7 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       cursor: entityPageHistory[entityPageHistory.length - 1],
       history: entityPageHistory.slice(0, -1),
       nextPage: null,
+      totalCount: currentPage.totalCount,
     });
   };
 
@@ -650,13 +749,29 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     setMutationError(null);
     if (entity) {
       const updated = await updateManagedEntity(config.section, entity.id, values, activeWorkspaceId);
+      if (config.section === 'sessions') {
+        await sessionIdSearch.syncSession(entity.id, updated as SessionApiResponse);
+      }
       setEntities((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       toast.success(managedToastMessage(config.section, 'updated', msg));
-      return;
+      return false;
     }
     const created = await createManagedEntity(config.section, values, activeWorkspaceId);
     setEntities((current) => [created, ...current.filter((item) => item.id !== created.id)]);
     toast.success(managedToastMessage(config.section, 'created', msg));
+    if (config.section === 'credential-vaults') {
+      navigateToInternalHref(
+        `${managedEntityDetailHref(activeWorkspaceId, config.section, created.id)}?addCredential=1`,
+      );
+      return false;
+    }
+    if (config.section === 'sessions') {
+      navigateToInternalHref(
+        `${managedEntityDetailHref(activeWorkspaceId, config.section, created.id)}?interactive=true`,
+      );
+      return true;
+    }
+    return false;
   };
 
   const handleConfirm = async () => {
@@ -667,12 +782,46 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     setBusyAction(`${action}:${entity.id}`);
     setMutationError(null);
     try {
-      if (action === 'archive') {
-        await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
-      } else {
-        await deleteManagedEntity(config.section, entity.id, activeWorkspaceId);
+      try {
+        let updated: ManagedEntityApiResponse | null = null;
+        if (action === 'archive') {
+          updated = await archiveManagedEntity(config.section, entity.id, activeWorkspaceId);
+        } else {
+          await deleteManagedEntity(config.section, entity.id, activeWorkspaceId);
+        }
+        if (config.section === 'sessions') {
+          await sessionIdSearch.syncSession(entity.id, updated as SessionApiResponse | null);
+        }
+      } catch (error) {
+        setMutationError(managedEntityErrorMessage(config.section, error, action, msg));
+        return;
       }
-      if (action === 'archive' && config.section === 'deployments') {
+      toast.success(managedToastMessage(config.section, action === 'archive' ? 'archived' : 'deleted', msg));
+      setConfirmState(null);
+      if (entityMutationDropsListRow(action, config.section, managedEntityListFilters, deploymentStatusFilter)) {
+        try {
+          let cursor = entityPageCursor;
+          let history = entityPageHistory;
+          let page = await listManagedEntities(config.section, activeWorkspaceId, cursor, managedEntityListFilters);
+          if ((page.data ?? []).length === 0 && history.length > 0) {
+            cursor = history[history.length - 1];
+            history = history.slice(0, -1);
+            page = await listManagedEntities(config.section, activeWorkspaceId, cursor, managedEntityListFilters);
+          }
+          setEntities(page.data ?? []);
+          setEntityPageState({
+            workspaceId: activeWorkspaceId,
+            section: config.section,
+            cursor,
+            history,
+            nextPage: page.next_page ?? null,
+            totalCount: resourceListTotalCount(page.total_count),
+          });
+        } catch (error) {
+          setEntities((current) => current.filter((item) => item.id !== entity.id));
+          setLoadError(errorMessage(error));
+        }
+      } else if (action === 'archive' && config.section === 'deployments') {
         const archivedAt = new Date().toISOString();
         setEntities((current) =>
           current.map((item) =>
@@ -682,10 +831,6 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
       } else {
         setEntities((current) => current.filter((item) => item.id !== entity.id));
       }
-      toast.success(managedToastMessage(config.section, action === 'archive' ? 'archived' : 'deleted', msg));
-      setConfirmState(null);
-    } catch (error) {
-      setMutationError(managedEntityErrorMessage(config.section, error, action, msg));
     } finally {
       setBusyAction(null);
     }
@@ -717,121 +862,197 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
     }
   };
 
+  const listFilters = (
+    <>
+      <ResourceSearchField
+        id={`${config.section}-search`}
+        value={search}
+        placeholder={searchPlaceholder}
+        prefix={config.section === 'sessions' ? undefined : config.searchPrefix}
+        onChange={setSearch}
+      />
+      {config.filters.map((filter) => renderManagedFilter(filter))}
+    </>
+  );
+  const sessionAgentNames = useMemo(
+    () => new Map(deploymentAgentOptions.map((option) => [option.id, option.label])),
+    [deploymentAgentOptions],
+  );
+  const sessionListActions = useMemo(
+    () => ({
+      onQuickView: (session: SessionApiResponse) => setPreviewSession({ workspaceId: activeWorkspaceId, session }),
+      onEdit: (session: SessionApiResponse) => setDialogState({ mode: 'edit' as const, entity: session }),
+      onArchive: (session: SessionApiResponse) => setConfirmState({ action: 'archive' as const, entity: session }),
+      onDelete: (session: SessionApiResponse) => setConfirmState({ action: 'delete' as const, entity: session }),
+    }),
+    [activeWorkspaceId],
+  );
+  const resetSessionFilters = () => {
+    setSearch('');
+    setCreatedFilter('all_time');
+    setSessionAgentFilter('');
+    setSessionDeploymentFilter('');
+    setSessionStatusFilter('active');
+    resetEntityPage();
+  };
+  const sessionListFiltered = Boolean(
+    search ||
+    createdFilter !== 'all_time' ||
+    sessionAgentFilter ||
+    sessionDeploymentFilter ||
+    sessionStatusFilter !== 'active',
+  );
   return (
     <section className="relative min-h-[calc(100vh-48px)] text-foreground">
-      <header className="mb-5 flex items-start justify-between gap-6">
-        <div>
-          <h1 className="text-[28px] font-semibold leading-tight text-foreground">{title}</h1>
-          <p className="mt-2 max-w-[760px] text-[15px] leading-5 text-muted-foreground">{description}</p>
-        </div>
-        {createLabel ? (
-          <Button type="button" className="h-9 shrink-0" onClick={() => setDialogState({ mode: 'create' })}>
-            <Plus className="size-4" aria-hidden />
-            {createLabel}
-          </Button>
-        ) : null}
-      </header>
-
-      <div className="mb-7 flex flex-wrap items-center gap-2">
-        <ManagedSearchField
-          id={`${config.section}-search`}
-          value={search}
-          placeholder={searchPlaceholder}
-          prefix={config.searchPrefix}
-          onChange={setSearch}
+      {config.section === 'sessions' ? (
+        <SessionListHeader
+          title={title}
+          loading={loading || sessionIdSearch.loading}
+          filters={listFilters}
+          onCreate={() => setDialogState({ mode: 'create' })}
+          onRefresh={() => (sessionIdSearch.handled ? sessionIdSearch.refresh() : reload())}
         />
-        {config.filters.map((filter) => renderManagedFilter(filter))}
-      </div>
+      ) : (
+        <>
+          <ResourcePageHeader
+            title={title}
+            description={
+              ['credential-vaults', 'memory-stores', 'deployments'].includes(config.section) ? undefined : description
+            }
+            actions={
+              createLabel ? (
+                <Button
+                  ref={createTriggerRef}
+                  type="button"
+                  size="lg"
+                  onClick={() => setDialogState({ mode: 'create' })}
+                >
+                  <Plus className="size-4" aria-hidden />
+                  {createLabel}
+                </Button>
+              ) : null
+            }
+          />
+          <div className="mb-7 flex flex-wrap items-center gap-2">{listFilters}</div>
+        </>
+      )}
 
-      {loadError ? <ManagedErrorAlert className="mb-3">{loadError}</ManagedErrorAlert> : null}
+      {loadError && config.section !== 'sessions' ? (
+        <ManagedErrorAlert className="mb-3">{loadError}</ManagedErrorAlert>
+      ) : null}
       {mutationError ? <ManagedErrorAlert className="mb-3">{mutationError}</ManagedErrorAlert> : null}
 
-      <div className="overflow-visible">
-        <Table className={dataTableClassName}>
-          <TableHeader>
-            <TableRow className={dataTableHeaderRowClassName}>
-              {config.columns.map((column) => (
+      {config.section === 'sessions' ? (
+        <SessionListContent
+          sessions={sessionListEntities}
+          agentNames={sessionAgentNames}
+          workspaceId={activeWorkspaceId}
+          loading={loading || sessionIdSearch.loading}
+          busyAction={busyAction}
+          actions={sessionListActions}
+          filtered={sessionListFiltered}
+          error={sessionIdSearch.error || loadError}
+          onCreate={() => setDialogState({ mode: 'create' })}
+          onReset={resetSessionFilters}
+          onRetry={() => (sessionIdSearch.handled ? sessionIdSearch.refresh() : reload())}
+        />
+      ) : (
+        <div>
+          <Table className={cn(dataTableClassName, managedEntityTableWidths[config.section])}>
+            <TableHeader>
+              <TableRow className={dataTableHeaderRowClassName}>
+                {config.columns.map((column) => (
+                  <TableHead
+                    key={column || 'select'}
+                    className={cn(
+                      dataTableHeaderCellClassName,
+                      columnWidth(config.section, column),
+                      (column === 'Tokens in / out' || column === 'Cost') && 'text-right',
+                    )}
+                  >
+                    {column ? (
+                      managedColumnLabel(column, msg)
+                    ) : (
+                      <AgentSelectionCheckbox
+                        checked={allVisibleEntitiesSelected}
+                        indeterminate={!allVisibleEntitiesSelected && someVisibleEntitiesSelected}
+                        disabled={!visibleEntityIds.length || loading}
+                        label={msg('managedAgents.common.selectAllRows', 'Select all rows')}
+                        onClick={toggleAllVisibleEntities}
+                      />
+                    )}
+                  </TableHead>
+                ))}
                 <TableHead
-                  key={column || 'select'}
-                  className={cn(dataTableHeaderCellClassName, columnWidth(config.section, column))}
-                >
-                  {column ? (
-                    managedColumnLabel(column, msg)
-                  ) : (
-                    <AgentSelectionCheckbox
-                      checked={allVisibleEntitiesSelected}
-                      indeterminate={!allVisibleEntitiesSelected && someVisibleEntitiesSelected}
-                      disabled={!visibleEntityIds.length || loading}
-                      label={msg('managedAgents.common.selectAllRows', 'Select all rows')}
-                      onClick={toggleAllVisibleEntities}
-                    />
-                  )}
-                </TableHead>
-              ))}
-              <TableHead
-                className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
-                aria-label={managedColumnLabel('Actions', msg)}
-              />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow className="border-0 hover:bg-transparent">
-                <TableCell
-                  colSpan={config.columns.length + 1}
-                  className="h-[280px] text-center text-sm text-muted-foreground"
-                >
-                  {managedMessage(msg, config.section, 'loading', `Loading ${config.title.toLowerCase()}...`)}
-                </TableCell>
-              </TableRow>
-            ) : (
-              visibleEntities.map((entity) => (
-                <ManagedEntityRow
-                  key={entity.id}
-                  config={config}
-                  entity={entity}
-                  workspaceId={activeWorkspaceId}
-                  busyAction={busyAction}
-                  selected={selectedEntityIds.has(entity.id)}
-                  onCopy={() => void copyText(entity.id)}
-                  onToggleSelect={() => toggleEntitySelection(entity.id)}
-                  onEdit={() => setDialogState({ mode: 'edit', entity })}
-                  onArchive={() => setConfirmState({ action: 'archive', entity })}
-                  onDelete={() => setConfirmState({ action: 'delete', entity })}
-                  onRunDeployment={() => void handleDeploymentAction('run', entity)}
-                  onPauseDeployment={() => void handleDeploymentAction('pause', entity)}
-                  onUnpauseDeployment={() => void handleDeploymentAction('unpause', entity)}
+                  className={cn(dataTableHeaderCellClassName, 'w-[48px] px-2')}
+                  aria-label={managedColumnLabel('Actions', msg)}
                 />
-              ))
-            )}
-          </TableBody>
-        </Table>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading ? (
+                <TableRow className="border-0 hover:bg-transparent">
+                  <TableCell
+                    colSpan={config.columns.length + 1}
+                    className="h-[280px] text-center text-sm text-muted-foreground"
+                  >
+                    {managedMessage(msg, config.section, 'loading', `Loading ${config.title.toLowerCase()}...`)}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                visibleEntities.map((entity) => (
+                  <ManagedEntityRow
+                    key={entity.id}
+                    config={config}
+                    entity={entity}
+                    workspaceId={activeWorkspaceId}
+                    busyAction={busyAction}
+                    selected={selectedEntityIds.has(entity.id)}
+                    onCopy={() => void copyText(entity.id)}
+                    onToggleSelect={() => toggleEntitySelection(entity.id)}
+                    onEdit={() => setDialogState({ mode: 'edit', entity })}
+                    onArchive={() => setConfirmState({ action: 'archive', entity })}
+                    onDelete={() => setConfirmState({ action: 'delete', entity })}
+                    onRunDeployment={() => void handleDeploymentAction('run', entity)}
+                    onPauseDeployment={() => void handleDeploymentAction('pause', entity)}
+                    onUnpauseDeployment={() => void handleDeploymentAction('unpause', entity)}
+                  />
+                ))
+              )}
+            </TableBody>
+          </Table>
 
-        {!loading && !visibleEntities.length ? <EmptyState config={config} /> : null}
+          {!loading && !loadError && !visibleEntities.length ? (
+            config.section === 'deployments' ? (
+              <DeploymentEmptyState
+                filtered={Boolean(search || deploymentAgentFilter || deploymentStatusFilter !== 'all')}
+              />
+            ) : (
+              <EmptyState config={config} />
+            )
+          ) : null}
+        </div>
+      )}
+
+      <div hidden={sessionIdSearch.handled}>
+        <ResourceListPagination
+          currentPage={entityPageHistory.length + 1}
+          totalPages={resourceListPageCount(currentPage.totalCount, managedEntityListLimit)}
+          canPrevious={entityPageHistory.length > 0 && !loading}
+          canNext={Boolean(entityNextPage) && !loading}
+          onPrevious={goToPreviousEntityPage}
+          onNext={goToNextEntityPage}
+        />
       </div>
 
-      <div className="mt-9 flex items-center gap-2">
-        <Button
-          type="button"
-          disabled={!entityPageHistory.length || loading}
-          variant="outline"
-          size="icon-lg"
-          aria-label={msg('pagination.previousPage', 'Previous page')}
-          onClick={goToPreviousEntityPage}
-        >
-          <ChevronLeft className="size-4" aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          disabled={!entityNextPage || loading}
-          variant="outline"
-          size="icon-lg"
-          aria-label={msg('pagination.nextPage', 'Next page')}
-          onClick={goToNextEntityPage}
-        >
-          <ChevronRight className="size-4" aria-hidden />
-        </Button>
-      </div>
+      {previewSession?.workspaceId === activeWorkspaceId ? (
+        <SessionQuickView
+          key={`${activeWorkspaceId}:${previewSession.session.id}`}
+          session={previewSession.session}
+          workspaceId={activeWorkspaceId}
+          onClose={() => setPreviewSession(null)}
+        />
+      ) : null}
 
       {dialogState ? (
         <ManagedEntityDialog
@@ -845,13 +1066,16 @@ export function ManagedEntitiesPage({ config }: { config: ResourceConfig & { sec
               : msg('managedAgents.common.editEntity', 'Edit {label}', { label: entityKindLabel(config.section, msg) })
           }
           entity={dialogState.entity}
+          returnFocus={() => (dialogState.mode === 'create' ? createTriggerRef.current : true)}
           workspaceId={activeWorkspaceId}
           onClose={() => setDialogState(null)}
           onSubmit={async (values) => {
             const resetPage = dialogState.mode === 'create';
-            await handleSubmitEntity(values, dialogState.entity);
+            const openedCreatedSession = await handleSubmitEntity(values, dialogState.entity);
             setDialogState(null);
-            reload(resetPage);
+            if (!openedCreatedSession) {
+              reload(resetPage);
+            }
           }}
         />
       ) : null}
@@ -908,13 +1132,14 @@ export function ManagedEntityRow({
   const detailHref = managedEntityDetailHref(workspaceId, config.section, entity.id);
 
   return (
-    <DataTableRow selected={selected}>
+    <DataTableRow selected={selected} className="[&>td]:h-11">
       {config.columns.map((column, index) => {
         const content =
           column === 'ID' ? (
             <CopyIdCell
               value={entity.id}
-              displayValue={compactEntityId(entity.id)}
+              displayValue={config.section === 'sessions' ? entity.id : compactEntityId(entity.id)}
+              alwaysVisible={config.section === 'sessions'}
               ariaLabel={msg('managedAgents.common.copyIdValue', 'Copy {id}', { id: entity.id })}
             />
           ) : column === 'Name' ? (
@@ -937,7 +1162,11 @@ export function ManagedEntityRow({
             />
           );
         return (
-          <DataTableCell key={column || 'select'} edge={index === 0 ? 'start' : undefined} className="truncate">
+          <DataTableCell
+            key={column || 'select'}
+            edge={index === 0 ? 'start' : undefined}
+            className={cn('truncate', (column === 'Tokens in / out' || column === 'Cost') && 'text-right tabular-nums')}
+          >
             {content}
           </DataTableCell>
         );

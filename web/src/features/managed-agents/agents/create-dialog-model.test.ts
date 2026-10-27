@@ -2,10 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import { createAgentConfigText, parseCreateAgentConfigText } from '../agentConfig';
 import { type AgentApiResponse, type CreateAgentInput } from '../types';
 import {
-  addCustomTool,
   addBuiltInToolset,
   addMcpServer,
   createAgentDraftSchema,
+  normalizeCreateAgentDraft,
   removeToolset,
   setToolPermission,
   setToolsetPermission,
@@ -14,6 +14,7 @@ import {
   toolsetPermission,
   updateCustomTool,
   updateDraftModelID,
+  updateMcpServer,
 } from './create-dialog-model';
 
 const baseDraft: CreateAgentInput = {
@@ -27,6 +28,130 @@ const baseDraft: CreateAgentInput = {
 };
 
 describe('create agent draft model', () => {
+  test('disables AskUserQuestion by default without overriding an explicit choice', () => {
+    expect(normalizeCreateAgentDraft(baseDraft).tools[0]).toEqual({
+      type: 'agent_toolset_20260401',
+      configs: [
+        {
+          name: 'ask_user_question',
+          enabled: false,
+          permission_policy: { type: 'always_allow' },
+        },
+      ],
+    });
+
+    const explicitlyEnabled = {
+      ...baseDraft,
+      tools: [
+        {
+          type: 'agent_toolset_20260401' as const,
+          configs: [
+            { name: 'ask_user_question' as const, enabled: true, permission_policy: { type: 'always_ask' as const } },
+          ],
+        },
+      ],
+    };
+    expect(normalizeCreateAgentDraft(explicitlyEnabled).tools).toEqual(explicitlyEnabled.tools);
+  });
+
+  test('rejects Raw MCP URLs that the rendered form rejects', () => {
+    for (const url of [
+      'ftp://internal.example/mcp',
+      'https://user:secret@example.com/mcp',
+      'https://example.com/mcp#tools',
+    ]) {
+      const parsed = parseCreateAgentConfigText(
+        JSON.stringify({
+          ...baseDraft,
+          mcp_servers: [{ name: 'invalid-runtime-url', type: 'url', url }],
+          tools: [...baseDraft.tools, { type: 'mcp_toolset', mcp_server_name: 'invalid-runtime-url' }],
+        }),
+        'JSON',
+      );
+
+      expect(parsed.ok).toBe(false);
+    }
+  });
+
+  test('rejects unsafe MCP server names in Raw and rendered modes', () => {
+    const ambiguousDraft: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: [{ name: 'you__search', type: 'url', url: 'https://example.com/mcp' }],
+      tools: [...baseDraft.tools, { type: 'mcp_toolset', mcp_server_name: 'you__search' }],
+    };
+
+    expect(createAgentDraftSchema.safeParse(ambiguousDraft).success).toBe(false);
+    expect(addMcpServer(baseDraft, { name: 'you__search', url: 'https://example.com/mcp' })).toEqual({
+      ok: false,
+      errors: { name: 'ambiguous' },
+    });
+    expect(addMcpServer(baseDraft, { name: 'unsafe name', url: 'https://example.com/mcp' })).toEqual({
+      ok: false,
+      errors: { name: 'invalid' },
+    });
+  });
+
+  test('rejects duplicate tool configs', () => {
+    const draft: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: [{ name: 'search', type: 'url', url: 'https://example.com/mcp' }],
+      tools: [
+        ...baseDraft.tools,
+        {
+          type: 'mcp_toolset',
+          mcp_server_name: 'search',
+          configs: [{ name: 'query' }, { name: 'query' }],
+        },
+      ],
+    };
+
+    expect(createAgentDraftSchema.safeParse(draft).success).toBe(false);
+  });
+
+  test('preserves untouched skill payloads while toggling another skill', () => {
+    const draft: CreateAgentInput = {
+      ...baseDraft,
+      skills: [
+        { type: 'custom', skill_id: 'skill_unpinned' },
+        { type: 'custom', skill_id: 'skill_remove', version: '3' },
+      ],
+    };
+    const removed = toggleSkill(draft, {
+      id: 'skill_remove',
+      displayTitle: 'Remove',
+      latestVersion: '3',
+      source: 'custom',
+    });
+    const added = toggleSkill(draft, {
+      id: 'skill_new',
+      displayTitle: 'New',
+      latestVersion: '1',
+      source: 'custom',
+    });
+
+    expect(removed.skills).toEqual([{ type: 'custom', skill_id: 'skill_unpinned' }]);
+    expect(added.skills).toEqual([...draft.skills, { type: 'custom', skill_id: 'skill_new', version: 'latest' }]);
+  });
+
+  test('rejects duplicate built-in and MCP toolsets', () => {
+    const duplicateBuiltIns: CreateAgentInput = {
+      ...baseDraft,
+      tools: [{ type: 'agent_toolset_20260401' }, { type: 'agent_toolset_20260401' }],
+    };
+    const duplicateMcpToolsets: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: [{ name: 'github', type: 'url', url: 'https://api.githubcopilot.com/mcp/' }],
+      tools: [
+        ...baseDraft.tools,
+        { type: 'mcp_toolset', mcp_server_name: 'github' },
+        { type: 'mcp_toolset', mcp_server_name: 'github' },
+      ],
+    };
+
+    expect(createAgentDraftSchema.safeParse(duplicateBuiltIns).success).toBe(false);
+    expect(createAgentDraftSchema.safeParse(duplicateMcpToolsets).success).toBe(false);
+  });
+
   test('round trips supported YAML and JSON fields without accepting model effort', () => {
     const input: CreateAgentInput = {
       ...baseDraft,
@@ -38,7 +163,7 @@ describe('create agent draft model', () => {
       const parsed = parseCreateAgentConfigText(createAgentConfigText(input, format), format);
       expect(parsed.ok).toBe(true);
       if (parsed.ok) {
-        expect(parsed.input).toEqual(input);
+        expect(parsed.input).toEqual(normalizeCreateAgentDraft(input));
       }
     }
 
@@ -65,10 +190,18 @@ describe('create agent draft model', () => {
     } as AgentApiResponse;
     const withAgent = toggleSubagent(baseDraft, agent);
     expect(withAgent.multiagent).toEqual({
-      type: 'coordinator',
-      agents: [{ type: 'agent', id: 'agent_helper', version: 3 }],
+      type: 'multiagent_20261001',
+      workflows: { type: 'disabled' },
+      advisor: { type: 'disabled' },
+      subagents: {
+        type: 'enabled',
+        inline_agents: { type: 'enabled' },
+        predefined_agents: [{ type: 'agent', id: 'agent_helper', version: 3 }],
+      },
     });
-    expect(toggleSubagent(withAgent, agent).multiagent).toBeNull();
+    expect(toggleSubagent(withAgent, agent).multiagent).toMatchObject({
+      subagents: { type: 'enabled', predefined_agents: [] },
+    });
 
     const withSkill = toggleSkill(baseDraft, {
       id: 'skill_report',
@@ -108,13 +241,76 @@ describe('create agent draft model', () => {
     ).toEqual(fullDraft.multiagent);
   });
 
-  test('adds and removes MCP server and toolset atomically', () => {
-    const withMcp = addMcpServer(baseDraft, {
-      slug: 'github',
-      displayName: 'GitHub',
-      url: 'https://api.githubcopilot.com/mcp/',
-      toolNames: ['search_code'],
+  test('rejects invalid MCP inputs without changing the draft', () => {
+    const invalid = addMcpServer(baseDraft, { name: ' ', url: 'ftp://internal.example/mcp' });
+    expect(invalid).toEqual({ ok: false, errors: { name: 'required', url: 'invalid' } });
+    expect(baseDraft.mcp_servers).toEqual([]);
+    expect(baseDraft.tools).toEqual([{ type: 'agent_toolset_20260401' }]);
+
+    expect(addMcpServer(baseDraft, { name: 'x'.repeat(256), url: `https://example.com/${'x'.repeat(2049)}` })).toEqual({
+      ok: false,
+      errors: { name: 'too_long', url: 'too_long' },
     });
+
+    for (const url of ['https://user:secret@example.com/mcp', 'https://example.com/mcp#tools']) {
+      expect(addMcpServer(baseDraft, { name: 'invalid-runtime-url', url })).toEqual({
+        ok: false,
+        errors: { url: 'invalid' },
+      });
+    }
+  });
+
+  test('rejects duplicate, conflicting, and over-limit MCP servers', () => {
+    const configuredDraft: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: [{ name: 'github', type: 'url', url: 'https://api.githubcopilot.com/mcp/' }],
+      tools: [...baseDraft.tools, { type: 'mcp_toolset', mcp_server_name: 'github' }],
+    };
+    expect(addMcpServer(configuredDraft, { name: ' github ', url: 'https://example.com/mcp' })).toEqual({
+      ok: false,
+      errors: { name: 'duplicate' },
+    });
+
+    const conflictDraft: CreateAgentInput = {
+      ...baseDraft,
+      tools: [...baseDraft.tools, { type: 'mcp_toolset', mcp_server_name: 'reserved' }],
+    };
+    expect(addMcpServer(conflictDraft, { name: 'reserved', url: 'https://example.com/mcp' })).toEqual({
+      ok: false,
+      errors: { name: 'duplicate' },
+    });
+
+    const fullDraft: CreateAgentInput = {
+      ...baseDraft,
+      mcp_servers: Array.from({ length: 20 }, (_, index) => ({
+        name: `server-${index}`,
+        type: 'url',
+        url: `https://server-${index}.example.com/mcp`,
+      })),
+      tools: [
+        ...baseDraft.tools,
+        ...Array.from({ length: 20 }, (_, index) => ({
+          type: 'mcp_toolset',
+          mcp_server_name: `server-${index}`,
+        })),
+      ],
+    };
+    expect(addMcpServer(fullDraft, { name: 'overflow', url: 'https://overflow.example.com/mcp' })).toEqual({
+      ok: false,
+      errors: { form: 'limit' },
+    });
+  });
+
+  test('adds and removes MCP server and toolset atomically', () => {
+    const result = addMcpServer(baseDraft, {
+      name: ' github ',
+      url: 'https://api.githubcopilot.com/mcp/',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const withMcp = result.draft;
     expect(withMcp.mcp_servers).toEqual([{ name: 'github', type: 'url', url: 'https://api.githubcopilot.com/mcp/' }]);
     expect(withMcp.tools[1]).toEqual({
       type: 'mcp_toolset',
@@ -125,10 +321,132 @@ describe('create agent draft model', () => {
     expect(removeToolset(withMcp, 'github')).toEqual(baseDraft);
   });
 
+  test('updates an MCP server and matching toolset atomically without losing permissions', () => {
+    const withMcpResult = addMcpServer(baseDraft, {
+      name: 'tunnel_example.main',
+      url: 'https://oma.example.com/v1/mcp/tunnel_example',
+    });
+    if (!withMcpResult.ok) throw new Error('MCP fixture must be valid');
+    const withMcp = withMcpResult.draft;
+    const withPermission = setToolPermission(
+      withMcp,
+      (tool) => tool.type === 'mcp_toolset',
+      'search_records',
+      'always_allow',
+      'always_ask',
+    );
+    const updated = updateMcpServer(withPermission, 'tunnel_example.main', {
+      slug: 'tunnel_example.secondary',
+      displayName: 'Private tools',
+      url: 'https://oma.example.com/v1/mcp/tunnel_example/secondary',
+      toolNames: [],
+    });
+
+    expect(updated.mcp_servers).toEqual([
+      {
+        name: 'tunnel_example.secondary',
+        type: 'url',
+        url: 'https://oma.example.com/v1/mcp/tunnel_example/secondary',
+      },
+    ]);
+    expect(updated.tools[1]).toEqual({
+      type: 'mcp_toolset',
+      mcp_server_name: 'tunnel_example.secondary',
+      default_config: { enabled: true, permission_policy: { type: 'always_ask' } },
+      configs: [{ name: 'search_records', enabled: true, permission_policy: { type: 'always_allow' } }],
+    });
+  });
+
+  test('updates every matching MCP toolset reference without changing their permissions or order', () => {
+    const withMcpResult = addMcpServer(baseDraft, {
+      name: 'tunnel_example.main',
+      url: 'https://oma.example.com/v1/mcp/tunnel_example',
+    });
+    if (!withMcpResult.ok) throw new Error('MCP fixture must be valid');
+    const withMcp = withMcpResult.draft;
+    const duplicateReference = {
+      ...withMcp,
+      tools: [
+        ...withMcp.tools,
+        {
+          type: 'mcp_toolset' as const,
+          mcp_server_name: 'tunnel_example.main',
+          default_config: { permission_policy: { type: 'always_allow' as const } },
+          configs: [],
+        },
+      ],
+    };
+
+    const updated = updateMcpServer(duplicateReference, 'tunnel_example.main', {
+      slug: 'tunnel_example.secondary',
+      displayName: 'Private tools',
+      url: 'https://oma.example.com/v1/mcp/tunnel_example/secondary',
+      toolNames: [],
+    });
+
+    expect(
+      updated.tools
+        .filter((tool) => tool.type === 'mcp_toolset')
+        .map((tool) => ({ name: tool.mcp_server_name, default_config: tool.default_config })),
+    ).toEqual([
+      {
+        name: 'tunnel_example.secondary',
+        default_config: { enabled: true, permission_policy: { type: 'always_ask' } },
+      },
+      {
+        name: 'tunnel_example.secondary',
+        default_config: { permission_policy: { type: 'always_allow' } },
+      },
+    ]);
+  });
+
+  test('does not update an MCP server to a duplicate or orphan its toolset', () => {
+    const firstResult = addMcpServer(baseDraft, {
+      name: 'first',
+      url: 'https://first.example.com/mcp',
+    });
+    if (!firstResult.ok) throw new Error('MCP fixture must be valid');
+    const first = firstResult.draft;
+    const secondResult = addMcpServer(first, {
+      name: 'second',
+      url: 'https://second.example.com/mcp',
+    });
+    if (!secondResult.ok) throw new Error('MCP fixture must be valid');
+    const second = secondResult.draft;
+
+    expect(
+      updateMcpServer(second, 'first', {
+        slug: 'second',
+        displayName: 'Duplicate',
+        url: 'https://duplicate.example.com/mcp',
+        toolNames: [],
+      }),
+    ).toBe(second);
+    expect(
+      updateMcpServer(baseDraft, 'missing', {
+        slug: 'replacement',
+        displayName: 'Replacement',
+        url: 'https://replacement.example.com/mcp',
+        toolNames: [],
+      }),
+    ).toBe(baseDraft);
+  });
+
   test('restores the removed built-in toolset without duplicating it', () => {
     const withoutBuiltIns = removeToolset(baseDraft, 'agent_toolset_20260401');
 
-    expect(addBuiltInToolset(withoutBuiltIns).tools).toEqual([{ type: 'agent_toolset_20260401' }]);
+    expect(addBuiltInToolset(withoutBuiltIns).tools).toEqual([
+      {
+        type: 'agent_toolset_20260401',
+        configs: [
+          {
+            name: 'ask_user_question',
+            enabled: false,
+            permission_policy: { type: 'always_allow' },
+          },
+        ],
+      },
+    ]);
     expect(addBuiltInToolset(baseDraft)).toBe(baseDraft);
   });
 
@@ -138,7 +456,9 @@ describe('create agent draft model', () => {
       enabled: false,
       permission_policy: { type: 'always_allow' },
     });
-    expect(groupDenied.tools[0].configs).toEqual([]);
+    expect(groupDenied.tools[0].configs).toEqual([
+      { name: 'ask_user_question', enabled: false, permission_policy: { type: 'always_allow' } },
+    ]);
 
     const askBash = setToolPermission(baseDraft, () => true, 'bash', 'always_ask', 'always_allow');
     expect(askBash.tools[0].configs).toEqual([
@@ -148,13 +468,79 @@ describe('create agent draft model', () => {
     expect(setToolPermission(askBash, () => true, 'bash', 'always_allow', 'always_allow').tools[0].configs).toEqual([]);
   });
 
-  test('creates unique custom tool names and makes invalid schemas observable', () => {
-    const first = addCustomTool(baseDraft);
-    const second = addCustomTool(first);
-    expect(first.tools[1].name).toBe('new_tool');
-    expect(second.tools[2].name).toBe('new_tool_2');
+  test('preserves an explicit always-allow choice for AskUserQuestion', () => {
+    const normalizedDraft = normalizeCreateAgentDraft(baseDraft);
+    const allowed = setToolPermission(normalizedDraft, () => true, 'ask_user_question', 'always_allow', 'always_allow');
 
-    const invalid = updateCustomTool(first, 1, { input_schema: '{' });
+    expect(allowed.tools[0].configs).toEqual([
+      {
+        name: 'ask_user_question',
+        enabled: true,
+        permission_policy: { type: 'always_allow' },
+      },
+    ]);
+    expect(normalizeCreateAgentDraft(allowed)).toEqual(allowed);
+  });
+
+  test('keeps an explicit AskUserQuestion config when setting group permission', () => {
+    const allowed = setToolsetPermission(normalizeCreateAgentDraft(baseDraft), () => true, 'always_allow');
+
+    expect(allowed.tools[0].configs).toEqual([
+      {
+        name: 'ask_user_question',
+        enabled: true,
+        permission_policy: { type: 'always_allow' },
+      },
+    ]);
+    expect(normalizeCreateAgentDraft(allowed)).toEqual(allowed);
+  });
+
+  test('accepts the built-in tool permission surface and rejects unknown tools', () => {
+    const configs = [
+      'ask_user_question',
+      'bash',
+      'edit',
+      'glob',
+      'grep',
+      'read',
+      'web_fetch',
+      'web_search',
+      'write',
+    ].map((name) => ({ name, enabled: true, permission_policy: { type: 'always_allow' as const } }));
+
+    expect(
+      createAgentDraftSchema.safeParse({
+        ...baseDraft,
+        tools: [{ type: 'agent_toolset_20260401', configs }],
+      }).success,
+    ).toBe(true);
+    expect(
+      createAgentDraftSchema.safeParse({
+        ...baseDraft,
+        tools: [
+          {
+            type: 'agent_toolset_20260401',
+            configs: [{ name: 'unsupported_tool', enabled: true, permission_policy: { type: 'always_allow' } }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  test('keeps invalid custom tool schemas observable without offering a create helper', () => {
+    const withCustomTool: CreateAgentInput = {
+      ...baseDraft,
+      tools: [
+        ...baseDraft.tools,
+        {
+          type: 'custom',
+          name: 'lookup',
+          description: 'Lookup data.',
+          input_schema: { type: 'object', properties: {} },
+        },
+      ],
+    };
+    const invalid = updateCustomTool(withCustomTool, 1, { input_schema: '{' });
     const parsed = parseCreateAgentConfigText(JSON.stringify(invalid), 'JSON');
     expect(parsed.ok).toBe(false);
   });
@@ -199,4 +585,92 @@ describe('create agent draft model', () => {
       }).success,
     ).toBe(true);
   });
+});
+
+test('Web policy fields survive Raw parsing and individual or toolset permission edits', () => {
+  const draft: CreateAgentInput = {
+    ...baseDraft,
+    tools: [
+      {
+        type: 'agent_toolset_20260401',
+        configs: [{ name: 'web_fetch', allowed_domains: ['example.com'], max_content_tokens: 1000 }],
+      },
+    ],
+  };
+  expect(createAgentDraftSchema.safeParse(draft).success).toBe(true);
+  for (const updated of [
+    setToolPermission(draft, () => true, 'web_fetch', 'always_allow', 'always_allow'),
+    setToolPermission(draft, () => true, 'web_fetch', 'always_ask', 'always_allow'),
+    setToolsetPermission(draft, () => true, 'always_ask'),
+    setToolsetPermission(draft, () => true, 'always_deny'),
+  ]) {
+    expect(createAgentDraftSchema.safeParse(updated).success).toBe(true);
+    expect(updated.tools[0].configs).toContainEqual(
+      expect.objectContaining({ name: 'web_fetch', allowed_domains: ['example.com'], max_content_tokens: 1000 }),
+    );
+  }
+  for (const config of [
+    { name: 'bash', allowed_domains: ['example.com'] },
+    { name: 'web_search', max_content_tokens: 10 },
+    { name: 'web_fetch', allowed_domains: [] },
+    { name: 'web_search', allowed_domains: ['example.com'], blocked_domains: ['iana.org'] },
+  ]) {
+    expect(
+      createAgentDraftSchema.safeParse({ ...draft, tools: [{ type: 'agent_toolset_20260401', configs: [config] }] })
+        .success,
+    ).toBe(false);
+  }
+});
+
+test('CMA search location survives Raw parsing and permission edits', () => {
+  const userLocation = {
+    type: 'approximate',
+    country: 'US',
+    city: 'San Francisco',
+    region: 'California',
+    timezone: 'America/Los_Angeles',
+  };
+  const draft: CreateAgentInput = {
+    ...baseDraft,
+    tools: [{ type: 'agent_toolset_20260401', configs: [{ name: 'web_search', user_location: userLocation }] }],
+  };
+  for (const updated of [
+    draft,
+    setToolPermission(draft, () => true, 'web_search', 'always_allow', 'always_allow'),
+    setToolsetPermission(draft, () => true, 'always_ask'),
+  ]) {
+    const parsed = createAgentDraftSchema.safeParse(updated);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.tools[0].configs).toContainEqual(
+      expect.objectContaining({ name: 'web_search', user_location: userLocation }),
+    );
+  }
+  for (const config of [
+    { name: 'web_fetch', user_location: userLocation },
+    { name: 'web_search', user_location: { type: 'precise' } },
+    { name: 'web_search', user_location: { type: 'approximate', country: 42 } },
+  ]) {
+    expect(
+      createAgentDraftSchema.safeParse({ ...draft, tools: [{ type: 'agent_toolset_20260401', configs: [config] }] })
+        .success,
+    ).toBe(false);
+  }
+});
+
+test.each([
+  ['web_fetch', undefined, true],
+  ['web_fetch', null, true],
+  ['web_fetch', 10, true],
+  ['web_search', undefined, true],
+  ['web_search', null, true],
+  ['web_search', 10, false],
+  ['bash', undefined, true],
+  ['bash', null, false],
+  ['bash', 10, false],
+])('content budget on %s with %s has validity %s', (name, budget, valid) => {
+  const result = createAgentDraftSchema.safeParse({
+    ...baseDraft,
+    tools: [{ type: 'agent_toolset_20260401', configs: [{ name, max_content_tokens: budget }] }],
+  });
+  expect(result.success).toBe(valid);
 });

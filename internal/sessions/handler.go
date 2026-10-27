@@ -8,7 +8,9 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
@@ -16,18 +18,26 @@ import (
 )
 
 const maxSessionBodySize = 4 << 20
+const maxSessionCreateBodySize = 32 << 20
 
 type Handler struct {
-	cfg          config.Config
-	db           *db.DB
-	codeSessions *codesessions.Service
-	webhooks     webhookEnqueuer
-	logger       *slog.Logger
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
-	streams      *streamHub
-	eventBus     sessionfanout.EventBus
-	previews     *workerPreviewConverter
+	secretService   *secrets.Service
+	eventPayloads   *eventpayload.Store
+	cfg             config.Config
+	db              *db.DB
+	codeSessions    *codesessions.Service
+	webhooks        webhookEnqueuer
+	sandboxReclaims sandboxReclaimer
+	logger          *slog.Logger
+	errorAdapter    *httpapi.ErrorAdapter
+	router          chi.Router
+	streams         *streamHub
+	eventBus        sessionfanout.EventBus
+	previews        *workerPreviewConverter
+}
+
+type sandboxReclaimer interface {
+	EnqueueRemovedSession(context.Context, db.Session) error
 }
 
 type webhookEnqueuer interface {
@@ -43,6 +53,7 @@ type sessionResponse struct {
 	ID                 string            `json:"id"`
 	Agent              json.RawMessage   `json:"agent"`
 	ArchivedAt         *string           `json:"archived_at"`
+	Budget             json.RawMessage   `json:"budget"`
 	CreatedAt          string            `json:"created_at"`
 	DeploymentID       *string           `json:"deployment_id,omitempty"`
 	EnvironmentID      string            `json:"environment_id"`
@@ -55,7 +66,7 @@ type sessionResponse struct {
 	Type               string            `json:"type"`
 	UpdatedAt          string            `json:"updated_at"`
 	Usage              json.RawMessage   `json:"usage"`
-	VaultIDs           json.RawMessage   `json:"vault_ids"`
+	VaultIDs           []string          `json:"vault_ids"`
 }
 
 type threadResponse struct {
@@ -70,6 +81,7 @@ type threadResponse struct {
 	Type           string          `json:"type"`
 	UpdatedAt      string          `json:"updated_at"`
 	Usage          json.RawMessage `json:"usage"`
+	WorkflowRunID  *string         `json:"workflow_run_id"`
 }
 
 type deleteResponse struct {
@@ -81,8 +93,14 @@ type sendEventsResponse struct {
 	Data []json.RawMessage `json:"data,omitempty"`
 }
 
+type sessionCreateRequest struct {
+	sessionMutationRequest
+	InitialEvents json.RawMessage `json:"initial_events"`
+}
+
 type sessionMutationRequest struct {
 	Agent         json.RawMessage `json:"agent"`
+	Budget        json.RawMessage `json:"budget"`
 	EnvironmentID json.RawMessage `json:"environment_id"`
 	Metadata      json.RawMessage `json:"metadata"`
 	Resources     json.RawMessage `json:"resources"`
@@ -95,33 +113,20 @@ type sessionEventsRequest struct {
 }
 
 type sessionResourceRequest struct {
-	Access        json.RawMessage `json:"access"`
-	Checkout      json.RawMessage `json:"checkout"`
-	Description   json.RawMessage `json:"description"`
-	FileID        json.RawMessage `json:"file_id"`
-	Instructions  json.RawMessage `json:"instructions"`
-	MemoryStoreID json.RawMessage `json:"memory_store_id"`
-	MountPath     json.RawMessage `json:"mount_path"`
-	Name          json.RawMessage `json:"name"`
-	Source        json.RawMessage `json:"source"`
-	Type          json.RawMessage `json:"type"`
-	URL           json.RawMessage `json:"url"`
+	AuthorizationToken json.RawMessage `json:"authorization_token"`
+	Access             json.RawMessage `json:"access"`
+	Checkout           json.RawMessage `json:"checkout"`
+	Description        json.RawMessage `json:"description"`
+	FileID             json.RawMessage `json:"file_id"`
+	Instructions       json.RawMessage `json:"instructions"`
+	MemoryStoreID      json.RawMessage `json:"memory_store_id"`
+	MountPath          json.RawMessage `json:"mount_path"`
+	Name               json.RawMessage `json:"name"`
+	Source             json.RawMessage `json:"source"`
+	Type               json.RawMessage `json:"type"`
+	URL                json.RawMessage `json:"url"`
 }
 
 type sessionResourceUpdateRequest struct {
 	AuthorizationToken json.RawMessage `json:"authorization_token"`
-}
-
-type resourceReferenceError struct {
-	ResourceType string
-	ResourceID   string
-	Err          error
-}
-
-func (e resourceReferenceError) Error() string {
-	return e.ResourceType + " reference failed: " + e.ResourceID
-}
-
-func (e resourceReferenceError) Unwrap() error {
-	return e.Err
 }

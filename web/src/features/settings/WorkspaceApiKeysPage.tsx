@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useDialogDismissal } from '../../shared/hooks/use-dialog-dismissal';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
 import {
@@ -20,6 +21,9 @@ import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
 import { Card, CardContent } from '../../shared/ui/card';
+import { ResourceListState } from '../../shared/ui/resource-list-state';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,6 +37,7 @@ import {
 } from '../../shared/ui/alert-dialog';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -57,9 +62,9 @@ import {
   type Workspace,
   type WorkspaceApiKey,
 } from '../../shared/workspaces/api';
-import { useI18n } from '../../shared/i18n';
+import { useFormatters, useI18n } from '../../shared/i18n';
 import { useWorkspace } from '../../shared/workspaces/context';
-import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
+import { workspaceColor, workspaceIdFromPath } from '../../shared/workspaces/presentation';
 
 type WorkspaceApiKeysContentProps = {
   routeWorkspaceId?: string;
@@ -156,6 +161,8 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
   const keys = useMemo(() => (keysQuery.data ?? []).filter((apiKey) => !isArchivedKey(apiKey)), [keysQuery.data]);
   const identity = displayIdentity(account);
   const errorMessage = readableError(keysQuery.error);
+  const showRows = !keysQuery.isLoading && !errorMessage && keys.length > 0;
+  const workspaceName = localizedWorkspaceName(workspace.name, msg);
 
   const handleCreateKey = async (name: string) => {
     await createMutation.mutateAsync(name);
@@ -173,12 +180,15 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
   return (
     <TooltipProvider>
       <section className="w-full max-w-none" data-testid="workspace-api-keys-page">
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-                {msg('apiKeys.title', 'API keys')}
-              </h1>
+        <ResourcePageHeader
+          contentGap="content"
+          title={msg('apiKeys.title', 'API keys')}
+          description={msg(
+            'apiKeys.description',
+            'API keys are owned by workspaces and remain active even after the creator is removed',
+          )}
+          titleAdornment={
+            keysQuery.isSuccess ? (
               <Badge
                 variant="secondary"
                 className="h-6 min-w-6 rounded-md px-2 text-muted-foreground"
@@ -188,85 +198,77 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
               >
                 {keys.length}
               </Badge>
-            </div>
-            <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
-              {msg(
-                'apiKeys.description',
-                'API keys are owned by workspaces and remain active even after the creator is removed',
-              )}
-            </p>
-          </div>
-          <Button type="button" size="lg" onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            {msg('apiKeys.create', 'Create key')}
-          </Button>
-        </div>
+            ) : null
+          }
+          actions={
+            <Button type="button" size="lg" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" aria-hidden />
+              {msg('apiKeys.create', 'Create API key')}
+            </Button>
+          }
+        />
 
-        <Card className="overflow-hidden py-0">
-          <CardContent className="p-0">
-            <Table className="min-w-[920px] table-fixed text-left">
-              <colgroup>
-                <col className="w-[30%]" />
-                <col className="w-[22%]" />
-                <col className="w-[14%]" />
-                <col className="w-[14%]" />
-                <col className="w-[10%]" />
-                <col className="w-[72px]" />
-              </colgroup>
-              <TableHeader className="text-[13px] text-muted-foreground">
-                <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="px-3 py-3 text-muted-foreground">{msg('apiKeys.key', 'Key')}</TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">
-                    {msg('apiKeys.createdBy', 'Created by')}
-                  </TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">
-                    {msg('apiKeys.createdAt', 'Created at')}
-                  </TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">
-                    {msg('apiKeys.lastUsedAt', 'Last used at')}
-                  </TableHead>
-                  <TableHead className="px-3 py-3 text-muted-foreground">
-                    <span className="inline-flex items-center gap-1">
-                      {msg('analytics.cost.title', 'Cost')}
-                      <InfoTooltip
-                        label={msg('apiKeys.costTooltip', 'API key cost attribution appears after usage is recorded.')}
-                      />
-                    </span>
-                  </TableHead>
-                  <TableHead className="px-3 py-3 text-right text-muted-foreground">
-                    {msg('common.actions', 'Actions')}
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {keysQuery.isLoading ? (
-                  <ApiKeysState
-                    text={msg('apiKeys.loading', 'Loading {workspaceName} API keys...', {
-                      workspaceName: workspace.name,
-                    })}
-                  />
-                ) : errorMessage ? (
-                  <ApiKeysState tone="error" text={errorMessage} />
-                ) : keys.length > 0 ? (
-                  keys.map((apiKey) => (
-                    <ApiKeyRow
-                      key={apiKey.id}
-                      apiKey={apiKey}
-                      identity={identity}
-                      onAction={(action) => setPendingAction({ action, apiKey })}
+        <Table className={`table-fixed text-left ${showRows ? 'min-w-[920px]' : 'min-w-full'}`}>
+          <colgroup>
+            <col className="w-[30%]" />
+            <col className="w-[22%]" />
+            <col className="w-[14%]" />
+            <col className="w-[14%]" />
+            <col className="w-[10%]" />
+            <col className="w-[72px]" />
+          </colgroup>
+          {showRows ? (
+            <TableHeader className="text-xs text-muted-foreground">
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="px-3 py-3 text-muted-foreground">{msg('apiKeys.key', 'Key')}</TableHead>
+                <TableHead className="px-3 py-3 text-muted-foreground">
+                  {msg('apiKeys.createdBy', 'Created by')}
+                </TableHead>
+                <TableHead className="px-3 py-3 text-muted-foreground">
+                  {msg('apiKeys.createdAt', 'Created at')}
+                </TableHead>
+                <TableHead className="px-3 py-3 text-muted-foreground">
+                  {msg('apiKeys.lastUsedAt', 'Last used at')}
+                </TableHead>
+                <TableHead className="px-3 py-3 text-muted-foreground">
+                  <span className="inline-flex items-center gap-1">
+                    {msg('analytics.cost.title', 'Cost')}
+                    <InfoTooltip
+                      label={msg('apiKeys.costTooltip', 'API key cost attribution appears after usage is recorded.')}
                     />
-                  ))
-                ) : (
-                  <ApiKeysState
-                    text={msg('apiKeys.empty', 'No API keys have been created for {workspaceName}.', {
-                      workspaceName: workspace.name,
-                    })}
-                  />
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+                  </span>
+                </TableHead>
+                <TableHead className="px-3 py-3 text-right text-muted-foreground">
+                  {msg('common.actions', 'Actions')}
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+          ) : null}
+          <TableBody>
+            {keysQuery.isLoading ? (
+              <ApiKeysState
+                text={msg('apiKeys.loading', 'Loading {workspaceName} API keys...', {
+                  workspaceName,
+                })}
+              />
+            ) : errorMessage ? (
+              <ApiKeysState tone="error" text={errorMessage} />
+            ) : (
+              keys.map((apiKey) => (
+                <ApiKeyRow
+                  key={apiKey.id}
+                  apiKey={apiKey}
+                  identity={identity}
+                  onAction={(action) => setPendingAction({ action, apiKey })}
+                />
+              ))
+            )}
+          </TableBody>
+        </Table>
+
+        {!keysQuery.isLoading && !errorMessage && keys.length === 0 ? (
+          <ResourceListState icon={KeyRound} title={msg('apiKeys.emptyTitle', 'No API keys yet')} />
+        ) : null}
 
         {createOpen ? (
           <CreateApiKeyModal
@@ -303,19 +305,25 @@ function ApiKeyRow({
   onAction: (action: KeyAction) => void;
 }) {
   const { msg } = useI18n();
+  const { date } = useFormatters();
   const status = normalizeKeyStatus(apiKey);
   const inactive = status === 'inactive';
   const creator = displayCreator(apiKey, identity);
 
   return (
     <TableRow
-      className={`h-[58px] border-border text-sm hover:bg-accent ${inactive ? 'text-muted-foreground/70' : 'text-foreground'}`}
+      className={`h-[58px] border-border text-sm hover:bg-accent ${inactive ? 'text-muted-foreground' : 'text-foreground'}`}
     >
       <TableCell className="min-w-0 px-3 py-2.5 align-middle">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate font-medium">{apiKey.name || msg('apiKeys.untitledKey', 'Untitled key')}</span>
+        <div className="flex min-w-0 items-start gap-2">
+          <span
+            className="min-w-0 line-clamp-2 whitespace-normal font-medium [overflow-wrap:anywhere]"
+            title={apiKey.name || msg('apiKeys.untitledKey', 'Untitled key')}
+          >
+            {apiKey.name || msg('apiKeys.untitledKey', 'Untitled key')}
+          </span>
           {inactive ? (
-            <Badge variant="secondary" className="h-5 shrink-0 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground">
+            <Badge variant="secondary" className="h-5 shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground">
               {msg('apiKeys.inactive', 'Inactive')}
             </Badge>
           ) : null}
@@ -326,9 +334,11 @@ function ApiKeyRow({
         <div className="truncate">{creator.name}</div>
         <div className="mt-1 truncate text-xs text-muted-foreground">{creator.email}</div>
       </TableCell>
-      <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">{formatDate(apiKey.created_at)}</TableCell>
       <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">
-        {apiKey.last_used_at ? formatDate(apiKey.last_used_at) : msg('common.never', 'Never')}
+        {formatDate(apiKey.created_at, date)}
+      </TableCell>
+      <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">
+        {apiKey.last_used_at ? formatDate(apiKey.last_used_at, date) : msg('common.never', 'Never')}
       </TableCell>
       <TableCell className="px-3 py-2.5 align-middle text-muted-foreground">-</TableCell>
       <TableCell className="px-3 py-2.5 text-right align-middle">
@@ -377,8 +387,10 @@ function CreateApiKeyModal({
   onCreate: (name: string) => Promise<void>;
 }) {
   const { msg } = useI18n();
+  const dialogProps = useDialogDismissal(onClose, isSubmitting);
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const canSubmit = name.trim().length > 0 && !isSubmitting;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -396,15 +408,8 @@ function CreateApiKeyModal({
   };
 
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
-    >
-      <DialogContent className="sm:max-w-[520px]">
+    <Dialog {...dialogProps}>
+      <DialogContent closeButtonDisabled={isSubmitting} initialFocus={nameInputRef} className="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>{msg('apiKeys.createTitle', 'Create API key')}</DialogTitle>
         </DialogHeader>
@@ -418,18 +423,17 @@ function CreateApiKeyModal({
               />
             </FieldLabel>
             <FieldDescription className="flex h-5 items-center gap-2 text-sm text-foreground">
-              <Box
-                className="size-4 shrink-0"
-                style={{ color: workspace.display_color || workspace.color }}
-                aria-hidden
-              />
-              <span className="truncate">{workspace.name}</span>
+              <Box className="size-4 shrink-0" style={{ color: workspaceColor(workspace) }} aria-hidden />
+              <span className="truncate" title={localizedWorkspaceName(workspace.name, msg)}>
+                {localizedWorkspaceName(workspace.name, msg)}
+              </span>
             </FieldDescription>
           </Field>
 
           <Field data-invalid={Boolean(error)}>
             <FieldLabel htmlFor="api-key-name">{msg('common.name', 'Name')}</FieldLabel>
             <Input
+              ref={nameInputRef}
               id="api-key-name"
               value={name}
               aria-invalid={Boolean(error) || undefined}
@@ -440,9 +444,15 @@ function CreateApiKeyModal({
           </Field>
 
           <DialogFooter>
+            <DialogClose
+              render={<Button type="button" variant="outline" disabled={isSubmitting} />}
+              disabled={isSubmitting}
+            >
+              {msg('common.cancel', 'Cancel')}
+            </DialogClose>
             <Button type="submit" disabled={!canSubmit} className="min-w-[52px]">
               {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              {msg('apiKeys.add', 'Add')}
+              {msg('apiKeys.create', 'Create API key')}
             </Button>
           </DialogFooter>
         </form>
@@ -453,6 +463,7 @@ function CreateApiKeyModal({
 
 function RawApiKeyModal({ apiKey, onClose }: { apiKey: WorkspaceApiKey; onClose: () => void }) {
   const { msg } = useI18n();
+  const dialogProps = useDialogDismissal(onClose);
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const rawKey = apiKey.raw_key ?? '';
@@ -470,23 +481,16 @@ function RawApiKeyModal({ apiKey, onClose }: { apiKey: WorkspaceApiKey; onClose:
   };
 
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
-    >
-      <DialogContent className="sm:max-w-[560px]">
+    <Dialog {...dialogProps}>
+      <DialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] overflow-clip sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>{msg('apiKeys.createdTitle', 'API key created')}</DialogTitle>
           <DialogDescription className="leading-6">
             {msg('apiKeys.copyRaw', "Copy this key now. You won't be able to view it again after closing this window.")}
           </DialogDescription>
         </DialogHeader>
-        <Card size="sm" className="mt-5 py-0">
-          <CardContent className="px-3 py-3">
+        <Card size="sm" className="min-h-0 py-0">
+          <CardContent className="subtle-scrollbar min-h-0 overflow-y-auto px-3 py-3">
             <div className="break-all font-mono text-sm leading-6 text-foreground">{rawKey}</div>
           </CardContent>
         </Card>
@@ -499,9 +503,7 @@ function RawApiKeyModal({ apiKey, onClose }: { apiKey: WorkspaceApiKey; onClose:
                 ? msg('common.copyFailed', 'Copy failed')
                 : msg('common.copy', 'Copy')}
           </Button>
-          <Button type="button" onClick={onClose}>
-            {msg('common.done', 'Done')}
-          </Button>
+          <DialogClose render={<Button type="button" />}>{msg('common.done', 'Done')}</DialogClose>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -564,6 +566,7 @@ function ConfirmKeyActionModal({
   onConfirm: () => Promise<void>;
 }) {
   const { msg } = useI18n();
+  const dialogProps = useDialogDismissal(onClose, isSubmitting);
   const destructive = pendingAction.action === 'delete';
   const action = actionLabel(pendingAction.action, msg);
   const actionVerb = actionVerbLabel(pendingAction.action, msg);
@@ -591,15 +594,11 @@ function ConfirmKeyActionModal({
     );
 
   return (
-    <AlertDialog
-      open
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
-    >
-      <AlertDialogContent size="sm">
+    <AlertDialog {...dialogProps}>
+      <AlertDialogContent
+        size="sm"
+        className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] overflow-clip"
+      >
         <AlertDialogHeader>
           <AlertDialogMedia
             className={destructive ? 'bg-destructive/10 text-destructive dark:bg-destructive/20' : undefined}
@@ -607,9 +606,11 @@ function ConfirmKeyActionModal({
             {icon}
           </AlertDialogMedia>
           <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{body}</AlertDialogDescription>
         </AlertDialogHeader>
-        {error ? <InlineError>{error}</InlineError> : null}
+        <div className="subtle-scrollbar min-h-0 min-w-0 overflow-y-auto text-center">
+          <AlertDialogDescription>{body}</AlertDialogDescription>
+          {error ? <InlineError>{error}</InlineError> : null}
+        </div>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isSubmitting}>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
           <AlertDialogAction
@@ -630,7 +631,7 @@ function ConfirmKeyActionModal({
 
 function InlineError({ children }: { children: ReactNode }) {
   return (
-    <Alert variant="destructive" className="mt-4">
+    <Alert variant="destructive" className="mt-4 [overflow-wrap:anywhere]">
       <AlertCircle className="size-4 shrink-0" aria-hidden />
       <AlertDescription>{children}</AlertDescription>
     </Alert>
@@ -661,7 +662,10 @@ function InfoTooltip({ label }: { label: string }) {
 function ApiKeysState({ text, tone = 'muted' }: { text: string; tone?: 'muted' | 'error' }) {
   return (
     <TableRow className="border-border hover:bg-transparent">
-      <TableCell colSpan={6} className="h-[156px] px-4 py-8 text-center text-sm text-muted-foreground">
+      <TableCell
+        colSpan={6}
+        className="h-[156px] px-4 py-8 text-center text-sm whitespace-normal text-muted-foreground [overflow-wrap:anywhere]"
+      >
         <div>
           {tone === 'error' ? (
             <AlertCircle className="mx-auto mb-3 size-6 text-destructive" aria-hidden />
@@ -703,7 +707,10 @@ function keyHint(apiKey: WorkspaceApiKey) {
   return 'sk-ant-api03-...';
 }
 
-function formatDate(value?: string | null) {
+function formatDate(
+  value: string | null | undefined,
+  formatter: (value: Date, options?: Intl.DateTimeFormatOptions) => string,
+) {
   if (!value) {
     return '-';
   }
@@ -711,11 +718,11 @@ function formatDate(value?: string | null) {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat('en', {
+  return formatter(date, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  }).format(date);
+  });
 }
 
 function displayIdentity(account: { email_address?: string; display_name?: string; full_name?: string } | null) {

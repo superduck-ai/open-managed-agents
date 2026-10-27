@@ -7,12 +7,11 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 )
 
 func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 	t.Run("failure nil store", func(t *testing.T) {
-		_, _, err := New(nil).FindOrCreateUserContextByEmail(context.Background(), "user@example.com")
+		_, _, err := newTestService(nil).findOrCreateUserContextByEmail(t.Context(), "user@example.com")
 		if !errors.Is(err, db.ErrNotFound) {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
@@ -21,7 +20,7 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 	t.Run("failure find error", func(t *testing.T) {
 		wantErr := errors.New("query failed")
 		store := &fakePlatformAuthStore{tx: &fakePlatformAuthTx{findErr: wantErr}}
-		_, _, err := New(store).FindOrCreateUserContextByEmail(context.Background(), "user@example.com")
+		_, _, err := newTestService(store).findOrCreateUserContextByEmail(t.Context(), "user@example.com")
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("err = %v, want %v", err, wantErr)
 		}
@@ -31,7 +30,7 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 		tx := &fakePlatformAuthTx{
 			findContext: db.PlatformAuthUserContext{UserExternalID: "user_existing", OrgUUID: "org-existing"},
 		}
-		userID, orgUUID, err := New(&fakePlatformAuthStore{tx: tx}).FindOrCreateUserContextByEmail(context.Background(), "Ada.Lovelace@example.com")
+		userID, orgUUID, err := newTestService(&fakePlatformAuthStore{tx: tx}).findOrCreateUserContextByEmail(t.Context(), "ada.lovelace@example.com")
 		if err != nil {
 			t.Fatalf("FindOrCreateUserContextByEmail() error = %v", err)
 		}
@@ -45,7 +44,7 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 
 	t.Run("success missing user creates default context", func(t *testing.T) {
 		tx := &fakePlatformAuthTx{findErr: db.ErrNotFound}
-		userID, orgUUID, err := New(&fakePlatformAuthStore{tx: tx}).FindOrCreateUserContextByEmail(context.Background(), "new-user@example.com")
+		userID, orgUUID, err := newTestService(&fakePlatformAuthStore{tx: tx}).findOrCreateUserContextByEmail(t.Context(), "new-user@example.com")
 		if err != nil {
 			t.Fatalf("FindOrCreateUserContextByEmail() error = %v", err)
 		}
@@ -58,9 +57,6 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 		if len(tx.workspaces) != 1 || tx.workspaces[0].Name != "default" || !strings.HasPrefix(tx.workspaces[0].ExternalID, "wrkspc_") {
 			t.Fatalf("workspaces = %#v, want default workspace", tx.workspaces)
 		}
-		if len(tx.members) != 1 || tx.members[0].WorkspaceRole != "workspace_admin" || !strings.HasPrefix(tx.members[0].ExternalID, "wmem_") {
-			t.Fatalf("members = %#v, want workspace admin member", tx.members)
-		}
 		if len(tx.apiKeys) != 1 || tx.apiKeys[0].Name != "default" || tx.apiKeys[0].Status != "active" || !strings.HasPrefix(tx.apiKeys[0].ExternalID, "api_key_") {
 			t.Fatalf("api keys = %#v, want default active api key", tx.apiKeys)
 		}
@@ -68,6 +64,10 @@ func TestServiceFindOrCreateUserContextByEmail(t *testing.T) {
 			t.Fatalf("api key credential fields = %#v, want hashed key and partial hint only", tx.apiKeys[0])
 		}
 	})
+}
+
+func newTestService(store Store) *EmailProvider {
+	return &EmailProvider{store: store}
 }
 
 type fakePlatformAuthStore struct {
@@ -78,10 +78,6 @@ func (s *fakePlatformAuthStore) WithPlatformAuthTx(ctx context.Context, fn func(
 	return fn(s.tx)
 }
 
-func (s *fakePlatformAuthStore) ResolvePlatformSessionIdentity(context.Context, platformsession.CreateInput) (platformsession.Session, error) {
-	return platformsession.Session{}, nil
-}
-
 type fakePlatformAuthTx struct {
 	findContext   db.PlatformAuthUserContext
 	findErr       error
@@ -89,7 +85,6 @@ type fakePlatformAuthTx struct {
 	organizations []db.PlatformAuthOrganizationInput
 	users         []db.PlatformAuthUserInput
 	workspaces    []db.PlatformAuthWorkspaceInput
-	members       []db.PlatformAuthWorkspaceMemberInput
 	apiKeys       []db.PlatformAuthAPIKeyInput
 }
 
@@ -123,11 +118,6 @@ func (tx *fakePlatformAuthTx) InsertUser(_ context.Context, input db.PlatformAut
 func (tx *fakePlatformAuthTx) InsertWorkspace(_ context.Context, input db.PlatformAuthWorkspaceInput) (db.PlatformAuthWorkspaceRef, error) {
 	tx.workspaces = append(tx.workspaces, input)
 	return db.PlatformAuthWorkspaceRef{UUID: input.UUID}, nil
-}
-
-func (tx *fakePlatformAuthTx) InsertWorkspaceMember(_ context.Context, input db.PlatformAuthWorkspaceMemberInput) error {
-	tx.members = append(tx.members, input)
-	return nil
 }
 
 func (tx *fakePlatformAuthTx) InsertAPIKey(_ context.Context, input db.PlatformAuthAPIKeyInput) error {

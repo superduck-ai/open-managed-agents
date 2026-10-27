@@ -1,4 +1,3 @@
-import { type QuickstartStepName } from './quickstart/steps';
 import {
   type AgentCreatedFilter,
   type AgentStatusFilter,
@@ -48,19 +47,6 @@ export function templateSearchText(template: AgentTemplate, msg: I18nMsg) {
   ].join(' ');
 }
 
-export function quickstartStepLabel(step: QuickstartStepName, msg: I18nMsg) {
-  switch (step) {
-    case 'Create agent':
-      return msg('managedAgents.quickstart.steps.createAgent', step);
-    case 'Configure environment':
-      return msg('managedAgents.quickstart.steps.configureEnvironment', step);
-    case 'Start session':
-      return msg('managedAgents.quickstart.steps.startSession', step);
-    case 'Integrate':
-      return msg('managedAgents.quickstart.steps.integrate', step);
-  }
-}
-
 export function resourceTitle(config: ResourceConfig, msg: I18nMsg) {
   return managedMessage(msg, config.section, 'title', config.title);
 }
@@ -85,8 +71,23 @@ export function resourceEmptyBody(config: ResourceConfig, msg: I18nMsg) {
   return config.emptyBody ? managedMessage(msg, config.section, 'emptyBody', config.emptyBody) : undefined;
 }
 
-export function resourceEmptyAction(config: ResourceConfig, msg: I18nMsg) {
-  return config.emptyAction ? managedMessage(msg, config.section, 'emptyAction', config.emptyAction) : undefined;
+export function createActionLabel(section: ManagedEntitySection) {
+  switch (section) {
+    case 'sessions':
+      return 'Create session';
+    case 'deployments':
+      return 'Create deployment';
+    case 'environments':
+      return 'Create environment';
+    case 'credential-vaults':
+      return 'Create vault';
+    case 'memory-stores':
+      return 'Create memory store';
+    default: {
+      const unreachable: never = section;
+      return unreachable;
+    }
+  }
 }
 
 export function entityKindLabel(section: ManagedEntitySection, msg?: I18nMsg) {
@@ -168,16 +169,8 @@ export function submitLabel(section: ManagedEntitySection, editing: boolean, msg
   if (editing) {
     return msg ? msg('common.save', 'Save') : 'Save';
   }
-  if (section === 'credential-vaults') {
-    return msg ? msg('common.continue', 'Continue') : 'Continue';
-  }
-  if (section === 'sessions') {
-    return msg ? msg('managedAgents.sessions.createLabel', 'Create session') : 'Create session';
-  }
-  if (section === 'memory-stores') {
-    return msg ? msg('managedAgents.memoryStores.createLabel', 'Create memory store') : 'Create memory store';
-  }
-  return msg ? msg('common.create', 'Create') : 'Create';
+  const fallback = createActionLabel(section);
+  return msg ? managedMessage(msg, section, 'createLabel', fallback) : fallback;
 }
 
 export function entityDialogSubtitle(section: ManagedEntitySection, msg: I18nMsg) {
@@ -226,6 +219,10 @@ export function managedColumnLabel(column: string, msg: I18nMsg) {
       return msg('managedAgents.common.lastUpdated', 'Last updated');
     case 'Agent':
       return msg('managedAgents.common.agent', 'Agent');
+    case 'Tokens in / out':
+      return msg('managedAgents.sessions.tokensInOut', 'Tokens in / out');
+    case 'Cost':
+      return msg('managedAgents.sessions.inspector.cost', 'Cost');
     case 'Trigger':
       return msg('managedAgents.common.trigger', 'Trigger');
     case 'Session':
@@ -238,6 +235,8 @@ export function managedColumnLabel(column: string, msg: I18nMsg) {
       return msg('common.actions', 'Actions');
     case 'Auth':
       return msg('managedAgents.common.auth', 'Auth');
+    case 'Updated':
+      return msg('managedAgents.common.updated', 'Updated');
     case 'Payload':
       return msg('managedAgents.common.payload', 'Payload');
     default:

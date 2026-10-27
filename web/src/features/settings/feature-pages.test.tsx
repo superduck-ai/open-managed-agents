@@ -8,10 +8,6 @@ import { ThemeProvider } from '../../shared/theme/ThemeProvider';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
-import { BillingSettingsPage } from './BillingSettingsPage';
-import { AdminKeysSettingsPage } from './AdminKeysSettingsPage';
-import { IdentityAndAccessSettingsPage } from './IdentityAndAccessSettingsPage';
-import { WorkloadIdentitySettingsPage } from './WorkloadIdentitySettingsPage';
 import { AppearanceSettingsPage, ProfileSettingsPage, settingsSectionFromPath } from './feature-pages';
 
 const testingLibrary = await import('@testing-library/react');
@@ -22,16 +18,22 @@ afterEach(() => {
 });
 
 describe('Settings feature pages', () => {
-  test('maps settings routes to the correct settings-shell sections', () => {
-    expect(settingsSectionFromPath('/settings/profile')).toBe('profile');
-    expect(settingsSectionFromPath('/settings/appearance')).toBe('appearance');
-    expect(settingsSectionFromPath('/settings/workspaces')).toBe('workspaces');
-    expect(settingsSectionFromPath('/settings/api-keys')).toBe('api-keys');
-    expect(settingsSectionFromPath('/settings/workload-identity')).toBe('workload-identity');
-    expect(settingsSectionFromPath('/settings/identity-and-access')).toBe('identity-and-access');
-    expect(settingsSectionFromPath('/settings/privacy-controls')).toBe('privacy-controls');
-    expect(settingsSectionFromPath('/settings/billing')).toBe('billing');
-    expect(settingsSectionFromPath('/settings/unknown')).toBe('organization');
+  test('keeps only working organization and personal settings routes', () => {
+    for (const section of ['profile', 'appearance', 'organization', 'llm', 'members', 'workspaces', 'api-keys']) {
+      expect(settingsSectionFromPath(`/settings/${section}`)).toBe(section);
+    }
+    for (const section of [
+      'billing',
+      'limits',
+      'admin-keys',
+      'service-accounts',
+      'workload-identity',
+      'privacy-controls',
+      'identity-and-access',
+      'unknown',
+    ]) {
+      expect(settingsSectionFromPath(`/settings/${section}`)).toBe('retired');
+    }
   });
 
   test('renders profile settings with account identity instead of the organization page', async () => {
@@ -39,7 +41,8 @@ describe('Settings feature pages', () => {
 
     const { container } = renderSettingsFeature('/settings/profile', <ProfileSettingsPage />);
 
-    expect(screen.getByText('Organization settings')).toBeTruthy();
+    expect(screen.getByText('Personal settings')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Organization' })).toBeNull();
     expect(screen.getByRole('heading', { name: 'Profile' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Organization' })).toBeNull();
     expect((screen.getByLabelText('Display name') as HTMLInputElement).value).toBe('Ada Lovelace');
@@ -61,66 +64,16 @@ describe('Settings feature pages', () => {
     expect(container.querySelector('.surface-card')).toBeNull();
   });
 
-  test('renders billing settings with shared links and configure actions', () => {
-    resetTestDom('https://oma.duck.ai/settings/billing');
-
-    const { container } = renderSettingsFeature('/settings/billing', <BillingSettingsPage />);
-
-    expect(screen.getByRole('heading', { name: 'Billing' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'View cost dashboard' }).getAttribute('href')).toBe('/cost');
-    expect(screen.getByRole('link', { name: 'View cost dashboard' }).getAttribute('data-slot')).toBe('button');
-    expect(screen.getByRole('link', { name: 'Review rate limits' }).getAttribute('href')).toBe('/usage/limits');
-    expect(screen.getByRole('link', { name: 'Review rate limits' }).getAttribute('data-slot')).toBe('button');
-    expect(screen.getByRole('link', { name: 'Manage' }).getAttribute('href')).toBe('/settings/members');
-    expect(screen.getByRole('link', { name: 'Manage' }).getAttribute('data-slot')).toBe('button');
-    expect(screen.getAllByRole('button', { name: 'Configure' })).toHaveLength(3);
-    expect(screen.getByText('Current default: Admins and billing members')).toBeTruthy();
-    expect(screen.getByText('Current default: Billing members only')).toBeTruthy();
-    expect(screen.getByText('Current default: Monthly')).toBeTruthy();
-    expect(container.querySelector('.surface-card')).toBeNull();
-  });
-
-  test('renders admin keys with a real shared settings surface', () => {
-    resetTestDom('https://oma.duck.ai/settings/admin-keys');
-
-    const { container } = renderSettingsFeature('/settings/admin-keys', <AdminKeysSettingsPage />);
-
-    expect(screen.getByRole('heading', { name: 'Admin keys' })).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Organization' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Create admin key' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Active' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Revoked' })).toBeTruthy();
-    expect(container.querySelector('.surface-card')).toBeNull();
-  });
-
-  test('renders workload identity with a real shared settings surface', () => {
-    resetTestDom('https://oma.duck.ai/settings/workload-identity');
-
-    const { container } = renderSettingsFeature('/settings/workload-identity', <WorkloadIdentitySettingsPage />);
-
-    expect(screen.getByRole('heading', { name: 'Workload identity' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'View service accounts' }).getAttribute('href')).toBe(
-      '/settings/service-accounts',
-    );
-    expect(screen.getByRole('link', { name: 'View service accounts' }).getAttribute('data-slot')).toBe('button');
-    expect(screen.queryByRole('heading', { name: 'Organization' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Create provider' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Active' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Disabled' })).toBeTruthy();
-    expect(container.querySelector('.surface-card')).toBeNull();
-  });
-
-  test('renders identity and access with a real shared settings surface', () => {
-    resetTestDom('https://oma.duck.ai/settings/identity-and-access');
-
-    const { container } = renderSettingsFeature('/settings/identity-and-access', <IdentityAndAccessSettingsPage />);
-
-    expect(screen.getByRole('heading', { name: 'Identity and access' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Manage' }).getAttribute('href')).toBe('/settings/members');
-    expect(screen.getByRole('link', { name: 'Manage' }).getAttribute('data-slot')).toBe('button');
-    expect(screen.getAllByRole('button', { name: 'Configure' })).toHaveLength(3);
-    expect(screen.queryByRole('heading', { name: 'Organization' })).toBeNull();
-    expect(container.querySelector('.surface-card')).toBeNull();
+  test('organization navigation includes a separate LLM configuration section', () => {
+    resetTestDom('https://oma.duck.ai/settings/organization');
+    renderSettingsFeature('/settings/organization', <div>Organization form</div>);
+    const nav = screen.getByRole('navigation', { name: 'Settings navigation' });
+    expect(Array.from(nav.querySelectorAll('a')).map((link) => link.getAttribute('href'))).toEqual([
+      '/settings/organization',
+      '/settings/llm',
+      '/settings/members',
+      '/settings/workspaces',
+    ]);
   });
 });
 

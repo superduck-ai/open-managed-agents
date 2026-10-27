@@ -11,14 +11,22 @@ import (
 type normalizedSessionResource struct {
 	resource db.SessionResource
 	fileSpec *sessionresource.FileSpec
+	gitSpec  *sessionresource.GitRepositorySpec
 }
 
 func validateNormalizedSessionResources(resources []normalizedSessionResource) error {
+	gitSpecs := make([]sessionresource.GitRepositorySpec, 0, len(resources))
 	specs := make([]sessionresource.FileSpec, 0, len(resources))
 	for _, resource := range resources {
+		if resource.gitSpec != nil {
+			gitSpecs = append(gitSpecs, *resource.gitSpec)
+		}
 		if resource.fileSpec != nil {
 			specs = append(specs, *resource.fileSpec)
 		}
+	}
+	if err := sessionresource.ValidateGitRepositoryConflicts(gitSpecs); err != nil {
+		return err
 	}
 	return sessionresource.ValidateFileSpecs(specs)
 }

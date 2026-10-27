@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -259,6 +261,8 @@ func TestVaultsAPI(t *testing.T) {
 		}`)
 		assertRawContains(t, envCred.Auth, `"secret_name":"NOTION_TOKEN"`)
 		assertRawContains(t, envCred.Auth, `"allowed_hosts":["api.notion.com","*.example.com"]`)
+		assertRawContains(t, envCred.Auth, `"placeholder":"oma_ph_`)
+		assertRawContains(t, envCred.Auth, `"injection_location":{"header":true,"body":true}`)
 		assertRawNotContains(t, envCred.Auth, "env-secret")
 
 		retrieved := retrieveVaultCredential(t, app, vault.ID, mcp.ID)
@@ -284,13 +288,13 @@ func TestVaultsAPI(t *testing.T) {
 		assertRawContains(t, updated.Auth, `"scope":"channels:read chat:write"`)
 
 		staticRotated := updateVaultCredential(t, app, vault.ID, static.ID, `{
-			"display_name":"static bearer moved",
+			"display_name":"static bearer rotated",
 			"auth":{
 				"type":"static_bearer",
-				"mcp_server_url":"https://mcp.github.example/mcp"
+				"token":"rotated-bearer-secret"
 			}
 		}`)
-		assertRawContains(t, staticRotated.Auth, `"mcp_server_url":"https://mcp.github.example/mcp"`)
+		assertRawContains(t, staticRotated.Auth, `"mcp_server_url":"https://mcp.github.example/sse"`)
 		assertRawNotContains(t, staticRotated.Auth, "bearer-secret")
 		var credentialKey string
 		if err := app.pool.QueryRow(context.Background(), `
@@ -298,8 +302,8 @@ func TestVaultsAPI(t *testing.T) {
 		`, static.ID).Scan(&credentialKey); err != nil {
 			t.Fatalf("load credential_key: %v", err)
 		}
-		if credentialKey != "https://mcp.github.example/mcp" {
-			t.Fatalf("credential_key = %q, want updated mcp_server_url", credentialKey)
+		if credentialKey != "https://mcp.github.example/sse" {
+			t.Fatalf("credential_key = %q, want original mcp_server_url", credentialKey)
 		}
 		dupURL := doVaultRequest(t, app, http.MethodPost, "/v1/vaults/"+vault.ID+"/credentials/"+static.ID+"?beta=true", strings.NewReader(`{
 			"auth":{
@@ -307,7 +311,7 @@ func TestVaultsAPI(t *testing.T) {
 				"mcp_server_url":"https://mcp.slack.example/mcp"
 			}
 		}`), defaultTestKey, true)
-		assertError(t, dupURL, http.StatusConflict, "conflict_error")
+		assertError(t, dupURL, http.StatusBadRequest, "invalid_request_error")
 
 		validation := validateVaultCredential(t, app, vault.ID, mcp.ID)
 		if validation.Type != "vault_credential_validation" || validation.CredentialID != mcp.ID || !validation.HasRefreshToken || validation.Refresh.Status != "connect_error" {
@@ -359,21 +363,13 @@ func TestVaultWebhooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	cfg.Webhook.EndpointURL = "https://webhook.example.com"
-	cfg.Webhook.SigningKey = "whsec_c2VjcmV0Cg=="
-	cfg.Webhook.EventTypes = []string{
-		"vault.created",
-		"vault.archived",
-		"vault.deleted",
-		"vault_credential.created",
-		"vault_credential.archived",
-		"vault_credential.deleted",
-	}
+
 	cfg.Webhook.WorkerEnabled = true
 	app := newTestAppWithStore(t, &cfg, newFakeStore("vaults-webhooks-bucket"))
 	defer app.close()
 	clearWebhookState(t, app)
 	defer clearWebhookState(t, app)
+	createWebhook(t, app, `{"url":"https://webhook.example.com","enabled_events":["vault.created","vault.archived","vault.deleted","vault_credential.created","vault_credential.archived","vault_credential.deleted"]}`)
 
 	vault := createVault(t, app, `{"display_name":"vault webhook lifecycle"}`)
 	defer cleanupVaultRows(t, app, vault.ID)
@@ -652,19 +648,22 @@ func containsVaultCredential(credentials []vaultCredentialAPIResponse, id string
 
 func webhookJobDataField(t *testing.T, app *testApp, eventType, resourceID, field string) string {
 	t.Helper()
-	var value string
-	if err := app.pool.QueryRow(context.Background(), `
-		select jsonb_extract_path_text(payload, 'event', 'data', $3)
-		from jobs
-		where type = 'webhook_delivery'
-			and payload->>'event_type' = $1
-			and payload->'event'->'data'->>'id' = $2
-		order by created_at desc, id desc
-		limit 1
-	`, eventType, resourceID, field).Scan(&value); err != nil {
-		t.Fatalf("load webhook job data field: %v", err)
+	for _, event := range queuedWebhookEvents(t, app) {
+		if event.Data.Type != eventType || event.Data.ID != resourceID {
+			continue
+		}
+		encoded, err := json.Marshal(event.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields[field]
 	}
-	return value
+	t.Fatal("queued webhook not found")
+	return ""
 }
 
 func cleanupVaultRows(t *testing.T, app *testApp, vaultID string) {
@@ -728,6 +727,7 @@ func environmentVariableBody(displayName, secretName, secretValue string) string
 			"type":         "environment_variable",
 			"secret_name":  secretName,
 			"secret_value": secretValue,
+			"networking":   map[string]any{"type": "unrestricted"},
 		},
 	})
 	return string(body)

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	urlpkg "net/url"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
+	"github.com/superduck-ai/open-managed-agents/internal/mcpnames"
 )
 
 // ErrMalformedAgentSnapshot 表示 Session AgentSnapshot 或其中的 MCP URL
@@ -20,6 +22,7 @@ type agentSnapshotSchema struct {
 }
 
 type mcpServerSchema struct {
+	Name string `json:"name"`
 	Type string `json:"type"`
 	URL  string `json:"url"`
 }
@@ -27,8 +30,9 @@ type mcpServerSchema struct {
 type mcpServerListSchema []mcpServerSchema
 
 type mcpServerTargets struct {
-	hosts []string
-	urls  []string
+	hosts      []string
+	urls       []string
+	urlsByName map[string]string
 }
 
 func (s *mcpServerListSchema) UnmarshalJSON(raw []byte) error {
@@ -62,6 +66,7 @@ func parseMCPServerTargets(agentSnapshot json.RawMessage) (mcpServerTargets, err
 	}
 	var hosts []string
 	var urls []string
+	urlsByName := map[string]string{}
 	for _, server := range snapshot.MCPServers {
 		host, err := mcpServerHost(server)
 		if err != nil {
@@ -72,11 +77,22 @@ func parseMCPServerTargets(agentSnapshot json.RawMessage) (mcpServerTargets, err
 		}
 		if rawURL := strings.TrimSpace(server.URL); rawURL != "" {
 			urls = append(urls, rawURL)
+			name := server.Name
+			if name != "" && !mcpnames.Valid(name) {
+				return mcpServerTargets{}, fmt.Errorf("%w: MCP server name %q must contain 1 to 255 characters", ErrMalformedAgentSnapshot, name)
+			}
+			if name != "" {
+				if _, exists := urlsByName[name]; exists {
+					return mcpServerTargets{}, fmt.Errorf("%w: duplicate MCP server name %q", ErrMalformedAgentSnapshot, name)
+				}
+				urlsByName[name] = rawURL
+			}
 		}
 	}
 	return mcpServerTargets{
-		hosts: collections.UniqueTrimmedStrings(hosts),
-		urls:  collections.UniqueTrimmedStrings(urls),
+		hosts:      collections.UniqueTrimmedStrings(hosts),
+		urls:       collections.UniqueTrimmedStrings(urls),
+		urlsByName: urlsByName,
 	}, nil
 }
 
@@ -129,4 +145,23 @@ func mcpServerHost(server mcpServerSchema) (string, error) {
 		return "", fmt.Errorf("%w: MCP server URL has an invalid host", ErrMalformedAgentSnapshot)
 	}
 	return host, nil
+}
+
+func canonicalMCPURLKey(rawURL string) (string, error) {
+	target, err := urlpkg.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("%w: invalid MCP URL", ErrMalformedAgentSnapshot)
+	}
+	host, err := MCPHostKey(target.Hostname())
+	if err != nil {
+		return "", fmt.Errorf("%w: invalid MCP host", ErrMalformedAgentSnapshot)
+	}
+	port := target.Port()
+	target.Host = host
+	if port != "" {
+		target.Host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		target.Host = "[" + host + "]"
+	}
+	return target.String(), nil
 }

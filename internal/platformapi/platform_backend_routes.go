@@ -10,11 +10,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-type UsageActivitiesResponse struct {
-	Usages      map[string]any `json:"usages"`
-	Granularity string         `json:"granularity"`
-}
-
 type APIKeysUsageResponse struct {
 	APIKeys    []any `json:"api_keys"`
 	CutoffDays int   `json:"cutoff_days"`
@@ -37,9 +32,9 @@ type platformOrganizationUpdater interface {
 	UpdatePlatformOrganization(ctx context.Context, orgUUID string, patch OrganizationUpdatePatch) (*OrganizationRecord, error)
 }
 
-func RegisterPlatformAccountRoutes(r chi.Router, store OrganizationStore) {
-	r.Get("/api/bootstrap", handleBootstrap(store))
-	r.Get("/api/bootstrap/{orgUuid}/app_start", handleBootstrap(store))
+func RegisterPlatformAccountRoutes(r chi.Router, store OrganizationStore, resolveAccess PlatformAccessResolver) {
+	r.Get("/api/bootstrap", handleBootstrap(store, resolveAccess))
+	r.Get("/api/bootstrap/{orgUuid}/app_start", handleBootstrap(store, resolveAccess))
 	r.Get("/api/banners", handleBanners)
 }
 
@@ -70,15 +65,7 @@ func RegisterOrganizationBillingRoutes(r chi.Router) {
 	}))
 	r.Get("/api_keys/usage", handleAPIKeysUsage)
 	r.Get("/workspaces/{workspaceId}/api_keys/usage", handleAPIKeysUsage)
-	r.Get("/usage_activities", handleUsageActivities)
-	r.Get("/usage_cost", handleUsageCost)
-	r.Get("/workspaces/{workspaceId}/usage_cost", handleUsageCost)
 	r.Get("/cache_analytics", handlePromptCacheAnalytics)
-}
-
-func RegisterOrganizationAnalyticsRoutes(r chi.Router) {
-	r.Get("/analytics/sessions/overview", handleSessionAnalyticsOverview)
-	r.Get("/analytics/sessions/timeseries", handleSessionAnalyticsTimeseries)
 }
 
 func RegisterConsoleOrganizationWorkspaceRoutes(r chi.Router, store OrganizationStore) {
@@ -110,71 +97,8 @@ func handleCurrentSpend(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func handleSessionAnalyticsOverview(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"sessions_count":            analyticsValue(0),
-		"error_rate":                analyticsValue(0),
-		"input_tokens":              analyticsMetricBucket(),
-		"output_tokens":             analyticsMetricBucket(),
-		"duration":                  analyticsMetricBucket(),
-		"active_time":               analyticsMetricBucket(),
-		"input_tokens_per_session":  analyticsMetricBucket(),
-		"output_tokens_per_session": analyticsMetricBucket(),
-		"turns_per_session":         analyticsMetricBucket(),
-		"tool_call_counts":          map[string]any{},
-		"stop_reason_counts":        map[string]any{},
-		"data_as_of":                nil,
-	})
-}
-
-func handleSessionAnalyticsTimeseries(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"data":        []any{},
-		"data_points": []any{},
-		"group_by":    strings.TrimSpace(r.URL.Query().Get("group_by")),
-	})
-}
-
-func analyticsMetricBucket() map[string]any {
-	return map[string]any{
-		"total": analyticsValue(0),
-		"p50":   analyticsValue(0),
-		"p90":   analyticsValue(0),
-		"p95":   analyticsValue(0),
-	}
-}
-
-func analyticsValue(value int) map[string]any {
-	return map[string]any{"value": value}
-}
-
 func nextMonthlyResetAt(now time.Time) string {
 	return time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
-}
-
-func usageGranularity(r *http.Request) string {
-	granularity := strings.TrimSpace(r.URL.Query().Get("granularity"))
-	if granularity == "" {
-		granularity = "daily"
-	}
-	return granularity
-}
-
-func handleUsageActivities(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, UsageActivitiesResponse{
-		Usages:      map[string]any{},
-		Granularity: usageGranularity(r),
-	})
-}
-
-func handleUsageCost(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"costs":                map[string]any{},
-		"web_search_costs":     map[string]any{},
-		"code_execution_costs": map[string]any{},
-		"session_usage_costs":  map[string]any{},
-		"claude_code_savings":  map[string]any{},
-	})
 }
 
 func handleAPIKeysUsage(w http.ResponseWriter, r *http.Request) {
@@ -241,6 +165,9 @@ func handleGetPlatformOrganization(store OrganizationStore) http.HandlerFunc {
 func handleUpdatePlatformOrganization(store OrganizationStore) http.HandlerFunc {
 	organizationStore, _ := store.(platformOrganizationUpdater)
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireOrganizationAdministrator(w, r) {
+			return
+		}
 		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
 			return

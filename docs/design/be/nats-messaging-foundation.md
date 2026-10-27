@@ -1,0 +1,132 @@
+# NATS 消息基础设施
+
+## 运行边界
+
+应用在组装层创建一条全局 NATS 连接，确认目标账号已启用 JetStream，并在退出时 drain。Session SSE
+preview 使用 Core NATS Pub/Sub；Code Session worker 入站事件使用同一连接上的 JetStream。handler
+和业务 service 不建立独立连接池。
+Brain 领取长轮询通过同一连接订阅 Core NATS `oma.brain.work.available`，派发时发布无数据通知唤醒各实例；通知可丢失，任务归属以 PostgreSQL 领取状态为准，不使用 JetStream stream（见 [Brain Worker 领取](brain-worker-claim.md)）。
+
+HTTP 退出时，组装层通过 `httpapi.WithStreamShutdown` 向请求传入进程退出通知。
+Session SSE 与 Worker SSE 在资源入口使用 `httpapi.StreamContext` 派生流 context，
+收到通知后结束订阅，执行原有断连清理；退出不会推进 Worker epoch，也不会删除仍活跃会话的 consumer。
+普通 HTTP 请求不随该通知取消，继续在 `http.Server.Shutdown` 的 10 秒预算内完成。
+超时后组装层调用 `Server.Close` 关闭剩余连接，再清理后台组件、NATS、Redis 和数据库；
+HTTP 超时仍作为错误返回。此预算仅覆盖 HTTP 排空，不是整个进程清理的总时限。
+第一次 SIGINT 或 SIGTERM 后解除信号接管，后续信号恢复默认行为，允许再次 Ctrl-C 中断等待。
+
+执行 `just generate` 后，回归入口为
+`go test . ./internal/httpapi -run 'TestShutdownHTTP|TestServeHTTP|TestStreamContext' -count=1`，
+覆盖超时关闭活跃连接、退出时结束长流、普通请求继续完成及客户端取消传播。
+完整静态检查与单测按仓库质量门禁执行；这些测试不替代真实 Worker、NATS 和数据库集成验收。
+真实退出验收使用 `just verify-be chat doctor shutdown` 与 `just verify-be chat shutdown`，
+在隔离 PostgreSQL、Redis、NATS 和 MinIO 上启动真实后端进程，覆盖部分请求体阻塞时的十秒排空、
+第二次中断立即退出，以及同时保持 Session/Worker SSE 时的正常退出。
+该场景不需要模型 Worker，不覆盖云端退出或全部后台组件的总清理时间；聊天回合另运行 `chat roundtrip`。
+
+MCP Tunnel 复用同一连接：命令使用 R3 WorkQueue（共享 consumer，MaxDeliver=1），不可覆盖响应绑定改由 Redis String key 保存，NATS 不再创建 Request KV。
+通知和最终响应正文均通过 Core NATS request-reply 直接交付原 OMA；不保存终态、不定时恢复，完成标记仅在原实例内存中保留。
+Tunnel Broker 只关闭自身订阅，共享连接由组装层统一 drain。Broker 依赖 Redis 保存和读取领取绑定；绑定写入失败不交付命令，读取失败拒绝响应，不回退到 NATS KV 或 PostgreSQL。
+Connector/Console 的在线展示使用独立组件，复用同一 Redis 8 客户端。在线记录写入失败不阻止 Poll，读取失败显示“状态未知”；此降级策略不适用于领取绑定。
+Control KV、token 状态同步、亲和路由和专属 River 清理队列已移除。
+
+```mermaid
+flowchart LR
+    Config["nats.url"] --> Client["全局 NATS connection"]
+    Client --> Core["Core NATS：Session preview"]
+    Client --> JS["JetStream：OMA_WORKER_INBOUND"]
+    Producer["Code Session 入站生产方"] -->|直接 Publish，等待 PubAck| JS
+    JS --> Durable["每 Code Session 任务与回应两个 durable consumer"]
+    Durable --> Worker["worker SSE"]
+```
+
+`nats.url` 是部署必填项，可包含逗号分隔的多个种子 URL。全部种子不可连接或 JetStream 不可用时，
+HTTP server 不开始监听，也不回退到 Redis。连接关闭 reconnect publish buffer，避免断线期间积累的
+过期 preview 在重连后发送。可靠入站发布必须等待 JetStream PubAck。
+
+## 本地与生产拓扑
+
+Docker Compose 使用三个独立 NATS 节点组成 `oma-nats` JetStream 集群。节点分别持有 named volume，
+通过 6222 route 互联；客户端端口是 loopback 上的 4222、4223、4224，监控端口是
+8222、8223、8224。
+
+本地拓扑不启用认证或 TLS，不得暴露到非受信网络。生产环境必须配置独立账号与凭证、TLS、网络
+策略和容量告警。三节点集群只是创建 3 replicas Stream 的前提，不替代生产安全配置。
+
+## Worker 入站 Stream
+
+应用启动时创建或校验共享 Stream `OMA_WORKER_INBOUND`：
+
+- subjects：`oma.worker.inbound.v2.>`；
+- retention：`WorkQueuePolicy`；
+- storage：file；
+- capacity：默认 256 MiB（`1 << 28`），通过 `nats.worker_event_stream.max_bytes` 配置；discard：`DiscardNew`；
+- 单消息上限：默认 1 MiB，通过 `max_msg_size` 配置；duplicate window 默认 24 小时，非零 `max_age` 更短时同步缩短；
+- `max_age` 默认 `0s`；副本数通过 `replicas` 配置，默认 3。
+
+配置非零 `max_age` 会自动删除到期的未 ACK 消息；默认 `MaxAge=0` 避免服务端静默删除未处理消息。30 天逻辑期限由 envelope 的 `expires_at` 和应用 expiry
+worker 强制执行。容量满时新 Publish 被拒绝并返回调用方；没有 PostgreSQL outbox 或后台补发。
+
+每条版本 2 envelope 包含 Code Session ID、稳定 transport event ID、可选 payload event ID、事件
+类型、`expires_at`，以及内联 payload 或对象存储引用。生产方直接使用稳定 `Nats-Msg-Id` 发布并
+等待 PubAck。PubAck 响应丢失时，调用方重试由 duplicate window 去重。
+
+`sequence_num` 在存储 envelope 中为 0，由 consumer 读取 JetStream metadata 后填入 Stream sequence。它是
+共享 Stream 的全局序号，单个 Code Session 看到间断是正常的；跨通道的交付序号可以非单调。
+
+## Subject 与 consumer
+
+每个 Code Session 使用任务 subject `oma.worker.inbound.v2.<code-session-id>` 和回应 subject
+`oma.worker.inbound.v2.<code-session-id>.reply`，各创建一个稳定 durable pull consumer。精确 filter
+互不重叠，满足 `WorkQueuePolicy` 限制。两路均配置为 `DeliverAll`、`AckExplicit`、
+无限 `MaxDeliver`，退避 1 分钟、5 分钟、15 分钟，之后保持 15 分钟。
+两路均使用服务端默认 `MaxAckPending`，当前 NATS 2.14.6 为 1000；每次按序拉取一条，执行端负责输入顺序和幂等。控制回应可以越过未完成任务及排队输入，解除循环等待。分类及顺序约束见
+[Worker 入站投递设计](ccrv2/ccr-v2-worker-events-delivery-backend-design.md#stream-与顺序)。
+
+SSE 断开不删除 consumer。worker 上报 `received` 或 `processing` 时发送 InProgress；只有
+`processed` 才 DoubleAck。终止或 30 天过期时删除两个 consumer，并按两个精确 subject 清空消息。
+
+`workerevents.Delivery` 只携带 envelope 和 ACK subject。InProgress、DoubleAck 由 `Broker` 按
+ACK subject 执行，不在 delivery 中保存 SDK 方法或函数回调。SSE 或后台扫描发现过期时，必须先
+成功提交 PG 终止与凭证撤销，再删除 consumer、purge subject。不能提前 TERM 或 ACK，否则 PG
+失败时会丢失重试依据，且可能向同一 worker 放行下一条消息。
+
+后台每分钟按 subject 查找下一条实际存储消息，一轮最多检查 512 条；序号空洞不占预算。坏
+envelope 会告警，但不阻塞其他 Session 的扫描。同通道后续消息仍阻塞消费，以可信的 subject
+和存储时间加 30 天兜底终止；任何终止或队列清理失败都保留批次游标重试。
+
+## 数据安全与大消息
+
+JetStream envelope 可能包含用户内容，不得写入运行日志。Worker 入站事件的原始字节数超过 32 KiB 时，payload 存入对象
+存储，envelope 只携带租户作用域 key、字节数、SHA-256 和 cleanup job ID；引用 envelope 仍不得
+超过配置的 `nats.worker_event_stream.max_msg_size`，默认 1 MiB。Worker 入站链路中的 Redis 只保存短期 ACK subject，不保存 payload，也不是消息事实源。
+
+## 其他消息能力的接入约束
+
+其他可靠业务队列接入前必须先定义 subject、schema/version、幂等键、ACK、重试、过期行为和租户
+隔离。Core NATS 的 at-most-once 语义不能作为持久队列。Session preview 继续使用 Core NATS，
+不得创建捕获 `oma.s.>` 的 Stream。
+
+## 验收
+
+连接层测试覆盖空 URL、JetStream 未启用和成功连接。worker event 测试使用内嵌三节点集群验证
+Stream 配置、duplicate window、durable consumer、全局 Stream sequence、各通道串行 ACK 及回应越过排队输入。
+过期测试覆盖序号空洞、损坏 envelope 隔离，以及 PG 终止失败保留队列、恢复后重新终止和清理。
+
+```bash
+docker compose up -d nats nats-2 nats-3
+docker compose ps nats nats-2 nats-3
+curl --fail 'http://127.0.0.1:8222/healthz?js-enabled-only=true'
+curl --fail 'http://127.0.0.1:8223/healthz?js-enabled-only=true'
+curl --fail 'http://127.0.0.1:8224/healthz?js-enabled-only=true'
+just generate
+go test ./internal/workerevents -count=1
+```
+
+MCP Tunnel 的 Commands Stream、Redis 绑定、2 MiB 节点 payload 要求、容量和故障合同详见 [MCP Tunnels](mcp-tunnels.md)。
+
+### Tunnel 超限正文与默认预算
+
+Tunnel 完整 NATS 消息（命令包含去重 header）超过 2 MiB 时才将正文暂存对象存储，队列/响应通道传引用；未超限保持内联。接收 OMA 恢复并校验完整正文，客户端协议不变。对象清理复用 PostgreSQL 任务，原 deadline 后 5 分钟开始删除所有版本。此阈值与 Worker 事件 32 KiB 外置阈值无关。
+
+Tunnel 默认不设置请求数量准入，Commands 的 `max_msgs=-1`，`max_bytes` 默认每节点 513 MiB（537919488 字节），R3 合计约 1.50 GiB；两项可通过 `tunnel.command_stream` 配置，启动时原地更新已有 Stream。`max_stored_requests` 已删除；Redis 绑定不占 NATS 存储预算。默认正文上限 16 MiB 不改变命令预算。Worker Stream 默认 256 MiB、R3，可通过 `nats.worker_event_stream` 调整容量与副本数；这些设置不调整 NATS 集群容量，也不保证任意小磁盘都能运行完整应用。

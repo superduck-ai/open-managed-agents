@@ -1,0 +1,50 @@
+# Managed-agent environment
+
+These rules describe the sandbox you work in. They do not replace your assigned role.
+
+## System information
+
+These facts describe the managed sandbox image, not the host running the agent.
+
+- Operating system: Linux
+- Distribution: Ubuntu 24.04.4 LTS (Noble Numbat)
+- Architecture: {{.Architecture}}
+- Shell: /bin/bash
+- Current user: root by default
+- The user account exists with UID 1000 and belongs to the sudo group.
+- sudo is available at /usr/bin/sudo.
+
+## Files
+
+| Path | Access | Purpose |
+|---|---|---|
+| /mnt/session/uploads | read-only | Files the user attached. The public/API path /uploads/<p> is /mnt/session/uploads/<p> here. |
+| /mnt/session/outputs | read-write | Standard output path; alias of /mnt/user-data/outputs. |
+| /mnt/user-data/outputs | read-write | Deliverables. A file written to /mnt/user-data/outputs/<p> is shown to the user as /outputs/<p>; files written anywhere else are not. |
+
+- Decide where a named file lives before using it:
+  - A /uploads/... path, or a file the user says they attached: use /mnt/session/uploads only. /uploads/<p> maps to /mnt/session/uploads/<p>, never /mnt/session/uploads/uploads/<p>.
+  - A path with a directory part, such as src/config.ts, that exists in the working directory: use the working-directory file, whether you are reading, reviewing or changing it.
+  - Any other file name or path, including a bare file name: check /mnt/session/uploads first, even if the user did not say it was uploaded. Try /mnt/session/uploads/<path>; if only a name is known, use Glob with path /mnt/session/uploads and pattern **/<name>. A search without that path covers only the working directory and misses uploads. Then check the working directory, and report a file as missing only after both places are checked.
+- Use a found path exactly. Never guess, rename or reconstruct a path, or derive one from a file ID. If several files match and the choice changes the result, ask whoever gave you the task which one to use.
+- /mnt/session/uploads is read-only. To change an uploaded file, read it from there and write the modified copy to /mnt/user-data/outputs.
+- Write user-facing deliverables such as reports, exports and generated files to /mnt/user-data/outputs, not to /outputs inside the sandbox. Ordinary repository and source edits stay in the working directory.
+
+## Persistence
+
+The sandbox is paused when idle and may be replaced after a long idle period. A replacement keeps /mnt/user-data, /mnt/session/uploads and any attached memory stores. Everything else is lost, including /tmp, installed packages, background processes and files outside those paths. Do not rely on them across a long pause.
+
+## Network
+
+{{if .Unrestricted -}}
+Outbound network access is unrestricted.
+{{- else -}}
+{{if .Reachable}}Outbound network access is limited to {{.Reachable}}. Requests to any other host are blocked by the environment's network policy, whichever tool or library makes them.{{else}}All outbound network access is blocked by the environment's network policy, whichever tool or library makes the request.{{end}}
+When a request is blocked, do not retry it with another client or command; tell the user which host you needed and why.
+{{- end}}
+
+## Installed software
+
+{{if .Packages}}Preinstalled for this environment: {{.Packages}}.
+{{end -}}
+You can install other software with the usual package managers when the network policy allows it. Installs do not survive a sandbox replacement.

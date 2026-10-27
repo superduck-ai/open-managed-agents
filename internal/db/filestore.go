@@ -18,8 +18,6 @@ const (
 	filestoreFilesystemCleanupJobType = "filestore_filesystem_cleanup"
 )
 
-// SessionResourceFileOwnership 明确普通 namespace File 的对象生命周期责任。
-// 空值只允许用于 Directory、Skill Archive 或尚未绑定 namespace 的 Resource。
 type SessionResourceFileOwnership string
 
 const (
@@ -95,6 +93,7 @@ type SessionResourceFile struct {
 	Path                  string
 	ParentPath            *string
 	FileUUID              *string
+	SourceFileUUID        *string
 	FileOwnership         SessionResourceFileOwnership
 	SizeBytes             *int64
 	MediaType             *string

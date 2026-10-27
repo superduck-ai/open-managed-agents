@@ -3,8 +3,6 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"net/http"
 	"strings"
 	"time"
 	"uuid"
@@ -13,21 +11,12 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 )
 
 type Service struct {
 	cfg config.Config
 	db  *db.DB
-}
-
-type serviceError struct {
-	status  int
-	typ     string
-	message string
-}
-
-func (e *serviceError) Error() string {
-	return e.message
 }
 
 func NewService(cfg config.Config, database *db.DB) *Service {
@@ -59,7 +48,7 @@ func (s *Service) CreateInvite(ctx context.Context, principal auth.Principal, re
 	if err != nil {
 		return inviteResponse{}, invalidRequest(err.Error())
 	}
-	if err := validateOrganizationRole(req.Role, false); err != nil {
+	if err := validateOrganizationRole(req.Role); err != nil {
 		return inviteResponse{}, invalidRequest(err.Error())
 	}
 	externalID, err := ids.New("invite_")
@@ -152,7 +141,7 @@ func (s *Service) ListUsers(ctx context.Context, principal auth.Principal, email
 }
 
 func (s *Service) UpdateUser(ctx context.Context, principal auth.Principal, userID string, req updateUserRequest) (userResponse, error) {
-	if err := validateOrganizationRole(req.Role, false); err != nil {
+	if err := validateOrganizationRole(req.Role); err != nil {
 		return userResponse{}, invalidRequest(err.Error())
 	}
 	user, err := s.db.UpdateAdminUserRole(ctx, principal.OrganizationUUID, userID, req.Role)
@@ -171,6 +160,9 @@ func (s *Service) DeleteUser(ctx context.Context, principal auth.Principal, user
 
 func (s *Service) CreateWorkspace(ctx context.Context, principal auth.Principal, req createWorkspaceRequest) (workspaceResponse, error) {
 	name := strings.TrimSpace(req.Name)
+	if strings.EqualFold(name, "default") {
+		return workspaceResponse{}, invalidRequest("Default Workspace name is reserved")
+	}
 	if name == "" {
 		return workspaceResponse{}, invalidRequest("name is required")
 	}
@@ -252,6 +244,12 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
+	if current.ArchivedAt != nil {
+		return workspaceResponse{}, mapAdminDBError(workspaceaccess.ErrDenied, "Workspace not found")
+	}
+	if current.IsDefault && req.Name != nil {
+		return workspaceResponse{}, invalidRequest(workspaceaccess.ErrDefaultProtected.Error())
+	}
 	currentResidency, err := decodeDataResidency(current.DataResidency)
 	if err != nil {
 		return workspaceResponse{}, invalidRequest("stored data_residency is invalid")
@@ -274,6 +272,9 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 	name := current.Name
 	if req.Name != nil {
 		name = strings.TrimSpace(*req.Name)
+		if strings.EqualFold(name, "default") {
+			return workspaceResponse{}, invalidRequest("Default Workspace name is reserved")
+		}
 		if name == "" {
 			return workspaceResponse{}, invalidRequest("name must be non-empty")
 		}
@@ -302,7 +303,7 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 		}
 		externalKeyID = &nextExternalKeyID
 	}
-	updated, err := s.db.UpdateAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID, db.AdminWorkspace{
+	updated, err := s.db.UpdateAdminWorkspace(ctx, principal.OrganizationUUID, current.ExternalID, db.AdminWorkspace{
 		Name:          name,
 		DataResidency: residencyJSON,
 		ExternalKeyID: externalKeyID,
@@ -316,92 +317,18 @@ func (s *Service) UpdateWorkspace(ctx context.Context, principal auth.Principal,
 }
 
 func (s *Service) ArchiveWorkspace(ctx context.Context, principal auth.Principal, workspaceID string) (workspaceResponse, error) {
-	workspace, err := s.db.ArchiveAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
+	current, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
+	if err != nil {
+		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
+	}
+	if current.IsDefault {
+		return workspaceResponse{}, invalidRequest(workspaceaccess.ErrDefaultProtected.Error())
+	}
+	workspace, err := s.db.ArchiveAdminWorkspace(ctx, principal.OrganizationUUID, current.ExternalID)
 	if err != nil {
 		return workspaceResponse{}, mapAdminDBError(err, "Workspace not found")
 	}
 	return s.workspaceFromRecord(workspace), nil
-}
-
-func (s *Service) CreateWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID string, req createWorkspaceMemberRequest) (workspaceMemberResponse, error) {
-	if err := validateWorkspaceRole(req.WorkspaceRole, false); err != nil {
-		return workspaceMemberResponse{}, invalidRequest(err.Error())
-	}
-	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
-	if err != nil {
-		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace not found")
-	}
-	user, err := s.db.GetAdminUser(ctx, principal.OrganizationUUID, req.UserID)
-	if err != nil {
-		return workspaceMemberResponse{}, mapAdminDBError(err, "User not found")
-	}
-	memberID, err := ids.New("wmem_")
-	if err != nil {
-		return workspaceMemberResponse{}, err
-	}
-	member, err := s.db.CreateAdminWorkspaceMember(ctx, db.AdminWorkspaceMember{
-		ExternalID:          memberID,
-		OrganizationUUID:    workspace.OrganizationUUID,
-		WorkspaceUUID:       workspace.UUID,
-		WorkspaceExternalID: workspace.ExternalID,
-		UserUUID:            user.UUID,
-		UserExternalID:      user.ExternalID,
-		WorkspaceRole:       req.WorkspaceRole,
-		CreatedAt:           time.Now().UTC(),
-	})
-	if err != nil {
-		return workspaceMemberResponse{}, mapAdminDBError(err, "Could not create workspace member")
-	}
-	return workspaceMemberFromRecord(member), nil
-}
-
-func (s *Service) GetWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID, userID string) (workspaceMemberResponse, error) {
-	member, err := s.db.GetAdminWorkspaceMember(ctx, principal.OrganizationUUID, workspaceID, userID)
-	if err != nil {
-		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace member not found")
-	}
-	return workspaceMemberFromRecord(member), nil
-}
-
-func (s *Service) ListWorkspaceMembers(ctx context.Context, principal auth.Principal, workspaceID, afterID, beforeID string, limit int) (cursorPageResponse[workspaceMemberResponse], error) {
-	workspace, err := s.db.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
-	if err != nil {
-		return cursorPageResponse[workspaceMemberResponse]{}, mapAdminDBError(err, "Workspace not found")
-	}
-	records, hasMore, err := s.db.ListAdminWorkspaceMembersPage(ctx, db.ListAdminMembersParams{
-		OrganizationUUID: principal.OrganizationUUID,
-		WorkspaceUUID:    workspace.UUID,
-		AfterID:          afterID,
-		BeforeID:         beforeID,
-		Limit:            limit,
-	})
-	if err != nil {
-		return cursorPageResponse[workspaceMemberResponse]{}, err
-	}
-	data := make([]workspaceMemberResponse, 0, len(records))
-	for _, record := range records {
-		data = append(data, workspaceMemberFromRecord(record))
-	}
-	return cursorPage(data, hasMore, func(value workspaceMemberResponse) string { return value.UserID }), nil
-}
-
-func (s *Service) UpdateWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID, userID string, req updateWorkspaceMemberRequest) (workspaceMemberResponse, error) {
-	if err := validateWorkspaceRole(req.WorkspaceRole, true); err != nil {
-		return workspaceMemberResponse{}, invalidRequest(err.Error())
-	}
-	member, err := s.db.UpdateAdminWorkspaceMember(ctx, principal.OrganizationUUID, workspaceID, userID, req.WorkspaceRole)
-	if err != nil {
-		return workspaceMemberResponse{}, mapAdminDBError(err, "Workspace member not found")
-	}
-	return workspaceMemberFromRecord(member), nil
-}
-
-func (s *Service) DeleteWorkspaceMember(ctx context.Context, principal auth.Principal, workspaceID, userID string) (map[string]string, error) {
-	member, err := s.db.DeleteAdminWorkspaceMember(ctx, principal.OrganizationUUID, workspaceID, userID)
-	if err != nil {
-		return nil, mapAdminDBError(err, "Workspace member not found")
-	}
-	return map[string]string{"type": "workspace_member_deleted", "user_id": member.UserExternalID, "workspace_id": member.WorkspaceExternalID}, nil
 }
 
 func (s *Service) GetAPIKey(ctx context.Context, principal auth.Principal, apiKeyID string) (apiKeyResponse, error) {
@@ -620,160 +547,11 @@ func (s *Service) CostReport(query reportQuery) (reportResponse, error) {
 	return emptyReport(), nil
 }
 
-func (s *Service) GetTunnel(ctx context.Context, principal auth.Principal, tunnelID string) (tunnelResponse, error) {
-	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
-	if err != nil {
-		return tunnelResponse{}, mapAdminDBError(err, "Tunnel not found")
-	}
-	return s.tunnelFromRecord(tunnel), nil
-}
-
-func (s *Service) ListTunnels(ctx context.Context, principal auth.Principal, workspaceExternalID string, includeArchived bool, limit, offset int) (tokenPageResponse[tunnelResponse], error) {
-	records, hasMore, err := s.db.ListAdminTunnelsPage(ctx, db.ListAdminTunnelsParams{
-		OrganizationUUID:    principal.OrganizationUUID,
-		WorkspaceExternalID: workspaceExternalID,
-		IncludeArchived:     includeArchived,
-		Limit:               limit,
-		Offset:              offset,
-	})
-	if err != nil {
-		return tokenPageResponse[tunnelResponse]{}, err
-	}
-	data := make([]tunnelResponse, 0, len(records))
-	for _, record := range records {
-		data = append(data, s.tunnelFromRecord(record))
-	}
-	return tokenPage(data, hasMore, offset), nil
-}
-
-func (s *Service) RevealTunnelToken(ctx context.Context, principal auth.Principal, tunnelID string) (tunnelTokenResponse, error) {
-	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
-	if err != nil {
-		return tunnelTokenResponse{}, mapAdminDBError(err, "Tunnel not found")
-	}
-	if tunnel.ArchivedAt != nil {
-		return tunnelTokenResponse{}, conflict("Tunnel is archived")
-	}
-	if tunnel.TokenID != nil && tunnel.TunnelToken != nil {
-		return tunnelTokenResponse{ID: *tunnel.TokenID, TunnelToken: *tunnel.TunnelToken, Type: "tunnel_token"}, nil
-	}
-	tokenID, token, err := newTunnelToken()
-	if err != nil {
-		return tunnelTokenResponse{}, err
-	}
-	updated, err := s.db.SetAdminTunnelToken(ctx, principal.OrganizationUUID, tunnelID, tokenID, token)
-	if err != nil {
-		return tunnelTokenResponse{}, mapAdminDBError(err, "Tunnel not found")
-	}
-	return tunnelTokenResponse{ID: *updated.TokenID, TunnelToken: *updated.TunnelToken, Type: "tunnel_token"}, nil
-}
-
-func (s *Service) RotateTunnelToken(ctx context.Context, principal auth.Principal, tunnelID string) (tunnelTokenResponse, error) {
-	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
-	if err != nil {
-		return tunnelTokenResponse{}, mapAdminDBError(err, "Tunnel not found")
-	}
-	if tunnel.ArchivedAt != nil {
-		return tunnelTokenResponse{}, conflict("Tunnel is archived")
-	}
-	tokenID, token, err := newTunnelToken()
-	if err != nil {
-		return tunnelTokenResponse{}, err
-	}
-	updated, err := s.db.SetAdminTunnelToken(ctx, principal.OrganizationUUID, tunnelID, tokenID, token)
-	if err != nil {
-		return tunnelTokenResponse{}, mapAdminDBError(err, "Tunnel not found")
-	}
-	return tunnelTokenResponse{ID: *updated.TokenID, TunnelToken: *updated.TunnelToken, Type: "tunnel_token"}, nil
-}
-
-func (s *Service) ArchiveTunnel(ctx context.Context, principal auth.Principal, tunnelID string) (tunnelResponse, error) {
-	tunnel, err := s.db.ArchiveAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
-	if err != nil {
-		return tunnelResponse{}, mapAdminDBError(err, "Tunnel not found")
-	}
-	return s.tunnelFromRecord(tunnel), nil
-}
-
-func (s *Service) CreateTunnelCertificate(ctx context.Context, principal auth.Principal, tunnelID string, req createTunnelCertificateRequest) (tunnelCertificateResponse, error) {
-	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
-	if err != nil {
-		return tunnelCertificateResponse{}, mapAdminDBError(err, "Tunnel not found")
-	}
-	if tunnel.ArchivedAt != nil {
-		return tunnelCertificateResponse{}, conflict("Tunnel is archived")
-	}
-	count, err := s.db.CountActiveAdminTunnelCertificates(ctx, principal.OrganizationUUID, tunnel.UUID)
-	if err != nil {
-		return tunnelCertificateResponse{}, err
-	}
-	if count >= 2 {
-		return tunnelCertificateResponse{}, conflict("Tunnel already has two active certificates")
-	}
-	parsed, err := parseCACertificatePEM(req.CACertificatePEM)
-	if err != nil {
-		return tunnelCertificateResponse{}, invalidRequest(err.Error())
-	}
-	certID, err := ids.New("tcrt_")
-	if err != nil {
-		return tunnelCertificateResponse{}, err
-	}
-	cert, err := s.db.CreateAdminTunnelCertificate(ctx, db.AdminTunnelCertificate{
-		ExternalID:       certID,
-		OrganizationUUID: tunnel.OrganizationUUID,
-		TunnelUUID:       tunnel.UUID,
-		TunnelExternalID: tunnel.ExternalID,
-		CACertificatePEM: req.CACertificatePEM,
-		Fingerprint:      parsed.Fingerprint,
-		ExpiresAt:        parsed.ExpiresAt,
-		CreatedAt:        time.Now().UTC(),
-	})
-	if err != nil {
-		return tunnelCertificateResponse{}, mapAdminDBError(err, "Could not create tunnel certificate")
-	}
-	return tunnelCertificateFromRecord(cert), nil
-}
-
-func (s *Service) GetTunnelCertificate(ctx context.Context, principal auth.Principal, tunnelID, certificateID string) (tunnelCertificateResponse, error) {
-	cert, err := s.db.GetAdminTunnelCertificate(ctx, principal.OrganizationUUID, tunnelID, certificateID)
-	if err != nil {
-		return tunnelCertificateResponse{}, mapAdminDBError(err, "Tunnel certificate not found")
-	}
-	return tunnelCertificateFromRecord(cert), nil
-}
-
-func (s *Service) ListTunnelCertificates(ctx context.Context, principal auth.Principal, tunnelID string, includeArchived bool, limit, offset int) (tokenPageResponse[tunnelCertificateResponse], error) {
-	tunnel, err := s.db.GetAdminTunnel(ctx, principal.OrganizationUUID, tunnelID)
-	if err != nil {
-		return tokenPageResponse[tunnelCertificateResponse]{}, mapAdminDBError(err, "Tunnel not found")
-	}
-	records, hasMore, err := s.db.ListAdminTunnelCertificatesPage(ctx, db.ListAdminTunnelCertificatesParams{
-		OrganizationUUID: principal.OrganizationUUID,
-		TunnelUUID:       tunnel.UUID,
-		IncludeArchived:  includeArchived,
-		Limit:            limit,
-		Offset:           offset,
-	})
-	if err != nil {
-		return tokenPageResponse[tunnelCertificateResponse]{}, err
-	}
-	data := make([]tunnelCertificateResponse, 0, len(records))
-	for _, record := range records {
-		data = append(data, tunnelCertificateFromRecord(record))
-	}
-	return tokenPage(data, hasMore, offset), nil
-}
-
-func (s *Service) ArchiveTunnelCertificate(ctx context.Context, principal auth.Principal, tunnelID, certificateID string) (tunnelCertificateResponse, error) {
-	cert, err := s.db.ArchiveAdminTunnelCertificate(ctx, principal.OrganizationUUID, tunnelID, certificateID)
-	if err != nil {
-		return tunnelCertificateResponse{}, mapAdminDBError(err, "Tunnel certificate not found")
-	}
-	return tunnelCertificateFromRecord(cert), nil
-}
-
 func inviteFromRecord(record db.AdminInvite) inviteResponse {
 	status := record.Status
+	if status == "declined" {
+		status = "deleted"
+	}
 	if status == "pending" && time.Now().UTC().After(record.ExpiresAt) {
 		status = "expired"
 	}
@@ -865,52 +643,6 @@ func externalKeyFromRecord(record db.AdminExternalKey) externalKeyResponse {
 	}
 }
 
-func (s *Service) tunnelFromRecord(record db.AdminTunnel) tunnelResponse {
-	return tunnelResponse{
-		ID:          record.ExternalID,
-		ArchivedAt:  formatOptionalTime(record.ArchivedAt),
-		CreatedAt:   formatTime(record.CreatedAt),
-		DisplayName: record.DisplayName,
-		Domain:      record.Domain,
-		Type:        "tunnel",
-		WorkspaceID: nullableWorkspaceIDFromPtr(record.WorkspaceExternalID, s.cfg.Bootstrap.WorkspaceExternalID),
-	}
-}
-
-func tunnelCertificateFromRecord(record db.AdminTunnelCertificate) tunnelCertificateResponse {
-	return tunnelCertificateResponse{
-		ID:          record.ExternalID,
-		ArchivedAt:  formatOptionalTime(record.ArchivedAt),
-		CreatedAt:   formatTime(record.CreatedAt),
-		ExpiresAt:   formatOptionalTime(record.ExpiresAt),
-		Fingerprint: record.Fingerprint,
-		TunnelID:    record.TunnelExternalID,
-		Type:        "tunnel_certificate",
-	}
-}
-
-func mapAdminDBError(err error, missingMessage string) error {
-	if errors.Is(err, db.ErrNotFound) {
-		return notFound(missingMessage)
-	}
-	if errors.Is(err, db.ErrDuplicate) {
-		return conflict("Resource already exists")
-	}
-	return err
-}
-
-func invalidRequest(message string) error {
-	return &serviceError{status: http.StatusBadRequest, typ: "invalid_request_error", message: message}
-}
-
-func notFound(message string) error {
-	return &serviceError{status: http.StatusNotFound, typ: "not_found_error", message: message}
-}
-
-func conflict(message string) error {
-	return &serviceError{status: http.StatusConflict, typ: "conflict_error", message: message}
-}
-
 func emptyReport() reportResponse {
 	return reportResponse{Data: []any{}, HasMore: false, NextPage: nil}
 }
@@ -968,11 +700,4 @@ func (s *Service) nullableWorkspaceID(workspaceID string) *string {
 		return nil
 	}
 	return &workspaceID
-}
-
-func nullableWorkspaceIDFromPtr(workspaceID *string, defaultWorkspaceID string) *string {
-	if workspaceID == nil || *workspaceID == "" || *workspaceID == defaultWorkspaceID {
-		return nil
-	}
-	return workspaceID
 }

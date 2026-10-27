@@ -16,16 +16,12 @@ const (
 	// FileSource 是 managed-agent File resource 唯一允许的 Filestore source。
 	FileSource = "/uploads"
 	// SandboxUploadsMount 是 FileSource 在 Sandbox 中的挂载点。
-	SandboxUploadsMount = "/mnt/session/uploads"
-	// OutputsRoot 是用户可下载输出在 Filestore 中的固定 namespace。
-	OutputsRoot = "/outputs"
-	// SandboxOutputsMount 是 OutputsRoot 在 Sandbox 中的挂载点。
-	SandboxOutputsMount = "/mnt/user-data/outputs"
+	SandboxUploadsMount    = "/mnt/session/uploads"
+	OutputsRoot            = "/outputs"
+	MessageAttachmentsRoot = FileSource + "/message_attachments"
+	SandboxOutputsMount    = "/mnt/user-data/outputs"
 )
 
-// SandboxPath 将公开的输入、输出 namespace 路径映射为 Sandbox 绝对路径。
-// 其他 namespace 保持不变，避免把 transcripts、tool_results 等内部路径
-// 错误投影到输入或输出挂载点。
 func SandboxPath(namespacePath string) string {
 	for _, mapping := range []struct {
 		namespace string
@@ -60,11 +56,8 @@ func NormalizeFileSource(raw json.RawMessage) (string, error) {
 }
 
 // DefaultFileMountPath 返回 File resource 在 uploads namespace 中的默认路径。
-func DefaultFileMountPath(fileID, filename string) string {
-	if filename == "" {
-		filename = fileID
-	}
-	return FileSource + "/" + filename
+func DefaultFileMountPath(fileID string) string {
+	return FileSource + "/" + fileID
 }
 
 // ValidateFileMountPath 校验 File resource 在固定 uploads 根目录下的相对命名空间路径。
@@ -78,6 +71,11 @@ func ValidateFileMountPath(mountPath string) error {
 func FileBackingPath(mountPath string) (string, error) {
 	if err := filestorepath.Validate(mountPath, false); err != nil {
 		return "", fmt.Errorf("mount_path %w", err)
+	}
+	for _, segment := range strings.Split(mountPath, "/") {
+		if len(segment) > 255 {
+			return "", errors.New("mount_path components must not exceed 255 UTF-8 bytes")
+		}
 	}
 	for _, value := range mountPath {
 		if unicode.IsControl(value) {

@@ -1,6 +1,7 @@
 import { expect, mock } from 'bun:test';
 import type { EditorView } from '@codemirror/view';
-import type { ReactNode } from 'react';
+import type { QueryClient as QueryClientType } from '@tanstack/react-query';
+import type { AnyRouter } from '@tanstack/react-router';
 import { resetTestDom } from '../../test/setup';
 import type { AuthContextValue } from '../../shared/auth/context';
 
@@ -14,30 +15,26 @@ const { defaultWorkspace } = await import('../../shared/workspaces/api');
 const { setConsoleRequestContext } = await import('../../shared/api/client');
 const { resetMcpDirectoryCacheForTests } = await import('./agents/tools/api');
 const { I18nProvider } = await import('../../shared/i18n');
+const { Toaster } = await import('../../shared/ui/sonner');
 const { AuthContext } = await import('../../shared/auth/context');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { RouterContextProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
+const { RouterProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
   await import('@tanstack/react-router');
 const { useEffect } = await import('react');
 
-const managedAgentsTestRootRoute = createRootRoute();
-const managedAgentsTestEnvironmentListRoute = createRoute({
-  getParentRoute: () => managedAgentsTestRootRoute,
-  path: 'workspaces/$workspaceId/environments',
-});
-const managedAgentsTestEnvironmentDetailRoute = createRoute({
-  getParentRoute: () => managedAgentsTestRootRoute,
-  path: 'workspaces/$workspaceId/environments/$environmentId',
-});
-const managedAgentsTestFallbackRoute = createRoute({
-  getParentRoute: () => managedAgentsTestRootRoute,
-  path: '$',
-});
-const managedAgentsTestRouteTree = managedAgentsTestRootRoute.addChildren([
-  managedAgentsTestEnvironmentListRoute,
-  managedAgentsTestEnvironmentDetailRoute,
-  managedAgentsTestFallbackRoute,
-]);
+type TestAgentModel = { id: string; displayName?: string };
+
+type ManagedAgentsRenderOptions = {
+  workspaceId?: string;
+  models?: TestAgentModel[];
+  auth?: AuthContextValue;
+  seedModels?: boolean;
+};
+
+const defaultTestAgentModels: TestAgentModel[] = [
+  { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+  { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+];
 
 export const { act, cleanup, fireEvent, screen, waitFor, within } = testingLibrary;
 const originalFetch = globalThis.fetch;
@@ -54,10 +51,72 @@ const managedAgentsAuthContextValue: AuthContextValue = {
   logout: async () => undefined,
 };
 
+function mockObservabilityDashboard() {
+  return {
+    version: 1,
+    tabs: [
+      {
+        id: 'overview',
+        title_key: 'observability.tab.overview',
+        panels: [
+          {
+            id: 'overview.active_sessions',
+            title_key: 'observability.panel.overview.active_sessions',
+            render_type: 'stat',
+            unit: 'count',
+            query_ref: 'overview.active_sessions',
+            grid: { x: 0, y: 0, w: 2, h: 1 },
+            options: {},
+          },
+          {
+            id: 'overview.token_total',
+            title_key: 'observability.panel.overview.token_total',
+            render_type: 'stat',
+            unit: 'tokens',
+            query_ref: 'overview.token_total',
+            grid: { x: 4, y: 0, w: 2, h: 1 },
+            options: {},
+          },
+        ],
+      },
+      { id: 'model', title_key: 'observability.tab.model', panels: [] },
+      { id: 'tool', title_key: 'observability.tab.tool', panels: [] },
+    ],
+    queries: [
+      {
+        query_ref: 'overview.active_sessions',
+        variables: [
+          { name: 'start_time', type: 'time', required: true },
+          { name: 'end_time', type: 'time', required: true },
+          { name: 'agent_id', type: 'string', required: false },
+        ],
+      },
+      {
+        query_ref: 'overview.token_total',
+        variables: [
+          { name: 'start_time', type: 'time', required: true },
+          { name: 'end_time', type: 'time', required: true },
+          { name: 'agent_id', type: 'string', required: false },
+        ],
+      },
+    ],
+  };
+}
+
+function mockObservabilityPanelResult(queryRef: string) {
+  const current = queryRef === 'overview.token_total' ? 12345 : 3;
+  return {
+    query_ref: queryRef,
+    render_type: 'stat',
+    data_as_of: '2026-08-13T00:00:00.000Z',
+    data: { current, previous: 2, change_percent: 50 },
+  };
+}
+
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
   options?: Parameters<typeof testingLibrary.render>[1],
-  queryOptions: { auth?: AuthContextValue; seedModels?: boolean } = {},
+  queryOptions: ManagedAgentsRenderOptions = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -65,17 +124,15 @@ export function render(
       mutations: { retry: false },
     },
   });
-  const models = [
-    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-  ];
   if (queryOptions.seedModels !== false) {
-    queryClient.setQueryData(['create-agent', 'models', 'default'], models);
-    queryClient.setQueryData(['agent-quickstart', 'models', 'default'], models);
+    seedCreateAgentModels(queryClient, queryOptions.workspaceId ?? 'default', queryOptions.models);
   }
   return testingLibrary.render(
     <AuthContext.Provider value={queryOptions.auth ?? managedAgentsAuthContextValue}>
-      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <Toaster portal={false} closeButton toastOptions={{ closeButtonAriaLabel: 'Close' }} />
+        {ui}
+      </QueryClientProvider>
     </AuthContext.Provider>,
     options,
   );
@@ -96,6 +153,20 @@ export function codeBlockContaining(value: string) {
   return Array.from(document.querySelectorAll('pre')).find((element) => element.textContent?.includes(value));
 }
 
+export async function addMemoryStoreResource(container: HTMLElement, storeName: string | RegExp) {
+  fireEvent.click(within(container).getByRole('button', { name: 'Add resource' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Memory store' }));
+  const trigger = await waitFor(() => within(container).getByRole('combobox', { name: 'Memory store' }));
+  fireEvent.pointerDown(trigger);
+  fireEvent.pointerUp(trigger);
+  fireEvent.click(trigger);
+  fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+  const option = await screen.findByRole('option', { name: storeName });
+  fireEvent.pointerDown(option);
+  fireEvent.pointerUp(option);
+  fireEvent.click(option);
+}
+
 export async function selectManagedComboboxOption(
   container: HTMLElement,
   name: string | RegExp,
@@ -110,6 +181,18 @@ export async function selectManagedComboboxOption(
   fireEvent.pointerDown(option);
   fireEvent.pointerUp(option);
   fireEvent.click(option);
+}
+
+export function expandAgentCreateSections(container: HTMLElement) {
+  for (const button of within(container).queryAllByRole('button')) {
+    if (
+      button.dataset.slot === 'collapsible-trigger' &&
+      /^(Tools|Skills|Multiagent|工具|技能|多智能体)/.test(button.textContent ?? '') &&
+      button.getAttribute('aria-expanded') === 'false'
+    ) {
+      fireEvent.click(button);
+    }
+  }
 }
 
 export type CodeMirrorTestElement = HTMLElement & {
@@ -138,7 +221,9 @@ export function setAgentConfigEditorValue(container: HTMLElement, value: string,
 export function renderManagedAgentsPage(
   section: Parameters<typeof ManagedAgentsPage>[0]['section'],
   locale: 'en' | 'zh-CN' = 'en',
+  options: ManagedAgentsRenderOptions = {},
 ) {
+  const workspaceId = options.workspaceId ?? 'default';
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -146,37 +231,50 @@ export function renderManagedAgentsPage(
       },
     },
   });
-  const models = [
-    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
-    { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
-  ];
-  queryClient.setQueryData(['create-agent', 'models', 'default'], models);
-  queryClient.setQueryData(['agent-quickstart', 'models', 'default'], models);
+  seedCreateAgentModels(queryClient, workspaceId, options.models);
   const history = createBrowserHistory({ window });
+  const managedAgentsTestRootRoute = createRootRoute({ component: () => <ManagedAgentsPage section={section} /> });
+  const managedAgentsTestEnvironmentListRoute = createRoute({
+    getParentRoute: () => managedAgentsTestRootRoute,
+    path: 'workspaces/$workspaceId/environments',
+  });
+  const managedAgentsTestEnvironmentDetailRoute = createRoute({
+    getParentRoute: () => managedAgentsTestRootRoute,
+    path: 'workspaces/$workspaceId/environments/$environmentId',
+  });
+  const managedAgentsTestFallbackRoute = createRoute({
+    getParentRoute: () => managedAgentsTestRootRoute,
+    path: '$',
+  });
+  const managedAgentsTestRouteTree = managedAgentsTestRootRoute.addChildren([
+    managedAgentsTestEnvironmentListRoute,
+    managedAgentsTestEnvironmentDetailRoute,
+    managedAgentsTestFallbackRoute,
+  ]);
   const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
   const result = render(
-    <ManagedAgentsTestRouterProvider router={router}>
-      <QueryClientProvider client={queryClient}>
-        <I18nProvider initialLocale={locale}>
-          <WorkspaceContext.Provider value={workspaceContextValue('default')}>
-            <ManagedAgentsPage section={section} />
-          </WorkspaceContext.Provider>
-        </I18nProvider>
-      </QueryClientProvider>
-    </ManagedAgentsTestRouterProvider>,
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider initialLocale={locale}>
+        <WorkspaceContext.Provider value={workspaceContextValue(workspaceId)}>
+          <ManagedAgentsTestRouterProvider router={router} />
+        </WorkspaceContext.Provider>
+      </I18nProvider>
+    </QueryClientProvider>,
+    undefined,
+    { workspaceId, models: options.models },
   );
-  return Object.assign(result, { router });
+  return Object.assign(result, { queryClient, router });
 }
 
-function ManagedAgentsTestRouterProvider({
-  router,
-  children,
-}: {
-  router: ReturnType<typeof createRouter<typeof managedAgentsTestRouteTree>>;
-  children: ReactNode;
-}) {
+function seedCreateAgentModels(queryClient: QueryClientType, workspaceId: string, models?: TestAgentModel[]) {
+  const values = (models ?? defaultTestAgentModels).map((model) => ({ ...model }));
+  queryClient.setQueryData(['create-agent', 'models', workspaceId], values);
+  queryClient.setQueryData(['agent-quickstart', 'models', workspaceId], values);
+}
+
+function ManagedAgentsTestRouterProvider({ router }: { router: AnyRouter }) {
   useEffect(() => () => router.history.destroy(), [router]);
-  return <RouterContextProvider router={router}>{children}</RouterContextProvider>;
+  return <RouterProvider router={router} />;
 }
 
 export type AgentFixture = {
@@ -236,17 +334,18 @@ export type MockAgentsApiOptions = {
   deployments?: DeploymentFixture[];
   skills?: SkillFixture[];
   mcpDirectoryServers?: Array<Record<string, unknown>>;
+  mcpTunnels?: Array<Record<string, unknown>>;
+  mcpTunnelProbeResult?: Record<string, unknown>;
   mcpDirectoryErrorOnce?: boolean;
+  workspaceMCPServers?: Array<Record<string, unknown>>;
+  mcpTunnelsErrorOnce?: boolean;
   mcpToolCatalogs?: Array<Record<string, unknown>>;
   mcpToolCatalogRefreshResult?: Record<string, unknown>;
   mcpToolCatalogRefreshErrorOnce?: boolean;
   mcpToolCatalogRefreshWait?: Promise<void>;
-  analyticsOverview?: Record<string, unknown>;
-  analyticsTimeseries?: Array<Record<string, unknown>>;
   modelsErrorOnce?: boolean;
   modelsNotConfigured?: boolean;
   quickstartStream?: string | ((body: Record<string, unknown>) => string);
-  quickstartStreamErrorOnce?: boolean;
   agentUpdateErrorStatus?: number;
   agentsListErrorOnce?: boolean;
   agentsSearchErrorOnce?: boolean;
@@ -269,9 +368,9 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   let agentsSearchErrorsRemaining = options.agentsSearchErrorOnce ? 1 : 0;
   let agentArchiveErrorsRemaining = options.agentArchiveErrorOnce ? 1 : 0;
   let mcpDirectoryErrorsRemaining = options.mcpDirectoryErrorOnce ? 1 : 0;
+  let mcpTunnelsErrorsRemaining = options.mcpTunnelsErrorOnce ? 1 : 0;
   let mcpToolCatalogRefreshErrorsRemaining = options.mcpToolCatalogRefreshErrorOnce ? 1 : 0;
   let modelsErrorsRemaining = options.modelsErrorOnce ? 1 : 0;
-  let quickstartStreamErrorsRemaining = options.quickstartStreamErrorOnce ? 1 : 0;
   let mcpToolCatalogs = options.mcpToolCatalogs?.map((catalog) => ({ ...catalog }));
   const now = new Date().toISOString();
   const skillDetails = new Map((options.skills ?? []).map((skill) => [skill.id, skillResponse(skill)]));
@@ -394,6 +493,34 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         return jsonResponse({ error: { message: 'MCP directory unavailable' } }, 503);
       }
       return jsonResponse({ servers: options.mcpDirectoryServers ?? [] });
+    }
+
+    if (
+      url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_servers(?:\?|$)/) &&
+      method === 'GET'
+    ) {
+      return jsonResponse({ data: options.workspaceMCPServers ?? [], next_page: null });
+    }
+
+    if (url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_tunnels\?/) && method === 'GET') {
+      if (mcpTunnelsErrorsRemaining > 0) {
+        mcpTunnelsErrorsRemaining -= 1;
+        return jsonResponse({ error: { message: 'MCP tunnels unavailable' } }, 503);
+      }
+      return jsonResponse(options.mcpTunnels ?? []);
+    }
+
+    if (
+      url.match(/^\/api\/console\/organizations\/[^/]+\/workspaces\/[^/]+\/mcp_tunnels\/[^/]+\/probe$/) &&
+      method === 'POST'
+    ) {
+      return jsonResponse(
+        options.mcpTunnelProbeResult ?? {
+          status: 'ok',
+          channel: typeof body?.channel === 'string' ? body.channel : 'main',
+          tools: [],
+        },
+      );
     }
 
     if (url.startsWith('/v1/agents?') && method === 'GET') {
@@ -588,6 +715,8 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         type: 'session',
         updated_at: createdAt,
         vault_ids: [],
+        metadata: body?.metadata ?? {},
+        resources: body?.resources ?? [],
       };
       sessionEvents.set(created.id, []);
       return jsonResponse(created);
@@ -641,27 +770,17 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
       return jsonResponse({ data: [], next_page: null });
     }
 
-    if (url.startsWith('/api/organizations/org_test/analytics/sessions/overview') && method === 'GET') {
-      return jsonResponse(
-        options.analyticsOverview ?? {
-          sessions_count: 0,
-          error_rate: 0,
-          input_tokens: { total: 0, p50: 0, p95: 0 },
-          output_tokens: { total: 0, p50: 0, p95: 0 },
-          duration: { p50: 0, p95: 0 },
-          active_time: { p50: 0, p95: 0 },
-          input_tokens_per_session: { p50: 0, p95: 0 },
-          output_tokens_per_session: { p50: 0, p95: 0 },
-          turns_per_session: { p50: 0, p95: 0 },
-          tool_call_counts: {},
-          stop_reason_counts: {},
-          data_as_of: null,
-        },
-      );
+    if (url === '/api/organizations/org_test/observability/dashboard' && method === 'GET') {
+      return jsonResponse(mockObservabilityDashboard());
     }
 
-    if (url.startsWith('/api/organizations/org_test/analytics/sessions/timeseries') && method === 'GET') {
-      return jsonResponse({ data: options.analyticsTimeseries ?? [] });
+    if (url === '/api/organizations/org_test/observability/panels/query' && method === 'POST') {
+      const queryRef = typeof body?.query_ref === 'string' ? body.query_ref : 'overview.active_sessions';
+      return jsonResponse(mockObservabilityPanelResult(queryRef));
+    }
+
+    if (url.startsWith('/api/organizations/org_test/observability/traces') && method === 'GET') {
+      return jsonResponse({ data_as_of: '2026-08-13T00:00:00.000Z', has_more: false, items: [] });
     }
 
     const sessionEventsMatch = url.match(/^\/v1\/sessions\/([^/]+)\/events\?beta=true/);
@@ -759,6 +878,11 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         name,
         description: typeof body?.description === 'string' ? body.description : null,
         model: typeof body?.model === 'string' ? { id: body.model, speed: 'standard' } : { id: 'claude-sonnet-4-6' },
+        system: typeof body?.system === 'string' ? body.system : null,
+        metadata: body?.metadata as Record<string, unknown> | undefined,
+        tools: body?.tools as Array<Record<string, unknown>> | undefined,
+        mcp_servers: body?.mcp_servers as unknown[] | undefined,
+        skills: body?.skills as unknown[] | undefined,
       });
       agents = [created, ...agents];
       versionsById.set(created.id, [created]);
@@ -766,10 +890,6 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
     }
 
     if (url.match(/^\/api\/organizations\/[^/]+\/proxy\/v1\/messages$/) && method === 'POST') {
-      if (quickstartStreamErrorsRemaining > 0) {
-        quickstartStreamErrorsRemaining -= 1;
-        return jsonResponse({ error: { message: 'forced quickstart failure' } }, 500);
-      }
       const stream =
         typeof options.quickstartStream === 'function'
           ? options.quickstartStream(body ?? {})
@@ -785,7 +905,10 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
         return jsonResponse({ error: { message: 'not found' } }, 404);
       }
       if (options.agentUpdateErrorStatus) {
-        return jsonResponse({ error: { message: 'forced update failure' } }, options.agentUpdateErrorStatus);
+        return jsonResponse(
+          { error: { message: 'allowed_domains.0: Invalid domain format' } },
+          options.agentUpdateErrorStatus,
+        );
       }
       if (body?.version !== current.version) {
         return jsonResponse({ error: { message: 'version conflict' } }, 409);
@@ -846,7 +969,23 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
   return { requests };
 }
 
-export function mockManagedResourceApi() {
+type MockManagedResourceApiOptions = {
+  agent?: Pick<AgentFixture, 'tools' | 'version'>;
+  memoryStoresPageSize?: number;
+};
+
+export function pageResourceRows<T>(rows: T[], limit: number, page: string | null) {
+  const parsedOffset = page?.startsWith('offset_') ? Number(page.slice('offset_'.length)) : Number.NaN;
+  const offset = Number.isFinite(parsedOffset) ? parsedOffset : 0;
+  const data = rows.slice(offset, offset + limit);
+  const nextOffset = offset + data.length;
+  return {
+    data,
+    next_page: nextOffset < rows.length ? `offset_${nextOffset}` : null,
+  };
+}
+
+export function mockManagedResourceApi(options: MockManagedResourceApiOptions = {}) {
   const now = new Date().toISOString();
   const requests: RecordedRequest[] = [];
   const sessionResources = [
@@ -859,10 +998,45 @@ export function mockManagedResourceApi() {
     },
   ];
   const resources = {
+    failSessionList: false,
+    files: [
+      {
+        id: 'file_input123456',
+        type: 'file',
+        filename: 'input.txt',
+        size_bytes: 108,
+        mime_type: 'text/plain',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+      {
+        id: 'file_image123456',
+        type: 'file',
+        filename: 'image.png',
+        size_bytes: 257_024,
+        mime_type: 'image/png',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+      {
+        id: 'file_report123456',
+        type: 'file',
+        filename: 'NL2SQL report.md',
+        size_bytes: 30_720,
+        mime_type: 'text/markdown',
+        created_at: now,
+        downloadable: true,
+        scope: null,
+      },
+    ],
     agents: [
       agentResponse({
         id: 'agent_option123456',
         name: 'Option agent',
+        version: 3,
+        ...options.agent,
       }),
     ],
     sessions: [
@@ -876,6 +1050,7 @@ export function mockManagedResourceApi() {
         title: 'Session one',
         type: 'session',
         updated_at: now,
+        usage: { input_tokens: 1234, output_tokens: 56, list_cost: 0.0123 },
         vault_ids: ['vlt_one123456'],
         resources: sessionResources,
       },
@@ -929,7 +1104,7 @@ export function mockManagedResourceApi() {
         id: 'evt_user_queued',
         type: 'user.message',
         created_at: new Date(Date.now() - 84_000).toISOString(),
-        is_queued: true,
+        processed_at: null,
         content: [{ type: 'text', text: 'Queued warmup request' }],
       },
       {
@@ -1286,6 +1461,14 @@ export function mockManagedResourceApi() {
         type: 'vault',
         updated_at: now,
       },
+      {
+        id: 'vlt_two123456',
+        archived_at: null,
+        created_at: now,
+        display_name: 'Vault two',
+        type: 'vault',
+        updated_at: now,
+      },
     ],
     vaultCredentials: {
       vlt_one123456: [
@@ -1298,6 +1481,18 @@ export function mockManagedResourceApi() {
           type: 'vault_credential',
           updated_at: now,
           vault_id: 'vlt_one123456',
+        },
+      ],
+      vlt_two123456: [
+        {
+          id: 'vcrd_two123456',
+          archived_at: null,
+          auth: { type: 'mcp_oauth' },
+          created_at: now,
+          display_name: 'Vault credential two',
+          type: 'vault_credential',
+          updated_at: now,
+          vault_id: 'vlt_two123456',
         },
       ],
     },
@@ -1377,6 +1572,10 @@ export function mockManagedResourceApi() {
       });
     }
     if (url.startsWith('/v1/sessions?') && method === 'GET') {
+      if (resources.failSessionList) {
+        resources.failSessionList = false;
+        return jsonResponse({ error: { message: 'list failed' } }, 500);
+      }
       const params = new URL(url, 'https://oma.duck.ai').searchParams;
       const agentId = params.get('agent_id');
       const deploymentId = params.get('deployment_id');
@@ -1398,13 +1597,38 @@ export function mockManagedResourceApi() {
         }
         return matchesCreatedAtParams(session, params);
       });
-      return jsonResponse({ data: filteredSessions, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredSessions.length) || filteredSessions.length;
+      return jsonResponse(pageResourceRows(filteredSessions, limit, params.get('page')));
+    }
+    if (url.startsWith('/v1/files?') && method === 'GET') {
+      const scopeId = new URL(url, 'https://oma.duck.ai').searchParams.get('scope_id');
+      const files = scopeId
+        ? resources.files.filter((file) => (file.scope as { id?: string } | null)?.id === scopeId)
+        : resources.files;
+      return jsonResponse({
+        data: files,
+        has_more: false,
+        first_id: files.at(0)?.id ?? null,
+        last_id: files.at(-1)?.id ?? null,
+      });
     }
     const retrieveSessionMatch = url.match(/^\/v1\/sessions\/([^/?]+)\?beta=true$/);
     if (retrieveSessionMatch && method === 'GET') {
       const sessionId = decodeURIComponent(retrieveSessionMatch[1]);
       const session = resources.sessions.find((item) => item.id === sessionId);
       return session ? jsonResponse(session) : jsonResponse({ error: { message: 'not found' } }, 404);
+    }
+    if (retrieveSessionMatch && method === 'POST') {
+      const sessionId = decodeURIComponent(retrieveSessionMatch[1]);
+      const existing = resources.sessions.find((item) => item.id === sessionId);
+      if (!existing) return jsonResponse({ error: { message: 'not found' } }, 404);
+      const updated = {
+        ...existing,
+        title: body?.title === undefined ? existing.title : body.title,
+        updated_at: new Date().toISOString(),
+      };
+      resources.sessions = resources.sessions.map((item) => (item.id === sessionId ? updated : item));
+      return jsonResponse(updated);
     }
     const fileMetadataMatch = url.match(/^\/v1\/files\/([^/?]+)\?beta=true$/);
     if (fileMetadataMatch && method === 'GET') {
@@ -1429,6 +1653,21 @@ export function mockManagedResourceApi() {
     if (sessionThreadsMatch && method === 'GET') {
       return jsonResponse({ data: resources.sessionThreads, next_page: null });
     }
+    if (url.match(/^\/v1\/sessions\/[^/]+\/(?:events\/stream|threads\/[^/]+\/stream)\?/) && method === 'GET') {
+      return new Response(
+        new ReadableStream({
+          start(stream) {
+            if (init?.signal?.aborted) {
+              stream.close();
+              return;
+            }
+            stream.enqueue(new TextEncoder().encode(': connected\n\n'));
+            init?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    }
     const sessionThreadEventsMatch = url.match(/^\/v1\/sessions\/([^/?]+)\/threads\/([^/?]+)\/events\?/);
     if (sessionThreadEventsMatch && method === 'GET') {
       const threadId = decodeURIComponent(sessionThreadEventsMatch[2]);
@@ -1448,7 +1687,7 @@ export function mockManagedResourceApi() {
       const createdEvents = incomingEvents.map((event, index) => ({
         ...event,
         id: `evt_user_action_${resources.sessionEvents.length + index + 1}`,
-        created_at: new Date().toISOString(),
+        processed_at: new Date().toISOString(),
       }));
       (resources.sessionEvents as Record<string, unknown>[]).push(...createdEvents);
       return jsonResponse({ data: createdEvents });
@@ -1470,13 +1709,30 @@ export function mockManagedResourceApi() {
         }
         return matchesCreatedAtParams(deployment, params);
       });
-      return jsonResponse({ data: filteredDeployments, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredDeployments.length) || filteredDeployments.length;
+      return jsonResponse(pageResourceRows(filteredDeployments, limit, params.get('page')));
     }
     const retrieveDeploymentMatch = url.match(/^\/v1\/deployments\/([^/?]+)\?beta=true$/);
     if (retrieveDeploymentMatch && method === 'GET') {
       const deploymentId = decodeURIComponent(retrieveDeploymentMatch[1]);
       const deployment = resources.deployments.find((item) => item.id === deploymentId);
       return deployment ? jsonResponse(deployment) : jsonResponse({ error: { message: 'not found' } }, 404);
+    }
+    if (retrieveDeploymentMatch && method === 'POST') {
+      const deploymentId = decodeURIComponent(retrieveDeploymentMatch[1]);
+      const existing = resources.deployments.find((item) => item.id === deploymentId);
+      if (!existing) {
+        return jsonResponse({ error: { message: 'not found' } }, 404);
+      }
+      const updated = {
+        ...existing,
+        name: typeof body?.name === 'string' ? body.name : existing.name,
+        description: body?.description === undefined ? existing.description : body.description,
+        resources: body?.resources ?? existing.resources,
+        updated_at: new Date().toISOString(),
+      };
+      resources.deployments = [updated, ...resources.deployments.filter((item) => item.id !== deploymentId)];
+      return jsonResponse(updated);
     }
     if (url.startsWith('/v1/deployment_runs?') && method === 'GET') {
       const deploymentId = new URL(url, 'https://oma.duck.ai').searchParams.get('deployment_id');
@@ -1494,7 +1750,8 @@ export function mockManagedResourceApi() {
         }
         return matchesCreatedAtParams(environment, params);
       });
-      return jsonResponse({ data: filteredEnvironments, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredEnvironments.length) || filteredEnvironments.length;
+      return jsonResponse(pageResourceRows(filteredEnvironments, limit, params.get('page')));
     }
     const retrieveEnvironmentMatch = url.match(/^\/v1\/environments\/([^/?]+)\?beta=true$/);
     if (retrieveEnvironmentMatch && method === 'GET') {
@@ -1536,7 +1793,8 @@ export function mockManagedResourceApi() {
         }
         return matchesCreatedAtParams(vault, params);
       });
-      return jsonResponse({ data: filteredVaults, next_page: null });
+      const limit = Number(params.get('limit') ?? filteredVaults.length) || filteredVaults.length;
+      return jsonResponse(pageResourceRows(filteredVaults, limit, params.get('page')));
     }
     const retrieveVaultMatch = url.match(/^\/v1\/vaults\/([^/?]+)\?beta=true$/);
     if (retrieveVaultMatch && method === 'GET') {
@@ -1625,7 +1883,15 @@ export function mockManagedResourceApi() {
         }
         return matchesCreatedAtParams(memoryStore, params);
       });
-      return jsonResponse({ data: filteredMemoryStores, next_page: null });
+      const requestedLimit = Number(params.get('limit') ?? 5) || 5;
+      const limit = options.memoryStoresPageSize ?? requestedLimit;
+      const page = params.get('page');
+      const parsedOffset = page?.startsWith('memory_') ? Number(page.slice('memory_'.length)) : NaN;
+      const offset = Number.isFinite(parsedOffset) ? parsedOffset : 0;
+      const data = filteredMemoryStores.slice(offset, offset + limit);
+      const nextOffset = offset + data.length;
+      const nextPage = nextOffset < filteredMemoryStores.length ? `memory_${nextOffset}` : null;
+      return jsonResponse({ data, next_page: nextPage });
     }
     if (url === '/v1/memory_stores/memstore_one123456?beta=true' && method === 'GET') {
       return jsonResponse(resources.memoryStores[0]);
@@ -1745,8 +2011,15 @@ export function mockManagedResourceApi() {
       const collection = collectionForTestEndpoint(resources, archiveMatch[1]);
       const resourceId = decodeURIComponent(archiveMatch[2]);
       const existing = collection.find((resource) => resource.id === resourceId) ?? collection[0];
-      removeFromCollection(collection, resourceId);
-      return jsonResponse({ ...existing, archived_at: new Date().toISOString() });
+      const archivedAt = new Date().toISOString();
+      if (archiveMatch[1] === 'environments') {
+        resources.environments = resources.environments.map((environment) =>
+          environment.id === resourceId ? { ...environment, archived_at: archivedAt, state: 'archived' } : environment,
+        );
+      } else {
+        removeFromCollection(collection, resourceId);
+      }
+      return jsonResponse({ ...existing, archived_at: archivedAt });
     }
 
     const deleteMatch = url.match(/^\/v1\/(sessions|environments|vaults|memory_stores)\/([^/]+)\?beta=true$/);
@@ -2006,9 +2279,9 @@ function applyMetadataPatch(current: unknown, patch: unknown) {
 }
 
 export function persistedSessionEvents<T extends Record<string, unknown>>(events: T[]) {
-  return events.map((event) => ({
+  return events.map(({ created_at: createdAt, ...event }) => ({
     ...event,
-    processed_at: typeof event.processed_at === 'string' ? event.processed_at : event.created_at,
+    processed_at: event.processed_at === undefined ? createdAt : event.processed_at,
   }));
 }
 
@@ -2056,79 +2329,6 @@ export function quickstartToolStream(name: string, input: Record<string, unknown
     sseFrame('content_block_stop', { type: 'content_block_stop', index: 0 }),
     sseFrame('message_stop', { type: 'message_stop' }),
   ].join('');
-}
-
-export function quickstartTextAndToolStream(text: string, name: string, input: Record<string, unknown>) {
-  return [
-    sseFrame('message_start', { type: 'message_start', message: { id: 'msg_text_tool', type: 'message' } }),
-    sseFrame('content_block_start', {
-      type: 'content_block_start',
-      index: 0,
-      content_block: { type: 'text', text: '' },
-    }),
-    sseFrame('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }),
-    sseFrame('content_block_stop', { type: 'content_block_stop', index: 0 }),
-    sseFrame('content_block_start', {
-      type: 'content_block_start',
-      index: 1,
-      content_block: { type: 'tool_use', id: `toolu_${name}`, name, input: {} },
-    }),
-    sseFrame('content_block_delta', {
-      type: 'content_block_delta',
-      index: 1,
-      delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
-    }),
-    sseFrame('content_block_stop', { type: 'content_block_stop', index: 1 }),
-    sseFrame('message_stop', { type: 'message_stop' }),
-  ].join('');
-}
-
-export function quickstartTextServerToolAndToolStream(
-  text: string,
-  serverToolQuery: string,
-  name: string,
-  input: Record<string, unknown>,
-) {
-  const frames = [
-    sseFrame('message_start', { type: 'message_start', message: { id: 'msg_text_server_tool', type: 'message' } }),
-    sseFrame('content_block_start', {
-      type: 'content_block_start',
-      index: 0,
-      content_block: { type: 'text', text: '' },
-    }),
-    sseFrame('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }),
-    sseFrame('content_block_stop', { type: 'content_block_stop', index: 0 }),
-    sseFrame('content_block_start', {
-      type: 'content_block_start',
-      index: 1,
-      content_block: { type: 'server_tool_use', id: 'srvtoolu_web_search', name: 'web_search', input: {} },
-    }),
-    sseFrame('content_block_stop', { type: 'content_block_stop', index: 1 }),
-    sseFrame('content_block_start', {
-      type: 'content_block_start',
-      index: 2,
-      content_block: { type: 'tool_use', id: `toolu_${name}`, name, input: {} },
-    }),
-    sseFrame('content_block_delta', {
-      type: 'content_block_delta',
-      index: 2,
-      delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
-    }),
-    sseFrame('content_block_stop', { type: 'content_block_stop', index: 2 }),
-    sseFrame('message_stop', { type: 'message_stop' }),
-  ];
-  if (serverToolQuery) {
-    frames.splice(
-      5,
-      0,
-      sseFrame('content_block_delta', {
-        type: 'content_block_delta',
-        index: 1,
-        delta: { type: 'input_json_delta', partial_json: JSON.stringify({ query: serverToolQuery }) },
-      }),
-    );
-  }
-  return frames.join('');
 }
 
 export function sseFrame(event: string, data: Record<string, unknown>) {

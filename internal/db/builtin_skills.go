@@ -45,6 +45,7 @@ type ListBuiltinSkillsPageParams struct {
 }
 
 type ListBuiltinSkillVersionsPageParams struct {
+	OldestFirst     bool
 	SkillExternalID string
 	Limit           int
 	Offset          int
@@ -145,7 +146,7 @@ func (d *DB) ListBuiltinSkillVersionsPage(
 	if err != nil {
 		return nil, false, mapNoRows(err)
 	}
-	rows, err := mapper.ListVersionsPage(ctx, skillID, params.Limit+1, params.Offset)
+	rows, err := mapper.ListVersionsPage(ctx, skillID, params.Limit+1, params.Offset, params.OldestFirst)
 	if err != nil {
 		return nil, false, err
 	}

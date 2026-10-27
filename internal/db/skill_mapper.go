@@ -11,7 +11,7 @@ type skillRow struct {
 	UUID                string     `db:"uuid"`
 	ExternalID          string     `db:"external_id"`
 	WorkspaceUUID       string     `db:"workspace_uuid"`
-	CreatedByAPIKeyUUID string     `db:"created_by_api_key_uuid"`
+	CreatedByAPIKeyUUID *string    `db:"created_by_api_key_uuid"`
 	DisplayTitle        *string    `db:"display_title"`
 	LatestVersion       *string    `db:"latest_version"`
 	Source              string     `db:"source"`
@@ -24,7 +24,7 @@ type insertSkillParams struct {
 	UUID                string
 	ExternalID          string
 	WorkspaceUUID       string
-	CreatedByAPIKeyUUID string
+	CreatedByAPIKeyUUID *string
 	DisplayTitle        *string
 	LatestVersion       string
 	CreatedAt           time.Time
@@ -38,11 +38,12 @@ type updateSkillLatestVersionParams struct {
 }
 
 type SkillMapper interface {
+	LockWorkspace(ctx context.Context, workspaceUUID string) error
 	FindExternalIDByDisplayTitle(ctx context.Context, workspaceUUID, displayTitle string) (string, bool, error)
 	Insert(ctx context.Context, params insertSkillParams) (skillRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (skillRow, error)
 	FindForUpdateByExternalID(ctx context.Context, workspaceUUID, externalID string) (skillRow, error)
-	ListPage(ctx context.Context, workspaceUUID string, limit, offset int) ([]skillRow, error)
+	ListPage(ctx context.Context, workspaceUUID string, limit, offset int, onlyVersioned bool) ([]skillRow, error)
 	FindUUIDByExternalID(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	UpdateLatestVersionByExternalID(ctx context.Context, params updateSkillLatestVersionParams) (skillRow, error)
 	SoftDeleteByUUID(ctx context.Context, workspaceUUID, skillUUID string) (skillRow, error)

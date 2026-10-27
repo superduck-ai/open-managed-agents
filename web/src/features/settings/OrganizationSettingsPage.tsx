@@ -3,15 +3,13 @@ import { useLocation, useNavigate } from '@tanstack/react-router';
 import { Copy, Save, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react';
 import { SettingsShell } from '../../app/layout/ConsoleLayout';
-import { LimitsPage, ServiceAccountsPage } from '../dashboard/DashboardPage';
-import { PrivacyControlsPage } from '../dashboard/privacy-controls';
 import { useAuth } from '../../shared/auth/context';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Button } from '../../shared/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../shared/ui/card';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { useI18n } from '../../shared/i18n';
 import { Field, FieldLabel } from '../../shared/ui/field';
 import { Input } from '../../shared/ui/input';
-import { Label } from '../../shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { Switch } from '../../shared/ui/switch';
@@ -27,25 +25,17 @@ import {
   type UpdateOrganizationProfileInput,
 } from '../../shared/organization/api';
 import { useWorkspace } from '../../shared/workspaces/context';
-import { BillingSettingsPage } from './BillingSettingsPage';
-import { AdminKeysSettingsPage } from './AdminKeysSettingsPage';
-import { IdentityAndAccessSettingsPage } from './IdentityAndAccessSettingsPage';
-import { WorkloadIdentitySettingsPage } from './WorkloadIdentitySettingsPage';
 import {
   AppearanceSettingsPage,
   ProfileSettingsPage,
-  SettingsApiKeysPage,
   settingsSectionFromPath,
   type SettingsPageSection,
 } from './feature-pages';
+import { OrganizationLLMSettingsPage } from './OrganizationLLMSettingsPage';
 import { OrganizationMembersPage } from './OrganizationMembersPage';
 import { WorkspacesSettingsPage } from './WorkspacesSettingsPage';
-
-const countryOptions = [
-  { value: 'US', label: 'United States' },
-  { value: 'CA', label: 'Canada' },
-  { value: 'GB', label: 'United Kingdom' },
-];
+import { RetiredConsolePage } from '../dashboard/RetiredConsolePage';
+import { WorkspaceSettingsRedirect } from './WorkspaceSettingsRedirect';
 
 type FormState = {
   name: string;
@@ -67,28 +57,15 @@ const emptyForm: FormState = {
   postalCode: '',
 };
 
-type OrganizationSettingsSection = Extract<
-  SettingsPageSection,
-  | 'organization'
-  | 'limits'
-  | 'members'
-  | 'workspaces'
-  | 'service-accounts'
-  | 'profile'
-  | 'appearance'
-  | 'billing'
-  | 'api-keys'
-  | 'admin-keys'
-  | 'workload-identity'
-  | 'privacy-controls'
-  | 'identity-and-access'
->;
-
-export function OrganizationSettingsPage({ section = 'organization' }: { section?: OrganizationSettingsSection }) {
+export function OrganizationSettingsPage({ section = 'organization' }: { section?: SettingsPageSection }) {
   const { account, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const resolvedSection = section === 'organization' ? settingsSectionFromPath(location.pathname) : section;
+
+  if (resolvedSection === 'api-keys') {
+    return <WorkspaceSettingsRedirect resource="keys" />;
+  }
 
   const handleNavigate = async (href: string) => {
     await navigate({ href });
@@ -109,21 +86,16 @@ export function OrganizationSettingsPage({ section = 'organization' }: { section
       {resolvedSection === 'profile' ? <ProfileSettingsPage /> : null}
       {resolvedSection === 'appearance' ? <AppearanceSettingsPage /> : null}
       {resolvedSection === 'organization' ? <OrganizationSettingsContent /> : null}
+      {resolvedSection === 'llm' ? <OrganizationLLMSettingsPage /> : null}
       {resolvedSection === 'members' ? <OrganizationMembersPage /> : null}
       {resolvedSection === 'workspaces' ? <WorkspacesSettingsPage /> : null}
-      {resolvedSection === 'billing' ? <BillingSettingsPage /> : null}
-      {resolvedSection === 'limits' ? <LimitsPage /> : null}
-      {resolvedSection === 'api-keys' ? <SettingsApiKeysPage /> : null}
-      {resolvedSection === 'admin-keys' ? <AdminKeysSettingsPage /> : null}
-      {resolvedSection === 'service-accounts' ? <ServiceAccountsPage /> : null}
-      {resolvedSection === 'workload-identity' ? <WorkloadIdentitySettingsPage /> : null}
-      {resolvedSection === 'privacy-controls' ? <PrivacyControlsPage /> : null}
-      {resolvedSection === 'identity-and-access' ? <IdentityAndAccessSettingsPage /> : null}
+      {resolvedSection === 'retired' ? <RetiredConsolePage organizationSettings /> : null}
     </SettingsShell>
   );
 }
 
 export function OrganizationSettingsContent() {
+  const { msg } = useI18n();
   const { account, csrfToken, refresh } = useAuth();
   const { orgUuid } = useWorkspace();
   const queryClient = useQueryClient();
@@ -259,17 +231,15 @@ export function OrganizationSettingsContent() {
     }
   };
 
+  const organizationTitle = msg('nav.organization', 'Organization');
+
   if (!activeOrgUuid) {
     return (
-      <section className="mx-auto w-full max-w-[1100px]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Organization</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">No organization is available for this session.</p>
-          </CardContent>
-        </Card>
+      <section>
+        <ResourcePageHeader contentGap="content" title={organizationTitle} />
+        <p className="text-sm leading-5 text-muted-foreground">
+          {msg('settings.organization.unavailable', 'No organization is available for this session.')}
+        </p>
       </section>
     );
   }
@@ -278,14 +248,15 @@ export function OrganizationSettingsContent() {
     (organizationQuery.isLoading || profileQuery.isLoading) && (!organizationQuery.data || !profileQuery.data);
 
   return (
-    <section className="mx-auto w-full max-w-[1100px] space-y-4" data-testid="organization-settings-page">
-      <Card>
-        <CardHeader>
-          <h1 className="text-xl font-semibold tracking-normal text-foreground">Organization</h1>
-        </CardHeader>
-        <CardContent className="space-y-7">
+    <section className="mx-auto w-full max-w-3xl" data-testid="organization-settings-page">
+      <ResourcePageHeader contentGap="content" title={organizationTitle} />
+      <div className="space-y-7">
+        <div className="space-y-7">
           {isInitialLoading ? (
-            <div className="space-y-4" aria-label="Loading organization settings">
+            <div
+              className="space-y-4"
+              aria-label={msg('settings.organization.loading', 'Loading organization settings')}
+            >
               <Skeleton className="h-10 w-[428px] max-w-full" />
               <Skeleton className="h-10 w-[428px] max-w-full" />
               <Skeleton className="h-10 w-[720px] max-w-full" />
@@ -293,7 +264,9 @@ export function OrganizationSettingsContent() {
           ) : (
             <>
               <Field className="max-w-[428px] gap-2">
-                <FieldLabel htmlFor="organization-name">Organization name</FieldLabel>
+                <FieldLabel htmlFor="organization-name">
+                  {msg('settings.organization.name', 'Organization name')}
+                </FieldLabel>
                 <TextInput
                   id="organization-name"
                   value={form.name}
@@ -302,47 +275,49 @@ export function OrganizationSettingsContent() {
               </Field>
 
               <div className="space-y-6">
-                <div className="text-sm font-medium text-foreground">Primary business address</div>
-                <div className="grid gap-3 lg:grid-cols-[208px_208px]">
+                <div className="text-sm font-medium text-foreground">
+                  {msg('settings.organization.addressTitle', 'Primary business address')}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
                   <TextInput
-                    aria-label="Primary business address line 1"
-                    placeholder="Line 1"
+                    aria-label={msg('settings.organization.line1', 'Primary business address line 1')}
+                    placeholder={msg('settings.organization.line1Placeholder', 'Line 1')}
                     value={form.line1}
                     onChange={(line1) => setForm((current) => ({ ...current, line1 }))}
                   />
                   <TextInput
-                    aria-label="Primary business address line 2"
-                    placeholder="Line 2"
+                    aria-label={msg('settings.organization.line2', 'Primary business address line 2')}
+                    placeholder={msg('settings.organization.line2Placeholder', 'Line 2')}
                     value={form.line2}
                     onChange={(line2) => setForm((current) => ({ ...current, line2 }))}
                   />
                 </div>
 
-                <div className="grid gap-3 lg:grid-cols-[208px_208px_minmax(180px,1fr)_96px]">
-                  <div>
-                    <Label id="country-label" className="mb-2">
-                      Country
-                    </Label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field className="gap-2">
+                    <FieldLabel htmlFor="organization-country">
+                      {msg('settings.organization.country', 'Country')}
+                    </FieldLabel>
                     <CountryCombobox
                       value={form.country}
                       onChange={(country) => setForm((current) => ({ ...current, country }))}
                     />
-                  </div>
+                  </Field>
                   <TextField
                     id="state"
-                    label="State or province"
+                    label={msg('settings.organization.state', 'State or province')}
                     value={form.state}
                     onChange={(state) => setForm((current) => ({ ...current, state }))}
                   />
                   <TextField
                     id="city"
-                    label="City"
+                    label={msg('settings.organization.city', 'City')}
                     value={form.city}
                     onChange={(city) => setForm((current) => ({ ...current, city }))}
                   />
                   <TextField
                     id="postal-code"
-                    label="Postal code"
+                    label={msg('settings.organization.postalCode', 'Postal code')}
                     value={form.postalCode}
                     onChange={(postalCode) => setForm((current) => ({ ...current, postalCode }))}
                   />
@@ -351,25 +326,28 @@ export function OrganizationSettingsContent() {
                 {!addressValid ? (
                   <Alert variant="destructive">
                     <AlertDescription>
-                      Enter line 1, country, state, city, and postal code, or leave the address blank.
+                      {msg(
+                        'settings.organization.addressInvalid',
+                        'Enter line 1, country, state, city, and postal code, or leave the address blank.',
+                      )}
                     </AlertDescription>
                   </Alert>
                 ) : null}
               </div>
 
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span>Organization ID: {organizationId}</span>
+                <span>{msg('settings.organization.id', 'Organization ID: {id}', { id: organizationId })}</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-xs"
                   className="text-muted-foreground hover:text-foreground"
-                  aria-label="Copy Organization ID"
+                  aria-label={msg('settings.organization.copyId', 'Copy Organization ID')}
                   onClick={copyOrganizationId}
                 >
                   <Copy className="size-3.5" aria-hidden />
                 </Button>
-                {copied ? <span className="text-primary">Copied</span> : null}
+                {copied ? <span className="text-primary">{msg('common.copied', 'Copied')}</span> : null}
               </div>
 
               {isDirty ? (
@@ -377,11 +355,13 @@ export function OrganizationSettingsContent() {
                   <div className="flex flex-wrap items-center gap-3">
                     <Button type="button" size="lg" disabled={!canSave} onClick={handleSave}>
                       <Save className="size-4" aria-hidden />
-                      {isSaving ? 'Saving' : 'Save changes'}
+                      {isSaving
+                        ? msg('settings.organization.saving', 'Saving')
+                        : msg('common.saveChanges', 'Save changes')}
                     </Button>
                     <Button type="button" variant="outline" size="lg" onClick={handleCancel}>
                       <X className="size-4" aria-hidden />
-                      Cancel
+                      {msg('common.cancel', 'Cancel')}
                     </Button>
                   </div>
                   {formError ? (
@@ -397,18 +377,18 @@ export function OrganizationSettingsContent() {
               ) : null}
             </>
           )}
-        </CardContent>
-      </Card>
+        </div>
 
-      <Card>
-        <CardContent className="flex items-start justify-between gap-8">
+        <div className="flex items-start justify-between gap-6 border-t-[0.5px] border-border pt-7">
           <div className="max-w-[760px]">
-            <h2 className="text-xl font-semibold tracking-normal text-foreground">
-              Allow creating new API keys in default workspace
+            <h2 className="text-sm font-medium text-foreground">
+              {msg('settings.organization.allowApiKeys', 'Allow creating new API keys in default workspace')}
             </h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Allow users to create new API keys in the default workspace. Disabling this setting does not affect
-              existing API keys or disable Workbench usage.
+              {msg(
+                'settings.organization.allowApiKeysDescription',
+                'Allow users to create new API keys in the default workspace. Disabling this setting does not affect existing API keys or disable Workbench usage.',
+              )}
             </p>
             {switchError ? (
               <Alert variant="destructive" className="mt-3">
@@ -418,13 +398,13 @@ export function OrganizationSettingsContent() {
           </div>
           <Switch
             checked={allowApiKeys}
-            aria-label="Allow creating new API keys in default workspace"
+            aria-label={msg('settings.organization.allowApiKeys', 'Allow creating new API keys in default workspace')}
             className="mt-1"
             disabled={updateOrganizationMutation.isPending}
             onCheckedChange={() => void handleApiKeysToggle()}
           />
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </section>
   );
 }
@@ -456,10 +436,16 @@ function TextInput({
   value: string;
   onChange: (value: string) => void;
 } & Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value'>) {
-  return <Input {...props} value={value} onChange={(event) => onChange(event.target.value)} className="h-10 px-4" />;
+  return <Input {...props} value={value} onChange={(event) => onChange(event.target.value)} className="h-9 px-3" />;
 }
 
 function CountryCombobox({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const { msg } = useI18n();
+  const countryOptions = [
+    { value: 'US', label: msg('settings.organization.country.us', 'United States') },
+    { value: 'CA', label: msg('settings.organization.country.ca', 'Canada') },
+    { value: 'GB', label: msg('settings.organization.country.gb', 'United Kingdom') },
+  ];
   return (
     <Select<string>
       value={value || null}
@@ -470,8 +456,12 @@ function CountryCombobox({ value, onChange }: { value: string; onChange: (value:
         }
       }}
     >
-      <SelectTrigger aria-label="Country" className="h-10 w-full px-4">
-        <SelectValue placeholder="Select" />
+      <SelectTrigger
+        id="organization-country"
+        aria-label={msg('settings.organization.country', 'Country')}
+        className="h-9 w-full px-3"
+      >
+        <SelectValue placeholder={msg('settings.organization.select', 'Select')} />
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false} className="min-w-[208px]">
         {countryOptions.map((option) => (

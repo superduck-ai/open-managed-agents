@@ -17,18 +17,17 @@ describe('LoginFlow', () => {
     render(<LoginFlow onAuthenticated={() => undefined} />);
 
     expect(screen.getAllByText('Open Managed Agents').length).toBeGreaterThan(0);
-    expect(screen.getByText('Build with Open Managed Agents')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Sign in' })).toBeTruthy();
+    expect(screen.queryByText('Build with Open Managed Agents')).toBeNull();
     const developerDocs = screen.getByRole('link', { name: /Developer Docs/i });
     expect(developerDocs.getAttribute('data-slot')).toBe('button');
-    expect(developerDocs.getAttribute('href')).toBe('https://oma.mintlify.site/docs/en/overview');
+    expect(developerDocs.getAttribute('href')).toBe('https://oma.mintlifysite.com/docs/en/overview');
     expect(screen.getByRole('link', { name: /API Reference/i }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/en/api/overview',
+      'https://oma.mintlifysite.com/docs/en/api/overview',
     );
-    expect(screen.getByRole('link', { name: /Cookbooks/i }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/en/quickstart',
-    );
+    expect(screen.queryByRole('link', { name: /Cookbooks/i })).toBeNull();
     expect(screen.getByRole('link', { name: /Quickstarts/i }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/en/quickstart',
+      'https://oma.mintlifysite.com/docs/en/quickstart',
     );
     expect(document.querySelectorAll('[data-slot="card"]').length).toBe(1);
     expect(document.querySelector('.surface-card')).toBeNull();
@@ -47,15 +46,30 @@ describe('LoginFlow', () => {
     expect(screen.queryByText(/Contact sales/i)).toBeNull();
   });
 
+  test.each(['person@gmail.com', 'person@sub.example.org', 'person@example.org.evil', 'person@evilexample.org'])(
+    'shows the server domain rejection for %s',
+    async (email) => {
+      resetTestDom('https://oma.duck.ai/login');
+      const send = mock(async () => {
+        throw { status: 403, code: 'email_domain_not_allowed', message: 'Denied' };
+      });
+      render(<LoginFlow onAuthenticated={() => undefined} onSendMagicLink={send} />);
+      fireEvent.input(screen.getByLabelText(/Email/i), { target: { value: email } });
+      fireEvent.click(screen.getByRole('button', { name: /Continue with email/i }));
+      expect((await screen.findByRole('alert')).textContent).toContain('Use an approved email address to sign in.');
+      expect(send).toHaveBeenCalledWith(email);
+    },
+  );
+
   test('submits email and advances to verification code step', async () => {
     resetTestDom('https://oma.duck.ai/login');
     const send = mock(async () => ({ sent: true }));
     render(<LoginFlow onAuthenticated={() => undefined} onSendMagicLink={send} />);
 
-    fireEvent.input(screen.getByLabelText(/Email/i), { target: { value: 'ada@example.com' } });
+    fireEvent.input(screen.getByLabelText(/Email/i), { target: { value: 'ada@subsidiary.example' } });
     fireEvent.click(screen.getByRole('button', { name: /Continue with email/i }));
 
-    await waitFor(() => expect(send).toHaveBeenCalledWith('ada@example.com'));
+    await waitFor(() => expect(send).toHaveBeenCalledWith('ada@subsidiary.example'));
     expect(screen.getByText(/We sent a 6-digit code to/i)).toBeTruthy();
   });
 
@@ -67,14 +81,14 @@ describe('LoginFlow', () => {
 
     render(<LoginFlow onAuthenticated={authenticated} onSendMagicLink={send} onVerifyMagicLink={verify} />);
 
-    fireEvent.input(screen.getByLabelText(/Email/i), { target: { value: 'grace@example.com' } });
+    fireEvent.input(screen.getByLabelText(/Email/i), { target: { value: 'grace@example.org' } });
     fireEvent.click(screen.getByRole('button', { name: /Continue with email/i }));
 
     await screen.findByLabelText(/Verification code/i);
     fireEvent.input(screen.getByLabelText(/Verification code/i), { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: /Verify email/i }));
 
-    await waitFor(() => expect(verify).toHaveBeenCalledWith('grace@example.com', '123456'));
+    await waitFor(() => expect(verify).toHaveBeenCalledWith('grace@example.org', '123456'));
     await waitFor(() => expect(authenticated).toHaveBeenCalled());
   });
 
@@ -110,20 +124,85 @@ describe('LoginFlow', () => {
     );
 
     expect(document.documentElement.lang).toBe('zh-CN');
-    expect(screen.getByText('使用 Open Managed Agents 构建')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: '登录' })).toBeTruthy();
     expect(screen.getByRole('link', { name: '开发者文档' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/zh/overview',
+      'https://oma.mintlifysite.com/docs/zh/overview',
     );
     expect(screen.getByRole('link', { name: 'API 参考' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/zh/api/overview',
+      'https://oma.mintlifysite.com/docs/zh/api/overview',
     );
-    expect(screen.getByRole('link', { name: 'Cookbooks' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/zh/quickstart',
-    );
+    expect(screen.queryByRole('link', { name: 'Cookbooks' })).toBeNull();
     expect(screen.getByRole('link', { name: '快速开始' }).getAttribute('href')).toBe(
-      'https://oma.mintlify.site/docs/zh/quickstart',
+      'https://oma.mintlifysite.com/docs/zh/quickstart',
     );
     expect(screen.getByLabelText(/邮箱/i)).toBeTruthy();
     expect(screen.getByRole('button', { name: '使用邮箱继续' })).toBeTruthy();
   });
+
+  test('localizes an invalid or expired verification code in Chinese', async () => {
+    resetTestDom('https://oma.duck.ai/login');
+    const send = mock(async () => ({ sent: true }));
+    const verify = mock(async () => {
+      throw {
+        status: 401,
+        code: 'authentication_error',
+        message: 'Verification code is invalid or expired',
+      };
+    });
+    render(
+      <I18nProvider initialLocale="zh-CN">
+        <LoginFlow onAuthenticated={() => undefined} onSendMagicLink={send} onVerifyMagicLink={verify} />
+      </I18nProvider>,
+    );
+
+    fireEvent.input(screen.getByLabelText('邮箱 *'), { target: { value: 'user@example.org' } });
+    fireEvent.click(screen.getByRole('button', { name: '使用邮箱继续' }));
+
+    await screen.findByLabelText('验证码');
+    fireEvent.input(screen.getByLabelText('验证码'), { target: { value: '000000' } });
+    fireEvent.click(screen.getByRole('button', { name: '验证邮箱' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('验证码无效或已过期');
+    expect(alert.textContent).not.toContain('Verification code is invalid or expired');
+  });
+  test.each(['verify', 'resend'] as const)(
+    'localizes a tightened domain policy during %s in Chinese',
+    async (action) => {
+      resetTestDom('https://oma.duck.ai/login');
+      const domainError = {
+        status: 403,
+        code: 'email_domain_not_allowed',
+        message: 'Use an approved email address to sign in',
+      };
+      const send = mock(async () => {
+        if (send.mock.calls.length > 1) throw domainError;
+        return { sent: true };
+      });
+      const verify = mock(async () => {
+        throw domainError;
+      });
+      const authenticated = mock(async () => undefined);
+      render(
+        <I18nProvider initialLocale="zh-CN">
+          <LoginFlow onAuthenticated={authenticated} onSendMagicLink={send} onVerifyMagicLink={verify} />
+        </I18nProvider>,
+      );
+      fireEvent.input(screen.getByLabelText('邮箱 *'), { target: { value: 'user@example.org' } });
+      fireEvent.click(screen.getByRole('button', { name: '使用邮箱继续' }));
+      await screen.findByLabelText('验证码');
+      if (action === 'verify') {
+        fireEvent.input(screen.getByLabelText('验证码'), { target: { value: '123456' } });
+        fireEvent.click(screen.getByRole('button', { name: '验证邮箱' }));
+        await waitFor(() => expect(verify).toHaveBeenCalledWith('user@example.org', '123456'));
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: '重新发送验证码' }));
+        await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+      }
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('请使用允许登录的邮箱。');
+      expect(alert.textContent).not.toContain(domainError.message);
+      expect(authenticated).not.toHaveBeenCalled();
+    },
+  );
 });

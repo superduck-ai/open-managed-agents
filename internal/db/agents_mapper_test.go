@@ -32,7 +32,7 @@ func TestAgentMapperStatements(t *testing.T) {
 		UUID:                "00000000-0000-4000-8000-000000000001",
 		ExternalID:          "agent_mapper",
 		WorkspaceUUID:       "00000000-0000-4000-8000-000000000002",
-		CreatedByAPIKeyUUID: "00000000-0000-4000-8000-000000000003",
+		CreatedByAPIKeyUUID: nullableString("00000000-0000-4000-8000-000000000003"),
 		Config:              config,
 		CreatedAt:           now,
 	}
@@ -156,7 +156,7 @@ func TestAgentMapperStatements(t *testing.T) {
 			id:        "AgentMapper.ArchiveByExternalID",
 			kind:      yourbatis.StatementUpdate,
 			values:    []any{insertParams.WorkspaceUUID, insertParams.ExternalID},
-			fragments: []string{"UPDATE agents", "archived_at = COALESCE", "workspace_uuid = $1", "RETURNING"},
+			fragments: []string{"UPDATE agents", "archived_at = COALESCE", "workspace_uuid = $1", "external_id = $2", "archived_at IS NULL", "RETURNING"},
 		},
 		{
 			name:      "list page",

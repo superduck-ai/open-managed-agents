@@ -21,9 +21,7 @@ func (h *Handler) authorizeSession(r *http.Request, sessionID string, access ses
 	if !ok {
 		return db.Session{}, sessionAuthenticationRequired()
 	}
-	if h.isOfficialSDKFixturePrincipal(principal) && sessionID == h.cfg.SDKFixtures.SessionID {
-		return h.fixtureDBSession(principal), nil
-	}
+
 	session, found, err := h.db.GetSession(r.Context(), principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		return db.Session{}, mapSessionLoadError(err, sessionID)
@@ -34,7 +32,10 @@ func (h *Handler) authorizeSession(r *http.Request, sessionID string, access ses
 	if isSessionManagerCredential(principal) {
 		return session, nil
 	}
-	if principal.CredentialType != auth.CredentialTypeEnvironmentKey {
+	if principal.CredentialType == auth.CredentialTypeWorkToken && principal.PublicSessionExternalID != sessionID {
+		return db.Session{}, environmentKeyCannotAccessSession()
+	}
+	if principal.CredentialType != auth.CredentialTypeEnvironmentKey && principal.CredentialType != auth.CredentialTypeWorkToken {
 		return db.Session{}, sessionAuthenticationRequired()
 	}
 	if session.EnvironmentExternalID != principal.EnvironmentExternalID {
@@ -67,14 +68,4 @@ func isSessionManagerCredential(principal auth.Principal) bool {
 func workspaceUUIDFromRequest(r *http.Request) string {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	return principal.WorkspaceUUID
-}
-
-func organizationUUIDFromRequest(r *http.Request) string {
-	principal, _ := auth.PrincipalFromContext(r.Context())
-	return principal.OrganizationUUID
-}
-
-func workspaceExternalIDFromRequest(r *http.Request) string {
-	principal, _ := auth.PrincipalFromContext(r.Context())
-	return principal.WorkspaceExternalID
 }

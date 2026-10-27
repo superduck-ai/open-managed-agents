@@ -9,7 +9,7 @@ import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/works
 import { WorkspaceApiKeysContent } from './WorkspaceApiKeysPage';
 
 const testingLibrary = await import('@testing-library/react');
-const { cleanup, fireEvent, render, screen, waitFor } = testingLibrary;
+const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
 
 const originalFetch = globalThis.fetch;
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(globalThis.navigator, 'clipboard');
@@ -23,6 +23,70 @@ afterEach(() => {
 });
 
 describe('Workspace API keys page', () => {
+  test('shows a key count only after the directory loads and keeps empty headers out of loading state', async () => {
+    resetTestDom('https://oma.duck.ai/settings/workspaces/default/keys');
+    let finishLoading: (response: Response) => void = () => {};
+    globalThis.fetch = () =>
+      new Promise<Response>((resolve) => {
+        finishLoading = resolve;
+      });
+    render(
+      <WorkspaceApiKeysHarness>
+        <WorkspaceApiKeysContent routeWorkspaceId="default" />
+      </WorkspaceApiKeysHarness>,
+    );
+    expect(await screen.findByText('Loading Default API keys...')).toBeTruthy();
+    expect(screen.queryByLabelText('0 API keys')).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Key', exact: true })).toBeNull();
+    finishLoading(jsonResponse([activeKey]));
+    await screen.findByText('foo');
+    expect(screen.getByLabelText('1 API key')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Key', exact: true })).toBeTruthy();
+  });
+
+  for (const creating of [true, false]) {
+    test(`keeps ${creating ? 'creation' : 'status confirmation'} open while pending and allows cancellation after failure`, async () => {
+      resetTestDom('https://oma.duck.ai/settings/workspaces/default/keys');
+      mockWorkspaceApiKeys([activeKey]);
+      const mockedFetch = globalThis.fetch;
+      let finishRequest: (response: Response) => void = () => {};
+      globalThis.fetch = (input, init) =>
+        init?.method === 'POST'
+          ? new Promise<Response>((resolve) => {
+              finishRequest = resolve;
+            })
+          : mockedFetch(input, init);
+      render(
+        <WorkspaceApiKeysHarness>
+          <WorkspaceApiKeysContent routeWorkspaceId="default" />
+        </WorkspaceApiKeysHarness>,
+      );
+      await screen.findByText('foo');
+      if (creating) {
+        fireEvent.click(screen.getByRole('button', { name: 'Create API key' }));
+        fireEvent.change(screen.getByPlaceholderText('my-secret-key'), { target: { value: 'research' } });
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: /More actions for foo/i }));
+        fireEvent.click(screen.getByText('Disable API key'));
+      }
+      const dialog = screen.getByRole(creating ? 'dialog' : 'alertdialog');
+      fireEvent.click(
+        within(dialog).getByRole('button', { name: creating ? 'Create API key' : 'Disable', exact: true }),
+      );
+      await waitFor(() =>
+        expect(within(dialog).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true),
+      );
+      fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+      expect(screen.getByRole(creating ? 'dialog' : 'alertdialog')).toBe(dialog);
+      if (creating) expect(within(dialog).getByRole('button', { name: 'Close' }).hasAttribute('disabled')).toBe(true);
+      finishRequest(jsonResponse({ error: { message: 'Example request failed' } }, 500));
+      await within(dialog).findByText('Example request failed');
+      if (creating) expect(screen.getByPlaceholderText('my-secret-key')).toHaveProperty('value', 'research');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole(creating ? 'dialog' : 'alertdialog')).toBeNull());
+    });
+  }
+
   test('renders the wide workspace-scoped API keys shell with the workspace switcher', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/keys');
     mockWorkspaceApiKeys([activeKey, archivedKey]);
@@ -45,8 +109,9 @@ describe('Workspace API keys page', () => {
         .some((button) => button.getAttribute('aria-label') === 'Default'),
     ).toBe(true);
     expect(screen.getByRole('heading', { name: 'API keys' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Create key' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create API key' })).toBeTruthy();
     expect(screen.getByText(/API keys are owned by workspaces/i)).toBeTruthy();
+    await screen.findByText('foo');
     expect(screen.getByText('Created by')).toBeTruthy();
     expect(screen.getByText('Created at')).toBeTruthy();
     expect(screen.getByText('Last used at')).toBeTruthy();
@@ -70,15 +135,18 @@ describe('Workspace API keys page', () => {
     );
 
     await screen.findByText('foo');
-    fireEvent.click(screen.getByRole('button', { name: 'Create key' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create API key' }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByPlaceholderText('my-secret-key')));
 
-    expect(screen.getByRole('dialog', { name: 'Create API key' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add' }).hasAttribute('disabled')).toBe(true);
+    const dialog = screen.getByRole('dialog', { name: 'Create API key' });
+    expect(within(dialog).getByRole('button', { name: 'Create API key' }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByText('Workspace')).toBeTruthy();
     expect(screen.getByText('Default')).toBeTruthy();
 
     fireEvent.change(screen.getByPlaceholderText('my-secret-key'), { target: { value: 'local-key' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Create API key' })).getByRole('button', { name: 'Create API key' }),
+    );
 
     const createdDialog = await screen.findByRole('dialog', { name: 'API key created' });
     expect(screen.getByText('sk-ant-api03-localraw')).toBeTruthy();
@@ -110,9 +178,11 @@ describe('Workspace API keys page', () => {
     );
 
     await screen.findByText('foo');
-    fireEvent.click(screen.getByRole('button', { name: 'Create key' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create API key' }));
     fireEvent.change(screen.getByPlaceholderText('my-secret-key'), { target: { value: 'local-key' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Create API key' })).getByRole('button', { name: 'Create API key' }),
+    );
 
     await screen.findByRole('dialog', { name: 'API key created' });
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
@@ -140,9 +210,11 @@ describe('Workspace API keys page', () => {
     );
 
     await screen.findByText('foo');
-    fireEvent.click(screen.getByRole('button', { name: 'Create key' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create API key' }));
     fireEvent.change(screen.getByPlaceholderText('my-secret-key'), { target: { value: 'local-key' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Create API key' })).getByRole('button', { name: 'Create API key' }),
+    );
 
     await screen.findByRole('dialog', { name: 'API key created' });
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));

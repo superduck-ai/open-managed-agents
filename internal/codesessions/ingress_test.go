@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func TestCodeSessionHTTPPollReturnsErrorsThroughAdapter(t *testing.T) {
+func TestCodeSessionHTTPPollRouteIsRemoved(t *testing.T) {
 	handler := NewHandler(config.Config{}, newTestService(t, nil), nil, nil)
 	router := chi.NewRouter()
 	handler.RegisterV1Routes(router)
@@ -21,8 +21,8 @@ func TestCodeSessionHTTPPollReturnsErrorsThroughAdapter(t *testing.T) {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusUnauthorized, response.Body.String())
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusMethodNotAllowed, response.Body.String())
 	}
 }
 
@@ -40,7 +40,10 @@ func TestSessionContextFromCodeSessionUsesStoredConfig(t *testing.T) {
 		}`),
 	}
 
-	context := sessionContextFromCodeSession(record)
+	context, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{}, config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if context["cwd"] != "/workspace/repo" || context["model"] != "claude-opus-4-8" {
 		t.Fatalf("unexpected base context: %#v", context)
 	}
@@ -50,7 +53,10 @@ func TestSessionContextFromCodeSessionUsesStoredConfig(t *testing.T) {
 	if len(context["outcomes"].([]any)) != 1 {
 		t.Fatalf("unexpected outcomes: %#v", context["outcomes"])
 	}
-	mcpConfig := context["mcp_config"].(map[string]any)
+	var mcpConfig map[string]any
+	if err := json.Unmarshal(context["mcp_config"].(json.RawMessage), &mcpConfig); err != nil {
+		t.Fatal(err)
+	}
 	servers := mcpConfig["mcpServers"].(map[string]any)
 	notion := servers["notion"].(map[string]any)
 	if notion["type"] != "http" || notion["url"] != "https://mcp.notion.com/mcp" {
@@ -198,5 +204,26 @@ func TestDecodeWorkerPayloadHeader(t *testing.T) {
 				t.Fatalf("header = %#v, error = %v", header, err)
 			}
 		})
+	}
+}
+
+func TestWorkerEpochDBErrorMapsInactiveSessionToConflict(t *testing.T) {
+	handler := NewHandler(config.Config{}, newTestService(t, nil), nil, nil)
+	request := httptest.NewRequest(http.MethodPut, "/v1/code/sessions/cse_test/worker", nil)
+	response := httptest.NewRecorder()
+
+	handler.writeWorkerEpochDBError(response, request, "cse_test", db.ErrInvalidState, "Could not update code session worker")
+
+	var body struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if response.Code != http.StatusConflict || body.Error.Type != "conflict_error" || body.Error.Message != "Code session is not active" {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
 }

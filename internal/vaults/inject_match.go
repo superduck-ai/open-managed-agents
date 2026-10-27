@@ -5,35 +5,31 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 )
 
-// injectionKind is the outbound proxy decision for a request URL.
-type injectionKind int
-
-const (
-	injectionPassthrough injectionKind = iota
-	injectionInject
-	injectionReject
-)
-
-// injectionDecision is the result of matching vault credentials to an outbound URL.
-type injectionDecision struct {
-	Kind       injectionKind
-	Credential *db.VaultCredential
+// listInjectableMatches returns vault_ids-ordered injectable credentials that
+// match requestURL. hostCovered is true when any credential covers the host
+// (including non-injectable types), for reject-vs-passthrough.
+func listInjectableMatches(requestURL *url.URL, credentials []db.VaultCredential) ([]*db.VaultCredential, bool, error) {
+	return listCredentialMatches(requestURL, credentials, false)
 }
 
-// decideInjection walks credentials in vault_ids order. First matching static_bearer
-// wins; same-host coverage without an injectable path match rejects.
-func decideInjection(requestURL *url.URL, credentials []db.VaultCredential) injectionDecision {
+func listMCPInjectableMatches(requestURL *url.URL, credentials []db.VaultCredential) ([]*db.VaultCredential, bool, error) {
+	return listCredentialMatches(requestURL, credentials, true)
+}
+
+func listCredentialMatches(requestURL *url.URL, credentials []db.VaultCredential, exactMCPPath bool) ([]*db.VaultCredential, bool, error) {
 	if requestURL == nil {
-		return injectionDecision{Kind: injectionReject}
+		return nil, false, nil
 	}
 	hostCovered := false
+	matches := make([]*db.VaultCredential, 0)
 	for i := range credentials {
 		cred := &credentials[i]
 		auth, err := decodeCredentialAuth(cred.Auth)
 		if err != nil {
-			return injectionDecision{Kind: injectionReject}
+			return nil, false, err
 		}
 		var rawServerURL string
 		var authType credentialAuthType
@@ -54,22 +50,27 @@ func decideInjection(requestURL *url.URL, credentials []db.VaultCredential) inje
 		if err != nil || serverURL.Host == "" {
 			continue
 		}
-		if !hostsEqual(serverURL, requestURL) {
+		matchingHost := hostsEqual(serverURL, requestURL)
+		if exactMCPPath {
+			matchingHost = mcpHostsEqual(serverURL, requestURL)
+		}
+		if !matchingHost {
 			continue
 		}
 		hostCovered = true
-		if !pathPrefixMatch(serverURL.Path, requestURL.Path) {
+		matchesPath := pathPrefixMatch(serverURL.Path, requestURL.Path)
+		if exactMCPPath {
+			matchesPath = strings.TrimRight(serverURL.EscapedPath(), "/") == strings.TrimRight(requestURL.EscapedPath(), "/") && serverURL.RawQuery == requestURL.RawQuery
+		}
+		if !matchesPath {
 			continue
 		}
-		if !isInjectableStaticBearer(cred.AuthType, string(authType)) {
+		if !isInjectableAuthType(authType) {
 			continue
 		}
-		return injectionDecision{Kind: injectionInject, Credential: cred}
+		matches = append(matches, cred)
 	}
-	if hostCovered {
-		return injectionDecision{Kind: injectionReject}
-	}
-	return injectionDecision{Kind: injectionPassthrough}
+	return matches, hostCovered, nil
 }
 
 func hostsEqual(serverURL, requestURL *url.URL) bool {
@@ -110,10 +111,15 @@ func normalizeURLPath(path string) string {
 	return "/" + trimmed
 }
 
-func isInjectableStaticBearer(authType, cfgType string) bool {
-	typ := strings.TrimSpace(authType)
-	if typ == "" {
-		typ = strings.TrimSpace(cfgType)
+func isInjectableAuthType(typ credentialAuthType) bool {
+	return typ == credentialAuthTypeStaticBearer || typ == credentialAuthTypeMCPOAuth
+}
+
+func mcpHostsEqual(serverURL, requestURL *url.URL) bool {
+	serverHost, err := networkpolicy.MCPHostKey(serverURL.Hostname())
+	if err != nil {
+		return false
 	}
-	return typ == "static_bearer"
+	requestHost, err := networkpolicy.MCPHostKey(requestURL.Hostname())
+	return err == nil && serverHost == requestHost && strings.EqualFold(serverURL.Scheme, requestURL.Scheme) && effectivePort(serverURL) == effectivePort(requestURL)
 }

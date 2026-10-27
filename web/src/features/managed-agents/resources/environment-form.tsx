@@ -1,4 +1,5 @@
 import { useBlocker } from '@tanstack/react-router';
+import { useScopeUnsavedChanges } from '../../../shared/organizations/unsaved';
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
@@ -23,9 +24,13 @@ type UnsavedChangesGuardOptions = {
 };
 
 export function useUnsavedChangesGuard({ dirty, interactionBlocked, onDiscard }: UnsavedChangesGuardOptions) {
+  useScopeUnsavedChanges(dirty || interactionBlocked);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const bypassRef = useRef(false);
+  useEffect(() => {
+    if (!dirty) bypassRef.current = false;
+  }, [dirty]);
   const navigationBlocker = useBlocker({
     shouldBlockFn: () => dirty && !bypassRef.current,
     enableBeforeUnload: dirty,

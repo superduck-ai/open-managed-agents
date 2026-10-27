@@ -1,11 +1,23 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
+import { createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router';
+import { PlatformAdminLayout } from '../features/platform-admin/PlatformAdminLayout';
+import { SuperAdministratorsPage } from '../features/platform-admin/SuperAdministratorsPage';
+import { OrganizationsPage } from '../features/platform-admin/OrganizationsPage';
+import { OrganizationDetailPage } from '../features/platform-admin/OrganizationDetailPage';
+import { organizationSection, type OrganizationSection } from '../features/platform-admin/organizationNavigation';
+import { InvitationEntryGate } from '../features/organizations/InvitationEntryGate';
+import { InvitationsPage } from '../features/organizations/InvitationsPage';
+import { invitationReturnTo } from '../features/organizations/api';
 import { ConsoleLayout } from './layout/ConsoleLayout';
 import { ProtectedConsoleLayout } from './layout/ProtectedConsoleLayout';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
+import { WorkspaceSettingsRedirect } from '../features/settings/WorkspaceSettingsRedirect';
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
+import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
+import { McpTunnelsPage } from '../features/mcp-tunnels/McpTunnelsPage';
+import { McpTunnelDetailPage } from '../features/mcp-tunnels/McpTunnelDetailPage';
 import { OrganizationSettingsPage } from '../features/settings/OrganizationSettingsPage';
 import { WorkspaceApiKeysPage } from '../features/settings/WorkspaceApiKeysPage';
 import { WorkspaceWebhooksPage } from '../features/settings/WorkspaceWebhooksPage';
@@ -13,9 +25,41 @@ import { WorkbenchPage } from '../features/workbench/WorkbenchPage';
 import { normalizeReturnTo } from '../shared/auth/redirects';
 
 const rootRoute = createRootRoute({
-  component: () => <Outlet />,
+  component: InvitationEntryGate,
 });
 
+const invitationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'invites',
+  validateSearch: (search: Record<string, unknown>) => ({
+    returnTo: invitationReturnTo(typeof search.returnTo === 'string' ? search.returnTo : undefined),
+  }),
+  component: InvitationsPage,
+});
+
+const platformAdminRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'platform-admin',
+  component: PlatformAdminLayout,
+});
+const platformOrganizationsRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: '/',
+  component: OrganizationsPage,
+});
+const platformAdministratorsRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: 'administrators',
+  component: SuperAdministratorsPage,
+});
+const platformOrganizationDetailRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: 'organizations/$organizationUuid',
+  validateSearch: (search: Record<string, unknown>): { view?: OrganizationSection } => ({
+    view: organizationSection(search.view),
+  }),
+  component: OrganizationDetailPage,
+});
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'login',
@@ -133,6 +177,30 @@ const workspaceBatchesRoute = createRoute({
   component: () => <DashboardPage section="batches" />,
 });
 
+const mcpServersRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'mcp-servers',
+  component: MCPServersPage,
+});
+
+const workspaceMCPServersRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/mcp-servers',
+  component: MCPServersPage,
+});
+
+const workspaceMCPServerNewRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/mcp-servers/new',
+  component: CreateMCPServerPage,
+});
+
+const workspaceMCPServerDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/mcp-servers/$mcpServerId',
+  component: MCPServerDetailPage,
+});
+
 const apiKeysRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'api-keys',
@@ -170,8 +238,12 @@ const workspaceSessionsRoute = createRoute({
 });
 
 const sessionDetailSearch = (search: Record<string, unknown>) => ({
-  segment: search.segment === 'debug' ? 'debug' : undefined,
+  segment: search.segment === 'debug' || search.segment === 'trace' ? search.segment : undefined,
   event: typeof search.event === 'string' && search.event.trim() ? search.event.trim() : undefined,
+  trace_id:
+    typeof search.trace_id === 'string' && search.trace_id.trim() && search.trace_id.trim().length <= 128
+      ? search.trace_id.trim()
+      : undefined,
 });
 
 const workspaceSessionDetailRoute = createRoute({
@@ -179,6 +251,18 @@ const workspaceSessionDetailRoute = createRoute({
   path: 'workspaces/$workspaceId/sessions/$sessionId',
   validateSearch: sessionDetailSearch,
   component: () => <ManagedAgentsPage section="sessions" />,
+});
+
+const observabilityRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'observability',
+  component: () => <ManagedAgentsPage section="observability" />,
+});
+
+const workspaceObservabilityRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/observability',
+  component: () => <ManagedAgentsPage section="observability" />,
 });
 
 const deploymentsRoute = createRoute({
@@ -355,6 +439,12 @@ const agentsRoute = createRoute({
   component: () => <ManagedAgentsPage section="agents" />,
 });
 
+const agentCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'agents/new',
+  component: () => <ManagedAgentsPage section="agents" />,
+});
+
 const agentDetailRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'agents/$agentId',
@@ -364,6 +454,12 @@ const agentDetailRoute = createRoute({
 const workspaceAgentsRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/agents',
+  component: () => <ManagedAgentsPage section="agents" />,
+});
+
+const workspaceAgentCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/agents/new',
   component: () => <ManagedAgentsPage section="agents" />,
 });
 
@@ -394,13 +490,19 @@ const securityRoute = createRoute({
 const webhooksRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'webhooks',
-  component: () => <DashboardPage section="webhooks" />,
+  component: () => <WorkspaceSettingsRedirect resource="webhooks" />,
 });
 
-const mcpTunnelsRoute = createRoute({
+const settingsWorkspaceMcpTunnelsRoute = createRoute({
   getParentRoute: () => consoleRoute,
-  path: 'mcp-tunnels',
-  component: () => <DashboardPage section="mcp-tunnels" />,
+  path: 'settings/workspaces/$workspaceId/mcp-tunnels',
+  component: McpTunnelsPage,
+});
+
+const settingsWorkspaceMcpTunnelDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'settings/workspaces/$workspaceId/mcp-tunnels/$tunnelId',
+  component: McpTunnelDetailPage,
 });
 
 const tagsRoute = createRoute({
@@ -427,10 +529,16 @@ const settingsOrganizationRoute = createRoute({
   component: OrganizationSettingsPage,
 });
 
+const settingsBillingRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: 'settings/billing',
+  component: () => <Navigate to="/billing" replace />,
+});
+
 const settingsLimitsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: 'settings/limits',
-  component: () => <OrganizationSettingsPage section="limits" />,
+  component: () => <OrganizationSettingsPage section="retired" />,
 });
 
 const settingsMembersRoute = createRoute({
@@ -442,7 +550,7 @@ const settingsMembersRoute = createRoute({
 const settingsServiceAccountsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: 'settings/service-accounts',
-  component: () => <OrganizationSettingsPage section="service-accounts" />,
+  component: () => <OrganizationSettingsPage section="retired" />,
 });
 
 const settingsFallbackRoute = createRoute({
@@ -452,7 +560,13 @@ const settingsFallbackRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
+  platformAdminRoute.addChildren([
+    platformOrganizationsRoute,
+    platformOrganizationDetailRoute,
+    platformAdministratorsRoute,
+  ]),
   loginRoute,
+  invitationsRoute,
   protectedRoute.addChildren([
     consoleRoute.addChildren([
       dashboardRoute,
@@ -472,16 +586,24 @@ const routeTree = rootRoute.addChildren([
       batchesRoute,
       workspaceBatchesRoute,
       workspaceLLMModelsRoute,
+      mcpServersRoute,
+      workspaceMCPServersRoute,
+      workspaceMCPServerNewRoute,
+      workspaceMCPServerDetailRoute,
       apiKeysRoute,
       quickstartRoute,
       workspaceAgentQuickstartRoute,
       agentsRoute,
+      agentCreateRoute,
       agentDetailRoute,
       workspaceAgentsRoute,
+      workspaceAgentCreateRoute,
       workspaceAgentDetailRoute,
       sessionsRoute,
       workspaceSessionsRoute,
       workspaceSessionDetailRoute,
+      observabilityRoute,
+      workspaceObservabilityRoute,
       deploymentsRoute,
       workspaceDeploymentsRoute,
       workspaceDeploymentDetailRoute,
@@ -514,12 +636,14 @@ const routeTree = rootRoute.addChildren([
       privacyControlsRoute,
       securityRoute,
       webhooksRoute,
-      mcpTunnelsRoute,
+      settingsWorkspaceMcpTunnelsRoute,
+      settingsWorkspaceMcpTunnelDetailRoute,
       tagsRoute,
       settingsWorkspaceKeysRoute,
       settingsWorkspaceWebhooksRoute,
     ]),
     settingsOrganizationRoute,
+    settingsBillingRoute,
     settingsLimitsRoute,
     settingsMembersRoute,
     settingsServiceAccountsRoute,

@@ -35,19 +35,67 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
-	Env               string                  `yaml:"env"`
-	Server            ServerConfig            `yaml:"server"`
-	Database          yamlDatabaseConfig      `yaml:"database"`
-	Redis             RedisConfig             `yaml:"redis"`
-	Storage           StorageConfig           `yaml:"storage"`
-	Batch             BatchConfig             `yaml:"batch"`
-	E2B               E2BConfig               `yaml:"e2b"`
-	EnvironmentRunner EnvironmentRunnerConfig `yaml:"environment_runner"`
-	CodeSession       yamlCodeSessionConfig   `yaml:"code_session"`
-	Webhook           yamlWebhookConfig       `yaml:"webhook"`
-	Vault             VaultConfig             `yaml:"vault"`
-	Bootstrap         yamlBootstrapConfig     `yaml:"bootstrap"`
-	SDKFixtures       SDKFixtureConfig        `yaml:"sdk_fixtures"`
+	ChannelBridge          ChannelBridgeConfig       `yaml:"channel_bridge"`
+	LLMProviderPresetsFile string                    `yaml:"llm_provider_presets_file"`
+	WebTools               WebToolsConfig            `yaml:"web_tools"`
+	EnvironmentPackages    EnvironmentPackageConfig  `yaml:"environment_packages"`
+	EnvironmentPrebuilds   EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	TranscriptArchive      TranscriptArchiveConfig   `yaml:"transcript_archive"`
+	Env                    string                    `yaml:"env"`
+	Server                 ServerConfig              `yaml:"server"`
+	Database               yamlDatabaseConfig        `yaml:"database"`
+	Redis                  RedisConfig               `yaml:"redis"`
+	NATS                   yamlNATSConfig            `yaml:"nats"`
+	Auth                   AuthConfig                `yaml:"auth"`
+	Tunnel                 TunnelConfig              `yaml:"tunnel"`
+	Storage                StorageConfig             `yaml:"storage"`
+	Batch                  BatchConfig               `yaml:"batch"`
+	SandboxLifecycle       SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
+	E2B                    E2BConfig                 `yaml:"e2b"`
+	EnvironmentRunner      EnvironmentRunnerConfig   `yaml:"environment_runner"`
+	CodeSession            yamlCodeSessionConfig     `yaml:"code_session"`
+	Observability          ObservabilityConfig       `yaml:"observability"`
+	Webhook                yamlWebhookConfig         `yaml:"webhook"`
+	Vault                  VaultConfig               `yaml:"vault"`
+	Bootstrap              yamlBootstrapConfig       `yaml:"bootstrap"`
+}
+
+// Legacy flat fields exist only at the YAML boundary. All consumers use Local.
+type yamlMasterKeyConfig struct {
+	Provider       string                           `yaml:"provider"`
+	Local          *LocalKeyConfig                  `yaml:"local"`
+	AliyunKMS      *AliyunKMSConfig                 `yaml:"aliyun_kms"`
+	HashicorpVault *HashicorpVaultConfig            `yaml:"hashicorp_vault"`
+	Kek            optional[string]                 `yaml:"kek"`
+	KekFile        optional[string]                 `yaml:"kek_file"`
+	Version        optional[int64]                  `yaml:"version"`
+	DecryptOnly    optional[[]DecryptOnlyKeyConfig] `yaml:"decrypt_only"`
+}
+
+func (m *MasterKeyConfig) UnmarshalYAML(node *yaml.Node) error {
+	var input yamlMasterKeyConfig
+	if err := node.Decode(&input); err != nil {
+		return err
+	}
+	legacy := input.Kek.set || input.KekFile.set || input.Version.set || input.DecryptOnly.set
+	if input.Local != nil && legacy {
+		return errors.New("vault.master_key: local cannot be combined with legacy kek, kek_file, version or decrypt_only fields")
+	}
+	*m = MasterKeyConfig{
+		Provider: input.Provider, Local: input.Local,
+		AliyunKMS: input.AliyunKMS, HashicorpVault: input.HashicorpVault,
+	}
+	if legacy {
+		local := &LocalKeyConfig{
+			Kek: input.Kek.value, KekFile: input.KekFile.value,
+			Version: input.Version.value, DecryptOnly: input.DecryptOnly.value,
+		}
+		// Older serialized remote configs included empty local fields and version 0/1.
+		if m.EffectiveProvider() == "local" || local.KEKConfigured() || len(local.DecryptOnly) > 0 || (local.Version != 0 && local.Version != 1) {
+			m.Local = local
+		}
+	}
+	return nil
 }
 
 type yamlDatabaseConfig struct {
@@ -55,25 +103,30 @@ type yamlDatabaseConfig struct {
 	AutoMigrate optional[bool] `yaml:"auto_migrate"`
 }
 
+type yamlNATSConfig struct {
+	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
+	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL               string                  `yaml:"url"`
+	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
+}
+
 type yamlCodeSessionConfig struct {
-	SandboxAPIBaseURL                  string         `yaml:"sandbox_api_base_url"`
-	OTLPFileLogEnabled                 optional[bool] `yaml:"otlp_file_log_enabled"`
-	OTLPLogRoot                        string         `yaml:"otlp_log_root"`
-	OTLPLogBodyPreviewBytes            int            `yaml:"otlp_log_body_preview_bytes"`
-	JWTSigningPrivateKeyFile           string         `yaml:"jwt_signing_private_key_file"`
-	UpstreamProxyMITMEnabled           bool           `yaml:"upstream_proxy_mitm_enabled"`
-	UpstreamProxyCAKeyFile             string         `yaml:"upstream_proxy_ca_key_file"`
-	UpstreamProxyDisableSSRFProtection bool           `yaml:"upstream_proxy_disable_ssrf_protection"`
+	SandboxAPIBaseURL                  string `yaml:"sandbox_api_base_url"`
+	JWTSigningPrivateKeyFile           string `yaml:"jwt_signing_private_key_file"`
+	UpstreamProxyMITMEnabled           bool   `yaml:"upstream_proxy_mitm_enabled"`
+	UpstreamProxyCAKeyFile             string `yaml:"upstream_proxy_ca_key_file"`
+	UpstreamProxyDisableSSRFProtection bool   `yaml:"upstream_proxy_disable_ssrf_protection"`
+	BrainClaimTokenFile                string `yaml:"brain_claim_token_file"`
 }
 
 type yamlWebhookConfig struct {
-	EndpointURL   string         `yaml:"endpoint_url"`
-	SigningKey    string         `yaml:"signing_key"`
-	EventTypes    []string       `yaml:"event_types"`
-	WorkerEnabled optional[bool] `yaml:"worker_enabled"`
-	Timeout       time.Duration  `yaml:"timeout"`
-	MaxAttempts   int            `yaml:"max_attempts"`
-	AllowInsecure bool           `yaml:"allow_insecure"`
+	Concurrency         int            `yaml:"concurrency"`
+	WorkerEnabled       optional[bool] `yaml:"worker_enabled"`
+	Timeout             time.Duration  `yaml:"timeout"`
+	FailureDisableAfter time.Duration  `yaml:"failure_disable_after"`
+	MaxAttempts         int            `yaml:"max_attempts"`
+	AllowInsecure       bool           `yaml:"allow_insecure"`
 }
 
 type yamlBootstrapConfig struct {
@@ -82,36 +135,52 @@ type yamlBootstrapConfig struct {
 	OrganizationName    string                 `yaml:"organization_name"`
 	WorkspaceExternalID string                 `yaml:"workspace_external_id"`
 	UserExternalID      string                 `yaml:"user_external_id"`
+	UserEmail           string                 `yaml:"user_email"`
+	UserName            string                 `yaml:"user_name"`
 	APIKeyExternalID    string                 `yaml:"api_key_external_id"`
 }
 
 func newYAMLConfig() yamlConfig {
 	defaults := defaultConfig()
 	return yamlConfig{
-		Env:               defaults.Env,
-		Server:            defaults.Server,
-		Database:          yamlDatabaseConfig{URL: defaults.Database.URL},
-		Redis:             defaults.Redis,
-		Storage:           defaults.Storage,
-		Batch:             defaults.Batch,
-		E2B:               defaults.E2B,
-		EnvironmentRunner: defaults.EnvironmentRunner,
+		ChannelBridge: defaults.ChannelBridge,
+		Env:           defaults.Env,
+		Server:        defaults.Server,
+		Database:      yamlDatabaseConfig{URL: defaults.Database.URL},
+		Redis:         defaults.Redis,
+		NATS: yamlNATSConfig{
+			WorkerEventStream: defaults.NATS.WorkerEventStream,
+			WebhookStream:     defaults.NATS.WebhookStream,
+			URL:               defaults.NATS.URL,
+			ConnectTimeout:    defaults.NATS.ConnectTimeout,
+			DrainTimeout:      defaults.NATS.DrainTimeout,
+		},
+		WebTools:             defaults.WebTools,
+		Auth:                 defaults.Auth,
+		Tunnel:               defaults.Tunnel,
+		Storage:              defaults.Storage,
+		Batch:                defaults.Batch,
+		E2B:                  defaults.E2B,
+		EnvironmentPrebuilds: defaults.EnvironmentPrebuilds,
+		EnvironmentPackages:  defaults.EnvironmentPackages,
+		TranscriptArchive:    defaults.TranscriptArchive,
+		SandboxLifecycle:     defaults.SandboxLifecycle,
+		EnvironmentRunner:    defaults.EnvironmentRunner,
 		CodeSession: yamlCodeSessionConfig{
 			SandboxAPIBaseURL:                  defaults.CodeSession.SandboxAPIBaseURL,
-			OTLPLogRoot:                        defaults.CodeSession.OTLPLogRoot,
-			OTLPLogBodyPreviewBytes:            defaults.CodeSession.OTLPLogBodyPreviewBytes,
 			JWTSigningPrivateKeyFile:           defaults.CodeSession.JWTSigningPrivateKeyFile,
 			UpstreamProxyMITMEnabled:           defaults.CodeSession.UpstreamProxyMITMEnabled,
 			UpstreamProxyCAKeyFile:             defaults.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: defaults.CodeSession.UpstreamProxyDisableSSRFProtection,
+			BrainClaimTokenFile:                defaults.CodeSession.BrainClaimTokenFile,
 		},
+		Observability: defaults.Observability,
 		Webhook: yamlWebhookConfig{
-			EndpointURL:   defaults.Webhook.EndpointURL,
-			SigningKey:    defaults.Webhook.SigningKey,
-			EventTypes:    defaults.Webhook.EventTypes,
-			Timeout:       defaults.Webhook.Timeout,
-			MaxAttempts:   defaults.Webhook.MaxAttempts,
-			AllowInsecure: defaults.Webhook.AllowInsecure,
+			Concurrency:         defaults.Webhook.Concurrency,
+			Timeout:             defaults.Webhook.Timeout,
+			MaxAttempts:         defaults.Webhook.MaxAttempts,
+			FailureDisableAfter: defaults.Webhook.FailureDisableAfter,
+			AllowInsecure:       defaults.Webhook.AllowInsecure,
 		},
 		Vault: defaults.Vault,
 		Bootstrap: yamlBootstrapConfig{
@@ -119,38 +188,54 @@ func newYAMLConfig() yamlConfig {
 			OrganizationName:    defaults.Bootstrap.OrganizationName,
 			WorkspaceExternalID: defaults.Bootstrap.WorkspaceExternalID,
 			UserExternalID:      defaults.Bootstrap.UserExternalID,
+			UserEmail:           defaults.Bootstrap.UserEmail,
+			UserName:            defaults.Bootstrap.UserName,
 			APIKeyExternalID:    defaults.Bootstrap.APIKeyExternalID,
 		},
-		SDKFixtures: defaults.SDKFixtures,
 	}
 }
 
 func (input yamlConfig) resolve() Config {
 	cfg := Config{
-		Env:               input.Env,
-		Server:            input.Server,
-		Database:          DatabaseConfig{URL: input.Database.URL},
-		Redis:             input.Redis,
-		Storage:           input.Storage,
-		Batch:             input.Batch,
-		E2B:               input.E2B,
-		EnvironmentRunner: input.EnvironmentRunner,
+		ChannelBridge:          input.ChannelBridge,
+		LLMProviderPresetsFile: input.LLMProviderPresetsFile,
+		Env:                    input.Env,
+		Server:                 input.Server,
+		Database:               DatabaseConfig{URL: input.Database.URL},
+		Redis:                  input.Redis,
+		NATS: NATSConfig{
+			WorkerEventStream: input.NATS.WorkerEventStream,
+			WebhookStream:     input.NATS.WebhookStream,
+			URL:               input.NATS.URL,
+			ConnectTimeout:    input.NATS.ConnectTimeout,
+			DrainTimeout:      input.NATS.DrainTimeout,
+		},
+		WebTools:             input.WebTools,
+		Auth:                 input.Auth,
+		Tunnel:               input.Tunnel,
+		Storage:              input.Storage,
+		Batch:                input.Batch,
+		E2B:                  input.E2B,
+		EnvironmentPrebuilds: input.EnvironmentPrebuilds,
+		EnvironmentPackages:  input.EnvironmentPackages,
+		TranscriptArchive:    input.TranscriptArchive,
+		SandboxLifecycle:     input.SandboxLifecycle,
+		EnvironmentRunner:    input.EnvironmentRunner,
 		CodeSession: CodeSessionConfig{
 			SandboxAPIBaseURL:                  input.CodeSession.SandboxAPIBaseURL,
-			OTLPLogRoot:                        input.CodeSession.OTLPLogRoot,
-			OTLPLogBodyPreviewBytes:            input.CodeSession.OTLPLogBodyPreviewBytes,
 			JWTSigningPrivateKeyFile:           input.CodeSession.JWTSigningPrivateKeyFile,
 			UpstreamProxyMITMEnabled:           input.CodeSession.UpstreamProxyMITMEnabled,
 			UpstreamProxyCAKeyFile:             input.CodeSession.UpstreamProxyCAKeyFile,
 			UpstreamProxyDisableSSRFProtection: input.CodeSession.UpstreamProxyDisableSSRFProtection,
+			BrainClaimTokenFile:                input.CodeSession.BrainClaimTokenFile,
 		},
+		Observability: input.Observability,
 		Webhook: WebhookConfig{
-			EndpointURL:   input.Webhook.EndpointURL,
-			SigningKey:    input.Webhook.SigningKey,
-			EventTypes:    input.Webhook.EventTypes,
-			Timeout:       input.Webhook.Timeout,
-			MaxAttempts:   input.Webhook.MaxAttempts,
-			AllowInsecure: input.Webhook.AllowInsecure,
+			Concurrency:         input.Webhook.Concurrency,
+			Timeout:             input.Webhook.Timeout,
+			MaxAttempts:         input.Webhook.MaxAttempts,
+			FailureDisableAfter: input.Webhook.FailureDisableAfter,
+			AllowInsecure:       input.Webhook.AllowInsecure,
 		},
 		Vault: input.Vault,
 		Bootstrap: BootstrapConfig{
@@ -158,13 +243,13 @@ func (input yamlConfig) resolve() Config {
 			OrganizationName:    input.Bootstrap.OrganizationName,
 			WorkspaceExternalID: input.Bootstrap.WorkspaceExternalID,
 			UserExternalID:      input.Bootstrap.UserExternalID,
+			UserEmail:           input.Bootstrap.UserEmail,
+			UserName:            input.Bootstrap.UserName,
 			APIKeyExternalID:    input.Bootstrap.APIKeyExternalID,
 		},
-		SDKFixtures: input.SDKFixtures,
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
-	cfg.CodeSession.OTLPFileLogEnabled = input.CodeSession.OTLPFileLogEnabled.valueOr(defaultCodeSessionOTLPFileLogEnabled(cfg.Env))
-	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(cfg.Webhook.EndpointURL != "" && cfg.Webhook.SigningKey != "")
+	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(true)
 	if input.Bootstrap.SeedAPIKeys.set {
 		cfg.Bootstrap.SeedAPIKeys = input.Bootstrap.SeedAPIKeys.value
 	} else {

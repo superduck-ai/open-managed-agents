@@ -1,6 +1,7 @@
 package deployments
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -17,12 +18,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/deploymentjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
-	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 const (
@@ -32,14 +35,12 @@ const (
 )
 
 type Handler struct {
-	db           *db.DB
-	webhooks     webhookEnqueuer
-	errorAdapter *httpapi.ErrorAdapter
-	router       chi.Router
-}
-
-type webhookEnqueuer interface {
-	Enqueue(context.Context, webhooks.EnqueueInput)
+	secretService *secrets.Service
+	db            *db.DB
+	deployments   *Store
+	billing       *billing.Calculator
+	errorAdapter  *httpapi.ErrorAdapter
+	router        chi.Router
 }
 
 type RunsHandler struct {
@@ -52,6 +53,7 @@ type deploymentResponse struct {
 	ID            string                      `json:"id"`
 	Agent         deploymentAgentReference    `json:"agent"`
 	ArchivedAt    *string                     `json:"archived_at"`
+	Budget        json.RawMessage             `json:"budget"`
 	CreatedAt     string                      `json:"created_at"`
 	Description   string                      `json:"description"`
 	EnvironmentID string                      `json:"environment_id"`
@@ -74,13 +76,14 @@ type deploymentAgentReference struct {
 }
 
 type deploymentScheduleResponse struct {
-	deploymentSchedule
+	deploymentjobs.Schedule
 	LastRunAt      *string  `json:"last_run_at"`
 	UpcomingRunsAt []string `json:"upcoming_runs_at"`
 }
 
 type deploymentMutationRequest struct {
 	Agent         json.RawMessage `json:"agent"`
+	Budget        json.RawMessage `json:"budget"`
 	Description   json.RawMessage `json:"description"`
 	EnvironmentID json.RawMessage `json:"environment_id"`
 	InitialEvents json.RawMessage `json:"initial_events"`
@@ -89,12 +92,6 @@ type deploymentMutationRequest struct {
 	Resources     json.RawMessage `json:"resources"`
 	Schedule      json.RawMessage `json:"schedule"`
 	VaultIDs      json.RawMessage `json:"vault_ids"`
-}
-
-type deploymentCheckoutRequest struct {
-	Name json.RawMessage `json:"name"`
-	SHA  json.RawMessage `json:"sha"`
-	Type json.RawMessage `json:"type"`
 }
 
 type deploymentRunResponse struct {
@@ -232,9 +229,9 @@ type deploymentAgentSnapshot struct {
 	} `json:"skills"`
 }
 
-func NewHandler(database *db.DB, webhookEvents webhookEnqueuer, logger *slog.Logger) *Handler {
+func NewHandler(database *db.DB, deploymentStore *Store, secretService *secrets.Service, billingCalculator *billing.Calculator, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{db: database, webhooks: webhookEvents, errorAdapter: httpapi.NewErrorAdapter(logger)}
+	h := &Handler{db: database, deployments: deploymentStore, secretService: secretService, billing: billingCalculator, errorAdapter: httpapi.NewErrorAdapter(logger)}
 	wrap := h.errorAdapter.Wrap
 	router := chi.NewRouter()
 	router.NotFound(wrap(h.notFound))
@@ -346,11 +343,15 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if env.ArchivedAt != nil {
 		return invalidRequest(errors.New("environment must not be archived"))
 	}
-	resources, resourceSecrets, err := h.normalizeResources(r, principal, jsonx.Default(body.Resources, `[]`))
+	resources, resourceSecrets, err := h.normalizeResources(r, principal, jsonx.Default(body.Resources, `[]`), nil)
 	if err != nil {
 		return resourceBuildError(err)
 	}
 	vaultIDs, err := h.normalizeVaultIDs(r, principal, jsonx.Default(body.VaultIDs, `[]`))
+	if err != nil {
+		return invalidRequest(err)
+	}
+	budget, err := h.scopedDeploymentBudgetPatch(r, principal, nil, body.Budget, agent.snapshot)
 	if err != nil {
 		return invalidRequest(err)
 	}
@@ -359,12 +360,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		return internalError("Could not generate deployment ID", fmt.Errorf("generate deployment ID: %w", err))
 	}
 	now := time.Now().UTC()
-	created, err := h.db.CreateDeployment(r.Context(), db.Deployment{
+	created, err := h.deployments.Create(r.Context(), db.Deployment{
 		UUID:                  uuid.NewV4().String(),
 		ExternalID:            deploymentID,
 		OrganizationUUID:      principal.OrganizationUUID,
 		WorkspaceUUID:         principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID:   principal.APIKeyUUID,
+		RuntimeUserUUID:       principal.UserUUID,
 		EnvironmentUUID:       env.UUID,
 		EnvironmentExternalID: env.ExternalID,
 		AgentUUID:             agent.record.UUID,
@@ -378,6 +380,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		Resources:             resources,
 		ResourceSecrets:       resourceSecrets,
 		VaultIDs:              vaultIDs,
+		Budget:                budget,
 		Schedule:              schedule,
 		Status:                "active",
 		CreatedAt:             now,
@@ -539,7 +542,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	if len(body.Resources) > 0 {
-		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, body.Resources)
+		next.Resources, next.ResourceSecrets, err = h.normalizeResources(r, principal, body.Resources, next.ResourceSecrets)
 		if err != nil {
 			return resourceBuildError(err)
 		}
@@ -550,6 +553,11 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 			return invalidRequest(err)
 		}
 	}
+	budget, err := h.scopedDeploymentBudgetPatch(r, principal, next.Budget, body.Budget, next.AgentSnapshot)
+	if err != nil {
+		return invalidRequest(err)
+	}
+	next.Budget = budget
 	scheduleProvided := body.Schedule != nil
 	if scheduleProvided {
 		next.Schedule, err = normalizeOptionalSchedule(body.Schedule)
@@ -558,7 +566,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	next.UpdatedAt = time.Now().UTC()
-	updated, err := h.db.UpdateDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, db.UpdateDeploymentInput{
+	updated, err := h.deployments.Update(r.Context(), principal.WorkspaceUUID, deploymentID, db.UpdateDeploymentInput{
 		Deployment: next, ScheduleProvided: scheduleProvided,
 	})
 	if err != nil {
@@ -575,7 +583,7 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	archived, err := h.db.ArchiveDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
+	archived, err := h.deployments.Archive(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
 	}
@@ -589,7 +597,7 @@ func (h *Handler) pauseRoute(w http.ResponseWriter, r *http.Request) error {
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
 	reason := json.RawMessage(`{"type":"manual"}`)
-	paused, err := h.db.PauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID, reason)
+	paused, err := h.deployments.Pause(r.Context(), principal.WorkspaceUUID, deploymentID, reason)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
 	}
@@ -602,7 +610,7 @@ func (h *Handler) unpauseRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	deploymentID := chi.URLParam(r, "deployment_id")
-	unpaused, err := h.db.UnpauseDeployment(r.Context(), principal.WorkspaceUUID, deploymentID)
+	unpaused, err := h.deployments.Unpause(r.Context(), principal.WorkspaceUUID, deploymentID)
 	if err != nil {
 		return deploymentLoadError(err, deploymentID)
 	}
@@ -622,7 +630,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 	if deployment.ArchivedAt != nil {
 		return invalidRequest(errors.New("archived deployments cannot be run"))
 	}
-	referenceFailure, err := validateRunReferences(r.Context(), h.db, principal.WorkspaceUUID, deployment)
+	memoryStores, referenceFailure, err := validateRunReferences(r.Context(), h.db, principal.WorkspaceUUID, deployment)
 	if err != nil {
 		referenceFailure = runError("unknown_error", "Could not create session")
 	}
@@ -630,14 +638,14 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 	}
 	now := time.Now().UTC()
-	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, now)
+	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, principal.UserUUID, now, memoryStores)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return deploymentLoadError(err, deploymentID)
 		}
 		return h.writeRunReferenceFailure(w, r, principal, deployment, runError("session_resource_not_found_error", err.Error()))
 	}
-	run, session, thread, createdEvents, err := h.db.CreateManualDeploymentRun(r.Context(), db.CreateManualDeploymentRunInput{
+	run, _, _, _, err := h.deployments.CreateManualRun(r.Context(), db.CreateManualDeploymentRunInput{
 		DeploymentExternalID: deployment.ExternalID,
 		Session:              preparedRun.Session,
 		Events:               preparedRun.Events,
@@ -665,29 +673,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		}
 		return deploymentLoadError(err, deploymentID)
 	}
-	h.enqueueWebhook(r.Context(), principal, "session.created", session.ExternalID, nil)
-	h.enqueueWebhook(r.Context(), principal, "session.pending", session.ExternalID, nil)
-	h.enqueueWebhook(r.Context(), principal, "session.status_idled", session.ExternalID, nil)
-	h.enqueueWebhook(r.Context(), principal, "session.thread_created", session.ExternalID, &thread.ExternalID)
-	h.enqueueWebhook(r.Context(), principal, "session.thread_idled", session.ExternalID, &thread.ExternalID)
-	if outcomesChanged(createdEvents) {
-		h.enqueueWebhook(r.Context(), principal, "session.outcome_evaluation_ended", session.ExternalID, nil)
-	}
 	return writeRunResponse(w, run)
-}
-
-func (h *Handler) enqueueWebhook(ctx context.Context, principal auth.Principal, eventType, resourceID string, sessionThreadID *string) {
-	if h.webhooks == nil {
-		return
-	}
-	h.webhooks.Enqueue(ctx, webhooks.EnqueueInput{
-		WorkspaceUUID:       principal.WorkspaceUUID,
-		OrganizationUUID:    principal.OrganizationUUID,
-		WorkspaceExternalID: principal.WorkspaceExternalID,
-		EventType:           eventType,
-		ResourceID:          resourceID,
-		Options:             webhooks.EventOptions{SessionThreadID: sessionThreadID},
-	})
 }
 
 func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Request, principal auth.Principal, deployment db.Deployment, runError *deploymentRunError) error {
@@ -714,21 +700,23 @@ func (h *Handler) writeRunReferenceFailure(w http.ResponseWriter, r *http.Reques
 	return writeRunResponse(w, run)
 }
 
-func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
+func validateRunReferences(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (map[string]db.MemoryStore, *deploymentRunError, error) {
 	agent, err := database.GetAgent(ctx, workspaceUUID, deployment.AgentExternalID)
 	if err != nil {
-		return classifyReferenceFailure("agent", err, false)
+		failure, err := classifyReferenceFailure("agent", err, false)
+		return nil, failure, err
 	}
 	if agent.ArchivedAt != nil {
-		return classifyReferenceFailure("agent", nil, true)
+		failure, err := classifyReferenceFailure("agent", nil, true)
+		return nil, failure, err
 	}
 	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
 }
 
-func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
+func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (map[string]db.MemoryStore, *deploymentRunError, error) {
 	var snapshot deploymentAgentSnapshot
 	if err := json.Unmarshal(deployment.AgentSnapshot, &snapshot); err != nil {
-		return runError("unknown_error", "Stored agent snapshot is invalid"), nil
+		return nil, runError("unknown_error", "Stored agent snapshot is invalid"), nil
 	}
 	if snapshot.Multiagent != nil {
 		for _, reference := range snapshot.Multiagent.Agents {
@@ -737,10 +725,12 @@ func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID
 			}
 			subagent, err := database.GetAgent(ctx, workspaceUUID, reference.ID)
 			if err != nil {
-				return classifyReferenceFailure("agent", err, false)
+				failure, err := classifyReferenceFailure("agent", err, false)
+				return nil, failure, err
 			}
 			if subagent.ArchivedAt != nil {
-				return classifyReferenceFailure("agent", nil, true)
+				failure, err := classifyReferenceFailure("agent", nil, true)
+				return nil, failure, err
 			}
 		}
 	}
@@ -755,58 +745,47 @@ func validateRunDependencies(ctx context.Context, database *db.DB, workspaceUUID
 			_, err = database.GetSkillVersion(ctx, workspaceUUID, skill.ID, skill.Version)
 		}
 		if err != nil {
-			return classifyReferenceFailure("skill", err, false)
+			failure, err := classifyReferenceFailure("skill", err, false)
+			return nil, failure, err
 		}
 	}
 	return validateSessionDependencies(ctx, database, workspaceUUID, deployment)
 }
 
-func validateSessionDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (*deploymentRunError, error) {
+func validateSessionDependencies(ctx context.Context, database *db.DB, workspaceUUID string, deployment db.Deployment) (map[string]db.MemoryStore, *deploymentRunError, error) {
 	env, err := database.GetEnvironment(ctx, workspaceUUID, deployment.EnvironmentExternalID)
 	if err != nil {
-		return classifyReferenceFailure("environment", err, false)
+		failure, err := classifyReferenceFailure("environment", err, false)
+		return nil, failure, err
 	}
 	if env.ArchivedAt != nil {
-		return classifyReferenceFailure("environment", nil, true)
+		failure, err := classifyReferenceFailure("environment", nil, true)
+		return nil, failure, err
 	}
 	var vaultIDs []string
 	if len(deployment.VaultIDs) > 0 && !jsonx.IsNull(deployment.VaultIDs) {
 		if err := json.Unmarshal(deployment.VaultIDs, &vaultIDs); err != nil {
-			return runError("unknown_error", "Stored vault references are invalid"), nil
+			return nil, runError("unknown_error", "Stored vault references are invalid"), nil
 		}
 	}
 	for _, vaultID := range vaultIDs {
 		vault, err := database.GetVault(ctx, workspaceUUID, vaultID)
 		if err != nil {
-			return classifyReferenceFailure("vault", err, false)
+			failure, err := classifyReferenceFailure("vault", err, false)
+			return nil, failure, err
 		}
 		if vault.ArchivedAt != nil {
-			return classifyReferenceFailure("vault", nil, true)
+			failure, err := classifyReferenceFailure("vault", nil, true)
+			return nil, failure, err
 		}
 	}
 	var resources []deploymentResourcePayload
 	if len(deployment.Resources) > 0 && !jsonx.IsNull(deployment.Resources) {
 		if err := json.Unmarshal(deployment.Resources, &resources); err != nil {
-			return runError("unknown_error", "Stored resources are invalid"), nil
+			return nil, runError("unknown_error", "Stored resources are invalid"), nil
 		}
 	}
-	for _, resource := range resources {
-		switch resource.Type {
-		case "file":
-			if _, err := database.GetFile(ctx, workspaceUUID, resource.FileID); err != nil {
-				return classifyReferenceFailure("file", err, false)
-			}
-		case "memory_store":
-			store, err := database.GetMemoryStore(ctx, workspaceUUID, resource.MemoryStoreID)
-			if err != nil {
-				return classifyReferenceFailure("memory_store", err, false)
-			}
-			if store.ArchivedAt != nil {
-				return classifyReferenceFailure("memory_store", nil, true)
-			}
-		}
-	}
-	return nil, nil
+	return validateDeploymentResources(ctx, database, workspaceUUID, resources)
 }
 
 func (h *RunsHandler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
@@ -911,7 +890,7 @@ func (h *Handler) resolveAgent(r *http.Request, principal auth.Principal, raw js
 	if agent.ArchivedAt != nil {
 		return resolvedAgent{}, errors.New("agent must not be archived")
 	}
-	snapshot, err := agentsnapshot.FromAgent(agent)
+	snapshot, err := agentsnapshot.Resolve(r.Context(), h.db, agent)
 	if err != nil {
 		return resolvedAgent{}, err
 	}
@@ -1112,17 +1091,17 @@ func scheduleResponse(scheduleRaw json.RawMessage, lastRunAt *time.Time, now tim
 	if len(scheduleRaw) == 0 || jsonx.IsNull(scheduleRaw) {
 		return nil
 	}
-	config, err := jsonx.Decode[deploymentSchedule](scheduleRaw)
+	config, err := jsonx.Decode[deploymentjobs.Schedule](scheduleRaw)
 	if err != nil {
 		return nil
 	}
 	response := &deploymentScheduleResponse{
-		deploymentSchedule: config,
-		LastRunAt:          httpapi.OptionalTime(lastRunAt),
-		UpcomingRunsAt:     []string{},
+		Schedule:       config,
+		LastRunAt:      httpapi.OptionalTime(lastRunAt),
+		UpcomingRunsAt: []string{},
 	}
-	if schedule, err := parseDeploymentSchedule(scheduleRaw); err == nil {
-		response.UpcomingRunsAt = upcomingRuns(schedule.cron, now, inactive)
+	if schedule, err := deploymentjobs.Parse(scheduleRaw); err == nil {
+		response.UpcomingRunsAt = upcomingRuns(schedule.Cron, now, inactive)
 	}
 	return response
 }
@@ -1180,6 +1159,7 @@ func responseFromDeployment(deployment db.Deployment, now time.Time) (deployment
 		ID:            deployment.ExternalID,
 		Agent:         agentReference(deployment.AgentExternalID, deployment.AgentVersion),
 		ArchivedAt:    httpapi.OptionalTime(deployment.ArchivedAt),
+		Budget:        jsonx.Default(deployment.Budget, "null"),
 		CreatedAt:     httpapi.FormatTime(deployment.CreatedAt),
 		Description:   description,
 		EnvironmentID: deployment.EnvironmentExternalID,
@@ -1272,15 +1252,6 @@ func classifyReferenceFailure(resourceType string, err error, archived bool) (*d
 
 func runError(errorType, message string) *deploymentRunError {
 	return &deploymentRunError{Type: errorType, Message: message}
-}
-
-func outcomesChanged(events []db.SessionEvent) bool {
-	for _, event := range events {
-		if event.EventType == "user.define_outcome" {
-			return true
-		}
-	}
-	return false
 }
 
 func newRunIDs() (sessionID, threadID, workID, runID string, err error) {
@@ -1557,26 +1528,6 @@ func normalizeOutcomeRubric(raw json.RawMessage) (*deploymentOutcomeRubric, erro
 	return rubric, nil
 }
 
-func validateCheckout(raw json.RawMessage) error {
-	var checkout deploymentCheckoutRequest
-	if err := json.Unmarshal(raw, &checkout); err != nil {
-		return errors.New("checkout must be an object")
-	}
-	checkoutType, err := parseRequiredRawString(checkout.Type, "type")
-	if err != nil {
-		return err
-	}
-	switch checkoutType {
-	case "branch":
-		_, err = parseRequiredRawString(checkout.Name, "name")
-	case "commit":
-		_, err = parseRequiredRawString(checkout.SHA, "sha")
-	default:
-		err = errors.New("checkout.type must be branch or commit")
-	}
-	return err
-}
-
 func deploymentAPIContractEnabled(r *http.Request) bool {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if ok && principal.CredentialType == auth.CredentialTypePlatformSession && r.URL.Query().Get("beta") == "true" {
@@ -1672,4 +1623,60 @@ func decodeCursor(raw string) (*time.Time, string, error) {
 	}
 	createdAt = createdAt.UTC()
 	return &createdAt, parsedUUID.String(), nil
+}
+
+// normalizeDeploymentBudget validates a deployment budget input. JSON null
+// clears the budget; an absent field is an empty raw value.
+func normalizeDeploymentBudget(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if string(trimmed) == "null" {
+		return nil, nil
+	}
+	budget, err := billing.ParseBudget(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := jsonx.Encode(budget)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+// deploymentBudgetPatch applies an optional budget field to the current value:
+// an absent field keeps current, a null or object replaces it. When a budget
+// is set, the agent snapshot must not reference unpriced models: unpriced
+// requests accrue no cost, so the budget could never trigger.
+func (h *Handler) deploymentBudgetPatch(current, raw, snapshot json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		// An agent-only patch must not smuggle an unpriced model into a
+		// deployment that still carries a budget: unpriced requests accrue no
+		// cost, so the budget would silently never trigger.
+		if len(current) > 0 {
+			if unpriced := h.billing.UnpricedSnapshotModels(snapshot); len(unpriced) > 0 {
+				return nil, fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", "))
+			}
+		}
+		return current, nil
+	}
+	budget, err := normalizeDeploymentBudget(raw)
+	if err != nil || budget == nil {
+		return budget, err
+	}
+	if unpriced := h.billing.UnpricedSnapshotModels(snapshot); len(unpriced) > 0 {
+		return nil, fmt.Errorf("budget requires models with a list price; no list price configured for: %s", strings.Join(unpriced, ", "))
+	}
+	return budget, nil
+}
+
+func (h *Handler) scopedDeploymentBudgetPatch(r *http.Request, principal auth.Principal, current, raw, snapshot json.RawMessage) (json.RawMessage, error) {
+	calculator, err := h.billing.Scope(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID)
+	if err != nil {
+		return nil, err
+	}
+	scoped := Handler{billing: calculator}
+	return scoped.deploymentBudgetPatch(current, raw, snapshot)
 }

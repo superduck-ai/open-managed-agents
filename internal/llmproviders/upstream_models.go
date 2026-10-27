@@ -40,8 +40,7 @@ func ListUpstreamModels(ctx context.Context, client *http.Client, upstream Upstr
 		return nil, fmt.Errorf("%w: %s", ErrUpstreamModels, err.Error())
 	}
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Anthropic-Version", anthropicVersion)
-	ApplyAPIKey(request.Header, upstream.APIKey)
+	upstream.ApplyHeaders(request.Header)
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrUpstreamModels, err.Error())

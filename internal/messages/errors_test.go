@@ -34,10 +34,10 @@ func TestProviderResolveErrorDistinguishesMissingProviderFromLoadFailure(t *test
 		},
 		{
 			name:       "ambiguous model",
-			err:        llmproviders.ErrAmbiguousModel,
-			wantStatus: http.StatusInternalServerError,
-			wantType:   "api_error",
-			wantMsg:    "Workspace model configuration is unavailable",
+			err:        &llmproviders.AmbiguousModelError{ModelID: "kimi-k2.5", Candidates: []string{"oma/kimi-k2.5", "default/kimi-k2.5"}},
+			wantStatus: http.StatusBadRequest,
+			wantType:   "invalid_request_error",
+			wantMsg:    "model \"kimi-k2.5\" is configured by more than one provider; use one of: oma/kimi-k2.5, default/kimi-k2.5",
 		},
 		{
 			name:       "incomplete secret envelope",

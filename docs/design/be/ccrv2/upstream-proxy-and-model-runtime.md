@@ -85,22 +85,20 @@ payload 不再包含 `anthropic_api` 或 `CLAUDE_CODE_SESSION_ACCESS_TOKEN`。�
 
 ### Git 私有仓库出站
 
-Runner 在执行 `environment-manager task-run` 前向其进程环境注入以下 Git 配置：
+Runner 在执行 `environment-manager task-run` 前向其进程环境注入 Git 配置。**内置**条目始终包含：
 
 ```text
-GIT_CONFIG_COUNT=3
 GIT_CONFIG_KEY_0=credential.interactive
 GIT_CONFIG_VALUE_0=false
 GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf
 GIT_CONFIG_VALUE_1=git@github.com:
 GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf
 GIT_CONFIG_VALUE_2=ssh://git@github.com/
-GIT_EDITOR=true
-GIT_SSL_CAINFO=/root/.ccr/ca-bundle.crt
-GIT_TERMINAL_PROMPT=0
 ```
 
-两条 `insteadOf` 在 Git 建连前把 `git@github.com:team/repo.git` 和 `ssh://git@github.com/team/repo.git` 改写为 `https://github.com/team/repo.git`。因为这些变量存在于 environment-manager 的启动环境，其自身执行的源码拉取以及后续 Claude、Bash 和 Git 子进程都会继承，不需要修改 Agent 生成的 `git clone` / `git fetch` 命令。改写后的 HTTPS 请求继续使用 runtime 注入的 `HTTPS_PROXY`；`GIT_SSL_CAINFO` 指向 runtime 合并 CA bundle，以验证 Gateway 动态签发的证书。关闭 credential 交互、terminal prompt 和 editor 可保证凭证失败时快速返回，不在无人值守的 Sandbox 中阻塞。
+`environment_runner.git_ssh_to_https_hosts` 可追加其它 host（例如 `gitlab.xxxx.cn`，仅允许合法裸 DNS hostname：label 为 `[a-z0-9-]` 且首尾非连字符）；每个 host 再增加两条 `insteadOf`（`git@host:` 与 `ssh://git@host/` → `https://host/`）。动态条目的 `GIT_CONFIG_KEY_*` / `VALUE_*` 经 shell 引号后再写入启动脚本；`GIT_CONFIG_COUNT` 由条目总数计算，无需手写。
+
+内置 github.com 改写把 `git@github.com:team/repo.git` 和 `ssh://git@github.com/team/repo.git` 变成 `https://github.com/team/repo.git`。变量在 environment-manager 启动环境中，其子进程（Claude、Bash、Git）都会继承。改写后的 HTTPS 继续走 `HTTPS_PROXY`；`GIT_SSL_CAINFO` 指向 runtime 合并 CA bundle。关闭 credential 交互、terminal prompt 和 editor，避免无人值守沙箱阻塞。
 
 Runner 把 environment-manager 作为 E2B 后台进程启动。包含双凭证的 payload 通过进程 PID 直接写入 stdin，随后显式关闭 EOF；payload 不写入沙箱文件系统。stdin 发送或关闭失败时，Runner 终止尚未完整初始化的后台进程并按沙箱启动失败处理。
 
@@ -124,7 +122,7 @@ Claude worker 与 upstream proxy 端点由长生命周期的 `codesessions.Handl
 4. 目标为该 Provider 的 `{base_url}/v1/messages`；请求 body 原样转发，不改写模型 ID。
 5. 删除下游 `Authorization`、`X-Api-Key` 和所有 hop-by-hop headers。
 6. 解密 Provider Key，并设置为上游 `X-Api-Key`；Key 不进入 sandbox。
-7. 原样转发上游状态、end-to-end headers 和响应流；提交状态后立即 flush，之后每次写入继续 flush，以支持 SSE。响应一旦提交，流错误只记录并终止连接，不再尝试改写 HTTP 状态。
+7. 已鉴权 Code Session 的上游 `401` 转为 `403 permission_error`，设置 `X-Should-Retry: false`，保留模型 span 的 `http_error` 与上游 request ID；这是 Provider 凭据被拒绝，不触发 Worker 自身的 OAuth 恢复。其余上游状态、end-to-end headers 和响应流原样转发；提交状态后立即 flush，之后每次写入继续 flush，以支持 SSE。响应一旦提交，流错误只记录并终止连接，不再尝试改写 HTTP 状态。完整错误合同见 [Messages 代理](../messages-proxy.md#失败语义)。
 
 ### `GET /v1/code/upstreamproxy/ca-cert`
 
@@ -177,17 +175,17 @@ Proxy-Authorization: Basic base64(code_session_id:session_ingress_jwt)
 
 ### `GET|POST|DELETE /v2/ccr-sessions/{code_session_id}/mcp`
 
-Runner 不再把 Managed Agent MCP URL 改写到该接口。MCP config 保留 Agent Snapshot 中的原始 URL，Claude 主进程通过 `HTTPS_PROXY` 将请求交给 CCRv2 CONNECT relay；配置中也不再为该接口注入 session-ingress header。
+Runner 不再把普通 Managed Agent MCP URL 改写到该接口。普通 MCP config 保留 Agent Snapshot 中的原始 URL，Claude 主进程通过 `HTTPS_PROXY` 将请求交给 CCRv2 CONNECT relay；配置中也不再为该接口注入 session-ingress header。canonical Tunnel 使用的是独立的 `/mcp/{server_name}` named Runtime Gateway 和 SessionIngressToken，不改变本接口合同。
 
 该接口作为显式调用的兼容入口继续保留，其边界如下：
 
 代理执行以下边界：
 
-1. 从 `Authorization: Bearer` 或 `X-Api-Key` 读取 session-ingress JWT，将签名 claims 中的 `session_id` 绑定到路径参数；managed-agent JWT 还会按租户回查 active Code Session 的 `current_worker_epoch`，Sandbox 恢复递增 epoch 后旧 JWT 立即失效。
+1. 从 `Authorization: Bearer` 或 `X-Api-Key` 读取 session-ingress JWT，将签名 claims 中的 `session_id` 绑定到路径参数；JWT 身份验证不查询 worker epoch。资源授权独立校验租户与 active Code Session；worker 的代理、工具调用、写入和流订阅再检查当前 epoch，旧 owner 返回 `409 conflict_error`，不再返回 token 无效的 `401`。
 2. `mcp_url` 必须是唯一、长度不超过 2048 字节、不含 userinfo/fragment 的绝对 HTTP(S) URL，并精确匹配当前 Session Agent Snapshot 的一个远程 MCP URL。
 3. 每次请求新鲜读取 Code Session → Environment / Session 租户关系，并在加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 编译为精确 URL 集合、MCP host 集合以及 Environment host/port matcher。handler 只把未改写的 `mcp_url` 交给 `AuthorizeMCPURL`；策略同时完成精确 URL 与真实 scheme/host/有效端口授权，不使用伪造的 `host:443`，也不在 handler 中重新解析 snapshot。随后解析目标地址并应用与 upstream proxy 相同的公网 IP / DNS rebinding 防护。受控本地排障可复用 `upstream_proxy_disable_ssrf_protection`，生产默认不得关闭。
 4. 删除 OMA 的 `Authorization`、`X-Api-Key`、`Proxy-Authorization` 和 `Proxy-Connection`，保留 MCP 协议与 content negotiation header。真实 MCP 凭证只允许在服务端 header injector 边界按已验签 session claims 和目标 URL 注入；默认实现不注入。
-5. 请求 method、body、目标 path/query、上游状态、端到端响应 header 和响应 body 均流式转发；`Mcp-Session-Id`、`Last-Event-ID` 与 SSE 不被缓冲或改写。
+5. 请求 method、body、目标 path/query、上游状态、端到端响应 header 和响应 body 均流式转发；`Mcp-Session-Id`、`Last-Event-ID` 与 SSE 不被缓冲或改写。上游返回 `text/event-stream` 时额外设置 `X-Accel-Buffering: no`，避免网关直连 oma-server 时缓冲事件；其他响应 header 保持原样。
 
 该接口只接受 MCP Streamable HTTP 所需的 `GET`、`POST`、`DELETE`，不是任意 method 或任意 URL 的开放反向代理。收到合法代理请求时记录 method、Code Session ID、去除 query 的 `mcp_url`、Content-Type 和 Content-Length；策略日志另外记录租户、目标 host、reason 和错误。除白名单化的 Content-Type 外，日志不记录 `mcp_url` query、其他 header 值或 body。
 
@@ -215,7 +213,7 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 - 拒绝 loopback、RFC1918、link-local、CGNAT、benchmark、documentation、multicast 和保留地址。
 - 域名先解析，服务端只拨号已验证的 public IP，避免校验后再次解析造成 DNS rebinding。
 - 不记录 bearer token、Basic header、上游 API key 或隧道内容。
-- MITM 默认关闭；开启后只解密通过 code-session 双重鉴权且通过 SSRF 校验的 CONNECT 流量。
+- MITM 默认开启，需提供稳定 CA 私钥；显式配置 `upstream_proxy_mitm_enabled: false` 可关闭。开启时只解密通过 code-session 双重鉴权且通过 SSRF 校验的 CONNECT 流量。
 - MITM 解密并完成 Host 校验后，为每条 HTTP 请求记录结构化的 `host`、`port` 和去除 query 的 `url`；不记录 header 或 body。
 - 即使开启 MITM，也不会信任动态 CA 作为真实上游根证书；服务端到目标网站始终使用系统信任链。
 
@@ -250,6 +248,10 @@ flowchart TD
   K --> L["Dial the locked public IP"]
 ```
 
+### 缺省 networking
+
+Cloud Environment 未提供 `networking` 或未指定 `type` 时按 `unrestricted` 处理：创建与更新写入 `{"type":"unrestricted"}`，`networkpolicy.ParseConfig` 按不受限放行，控制台 API 响应同样补全为 `unrestricted`，前端环境页与快速开始新建表单的默认选项与之一致。
+
 ### limited 语义
 
 `limited` 默认拒绝，三类 host 合并放行：
@@ -262,7 +264,7 @@ Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-
 
 匹配规则：`*.example.com` 匹配任意深度子域但**不含 apex**（`example.com` 需单独列出）；无端口条目匹配该 host 的任意有效端口，显式端口条目只匹配相同端口。因 CONNECT 只接受 443，带非 443 端口的条目对 CONNECT 仍然惰性；MCP URL 则按 `http` 默认 80、`https` 默认 443 或 URL 显式端口匹配。allowlist 条目在策略解析时先校验端口范围和完整 hostname label 语义，任一非法条目使整份策略 fail-closed。合法 allowlist 条目与 target 匹配前统一归一化（小写、去尾点、IDNA→punycode）；DNS 子域与 wildcard 的字符、label 和 253 长度边界使用与 Kubernetes 同款的 RFC 1123 validator（vendored 自 `k8s.io/apimachinery` 的 `pkg/util/validation` 最小子集，位于 `internal/networkpolicy/dns1123.go`，正则与错误信息与上游逐字一致，不引入 k8s 依赖链），不在本项目维护自制正则。IDNA lookup 保留浏览器兼容映射，Unicode host 先转 punycode 再校验。IPv4/IPv6 字面量在 IDNA 前通过 `netip` 规范化，IPv4-mapped IPv6 统一为 IPv4，带 zone 的 IPv6 不接受；IP allowlist 只做精确匹配且仍须通过 SSRF/公网 IP 检查。编译后 `Policy` 使用一棵按 DNS label 倒序的 trie，节点按端口保存 exact 与 wildcard 终止规则，不在授权时逐条重复解析 allowlist。策略授权不替代既有 CONNECT 443 限制、SSRF、公网 IP、DNS rebinding 与 MITM Host/SNI 检查。
 
-`unrestricted` 保持 CONNECT 的既有行为：允许通过 SSRF 安全检查的任意公网 `host:443`；MCP proxy 仍要求 URL 精确存在于当前 Session Agent Snapshot，但允许其中通过 SSRF 检查的 HTTP(S) 实际端口。
+`unrestricted` 允许通过地址检查的任意公网 `host:443`。管理员在 `environment_packages` 中配置 npm、pip、go、cargo、gem 的软件源 URL；其精确 registry host 连接 443 时，自动允许合规的 RFC1918、ULA 与 CGNAT 私网地址，不提供单独的 `network.private_endpoints` 或 CIDR 配置。有限网络下仍须通过 Environment host 策略；`allow_package_managers` 额外包含全部配置源的 `RegistryHosts()`，关闭时需显式 `allowed_hosts`。DNS 只解析一次，连接锁定到满足公网检查或源 host 例外的 IP；loopback、link-local 与 metadata 仍拒绝。该例外仅影响 OMA CONNECT，不扩大 MCP proxy 或其他服务的私网权限，也不创建网络路由。完整配置和安装路径见 [Environment Package 安装](../environment-package-provisioning.md)。MCP proxy 仍要求 URL 精确存在于当前 Session Agent Snapshot，并通过原有公网地址检查。
 
 ### 拒绝语义与观测
 
@@ -303,3 +305,34 @@ Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-
 - `internal/codesessions` 与 DB-backed proxy 集成测试覆盖策略上下文边界：JWT org/workspace 作用域、Code Session 与 Environment/Session 绑定、不能借用另一 Environment allowlist、Environment/Session 缺失与持久化配置畸形时 fail-closed。
 - proxy 集成测试证明：limited 下授权目标能进入拨号路径、未授权目标在 DNS/拨号前收到 framed `403`、unrestricted 行为与现状兼容、Environment 更新对存活 Code Session 的下一次 CONNECT 即时生效。
 - linux/amd64 镜像验收通过真实 Claude CLI 和 Bash tool call 确认：relay 从 `/run/ccr/session_token` 读取 token 并启动，Claude 主进程与子进程同时具有指向同一 `127.0.0.1` relay 的 `HTTPS_PROXY`、`https_proxy`，以及 `NODE_EXTRA_CA_CERTS`、`SSL_CERT_FILE`。
+
+## Brain 与普通 HTTP 出站
+
+Brain 的 sandbox 启动请求携带独立的 sandbox session-ingress JWT、use_code_sessions、会话 ID 和 relay 开关。该 JWT 使用 `role=sandbox`、`sandbox_uuid` 和签名的 Code Session/租户身份，不携带 worker epoch。懒启动和预热均在具体 Sandbox 记录建立后签发，不旋转已有 Brain owner 的凭据。认证只经 Manager stdin 传递，不进入命令行或文件。
+
+Brain owner 领取会推进 worker epoch，而沙箱、relay 与文件系统可以跨 owner 复用，因此沙箱凭据绑定沙箱生命周期。代理握手和 Git commit 签名逐次通过 Yourbatis 校验 Code Session active、公共 Session 未删除/终止、Work active、租户及父子 UUID 一致、transport 为 `claim`，且指定 Sandbox 有 provider ID、处于 creating/running。creating 仅用于 Manager 初始化期间的 source 出站。Sandbox 进入 stopping/stopped/failed 后，新请求立即拒绝；替换沙箱获得不同 UUID，不能复用旧凭据。普通 worker 的 ingress JWT 验证不校验 epoch，执行授权仍校验当前 epoch；sandbox JWT 不可用于 worker 注册、心跳、事件投递、沙箱 MCP 网关或模型接口。
+
+升级前已存活的 Brain Manager 仍持有旧 worker JWT，需要重启 Manager 并经 stdin 注入该沙箱的新凭据一次；之后 Brain owner 变更不需要重新签发或重启 relay。Claude 模式继续使用与其进程生命周期一致的 worker JWT。
+
+Manager 的嵌入 MCP/Bash 与 source 初始化、Claude executor 共享已准备的会话 relay。relay 网络变量覆盖 StartupContext 中的旧代理值，保持会话局部，不更改全局进程环境。
+
+本地 relay 同时设置 HTTP_PROXY/http_proxy 与 HTTPS_PROXY/https_proxy。HTTPS 继续使用原 CONNECT 协议和 443 限制。HTTP 使用 absolute-form 请求头与 body，经同一 WebSocket chunk 协议转发；后台首包根据请求行选择 HTTP 处理，普通 HTTP 不返回 CONNECT 建连响应。
+
+HTTP 每个请求验证 Proxy-Authorization 与 WebSocket 已认证 session/token 一致，重新加载带租户范围的 Environment 策略，再校验 http scheme、合法端口及公网地址。DNS 解析后固定目标 IP，拨号不再次解析；关闭上游环境代理，不自动跟随重定向。HTTP 支持 Environment 策略允许的合法端口，包括独立测试接收端的 6788；这不放宽 HTTPS CONNECT 的 443 限制。
+
+启用 Vault 出站处理时，HTTP 在发送前按凭据 allowed_hosts 和 injection_location 替换占位符；加载、解密或替换失败拒绝转发。HTTP 路径不注入 HTTPS MCP Bearer 或 Git 资源认证。代理认证头不传给接收端。普通 HTTP 自身不提供 TLS 保密性，适用本轮用户明确授权的合成 canary 测试。
+
+```mermaid
+flowchart LR
+    Bash[Bash HTTP 请求] --> Relay[会话 relay]
+    Relay --> WS[已认证 WebSocket]
+    WS --> Policy[会话/租户/Environment/SSRF 检查]
+    Policy --> Vault[host 与位置约束的 Vault 替换]
+    Vault --> HTTP[固定 IP 的 HTTP 转发]
+```
+
+回归覆盖 Rust absolute-form/head/body 传输、认证覆盖、真实嵌入 MCP/Bash 环境、Go 拒绝路径/转发/认证头隔离及 HTTP Vault host/body 边界。端到端使用新 ARM64 镜像和真实 Brain/HTTP 接收端复测 VAULT-CRED-008；局部单测不代表该用例通过。
+
+沙箱凭据回归由 `TestBrainSandboxUsesEnvironmentLifecycle` 覆盖预热/惰性启动、真实 Brain claim/release 后复用沙箱、旧 owner JWT 拒绝、sandbox JWT 的代理与 Git 签名授权、跨租户/会话/沙箱拒绝及 stopping 后撤销；`TestSandboxCredentialRejectsInvalidScope` 覆盖凭据类型隔离和无持久化校验时拒绝。普通单测不替代真实 Bash HTTPS 出站验收。
+
+真实 owner 接管与 HTTPS 验收使用 `just verify-be chat brain-proxy`，先运行对应 doctor。该场景由真实 Brain 进程消费脚本模型发出的 Bash 调用，接管前后均经 OMA relay/WebSocket 访问公网 HTTPS；要求 epoch 增长、同一个旧 worker JWT 在接管前后读取 session_context 均返回 200，而执行请求返回 409、沙箱 UUID/provider ID/relay 地址不变，以及 HTTP/CONNECT 200、TLS 验证成功。测试在隔离依赖中运行，结束后清理沙箱与进程，不代表云端 TTL 或性能基线验证。

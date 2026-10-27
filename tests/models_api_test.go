@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -27,12 +29,12 @@ func TestModelsAPI(t *testing.T) {
 		if !ok || len(data) != len(defaultTestModelIDs) {
 			t.Fatalf("models page = %#v", body)
 		}
-		if body["has_more"] != false || body["first_id"] != "kimi-k2.5" || body["last_id"] != "test" {
+		if body["has_more"] != false || body["first_id"] != "default/kimi-k2.5" || body["last_id"] != "default/test" {
 			t.Fatalf("models pagination envelope = %#v", body)
 		}
 
 		first, _ := data[0].(map[string]any)
-		if first["type"] != "model" || first["id"] != "kimi-k2.5" || first["display_name"] != "kimi-k2.5" ||
+		if first["type"] != "model" || first["id"] != "default/kimi-k2.5" || first["display_name"] != "default/kimi-k2.5" ||
 			first["created_at"] != "1970-01-01T00:00:00Z" {
 			t.Fatalf("first model = %#v", first)
 		}

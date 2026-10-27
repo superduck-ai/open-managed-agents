@@ -1,4 +1,4 @@
-import { AlertCircle, Ban, Download, Receipt, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, Ban, Download, RefreshCw, X } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/shared/lib/utils';
@@ -14,8 +14,12 @@ import {
   dataTableHeaderRowClassName,
 } from '@/shared/ui/data-table-interactions';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
+import { consoleResourceListLimit } from '@/shared/console-list';
+import { resourceListPageCount } from '@/shared/ui/resource-list-pagination';
 import { useI18n } from '../../shared/i18n';
-import { ConsolePageFrame, CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
+import { CursorPagination, TableEmptyRow, TableErrorRow, TableLoadingRow } from './frame';
 import {
   batchDetailHref,
   batchRequestProgressClass,
@@ -41,7 +45,8 @@ import {
 export function BatchesPage() {
   const { msg } = useI18n();
   const queryClient = useQueryClient();
-  const { workspaceId, workspaceName } = useDashboardWorkspaceScope();
+  const { workspaceId, workspaceName: workspaceNameToken } = useDashboardWorkspaceScope();
+  const workspaceName = localizedWorkspaceName(workspaceNameToken, msg);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCursors, setPageCursors] = useState<MessageBatchesPageCursor[]>([{}]);
   const [selectedBatchId, setSelectedBatchId] = useState(currentBatchId());
@@ -148,7 +153,8 @@ export function BatchesPage() {
   };
 
   return (
-    <ConsolePageFrame title={msg('batches.title', 'Batches')} icon={Receipt}>
+    <section>
+      <ResourcePageHeader title={msg('batches.title', 'Batches')} contentGap="content" />
       <div className={workspaceSelectedBatchId ? 'grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]' : ''}>
         <BatchesTable
           batches={batches}
@@ -159,6 +165,8 @@ export function BatchesPage() {
           error={batchesQuery.error}
           canPrevious={pageIndex > 0 && !batchesQuery.isFetching}
           canNext={Boolean(response?.has_more && lastId) && !batchesQuery.isFetching}
+          currentPage={pageIndex + 1}
+          totalPages={resourceListPageCount(response?.total_count, consoleResourceListLimit)}
           onRetry={() => void batchesQuery.refetch()}
           onPrevious={goPrevious}
           onNext={goNext}
@@ -179,7 +187,7 @@ export function BatchesPage() {
           />
         ) : null}
       </div>
-    </ConsolePageFrame>
+    </section>
   );
 }
 
@@ -192,6 +200,8 @@ function BatchesTable({
   error,
   canPrevious,
   canNext,
+  currentPage,
+  totalPages,
   onRetry,
   onPrevious,
   onNext,
@@ -205,32 +215,44 @@ function BatchesTable({
   error: unknown;
   canPrevious: boolean;
   canNext: boolean;
+  currentPage: number;
+  totalPages: number | null;
   onRetry: () => void;
   onPrevious: () => void;
   onNext: () => void;
   onSelectBatch: (batchId: string) => void;
 }) {
-  const { msg } = useI18n();
+  const { msg, locale } = useI18n();
+  const hasRows = !isLoading && !error && batches.length > 0;
 
   return (
-    <section aria-label={msg('batches.listAria', 'Batches list')} className="overflow-x-auto">
-      <Table className={cn('min-w-[760px]', dataTableClassName)}>
-        <colgroup>
-          <col className="w-[28%]" />
-          <col className="w-[16%]" />
-          <col className="w-[16%]" />
-          <col className="w-[40%]" />
-        </colgroup>
-        <TableHeader>
-          <TableRow className={dataTableHeaderRowClassName}>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.id', 'ID')}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.status', 'Status')}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>
-              {msg('analytics.table.requests', 'Requests')}
-            </TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.created', 'Created')}</TableHead>
-          </TableRow>
-        </TableHeader>
+    <section aria-label={msg('batches.listAria', 'Batches list')} className="min-w-0">
+      <Table
+        className={cn(
+          dataTableClassName,
+          hasRows ? 'min-w-[760px]' : 'table-fixed min-w-full [&_td]:whitespace-normal',
+        )}
+      >
+        {hasRows ? (
+          <>
+            <colgroup>
+              <col className="w-[28%]" />
+              <col className="w-[16%]" />
+              <col className="w-[16%]" />
+              <col className="w-[40%]" />
+            </colgroup>
+            <TableHeader>
+              <TableRow className={dataTableHeaderRowClassName}>
+                <TableHead className={dataTableHeaderCellClassName}>{msg('common.id', 'ID')}</TableHead>
+                <TableHead className={dataTableHeaderCellClassName}>{msg('common.status', 'Status')}</TableHead>
+                <TableHead className={dataTableHeaderCellClassName}>
+                  {msg('analytics.table.requests', 'Requests')}
+                </TableHead>
+                <TableHead className={dataTableHeaderCellClassName}>{msg('common.created', 'Created')}</TableHead>
+              </TableRow>
+            </TableHeader>
+          </>
+        ) : null}
         <TableBody>
           {isLoading ? (
             <TableLoadingRow colSpan={4} label={msg('batches.loading', 'Loading batches...')} />
@@ -296,7 +318,7 @@ function BatchesTable({
                     </span>
                   </DataTableCell>
                   <DataTableCell edge="end" className="text-muted-foreground">
-                    {formatRelativeTime(batch.created_at)}
+                    {formatRelativeTime(batch.created_at, locale, msg('common.justNow', 'just now'))}
                   </DataTableCell>
                 </DataTableRow>
               );
@@ -305,16 +327,18 @@ function BatchesTable({
         </TableBody>
       </Table>
 
-      <CursorPagination
-        previousLabel={msg('pagination.previousPage', 'Previous page')}
-        nextLabel={msg('pagination.nextPage', 'Next page')}
-        updatingLabel={msg('common.updating', 'Updating...')}
-        canPrevious={canPrevious}
-        canNext={canNext}
-        isUpdating={isFetching && !isLoading}
-        onPrevious={onPrevious}
-        onNext={onNext}
-      />
+      {hasRows || currentPage > 1 ? (
+        <CursorPagination
+          updatingLabel={msg('common.updating', 'Updating...')}
+          canPrevious={canPrevious}
+          canNext={canNext}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          isUpdating={isFetching && !isLoading}
+          onPrevious={onPrevious}
+          onNext={onNext}
+        />
+      ) : null}
     </section>
   );
 }
@@ -340,9 +364,9 @@ function BatchDetailPanel({
   onDownloadResults: (batch: ConsoleMessageBatch) => void;
   onCancelBatch: (batch: ConsoleMessageBatch) => void;
 }) {
-  const { msg } = useI18n();
+  const { msg, locale } = useI18n();
   const panelClassName =
-    'border-t border-border pt-5 xl:min-h-[calc(100vh-5rem)] xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0';
+    'border-t-[0.5px] border-border pt-5 xl:min-h-[calc(100vh-5rem)] xl:border-l-[0.5px] xl:border-t-0 xl:pl-6 xl:pt-0';
 
   if (isLoading && !batch) {
     return (
@@ -424,14 +448,14 @@ function BatchDetailPanel({
         </Button>
       </div>
 
-      <Table className="mt-8 table-fixed border-t border-border text-left text-sm">
+      <Table className="mt-8 table-fixed border-t-[0.5px] border-border text-left text-sm">
         <colgroup>
           <col className="w-[48%]" />
           <col className="w-[52%]" />
         </colgroup>
         <TableBody>
           <TableRow className="border-border hover:bg-transparent">
-            <TableCell className="px-0 py-3 text-xs font-medium text-muted-foreground/70">
+            <TableCell className="px-0 py-3 text-xs font-medium text-muted-foreground">
               {msg('batches.details.totalRequests', 'Total requests')}
             </TableCell>
             <TableCell className="px-0 py-3 text-right text-foreground">
@@ -442,25 +466,25 @@ function BatchDetailPanel({
             </TableCell>
           </TableRow>
           <TableRow className="border-border hover:bg-transparent">
-            <TableCell className="px-0 py-3 text-xs font-medium text-muted-foreground/70">
+            <TableCell className="px-0 py-3 text-xs font-medium text-muted-foreground">
               {msg('batches.details.createdAt', 'Created at')}
             </TableCell>
             <TableCell className="px-0 py-3 text-right text-foreground">
-              {formatBatchDateTime(batch.created_at)}
+              {formatBatchDateTime(batch.created_at, locale)}
             </TableCell>
           </TableRow>
           <TableRow className="border-border hover:bg-transparent">
-            <TableCell className="px-0 py-3 text-xs font-medium text-muted-foreground/70">
+            <TableCell className="px-0 py-3 text-xs font-medium text-muted-foreground">
               {msg('batches.details.endedAt', 'Ended at')}
             </TableCell>
             <TableCell className="px-0 py-3 text-right text-foreground">
-              {formatBatchDateTime(batch.ended_at)}
+              {formatBatchDateTime(batch.ended_at, locale)}
             </TableCell>
           </TableRow>
         </TableBody>
       </Table>
 
-      <div className="mt-10 space-y-2">
+      <div className="mt-10 flex flex-wrap gap-2">
         <Button
           type="button"
           variant="outline"

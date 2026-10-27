@@ -7,12 +7,16 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/invitations"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -21,11 +25,12 @@ type Handler struct {
 	service *Service
 	router  chi.Router
 	logger  *slog.Logger
+	mailer  *invitations.Mailer
 }
 
 func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handler {
 	logger = logging.LoggerOrDefault(logger)
-	h := &Handler{service: NewService(cfg, database), logger: logger}
+	h := &Handler{service: NewService(cfg, database), logger: logger, mailer: invitations.NewMailer(cfg.Auth, database, logger)}
 	router := chi.NewRouter()
 	router.NotFound(routeNotFound)
 	router.MethodNotAllowed(routeNotFound)
@@ -49,7 +54,7 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 		r.Get("/{workspace_id}", h.getWorkspace)
 		r.Post("/{workspace_id}", h.updateWorkspace)
 		r.Post("/{workspace_id}/archive", h.archiveWorkspace)
-		r.Get("/{workspace_id}/rate_limits", h.listWorkspaceRateLimits)
+		r.With(h.requireOrganizationAdmin).Get("/{workspace_id}/rate_limits", h.listWorkspaceRateLimits)
 		r.Route("/{workspace_id}/members", func(r chi.Router) {
 			r.Post("/", h.createWorkspaceMember)
 			r.Get("/", h.listWorkspaceMembers)
@@ -58,7 +63,7 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 			r.Delete("/{user_id}", h.deleteWorkspaceMember)
 		})
 	})
-	router.Get("/rate_limits", h.listOrganizationRateLimits)
+	router.With(h.requireOrganizationAdmin).Get("/rate_limits", h.listOrganizationRateLimits)
 	router.Route("/api_keys", func(r chi.Router) {
 		r.Get("/", h.listAPIKeys)
 		r.Get("/{api_key_id}", h.getAPIKey)
@@ -73,24 +78,11 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 		r.Post("/{external_key_id}/validate", h.validateExternalKey)
 	})
 	router.Route("/usage_report", func(r chi.Router) {
+		r.Use(h.requireOrganizationAdmin)
 		r.Get("/messages", h.messagesUsageReport)
 		r.Get("/claude_code", h.claudeCodeUsageReport)
 	})
-	router.Get("/cost_report", h.costReport)
-	router.Route("/tunnels", func(r chi.Router) {
-		r.Use(h.requireTunnelsBeta)
-		r.Get("/", h.listTunnels)
-		r.Get("/{tunnel_id}", h.getTunnel)
-		r.Post("/{tunnel_id}/reveal_token", h.revealTunnelToken)
-		r.Post("/{tunnel_id}/rotate_token", h.rotateTunnelToken)
-		r.Post("/{tunnel_id}/archive", h.archiveTunnel)
-		r.Route("/{tunnel_id}/certificates", func(r chi.Router) {
-			r.Post("/", h.createTunnelCertificate)
-			r.Get("/", h.listTunnelCertificates)
-			r.Get("/{certificate_id}", h.getTunnelCertificate)
-			r.Post("/{certificate_id}/archive", h.archiveTunnelCertificate)
-		})
-	})
+	router.With(h.requireOrganizationAdmin).Get("/cost_report", h.costReport)
 	h.router = router
 	return h
 }
@@ -122,6 +114,13 @@ func (h *Handler) createInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value, err := h.service.CreateInvite(r.Context(), principal, req)
+	if err == nil {
+		expiry, parseErr := time.Parse(time.RFC3339, value.ExpiresAt)
+		value.EmailDelivery = "failed"
+		if parseErr == nil {
+			value.EmailDelivery = h.mailer.Notify(r.Context(), principal, value.Email, expiry)
+		}
+	}
 	h.respond(w, r, value, err)
 }
 
@@ -445,125 +444,15 @@ func (h *Handler) costReport(w http.ResponseWriter, r *http.Request) {
 	h.respond(w, r, value, err)
 }
 
-func (h *Handler) getTunnel(w http.ResponseWriter, r *http.Request) {
-	principal, ok := h.principal(w, r)
-	if !ok {
-		return
-	}
-	value, err := h.service.GetTunnel(r.Context(), principal, chi.URLParam(r, "tunnel_id"))
-	h.respond(w, r, value, err)
-}
-
-func (h *Handler) listTunnels(w http.ResponseWriter, r *http.Request) {
-	limit, offset, ok := tokenPageParams(w, r, 20, 1000)
-	if !ok {
-		return
-	}
-	includeArchived, ok := parseBoolQuery(w, r, "include_archived")
-	if !ok {
-		return
-	}
-	principal, ok := h.principal(w, r)
-	if !ok {
-		return
-	}
-	value, err := h.service.ListTunnels(r.Context(), principal, r.URL.Query().Get("workspace_id"), includeArchived, limit, offset)
-	h.respond(w, r, value, err)
-}
-
-func (h *Handler) revealTunnelToken(w http.ResponseWriter, r *http.Request) {
-	principal, ok := h.principal(w, r)
-	if !ok {
-		return
-	}
-	value, err := h.service.RevealTunnelToken(r.Context(), principal, chi.URLParam(r, "tunnel_id"))
-	h.respond(w, r, value, err)
-}
-
-func (h *Handler) rotateTunnelToken(w http.ResponseWriter, r *http.Request) {
-	var req rotateTunnelTokenRequest
-	if !decodeJSONBody(w, r, &req, true) {
-		return
-	}
-	principal, ok := h.principal(w, r)
-	if !ok {
-		return
-	}
-	value, err := h.service.RotateTunnelToken(r.Context(), principal, chi.URLParam(r, "tunnel_id"))
-	h.respond(w, r, value, err)
-}
-
-func (h *Handler) archiveTunnel(w http.ResponseWriter, r *http.Request) {
-	principal, ok := h.principal(w, r)
-	if !ok {
-		return
-	}
-	value, err := h.service.ArchiveTunnel(r.Context(), principal, chi.URLParam(r, "tunnel_id"))
-	h.respond(w, r, value, err)
-}
-
-func (h *Handler) createTunnelCertificate(w http.ResponseWriter, r *http.Request) {
-	var req createTunnelCertificateRequest
-	if !decodeJSONBody(w, r, &req, false) {
-		return
-	}
-	principal, ok := h.principal(w, r)
-	if !ok {
-		return
-	}
-	value, err := h.service.CreateTunnelCertificate(r.Context(), principal, chi.URLParam(r, "tunnel_id"), req)
-	h.respond(w, r, value, err)
-}
-
-func (h *Handler) getTunnelCertificate(w http.ResponseWriter, r *http.Request) {
-	principal, ok := h.principal(w, r)
-	if !ok {
-		return
-	}
-	value, err := h.service.GetTunnelCertificate(r.Context(), principal, chi.URLParam(r, "tunnel_id"), chi.URLParam(r, "certificate_id"))
-	h.respond(w, r, value, err)
-}
-
-func (h *Handler) listTunnelCertificates(w http.ResponseWriter, r *http.Request) {
-	limit, offset, ok := tokenPageParams(w, r, 20, 1000)
-	if !ok {
-		return
-	}
-	includeArchived, ok := parseBoolQuery(w, r, "include_archived")
-	if !ok {
-		return
-	}
-	principal, ok := h.principal(w, r)
-	if !ok {
-		return
-	}
-	value, err := h.service.ListTunnelCertificates(r.Context(), principal, chi.URLParam(r, "tunnel_id"), includeArchived, limit, offset)
-	h.respond(w, r, value, err)
-}
-
-func (h *Handler) archiveTunnelCertificate(w http.ResponseWriter, r *http.Request) {
-	principal, ok := h.principal(w, r)
-	if !ok {
-		return
-	}
-	value, err := h.service.ArchiveTunnelCertificate(r.Context(), principal, chi.URLParam(r, "tunnel_id"), chi.URLParam(r, "certificate_id"))
-	h.respond(w, r, value, err)
-}
-
-func (h *Handler) requireTunnelsBeta(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !hasTunnelsBetaValues(r.Header.Values("anthropic-beta")) {
-			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "Tunnel endpoints require anthropic-beta: "+tunnelsBeta))
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (h *Handler) principal(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || principal.CredentialType != "api_key" {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing API key"))
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing authenticated principal"))
+		return auth.Principal{}, false
+	}
+	memberRoute := strings.Contains(chi.RouteContext(r.Context()).RoutePattern(), "/workspaces/{workspace_id}/members")
+	if !principal.WorkspaceAccess.ManageOrganization() && !memberRoute {
+		h.writeError(w, r, organizationAdministratorRequired())
 		return auth.Principal{}, false
 	}
 	return principal, true
@@ -653,4 +542,20 @@ func reportQueryFromRequest(r *http.Request) reportQuery {
 		Limit:       limit,
 		Page:        query.Get("page"),
 	}
+}
+
+func (h *Handler) requireOrganizationAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := h.principal(w, r)
+		if !ok {
+			return
+		}
+		if workspaceID := chi.URLParam(r, "workspace_id"); workspaceID != "" {
+			if _, _, err := workspaceaccess.New(h.service.db).Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, workspaceID); err != nil {
+				h.writeError(w, r, mapAdminDBError(err, "Workspace not found"))
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }

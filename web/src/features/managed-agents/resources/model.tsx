@@ -23,6 +23,8 @@ import {
   type VaultCredentialApiResponse,
 } from '../types';
 import { formatBytes, objectRecord, sectionPathSegment, titleCase } from '../utils';
+import { resourceFormValues } from './git-resource';
+import { entityBudgetDisplay, entityBudgetUsdInput } from './budget';
 
 export { sectionPathSegment };
 
@@ -58,7 +60,8 @@ export function memoryBranchFromPage(page: PageResponse<MemoryApiResponse>): Mem
 export function memoryRowsFromPage(page: PageResponse<MemoryApiResponse>) {
   const rows = (page.data ?? [])
     .map(normalizeMemoryRow)
-    .filter((memory): memory is MemoryApiResponse => Boolean(memory));
+    .filter((memory): memory is MemoryApiResponse => Boolean(memory))
+    .filter((memory) => memory.type !== 'memory' || !isPlatformMemoryMarkdownPath(memory.path));
   const existingPaths = new Set(
     rows.map((memory) => (memory.type === 'memory_prefix' ? normalizeMemoryFolderPath(memory.path) : memory.path)),
   );
@@ -178,6 +181,9 @@ export function buildMemoryTreeNodes(
   const appendRows = (rows: MemoryApiResponse[], depth: number) => {
     const seenFolders = new Set<string>();
     for (const row of sortMemoryRows(rows)) {
+      if (row.type === 'memory' && isPlatformMemoryMarkdownPath(row.path)) {
+        continue;
+      }
       if (row.type === 'memory_prefix') {
         const path = normalizeMemoryFolderPath(row.path);
         if (seenFolders.has(path)) {
@@ -326,12 +332,13 @@ export function initialFormValues(
     agentId: entity ? entityAgentId(entity) : '',
     environmentId: entity && 'environment_id' in entity ? entity.environment_id : '',
     initialMessage: entity ? entityInitialMessage(entity) : '',
-    triggerType: entity ? entityTriggerType(entity) : '',
-    cronExpression: entity ? entityCronExpression(entity) : '0 9 * * 1',
+    triggerType: entity ? entityTriggerType(entity) : section === 'deployments' ? 'manual' : '',
+    cronExpression: entity ? entityCronExpression(entity) : '0 9 * * 1-5',
     timezone: entity ? entityTimezone(entity) : localTimezone(),
     vaultIds: entity ? entityVaultIds(entity) : [],
-    memoryStoreIds: entity ? entityMemoryStoreIds(entity) : [],
-    fileResources: [],
+    budgetUsd: entityBudgetUsdInput(entity),
+    budgetChanged: false,
+    ...resourceFormValues(entity && 'resources' in entity ? entity.resources : []),
   };
 }
 
@@ -467,19 +474,9 @@ export function entityInitialMessage(entity: ManagedEntityApiResponse) {
   return '';
 }
 
-export function entityMemoryStoreIds(entity: ManagedEntityApiResponse) {
-  if (!('resources' in entity) || !Array.isArray(entity.resources)) {
-    return [];
-  }
-  return entity.resources
-    .map((resource) =>
-      resource &&
-      typeof resource === 'object' &&
-      typeof (resource as { memory_store_id?: unknown }).memory_store_id === 'string'
-        ? (resource as { memory_store_id: string }).memory_store_id
-        : null,
-    )
-    .filter((item): item is string => Boolean(item));
+export function isPlatformMemoryMarkdownPath(path: string) {
+  const trimmed = path.trim();
+  return trimmed === '/MEMORY.md' || trimmed === 'MEMORY.md';
 }
 
 export function entityTriggerType(entity: ManagedEntityApiResponse): ManagedEntityFormValues['triggerType'] {
@@ -528,6 +525,10 @@ export function detailRowsForEntity(
           label: label('managedAgents.deployments.kindTitle', 'Deployment'),
           value: (entity as SessionApiResponse).deployment_id || '—',
         },
+        {
+          label: label('managedAgents.budget.title', 'Budget'),
+          value: entityBudgetDisplay(entity as SessionApiResponse),
+        },
       ];
     case 'deployments':
       return [
@@ -542,6 +543,10 @@ export function detailRowsForEntity(
           value: msg
             ? localizedDeploymentTrigger(entity as DeploymentApiResponse, msg)
             : deploymentTrigger(entity as DeploymentApiResponse),
+        },
+        {
+          label: label('managedAgents.budget.title', 'Budget'),
+          value: entityBudgetDisplay(entity as DeploymentApiResponse),
         },
       ];
     case 'environments':
@@ -632,6 +637,45 @@ export function environmentEditValues(entity: EnvironmentApiResponse): Environme
     metadataRows: Object.entries(metadata).length
       ? Object.entries(metadata).map(([key, value]) => ({ key, value: String(value) }))
       : [{ key: '', value: '' }],
+    ...environmentTemplateValues(config),
+  };
+}
+
+function environmentTemplateValues(config: Record<string, unknown>) {
+  const resources = objectRecord(config.resources);
+  const resourceText = (value: unknown) => (typeof value === 'number' && value > 0 ? String(value) : '');
+  return {
+    initScript: typeof config.init_script === 'string' ? config.init_script : '',
+    environmentRows: Object.entries(objectRecord(config.environment)).map(([key, value]) => ({
+      key,
+      value: String(value),
+    })),
+    resources: {
+      cpu: resourceText(resources.cpu),
+      memory: resourceText(resources.memory),
+      disk: resourceText(resources.disk),
+    },
+  };
+}
+
+export function environmentTemplateBody(values: EnvironmentEditValues) {
+  const environment: Record<string, string> = {};
+  for (const row of values.environmentRows) {
+    if (row.key.trim()) {
+      environment[row.key.trim()] = row.value;
+    }
+  }
+  const resources: Record<string, number> = {};
+  for (const name of ['cpu', 'memory', 'disk'] as const) {
+    const value = Number(values.resources[name].trim());
+    if (values.resources[name].trim() && Number.isInteger(value) && value > 0) {
+      resources[name] = value;
+    }
+  }
+  return {
+    init_script: values.initScript.trim(),
+    environment,
+    resources: Object.keys(resources).length ? resources : null,
   };
 }
 
@@ -643,7 +687,7 @@ function stringArrayValue(value: unknown): string[] {
 }
 
 // parseAllowedHostsText 把逗号/换行分隔的输入归一化为去重、保序的 host 数组。
-function parseAllowedHostsText(text: string): string[] {
+export function parseAllowedHostsText(text: string): string[] {
   const seen = new Set<string>();
   const hosts: string[] = [];
   for (const entry of text.split(/[\s,]+/)) {
@@ -655,6 +699,64 @@ function parseAllowedHostsText(text: string): string[] {
     hosts.push(host);
   }
   return hosts;
+}
+
+export function credentialEnvHostsMissing(values: CredentialFormValues): boolean {
+  return (
+    values.authType === 'environment_variable' &&
+    values.networkType === 'limited' &&
+    parseAllowedHostsText(values.allowedHostsText).length === 0
+  );
+}
+
+export function credentialEnvInjectionMissing(values: CredentialFormValues): boolean {
+  return values.authType === 'environment_variable' && !values.injectHeader && !values.injectBody;
+}
+
+function credentialNetworkingBody(values: CredentialFormValues) {
+  if (values.networkType === 'limited') {
+    return {
+      type: 'limited' as const,
+      allowed_hosts: parseAllowedHostsText(values.allowedHostsText),
+    };
+  }
+  return { type: 'unrestricted' as const };
+}
+
+function credentialInjectionLocationBody(values: CredentialFormValues) {
+  return {
+    header: values.injectHeader,
+    body: values.injectBody,
+  };
+}
+
+function credentialInjectionLocationFromAuth(auth: Record<string, unknown>): {
+  injectHeader: boolean;
+  injectBody: boolean;
+} {
+  const location = objectRecord(auth.injection_location);
+  // CMA create default / Console: header only when omitted.
+  if (Object.keys(location).length === 0) {
+    return { injectHeader: true, injectBody: false };
+  }
+  return {
+    injectHeader: location.header !== false,
+    injectBody: location.body === true,
+  };
+}
+
+function credentialNetworkingFromAuth(auth: Record<string, unknown>): {
+  networkType: 'limited' | 'unrestricted';
+  allowedHostsText: string;
+} {
+  const networking = objectRecord(auth.networking);
+  if (networking.type === 'limited') {
+    return {
+      networkType: 'limited',
+      allowedHostsText: stringArrayValue(networking.allowed_hosts).join('\n'),
+    };
+  }
+  return { networkType: 'unrestricted', allowedHostsText: '' };
 }
 
 export function environmentPackageRows(packages: unknown): EnvironmentPackageRow[] {
@@ -698,6 +800,7 @@ export function environmentConfigBody(values: EnvironmentEditValues) {
   return {
     type: 'cloud',
     packages,
+    ...environmentTemplateBody(values),
     networking:
       values.networkType === 'limited'
         ? {
@@ -720,61 +823,440 @@ export function environmentMetadataBody(values: EnvironmentEditValues) {
   return metadata;
 }
 
-export function credentialFormValues(credential?: VaultCredentialApiResponse): CredentialFormValues {
-  const auth = objectRecord(credential?.auth);
-  const authType = auth.type === 'environment_variable' ? 'environment_variable' : 'static_bearer';
+export function emptyCredentialFormValues(): CredentialFormValues {
   return {
-    displayName: credential?.display_name || '',
+    displayName: '',
+    authType: 'mcp_oauth',
+    mcpServerUrl: '',
+    token: '',
+    secretName: '',
+    secretValue: '',
+    networkType: 'limited',
+    allowedHostsText: '',
+    injectHeader: true,
+    injectBody: false,
+    refreshToken: '',
+    refreshTokenEndpoint: '',
+    refreshClientId: '',
+    refreshClientSecret: '',
+    refreshAuthType: 'none',
+    oauthClientId: '',
+    oauthClientSecret: '',
+  };
+}
+
+const emptyCredentialRefreshFields = {
+  refreshToken: '',
+  refreshTokenEndpoint: '',
+  refreshClientId: '',
+  refreshClientSecret: '',
+  refreshAuthType: 'none' as const,
+};
+
+/** Apply a form patch; clearing the access token also drops paste-path refresh fields. */
+export function patchCredentialFormValues(
+  current: CredentialFormValues,
+  patch: Partial<CredentialFormValues>,
+): CredentialFormValues {
+  const next = { ...current, ...patch };
+  if (next.token.trim()) {
+    return next;
+  }
+  return { ...next, ...emptyCredentialRefreshFields };
+}
+
+export function parseCredentialAuthType(value: string): CredentialFormValues['authType'] {
+  if (value === 'environment_variable' || value === 'mcp_oauth' || value === 'static_bearer') {
+    return value;
+  }
+  return '';
+}
+
+/** Resolved auth type for existing credentials; defaults to static_bearer when missing. */
+export function parseExistingCredentialAuthType(value: string): Exclude<CredentialFormValues['authType'], ''> {
+  const parsed = parseCredentialAuthType(value);
+  return parsed || 'static_bearer';
+}
+
+/** API display_name when the optional Name field is left blank. */
+export function credentialDisplayName(values: CredentialFormValues): string {
+  if (values.displayName.trim()) {
+    return values.displayName.trim();
+  }
+  if (values.authType === 'environment_variable' && values.secretName.trim()) {
+    return values.secretName.trim();
+  }
+  if (values.mcpServerUrl.trim()) {
+    try {
+      return new URL(values.mcpServerUrl.trim()).hostname;
+    } catch {
+      return values.mcpServerUrl.trim();
+    }
+  }
+  if (values.authType === 'mcp_oauth') {
+    return 'MCP OAuth credential';
+  }
+  if (values.authType === 'environment_variable') {
+    return 'Environment variable';
+  }
+  if (values.authType === 'static_bearer') {
+    return 'Static bearer credential';
+  }
+  return 'Credential';
+}
+
+export function credentialFormValues(credential?: VaultCredentialApiResponse): CredentialFormValues {
+  if (!credential) {
+    return emptyCredentialFormValues();
+  }
+  const auth = objectRecord(credential.auth);
+  const authType = parseExistingCredentialAuthType(typeof auth.type === 'string' ? auth.type : '');
+  const networking = authType === 'environment_variable' ? credentialNetworkingFromAuth(auth) : null;
+  const injection = authType === 'environment_variable' ? credentialInjectionLocationFromAuth(auth) : null;
+  return {
+    ...emptyCredentialFormValues(),
+    displayName: credential.display_name || '',
     authType,
     mcpServerUrl: typeof auth.mcp_server_url === 'string' ? auth.mcp_server_url : '',
-    token: '',
     secretName: typeof auth.secret_name === 'string' ? auth.secret_name : '',
-    secretValue: '',
+    ...(networking ?? {}),
+    ...(injection ?? {}),
+  };
+}
+
+function credentialRefreshStarted(values: CredentialFormValues) {
+  return (
+    Boolean(values.refreshToken.trim()) ||
+    Boolean(values.refreshTokenEndpoint.trim()) ||
+    Boolean(values.refreshClientId.trim()) ||
+    Boolean(values.refreshClientSecret.trim()) ||
+    values.refreshAuthType !== 'none'
+  );
+}
+
+function credentialRefreshBody(values: CredentialFormValues) {
+  const refreshToken = values.refreshToken.trim();
+  const tokenEndpoint = values.refreshTokenEndpoint.trim();
+  const clientId = values.refreshClientId.trim();
+  if (!refreshToken || !tokenEndpoint || !clientId) {
+    return undefined;
+  }
+  const authType = values.refreshAuthType;
+  return {
+    token_endpoint: tokenEndpoint,
+    client_id: clientId,
+    refresh_token: refreshToken,
+    token_endpoint_auth:
+      authType === 'none'
+        ? { type: 'none' as const }
+        : { type: authType, client_secret: values.refreshClientSecret.trim() },
   };
 }
 
 export function credentialAuthBody(values: CredentialFormValues, mode: 'create' | 'update') {
+  if (!values.authType) {
+    throw new Error('Credential auth type is required');
+  }
   if (values.authType === 'environment_variable') {
+    // Keep secret_value verbatim; env values may intentionally include whitespace.
+    const secretValue = values.secretValue;
     const body: Record<string, unknown> = {
       type: 'environment_variable',
-      networking: { type: 'unrestricted' },
+      networking: credentialNetworkingBody(values),
+      injection_location: credentialInjectionLocationBody(values),
     };
     if (mode === 'create') {
       body.secret_name = values.secretName.trim();
-      body.secret_value = values.secretValue;
-    } else if (values.secretValue.trim()) {
-      body.secret_value = values.secretValue;
+      body.secret_value = secretValue;
+    } else if (secretValue.trim()) {
+      body.secret_value = secretValue;
     }
     return body;
   }
+  if (values.authType === 'mcp_oauth') {
+    const accessToken = values.token.trim();
+    const refresh = mode === 'create' ? credentialRefreshBody(values) : undefined;
+    return {
+      type: 'mcp_oauth',
+      ...(mode === 'create' ? { mcp_server_url: values.mcpServerUrl.trim() } : {}),
+      ...(accessToken ? { access_token: accessToken } : {}),
+      ...(refresh ? { refresh } : {}),
+    };
+  }
+  const token = values.token.trim();
   const body: Record<string, unknown> = {
     type: 'static_bearer',
     mcp_server_url: values.mcpServerUrl.trim(),
   };
-  if (mode === 'create' || values.token.trim()) {
-    body.token = values.token;
+  if (mode === 'create' || token) {
+    body.token = token;
   }
   return body;
 }
 
+function credentialRefreshComplete(values: CredentialFormValues) {
+  if (!credentialRefreshStarted(values)) {
+    return true;
+  }
+  if (!values.refreshToken.trim() || !values.refreshTokenEndpoint.trim() || !values.refreshClientId.trim()) {
+    return false;
+  }
+  if (values.refreshAuthType !== 'none' && !values.refreshClientSecret.trim()) {
+    return false;
+  }
+  return true;
+}
+
+export function credentialFormReady(values: CredentialFormValues, mode: 'create' | 'edit', acknowledged: boolean) {
+  if (!acknowledged || !values.authType) {
+    return false;
+  }
+  if (values.authType === 'environment_variable') {
+    if (credentialEnvInjectionMissing(values) || credentialEnvHostsMissing(values)) {
+      return false;
+    }
+    // Edit: secret value optional (sealed secrets are not returned; rotate only when provided).
+    if (mode === 'edit') {
+      return true;
+    }
+    return Boolean(values.secretName.trim() && values.secretValue.trim());
+  }
+  if (values.authType === 'static_bearer') {
+    // Edit: token optional for the same sealed-secret reason (matches main canSubmit).
+    if (mode === 'edit') {
+      return Boolean(values.mcpServerUrl.trim());
+    }
+    return Boolean(values.mcpServerUrl.trim() && values.token.trim());
+  }
+  if (mode === 'create' && !values.mcpServerUrl.trim()) {
+    return false;
+  }
+  if (!credentialRefreshComplete(values)) {
+    return false;
+  }
+  if (mode === 'edit' || values.token.trim()) {
+    return true;
+  }
+  // Connect path: refresh fields belong to paste-token create; client_secret needs client_id
+  if (credentialRefreshStarted(values)) {
+    return false;
+  }
+  return !values.oauthClientSecret.trim() || Boolean(values.oauthClientId.trim());
+}
+
 export function credentialAuthLabel(auth: unknown, msg?: I18nMsg) {
   const record = objectRecord(auth);
-  if (record.type === 'environment_variable') {
+  return credentialAuthTypeLabel(typeof record.type === 'string' ? record.type : '', msg);
+}
+
+export function credentialAuthTypeLabel(authType: string, msg?: I18nMsg) {
+  if (authType === 'environment_variable') {
     return msg
       ? msg('managedAgents.credentialVaults.credentialDialog.environmentVariable', 'Environment variable')
       : 'Environment variable';
   }
-  if (record.type === 'mcp_oauth') {
-    return 'MCP OAuth';
+  if (authType === 'mcp_oauth') {
+    return msg ? msg('managedAgents.credentialVaults.credentialDialog.mcpOAuth', 'MCP OAuth') : 'MCP OAuth';
   }
-  return msg
-    ? msg('managedAgents.credentialVaults.credentialDialog.staticBearer', 'Static bearer token')
-    : 'Static bearer';
+  return msg ? msg('managedAgents.credentialVaults.credentialDialog.staticBearer', 'Bearer token') : 'Bearer token';
+}
+
+/** Credential display names for vault pickers (CMA-aligned). */
+export function vaultCredentialNames(credentials: VaultCredentialApiResponse[], msg: I18nMsg): string[] {
+  return credentials.map((credential) => {
+    if (typeof credential.display_name === 'string' && credential.display_name.trim()) {
+      return credential.display_name.trim();
+    }
+    const auth = objectRecord(credential.auth);
+    if (typeof auth.secret_name === 'string' && auth.secret_name.trim()) {
+      return auth.secret_name.trim();
+    }
+    return credentialAuthLabel(credential.auth, msg);
+  });
+}
+
+/** Trailing summary for vault pickers: joined names, or “No credentials”. */
+export function vaultCredentialSummary(credentials: VaultCredentialApiResponse[], msg: I18nMsg): string {
+  const names = vaultCredentialNames(credentials, msg);
+  if (!names.length) {
+    return msg('managedAgents.credentialVaults.emptyCredentialSummary', 'No credentials');
+  }
+  return names.join(', ');
+}
+
+export function vaultCredentialSummaryFromNames(names: string[], msg: I18nMsg): string {
+  if (!names.length) {
+    return msg('managedAgents.credentialVaults.emptyCredentialSummary', 'No credentials');
+  }
+  return names.join(', ');
+}
+
+/** Set equality for vault id selections (order-insensitive). */
+export function vaultSelectionEquals(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const rightIds = new Set(right);
+  return left.every((id) => rightIds.has(id));
+}
+
+/** Order-insensitive cache key so vault list reshuffles do not restart loads. */
+export function vaultCredentialSummaryCacheKey(vaultIds: string[]): string {
+  if (!vaultIds.length) {
+    return '';
+  }
+  return [...vaultIds].sort().join('\0');
+}
+
+export type VaultCredentialSummaryLoadState =
+  { status: 'idle' | 'loading' | 'error'; names?: string[] } | { status: 'ready'; names: string[] };
+
+export type VaultCredentialSummaryCache = {
+  workspaceId: string;
+  summaries: Record<string, VaultCredentialSummaryLoadState>;
+};
+
+/** Active summary map for the current workspace; foreign caches read as empty. */
+export function vaultCredentialSummariesForWorkspace(
+  cache: VaultCredentialSummaryCache,
+  workspaceId: string,
+): Record<string, VaultCredentialSummaryLoadState> {
+  return cache.workspaceId === workspaceId ? cache.summaries : {};
+}
+
+/**
+ * Vaults that still need a credential-summary fetch.
+ * Includes cancelled in-flight `loading` entries so a restarted effect can recover.
+ */
+export function vaultCredentialSummaryPendingIds(
+  vaultIds: string[],
+  summaries: Record<string, VaultCredentialSummaryLoadState | undefined>,
+): string[] {
+  return vaultIds.filter((vaultId) => {
+    const current = summaries[vaultId];
+    return !current || current.status !== 'ready';
+  });
+}
+
+/** Trailing label + tooltip body for a vault row credential summary. */
+export function vaultCredentialSummaryPresentation(
+  state: VaultCredentialSummaryLoadState | undefined,
+  loadingLabel: string,
+  msg: I18nMsg,
+): { trailing: string; detail: string } {
+  const status = state?.status ?? 'idle';
+  if (status === 'loading' || status === 'idle') {
+    return { trailing: loadingLabel, detail: loadingLabel };
+  }
+  if (status === 'error') {
+    const trailing = vaultCredentialSummaryFromNames([], msg);
+    return { trailing, detail: trailing };
+  }
+  const names = state?.names ?? [];
+  const trailing = vaultCredentialSummaryFromNames(names, msg);
+  return {
+    trailing,
+    detail: names.length ? names.join('\n') : trailing,
+  };
+}
+
+/** CMA-style created label: relative when recent, short calendar date when older. */
+export function vaultCreatedLabel(
+  createdAt: string,
+  formatRelative: (value: number, unit: Intl.RelativeTimeFormatUnit) => string,
+  formatDate: (value: string | number | Date, options?: Intl.DateTimeFormatOptions) => string,
+): string {
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp)) {
+    return '—';
+  }
+  const seconds = Math.round((timestamp - Date.now()) / 1000);
+  if (Math.abs(seconds) < 60) {
+    return formatRelative(0, 'second');
+  }
+  const minutes = Math.round(seconds / 60);
+  if (Math.abs(minutes) < 60) {
+    return formatRelative(minutes, 'minute');
+  }
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 24) {
+    return formatRelative(hours, 'hour');
+  }
+  const days = Math.round(hours / 24);
+  if (Math.abs(days) < 7) {
+    return formatRelative(days, 'day');
+  }
+  return formatDate(createdAt, { month: 'short', day: 'numeric' });
+}
+
+export function vaultCreatedAbsoluteLabel(
+  createdAt: string,
+  formatDate: (value: string | number | Date, options?: Intl.DateTimeFormatOptions) => string,
+): string {
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp)) {
+    return '—';
+  }
+  return formatDate(createdAt, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+
+/** Map platform vault OAuth error_code wire values to localized user copy. */
+export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string {
+  switch (errorCode.trim()) {
+    case 'already_exists':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.alreadyExists',
+        'A credential for this MCP server already exists in the vault.',
+      );
+    case 'oauth_discovery_failed':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.discoveryFailed',
+        'Could not discover OAuth settings for this MCP server.',
+      );
+    case 'token_exchange_failed':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.tokenExchangeFailed',
+        'OAuth token exchange failed. Try connecting again.',
+      );
+    case 'verification_request_failed':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.verificationFailed',
+        'OAuth verification failed. Check the MCP server URL and try again.',
+      );
+    default:
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.oauthError.generic',
+        'Could not complete OAuth. Try again.',
+      );
+  }
 }
 
 export function columnWidth(section: ManagedEntitySection, column: string) {
   if (!column) {
     return 'w-[48px]';
+  }
+  if (section === 'sessions') {
+    switch (column) {
+      case 'ID':
+        return 'w-[180px]';
+      case 'Status':
+        return 'w-[130px]';
+      case 'Agent':
+        return 'w-[160px]';
+      case 'Tokens in / out':
+        return 'w-[140px]';
+      case 'Cost':
+        return 'w-[130px]';
+      case 'Created':
+        return 'w-[160px]';
+    }
   }
   if (column === 'ID') {
     return 'w-[190px]';

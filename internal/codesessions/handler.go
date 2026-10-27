@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -14,6 +13,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
+	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
+	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 )
 
 // Handler 是 code-session 的 HTTP transport 边界。
@@ -25,13 +26,42 @@ type Handler struct {
 	logger                 *slog.Logger
 	errorAdapter           *httpapi.ErrorAdapter
 	sandboxTimeoutExtender SandboxTimeoutExtender
+	sandboxRenewals        sandboxRenewals
 	upstreamProxy          upstreamProxyRuntime
 	mcpProxyTransport      http.RoundTripper
-	injectMCPProxyHeaders  mcpProxyHeaderInjector
+	wrapMCPVaultTransport  mcpProxyTransportWrapper
+	mitmEgress             *vaults.MITMEgress
+	tunnelInvoker          TunnelInvoker
 	// 策略加载函数在生产环境读取数据库，测试可替换为 fixture。
 	loadUpstreamPolicyContext func(ctx context.Context, identity upstreamProxyIdentity) (upstreamProxyPolicyContext, error)
 	loadMCPPolicyContext      func(ctx context.Context, identity upstreamProxyIdentity) (mcpProxyPolicyContext, error)
-	otlpLogMu                 sync.Mutex
+	loadMemoryToolMounts      func(context.Context, db.CodeSession) ([]db.SessionMemoryMount, error)
+	loadMemoryToolVersion     func(context.Context, db.CodeSession, string, string) (memoryToolVersion, error)
+	otlpSink                  otlpSink
+	otlpAdmission             *otlpAdmission
+	brainClaims               BrainClaimAuthenticator
+	webTools                  *webtools.Client
+}
+
+// TunnelInvoker is implemented by the Tunnel DataPlane. Named Runtime Gateway
+// routes never fall back to ordinary MCP proxying when this boundary declines a
+// target. The implementation owns tunnel lookup, broker dispatch, and protocol
+// response mapping.
+type TunnelInvoker interface {
+	ServeTunnel(
+		w http.ResponseWriter,
+		r *http.Request,
+		organizationUUID string,
+		workspaceUUID string,
+		target *url.URL,
+	) bool
+	ServeTunnelOAuthDiscovery(
+		w http.ResponseWriter,
+		r *http.Request,
+		organizationUUID string,
+		workspaceUUID string,
+		target *url.URL,
+	) bool
 }
 
 // SandboxTimeoutExtender resumes or renews the provider-side lifetime of a
@@ -56,10 +86,13 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 		sandboxTimeoutExtender: sandboxTimeoutExtender,
 		upstreamProxy:          newUpstreamProxyRuntime(),
 		mcpProxyTransport:      newMCPProxyTransport(cfg.CodeSession.UpstreamProxyDisableSSRFProtection),
-		injectMCPProxyHeaders:  func(context.Context, SessionCredentialClaims, *url.URL, http.Header) error { return nil },
+		otlpSink:               newOTLPSink(cfg.Observability),
+		otlpAdmission:          newOTLPAdmission(defaultOTLPGlobalConcurrency, defaultOTLPSessionConcurrency),
 	}
 	handler.loadUpstreamPolicyContext = handler.loadUpstreamProxyPolicyContext
 	handler.loadMCPPolicyContext = handler.loadMCPProxyPolicyContext
+	handler.loadMemoryToolMounts = handler.loadSandboxMemoryMounts
+	handler.loadMemoryToolVersion = handler.loadSandboxMemoryVersion
 	// 只有 MITM 开启时才在构造阶段读取稳定私钥并签发一年期根证书，使配置错误在启动期失败。
 	// MITM 关闭时私钥路径完全休眠，由 CA 下载接口按需生成进程级临时 CA。
 	if cfg.CodeSession.UpstreamProxyMITMEnabled {
@@ -70,21 +103,36 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 	return handler
 }
 
-// WithVaultSecrets wires vault static_bearer injection into the MCP HTTP proxy.
-func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service) *Handler {
+// WithVaultSecrets wires vault credential injection (static_bearer / mcp_oauth)
+// into Session MCP HTTP proxy and CONNECT MITM, and environment_variable egress
+// rewriting (placeholder substitution + Git Smart HTTP Authorization) on MITM
+// via MITMEgress.Prepare. Platform OAuth client secrets are re-resolved from
+// cfg at refresh time.
+func (h *Handler) WithVaultSecrets(secretSvc *secrets.Service, refreshLease vaults.OAuthRefreshLease, webhookEnqueuer *webhooks.Enqueuer) *Handler {
 	if h == nil || h.db == nil || secretSvc == nil {
 		return h
 	}
-	injector := vaults.NewInjector(h.db, secretSvc)
-	h.injectMCPProxyHeaders = func(ctx context.Context, claims SessionCredentialClaims, target *url.URL, headers http.Header) error {
-		return injector.RewriteAuthorization(
+	injector := vaults.NewInjector(h.db, secretSvc, h.logger).
+		WithPlatformOAuthClients(h.cfg.Vault.PlatformOAuthClients).WithWebhooks(webhookEnqueuer)
+	if refreshLease != nil {
+		injector = injector.WithRefreshLease(refreshLease)
+	}
+	h.wrapMCPVaultTransport = func(ctx context.Context, claims SessionCredentialClaims, target *url.URL, base http.RoundTripper) http.RoundTripper {
+		return injector.WrapMCPTransport(
 			ctx,
 			claims.SessionID,
 			claims.OrganizationUUID,
 			claims.WorkspaceUUID,
 			target,
-			headers,
+			base,
 		)
 	}
+	h.mitmEgress = vaults.NewMITMEgress(h.db, secretSvc, h.logger, injector)
+	return h
+}
+
+// WithTunnelInvoker enables in-process dispatch for configured Tunnel URLs.
+func (h *Handler) WithTunnelInvoker(invoker TunnelInvoker) *Handler {
+	h.tunnelInvoker = invoker
 	return h
 }

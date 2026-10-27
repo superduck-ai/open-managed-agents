@@ -1,3 +1,5 @@
+//go:build integration || e2e || e2b_integration
+
 package tests
 
 import (
@@ -362,7 +364,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}); err != nil || len(versions) != 2 || versions[0].CurrentVersion != 2 {
 		t.Fatalf("list Agent versions through string UUID mapper parameters = (%+v, %v)", versions, err)
 	}
-	if archived, err := app.db.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
+	if archived, _, err := app.deployments.ArchiveAgent(ctx, ids.WorkspaceUUID, agentID); err != nil || archived.ArchivedAt == nil {
 		t.Fatalf("archive Agent through string UUID mapper parameters = (%+v, %v)", archived, err)
 	}
 
@@ -389,7 +391,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		SHA256:              "typed-uuid",
 		CreatedByAPIKeyUUID: ids.APIKeyUUID,
 		CreatedAt:           now,
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("create Skill through typed UUID parameters: %v", err)
 	}
@@ -470,7 +472,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	}
 
 	deploymentID := "dep_typed_uuid_" + suffix
-	deployment, err := app.db.CreateDeployment(ctx, db.Deployment{
+	deployment, err := app.deployments.Create(ctx, db.Deployment{
 		UUID:                  uuid.NewV4().String(),
 		ExternalID:            deploymentID,
 		OrganizationUUID:      ids.OrganizationUUID,
@@ -629,29 +631,10 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create Webhook endpoint through typed UUID parameters: %v", err)
 	}
-	eventType := "typed_uuid." + suffix
-	if err := app.db.EnqueueWebhookDeliveryJobForEndpoint(ctx, ids.WorkspaceUUID, eventType, []byte(`{"type":"typed_uuid"}`), endpoint.UUID); err != nil {
-		t.Fatalf("enqueue Webhook delivery through typed UUID parameters: %v", err)
+	target, found, err := app.db.FindWebhookDeliveryTarget(ctx, ids.WorkspaceUUID, endpoint.UUID)
+	if err != nil || !found || target.URL != endpoint.URL {
+		t.Fatalf("webhook UUID lookup: %+v %t %v", target, found, err)
 	}
-	jobs, err := app.db.LeaseWebhookDeliveryJobs(ctx, "typed-uuid-"+suffix, 100, time.Minute)
-	if err != nil {
-		t.Fatalf("lease Webhook deliveries through typed UUID rows: %v", err)
-	}
-	foundJob := false
-	for _, job := range jobs {
-		if job.EventType == eventType {
-			foundJob = job.WorkspaceUUID == ids.WorkspaceUUID &&
-				job.WebhookEndpointUUID != nil &&
-				*job.WebhookEndpointUUID == endpoint.UUID
-			if err := app.db.CompleteWebhookDeliveryJob(ctx, job.UUID); err != nil {
-				t.Fatalf("complete Webhook job through typed UUID parameter: %v", err)
-			}
-		}
-	}
-	if !foundJob {
-		t.Fatalf("leased Webhook jobs did not contain typed UUID endpoint %s: %+v", endpoint.UUID, jobs)
-	}
-
 	if loadedSkill, err := app.db.GetSkill(ctx, ids.WorkspaceUUID, skillID); err != nil || loadedSkill.UUID != skill.UUID {
 		t.Fatalf("get Skill through typed UUID row = (%+v, %v)", loadedSkill, err)
 	}
@@ -660,11 +643,12 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 		ids.WorkspaceUUID,
 		skillID,
 		secondSkillVersion.Version,
+		true,
 	)
 	if err != nil || deletedVersion.UUID != secondSkillVersion.UUID || latestVersion == nil || *latestVersion != skillVersion.Version {
 		t.Fatalf("soft delete Skill version = (%+v, %+v, %v)", deletedVersion, latestVersion, err)
 	}
-	deletedSkill, deletedVersions, err := app.db.SoftDeleteSkill(ctx, ids.WorkspaceUUID, skillID)
+	deletedSkill, deletedVersions, err := app.db.SoftDeleteSkill(ctx, ids.WorkspaceUUID, skillID, true)
 	if err != nil || deletedSkill.UUID != skill.UUID || len(deletedVersions) != 1 || deletedVersions[0].UUID != skillVersion.UUID {
 		t.Fatalf("soft delete Skill = (%+v, %+v, %v)", deletedSkill, deletedVersions, err)
 	}
@@ -728,19 +712,16 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		ProcessedAt: now,
 		CreatedAt:   now,
 	}}, nil)
-	if err != nil || len(events) != 1 || events[0].ThreadUUID == nil || *events[0].ThreadUUID != thread.UUID {
+	if err != nil || len(events.Events) != 1 || events.Events[0].ThreadUUID == nil || *events.Events[0].ThreadUUID != thread.UUID {
 		t.Fatalf("append Session event with inferred typed thread UUID = (%+v, %v)", events, err)
 	}
 	listedEvents, _, err := app.db.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
 		WorkspaceUUID:     ids.WorkspaceUUID,
 		SessionExternalID: session.ExternalID,
 		Limit:             10,
-		Cursor: &db.SessionEventPageCursor{
-			CreatedAt: now.Add(-time.Second),
-			UUID:      uuid.NewV4().String(),
-		},
+		Cursor:            &db.SessionEventPageCursor{ExternalID: eventExternalID},
 	})
-	if err != nil || len(listedEvents) != 1 || listedEvents[0].UUID != events[0].UUID {
+	if err != nil || len(listedEvents) != 0 {
 		t.Fatalf("list Session events with typed UUID cursor = (%+v, %v)", listedEvents, err)
 	}
 
@@ -807,8 +788,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		ctx,
 		codeSession.ExternalID,
 		epoch,
-		time.Minute,
-		time.Second,
+		fixedWorkerLease(time.Minute, time.Second),
 	); err != nil {
 		t.Fatalf("record Code Session heartbeat through typed UUID transaction: %v", err)
 	}
@@ -821,20 +801,6 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 	if err != nil || credential.CodeSessionUUID != codeSession.UUID ||
 		credential.PublicSessionUUID != session.UUID || credential.AgentUUID != session.AgentUUID {
 		t.Fatalf("get Code Session credential typed UUID projection = (%+v, %v)", credential, err)
-	}
-	inbound, duplicate, err := app.db.AppendCodeSessionInboundEvent(ctx, codeSession.ExternalID, db.AppendCodeSessionEventInput{
-		ExternalID:     "csein_typed_uuid_" + suffix,
-		EventType:      "control_request",
-		EventSubtype:   "typed_uuid",
-		Payload:        []byte(`{}`),
-		PayloadHash:    strings.Repeat("b", 64),
-		IdempotencyKey: "typed-uuid-" + suffix,
-		DeliveryStatus: "queued",
-		Source:         "integration",
-		CreatedAt:      now,
-	})
-	if err != nil || duplicate || inbound.CodeSessionUUID != codeSession.UUID {
-		t.Fatalf("append Code Session event through typed UUID transaction = (%+v, %v, %v)", inbound, duplicate, err)
 	}
 	internalEvents, err := app.db.AppendCodeSessionInternalEvents(ctx, codeSession.ExternalID, epoch, []db.AppendCodeSessionInternalEventInput{{
 		ExternalID:     "cseint_typed_uuid_" + suffix,
@@ -874,7 +840,7 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		ExpiresAt:  &platformExpiresAt,
 	})
 	if err != nil || platformIdentity.OrganizationUUID != orgUUID ||
-		!isValidUUID(platformIdentity.UserUUID) || !isValidUUID(platformIdentity.APIKeyUUID) {
+		!isValidUUID(platformIdentity.UserUUID) || !isValidUUID(platformIdentity.WorkspaceUUID) || platformIdentity.APIKeyUUID != "" {
 		t.Fatalf("resolve platform identity through typed UUID rows = (%+v, %v)", platformIdentity, err)
 	}
 
@@ -915,12 +881,20 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		TokenEndpoint:           "https://auth.example.test/token",
 		Resource:                "https://mcp.example.test",
 		ClientID:                "typed-uuid",
+		ClientCredentialSource:  "sealed",
 		TokenEndpointAuthMethod: "none",
-		CodeVerifier:            "typed-uuid-verifier",
 		CodeChallengeMethod:     "S256",
-		Status:                  "pending",
-		CreatedAt:               now,
-		ExpiresAt:               now.Add(10 * time.Minute),
+		SecretEnvelope: &secrets.Envelope{
+			Ciphertext:    []byte("typed-uuid-flow-cipher"),
+			Nonce:         []byte("nonce-12byte"),
+			WrappedDEK:    []byte("typed-uuid-flow-wrap"),
+			FormatVersion: 1,
+			KeyProvider:   "local",
+			KeyVersion:    1,
+		},
+		Status:    "pending",
+		CreatedAt: now,
+		ExpiresAt: now.Add(10 * time.Minute),
 	})
 	if err != nil || flow.UserUUID != "" || flow.UUID == "" {
 		t.Fatalf("create MCP OAuth flow with nullable typed user UUID = (%+v, %v)", flow, err)

@@ -3,40 +3,62 @@ package codesessions
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-// AuthenticateSessionIngress verifies the signed identity, binds session_id to
-// the request path, and checks a claimed worker epoch against the active Code
-// Session. Legacy credentials without worker_epoch remain signature-only and
-// are fenced during worker registration after a credential rotation.
-func (s *Service) AuthenticateSessionIngress(ctx context.Context, rawToken, expectedCodeSessionID string) (SessionCredentialClaims, error) {
+func (s *Service) AuthenticateSessionIngress(_ context.Context, rawToken, expectedCodeSessionID string) (SessionCredentialClaims, error) {
 	claims, err := s.credentials.Verify(strings.TrimSpace(rawToken))
 	if err != nil {
 		return SessionCredentialClaims{}, err
 	}
-	if strings.TrimSpace(expectedCodeSessionID) != "" && claims.SessionID != strings.TrimSpace(expectedCodeSessionID) {
+	if expectedCodeSessionID != "" && claims.SessionID != expectedCodeSessionID {
 		return SessionCredentialClaims{}, errors.New("session ingress token does not match request path")
-	}
-	if s.db != nil && claims.WorkerEpoch > 0 {
-		if err := s.db.ValidateCodeSessionIngressWorkerEpoch(
-			ctx,
-			claims.OrganizationUUID,
-			claims.WorkspaceUUID,
-			claims.SessionID,
-			claims.WorkerEpoch,
-		); err != nil {
-			return SessionCredentialClaims{}, fmt.Errorf("session ingress worker epoch is no longer active: %w", err)
-		}
 	}
 	return claims, nil
 }
 
+func (s *Service) authorizeIngressIdentity(ctx context.Context, claims SessionCredentialClaims) error {
+	if s.db == nil {
+		return nil
+	}
+	identity, err := s.db.GetCodeSessionCredentialContextForIssue(ctx, claims.OrganizationUUID, claims.WorkspaceUUID, claims.SessionID)
+	if errors.Is(err, db.ErrNotFound) {
+		return errSessionIngressIdentity
+	}
+	if err != nil {
+		return err
+	}
+	if !credentialContextMatchesClaims(identity, claims) {
+		return errSessionIngressIdentity
+	}
+	return nil
+}
+
+func (s *Service) authorizeWorkerClaims(ctx context.Context, claims SessionCredentialClaims) error {
+	if s.db == nil {
+		return nil
+	}
+	if claims.WorkerEpoch <= 0 {
+		return s.authorizeIngressIdentity(ctx, claims)
+	}
+	err := s.db.ValidateCodeSessionIngressWorkerEpoch(ctx, claims.OrganizationUUID, claims.WorkspaceUUID, claims.SessionID, claims.WorkerEpoch)
+	if errors.Is(err, db.ErrNotFound) {
+		if err := s.authorizeIngressIdentity(ctx, claims); err != nil {
+			return err
+		}
+		return db.ErrWorkerEpochMismatch
+	}
+	return err
+}
+
 func (s *Service) issueSessionIngressToken(credentialContext db.CodeSessionCredentialContext, workerEpoch int64) (string, error) {
-	return s.credentials.Issue(SessionCredentialIdentity{
+	return s.credentials.Issue(sessionCredentialIdentity(credentialContext, workerEpoch))
+}
+
+func sessionCredentialIdentity(credentialContext db.CodeSessionCredentialContext, workerEpoch int64) SessionCredentialIdentity {
+	return SessionCredentialIdentity{
 		SessionID:        credentialContext.CodeSessionExternalID,
 		PublicSessionID:  credentialContext.PublicSessionExternalID,
 		AgentID:          credentialContext.AgentExternalID,
@@ -45,5 +67,5 @@ func (s *Service) issueSessionIngressToken(credentialContext db.CodeSessionCrede
 		WorkspaceUUID:    credentialContext.WorkspaceUUID,
 		AccountEmail:     credentialContext.AccountEmail,
 		WorkerEpoch:      workerEpoch,
-	})
+	}
 }

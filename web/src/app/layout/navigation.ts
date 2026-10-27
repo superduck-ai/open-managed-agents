@@ -50,12 +50,14 @@ export type NavGroupItem = {
   label: string;
   labelId: string;
   icon: IconComponent;
+  hidden?: boolean;
   children: Array<{
     href: string;
     label: string;
     labelId: string;
     badge?: string;
     badgeId?: string;
+    hidden?: boolean;
   }>;
 };
 
@@ -71,10 +73,12 @@ export const consoleNavigation: NavItem[] = [
     labelId: 'nav.build',
     icon: Braces,
     children: [
-      { href: '/workbench', label: 'Workbench', labelId: 'nav.workbench' },
+      // Temporarily hidden from the sidebar; this entry stays so the route can be restored.
+      { href: '/workbench', label: 'Workbench', labelId: 'nav.workbench', hidden: true },
       { href: '/files', label: 'Files', labelId: 'nav.files' },
       { href: '/skills', label: 'Skills', labelId: 'nav.skills' },
-      { href: '/batches', label: 'Batches', labelId: 'nav.batches' },
+      { href: '/mcp-servers', label: 'MCP Servers', labelId: 'nav.mcpServers' },
+      { href: '/batches', label: 'Batches', labelId: 'nav.batches', hidden: true },
     ],
   },
   {
@@ -86,7 +90,8 @@ export const consoleNavigation: NavItem[] = [
       { href: '/quickstart', label: 'Quickstart', labelId: 'nav.quickstart' },
       { href: '/agents', label: 'Agents', labelId: 'nav.agents' },
       { href: '/sessions', label: 'Sessions', labelId: 'nav.sessions' },
-      { href: '/deployments', label: 'Deployments', labelId: 'nav.deployments', badge: 'New', badgeId: 'nav.new' },
+      { href: '/observability', label: 'Observability', labelId: 'nav.observability' },
+      { href: '/deployments', label: 'Deployments', labelId: 'nav.deployments' },
       { href: '/environments', label: 'Environments', labelId: 'nav.environments' },
       { href: '/credential-vaults', label: 'Credential vaults', labelId: 'nav.credentialVaults' },
       { href: '/memory-stores', label: 'Memory stores', labelId: 'nav.memoryStores' },
@@ -106,10 +111,12 @@ export const consoleNavigation: NavItem[] = [
     ],
   },
   {
+    // Temporarily hidden from the sidebar; the group definition stays so it can be restored.
     type: 'group',
     label: 'Claude Code',
     labelId: 'nav.claudeCode',
     icon: TerminalSquare,
+    hidden: true,
     children: [
       { href: '/claude-code/usage', label: 'Usage', labelId: 'nav.usage' },
       { href: '/claude-code/settings', label: 'Settings', labelId: 'nav.settings' },
@@ -117,34 +124,46 @@ export const consoleNavigation: NavItem[] = [
   },
   {
     type: 'group',
-    label: 'Manage',
-    labelId: 'nav.manage',
+    label: 'Workspace settings',
+    labelId: 'nav.workspaceSettings',
     icon: Settings,
     children: [
-      { href: '/limits', label: 'Limits', labelId: 'nav.limits' },
       { href: '/members', label: 'Members', labelId: 'nav.members' },
-      { href: '/service-accounts', label: 'Service accounts', labelId: 'nav.serviceAccounts' },
-      { href: '/privacy-controls', label: 'Privacy controls', labelId: 'nav.privacyControls' },
-      { href: '/security', label: 'Security', labelId: 'nav.security' },
+      { href: '/api-keys', label: 'API keys', labelId: 'nav.apiKeys' },
       { href: '/webhooks', label: 'Webhooks', labelId: 'nav.webhooks' },
+      {
+        href: '/mcp-tunnels',
+        label: 'MCP tunnels',
+        labelId: 'nav.mcpTunnels',
+        badge: 'Preview',
+        badgeId: 'nav.preview',
+      },
     ],
   },
 ];
 
+export function visibleConsoleNavigation(items: readonly NavItem[] = consoleNavigation): NavItem[] {
+  return items.flatMap<NavItem>((item) => {
+    if (item.type === 'link') {
+      return [item];
+    }
+    if (item.hidden) {
+      return [];
+    }
+    return [{ ...item, children: item.children.filter((child) => !child.hidden) }];
+  });
+}
+
 export const settingsNavigation = [
-  { href: '/settings/profile', label: 'Profile', labelId: 'nav.profile' },
-  { href: '/settings/appearance', label: 'Appearance', labelId: 'nav.appearance' },
   { href: '/settings/organization', label: 'Organization', labelId: 'nav.organization' },
+  { href: '/settings/llm', label: 'LLM configuration', labelId: 'nav.llmSettings' },
   { href: '/settings/members', label: 'Members', labelId: 'nav.members' },
   { href: '/settings/workspaces', label: 'Workspaces', labelId: 'nav.workspaces' },
-  { href: '/settings/billing', label: 'Billing', labelId: 'nav.billing' },
-  { href: '/settings/limits', label: 'Limits', labelId: 'nav.limits' },
-  { href: '/settings/api-keys', label: 'API keys', labelId: 'nav.apiKeys' },
-  { href: '/settings/admin-keys', label: 'Admin keys', labelId: 'nav.adminKeys' },
-  { href: '/settings/service-accounts', label: 'Service accounts', labelId: 'nav.serviceAccounts' },
-  { href: '/settings/workload-identity', label: 'Workload identity', labelId: 'nav.workloadIdentity' },
-  { href: '/settings/privacy-controls', label: 'Privacy controls', labelId: 'nav.privacyControls' },
-  { href: '/settings/identity-and-access', label: 'Identity and access', labelId: 'nav.identityAndAccess' },
+] as const;
+
+export const personalSettingsNavigation = [
+  { href: '/settings/profile', label: 'Profile', labelId: 'nav.profile' },
+  { href: '/settings/appearance', label: 'Appearance', labelId: 'nav.appearance' },
 ] as const;
 
 export const placeholderIcons = {
@@ -154,6 +173,7 @@ export const placeholderIcons = {
   '/playground': Braces,
   '/files': FileText,
   '/skills': ToggleLeft,
+  '/mcp-servers': Plug,
   '/batches': Receipt,
   '/quickstart': Bot,
   '/agents': Bot,

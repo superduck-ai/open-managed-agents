@@ -82,10 +82,56 @@ func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 			want:     resolvedToolPermissionAsk,
 		},
 		{
-			name:     "unknown tool defaults to ask",
+			name:     "unknown tool is denied without asking",
 			snapshot: `{"tools":[]}`,
 			toolName: "MysteryTool",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name:     "ask user question without config defaults to deny",
+			snapshot: `{"tools":[{"type":"agent_toolset_20260401"}]}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name:     "ask user question without toolset defaults to deny",
+			snapshot: `{"tools":[]}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name: "ask user question explicit allow is preserved",
+			snapshot: `{
+				"tools":[{
+					"type":"agent_toolset_20260401",
+					"configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_allow"}}],
+					"default_config":{"enabled":true,"permission_policy":{"type":"always_allow"}}
+				}]
+			}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name: "ask user question explicit ask is preserved",
+			snapshot: `{
+				"tools":[{
+					"type":"agent_toolset_20260401",
+					"configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_ask"}}]
+				}]
+			}`,
+			toolName: "AskUserQuestion",
 			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name: "ask user question enabled false denies",
+			snapshot: `{
+				"tools":[{
+					"type":"agent_toolset_20260401",
+					"configs":[{"name":"ask_user_question","enabled":false,"permission_policy":{"type":"always_allow"}}]
+				}]
+			}`,
+			toolName: "AskUserQuestion",
+			want:     resolvedToolPermissionDeny,
 		},
 	}
 
@@ -94,7 +140,7 @@ func TestResolveToolPermissionFromAgentSnapshot(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := resolveToolPermissionFromAgentSnapshot(json.RawMessage(tt.snapshot), tt.toolName)
+			got, _ := resolveToolPermissionFromAgentSnapshot(json.RawMessage(tt.snapshot), tt.toolName)
 			if got != tt.want {
 				t.Fatalf("permission = %s, want %s", got, tt.want)
 			}
@@ -113,5 +159,195 @@ func TestParseClaudeToolIdentity(t *testing.T) {
 	identity = parseClaudeToolIdentity("MultiEdit")
 	if identity.Kind != "agent_toolset" || identity.ToolName != "edit" {
 		t.Fatalf("identity = %+v", identity)
+	}
+
+	identity = parseClaudeToolIdentity("WebFetch")
+	if identity.Kind != "agent_toolset" || identity.ToolName != "web_fetch" {
+		t.Fatalf("identity = %+v", identity)
+	}
+
+	identity = parseClaudeToolIdentity("WebSearch")
+	if identity.Kind != "agent_toolset" || identity.ToolName != "web_search" {
+		t.Fatalf("identity = %+v", identity)
+	}
+
+	for claudeName, configName := range map[string]string{
+		"AskUserQuestion": "ask_user_question",
+		"Bash":            "bash",
+		"Edit":            "edit",
+		"Glob":            "glob",
+		"Grep":            "grep",
+		"Read":            "read",
+		"Write":           "write",
+	} {
+		identity = parseClaudeToolIdentity(claudeName)
+		if identity.Kind != "agent_toolset" || identity.ToolName != configName {
+			t.Fatalf("identity for %s = %+v, want config name %s", claudeName, identity, configName)
+		}
+	}
+
+	for _, claudeName := range []string{
+		"Task", "Agent", "CronCreate", "EnterPlanMode", "EnterWorktree", "ExitPlanMode", "ExitWorktree",
+		"NotebookEdit", "ScheduleWakeup", "Skill", "TaskOutput", "TaskStop", "TodoWrite",
+	} {
+		identity = parseClaudeToolIdentity(claudeName)
+		if identity.Kind != "unknown" || identity.ToolName != claudeName {
+			t.Fatalf("identity for retired tool %s = %+v, want unknown", claudeName, identity)
+		}
+	}
+}
+
+func TestResolveMCPToolPermissionForRuntimeNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		snapshot string
+		toolName string
+		want     resolvedToolPermission
+	}{
+		{
+			name:     "malformed permission configuration does not allow",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"enabled":"false","permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "empty tool suffix does not allow",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "unknown runtime server still asks",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__other_service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "colliding runtime names cannot use the exact name allow policy",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"enabled":false}},{"type":"mcp_toolset","mcp_server_name":"weather_service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "unconfigured server participates in collision detection",
+			snapshot: `{"mcp_servers":[{"name":"weather.service"},{"name":"weather_service"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"weather_service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "overlapping server prefixes cannot borrow a longer server policy",
+			snapshot: `{"mcp_servers":[{"name":"weather"},{"name":"weather..service"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"weather..service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather__service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "disabled dotted server tool overrides allow default",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","configs":[{"name":"delete_weather","enabled":false}],"default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__delete_weather",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name:     "dotted server tool ask overrides allow default",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","configs":[{"name":"get_weather","permission_policy":{"type":"always_ask"}}],"default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionAsk,
+		},
+		{
+			name:     "disabled dotted server default denies",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"enabled":false,"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionDeny,
+		},
+		{
+			name:     "dotted tunnel server default allows",
+			snapshot: `{"mcp_servers":[{"name":"tunnel_0123456789abcdef0123456789abcdef.main"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"tunnel_0123456789abcdef0123456789abcdef.main","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__tunnel_0123456789abcdef0123456789abcdef_main__echo",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name:     "dotted server tool allow overrides ask default",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","configs":[{"name":"get_weather","permission_policy":{"type":"always_allow"}}],"default_config":{"permission_policy":{"type":"always_ask"}}}]}`,
+			toolName: "mcp__weather_service__get_weather",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name:     "consecutive dots in server do not become the tool separator",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"tunnel_0123456789abcdef0123456789abcdef.internal..tools","configs":[{"name":"echo__text","permission_policy":{"type":"always_allow"}}]}]}`,
+			toolName: "mcp__tunnel_0123456789abcdef0123456789abcdef_internal__tools__echo__text",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name:     "leading dots do not hide the MCP server",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"..weather","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp____weather__get_weather",
+			want:     resolvedToolPermissionAllow,
+		},
+		{
+			name:     "unchanged worker name remains supported",
+			snapshot: `{"tools":[{"type":"mcp_toolset","mcp_server_name":"weather.service","default_config":{"permission_policy":{"type":"always_allow"}}}]}`,
+			toolName: "mcp__weather.service__get_weather",
+			want:     resolvedToolPermissionAllow,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, _ := resolveToolPermissionFromAgentSnapshot(json.RawMessage(tt.snapshot), tt.toolName)
+			if got != tt.want {
+				t.Fatalf("permission = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestToolPermissionPublicPayloadsUseCanonicalPublicID(t *testing.T) {
+	t.Parallel()
+
+	requestID := "request-weather"
+	payload := workerControlRequestPayload{
+		Request: workerPermissionRequest{
+			ToolName:  "mcp__weather_service__get_weather",
+			ToolUseID: "toolu_weather",
+			Input:     map[string]any{"location": "Beijing"},
+		},
+	}
+	request, publicPayloads, err := toolPermissionPublicPayloads(
+		"cse_test",
+		&payload,
+		EventMetadata{RequestID: &requestID},
+		parseClaudeToolIdentity(payload.Request.ToolName),
+		resolvedToolPermissionAsk,
+	)
+	if err != nil {
+		t.Fatalf("build public payloads: %v", err)
+	}
+	if len(publicPayloads) != 2 {
+		t.Fatalf("public payload count = %d, want 2", len(publicPayloads))
+	}
+	var toolEvent map[string]any
+	if err := json.Unmarshal(publicPayloads[0], &toolEvent); err != nil {
+		t.Fatalf("decode tool event: %v", err)
+	}
+	if toolEvent["id"] != request.PublicEventID || toolEvent["type"] != "agent.mcp_tool_use" || toolEvent["name"] != "get_weather" || toolEvent["evaluated_permission"] != "ask" {
+		t.Fatalf("canonical tool event = %#v", toolEvent)
+	}
+	for _, privateField := range []string{"content", "message", "tool_use_id", "request_id", "requires_action_details"} {
+		if _, ok := toolEvent[privateField]; ok {
+			t.Fatalf("canonical tool event leaked %s: %#v", privateField, toolEvent)
+		}
+	}
+	var statusEvent map[string]any
+	if err := json.Unmarshal(publicPayloads[1], &statusEvent); err != nil {
+		t.Fatalf("decode status event: %v", err)
+	}
+	stopReason, _ := statusEvent["stop_reason"].(map[string]any)
+	eventIDs, _ := stopReason["event_ids"].([]any)
+	if len(eventIDs) != 1 || eventIDs[0] != request.PublicEventID {
+		t.Fatalf("stop_reason.event_ids = %#v, want [%s]", eventIDs, request.PublicEventID)
+	}
+	if _, ok := statusEvent["requires_action_details"]; ok {
+		t.Fatalf("status event leaked private action details: %#v", statusEvent)
 	}
 }

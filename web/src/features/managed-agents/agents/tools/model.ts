@@ -41,6 +41,13 @@ export type McpDirectoryServer = {
   url?: string;
   iconUrl?: string;
   toolNames: string[];
+  source?: 'directory' | 'tunnel';
+  group?: string;
+  tunnel?: {
+    id: string;
+    connectionState: 'connected' | 'disconnected' | 'unknown';
+    channels: string[];
+  };
 };
 
 type ResolvedMcpServer = Omit<McpDirectoryServer, 'url'> & {
@@ -55,27 +62,28 @@ export const BUILT_IN_AGENT_TOOLSETS: Record<string, BuiltInAgentTool[]> = {
     { name: 'edit', description: 'String replacement in files' },
     { name: 'glob', description: 'File pattern matching' },
     { name: 'grep', description: 'Text search with regex' },
+    { name: 'web_fetch', description: 'Fetch URL content' },
+    { name: 'web_search', description: 'Search the web and return sources' },
+    { name: 'ask_user_question', description: 'Ask the user a structured question' },
   ],
 };
 
 export function builtInAgentToolDescription(tool: BuiltInAgentTool, msg: I18nMsg) {
-  switch (tool.name) {
-    case 'bash':
-      return msg('managedAgents.agents.createDialog.builtInTool.bash', tool.description);
-    case 'read':
-      return msg('managedAgents.agents.createDialog.builtInTool.read', tool.description);
-    case 'write':
-      return msg('managedAgents.agents.createDialog.builtInTool.write', tool.description);
-    case 'edit':
-      return msg('managedAgents.agents.createDialog.builtInTool.edit', tool.description);
-    case 'glob':
-      return msg('managedAgents.agents.createDialog.builtInTool.glob', tool.description);
-    case 'grep':
-      return msg('managedAgents.agents.createDialog.builtInTool.grep', tool.description);
-    default:
-      return tool.description;
-  }
+  const key = BUILT_IN_TOOL_DESCRIPTION_KEYS[tool.name];
+  return key ? msg(key, tool.description) : tool.description;
 }
+
+const BUILT_IN_TOOL_DESCRIPTION_KEYS: Record<string, string> = {
+  ask_user_question: 'managedAgents.agents.createDialog.builtInTool.askUserQuestion',
+  bash: 'managedAgents.agents.createDialog.builtInTool.bash',
+  edit: 'managedAgents.agents.createDialog.builtInTool.edit',
+  glob: 'managedAgents.agents.createDialog.builtInTool.glob',
+  grep: 'managedAgents.agents.createDialog.builtInTool.grep',
+  read: 'managedAgents.agents.createDialog.builtInTool.read',
+  web_fetch: 'managedAgents.agents.createDialog.builtInTool.webFetch',
+  web_search: 'managedAgents.agents.createDialog.builtInTool.webSearch',
+  write: 'managedAgents.agents.createDialog.builtInTool.write',
+};
 
 const CURRENT_BUILT_IN_TOOLSET = 'agent_toolset_20260401';
 
@@ -225,6 +233,32 @@ export function aggregateToolPermissions(
   return new Set(permissions).size === 1 ? permissions[0] : 'custom';
 }
 
+export function configuredAgentToolPermission(
+  agent: AgentApiResponse,
+  runtimeToolName: string,
+): Exclude<ToolPermissionState, 'custom'> | undefined {
+  const tools = arrayRecords(agent.tools);
+  const normalizedName = normalizeRuntimeToolName(runtimeToolName);
+  const builtInToolset = tools.find((tool) => stringValue(tool.type).startsWith('agent_toolset_'));
+  const builtInDefinitions = BUILT_IN_AGENT_TOOLSETS[CURRENT_BUILT_IN_TOOLSET];
+  if (builtInToolset && builtInDefinitions.some((tool) => tool.name === normalizedName)) {
+    return toolPermissionForName(builtInToolset, normalizedName, true, 'always_allow');
+  }
+
+  for (const server of arrayRecords(agent.mcp_servers)) {
+    const serverName = stringValue(server.name);
+    const prefix = `mcp__${normalizeRuntimeToolName(serverName)}__`;
+    if (!serverName || !normalizedName.startsWith(prefix)) continue;
+    const toolName = normalizedName.slice(prefix.length);
+    const toolset = tools.find(
+      (tool) => tool.type === 'mcp_toolset' && stringValue(tool.mcp_server_name) === serverName,
+    );
+    return toolPermissionForName(toolset, toolName, false, 'always_ask');
+  }
+
+  return undefined;
+}
+
 export function buildAgentToolDisplayCards(
   agent: AgentApiResponse,
   directoryServers: McpDirectoryServer[] = [],
@@ -367,30 +401,43 @@ function toolPermissionForName(
     return fallback;
   }
   // 与运行时保持 first-wins：按配置顺序取首个同名项。内置工具兼容 legacy tool_name，
-  // MCP 只匹配 name；未命中时再使用 default_config。
+  // MCP 只匹配 name。内置 ask_user_question 未配置时与运行时一样 deny，不回落 default_config。
   const override = arrayRecords(toolset.configs).find(
     (config) => (stringValue(config.name) || (allowLegacyToolName ? stringValue(config.tool_name) : '')) === toolName,
   );
-  return effectiveToolPermission(override ?? optionalRecordValue(toolset.default_config), fallback);
+  if (override) {
+    return effectiveToolPermission(override, fallback);
+  }
+  if (allowLegacyToolName && toolName === 'ask_user_question') {
+    return 'always_deny';
+  }
+  return effectiveToolPermission(optionalRecordValue(toolset.default_config), fallback);
+}
+
+export function normalizeRuntimeToolName(value: string) {
+  return value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase();
 }
 
 function resolveMcpServer(name: string, url: string, directoryServers: McpDirectoryServer[]): ResolvedMcpServer {
-  if (name.startsWith('tunnel:')) {
-    return {
-      slug: name,
-      displayName: urlHost(url) || name.slice('tunnel:'.length),
-      url,
-      toolNames: [],
-    };
-  }
-
   const metadata =
-    directoryServers.find((server) => server.slug === name) ??
-    FALLBACK_MCP_SERVERS.find((server) => server.slug === name);
+    directoryServers.find((server) => server.slug === name && server.url === url) ??
+    FALLBACK_MCP_SERVERS.find((server) => server.slug === name && server.url === url);
   // 展示元数据优先级：在线 Directory > 内置 GitHub/Slack fallback > 名称格式化；
   // 实际 URL 始终以当前 Agent 版本配置为准。
   if (metadata) {
     return { ...metadata, slug: name, url };
+  }
+  if (name.startsWith('tunnel_')) {
+    return {
+      slug: name,
+      displayName: urlHost(url) || name.slice('tunnel_'.length),
+      url,
+      toolNames: [],
+    };
   }
   return {
     slug: name,

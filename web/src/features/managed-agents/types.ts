@@ -8,6 +8,7 @@ export type ManagedAgentSection =
   | 'quickstart'
   | 'agents'
   | 'sessions'
+  | 'observability'
   | 'deployments'
   | 'environments'
   | 'credential-vaults'
@@ -35,8 +36,6 @@ export type AgentTemplate = {
 
 export type CodeFormat = 'YAML' | 'JSON';
 
-export type IntegrationSnippetLanguage = 'cli' | 'python' | 'typescript' | 'curl';
-
 export type AgentPanelTab = 'config' | 'preview';
 
 export type AgentApiResponse = {
@@ -60,9 +59,10 @@ export type AgentApiResponse = {
 export type AgentPageResponse = {
   data: AgentApiResponse[];
   next_page: string | null;
+  total_count?: number;
 };
 
-export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability';
+export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability' | 'channels';
 
 export type AgentDetailVersionFilter = number | null;
 
@@ -126,12 +126,13 @@ export type AgentUpdateInput = {
   multiagent: unknown | null;
 };
 
-export type ManagedEntitySection = Exclude<ManagedAgentSection, 'quickstart' | 'agents' | 'dreams'>;
+export type ManagedEntitySection = Exclude<ManagedAgentSection, 'quickstart' | 'agents' | 'dreams' | 'observability'>;
 
 export type PageResponse<T> = {
   data: T[];
   next_page: string | null;
   prefixes?: unknown[];
+  total_count?: number;
 };
 
 export type PageCursor = string | null;
@@ -163,9 +164,11 @@ export type AgentSearchResponse = AgentPageResponse & {
 };
 
 export type SessionApiResponse = {
+  metadata?: Record<string, string>;
   id: string;
   agent: unknown;
   archived_at: string | null;
+  budget?: unknown;
   created_at: string;
   deployment_id?: string | null;
   environment_id: string;
@@ -183,6 +186,7 @@ export type DeploymentApiResponse = {
   id: string;
   agent: unknown;
   archived_at: string | null;
+  budget?: unknown;
   created_at: string;
   description?: string | null;
   environment_id: string;
@@ -198,6 +202,7 @@ export type DeploymentApiResponse = {
 };
 
 export type EnvironmentApiResponse = {
+  metadata?: Record<string, string>;
   id: string;
   archived_at: string | null;
   config: unknown;
@@ -299,6 +304,8 @@ export type EnvironmentWorkApiResponse = {
 };
 
 export type SessionResourceApiResponse = {
+  name?: string;
+  memory_store_id?: string;
   id?: string;
   created_at?: string;
   file_id?: string;
@@ -318,8 +325,18 @@ export type FileMetadataApiResponse = {
   type: 'file';
 };
 
+export type FileMetadataPageResponse = {
+  data: FileMetadataApiResponse[];
+  first_id?: string | null;
+  has_more: boolean;
+  last_id?: string | null;
+};
+
+export type SessionThreadAgentSnapshot = Partial<Pick<AgentApiResponse, 'id' | 'name' | 'version' | 'model'>>;
+
 export type SessionThreadApiResponse = {
   id: string;
+  agent?: SessionThreadAgentSnapshot;
   archived_at?: string | null;
   created_at: string;
   parent_thread_id?: string | null;
@@ -329,11 +346,19 @@ export type SessionThreadApiResponse = {
 
 export type QuickstartSessionEvent = Record<string, unknown>;
 
+export type SessionToolConfirmationInput = {
+  toolUseId: string;
+  result: 'allow' | 'deny';
+  denyMessage?: string | null;
+  answers?: Record<string, unknown>;
+  customTool?: boolean;
+  sessionThreadId?: string;
+};
+
 export type SessionDetailEventCache = {
   events: QuickstartSessionEvent[];
   syncedThrough: PageCursor;
   historyComplete: boolean;
-  sawTerminated: boolean;
 };
 
 export type SessionDetailDeltaFrame = {
@@ -376,16 +401,10 @@ export type SessionTraceFamily =
   | 'env'
   | 'span';
 
-export type SessionTraceFilterOption = {
-  value: string;
-  label: string;
-};
-
 export type SessionTraceBuildOptions = {
   platformTranscriptFiltering?: boolean;
+  interruptedModelRequestIds?: ReadonlySet<string>;
 };
-
-export type SessionDebugDetailTab = 'content' | 'deltas';
 
 export type SessionTraceEntry = {
   id: string;
@@ -403,6 +422,7 @@ export type SessionTraceEntry = {
   rawEventId: string;
   searchText: string;
   isError: boolean;
+  state?: SessionExecutionState;
 };
 
 export type DisplayEventType =
@@ -432,7 +452,6 @@ export type DisplayEvent = {
   label: string;
   content: string;
   event: QuickstartSessionEvent;
-  isQueued: boolean;
   isStreaming: boolean;
   isError: boolean;
   createdAtMs: number;
@@ -441,9 +460,20 @@ export type DisplayEvent = {
 };
 
 export type TranscriptEntryKind =
-  'idle_gap' | 'queued_boundary' | 'outcome' | 'tool_call' | 'tool_batch' | 'message' | 'status' | 'passthrough';
+  'idle_gap' | 'outcome' | 'tool_call' | 'tool_batch' | 'message' | 'status' | 'passthrough';
 
-export type ToolLifecycle = 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'denied';
+export type ToolLifecycle =
+  'running' | 'awaiting_approval' | 'awaiting_result' | 'completed' | 'failed' | 'denied' | 'interrupted';
+
+export type SessionExecutionState =
+  | ToolLifecycle
+  | 'stopping'
+  | 'stopped'
+  | 'queued'
+  | 'awaiting_action'
+  | 'budget_reached'
+  | 'rescheduled'
+  | 'terminated';
 
 export type BaseSessionEventEntry = {
   id: string;
@@ -458,23 +488,15 @@ export type BaseSessionEventEntry = {
   relativeTime: string;
   searchText: string;
   isError: boolean;
+  turnId?: string;
+  bracketOpen?: boolean;
+  bracketEndMs?: number;
 };
 
 export type IdleGapEntry = {
   id: string;
   kind: 'idle_gap';
   durationMs: number;
-  createdAtMs: number;
-  processedAtMs: number;
-  relativeTime: string;
-  searchText: string;
-  isError: false;
-};
-
-export type QueuedBoundaryEntry = {
-  id: string;
-  kind: 'queued_boundary';
-  count: number;
   createdAtMs: number;
   processedAtMs: number;
   relativeTime: string;
@@ -490,7 +512,7 @@ export type ToolCallEntry = BaseSessionEventEntry & {
   confirmationEvent?: QuickstartSessionEvent;
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   lifecycle: ToolLifecycle;
   bracketId: string;
   bracketStartMs?: number;
@@ -502,7 +524,7 @@ export type ToolBatchEntry = Omit<BaseSessionEventEntry, 'kind'> & {
   toolCounts: Array<{ name: string; count: number }>;
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   lifecycle: ToolLifecycle;
   bracketStartMs?: number;
 };
@@ -511,7 +533,7 @@ export type DisplayEventEntry = BaseSessionEventEntry & {
   kind: 'message' | 'status' | 'passthrough' | 'outcome' | 'debug';
   usage: SessionEventUsage;
   inferenceMs: number;
-  executionMs: number;
+  executionMs?: number;
   inProgress?: boolean;
   outcomeStatus?: string;
   outcomeIteration?: number;
@@ -525,6 +547,8 @@ export type ModelBracketTargetEntry = DisplayEventEntry | ToolCallEntry;
 export type ModelRequestBracket = {
   startId: string;
   startMs: number;
+  softEndMs?: number;
+  endMeta?: ModelRequestBracketMeta;
   entries: ModelBracketTargetEntry[];
 };
 
@@ -535,8 +559,16 @@ export type ModelRequestBracketMeta = {
   usage: SessionEventUsage;
 };
 
-export type SessionEventListEntry =
-  IdleGapEntry | QueuedBoundaryEntry | ToolCallEntry | ToolBatchEntry | DisplayEventEntry;
+export type SessionEventListEntry = IdleGapEntry | ToolCallEntry | ToolBatchEntry | DisplayEventEntry;
+
+export type MemoryAttachAccess = 'read_write' | 'read_only';
+
+export type MemoryAttachFormValue = {
+  memoryStoreId: string;
+  access: MemoryAttachAccess;
+  instructions: string;
+  mountPath?: string;
+};
 
 export type ManagedEntityFormValues = {
   name: string;
@@ -548,8 +580,22 @@ export type ManagedEntityFormValues = {
   cronExpression: string;
   timezone: string;
   vaultIds: string[];
-  memoryStoreIds: string[];
+  memoryAttaches: MemoryAttachFormValue[];
   fileResources: SessionFileResourceFormValue[];
+  gitResources: GitRepositoryResourceFormValue[];
+  originalResources: SessionResourceApiResponse[];
+  resourcesChanged: boolean;
+  /** Budget cap in USD dollars as typed; empty string means no budget. */
+  budgetUsd: string;
+  budgetChanged: boolean;
+};
+
+export type GitRepositoryResourceFormValue = {
+  url: string;
+  authorizationToken: string;
+  checkoutType: '' | 'branch' | 'commit';
+  checkoutValue: string;
+  mountPath: string;
 };
 
 export type SessionFileResourceFormValue = {
@@ -561,6 +607,8 @@ export type EntityOption = {
   id: string;
   label: string;
   secondary?: string;
+  /** Absolute created timestamp for vault pickers (CMA-aligned). */
+  createdAt?: string;
 };
 
 export type AgentModelInput =
@@ -580,10 +628,24 @@ export type SelfAgentReferenceInput = {
   type: 'self';
 };
 
-export type AgentMultiagentInput = {
-  type: 'coordinator';
-  agents: Array<AgentReferenceInput | SelfAgentReferenceInput>;
-};
+export type SubagentReference = AgentReferenceInput | SelfAgentReferenceInput;
+
+export type AgentDelegationInput =
+  | { type: 'disabled' }
+  | {
+      type: 'enabled';
+      inline_agents?: { type: 'enabled' | 'disabled' };
+      predefined_agents?: SubagentReference[];
+    };
+
+export type AgentMultiagentInput =
+  | { type: 'coordinator'; agents: SubagentReference[] }
+  | {
+      type: 'multiagent_20261001';
+      subagents?: AgentDelegationInput;
+      workflows?: AgentDelegationInput;
+      advisor?: { type: 'disabled' } | { type: 'enabled'; model: string };
+    };
 
 export type AgentSkillInput = {
   type: 'anthropic' | 'custom';
@@ -605,73 +667,28 @@ export type CreateAgentInput = {
 
 export type AgentEditConfig = z.infer<typeof agentEditConfigSchema>;
 
-export type QuickstartToolStatus = 'running' | 'awaiting_user' | 'completed' | 'failed';
-
-export type QuickstartToolCall = {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-  status: QuickstartToolStatus;
-  result?: string;
-  error?: string;
-};
-
-export type QuickstartChatItem =
-  | {
-      id: string;
-      type: 'message';
-      role: 'user' | 'assistant';
-      content: string;
-    }
-  | {
-      id: string;
-      type: 'create_agent_result';
-      agentConfig: CreateAgentInput;
-    }
-  | {
-      id: string;
-      type: 'status';
-      content: string;
-      tone?: 'muted' | 'success' | 'error';
-    }
-  | {
-      id: string;
-      type: 'tool';
-      call: QuickstartToolCall;
-    };
-
-export type QuickstartToolExecutionResult = {
-  content: string;
-  isError?: boolean;
-};
-
-export type QuickstartEnvironmentConfig = {
-  type?: string;
-  networking?: Record<string, unknown>;
-  [key: string]: unknown;
-};
-
-export type QuickstartCreateEnvironmentInput = {
-  reuse_environment_id?: string;
-  name?: string;
-  description?: string;
-  config?: QuickstartEnvironmentConfig;
-};
-
-export type QuickstartDeploymentInput = {
-  name?: string;
-  cron_expression?: string;
-  timezone?: string;
-  initial_message?: string;
-};
+export type CredentialTokenEndpointAuthType = 'none' | 'client_secret_post' | 'client_secret_basic';
 
 export type CredentialFormValues = {
   displayName: string;
-  authType: 'static_bearer' | 'environment_variable';
+  /** Empty until the user picks a type in the create dialog (CMA progressive form). */
+  authType: '' | 'static_bearer' | 'environment_variable' | 'mcp_oauth';
   mcpServerUrl: string;
   token: string;
   secretName: string;
   secretValue: string;
+  /** Environment variable credential networking (CMA limited / unrestricted). */
+  networkType: 'limited' | 'unrestricted';
+  allowedHostsText: string;
+  injectHeader: boolean;
+  injectBody: boolean;
+  refreshToken: string;
+  refreshTokenEndpoint: string;
+  refreshClientId: string;
+  refreshClientSecret: string;
+  refreshAuthType: CredentialTokenEndpointAuthType;
+  oauthClientId: string;
+  oauthClientSecret: string;
 };
 
 export type MemoryFormValues = {
@@ -680,18 +697,12 @@ export type MemoryFormValues = {
 };
 
 export type QuickstartQuestion = {
+  id?: string;
   header: string;
   question: string;
   multiSelect: boolean;
   options: Array<{ label: string; description: string }>;
 };
-
-export type TranscriptMarkdownBlock =
-  | { type: 'paragraph'; text: string }
-  | { type: 'heading'; level: number; text: string }
-  | { type: 'list'; items: string[] }
-  | { type: 'table'; headers: string[]; rows: string[][] }
-  | { type: 'code'; language?: string; value: string };
 
 export type SessionThreadHint = { id: string; name: string };
 
@@ -699,7 +710,7 @@ export type HighlightLanguage =
   'bash' | 'bash-yaml' | 'javascript' | 'json' | 'plaintext' | 'python' | 'typescript' | 'yaml';
 
 export type ResourceConfig = {
-  section: Exclude<ManagedAgentSection, 'quickstart' | 'dreams'>;
+  section: Exclude<ManagedAgentSection, 'quickstart' | 'dreams' | 'observability'>;
   title: string;
   description: string;
   createLabel?: string;
@@ -709,59 +720,63 @@ export type ResourceConfig = {
   columns: string[];
   emptyTitle: string;
   emptyBody?: string;
-  emptyAction?: string;
   emptyIcon: IconComponent;
   rows?: Array<Record<string, ReactNode>>;
 };
 
 export type EventsTabProps = {
+  emptyState?: ReactNode;
   activeLane: string;
   archivedLaneCount: number;
   childLoading: boolean;
   composer?: ReactNode;
-  copyPayload: string;
-  detailPanelRef: RefObject<HTMLDivElement | null>;
   entries: SessionEventListEntry[];
   events: QuickstartSessionEvent[];
   filteredEntries: SessionEventListEntry[];
-  filterOptions: SessionTraceFilterOption[];
   hasFilter: boolean;
+  hoveredEventId: string | null;
+  inspector: ReactNode;
+  inspectorOpen: boolean;
   isMultiAgent: boolean;
   lanes: SessionDetailLane[];
+  openModelRequest: QuickstartSessionEvent | null;
+  pendingAction?: ReactNode;
+  outputFiles?: (children: ReactNode) => ReactNode;
   onClearFilters: () => void;
   onCopyAll: () => void;
-  onDetailTabChange: (tab: SessionDebugDetailTab) => void;
-  onOpenDeltas: (entryId: string) => void;
+  onCloseInspector: () => void;
+  onHoverEvent: (entryId: string | null) => void;
+  onOpenInspector: () => void;
   onQueryChange: (value: string) => void;
   onSelectEntry: (entryId: string | null) => void;
   onSelectLane: (laneId: string, targetEntryId?: string | null) => void;
   onThreadClick: (threadId: string, processedAtMs: number, eventType: string) => void;
-  onSelectedTypesChange: (types: string[]) => void;
   onTimelineSeek: (entryId: string | null) => void;
   onToggleArchivedLanes: (nextPressed: boolean) => void;
-  onViewChange: (view: SessionTraceView) => void;
   query: string;
   scrollerRef: RefObject<HTMLDivElement | null>;
   selectedEntry: SessionEventListEntry | null;
-  selectedDetailTab: SessionDebugDetailTab;
   selectedEntryId: string | null;
-  selectedTypes: string[];
+  sentMessageVersion: number;
   showArchivedLanes: boolean;
   suppressScrollSeekUntilRef: MutableRefObject<number>;
   threadNameById: Map<string, string>;
   timeline: SessionTimelineLane[];
   timelineVisibleIds?: Set<string>;
-  view: SessionTraceView;
+  traceStartMs: number;
 };
 
 export type SessionDetailSummaryChip = {
   key: string;
   icon: IconComponent;
+  copyValue?: string;
+  tooltip?: string;
   value: string;
 };
 
 export type SessionDetailLane = {
   id: string;
+  agent?: SessionThreadAgentSnapshot;
   label: string;
   group?: string;
   archived?: boolean;
@@ -789,6 +804,11 @@ export type SessionTimelineItem = {
   relativeTime: string;
   processedAtMs: number;
   durationMs: number;
+  open?: boolean;
+  threadMessage?: {
+    direction: 'sent' | 'received';
+    laneId: string;
+  };
 };
 
 export type SessionTimelineTick = SessionTimelineItem & {
@@ -803,13 +823,6 @@ export type TimelinePickOptions = {
   includeIdle?: boolean;
   maxDistancePct?: number;
   visibleIds?: Set<string>;
-};
-
-export type LaneTabGroup = {
-  key: string;
-  label: string;
-  lanes: SessionDetailLane[];
-  collapsed: boolean;
 };
 
 export type EnvironmentPackageRow = {
@@ -831,4 +844,9 @@ export type EnvironmentEditValues = {
   allowedHostsText: string;
   packages: EnvironmentPackageRow[];
   metadataRows: EnvironmentMetadataRow[];
+  initScript: string;
+  environmentRows: EnvironmentMetadataRow[];
+  resources: EnvironmentResourceValues;
 };
+
+export type EnvironmentResourceValues = { cpu: string; memory: string; disk: string };

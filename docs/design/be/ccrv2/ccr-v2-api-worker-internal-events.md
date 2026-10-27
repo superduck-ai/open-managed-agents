@@ -355,3 +355,12 @@ and e.code_session_external_id = :code_session_external_id
 1. 当前幂等实现先查重再批量插入，没有使用 `insert ... on conflict do nothing`。由于事务持有 code session 行锁，同一 code session 的并发 append 已串行化，正确性不依赖数据库 conflict retry。
 2. GET 的 compaction 查询先在 scoped CTE 内计算边界，再做 cursor/limit 分页。它优先保证语义清晰；如果 internal event 历史非常大，可以后续将 compaction boundary 查询拆成更窄的索引查找。
 3. `created_at` 当前由 append 批次统一设置，同一批事件可能拥有相同时间戳；对外顺序以 `sequence_num` 为准。
+
+
+## 11. 生命周期与历史保留
+
+[私有 transcript 归档](../transcript-archive.md) 默认关闭，不改变 GET、cursor、500 条分页、compaction 边界或 epoch 围栏。模式 A 仅归档各 foreground/agent_id scope 最近 compaction 之前且至少 7 天的历史，边界本身与之后事件保留；没有 compaction 的 scope 不处理。新的 compaction 前移不会使已归档历史重新可达，恢复仍只读取既有 ListPage，不透明读取对象存储历史段。
+
+模式 B 仅处理 archived_at/deleted_at 已满静置期、同一父 session 下所有 code session 均 idle 且无有效 lease 的会话。terminated 可以翻回 running，沙箱 idle_timeout 回收后仍可唤醒，两者都不能触发整份归档。archive/delete API 写事务不执行归档，独立 River sweep 同时覆盖上线前已删除但遗留的私有 transcript。
+
+归档按 pending → 上传 → 回读校验 → attached → 分批软删除执行，观察期后由独立开关控制物理删除。原 payload_hash 仅保留为 worker 审计与幂等元数据，不能与 JSONB 读回字节重新计算比较。维护人员可用 CLI 导出完整历史或还原回 PG；不新增 /v1 路由，不修改公开 session_events、SSE 或 NATS。

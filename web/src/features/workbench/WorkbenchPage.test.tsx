@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { resetTestDom } from '../../test/setup';
+import { I18nProvider, type Locale } from '../../shared/i18n';
 
 const testingLibrary = await import('@testing-library/react');
 const { WorkbenchPage } = await import('./WorkbenchPage');
@@ -45,6 +46,84 @@ describe('WorkbenchPage', () => {
     expect(screen.getByRole('heading', { name: 'Response' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Create New Prompt' })).toBeNull();
     expect(document.body.textContent).not.toContain('Show Ideal Outputs');
+  });
+
+  test('localizes editor controls and the prompt menu without changing prompt content', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    const api = mockWorkbenchApi({ initialPromptText: 'Keep this user content unchanged.' });
+    renderWorkbench({ locale: 'zh-CN' });
+
+    expect(await screen.findByRole('button', { name: '查看代码' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '提示词', exact: true })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '评估' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '运行 ⌘ + ⏎' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '模型设置' })).toBeTruthy();
+    expect(screen.getByText('示例')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '用户', exact: true })).toBeTruthy();
+    expect((screen.getByLabelText('用户提示词 1') as HTMLTextAreaElement).value).toBe(
+      'Keep this user content unchanged.',
+    );
+    expect(screen.getByText('运行提示词后查看回复')).toBeTruthy();
+    expect(screen.getByText(/^上次保存于 /)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('展开系统提示词'));
+    expect(screen.getByLabelText('系统提示词')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '收起系统提示词' }));
+    fireEvent.click(screen.getByRole('button', { name: '提示词设置' }));
+    const menu = screen.getByRole('menu');
+    for (const name of ['重命名提示词', '保存', '版本历史', '创建副本', '分享', '删除']) {
+      expect(within(menu).getByRole('menuitem', { name, exact: true })).toBeTruthy();
+    }
+    expect(
+      api.requests.some(
+        (request) => request.method === 'POST' || request.method === 'PUT' || request.method === 'DELETE',
+      ),
+    ).toBe(false);
+  });
+
+  test('localizes model, variables and tool drawers while preserving parameter values and schema', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    const api = mockWorkbenchApi({ initialPromptText: 'Keep the prompt unchanged.' });
+    renderWorkbench({ locale: 'zh-CN' });
+    fireEvent.click(await screen.findByRole('button', { name: '模型设置', exact: true }));
+    const model = screen.getByRole('dialog', { name: '模型设置' });
+    expect(within(model).getByRole('slider', { name: '最大输出 Token' }).getAttribute('aria-valuenow')).toBe('20000');
+    expect(within(model).getByRole('radio', { name: '开启' }).getAttribute('aria-checked')).toBe('true');
+    expect(within(model).getByRole('radio', { name: '自适应' })).toBeTruthy();
+    fireEvent.click(within(model).getByRole('combobox', { name: '思考强度' }));
+    const effortSearch = screen.getByRole('combobox', { name: '搜索选项...' });
+    fireEvent.change(effortSearch, { target: { value: '最高' } });
+    expect(screen.getByRole('option', { name: '最高', exact: true })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: '低', exact: true })).toBeNull();
+    fireEvent.keyDown(effortSearch, { key: 'Escape' });
+    expect(screen.getByRole('dialog', { name: '模型设置' })).toBe(model);
+    fireEvent.click(screen.getByRole('button', { name: '变量', exact: true }));
+    const variables = screen.getByRole('dialog', { name: '变量' });
+    expect(within(variables).getByRole('heading', { name: '暂无变量' })).toBeTruthy();
+    expect(variables.textContent).toContain('{{variable_name}}');
+    fireEvent.click(screen.getByRole('button', { name: '工具', exact: true }));
+    const tools = screen.getByRole('dialog', { name: '工具' });
+    expect(within(tools).getByRole('heading', { name: '暂无工具' })).toBeTruthy();
+    fireEvent.click(within(tools).getByRole('button', { name: '自定义工具', exact: true }));
+    expect(document.activeElement).toBe(within(tools).getByRole('textbox', { name: '名称', exact: true }));
+    const schema = within(tools).getByLabelText('输入参数 Schema') as HTMLTextAreaElement;
+    expect(JSON.parse(schema.value).required).toEqual(['location']);
+    expect(within(tools).getByRole('button', { name: '添加工具', exact: true }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(within(tools).getByRole('button', { name: '取消', exact: true }));
+    fireEvent.click(within(tools).getByRole('button', { name: '网页搜索', exact: true }));
+    fireEvent.click(within(tools).getByRole('combobox', { name: '搜索范围' }));
+    const restrictionSearch = screen.getByRole('combobox', { name: '搜索选项...' });
+    fireEvent.change(restrictionSearch, { target: { value: '排除' } });
+    expect(screen.getByRole('option', { name: /排除指定域名/ })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /仅允许指定域名/ })).toBeNull();
+    fireEvent.keyDown(restrictionSearch, { key: 'Escape' });
+    fireEvent.click(within(tools).getByRole('button', { name: '取消', exact: true }));
+    expect(within(tools).getByRole('heading', { name: '暂无工具' })).toBeTruthy();
+    expect((screen.getByLabelText('用户提示词 1') as HTMLTextAreaElement).value).toBe('Keep the prompt unchanged.');
+    expect(
+      api.requests.some(
+        (request) => request.method === 'POST' || request.method === 'PUT' || request.method === 'DELETE',
+      ),
+    ).toBe(false);
   });
 
   test('routes bare Workbench to the most recent prompt created by the current user in the current workspace', async () => {
@@ -137,7 +216,7 @@ describe('WorkbenchPage', () => {
         ...defaultAuthAccount(),
         memberships: [
           {
-            role: 'developer',
+            role: 'user',
             seat_tier: 'enterprise_standard',
             organization: {
               uuid: 'org_test',
@@ -192,7 +271,7 @@ describe('WorkbenchPage', () => {
   test('tells non-administrators to contact an administrator when no provider exists', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
     mockWorkbenchApi({ modelsNotConfigured: true });
-    renderWorkbench({ auth: authContextValue(defaultAuthAccount('developer')) });
+    renderWorkbench({ auth: authContextValue(defaultAuthAccount('user')) });
 
     const emptyState = await screen.findByTestId('llm-provider-required');
     expect(emptyState.textContent).toContain('Contact your organization administrator to configure a model.');
@@ -307,8 +386,68 @@ describe('WorkbenchPage', () => {
     );
     expect(within(panel).getByRole('button', { name: 'Run ⌘ + ⏎' })).toBeTruthy();
 
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByLabelText('Model')).toBeNull();
+    fireEvent.keyDown(panel, { key: 'Escape', code: 'Escape' });
+    await waitFor(() => expect(screen.queryByLabelText('Model')).toBeNull());
+  });
+
+  for (const action of ['close', 'escape']) {
+    test(`keeps a tool draft during ${action} exit and applies its existing reopen behavior`, async () => {
+      resetTestDom('https://oma.duck.ai/workbench');
+      const api = mockWorkbenchApi();
+      renderWorkbench();
+      fireEvent.click(await screen.findByRole('button', { name: 'Tools', exact: true }));
+      const panel = await screen.findByRole('dialog', { name: 'Tools', exact: true });
+      fireEvent.click(within(panel).getByRole('button', { name: 'Custom', exact: true }));
+      const name = within(panel).getByRole('textbox', { name: 'Name', exact: true });
+      fireEvent.change(name, { target: { value: 'Unsaved tool' } });
+      let finishExit = () => {};
+      const exit = new Promise<void>((resolve) => {
+        finishExit = resolve;
+      });
+      Object.defineProperty(panel, 'getAnimations', {
+        configurable: true,
+        value: () => (panel.hasAttribute('data-ending-style') ? [{ finished: exit }] : []),
+      });
+      if (action === 'escape') fireEvent.keyDown(name, { key: 'Escape', code: 'Escape' });
+      else fireEvent.click(within(panel).getByRole('button', { name: 'Close', exact: true }));
+      await waitFor(() => expect(panel.hasAttribute('data-ending-style')).toBe(true));
+      expect(name).toHaveProperty('value', 'Unsaved tool');
+      expect(panel.isConnected).toBe(true);
+      await act(async () => finishExit());
+      await waitFor(() => expect(panel.isConnected).toBe(false));
+      fireEvent.click(screen.getByRole('button', { name: 'Tools', exact: true }));
+      const reopened = await screen.findByRole('dialog', { name: 'Tools', exact: true });
+      if (action === 'escape') expect(within(reopened).getByRole('heading', { name: 'No tools defined' })).toBeTruthy();
+      else
+        expect(within(reopened).getByRole('textbox', { name: 'Name', exact: true })).toHaveProperty(
+          'value',
+          'Unsaved tool',
+        );
+      expect(api.requests.some((request) => request.method !== 'GET')).toBe(false);
+    });
+  }
+
+  test('switching drawers during exit cannot close the newly opened drawer', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    mockWorkbenchApi();
+    renderWorkbench();
+    fireEvent.click(await screen.findByRole('button', { name: 'Model settings', exact: true }));
+    const panel = await screen.findByRole('dialog', { name: 'Model', exact: true });
+    let finishExit = () => {};
+    const exit = new Promise<void>((resolve) => {
+      finishExit = resolve;
+    });
+    Object.defineProperty(panel, 'getAnimations', {
+      configurable: true,
+      value: () => (panel.hasAttribute('data-ending-style') ? [{ finished: exit }] : []),
+    });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close', exact: true }));
+    await waitFor(() => expect(panel.hasAttribute('data-ending-style')).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Variables', exact: true }));
+    const variables = await screen.findByRole('dialog', { name: 'Test Case', exact: true });
+    await act(async () => finishExit());
+    expect(variables.isConnected).toBe(true);
+    expect(within(variables).getByRole('heading', { name: 'No variables' })).toBeTruthy();
   });
 
   test('opens the official-style tools panel and custom tool form', async () => {
@@ -365,15 +504,13 @@ describe('WorkbenchPage', () => {
     fireEvent.click(within(panel).getByRole('button', { name: 'Web search' }));
     await waitFor(() => expect(drawerBody.scrollTop).toBe(0));
     expect(within(panel).getByRole('heading', { name: 'Web search' })).toBeTruthy();
-    expect(
-      within(panel).getByText('Allow Claude to search the web and cite those results in its responses.'),
-    ).toBeTruthy();
+    expect(within(panel).queryByText('Search the web and cite sources.')).toBeNull();
     const restrictionSelect = within(panel).getByRole('combobox', { name: 'Search restrictions' });
     expect(restrictionSelect.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(restrictionSelect);
-    expect(screen.getByRole('option', { name: 'Allow domains Only search allowed domains' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'None Search any domain' }).getAttribute('aria-selected')).toBe('true');
-    selectOption('Allow domains Only search allowed domains');
+    expect(screen.getByRole('option', { name: 'Allow domains' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'None' }).getAttribute('aria-selected')).toBe('true');
+    selectOption('Allow domains');
     await waitFor(() =>
       expect(within(panel).getByRole('combobox', { name: 'Search restrictions' }).textContent).toContain(
         'Allow domains',
@@ -418,7 +555,7 @@ describe('WorkbenchPage', () => {
     fireEvent.click(within(panel).getByRole('button', { name: 'Edit Web search' }));
     expect(within(panel).getByRole('combobox', { name: 'Search restrictions' }).textContent).toContain('None');
     fireEvent.click(within(panel).getByRole('combobox', { name: 'Search restrictions' }));
-    selectOption('Blocked domains Do not search blocked domains');
+    selectOption('Blocked domains');
     await waitFor(() =>
       expect(within(panel).getByRole('combobox', { name: 'Search restrictions' }).textContent).toContain(
         'Blocked domains',
@@ -459,7 +596,7 @@ describe('WorkbenchPage', () => {
     expect(panel).toBeTruthy();
     fireEvent.click(within(panel).getByRole('button', { name: 'Web search' }));
     fireEvent.click(within(panel).getByRole('combobox', { name: 'Search restrictions' }));
-    selectOption('Allow domains Only search allowed domains');
+    selectOption('Allow domains');
     await waitFor(() =>
       expect(within(panel).getByRole('combobox', { name: 'Search restrictions' }).textContent).toContain(
         'Allow domains',
@@ -610,7 +747,7 @@ describe('WorkbenchPage', () => {
     });
     expect(messageCard.classList.contains('is-drag-over')).toBe(true);
     expect(screen.getByText('Drop here to insert into user message')).toBeTruthy();
-    expect(screen.getByText('Max 100 files at 20MB each')).toBeTruthy();
+    expect(screen.getByText('Upload up to 100 files, 20MB per file.')).toBeTruthy();
 
     fireEvent.drop(messageCard, {
       dataTransfer: { types: ['Files'], files: [droppedFile] },
@@ -619,6 +756,49 @@ describe('WorkbenchPage', () => {
     expect(await screen.findByText('notes.txt')).toBeTruthy();
     expect(messageCard.classList.contains('is-drag-over')).toBe(false);
     expect(api.requests.filter((request) => request.url === '/v1/files?beta=true')).toHaveLength(1);
+  });
+
+  test('localizes the example form and keeps only one add action while preserving example content', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    mockWorkbenchApi({ initialPromptText: 'Summarize {{topic}}.', promptExamples: [] });
+    renderWorkbench({ locale: 'zh-CN' });
+    fireEvent.click(await screen.findByRole('button', { name: '添加示例以帮助模型理解任务' }));
+    const panel = screen.getByRole('dialog', { name: '示例' });
+    expect(within(panel).getByText('暂无示例')).toBeTruthy();
+    fireEvent.click(within(panel).getByRole('button', { name: '添加示例', exact: true }));
+    expect(within(panel).getAllByRole('button', { name: '添加示例', exact: true })).toHaveLength(1);
+    expect(within(panel).getByRole('button', { name: '生成示例' })).toBeTruthy();
+    const add = within(panel).getByRole('button', { name: '添加示例', exact: true });
+    expect(add.hasAttribute('disabled')).toBe(true);
+    fireEvent.change(within(panel).getByLabelText('{{topic}}'), { target: { value: '订单汇总' } });
+    fireEvent.change(within(panel).getByLabelText('期望输出'), { target: { value: '订单总计：42。' } });
+    fireEvent.click(within(panel).getByRole('button', { name: '添加上下文' }));
+    fireEvent.change(within(panel).getByLabelText('补充上下文'), { target: { value: '保留原始数值与引用。' } });
+    expect(add.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(add);
+    expect(within(panel).getByText('订单总计：42。')).toBeTruthy();
+    expect(within(panel).getByText('保留原始数值与引用。')).toBeTruthy();
+    expect(within(panel).getByRole('button', { name: '编辑示例 1' })).toBeTruthy();
+  });
+
+  test('localizes evaluation controls and keeps variable identifiers and test case values unchanged', async () => {
+    resetTestDom('https://oma.duck.ai/workbench/prompt_1?tab=evaluate');
+    mockWorkbenchApi({ initialPromptText: 'Summarize {{topic}}.' });
+    renderWorkbench({ locale: 'zh-CN' });
+    expect(await screen.findByRole('button', { name: '全部运行 ⌘ + ⏎' })).toBeTruthy();
+    expect(screen.getByText('暂无测试用例')).toBeTruthy();
+    fireEvent.click(screen.getByRole('switch', { name: '显示期望输出' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加行' }));
+    const variable = screen.getByLabelText('topic 第 1 行') as HTMLTextAreaElement;
+    const ideal = screen.getByLabelText('第 1 行期望输出') as HTMLTextAreaElement;
+    fireEvent.change(variable, { target: { value: '订单汇总' } });
+    fireEvent.change(ideal, { target: { value: '订单总计：42。' } });
+    expect(variable.value).toBe('订单汇总');
+    expect(ideal.value).toBe('订单总计：42。');
+    expect(screen.getByText('暂无输出')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '删除第 1 行' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '生成测试用例选项' }));
+    expect(screen.getByRole('menuitem', { name: '生成 5 个测试用例' })).toBeTruthy();
   });
 
   test('opens the official-style Examples panel and add-example form', async () => {
@@ -637,7 +817,7 @@ describe('WorkbenchPage', () => {
     expect(within(panel).getByRole('link', { name: 'Learn more' })).toBeTruthy();
 
     fireEvent.click(within(panel).getByRole('button', { name: 'Add example' }));
-    expect((within(panel).getByRole('button', { name: 'Add example' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(panel).queryByRole('button', { name: 'Add example', exact: true })).toBeNull();
     expect(within(panel).getByRole('heading', { name: 'Add example' })).toBeTruthy();
     expect(within(panel).getByRole('button', { name: 'Generate example' })).toBeTruthy();
     expect(within(panel).getByRole('textbox', { name: '{{animal}}' })).toBeTruthy();
@@ -750,7 +930,7 @@ describe('WorkbenchPage', () => {
 
     const dialog = screen.getByRole('dialog', { name: 'What would you like to improve?' });
     expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy();
-    expect(within(dialog).getByText('This takes 1-2 minutes and uses Claude Sonnet 4.5 credits')).toBeTruthy();
+    expect(within(dialog).getByText('Uses the selected model and may incur usage charges.')).toBeTruthy();
     const feedback = within(dialog).getByRole('textbox', {
       name: 'The more detailed the feedback, the more Claude will be able to help.',
     });
@@ -793,7 +973,8 @@ describe('WorkbenchPage', () => {
     const modelPanel = screen.getByLabelText('Model');
     fireEvent.click(within(modelPanel).getByRole('combobox', { name: 'claude-opus-4-8' }));
     fireEvent.click(screen.getByRole('option', { name: /claude-sonnet-4-6/i }));
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(modelPanel, { key: 'Escape', code: 'Escape' });
+    await waitFor(() => expect(document.querySelector('.workbench-drawer-panel.is-model')).toBeNull());
     expect(screen.getAllByRole('button', { name: 'Generate Prompt' })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Add message pair' }));
     expect(screen.getAllByRole('button', { name: 'Generate Prompt' })).toHaveLength(1);
@@ -825,9 +1006,6 @@ describe('WorkbenchPage', () => {
     })) as HTMLTextAreaElement;
     await waitFor(() => expect(generatedPromptTextarea.value).toBe(generatedPrompt));
     expect(within(dialog).getByRole('heading', { name: 'Variables' })).toBeTruthy();
-    expect(
-      within(dialog).getByText(/Variables are placeholder values that make your prompt flexible and reusable/),
-    ).toBeTruthy();
     expect(within(within(dialog).getByLabelText('Generated prompt variables')).getByText('{{topic}}')).toBeTruthy();
     expect((screen.getByLabelText('User prompt 1') as HTMLTextAreaElement).value).toBe('');
     const continueButton = within(dialog).getByRole('button', { name: 'Continue' }) as HTMLButtonElement;
@@ -997,6 +1175,56 @@ describe('WorkbenchPage', () => {
     await waitFor(() => expect(generatedPromptTextarea.value).toBe(generatedPrompt), { timeout: 3000 });
   });
 
+  test('localizes generator steps and clear confirmation while preserving preset task and generated text', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    const generated = 'Keep {{topic}} and this generated content.';
+    const api = mockWorkbenchApi({
+      initialPromptText: '',
+      generatedPromptText: `<Instructions>${generated}</Instructions>`,
+    });
+    renderWorkbench({ locale: 'zh-CN' });
+    const opener = await screen.findByRole('button', { name: '生成提示词' });
+    fireEvent.click(opener);
+    const dialog = await screen.findByRole('dialog', { name: '生成提示词' });
+    expect(within(dialog).getByRole('checkbox', { name: '用于开启思考的模型' })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: '文档摘要' }));
+    expect(within(dialog).getByRole('textbox', { name: '描述任务要求' })).toHaveProperty(
+      'value',
+      'Summarize documents into 10 bullet points max',
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: '更多示例' }));
+    expect(within(dialog).getByRole('button', { name: '商品推荐' })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: '生成', exact: true }));
+    const result = await within(dialog).findByRole('textbox', { name: '生成结果' });
+    await waitFor(() => expect(result).toHaveProperty('value', generated));
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: '继续' }).hasAttribute('disabled')).toBe(false),
+    );
+    expect(within(dialog).getByText('{{topic}}')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: '返回' }));
+    let confirm = await screen.findByRole('alertdialog', { name: '清除生成结果？' });
+    expect(within(confirm).getByText('返回后会清除当前生成结果。')).toBeTruthy();
+    fireEvent.click(within(confirm).getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(result).toHaveProperty('value', generated);
+    fireEvent.click(within(dialog).getByRole('button', { name: '返回' }));
+    confirm = await screen.findByRole('alertdialog', { name: '清除生成结果？' });
+    fireEvent.click(within(confirm).getByRole('button', { name: '清除结果' }));
+    await waitFor(() =>
+      expect(within(dialog).getByRole('textbox', { name: '描述任务要求' })).toHaveProperty(
+        'value',
+        'Summarize documents into 10 bullet points max',
+      ),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(opener);
+    expect(screen.getByRole('textbox', { name: '用户提示词 1' })).toHaveProperty('value', '');
+    const request = api.requests.find((item) => item.url.endsWith('/workbench/generate_prompt'));
+    expect(request?.body?.task).toBe('Summarize documents into 10 bullet points max');
+    expect(api.requests.some((item) => item.method === 'PUT' || item.method === 'DELETE')).toBe(false);
+  });
+
   test('selects Generate Prompt examples and expands the preset list', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
     mockWorkbenchApi({ initialPromptText: '' });
@@ -1048,36 +1276,43 @@ describe('WorkbenchPage', () => {
     expect(userPrompt.value).toBe('Draft a concise launch plan.');
   });
 
-  test('disables Generate Prompt when Workbench prompt generation is unavailable', async () => {
-    resetTestDom('https://oma.duck.ai/workbench');
-    mockWorkbenchApi({ initialPromptText: '' });
-    renderWorkbench({
-      auth: authContextValue({
-        ...defaultAuthAccount(),
-        memberships: [
-          {
-            role: 'developer',
-            seat_tier: 'enterprise_standard',
-            organization: {
-              uuid: 'org_test',
-              name: 'Claude Platform',
-              api_disabled_reason: 'out_of_credits',
-              settings: {
-                product_name: 'Claude Platform',
-                workbench: { enabled: true },
-              } as any,
+  for (const [reason, credits, expected] of [
+    ['policy_restriction', 100, "This organization's API is unavailable."],
+    ['policy_restriction', 0, "This organization's API is unavailable."],
+    ['out_of_credits', 100, 'Add credits to use the prompt generator.'],
+  ] as const) {
+    test(`disables prompt generation with the correct explanation for ${reason} and ${credits} credits`, async () => {
+      resetTestDom('https://oma.duck.ai/workbench');
+      const api = mockWorkbenchApi({ initialPromptText: '', prepaidCreditsAmount: credits });
+      renderWorkbench({
+        auth: authContextValue({
+          ...defaultAuthAccount(),
+          memberships: [
+            {
+              role: 'user',
+              seat_tier: 'enterprise_standard',
+              organization: {
+                uuid: 'org_test',
+                name: 'Claude Platform',
+                api_disabled_reason: reason,
+                settings: {
+                  product_name: 'Claude Platform',
+                  workbench: { enabled: true },
+                } as any,
+              },
             },
-          },
-        ],
-      }),
-    });
+          ],
+        }),
+      });
 
-    const button = (await screen.findByRole('button', { name: 'Generate Prompt' })) as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    expect(button.closest('[title]')?.getAttribute('title')).toBe('Get More credits to use the prompt generator');
-    fireEvent.click(button);
-    expect(screen.queryByRole('dialog', { name: 'Generate a prompt' })).toBeNull();
-  });
+      const button = (await screen.findByRole('button', { name: 'Generate Prompt' })) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(button.closest('[title]')?.getAttribute('title')).toBe(expected);
+      fireEvent.click(button);
+      expect(screen.queryByRole('dialog', { name: 'Generate a prompt' })).toBeNull();
+      expect(api.requests.some((request) => request.url.includes('/generate_prompt'))).toBe(false);
+    });
+  }
 
   test('shows official Improve prompt warnings for images and multi-turn prompts', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
@@ -1386,8 +1621,8 @@ describe('WorkbenchPage', () => {
     ).toEqual(['Rename prompt', 'Save', 'Version history', 'Make a copy', 'Share', 'Delete']);
     expect(within(menu).getByRole('menuitem', { name: 'Save' }).getAttribute('aria-disabled')).toBe('true');
     expect(menu.querySelector('[data-slot="dropdown-menu-separator"]')).toBeTruthy();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
 
     expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
     fireEvent.change(screen.getByLabelText('User prompt 1'), { target: { value: 'Updated complaint response.' } });
@@ -1465,6 +1700,77 @@ describe('WorkbenchPage', () => {
     expect(screen.getByRole('button', { name: 'Prompt settings' }).textContent).toContain('Renamed prompt');
   });
 
+  test('keeps history loading and request failures distinct from an empty history and retries', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    mockWorkbenchApi();
+    const baseFetch = globalThis.fetch;
+    let attempts = 0;
+    let release!: () => void;
+    const heldRequest = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    globalThis.fetch = mock(async (input, init) => {
+      if (String(input).endsWith('/workbench/prompts/prompt_1/revisions') && (!init?.method || init.method === 'GET')) {
+        attempts += 1;
+        if (attempts === 1) {
+          await heldRequest;
+          return jsonResponse({ error: { message: 'History unavailable' } }, 503);
+        }
+      }
+      return baseFetch(input, init);
+    });
+    renderWorkbench({ locale: 'zh-CN' });
+    fireEvent.click(await screen.findByRole('button', { name: '提示词设置' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '版本历史' }));
+    const panel = screen.getByRole('dialog', { name: '版本历史' });
+    expect(await within(panel).findByRole('status')).toBeTruthy();
+    expect(within(panel).queryByText('暂无已保存版本')).toBeNull();
+    await act(async () => release());
+    expect((await within(panel).findByRole('alert')).textContent).toContain('版本历史加载失败');
+    expect(within(panel).queryByText('暂无已保存版本')).toBeNull();
+    fireEvent.click(within(panel).getByRole('button', { name: '重试' }));
+    expect(await within(panel).findByText('未命名版本')).toBeTruthy();
+    expect(within(panel).queryByRole('alert')).toBeNull();
+    expect(attempts).toBe(2);
+  });
+
+  test('localizes prompt metadata and history fallbacks while preserving named versions and prompt text', async () => {
+    resetTestDom('https://oma.duck.ai/workbench/prompt_1');
+    const api = mockWorkbenchApi({
+      initialPromptName: 'User title 原样',
+      revisionIds: { prompt_1: 'latest' },
+      revisionsByPrompt: {
+        prompt_1: [
+          { ...promptRevision('Empty prompt', 'latest'), name: 'Untitled version' },
+          promptRevision('', 'earlier'),
+        ],
+      },
+    });
+    renderWorkbench({ locale: 'zh-CN' });
+    fireEvent.click(await screen.findByRole('button', { name: '打开提示词列表' }));
+    const picker = screen.getByRole('dialog', { name: '提示词' });
+    expect(within(picker).getByRole('option', { name: /User title 原样/ })).toBeTruthy();
+    expect(within(picker).getAllByText(/由你创建/).length).toBeGreaterThan(0);
+    const search = within(picker).getByRole('combobox', { name: '搜索提示词' });
+    fireEvent.change(search, { target: { value: 'no-matching-prompt' } });
+    expect(within(picker).getByText('未找到提示词')).toBeTruthy();
+    fireEvent.keyDown(search, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: '提示词设置' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '版本历史' }));
+    const panel = screen.getByRole('dialog', { name: '版本历史' });
+    expect(await within(panel).findByText('未命名版本')).toBeTruthy();
+    expect(within(panel).getByText('Untitled version')).toBeTruthy();
+    expect(within(panel).getByText('Empty prompt')).toBeTruthy();
+    expect(within(panel).getByText('空提示词')).toBeTruthy();
+    expect(within(panel).getByText('2026年6月12日')).toBeTruthy();
+    expect(within(panel).getByRole('button', { name: '版本 v2' }).getAttribute('aria-current')).toBe('true');
+    expect(
+      api.requests.some(
+        (request) => request.method === 'POST' || request.method === 'PUT' || request.method === 'DELETE',
+      ),
+    ).toBe(false);
+  });
+
   test('restores a saved version from Version history', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
     const api = mockWorkbenchApi({
@@ -1496,10 +1802,13 @@ describe('WorkbenchPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Prompt settings' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Version history' }));
 
-    expect(screen.queryByRole('menu')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     const panel = screen.getByLabelText('Version history');
     expect(await within(panel).findByText('Jun 12, 2026')).toBeTruthy();
     expect(await within(panel).findAllByText('Untitled version')).toHaveLength(2);
+    expect(within(panel).getByText('{{animal}}').getAttribute('title')).toBe('{{animal}}');
+    expect(within(panel).queryByText('{{ANIMAL}}')).toBeNull();
+    expect(within(panel).getAllByText('Untitled version')[0]?.getAttribute('title')).toBe('Untitled version');
     const currentRevision = within(panel).getByRole('button', { name: 'Revision v2' });
     expect(currentRevision.getAttribute('aria-current')).toBe('true');
     expect(within(panel).queryByRole('button', { name: 'Restore this version' })).toBeNull();
@@ -1554,7 +1863,7 @@ describe('WorkbenchPage', () => {
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Version history' }));
 
     const panel = screen.getByLabelText('Version history');
-    expect(screen.queryByRole('menu')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     expect(await within(panel).findByRole('button', { name: 'Revision Draft version' })).toBeTruthy();
     expect(within(panel).getByText('Draft-only prompt body.')).toBeTruthy();
     expect(await within(panel).findByText('Previously')).toBeTruthy();
@@ -1617,7 +1926,7 @@ describe('WorkbenchPage', () => {
     expect(within(dialog).queryByRole('button', { name: 'Close dialog' })).toBeNull();
     expect(api.requests.some((request) => request.method === 'DELETE')).toBe(false);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('alertdialog', { name: 'Delete prompt' })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Delete prompt' })).toBeNull());
 
     fireEvent.click(screen.getByRole('button', { name: 'Prompt settings' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
@@ -1631,6 +1940,49 @@ describe('WorkbenchPage', () => {
         ),
       ).toBe(true),
     );
+  });
+
+  test('localizes management dialogs and cancels without renaming, sharing, deleting or improving', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    const api = mockWorkbenchApi({ initialPromptName: 'Original name', initialPromptText: 'Keep user content.' });
+    renderWorkbench({ locale: 'zh-CN' });
+    await screen.findByRole('button', { name: '查看代码' });
+    fireEvent.click(screen.getByRole('button', { name: '提示词设置' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '重命名提示词' }));
+    let dialog = await screen.findByRole('dialog', { name: '重命名提示词' });
+    expect(within(dialog).getByRole('textbox', { name: '名称' })).toHaveProperty('value', 'Original name');
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '提示词设置' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '分享' }));
+    dialog = await screen.findByRole('dialog', { name: '分享提示词' });
+    expect(within(dialog).getByText('Original name')).toBeTruthy();
+    expect(within(dialog).getByText('2026年6月12日，由user_default创建')).toBeTruthy();
+    expect(within(dialog).getByText('当前仅你可访问此提示词。')).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: '分享到工作区' })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '提示词设置' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
+    dialog = await screen.findByRole('alertdialog', { name: '删除提示词' });
+    expect(within(dialog).getByText('删除后无法恢复。')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '使用模型优化提示词' }));
+    dialog = await screen.findByRole('dialog', { name: '优化提示词' });
+    expect(within(dialog).getByText('使用当前模型，可能产生费用。')).toBeTruthy();
+    expect(within(dialog).getByRole('checkbox', { name: '用于开启思考的模型' })).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(dialog).getByRole('textbox', { name: '说明需要优化的内容' })),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('textbox', { name: '用户提示词 1' })).toHaveProperty('value', 'Keep user content.');
+    expect(
+      api.requests.some(
+        (request) => request.method === 'POST' || request.method === 'PUT' || request.method === 'DELETE',
+      ),
+    ).toBe(false);
   });
 
   test('opens the official-style Share Prompt dialog before sharing with the workspace', async () => {
@@ -1771,7 +2123,7 @@ describe('WorkbenchPage', () => {
     fireEvent.click(
       within(screen.getByRole('alertdialog', { name: 'Delete prompt' })).getByRole('button', { name: 'Cancel' }),
     );
-    expect(screen.queryByRole('alertdialog', { name: 'Delete prompt' })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Delete prompt' })).toBeNull());
 
     if (!screen.queryByRole('dialog', { name: 'Prompts' })) {
       fireEvent.click(screen.getByRole('button', { name: 'Open prompt list' }));
@@ -1792,6 +2144,7 @@ describe('WorkbenchPage', () => {
 
     expect(screen.getByRole('dialog', { name: 'Prompts' })).toBeTruthy();
     expect(screen.queryByTestId('workbench-prompt-picker-backdrop')).toBeNull();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search prompts' }), { target: { value: 'missing' } });
 
     await act(async () => {
       fireEvent.pointerDown(document.body);
@@ -1799,6 +2152,8 @@ describe('WorkbenchPage', () => {
     });
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Prompts' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Open prompt list' }));
+    expect(screen.getByRole('combobox', { name: 'Search prompts' })).toHaveProperty('value', '');
   });
 
   test('shows the current draft title and hides stale untitled prompts in the prompt picker', async () => {
@@ -1984,7 +2339,9 @@ describe('WorkbenchPage', () => {
     expect(document.body.textContent).toContain('No test cases');
     expect(document.body.textContent).toContain('{{animal}}');
     expect(document.body.textContent).toContain('Model output');
-    expect(document.body.textContent).not.toContain('Pre-fill response');
+    expect(
+      within(screen.getByRole('tabpanel', { name: 'Evaluate' })).queryByRole('button', { name: 'Pre-fill response' }),
+    ).toBeNull();
     expect(screen.getByRole('button', { name: 'Add Row' })).toBeTruthy();
   });
 
@@ -2257,8 +2614,10 @@ describe('WorkbenchPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Variables/i }));
 
     const panel = await screen.findByLabelText('Test Case');
-    expect(within(panel).getByText('Variable generation logic')).toBeTruthy();
-    fireEvent.click(within(panel).getByText('Variable generation logic'));
+    const logicTrigger = within(panel).getByRole('button', { name: 'Variable generation logic' });
+    expect(logicTrigger.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(logicTrigger);
+    expect(logicTrigger.getAttribute('aria-expanded')).toBe('true');
 
     const logicInput = within(panel).getByRole('textbox', {
       name: 'Click Generate to populate with some initial logic...',
@@ -2540,6 +2899,38 @@ describe('WorkbenchPage', () => {
     );
   });
 
+  test('localizes code controls, searches provider languages and preserves generated code without writes', async () => {
+    resetTestDom('https://oma.duck.ai/workbench');
+    const api = mockWorkbenchApi({ initialPromptText: 'Preserve original prompt content.' });
+    renderWorkbench({ locale: 'zh-CN' });
+    const opener = await screen.findByRole('button', { name: '查看代码' });
+    opener.focus();
+    fireEvent.click(opener);
+    const dialog = await screen.findByRole('dialog', { name: 'API 调用代码' });
+    expect(within(dialog).getByRole('button', { name: '查看文档' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: '复制代码' })).toBeTruthy();
+    expect(dialog.querySelector('code.language-python')?.textContent).toContain('import anthropic');
+    expect(dialog.querySelector('code')?.textContent).toContain('Preserve original prompt content.');
+    expect(dialog.querySelector('.hljs-string')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('combobox', { name: '代码语言' }));
+    fireEvent.change(await screen.findByRole('combobox', { name: '搜索选项...' }), {
+      target: { value: 'Bedrock' },
+    });
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+    expect(screen.queryByRole('option', { name: 'Vertex AI Python' })).toBeNull();
+    selectOption('AWS Bedrock Python');
+    expect(dialog.querySelector('code')?.textContent).toContain('from anthropic import AnthropicBedrock');
+    expect(dialog.querySelector('code')?.textContent).toContain('Preserve original prompt content.');
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(opener);
+    expect(
+      api.requests.some(
+        (request) => request.method === 'POST' || request.method === 'PUT' || request.method === 'DELETE',
+      ),
+    ).toBe(false);
+  });
+
   test('opens the generated Claude API code modal with Highlight.js markup', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
     const unorderedRevision = promptRevision();
@@ -2631,14 +3022,18 @@ describe('WorkbenchPage', () => {
 function renderWorkbench({
   auth = authContextValue(),
   workspace = workspaceContextValue('default'),
+  locale = 'en',
 }: {
   auth?: ReturnType<typeof authContextValue>;
   workspace?: ReturnType<typeof workspaceContextValue>;
+  locale?: Locale;
 } = {}) {
   return render(
     <AuthContext.Provider value={auth}>
       <WorkspaceContext.Provider value={workspace}>
-        <WorkbenchPage />
+        <I18nProvider initialLocale={locale}>
+          <WorkbenchPage />
+        </I18nProvider>
       </WorkspaceContext.Provider>
     </AuthContext.Provider>,
   );

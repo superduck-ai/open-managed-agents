@@ -27,7 +27,7 @@ func TestMemoryStoreMapperBuilderContracts(t *testing.T) {
 	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	insertParams := insertMemoryStoreParams{
 		UUID: "store-uuid", ExternalID: "store-id", OrganizationUUID: "org-uuid",
-		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: "key-uuid",
+		WorkspaceUUID: "workspace-uuid", CreatedByAPIKeyUUID: nullableString("key-uuid"),
 		Name: "store", Description: "description", Metadata: []byte(`{"key":"value"}`), CreatedAt: now,
 	}
 	updateParams := updateMemoryStoreParams{
@@ -59,13 +59,6 @@ func TestMemoryStoreMapperBuilderContracts(t *testing.T) {
 			fragments:     []string{"FROM memory_stores", "workspace_uuid = $1", "external_id = $2", "deleted_at IS NULL"},
 		},
 		{
-			statement: memoryStoreMapperFindByOrganizationAndExternalIDStatement,
-			bound:     buildMemoryStoreMapperFindByOrganizationAndExternalID(yourbatis.DialectPostgres, "org-uuid", "store-id"),
-			id:        "MemoryStoreMapper.FindByOrganizationAndExternalID", kind: yourbatis.StatementSelect,
-			argumentNames: []string{"organizationUUID", "externalID"},
-			fragments:     []string{"FROM memory_stores", "organization_uuid = $1", "external_id = $2", "deleted_at IS NULL"},
-		},
-		{
 			statement: memoryStoreMapperFindForUpdateStatement,
 			bound:     buildMemoryStoreMapperFindForUpdate(yourbatis.DialectPostgres, "workspace-uuid", "store-id"),
 			id:        "MemoryStoreMapper.FindForUpdate", kind: yourbatis.StatementSelect,
@@ -88,7 +81,7 @@ func TestMemoryStoreMapperBuilderContracts(t *testing.T) {
 			bound:     buildMemoryStoreMapperArchiveByExternalID(yourbatis.DialectPostgres, "workspace-uuid", "store-id"),
 			id:        "MemoryStoreMapper.ArchiveByExternalID", kind: yourbatis.StatementUpdate,
 			argumentNames: []string{"workspaceUUID", "externalID"},
-			fragments:     []string{"UPDATE memory_stores", "COALESCE(archived_at, NOW())", "workspace_uuid = $1", "RETURNING"},
+			fragments:     []string{"UPDATE memory_stores", "COALESCE(archived_at, NOW())", "workspace_uuid = $1", "external_id = $2", "archived_at IS NULL", "RETURNING"},
 		},
 		{
 			statement: memoryStoreMapperFindUUIDForUpdateStatement,
@@ -245,8 +238,15 @@ func TestMemoryMapperBuilderContracts(t *testing.T) {
 			statement: memoryMapperFindPathConflictStatement,
 			bound:     buildMemoryMapperFindPathConflict(yourbatis.DialectPostgres, "workspace-uuid", "store-uuid", "/test", "memory-uuid"),
 			id:        "MemoryMapper.FindPathConflict", kind: yourbatis.StatementSelect,
-			argumentNames: []string{"workspaceUUID", "storeUUID", "path", "excludeMemoryUUID"},
-			fragments:     []string{"workspace_uuid = $1", "memory_store_uuid = $2", "path = $3", "uuid <> $4", "LIMIT 1"},
+			argumentNames: []string{"workspaceUUID", "storeUUID", "path", "excludeMemoryUUID", "path", "path"},
+			fragments:     []string{"workspace_uuid = $1", "memory_store_uuid = $2", "path = $3", "uuid <> $4", "starts_with(path, $5 || '/')", "starts_with($6, path || '/')", "LIMIT 1"},
+		},
+		{
+			statement: memoryMapperFindByPathStatement,
+			bound:     buildMemoryMapperFindByPath(yourbatis.DialectPostgres, "workspace-uuid", "store-id", "/notes/a.txt"),
+			id:        "MemoryMapper.FindByPath", kind: yourbatis.StatementSelect,
+			argumentNames: []string{"workspaceUUID", "memoryStoreExternalID", "path"},
+			fragments:     []string{"workspace_uuid = $1", "memory_store_external_id = $2", "path = $3", "deleted_at IS NULL"},
 		},
 		{
 			statement: memoryMapperCountActiveHeadStatement,
@@ -254,6 +254,13 @@ func TestMemoryMapperBuilderContracts(t *testing.T) {
 			id:        "MemoryMapper.CountActiveHead", kind: yourbatis.StatementSelect,
 			argumentNames: []string{"workspaceUUID", "memoryStoreExternalID", "versionUUID"},
 			fragments:     []string{"CAST(COUNT(*) AS integer)", "workspace_uuid = $1", "current_version_uuid = $3"},
+		},
+		{
+			statement: memoryMapperCountActiveByStoreStatement,
+			bound:     buildMemoryMapperCountActiveByStore(yourbatis.DialectPostgres, "workspace-uuid", "store-id"),
+			id:        "MemoryMapper.CountActiveByStore", kind: yourbatis.StatementSelect,
+			argumentNames: []string{"workspaceUUID", "memoryStoreExternalID"},
+			fragments:     []string{"CAST(COUNT(*) AS integer)", "workspace_uuid = $1", "memory_store_external_id = $2", "deleted_at IS NULL"},
 		},
 		{
 			statement: memoryMapperDeleteByStoreUUIDStatement,
@@ -315,7 +322,7 @@ func TestMemoryMapperListPageBranches(t *testing.T) {
 
 	t.Run("path conflict without exclusion", func(t *testing.T) {
 		bound := buildMemoryMapperFindPathConflict(yourbatis.DialectPostgres, "workspace", "store", "/test", "")
-		if strings.Contains(bound.SQL, "uuid <>") || len(bound.Args) != 3 {
+		if strings.Contains(bound.SQL, "uuid <>") || len(bound.Args) != 5 {
 			t.Fatalf("FindPathConflict() SQL = %q args = %#v", bound.SQL, bound.Args)
 		}
 	})
@@ -444,10 +451,6 @@ func TestMemoryMapperExecutionModes(t *testing.T) {
 			_, err := NewMemoryStoreMapper(executor).FindByExternalID(ctx, "workspace", "store")
 			return err
 		}},
-		{statementID: "MemoryStoreMapper.FindByOrganizationAndExternalID", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
-			_, err := NewMemoryStoreMapper(executor).FindByOrganizationAndExternalID(ctx, "org", "store")
-			return err
-		}},
 		{statementID: "MemoryStoreMapper.FindForUpdate", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
 			_, err := NewMemoryStoreMapper(executor).FindForUpdate(ctx, "workspace", "store")
 			return err
@@ -511,8 +514,16 @@ func TestMemoryMapperExecutionModes(t *testing.T) {
 			_, _, err := NewMemoryMapper(executor).FindPathConflict(ctx, "workspace", "store", "/test", "")
 			return err
 		}},
+		{statementID: "MemoryMapper.FindByPath", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
+			_, _, err := NewMemoryMapper(executor).FindByPath(ctx, "workspace", "store", "/test")
+			return err
+		}},
 		{statementID: "MemoryMapper.CountActiveHead", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
 			_, err := NewMemoryMapper(executor).CountActiveHead(ctx, "workspace", "store", "version")
+			return err
+		}},
+		{statementID: "MemoryMapper.CountActiveByStore", kind: yourbatis.StatementSelect, query: true, call: func(executor yourbatis.Executor) error {
+			_, err := NewMemoryMapper(executor).CountActiveByStore(ctx, "workspace", "store")
 			return err
 		}},
 		{statementID: "MemoryMapper.DeleteByStoreUUID", kind: yourbatis.StatementDelete, call: func(executor yourbatis.Executor) error {

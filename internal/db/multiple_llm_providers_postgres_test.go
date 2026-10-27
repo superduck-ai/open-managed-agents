@@ -17,7 +17,7 @@ func TestMultipleOrganizationLLMProvidersMigrationAndScope(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, migrations := newIsolatedMigrationTestDatabase(t, databaseURL)
-	if _, err := migrations.UpTo(ctx, 104); err != nil {
+	if _, err := migrations.UpTo(ctx, 106); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(ctx, `

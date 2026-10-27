@@ -68,7 +68,7 @@ Provider ID 对应 `slug`，在整个组织内唯一，包含组织连接和该�
 
 组织 CRUD 使用集合 `/api/console/organizations/{orgUuid}/llm_providers` 和 `/{providerId}`；工作区仍使用原有 `/workspaces/{workspaceId}/llm_providers`。模型发现、已保存凭据预览、同步均作用于指定连接。工作区刷新不修改组织连接。组织列表为空返回 `[]`；读取失败显示降级提示，不能隐藏成正常空目录。
 
-已有组织连接保留 ID `organization` 及其模型引用。旧单数 `/llm_provider` API 仅操作这个历史连接，不选择或覆盖新增连接；`organization` 对新集合创建仍为保留 ID。迁移 00105 在组织内确定性重命名历史重复工作区 ID，并同步更新 Agent、版本、多 Agent 配置、Session/线程/部署快照、Code Session 恢复元数据及待处理 Batch 的模型引用；Provider UUID 与密钥绑定不变。组织迁移和回滚要求见后端模型代理设计。新增同名模型后，已有完整引用继续指向原连接。
+已有组织连接保留 ID `organization` 及其模型引用。旧单数 `/llm_provider` API 仅操作这个历史连接，不选择或覆盖新增连接；`organization` 对新集合创建仍为保留 ID。迁移 00107 在组织内确定性重命名历史重复工作区 ID，并同步更新 Agent、版本、多 Agent 配置、Session/线程/部署快照、Code Session 恢复元数据及待处理 Batch 的模型引用；Provider UUID 与密钥绑定不变。组织迁移和回滚要求见后端模型代理设计。新增同名模型后，已有完整引用继续指向原连接。
 
 添加 Provider 继续使用供应商目录和自定义 API 两个入口，不内置公司专用逻辑。删除组织连接的确认说明它会影响所有工作区通过此连接引用的模型，不影响其他组织连接或工作区连接。
 

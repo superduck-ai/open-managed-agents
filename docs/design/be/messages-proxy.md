@@ -99,7 +99,7 @@ Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 
 
 运行时只加载当前组织共享连接和当前 workspace 的连接，不加载其他 workspace。完整模型引用使用 `<slug>/<upstream-model-id>`，上游 ID 允许包含 `/`。裸 ID 先在当前工作区匹配：一个匹配则使用，多个匹配则拒绝；无匹配时在组织连接中执行同样的唯一匹配规则。歧义返回可选完整引用；Brain 派生索引不导出有歧义的裸 ID。计费目录使用相同优先级，组织连接的请求仍归属实际工作区。
 
-迁移 `00105_multiple_organization_llm_providers.sql` 移除组织单连接和固定 slug 约束，增加 `(organization_uuid, slug)` 唯一约束，并移除显示名称唯一约束。历史组织连接保留 `organization` ID。对跨工作区重复的 slug，按 workspace/创建时间/UUID 确定保留者，其他连接选择组织内未占用的 `原ID-2` 等 ID，长度保持 32 字符以内。迁移事务内更新已保存的模型引用，包括 Agent/版本、multiagent、Session/线程/部署/运行快照、Code Session 与恢复元数据、queued/in_flight Batch；其他工作区和孤儿引用不改写。Provider UUID 和密钥信封不变。外部脚本中被重命名的连接引用需要同步更新。
+迁移 `00107_multiple_organization_llm_providers.sql` 移除组织单连接和固定 slug 约束，增加 `(organization_uuid, slug)` 唯一约束，并移除显示名称唯一约束。历史组织连接保留 `organization` ID。对跨工作区重复的 slug，按 workspace/创建时间/UUID 确定保留者，其他连接选择组织内未占用的 `原ID-2` 等 ID，长度保持 32 字符以内。迁移事务内更新已保存的模型引用，包括 Agent/版本、multiagent、Session/线程/部署/运行快照、Code Session 与恢复元数据、queued/in_flight Batch；其他工作区和孤儿引用不改写。Provider UUID 和密钥信封不变。外部脚本中被重命名的连接引用需要同步更新。
 
 旧单数 `/llm_provider` 路由保留为历史 `organization` 连接的兼容入口，不返回或覆盖其他组织连接；新集合接口保留该 ID，避免被新连接重用。数据库竞争创建统一返回 `409 llm_provider_slug_conflict`，不返回占用者的归属信息。先完成所有 Server 实例的升级，再启用多个组织连接；旧 Server 的单连接查询不兼容多个组织连接。Brain 的 `models` payload 结构保持不变。
 

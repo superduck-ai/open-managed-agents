@@ -413,6 +413,7 @@ function inspectorMoneyInCents(value: unknown) {
 function activeMilliseconds(usage: Record<string, unknown>) {
   const milliseconds = optionalNumericValueFromKeys(usage, ['active_milliseconds']);
   if (milliseconds !== undefined) return milliseconds;
+  // Older session.usage snapshots only had active_seconds; prefer milliseconds when present.
   const seconds = optionalNumericValueFromKeys(usage, ['active_seconds']);
   return seconds === undefined ? undefined : seconds * 1000;
 }

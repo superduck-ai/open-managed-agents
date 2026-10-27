@@ -29,12 +29,17 @@ func TestSessionActivityMetricsPostgres(t *testing.T) {
 	if _, err := database.ExecContext(ctx, ddl); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile("migrations/00088_session_activity_metrics.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.ExecContext(ctx, strings.Split(string(raw), "-- +goose Down")[0]); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{
+		"migrations/00088_session_activity_metrics.sql",
+		"migrations/00092_session_usage_drop_active_seconds.sql",
+	} {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx, strings.Split(string(raw), "-- +goose Down")[0]); err != nil {
+			t.Fatal(name, err)
+		}
 	}
 	const workspace = "98000000-0000-0000-0000-000000000001"
 	const sid = "98000000-0000-0000-0000-000000000002"
@@ -99,8 +104,18 @@ func TestSessionActivityMetricsPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	var usage map[string]any
-	if err := json.Unmarshal(projection.Usage, &usage); err != nil || usage["input_tokens"] != float64(19) || usage["active_seconds"] != float64(11) {
+	if err := json.Unmarshal(projection.Usage, &usage); err != nil || usage["input_tokens"] != float64(19) {
 		t.Fatal("lost counters", usage, err)
+	}
+	if _, ok := usage["active_seconds"]; ok {
+		t.Fatal("usage still has active_seconds", usage)
+	}
+	var stats map[string]any
+	if err := json.Unmarshal(projection.Stats, &stats); err != nil || stats["other"] != float64(1) {
+		t.Fatal("lost stats", stats, err)
+	}
+	if _, ok := stats["active_seconds"]; !ok {
+		t.Fatal("stats missing active_seconds", stats)
 	}
 }
 
@@ -121,12 +136,17 @@ func TestSessionActivityNewWorkerFactAndReplayPostgres(t *testing.T) {
 	if _, err := database.ExecContext(ctx, ddl); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile("migrations/00088_session_activity_metrics.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.ExecContext(ctx, strings.Split(string(raw), "-- +goose Down")[0]); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{
+		"migrations/00088_session_activity_metrics.sql",
+		"migrations/00092_session_usage_drop_active_seconds.sql",
+	} {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx, strings.Split(string(raw), "-- +goose Down")[0]); err != nil {
+			t.Fatal(name, err)
+		}
 	}
 	const workspace = "98000000-0000-0000-0000-000000000011"
 	const sid = "98000000-0000-0000-0000-000000000012"

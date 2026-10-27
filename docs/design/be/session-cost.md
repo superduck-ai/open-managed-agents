@@ -41,6 +41,8 @@ sequenceDiagram
 
 累计时长只放一个键：`sessions.usage.active_milliseconds`，单位是毫秒整数。token 累加使用 `usage || jsonb_build_object(...)`，只覆盖 token 键，不会清掉这个键。线程 `usage` 不加它。没有这段时长时不要写 0。已经写成小数秒的 `active_seconds` 在下一次累加时乘 1000 并入这个整数，然后从 `usage` 里去掉。
 
+读路径上的 `oma_session_activity_projection` 不再把实时算出的 `active_seconds` 叠进 `usage`（只继续叠进 `stats`）。对外的会话响应和 `session.usage` 快照因此只带存储里的 `active_milliseconds`；投影还会去掉遗留的 `usage.active_seconds`。
+
 当前这段 `running` 的起点是最近一条已写入的 `session.status_running` 的 `processed_at`。会话还不是 `running` 时才会写入这条事件，重复上报不会再插一条，所以不需要额外的列。会话响应和 `session.usage` 事件都原样输出 `sessions.usage`，起点放进这份 JSON 会变成公开字段。
 
 离开 `running` 时，用离开事件的 `processed_at` 减去这个起点。差值不大于 0 则不加。大于 0 时把整毫秒加进 `usage.active_milliseconds`。下一次进入 `running` 会写入更新的状态事件，下一段从那条事件另计。

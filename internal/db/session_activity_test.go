@@ -7,17 +7,24 @@ import (
 
 func TestSessionActivityProjectionPreservesMeasuredTokens(t *testing.T) {
 	var p sessionActivityProjection
-	if err := p.Scan([]byte(`{"usage":{"input_tokens":19,"active_seconds":10},"stats":{"active_seconds":22}}`)); err != nil {
+	if err := p.Scan([]byte(`{"usage":{"input_tokens":19,"active_milliseconds":10000},"stats":{"active_seconds":22}}`)); err != nil {
 		t.Fatal(err)
 	}
 	row := sessionRow{Usage: []byte(`{"input_tokens":19}`), Stats: []byte(`{}`), Activity: p}
 	value := row.session()
 	var usage struct {
-		InputTokens   int     `json:"input_tokens"`
-		ActiveSeconds float64 `json:"active_seconds"`
+		InputTokens        int   `json:"input_tokens"`
+		ActiveMilliseconds int64 `json:"active_milliseconds"`
 	}
-	if err := json.Unmarshal(value.Usage, &usage); err != nil || usage.InputTokens != 19 || usage.ActiveSeconds != 10 {
+	if err := json.Unmarshal(value.Usage, &usage); err != nil || usage.InputTokens != 19 || usage.ActiveMilliseconds != 10000 {
 		t.Fatal("projected usage", usage, err)
+	}
+	var usageMap map[string]any
+	if err := json.Unmarshal(value.Usage, &usageMap); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := usageMap["active_seconds"]; ok {
+		t.Fatal("usage still has active_seconds", usageMap)
 	}
 	value.Usage[0] = '['
 	if string(p.Usage)[0] != '{' {

@@ -19,7 +19,7 @@ flowchart TB
 |---|---|---|
 | L0 | `oma-brain-dsh/src/prompt/platform.ts` | 运行环境说明、提问与直接执行的取舍、工作习惯与完成前验证、审批、子 Agent 委派（开启时描述可用工具，关闭时明确禁止委派）、指令信任与优先级、收尾格式 |
 | L1 | `internal/environments/environment_prompt.tmpl`，经 `append_system_prompt` 下发 | 沙箱系统信息、uploads/outputs 路径规则、沙箱持久化语义、Environment `networking` 和 `packages` |
-| L2 | `runtime_skills` | 每个 Skill 一行：名称、描述、`SKILL.md` 路径；不包含版本号 |
+| L2 | `runtime_skills` | 每个 Skill 一行：名称、描述、`SKILL.md` 路径；不包含版本号。明确为空时输出 `Available skills: []`；未提供目录时省略本层。主、子 Agent 使用相同规则 |
 | L3 | Agent `system`，或子 Agent 的 specialist 指令 | 原样插入，不做变量插值 |
 | L4 | `cwd`、`memory_catalog_prompt` | 工作目录、Memory 目录 |
 

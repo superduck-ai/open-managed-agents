@@ -131,7 +131,7 @@ export class Subagents {
         name: definition?.name ?? args.name,
         systemPrompt: definition?.systemPrompt ?? args.system_prompt,
         model: definition?.model ?? this.parent.config.model,
-        tools: inheritedTools(definition?.tools, this.parent.config.tools), status: "idle" };
+        tools: definition ? [...(definition.tools ?? [])] : this.parent.config.tools, status: "idle" };
       this.threads.push(thread);
       this.bridge.bindPersistence(thread.id);
     }
@@ -261,9 +261,4 @@ export class Subagents {
     for (const unbind of this.unbind.values()) unbind();
     this.unbind.clear();
   }
-}
-
-function inheritedTools(own: string[] | undefined, parent: string[] | undefined): string[] | undefined {
-  if (!own) return parent;
-  return parent ? own.filter((name) => parent.includes(name)) : own;
 }

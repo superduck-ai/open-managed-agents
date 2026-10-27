@@ -579,7 +579,7 @@ test("root registers only enabled sandbox tools and inline agents inherit them",
   expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
 });
 
-test("predefined specialist tools are limited to the tools enabled for the parent", async () => {
+test("predefined specialist uses its own enabled tools independently of the parent", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
   b.a.launch.tools = ["Read", "Grep", "Glob"];
@@ -589,7 +589,9 @@ test("predefined specialist tools are limited to the tools enabled for the paren
   const f = await fixture(b);
   b.modelScript = [call("send_to_agent", { agent_name: "writer", message: "Write" }, "delegate"), textEvents("writer report"), textEvents("done")];
   await f.session.receive("intersect", { content: "Write" });
-  expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
+  expect(b.requests[0]!.tools.map((tool: Payload) => tool.name)).not.toContain("Write");
+  expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Edit", "Grep", "Read", "Write"]);
+  expect(b.requests[1]!.tools.map((tool: Payload) => tool.name)).not.toContain("Glob");
 });
 
 
@@ -652,4 +654,54 @@ test("capacity refresh shares admission and never creates two replacements for o
   expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
   expect(f.session.subagents.threads).toHaveLength(26);
   expect(f.session.subagents.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
+});
+
+test.each([false, true])("predefined specialist without enabled tools does not inherit parent tools (explicit=%s)", async explicit => {
+  const b = new Backend();
+  cleanups.push(async () => b.stop());
+  b.a.launch.tools = ["Read", "Write"];
+  b.a.launch.subagents = { inlineAgents: false, agents: [{
+    name: "text-only", description: "No builtin tools", systemPrompt: "Only answer", tools: explicit ? [] : undefined,
+  }] };
+  const f = await fixture(b);
+  b.modelScript = [call("send_to_agent", { agent_name: "text-only", message: "Answer" }, "delegate"), textEvents("report"), textEvents("done")];
+  await f.session.receive("empty-specialist", { content: "Delegate" });
+  expect(b.requests[0]!.tools.map((tool: Payload) => tool.name)).toContain("Write");
+  expect(b.requests[1]!.tools ?? []).toEqual([]);
+  expect(f.session.subagents.threads[0]?.tools).toEqual([]);
+});
+
+test("specialist sandbox calls carry child identity and root calls remain unscoped", async () => {
+  const b = new Backend();
+  cleanups.push(async () => b.stop());
+  b.a.launch.tools = ["Read"];
+  b.a.launch.subagents = { inlineAgents: false, agents: [{
+    name: "writer", description: "Writes owned files", systemPrompt: "Write the assigned file", tools: ["Write"],
+  }] };
+  const f = await fixture(b);
+  const route = b.route.bind(b);
+  const calls: { tool: string; thread: string | null }[] = [];
+  b.route = async request => {
+    if (request.method === "POST") {
+      const body = await request.clone().json();
+      if (body.method === "tools/call") {
+        const thread = request.headers.get("X-OMA-Session-Thread-ID");
+        calls.push({ tool: body.params.name, thread });
+        const permitted = body.params.name === "write" ? thread === f.session.subagents.threads[0]?.id : thread === null;
+        if (!permitted) return Response.json({ error: { message: "wrong tool execution scope" } },
+          { status: 403, headers: { "X-Oma-Sandbox-Not-Forwarded": "true" } });
+      }
+    }
+    return route(request);
+  };
+  spyOn(f.session, "approve").mockResolvedValue({ allowed: true });
+  b.modelScript = [
+    call("send_to_agent", { agent_name: "writer", message: "Write assigned file" }, "delegate"),
+    call("Write", { file_path: "/workspace/owned.txt", content: "owned" }, "child-write"),
+    textEvents("written"), call("Read", { file_path: "/workspace/owned.txt" }, "root-read"), textEvents("done"),
+  ];
+  await f.session.receive("thread-boundary", { content: "Delegate then read" });
+  expect(calls).toEqual([{ tool: "write", thread: f.session.subagents.threads[0]!.id }, { tool: "read", thread: null }]);
+  expect(b.executions.map(call => call.name)).toEqual(["write", "read"]);
+  expect(b.requests[0]!.tools.map((tool: Payload) => tool.name)).not.toContain("Write");
 });

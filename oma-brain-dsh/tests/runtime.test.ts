@@ -87,3 +87,16 @@ test("approved argument changes remain visible without duplicating tool results"
   expect(f.deferred).toHaveLength(1);
   expect(f.executions).toBe(1);
 });
+
+test("read-only retry preserves its originating child thread identity", async () => {
+  const f = fixture();
+  const threads: (string | undefined)[] = [];
+  f.sandbox.call = async (_tool, _args, _signal, threadId) => {
+    threads.push(threadId);
+    if (threads.length === 1) throw new Error("transient read failure");
+    return { content: [{ type: "text", text: "confirmed" }] };
+  };
+  const execution = new ToolExecution(f.sandbox, f.bridge, undefined, "child-scope");
+  expect(await execution.execute({ ...tool, readOnly: true }, { command: "original" }, f.exec)).toBe("confirmed");
+  expect(threads).toEqual(["child-scope", "child-scope"]);
+});

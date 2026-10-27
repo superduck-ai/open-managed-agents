@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -71,18 +70,15 @@ func workCredentialAllows(method, path string, work db.EnvironmentWork, resource
 		if resource.DeletedAt != nil || resource.ResourceType != db.SessionResourceTypeMemoryStore {
 			continue
 		}
-		var payload struct {
-			MemoryStoreID string `json:"memory_store_id"`
-			Access        string `json:"access"`
-		}
-		if json.Unmarshal(resource.Payload, &payload) != nil || payload.MemoryStoreID == "" {
+		store := resource.MemoryStore
+		if store == nil || store.ExternalID == "" {
 			continue
 		}
-		prefix := "/v1/memory_stores/" + payload.MemoryStoreID
+		prefix := "/v1/memory_stores/" + store.ExternalID
 		if method == http.MethodGet && (path == prefix || path == prefix+"/memories" || strings.HasPrefix(path, prefix+"/memories/")) {
 			return true
 		}
-		if payload.Access == "read_write" && (path == prefix+"/memories" || strings.HasPrefix(path, prefix+"/memories/")) && (method == http.MethodPost || method == http.MethodPatch || method == http.MethodDelete) {
+		if store.Access != nil && *store.Access == "read_write" && (path == prefix+"/memories" || strings.HasPrefix(path, prefix+"/memories/")) && (method == http.MethodPost || method == http.MethodPatch || method == http.MethodDelete) {
 			return true
 		}
 	}

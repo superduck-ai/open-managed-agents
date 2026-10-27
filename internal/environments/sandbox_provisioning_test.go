@@ -99,7 +99,7 @@ func TestProbeSandboxMCPReadyAgainstRustServer(t *testing.T) {
 }
 
 func TestBrainSandboxManagerReceivesRepositorySources(t *testing.T) {
-	resource := db.SessionResource{ResourceType: "github_repository", Payload: json.RawMessage(`{"url":"https://github.com/octocat/Hello-World.git","mount_path":"/workspace/probe","checkout":{"type":"commit","sha":"7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"}}`), SecretPayload: json.RawMessage(`{"must_not_forward":"private-test-material"}`)}
+	resource := db.SessionResource{ResourceType: "github_repository", GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/octocat/Hello-World.git", MountPath: "/workspace/probe", Checkout: &db.SessionResourceGitHubCheckout{Type: "commit", SHA: "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"}}, SecretPayload: json.RawMessage(`{"must_not_forward":"private-test-material"}`)}
 	resolved, err := resolveManagedAgentRuntimeResources([]db.SessionResource{resource})
 	if err != nil {
 		t.Fatal(err)

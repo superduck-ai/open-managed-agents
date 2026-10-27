@@ -809,14 +809,11 @@ func (h *Handler) updateResourceRoute(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return invalidRequest(err)
 	}
-	secret, err := sessionresource.EncryptGitToken(r.Context(), h.secretService, secrets.ResourceBinding{
-		OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID,
-	}, token)
+	secret, err := sessionresource.EncryptGitToken(r.Context(), h.secretService, secrets.ResourceBinding{OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID}, token)
 	if err != nil {
 		return mapResourceBuildError(err)
 	}
-	// Keep the running repository configuration unchanged; update only credentials.
-	updated, err := h.db.UpdateSessionResource(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID, current.Payload, secret)
+	updated, err := h.db.UpdateSessionGitHubRepositorySecret(r.Context(), session.WorkspaceUUID, session.ExternalID, resourceID, secret)
 	if err != nil {
 		return mapResourceLoadError(err, resourceID)
 	}

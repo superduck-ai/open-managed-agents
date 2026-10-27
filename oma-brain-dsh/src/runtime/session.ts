@@ -71,6 +71,7 @@ export class SessionRuntime {
         bridge: this.bridge,
         tools: this.config.tools,
         permissions: toolPermissions,
+        threadId: this.parent ? this.config.id : undefined,
       });
       if (!this.parent) this.questionTools = await scope.plugin(UserQuestions, { bridge: this.bridge, tools: this.config.tools });
       this.hostTools = await this.config.setupTools?.(scope, this.bridge, this.config.tools, this.parent ? this.config.id : undefined, toolPermissions);

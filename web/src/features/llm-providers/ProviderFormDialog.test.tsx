@@ -118,3 +118,27 @@ test('keeps a successfully saved provider draft mounted until its exit completes
   expect(name).toHaveProperty('value', 'Saved research');
   await waitFor(() => expect(screen.getByText('Closed 1')).toBeTruthy());
 });
+
+test('editing preserves an existing display name and clearing it saves the Provider ID', async () => {
+  let savedName = '';
+  render(
+    <I18nProvider initialLocale="en">
+      <ProviderFormDialog
+        provider={provider}
+        error=""
+        isPending={false}
+        onClose={() => {}}
+        onDiscoverModels={async () => []}
+        onSubmit={async (input) => {
+          savedName = input.name;
+          return true;
+        }}
+      />
+    </I18nProvider>,
+  );
+  expect(screen.getByLabelText('Display name')).toHaveProperty('value', provider.name);
+  fireEvent.change(screen.getByLabelText('Display name'), { target: { value: '' } });
+  expect(screen.getByLabelText('Display name')).toHaveProperty('value', provider.slug);
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  await waitFor(() => expect(savedName).toBe(provider.slug));
+});

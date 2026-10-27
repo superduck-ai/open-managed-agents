@@ -40,7 +40,7 @@
         SELECT <include refid="columns"/>
         FROM llm_providers
         WHERE organization_uuid = #{organizationUUID}
-        AND workspace_uuid = #{workspaceUUID}
+        AND workspace_uuid IS NOT DISTINCT FROM #{workspaceUUID}
         ORDER BY created_at, uuid
     </select>
 
@@ -48,8 +48,15 @@
         SELECT <include refid="columns"/>
         FROM llm_providers
         WHERE organization_uuid = #{organizationUUID}
-        AND workspace_uuid = #{workspaceUUID}
+        AND workspace_uuid IS NOT DISTINCT FROM #{workspaceUUID}
         AND external_id = #{externalID}
+    </select>
+
+    <select id="ListByOrganization" resultType="llmProviderRow">
+        SELECT <include refid="columns"/>
+        FROM llm_providers
+        WHERE organization_uuid = #{organizationUUID}
+        ORDER BY created_at, uuid
     </select>
 
     <select id="FindOrganizationDefault" resultType="llmProviderRow">
@@ -57,6 +64,7 @@
         FROM llm_providers
         WHERE organization_uuid = #{organizationUUID}
         AND workspace_uuid IS NULL
+        AND slug = 'organization'
     </select>
 
     <update id="UpdateByExternalID" result="returning" resultType="llmProviderRow">

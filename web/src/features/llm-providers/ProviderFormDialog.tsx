@@ -9,7 +9,13 @@ import { ProviderModelsEditor, newModelDraft, type ProviderModelDraft } from './
 import { ProviderConnectionFields, ProviderAPIKeyField } from './ProviderConnectionFields';
 import { readableError } from './catalog';
 
-import { providerForm, providerFormInput, type ProviderForm, type ProviderFieldErrors } from './provider-form';
+import {
+  providerForm,
+  providerFormInput,
+  providerBaseURL,
+  type ProviderForm,
+  type ProviderFieldErrors,
+} from './provider-form';
 import { ProviderPresetPicker } from './ProviderPresetPicker';
 import { ModelDiscoveryDialog } from './ModelDiscoveryDialog';
 import { Tabs, TabsList, TabsTrigger } from '../../shared/ui/tabs';
@@ -23,7 +29,6 @@ type ProviderDraft = {
 
 export function ProviderFormDialog({
   provider,
-  organization = false,
   error,
   isPending,
   onClose,
@@ -37,7 +42,6 @@ export function ProviderFormDialog({
   presetError?: string;
   onReloadPresets?: () => void;
   provider: LLMProvider | null;
-  organization?: boolean;
   error: string;
   isPending: boolean;
   onClose: () => void;
@@ -56,18 +60,26 @@ export function ProviderFormDialog({
   const [advanced, setAdvanced] = useState(false);
   const [candidates, setCandidates] = useState<string[] | null>(null);
   const discoveryVersion = useRef(0);
+  const wasSelecting = useRef(false);
   const drafts = useRef<Record<string, ProviderDraft>>({});
   const busy = isPending;
   const presetMode = mode === 'preset' && !provider;
 
   const [form, setForm] = useState<ProviderForm>(() => ({
     ...providerForm(provider),
-    ...(organization ? { slug: 'organization' } : {}),
   }));
   const [formError, setFormError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<ProviderFieldErrors>({});
   const [validationAttempt, setValidationAttempt] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (candidates) {
+      wasSelecting.current = true;
+    } else if (wasSelecting.current) {
+      formRef.current?.querySelector<HTMLElement>('[data-model-discovery-trigger]')?.focus();
+      wasSelecting.current = false;
+    }
+  }, [candidates]);
   useEffect(() => {
     if (validationAttempt) formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
   }, [validationAttempt]);
@@ -80,7 +92,7 @@ export function ProviderFormDialog({
 
   const fetchModels = async () => {
     const version = ++discoveryVersion.current;
-    const baseUrl = form.baseUrl.trim();
+    const baseUrl = providerBaseURL(form.baseUrl);
     const apiKey = form.apiKey.trim();
     setFormError('');
     if (!baseUrl || (!apiKey && !provider)) {
@@ -92,7 +104,11 @@ export function ProviderFormDialog({
       setValidationAttempt((value) => value + 1);
       return;
     }
-    if (provider && !apiKey && (baseUrl !== provider.base_url || form.apiBackend !== provider.api_backend)) {
+    if (
+      provider &&
+      !apiKey &&
+      (baseUrl !== providerBaseURL(provider.base_url) || form.apiBackend !== provider.api_backend)
+    ) {
       setFieldErrors({
         apiKey: msg(
           'llmModels.fetchChangedEndpoint',
@@ -123,13 +139,13 @@ export function ProviderFormDialog({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!open || busy || discovering) return;
+    if (!open || busy || discovering || candidates) return;
     if (presetMode && !presetId) {
       setFieldErrors({ supplier: msg('llmModels.supplierRequired', 'Select a model supplier.') });
       setValidationAttempt((value) => value + 1);
       return;
     }
-    const result = providerFormInput(form, provider, organization, msg);
+    const result = providerFormInput(form, provider, msg);
     if ('errors' in result) {
       setFieldErrors(result.errors);
       if (result.errors.name || result.errors.baseUrl || result.errors.slug) setAdvanced(true);
@@ -155,6 +171,8 @@ export function ProviderFormDialog({
       }
       return remaining;
     });
+    wasSelecting.current = false;
+    setCandidates(null);
     setForm(next);
   };
   const apiKeyField = (
@@ -165,6 +183,11 @@ export function ProviderFormDialog({
     <Dialog
       open={open}
       onOpenChange={(nextOpen, details) => {
+        if (!nextOpen && candidates) {
+          details.cancel();
+          setCandidates(null);
+          return;
+        }
         if (!nextOpen && (details.reason === 'focus-out' || busy)) {
           details.cancel();
           return;
@@ -203,21 +226,25 @@ export function ProviderFormDialog({
                 presetId={presetId}
                 onReload={onReloadPresets}
                 onModeChange={(value) => {
+                  wasSelecting.current = false;
+                  setCandidates(null);
                   drafts.current[mode] = { form, presetId, advanced };
                   const next = drafts.current[value];
                   setMode(value);
                   setPresetId(next?.presetId ?? '');
                   setAdvanced(next?.advanced ?? false);
-                  setForm(next?.form ?? { ...providerForm(null), ...(organization ? { slug: 'organization' } : {}) });
+                  setForm(next?.form ?? providerForm(null));
                   setFormError('');
                   setFieldErrors({});
                 }}
                 onPresetChange={(preset) => {
+                  wasSelecting.current = false;
+                  setCandidates(null);
                   setPresetId(preset.id);
                   setFormError('');
                   setFieldErrors({});
                   setForm({
-                    ...providerForm({ ...preset, slug: organization ? 'organization' : preset.id }),
+                    ...providerForm({ ...preset, slug: preset.id }),
                     apiKey: '',
                   });
                 }}
@@ -231,10 +258,21 @@ export function ProviderFormDialog({
                       errors={fieldErrors}
                       setForm={updateConnectionForm}
                       provider={provider}
-                      organization={organization}
                     />
                     {!presetMode ? apiKeyField : null}
                     <ProviderModelsEditor
+                      selection={
+                        candidates ? (
+                          <ModelDiscoveryDialog
+                            models={candidates}
+                            onClose={() => setCandidates(null)}
+                            onAccept={(ids) => {
+                              setForm((current) => ({ ...current, models: mergeModels(current.models, ids) }));
+                              setCandidates(null);
+                            }}
+                          />
+                        ) : null
+                      }
                       models={form.models}
                       discovering={discovering}
                       onChange={(models) => setForm((value) => ({ ...value, models }))}
@@ -245,28 +283,18 @@ export function ProviderFormDialog({
               ) : null}
             </fieldset>
           </div>
-          <div className="px-4 py-4">
+          <div hidden={Boolean(candidates)} className="px-4 py-4">
             <DialogFooter>
               <Button type="button" variant="outline" disabled={busy} onClick={() => setOpen(false)}>
                 {msg('common.cancel', 'Cancel')}
               </Button>
-              <Button type="submit" disabled={busy || discovering}>
+              <Button type="submit" disabled={busy || discovering || Boolean(candidates)}>
                 {busy ? msg('common.saving', 'Saving...') : msg('common.save', 'Save')}
               </Button>
             </DialogFooter>
           </div>
         </form>
       </DialogContent>
-      {candidates ? (
-        <ModelDiscoveryDialog
-          models={candidates}
-          onClose={() => setCandidates(null)}
-          onAccept={(ids) => {
-            setForm((current) => ({ ...current, models: mergeModels(current.models, ids) }));
-            setCandidates(null);
-          }}
-        />
-      ) : null}
     </Dialog>
   );
 }

@@ -370,35 +370,35 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
         <TabsList
           variant="line"
           aria-label={msg('managedAgents.agents.detail.sections', 'Agent detail sections')}
-          className="mb-6 h-auto w-full justify-start gap-6 rounded-none border-b-[0.5px] border-border p-0"
+          className="mb-6 group-data-[orientation=horizontal]/tabs:h-11 w-full justify-start gap-6 rounded-none border-b-[0.5px] border-border p-0"
         >
           <TabsTrigger
             value="config"
-            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-[0.5px]"
+            className="h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]"
           >
             {msg('managedAgents.common.agent', 'Agent')}
           </TabsTrigger>
           <TabsTrigger
             value="sessions"
-            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-[0.5px]"
+            className="h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]"
           >
             {msg('managedAgents.sessions.title', 'Sessions')}
           </TabsTrigger>
           <TabsTrigger
             value="deployments"
-            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-[0.5px]"
+            className="h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]"
           >
             {msg('managedAgents.deployments.title', 'Deployments')}
           </TabsTrigger>
           <TabsTrigger
             value="observability"
-            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-[0.5px]"
+            className="h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]"
           >
             {msg('managedAgents.observability.title', 'Observability')}
           </TabsTrigger>
           <TabsTrigger
             value="channels"
-            className="h-11 flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none after:bottom-0 after:h-[0.5px]"
+            className="h-full flex-none rounded-none border-0 px-0 text-sm font-semibold text-muted-foreground hover:bg-transparent hover:text-foreground data-active:bg-transparent data-active:text-foreground data-active:shadow-none group-data-[orientation=horizontal]/tabs:after:bottom-0 group-data-[orientation=horizontal]/tabs:after:h-[0.5px]"
           >
             {msg('managedAgents.channels.title', 'Channels')}
           </TabsTrigger>

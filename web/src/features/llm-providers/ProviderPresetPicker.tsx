@@ -22,7 +22,7 @@ export function ProviderPresetPicker({
     <Field>
       <FieldLabel htmlFor="llm-supplier">{msg('llmModels.supplier', 'Model supplier')}</FieldLabel>
       <Select
-        value={value}
+        value={value || null}
         items={catalog?.providers.map((preset) => ({ value: preset.id, label: preset.name })) ?? []}
         onValueChange={(id) => {
           const preset = catalog?.providers.find((item) => item.id === id);

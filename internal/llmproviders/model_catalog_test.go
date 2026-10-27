@@ -7,7 +7,7 @@ import (
 
 func TestRuntimeModelsPreserveSettingsAndWorkspacePrecedence(t *testing.T) {
 	catalog := NewCatalog([]db.LLMProvider{{Slug: "local", APIBackend: Messages, Models: db.LLMModels{{ID: "same", ContextWindow: new(256000), MaxOutputTokens: new(8000)}}}})
-	catalog.organization = &db.LLMProvider{Slug: OrganizationSlug, APIBackend: ChatCompletions, Models: db.LLMModels{{ID: "same", ContextWindow: new(1000000), MaxOutputTokens: new(128000), InputModalities: []string{"text", "image"}}, {ID: "shared"}}}
+	catalog.organization = []db.LLMProvider{{Slug: OrganizationSlug, APIBackend: ChatCompletions, Models: db.LLMModels{{ID: "same", ContextWindow: new(1000000), MaxOutputTokens: new(128000), InputModalities: []string{"text", "image"}}, {ID: "shared"}}}}
 	models, err := catalog.RuntimeModels()
 	if err != nil {
 		t.Fatal(err)

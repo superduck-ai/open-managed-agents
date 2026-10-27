@@ -1,12 +1,14 @@
 package platformapi
 
 import (
+	"cmp"
 	"errors"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -15,7 +17,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 const maxLLMProviderModels = 100
@@ -56,6 +57,15 @@ func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretServi
 		r.Post("/preview_models", previewConsoleOrganizationLLMProviderModels(database, client))
 		r.Post("/models/sync", syncConsoleOrganizationLLMProviderModels(database, secretService, client, true))
 		r.Post("/models/preview", syncConsoleOrganizationLLMProviderModels(database, secretService, client, false))
+	})
+	r.Route("/llm_providers", func(r chi.Router) {
+		r.Get("/", listConsoleLLMProviders(database))
+		r.Post("/", createConsoleLLMProvider(database, secretService))
+		r.Post("/preview_models", previewConsoleLLMProviderModels(database, client))
+		r.Put("/{providerId}", updateConsoleLLMProvider(database, secretService))
+		r.Delete("/{providerId}", deleteConsoleLLMProvider(database))
+		r.Post("/{providerId}/models/sync", syncConsoleLLMProviderModels(database, secretService, client, true))
+		r.Post("/{providerId}/models/preview", syncConsoleLLMProviderModels(database, secretService, client, false))
 	})
 	r.Route("/workspaces/{workspaceId}/llm_providers", func(r chi.Router) {
 		r.Get("/", listConsoleLLMProviders(database))
@@ -102,11 +112,11 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			return
 		}
 		apiKey := strings.TrimSpace(*body.APIKey)
-		name, baseURL, models, ok := validateLLMProviderInput(w, body)
+		slug, ok := newLLMProviderSlug(w, r, database, orgUUID, body.Slug)
 		if !ok {
 			return
 		}
-		slug, ok := newLLMProviderSlug(w, r, database, orgUUID, scope.UUID, body.Slug)
+		name, baseURL, models, ok := validateLLMProviderInput(w, body, slug)
 		if !ok {
 			return
 		}
@@ -117,7 +127,7 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 		}
 		now := time.Now().UTC()
 		provider := db.LLMProvider{
-			UUID:             uuid.NewString(),
+			UUID:             uuid.New().String(),
 			ExternalID:       externalID,
 			OrganizationUUID: orgUUID,
 			WorkspaceUUID:    scope.UUID,
@@ -170,7 +180,7 @@ func updateConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 		if !ok {
 			return
 		}
-		name, baseURL, models, ok := validateLLMProviderInput(w, body)
+		name, baseURL, models, ok := validateLLMProviderInput(w, body, current.Slug)
 		if !ok {
 			return
 		}
@@ -235,6 +245,12 @@ func llmProviderScope(w http.ResponseWriter, r *http.Request, database *db.DB) (
 	if !ok {
 		return "", WorkspaceScope{}, false
 	}
+	if chi.URLParam(r, "workspaceId") == "" {
+		if r.Method != http.MethodGet && !requireLLMProviderAdministrator(w, r, database, orgUUID) {
+			return "", WorkspaceScope{}, false
+		}
+		return orgUUID, WorkspaceScope{}, true
+	}
 	scope, ok := consoleWorkspaceScopeFromRequest(w, r, database, orgUUID)
 	if !ok || (r.Method != http.MethodGet && !requireLLMProviderAdministrator(w, r, database, orgUUID)) {
 		return "", WorkspaceScope{}, false
@@ -291,12 +307,12 @@ func decodeLLMProviderRequest(w http.ResponseWriter, r *http.Request) (llmProvid
 	return body, true
 }
 
-func validateLLMProviderInput(w http.ResponseWriter, body llmProviderRequest) (string, string, db.LLMModels, bool) {
+func validateLLMProviderInput(w http.ResponseWriter, body llmProviderRequest, slug string) (string, string, db.LLMModels, bool) {
 	if body.APIBackend != nil && !llmproviders.ValidBackend(*body.APIBackend) {
 		writeLLMProviderBackendError(w)
 		return "", "", nil, false
 	}
-	name := strings.TrimSpace(body.Name)
+	name := cmp.Or(strings.TrimSpace(body.Name), slug)
 	if name == "" || utf8.RuneCountInString(name) > 100 {
 		writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeNameInvalid, "name must contain 1 to 100 characters")
 		return "", "", nil, false
@@ -348,7 +364,7 @@ func newLLMProviderSlug(
 	w http.ResponseWriter,
 	r *http.Request,
 	database *db.DB,
-	organizationUUID, workspaceUUID string,
+	organizationUUID string,
 	requested *string,
 ) (string, bool) {
 	if requested != nil && strings.TrimSpace(*requested) != "" {
@@ -363,7 +379,7 @@ func newLLMProviderSlug(
 		}
 		return slug, true
 	}
-	providers, err := database.ListLLMProviders(r.Context(), organizationUUID, workspaceUUID)
+	providers, err := database.ListOrganizationLLMProviders(r.Context(), organizationUUID)
 	if err != nil {
 		internalError(w, "failed to list LLM providers")
 		return "", false
@@ -392,7 +408,7 @@ func sealLLMProviderAPIKey(w http.ResponseWriter, r *http.Request, secretService
 }
 
 func formatLLMProvider(provider db.LLMProvider) llmProviderResponse {
-	return llmProviderResponse{
+	response := llmProviderResponse{
 		APIBackend:  provider.APIBackend,
 		Type:        "llm_provider",
 		ID:          provider.ExternalID,
@@ -406,6 +422,10 @@ func formatLLMProvider(provider db.LLMProvider) llmProviderResponse {
 		CreatedAt:   provider.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:   provider.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if provider.WorkspaceUUID == "" {
+		response.Scope = "organization"
+	}
+	return response
 }
 
 func lastFour(value string) string {

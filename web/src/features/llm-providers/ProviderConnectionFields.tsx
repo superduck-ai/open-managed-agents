@@ -3,20 +3,18 @@ import { useI18n } from '../../shared/i18n';
 import { Field, FieldDescription, FieldLabel, FieldError } from '../../shared/ui/field';
 import { Input } from '../../shared/ui/input';
 import type { LLMProvider } from './api';
-import type { ProviderForm, ProviderFieldErrors } from './provider-form';
+import { providerRequestURL, type ProviderForm, type ProviderFieldErrors } from './provider-form';
 import { ProviderBackendField } from './ProviderBackendField';
 
 export function ProviderConnectionFields({
   form,
   setForm,
   provider,
-  organization,
   errors,
 }: {
   form: ProviderForm;
   setForm: Dispatch<SetStateAction<ProviderForm>>;
   provider: LLMProvider | null;
-  organization: boolean;
   errors: ProviderFieldErrors;
 }) {
   const { msg } = useI18n();
@@ -26,7 +24,6 @@ export function ProviderConnectionFields({
         <ProviderIdField
           error={errors.slug}
           slug={form.slug}
-          readOnly={organization}
           onChange={(slug) => setForm((value) => ({ ...value, slug }))}
         />
       ) : null}
@@ -36,9 +33,9 @@ export function ProviderConnectionFields({
           id="llm-provider-name"
           aria-invalid={Boolean(errors.name)}
           aria-describedby={errors.name ? 'llm-provider-name-error' : undefined}
-          value={form.name}
+          value={form.name || form.slug}
           onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))}
-          placeholder={msg('llmModels.name', 'Display name')}
+          placeholder={msg('llmModels.optionalName', 'Display name (optional)')}
           autoComplete="off"
         />
         {errors.name ? <FieldError id="llm-provider-name-error">{errors.name}</FieldError> : null}
@@ -54,15 +51,12 @@ export function ProviderConnectionFields({
           onChange={(event) => {
             setForm((value) => ({ ...value, baseUrl: event.target.value }));
           }}
-          placeholder="https://example.com/anthropic"
+          placeholder="https://api.deepseek.com/anthropic"
           autoComplete="url"
         />
         <FieldDescription>
           {msg('llmModels.baseUrlHint', 'Request URL:')}{' '}
-          <code className="break-all">
-            {form.baseUrl.replace(/\/+$/, '')}
-            {form.apiBackend === 'messages' ? '/v1/messages' : '/v1/chat/completions'}
-          </code>
+          <code className="break-all">{providerRequestURL(form.baseUrl, form.apiBackend) || '—'}</code>
         </FieldDescription>
         {errors.baseUrl ? <FieldError id="llm-provider-url-error">{errors.baseUrl}</FieldError> : null}
       </Field>
@@ -108,12 +102,10 @@ export function ProviderAPIKeyField({
 
 function ProviderIdField({
   slug,
-  readOnly,
   error,
   onChange,
 }: {
   slug: string;
-  readOnly: boolean;
   error?: string;
   onChange: (slug: string) => void;
 }) {
@@ -127,20 +119,14 @@ function ProviderIdField({
         aria-describedby={error ? 'llm-provider-slug-error' : undefined}
         value={slug}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="acme-gateway"
+        placeholder="deepseek"
         autoComplete="off"
-        readOnly={readOnly}
-        aria-readonly={readOnly}
-        className="font-mono read-only:bg-muted read-only:text-muted-foreground"
+        className="font-mono"
       />
       <FieldDescription>
-        {readOnly
-          ? msg('llmModels.slugReadOnlyHint', 'Used in {modelId}. Provider ID cannot be changed.', {
-              modelId: `${slug}/<model-id>`,
-            })
-          : msg('llmModels.slugHint', 'Used in {modelId}. Provider ID cannot be changed after creation.', {
-              modelId: `${slug || 'acme-gateway'}/<model-id>`,
-            })}
+        {msg('llmModels.slugHint', 'Used in {modelId}. Provider ID cannot be changed after creation.', {
+          modelId: `${slug || 'deepseek'}/<model-id>`,
+        })}
       </FieldDescription>
       {error ? <FieldError id="llm-provider-slug-error">{error}</FieldError> : null}
     </Field>

@@ -45,13 +45,19 @@ async function selectGateway() {
 
 test('loads empty supplier models, selects fetched models, saves only the connection', async () => {
   const calls = renderPreset();
+  expect(screen.getByRole('combobox', { name: 'Model supplier' }).textContent).toContain('Select a supplier');
   await selectGateway();
   expect(screen.queryByLabelText('Base URL')).toBeNull();
   expect(screen.queryByRole('checkbox', { name: /all organizations/ })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
   expect(screen.getByLabelText('API key').getAttribute('placeholder')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
-  const candidates = await screen.findByRole('dialog', { name: 'Select models' });
+  const candidates = await screen.findByRole('region', { name: 'Select models' });
+  expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  expect(screen.getByLabelText('API key').closest('form')?.hidden).toBe(false);
+  expect(screen.getByRole('dialog', { name: 'Add provider' })).toBeTruthy();
+  expect(screen.getByLabelText('Base URL').closest('[hidden]')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Save', exact: true })).toBeNull();
   fireEvent.click(within(candidates).getByRole('button', { name: 'Add selected models' }));
   expect(screen.getByLabelText('Model ID 1')).toHaveProperty('value', 'second');
   fireEvent.change(screen.getByLabelText('Display name 1'), { target: { value: 'Second model' } });
@@ -98,7 +104,7 @@ test('shows field-specific custom API errors and keeps model display names optio
   renderPreset();
   fireEvent.click(screen.getByRole('tab', { name: 'Custom model API' }));
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
-  for (const label of ['Provider ID', 'Display name', 'Base URL', 'API key']) {
+  for (const label of ['Provider ID', 'Base URL', 'API key']) {
     expect(screen.getByLabelText(label).getAttribute('aria-invalid')).toBe('true');
   }
   expect(screen.getByLabelText('Display name 1').getAttribute('aria-invalid')).not.toBe('true');
@@ -141,4 +147,75 @@ test('opens advanced settings and focuses an invalid hidden connection field', a
   expect(screen.getByLabelText('Base URL').getAttribute('aria-invalid')).toBe('true');
   await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Base URL')));
   expect(calls.save).not.toHaveBeenCalled();
+});
+
+test('cancels discovery with Escape, restores draft and focus in the provider form', async () => {
+  renderPreset();
+  await selectGateway();
+  fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
+  fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'My gateway' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
+  const dialog = await screen.findByRole('region', { name: 'Select models' });
+  fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+  await screen.findByRole('dialog', { name: 'Add provider' });
+  expect(screen.getByLabelText('Display name')).toHaveProperty('value', 'My gateway');
+  expect(screen.getByLabelText('API key')).toHaveProperty('value', 'test-key');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Get available models' }));
+});
+
+test('custom provider name follows its ID until customized and clearing restores the default', async () => {
+  const { save } = renderPreset();
+  expect(screen.queryByText(/Choose a supplier to fill in/)).toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Custom model API', exact: true }));
+  const id = screen.getByLabelText('Provider ID');
+  const name = screen.getByLabelText('Display name');
+  expect(id.getAttribute('placeholder')).toBe('deepseek');
+  expect(screen.getByLabelText('Model ID 1').getAttribute('placeholder')).toBe('kimi-k3');
+  expect(screen.queryByText(/Paste a base URL or a full/)).toBeNull();
+  fireEvent.change(id, { target: { value: 'my-provider' } });
+  expect(name).toHaveProperty('value', 'my-provider');
+  fireEvent.change(id, { target: { value: 'another-provider' } });
+  expect(name).toHaveProperty('value', 'another-provider');
+  fireEvent.change(name, { target: { value: 'Research models' } });
+  fireEvent.change(id, { target: { value: 'research' } });
+  expect(name).toHaveProperty('value', 'Research models');
+  fireEvent.change(name, { target: { value: '' } });
+  expect(name).toHaveProperty('value', 'research');
+  fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://example.test' } });
+  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'test-key' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0][0].name).toBe('research');
+});
+
+test('cancels inline selection without changing model drafts or expanded parameters', async () => {
+  renderPreset();
+  await selectGateway();
+  fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add model', exact: true }));
+  fireEvent.change(screen.getByLabelText('Model ID 1'), { target: { value: 'manual-model' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Model parameters 1' }));
+  fireEvent.change(screen.getByLabelText('Context window 1'), { target: { value: '128K' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
+  const selection = await screen.findByRole('region', { name: 'Select models' });
+  fireEvent.click(within(selection).getByRole('button', { name: 'Cancel', exact: true }));
+  expect(screen.queryByRole('region', { name: 'Select models' })).toBeNull();
+  expect(screen.getByLabelText('Model ID 1')).toHaveProperty('value', 'manual-model');
+  expect(screen.getByLabelText('Context window 1')).toHaveProperty('value', '128K');
+  expect(screen.getByRole('button', { name: 'Model parameters 1' }).getAttribute('aria-expanded')).toBe('true');
+});
+
+test('discards candidates when connection settings change', async () => {
+  renderPreset();
+  await selectGateway();
+  fireEvent.click(screen.getByRole('button', { name: 'Custom settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Get available models' }));
+  await screen.findByRole('region', { name: 'Select models' });
+  const baseURL = screen.getByLabelText('Base URL');
+  baseURL.focus();
+  fireEvent.change(baseURL, { target: { value: 'https://new.example.test' } });
+  expect(document.activeElement).toBe(baseURL);
+  expect(screen.queryByRole('region', { name: 'Select models' })).toBeNull();
+  expect(screen.getByLabelText('Model ID 1')).toHaveProperty('value', '');
+  expect(screen.getByRole('button', { name: 'Save', exact: true }).disabled).toBe(false);
 });

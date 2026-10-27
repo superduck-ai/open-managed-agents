@@ -51,8 +51,9 @@ type llmProviderWriteParams struct {
 
 type LLMProviderMapper interface {
 	Insert(ctx context.Context, params llmProviderWriteParams) (llmProviderRow, error)
-	ListByWorkspace(ctx context.Context, organizationUUID, workspaceUUID string) ([]llmProviderRow, error)
-	FindByExternalID(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (llmProviderRow, error)
+	ListByWorkspace(ctx context.Context, organizationUUID string, workspaceUUID *string) ([]llmProviderRow, error)
+	FindByExternalID(ctx context.Context, organizationUUID string, workspaceUUID *string, externalID string) (llmProviderRow, error)
+	ListByOrganization(ctx context.Context, organizationUUID string) ([]llmProviderRow, error)
 	FindOrganizationDefault(ctx context.Context, organizationUUID string) (llmProviderRow, error)
 	UpdateByExternalID(ctx context.Context, params llmProviderWriteParams) (llmProviderRow, error)
 	UpdateOrganizationDefault(ctx context.Context, params llmProviderWriteParams) (llmProviderRow, error)

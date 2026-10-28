@@ -3274,6 +3274,7 @@
   "platformAdmin.platformAdministrationIsTemporarilyUnavailablePleaseTryAgain": "Platform administration is temporarily unavailable. Please try again.",
   "platformAdmin.thisAccountDoesNotHavePlatformAccess": "This account does not have platform access.",
   "platformAdmin.backToConsole": "Back to console",
+  "platformAdmin.openPlatformAdministration": "Open platform administration",
   "platformAdmin.platformAdministration": "Platform administration",
   "platformAdmin.toggleAdministrationMenu": "Toggle administration menu",
   "platformAdmin.globalAdministration": "Global administration",

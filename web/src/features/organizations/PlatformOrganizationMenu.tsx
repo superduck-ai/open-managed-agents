@@ -35,13 +35,13 @@ function ConnectedPlatformOrganizationMenu() {
   if (!organizations?.platformScope) return null;
   return (
     <>
+      <DropdownMenuSeparator />
       <DropdownMenuGroup>
         <DropdownMenuLabel className="truncate px-3 py-2 text-xs">
           {msg('platformScope.active', 'Platform administrator · {organization}', {
             organization: organizationAccess?.organization.name ?? organizations.platformScope.targetOrganizationUuid,
           })}
         </DropdownMenuLabel>
-        <DropdownMenuSeparator />
         <DropdownMenuItem
           className="h-8 gap-3 px-3"
           disabled={organizations.switching}

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { errorMessage } from '../../utils';
 import { anthropicBetaApi } from '../../../../shared/api/anthropic';
 import { listLLMProviders, listOrganizationLLMProviders } from '../../../llm-providers/api';
 import { listCreateAgentSkills, loadMcpDirectoryServers } from '../../agents/create-dialog-api';
@@ -58,39 +59,47 @@ export function credentialCovers(credential: VaultCredentialApiResponse, url: st
   return !credential.archived_at && auth.success && auth.data.mcp_server_url === url;
 }
 export async function loadBuilderVaults(workspaceId: string, servers: Array<{ name: string; url: string }>) {
-  const vaults = await allPages<VaultApiResponse>(async (page) => {
-    const response = await listManagedEntities('credential-vaults', workspaceId, page);
-    return {
-      ...response,
-      data: response.data.filter((item): item is VaultApiResponse => item.type === 'vault' && !item.archived_at),
-    };
-  });
-  return Promise.all(
-    vaults.map(async (vault) => {
-      const credentials = await allPages((page) => listVaultCredentials(vault.id, workspaceId, page));
+  try {
+    const vaults = await allPages<VaultApiResponse>(async (page) => {
+      const response = await listManagedEntities('credential-vaults', workspaceId, page);
       return {
-        id: vault.id,
-        name: vault.display_name,
-        covered: servers
-          .filter((server) => credentials.some((credential) => credentialCovers(credential, server.url)))
-          .map((server) => server.name),
+        ...response,
+        data: response.data.filter((item): item is VaultApiResponse => item.type === 'vault' && !item.archived_at),
       };
-    }),
-  );
+    });
+    return await Promise.all(
+      vaults.map(async (vault) => {
+        const credentials = await allPages((page) => listVaultCredentials(vault.id, workspaceId, page));
+        return {
+          id: vault.id,
+          name: vault.display_name,
+          covered: servers
+            .filter((server) => credentials.some((credential) => credentialCovers(credential, server.url)))
+            .map((server) => server.name),
+        };
+      }),
+    );
+  } catch (cause) {
+    throw new BuilderCredentialReadError(cause);
+  }
 }
 export async function missingBuilderCredentials(state: BuilderState, catalog: BuilderCatalog, workspaceId: string) {
   const servers = authenticationServers(state.savedConfig ?? state.config, catalog);
   if (!servers.length) return [];
-  const credentials = (
-    await Promise.all(
-      state.vaults.map((vault) => allPages((page) => listVaultCredentials(vault.id, workspaceId, page))),
-    )
-  ).flat();
-  return servers.filter(
-    (server) =>
-      !state.skippedServers.includes(server.url) &&
-      !credentials.some((credential) => credentialCovers(credential, server.url)),
-  );
+  try {
+    const credentials = (
+      await Promise.all(
+        state.vaults.map((vault) => allPages((page) => listVaultCredentials(vault.id, workspaceId, page))),
+      )
+    ).flat();
+    return servers.filter(
+      (server) =>
+        !state.skippedServers.includes(server.url) &&
+        !credentials.some((credential) => credentialCovers(credential, server.url)),
+    );
+  } catch (cause) {
+    throw new BuilderCredentialReadError(cause);
+  }
 }
 export function savedBuilderAgent(agent: AgentApiResponse) {
   const config = normalizeCreateAgentDraft(
@@ -236,4 +245,11 @@ export async function recoverBuilderOperation(state: BuilderState, workspaceId: 
     vaults: [...state.vaults.filter((vault) => vault.id !== reference.id), reference],
     operation: null,
   };
+}
+
+export class BuilderCredentialReadError extends Error {
+  constructor(cause: unknown) {
+    super(errorMessage(cause));
+    this.name = 'BuilderCredentialReadError';
+  }
 }

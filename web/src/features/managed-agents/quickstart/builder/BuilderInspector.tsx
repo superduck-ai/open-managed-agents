@@ -12,7 +12,9 @@ import {
 import { useI18n } from '../../../../shared/i18n';
 import { Button, ButtonLink } from '../../../../shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../shared/ui/card';
-import { Badge } from '../../../../shared/ui/badge';
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '../../../../shared/ui/accordion';
+import { SyntaxCodeBlock } from '../../components/CodeBlocks';
+import { stableStringify } from '../platformQuickstartRequest';
 import { downloadTextFile } from '../../utils';
 import { builderExportConfig } from './model';
 import type { Builder } from './useBuilder';
@@ -42,7 +44,10 @@ export function BuilderInspector({ builder, workspaceId }: { builder: Builder; w
     ...(state.deployment ? [{ ...state.deployment, section: 'deployments', icon: CalendarClock }] : []),
   ];
   return (
-    <aside aria-label={zh ? '构建配置' : 'Build configuration'} className="min-h-0 space-y-5 overflow-y-auto pb-6">
+    <aside
+      aria-label={zh ? '构建配置' : 'Build configuration'}
+      className="min-h-0 space-y-5 overflow-y-auto pb-6 text-sm"
+    >
       <Card className="gap-4 ring-0">
         <CardHeader>
           <CardTitle className="text-sm">{zh ? '进度' : 'Progress'}</CardTitle>
@@ -66,33 +71,9 @@ export function BuilderInspector({ builder, workspaceId }: { builder: Builder; w
           </ol>
         </CardContent>
       </Card>
-      {state.agent && (
-        <Card className="gap-3 ring-0">
-          <CardHeader>
-            <CardTitle className="text-sm">{zh ? '智能体' : 'Agent'}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ButtonLink
-              variant="ghost"
-              aria-label={zh ? '查看配置' : 'View configuration'}
-              className="h-auto w-full min-w-0 justify-start gap-3 px-0 py-2 font-normal"
-              href={`/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(state.agent.id)}`}
-            >
-              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
-                <Bot className="size-4" />
-              </span>
-              <span className="min-w-0 flex-1 truncate text-left" title={state.config.name}>
-                {state.agent.name}
-              </span>
-              <Badge variant="secondary" className="font-normal">
-                {`v${state.agent.version}`}
-              </Badge>
-              <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-            </ButtonLink>
-          </CardContent>
-        </Card>
-      )}
+      <SavedAgent builder={builder} workspaceId={workspaceId} />
       <BuilderResources resources={resources} workspaceId={workspaceId} />
+      <SkippedAuthorization builder={builder} />
       <Button
         variant="secondary"
         className="w-full font-normal"
@@ -100,7 +81,7 @@ export function BuilderInspector({ builder, workspaceId }: { builder: Builder; w
         onClick={() => downloadTextFile('agent.json', JSON.stringify(builderExportConfig(state), null, 2))}
       >
         <ArrowDownToLine aria-hidden="true" />
-        {zh ? '导出配置' : 'Export configuration'}
+        {state.savedConfig ? (zh ? '导出配置' : 'Export configuration') : zh ? '导出草稿' : 'Export draft'}
       </Button>
     </aside>
   );
@@ -122,26 +103,124 @@ function BuilderResources({
       </CardHeader>
       <CardContent className="space-y-3">
         {!resources.length && (
-          <div className="grid min-h-36 place-content-center justify-items-center gap-4 text-muted-foreground">
-            <Layers aria-hidden="true" className="size-8" strokeWidth={1.25} />
-            <p className="text-sm">{zh ? '暂无资源' : 'No resources yet'}</p>
-          </div>
+          <p className="text-sm text-muted-foreground">{zh ? '暂无关联资源' : 'No resources yet'}</p>
         )}
         {resources.map((resource) => (
-          <a
-            key={resource.id}
-            className="flex min-w-0 items-center gap-3 rounded-lg py-2 text-sm hover:bg-accent focus-visible:outline focus-visible:outline-ring"
-            title={resource.name}
-            href={`/workspaces/${encodeURIComponent(workspaceId)}/${resource.section}/${encodeURIComponent(resource.id)}`}
-          >
-            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
-              <resource.icon aria-hidden="true" className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1 truncate">{resource.name}</span>
-            <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-          </a>
+          <Accordion key={resource.id}>
+            <AccordionItem value={resource.id}>
+              <AccordionTrigger>
+                <span className="min-w-0 truncate" title={resource.name}>
+                  {resource.name}
+                </span>
+              </AccordionTrigger>
+              <AccordionContent className="space-y-2">
+                <p className="break-all font-mono text-xs text-muted-foreground">{resource.id}</p>
+                {resource.section === 'environments' && (
+                  <p className="text-xs text-muted-foreground">
+                    {zh
+                      ? '环境配置已保存。运行环境准备、软件包安装与工具执行结果以实际会话事件为准。'
+                      : 'Environment configuration is saved. Runtime preparation, package installation and tool execution require actual session evidence.'}
+                  </p>
+                )}
+                <a
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={zh ? `在管理页查看 ${resource.name}` : `Manage ${resource.name}`}
+                  className="flex min-w-0 items-center gap-3 rounded-lg py-2 text-sm hover:bg-accent focus-visible:outline focus-visible:outline-ring"
+                  title={resource.name}
+                  href={`/workspaces/${encodeURIComponent(workspaceId)}/${resource.section}/${encodeURIComponent(resource.id)}`}
+                >
+                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
+                    <resource.icon aria-hidden="true" className="size-4" />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{resource.name}</span>
+                  <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                </a>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
         ))}
       </CardContent>
     </Card>
+  );
+}
+
+function SkippedAuthorization({ builder }: { builder: Builder }) {
+  const { locale } = useI18n();
+  const zh = locale === 'zh-CN';
+  const { state } = builder;
+  return (
+    <>
+      {state.skippedServers.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm text-warning">
+            {zh ? '已跳过授权：' : 'Authorization skipped: '}
+            {state.skippedServers
+              .map((url) => state.config.mcp_servers.find((server) => server.url === url)?.name ?? url)
+              .join(', ')}
+          </p>
+          <Button
+            variant="outline"
+            disabled={builder.busy || Boolean(state.sessionID && !state.testClosed)}
+            onClick={() =>
+              void builder.reply(zh ? '重新授权已跳过的服务。' : 'Authorize the services I skipped earlier.')
+            }
+          >
+            {zh ? '重新授权' : 'Authorize services'}
+          </Button>
+        </div>
+      )}
+    </>
+  );
+}
+
+function SavedAgent({ builder, workspaceId }: { builder: Builder; workspaceId: string }) {
+  const { locale } = useI18n();
+  const zh = locale === 'zh-CN';
+  const { state } = builder;
+  return (
+    <>
+      {state.agent && (
+        <Card className="gap-3 ring-0">
+          <CardHeader>
+            <CardTitle className="text-sm">{zh ? '智能体' : 'Agent'}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ButtonLink
+              variant="ghost"
+              aria-label={zh ? '在管理页查看智能体' : 'Manage agent'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="h-auto w-full min-w-0 justify-start gap-3 px-0 py-2 font-normal"
+              href={`/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(state.agent.id)}`}
+            >
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
+                <Bot className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-left" title={state.config.name}>
+                {state.agent.name}
+              </span>
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">{`v${state.agent.version}`}</span>
+              <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            </ButtonLink>
+            <Accordion>
+              <AccordionItem value="config">
+                <AccordionTrigger>{zh ? '查看已保存配置' : 'View saved configuration'}</AccordionTrigger>
+                <AccordionContent>
+                  <SyntaxCodeBlock language="json" value={JSON.stringify(state.savedConfig, null, 2)} />
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+            {stableStringify(state.savedConfig) !== stableStringify(state.config) && (
+              <p className="text-xs text-muted-foreground">
+                {zh
+                  ? '有待确认修改，当前版本尚未变更。'
+                  : 'Changes await confirmation. The saved version is unchanged.'}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </>
   );
 }

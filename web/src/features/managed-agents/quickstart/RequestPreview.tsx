@@ -24,7 +24,15 @@ export function quickstartCurl(path: string, workspaceID: string, body?: unknown
   return lines.join(' \\\n');
 }
 
-export function RequestPreview({ code, hint = true }: { code: string; hint?: boolean }) {
+export function RequestPreview({
+  code,
+  hint = true,
+  language = 'bash',
+}: {
+  code: string;
+  hint?: boolean;
+  language?: string;
+}) {
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -39,13 +47,15 @@ export function RequestPreview({ code, hint = true }: { code: string; hint?: boo
   return (
     <div className="min-w-0 space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-muted-foreground">curl</span>
+        <span className="text-xs font-medium text-muted-foreground">
+          {language === 'bash' ? 'curl' : language === 'python' ? 'Python' : 'JavaScript'}
+        </span>
         <Button type="button" variant="ghost" size="xs" onClick={() => void copy()}>
           <span>{copyState === 'copied' ? text.copied : text.copy}</span>
           {copyState === 'copied' ? <Check /> : <Copy />}
         </Button>
       </div>
-      <SyntaxCodeBlock value={code} language="bash" />
+      <SyntaxCodeBlock value={code} language={language} />
       {copyState === 'failed' && (
         <p role="status" className="text-sm text-muted-foreground">
           {text.copyFailed}

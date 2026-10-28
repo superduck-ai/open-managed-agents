@@ -5,6 +5,7 @@ import { Button } from '../../../shared/ui/button';
 import { Field, FieldLabel } from '../../../shared/ui/field';
 import { Input } from '../../../shared/ui/input';
 import { Textarea } from '../../../shared/ui/textarea';
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '../../../shared/ui/accordion';
 import { RadioGroup, RadioGroupItem } from '../../../shared/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import type { AgentModelOption } from '../agents/create-dialog-model';
@@ -117,16 +118,6 @@ export function QuickstartAgent({
           if (valid && !disabled) void wizard.saveAgent();
         }}
       >
-        <Field>
-          <FieldLabel htmlFor="quickstart-name">{text.name}</FieldLabel>
-          <Input
-            id="quickstart-name"
-            value={draft.name}
-            disabled={disabled || Boolean(agent)}
-            onChange={(event) => wizard.editDraft({ name: event.target.value })}
-            maxLength={256}
-          />
-        </Field>
         {(candidates.length > 0 || agent) && (
           <div className="space-y-3 border-b-[0.5px] border-border pb-4">
             <p className="text-sm text-muted-foreground">{text.existingAgent}</p>
@@ -165,45 +156,99 @@ export function QuickstartAgent({
             {agent && <p className="text-xs text-muted-foreground">{text.usingAgent}</p>}
           </div>
         )}
-        <Field>
-          <FieldLabel htmlFor="quickstart-description">{text.description}</FieldLabel>
-          <Input
-            id="quickstart-description"
-            value={draft.description}
-            disabled={disabled || Boolean(agent)}
-            onChange={(event) => wizard.editDraft({ description: event.target.value })}
-          />
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="quickstart-model">{text.model}</FieldLabel>
-          <Select
-            value={draft.modelID}
-            disabled={disabled || Boolean(agent)}
-            onValueChange={(value) => wizard.editDraft({ modelID: value ?? '' })}
-          >
-            <SelectTrigger id="quickstart-model" className="h-auto! min-h-10 w-full py-2.5">
-              <SelectValue>{draft.modelID}</SelectValue>
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false} align="start" className="max-h-80 p-1.5">
-              {models.map((model) => (
-                <SelectItem key={model.id} value={model.id} className="py-3 pl-3">
-                  {model.displayName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="quickstart-system">{text.system}</FieldLabel>
-          <Textarea
-            id="quickstart-system"
-            value={draft.system}
-            disabled={disabled || Boolean(agent)}
-            rows={7}
-            onChange={(event) => wizard.editDraft({ system: event.target.value })}
-            className="h-[clamp(6rem,18dvh,10rem)] resize-y"
-          />
-        </Field>
+        {agent ? (
+          <div aria-label={locale === 'zh-CN' ? '复用智能体摘要' : 'Reused agent summary'} className="space-y-5">
+            <div className="flex flex-wrap items-baseline gap-3">
+              <h2 className="min-w-0 break-words text-base font-medium">{agent.name}</h2>
+              <span className="font-mono text-xs text-muted-foreground">v{agent.version}</span>
+            </div>
+            <dl className="space-y-3 text-sm">
+              <div>
+                <dt className="text-xs text-muted-foreground">{text.model}</dt>
+                <dd className="break-all">{draft.modelID}</dd>
+              </div>
+              {draft.description && (
+                <div>
+                  <dt className="text-xs text-muted-foreground">{text.description}</dt>
+                  <dd className="break-words">{draft.description}</dd>
+                </div>
+              )}
+            </dl>
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium">{text.system}</h3>
+              <p className="line-clamp-3 break-words whitespace-pre-wrap text-sm leading-6">{draft.system}</p>
+              <Accordion>
+                <AccordionItem value="system">
+                  <AccordionTrigger>
+                    {locale === 'zh-CN' ? '展开完整提示词' : 'Show full system prompt'}
+                  </AccordionTrigger>
+                  <AccordionContent className="break-words whitespace-pre-wrap leading-6">
+                    {draft.system}
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            </div>
+            <Button
+              variant="outline"
+              disabled={disabled}
+              onClick={() => wizard.update((value) => ({ ...value, agentID: 'new' }))}
+            >
+              {locale === 'zh-CN' ? '改为新建' : 'Create a new agent instead'}
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Field>
+              <FieldLabel htmlFor="quickstart-name">{text.name}</FieldLabel>
+              <Input
+                id="quickstart-name"
+                value={draft.name}
+                disabled={disabled}
+                onChange={(event) => wizard.editDraft({ name: event.target.value })}
+                maxLength={256}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="quickstart-description">{text.description}</FieldLabel>
+              <Input
+                id="quickstart-description"
+                value={draft.description}
+                disabled={disabled}
+                onChange={(event) => wizard.editDraft({ description: event.target.value })}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="quickstart-model">{text.model}</FieldLabel>
+              <Select
+                value={draft.modelID}
+                disabled={disabled}
+                onValueChange={(value) => wizard.editDraft({ modelID: value ?? '' })}
+              >
+                <SelectTrigger id="quickstart-model" className="h-auto! min-h-10 w-full py-2.5">
+                  <SelectValue>{draft.modelID}</SelectValue>
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false} align="start" className="max-h-80 p-1.5">
+                  {models.map((model) => (
+                    <SelectItem key={model.id} value={model.id} className="py-3 pl-3">
+                      {model.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="quickstart-system">{text.system}</FieldLabel>
+              <Textarea
+                id="quickstart-system"
+                value={draft.system}
+                disabled={disabled}
+                rows={7}
+                onChange={(event) => wizard.editDraft({ system: event.target.value })}
+                className="h-[clamp(6rem,18dvh,10rem)] resize-y"
+              />
+            </Field>
+          </>
+        )}
         {!valid && (
           <p role="status" className="text-sm text-muted-foreground">
             {modelAvailable ? text.required : text.modelUnavailable}
@@ -341,14 +386,14 @@ function ConfigurationLayout({
       <div className="mb-(--quickstart-gap) shrink-0 space-y-2">
         <h1 className="text-2xl leading-8 font-semibold tracking-tight">{title}</h1>
       </div>
-      <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max gap-(--quickstart-gap) overflow-y-auto min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)] min-[860px]:overflow-hidden">
-        <div className="min-h-0 min-w-0 max-w-xl pr-1 min-[860px]:overflow-y-auto">{children}</div>
-        <aside className="min-h-0 min-w-0 border-t-[0.5px] border-border pt-6 min-[860px]:overflow-y-auto min-[860px]:border-t-0 min-[860px]:border-l-[0.5px] min-[860px]:pt-0 min-[860px]:pl-6">
+      <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max gap-(--quickstart-gap) overflow-y-auto xl:grid-cols-[minmax(0,560px)_minmax(0,1fr)] xl:grid-rows-[minmax(0,1fr)] xl:overflow-hidden">
+        <div className="min-h-0 min-w-0 max-w-xl pr-1 xl:overflow-y-auto">{children}</div>
+        <aside className="min-h-0 min-w-0 border-t-[0.5px] border-border pt-6 xl:overflow-y-auto xl:border-t-0 xl:border-l-[0.5px] xl:pt-0 xl:pl-6">
           <div className="min-w-0">
             <QuickstartApiKey workspaceID={workspaceID} />
             <div className="mt-(--quickstart-gap) border-t-[0.5px] border-border pt-(--quickstart-gap)">
               <h2 className="mb-3 text-sm font-medium">{text.api}</h2>
-              <RequestPreview code={code} />
+              <RequestPreview code={code} hint={false} />
             </div>
           </div>
         </aside>

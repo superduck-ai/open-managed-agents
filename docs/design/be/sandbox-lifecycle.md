@@ -205,3 +205,26 @@ sweep 对每页至多 100 个候选过滤策略后，通过 River `InsertMany` �
 解除阻塞后，即使原归档请求已经结束，即时删除仍将沙箱写为 stopped。
 失败路径验证归档成功、stopping 状态保留、重试任务持久化及再次归档通过 Provider 404 完成删除。
 并发测试强制即时删除与后台回收同时到达 Provider，以 204/404 返回检查双方收敛为 stopped。
+
+## Sandbox 准备阶段的租约
+
+Provider 的存活 TTL、Work 的 heartbeat 和 Code Session 的 Worker lease 是独立租约。准备包、文件系统与 Manager 时 Sandbox 仍为 `creating`，不能依赖仅选择 `running` Sandbox 的 Worker heartbeat 来保活；prewarm 也可能早于 Worker 启动。
+
+Runner 成功创建 Provider Sandbox 后，立即保存 Provider ID，并为本次 Sandbox UUID 启动准备期租约。首次续租同步成功后才执行准备 I/O，后续间隔为原 Provider TTL 的三分之一，每次仍续原 TTL，不延长包准备、MCP readiness 或公开按需准备的 timeout。每次续租重新检查同一 Work、未终止/归档/删除的 Session、当前 pending Sandbox UUID 和 Provider ID，以及 `creating`/`running` 状态。网络调用在数据库事务外执行，保留已有多租户与 UUID 查询边界。
+
+租约只归当前创建调用持有，不由扫描器或其他 Worker 为所有 `creating` 记录保活。完成准备后停止并等待 goroutine 退出，运行态续租仍由既有 Worker 策略负责；idle/requires_action 的保活策略不变。请求取消、续租错误、owner 状态失效或 attempt 被替换会取消准备上下文。单次续租时限不超过一个续租周期，不重试至 Provider TTL 被静默耗尽。
+
+准备 owner 还受 Sandbox 创建起既有三分钟 pending 年龄上限约束；按需入口已有的150秒上限更短时继续优先。进程退出会失去本地租约，Provider TTL 自然停止保活；以后请求发现超龄 pending attempt 时，通过既有失败清理/可恢复 Work 重排路径退役旧 attempt，而不是无限等待。取消后的失败落库使用独立有界清理上下文，不能因请求已经取消而遗留 `creating`；旧 attempt 的清理先对旧记录单独持久化 failed、原因与停止时间，再清理其独立 Provider；不能停止或重排已被新 attempt 接管的 Work，也不能删除 replacement 的 Provider ID。若两条记录共享 Provider ID，只退役旧记录，不删除该 Provider。旧记录落库失败时记录错误并停止本次清理，不先 Kill 制造仍为 creating 的孤儿记录。
+
+```mermaid
+flowchart LR
+    C[Provider 创建成功] --> I[立即登记 Provider ID]
+    I --> L[Runner 首次续租]
+    L --> P[包 / 文件系统 / Manager 准备]
+    P --> R[就绪并停止准备租约]
+    R --> W[既有 Worker 运行态续租]
+    L -->|失败| F[有界失败清理]
+    P -->|取消 / owner 失效 / 超龄| F
+```
+
+replacement 回归明确构造旧行仍为 creating 的场景，不先将其标为 failed，并分别检查不同和共享 Provider ID。回归用隔离 PostgreSQL schema 驱动真实 Runner 准备路径，验证短 TTL 下超过 TTL 的准备过程实际续期；虚拟时间测试原30秒 TTL 下准备75秒、续租错误、取消、截止与 handoff。终止、归档、替换、取消清理和超龄 attempt 退役单独检查。受控准备测试不证明真实包源、pandas 安装或 import 成功，后者仍由新 SHA 的独立黑盒验收。

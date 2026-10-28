@@ -68,15 +68,24 @@ export function BuilderEntry({
           <AlertDialogHeader>
             <AlertDialogTitle>{zh ? '开始新的构建？' : 'Start a new build?'}</AlertDialogTitle>
             <AlertDialogDescription>
-              {zh
-                ? '当前本地构建记录将被替换，已创建的智能体和环境仍会保留。'
-                : 'This replaces the current local build history. Saved agents and environments remain available.'}
+              {builder.state.sessionID && !builder.state.testClosed
+                ? zh
+                  ? '请先继续上次构建并结束当前试跑，再开始新的构建。'
+                  : 'Continue the previous build and end its open test before starting a new build.'
+                : zh
+                  ? '当前本地构建记录将被替换，已创建的智能体和环境仍会保留。'
+                  : 'This replaces the current local build history. Saved agents and environments remain available.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{zh ? '取消' : 'Cancel'}</AlertDialogCancel>
             <AlertDialogAction
-              disabled={builder.busy || Boolean(builder.state.operation) || Boolean(builder.state.unconfirmedMessage)}
+              disabled={
+                builder.busy ||
+                Boolean(builder.state.operation) ||
+                Boolean(builder.state.unconfirmedMessage) ||
+                Boolean(builder.state.sessionID && !builder.state.testClosed)
+              }
               onClick={() => {
                 if (!builder.restart()) return;
                 onEnter();

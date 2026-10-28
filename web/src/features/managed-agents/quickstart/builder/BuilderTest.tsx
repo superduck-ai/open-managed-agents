@@ -55,41 +55,44 @@ export function BuilderTest({
     )
       void builder.resolve({ session_id: state.sessionID, first_message: firstText });
   }, [firstText, state.firstMessage, state.gate, builder.busy]);
-  const end = () => {
-    const summary = conversation.data.events.slice(-100).map((event) => ({
-      type: sessionEventType(event),
-      text: ['user.message', 'agent.message', 'assistant.message'].includes(sessionEventType(event))
-        ? sessionEventTranscriptText(event).slice(0, 3000)
+  const summary = conversation.data.events.slice(-20).map((event) => ({
+    type: sessionEventType(event),
+    text: ['user.message', 'agent.message', 'assistant.message'].includes(sessionEventType(event))
+      ? sessionEventTranscriptText(event).slice(0, 1000)
+      : undefined,
+    stop_reason:
+      typeof event.stop_reason === 'object' && event.stop_reason && 'type' in event.stop_reason
+        ? String(event.stop_reason.type)
         : undefined,
-      stop_reason: event.stop_reason,
-      tool: sessionToolDisplayName(event),
-      is_error: event.is_error === true,
-    }));
-    void builder.closeTest(JSON.stringify(summary));
+    tool: sessionToolDisplayName(event),
+    is_error: event.is_error === true,
+  }));
+  const evidence = JSON.stringify(summary);
+  useEffect(() => {
+    builder.observeTest(JSON.stringify(summary.map(({ text: _text, ...metadata }) => metadata)));
+  }, [evidence]);
+  const end = () => {
+    void builder.closeTest(evidence);
   };
   return (
-    <section className="flex h-[600px] min-h-0 min-w-0 flex-1 xl:h-full flex-col gap-3">
-      <QuickstartChat conversation={conversation} workspaceID={workspaceId} />
-      <div className="flex justify-end gap-2">
-        {conversation.running || conversation.action ? (
-          <Button variant="outline" disabled={conversation.sending} onClick={() => void conversation.stop()}>
-            {zh ? '中断试跑' : 'Interrupt test'}
-          </Button>
-        ) : (
-          <Button
-            disabled={
-              builder.busy ||
-              conversation.sending ||
-              conversation.unconfirmed ||
-              !conversation.bindingValid ||
-              conversation.data.loading ||
-              !conversation.data.connected
-            }
-            onClick={end}
-          >
-            {zh ? '结束试跑' : 'End test'}
-          </Button>
-        )}
+    <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <QuickstartChat conversation={conversation} workspaceID={workspaceId} className="h-full" />
+      <div className="flex shrink-0 justify-end gap-2">
+        <Button
+          disabled={
+            builder.busy ||
+            conversation.running ||
+            Boolean(conversation.action) ||
+            conversation.sending ||
+            conversation.unconfirmed ||
+            !conversation.bindingValid ||
+            conversation.data.loading ||
+            !conversation.data.connected
+          }
+          onClick={end}
+        >
+          {zh ? '结束试跑并复盘' : 'End test and review'}
+        </Button>
       </div>
     </section>
   );

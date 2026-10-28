@@ -6,7 +6,7 @@ import { previewSchedule } from '../../resources/deployment-schedule';
 import type { BuilderState, BuilderTool } from './model';
 
 const configurationDescription =
-  'Propose the complete agent configuration for user confirmation before saving. Include user-supplied source material needed by future sessions in system as reference data, preserving facts and unknowns. This call opens a confirmation card; it does not mean the agent is saved. Only a successful save result confirms persistence.';
+  'Propose the complete agent configuration for user confirmation before saving. Include user-supplied source material needed by future sessions in system as reference data, preserving facts and unknowns. Keep explicit user restrictions on runtime behavior in their own wording in a User constraints section of system; do not replace them with weaker optional or unconfirmed exceptions. This call opens a confirmation card; it does not mean the agent is saved. Only a successful save result confirms persistence.';
 const empty = z.object({}).strict();
 const question = z
   .object({

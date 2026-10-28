@@ -22,3 +22,13 @@ test('configuration tool describes a proposal rather than a completed save', () 
   expect(tool?.description).toContain('user confirmation');
   expect(tool?.description).toContain('source material');
 });
+
+test('builder preserves explicit scope restrictions without inventing optional exceptions', () => {
+  const state = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'model'));
+  const text = builderSystem(state, 'en', ['model'], [], [])
+    .map((block) => block.text)
+    .join('\n');
+  expect(text).toContain("user's own wording in a separate User constraints section");
+  expect(text).toContain('Do not weaken exclusions');
+  expect(text).toContain('optional, secondary or pending-confirmation exceptions');
+});

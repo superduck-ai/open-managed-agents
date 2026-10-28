@@ -290,6 +290,14 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 	}
 	providerSandboxID := sandbox.ID
 
+	preparationCtx, stopLease, err := r.startSandboxPreparation(ctx, record, *work, providerSandboxID)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return true, err
+	}
+	defer stopLease()
+	ctx = preparationCtx
+
 	// 将 E2B ID 写入 Work metadata；Managed Agent preparation 可能还加入了 skill
 	// mount，所以即使 Provider ID 为空，也要为该分支持久化更新后的 metadata。
 	if strings.TrimSpace(providerSandboxID) != "" || preparation != nil {
@@ -527,9 +535,24 @@ func (r *Runner) requeueFailedRecoverySandbox(
 	return err == nil && requeued
 }
 
-// failCreatedSandbox returns true when a concurrent user stop already won and
-// the sandbox was kept stopped instead of being rewritten as failed.
 func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) bool {
+	cause = errors.Join(cause, context.Cause(ctx))
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	ctx = cleanupCtx
+	pending, found, pendingErr := r.db.GetPendingEnvironmentSandboxForWork(ctx, *work)
+	if pendingErr == nil && found && pending.UUID != record.UUID {
+		now := time.Now().UTC()
+		message := cause.Error()
+		if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceUUID, record.ExternalID, "failed", &providerSandboxID, &message, &now); err != nil {
+			r.logger.ErrorContext(ctx, "retire replaced sandbox preparation", "sandbox_id", record.ExternalID, "error", err)
+			return true
+		}
+		if providerSandboxID != "" && (pending.ProviderSandboxID == nil || *pending.ProviderSandboxID != providerSandboxID) {
+			_ = r.provider.Kill(ctx, providerSandboxID)
+		}
+		return true
+	}
 	currentWork, err := r.db.GetEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID)
 	if err == nil && (currentWork.State == "stopping" || currentWork.State == "stopped") {
 		*work = currentWork

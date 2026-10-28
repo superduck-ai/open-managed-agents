@@ -307,6 +307,8 @@ type rcloneTestProvider struct {
 	configExists    bool
 }
 
+func (*rcloneTestProvider) SetTimeout(context.Context, string, time.Duration) error { return nil }
+
 func (*rcloneTestProvider) Create(context.Context, db.Environment, *db.EnvironmentWork, e2bruntime.Resolution) (e2bruntime.Sandbox, error) {
 	panic("unexpected Create call")
 }

@@ -11,6 +11,7 @@ import type { CreateAgentInput } from '../../types';
 import { errorMessage } from '../../utils';
 import {
   BuilderOperationNotFoundError,
+  BuilderCredentialReadError,
   authenticationServers,
   loadBuilderVaults,
   builderBackend,
@@ -35,7 +36,7 @@ import { builderSystem } from './prompt';
 import { builderTools } from './tools';
 import { prepareBuilderTool, type BuilderVaultOption } from './dispatch';
 import { streamBuilderTurn } from './protocol';
-import { operationKind, performBuilderMutation, reloadBuilderAgent } from './mutations';
+import { operationKind, performBuilderMutation, reloadBuilderAgent, savedBuilderOperationResult } from './mutations';
 
 type BuilderInput = { accountId: string; workspaceId: string; orgUuid: string; models: string[] };
 export function useBuilder(input: BuilderInput) {
@@ -55,6 +56,10 @@ export function useBuilder(input: BuilderInput) {
   const [partial, setPartial] = useState('');
   const [unmatchedOperationId, setUnmatchedOperationId] = useState('');
   const [vaults, setVaults] = useState<BuilderVaultOption[]>([]);
+  const [vaultRevision, setVaultRevision] = useState(0);
+  const [vaultsLoading, setVaultsLoading] = useState(false);
+  const [vaultsError, setVaultsError] = useState('');
+  const testEvents = useRef('');
   const catalog = useQuery({
     queryKey: ['builder-catalog', input.accountId, input.workspaceId],
     queryFn: () => loadBuilderCatalog(input.orgUuid, input.workspaceId),
@@ -70,18 +75,26 @@ export function useBuilder(input: BuilderInput) {
   useEffect(() => {
     if (!catalog.data || !['pick_vault', 'select_vault'].includes(state.gate?.name ?? '')) return;
     let active = true;
+    setVaultsLoading(true);
+    setVaultsError('');
     const servers = authenticationServers(state.savedConfig ?? state.config, catalog.data);
     void loadBuilderVaults(input.workspaceId, servers)
       .then((options) => {
-        if (active) setVaults(options);
+        if (active) {
+          setVaults(options);
+          setVaultsLoading(false);
+        }
       })
       .catch((cause) => {
-        if (active) setError(errorMessage(cause));
+        if (active) {
+          setVaultsError(errorMessage(cause));
+          setVaultsLoading(false);
+        }
       });
     return () => {
       active = false;
     };
-  }, [state.gate?.id, catalog.data, input.workspaceId]);
+  }, [state.gate?.id, catalog.data, input.workspaceId, vaultRevision]);
   function update(change: (value: BuilderState) => BuilderState) {
     if (!mounted.current) return;
     const next = change(current.current);
@@ -126,6 +139,10 @@ export function useBuilder(input: BuilderInput) {
         content: typeof prepared.result === 'string' ? prepared.result : JSON.stringify(prepared.result ?? null),
       };
     } catch (cause) {
+      if (cause instanceof BuilderCredentialReadError) {
+        update((value) => ({ ...value, gate: call, readError: errorMessage(cause) }));
+        return null;
+      }
       return { content: errorMessage(cause), isError: true };
     }
   }
@@ -150,7 +167,14 @@ export function useBuilder(input: BuilderInput) {
         ...input,
         model: input.models[0],
         backend: builderBackend(input.models[0], catalog.data),
-        system: builderSystem(value, locale, input.models, catalog.data.directory, catalog.data.skills),
+        system: builderSystem(
+          value,
+          locale,
+          input.models,
+          catalog.data.directory,
+          catalog.data.skills,
+          value.sessionID && !value.testClosed ? testEvents.current : '',
+        ),
         tools: builderTools(input.models),
         messages: baseMessages,
         signal: turnController.signal,
@@ -177,7 +201,7 @@ export function useBuilder(input: BuilderInput) {
   }
   function sendChatReply(text: string) {
     const trimmedReply = text.trim();
-    if (!trimmedReply || current.current.gate?.name === 'ask_user_questions') return Promise.resolve();
+    if (!trimmedReply) return Promise.resolve();
     return run(async () => {
       if (current.current.operation) throw new Error('Check the pending save before continuing.');
       update((value) => {
@@ -213,11 +237,7 @@ export function useBuilder(input: BuilderInput) {
       update((value) =>
         toolResult({ ...value, ...patch, operation: null }, tool, {
           saved: true,
-          agent: patch.agent,
-          environment: patch.environment,
-          vaults: patch.vaults,
-          deployment: patch.deployment,
-          session_id: patch.sessionID,
+          ...savedBuilderOperationResult(operation.kind, { ...value, ...patch }),
         }),
       );
     } catch (cause) {
@@ -299,11 +319,7 @@ export function useBuilder(input: BuilderInput) {
         tool
           ? toolResult(restored, tool, {
               recovered: true,
-              agent: restored.agent,
-              environment: restored.environment,
-              vaults: restored.vaults,
-              deployment: restored.deployment,
-              session_id: restored.sessionID,
+              ...savedBuilderOperationResult(operationKind(tool), restored),
             })
           : restored,
       );
@@ -315,7 +331,11 @@ export function useBuilder(input: BuilderInput) {
       const tool = current.current.gate;
       if (!tool) return;
       const environment = await selectBuilderEnvironment(id, input.workspaceId);
-      await completeAwaitingTool(tool, environment, { ...invalidateBuilderTest(current.current), environment });
+      await completeAwaitingTool(
+        tool,
+        { ...environment, runtime_verified: false, selected: true },
+        { ...invalidateBuilderTest(current.current), environment },
+      );
     });
   const credentialDone = () =>
     run(async () => {
@@ -388,13 +408,28 @@ export function useBuilder(input: BuilderInput) {
     error,
     partial,
     vaults,
+    vaultsLoading,
+    vaultsError,
+    retryVaults: () => setVaultRevision((value) => value + 1),
+    retryRead: () =>
+      run(async () => {
+        if (!current.current.readError || !current.current.gate || current.current.operation) return;
+        update((value) => ({ ...value, gate: null, readError: '' }));
+        await startQuickstartTurn();
+      }),
     update,
     reply: sendChatReply,
     resolve,
     confirm,
     startTemplate,
     restart: () => {
-      if (current.current.operation || current.current.unconfirmedMessage || lock.current) return false;
+      if (
+        current.current.operation ||
+        current.current.unconfirmedMessage ||
+        (current.current.sessionID && !current.current.testClosed) ||
+        lock.current
+      )
+        return false;
       update(() => newBuilderState(createDialogAgentConfig(blankAgentTemplate, locale, undefined, input.models[0])));
       return true;
     },
@@ -421,6 +456,9 @@ export function useBuilder(input: BuilderInput) {
     selectEnvironment,
     credentialDone,
     closeTest,
+    observeTest: (summary: string) => {
+      testEvents.current = summary;
+    },
     next: completeOfferNextStep,
     resume: () => run(() => startQuickstartTurn()),
     cancel: () => controller.current?.abort(),

@@ -20,7 +20,7 @@ export function BuilderComposer({
   const [draft, setDraft] = useState('');
   const send = () => {
     const text = draft.trim();
-    if (!text || state.gate?.name === 'ask_user_questions') return;
+    if (!text || state.operation) return;
     if (onSend) {
       onSend(text);
       return;
@@ -30,7 +30,7 @@ export function BuilderComposer({
   };
   return (
     <form
-      className={`mx-auto flex w-full gap-2 border-[0.5px] border-input bg-card p-3 focus-within:border-foreground ${entry ? 'max-w-[728px] flex-col rounded-2xl' : 'max-w-[680px] items-end rounded-2xl'}`}
+      className={`mx-auto flex w-full gap-2 border-[0.5px] border-input bg-card p-3 focus-within:border-foreground ${entry ? 'max-w-[728px] flex-col rounded-2xl' : 'max-w-[760px] items-end rounded-2xl'}`}
       onSubmit={(event) => {
         event.preventDefault();
         send();
@@ -45,8 +45,8 @@ export function BuilderComposer({
               ? '一个客服助手，根据我们的文档回答问题，遇到无法解决的问题时交给人工…'
               : 'A customer support agent that answers from our docs and hands unresolved questions to a person…'
             : zh
-              ? '描述你的需求…'
-              : 'Describe what you need…'
+              ? '回复或继续调整…'
+              : 'Reply or keep refining…'
         }
         aria-label={zh ? '构建消息' : 'Builder message'}
         className="max-h-48 min-h-16 resize-none border-0 bg-transparent px-1 pt-1 pb-3 text-sm leading-6 shadow-none focus-visible:ring-0 dark:bg-transparent"
@@ -75,7 +75,7 @@ export function BuilderComposer({
             type="submit"
             size="icon"
             aria-label={zh ? '发送' : 'Send'}
-            disabled={!draft.trim() || Boolean(state.operation) || state.gate?.name === 'ask_user_questions'}
+            disabled={!draft.trim() || Boolean(state.operation)}
           >
             <ArrowUp />
           </Button>

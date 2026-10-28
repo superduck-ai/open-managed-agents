@@ -2,6 +2,7 @@ import { buildQuickstartToolResultMessage, toolResultBlock } from '../chatModel'
 import { z } from 'zod';
 import { createAgentDraftSchema, normalizeCreateAgentDraft } from '../../agents/create-dialog-model';
 import type { CreateAgentInput } from '../../types';
+import { stableStringify } from '../platformQuickstartRequest';
 
 export const builderStepSchema = z.enum(['agent', 'environment', 'session', 'deploy', 'integrate']);
 export const builderToolSchema = z.object({
@@ -29,6 +30,7 @@ export const builderStateSchema = z.object({
   deployment: referenceSchema.nullable(),
   wantsSchedule: z.boolean(),
   gate: builderToolSchema.nullable(),
+  readError: z.string().default(''),
   operation: z
     .object({
       id: z.string(),
@@ -65,6 +67,7 @@ export function newBuilderState(config: CreateAgentInput): BuilderState {
     deployment: null,
     wantsSchedule: false,
     gate: null,
+    readError: '',
     operation: null,
     sessionID: '',
     sessionBinding: '',
@@ -107,6 +110,7 @@ export function toolResult(state: BuilderState, tool: BuilderTool, result: unkno
   return {
     ...state,
     gate: null,
+    readError: '',
     queue: state.queue.filter((item) => item.id !== tool.id),
     messages: [
       ...state.messages.slice(0, resultIndex),
@@ -130,6 +134,12 @@ export function invalidateBuilderTest(state: BuilderState, preserveClosedTest = 
     sessionBinding: '',
     unconfirmedMessage: '',
     firstMessage: '',
+    deployment: null,
+    step: ['deploy', 'integrate'].includes(state.step)
+      ? state.wantsSchedule && preserveClosedTest && state.testClosed
+        ? 'deploy'
+        : 'session'
+      : state.step,
     testClosed: preserveClosedTest && state.testClosed,
     testSummary: preserveClosedTest ? state.testSummary : '',
   };
@@ -162,10 +172,12 @@ function builderResultText(content: unknown, zh: boolean) {
     const answers = z.array(z.object({ answers: z.array(z.string()) })).safeParse(result);
     if (answers.success) return answers.data.map((answer) => answer.answers.join(', ') || (zh ? '继续' : 'Continue'));
     if (result.user_choice) return [String(result.user_choice)];
-    if (result.id && result.name) return [String(result.name)];
+    if (result.id && result.name) return [zh ? `${result.name}：已选择` : `${result.name}: selected`];
     if (result.saved || result.recovered) return [zh ? '已保存' : 'Saved'];
-    if (result.skipped) return [zh ? '暂时跳过授权' : 'Authorization skipped for now'];
-    if (result.authorized) return [zh ? '已添加凭据' : 'Credential added'];
+    if (result.skipped)
+      return [zh ? `${result.service ?? ''}：已跳过授权` : `${result.service ?? ''}: authorization skipped`];
+    if (result.authorized)
+      return [zh ? `${result.service ?? ''}：凭据已添加` : `${result.service ?? ''}: credential added`];
     if (result.selected_vaults) return [zh ? '已选择保险库' : 'Vaults selected'];
     return [];
   } catch {
@@ -174,10 +186,15 @@ function builderResultText(content: unknown, zh: boolean) {
 }
 
 export function builderExportConfig(state: BuilderState) {
+  const pending = Boolean(state.savedConfig && stableStringify(state.config) !== stableStringify(state.savedConfig));
   return {
-    agent: state.config,
+    configuration_status: state.savedConfig ? (pending ? 'unsaved_changes' : 'saved') : 'draft',
+    agent: state.savedConfig ?? state.config,
+    ...(pending ? { draft: state.config } : {}),
     session: {
-      ...(state.agent ? { agent: { type: 'agent', id: state.agent.id, version: state.agent.version } } : {}),
+      ...(state.agent && state.savedConfig
+        ? { agent: { type: 'agent', id: state.agent.id, version: state.agent.version } }
+        : {}),
       ...(state.environment ? { environment_id: state.environment.id } : {}),
       vault_ids: state.vaults.map((vault) => vault.id),
     },

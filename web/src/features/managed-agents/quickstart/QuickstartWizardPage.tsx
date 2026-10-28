@@ -30,9 +30,9 @@ export function QuickstartWizardPage({
   return (
     <>
       {wizard.progress.step === 0 && startHeader}
-      <section className="quickstart-wizard mx-auto flex h-full min-h-0 w-full min-w-0 max-w-[880px] flex-1 flex-col overflow-hidden text-sm">
+      <section className="quickstart-wizard mx-auto flex h-full min-h-0 w-full min-w-0 max-w-[1440px] flex-1 flex-col overflow-hidden text-sm">
         {started && (
-          <nav aria-label={text.title} className="mx-auto w-full max-w-4xl shrink-0">
+          <nav aria-label={text.title} className="w-full shrink-0">
             <ol className="grid grid-cols-4">
               {text.steps.map((label, index) => (
                 <li

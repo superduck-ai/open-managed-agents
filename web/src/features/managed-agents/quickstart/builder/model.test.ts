@@ -160,6 +160,7 @@ test('configuration export contains the current agent and real session reference
   state.config = { ...state.config, name: 'Exported research', system: 'Cite primary sources.' };
   state.messages = [{ role: 'user', content: 'Private build discussion' }];
   state.agent = { id: 'agent_saved', name: 'Exported research', version: 3 };
+  state.savedConfig = state.config;
   const empty = builderExportConfig(state);
   expect(empty.session).not.toHaveProperty('environment_id');
   state.environment = { id: 'env_selected', name: 'Research environment' };
@@ -199,4 +200,44 @@ test('remaining tool results precede chat replies in model history', () => {
   expect(
     completed.messages.slice(1, -1).map((message) => Array.isArray(message.content) && message.content[0].tool_use_id),
   ).toEqual(['first', 'second']);
+});
+
+test('export keeps pending draft separate from the version used by sessions', () => {
+  const state = initial();
+  state.savedConfig = { ...state.config, name: 'Saved', system: 'Saved instructions' };
+  state.agent = { id: 'agent_saved', name: 'Saved', version: 2 };
+  state.config = { ...state.savedConfig, name: 'Pending', system: 'Unconfirmed instructions' };
+  const exported = builderExportConfig(state);
+  expect(exported.agent).toEqual(state.savedConfig);
+  expect(exported.draft).toEqual(state.config);
+  expect(exported.configuration_status).toBe('unsaved_changes');
+  expect(exported.session.agent).toEqual({ type: 'agent', id: 'agent_saved', version: 2 });
+});
+
+test('changing dependencies detaches the old deployment from the current flow without rewriting history', () => {
+  const state = initial();
+  state.step = 'integrate';
+  state.wantsSchedule = true;
+  state.testClosed = true;
+  state.deployment = { id: 'deployment_old', name: 'Old pinned deployment' };
+  state.messages = [{ role: 'user', content: 'Original deployment exists.' }];
+  const changed = invalidateBuilderTest(state);
+  expect(changed.deployment).toBeNull();
+  expect(changed.step).toBe('session');
+  expect(changed.testClosed).toBe(false);
+  expect(changed.messages).toEqual(state.messages);
+  const repairAndContinue = invalidateBuilderTest(state, true);
+  expect(repairAndContinue.step).toBe('deploy');
+  expect(repairAndContinue.testClosed).toBe(true);
+});
+
+test('restating the same model ID in a full proposal preserves saved model options', () => {
+  const state = initial();
+  state.config.model = { id: 'model', speed: 'fast' };
+  const proposed = proposedAgentConfig(
+    { id: 'rename', name: 'build_agent_config', input: { name: 'Renamed', model: 'model' } },
+    state,
+    ['model'],
+  );
+  expect(proposed.model).toEqual({ id: 'model', speed: 'fast' });
 });

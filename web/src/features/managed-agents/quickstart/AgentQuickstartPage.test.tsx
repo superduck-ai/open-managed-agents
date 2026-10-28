@@ -193,8 +193,8 @@ test('Agent candidates include later pages and an unavailable saved model cannot
   }) as typeof fetch;
   renderManagedAgentsPage('quickstart');
   fireEvent.click(await screen.findByRole('button', { name: 'Start configuring' }));
-  await waitFor(() => expect(screen.getByLabelText('Model').textContent).toContain('removed-model'));
-  expect(screen.getByLabelText('Model').textContent).toContain('removed-model');
+  await waitFor(() => expect(screen.getByLabelText('Reused agent summary').textContent).toContain('removed-model'));
+  expect(screen.getByLabelText('Reused agent summary').textContent).toContain('removed-model');
   expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Use existing and continue' }).disabled).toBe(true);
   expect(
     screen.getByText(
@@ -211,19 +211,21 @@ test('same-name Agents default to an existing configuration and preserve an expl
   ]);
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
-  expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('First saved prompt.');
+  expect(screen.getByLabelText('Reused agent summary').textContent).toContain('First saved prompt.');
+  expect(screen.queryByRole('textbox', { name: 'System prompt' })).toBeNull();
   expect(codeBlockContaining('/v1/agents/agent_savedfirst').textContent).not.toContain('-X POST');
   await selectManagedComboboxOption(document.body, 'Use existing', 'Create a new Agent');
   fireEvent.change(screen.getByLabelText('System prompt'), { target: { value: 'My draft prompt.' } });
   await selectManagedComboboxOption(document.body, 'Use existing', /agent_savedsecond/);
-  expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('Second saved prompt.');
+  expect(screen.getByLabelText('Reused agent summary').textContent).toContain('Second saved prompt.');
   expect(codeBlockContaining('/v1/agents/agent_savedsecond').textContent).not.toContain('-X POST');
   await selectManagedComboboxOption(document.body, 'Use existing', 'Create a new Agent');
   expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('My draft prompt.');
   cleanup();
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
-  expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('First saved prompt.');
+  expect(screen.getByLabelText('Reused agent summary').textContent).toContain('First saved prompt.');
+  expect(screen.queryByRole('textbox', { name: 'System prompt' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Use existing and continue' }));
   expect(await screen.findByRole('heading', { name: 'Configure the runtime environment' })).toBeTruthy();
   expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(0);
@@ -253,7 +255,7 @@ test('refreshing during environment configuration starts over without recreating
   renderManagedAgentsPage('quickstart');
   await startAgentConfiguration();
   expect(await screen.findByRole('button', { name: 'Use existing and continue' })).toBeTruthy();
-  expect(screen.getByLabelText<HTMLInputElement>('Name').value).toBe('Hello World Agent');
+  expect(screen.getByLabelText('Reused agent summary').textContent).toContain('Hello World Agent');
   expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
 });
 
@@ -472,10 +474,10 @@ test('the online test receives real event shapes, completes after idle and reuse
   fireEvent.click(await screen.findByRole('button', { name: 'Use existing and continue' }));
   fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
   await waitFor(() => expect(runtime.sent.length).toBe(1));
-  expect(Boolean(screen.queryByText('First conversation completed'))).toBe(false);
+  expect(Boolean(screen.queryByText('Turn completed'))).toBe(false);
   await act(async () => runtime.reply('First reply'));
   expect(await screen.findByText('First reply')).toBeTruthy();
-  expect(await screen.findByText('First conversation completed')).toBeTruthy();
+  expect(await screen.findByText('Turn completed')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Test message'), { target: { value: 'A second message' } });
   fireEvent.keyDown(screen.getByLabelText('Test message'), { key: 'Enter', shiftKey: true });
   expect(runtime.sent).toHaveLength(1);
@@ -573,12 +575,12 @@ test.each([
   fireEvent.change(screen.getByLabelText('Test message'), { target: { value: 'Wait for the resumed turn' } });
   await act(async () => fireEvent.keyDown(screen.getByLabelText('Test message'), { key: 'Enter' }));
   expect(runtime.sent).toHaveLength(2);
-  expect(screen.getByRole('button', { name: 'Stop', exact: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Stop this turn', exact: true })).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Test message'), { target: { value: 'Still waiting for a new status' } });
   await act(async () => fireEvent.keyDown(screen.getByLabelText('Test message'), { key: 'Enter' }));
   expect(runtime.sent).toHaveLength(2);
   await act(async () => runtime.emit('session.status_running', {}));
-  fireEvent.click(screen.getByRole('button', { name: 'Stop', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Stop this turn', exact: true }));
   await waitFor(() => expect(runtime.sent[2]).toMatchObject({ type: 'user.interrupt' }));
   await act(async () => runtime.emit('session.status_idle', { stop_reason: { type: 'end_turn' } }));
   fireEvent.click(await screen.findByRole('button', { name: 'Send', exact: true }));
@@ -591,7 +593,7 @@ test.each([
   cleanup();
   renderManagedAgentsPage('quickstart');
   expect(await screen.findByRole('button', { name: 'Start configuring' })).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Stop', exact: true })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Stop this turn', exact: true })).toBeNull();
   expect(runtime.sent).toHaveLength(4);
 });
 
@@ -658,7 +660,7 @@ test('Thinking followed by idle is not reported as a completed first reply', asy
     runtime.emit('agent.message', { content: [{ type: 'thinking', thinking: 'Checking the question' }] });
     runtime.emit('session.status_idle', { stop_reason: { type: 'end_turn' } });
   });
-  expect(Boolean(screen.queryByText('First conversation completed'))).toBe(false);
+  expect(Boolean(screen.queryByText('Turn completed'))).toBe(false);
 });
 
 test('an interrupted partial reply is stopped rather than reported as completed', async () => {
@@ -676,7 +678,7 @@ test('an interrupted partial reply is stopped rather than reported as completed'
     runtime.emit('user.interrupt', {});
     runtime.emit('session.status_idle', { stop_reason: { type: 'end_turn' } });
   });
-  expect(Boolean(screen.queryByText('First conversation completed'))).toBe(false);
+  expect(Boolean(screen.queryByText('Turn completed'))).toBe(false);
   expect(await screen.findByText('Test stopped')).toBeTruthy();
 });
 
@@ -870,7 +872,7 @@ test('a completed Session has no recurring retrievals while visible or on an ear
   fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
   await waitFor(() => expect(runtime.sent).toHaveLength(1));
   await act(async () => runtime.reply('Finished reply'));
-  await screen.findByText('First conversation completed');
+  await screen.findByText('Turn completed');
   const before = retrievals;
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 2100));

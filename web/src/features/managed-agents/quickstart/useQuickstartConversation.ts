@@ -123,7 +123,7 @@ export function useQuickstartConversation(
     () => findActiveAwaitingToolCall(entries, latestRequiresActionEventIDs(data.events)),
     [data.events, entries],
   );
-  const { status, complete, running, failedTurn, stopped } = quickstartConversationState(
+  const { status, complete, running, waiting, failedTurn, stopped } = quickstartConversationState(
     data.events,
     session.data?.status ?? 'idle',
     Boolean(action),
@@ -215,6 +215,7 @@ export function useQuickstartConversation(
     complete,
     stopped,
     running,
+    waiting,
     disabled,
     unconfirmed,
     message,

@@ -45,7 +45,7 @@ const scenarios = {
       description: 'Review user-provided code changes.',
       summary: 'Check code changes and suggest concrete improvements.',
       system:
-        'Review user-provided code or diffs for correctness and edge cases. Report findings with locations and actionable suggestions. Do not modify code.',
+        'Review user-provided code or diffs for confirmed defects in the current code under the stated contract. For each finding, give its location, evidence, trigger and impact, then a concise suggestion. Omit assumptions about unspecified contracts, unsupported input types, hypothetical future changes, optional optimizations and style preferences from the entire response, including notes, non-findings and follow-up questions. Ask a focused question only when missing context prevents evaluating the requested behavior. If no confirmed defects remain, say so and stop; do not fill a quota. Do not modify code.',
     },
     {
       id: 'extract',
@@ -107,7 +107,8 @@ const scenarios = {
       name: '代码评审',
       description: '检查用户提供的代码变更。',
       summary: '检查代码变更，找出问题并给出具体修改建议。',
-      system: '先明确评审范围，读取用户提供的代码或变更，检查正确性和边界条件。给出问题、位置与建议，不直接修改代码。',
+      system:
+        '评审用户提供的代码或变更，只报告当前代码在已给定的契约下有证据支持的缺陷。每条给出位置、依据、触发条件与影响，再给简短建议。未明确的契约假设、未要求支持的输入类型、假设的未来改动、可选优化和风格偏好不进入回答，也不以附注、非问题或后续建议的形式追加。只有缺失上下文确实阻止判断用户要求的行为时，才简短询问；不要把猜测列为发现。没有可确认的缺陷时直接说明并结束，不凑数量，不直接修改代码。',
     },
     {
       id: 'extract',

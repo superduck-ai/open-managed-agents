@@ -65,7 +65,10 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
     const input = environmentInputSchema.parse(tool.input);
     if (!input.reuse_environment_id) return { gate: true };
     const environment = await selectBuilderEnvironment(input.reuse_environment_id, workspaceId);
-    return { result: environment, patch: { ...invalidateBuilderTest(state), environment } };
+    return {
+      result: { ...environment, runtime_verified: false, selected: true },
+      patch: { ...invalidateBuilderTest(state), environment },
+    };
   },
   list_vaults: async (context) => ({ result: await vaultOptions(context) }),
   pick_vault: async (context) => {

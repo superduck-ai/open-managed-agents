@@ -42,7 +42,11 @@ export function QuickstartIntegration({
       </div>
       <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max items-stretch gap-(--quickstart-gap) overflow-y-auto min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)] min-[860px]:overflow-hidden">
         <QuickstartApiCalls wizard={wizard} workspaceID={workspaceID} message={conversation.message} />
-        <QuickstartChat conversation={conversation} workspaceID={workspaceID} />
+        <QuickstartChat
+          conversation={conversation}
+          workspaceID={workspaceID}
+          className="order-first min-[860px]:order-last"
+        />
       </div>
       <QuickstartFooter wizard={wizard}>
         <Button

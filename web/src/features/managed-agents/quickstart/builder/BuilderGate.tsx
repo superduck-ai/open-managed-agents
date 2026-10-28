@@ -8,6 +8,8 @@ import { createVaultCredential } from '../../api';
 import { authenticationServers } from './api';
 import { BuilderQuestions } from './BuilderQuestions';
 import { invalidateBuilderTest } from './model';
+import { environmentFormValues } from '../../environments/model';
+import { ManagedErrorAlert } from '../../components/common';
 import type { Builder } from './useBuilder';
 
 type GateProps = { builder: Builder; workspaceId: string; orgUuid: string };
@@ -25,6 +27,15 @@ export function BuilderGate({
   const { state } = builder;
   const tool = state.gate;
   if (!tool) return null;
+  if (state.readError)
+    return (
+      <div className="space-y-3">
+        <ManagedErrorAlert>{state.readError}</ManagedErrorAlert>
+        <Button disabled={builder.busy} onClick={() => void builder.retryRead()}>
+          {zh ? '重试加载凭据' : 'Retry loading credentials'}
+        </Button>
+      </div>
+    );
   if (tool.name === 'ask_user_questions')
     return <BuilderQuestions tool={tool} disabled={builder.busy} onAnswer={(answer) => void builder.resolve(answer)} />;
   if (tool.name === 'pick_environment') return <EnvironmentGate {...{ builder, workspaceId, orgUuid }} />;
@@ -71,7 +82,7 @@ function ConfirmationGate({ builder }: GateProps) {
       )}
       <div className="flex gap-2">
         <Button disabled={builder.busy || Boolean(state.operation)} onClick={() => void builder.confirm()}>
-          {tool.name === 'agent_ready' ? (zh ? '开始试跑' : 'Start test') : zh ? '确认' : 'Confirm'}
+          {confirmationLabel(tool.name, state.agent?.version, zh)}
         </Button>
         <Button
           variant="ghost"
@@ -85,7 +96,7 @@ function ConfirmationGate({ builder }: GateProps) {
             )
           }
         >
-          {zh ? '修改' : 'Change'}
+          {zh ? '继续调整' : 'Keep refining'}
         </Button>
       </div>
     </div>
@@ -103,11 +114,22 @@ function EnvironmentGate({ builder }: GateProps) {
           <Button
             key={environment.id}
             variant="outline"
-            className="w-full justify-start"
+            className="h-auto min-h-11 w-full justify-start whitespace-normal text-left"
             disabled={builder.busy}
             onClick={() => void builder.selectEnvironment(environment.id)}
           >
-            {environment.name}
+            <span className="min-w-0 space-y-1">
+              <span className="block break-words">{environment.name}</span>
+              <span className="block text-xs font-normal text-muted-foreground">
+                {environmentFormValues(environment).networkType === 'unrestricted'
+                  ? zh
+                    ? '允许访问互联网'
+                    : 'Internet access'
+                  : zh
+                    ? '受限网络'
+                    : 'Restricted network'}
+              </span>
+            </span>
           </Button>
         ))}
       <Button
@@ -133,24 +155,39 @@ function VaultGate({ builder }: GateProps) {
   const [selected, setSelected] = useState(state.vaults.map((vault) => vault.id));
   return (
     <div className="space-y-3">
-      {builder.vaults.map((vault) => (
-        <label key={vault.id} className="flex items-center gap-3 rounded-lg border-[0.5px] border-border p-3">
-          <Checkbox
-            disabled={builder.busy}
-            checked={selected.includes(vault.id)}
-            onCheckedChange={(checked) =>
-              setSelected((value) => (checked ? [...value, vault.id] : value.filter((id) => id !== vault.id)))
-            }
-          />
-          <span className="flex-1">{vault.name}</span>
-          {vault.covered.length > 0 && (
-            <span className="text-xs text-muted-foreground">{vault.covered.join(', ')}</span>
-          )}
-        </label>
-      ))}
+      {builder.vaultsLoading && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {zh ? '正在检查凭据覆盖…' : 'Checking credential coverage…'}
+        </p>
+      )}
+      {builder.vaultsError && (
+        <div className="space-y-2">
+          <ManagedErrorAlert>{builder.vaultsError}</ManagedErrorAlert>
+          <Button variant="outline" onClick={builder.retryVaults}>
+            {zh ? '重试加载保险库' : 'Retry loading vaults'}
+          </Button>
+        </div>
+      )}
+      {!builder.vaultsLoading &&
+        !builder.vaultsError &&
+        builder.vaults.map((vault) => (
+          <label key={vault.id} className="flex items-center gap-3 rounded-lg border-[0.5px] border-border p-3">
+            <Checkbox
+              disabled={builder.busy}
+              checked={selected.includes(vault.id)}
+              onCheckedChange={(checked) =>
+                setSelected((value) => (checked ? [...value, vault.id] : value.filter((id) => id !== vault.id)))
+              }
+            />
+            <span className="flex-1">{vault.name}</span>
+            {vault.covered.length > 0 && (
+              <span className="text-xs text-muted-foreground">{vault.covered.join(', ')}</span>
+            )}
+          </label>
+        ))}
       <div className="flex gap-2">
         <Button
-          disabled={builder.busy || !selected.length}
+          disabled={builder.busy || builder.vaultsLoading || Boolean(builder.vaultsError) || !selected.length}
           onClick={() =>
             void builder.resolve(
               { selected_vaults: selected },
@@ -252,4 +289,19 @@ function NextStepGate({ builder }: GateProps) {
       {locale === 'zh-CN' ? '继续' : 'Continue'}
     </Button>
   );
+}
+
+function confirmationLabel(toolName: string, version: number | undefined, zh: boolean) {
+  if (toolName === 'build_agent_config')
+    return version == null
+      ? zh
+        ? '创建智能体'
+        : 'Create agent'
+      : zh
+        ? `保存为 v${version + 1}`
+        : `Save as v${version + 1}`;
+  if (toolName === 'agent_ready') return zh ? '开始试跑' : 'Start test';
+  if (toolName === 'create_environment') return zh ? '创建环境' : 'Create environment';
+  if (toolName === 'create_deployment') return zh ? '创建定时运行' : 'Create scheduled deployment';
+  return zh ? '创建保险库' : 'Create vault';
 }

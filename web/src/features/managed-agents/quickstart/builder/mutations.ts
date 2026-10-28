@@ -60,3 +60,11 @@ export async function reloadBuilderAgent(state: BuilderState, workspaceId: strin
   if (!state.agent) throw new Error('No saved agent to reload.');
   return savedBuilderAgent(await retrieveAgent(state.agent.id, workspaceId));
 }
+
+export function savedBuilderOperationResult(kind: NonNullable<BuilderState['operation']>['kind'], state: BuilderState) {
+  if (kind === 'agent') return { agent: state.agent };
+  if (kind === 'environment') return { environment: state.environment };
+  if (kind === 'vault') return { vaults: state.vaults.slice(-1) };
+  if (kind === 'deployment') return { deployment: state.deployment };
+  return { session_id: state.sessionID };
+}

@@ -11977,7 +11977,7 @@
           "queryType": "sql",
           "queries": [
             {
-              "query": "SELECT to_timestamp_micros(_timestamp) AS time, severity, service_name, body, reason, stop_reason, failure_reason, error, trace_id FROM oma_server WHERE body NOT IN ('http request', 'http response') AND (session_id = '$session_id' OR code_session_id IN (SELECT DISTINCT code_session_id FROM oma_server WHERE session_id = '$session_id' AND code_session_id IS NOT NULL) OR trace_id IN (SELECT DISTINCT trace_id FROM oma_server WHERE session_id = '$session_id')) ORDER BY _timestamp ASC",
+              "query": "SELECT to_timestamp_micros(_timestamp) AS time, severity, service_name, body, reason, error_type, trace_id FROM oma_server WHERE body NOT IN ('http request', 'http response') AND (session_id = '$session_id' OR code_session_id IN (SELECT DISTINCT code_session_id FROM oma_server WHERE session_id = '$session_id' AND code_session_id IS NOT NULL) OR trace_id IN (SELECT DISTINCT trace_id FROM oma_server WHERE session_id = '$session_id')) ORDER BY _timestamp ASC",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -12035,29 +12035,9 @@
                     "functionName": null
                   },
                   {
-                    "label": "stop reason",
-                    "alias": "stop_reason",
-                    "column": "stop_reason",
-                    "color": null,
-                    "isDerived": false,
-                    "type": "custom",
-                    "args": [],
-                    "functionName": null
-                  },
-                  {
-                    "label": "失败原因",
-                    "alias": "failure_reason",
-                    "column": "failure_reason",
-                    "color": null,
-                    "isDerived": false,
-                    "type": "custom",
-                    "args": [],
-                    "functionName": null
-                  },
-                  {
-                    "label": "错误",
-                    "alias": "error",
-                    "column": "error",
+                    "label": "错误类型",
+                    "alias": "error_type",
+                    "column": "error_type",
                     "color": null,
                     "isDerived": false,
                     "type": "custom",

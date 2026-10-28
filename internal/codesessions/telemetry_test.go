@@ -134,6 +134,12 @@ func TestWorkerDeliveryTelemetryCompatibility(t *testing.T) {
 			if result.Applied != tc.applied || result.Ignored != tc.ignored || (err != nil) != tc.failure {
 				t.Fatalf("result = %+v, %v", result, err)
 			}
+			if len(recorder.Ended()) != 0 {
+				t.Fatal("ACK span emitted before commit")
+			}
+			if err == nil {
+				observeSettledWorkerDeliveries(t.Context(), "cse_test", result.settled)
+			}
 			spans := recorder.Ended()
 			if len(spans) != tc.spans {
 				t.Fatalf("span count = %d, want %d", len(spans), tc.spans)

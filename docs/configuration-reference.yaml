@@ -372,7 +372,7 @@ telemetry:
   enabled: false
   service_name: oma-server
   otlp:
-    base_url: http://openobserve:5080
+    base_url: http://openobserve:5080 # 只写协议、主机与端口，不带路径
     organization: oma
     username: ""
     password: "" # 敏感值：OpenObserve 写入账号密码

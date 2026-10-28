@@ -1,6 +1,6 @@
 import type { Assignment } from "./assignment.ts";
 import type { Payload } from "./json.ts";
-import { traceHeaders } from "./trace-context.ts";
+import { traceHeaders } from "./observability/trace-context.ts";
 
 export class HttpError extends Error {
   constructor(readonly status: number) {

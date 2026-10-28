@@ -6,7 +6,7 @@ import type { Assignment } from "./assignment.ts";
 import { DEFAULT_MAX_OUTPUT_TOKENS } from "./model-defaults.ts";
 import { normalizeChatReasoning } from "./chat-reasoning.ts";
 import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
-import { traceHeaders } from "./trace-context.ts";
+import { traceHeaders } from "./observability/trace-context.ts";
 
 type ModelBackend = "messages" | "chat_completions";
 

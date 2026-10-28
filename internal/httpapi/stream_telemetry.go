@@ -17,7 +17,7 @@ type sseStreamInstruments struct {
 var sseStreamMetrics = telemetry.NewInstruments(func(meter metric.Meter) sseStreamInstruments {
 	return sseStreamInstruments{
 		streams:  telemetry.UpDownCounter(meter, "oma.sse.streams", "{stream}", "Open SSE streams"),
-		duration: telemetry.Histogram(meter, "oma.sse.stream.duration", "s", "SSE stream duration", telemetry.LongWaitBuckets),
+		duration: telemetry.Histogram(meter, "oma.sse.stream.duration", "s", "SSE stream duration", telemetry.LongWaitBuckets()),
 	}
 })
 

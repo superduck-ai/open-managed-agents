@@ -14,10 +14,34 @@ test("telemetry stays disabled without an OTLP endpoint or when the SDK is disab
   expect(telemetryEnabled({})).toBe(false);
   expect(telemetryEnabled({ ...ENV, OTEL_SDK_DISABLED: "true" })).toBe(false);
   expect(telemetryEnabled({ OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://127.0.0.1:1/v1/logs" })).toBe(true);
+  expect(telemetryEnabled({ ...ENV, OTEL_LOGS_EXPORTER: "none", OTEL_METRICS_EXPORTER: "none" })).toBe(false);
+  expect(telemetryEnabled({ OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://127.0.0.1:1/v1/logs", OTEL_LOGS_EXPORTER: "none" })).toBe(false);
   startTelemetry({});
   const noop = brainMetrics();
   expect(() => noop.sessionsActive.add(1)).not.toThrow();
   expect(() => emitBrainLog("info", "noop", { session_id: "cse_a" })).not.toThrow();
+});
+
+test("telemetry starts only the signals with a configured endpoint", async () => {
+  const noop = brainMetrics();
+  const logs = new InMemoryLogRecordExporter();
+  startTelemetry({ OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://127.0.0.1:1/v1/logs" }, { logProcessor: new SimpleLogRecordProcessor(logs) });
+  emitBrainLog("info", "logs_only", {});
+  expect(logs.getFinishedLogRecords().map((record) => record.body)).toEqual(["logs_only"]);
+  expect(brainMetrics()).toBe(noop);
+  await stopTelemetry();
+
+  const metrics = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+  const reader = new PeriodicExportingMetricReader({ exporter: metrics, exportIntervalMillis: 60_000 });
+  const unused = new InMemoryLogRecordExporter();
+  startTelemetry({ ...ENV, OTEL_LOGS_EXPORTER: "none" }, { logProcessor: new SimpleLogRecordProcessor(unused), metricReader: reader });
+  emitBrainLog("info", "logs_disabled", {});
+  expect(unused.getFinishedLogRecords()).toEqual([]);
+  expect(brainMetrics()).not.toBe(noop);
+  await stopTelemetry();
+
+  startTelemetry({ ...ENV, OTEL_METRICS_EXPORTER: "none" }, { logProcessor: new SimpleLogRecordProcessor(new InMemoryLogRecordExporter()) });
+  expect(brainMetrics()).toBe(noop);
 });
 
 test("diagnostics export structured log records with code session identity and dispatch trace context", () => {

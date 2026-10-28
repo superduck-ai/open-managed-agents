@@ -6,7 +6,7 @@ import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { Resource } from "@opentelemetry/resources";
 import { BatchLogRecordProcessor, LoggerProvider, type LogRecordProcessor } from "@opentelemetry/sdk-logs";
 import { MeterProvider, PeriodicExportingMetricReader, type MetricReader } from "@opentelemetry/sdk-metrics";
-import { validTraceParent } from "./trace-context.ts";
+import { parseTraceParent } from "./observability/trace-context.ts";
 
 export type LogLevel = "info" | "warn" | "error";
 
@@ -31,9 +31,13 @@ const NOOP_INSTRUMENTS = createInstruments(createNoopMeter());
 let instruments = NOOP_INSTRUMENTS;
 let shutdowns: (() => Promise<void>)[] = [];
 
+function signalEnabled(env: Record<string, string | undefined>, signal: "LOGS" | "METRICS"): boolean {
+  if (env.OTEL_SDK_DISABLED === "true" || env[`OTEL_${signal}_EXPORTER`] === "none") return false;
+  return Boolean(env.OTEL_EXPORTER_OTLP_ENDPOINT || env[`OTEL_EXPORTER_OTLP_${signal}_ENDPOINT`]);
+}
+
 export function telemetryEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  if (env.OTEL_SDK_DISABLED === "true") return false;
-  return Boolean(env.OTEL_EXPORTER_OTLP_ENDPOINT || env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT || env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT);
+  return signalEnabled(env, "LOGS") || signalEnabled(env, "METRICS");
 }
 
 export interface TelemetryExporters {
@@ -42,24 +46,29 @@ export interface TelemetryExporters {
 }
 
 export function startTelemetry(env: Record<string, string | undefined> = process.env, exporters: TelemetryExporters = {}): void {
-  if (logger || !telemetryEnabled(env)) return;
+  if (shutdowns.length || !telemetryEnabled(env)) return;
   const resource = new Resource({
     "service.name": env.OTEL_SERVICE_NAME || "oma-brain",
     "service.instance.id": `${hostname()}:${process.pid}`,
   });
-  const loggerProvider = new LoggerProvider({ resource });
-  loggerProvider.addLogRecordProcessor(exporters.logProcessor ?? new BatchLogRecordProcessor(new OTLPLogExporter()));
-  const interval = Number(env.OTEL_METRIC_EXPORT_INTERVAL ?? "10000");
-  const meterProvider = new MeterProvider({
-    resource,
-    readers: [exporters.metricReader ?? new PeriodicExportingMetricReader({
-      exporter: new OTLPMetricExporter(),
-      exportIntervalMillis: Number.isSafeInteger(interval) && interval > 0 ? interval : 10_000,
-    })],
-  });
-  logger = loggerProvider.getLogger(SCOPE);
-  instruments = createInstruments(meterProvider.getMeter(SCOPE));
-  shutdowns = [() => meterProvider.shutdown(), () => loggerProvider.shutdown()];
+  if (signalEnabled(env, "LOGS")) {
+    const loggerProvider = new LoggerProvider({ resource });
+    loggerProvider.addLogRecordProcessor(exporters.logProcessor ?? new BatchLogRecordProcessor(new OTLPLogExporter()));
+    logger = loggerProvider.getLogger(SCOPE);
+    shutdowns.push(() => loggerProvider.shutdown());
+  }
+  if (signalEnabled(env, "METRICS")) {
+    const interval = Number(env.OTEL_METRIC_EXPORT_INTERVAL ?? "10000");
+    const meterProvider = new MeterProvider({
+      resource,
+      readers: [exporters.metricReader ?? new PeriodicExportingMetricReader({
+        exporter: new OTLPMetricExporter(),
+        exportIntervalMillis: Number.isSafeInteger(interval) && interval > 0 ? interval : 10_000,
+      })],
+    });
+    instruments = createInstruments(meterProvider.getMeter(SCOPE));
+    shutdowns.push(() => meterProvider.shutdown());
+  }
 }
 
 export async function stopTelemetry(): Promise<void> {
@@ -99,11 +108,10 @@ function attributes(fields: Record<string, unknown>): Attributes {
 }
 
 function traceContext(traceParent: string | undefined) {
-  const valid = validTraceParent(traceParent);
-  if (!valid) return undefined;
-  const [, traceId, spanId, flags] = valid.split("-");
+  const parsed = parseTraceParent({ traceparent: traceParent });
+  if (!parsed) return undefined;
   return trace.setSpanContext(context.active(), {
-    traceId: traceId!, spanId: spanId!, traceFlags: Number.parseInt(flags!, 16) & TraceFlags.SAMPLED, isRemote: true,
+    traceId: parsed.traceId, spanId: parsed.spanId, traceFlags: parsed.sampled ? TraceFlags.SAMPLED : TraceFlags.NONE, isRemote: true,
   });
 }
 

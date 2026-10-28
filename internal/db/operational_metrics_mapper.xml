@@ -26,11 +26,11 @@
     </select>
 
     <select id="CountActiveCodeSessionsByWorkerState" resultType="operationalCodeSessionCountRow">
-        SELECT COALESCE(worker_status, 'unknown') AS worker_status, connection_status AS connection_status, count(*) AS total
+        SELECT worker_status AS worker_status, connection_status AS connection_status, count(*) AS total
         FROM code_sessions
         WHERE deleted_at IS NULL
         AND status = 'active'
-        GROUP BY COALESCE(worker_status, 'unknown'), connection_status
+        GROUP BY worker_status, connection_status
     </select>
 
     <select id="CountLiveEnvironmentWorkByState" resultType="operationalStateCountRow">

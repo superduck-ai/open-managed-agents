@@ -645,7 +645,6 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
-	annotateSessionInputShape(r.Context(), inputs)
 	if session.BudgetReachedAt != nil {
 		inputs, err = filterEventsAtBudgetCap(inputs)
 		if err != nil {
@@ -656,6 +655,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 			return nil
 		}
 	}
+	annotateSessionInputShape(r.Context(), inputs)
 	now := time.Now().UTC()
 	events := make([]db.SessionEvent, 0, len(inputs))
 	var outcomesChanged bool

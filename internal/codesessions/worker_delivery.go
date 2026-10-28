@@ -19,6 +19,13 @@ type workerDeliveryUpdate struct {
 type workerDeliveryResult struct {
 	Applied int
 	Ignored int
+	settled []settledWorkerDelivery
+}
+
+type settledWorkerDelivery struct {
+	update    workerDeliveryUpdate
+	outcome   string
+	reference workerevents.AckRef
 }
 
 func (s *Service) applyWorkerDeliveryUpdates(
@@ -65,7 +72,9 @@ func (s *Service) applyWorkerDeliveryUpdates(
 		}
 	}
 	if err != nil {
-		recordFailedWorkerDeliveryUpdates(ctx, updates, result, err)
+		recordFailedWorkerDeliveryUpdates(ctx, updates, err)
+	} else {
+		observeSettledWorkerDeliveries(ctx, codeSessionID, result.settled)
 	}
 	cancel()
 	// 对象清理会访问 jobs 表，必须在释放 Code Session 事务后执行，避免回调
@@ -88,7 +97,7 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 	for _, update := range updates {
 		reference, found := references[update.EventID]
 		if !found {
-			recordWorkerEventUpdate(ctx, update.Status, "ignored")
+			result.settled = append(result.settled, settledWorkerDelivery{update: update, outcome: "ignored"})
 			result.Ignored++
 			continue
 		}
@@ -107,25 +116,33 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 			if err := s.workerEventAcks.Delete(ctx, codeSessionID, epoch, update.EventID); err != nil {
 				s.logger.WarnContext(ctx, "delete processed worker event ACK", "code_session_id", codeSessionID, "event_id", update.EventID, "error", err)
 			}
-			observeWorkerEventAck(ctx, codeSessionID, update.EventID, reference)
 			if reference.CleanupJobID != "" {
 				cleanupJobIDs = append(cleanupJobIDs, reference.CleanupJobID)
 			}
 		default:
 			return result, cleanupJobIDs, db.ErrInvalidState
 		}
-		recordWorkerEventUpdate(ctx, update.Status, "applied")
+		result.settled = append(result.settled, settledWorkerDelivery{update: update, outcome: "applied", reference: reference})
 		result.Applied++
 	}
 	return result, cleanupJobIDs, nil
 }
 
-func recordFailedWorkerDeliveryUpdates(ctx context.Context, updates []workerDeliveryUpdate, result workerDeliveryResult, err error) {
+func observeSettledWorkerDeliveries(ctx context.Context, codeSessionID string, settled []settledWorkerDelivery) {
+	for _, delivery := range settled {
+		if delivery.outcome == "applied" && delivery.update.Status == "processed" {
+			observeWorkerEventAck(ctx, codeSessionID, delivery.update.EventID, delivery.reference)
+		}
+		recordWorkerEventUpdate(ctx, delivery.update.Status, delivery.outcome)
+	}
+}
+
+func recordFailedWorkerDeliveryUpdates(ctx context.Context, updates []workerDeliveryUpdate, err error) {
 	outcome := telemetry.Outcome(err)
 	if ctx.Err() != nil {
 		outcome = telemetry.OutcomeCanceled
 	}
-	for _, update := range updates[min(result.Applied+result.Ignored, len(updates)):] {
+	for _, update := range updates {
 		recordWorkerEventUpdate(ctx, update.Status, outcome)
 	}
 }

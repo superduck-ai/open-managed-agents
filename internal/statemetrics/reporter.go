@@ -60,6 +60,7 @@ type streamState struct {
 }
 
 type consumerState struct {
+	stream      string
 	name        string
 	pending     int64
 	ackPending  int64
@@ -176,7 +177,7 @@ func (r *Reporter) collectConsumers(ctx context.Context) []consumerState {
 			recordCollectFailure(ctx, "nats")
 			continue
 		}
-		states = append(states, consumerState{name: target.Consumer, pending: int64(info.NumPending), ackPending: int64(info.NumAckPending), redelivered: int64(info.NumRedelivered)})
+		states = append(states, consumerState{stream: target.Stream, name: target.Consumer, pending: int64(info.NumPending), ackPending: int64(info.NumAckPending), redelivered: int64(info.NumRedelivered)})
 	}
 	return states
 }
@@ -266,7 +267,7 @@ func (r *Reporter) observe(_ context.Context, observer metric.Observer) error {
 		observer.ObserveInt64(r.gauges.natsStreamOldestMessageAge, state.oldestAge, attrs)
 	}
 	for _, state := range current.consumers {
-		attrs := metric.WithAttributes(telemetry.AttrNATSConsumer.String(state.name))
+		attrs := metric.WithAttributes(telemetry.AttrNATSStream.String(state.stream), telemetry.AttrNATSConsumer.String(state.name))
 		observer.ObserveInt64(r.gauges.natsConsumerPending, state.pending, attrs)
 		observer.ObserveInt64(r.gauges.natsConsumerAckPending, state.ackPending, attrs)
 		observer.ObserveInt64(r.gauges.natsConsumerRedelivered, state.redelivered, attrs)

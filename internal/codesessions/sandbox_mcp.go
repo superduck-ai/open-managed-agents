@@ -155,14 +155,14 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
 		return call.with(sandboxMCPTransportOutcome(r))
 	}
-	if replyOutcome, ok := sandboxMCPReplyOutcome(responseBody); ok && call.outcome == telemetry.OutcomeOK {
-		call.outcome = replyOutcome
-	}
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		responseBody, err = commit.confirm(r.Context(), request, responseBody)
 		if err != nil {
 			h.logger.WarnContext(r.Context(), "Memory tool version confirmation failed", "session_id", session.SessionExternalID, "error", err)
 		}
+	}
+	if replyOutcome, ok := sandboxMCPReplyOutcome(responseBody); ok && call.outcome == telemetry.OutcomeOK {
+		call.outcome = replyOutcome
 	}
 	copySandboxMCPResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -12,8 +13,8 @@ func validateTelemetryConfig(cfg TelemetryConfig) error {
 		return nil
 	}
 	endpoint, err := url.Parse(cfg.OTLP.BaseURL)
-	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
-		return errors.New("telemetry.otlp.base_url must be an HTTP or HTTPS URL with a host")
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || strings.Trim(endpoint.Path, "/") != "" {
+		return errors.New("telemetry.otlp.base_url must be an HTTP or HTTPS URL with a host and no path")
 	}
 	checks := []struct {
 		valid   bool

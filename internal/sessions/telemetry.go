@@ -35,7 +35,7 @@ var sessionMetrics = telemetry.NewInstruments(func(meter metric.Meter) sessionIn
 		turns:                 telemetry.Counter(meter, "oma.session.turns", "{turn}", "Session turns ended by stop reason"),
 		errors:                telemetry.Counter(meter, "oma.session.errors", "{error}", "Session error events"),
 		handoffFailures:       telemetry.Counter(meter, "oma.session.handoff.failures", "{failure}", "Session handoff failures"),
-		inputQueueWait:        telemetry.Histogram(meter, "oma.session.input.queue_wait", "s", "Session input wait before worker processing", telemetry.LongWaitBuckets),
+		inputQueueWait:        telemetry.Histogram(meter, "oma.session.input.queue_wait", "s", "Session input wait before worker processing", telemetry.LongWaitBuckets()),
 		sseSubscribersDropped: telemetry.Counter(meter, "oma.sse.subscribers.dropped", "{subscriber}", "SSE subscribers dropped"),
 		fanoutPublishFailures: telemetry.Counter(meter, "oma.fanout.publish.failures", "{failure}", "Fanout publication failures"),
 	}

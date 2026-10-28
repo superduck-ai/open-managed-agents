@@ -1,7 +1,7 @@
 import { HttpError, type OmaApi } from "./api.ts";
 import { ConfigurationError } from "./config.ts";
 import { failureDiagnostic, workerDiagnostic } from "./ccrv2/diagnostics.ts";
-import { traceIdOf, validTraceParent } from "./trace-context.ts";
+import { canonicalTraceParent, parseTraceParent } from "./observability/trace-context.ts";
 import { brainMetrics } from "./telemetry.ts";
 
 export type TaskAdmissionStage = "validate_assignment" | "retire_session"
@@ -73,7 +73,7 @@ function claimedTask(value: unknown): ClaimedTask | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const task = value as Record<string, unknown>;
   if (typeof task.session_id !== "string" || typeof task.worker_epoch !== "number") return undefined;
-  const traceParent = validTraceParent(typeof task.trace_parent === "string" ? task.trace_parent : undefined);
+  const traceParent = canonicalTraceParent(task.trace_parent);
   return { session_id: task.session_id, worker_epoch: task.worker_epoch, ...(traceParent ? { trace_parent: traceParent } : {}) };
 }
 
@@ -107,8 +107,9 @@ async function admitClaim(
   const startMs = Date.now();
   const task = claimedTask(value);
   const traceParent = task?.trace_parent;
+  const traceId = parseTraceParent({ traceparent: traceParent })?.traceId;
   const fields: Record<string, unknown> = {
-    session_id: task?.session_id, worker_epoch: task?.worker_epoch, ...(traceParent ? { trace_id: traceIdOf(traceParent) } : {}),
+    session_id: task?.session_id, worker_epoch: task?.worker_epoch, ...(traceId ? { trace_id: traceId } : {}),
   };
   let stage = "validate_assignment";
   workerDiagnostic("info", "oma_task_admission_started", fields, traceParent);

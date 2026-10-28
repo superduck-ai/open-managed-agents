@@ -329,11 +329,11 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 }
 
 func newApplicationLogger(console slog.Handler, telemetryRuntime *telemetry.Runtime, level slog.Level) *slog.Logger {
-	handler := console
+	var handler slog.Handler = logging.NewContextHandler(console, logContextAttrs)
 	if otelHandler := telemetryRuntime.LogHandler(); otelHandler != nil {
-		handler = slog.NewMultiHandler(console, logging.NewLevelHandler(otelHandler, level))
+		handler = slog.NewMultiHandler(handler, logging.NewContextHandler(logging.NewLevelHandler(otelHandler, level), requestIDAttrs))
 	}
-	return slog.New(logging.NewContextHandler(handler, logContextAttrs))
+	return slog.New(handler)
 }
 
 func logContextAttrs(ctx context.Context) []slog.Attr {
@@ -344,10 +344,14 @@ func logContextAttrs(ctx context.Context) []slog.Attr {
 			slog.String("span_id", spanContext.SpanID().String()),
 		)
 	}
+	return append(attrs, requestIDAttrs(ctx)...)
+}
+
+func requestIDAttrs(ctx context.Context) []slog.Attr {
 	if requestID := httpapi.RequestID(ctx); requestID != "" {
-		attrs = append(attrs, slog.String("request_id", requestID))
+		return []slog.Attr{slog.String("request_id", requestID)}
 	}
-	return attrs
+	return nil
 }
 
 func shutdownTelemetry(telemetryRuntime *telemetry.Runtime, bootstrap *slog.Logger) {
@@ -364,7 +368,7 @@ func startStateMetrics(ctx context.Context, cfg config.Config, database *db.DB, 
 	}
 	reporter, err := statemetrics.New(statemetrics.Dependencies{
 		DB: database, NATS: natsConnection, Config: cfg.Telemetry.StateMetrics,
-		Streams:   []string{workerevents.StreamName, webhooks.StreamName, tunnels.CommandStreamName},
+		Streams:   []string{workerevents.StreamName, webhooks.StreamName, tunnels.CommandStreamName, telemetryexport.StreamName},
 		Consumers: []statemetrics.ConsumerTarget{{Stream: webhooks.StreamName, Consumer: webhooks.DeliveryConsumerName}},
 		Logger:    logger.With("component", "state_metrics"),
 	})

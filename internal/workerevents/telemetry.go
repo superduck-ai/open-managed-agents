@@ -12,6 +12,6 @@ type publishInstruments struct {
 
 var publishMetrics = telemetry.NewInstruments(func(meter metric.Meter) publishInstruments {
 	return publishInstruments{
-		workerEvent: telemetry.Histogram(meter, "oma.worker_event.publish.duration", "s", "Worker event publication duration", telemetry.LatencyBuckets),
+		workerEvent: telemetry.Histogram(meter, "oma.worker_event.publish.duration", "s", "Worker event publication duration", telemetry.LatencyBuckets()),
 	}
 })

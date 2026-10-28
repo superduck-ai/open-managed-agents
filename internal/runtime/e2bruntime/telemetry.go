@@ -12,7 +12,7 @@ import (
 )
 
 var providerCallDuration = telemetry.NewInstruments(func(meter metric.Meter) metric.Float64Histogram {
-	return telemetry.Histogram(meter, "oma.sandbox.provider.duration", "s", "Sandbox provider duration", telemetry.LatencyBuckets)
+	return telemetry.Histogram(meter, "oma.sandbox.provider.duration", "s", "Sandbox provider duration", telemetry.LatencyBuckets())
 })
 
 func observeProviderCall(ctx context.Context, operation string, sandboxID string) (context.Context, func(error)) {

@@ -108,12 +108,11 @@ func TestModelProxyTelemetry(t *testing.T) {
 				}
 				found = true
 				errorType, _ := point.Attributes.Value(attribute.Key("error.type"))
-				status, _ := point.Attributes.Value(attribute.Key("http.response.status_code"))
-				wantStatus := tc.upstreamStatus
-				if tc.closed {
-					wantStatus = 0
+				status, hasStatus := point.Attributes.Value(attribute.Key("http.response.status_code"))
+				if hasStatus == tc.closed || (hasStatus && status.AsInt64() != int64(tc.upstreamStatus)) {
+					t.Fatalf("operation status attribute: %+v", point)
 				}
-				if point.Count != 1 || errorType.AsString() != tc.errorType || status.AsInt64() != int64(wantStatus) {
+				if point.Count != 1 || errorType.AsString() != tc.errorType {
 					t.Fatalf("operation metric: %+v", point)
 				}
 			}

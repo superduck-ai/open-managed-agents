@@ -206,7 +206,7 @@ func (r *Runner) RunOnce(ctx context.Context, workerID string) (bool, error) {
 
 	runCtx, run := startRunnerRun(ctx, *work)
 	if run.trigger == runnerTriggerStaleRecovery {
-		r.logger.WarnContext(runCtx, "environment work stale recovery claimed", staleRecoveryLogAttrs(*work, time.Now())...)
+		r.logger.WarnContext(runCtx, "environment work stale recovery claimed", "work_id", work.ExternalID, "session_id", work.SessionExternalID, "state", work.State)
 	}
 	processed, err := r.runClaimedWork(runCtx, run, work)
 	run.end(runCtx, err)

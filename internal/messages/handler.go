@@ -132,6 +132,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	if backend == llmproviders.Messages {
 		resolvedBody, fileErr := h.managedFileReferences(r.Context(), principal, body)
 		if fileErr != nil {
+			call.failBeforeProxy("file_reference")
 			httpapi.WriteError(w, r, fileErr)
 			return
 		}
@@ -175,10 +176,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	}
 	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
-		call.failBeforeProxy("begin_model_request")
 		if errors.Is(err, db.ErrSessionBudgetReached) {
+			call.failBeforeProxy("budget_reached")
 			w.Header().Set("X-Should-Retry", "false")
 		} else {
+			call.failBeforeProxy("begin_model_request")
 			h.logger.ErrorContext(r.Context(), "start model request", "error", err)
 		}
 		httpapi.WriteError(w, r, modelRequestStartError(err))

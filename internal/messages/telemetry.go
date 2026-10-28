@@ -23,10 +23,10 @@ type modelInstruments struct {
 
 var modelMetrics = telemetry.NewInstruments(func(meter metric.Meter) modelInstruments {
 	return modelInstruments{
-		operationDuration: telemetry.Histogram(meter, "gen_ai.client.operation.duration", "s", "Model operation duration", telemetry.LatencyBuckets),
-		timeToFirstByte:   telemetry.Histogram(meter, "oma.model.time_to_first_byte", "s", "Model time to first byte", telemetry.LatencyBuckets),
-		timeToFirstToken:  telemetry.Histogram(meter, "oma.model.time_to_first_token", "s", "Model time to first token", telemetry.LatencyBuckets),
-		tokenUsage:        telemetry.Int64Histogram(meter, "gen_ai.client.token.usage", "{token}", "Model token usage", telemetry.TokenBuckets),
+		operationDuration: telemetry.Histogram(meter, "gen_ai.client.operation.duration", "s", "Model operation duration", telemetry.LatencyBuckets()),
+		timeToFirstByte:   telemetry.Histogram(meter, "oma.model.time_to_first_byte", "s", "Model time to first byte", telemetry.LatencyBuckets()),
+		timeToFirstToken:  telemetry.Histogram(meter, "oma.model.time_to_first_token", "s", "Model time to first token", telemetry.LatencyBuckets()),
+		tokenUsage:        telemetry.Int64Histogram(meter, "gen_ai.client.token.usage", "{token}", "Model token usage", telemetry.TokenBuckets()),
 	}
 })
 
@@ -116,7 +116,9 @@ func (c *modelCall) end() {
 		c.span.SetAttributes(modelResponseAttributes(c.observation, measurement)...)
 	}
 	recordModelCall(c.ctx, measurement)
-	c.span.SetAttributes(attribute.Int("http.response.status_code", c.status))
+	if c.status != 0 {
+		c.span.SetAttributes(attribute.Int("http.response.status_code", c.status))
+	}
 	if measurement.ErrorType != "" {
 		c.span.SetAttributes(attribute.String("error.type", measurement.ErrorType))
 		if measurement.ErrorType != telemetry.OutcomeCanceled {
@@ -130,7 +132,10 @@ func recordModelCall(ctx context.Context, measurement modelCallMeasurement) {
 	instruments := modelMetrics.Get()
 	model := attribute.String("gen_ai.request.model", measurement.Model)
 	source := telemetry.AttrSource.String(measurement.Source)
-	attrs := []attribute.KeyValue{model, source, attribute.Int("http.response.status_code", measurement.Status)}
+	attrs := []attribute.KeyValue{model, source}
+	if measurement.Status != 0 {
+		attrs = append(attrs, attribute.Int("http.response.status_code", measurement.Status))
+	}
 	if measurement.ErrorType != "" {
 		attrs = append(attrs, attribute.String("error.type", measurement.ErrorType))
 	}

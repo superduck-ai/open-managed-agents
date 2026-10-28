@@ -25,8 +25,8 @@ type riverInstruments struct {
 var riverMetrics = telemetry.NewInstruments(func(meter metric.Meter) riverInstruments {
 	return riverInstruments{
 		jobs:      telemetry.Counter(meter, "oma.river.jobs", "{job}", "River jobs"),
-		duration:  telemetry.Histogram(meter, "oma.river.job.duration", "s", "River job duration", telemetry.LatencyBuckets),
-		queueWait: telemetry.Histogram(meter, "oma.river.job.queue_wait", "s", "River job queue wait", telemetry.LongWaitBuckets),
+		duration:  telemetry.Histogram(meter, "oma.river.job.duration", "s", "River job duration", telemetry.LatencyBuckets()),
+		queueWait: telemetry.Histogram(meter, "oma.river.job.queue_wait", "s", "River job queue wait", telemetry.LongWaitBuckets()),
 	}
 })
 

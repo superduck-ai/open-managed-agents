@@ -1,7 +1,7 @@
 import { validateAssignment, type Assignment } from "./assignment.ts";
 import type { OmaApi } from "./api.ts";
 import { PermanentAdmissionError } from "./claim.ts";
-import { traceHeaders, validTraceParent } from "./trace-context.ts";
+import { canonicalTraceParent, traceHeaders } from "./observability/trace-context.ts";
 
 export interface BrainTask {
   session_id: string;
@@ -24,7 +24,7 @@ export function validateBrainTask(value: unknown): asserts value is BrainTask {
 
 export async function registerWorkerTask(api: OmaApi, claimed: BrainTask, signal?: AbortSignal): Promise<Assignment> {
   const { trace_parent: claimedTraceParent, ...task } = claimed;
-  const traceParent = validTraceParent(claimedTraceParent);
+  const traceParent = canonicalTraceParent(claimedTraceParent);
   const id = encodeURIComponent(task.session_id);
   const trace = traceHeaders(traceParent);
   const registeredAt = Date.now();

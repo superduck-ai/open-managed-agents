@@ -24,7 +24,7 @@ func TestInstrumentsFollowGlobalProvider(t *testing.T) {
 
 func TestRecordWaitRejectsNegativeDurations(t *testing.T) {
 	reader := telemetrytest.MetricReader(t)
-	histogram := Histogram(otel.GetMeterProvider().Meter(InstrumentationName), "oma.test.wait", "s", "Test wait", LongWaitBuckets)
+	histogram := Histogram(otel.GetMeterProvider().Meter(InstrumentationName), "oma.test.wait", "s", "Test wait", LongWaitBuckets())
 	RecordWait(t.Context(), histogram, -time.Second)
 	if data := telemetrytest.Collect(t, reader); len(data) != 0 {
 		t.Fatalf("negative wait recorded: %v", data)

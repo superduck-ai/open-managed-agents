@@ -30,12 +30,12 @@ type runnerInstruments struct {
 
 var runnerMetrics = telemetry.NewInstruments(func(meter metric.Meter) runnerInstruments {
 	return runnerInstruments{
-		queueWait:           telemetry.Histogram(meter, "oma.runner.queue_wait", "s", "Runner queue wait", telemetry.LongWaitBuckets),
+		queueWait:           telemetry.Histogram(meter, "oma.runner.queue_wait", "s", "Runner queue wait", telemetry.LongWaitBuckets()),
 		runs:                telemetry.Counter(meter, "oma.runner.runs", "{run}", "Runner runs"),
-		runDuration:         telemetry.Histogram(meter, "oma.runner.run.duration", "s", "Runner run duration", telemetry.LatencyBuckets),
-		stageDuration:       telemetry.Histogram(meter, "oma.runner.stage.duration", "s", "Runner stage duration", telemetry.LatencyBuckets),
+		runDuration:         telemetry.Histogram(meter, "oma.runner.run.duration", "s", "Runner run duration", telemetry.LatencyBuckets()),
+		stageDuration:       telemetry.Histogram(meter, "oma.runner.stage.duration", "s", "Runner stage duration", telemetry.LatencyBuckets()),
 		staleRecoveryClaims: telemetry.Counter(meter, "oma.runner.stale_recovery_claims", "{work}", "Runner stale work recovery claims"),
-		sandboxEnsure:       telemetry.Histogram(meter, "oma.sandbox.ensure.duration", "s", "Session sandbox ensure duration", telemetry.LatencyBuckets),
+		sandboxEnsure:       telemetry.Histogram(meter, "oma.sandbox.ensure.duration", "s", "Session sandbox ensure duration", telemetry.LatencyBuckets()),
 	}
 })
 
@@ -87,14 +87,6 @@ func staleRecoveryAttributes(work db.EnvironmentWork, now time.Time) []attribute
 	attrs := []attribute.KeyValue{attribute.String("oma.environment_work.state", work.State)}
 	if work.LatestHeartbeatAt != nil {
 		attrs = append(attrs, attribute.Float64("oma.environment_work.heartbeat_age_s", now.Sub(*work.LatestHeartbeatAt).Seconds()))
-	}
-	return attrs
-}
-
-func staleRecoveryLogAttrs(work db.EnvironmentWork, now time.Time) []any {
-	attrs := []any{"work_id", work.ExternalID, "session_id", work.SessionExternalID, "state", work.State}
-	if work.LatestHeartbeatAt != nil {
-		attrs = append(attrs, "heartbeat_age_s", now.Sub(*work.LatestHeartbeatAt).Seconds())
 	}
 	return attrs
 }

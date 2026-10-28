@@ -24,7 +24,7 @@ const (
 )
 
 var httpRequestDuration = telemetry.NewInstruments(func(meter metric.Meter) metric.Float64Histogram {
-	return telemetry.Histogram(meter, "http.server.request.duration", "s", "HTTP server request duration", telemetry.LatencyBuckets)
+	return telemetry.Histogram(meter, "http.server.request.duration", "s", "HTTP server request duration", telemetry.LatencyBuckets())
 })
 
 type routeParam struct {
@@ -160,7 +160,7 @@ func observeRequests(routes chi.Routes, next http.Handler) http.Handler {
 
 func workerTraceParent(r *http.Request) string {
 	path := r.URL.Path
-	if path == "/v1/messages" || strings.HasPrefix(path, "/v1/code/") || strings.HasPrefix(path, "/v2/ccr-sessions/") || strings.HasPrefix(path, "/v2/sessions/") {
+	if path == "/v1/messages" || path == "/v1/chat/completions" || strings.HasPrefix(path, "/v1/code/") || strings.HasPrefix(path, "/v2/ccr-sessions/") || strings.HasPrefix(path, "/v2/sessions/") {
 		return r.Header.Get(telemetry.TraceParentHeader)
 	}
 	return ""

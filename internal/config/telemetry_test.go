@@ -17,6 +17,7 @@ func TestTelemetryValidationRejectsInvalidConfig(t *testing.T) {
 		{"malformed URL", "base_url", func(c *TelemetryConfig) { c.OTLP.BaseURL = "://" }},
 		{"URL scheme", "base_url", func(c *TelemetryConfig) { c.OTLP.BaseURL = "ftp://example.com" }},
 		{"URL host", "base_url", func(c *TelemetryConfig) { c.OTLP.BaseURL = "http:///path" }},
+		{"URL path", "base_url", func(c *TelemetryConfig) { c.OTLP.BaseURL = "http://openobserve:5080/api/oma" }},
 		{"timeout", "timeout", func(c *TelemetryConfig) { c.OTLP.Timeout = 0 }},
 		{"username only", "username", func(c *TelemetryConfig) { c.OTLP.Username = "writer" }},
 		{"password only", "password", func(c *TelemetryConfig) { c.OTLP.Password = "password" }},
@@ -56,6 +57,7 @@ func TestTelemetryConfigurationDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.OTLP.Username, cfg.OTLP.Password = "writer", " password "
+	cfg.OTLP.BaseURL = "http://openobserve:5080/"
 	cfg.Metrics.ExportInterval = time.Second
 	cfg.StateMetrics.Interval = 10 * time.Second
 	if err := validateTelemetryConfig(cfg); err != nil {

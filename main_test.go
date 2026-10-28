@@ -149,4 +149,7 @@ func TestLogContextAttrs(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("context attrs = %v, want %v", got, want)
 	}
+	if attrs := requestIDAttrs(ctx); len(attrs) != 1 || attrs[0].Key != "request_id" || attrs[0].Value.String() != "req_test" {
+		t.Fatalf("OTLP context attrs = %v", attrs)
+	}
 }

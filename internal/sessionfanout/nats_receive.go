@@ -84,5 +84,5 @@ func observeFanoutLag(ctx context.Context, message *nats.Msg) {
 }
 
 var fanoutLag = telemetry.NewInstruments(func(meter metric.Meter) metric.Float64Histogram {
-	return telemetry.Histogram(meter, "oma.fanout.lag", "s", "Fanout lag", telemetry.LatencyBuckets)
+	return telemetry.Histogram(meter, "oma.fanout.lag", "s", "Fanout lag", telemetry.LatencyBuckets())
 })

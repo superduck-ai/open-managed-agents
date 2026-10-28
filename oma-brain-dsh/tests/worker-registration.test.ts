@@ -6,7 +6,7 @@ import { validateAssignment } from "../src/assignment.ts";
 import { createOmaCcrClient } from "../src/oma-ccrv2.ts";
 import { assignment } from "./backend.ts";
 import { sandboxEndpoint } from "../src/oma-sandbox/config.ts";
-import { traceIdOf, validTraceParent } from "../src/trace-context.ts";
+import { canonicalTraceParent } from "../src/observability/trace-context.ts";
 
 test("registration rejects conflicts and stale epochs", async () => {
  const task = { session_id: "cse", worker_epoch: 1, ingress_token: "ingress", model_token: "model" };
@@ -96,12 +96,12 @@ test("assignment rejects unknown launch tools", () => {
 });
 
 test("trace context ignores malformed and all-zero traceparent values", () => {
- for (const value of [undefined, null, "", "01-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+ for (const value of [undefined, null, "", "ff-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
   "00-00000000000000000000000000000000-0123456789abcdef-01", "00-0123456789abcdef0123456789abcdef-0000000000000000-01",
-  "00-0123456789ABCDEF0123456789abcdef-0123456789abcdef-01"]) expect(validTraceParent(value)).toBeUndefined();
+  "00-0123456789ABCDEF0123456789abcdef-0123456789abcdef-01", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01-extra"]) expect(canonicalTraceParent(value)).toBeUndefined();
  const traceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01";
- expect(validTraceParent(traceParent)).toBe(traceParent);
- expect(traceIdOf(traceParent)).toBe("0123456789abcdef0123456789abcdef");
+ expect(canonicalTraceParent(traceParent)).toBe(traceParent);
+ expect(canonicalTraceParent("01-0123456789abcdef0123456789abcdef-0123456789abcdef-01-future")).toBe(traceParent);
 });
 
 test("claim without trace context sends no traceparent", async () => {

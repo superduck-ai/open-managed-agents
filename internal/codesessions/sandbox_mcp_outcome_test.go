@@ -35,7 +35,9 @@ func TestSandboxMCPStreamInspector(t *testing.T) {
 		{"oversized event ignored", []string{"data: " + strings.Repeat("x", sandboxMCPInspectLimit+1) + "\n\n"}, ""},
 		{"progress only", []string{"event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\n"}, ""},
 		{"tool error split across chunks", []string{"data: {\"jsonrpc\":\"2.0\",\"id\":1,", "\"result\":{\"isError\":true}}\r\n", "\r\n"}, "tool_error"},
-		{"last reply wins", []string{"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"}, "ok"},
+		{"reply after progress", []string{"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"}, "ok"},
+		{"first reply stops inspection", []string{"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"isError\":true}}\n\n", "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"}, "tool_error"},
+		{"oversized line split across chunks", []string{"data: " + strings.Repeat("x", sandboxMCPInspectLimit), "x\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"}, "ok"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inspector := &sandboxMCPStreamInspector{}

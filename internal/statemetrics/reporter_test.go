@@ -91,7 +91,7 @@ func TestReporterObservesOnlyPoolUntilReady(t *testing.T) {
 		}
 	}
 	codeSessions := map[db.CodeSessionState]int64{}
-	for _, worker := range []string{"unknown", "idle", "running", "requires_action"} {
+	for _, worker := range []string{"idle", "running", "requires_action"} {
 		for _, connection := range []string{"connected", "disconnected"} {
 			codeSessions[db.CodeSessionState{WorkerStatus: worker, ConnectionStatus: connection}] = 0
 		}
@@ -102,9 +102,9 @@ func TestReporterObservesOnlyPoolUntilReady(t *testing.T) {
 		EnvironmentWork: map[string]int64{"queued": 4, "starting": 0, "active": 0, "stopping": 0}, OldestQueuedWorkSeconds: 5, StuckStartingWork: 6,
 		EnvironmentSandboxes: map[string]int64{"creating": 7, "running": 0, "stopping": 0},
 		BrainClaims:          map[string]int64{"waiting": 13, "claimed": 0, "takeover": 0}, OldestWaitingBrainClaimSeconds: 14,
-	}, streams: []streamState{{name: "OMA_WORKER_INBOUND", messages: 8, oldestAge: 9}}, consumers: []consumerState{{name: "oma_webhook_delivery", pending: 10, ackPending: 11, redelivered: 12}}})
+	}, streams: []streamState{{name: "OMA_WORKER_INBOUND", messages: 8, oldestAge: 9}}, consumers: []consumerState{{stream: "OMA_WEBHOOK_DELIVERY", name: "shared", pending: 10, ackPending: 11, redelivered: 12}, {stream: "OMA_TELEMETRY_EXPORT", name: "shared"}}})
 	data = collect()
-	expected := map[string]int{"oma.sessions.live": 2, "oma.sessions.stale_running": 1, "oma.code_sessions.active": 8, "oma.environment_work.live": 4, "oma.environment_work.oldest_queued_age": 1, "oma.environment_work.stuck_starting": 1, "oma.environment_sandboxes.live": 3, "oma.brain_claims.pending": 3, "oma.brain_claims.oldest_waiting_age": 1, "oma.nats.stream.messages": 1, "oma.nats.stream.oldest_message_age": 1, "oma.nats.consumer.pending": 1, "oma.nats.consumer.ack_pending": 1, "oma.nats.consumer.redelivered": 1, "oma.db.pool.connections": 4}
+	expected := map[string]int{"oma.sessions.live": 2, "oma.sessions.stale_running": 1, "oma.code_sessions.active": 6, "oma.environment_work.live": 4, "oma.environment_work.oldest_queued_age": 1, "oma.environment_work.stuck_starting": 1, "oma.environment_sandboxes.live": 3, "oma.brain_claims.pending": 3, "oma.brain_claims.oldest_waiting_age": 1, "oma.nats.stream.messages": 1, "oma.nats.stream.oldest_message_age": 1, "oma.nats.consumer.pending": 2, "oma.nats.consumer.ack_pending": 2, "oma.nats.consumer.redelivered": 2, "oma.db.pool.connections": 4}
 	if len(data) != len(expected) {
 		t.Fatalf("gauge names: %v", data)
 	}

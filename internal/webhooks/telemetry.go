@@ -16,7 +16,7 @@ type deliveryInstruments struct {
 var deliveryMetrics = telemetry.NewInstruments(func(meter metric.Meter) deliveryInstruments {
 	return deliveryInstruments{
 		deliveries: telemetry.Counter(meter, "oma.webhook.deliveries", "{delivery}", "Webhook deliveries"),
-		duration:   telemetry.Histogram(meter, "oma.webhook.delivery.duration", "s", "Webhook delivery duration", telemetry.LatencyBuckets),
+		duration:   telemetry.Histogram(meter, "oma.webhook.delivery.duration", "s", "Webhook delivery duration", telemetry.LatencyBuckets()),
 	}
 })
 

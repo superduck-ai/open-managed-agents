@@ -67,7 +67,7 @@ func TestReporterCollectsNATSSnapshotsWithoutService(t *testing.T) {
 		t.Fatalf("stream snapshots: %v", streams)
 	}
 	consumers := reporter.collectConsumers(t.Context())
-	if len(consumers) != 1 || consumers[0].name != "ready" || consumers[0].pending != 3 || consumers[0].ackPending != 2 || consumers[0].redelivered != 1 {
+	if len(consumers) != 1 || consumers[0].stream != "stream" || consumers[0].name != "ready" || consumers[0].pending != 3 || consumers[0].ackPending != 2 || consumers[0].redelivered != 1 {
 		t.Fatalf("consumer snapshots: %v", consumers)
 	}
 }

@@ -10,11 +10,17 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 )
 
-var LatencyBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600}
+func LatencyBuckets() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600}
+}
 
-var LongWaitBuckets = []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 21600, 86400}
+func LongWaitBuckets() []float64 {
+	return []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 21600, 86400}
+}
 
-var TokenBuckets = []float64{16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576}
+func TokenBuckets() []float64 {
+	return []float64{16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576}
+}
 
 type Instruments[T any] struct {
 	build func(metric.Meter) T

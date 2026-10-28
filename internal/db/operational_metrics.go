@@ -14,7 +14,7 @@ var (
 	liveEnvironmentSandboxStates = []string{"creating", "running", "stopping"}
 	requestedBrainClaimStates    = []string{"waiting", "claimed"}
 	takeoverBrainClaimState      = "takeover"
-	codeSessionWorkerStates      = []string{"unknown", "idle", "running", "requires_action"}
+	codeSessionWorkerStates      = []string{"idle", "running", "requires_action"}
 	codeSessionConnectionStates  = []string{"connected", "disconnected"}
 )
 

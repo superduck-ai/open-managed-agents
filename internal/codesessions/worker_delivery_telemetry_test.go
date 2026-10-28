@@ -21,9 +21,8 @@ func TestRecordFailedWorkerDeliveryUpdates(t *testing.T) {
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
 	updates := []workerDeliveryUpdate{{EventID: "a", Status: "processed"}, {EventID: "b", Status: "processing"}, {EventID: "c", Status: "bogus"}}
-	recordFailedWorkerDeliveryUpdates(canceled, updates, workerDeliveryResult{Applied: 1}, errors.New("private failure"))
-	recordFailedWorkerDeliveryUpdates(t.Context(), updates[:1], workerDeliveryResult{}, errors.New("private failure"))
-	recordFailedWorkerDeliveryUpdates(t.Context(), updates, workerDeliveryResult{Applied: 5}, errors.New("over-counted result"))
+	recordFailedWorkerDeliveryUpdates(canceled, updates[1:], errors.New("private failure"))
+	recordFailedWorkerDeliveryUpdates(t.Context(), updates[:1], errors.New("private failure"))
 	got := map[string]int64{}
 	for _, point := range telemetrytest.Points(t, telemetrytest.Collect(t, reader), "oma.worker_event.updates") {
 		status, _ := point.Attributes.Value(attribute.Key("oma.delivery.status"))

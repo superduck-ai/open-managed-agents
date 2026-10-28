@@ -72,6 +72,7 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 			"/v2/ccr-sessions/cse_a/sandbox/mcp":      1,
 			"/v2/sessions/cse_a":                      1,
 			"/v1/messages":                            1,
+			"/v1/chat/completions":                    1,
 		} {
 			request := httptest.NewRequest(http.MethodPost, path, nil)
 			if path != "/v1/code/sessions/cse_a/worker" {

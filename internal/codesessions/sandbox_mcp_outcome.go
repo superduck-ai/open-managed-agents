@@ -75,26 +75,41 @@ func sandboxMCPSpanFailed(outcome string) bool {
 }
 
 type sandboxMCPStreamInspector struct {
-	pending  []byte
-	data     []byte
-	outcome  string
-	overflow bool
+	pending      []byte
+	data         []byte
+	outcome      string
+	overflow     bool
+	lineOverflow bool
 }
 
 func (i *sandboxMCPStreamInspector) observe(chunk []byte) {
-	i.pending = append(i.pending, chunk...)
-	for {
-		index := bytes.IndexByte(i.pending, '\n')
+	for i.outcome == "" && len(chunk) > 0 {
+		index := bytes.IndexByte(chunk, '\n')
 		if index < 0 {
-			if len(i.pending) > sandboxMCPInspectLimit {
-				i.pending, i.overflow = i.pending[:0], true
-			}
+			i.buffer(chunk)
 			return
 		}
-		line := bytes.TrimSuffix(i.pending[:index], []byte("\r"))
-		i.line(line)
-		i.pending = append(i.pending[:0], i.pending[index+1:]...)
+		i.buffer(chunk[:index])
+		if !i.lineOverflow {
+			i.line(bytes.TrimSuffix(i.pending, []byte("\r")))
+		}
+		i.pending, i.lineOverflow = i.pending[:0], false
+		chunk = chunk[index+1:]
 	}
+	if i.outcome != "" {
+		i.pending, i.data = nil, nil
+	}
+}
+
+func (i *sandboxMCPStreamInspector) buffer(part []byte) {
+	if i.lineOverflow {
+		return
+	}
+	if len(i.pending)+len(part) > sandboxMCPInspectLimit {
+		i.pending, i.lineOverflow, i.overflow = i.pending[:0], true, true
+		return
+	}
+	i.pending = append(i.pending, part...)
 }
 
 func (i *sandboxMCPStreamInspector) line(line []byte) {

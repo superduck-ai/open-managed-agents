@@ -1,3 +1,4 @@
+import { getScopeSignal } from '../../shared/api/client';
 import type { ComponentType } from 'react';
 import { useLocation } from '@tanstack/react-router';
 import { copyText } from '@/shared/lib/clipboard';
@@ -416,14 +417,17 @@ export function downloadFile(file: ConsoleFile, workspaceId: string) {
 }
 
 export async function downloadMessageBatchResults(batch: ConsoleMessageBatch, workspaceId: string) {
+  const scopeSignal = getScopeSignal();
   const response = await fetch(`/v1/messages/batches/${encodeURIComponent(batch.id)}/results?beta=true`, {
     headers: messageBatchesRequestHeaders(workspaceRequestHeaders(workspaceId)),
     credentials: 'include',
+    signal: scopeSignal,
   });
   if (!response.ok) {
     throw new Error(await responseErrorMessage(response));
   }
   const blob = await response.blob();
+  scopeSignal.throwIfAborted();
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -440,17 +444,20 @@ export async function downloadSkillVersion(
   directory: string | undefined,
   workspaceId: string,
 ) {
+  const scopeSignal = getScopeSignal();
   const response = await fetch(
     `/v1/skills/${encodeURIComponent(skillId)}/versions/${encodeURIComponent(version)}/content?beta=true`,
     {
       headers: skillsRequestHeaders(workspaceRequestHeaders(workspaceId)),
       credentials: 'include',
+      signal: scopeSignal,
     },
   );
   if (!response.ok) {
     throw new Error(await responseErrorMessage(response));
   }
   const blob = await response.blob();
+  scopeSignal.throwIfAborted();
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;

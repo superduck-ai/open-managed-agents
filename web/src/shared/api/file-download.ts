@@ -1,8 +1,12 @@
+import { getScopeSignal } from './client';
 import { anthropicBetaApi } from './anthropic';
 
 export async function downloadApiFile(file: { id: string; filename: string }, workspaceId: string) {
+  const scopeSignal = getScopeSignal();
   const response = await anthropicBetaApi.files.download(file.id, workspaceId);
-  const url = URL.createObjectURL(await response.blob());
+  const blob = await response.blob();
+  scopeSignal.throwIfAborted();
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   try {
     anchor.href = url;

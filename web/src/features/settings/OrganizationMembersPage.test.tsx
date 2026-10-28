@@ -288,6 +288,8 @@ describe('Organization members settings', () => {
             uuid: 'acct_test',
             email_address: 'test@example.com',
             display_name: 'test',
+            effectiveOrganizationUuid: 'org_test',
+            permissions: ['organization:manage', 'members:manage', 'members:view'],
             memberships: [{ organization: { uuid: 'org_test', name: 'default' }, role: 'admin' }],
           }}
           onLogout={() => undefined}
@@ -483,6 +485,7 @@ function OrganizationMembersHarness({
         email_address: 'test@example.com',
         display_name: 'test',
         permissions,
+        effectiveOrganizationUuid: 'org_test',
         memberships: [{ organization: { uuid: 'org_test', name: organizationName }, role: 'admin' }],
       },
       status: 'authenticated',

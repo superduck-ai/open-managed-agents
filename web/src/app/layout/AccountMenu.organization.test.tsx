@@ -50,6 +50,7 @@ function mount(initialAccount = account, collapsed = false) {
           value={{
             account: initialAccount,
             status: 'authenticated',
+            platformAccess: { role: 'super_admin', permissions: ['platform:access'] },
             logout: async () => {},
             refresh: async () => ({ account: initialAccount }),
           }}
@@ -106,4 +107,22 @@ test('折叠菜单保持账号名称，不依赖当前组织是否命名或存�
   view.unmount();
   mount({ ...account, memberships: [] }, true);
   expect(await screen.findByRole('button', { name: 'guanpeixian', exact: true })).toBeTruthy();
+});
+
+test('平台管理在邀请后的分隔线之后并与组织设置同级', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  globalThis.fetch = mock(async () => Response.json([])) as typeof fetch;
+  mount(account, true);
+  fireEvent.click(await screen.findByRole('button', { name: 'guanpeixian', exact: true }));
+  const platform = screen.getByRole('menuitem', { name: '平台管理' });
+  const settings = screen.getByRole('menuitem', { name: '组织设置' });
+  const invitations = screen.getByRole('menuitem', { name: /组织邀请/ });
+  expect(platform.parentElement).toBe(settings.parentElement);
+  const children = Array.from(platform.parentElement!.children);
+  const separator = children.findIndex(
+    (element, index) => element.getAttribute('role') === 'separator' && index > children.indexOf(invitations),
+  );
+  expect(separator).toBeGreaterThan(children.indexOf(invitations));
+  expect(children.indexOf(settings)).toBeGreaterThan(separator);
+  expect(children.indexOf(platform)).toBeGreaterThan(children.indexOf(settings));
 });

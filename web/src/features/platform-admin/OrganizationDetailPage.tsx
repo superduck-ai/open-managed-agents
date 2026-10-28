@@ -1,3 +1,4 @@
+import { EnterOrganizationButton } from './EnterOrganizationButton';
 import { useI18n } from '../../shared/i18n';
 import { useState } from 'react';
 import { Link, useParams, useSearch } from '@tanstack/react-router';
@@ -83,11 +84,14 @@ function OrganizationDetail({ organizationUuid, view }: { organizationUuid: stri
             ))}
           </dl>
         </div>
-        {view === 'profile' && (
-          <Button className="shrink-0" variant="outline" onClick={() => setEditing(true)} disabled={editing}>
-            {msg('platformAdmin.editDetails', 'Edit details')}
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          <EnterOrganizationButton organizationUuid={organizationUuid} />
+          {view === 'profile' && (
+            <Button className="shrink-0" variant="outline" onClick={() => setEditing(true)} disabled={editing}>
+              {msg('platformAdmin.editDetails', 'Edit details')}
+            </Button>
+          )}
+        </div>
       </header>
       {notice && <p role="status">{msg(notice, '')}</p>}
       {view === 'profile' &&

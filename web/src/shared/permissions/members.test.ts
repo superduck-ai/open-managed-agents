@@ -21,7 +21,7 @@ test('explicit permissions take precedence over role labels', () => {
   expect(canManageMembers({ uuid: 'account', memberships: [{ role: 'user' }], permissions: ['members:manage'] })).toBe(
     true,
   );
-  expect(canManageMembers({ uuid: 'account', memberships: [{ role: 'admin' }] })).toBe(true);
+  expect(canManageMembers({ uuid: 'account', memberships: [{ role: 'admin' }] })).toBe(false);
 });
 
 test('其他组织的管理员身份不能管理当前组织成员', () => {
@@ -35,5 +35,11 @@ test('其他组织的管理员身份不能管理当前组织成员', () => {
   };
   expect(canManageMembers(account, 'org_member')).toBe(false);
   expect(canManageMembers(account, 'unknown')).toBe(false);
-  expect(canManageMembers(account, 'org_admin')).toBe(true);
+  expect(canManageMembers(account, 'org_admin')).toBe(false);
+  expect(
+    canManageMembers(
+      { ...account, effectiveOrganizationUuid: 'org_admin', permissions: ['members:manage'] },
+      'org_admin',
+    ),
+  ).toBe(true);
 });

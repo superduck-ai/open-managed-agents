@@ -138,7 +138,7 @@ for (const target of ['organization', 'workspace']) {
     expect(screen.getByTestId('state').textContent).toBe('error');
     expect(screen.getByTestId('scope').textContent).toBe('a:ws-a:self-a');
     expect(getConsoleRequestContext()).toEqual(previousContext);
-    expect(navigatingContext).toEqual(previousContext);
+    expect(navigatingContext).toEqual(target === 'organization' ? {} : previousContext);
     expect(window.sessionStorage.getItem('oma.organization.account')).toBe('a');
     expect(window.localStorage.getItem('oma.workspace.account.a')).toBe('ws-a');
     expect(window.localStorage.getItem('oma.workspace.account.b')).toBeNull();
@@ -491,11 +491,11 @@ test('目标组织加载失败返回false，不提交新scope，重试成功返�
   expect(screen.getByTestId('scope').textContent).toBe('b:ws-b:self-b');
 });
 
-test('显式空权限不回退管理员身份，缺失字段才兼容角色', () => {
+test('空权限或缺失权限均不回退真实成员角色', () => {
   expect(canManageMembers({ ...account, permissions: [] })).toBe(false);
   expect(canManageMembers({ ...account, permissions: ['workspaces:view'] })).toBe(false);
   expect(canManageMembers({ ...account, permissions: ['members:manage'] })).toBe(true);
-  expect(canManageMembers(account)).toBe(true);
+  expect(canManageMembers(account)).toBe(false);
 });
 
 test('创建工作区从服务端列表安装有效权限，归档当前空间后回退默认空间', async () => {
@@ -534,11 +534,12 @@ test('创建工作区从服务端列表安装有效权限，归档当前空间�
 for (const fail of [true, false]) {
   test(`工作区加载及${fail ? '失败' : '成功'}期间保留按组织隔离的偏好`, async () => {
     let finish!: (response: Response) => void;
-    globalThis.fetch = mock(
-      () =>
-        new Promise<Response>((resolve) => {
-          finish = resolve;
-        }),
+    globalThis.fetch = mock((input) =>
+      String(input) === '/api/bootstrap'
+        ? Promise.resolve(Response.json({ account }))
+        : new Promise<Response>((resolve) => {
+            finish = resolve;
+          }),
     ) as typeof fetch;
     const { queryClient } = mount();
     const key = 'oma.workspace.account.a';

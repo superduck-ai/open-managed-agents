@@ -90,6 +90,7 @@ import {
   workspaceWebhooksPath,
 } from '../../shared/workspaces/presentation';
 import { useI18n, useLocale } from '../../shared/i18n';
+import { PlatformOrganizationMenu } from '../../features/organizations/PlatformOrganizationMenu';
 import { accountRoleLabel, membershipRoleForOrganization } from '../../shared/permissions/roles';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
@@ -865,7 +866,6 @@ export function AccountMenu({
             </DropdownMenuGroup>
 
             <OrganizationMenu />
-            <PlatformAdminMenuItem onNavigate={handleMenuNavigation} />
 
             <DropdownMenuSeparator />
 
@@ -878,6 +878,9 @@ export function AccountMenu({
                 {msg('account.organizationSettings', 'Organization settings')}
               </span>
             </DropdownMenuItem>
+
+            <PlatformAdminMenuItem onNavigate={handleMenuNavigation} />
+            <PlatformOrganizationMenu />
 
             {personalSettingsNavigation
               .filter((item) => item.href !== '/settings/appearance')

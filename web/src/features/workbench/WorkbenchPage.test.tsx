@@ -3046,6 +3046,8 @@ function defaultAuthAccount(role = 'admin') {
     email_address: 'admin@example.local',
     full_name: 'Local Admin',
     display_name: 'Local Admin',
+    effectiveOrganizationUuid: 'org_test',
+    permissions: role === 'admin' ? ['organization:manage', 'members:manage'] : [],
     memberships: [{ role, organization: { uuid: 'org_test', name: 'Claude Platform' } }],
   };
 }

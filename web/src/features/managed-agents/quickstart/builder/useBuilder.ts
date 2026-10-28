@@ -1,3 +1,4 @@
+import { requiredEnvironmentPackages } from './environmentRequirements';
 import {
   quickstartChatReplyToolResult,
   quickstartTurnMessages,
@@ -36,7 +37,13 @@ import { builderSystem } from './prompt';
 import { builderTools } from './tools';
 import { prepareBuilderTool, type BuilderVaultOption } from './dispatch';
 import { streamBuilderTurn } from './protocol';
-import { operationKind, performBuilderMutation, reloadBuilderAgent, savedBuilderOperationResult } from './mutations';
+import {
+  BuilderVersionConflictError,
+  operationKind,
+  prepareBuilderMutation,
+  reloadBuilderAgent,
+  savedBuilderOperationResult,
+} from './mutations';
 
 type BuilderInput = { accountId: string; workspaceId: string; orgUuid: string; models: string[] };
 export function useBuilder(input: BuilderInput) {
@@ -106,7 +113,7 @@ export function useBuilder(input: BuilderInput) {
   async function run(action: () => Promise<void>) {
     if (lock.current) return;
     lock.current = true;
-    controller.current = null;
+    controller.current = new AbortController();
     setBusy(true);
     setError('');
     try {
@@ -224,11 +231,23 @@ export function useBuilder(input: BuilderInput) {
       await completeAwaitingTool(call, result, patch);
     });
   }
+  function isCurrentWrite(action: AbortController | null, tool: BuilderTool) {
+    return Boolean(
+      mounted.current &&
+      action &&
+      !action.signal.aborted &&
+      controller.current === action &&
+      current.current.gate?.id === tool.id,
+    );
+  }
   async function write(tool: BuilderTool) {
     const operation = { id: crypto.randomUUID(), kind: operationKind(tool), toolId: tool.id };
-    update((value) => ({ ...value, operation }));
+    const action = controller.current;
     try {
-      const patch = await performBuilderMutation(current.current, tool, operation.id, input.workspaceId);
+      const sendMutation = await prepareBuilderMutation(current.current, tool, operation.id, input.workspaceId);
+      if (!isCurrentWrite(action, tool)) return;
+      update((value) => ({ ...value, operation }));
+      const patch = await sendMutation();
       if (patch.config && catalog.data && !authenticationServers(patch.config, catalog.data).length) {
         patch.vaults = [];
         patch.skippedServers = [];
@@ -243,7 +262,7 @@ export function useBuilder(input: BuilderInput) {
     } catch (cause) {
       if (!mounted.current) return;
       const status = typeof cause === 'object' && cause && 'status' in cause ? Number(cause.status) : 0;
-      if (status === 409 && tool.name === 'build_agent_config') {
+      if ((cause instanceof BuilderVersionConflictError || status === 409) && tool.name === 'build_agent_config') {
         const patch = await reloadBuilderAgent(current.current, input.workspaceId);
         update((value) =>
           toolResult(
@@ -269,6 +288,7 @@ export function useBuilder(input: BuilderInput) {
         models: input.models,
         workspaceId: input.workspaceId,
       });
+      if (!mounted.current || controller.current?.signal.aborted) return;
       if (!prepared.gate) {
         update((value) => toolResult({ ...value, ...prepared.patch }, tool, prepared.result));
         await startQuickstartTurn();
@@ -330,7 +350,11 @@ export function useBuilder(input: BuilderInput) {
     run(async () => {
       const tool = current.current.gate;
       if (!tool) return;
-      const environment = await selectBuilderEnvironment(id, input.workspaceId);
+      const environment = await selectBuilderEnvironment(
+        id,
+        input.workspaceId,
+        requiredEnvironmentPackages(current.current.savedConfig ?? current.current.config),
+      );
       await completeAwaitingTool(
         tool,
         { ...environment, runtime_verified: false, selected: true },

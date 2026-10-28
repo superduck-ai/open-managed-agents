@@ -1,3 +1,4 @@
+import { assertEnvironmentPackages, requiredEnvironmentPackages } from './environmentRequirements';
 import { z } from 'zod';
 import {
   authenticationServers,
@@ -63,8 +64,12 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
     beforeTest(state);
     if (!state.agent) throw new Error('Save the agent first.');
     const input = environmentInputSchema.parse(tool.input);
-    if (!input.reuse_environment_id) return { gate: true };
-    const environment = await selectBuilderEnvironment(input.reuse_environment_id, workspaceId);
+    const requirements = requiredEnvironmentPackages(state.savedConfig ?? state.config);
+    if (!input.reuse_environment_id) {
+      assertEnvironmentPackages(input.config, requirements);
+      return { gate: true };
+    }
+    const environment = await selectBuilderEnvironment(input.reuse_environment_id, workspaceId, requirements);
     return {
       result: { ...environment, runtime_verified: false, selected: true },
       patch: { ...invalidateBuilderTest(state), environment },
@@ -110,6 +115,11 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
     savedResources(state);
     if (stableStringify(state.config) !== stableStringify(state.savedConfig))
       throw new Error('Save or discard the proposed agent changes before testing.');
+    await selectBuilderEnvironment(
+      state.environment!.id,
+      workspaceId,
+      requiredEnvironmentPackages(state.savedConfig ?? state.config),
+    );
     const missing = await missingBuilderCredentials(state, catalog, workspaceId);
     if (missing.length)
       throw new Error(

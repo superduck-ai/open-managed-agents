@@ -213,6 +213,7 @@ export function useQuickstartConversation(
     data,
     entries,
     action,
+    status,
     complete,
     stopped,
     running,

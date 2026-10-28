@@ -257,3 +257,37 @@ BB15 已观察到工具 503 和运行阻塞，手算结果不能证明工具执�
 - 凭据目录读取：`list_vaults` 及凭据覆盖读取失败以可识别的边界错误暂停当前工具，保留队列、配置、输入与 `readError`，在当前卡片显示错误和显式重试。重试只重新执行原读取；成功后才形成 tool_result 并继续，若下一步是写操作仍等待确认。刷新恢复等待，不自动新建、跳过或重放读取；用户自由修改需求仍走正常 tool_result，不绕过权限或版本。
 
 三项均保留修复前失败回归；版本改名覆盖正常响应和丢响应后恢复，读取覆盖模型先调用自动目录工具、故障、刷新与重试成功路径。真实界面须由原独立 reviewer 在新组合树复测。后端源码合入已复审 runtime tree `9fc70d33d46cb812a1db5860a68bc6a4844330b7`，不代表共享 a579 API 已部署该版本，BB15 仍须最终实际 head 单独验收。
+
+## 文件交付、输出合同与环境依赖
+
+生成新的 Agent system 或实质修改 system 时，Builder 在确认前附加统一的平台文件交付合同；该段参与预览、实际保存与后续 Session snapshot，重复提议不会重复追加。交付物写入 `/mnt/user-data/outputs`（`/mnt/session/outputs` 别名），公开链接使用 `/outputs/<relative-path>`。普通工作目录和 `/home` 的文件不是可下载产物，普通源码编辑仍留在工作目录。成功计算与交付失败分别报告，不扫描、搬运任意本地文件或后处理回答。只改名称等独立字段不改写已保存 system，模板点击直接保存 v1 的合同保持不变。运行时已有的平台 guarantees 和环境事实继续优先于角色指令。
+
+用户收窄输出范围时，模型应完整重写输出结构和相关工作规则，移除不再允许的旧章节；旧输出章节和模板默认不能作为“其他字段不变”保留。名称、模型、工具、永久知识、保留字段的缺失处理等独立要求继续保留。结构化输出应把用户明确的字段名、JSON 类型、缺失值和纯 JSON 格式作为同一合同保留；类型未给且表示选择影响正确性时询问一次，不能凭字段名补字符串/数值策略。本改动不引入通用业务 JSON Schema 执行器，不按字段名纠正模型答案。提议合并直接替换 system，不重新合入旧输出章节；自然语言生成是否完整遵从仍须真实新版本复测，普通字符串或合并测试不能代替。
+
+Builder 的 `build_agent_config.environment_packages` 使用现有 Environment package-manager 对象结构声明用户要求的软件。确认 Agent 时以 `metadata.quickstart_environment_packages` 的 JSON 字符串保存，保证重新载入、版本更新和步骤切换后仍可核对；它是依赖需求，不是安装状态，也不改变 Agent/Session 公共 schema。省略此工具字段表示保留旧需求；显式空 packages 表示提出清除需求，仍需保存确认。依赖需在 Agent 确认卡单独可见，不能只藏在完整 JSON，也不能用 system 的“已安装”代替。
+
+复用环境时通过真实 API 读取 config，逐包管理器核对 `config.packages` 是否包含每个请求的完整 spec；不解析/推测版本范围，spec 不相同须确认匹配配置而不宣称已满足。新建环境的确认前、实际创建前及创建响应也校验覆盖，实际包清单仍只写 Environment.config.packages。配置不匹配时阻止推进，解释缺哪些包并提出新建环境确认，不静默编辑共享环境，也不让 Session 自装来替代入口准备。选定环境不代表永久有效：试跑提议、创建 Session 和创建 Deployment 前重新读取实际配置，防止选择后环境发生变化。以上是 Builder 的工作流约束，不改变后端既有包准备/预构建/租约状态机；API 模式或直接资源编辑不获得新的安装保证。
+
+```mermaid
+flowchart LR
+  Request[用户依赖要求] --> Proposal[environment_packages 提议]
+  Proposal --> Confirm[用户确认 Agent]
+  Confirm --> Saved[Agent metadata 保存需求]
+  Saved --> Select[读取环境 config.packages]
+  Select -->|不覆盖| New[新环境配置确认]
+  New --> Select
+  Select -->|覆盖| BeforeRun[试跑或部署前重新读取]
+  BeforeRun -->|不覆盖| New
+  BeforeRun -->|覆盖| Session[既有入口准备与 Session]
+  Session --> Evidence[实际工具事件验证安装和执行]
+```
+
+软件包配置保存、环境 active 和复用成功都不代表安装或 import 成功。工具结果对环境写入返回 `configuration_saved=true`、`runtime_verified=false`；只有实际运行证据支持安装完成的说明。普通回归覆盖不匹配无写入、匹配复用、需求跨部分修改保留、新环境参数、试跑前复核和原保存/知识持久化路径；最终文件下载、入口安装和输出类型/范围仍由原独立黑盒在新 SHA 验收。
+
+### 确认写入的准备边界
+
+用户确认后，先完成无写入的准备：解析参数、检查 Agent 当前版本、重新读取 Environment 与校验包覆盖；该阶段失败时不登记未知写入，保留确认卡和可修改的 Builder 对话。准备期间用户停止或页面卸载时不发送 POST。准备成功后，在真正发出创建或更新请求之前将同一 operation ID 持久化到 sessionStorage；若无法持久化，不发送写入。POST 已发送后遇到断线、服务错误或创建响应包配置不一致，继续保留 operation 和查询恢复入口，不根据错误文案或无状态异常猜测未写入。已明确拒绝的 4xx 与版本冲突仍沿用原处理合同；Agent 版本预检使用独立冲突类型，不伪造 HTTP 状态，真正的 HTTP 409 继续按响应处理。Session、Deployment、Environment、Agent 和 Vault 均使用这一准备/写入边界；Environment 的创建响应校验在 POST 后，不能误判成写前失败。
+
+普通回归通过用户确认界面和真实 fetch 边界覆盖：Session 第二次 fresh GET 缺包、Deployment fresh GET 缺包、Agent 版本读取断线，均无 POST、无未决 operation 且可继续调整；准备期间停止或卸载不发送 POST；Session/Deployment 的响应丢失、Environment 创建后响应配置不一致保留 operation，并检查 operation ID 在 POST 前已持久化。原 Agent 丢响应恢复及版本冲突回归继续执行。环境读取与 POST 之间仍可能发生外部配置变化，前端检查不构成服务端原子绑定。
+
+试跑面板复用 Session 的公开 Files 列表和输出卡：只展示实际属于当前 Session、可下载且按现有轮次归属规则匹配的文件，并通过既有 Files 下载接口取内容。模型原文保持原样；普通文本路径不会被猜测或改写为链接。文件目录读取失败显示现有错误及重试，运行与结束后短暂刷新沿用 Session 详情的机制；不扫描、搬运或伪造运行环境中的文件。独立真实环境仍须验证最终文件是否生成并进入 Files 目录。

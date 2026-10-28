@@ -16,6 +16,7 @@ import { errorMessage } from '../utils';
 import { FollowSentSessionMessage } from '../sessions/FollowSentSessionMessage';
 import { SessionDetailDeltaFramesContext } from '../sessions/sessionDetailData';
 import { SessionTranscriptView } from '../sessions/SessionTranscriptView';
+import { SessionOutputFiles } from '../sessions/SessionOutputFiles';
 import { SessionRequiresActionCard } from '../sessions/SessionRequiresActionCard';
 import { quickstartCopy } from './copy';
 import type { useQuickstartConversation } from './useQuickstartConversation';
@@ -34,6 +35,16 @@ export function QuickstartChat({
 }) {
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
+  const transcript = (
+    <SessionTranscriptView
+      entries={conversation.entries}
+      selectedEntryId={null}
+      onSelectEntry={() => {}}
+      threadNameById={noThreadNames}
+      onThreadClick={() => {}}
+      openModelRequest={conversation.openModelRequest}
+    />
+  );
   return (
     <div
       className={cn(
@@ -67,14 +78,21 @@ export function QuickstartChat({
                     {conversation.sending || conversation.data.loading ? text.sending : text.firstMessage}
                   </div>
                 )}
-                <SessionTranscriptView
-                  entries={conversation.entries}
-                  selectedEntryId={null}
-                  onSelectEntry={() => {}}
-                  threadNameById={noThreadNames}
-                  onThreadClick={() => {}}
-                  openModelRequest={conversation.openModelRequest}
-                />
+                {conversation.bindingValid && conversation.session.data ? (
+                  <SessionOutputFiles
+                    session={{
+                      ...conversation.session.data,
+                      status: conversation.running ? 'running' : conversation.status,
+                      resources: conversation.session.data.resources ?? [],
+                    }}
+                    workspaceId={workspaceID}
+                    refreshKey={conversation.sentVersion}
+                  >
+                    {transcript}
+                  </SessionOutputFiles>
+                ) : (
+                  transcript
+                )}
                 {conversation.action && (
                   <SessionRequiresActionCard
                     toolCall={conversation.action}

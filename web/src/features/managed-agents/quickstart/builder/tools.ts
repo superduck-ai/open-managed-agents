@@ -1,3 +1,5 @@
+import { environmentPackagesSchema, environmentPackagesMetadataKey } from './environmentRequirements';
+import { builderFileDeliverySystem } from './fileDelivery';
 import { z } from 'zod';
 import { createAgentDraftSchema, normalizeCreateAgentDraft } from '../../agents/create-dialog-model';
 import { quickstartBuildAgentConfigInput } from '../../agentConfig';
@@ -6,7 +8,7 @@ import { previewSchedule } from '../../resources/deployment-schedule';
 import type { BuilderState, BuilderTool } from './model';
 
 const configurationDescription =
-  'Propose the complete agent configuration for user confirmation before saving. Include user-supplied source material needed by future sessions in system as reference data, preserving facts and unknowns. Keep explicit user restrictions on runtime behavior in their own wording in a User constraints section of system; do not replace them with weaker optional or unconfirmed exceptions. This call opens a confirmation card; it does not mean the agent is saved. Only a successful save result confirms persistence.';
+  'Propose the complete agent configuration for user confirmation before saving. Include user-supplied source material needed by future sessions in system as reference data, preserving facts and unknowns. Keep explicit user restrictions on runtime behavior in their own wording in a User constraints section of system; do not replace them with weaker optional or unconfirmed exceptions. Declare software the user requests for runtime setup in environment_packages by package manager, including on the initial proposal; do not claim it is installed in system. Preserve declared dependencies on partial updates. File deliverables must use the platform outputs mount and a downloadable link, never a working-directory-only path. When narrowing output scope, replace the complete output contract and remove obsolete sections while preserving unrelated fields. Preserve explicit JSON field types, missing-value handling and JSON-only format; clarify an unspecified type if choosing a representation changes correctness. This call opens a confirmation card; it does not mean the agent is saved. Only a successful save result confirms persistence.';
 const empty = z.object({}).strict();
 const question = z
   .object({
@@ -32,24 +34,13 @@ const networking = z.discriminatedUnion('type', [
     })
     .strict(),
 ]);
-const packages = z
-  .object({
-    type: z.literal('packages'),
-    apt: z.array(z.string()).optional(),
-    pip: z.array(z.string()).optional(),
-    npm: z.array(z.string()).optional(),
-    cargo: z.array(z.string()).optional(),
-    gem: z.array(z.string()).optional(),
-    go: z.array(z.string()).optional(),
-  })
-  .strict();
 export const environmentInputSchema = z
   .object({
     reuse_environment_id: z.string().min(1).optional(),
     name: z.string().trim().min(1).optional(),
     description: z.string().optional(),
     config: z
-      .object({ type: z.literal('cloud'), networking, packages: packages.optional() })
+      .object({ type: z.literal('cloud'), networking, packages: environmentPackagesSchema.optional() })
       .strict()
       .optional(),
   })
@@ -67,7 +58,11 @@ export const deploymentInputSchema = z
   })
   .strict();
 export const questionInputSchema = z.object({ questions: z.array(question).min(1).max(4) }).strict();
-const configInput = z.object(createAgentDraftSchema.shape).partial().strict();
+const configInput = z
+  .object(createAgentDraftSchema.shape)
+  .partial()
+  .extend({ environment_packages: environmentPackagesSchema.optional() })
+  .strict();
 export const builderToolInputs = {
   ask_user_questions: questionInputSchema,
   build_agent_config: configInput,
@@ -100,6 +95,14 @@ export function proposedAgentConfig(tool: BuilderTool, state: BuilderState, mode
   );
   const model = typeof config.model === 'string' ? config.model : config.model.id;
   if (!models.includes(model)) throw new Error('The proposed model is not available in this workspace.');
+  if (tool.input.system !== undefined && config.system !== state.savedConfig?.system)
+    config.system = builderFileDeliverySystem(config.system ?? '');
+  const requirements = tool.input.environment_packages;
+  const previousRequirements = state.config.metadata?.[environmentPackagesMetadataKey];
+  const savedRequirements =
+    requirements === undefined ? previousRequirements : JSON.stringify(environmentPackagesSchema.parse(requirements));
+  if (savedRequirements !== undefined)
+    config.metadata = { ...config.metadata, [environmentPackagesMetadataKey]: savedRequirements };
   return createAgentDraftSchema.parse(config);
 }
 export function validatedDeployment(tool: BuilderTool) {

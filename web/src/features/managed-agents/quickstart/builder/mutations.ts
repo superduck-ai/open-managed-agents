@@ -1,13 +1,16 @@
+import { requiredEnvironmentPackages } from './environmentRequirements';
 import { retrieveAgent } from '../../api';
 import {
-  saveBuilderAgent,
-  saveBuilderEnvironment,
-  saveBuilderVault,
-  saveBuilderDeployment,
-  saveBuilderSession,
+  prepareBuilderAgent,
+  prepareBuilderEnvironment,
+  prepareBuilderVault,
+  prepareBuilderDeployment,
+  prepareBuilderSession,
   savedBuilderAgent,
 } from './api';
 import { builderTestBinding, invalidateBuilderTest, type BuilderState, type BuilderTool } from './model';
+
+export class BuilderVersionConflictError extends Error {}
 
 export function operationKind(tool: BuilderTool): NonNullable<BuilderState['operation']>['kind'] {
   const kinds: Record<string, NonNullable<BuilderState['operation']>['kind']> = {
@@ -21,37 +24,47 @@ export function operationKind(tool: BuilderTool): NonNullable<BuilderState['oper
   if (!kind) throw new Error('This tool cannot write resources.');
   return kind;
 }
-export async function performBuilderMutation(
+export async function prepareBuilderMutation(
   state: BuilderState,
   tool: BuilderTool,
   id: string,
   workspaceId: string,
-): Promise<Partial<BuilderState>> {
+): Promise<() => Promise<Partial<BuilderState>>> {
   if (tool.name === 'build_agent_config') {
     if (state.agent) {
       const latest = await retrieveAgent(state.agent.id, workspaceId);
-      if (latest.version !== state.agent.version)
-        throw Object.assign(new Error('The agent changed elsewhere.'), { status: 409 });
+      if (latest.version !== state.agent.version) throw new BuilderVersionConflictError('The agent changed elsewhere.');
     }
-    return saveBuilderAgent(state, id, workspaceId);
+    return prepareBuilderAgent(state, id, workspaceId);
   }
-  if (tool.name === 'create_environment')
-    return { ...invalidateBuilderTest(state), environment: await saveBuilderEnvironment(tool, id, workspaceId) };
-  if (tool.name === 'create_vault')
-    return {
-      ...invalidateBuilderTest(state),
-      vaults: [...state.vaults, await saveBuilderVault(tool, id, workspaceId)],
-    };
-  if (tool.name === 'create_deployment')
-    return { deployment: await saveBuilderDeployment(state, tool, id, workspaceId) };
+  if (tool.name === 'create_environment') {
+    const saveEnvironment = prepareBuilderEnvironment(
+      tool,
+      id,
+      workspaceId,
+      requiredEnvironmentPackages(state.savedConfig ?? state.config),
+    );
+    return async () => ({ ...invalidateBuilderTest(state), environment: await saveEnvironment() });
+  }
+  if (tool.name === 'create_vault') {
+    const saveVault = prepareBuilderVault(tool, id, workspaceId);
+    return async () => ({ ...invalidateBuilderTest(state), vaults: [...state.vaults, await saveVault()] });
+  }
+  if (tool.name === 'create_deployment') {
+    const saveDeployment = await prepareBuilderDeployment(state, tool, id, workspaceId);
+    return async () => ({ deployment: await saveDeployment() });
+  }
   if (tool.name === 'agent_ready') {
-    const session = await saveBuilderSession(state, id, workspaceId);
-    return {
-      sessionID: session.id,
-      sessionBinding: builderTestBinding(state),
-      testClosed: false,
-      firstMessage: '',
-      testSummary: '',
+    const saveSession = await prepareBuilderSession(state, id, workspaceId);
+    return async () => {
+      const session = await saveSession();
+      return {
+        sessionID: session.id,
+        sessionBinding: builderTestBinding(state),
+        testClosed: false,
+        firstMessage: '',
+        testSummary: '',
+      };
     };
   }
   throw new Error('Unsupported write.');
@@ -63,7 +76,8 @@ export async function reloadBuilderAgent(state: BuilderState, workspaceId: strin
 
 export function savedBuilderOperationResult(kind: NonNullable<BuilderState['operation']>['kind'], state: BuilderState) {
   if (kind === 'agent') return { agent: state.agent };
-  if (kind === 'environment') return { environment: state.environment };
+  if (kind === 'environment')
+    return { environment: state.environment, configuration_saved: true, runtime_verified: false };
   if (kind === 'vault') return { vaults: state.vaults.slice(-1) };
   if (kind === 'deployment') return { deployment: state.deployment };
   return { session_id: state.sessionID };

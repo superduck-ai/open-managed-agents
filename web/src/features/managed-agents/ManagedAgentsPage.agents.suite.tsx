@@ -1018,6 +1018,7 @@ export function registerManagedAgentsAgentsTests() {
     expandAgentCreateSections(dialog);
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Subagents' }));
     fireEvent.click(await within(dialog).findByRole('combobox', { name: 'Add agent' }));
+    expect(await screen.findByRole('option', { name: /Candidate 99/ })).toBeTruthy();
     expect(screen.queryByRole('option', { name: /Remote helper/ })).toBeNull();
 
     fireEvent.change(screen.getByPlaceholderText('Search agents by name or exact ID'), {

@@ -1,3 +1,4 @@
+import { builderFileDeliverySystem } from './fileDelivery';
 import { builderStorageKey, builderTestBinding, newBuilderState } from './model';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
 import { installSessionRuntime } from '../sessionRuntime.test-utils';
@@ -169,18 +170,22 @@ test('reference knowledge reaches model context, confirmation and saved payload 
   send('Build an archive policy assistant. I will paste its reference knowledge here; no external systems.');
   await screen.findByRole('button', { name: /^(Create agent|Save as v\d+)$/ });
   send(reference);
-  await screen.findByText((_, element) => element?.tagName === 'P' && element.textContent === instructions);
+  await screen.findByText(
+    (_, element) => element?.tagName === 'P' && element.textContent === builderFileDeliverySystem(instructions),
+  );
   expect(JSON.stringify(api.calls[1].messages)).toContain(reference);
   expect(writes(api.requests)).toHaveLength(0);
   send('Rename it to Renamed archive assistant.');
   await screen.findByRole('heading', { name: 'Renamed archive assistant', level: 4 });
   expect(
-    screen.getByText((_, element) => element?.tagName === 'P' && element.textContent === instructions),
+    screen.getByText(
+      (_, element) => element?.tagName === 'P' && element.textContent === builderFileDeliverySystem(instructions),
+    ),
   ).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: /^(Create agent|Save as v\d+)$/ }));
   await screen.findByRole('button', { name: 'Continue', exact: true });
   expect(writes(api.requests)).toHaveLength(1);
-  expect((writes(api.requests)[0].body as { system: string }).system).toBe(instructions);
+  expect((writes(api.requests)[0].body as { system: string }).system).toBe(builderFileDeliverySystem(instructions));
   expect(
     api.requests.filter((request) => request.method === 'POST' && /\/v1\/sessions/.test(request.url)),
   ).toHaveLength(0);
@@ -964,3 +969,491 @@ test('terminal status overrides an old tool confirmation but unknown delivery st
   expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Test message' }).value).toBe(original);
   expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Test message' }).disabled).toBe(true);
 });
+
+test('R4-01 changed environment before session POST leaves the confirmation editable', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([]);
+  const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  value.initialized = true;
+  value.step = 'session';
+  value.agent = { id: 'agent_saved', name: 'Saved', version: 1 };
+  value.config.metadata = { quickstart_environment_packages: JSON.stringify({ type: 'packages', pip: ['polars'] }) };
+  value.savedConfig = value.config;
+  value.environment = { id: 'environment_saved', name: 'Restricted' };
+  value.gate = { id: 'ready', name: 'agent_ready', input: { suggested_first_message: 'Analyze a table' } };
+  value.queue = [value.gate];
+  const storageKey = builderStorageKey('acct_managed_agents_test', 'default');
+  window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+  const baseFetch = globalThis.fetch;
+  let reads = 0;
+  let sessionPosts = 0;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url.includes('/v1/environments/environment_saved?') && (!init?.method || init.method === 'GET')) {
+      reads++;
+      return jsonResponse({
+        id: 'environment_saved',
+        name: 'Restricted',
+        archived_at: null,
+        config: { type: 'cloud', packages: { type: 'packages', pip: reads === 1 ? ['polars'] : [] } },
+      });
+    }
+    if (url.includes('/v1/sessions?') && init?.method === 'POST') sessionPosts++;
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Start test' }));
+  await screen.findByText(/Environment package configuration does not cover/);
+  expect(reads).toBe(2);
+  expect(sessionPosts).toBe(0);
+  expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Check saved result' })).toBeNull();
+  expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Builder message' }).disabled).toBe(false);
+  expect(api.calls).toHaveLength(0);
+});
+
+test('R4-01 changed environment before deployment POST leaves the confirmation editable', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  setup([]);
+  const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  value.initialized = true;
+  value.step = 'deploy';
+  value.wantsSchedule = true;
+  value.testClosed = true;
+  value.agent = { id: 'agent_saved', name: 'Saved', version: 1 };
+  value.config.metadata = { quickstart_environment_packages: JSON.stringify({ type: 'packages', pip: ['polars'] }) };
+  value.savedConfig = value.config;
+  value.environment = { id: 'environment_saved', name: 'Restricted' };
+  value.gate = {
+    id: 'deploy',
+    name: 'create_deployment',
+    input: { name: 'Daily', cron_expression: '0 9 * * *', timezone: 'UTC', initial_message: 'Analyze a table' },
+  };
+  value.queue = [value.gate];
+  const storageKey = builderStorageKey('acct_managed_agents_test', 'default');
+  window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+  const baseFetch = globalThis.fetch;
+  let reads = 0;
+  let deploymentPosts = 0;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url.includes('/v1/environments/environment_saved?') && (!init?.method || init.method === 'GET')) {
+      reads++;
+      return jsonResponse({
+        id: 'environment_saved',
+        name: 'Restricted',
+        archived_at: null,
+        config: { type: 'cloud', packages: { type: 'packages', pip: [] } },
+      });
+    }
+    if (url.includes('/v1/deployments?') && init?.method === 'POST') deploymentPosts++;
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Create scheduled deployment' }));
+  await screen.findByText(/Environment package configuration does not cover/);
+  expect(reads).toBe(1);
+  expect(deploymentPosts).toBe(0);
+  expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Check saved result' })).toBeNull();
+  expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Builder message' }).disabled).toBe(false);
+});
+
+test('R4-01 agent version read failure is a pre-write failure', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  setup([]);
+  const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  value.initialized = true;
+  value.agent = { id: 'agent_saved', name: 'Saved', version: 1 };
+  value.savedConfig = value.config;
+  value.gate = { id: 'rename', name: 'build_agent_config', input: { name: 'Renamed' } };
+  value.queue = [value.gate];
+  const storageKey = builderStorageKey('acct_managed_agents_test', 'default');
+  window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+  const baseFetch = globalThis.fetch;
+  let agentPosts = 0;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url.includes('/v1/agents/agent_saved?') && (!init?.method || init.method === 'GET'))
+      throw new TypeError('Connection lost');
+    if (url.includes('/v1/agents/agent_saved?') && init?.method === 'POST') agentPosts++;
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Save as v2' }));
+  await screen.findByText(/Connection error/);
+  expect(agentPosts).toBe(0);
+  expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Check saved result' })).toBeNull();
+});
+
+test.each(['cancel', 'unmount'] as const)(
+  'R4-01 %s during environment read never starts the session POST',
+  async (action) => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    const api = setup([]);
+    const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+    value.initialized = true;
+    value.step = 'session';
+    value.agent = { id: 'agent_saved', name: 'Saved', version: 1 };
+    value.config.metadata = { quickstart_environment_packages: JSON.stringify({ type: 'packages', pip: ['polars'] }) };
+    value.savedConfig = value.config;
+    value.environment = { id: 'environment_saved', name: 'Restricted' };
+    value.gate = { id: 'ready', name: 'agent_ready', input: { suggested_first_message: 'Analyze a table' } };
+    value.queue = [value.gate];
+    const storageKey = builderStorageKey('acct_managed_agents_test', 'default');
+    window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+    const baseFetch = globalThis.fetch;
+    let reads = 0;
+    let posts = 0;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes('/v1/environments/environment_saved?') && (!init?.method || init.method === 'GET')) {
+        reads++;
+        if (reads === 2) await blocked;
+        return jsonResponse({
+          id: 'environment_saved',
+          name: 'Restricted',
+          archived_at: null,
+          config: { type: 'cloud', packages: { type: 'packages', pip: ['polars'] } },
+        });
+      }
+      if (url.includes('/v1/sessions?') && init?.method === 'POST') posts++;
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    renderManagedAgentsPage('quickstart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start test' }));
+    await waitFor(() => expect(reads).toBe(2));
+    if (action === 'cancel') fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    else cleanup();
+    await act(async () => {
+      release();
+    });
+    if (action === 'cancel') await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull());
+    expect(posts).toBe(0);
+    expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toBeNull();
+    expect(api.calls).toHaveLength(0);
+  },
+);
+
+test('R4-01 session POST lost response keeps the persisted operation for recovery', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  setup([]);
+  const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  value.initialized = true;
+  value.step = 'session';
+  value.agent = { id: 'agent_saved', name: 'Saved', version: 1 };
+  value.config.metadata = { quickstart_environment_packages: JSON.stringify({ type: 'packages', pip: ['polars'] }) };
+  value.savedConfig = value.config;
+  value.environment = { id: 'environment_saved', name: 'Restricted' };
+  value.gate = { id: 'ready', name: 'agent_ready', input: { suggested_first_message: 'Analyze a table' } };
+  value.queue = [value.gate];
+  const storageKey = builderStorageKey('acct_managed_agents_test', 'default');
+  window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+  const baseFetch = globalThis.fetch;
+  let postOperation: { id: string; kind: string } | undefined;
+  let posts = 0;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url.includes('/v1/environments/environment_saved?') && (!init?.method || init.method === 'GET'))
+      return jsonResponse({
+        id: 'environment_saved',
+        name: 'Restricted',
+        archived_at: null,
+        config: { type: 'cloud', packages: { type: 'packages', pip: ['polars'] } },
+      });
+    if (url.includes('/v1/sessions?') && init?.method === 'POST') {
+      posts++;
+      postOperation = JSON.parse(window.sessionStorage.getItem(storageKey)!).operation;
+      const body = JSON.parse(String(init.body));
+      expect(body.metadata.quickstart_operation_id).toBe(postOperation?.id);
+      await baseFetch(input, init);
+      throw new TypeError('Response lost');
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Start test' }));
+  await screen.findByRole('button', { name: 'Check saved result' });
+  expect(posts).toBe(1);
+  expect(postOperation?.kind).toBe('session');
+  expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toEqual(postOperation);
+  expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Builder message' }).disabled).toBe(true);
+});
+
+test('R4-01 environment POST response mismatch keeps operation for recovery', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  setup([]);
+  const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  value.initialized = true;
+  value.step = 'environment';
+  value.agent = { id: 'agent_saved', name: 'Saved', version: 1 };
+  value.config.metadata = { quickstart_environment_packages: JSON.stringify({ type: 'packages', pip: ['polars'] }) };
+  value.savedConfig = value.config;
+  value.gate = {
+    id: 'env',
+    name: 'create_environment',
+    input: {
+      name: 'New',
+      config: { type: 'cloud', networking: { type: 'unrestricted' }, packages: { type: 'packages', pip: ['polars'] } },
+    },
+  };
+  value.queue = [value.gate];
+  const storageKey = builderStorageKey('acct_managed_agents_test', 'default');
+  window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+  const baseFetch = globalThis.fetch;
+  let posts = 0;
+  let postOperation: { id: string; kind: string } | undefined;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url.includes('/v1/environments?') && init?.method === 'POST') {
+      posts++;
+      postOperation = JSON.parse(window.sessionStorage.getItem(storageKey)!).operation;
+      const body = JSON.parse(String(init.body));
+      expect(body.metadata.quickstart_operation_id).toBe(postOperation?.id);
+      return jsonResponse({
+        id: 'environment_new',
+        name: 'New',
+        archived_at: null,
+        config: { type: 'cloud', packages: { type: 'packages', pip: [] } },
+      });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Create environment' }));
+  await screen.findByRole('button', { name: 'Check saved result' });
+  expect(posts).toBe(1);
+  expect(postOperation?.kind).toBe('environment');
+  expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toEqual(postOperation);
+});
+
+test('R4-01 invalid environment proposal does not create an operation or POST', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  setup([]);
+  const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  value.initialized = true;
+  value.step = 'environment';
+  value.agent = { id: 'agent_saved', name: 'Saved', version: 1 };
+  value.config.metadata = { quickstart_environment_packages: JSON.stringify({ type: 'packages', pip: ['polars'] }) };
+  value.savedConfig = value.config;
+  value.gate = {
+    id: 'env',
+    name: 'create_environment',
+    input: {
+      name: 'New',
+      config: { type: 'cloud', networking: { type: 'unrestricted' }, packages: { type: 'packages', pip: [] } },
+    },
+  };
+  value.queue = [value.gate];
+  const storageKey = builderStorageKey('acct_managed_agents_test', 'default');
+  window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+  const baseFetch = globalThis.fetch;
+  let posts = 0;
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).includes('/v1/environments?') && init?.method === 'POST') posts++;
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Create environment' }));
+  await screen.findByText(/Environment package configuration does not cover/);
+  expect(posts).toBe(0);
+  expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Check saved result' })).toBeNull();
+});
+
+test('R4-01 deployment POST lost response keeps the persisted operation for recovery', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  setup([]);
+  const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  value.initialized = true;
+  value.step = 'deploy';
+  value.wantsSchedule = true;
+  value.testClosed = true;
+  value.agent = { id: 'agent_saved', name: 'Saved', version: 1 };
+  value.config.metadata = { quickstart_environment_packages: JSON.stringify({ type: 'packages', pip: ['polars'] }) };
+  value.savedConfig = value.config;
+  value.environment = { id: 'environment_saved', name: 'Restricted' };
+  value.gate = {
+    id: 'deploy',
+    name: 'create_deployment',
+    input: { name: 'Daily', cron_expression: '0 9 * * *', timezone: 'UTC', initial_message: 'Analyze a table' },
+  };
+  value.queue = [value.gate];
+  const storageKey = builderStorageKey('acct_managed_agents_test', 'default');
+  window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+  const baseFetch = globalThis.fetch;
+  let posts = 0;
+  let postOperation: { id: string; kind: string } | undefined;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url.includes('/v1/environments/environment_saved?') && (!init?.method || init.method === 'GET'))
+      return jsonResponse({
+        id: 'environment_saved',
+        name: 'Restricted',
+        archived_at: null,
+        config: { type: 'cloud', packages: { type: 'packages', pip: ['polars'] } },
+      });
+    if (url.includes('/v1/deployments?') && init?.method === 'POST') {
+      posts++;
+      postOperation = JSON.parse(window.sessionStorage.getItem(storageKey)!).operation;
+      const body = JSON.parse(String(init.body));
+      expect(body.metadata.quickstart_operation_id).toBe(postOperation?.id);
+      await baseFetch(input, init);
+      throw new TypeError('Response lost');
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Create scheduled deployment' }));
+  await screen.findByRole('button', { name: 'Check saved result' });
+  expect(posts).toBe(1);
+  expect(postOperation?.kind).toBe('deployment');
+  expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toEqual(postOperation);
+});
+
+test('R4-02 test transcript exposes actual session output for download even when the reply is plain text', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  restoreOpenTest('idle', '', false, [
+    {
+      id: 'user_1',
+      type: 'user.message',
+      content: [{ type: 'text', text: 'Produce a CSV.' }],
+      created_at: '2026-10-28T12:00:00Z',
+      processed_at: '2026-10-28T12:00:00Z',
+    },
+    {
+      id: 'agent_1',
+      type: 'agent.message',
+      content: [{ type: 'text', text: 'Download: /outputs/report.csv' }],
+      created_at: '2026-10-28T12:00:03Z',
+      processed_at: '2026-10-28T12:00:03Z',
+    },
+    {
+      id: 'idle_1',
+      type: 'session.status_idle',
+      stop_reason: { type: 'end_turn' },
+      processed_at: '2026-10-28T12:00:04Z',
+    },
+  ]);
+  const baseFetch = globalThis.fetch;
+  let scopedFiles = 0;
+  let downloads = 0;
+  let downloadWorkspace = '';
+  let savedFilename = '';
+  let downloadedBlob: Blob | undefined;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (
+      url.startsWith('/v1/files?') &&
+      new URL(url, 'https://oma.duck.ai').searchParams.get('scope_id') === 'session_saved'
+    ) {
+      scopedFiles++;
+      return jsonResponse({
+        data: [
+          {
+            id: 'file_actual',
+            filename: 'report.csv',
+            type: 'file',
+            mime_type: 'text/csv',
+            size_bytes: 8,
+            created_at: '2026-10-28T12:00:02Z',
+            downloadable: true,
+          },
+        ],
+        has_more: false,
+      });
+    }
+    if (url.includes('/v1/files/file_actual/content?')) {
+      downloads++;
+      downloadWorkspace = new Headers(init?.headers).get('X-Workspace-ID') ?? '';
+      return new Response('name,n\na,1\n', { headers: { 'Content-Type': 'text/csv' } });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  const createObjectURL = URL.createObjectURL;
+  const anchorClick = window.HTMLAnchorElement.prototype.click;
+  URL.createObjectURL = (value) => {
+    if (value instanceof Blob) downloadedBlob = value;
+    return 'blob:output-test';
+  };
+  window.HTMLAnchorElement.prototype.click = function () {
+    savedFilename = this.download;
+  };
+  try {
+    renderManagedAgentsPage('quickstart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+    await screen.findByText('Download: /outputs/report.csv');
+    const download = await screen.findByRole('button', { name: 'Download report.csv' });
+    expect(scopedFiles).toBeGreaterThan(0);
+    fireEvent.click(download);
+    await waitFor(() => expect(savedFilename).toBe('report.csv'));
+    expect(downloads).toBe(1);
+    expect(downloadWorkspace).toBe('default');
+    expect(await downloadedBlob?.text()).toBe('name,n\na,1\n');
+    expect(screen.getByText('Download: /outputs/report.csv')).toBeTruthy();
+  } finally {
+    URL.createObjectURL = createObjectURL;
+    window.HTMLAnchorElement.prototype.click = anchorClick;
+  }
+});
+
+test.each(['preflight', 'response'] as const)(
+  'R4-01 %s agent version conflict reloads without an unknown operation',
+  async (conflict) => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    setup([]);
+    const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+    value.initialized = true;
+    value.agent = { id: 'agent_saved', name: 'Saved', version: 1 };
+    value.savedConfig = value.config;
+    value.gate = { id: 'rename', name: 'build_agent_config', input: { name: 'Renamed' } };
+    value.queue = [value.gate];
+    const storageKey = builderStorageKey('acct_managed_agents_test', 'default');
+    window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+    const baseFetch = globalThis.fetch;
+    let reads = 0;
+    let posts = 0;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.includes('/v1/agents/agent_saved?')) {
+        if (init?.method === 'POST') {
+          posts++;
+          return new Response(
+            JSON.stringify({ type: 'error', error: { type: 'conflict', message: 'Agent version changed' } }),
+            { status: 409, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        reads++;
+        return jsonResponse({
+          id: 'agent_saved',
+          version: conflict === 'preflight' || reads > 1 ? 2 : 1,
+          ...value.config,
+          name: 'Saved',
+          archived_at: null,
+        });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    renderManagedAgentsPage('quickstart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save as v2' }));
+    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).agent.version).toBe(2));
+    expect(reads).toBe(2);
+    expect(posts).toBe(conflict === 'response' ? 1 : 0);
+    expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Check saved result' })).toBeNull();
+  },
+);

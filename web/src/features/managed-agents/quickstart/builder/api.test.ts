@@ -1,4 +1,4 @@
-import { performBuilderMutation } from './mutations';
+import { prepareBuilderMutation } from './mutations';
 import { afterEach, expect, test } from 'bun:test';
 import { newBuilderState } from './model';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
@@ -6,8 +6,8 @@ import {
   loadBuilderCatalog,
   builderBackend,
   loadBuilderVaults,
-  saveBuilderDeployment,
-  saveBuilderSession,
+  prepareBuilderDeployment,
+  prepareBuilderSession,
   recoverBuilderOperation,
   type BuilderCatalog,
 } from './api';
@@ -102,11 +102,13 @@ test('deployment is blocked before testing and binds confirmed saved resources a
   let headers = new Headers();
   setConsoleRequestContext({ csrfToken: 'csrf_test' });
   globalThis.fetch = (async (_input, init) => {
+    if (!init?.body)
+      return json({ id: 'environment', name: 'Configured', config: { type: 'cloud' }, archived_at: null });
     payload = JSON.parse(String(init?.body));
     headers = new Headers(init?.headers);
     return json({ id: 'deployment', name: 'Daily orders' });
   }) as typeof fetch;
-  expect(await saveBuilderDeployment(value, tool, 'operation_test', 'workspace')).toEqual({
+  expect(await (await prepareBuilderDeployment(value, tool, 'operation_test', 'workspace'))()).toEqual({
     id: 'deployment',
     name: 'Daily orders',
   });
@@ -130,10 +132,14 @@ test('restored session creation binds the saved agent version, environment, sele
   let payload: Record<string, unknown> = {};
   setConsoleRequestContext({ csrfToken: 'csrf_test' });
   globalThis.fetch = (async (_input, init) => {
+    if (!init?.body)
+      return json({ id: 'environment', name: 'Configured', config: { type: 'cloud' }, archived_at: null });
     payload = JSON.parse(String(init?.body));
     return json({ id: 'session_saved' });
   }) as typeof fetch;
-  await saveBuilderSession(value, 'session_operation', 'workspace');
+  await (
+    await prepareBuilderSession(value, 'session_operation', 'workspace')
+  )();
   expect(payload).toMatchObject({
     agent: { type: 'agent', id: 'agent_saved', version: 4 },
     environment_id: 'environment_saved',
@@ -165,12 +171,14 @@ test('creating and recovering an additional vault preserves prior selections wit
             next_page: null,
           },
     )) as typeof fetch;
-  const patch = await performBuilderMutation(
-    value,
-    { id: 'create_vault', name: 'create_vault', input: { name: 'New' } },
-    'vault_operation',
-    'workspace',
-  );
+  const patch = await (
+    await prepareBuilderMutation(
+      value,
+      { id: 'create_vault', name: 'create_vault', input: { name: 'New' } },
+      'vault_operation',
+      'workspace',
+    )
+  )();
   expect(patch.testClosed).toBe(false);
   expect(patch.testSummary).toBe('');
   expect(patch.vaults?.map((vault) => vault.id)).toEqual(['vault_existing', 'vault_new']);
@@ -234,12 +242,14 @@ test('recovering a second session clears the completed test lifecycle like succe
             next_page: null,
           },
     )) as typeof fetch;
-  const expected = await performBuilderMutation(
-    value,
-    { id: 'ready', name: 'agent_ready', input: {} },
-    'session_operation',
-    'workspace',
-  );
+  const expected = await (
+    await prepareBuilderMutation(
+      value,
+      { id: 'ready', name: 'agent_ready', input: {} },
+      'session_operation',
+      'workspace',
+    )
+  )();
   const recovered = await recoverBuilderOperation(value, 'workspace');
   expect(recovered).toMatchObject(expected);
   expect(recovered.testClosed).toBe(false);

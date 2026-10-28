@@ -1,3 +1,8 @@
+import {
+  assertEnvironmentPackages,
+  requiredEnvironmentPackages,
+  type EnvironmentPackages,
+} from './environmentRequirements';
 import { z } from 'zod';
 import { errorMessage } from '../../utils';
 import { anthropicBetaApi } from '../../../../shared/api/anthropic';
@@ -121,50 +126,74 @@ export function savedBuilderAgent(agent: AgentApiResponse) {
     config: createAgentDraftSchema.parse(config),
   };
 }
-export async function saveBuilderAgent(state: BuilderState, operationId: string, workspaceId: string) {
+export function prepareBuilderAgent(state: BuilderState, operationId: string, workspaceId: string) {
   const config = { ...state.config, metadata: { ...state.config.metadata, quickstart_operation_id: operationId } };
-  const saved = state.agent
-    ? await updateAgentDetail(state.agent.id, buildAgentUpdateInput(state.agent.version, config), workspaceId)
-    : await createAgent(config, workspaceId);
-  return { ...invalidateBuilderTest(state, true), ...savedBuilderAgent(saved), operation: null };
+  const agent = state.agent;
+  const update = agent ? buildAgentUpdateInput(agent.version, config) : null;
+  return async () => {
+    const saved =
+      agent && update ? await updateAgentDetail(agent.id, update, workspaceId) : await createAgent(config, workspaceId);
+    return { ...invalidateBuilderTest(state, true), ...savedBuilderAgent(saved), operation: null };
+  };
 }
-export async function selectBuilderEnvironment(id: string, workspaceId: string) {
+
+export async function selectBuilderEnvironment(
+  id: string,
+  workspaceId: string,
+  requirements: EnvironmentPackages = { type: 'packages' },
+) {
   const environment = await anthropicBetaApi.environments.retrieve<EnvironmentApiResponse>(id, workspaceId);
   if (environment.archived_at) throw new Error('This environment is archived. Choose an active environment.');
+  assertEnvironmentPackages(environment.config, requirements);
   return { id: environment.id, name: environment.name };
 }
-export async function saveBuilderEnvironment(tool: BuilderTool, operationId: string, workspaceId: string) {
+export function prepareBuilderEnvironment(
+  tool: BuilderTool,
+  operationId: string,
+  workspaceId: string,
+  requirements: EnvironmentPackages = { type: 'packages' },
+) {
   const input = environmentInputSchema.parse(tool.input);
-  const environment = await anthropicBetaApi.environments.create<EnvironmentApiResponse>(
-    {
-      name: input.name,
-      description: input.description ?? '',
-      config: input.config,
-      metadata: { quickstart_operation_id: operationId },
-    },
-    workspaceId,
-  );
-  return { id: environment.id, name: environment.name };
+  assertEnvironmentPackages(input.config, requirements);
+  return async () => {
+    const environment = await anthropicBetaApi.environments.create<EnvironmentApiResponse>(
+      {
+        name: input.name,
+        description: input.description ?? '',
+        config: input.config,
+        metadata: { quickstart_operation_id: operationId },
+      },
+      workspaceId,
+    );
+    assertEnvironmentPackages(environment.config, requirements);
+    return { id: environment.id, name: environment.name };
+  };
 }
-export async function saveBuilderVault(tool: BuilderTool, operationId: string, workspaceId: string) {
+export function prepareBuilderVault(tool: BuilderTool, operationId: string, workspaceId: string) {
   const name = z.string().trim().min(1).parse(tool.input.name);
-  const vault = await anthropicBetaApi.vaults.create<VaultApiResponse>(
-    { display_name: name, metadata: { quickstart_operation_id: operationId } },
-    workspaceId,
-  );
-  return { id: vault.id, name: vault.display_name };
+  return async () => {
+    const vault = await anthropicBetaApi.vaults.create<VaultApiResponse>(
+      { display_name: name, metadata: { quickstart_operation_id: operationId } },
+      workspaceId,
+    );
+    return { id: vault.id, name: vault.display_name };
+  };
 }
-export async function saveBuilderSession(state: BuilderState, operationId: string, workspaceId: string) {
+
+export async function prepareBuilderSession(state: BuilderState, operationId: string, workspaceId: string) {
   if (!state.agent || !state.environment) throw new Error('Save an agent and choose an environment first.');
-  return createQuickstartSession(
-    state.agent,
+  await selectBuilderEnvironment(
     state.environment.id,
-    state.vaults.map((vault) => vault.id),
     workspaceId,
-    { quickstart_operation_id: operationId },
+    requiredEnvironmentPackages(state.savedConfig ?? state.config),
   );
+  const agent = state.agent;
+  const environmentId = state.environment.id;
+  const vaultIds = state.vaults.map((vault) => vault.id);
+  return () =>
+    createQuickstartSession(agent, environmentId, vaultIds, workspaceId, { quickstart_operation_id: operationId });
 }
-export async function saveBuilderDeployment(
+export async function prepareBuilderDeployment(
   state: BuilderState,
   tool: BuilderTool,
   operationId: string,
@@ -172,21 +201,31 @@ export async function saveBuilderDeployment(
 ) {
   if (!state.agent || !state.environment || !state.testClosed)
     throw new Error('Finish the test before creating a deployment.');
-  const input = validatedDeployment(tool);
-  const deployment = await anthropicBetaApi.deployments.create<DeploymentApiResponse>(
-    {
-      name: input.name,
-      agent: { type: 'agent', id: state.agent.id, version: state.agent.version },
-      environment_id: state.environment.id,
-      vault_ids: state.vaults.map((vault) => vault.id),
-      resources: [],
-      metadata: { quickstart_operation_id: operationId },
-      initial_events: [{ type: 'user.message', content: [{ type: 'text', text: input.initial_message }] }],
-      schedule: { type: 'cron', expression: input.cron_expression, timezone: input.timezone },
-    },
+  await selectBuilderEnvironment(
+    state.environment.id,
     workspaceId,
+    requiredEnvironmentPackages(state.savedConfig ?? state.config),
   );
-  return { id: deployment.id, name: deployment.name };
+  const input = validatedDeployment(tool);
+  const agent = state.agent;
+  const environmentId = state.environment.id;
+  const vaultIds = state.vaults.map((vault) => vault.id);
+  return async () => {
+    const deployment = await anthropicBetaApi.deployments.create<DeploymentApiResponse>(
+      {
+        name: input.name,
+        agent: { type: 'agent', id: agent.id, version: agent.version },
+        environment_id: environmentId,
+        vault_ids: vaultIds,
+        resources: [],
+        metadata: { quickstart_operation_id: operationId },
+        initial_events: [{ type: 'user.message', content: [{ type: 'text', text: input.initial_message }] }],
+        schedule: { type: 'cron', expression: input.cron_expression, timezone: input.timezone },
+      },
+      workspaceId,
+    );
+    return { id: deployment.id, name: deployment.name };
+  };
 }
 const resourceIdentity = z
   .object({

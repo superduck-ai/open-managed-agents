@@ -1,3 +1,4 @@
+import { requiredEnvironmentPackages } from './environmentRequirements';
 import { useI18n } from '../../../../shared/i18n';
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '../../../../shared/ui/accordion';
 import { SyntaxCodeBlock } from '../../components/CodeBlocks';
@@ -13,6 +14,7 @@ export function BuilderConfigPreview({ state, tool }: { state: BuilderState; too
     return (
       <div className="space-y-4">
         <h4 className="break-words text-base font-medium">{state.config.name}</h4>
+        <EnvironmentRequirementsPreview state={state} />
         {state.agent && state.savedConfig && (
           <div className="space-y-2 text-sm">
             <p className="font-mono text-xs text-muted-foreground">
@@ -89,6 +91,26 @@ export function BuilderConfigPreview({ state, tool }: { state: BuilderState; too
       <dt>{zh ? '初始消息' : 'Initial message'}</dt>
       <dd className="whitespace-pre-wrap">{deployment.initial_message}</dd>
     </dl>
+  );
+}
+
+function EnvironmentRequirementsPreview({ state }: { state: BuilderState }) {
+  const { locale } = useI18n();
+  const entries = Object.entries(requiredEnvironmentPackages(state.config)).filter(
+    ([manager, specs]) => manager !== 'type' && specs.length > 0,
+  );
+  if (!entries.length) return null;
+  return (
+    <div className="space-y-1 text-sm">
+      <p>
+        {locale === 'zh-CN'
+          ? '环境依赖要求（配置后在运行时准备）'
+          : 'Required environment packages (prepared at runtime after configuration)'}
+      </p>
+      <p>
+        {entries.map(([manager, specs]) => `${manager}: ${Array.isArray(specs) ? specs.join(', ') : specs}`).join('; ')}
+      </p>
+    </div>
   );
 }
 

@@ -530,6 +530,12 @@ const settingsWorkspaceWebhooksRoute = createRoute({
   component: WorkspaceWebhooksPage,
 });
 
+const settingsCostRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: 'settings/cost',
+  component: OrganizationSettingsPage,
+});
+
 const settingsWorkspaceTelemetryRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'settings/workspaces/$workspaceId/telemetry',
@@ -658,6 +664,7 @@ const routeTree = rootRoute.addChildren([
       settingsWorkspaceTelemetryRoute,
     ]),
     settingsOrganizationRoute,
+    settingsCostRoute,
     settingsBillingRoute,
     settingsLimitsRoute,
     settingsMembersRoute,

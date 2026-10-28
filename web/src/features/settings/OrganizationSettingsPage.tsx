@@ -3,7 +3,10 @@ import { TelemetryDestinationsPage } from '../telemetry-destinations/TelemetryDe
 import { useLocation, useNavigate } from '@tanstack/react-router';
 import { Copy, Save, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react';
+import { CostPage } from '../analytics/AnalyticsPages';
 import { SettingsShell } from '../../app/layout/ConsoleLayout';
+import { canManageMembers } from '../../shared/permissions/members';
+import { MembersAccessDenied } from './MembersAccessDenied';
 import { useAuth } from '../../shared/auth/context';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Button } from '../../shared/ui/button';
@@ -90,10 +93,27 @@ export function OrganizationSettingsPage({ section = 'organization' }: { section
       {resolvedSection === 'llm' ? <OrganizationLLMSettingsPage /> : null}
       {resolvedSection === 'members' ? <OrganizationMembersPage /> : null}
       {resolvedSection === 'workspaces' ? <WorkspacesSettingsPage /> : null}
+      {resolvedSection === 'cost' ? <OrganizationCostSettings /> : null}
       {resolvedSection === 'telemetry' ? <TelemetryDestinationsPage /> : null}
       {resolvedSection === 'retired' ? <RetiredConsolePage organizationSettings /> : null}
     </SettingsShell>
   );
+}
+
+function OrganizationCostSettings() {
+  const { account } = useAuth();
+  const { msg } = useI18n();
+  if (!canManageMembers(account)) {
+    return (
+      <MembersAccessDenied
+        description={msg(
+          'analytics.cost.accessDenied',
+          'Only organization administrators can view cost across workspaces.',
+        )}
+      />
+    );
+  }
+  return <CostPage />;
 }
 
 export function OrganizationSettingsContent() {

@@ -198,8 +198,9 @@ export function sessionListCost(value: unknown) {
   const money = toRecord(usage.list_cost) ?? {};
   const cents = optionalNumericValueFromKeys(money, ['amount']);
   if (cents !== undefined) {
+    const raw = money.amount;
     return {
-      amount: cents / 100,
+      amount: typeof raw === 'string' && raw.includes('.') ? cents : cents / 100,
       currency: typeof money.currency === 'string' && money.currency ? money.currency : 'USD',
     };
   }

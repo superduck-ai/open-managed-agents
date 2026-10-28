@@ -259,7 +259,7 @@ export function SessionListTable({
       },
       {
         id: 'cost',
-        size: 80,
+        size: 128,
         header: () => (
           <span className="inline-flex items-center gap-1">
             {managedColumnLabel('Cost', msg)}

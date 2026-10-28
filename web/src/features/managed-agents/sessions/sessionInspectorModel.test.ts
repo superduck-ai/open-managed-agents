@@ -343,7 +343,7 @@ describe('session inspector cost', () => {
           cache_read_input_tokens: 30,
           cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 5 },
           list_cost: { amount: '125', currency: 'USD' },
-          active_seconds: 2.5,
+          session_active_milliseconds: 2500,
           server_tool_use: { web_search_requests: 3 },
         },
       },
@@ -364,7 +364,7 @@ describe('session inspector cost', () => {
         eventId: 'usage_first',
         stepCents: 125,
         usage: {
-          activeSeconds: 2.5,
+          activeMilliseconds: 2500,
           cacheRead: 30,
           cacheWrite: 45,
           input: 100,
@@ -379,7 +379,7 @@ describe('session inspector cost', () => {
         eventId: 'usage_stale',
         stepCents: 0,
         usage: {
-          activeSeconds: undefined,
+          activeMilliseconds: undefined,
           cacheRead: 0,
           cacheWrite: 0,
           input: 0,

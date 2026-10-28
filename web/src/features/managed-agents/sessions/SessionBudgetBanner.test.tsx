@@ -24,7 +24,7 @@ test('中文预算提示和编辑弹窗使用翻译及本地化金额', async ()
       />
     </I18nProvider>,
   );
-  expect(screen.getByText(/已达到预算上限/).textContent).toContain('US$0.07');
+  expect(screen.getByText(/已达到预算上限/).textContent).toContain('$0.070000');
   expect(screen.queryByText(/Budget reached/)).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '调整预算' }));
   expect(await screen.findByRole('dialog')).toBeTruthy();
@@ -42,7 +42,7 @@ test('英文预算金额占位符正确插值', () => {
       />
     </I18nProvider>,
   );
-  expect(screen.getByText('Budget $1.00 spent $0.01')).toBeTruthy();
+  expect(screen.getByText('Budget $1.000000 spent $0.010000')).toBeTruthy();
 });
 
 function BudgetSyncProbe({ initial, rejected }: { initial: SessionApiResponse; rejected: boolean }) {

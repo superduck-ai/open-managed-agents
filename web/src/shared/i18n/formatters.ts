@@ -22,6 +22,9 @@ export function useFormatters() {
           style: 'currency',
           currency,
           ...options,
+          currencyDisplay: 'narrowSymbol',
+          minimumFractionDigits: 6,
+          maximumFractionDigits: 6,
         }).format(value);
       },
       relativeTime(value: number, unit: Intl.RelativeTimeFormatUnit, options?: Intl.RelativeTimeFormatOptions) {

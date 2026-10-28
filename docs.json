@@ -212,6 +212,7 @@
                   "docs/zh/session-operations",
                   "docs/zh/events-and-streaming",
                   "docs/zh/budgets",
+                  "docs/zh/pricing",
                   "docs/zh/webhooks",
                   "docs/zh/define-outcomes",
                   "docs/zh/vaults"
@@ -537,6 +538,7 @@
                   "docs/en/session-operations",
                   "docs/en/events-and-streaming",
                   "docs/en/budgets",
+                  "docs/en/pricing",
                   "docs/en/webhooks",
                   "docs/en/define-outcomes",
                   "docs/en/vaults"

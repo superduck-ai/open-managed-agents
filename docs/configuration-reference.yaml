@@ -368,6 +368,11 @@ transcript_archive:
   delete_batch_rows: 500
   max_rows_per_job: 50000
 
+# Omit this block to leave runtime cost unconfigured. The cost page then says it is not configured.
+# usd_per_hour is USD per sandbox hour. Convert yuan and the exchange rate before writing this value.
+runtime_cost:
+  usd_per_hour: "0.01652866"
+
 # 飞书渠道桥接服务；令牌仅用于 OMA 到桥接服务的内部调用。
 channel_bridge:
   url: ""

@@ -160,6 +160,7 @@ export const settingsNavigation = [
   { href: '/settings/llm', label: 'LLM configuration', labelId: 'nav.llmSettings' },
   { href: '/settings/members', label: 'Members', labelId: 'nav.members' },
   { href: '/settings/workspaces', label: 'Workspaces', labelId: 'nav.workspaces' },
+  { href: '/settings/cost', label: 'Cost', labelId: 'nav.cost' },
   { href: '/settings/telemetry', label: 'OpenTelemetry', labelId: 'nav.telemetry' },
 ] as const;
 

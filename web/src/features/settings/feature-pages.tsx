@@ -15,6 +15,7 @@ export const settingsSections = [
   'llm',
   'members',
   'workspaces',
+  'cost',
   'telemetry',
   'api-keys',
 ] as const;

@@ -70,10 +70,26 @@ func (h usageHandler) report(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "failed to query analytics options")
 		return
 	}
+	report := analytics.BuildReport(rows, query.Data)
+	var counts []db.WebSearchDay
+	if query.Data.APIKeyUUID == "" && (query.Data.Source == "" || query.Data.Source == "managed_agents") {
+		counts, err = h.database.CountWebSearches(r.Context(), query.Data)
+		if err != nil {
+			internalError(w, "failed to query analytics usage")
+			return
+		}
+	}
+	report = analytics.ApplyWebSearchCounts(report, counts)
+	usage, err := h.database.ListModelUsage(r.Context(), query.Data)
+	if err != nil {
+		internalError(w, "failed to query analytics usage")
+		return
+	}
+	report = analytics.ApplyModelCosts(report, usage)
 	writeJSON(w, http.StatusOK, struct {
 		analytics.Report
 		Options usageOptions `json:"options"`
-	}{Report: analytics.BuildReport(rows, query.Data), Options: options})
+	}{Report: report, Options: options})
 }
 
 type usageOption struct {

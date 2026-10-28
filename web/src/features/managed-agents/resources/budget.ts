@@ -69,7 +69,19 @@ export function entityBudgetUsdInput(entity: unknown): string {
 }
 
 export function formatUsdCents(cents: number): string {
-  return `$${formatUsdCentsPlain(cents)}`;
+  return `$${(cents / 100).toFixed(6)}`;
+}
+
+function amountMicros(amount: unknown) {
+  if (amount == null || amount === '') return { micros: 0n, invalid: false };
+  const raw = typeof amount === 'string' ? amount.trim() : '';
+  if (!/^\d+(\.\d+)?$/.test(raw)) return { micros: 0n, invalid: true };
+  if (!raw.includes('.')) return { micros: BigInt(raw) * 10_000n, invalid: false };
+  const [whole, fraction = ''] = raw.split('.');
+  const digits = `${fraction}0000000`;
+  let micros = BigInt(whole) * 1_000_000n + BigInt(digits.slice(0, 6));
+  if (digits[6]! >= '5') micros += 1n;
+  return { micros, invalid: false };
 }
 
 function formatUsdCentsPlain(cents: number): string {
@@ -89,11 +101,11 @@ export function sessionBudgetState(session: SessionApiResponse): SessionBudgetSt
     return null;
   }
   const usage = (session.usage ?? null) as { list_cost?: { amount?: unknown } } | null;
-  const spentCents = Number(usage?.list_cost?.amount ?? 0);
+  const spent = amountMicros(usage?.list_cost?.amount);
   return {
     budgetCents,
-    spentCents: Number.isSafeInteger(spentCents) && spentCents > 0 ? spentCents : 0,
-    reached: spentCents >= budgetCents,
+    spentCents: Number(spent.micros) / 10_000,
+    reached: spent.invalid || spent.micros >= BigInt(budgetCents) * 10_000n,
   };
 }
 

@@ -158,12 +158,12 @@ A budget can only be attached when the session is created. Adding a budget to an
 The platform prices what the session consumes, continuously, at public list rates:
 
 * **Model tokens**, at each served model's list price
-* **Web searches**, at $10 per 1,000 searches
-* **Session running time**, at $0.08 per hour
+* **Web searches**, at the rate recorded when each call completed. The current rate is ¥5 per 1,000 searches, converted at 7.2 yuan per US dollar; a later rate change does not reprice calls already recorded
+* **Session running time**, at the deployment's hourly dollar rate, added when a running interval ends
 
 This running dollar total is the session's **list cost**, and it is what the budget compares against. List cost is not your contracted price: if your organization has negotiated discounts, the session reaches its cap when the list-price total does, and your billed spend might be lower than the cap.
 
-Enforcement uses the exact, unrounded list cost. The `list_cost` figures reported on the session and its events are whole cents, rounded to the nearest cent, so a reported figure can read up to half a cent either side of the exact amount enforcement uses.
+The `list_cost` reported on session usage is a USD amount with 6 decimal places. The budget cap `max_list_cost` stays a whole number of cents. Enforcement compares that 6-decimal amount with the cap, and does not round the spent amount to a whole cent first.
 
 ## When a session reaches its budget
 
@@ -378,9 +378,9 @@ Set `budget` to `null` to remove the cap entirely. The session's paused work res
 
 ## Monitor spend
 
-The session object carries its `budget` and a `usage` object with the tracked spend: `usage.list_cost` is the session's consumed list cost, and `usage.active_seconds` is the running time its runtime cost is priced on. On a session paused at `budget_reached`, expect `usage.list_cost` to read at or a fraction past `max_list_cost`: the [request that crossed the cap](/docs/en/budgets#when-a-session-reaches-its-budget) finished before the pause. Session-level `active_seconds` counts overlapping activity from concurrent threads once. Thread retrieval responses carry the same two fields on the thread's own `usage`, priced per thread. Per-thread figures are rounded independently and exclude the session's running-time cost, so they don't sum exactly to the session's `list_cost`; the session figure is the one the budget is enforced against.
+The session object carries its `budget` and a `usage` object with the tracked spend: `usage.list_cost` is the session's consumed list cost, and `usage.session_active_milliseconds` is the integer milliseconds its runtime cost is priced on. On a session paused at `budget_reached`, expect `usage.list_cost` to read at or a fraction past `max_list_cost`: the [request that crossed the cap](/docs/en/budgets#when-a-session-reaches-its-budget) finished before the pause. Session-level `session_active_milliseconds` counts overlapping activity from concurrent threads once. Thread retrieval responses carry `list_cost` on the thread's own `usage` and do not carry the running time. Per-thread figures are rounded independently, so they don't sum exactly to the session's `list_cost`; the session figure is the one the budget is enforced against.
 
-The `session.usage` event is a snapshot of the session's cumulative usage and tracked list cost. It carries the session's token totals, `list_cost`, `active_seconds`, `server_tool_use` request counts (`web_search_requests`, priced into list cost per request, and `web_fetch_requests`, which reads `0` because web fetch requests carry no per-request charge and aren't metered), and an echo of the session's `budget`, or `null` when the session has none. It appears in the events list and the session stream. The session emits one immediately before it goes idle, whatever the stop reason, so a session that reaches its budget always emits one immediately before the budget-reached idle event.
+The `session.usage` event is a snapshot of the session's cumulative usage and tracked list cost. It carries the session's token totals, `list_cost`, `session_active_milliseconds`, `server_tool_use` request counts (`web_search_requests`, the count of successful web search tool calls priced at the rate recorded for each call (currently ¥5 per 1,000 calls), and `web_fetch_requests`, which reads `0` because web fetch requests carry no per-request charge and aren't metered), and an echo of the session's `budget`, or `null` when the session has none. It appears in the events list and the session stream. The session emits one immediately before it goes idle, whatever the stop reason, so a session that reaches its budget always emits one immediately before the budget-reached idle event.
 
 For reading usage from the stream and the session object, see [Tracking usage](/docs/en/events-and-streaming#tracking-usage).
 

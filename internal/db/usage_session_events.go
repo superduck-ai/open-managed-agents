@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/yourbatis"
@@ -62,11 +64,18 @@ func sessionUsageRecord(event SessionEvent) (UsageRecord, error) {
 	}
 	if payload.PriceSnapshot != nil {
 		calculator := billing.NewCalculator(map[string]billing.ModelPrice{record.Model: *payload.PriceSnapshot})
-		if usage != nil && usage.InputTokens != nil {
-			if cents, ok := calculator.ModelRequestCents(record.Model, usage.Tokens()); ok {
-				record.ModelCents = new(cents)
+		if usage != nil {
+			if amount, ok := calculator.BudgetRequestAmount(record.Model, usage.Tokens()); ok {
+				record.ModelCostUSD = amount
+			}
+			if usage.InputTokens != nil {
+				if cents, ok := calculator.ModelRequestCents(record.Model, usage.Tokens()); ok {
+					record.ModelCents = new(cents)
+				}
 			}
 		}
+	} else if payload.Billing != nil && payload.Billing.Currency == "USD" && strings.Contains(payload.Billing.ListCost, ".") {
+		record.ModelCostUSD = payload.Billing.ListCost
 	} else if payload.Billing != nil && payload.Billing.Currency == "USD" {
 		cents, err := strconv.ParseInt(payload.Billing.ListCost, 10, 64)
 		if err == nil && cents >= 0 {
@@ -74,6 +83,35 @@ func sessionUsageRecord(event SessionEvent) (UsageRecord, error) {
 		}
 	}
 	return record, nil
+}
+
+func modelRequestDollars(raw []byte) *big.Rat {
+	var payload sessionUsageEvent
+	if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil {
+		return new(big.Rat)
+	}
+	usage := payload.Usage
+	if usage == nil {
+		usage = payload.LegacyUsage
+	}
+	if payload.Billing != nil && payload.Billing.Currency == "USD" && strings.Contains(payload.Billing.ListCost, ".") {
+		if dollars, ok := new(big.Rat).SetString(payload.Billing.ListCost); ok && dollars.Sign() >= 0 {
+			return dollars
+		}
+	}
+	if payload.PriceSnapshot != nil && usage != nil {
+		if dollars, ok := payload.PriceSnapshot.BudgetDollars(usage.Tokens()); ok {
+			return dollars
+		}
+	}
+	if payload.Billing == nil || payload.Billing.Currency != "USD" || strings.Contains(payload.Billing.ListCost, ".") {
+		return new(big.Rat)
+	}
+	cents, err := strconv.ParseInt(payload.Billing.ListCost, 10, 64)
+	if err != nil || cents <= 0 {
+		return new(big.Rat)
+	}
+	return new(big.Rat).SetFrac64(cents, 100)
 }
 
 func ApplyUsage(record *UsageRecord, usage billing.Usage) {
@@ -84,6 +122,4 @@ func ApplyUsage(record *UsageRecord, usage billing.Usage) {
 		record.CacheWrite5mTokens = billing.UsageCount(usage.CacheCreation.FiveMinutes)
 		record.CacheWrite1hTokens = billing.UsageCount(usage.CacheCreation.OneHour)
 	}
-	record.SearchRequests = usage.Searches()
-	record.SearchCents = record.SearchRequests * billing.WebSearchCentsPerRequest
 }

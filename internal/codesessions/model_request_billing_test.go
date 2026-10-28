@@ -12,7 +12,7 @@ func TestModelRequestBillingUsesProxyUsage(t *testing.T) {
 		t.Fatalf("未定价模型产生账单：%v", got)
 	}
 	got := modelRequestBilling(service.billing, "priced", usage)
-	if got["list_cost"] != "2205" || got["currency"] != "USD" {
+	if got["list_cost"] != "22.050000" || got["currency"] != "USD" {
 		t.Fatalf("代理请求费用错误：%v", got)
 	}
 }
@@ -25,7 +25,7 @@ func TestModelRequestBillingCountsMissingCacheRead(t *testing.T) {
 		t.Fatal("HasModel(priced) = false")
 	}
 	got := modelRequestBilling(calculator, "priced", ModelRequestUsage{CacheReadInputTokens: new(int64(1_000_000))})
-	if got["list_cost"] != "300" || got["currency"] != "USD" {
-		t.Fatalf("缺失缓存读取单价被记成 %v，期望 300 USD", got)
+	if got["list_cost"] != "3.000000" || got["currency"] != "USD" {
+		t.Fatalf("缺失缓存读取单价被记成 %v，期望 3.000000 USD", got)
 	}
 }

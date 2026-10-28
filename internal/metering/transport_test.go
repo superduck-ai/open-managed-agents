@@ -85,8 +85,8 @@ func TestTransportRecordsCancelledAndCompleteResponses(t *testing.T) {
 			if first.Finalized || !last.Finalized || first.AttemptID != last.AttemptID || last.Complete != tc.complete || last.ModelCents == nil || *last.ModelCents != tc.cents {
 				t.Fatalf("计量不正确：%+v", last)
 			}
-			if tc.name == "普通响应" && last.SearchCents != 2 {
-				t.Fatal("搜索未计费")
+			if last.SearchRequests != 0 || last.SearchCents != 0 {
+				t.Fatal("模型用量里的搜索次数不应写入账本")
 			}
 		})
 	}

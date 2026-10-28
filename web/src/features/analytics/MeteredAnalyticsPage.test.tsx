@@ -8,6 +8,10 @@ import { CostPage, UsagePage } from './MeteredAnalyticsPage';
 import type { UsageMetrics, UsageReport } from './usage-api';
 
 const { cleanup, render, screen, fireEvent, waitFor } = await import('@testing-library/react');
+
+function usageRequests(requests: URL[]) {
+  return requests.filter((url) => !url.pathname.includes('/runtime_cost'));
+}
 const originalFetch = globalThis.fetch;
 const clients: QueryClient[] = [];
 afterEach(() => {
@@ -86,7 +90,7 @@ test('查询失败不显示零费用', async () => {
   globalThis.fetch = (async () => new Response('{}', { status: 403 })) as typeof fetch;
   mount(true);
   await screen.findByText('Could not load costs. Check your access and retry.');
-  expect(screen.queryByText('USD 0.00')).toBeNull();
+  expect(screen.queryByText('$0.000000')).toBeNull();
   expect(screen.queryByText('Model and search subtotal')).toBeNull();
 });
 
@@ -112,15 +116,18 @@ test('非零费用随模型筛选重新查询且保留 URL', async () => {
     return Response.json(report(url.searchParams.get('model') === 'other-model' ? '250' : '125'));
   }) as typeof fetch;
   mount(true);
-  await screen.findByText('USD 1.25');
+  await screen.findByText('$1.250000');
   expect(screen.getByText('Total cost')).toBeTruthy();
-  expect(screen.getByText('Total code execution cost')).toBeTruthy();
+  expect(screen.getByText('Total tool call cost')).toBeTruthy();
+  expect(screen.getByText('Daily tool call cost')).toBeTruthy();
+  expect(screen.getByText('$0.020000')).toBeTruthy();
+  expect(screen.queryByText('Total code execution cost')).toBeNull();
   expect(screen.getByText('Total session runtime cost')).toBeTruthy();
-  expect(screen.getByText('USD 1.27')).toBeTruthy();
-  expect(screen.getAllByText('USD 0.00')).toHaveLength(2);
+  expect(screen.getByText('$1.270000')).toBeTruthy();
+  expect(screen.getAllByText('$0.000000')).toHaveLength(1);
   expect(screen.queryByText('—')).toBeNull();
   expect(screen.queryByText('Model and search subtotal')).toBeNull();
-  expect(screen.getAllByRole('article')).toHaveLength(5);
+  expect(screen.getAllByRole('article')).toHaveLength(4);
   fireEvent.click(screen.getByRole('combobox', { name: 'Model: All' }));
   const option = screen.getByRole('option', { name: 'other-model' });
   fireEvent.pointerDown(option);
@@ -129,8 +136,8 @@ test('非零费用随模型筛选重新查询且保留 URL', async () => {
   fireEvent.mouseUp(option);
   fireEvent.click(option);
   await waitFor(() => expect(requests.map((url) => url.searchParams.get('model'))).toContain('other-model'));
-  await screen.findByText('USD 2.50');
-  expect(screen.getByText('USD 2.52')).toBeTruthy();
+  await screen.findByText('$2.500000');
+  expect(screen.getByText('$2.520000')).toBeTruthy();
   expect(requests.some((url) => url.searchParams.get('model') === 'other-model')).toBe(true);
   await waitFor(() => expect(window.location.search).toContain('model=other-model'));
 });
@@ -143,9 +150,10 @@ test('工作区路径初始化筛选且允许切换到全部工作区', async ()
     return Response.json(report());
   }) as typeof fetch;
   mount(true);
-  await screen.findByText('USD 1.25');
-  expect(requests[0].searchParams.get('workspace_id')).toBe('default');
-  expect(requests[0].searchParams.get('session_id')).toBe('sesn_real');
+  await screen.findByText('$1.250000');
+  const initial = usageRequests(requests)[0];
+  expect(initial.searchParams.get('workspace_id')).toBe('default');
+  expect(initial.searchParams.get('session_id')).toBe('sesn_real');
   const workspace = screen.getByRole('combobox', { name: /Workspace:/ });
   expect((workspace as HTMLButtonElement).disabled).toBe(false);
   fireEvent.click(workspace);
@@ -155,8 +163,8 @@ test('工作区路径初始化筛选且允许切换到全部工作区', async ()
   fireEvent.pointerUp(all);
   fireEvent.mouseUp(all);
   fireEvent.click(all);
-  await waitFor(() => expect(requests.at(-1)?.searchParams.get('workspace_id')).toBe(''));
-  expect(requests.at(-1)?.searchParams.has('session_id')).toBe(false);
+  await waitFor(() => expect(usageRequests(requests).at(-1)?.searchParams.get('workspace_id')).toBe(''));
+  expect(usageRequests(requests).at(-1)?.searchParams.has('session_id')).toBe(false);
   await waitFor(() => expect(new URLSearchParams(window.location.search).get('workspace_id')).toBe(''));
 });
 
@@ -168,8 +176,8 @@ test('工作区路径刷新保留显式选择的全部工作区', async () => {
     return Response.json(report());
   }) as typeof fetch;
   mount(true);
-  await screen.findByText('USD 1.25');
-  expect(requests[0].searchParams.get('workspace_id')).toBe('');
+  await screen.findByText('$1.250000');
+  expect(usageRequests(requests)[0].searchParams.get('workspace_id')).toBe('');
 });
 
 for (const cost of [false, true]) {
@@ -185,7 +193,7 @@ for (const cost of [false, true]) {
       return Response.json(result);
     }) as typeof fetch;
     mount(cost);
-    await screen.findByText(cost ? 'USD 1.25' : '600');
+    await screen.findByText(cost ? '$1.250000' : '600');
     async function select(name: string, value: string) {
       fireEvent.click(screen.getByRole('combobox', { name }));
       const option = screen.getByRole('option', { name: value, exact: true });
@@ -197,14 +205,14 @@ for (const cost of [false, true]) {
     }
     await select('Range: Last 30 days', 'Last 7 days');
     await waitFor(() => {
-      const params = requests.at(-1)!.searchParams;
+      const params = usageRequests(requests).at(-1)!.searchParams;
       expect(new Date(params.get('ending_at')!).getTime() - new Date(params.get('starting_at')!).getTime()).toBe(
         7 * 86400000,
       );
     });
     await select('API key: All', 'key-real');
-    await waitFor(() => expect(requests.at(-1)!.searchParams.get('api_key_id')).toBe('key-real'));
-    await screen.findByText(cost ? 'USD 2.50' : '75');
+    await waitFor(() => expect(usageRequests(requests).at(-1)!.searchParams.get('api_key_id')).toBe('key-real'));
+    await screen.findByText(cost ? '$2.500000' : '75');
     expect(new URLSearchParams(window.location.search).get('api_key_id')).toBe('key-real');
     expect(screen.queryByRole('combobox', { name: /Source:/ })).toBeNull();
     expect(screen.queryByRole('table')).toBeNull();
@@ -225,6 +233,87 @@ for (const cost of [false, true]) {
     expect(screen.queryByText('Model and search subtotal')).toBeNull();
   });
 }
+
+test('工具费用为 0 时仍画出每日图', async () => {
+  resetTestDom('https://oma.duck.ai/cost');
+  const result = report();
+  result.summary = { ...result.summary, search_cost_cents: '0', subtotal_cents: result.summary.model_cost_cents };
+  result.daily = [{ key: '2026-10-01', metrics: result.summary }];
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input), 'https://oma.duck.ai');
+    if (url.pathname.includes('/runtime_cost')) {
+      return Response.json({
+        configured: true,
+        currency: 'USD',
+        total: '0.00',
+        daily: [],
+        groups: [],
+        models: [],
+        service_accounts: [],
+      });
+    }
+    return Response.json(result);
+  }) as typeof fetch;
+  mount(true);
+  await screen.findByText('Daily tool call cost');
+  expect(screen.queryByText('No data')).toBeNull();
+});
+
+test('成本页展示会话运行时金额', async () => {
+  resetTestDom('https://oma.duck.ai/cost');
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input), 'https://oma.duck.ai');
+    if (url.pathname.includes('/runtime_cost')) {
+      return Response.json({
+        configured: true,
+        currency: 'USD',
+        total: '0.001484',
+        daily: [
+          {
+            date: '2026-10-14',
+            amount: '0.001484',
+            groups: [{ id: 'claude-opus-4-6', label: 'claude-opus-4-6', amount: '0.001484' }],
+          },
+        ],
+        groups: [],
+        models: [],
+        service_accounts: [],
+      });
+    }
+    return Response.json(report());
+  }) as typeof fetch;
+  mount(true);
+  expect(await screen.findByText('$0.001484')).toBeTruthy();
+  expect(screen.getByText('$1.271484')).toBeTruthy();
+  const summary = screen.getByText('Total cost');
+  const runtimeChart = screen.getByText('Daily runtime cost');
+  const tokenChart = screen.getByText('Daily token cost');
+  expect(summary.compareDocumentPosition(runtimeChart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(runtimeChart.compareDocumentPosition(tokenChart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByText('Total session runtime cost')).toBeTruthy();
+});
+
+test('未配置运行时单价时提示', async () => {
+  resetTestDom('https://oma.duck.ai/cost');
+  globalThis.fetch = (async (input) => {
+    const url = new URL(String(input), 'https://oma.duck.ai');
+    if (url.pathname.includes('/runtime_cost')) {
+      return Response.json({
+        configured: false,
+        currency: 'USD',
+        total: '0.00',
+        daily: [],
+        groups: [],
+        models: [],
+        service_accounts: [],
+      });
+    }
+    return Response.json(report());
+  }) as typeof fetch;
+  mount(true);
+  expect(await screen.findByText('Runtime price is not configured')).toBeTruthy();
+  expect(screen.getByText('Not configured')).toBeTruthy();
+});
 
 test('默认工作区沿用控制台 ID 并显示本地化名称', async () => {
   resetTestDom('https://oma.duck.ai/cost?workspace_id=default');

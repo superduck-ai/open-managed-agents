@@ -90,8 +90,8 @@ describe('entity helpers', () => {
   });
 
   it('formats cents as dollars', () => {
-    expect(formatUsdCents(2500)).toBe('$25');
-    expect(formatUsdCents(2599)).toBe('$25.99');
+    expect(formatUsdCents(2500)).toBe('$25.000000');
+    expect(formatUsdCents(2599)).toBe('$25.990000');
   });
 
   it('derives reached state from usage spend', () => {
@@ -106,10 +106,25 @@ describe('entity helpers', () => {
       reached: false,
     });
     expect(sessionBudgetState({} as unknown as SessionApiResponse)).toBeNull();
+    const under = {
+      budget: budgetWireBody(1),
+      usage: { list_cost: { amount: '0.009999', currency: 'USD' } },
+    } as unknown as SessionApiResponse;
+    const exact = {
+      budget: budgetWireBody(1),
+      usage: { list_cost: { amount: '0.010000', currency: 'USD' } },
+    } as unknown as SessionApiResponse;
+    expect(sessionBudgetState(under)?.reached).toBe(false);
+    expect(sessionBudgetState(exact)?.reached).toBe(true);
+    const broken = {
+      budget: budgetWireBody(100),
+      usage: { list_cost: { amount: 'bad', currency: 'USD' } },
+    } as unknown as SessionApiResponse;
+    expect(sessionBudgetState(broken)?.reached).toBe(true);
   });
 
   it('renders display values for detail rows', () => {
-    expect(entityBudgetDisplay({ budget: budgetWireBody(100) } as never)).toBe('$1');
+    expect(entityBudgetDisplay({ budget: budgetWireBody(100) } as never)).toBe('$1.000000');
     expect(entityBudgetDisplay({} as never)).toBe('—');
   });
 });

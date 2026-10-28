@@ -331,6 +331,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterOrganizationOnboardingRoutes(r)
 			platformapi.RegisterOrganizationExperienceRoutes(r)
 			platformapi.RegisterOrganizationBillingRoutes(r)
+			platformapi.RegisterOrganizationRuntimeCostRoutes(r, s.db)
 			platformapi.RegisterOrganizationUsageRoutes(r, s.db)
 			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets, s.db.BillingCalculator(), s.logger.With("component", "console_metering"))
 			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.db.BillingCalculator())

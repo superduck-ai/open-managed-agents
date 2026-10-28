@@ -1,8 +1,17 @@
 import { useI18n } from '@/shared/i18n';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
+import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { AnalyticsPageRoot, FilterBar, FilterControl } from './analytics-chrome';
+import { RuntimeCostChart } from './RuntimeCostChart';
+import {
+  apiErrorStatus,
+  isRuntimeCostReport,
+  sessionRuntimeCostLabel,
+  useRuntimeCost,
+  type RuntimeCostReport,
+} from './runtimeCost';
 import { UsageResults } from './UsageResults';
-import { monthOptions } from './usage-api';
+import { money, monthOptions, reportRange, type UsageReport } from './usage-api';
 import { useUsageReport } from './use-usage-report';
 
 export function UsagePage() {
@@ -56,14 +65,61 @@ function MeteredAnalyticsPage({ cost }: { cost: boolean }) {
           onValueChange={(value) => change('apiKey', value)}
         />
       </FilterBar>
-      {!scope.orgUuid ? (
+      <MeteredAnalyticsBody
+        cost={cost}
+        locale={locale}
+        orgUuid={scope.orgUuid}
+        workspaceId={filters.workspace}
+        range={filters.range}
+        query={query}
+      />
+    </AnalyticsPageRoot>
+  );
+}
+
+function MeteredAnalyticsBody({
+  cost,
+  locale,
+  orgUuid,
+  workspaceId,
+  range,
+  query,
+}: {
+  cost: boolean;
+  locale: string;
+  orgUuid?: string;
+  workspaceId: string;
+  range: string;
+  query: {
+    data?: UsageReport;
+    isPending: boolean;
+    isPlaceholderData: boolean;
+    isError: boolean;
+  };
+}) {
+  const { msg } = useI18n();
+  const bounds = reportRange(range);
+  const runtime = useRuntimeCost({
+    orgUuid: orgUuid ?? '',
+    workspaceId: workspaceId || 'all-workspaces',
+    model: 'all',
+    groupBy: 'model',
+    range,
+    startingOn: bounds.start.slice(0, 10),
+    endingBefore: bounds.end.slice(0, 10),
+    enabled: cost,
+  });
+  const runtimeReport = isRuntimeCostReport(runtime.data) ? runtime.data : undefined;
+  return (
+    <>
+      {!orgUuid ? (
         <Alert>
           <AlertDescription>
             {msg('analytics.real.selectOrg', 'Select an organization to view usage.')}
           </AlertDescription>
         </Alert>
       ) : null}
-      {(query.isPending || query.isPlaceholderData) && scope.orgUuid ? (
+      {(query.isPending || query.isPlaceholderData) && orgUuid ? (
         <p role="status">{msg('common.loading', 'Loading...')}</p>
       ) : null}
       {query.isError ? (
@@ -75,9 +131,74 @@ function MeteredAnalyticsPage({ cost }: { cost: boolean }) {
           </AlertDescription>
         </Alert>
       ) : null}
+      {cost ? <RuntimeCostNotice report={runtimeReport} error={runtime.error} /> : null}
       {query.data && !query.isError && !query.isPlaceholderData ? (
-        <UsageResults report={query.data} cost={cost} />
+        <UsageResults
+          report={query.data}
+          cost={cost}
+          runtimeValue={cost ? runtimeCardValue(runtimeReport, locale, msg) : undefined}
+          runtimeDollars={runtimeAmount(runtimeReport)}
+          afterSummary={<RuntimeCostChartCard report={runtimeReport} />}
+        />
       ) : null}
-    </AnalyticsPageRoot>
+    </>
+  );
+}
+
+function runtimeAmount(report: RuntimeCostReport | undefined) {
+  if (!report || report.configured === false) return '0';
+  return report.total || '0';
+}
+
+function runtimeCardValue(
+  report: RuntimeCostReport | undefined,
+  locale: string,
+  msg: (id: string, fallback: string) => string,
+) {
+  return sessionRuntimeCostLabel(
+    report,
+    money('0', locale),
+    msg('analytics.cost.notConfigured', 'Not configured'),
+    locale,
+  );
+}
+
+function RuntimeCostNotice({ report, error }: { report: RuntimeCostReport | undefined; error: unknown }) {
+  const { msg } = useI18n();
+  return (
+    <>
+      {report?.configured === false ? (
+        <Alert>
+          <AlertDescription>
+            {msg('analytics.cost.runtimePriceMissing', 'Runtime price is not configured')}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {apiErrorStatus(error) === 403 ? (
+        <Alert>
+          <AlertDescription>
+            {msg('analytics.cost.accessDenied', 'Only organization administrators can view cost across workspaces.')}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </>
+  );
+}
+
+function RuntimeCostChartCard({ report }: { report: RuntimeCostReport | undefined }) {
+  const { msg } = useI18n();
+  const days = report?.daily.some((day) => day.groups.length > 0) ? report.daily : undefined;
+  if (!days) {
+    return null;
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{msg('analytics.cost.dailyRuntimeCost', 'Daily runtime cost')}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <RuntimeCostChart days={days} label={msg('analytics.cost.runtimeCost', 'Runtime cost')} />
+      </CardContent>
+    </Card>
   );
 }

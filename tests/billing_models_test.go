@@ -146,8 +146,9 @@ func TestModelPriceReconciliation(t *testing.T) {
 						want.ModelCents = *tc.Cents
 						want.SubtotalCents = *tc.Cents
 					}
-					if report.Summary != want {
-						t.Fatalf("汇总对账：%+v，预期：%+v", report.Summary, want)
+					got := report.Summary
+					if got.Requests != want.Requests || got.InputTokens != want.InputTokens || got.OutputTokens != want.OutputTokens || got.CacheReadTokens != want.CacheReadTokens || got.CacheWriteTokens != want.CacheWriteTokens || got.ModelCents != want.ModelCents || got.SubtotalCents != want.SubtotalCents || got.Unpriced != want.Unpriced {
+						t.Fatalf("汇总对账：%+v，预期：%+v", got, want)
 					}
 					var dailyRequests, dailyCents int64
 					for _, day := range report.Daily {

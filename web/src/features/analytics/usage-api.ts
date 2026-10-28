@@ -10,7 +10,11 @@ export type UsageMetrics = {
   cache_write_1h_tokens: number;
   web_search_requests: number;
   model_cost_cents: string;
+  model_cost?: string;
   search_cost_cents: string;
+  search_cost?: string;
+  model_costs?: { name: string; cost: string }[];
+  tool_costs?: { name: string; cost: string }[];
   subtotal_cents: string;
   unpriced_requests: number;
   incomplete_requests: number;
@@ -69,10 +73,59 @@ export function monthOptions(firstSeen: string | null, locale: string, now = new
   return options;
 }
 
+export function modelCostDollars(metrics: Pick<UsageMetrics, 'model_cost' | 'model_cost_cents'>) {
+  if (metrics.model_cost) return metrics.model_cost;
+  return centsToDollars(metrics.model_cost_cents);
+}
+
+export function toolCostDollars(metrics: Pick<UsageMetrics, 'search_cost' | 'search_cost_cents'>) {
+  if (metrics.search_cost) return metrics.search_cost;
+  return centsToDollars(metrics.search_cost_cents);
+}
+
+export function costTotalLabel(modelDollars: string, toolDollars: string, runtimeDollars: string, locale: string) {
+  return formatMicros(
+    dollarsToMicros(modelDollars) + dollarsToMicros(toolDollars) + dollarsToMicros(runtimeDollars),
+    locale,
+  );
+}
+
+export function formatCost(amount: string, locale: string) {
+  return formatMicros(dollarsToMicros(amount), locale);
+}
+
+function centsToDollars(cents: string) {
+  const amount = BigInt(cents || '0');
+  const whole = amount / 100n;
+  const fraction = (amount < 0n ? -amount : amount) % 100n;
+  return `${amount < 0n ? '-' : ''}${whole}.${fraction.toString().padStart(2, '0')}`;
+}
+
+function centsToMicros(cents: string) {
+  return BigInt(cents || '0') * 10000n;
+}
+
+function dollarsToMicros(amount: string) {
+  const trimmed = amount.trim();
+  const negative = trimmed.startsWith('-');
+  const value = negative ? trimmed.slice(1) : trimmed;
+  if (!/^\d+(\.\d+)?$/.test(value)) return 0n;
+  const [whole, fraction = ''] = value.split('.');
+  const digits = `${fraction}0000000`;
+  const micros = BigInt(whole) * 1000000n + BigInt(digits.slice(0, 6)) + (digits[6]! >= '5' ? 1n : 0n);
+  return negative ? -micros : micros;
+}
+
+function formatMicros(micros: bigint, locale: string) {
+  const negative = micros < 0n;
+  const absolute = negative ? -micros : micros;
+  const whole = new Intl.NumberFormat(locale).format(absolute / 1000000n);
+  const fraction = (absolute % 1000000n).toString().padStart(6, '0');
+  return `${negative ? '-' : ''}$${whole}.${fraction}`;
+}
+
 export function money(cents: string, locale: string) {
-  const amount = BigInt(cents);
-  const fraction = (amount % 100n).toString().padStart(2, '0');
-  return `USD ${new Intl.NumberFormat(locale).format(amount / 100n)}.${fraction}`;
+  return formatMicros(centsToMicros(cents), locale);
 }
 
 export function reportRange(value: string, now = new Date()) {

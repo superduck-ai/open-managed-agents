@@ -76,15 +76,15 @@ func TestFilterEventsAtBudgetCap(t *testing.T) {
 }
 
 func TestSessionUsageJSON(t *testing.T) {
-	totals := db.SessionUsageTotals{ListCostCents: 2500, InputTokens: 100, OutputTokens: 50}
+	totals := db.SessionUsageTotals{ListCostUSD: "25.000000", InputTokens: 100, OutputTokens: 50}
 	usage := sessionUsageJSON(totals, json.RawMessage(`{"type":"limit","max_list_cost":{"amount":"2500","currency":"USD"}}`))
 	var parsed map[string]any
 	if err := json.Unmarshal(usage, &parsed); err != nil {
 		t.Fatalf("usage json invalid: %v", err)
 	}
 	listCost, ok := parsed["list_cost"].(map[string]any)
-	if !ok || listCost["amount"] != "2500" || listCost["currency"] != "USD" {
-		t.Fatalf("list_cost = %v, want amount 2500 USD", parsed["list_cost"])
+	if !ok || listCost["amount"] != "25.000000" || listCost["currency"] != "USD" {
+		t.Fatalf("list_cost = %v, want amount 25.000000 USD", parsed["list_cost"])
 	}
 	budget, ok := parsed["budget"].(map[string]any)
 	if !ok || budget["type"] != "limit" {
@@ -100,7 +100,36 @@ func TestSessionUsageJSON(t *testing.T) {
 	if !has || budgetValue != nil {
 		t.Fatalf("budget = %v (present=%v), want explicit null without a configured budget", budgetValue, has)
 	}
-	if parsedNoBudget["list_cost"].(map[string]any)["amount"] != "2500" {
-		t.Fatalf("list_cost.amount = %v", parsedNoBudget["list_cost"])
+	if parsedNoBudget["list_cost"].(map[string]any)["amount"] != "25.000000" || parsedNoBudget["model_cost_usd"] != "0.000000" || parsedNoBudget["tool_cost_usd"] != "0.000000" {
+		t.Fatalf("cost fields = list %v model %v tool %v", parsedNoBudget["list_cost"], parsedNoBudget["model_cost_usd"], parsedNoBudget["tool_cost_usd"])
+	}
+
+	withRuntime := totals
+	withRuntime.RuntimeCostUSD = "0.025451"
+	usageWithRuntime := sessionUsageJSON(withRuntime, nil)
+	var parsedRuntime map[string]any
+	if err := json.Unmarshal(usageWithRuntime, &parsedRuntime); err != nil {
+		t.Fatalf("usage json invalid: %v", err)
+	}
+	if parsedRuntime["runtime_cost_usd"] != "0.025451" {
+		t.Fatalf("runtime_cost_usd = %v", parsedRuntime["runtime_cost_usd"])
+	}
+	if parsedRuntime["list_cost"].(map[string]any)["amount"] != "25.000000" {
+		t.Fatalf("list_cost.amount = %v, want 25.000000", parsedRuntime["list_cost"])
+	}
+}
+
+func TestSessionCostReachedUsesSixDecimalDollars(t *testing.T) {
+	if sessionCostReached(db.SessionUsageTotals{ListCostUSD: "0.009999"}, 1) {
+		t.Fatal("0.009999 reached a 1 cent budget")
+	}
+	if !sessionCostReached(db.SessionUsageTotals{ListCostUSD: "0.010000"}, 1) {
+		t.Fatal("0.010000 did not reach a 1 cent budget")
+	}
+	if !sessionCostReached(db.SessionUsageTotals{ListCostUSD: "bad"}, 1) {
+		t.Fatal("unreadable spend was treated as under budget")
+	}
+	if sessionCostReached(db.SessionUsageTotals{}, 1) {
+		t.Fatal("empty spend reached a budget")
 	}
 }

@@ -435,7 +435,12 @@ func (h *Handler) listWorkspaceRateLimits(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) messagesUsageReport(w http.ResponseWriter, r *http.Request) {
-	value, err := h.service.MessagesUsageReport(reportQueryFromRequest(r))
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing authenticated principal"))
+		return
+	}
+	value, err := h.service.MessagesUsageReport(r.Context(), principal, reportQueryFromRequest(r))
 	h.respond(w, r, value, err)
 }
 
@@ -445,7 +450,12 @@ func (h *Handler) claudeCodeUsageReport(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) costReport(w http.ResponseWriter, r *http.Request) {
-	value, err := h.service.CostReport(reportQueryFromRequest(r))
+	principal, ok := auth.PrincipalFromContext(r.Context())
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Missing authenticated principal"))
+		return
+	}
+	value, err := h.service.CostReport(r.Context(), principal, reportQueryFromRequest(r))
 	h.respond(w, r, value, err)
 }
 
@@ -546,6 +556,7 @@ func reportQueryFromRequest(r *http.Request) reportQuery {
 		BucketWidth: query.Get("bucket_width"),
 		Limit:       limit,
 		Page:        query.Get("page"),
+		GroupBy:     append(append([]string{}, query["group_by[]"]...), query["group_by"]...),
 	}
 }
 

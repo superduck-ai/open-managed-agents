@@ -35,8 +35,17 @@ func (r Rates) Cost(u TokenUsage) (int64, bool) {
 }
 
 func (r Rates) cost(u TokenUsage, exchangeRate string) (int64, bool) {
-	if u.CacheWrite5mTokens+u.CacheWrite1hTokens > u.CacheCreationInputTokens {
+	cents, ok := r.cents(u, exchangeRate)
+	if !ok {
 		return 0, false
+	}
+	rounded := scaleHalfUp(cents, 1)
+	return rounded.Int64(), rounded.IsInt64()
+}
+
+func (r Rates) cents(u TokenUsage, exchangeRate string) (*big.Rat, bool) {
+	if u.CacheWrite5mTokens+u.CacheWrite1hTokens > u.CacheCreationInputTokens {
+		return nil, false
 	}
 	total := new(big.Rat)
 	terms := []struct {
@@ -49,31 +58,29 @@ func (r Rates) cost(u TokenUsage, exchangeRate string) (int64, bool) {
 	}
 	for _, term := range terms {
 		if term.tokens < 0 {
-			return 0, false
+			return nil, false
 		}
 		if term.tokens == 0 {
 			continue
 		}
 		if term.rate == nil {
-			return 0, false
+			return nil, false
 		}
 		rate, ok := new(big.Rat).SetString(*term.rate)
 		if !ok || rate.Sign() < 0 {
-			return 0, false
+			return nil, false
 		}
-		total.Add(total, rate.Mul(rate, new(big.Rat).SetInt64(term.tokens)))
+		total.Add(total, new(big.Rat).Mul(rate, new(big.Rat).SetInt64(term.tokens)))
 	}
 	if exchangeRate != "" {
 		rate, ok := new(big.Rat).SetString(exchangeRate)
 		if !ok || rate.Sign() <= 0 {
-			return 0, false
+			return nil, false
 		}
 		total.Quo(total, rate)
 	}
 	total.Quo(total, big.NewRat(10000, 1))
-	total.Add(total, big.NewRat(1, 2))
-	rounded := new(big.Int).Quo(total.Num(), total.Denom())
-	return rounded.Int64(), rounded.IsInt64()
+	return total, true
 }
 
 type PriceLoader func(context.Context, string, string, []string) (map[string]ModelPrice, error)

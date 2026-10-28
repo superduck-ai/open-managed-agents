@@ -40,7 +40,7 @@ export function managedEntityDialogCanSubmit(
     (section === 'sessions'
       ? managedResourceFieldsValid(values, false) &&
         budgetValid(values) &&
-        (!values.vaultIds.length || options.vaultAcknowledged === true)
+        (options.editing || !values.vaultIds.length || options.vaultAcknowledged === true)
       : values.name.trim().length > 0)
   );
 }

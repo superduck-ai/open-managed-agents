@@ -365,6 +365,8 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 		return true, err
 	}
 
+	var startedLaunch *managedAgentRuntimeLaunch
+
 	// Cloud Session 还需创建 Code Session，并在 Sandbox 内启动 Environment Manager。
 	if preparation != nil {
 		launch, err := r.prepareSandboxRuntimeLaunch(ctx, env, *work, *preparation, existingLaunch, record.UUID)
@@ -396,10 +398,12 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 				return true, fmt.Errorf("publish managed-agent runtime metadata: %w", err)
 			}
 		}
-
+		startedLaunch = &launch
 	}
 
-	return true, r.finishSandboxPreparation(ctx, record, work, providerSandboxID, finishBackground)
+	return true, r.finishSandboxPreparation(finishBackground, preparation, startedLaunch, func(err error) {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+	})
 }
 
 func (r *Runner) markSandboxRunningAfterFilesystem(ctx context.Context, record db.EnvironmentSandbox, providerSandboxID string, managed bool) error {
@@ -480,20 +484,25 @@ func (r *Runner) failManagedAgentRuntime(
 	launch managedAgentRuntimeLaunch,
 	cause error,
 ) {
+	r.terminateFailedManagedAgentRuntime(session, launch, cause)
+	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
+}
+
+func (r *Runner) terminateFailedManagedAgentRuntime(session db.Session, launch managedAgentRuntimeLaunch, cause error) {
+	if launch.Recovered {
+		return
+	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if !launch.Recovered {
-		if err := r.codeSessions.TerminateManagedAgentCodeSession(cleanupCtx, session, launch.CodeSessionID); err != nil {
-			r.logger.ErrorContext(
-				cleanupCtx,
-				"terminate failed managed agent runtime",
-				"code_session_id", launch.CodeSessionID,
-				"stage_error_type", fmt.Sprintf("%T", cause),
-				"error", err,
-			)
-		}
+	if err := r.codeSessions.TerminateManagedAgentCodeSession(cleanupCtx, session, launch.CodeSessionID); err != nil {
+		r.logger.ErrorContext(
+			cleanupCtx,
+			"terminate failed managed agent runtime",
+			"code_session_id", launch.CodeSessionID,
+			"stage_error_type", fmt.Sprintf("%T", cause),
+			"error", err,
+		)
 	}
-	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
 }
 
 func (r *Runner) failWorkBeforeSandbox(ctx context.Context, work db.EnvironmentWork) {

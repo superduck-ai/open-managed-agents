@@ -95,8 +95,8 @@ export function proposedAgentConfig(tool: BuilderTool, state: BuilderState, mode
   );
   const model = typeof config.model === 'string' ? config.model : config.model.id;
   if (!models.includes(model)) throw new Error('The proposed model is not available in this workspace.');
-  if (tool.input.system !== undefined && config.system !== state.savedConfig?.system)
-    config.system = builderFileDeliverySystem(config.system ?? '');
+  if (tool.input.system !== undefined && config.system && config.system !== state.savedConfig?.system)
+    config.system = builderFileDeliverySystem(config.system);
   const requirements = tool.input.environment_packages;
   const previousRequirements = state.config.metadata?.[environmentPackagesMetadataKey];
   const savedRequirements =

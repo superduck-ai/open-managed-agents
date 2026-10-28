@@ -4,7 +4,12 @@ import { useI18n } from '../../../../shared/i18n';
 import { useQuickstartConversation } from '../useQuickstartConversation';
 import { QuickstartChat } from '../QuickstartChat';
 import { builderTestBinding } from './model';
-import { sessionEventType, sessionEventTranscriptText, sessionToolDisplayName } from '../../sessions/sessionTraceModel';
+import {
+  sessionEventType,
+  sessionEventTranscriptText,
+  sessionToolDisplayName,
+  sessionToolResultText,
+} from '../../sessions/sessionTraceModel';
 import type { Builder } from './useBuilder';
 
 export function BuilderTest({
@@ -55,21 +60,49 @@ export function BuilderTest({
     )
       void builder.resolve({ session_id: state.sessionID, first_message: firstText });
   }, [firstText, state.firstMessage, state.gate, builder.busy]);
-  const summary = conversation.data.events.slice(-20).map((event) => ({
-    type: sessionEventType(event),
-    text: ['user.message', 'agent.message', 'assistant.message'].includes(sessionEventType(event))
-      ? sessionEventTranscriptText(event).slice(0, 1000)
-      : undefined,
-    stop_reason:
-      typeof event.stop_reason === 'object' && event.stop_reason && 'type' in event.stop_reason
-        ? String(event.stop_reason.type)
-        : undefined,
-    tool: sessionToolDisplayName(event),
-    is_error: event.is_error === true,
-  }));
-  const evidence = JSON.stringify(summary);
+  const relevantEvents = conversation.data.events.filter((event) =>
+    [
+      'user.message',
+      'agent.message',
+      'assistant.message',
+      'agent.tool_use',
+      'agent.tool_result',
+      'session.status_idle',
+      'session.status_terminated',
+      'session.thread_status_terminated',
+      'session.deleted',
+    ].includes(sessionEventType(event)),
+  );
+  const summary = relevantEvents.slice(-40).map((event) => {
+    const type = sessionEventType(event);
+    const content = type === 'agent.tool_result' ? sessionToolResultText(event) : sessionEventTranscriptText(event);
+    return {
+      type,
+      text: content.slice(0, 1000) || undefined,
+      text_truncated: content.length > 1000 || undefined,
+      text_missing:
+        (['user.message', 'agent.message', 'assistant.message', 'agent.tool_result'].includes(type) && !content) ||
+        undefined,
+      id: typeof event.id === 'string' ? event.id.slice(0, 128) : undefined,
+      tool_use_id: typeof event.tool_use_id === 'string' ? event.tool_use_id.slice(0, 128) : undefined,
+      processed_at: typeof event.processed_at === 'string' ? event.processed_at.slice(0, 64) : undefined,
+      stop_reason:
+        typeof event.stop_reason === 'object' && event.stop_reason && 'type' in event.stop_reason
+          ? String(event.stop_reason.type).slice(0, 128)
+          : undefined,
+      tool: sessionToolDisplayName(event).slice(0, 128),
+      is_error: typeof event.is_error === 'boolean' ? event.is_error : undefined,
+    };
+  });
+  const omitted = relevantEvents.length - summary.length;
+  const evidence = JSON.stringify(
+    omitted ? [{ type: 'evidence.truncated', omitted_events: omitted }, ...summary] : summary,
+  );
   useEffect(() => {
-    builder.observeTest(JSON.stringify(summary.map(({ text: _text, ...metadata }) => metadata)));
+    const metadata = summary.map(({ text: _text, ...event }) => event);
+    builder.observeTest(
+      JSON.stringify(omitted ? [{ type: 'evidence.truncated', omitted_events: omitted }, ...metadata] : metadata),
+    );
   }, [evidence]);
   const end = () => {
     void builder.closeTest(evidence);

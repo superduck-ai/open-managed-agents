@@ -178,3 +178,78 @@ test('confirmed environment creation writes the declared packages and checks the
     )(),
   ).rejects.toThrow('polars');
 });
+
+test('package requirements over 512 UTF-8 bytes survive proposal, saved draft and partial edits', () => {
+  const value = state();
+  const requirements = {
+    type: 'packages',
+    pip: Array.from({ length: 36 }, (_, index) => `dependency-example-${index}==1.2.3`),
+    npm: ['@example/other-package@1.2.3'],
+  };
+  const encoded = JSON.stringify(requirements);
+  expect(new TextEncoder().encode(encoded).length).toBeGreaterThan(512);
+  const first = proposedAgentConfig(
+    { id: 'proposal', name: 'build_agent_config', input: { name: 'Reader', environment_packages: requirements } },
+    value,
+    ['model'],
+  );
+  const next = proposedAgentConfig(
+    { id: 'rename', name: 'build_agent_config', input: { name: 'Renamed' } },
+    { ...value, config: first, savedConfig: first },
+    ['model'],
+  );
+  expect(next.metadata?.quickstart_environment_packages).toBe(encoded);
+  expect(newBuilderState(next).config.metadata?.quickstart_environment_packages).toBe(encoded);
+});
+
+test.each([null, '', '   '])('an explicit empty system %j remains empty without a file contract', (system) => {
+  const value = state();
+  value.config.system = 'Existing instructions';
+  value.savedConfig = value.config;
+  const next = proposedAgentConfig({ id: 'empty', name: 'build_agent_config', input: { system } }, value, ['model']);
+  expect(next.system).toBeNull();
+});
+
+test('omitted system stays unchanged and a nonempty system receives a generic file delivery contract', () => {
+  const value = state();
+  value.config.system = 'Keep existing instructions';
+  value.savedConfig = value.config;
+  expect(
+    proposedAgentConfig({ id: 'rename', name: 'build_agent_config', input: { name: 'New' } }, value, ['model']).system,
+  ).toBe('Keep existing instructions');
+  const next = proposedAgentConfig(
+    { id: 'system', name: 'build_agent_config', input: { system: 'Use the user-specified output name.' } },
+    value,
+    ['model'],
+  );
+  expect(next.system).toContain('Use the user-specified output name.');
+  expect(next.system).toContain('# Platform file delivery contract');
+  expect(next.system).toContain('explicitly requested filename');
+  expect(next.system).toContain('do not overwrite');
+});
+
+test('a changed system ending in the previous delivery contract upgrades it once and keeps explicit user rules', () => {
+  const previous =
+    '# Platform file delivery contract\n\nThese platform rules take precedence over conflicting file delivery instructions above. When the user requests a deliverable, write it to /mnt/user-data/outputs/<relative-path> (also mounted at /mnt/session/outputs). Only this mount publishes files as downloadable session resources; a path in /home, /tmp or the working directory is not a delivered file. Verify the written file before reporting delivery, and link it using [filename](/outputs/<relative-path>). If publishing fails, report the delivery failure separately from successful calculation. Ordinary source edits stay in the working directory unless the user asks for an exported copy. This contract does not change the requested response format when no file is requested.';
+  const value = state();
+  value.config.system = `Old behavior\n\n${previous}`;
+  value.savedConfig = value.config;
+  const first = proposedAgentConfig(
+    {
+      id: 'edit',
+      name: 'build_agent_config',
+      input: { system: `Keep an explicitly fixed user filename.\n\n${previous}` },
+    },
+    value,
+    ['model'],
+  );
+  expect(first.system?.split('# Platform file delivery contract')).toHaveLength(2);
+  expect(first.system).toContain('Keep an explicitly fixed user filename.');
+  expect(first.system).toContain('explicitly requested filename');
+  const second = proposedAgentConfig(
+    { id: 'edit2', name: 'build_agent_config', input: { system: first.system } },
+    { ...value, config: first },
+    ['model'],
+  );
+  expect(second.system).toBe(first.system);
+});

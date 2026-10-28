@@ -32,3 +32,15 @@ test('builder preserves explicit scope restrictions without inventing optional e
   expect(text).toContain('Do not weaken exclusions');
   expect(text).toContain('optional, secondary or pending-confirmation exceptions');
 });
+
+test('builder preserves explicitly requested execution methods for relevant inputs', () => {
+  const state = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'model'));
+  const text = builderSystem(state, 'en', ['model'], [], [])
+    .map((block) => block.text)
+    .join('\n');
+  expect(text).toContain('explicitly requested library, tool or execution method');
+  expect(text).toContain('both inline examples and file inputs');
+  expect(text).toContain('actually execute the requested method');
+  expect(text).toContain('report execution failures honestly');
+  expect(text).toContain('Do not require tools for unrelated requests');
+});

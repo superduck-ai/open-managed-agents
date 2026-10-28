@@ -239,7 +239,7 @@ Narrows 解析回归使用合成规则验证固定汇率、分档上下界及无
 
 用量和成本的模型筛选项合并账本中已有的模型值与当前供应商目录的限定模型名，再排序去重。配置中的模型不再以短名额外加入选项，避免与精确匹配的账本查询不一致；历史账本中的短名仍原样保留并可筛选。
 
-Chat Completions 当前仅允许 Brain 模型凭据及流式调用，由现有 `chatObservation` 将普通输入、缓存输入和输出转成会话模型请求用量，随后通过会话结束事件入账。通用计量 Transport 跳过这类请求，避免重复计费；没有新增普通凭据的 Chat Completions 能力。
+公开 `/v1/chat/completions` 入口仅允许 Brain 模型凭据及流式调用，由现有 `chatObservation` 将普通输入、缓存输入和输出转成会话模型请求用量，随后通过会话结束事件入账。通用计量 Transport 按主体判断：没有 Principal 或 `CodeSessionExternalID` 非空时直接透传，后者由会话事件计量以避免重复；其他组织 API 主体进入通用计量，并按上游路径选择 Chat 或 Messages 观察器。组织 Console 的 Chat Completions 代理及其主体计量见下节。
 
 ### 组织模型与预算兜底的边界
 

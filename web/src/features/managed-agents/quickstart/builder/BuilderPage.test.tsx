@@ -318,13 +318,73 @@ test('test first reply does not close the session; explicit end returns actual e
     expect(screen.getByRole('button', { name: 'End test and review' }).hasAttribute('disabled')).toBe(false),
   );
   expect(screen.queryByText('Missing quantity was invented. Choose a repair.')).toBeNull();
+  await act(async () => {
+    for (let i = 0; i < 30; i++) runtime.emit('session.status_running');
+    runtime.emit('user.message', { content: [{ type: 'text', text: 'Save a second copy.' }] });
+    runtime.emit('agent.tool_result', { content: [{ type: 'text', text: 'Second copy saved' }], is_error: false });
+    runtime.reply('Second copy is ready.');
+    runtime.emit('user.message', { content: [{ type: 'text', text: 'Read the missing input and report failure.' }] });
+    runtime.emit('agent.tool_use', { name: 'bash', input: { command: 'read missing input' } });
+    runtime.emit('agent.tool_result', { content: [{ type: 'text', text: 'File not found' }], is_error: false });
+    runtime.reply('The input does not exist.');
+  });
+  await waitFor(() => expect(screen.getByText('The input does not exist.')).toBeTruthy());
   fireEvent.click(screen.getByRole('button', { name: 'End test and review' }));
   await screen.findByText('Missing quantity was invented. Choose a repair.');
   fireEvent.click(screen.getByRole('button', { name: 'Skip', exact: true }));
   await screen.findByRole('button', { name: 'Continue', exact: true });
   expect(screen.queryByRole('button', { name: 'Use in an application' })).toBeNull();
-  expect(api.calls.some((body) => JSON.stringify(body.messages).includes('Quantity: 1.'))).toBe(true);
+  const review = JSON.stringify(api.calls.at(-2)?.messages);
+  expect(review).toContain('Quantity: 1.');
+  expect(review).toContain('Save a second copy.');
+  expect(review).toContain('Second copy saved');
+  expect(review).toContain('Second copy is ready.');
+  expect(review).toContain('Read the missing input and report failure.');
+  expect(review).toContain('File not found');
+  expect(review).toContain('The input does not exist.');
   expect(writes(api.requests)).toHaveLength(1);
+});
+
+test('test review marks omitted events and truncated or missing tool output', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([
+    toolStream('offer_next_step', {}),
+    toolStream('pick_environment', {}),
+    toolStream('offer_next_step', {}),
+    toolStream('agent_ready', { suggested_first_message: 'First task' }),
+    toolStream('await_test_run', { until: 'session_closed' }),
+    toolStream('offer_next_step', {}),
+  ]);
+  const runtime = installSessionRuntime();
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: /Structured extractor/ }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: /Option environment/ }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Start test', exact: true }));
+  await screen.findByRole('textbox', { name: 'Test message' });
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'End test and review' }).hasAttribute('disabled')).toBe(false),
+  );
+  await act(async () => {
+    for (let i = 0; i < 42; i++) runtime.emit('user.message', { content: [{ type: 'text', text: `Task ${i}` }] });
+    runtime.emit('agent.tool_result', {
+      content: [{ type: 'text', text: 'Long output ' + 'x'.repeat(1100) }],
+      is_error: false,
+    });
+    runtime.emit('agent.tool_result', { content: [] });
+    runtime.reply('Finished with incomplete evidence.');
+  });
+  await screen.findByText('Finished with incomplete evidence.');
+  fireEvent.click(screen.getByRole('button', { name: 'End test and review' }));
+  await waitFor(() =>
+    expect(api.calls.some((body) => JSON.stringify(body.messages).includes('evidence.truncated'))).toBe(true),
+  );
+  const review = JSON.stringify(api.calls.at(-1)?.messages);
+  expect(review).toContain('omitted_events');
+  expect(review).toContain('text_truncated');
+  expect(review).toContain('text_missing');
+  expect(review).toContain('Finished with incomplete evidence.');
 });
 
 test('deployment integration uses the OMA deployment_runs endpoint with actual saved IDs', async () => {

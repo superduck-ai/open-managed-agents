@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { CreateAgentInput } from '../../types';
+import { environmentPackagesMetadataKey } from '../../agents/create-dialog-model';
+export { environmentPackagesMetadataKey } from '../../agents/create-dialog-model';
 
 export const environmentPackagesSchema = z
   .object({
@@ -13,7 +15,6 @@ export const environmentPackagesSchema = z
   })
   .strict();
 export type EnvironmentPackages = z.infer<typeof environmentPackagesSchema>;
-export const environmentPackagesMetadataKey = 'quickstart_environment_packages';
 export function requiredEnvironmentPackages(config: Pick<CreateAgentInput, 'metadata'>): EnvironmentPackages {
   const raw = config.metadata?.[environmentPackagesMetadataKey];
   return raw === undefined ? { type: 'packages' } : environmentPackagesSchema.parse(JSON.parse(String(raw)));

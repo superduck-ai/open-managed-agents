@@ -31,7 +31,9 @@ import (
 )
 
 const (
-	maxAgentBodySize = 4 << 20
+	maxAgentBodySize                         = 4 << 20
+	maxQuickstartPackageMetadataBytes        = 1 << 20
+	quickstartEnvironmentPackagesMetadataKey = "quickstart_environment_packages"
 )
 
 var (
@@ -902,6 +904,12 @@ func validateMetadata(metadata map[string]string) error {
 	for key, value := range metadata {
 		if key == "" || len(key) > 64 {
 			return errors.New("metadata keys must be between 1 and 64 characters")
+		}
+		if key == quickstartEnvironmentPackagesMetadataKey {
+			if len(value) > maxQuickstartPackageMetadataBytes {
+				return errors.New("quickstart_environment_packages metadata must be at most 1048576 bytes")
+			}
+			continue
 		}
 		if len(value) > 512 {
 			return errors.New("metadata values must be at most 512 characters")

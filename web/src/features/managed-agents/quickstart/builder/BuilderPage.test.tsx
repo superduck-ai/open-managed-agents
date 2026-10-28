@@ -218,3 +218,25 @@ test('deployment integration uses the OMA deployment_runs endpoint with actual s
   expect(codeBlockContaining('/v1/sessions/SESSION_ID/events/stream').textContent).toContain('x-workspace-id: default');
   expect(api.calls).toHaveLength(0);
 });
+
+test('the start page follows the reviewed title, mode, composer and six-template order', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([]);
+  renderManagedAgentsPage('quickstart');
+  const heading = await screen.findByRole('heading', { name: 'What would you like to build?' });
+  const modes = screen.getByRole('tablist', { name: 'Build method' });
+  const composer = screen.getByRole('textbox', { name: 'Builder message' });
+  const templates = screen.getByLabelText('Quickstart templates');
+  expect(Boolean(heading.compareDocumentPosition(modes) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  expect(Boolean(modes.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  expect(Boolean(composer.compareDocumentPosition(templates) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  expect(templates.querySelectorAll('button')).toHaveLength(6);
+  expect(screen.getByRole('button', { name: 'Code review', exact: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Data analysis', exact: true })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Incident commander', exact: true })).toBeNull();
+  expect(screen.getAllByRole('textbox', { name: 'Builder message' })).toHaveLength(1);
+  expect(writes(api.requests)).toHaveLength(0);
+  fireEvent.click(screen.getByRole('tab', { name: 'Build with API', exact: true }));
+  expect(await screen.findByRole('button', { name: 'Start configuring' })).toBeTruthy();
+  expect(screen.queryByRole('textbox', { name: 'Builder message' })).toBeNull();
+});

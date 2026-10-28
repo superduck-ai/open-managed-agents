@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '../../../../shared/i18n';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
-import type { AgentTemplate } from '../../types';
+import type { CreateAgentInput } from '../../types';
 import { errorMessage } from '../../utils';
 import {
   authenticationServers,
@@ -224,10 +224,10 @@ export function useBuilder(input: BuilderInput) {
       await catalog.refetch();
       await advance();
     });
-  const startTemplate = (template: AgentTemplate) =>
+  const startTemplate = (config: CreateAgentInput) =>
     run(async () => {
       if (current.current.initialized) return;
-      const initial = newBuilderState(createDialogAgentConfig(template, locale, undefined, input.models[0]));
+      const initial = newBuilderState(config);
       const tool: BuilderTool = { id: crypto.randomUUID(), name: 'build_agent_config', input: initial.config };
       update(() => ({
         ...initial,
@@ -235,7 +235,8 @@ export function useBuilder(input: BuilderInput) {
         messages: [
           {
             role: 'user',
-            content: locale === 'zh-CN' ? `使用模板：${initial.config.name}` : `Use the ${template.title} template.`,
+            content:
+              locale === 'zh-CN' ? `使用模板：${initial.config.name}` : `Use the ${initial.config.name} template.`,
           },
           { role: 'assistant', content: [{ type: 'tool_use', ...tool }] },
         ],

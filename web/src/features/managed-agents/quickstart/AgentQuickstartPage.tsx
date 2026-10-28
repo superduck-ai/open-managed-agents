@@ -41,37 +41,48 @@ export function AgentQuickstartPage() {
         <Button onClick={() => void models.refetch()}>{msg('common.retry', 'Retry')}</Button>
       </div>
     );
+  const modeControl = (
+    <Tabs
+      className="items-center shrink-0"
+      value={mode}
+      onValueChange={(value) => {
+        setMode(String(value));
+        const url = new URL(window.location.href);
+        url.searchParams.set('mode', String(value));
+        window.history.replaceState(null, '', url);
+      }}
+    >
+      <TabsList aria-label={locale === 'zh-CN' ? '创建方式' : 'Build method'}>
+        <TabsTrigger className="px-4" value="chat">
+          {locale === 'zh-CN' ? '问答构建' : 'Build with chat'}
+        </TabsTrigger>
+        <TabsTrigger className="px-4" value="api">
+          {locale === 'zh-CN' ? 'API 创建' : 'Build with API'}
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
-      <Tabs
-        value={mode}
-        onValueChange={(value) => {
-          setMode(String(value));
-          const url = new URL(window.location.href);
-          url.searchParams.set('mode', String(value));
-          window.history.replaceState(null, '', url);
-        }}
-      >
-        <TabsList variant="line">
-          <TabsTrigger value="chat">{locale === 'zh-CN' ? '对话构建' : 'Build with chat'}</TabsTrigger>
-          <TabsTrigger value="api">{locale === 'zh-CN' ? 'API 构建' : 'Build with API'}</TabsTrigger>
-        </TabsList>
-      </Tabs>
       {mode === 'chat' ? (
         <BuilderPage
           key={`${account?.uuid}:${activeWorkspaceId}`}
           accountId={account?.uuid ?? ''}
           workspaceId={activeWorkspaceId}
           orgUuid={orgUuid ?? ''}
+          modeControl={modeControl}
           models={models.data.map((model) => model.id)}
         />
       ) : (
-        <QuickstartWizardPage
-          key={`${account?.uuid}:${activeWorkspaceId}`}
-          workspaceID={activeWorkspaceId}
-          accountID={account?.uuid ?? ''}
-          models={models.data}
-        />
+        <>
+          {modeControl}
+          <QuickstartWizardPage
+            key={`${account?.uuid}:${activeWorkspaceId}`}
+            workspaceID={activeWorkspaceId}
+            accountID={account?.uuid ?? ''}
+            models={models.data}
+          />
+        </>
       )}
     </div>
   );

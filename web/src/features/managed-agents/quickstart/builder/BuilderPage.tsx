@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ArrowUp, Square } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { ArrowUp, Square, Sparkles } from 'lucide-react';
 import { useI18n } from '../../../../shared/i18n';
 import { Button, ButtonLink } from '../../../../shared/ui/button';
 import { Textarea } from '../../../../shared/ui/textarea';
@@ -11,25 +11,26 @@ import {
   MessageScrollerViewport,
 } from '../../../../shared/ui/message-scroller';
 import { ManagedErrorAlert } from '../../components/common';
-import { agentTemplates } from '../../agentConfig';
-import { templateTitle } from '../../labels';
 import { errorMessage } from '../../utils';
 import { builderHistoryText, type BuilderMessage, type BuilderState } from './model';
 import { useBuilder, type Builder } from './useBuilder';
 import { BuilderGate } from './BuilderGate';
 import { BuilderTest } from './BuilderTest';
 import { BuilderIntegration } from './BuilderIntegration';
+import { BuilderStart } from './BuilderStart';
 
 export function BuilderPage({
   accountId,
   workspaceId,
   orgUuid,
   models,
+  modeControl,
 }: {
   accountId: string;
   workspaceId: string;
   orgUuid: string;
   models: string[];
+  modeControl?: ReactNode;
 }) {
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
@@ -43,15 +44,23 @@ export function BuilderPage({
         <Button onClick={() => void builder.catalog.refetch()}>{zh ? '重试' : 'Retry'}</Button>
       </div>
     );
+  if (!state.initialized)
+    return (
+      <BuilderStart
+        builder={builder}
+        modeControl={modeControl}
+        composer={<BuilderComposer builder={builder} entry />}
+      />
+    );
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+      {modeControl}
       <div className={`grid min-h-0 min-w-0 flex-1 gap-6 ${builderColumns(state)}`}>
         <div className="flex min-h-0 min-w-0 flex-col">
           <MessageScrollerProvider autoScroll defaultScrollPosition="end">
             <MessageScroller className="min-h-0 flex-1">
               <MessageScrollerViewport className="px-1 py-6">
                 <MessageScrollerContent className="mx-auto w-full max-w-3xl space-y-6">
-                  {!state.initialized && <BuilderEntry builder={builder} />}
                   {state.messages.map((message, index) => (
                     <BuilderMessageView key={index} message={message} pendingToolId={state.gate?.id} />
                   ))}
@@ -193,49 +202,6 @@ function BuilderInspector({ builder, workspaceId }: { builder: Builder; workspac
   );
 }
 
-function BuilderEntry({ builder }: { builder: Builder }) {
-  const { locale, msg } = useI18n();
-  const zh = locale === 'zh-CN';
-  const state = builder.state;
-  return (
-    <>
-      {' '}
-      {!state.initialized && (
-        <>
-          <h1 className="pt-8 text-2xl font-semibold">{zh ? '你想构建什么？' : 'What would you like to build?'}</h1>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {agentTemplates
-              .filter((template) => template.id !== 'blank')
-              .slice(0, 6)
-              .map((template) => (
-                <Button
-                  key={template.id}
-                  variant="outline"
-                  className="h-auto justify-start px-4 py-5 text-left whitespace-normal"
-                  disabled={builder.busy}
-                  onClick={() => void builder.startTemplate(template)}
-                >
-                  {templateTitle(template, msg)}
-                </Button>
-              ))}
-          </div>
-          <Button
-            variant="ghost"
-            disabled={builder.busy}
-            onClick={() =>
-              void builder.reply(
-                zh ? '从空白开始，先问我想实现什么。' : 'Start from scratch. Ask what I want to build first.',
-              )
-            }
-          >
-            {zh ? '从空白开始' : 'Start from scratch'}
-          </Button>
-        </>
-      )}
-    </>
-  );
-}
-
 function BuilderStatus({ builder }: { builder: Builder }) {
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
@@ -261,7 +227,7 @@ function BuilderStatus({ builder }: { builder: Builder }) {
   );
 }
 
-function BuilderComposer({ builder }: { builder: Builder }) {
+function BuilderComposer({ builder, entry = false }: { builder: Builder; entry?: boolean }) {
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
   const state = builder.state;
@@ -274,7 +240,7 @@ function BuilderComposer({ builder }: { builder: Builder }) {
   };
   return (
     <form
-      className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-xl border-[0.5px] border-border bg-card p-3"
+      className={`mx-auto flex w-full max-w-3xl gap-2 border-[0.5px] border-input bg-card p-3 focus-within:border-foreground ${entry ? 'flex-col rounded-2xl' : 'items-end rounded-xl'}`}
       onSubmit={(event) => {
         event.preventDefault();
         send();
@@ -283,9 +249,17 @@ function BuilderComposer({ builder }: { builder: Builder }) {
       <Textarea
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
-        placeholder={zh ? '描述你的需求…' : 'Describe what you need…'}
+        placeholder={
+          entry
+            ? zh
+              ? '一个客服助手，根据我们的文档回答问题，遇到无法解决的问题时交给人工…'
+              : 'A customer support agent that answers from our docs and hands unresolved questions to a person…'
+            : zh
+              ? '描述你的需求…'
+              : 'Describe what you need…'
+        }
         aria-label={zh ? '构建消息' : 'Builder message'}
-        className="max-h-48 min-h-16 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+        className="max-h-48 min-h-16 resize-none border-0 bg-transparent px-1 pt-1 pb-3 text-sm leading-6 shadow-none focus-visible:ring-0 dark:bg-transparent"
         disabled={Boolean(state.operation)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -294,20 +268,29 @@ function BuilderComposer({ builder }: { builder: Builder }) {
           }
         }}
       />
-      {builder.busy ? (
-        <Button type="button" size="icon" aria-label={zh ? '停止' : 'Stop'} variant="outline" onClick={builder.cancel}>
-          <Square />
-        </Button>
-      ) : (
-        <Button
-          type="submit"
-          size="icon"
-          aria-label={zh ? '发送' : 'Send'}
-          disabled={!draft.trim() || Boolean(state.operation)}
-        >
-          <ArrowUp />
-        </Button>
-      )}
+      <div className={entry ? 'flex w-full items-center justify-between text-muted-foreground' : 'contents'}>
+        {entry && <Sparkles aria-hidden="true" className="ml-1 size-4" />}
+        {builder.busy ? (
+          <Button
+            type="button"
+            size="icon"
+            aria-label={zh ? '停止' : 'Stop'}
+            variant="outline"
+            onClick={builder.cancel}
+          >
+            <Square />
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            size="icon"
+            aria-label={zh ? '发送' : 'Send'}
+            disabled={!draft.trim() || Boolean(state.operation)}
+          >
+            <ArrowUp />
+          </Button>
+        )}
+      </div>
     </form>
   );
 }

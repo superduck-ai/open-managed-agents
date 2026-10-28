@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Sparkles } from 'lucide-react';
 import { useI18n } from '../../../../shared/i18n';
 import { Button } from '../../../../shared/ui/button';
 import { Card, CardContent } from '../../../../shared/ui/card';
@@ -49,12 +49,26 @@ export function BuilderPage({
     );
   if (!active) return <BuilderEntry builder={builder} startHeader={startHeader} onEnter={() => setActive(true)} />;
   return (
-    <section className="mx-auto flex min-h-0 w-full min-w-0 max-w-[1440px] flex-1 flex-col gap-4">
+    <section className="mx-auto flex min-h-0 w-full min-w-0 max-w-[1440px] flex-1 flex-col gap-6">
+      <header className="flex h-12 shrink-0 items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={zh ? '返回快速开始' : 'Back to quickstart'}
+          onClick={() => {
+            builder.cancel();
+            setActive(false);
+          }}
+        >
+          <ArrowLeft />
+        </Button>
+        <h1 className="min-w-0 truncate text-base font-medium">{state.agent?.name ?? state.config.name}</h1>
+      </header>
       <div className={`grid min-h-0 min-w-0 flex-1 gap-8 ${builderColumns(state)}`}>
         <div className="flex min-h-0 min-w-0 flex-col pb-3">
           <MessageScrollerProvider autoScroll defaultScrollPosition="end">
             <MessageScroller className="min-h-0 flex-1">
-              <MessageScrollerViewport className="px-1 pt-8 pb-6">
+              <MessageScrollerViewport className="px-1 pt-[clamp(1.5rem,6vh,4rem)] pb-6">
                 <MessageScrollerContent className="mx-auto w-full max-w-[680px] space-y-6">
                   <BuilderHistory messages={state.messages} pendingToolId={state.gate?.id} />
                   <BuilderStatus builder={builder} />

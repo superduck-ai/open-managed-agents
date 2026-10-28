@@ -1,8 +1,20 @@
-import { Bot, Check, ChevronRight, Layers, ShieldCheck, CalendarClock, Sparkles } from 'lucide-react';
+import {
+  Bot,
+  Check,
+  ChevronRight,
+  Layers,
+  ShieldCheck,
+  CalendarClock,
+  Sparkles,
+  ArrowDownToLine,
+  type LucideIcon,
+} from 'lucide-react';
 import { useI18n } from '../../../../shared/i18n';
-import { ButtonLink } from '../../../../shared/ui/button';
+import { Button, ButtonLink } from '../../../../shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../shared/ui/card';
 import { Badge } from '../../../../shared/ui/badge';
+import { downloadTextFile } from '../../utils';
+import { builderExportConfig } from './model';
 import type { Builder } from './useBuilder';
 
 export function BuilderInspector({ builder, workspaceId }: { builder: Builder; workspaceId: string }) {
@@ -19,12 +31,18 @@ export function BuilderInspector({ builder, workspaceId }: { builder: Builder; w
     { id: 'integrate', label: zh ? '接入' : 'Integrate', done: false },
   ];
   const resources = [
+    ...(state.savedConfig?.skills ?? []).map((skill) => ({
+      id: skill.skill_id,
+      name: builder.catalog.data?.skills.find((item) => item.id === skill.skill_id)?.displayTitle ?? skill.skill_id,
+      section: 'skills',
+      icon: Sparkles,
+    })),
     ...(state.environment ? [{ ...state.environment, section: 'environments', icon: Layers }] : []),
     ...state.vaults.map((vault) => ({ ...vault, section: 'vaults', icon: ShieldCheck })),
     ...(state.deployment ? [{ ...state.deployment, section: 'deployments', icon: CalendarClock }] : []),
   ];
   return (
-    <aside aria-label={zh ? '构建配置' : 'Build configuration'} className="min-h-0 space-y-5 overflow-y-auto pt-8 pb-6">
+    <aside aria-label={zh ? '构建配置' : 'Build configuration'} className="min-h-0 space-y-5 overflow-y-auto pb-6">
       <Card className="gap-4 ring-0">
         <CardHeader>
           <CardTitle className="text-sm">{zh ? '进度' : 'Progress'}</CardTitle>
@@ -71,41 +89,59 @@ export function BuilderInspector({ builder, workspaceId }: { builder: Builder; w
               </Badge>
               <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
             </ButtonLink>
-            {(state.savedConfig?.skills ?? []).map((skill) => (
-              <div key={skill.skill_id} className="mt-3 flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
-                <Sparkles aria-hidden="true" className="size-4 shrink-0" />
-                <span className="truncate">
-                  {builder.catalog.data?.skills.find((item) => item.id === skill.skill_id)?.displayTitle ??
-                    skill.skill_id}
-                </span>
-              </div>
-            ))}
           </CardContent>
         </Card>
       )}
-      {resources.length > 0 && (
-        <Card className="gap-4 ring-0">
-          <CardHeader>
-            <CardTitle className="text-sm">{zh ? '资源' : 'Resources'}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {resources.map((resource) => (
-              <a
-                key={resource.id}
-                className="flex min-w-0 items-center gap-3 rounded-lg py-2 text-sm hover:bg-accent focus-visible:outline focus-visible:outline-ring"
-                title={resource.name}
-                href={`/workspaces/${encodeURIComponent(workspaceId)}/${resource.section}/${encodeURIComponent(resource.id)}`}
-              >
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
-                  <resource.icon aria-hidden="true" className="size-4" />
-                </span>
-                <span className="min-w-0 flex-1 truncate">{resource.name}</span>
-                <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-              </a>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+      <BuilderResources resources={resources} workspaceId={workspaceId} />
+      <Button
+        variant="secondary"
+        className="w-full font-normal"
+        disabled={builder.busy || Boolean(state.operation)}
+        onClick={() => downloadTextFile('agent.json', JSON.stringify(builderExportConfig(state), null, 2))}
+      >
+        <ArrowDownToLine aria-hidden="true" />
+        {zh ? '导出配置' : 'Export configuration'}
+      </Button>
     </aside>
+  );
+}
+
+function BuilderResources({
+  resources,
+  workspaceId,
+}: {
+  resources: Array<{ id: string; name: string; section: string; icon: LucideIcon }>;
+  workspaceId: string;
+}) {
+  const { locale } = useI18n();
+  const zh = locale === 'zh-CN';
+  return (
+    <Card className="gap-4 ring-0">
+      <CardHeader>
+        <CardTitle className="text-sm">{zh ? '资源' : 'Resources'}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!resources.length && (
+          <div className="grid min-h-36 place-content-center justify-items-center gap-4 text-muted-foreground">
+            <Layers aria-hidden="true" className="size-8" strokeWidth={1.25} />
+            <p className="text-sm">{zh ? '暂无资源' : 'No resources yet'}</p>
+          </div>
+        )}
+        {resources.map((resource) => (
+          <a
+            key={resource.id}
+            className="flex min-w-0 items-center gap-3 rounded-lg py-2 text-sm hover:bg-accent focus-visible:outline focus-visible:outline-ring"
+            title={resource.name}
+            href={`/workspaces/${encodeURIComponent(workspaceId)}/${resource.section}/${encodeURIComponent(resource.id)}`}
+          >
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
+              <resource.icon aria-hidden="true" className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1 truncate">{resource.name}</span>
+            <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          </a>
+        ))}
+      </CardContent>
+    </Card>
   );
 }

@@ -1,6 +1,13 @@
 import { expect, test } from 'bun:test';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
-import { newBuilderState, toolResult, builderStorageKey, invalidateBuilderTest, builderHistoryText } from './model';
+import {
+  newBuilderState,
+  builderExportConfig,
+  toolResult,
+  builderStorageKey,
+  invalidateBuilderTest,
+  builderHistoryText,
+} from './model';
 import { proposedAgentConfig, validatedDeployment, builderTools } from './tools';
 import { authenticationServers, credentialCovers, type BuilderCatalog } from './api';
 import { prepareBuilderTool } from './dispatch';
@@ -132,4 +139,24 @@ test('discarding a pending proposal restores saved config without writing a vers
       workspaceId: 'workspace',
     }),
   ).rejects.toThrow('Save or discard');
+});
+
+test('configuration export contains the current agent and real session references without history or placeholder resources', () => {
+  const state = initial();
+  state.config = { ...state.config, name: 'Exported research', system: 'Cite primary sources.' };
+  state.messages = [{ role: 'user', content: 'Private build discussion' }];
+  state.agent = { id: 'agent_saved', name: 'Exported research', version: 3 };
+  const empty = builderExportConfig(state);
+  expect(empty.session).not.toHaveProperty('environment_id');
+  state.environment = { id: 'env_selected', name: 'Research environment' };
+  state.vaults = [{ id: 'vault_linked', name: 'Connected service' }];
+  const exported = builderExportConfig(state);
+  expect(exported.agent.system).toBe('Cite primary sources.');
+  expect(exported.session).toEqual({
+    agent: { type: 'agent', id: 'agent_saved', version: 3 },
+    environment_id: 'env_selected',
+    vault_ids: ['vault_linked'],
+  });
+  expect(JSON.stringify(exported)).not.toContain('Private build discussion');
+  expect(JSON.stringify(exported)).not.toContain('ENVIRONMENT_ID');
 });

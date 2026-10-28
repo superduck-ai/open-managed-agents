@@ -167,3 +167,14 @@ function builderResultText(content: unknown, zh: boolean) {
     return [];
   }
 }
+
+export function builderExportConfig(state: BuilderState) {
+  return {
+    agent: state.config,
+    session: {
+      ...(state.agent ? { agent: { type: 'agent', id: state.agent.id, version: state.agent.version } } : {}),
+      ...(state.environment ? { environment_id: state.environment.id } : {}),
+      vault_ids: state.vaults.map((vault) => vault.id),
+    },
+  };
+}

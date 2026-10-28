@@ -95,6 +95,11 @@ test('template creates immediately; confirmed rename retains saved ID, instructi
   expect(screen.getByRole('group', { name: 'Saved result' }).textContent).toContain('Structured extractor');
   expect(screen.getAllByRole('article', { name: 'User message' })).toHaveLength(1);
   expect(screen.getByRole('link', { name: 'View configuration' }).textContent).toContain('Structured extractor');
+  expect(screen.getByText('No resources yet')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Export configuration' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Back to quickstart' }));
+  expect(screen.getByRole('heading', { name: 'What would you like to build?' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Continue previous build' }));
   send('Change its name to New extractor name.');
   await screen.findByRole('button', { name: 'Confirm', exact: true });
   expect(writes(api.requests)).toHaveLength(1);
@@ -330,4 +335,23 @@ test('starting over requires an explicit choice and cancel keeps both the saved 
   expect(screen.queryByRole('group', { name: 'Saved result' })).toBeNull();
   expect(screen.getByRole('article', { name: 'User message' }).textContent).toBe('Start a different task.');
   expect(writes(api.requests)).toHaveLength(1);
+});
+
+test('a used skill appears in resources without showing an empty state or adding unused credential items', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([]);
+  const state = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  state.initialized = true;
+  state.agent = { id: 'agent_skilled', name: 'Skilled research', version: 1 };
+  state.config.skills = [{ type: 'custom', skill_id: 'skill_used', version: '1' }];
+  state.savedConfig = state.config;
+  window.sessionStorage.setItem(builderStorageKey('acct_managed_agents_test', 'default'), JSON.stringify(state));
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  expect(screen.getByRole('link', { name: 'skill_used' }).getAttribute('href')).toBe(
+    '/workspaces/default/skills/skill_used',
+  );
+  expect(screen.queryByText('No resources yet')).toBeNull();
+  expect(document.querySelectorAll('a[href*="/vaults/"]')).toHaveLength(0);
+  expect(writes(api.requests)).toHaveLength(0);
 });

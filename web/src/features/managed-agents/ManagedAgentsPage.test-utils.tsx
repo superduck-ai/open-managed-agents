@@ -717,6 +717,14 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
       return jsonResponse({ data: [], next_page: null });
     }
 
+    if (url.startsWith('/api/organizations/org_test/observability/dashboards/') && method === 'GET') {
+      return jsonResponse(emptyObservabilityDashboard());
+    }
+
+    if (url.startsWith('/api/organizations/org_test/observability/trajectories/') && method === 'GET') {
+      return jsonResponse({ header: null, events: [], next_seq: -1, has_more: false, segment: '', segments: [] });
+    }
+
     if (url.startsWith('/api/organizations/org_test/observability/trajectories') && method === 'GET') {
       return jsonResponse({ next_offset: null, items: [] });
     }
@@ -1491,6 +1499,14 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
     const headers = Object.fromEntries(new Headers(init?.headers).entries());
     const body = parseBody(init?.body);
     requests.push({ url, method, headers, body });
+
+    if (url.startsWith('/api/organizations/org_test/observability/dashboards/') && method === 'GET') {
+      return jsonResponse(emptyObservabilityDashboard());
+    }
+
+    if (url.startsWith('/api/organizations/org_test/observability/trajectories/') && method === 'GET') {
+      return jsonResponse({ header: null, events: [], next_seq: -1, has_more: false, segment: '', segments: [] });
+    }
 
     if (url.startsWith('/api/organizations/org_test/observability/trajectories') && method === 'GET') {
       return jsonResponse({ next_offset: null, items: [] });
@@ -2305,5 +2321,17 @@ export function workspaceContextValue(workspaceId: string) {
     selectWorkspace: () => undefined,
     createWorkspace: async () => workspace,
     refreshWorkspaces: async () => undefined,
+  };
+}
+
+function emptyObservabilityDashboard() {
+  return {
+    tab: 'overview',
+    interval_ms: 3_600_000,
+    filter_options: [],
+    panels: [
+      { id: 'active_sessions', render: 'stat', unit: 'count', span: 3, data: { value: 0, previous: 0 } },
+      { id: 'session_activity', render: 'series', unit: 'count', span: 6, chart: 'bar', data: [] },
+    ],
   };
 }

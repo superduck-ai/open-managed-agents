@@ -31,6 +31,11 @@ nats:
     max_bytes: 268435456
     max_age: 24h
     replicas: 3 # Set 1 for a single-node JetStream deployment.
+  # Short-lived OTLP span delivery queue for telemetry destinations; spans are never stored elsewhere.
+  telemetry_export_stream:
+    max_bytes: 268435456
+    max_age: 1h
+    replicas: 3
   worker_event_stream:
     consumer_inactive_threshold: 5m
     max_bytes: 268435456
@@ -184,6 +189,19 @@ webhook:
   failure_disable_after: 24h
   # Webhooks connect directly; HTTP_PROXY/HTTPS_PROXY are not used.
   # Verify direct egress before upgrading a proxy-dependent deployment.
+  allow_insecure: false
+
+# Delivers Brain spans to organization telemetry destinations (OTLP/HTTP protobuf).
+telemetry_export:
+  # Set false to stop consuming the delivery queue on this instance.
+  worker_enabled: true
+  concurrency: 10
+  # Total time per delivery attempt, including TLS and response headers.
+  timeout: 10s
+  max_attempts: 3
+  # A destination that fails continuously for this long is disabled with reason sustained_failure.
+  failure_disable_after: 24h
+  # Development only: allow http, private addresses and non-443 ports for destinations.
   allow_insecure: false
 
 vault:

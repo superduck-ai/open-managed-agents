@@ -16,7 +16,7 @@ func TestPrepareNativeOTLPReplacesAllWorkerAttributes(t *testing.T) {
 	for _, protocol := range []otlpProtocol{otlpProtocolJSON, otlpProtocolProtobuf} {
 		t.Run(string(protocol), func(t *testing.T) {
 			record := nativeRecordFixture()
-			record.Attributes = append(record.Attributes, otlpStringAttribute("oma_session_id", "forged"), otlpStringAttribute("service.oma.organization.uuid", "forged"))
+			record.Attributes = append(record.Attributes, otlpStringAttribute("oma_session_id", "forged"), otlpStringAttribute("service.oma.organization.uuid", "forged"), otlpStringAttribute("dsh.tool.name", "forged"), otlpIntAttribute("oma.model_request.started_at", 90), otlpStringAttribute("gen_ai.request.model", "forged"))
 			request := &collectlogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{SchemaUrl: "forged", Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{otlpStringAttribute("oma_organization_uuid", "forged"), otlpStringAttribute("service.name", "forged")}}, ScopeLogs: []*logspb.ScopeLogs{{SchemaUrl: "forged", Scope: &commonpb.InstrumentationScope{Name: "forged", Attributes: []*commonpb.KeyValue{otlpStringAttribute("oma.workspace.uuid", "forged")}}, LogRecords: []*logspb.LogRecord{record}}}}}}
 			encoded, err := marshalOTLPMessage(protocol, request)
 			if err != nil {
@@ -35,7 +35,7 @@ func TestPrepareNativeOTLPReplacesAllWorkerAttributes(t *testing.T) {
 			if resource.SchemaUrl != "" || scope.SchemaUrl != "" || scope.Scope.Name != "@deepseek-ai/dsh-session" || len(scope.Scope.Attributes) != 0 {
 				t.Fatal("worker scope metadata survived")
 			}
-			assertExactOTLPAttributes(t, actual.Attributes, []*commonpb.KeyValue{otlpStringAttribute("dsh.header", logAttribute(record, "dsh.header")), otlpStringAttribute("dsh.session.id", "native"), otlpIntAttribute("dsh.event.seq", 0), otlpIntAttribute("dsh.event.time", 100), otlpStringAttribute("sessionId", "native"), otlpStringAttribute("content", logAttribute(record, "content"))})
+			assertExactOTLPAttributes(t, actual.Attributes, append([]*commonpb.KeyValue{otlpStringAttribute("dsh.header", logAttribute(record, "dsh.header")), otlpStringAttribute("dsh.session.id", "native"), otlpIntAttribute("dsh.event.seq", 0), otlpIntAttribute("dsh.event.time", 100), otlpStringAttribute("sessionId", "native"), otlpStringAttribute("content", logAttribute(record, "content"))}, nativeStructuredFacts{eventType: "tool/call", turn: 1, step: 2, toolCallID: "call1", toolName: "Bash"}.attributes()...))
 		})
 	}
 }

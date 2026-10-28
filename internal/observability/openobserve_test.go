@@ -145,17 +145,33 @@ func TestNativeQueryRejectsMissingScopeAndUnsafeStream(t *testing.T) {
 func TestTrajectoryListReturnsServerPagination(t *testing.T) {
 	for _, count := range []int{0, trajectoryListSize, trajectoryListSize + 1} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			var sql string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				hits := make([]Trajectory, count)
+				var request struct {
+					Query searchQuery `json:"query"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+				}
+				sql = request.Query.SQL
+				hits := make([]SessionActivity, count)
 				_ = json.NewEncoder(w).Encode(struct {
-					Hits []Trajectory `json:"hits"`
+					Hits []SessionActivity `json:"hits"`
 				}{hits})
 			}))
 			defer server.Close()
 			backend := NewOpenObserve(config.OpenObserveConfig{BaseURL: server.URL, Organization: "oma", LogsStream: "oma_dsh"}, server.Client())
-			list, err := backend.List(context.Background(), Scope{OrganizationUUID: "org", WorkspaceUUID: "ws"}, Window{}, 17)
+			list, err := backend.List(context.Background(), Scope{OrganizationUUID: "org", WorkspaceUUID: "ws", AgentID: "agent'1"}, Window{}, ListQuery{Offset: 17, Sort: SortRecent})
 			if err != nil {
 				t.Fatal(err)
+			}
+			for _, fragment := range []string{"oma_agent_id = 'agent''1'", "oma_session_id IS NOT NULL", "GROUP BY oma_session_id", "ORDER BY last_event_at DESC, session_id ASC", "LIMIT 51 OFFSET 17"} {
+				if !strings.Contains(sql, fragment) {
+					t.Errorf("session list query missing %s: %s", fragment, sql)
+				}
+			}
+			if strings.Contains(sql, "GROUP BY dsh_session_id") {
+				t.Error("session list must not group by native session")
 			}
 			if len(list.Items) != min(count, trajectoryListSize) {
 				t.Fatal("invalid list size")
@@ -166,6 +182,46 @@ func TestTrajectoryListReturnsServerPagination(t *testing.T) {
 				}
 			} else if list.NextOffset != nil {
 				t.Fatal("unexpected next page")
+			}
+		})
+	}
+}
+
+func TestSearchTreatsOnlyMissingStructuredSchemaAsEmpty(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+		body   string
+		empty  bool
+		err    bool
+	}{
+		{"missing stream", http.StatusBadRequest, `{"code":20002,"message":"stream not found"}`, true, false},
+		{"unknown structured field", http.StatusBadRequest, `{"code":20004,"message":"unknown field 'dsh_turn'"}`, true, false},
+		{"unknown structured field in another format", http.StatusBadRequest, `{"code":20004,"message":"Search SQL error: Unknown field \"gen_ai_request_model\" in table"}`, true, false},
+		{"unknown unrelated field", http.StatusBadRequest, `{"code":20004,"message":"unknown field 'secret_column'"}`, false, true},
+		{"other sql error", http.StatusBadRequest, `{"code":20004,"message":"syntax error near dsh_turn"}`, false, true},
+		{"non JSON error", http.StatusInternalServerError, `upstream failed`, false, true},
+		{"success", http.StatusOK, `{"hits":[{"n":1}]}`, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			backend := NewOpenObserve(config.OpenObserveConfig{BaseURL: server.URL, Organization: "oma", LogsStream: "oma_dsh"}, server.Client())
+			body, err := backend.searchRaw(context.Background(), Window{Start: time.UnixMilli(0), End: time.UnixMilli(1)}, "SELECT 1", 1)
+			switch {
+			case test.err:
+				if err == nil {
+					t.Fatalf("body = %s, want error", body)
+				}
+			case err != nil:
+				t.Fatal(err)
+			case test.empty && string(body) != string(emptySearch):
+				t.Fatalf("body = %s, want empty search", body)
+			case !test.empty && string(body) != test.body:
+				t.Fatalf("body = %s", body)
 			}
 		})
 	}

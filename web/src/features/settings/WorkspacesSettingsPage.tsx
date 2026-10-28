@@ -1,4 +1,16 @@
-import { AlertCircle, Box, Info, KeyRound, MoreVertical, Plus, Search, Settings, Trash2, Webhook } from 'lucide-react';
+import {
+  Activity,
+  AlertCircle,
+  Box,
+  Info,
+  KeyRound,
+  MoreVertical,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+  Webhook,
+} from 'lucide-react';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '../../shared/i18n';
@@ -10,6 +22,7 @@ import { archiveConsoleWorkspace, listConsoleWorkspaces, updateConsoleWorkspace 
 import {
   buildCreateWorkspaceInput,
   workspaceApiKeysPath,
+  workspaceTelemetryPath,
   workspaceWebhooksPath,
   workspaceColor,
 } from '../../shared/workspaces/presentation';
@@ -389,6 +402,12 @@ export function WorkspacesSettingsPage() {
                                 >
                                   <Webhook className="size-4" aria-hidden />
                                   <span>{msg('nav.webhooks', 'Webhooks')}</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => window.location.assign(workspaceTelemetryPath(workspace.id))}
+                                >
+                                  <Activity className="size-4" aria-hidden />
+                                  <span>{msg('nav.telemetry', 'OpenTelemetry')}</span>
                                 </DropdownMenuItem>
                                 {canManageWorkspaces && !workspace.is_default && !workspace.archived_at ? (
                                   <DropdownMenuItem

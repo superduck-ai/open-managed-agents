@@ -24,6 +24,7 @@ import { CcrToolResults } from "./tool-results.ts";
 import { assistantMessages, CcrAssistantStream } from "./assistant.ts";
 import { userInputContent } from "./user-content.ts";
 import { appendedSystemContext } from "./system-context.ts";
+import { traceHooks } from "../observability/trace-context.ts";
 
 declare module "@deepseek-ai/dsh-llm" {
   interface MessageSourceMap {
@@ -201,6 +202,7 @@ export class CcrSession {
         "Previous turn was interrupted and was not replayed. Tool outcomes may be unknown.",
         "recovery",
       );
+      traceHooks.turnsInterrupted(this.id, this.state.traceTurns);
       setStage("recovery_persistence");
       await this.runtime.flushLog();
       await this.save();
@@ -269,6 +271,7 @@ export class CcrSession {
   save(): Promise<void> {
     const snapshot = structuredClone({
       ...this.state,
+      traceTurns: traceHooks.openTurns(this.id),
       revision: ++this.state.revision,
     });
     const promise = this.saves.then(() =>
@@ -380,11 +383,13 @@ export class CcrSession {
         const approval = this.approvals.get(requestId);
         if (pending && approval?.phase === "policy") {
           approval.phase = "confirmation";
+          traceHooks.approvalPending(ownerId, request.callId);
           await this.updateStatus();
         }
       }
       decision = await decisionPromise;
       signal.throwIfAborted();
+      traceHooks.approvalResolved(ownerId, request.callId, decision.externalResult !== undefined ? "external" : decision.behavior === "allow" ? "allowed" : "denied");
     } finally {
       signal.removeEventListener("abort", cancel);
       this.approvals.delete(requestId);
@@ -683,6 +688,8 @@ export class CcrSession {
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
     if (this.blocked()) await this.continueAfterUnknownOutcomes(inputId);
+    const traceContext = payload.trace_context;
+    traceHooks.inputReceived(this.id, traceContext && typeof traceContext === "object" && !Array.isArray(traceContext) ? traceContext as Payload : undefined);
     let stopProgress = () => {};
     try {
       await this.runtime.run(() => {

@@ -4,6 +4,7 @@ import { OrganizationMenu } from '../../features/organizations/OrganizationMenu'
 import { useScopeConfirmation } from '../../features/organizations/useScopeConfirmation';
 import { useOrganizations } from '../../shared/organizations/context';
 import {
+  Activity,
   ArrowLeft,
   BookOpen,
   Box,
@@ -82,6 +83,7 @@ import {
   workspaceApiKeysPath,
   workspaceColor,
   workspaceIdFromPath,
+  workspaceTelemetryPath,
   workspaceWebhooksPath,
 } from '../../shared/workspaces/presentation';
 import { useI18n, useLocale } from '../../shared/i18n';
@@ -758,6 +760,9 @@ function SettingsNavigationIcon({ href }: { href: string }) {
   if (href === '/settings/workspaces') {
     return <Box className="size-4" aria-hidden />;
   }
+  if (href === '/settings/telemetry') {
+    return <Activity className="size-4" aria-hidden />;
+  }
   return <Settings className="size-4" aria-hidden />;
 }
 
@@ -941,6 +946,7 @@ const managedAgentPathByHref: Record<string, string> = {
 const workspaceSettingsResourceByHref: Record<string, string> = {
   '/api-keys': 'keys',
   '/webhooks': 'webhooks',
+  '/telemetry': 'telemetry',
   '/mcp-tunnels': 'mcp-tunnels',
 };
 
@@ -992,6 +998,9 @@ function navigationHref(href: string, workspaceId: string) {
   }
   if (href === '/webhooks') {
     return workspaceWebhooksPath(workspaceId);
+  }
+  if (href === '/telemetry') {
+    return workspaceTelemetryPath(workspaceId);
   }
   if (href === '/mcp-tunnels') {
     return workspaceMcpTunnelsPath(workspaceId);
@@ -1083,7 +1092,7 @@ function isWideConsolePath(currentPath: string) {
     ['/api-keys', '/members', '/settings/members'].includes(currentPath) ||
     /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath) ||
     currentPath === '/webhooks' ||
-    /^\/settings\/workspaces\/[^/]+\/webhooks/.test(currentPath) ||
+    /^\/settings\/workspaces\/[^/]+\/(webhooks|telemetry)/.test(currentPath) ||
     isMcpTunnelsPath(currentPath) ||
     isBuildPath(currentPath) ||
     isAnalyticsPath(currentPath) ||

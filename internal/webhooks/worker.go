@@ -40,25 +40,10 @@ func (w *Worker) Start(ctx context.Context) (func(), error) {
 		return nil, err
 	}
 	runtime := newWorkerRuntime(ctx, w)
-	for index := range runtime.sessions {
-		session, err := runtime.consume(index)
-		if err != nil {
-			runtime.stop()
-			return nil, err
-		}
-		runtime.sessions[index] = session
+	if err := runtime.Start(); err != nil {
+		return nil, err
 	}
-	for index, session := range runtime.sessions {
-		runtime.pending.Go(func() { runtime.runSession(index, session) })
-	}
-	go func() {
-		select {
-		case <-runtime.ctx.Done():
-			runtime.stop()
-		case <-runtime.done:
-		}
-	}()
-	return runtime.stop, nil
+	return runtime.Stop, nil
 }
 
 func (w *Worker) processMessage(ctx context.Context, client *http.Client, msg jetstream.Msg) {

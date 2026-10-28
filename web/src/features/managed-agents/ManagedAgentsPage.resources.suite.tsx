@@ -700,35 +700,17 @@ export function registerManagedAgentsResourceTests() {
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete session/i })).toBeNull());
   });
 
-  test('opens the native trajectory tab and queries the current session scope', async () => {
+  test('opens the session trajectory tab for the active lane without listing trajectories', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
     const api = mockManagedResourceApi();
     renderManagedAgentsPage('sessions');
     fireEvent.click(await screen.findByRole('tab', { name: 'Trajectory' }));
-    expect(await screen.findByText('No DSH trajectory events in the last month.')).toBeTruthy();
-    await waitFor(() =>
-      expect(
-        api.requests.some(
-          (request) =>
-            request.url.includes('/observability/trajectories?') && request.url.includes('session_id=sesn_one123456'),
-        ),
-      ).toBe(true),
-    );
+    const panel = await screen.findByRole('tabpanel');
+    expect(await within(panel).findByRole('heading', { name: /^Trajectory/ })).toBeTruthy();
+    expect(within(panel).queryByRole('button', { name: 'Back' })).toBeNull();
+    expect(panel.textContent).not.toContain('cse_');
+    expect(api.requests.some((request) => request.url.includes('/observability/trajectories?'))).toBe(false);
     expect(new URL(window.location.href).searchParams.get('inspector')).toBe('trajectory');
-  });
-
-  test('shows an explicit query failure when observability is unavailable', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
-    mockManagedResourceApi();
-    const original = globalThis.fetch;
-    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) =>
-      requestUrl(input).includes('/observability/trajectories')
-        ? new Response(JSON.stringify({ error: { message: 'unavailable' } }), { status: 503 })
-        : original(input, init),
-    ) as typeof fetch;
-    renderManagedAgentsPage('sessions');
-    fireEvent.click(await screen.findByRole('tab', { name: 'Trajectory' }));
-    expect(await screen.findByText('Could not load trajectories. Please try again later.')).toBeTruthy();
   });
 
   test('sends messages and exposes session context through the six-tab inspector', async () => {

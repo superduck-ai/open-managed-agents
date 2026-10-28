@@ -22,6 +22,7 @@ export function validateBrainTask(value: unknown): asserts value is BrainTask {
 
 export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: AbortSignal): Promise<Assignment> {
   const id = encodeURIComponent(task.session_id);
+  const registeredAt = Date.now();
   const registered = await api.request(`/v1/code/sessions/${id}/worker/register`,
     task.ingress_token, "POST", {}, undefined, signal);
   if (Number(registered.worker_epoch) !== task.worker_epoch)
@@ -33,6 +34,9 @@ export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: 
   const assignment: Assignment = {
     ...task,
     observability_enabled: registered.observability_enabled === true,
+    registered_at: registeredAt,
+    ...(registered.trace_export && typeof registered.trace_export === "object"
+      ? { trace_export: { content: (registered.trace_export as { content?: unknown }).content === true } } : {}),
     external_mcp_config: context.mcp_config,
     launch: {
       version: 2, model: context.model, model_backends: context.model_backends, work_dir: context.cwd,

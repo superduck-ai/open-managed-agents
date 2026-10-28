@@ -102,6 +102,9 @@ export class Backend {
   readonly releases: Payload[] = [];
   claimToken = "test-claim-token";
   telemetryRequests = 0;
+  telemetryStatus = 503;
+  telemetryRecords: Payload[] = [];
+  traceSpans: Payload[] = [];
   registrations = 0;
   connections = 0;
   sandboxCount = 0;
@@ -202,7 +205,17 @@ export class Backend {
       Response.json(data, { status });
     if (path === `/v1/code/sessions/${this.a.session_id}/worker/otlp/v1/logs`) {
       this.telemetryRequests++;
-      return json({}, 503);
+      for (const resource of body.resourceLogs ?? []) {
+        for (const scope of resource.scopeLogs ?? []) this.telemetryRecords.push(...(scope.logRecords ?? []));
+      }
+      return json({}, this.telemetryStatus);
+    }
+    if (path === `/v1/code/sessions/${this.a.session_id}/worker/otlp/v1/traces`) {
+      expect(request.headers.get("Authorization")).toBe(`Bearer ${this.a.ingress_token}`);
+      for (const resource of body.resourceSpans ?? []) {
+        for (const scope of resource.scopeSpans ?? []) this.traceSpans.push(...(scope.spans ?? []));
+      }
+      return json({});
     }
     if (path === `/v1/code/sessions/${this.a.session_id}/worker/register`) {
       expect(request.headers.get("Authorization")).toBe(`Bearer ${this.a.ingress_token}`);

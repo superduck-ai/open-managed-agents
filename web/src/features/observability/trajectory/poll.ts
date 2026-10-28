@@ -1,22 +1,24 @@
-import { trajectoryPage, type QueryScope, type TrajectoryPage } from '../api';
+import { trajectoryPage, type QueryScope, type TrajectoryPage, type TrajectoryTarget } from '../api';
 
 export function pollTrajectory(
   scope: QueryScope,
-  id: string,
+  target: TrajectoryTarget,
   signal: AbortSignal,
   onPage: (page: TrajectoryPage) => void,
   onFailure: (stopped: boolean) => void,
 ) {
   let after = -1;
   let failures = 0;
+  let segment = target.segment;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const poll = async () => {
     if (signal.aborted) return;
     try {
       let more = true;
       while (more && !signal.aborted) {
-        const page = await trajectoryPage(scope, id, after, signal);
+        const page = await trajectoryPage(scope, { ...target, segment }, after, signal);
         if (signal.aborted) return;
+        segment ||= page.segment || undefined;
         onPage(page);
         after = page.next_seq;
         more = page.has_more;

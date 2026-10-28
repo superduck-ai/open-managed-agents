@@ -328,7 +328,11 @@ export function SessionInspector({
           />
         </TabsContent>
         <TabsContent value="trajectory" className="mt-0 min-h-0 min-w-0 overflow-hidden">
-          <SessionTrajectory sessionId={session.id} />
+          <SessionTrajectory
+            sessionId={session.id}
+            threadId={activeLane || undefined}
+            laneLabel={showToolScope ? activeToolLane?.label : undefined}
+          />
         </TabsContent>
       </Tabs>
     </aside>

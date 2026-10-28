@@ -53,11 +53,17 @@ func (s *Store) PreparePublic(ctx context.Context, organizationUUID, workspaceUU
 				return nil, err
 			}
 		}
+		if err := storeTraceContext(event); err != nil {
+			return nil, err
+		}
 	}
 	return prepared, nil
 }
 
 func (s *Store) RestorePublic(ctx context.Context, event db.SessionEvent) (db.SessionEvent, error) {
+	if err := liftTraceContext(&event); err != nil {
+		return db.SessionEvent{}, err
+	}
 	payload, err := s.restore(ctx, event.WorkspaceUUID, event.Payload, event.PayloadBlobUUID)
 	if err != nil {
 		return db.SessionEvent{}, err
@@ -202,8 +208,8 @@ func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID strin
 			}
 		}
 	}
-	changes.Events = RestoreCreatedPublic(changes.Events, events)
-	return changes, nil
+	changes.Events, err = RestoreCreatedPublic(changes.Events, events)
+	return changes, err
 }
 
 // Avoid uploading already persisted events during worker replay. The insert still
@@ -227,7 +233,7 @@ func (s *Store) skipPersistedLargeEvents(ctx context.Context, workspaceUUID, ses
 
 // RestoreCreatedPublic reuses original bytes only for rows inserted by this call.
 // Idempotent conflicts must load the persisted event instead.
-func RestoreCreatedPublic(created, originals []db.SessionEvent) []db.SessionEvent {
+func RestoreCreatedPublic(created, originals []db.SessionEvent) ([]db.SessionEvent, error) {
 	payloads := make(map[string]json.RawMessage, len(originals))
 	uuidByID := make(map[string]string, len(originals))
 	for _, event := range originals {
@@ -237,11 +243,14 @@ func RestoreCreatedPublic(created, originals []db.SessionEvent) []db.SessionEven
 		}
 	}
 	for i := range created {
+		if err := liftTraceContext(&created[i]); err != nil {
+			return nil, err
+		}
 		if payload, ok := payloads[created[i].ExternalID]; ok && uuidByID[created[i].ExternalID] == created[i].UUID && (created[i].PayloadBlobUUID != nil || strings.Contains(string(created[i].Payload), `"_echo_key"`)) {
 			created[i].Payload = payload
 		}
 	}
-	return created
+	return created, nil
 }
 
 func (s *Store) AppendInternal(ctx context.Context, session db.CodeSession, epoch int64, inputs []db.AppendCodeSessionInternalEventInput) ([]db.CodeSessionInternalEvent, error) {

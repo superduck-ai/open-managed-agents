@@ -1753,12 +1753,24 @@ export function registerManagedAgentsAgentsTests() {
     ]);
   });
 
-  test('renders native trajectories and requests the current agent scope', async () => {
+  test('scopes agent observability dashboards and session options to the current agent', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents/agent_detail123456?tab=observability');
     const api = mockAgentsApi([{ id: 'agent_detail123456', name: 'Current agent', version: 2 }]);
     renderManagedAgentsPage('agents');
     expect(await screen.findByRole('heading', { name: 'Current agent' })).toBeTruthy();
-    expect(await screen.findByRole('heading', { name: 'Trajectory' })).toBeTruthy();
+    expect(await screen.findByText('Active sessions')).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        api.requests.some(
+          (request) =>
+            request.url.includes('/observability/dashboards/overview?') &&
+            request.url.includes('agent_id=agent_detail123456'),
+        ),
+      ).toBe(true),
+    );
+    const observabilityTabs = screen.getByRole('tab', { name: 'Overview' }).closest<HTMLElement>('[role="tablist"]')!;
+    expect(within(observabilityTabs).queryByRole('tab', { name: 'Trajectories' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Agent' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy();
     await waitFor(() =>
       expect(
@@ -1772,12 +1784,15 @@ export function registerManagedAgentsAgentsTests() {
     );
   });
 
-  test('workspace observability lists native trajectories', async () => {
+  test('workspace observability shows the titled dashboard without a trajectory list', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/observability');
     mockAgentsApi([]);
     renderManagedAgentsPage('observability');
-    expect(await screen.findByRole('heading', { name: 'Trajectory' })).toBeTruthy();
-    expect(await screen.findByText('No DSH trajectory events in the last month.')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Observability' })).toBeTruthy();
+    expect(await screen.findByText('Active sessions')).toBeTruthy();
+    expect(screen.getAllByText('No data in this range.').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('tab', { name: 'Trajectories' })).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Session' })).toBeTruthy();
   });
 
   test('renders missing agent and missing version states with shared alerts', async () => {

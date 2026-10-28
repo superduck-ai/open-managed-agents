@@ -270,7 +270,9 @@ Base URL 保持 API 根地址合同。最终地址为 `{base_url}/v1/chat/comple
 
 用量仅来自实际上游 usage，缺失时不补零。`completion_tokens` 映射为输出 token；
 `prompt_tokens_details.cached_tokens` 映射为缓存读取，非缓存输入为 prompt tokens 减去缓存读取，
-与现有 Anthropic 分项统计保持一致。缓存数超过输入数或负数属于畸形响应。
+与现有 Anthropic 分项统计保持一致。部分兼容网关（例如 sub2api 渠道）的 `prompt_tokens` 已不含缓存命中，
+缓存数会超过 prompt tokens；此时 prompt tokens 直接作为非缓存输入，不视为畸形响应。缓存数为负数属于畸形响应。
+缓存数不超过 prompt tokens 时两种口径无法区分，统一按包含缓存处理。
 
 普通单测与 PostgreSQL/httptest 合同测试入口：
 `internal/messages/chat_observation_test.go`、`internal/llmproviders/backends_test.go`、

@@ -29,6 +29,7 @@ type Config struct {
 	CodeSession          CodeSessionConfig         `yaml:"code_session"`
 	Observability        ObservabilityConfig       `yaml:"observability"`
 	Webhook              WebhookConfig             `yaml:"webhook"`
+	TelemetryExport      TelemetryExportConfig     `yaml:"telemetry_export"`
 	Vault                VaultConfig               `yaml:"vault"`
 	Bootstrap            BootstrapConfig           `yaml:"bootstrap"`
 }
@@ -139,11 +140,12 @@ type WebhookStreamConfig struct {
 }
 
 type NATSConfig struct {
-	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
-	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
-	URL               string                  `yaml:"url"`
-	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
-	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
+	WebhookStream         WebhookStreamConfig     `yaml:"webhook_stream"`
+	TelemetryExportStream WebhookStreamConfig     `yaml:"telemetry_export_stream"`
+	WorkerEventStream     WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL                   string                  `yaml:"url"`
+	ConnectTimeout        time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout          time.Duration           `yaml:"drain_timeout"`
 }
 
 type AuthConfig struct {
@@ -286,6 +288,15 @@ type WebhookConfig struct {
 	Timeout             time.Duration `yaml:"timeout"`
 	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`
 	MaxAttempts         int           `yaml:"max_attempts"`
+	AllowInsecure       bool          `yaml:"allow_insecure"`
+}
+
+type TelemetryExportConfig struct {
+	WorkerEnabled       bool          `yaml:"worker_enabled"`
+	Concurrency         int           `yaml:"concurrency"`
+	Timeout             time.Duration `yaml:"timeout"`
+	MaxAttempts         int           `yaml:"max_attempts"`
+	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`
 	AllowInsecure       bool          `yaml:"allow_insecure"`
 }
 

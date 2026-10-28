@@ -5,6 +5,10 @@ import { SessionTelemetryBackend, SessionTelemetryCoordinator, type SessionTelem
 import type { Assignment } from "../assignment.ts";
 import type { OmaApi } from "../api.ts";
 import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
+import { ModelRequestClock } from "./model-requests.ts";
+import { SpanExporter } from "./span-exporter.ts";
+import { traceHooks } from "./trace-context.ts";
+import { TraceProducer } from "./trace-producer.ts";
 
 interface ReporterState {
   assignment: Assignment;
@@ -22,11 +26,34 @@ export class NativeTelemetry extends SessionTelemetryBackend {
   private stopped = false;
   private readonly owners = new Map<string, { id: string; header: string }>();
   private readonly api: OmaApi;
+  private readonly modelRequests = new ModelRequestClock();
+  private readonly traces = new TraceProducer();
 
   constructor(ctx: Context, config: { api: OmaApi }) {
     super(ctx);
     this.api = config.api;
     this.api.telemetry = this;
+    traceHooks.target = {
+      inputReceived: (sessionId, context) => {
+        this.ensureTraceOwner(sessionId);
+        this.traces.inputReceived(sessionId, context);
+      },
+      openTurns: (owner) => this.traces.openTurns(owner),
+      turnsInterrupted: (owner, turns) => {
+        if (this.ensureTraceOwner(owner)) this.traces.turnsInterrupted(owner, turns);
+      },
+      approvalPending: (sessionId, callId) => this.traces.approvalPending(sessionId, callId),
+      approvalResolved: (sessionId, callId, outcome) => this.traces.approvalResolved(sessionId, callId, outcome),
+      toolDispatched: (sessionId, callId) => this.traces.toolDispatched(sessionId, callId),
+      subagent: (sessionId, info) => this.traces.subagent(sessionId, info),
+    };
+    ctx.on("agent/assistant-stream", ({ agent, frame }) => {
+      try {
+        if (frame.type === "start") this.modelRequests.started(agent.session.id, Date.now());
+      } catch {
+        workerDiagnostic("warn", "trajectory_stream_capture_failed", {});
+      }
+    });
     new SessionTelemetryCoordinator(ctx, this, { capture: "live", includeHistory: true });
   }
 
@@ -80,19 +107,48 @@ export class NativeTelemetry extends SessionTelemetryBackend {
       const source = record.sourceEvent;
       const owner = this.owner(source.sessionId);
       if (!owner) return;
+      const modelRequest = this.modelRequests.observe(source.sessionId, source.envelope.type, source.envelope.time, record.body);
+      this.observeTraces(owner.id, source.sessionId, source.envelope.type, source.envelope.time, record.body, modelRequest);
       this.reporter(owner.id)?.reportSessionLog({
         sessionId: source.sessionId,
         event: { ...source.envelope, data: record.body },
-        attributes: { "dsh.header": owner.header },
+        attributes: { ...modelRequest, "dsh.header": owner.header },
       });
     } catch {
       workerDiagnostic("warn", "trajectory_capture_failed", {});
     }
   }
 
+  private ensureTraceOwner(owner: string): boolean {
+    const assignment = this.api.assignments.get(owner);
+    if (!assignment?.trace_export || this.stopped || this.closed.has(assignment)) return false;
+    if (!this.traces.owned(owner)) {
+      this.traces.attach(owner, {
+        exporter: new SpanExporter(`${this.api.base}/v1/code/sessions/${encodeURIComponent(owner)}/worker/otlp/v1/traces`,
+          () => assignment.ingress_token, this.api.fetcher, owner),
+        content: assignment.trace_export.content, model: assignment.launch.model, systemPrompt: assignment.launch.system, liveSince: assignment.registered_at ?? Date.now(),
+      });
+    }
+    return true;
+  }
+
+  private observeTraces(owner: string, sessionId: string, type: string, time: number, body: unknown, timing: Record<string, string | number>): void {
+    try {
+      if (!this.ensureTraceOwner(owner)) return;
+      const parent = this.ctx.sessions.get(SessionId(sessionId))?.header.parentSession;
+      this.traces.observe(sessionId, owner, parent, type, time, body, timing);
+    } catch {
+      workerDiagnostic("warn", "trace_capture_failed", {});
+    }
+  }
+
   async shutdown(): Promise<void> {
     this.stopped = true;
     for (const id of this.reporters.keys()) void this.close(id);
+    for (const id of this.api.assignments.keys()) {
+      const traces = this.traces.close(id).finally(() => this.draining.delete(traces));
+      this.draining.add(traces);
+    }
     await Promise.allSettled([...this.draining]);
   }
 
@@ -100,7 +156,14 @@ export class NativeTelemetry extends SessionTelemetryBackend {
     const state = this.reporters.get(id);
     const assignment = this.api.assignments.get(id);
     if (assignment) this.closed.add(assignment);
-    for (const [sessionId, owner] of this.owners) if (owner.id === id) this.owners.delete(sessionId);
+    for (const [sessionId, owner] of this.owners) {
+      if (owner.id !== id) continue;
+      this.owners.delete(sessionId);
+      this.modelRequests.forget(sessionId);
+    }
+    this.modelRequests.forget(id);
+    const traces = this.traces.close(id).finally(() => this.draining.delete(traces));
+    this.draining.add(traces);
     return state ? this.closeReporter(id, state) : Promise.resolve();
   }
 

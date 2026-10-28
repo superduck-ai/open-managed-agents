@@ -26,6 +26,10 @@ func InvalidOffset() error {
 	return apperr.New(apperr.InvalidArgument, "invalid trajectory offset", nil)
 }
 
+func InvalidSort() error {
+	return apperr.New(apperr.InvalidArgument, "invalid trajectory sort", nil)
+}
+
 func MissingTrajectoryID() error {
 	return apperr.New(apperr.InvalidArgument, "trajectory id is required", nil)
 }
@@ -52,4 +56,20 @@ func invalidResponse(cause error) error {
 
 func notFound() error {
 	return apperr.New(apperr.NotFound, "trajectory resource not found", nil)
+}
+
+func UnknownDashboard() error {
+	return apperr.New(apperr.NotFound, "unknown observability dashboard", nil)
+}
+
+func InvalidDashboardFilter() error {
+	return apperr.New(apperr.InvalidArgument, "invalid observability dashboard filter", nil)
+}
+
+func InvalidAgentVersion() error {
+	return apperr.New(apperr.InvalidArgument, "agent_version must be a positive integer", nil)
+}
+
+func invalidDashboard(cause error) error {
+	return apperr.New(apperr.Internal, "invalid observability dashboard definition", cause)
 }

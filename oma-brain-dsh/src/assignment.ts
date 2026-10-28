@@ -5,6 +5,8 @@ import { webToolDefinitions } from "./web-tools/definitions.ts";
 
 export interface Assignment {
   observability_enabled?: boolean;
+  trace_export?: { content: boolean };
+  registered_at?: number;
   session_id: string;
   worker_epoch: number;
   ingress_token: string;

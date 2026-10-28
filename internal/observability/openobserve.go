@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,64 +56,121 @@ func (b *OpenObserve) scopedQuery(scope Scope) (string, error) {
 	if scope.AgentID != "" {
 		conditions = append(conditions, "oma_agent_id = "+quote(scope.AgentID))
 	}
+	if len(scope.AgentVersions) > 0 {
+		versions := make([]string, 0, len(scope.AgentVersions))
+		for _, version := range scope.AgentVersions {
+			versions = append(versions, strconv.Itoa(version))
+		}
+		conditions = append(conditions, "CAST(oma_agent_version AS BIGINT) IN ("+strings.Join(versions, ", ")+")")
+	}
 	return " FROM " + b.config.LogsStream + " WHERE " + strings.Join(conditions, " AND "), nil
 }
 
-func (b *OpenObserve) search(ctx context.Context, window Window, sql string, size int, result any) error {
+var emptySearch = []byte(`{"hits":[]}`)
+
+var structuredFields = []string{"dsh_event_type", "dsh_turn", "dsh_step", "dsh_tool_call_id", "dsh_tool_name", "dsh_tool_is_error", "dsh_error_code", "dsh_turn_end_reason", "dsh_model_request_status", "oma_model_request_started_at", "oma_model_request_first_token_at", "gen_ai_request_model", "gen_ai_usage_input_tokens", "gen_ai_usage_output_tokens", "gen_ai_usage_cache_read_input_tokens", "gen_ai_usage_cache_creation_input_tokens", "gen_ai_usage_reasoning_output_tokens"}
+
+var unknownFieldPattern = regexp.MustCompile(`(?i)unknown field\s*['"]?([a-z0-9_]+)`)
+
+func emptyStorage(body []byte) bool {
+	var failure struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &failure) != nil {
+		return false
+	}
+	switch failure.Code {
+	case 20002:
+		return true
+	case 20004:
+		match := unknownFieldPattern.FindStringSubmatch(failure.Message)
+		return match != nil && slices.Contains(structuredFields, match[1])
+	}
+	return false
+}
+
+func (b *OpenObserve) searchRaw(ctx context.Context, window Window, sql string, size int) ([]byte, error) {
 	payload, err := json.Marshal(struct {
 		Query searchQuery `json:"query"`
 	}{Query: searchQuery{SQL: sql, StartTime: window.Start.UnixMicro(), EndTime: window.End.UnixMicro(), Size: size}})
 	if err != nil {
-		return invalidResponse(err)
+		return nil, invalidResponse(err)
 	}
 	endpoint := strings.TrimRight(b.config.BaseURL, "/") + "/api/" + url.PathEscape(b.config.Organization) + "/_search?type=logs"
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return unavailable(err)
+		return nil, unavailable(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.SetBasicAuth(b.config.Query.Username, b.config.Query.Password)
 	response, err := b.client.Do(request)
 	if err != nil {
-		return unavailable(err)
+		return nil, unavailable(err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxSearchBytes+1))
 	if err != nil {
-		return unavailable(err)
+		return nil, unavailable(err)
 	}
 	if len(body) > maxSearchBytes {
-		return invalidResponse(fmt.Errorf("search exceeds response limit"))
+		return nil, invalidResponse(fmt.Errorf("search exceeds response limit"))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return unavailable(fmt.Errorf("search returned status %d", response.StatusCode))
+		if emptyStorage(body) {
+			return emptySearch, nil
+		}
+		return nil, unavailable(fmt.Errorf("search returned status %d", response.StatusCode))
 	}
+	return body, nil
+}
+
+func decodeSearch(body []byte, result any) error {
 	if err := json.Unmarshal(body, result); err != nil {
 		return invalidResponse(err)
 	}
 	return nil
 }
 
-func (b *OpenObserve) List(ctx context.Context, scope Scope, window Window, offset int) (List, error) {
+func (b *OpenObserve) search(ctx context.Context, window Window, sql string, size int, result any) error {
+	body, err := b.searchRaw(ctx, window, sql, size)
+	if err != nil {
+		return err
+	}
+	return decodeSearch(body, result)
+}
+
+var listOrders = map[string]string{
+	SortRecent:   "last_event_at DESC, session_id ASC",
+	SortDuration: "duration_ms DESC, last_event_at DESC, session_id ASC",
+	SortErrors:   "error_turns DESC, last_event_at DESC, session_id ASC",
+}
+
+func (b *OpenObserve) List(ctx context.Context, scope Scope, window Window, query ListQuery) (ActivityList, error) {
 	suffix, err := b.scopedQuery(scope)
 	if err != nil {
-		return List{}, err
+		return ActivityList{}, err
 	}
-	sql := "SELECT dsh_session_id AS id, MAX(oma_session_id) AS session_id, MAX(oma_agent_id) AS agent_id, MIN(CAST(dsh_event_time AS BIGINT)) AS started_at, MAX(CAST(dsh_event_time AS BIGINT)) AS last_event_at" + suffix + " GROUP BY dsh_session_id ORDER BY last_event_at DESC, id ASC" + fmt.Sprintf(" LIMIT %d OFFSET %d", trajectoryListSize+1, offset)
+	order, found := listOrders[query.Sort]
+	if !found {
+		return ActivityList{}, InvalidSort()
+	}
+	offset := query.Offset
+	sql := "SELECT oma_session_id AS session_id, MIN(CAST(dsh_event_time AS BIGINT)) AS started_at, MAX(CAST(dsh_event_time AS BIGINT)) AS last_event_at, " +
+		"MAX(CAST(dsh_event_time AS BIGINT)) - MIN(CAST(dsh_event_time AS BIGINT)) AS duration_ms, " +
+		"COUNT(DISTINCT CASE WHEN dsh_event_type = 'turn/end' AND dsh_turn_end_reason = 'error' THEN concat(dsh_session_id, ':', CAST(dsh_event_seq AS VARCHAR)) END) AS error_turns" +
+		suffix + " AND oma_session_id IS NOT NULL GROUP BY oma_session_id ORDER BY " + order + fmt.Sprintf(" LIMIT %d OFFSET %d", trajectoryListSize+1, offset)
 	var result struct {
-		Hits []Trajectory `json:"hits"`
+		Hits []SessionActivity `json:"hits"`
 	}
 	if err := b.search(ctx, window, sql, trajectoryListSize+1, &result); err != nil {
-		return List{}, err
+		return ActivityList{}, err
 	}
 	hasMore := len(result.Hits) > trajectoryListSize
 	if hasMore {
 		result.Hits = result.Hits[:trajectoryListSize]
 	}
-	if result.Hits == nil {
-		result.Hits = []Trajectory{}
-	}
-	list := List{Items: result.Hits}
+	list := ActivityList{Items: result.Hits}
 	if hasMore {
 		next := offset + len(result.Hits)
 		list.NextOffset = &next

@@ -1,5 +1,6 @@
 import type { Payload } from "../json.ts";
 import type { SubagentThread } from "../runtime/contracts.ts";
+import type { TurnTrace } from "../observability/trace-context.ts";
 export { object, type Json, type Payload } from "../json.ts";
 
 const controlInputTypes = new Set(["control_response", "control_request", "interrupt", "user.interrupt", "keep_alive"]);
@@ -29,6 +30,7 @@ export interface BrainState {
   threads?: SubagentThread[];
   /** Optional for compatibility with existing schema-version-1 journals. */
   executions?: Record<string, ThreadExecutionState>;
+  traceTurns?: TurnTrace[];
 }
 
 export const emptyState = (): BrainState => ({

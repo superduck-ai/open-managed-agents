@@ -273,7 +273,11 @@ func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http
 		h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not register code session worker")
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"worker_epoch": strconv.FormatInt(epoch, 10), "observability_enabled": h.cfg.Observability.Enabled})
+	response := map[string]any{"worker_epoch": strconv.FormatInt(epoch, 10), "observability_enabled": h.cfg.Observability.Enabled}
+	if export := h.traceExportSettings(r.Context(), claims.OrganizationUUID, claims.WorkspaceUUID); export != nil {
+		response["trace_export"] = export
+	}
+	httpapi.WriteJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer, flusher http.Flusher,

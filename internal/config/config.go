@@ -135,7 +135,10 @@ func validate(cfg Config) error {
 }
 
 func validateNATSStreams(cfg NATSConfig) error {
-	if err := validateWebhookStream(cfg.WebhookStream); err != nil {
+	if err := validateStreamLimits("nats.webhook_stream", cfg.WebhookStream); err != nil {
+		return err
+	}
+	if err := validateStreamLimits("nats.telemetry_export_stream", cfg.TelemetryExportStream); err != nil {
 		return err
 	}
 	return validateWorkerEventStream(cfg.WorkerEventStream)
@@ -499,6 +502,10 @@ func validatePositiveValues(cfg Config) error {
 		{name: "webhook.timeout", valid: cfg.Webhook.Timeout > 0},
 		{name: "webhook.max_attempts", valid: cfg.Webhook.MaxAttempts > 0},
 		{name: "webhook.failure_disable_after", valid: cfg.Webhook.FailureDisableAfter > 0},
+		{name: "telemetry_export.concurrency", valid: cfg.TelemetryExport.Concurrency > 0},
+		{name: "telemetry_export.timeout", valid: cfg.TelemetryExport.Timeout > 0},
+		{name: "telemetry_export.max_attempts", valid: cfg.TelemetryExport.MaxAttempts > 0},
+		{name: "telemetry_export.failure_disable_after", valid: cfg.TelemetryExport.FailureDisableAfter > 0},
 	}
 	for _, check := range checks {
 		if !check.valid {

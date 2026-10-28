@@ -15,10 +15,11 @@ func defaultConfig() Config {
 			},
 		},
 		NATS: NATSConfig{
-			WebhookStream:     WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: 24 * time.Hour, Replicas: 3},
-			WorkerEventStream: WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3},
-			ConnectTimeout:    5 * time.Second,
-			DrainTimeout:      10 * time.Second,
+			WebhookStream:         WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: 24 * time.Hour, Replicas: 3},
+			TelemetryExportStream: WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: time.Hour, Replicas: 3},
+			WorkerEventStream:     WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3},
+			ConnectTimeout:        5 * time.Second,
+			DrainTimeout:          10 * time.Second,
 		},
 		Storage: StorageConfig{
 			MaxFileBytes:        500 * 1024 * 1024,
@@ -82,6 +83,13 @@ func defaultConfig() Config {
 		Webhook: WebhookConfig{
 			Concurrency:         10,
 			WorkerEnabled:       true,
+			Timeout:             10 * time.Second,
+			MaxAttempts:         3,
+			FailureDisableAfter: 24 * time.Hour,
+		},
+		TelemetryExport: TelemetryExportConfig{
+			WorkerEnabled:       true,
+			Concurrency:         10,
 			Timeout:             10 * time.Second,
 			MaxAttempts:         3,
 			FailureDisableAfter: 24 * time.Hour,

@@ -97,6 +97,7 @@ func (e *environment) writeConfig(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		config["telemetry_export"] = map[string]any{"allow_insecure": true}
 		config["observability"] = map[string]any{"enabled": true, "openobserve": map[string]any{"base_url": "http://127.0.0.1:" + port, "organization": "default", "logs_stream": "oma_dsh", "ingestion": map[string]string{"username": "verify@oma.local", "password": "Verify-Be-OpenObserve-Local-Only9!"}, "query": map[string]string{"username": "verify@oma.local", "password": "Verify-Be-OpenObserve-Local-Only9!"}}}
 	}
 	if e.brain {

@@ -11,6 +11,7 @@ import { approveToolCall, releaseToolApproval, clearToolApprovals, prefetchMcpAp
 import * as UserQuestions from "../user-questions/index.ts";
 import { SHUTDOWN_CANCEL } from "./contracts.ts";
 import { object } from "../json.ts";
+import { traceHooks } from "../observability/trace-context.ts";
 import type {
   SessionRuntimeConfig,
   SessionRuntimeHooks,
@@ -94,15 +95,16 @@ export class SessionRuntime {
         return approval.allowed ? decision : { kind: "deny", reason: approval.reason || "Tool use denied by OMA" };
       });
       scope.on("tools/execute", async (exec, next) => {
-        if (exec.name === "AskUserQuestion") return next();
-        if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return next();
+        const dispatch = () => traceHooks.runTool(this.config.id, exec.callId, next);
+        if (exec.name === "AskUserQuestion") return dispatch();
+        if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return dispatch();
         prefetchMcpApprovals(this.bridge, this.toolCalls, exec.callId,
           name => name.startsWith("mcp__") && !!scope.tools.get(name, exec.agent), exec.signal);
         const approval = await approveToolCall(this.bridge, {
           callId: exec.callId, toolName: exec.name, input: object(exec.arguments), available: true,
         }, exec.signal);
         if (!approval.allowed) throw new Error(approval.reason || "Tool use denied by OMA");
-        return next();
+        return dispatch();
       });
       scope.on("session/event", (session, event) => {
         if (session.id !== this.config.id) return;

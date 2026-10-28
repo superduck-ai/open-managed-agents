@@ -1,98 +1,166 @@
-import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../shared/i18n';
-import { Button } from '../../shared/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
-import { type ObservabilityScope } from './api';
-import { useTrajectoryBrowser } from './useTrajectoryBrowser';
-import { NativeTrajectory } from './trajectory/NativeTrajectory';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs';
+import { TooltipProvider } from '../../shared/ui/tooltip';
+import { useWorkspace } from '../../shared/workspaces/context';
+import {
+  DASHBOARD_TABS,
+  type DashboardPanel,
+  type DashboardQuery,
+  type DashboardTab,
+  type ObservabilityScope,
+} from './api';
+import { DashboardContext, type DashboardInteractions } from './dashboard/context';
+import { DashboardToolbar, FilterVariable, SessionVariable } from './dashboard/DashboardToolbar';
+import { DashboardView } from './dashboard/DashboardView';
+import { useDashboardQuery } from './dashboard/useDashboardQuery';
+import { InspectDialog } from './dashboard/InspectDialog';
+import { useDashboardShortcuts } from './dashboard/useShortcuts';
+import { useDashboardState, type DashboardState } from './dashboardState';
+import { problemText } from './time/labels';
+import { TimeControls } from './time/TimeControls';
+import { useDashboardTime } from './useDashboardTime';
+import { useSessionOptions } from './useSessionOptions';
+
+function dashboardFilters(state: DashboardState): DashboardQuery {
+  return {
+    agentVersions: state.versions,
+    ...(state.tab === 'models' && state.model ? { model: state.model } : {}),
+    ...(state.tab === 'tools' && state.tool ? { tool: state.tool } : {}),
+  };
+}
 
 export function ObservabilityPage({ scope }: { scope: ObservabilityScope }) {
-  const { locale, msg } = useI18n();
-  const { queryScope, scopeKey, current, select, query, next, previous, hasPrevious, ready } =
-    useTrajectoryBrowser(scope);
-  if (!ready)
+  const { msg } = useI18n();
+  const { activeWorkspaceId, orgUuid } = useWorkspace();
+  const [state, update] = useDashboardState();
+  const time = useDashboardTime(state, update);
+  const [inspected, setInspected] = useState<DashboardPanel | null>(null);
+  const hoveredPanel = useRef('');
+  const agentId = scope.kind === 'agent' ? scope.agentId : state.agentId;
+  const queryScope = useMemo(
+    () => ({
+      orgUuid: orgUuid ?? '',
+      workspaceId: activeWorkspaceId,
+      agentId: agentId || undefined,
+      sessionId: state.sessionId || undefined,
+      ...time.timeWindow,
+    }),
+    [orgUuid, activeWorkspaceId, agentId, state.sessionId, time.timeWindow],
+  );
+  const sessionScope = useMemo(() => ({ ...queryScope, sessionId: undefined }), [queryScope]);
+  const sessions = useSessionOptions(sessionScope);
+  const filters = useMemo(() => dashboardFilters(state), [state]);
+  const query = useDashboardQuery(time.timeWindow ? state.tab : null, queryScope, filters);
+  const viewPanel = (id: string) => update({ viewPanel: id }, 'push');
+  useDashboardShortcuts({
+    shiftBack: () => time.shift(-1),
+    shiftForward: () => time.shift(1),
+    zoomOut: time.zoomOut,
+    refresh: time.refresh,
+    viewHovered: () => hoveredPanel.current && viewPanel(state.viewPanel ? '' : hoveredPanel.current),
+    exitView: () => state.viewPanel && viewPanel(''),
+  });
+  const interactions = useMemo<DashboardInteractions>(
+    () => ({
+      syncId: `observability-${state.tab}`,
+      timeZone: state.timeZone,
+      viewPanel: state.viewPanel,
+      fetching: query.isFetching,
+      onZoom: time.zoomTo,
+      onViewPanel: (id) => update({ viewPanel: id }, 'push'),
+      onInspect: setInspected,
+      onHoverPanel: (id) => {
+        hoveredPanel.current = id;
+      },
+    }),
+    [state.tab, state.timeZone, state.viewPanel, query.isFetching, time.zoomTo, update],
+  );
+  if (!orgUuid || !activeWorkspaceId)
     return (
       <p role="status" className="p-3 text-sm text-muted-foreground">
-        {msg('trajectory.workspaceRequired', 'Select a workspace to view trajectories.')}
+        {msg('observability.workspaceRequired', 'Select a workspace to view observability.')}
       </p>
     );
+  const filterKind = state.tab === 'models' || state.tab === 'tools' ? state.tab : null;
   return (
-    <section className="flex h-full min-h-[500px] min-w-0 flex-col gap-3 py-3">
-      <div className="flex items-center gap-2 px-3">
-        {current && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => select(null)}
-            aria-label={msg('trajectory.back', 'Back')}
-          >
-            <ArrowLeft />
-          </Button>
-        )}
-        <h2 className="min-w-0 flex-1 truncate text-sm font-medium">
-          {msg('trajectory.title', 'Trajectory')}
-          {current ? ` · ${current}` : ''}
-        </h2>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => void query.refetch()}
-          aria-label={msg('trajectory.refresh', 'Refresh')}
-        >
-          <RefreshCw />
-        </Button>
-      </div>
-      {query.isError && (
-        <div role="alert" className="px-3 text-sm text-destructive">
-          {msg('trajectory.loadError', 'Could not load trajectories. Please try again later.')}
-        </div>
-      )}
-      {current ? (
-        <NativeTrajectory key={`${scopeKey}:${current}`} scope={queryScope} id={current} />
-      ) : (
-        <>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{msg('trajectory.title', 'Trajectory')}</TableHead>
-                <TableHead>{msg('trajectory.session', 'Session')}</TableHead>
-                <TableHead>{msg('trajectory.lastEvent', 'Last event')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {query.data?.items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>
-                    <Button variant="link" onClick={() => select(item.id)}>
-                      {item.id}
-                    </Button>
-                  </TableCell>
-                  <TableCell className="max-w-48 truncate">{item.session_id}</TableCell>
-                  <TableCell>{new Date(item.last_event_at).toLocaleString(locale)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          {!query.isPending && !query.isError && !query.data?.items.length && (
-            <p className="px-3 text-sm text-muted-foreground">
-              {msg('trajectory.empty', 'No DSH trajectory events in the last month.')}
+    <TooltipProvider>
+      <DashboardContext value={interactions}>
+        <div className="flex h-full min-h-[500px] min-w-0 flex-col gap-4 px-3 py-3">
+          <div className="min-w-0">
+            {scope.kind === 'workspace' ? (
+              <ResourcePageHeader title={msg('managedAgents.observability.title', 'Observability')} />
+            ) : null}
+            <DashboardToolbar
+              workspaceId={activeWorkspaceId}
+              agentId={agentId}
+              fixedAgent={scope.kind === 'agent'}
+              versions={state.versions}
+              session={
+                <SessionVariable
+                  sessionId={state.sessionId}
+                  options={sessions.options}
+                  loading={sessions.loading}
+                  onChange={(sessionId) => update({ sessionId })}
+                />
+              }
+              filter={
+                filterKind && (
+                  <FilterVariable
+                    kind={filterKind}
+                    value={filterKind === 'models' ? state.model : state.tool}
+                    options={query.data?.filter_options ?? []}
+                    onChange={(value) => update(filterKind === 'models' ? { model: value } : { tool: value })}
+                  />
+                )
+              }
+              timeControls={
+                <TimeControls
+                  range={state.range}
+                  now={time.anchor}
+                  timeZone={state.timeZone}
+                  refresh={state.refresh}
+                  fetching={query.isFetching}
+                  resolvedTitle={time.title}
+                  onRangeChange={time.setRange}
+                  onTimeZoneChange={(timeZone) => update({ timeZone })}
+                  onShift={time.shift}
+                  onZoomOut={time.zoomOut}
+                  onRefresh={time.refresh}
+                  onRefreshChange={(refresh) => update({ refresh })}
+                />
+              }
+              onAgentChange={(next) => update({ agentId: next, versions: [], sessionId: '' })}
+              onVersionsChange={(versions) => update({ versions })}
+            />
+          </div>
+          {time.problem && (
+            <p role="alert" className="text-sm text-destructive">
+              {problemText(time.problem, msg)}
             </p>
           )}
-          <div className="flex gap-2 px-3">
-            <Button variant="outline" size="sm" disabled={!hasPrevious || query.isFetching} onClick={previous}>
-              {msg('trajectory.previous', 'Previous')}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={query.data?.next_offset == null || query.isFetching}
-              onClick={next}
-            >
-              {msg('trajectory.next', 'Next')}
-            </Button>
-          </div>
-        </>
-      )}
-    </section>
+          <Tabs
+            value={state.tab}
+            onValueChange={(value) => update({ tab: value as DashboardTab, viewPanel: '' })}
+            className="flex min-w-0 flex-col gap-4"
+          >
+            <TabsList variant="line" className={state.viewPanel ? 'hidden' : 'gap-4'}>
+              {DASHBOARD_TABS.map(([value, label]) => (
+                <TabsTrigger key={value} value={value}>
+                  {msg(`observability.tab.${value}`, label)}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {DASHBOARD_TABS.map(([value]) => (
+              <TabsContent key={value} value={value}>
+                {state.tab === value && time.timeWindow && <DashboardView query={query} viewPanel={state.viewPanel} />}
+              </TabsContent>
+            ))}
+          </Tabs>
+          <InspectDialog panel={inspected} timeZone={state.timeZone} onClose={() => setInspected(null)} />
+        </div>
+      </DashboardContext>
+    </TooltipProvider>
   );
 }

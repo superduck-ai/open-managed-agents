@@ -110,6 +110,8 @@ type SessionEvent struct {
 	UsageIncrement     *SessionUsageIncrement
 	PayloadBlobUUID    *string
 	ToolUseID          *string
+	TraceParent        *string
+	TraceState         *string
 	UUID               string
 	ExternalID         string
 	OrganizationUUID   string
@@ -486,6 +488,45 @@ func (d *DB) ListSessionsPage(ctx context.Context, params ListSessionsPageParams
 		sessions = sessions[:params.Limit]
 	}
 	return sessions, hasMore, nil
+}
+
+type SessionTrajectorySummary struct {
+	ExternalID      string
+	AgentExternalID string
+	AgentVersion    int
+	Title           *string
+	Status          string
+	SubagentCount   int
+}
+
+func (d *DB) ListSessionTrajectorySummaries(ctx context.Context, workspaceUUID string, externalIDs []string) ([]SessionTrajectorySummary, error) {
+	if len(externalIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := NewSessionMapper(d.mapperDB).ListTrajectorySummaries(ctx, workspaceUUID, externalIDs)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]SessionTrajectorySummary, 0, len(rows))
+	for _, row := range rows {
+		summaries = append(summaries, SessionTrajectorySummary(row))
+	}
+	return summaries, nil
+}
+
+func (d *DB) ListSubagentThreadNames(ctx context.Context, workspaceUUID string, threadExternalIDs []string) (map[string]string, error) {
+	names := make(map[string]string, len(threadExternalIDs))
+	if len(threadExternalIDs) == 0 {
+		return names, nil
+	}
+	rows, err := NewSessionThreadMapper(d.mapperDB).ListSubagentNames(ctx, workspaceUUID, threadExternalIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		names[row.ExternalID] = row.Name
+	}
+	return names, nil
 }
 
 func (d *DB) GetPrimarySessionThreadExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (string, bool, error) {

@@ -79,6 +79,7 @@ func validateNativeRecord(record *logspb.LogRecord, capture bool) error {
 	if json.Unmarshal([]byte(headerJSON), &header) != nil || header.ID == "" || header.Version != 4 || json.Unmarshal([]byte(eventJSON), &event) != nil || event.Seq == nil || *event.Seq < 0 || event.Time <= 0 || event.Time > math.MaxInt64/1000000 || event.Type == "" || !json.Valid(event.Data) {
 		return errNativeTrajectoryPayload
 	}
+	facts := extractNativeStructuredFacts(event, record.Attributes)
 	if !capture {
 		var err error
 		eventJSON, err = redactNativeJSON(eventJSON)
@@ -90,14 +91,14 @@ func validateNativeRecord(record *logspb.LogRecord, capture bool) error {
 			return err
 		}
 	}
-	record.Attributes = []*commonpb.KeyValue{
+	record.Attributes = append([]*commonpb.KeyValue{
 		otlpStringAttribute("dsh.header", headerJSON),
 		otlpStringAttribute("dsh.session.id", header.ID),
 		otlpIntAttribute("dsh.event.seq", *event.Seq),
 		otlpIntAttribute("dsh.event.time", event.Time),
 		otlpStringAttribute("sessionId", header.ID),
 		otlpStringAttribute("content", eventJSON),
-	}
+	}, facts.attributes()...)
 	record.Body = &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "session-log"}}
 	record.TimeUnixNano = uint64(event.Time) * 1000000
 	record.ObservedTimeUnixNano = record.TimeUnixNano

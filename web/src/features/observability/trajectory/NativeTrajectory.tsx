@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
-import type { QueryScope } from '../api';
+import type { QueryScope, TrajectoryPage, TrajectoryTarget } from '../api';
 import { pollTrajectory } from './poll';
 import { createProjection, type Projection } from './projection';
 import type { NativeStore } from './native-types';
@@ -35,12 +35,24 @@ function NativeView({ projection, snapshot }: { projection: Projection; snapshot
   );
 }
 
-export function NativeTrajectory({ scope, id }: { scope: QueryScope; id: string }) {
+export function NativeTrajectory({
+  scope,
+  target,
+  onPage,
+}: {
+  scope: QueryScope;
+  target: TrajectoryTarget;
+  onPage?: (page: TrajectoryPage) => void;
+}) {
   const { locale, msg } = useI18n();
   const [state, setState] = useState<{ projection?: Projection; snapshot?: unknown; error?: 'retrying' | 'stopped' }>(
     {},
   );
   const [revision, setRevision] = useState(0);
+  const pageListener = useRef(onPage);
+  useEffect(() => {
+    pageListener.current = onPage;
+  }, [onPage]);
   useEffect(() => {
     const abort = new AbortController();
     let stopPolling: (() => void) | undefined;
@@ -55,11 +67,12 @@ export function NativeTrajectory({ scope, id }: { scope: QueryScope; id: string 
         const projection = createProjection(native, trajectory, locale);
         stopPolling = pollTrajectory(
           scope,
-          id,
+          target,
           abort.signal,
           (page) => {
             const snapshot = projection.append(page.events);
             setState({ projection, snapshot });
+            pageListener.current?.(page);
           },
           (stopped) => setState((current) => ({ ...current, error: stopped ? 'stopped' : 'retrying' })),
         );
@@ -72,7 +85,7 @@ export function NativeTrajectory({ scope, id }: { scope: QueryScope; id: string 
       abort.abort();
       stopPolling?.();
     };
-  }, [scope, id, locale, revision]);
+  }, [scope, target, locale, revision]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {state.error && (

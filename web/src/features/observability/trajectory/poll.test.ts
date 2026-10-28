@@ -41,7 +41,7 @@ function clock() {
 
 function start(onPage = (_page: TrajectoryPage) => {}, onFailure = (_stopped: boolean) => {}) {
   const abort = new AbortController();
-  const stop = pollTrajectory(scope, 'native', abort.signal, onPage, onFailure);
+  const stop = pollTrajectory(scope, { sessionId: 'sesn_1' }, abort.signal, onPage, onFailure);
   const dispose = () => {
     abort.abort();
     stop();
@@ -50,14 +50,52 @@ function start(onPage = (_page: TrajectoryPage) => {}, onFailure = (_stopped: bo
   return dispose;
 }
 
-function page(seq: number, more = false): TrajectoryPage {
+function page(seq: number, more = false, segment = 'cse_1'): TrajectoryPage {
   return {
     header: null,
     events: [{ seq, time: 1, type: 'turn/start', data: { turn: seq } }],
     next_seq: seq,
     has_more: more,
+    segment,
+    segments: [{ id: segment, started_at: '2026-10-20T00:00:00Z' }],
   };
 }
+
+test('lane targets keep thread scope and pin the first resolved segment', async () => {
+  const timer = clock();
+  const responses = [
+    { ...page(-1), events: [], segment: '', segments: [] },
+    page(0, true),
+    page(1),
+    page(2, false, 'cse_newer'),
+  ];
+  const requests: URL[] = [];
+  globalThis.fetch = (async (input) => {
+    requests.push(new URL(String(input), 'http://localhost'));
+    return Response.json(responses.shift());
+  }) as typeof fetch;
+  const abort = new AbortController();
+  const stop = pollTrajectory(
+    scope,
+    { sessionId: 'sesn 1', threadId: 'sthr_1' },
+    abort.signal,
+    () => {},
+    () => {},
+  );
+  cleanups.push(() => {
+    abort.abort();
+    stop();
+  });
+  await Bun.sleep(0);
+  await timer.next(1000);
+  await timer.next(1000);
+  expect(requests.map((url) => url.pathname)).toEqual(
+    Array(4).fill('/api/organizations/org/observability/trajectories/sesn%201'),
+  );
+  expect(requests.map((url) => url.searchParams.get('thread_id'))).toEqual(['sthr_1', 'sthr_1', 'sthr_1', 'sthr_1']);
+  expect(requests.map((url) => url.searchParams.get('segment'))).toEqual([null, null, 'cse_1', 'cse_1']);
+  expect(requests.map((url) => url.searchParams.get('after_seq'))).toEqual(['-1', '-1', '0', '1']);
+});
 
 test('permanent history gaps stop after three failures with bounded backoff', async () => {
   const timer = clock();

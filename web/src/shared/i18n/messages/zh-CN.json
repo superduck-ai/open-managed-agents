@@ -3274,7 +3274,6 @@
   "platformAdmin.platformAdministrationIsTemporarilyUnavailablePleaseTryAgain": "管理服务暂不可用，请重试。",
   "platformAdmin.thisAccountDoesNotHavePlatformAccess": "当前账号无后台权限。",
   "platformAdmin.backToConsole": "返回工作台",
-  "platformAdmin.openPlatformAdministration": "打开平台管理",
   "platformAdmin.platformAdministration": "平台管理",
   "platformAdmin.toggleAdministrationMenu": "切换后台菜单",
   "platformAdmin.globalAdministration": "全局管理",

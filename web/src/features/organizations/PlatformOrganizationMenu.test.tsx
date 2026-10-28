@@ -13,7 +13,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '../../sh
 import { PlatformAdminMenuItem } from '../platform-admin/PlatformAdminMenuItem';
 import { resetTestDom } from '../../test/setup';
 
-const { cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
+const { cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 afterEach(cleanup);
 
 function mount({
@@ -105,24 +105,19 @@ async function openAccountMenu() {
   return trigger;
 }
 
-async function openPlatformMenu(locale: Locale = 'zh-CN') {
+async function findPlatformItem(locale: Locale = 'zh-CN') {
   const parent = await screen.findByRole('menuitem', {
     name: locale === 'zh-CN' ? '平台管理' : 'Platform administration',
     exact: true,
   });
-  expect(parent.getAttribute('aria-haspopup')).toBe('menu');
+  expect(parent.getAttribute('aria-haspopup')).toBeNull();
   expect(parent.querySelector('svg')?.classList.contains('lucide-shield')).toBe(true);
-  fireEvent.keyDown(parent, { key: 'ArrowRight', code: 'ArrowRight' });
-  const open = await screen.findByRole('menuitem', {
-    name: locale === 'zh-CN' ? '打开平台管理' : 'Open platform administration',
-    exact: true,
-  });
-  await waitFor(() => expect(document.activeElement).toBe(open));
-  return { parent, open };
+  await waitFor(() => expect(document.activeElement).toBe(parent));
+  return parent;
 }
 
 for (const target of [undefined, 'target']) {
-  test(`无平台访问权限不显示一级入口或子菜单，进入状态：${Boolean(target)}`, async () => {
+  test(`无平台访问权限不显示一级入口或缩进子项，进入状态：${Boolean(target)}`, async () => {
     mount({ permissions: [], target });
     await openAccountMenu();
     expect(screen.queryByRole('menuitem')).toBeNull();
@@ -131,17 +126,15 @@ for (const target of [undefined, 'target']) {
 }
 
 for (const locale of ['zh-CN', 'en'] as const) {
-  test(`未进入组织仅显示打开后台，父项不导航且子项打开后台：${locale}`, async () => {
+  test(`未进入组织只显示平台管理，点击一级项直接打开后台：${locale}`, async () => {
     const { router, exit, onNavigate } = mount({ locale });
     await openAccountMenu();
-    const { open } = await openPlatformMenu(locale);
+    const parent = await findPlatformItem(locale);
     expect(router.state.location.pathname).toBe('/');
-    expect(onNavigate).not.toHaveBeenCalled();
-    const submenu = open.closest('[role="menu"]')!;
-    expect(within(submenu as HTMLElement).getAllByRole('menuitem')).toHaveLength(1);
-    expect(submenu.querySelector('[data-slot="dropdown-menu-label"]')).toBeNull();
-    expect(submenu.querySelector('[role="separator"]')).toBeNull();
-    fireEvent.keyDown(open, { key: 'Enter', code: 'Enter' });
+    expect(screen.getAllByRole('menuitem')).toHaveLength(1);
+    expect(screen.queryByText(/平台管理员进入|Platform administrator/)).toBeNull();
+    expect(screen.queryByRole('separator')).toBeNull();
+    fireEvent.click(parent);
     await waitFor(() => expect(router.state.location.pathname).toBe('/platform-admin'));
     expect(onNavigate).toHaveBeenCalledTimes(1);
     expect(exit).not.toHaveBeenCalled();
@@ -151,37 +144,36 @@ for (const locale of ['zh-CN', 'en'] as const) {
 for (const target of ['', 'target']) {
   for (const theme of ['light', 'dark']) {
     for (const locale of ['zh-CN', 'en'] as const) {
-      test(`二级返回项使用退出前目标且无目标回退：${target || '无'}，${locale}，${theme}`, async () => {
+      test(`静态缩进返回项使用退出前目标且无目标回退：${target || '无'}，${locale}，${theme}`, async () => {
         const { router, exit } = mount({ target, theme, locale });
         const trigger = await openAccountMenu();
-        expect(screen.queryByText(/平台管理员进入|Platform administrator/)).toBeNull();
-        expect(screen.queryByRole('menuitem', { name: /返回平台管理|Return to platform/ })).toBeNull();
-        const { parent, open } = await openPlatformMenu(locale);
+        const parent = await findPlatformItem(locale);
         const description = await screen.findByText(
           locale === 'zh-CN' ? '平台管理员进入 · 目标组织' : 'Platform administrator · 目标组织',
         );
         const item = screen.getByRole('menuitem', {
           name: locale === 'zh-CN' ? '返回平台管理' : 'Return to platform administration',
         });
-        const submenu = item.closest('[role="menu"]')!;
-        expect(submenu).toBe(open.closest('[role="menu"]'));
-        expect(submenu).not.toBe(parent.closest('[role="menu"]'));
-        expect(submenu.classList.contains('max-w-[calc(100vw-2rem)]')).toBe(true);
+        expect(screen.getAllByRole('menu')).toHaveLength(1);
+        expect(screen.getAllByRole('menuitem')).toEqual([parent, item]);
+        expect(item.closest('[role="menu"]')).toBe(parent.closest('[role="menu"]'));
+        expect(description.parentElement?.previousElementSibling).toBe(parent);
+        expect(screen.queryByRole('separator')).toBeNull();
         expect(item.classList.contains('h-8')).toBe(true);
         expect(item.classList.contains('gap-3')).toBe(true);
-        expect(item.classList.contains('px-3')).toBe(true);
+        expect(item.classList.contains('pl-10')).toBe(true);
         expect(item.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
         expect(item.querySelector('span')?.className).toBe('min-w-0 flex-1 truncate');
         expect(description.classList.contains('truncate')).toBe(true);
-        fireEvent.keyDown(open, { key: 'ArrowDown', code: 'ArrowDown' });
+        expect(description.classList.contains('pl-10')).toBe(true);
+        expect(description.classList.contains('text-xs')).toBe(true);
+        fireEvent.keyDown(parent, { key: 'ArrowDown', code: 'ArrowDown' });
         await waitFor(() => expect(document.activeElement).toBe(item));
         fireEvent.keyDown(item, { key: 'Escape', code: 'Escape' });
-        await waitFor(() => expect(document.activeElement).toBe(parent));
-        fireEvent.keyDown(parent, { key: 'Escape', code: 'Escape' });
         await waitFor(() => expect(document.activeElement).toBe(trigger));
         fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
-        const reopened = await openPlatformMenu(locale);
-        fireEvent.keyDown(reopened.open, { key: 'ArrowDown', code: 'ArrowDown' });
+        const reopened = await findPlatformItem(locale);
+        fireEvent.keyDown(reopened, { key: 'ArrowDown', code: 'ArrowDown' });
         const returnItem = screen.getByRole('menuitem', {
           name: locale === 'zh-CN' ? '返回平台管理' : 'Return to platform administration',
         });

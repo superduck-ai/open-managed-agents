@@ -3,12 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useOrganizations } from '../../shared/organizations/context';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
-import {
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from '../../shared/ui/dropdown-menu';
+import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel } from '../../shared/ui/dropdown-menu';
 import { useScopeConfirmation } from './useScopeConfirmation';
 
 export function PlatformOrganizationMenu() {
@@ -35,15 +30,14 @@ function ConnectedPlatformOrganizationMenu() {
   if (!organizations?.platformScope) return null;
   return (
     <>
-      <DropdownMenuSeparator />
       <DropdownMenuGroup>
-        <DropdownMenuLabel className="truncate px-3 py-2 text-xs">
+        <DropdownMenuLabel className="truncate py-1 pr-3 pl-10 text-xs">
           {msg('platformScope.active', 'Platform administrator · {organization}', {
             organization: organizationAccess?.organization.name ?? organizations.platformScope.targetOrganizationUuid,
           })}
         </DropdownMenuLabel>
         <DropdownMenuItem
-          className="h-8 gap-3 px-3"
+          className="h-8 gap-3 pr-3 pl-10"
           disabled={organizations.switching}
           closeOnClick={false}
           onClick={() => confirmation.request(() => void exit())}

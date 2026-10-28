@@ -2,6 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import OTel from "@deepseek-ai/dsh-otel";
 import { Context } from "@deepseek-ai/cordis";
 import { SessionId } from "@deepseek-ai/dsh-session";
+import { version as sessionVersion } from "@deepseek-ai/dsh-session/package.json";
 import { OmaApi } from "../src/api.ts";
 import { mountKernel } from "../src/kernel.ts";
 import { mountTelemetry } from "../src/observability/index.ts";
@@ -25,9 +26,11 @@ test("disabled observability creates no exporter", async () => {
 
 test("official live capture exports original events and fork headers through the owning OMA credentials", async () => {
   type Record = { attributes: { key: string; value: { stringValue?: string } }[] };
+  const scopes: { name: string; version: string }[] = [];
   const requests: { path: string; authorization: string | null; events: Record[] }[] = [];
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    const body = await request.json() as { resourceLogs: { scopeLogs: { logRecords: Record[] }[] }[] };
+    const body = await request.json() as { resourceLogs: { scopeLogs: { scope: { name: string; version: string }; logRecords: Record[] }[] }[] };
+    scopes.push(...body.resourceLogs.flatMap(resource => resource.scopeLogs.map(scope => scope.scope)));
     requests.push({ path: new URL(request.url).pathname, authorization: request.headers.get("authorization"), events: body.resourceLogs.flatMap(resource => resource.scopeLogs.flatMap(scope => scope.logRecords)) });
     return Response.json({});
   } });
@@ -45,6 +48,8 @@ test("official live capture exports original events and fork headers through the
     task.ingress_token = "rotated-ingress";
     await api.telemetry!.close(task.session_id);
     expect(requests.length).toBeGreaterThan(0);
+    expect(scopes.length).toBeGreaterThan(0);
+    for (const scope of scopes) expect(scope).toEqual({ name: "@deepseek-ai/dsh-session", version: sessionVersion });
     const records = requests.flatMap(request => request.events);
     const value = (record: Record, key: string) => record.attributes.find(attribute => attribute.key === key)?.value.stringValue;
     expect(records.some(record => value(record, "content") === JSON.stringify(event))).toBe(true);

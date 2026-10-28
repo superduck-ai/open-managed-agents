@@ -197,7 +197,7 @@ func mustSessionActiveMilliseconds(t *testing.T, app *testApp, worker db.CodeSes
 func usageActiveMilliseconds(t *testing.T, raw json.RawMessage) (int64, bool) {
 	t.Helper()
 	var usage struct {
-		Active *int64 `json:"active_milliseconds"`
+		Active *int64 `json:"session_active_milliseconds"`
 	}
 	if err := json.Unmarshal(raw, &usage); err != nil {
 		t.Fatal(err)

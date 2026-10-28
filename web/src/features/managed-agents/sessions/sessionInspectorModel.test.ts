@@ -344,7 +344,7 @@ describe('session inspector cost', () => {
           cache_read_input_tokens: 30,
           cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 5 },
           list_cost: { amount: '125', currency: 'USD' },
-          active_milliseconds: 2500,
+          session_active_milliseconds: 2500,
           server_tool_use: { web_search_requests: 3 },
         },
       },

@@ -109,7 +109,11 @@ func (t *Transport) finish(ctx context.Context, record db.UsageRecord, observer 
 	if len(record.PriceSnapshot) > 0 && json.Unmarshal(record.PriceSnapshot, &price) == nil {
 		calculator = billing.NewCalculator(map[string]billing.ModelPrice{record.Model: price})
 	}
-	if cents, ok := calculator.ModelRequestCents(record.Model, observer.usage.Tokens()); ok && observer.usage.InputTokens != nil {
+	tokens := observer.usage.Tokens()
+	if amount, ok := calculator.BudgetRequestAmount(record.Model, tokens); ok {
+		record.ModelCostUSD = amount
+	}
+	if cents, ok := calculator.ModelRequestCents(record.Model, tokens); ok && observer.usage.InputTokens != nil {
 		record.ModelCents = new(cents)
 	}
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

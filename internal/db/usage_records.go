@@ -30,6 +30,7 @@ type UsageRecord struct {
 	CacheWrite1hTokens int64
 	SearchRequests     int64
 	ModelCents         *int64
+	ModelCostUSD       string
 	SearchCents        int64
 	Complete           bool
 	Version            string
@@ -70,6 +71,41 @@ type UsageAggregate struct {
 
 func (d *DB) InsertUsageRecord(ctx context.Context, record UsageRecord) error {
 	return NewUsageRecordMapper(d.mapperDB).Insert(ctx, record)
+}
+
+type ModelUsage struct {
+	Day                string
+	Model              string
+	PriceSnapshot      []byte
+	InputTokens        int64
+	OutputTokens       int64
+	CacheReadTokens    int64
+	CacheWriteTokens   int64
+	CacheWrite5mTokens int64
+	CacheWrite1hTokens int64
+	ModelCents         int64
+	ModelCostUSD       string
+}
+
+func (d *DB) ListModelUsage(ctx context.Context, query UsageQuery) ([]ModelUsage, error) {
+	if len(query.WorkspaceUUIDs) == 0 {
+		return []ModelUsage{}, nil
+	}
+	rows, err := NewUsageRecordMapper(d.mapperDB).ListModelUsage(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	usage := make([]ModelUsage, len(rows))
+	for i, row := range rows {
+		usage[i] = ModelUsage{
+			Day: row.Day, Model: row.Model, PriceSnapshot: row.PriceSnapshot,
+			InputTokens: row.InputTokens, OutputTokens: row.OutputTokens,
+			CacheReadTokens: row.CacheReadTokens, CacheWriteTokens: row.CacheWriteTokens,
+			CacheWrite5mTokens: row.CacheWrite5mTokens, CacheWrite1hTokens: row.CacheWrite1hTokens,
+			ModelCents: row.ModelCents, ModelCostUSD: row.ModelCostUSD,
+		}
+	}
+	return usage, nil
 }
 
 func (d *DB) AggregateUsage(ctx context.Context, query UsageQuery) ([]UsageAggregate, error) {

@@ -173,21 +173,44 @@ func TestBudgetRequestCentsMissingCacheRate(t *testing.T) {
 	}
 }
 
-func TestMeteringCents(t *testing.T) {
-	if got := MeteringCents(10, 0); got != 10*WebSearchCentsPerRequest {
-		t.Fatalf("MeteringCents(10 searches) = %d", got)
-	}
-	if got := MeteringCents(0, 3600); got != ActiveTimeCentsPerHour {
-		t.Fatalf("MeteringCents(1h active) = %d", got)
+func TestTokenDollarsKeepsSubCentAmounts(t *testing.T) {
+	price := ModelPrice{ExchangeRate: "7.2", Rates: &Rates{Input: new("0.14"), Output: new("0.42"), CacheRead: new("0.0042")}}
+	dollars, ok := price.TokenDollars(TokenUsage{InputTokens: 369, OutputTokens: 127, CacheReadInputTokens: 3968})
+	if !ok || FormatDollars(dollars) != "0.000017" {
+		t.Fatalf("sub-cent token cost = %s, ok %v", FormatDollars(dollars), ok)
 	}
 }
 
-func TestTotalListCostCents(t *testing.T) {
-	// 1800 active seconds = 0.5h at $0.08/h = 4 cents.
-	got := TotalListCostCents(1800, 5, 1800)
-	want := int64(1800 + 5*WebSearchCentsPerRequest + 4)
-	if got != want {
-		t.Fatalf("TotalListCostCents = %d, want %d", got, want)
+func TestToolCostCents(t *testing.T) {
+	if got := ToolCostCents(Usage{}); got != 0 {
+		t.Fatalf("no searches = %d", got)
+	}
+	one := ToolCostCents(Usage{ServerToolUse: &SearchUsage{Requests: new(int64(1))}})
+	if one != 0 {
+		t.Fatalf("one search = %d, want 0", one)
+	}
+	thousand := ToolCostCents(Usage{ServerToolUse: &SearchUsage{Requests: new(int64(1000))}})
+	if thousand != 69 {
+		t.Fatalf("1000 searches = %d, want 69 cents", thousand)
+	}
+	if got := FormatDollars(ToolDollars(Usage{})); got != "0.000000" {
+		t.Fatalf("empty dollars = %s", got)
+	}
+	if got := FormatDollars(ToolDollars(Usage{ServerToolUse: &SearchUsage{Requests: new(int64(2))}})); got != "0.001389" {
+		t.Fatalf("two searches = %s, want 0.001389", got)
+	}
+	if got := FormatDollars(ToolDollars(Usage{ServerToolUse: &SearchUsage{Requests: new(int64(1000))}})); got != "0.694444" {
+		t.Fatalf("1000 searches = %s, want 0.694444", got)
+	}
+}
+
+func TestRecordedSearchPriceDoesNotFollowCatalog(t *testing.T) {
+	recorded := ResolveSearchPrice("5", "1000", "7.2")
+	if FormatDollars(recorded.Dollars(1000)) != "0.694444" || FormatDollars(LegacySearchPrice().Dollars(2)) != "0.001389" {
+		t.Fatalf("recorded price changed: 1000=%s 2=%s", FormatDollars(recorded.Dollars(1000)), FormatDollars(LegacySearchPrice().Dollars(2)))
+	}
+	if FormatDollars((SearchPrice{CNY: "10", Per: 1000, Exchange: "7.2"}).Dollars(1000)) != "1.388889" {
+		t.Fatal("a later unit price must not be the recorded price")
 	}
 }
 

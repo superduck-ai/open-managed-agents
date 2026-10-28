@@ -258,7 +258,7 @@ Claude Code 2.1.251 和 2.1.278 的独立假网关验证确认了上述 header/t
 
 每个 `span.model_request_end` 仅在首次插入时累计 Session 与所属线程的实际计数。
 当前报告 input/output/cache-read，以及上游确实返回的 5 分钟 / 1 小时 cache-creation 分项；
-nil 保持缺失，显式 0 保留。没有来源的计费金额、active_milliseconds、server_tool_use 不填估计值。
+nil 保持缺失，显式 0 保留。没有来源的计费金额、session_active_milliseconds、server_tool_use 不填估计值。
 
 每次真正发布 Session idle，紧前发布 `session.usage`，`budget` 为 null。
 `session.usage` 由 `sessionStatusEventsTx` 在 thread idle 与 session idle 之间派生，写入时在 Session 行锁内用最新累计值生成快照，

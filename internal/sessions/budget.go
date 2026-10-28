@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 	"uuid"
 
@@ -78,8 +79,18 @@ func budgetGate(eventType string) error {
 
 // sessionUsageJSON renders the contract-shaped usage object for a session or
 // thread. budget is echoed verbatim (null when absent).
+func costOrZero(amount string) string {
+	if amount == "" {
+		return "0.000000"
+	}
+	return amount
+}
+
 func sessionUsageJSON(totals db.SessionUsageTotals, budget json.RawMessage) json.RawMessage {
-	totalCents := billing.TotalListCostCents(totals.ListCostCents, totals.WebSearchRequests, totals.ActiveSeconds)
+	amount := totals.ListCostUSD
+	if amount == "" {
+		amount = "0.000000"
+	}
 	payload := map[string]any{
 		"input_tokens":            totals.InputTokens,
 		"output_tokens":           totals.OutputTokens,
@@ -88,12 +99,20 @@ func sessionUsageJSON(totals db.SessionUsageTotals, budget json.RawMessage) json
 			"ephemeral_5m_input_tokens": totals.CacheWrite5mTokens,
 			"ephemeral_1h_input_tokens": totals.CacheWrite1hTokens,
 		},
-		"list_cost":      billing.CostAmount{Amount: totalCents, Currency: billing.CurrencyUSD},
-		"active_seconds": totals.ActiveSeconds,
+		"list_cost":                  map[string]string{"amount": amount, "currency": billing.CurrencyUSD},
+		"model_cost_usd":             costOrZero(totals.ModelCostUSD),
+		"tool_cost_usd":              costOrZero(totals.ToolCostUSD),
+		"model_request_milliseconds": totals.ModelRequestMilliseconds,
 		"server_tool_use": map[string]any{
 			"web_search_requests": totals.WebSearchRequests,
 			"web_fetch_requests":  0,
 		},
+	}
+	if totals.SessionActiveMilliseconds > 0 {
+		payload["session_active_milliseconds"] = totals.SessionActiveMilliseconds
+	}
+	if totals.RuntimeCostUSD != "" {
+		payload["runtime_cost_usd"] = totals.RuntimeCostUSD
 	}
 	if len(budget) > 0 && string(budget) != "null" {
 		payload["budget"] = json.RawMessage(budget)
@@ -142,6 +161,17 @@ func sessionBudgetAmount(session db.Session) (int64, bool) {
 	return budget.MaxListCost.Amount, true
 }
 
+func sessionCostReached(totals db.SessionUsageTotals, budgetCents int64) bool {
+	if totals.ListCostUSD == "" {
+		return false
+	}
+	spent := new(big.Rat)
+	if _, ok := spent.SetString(totals.ListCostUSD); !ok {
+		return true
+	}
+	return spent.Cmp(new(big.Rat).SetFrac64(budgetCents, 100)) >= 0
+}
+
 // enforceBudgetAfterEvents is called after a worker batch is persisted. It
 // refreshes the session usage projection and, when a budgeted session first
 // reaches its cap, marks the cap reached and emits the CMA budget_reached
@@ -153,7 +183,7 @@ func (h *Handler) enforceBudgetAfterEvents(ctx context.Context, session db.Sessi
 	}
 	interesting := false
 	for _, event := range events {
-		if event.EventType == "span.model_request_end" || event.EventType == "session.status_idle" || event.EventType == "session.thread_status_idle" {
+		if event.EventType == "span.model_request_end" || event.EventType == "agent.tool_result" || event.EventType == "session.status_idle" || event.EventType == "session.thread_status_idle" {
 			interesting = true
 			break
 		}
@@ -173,7 +203,7 @@ func (h *Handler) enforceBudgetAfterEvents(ctx context.Context, session db.Sessi
 	if !budgeted || session.BudgetReachedAt != nil {
 		return nil
 	}
-	if billing.TotalListCostCents(totals.ListCostCents, totals.WebSearchRequests, totals.ActiveSeconds) < budgetAmount {
+	if !sessionCostReached(totals, budgetAmount) {
 		return nil
 	}
 	now := time.Now().UTC()

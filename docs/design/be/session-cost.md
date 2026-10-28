@@ -35,23 +35,23 @@ sequenceDiagram
     Events->>Events: 写入 session.status_running，processed_at 就是这段起点
     Worker->>Events: 离开 running
     Events->>Events: 读取最近一条 session.status_running
-    Events->>Session: 把差值加进 active_milliseconds
+    Events->>Session: 把差值加进 session_active_milliseconds
     Events->>Events: idle 时再用这份 usage 写 session.usage 快照
 ```
 
-累计时长只放一个键：`sessions.usage.active_milliseconds`，单位是毫秒整数。token 累加使用 `usage || jsonb_build_object(...)`，只覆盖 token 键，不会清掉这个键。线程 `usage` 不加它。没有这段时长时不要写 0。已经写成小数秒的 `active_seconds` 在下一次累加时乘 1000 并入这个整数，然后从 `usage` 里去掉。
+累计会话运行时长只放一个键：`sessions.usage.session_active_milliseconds`，单位是毫秒整数。模型请求耗时另记为 `usage.model_request_milliseconds`，是各次模型请求起止时间之差的毫秒合计，重叠请求分别累加，不参与运行时金额。token 累加使用 `usage || jsonb_build_object(...)`，只覆盖 token 键，不会清掉这个键。线程 `usage` 不加它。没有这段时长时不要写 0。
 
-读路径上的 `oma_session_activity_projection` 不再把实时算出的 `active_seconds` 叠进 `usage`（只继续叠进 `stats`）。对外的会话响应和 `session.usage` 快照因此只带存储里的 `active_milliseconds`；投影还会去掉遗留的 `usage.active_seconds`。
+读路径上的 `oma_session_activity_projection` 不再把实时算出的 `active_seconds` 叠进 `usage`（只继续叠进 `stats`）。对外的会话响应和 `session.usage` 快照因此只带存储里的 `session_active_milliseconds`；投影还会去掉遗留的 `usage.active_seconds`。
 
 当前这段 `running` 的起点是最近一条已写入的 `session.status_running` 的 `processed_at`。会话还不是 `running` 时才会写入这条事件，重复上报不会再插一条，所以不需要额外的列。会话响应和 `session.usage` 事件都原样输出 `sessions.usage`，起点放进这份 JSON 会变成公开字段。
 
-离开 `running` 时，用离开事件的 `processed_at` 减去这个起点。差值不大于 0 则不加。大于 0 时把整毫秒加进 `usage.active_milliseconds`。下一次进入 `running` 会写入更新的状态事件，下一段从那条事件另计。
+离开 `running` 时，用离开事件的 `processed_at` 减去这个起点。差值不大于 0 则不加。大于 0 时把整毫秒加进 `usage.session_active_milliseconds`。下一次进入 `running` 会写入更新的状态事件，下一段从那条事件另计。
 
 `idle` 的实际写入顺序是线程 `idle`、`session.usage`、会话 `idle`。结算发生在生成 `session.usage` 之前，快照才能带上刚结束的这段。`rescheduling` 和 `terminated` 不发 `session.usage`，在会话状态离开 `running` 时结算到同一行。
 
 用事件上的 `processed_at`，不用写入时的墙钟。同一状态事件重试时，状态没有再次从 `running` 离开，时长只加一次。这和 token 只在 `span.model_request_end` 首次插入时累加是同一条规则。
 
-`session.usage` 快照继续在真正的会话 `idle` 之前发出，`budget` 仍为 null。快照直接带出这份 `usage`，其中已经是 `active_milliseconds`。
+`session.usage` 快照继续在真正的会话 `idle` 之前发出，`budget` 仍为 null。快照直接带出这份 `usage`，其中已经是 `session_active_milliseconds`。
 
 模型调用失败且上游没有给出 token 时，维持现在的行为：不补 0，也不产生金额。
 
@@ -62,16 +62,16 @@ sequenceDiagram
 - 不在这一版拒绝超预算的用户消息。OMA 的 `session.usage` 现在固定带 `budget: null`。
 - 不记网页搜索次数，也不记代码执行容器小时。
 
-运行时长按 `runtime_cost.usd_per_hour` 计价，并在累加的那次事务里把当时的金额冻进 `usage.runtime_cost_usd`。历史不随以后的改价重算。Token 价目仍只在文档里，不写入 `usage`。不带 `workspace_id` 的成本查询只对组织管理员开放。
+运行时长按 `runtime_cost.usd_per_hour` 计价，并在累加的那次事务里把当时的金额冻进 `usage.runtime_cost_usd`。历史不随以后的改价重算。会话预算触顶和提高预算上限时，运行费用取这份已冻住的金额，按半分向上折成美分后计入累计费用。Token 价目仍只在文档里，不写入 `usage`。不带 `workspace_id` 的成本查询只对组织管理员开放。
 
 ## 验收
 
 先写失败，再写成功：
 
 - 乱序：离开事件不晚于这段 `session.status_running`，时长不变，下一段从新的 `running` 另计。
-- 重试：同一次离开 `running` 投递两次，`active_milliseconds` 只加一次。
+- 重试：同一次离开 `running` 投递两次，`session_active_milliseconds` 只加一次。
 - 折叠：一个线程已 `idle`、另一个仍 `running`，会话时长不截止。
 - `rescheduling` 截止当前这段；再次 `running` 另起一段。
-- 成功路径：`running` 到 `idle` 的时长进入随后那条 `session.usage` 的 `active_milliseconds`。token 累加与现在一致。沙箱停止不改变这个数。
+- 成功路径：`running` 到 `idle` 的时长进入随后那条 `session.usage` 的 `session_active_milliseconds`。token 累加与现在一致。沙箱停止不改变这个数。
 
 分析页 `/cost` 读取这些 `session.usage` 快照里的 `runtime_cost_usd`。这个金额在一段 `running` 结束时，按当时的 `runtime_cost.usd_per_hour` 写成小数点后 6 位的十进制美元金额，之后改配置不会改写它。没写这项时不写入新金额，成本页提示未配置。页面把相邻快照的差额按 UTC 日相加。工作区、模型缩小计入范围；分组决定每日图的拆分。没有该字段的旧快照在配置了单价之后，按当前配置折算。正在 `running`、尚未写入快照的时长不出现在这张图里。

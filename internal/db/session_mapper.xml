@@ -178,16 +178,9 @@ RETURNING <include refid="columns"/>
     <update id="AddActiveMilliseconds" result="returning" resultType="sessionUsageRow">
         UPDATE sessions
         SET usage = jsonb_set(
-                usage - 'active_seconds',
-                '{active_milliseconds}',
-                to_jsonb(
-                    COALESCE(CAST(usage-&gt;&gt;'active_milliseconds' AS bigint), 0)
-                    + CASE
-                        WHEN jsonb_exists(usage, 'active_milliseconds') THEN 0
-                        ELSE COALESCE(CAST(CAST(usage-&gt;&gt;'active_seconds' AS numeric) * 1000 AS bigint), 0)
-                      END
-                    + #{durationMillis}
-                ),
+                usage,
+                '{session_active_milliseconds}',
+                to_jsonb(COALESCE(CAST(usage-&gt;&gt;'session_active_milliseconds' AS bigint), 0) + #{durationMillis}),
                 true
             )
         WHERE workspace_uuid = #{workspaceUUID}

@@ -2736,7 +2736,7 @@ The session object includes a `usage` field with the session's cumulative usage:
       "amount": "187",
       "currency": "USD"
     },
-    "active_milliseconds": 342500,
+    "session_active_milliseconds": 342500,
     "server_tool_use": {
       "web_search_requests": 3,
       "web_fetch_requests": 0
@@ -2747,7 +2747,7 @@ The session object includes a `usage` field with the session's cumulative usage:
 
 `input_tokens` reports uncached input tokens and `output_tokens` reports total output tokens across all model calls in the session. The `cache_read_input_tokens` field reports tokens read from the prompt cache, and the `cache_creation` object breaks down cache-creation tokens by cache lifetime (`ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens`). Cache entries use a 5-minute TTL by default, so back-to-back turns within that window benefit from cache reads, which reduce per-token cost.
 
-`list_cost` is the session's cumulative consumption priced at public list rates, as a whole number of cents in a string, with a currency code. `active_milliseconds` is the cumulative integer milliseconds during which the session had at least one thread `running`; overlapping activity from concurrent threads is counted once. This integer is the duration the session's runtime cost is priced on. `server_tool_use` counts server-executed tool requests for pricing: web search requests are priced into list cost per request, and web fetch requests carry no per-request charge and aren't metered, so `web_fetch_requests` reads `0`. Each [session thread](/docs/en/multiagent-orchestration)'s own `usage` carries `list_cost` and does not carry `active_milliseconds`. Per-thread figures are rounded independently, so they don't sum exactly to the session's `list_cost`; the session figure is the authoritative one.
+`list_cost` is the session's cumulative consumption priced at public list rates, as a USD amount with 6 decimal places in a string, with a currency code. An `amount` without a decimal point on an older event is still a whole number of cents. `session_active_milliseconds` is the cumulative integer milliseconds during which the session had at least one thread `running`; overlapping activity from concurrent threads is counted once. This integer is the duration the session's runtime cost is priced on. `server_tool_use.web_search_requests` counts successful web search tool calls. Each successful call is priced at the rate recorded when it completed; the current rate is ¥5 per 1,000 calls, and a later rate change does not reprice calls already recorded. Web fetch requests carry no per-request charge and aren't metered, so `web_fetch_requests` reads `0`. Each [session thread](/docs/en/multiagent-orchestration)'s own `usage` carries `list_cost` and does not carry `session_active_milliseconds`. Per-thread figures are rounded independently, so they don't sum exactly to the session's `list_cost`; the session figure is the authoritative one.
 
 You don't have to poll the session to observe these totals. The `session.usage` event carries the same cumulative snapshot (the `usage` object, plus the session's `budget`, which is `null` when the session has none) on the session stream and in the event history. It is emitted on idle transitions rather than on a timer: the session emits one immediately before it goes idle, whatever the stop reason, and one when a thread pauses at a [session budget](/docs/en/budgets). A stream reader therefore sees the final cost of a turn, or of the work that hit a budget, without an extra fetch.
 

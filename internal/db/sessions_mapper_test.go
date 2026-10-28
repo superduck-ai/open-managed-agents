@@ -282,7 +282,7 @@ func TestSessionRunningIntervalSQL(t *testing.T) {
 		statement: sessionMapperAddActiveMillisecondsStatement, bound: bound,
 		wantID: "SessionMapper.AddActiveMilliseconds", wantKind: yourbatis.StatementUpdate,
 		wantArgumentNames: []string{"durationMillis", "workspaceUUID", "sessionExternalID"},
-		wantSQLFragments:  []string{"'{active_milliseconds}'", "status = 'running'"},
+		wantSQLFragments:  []string{"'{session_active_milliseconds}'", "status = 'running'"},
 	})
 	replaced := buildSessionMapperReplaceUsage(yourbatis.DialectPostgres, "workspace-uuid", "ses_test", []byte(`{"runtime_cost_usd":"1.00"}`))
 	assertMapperBuilderContract(t, mapperBuilderContract{
@@ -306,7 +306,7 @@ func TestSessionRunningIntervalSQL(t *testing.T) {
 		wantArgumentNames: []string{
 			"params.OrganizationUUID", "params.EndingBefore", "params.StartingAt", "params.OrganizationUUID", "params.StartingAt",
 		},
-		wantSQLFragments: []string{"event_type = 'session.usage'", "active_milliseconds", "DISTINCT ON (baseline.session_uuid)"},
+		wantSQLFragments: []string{"event_type = 'session.usage'", "session_active_milliseconds", "DISTINCT ON (baseline.session_uuid)"},
 	})
 	adminUsage := buildSessionEventMapperListAdminUsagePoints(yourbatis.DialectPostgres, adminUsageQuery{OrganizationUUID: "org"})
 	assertMapperBuilderContract(t, mapperBuilderContract{

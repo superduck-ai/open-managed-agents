@@ -107,7 +107,7 @@ func TestAnalyticsMeteredRequests(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 		want := tc.requests
-		if report.Summary.Requests != want || report.Summary.ModelCents != 4*want || report.Summary.SearchCents != 2*want || report.Summary.SubtotalCents != 6*want || report.Summary.CacheReadTokens != 1000*want || report.Summary.CacheWriteTokens != 1000*want || report.Summary.Incomplete != 0 {
+		if report.Summary.Requests != want || report.Summary.ModelCents != 4*want || report.Summary.SearchCents != 0 || report.Summary.SearchRequests != 0 || report.Summary.SubtotalCents != 4*want || report.Summary.CacheReadTokens != 1000*want || report.Summary.CacheWriteTokens != 1000*want || report.Summary.Incomplete != 0 {
 			t.Fatalf("filter=%s summary=%+v", tc.filter, report.Summary)
 		}
 	}

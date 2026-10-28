@@ -2736,7 +2736,7 @@ agent.message   {"id": "sevt_01abc...", "content": [...]}
       "amount": "187",
       "currency": "USD"
     },
-    "active_milliseconds": 342500,
+    "session_active_milliseconds": 342500,
     "server_tool_use": {
       "web_search_requests": 3,
       "web_fetch_requests": 0
@@ -2747,7 +2747,7 @@ agent.message   {"id": "sevt_01abc...", "content": [...]}
 
 `input_tokens` 报告未缓存的输入令牌数，`output_tokens` 报告会话中所有模型调用的总输出令牌数。`cache_read_input_tokens` 字段报告从提示缓存中读取的令牌数，`cache_creation` 对象按缓存生命周期细分缓存创建令牌（`ephemeral_5m_input_tokens` 和 `ephemeral_1h_input_tokens`）。缓存条目默认使用 5 分钟的 "TTL"（生存时间），因此在该时间窗口内连续进行的轮次可以受益于缓存读取，从而降低每令牌成本。
 
-`list_cost` 是会话按公开标价计算的累计消费，以字符串形式表示的整数美分值，并附带货币代码。`active_milliseconds` 是会话中至少有一个线程处于 `running` 的累计毫秒整数；并发线程的重叠活动只计算一次。这个整数即为会话运行时成本的计价时长。`server_tool_use` 统计用于计价的服务器端执行的工具请求数：网络搜索请求按每次请求计入标价成本，而网络抓取请求不收取每次请求费用且不计量，因此 `web_fetch_requests` 显示为 `0`。每个[会话线程](/docs/zh/multiagent-orchestration)自身的 `usage` 也包含 `list_cost`，不包含 `active_milliseconds`。各线程的数值是独立四舍五入的，因此它们的总和不会与会话的 `list_cost` 完全相等；会话级别的数值才是权威数据。
+`list_cost` 是会话按公开标价计算的累计消费，金额是保留 6 位小数的美元字符串，并附带货币代码。旧事件里不带小数点的 `amount` 仍是整数美分。`session_active_milliseconds` 是会话中至少有一个线程处于 `running` 的累计毫秒整数；并发线程的重叠活动只计算一次。这个整数即为会话运行时成本的计价时长。`server_tool_use.web_search_requests` 统计成功的网页搜索工具调用。每次成功调用按当时的单价计入标价成本，当前单价是每 1000 次 5 元；之后改价不再改变已记下的调用。网络抓取请求不收取每次请求费用且不计量，因此 `web_fetch_requests` 显示为 `0`。每个[会话线程](/docs/zh/multiagent-orchestration)自身的 `usage` 也包含 `list_cost`，不包含 `session_active_milliseconds`。各线程的数值是独立四舍五入的，因此它们的总和不会与会话的 `list_cost` 完全相等；会话级别的数值才是权威数据。
 
 您无需轮询会话即可观察这些总计数据。`session.usage` 事件会在会话流和事件历史记录中携带相同的累计快照（即 `usage` 对象，以及会话的 `budget`，当会话没有预算时该值为 `null`）。该事件在空闲状态转换时发出，而非按定时器发出：无论停止原因为何，会话都会在进入空闲状态之前立即发出一个此事件；当某个线程在[会话预算](/docs/zh/budgets)处暂停时，也会发出一个。因此，流读取器无需额外获取即可看到某个轮次的最终成本，或触及预算的那部分工作的最终成本。
 

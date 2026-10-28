@@ -402,27 +402,21 @@ export const inspectorSessionListCost = sessionListCost;
 
 function inspectorMoneyInCents(value: unknown) {
   const money = objectRecord(value);
-  const cents = optionalNumericValueFromKeys(money, ['amount']);
-  if (cents === undefined) return null;
+  const amount = optionalNumericValueFromKeys(money, ['amount']);
+  if (amount === undefined) return null;
+  const raw = money.amount;
+  const cents = typeof raw === 'string' && raw.includes('.') ? amount * 100 : amount;
   return {
     cents,
     currency: typeof money.currency === 'string' && money.currency ? money.currency : 'USD',
   };
 }
 
-function activeMilliseconds(usage: Record<string, unknown>) {
-  const milliseconds = optionalNumericValueFromKeys(usage, ['active_milliseconds']);
-  if (milliseconds !== undefined) return milliseconds;
-  // Older session.usage snapshots only had active_seconds; prefer milliseconds when present.
-  const seconds = optionalNumericValueFromKeys(usage, ['active_seconds']);
-  return seconds === undefined ? undefined : seconds * 1000;
-}
-
 function inspectorSessionUsage(usage: Record<string, unknown>): InspectorSessionUsage {
   const cacheCreation = objectRecord(usage.cache_creation);
   const serverToolUse = objectRecord(usage.server_tool_use);
   return {
-    activeMilliseconds: activeMilliseconds(usage),
+    activeMilliseconds: optionalNumericValueFromKeys(usage, ['session_active_milliseconds']),
     cacheRead: optionalNumericValueFromKeys(usage, ['cache_read_input_tokens']) ?? 0,
     cacheWrite:
       (optionalNumericValueFromKeys(cacheCreation, ['ephemeral_5m_input_tokens']) ?? 0) +

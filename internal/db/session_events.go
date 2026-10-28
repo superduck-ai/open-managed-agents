@@ -320,9 +320,22 @@ func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, ses
 			return SessionEvent{}, false, ErrNotFound
 		}
 		session.Usage = row.session().Usage
+		usage, costErr := usageListCostWithRuntime(ctx, executor, session.WorkspaceUUID, session.ExternalID, session.Usage)
+		if costErr != nil {
+			return SessionEvent{}, false, costErr
+		}
+		replaced, costErr := NewSessionMapper(executor).ReplaceUsage(ctx, session.WorkspaceUUID, session.ExternalID, usage)
+		if costErr != nil {
+			return SessionEvent{}, false, costErr
+		}
+		session.Usage = replaced.Usage
 		if event.Payload, err = sessionUsagePayload(event, session.Usage); err != nil {
 			return SessionEvent{}, false, err
 		}
+	}
+	event, err = stampWebSearchPrice(ctx, executor, event)
+	if err != nil {
+		return SessionEvent{}, false, err
 	}
 	return event, true, nil
 }

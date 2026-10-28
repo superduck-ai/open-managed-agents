@@ -283,6 +283,18 @@ func snapshotRuntimeCost(point runtimeUsagePointRow, usdPerHour *big.Rat) *big.R
 	return millis.Quo(millis, big.NewRat(3600000, 1))
 }
 
+func sessionActiveMillis(payload map[string]json.RawMessage) (int64, error) {
+	raw := payload["session_active_milliseconds"]
+	if len(raw) == 0 {
+		return 0, nil
+	}
+	var millis int64
+	if err := json.Unmarshal(raw, &millis); err != nil {
+		return 0, err
+	}
+	return millis, nil
+}
+
 func addRuntimeCostUSD(usage json.RawMessage, addedMillis int64, usdPerHour *big.Rat) (json.RawMessage, error) {
 	if usdPerHour == nil || usdPerHour.Sign() <= 0 {
 		return nil, ErrInvalidState
@@ -293,11 +305,9 @@ func addRuntimeCostUSD(usage json.RawMessage, addedMillis int64, usdPerHour *big
 			return nil, err
 		}
 	}
-	var totalMillis int64
-	if raw := payload["active_milliseconds"]; len(raw) > 0 {
-		if err := json.Unmarshal(raw, &totalMillis); err != nil {
-			return nil, err
-		}
+	totalMillis, err := sessionActiveMillis(payload)
+	if err != nil {
+		return nil, err
 	}
 	priorMillis := totalMillis - addedMillis
 	if priorMillis < 0 {

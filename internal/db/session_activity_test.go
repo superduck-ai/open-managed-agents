@@ -7,14 +7,14 @@ import (
 
 func TestSessionActivityProjectionPreservesMeasuredTokens(t *testing.T) {
 	var p sessionActivityProjection
-	if err := p.Scan([]byte(`{"usage":{"input_tokens":19,"active_milliseconds":10000},"stats":{"active_seconds":22}}`)); err != nil {
+	if err := p.Scan([]byte(`{"usage":{"input_tokens":19,"session_active_milliseconds":10000},"stats":{"active_seconds":22}}`)); err != nil {
 		t.Fatal(err)
 	}
 	row := sessionRow{Usage: []byte(`{"input_tokens":19}`), Stats: []byte(`{}`), Activity: p}
 	value := row.session()
 	var usage struct {
 		InputTokens        int   `json:"input_tokens"`
-		ActiveMilliseconds int64 `json:"active_milliseconds"`
+		ActiveMilliseconds int64 `json:"session_active_milliseconds"`
 	}
 	if err := json.Unmarshal(value.Usage, &usage); err != nil || usage.InputTokens != 19 || usage.ActiveMilliseconds != 10000 {
 		t.Fatal("projected usage", usage, err)

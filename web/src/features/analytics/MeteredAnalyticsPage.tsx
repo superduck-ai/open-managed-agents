@@ -70,7 +70,6 @@ function MeteredAnalyticsPage({ cost }: { cost: boolean }) {
         locale={locale}
         orgUuid={scope.orgUuid}
         workspaceId={filters.workspace}
-        model={filters.model}
         range={filters.range}
         query={query}
       />
@@ -83,7 +82,6 @@ function MeteredAnalyticsBody({
   locale,
   orgUuid,
   workspaceId,
-  model,
   range,
   query,
 }: {
@@ -91,7 +89,6 @@ function MeteredAnalyticsBody({
   locale: string;
   orgUuid?: string;
   workspaceId: string;
-  model: string;
   range: string;
   query: {
     data?: UsageReport;
@@ -105,7 +102,7 @@ function MeteredAnalyticsBody({
   const runtime = useRuntimeCost({
     orgUuid: orgUuid ?? '',
     workspaceId: workspaceId || 'all-workspaces',
-    model: model || 'all',
+    model: 'all',
     groupBy: 'model',
     range,
     startingOn: bounds.start.slice(0, 10),
@@ -140,10 +137,17 @@ function MeteredAnalyticsBody({
           report={query.data}
           cost={cost}
           runtimeValue={cost ? runtimeCardValue(runtimeReport, locale, msg) : undefined}
+          runtimeDollars={runtimeAmount(runtimeReport)}
+          afterSummary={<RuntimeCostChartCard report={runtimeReport} />}
         />
       ) : null}
     </>
   );
+}
+
+function runtimeAmount(report: RuntimeCostReport | undefined) {
+  if (!report || report.configured === false) return '0';
+  return report.total || '0';
 }
 
 function runtimeCardValue(
@@ -151,12 +155,16 @@ function runtimeCardValue(
   locale: string,
   msg: (id: string, fallback: string) => string,
 ) {
-  return sessionRuntimeCostLabel(report, money('0', locale), msg('analytics.cost.notConfigured', 'Not configured'));
+  return sessionRuntimeCostLabel(
+    report,
+    money('0', locale),
+    msg('analytics.cost.notConfigured', 'Not configured'),
+    locale,
+  );
 }
 
 function RuntimeCostNotice({ report, error }: { report: RuntimeCostReport | undefined; error: unknown }) {
   const { msg } = useI18n();
-  const days = report?.daily.some((day) => day.groups.length > 0) ? report.daily : undefined;
   return (
     <>
       {report?.configured === false ? (
@@ -173,16 +181,24 @@ function RuntimeCostNotice({ report, error }: { report: RuntimeCostReport | unde
           </AlertDescription>
         </Alert>
       ) : null}
-      {days ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>{msg('analytics.cost.dailyRuntimeCost', 'Daily runtime cost')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <RuntimeCostChart days={days} />
-          </CardContent>
-        </Card>
-      ) : null}
     </>
+  );
+}
+
+function RuntimeCostChartCard({ report }: { report: RuntimeCostReport | undefined }) {
+  const { msg } = useI18n();
+  const days = report?.daily.some((day) => day.groups.length > 0) ? report.daily : undefined;
+  if (!days) {
+    return null;
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{msg('analytics.cost.dailyRuntimeCost', 'Daily runtime cost')}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <RuntimeCostChart days={days} label={msg('analytics.cost.runtimeCost', 'Runtime cost')} />
+      </CardContent>
+    </Card>
   );
 }

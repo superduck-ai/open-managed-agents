@@ -11,7 +11,6 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -415,8 +414,7 @@ func (h *Handler) applyBudgetUpdate(r *http.Request, next *db.Session, raw json.
 	if err != nil {
 		return internalError("Could not update session", fmt.Errorf("sum session usage: %w", err))
 	}
-	spent := billing.TotalListCostCents(totals.ListCostCents, totals.WebSearchRequests, totals.ActiveSeconds)
-	if budget.MaxListCost.Amount <= spent {
+	if sessionCostReached(totals, budget.MaxListCost.Amount) {
 		return invalidRequest(errors.New("budget.max_list_cost must be greater than the session's consumed list cost"))
 	}
 	encoded, err := httpapi.MarshalRaw(budget)

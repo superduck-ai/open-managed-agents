@@ -11,6 +11,10 @@ describe('managed agent numeric fields', () => {
       amount: 1.25,
       currency: 'EUR',
     });
+    expect(sessionListCost({ list_cost: { amount: '0.000397', currency: 'USD' } })).toEqual({
+      amount: 0.000397,
+      currency: 'USD',
+    });
     expect(sessionListCost({ list_cost: 0.42 })).toEqual({ amount: 0.42, currency: 'USD' });
   });
 });

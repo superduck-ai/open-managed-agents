@@ -57,7 +57,7 @@ Qoder Cloud Agents 与 CMA、OMA 同属托管 Agent：Agent、Environment、Sess
 
 | 表面 | 路径 | 调用方 | OMA 现状 |
 | --- | --- | --- | --- |
-| Admin Usage | `GET /v1/organizations/usage_report/messages` | Admin 凭证 | 按时间桶返回 token 与 `active_milliseconds` 增量 |
+| Admin Usage | `GET /v1/organizations/usage_report/messages` | Admin 凭证 | 按时间桶返回 token 与 `session_active_milliseconds` 增量 |
 | Admin Cost | `GET /v1/organizations/cost_report` | 组织管理员 | 按日返回运行时成本增量，只接受 `bucket_width=1d` |
 | Admin Claude Code | `GET /v1/organizations/usage_report/claude_code` | 组织管理员 | 只校验 `YYYY-MM-DD`，返回空 `data` |
 | Console 成本 | `GET /api/organizations/{org}/usage_cost` 和 `.../workspaces/{workspaceId}/usage_cost` | 控制台页面 | 固定返回五个空对象 |
@@ -205,7 +205,7 @@ OMA 的模型调用走组织自己的 LLM Provider（见 `docs/design/be/message
 - Cost 的 `amount` 用十进制字符串，单位是美分。`$1.23` 写成 `"123"` 或带小数的 `"123.00"` 一类字符串，禁止用 JSON number。
 - 按日对齐到 UTC 零点。`ending_at` / `ending_before` 是开区间。范围内没有数据的桶也要返回。
 - Priority、flex 只进 Usage。Cost 的 `service_tier` 只产出 `standard` 和 `batch`。
-- CMA 会话的运行时费用进 `cost_type=session_usage`。同一会话不要再记一笔容器小时 `code_execution`。Messages API 的代码执行容器小时才记 `code_execution`。控制台仍保留「代码执行总费用」卡，供后一种用量显示。
+- CMA 会话的运行时费用进 `cost_type=session_usage`。同一会话不要再记一笔容器小时 `code_execution`。Messages API 的代码执行容器小时才记 `code_execution`。控制台不单独展示代码执行总费用；搜索费用显示在「工具调用总费用」卡上。
 - Web search 次数进 Usage 的 `server_tool_use.web_search_requests`，金额进 Cost 的 `web_search`。搜索失败不计。
 - 默认工作区对外 `workspace_id` 为 `null`。分组字段在未按该维度分组时为 `null`，不要省略字段。
 - Console `/usage_cost` 的查询名和五个顶层键保持测试合同。它的内层结构在拿到样本前不要发明。页面上的“按模型分组”不能直接转发成 Admin 的 `group_by[]=model`，Admin Cost 没有这个参数。

@@ -6,7 +6,6 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
@@ -302,9 +301,9 @@ func modelRequestBilling(calculator *billing.Calculator, model string, usage Mod
 			counters.CacheCreationInputTokens = counters.CacheWrite5mTokens + counters.CacheWrite1hTokens
 		}
 	}
-	cents, priced := calculator.BudgetRequestCents(model, counters)
+	amount, priced := calculator.BudgetRequestAmount(model, counters)
 	if !priced {
 		return nil
 	}
-	return map[string]string{"list_cost": strconv.FormatInt(cents, 10), "currency": "USD"}
+	return map[string]string{"list_cost": amount, "currency": "USD"}
 }

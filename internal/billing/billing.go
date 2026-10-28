@@ -2,15 +2,15 @@
 //
 // 方案A: no ledger tables. Model request cost is computed when the platform
 // synthesizes span.model_request_end and stored on the event payload as a
-// CMA-compatible billing object {"list_cost": "53", "currency": "USD"}
-// (integer cents as a string). Budget enforcement sums those payloads over
-// the session's events and adds web-search and active-time metering.
+// Session usage list_cost is a USD amount with 6 decimal places. It sums each
+// model request from its price snapshot, each tool call from its recorded
+// rate, and the frozen runtime_cost_usd. The budget cap stays integer cents.
 package billing
 
 import (
 	"encoding/json"
 	"fmt"
-	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,11 +19,6 @@ import (
 
 const (
 	CurrencyUSD = "USD"
-
-	// CMA list prices for server tools and runtime, expressed in cents.
-	WebSearchCentsPerRequest = 1 // $10 per 1,000 searches
-	ActiveTimeCentsPerHour   = 8 // $0.08 per hour
-
 )
 
 // Budget is a parsed session/deployment budget:
@@ -174,6 +169,44 @@ func (c *Calculator) BudgetRequestCents(model string, usage TokenUsage) (cents i
 	return c.modelRequestCents(model, usage, true)
 }
 
+func (c *Calculator) BudgetRequestAmount(model string, usage TokenUsage) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	price, priced := c.Models[normalizeModelName(model)]
+	if !priced {
+		return "", false
+	}
+	dollars, ok := price.BudgetDollars(usage)
+	if !ok {
+		return "", false
+	}
+	return FormatDollars(dollars), true
+}
+
+func (p ModelPrice) TokenDollars(usage TokenUsage) (*big.Rat, bool) {
+	return p.dollars(usage, false)
+}
+
+func (p ModelPrice) BudgetDollars(usage TokenUsage) (*big.Rat, bool) {
+	return p.dollars(usage, true)
+}
+
+func (p ModelPrice) dollars(usage TokenUsage, fillMissingCache bool) (*big.Rat, bool) {
+	if p.Rates == nil {
+		return nil, false
+	}
+	rates := p.effectiveRates(usage)
+	if fillMissingCache {
+		rates = rates.fillMissingCacheRates()
+	}
+	cents, ok := rates.cents(usage, p.ExchangeRate)
+	if !ok {
+		return nil, false
+	}
+	return new(big.Rat).Quo(cents, big.NewRat(100, 1)), true
+}
+
 func (c *Calculator) modelRequestCents(model string, usage TokenUsage, fillMissingCache bool) (cents int64, ok bool) {
 	if c == nil {
 		return 0, false
@@ -206,19 +239,6 @@ func (r Rates) fillMissingCacheRates() Rates {
 		r.CacheWrite1h = r.CacheWrite
 	}
 	return r
-}
-
-// MeteringCents converts web-search request counts and active seconds into
-// cents at the fixed CMA list prices.
-func MeteringCents(webSearchRequests int64, activeSeconds float64) int64 {
-	activeCents := int64(math.Round(activeSeconds / 3600 * ActiveTimeCentsPerHour))
-	return webSearchRequests*WebSearchCentsPerRequest + activeCents
-}
-
-// TotalListCostCents is the authoritative list cost the budget is enforced
-// against: model request costs stored on events plus runtime metering.
-func TotalListCostCents(modelCents, webSearchRequests int64, activeSeconds float64) int64 {
-	return modelCents + MeteringCents(webSearchRequests, activeSeconds)
 }
 
 func (c *Calculator) UnpricedSnapshotModels(snapshot json.RawMessage) []string {

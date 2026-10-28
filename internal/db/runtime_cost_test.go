@@ -57,7 +57,7 @@ func TestAddRuntimeCostUSDStoresDecimal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := addRuntimeCostUSD([]byte(`{"active_milliseconds":8367}`), 8367, rate)
+	raw, err := addRuntimeCostUSD([]byte(`{"session_active_milliseconds":8367}`), 8367, rate)
 	if err != nil {
 		t.Fatal(err)
 	}

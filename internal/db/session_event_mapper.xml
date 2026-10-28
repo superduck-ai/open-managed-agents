@@ -121,13 +121,7 @@
             w.external_id AS workspace_external_id,
             e.processed_at,
             e.id,
-            CAST(
-                CASE
-                    WHEN jsonb_exists(e.payload-&gt;'usage', 'active_milliseconds')
-                        THEN CAST(e.payload-&gt;'usage'-&gt;&gt;'active_milliseconds' AS bigint)
-                    ELSE CAST(CAST(COALESCE(e.payload-&gt;'usage'-&gt;&gt;'active_seconds', '0') AS numeric) * 1000 AS bigint)
-                END
-            AS text) AS active_milliseconds,
+            CAST(COALESCE(CAST(e.payload-&gt;'usage'-&gt;&gt;'session_active_milliseconds' AS bigint), 0) AS text) AS active_milliseconds,
             COALESCE(e.payload-&gt;'usage'-&gt;&gt;'runtime_cost_usd', '') AS runtime_cost_usd,
             CASE
                 WHEN jsonb_typeof(s.agent_snapshot-&gt;'model') = 'object' THEN COALESCE(s.agent_snapshot-&gt;'model'-&gt;&gt;'id', '')
@@ -261,13 +255,7 @@
             COALESCE(e.payload-&gt;'usage'-&gt;&gt;'cache_read_input_tokens', '0') AS cache_read_input_tokens,
             COALESCE(e.payload-&gt;'usage'-&gt;'cache_creation'-&gt;&gt;'ephemeral_5m_input_tokens', '0') AS cache_5m_input_tokens,
             COALESCE(e.payload-&gt;'usage'-&gt;'cache_creation'-&gt;&gt;'ephemeral_1h_input_tokens', '0') AS cache_1h_input_tokens,
-            CAST(
-                CASE
-                    WHEN jsonb_exists(e.payload-&gt;'usage', 'active_milliseconds')
-                        THEN CAST(e.payload-&gt;'usage'-&gt;&gt;'active_milliseconds' AS bigint)
-                    ELSE CAST(CAST(COALESCE(e.payload-&gt;'usage'-&gt;&gt;'active_seconds', '0') AS numeric) * 1000 AS bigint)
-                END
-            AS text) AS active_milliseconds,
+            CAST(COALESCE(CAST(e.payload-&gt;'usage'-&gt;&gt;'session_active_milliseconds' AS bigint), 0) AS text) AS active_milliseconds,
             COALESCE(e.payload-&gt;'usage'-&gt;&gt;'runtime_cost_usd', '') AS runtime_cost_usd
         FROM session_events e
         JOIN sessions s ON s.uuid = e.session_uuid AND s.workspace_uuid = e.workspace_uuid

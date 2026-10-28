@@ -34,7 +34,10 @@ export function useManagedEntityCells(
       ),
       Cost: cost ? (
         <span className="font-mono tabular-nums">
-          {formatters.currency(cost.amount, cost.currency, { maximumFractionDigits: 4 })}
+          {formatters.currency(cost.amount, cost.currency, {
+            minimumFractionDigits: 6,
+            maximumFractionDigits: 6,
+          })}
         </span>
       ) : (
         '—'

@@ -118,16 +118,20 @@ func TestSessionBudgetTransitionPostgres(t *testing.T) {
 	}
 
 	metered := event("sevt_search_end", "span.model_request_end", `{"model_usage":{"server_tool_use":{"web_search_requests":3}},"billing":{"list_cost":"2","currency":"USD"}}`, now)
-	if _, err := store.AppendSessionEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{metered}, nil); err != nil {
+	search := event("sevt_web_search", "agent.tool_use", `{"name":"web_search"}`, now)
+	failed := event("sevt_web_search_failed", "agent.tool_result", `{"tool_use_id":"sevt_web_search","is_error":true}`, now)
+	successUse := event("sevt_web_search_ok", "agent.tool_use", `{"name":"web_search"}`, now)
+	success := event("sevt_web_search_result", "agent.tool_result", `{"tool_use_id":"sevt_web_search_ok","is_error":false}`, now)
+	if _, err := store.AppendSessionEvents(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{metered, search, failed, successUse, success}, nil); err != nil {
 		t.Fatal(err)
 	}
 	totals, err := store.SumSessionUsageTotals(t.Context(), scope.WorkspaceUUID, sessionID)
-	if err != nil || totals.WebSearchRequests != 3 || totals.ListCostCents != 2 {
+	if err != nil || totals.WebSearchRequests != 1 || totals.ListCostCents != 2 {
 		t.Fatalf("搜索计量聚合错误：%+v，%v", totals, err)
 	}
 
 	analytics, err := store.AggregateUsage(t.Context(), UsageQuery{OrganizationUUID: scope.OrganizationUUID, WorkspaceUUIDs: []string{scope.WorkspaceUUID}, SessionID: sessionID, Start: now.Add(-time.Hour), End: now.Add(time.Hour), AsOf: time.Now().Add(time.Hour), Timezone: "UTC"})
-	if err != nil || len(analytics) != 1 || analytics[0].ModelCents != totals.ListCostCents || analytics[0].SearchRequests != totals.WebSearchRequests {
+	if err != nil || len(analytics) != 1 || analytics[0].ModelCents != totals.ListCostCents || analytics[0].SearchRequests != 0 {
 		t.Fatalf("分析与会话分项不一致：%+v %+v %v", analytics, totals, err)
 	}
 	if count, err := store.BackfillUsageRecords(t.Context(), 500); err != nil || count != 0 {

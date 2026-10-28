@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { formatCost } from '@/features/analytics/usage-api';
 import { consoleApi, type ApiError } from '../../shared/api/client';
 
 export type RuntimeCostGroup = { id: string; label: string; amount: string };
@@ -28,11 +29,11 @@ export function runtimeCostLabel(
   if (report.configured === false) {
     return labels.unconfigured;
   }
-  return formatDollars(report.total);
+  return formatDollars(report.total, 'en');
 }
 
-export function formatDollars(amount: string) {
-  return `$${amount}`;
+export function formatDollars(amount: string, locale = 'en') {
+  return formatCost(amount, locale);
 }
 
 export function runtimeCostRange(range: string, now = new Date()) {
@@ -58,7 +59,12 @@ export function isRuntimeCostReport(value: unknown): value is RuntimeCostReport 
   return typeof report.total === 'string' && Array.isArray(report.daily);
 }
 
-export function sessionRuntimeCostLabel(report: RuntimeCostReport | undefined, fallback: string, unconfigured: string) {
+export function sessionRuntimeCostLabel(
+  report: RuntimeCostReport | undefined,
+  fallback: string,
+  unconfigured: string,
+  locale = 'en',
+) {
   if (!report) {
     return fallback;
   }
@@ -68,7 +74,7 @@ export function sessionRuntimeCostLabel(report: RuntimeCostReport | undefined, f
   if (!Number(report.total)) {
     return fallback;
   }
-  return formatDollars(report.total);
+  return formatDollars(report.total, locale);
 }
 
 export function useRuntimeCost(input: {

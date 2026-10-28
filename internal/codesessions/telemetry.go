@@ -118,12 +118,14 @@ func annotateWorkerEventBatch(ctx context.Context, count int, eventTypes []strin
 
 func (s *Service) observeInputWorkerAvailability(ctx context.Context, codeSession db.CodeSession, inputs int, now time.Time) {
 	leaseActive := codeSession.WorkerLeaseExpiresAt != nil && codeSession.WorkerLeaseExpiresAt.After(now)
-	trace.SpanFromContext(ctx).SetAttributes(
-		telemetry.AttrConnectionStatus.String(codeSession.ConnectionStatus),
-		telemetry.AttrWorkerStatus.String(codeSession.WorkerStatus),
-		attribute.Bool("oma.worker.lease_active", leaseActive),
-	)
-	if codeSession.ConnectionStatus == "connected" && leaseActive || usesBrainClaimTransport(codeSession) {
+	if span := trace.SpanFromContext(ctx); span.IsRecording() {
+		span.SetAttributes(
+			telemetry.AttrConnectionStatus.String(codeSession.ConnectionStatus),
+			telemetry.AttrWorkerStatus.String(codeSession.WorkerStatus),
+			attribute.Bool("oma.worker.lease_active", leaseActive),
+		)
+	}
+	if (codeSession.ConnectionStatus == "connected" && leaseActive) || usesBrainClaimTransport(codeSession) {
 		return
 	}
 	attrs := []any{"code_session_id", codeSession.ExternalID, "session_id", codeSession.SessionExternalID,

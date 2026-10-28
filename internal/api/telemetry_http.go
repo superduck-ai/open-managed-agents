@@ -91,14 +91,6 @@ func routeParamLogAttrs(r *http.Request) []any {
 	return attrs
 }
 
-func routeParamAttributes(r *http.Request) []attribute.KeyValue {
-	var attrs []attribute.KeyValue
-	eachRouteParam(r, func(param routeParam, value string) {
-		attrs = append(attrs, param.attr.String(value))
-	})
-	return attrs
-}
-
 func observeRequests(logger *slog.Logger, routes chi.Routes) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +152,9 @@ func endRequestSpan(span trace.Span, r *http.Request, route string, status int, 
 	}
 	span.SetName(r.Method + " " + route)
 	span.SetAttributes(attribute.String("http.route", route), attribute.Int("http.response.status_code", status))
-	span.SetAttributes(routeParamAttributes(r)...)
+	eachRouteParam(r, func(param routeParam, value string) {
+		span.SetAttributes(param.attr.String(value))
+	})
 	if status >= http.StatusInternalServerError {
 		span.SetStatus(codes.Error, http.StatusText(status))
 	}

@@ -140,8 +140,8 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	}
 	defer response.Body.Close()
 	span.SetAttributes(attribute.Int("oma.sandbox_mcp.upstream_status_code", response.StatusCode))
-	call.outcome = sandboxMCPStatusOutcome(response.StatusCode)
 	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+		call.outcome = sandboxMCPOutcome(response.StatusCode, nil)
 		if commit != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
 			return call.with(h.relayMemoryToolStream(w, r, response, session, request, commit, call))
 		}
@@ -161,9 +161,7 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 			h.logger.WarnContext(r.Context(), "Memory tool version confirmation failed", "session_id", session.SessionExternalID, "error", err)
 		}
 	}
-	if replyOutcome, ok := sandboxMCPReplyOutcome(responseBody); ok && call.outcome == telemetry.OutcomeOK {
-		call.outcome = replyOutcome
-	}
+	call.outcome = sandboxMCPOutcome(response.StatusCode, responseBody)
 	copySandboxMCPResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(responseBody)

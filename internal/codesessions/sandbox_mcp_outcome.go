@@ -39,11 +39,14 @@ func sandboxMCPRequestID(call sandboxRPCRequest) string {
 	return id
 }
 
-func sandboxMCPStatusOutcome(status int) string {
-	if status >= http.StatusOK && status < http.StatusMultipleChoices {
-		return telemetry.OutcomeOK
+func sandboxMCPOutcome(status int, reply []byte) string {
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return "upstream_status"
 	}
-	return "upstream_status"
+	if outcome, ok := sandboxMCPReplyOutcome(reply); ok {
+		return outcome
+	}
+	return telemetry.OutcomeOK
 }
 
 func sandboxMCPTransportOutcome(r *http.Request) string {

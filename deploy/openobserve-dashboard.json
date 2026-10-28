@@ -4357,8 +4357,8 @@
         {
           "id": "Panel_delivery_13",
           "type": "bar",
-          "title": "重投（按通道）",
-          "description": "",
+          "title": "重投（按通道，进程启动以来）",
+          "description": "投递次数大于 1 的 worker 事件；健康时应接近 0，用累计值避免漏掉首次重投",
           "config": {
             "show_legends": true,
             "legends_position": "bottom",
@@ -4401,7 +4401,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum by (oma_worker_event_lane) (increase(oma_worker_event_redeliveries{service_instance_id=~\"$instance\"}[5m])) or on() vector(0)",
+              "query": "sum by (oma_worker_event_lane) (max_over_time(oma_worker_event_redeliveries{service_instance_id=~\"$instance\"}[1d])) or on() vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -4696,9 +4696,9 @@
         },
         {
           "id": "Panel_delivery_17",
-          "type": "stacked",
-          "title": "心跳被拒（按状态码）",
-          "description": "心跳只记 HTTP 指标、不建 span",
+          "type": "bar",
+          "title": "心跳被拒（按状态码，进程启动以来）",
+          "description": "心跳只记 HTTP 指标、不建 span；用累计值避免漏掉一次性的拒绝",
           "config": {
             "show_legends": true,
             "legends_position": "bottom",
@@ -4741,7 +4741,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum by (http_response_status_code) (increase(http_server_request_duration_count{service_instance_id=~\"$instance\",http_route=\"/v1/code/sessions/{code_session_id}/worker/heartbeat\",http_response_status_code!=\"200\"}[5m])) or on() vector(0)",
+              "query": "sum by (http_response_status_code) (max_over_time(http_server_request_duration_count{service_instance_id=~\"$instance\",http_route=\"/v1/code/sessions/{code_session_id}/worker/heartbeat\",http_response_status_code!=\"200\"}[1d])) or on() vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -6056,9 +6056,9 @@
         },
         {
           "id": "Panel_exec_11",
-          "type": "stacked",
-          "title": "权限答复（按结果 / 来源）",
-          "description": "auto-approve 为策略自动放行；tool-confirmation 为用户确认",
+          "type": "bar",
+          "title": "权限答复（按结果 / 来源，进程启动以来）",
+          "description": "auto-approve 为策略自动放行；tool-confirmation 为用户确认；用累计值避免漏掉单次答复",
           "config": {
             "show_legends": true,
             "legends_position": "bottom",
@@ -6101,7 +6101,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum by (oma_behavior, oma_source) (increase(oma_tool_permission_responses{service_instance_id=~\"$instance\"}[5m])) or on() vector(0)",
+              "query": "sum by (oma_behavior, oma_source) (max_over_time(oma_tool_permission_responses{service_instance_id=~\"$instance\"}[1d])) or on() vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {

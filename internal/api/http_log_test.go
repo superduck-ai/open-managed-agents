@@ -65,7 +65,7 @@ func TestRequestLoggingMiddlewareLogsRequestAndResponse(t *testing.T) {
 		t.Fatalf("response log fields mismatch: %#v", responseEntry)
 	}
 	if _, ok := responseEntry["duration_ms"].(float64); !ok {
-		t.Fatalf("durationMs should be numeric: %#v", responseEntry)
+		t.Fatalf("duration_ms should be numeric: %#v", responseEntry)
 	}
 }
 

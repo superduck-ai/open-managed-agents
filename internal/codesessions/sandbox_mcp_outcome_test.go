@@ -1,6 +1,7 @@
 package codesessions
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -21,6 +22,28 @@ func TestSandboxMCPReplyOutcome(t *testing.T) {
 			outcome, reply := sandboxMCPReplyOutcome([]byte(tc.payload))
 			if outcome != tc.outcome || reply != tc.reply {
 				t.Fatalf("outcome = %q, %v", outcome, reply)
+			}
+		})
+	}
+}
+
+func TestSandboxMCPOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		reply   string
+		outcome string
+	}{
+		{"upstream status wins over reply", http.StatusBadGateway, `{"jsonrpc":"2.0","id":1,"result":{"isError":true}}`, "upstream_status"},
+		{"redirect", http.StatusFound, "", "upstream_status"},
+		{"tool error", http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":{"isError":true}}`, "tool_error"},
+		{"rpc error", http.StatusOK, `{"jsonrpc":"2.0","id":1,"error":{"code":-32602}}`, "rpc_error"},
+		{"no reply body", http.StatusAccepted, "", "ok"},
+		{"success", http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":{}}`, "ok"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sandboxMCPOutcome(tc.status, []byte(tc.reply)); got != tc.outcome {
+				t.Fatalf("outcome = %q, want %q", got, tc.outcome)
 			}
 		})
 	}

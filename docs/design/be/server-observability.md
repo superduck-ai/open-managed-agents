@@ -117,7 +117,8 @@ flowchart TB
 - 新包 `internal/statemetrics`：进程内的状态上报器 `Reporter`，是 OMA 进程里的一个 goroutine，
   定期查询数据库和 NATS 并上报 gauge。它不是独立服务，属于组装层，由 `main.go` 注入依赖。它依赖
   `internal/db` 与 NATS，因此不并入基础包 `internal/telemetry`，避免基础包反向依赖持久化层；包名与配置
-  `telemetry.state_metrics`、指标 `oma.state_metrics.*` 保持一致。
+  `telemetry.state_metrics` 保持一致，上报的是 `oma.sessions.*`、`oma.environment_work.*`、`oma.nats.*`、
+  `oma.db.pool.*`、`oma.brain_claims.*` 等状态 gauge（第 6.6 节）。
 - 部署上不新增任何组件：只需要在配置中填写现有 OpenObserve 的地址和写入账号。
 - 全局 provider 通过 `otel.SetTracerProvider`、`otel.SetMeterProvider`、`global.SetLoggerProvider`
   在启动早期设置一次；未启用时保持 OTel 默认的 no-op 实现。需要额外解析或分配才能得到的 span 属性
@@ -748,7 +749,7 @@ Provider 测试覆盖 NotFound 等结果；`tests/sandbox_observability_test.go`
 迁移使用 `NO TRANSACTION`、`CONCURRENTLY` 与 `IF NOT EXISTS`，已存在同名索引（部分执行或手工补建）时不会失败。
 
 Work 心跳更新 `updated_at`；把它放入索引会阻止 HOT 更新。状态计数只依赖 `state`，
-`stuck_starting` 可在少量 starting 行中筛选，因此 v2 不包含 `updated_at`。
+`stuck_starting` 可在少量 starting 行中筛选，因此 v1 不包含 `updated_at`。
 会话索引仍保留该列，其更新频率与 Work 心跳不同。
 
 ### P6.2 跨租户边界
@@ -819,6 +820,8 @@ drilldown（`type: byDashboard`，按文件夹名、看板标题与标签页名�
   - Brain 释放原因（`reason`）：Brain 页的"释放与耗尽"按 `'释放·' || reason` 分组，`reason` 只由
     `brain worker released code session` 写入，首次释放前该面板报错；释放是常规事件，部署后很快自愈。
   `oma_worker_register_delay_s` 只在对应 span 上查看。
+- Brain 页的"接管次数"与"领取来源"依赖 OpenObserve 原生的 span `links` 列（v0.91.1 已核对）：`oma.brain_claim.issue`
+  带派发 link 时为派发，`links = '[]'` 为接管；该列由 OpenObserve 按 OTLP span link 生成，不是 OMA 写入的属性。
 - OTel SDK 只在计数器第一次累加后才导出该指标，失败类计数器（交接失败、River 丢弃等）在首次失败前
   不存在对应的流。只在失败或稀有事件时累加的 PromQL 面板（SSE 订阅者丢弃、跨实例广播失败、输入拒绝、重投、
   心跳被拒、交接失败、权限答复、webhook 投递结果）在查询末尾追加 `or vector(0)`（单值）或 `or on() vector(0)`
@@ -850,8 +853,12 @@ flowchart TB
 | 当前状态与积压 | 状态 gauge（取 `max`） | 由 Reporter 定期快照 |
 | 用户体感延迟 | traces SQL 窗口函数 | 用户等首 token：`user.message` 写入的 `POST .../events` span 到同会话下一次 `chat` span 开始再加其首 token 时间；回合时长：`session.status_running` 到随后 `session.status_idle`。均用 `LEAD() OVER (PARTITION BY oma_session_id ORDER BY _timestamp)` |
 
-只在进程启动以来有意义的稀有计数器（输入拒绝原因、SSE 订阅者丢弃、广播失败、交接失败）用
-`max_over_time(x[1d])` 展示累计值，不用 `increase()`。低流量时 p95 会贴近直方图分桶边界，判读时结合对应数量面板。
+只在进程启动以来有意义的稀有计数器（输入拒绝原因、SSE 订阅者丢弃、广播失败、交接失败、重投、心跳被拒、权限答复）用
+`sum by (...) (max_over_time(x[1d]))` 展示累计值（标题注明"进程启动以来"），不用 `increase()`：计数器的首个导出样本
+已包含整段突发，`increase()` 没有前一个样本可比，一次性的事件会显示为 0。仍用 `increase(...[5m])` 的面板（Runner 运行、
+接受的输入、回执结果、工具权限决策、领取请求结果、River 任务结果、webhook 投递结果）对应每个回合、每次工具调用或每个
+定时任务都会累加的计数器，序列持续存在，速率形状有意义；其中的稀有失败另有 SQL 面板逐条计数（启动失败、5xx、
+DSH 警告与错误事件）。低流量时 p95 会贴近直方图分桶边界，判读时结合对应数量面板。
 
 看板默认时间范围 6 小时，drilldown 保留当前时间范围。第一层"总览"标签页：
 

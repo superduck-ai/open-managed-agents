@@ -63,8 +63,13 @@ for (const [value, name] of [
     expect(trigger.querySelector('.text-sm')?.textContent).toBe(name);
     expect(trigger.querySelector('.text-xs')?.textContent).toBe('成员组织');
     expect(trigger.getAttribute('data-size')).toBe('lg');
-    expect(trigger.classList.contains('rounded-xl')).toBe(true);
-    expect(trigger.classList.contains('bg-sidebar-accent')).toBe(true);
+    expect(trigger.classList.contains('rounded-xl')).toBe(false);
+    expect(trigger.classList.contains('bg-sidebar-accent')).toBe(false);
+    expect(trigger.classList.contains('text-sidebar-accent-foreground')).toBe(false);
+    expect(trigger.classList.contains('data-[popup-open]:bg-sidebar-accent')).toBe(true);
+    expect(trigger.classList.contains('data-[popup-open]:text-sidebar-accent-foreground')).toBe(true);
+    expect(within(trigger).queryByText('管理员', { exact: true })).toBeNull();
+    expect(trigger.textContent).not.toContain('默认');
     expect(within(trigger).queryByText('平台管理员')).toBeNull();
   });
 }
@@ -102,6 +107,7 @@ test('平台进入时显示目标组织名及紧凑平台标识，账号菜单�
   ).toBe(true);
   expect(trigger.querySelector('.text-sm')?.textContent).toBe('显示名称');
   expect(trigger.textContent).not.toContain('默认');
+  expect(within(trigger).queryByText('管理员', { exact: true })).toBeNull();
   fireEvent.click(trigger);
   const menu = screen.getByRole('menu');
   expect(within(menu).queryByText(/平台管理员|返回平台管理/)).toBeNull();

@@ -36,7 +36,7 @@ flowchart TD
 
 ## 左下角账号区与平台返回入口
 
-账号区使用 `SidebarMenuButton size="lg"`、圆角和 sidebar-accent 背景，左侧建筑图标，右侧两层文字及 ChevronDown。上层用户名沿用 display_name、full_name、邮箱前缀的优先级；下层显示当前组织名，优先有效 organizationAccess，再取当前 orgUuid 的真实 membership 名称，最后回退 orgUuid，不再展示角色或工作区名。长组织名截断并保留完整 title；用户名不随组织切换改变。
+账号区保持原有 `SidebarMenuButton size="lg"` 的尺寸和圆角，仅菜单打开时使用 sidebar-accent 背景与前景色，不添加常驻背景或额外圆角类，左侧建筑图标，右侧两层文字及 ChevronDown。上层用户名沿用 display_name、full_name、邮箱前缀的优先级；下层显示当前组织名，优先有效 organizationAccess，再取当前 orgUuid 的真实 membership 名称，最后回退 orgUuid，不再展示角色或工作区名。长组织名截断并保留完整 title；用户名不随组织切换改变。
 
 平台管理员进入组织时，下层显示目标组织名及小号“平台管理员”标识。组织名可收缩截断，标识最多占该行 45% 宽度，避免长英文标识挤占组织名称。折叠账号区保留建筑图标与用户名可访问名称。
 

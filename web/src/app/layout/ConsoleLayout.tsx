@@ -831,7 +831,7 @@ export function AccountMenu({
                 size="lg"
                 className={clsx(
                   interactiveMotionClass,
-                  'rounded-xl bg-sidebar-accent text-sidebar-accent-foreground data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-sidebar-accent-foreground',
+                  'data-[popup-open]:bg-sidebar-accent data-[popup-open]:text-sidebar-accent-foreground',
                   collapsed ? 'justify-center' : '',
                 )}
                 aria-label={collapsed ? identity.name : undefined}

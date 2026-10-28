@@ -211,7 +211,7 @@ Console 成员写入由资源层根据已验证 Principal 提供校验回调，�
 
 页面使用既有 shadcn/ui 表格、Dialog、Alert Dialog、字段和分页组件，保持明暗主题、键盘操作与移动端基本可用。提交时禁用重复操作，失败保留表单；管理员行操作统一称为“修改角色”，复用组织管理的角色名称与权限说明，默认显示当前角色，选择其他角色后即可提交，最后一位管理员仍禁止改为非管理员。修改角色和交接弹窗展示目标组织、目标账号和权限影响。
 
-左下角账号区复用圆角、sidebar-accent 背景的 `SidebarMenuButton size="lg"`，保留建筑图标、两层文字和 ChevronDown。上层沿用用户名优先级：display_name、full_name、邮箱前缀；下层显示当前组织名，优先当前 organizationAccess 的组织名，再取当前 orgUuid 对应真实 membership 的组织名，最后回退 orgUuid，不再展示角色与工作区名。平台进入时使用目标组织名，并在旁边显示小号“平台管理员”标识；组织名可截断，标识宽度受限，避免挤占整行。
+左下角账号区保持原有 `SidebarMenuButton size="lg"` 的尺寸和圆角，仅菜单打开时使用 sidebar-accent 背景与前景色，不添加常驻背景或额外圆角类，保留建筑图标、两层文字和 ChevronDown。上层沿用用户名优先级：display_name、full_name、邮箱前缀；下层显示当前组织名，优先当前 organizationAccess 的组织名，再取当前 orgUuid 对应真实 membership 的组织名，最后回退 orgUuid，不再展示角色与工作区名。平台进入时使用目标组织名，并在旁边显示小号“平台管理员”标识；组织名可截断，标识宽度受限，避免挤占整行。
 
 进入状态下，SidebarFooter 在账号区上方显示独立的全宽圆角“返回平台管理”按钮，带 ArrowLeft 图标，与账号区宽度对齐；折叠侧栏保留图标、可访问名称和提示。仅当前标签 platformScope 存在时显示。点击沿用未保存内容确认，退出成功后导航刚访问的目标组织详情页，目标缺失时回退 `/platform-admin`，退出未成功则不导航。
 

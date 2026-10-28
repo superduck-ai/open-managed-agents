@@ -62,8 +62,6 @@ var routeTelemetry = map[string]requestTelemetry{
 	"/web-api/sessions/{sessionId}/stream":                      unobservedRequest,
 	"/v1/code/upstreamproxy/ws":                                 unobservedRequest,
 	"/v1/code/sessions/{code_session_id}/worker/events/stream":  unobservedRequest,
-	"/v1/code/sessions/{code_session_id}/worker/otlp/metrics":   unobservedRequest,
-	"/v1/code/sessions/{code_session_id}/worker/otlp/logs":      unobservedRequest,
 	"/v1/code/sessions/{code_session_id}/worker/otlp/v1/logs":   unobservedRequest,
 	"/v1/code/sessions/{code_session_id}/worker/otlp/v1/traces": unobservedRequest,
 	"/v1/code/sessions/{code_session_id}/worker/heartbeat":      measuredRequest,

@@ -292,6 +292,17 @@ func (d *DB) GetCodeSessionCredentialContextForIssue(ctx context.Context, organi
 	return row.context(), nil
 }
 
+func (d *DB) ValidateCodeSessionSandbox(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID, sandboxUUID string) error {
+	count, err := NewCodeSessionMapper(d.mapperDB).CountActiveSandbox(ctx, organizationUUID, workspaceUUID, codeSessionExternalID, sandboxUUID)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (d *DB) ValidateCodeSessionIngressWorkerEpoch(
 	ctx context.Context,
 	organizationUUID string,
@@ -406,6 +417,23 @@ func (d *DB) GetCodeSessionBySessionExternalID(ctx context.Context, workspaceUUI
 		return CodeSession{}, err
 	}
 	return row.session(), nil
+}
+
+type CodeSessionSegment struct {
+	ExternalID string
+	CreatedAt  time.Time
+}
+
+func (d *DB) ListCodeSessionSegments(ctx context.Context, workspaceUUID, sessionExternalID string) ([]CodeSessionSegment, error) {
+	rows, err := NewCodeSessionMapper(d.mapperDB).ListSegmentsBySessionExternalID(ctx, workspaceUUID, sessionExternalID)
+	if err != nil {
+		return nil, err
+	}
+	segments := make([]CodeSessionSegment, 0, len(rows))
+	for _, row := range rows {
+		segments = append(segments, CodeSessionSegment(row))
+	}
+	return segments, nil
 }
 
 func (d *DB) GetActiveCodeSessionForEnvironmentWork(ctx context.Context, work EnvironmentWork, sessionUUID string) (CodeSession, error) {

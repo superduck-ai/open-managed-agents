@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
@@ -31,6 +32,7 @@ import (
 // seed, restart servers, flush Redis, or purge an entire shared stream.
 type liveEnv struct {
 	url         string
+	cookies     []*http.Cookie
 	database    *db.DB
 	service     *codesessions.Service
 	credentials *codesessions.SessionCredentials
@@ -108,6 +110,7 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	e.credentials, err = codesessions.NewSessionCredentials(cfg)
 	requireOK(t, err)
 	e.service = codesessions.NewServiceWithCredentials(e.database, e.credentials, nil).WithWorkerEventBroker(e.broker).WithWorkerEventState(e.acks, e.objects)
+	e.service.WithSessionAttachments(filestore.NewService(cfg, e.database, e.database, e.objects))
 	if os.Getenv("LIVE_WORKER_REAL_CLAUDE") == "1" {
 		ensureRealWorkerProvider(t, e, cfg)
 	}
@@ -133,12 +136,12 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	return e
 }
 
-func (e *liveEnv) request(t *testing.T, method, path, token string, body any, want int) []byte {
+func (e *liveEnv) request(t *testing.T, method, path, token string, body any, want int, cookies ...*http.Cookie) []byte {
 	t.Helper()
-	return e.requestContext(t.Context(), t, method, path, token, body, want)
+	return e.requestContext(t.Context(), t, method, path, token, body, want, cookies...)
 }
 
-func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path, token string, body any, want int) []byte {
+func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path, token string, body any, want int, cookies ...*http.Cookie) []byte {
 	t.Helper()
 	encoded, err := json.Marshal(body)
 	requireOK(t, err)
@@ -155,6 +158,12 @@ func (e *liveEnv) requestContext(ctx context.Context, t *testing.T, method, path
 	req.Header.Set("anthropic-beta", "managed-agents-2026-04-01")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+		if cookie.Name == "sessionKey" {
+			req.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken(cookie.Value))
+		}
 	}
 	response, err := http.DefaultClient.Do(req)
 	requireOK(t, err)

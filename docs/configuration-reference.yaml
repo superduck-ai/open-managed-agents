@@ -1,3 +1,5 @@
+llm_provider_presets_file: ""
+
 # Open Managed Agents complete process-configuration reference.
 #
 # This file documents every YAML field accepted by internal/config.Config. It is
@@ -31,6 +33,11 @@ nats:
     max_bytes: 268435456
     max_age: 24h
     replicas: 3 # Set 1 for a single-node JetStream deployment.
+  # Short-lived OTLP span delivery queue for telemetry destinations; spans are never stored elsewhere.
+  telemetry_export_stream:
+    max_bytes: 268435456
+    max_age: 1h
+    replicas: 3
   worker_event_stream:
     consumer_inactive_threshold: 5m
     max_bytes: 268435456
@@ -135,13 +142,12 @@ environment_runner:
 
 code_session:
   # Set when a sandbox must call this service through a specific reachable URL.
-  # Required when observability.enabled is true: workers derive their OTLP
-  # export endpoints from this URL, so telemetry silently stops without it.
+  # Sandbox callbacks use this URL. Brain telemetry uses OMA_API_URL.
   sandbox_api_base_url: ""
   # Derived default: true for dev and false for prod.
   # Required in prod; also signs CCRv2 Git commits. Dev creates an in-memory key when empty.
   jwt_signing_private_key_file: ""
-  upstream_proxy_mitm_enabled: false
+  upstream_proxy_mitm_enabled: true
   # Required only when upstream_proxy_mitm_enabled is true.
   upstream_proxy_ca_key_file: ""
   # Dangerous local fake-IP/TUN diagnostic switch; keep false in production.
@@ -156,7 +162,7 @@ observability:
   # Content capture sends prompt originals, model output, and tool input/output
   # (which may include source code, command output, and secrets) to the
   # observability store. It is enabled by default when observability is on; set
-  # false to keep structure-only telemetry (spans, durations, tokens, tool names).
+  # false to keep structure-only DSH telemetry (event types, durations, tokens, tool names).
   content_capture_enabled: true
   otlp:
     max_request_bytes: 16777216
@@ -165,8 +171,7 @@ observability:
   openobserve:
     base_url: http://openobserve:5080
     organization: oma
-    logs_stream: oma_claude_code
-    traces_stream: oma_claude_code
+    logs_stream: oma_dsh
     ingestion:
       username: ""
       password: ""
@@ -186,6 +191,19 @@ webhook:
   failure_disable_after: 24h
   # Webhooks connect directly; HTTP_PROXY/HTTPS_PROXY are not used.
   # Verify direct egress before upgrading a proxy-dependent deployment.
+  allow_insecure: false
+
+# Delivers Brain spans to organization telemetry destinations (OTLP/HTTP protobuf).
+telemetry_export:
+  # Set false to stop consuming the delivery queue on this instance.
+  worker_enabled: true
+  concurrency: 10
+  # Total time per delivery attempt, including TLS and response headers.
+  timeout: 10s
+  max_attempts: 3
+  # A destination that fails continuously for this long is disabled with reason sustained_failure.
+  failure_disable_after: 24h
+  # Development only: allow http, private addresses and non-443 ports for destinations.
   allow_insecure: false
 
 vault:
@@ -324,6 +342,17 @@ environment_prebuilds:
     registry_auth:
       username: ""
       password: ""
+    # TCP ports exposed by prebuilt templates. Include envd (49983) and
+    # environment_runner.sandbox_mcp_port so the runner can reach the sandbox.
+    exposed_ports: [3001, 49983]
+    # Template readiness probe port; must be listed in exposed_ports.
+    probe_port: 49983
+    # Upper bounds for Environment config.resources. 0 keeps that resource at the
+    # deployment default above and rejects per-environment overrides.
+    max_resources:
+      cpu: 0 # Millicores, e.g. 8000.
+      memory: 0 # MiB, e.g. 16384.
+      disk: 0 # GiB, e.g. 100.
 
 # Private transcript archives reuse storage.s3.bucket. No fixed object TTL on this prefix.
 transcript_archive:
@@ -363,6 +392,10 @@ telemetry:
     stale_running_after: 10m
     stuck_starting_after: 10m
 
+# 飞书渠道桥接服务；令牌仅用于 OMA 到桥接服务的内部调用。
+channel_bridge:
+  url: ""
+  token: ""
 web_tools:
   search_provider: ""
   providers: {}

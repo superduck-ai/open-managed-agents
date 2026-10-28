@@ -75,13 +75,16 @@ func (a *otlpAdmission) acquire(sessionID string) (func(), bool) {
 	}, true
 }
 
-// handleCodeSessionWorkerOTLP 是 worker 遥测上报入口：
-// 鉴权 → 协议/信号 → 并发准入 → epoch/lease 栅栏 → 读 body → 注入可信属性 → 转发。
-// 所有拒绝判定都发生在读 body 之前。
-func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Request) {
+type otlpWorkerRequest struct {
+	codeSessionID     string
+	protocol          otlpProtocol
+	credentialContext db.CodeSessionCredentialContext
+	release           func()
+}
+
+func (h *Handler) admitWorkerOTLP(w http.ResponseWriter, r *http.Request, admission *otlpAdmission, available bool, unavailable string) (otlpWorkerRequest, bool) {
 	codeSessionID := chi.URLParam(r, "code_session_id")
 	protocol, protocolError := parseOTLPProtocol(r.Header.Get("Content-Type"))
-	// 鉴权：先于协议错误，协议未知时错误体退回 JSON。
 	claims, authError := h.sessionIngressClaims(r, codeSessionID)
 	if authError != nil {
 		if protocolError != nil {
@@ -89,50 +92,50 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 		}
 		status, message := otlpSessionIngressAuthStatus(authError)
 		writeOTLPStatus(w, protocol, status, message, "")
-		return
+		return otlpWorkerRequest{}, false
 	}
-
 	if protocolError != nil {
 		writeOTLPStatus(w, otlpProtocolJSON, http.StatusUnsupportedMediaType, protocolError.Error(), "")
-		return
+		return otlpWorkerRequest{}, false
 	}
-	signal, err := otlpEndpointFromPath(r.URL.Path)
-	if err != nil {
-		writeOTLPStatus(w, protocol, http.StatusNotFound, err.Error(), "")
-		return
+	if err := h.service.authorizeWorkerClaims(r.Context(), claims); err != nil {
+		h.writeOTLPDatabaseError(w, r, protocol, codeSessionID, err)
+		return otlpWorkerRequest{}, false
 	}
-	if h.otlpSink == nil || !h.cfg.Observability.Enabled {
-		writeOTLPStatus(w, protocol, http.StatusServiceUnavailable, "agent observability is not enabled", "")
-		return
+	if !available {
+		writeOTLPStatus(w, protocol, http.StatusServiceUnavailable, unavailable, "")
+		return otlpWorkerRequest{}, false
 	}
-
-	release, admitted := h.otlpAdmission.acquire(codeSessionID)
+	release, admitted := admission.acquire(codeSessionID)
 	if !admitted {
 		writeOTLPStatus(w, protocol, http.StatusTooManyRequests, "OTLP ingress is busy", "1")
-		return
+		return otlpWorkerRequest{}, false
 	}
-	defer release()
-
-	// 可信租户属性的唯一来源；注入 payload 的身份全部取自它而非 worker 输入。
-	credentialContext, err := h.db.GetCodeSessionCredentialContextForIssue(
-		r.Context(),
-		claims.OrganizationUUID,
-		claims.WorkspaceUUID,
-		codeSessionID,
-	)
+	credentialContext, err := h.db.GetCodeSessionCredentialContextForIssue(r.Context(), claims.OrganizationUUID, claims.WorkspaceUUID, codeSessionID)
+	if err == nil {
+		err = h.db.ValidateCodeSessionWorkerActiveLease(r.Context(), codeSessionID)
+	}
 	if err != nil {
+		release()
 		h.writeOTLPDatabaseError(w, r, protocol, codeSessionID, err)
-		return
-	}
-	if err := h.db.ValidateCodeSessionWorkerActiveLease(r.Context(), codeSessionID); err != nil {
-		h.writeOTLPDatabaseError(w, r, protocol, codeSessionID, err)
-		return
+		return otlpWorkerRequest{}, false
 	}
 	// session 重建或换绑后，旧 token 即使未过期也必须被拒。
 	if !credentialContextMatchesClaims(credentialContext, claims) {
+		release()
 		writeOTLPStatus(w, protocol, http.StatusUnauthorized, "session ingress identity no longer matches the active code session", "")
+		return otlpWorkerRequest{}, false
+	}
+	return otlpWorkerRequest{codeSessionID: codeSessionID, protocol: protocol, credentialContext: credentialContext, release: release}, true
+}
+
+func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Request) {
+	admitted, ok := h.admitWorkerOTLP(w, r, h.otlpAdmission, h.otlpSink != nil && h.cfg.Observability.Enabled, "agent observability is not enabled")
+	if !ok {
 		return
 	}
+	defer admitted.release()
+	codeSessionID, protocol, credentialContext := admitted.codeSessionID, admitted.protocol, admitted.credentialContext
 
 	body, err := readOTLPRequestBody(w, r, h.cfg.Observability.OTLP.MaxRequestBytes)
 	if err != nil {
@@ -144,20 +147,20 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 		writeOTLPStatus(w, protocol, status, err.Error(), "")
 		return
 	}
-	canonicalBody, err := canonicalizeOTLPPayload(signal, protocol, body, trustedOTLPResourceAttributes{
+	canonicalBody, err := prepareNativeOTLP(protocol, body, trustedOTLPResourceAttributes{
 		organizationUUID: credentialContext.OrganizationUUID,
 		workspaceUUID:    credentialContext.WorkspaceUUID,
 		publicSessionID:  credentialContext.PublicSessionExternalID,
 		codeSessionID:    credentialContext.CodeSessionExternalID,
 		agentID:          credentialContext.AgentExternalID,
 		agentVersion:     int64(credentialContext.AgentVersion),
-	})
+	}, h.cfg.Observability.ContentCaptureEnabled)
 	if err != nil {
 		writeOTLPStatus(w, protocol, http.StatusBadRequest, err.Error(), "")
 		return
 	}
 
-	response, err := h.otlpSink.forward(r.Context(), signal, protocol, canonicalBody)
+	response, err := h.otlpSink.forward(r.Context(), protocol, canonicalBody)
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		retryAfter := ""
@@ -167,7 +170,7 @@ func (h *Handler) handleCodeSessionWorkerOTLP(w http.ResponseWriter, r *http.Req
 			retryAfter = sinkError.retryAfter
 		}
 		// 上游细节只进日志，对 worker 只回固定文案。
-		h.logger.WarnContext(r.Context(), "forward code session OTLP", "code_session_id", codeSessionID, "signal", signal, "status", status, "error", err)
+		h.logger.WarnContext(r.Context(), "forward code session OTLP", "code_session_id", codeSessionID, "status", status, "error", err)
 		writeOTLPStatus(w, protocol, status, "OTLP backend rejected the request", retryAfter)
 		return
 	}
@@ -199,6 +202,10 @@ func credentialContextMatchesClaims(context db.CodeSessionCredentialContext, cla
 
 func (h *Handler) writeOTLPDatabaseError(w http.ResponseWriter, r *http.Request, protocol otlpProtocol, codeSessionID string, err error) {
 	switch {
+	case errors.Is(err, errSessionIngressIdentity):
+		writeOTLPStatus(w, protocol, http.StatusUnauthorized, "session ingress identity is no longer active", "")
+	case errors.Is(err, db.ErrWorkerEpochMismatch):
+		writeOTLPStatus(w, protocol, http.StatusConflict, "Worker epoch mismatch", "")
 	case errors.Is(err, db.ErrNotFound):
 		writeOTLPStatus(w, protocol, http.StatusGone, "code session is no longer active", "")
 	case errors.Is(err, db.ErrWorkerLeaseExpired):
@@ -206,20 +213,6 @@ func (h *Handler) writeOTLPDatabaseError(w http.ResponseWriter, r *http.Request,
 	default:
 		httpapi.LogFailure(h.logger, r, "validate code session OTLP lifecycle", "code_session_id", codeSessionID, "error", err)
 		writeOTLPStatus(w, protocol, http.StatusServiceUnavailable, "could not validate code session lifecycle", "")
-	}
-}
-
-func otlpEndpointFromPath(path string) (string, error) {
-	path = strings.TrimRight(path, "/")
-	switch {
-	case strings.HasSuffix(path, "/otlp/metrics"):
-		return "metrics", nil
-	case strings.HasSuffix(path, "/otlp/logs"), strings.HasSuffix(path, "/otlp/v1/logs"):
-		return "logs", nil
-	case strings.HasSuffix(path, "/otlp/v1/traces"):
-		return "traces", nil
-	default:
-		return "", errors.New("unsupported OTLP endpoint")
 	}
 }
 

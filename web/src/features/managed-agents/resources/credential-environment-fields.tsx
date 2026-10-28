@@ -159,11 +159,11 @@ function NetworkingOption({
     <Label
       htmlFor={id}
       className={cn(
-        'flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground transition-colors',
-        selected && 'border-primary bg-primary/5 text-primary',
+        'flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border-[0.5px] border-input bg-background px-3 text-sm font-normal text-foreground transition-colors duration-150 ease-out motion-reduce:transition-none has-[:focus-visible]:ring-[0.5px] has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-foreground',
+        selected && 'border-foreground bg-accent text-foreground',
       )}
     >
-      <RadioGroupItem id={id} value={value} className="sr-only" aria-label={label} />
+      <RadioGroupItem id={id} value={value} className="sr-only" />
       {label}
     </Label>
   );

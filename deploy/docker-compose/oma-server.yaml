@@ -55,10 +55,12 @@ vault:
       kek: "rFF/9K42dW9xtX3zvE3rm6HzJshGCVntS62F2884M78="
 
 code_session:
+  upstream_proxy_mitm_enabled: true
+  upstream_proxy_ca_key_file: /etc/open-managed-agents/secrets/upstream-proxy-ca-key.pem
   sandbox_api_base_url: http://host.docker.internal:38080
 
 observability:
-  enabled: true
+  enabled: false
   # May capture prompts, model output, tool data, source code, and secrets.
   # Set false for structure-only telemetry.
   content_capture_enabled: true
@@ -69,8 +71,7 @@ observability:
   openobserve:
     base_url: http://openobserve:5080
     organization: oma
-    logs_stream: oma_claude_code
-    traces_stream: oma_claude_code
+    logs_stream: oma_dsh
     # Local credentials must match docker-compose.yml.
     ingestion:
       username: root@example.com

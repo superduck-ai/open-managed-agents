@@ -53,11 +53,17 @@ func (s *Store) PreparePublic(ctx context.Context, organizationUUID, workspaceUU
 				return nil, err
 			}
 		}
+		if err := storeTraceContext(event); err != nil {
+			return nil, err
+		}
 	}
 	return prepared, nil
 }
 
 func (s *Store) RestorePublic(ctx context.Context, event db.SessionEvent) (db.SessionEvent, error) {
+	if err := liftTraceContext(&event); err != nil {
+		return db.SessionEvent{}, err
+	}
 	payload, err := s.restore(ctx, event.WorkspaceUUID, event.Payload, event.PayloadBlobUUID)
 	if err != nil {
 		return db.SessionEvent{}, err
@@ -156,14 +162,18 @@ func (s *Store) GetSessionEvent(ctx context.Context, workspaceUUID, sessionID, e
 }
 
 func (s *Store) AppendSessionEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage) (db.SessionEventChanges, error) {
-	return s.appendPublic(ctx, workspaceUUID, sessionID, events, outcomes, false)
+	return s.appendPublic(ctx, workspaceUUID, sessionID, events, outcomes, false, nil)
 }
 
 func (s *Store) AppendSessionEventsIfAbsent(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent) (db.SessionEventChanges, error) {
-	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, true)
+	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, true, nil)
 }
 
-func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage, ifAbsent bool) (db.SessionEventChanges, error) {
+func (s *Store) AppendSessionBudgetReachedEvents(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, transition db.SessionBudgetTransition) (db.SessionEventChanges, error) {
+	return s.appendPublic(ctx, workspaceUUID, sessionID, events, nil, false, &transition)
+}
+
+func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID string, events []db.SessionEvent, outcomes json.RawMessage, ifAbsent bool, transition *db.SessionBudgetTransition) (db.SessionEventChanges, error) {
 	session, found, err := s.database.GetSession(ctx, workspaceUUID, sessionID)
 	if err != nil {
 		return db.SessionEventChanges{}, err
@@ -182,7 +192,9 @@ func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID strin
 		return db.SessionEventChanges{}, err
 	}
 	var changes db.SessionEventChanges
-	if ifAbsent {
+	if transition != nil {
+		changes, err = s.database.AppendSessionBudgetReachedEvents(ctx, workspaceUUID, sessionID, prepared, *transition)
+	} else if ifAbsent {
 		changes, err = s.database.AppendSessionEventsIfAbsent(ctx, workspaceUUID, sessionID, prepared)
 	} else {
 		changes, err = s.database.AppendSessionEvents(ctx, workspaceUUID, sessionID, prepared, outcomes)
@@ -202,8 +214,8 @@ func (s *Store) appendPublic(ctx context.Context, workspaceUUID, sessionID strin
 			}
 		}
 	}
-	changes.Events = RestoreCreatedPublic(changes.Events, events)
-	return changes, nil
+	changes.Events, err = RestoreCreatedPublic(changes.Events, events)
+	return changes, err
 }
 
 // Avoid uploading already persisted events during worker replay. The insert still
@@ -227,7 +239,7 @@ func (s *Store) skipPersistedLargeEvents(ctx context.Context, workspaceUUID, ses
 
 // RestoreCreatedPublic reuses original bytes only for rows inserted by this call.
 // Idempotent conflicts must load the persisted event instead.
-func RestoreCreatedPublic(created, originals []db.SessionEvent) []db.SessionEvent {
+func RestoreCreatedPublic(created, originals []db.SessionEvent) ([]db.SessionEvent, error) {
 	payloads := make(map[string]json.RawMessage, len(originals))
 	uuidByID := make(map[string]string, len(originals))
 	for _, event := range originals {
@@ -237,11 +249,14 @@ func RestoreCreatedPublic(created, originals []db.SessionEvent) []db.SessionEven
 		}
 	}
 	for i := range created {
+		if err := liftTraceContext(&created[i]); err != nil {
+			return nil, err
+		}
 		if payload, ok := payloads[created[i].ExternalID]; ok && uuidByID[created[i].ExternalID] == created[i].UUID && (created[i].PayloadBlobUUID != nil || strings.Contains(string(created[i].Payload), `"_echo_key"`)) {
 			created[i].Payload = payload
 		}
 	}
-	return created
+	return created, nil
 }
 
 func (s *Store) AppendInternal(ctx context.Context, session db.CodeSession, epoch int64, inputs []db.AppendCodeSessionInternalEventInput) ([]db.CodeSessionInternalEvent, error) {

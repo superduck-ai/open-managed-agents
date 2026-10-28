@@ -40,7 +40,7 @@ export function CursorPagination({
 
 export function TableLoadingRow({ colSpan, label }: { colSpan: number; label: string }) {
   return (
-    <TableRow className="border-b border-border">
+    <TableRow className="border-b-[0.5px] border-border">
       <TableCell colSpan={colSpan} className="h-24 px-3 py-6 text-sm text-muted-foreground">
         <span className="inline-flex items-center gap-2">
           <RefreshCw className="size-3.5 animate-spin" aria-hidden />
@@ -65,9 +65,9 @@ export function TableErrorRow({
   onRetry: () => void;
 }) {
   return (
-    <TableRow className="border-b border-border">
+    <TableRow className="border-b-[0.5px] border-border">
       <TableCell colSpan={colSpan} className="h-28 px-3 py-6">
-        <Alert variant="destructive" className="max-w-xl">
+        <Alert variant="destructive" className="min-w-0 max-w-xl whitespace-normal [overflow-wrap:anywhere]">
           <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
           <AlertTitle>{title}</AlertTitle>
           <AlertDescription>
@@ -85,7 +85,7 @@ export function TableErrorRow({
 
 export function TableEmptyRow({ colSpan, children }: { colSpan: number; children: ReactNode }) {
   return (
-    <TableRow className="border-b border-border">
+    <TableRow className="border-b-[0.5px] border-border">
       <TableCell colSpan={colSpan} className="h-24 px-3 py-6 text-sm text-muted-foreground">
         {children}
       </TableCell>

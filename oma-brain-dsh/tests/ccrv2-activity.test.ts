@@ -1,3 +1,5 @@
+import { completedInputs } from "./session-log.ts";
+import { logData } from "./persistence-fixtures.ts";
 import { expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { CcrActivity, isEnvTruthy, type CcrActivityClock } from "../src/ccrv2/activity.ts";
@@ -152,7 +154,7 @@ test("keepalive retries cancel on idle without stopping other writes, with or wi
       activity.endThread("a");
       await activity.close();
       expect(requests[0]?.signal?.aborted).toBe(true);
-      await client.persist("a", "dsh_log", {});
+      await client.persist("a", "dsh_log", logData({}));
       expect(requests).toHaveLength(2);
     } finally { await Promise.all([activity.close(), heartbeat?.close()]); }
   }
@@ -202,10 +204,10 @@ test("the plugin sends during real model and tool work, stops for approval and k
     expect(clock.pending.size).toBe(0);
     const turn = session.receive("active", { content: "run tool" });
     await eventually(() => backend.requests.length === 1);
-    const revision = session.state.revision;
+    const revision = session.agent.session.seq;
     clock.fire();
     await eventually(() => [...backend.publicLog.values()].filter((event) => event.type === "keep_alive").length === 1);
-    expect(session.state.revision).toBe(revision);
+    expect(session.agent.session.seq).toBe(revision);
     expect(JSON.stringify([...backend.privateLog.values()])).not.toContain('"keep_alive"');
     model.resolve();
     await eventually(() => session.approvals.size === 1 && backend.statuses.at(-1) === "requires_action");
@@ -222,7 +224,7 @@ test("the plugin sends during real model and tool work, stops for approval and k
     expect(clock.pending.size).toBe(0);
     expect(backend.processed).toEqual(["active"]);
     expect(backend.executions).toHaveLength(1);
-    expect(session.state.completed).toContain("active");
+    expect(completedInputs(session)).toContain("active");
     expect(JSON.stringify([...backend.privateLog.values()])).not.toContain('"keep_alive"');
   } finally { model.resolve(); tool.resolve(); await ctx.fiber.dispose(); backend.stop(); }
 });
@@ -259,6 +261,6 @@ test("a pending keepalive cannot delay a model result or terminal publication", 
     expect(clock.pending.size).toBe(0);
     expect(session.abort.signal.aborted).toBe(false);
     expect([...backend.publicLog.values()].some((event) => event.type === "result")).toBe(true);
-    expect(session.state.outbox).toEqual([]);
+    expect(session.pendingEvents).toEqual([]);
   } finally { model.resolve(); await ctx.fiber.dispose(); backend.stop(); }
 });

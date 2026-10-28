@@ -41,7 +41,7 @@ flowchart LR
 - Tunnel 也复用 Create 的内联 Channel 配置：多/零
   实时 Channel 的待确认卡片阻止 Save 和切换 Raw；已配置 Channel 只在 Apply 或选择有效建议后原子迁移 server/toolset
   引用，保留既有权限和其他字段，并对已连接 Tunnel 重新发现工具。
-- 内置工具回显当前 23 项可选工具，与创建页和 Agent API 合同一致；未显式配置时 `ask_user_question` 默认关闭，用户可以主动开启。Brain 的 `web_search` / `web_fetch` 在 oma-server 执行，外部 Claude Code 的 `WebFetch` 仍按客户端工具处理，不启用 Messages API 的模型服务端同名工具。Rendered 与 Raw 均支持内置 `web_search`；Web 工具域名策略和 Fetch 内容预算保留在配置中。
+- 内置工具回显当前 9 项可选工具，与创建页和 Agent API 合同一致；未显式配置时 `ask_user_question` 默认关闭，用户可以主动开启。Brain 的 `web_search` / `web_fetch` 在 oma-server 执行，外部 Claude Code 的 `WebFetch` 仍按客户端工具处理，不启用 Messages API 的模型服务端同名工具。Rendered 与 Raw 均支持内置 `web_search`；Web 工具域名策略和 Fetch 内容预算保留在配置中。
 
 ## 布局与验收
 
@@ -49,3 +49,13 @@ flowchart LR
 - 组件测试覆盖默认 Rendered、Raw YAML/JSON、无改动禁用保存、并发失败保留 Draft、固定引用与模型修饰项保留、
   Tunnel Channel 待确认阻断与原子迁移，以及旧配置回退 Raw。
 - 纯函数测试覆盖 Rendered 兼容性判断，避免未来扩展 schema 时误将不可表达的配置带入表单。
+
+
+## 详情与编辑的视觉约定
+
+- 详情页采用12px元数据、14px正文与区块标题、24px页面标题，以字重和留白建立层级。长标题和描述可换行，窄屏操作区另起一行。
+- 详情和快速查看共用AgentToolsSection，按工具卡实际容器宽度切换列布局，32rem以下说明另起一行，权限标签右对齐；不按浏览器宽度强迫窄侧栏使用三列。
+- 工具卡保留原有圆角，以0.5px内侧轮廓避免裁切；局部结构边界和中性键盘焦点均为0.5px。箭头保留220ms ease-out、颜色150ms，减少动态效果时取消过渡。
+- 关联会话表格保留可读列宽，名称列显式保留200px，横向滚动只发生在表格容器中，不让固定列挤出零宽度名称列。
+- Raw模式由外层提供唯一“Agent配置”标题，共享原始编辑器只提供格式选择、复制和代码编辑；Create与Edit同时适用。
+- 本批真实样本覆盖配置、工具、版本菜单、关联会话、部署空状态、编辑Rendered/Raw和快速查看的桌面明暗及390px浅色。没有保存、刷新MCP目录或运行资源；非空技能/部署、错误/权限、英文和原生缩放仍待验收。

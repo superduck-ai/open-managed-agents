@@ -11,6 +11,7 @@ Quickstart 的 `AskUserQuestionsCard` 提交 `ask_user_questions` 专用数组�
 { "answers": [{ "header": "...", "question": "...", "answers": ["Blue"] }] }
 ```
 
-Session 中的 Claude Code `AskUserQuestion` 使用以完整问题文本为 key 的答案对象，并通过
-`user.custom_tool_result` 提交。实现只复用 `parseQuestionInput()` 与共享 `Questionnaire` 控件，
-不直接挂载 Quickstart 卡片。
+Session 的 `AskUserQuestion` 采用 DeepSeek 参数定义，提交
+`{answers:[{id,selected,custom?}]}`，通过 `user.custom_tool_result.content` 返回。
+实现只复用 `parseQuestionInput()` 与共享 `Questionnaire` 控件，不直接挂载 Quickstart 卡片。
+每题必须携带 `id`，多选使用 `multi_select`；不再支持旧 Claude Code 按问题文本编码的答案。

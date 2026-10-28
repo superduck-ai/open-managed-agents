@@ -1,3 +1,4 @@
+import { useI18n } from '../../shared/i18n';
 import { useState } from 'react';
 import { hasScopeUnsavedChanges } from '../../shared/organizations/unsaved';
 import {
@@ -12,12 +13,13 @@ import {
 } from '../../shared/ui/alert-dialog';
 
 export function useScopeConfirmation() {
+  const { msg } = useI18n();
   const [pending, setPending] = useState<(() => void) | null>(null);
   const request = (action: () => void) => {
     if (hasScopeUnsavedChanges()) setPending(() => action);
     else action();
   };
-  const dialog = pending ? (
+  const dialog = (
     <AlertDialog
       open={Boolean(pending)}
       onOpenChange={(open) => {
@@ -26,11 +28,16 @@ export function useScopeConfirmation() {
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>放弃未保存的更改？</AlertDialogTitle>
-          <AlertDialogDescription>切换组织或工作区会关闭当前页面，未保存的更改将丢失。</AlertDialogDescription>
+          <AlertDialogTitle>{msg('organizations.unsaved.title', 'Discard unsaved changes?')}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {msg(
+              'organizations.unsaved.description',
+              'Switching organizations or workspaces closes this page and discards unsaved changes.',
+            )}
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel onClick={() => setPending(null)}>继续编辑</AlertDialogCancel>
+          <AlertDialogCancel>{msg('organizations.unsaved.keepEditing', 'Keep editing')}</AlertDialogCancel>
           <AlertDialogAction
             onClick={() => {
               const action = pending;
@@ -38,11 +45,11 @@ export function useScopeConfirmation() {
               action?.();
             }}
           >
-            放弃更改并切换
+            {msg('organizations.unsaved.switch', 'Discard and switch')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  ) : null;
+  );
   return { request, dialog };
 }

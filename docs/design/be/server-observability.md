@@ -624,7 +624,7 @@ worker 输出事件的 span 标注在 `prepareWorkerOutputEvents` 中复用已�
 
 ### P3.1 迁移
 
-`internal/db/migrations/00092_environment_work_observability.sql` 为 Work 增加 `queued_at` 与
+`internal/db/migrations/00109_environment_work_observability.sql` 为 Work 增加 `queued_at` 与
 `trace_parent`。两者仅用于内部排队计量与关联，不进入公开 API DTO。
 
 ### P3.2 Mapper 边界
@@ -719,10 +719,10 @@ Provider 测试覆盖 NotFound 等结果；`tests/sandbox_observability_test.go`
 
 ### P6.1 索引迁移
 
-`00093_operational_metrics_indexes.sql` 创建四个状态部分索引，其中 Work 使用仅含 `state` 的
+`00110_operational_metrics_indexes.sql` 创建四个状态部分索引，其中 Work 使用仅含 `state` 的
 `environment_work_live_state_v2_idx`，并清理旧版 `environment_work_live_state_v1_idx`。
-观测迁移已重编号为 `00092`–`00094` 以避开 main 的 `00084`–`00091`；曾以旧编号运行过本分支的库会把
-main 的 `00084`、`00085` 视为已应用，需人工核对并补齐。
+观测迁移已重编号为 `00109`–`00111` 以避开 main 的 `00084`–`00108`；曾以旧编号 `00092`–`00094` 运行过本分支的库
+会把 main 的同号迁移视为已应用，须重建隔离库。
 迁移使用 `NO TRANSACTION` 与 `CONCURRENTLY`，先清理失败构建的遗留索引，再构建替代索引。
 
 Work 心跳更新 `updated_at`；把它放入索引会阻止 HOT 更新。状态计数只依赖 `state`，
@@ -940,7 +940,7 @@ sequenceDiagram
 ```
 
 - 派发不再经过 NATS：Runner 在 `brain_dispatch` 阶段调用 `RequestCodeSessionWorker`，把当前 span 的
-  `traceparent` 写入 `code_sessions.worker_claim_trace_parent`（migration `00094`）。同一请求周期内的重复
+  `traceparent` 写入 `code_sessions.worker_claim_trace_parent`（migration `00111`）。同一请求周期内的重复
   请求不覆盖首个值，与 `worker_claim_requested_at` 的 `COALESCE` 语义一致。
 - 只有带 requested 标记的领取才返回该值；租约过期后的接管领取（公共会话仍 running 但未重新请求）不
   复用旧派发的 trace，`trace_parent` 为空。重试、交接释放会保留 requested 标记，新领取继续 link 到原派发。
@@ -1144,7 +1144,7 @@ exporter）。PostgreSQL 测试覆盖"有新事件的 running 会话不计入 st
 | Runner 与沙箱准备 | `internal/environments/runner_telemetry.go`、`internal/runtime/e2bruntime/telemetry.go` |
 | 模型代理 | `internal/messages/telemetry.go` |
 | 队列、后台任务与扇出 | `internal/workerevents/telemetry.go`、`internal/riverjobs/telemetry.go`、`internal/webhooks/telemetry.go`、`internal/sessionfanout/nats_receive.go` |
-| 状态聚合与索引 | `internal/db/operational_metrics*`、`internal/db/migrations/00092*`、`00093*`、`00094*`、`internal/statemetrics/reporter.go` |
+| 状态聚合与索引 | `internal/db/operational_metrics*`、`internal/db/migrations/00109*`、`00110*`、`00111*`、`internal/statemetrics/reporter.go` |
 | Brain 服务级遥测与透传 | `oma-brain-dsh/src/{telemetry,trace-context,api,worker-registration}.ts` |
 | 看板 | `deploy/openobserve-dashboard.json` |
 

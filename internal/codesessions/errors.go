@@ -10,8 +10,16 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
+var errNativeTrajectoryPayload = errors.New("invalid DSH event envelope")
+
 var errRuntimeSubagentConfig = errors.New("invalid runtime subagent configuration")
 var errSandboxUnavailable = errors.New("sandbox is unavailable")
+var errSessionIngressIdentity = errors.New("session ingress identity does not match an active code session")
+
+var errSandboxCredentialUnbound = errors.New("sandbox credential requires a sandbox UUID")
+var errSandboxCredentialScope = errors.New("invalid session ingress credential scope")
+var errSandboxCredentialPath = errors.New("sandbox credential does not match request path")
+var errSandboxCredentialLifecycle = errors.New("sandbox credential requires persistent lifecycle validation")
 
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
@@ -173,4 +181,14 @@ func mapBrainClaimReleaseError(err error) error {
 		return apperr.New(apperr.Conflict, "Brain claim is no longer held", err)
 	}
 	return internalError("Could not release code session claim", err)
+}
+
+func workerIngressAuthorizationFailure(cause error) error {
+	if errors.Is(cause, errSessionIngressIdentity) {
+		return apperr.New(apperr.Unauthenticated, "Session ingress identity is no longer active", cause)
+	}
+	if errors.Is(cause, db.ErrWorkerEpochMismatch) {
+		return apperr.New(apperr.Conflict, "Worker epoch mismatch", cause)
+	}
+	return internalError("Could not authorize code session worker", cause)
 }

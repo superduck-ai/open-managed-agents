@@ -13,30 +13,6 @@ import (
 // 鉴权失败的 401 行为（含按协议编码的 OTLP 错误体与跨 session token 绕过路径）
 // 由 tests/sessions_api_test.go 的 TestCodeSessionWorkerOTLPRejectsInvalidSessionIngress 端到端覆盖。
 
-func TestOTLPEndpointFromPathResolvesSignal(t *testing.T) {
-	tests := []struct {
-		name       string
-		path       string
-		wantSignal string
-	}{
-		{name: "metrics", path: "/worker/otlp/metrics", wantSignal: "metrics"},
-		{name: "standard logs", path: "/worker/otlp/logs", wantSignal: "logs"},
-		{name: "detailed logs", path: "/worker/otlp/v1/logs", wantSignal: "logs"},
-		{name: "detailed traces", path: "/worker/otlp/v1/traces", wantSignal: "traces"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			signal, err := otlpEndpointFromPath(test.path)
-			if err != nil || signal != test.wantSignal {
-				t.Fatalf("otlpEndpointFromPath() = %q, %v; want %q", signal, err, test.wantSignal)
-			}
-		})
-	}
-	if _, err := otlpEndpointFromPath("/worker/otlp/unknown"); err == nil {
-		t.Fatal("otlpEndpointFromPath() accepted unsupported endpoint")
-	}
-}
-
 func TestReadOTLPRequestBodyEnforcesEncodingAndExpandedLimit(t *testing.T) {
 	var compressed bytes.Buffer
 	writer := gzip.NewWriter(&compressed)

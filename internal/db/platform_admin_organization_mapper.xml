@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="PlatformAdminOrganizationMapper">
+    <sql id="columns">
+        o.uuid, o.name, COALESCE(o.profile-&gt;&gt;'website', '') AS website,
+        COALESCE(o.profile-&gt;&gt;'industry', '') AS industry, o.management_version, o.created_at,
+        (SELECT count(*) FROM users u WHERE u.organization_uuid = o.uuid AND u.deleted_at IS NULL) AS member_count,
+        (SELECT count(*) FROM users u WHERE u.organization_uuid = o.uuid AND u.deleted_at IS NULL AND u.role = 'admin') AS admin_count,
+        (SELECT count(*) FROM workspaces w WHERE w.organization_uuid = o.uuid) AS workspace_count
+    </sql>
+    <select id="List" resultType="PlatformAdminOrganization">
+        SELECT <include refid="columns"/> FROM organizations o
+        WHERE (o.name ILIKE '%' || #{params.Query} || '%' OR o.uuid::text = #{params.Query})
+        <if test="params.After != ''">AND o.uuid &gt; #{params.After}</if>
+        ORDER BY o.uuid LIMIT #{params.Limit}
+    </select>
+    <select id="Exists" result="scalar">
+        SELECT EXISTS (SELECT 1 FROM organizations WHERE uuid = #{organizationUUID}) AS found
+    </select>
+    <select id="Find" resultType="PlatformAdminOrganization">
+        SELECT <include refid="columns"/> FROM organizations o WHERE o.uuid = #{organizationUUID}
+    </select>
+    <select id="Lock" result="scalar">
+        SELECT management_version FROM organizations WHERE uuid = #{organizationUUID} FOR UPDATE
+    </select>
+    <update id="Update" result="exec">
+        UPDATE organizations SET
+        name = COALESCE(#{params.Name}, name),
+        profile = profile || jsonb_strip_nulls(jsonb_build_object('website', CAST(#{params.Website} AS text), 'industry', CAST(#{params.Industry} AS text))),
+        updated_at = now()
+        WHERE uuid = #{params.OrganizationUUID}
+    </update>
+    <select id="ListMembers" resultType="PlatformAdminMember">
+        SELECT uuid, email, name, role FROM users WHERE organization_uuid = #{params.OrganizationUUID} AND deleted_at IS NULL
+        <if test="params.After != ''">AND uuid &gt; #{params.After}</if>
+        ORDER BY uuid LIMIT #{params.Limit}
+    </select>
+    <select id="ListWorkspaces" resultType="PlatformAdminWorkspace">
+        SELECT uuid, external_id, name, is_default, archived_at IS NOT NULL AS archived FROM workspaces
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        <if test="params.After != ''">AND uuid &gt; #{params.After}</if>
+        ORDER BY uuid LIMIT #{params.Limit}
+    </select>
+    <select id="FindMember" resultType="PlatformAdminMember">
+        SELECT uuid, email, name, role FROM users WHERE organization_uuid = #{organizationUUID} AND uuid = #{memberUUID} AND deleted_at IS NULL
+    </select>
+    <select id="FindMemberByEmail" resultType="PlatformAdminMember">
+        SELECT uuid, email, name, role FROM users WHERE organization_uuid = #{organizationUUID} AND lower(email) = lower(#{email}) AND deleted_at IS NULL
+    </select>
+    <insert id="InsertMember" result="exec">
+        INSERT INTO users (uuid, external_id, organization_uuid, email, name, role, registration_identity)
+        VALUES (#{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.Email}, #{params.Name}, #{params.Role}, false)
+    </insert>
+    <update id="SetMemberRole" result="exec">
+        UPDATE users SET role = #{role}, updated_at = now() WHERE organization_uuid = #{organizationUUID} AND uuid = #{memberUUID} AND deleted_at IS NULL
+    </update>
+    <select id="FindCreation" resultType="PlatformAdminOrganizationCreation">
+        SELECT uuid, creation_request_hash FROM organizations
+        WHERE creation_account_uuid = #{accountUUID} AND creation_idempotency_key = #{key, sensitive=true}
+    </select>
+    <insert id="Insert" result="returning" resultType="PlatformAdminOrganizationCreation">
+        INSERT INTO organizations (name, creation_account_uuid, creation_idempotency_key, creation_request_hash)
+        VALUES (#{params.Name}, #{params.AccountUUID}, #{params.Key, sensitive=true}, #{params.Hash, sensitive=true})
+        ON CONFLICT (creation_account_uuid, creation_idempotency_key) DO NOTHING
+        RETURNING uuid, creation_request_hash
+    </insert>
+</mapper>

@@ -14,17 +14,34 @@ import (
 )
 
 type mailFixture struct {
-	err       error
-	calls     int
-	recipient string
-	message   string
+	err           error
+	calls         int
+	recipient     string
+	message       string
+	memberLookups int
 }
 
 func (f *mailFixture) GetPlatformOrganization(context.Context, string) (*platform.OrganizationRecord, error) {
 	return &platform.OrganizationRecord{Name: "研发 <script>alert(1)</script>"}, nil
 }
 func (f *mailFixture) GetAdminUser(context.Context, string, string) (db.AdminUser, error) {
+	f.memberLookups++
 	return db.AdminUser{Email: "admin@example.com"}, nil
+}
+
+func TestPlatformInvitationMailIdentity(t *testing.T) {
+	fixture := &mailFixture{}
+	mailer := NewMailer(config.AuthConfig{ConsoleURL: "https://oma.example.com", SMTP: config.EmailSMTPConfig{Username: "sender@example.com"}}, fixture, nil)
+	mailer.sender = fixture
+	if got := mailer.NotifyPlatform(t.Context(), "target-org", "recipient@example.com", time.Now().Add(time.Hour)); got != "sent" {
+		t.Fatal(got)
+	}
+	if fixture.memberLookups != 0 || !strings.Contains(fixture.message, "Platform administrator") || strings.Contains(fixture.message, "admin@example.com") {
+		t.Fatal("平台邀请伪装为组织成员")
+	}
+	if !strings.Contains(fixture.message, "https://oma.example.com/invites") {
+		t.Fatal("缺少登录后接受入口")
+	}
 }
 func (f *mailFixture) SendMessage(_ context.Context, recipient string, message []byte) error {
 	f.calls++

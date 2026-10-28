@@ -35,28 +35,31 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
-	WebTools             WebToolsConfig            `yaml:"web_tools"`
-	EnvironmentPackages  EnvironmentPackageConfig  `yaml:"environment_packages"`
-	EnvironmentPrebuilds EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
-	TranscriptArchive    TranscriptArchiveConfig   `yaml:"transcript_archive"`
-	Env                  string                    `yaml:"env"`
-	Server               ServerConfig              `yaml:"server"`
-	Database             yamlDatabaseConfig        `yaml:"database"`
-	Redis                RedisConfig               `yaml:"redis"`
-	NATS                 yamlNATSConfig            `yaml:"nats"`
-	Auth                 AuthConfig                `yaml:"auth"`
-	Tunnel               TunnelConfig              `yaml:"tunnel"`
-	Storage              StorageConfig             `yaml:"storage"`
-	Batch                BatchConfig               `yaml:"batch"`
-	SandboxLifecycle     SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
-	E2B                  E2BConfig                 `yaml:"e2b"`
-	EnvironmentRunner    EnvironmentRunnerConfig   `yaml:"environment_runner"`
-	CodeSession          yamlCodeSessionConfig     `yaml:"code_session"`
-	Observability        ObservabilityConfig       `yaml:"observability"`
-	Telemetry            TelemetryConfig           `yaml:"telemetry"`
-	Webhook              yamlWebhookConfig         `yaml:"webhook"`
-	Vault                VaultConfig               `yaml:"vault"`
-	Bootstrap            yamlBootstrapConfig       `yaml:"bootstrap"`
+	ChannelBridge          ChannelBridgeConfig       `yaml:"channel_bridge"`
+	LLMProviderPresetsFile string                    `yaml:"llm_provider_presets_file"`
+	WebTools               WebToolsConfig            `yaml:"web_tools"`
+	EnvironmentPackages    EnvironmentPackageConfig  `yaml:"environment_packages"`
+	EnvironmentPrebuilds   EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
+	TranscriptArchive      TranscriptArchiveConfig   `yaml:"transcript_archive"`
+	Env                    string                    `yaml:"env"`
+	Server                 ServerConfig              `yaml:"server"`
+	Database               yamlDatabaseConfig        `yaml:"database"`
+	Redis                  RedisConfig               `yaml:"redis"`
+	NATS                   yamlNATSConfig            `yaml:"nats"`
+	Auth                   AuthConfig                `yaml:"auth"`
+	Tunnel                 TunnelConfig              `yaml:"tunnel"`
+	Storage                StorageConfig             `yaml:"storage"`
+	Batch                  BatchConfig               `yaml:"batch"`
+	SandboxLifecycle       SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
+	E2B                    E2BConfig                 `yaml:"e2b"`
+	EnvironmentRunner      EnvironmentRunnerConfig   `yaml:"environment_runner"`
+	CodeSession            yamlCodeSessionConfig     `yaml:"code_session"`
+	Observability          ObservabilityConfig       `yaml:"observability"`
+	Telemetry              TelemetryConfig           `yaml:"telemetry"`
+	Webhook                yamlWebhookConfig         `yaml:"webhook"`
+	TelemetryExport        yamlWebhookConfig         `yaml:"telemetry_export"`
+	Vault                  VaultConfig               `yaml:"vault"`
+	Bootstrap              yamlBootstrapConfig       `yaml:"bootstrap"`
 }
 
 // Legacy flat fields exist only at the YAML boundary. All consumers use Local.
@@ -103,11 +106,12 @@ type yamlDatabaseConfig struct {
 }
 
 type yamlNATSConfig struct {
-	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
-	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
-	URL               string                  `yaml:"url"`
-	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
-	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
+	WebhookStream         WebhookStreamConfig     `yaml:"webhook_stream"`
+	TelemetryExportStream WebhookStreamConfig     `yaml:"telemetry_export_stream"`
+	WorkerEventStream     WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL                   string                  `yaml:"url"`
+	ConnectTimeout        time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout          time.Duration           `yaml:"drain_timeout"`
 }
 
 type yamlCodeSessionConfig struct {
@@ -142,16 +146,18 @@ type yamlBootstrapConfig struct {
 func newYAMLConfig() yamlConfig {
 	defaults := defaultConfig()
 	return yamlConfig{
-		Env:      defaults.Env,
-		Server:   defaults.Server,
-		Database: yamlDatabaseConfig{URL: defaults.Database.URL},
-		Redis:    defaults.Redis,
+		ChannelBridge: defaults.ChannelBridge,
+		Env:           defaults.Env,
+		Server:        defaults.Server,
+		Database:      yamlDatabaseConfig{URL: defaults.Database.URL},
+		Redis:         defaults.Redis,
 		NATS: yamlNATSConfig{
-			WorkerEventStream: defaults.NATS.WorkerEventStream,
-			WebhookStream:     defaults.NATS.WebhookStream,
-			URL:               defaults.NATS.URL,
-			ConnectTimeout:    defaults.NATS.ConnectTimeout,
-			DrainTimeout:      defaults.NATS.DrainTimeout,
+			WorkerEventStream:     defaults.NATS.WorkerEventStream,
+			WebhookStream:         defaults.NATS.WebhookStream,
+			TelemetryExportStream: defaults.NATS.TelemetryExportStream,
+			URL:                   defaults.NATS.URL,
+			ConnectTimeout:        defaults.NATS.ConnectTimeout,
+			DrainTimeout:          defaults.NATS.DrainTimeout,
 		},
 		WebTools:             defaults.WebTools,
 		Auth:                 defaults.Auth,
@@ -181,6 +187,13 @@ func newYAMLConfig() yamlConfig {
 			FailureDisableAfter: defaults.Webhook.FailureDisableAfter,
 			AllowInsecure:       defaults.Webhook.AllowInsecure,
 		},
+		TelemetryExport: yamlWebhookConfig{
+			Concurrency:         defaults.TelemetryExport.Concurrency,
+			Timeout:             defaults.TelemetryExport.Timeout,
+			MaxAttempts:         defaults.TelemetryExport.MaxAttempts,
+			FailureDisableAfter: defaults.TelemetryExport.FailureDisableAfter,
+			AllowInsecure:       defaults.TelemetryExport.AllowInsecure,
+		},
 		Vault: defaults.Vault,
 		Bootstrap: yamlBootstrapConfig{
 			WorkspaceName:       defaults.Bootstrap.WorkspaceName,
@@ -196,16 +209,19 @@ func newYAMLConfig() yamlConfig {
 
 func (input yamlConfig) resolve() Config {
 	cfg := Config{
-		Env:      input.Env,
-		Server:   input.Server,
-		Database: DatabaseConfig{URL: input.Database.URL},
-		Redis:    input.Redis,
+		ChannelBridge:          input.ChannelBridge,
+		LLMProviderPresetsFile: input.LLMProviderPresetsFile,
+		Env:                    input.Env,
+		Server:                 input.Server,
+		Database:               DatabaseConfig{URL: input.Database.URL},
+		Redis:                  input.Redis,
 		NATS: NATSConfig{
-			WorkerEventStream: input.NATS.WorkerEventStream,
-			WebhookStream:     input.NATS.WebhookStream,
-			URL:               input.NATS.URL,
-			ConnectTimeout:    input.NATS.ConnectTimeout,
-			DrainTimeout:      input.NATS.DrainTimeout,
+			WorkerEventStream:     input.NATS.WorkerEventStream,
+			WebhookStream:         input.NATS.WebhookStream,
+			TelemetryExportStream: input.NATS.TelemetryExportStream,
+			URL:                   input.NATS.URL,
+			ConnectTimeout:        input.NATS.ConnectTimeout,
+			DrainTimeout:          input.NATS.DrainTimeout,
 		},
 		WebTools:             input.WebTools,
 		Auth:                 input.Auth,
@@ -235,6 +251,13 @@ func (input yamlConfig) resolve() Config {
 			FailureDisableAfter: input.Webhook.FailureDisableAfter,
 			AllowInsecure:       input.Webhook.AllowInsecure,
 		},
+		TelemetryExport: TelemetryExportConfig{
+			Concurrency:         input.TelemetryExport.Concurrency,
+			Timeout:             input.TelemetryExport.Timeout,
+			MaxAttempts:         input.TelemetryExport.MaxAttempts,
+			FailureDisableAfter: input.TelemetryExport.FailureDisableAfter,
+			AllowInsecure:       input.TelemetryExport.AllowInsecure,
+		},
 		Vault: input.Vault,
 		Bootstrap: BootstrapConfig{
 			WorkspaceName:       input.Bootstrap.WorkspaceName,
@@ -248,6 +271,7 @@ func (input yamlConfig) resolve() Config {
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
 	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(true)
+	cfg.TelemetryExport.WorkerEnabled = input.TelemetryExport.WorkerEnabled.valueOr(true)
 	if input.Bootstrap.SeedAPIKeys.set {
 		cfg.Bootstrap.SeedAPIKeys = input.Bootstrap.SeedAPIKeys.value
 	} else {

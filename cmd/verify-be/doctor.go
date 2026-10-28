@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const openObserveImage = "public.ecr.aws/zinclabs/openobserve:v1.1.2"
+
 const defaultWorker = "ghcr.io/superduck-ai/managed-agent-sandbox:latest"
 const minimumDiskKiB = 1 << 20
 
@@ -27,8 +29,8 @@ type doctorResult struct {
 	PublicSandboxChecked bool              `json:"public_sandbox_checked"`
 }
 
-func doctor(ctx context.Context, root, worker, selected string) (doctorResult, error) {
-	result := doctorResult{Versions: map[string]string{}, Images: map[string]string{}, APIPort: 18080}
+func doctor(ctx context.Context, root, worker, selected string, apiPort int) (doctorResult, error) {
+	result := doctorResult{Versions: map[string]string{}, Images: map[string]string{}, APIPort: apiPort}
 	if usesBrain(selected) {
 		path := os.Getenv("OMA_BRAIN_BINARY")
 		info, err := os.Stat(path)
@@ -62,6 +64,9 @@ func doctor(ctx context.Context, root, worker, selected string) (doctorResult, e
 		result.Versions[name] = strings.Split(value, "\n")[0]
 	}
 	images := map[string]string{"postgres": "postgres:17", "redis": "redis:8", "nats": "nats:2.14.6-alpine", "minio": "pgsty/minio:latest"}
+	if selected == "chat.brain-observability" {
+		images["openobserve"] = openObserveImage
+	}
 	if worker != "" {
 		images["worker"] = worker
 	}
@@ -72,7 +77,7 @@ func doctor(ctx context.Context, root, worker, selected string) (doctorResult, e
 		}
 		result.Images[name] = value
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:18080")
+	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(apiPort)))
 	if err != nil {
 		return result, fmt.Errorf("verification port unavailable: %w", err)
 	}

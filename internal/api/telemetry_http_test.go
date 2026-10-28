@@ -216,8 +216,6 @@ func TestRequestTelemetryPolicyFollowsServerRoutes(t *testing.T) {
 		{http.MethodGet, "/web-api/sessions/sesn_a/stream", unobservedRequest},
 		{http.MethodGet, "/v1/code/upstreamproxy/ws", unobservedRequest},
 		{http.MethodGet, "/v1/code/sessions/cse_a/worker/events/stream", unobservedRequest},
-		{http.MethodPost, "/v1/code/sessions/cse_a/worker/otlp/metrics", unobservedRequest},
-		{http.MethodPost, "/v1/code/sessions/cse_a/worker/otlp/logs", unobservedRequest},
 		{http.MethodPost, "/v1/code/sessions/cse_a/worker/otlp/v1/logs", unobservedRequest},
 		{http.MethodPost, "/v1/code/sessions/cse_a/worker/otlp/v1/traces", unobservedRequest},
 		{http.MethodPut, "/v1/filestore/fs/fs_a/file", unobservedRequest},

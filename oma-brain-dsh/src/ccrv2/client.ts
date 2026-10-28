@@ -1,3 +1,4 @@
+import type { CcrPersistArgs } from "./persistence-contracts.ts";
 import { createHash } from "node:crypto";
 import { brainMetrics } from "../telemetry.ts";
 import type { CcrBackend } from "./contracts.ts";
@@ -106,8 +107,10 @@ export interface CcrClientConfig {
 
 export type CcrLeaseStatus = CcrLeaseResult["status"];
 
-function stableId(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+function persistenceId(id: string, ...[type, data, agentId]: CcrPersistArgs): string {
+  const scope = `${type}:${encodeURIComponent(id)}`;
+  if ("seq" in data) return `${scope}:${encodeURIComponent(agentId ?? id)}:${data.seq}`;
+  return `${scope}:${encodeURIComponent(data.id)}:header`;
 }
 
 /** CCRv2 HTTP paths, wire envelopes, fencing and confirmation rules. */
@@ -637,18 +640,18 @@ export class CcrClient implements CcrBackend {
     return false;
   }
 
-  async privateEvents(id: string, options?: { subagents?: boolean; signal?: AbortSignal }): Promise<Record<string, unknown>[]> {
-    const events = await this.readHistory(id, options?.subagents ?? false, options?.signal);
+  async privateEvents(id: string, options?: { subagents?: boolean; agentId?: string; signal?: AbortSignal }): Promise<Record<string, unknown>[]> {
+    const events = await this.readHistory(id, options?.agentId !== undefined || (options?.subagents ?? false), options?.signal);
     if (events === null) throw new Error("Private event history unavailable");
-    return events.map((event) => event.payload);
+    return events.filter((event) => options?.agentId === undefined || event.agent_id === options.agentId)
+      .map((event) => event.payload);
   }
 
-  async persist(id: string, subtype: string, data: unknown, agentId?: string): Promise<void> {
+  async persist(id: string, ...args: CcrPersistArgs): Promise<void> {
+    const [type, data, agentId] = args;
     const payload = {
-      type: "system",
-      uuid: stableId(agentId === undefined ? [id, subtype, data] : [id, agentId, subtype, data]),
-      subtype,
-      schema_version: 1,
+      type,
+      uuid: persistenceId(id, ...args),
       data,
     };
     const event: WorkerEvent = { payload, is_compaction: false, ...(agentId === undefined ? {} : { agent_id: agentId }) };

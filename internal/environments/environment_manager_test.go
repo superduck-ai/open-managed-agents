@@ -35,15 +35,15 @@ func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 	resources := []db.SessionResource{
 		{
 			ResourceType: "file",
-			Payload:      json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/workspace/data.csv"}`),
+			File:         &db.SessionResourceFileReference{FileID: "file_test", NamespacePath: "/workspace/data.csv"},
 		},
 		{
 			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/mnt/memory/test","access":"read_write"}`),
+			MemoryStore:  &db.SessionResourceMemoryStore{ExternalID: "mem_test", MountPath: new("/mnt/memory/test"), Access: new("read_write")},
 		},
 		{
 			ResourceType: "future_resource",
-			Payload:      json.RawMessage(`{"type":"future_resource","mount_path":"/workspace/future"}`),
+			File:         &db.SessionResourceFileReference{FileID: "", NamespacePath: "/workspace/future"},
 		},
 	}
 	if workDir := mustResolveRuntimeResources(t, resources).workDir; workDir != defaultEnvironmentWorkDir {
@@ -53,19 +53,19 @@ func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 
 func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T) {
 	repository := db.SessionResource{
-		UUID:         "00000000-0000-0000-0000-000000000002",
-		ResourceType: "github_repository",
-		Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/repository","mount_path":"/workspace/repository"}`),
+		UUID:             "00000000-0000-0000-0000-000000000002",
+		ResourceType:     "github_repository",
+		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/repository", MountPath: "/workspace/repository"},
 	}
 	file := db.SessionResource{
 		UUID:         "00000000-0000-0000-0000-000000000001",
 		ResourceType: "file",
-		Payload:      json.RawMessage(`{"type":"file","mount_path":"/workspace/data.csv"}`),
+		File:         &db.SessionResourceFileReference{FileID: "", NamespacePath: "/workspace/data.csv"},
 	}
 	memoryStore := db.SessionResource{
 		UUID:         "00000000-0000-0000-0000-000000000003",
 		ResourceType: "memory_store",
-		Payload:      json.RawMessage(`{"type":"memory_store","mount_path":"/mnt/memory/test","access":"read_write"}`),
+		MemoryStore:  &db.SessionResourceMemoryStore{ExternalID: "", MountPath: new("/mnt/memory/test"), Access: new("read_write")},
 	}
 	for name, resources := range map[string][]db.SessionResource{
 		"repository first": {repository, file, memoryStore},
@@ -82,18 +82,18 @@ func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T
 func TestManagedAgentWorkDirUsesEarliestAttachedRepository(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
 	first := db.SessionResource{
-		UUID:         "00000000-0000-0000-0000-000000000010",
-		ExternalID:   "sesrsc_first",
-		ResourceType: "github_repository",
-		Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/first","mount_path":"/workspace/first"}`),
-		CreatedAt:    createdAt,
+		UUID:             "00000000-0000-0000-0000-000000000010",
+		ExternalID:       "sesrsc_first",
+		ResourceType:     "github_repository",
+		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/first", MountPath: "/workspace/first"},
+		CreatedAt:        createdAt,
 	}
 	later := db.SessionResource{
-		UUID:         "00000000-0000-0000-0000-000000000011",
-		ExternalID:   "sesrsc_later",
-		ResourceType: "github_repository",
-		Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/later","mount_path":"/workspace/later"}`),
-		CreatedAt:    createdAt.Add(time.Minute),
+		UUID:             "00000000-0000-0000-0000-000000000011",
+		ExternalID:       "sesrsc_later",
+		ResourceType:     "github_repository",
+		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/later", MountPath: "/workspace/later"},
+		CreatedAt:        createdAt.Add(time.Minute),
 	}
 	sameTimeLater := later
 	sameTimeLater.CreatedAt = createdAt
@@ -116,15 +116,15 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 	resources := []db.SessionResource{
 		{
 			ResourceType: "file",
-			Payload:      json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/workspace/data.csv"}`),
+			File:         &db.SessionResourceFileReference{FileID: "file_test", NamespacePath: "/workspace/data.csv"},
 		},
 		{
-			ResourceType: "github_repository",
-			Payload:      json.RawMessage(`{"type":"github_repository","url":"https://git.internal:443/group/subgroup/widgets.git","mount_path":"/workspace/widgets","checkout":{"type":"branch","name":"main"}}`),
+			ResourceType:     "github_repository",
+			GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://git.internal:443/group/subgroup/widgets.git", MountPath: "/workspace/widgets", Checkout: &db.SessionResourceGitHubCheckout{Type: "branch", Name: "main"}},
 		},
 		{
 			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/mnt/memory/test","access":"read_write","runtime_extension":{"enabled":true}}`),
+			MemoryStore:  &db.SessionResourceMemoryStore{ExternalID: "mem_test", MountPath: new("/mnt/memory/test"), Access: new("read_write")},
 		},
 	}
 
@@ -155,7 +155,7 @@ func TestManagedAgentRuntimeResourcesRejectInvalidGit(t *testing.T) {
 		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/../outside"}`,
 	} {
 		t.Run(raw, func(t *testing.T) {
-			_, err := resolveManagedAgentRuntimeResources([]db.SessionResource{{ResourceType: "github_repository", Payload: json.RawMessage(raw)}})
+			_, err := resolveManagedAgentRuntimeResources([]db.SessionResource{{ResourceType: "github_repository", GitHubRepository: testGitRepository(json.RawMessage(raw))}})
 			if err == nil {
 				t.Fatal("invalid persisted Git resource accepted")
 			}
@@ -174,7 +174,7 @@ func TestManagedAgentGitSourcesIncludeSigningType(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resources := mustResolveRuntimeResources(t, []db.SessionResource{{ResourceType: "github_repository", Payload: payload}})
+			resources := mustResolveRuntimeResources(t, []db.SessionResource{{ResourceType: "github_repository", GitHubRepository: testGitRepository(payload)}})
 			var source gitRepositoryRuntimeSource
 			if err := json.Unmarshal(resources.sources[0], &source); err != nil {
 				t.Fatal(err)
@@ -255,30 +255,9 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if _, ok := startupEnv["CLAUDE_CODE_SESSION_ACCESS_TOKEN"]; ok {
 		t.Fatalf("session access token environment variable must not mask the WebSocket auth FD: %#v", startupEnv)
 	}
-	if startupEnv["OTEL_METRICS_EXPORTER"] != "otlp" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"] != "http/protobuf" ||
-		startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"] != "http/protobuf" ||
-		startupEnv["ENABLE_BETA_TRACING_DETAILED"] != "1" ||
-		startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "1" ||
-		startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] != "" {
-		t.Fatalf("unexpected otlp environment variables: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_LOG_USER_PROMPTS"] != "1" ||
-		startupEnv["OTEL_LOG_TOOL_DETAILS"] != "1" ||
-		startupEnv["OTEL_LOG_TOOL_CONTENT"] != "1" {
-		t.Fatalf("content capture grants missing from startup environment: %#v", startupEnv)
-	}
-	otlpBaseURL := "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp"
-	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != otlpBaseURL+"/metrics" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != otlpBaseURL+"/logs" ||
-		startupEnv["BETA_TRACING_ENDPOINT"] != otlpBaseURL {
-		t.Fatalf("unexpected managed OTLP endpoints: %#v", startupEnv)
-	}
-	for _, key := range []string{"OTEL_EXPORTER_OTLP_METRICS_HEADERS", "OTEL_EXPORTER_OTLP_LOGS_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS"} {
-		if startupEnv[key] != "Authorization=Bearer "+sessionIngressToken {
-			t.Fatalf("%s = %q, want managed session ingress authorization", key, startupEnv[key])
+	for _, key := range []string{"CLAUDE_CODE_ENABLE_TELEMETRY", "OTEL_LOGS_EXPORTER", "BETA_TRACING_ENDPOINT"} {
+		if _, exists := startupEnv[key]; exists {
+			t.Fatalf("retired Claude telemetry injected: %s", key)
 		}
 	}
 	auths := body["auth"].([]any)
@@ -429,59 +408,13 @@ func TestClaudeRuntimeModelEnvironment(t *testing.T) {
 	}
 }
 
-func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) {
-	cfg := config.Config{
-		CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "https://oma.example.test"},
-		Observability: config.ObservabilityConfig{
-			Enabled:               true,
-			ContentCaptureEnabled: false,
-		},
-	}
-	sessionConfig := json.RawMessage(`{"environment_variables":{
-		"CLAUDE_CODE_ENABLE_TELEMETRY":"",
-		"CLAUDE_CODE_DISABLE_TERMINAL_TITLE":"0",
-		"OTEL_METRICS_EXPORTER":"console",
-		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com",
-		"OTEL_EXPORTER_OTLP_METRICS_HEADERS":"Authorization=Bearer stale",
-		"OTEL_METRICS_INCLUDE_SESSION_ID":"false",
-		"OTEL_LOG_USER_PROMPTS":"1",
-		"OTEL_LOG_RAW_API_BODIES":"1"
-	}}`)
-	startup := buildEnvironmentManagerPayloadStartupContext(t, sessionConfig, cfg)
-	startupEnv := startup["environment_variables"].(map[string]any)
-	// 用户设置的值优先；未设置的键才补平台默认值。
-	if startupEnv["OTEL_METRICS_EXPORTER"] != "console" ||
-		startupEnv["OTEL_METRICS_INCLUDE_SESSION_ID"] != "false" {
-		t.Fatalf("user telemetry preferences were overridden: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
-		startupEnv["ENABLE_BETA_TRACING_DETAILED"] != "1" ||
-		startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "" {
-		t.Fatalf("user telemetry values or platform defaults mismatch: %#v", startupEnv)
-	}
-	if got := startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]; got != "" {
-		t.Fatalf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = %#v, want empty so Claude can export OTEL", got)
-	}
-	if got := startupEnv["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"]; got != "1" {
-		t.Fatalf("CLAUDE_CODE_DISABLE_TERMINAL_TITLE = %#v, want 1", got)
-	}
-	// 用户可以保留采集偏好；连接 OMA 的 signal-specific endpoint/header
-	// 由平台覆盖，使不会动态配置 OTLP 的旧版 environment-manager 也能工作。
-	if startupEnv["OTEL_EXPORTER_OTLP_ENDPOINT"] != "https://collector.example.com" ||
-		startupEnv["OTEL_LOG_USER_PROMPTS"] != "1" {
-		t.Fatalf("user telemetry variables were removed: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "https://oma.example.test/v1/code/sessions/cse_test/worker/otlp/metrics" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token" {
-		t.Fatalf("managed OTLP connection was not applied: %#v", startupEnv)
-	}
-	if startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" {
-		t.Fatalf("CLAUDE_CODE_WORKER_EPOCH = %q, want 1", startupEnv["CLAUDE_CODE_WORKER_EPOCH"])
-	}
-	// 内容采集关闭时平台不补授权默认值，但不删用户自己设置的键。
-	for _, key := range []string{"OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_TOOL_CONTENT"} {
-		if _, ok := startupEnv[key]; ok {
-			t.Fatalf("content capture grant %s injected while content capture is disabled: %#v", key, startupEnv)
+func TestBuildEnvironmentManagerPayloadDoesNotInjectClaudeTelemetry(t *testing.T) {
+	cfg := config.Config{Observability: config.ObservabilityConfig{Enabled: true}}
+	startup := buildEnvironmentManagerPayloadStartupContext(t, json.RawMessage(`{}`), cfg)
+	environment := startup["environment_variables"].(map[string]any)
+	for _, key := range []string{"CLAUDE_CODE_ENABLE_TELEMETRY", "OTEL_LOGS_EXPORTER", "OTEL_LOG_USER_PROMPTS", "ENABLE_BETA_TRACING_DETAILED"} {
+		if _, exists := environment[key]; exists {
+			t.Fatalf("retired telemetry injected: %s", key)
 		}
 	}
 }
@@ -604,7 +537,7 @@ func TestManagedAgentRuntimeGitRef(t *testing.T) {
 		{"commit sha256", `{"type":"commit","sha":"` + strings.Repeat("B", 64) + `"}`, strings.Repeat("b", 64)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			resources := []db.SessionResource{{ResourceType: "github_repository", Payload: json.RawMessage(`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":` + test.checkout + `}`)}}
+			resources := []db.SessionResource{{ResourceType: "github_repository", GitHubRepository: testGitRepository(json.RawMessage(`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":` + test.checkout + `}`))}}
 			sources := mustResolveRuntimeResources(t, resources).sources
 			var source struct {
 				GitInfo struct {
@@ -620,4 +553,20 @@ func TestManagedAgentRuntimeGitRef(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testGitRepository(raw json.RawMessage) *db.SessionResourceGitHubRepository {
+	var repository db.SessionResourceGitHubRepository
+	var fields struct {
+		URL       string                            `json:"url"`
+		MountPath string                            `json:"mount_path"`
+		Checkout  *db.SessionResourceGitHubCheckout `json:"checkout"`
+	}
+	if json.Unmarshal(raw, &fields) != nil {
+		return &repository
+	}
+	repository.URL = fields.URL
+	repository.MountPath = fields.MountPath
+	repository.Checkout = fields.Checkout
+	return &repository
 }

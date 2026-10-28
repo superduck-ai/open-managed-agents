@@ -79,7 +79,7 @@ sequenceDiagram
 | `worker_claimed_by` | `text null` | 最近一次领取者的 `X-Worker-ID`，仅用于诊断和释放校验 |
 | `worker_claim_expires_at` | `timestamptz null` | 领取期限；注册前保护该行不被他人领取 |
 | `worker_claim_attempts` | `integer not null default 0` | 连续未完成准入的领取次数 |
-| `worker_claim_trace_parent` | `text null` | 首次请求执行端时 Runner 的 W3C `traceparent`（migration `00094_code_session_worker_claim_trace.sql`）；仅随带 requested 标记的领取下发，用于把 DSH 回调 link 到派发 span |
+| `worker_claim_trace_parent` | `text null` | 首次请求执行端时 Runner 的 W3C `traceparent`（migration `00111_code_session_worker_claim_trace.sql`）；仅随带 requested 标记的领取下发，用于把 DSH 回调 link 到派发 span |
 
 部分索引：
 

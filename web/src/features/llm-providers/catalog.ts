@@ -37,24 +37,28 @@ const PROVIDER_ERROR_MESSAGES: Record<string, { id: string; defaultMessage: stri
   },
   llm_provider_name_invalid: {
     id: 'llmModels.errorNameLength',
-    defaultMessage: 'Provider name must contain 1 to 100 characters.',
+    defaultMessage: 'Display name must contain 1 to 100 characters.',
   },
   llm_provider_slug_invalid: {
     id: 'llmModels.errorSlugInvalid',
     defaultMessage:
-      'Slug must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
+      'Provider ID must contain 1 to 32 lowercase letters, digits, ".", "_" or "-" and start with a letter or digit.',
   },
   llm_provider_slug_conflict: {
     id: 'llmModels.errorSlugExists',
-    defaultMessage: 'A provider with this slug already exists.',
+    defaultMessage: 'A provider with this ID already exists.',
   },
   llm_provider_slug_immutable: {
     id: 'llmModels.errorSlugImmutable',
-    defaultMessage: 'The slug cannot be changed after the provider is created.',
+    defaultMessage: 'Provider ID cannot be changed after creation.',
   },
   llm_provider_name_conflict: {
     id: 'llmModels.errorProviderNameExists',
     defaultMessage: 'A provider with this name already exists.',
+  },
+  organization_llm_provider_exists: {
+    id: 'llmModels.errorOrganizationProviderExists',
+    defaultMessage: 'This organization already has a default provider.',
   },
   llm_provider_configuration_invalid: {
     id: 'llmModels.errorInvalidConfiguration',
@@ -72,6 +76,7 @@ const SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 
 export type CatalogModel = {
   id: string;
+  name?: string;
   qualifiedId: string;
   providerId: string;
   providerName: string;
@@ -85,18 +90,10 @@ export function isValidSlug(slug: string): boolean {
   return SLUG_PATTERN.test(slug);
 }
 
-export function slugFromName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^[^a-z0-9]+/, '')
-    .slice(0, 32)
-    .replace(/[-._]+$/, '');
-}
-
 export function catalogModels(providers: LLMProvider[]): CatalogModel[] {
   return providers.flatMap((provider) =>
-    provider.model_ids.map((modelId) => ({
+    provider.models.map(({ id: modelId, name }) => ({
+      ...(name ? { name } : {}),
       id: modelId,
       qualifiedId: qualifiedModelId(provider.slug, modelId),
       providerId: provider.id,
@@ -111,7 +108,10 @@ export function filterCatalogModels(models: CatalogModel[], query: string): Cata
     return models;
   }
   return models.filter(
-    (model) => model.qualifiedId.toLowerCase().includes(needle) || model.providerName.toLowerCase().includes(needle),
+    (model) =>
+      model.qualifiedId.toLowerCase().includes(needle) ||
+      model.providerName.toLowerCase().includes(needle) ||
+      Boolean(model.name?.toLowerCase().includes(needle)),
   );
 }
 
@@ -189,7 +189,7 @@ export function providerInput(provider: LLMProvider, modelIds: string[]) {
     slug: provider.slug,
     api_backend: provider.api_backend,
     base_url: provider.base_url,
-    model_ids: modelIds,
+    models: modelIds.map((id) => provider.models.find((model) => model.id === id) ?? { id }),
   };
 }
 

@@ -10,6 +10,7 @@ const thread: SubagentThread = {
 function launch() {
   return {
     ...assignment().launch,
+    subagents: undefined,
     system: "Literal {{ agent }} instructions.",
     environment_prompt: "# Managed-agent environment\n\nEnvironment rules.",
     memory_catalog_prompt: "\n\nUse the attached memory stores.\n<attached_memory_stores/>",
@@ -27,6 +28,7 @@ function order(prompt: string, markers: string[]): number[] {
 
 test("root prompt omits delegation guidance without subagents", () => {
   const prompt = rootSystemPrompt(launch());
+  expect(prompt).toContain("Subagents are disabled for this session.");
   expect(prompt).not.toContain("send_to_agent");
   expect(prompt).not.toContain("Delegating to subagents");
 });
@@ -125,3 +127,23 @@ test("empty configured instructions are omitted", () => {
   expect(root).toContain("# Skills");
   expect(root).toContain("# This session");
 });
+
+
+test("predefined-only prompt prohibits inline agents", () => {
+  const prompt = rootSystemPrompt({ ...launch(), subagents: { inlineAgents: false } });
+  expect(prompt).toContain("You cannot define inline agents");
+  expect(prompt).toContain("agent_name");
+});
+
+for (const mode of ["root", "child"]) {
+  test(`${mode} prompt distinguishes empty skills from an absent catalog`, () => {
+    const render = (skills: ReturnType<typeof launch>["skills"] | undefined) => {
+      const config = { ...launch(), skills };
+      return mode === "root" ? rootSystemPrompt(config) : childSystemPrompt(config, thread);
+    };
+    expect(render([])).toContain("# Skills\n\nAvailable skills: []");
+    expect(render(undefined)).not.toContain("# Skills");
+    expect(render(launch().skills)).toContain("- pdf: Read PDF files");
+    expect(render(launch().skills)).not.toContain("Available skills: []");
+  });
+}

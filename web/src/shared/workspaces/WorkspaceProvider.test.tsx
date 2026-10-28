@@ -288,7 +288,7 @@ test('取消未保存确认前不触碰 context、不刷新 bootstrap、不取�
   queryClient.setQueryData(['files', 'ws-a'], ['existing']);
   fireEvent.click(screen.getByRole('button', { name: '切换 B' }));
   expect(screen.getByRole('alertdialog')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: '继续编辑' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
   expect(refresh).not.toHaveBeenCalled();
   expect(getConsoleRequestContext().organizationUuid).toBe('a');
   expect(queryClient.getQueryData(['files', 'ws-a'])).toEqual(['existing']);

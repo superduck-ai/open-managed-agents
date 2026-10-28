@@ -9,6 +9,7 @@ export class HttpError extends Error {
 }
 
 export class OmaApi {
+  telemetry?: { close(id: string): Promise<void> };
   readonly assignments = new Map<string, Assignment>();
   readonly modelSessions = new Map<string, string>();
   readonly modelResponses = new Map<string, string>();

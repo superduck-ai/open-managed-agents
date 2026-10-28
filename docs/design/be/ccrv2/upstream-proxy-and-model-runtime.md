@@ -181,7 +181,7 @@ Runner 不再把普通 Managed Agent MCP URL 改写到该接口。普通 MCP con
 
 代理执行以下边界：
 
-1. 从 `Authorization: Bearer` 或 `X-Api-Key` 读取 session-ingress JWT，将签名 claims 中的 `session_id` 绑定到路径参数；managed-agent JWT 还会按租户回查 active Code Session 的 `current_worker_epoch`，Sandbox 恢复递增 epoch 后旧 JWT 立即失效。
+1. 从 `Authorization: Bearer` 或 `X-Api-Key` 读取 session-ingress JWT，将签名 claims 中的 `session_id` 绑定到路径参数；JWT 身份验证不查询 worker epoch。资源授权独立校验租户与 active Code Session；worker 的代理、工具调用、写入和流订阅再检查当前 epoch，旧 owner 返回 `409 conflict_error`，不再返回 token 无效的 `401`。
 2. `mcp_url` 必须是唯一、长度不超过 2048 字节、不含 userinfo/fragment 的绝对 HTTP(S) URL，并精确匹配当前 Session Agent Snapshot 的一个远程 MCP URL。
 3. 每次请求新鲜读取 Code Session → Environment / Session 租户关系，并在加载边界通过 `ParseMCPProxyPolicy` 一次性把 Agent Snapshot 编译为精确 URL 集合、MCP host 集合以及 Environment host/port matcher。handler 只把未改写的 `mcp_url` 交给 `AuthorizeMCPURL`；策略同时完成精确 URL 与真实 scheme/host/有效端口授权，不使用伪造的 `host:443`，也不在 handler 中重新解析 snapshot。随后解析目标地址并应用与 upstream proxy 相同的公网 IP / DNS rebinding 防护。受控本地排障可复用 `upstream_proxy_disable_ssrf_protection`，生产默认不得关闭。
 4. 删除 OMA 的 `Authorization`、`X-Api-Key`、`Proxy-Authorization` 和 `Proxy-Connection`，保留 MCP 协议与 content negotiation header。真实 MCP 凭证只允许在服务端 header injector 边界按已验签 session claims 和目标 URL 注入；默认实现不注入。
@@ -213,7 +213,7 @@ upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发
 - 拒绝 loopback、RFC1918、link-local、CGNAT、benchmark、documentation、multicast 和保留地址。
 - 域名先解析，服务端只拨号已验证的 public IP，避免校验后再次解析造成 DNS rebinding。
 - 不记录 bearer token、Basic header、上游 API key 或隧道内容。
-- MITM 默认关闭；开启后只解密通过 code-session 双重鉴权且通过 SSRF 校验的 CONNECT 流量。
+- MITM 默认开启，需提供稳定 CA 私钥；显式配置 `upstream_proxy_mitm_enabled: false` 可关闭。开启时只解密通过 code-session 双重鉴权且通过 SSRF 校验的 CONNECT 流量。
 - MITM 解密并完成 Host 校验后，为每条 HTTP 请求记录结构化的 `host`、`port` 和去除 query 的 `url`；不记录 header 或 body。
 - 即使开启 MITM，也不会信任动态 CA 作为真实上游根证书；服务端到目标网站始终使用系统信任链。
 
@@ -247,6 +247,10 @@ flowchart TD
   H --> K["Run public-IP and SSRF resolution checks"]
   K --> L["Dial the locked public IP"]
 ```
+
+### 缺省 networking
+
+Cloud Environment 未提供 `networking` 或未指定 `type` 时按 `unrestricted` 处理：创建与更新写入 `{"type":"unrestricted"}`，`networkpolicy.ParseConfig` 按不受限放行，控制台 API 响应同样补全为 `unrestricted`，前端环境页与快速开始新建表单的默认选项与之一致。
 
 ### limited 语义
 
@@ -304,7 +308,11 @@ Go 官方 module proxy 对较大的 module zip（例如 `github.com/aws/aws-sdk-
 
 ## Brain 与普通 HTTP 出站
 
-Brain 的 sandbox 启动请求携带当前 Code Session 的 session_ingress token、use_code_sessions、会话 ID 和 relay 开关。懒启动或重建 sandbox 时签发当前 epoch 的 token，不旋转已有 Brain owner 的凭据。认证只经 Manager stdin 传递，不进入命令行或文件。
+Brain 的 sandbox 启动请求携带独立的 sandbox session-ingress JWT、use_code_sessions、会话 ID 和 relay 开关。该 JWT 使用 `role=sandbox`、`sandbox_uuid` 和签名的 Code Session/租户身份，不携带 worker epoch。懒启动和预热均在具体 Sandbox 记录建立后签发，不旋转已有 Brain owner 的凭据。认证只经 Manager stdin 传递，不进入命令行或文件。
+
+Brain owner 领取会推进 worker epoch，而沙箱、relay 与文件系统可以跨 owner 复用，因此沙箱凭据绑定沙箱生命周期。代理握手和 Git commit 签名逐次通过 Yourbatis 校验 Code Session active、公共 Session 未删除/终止、Work active、租户及父子 UUID 一致、transport 为 `claim`，且指定 Sandbox 有 provider ID、处于 creating/running。creating 仅用于 Manager 初始化期间的 source 出站。Sandbox 进入 stopping/stopped/failed 后，新请求立即拒绝；替换沙箱获得不同 UUID，不能复用旧凭据。普通 worker 的 ingress JWT 验证不校验 epoch，执行授权仍校验当前 epoch；sandbox JWT 不可用于 worker 注册、心跳、事件投递、沙箱 MCP 网关或模型接口。
+
+升级前已存活的 Brain Manager 仍持有旧 worker JWT，需要重启 Manager 并经 stdin 注入该沙箱的新凭据一次；之后 Brain owner 变更不需要重新签发或重启 relay。Claude 模式继续使用与其进程生命周期一致的 worker JWT。
 
 Manager 的嵌入 MCP/Bash 与 source 初始化、Claude executor 共享已准备的会话 relay。relay 网络变量覆盖 StartupContext 中的旧代理值，保持会话局部，不更改全局进程环境。
 
@@ -324,3 +332,7 @@ flowchart LR
 ```
 
 回归覆盖 Rust absolute-form/head/body 传输、认证覆盖、真实嵌入 MCP/Bash 环境、Go 拒绝路径/转发/认证头隔离及 HTTP Vault host/body 边界。端到端使用新 ARM64 镜像和真实 Brain/HTTP 接收端复测 VAULT-CRED-008；局部单测不代表该用例通过。
+
+沙箱凭据回归由 `TestBrainSandboxUsesEnvironmentLifecycle` 覆盖预热/惰性启动、真实 Brain claim/release 后复用沙箱、旧 owner JWT 拒绝、sandbox JWT 的代理与 Git 签名授权、跨租户/会话/沙箱拒绝及 stopping 后撤销；`TestSandboxCredentialRejectsInvalidScope` 覆盖凭据类型隔离和无持久化校验时拒绝。普通单测不替代真实 Bash HTTPS 出站验收。
+
+真实 owner 接管与 HTTPS 验收使用 `just verify-be chat brain-proxy`，先运行对应 doctor。该场景由真实 Brain 进程消费脚本模型发出的 Bash 调用，接管前后均经 OMA relay/WebSocket 访问公网 HTTPS；要求 epoch 增长、同一个旧 worker JWT 在接管前后读取 session_context 均返回 200，而执行请求返回 409、沙箱 UUID/provider ID/relay 地址不变，以及 HTTP/CONNECT 200、TLS 验证成功。测试在隔离依赖中运行，结束后清理沙箱与进程，不代表云端 TTL 或性能基线验证。

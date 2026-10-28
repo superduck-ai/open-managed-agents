@@ -35,6 +35,7 @@ Use this workflow when implementing or fixing Deployment/River, Memory/Filestore
 | Session creation, Runner, mounts or Worker startup | `chat.public` |
 | Bound Skill discovery, permission, body/reference loading or readonly mounts | `chat.skills-loading`; read [Skill loading](features/skills-loading.md) |
 | Configured subagents, child skills/MCP, child tool policy or thread continuation | `chat.subagents`; read [Subagents](features/subagents.md) |
+| DSH native event export or OpenObserve trajectory queries | `chat.brain-observability`; read [Observability](features/observability.md) |
 | Chat queries, scheduling, streaming latency or other performance-sensitive paths | `chat.performance` with a baseline comparison |
 | Upstream model authentication errors and failed-turn completion | `chat.upstream-errors`; read [Upstream errors](features/upstream-errors.md) |
 
@@ -68,13 +69,13 @@ Prerequisites: macOS or Linux, repository Go toolchain, Bash, git, tar, Docker E
 .agents/skills/verify-be/scripts/verify-be chat performance
 ```
 
-Worker image selection follows this order: `--worker-image IMAGE`, `OMA_WORKER_CONTROL_IMAGE`, the root `.verify-be.local.json` file's `worker_image` field, then `ghcr.io/superduck-ai/managed-agent-sandbox:latest`. The local settings file is Git-ignored: keep private registry addresses there, out of source and documentation. Once configured locally, no export is needed. Help does not display resolved local values; reports record image IDs. The CLI generates Go sources, builds the actual backend, starts it on `127.0.0.1:18080`, and waits for `/readyz`. It uses a unique Compose project with disposable PostgreSQL, Redis, three NATS nodes and MinIO. It never reads `config/config.yaml` and never kills the listener of an occupied port. Dependency ports are allocated by Docker.
+Worker image selection follows this order: `--worker-image IMAGE`, `OMA_WORKER_CONTROL_IMAGE`, the root `.verify-be.local.json` file's `worker_image` field, then `ghcr.io/superduck-ai/managed-agent-sandbox:latest`. The local settings file is Git-ignored: keep private registry addresses there, out of source and documentation. Once configured locally, no export is needed. Help does not display resolved local values; reports record image IDs. The CLI generates Go sources, builds the actual backend, starts it on `127.0.0.1:18080` by default (`--api-port` selects another port), and waits for `/readyz`. It uses a unique Compose project with disposable PostgreSQL, Redis, three NATS nodes and MinIO. It never reads `config/config.yaml` and never kills the listener of an occupied port. Dependency ports are allocated by Docker.
 
 ## Doctor
 
 Scenario subprocesses and the full Go suite discard inherited model-provider credentials, endpoints, profiles, custom headers and model settings. The filtered families are documented in [Backend verification](../../../docs/design/be/backend-verification.md). Infrastructure environment variables remain available. Local scripted-model scenarios require no external `ANTHROPIC_API_KEY`.
 
-`doctor` / `chat doctor [SCENARIO]` / `files doctor [SCENARIO]` / `transcript doctor [SCENARIO]` / `memory doctor [SCENARIO]` checks tools, Docker daemon, image IDs, port 18080 and at least 1 GiB of free Docker volume space. It creates and removes a short-lived probe container and anonymous volume. `chat doctor public`, `chat doctor subagents`, `chat doctor upstream-errors`, `files doctor generated` and `memory doctor mounts` also open the daemon-side FUSE device and verifies mount permissions with the Worker image; macOS alone is not a blocker. Every run performs its own scenario-specific preflight. It does not claim the application works. Scenario execution performs dependency health checks and, when starting a standalone backend, readiness checks before testing. Do not point this runner at an existing API or database. Leave the checkout unchanged while a run is active; source changes invalidate the result.
+`doctor` / `chat doctor [SCENARIO]` / `files doctor [SCENARIO]` / `transcript doctor [SCENARIO]` / `memory doctor [SCENARIO]` checks tools, Docker daemon, image IDs, the selected API port (default 18080) and at least 1 GiB of free Docker volume space. It creates and removes a short-lived probe container and anonymous volume. `chat doctor public`, `chat doctor subagents`, `chat doctor upstream-errors`, `files doctor generated` and `memory doctor mounts` also open the daemon-side FUSE device and verifies mount permissions with the Worker image; macOS alone is not a blocker. Every run performs its own scenario-specific preflight. It does not claim the application works. Scenario execution performs dependency health checks and, when starting a standalone backend, readiness checks before testing. Do not point this runner at an existing API or database. Leave the checkout unchanged while a run is active; source changes invalidate the result.
 
 ## Full Go suite
 
@@ -133,7 +134,7 @@ The backend PR workflow has separate Files, Transcript, Memory and Deployment ve
 
 ## Cleanup
 
-Scenario execution cleans up on success, failure, Ctrl-C and SIGTERM. It stops its backend process, removes only Worker containers carrying this run's label, then removes its Compose project and volumes. Config, ephemeral signing key and backend binary are removed; evidence survives.
+Scenario execution cleans up on success, failure, Ctrl-C and SIGTERM. It stops its backend process, removes only Worker containers carrying this run's label, then removes its Compose project and volumes. Config, ephemeral JWT and proxy CA private keys and backend binary are removed; evidence survives.
 
 After an uncatchable SIGKILL or host crash, use the exact run ID and evidence directory printed by the CLI. Inspect the owned resources before removing them:
 
@@ -142,7 +143,7 @@ docker ps -a --filter label=oma.verify-be.run=RUN_ID
 docker compose -p RUN_ID -f /absolute/evidence/directory/compose.json ps -a
 ```
 
-Remove only the listed Worker container IDs with `docker rm -f`, then use the same Compose arguments with `down --volumes`. Check any remaining backend process against the exact `/absolute/evidence/directory/server` executable before stopping it. Remove that run's `jwt.pem` and `config.json` after cleanup. Never flush shared Redis or purge shared NATS streams. An interrupted report without a final verdict is not proof.
+Remove only the listed Worker container IDs with `docker rm -f`, then use the same Compose arguments with `down --volumes`. Check any remaining backend process against the exact `/absolute/evidence/directory/server` executable before stopping it. Remove that run's `jwt.pem`, `proxy-ca.pem` and `config.json` after cleanup. Never flush shared Redis or purge shared NATS streams. An interrupted report without a final verdict is not proof.
 
 ## Helpers
 

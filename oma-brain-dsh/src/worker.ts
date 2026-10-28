@@ -6,14 +6,22 @@ import { registerWorkerTask, validateBrainTask } from "./worker-registration.ts"
 import { claimTasks, releaseClaim, type ClaimClient, type TaskAdmissionStage } from "./claim.ts";
 import { SessionCapacity } from "./capacity.ts";
 import { failureDiagnostic, workerDiagnostic } from "./ccrv2/diagnostics.ts";
+import { SHUTDOWN_SETTLE_MS } from "./config.ts";
 import { brainMetrics } from "./telemetry.ts";
 import { openWorkerSession } from "./worker-session.ts";
 
 type RetireReason = "superseded" | "capacity" | "inbound_ended" | "admission_failed" | "aborted" | "idle" | "shutdown";
 
+declare module "@deepseek-ai/cordis" {
+  interface Events {
+    "oma/shutdown-drain"(): Promise<void>;
+  }
+}
+
 export interface WorkerOptions {
   maxSessions: number;
   claimConcurrency: number;
+  shutdownDrainMs?: number;
 }
 
 export async function startWorkers(
@@ -61,7 +69,7 @@ export async function startWorkers(
     });
     brainMetrics().sessionTasksStopped.add(1, { reason });
     session.stop();
-    const result = session.close().finally(() => {
+    const result = session.close().finally(() => { void api.telemetry?.close(session.id); }).finally(() => {
       ctx.ccrv2.forget(session.id);
       if (sessions.delete(session.id)) brainMetrics().sessionsActive.add(-1);
       api.assignments.delete(session.id);
@@ -119,6 +127,15 @@ export async function startWorkers(
     }
   }, 3000);
   let capacityReported = false;
+  let draining: Promise<void> | undefined;
+  const drainSessions = async () => {
+    abort.abort();
+    clearInterval(timer);
+    const active = [...sessions.values()].filter((session) => !session.abort.signal.aborted && !retiring.has(session.id));
+    const drained = await Promise.all(active.map((session) => session.drain(options.shutdownDrainMs ?? 0)));
+    await Promise.all(active.filter((_, index) => !drained[index]).map((session) => session.interruptForShutdown(SHUTDOWN_SETTLE_MS)));
+  };
+  ctx.on("oma/shutdown-drain", () => draining ??= drainSessions());
   ctx.effect(() => async () => {
     if (capacityReported) brainMetrics().sessionsCapacity.add(-maxSessions);
     abort.abort();

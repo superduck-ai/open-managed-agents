@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
@@ -70,7 +71,7 @@ func verifyLazyBrain(t *testing.T, started time.Time) {
 	requireOK(t, err)
 	denied := createPublicChat(t, e)
 	sessions = append(sessions, denied.session.UUID)
-	deniedModel := brainToolModel(t)
+	deniedModel := brainToolCallModel(t, "Write", `{"file_path":"/tmp/oma-brain-proof.txt","content":"native grok loop"}`, nil, []string{"archive_agent", "list_agents", "send_to_agent"})
 	configureChatModel(t, e, deniedModel.URL)
 	submitChat(t, denied, "Try Write, then reply done even if denied.")
 	waitRealWorker(t, "denied tool finished without allocating a sandbox", func() bool {
@@ -159,7 +160,7 @@ func startLazyBrainRunner(t *testing.T, e *liveEnv, cfg config.Config) (*chatDoc
 	cfg.EnvironmentRunner.Concurrency = 2
 	credentials, err := filestore.NewTokenCredentials(cfg)
 	requireOK(t, err)
-	provider := &chatDockerProvider{name: "oma-public-" + os.Getenv("VERIFY_BE_RUN_ID") + "-brain", image: os.Getenv("OMA_WORKER_CONTROL_IMAGE"), t: t, publishMCP: true}
+	provider := &chatDockerProvider{name: "oma-public-" + os.Getenv("VERIFY_BE_RUN_ID") + "-brain-" + uuid.NewString()[:8], image: os.Getenv("OMA_WORKER_CONTROL_IMAGE"), t: t, publishMCP: true}
 	var stops []func()
 	var provisioner *environments.Runner
 	for range 2 {
@@ -186,6 +187,7 @@ func startLazyBrainRunner(t *testing.T, e *liveEnv, cfg config.Config) (*chatDoc
 	e.url = gateway.URL
 	return provider, func() {
 		e.url = originalURL
+		gateway.CloseClientConnections()
 		gateway.Close()
 		for _, stop := range stops {
 			stop()

@@ -187,7 +187,8 @@ services:
     restart: unless-stopped
 
   openobserve:
-    image: public.ecr.aws/zinclabs/openobserve:v0.91.1
+    profiles: [observability]
+    image: public.ecr.aws/zinclabs/openobserve:v1.1.2
     environment:
       ZO_DATA_DIR: /data
       ZO_LOCAL_MODE: "true"
@@ -262,6 +263,12 @@ services:
       - type: bind
         source: ./deploy/docker-compose/oma-server.local.yaml
         target: /etc/open-managed-agents/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./config/secrets/upstream-proxy-ca-key.pem
+        target: /etc/open-managed-agents/secrets/upstream-proxy-ca-key.pem
         read_only: true
         bind:
           create_host_path: false

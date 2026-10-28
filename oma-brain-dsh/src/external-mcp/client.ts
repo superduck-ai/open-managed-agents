@@ -1,3 +1,4 @@
+import { isConnectFailure, notForwardedDetail } from "../ccrv2/tool-transport.ts";
 import { isDeepStrictEqual } from "node:util";
 import {
   Client,
@@ -6,9 +7,12 @@ import {
   SdkHttpError,
   SSEClientTransport,
   StreamableHTTPClientTransport,
+  TRACEPARENT_META_KEY,
+  TRACESTATE_META_KEY,
 } from "@modelcontextprotocol/client";
+import { currentToolTrace, traceHooks } from "../observability/trace-context.ts";
 import { object, type Payload } from "../json.ts";
-import type { RemoteTool } from "../runtime/contracts.ts";
+import { type RemoteTool } from "../runtime/contracts.ts";
 import type { ExternalServer } from "./config.ts";
 
 export class ExternalMcpClient {
@@ -17,17 +21,28 @@ export class ExternalMcpClient {
   private readonly options;
   private authenticationRejected = false;
   private rejectedCallSession = false;
+  private notForwarded?: string;
 
   get authenticationFailed(): boolean { return this.authenticationRejected; }
 
   constructor(readonly server: ExternalServer, fetcher: typeof fetch = fetch) {
+    traceHooks.registerMcpServer(server.prefix, server.name);
     this.client = this.createClient();
     this.options = {
       requestInit: { headers: server.headers, redirect: "error" as const },
       fetch: async (input: string | URL | Request, init?: RequestInit) => {
-        const response = await fetcher(input, { ...init, redirect: "error" });
+        const toolCall = isToolCall(init);
+        let response: Response;
+        try {
+          response = await fetcher(input, { ...init, redirect: "error" });
+        } catch (error) {
+          if (toolCall && isConnectFailure(error)) this.notForwarded = "OMA MCP gateway is unreachable";
+          throw error;
+        }
         if (response.status === 401 || response.status === 403) this.authenticationRejected = true;
         if (this.isRejectedSessionCall(response, init)) this.rejectedCallSession = true;
+        if (toolCall && response.headers.get("X-Oma-Mcp-Not-Forwarded") === "true")
+          this.notForwarded = await notForwardedDetail(response.clone());
         return response;
       },
     };
@@ -75,6 +90,7 @@ export class ExternalMcpClient {
     authenticationFailure?: (serverName: string, phase?: "discovery" | "tool_call") => Promise<void>,
   ): Promise<Payload> {
     this.authenticationRejected = false;
+    this.notForwarded = undefined;
     try {
       return object(
         await this.callWithSessionRecovery(tool, args, signal),
@@ -88,6 +104,11 @@ export class ExternalMcpClient {
           content: [{ type: "text", text: "MCP server authentication failed during tool execution." }],
         };
       }
+      if (this.notForwarded !== undefined)
+        return {
+          isError: true,
+          content: [{ type: "text", text: `MCP tool call was not executed: ${this.notForwarded}` }],
+        };
       if (!(error instanceof ProtocolError) || error.code !== ProtocolErrorCode.InvalidParams)
         throw error;
       return {
@@ -105,15 +126,16 @@ export class ExternalMcpClient {
   }
 
   private isRejectedSessionCall(response: Response, init?: RequestInit): boolean {
-    if (!(this.transport instanceof StreamableHTTPClientTransport) || response.status !== 404 || !this.transport.sessionId || init?.method !== "POST" || typeof init.body !== "string") return false;
-    if (new Headers(init.headers).get("Mcp-Session-Id") !== this.transport.sessionId) return false;
-    try { return object(JSON.parse(init.body)).method === "tools/call"; }
-    catch { return false; }
+    if (!(this.transport instanceof StreamableHTTPClientTransport) || response.status !== 404 || !this.transport.sessionId || !isToolCall(init)) return false;
+    return new Headers(init?.headers).get("Mcp-Session-Id") === this.transport.sessionId;
   }
 
   private requestTool(tool: RemoteTool, args: Payload, signal: AbortSignal) {
+    this.notForwarded = undefined;
+    const trace = currentToolTrace();
+    const meta = trace ? { _meta: { [TRACEPARENT_META_KEY]: trace.traceparent, ...(trace.tracestate ? { [TRACESTATE_META_KEY]: trace.tracestate } : {}) } } : {};
     return this.client.callTool(
-      { name: tool.remoteName, arguments: args },
+      { name: tool.remoteName, arguments: args, ...meta },
       { signal, timeout: 185_000 },
     );
   }
@@ -147,4 +169,10 @@ export class ExternalMcpClient {
   async close(): Promise<void> {
     await this.client.close();
   }
+}
+
+function isToolCall(init?: RequestInit): boolean {
+  if (init?.method !== "POST" || typeof init.body !== "string") return false;
+  try { return object(JSON.parse(init.body)).method === "tools/call"; }
+  catch { return false; }
 }

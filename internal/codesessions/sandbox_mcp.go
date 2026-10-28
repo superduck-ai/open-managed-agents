@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,7 +23,10 @@ import (
 
 var sandboxMCPMethods = telemetry.NewEnum("server/discover", "initialize", "notifications/initialized", "ping", "tools/list", "tools/call", "notifications/cancelled")
 
-const sandboxNotForwardedHeader = "X-Oma-Sandbox-Not-Forwarded"
+const (
+	sandboxNotForwardedHeader  = "X-Oma-Sandbox-Not-Forwarded"
+	sandboxToolCallWriteWindow = 15 * time.Minute
+)
 
 func (h *Handler) handleSandboxMCP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(sandboxNotForwardedHeader, "true")
@@ -121,10 +126,15 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 	}
 	copySandboxMCPRequestHeaders(upstream.Header, r.Header)
 	telemetry.InjectTraceParent(r.Context(), upstream.Header.Set)
-	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	if request.Method == "tools/call" {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(sandboxToolCallWriteWindow))
+	}
 	w.Header().Del(sandboxNotForwardedHeader)
-	response, err := client.Do(upstream)
+	response, connected, err := sendSandboxMCPRequest(upstream)
 	if err != nil {
+		if !connected {
+			w.Header().Set(sandboxNotForwardedHeader, "true")
+		}
 		h.errorAdapter.Write(w, r, sandboxOperationError(err))
 		return call.with(sandboxMCPTransportOutcome(r))
 	}
@@ -187,6 +197,18 @@ func (h *Handler) relayMemoryToolStream(w http.ResponseWriter, r *http.Request, 
 		return sandboxMCPTransportOutcome(r)
 	}
 	return call.outcome
+}
+
+func sendSandboxMCPRequest(request *http.Request) (*http.Response, bool, error) {
+	var connected atomic.Bool
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(traceConnection(request, &connected))
+	return response, connected.Load(), err
+}
+
+func traceConnection(request *http.Request, connected *atomic.Bool) *http.Request {
+	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connected.Store(true) }}
+	return request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
 }
 
 func copySandboxMCPRequestHeaders(target, source http.Header) {

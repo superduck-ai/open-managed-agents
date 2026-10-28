@@ -140,11 +140,6 @@ export function FilesPage() {
         <ResourcePageHeader
           contentGap="content"
           title={msg('files.title', 'Files')}
-          description={msg(
-            'files.description',
-            "Only files from the {workspaceName} workspace are shown. To see another workspace's files, select a workspace.",
-            { workspaceName },
-          )}
           actions={
             <>
               <input
@@ -214,11 +209,12 @@ function FilesTable({
   onNext: () => void;
   onDownload: (file: ConsoleFile) => void;
 }) {
-  const { msg } = useI18n();
+  const { msg, locale } = useI18n();
+  const showRows = !isLoading && !error && files.length > 0;
 
   return (
     <section aria-label={msg('files.listAria', 'Files list')} className="overflow-x-auto">
-      <Table className={cn('min-w-[920px]', dataTableClassName)}>
+      <Table className={cn(dataTableClassName, showRows ? 'min-w-[920px]' : 'min-w-full [&_td]:whitespace-normal')}>
         <colgroup>
           <col className="w-[18%]" />
           <col className="w-[49%]" />
@@ -226,15 +222,17 @@ function FilesTable({
           <col className="w-[15%]" />
           <col className="w-[7%]" />
         </colgroup>
-        <TableHeader>
-          <TableRow className={dataTableHeaderRowClassName}>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.id', 'ID')}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.name', 'Name')}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.size', 'Size')}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName}>{msg('common.created', 'Created')}</TableHead>
-            <TableHead className={dataTableHeaderCellClassName} aria-label={msg('common.actions', 'Actions')} />
-          </TableRow>
-        </TableHeader>
+        {showRows ? (
+          <TableHeader>
+            <TableRow className={dataTableHeaderRowClassName}>
+              <TableHead className={dataTableHeaderCellClassName}>{msg('common.id', 'ID')}</TableHead>
+              <TableHead className={dataTableHeaderCellClassName}>{msg('common.name', 'Name')}</TableHead>
+              <TableHead className={dataTableHeaderCellClassName}>{msg('common.size', 'Size')}</TableHead>
+              <TableHead className={dataTableHeaderCellClassName}>{msg('common.created', 'Created')}</TableHead>
+              <TableHead className={dataTableHeaderCellClassName} aria-label={msg('common.actions', 'Actions')} />
+            </TableRow>
+          </TableHeader>
+        ) : null}
         <TableBody>
           {isLoading ? (
             <TableLoadingRow colSpan={5} label={msg('files.loading', 'Loading files...')} />
@@ -256,9 +254,11 @@ function FilesTable({
                     ariaLabel={msg('files.copyAria', 'Copy {fileId}', { fileId: file.id })}
                   />
                 </DataTableCell>
-                <DataTableCell className="truncate">{file.filename}</DataTableCell>
+                <DataTableCell className="break-words whitespace-normal">{file.filename}</DataTableCell>
                 <DataTableCell className="text-muted-foreground">{formatBytes(file.size_bytes)}</DataTableCell>
-                <DataTableCell className="text-muted-foreground">{formatRelativeTime(file.created_at)}</DataTableCell>
+                <DataTableCell className="text-muted-foreground">
+                  {formatRelativeTime(file.created_at, locale, msg('common.justNow', 'just now'))}
+                </DataTableCell>
                 <DataTableCell edge="end" className="text-right">
                   <RowIconButton
                     label={msg('files.downloadAria', 'Download {filename}', { filename: file.filename })}

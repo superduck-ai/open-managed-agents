@@ -25,7 +25,8 @@ func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", fmt.Errorf("%s must be a string", name)
 	}
-	if strings.TrimSpace(value) == "" {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return "", fmt.Errorf("%s must be non-empty", name)
 	}
 	return value, nil
@@ -195,8 +196,9 @@ func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, 
 	} else {
 		changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
 	}
-	if strings.TrimSpace(threadID) != "" && !hasSessionThreadOwnerField(payload) {
-		payload["session_thread_id"] = strings.TrimSpace(threadID)
+	threadMessage := payload["type"] == "agent.thread_message_sent" || payload["type"] == "agent.thread_message_received"
+	if threadID != "" && (threadMessage || !hasSessionThreadOwnerField(payload)) && payload["session_thread_id"] != threadID {
+		payload["session_thread_id"] = threadID
 		changed = true
 	}
 	if !changed {

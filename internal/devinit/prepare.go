@@ -127,6 +127,8 @@ func prepareYAMLTemplate(repoRoot, name, target string, configure func(*yaml.Nod
 
 func configureLocalRuntime(root *yaml.Node) {
 	setMappingValue(root, "environment_runner", "agent_mode", "brain")
+	setNode(getOrCreateMapping(root, "code_session"), "upstream_proxy_mitm_enabled", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
+	setNode(getOrCreateMapping(root, "code_session"), "upstream_proxy_disable_ssrf_protection", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
 	setMappingValue(root, "code_session", "brain_claim_token_file", "./generated/secrets/brain-claim-token")
 	setMappingValue(root, "code_session", "jwt_signing_private_key_file", "./secrets/code-session-jwt-ed25519.pem")
 	setMappingValue(root, "code_session", "upstream_proxy_ca_key_file", "./secrets/upstream-proxy-ca-key.pem")

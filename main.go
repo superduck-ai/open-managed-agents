@@ -25,11 +25,14 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/invitations"
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/natsclient"
+	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 	"github.com/superduck-ai/open-managed-agents/internal/redisclient"
 	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
@@ -39,6 +42,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/statemetrics"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetryexport"
 	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
@@ -89,6 +93,7 @@ func run(bootstrap *slog.Logger) error {
 	if err := initializeDatabase(ctx, cfg, database, logger); err != nil {
 		return err
 	}
+	syncModelPrices(ctx, database, logger)
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {
 		return fmt.Errorf("open redis client: %w", err)
@@ -194,7 +199,13 @@ func run(bootstrap *slog.Logger) error {
 		return fmt.Errorf("start webhook worker: %w", err)
 	}
 	defer stopWebhookWorker()
+	telemetryExporter, stopTelemetryWorker, err := startTelemetryExport(ctx, natsConnection, database, vaultSecrets, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer stopTelemetryWorker()
 	workers := river.NewWorkers()
+	queues := jobQueues(workers, database, cfg, logger, platformAuthProvider.VerifiedLoginEnabled())
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
 	prebuilds.Register(workers)
 	deploymentStore := deployments.NewStore(database, logger.With("component", "deployments")).
@@ -208,13 +219,8 @@ func run(bootstrap *slog.Logger) error {
 		return fmt.Errorf("create transcript archive service: %w", err)
 	}
 	transcripts.Register(workers)
-	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers,
-		map[string]river.QueueConfig{
-			environments.PrebuildQueue:         {MaxWorkers: 4},
-			deploymentjobs.Queue:               {MaxWorkers: 10},
-			environments.SandboxLifecycleQueue: {MaxWorkers: 4},
-			transcriptretention.Queue:          {MaxWorkers: 2},
-		})
+
+	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers, queues)
 	if err != nil {
 		return fmt.Errorf("create River client: %w", err)
 	}
@@ -246,12 +252,14 @@ func run(bootstrap *slog.Logger) error {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			InvitationJobs:         jobClient,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,
 			Config:                 cfg,
 			DB:                     database,
 			Deployments:            deploymentStore,
 			WebhookEnqueuer:        webhookEnqueuer,
+			TelemetryExporter:      telemetryExporter,
 			ObjectStore:            objectStore,
 			Logger:                 logger,
 			PlatformStore:          platformSessions,
@@ -278,6 +286,20 @@ func run(bootstrap *slog.Logger) error {
 	}
 
 	return serveHTTP(ctx, server, logger)
+}
+
+func jobQueues(workers *river.Workers, database *db.DB, cfg config.Config, logger *slog.Logger, invitationsEnabled bool) map[string]river.QueueConfig {
+	queues := map[string]river.QueueConfig{
+		environments.PrebuildQueue:         {MaxWorkers: 4},
+		deploymentjobs.Queue:               {MaxWorkers: 10},
+		environments.SandboxLifecycleQueue: {MaxWorkers: 4},
+		transcriptretention.Queue:          {MaxWorkers: 2},
+	}
+	if invitationsEnabled {
+		queues[platformadmin.DeliveryQueue] = river.QueueConfig{MaxWorkers: 4}
+		platformadmin.RegisterDeliveryWorker(workers, database, invitations.NewMailer(cfg.Auth, database, logger.With("component", "platform_invitation_mail")))
+	}
+	return queues
 }
 
 func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) error {
@@ -373,6 +395,15 @@ func initializeDatabase(ctx context.Context, cfg config.Config, database *db.DB,
 	return nil
 }
 
+func syncModelPrices(ctx context.Context, database *db.DB, logger *slog.Logger) {
+	if err := pricing.Sync(ctx, database); err != nil {
+		logger.Warn("sync model prices", "source", "openrouter", "error", err)
+	}
+	if err := pricing.SyncNarrows(ctx, database); err != nil {
+		logger.Warn("sync model prices", "source", "narrows", "error", err)
+	}
+}
+
 func shutdownHTTP(ctx context.Context, server *http.Server) error {
 	if err := server.Shutdown(ctx); err != nil {
 		return errors.Join(fmt.Errorf("shutdown server: %w", err), server.Close())
@@ -402,4 +433,16 @@ func loadCodeRuntime(cfg config.Config) (codeRuntime, error) {
 		return runtime, fmt.Errorf("load web tools: %w", err)
 	}
 	return runtime, nil
+}
+
+func startTelemetryExport(ctx context.Context, conn *nats.Conn, database *db.DB, opener telemetryexport.Opener, cfg config.Config, logger *slog.Logger) (*telemetryexport.Exporter, func(), error) {
+	queue, err := telemetryexport.NewQueue(ctx, conn, cfg.NATS.TelemetryExportStream, cfg.TelemetryExport)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open telemetry export queue: %w", err)
+	}
+	stop, err := telemetryexport.NewWorker(database, opener, queue, cfg.TelemetryExport, logger.With("component", "telemetry_export_worker")).Start(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("start telemetry export worker: %w", err)
+	}
+	return telemetryexport.NewExporter(database, queue), stop, nil
 }

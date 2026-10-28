@@ -1,7 +1,7 @@
 import { expect, mock } from 'bun:test';
 import type { EditorView } from '@codemirror/view';
 import type { QueryClient as QueryClientType } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import type { AnyRouter } from '@tanstack/react-router';
 import { resetTestDom } from '../../test/setup';
 import type { AuthContextValue } from '../../shared/auth/context';
 
@@ -18,28 +18,9 @@ const { I18nProvider } = await import('../../shared/i18n');
 const { Toaster } = await import('../../shared/ui/sonner');
 const { AuthContext } = await import('../../shared/auth/context');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { RouterContextProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
+const { RouterProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
   await import('@tanstack/react-router');
 const { useEffect } = await import('react');
-
-const managedAgentsTestRootRoute = createRootRoute();
-const managedAgentsTestEnvironmentListRoute = createRoute({
-  getParentRoute: () => managedAgentsTestRootRoute,
-  path: 'workspaces/$workspaceId/environments',
-});
-const managedAgentsTestEnvironmentDetailRoute = createRoute({
-  getParentRoute: () => managedAgentsTestRootRoute,
-  path: 'workspaces/$workspaceId/environments/$environmentId',
-});
-const managedAgentsTestFallbackRoute = createRoute({
-  getParentRoute: () => managedAgentsTestRootRoute,
-  path: '$',
-});
-const managedAgentsTestRouteTree = managedAgentsTestRootRoute.addChildren([
-  managedAgentsTestEnvironmentListRoute,
-  managedAgentsTestEnvironmentDetailRoute,
-  managedAgentsTestFallbackRoute,
-]);
 
 type TestAgentModel = { id: string; displayName?: string };
 
@@ -69,68 +50,6 @@ const managedAgentsAuthContextValue: AuthContextValue = {
   refresh: async () => undefined,
   logout: async () => undefined,
 };
-
-function mockObservabilityDashboard() {
-  return {
-    version: 1,
-    tabs: [
-      {
-        id: 'overview',
-        title_key: 'observability.tab.overview',
-        panels: [
-          {
-            id: 'overview.active_sessions',
-            title_key: 'observability.panel.overview.active_sessions',
-            render_type: 'stat',
-            unit: 'count',
-            query_ref: 'overview.active_sessions',
-            grid: { x: 0, y: 0, w: 2, h: 1 },
-            options: {},
-          },
-          {
-            id: 'overview.token_total',
-            title_key: 'observability.panel.overview.token_total',
-            render_type: 'stat',
-            unit: 'tokens',
-            query_ref: 'overview.token_total',
-            grid: { x: 4, y: 0, w: 2, h: 1 },
-            options: {},
-          },
-        ],
-      },
-      { id: 'model', title_key: 'observability.tab.model', panels: [] },
-      { id: 'tool', title_key: 'observability.tab.tool', panels: [] },
-    ],
-    queries: [
-      {
-        query_ref: 'overview.active_sessions',
-        variables: [
-          { name: 'start_time', type: 'time', required: true },
-          { name: 'end_time', type: 'time', required: true },
-          { name: 'agent_id', type: 'string', required: false },
-        ],
-      },
-      {
-        query_ref: 'overview.token_total',
-        variables: [
-          { name: 'start_time', type: 'time', required: true },
-          { name: 'end_time', type: 'time', required: true },
-          { name: 'agent_id', type: 'string', required: false },
-        ],
-      },
-    ],
-  };
-}
-
-function mockObservabilityPanelResult(queryRef: string) {
-  const current = queryRef === 'overview.token_total' ? 12345 : 3;
-  return {
-    query_ref: queryRef,
-    render_type: 'stat',
-    data_as_of: '2026-08-13T00:00:00.000Z',
-    data: { current, previous: 2, change_percent: 50 },
-  };
-}
 
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
@@ -252,17 +171,33 @@ export function renderManagedAgentsPage(
   });
   seedCreateAgentModels(queryClient, workspaceId, options.models);
   const history = createBrowserHistory({ window });
+  const managedAgentsTestRootRoute = createRootRoute({ component: () => <ManagedAgentsPage section={section} /> });
+  const managedAgentsTestEnvironmentListRoute = createRoute({
+    getParentRoute: () => managedAgentsTestRootRoute,
+    path: 'workspaces/$workspaceId/environments',
+  });
+  const managedAgentsTestEnvironmentDetailRoute = createRoute({
+    getParentRoute: () => managedAgentsTestRootRoute,
+    path: 'workspaces/$workspaceId/environments/$environmentId',
+  });
+  const managedAgentsTestFallbackRoute = createRoute({
+    getParentRoute: () => managedAgentsTestRootRoute,
+    path: '$',
+  });
+  const managedAgentsTestRouteTree = managedAgentsTestRootRoute.addChildren([
+    managedAgentsTestEnvironmentListRoute,
+    managedAgentsTestEnvironmentDetailRoute,
+    managedAgentsTestFallbackRoute,
+  ]);
   const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
   const result = render(
-    <ManagedAgentsTestRouterProvider router={router}>
-      <QueryClientProvider client={queryClient}>
-        <I18nProvider initialLocale={locale}>
-          <WorkspaceContext.Provider value={workspaceContextValue(workspaceId)}>
-            <ManagedAgentsPage section={section} />
-          </WorkspaceContext.Provider>
-        </I18nProvider>
-      </QueryClientProvider>
-    </ManagedAgentsTestRouterProvider>,
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider initialLocale={locale}>
+        <WorkspaceContext.Provider value={workspaceContextValue(workspaceId)}>
+          <ManagedAgentsTestRouterProvider router={router} />
+        </WorkspaceContext.Provider>
+      </I18nProvider>
+    </QueryClientProvider>,
     undefined,
     { workspaceId, models: options.models },
   );
@@ -275,15 +210,9 @@ function seedCreateAgentModels(queryClient: QueryClientType, workspaceId: string
   queryClient.setQueryData(['agent-quickstart', 'models', workspaceId], values);
 }
 
-function ManagedAgentsTestRouterProvider({
-  router,
-  children,
-}: {
-  router: ReturnType<typeof createRouter<typeof managedAgentsTestRouteTree>>;
-  children: ReactNode;
-}) {
+function ManagedAgentsTestRouterProvider({ router }: { router: AnyRouter }) {
   useEffect(() => () => router.history.destroy(), [router]);
-  return <RouterContextProvider router={router}>{children}</RouterContextProvider>;
+  return <RouterProvider router={router} />;
 }
 
 export type AgentFixture = {
@@ -779,17 +708,16 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
       return jsonResponse({ data: [], next_page: null });
     }
 
-    if (url === '/api/organizations/org_test/observability/dashboard' && method === 'GET') {
-      return jsonResponse(mockObservabilityDashboard());
+    if (url.startsWith('/api/organizations/org_test/observability/dashboards/') && method === 'GET') {
+      return jsonResponse(emptyObservabilityDashboard());
     }
 
-    if (url === '/api/organizations/org_test/observability/panels/query' && method === 'POST') {
-      const queryRef = typeof body?.query_ref === 'string' ? body.query_ref : 'overview.active_sessions';
-      return jsonResponse(mockObservabilityPanelResult(queryRef));
+    if (url.startsWith('/api/organizations/org_test/observability/trajectories/') && method === 'GET') {
+      return jsonResponse({ header: null, events: [], next_seq: -1, has_more: false, segment: '', segments: [] });
     }
 
-    if (url.startsWith('/api/organizations/org_test/observability/traces') && method === 'GET') {
-      return jsonResponse({ data_as_of: '2026-08-13T00:00:00.000Z', has_more: false, items: [] });
+    if (url.startsWith('/api/organizations/org_test/observability/trajectories') && method === 'GET') {
+      return jsonResponse({ next_offset: null, items: [] });
     }
 
     const sessionEventsMatch = url.match(/^\/v1\/sessions\/([^/]+)\/events\?beta=true/);
@@ -1563,6 +1491,18 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
     const body = parseBody(init?.body);
     requests.push({ url, method, headers, body });
 
+    if (url.startsWith('/api/organizations/org_test/observability/dashboards/') && method === 'GET') {
+      return jsonResponse(emptyObservabilityDashboard());
+    }
+
+    if (url.startsWith('/api/organizations/org_test/observability/trajectories/') && method === 'GET') {
+      return jsonResponse({ header: null, events: [], next_seq: -1, has_more: false, segment: '', segments: [] });
+    }
+
+    if (url.startsWith('/api/organizations/org_test/observability/trajectories') && method === 'GET') {
+      return jsonResponse({ next_offset: null, items: [] });
+    }
+
     if (url.startsWith('/v1/agents?') && method === 'GET') {
       return jsonResponse({ data: resources.agents, next_page: null });
     }
@@ -2020,8 +1960,15 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       const collection = collectionForTestEndpoint(resources, archiveMatch[1]);
       const resourceId = decodeURIComponent(archiveMatch[2]);
       const existing = collection.find((resource) => resource.id === resourceId) ?? collection[0];
-      removeFromCollection(collection, resourceId);
-      return jsonResponse({ ...existing, archived_at: new Date().toISOString() });
+      const archivedAt = new Date().toISOString();
+      if (archiveMatch[1] === 'environments') {
+        resources.environments = resources.environments.map((environment) =>
+          environment.id === resourceId ? { ...environment, archived_at: archivedAt, state: 'archived' } : environment,
+        );
+      } else {
+        removeFromCollection(collection, resourceId);
+      }
+      return jsonResponse({ ...existing, archived_at: archivedAt });
     }
 
     const deleteMatch = url.match(/^\/v1\/(sessions|environments|vaults|memory_stores)\/([^/]+)\?beta=true$/);
@@ -2372,5 +2319,17 @@ export function workspaceContextValue(workspaceId: string) {
     selectWorkspace: () => undefined,
     createWorkspace: async () => workspace,
     refreshWorkspaces: async () => undefined,
+  };
+}
+
+function emptyObservabilityDashboard() {
+  return {
+    tab: 'overview',
+    interval_ms: 3_600_000,
+    filter_options: [],
+    panels: [
+      { id: 'active_sessions', render: 'stat', unit: 'count', span: 3, data: { value: 0, previous: 0 } },
+      { id: 'session_activity', render: 'series', unit: 'count', span: 6, chart: 'bar', data: [] },
+    ],
   };
 }

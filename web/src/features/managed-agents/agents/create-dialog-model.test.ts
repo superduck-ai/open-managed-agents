@@ -190,10 +190,18 @@ describe('create agent draft model', () => {
     } as AgentApiResponse;
     const withAgent = toggleSubagent(baseDraft, agent);
     expect(withAgent.multiagent).toEqual({
-      type: 'coordinator',
-      agents: [{ type: 'agent', id: 'agent_helper', version: 3 }],
+      type: 'multiagent_20261001',
+      workflows: { type: 'disabled' },
+      advisor: { type: 'disabled' },
+      subagents: {
+        type: 'enabled',
+        inline_agents: { type: 'enabled' },
+        predefined_agents: [{ type: 'agent', id: 'agent_helper', version: 3 }],
+      },
     });
-    expect(toggleSubagent(withAgent, agent).multiagent).toBeNull();
+    expect(toggleSubagent(withAgent, agent).multiagent).toMatchObject({
+      subagents: { type: 'enabled', predefined_agents: [] },
+    });
 
     const withSkill = toggleSkill(baseDraft, {
       id: 'skill_report',
@@ -489,26 +497,12 @@ describe('create agent draft model', () => {
 
   test('accepts the built-in tool permission surface and rejects unknown tools', () => {
     const configs = [
-      'task',
       'ask_user_question',
       'bash',
-      'cron_create',
-      'cron_delete',
-      'cron_list',
       'edit',
-      'enter_plan_mode',
-      'enter_worktree',
-      'exit_plan_mode',
-      'exit_worktree',
       'glob',
       'grep',
-      'notebook_edit',
       'read',
-      'schedule_wakeup',
-      'skill',
-      'task_output',
-      'task_stop',
-      'todo_write',
       'web_fetch',
       'web_search',
       'write',

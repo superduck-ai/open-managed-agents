@@ -170,7 +170,7 @@ type runtimeDelegation struct {
 	PredefinedAgents []runtimeAgentReference `json:"predefined_agents"`
 }
 
-var sandboxToolNames = []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob", "web_search", "web_fetch"}
+var sandboxToolNames = []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob", "web_search", "web_fetch", "ask_user_question"}
 
 func enabledSandboxTools(tools []toolPermissionToolset) []string {
 	enabled := make([]string, 0, len(sandboxToolNames))

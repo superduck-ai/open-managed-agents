@@ -3,6 +3,8 @@ package workbench
 import (
 	"context"
 	"encoding/json"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
+	"github.com/superduck-ai/open-managed-agents/internal/metering"
 	"io"
 	"log/slog"
 	"net"
@@ -36,8 +38,10 @@ type workbenchAccount struct {
 	DisplayName  *string
 }
 
-func RegisterOrgWorkbenchRoutes(r chi.Router, store OrganizationStore, secretService *secrets.Service, logger *slog.Logger) {
-	newWorkbenchHandler(store, secretService, logger).registerRoutes(r)
+func RegisterOrgWorkbenchRoutes(r chi.Router, store OrganizationStore, secretService *secrets.Service, logger *slog.Logger, calculator *billing.Calculator) {
+	handler := newWorkbenchHandler(store, secretService, logger)
+	handler.client.Transport = &metering.Transport{Base: handler.client.Transport, Store: handler.database, Calculator: calculator, Source: "workbench", Logger: handler.logger}
+	handler.registerRoutes(r)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

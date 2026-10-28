@@ -195,6 +195,15 @@
         LIMIT 2
     </select>
 
+    <select id="ListSegmentsBySessionExternalID" resultType="codeSessionSegmentRow">
+        SELECT external_id, created_at
+        FROM code_sessions
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND session_external_id = #{sessionExternalID}
+          AND deleted_at IS NULL
+        ORDER BY created_at ASC, uuid ASC
+    </select>
+
     <select id="FindLatestBySessionExternalID" resultType="codeSessionRow">
         SELECT
         <include refid="columns"/>
@@ -419,6 +428,35 @@
           AND current_worker_epoch = #{workerEpoch}
           AND status = 'active'
           AND deleted_at IS NULL
+    </select>
+
+    <select id="CountActiveSandbox" result="scalar" resultType="int64">
+        SELECT COUNT(*)
+        FROM code_sessions cs
+        JOIN sessions s ON s.uuid = cs.session_uuid
+            AND s.organization_uuid = cs.organization_uuid
+            AND s.workspace_uuid = cs.workspace_uuid
+            AND s.deleted_at IS NULL
+            AND s.status &lt;&gt; 'terminated'
+        JOIN environment_work work ON work.session_uuid = cs.session_uuid
+            AND work.organization_uuid = cs.organization_uuid
+            AND work.workspace_uuid = cs.workspace_uuid
+            AND work.environment_uuid = cs.environment_uuid
+            AND work.state = 'active'
+            AND work.deleted_at IS NULL
+        JOIN environment_sandboxes sandbox ON sandbox.work_uuid = work.uuid
+            AND sandbox.organization_uuid = cs.organization_uuid
+            AND sandbox.workspace_uuid = cs.workspace_uuid
+            AND sandbox.environment_uuid = cs.environment_uuid
+            AND sandbox.provider_sandbox_id IS NOT NULL
+            AND sandbox.state IN ('creating', 'running')
+        WHERE cs.organization_uuid = #{organizationUUID}
+          AND cs.workspace_uuid = #{workspaceUUID}
+          AND cs.external_id = #{codeSessionExternalID}
+          AND cs.status = 'active'
+          AND cs.deleted_at IS NULL
+          AND cs.metadata #&gt;&gt; '{config,worker_transport}' = 'claim'
+          AND sandbox.uuid = #{sandboxUUID}
     </select>
 
     <update id="RotateCredentials" result="returning" resultType="int64">

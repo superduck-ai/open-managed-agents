@@ -13,7 +13,9 @@ export function assignment(): Assignment {
     mcp_config: { mcpServers: { sandbox: { type: "http", url: "http://sandbox.test/mcp", headers: { Authorization: "Bearer test-mcp" } } } },
     launch: {
       version: 2,
+      subagents: {},
       model: "test-model",
+      models: {"test-model":{id:"test-model",api_backend:"messages"}},
       work_dir: "/workspace",
       system: "You are a test agent.",
       tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
@@ -101,11 +103,15 @@ export class Backend {
   readonly claimRequests: { workerId: string; blockMs: number }[] = [];
   readonly releases: Payload[] = [];
   claimToken = "test-claim-token";
+  telemetryRequests = 0;
+  telemetryStatus = 503;
+  telemetryRecords: Payload[] = [];
+  traceSpans: Payload[] = [];
   registrations = 0;
   connections = 0;
   sandboxCount = 0;
   modelScript: Payload[][] = [textEvents("hello")];
-  onModel?: (request: Payload) => Promise<Payload[]>;
+  onModel?: (request: Payload) => Promise<Payload[] | Response>;
   onCancel?: (params: Payload) => Promise<void>;
   onTool?: (params: Payload) => Promise<Payload>;
   onApproval?: (payload: Payload) => Promise<void>;
@@ -199,17 +205,32 @@ export class Backend {
     const body: Payload = request.method === "GET" ? {} : await request.json();
     const json = (data: unknown, status = 200) =>
       Response.json(data, { status });
+    if (path === `/v1/code/sessions/${this.a.session_id}/worker/otlp/v1/logs`) {
+      this.telemetryRequests++;
+      for (const resource of body.resourceLogs ?? []) {
+        for (const scope of resource.scopeLogs ?? []) this.telemetryRecords.push(...(scope.logRecords ?? []));
+      }
+      return json({}, this.telemetryStatus);
+    }
+    if (path === `/v1/code/sessions/${this.a.session_id}/worker/otlp/v1/traces`) {
+      expect(request.headers.get("Authorization")).toBe(`Bearer ${this.a.ingress_token}`);
+      for (const resource of body.resourceSpans ?? []) {
+        for (const scope of resource.scopeSpans ?? []) this.traceSpans.push(...(scope.spans ?? []));
+      }
+      return json({});
+    }
     if (path === `/v1/code/sessions/${this.a.session_id}/worker/register`) {
       expect(request.headers.get("Authorization")).toBe(`Bearer ${this.a.ingress_token}`);
       this.registrations++;
       this.timeline.push({ type: "worker.register" });
-      return json({ worker_epoch: String(this.a.worker_epoch) });
+      return json({ worker_epoch: String(this.a.worker_epoch), observability_enabled: this.a.observability_enabled === true });
     }
     if (path === `/v2/sessions/${this.a.session_id}`) return json({session_context: {
       runtime_tools: this.a.launch.tools, mcp_config: this.a.external_mcp_config ?? {},
       cwd: this.a.launch.work_dir, model: this.a.launch.model, system_prompt: this.a.launch.system,
       append_system_prompt: this.a.launch.environment_prompt, memory_catalog_prompt: this.a.launch.memory_catalog_prompt, runtime_skills: this.a.launch.skills, subagents: this.a.launch.subagents,
       runtime_tool_permissions: this.a.launch.tool_permissions,
+      models: this.a.launch.models,
     }});
     if (path === "/v1/messages") {
       expect(request.headers.get("Authorization")).toBe(
@@ -220,6 +241,7 @@ export class Backend {
       this.timeline.push({ type: "model.request" });
       const script = this.onModel ? await this.onModel(body) : this.modelScript.shift();
       if (!script) return json({ error: "model script exhausted" }, 500);
+      if (script instanceof Response) return script;
       return new Response(
         script
           .map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)
@@ -253,11 +275,7 @@ export class Backend {
           }
           this.executions.push(body.params);
           this.timeline.push({ type: "tool.dispatch", ...body.params });
-          const states = [...this.privateLog.values()].filter(
-            (p) => p.subtype === "dsh_brain_state",
-          );
-          if (!["read", "glob", "grep"].includes(body.params.name))
-            expect(states.at(-1)!.data.phase).toBe("dispatch");
+
           if (this.hangTool) return await new Promise<Response>(() => {});
           result = this.onTool ? await this.onTool(body.params) : { content: [{ type: "text", text: "actual stdout\n" }] };
         } else
@@ -272,7 +290,7 @@ export class Backend {
         this.registrations++;
         this.timeline.push({ type: "worker.register" });
         expect(body).toEqual({});
-        return json({ worker_epoch: String(this.a.worker_epoch) });
+        return json({ worker_epoch: String(this.a.worker_epoch), observability_enabled: this.a.observability_enabled === true });
       }
       if (path.endsWith("/events/stream")) {
         expect(url.searchParams.get("worker_epoch")).toBe(String(this.a.worker_epoch));
@@ -312,6 +330,7 @@ export class Backend {
           });
         if (this.failWrites) { this.failedCcrWrites++; return json({}, 503); }
         for (const event of body.events) {
+          expect(event.payload.type).toBe("dsh_log");
           const old = this.privateLog.get(event.payload.uuid);
           if (old) expect(event.payload).toEqual(old);
           this.privateLog.set(event.payload.uuid, event.payload);

@@ -31,6 +31,9 @@ type invitationMemberParams struct {
 }
 
 type InvitationMapper interface {
+	StartDelivery(ctx context.Context, snapshot InvitationDelivery) (int64, error)
+	FinishDelivery(ctx context.Context, snapshot InvitationDelivery, status string) error
+	LockOrganizationByIDAndEmail(ctx context.Context, id, email string) (string, error)
 	ListByEmail(ctx context.Context, email string) ([]invitationRow, error)
 	LockByIDAndEmail(ctx context.Context, id, email string) (invitationRow, bool, error)
 	FindActiveMember(ctx context.Context, organizationUUID, email string) (invitationMemberRow, bool, error)

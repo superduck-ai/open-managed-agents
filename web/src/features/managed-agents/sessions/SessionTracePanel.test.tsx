@@ -1,10 +1,10 @@
+import { resetTestDom } from '../../../test/setup';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { I18nProvider } from '../../../shared/i18n';
 import { TooltipProvider } from '../../../shared/ui/tooltip';
-import { resetTestDom } from '../../../test/setup';
 import { type QuickstartSessionEvent } from '../types';
 import { SessionDetailDeltaFramesContext } from './sessionDetailData';
-import { BatchDetailPanel, DebugDetailPanel, ToolCallDetailContent } from './SessionTracePanel';
+import { BatchDetailPanel, DebugDetailPanel, EventDetailPanel, ToolCallDetailContent } from './SessionTracePanel';
 import { MetaStrip } from './sessionTimeline';
 import { buildSessionEventEntries, toolBatchEntry } from './sessionTraceModel';
 
@@ -13,6 +13,40 @@ const { cleanup, fireEvent, render, screen } = await import('@testing-library/re
 afterEach(cleanup);
 
 describe('DebugDetailPanel', () => {
+  test.each([
+    ['en', 'Copy event-localized', 'Close detail panel', 'Event view', 'Deltas'],
+    ['zh-CN', '复制 event-localized', '关闭详情面板', '事件视图', '增量帧'],
+  ] as const)(
+    'localizes event controls and preserves user punctuation in %s',
+    (locale, copyLabel, closeLabel, viewLabel, deltaLabel) => {
+      resetTestDom('https://oma.duck.ai/');
+      const [entry] = buildSessionEventEntries(
+        [{ id: 'event-localized', type: 'agent.message', content: [{ type: 'text', text: 'Keep user text A · B.' }] }],
+        'debug',
+      );
+      let closed = false;
+      render(
+        <I18nProvider initialLocale={locale}>
+          <TooltipProvider>
+            <EventDetailPanel
+              entry={entry!}
+              view="debug"
+              onClose={() => {
+                closed = true;
+              }}
+            />
+          </TooltipProvider>
+        </I18nProvider>,
+      );
+      expect(screen.getByRole('button', { name: copyLabel })).toBeTruthy();
+      expect(screen.getByRole('tablist', { name: viewLabel })).toBeTruthy();
+      expect(screen.getByRole('tab', { name: deltaLabel }).getAttribute('aria-disabled')).toBe('true');
+      expect(screen.getByTestId('session-trace-code-block').textContent).toContain('Keep user text A · B.');
+      fireEvent.click(screen.getByRole('button', { name: closeLabel }));
+      expect(closed).toBe(true);
+    },
+  );
+
   test.each(['running', 'failed'] as const)('shows only one %s state in the metadata strip', (lifecycle) => {
     resetTestDom();
     const { container } = render(

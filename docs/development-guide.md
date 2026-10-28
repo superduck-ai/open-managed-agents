@@ -60,7 +60,7 @@ chmod 600 "$HOME/.oma-dev/model-providers.yaml"
 
 模板的 `api_key` 默认为空，必须填写服务商提供的真实 key。共享目录只需保留 `model-providers.yaml`，不再需要共享的 `dev-init.yaml` 或 `secrets/`。真实 key 只保存在仓库外的私有配置中，不要写入仓库或文档。
 
-Anthropic 协议使用 `api_backend: messages`，OpenAI 兼容协议使用 `api_backend: chat_completions`。根据上游修改地址和模型列表。同一个 workspace 内不同 provider 可以配置相同上游模型 ID，通过 `<slug>/<model_id>` 选择，例如 `primary/kimi-k2.5`。`slug` 可选，新建 provider 时省略则依次分配 `default`、`default-2` 等可用值；重跑时保留现有 slug。slug 创建后不可修改，包括 `--update`。初始化不会向上游自动发现模型，必须显式填写 `model_ids`。
+Anthropic 协议使用 `api_backend: messages`，OpenAI 兼容协议使用 `api_backend: chat_completions`。根据上游修改地址和模型列表。同一个 workspace 内不同 provider 可以配置相同上游模型 ID，通过 `<slug>/<model_id>` 选择，例如 `primary/kimi-k2.5`。`slug` 可选，作为新建 provider 的候选值，省略时使用 `default`。实际 slug 在整个组织内唯一；跨 workspace 或组织级连接发生冲突时会追加 `-2`、`-3` 等可用后缀。模型引用使用 Console 中的实际 slug；重跑和 `--update` 均保留它。旧状态首次重跑兼容数据库迁移后的 slug，并登记当前文件候选值，之后不得修改该值。初始化不会向上游自动发现模型，必须显式填写 `model_ids`。
 
 所有新 worktree 的 `.run/dev-init.yaml` 都会包含类似下面的引用：
 

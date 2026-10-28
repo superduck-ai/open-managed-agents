@@ -188,7 +188,7 @@ function EnvironmentNetworkingEditor({
             </FieldDescription>
           </Field>
           {values.networkType === 'limited' ? (
-            <div className="space-y-6 border-t border-border pt-6">
+            <div className="space-y-6 border-t-[0.5px] border-border pt-6">
               <NetworkingSwitchRow
                 label={msg('managedAgents.environments.networking.allowMcpServers', 'Allow MCP server network access')}
                 description={msg(

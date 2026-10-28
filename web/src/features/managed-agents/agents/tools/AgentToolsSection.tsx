@@ -207,7 +207,7 @@ export function AgentToolCard({
   const toolCount = card.toolCountKnown === false ? '—' : card.tools.length;
 
   return (
-    <Card size="sm" className="gap-0 py-0">
+    <Card size="sm" className="@container/tool-details gap-0 py-0 ring-inset">
       <div className="flex min-w-0 items-center gap-3 px-4 py-3">
         <ToolCardIcon card={card} />
         <div className="min-w-0 flex-1">
@@ -232,7 +232,7 @@ export function AgentToolCard({
               server: title,
             })}
           >
-            <RefreshCw className={refreshBusy ? 'animate-spin' : ''} aria-hidden />
+            <RefreshCw className={refreshBusy ? 'animate-spin motion-reduce:animate-none' : ''} aria-hidden />
             {msg('common.refresh', 'Refresh')}
           </Button>
         ) : null}
@@ -242,10 +242,10 @@ export function AgentToolCard({
           aria-label={[title, triggerLabel, toolCount, aggregatePermissionLabel, catalogStatusLabel]
             .filter((value) => value !== undefined)
             .join(' ')}
-          className="flex h-11 w-full items-center gap-3 border-t border-border px-4 text-left text-sm font-semibold text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          className="flex h-11 w-full items-center gap-3 border-t-[0.5px] border-border px-4 text-left text-sm font-semibold text-muted-foreground transition-colors duration-150 ease-out motion-reduce:transition-none hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-[0.5px] focus-visible:ring-ring focus-visible:ring-inset"
         >
           <ChevronRight
-            className={`size-4 shrink-0 text-muted-foreground/70 transition-transform ${expanded ? 'rotate-90' : ''}`}
+            className={`size-4 shrink-0 text-muted-foreground/70 transition-transform duration-220 ease-out motion-reduce:transition-none ${expanded ? 'rotate-90' : ''}`}
             aria-hidden
           />
           {triggerLabel}
@@ -258,13 +258,13 @@ export function AgentToolCard({
           <span className="min-w-0 flex-1" />
           {card.aggregatePermission ? <PermissionBadge permission={card.aggregatePermission} /> : null}
         </CollapsibleTrigger>
-        <CollapsibleContent className="border-t border-border">
+        <CollapsibleContent className="border-t-[0.5px] border-border">
           {card.tools.length ? (
             <div
               className={
                 card.kind === 'mcp'
-                  ? 'subtle-scrollbar max-h-64 divide-y divide-border overflow-y-auto'
-                  : 'divide-y divide-border'
+                  ? 'subtle-scrollbar max-h-64 divide-y-[0.5px] divide-border overflow-y-auto'
+                  : 'divide-y-[0.5px] divide-border'
               }
             >
               {card.tools.map((tool, index) => {
@@ -275,31 +275,33 @@ export function AgentToolCard({
                 return (
                   <div
                     key={`${tool.name}-${index}`}
-                    className={`grid min-w-0 items-center gap-x-4 gap-y-1 px-4 py-2.5 text-sm sm:pl-12 ${
+                    className={`grid min-w-0 items-center gap-x-4 gap-y-1 px-4 py-2.5 text-sm @[32rem]/tool-details:pl-12 ${
                       tool.permission
-                        ? 'grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[10rem_minmax(0,1fr)_auto]'
-                        : 'grid-cols-1 sm:grid-cols-[10rem_minmax(0,1fr)]'
+                        ? 'grid-cols-[minmax(0,1fr)_auto] @[32rem]/tool-details:grid-cols-[10rem_minmax(0,1fr)_auto]'
+                        : 'grid-cols-1 @[32rem]/tool-details:grid-cols-[10rem_minmax(0,1fr)]'
                     }`}
                   >
-                    <code className="min-w-0 truncate font-mono text-xs text-foreground" title={tool.name}>
+                    <code className="min-w-0 break-words font-mono text-xs text-foreground" title={tool.name}>
                       {tool.name}
                     </code>
                     {description ? (
                       <span
-                        className={`min-w-0 truncate text-muted-foreground ${
-                          tool.permission ? 'col-span-2 row-start-2 sm:col-span-1 sm:col-start-2 sm:row-start-1' : ''
+                        className={`min-w-0 break-words text-muted-foreground ${
+                          tool.permission
+                            ? 'col-span-2 row-start-2 @[32rem]/tool-details:col-span-1 @[32rem]/tool-details:col-start-2 @[32rem]/tool-details:row-start-1'
+                            : ''
                         }`}
                         title={description}
                       >
                         {description}
                       </span>
                     ) : (
-                      <span className="hidden min-w-0 sm:block" />
+                      <span className="hidden min-w-0 @[32rem]/tool-details:block" />
                     )}
                     {tool.permission ? (
                       <PermissionBadge
                         permission={tool.permission}
-                        className="col-start-2 row-start-1 justify-self-end sm:col-start-3"
+                        className="col-start-2 row-start-1 justify-self-end @[32rem]/tool-details:col-start-3"
                       />
                     ) : null}
                   </div>
@@ -382,7 +384,7 @@ function ToolCardIcon({ card }: { card: AgentToolDisplayCard }) {
   }
 
   return (
-    <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-secondary text-foreground">
+    <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg border-[0.5px] border-border bg-secondary text-foreground">
       {card.kind === 'built-in' ? (
         <BriefcaseBusiness className="size-5" aria-hidden />
       ) : (

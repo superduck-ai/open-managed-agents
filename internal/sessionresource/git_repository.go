@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestorepath"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
@@ -20,11 +21,7 @@ const GitRepositoryType = "github_repository"
 
 var gitCommitSHA = regexp.MustCompile(`^([a-fA-F0-9]{40}|[a-fA-F0-9]{64})$`)
 
-type GitRepositoryCheckout struct {
-	Type string `json:"type"`
-	Name string `json:"name,omitempty"`
-	SHA  string `json:"sha,omitempty"`
-}
+type GitRepositoryCheckout = db.SessionResourceGitHubCheckout
 
 type GitRepositorySpec struct {
 	URL       string                 `json:"url"`
@@ -154,6 +151,17 @@ func ParseStoredGitRepositorySpec(raw json.RawMessage) (GitRepositorySpec, error
 	if err := json.Unmarshal(raw, &spec); err != nil {
 		return GitRepositorySpec{}, errStoredGitResource
 	}
+	return validateStoredGitRepositorySpec(spec)
+}
+
+func StoredGitRepositorySpec(repository *db.SessionResourceGitHubRepository) (GitRepositorySpec, error) {
+	if repository == nil {
+		return GitRepositorySpec{}, errStoredGitResource
+	}
+	return validateStoredGitRepositorySpec(GitRepositorySpec{URL: repository.URL, MountPath: repository.MountPath, Checkout: repository.Checkout})
+}
+
+func validateStoredGitRepositorySpec(spec GitRepositorySpec) (GitRepositorySpec, error) {
 	if err := ValidateGitRepositoryURL(spec.URL); err != nil {
 		return GitRepositorySpec{}, err
 	}

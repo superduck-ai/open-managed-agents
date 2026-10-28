@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { ExternalMcpClient } from "../src/external-mcp/client.ts";
 
-function statefulPeer(rejection: number, issueSession = true, rejectFresh = false) {
+function statefulPeer(rejection: number, issueSession = true, rejectFresh = false, loseFreshResponse = false) {
   const initializes: (string | null)[] = [];
   const calls: (string | null)[] = [];
   let active = "sdk-session-a";
@@ -25,8 +25,9 @@ function statefulPeer(rejection: number, issueSession = true, rejectFresh = fals
     if (body.method === "tools/list") return reply({ tools: [{ name: "read_record", description: "Read owned record", inputSchema: { type: "object", properties: {}, additionalProperties: false } }] });
     if (body.method === "tools/call") {
       calls.push(sid);
-      if (expired && (!issueSession || sid !== "sdk-session-b" || rejectFresh)) return new Response("Session rejected", { status: rejection });
+      if (expired && (!issueSession || sid !== "sdk-session-b" || rejectFresh)) return new Response("Session rejected", { status: rejection, headers: loseFreshResponse ? { "X-Oma-Mcp-Not-Forwarded": "true" } : {} });
       executed++;
+      if (expired && loseFreshResponse) return new Response("Result lost", { status: 503 });
       return reply({ content: [{ type: "text", text: "actual-owned-record" }] });
     }
     return new Response(null, { status: 404 });
@@ -77,6 +78,19 @@ test("a second stateful404 never causes an unbounded replay loop", async () => {
     await expect(p.client.call(tools[0]!, {}, signal)).rejects.toThrow();
     expect(p.initializes).toEqual([null, null]);
     expect(p.calls).toEqual(["sdk-session-a", "sdk-session-a", "sdk-session-b"]);
+    expect(p.executed()).toBe(1);
+  } finally { await p.close(); }
+});
+
+
+test("a safely retried MCP call clears the expired request's not-forwarded evidence", async () => {
+  const p = statefulPeer(404, true, false, true);
+  try {
+    const signal = new AbortController().signal;
+    const [tool] = await p.client.discover(signal);
+    p.expire();
+    await expect(p.client.call(tool!, {}, signal)).rejects.toThrow();
+    expect(p.calls).toEqual(["sdk-session-a", "sdk-session-b"]);
     expect(p.executed()).toBe(1);
   } finally { await p.close(); }
 });

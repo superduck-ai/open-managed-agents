@@ -131,6 +131,7 @@ export const consoleNavigation: NavItem[] = [
       { href: '/members', label: 'Members', labelId: 'nav.members' },
       { href: '/api-keys', label: 'API keys', labelId: 'nav.apiKeys' },
       { href: '/webhooks', label: 'Webhooks', labelId: 'nav.webhooks' },
+      { href: '/telemetry', label: 'OpenTelemetry', labelId: 'nav.telemetry' },
       {
         href: '/mcp-tunnels',
         label: 'MCP tunnels',
@@ -156,8 +157,10 @@ export function visibleConsoleNavigation(items: readonly NavItem[] = consoleNavi
 
 export const settingsNavigation = [
   { href: '/settings/organization', label: 'Organization', labelId: 'nav.organization' },
+  { href: '/settings/llm', label: 'LLM configuration', labelId: 'nav.llmSettings' },
   { href: '/settings/members', label: 'Members', labelId: 'nav.members' },
   { href: '/settings/workspaces', label: 'Workspaces', labelId: 'nav.workspaces' },
+  { href: '/settings/telemetry', label: 'OpenTelemetry', labelId: 'nav.telemetry' },
 ] as const;
 
 export const personalSettingsNavigation = [
@@ -195,6 +198,7 @@ export const placeholderIcons = {
   '/privacy-controls': Shield,
   '/security': Shield,
   '/webhooks': Webhook,
+  '/telemetry': Activity,
   '/mcp-tunnels': Plug,
   '/tags': Tags,
   '/billing': WalletCards,

@@ -19,6 +19,8 @@ function formValues(overrides: Partial<ManagedEntityFormValues> = {}): ManagedEn
     agentId: 'agent_option123456',
     environmentId: 'env_option123456',
     initialMessage: 'Summarize support tickets.',
+    budgetUsd: '',
+    budgetChanged: false,
     triggerType: 'manual',
     cronExpression: '0 9 * * 1',
     timezone: 'UTC',

@@ -82,7 +82,7 @@ func TestManagedAgentRuntimeConfigPublishesRootTools(t *testing.T) {
 	if string(fields["runtime_tools"]) != `["Read"]` {
 		t.Fatalf("runtime_tools = %s", fields["runtime_tools"])
 	}
-	want := `{"bash":"deny","edit":"deny","glob":"deny","grep":"deny","read":"allow","web_fetch":"deny","web_search":"deny","write":"deny"}`
+	want := `{"ask_user_question":"deny","bash":"deny","edit":"deny","glob":"deny","grep":"deny","read":"allow","web_fetch":"deny","web_search":"deny","write":"deny"}`
 	if string(fields["runtime_tool_permissions"]) != want {
 		t.Fatalf("runtime_tool_permissions = %s", fields["runtime_tool_permissions"])
 	}

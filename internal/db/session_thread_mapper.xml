@@ -52,6 +52,15 @@
         SELECT <include refid="columns"/> FROM inserted
     </select>
 
+    <select id="ListSubagentNames" resultType="sessionThreadNameRow">
+        SELECT external_id, COALESCE(agent_snapshot-&gt;&gt;'name', '') AS name
+        FROM session_threads
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND parent_thread_uuid IS NOT NULL
+          AND external_id IN
+          <foreach collection="externalIDs" item="externalID" open="(" separator="," close=")">#{externalID}</foreach>
+    </select>
+
     <select id="FindPrimaryExternalID" result="optional" resultType="string">
         SELECT external_id FROM session_threads
         WHERE workspace_uuid = #{workspaceUUID}

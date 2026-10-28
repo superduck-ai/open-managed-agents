@@ -1583,8 +1583,7 @@ func TestCodeSessionWorkerEndpointsPublishEvents(t *testing.T) {
 	postCodeSessionWorkerInternalEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{"type":"user","uuid":"internal-`+strings.TrimPrefix(session.ID, "sesn_")+`"}}]}`)
 	assertCodeSessionWorkerDelivery(t, app, codeSessionID, workerEpoch)
 	assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, workerEpoch)
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics")
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs")
+	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/logs")
 
 	eventSuffix := strings.TrimPrefix(session.ID, "sesn_")
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"events":[{"payload":{"type":"assistant","uuid":"assistant-worker-`+eventSuffix+`","message":{"role":"assistant","content":"hello from ccr worker"},"created_at":"2026-06-16T01:10:00Z"}}],"worker_epoch":`+quoteJSON(workerEpoch)+`}`)
@@ -2175,8 +2174,7 @@ func TestCodeSessionMCPDefaultAskPublishesRequiresActionAndAcceptsConfirmation(t
 }
 
 func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
-	app := newTestAppWithStore(t, nil, newFakeStore("sessions-code-worker-ask-user-question-bucket"))
-	defer app.close()
+	app := newPayloadIntegrationApp(t, newFakeStore("sessions-code-worker-ask-user-question-bucket"))
 
 	agent := createAgent(t, app, `{"model":"claude-opus-4-6","name":"sessions-worker-ask-user-question-agent","tools":[{"type":"agent_toolset_20260401","configs":[{"name":"ask_user_question","enabled":true,"permission_policy":{"type":"always_ask"}}]}]}`)
 	defer cleanupAgentRows(t, app.pool, agent.ID)
@@ -2188,7 +2186,7 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	suffix := strings.TrimPrefix(session.ID, "sesn_")
 	toolUseID := "toolu_ask_color_" + suffix
 	requestID := "req_ask_color_" + suffix
-	questionsJSON := `[{"header":"Color","question":"Favorite color?","options":[{"label":"Blue"},{"label":"Green"}]}]`
+	questionsJSON := `[{"id":"color","header":"Color","question":"Favorite color?","options":[{"label":"Blue"},{"label":"Green"}]}]`
 
 	postCodeSessionWorkerEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(workerEpoch)+`,"events":[{"payload":{`+
 		`"type":"control_request",`+
@@ -2220,7 +2218,7 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 	resp := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+session.ID+"/events?beta=true", strings.NewReader(`{"events":[{`+
 		`"type":"user.custom_tool_result",`+
 		`"custom_tool_use_id":`+quoteJSON(toolEventID)+`,`+
-		`"content":[{"type":"text","text":`+quoteJSON(`{"Color":"Blue"}`)+`}]`+
+		`"content":[{"type":"text","text":`+quoteJSON(`{"answers":[{"id":"color","selected":["Blue"]}]}`)+`}]`+
 		`}]}`), defaultTestKey, true)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -2248,16 +2246,13 @@ func TestCodeSessionAskUserQuestionUsesCustomToolResult(t *testing.T) {
 		t.Fatalf("confirmation response request_id = %v, want %s; payload=%s", response["request_id"], requestID, payload)
 	}
 	nested := response["response"].(map[string]any)
-	updatedInput, ok := nested["updatedInput"].(map[string]any)
-	if !ok {
-		t.Fatalf("confirmation updatedInput = %#v, want object; payload=%s", nested["updatedInput"], payload)
+	external, ok := nested["externalResult"].(map[string]any)
+	if !ok || external["isError"] != false {
+		t.Fatalf("custom result = %#v; payload=%s", nested, payload)
 	}
-	if _, ok := updatedInput["questions"]; !ok {
-		t.Fatalf("confirmation updatedInput missing questions: %#v", updatedInput)
-	}
-	answers, ok := updatedInput["answers"].(map[string]any)
-	if !ok || answers["Color"] != "Blue" {
-		t.Fatalf("confirmation updatedInput.answers = %#v, want Color=Blue; payload=%s", updatedInput["answers"], payload)
+	content := external["content"].([]any)
+	if len(content) != 1 || content[0].(map[string]any)["text"] != `{"answers":[{"id":"color","selected":["Blue"]}]}` {
+		t.Fatalf("answer content = %#v", content)
 	}
 	inputID := sessionEventStringField(t, submitted.Data[0], "id")
 	if object["id"] != inputID {
@@ -2558,11 +2553,8 @@ func TestCodeSessionWorkerEpochProtection(t *testing.T) {
 	postCodeSessionWorkerInternalEvents(t, app, codeSessionID, `{"worker_epoch":`+quoteJSON(epoch2)+`,"events":[]}`)
 	assertCodeSessionWorkerDelivery(t, app, codeSessionID, epoch2)
 	assertCodeSessionWorkerHeartbeat(t, app, codeSessionID, epoch2)
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "metrics")
-	assertCodeSessionWorkerOTLPJSON(t, app, codeSessionID, "metrics")
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "logs")
 	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/logs")
-	assertCodeSessionWorkerOTLP(t, app, codeSessionID, "v1/traces")
+	assertCodeSessionWorkerOTLPJSON(t, app, codeSessionID, "v1/logs")
 	postCodeSessionWorkerEvents(t, app, codeSessionID, workerEventBody(session.ID, "current", epoch2))
 	postCodeSessionWorkerDiagnostics(t, app, codeSessionID, workerDiagnosticsBody(codeSessionID, epoch2, "current diag"))
 }
@@ -2791,7 +2783,7 @@ func TestCodeSessionWorkerOTLPAcceptsWithoutEpochWithoutWorkerActivity(t *testin
 		t.Fatalf("load code session before OTLP: %v", err)
 	}
 
-	for _, suffix := range []string{"metrics", "logs"} {
+	for _, suffix := range []string{"v1/logs"} {
 		assertCodeSessionWorkerOTLP(t, app, codeSessionID, suffix)
 	}
 
@@ -3059,7 +3051,7 @@ func TestCodeSessionWorkerHeartbeatUpdatesLeaseForCurrentEpoch(t *testing.T) {
 	if calls := app.sandboxTimeouts.snapshotCalls(); len(calls) != 3 {
 		t.Fatalf("expired heartbeat sandbox timeout calls = %d, want 3", len(calls))
 	}
-	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "metrics", "application/x-protobuf", nil)
+	resp = doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, "v1/logs", "application/x-protobuf", nil)
 	assertCodeSessionWorkerOTLPResponse(t, resp, http.StatusGone, "code session worker lease expired")
 	afterExpiredHeartbeat, err := getCodeSession(app, context.Background(), codeSessionID)
 	if err != nil {
@@ -4525,7 +4517,7 @@ func assertCodeSessionWorkerOTLP(t *testing.T, app *testApp, codeSessionID strin
 
 func assertCodeSessionWorkerOTLPJSON(t *testing.T, app *testApp, codeSessionID string, suffix string) {
 	t.Helper()
-	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, "application/json", []byte(`{"resourceMetrics":[]}`))
+	resp := doCodeSessionWorkerOTLPRequest(t, app, codeSessionID, suffix, "application/json", []byte(`{"resourceLogs":[]}`))
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("post worker otlp/%s json status = %d, want 200: %s", suffix, resp.StatusCode, readAll(t, resp.Body))

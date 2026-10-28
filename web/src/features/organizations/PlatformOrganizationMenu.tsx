@@ -1,8 +1,14 @@
+import { ArrowLeft } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { useOrganizations } from '../../shared/organizations/context';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
-import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel } from '../../shared/ui/dropdown-menu';
+import {
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '../../shared/ui/dropdown-menu';
 import { useScopeConfirmation } from './useScopeConfirmation';
 
 export function PlatformOrganizationMenu() {
@@ -35,12 +41,17 @@ function ConnectedPlatformOrganizationMenu() {
             organization: organizationAccess?.organization.name ?? organizations.platformScope.targetOrganizationUuid,
           })}
         </DropdownMenuLabel>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
+          className="h-8 gap-3 px-3"
           disabled={organizations.switching}
           closeOnClick={false}
           onClick={() => confirmation.request(() => void exit())}
         >
-          {msg('platformScope.exit', 'Return to platform administration')}
+          <ArrowLeft className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="min-w-0 flex-1 truncate">
+            {msg('platformScope.exit', 'Return to platform administration')}
+          </span>
         </DropdownMenuItem>
       </DropdownMenuGroup>
       {confirmation.dialog}

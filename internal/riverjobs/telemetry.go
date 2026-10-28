@@ -9,6 +9,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
@@ -44,7 +45,7 @@ func (m *telemetryMiddleware) InsertMany(ctx context.Context, manyParams []*rive
 	return doInner(ctx)
 }
 
-func (m *telemetryMiddleware) Work(ctx context.Context, job *rivertype.JobRow, doInner func(context.Context) error) error {
+func (m *telemetryMiddleware) Work(ctx context.Context, job *rivertype.JobRow, doInner func(context.Context) error) (err error) {
 	startedAt := time.Now()
 	ctx, span := telemetry.StartRoot(ctx, "oma.river."+job.Kind, traceParentFromMetadata(job.Metadata),
 		attribute.Int64("oma.river.job.id", job.ID),
@@ -52,12 +53,20 @@ func (m *telemetryMiddleware) Work(ctx context.Context, job *rivertype.JobRow, d
 		attribute.String("oma.river.queue", job.Queue),
 		attribute.Int("oma.river.attempt", job.Attempt),
 	)
-	err := doInner(ctx)
-	outcome := riverOutcome(job, err)
-	recordRiverJob(ctx, job, outcome, time.Since(startedAt))
-	span.SetAttributes(telemetry.AttrOutcome.String(outcome))
-	telemetry.SetErrorStatus(span, riverSpanError(outcome, err))
-	span.End()
+	completed := false
+	defer func() {
+		outcome := riverOutcome(job, err)
+		if !completed {
+			outcome = "panic"
+			span.SetStatus(codes.Error, outcome)
+		}
+		recordRiverJob(ctx, job, outcome, time.Since(startedAt))
+		span.SetAttributes(telemetry.AttrOutcome.String(outcome))
+		telemetry.SetErrorStatus(span, riverSpanError(outcome, err))
+		span.End()
+	}()
+	err = doInner(ctx)
+	completed = true
 	return err
 }
 

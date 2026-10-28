@@ -9,6 +9,10 @@ import (
 )
 
 func validateTelemetryConfig(cfg TelemetryConfig) error {
+	var level slog.Level
+	if cfg.Logs.Level != "" && level.UnmarshalText([]byte(cfg.Logs.Level)) != nil {
+		return errors.New("telemetry.logs.level must be a valid slog level")
+	}
 	if !cfg.Enabled {
 		return nil
 	}
@@ -36,10 +40,6 @@ func validateTelemetryConfig(cfg TelemetryConfig) error {
 		if !check.valid {
 			return errors.New(check.message)
 		}
-	}
-	var level slog.Level
-	if cfg.Logs.Enabled && level.UnmarshalText([]byte(cfg.Logs.Level)) != nil {
-		return errors.New("telemetry.logs.level must be a valid slog level")
 	}
 	return nil
 }

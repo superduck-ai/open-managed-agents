@@ -20,7 +20,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
-// requestHeadersToRemove 包含 hop-by-hop header、调用方凭证、不可由 sandbox 伪造的租户 header 和 OMA 内部 trace 上下文。
 var requestHeadersToRemove = map[string]struct{}{
 	"Authorization":       {},
 	"Connection":          {},

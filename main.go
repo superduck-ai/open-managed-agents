@@ -56,12 +56,19 @@ func main() {
 	slog.SetDefault(logger)
 
 	if err := run(logger); err != nil {
-		logger.Error("application stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(bootstrap *slog.Logger) error {
+func run(bootstrap *slog.Logger) (err error) {
+	logger := bootstrap
+	shutdown := func() {}
+	defer func() {
+		if err != nil {
+			logger.Error("application stopped", "error", err)
+		}
+		shutdown()
+	}()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	context.AfterFunc(ctx, stop)
@@ -74,9 +81,9 @@ func run(bootstrap *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("setup telemetry: %w", err)
 	}
-	defer shutdownTelemetry(telemetryRuntime, bootstrap)
+	shutdown = func() { shutdownTelemetry(telemetryRuntime, bootstrap) }
 	level := cfg.Telemetry.Logs.SlogLevel()
-	logger := newApplicationLogger(logging.NewConsoleHandler(os.Stdout, level), telemetryRuntime, level)
+	logger = newApplicationLogger(logging.NewConsoleHandler(os.Stdout, level), telemetryRuntime, level)
 	slog.SetDefault(logger)
 
 	closeDiagnostics, err := diagnostics.Start(cfg.Server.DiagnosticsAddr, os.Getenv("OMA_DIAGNOSTICS_LISTENER_FD"), logger.With("component", "diagnostics"))

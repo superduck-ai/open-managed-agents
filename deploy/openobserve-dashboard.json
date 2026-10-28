@@ -1711,7 +1711,7 @@
           "id": "Panel_start_2",
           "type": "metric",
           "title": "Runner 运行",
-          "description": "oma.runner.run 次数（queue、lazy_mcp、prewarm、stale_recovery）",
+          "description": "oma.runner.run 次数（queue、lazy_mcp、stale_recovery；嵌套在 queue run 中的 prewarm 不单独计数）",
           "config": {
             "show_legends": true,
             "legends_position": "bottom",

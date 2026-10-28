@@ -161,7 +161,9 @@ func TestRunnerStagePreservesCallerContext(t *testing.T) {
 		t.Fatalf("stage spans: %v", spans)
 	}
 	data := telemetrytest.Collect(t, reader)
-	telemetrytest.AssertSingle(t, data, "oma.runner.runs", 1, map[string]string{"oma.runner.trigger": "prewarm", "oma.outcome": "ok", "oma.runner.recovered": "false"})
+	if _, counted := data["oma.runner.runs"]; counted {
+		t.Fatal("nested prewarm run counted as a separate run")
+	}
 	if points := telemetrytest.Points(t, data, "oma.runner.stage.duration"); len(points) != 2 {
 		t.Fatalf("stage points: %v", points)
 	}

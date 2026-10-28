@@ -14,6 +14,7 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -112,11 +113,13 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", err.Error()))
 			return
 		}
-		internalTypes := make([]string, len(events))
-		for i, event := range events {
-			internalTypes[i] = event.EventType
+		if trace.SpanFromContext(r.Context()).IsRecording() {
+			internalTypes := make([]string, len(events))
+			for i, event := range events {
+				internalTypes[i] = event.EventType
+			}
+			annotateWorkerEventBatch(r.Context(), len(events), internalTypes)
 		}
-		annotateWorkerEventBatch(r.Context(), len(events), internalTypes)
 		created, err := h.service.eventPayloads.AppendInternal(r.Context(), record, epoch, events)
 		if err != nil {
 			if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
@@ -217,7 +220,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := h.db.MarkCodeSessionWorkerDisconnectedForEpoch(ctx, codeSessionID, epoch); err != nil && !errors.Is(err, db.ErrNotFound) && !errors.Is(err, db.ErrWorkerEpochMismatch) {
-			httpapi.LogFailure(h.logger, r, "mark code session worker stream disconnected", "code_session_id", codeSessionID, "error", err)
+			httpapi.LogFailure(h.logger, r.WithContext(requestCtx), "mark code session worker stream disconnected", "code_session_id", codeSessionID, "error", err)
 		}
 	}
 	defer h.service.reclaimClosedSubscription(codeSession)

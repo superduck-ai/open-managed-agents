@@ -68,9 +68,12 @@ func TestTelemetryConfigurationDefaults(t *testing.T) {
 	cfg.Traces.Enabled, cfg.Metrics.Enabled, cfg.Logs.Enabled = false, false, false
 	cfg.OTLP.TracesStream, cfg.OTLP.LogsStream = "", ""
 	cfg.Metrics.ExportInterval, cfg.StateMetrics.Interval = 0, 0
-	cfg.Logs.Level = "invalid"
 	if err := validateTelemetryConfig(cfg); err != nil {
 		t.Fatal(err)
+	}
+	cfg.Enabled, cfg.Logs.Level = false, "invalid"
+	if err := validateTelemetryConfig(cfg); err == nil || !strings.Contains(err.Error(), "telemetry.logs.level") {
+		t.Fatalf("console level not validated with telemetry disabled: %v", err)
 	}
 	if cfg.Logs.SlogLevel() != slog.LevelInfo {
 		t.Fatal("invalid level must fall back to info")

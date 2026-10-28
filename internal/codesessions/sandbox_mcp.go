@@ -161,7 +161,11 @@ func (h *Handler) proxySandboxMCP(w http.ResponseWriter, r *http.Request, sessio
 			h.logger.WarnContext(r.Context(), "Memory tool version confirmation failed", "session_id", session.SessionExternalID, "error", err)
 		}
 	}
-	call.outcome = sandboxMCPOutcome(response.StatusCode, responseBody)
+	reply := responseBody
+	if call.tool == "" {
+		reply = nil
+	}
+	call.outcome = sandboxMCPOutcome(response.StatusCode, reply)
 	copySandboxMCPResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(responseBody)
@@ -190,8 +194,11 @@ func (h *Handler) relayMemoryToolStream(w http.ResponseWriter, r *http.Request, 
 	copySandboxMCPResponseHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(response.StatusCode)
-	if err := streamMemoryToolResponse(r.Context(), w, response.Body, request, commit); err != nil {
-		h.logger.WarnContext(r.Context(), "Memory tool version confirmation failed", "session_id", session.SessionExternalID, "error", err)
+	confirmErr, err := streamMemoryToolResponse(r.Context(), w, response.Body, request, commit)
+	if confirmErr != nil {
+		h.logger.WarnContext(r.Context(), "Memory tool version confirmation failed", "session_id", session.SessionExternalID, "error", confirmErr)
+	}
+	if err != nil {
 		return sandboxMCPTransportOutcome(r)
 	}
 	return call.outcome

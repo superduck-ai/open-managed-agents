@@ -369,7 +369,7 @@ NATS Work）、`lazy_mcp`（首次工具调用触发沙箱创建）、`prewarm`�
 
 | 名称 | 类型 | 分桶 | 属性与取值 |
 | --- | --- | --- | --- |
-| `oma.river.jobs` | Int64Counter | — | `oma.river.kind`、`oma.river.queue`、`oma.outcome`=`ok`、`retry`、`discarded`、`canceled`、`snoozed` |
+| `oma.river.jobs` | Int64Counter | — | `oma.river.kind`、`oma.river.queue`、`oma.outcome`=`ok`、`retry`、`discarded`、`canceled`、`snoozed`、`panic` |
 | `oma.river.job.duration` | Float64Histogram | latency | 同上 |
 | `oma.river.job.queue_wait` | Float64Histogram | longWait | `oma.river.kind`、`oma.river.queue` |
 | `oma.webhook.deliveries` | Int64Counter | — | `oma.outcome`=`ok`、`retry`、`dropped` |
@@ -460,8 +460,8 @@ telemetry:
 
 开启遥测后要求服务名、组织非空，`base_url` 为不带路径、query 与 fragment 的 HTTP(S) 地址（服务端自行拼接 `/api/{organization}/v1/{signal}`，
 与 DSH 使用的标准 OTel `OTEL_EXPORTER_OTLP_ENDPOINT=.../api/{organization}` 约定不同，带路径、query 或 fragment 的值会被拒绝），认证用户名/密码成对出现；
-启用的 traces/logs 流名非空，日志级别合法，超时为正，指标导出间隔至少 1 秒，状态刷新至少 10 秒，
-stale/stuck 阈值为正。状态指标没有独立开关：`StateMetricsActive` 只要求遥测与 metrics 同时开启，
+启用的 traces/logs 流名非空，超时为正，指标导出间隔至少 1 秒，状态刷新至少 10 秒，
+stale/stuck 阈值为正。`telemetry.logs.level` 同时决定 console 级别，因此无论是否开启遥测都要求为空或合法的 slog 级别。状态指标没有独立开关：`StateMetricsActive` 只要求遥测与 metrics 同时开启，
 状态 gauge 是排查积压与卡死的基础数据，采集成本为每副本每个刷新周期约十条带部分索引的查询。
 
 ### 7.3 配置验证
@@ -515,7 +515,8 @@ console 一路由 `ConsoleHandler` 自身按 `telemetry.logs.level` 过滤，`Le
 ### P0.6 生命周期
 
 `main.go` 在配置加载后初始化遥测与应用 logger，后续组件显式接收该 logger。遥测 shutdown 在
-HTTP server、River、NATS 等组件关闭后执行。启动失败由 console-only bootstrap logger 报告。
+HTTP server、River、NATS 等组件关闭后执行。`run` 的终止错误在遥测 shutdown 之前由应用 logger 记录一次
+（遥测开启时随 OTLP 导出），遥测初始化之前的失败由 console-only bootstrap logger 报告；`main` 只设置退出码。
 未启用遥测时，console 日志仍可携带 `request_id`。
 
 ### P0.7 测试与验收
@@ -740,7 +741,8 @@ Provider 测试覆盖 NotFound 等结果；`tests/sandbox_observability_test.go`
 ### P5.1 River 中间件
 
 `internal/riverjobs/telemetry.go` 在插入时合并 metadata 中的 `oma_trace_parent`，无效 JSON 或 `null`
-原样保留；执行时新建根 span 并 link。任务结果为 `ok`、`retry`、`discarded`、`canceled`、`snoozed`。
+原样保留；执行时新建根 span 并 link。任务结果为 `ok`、`retry`、`discarded`、`canceled`、`snoozed`；
+任务 panic 时由 `defer` 记录 `panic`、结束 Error span 后继续向上 panic，交给 River 的恢复逻辑。
 排队时长缺失或非正时不记录。指标定义与结果分类都在 riverjobs 包中。
 
 ### P5.2 Webhook
@@ -1046,7 +1048,8 @@ sequenceDiagram
 
 `queue_wait` 只对 `queue` 有意义：恢复领取的 Work 保留最初的 `queued_at`，直接计算会得到数小时的假值。
 预热在外层 run 的 `sandbox_prewarm` 阶段内产生一个 `prewarm` 子 run，两者按 `oma.runner.trigger`
-区分；一次预热流程会同时计入外层与子 run，看板应按触发方式分别统计，不把跨 trigger 总和当作领取数。另一个请求已在创建同一 Work 的沙箱时，
+区分；子 run 只保留 span 与阶段耗时，不计入 `oma.runner.runs`/`oma.runner.run.duration`，避免同一 Work 被计数两次、
+预热耗时重复计入外层 run。另一个请求已在创建同一 Work 的沙箱时，
 `createEnvironmentSandbox` 返回未处理，`oma.sandbox.ensure.duration` 记为 `joined`。
 
 ### P8.3 新增指标
@@ -1119,7 +1122,8 @@ flowchart LR
 
 | 类别 | 改动 | 位置 |
 | --- | --- | --- |
-| 工具结果 | `tools/call` 解析 JSON（在 Memory 版本确认改写响应之后）或 SSE 中第一个 reply 帧的 `result.isError` / `error`，分类后即停止检查 SSE，单行与单事件均以 1 MiB 为上限且只扫描新到达的字节；outcome 记 `tool_error`、`rpc_error`；span 加 `oma.tool.name`（白名单）、`oma.mcp.request_id`；非 ok/canceled 的 span 设 Error | `internal/codesessions/sandbox_mcp.go`、`sandbox_mcp_outcome.go` |
+| 工具结果 | `tools/call` 解析 JSON（在 Memory 版本确认改写响应之后）或 SSE 中第一个 reply 帧的 `result.isError` / `error`，分类后即停止检查 SSE，单行与单事件均以 1 MiB 为上限且只扫描新到达的字节；outcome 记 `tool_error`、`rpc_error`，其他方法只按 HTTP 状态分类；流式 Memory 版本确认失败与非流式一致，只写 Warn，
+保留上游 outcome，写出或读取失败才记 `upstream_error`/`canceled`；span 加 `oma.tool.name`（白名单）、`oma.mcp.request_id`；非 ok/canceled 的 span 设 Error | `internal/codesessions/sandbox_mcp.go`、`sandbox_mcp_outcome.go` |
 | 调用方取消 | 网关在请求上下文已取消时记 `canceled`；HTTP 中间件把客户端断开导致的 5xx 记为 499 并加 `oma.client_canceled=true`，不设 Error；错误边界对 `context.Canceled` 改记 Info `http request canceled by client`；模型代理遥测把下游断开归一为 `canceled`，不再混入 `stream_error`；回执失败按 `canceled`、`timeout`、`error` 计入 `oma.worker_event.updates` | `internal/api/telemetry_http.go`、`internal/httpapi/app_error.go`、`internal/messages/model_request.go`、`internal/codesessions/worker_delivery.go` |
 | 回合结局 | 见 P2.11：`oma.session.status` 的 `oma.stop_reason` 与 `oma.session.error` span | `internal/sessions/outcome_telemetry.go` |
 | 恢复上下文 | stale_recovery 的 `oma.runner.run` 加 `oma.environment_work.state`、`heartbeat_age_s`，并输出 Warn `environment work stale recovery claimed`（日志只带 `work_id`、`session_id`、`state`，心跳年龄以 span 为准）；不记录 Work 空闲时长（领取语句会刷新 `updated_at`，输入到被恢复的等待由 `oma.session.input.queue_wait` 度量）；lazy_mcp/prewarm 不再标 `oma.runner.recovered=true` | `internal/environments/runner.go`、`runner_telemetry.go` |

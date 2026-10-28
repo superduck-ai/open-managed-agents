@@ -136,6 +136,25 @@ func TestRiverMiddlewarePropagationAndCompletion(t *testing.T) {
 	}
 }
 
+func TestRiverMiddlewareRecordsPanic(t *testing.T) {
+	recorder := telemetrytest.SpanRecorder(t)
+	reader := telemetrytest.MetricReader(t)
+	job := &rivertype.JobRow{Kind: "sandbox_lifecycle_sweep", Queue: "sandbox_lifecycle", Attempt: 1, MaxAttempts: 3}
+	func() {
+		defer func() {
+			if recover() != "job panic" {
+				t.Fatal("panic was not propagated")
+			}
+		}()
+		_ = (&telemetryMiddleware{}).Work(t.Context(), job, func(context.Context) error { panic("job panic") })
+	}()
+	spans := recorder.Ended()
+	if len(spans) != 1 || spans[0].Status().Code != codes.Error {
+		t.Fatalf("panic span: %v", spans)
+	}
+	telemetrytest.AssertSingle(t, telemetrytest.Collect(t, reader), "oma.river.jobs", 1, map[string]string{"oma.river.kind": "sandbox_lifecycle_sweep", "oma.river.queue": "sandbox_lifecycle", "oma.outcome": "panic"})
+}
+
 func TestRiverClientLoggerDropsRoutineInfo(t *testing.T) {
 	var output bytes.Buffer
 	logger := riverClientLogger(slog.New(slog.NewJSONHandler(&output, nil)).With("component", "river_jobs"))

@@ -125,10 +125,12 @@ func (r *runnerRun) end(ctx context.Context, err error) {
 	if err != nil {
 		r.span.SetAttributes(telemetry.AttrStage.String(failedStage))
 	}
-	attrs := metric.WithAttributes(telemetry.AttrRunnerTrigger.String(r.trigger), telemetry.AttrOutcome.String(telemetry.Outcome(err)), telemetry.AttrRecovered.Bool(r.recovered))
-	instruments := runnerMetrics.Get()
-	instruments.runs.Add(ctx, 1, attrs)
-	instruments.runDuration.Record(ctx, time.Since(r.startedAt).Seconds(), attrs)
+	if r.trigger != runnerTriggerPrewarm {
+		attrs := metric.WithAttributes(telemetry.AttrRunnerTrigger.String(r.trigger), telemetry.AttrOutcome.String(telemetry.Outcome(err)), telemetry.AttrRecovered.Bool(r.recovered))
+		instruments := runnerMetrics.Get()
+		instruments.runs.Add(ctx, 1, attrs)
+		instruments.runDuration.Record(ctx, time.Since(r.startedAt).Seconds(), attrs)
+	}
 	r.endRun(err)
 }
 

@@ -25,6 +25,20 @@ const catalog: BuilderCatalog = {
     { slug: 'public', displayName: 'Public', url: 'https://public.example/mcp', authless: true, toolNames: [] },
   ],
 };
+test('advancing an unsaved draft explains the missing confirmation tool without changing state', async () => {
+  const state = initial();
+  const before = structuredClone(state);
+  await expect(
+    prepareBuilderTool({
+      state,
+      tool: { id: 'advance', name: 'offer_next_step', input: {} },
+      catalog,
+      models: ['model'],
+      workspaceId: 'workspace',
+    }),
+  ).rejects.toThrow('Call build_agent_config');
+  expect(state).toEqual(before);
+});
 test('config proposal rejects unavailable models and preserves every unspecified config field', () => {
   const state = initial();
   state.config.system = 'Preserve these instructions';

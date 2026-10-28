@@ -5,6 +5,8 @@ import { platformQuickstartTools } from '../platformQuickstartRequest';
 import { previewSchedule } from '../../resources/deployment-schedule';
 import type { BuilderState, BuilderTool } from './model';
 
+const configurationDescription =
+  'Propose the complete agent configuration for user confirmation before saving. Include user-supplied source material needed by future sessions in system as reference data, preserving facts and unknowns. This call opens a confirmation card; it does not mean the agent is saved. Only a successful save result confirms persistence.';
 const empty = z.object({}).strict();
 const question = z
   .object({
@@ -116,7 +118,7 @@ export function builderTools(models: string[]) {
     return {
       name,
       description:
-        official?.description ??
+        (name === 'build_agent_config' ? configurationDescription : official?.description) ??
         (name === 'pick_environment'
           ? 'Choose an existing environment or request a new one.'
           : 'Choose vaults by credential coverage, or request a new vault.'),

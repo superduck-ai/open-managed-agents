@@ -138,6 +138,29 @@ export function quickstartBuilderBehavior(locale: Locale): string {
   const source = locale === 'zh-CN' ? agentBuilderBlock1Zh : englishBlock1Text;
   return source
     .replace(mcpCatalog, '')
+    .replace(
+      /^The user has already CREATED.*$/m,
+      'Actual builder state determines whether an agent exists. Propose an unsaved configuration with build_agent_config and wait for user confirmation; only a successful save result means it exists.',
+    )
+    .replace(
+      /^用户已经创建了 agent.*$/m,
+      '以 Actual builder state 判断是否已创建智能体。未保存时先调用 build_agent_config 提议配置并等待用户确认；只有保存成功的工具结果才能证明已创建。',
+    )
+    .replace('═══ STEP 1: CREATE AGENT (already done — review only) ═══', '═══ STEP 1: CREATE OR UPDATE AGENT ═══')
+    .replace('═══ STEP 1: CREATE AGENT（已完成 —— 仅需复核）═══', '═══ STEP 1: CREATE OR UPDATE AGENT ═══')
+    .replace(
+      /^The config shown in context is already live in the editor.*$/m,
+      'The context contains a draft, not proof of saving. Call build_agent_config for new agents or requested changes; unchanged saved configurations need no new version.',
+    )
+    .replace(
+      /^上下文中显示的配置已经在编辑器里生效.*$/m,
+      '上下文中的配置只是草稿，不代表已保存。新建或修改配置须调用 build_agent_config；已保存且未变更的配置无需创建新版本。',
+    )
+    .replace(
+      'After the review, call offer_next_step.',
+      'After the configuration is saved successfully, call offer_next_step.',
+    )
+    .replace('复核完成后，调用 offer_next_step。', '配置保存成功后，调用 offer_next_step。')
     .replaceAll('Claude Managed Agent', 'Open Managed Agent')
     .replace(/^.*vault_sharing_notice.*$/gm, '')
     .replace(/^- (?:model 必须|Pick the most appropriate model).*$/gm, '- Choose a model from availableModels.');

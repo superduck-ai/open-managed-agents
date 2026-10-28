@@ -125,7 +125,10 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
     return { gate: true };
   },
   offer_next_step: ({ state }) => {
-    if (!state.agent) throw new Error('Save the agent before advancing.');
+    if (!state.agent)
+      throw new Error(
+        'No agent has been saved. Call build_agent_config to propose the configuration and wait for user confirmation before advancing.',
+      );
     if (stableStringify(state.config) !== stableStringify(state.savedConfig))
       throw new Error('Save or discard the proposed configuration before advancing.');
     if (state.step !== 'agent' && !state.environment) throw new Error('Choose an environment before advancing.');

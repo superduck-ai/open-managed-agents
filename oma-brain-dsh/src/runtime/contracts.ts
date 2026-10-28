@@ -1,3 +1,4 @@
+import { HarnessError } from "@deepseek-ai/dsh-llm";
 import type { ContinuableSubagentDescriptorData } from "@deepseek-ai/dsh-subagent";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
@@ -163,4 +164,6 @@ export interface TurnHooks {
   afterRun(completed: boolean): Promise<void>;
 }
 
-export class RetryableInputError extends Error {}
+export class RetryableInputError extends HarnessError {
+  constructor(message: string, options?: ErrorOptions) { super(message, "RETRYABLE_INPUT", options); }
+}

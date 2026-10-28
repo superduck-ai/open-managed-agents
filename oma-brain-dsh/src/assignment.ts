@@ -1,3 +1,4 @@
+import { MAX_MESSAGES_REQUEST_BODY_BYTES } from "./model-defaults.ts";
 import type { CcrSubagentConfig } from "./ccrv2/contracts.ts";
 import type { ToolPermissions } from "./runtime/contracts.ts";
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
@@ -110,7 +111,7 @@ export function validateModels(value: unknown): asserts value is Record<string, 
         throw new Error("Invalid model capacity");
     }
     if (model.image_input !== undefined && (!model.image_input || typeof model.image_input !== "object" || Array.isArray(model.image_input)
-      || Object.values(model.image_input).some(value => !Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 32 * 1024 * 1024)))
+      || Object.values(model.image_input).some(value => !Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > MAX_MESSAGES_REQUEST_BODY_BYTES)))
       throw new Error("Invalid image input limits");
     const inputs = model.input_modalities;
     if (

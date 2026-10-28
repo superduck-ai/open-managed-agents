@@ -3,7 +3,8 @@ import { admitEncodedImages, type EncodedImageAttachment } from "@deepseek-ai/ds
 import type { ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import type { Payload } from "../json.ts";
-import { withAttachmentSession } from "../attachments/remote.ts";
+import { setTimeout } from "node:timers/promises";
+import { AttachmentTransportError, withAttachmentSession } from "../attachments/remote.ts";
 import { toolText } from "../runtime/tools.ts";
 
 export async function readContent(ctx: Context, result: Payload, exec: ToolExecution): Promise<ContentBlock[]> {
@@ -27,7 +28,17 @@ export async function readContent(ctx: Context, result: Payload, exec: ToolExecu
   const attachments = ctx.get("attachments");
   if (!attachments) throw new Error("Read image attachment storage is unavailable");
   exec.signal.throwIfAborted();
-  const refs = await withAttachmentSession(agent.session.id, () => admitEncodedImages(attachments, images));
+  let refs;
+  for (let attempt = 0; ; attempt++) {
+    exec.signal.throwIfAborted();
+    try {
+      refs = await withAttachmentSession(agent.session.id, () => admitEncodedImages(attachments, images));
+      break;
+    } catch (error) {
+      if (!(error instanceof AttachmentTransportError) || error.recovery === "reclaim" || attempt >= 2) throw error;
+      await setTimeout(100 * 2 ** attempt, undefined, { signal: exec.signal });
+    }
+  }
   exec.signal.throwIfAborted();
   let index = 0;
   return result.content.map((block: Payload): ContentBlock => block.type === "text"

@@ -50,9 +50,11 @@ export async function userInputContent(payload: Payload, attachments: Attachment
       try {
         const input = source.type === "file" ? await attachments.source(source.file_id)
           : source.type === "base64" ? { data: new Uint8Array(Buffer.from(source.data, "base64")), mediaType: source.media_type } : undefined;
-        if (input) imageBytes += input.data.byteLength;
-        blocks.push(input && imageBytes <= attachments.imageLimits.maxMessageImageBytes ? { type: "image", attachment: await attachments.saveImage(input) }
-          : { type: "text", text: "[Image attachment unavailable]" });
+        if (input && input.data.byteLength <= attachments.imageLimits.maxMessageImageBytes - imageBytes) {
+          const attachment = await attachments.saveImage(input);
+          imageBytes += input.data.byteLength;
+          blocks.push({ type: "image", attachment });
+        } else blocks.push({ type: "text", text: "[Image attachment unavailable]" });
       } catch (error) {
         if (error instanceof AttachmentTransportError) throw error;
         if (!isImageAdmissionError(error)) throw error;

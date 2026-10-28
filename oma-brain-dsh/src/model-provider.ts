@@ -28,12 +28,12 @@ export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
   if (backend === "messages") {
     const fetcher = proxyFetch(api, `${root}/messages`, agentID, undefined, options);
     return { model: createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(options.model),
-      imageInput, replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output, maxOutputTokensLimit,
+      imageInput, maxRequestBodyBytes: MAX_MESSAGES_REQUEST_BODY_BYTES, replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output, maxOutputTokensLimit,
       providerOptions: { anthropic: { toolStreaming: false } } };
   }
   const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID, normalizeChatReasoning, options);
   return { model: createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
-    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), imageInput, maxOutputTokens: output, maxOutputTokensLimit, toolImagesAsUser: true, replayFormat: "oma-chat-completions-v1" };
+    fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), imageInput, maxRequestBodyBytes: MAX_MESSAGES_REQUEST_BODY_BYTES, maxOutputTokens: output, maxOutputTokensLimit, toolImagesAsUser: true, replayFormat: "oma-chat-completions-v1" };
 }
 
 function modelBackend(assignment: Assignment, model: string): ModelBackend {

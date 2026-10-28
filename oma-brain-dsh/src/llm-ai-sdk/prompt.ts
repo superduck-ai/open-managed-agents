@@ -36,7 +36,7 @@ export async function callOptions(options: GenerateOptions, route: AiSdkRoute, a
   const content = await prompt(options, route, versions);
   const requestBytes = Buffer.byteLength(JSON.stringify({ prompt: content, tools: options.tools }, (_key, value) => value instanceof Uint8Array ? Buffer.from(value).toString("base64") : value));
   const imageBytes = images.reduce((sum, block) => sum + 4 * Math.ceil(versions.get(block.attachment.attachmentId)!.bytes / 3), 0);
-  const available = Math.max(0, 32 * 1024 * 1024 - 128 * 1024 - (requestBytes - imageBytes));
+  const available = Math.max(0, (route.maxRequestBodyBytes ?? Infinity) - 128 * 1024 - (requestBytes - imageBytes));
   const offloadImages = requiredImageOffload(options.messages,
     { representation: "base64", maxImages: policy.maxImages, maxBytes: Math.min(4 * Math.ceil(policy.maxBytes / 3), available) },
     block => versions.get(block.attachment.attachmentId)!.bytes);

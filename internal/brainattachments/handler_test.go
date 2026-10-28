@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -50,8 +52,9 @@ func (d *attachmentDatabase) GetSessionAttachmentFile(_ context.Context, workspa
 
 type attachmentObjects struct {
 	storage.ObjectStore
-	data    map[string][]byte
-	uploads int
+	data        map[string][]byte
+	uploads     int
+	readFailure error
 }
 
 func (s *attachmentObjects) Name() string { return "images" }
@@ -64,6 +67,9 @@ func (s *attachmentObjects) Upload(_ context.Context, key string, body io.Reader
 	return storage.UploadResult{Size: int64(len(data))}, err
 }
 func (s *attachmentObjects) Open(_ context.Context, key string, _ *storage.ByteRange) (storage.Object, error) {
+	if s.readFailure != nil {
+		return storage.Object{Body: io.NopCloser(iotest.ErrReader(s.readFailure))}, nil
+	}
 	data, found := s.data[key]
 	if !found {
 		return storage.Object{}, db.ErrNotFound
@@ -125,6 +131,13 @@ func TestImageAttachmentHTTPContract(t *testing.T) {
 			}
 		}
 	})
+	t.Run("foreign source bucket is a permanent missing attachment", func(t *testing.T) {
+		database.source = db.FileRecord{S3Bucket: "other-bucket"}
+		if got := request("GET", "/message-attachments/file_private/content", "", nil, "1").Code; got != 404 {
+			t.Fatalf("foreign bucket status = %d", got)
+		}
+	})
+
 	t.Run("upload is immutable and scoped", func(t *testing.T) {
 		if got := request("PUT", path, "image/png", image, "1").Code; got != 201 {
 			t.Fatalf("upload = %d", got)
@@ -157,12 +170,20 @@ func TestImageAttachmentHTTPContract(t *testing.T) {
 		}
 		scope.WorkspaceUUID = "workspace"
 	})
+	t.Run("temporary object read failure remains retryable", func(t *testing.T) {
+		objects.readFailure = errors.New("temporary stream failure")
+		defer func() { objects.readFailure = nil }()
+		if got := request("GET", path, "", nil, "1").Code; got != 503 {
+			t.Fatalf("read failure status = %d", got)
+		}
+	})
+
 	t.Run("corruption is rejected before response body", func(t *testing.T) {
 		for key := range objects.data {
 			objects.data[key] = []byte("bad")
 		}
 		result := request("GET", path, "", nil, "1")
-		if result.Code != 503 {
+		if result.Code != 400 {
 			t.Fatalf("corrupt object = %d", result.Code)
 		}
 	})

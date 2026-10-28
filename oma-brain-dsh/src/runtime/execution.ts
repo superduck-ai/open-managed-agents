@@ -5,6 +5,7 @@ import { object, type Payload } from "../json.ts";
 import { approveToolCall } from "./tool-approvals.ts";
 import { toolText } from "./tools.ts";
 import {
+  RetryableInputError,
   ToolNotForwardedError,
   isShutdownCancel,
   type ApprovalDecision,
@@ -70,6 +71,8 @@ export class ToolExecution {
     try {
       output = content && !result.isError ? await content(result) : toolText(result);
     } catch (error) {
+      exec.signal.throwIfAborted();
+      if (error instanceof RetryableInputError) throw error;
       output = `Sandbox tool returned an unsupported result: ${(error as Error).message}`;
       failed = true;
     }

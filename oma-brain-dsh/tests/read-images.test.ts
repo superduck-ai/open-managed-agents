@@ -174,3 +174,36 @@ test("Read tool images participate in native image offload", async () => {
   expect(f.session.runtime.agent.session.snapshotEvents().some(event => String(event.type) === "image/offload")).toBe(true);
   expect(f.backend.executions).toHaveLength(2);
 });
+
+test.each([500, 502, 503, 504])("Read retries temporary image admission HTTP %i without repeating MCP", async status => {
+  const f = await fixture();
+  const original = f.backend.route.bind(f.backend);
+  let puts = 0;
+  f.backend.route = request => request.method === "PUT" && new URL(request.url).pathname.includes("/image-attachments/") && ++puts === 1
+    ? Promise.resolve(new Response(null, { status })) : original(request);
+  await f.session.receive("recover-read", { content: "Read /workspace/chart.png" });
+  expect(puts).toBe(2);
+  expect(f.backend.executions).toHaveLength(1);
+  expect(toolResults(f.requests[1]!, "messages")[0]!.is_error).not.toBe(true);
+  expect(toolResults(f.requests[1]!, "messages")[0]!.content.some((block: Payload) => block.type === "image")).toBe(true);
+});
+
+test.each([503, 409])("Read retains the recovery meaning of persistent HTTP %i", async status => {
+  const f = await fixture();
+  f.backend.imageStatus = status;
+  let errorCode: string | undefined;
+  f.ctx.on("tools/result", (_exec, result) => { errorCode = result.error?.info?.code; return undefined; });
+  const original = f.backend.route.bind(f.backend);
+  let puts = 0;
+  f.backend.route = request => {
+    if (request.method === "PUT" && new URL(request.url).pathname.includes("/image-attachments/")) puts++;
+    return original(request);
+  };
+  await f.session.receive("failed-read", { content: "Read /workspace/chart.png" });
+  const result = JSON.stringify(toolResults(f.requests[1]!, "messages"));
+  expect(result).not.toContain("unsupported result");
+  expect(result).toContain(status === 409 ? "reassignment" : "retry");
+  expect(puts).toBe(status === 409 ? 1 : 3);
+  expect(errorCode).toBe("RETRYABLE_INPUT");
+  expect(f.backend.executions).toHaveLength(1);
+});

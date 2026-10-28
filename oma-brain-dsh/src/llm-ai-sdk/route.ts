@@ -6,6 +6,7 @@ import type { GenerateOptions, LlmResolvedModelInfo } from "@deepseek-ai/dsh-llm
 export interface AiSdkRoute {
   model: LanguageModelV4;
   imageInput?: ImageInput;
+  maxRequestBodyBytes?: number;
   toolImagesAsUser?: boolean;
   replayFormat: string;
   signedReasoning?: boolean;

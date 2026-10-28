@@ -9,6 +9,7 @@ import (
 )
 
 var errImageInvalid = errors.New("invalid image attachment")
+var errImageCorrupt = errors.New("stored image attachment is corrupt")
 var errImageTooLarge = errors.New("image attachment exceeds size limit")
 var errImageNotFound = errors.New("image attachment not found")
 var errImageUnavailable = errors.New("image attachment storage unavailable")
@@ -26,4 +27,8 @@ func attachmentFailure(err error) error {
 		return apperr.New(apperr.NotFound, "Image attachment not found", errors.Join(errImageNotFound, err))
 	}
 	return apperr.New(apperr.Unavailable, "Image attachment storage is unavailable", errors.Join(errImageUnavailable, err))
+}
+
+func corruptImage() error {
+	return apperr.New(apperr.InvalidArgument, "Stored image attachment is corrupt", errImageCorrupt)
 }

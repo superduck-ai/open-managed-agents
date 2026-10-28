@@ -309,3 +309,51 @@ test("Brain serialized request limit matches the Go proxy contract", async () =>
   expect(limit).not.toBeNull();
   expect(MAX_MESSAGES_REQUEST_BODY_BYTES).toBe(Number(limit![1]) * 2 ** Number(limit![2]));
 });
+
+test.each([401, 403, 408, 410, 429, 500, 502, 504])("attachment HTTP %i preserves input for recovery", async status => {
+  const f = await storeFixture();
+  f.backend.imageStatus = status;
+  await expect(f.run(() => f.store.saveImage({ data: Buffer.from(png, "base64"), mediaType: "image/png" }))).rejects.toBeInstanceOf(AttachmentTransportError);
+});
+
+test("rejected oversized images do not consume the budget of later small images", async () => {
+  const f = await storeFixture();
+  f.store.imageLimits.maxMessageImageBytes = Buffer.from(png, "base64").byteLength;
+  const content = await f.run(() => userInputContent({ content: [
+    { type: "image", source: { type: "base64", media_type: "image/png", data: Buffer.alloc(1000).toString("base64") } },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
+  ] }, f.store));
+  expect(content.map(block => block.type)).toEqual(["text", "image"]);
+  expect(f.backend.imageObjects.size).toBe(1);
+});
+
+test("a failed image admission does not consume bytes reserved for later images", async () => {
+  const f = await storeFixture();
+  f.store.imageLimits.maxMessageImageBytes = Buffer.from(png, "base64").byteLength;
+  const original = f.backend.route.bind(f.backend);
+  let puts = 0;
+  f.backend.route = request => request.method === "PUT" && new URL(request.url).pathname.includes("/image-attachments/") && ++puts === 1
+    ? Promise.resolve(new Response(null, { status: 400 })) : original(request);
+  const content = await f.run(() => userInputContent({ content: Array.from({ length: 2 }, () => (
+    { type: "image", source: { type: "base64", media_type: "image/png", data: png } }
+  )) }, f.store));
+  expect(content.map(block => block.type)).toEqual(["text", "image"]);
+});
+
+test("a missing stored image uses the reference error code without a legacy migration", async () => {
+  const f = await storeFixture();
+  const ref = await f.run(() => f.store.saveImage({ data: Buffer.from(png, "base64"), mediaType: "image/png" }));
+  f.api.assignments.set(f.backend.a.session_id, { ...f.backend.a });
+  f.backend.imageObjects.clear();
+  await expect(f.run(() => f.store.readImage(ref))).rejects.toMatchObject({ code: "ATTACHMENT_NOT_FOUND" });
+  expect(f.backend.imageObjects.size).toBe(0);
+});
+
+test.each([401, 403, 500, 502, 504])("HTTP %i does not acknowledge a failed image input", async status => {
+  const backend = new Backend();
+  backend.imageStatus = status;
+  const { session } = await openRuntime(backend);
+  await expect(session.receive("recoverable-image", { content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: png } }] })).rejects.toBeInstanceOf(AttachmentTransportError);
+  expect(backend.processed).not.toContain("recoverable-image");
+  expect(session.receivedInputIds.has("recoverable-image")).toBe(false);
+});

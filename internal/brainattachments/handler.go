@@ -138,6 +138,10 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 		h.failure(w, r, errors.New("storage unavailable"))
 		return
 	}
+	if image.Bucket != h.store.Name() {
+		h.failure(w, r, storage.ErrNotFound)
+		return
+	}
 	object, err := h.store.Open(r.Context(), image.ObjectKey, nil)
 	if err != nil {
 		h.failure(w, r, err)
@@ -146,8 +150,12 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 	defer object.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(object.Body, MaxObjectBytes+1))
 	sum := sha256.Sum256(data)
-	if err != nil || int64(len(data)) != image.SizeBytes || hex.EncodeToString(sum[:]) != digest || http.DetectContentType(data) != image.MediaType {
-		h.failure(w, r, errors.New("image attachment integrity check failed"))
+	if err != nil {
+		h.failure(w, r, err)
+		return
+	}
+	if int64(len(data)) != image.SizeBytes || hex.EncodeToString(sum[:]) != digest || http.DetectContentType(data) != image.MediaType {
+		h.errors.Write(w, r, corruptImage())
 		return
 	}
 	w.Header().Set("Content-Type", image.MediaType)
@@ -171,8 +179,12 @@ func (h *Handler) source(w http.ResponseWriter, r *http.Request) {
 		h.failure(w, r, err)
 		return
 	}
-	if h.store == nil || file.S3Bucket != h.store.Name() {
-		h.failure(w, r, errors.New("attachment bucket unavailable"))
+	if h.store == nil {
+		h.failure(w, r, errors.New("storage unavailable"))
+		return
+	}
+	if file.S3Bucket != h.store.Name() {
+		h.failure(w, r, storage.ErrNotFound)
 		return
 	}
 	object, err := h.store.Open(r.Context(), file.S3Key, nil)

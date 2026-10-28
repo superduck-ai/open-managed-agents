@@ -44,13 +44,23 @@ Worker 路由位于 `/v1/code/sessions/{code_session_id}/worker`：
 | GET `/image-attachments/{sha256}` | 校验保存的摘要、长度和 MIME 后返回原始归一化字节 |
 | GET `/message-attachments/{file_id}/content` | 只读取本 Session 的私有消息附件，不回退查询 workspace Files |
 
-所有接口复用当前 worker ingress 凭证，并核对 `X-Worker-Epoch`。会话标识从可信 claims 与 DB 解析，其他 Session 的相同摘要不可访问。存储暂时失败为 503；摘要/类型错误为 400；不存在为 404；超限为 413。
+所有接口复用当前 worker ingress 凭证，并核对 `X-Worker-Epoch`。会话标识从可信 claims 与 DB 解析，其他 Session 的相同摘要不可访问。存储暂时失败为 503；摘要/类型错误及已存对象校验损坏为 400；不存在或存放在不支持的 bucket 为 404；超限为 413。对象流读取失败与读取成功后确认损坏分开处理，前者允许恢复，后者不反复重试。
 
-`brain_image_attachments.max_object_bytes` 默认为 4 MiB，可降低，不能超过 4 MiB。Brain 使用 DSH 默认的源字节、像素和尺寸限制；逐张入库并累计原始图片张数与源字节。超出 maxImagesPerMessage 或 maxMessageImageBytes 的图片降级为附件不可用文本，超限后不再读取后续图片，不拒绝已接受的整条消息。源附件缺失、解码失败、400/404/413/415/422 永久拒绝只降级该图片。仅网络错误、503 与 epoch 冲突作为可重试传输错误，不 ACK，由投递与认领恢复重试；其他 HTTP 错误沿正常失败路径处理。
+`brain_image_attachments.max_object_bytes` 默认为 4 MiB，可降低，不能超过 4 MiB。Brain 使用 DSH 默认的源字节、像素和尺寸限制；逐张入库并累计图片张数和成功接纳的源字节。单图放不下或接纳失败时不扣字节预算，后续较小图片仍可接纳。达到张数上限或已用完字节预算后不再读取后续图片，不拒绝已接受的整条消息。
+
+| HTTP 状态或故障 | 入站消息图片 | Read 图片结果与存量引用 |
+| --- | --- | --- |
+| 400/413/415/422 | 单图降级为附件不可用文本 | 新 Read 返回永久工具错误；存量引用返回 ATTACHMENT_CORRUPT |
+| 404 | 源图缺失或 PUT 被拒绝，单图降级 | 存量引用返回 ATTACHMENT_NOT_FOUND，不补传本地旧图 |
+| 401/403/409/410 | 保留输入、不 ACK，交回既有重新认领路径更新 Worker 凭证或租约 | 不在同一凭证上局部重试；返回明确的重新分配提示 |
+| 网络错误、408/429、5xx | 保留输入、不 ACK，由投递恢复重试 | Read 仅对已取得的图片结果接纳重试，最多 3 次，间隔 100/200 ms；不重新执行 MCP |
+| 其他拒绝状态 | 正常失败，不作为图片校验错误降级 | 正常失败 |
+
+可恢复错误保持 RetryableInputError 类型与 RETRYABLE_INPUT 工具错误码。Read 重试耗尽后保留该结构化错误及明确的重试提示，不包装成 unsupported result。401/403 在此处是服务端签发的 Worker ingress 凭证错误，与用户图片内容无关；重新认领与同一请求上的存储重试分开处理。
 
 Pending 登记先持久化；上传在事务外进行，有 30 秒超时，上传完成后短事务锁定该行并推进 attached。若上传期间登记已进入 deleting 或已被清理，拒绝发布。事务外上传与清理恰好交错时可能留下迟到的未引用对象，严格消除该窗口需要另行确认上传租约或清理握手的范围，本轮未增加这类机制。清理调度分别选择过期 pending 与软删除 Session 的图片，使用 SKIP LOCKED；标记 deleting 与创建任务同事务提交。新增 migration 00109 为后者添加部分索引。只有 brain_image_attachment 类型的任务完成时关联删除图片登记，其他任务直接完成。任务删除全部对象版本，没有固定 TTL。Session 按既有软删除流程保留登记，未增加物理删除 Session 后的孤儿扫描。
 
-本地缓存按内容寻址共享。每个 Session assignment 与 worker epoch 首次使用哈希时经 PUT 或 HEAD 确认授权，后续复用内存结果；epoch 改变或 assignment 替换后重新确认，其他 Session 不共享授权。授权集合使用弱引用，不保留已释放的 assignment。远端 GET 与本地读取均检查完整性，imageHostPath 不暴露 Brain 路径。归一化和请求变体处理共用两个并发槽，释放时先将名额直接交给已等待的调用者。本地缓存清理、指标聚合和 Session 图片总配额暂未实现。
+本地缓存按内容寻址共享。每个 Session assignment 与 worker epoch 首次使用哈希时经 PUT 或 HEAD 确认授权，后续复用内存结果；epoch 改变或 assignment 替换后重新确认，其他 Session 不共享授权。授权集合使用弱引用，不保留已释放的 assignment。只有 saveImage/readImage 操作授权集合，通用 remote HTTP 函数不按路由或方法推断缓存行为。远端 GET 与本地读取均检查完整性，imageHostPath 不暴露 Brain 路径。归一化和请求变体处理共用两个并发槽，释放时先将名额直接交给已等待的调用者。本地缓存清理、指标聚合和 Session 图片总配额暂未实现。
 
 ## 模型预算与计量
 
@@ -135,3 +145,13 @@ Worker 镜像摘要为 `sha256:b3a09eb84545362778315d0364affc2368d638f28555f783f
 审查项 2 按用户要求暂不修改：切换前仅存在 Brain 本地的原生图片，远端没有登记时仍不可解析。历史 oma-image 保持既有兼容路径。本轮未重新运行 verify-be，之前的真实链路报告保留为当时版本的记录。
 
 本轮验证：`just test`、`just lint`、`just dead-code`、`just duplicates`、`just complexity`、Brain typecheck 与独立构建通过。Brain 全套 675 通过、5 跳过，随后最终图片边界组 25 项通过。隔离 PostgreSQL 17 执行 `just test-integration ./internal/db -run 'TestBrainImageAttachmentsPostgres|TestObjectCleanupJobsPostgres|TestEventPayloadBlobsPostgres' -v`，三个测试组通过，无跳过；未连接开发环境依赖，测试容器已停止。
+
+### 第二轮审查验证
+
+已通过回归复现并修正永久存储损坏/错误 bucket 的 503 分类、网关与 Worker 凭证失败丢输入、Read 接纳错误被吞没、超限或失败图片占用后续图片预算。Read 的传输恢复只重试图片保存，保留 MCP 执行次数为一次；工具注册表保留 RETRYABLE_INPUT 结构化错误码。请求构建、assignment 校验和 Console 校验统一复用所在语言的代理上限常量。
+
+清理查询没有修改：在真实 PostgreSQL 17 的隔离 schema 中，以 20000 个无关已删除 Session 和 20000 张属于同一活跃 Session 的图片执行 EXPLAIN ANALYZE，Session 索引查找次数为 1，没有访问无关已删除 Session 行，单次约 3 至 4 ms。新增 integration 回归守卫这一查询形态；该结果不代表生产性能基线，也不能保证其他数据分布下的扫描量。不能仅据 JOIN 写法断言每个 tick 必然扫描全部已删除会话。
+
+旧本地图片兼容与事务外迟到上传的严格回收仍按已确认范围不扩展。存量引用缺失仅修正为 ATTACHMENT_NOT_FOUND，没有增加本地补传、上传租约或清理握手。
+
+本轮验证：新增边界测试在 f76af34 上先复现 17 个失败断言。修正后的定向组 66 项通过，随后 Brain 全套 700 通过、5 跳过，类型检查、独立构建通过；架构检查保持通用 AI SDK 适配器只依赖 DSH/AI SDK，OMA 的请求体上限通过路由字段传入。Go 默认单测及 lint、dead-code、duplicates、complexity 均通过。隔离 PostgreSQL 17 的清理执行计划回归通过，测试容器已停止。本轮未运行 verify-be 或真实模型。

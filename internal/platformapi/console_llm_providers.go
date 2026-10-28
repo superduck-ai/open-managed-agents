@@ -302,8 +302,8 @@ func decodeLLMProviderRequest(w http.ResponseWriter, r *http.Request) (llmProvid
 		if model.ImageInput != nil {
 			image := model.ImageInput
 			for _, value := range []int{image.MaxImages, image.MaxRequestImageBytes, image.MaxImageBytes, image.MaxLongEdge, image.MaxPixels, image.TokensPerMegapixel} {
-				if value < 0 || value > 32*1024*1024 {
-					writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "image input limits must be nonnegative integers at most 33554432")
+				if value < 0 || int64(value) > llmproviders.MaxMessagesRequestBodyBytes {
+					writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "image input limits must be nonnegative integers within the proxy request limit")
 					return llmProviderRequest{}, false
 				}
 			}

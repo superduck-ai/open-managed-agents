@@ -50,17 +50,17 @@ flowchart TD
 
 授权复用 `CredentialDialog` 的真实 OAuth 与手动凭据能力。令牌和 OAuth 凭据停留在该弹窗与既有 API 请求中，不写入 Builder 快照或工具结果。OAuth 完成后重新读取凭据验证覆盖。明确跳过记录未授权事实并允许有限试跑；用户后续要求重新授权时可以重新打开该服务的授权步骤。
 
-试跑复用 `useQuickstartConversation`、真实 Session SSE、Transcript、工具确认、停止与未知消息投递恢复。构建消息与 Session 消息分开保存和展示。首条消息被实际接受后才返回给 Builder；首轮 idle 不表示整个试跑已关闭。用户显式结束前阻止改动运行依赖；运行或等待工具确认时需先中断并等待状态收敛。
+试跑复用 `useQuickstartConversation`、真实 Session SSE、Transcript、工具确认、停止与未知消息投递恢复。构建消息与 Session 消息分开保存和展示。首条消息被实际接受后才返回给 Builder；首轮 idle 不表示整个试跑已关闭。挂载试跑面板时，已恢复的未知投递原文优先于建议消息；显式核对后仍保留原文，不自动重发。用户显式结束前阻止改动运行依赖；运行或等待工具确认时需先中断并等待状态收敛。已读取且绑定匹配的 Session 若明确为 terminated/deleted，历史成功加载后可显式结束，无需重新建立已关闭的实时连接；旧工具确认不再视为待处理。未知投递仍须先核对，历史读取失败或非终态断线不能视为已结束。
 
 复盘使用实际 Session 事件的有限摘要：用户和 Agent 文本、事件类型、工具名称、错误标识与停止原因，不发送原始凭据或工具输入。有具体问题才提出修复多选题；空选等同继续。修复后保存新版本可以直接继续，不强制再试跑。
 
-试跑复盘后的使用方式选择沿用旧版 `ask_user_questions`：模型询问定时运行或应用调用；选择定时后由 `flag_schedule_intent` 记录。`offer_next_step` 仅显示继续，不再附带前端写死的第二套使用方式按钮。定时意图也可以提前记录，Deployment 只能在试跑结束后确认创建。自然语言周期由模型转为 cron 和时区，并用现有 `previewSchedule` 校验 OMA 的 cron/DST 语义。确认绑定已保存 Agent 的具体版本、环境、保险库和初始消息。Deployment 创建成功后才出现在资源卡；接入分支展示 deployment runs 与运行 Session 的事件接口。
+试跑复盘后的使用方式选择沿用旧版 `ask_user_questions`：模型询问定时运行或应用调用；选择定时后由 `flag_schedule_intent` 记录。`offer_next_step` 仅显示继续，不再附带前端写死的第二套使用方式按钮。定时意图也可以提前记录，Deployment 只能在试跑结束后确认创建。接入阶段重新启用定时意图会返回部署阶段，撤回则返回接入；切换本身不创建资源，不绕过试跑与部署确认。自然语言周期由模型转为 cron 和时区，并用现有 `previewSchedule` 校验 OMA 的 cron/DST 语义。确认绑定已保存 Agent 的具体版本、环境、保险库和初始消息。Deployment 创建成功后才出现在资源卡；接入分支展示 deployment runs 与运行 Session 的事件接口。
 
 本 HAR 的 Builder 和内嵌试跑 composer 均未接附件入口，因此该实现保持文本输入。Files API 与 Session resources 的通用能力不等于本页面已有附件交互。
 
 ## 协议、保存与恢复边界
 
-Builder 模型通过工作区配置解析实际 Provider。Messages 使用已有 Console proxy；Chat Completions 使用新增的组织 Console proxy 路径。二者均由服务端注入供应商密钥并移除浏览器凭据。未修改 `/v1/chat/completions` 的 Brain 凭据授权边界。
+Builder 模型通过工作区配置解析实际 Provider。Messages 使用已有 Console proxy；Chat Completions 使用新增的组织 Console proxy 路径。Chat Completions 流请求显式发送 `stream_options: { include_usage: true }`，请求供应商返回用量；Messages 请求保持原协议。二者均由服务端注入供应商密钥并移除浏览器凭据。未修改 `/v1/chat/completions` 的 Brain 凭据授权边界。
 
 Console POST 流请求携带 CSRF，资源请求继续使用现有 SDK client 与服务端工作区权限。界面暂停和确认不替代服务端 RBAC。
 
@@ -140,13 +140,13 @@ Git 历史确认 PR #427（`ce4786b1`）把旧版对话构建替换为手动四�
 
 此前只复用了提示词和问答，主循环尚未迁回；本轮进一步以旧版主流程为基础迁移。来源固定为 `1033ab15bffa0c6be670195b29799290d92be458`（PR #427 的父提交），不是恢复整个旧页面或仅重命名现有函数。
 
-| 旧代码位置与职责 | 当前接入 | 必要适配 |
-| --- | --- | --- |
-| `AgentQuickstartPage.tsx` 的 `startQuickstartTurn`、`executeQuickstartTool`、`completeAwaitingTool` | `builder/useBuilder.ts` | 保留“执行自动工具 → 等待用户工具 → 工具结果续轮”的递归控制流；用可恢复的 queue/gate 替代旧页面 chatItems 的运行状态；每个自动结果立即保存，多个工具遇到等待时不丢弃已完成结果 |
-| 同文件 `sendChatReply`、`completeOfferNextStep` | `builder/useBuilder.ts` | 用户补充需求按旧版专门的工具结果语义返回；问题卡与聊天回答均完成当前等待，后续写入仍须显式确认；按当前阶段推进，同时兼容可选 deploy 阶段 |
-| `chatModel.ts` 的 `quickstartChatReplyToolResult`、`toolResultBlock` 与旧页面工具结果消息 | `quickstart/chatModel.ts`、`builder/model.ts` | 统一 tool_result ID 与 is_error；不再把补充需求一律告知模型为“取消并改变方向” |
-| 旧页面 `buildCurrentQuickstartTurnContextBlock` | `quickstart/chatModel.ts` 的 `quickstartTurnMessages`，复用 `buildQuickstartTurnContextText` | 每次续轮附带最新阶段、配置与定时意图；仅进入模型请求，避免把内部状态行显示或保存成用户消息 |
-| `api.ts` 的 `createQuickstartSession` | `quickstart/api.ts` | 恢复共享的 Agent 版本、环境和 vault 绑定；手动配置与对话试跑共用；增加现有 operation metadata 以保留结果未知恢复 |
+| 旧代码位置与职责                                                                                    | 当前接入                                                                                     | 必要适配                                                                                                                                                                      |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentQuickstartPage.tsx` 的 `startQuickstartTurn`、`executeQuickstartTool`、`completeAwaitingTool` | `builder/useBuilder.ts`                                                                      | 保留“执行自动工具 → 等待用户工具 → 工具结果续轮”的递归控制流；用可恢复的 queue/gate 替代旧页面 chatItems 的运行状态；每个自动结果立即保存，多个工具遇到等待时不丢弃已完成结果 |
+| 同文件 `sendChatReply`、`completeOfferNextStep`                                                     | `builder/useBuilder.ts`                                                                      | 用户补充需求按旧版专门的工具结果语义返回；问题卡与聊天回答均完成当前等待，后续写入仍须显式确认；按当前阶段推进，同时兼容可选 deploy 阶段                                      |
+| `chatModel.ts` 的 `quickstartChatReplyToolResult`、`toolResultBlock` 与旧页面工具结果消息           | `quickstart/chatModel.ts`、`builder/model.ts`                                                | 统一 tool_result ID 与 is_error；不再把补充需求一律告知模型为“取消并改变方向”                                                                                                 |
+| 旧页面 `buildCurrentQuickstartTurnContextBlock`                                                     | `quickstart/chatModel.ts` 的 `quickstartTurnMessages`，复用 `buildQuickstartTurnContextText` | 每次续轮附带最新阶段、配置与定时意图；仅进入模型请求，避免把内部状态行显示或保存成用户消息                                                                                    |
+| `api.ts` 的 `createQuickstartSession`                                                               | `quickstart/api.ts`                                                                          | 恢复共享的 Agent 版本、环境和 vault 绑定；手动配置与对话试跑共用；增加现有 operation metadata 以保留结果未知恢复                                                              |
 
 原先 `advance` 的独立循环已经删除。`dispatch.ts` 只保留当前资源前置校验与暂停策略；`mutations.ts` 只保留版本冲突检查和 SDK 写入适配，它们均不再承担模型调用、用户回复或续轮控制。未为了声称复用而改名这两个适配模块。
 
@@ -167,7 +167,6 @@ Git 历史确认 PR #427（`ce4786b1`）把旧版对话构建替换为手动四�
 环境实测中发现模型曾将已有环境选择与假设新建时的网络策略一起询问，已按旧版先后关系补足约束：第一轮仅问环境选择，确认新建后才问网络，此处补足旧版已有的提示词约束，不增加另一套环境问答流程。
 
 实际结束试跑后，模型已依据本次返回的订单字段复盘为无需修复；用户在模型的结构化问答中选择应用调用，随后只出现一个继续操作，没有再次询问使用方式。
-
 
 ### PR #511 审阅修复：模型范围、工具队列与试跑恢复
 
@@ -198,7 +197,6 @@ Session 恢复确认唯一结果后，与正常创建一致地绑定当前 Agent
 Builder 将用户需求写入配置时，必须保留显式约束的范围与强度，不把排除条件改写为“可选、次要、待确认”例外，也不添加任务之外的契约和未来场景。这是通用的配置生成约束，不按某个测试函数、输入或答案分支。已有的知识持久化、保存确认和工具能力保持原合同。
 
 本轮 BB08 的公开 Agent v2 与 Session 内嵌 v2 的 `system` 一致，约束在生成提议时已被弱化；不修改保存映射、版本绑定或运行工具。回归包含两种语言的共享模板合同和 Builder 排除边界，真实模型回放检查原缺陷仍能识别、修正版不再追加契约推测；这些回放不替代新 SHA 的独立产品黑盒，原完整回答仍保留为失败证据。
-
 
 ## 2026-10-28 整体体验修订
 

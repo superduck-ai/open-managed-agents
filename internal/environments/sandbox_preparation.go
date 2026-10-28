@@ -88,3 +88,28 @@ func keepSandboxPreparationLease(ctx context.Context, ttl time.Duration, renew f
 	}()
 	return leaseCtx, func() { cancel(nil); <-done }, nil
 }
+
+func sandboxPreparationBackgroundContext(parent, preparation context.Context) (context.Context, func(bool) error) {
+	runtimeCtx, cancel := context.WithCancelCause(parent)
+	stopPropagation := context.AfterFunc(preparation, func() { cancel(context.Cause(preparation)) })
+	finished := false
+	return runtimeCtx, func(success bool) error {
+		if finished {
+			return nil
+		}
+		finished = true
+		detached := stopPropagation()
+		if !success || !detached || preparation.Err() != nil {
+			cancel(context.Cause(preparation))
+		}
+		return context.Cause(runtimeCtx)
+	}
+}
+
+func (r *Runner) finishSandboxPreparation(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerID string, finishBackground func(bool) error) error {
+	err := finishBackground(true)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerID, err)
+	}
+	return err
+}

@@ -147,6 +147,7 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
     patch: {
       wantsSchedule: tool.input.wants_schedule === true,
       ...(state.step === 'deploy' && !tool.input.wants_schedule ? { step: 'integrate' as const } : {}),
+      ...(state.step === 'integrate' && tool.input.wants_schedule ? { step: 'deploy' as const } : {}),
     },
   }),
   create_deployment: ({ state, tool }) => {

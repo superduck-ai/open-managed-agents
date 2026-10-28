@@ -113,6 +113,7 @@ async function streamChatTurn(input: TurnInput): Promise<BuilderTurn> {
       tools,
       tool_choice: 'auto',
       stream: true,
+      stream_options: { include_usage: true },
     },
     signal: input.signal,
     errorFromResponse: quickstartStreamError,

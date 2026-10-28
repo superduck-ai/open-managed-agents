@@ -64,10 +64,13 @@ test('Messages collects fragmented tool JSON and sends scoped CSRF without provi
   expect(headers.get('X-CSRF-Token')).toBe('csrf_test');
   expect(headers.get('X-Workspace-ID')).toBe('workspace_test');
   expect(headers.has('Authorization')).toBe(false);
+  expect(JSON.parse(String(captured?.body))).not.toHaveProperty('stream_options');
 });
 test('Chat collects fragmented calls and retains reasoning for the following tool result', async () => {
-  globalThis.fetch = (async () =>
-    stream([
+  let captured: RequestInit | undefined;
+  globalThis.fetch = (async (_url, init) => {
+    captured = init;
+    return stream([
       {
         choices: [
           {
@@ -83,8 +86,10 @@ test('Chat collects fragmented calls and retains reasoning for the following too
           { delta: { tool_calls: [{ index: 0, function: { arguments: '"Sandbox"}' } }] }, finish_reason: 'tool_calls' },
         ],
       },
-    ])) as typeof fetch;
+    ]);
+  }) as typeof fetch;
   const turn = await streamBuilderTurn(input('chat_completions'));
+  expect(JSON.parse(String(captured?.body)).stream_options).toEqual({ include_usage: true });
   expect(turn.tools[0].input).toEqual({ name: 'Sandbox' });
   expect(
     chatMessages([

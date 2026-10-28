@@ -53,13 +53,14 @@ export function useQuickstartConversation(
     staleTime: 1000,
   });
   const bindingValid = sessionMatchesQuickstart(session.data, binding);
+  const terminal = ['terminated', 'deleted'].includes(session.data?.status ?? '');
   const [refreshKey, setRefreshKey] = useState(0);
   const data = useSessionDetailEventData({
     sessionId: sessionID || null,
     workspaceId: workspaceID,
     threads: noThreads,
     includeArchivedThreads: false,
-    live: bindingValid && !['terminated', 'deleted'].includes(session.data?.status ?? ''),
+    live: bindingValid && !terminal,
     refreshKey,
   });
   const latestData = useRef(data);
@@ -120,8 +121,8 @@ export function useQuickstartConversation(
     [data.events, msg],
   );
   const action = useMemo(
-    () => findActiveAwaitingToolCall(entries, latestRequiresActionEventIDs(data.events)),
-    [data.events, entries],
+    () => (terminal ? null : findActiveAwaitingToolCall(entries, latestRequiresActionEventIDs(data.events))),
+    [data.events, entries, terminal],
   );
   const { status, complete, running, waiting, failedTurn, stopped } = quickstartConversationState(
     data.events,
@@ -230,6 +231,13 @@ export function useQuickstartConversation(
     newConversation,
     failedTurn,
     bindingValid,
+    historyReady:
+      bindingValid &&
+      !session.isFetching &&
+      !session.isError &&
+      !data.loading &&
+      !data.error &&
+      (data.connected || terminal),
     openModelRequest: latestOpenModelRequest(data.events),
   };
 }

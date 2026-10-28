@@ -241,3 +241,44 @@ test('restating the same model ID in a full proposal preserves saved model optio
   );
   expect(proposed.model).toEqual({ id: 'model', speed: 'fast' });
 });
+
+for (const step of ['agent', 'environment', 'session', 'integrate'] as const) {
+  test(`schedule intent at ${step} does not create or bypass testing and confirmation`, async () => {
+    const state = initial();
+    state.step = step;
+    const prepared = await prepareBuilderTool({
+      state,
+      tool: { id: 'schedule', name: 'flag_schedule_intent', input: { wants_schedule: true } },
+      catalog,
+      models: ['model'],
+      workspaceId: 'workspace',
+    });
+    expect(prepared.patch?.step ?? step).toBe(step === 'integrate' ? 'deploy' : step);
+    expect(prepared.patch?.wantsSchedule).toBe(true);
+    const planned = {
+      ...state,
+      ...prepared.patch,
+      agent: { id: 'agent', name: 'Agent', version: 1 },
+      environment: { id: 'environment', name: 'Environment' },
+    };
+    await expect(
+      prepareBuilderTool({
+        state: planned,
+        tool: {
+          id: 'deploy',
+          name: 'create_deployment',
+          input: {
+            name: 'Daily report',
+            cron_expression: '0 9 * * *',
+            timezone: 'Asia/Shanghai',
+            initial_message: 'Report',
+          },
+        },
+        catalog,
+        models: ['model'],
+        workspaceId: 'workspace',
+      }),
+    ).rejects.toThrow('finish the test');
+    expect(planned.deployment).toBeNull();
+  });
+}

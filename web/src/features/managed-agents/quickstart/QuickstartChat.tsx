@@ -214,7 +214,7 @@ function QuickstartConversationAlerts({ conversation }: { conversation: Quicksta
           <Button
             variant="ghost"
             size="sm"
-            disabled={conversation.data.loading || !conversation.data.connected}
+            disabled={!conversation.historyReady}
             onClick={conversation.dismissUnconfirmed}
           >
             {text.reviewed}

@@ -1,4 +1,4 @@
-import { builderStorageKey, newBuilderState } from './model';
+import { builderStorageKey, builderTestBinding, newBuilderState } from './model';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
 import { installSessionRuntime } from '../sessionRuntime.test-utils';
 import { afterEach, expect, test } from 'bun:test';
@@ -807,4 +807,160 @@ test('R1 automatic credential discovery failure pauses for local retry and prese
   expect(
     api.requests.filter((request) => request.method === 'POST' && /\/v1\/(agents|vaults|sessions)/.test(request.url)),
   ).toHaveLength(0);
+});
+
+function restoreOpenTest(
+  status: string,
+  unconfirmedMessage = '',
+  disconnected = false,
+  events: Record<string, unknown>[] = [],
+) {
+  const api = setup([toolStream('offer_next_step', {})]);
+  const state = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  state.initialized = true;
+  state.step = 'session';
+  state.agent = { id: 'agent_saved', name: 'Saved', version: 2 };
+  state.savedConfig = state.config;
+  state.environment = { id: 'environment_saved', name: 'Environment' };
+  state.sessionID = 'session_saved';
+  state.sessionBinding = builderTestBinding(state);
+  state.suggestedMessage = 'Suggested message must not replace my text';
+  state.unconfirmedMessage = unconfirmedMessage;
+  window.sessionStorage.setItem(builderStorageKey('acct_managed_agents_test', 'default'), JSON.stringify(state));
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url.includes('/sessions/session_saved/events/stream?')) {
+      if (disconnected) throw new TypeError('Stream disconnected');
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(': connected\n\n'));
+            init?.signal?.addEventListener('abort', () => controller.close(), { once: true });
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    }
+    if (url.includes('/sessions/session_saved/events?') && (!init?.method || init.method === 'GET'))
+      return jsonResponse({ data: events, next_page: null });
+    if (url.includes('/sessions/session_saved?'))
+      return jsonResponse({ id: state.sessionID, status, agent: state.agent, environment_id: state.environment.id });
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  return api;
+}
+
+test('restored unconfirmed test text survives mounting and explicit acknowledgement without automatic resend', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const original = 'My exact unconfirmed message: preserve this order.';
+  const api = restoreOpenTest('idle', original);
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  const input = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Test message' });
+  expect(input.value).toBe(original);
+  const reviewed = screen.getByRole('button', { name: 'I reviewed the conversation; enable sending' });
+  await waitFor(() => expect(reviewed.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(reviewed);
+  expect(input.value).toBe(original);
+  expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/sessions'))).toBe(false);
+  fireEvent.submit(input.closest('form')!);
+  await waitFor(() =>
+    expect(
+      api.requests.some(
+        (request) => request.method === 'POST' && request.url.includes('/sessions/session_saved/events'),
+      ),
+    ).toBe(true),
+  );
+  const sent = api.requests.find(
+    (request) => request.method === 'POST' && request.url.includes('/sessions/session_saved/events'),
+  )!;
+  expect(JSON.stringify(sent.body)).toContain(original);
+  expect(JSON.stringify(sent.body)).not.toContain('Suggested message');
+});
+
+for (const status of ['terminated', 'deleted']) {
+  test(`a restored ${status} test can explicitly close and review without a live connection`, async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    const api = restoreOpenTest(status);
+    renderManagedAgentsPage('quickstart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+    const end = await screen.findByRole('button', { name: 'End test and review' });
+    await waitFor(() => expect(end.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(end);
+    await waitFor(() =>
+      expect(
+        JSON.parse(window.sessionStorage.getItem(builderStorageKey('acct_managed_agents_test', 'default'))!).testClosed,
+      ).toBe(true),
+    );
+    expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/sessions'))).toBe(false);
+  });
+}
+
+for (const status of ['idle', 'running']) {
+  test(`a disconnected ${status} test cannot be mistaken for a terminal session`, async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    restoreOpenTest(status, '', true);
+    renderManagedAgentsPage('quickstart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+    await screen.findByRole('textbox', { name: 'Test message' });
+    expect(screen.getByRole('button', { name: 'End test and review' }).hasAttribute('disabled')).toBe(true);
+    expect(
+      JSON.parse(window.sessionStorage.getItem(builderStorageKey('acct_managed_agents_test', 'default'))!).testClosed,
+    ).toBe(false);
+  });
+}
+
+test('schedule intent from integration returns to a deployment proposal and waits for explicit confirmation', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([
+    toolStream('flag_schedule_intent', { wants_schedule: true }),
+    toolStream('create_deployment', {
+      name: 'Daily report',
+      cron_expression: '0 9 * * *',
+      timezone: 'Asia/Shanghai',
+      initial_message: 'Produce report',
+    }),
+  ]);
+  const state = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  state.initialized = true;
+  state.step = 'integrate';
+  state.agent = { id: 'agent_saved', name: 'Saved', version: 2 };
+  state.savedConfig = state.config;
+  state.environment = { id: 'environment_saved', name: 'Environment' };
+  state.testClosed = true;
+  window.sessionStorage.setItem(builderStorageKey('acct_managed_agents_test', 'default'), JSON.stringify(state));
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  send('Schedule the tested agent every morning at 9 Asia/Shanghai.');
+  await screen.findByRole('heading', { name: 'Create scheduled deployment' });
+  expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/deployments'))).toBe(false);
+  expect(
+    JSON.parse(window.sessionStorage.getItem(builderStorageKey('acct_managed_agents_test', 'default'))!).step,
+  ).toBe('deploy');
+});
+
+test('terminal status overrides an old tool confirmation but unknown delivery still needs acknowledgement', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const original = 'Unconfirmed original input';
+  restoreOpenTest('terminated', original, false, [
+    { id: 'tool_pending', type: 'agent.tool_use', name: 'Write', input: {}, processed_at: '2026-10-28T12:00:00Z' },
+    {
+      id: 'idle_pending',
+      type: 'session.status_idle',
+      stop_reason: { type: 'requires_action', event_ids: ['tool_pending'] },
+      processed_at: '2026-10-28T12:00:01Z',
+    },
+  ]);
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  const reviewed = await screen.findByRole('button', { name: 'I reviewed the conversation; enable sending' });
+  await waitFor(() => expect(reviewed.hasAttribute('disabled')).toBe(false));
+  const end = screen.getByRole('button', { name: 'End test and review' });
+  expect(end.hasAttribute('disabled')).toBe(true);
+  expect(screen.queryByRole('button', { name: 'Allow', exact: true })).toBeNull();
+  fireEvent.click(reviewed);
+  await waitFor(() => expect(end.hasAttribute('disabled')).toBe(false));
+  expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Test message' }).value).toBe(original);
+  expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Test message' }).disabled).toBe(true);
 });

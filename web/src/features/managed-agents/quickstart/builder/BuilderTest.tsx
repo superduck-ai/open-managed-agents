@@ -39,7 +39,7 @@ export function BuilderTest({
   const initialized = useRef(false);
   useEffect(() => {
     if (!initialized.current) {
-      conversation.setMessage(state.suggestedMessage);
+      if (!conversation.unconfirmed) conversation.setMessage(state.suggestedMessage);
       initialized.current = true;
     }
   }, [conversation, state.suggestedMessage]);
@@ -85,9 +85,7 @@ export function BuilderTest({
             Boolean(conversation.action) ||
             conversation.sending ||
             conversation.unconfirmed ||
-            !conversation.bindingValid ||
-            conversation.data.loading ||
-            !conversation.data.connected
+            !conversation.historyReady
           }
           onClick={end}
         >

@@ -290,12 +290,15 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 	}
 	providerSandboxID := sandbox.ID
 
+	parentCtx := ctx
 	preparationCtx, stopLease, err := r.startSandboxPreparation(ctx, record, *work, providerSandboxID)
 	if err != nil {
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
 	defer stopLease()
+	runtimeCtx, finishBackground := sandboxPreparationBackgroundContext(parentCtx, preparationCtx)
+	defer finishBackground(false)
 	ctx = preparationCtx
 
 	// 将 E2B ID 写入 Work metadata；Managed Agent preparation 可能还加入了 skill
@@ -345,7 +348,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, fmt.Errorf("prepare rclone-filestore launch: %w", err)
 		}
-		if err := r.startManagedAgentSessionFilesystem(ctx, providerSandboxID, rcloneLaunch); err != nil {
+		if err := r.startManagedAgentSessionFilesystem(ctx, runtimeCtx, providerSandboxID, rcloneLaunch); err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, err
 		}
@@ -369,7 +372,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, fmt.Errorf("create managed-agent runtime launch: %w", err)
 		}
-		if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
+		if err := r.provider.StartBackgroundCommand(runtimeCtx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
 			publicError := r.logManagedAgentRuntimeStageFailure(
 				ctx,
 				"environment_manager_start",
@@ -396,8 +399,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, env db.Environmen
 
 	}
 
-	// true 表示本轮确实消费了一条 Work；nil 表示所需启动阶段全部完成。
-	return true, nil
+	return true, r.finishSandboxPreparation(ctx, record, work, providerSandboxID, finishBackground)
 }
 
 func (r *Runner) markSandboxRunningAfterFilesystem(ctx context.Context, record db.EnvironmentSandbox, providerSandboxID string, managed bool) error {
@@ -819,7 +821,7 @@ func (r *Runner) publishManagedAgentRuntime(
 	)
 }
 
-func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
+func (r *Runner) startManagedAgentSessionFilesystem(ctx, runtimeCtx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
 	if len(launch.MemoryMounts) > 0 {
 		if err := r.runSandboxCommand(ctx, sandboxID, memoryRootMkdirCommand(), rcloneCommandGraceTimeout); err != nil {
 			return r.logManagedAgentRuntimeStageFailure(ctx, "memory_root_mkdir", errMemoryRootCreate, err)
@@ -828,7 +830,7 @@ func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandbox
 	if err := r.runSandboxCommand(ctx, sandboxID, sessionOutputsAliasCommand(rcloneOutputsDestination, sessionOutputsPath), rcloneCommandGraceTimeout); err != nil {
 		return r.logManagedAgentRuntimeStageFailure(ctx, "outputs_alias", errOutputsAliasCreate, err)
 	}
-	if err := r.startRcloneFilestore(ctx, sandboxID, launch); err != nil {
+	if err := r.startRcloneFilestore(ctx, runtimeCtx, sandboxID, launch); err != nil {
 		return err
 	}
 	if len(launch.MemoryMounts) == 0 {
@@ -843,7 +845,7 @@ func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandbox
 	return nil
 }
 
-func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
+func (r *Runner) startRcloneFilestore(ctx, runtimeCtx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
 	if err := r.provider.WriteFile(ctx, sandboxID, rcloneConfigPath, launch.ConfigPayload); err != nil {
 		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return r.logRcloneStageFailure(ctx, "config_write", errRcloneConfigWrite, err)
@@ -852,7 +854,7 @@ func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, lau
 		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return r.logRcloneStageFailure(ctx, "config_permissions", errRcloneConfigPermissions, err)
 	}
-	if err := r.provider.StartBackgroundCommand(ctx, sandboxID, rcloneStartCommand(), nil); err != nil {
+	if err := r.provider.StartBackgroundCommand(runtimeCtx, sandboxID, rcloneStartCommand(), nil); err != nil {
 		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return r.logRcloneStageFailure(ctx, "process_start", errRcloneProcessStart, err)
 	}

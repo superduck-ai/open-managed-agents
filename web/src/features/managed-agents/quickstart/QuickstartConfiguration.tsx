@@ -1,4 +1,4 @@
-import { ArrowRight, Bot, Code, Plus, Search, BarChart3, Radar, Sparkles } from 'lucide-react';
+import { ArrowRight, Bot, Plus, Sparkles } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
@@ -16,70 +16,73 @@ import { quickstartCurl, RequestPreview } from './RequestPreview';
 import type { QuickstartWizard } from './useQuickstartWizard';
 import { QuickstartFooter } from './QuickstartFooter';
 import { QuickstartApiKey } from './QuickstartApiKey';
+import {
+  quickstartTemplates,
+  quickstartTemplateCard,
+  quickstartTemplateGrid,
+  QuickstartTemplateContent,
+} from './templates';
 
-const scenarioIcons = {
-  hello: Bot,
-  research: Search,
-  analysis: BarChart3,
-  tracking: Radar,
-  review: Code,
-  custom: Sparkles,
-};
-
-export function QuickstartStart({ wizard }: { wizard: QuickstartWizard }) {
+export function QuickstartStart({ wizard, onStart }: { wizard: QuickstartWizard; onStart: () => void }) {
   const { locale } = useI18n();
+  const zh = locale === 'zh-CN';
   const text = quickstartCopy(locale);
+  const templates = quickstartTemplates(locale, wizard.draft.modelID).map(({ id, icon, config, description }) => ({
+    id,
+    icon,
+    name: config.name,
+    description,
+  }));
+  const extras = quickstartScenarios(locale).filter((item) => item.id === 'hello' || item.id === 'custom');
+  const disabled = wizard.busy || Boolean(wizard.progress.pending);
   return (
-    <div className="flex min-h-0 flex-1 flex-col pt-(--quickstart-gap)">
-      <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
-        <div className="mb-(--quickstart-gap) space-y-2">
-          <h1 className="text-xl leading-7 font-semibold tracking-tight">{text.title}</h1>
-        </div>
+    <div className="min-h-0 flex-1 overflow-y-auto pb-12">
+      <div className="mx-auto w-full max-w-[880px]">
         <RadioGroup
           value={wizard.progress.scenarioID}
           onValueChange={(value) => wizard.chooseScenario(value)}
           aria-label={text.scenarios}
-          disabled={wizard.busy || Boolean(wizard.progress.pending)}
-          className="grid gap-[clamp(0.5rem,1.5dvh,0.75rem)] sm:grid-cols-2"
+          disabled={disabled}
+          className="gap-4"
         >
-          {quickstartScenarios(locale).map((scenario) => {
-            const Icon = scenarioIcons[scenario.id];
-            const featured = scenario.id === 'hello';
-            const custom = scenario.id === 'custom';
-            return (
+          <div className={quickstartTemplateGrid}>
+            {templates.map(({ id, icon, name, description }) => (
               <FieldLabel
-                key={scenario.id}
-                htmlFor={`scenario-${scenario.id}`}
-                className={`flex w-full cursor-pointer flex-col items-stretch gap-2 rounded-xl border-[0.5px] px-4 py-3 ${featured || custom ? 'sm:col-span-2' : ''} ${wizard.progress.scenarioID === scenario.id ? 'border-foreground bg-accent/40' : 'border-border bg-card hover:bg-accent/20'}`}
+                key={id}
+                htmlFor={`scenario-${id}`}
+                className={`${quickstartTemplateCard} cursor-pointer ${wizard.progress.scenarioID === id ? 'border-foreground bg-accent/40' : 'hover:bg-accent/50'}`}
               >
-                <div className="flex items-center gap-2.5">
-                  <span
-                    className={
-                      featured
-                        ? 'grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground'
-                        : 'shrink-0'
-                    }
-                  >
-                    <Icon className={featured ? 'size-[18px]' : 'size-4'} />
-                  </span>
-                  <span className="min-w-0 flex-1 space-y-1">
-                    <span className="block text-sm font-medium">{scenario.name}</span>
-                  </span>
-                  {featured && <Badge>{text.recommended}</Badge>}
-                  <RadioGroupItem id={`scenario-${scenario.id}`} value={scenario.id} />
-                </div>
-                <p className="text-xs leading-5 font-normal text-muted-foreground">{scenario.summary}</p>
+                <RadioGroupItem className="absolute top-5 right-5" id={`scenario-${id}`} value={id} aria-label={name} />
+                <QuickstartTemplateContent icon={icon} title={name} description={description} />
               </FieldLabel>
-            );
-          })}
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {extras.map((item) => {
+              const Icon = item.id === 'hello' ? Bot : Sparkles;
+              return (
+                <FieldLabel
+                  key={item.id}
+                  htmlFor={`scenario-${item.id}`}
+                  className={`flex w-full min-w-0 cursor-pointer items-center gap-3 rounded-xl border-[0.5px] px-4 py-3 text-sm font-normal ${wizard.progress.scenarioID === item.id ? 'border-foreground bg-accent/40' : 'border-border hover:bg-accent/50'}`}
+                >
+                  <Icon aria-hidden="true" className="size-4 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    {item.id === 'hello' ? 'Hello World' : zh ? '从空白开始' : 'Start from scratch'}
+                  </span>
+                  <RadioGroupItem id={`scenario-${item.id}`} value={item.id} aria-label={item.name} />
+                </FieldLabel>
+              );
+            })}
+          </div>
         </RadioGroup>
+        <div className="mt-6 flex justify-end">
+          <Button disabled={disabled} onClick={onStart}>
+            {text.start}
+            <ArrowRight />
+          </Button>
+        </div>
       </div>
-      <QuickstartFooter wizard={wizard}>
-        <Button disabled={wizard.busy || Boolean(wizard.progress.pending)} onClick={() => wizard.navigate(1)}>
-          {text.start}
-          <ArrowRight />
-        </Button>
-      </QuickstartFooter>
     </div>
   );
 }

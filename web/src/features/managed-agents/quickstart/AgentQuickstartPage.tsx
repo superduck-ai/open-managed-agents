@@ -54,35 +54,37 @@ export function AgentQuickstartPage() {
     >
       <TabsList aria-label={locale === 'zh-CN' ? '创建方式' : 'Build method'}>
         <TabsTrigger className="px-4" value="chat">
-          {locale === 'zh-CN' ? '问答构建' : 'Build with chat'}
+          {locale === 'zh-CN' ? '对话构建' : 'Build with chat'}
         </TabsTrigger>
         <TabsTrigger className="px-4" value="api">
-          {locale === 'zh-CN' ? 'API 创建' : 'Build with API'}
+          {locale === 'zh-CN' ? '手动配置' : 'Manual setup'}
         </TabsTrigger>
       </TabsList>
     </Tabs>
   );
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+    <div className="mx-auto flex h-full min-h-0 w-full min-w-0 flex-1 flex-col gap-6">
+      <header className="mx-auto flex w-full max-w-[880px] shrink-0 flex-col items-center gap-6 pt-[clamp(2rem,7vh,5rem)]">
+        <h1 id="quickstart-start-title" className="text-center text-2xl font-semibold">
+          {locale === 'zh-CN' ? '你想构建什么？' : 'What would you like to build?'}
+        </h1>
+        {modeControl}
+      </header>
       {mode === 'chat' ? (
         <BuilderPage
           key={`${account?.uuid}:${activeWorkspaceId}`}
           accountId={account?.uuid ?? ''}
           workspaceId={activeWorkspaceId}
           orgUuid={orgUuid ?? ''}
-          modeControl={modeControl}
           models={models.data.map((model) => model.id)}
         />
       ) : (
-        <>
-          {modeControl}
-          <QuickstartWizardPage
-            key={`${account?.uuid}:${activeWorkspaceId}`}
-            workspaceID={activeWorkspaceId}
-            accountID={account?.uuid ?? ''}
-            models={models.data}
-          />
-        </>
+        <QuickstartWizardPage
+          key={`${account?.uuid}:${activeWorkspaceId}`}
+          workspaceID={activeWorkspaceId}
+          accountID={account?.uuid ?? ''}
+          models={models.data}
+        />
       )}
     </div>
   );

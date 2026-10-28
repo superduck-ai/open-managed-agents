@@ -429,12 +429,12 @@ test('selecting the same scenario or returning home keeps custom drafts and requ
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
-  fireEvent.click(await screen.findByRole('radio', { name: /My Agent/ }));
+  fireEvent.click(await screen.findByRole('radio', { name: /Start from scratch/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Start configuring' }));
   expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Create and continue' }).disabled).toBe(true);
   fireEvent.change(screen.getByLabelText('System prompt'), { target: { value: 'Keep my draft.' } });
   fireEvent.click(screen.getByRole('button', { name: 'Back', exact: true }));
-  fireEvent.click(screen.getByRole('radio', { name: /My Agent/ }));
+  fireEvent.click(screen.getByRole('radio', { name: /Start from scratch/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Start configuring' }));
   expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('Keep my draft.');
   expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(0);
@@ -684,8 +684,7 @@ test('selecting a quickstart scenario only edits a draft until the user confirms
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
 
-  expect(await screen.findByRole('heading', { name: 'Start with your first Agent' })).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Start configuring' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Start configuring' }));
 
   expect(screen.getByLabelText<HTMLInputElement>('Name').value).toBe('Hello World Agent');
   expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toContain('helpful assistant');

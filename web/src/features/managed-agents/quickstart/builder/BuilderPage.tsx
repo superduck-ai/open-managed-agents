@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { ArrowUp, Square, Sparkles } from 'lucide-react';
 import { useI18n } from '../../../../shared/i18n';
 import { Button, ButtonLink } from '../../../../shared/ui/button';
@@ -24,13 +24,11 @@ export function BuilderPage({
   workspaceId,
   orgUuid,
   models,
-  modeControl,
 }: {
   accountId: string;
   workspaceId: string;
   orgUuid: string;
   models: string[];
-  modeControl?: ReactNode;
 }) {
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
@@ -45,16 +43,9 @@ export function BuilderPage({
       </div>
     );
   if (!state.initialized)
-    return (
-      <BuilderStart
-        builder={builder}
-        modeControl={modeControl}
-        composer={<BuilderComposer builder={builder} entry />}
-      />
-    );
+    return <BuilderStart builder={builder} composer={<BuilderComposer builder={builder} entry />} />;
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-      {modeControl}
       <div className={`grid min-h-0 min-w-0 flex-1 gap-6 ${builderColumns(state)}`}>
         <div className="flex min-h-0 min-w-0 flex-col">
           <MessageScrollerProvider autoScroll defaultScrollPosition="end">

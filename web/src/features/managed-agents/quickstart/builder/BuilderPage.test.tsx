@@ -68,7 +68,7 @@ test('a description proposes before writing; refresh preserves the pending propo
     toolStream('build_agent_config', { name: 'Order extractor', system: 'Extract fields. Missing fields are null.' }),
   ]);
   renderManagedAgentsPage('quickstart');
-  await screen.findByRole('heading', { name: 'What would you like to build?' });
+  await screen.findByRole('textbox', { name: 'Builder message' });
   send();
   await screen.findByRole('button', { name: 'Confirm', exact: true });
   expect(writes(api.requests)).toHaveLength(0);
@@ -86,7 +86,7 @@ test('template creates immediately; confirmed rename retains saved ID, instructi
     toolStream('offer_next_step', {}),
   ]);
   renderManagedAgentsPage('quickstart');
-  fireEvent.click(await screen.findByRole('button', { name: 'Structured extractor', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: /Structured extractor/ }));
   await screen.findByRole('button', { name: 'Continue', exact: true });
   expect(writes(api.requests)).toHaveLength(1);
   send('Change its name to New extractor name.');
@@ -118,7 +118,7 @@ test('new environment uses conversational questions without a creation form', as
     }),
   ]);
   renderManagedAgentsPage('quickstart');
-  fireEvent.click(await screen.findByRole('button', { name: 'Structured extractor', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: /Structured extractor/ }));
   fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
   fireEvent.click(await screen.findByRole('button', { name: 'New environment', exact: true }));
   expect(await screen.findByText('Which websites should the environment access?', { selector: 'label' })).toBeTruthy();
@@ -140,7 +140,7 @@ test('lost save response is recovered after refresh without repeating the write'
     return response;
   }) as typeof fetch;
   renderManagedAgentsPage('quickstart');
-  fireEvent.click(await screen.findByRole('button', { name: 'Structured extractor', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: /Structured extractor/ }));
   await screen.findByRole('button', { name: 'Check saved result' });
   cleanup();
   renderManagedAgentsPage('quickstart');
@@ -171,7 +171,7 @@ test('test first reply does not close the session; explicit end returns actual e
   ]);
   const runtime = installSessionRuntime();
   renderManagedAgentsPage('quickstart');
-  fireEvent.click(await screen.findByRole('button', { name: 'Structured extractor', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: /Structured extractor/ }));
   fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
   fireEvent.click(await screen.findByRole('button', { name: 'Option environment', exact: true }));
   fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
@@ -225,7 +225,7 @@ test('the start page follows the reviewed title, mode, composer and six-template
   renderManagedAgentsPage('quickstart');
   const heading = await screen.findByRole('heading', { name: 'What would you like to build?' });
   const modes = screen.getByRole('tablist', { name: 'Build method' });
-  const composer = screen.getByRole('textbox', { name: 'Builder message' });
+  const composer = await screen.findByRole('textbox', { name: 'Builder message' });
   const templates = screen.getByLabelText('Quickstart templates');
   expect(Boolean(heading.compareDocumentPosition(modes) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
   expect(Boolean(modes.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
@@ -236,7 +236,34 @@ test('the start page follows the reviewed title, mode, composer and six-template
   expect(screen.queryByRole('button', { name: 'Incident commander', exact: true })).toBeNull();
   expect(screen.getAllByRole('textbox', { name: 'Builder message' })).toHaveLength(1);
   expect(writes(api.requests)).toHaveLength(0);
-  fireEvent.click(screen.getByRole('tab', { name: 'Build with API', exact: true }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Manual setup', exact: true }));
   expect(await screen.findByRole('button', { name: 'Start configuring' })).toBeTruthy();
   expect(screen.queryByRole('textbox', { name: 'Builder message' })).toBeNull();
+});
+
+test('both build methods share the header and templates, with manual selection separate from creation', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([]);
+  renderManagedAgentsPage('quickstart');
+  await screen.findByRole('textbox', { name: 'Builder message' });
+  const heading = screen.getByRole('heading', { name: 'What would you like to build?' });
+  const modes = screen.getByRole('tablist', { name: 'Build method' });
+  const names = Array.from(screen.getByLabelText('Quickstart templates').querySelectorAll('button')).map((button) =>
+    button.getAttribute('aria-label'),
+  );
+  fireEvent.click(screen.getByRole('tab', { name: 'Manual setup', exact: true }));
+  await screen.findByRole('button', { name: 'Start configuring' });
+  expect(screen.getByRole('heading', { name: 'What would you like to build?' })).toBe(heading);
+  expect(screen.getByRole('tablist', { name: 'Build method' })).toBe(modes);
+  expect(screen.queryByRole('navigation', { name: 'Start with your first Agent' })).toBeNull();
+  const radios = screen.getAllByRole('radio');
+  expect(radios.slice(0, 6).map((radio) => radio.getAttribute('aria-label'))).toEqual(names);
+  fireEvent.click(screen.getByRole('radio', { name: /Structured extractor/ }));
+  expect(screen.getByRole('radio', { name: /Structured extractor/ }).getAttribute('aria-checked')).toBe('true');
+  expect(writes(api.requests)).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Start configuring' }));
+  expect(screen.getByRole('navigation', { name: 'Start with your first Agent' })).toBeTruthy();
+  expect(screen.getByLabelText<HTMLInputElement>('Name').value).toBe('Structured extractor');
+  expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toContain('valid JSON');
+  expect(writes(api.requests)).toHaveLength(0);
 });

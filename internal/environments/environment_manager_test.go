@@ -255,30 +255,9 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 	if _, ok := startupEnv["CLAUDE_CODE_SESSION_ACCESS_TOKEN"]; ok {
 		t.Fatalf("session access token environment variable must not mask the WebSocket auth FD: %#v", startupEnv)
 	}
-	if startupEnv["OTEL_METRICS_EXPORTER"] != "otlp" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"] != "http/protobuf" ||
-		startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"] != "http/protobuf" ||
-		startupEnv["ENABLE_BETA_TRACING_DETAILED"] != "1" ||
-		startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "1" ||
-		startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] != "" {
-		t.Fatalf("unexpected otlp environment variables: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_LOG_USER_PROMPTS"] != "1" ||
-		startupEnv["OTEL_LOG_TOOL_DETAILS"] != "1" ||
-		startupEnv["OTEL_LOG_TOOL_CONTENT"] != "1" {
-		t.Fatalf("content capture grants missing from startup environment: %#v", startupEnv)
-	}
-	otlpBaseURL := "http://host.docker.internal:18081/v1/code/sessions/cse_test/worker/otlp"
-	if startupEnv["OTEL_EXPORTER_OTLP_HEADERS"] != "" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != otlpBaseURL+"/metrics" ||
-		startupEnv["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] != otlpBaseURL+"/logs" ||
-		startupEnv["BETA_TRACING_ENDPOINT"] != otlpBaseURL {
-		t.Fatalf("unexpected managed OTLP endpoints: %#v", startupEnv)
-	}
-	for _, key := range []string{"OTEL_EXPORTER_OTLP_METRICS_HEADERS", "OTEL_EXPORTER_OTLP_LOGS_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS"} {
-		if startupEnv[key] != "Authorization=Bearer "+sessionIngressToken {
-			t.Fatalf("%s = %q, want managed session ingress authorization", key, startupEnv[key])
+	for _, key := range []string{"CLAUDE_CODE_ENABLE_TELEMETRY", "OTEL_LOGS_EXPORTER", "BETA_TRACING_ENDPOINT"} {
+		if _, exists := startupEnv[key]; exists {
+			t.Fatalf("retired Claude telemetry injected: %s", key)
 		}
 	}
 	auths := body["auth"].([]any)
@@ -429,59 +408,13 @@ func TestClaudeRuntimeModelEnvironment(t *testing.T) {
 	}
 }
 
-func TestBuildEnvironmentManagerPayloadPrefersUserTelemetryConfig(t *testing.T) {
-	cfg := config.Config{
-		CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "https://oma.example.test"},
-		Observability: config.ObservabilityConfig{
-			Enabled:               true,
-			ContentCaptureEnabled: false,
-		},
-	}
-	sessionConfig := json.RawMessage(`{"environment_variables":{
-		"CLAUDE_CODE_ENABLE_TELEMETRY":"",
-		"CLAUDE_CODE_DISABLE_TERMINAL_TITLE":"0",
-		"OTEL_METRICS_EXPORTER":"console",
-		"OTEL_EXPORTER_OTLP_ENDPOINT":"https://collector.example.com",
-		"OTEL_EXPORTER_OTLP_METRICS_HEADERS":"Authorization=Bearer stale",
-		"OTEL_METRICS_INCLUDE_SESSION_ID":"false",
-		"OTEL_LOG_USER_PROMPTS":"1",
-		"OTEL_LOG_RAW_API_BODIES":"1"
-	}}`)
-	startup := buildEnvironmentManagerPayloadStartupContext(t, sessionConfig, cfg)
-	startupEnv := startup["environment_variables"].(map[string]any)
-	// 用户设置的值优先；未设置的键才补平台默认值。
-	if startupEnv["OTEL_METRICS_EXPORTER"] != "console" ||
-		startupEnv["OTEL_METRICS_INCLUDE_SESSION_ID"] != "false" {
-		t.Fatalf("user telemetry preferences were overridden: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_LOGS_EXPORTER"] != "otlp" ||
-		startupEnv["ENABLE_BETA_TRACING_DETAILED"] != "1" ||
-		startupEnv["CLAUDE_CODE_ENABLE_TELEMETRY"] != "" {
-		t.Fatalf("user telemetry values or platform defaults mismatch: %#v", startupEnv)
-	}
-	if got := startupEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]; got != "" {
-		t.Fatalf("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = %#v, want empty so Claude can export OTEL", got)
-	}
-	if got := startupEnv["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"]; got != "1" {
-		t.Fatalf("CLAUDE_CODE_DISABLE_TERMINAL_TITLE = %#v, want 1", got)
-	}
-	// 用户可以保留采集偏好；连接 OMA 的 signal-specific endpoint/header
-	// 由平台覆盖，使不会动态配置 OTLP 的旧版 environment-manager 也能工作。
-	if startupEnv["OTEL_EXPORTER_OTLP_ENDPOINT"] != "https://collector.example.com" ||
-		startupEnv["OTEL_LOG_USER_PROMPTS"] != "1" {
-		t.Fatalf("user telemetry variables were removed: %#v", startupEnv)
-	}
-	if startupEnv["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] != "https://oma.example.test/v1/code/sessions/cse_test/worker/otlp/metrics" ||
-		startupEnv["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] != "Authorization=Bearer sk-ant-si-test-token" {
-		t.Fatalf("managed OTLP connection was not applied: %#v", startupEnv)
-	}
-	if startupEnv["CLAUDE_CODE_WORKER_EPOCH"] != "1" {
-		t.Fatalf("CLAUDE_CODE_WORKER_EPOCH = %q, want 1", startupEnv["CLAUDE_CODE_WORKER_EPOCH"])
-	}
-	// 内容采集关闭时平台不补授权默认值，但不删用户自己设置的键。
-	for _, key := range []string{"OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_TOOL_CONTENT"} {
-		if _, ok := startupEnv[key]; ok {
-			t.Fatalf("content capture grant %s injected while content capture is disabled: %#v", key, startupEnv)
+func TestBuildEnvironmentManagerPayloadDoesNotInjectClaudeTelemetry(t *testing.T) {
+	cfg := config.Config{Observability: config.ObservabilityConfig{Enabled: true}}
+	startup := buildEnvironmentManagerPayloadStartupContext(t, json.RawMessage(`{}`), cfg)
+	environment := startup["environment_variables"].(map[string]any)
+	for _, key := range []string{"CLAUDE_CODE_ENABLE_TELEMETRY", "OTEL_LOGS_EXPORTER", "OTEL_LOG_USER_PROMPTS", "ENABLE_BETA_TRACING_DETAILED"} {
+		if _, exists := environment[key]; exists {
+			t.Fatalf("retired telemetry injected: %s", key)
 		}
 	}
 }

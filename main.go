@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/riverqueue/river"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
@@ -39,6 +40,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetryexport"
 	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
@@ -196,6 +198,11 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("start webhook worker: %w", err)
 	}
 	defer stopWebhookWorker()
+	telemetryExporter, stopTelemetryWorker, err := startTelemetryExport(ctx, natsConnection, database, vaultSecrets, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer stopTelemetryWorker()
 	workers := river.NewWorkers()
 	queues := jobQueues(workers, database, cfg, logger, platformAuthProvider.VerifiedLoginEnabled())
 	prebuilds := environments.NewPrebuilds(database, cfg, logger.With("component", "environment_prebuild"))
@@ -245,6 +252,7 @@ func run(logger *slog.Logger) error {
 			DB:                     database,
 			Deployments:            deploymentStore,
 			WebhookEnqueuer:        webhookEnqueuer,
+			TelemetryExporter:      telemetryExporter,
 			ObjectStore:            objectStore,
 			Logger:                 logger,
 			PlatformStore:          platformSessions,
@@ -351,4 +359,16 @@ func loadCodeRuntime(cfg config.Config) (codeRuntime, error) {
 		return runtime, fmt.Errorf("load web tools: %w", err)
 	}
 	return runtime, nil
+}
+
+func startTelemetryExport(ctx context.Context, conn *nats.Conn, database *db.DB, opener telemetryexport.Opener, cfg config.Config, logger *slog.Logger) (*telemetryexport.Exporter, func(), error) {
+	queue, err := telemetryexport.NewQueue(ctx, conn, cfg.NATS.TelemetryExportStream, cfg.TelemetryExport)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open telemetry export queue: %w", err)
+	}
+	stop, err := telemetryexport.NewWorker(database, opener, queue, cfg.TelemetryExport, logger.With("component", "telemetry_export_worker")).Start(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("start telemetry export worker: %w", err)
+	}
+	return telemetryexport.NewExporter(database, queue), stop, nil
 }

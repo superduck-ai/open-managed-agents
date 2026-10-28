@@ -154,9 +154,11 @@ Webhook 全局投递已移除：`webhook.endpoint_url`、`webhook.signing_key`�
 
 SDK 测试不再有生产配置或专用默认身份。旧配置与测试的迁移方式见 [SDK 契约测试与真实资源生命周期](sdk-contract-testing.md)。
 
-`code_session.sandbox_api_base_url` 不从 `server.addr` 或其他字段推导。空值会保持为空；需要 sandbox 回调 code-session ingress 或 OTLP endpoint 时，部署配置必须显式提供 sandbox 可访问的地址。非空值必须是绝对 HTTP(S) URL；生产环境必须使用 HTTPS。Docker Compose 使用 `env: dev`，因此可显式使用 `http://host.docker.internal:38080`。
+`code_session.sandbox_api_base_url` 不从 `server.addr` 或其他字段推导。空值会保持为空；需要 sandbox 回调 code-session ingress 时，部署配置必须显式提供 sandbox 可访问的地址。非空值必须是绝对 HTTP(S) URL；生产环境必须使用 HTTPS。Docker Compose 使用 `env: dev`，因此可显式使用 `http://host.docker.internal:38080`。
 
-Observability 使用独立的进程级 YAML 配置：`observability.enabled` 控制采集、转发与查询 API（开启即注入 Metrics、Logs 和 Detailed Trace 全部信号，不再按信号拆分开关）；`observability.backend` 选择写入/查询后端（首版仅 `openobserve`）；`observability.content_capture_enabled`（默认 true）控制 prompt 原文、模型输出和工具输入/输出正文是否进入可观测存储，设为 false 时仅保留结构化遥测（span 结构、耗时、token、工具名）；`observability.otlp` 控制 ingress body 上限和转发超时；选中后端块内的 `ingestion` 与 `query` 分组分别保存写入凭据和查询凭据（`query.timeout` 默认 15s）。OpenObserve 凭据只存在于 OMA 服务端，不进入 Agent、Session 或 Sandbox 环境。
+Observability 使用独立的进程级 YAML 配置：`observability.enabled` 控制 DSH 原生 Session 事件采集、OTLP logs 转发与 Trajectory 查询；`observability.backend` 仅支持 `openobserve`；`observability.content_capture_enabled` 默认 true，关闭时在上报边界替换正文和参数。`observability.otlp` 控制请求体上限和转发超时。OpenObserve 的 `ingestion`、`query` 分别保存写入与查询凭据，默认 logs stream 为 `oma_dsh`，已删除 `traces_stream`。Brain 使用 `OMA_API_URL` 回连 OMA，不依赖 sandbox URL。OpenObserve 凭据只存在于服务端。详见 [DSH 可观测性](ccrv2/dsh-observability.md)。
+
+OpenObserve 是可选运行依赖。可观测性配置不完整时由 HTTP 服务组装层记录 warning 并禁用该组件，不作为整个平台配置加载失败；配置完整但存储不可达时仅上报和查询降级，启动与 readiness 不依赖其健康。本地 dev-init 新模板默认启用独立实例。
 
 这是一次 breaking 迁移：OpenObserve 平铺 ingestion 凭据已删除，改为嵌套的 `observability.openobserve.ingestion.{username,password}` 与 `observability.openobserve.query.{username,password,timeout}`。升级前必须改写 YAML；严格解析不会接受旧平铺键，也不提供兼容层。旧 `code_session.otlp_file_log_enabled`、`code_session.otlp_log_root` 和 `code_session.otlp_log_body_preview_bytes` 也已随本地文件日志功能一起删除。
 
@@ -191,8 +193,9 @@ Cloud Session 的固定 Filestore 挂载也使用 `code_session.sandbox_api_base
 | `E2BConfig`               | `e2b`                | E2B provider 连接、模板和超时                                                            |
 | `EnvironmentRunnerConfig` | `environment_runner` | Environment runner 并发及 Claude 运行命令                                                |
 | `CodeSessionConfig`       | `code_session`       | Code session ingress、sandbox 回调 URL、JWT 和上游代理安全配置                           |
-| `ObservabilityConfig`     | `observability`      | Claude Code signal 策略、Backend 选择器、OpenObserve ingestion/query 连接与 OTLP ingress |
+| `ObservabilityConfig`     | `observability`      | DSH 原生事件、OpenObserve ingestion/query 连接与 OTLP logs ingress |
 | `WebhookConfig`           | `webhook`            | Webhook 投递 worker 开关、超时、重试、失败窗口和地址策略                                           |
+| `TelemetryExportConfig`   | `telemetry_export`   | OTel 导出投递 worker 开关、并发、超时、重试、失败窗口和开发用地址策略；队列为 `nats.telemetry_export_stream` |
 | `BootstrapConfig`         | `bootstrap`          | 本地默认身份和需要 seed 的 API keys                                                      |
 
 ### S3 兼容对象存储

@@ -57,7 +57,7 @@ export async function startWorkers(
     const existing = retiring.get(session.id);
     if (existing) return existing;
     session.stop();
-    const result = session.close().finally(() => {
+    const result = session.close().finally(() => { void api.telemetry?.close(session.id); }).finally(() => {
       ctx.ccrv2.forget(session.id);
       sessions.delete(session.id);
       api.assignments.delete(session.id);

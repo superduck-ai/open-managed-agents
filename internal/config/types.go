@@ -38,6 +38,7 @@ type Config struct {
 	CodeSession            CodeSessionConfig         `yaml:"code_session"`
 	Observability          ObservabilityConfig       `yaml:"observability"`
 	Webhook                WebhookConfig             `yaml:"webhook"`
+	TelemetryExport        TelemetryExportConfig     `yaml:"telemetry_export"`
 	Vault                  VaultConfig               `yaml:"vault"`
 	Bootstrap              BootstrapConfig           `yaml:"bootstrap"`
 }
@@ -148,11 +149,12 @@ type WebhookStreamConfig struct {
 }
 
 type NATSConfig struct {
-	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
-	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
-	URL               string                  `yaml:"url"`
-	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
-	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
+	WebhookStream         WebhookStreamConfig     `yaml:"webhook_stream"`
+	TelemetryExportStream WebhookStreamConfig     `yaml:"telemetry_export_stream"`
+	WorkerEventStream     WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL                   string                  `yaml:"url"`
+	ConnectTimeout        time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout          time.Duration           `yaml:"drain_timeout"`
 }
 
 type AuthConfig struct {
@@ -258,11 +260,7 @@ type CodeSessionConfig struct {
 }
 
 type ObservabilityConfig struct {
-	Enabled bool `yaml:"enabled"`
-	// ContentCaptureEnabled defaults to true. It authorizes prompt originals,
-	// model output, and tool input/output payloads to enter the observability
-	// store. Set false to keep structural telemetry only (spans, durations,
-	// tokens, tool names).
+	Enabled               bool                    `yaml:"enabled"`
 	ContentCaptureEnabled bool                    `yaml:"content_capture_enabled"`
 	OTLP                  ObservabilityOTLPConfig `yaml:"otlp"`
 	Backend               string                  `yaml:"backend"`
@@ -273,7 +271,6 @@ type OpenObserveConfig struct {
 	BaseURL      string                   `yaml:"base_url"`
 	Organization string                   `yaml:"organization"`
 	LogsStream   string                   `yaml:"logs_stream"`
-	TracesStream string                   `yaml:"traces_stream"`
 	Ingestion    BackendCredentialsConfig `yaml:"ingestion"`
 	Query        BackendQueryConfig       `yaml:"query"`
 }
@@ -300,6 +297,15 @@ type WebhookConfig struct {
 	Timeout             time.Duration `yaml:"timeout"`
 	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`
 	MaxAttempts         int           `yaml:"max_attempts"`
+	AllowInsecure       bool          `yaml:"allow_insecure"`
+}
+
+type TelemetryExportConfig struct {
+	WorkerEnabled       bool          `yaml:"worker_enabled"`
+	Concurrency         int           `yaml:"concurrency"`
+	Timeout             time.Duration `yaml:"timeout"`
+	MaxAttempts         int           `yaml:"max_attempts"`
+	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`
 	AllowInsecure       bool          `yaml:"allow_insecure"`
 }
 

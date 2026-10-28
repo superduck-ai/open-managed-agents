@@ -76,13 +76,14 @@ func TestWebhookConsumePanicRecoveryAndRedelivery(t *testing.T) {
 	var record struct {
 		Level   string `json:"level"`
 		Message string `json:"msg"`
+		Queue   string `json:"queue"`
 		Slot    int    `json:"consume_slot"`
 		Stack   string `json:"stack"`
 	}
 	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
 		t.Fatal(err)
 	}
-	if record.Level != "ERROR" || record.Message != "webhook message processing panicked" || record.Slot != 0 || record.Stack == "" {
+	if record.Level != "ERROR" || record.Message != "queued message processing panicked" || record.Queue != "webhook" || record.Slot != 0 || record.Stack == "" {
 		t.Fatalf("invalid panic record: level=%s message=%s slot=%d stack_bytes=%d", record.Level, record.Message, record.Slot, len(record.Stack))
 	}
 	if bytes.Contains(output.Bytes(), []byte("private-credential-must-not-be-logged")) {
@@ -110,10 +111,10 @@ func TestWebhookConsumeConfiguredConcurrency(t *testing.T) {
 			q.consumer = tracked
 			worker := runtimeTestWorker(t, q, store, cfg)
 			runtime := newWorkerRuntime(t.Context(), worker)
-			if len(runtime.sessions) != limit || runtime.transport.MaxIdleConns != limit || runtime.transport.MaxIdleConnsPerHost != limit || runtime.transport.MaxConnsPerHost != limit {
+			if runtime.Slots() != limit || runtime.transport.MaxIdleConns != limit || runtime.transport.MaxIdleConnsPerHost != limit || runtime.transport.MaxConnsPerHost != limit {
 				t.Fatal("HTTP limits do not match concurrency")
 			}
-			runtime.stop()
+			runtime.Stop()
 			stop, err := worker.Start(t.Context())
 			if err != nil {
 				t.Fatal(err)

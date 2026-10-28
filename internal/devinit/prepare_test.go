@@ -117,12 +117,18 @@ func TestPrepareLocalCreatesBrainConfigAndStableKeys(t *testing.T) {
 	if !cfg.CodeSession.UpstreamProxyMITMEnabled || cfg.CodeSession.UpstreamProxyCAKeyFile != filepath.Join(root, ".run", "secrets", "upstream-proxy-ca-key.pem") {
 		t.Fatal("fresh config must enable MITM with its generated stable CA key")
 	}
+	if !cfg.CodeSession.UpstreamProxyDisableSSRFProtection {
+		t.Fatal("fresh local config must support Fake-IP DNS")
+	}
 	if cfg.EnvironmentRunner.AgentMode != "brain" || cfg.Vault.MasterKey.Local.Kek != "" {
 		t.Fatal("fresh config must use Brain and a generated local KEK")
 	}
 	spec, err := LoadSpec(filepath.Join(root, ".run", "dev-init.yaml"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !spec.LocalOpenObserve {
+		t.Fatal("fresh local environment must enable observability")
 	}
 	if spec.ModelProviders != filepath.Join(shared, "model-providers.yaml") || spec.FixedSecretsDir != filepath.Join(root, ".run", "secrets") {
 		t.Fatalf("unexpected prepared input paths: %+v", spec)
@@ -203,7 +209,7 @@ func TestPrepareLocalSharesProviderInputsAcrossWorktrees(t *testing.T) {
 	}
 }
 
-func TestPrepareLocalPreservesExplicitMITMDisable(t *testing.T) {
+func TestPrepareLocalPreservesExplicitProxySettings(t *testing.T) {
 	root, shared := prepareTestRepo(t), t.TempDir()
 	if err := prepareLocal(root, shared); err != nil {
 		t.Fatal(err)
@@ -214,6 +220,7 @@ func TestPrepareLocalPreservesExplicitMITMDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	contents := strings.Replace(string(data), "upstream_proxy_mitm_enabled: true", "upstream_proxy_mitm_enabled: false", 1)
+	contents = strings.Replace(contents, "upstream_proxy_disable_ssrf_protection: true", "upstream_proxy_disable_ssrf_protection: false", 1)
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -226,5 +233,8 @@ func TestPrepareLocalPreservesExplicitMITMDisable(t *testing.T) {
 	}
 	if cfg.CodeSession.UpstreamProxyMITMEnabled {
 		t.Fatal("existing explicit MITM disable must be preserved")
+	}
+	if cfg.CodeSession.UpstreamProxyDisableSSRFProtection {
+		t.Fatal("existing explicit SSRF protection must be preserved")
 	}
 }

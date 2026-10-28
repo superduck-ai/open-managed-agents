@@ -15,7 +15,7 @@ type healthcheck struct {
 type composeService struct {
 	Image       string            `json:"image"`
 	Ports       []string          `json:"ports"`
-	Healthcheck healthcheck       `json:"healthcheck"`
+	Healthcheck *healthcheck      `json:"healthcheck,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
 	Command     []string          `json:"command,omitempty"`
 	Volumes     []string          `json:"volumes,omitempty"`
@@ -27,7 +27,7 @@ type composeSpec struct {
 
 func service(image string, port int, check string) *composeService {
 	return &composeService{Image: image, Ports: []string{fmt.Sprintf("127.0.0.1::%d", port)},
-		Healthcheck: healthcheck{Test: []string{"CMD-SHELL", check}, Interval: "2s", Timeout: "2s", Retries: 45}}
+		Healthcheck: &healthcheck{Test: []string{"CMD-SHELL", check}, Interval: "2s", Timeout: "2s", Retries: 45}}
 }
 
 func dependencySpec(images map[string]string) composeSpec {
@@ -35,6 +35,9 @@ func dependencySpec(images map[string]string) composeSpec {
 		"postgres": service(images["postgres"], 5432, "pg_isready -U verify -d verify"),
 		"redis":    service(images["redis"], 6379, "redis-cli ping"),
 		"minio":    service(images["minio"], 9000, "mc ready local"),
+	}
+	if image := images["openobserve"]; image != "" {
+		services["openobserve"] = &composeService{Image: image, Ports: []string{"127.0.0.1::5080"}, Environment: map[string]string{"ZO_ROOT_USER_EMAIL": "verify@oma.local", "ZO_ROOT_USER_PASSWORD": "Verify-Be-OpenObserve-Local-Only9!", "ZO_DATA_DIR": "/data", "ZO_TELEMETRY": "false", "ZO_CPU_NUM": "2"}}
 	}
 	services["postgres"].Environment = map[string]string{"POSTGRES_USER": "verify", "POSTGRES_PASSWORD": "verify", "POSTGRES_DB": "verify"}
 	services["minio"].Command = []string{"server", "/data"}

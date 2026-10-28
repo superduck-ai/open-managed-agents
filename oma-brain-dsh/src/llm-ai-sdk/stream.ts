@@ -168,7 +168,8 @@ function closed(block: ContentBlock): ContentBlock {
 function tokenUsage(usage: LanguageModelV4Usage): TokenUsage | undefined {
   const input = usage.inputTokens;
   if (input.total === undefined && usage.outputTokens.total === undefined) return undefined;
-  return { inputTokens: input.noCache ?? input.total ?? 0, outputTokens: usage.outputTokens.total ?? 0,
+  const uncached = input.noCache !== undefined && input.noCache >= 0 ? input.noCache : input.total ?? 0;
+  return { inputTokens: uncached, outputTokens: usage.outputTokens.total ?? 0,
     ...(input.cacheRead !== undefined ? { cacheReadTokens: input.cacheRead } : {}),
     ...(input.cacheWrite !== undefined ? { cacheWriteTokens: input.cacheWrite } : {}) };
 }

@@ -21,6 +21,7 @@ import { McpTunnelDetailPage } from '../features/mcp-tunnels/McpTunnelDetailPage
 import { OrganizationSettingsPage } from '../features/settings/OrganizationSettingsPage';
 import { WorkspaceApiKeysPage } from '../features/settings/WorkspaceApiKeysPage';
 import { WorkspaceWebhooksPage } from '../features/settings/WorkspaceWebhooksPage';
+import { WorkspaceTelemetryPage } from '../features/telemetry-destinations/WorkspaceTelemetryPage';
 import { WorkbenchPage } from '../features/workbench/WorkbenchPage';
 import { normalizeReturnTo } from '../shared/auth/redirects';
 
@@ -493,6 +494,12 @@ const webhooksRoute = createRoute({
   component: () => <WorkspaceSettingsRedirect resource="webhooks" />,
 });
 
+const telemetryRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'telemetry',
+  component: () => <WorkspaceSettingsRedirect resource="telemetry" />,
+});
+
 const settingsWorkspaceMcpTunnelsRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'settings/workspaces/$workspaceId/mcp-tunnels',
@@ -527,6 +534,12 @@ const settingsCostRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: 'settings/cost',
   component: OrganizationSettingsPage,
+});
+
+const settingsWorkspaceTelemetryRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'settings/workspaces/$workspaceId/telemetry',
+  component: WorkspaceTelemetryPage,
 });
 
 const settingsOrganizationRoute = createRoute({
@@ -642,11 +655,13 @@ const routeTree = rootRoute.addChildren([
       privacyControlsRoute,
       securityRoute,
       webhooksRoute,
+      telemetryRoute,
       settingsWorkspaceMcpTunnelsRoute,
       settingsWorkspaceMcpTunnelDetailRoute,
       tagsRoute,
       settingsWorkspaceKeysRoute,
       settingsWorkspaceWebhooksRoute,
+      settingsWorkspaceTelemetryRoute,
     ]),
     settingsOrganizationRoute,
     settingsCostRoute,

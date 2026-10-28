@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { TelemetryDestinationsPage } from '../telemetry-destinations/TelemetryDestinationsPage';
 import { useLocation, useNavigate } from '@tanstack/react-router';
 import { Copy, Save, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react';
@@ -93,6 +94,7 @@ export function OrganizationSettingsPage({ section = 'organization' }: { section
       {resolvedSection === 'members' ? <OrganizationMembersPage /> : null}
       {resolvedSection === 'workspaces' ? <WorkspacesSettingsPage /> : null}
       {resolvedSection === 'cost' ? <OrganizationCostSettings /> : null}
+      {resolvedSection === 'telemetry' ? <TelemetryDestinationsPage /> : null}
       {resolvedSection === 'retired' ? <RetiredConsolePage organizationSettings /> : null}
     </SettingsShell>
   );

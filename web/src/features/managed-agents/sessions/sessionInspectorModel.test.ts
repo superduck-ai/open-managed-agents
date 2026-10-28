@@ -44,10 +44,9 @@ describe('session inspector event order', () => {
     );
   });
 
-  test('opens trace deep links in the traces tab and clears the trace when leaving it', () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test?trace_id=trace_1');
-
-    expect(readSessionInspectorTab()).toBe('traces');
+  test('restores the native trajectory inspector tab', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test?inspector=trajectory');
+    expect(readSessionInspectorTab()).toBe('trajectory');
     expect(sessionInspectorTabHref('events')).toBe('/workspaces/default/sessions/sesn_test?inspector=events');
   });
 

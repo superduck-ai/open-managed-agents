@@ -109,12 +109,12 @@ func (o *responseObservation) mergeChatUsage(usage *chatUsage) {
 		return
 	}
 	cached := *usage.PromptDetails.CachedTokens
-	if cached < 0 || (usage.PromptTokens != nil && cached > *usage.PromptTokens) {
+	if cached < 0 {
 		o.malformed = true
 		return
 	}
 	o.result.Usage.CacheReadInputTokens = usage.PromptDetails.CachedTokens
-	if usage.PromptTokens != nil {
+	if cached <= *usage.PromptTokens {
 		uncached := *usage.PromptTokens - cached
 		o.result.Usage.InputTokens = &uncached
 	}

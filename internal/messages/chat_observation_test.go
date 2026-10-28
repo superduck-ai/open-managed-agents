@@ -43,7 +43,7 @@ func TestChatObservationRejectsInvalidStreams(t *testing.T) {
 		{"filtered", chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"content":"x"},"finish_reason":"content_filter"}]}`) + chatFrame(`[DONE]`), "invalid_response"},
 		{"tool index", chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"tool_calls":[{"index":-1}]}}]}`), "invalid_response"},
 		{"error", chatFrame(`{"error":{"message":"denied"}}`), "provider_error"},
-		{"cache", chatFrame(`{"usage":{"prompt_tokens":1,"prompt_tokens_details":{"cached_tokens":2}}}`), "invalid_response"},
+		{"cache", chatFrame(`{"usage":{"prompt_tokens":1,"completion_tokens":1,"prompt_tokens_details":{"cached_tokens":-1}}}`), "invalid_response"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			observation := observeChat(t, test.body, 1)
@@ -73,6 +73,21 @@ func TestChatObservationFragmentedToolsAndUsage(t *testing.T) {
 		if result.ToolUses[0].ID != "call_b" || string(result.ToolUses[1].Input) != `{"command":"pwd"}` || result.ToolUses[1].ID != "call_a" {
 			t.Fatalf("tools=%+v", result.ToolUses)
 		}
+	}
+}
+
+func TestChatObservationCacheReadBeyondPromptTokens(t *testing.T) {
+	body := chatFrame(`{"id":"chat_cached","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"fc_call_1","type":"function","function":{"name":"Write","arguments":""}}]},"finish_reason":null}]}`) +
+		chatFrame(`{"id":"chat_cached","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"file_path\":\"/tmp/x\"}"}}]},"finish_reason":null}]}`) +
+		chatFrame(`{"id":"chat_cached","choices":[{"index":0,"delta":{"content":""},"finish_reason":"tool_calls"}]}`) +
+		chatFrame(`{"id":"chat_cached","choices":[],"usage":{"prompt_tokens":153,"completion_tokens":37,"total_tokens":190,"prompt_tokens_details":{"cached_tokens":7680}}}`) + chatFrame(`[DONE]`)
+	observation := observeChat(t, body, 1)
+	result := observation.result
+	if result.ErrorType != "" || len(result.ToolUses) != 1 || result.ToolUses[0].InputRejected {
+		t.Fatalf("result=%+v", result)
+	}
+	if *result.Usage.InputTokens != 153 || *result.Usage.OutputTokens != 37 || *result.Usage.CacheReadInputTokens != 7680 {
+		t.Fatalf("usage=%+v", result.Usage)
 	}
 }
 

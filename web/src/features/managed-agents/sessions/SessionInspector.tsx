@@ -87,7 +87,7 @@ import { SessionGitResources } from './SessionGitResources';
 import { useSessionFileMetadata, type SessionFileSummary } from './sessionFiles';
 import { useSessionFileDownload } from './useSessionFileDownload';
 import { sessionEventProcessedTimestamp, sessionEventTimestamp } from './sessionTraceModel';
-import { SessionTraceObservability } from '../../observability/traces/SessionTraceObservability';
+import { SessionTrajectory } from '../../observability/SessionTrajectory';
 
 const SESSION_INSPECTOR_DETAIL_DEFAULT_HEIGHT = 360;
 const SESSION_INSPECTOR_DETAIL_MIN_HEIGHT = 120;
@@ -318,10 +318,12 @@ export function SessionInspector({
             onSelectLane={onSelectLane}
           />
         </TabsContent>
-        <TabsContent value="traces" className="mt-0 min-h-0 min-w-0 overflow-hidden">
-          <ScrollArea className="[&_[data-slot=scroll-area-content]]:!w-full [&_[data-slot=scroll-area-content]]:!min-w-0 [&_[data-slot=scroll-area-content]]:!max-w-full">
-            <SessionTraceObservability sessionId={session.id} compact />
-          </ScrollArea>
+        <TabsContent value="trajectory" className="mt-0 min-h-0 min-w-0 overflow-hidden">
+          <SessionTrajectory
+            sessionId={session.id}
+            threadId={activeLane || undefined}
+            laneLabel={showToolScope ? activeToolLane?.label : undefined}
+          />
         </TabsContent>
       </Tabs>
     </aside>
@@ -2076,7 +2078,7 @@ function inspectorTabLabel(tab: SessionInspectorTab, msg: ReturnType<typeof useI
     tools: msg('managedAgents.sessions.inspector.tools', 'Tools'),
     resources: msg('managedAgents.sessions.detail.resourcesTab', 'Resources'),
     threads: msg('managedAgents.sessions.inspector.threads', 'Threads'),
-    traces: msg('observability.tab.traces', 'Traces'),
+    trajectory: msg('trajectory.title', 'Trajectory'),
   };
   return labels[tab];
 }

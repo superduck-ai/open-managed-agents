@@ -103,6 +103,10 @@ export class Backend {
   readonly claimRequests: { workerId: string; blockMs: number }[] = [];
   readonly releases: Payload[] = [];
   claimToken = "test-claim-token";
+  telemetryRequests = 0;
+  telemetryStatus = 503;
+  telemetryRecords: Payload[] = [];
+  traceSpans: Payload[] = [];
   registrations = 0;
   connections = 0;
   sandboxCount = 0;
@@ -201,11 +205,25 @@ export class Backend {
     const body: Payload = request.method === "GET" ? {} : await request.json();
     const json = (data: unknown, status = 200) =>
       Response.json(data, { status });
+    if (path === `/v1/code/sessions/${this.a.session_id}/worker/otlp/v1/logs`) {
+      this.telemetryRequests++;
+      for (const resource of body.resourceLogs ?? []) {
+        for (const scope of resource.scopeLogs ?? []) this.telemetryRecords.push(...(scope.logRecords ?? []));
+      }
+      return json({}, this.telemetryStatus);
+    }
+    if (path === `/v1/code/sessions/${this.a.session_id}/worker/otlp/v1/traces`) {
+      expect(request.headers.get("Authorization")).toBe(`Bearer ${this.a.ingress_token}`);
+      for (const resource of body.resourceSpans ?? []) {
+        for (const scope of resource.scopeSpans ?? []) this.traceSpans.push(...(scope.spans ?? []));
+      }
+      return json({});
+    }
     if (path === `/v1/code/sessions/${this.a.session_id}/worker/register`) {
       expect(request.headers.get("Authorization")).toBe(`Bearer ${this.a.ingress_token}`);
       this.registrations++;
       this.timeline.push({ type: "worker.register" });
-      return json({ worker_epoch: String(this.a.worker_epoch) });
+      return json({ worker_epoch: String(this.a.worker_epoch), observability_enabled: this.a.observability_enabled === true });
     }
     if (path === `/v2/sessions/${this.a.session_id}`) return json({session_context: {
       runtime_tools: this.a.launch.tools, mcp_config: this.a.external_mcp_config ?? {},
@@ -272,7 +290,7 @@ export class Backend {
         this.registrations++;
         this.timeline.push({ type: "worker.register" });
         expect(body).toEqual({});
-        return json({ worker_epoch: String(this.a.worker_epoch) });
+        return json({ worker_epoch: String(this.a.worker_epoch), observability_enabled: this.a.observability_enabled === true });
       }
       if (path.endsWith("/events/stream")) {
         expect(url.searchParams.get("worker_epoch")).toBe(String(this.a.worker_epoch));

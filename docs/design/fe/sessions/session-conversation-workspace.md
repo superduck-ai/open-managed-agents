@@ -85,7 +85,7 @@ Inspector header 与 tab 控件共用 `32px` 总高度。外壳始终使用 pane
 3. **Tools**：展示 Name、Permission、Calls、Failed、p50，并提供工具搜索和 `All threads / Current agent / Current thread` Scope；`Current agent` 只按 Lane 的既有 `group` 归属筛选，不按名称猜测。配置工具按 Built-in、Custom 和 MCP Server 分组，未出现在当前 Agent 配置中的实际调用单列为 `Called, not configured`；只有主 Agent 配置可用时才展示其 `Configured on`。默认 detail 是带 `64×64` CSS conic-gradient 结果环的 Overview；Failed 非零时同时展示失败率，Failed/Denied 为零时使用国际化 `none`，Completed 始终保留数字。选择工具后展示调用表，调用行与转录的选择和悬浮状态联动，清除选择后回到 Overview。调用表仅在存在审批时展示 Waited，仅在当前 Scope 跨多个线程时展示 Thread。p50 仅统计已完成或失败的调用，优先使用有效的执行耗时（包括明确的 `0`），缺失或无效时才使用确认（若有）或调用至结果事件的时间差，与调用表保持一致。Total time in tools、Execution time 和 Waiting for approval 对同一线程内重叠的调用区间做并集合并，不重复累计同一 Tool Batch 中的并行墙钟时间；不同线程分别累计。
 4. **Resources**：提供常驻资源筛选，按 Path/Size 展示 Session 挂载资源（File 用挂载路径与文件元数据；Memory Store 用快照 `name`/`memory_store_id`，Size 为 `—`）。可通过 `+ Resource → File` 挂载已有文件；Memory Store 在创建 Session/Deployment 表单中挂载，Inspector 只读展示。当前产品不展示 GitHub Repository 入口。
 5. **Threads**：展示有真实数据来源的 Thread、Status、Context；在后端提供线程级费用前不展示 Cost 占位列。detail 始终绑定 active thread，不提供本地关闭态。detail 显示 Agent、Model、Effort 和 `140px`、step-after area 的 Context usage 图；图上 model-request point hover 与 Transcript/Events 使用同一个 event ID 联动。单时间点只显示一个 X 轴标签，短会话显示秒，避免重复时间标签叠加。
-6. **Traces**：仅在 `observability.enabled=true` 时查询当前 Session 的 OpenObserve traces。选中 trace 后使用 `trace_id` 查询参数保存详情状态；返回列表或切换到其他 Inspector 页签时删除该参数。observability 路由返回 404 时展示 “Observability is not enabled”，不使用通用加载错误。
+6. **Trajectory**：一个 OMA Session 只有一条轨迹，跟随会话页当前泳道 `activeLane`：主线程泳道（lane 0）显示该 Session 的 code session，子 agent 泳道显示对应 `sthr_*` 线程，切换泳道、线程 tab 跳转或 minimap 选择时同步切换；不再出现轨迹列表、返回按钮或 `cse_*`。从 OpenObserve 查询 DSH 原生 Session v4 事件，直接使用 Harness 的 ConversationNodeAssembler 和 TrajectoryView 渲染。主线程存在多个 code session 时以“运行”选择器按时间切换，默认最新一段；首次返回的分段会被固定，后续轮询不会因新分段出现而跳段。详情按 seq 增量刷新，只追加服务端已通过连续性和冲突校验的事件；连续三次请求失败后暂停自动查询，保留已加载内容并允许手动重试。缺少工作区时展示占位，查询错误使用不含存储产品名的提示。实现边界和验收见 [DSH 可观测性](../../be/ccrv2/dsh-observability.md)。
 
 事件详情标题栏按“事件类型与标题”和“ID、相对时间与关闭操作”两组组织，空间不足时自然换行；为标题保留可读宽度，常见事件类型不做多余截断，长类型通过原有提示提供全值。复制按钮的可访问名称包含完整事件ID并按当前语言显示，视觉摘要不改变复制值。标题栏、消息时间及状态标签遵循规范最小字号，中点分隔改由间距组织。Raw/Deltas 在中文显示为“原始数据 / 增量帧”，缺少当前标签页实时帧时继续禁用增量视图，并以本地化提示说明；不从历史伪造帧。event_start 的预览只展示内部原始事件类型，不重复起始前缀。
 
@@ -241,3 +241,8 @@ Inspector详情正文和ScrollArea内容均受面板宽度约束，长事件JSON
 上下文用量图仅有一个数据点时直接显示标记，不能依赖悬停才能看见已有用量；继续使用真实事件时间，不补造时间跨度。多点路径、悬停联动和事件选择合同保持。session-inspector-details-review-2026-10-26记录15组隔离样本；单点补充修复后4组线程截图已重采，事件JSON已滚动到末尾，整页仍待联合验收。
 
 Inspector内嵌Traces时，外层ScrollArea内容宽度约束在面板内，不能由稠密表格的最小宽度撑开。筛选、时间范围和刷新在面板内换行，表格保留局部横向滚动；节点详情继续复用共享TraceDetailView与SpanDetailPanel，不创建独立版本。session-traces-joined-review-2026-10-26记录8组完整Inspector隔离对比及节点/末列观察；状态搜索、Escape焦点恢复、详情关闭与返回列表已复核。样本仅使用模拟GET，不证明真实链路采集或后端验收。
+
+
+### 窄屏默认面板
+
+Session 工作区首次进入窄屏或从双栏缩至单栏时，自动收起 Inspector，优先展示对话和输入区。窄屏内仍可通过工具栏或事件选择显式打开 Inspector；在同一窄屏区间调整宽度不打断该操作。切换布局保留对话 DOM、草稿和滚动状态，恢复宽屏不自动重新打开已收起的 Inspector。

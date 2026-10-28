@@ -16,6 +16,7 @@ export const settingsSections = [
   'members',
   'workspaces',
   'cost',
+  'telemetry',
   'api-keys',
 ] as const;
 export type SettingsPageSection = (typeof settingsSections)[number] | 'retired';

@@ -163,6 +163,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
+	attachTraceContext(r, events)
 	prepared, err := h.eventPayloads.PreparePublic(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, events)
 	if err != nil {
 		return internalError("Could not prepare initial events", err)
@@ -177,7 +178,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if len(events) == 0 {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil, created.CreatedAt)
 	} else {
-		persisted = eventpayload.RestoreCreatedPublic(persisted, events)
+		persisted, err = eventpayload.RestoreCreatedPublic(persisted, events)
+		if err != nil {
+			return internalError("Could not create session", fmt.Errorf("restore session %q events: %w", sessionID, err))
+		}
 		h.publishSessionEvents(r.Context(), persisted)
 		h.enqueueWebhooksForSessionEvents(r.Context(), created.WorkspaceUUID, created.ExternalID, persisted)
 	}
@@ -663,6 +667,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if err := h.validateMessageFileSources(r.Context(), session, events); err != nil {
 		return err
 	}
+	attachTraceContext(r, events)
 	var outcomeEvaluations json.RawMessage
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations

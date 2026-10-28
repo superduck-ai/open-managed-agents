@@ -83,6 +83,7 @@ describe('Settings feature pages', () => {
       '/settings/members',
       '/settings/workspaces',
       '/settings/cost',
+      '/settings/telemetry',
     ]);
   });
 });

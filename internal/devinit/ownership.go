@@ -30,18 +30,43 @@ func checkStackOwnership(ctx context.Context, binding EnvBinding) error {
 }
 
 func checkDockerResources(ctx context.Context, binding EnvBinding, kind string) error {
+	resources, err := listDockerResources(ctx, binding, kind)
+	if err != nil {
+		return err
+	}
+	for _, resource := range resources {
+		if err := checkDockerResource(ctx, binding, kind, resource); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func listDockerResources(ctx context.Context, binding EnvBinding, kind string) ([]string, error) {
 	args := []string{kind, "ls", "-q", "--filter", "label=com.docker.compose.project=" + composeProjectName(binding)}
 	if kind == "container" {
 		args = append(args, "--all")
 	}
 	output, err := exec.CommandContext(ctx, "docker", args...).Output()
 	if err != nil {
-		return fmt.Errorf("list %s resources for %s: %w", kind, binding.Name, err)
+		return nil, fmt.Errorf("list %s resources for %s: %w", kind, binding.Name, err)
 	}
-	for _, resource := range strings.Fields(string(output)) {
-		if err := checkDockerResource(ctx, binding, kind, resource); err != nil {
+	return strings.Fields(string(output)), nil
+}
+
+func checkStackRemoved(ctx context.Context, binding EnvBinding) error {
+	var remaining []string
+	for _, kind := range []string{"container", "volume", "network"} {
+		resources, err := listDockerResources(ctx, binding, kind)
+		if err != nil {
 			return err
 		}
+		for _, resource := range resources {
+			remaining = append(remaining, kind+" "+resource)
+		}
+	}
+	if len(remaining) > 0 {
+		return fmt.Errorf("compose project %s still has resources after teardown: %s", composeProjectName(binding), strings.Join(remaining, ", "))
 	}
 	return nil
 }

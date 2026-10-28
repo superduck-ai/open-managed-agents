@@ -29,7 +29,7 @@ import {
 } from '../agents/tools/model';
 import { buildSessionTranscriptBlocks } from './sessionTranscriptModel';
 
-export const SESSION_INSPECTOR_TABS = ['session', 'events', 'tools', 'resources', 'threads', 'traces'] as const;
+export const SESSION_INSPECTOR_TABS = ['session', 'events', 'tools', 'resources', 'threads', 'trajectory'] as const;
 
 export type SessionInspectorTab = (typeof SESSION_INSPECTOR_TABS)[number];
 
@@ -37,7 +37,6 @@ export function readSessionInspectorTab(): SessionInspectorTab {
   if (typeof window === 'undefined') return 'session';
   const search = new URLSearchParams(window.location.search);
   const value = search.get('inspector');
-  if (!value && search.has('trace_id')) return 'traces';
   return SESSION_INSPECTOR_TABS.find((tab) => tab === value) ?? 'session';
 }
 
@@ -46,7 +45,6 @@ export function sessionInspectorTabHref(tab: SessionInspectorTab) {
   const url = new URL(window.location.href);
   if (tab === 'session') url.searchParams.delete('inspector');
   else url.searchParams.set('inspector', tab);
-  if (tab !== 'traces') url.searchParams.delete('trace_id');
   return `${url.pathname}${url.search}${url.hash}`;
 }
 

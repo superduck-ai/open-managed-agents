@@ -314,7 +314,7 @@ export function registerManagedAgentsResourceTests() {
     expect(within(inspectorTabs).getByRole('tab', { name: 'Tools' })).toBeTruthy();
     expect(within(inspectorTabs).getByRole('tab', { name: 'Resources' })).toBeTruthy();
     expect(within(inspectorTabs).getByRole('tab', { name: 'Threads' })).toBeTruthy();
-    expect(within(inspectorTabs).getByRole('tab', { name: 'Traces' })).toBeTruthy();
+    expect(within(inspectorTabs).getByRole('tab', { name: 'Trajectory' })).toBeTruthy();
     expect(inspector.className).toContain('overflow-hidden');
     expect(inspectorTabs.className).toContain('h-8');
     expect(inspectorTabs.className).toContain('overflow-x-auto');
@@ -759,86 +759,17 @@ export function registerManagedAgentsResourceTests() {
     await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Delete session/i })).toBeNull());
   });
 
-  test('keeps the selected session trace in the URL', async () => {
+  test('opens the session trajectory tab for the active lane without listing trajectories', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
-    mockManagedResourceApi();
-    const managedFetch = globalThis.fetch;
-    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = requestUrl(input);
-      if (url === '/api/organizations/org_test/observability/dashboard') {
-        return new Response(JSON.stringify({ version: 1, tabs: [], queries: [] }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      if (url.startsWith('/api/organizations/org_test/observability/traces/trace_session_1?')) {
-        return new Response(
-          JSON.stringify({
-            trace_id: 'trace_session_1',
-            data_as_of: '2026-08-17T00:00:00Z',
-            truncated: false,
-            spans: [
-              {
-                span_id: 'span_1',
-                parent_span_id: '',
-                kind: 'server',
-                name: 'claude-code interaction',
-                start_time: '2026-08-17T00:00:00Z',
-                end_time: '2026-08-17T00:00:01Z',
-                duration_ms: 1000,
-                status: 'ok',
-                attributes: {},
-              },
-            ],
-          }),
-          { headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-      if (url.startsWith('/api/organizations/org_test/observability/traces?')) {
-        return new Response(
-          JSON.stringify({
-            data_as_of: '2026-08-17T00:00:00Z',
-            has_more: false,
-            items: [
-              {
-                trace_id: 'trace_session_1',
-                session_id: 'sesn_one123456',
-                start_time: '2026-08-17T00:00:00Z',
-                duration_ms: 1000,
-                tokens: 42,
-                llm_calls: 1,
-                tool_calls: 0,
-                status: 'ok',
-              },
-            ],
-          }),
-          { headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-      return managedFetch(input, init);
-    }) as unknown as typeof fetch;
-
+    const api = mockManagedResourceApi();
     renderManagedAgentsPage('sessions');
-    fireEvent.click(await screen.findByRole('tab', { name: 'Traces' }));
-    fireEvent.click(await screen.findByText('trace_session_1'));
-
-    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBe('trace_session_1'));
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBeNull());
-
-    fireEvent.click(screen.getByText('trace_session_1'));
-    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBe('trace_session_1'));
-    fireEvent.click(within(screen.getByTestId('session-inspector')).getByRole('tab', { name: 'Session' }));
-    await waitFor(() => expect(new URL(window.location.href).searchParams.get('trace_id')).toBeNull());
-  });
-
-  test('shows the disabled state for session traces when observability is off', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_one123456');
-    mockManagedResourceApi();
-    renderManagedAgentsPage('sessions');
-
-    fireEvent.click(await screen.findByRole('tab', { name: 'Traces' }));
-
-    expect(await screen.findByText('Observability is not enabled')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Trajectory' }));
+    const panel = await screen.findByRole('tabpanel');
+    expect(await within(panel).findByRole('heading', { name: /^Trajectory/ })).toBeTruthy();
+    expect(within(panel).queryByRole('button', { name: 'Back' })).toBeNull();
+    expect(panel.textContent).not.toContain('cse_');
+    expect(api.requests.some((request) => request.url.includes('/observability/trajectories?'))).toBe(false);
+    expect(new URL(window.location.href).searchParams.get('inspector')).toBe('trajectory');
   });
 
   test('sends messages and exposes session context through the six-tab inspector', async () => {

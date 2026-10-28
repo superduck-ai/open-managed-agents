@@ -51,68 +51,6 @@ const managedAgentsAuthContextValue: AuthContextValue = {
   logout: async () => undefined,
 };
 
-function mockObservabilityDashboard() {
-  return {
-    version: 1,
-    tabs: [
-      {
-        id: 'overview',
-        title_key: 'observability.tab.overview',
-        panels: [
-          {
-            id: 'overview.active_sessions',
-            title_key: 'observability.panel.overview.active_sessions',
-            render_type: 'stat',
-            unit: 'count',
-            query_ref: 'overview.active_sessions',
-            grid: { x: 0, y: 0, w: 2, h: 1 },
-            options: {},
-          },
-          {
-            id: 'overview.token_total',
-            title_key: 'observability.panel.overview.token_total',
-            render_type: 'stat',
-            unit: 'tokens',
-            query_ref: 'overview.token_total',
-            grid: { x: 4, y: 0, w: 2, h: 1 },
-            options: {},
-          },
-        ],
-      },
-      { id: 'model', title_key: 'observability.tab.model', panels: [] },
-      { id: 'tool', title_key: 'observability.tab.tool', panels: [] },
-    ],
-    queries: [
-      {
-        query_ref: 'overview.active_sessions',
-        variables: [
-          { name: 'start_time', type: 'time', required: true },
-          { name: 'end_time', type: 'time', required: true },
-          { name: 'agent_id', type: 'string', required: false },
-        ],
-      },
-      {
-        query_ref: 'overview.token_total',
-        variables: [
-          { name: 'start_time', type: 'time', required: true },
-          { name: 'end_time', type: 'time', required: true },
-          { name: 'agent_id', type: 'string', required: false },
-        ],
-      },
-    ],
-  };
-}
-
-function mockObservabilityPanelResult(queryRef: string) {
-  const current = queryRef === 'overview.token_total' ? 12345 : 3;
-  return {
-    query_ref: queryRef,
-    render_type: 'stat',
-    data_as_of: '2026-08-13T00:00:00.000Z',
-    data: { current, previous: 2, change_percent: 50 },
-  };
-}
-
 export function render(
   ui: Parameters<typeof testingLibrary.render>[0],
   options?: Parameters<typeof testingLibrary.render>[1],
@@ -770,17 +708,16 @@ export function mockAgentsApi(initialAgents: AgentFixture[], options: MockAgents
       return jsonResponse({ data: [], next_page: null });
     }
 
-    if (url === '/api/organizations/org_test/observability/dashboard' && method === 'GET') {
-      return jsonResponse(mockObservabilityDashboard());
+    if (url.startsWith('/api/organizations/org_test/observability/dashboards/') && method === 'GET') {
+      return jsonResponse(emptyObservabilityDashboard());
     }
 
-    if (url === '/api/organizations/org_test/observability/panels/query' && method === 'POST') {
-      const queryRef = typeof body?.query_ref === 'string' ? body.query_ref : 'overview.active_sessions';
-      return jsonResponse(mockObservabilityPanelResult(queryRef));
+    if (url.startsWith('/api/organizations/org_test/observability/trajectories/') && method === 'GET') {
+      return jsonResponse({ header: null, events: [], next_seq: -1, has_more: false, segment: '', segments: [] });
     }
 
-    if (url.startsWith('/api/organizations/org_test/observability/traces') && method === 'GET') {
-      return jsonResponse({ data_as_of: '2026-08-13T00:00:00.000Z', has_more: false, items: [] });
+    if (url.startsWith('/api/organizations/org_test/observability/trajectories') && method === 'GET') {
+      return jsonResponse({ next_offset: null, items: [] });
     }
 
     const sessionEventsMatch = url.match(/^\/v1\/sessions\/([^/]+)\/events\?beta=true/);
@@ -1553,6 +1490,18 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
     const headers = Object.fromEntries(new Headers(init?.headers).entries());
     const body = parseBody(init?.body);
     requests.push({ url, method, headers, body });
+
+    if (url.startsWith('/api/organizations/org_test/observability/dashboards/') && method === 'GET') {
+      return jsonResponse(emptyObservabilityDashboard());
+    }
+
+    if (url.startsWith('/api/organizations/org_test/observability/trajectories/') && method === 'GET') {
+      return jsonResponse({ header: null, events: [], next_seq: -1, has_more: false, segment: '', segments: [] });
+    }
+
+    if (url.startsWith('/api/organizations/org_test/observability/trajectories') && method === 'GET') {
+      return jsonResponse({ next_offset: null, items: [] });
+    }
 
     if (url.startsWith('/v1/agents?') && method === 'GET') {
       return jsonResponse({ data: resources.agents, next_page: null });
@@ -2370,5 +2319,17 @@ export function workspaceContextValue(workspaceId: string) {
     selectWorkspace: () => undefined,
     createWorkspace: async () => workspace,
     refreshWorkspaces: async () => undefined,
+  };
+}
+
+function emptyObservabilityDashboard() {
+  return {
+    tab: 'overview',
+    interval_ms: 3_600_000,
+    filter_options: [],
+    panels: [
+      { id: 'active_sessions', render: 'stat', unit: 'count', span: 3, data: { value: 0, previous: 0 } },
+      { id: 'session_activity', render: 'series', unit: 'count', span: 6, chart: 'bar', data: [] },
+    ],
   };
 }

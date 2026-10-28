@@ -50,6 +50,9 @@ func workerPayloadForPublicEvent(codeSessionID string, event db.SessionEvent) (j
 		if schema.SessionThreadID != "" {
 			payload["session_thread_id"] = schema.SessionThreadID
 		}
+		if trace := workerTraceContext(event); trace != nil {
+			payload["trace_context"] = trace
+		}
 		return marshalRaw(payload)
 	default:
 		if schema.UUID == "" {
@@ -839,4 +842,15 @@ func completedWorkerResultCandidate(at time.Time) publicPayloadCandidate {
 		"processed_at": formatTime(at),
 		"stop_reason":  map[string]any{"type": "end_turn"},
 	}, seedSuffix: "result:end_turn"}
+}
+
+func workerTraceContext(event db.SessionEvent) map[string]string {
+	if event.TraceParent == nil || *event.TraceParent == "" {
+		return nil
+	}
+	trace := map[string]string{"traceparent": *event.TraceParent}
+	if event.TraceState != nil && *event.TraceState != "" {
+		trace["tracestate"] = *event.TraceState
+	}
+	return trace
 }

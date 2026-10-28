@@ -87,6 +87,11 @@ func NewHandler(cfg config.Config, database *db.DB, logger *slog.Logger) *Handle
 	return h
 }
 
+func (h *Handler) WithTelemetryDestinations(destinations http.Handler) *Handler {
+	h.router.Mount("/telemetry_destinations", destinations)
+	return h
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.router.ServeHTTP(w, r)
 }

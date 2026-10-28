@@ -208,3 +208,14 @@
   - TypeScript SDK：`./node_modules/.bin/jest tests/api-resources/beta/files.test.ts --runInBand`
   - Python SDK：`.venv/bin/pytest tests/api_resources/beta/test_files.py -q`
 - 结束前停止所有为 E2E 启动的本地服务。
+
+## Cursor Cloud specific instructions
+
+Cloud Agent 启动时会拉起 PostgreSQL、Redis、三节点 NATS、MinIO、本机 `oma-server` 和 Vite。不要在这个环境里改用 `just dev-init`，除非已经准备好 `~/.oma-dev/model-providers.yaml`；当前启动使用未绑定的 `.run/config.yaml`。
+
+- API：`http://127.0.0.1:38080`，健康检查是 `/readyz` 和 `/healthz`。
+- 控制台：`http://127.0.0.1:5173`。
+- 种子 API key 是 `sk-ant-local-default`。`GET /v1/agents` 在未配置 LLM provider 时可用。
+- 控制台登录邮箱是 `admin@example.local`。未配置 SMTP 时，任意 6 位验证码都可以登录。
+- `GET /v1/models` 在配置 LLM provider 之前返回 503。这不阻塞 API 和控制台开发。
+- 普通单测是 `just test`。服务进程退出后，用 `just restart-server` 和 `just restart-web` 分别拉起 API 和 Vite；基础设施容器用 `docker compose up -d postgres redis nats nats-2 nats-3 minio`。

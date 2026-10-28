@@ -20,7 +20,7 @@ export function scopedAccount(
     ...account,
     effectiveOrganizationUuid: orgUuid,
     permissions:
-      access && access.organization.uuid === orgUuid
+      access?.source === 'platform_admin' && access.organization.uuid === orgUuid
         ? (account.permissions ?? [])
         : scopePermissions(memberships[0]?.role, workspace?.effective_role),
     memberships,

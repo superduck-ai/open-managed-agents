@@ -65,10 +65,10 @@ Handler 内部依次做三层校验：
    匹配失败返回 404。
 
 3. **动作权限** — `consoleWorkspaceScopeFromRequest` 对真实目标空间调用统一授权服务，
-   检查当前用户的 `Develop()` 能力；无权或空间已归档返回 403。此检查覆盖工作区 Key 的
+   通过 ResolvePrincipal 检查当前请求的 `UseResources()` 能力；无权或空间已归档返回 403。此检查覆盖工作区 Key 的
    列表、创建、更新和计数，在 `CreateConsoleAPIKey` 等 DB 操作前完成。
 
-通过校验后，handler 直接读取 `auth.Principal.UserUUID` 作为 `createdByUserUUID`，连同 org UUID、
+通过校验后，普通成员来源读取 `auth.Principal.UserUUID` 作为 `createdByUserUUID`，平台来源传 nil。连同 org UUID、
 workspace UUID、name 和 expires_at 一起传入 DB 层。这里不接受前端提交的创建者，也不使用
 `UserExternalID` 或 `user_...` 派生值。HTTP/resource 边界负责清理和校验这些 UUID 字符串，DB 层
 按调用契约直接绑定到 PostgreSQL 的 `uuid` 列，不再重复调用 `TrimSpace`、`parseDBUUID`，也不添加
@@ -173,6 +173,12 @@ db.GetAPIKey(keyHash)  →  SELECT ... FROM api_keys WHERE key_hash = $1
 
 ## #339 授权补充
 
-空间解析成功后，还需针对 URL 中的真实目标空间调用统一授权服务，并检查开发或管理 API Key 的能力。Billing 的新增权限规则由独立 PR 承接，本 PR 沿用既有资源能力，但必须先通过通用作用域和有效成员校验。全组织 Key 列表仅 Org Admin 可访问。
+空间解析成功后，还需针对 URL 中的真实目标空间调用统一授权服务，并检查开发或管理 API Key 的能力。Billing 的新增权限规则由独立 PR 承接，本 PR 沿用既有资源能力，但必须先通过通用作用域和有效组织访问校验（真实成员或可信平台来源）。全组织 Key 列表仅 Org Admin 可访问。
 
 Default 通过数据库 `is_default` 标记解析，不从名称猜测，不读取历史默认成员。Workspace Key 的有效性独立于创建者是否仍是组织成员；目标工作区归档后拒绝新业务请求。不能由 Key 的创建者信息推导组织管理权限。通用权限与兼容合同见 [组织与工作区通用权限](./workspace-permissions.md)。
+
+## 平台管理员目标组织访问（2026-10-28）
+
+可信平台来源在路径真实工作区经 ResolvePrincipal 验证后可管理 Key。created_by_user_uuid 为 nil，不把稳定平台账号或任意目标 Admin 写入成员创建者字段；普通来源继续使用真实成员 UUID。无需迁移，实际平台操作者由安全请求日志关联。
+
+完整权限及进入/退出合同见 [平台超级管理员设计](../platform-super-admin.md)。

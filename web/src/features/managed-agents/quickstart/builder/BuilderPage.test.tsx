@@ -91,6 +91,9 @@ test('template creates immediately; confirmed rename retains saved ID, instructi
   fireEvent.click(await screen.findByRole('button', { name: /Structured extractor/ }));
   await screen.findByRole('button', { name: 'Continue', exact: true });
   expect(writes(api.requests)).toHaveLength(1);
+  expect(screen.getByRole('group', { name: 'Saved result' }).textContent).toContain('Structured extractor');
+  expect(screen.getAllByRole('article', { name: 'User message' })).toHaveLength(1);
+  expect(screen.getByRole('link', { name: 'View configuration' }).textContent).toContain('Structured extractor');
   send('Change its name to New extractor name.');
   await screen.findByRole('button', { name: 'Confirm', exact: true });
   expect(writes(api.requests)).toHaveLength(1);

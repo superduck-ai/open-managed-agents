@@ -1,9 +1,9 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowUp, Square, Sparkles } from 'lucide-react';
+import { ArrowUp, ArrowRight, Square, Sparkles } from 'lucide-react';
 import { useI18n } from '../../../../shared/i18n';
-import { Button, ButtonLink } from '../../../../shared/ui/button';
+import { Button } from '../../../../shared/ui/button';
 import { Textarea } from '../../../../shared/ui/textarea';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../../shared/ui/card';
+import { Card, CardContent } from '../../../../shared/ui/card';
 import {
   MessageScroller,
   MessageScrollerContent,
@@ -12,7 +12,9 @@ import {
 } from '../../../../shared/ui/message-scroller';
 import { ManagedErrorAlert } from '../../components/common';
 import { errorMessage } from '../../utils';
-import { builderHistoryText, type BuilderMessage, type BuilderState } from './model';
+import type { BuilderState } from './model';
+import { BuilderHistory } from './BuilderHistory';
+import { BuilderInspector } from './BuilderInspector';
 import { useBuilder, type Builder } from './useBuilder';
 import { BuilderGate } from './BuilderGate';
 import { BuilderTest } from './BuilderTest';
@@ -52,36 +54,26 @@ export function BuilderPage({
       </>
     );
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-      <div className={`grid min-h-0 min-w-0 flex-1 gap-6 ${builderColumns(state)}`}>
-        <div className="flex min-h-0 min-w-0 flex-col">
+    <section className="mx-auto flex min-h-0 w-full min-w-0 max-w-[1440px] flex-1 flex-col gap-4">
+      <div className={`grid min-h-0 min-w-0 flex-1 gap-8 ${builderColumns(state)}`}>
+        <div className="flex min-h-0 min-w-0 flex-col pb-3">
           <MessageScrollerProvider autoScroll defaultScrollPosition="end">
             <MessageScroller className="min-h-0 flex-1">
-              <MessageScrollerViewport className="px-1 py-6">
-                <MessageScrollerContent className="mx-auto w-full max-w-3xl space-y-6">
-                  {state.messages.map((message, index) => (
-                    <BuilderMessageView key={index} message={message} pendingToolId={state.gate?.id} />
-                  ))}
+              <MessageScrollerViewport className="px-1 pt-8 pb-6">
+                <MessageScrollerContent className="mx-auto w-full max-w-[680px] space-y-6">
+                  <BuilderHistory messages={state.messages} pendingToolId={state.gate?.id} />
                   <BuilderStatus builder={builder} />
-                  {state.gate && !state.operation && (
-                    <Card>
-                      <CardContent>
-                        <BuilderGate
-                          key={state.gate.id}
-                          builder={builder}
-                          workspaceId={workspaceId}
-                          orgUuid={orgUuid}
-                        />
-                      </CardContent>
-                    </Card>
-                  )}
+                  <BuilderActiveGate builder={builder} workspaceId={workspaceId} orgUuid={orgUuid} />
                   {state.step === 'integrate' && state.gate?.name === 'show_integration_exits' && (
                     <BuilderIntegration state={state} workspaceId={workspaceId} accountId={accountId} />
                   )}
                   {state.initialized && !state.gate && !state.operation && !builder.busy && (
-                    <Button variant="ghost" onClick={() => void builder.resume()}>
-                      {zh ? '继续' : 'Continue'}
-                    </Button>
+                    <div className="ml-7 flex justify-start pb-4">
+                      <Button variant="outline" onClick={() => void builder.resume()}>
+                        {zh ? '继续' : 'Continue'}
+                        <ArrowRight aria-hidden="true" />
+                      </Button>
+                    </div>
                   )}
                 </MessageScrollerContent>
               </MessageScrollerViewport>
@@ -97,106 +89,25 @@ export function BuilderPage({
     </section>
   );
 }
-function BuilderMessageView({ message, pendingToolId }: { message: BuilderMessage; pendingToolId?: string }) {
-  const { locale } = useI18n();
-  const text = builderHistoryText(message, locale === 'zh-CN', pendingToolId);
-  if (!text) return null;
+
+function BuilderActiveGate({
+  builder,
+  workspaceId,
+  orgUuid,
+}: {
+  builder: Builder;
+  workspaceId: string;
+  orgUuid: string;
+}) {
+  const { gate, operation } = builder.state;
+  if (!gate || operation || gate.name === 'show_integration_exits') return null;
+  const inline = gate.name === 'offer_next_step';
   return (
-    <div
-      className={
-        message.role === 'user'
-          ? 'ml-auto w-fit max-w-[90%] rounded-xl bg-muted px-4 py-3'
-          : 'whitespace-pre-wrap leading-7'
-      }
-    >
-      <p className="break-words whitespace-pre-wrap">{text}</p>
-    </div>
-  );
-}
-function BuilderInspector({ builder, workspaceId }: { builder: Builder; workspaceId: string }) {
-  const { locale } = useI18n();
-  const zh = locale === 'zh-CN';
-  const { state } = builder;
-  const steps = [
-    { id: 'agent', label: zh ? '创建智能体' : 'Create agent' },
-    { id: 'environment', label: zh ? '配置环境' : 'Environment' },
-    { id: 'session', label: zh ? '试跑' : 'Test' },
-    ...(state.wantsSchedule ? [{ id: 'deploy', label: zh ? '定时运行' : 'Schedule' }] : []),
-    { id: 'integrate', label: zh ? '接入' : 'Integrate' },
-  ];
-  const resources = [
-    ...(state.environment ? [{ ...state.environment, section: 'environments' }] : []),
-    ...state.vaults.map((vault) => ({ ...vault, section: 'credential-vaults' })),
-    ...(state.deployment ? [{ ...state.deployment, section: 'deployments' }] : []),
-  ];
-  return (
-    <aside className="space-y-4 overflow-y-auto py-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>{zh ? '进度' : 'Progress'}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ol className="space-y-4">
-            {steps.map((step, index) => (
-              <li
-                key={step.id}
-                aria-current={state.step === step.id ? 'step' : undefined}
-                className={`flex items-center gap-3 ${state.step === step.id ? 'font-medium text-foreground' : 'text-muted-foreground'}`}
-              >
-                <span
-                  className={`grid size-6 place-items-center rounded-full border-[0.5px] border-border text-xs ${state.step === step.id ? 'bg-muted' : ''}`}
-                >
-                  {index + 1}
-                </span>
-                {step.label}
-              </li>
-            ))}
-          </ol>
-        </CardContent>
-      </Card>
-      {state.agent && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{state.agent.name}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted-foreground">v{state.agent.version}</p>{' '}
-            {(state.savedConfig?.skills ?? []).map((skill) => (
-              <p key={skill.skill_id} className="truncate text-sm">
-                {builder.catalog.data?.skills.find((item) => item.id === skill.skill_id)?.displayTitle ??
-                  skill.skill_id}
-              </p>
-            ))}
-            <ButtonLink
-              variant="ghost"
-              size="sm"
-              href={`/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(state.agent.id)}`}
-            >
-              {zh ? '查看配置' : 'View configuration'}
-            </ButtonLink>
-          </CardContent>
-        </Card>
-      )}
-      {resources.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{zh ? '资源' : 'Resources'}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {resources.map((resource) => (
-              <a
-                key={resource.id}
-                className="block truncate text-sm hover:underline"
-                title={resource.name}
-                href={`/workspaces/${encodeURIComponent(workspaceId)}/${resource.section}/${encodeURIComponent(resource.id)}`}
-              >
-                {resource.name}
-              </a>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-    </aside>
+    <Card className={`ml-7 ${inline ? 'bg-transparent py-0 ring-0' : ''}`}>
+      <CardContent className={inline ? 'px-0' : undefined}>
+        <BuilderGate key={gate.id} builder={builder} workspaceId={workspaceId} orgUuid={orgUuid} />
+      </CardContent>
+    </Card>
   );
 }
 
@@ -208,9 +119,10 @@ function BuilderStatus({ builder }: { builder: Builder }) {
     <>
       {' '}
       {builder.partial && (
-        <p aria-live="polite" className="whitespace-pre-wrap">
-          {builder.partial}
-        </p>
+        <div aria-live="polite" className="flex min-w-0 items-start gap-3 text-sm leading-6">
+          <Sparkles aria-hidden="true" className="mt-1 size-4 shrink-0 text-muted-foreground" />
+          <p className="min-w-0 whitespace-pre-wrap">{builder.partial}</p>
+        </div>
       )}
       {builder.error && <ManagedErrorAlert>{builder.error}</ManagedErrorAlert>}
       {state.operation && (
@@ -238,7 +150,7 @@ function BuilderComposer({ builder, entry = false }: { builder: Builder; entry?:
   };
   return (
     <form
-      className={`mx-auto flex w-full max-w-3xl gap-2 border-[0.5px] border-input bg-card p-3 focus-within:border-foreground ${entry ? 'flex-col rounded-2xl' : 'items-end rounded-xl'}`}
+      className={`mx-auto flex w-full gap-2 border-[0.5px] border-input bg-card p-3 focus-within:border-foreground ${entry ? 'max-w-[728px] flex-col rounded-2xl' : 'max-w-[680px] items-end rounded-2xl'}`}
       onSubmit={(event) => {
         event.preventDefault();
         send();
@@ -297,5 +209,5 @@ function builderColumns(state: BuilderState) {
   if (!state.initialized) return '';
   return state.sessionID && !state.testClosed
     ? 'xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]'
-    : 'xl:grid-cols-[minmax(0,1fr)_280px]';
+    : 'lg:grid-cols-[minmax(0,1fr)_300px]';
 }

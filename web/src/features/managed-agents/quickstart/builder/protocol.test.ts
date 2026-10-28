@@ -121,3 +121,26 @@ test('Chat length termination rejects even syntactically valid tool arguments', 
     ])) as typeof fetch;
   await expect(streamBuilderTurn(input('chat_completions'))).rejects.toThrow('incomplete');
 });
+
+test('synthetic template tool history carries an empty reasoning field for thinking-mode continuations', () => {
+  const messages = chatMessages([
+    { role: 'user', content: 'Use the Deep research template.' },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'tool_use', id: 'template-call', name: 'build_agent_config', input: { name: 'Deep research' } },
+      ],
+    },
+    {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'template-call', content: JSON.stringify({ saved: true }) }],
+    },
+  ]);
+  expect(messages[1]).toMatchObject({
+    role: 'assistant',
+    content: null,
+    reasoning_content: '',
+    tool_calls: [{ id: 'template-call' }],
+  });
+  expect(messages[2]).toMatchObject({ role: 'tool', tool_call_id: 'template-call' });
+});

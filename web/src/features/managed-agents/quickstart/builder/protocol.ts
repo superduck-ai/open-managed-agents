@@ -79,7 +79,7 @@ export function chatMessages(messages: BuilderMessage[]) {
           role: 'assistant',
           content: text || null,
           ...(tools.length ? { tool_calls: tools } : {}),
-          ...(message.reasoning ? { reasoning_content: message.reasoning } : {}),
+          ...(tools.length || message.reasoning !== undefined ? { reasoning_content: message.reasoning ?? '' } : {}),
         },
       ];
     }

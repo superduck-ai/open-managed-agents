@@ -16,6 +16,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+	"github.com/superduck-ai/open-managed-agents/internal/metering"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -713,7 +714,7 @@ func newWorkbenchAnthropicRequest(
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
+	req, err := http.NewRequestWithContext(metering.WithModel(ctx, upstream.QualifiedModelID), http.MethodPost, endpoint, bytes.NewReader(encoded))
 	if err != nil {
 		return nil, err
 	}

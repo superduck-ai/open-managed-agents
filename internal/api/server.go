@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"github.com/riverqueue/river"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -13,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
+	"github.com/superduck-ai/open-managed-agents/internal/channels"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -54,6 +57,7 @@ import (
 )
 
 type Server struct {
+	invitationJobs       *river.Client[*sql.Tx]
 	workspaceAccess      *workspaceaccess.Service
 	cfg                  config.Config
 	db                   *db.DB
@@ -91,6 +95,7 @@ type Server struct {
 // ObjectStore 由应用启动层从共享 storage.Client 派生，绑定默认 bucket，供对象资源与 Filestore 共用。
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
+	InvitationJobs         *river.Client[*sql.Tx]
 	SandboxProvisioner     codesessions.SandboxProvisioner
 	Prebuilds              *environments.Prebuilds
 	SandboxLifecycle       *environments.SandboxLifecycle
@@ -140,10 +145,12 @@ func NewServer(deps ServerDeps) *Server {
 	if workerEventAcks == nil {
 		workerEventAcks = workerevents.NewMemoryAcknowledgementStore()
 	}
+	billingCalculator := deps.DB.BillingCalculator()
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
 		WithSandboxProvisioner(deps.SandboxProvisioner).
 		WithWorkerEventBroker(deps.WorkerEventBroker).
 		WithWorkerEventState(workerEventAcks, deps.ObjectStore).
+		WithBilling(billingCalculator).
 		WithSandboxTimeoutExtender(deps.SandboxTimeoutExtender, deps.Config.E2B.SandboxTimeout)
 	webhookLogger := componentLogger("webhooks")
 	webhookEnqueuer := deps.WebhookEnqueuer
@@ -165,6 +172,7 @@ func NewServer(deps ServerDeps) *Server {
 		oauthRefreshLease = lease
 	}
 	s := &Server{
+		invitationJobs:       deps.InvitationJobs,
 		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
 		db:                   deps.DB,
@@ -177,16 +185,16 @@ func NewServer(deps ServerDeps) *Server {
 			telemetrydestinations.NewService(deps.DB, deps.VaultSecrets, telemetryexport.NewTester(deps.VaultSecrets, telemetryexport.Config{AllowInsecure: deps.Config.TelemetryExport.AllowInsecure, Timeout: deps.Config.TelemetryExport.Timeout}), deps.Config.TelemetryExport.AllowInsecure),
 			componentLogger("telemetry_destinations"),
 		)),
-		agents:         agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer),
+		agents:         agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(channels.NewHandler(deps.Config.ChannelBridge, deps.DB, componentLogger("channels"))),
 		batch:          batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:   codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter),
-		deployments:    deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, componentLogger("deployments")),
+		deployments:    deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
 		deploymentRuns: deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:           environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
 		files:          files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
 		filestore:      filestoreHandler,
 		memory:         memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
-		messages:       messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithFileStore(deps.ObjectStore),
+		messages:       messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
 		models:         modelsapi.NewHandler(deps.DB),
 		sessions:       sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
 		skills:         skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
@@ -298,6 +306,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 	mcpCatalogHandler *mcpcatalogs.Handler,
 	mcpServerHandler *mcpservers.Handler,
 ) {
+	s.registerPlatformAdminRoutes(router)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformIdentityMiddleware)
 		r.Route("/api/invitations", func(r chi.Router) {
@@ -307,8 +316,9 @@ func (s *Server) registerPlatformConsoleRoutes(
 	router.Group(func(r chi.Router) {
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
-		platformapi.RegisterPlatformAccountRoutes(r, s.db)
-		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, s.platformAuth, s.platformStore)
+		s.registerPlatformAccountRoutes(r)
+		secureCookies := s.cfg.Env == config.EnvironmentProd || strings.HasPrefix(s.cfg.Auth.ConsoleURL, "https://")
+		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, s.platformAuth, s.platformStore, secureCookies)
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
@@ -321,8 +331,9 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterOrganizationOnboardingRoutes(r)
 			platformapi.RegisterOrganizationExperienceRoutes(r)
 			platformapi.RegisterOrganizationBillingRoutes(r)
-			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets)
-			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger)
+			platformapi.RegisterOrganizationUsageRoutes(r, s.db)
+			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets, s.db.BillingCalculator(), s.logger.With("component", "console_metering"))
+			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.db.BillingCalculator())
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
 			if s.cfg.Observability.Enabled {
 				obsLogger := s.logger.With("component", "observability")
@@ -340,7 +351,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterConsoleOrganizationWorkspaceRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAdminRequestRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
-			platformapi.RegisterConsoleLLMProviderRoutes(r, s.db, s.vaultSecrets)
+			platformapi.RegisterConsoleLLMProviderRoutes(r, s.db, s.vaultSecrets, s.cfg.LLMProviderPresetsFile)
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db, invitations.NewMailer(s.cfg.Auth, s.db, s.logger.With("component", "invitation_mail")))
 			platformapi.RegisterConsoleWorkspaceMemberRoutes(r, s.db)

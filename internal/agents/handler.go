@@ -125,6 +125,11 @@ func NewHandler(database *db.DB, deploymentStore *deployments.Store, logger *slo
 	return h
 }
 
+func (h *Handler) WithChannels(channelHandler http.Handler) *Handler {
+	h.router.Mount("/{agent_id}/channels", channelHandler)
+	return h
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.router.ServeHTTP(w, r)
 }

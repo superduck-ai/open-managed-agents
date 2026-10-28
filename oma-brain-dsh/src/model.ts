@@ -2,6 +2,7 @@ import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 import type { GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { OmaApi } from "./api.ts";
 import type { AiSdkAdapterOptions } from "./llm-ai-sdk/index.ts";
+import { omaModelInfo } from "./model-configs.ts";
 import { modelSessionID, omaRoute } from "./model-provider.ts";
 import { logSystemPrompt } from "./prompt/debug.ts";
 
@@ -10,14 +11,19 @@ interface PiAiReplay {
   blocks?: { thinkingSignature?: string }[];
 }
 
-export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore): AiSdkAdapterOptions {
+export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore, currentSession?: () => string | undefined): AiSdkAdapterOptions {
   return {
     attachments,
+    modelInfo: (provider, model) => {
+      const id = currentSession?.();
+      const assignment = id === undefined ? undefined : api.assignment(api.modelSessions.get(id) ?? id);
+      return omaModelInfo(assignment, provider, model);
+    },
     route: (options) => omaRoute(api, options),
     history: legacyReplay,
-    onCallStart: (options) => { api.modelResponses.delete(modelSessionID(options)); },
+    onCallStart: (options) => { if (options.purpose !== "compaction") api.modelResponses.delete(modelSessionID(options)); },
     onRequestBody: (options, body) => { logSystemPrompt(modelSessionID(options), body); },
-    onMessageID: (options, messageID) => { api.modelResponses.set(modelSessionID(options), messageID); },
+    onMessageID: (options, messageID) => { if (options.purpose !== "compaction") api.modelResponses.set(modelSessionID(options), messageID); },
   };
 }
 

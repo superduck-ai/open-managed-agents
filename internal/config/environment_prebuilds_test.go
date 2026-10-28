@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -73,4 +74,39 @@ environment_prebuilds:
       pipeline_url: https://aliyun-flow.example/pipelines/1
       token: token
 `, baseImage)
+}
+
+func TestLoadEnvironmentPrebuildTemplatePorts(t *testing.T) {
+	prepareLoadTest(t)
+	for _, tc := range []struct {
+		name      string
+		template  string
+		wantErr   string
+		wantPorts []int
+		wantProbe int
+	}{
+		{name: "zero port", template: "exposed_ports: [0, 49983]", wantErr: "environment_prebuilds.template.exposed_ports "},
+		{name: "port above range", template: "exposed_ports: [65536, 49983]", wantErr: "environment_prebuilds.template.exposed_ports "},
+		{name: "empty ports", template: "exposed_ports: []", wantErr: "environment_prebuilds.template.probe_port "},
+		{name: "probe port not exposed", template: "probe_port: 8080", wantErr: "environment_prebuilds.template.probe_port "},
+		{name: "defaults", template: "disk_size: 20G", wantPorts: []int{3001, 49983}, wantProbe: 49983},
+		{name: "configured ports", template: "exposed_ports: [9000, 3002, 9000]\n    probe_port: 9000", wantPorts: []int{3002, 9000}, wantProbe: 9000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := loadConfigTestYAML(t, environmentPrebuildRegistryYAML("registry.example.com/team/base")+"  template:\n    "+tc.template+"\n")
+			if tc.wantErr != "" {
+				if err == nil || !strings.HasPrefix(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want prefix %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			template := cfg.EnvironmentPrebuilds.Template
+			if !slices.Equal(template.ExposedPorts, tc.wantPorts) || template.ProbePort != tc.wantProbe {
+				t.Fatalf("ports = %v probe %d, want %v probe %d", template.ExposedPorts, template.ProbePort, tc.wantPorts, tc.wantProbe)
+			}
+		})
+	}
 }

@@ -38,6 +38,8 @@ import {
 } from '../../shared/ui/data-table-interactions';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
+import { ResourceListState } from '../../shared/ui/resource-list-state';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,7 +49,7 @@ import {
 import { Input } from '../../shared/ui/input';
 import { Skeleton } from '../../shared/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../shared/ui/tooltip';
 import { toast } from '../../shared/ui/sonner';
 
@@ -145,52 +147,48 @@ export function WorkspacesSettingsPage() {
   return (
     <TooltipProvider>
       <section className="w-full">
-        <div className="mb-6 flex min-h-9 items-center justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <h1 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-normal text-foreground">
-              <span>{msg('nav.workspaces', 'Workspaces')}</span>
+        <ResourcePageHeader
+          title={msg('nav.workspaces', 'Workspaces')}
+          titleAdornment={
+            <>
               <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
                 {workspaces.length}
               </Badge>
-            </h1>
-            <Tooltip>
-              <TooltipTrigger className="cursor-help text-muted-foreground">
-                <Info className="size-4" aria-hidden />
-                <span className="sr-only">
+              <Tooltip>
+                <TooltipTrigger className="cursor-help text-muted-foreground">
+                  <Info className="size-4" aria-hidden />
+                  <span className="sr-only">
+                    {msg(
+                      'settings.workspaces.overview',
+                      'Workspaces are collaborative spaces where teams can separate API resources by use case.',
+                    )}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
                   {msg(
                     'settings.workspaces.overview',
                     'Workspaces are collaborative spaces where teams can separate API resources by use case.',
                   )}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs">
-                {msg(
-                  'settings.workspaces.overview',
-                  'Workspaces are collaborative spaces where teams can separate API resources by use case.',
-                )}
-              </TooltipContent>
-            </Tooltip>
-          </div>
-          {orgUuid && canManageWorkspaces ? (
-            <CreateWorkspaceDialog
-              open={createOpen}
-              onOpenChange={setCreateOpen}
-              onCreate={handleCreate}
-              trigger={
-                <Button type="button">
-                  <Plus className="size-4" aria-hidden />
-                  {msg('workspace.create.title', 'Create workspace')}
-                </Button>
-              }
-            />
-          ) : null}
-        </div>
-        <p className="mb-4 text-sm text-muted-foreground">
-          {msg(
-            'settings.workspaces.description',
-            'Review workspace-specific API keys and create new workspaces from one settings view.',
-          )}
-        </p>
+                </TooltipContent>
+              </Tooltip>
+            </>
+          }
+          actions={
+            orgUuid && canManageWorkspaces ? (
+              <CreateWorkspaceDialog
+                open={createOpen}
+                onOpenChange={setCreateOpen}
+                onCreate={handleCreate}
+                trigger={
+                  <Button type="button">
+                    <Plus className="size-4" aria-hidden />
+                    {msg('workspace.create.title', 'Create workspace')}
+                  </Button>
+                }
+              />
+            ) : null
+          }
+        />
         <div className="space-y-4">
           {!orgUuid ? (
             <Alert>
@@ -203,7 +201,7 @@ export function WorkspacesSettingsPage() {
               </AlertDescription>
             </Alert>
           ) : error ? (
-            <Alert variant="destructive">
+            <Alert variant="destructive" className="[overflow-wrap:anywhere]">
               <AlertCircle className="size-4" aria-hidden />
               <AlertTitle>{msg('settings.workspaces.loadError', 'Workspaces could not be loaded.')}</AlertTitle>
               <AlertDescription className="gap-3">
@@ -224,7 +222,7 @@ export function WorkspacesSettingsPage() {
               {Array.from({ length: 3 }).map((_, index) => (
                 <div
                   key={index}
-                  className="grid gap-3 rounded-lg border border-border p-4 md:grid-cols-[1.5fr_1fr_auto]"
+                  className="grid gap-3 rounded-lg border-[0.5px] border-border p-4 md:grid-cols-[1.5fr_1fr_auto]"
                 >
                   <div className="flex items-center gap-3">
                     <Skeleton className="size-9 rounded-md" />
@@ -287,148 +285,158 @@ export function WorkspacesSettingsPage() {
                 </Select>
               </div>
               <section className="min-w-0">
-                <Table aria-label={msg('nav.workspaces', 'Workspaces')} className={dataTableClassName}>
-                  <colgroup>
-                    <col className="w-[28%]" />
-                    <col className="w-[26%]" />
-                    <col className="w-[20%]" />
-                    <col className="w-[12%]" />
-                    <col className="w-[14%]" />
-                  </colgroup>
-                  <TableHeader>
-                    <TableRow className={dataTableHeaderRowClassName}>
-                      <TableHead className={dataTableHeaderCellClassName}>
-                        {msg('settings.workspaces.workspace', 'Workspace')}
-                      </TableHead>
-                      <TableHead className={dataTableHeaderCellClassName}>ID</TableHead>
-                      <TableHead className={dataTableHeaderCellClassName}>
-                        {msg('settings.workspaces.created', 'Created')}
-                      </TableHead>
-                      <TableHead className={dataTableHeaderCellClassName}>
-                        {msg('settings.workspaces.apiKeysCount', 'API keys')}
-                      </TableHead>
-                      <TableHead className={dataTableHeaderCellClassName}>
-                        <span className="sr-only">{msg('common.actions', 'Actions')}</span>
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visibleWorkspaces.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={5} className="h-24 px-3 py-6 text-sm text-muted-foreground">
-                          {msg('settings.workspaces.noMatches', 'No workspaces match the current search or filter.')}
-                        </TableCell>
+                {visibleWorkspaces.length === 0 ? (
+                  <ResourceListState
+                    icon={Search}
+                    title={msg('settings.workspaces.noMatches', 'No workspaces match the current search or filter.')}
+                  />
+                ) : (
+                  <Table
+                    aria-label={msg('nav.workspaces', 'Workspaces')}
+                    className={`${dataTableClassName} min-w-[760px]`}
+                  >
+                    <colgroup>
+                      <col className="w-[28%]" />
+                      <col className="w-[26%]" />
+                      <col className="w-[20%]" />
+                      <col className="w-[12%]" />
+                      <col className="w-[14%]" />
+                    </colgroup>
+                    <TableHeader>
+                      <TableRow className={dataTableHeaderRowClassName}>
+                        <TableHead className={dataTableHeaderCellClassName}>
+                          {msg('settings.workspaces.workspace', 'Workspace')}
+                        </TableHead>
+                        <TableHead className={dataTableHeaderCellClassName}>ID</TableHead>
+                        <TableHead className={dataTableHeaderCellClassName}>
+                          {msg('settings.workspaces.created', 'Created')}
+                        </TableHead>
+                        <TableHead className={dataTableHeaderCellClassName}>
+                          {msg('settings.workspaces.apiKeysCount', 'API keys')}
+                        </TableHead>
+                        <TableHead className={dataTableHeaderCellClassName}>
+                          <span className="sr-only">{msg('common.actions', 'Actions')}</span>
+                        </TableHead>
                       </TableRow>
-                    ) : null}
-                    {visibleWorkspaces.map((workspace) => (
-                      <DataTableRow key={workspace.id}>
-                        <DataTableCell edge="start" className="min-w-0">
-                          <div className="flex min-w-0 items-start gap-3">
-                            <span className="grid size-9 shrink-0 place-items-center rounded-md border border-border bg-muted/40">
-                              <Box className="size-4" style={{ color: workspaceColor(workspace) }} aria-hidden />
-                            </span>
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="truncate font-medium text-foreground">{workspace.name}</span>
-                                {workspace.is_default ? (
-                                  <Tooltip>
-                                    <TooltipTrigger className="cursor-help text-muted-foreground">
-                                      <Info className="size-3.5" aria-hidden />
-                                      <span className="sr-only">
+                    </TableHeader>
+                    <TableBody>
+                      {visibleWorkspaces.map((workspace) => (
+                        <DataTableRow key={workspace.id}>
+                          <DataTableCell edge="start" className="min-w-0">
+                            <div className="flex min-w-0 items-start gap-3">
+                              <span className="grid size-9 shrink-0 place-items-center rounded-md border-[0.5px] border-border bg-muted/40">
+                                <Box className="size-4" style={{ color: workspaceColor(workspace) }} aria-hidden />
+                              </span>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="truncate font-medium text-foreground" title={workspace.name}>
+                                    {workspace.name}
+                                  </span>
+                                  {workspace.is_default ? (
+                                    <Tooltip>
+                                      <TooltipTrigger className="cursor-help text-muted-foreground">
+                                        <Info className="size-3.5" aria-hidden />
+                                        <span className="sr-only">
+                                          {msg(
+                                            'settings.workspaces.defaultLocked',
+                                            'The default workspace is not editable and cannot be removed',
+                                          )}
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
                                         {msg(
                                           'settings.workspaces.defaultLocked',
                                           'The default workspace is not editable and cannot be removed',
                                         )}
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      {msg(
-                                        'settings.workspaces.defaultLocked',
-                                        'The default workspace is not editable and cannot be removed',
-                                      )}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                ) : null}
-                                {workspace.id === activeWorkspaceId ? (
-                                  <Badge variant="secondary">{msg('settings.workspaces.current', 'Current')}</Badge>
-                                ) : null}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  ) : null}
+                                  {workspace.id === activeWorkspaceId ? (
+                                    <Badge variant="secondary">{msg('settings.workspaces.current', 'Current')}</Badge>
+                                  ) : null}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        </DataTableCell>
-                        <DataTableCell className="min-w-0">
-                          <span className="block truncate font-mono text-xs text-muted-foreground">{workspace.id}</span>
-                        </DataTableCell>
-                        <DataTableCell className="text-sm text-foreground">
-                          <span className="block truncate">
-                            {workspace.created_at
-                              ? formatters.date(workspace.created_at, { dateStyle: 'medium', timeStyle: 'short' })
-                              : '–'}
-                          </span>
-                        </DataTableCell>
-                        <DataTableCell className="text-sm text-foreground">
-                          {formatters.number(workspace.api_keys_count ?? 0)}
-                        </DataTableCell>
-                        <DataTableCell edge="end" className="text-right">
-                          <div className="flex justify-end">
-                            <DropdownMenu>
-                              <DropdownMenuTrigger
-                                render={
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="text-muted-foreground"
-                                    aria-label={msg('settings.workspaces.rowActions', 'Workspace actions')}
-                                  />
-                                }
-                              >
-                                <MoreVertical className="size-4" aria-hidden />
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-48">
-                                {canManageWorkspaces && !workspace.is_default && !workspace.archived_at ? (
-                                  <DropdownMenuItem onClick={() => setEditingWorkspace(workspace)}>
-                                    <Settings className="size-4" aria-hidden />
-                                    <span>{msg('settings.workspaces.editDetails', 'Edit details')}</span>
-                                  </DropdownMenuItem>
-                                ) : null}
-                                <DropdownMenuItem
-                                  onClick={() => window.location.assign(workspaceApiKeysPath(workspace.id))}
+                          </DataTableCell>
+                          <DataTableCell className="min-w-0">
+                            <span
+                              className="block truncate font-mono text-xs text-muted-foreground"
+                              title={workspace.id}
+                            >
+                              {workspace.id}
+                            </span>
+                          </DataTableCell>
+                          <DataTableCell className="text-sm text-foreground">
+                            <span className="block whitespace-normal">
+                              {workspace.created_at
+                                ? formatters.date(workspace.created_at, { dateStyle: 'medium', timeStyle: 'short' })
+                                : '–'}
+                            </span>
+                          </DataTableCell>
+                          <DataTableCell className="text-sm text-foreground">
+                            {formatters.number(workspace.api_keys_count ?? 0)}
+                          </DataTableCell>
+                          <DataTableCell edge="end" className="text-right">
+                            <div className="flex justify-end">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger
+                                  render={
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="text-muted-foreground"
+                                      aria-label={msg('settings.workspaces.rowActions', 'Workspace actions')}
+                                    />
+                                  }
                                 >
-                                  <KeyRound className="size-4" aria-hidden />
-                                  <span>{msg('settings.workspaces.manageApiKeys', 'Manage API keys')}</span>
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => window.location.assign(workspaceWebhooksPath(workspace.id))}
-                                >
-                                  <Webhook className="size-4" aria-hidden />
-                                  <span>{msg('nav.webhooks', 'Webhooks')}</span>
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => window.location.assign(workspaceTelemetryPath(workspace.id))}
-                                >
-                                  <Activity className="size-4" aria-hidden />
-                                  <span>{msg('nav.telemetry', 'OpenTelemetry')}</span>
-                                </DropdownMenuItem>
-                                {canManageWorkspaces && !workspace.is_default && !workspace.archived_at ? (
+                                  <MoreVertical className="size-4" aria-hidden />
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-48">
+                                  {canManageWorkspaces && !workspace.is_default && !workspace.archived_at ? (
+                                    <DropdownMenuItem onClick={() => setEditingWorkspace(workspace)}>
+                                      <Settings className="size-4" aria-hidden />
+                                      <span>{msg('settings.workspaces.editDetails', 'Edit details')}</span>
+                                    </DropdownMenuItem>
+                                  ) : null}
                                   <DropdownMenuItem
-                                    variant="destructive"
-                                    onClick={() => {
-                                      setArchiveError('');
-                                      setArchivingWorkspace(workspace);
-                                    }}
+                                    onClick={() => window.location.assign(workspaceApiKeysPath(workspace.id))}
                                   >
-                                    <Trash2 className="size-4" aria-hidden />
-                                    <span>{msg('settings.workspaces.archiveWorkspace', 'Archive workspace')}</span>
+                                    <KeyRound className="size-4" aria-hidden />
+                                    <span>{msg('settings.workspaces.manageApiKeys', 'Manage API keys')}</span>
                                   </DropdownMenuItem>
-                                ) : null}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </DataTableCell>
-                      </DataTableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                                  <DropdownMenuItem
+                                    onClick={() => window.location.assign(workspaceWebhooksPath(workspace.id))}
+                                  >
+                                    <Webhook className="size-4" aria-hidden />
+                                    <span>{msg('nav.webhooks', 'Webhooks')}</span>
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => window.location.assign(workspaceTelemetryPath(workspace.id))}
+                                  >
+                                    <Activity className="size-4" aria-hidden />
+                                    <span>{msg('nav.telemetry', 'OpenTelemetry')}</span>
+                                  </DropdownMenuItem>
+                                  {canManageWorkspaces && !workspace.is_default && !workspace.archived_at ? (
+                                    <DropdownMenuItem
+                                      variant="destructive"
+                                      onClick={() => {
+                                        setArchiveError('');
+                                        setArchivingWorkspace(workspace);
+                                      }}
+                                    >
+                                      <Trash2 className="size-4" aria-hidden />
+                                      <span>{msg('settings.workspaces.archiveWorkspace', 'Archive workspace')}</span>
+                                    </DropdownMenuItem>
+                                  ) : null}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                          </DataTableCell>
+                        </DataTableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
               </section>
             </>
           ) : (

@@ -16,11 +16,29 @@ const (
 	// FileSource 是 managed-agent File resource 唯一允许的 Filestore source。
 	FileSource = "/uploads"
 	// SandboxUploadsMount 是 FileSource 在 Sandbox 中的挂载点。
-	SandboxUploadsMount = "/mnt/session/uploads"
-	// OutputsRoot 是 session 输出文件的 Filestore 命名空间。
+	SandboxUploadsMount    = "/mnt/session/uploads"
 	OutputsRoot            = "/outputs"
 	MessageAttachmentsRoot = FileSource + "/message_attachments"
+	SandboxOutputsMount    = "/mnt/user-data/outputs"
 )
+
+func SandboxPath(namespacePath string) string {
+	for _, mapping := range []struct {
+		namespace string
+		mount     string
+	}{
+		{namespace: FileSource, mount: SandboxUploadsMount},
+		{namespace: OutputsRoot, mount: SandboxOutputsMount},
+	} {
+		if namespacePath == mapping.namespace {
+			return mapping.mount
+		}
+		if strings.HasPrefix(namespacePath, mapping.namespace+"/") {
+			return mapping.mount + strings.TrimPrefix(namespacePath, mapping.namespace)
+		}
+	}
+	return namespacePath
+}
 
 // NormalizeFileSource 为省略的 source 补默认值，并拒绝 null 或其他 namespace。
 func NormalizeFileSource(raw json.RawMessage) (string, error) {

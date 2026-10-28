@@ -49,10 +49,6 @@ func (m *Mailer) Notify(ctx context.Context, principal auth.Principal, recipient
 	if !auth.EmailDomainAllowed(recipient, m.allowedEmailDomains) {
 		return "failed"
 	}
-	org, err := m.db.GetPlatformOrganization(ctx, principal.OrganizationUUID)
-	if err != nil || org == nil {
-		return "failed"
-	}
 	inviter := "Organization administrator"
 	if principal.UserExternalID != "" {
 		user, err := m.db.GetAdminUser(ctx, principal.OrganizationUUID, principal.UserExternalID)
@@ -61,12 +57,30 @@ func (m *Mailer) Notify(ctx context.Context, principal auth.Principal, recipient
 		}
 		inviter = user.Email
 	}
+	return m.notify(ctx, principal.OrganizationUUID, recipient, inviter, expiresAt)
+}
+
+func (m *Mailer) NotifyPlatform(ctx context.Context, organizationUUID, recipient string, expiresAt time.Time) string {
+	return m.notify(ctx, organizationUUID, recipient, "Platform administrator", expiresAt)
+}
+
+func (m *Mailer) notify(ctx context.Context, organizationUUID, recipient, inviter string, expiresAt time.Time) string {
+	if m == nil || m.sender == nil {
+		return "not_configured"
+	}
+	if !auth.EmailDomainAllowed(recipient, m.allowedEmailDomains) {
+		return "failed"
+	}
+	org, err := m.db.GetPlatformOrganization(ctx, organizationUUID)
+	if err != nil || org == nil {
+		return "failed"
+	}
 	message, err := invitationMessage(m.from, recipient, org.Name, inviter, strings.TrimSuffix(m.consoleURL, "/")+"/invites", expiresAt)
 	if err == nil {
 		err = m.sender.SendMessage(ctx, recipient, message)
 	}
 	if err != nil {
-		m.logger.WarnContext(ctx, "invitation email submission failed", "organization_uuid", principal.OrganizationUUID)
+		m.logger.WarnContext(ctx, "invitation email submission failed", "organization_uuid", organizationUUID)
 		return "failed"
 	}
 	return "sent"

@@ -46,6 +46,10 @@ func Load() (Config, error) {
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
 		return Config{}, err
 	}
+	_, err = ReadLLMProviderPresetCatalog(cfg.LLMProviderPresetsFile)
+	if err != nil {
+		return Config{}, err
+	}
 	if err := validate(cfg); err != nil {
 		return Config{}, err
 	}

@@ -1,8 +1,10 @@
+import { isConnectFailure, notForwardedDetail } from "../ccrv2/tool-transport.ts";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { OmaApi } from "../api.ts";
 import { object, type Payload } from "../json.ts";
+import { normalizeSandboxResult } from "./output.ts";
 import { sandboxEndpoint } from "./config.ts";
-import { ToolNotForwardedError, isConnectFailure, notForwardedDetail, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
+import { ToolNotForwardedError, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
 import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
 
 /** Use the same MCP SDK as DSH, with initialization gated by the approval checkpoint. */
@@ -84,7 +86,7 @@ export class SandboxMcp implements SandboxExecutor {
     if (process.env.OMA_DEBUG_TIMING === "1") workerDiagnostic("info", "oma_sandbox_tool_finished", {
       session_id: this.sessionId, tool_name: tool.name, timestamp: new Date().toISOString(), duration_ms: Date.now() - start,
     });
-    return result;
+    return normalizeSandboxResult(result, tool.name);
   }
 
   async close(): Promise<void> { await this.client.close(); }

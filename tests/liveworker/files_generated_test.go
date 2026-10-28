@@ -73,7 +73,7 @@ func TestFilesGenerated(t *testing.T) {
 	requireOK(t, json.Unmarshal(e.request(t, "GET", "/v1/sessions/"+f.session.ExternalID, e.apiKey, nil, 200), &session))
 	found := false
 	for _, resource := range session.Resources {
-		if resource.FileID == record.ExternalID && resource.MountPath == "/outputs/verified.txt" {
+		if resource.FileID == record.ExternalID && resource.MountPath == "/mnt/user-data/outputs/verified.txt" {
 			found = true
 		}
 	}

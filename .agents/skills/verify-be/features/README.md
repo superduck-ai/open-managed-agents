@@ -2,6 +2,7 @@
 
 | User symptom | Map | Runnable coverage |
 | --- | --- | --- |
+| DSH 压缩通知、压缩上下文恢复和原子线程续聊 | [Brain](brain.md) | `chat brain-compaction` |
 | Rust Brain multi-node ownership, native loop or MCP execution | [Rust Brain](brain.md) | `chat brain` |
 | Brain owner replacement invalidates Bash HTTPS proxy credentials | [Rust Brain](brain.md) | `chat brain-proxy` with actual public HTTPS |
 | Brain system prompt composition or Skill discovery and loading | [Rust Brain](brain.md) | `chat brain-skills` |

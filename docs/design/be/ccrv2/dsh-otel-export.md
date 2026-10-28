@@ -112,7 +112,7 @@ Brain 接收输入时记下 trace context：turn 以它为父 span；采样位�
 
 只有注册响应带 `trace_export` 时才产出 span，`content=true` 表示至少一个目标选择了 content 模式，否则不计算内容属性。目标在会话进行中变化时，下次注册生效。`TraceProducer` 由 `NativeTelemetry` 驱动，输入为账本事件、start 帧、审批钩子和 `tools/execute` 派发。注册时间之前的事件属于重放历史，不产出 span；所有处理都在 try/catch 内，异常只丢失 span。
 
-turn 的 trace/span ID 在接收输入时分配。Brain 每次保存 `dsh_brain_state` 时把未结束的已采样 turn（含子 agent thread）写入 `traceTurns`。worker 在 turn 中途失去 lease 后，旧 worker 的导出会被入口栅栏拒绝，新 worker 又把旧 `turn/end` 当作重放忽略；因此新 worker 在恢复路径按 `traceTurns` 补发这些 turn：沿用原 span ID，`ERROR`、`stop_reason=interrupted`、`error.type=worker_lost`，结束时间为恢复时间。旧 worker 未结束的模型尝试和工具调用不补发；若旧 worker 实际已导出该 turn，后端会看到同一 span ID 的两条记录。
+turn 的 trace/span ID 在接收输入时分配。Brain 每次 checkpoint 时把未结束的已采样 turn（含子 agent thread）与上次上报值比较，变化时异步写入 worker `external_metadata.oma_trace_turns`（无未结束 turn 时写 null 删除该键），上报失败不影响聊天，下次 checkpoint 重试。worker 在 turn 中途失去 lease 后，旧 worker 的导出会被入口栅栏拒绝，DSH 原生恢复在新 worker 上补写的中断 `turn/end` 又不对应任何已开始的 turn；因此新 worker 在 `open` 读取 worker 状态时取出 `oma_trace_turns`，完成会话回放后补发这些 turn：沿用原 span ID，`ERROR`、`stop_reason=interrupted`、`error.type=worker_lost`，结束时间为恢复时间。旧 worker 未结束的模型尝试和工具调用不补发；若旧 worker 实际已导出该 turn 但未来得及清除元数据，后端会看到同一 span ID 的两条记录。
 
 Brain 到 OMA 使用 OTLP/JSON（trace/span ID 为 base64），每批最多 256 个 span 且不超过 8MB，队列 2048、超时 2 秒，失败直接丢弃。
 

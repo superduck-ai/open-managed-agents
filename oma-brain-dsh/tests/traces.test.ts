@@ -270,7 +270,7 @@ test("a worker killed mid-turn leaves its turn to the next worker, which exports
     expect(hex(turns[0]!.parentSpanId!)).toBe(PARENT_SPAN);
     expect(turns[0]!.status?.code).toBe(2);
     expect(attribute(turns[0]!, "error.type")).toBe("worker_lost");
-    expect([...backend.privateLog.values()].filter((entry) => entry.subtype === "dsh_brain_state").at(-1)!.data.traceTurns).toBeUndefined();
+    await eventually(() => backend.workerMetadata.oma_trace_turns === undefined, 10_000);
   } finally {
     child.kill("SIGKILL");
     await resumed?.close();

@@ -141,20 +141,6 @@ func (s *MemoryAttachSet) Observe(storeID, slug string) {
 	}
 }
 
-func ObserveStoredMemoryResource(set *MemoryAttachSet, resourceType string, payload json.RawMessage) {
-	if set == nil || resourceType != MemoryStoreType {
-		return
-	}
-	var body struct {
-		MemoryStoreID string `json:"memory_store_id"`
-		MountPath     string `json:"mount_path"`
-	}
-	if json.Unmarshal(payload, &body) != nil {
-		return
-	}
-	set.Observe(body.MemoryStoreID, MemorySlugFromMountPath(body.MountPath))
-}
-
 func (s *MemoryAttachSet) Claim(storeID string) error {
 	if s.ids == nil {
 		s.ids = make(map[string]struct{})

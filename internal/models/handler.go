@@ -48,7 +48,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if !ok {
 		return modelAuthenticationRequired()
 	}
-	modelIDs, err := llmproviders.ListModelIDs(
+	catalog, err := llmproviders.LoadCatalog(
 		r.Context(),
 		h.database,
 		principal.OrganizationUUID,
@@ -57,7 +57,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return modelUnavailable(err)
 	}
-	response := listResponse{Data: modelResponses(modelIDs)}
+	modelIDs := catalog.ModelIDs()
+	response := listResponse{Data: modelResponses(catalog)}
 	if len(modelIDs) > 0 {
 		response.FirstID = &modelIDs[0]
 		response.LastID = &modelIDs[len(modelIDs)-1]

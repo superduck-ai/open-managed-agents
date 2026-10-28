@@ -56,6 +56,28 @@ export interface TurnTrace {
   startMs: number;
 }
 
+export const TRACE_TURNS_METADATA = "oma_trace_turns";
+
+const HEX_ID = (length: number) => new RegExp(`^[0-9a-f]{${length}}$`);
+const TRACE_ID = HEX_ID(32);
+const SPAN_ID = HEX_ID(16);
+
+export function traceTurnsOf(value: unknown): TurnTrace[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const turns = value.flatMap((item): TurnTrace[] => {
+    if (!item || typeof item !== "object") return [];
+    const turn = item as Record<string, unknown>;
+    if (typeof turn.sessionId !== "string" || !turn.sessionId || typeof turn.traceId !== "string" || !TRACE_ID.test(turn.traceId)
+      || typeof turn.spanId !== "string" || !SPAN_ID.test(turn.spanId) || typeof turn.startMs !== "number" || !Number.isFinite(turn.startMs)) return [];
+    return [{
+      sessionId: turn.sessionId, traceId: turn.traceId, spanId: turn.spanId, startMs: turn.startMs,
+      ...(typeof turn.parentSpanId === "string" && SPAN_ID.test(turn.parentSpanId) ? { parentSpanId: turn.parentSpanId } : {}),
+      ...(typeof turn.traceState === "string" ? { traceState: turn.traceState } : {}),
+    }];
+  });
+  return turns.length ? turns : undefined;
+}
+
 export interface TraceHookTarget {
   inputReceived(sessionId: string, context: InputTraceContext | undefined): void;
   openTurns(owner: string): TurnTrace[];

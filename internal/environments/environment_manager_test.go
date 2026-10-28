@@ -35,15 +35,15 @@ func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 	resources := []db.SessionResource{
 		{
 			ResourceType: "file",
-			Payload:      json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/workspace/data.csv"}`),
+			File:         &db.SessionResourceFileReference{FileID: "file_test", NamespacePath: "/workspace/data.csv"},
 		},
 		{
 			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/mnt/memory/test","access":"read_write"}`),
+			MemoryStore:  &db.SessionResourceMemoryStore{ExternalID: "mem_test", MountPath: new("/mnt/memory/test"), Access: new("read_write")},
 		},
 		{
 			ResourceType: "future_resource",
-			Payload:      json.RawMessage(`{"type":"future_resource","mount_path":"/workspace/future"}`),
+			File:         &db.SessionResourceFileReference{FileID: "", NamespacePath: "/workspace/future"},
 		},
 	}
 	if workDir := mustResolveRuntimeResources(t, resources).workDir; workDir != defaultEnvironmentWorkDir {
@@ -53,19 +53,19 @@ func TestManagedAgentWorkDirIgnoresNonRepositoryResources(t *testing.T) {
 
 func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T) {
 	repository := db.SessionResource{
-		UUID:         "00000000-0000-0000-0000-000000000002",
-		ResourceType: "github_repository",
-		Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/repository","mount_path":"/workspace/repository"}`),
+		UUID:             "00000000-0000-0000-0000-000000000002",
+		ResourceType:     "github_repository",
+		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/repository", MountPath: "/workspace/repository"},
 	}
 	file := db.SessionResource{
 		UUID:         "00000000-0000-0000-0000-000000000001",
 		ResourceType: "file",
-		Payload:      json.RawMessage(`{"type":"file","mount_path":"/workspace/data.csv"}`),
+		File:         &db.SessionResourceFileReference{FileID: "", NamespacePath: "/workspace/data.csv"},
 	}
 	memoryStore := db.SessionResource{
 		UUID:         "00000000-0000-0000-0000-000000000003",
 		ResourceType: "memory_store",
-		Payload:      json.RawMessage(`{"type":"memory_store","mount_path":"/mnt/memory/test","access":"read_write"}`),
+		MemoryStore:  &db.SessionResourceMemoryStore{ExternalID: "", MountPath: new("/mnt/memory/test"), Access: new("read_write")},
 	}
 	for name, resources := range map[string][]db.SessionResource{
 		"repository first": {repository, file, memoryStore},
@@ -82,18 +82,18 @@ func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T
 func TestManagedAgentWorkDirUsesEarliestAttachedRepository(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
 	first := db.SessionResource{
-		UUID:         "00000000-0000-0000-0000-000000000010",
-		ExternalID:   "sesrsc_first",
-		ResourceType: "github_repository",
-		Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/first","mount_path":"/workspace/first"}`),
-		CreatedAt:    createdAt,
+		UUID:             "00000000-0000-0000-0000-000000000010",
+		ExternalID:       "sesrsc_first",
+		ResourceType:     "github_repository",
+		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/first", MountPath: "/workspace/first"},
+		CreatedAt:        createdAt,
 	}
 	later := db.SessionResource{
-		UUID:         "00000000-0000-0000-0000-000000000011",
-		ExternalID:   "sesrsc_later",
-		ResourceType: "github_repository",
-		Payload:      json.RawMessage(`{"type":"github_repository","url":"https://github.com/acme/later","mount_path":"/workspace/later"}`),
-		CreatedAt:    createdAt.Add(time.Minute),
+		UUID:             "00000000-0000-0000-0000-000000000011",
+		ExternalID:       "sesrsc_later",
+		ResourceType:     "github_repository",
+		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/later", MountPath: "/workspace/later"},
+		CreatedAt:        createdAt.Add(time.Minute),
 	}
 	sameTimeLater := later
 	sameTimeLater.CreatedAt = createdAt
@@ -116,15 +116,15 @@ func TestManagedAgentSourcesExcludesFileResources(t *testing.T) {
 	resources := []db.SessionResource{
 		{
 			ResourceType: "file",
-			Payload:      json.RawMessage(`{"type":"file","file_id":"file_test","source":"/uploads","mount_path":"/workspace/data.csv"}`),
+			File:         &db.SessionResourceFileReference{FileID: "file_test", NamespacePath: "/workspace/data.csv"},
 		},
 		{
-			ResourceType: "github_repository",
-			Payload:      json.RawMessage(`{"type":"github_repository","url":"https://git.internal:443/group/subgroup/widgets.git","mount_path":"/workspace/widgets","checkout":{"type":"branch","name":"main"}}`),
+			ResourceType:     "github_repository",
+			GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://git.internal:443/group/subgroup/widgets.git", MountPath: "/workspace/widgets", Checkout: &db.SessionResourceGitHubCheckout{Type: "branch", Name: "main"}},
 		},
 		{
 			ResourceType: "memory_store",
-			Payload:      json.RawMessage(`{"type":"memory_store","memory_store_id":"mem_test","mount_path":"/mnt/memory/test","access":"read_write","runtime_extension":{"enabled":true}}`),
+			MemoryStore:  &db.SessionResourceMemoryStore{ExternalID: "mem_test", MountPath: new("/mnt/memory/test"), Access: new("read_write")},
 		},
 	}
 
@@ -155,7 +155,7 @@ func TestManagedAgentRuntimeResourcesRejectInvalidGit(t *testing.T) {
 		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/../outside"}`,
 	} {
 		t.Run(raw, func(t *testing.T) {
-			_, err := resolveManagedAgentRuntimeResources([]db.SessionResource{{ResourceType: "github_repository", Payload: json.RawMessage(raw)}})
+			_, err := resolveManagedAgentRuntimeResources([]db.SessionResource{{ResourceType: "github_repository", GitHubRepository: testGitRepository(json.RawMessage(raw))}})
 			if err == nil {
 				t.Fatal("invalid persisted Git resource accepted")
 			}
@@ -174,7 +174,7 @@ func TestManagedAgentGitSourcesIncludeSigningType(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resources := mustResolveRuntimeResources(t, []db.SessionResource{{ResourceType: "github_repository", Payload: payload}})
+			resources := mustResolveRuntimeResources(t, []db.SessionResource{{ResourceType: "github_repository", GitHubRepository: testGitRepository(payload)}})
 			var source gitRepositoryRuntimeSource
 			if err := json.Unmarshal(resources.sources[0], &source); err != nil {
 				t.Fatal(err)
@@ -537,7 +537,7 @@ func TestManagedAgentRuntimeGitRef(t *testing.T) {
 		{"commit sha256", `{"type":"commit","sha":"` + strings.Repeat("B", 64) + `"}`, strings.Repeat("b", 64)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			resources := []db.SessionResource{{ResourceType: "github_repository", Payload: json.RawMessage(`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":` + test.checkout + `}`)}}
+			resources := []db.SessionResource{{ResourceType: "github_repository", GitHubRepository: testGitRepository(json.RawMessage(`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":` + test.checkout + `}`))}}
 			sources := mustResolveRuntimeResources(t, resources).sources
 			var source struct {
 				GitInfo struct {
@@ -553,4 +553,20 @@ func TestManagedAgentRuntimeGitRef(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testGitRepository(raw json.RawMessage) *db.SessionResourceGitHubRepository {
+	var repository db.SessionResourceGitHubRepository
+	var fields struct {
+		URL       string                            `json:"url"`
+		MountPath string                            `json:"mount_path"`
+		Checkout  *db.SessionResourceGitHubCheckout `json:"checkout"`
+	}
+	if json.Unmarshal(raw, &fields) != nil {
+		return &repository
+	}
+	repository.URL = fields.URL
+	repository.MountPath = fields.MountPath
+	repository.Checkout = fields.Checkout
+	return &repository
 }

@@ -60,9 +60,9 @@ describe('environment form payload', () => {
     ]);
     expect(addPackage(values, 'npm', 'requests==2.32.0').packages).toHaveLength(3);
   });
-  test('defaults to limited networking and treats blank UI rows as unchanged', () => {
+  test('defaults to unrestricted networking and treats blank UI rows as unchanged', () => {
     const initial = environmentFormValues();
-    expect(initial.networkType).toBe('limited');
+    expect(initial.networkType).toBe('unrestricted');
     expect(initial.allowPackageManagers).toBe(false);
     expect(environmentDraftKey({ ...initial, metadataRows: [{ key: '', value: '' }] })).toBe(
       environmentDraftKey(initial),

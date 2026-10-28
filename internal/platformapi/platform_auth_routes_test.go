@@ -80,6 +80,56 @@ type failingPlatformSessionStore struct {
 	*platformsession.MemoryStore
 }
 
+type verifiedEmailLoginServiceStub struct {
+	*emailLoginServiceStub
+}
+
+func (verifiedEmailLoginServiceStub) VerifiedLoginEnabled() bool { return true }
+
+type recordingPlatformSessionStore struct {
+	*platformsession.MemoryStore
+	saved platformsession.Session
+	key   string
+	saves int
+}
+
+func (s *recordingPlatformSessionStore) Save(ctx context.Context, key string, session platformsession.Session) error {
+	s.saves++
+	s.saved, s.key = session, key
+	return s.MemoryStore.Save(ctx, key, session)
+}
+
+func TestVerifiedLoginSessionPersistence(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		completeErr error
+		want        int
+	}{
+		{name: "验证码消耗失败清理会话", completeErr: apperr.New(apperr.Unauthenticated, "验证码已失效", errors.New("consumed")), want: http.StatusUnauthorized},
+		{name: "真实登录一次保存认证标记", want: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := verifiedEmailLoginServiceStub{&emailLoginServiceStub{verifiedUserID: "user_existing", verifiedOrgID: "org-existing", completeErr: tc.completeErr}}
+			sessions := &recordingPlatformSessionStore{MemoryStore: platformsession.NewMemoryStore()}
+			response := serveEmailLoginRequest(handleVerifyMagicLink(successfulEmailLoginStoreStub{}, service, sessions, false, false), `{"credentials":{"email_address":"user@example.com","code":"123456"}}`)
+			if response.Code != tc.want {
+				t.Fatalf("状态 = %d，预期 %d：%s", response.Code, tc.want, response.Body.String())
+			}
+			if sessions.saves != 1 || sessions.saved.AuthenticationMethod != "email_code_v1" {
+				t.Fatalf("会话保存次数 = %d，认证标记 = %q", sessions.saves, sessions.saved.AuthenticationMethod)
+			}
+			if tc.completeErr != nil {
+				if _, err := sessions.Get(t.Context(), sessions.key); !errors.Is(err, platformsession.ErrNotFound) {
+					t.Fatalf("失败会话未清理：%v", err)
+				}
+				if len(response.Result().Cookies()) != 0 {
+					t.Fatal("失败登录不得签发 Cookie")
+				}
+			}
+		})
+	}
+}
+
 func (failingPlatformSessionStore) Save(context.Context, string, platformsession.Session) error {
 	return errors.New("session store unavailable")
 }
@@ -115,7 +165,7 @@ func TestSendMagicLinkHTTPContract(t *testing.T) {
 
 func TestVerifyMagicLinkInvalidCodeReturnsUnauthorized(t *testing.T) {
 	service := &emailLoginServiceStub{verifyErr: apperr.New(apperr.Unauthenticated, "Verification code is invalid or expired", errors.New("invalid"))}
-	handler := handleVerifyMagicLink(emailLoginStoreStub{}, service, platformsession.NewMemoryStore(), false)
+	handler := handleVerifyMagicLink(emailLoginStoreStub{}, service, platformsession.NewMemoryStore(), false, false)
 	response := serveEmailLoginRequest(handler, `{"credentials":{"email_address":"user@example.com","code":"000000"}}`)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusUnauthorized, response.Body.String())
@@ -125,7 +175,7 @@ func TestVerifyMagicLinkInvalidCodeReturnsUnauthorized(t *testing.T) {
 func TestVerifyMagicLinkConsumesCodeOnlyAfterSessionSave(t *testing.T) {
 	service := &emailLoginServiceStub{verifiedUserID: "user_existing", verifiedOrgID: "org-existing"}
 	failingSessions := failingPlatformSessionStore{MemoryStore: platformsession.NewMemoryStore()}
-	handler := handleVerifyMagicLink(successfulEmailLoginStoreStub{}, service, failingSessions, false)
+	handler := handleVerifyMagicLink(successfulEmailLoginStoreStub{}, service, failingSessions, false, false)
 	response := serveEmailLoginRequest(handler, `{"credentials":{"email_address":"user@example.com","code":"123456"}}`)
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("failed save status = %d, want %d: %s", response.Code, http.StatusInternalServerError, response.Body.String())
@@ -134,7 +184,7 @@ func TestVerifyMagicLinkConsumesCodeOnlyAfterSessionSave(t *testing.T) {
 		t.Fatalf("CompleteEmailLogin() calls after failed save = %d, want 0", service.completeCalls)
 	}
 
-	handler = handleVerifyMagicLink(successfulEmailLoginStoreStub{}, service, platformsession.NewMemoryStore(), false)
+	handler = handleVerifyMagicLink(successfulEmailLoginStoreStub{}, service, platformsession.NewMemoryStore(), false, false)
 	response = serveEmailLoginRequest(handler, `{"credentials":{"email_address":"user@example.com","code":"123456"}}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("retry status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
@@ -153,12 +203,37 @@ func serveEmailLoginRequest(handler http.Handler, body string) *httptest.Respons
 	return response
 }
 
+func TestEmailLoginCookiePolicy(t *testing.T) {
+	for _, secure := range []bool{true, false} {
+		for _, path := range []string{"/api/auth/verify_magic_link", "/auth/verify_magic_link"} {
+			t.Run(path+"/secure="+map[bool]string{true: "true", false: "false"}[secure], func(t *testing.T) {
+				service := &emailLoginServiceStub{verifiedUserID: "user_existing", verifiedOrgID: "org-existing"}
+				router := chi.NewRouter()
+				RegisterPlatformEmailLoginRoutes(router, successfulEmailLoginStoreStub{}, service, platformsession.NewMemoryStore(), secure)
+				request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"credentials":{"email_address":"user@example.com","code":"123456"}}`))
+				request.Header.Set("X-Forwarded-Proto", map[bool]string{true: "http", false: "https"}[secure])
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				cookies := response.Result().Cookies()
+				if response.Code != http.StatusOK || len(cookies) != 2 {
+					t.Fatalf("登录响应 = %d，Cookie 数量 = %d", response.Code, len(cookies))
+				}
+				for _, cookie := range cookies {
+					if cookie.Secure != secure || cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/" || cookie.HttpOnly != (cookie.Name == "sessionKey") {
+						t.Fatalf("Cookie 安全属性错误：%s", cookie)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestEmailLoginRoutesRejectOtherDomains(t *testing.T) {
 	for _, path := range []string{"/api/auth/send_magic_link", "/auth/send_magic_link", "/api/auth/verify_magic_link", "/auth/verify_magic_link"} {
 		t.Run(path, func(t *testing.T) {
 			router := chi.NewRouter()
 			provider := platformauth.New(config.AuthConfig{AllowedEmailDomains: []string{"example.org"}}, nil, nil, nil)
-			RegisterPlatformEmailLoginRoutes(router, emailLoginStoreStub{}, provider, platformsession.NewMemoryStore())
+			RegisterPlatformEmailLoginRoutes(router, emailLoginStoreStub{}, provider, platformsession.NewMemoryStore(), true)
 			body := `{"email_address":"external@example.com"}`
 			if strings.Contains(path, "verify") {
 				body = `{"credentials":{"email_address":"external@example.com","code":"123456"}}`

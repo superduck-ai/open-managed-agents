@@ -57,6 +57,12 @@ export function SessionTraceWorkspaceLayout({
   // treating an unknown `0px` as compact would briefly inert the transcript
   // and steal focus before the real container breakpoint is known.
   const compact = containerWidth > 0 && containerWidth < sessionTraceDualPaneMinWidth;
+  const previousCompactRef = useRef(false);
+  useLayoutEffect(() => {
+    const enteringCompact = compact && !previousCompactRef.current;
+    previousCompactRef.current = compact;
+    if (enteringCompact) onInspectorCollapse?.();
+  }, [compact, onInspectorCollapse]);
   const compactInspectorOpen = compact && inspectorOpen;
   const splitInspectorOpen = inspectorOpen && !compact;
   const maximumInspectorWidth = Math.round(sessionTraceInspectorMaximumWidth(containerWidth, viewportWidth));

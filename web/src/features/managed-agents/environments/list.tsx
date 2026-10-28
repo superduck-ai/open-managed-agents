@@ -70,10 +70,6 @@ export function EnvironmentList({
     <section className="min-w-0 text-foreground">
       <ResourcePageHeader
         title={msg('managedAgents.environments.title', 'Environments')}
-        description={msg(
-          'managedAgents.environments.description',
-          'Configuration template for containers, such as sessions or code execution.',
-        )}
         actions={
           <>
             <ButtonLink size="lg" href={createHref} onClick={(event) => handleInternalLinkClick(event, createHref)}>
@@ -134,7 +130,17 @@ export function EnvironmentList({
         <Skeleton className="h-40 w-full" />
       ) : (
         <>
-          <Table className={`${dataTableClassName} min-w-[1080px]`}>
+          <Table className={`${dataTableClassName} min-w-[960px]`}>
+            <colgroup>
+              <col className="w-10" />
+              <col className="w-44" />
+              <col />
+              <col className="w-20" />
+              <col className="w-20" />
+              <col className="w-24" />
+              <col className="w-24" />
+              <col className="w-24" />
+            </colgroup>
             <TableHeader>
               <TableRow className={dataTableHeaderRowClassName}>
                 <TableHead className="w-10 px-3">
@@ -158,7 +164,7 @@ export function EnvironmentList({
                     {label}
                   </TableHead>
                 ))}
-                <TableHead className="w-28">
+                <TableHead className="w-24">
                   <span className="sr-only">{msg('common.actions', 'Actions')}</span>
                 </TableHead>
               </TableRow>
@@ -207,7 +213,7 @@ export function EnvironmentList({
         </>
       )}
       {selected.length ? (
-        <div className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-border bg-background p-1.5 pl-3 text-sm shadow-lg md:left-[calc(50%+var(--sidebar-width,256px)/2)]">
+        <div className="fixed bottom-6 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-xl border-[0.5px] border-border bg-background p-1.5 pl-3 text-sm shadow-lg transition-[left] duration-220 ease-out motion-reduce:transition-none md:left-[calc(50%+var(--sidebar-width,256px)/2)]">
           <span>{msg('environmentPage.selected', '{count} selected', { count: selected.length })}</span>
           <Button
             variant="ghost"
@@ -217,7 +223,7 @@ export function EnvironmentList({
           >
             <X className="size-3.5" />
           </Button>
-          <span className="mx-1 h-5 w-px bg-border" />
+          <span className="mx-1 h-5 w-[0.5px] bg-border" />
           {selected.some((entity) => !entity.archived_at && entity.state !== 'archived') ? (
             <Button
               variant="ghost"
@@ -287,7 +293,7 @@ function EnvironmentRow({
       <DataTableCell className="max-w-80 truncate">
         <a
           href={href}
-          className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring focus-visible:underline"
+          className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-[0.5px] focus-visible:outline-offset-[-0.5px] focus-visible:outline-ring focus-visible:underline"
           title={entity.name}
           onClick={(event) => {
             event.stopPropagation();

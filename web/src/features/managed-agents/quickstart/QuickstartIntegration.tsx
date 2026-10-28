@@ -114,12 +114,12 @@ function QuickstartApiCalls({
           <AccordionItem
             key={call.id}
             value={call.id}
-            className="rounded-lg border border-border bg-background last:border-b"
+            className="rounded-lg border-[0.5px] border-border bg-background last:border-b-[0.5px]"
           >
             <AccordionTrigger className="px-4 hover:no-underline">
               {index + 1}. {call.title}
             </AccordionTrigger>
-            <AccordionContent className="space-y-3 border-t border-border px-4 pt-4">
+            <AccordionContent className="space-y-3 border-t-[0.5px] border-border px-4 pt-4">
               <p className="text-sm leading-relaxed text-muted-foreground">{call.hint}</p>
               {call.id !== 'create' && (
                 <Field>

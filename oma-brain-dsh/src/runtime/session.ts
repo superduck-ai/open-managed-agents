@@ -1,12 +1,10 @@
 import type { Context, Fiber } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
-import { createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
+import { freezeMessage, MessageId, createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
-import { ContextRecovery } from "./compaction.ts";
 import { ModelRetry } from "./model-retry.ts";
 import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
-import { failureDiagnostic, workerDiagnostic } from "../ccrv2/diagnostics.ts";
 import { approveToolCall, releaseToolApproval, clearToolApprovals, prefetchMcpApprovals } from "./tool-approvals.ts";
 import * as UserQuestions from "../user-questions/index.ts";
 import { SHUTDOWN_CANCEL } from "./contracts.ts";
@@ -26,7 +24,6 @@ export class SessionRuntime {
   busy = false;
   lastIdle = Date.now();
   private turnCompleted = false;
-  private readonly contextRecovery = new ContextRecovery();
   private readonly modelRetry = new ModelRetry();
   private toolCalls: ToolCallBlock[] = [];
   appendedSystem = "";
@@ -75,6 +72,7 @@ export class SessionRuntime {
         bridge: this.bridge,
         tools: this.config.tools,
         permissions: toolPermissions,
+        threadId: this.parent ? this.config.id : undefined,
       });
       if (!this.parent) this.questionTools = await scope.plugin(UserQuestions, { bridge: this.bridge, tools: this.config.tools });
       this.hostTools = await this.config.setupTools?.(scope, this.bridge, this.config.tools, this.parent ? this.config.id : undefined, toolPermissions);
@@ -95,6 +93,11 @@ export class SessionRuntime {
         return approval.allowed ? decision : { kind: "deny", reason: approval.reason || "Tool use denied by OMA" };
       });
       scope.on("tools/execute", async (exec, next) => {
+        if (exec.agent) {
+          await this.ctx.sessions.flush(exec.agent.session);
+          await this.ctx.get("ccrReplication")?.flush(exec.agent.session.id);
+        }
+        exec.signal.throwIfAborted();
         const dispatch = () => traceHooks.runTool(this.config.id, exec.callId, next);
         if (exec.name === "AskUserQuestion") return dispatch();
         if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return dispatch();
@@ -108,16 +111,9 @@ export class SessionRuntime {
       });
       scope.on("session/event", (session, event) => {
         if (session.id !== this.config.id) return;
-        if (process.env.OMA_DEBUG_TIMING === "1" && ["assistant/message", "tool/result", "turn/end"].includes(event.type)) {
-          const data = event.data as { message?: { content?: { type: string }[] }; reason?: { kind: string } };
-          workerDiagnostic("info", "oma_runtime_event", {
-            session_id: session.id, event_type: event.type, timestamp: new Date().toISOString(),
-            block_types: data.message?.content?.map(block => block.type), reason: data.reason?.kind,
-          });
-        }
         if (event.type === "assistant/message")
           this.toolCalls = event.data.message.content.filter((block): block is ToolCallBlock => block.type === "tool-call");
-        this.hooks.onEvent(event);
+        this.hooks.onEvent(event, session);
         if (event.type === "tool/result") releaseToolApproval(this.bridge, event.data.message.toolCallId);
         if (event.type === "turn/end") {
           this.toolCalls = [];
@@ -127,29 +123,23 @@ export class SessionRuntime {
       });
       scope.on("agent/request", async ({ signal }, next) => {
         signal.throwIfAborted();
-        if (this.config.refreshToolPermissions) {
-          const permissions = await this.config.refreshToolPermissions(signal);
+        if (this.config.refreshSessionContext) {
+          const { toolPermissions: permissions } = await this.config.refreshSessionContext(signal);
           for (const name of Object.keys(toolPermissions)) delete toolPermissions[name];
           Object.assign(toolPermissions, permissions);
         }
-        await this.hooks.beforeRequest();
+        await this.flushLog();
+        await this.hooks.beforeRequest?.();
         signal.throwIfAborted();
-        return next();
+        const call = await next();
+        const model = this.hooks.selectModel?.(call.model) ?? call.model;
+        const selected = model === call.model ? call : { ...call, model };
+        return this.config.configureModel?.(selected) ?? selected;
       });
-      scope.on("agent/request-error", async ({ agent, failure, turn, step, signal }, next) => {
+      scope.on("agent/request-error", async ({ failure, turn, step, signal }, next) => {
         signal.throwIfAborted();
-        const recovered = await this.contextRecovery.recover(agent.session, failure, turn, step,
-          () => this.ctx.sessions.flush(agent.session),
-          async tokens => {
-            signal.throwIfAborted();
-            await this.hooks.onContextCompacted?.(tokens);
-          });
-        if (recovered) return { kind: "retry" };
         const retried = await this.modelRetry.retry(failure, turn, step, signal, (attempt, delayMs) => {
-          workerDiagnostic("warn", "oma_model_request_retry", {
-            session_id: this.config.id, failure_code: failure.code, http_status: failure.status,
-            attempt, delay_ms: delayMs,
-          });
+          this.hooks.onDiagnostic?.({ kind: "model-retry", failure, attempt, delayMs });
         });
         return retried ? { kind: "retry" } : next();
       });
@@ -161,6 +151,7 @@ export class SessionRuntime {
       parentAgent: this.parent?.agent,
       signal: this.abort.signal,
     };
+    await this.ctx.get("ccrReplication")?.ensure(this.config.id);
     this.handle = (await this.ctx.sessionPersistence.stat(SessionId(this.config.id)))
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(this.config.id), ...options })
       : await this.ctx.agents.create({
@@ -172,6 +163,11 @@ export class SessionRuntime {
           } : {}) },
           ...options,
         });
+    await this.hooks.onOpen?.(this.agent.session);
+    if (this.config.descriptor && !this.agent.session.snapshotEvents().some((event) => event.type === "subagent/descriptor")) {
+      this.agent.session.append("subagent/descriptor", this.config.descriptor);
+      await this.flushLog();
+    }
   }
 
   async refreshTools(): Promise<void> {
@@ -212,14 +208,14 @@ export class SessionRuntime {
       try {
         content = typeof input === "string" ? [{ type: "text", text: input }] : await input();
       } catch (error) {
-        workerDiagnostic("error", "oma_runtime_input_failed", { session_id: this.config.id, ...failureDiagnostic(error) });
+        this.hooks.onDiagnostic?.({ kind: "input-failed", error });
         await hooks.afterRun(false);
         return;
       }
-      this.agent.followup(createUserMessage({
-        source: { kind: "user" },
-        content,
-      }));
+      const message = hooks.messageId === undefined
+        ? createUserMessage({ source: { kind: "user" }, content })
+        : freezeMessage({ id: MessageId(hooks.messageId), role: "user", source: { kind: "user" }, content });
+      this.agent.followup(message);
       await this.agent.whenIdle();
       await this.flushLog();
       await hooks.afterRun(this.turnCompleted);
@@ -235,6 +231,7 @@ export class SessionRuntime {
 
   async flushLog(): Promise<void> {
     await this.ctx.sessions.flush(this.agent.session);
+    await this.hooks.afterFlushLog?.(this.agent.session);
   }
 
   cancelForShutdown(): void {

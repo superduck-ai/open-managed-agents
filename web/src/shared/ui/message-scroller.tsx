@@ -39,7 +39,6 @@ function MessageScrollerViewport({
   const { scrollToEnd } = useMessageScroller();
   const restoreFollowIfStillAtEnd = React.useCallback(
     (viewport: HTMLDivElement) => {
-      // @shadcn/react 0.3.0 releases follow on no-op gestures; strict end geometry safely re-arms it.
       window.requestAnimationFrame(() => {
         const distanceToEnd = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
         if (viewport.isConnected && distanceToEnd <= MESSAGE_SCROLLER_END_EPSILON) {
@@ -101,15 +100,18 @@ function MessageScrollerItem({
 }
 
 function MessageScrollerButton({
+  behavior = 'smooth',
   direction = 'end',
   className,
   children,
   render,
   variant = 'secondary',
   size = 'icon-sm',
+  onClick,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Button> &
   Pick<React.ComponentProps<typeof Button>, 'variant' | 'size'>) {
+  const { scrollToEnd, scrollToStart } = useMessageScroller();
   return (
     <MessageScrollerPrimitive.Button
       data-slot="message-scroller-button"
@@ -117,8 +119,17 @@ function MessageScrollerButton({
       data-variant={variant}
       data-size={size}
       direction={direction}
+      behavior={behavior}
+      onClick={(event) => {
+        onClick?.(event);
+        if (!event.defaultPrevented && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+          event.preventDefault();
+          if (direction === 'end') scrollToEnd({ behavior: 'auto' });
+          else scrollToStart({ behavior: 'auto' });
+        }
+      }}
       className={cn(
-        'absolute inset-x-1/2 z-10 -translate-x-1/2 border-border bg-background text-foreground transition-[translate,scale,opacity] duration-200 data-[active=false]:pointer-events-none data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[direction=end]:bottom-4 data-[direction=end]:data-[active=false]:translate-y-full data-[direction=start]:top-4 data-[direction=start]:data-[active=false]:-translate-y-full',
+        'absolute inset-x-1/2 z-10 -translate-x-1/2 border-border bg-background text-foreground data-[active=false]:opacity-0 data-[active=false]:invisible data-[active=false]:pointer-events-none data-[direction=end]:bottom-4 data-[direction=start]:top-4',
         className,
       )}
       render={render ?? <Button variant={variant} size={size} />}

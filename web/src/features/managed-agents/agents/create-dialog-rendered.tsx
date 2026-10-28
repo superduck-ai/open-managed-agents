@@ -21,19 +21,13 @@ import { Separator } from '../../../shared/ui/separator';
 import { Textarea } from '../../../shared/ui/textarea';
 import { type CreateAgentInput } from '../types';
 import { listMcpTunnels, probeMcpTunnel } from '../../mcp-tunnels/api';
-import { listCreateAgentSkills, loadMcpDirectoryServers, searchCreateAgentSubagents } from './create-dialog-api';
-import {
-  type AgentModelOption,
-  selectedSkillReferences,
-  selectedSubagentReferences,
-  toggleSkill,
-  toggleSubagent,
-  updateDraftModelID,
-} from './create-dialog-model';
+import { listCreateAgentSkills, loadMcpDirectoryServers } from './create-dialog-api';
+import { type AgentModelOption, selectedSkillReferences, toggleSkill, updateDraftModelID } from './create-dialog-model';
 import { CreateDialogPicker } from './create-dialog-picker';
 import { CreateDialogToolsEditor } from './create-dialog-tools-editor';
 import { CreatePageSection } from './create-page-section';
-import { agentCreateHref } from './creation-route';
+import { SubagentsEditor } from './subagents-editor';
+import { subagentSettings } from './subagents-model';
 
 export function AgentConfigRenderedEditor({
   orgUuid,
@@ -57,17 +51,6 @@ export function AgentConfigRenderedEditor({
   const { msg } = useI18n();
   const presentation = renderedEditorPresentation(compact === true);
   const csrfToken = useContext(AuthContext)?.csrfToken;
-  const [agentSearch, setAgentSearch] = useState('');
-  const [debouncedAgentSearch, setDebouncedAgentSearch] = useState('');
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedAgentSearch(agentSearch), 300);
-    return () => window.clearTimeout(timer);
-  }, [agentSearch]);
-  const agentsQuery = useQuery({
-    queryKey: ['agent-config', 'subagents', workspaceId, debouncedAgentSearch.trim()],
-    queryFn: () => searchCreateAgentSubagents(workspaceId, debouncedAgentSearch),
-    retry: false,
-  });
   const skillsQuery = useQuery({
     queryKey: ['skills', workspaceId, 'agent-config-picker'],
     queryFn: () => listCreateAgentSkills(workspaceId),
@@ -90,37 +73,24 @@ export function AgentConfigRenderedEditor({
     enabled: Boolean(orgUuid && workspaceId),
     retry: false,
   });
-  const refetchAgents = agentsQuery.refetch;
   const refetchSkills = skillsQuery.refetch;
   const refetchWorkspaceServers = workspaceServersQuery.refetch;
 
   useEffect(() => {
     const refresh = () => {
-      void refetchAgents();
       void refetchSkills();
       void refetchWorkspaceServers();
     };
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
-  }, [refetchAgents, refetchSkills, refetchWorkspaceServers]);
+  }, [refetchSkills, refetchWorkspaceServers]);
 
-  const selectedSubagents = selectedSubagentReferences(draft);
-  const selectedSubagentIds = selectedSubagents
-    .filter((reference) => reference.type === 'agent')
-    .map((reference) => reference.id);
   const selectedSkills = selectedSkillReferences(draft);
   const skillOptions = skillsQuery.data ?? [];
-  const agents = agentsQuery.data ?? [];
-  const agentOptions = agents.map((agent) => ({
-    id: agent.id,
-    label: agent.name,
-    description: `${agent.id} · v${agent.version}`,
-    disabled: selectedSubagents.length >= 20 && !selectedSubagentIds.includes(agent.id),
-  }));
   const skillPickerOptions = skillOptions.map((skill) => ({
     id: skill.id,
     label: skill.displayTitle,
-    description: `${skill.id} · ${skill.source}`,
+    description: `${skill.id}  ${skill.source}`,
     disabled: selectedSkills.length >= 20 && !selectedSkills.some((reference) => reference.skill_id === skill.id),
   }));
   const mcpServers = [
@@ -149,14 +119,7 @@ export function AgentConfigRenderedEditor({
 
   return (
     <div className={presentation.container}>
-      <CreateDialogSection
-        compact={compact}
-        title={msg('managedAgents.agents.createDialog.general', 'General')}
-        description={msg(
-          'managedAgents.agents.createDialog.generalDescription',
-          "What this agent is and how it's prompted.",
-        )}
-      >
+      <CreateDialogSection compact={compact} title={msg('managedAgents.agents.createDialog.general', 'General')}>
         <div className={cn('space-y-4', presentation.generalFields)}>
           <label className="grid gap-2 text-sm font-medium">
             <span>{msg('managedAgents.common.name', 'Name')}</span>
@@ -200,66 +163,19 @@ export function AgentConfigRenderedEditor({
         compact={compact}
         collapsible={compact}
         className={presentation.multiagentOrder}
-        summary={selectedConfigurationSummary(selectedSubagents.length, msg)}
+        summary={
+          subagentSettings(draft).type === 'enabled'
+            ? msg('managedAgents.agents.createDialog.subagentsOn', 'Subagents on')
+            : selectedConfigurationSummary(0, msg)
+        }
         title={msg('managedAgents.agents.createDialog.multiagent', 'Multiagent')}
         description={msg(
           'managedAgents.agents.createDialog.multiagentDescription',
-          'Subagents this agent can spawn and delegate work to.',
+          'Subagents this agent can hand work to.',
         )}
-        learnMore="https://platform.claude.com/docs/en/managed-agents/multi-agent"
+        learnMore="https://platform.claude.com/docs/en/managed-agents/multiagent-orchestration"
       >
-        <SelectedPills
-          items={selectedSubagents.map((reference) => {
-            if (reference.type === 'self') {
-              return { id: 'self', label: msg('managedAgents.agents.createDialog.thisAgent', 'This agent') };
-            }
-            const agent = agents.find((candidate) => candidate.id === reference.id);
-            return { id: reference.id, label: agent?.name || reference.id };
-          })}
-          onRemove={(id) => {
-            if (id === 'self') {
-              const agentsWithoutSelf = selectedSubagents.filter((reference) => reference.type !== 'self');
-              onChange({
-                ...draft,
-                multiagent: agentsWithoutSelf.length ? { type: 'coordinator', agents: agentsWithoutSelf } : null,
-              });
-              return;
-            }
-            const agent = agents.find((candidate) => candidate.id === id);
-            if (agent) {
-              onChange(toggleSubagent(draft, agent));
-            } else {
-              const remaining = selectedSubagents.filter(
-                (reference) => reference.type !== 'agent' || reference.id !== id,
-              );
-              onChange({
-                ...draft,
-                multiagent: remaining.length ? { type: 'coordinator', agents: remaining } : null,
-              });
-            }
-          }}
-        />
-        <CreateDialogPicker
-          label={msg('managedAgents.agents.createDialog.addSubagent', 'Add subagent')}
-          placeholder={msg('managedAgents.agents.createDialog.addSubagent', 'Add subagent')}
-          searchPlaceholder={msg('managedAgents.agents.createDialog.searchAgents', 'Search agents...')}
-          emptyLabel={msg('managedAgents.agents.createDialog.noAgents', 'No agents yet.')}
-          options={agentOptions}
-          selectedIds={selectedSubagentIds}
-          loading={agentsQuery.isLoading}
-          error={agentsQuery.isError}
-          onRetry={() => void agentsQuery.refetch()}
-          searchValue={agentSearch}
-          onSearchChange={setAgentSearch}
-          onToggle={(id) => {
-            const agent = agents.find((candidate) => candidate.id === id);
-            if (agent) {
-              onChange(toggleSubagent(draft, agent));
-            }
-          }}
-          createLabel={msg('managedAgents.agents.createLabel', 'Create agent')}
-          onCreate={() => openInNewTab(agentCreateHref(workspaceId))}
-        />
+        <SubagentsEditor draft={draft} workspaceId={workspaceId} orgUuid={orgUuid} onChange={onChange} />
       </CreateDialogSection>
 
       <Separator className={presentation.separator} />
@@ -293,7 +209,7 @@ export function AgentConfigRenderedEditor({
           label={msg('managedAgents.agents.createDialog.addSkill', 'Add skill')}
           placeholder={msg('managedAgents.agents.createDialog.addSkill', 'Add skill')}
           searchPlaceholder={msg('managedAgents.agents.createDialog.searchSkills', 'Search skills...')}
-          emptyLabel={msg('managedAgents.agents.createDialog.noSkills', 'No skills yet.')}
+          emptyLabel={msg('managedAgents.agents.createDialog.noSkills', 'No skills found.')}
           options={skillPickerOptions}
           selectedIds={selectedSkills.map((reference) => reference.skill_id)}
           loading={skillsQuery.isLoading}
@@ -361,7 +277,7 @@ function CreateDialogSection({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   learnMore?: string;
   compact?: boolean;
   collapsible?: boolean;
@@ -387,14 +303,14 @@ function CreateDialogSection({
       className={cn(
         'grid gap-5 md:gap-6',
         compact
-          ? 'border-b border-border py-4 md:grid-cols-[244px_minmax(0,1fr)]'
+          ? 'border-b-[0.5px] border-border py-4 md:grid-cols-[244px_minmax(0,1fr)]'
           : 'py-8 md:grid-cols-[220px_minmax(0,1fr)]',
         className,
       )}
     >
       <div>
-        <h3 className={compact ? 'text-sm font-medium' : 'text-base font-semibold'}>{title}</h3>
-        <p className="mt-2 max-w-64 text-sm leading-6 text-muted-foreground">{description}</p>
+        <h3 className={compact ? 'text-sm font-medium' : 'text-sm font-semibold'}>{title}</h3>
+        {description ? <p className="mt-2 max-w-64 text-sm leading-6 text-muted-foreground">{description}</p> : null}
         {learnMore ? (
           <a
             href={learnMore}
@@ -451,7 +367,10 @@ function ModelPicker({
         <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(520px,calc(100vw-2rem))] gap-0 p-0">
-        <Command>
+        <Command
+          defaultValue={selected ? `${selected.displayName} ${selected.id}` : undefined}
+          label={msg('managedAgents.agents.createDialog.searchModels', 'Search models...')}
+        >
           <CommandInput placeholder={msg('managedAgents.agents.createDialog.searchModels', 'Search models...')} />
           <CommandList>
             <CommandEmpty>{msg('managedAgents.agents.createDialog.noModels', 'No models found.')}</CommandEmpty>
@@ -468,7 +387,9 @@ function ModelPicker({
                   <Check className={cn('size-4', value === option.id ? 'opacity-100' : 'opacity-0')} aria-hidden />
                   <span className="min-w-0">
                     <span className="block truncate">{option.displayName}</span>
-                    <code className="block truncate text-xs text-muted-foreground">{option.id}</code>
+                    {option.displayName !== option.id ? (
+                      <code className="block truncate text-xs text-muted-foreground">{option.id}</code>
+                    ) : null}
                   </span>
                 </CommandItem>
               ))}

@@ -39,7 +39,7 @@ export async function registerWorkerTask(api: OmaApi, task: BrainTask, signal?: 
       ? { trace_export: { content: (registered.trace_export as { content?: unknown }).content === true } } : {}),
     external_mcp_config: context.mcp_config,
     launch: {
-      version: 2, model: context.model, model_backends: context.model_backends, work_dir: context.cwd,
+      version: 2, models: context.models, model: context.model, work_dir: context.cwd,
       system: context.system_prompt || context.custom_system_prompt || "",
       environment_prompt: context.append_system_prompt ?? "",
       memory_catalog_prompt: context.memory_catalog_prompt ?? "",

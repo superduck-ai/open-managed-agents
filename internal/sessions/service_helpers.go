@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/eventpayload"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -187,7 +189,8 @@ func (h *Handler) resourceFromRequest(
 	if err != nil {
 		return normalizedSessionResource{}, err
 	}
-	var payload any
+	var githubRepository *db.SessionResourceGitHubRepository
+	var memoryStore *db.SessionResourceMemoryStore
 	var secret json.RawMessage
 	var normalizedFileSpec *sessionresource.FileSpec
 	var gitSpec *sessionresource.GitRepositorySpec
@@ -211,7 +214,6 @@ func (h *Handler) resourceFromRequest(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		payload = fileSpec.PayloadFields(resourceID)
 		normalizedFileSpec = &fileSpec
 	case sessionresource.GitRepositoryType:
 		spec, err := sessionresource.NormalizeGitRepositorySpec(body.URL, body.MountPath, body.Checkout)
@@ -228,25 +230,17 @@ func (h *Handler) resourceFromRequest(
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		fields := map[string]any{"id": resourceID, "type": resourceType, "url": spec.URL}
-		fields["mount_path"] = spec.MountPath
-		if spec.Checkout != nil {
-			fields["checkout"] = spec.Checkout
-		}
-		payload = fields
+		githubRepository = &db.SessionResourceGitHubRepository{URL: spec.URL, MountPath: spec.MountPath, Checkout: spec.Checkout}
+
 		gitSpec = &spec
 	case sessionresource.MemoryStoreType:
 		fields, err := h.memoryStorePayload(r.Context(), session, body, attachSet, resourceID)
 		if err != nil {
 			return normalizedSessionResource{}, err
 		}
-		payload = fields
+		memoryStore = &db.SessionResourceMemoryStore{ExternalID: fields.MemoryStoreID, Access: new(string(fields.Access)), Description: new(fields.Description), Instructions: new(fields.Instructions), MountPath: new(fields.MountPath), Name: new(fields.Name)}
 	default:
 		return normalizedSessionResource{}, errors.New("resource type must be file, github_repository, or memory_store")
-	}
-	payloadRaw, err := httpapi.MarshalRaw(payload)
-	if err != nil {
-		return normalizedSessionResource{}, err
 	}
 	return normalizedSessionResource{
 		resource: db.SessionResource{
@@ -256,7 +250,8 @@ func (h *Handler) resourceFromRequest(
 			WorkspaceUUID:     session.WorkspaceUUID,
 			SessionExternalID: session.ExternalID,
 			ResourceType:      resourceType,
-			Payload:           payloadRaw,
+			GitHubRepository:  githubRepository,
+			MemoryStore:       memoryStore,
 			SecretPayload:     secret,
 			CreatedAt:         now,
 			UpdatedAt:         now,
@@ -541,15 +536,29 @@ func appendOutcomeEvaluation(raw json.RawMessage, outcomeID string, maxIteration
 	return httpapi.MarshalRaw(outcomes)
 }
 
-func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sessionResponse, error) {
+// responseFromSession renders a session API response. refreshUsage controls
+// whether the live usage aggregate is recomputed: single-session reads pass
+// true for freshness, list routes pass false to avoid a per-row aggregation
+// over session_events (the stored usage projection is kept fresh by budget
+// enforcement after every persisted batch).
+func (h *Handler) responseFromSession(r *http.Request, session db.Session, refreshUsage bool) (sessionResponse, error) {
 	resources, err := h.db.ListSessionResources(r.Context(), session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
 		return sessionResponse{}, err
+	}
+	usage := httpapi.RawOr(session.Usage, `{}`)
+	if refreshUsage {
+		totals, err := h.db.SumSessionUsageTotals(r.Context(), session.WorkspaceUUID, session.ExternalID)
+		if err != nil {
+			return sessionResponse{}, fmt.Errorf("sum session usage: %w", err)
+		}
+		usage = sessionUsageJSON(totals, session.Budget)
 	}
 	return sessionResponse{
 		ID:                 session.ExternalID,
 		Agent:              httpapi.RawOr(session.AgentSnapshot, `{}`),
 		ArchivedAt:         httpapi.OptionalTime(session.ArchivedAt),
+		Budget:             jsonx.Default(session.Budget, "null"),
 		CreatedAt:          httpapi.FormatTime(session.CreatedAt),
 		DeploymentID:       session.DeploymentID,
 		EnvironmentID:      session.EnvironmentExternalID,
@@ -561,7 +570,7 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session) (sess
 		Title:              session.Title,
 		Type:               "session",
 		UpdatedAt:          httpapi.FormatTime(session.UpdatedAt),
-		Usage:              httpapi.RawOr(session.Usage, `{}`),
+		Usage:              usage,
 		VaultIDs:           append([]string{}, session.VaultIDs...),
 	}, nil
 }
@@ -582,6 +591,16 @@ func responseFromThread(thread db.SessionThread) threadResponse {
 	}
 }
 
+func (h *Handler) responseFromThreadWithUsage(ctx context.Context, workspaceUUID, sessionExternalID string, thread db.SessionThread) (threadResponse, error) {
+	response := responseFromThread(thread)
+	totals, err := h.db.SumSessionThreadUsageTotals(ctx, workspaceUUID, sessionExternalID, thread.ExternalID)
+	if err != nil {
+		return threadResponse{}, fmt.Errorf("sum session thread usage: %w", err)
+	}
+	response.Usage = sessionUsageJSON(totals, nil)
+	return response, nil
+}
+
 func resourcesToResponses(resources []db.SessionResource) []json.RawMessage {
 	data := make([]json.RawMessage, 0, len(resources))
 	for _, resource := range resources {
@@ -591,35 +610,39 @@ func resourcesToResponses(resources []db.SessionResource) []json.RawMessage {
 }
 
 func responseFromResource(resource db.SessionResource) json.RawMessage {
-	var payload map[string]any
-	if resource.ResourceType == sessionresource.FileType && isOutputResource(resource) {
-		payload = map[string]any{}
-	} else if err := json.Unmarshal(resource.Payload, &payload); err != nil || payload == nil {
-		payload = map[string]any{}
+	payload := map[string]any{"id": resource.ExternalID, "type": resource.ResourceType}
+	switch {
+	case resource.ResourceType == sessionresource.FileType && resource.File != nil:
+		payload = map[string]any{
+			"file_id":    resource.File.FileID,
+			"mount_path": sandboxmount.SandboxPath(resource.File.NamespacePath),
+		}
+	case resource.ResourceType == "github_repository" && resource.GitHubRepository != nil:
+		payload["url"] = resource.GitHubRepository.URL
+		payload["mount_path"] = resource.GitHubRepository.MountPath
+		if resource.GitHubRepository.Checkout != nil {
+			payload["checkout"] = resource.GitHubRepository.Checkout
+		}
+	case resource.ResourceType == "memory_store" && resource.MemoryStore != nil:
+		payload["memory_store_id"] = resource.MemoryStore.ExternalID
+		setOptionalResourceField(payload, "access", resource.MemoryStore.Access)
+		setOptionalResourceField(payload, "description", resource.MemoryStore.Description)
+		setOptionalResourceField(payload, "instructions", resource.MemoryStore.Instructions)
+		setOptionalResourceField(payload, "mount_path", resource.MemoryStore.MountPath)
+		setOptionalResourceField(payload, "name", resource.MemoryStore.Name)
 	}
 	payload["id"] = resource.ExternalID
 	payload["type"] = resource.ResourceType
-	delete(payload, "authorization_token")
-	if resource.ResourceType == sessionresource.FileType {
-		delete(payload, "source")
-		if isOutputResource(resource) {
-			// 读取路径与 Owned File 同批 JOIN，可见的输出资源必然带 file_id。
-			payload["file_id"] = resource.FileExternalID
-			payload["mount_path"] = resource.Path
-		} else if mountPath, ok := payload["mount_path"].(string); ok {
-			if publicMountPath, err := sandboxmount.FileBackingPath(mountPath); err == nil {
-				payload["mount_path"] = publicMountPath
-			}
-		}
-	}
 	payload["created_at"] = httpapi.FormatTime(resource.CreatedAt)
 	payload["updated_at"] = httpapi.FormatTime(resource.UpdatedAt)
 	raw, _ := json.Marshal(payload)
 	return raw
 }
 
-func isOutputResource(resource db.SessionResource) bool {
-	return strings.HasPrefix(resource.Path, sandboxmount.OutputsRoot+"/")
+func setOptionalResourceField(payload map[string]any, name string, value *string) {
+	if value != nil {
+		payload[name] = *value
+	}
 }
 
 func threadMetricResponse(raw json.RawMessage, initialized bool) json.RawMessage {

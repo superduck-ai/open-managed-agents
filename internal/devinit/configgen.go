@@ -116,6 +116,7 @@ func defaultWorkspaceState(state State) (WorkspaceState, error) {
 // absolutizeConfigPaths pins every runtime-resolved relative path field from
 // the base config into the generated document as an absolute path.
 func absolutizeConfigPaths(root *yaml.Node, base config.Config) {
+	setPathIfPresent(root, []string{"llm_provider_presets_file"}, base.LLMProviderPresetsFile)
 	setPathIfPresent(root, []string{"code_session", "jwt_signing_private_key_file"}, base.CodeSession.JWTSigningPrivateKeyFile)
 	setPathIfPresent(root, []string{"code_session", "upstream_proxy_ca_key_file"}, base.CodeSession.UpstreamProxyCAKeyFile)
 	setPathIfPresent(root, []string{"code_session", "brain_claim_token_file"}, base.CodeSession.BrainClaimTokenFile)

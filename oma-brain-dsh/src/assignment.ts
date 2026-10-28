@@ -1,7 +1,16 @@
-import type { SubagentConfig, ToolPermissions } from "./runtime/contracts.ts";
+import type { CcrSubagentConfig } from "./ccrv2/contracts.ts";
+import type { ToolPermissions } from "./runtime/contracts.ts";
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { sandboxEndpoint } from "./oma-sandbox/config.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
+
+export type ModelConfig = {
+  id: string;
+  api_backend: "messages" | "chat_completions";
+  context_window?: number;
+  max_output_tokens?: number;
+  input_modalities?: ("text" | "image")[];
+};
 
 export interface Assignment {
   observability_enabled?: boolean;
@@ -16,11 +25,11 @@ export interface Assignment {
   launch: {
     version: number;
     model: string;
-    model_backends?: Record<string, "messages" | "chat_completions">;
+    models?: Record<string, ModelConfig>;
     work_dir: string;
     system: string;
     tools: string[];
-    subagents?: SubagentConfig;
+    subagents?: CcrSubagentConfig;
     tool_permissions?: ToolPermissions;
     environment_prompt?: string;
     memory_catalog_prompt?: string;
@@ -48,9 +57,7 @@ export function validateAssignment(a: Assignment): void {
     throw new Error("Unsupported launch version");
   if (!a.launch.model || !a.launch.work_dir.startsWith("/"))
     throw new Error("Invalid launch model or work directory");
-  if (a.launch.model_backends !== undefined && (!a.launch.model_backends || typeof a.launch.model_backends !== "object"
-    || Array.isArray(a.launch.model_backends) || Object.values(a.launch.model_backends).some((value) => value !== "messages" && value !== "chat_completions")))
-    throw new Error("Invalid model API backends");
+  validateModels(a.launch.models);
   const tools = new Set([...sandboxToolDefinitions(), ...webToolDefinitions()].map((tool) => tool.name));
   tools.add("ask_user_question");
   if (!Array.isArray(a.launch.tools)
@@ -82,4 +89,35 @@ export function validateToolPermissions(permissions: unknown): asserts permissio
   if (permissions !== undefined && (!permissions || typeof permissions !== "object" || Array.isArray(permissions)
     || Object.values(permissions).some((policy) => !["allow", "ask", "deny"].includes(policy))))
     throw new Error("Invalid launch tool permissions");
+}
+
+export function validateModels(value: unknown): asserts value is Record<string, ModelConfig> | undefined {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid model catalog");
+  for (const [key, model] of Object.entries(value)) {
+    if (
+      !key ||
+      !model ||
+      typeof model !== "object" ||
+      Array.isArray(model) ||
+      typeof model.id !== "string" ||
+      !model.id ||
+      !["messages", "chat_completions"].includes(model.api_backend)
+    )
+      throw new Error("Invalid model catalog");
+    for (const capacity of [model.context_window, model.max_output_tokens]) {
+      if (capacity !== undefined && (!Number.isSafeInteger(capacity) || capacity <= 0))
+        throw new Error("Invalid model capacity");
+    }
+    const inputs = model.input_modalities;
+    if (
+      inputs !== undefined &&
+      (!Array.isArray(inputs) ||
+        inputs.length === 0 ||
+        inputs.length > 2 ||
+        new Set(inputs).size !== inputs.length ||
+        inputs.some((input) => input !== "text" && input !== "image"))
+    )
+      throw new Error("Invalid model input modalities");
+  }
 }

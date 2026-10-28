@@ -6,17 +6,539 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/superduck-ai/yourbatis"
 )
+
+func TestSessionResourceFileOwnershipMigration(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+
+	ctx := context.Background()
+	standardDB := newIsolatedSessionResourceMigrationTestDatabase(t, ctx, databaseURL)
+	provider := newMigrationTestProvider(t, standardDB)
+	if _, err := provider.UpTo(ctx, 104); err != nil {
+		t.Fatalf("migrate ownership fixture database to 104: %v", err)
+	}
+	if _, err := standardDB.ExecContext(ctx, sessionFileOwnershipMigrationFixtureSQL); err != nil {
+		t.Fatalf("seed ownership migration fixture: %v", err)
+	}
+
+	if _, err := standardDB.ExecContext(ctx, `
+		update files
+		set workspace_uuid = '20000000-0000-0000-0000-000000000002'
+		where external_id = 'file_source_ownership'
+	`); err != nil {
+		t.Fatalf("break referenced File workspace: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 105); err == nil {
+		t.Fatal("ownership migration accepted a cross-workspace File reference")
+	}
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
+	if _, err := standardDB.ExecContext(ctx, `
+		update files
+		set workspace_uuid = '20000000-0000-0000-0000-000000000001'
+		where external_id = 'file_source_ownership'
+	`); err != nil {
+		t.Fatalf("restore referenced File workspace: %v", err)
+	}
+
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set payload = jsonb_set(payload, '{mount_path}', '"/wrong.txt"')
+		where external_id = 'sesrsc_input_ownership'
+	`); err != nil {
+		t.Fatalf("break referenced Resource backing path: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 105); err == nil {
+		t.Fatal("ownership migration accepted an inconsistent referenced Resource payload")
+	}
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set payload = jsonb_set(payload, '{mount_path}', '"/uploads/input.txt"')
+		where external_id = 'sesrsc_input_ownership'
+	`); err != nil {
+		t.Fatalf("restore referenced Resource backing path: %v", err)
+	}
+
+	if _, err := standardDB.ExecContext(ctx, `
+		update files
+		set scope_id = 'sesn_other_ownership'
+		where external_id = 'file_owned_ownership'
+	`); err != nil {
+		t.Fatalf("break owned File Session scope: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 105); err == nil {
+		t.Fatal("ownership migration accepted an owned File scoped to another Session")
+	}
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
+	if _, err := standardDB.ExecContext(ctx, `
+		update files
+		set scope_id = 'sesn_file_ownership'
+		where external_id = 'file_owned_ownership'
+	`); err != nil {
+		t.Fatalf("restore owned File Session scope: %v", err)
+	}
+
+	if _, err := standardDB.ExecContext(ctx, `
+		insert into session_resources (
+			uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+			session_external_id, resource_type, payload, path, parent_path, file_uuid
+		)
+		values (
+			'50000000-0000-0000-0000-000000000004', 'sesrsc_mixed_reference_ownership',
+			'10000000-0000-0000-0000-000000000001',
+			'20000000-0000-0000-0000-000000000001',
+			'40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
+			'file', '{"id":"sesrsc_mixed_reference_ownership","type":"file","file_id":"file_owned_ownership","source":"/uploads","mount_path":"/mixed.txt"}',
+			'/uploads/mixed.txt', '/uploads',
+			'60000000-0000-0000-0000-000000000002'
+		)
+	`); err != nil {
+		t.Fatalf("seed mixed referenced/owned File: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 105); err == nil {
+		t.Fatal("ownership migration accepted a File shared by owned and referenced Resources")
+	}
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", false)
+	if _, err := standardDB.ExecContext(ctx, `
+		delete from session_resources where external_id = 'sesrsc_mixed_reference_ownership'
+	`); err != nil {
+		t.Fatalf("remove mixed ownership fixture: %v", err)
+	}
+
+	if _, err := provider.UpTo(ctx, 105); err != nil {
+		t.Fatalf("migrate ownership fixture database to 105: %v", err)
+	}
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", true)
+	rows, err := standardDB.QueryContext(ctx, `
+		select path, coalesce(file_ownership, '')
+		from session_resources
+		where path in ('/uploads/input.txt', '/outputs/output.txt', '/skills/demo')
+		order by path
+	`)
+	if err != nil {
+		t.Fatalf("load migrated ownership values: %v", err)
+	}
+	defer rows.Close()
+	got := make(map[string]string)
+	for rows.Next() {
+		var path, ownership string
+		if err := rows.Scan(&path, &ownership); err != nil {
+			t.Fatalf("scan migrated ownership: %v", err)
+		}
+		got[path] = ownership
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate migrated ownership values: %v", err)
+	}
+	if got["/uploads/input.txt"] != "referenced" ||
+		got["/outputs/output.txt"] != "owned" ||
+		got["/skills/demo"] != "" {
+		t.Fatalf("migrated ownership values = %#v", got)
+	}
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources set file_ownership = null
+		where path = '/outputs/output.txt'
+	`); err == nil {
+		t.Fatal("ownership migration constraint accepted a File with NULL ownership")
+	}
+	if _, err := provider.Down(ctx); err == nil {
+		t.Fatal("ownership migration allowed an unsafe down migration")
+	}
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "file_ownership", true)
+}
+
+func TestSessionResourcePayloadRemovalMigration(t *testing.T) {
+	databaseURL := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+
+	ctx := context.Background()
+	standardDB := newIsolatedSessionResourceMigrationTestDatabase(t, ctx, databaseURL)
+	provider := newMigrationTestProvider(t, standardDB)
+	if _, err := provider.UpTo(ctx, 104); err != nil {
+		t.Fatalf("migrate payload fixture database to 104: %v", err)
+	}
+	if _, err := standardDB.ExecContext(ctx, sessionFileOwnershipMigrationFixtureSQL); err != nil {
+		t.Fatalf("seed payload migration base fixture: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 105); err != nil {
+		t.Fatalf("migrate payload fixture database to 105: %v", err)
+	}
+	if _, err := standardDB.ExecContext(ctx, sessionResourcePayloadMigrationFixtureSQL); err != nil {
+		t.Fatalf("seed explicit Resource payload fixture: %v", err)
+	}
+
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set payload = jsonb_set(payload, '{mount_path}', '"/broken/input.txt"')
+		where external_id = 'sesrsc_input_ownership'
+	`); err != nil {
+		t.Fatalf("break referenced File payload path: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 106); err == nil {
+		t.Fatal("payload removal migration accepted an inconsistent referenced File payload")
+	}
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", true)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "mount_path", false)
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set payload = jsonb_set(payload, '{mount_path}', '"/uploads/input.txt"')
+		where external_id = 'sesrsc_input_ownership'
+	`); err != nil {
+		t.Fatalf("restore referenced File payload path: %v", err)
+	}
+
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set payload = jsonb_set(payload, '{memory_store_id}', '42')
+		where external_id = 'sesrsc_memory_payload'
+	`); err != nil {
+		t.Fatalf("break Memory Store payload reference: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 106); err == nil {
+		t.Fatal("payload removal migration accepted an invalid Memory Store identity")
+	}
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", true)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "memory_store_uuid", false)
+	if _, err := standardDB.ExecContext(ctx, `
+		update session_resources
+		set payload = jsonb_set(payload, '{memory_store_id}', '"mem_payload"')
+		where external_id = 'sesrsc_memory_payload'
+	`); err != nil {
+		t.Fatalf("restore Memory Store payload reference: %v", err)
+	}
+
+	if _, err := provider.UpTo(ctx, 106); err != nil {
+		t.Fatalf("migrate payload fixture database to 106: %v", err)
+	}
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", false)
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "memory_store_uuid", true)
+
+	var repositoryURL, repositoryMountPath, memoryStoreUUID, memoryAccess string
+	var inputMountPath, outputMountPath string
+	var skillMountPath *string
+	if err := standardDB.QueryRowContext(ctx, `
+		select github_repository_url, mount_path
+		from session_resources
+		where external_id = 'sesrsc_github_payload'
+	`).Scan(&repositoryURL, &repositoryMountPath); err != nil {
+		t.Fatalf("load migrated GitHub Repository fields: %v", err)
+	}
+	if err := standardDB.QueryRowContext(ctx, `
+		select memory_store_uuid, memory_access
+		from session_resources
+		where external_id = 'sesrsc_memory_payload'
+	`).Scan(&memoryStoreUUID, &memoryAccess); err != nil {
+		t.Fatalf("load migrated Memory Store fields: %v", err)
+	}
+	if err := standardDB.QueryRowContext(ctx, `
+		select
+			max(mount_path) filter (where external_id = 'sesrsc_input_ownership'),
+			max(mount_path) filter (where external_id = 'sesrsc_output_ownership'),
+			max(mount_path) filter (where external_id = 'sesrsc_skill_ownership')
+		from session_resources
+	`).Scan(&inputMountPath, &outputMountPath, &skillMountPath); err != nil {
+		t.Fatalf("load migrated File mount paths: %v", err)
+	}
+	if repositoryURL != "https://github.com/example/repository" || repositoryMountPath != "/workspace/repository" {
+		t.Fatalf("migrated GitHub fields = (%q, %q)", repositoryURL, repositoryMountPath)
+	}
+	if memoryStoreUUID != "70000000-0000-0000-0000-000000000001" || memoryAccess != "read_write" {
+		t.Fatalf("migrated Memory Store fields = (%q, %q)", memoryStoreUUID, memoryAccess)
+	}
+	if inputMountPath != "/uploads/input.txt" || outputMountPath != "/outputs/output.txt" || skillMountPath != nil {
+		t.Fatalf("migrated File mount paths = (%q, %q, %v)", inputMountPath, outputMountPath, skillMountPath)
+	}
+
+	assertSessionResourceMapperAfterPayloadRemoval(t, ctx, standardDB)
+
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatalf("reverse payload removal migration: %v", err)
+	}
+	assertSessionResourceMigrationColumnExists(t, ctx, standardDB, "payload", true)
+	var restoredRepositoryType, restoredMemoryStoreID, restoredFileMountPath string
+	if err := standardDB.QueryRowContext(ctx, `
+		select payload->>'type' from session_resources
+		where external_id = 'sesrsc_github_payload'
+	`).Scan(&restoredRepositoryType); err != nil {
+		t.Fatalf("load restored GitHub payload: %v", err)
+	}
+	if err := standardDB.QueryRowContext(ctx, `
+		select payload->>'memory_store_id' from session_resources
+		where external_id = 'sesrsc_memory_payload'
+	`).Scan(&restoredMemoryStoreID); err != nil {
+		t.Fatalf("load restored Memory Store payload: %v", err)
+	}
+	if err := standardDB.QueryRowContext(ctx, `
+		select payload->>'mount_path' from session_resources
+		where external_id = 'sesrsc_input_ownership'
+	`).Scan(&restoredFileMountPath); err != nil {
+		t.Fatalf("load restored File payload: %v", err)
+	}
+	if restoredRepositoryType != "github_repository" ||
+		restoredMemoryStoreID != "mem_payload" ||
+		restoredFileMountPath != "/uploads/input.txt" {
+		t.Fatalf("restored payload fields = (%q, %q, %q)", restoredRepositoryType, restoredMemoryStoreID, restoredFileMountPath)
+	}
+}
+
+func assertSessionResourceMapperAfterPayloadRemoval(t *testing.T, ctx context.Context, database *sql.DB) {
+	t.Helper()
+	mapperDB := yourbatis.NewDB(database, yourbatis.DialectPostgres)
+	err := mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewSessionResourceMapper(executor)
+		repository, err := mapper.FindByExternalID(ctx, "20000000-0000-0000-0000-000000000001", "sesn_file_ownership", "sesrsc_github_payload")
+		if err != nil {
+			return err
+		}
+		checkout := repository.resource().GitHubRepository.Checkout
+		if checkout == nil || checkout.Type != "branch" || checkout.Name != "main" {
+			t.Fatalf("stored checkout = %+v", checkout)
+		}
+		copy := repository.resource()
+		copy.UUID = "50000000-0000-0000-0000-000000000021"
+		copy.ExternalID = "sesrsc_checkout_roundtrip"
+		written, err := mapper.Insert(ctx, sessionResourceWriteParameters(copy))
+		if err != nil {
+			return err
+		}
+		if got := written.resource().GitHubRepository.Checkout; got == nil || *got != *checkout {
+			t.Fatalf("checkout write round trip = %+v", got)
+		}
+		const workspaceUUID = "20000000-0000-0000-0000-000000000001"
+		const sessionID = "sesn_file_ownership"
+		mountPath := "/uploads/runtime.txt"
+		resource, err := mapper.Insert(ctx, sessionResourceWriteParams{
+			UUID: "50000000-0000-0000-0000-000000000020", ExternalID: "sesrsc_runtime_ownership",
+			OrganizationUUID: "10000000-0000-0000-0000-000000000001", WorkspaceUUID: workspaceUUID,
+			SessionExternalID: sessionID, ResourceType: SessionResourceTypeFile, MountPath: &mountPath, CreatedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		_, err = mapper.BindSessionFileResource(ctx, sessionFileResourceBindingParams{
+			ResourceUUID: resource.UUID, WorkspaceUUID: workspaceUUID, SessionUUID: resource.SessionUUID,
+			FileUUID: "60000000-0000-0000-0000-000000000020", FileExternalID: "file_runtime_instance",
+			SourceFileUUID: "60000000-0000-0000-0000-000000000001", EntryPath: mountPath, ParentPath: "/uploads", MountPath: mountPath, UpdatedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		found, err := mapper.FindByExternalID(ctx, workspaceUUID, sessionID, resource.ExternalID)
+		if err != nil {
+			return err
+		}
+		projected := found.resource()
+		if projected.File == nil || projected.File.FileID != "file_runtime_instance" || projected.File.Ownership != SessionResourceFileOwnershipReferenced {
+			t.Fatalf("bound input = %+v", projected)
+		}
+		count, err := mapper.CountSessionMemoryStoresByStoreID(ctx, workspaceUUID, sessionID, "mem_payload")
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			t.Fatalf("memory resource count = %d", count)
+		}
+		_, err = mapper.SoftDeleteSessionResource(ctx, workspaceUUID, sessionID, resource.ExternalID)
+		if err != nil {
+			return err
+		}
+		fileMapper := NewFileMapper(executor)
+		if _, err = fileMapper.GetFileByUUID(ctx, workspaceUUID, "60000000-0000-0000-0000-000000000020"); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("retired input instance lookup error = %v", err)
+		}
+		_, err = fileMapper.GetFileByUUID(ctx, workspaceUUID, "60000000-0000-0000-0000-000000000001")
+		return err
+	})
+	if err != nil {
+		t.Fatalf("explicit resource mapper after migration: %v", err)
+	}
+}
+
+func newIsolatedSessionResourceMigrationTestDatabase(t *testing.T, ctx context.Context, databaseURL string) *sql.DB {
+	t.Helper()
+	adminPool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open migration admin database: %v", err)
+	}
+	schema := "migration_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := adminPool.Exec(ctx, "create schema "+quoteIdent(schema)); err != nil {
+		adminPool.Close()
+		t.Fatalf("create migration test schema: %v", err)
+	}
+
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		adminPool.Close()
+		t.Fatalf("parse migration database URL: %v", err)
+	}
+	poolConfig.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		_, _ = adminPool.Exec(ctx, "drop schema "+quoteIdent(schema)+" cascade")
+		adminPool.Close()
+		t.Fatalf("open isolated migration schema: %v", err)
+	}
+	standardDB := stdlib.OpenDBFromPool(pool)
+	t.Cleanup(func() {
+		_ = standardDB.Close()
+		pool.Close()
+		_, _ = adminPool.Exec(context.Background(), "drop schema "+quoteIdent(schema)+" cascade")
+		adminPool.Close()
+	})
+	return standardDB
+}
+
+func assertSessionResourceMigrationColumnExists(t *testing.T, ctx context.Context, database *sql.DB, column string, want bool) {
+	t.Helper()
+	var exists bool
+	if err := database.QueryRowContext(ctx, `
+		select exists (
+			select 1
+			from information_schema.columns
+			where table_schema = current_schema()
+				and table_name = 'session_resources'
+				and column_name = $1
+		)
+	`, column).Scan(&exists); err != nil {
+		t.Fatalf("check migration column %s: %v", column, err)
+	}
+	if exists != want {
+		t.Fatalf("migration column %s exists = %t, want %t", column, exists, want)
+	}
+}
+
+const sessionFileOwnershipMigrationFixtureSQL = `
+	insert into organizations (uuid, name)
+	values ('10000000-0000-0000-0000-000000000001', 'ownership migration');
+
+	insert into workspaces (uuid, external_id, organization_uuid, name)
+	values
+		('20000000-0000-0000-0000-000000000001', 'workspace_ownership_one',
+		 '10000000-0000-0000-0000-000000000001', 'ownership one'),
+		('20000000-0000-0000-0000-000000000002', 'workspace_ownership_two',
+		 '10000000-0000-0000-0000-000000000001', 'ownership two');
+
+	insert into api_keys (uuid, external_id, workspace_uuid, key_hash)
+	values ('30000000-0000-0000-0000-000000000001', 'api_key_ownership',
+		'20000000-0000-0000-0000-000000000001', 'ownership-hash');
+
+	insert into sessions (
+		uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
+		environment_uuid, environment_external_id, agent_uuid, agent_external_id,
+		agent_version, agent_snapshot
+	)
+	values (
+		'40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
+		'10000000-0000-0000-0000-000000000001',
+		'20000000-0000-0000-0000-000000000001',
+		'30000000-0000-0000-0000-000000000001',
+		'41000000-0000-0000-0000-000000000001', 'env_file_ownership',
+		'42000000-0000-0000-0000-000000000001', 'agent_file_ownership', 1, '{}'
+	);
+
+	insert into files (
+		uuid, external_id, workspace_uuid, filename, mime_type, size_bytes, sha256,
+		s3_bucket, s3_key, downloadable, scope_type, scope_id, created_by_api_key_uuid
+	)
+	values
+		('60000000-0000-0000-0000-000000000001', 'file_source_ownership',
+		 '20000000-0000-0000-0000-000000000001', 'input.txt', 'text/plain', 11,
+		 repeat('a', 64), 'ownership', 'source/input.txt', true, null, null,
+		 '30000000-0000-0000-0000-000000000001'),
+		('60000000-0000-0000-0000-000000000002', 'file_owned_ownership',
+		 '20000000-0000-0000-0000-000000000001', 'output.txt', 'text/plain', 12,
+		 repeat('b', 64), 'ownership', 'owned/output.txt', true, 'session', 'sesn_file_ownership',
+		 '30000000-0000-0000-0000-000000000001'),
+		('60000000-0000-0000-0000-000000000003', 'file_skill_ownership',
+		 '20000000-0000-0000-0000-000000000001', 'demo.zip', 'application/zip', 13,
+		 repeat('c', 64), 'ownership', 'skills/demo.zip', false, null, null,
+		 '30000000-0000-0000-0000-000000000001');
+
+	insert into session_resources (
+		uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+		session_external_id, resource_type, payload, path, parent_path, file_uuid
+	)
+	values
+		('50000000-0000-0000-0000-000000000001', 'sesrsc_input_ownership',
+		 '10000000-0000-0000-0000-000000000001',
+		 '20000000-0000-0000-0000-000000000001',
+		 '40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
+		 'file', '{"id":"sesrsc_input_ownership","type":"file","file_id":"file_source_ownership","source":"/uploads","mount_path":"/uploads/input.txt"}', '/uploads/input.txt', '/uploads',
+		 '60000000-0000-0000-0000-000000000001'),
+		('50000000-0000-0000-0000-000000000002', 'sesrsc_output_ownership',
+		 '10000000-0000-0000-0000-000000000001',
+		 '20000000-0000-0000-0000-000000000001',
+		 '40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
+		 'file', null, '/outputs/output.txt', '/outputs',
+		 '60000000-0000-0000-0000-000000000002'),
+		('50000000-0000-0000-0000-000000000003', 'sesrsc_skill_ownership',
+		 '10000000-0000-0000-0000-000000000001',
+		 '20000000-0000-0000-0000-000000000001',
+		 '40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
+		 'skill_archive', null, '/skills/demo', '/skills',
+		 '60000000-0000-0000-0000-000000000003');
+ insert into files (uuid, external_id, workspace_uuid, filename, mime_type, size_bytes, sha256, s3_bucket, s3_key, downloadable, scope_type, scope_id)
+ select '60000000-0000-0000-0000-000000000004', 'file_instance_ownership', workspace_uuid, filename, mime_type, size_bytes, sha256, s3_bucket, s3_key, downloadable, 'session', 'sesn_file_ownership'
+ from files where external_id = 'file_source_ownership';
+ update session_resources set source_file_uuid = file_uuid, file_uuid = '60000000-0000-0000-0000-000000000004', payload = jsonb_set(payload, '{file_id}', '"file_instance_ownership"')
+ where external_id = 'sesrsc_input_ownership';
+
+`
+
+const sessionResourcePayloadMigrationFixtureSQL = `
+	insert into memory_stores (
+		uuid, external_id, organization_uuid, workspace_uuid, created_by_api_key_uuid,
+		name, description, metadata, created_at, updated_at
+	)
+	values (
+		'70000000-0000-0000-0000-000000000001', 'mem_payload',
+		'10000000-0000-0000-0000-000000000001',
+		'20000000-0000-0000-0000-000000000001',
+		'30000000-0000-0000-0000-000000000001',
+		'payload memory', '', '{}', now(), now()
+	);
+
+	insert into session_resources (
+		uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
+		session_external_id, resource_type, payload, secret_payload
+	)
+	values
+		(
+			'50000000-0000-0000-0000-000000000010', 'sesrsc_github_payload',
+			'10000000-0000-0000-0000-000000000001',
+			'20000000-0000-0000-0000-000000000001',
+			'40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
+			'github_repository',
+			'{"id":"sesrsc_github_payload","type":"github_repository","url":"https://github.com/example/repository","mount_path":"/workspace/repository","checkout":{"type":"branch","name":"main"}}',
+			'{"authorization_token":"secret"}'
+		),
+		(
+			'50000000-0000-0000-0000-000000000011', 'sesrsc_memory_payload',
+			'10000000-0000-0000-0000-000000000001',
+			'20000000-0000-0000-0000-000000000001',
+			'40000000-0000-0000-0000-000000000001', 'sesn_file_ownership',
+			'memory_store',
+			'{"id":"sesrsc_memory_payload","type":"memory_store","memory_store_id":"mem_payload","access":"read_write","mount_path":"/workspace/memory"}',
+			null
+		);
+`
 
 const migrationBackfillFixtureSQL = `
 	insert into organizations (uuid, external_id, name)
@@ -275,7 +797,7 @@ func TestUnifySessionResourcesAndFilesMigration(t *testing.T) {
 		t.Fatalf("restore legacy Skill Version reference: %v", err)
 	}
 	if _, err := provider.UpTo(ctx, 48); err != nil {
-		t.Fatalf("migrate fixture database to 48: %v", err)
+		t.Fatalf("migrate fixture database to 104: %v", err)
 	}
 	assertUnifiedMigrationState(t, ctx, standardDB)
 	if _, err := provider.Up(ctx); err != nil {
@@ -681,8 +1203,11 @@ func assertSessionResourceRuntimeWriteAfterUUIDMigration(
 		WorkspaceUUID:     workspaceUUID,
 		SessionExternalID: "sesn_migration_184",
 		ResourceType:      "github_repository",
-		Payload:           json.RawMessage(`{"repository":"example/repository"}`),
-		CreatedAt:         createdAt,
+		GitHubRepository: &SessionResourceGitHubRepository{
+			URL:       "https://github.com/example/repository",
+			MountPath: "/workspace/repository",
+		},
+		CreatedAt: createdAt,
 	}})
 	if err != nil {
 		t.Fatalf("create Session Resource after UUID migration: %v", err)

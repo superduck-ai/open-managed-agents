@@ -11,10 +11,10 @@ import (
 
 func TestOrganizationCatalogPreservesWorkspaceAmbiguity(t *testing.T) {
 	catalog := NewCatalog([]db.LLMProvider{
-		{Slug: "first", ModelIDs: []string{"shared"}},
-		{Slug: "second", ModelIDs: []string{"shared"}},
+		{Slug: "first", Models: db.LLMModels{{ID: "shared"}}},
+		{Slug: "second", Models: db.LLMModels{{ID: "shared"}}},
 	})
-	catalog.organization = &db.LLMProvider{Slug: OrganizationSlug, ModelIDs: []string{"shared"}}
+	catalog.organization = []db.LLMProvider{{Slug: OrganizationSlug, Models: db.LLMModels{{ID: "shared"}}}}
 	_, err := catalog.Lookup("shared")
 	ambiguous, ok := errors.AsType[*AmbiguousModelError](err)
 	if !ok || !slices.Equal(ambiguous.Candidates, []string{"first/shared", "second/shared"}) {
@@ -27,11 +27,11 @@ func TestOrganizationCatalogPreservesWorkspaceAmbiguity(t *testing.T) {
 
 func TestOrganizationCatalogResolvesFallbackAndExplicitReferences(t *testing.T) {
 	catalog := NewCatalog([]db.LLMProvider{
-		{Slug: "first", APIBackend: "messages", ModelIDs: []string{"shared", "workspace-only"}},
+		{Slug: "first", APIBackend: "messages", Models: db.LLMModels{{ID: "shared"}, {ID: "workspace-only"}}},
 	})
-	catalog.organization = &db.LLMProvider{
-		Slug: OrganizationSlug, APIBackend: "chat_completions", ModelIDs: []string{"shared", "org-only", "vendor/model"},
-	}
+	catalog.organization = []db.LLMProvider{{
+		Slug: OrganizationSlug, APIBackend: "chat_completions", Models: db.LLMModels{{ID: "shared"}, {ID: "org-only"}, {ID: "vendor/model"}},
+	}}
 	for _, test := range []struct {
 		modelID string
 		slug    string
@@ -60,7 +60,7 @@ func TestOrganizationCatalogResolvesFallbackAndExplicitReferences(t *testing.T) 
 
 func TestOrganizationCatalogWorksWithoutWorkspaceProvider(t *testing.T) {
 	catalog := NewCatalog(nil)
-	catalog.organization = &db.LLMProvider{Slug: OrganizationSlug, ModelIDs: []string{"org-only"}}
+	catalog.organization = []db.LLMProvider{{Slug: OrganizationSlug, Models: db.LLMModels{{ID: "org-only"}}}}
 	got, err := catalog.Lookup("org-only")
 	if err != nil || got.QualifiedModelID() != "organization/org-only" {
 		t.Fatalf("Lookup(org-only) = (%+v, %v)", got, err)
@@ -69,11 +69,11 @@ func TestOrganizationCatalogWorksWithoutWorkspaceProvider(t *testing.T) {
 
 func TestOrganizationCatalogBackendsPreserveWorkspacePriority(t *testing.T) {
 	catalog := NewCatalog([]db.LLMProvider{
-		{Slug: "first", APIBackend: Messages, ModelIDs: []string{"shared", "ambiguous"}},
-		{Slug: "second", APIBackend: ChatCompletions, ModelIDs: []string{"ambiguous"}},
+		{Slug: "first", APIBackend: Messages, Models: db.LLMModels{{ID: "shared"}, {ID: "ambiguous"}}},
+		{Slug: "second", APIBackend: ChatCompletions, Models: db.LLMModels{{ID: "ambiguous"}}},
 	})
-	catalog.organization = &db.LLMProvider{Slug: OrganizationSlug, APIBackend: ChatCompletions, ModelIDs: []string{"shared", "org-only", "ambiguous", "first/shared"}}
-	backends, err := catalog.Backends()
+	catalog.organization = []db.LLMProvider{{Slug: OrganizationSlug, APIBackend: ChatCompletions, Models: db.LLMModels{{ID: "shared"}, {ID: "org-only"}, {ID: "ambiguous"}, {ID: "first/shared"}}}}
+	backends, err := catalog.RuntimeModels()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,33 @@ func TestOrganizationCatalogBackendsPreserveWorkspacePriority(t *testing.T) {
 		"organization/ambiguous":    ChatCompletions,
 		"organization/first/shared": ChatCompletions,
 	}
-	if !maps.Equal(backends, want) {
+	if !maps.Equal(runtimeBackends(backends), want) {
 		t.Fatalf("Backends() = %v, want %v", backends, want)
+	}
+}
+
+func TestMultipleOrganizationProvidersRejectAmbiguousBareModels(t *testing.T) {
+	catalog := NewCatalog(nil)
+	catalog.organization = []db.LLMProvider{
+		{Slug: "kimi", APIBackend: Messages, Models: db.LLMModels{{ID: "shared"}, {ID: "kimi-only"}}},
+		{Slug: "deepseek", APIBackend: ChatCompletions, Models: db.LLMModels{{ID: "shared"}, {ID: "deepseek-only"}}},
+	}
+	if _, err := catalog.Lookup("shared"); !errors.Is(err, ErrAmbiguousModel) {
+		t.Fatalf("ambiguous model=%v", err)
+	}
+	for _, id := range []string{"kimi/shared", "deepseek/shared", "kimi-only", "deepseek-only"} {
+		if _, err := catalog.Lookup(id); err != nil {
+			t.Fatalf("Lookup(%q)=%v", id, err)
+		}
+	}
+	models, err := catalog.RuntimeModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := models["shared"]; ok {
+		t.Fatal("ambiguous model exported to Brain")
+	}
+	if models["kimi/shared"].APIBackend != Messages || models["deepseek/shared"].APIBackend != ChatCompletions {
+		t.Fatal("provider backend lost")
 	}
 }

@@ -158,8 +158,11 @@ func waitChatIdle(t *testing.T, f *liveSession, answers int) {
 			Status string `json:"status"`
 		}
 		requireOK(t, json.Unmarshal(f.env.request(t, "GET", "/v1/sessions/"+f.session.ExternalID, f.env.apiKey, nil, 200), &state))
+		if count != answers || state.Status != "idle" {
+			return false
+		}
 		queue := f.consumer(t)
-		return count == answers && state.Status == "idle" && queue.NumPending == 0 && queue.NumAckPending == 0
+		return queue.NumPending == 0 && queue.NumAckPending == 0
 	})
 }
 

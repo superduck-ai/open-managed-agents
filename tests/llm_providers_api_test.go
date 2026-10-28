@@ -23,7 +23,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestWorkspaceLLMProviderSlugIsUniqueUnderConcurrentCreates(t *testing.T) {
+func TestLLMProviderSlugIsUniqueAcrossScopesUnderConcurrentCreates(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-concurrent-slug-bucket"))
 	defer app.close()
 	clearTestLLMProviders(t, app)
@@ -45,9 +45,12 @@ func TestWorkspaceLLMProviderSlugIsUniqueUnderConcurrentCreates(t *testing.T) {
 			Slug:             "shared",
 			BaseURL:          fmt.Sprintf("https://concurrent-%d.example.com", index),
 			APIKeyLast4:      fmt.Sprintf("key%d", index),
-			ModelIDs:         []string{"shared-model"},
+			Models:           db.LLMModels{{ID: "shared-model"}},
 			CreatedAt:        now,
 			UpdatedAt:        now,
+		}
+		if index == 0 {
+			provider.WorkspaceUUID = ""
 		}
 		key := []byte(fmt.Sprintf("concurrent-provider-key-%d", index))
 		envelope, err := app.vaultSecrets.Seal(context.Background(), llmproviders.SecretBinding(provider), key)
@@ -494,6 +497,22 @@ func TestWorkspaceLLMProviderModelDiscovery(t *testing.T) {
 			"model_ids":["kimi-k2.5"]
 		}`)
 		providerID, _ := created["id"].(string)
+
+		available := app.platformRequest(t, http.MethodPost, path+"/"+providerID+"/models/preview", nil, cookies)
+		if available.StatusCode != http.StatusOK {
+			t.Fatalf("saved preview: %d %s", available.StatusCode, readAll(t, available.Body))
+		}
+		var availableBody map[string]any
+		decodeJSON(t, available.Body, &availableBody)
+		available.Body.Close()
+		assertJSONDoesNotContain(t, availableBody, liveKey)
+		if ids, ok := availableBody["model_ids"].([]any); !ok || len(ids) != 2 {
+			t.Fatalf("preview: %#v", availableBody)
+		}
+		saved, err := app.db.GetLLMProvider(t.Context(), orgUUID, getDefaultDBIDs(t, app.pool).WorkspaceUUID, providerID)
+		if err != nil || !slices.Equal(saved.Models.IDs(), []string{"kimi-k2.5"}) {
+			t.Fatalf("preview changed model IDs: %v %v", saved.Models.IDs(), err)
+		}
 		before := requests.Load()
 		resp := app.platformRequest(t, http.MethodPost, path+"/"+providerID+"/models/sync", nil, cookies)
 		defer resp.Body.Close()
@@ -795,7 +814,7 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 		APIBackend:       llmproviders.Messages,
 		BaseURL:          "https://second.example.com",
 		APIKeyLast4:      "cond",
-		ModelIDs:         []string{"second-model"},
+		Models:           db.LLMModels{{ID: "second-model"}},
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -806,8 +825,8 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 		t.Fatalf("seal duplicate organization provider: %v", err)
 	}
 	duplicate.SecretEnvelope = &envelope
-	if _, err := app.db.CreateLLMProvider(context.Background(), duplicate); !errors.Is(err, db.ErrOrganizationLLMProviderExists) {
-		t.Fatalf("duplicate organization provider error = %v, want ErrOrganizationLLMProviderExists", err)
+	if _, err := app.db.CreateLLMProvider(context.Background(), duplicate); !errors.Is(err, db.ErrLLMProviderSlugConflict) {
+		t.Fatalf("duplicate organization provider error = %v, want ErrLLMProviderSlugConflict", err)
 	}
 
 	updated := app.platformRequest(t, http.MethodPut, path, strings.NewReader(`{
@@ -868,6 +887,22 @@ func TestOrganizationLLMProviderPreviewAndSync(t *testing.T) {
 	if created.StatusCode != http.StatusCreated {
 		t.Fatalf("create status = %d", created.StatusCode)
 	}
+	available := app.platformRequest(t, http.MethodPost, path+"/models/preview", nil, cookies)
+	if available.StatusCode != http.StatusOK {
+		t.Fatalf("saved preview: %d %s", available.StatusCode, readAll(t, available.Body))
+	}
+	var availableBody map[string]any
+	decodeJSON(t, available.Body, &availableBody)
+	available.Body.Close()
+	assertJSONDoesNotContain(t, availableBody, "organization-preview-key")
+	if ids, ok := availableBody["model_ids"].([]any); !ok || len(ids) != 1 || ids[0] != "discovered-model" {
+		t.Fatalf("preview: %#v", availableBody)
+	}
+	saved, err := app.db.GetOrganizationLLMProvider(t.Context(), orgUUID)
+	if err != nil || !slices.Equal(saved.Models.IDs(), []string{"manual-model"}) {
+		t.Fatalf("preview changed model IDs: %v %v", saved.Models.IDs(), err)
+	}
+
 	synced := app.platformRequest(t, http.MethodPost, path+"/models/sync", nil, cookies)
 	if synced.StatusCode != http.StatusOK {
 		t.Fatalf("sync status = %d: %s", synced.StatusCode, readAll(t, synced.Body))
@@ -880,13 +915,13 @@ func TestOrganizationLLMProviderPreviewAndSync(t *testing.T) {
 		t.Fatalf("sync scope = %#v", syncBody)
 	}
 	provider, err := app.db.GetOrganizationLLMProvider(t.Context(), orgUUID)
-	if err != nil || !slices.Equal(provider.ModelIDs, []string{"manual-model", "discovered-model"}) {
-		t.Fatalf("synced provider models = %v, %v", provider.ModelIDs, err)
+	if err != nil || !slices.Equal(provider.Models.IDs(), []string{"manual-model", "discovered-model"}) {
+		t.Fatalf("synced provider models = %v, %v", provider.Models.IDs(), err)
 	}
 	if _, err := app.pool.Exec(t.Context(), `UPDATE users SET role='user' WHERE organization_uuid=$1 AND email='organization-preview@example.com'`, orgUUID); err != nil {
 		t.Fatal(err)
 	}
-	for _, operation := range []struct{ method, suffix string }{{http.MethodPost, "/preview_models"}, {http.MethodPost, "/models/sync"}, {http.MethodDelete, ""}} {
+	for _, operation := range []struct{ method, suffix string }{{http.MethodPost, "/preview_models"}, {http.MethodPost, "/models/preview"}, {http.MethodPost, "/models/sync"}, {http.MethodDelete, ""}} {
 		response := app.platformRequest(t, operation.method, path+operation.suffix, strings.NewReader(`{}`), cookies)
 		response.Body.Close()
 		if response.StatusCode != http.StatusForbidden {

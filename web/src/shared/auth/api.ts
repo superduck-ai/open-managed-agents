@@ -28,9 +28,12 @@ export type AuthMembership = {
 };
 
 export type BootstrapResponse = {
+  platform_access?: PlatformAccess;
   account: AuthAccount | null;
   csrf_token?: string;
 };
+
+export type PlatformAccess = { role: string | null; permissions: string[] };
 
 export type SendMagicLinkResponse = {
   sent: boolean;

@@ -24,6 +24,7 @@ import {
 } from '../types';
 import { formatBytes, objectRecord, sectionPathSegment, titleCase } from '../utils';
 import { resourceFormValues } from './git-resource';
+import { entityBudgetDisplay, entityBudgetUsdInput } from './budget';
 
 export { sectionPathSegment };
 
@@ -335,6 +336,8 @@ export function initialFormValues(
     cronExpression: entity ? entityCronExpression(entity) : '0 9 * * 1-5',
     timezone: entity ? entityTimezone(entity) : localTimezone(),
     vaultIds: entity ? entityVaultIds(entity) : [],
+    budgetUsd: entityBudgetUsdInput(entity),
+    budgetChanged: false,
     ...resourceFormValues(entity && 'resources' in entity ? entity.resources : []),
   };
 }
@@ -522,6 +525,10 @@ export function detailRowsForEntity(
           label: label('managedAgents.deployments.kindTitle', 'Deployment'),
           value: (entity as SessionApiResponse).deployment_id || '—',
         },
+        {
+          label: label('managedAgents.budget.title', 'Budget'),
+          value: entityBudgetDisplay(entity as SessionApiResponse),
+        },
       ];
     case 'deployments':
       return [
@@ -536,6 +543,10 @@ export function detailRowsForEntity(
           value: msg
             ? localizedDeploymentTrigger(entity as DeploymentApiResponse, msg)
             : deploymentTrigger(entity as DeploymentApiResponse),
+        },
+        {
+          label: label('managedAgents.budget.title', 'Budget'),
+          value: entityBudgetDisplay(entity as DeploymentApiResponse),
         },
       ];
     case 'environments':
@@ -626,6 +637,45 @@ export function environmentEditValues(entity: EnvironmentApiResponse): Environme
     metadataRows: Object.entries(metadata).length
       ? Object.entries(metadata).map(([key, value]) => ({ key, value: String(value) }))
       : [{ key: '', value: '' }],
+    ...environmentTemplateValues(config),
+  };
+}
+
+function environmentTemplateValues(config: Record<string, unknown>) {
+  const resources = objectRecord(config.resources);
+  const resourceText = (value: unknown) => (typeof value === 'number' && value > 0 ? String(value) : '');
+  return {
+    initScript: typeof config.init_script === 'string' ? config.init_script : '',
+    environmentRows: Object.entries(objectRecord(config.environment)).map(([key, value]) => ({
+      key,
+      value: String(value),
+    })),
+    resources: {
+      cpu: resourceText(resources.cpu),
+      memory: resourceText(resources.memory),
+      disk: resourceText(resources.disk),
+    },
+  };
+}
+
+export function environmentTemplateBody(values: EnvironmentEditValues) {
+  const environment: Record<string, string> = {};
+  for (const row of values.environmentRows) {
+    if (row.key.trim()) {
+      environment[row.key.trim()] = row.value;
+    }
+  }
+  const resources: Record<string, number> = {};
+  for (const name of ['cpu', 'memory', 'disk'] as const) {
+    const value = Number(values.resources[name].trim());
+    if (values.resources[name].trim() && Number.isInteger(value) && value > 0) {
+      resources[name] = value;
+    }
+  }
+  return {
+    init_script: values.initScript.trim(),
+    environment,
+    resources: Object.keys(resources).length ? resources : null,
   };
 }
 
@@ -750,6 +800,7 @@ export function environmentConfigBody(values: EnvironmentEditValues) {
   return {
     type: 'cloud',
     packages,
+    ...environmentTemplateBody(values),
     networking:
       values.networkType === 'limited'
         ? {

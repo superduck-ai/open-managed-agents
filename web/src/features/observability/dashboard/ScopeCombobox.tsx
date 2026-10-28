@@ -109,7 +109,13 @@ export function ScopeCombobox({
           <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         </PopoverTrigger>
         <PopoverContent align="start" className="w-80 gap-0 overflow-hidden p-0">
-          <Command loop shouldFilter={!onSearchChange} className="rounded-none bg-transparent">
+          <Command
+            defaultValue={value || ALL_VALUE}
+            label={searchPlaceholder}
+            loop
+            shouldFilter={!onSearchChange}
+            className="rounded-none bg-transparent"
+          >
             <CommandInput placeholder={searchPlaceholder} value={search} onValueChange={changeSearch} />
             <CommandList className="subtle-scrollbar max-h-72">
               {loading ? (

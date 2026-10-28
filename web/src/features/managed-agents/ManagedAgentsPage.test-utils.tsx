@@ -1,7 +1,7 @@
 import { expect, mock } from 'bun:test';
 import type { EditorView } from '@codemirror/view';
 import type { QueryClient as QueryClientType } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import type { AnyRouter } from '@tanstack/react-router';
 import { resetTestDom } from '../../test/setup';
 import type { AuthContextValue } from '../../shared/auth/context';
 
@@ -18,28 +18,9 @@ const { I18nProvider } = await import('../../shared/i18n');
 const { Toaster } = await import('../../shared/ui/sonner');
 const { AuthContext } = await import('../../shared/auth/context');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { RouterContextProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
+const { RouterProvider, createBrowserHistory, createRootRoute, createRoute, createRouter } =
   await import('@tanstack/react-router');
 const { useEffect } = await import('react');
-
-const managedAgentsTestRootRoute = createRootRoute();
-const managedAgentsTestEnvironmentListRoute = createRoute({
-  getParentRoute: () => managedAgentsTestRootRoute,
-  path: 'workspaces/$workspaceId/environments',
-});
-const managedAgentsTestEnvironmentDetailRoute = createRoute({
-  getParentRoute: () => managedAgentsTestRootRoute,
-  path: 'workspaces/$workspaceId/environments/$environmentId',
-});
-const managedAgentsTestFallbackRoute = createRoute({
-  getParentRoute: () => managedAgentsTestRootRoute,
-  path: '$',
-});
-const managedAgentsTestRouteTree = managedAgentsTestRootRoute.addChildren([
-  managedAgentsTestEnvironmentListRoute,
-  managedAgentsTestEnvironmentDetailRoute,
-  managedAgentsTestFallbackRoute,
-]);
 
 type TestAgentModel = { id: string; displayName?: string };
 
@@ -190,17 +171,33 @@ export function renderManagedAgentsPage(
   });
   seedCreateAgentModels(queryClient, workspaceId, options.models);
   const history = createBrowserHistory({ window });
+  const managedAgentsTestRootRoute = createRootRoute({ component: () => <ManagedAgentsPage section={section} /> });
+  const managedAgentsTestEnvironmentListRoute = createRoute({
+    getParentRoute: () => managedAgentsTestRootRoute,
+    path: 'workspaces/$workspaceId/environments',
+  });
+  const managedAgentsTestEnvironmentDetailRoute = createRoute({
+    getParentRoute: () => managedAgentsTestRootRoute,
+    path: 'workspaces/$workspaceId/environments/$environmentId',
+  });
+  const managedAgentsTestFallbackRoute = createRoute({
+    getParentRoute: () => managedAgentsTestRootRoute,
+    path: '$',
+  });
+  const managedAgentsTestRouteTree = managedAgentsTestRootRoute.addChildren([
+    managedAgentsTestEnvironmentListRoute,
+    managedAgentsTestEnvironmentDetailRoute,
+    managedAgentsTestFallbackRoute,
+  ]);
   const router = createRouter({ history, routeTree: managedAgentsTestRouteTree });
   const result = render(
-    <ManagedAgentsTestRouterProvider router={router}>
-      <QueryClientProvider client={queryClient}>
-        <I18nProvider initialLocale={locale}>
-          <WorkspaceContext.Provider value={workspaceContextValue(workspaceId)}>
-            <ManagedAgentsPage section={section} />
-          </WorkspaceContext.Provider>
-        </I18nProvider>
-      </QueryClientProvider>
-    </ManagedAgentsTestRouterProvider>,
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider initialLocale={locale}>
+        <WorkspaceContext.Provider value={workspaceContextValue(workspaceId)}>
+          <ManagedAgentsTestRouterProvider router={router} />
+        </WorkspaceContext.Provider>
+      </I18nProvider>
+    </QueryClientProvider>,
     undefined,
     { workspaceId, models: options.models },
   );
@@ -213,15 +210,9 @@ function seedCreateAgentModels(queryClient: QueryClientType, workspaceId: string
   queryClient.setQueryData(['agent-quickstart', 'models', workspaceId], values);
 }
 
-function ManagedAgentsTestRouterProvider({
-  router,
-  children,
-}: {
-  router: ReturnType<typeof createRouter<typeof managedAgentsTestRouteTree>>;
-  children: ReactNode;
-}) {
+function ManagedAgentsTestRouterProvider({ router }: { router: AnyRouter }) {
   useEffect(() => () => router.history.destroy(), [router]);
-  return <RouterContextProvider router={router}>{children}</RouterContextProvider>;
+  return <RouterProvider router={router} />;
 }
 
 export type AgentFixture = {
@@ -1969,8 +1960,15 @@ export function mockManagedResourceApi(options: MockManagedResourceApiOptions = 
       const collection = collectionForTestEndpoint(resources, archiveMatch[1]);
       const resourceId = decodeURIComponent(archiveMatch[2]);
       const existing = collection.find((resource) => resource.id === resourceId) ?? collection[0];
-      removeFromCollection(collection, resourceId);
-      return jsonResponse({ ...existing, archived_at: new Date().toISOString() });
+      const archivedAt = new Date().toISOString();
+      if (archiveMatch[1] === 'environments') {
+        resources.environments = resources.environments.map((environment) =>
+          environment.id === resourceId ? { ...environment, archived_at: archivedAt, state: 'archived' } : environment,
+        );
+      } else {
+        removeFromCollection(collection, resourceId);
+      }
+      return jsonResponse({ ...existing, archived_at: archivedAt });
     }
 
     const deleteMatch = url.match(/^\/v1\/(sessions|environments|vaults|memory_stores)\/([^/]+)\?beta=true$/);

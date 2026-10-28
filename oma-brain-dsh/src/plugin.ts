@@ -10,18 +10,21 @@ import { omaModelOptions } from "./model.ts";
 import { startWorkers } from "./worker.ts";
 import { BrainClaimClient } from "./claim.ts";
 import { required, readBrainClaimOptions, readCcrHeartbeatOptions, readShutdownDrainMs } from "./config.ts";
+import { checkWritableDirectory, resolveTranscriptRoot } from "./storage.ts";
 
 export const name = "oma-brain";
 
 /** Host composition: native kernel, CCRv2 bridge and OMA model route. */
 export async function mountOma(
-  ctx: Context, api: OmaApi, heartbeat: CcrBridge.CcrHeartbeatOptions = {},
+  ctx: Context, api: OmaApi, heartbeat: CcrBridge.CcrHeartbeatOptions = {}, localRoot?: string,
 ): Promise<CcrClient> {
   const heartbeatOptions = CcrBridge.resolveHeartbeatOptions(heartbeat);
   await mountKernel(ctx);
+  if (localRoot !== undefined) await checkWritableDirectory(localRoot, "OMA_BRAIN_TRANSCRIPT_DIR");
   const client = createOmaCcrClient(api);
   await ctx.plugin(CcrBridge, {
     backend: client,
+    localRoot,
     heartbeat: {
       ...heartbeatOptions,
       bind: (id: string) => client.bindLease(id),
@@ -30,7 +33,8 @@ export async function mountOma(
     },
   });
   await mountTelemetry(ctx, api);
-  await ctx.plugin(LlmAiSdk, { providers: ["oma"], adapter: omaModelOptions(api, ctx.get("attachments")) });
+  const agents = ctx.get("agents")!;
+  await ctx.plugin(LlmAiSdk, { providers: ["oma"], adapter: omaModelOptions(api, ctx.get("attachments"), () => agents.currentInitiator()?.session.id) });
   return client;
 }
 
@@ -43,7 +47,7 @@ export async function apply(ctx: Context): Promise<void> {
   const claim = readBrainClaimOptions();
   const shutdownDrainMs = readShutdownDrainMs();
   const api = new OmaApi(base.replace(/\/$/, ""));
-  const client = await mountOma(ctx, api, heartbeat);
+  const client = await mountOma(ctx, api, heartbeat, resolveTranscriptRoot());
   const claims = new BrainClaimClient(api, claim.token, crypto.randomUUID());
   await ctx.plugin({
     inject: ["ccrv2"],

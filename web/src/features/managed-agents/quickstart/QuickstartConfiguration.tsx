@@ -31,12 +31,9 @@ export function QuickstartStart({ wizard }: { wizard: QuickstartWizard }) {
   const text = quickstartCopy(locale);
   return (
     <div className="flex min-h-0 flex-1 flex-col pt-(--quickstart-gap)">
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+      <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="mb-(--quickstart-gap) space-y-2">
-          <h1 className="text-[length:clamp(1.75rem,4dvh,2.25rem)] leading-tight font-semibold tracking-tight">
-            {text.title}
-          </h1>
-          <p className="max-w-2xl text-muted-foreground">{text.subtitle}</p>
+          <h1 className="text-xl leading-7 font-semibold tracking-tight">{text.title}</h1>
         </div>
         <RadioGroup
           value={wizard.progress.scenarioID}
@@ -53,32 +50,25 @@ export function QuickstartStart({ wizard }: { wizard: QuickstartWizard }) {
               <FieldLabel
                 key={scenario.id}
                 htmlFor={`scenario-${scenario.id}`}
-                className={`flex w-full cursor-pointer flex-col items-stretch gap-[clamp(0.375rem,1dvh,0.75rem)] rounded-xl border p-(--quickstart-padding) ${featured || custom ? 'sm:col-span-2' : ''} ${wizard.progress.scenarioID === scenario.id ? 'border-foreground bg-accent/40' : 'border-border bg-card hover:bg-accent/20'}`}
+                className={`flex w-full cursor-pointer flex-col items-stretch gap-2 rounded-xl border-[0.5px] px-4 py-3 ${featured || custom ? 'sm:col-span-2' : ''} ${wizard.progress.scenarioID === scenario.id ? 'border-foreground bg-accent/40' : 'border-border bg-card hover:bg-accent/20'}`}
               >
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2.5">
                   <span
                     className={
                       featured
-                        ? 'grid size-[clamp(2.25rem,5dvh,2.75rem)] shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground'
+                        ? 'grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground'
                         : 'shrink-0'
                     }
                   >
-                    <Icon className={featured ? 'size-6' : 'size-5'} />
+                    <Icon className={featured ? 'size-[18px]' : 'size-4'} />
                   </span>
                   <span className="min-w-0 flex-1 space-y-1">
-                    {featured && (
-                      <span className="block text-xs font-medium text-muted-foreground">{text.firstStart}</span>
-                    )}
-                    <span
-                      className={`block font-semibold ${featured ? 'text-[length:clamp(1.125rem,2.8dvh,1.5rem)] tracking-tight' : 'text-base'}`}
-                    >
-                      {scenario.name}
-                    </span>
+                    <span className="block text-sm font-medium">{scenario.name}</span>
                   </span>
                   {featured && <Badge>{text.recommended}</Badge>}
                   <RadioGroupItem id={`scenario-${scenario.id}`} value={scenario.id} />
                 </div>
-                <p className="text-sm leading-relaxed font-normal text-muted-foreground">{scenario.summary}</p>
+                <p className="text-xs leading-5 font-normal text-muted-foreground">{scenario.summary}</p>
               </FieldLabel>
             );
           })}
@@ -115,7 +105,6 @@ export function QuickstartAgent({
     <ConfigurationLayout
       workspaceID={workspaceID}
       title={text.agentTitle}
-      subtitle={text.agentSubtitle}
       code={code}
       footer={
         <ConfigurationActions wizard={wizard} valid={valid} reuse={Boolean(agent)} formID="quickstart-agent-form" />
@@ -140,7 +129,7 @@ export function QuickstartAgent({
           />
         </Field>
         {(candidates.length > 0 || agent) && (
-          <div className="space-y-3 rounded-lg border border-border p-3">
+          <div className="space-y-3 border-b-[0.5px] border-border pb-4">
             <p className="text-sm text-muted-foreground">{text.existingAgent}</p>
             <Select
               value={agent?.id ?? 'new'}
@@ -162,7 +151,7 @@ export function QuickstartAgent({
                   <SelectItem
                     key={item.id}
                     value={item.id}
-                    className={`py-3 pl-3 ${item.id === 'new' ? 'mb-1 border-b border-border' : ''}`}
+                    className={`py-3 pl-3 ${item.id === 'new' ? 'mb-1 border-b-[0.5px] border-border' : ''}`}
                   >
                     <span className="min-w-0 flex-1 space-y-1 whitespace-normal">
                       <span className="block break-words font-medium">{item.name}</span>
@@ -242,7 +231,6 @@ export function QuickstartEnvironment({ wizard, workspaceID }: { wizard: Quickst
     <ConfigurationLayout
       workspaceID={workspaceID}
       title={text.environmentTitle}
-      subtitle={text.environmentSubtitle}
       code={code}
       footer={
         <ConfigurationActions
@@ -275,14 +263,14 @@ export function QuickstartEnvironment({ wizard, workspaceID }: { wizard: Quickst
               <FieldLabel
                 key={item.id}
                 htmlFor={`environment-${item.id}`}
-                className={`flex min-h-[clamp(3.5rem,9dvh,4.5rem)] w-full cursor-pointer items-center gap-3 rounded-lg border p-[clamp(0.5rem,1.5dvh,0.75rem)] ${item.id === progress.environmentID ? 'border-foreground bg-accent/40' : 'border-border'}`}
+                className={`flex min-h-[clamp(3.5rem,9dvh,4.5rem)] w-full cursor-pointer items-center gap-3 rounded-lg border-[0.5px] p-[clamp(0.5rem,1.5dvh,0.75rem)] ${item.id === progress.environmentID ? 'border-foreground bg-accent/40' : 'border-border'}`}
               >
                 <RadioGroupItem id={`environment-${item.id}`} value={item.id} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{item.name}</div>
-                  <div className="text-xs font-normal text-muted-foreground">
-                    {config.hosting === 'self_hosted' ? text.selfHosted : text.cloud} ·{' '}
-                    {config.networkType === 'unrestricted' ? text.unrestricted : text.limited}
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-normal text-muted-foreground">
+                    <span>{config.hosting === 'self_hosted' ? text.selfHosted : text.cloud}</span>
+                    <span>{config.networkType === 'unrestricted' ? text.unrestricted : text.limited}</span>
                   </div>
                   {config.hosting === 'self_hosted' && (
                     <p className="mt-1 text-xs font-normal text-muted-foreground">{text.selfHostedHint}</p>
@@ -294,7 +282,7 @@ export function QuickstartEnvironment({ wizard, workspaceID }: { wizard: Quickst
           })}
           <FieldLabel
             htmlFor="environment-new"
-            className={`flex min-h-[clamp(3.5rem,9dvh,4.5rem)] w-full cursor-pointer items-center gap-3 rounded-lg border p-[clamp(0.5rem,1.5dvh,0.75rem)] ${progress.environmentID === 'new' ? 'border-foreground bg-accent/40' : 'border-dashed border-border'}`}
+            className={`flex min-h-[clamp(3.5rem,9dvh,4.5rem)] w-full cursor-pointer items-center gap-3 rounded-lg border-[0.5px] p-[clamp(0.5rem,1.5dvh,0.75rem)] ${progress.environmentID === 'new' ? 'border-foreground bg-accent/40' : 'border-dashed border-border'}`}
           >
             <RadioGroupItem id="environment-new" value="new" />
             <Plus className="size-4" />
@@ -337,14 +325,12 @@ function ConfigurationActions({
 function ConfigurationLayout({
   workspaceID,
   title,
-  subtitle,
   code,
   children,
   footer,
 }: {
   workspaceID: string;
   title: string;
-  subtitle: string;
   code: string;
   children: React.ReactNode;
   footer: React.ReactNode;
@@ -354,17 +340,14 @@ function ConfigurationLayout({
   return (
     <div className="flex min-h-0 flex-1 flex-col pt-(--quickstart-gap)">
       <div className="mb-(--quickstart-gap) shrink-0 space-y-2">
-        <h1 className="text-[length:clamp(1.5rem,3.5dvh,1.875rem)] leading-tight font-semibold tracking-tight">
-          {title}
-        </h1>
-        <p className="text-muted-foreground">{subtitle}</p>
+        <h1 className="text-2xl leading-8 font-semibold tracking-tight">{title}</h1>
       </div>
       <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max gap-(--quickstart-gap) overflow-y-auto min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)] min-[860px]:overflow-hidden">
         <div className="min-h-0 min-w-0 max-w-xl pr-1 min-[860px]:overflow-y-auto">{children}</div>
-        <aside className="min-h-0 min-w-0 border-t border-muted-foreground/30 pt-6 min-[860px]:overflow-y-auto min-[860px]:border-t-0 min-[860px]:border-l min-[860px]:pt-0 min-[860px]:pl-6">
-          <div className="rounded-xl bg-muted/50 p-(--quickstart-padding)">
+        <aside className="min-h-0 min-w-0 border-t-[0.5px] border-border pt-6 min-[860px]:overflow-y-auto min-[860px]:border-t-0 min-[860px]:border-l-[0.5px] min-[860px]:pt-0 min-[860px]:pl-6">
+          <div className="min-w-0">
             <QuickstartApiKey workspaceID={workspaceID} />
-            <div className="mt-(--quickstart-gap) border-t border-border pt-(--quickstart-gap)">
+            <div className="mt-(--quickstart-gap) border-t-[0.5px] border-border pt-(--quickstart-gap)">
               <h2 className="mb-3 text-sm font-medium">{text.api}</h2>
               <RequestPreview code={code} />
             </div>

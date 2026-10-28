@@ -151,3 +151,30 @@ function SettingsFeatureHarness({ children }: { children: ReactNode }) {
     </QueryClientProvider>
   );
 }
+
+test('非成员平台来源的个人资料展示服务器当前组织和有效角色', () => {
+  resetTestDom('https://oma.duck.ai/settings/profile');
+  render(
+    <I18nProvider initialLocale="zh-CN">
+      <AuthContext.Provider
+        value={{
+          account: { uuid: 'stable-account', email_address: 'admin@example.com', memberships: [] },
+          organizationAccess: {
+            source: 'platform_admin',
+            organization: { uuid: 'target', name: '目标组织' },
+            organization_role: 'admin',
+            workspace_role: 'workspace_admin',
+          },
+          status: 'authenticated',
+          refresh: async () => undefined,
+          logout: async () => {},
+        }}
+      >
+        <ProfileSettingsPage />
+      </AuthContext.Provider>
+    </I18nProvider>,
+  );
+  expect(screen.getByDisplayValue('目标组织')).toBeTruthy();
+  expect(screen.getByDisplayValue('管理员')).toBeTruthy();
+  expect(screen.getByDisplayValue('stable-account')).toBeTruthy();
+});

@@ -465,11 +465,13 @@ describe('Organization members settings', () => {
 function OrganizationMembersHarness({
   children,
   organizationName = 'default',
+  platform = false,
   permissions = ['members:view', 'members:manage'],
   queryClient: suppliedQueryClient,
 }: {
   children: ReactNode;
   organizationName?: string;
+  platform?: boolean;
   permissions?: string[];
   queryClient?: QueryClient;
 }) {
@@ -486,14 +488,22 @@ function OrganizationMembersHarness({
         display_name: 'test',
         permissions,
         effectiveOrganizationUuid: 'org_test',
-        memberships: [{ organization: { uuid: 'org_test', name: organizationName }, role: 'admin' }],
+        memberships: platform ? [] : [{ organization: { uuid: 'org_test', name: organizationName }, role: 'admin' }],
       },
+      organizationAccess: platform
+        ? {
+            source: 'platform_admin',
+            organization: { uuid: 'org_test', name: organizationName },
+            organization_role: 'admin',
+            workspace_role: 'workspace_admin',
+          }
+        : null,
       status: 'authenticated',
       csrfToken: 'csrf_test',
       refresh: async () => ({ account: { uuid: 'acct_test', email_address: 'test@example.com' } }),
       logout: async () => undefined,
     }),
-    [organizationName, permissions],
+    [organizationName, permissions, platform],
   );
   const workspaceValue = useMemo<WorkspaceContextValue>(
     () => ({
@@ -682,3 +692,18 @@ function jsonResponse(body: unknown, status = 200) {
     },
   });
 }
+
+test('平台来源成员目录的移除提示使用目标组织名称而不伪造成员', async () => {
+  resetTestDom('https://oma.duck.ai/settings/members');
+  mockMembersApi();
+  render(
+    <I18nProvider initialLocale="en">
+      <OrganizationMembersHarness platform organizationName="目标组织">
+        <OrganizationMembersPage />
+      </OrganizationMembersHarness>
+    </I18nProvider>,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'More actions for Ada Lovelace' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove member' }));
+  expect((await screen.findByRole('alertdialog', { name: 'Remove member?' })).textContent).toContain('目标组织');
+});

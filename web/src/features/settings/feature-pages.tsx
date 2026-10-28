@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { accountRoleLabel } from '../../shared/permissions/roles';
 import { useAuth } from '../../shared/auth/context';
+import type { AuthAccount, OrganizationAccess } from '../../shared/auth/api';
 import { useI18n, useLocale, localeLabels, type Locale } from '../../shared/i18n';
 import { themeModes, useTheme, type ThemeMode } from '../../shared/theme/context';
 import { Field, FieldLabel } from '../../shared/ui/field';
@@ -26,17 +27,14 @@ export function settingsSectionFromPath(pathname: string): SettingsPageSection {
 }
 
 export function ProfileSettingsPage() {
-  const { account } = useAuth();
+  const { account, organizationAccess } = useAuth();
   const { msg } = useI18n();
-  const membership = account?.memberships?.[0];
   const displayName =
     account?.display_name ||
     account?.full_name ||
     account?.email_address?.split('@')[0] ||
     msg('settings.profile.unknownName', 'Unknown user');
-  const organizationName =
-    membership?.organization?.name || msg('settings.profile.unknownOrganization', 'Unknown organization');
-  const role = accountRoleLabel(membership?.role, msg);
+  const { name: organizationName, role } = profileOrganization(account, organizationAccess, msg);
 
   return (
     <section className="mx-auto w-full max-w-3xl" data-testid="settings-profile-page">
@@ -53,6 +51,21 @@ export function ProfileSettingsPage() {
       </div>
     </section>
   );
+}
+
+function profileOrganization(
+  account: AuthAccount | null,
+  access: OrganizationAccess | null | undefined,
+  msg: ReturnType<typeof useI18n>['msg'],
+) {
+  const membership = account?.memberships?.[0];
+  return {
+    name:
+      access?.organization.name ||
+      membership?.organization?.name ||
+      msg('settings.profile.unknownOrganization', 'Unknown organization'),
+    role: accountRoleLabel(access?.organization_role ?? membership?.role, msg),
+  };
 }
 
 export function AppearanceSettingsPage() {

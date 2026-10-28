@@ -10734,7 +10734,7 @@
             "show_legends": true,
             "legends_position": "bottom",
             "unit": "default",
-            "decimals": 2.0,
+            "decimals": 0.0,
             "line_thickness": 1.5,
             "top_results_others": false,
             "axis_border_show": false,
@@ -11011,7 +11011,7 @@
           "id": "Panel_infra_19",
           "type": "line",
           "title": "Go 调度延迟 p95（按实例）",
-          "description": "go.schedule.duration：goroutine 可运行到真正运行的等待；升高说明 CPU 饱和或 GOMAXPROCS 不足",
+          "description": "go.schedule.duration：goroutine 可运行到真正运行的等待；升高说明 CPU 饱和或 GOMAXPROCS 不足。不显示 ≥ 60 s 的值：实例首次导出时分位数会落到最大有限桶（约 1.4e5 s）",
           "config": {
             "show_legends": true,
             "legends_position": "bottom",
@@ -11054,7 +11054,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "histogram_quantile(0.95, sum by (le, service_instance_id) (rate(go_schedule_duration_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "query": "histogram_quantile(0.95, sum by (le, service_instance_id) (rate(go_schedule_duration_bucket{service_instance_id=~\"$instance\"}[5m]))) < 60",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {

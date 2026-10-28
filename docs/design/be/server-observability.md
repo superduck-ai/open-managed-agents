@@ -416,8 +416,11 @@ Warn 日志（`collect operational state counts`、`collect NATS stream|consumer
 | `go.config.gogc` | Int64ObservableUpDownCounter | 无 | `GOGC` 百分比，默认 100 |
 | `go.schedule.duration` | Float64Histogram（producer） | 无 | goroutine 可运行到开始运行的等待；由 `NewProducer` 挂在 PeriodicReader 上，桶边界来自 `runtime/metrics` |
 
-runtime 读取 `runtime/metrics` 的最小间隔为库默认的 15 秒，开销与导出间隔无关。资源属性 `service.instance.id`
-区分副本，看板按实例展示（第 7.1 节平台依赖）。
+runtime 读取 `runtime/metrics` 的最小间隔为库默认的 15 秒，开销与导出间隔无关；`export_interval` 小于 15 秒时连续导出
+重复的读数属于预期。资源属性 `service.instance.id` 区分副本，看板按实例展示（第 7.1 节平台依赖）。`go.memory.used`
+是 runtime 占用的全部内存（`/memory/classes/total:bytes` 减去已归还 OS 的部分），通常高于堆 GC 目标 `go.memory.gc.goal`，
+两条线的差值不代表内存压力。调度延迟 p95 面板过滤 ≥ 60 秒的值：实例首次导出时 `rate()` 外推会让分位数落到最大有限桶
+（约 1.4e5 秒），该点没有意义。
 
 ## 7. 配置
 

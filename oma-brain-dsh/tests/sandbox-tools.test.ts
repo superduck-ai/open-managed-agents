@@ -44,18 +44,21 @@ test("sandbox tools are built in, isolated per agent and removed with their plug
       }
     }
     expect(ctx.tools.get("Bash")).toBeUndefined();
-    const run = (agent: typeof a.agent, command: string) => agent.ctx.tools.execute({
-      callId: ToolCallId(crypto.randomUUID()), name: "Bash",
-      arguments: { command }, agent, signal: new AbortController().signal,
-    });
+    const run = async (agent: typeof a.agent, command: string) => {
+      const batch = await agent.ctx.tools.execute({
+        calls: [{ type: "tool-call", id: ToolCallId(crypto.randomUUID()), name: "Bash", arguments: JSON.stringify({ command }) }],
+        agent, signal: new AbortController().signal,
+      });
+      return batch.results[0]!.result;
+    };
     expect((await run(a.agent, "first")).isError).toBe(false);
     expect((await run(b.agent, "second")).isError).toBe(false);
     expect(calls).toEqual(["sandbox_a:bash:first", "sandbox_b:bash:second"]);
     const invalid = await a.agent.ctx.tools.execute({
-      callId: ToolCallId("invalid_read"), name: "Read", arguments: { command: "wrong" },
+      calls: [{ type: "tool-call", id: ToolCallId("invalid_read"), name: "Read", arguments: JSON.stringify({ command: "wrong" }) }],
       agent: a.agent, signal: new AbortController().signal,
     });
-    expect(invalid.isError).toBe(true);
+    expect(invalid.results[0]!.result.isError).toBe(true);
     expect(calls).toHaveLength(2);
     await plugins.get("sandbox_a")!.dispose();
     expect(a.agent.ctx.tools.get("Bash", a.agent)).toBeUndefined();

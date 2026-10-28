@@ -322,14 +322,14 @@ test("denied external tools and invalid approved arguments never dispatch", asyn
       });
     };
     const agent = f.session.agent;
-    const execute = (id: string, args: Payload) =>
-      agent.ctx.tools.execute({
+    const execute = async (id: string, args: Payload) => {
+      const batch = await agent.ctx.tools.execute({
         agent,
-        name: "mcp__peer__microsoft_docs_fetch",
-        arguments: args,
-        callId: ToolCallId(id),
+        calls: [{ type: "tool-call", id: ToolCallId(id), name: "mcp__peer__microsoft_docs_fetch", arguments: JSON.stringify(args) }],
         signal: new AbortController().signal,
       });
+      return batch.results[0]!.result;
+    };
     expect((await execute("bad_schema", {})).isError).toBe(true);
     expect(
       (await execute("denied", { url: "https://example.com" })).isError,

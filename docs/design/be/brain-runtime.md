@@ -6,17 +6,23 @@
 
 ## DSH 版本与文档基准
 
-Brain 的 20 个直接 DSH 依赖与控制台轨迹视图的 7 个直接 DSH 依赖统一固定为 `0.2.1-rc.4`，Cordis 固定为 `4.0.5`，满足上游 `~4.0.5` 的 peer 约束。两个应用各自提交 Bun lockfile，传递的 DSH 包也必须解析到同一 RC；不能用 `latest`、`next` 或版本范围替代精确依赖。
+Brain 的 21 个直接 DSH 依赖与控制台轨迹视图的 7 个直接 DSH 依赖统一固定为 `0.2.2-alpha.2`，Cordis 固定为 `4.0.6-alpha.1`，满足上游 `~4.0.6-alpha.1` 的 peer 约束。两个应用各自提交 Bun lockfile，传递的 DSH 包也必须解析到同一发布版本；不能用 `latest`、`next` 或版本范围替代精确依赖。
 
-官方发布标签为 `dsh-v0.2.1-rc.4`，文档固定到提交 `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`：
+官方发布标签为 `dsh-v0.2.2-alpha.2`，文档固定到提交 `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`：
 
-- [架构与插件组合](https://github.com/deepseek-ai/deepseek-harness/blob/504a01a9578abc2c6f1fb896b1dc322c9fe24f66/docs/architecture.zh.md)。
-- [核心运行时与 Agent 生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/504a01a9578abc2c6f1fb896b1dc322c9fe24f66/docs/subsystems/core.zh.md)。
-- [子系统文档](https://github.com/deepseek-ai/deepseek-harness/blob/504a01a9578abc2c6f1fb896b1dc322c9fe24f66/docs/subsystems/README.zh.md)，包括 Session、持久化、压缩、工具、子 Agent 与遥测。
-- [配置目录](https://github.com/deepseek-ai/deepseek-harness/blob/504a01a9578abc2c6f1fb896b1dc322c9fe24f66/docs/config-catalog.zh.md)。
-- [Session 格式与发布状态](https://github.com/deepseek-ai/deepseek-harness/blob/504a01a9578abc2c6f1fb896b1dc322c9fe24f66/docs/session-format-status.zh.md)。
+- [架构与插件组合](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/architecture.zh.md)。
+- [核心运行时与 Agent 生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/subsystems/core.zh.md)。
+- [子系统文档](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/subsystems/README.zh.md)，包括 Session、持久化、压缩、工具、子 Agent 与遥测。
+- [配置目录](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/config-catalog.zh.md)。
+- [Session 格式与发布状态](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/session-format-status.zh.md)。
 
 从 `0.2.1-alpha.2` 升级时，JSONL 持久化入口改为 `import * as JsonlPersistence`，通过 `ctx.plugin(JsonlPersistence, config)` 挂载上游模块；不再依赖已移除的默认类导出。服务仍通过 `ctx.sessionPersistence` 使用，消费者继续在注入作用域中完成关闭。Session 写入格式仍为 V4，OMA 的 Header/Event 复制、审批与恢复合同不变。OTLP instrumentation scope 的版本从已安装 `dsh-session/package.json` 读取，模块和独立二进制都使用实际打包版本。
+
+从 `0.2.1-rc.4` 升级到本次 alpha 时，`dsh-tools` 只保留工具注册与分派，原生执行由新增的 `dsh-tool-executor-native` 插件提供；内核依次挂载两者，删除已移除的 `mode: "native"` 配置。程序化调用改用 `tools.execute({ calls: [...] })`，每个调用包含原始 JSON 字符串参数，结果从 `results[].result` 读取。OMA 的工具审批、参数验证和持久化屏障继续由原有 hook 执行。
+
+模型选择通过 `agent.model.select({ provider, model })` 写入原生 `model/selection` 事件，必须在 step 准备前完成。`agent/request` 只配置当前已选模型的预算，不再覆盖路由。Worker metadata 仍是 OMA 恢复模型选择的来源；打开原生日志后重新应用该选择，使远程配置优先于历史最后一次请求。新版切换模型的压缩检查要求 adapter 提供上下文容量，生产 adapter 继续读取 OMA 模型配置。
+
+普通 `sessions.fork()` 不再自动设置 `parentSession`；独立 fork 不归入父 assignment 的遥测。OMA 子 Agent 创建路径继续显式写入 `parentSession`、`origin: "subagent"` 和 delegation depth，并沿该关系选择凭证。Session writer 仍为 V4，但新增事件不代表旧运行时可读取新日志；启用新版本后不保证直接降回 `0.2.1-rc.4`。这是 alpha 发布，真实模型、沙箱和跨实例行为仍需单独集成验收。
 
 升级验收运行 Brain 的 `bun run typecheck` 与 `bun run verify:executable`，后者构建模块和独立二进制，并用本地协议 fixture 执行普通单测；前端运行 `bun test`、`bun run build` 和根目录的 `just web-format-check`。原生轨迹的 host 合同、主题来源与浏览器 fixture 见 [UPSTREAM.md](../../../web/src/features/observability/trajectory/UPSTREAM.md)。根目录继续运行 `just test`、`just duplicates` 与 `just complexity`。这些检查不代表真实模型、沙箱、外部存储或跨实例集成验收；`verify-be` 仍需用户另行明确要求。`verification/` 中的历史报告与指纹不随升级改写。
 

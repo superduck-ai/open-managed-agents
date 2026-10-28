@@ -132,9 +132,7 @@ export class SessionRuntime {
         await this.hooks.beforeRequest?.();
         signal.throwIfAborted();
         const call = await next();
-        const model = this.hooks.selectModel?.(call.model) ?? call.model;
-        const selected = model === call.model ? call : { ...call, model };
-        return this.config.configureModel?.(selected) ?? selected;
+        return this.config.configureModel?.(call) ?? call;
       });
       scope.on("agent/request-error", async ({ failure, turn, step, signal }, next) => {
         signal.throwIfAborted();

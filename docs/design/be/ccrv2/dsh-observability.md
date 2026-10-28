@@ -33,7 +33,7 @@ flowchart LR
 
 ## 2. 采集和传输
 
-Brain 使用 `@deepseek-ai/dsh-session-telemetry` 的 `SessionTelemetryCoordinator`（`capture: live`、`includeHistory: true`）订阅原生事件与历史，再交给 `@deepseek-ai/dsh-otel` 的 `SessionLogReporter`。DSH 固定 `0.2.1-rc.4`，OTLP instrumentation scope 的版本读取已安装的 `dsh-session/package.json`，与模块及独立二进制内的依赖一致；上游 `session-telemetry-otel` 只有 `FEEDBACK_ONLY`、`DISABLED`，因此复用其采集与 transport 自行组装，上游支持持续上报后可替换，数据和 UI 不变。每个根 code session 一个 exporter；子 Session 沿 `parentSession` 找到根 assignment，保留自己的 Session ID、header 和 seq。
+Brain 使用 `@deepseek-ai/dsh-session-telemetry` 的 `SessionTelemetryCoordinator`（`capture: live`、`includeHistory: true`）订阅原生事件与历史，再交给 `@deepseek-ai/dsh-otel` 的 `SessionLogReporter`。DSH 固定 `0.2.2-alpha.2`，OTLP instrumentation scope 的版本读取已安装的 `dsh-session/package.json`，与模块及独立二进制内的依赖一致；上游 `session-telemetry-otel` 只有 `FEEDBACK_ONLY`、`DISABLED`，因此复用其采集与 transport 自行组装，上游支持持续上报后可替换，数据和 UI 不变。每个根 code session 一个 exporter；子 Session 沿 `parentSession` 找到根 assignment，保留自己的 Session ID、header 和 seq。
 
 Worker register 返回 `observability_enabled`，关闭时不创建 exporter。上报入口：
 

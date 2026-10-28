@@ -49,6 +49,7 @@ export function NativeTrajectory({
     {},
   );
   const [revision, setRevision] = useState(0);
+  const loaded = useRef('');
   const pageListener = useRef(onPage);
   useEffect(() => {
     pageListener.current = onPage;
@@ -56,7 +57,10 @@ export function NativeTrajectory({
   useEffect(() => {
     const abort = new AbortController();
     let stopPolling: (() => void) | undefined;
-    setState({});
+    const key = JSON.stringify([scope, target, locale]);
+    const retry = loaded.current === key;
+    loaded.current = key;
+    setState((current) => (retry ? { projection: current.projection, snapshot: current.snapshot } : {}));
     const run = async () => {
       try {
         const [{ default: native }, { default: trajectory }] = await Promise.all([

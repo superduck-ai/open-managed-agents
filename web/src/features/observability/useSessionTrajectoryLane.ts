@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { TrajectoryPage, TrajectorySegment, TrajectoryTarget } from './api';
 
-type LaneState = { lane: string; segment?: string; segments: TrajectorySegment[] };
+type LaneState = { lane: string; segment?: string; pinned?: string; segments: TrajectorySegment[] };
 
 function sameSegments(left: TrajectorySegment[], right: TrajectorySegment[]) {
   return left.length === right.length && left.every((segment, index) => segment.id === right[index].id);
@@ -20,7 +20,10 @@ export function useSessionTrajectoryLane(sessionId: string, threadId?: string) {
     (page: TrajectoryPage) =>
       setState((current) => {
         const base: LaneState = current.lane === lane ? current : { lane, segments: [] };
-        return sameSegments(base.segments, page.segments) ? base : { ...base, segments: page.segments };
+        const pinned = base.pinned ?? (page.segment || undefined);
+        return sameSegments(base.segments, page.segments) && pinned === base.pinned
+          ? base
+          : { ...base, pinned, segments: page.segments };
       }),
     [lane],
   );
@@ -29,8 +32,9 @@ export function useSessionTrajectoryLane(sessionId: string, threadId?: string) {
       setState((current) => ({ ...(current.lane === lane ? current : { lane, segments: [] }), segment })),
     [lane],
   );
-  const selectedIndex = active.segment
-    ? active.segments.findIndex((segment) => segment.id === active.segment)
+  const shown = active.segment ?? active.pinned;
+  const selectedIndex = shown
+    ? active.segments.findIndex((segment) => segment.id === shown)
     : active.segments.length - 1;
   return {
     viewKey: `${lane}:${active.segment ?? ''}`,

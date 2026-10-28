@@ -41,7 +41,7 @@ Worker register 返回 `observability_enabled`，关闭时不创建 exporter。�
 
 - 支持 OTLP HTTP JSON、Protobuf 与 gzip，不提供 metrics 或 gRPC。JWT 绑定 code session path，鉴权校验 worker epoch，handler 再验证 active lease 和租户身份。
 - 入口只解码一次 ExportLogsServiceRequest，整体替换 resource、scope 和 log attributes，注入 `oma.organization.uuid`、`oma.workspace.uuid`、`oma.session.id`、`oma.code_session.id`、`oma.agent.id`、`oma.agent.version`，最后编码一次。OpenObserve 凭据只在服务端。
-- `content` 是完整原生事件 JSON，`dsh.header` 是原生 SessionHeader。服务端校验 version=4 与合法 seq/time，并从 envelope 派生 `dsh.session.id`、`dsh.event.seq`、`dsh.event.time`。OpenObserve 将属性名规范化为下划线（`dsh_session_id`）。
+- `content` 是完整原生事件 JSON，`dsh.header` 是原生 SessionHeader。服务端校验 version=4 与合法 seq/time，并从 envelope 派生 `dsh.session.id`、`dsh.event.seq`、`dsh.event.time`。OpenObserve 将属性名规范化为下划线（`dsh_session_id`）。原生 Session ID 取自 worker 上报的 header，入口只校验非空，不校验它属于该 code session 的线程：Brain 是平台组件，原生 ID 视为 worker 域的值。租户与 `oma_session_id` 来自可信身份，轨迹详情据此限定；看板按 `dsh_session_id` 去重配对，因此被攻破的 Brain 只能影响同一工作区内其他线程的聚合。
 - `observability.content_capture_enabled=false` 时递归替换文本和参数，保留结构字段、数字与布尔值；脱敏用 UseNumber 保留数字原文，失败直接拒绝请求。
 - 请求体有压缩前与解压后上限；转发保留 OTLP partial success、重试状态和 Retry-After。
 

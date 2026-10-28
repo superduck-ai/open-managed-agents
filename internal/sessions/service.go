@@ -115,7 +115,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			OrganizationUUID:      principal.OrganizationUUID,
 			WorkspaceUUID:         principal.WorkspaceUUID,
 			CreatedByAPIKeyUUID:   principal.APIKeyUUID,
-			RuntimeUserUUID:       principal.UserUUID,
+			RuntimeUserUUID:       principal.RuntimeUserUUID(),
 			EnvironmentUUID:       env.UUID,
 			EnvironmentExternalID: env.ExternalID,
 			AgentUUID:             agent.UUID,

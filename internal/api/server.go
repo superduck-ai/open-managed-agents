@@ -34,6 +34,7 @@ import (
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
 	"github.com/superduck-ai/open-managed-agents/internal/observability"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
+	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
@@ -57,6 +58,7 @@ import (
 )
 
 type Server struct {
+	platformAccess       *platformadmin.Service
 	invitationJobs       *river.Client[*sql.Tx]
 	workspaceAccess      *workspaceaccess.Service
 	cfg                  config.Config
@@ -172,6 +174,7 @@ func NewServer(deps ServerDeps) *Server {
 		oauthRefreshLease = lease
 	}
 	s := &Server{
+		platformAccess:       platformadmin.New(deps.DB, componentLogger("platform_access")),
 		invitationJobs:       deps.InvitationJobs,
 		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
@@ -479,17 +482,25 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Action not allowed"))
 			return
 		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !auth.ValidatePlatformCSRFToken(auth.ExtractPlatformSessionKey(r), r.Header.Get("X-CSRF-Token")) {
+			httpapi.WriteError(w, r, platformCSRFRejected())
+			return
+		}
 		ctx := auth.WithPrincipal(r.Context(), principal)
 		if orgAlias := s.platformMirrorOrganizationAlias(r, principal); orgAlias != "" {
 			ctx = auth.WithPlatformMirrorOrganizationAlias(ctx, orgAlias)
 		}
-		next.ServeHTTP(w, r.WithContext(ctx))
+		s.servePlatformPrincipal(w, r.WithContext(ctx), next, principal)
 	})
 }
 
 func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if auth.ExtractPlatformSessionKey(r) == "" {
+			if strings.TrimSpace(r.Header.Get("X-Organization-UUID")) != "" {
+				httpapi.WriteError(w, r, platformIdentityUnauthorized())
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -498,7 +509,7 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 			if err.Status == http.StatusUnauthorized {
 				clearPlatformSessionCookies(w)
 			}
-			if err.Status >= http.StatusInternalServerError {
+			if err.Status >= http.StatusInternalServerError || strings.TrimSpace(r.Header.Get("X-Organization-UUID")) != "" {
 				httpapi.WriteError(w, r, err)
 				return
 			}
@@ -508,6 +519,9 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 		ctx := platformsession.WithSession(r.Context(), session)
 		if principal, scopeErr := s.resolvePlatformSessionPrincipal(r, session); scopeErr == nil {
 			ctx = auth.WithPrincipal(ctx, principal)
+		} else if strings.TrimSpace(r.Header.Get("X-Organization-UUID")) != "" {
+			httpapi.WriteError(w, r, scopeErr)
+			return
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -555,7 +569,7 @@ func (s *Server) resolvePlatformWorkspace(r *http.Request, principal auth.Princi
 	if workspaceID == "" {
 		workspaceID = "default"
 	}
-	workspace, access, err := s.workspaceAccess.Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, workspaceID)
+	workspace, access, err := s.workspaceAccess.ResolvePrincipal(r.Context(), principal, workspaceID)
 	if err != nil {
 		if errors.Is(err, workspaceaccess.ErrDenied) {
 			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
@@ -570,6 +584,9 @@ func (s *Server) resolvePlatformWorkspace(r *http.Request, principal auth.Princi
 }
 
 func (s *Server) platformMirrorOrganizationAlias(r *http.Request, principal auth.Principal) string {
+	if principal.PlatformOrganizationAdmin(principal.OrganizationUUID) {
+		return ""
+	}
 	if s.db == nil {
 		return ""
 	}

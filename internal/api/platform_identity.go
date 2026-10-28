@@ -2,7 +2,11 @@ package api
 
 import (
 	"errors"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
+	"log/slog"
 	"net/http"
+	"strings"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -43,12 +47,26 @@ func (s *Server) loadPlatformSession(r *http.Request) (platformsession.Session, 
 }
 
 func (s *Server) resolvePlatformSessionPrincipal(r *http.Request, session platformsession.Session) (auth.Principal, *httpapi.Error) {
+	header := strings.TrimSpace(r.Header.Get("X-Organization-UUID"))
+	query := strings.TrimSpace(r.URL.Query().Get("organization_uuid"))
+	if header != "" && query != "" && header != query {
+		return auth.Principal{}, platformOrganizationInvalid()
+	}
 	organizationUUID := platformOrganizationOverrideID(r)
 	if organizationUUID == "" {
 		organizationUUID = session.OrganizationUUID
 	}
 	if _, err := uuid.Parse(organizationUUID); err != nil {
-		return auth.Principal{}, platformOrganizationDenied()
+		return auth.Principal{}, platformOrganizationInvalid()
+	}
+	if header != "" && session.VerifiedLogin() && s.platformAuth.VerifiedLoginEnabled() {
+		principal, granted, accessErr := s.resolvePlatformAdministrator(r, session, organizationUUID)
+		if accessErr != nil {
+			return auth.Principal{}, accessErr
+		}
+		if granted {
+			return s.resolvePlatformWorkspaceScope(r, principal)
+		}
 	}
 	user, err := s.db.GetActivePlatformUserByEmail(r.Context(), organizationUUID, session.VerifiedEmail)
 	if err != nil {
@@ -59,6 +77,9 @@ func (s *Server) resolvePlatformSessionPrincipal(r *http.Request, session platfo
 		return auth.Principal{}, platformIdentityUnavailable()
 	}
 	principal := session.Principal()
+	principal.AccountUUID = session.UserUUID
+	principal.AccountExternalID = session.UserExternalID
+	principal.OrganizationAccessSource = auth.OrganizationAccessMember
 	principal.OrganizationUUID = user.OrganizationUUID
 	principal.UserUUID = user.UUID
 	principal.UserExternalID = user.ExternalID
@@ -90,4 +111,48 @@ func (s *Server) platformIdentityMiddleware(next http.Handler) http.Handler {
 func verifiedInvitationEmail(r *http.Request) (string, bool) {
 	session, ok := platformsession.SessionFromContext(r.Context())
 	return session.VerifiedEmail, ok && session.VerifiedEmail != ""
+}
+
+func (s *Server) resolvePlatformAdministrator(r *http.Request, session platformsession.Session, organizationUUID string) (auth.Principal, bool, *httpapi.Error) {
+	_, err := s.platformAccess.Authorize(r.Context(), session.UserUUID)
+	if errors.Is(err, platformadmin.ErrDenied) {
+		return auth.Principal{}, false, nil
+	}
+	if err != nil {
+		s.logger.ErrorContext(r.Context(), "authorize platform organization request", "actor_account_uuid", session.UserUUID, "error_code", "authorization_unavailable")
+		return auth.Principal{}, false, platformAuthorizationUnavailable()
+	}
+	organization, err := s.db.GetPlatformOrganization(r.Context(), organizationUUID)
+	if errors.Is(err, db.ErrNotFound) {
+		return auth.Principal{}, false, platformOrganizationNotFound()
+	}
+	if err != nil {
+		s.logger.ErrorContext(r.Context(), "resolve platform target organization", "actor_account_uuid", session.UserUUID, "error_code", "organization_lookup_unavailable")
+		return auth.Principal{}, false, platformAuthorizationUnavailable()
+	}
+	principal := session.Principal()
+	principal.AccountUUID = session.UserUUID
+	principal.AccountExternalID = session.UserExternalID
+	principal.UserUUID = ""
+	principal.UserExternalID = ""
+	principal.OrganizationUUID = organization.UUID
+	principal.OrganizationAccessSource = auth.OrganizationAccessPlatformAdmin
+	principal.WorkspaceAccess = auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: string(auth.OrganizationAccessPlatformAdmin)}
+	return principal, true, nil
+}
+
+func (s *Server) servePlatformPrincipal(w http.ResponseWriter, r *http.Request, next http.Handler, principal auth.Principal) {
+	if !principal.PlatformOrganizationAdmin(principal.OrganizationUUID) {
+		next.ServeHTTP(w, r)
+		return
+	}
+	response := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+	next.ServeHTTP(response, r)
+	level, outcome := slog.LevelInfo, "success"
+	if response.Status() >= 500 {
+		level, outcome = slog.LevelError, "failed"
+	} else if response.Status() >= 400 {
+		level, outcome = slog.LevelWarn, "denied"
+	}
+	s.logger.Log(r.Context(), level, "platform organization request", "request_id", httpapi.RequestID(r.Context()), "actor_account_uuid", principal.AccountUUID, "organization_uuid", principal.OrganizationUUID, "workspace_uuid", principal.WorkspaceUUID, "access_source", principal.OrganizationAccessSource, "action", r.Method, "resource_type", "console_request", "outcome", outcome, "status", response.Status())
 }

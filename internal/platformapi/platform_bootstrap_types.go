@@ -1,5 +1,7 @@
 package platformapi
 
+import "github.com/superduck-ai/open-managed-agents/internal/auth"
+
 type Account struct {
 	DefaultOrganizationUUID   string         `json:"default_organization_uuid"`
 	Permissions               []string       `json:"permissions"`
@@ -33,7 +35,19 @@ type Membership struct {
 	NotificationPreferences map[string]any `json:"notification_preferences"`
 }
 
+type OrganizationAccess struct {
+	Source           auth.OrganizationAccessSource  `json:"source"`
+	Organization     OrganizationAccessOrganization `json:"organization"`
+	OrganizationRole string                         `json:"organization_role"`
+	WorkspaceRole    string                         `json:"workspace_role"`
+}
+type OrganizationAccessOrganization struct {
+	UUID string `json:"uuid"`
+	Name string `json:"name"`
+}
+
 type BootstrapCompatibilityResponse struct {
+	OrganizationAccess       *OrganizationAccess    `json:"organization_access"`
 	PlatformAccess           PlatformAccess         `json:"platform_access"`
 	CSRFToken                string                 `json:"csrf_token"`
 	Account                  *Account               `json:"account"`

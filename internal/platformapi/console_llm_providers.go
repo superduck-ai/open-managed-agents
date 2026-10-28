@@ -260,6 +260,9 @@ func llmProviderScope(w http.ResponseWriter, r *http.Request, database *db.DB) (
 
 func requireLLMProviderAdministrator(w http.ResponseWriter, r *http.Request, database *db.DB, orgUUID string) bool {
 	principal, ok := auth.PrincipalFromContext(r.Context())
+	if ok && principal.PlatformOrganizationAdmin(orgUUID) {
+		return true
+	}
 	if !ok || principal.UserExternalID == "" {
 		writeLLMProviderPermissionDenied(w)
 		return false

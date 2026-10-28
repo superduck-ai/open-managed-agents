@@ -27,7 +27,7 @@ func accessibleConsoleWorkspaces(r *http.Request, store OrganizationStore, works
 		return nil, workspaceaccess.ErrDenied
 	}
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || principal.UserUUID == "" {
+	if !ok || (principal.UserUUID == "" && !principal.PlatformOrganizationAdmin(principal.OrganizationUUID)) {
 		return nil, workspaceaccess.ErrDenied
 	}
 	roles := map[string]string{}
@@ -58,6 +58,9 @@ func accessibleConsoleWorkspaces(r *http.Request, store OrganizationStore, works
 		}
 		if err != nil {
 			return nil, err
+		}
+		if principal.PlatformOrganizationAdmin(principal.OrganizationUUID) {
+			access.Source = string(auth.OrganizationAccessPlatformAdmin)
 		}
 		workspace.EffectiveRole, workspace.RoleSource = access.Role, access.Source
 		result = append(result, workspace)

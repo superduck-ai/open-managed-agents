@@ -105,7 +105,7 @@ func handleUpdateConsoleMember(store OrganizationStore) http.HandlerFunc {
 			return
 		}
 		principal, _ := auth.PrincipalFromContext(r.Context())
-		user, err := memberStore.UpdateOrgUserRole(r.Context(), orgUUID, userID, role, principal.UserExternalID, validateConsoleOrganizationAdminRole)
+		user, err := memberStore.UpdateOrgUserRole(r.Context(), orgUUID, userID, role, principal.UserExternalID, consoleMemberActorValidator(principal, orgUUID))
 		if err != nil {
 			writeConsoleMemberError(w, err)
 			return
@@ -135,7 +135,7 @@ func handleDeleteConsoleMember(store OrganizationStore) http.HandlerFunc {
 			return
 		}
 		principal, _ := auth.PrincipalFromContext(r.Context())
-		removed, err := memberStore.RemoveOrgUser(r.Context(), orgUUID, userID, principal.UserExternalID, validateConsoleOrganizationAdminRole)
+		removed, err := memberStore.RemoveOrgUser(r.Context(), orgUUID, userID, principal.UserExternalID, consoleMemberActorValidator(principal, orgUUID))
 		if err != nil {
 			writeConsoleMemberError(w, err)
 			return

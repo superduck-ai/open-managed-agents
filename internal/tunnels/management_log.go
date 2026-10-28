@@ -22,7 +22,7 @@ func logScopedManagementSuccess(
 	workspaceUUID string,
 ) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	actorID := principal.UserUUID
+	actorID := principal.RuntimeUserUUID()
 	if actorID == "" {
 		actorID = principal.APIKeyUUID
 	}

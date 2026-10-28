@@ -27,7 +27,7 @@ func (s *Service) DeleteWorkspaceMember(ctx context.Context, principal auth.Prin
 
 func (s *Service) memberManagementWorkspace(ctx context.Context, principal auth.Principal, workspaceID string) (db.AdminWorkspace, error) {
 	if !principal.WorkspaceAccess.ManageOrganization() {
-		workspace, access, err := workspaceaccess.New(s.db).Resolve(ctx, principal.OrganizationUUID, principal.UserExternalID, workspaceID)
+		workspace, access, err := workspaceaccess.New(s.db).ResolvePrincipal(ctx, principal, workspaceID)
 		if err != nil {
 			return db.AdminWorkspace{}, mapAdminDBError(err, "Workspace not found")
 		}

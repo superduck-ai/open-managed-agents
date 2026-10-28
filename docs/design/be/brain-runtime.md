@@ -6,17 +6,23 @@
 
 ## DSH 版本与文档基准
 
-Brain 的 20 个直接 DSH 依赖与控制台轨迹视图的 7 个直接 DSH 依赖统一固定为 `0.2.1-rc.4`，Cordis 固定为 `4.0.5`，满足上游 `~4.0.5` 的 peer 约束。两个应用各自提交 Bun lockfile，传递的 DSH 包也必须解析到同一 RC；不能用 `latest`、`next` 或版本范围替代精确依赖。
+Brain 的 21 个直接 DSH 依赖与控制台轨迹视图的 7 个直接 DSH 依赖统一固定为 `0.2.2-alpha.2`，Cordis 固定为 `4.0.6-alpha.1`，满足上游 `~4.0.6-alpha.1` 的 peer 约束。两个应用各自提交 Bun lockfile，传递的 DSH 包也必须解析到同一发布版本；不能用 `latest`、`next` 或版本范围替代精确依赖。
 
-官方发布标签为 `dsh-v0.2.1-rc.4`，文档固定到提交 `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`：
+官方发布标签为 `dsh-v0.2.2-alpha.2`，文档固定到提交 `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`：
 
-- [架构与插件组合](https://github.com/deepseek-ai/deepseek-harness/blob/504a01a9578abc2c6f1fb896b1dc322c9fe24f66/docs/architecture.zh.md)。
-- [核心运行时与 Agent 生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/504a01a9578abc2c6f1fb896b1dc322c9fe24f66/docs/subsystems/core.zh.md)。
-- [子系统文档](https://github.com/deepseek-ai/deepseek-harness/blob/504a01a9578abc2c6f1fb896b1dc322c9fe24f66/docs/subsystems/README.zh.md)，包括 Session、持久化、压缩、工具、子 Agent 与遥测。
-- [配置目录](https://github.com/deepseek-ai/deepseek-harness/blob/504a01a9578abc2c6f1fb896b1dc322c9fe24f66/docs/config-catalog.zh.md)。
-- [Session 格式与发布状态](https://github.com/deepseek-ai/deepseek-harness/blob/504a01a9578abc2c6f1fb896b1dc322c9fe24f66/docs/session-format-status.zh.md)。
+- [架构与插件组合](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/architecture.zh.md)。
+- [核心运行时与 Agent 生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/subsystems/core.zh.md)。
+- [子系统文档](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/subsystems/README.zh.md)，包括 Session、持久化、压缩、工具、子 Agent 与遥测。
+- [配置目录](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/config-catalog.zh.md)。
+- [Session 格式与发布状态](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/session-format-status.zh.md)。
 
 从 `0.2.1-alpha.2` 升级时，JSONL 持久化入口改为 `import * as JsonlPersistence`，通过 `ctx.plugin(JsonlPersistence, config)` 挂载上游模块；不再依赖已移除的默认类导出。服务仍通过 `ctx.sessionPersistence` 使用，消费者继续在注入作用域中完成关闭。Session 写入格式仍为 V4，OMA 的 Header/Event 复制、审批与恢复合同不变。OTLP instrumentation scope 的版本从已安装 `dsh-session/package.json` 读取，模块和独立二进制都使用实际打包版本。
+
+从 `0.2.1-rc.4` 升级到本次 alpha 时，`dsh-tools` 只保留工具注册与分派，原生执行由新增的 `dsh-tool-executor-native` 插件提供；内核依次挂载两者，删除已移除的 `mode: "native"` 配置。程序化调用改用 `tools.execute({ calls: [...] })`，每个调用包含原始 JSON 字符串参数，结果从 `results[].result` 读取。OMA 的工具审批、参数验证和持久化屏障继续由原有 hook 执行。
+
+模型选择通过 `agent.model.select({ provider, model })` 写入原生 `model/selection` 事件，必须在 step 准备前完成。`agent/request` 只配置当前已选模型的预算，不再覆盖路由。Worker metadata 仍是 OMA 恢复模型选择的来源；打开原生日志后重新应用该选择，使远程配置优先于历史最后一次请求。新版切换模型的压缩检查要求 adapter 提供上下文容量，生产 adapter 继续读取 OMA 模型配置。
+
+普通 `sessions.fork()` 不再自动设置 `parentSession`；独立 fork 不归入父 assignment 的遥测。OMA 子 Agent 创建路径继续显式写入 `parentSession`、`origin: "subagent"` 和 delegation depth，并沿该关系选择凭证。Session writer 仍为 V4，但新增事件不代表旧运行时可读取新日志；启用新版本后不保证直接降回 `0.2.1-rc.4`。这是 alpha 发布，真实模型、沙箱和跨实例行为仍需单独集成验收。
 
 升级验收运行 Brain 的 `bun run typecheck` 与 `bun run verify:executable`，后者构建模块和独立二进制，并用本地协议 fixture 执行普通单测；前端运行 `bun test`、`bun run build` 和根目录的 `just web-format-check`。原生轨迹的 host 合同、主题来源与浏览器 fixture 见 [UPSTREAM.md](../../../web/src/features/observability/trajectory/UPSTREAM.md)。根目录继续运行 `just test`、`just duplicates` 与 `just complexity`。这些检查不代表真实模型、沙箱、外部存储或跨实例集成验收；`verify-be` 仍需用户另行明确要求。`verification/` 中的历史报告与指纹不随升级改写。
 
@@ -433,11 +439,11 @@ The per-request callback is `refreshSessionContext`, shared by root and child re
 
 Each root session registers a DSH adapter under the internal provider route `oma:<session_id>`. Its model-info callback reads that session's assignment by the exact requested model ID, returning the selected catalog entry's context window, output limit and input modalities. Children use the same session-owned provider route and select their own model entry. This keeps identical model names in different tenants from sharing limits through the process-wide DSH adapter registry. The registration belongs to the root's plugin scope and is released with that scope. The model token, HTTP backend and upstream model string continue to use the existing OMA proxy route.
 
-Ordinary agent request configuration binds the session-owned provider and replaces any logged previous-model output budget with the currently selected model's `max_output_tokens`, or the shared default when omitted. The root's CCR model override is applied before the final binding; children use their own configured model. Thus set_model, configuration refresh and session restoration do not reuse a previous model's cap. Adapter metadata and the actual Messages/Chat Completions request use the same source. Auxiliary compaction requests bypass this hook and receive their output ceiling from the OMA route before SDK serialization. The generic AI SDK adapter still supports caller-specified request caps, with an optional route ceiling taking precedence when supplied.
+Ordinary agent request configuration binds the session-owned provider and replaces any logged previous-model output budget with the currently selected model's `max_output_tokens`, or the shared default when omitted. CCR records the root's choice through `agent.model.select({ provider, model })` before step preparation. The native `model/selection` event persists that choice, and opening a restored runtime reapplies worker metadata before another step starts. Children use their own configured model without inheriting the root's selection. Thus set_model, configuration refresh and session restoration do not reuse a previous model's cap. Adapter metadata and the actual Messages/Chat Completions request use the same source. Auxiliary compaction requests bypass this hook and receive their output ceiling from the OMA route before SDK serialization. The generic AI SDK adapter still supports caller-specified request caps, with an optional route ceiling taking precedence when supplied.
 
-`SessionRuntime` owns the single final `configureModel` call for each ordinary request. The order is session-context refresh, journal flush, protocol `beforeRequest`, native request-config resolution, optional root `selectModel` override, then `configureModel`. CCR supplies only the root model selector; it does not bind the budget again. Children use the same runtime binding path without inheriting the root selector. Regression tests count one binding per model request across root calls, children, model switching and restoration, and verify invalid refreshes leave the previous context unchanged without sending a model request.
+`SessionRuntime` owns the single final `configureModel` call for each ordinary request. DSH fixes the selected provider and model when step preparation begins. Within `agent/request`, the order is session-context refresh, journal flush, protocol `beforeRequest`, native request-config resolution, then `configureModel` to bind the selected model's budget. This hook does not override the prepared route. CCR owns root selection and restoration; it does not bind the budget again. Children use the same runtime budget-binding path with their own selection. Regression tests count one binding per model request across root calls, children, model switching and restoration, and verify invalid refreshes leave the previous context unchanged without sending a model request.
 
-Model-specific `context_window` and `max_output_tokens` take precedence. When a capacity is omitted, Brain follows main's shared defaults of 262144 context tokens and 32768 output tokens, without model-limit environment variables. Removing a configured limit replaces any stale ordinary-request budget with the shared default. The adapter metadata, runtime request budget and both API routes read the same unified catalog. Native pre-step pressure checks use the latest durable routed envelope, so a model switch can first be reflected by the next ordinary request, with bounded overflow recovery protecting that request if the smaller window rejects it.
+Model-specific `context_window` and `max_output_tokens` take precedence. When a capacity is omitted, Brain follows main's shared defaults of 262144 context tokens and 32768 output tokens, without model-limit environment variables. Removing a configured limit replaces any stale ordinary-request budget with the shared default. The adapter metadata, runtime request budget and both API routes read the same unified catalog. Native step preparation captures the next model choice before prompt assembly. Model-switch pressure checks require target-model context capacity and compact history when necessary before the request proceeds; a failed check preserves the previous request header. Bounded overflow recovery remains available for a request rejected by the upstream context limit.
 
 ```mermaid
 flowchart LR

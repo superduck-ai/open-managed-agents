@@ -5,6 +5,7 @@ import SessionStore from "@deepseek-ai/dsh-session";
 import SessionProjectionRegistry from "@deepseek-ai/dsh-session-projection";
 import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import ToolRuntime from "@deepseek-ai/dsh-tools";
+import * as NativeToolExecutor from "@deepseek-ai/dsh-tool-executor-native";
 import AgentRegistry from "@deepseek-ai/dsh-agent";
 import AgentLoop from "@deepseek-ai/dsh-agent-loop";
 import * as TimeContext from "./plugins/time-context.ts";
@@ -33,7 +34,8 @@ export async function mountKernel(ctx: Context): Promise<void> {
     includeHarnessIdentity: false,
     includeRuntimeContext: false,
   });
-  await ctx.plugin(ToolRuntime, { mode: "native" });
+  await ctx.plugin(ToolRuntime);
+  await ctx.plugin(NativeToolExecutor);
   await ctx.plugin(AgentRegistry);
   await ctx.plugin(TimeContext, { timeZone: "Asia/Shanghai" });
   await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 25 });

@@ -3322,6 +3322,5 @@
   "platformScope.enter": "进入组织工作台",
   "platformScope.failed": "组织访问失败，请重试。",
   "platformScope.active": "平台管理员进入 · {organization}",
-  "platformScope.exit": "退出并返回原组织",
-  "platformScope.exitEmpty": "退出组织工作台"
+  "platformScope.exit": "返回平台管理"
 }

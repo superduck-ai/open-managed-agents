@@ -79,9 +79,8 @@ export function scopeAccountForSwitch(
 export function workspacePreference(
   accountUuid: string,
   orgUuid: string,
-  explicit: string | undefined,
   initial: string | undefined,
   navigate: boolean,
 ) {
-  return explicit ?? (!navigate && initial ? initial : readPreference(accountUuid, orgUuid));
+  return !navigate && initial ? initial : readPreference(accountUuid, orgUuid);
 }

@@ -12,6 +12,6 @@
 
 ## 平台管理员目标组织访问（2026-10-28）
 
-平台目标与原真实 returnContext 仅存当前标签 sessionStorage。身份 bootstrap 后验证账号，再带目标头 bootstrap 和工作区目录安装 scope；不写普通偏好。退出或普通组织切换先取消旧 generation/SSE/下载、清 scope 与目标，再恢复真实组织及工作区；失败维持已退出空 scope 并允许重试。管理门控使用当前组织有效权限，成员列表不增加虚拟组织。
+平台目标组织及工作区仅存当前标签 sessionStorage。身份 bootstrap 后验证账号，再带目标头 bootstrap 和工作区目录安装 scope；不写普通偏好。退出先使旧 generation 失效、取消请求/SSE/下载、清缓存、Console scope 与标签目标，再返回刚访问的目标组织详情页 `/platform-admin/organizations/{targetOrganizationUuid}`；目标缺失时回退 `/platform-admin`。退出无需网络，不恢复原组织或工作区。普通组织切换清除平台目标后按所选真实组织安装 scope。管理门控使用当前组织有效权限，成员列表不增加虚拟组织。
 
 完整权限及进入/退出合同见 [平台超级管理员设计](../platform-super-admin.md)。

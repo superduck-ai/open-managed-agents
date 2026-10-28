@@ -3322,6 +3322,5 @@
   "platformScope.enter": "Enter organization console",
   "platformScope.failed": "Organization access failed. Please retry.",
   "platformScope.active": "Platform administrator · {organization}",
-  "platformScope.exit": "Exit and return to original organization",
-  "platformScope.exitEmpty": "Exit organization console"
+  "platformScope.exit": "Return to platform administration"
 }

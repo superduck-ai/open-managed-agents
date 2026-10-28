@@ -13,12 +13,11 @@ test('错误标签数据及其他账号不能恢复进入目标', () => {
   savePlatformScope({ accountUuid: 'other', targetOrganizationUuid: 'target' });
   expect(readPlatformScope('account')).toBeUndefined();
 });
-test('标签保存真实恢复上下文且退出只清进入偏好', () => {
+test('标签保存目标上下文且退出只清进入偏好', () => {
   const scope = {
     accountUuid: 'account',
     targetOrganizationUuid: 'target',
-    returnOrganizationUuid: 'home',
-    returnWorkspaceId: 'workspace',
+    targetWorkspaceId: 'workspace',
   };
   savePlatformScope(scope);
   expect(readPlatformScope('account')).toEqual(scope);

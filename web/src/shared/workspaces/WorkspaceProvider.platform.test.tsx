@@ -49,9 +49,9 @@ function Probe() {
   selectWorkspace = workspace.selectWorkspace;
   return null;
 }
-function mount() {
+function mount(navigateScope?: (workspaceId: string) => Promise<void>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <AuthContext.Provider
         value={{
@@ -62,12 +62,13 @@ function mount() {
           refresh: async () => ({ account: identity }),
         }}
       >
-        <WorkspaceProvider>
+        <WorkspaceProvider navigateScope={navigateScope}>
           <Probe />
         </WorkspaceProvider>
       </AuthContext.Provider>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
 function setup() {
   resetTestDom('https://oma.duck.ai/');
@@ -189,10 +190,11 @@ test('撤权停止目标请求并允许退出，不自动回退或重放写入',
   await act(async () => {
     await organizations.exitOrganization!();
   });
-  expect(getConsoleRequestContext().organizationUuid).toBe('home');
+  expect(getConsoleRequestContext().organizationUuid).toBeUndefined();
+  expect(organizations.error).toBeNull();
 });
 
-test('非成员进入按目标 bootstrap 后加载工作区，普通偏好不污染，退出取消旧请求并恢复', async () => {
+test('非成员进入按目标 bootstrap 后加载工作区，普通偏好不污染，退出取消旧请求且不恢复原组织', async () => {
   setup();
   mount();
   await waitFor(() => expect(organizations.switching).toBe(false));
@@ -215,19 +217,27 @@ test('非成员进入按目标 bootstrap 后加载工作区，普通偏好不污
   await act(async () => {
     await organizations.enterOrganization!('another');
   });
-  expect(organizations.platformScope?.returnOrganizationUuid).toBe('home');
+  expect(organizations.platformScope?.targetOrganizationUuid).toBe('another');
+  const exitSignal = getScopeSignal();
+  const requestCount = requests.length;
   await act(async () => {
     await organizations.exitOrganization!();
   });
   expect(targetSignal.aborted).toBe(true);
-  expect(getConsoleRequestContext().organizationUuid).toBe('home');
-  expect(activeWorkspace).toBe('ws-home');
+  expect(getConsoleRequestContext().organizationUuid).toBeUndefined();
+  expect(exitSignal.aborted).toBe(true);
+  expect(getConsoleRequestContext().workspaceId).toBeUndefined();
+  expect(organizations.orgUuid).toBeUndefined();
+  expect(organizations.platformScope).toBeUndefined();
+  expect(activeWorkspace).toBe('');
+  expect(currentAccount?.permissions).toEqual([]);
+  expect(requests).toHaveLength(requestCount);
   expect(readPlatformScope(identity.uuid)).toBeUndefined();
 });
 
 test('同账号刷新恢复标签目标，其他账号不能复用偏好', async () => {
   setup();
-  savePlatformScope({ accountUuid: identity.uuid, targetOrganizationUuid: 'target', returnOrganizationUuid: 'home' });
+  savePlatformScope({ accountUuid: identity.uuid, targetOrganizationUuid: 'target' });
   const view = mount();
   await waitFor(() => expect(organizations.orgUuid).toBe('target'));
   expect(requests[0]).toEqual({ path: '/api/bootstrap', organization: 'target' });
@@ -238,7 +248,7 @@ test('同账号刷新恢复标签目标，其他账号不能复用偏好', async
   expect(organizations.platformScope).toBeUndefined();
 });
 
-test('无真实组织仍可进入并退出为空组织，移除原成员关系后不恢复虚假成员', async () => {
+test('无真实组织仍可进入并退出为空组织', async () => {
   setup();
   identity = { ...identity, memberships: [] };
   mount();
@@ -246,7 +256,6 @@ test('无真实组织仍可进入并退出为空组织，移除原成员关系�
   await act(async () => {
     await organizations.enterOrganization!('target');
   });
-  expect(organizations.platformScope?.returnOrganizationUuid).toBeUndefined();
   await act(async () => {
     await organizations.exitOrganization!();
   });
@@ -254,29 +263,43 @@ test('无真实组织仍可进入并退出为空组织，移除原成员关系�
   expect(getConsoleRequestContext().organizationUuid).toBeUndefined();
 });
 
-test('退出恢复失败保持空 scope，重试只恢复真实原组织', async () => {
+test('退出无需网络且清除业务缓存，不恢复原组织或跳转原工作区', async () => {
   setup();
-  mount();
+  const navigate = mock(async () => {});
+  const view = mount(navigate);
   await waitFor(() => expect(organizations.switching).toBe(false));
   await act(async () => {
     await organizations.enterOrganization!('target');
   });
-  const fetchTarget = globalThis.fetch;
+  view.client.setQueryData(['agents', 'target'], ['target-agent']);
+  const pendingQuery = view.client
+    .fetchQuery({
+      queryKey: ['sessions', 'target'],
+      queryFn: ({ signal }) =>
+        new Promise((_, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    })
+    .catch(() => undefined);
+  const requestCount = requests.length;
+  navigate.mockClear();
   globalThis.fetch = mock(async () => {
     throw new Error('offline');
   }) as typeof fetch;
   await act(async () => {
-    expect(await organizations.exitOrganization!()).toBe(false);
+    expect(await organizations.exitOrganization!()).toBe(true);
+    await pendingQuery;
   });
+  expect(view.client.getQueryData(['agents', 'target'])).toBeUndefined();
+  expect(view.client.getQueryState(['sessions', 'target'])).toBeUndefined();
   expect(organizations.orgUuid).toBeUndefined();
-  expect(organizations.error).toBeTruthy();
+  expect(organizations.error).toBeNull();
+  expect(organizations.switching).toBe(false);
   expect(getConsoleRequestContext().organizationUuid).toBeUndefined();
   expect(readPlatformScope(identity.uuid)).toBeUndefined();
-  globalThis.fetch = fetchTarget;
-  await act(async () => {
-    await organizations.retry();
-  });
-  expect(organizations.orgUuid).toBe('home');
+  expect(requests).toHaveLength(requestCount);
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+  expect(navigate).not.toHaveBeenCalled();
 });
 
 test('进入响应中的其他账号或非平台权限不能安装目标', async () => {
@@ -326,7 +349,8 @@ test('退出使仍在等待的进入响应失效', async () => {
     complete(Response.json(bootstrap('target')));
     await enter.catch(() => false);
   });
-  expect(organizations.orgUuid).toBe('home');
+  expect(organizations.orgUuid).toBeUndefined();
+  expect(organizations.switching).toBe(false);
   expect(readPlatformScope(identity.uuid)).toBeUndefined();
 });
 

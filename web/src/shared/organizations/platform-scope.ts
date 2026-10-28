@@ -4,8 +4,6 @@ export type PlatformScope = {
   accountUuid: string;
   targetOrganizationUuid: string;
   targetWorkspaceId?: string;
-  returnOrganizationUuid?: string;
-  returnWorkspaceId?: string;
 };
 
 const storageKey = 'oma.platform-organization';
@@ -16,13 +14,7 @@ export function readPlatformScope(accountUuid: string): PlatformScope | undefine
     if (!stored || typeof stored !== 'object') return;
     const value = stored as Partial<PlatformScope>;
     if (value.accountUuid !== accountUuid || typeof value.targetOrganizationUuid !== 'string') return;
-    if (
-      ['targetWorkspaceId', 'returnOrganizationUuid', 'returnWorkspaceId'].some((key) => {
-        const field = value[key as keyof PlatformScope];
-        return field !== undefined && typeof field !== 'string';
-      })
-    )
-      return;
+    if (value.targetWorkspaceId !== undefined && typeof value.targetWorkspaceId !== 'string') return;
     return value as PlatformScope;
   } catch {
     return;

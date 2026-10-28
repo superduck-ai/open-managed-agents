@@ -1,3 +1,4 @@
+import { useNavigate } from '@tanstack/react-router';
 import { useOrganizations } from '../../shared/organizations/context';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
@@ -14,6 +15,17 @@ function ConnectedPlatformOrganizationMenu() {
   const { organizationAccess } = useAuth();
   const { msg } = useI18n();
   const confirmation = useScopeConfirmation();
+  const navigate = useNavigate();
+  const exit = async () => {
+    const targetOrganizationUuid = organizations?.platformScope?.targetOrganizationUuid;
+    if (!(await organizations?.exitOrganization?.())) return;
+    if (targetOrganizationUuid)
+      await navigate({
+        to: '/platform-admin/organizations/$organizationUuid',
+        params: { organizationUuid: targetOrganizationUuid },
+      });
+    else await navigate({ to: '/platform-admin' });
+  };
   if (!organizations?.platformScope) return null;
   return (
     <>
@@ -26,11 +38,9 @@ function ConnectedPlatformOrganizationMenu() {
         <DropdownMenuItem
           disabled={organizations.switching}
           closeOnClick={false}
-          onClick={() => confirmation.request(() => void organizations.exitOrganization?.())}
+          onClick={() => confirmation.request(() => void exit())}
         >
-          {organizations.platformScope.returnOrganizationUuid
-            ? msg('platformScope.exit', 'Exit and return to original organization')
-            : msg('platformScope.exitEmpty', 'Exit organization console')}
+          {msg('platformScope.exit', 'Return to platform administration')}
         </DropdownMenuItem>
       </DropdownMenuGroup>
       {confirmation.dialog}

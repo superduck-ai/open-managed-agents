@@ -217,6 +217,6 @@ Go 全量 `just test` 中，`internal/workerevents` 的四个 JetStream 用例�
 
 ## 平台管理员目标组织访问（2026-10-28）
 
-平台后台组织详情可进入未加入组织的 Console，但不会创建、恢复或提升成员；真实 memberships、邀请及组织切换器保持成员事实。用户菜单退出恢复原真实上下文，资源不随退出删除。
+平台后台组织详情可进入未加入组织的 Console，但不会创建、恢复或提升成员；真实 memberships、邀请及组织切换器保持成员事实。用户菜单通过“返回平台管理”退出，清空平台与 Console scope 后返回刚访问的目标组织详情页 `/platform-admin/organizations/{targetOrganizationUuid}`，目标缺失时回退 `/platform-admin`；不恢复原组织或工作区，资源不随退出删除。
 
 完整权限及进入/退出合同见 [平台超级管理员设计](platform-super-admin.md)。

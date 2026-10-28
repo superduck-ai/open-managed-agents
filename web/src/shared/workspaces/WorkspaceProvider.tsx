@@ -52,7 +52,6 @@ export function WorkspaceProvider({
   const [error, setError] = useState<unknown>(null);
   const generation = useRef(0);
   const attempted = useRef<string | undefined>(undefined);
-  const exiting = useRef<PlatformScope | undefined>(undefined);
   const recovery = useRef<'idle' | 'checking' | 'failed'>('idle');
   const authRef = useRef(auth);
   authRef.current = auth;
@@ -87,13 +86,7 @@ export function WorkspaceProvider({
   );
 
   const switchOrganization = useCallback(
-    async (
-      requested?: string,
-      refresh = true,
-      navigate = true,
-      knownAccount?: AuthAccount | null,
-      preferredWorkspaceId?: string,
-    ) => {
+    async (requested?: string, refresh = true, navigate = true, knownAccount?: AuthAccount | null) => {
       const previous = scopeRef.current;
       clearPlatformScope();
       if (previous.platform) {
@@ -119,13 +112,7 @@ export function WorkspaceProvider({
         const effective = await fetchBootstrap({ organizationUuid: orgUuid });
         if (ticket !== generation.current) return false;
         const workspaces = await listConsoleWorkspaces(orgUuid);
-        const preferred = workspacePreference(
-          account.uuid,
-          orgUuid,
-          preferredWorkspaceId,
-          initialWorkspaceId,
-          navigate,
-        );
+        const preferred = workspacePreference(account.uuid, orgUuid, initialWorkspaceId, navigate);
         const selected = chooseWorkspace(workspaces, preferred);
         const shouldNavigate = navigate || Boolean(initialWorkspaceId && selected?.id !== initialWorkspaceId);
         return await installScope(
@@ -162,13 +149,10 @@ export function WorkspaceProvider({
       const current = scopeRef.current;
       const account = authRef.current.account;
       if (!account) throw new Error('Authentication required');
-      const realOrganization = fallbackOrganization(account, current.orgUuid);
       const platform = restore ??
         current.platform ?? {
           accountUuid: account.uuid,
           targetOrganizationUuid: orgUuid,
-          returnOrganizationUuid: realOrganization,
-          returnWorkspaceId: realOrganization === current.orgUuid ? current.activeWorkspaceId : undefined,
         };
       const ticket = ++generation.current;
       setSwitching(true);
@@ -224,24 +208,21 @@ export function WorkspaceProvider({
   );
 
   const exitOrganization = useCallback(async () => {
-    const previous = scopeRef.current.platform ?? exiting.current;
-    exiting.current = previous;
-    ++generation.current;
+    const ticket = ++generation.current;
+    recovery.current = 'idle';
+    attempted.current = undefined;
     cancelScopeRequests();
     setConsoleRequestContext({});
     clearPlatformScope();
     scopeRef.current = emptyScope;
     setScope(emptyScope);
-    const success = await switchOrganization(
-      previous?.returnOrganizationUuid,
-      true,
-      true,
-      undefined,
-      previous?.returnWorkspaceId,
-    );
-    if (recovery.current !== 'failed') exiting.current = undefined;
-    return success;
-  }, [switchOrganization]);
+    setError(null);
+    setSwitching(false);
+    await queryClient.cancelQueries({ predicate: isBusinessQuery });
+    if (ticket !== generation.current) return false;
+    queryClient.removeQueries({ predicate: isBusinessQuery });
+    return true;
+  }, [queryClient]);
 
   const accountUuid = auth.account?.uuid;
   useEffect(() => {
@@ -420,11 +401,9 @@ export function WorkspaceProvider({
         error,
         switchOrganization,
         retry: () =>
-          exiting.current
-            ? exitOrganization()
-            : scope.platform
-              ? enterOrganization(scope.platform.targetOrganizationUuid, scope.platform)
-              : switchOrganization(attempted.current),
+          scope.platform
+            ? enterOrganization(scope.platform.targetOrganizationUuid, scope.platform)
+            : switchOrganization(attempted.current),
       }}
     >
       <AuthContext.Provider

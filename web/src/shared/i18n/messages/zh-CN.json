@@ -670,6 +670,8 @@
   "managedAgents.credentialVaults.clearSelection": "清除已选保险库",
   "managedAgents.credentialVaults.sessionAck.title": "我拥有或被授权使用此保险库。",
   "managedAgents.credentialVaults.sessionAck.description": "我理解这意味着此 Agent 可以使用该保险库授予的身份。",
+  "managedAgents.credentialVaults.sessionLocked.label": "为什么不能更改保险库",
+  "managedAgents.credentialVaults.sessionLocked.description": "凭据保险库在创建会话时绑定，之后不能更改。如需使用其他保险库，请新建会话。",
   "managedAgents.credentialVaults.selectOneOrMore": "选择一个或多个保险库",
   "managedAgents.credentialVaults.title": "凭据保险库",
   "managedAgents.credentialVaults.credentialKind": "凭据",

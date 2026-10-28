@@ -1,5 +1,11 @@
 import { afterEach, expect, test } from 'bun:test';
-import { readPlatformScope, savePlatformScope, clearPlatformScope } from './platform-scope';
+import {
+  readPlatformScope,
+  savePlatformScope,
+  clearPlatformScope,
+  isPlatformOrganizationAccess,
+} from './platform-scope';
+import type { OrganizationAccess } from '../auth/api';
 afterEach(() => window.sessionStorage.clear());
 test('错误标签数据及其他账号不能恢复进入目标', () => {
   window.sessionStorage.setItem('oma.platform-organization', '{');
@@ -20,4 +26,18 @@ test('标签保存真实恢复上下文且退出只清进入偏好', () => {
   clearPlatformScope();
   expect(readPlatformScope('account')).toBeUndefined();
   expect(window.sessionStorage.getItem('oma.organization.account')).toBe('home');
+});
+
+test('平台组织访问只接受目标一致的平台来源', () => {
+  const access: OrganizationAccess = {
+    source: 'platform_admin',
+    organization: { uuid: 'target', name: 'Target' },
+    organization_role: 'admin',
+    workspace_role: 'workspace_admin',
+  };
+  expect(isPlatformOrganizationAccess(undefined, 'target')).toBe(false);
+  expect(isPlatformOrganizationAccess(null, 'target')).toBe(false);
+  expect(isPlatformOrganizationAccess({ ...access, source: 'organization_member' }, 'target')).toBe(false);
+  expect(isPlatformOrganizationAccess(access, 'other')).toBe(false);
+  expect(isPlatformOrganizationAccess(access, 'target')).toBe(true);
 });

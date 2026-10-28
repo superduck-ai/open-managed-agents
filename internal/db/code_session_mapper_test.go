@@ -286,6 +286,6 @@ func TestCodeSessionRuntimeAccountEmailScope(t *testing.T) {
 		bound:     buildCodeSessionMapperFindCredentialForIssue(yourbatis.DialectPostgres, "org", "workspace", "code"),
 		wantID:    "CodeSessionMapper.FindCredentialForIssue", wantKind: yourbatis.StatementSelect,
 		wantArgumentNames: []string{"codeSessionExternalID", "organizationUUID", "workspaceUUID"},
-		wantSQLFragments:  []string{"s.metadata->>'_oma_runtime_user_uuid' IS NOT NULL OR u.organization_uuid = cs.organization_uuid", "u.deleted_at IS NULL", "cs.organization_uuid = $2", "cs.workspace_uuid = $3"},
+		wantSQLFragments:  []string{"s.metadata->>'_oma_runtime_user_uuid' IS NOT NULL OR u.organization_uuid = cs.organization_uuid", "u.deleted_at IS NULL", "cs.organization_uuid = $2", "cs.workspace_uuid = $3", "CASE WHEN s.metadata->>'_oma_runtime_user_uuid' IS NULL THEN ak.created_by_user_uuid ELSE CASE WHEN s.metadata->>'_oma_runtime_user_uuid' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid) END END"},
 	})
 }

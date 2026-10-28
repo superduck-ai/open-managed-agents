@@ -84,21 +84,32 @@ func TestPlatformOrganizationHeaderValidation(t *testing.T) {
 }
 
 func TestPlatformOrganizationLog(t *testing.T) {
-	var output bytes.Buffer
-	server := &Server{logger: slog.New(slog.NewJSONHandler(&output, nil))}
-	principal := auth.Principal{AccountUUID: "actor", OrganizationUUID: "target", WorkspaceUUID: "workspace", CredentialType: auth.CredentialTypePlatformSession, OrganizationAccessSource: auth.OrganizationAccessPlatformAdmin, WorkspaceAccess: auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: "platform_admin"}}
-	request := httptest.NewRequest(http.MethodPost, "/v1/agents?secret=private", strings.NewReader("sensitive body"))
-	request.Header.Set("Authorization", "secret")
-	request.AddCookie(&http.Cookie{Name: "sessionKey", Value: "session-secret"})
-	server.servePlatformPrincipal(httptest.NewRecorder(), request, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) }), principal)
-	records := parseSlogJSONLines(t, output.String())
-	if len(records) != 1 || records[0]["actor_account_uuid"] != "actor" || records[0]["access_source"] != "platform_admin" || records[0]["outcome"] != "success" || records[0]["status"] != float64(201) {
-		t.Fatalf("records=%+v", records)
-	}
-	for _, sensitive := range []string{"secret", "sensitive body", "private"} {
-		if strings.Contains(output.String(), sensitive) {
-			t.Fatal("日志泄漏敏感值")
-		}
+	for _, tc := range []struct {
+		name    string
+		handler func(http.ResponseWriter, *http.Request)
+		status  int
+	}{
+		{"仅 Flush", func(w http.ResponseWriter, _ *http.Request) { w.(http.Flusher).Flush() }, http.StatusOK},
+		{"显式状态", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) }, http.StatusCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			server := &Server{logger: slog.New(slog.NewJSONHandler(&output, nil))}
+			principal := auth.Principal{AccountUUID: "actor", OrganizationUUID: "target", WorkspaceUUID: "workspace", CredentialType: auth.CredentialTypePlatformSession, OrganizationAccessSource: auth.OrganizationAccessPlatformAdmin, WorkspaceAccess: auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: "platform_admin"}}
+			request := httptest.NewRequest(http.MethodPost, "/v1/agents?secret=private", strings.NewReader("sensitive body"))
+			request.Header.Set("Authorization", "secret")
+			request.AddCookie(&http.Cookie{Name: "sessionKey", Value: "session-secret"})
+			server.servePlatformPrincipal(httptest.NewRecorder(), request, http.HandlerFunc(tc.handler), principal)
+			records := parseSlogJSONLines(t, output.String())
+			if len(records) != 1 || records[0]["actor_account_uuid"] != "actor" || records[0]["access_source"] != "platform_admin" || records[0]["outcome"] != "success" || records[0]["status"] != float64(tc.status) {
+				t.Fatalf("records=%+v", records)
+			}
+			for _, sensitive := range []string{"secret", "sensitive body", "private"} {
+				if strings.Contains(output.String(), sensitive) {
+					t.Fatal("日志泄漏敏感值")
+				}
+			}
+		})
 	}
 }
 

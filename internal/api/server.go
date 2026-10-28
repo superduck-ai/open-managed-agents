@@ -482,10 +482,6 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Action not allowed"))
 			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !auth.ValidatePlatformCSRFToken(auth.ExtractPlatformSessionKey(r), r.Header.Get("X-CSRF-Token")) {
-			httpapi.WriteError(w, r, platformCSRFRejected())
-			return
-		}
 		ctx := auth.WithPrincipal(r.Context(), principal)
 		if orgAlias := s.platformMirrorOrganizationAlias(r, principal); orgAlias != "" {
 			ctx = auth.WithPlatformMirrorOrganizationAlias(ctx, orgAlias)

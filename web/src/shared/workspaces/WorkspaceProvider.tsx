@@ -7,6 +7,7 @@ import {
   readPlatformScope,
   savePlatformScope,
   clearPlatformScope,
+  isPlatformOrganizationAccess,
   type PlatformScope,
 } from '../organizations/platform-scope';
 import { canManageMembers } from '../permissions/members';
@@ -181,12 +182,13 @@ export function WorkspaceProvider({
         const bootstrap = await fetchBootstrap({ organizationUuid: orgUuid });
         if (ticket !== generation.current) return false;
         const access = bootstrap.organization_access;
-        if (
-          bootstrap.account?.uuid !== account.uuid ||
-          access?.organization.uuid !== orgUuid ||
-          access.source !== 'platform_admin'
-        )
+        if (bootstrap.account?.uuid !== account.uuid || !isPlatformOrganizationAccess(access, orgUuid)) {
+          if (restore && !current.orgUuid) {
+            clearPlatformScope();
+            return await switchOrganization(readPreference(account.uuid), false, false);
+          }
           throw new Error('Platform organization access denied');
+        }
         const workspaces = await listConsoleWorkspaces(orgUuid);
         if (ticket !== generation.current) return false;
         const selected = chooseWorkspace(workspaces, restore?.targetWorkspaceId ?? '');
@@ -218,7 +220,7 @@ export function WorkspaceProvider({
         throw cause;
       }
     },
-    [installScope, queryClient],
+    [installScope, queryClient, switchOrganization],
   );
 
   const exitOrganization = useCallback(async () => {

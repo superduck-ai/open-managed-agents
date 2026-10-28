@@ -1,3 +1,5 @@
+import type { OrganizationAccess } from '../auth/api';
+
 export type PlatformScope = {
   accountUuid: string;
   targetOrganizationUuid: string;
@@ -33,4 +35,8 @@ export function savePlatformScope(scope: PlatformScope) {
 
 export function clearPlatformScope() {
   window.sessionStorage.removeItem(storageKey);
+}
+
+export function isPlatformOrganizationAccess(access: OrganizationAccess | null | undefined, organizationUuid: string) {
+  return access?.organization.uuid === organizationUuid && access.source === 'platform_admin';
 }

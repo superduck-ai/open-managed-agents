@@ -148,11 +148,15 @@ func (s *Server) servePlatformPrincipal(w http.ResponseWriter, r *http.Request, 
 	}
 	response := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 	next.ServeHTTP(response, r)
+	status := response.Status()
+	if status == 0 {
+		status = http.StatusOK
+	}
 	level, outcome := slog.LevelInfo, "success"
-	if response.Status() >= 500 {
+	if status >= 500 {
 		level, outcome = slog.LevelError, "failed"
-	} else if response.Status() >= 400 {
+	} else if status >= 400 {
 		level, outcome = slog.LevelWarn, "denied"
 	}
-	s.logger.Log(r.Context(), level, "platform organization request", "request_id", httpapi.RequestID(r.Context()), "actor_account_uuid", principal.AccountUUID, "organization_uuid", principal.OrganizationUUID, "workspace_uuid", principal.WorkspaceUUID, "access_source", principal.OrganizationAccessSource, "action", r.Method, "resource_type", "console_request", "outcome", outcome, "status", response.Status())
+	s.logger.Log(r.Context(), level, "platform organization request", "request_id", httpapi.RequestID(r.Context()), "actor_account_uuid", principal.AccountUUID, "organization_uuid", principal.OrganizationUUID, "workspace_uuid", principal.WorkspaceUUID, "access_source", principal.OrganizationAccessSource, "action", r.Method, "resource_type", "console_request", "outcome", outcome, "status", status)
 }

@@ -124,6 +124,54 @@ test('目标拒绝与缺失 Default 保留原作用域且不写进入偏好', as
   }
 });
 
+test('刷新恢复明确不匹配时清除平台偏好并回落普通组织', async () => {
+  for (const failure of ['account', 'source', 'organization']) {
+    setup();
+    savePlatformScope({ accountUuid: identity.uuid, targetOrganizationUuid: 'target' });
+    const fallbackFetch = globalThis.fetch;
+    globalThis.fetch = mock(async (input, options) => {
+      if (String(input) !== '/api/bootstrap' || new Headers(options?.headers).get('X-Organization-UUID') !== 'target')
+        return fallbackFetch(input, options);
+      const result = bootstrap('target');
+      if (failure === 'account') result.account!.uuid = 'other';
+      if (failure === 'source') result.organization_access!.source = 'organization_member';
+      if (failure === 'organization') result.organization_access!.organization.uuid = 'other';
+      return Response.json(result);
+    }) as typeof fetch;
+    const view = mount();
+    await waitFor(() => expect(organizations.switching).toBe(false));
+    expect(organizations.orgUuid).toBe('home');
+    expect(organizations.error).toBeNull();
+    expect(organizations.platformScope).toBeUndefined();
+    expect(readPlatformScope(identity.uuid)).toBeUndefined();
+    expect(getConsoleRequestContext().organizationUuid).toBe('home');
+    view.unmount();
+  }
+});
+
+test('刷新恢复遇到临时网络或服务故障保留进入偏好并可重试', async () => {
+  for (const failure of ['network', 'service']) {
+    setup();
+    savePlatformScope({ accountUuid: identity.uuid, targetOrganizationUuid: 'target' });
+    const fallbackFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => {
+      if (failure === 'network') throw new Error('offline');
+      return Response.json({ error: 'unavailable' }, { status: 503 });
+    }) as typeof fetch;
+    const view = mount();
+    await waitFor(() => expect(organizations.error).toBeTruthy());
+    expect(organizations.platformScope?.targetOrganizationUuid).toBe('target');
+    expect(readPlatformScope(identity.uuid)?.targetOrganizationUuid).toBe('target');
+    expect(getConsoleRequestContext().organizationUuid).toBeUndefined();
+    globalThis.fetch = fallbackFetch;
+    await act(async () => {
+      await organizations.retry();
+    });
+    expect(organizations.orgUuid).toBe('target');
+    view.unmount();
+  }
+});
+
 test('撤权停止目标请求并允许退出，不自动回退或重放写入', async () => {
   setup();
   mount();

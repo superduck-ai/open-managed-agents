@@ -161,21 +161,20 @@ func TestPlatformAdminOrganizationAccessPostgres(t *testing.T) {
 		request(t, "GET", "/v1/agents?beta=true", operator, foreign.UUID, "default", 403)
 	})
 
-	t.Run("目标不存在与平台会话写入必须校验跨站请求令牌", func(t *testing.T) {
+	t.Run("目标不存在仍拒绝", func(t *testing.T) {
 		request(t, "GET", "/api/bootstrap", operator, uuid.NewV4().String(), "default", 404)
-		r := httptest.NewRequest(http.MethodPost, "/v1/agents?beta=true", strings.NewReader(`{"name":"denied","model":"claude-sonnet"}`))
-		r.AddCookie(&http.Cookie{Name: "sessionKey", Value: operator})
-		r.Header.Set("X-Organization-UUID", foreign.UUID)
-		w := httptest.NewRecorder()
-		server.ServeHTTP(w, r)
-		if w.Code != 403 || !strings.Contains(w.Body.String(), "Invalid CSRF token") {
-			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-		}
 	})
 	t.Run("非成员平台来源可创建资源且不创建成员", func(t *testing.T) {
 		request(t, "POST", "/api/console/organizations/"+foreign.UUID+"/llm_providers", operator, foreign.UUID, "default", 201, `{"name":"Platform","slug":"platform","base_url":"https://models.example.com","api_key":"test-provider-key","model_ids":["claude-sonnet"]}`)
 		request(t, "POST", "/v1/agents?beta=true", outsider, foreign.UUID, "default", 403, `{"name":"refused","model":"claude-sonnet"}`)
-		request(t, "POST", "/v1/agents?beta=true", operator, foreign.UUID, "default", 200, `{"name":"platform-agent","model":"claude-sonnet"}`)
+		r := httptest.NewRequest(http.MethodPost, "/v1/agents?beta=true", strings.NewReader(`{"name":"platform-agent","model":"claude-sonnet"}`))
+		r.AddCookie(&http.Cookie{Name: "sessionKey", Value: operator})
+		r.Header.Set("X-Organization-UUID", foreign.UUID)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("不带 CSRF 的平台会话 /v1 写请求 status=%d body=%s", w.Code, w.Body.String())
+		}
 		request(t, "GET", "/api/console/organizations/"+foreign.UUID+"/workspaces", operator, foreign.UUID, "default", 200)
 		request(t, "GET", "/api/console/organizations/"+foreign.UUID+"/llm_providers", operator, foreign.UUID, "default", 200)
 		request(t, "POST", "/api/console/organizations/"+foreign.UUID+"/workspaces/default/api_keys", operator, foreign.UUID, "default", 200, `{"name":"platform key"}`)

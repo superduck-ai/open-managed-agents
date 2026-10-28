@@ -35,13 +35,26 @@ func TestPlatformRuntimeFilestoreScopePostgres(t *testing.T) {
 		_, err := store.ResolveFilestoreTokenScope(ctx, target, user, workspace, "wrkspc_runtime", "wrkspc_runtime", "claude_chat_runtime")
 		return err
 	}
-	t.Run("缺少隐藏运行身份不能访问跨组织账号范围", func(t *testing.T) {
-		execFixture(`UPDATE sessions SET metadata='{}' WHERE uuid=$1`, session)
-		defer execFixture(`UPDATE sessions SET metadata=$1 WHERE uuid=$2`, `{"_oma_runtime_user_uuid":"`+account+`"}`, session)
-		if err := validate(account); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("err=%v", err)
-		}
-	})
+	for _, invalid := range []struct{ name, metadata string }{
+		{"缺失键", `{}`},
+		{"空串", `{"_oma_runtime_user_uuid":""}`},
+		{"非法值", `{"_oma_runtime_user_uuid":"not-a-uuid"}`},
+	} {
+		t.Run(invalid.name, func(t *testing.T) {
+			execFixture(`UPDATE sessions SET metadata=$1 WHERE uuid=$2`, invalid.metadata, session)
+			defer execFixture(`UPDATE sessions SET metadata=$1 WHERE uuid=$2`, `{"_oma_runtime_user_uuid":"`+account+`"}`, session)
+			if err := validate(account); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("回查 err=%v", err)
+			}
+			if _, err := store.GetFilestoreTokenScopeForSessionIssue(ctx, workspace, "sesn_runtime"); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("签发 err=%v", err)
+			}
+			credential, err := NewCodeSessionMapper(store.mapperDB).FindCredentialForIssue(ctx, target, workspace, "cse_runtime")
+			if err != nil || credential.AccountEmail != "" {
+				t.Fatalf("credential=%+v err=%v", credential, err)
+			}
+		})
+	}
 	t.Run("不能冒用其他跨组织账号", func(t *testing.T) {
 		if err := validate(stranger); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("err=%v", err)
@@ -68,6 +81,32 @@ func TestPlatformRuntimeFilestoreScopePostgres(t *testing.T) {
 			}
 		})
 	}
+	t.Run("仅缺失运行身份允许同组织 API Key 回退", func(t *testing.T) {
+		execFixture(`INSERT INTO api_keys(uuid,external_id,workspace_uuid,key_hash,created_by_user_uuid) VALUES ('63000000-0000-4000-8000-000000000011','key_runtime',$1,'runtime-hash',$2)`, workspace, member)
+		execFixture(`UPDATE sessions SET created_by_api_key_uuid='63000000-0000-4000-8000-000000000011' WHERE uuid=$1`, session)
+		defer execFixture(`UPDATE sessions SET created_by_api_key_uuid=NULL, metadata=$1 WHERE uuid=$2`, `{"_oma_runtime_user_uuid":"`+account+`"}`, session)
+		for _, tc := range []struct{ name, metadata, email string }{
+			{"空串不回退", `{"_oma_runtime_user_uuid":""}`, ""},
+			{"非法值不回退", `{"_oma_runtime_user_uuid":"not-a-uuid"}`, ""},
+			{"缺失键保留回退", `{}`, "member@example.com"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				execFixture(`UPDATE sessions SET metadata=$1 WHERE uuid=$2`, tc.metadata, session)
+				scope, err := store.GetFilestoreTokenScopeForSessionIssue(ctx, workspace, "sesn_runtime")
+				if tc.email == "" {
+					if !errors.Is(err, ErrNotFound) {
+						t.Fatalf("签发 err=%v", err)
+					}
+				} else if err != nil || scope.AccountUUID != member {
+					t.Fatalf("scope=%+v err=%v", scope, err)
+				}
+				credential, err := NewCodeSessionMapper(store.mapperDB).FindCredentialForIssue(ctx, target, workspace, "cse_runtime")
+				if err != nil || credential.AccountEmail != tc.email {
+					t.Fatalf("credential=%+v err=%v", credential, err)
+				}
+			})
+		}
+	})
 	t.Run("平台稳定账号通过持久化运行身份闭合目标资源范围", func(t *testing.T) {
 		scope, err := store.GetFilestoreTokenScopeForSessionIssue(ctx, workspace, "sesn_runtime")
 		if err != nil || scope.AccountUUID != account || scope.OrganizationUUID != target || scope.WorkspaceUUID != workspace {

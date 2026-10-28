@@ -235,8 +235,7 @@ export function useBuilder(input: BuilderInput) {
         messages: [
           {
             role: 'user',
-            content:
-              locale === 'zh-CN' ? `使用模板：${initial.config.name}` : `Use the ${initial.config.name} template.`,
+            content: initial.config.description || initial.config.system || initial.config.name,
           },
           { role: 'assistant', content: [{ type: 'tool_use', ...tool }] },
         ],

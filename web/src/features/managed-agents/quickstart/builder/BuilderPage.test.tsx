@@ -94,6 +94,9 @@ test('template creates immediately; confirmed rename retains saved ID, instructi
   expect(writes(api.requests)).toHaveLength(1);
   expect(screen.getByRole('group', { name: 'Saved result' }).textContent).toContain('Structured extractor');
   expect(screen.getAllByRole('article', { name: 'User message' })).toHaveLength(1);
+  expect(screen.getByRole('article', { name: 'User message' }).textContent).toBe(
+    (writes(api.requests)[0].body as { description: string }).description,
+  );
   expect(screen.getByRole('link', { name: 'View configuration' }).textContent).toContain('Structured extractor');
   expect(screen.getByText('No resources yet')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Export configuration' })).toBeTruthy();
@@ -132,7 +135,7 @@ test('new environment uses conversational questions without a creation form', as
   fireEvent.click(await screen.findByRole('button', { name: /Structured extractor/ }));
   fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
   fireEvent.click(await screen.findByRole('button', { name: 'New environment', exact: true }));
-  expect(await screen.findByText('Which websites should the environment access?', { selector: 'label' })).toBeTruthy();
+  expect(await screen.findByText('Which websites should the environment access?')).toBeTruthy();
   expect(screen.queryByRole('textbox', { name: 'Name', exact: true })).toBeNull();
   expect(screen.queryByText('Vaults')).toBeNull();
 });
@@ -203,8 +206,8 @@ test('test first reply does not close the session; explicit end returns actual e
   await waitFor(() => expect(screen.getByRole('button', { name: 'End test' }).hasAttribute('disabled')).toBe(false));
   expect(screen.queryByText('Missing quantity was invented. Choose a repair.')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'End test' }));
-  await screen.findByText('Missing quantity was invented. Choose a repair.', { selector: 'label' });
-  fireEvent.click(screen.getByRole('button', { name: 'Continue', exact: true }));
+  await screen.findByText('Missing quantity was invented. Choose a repair.');
+  fireEvent.click(screen.getByRole('button', { name: 'Skip', exact: true }));
   await screen.findByRole('button', { name: 'Use in an application' });
   expect(api.calls.some((body) => JSON.stringify(body.messages).includes('Quantity: 1.'))).toBe(true);
   expect(writes(api.requests)).toHaveLength(1);

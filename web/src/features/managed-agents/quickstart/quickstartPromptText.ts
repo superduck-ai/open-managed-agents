@@ -134,6 +134,15 @@ ${mcpCatalog}
   LINKS：
   - Anthropic Console 位于 https://platform.claude.com。给用户链接到 Console 时使用该 URL（而不是 console.anthropic.com）。`;
 
+export function quickstartBuilderBehavior(locale: Locale): string {
+  const source = locale === 'zh-CN' ? agentBuilderBlock1Zh : englishBlock1Text;
+  return source
+    .replace(mcpCatalog, '')
+    .replaceAll('Claude Managed Agent', 'Open Managed Agent')
+    .replace(/^.*vault_sharing_notice.*$/gm, '')
+    .replace(/^- (?:model 必须|Pick the most appropriate model).*$/gm, '- Choose a model from availableModels.');
+}
+
 export function resolveQuickstartSystem(locale: Locale, modelID: string): Array<Record<string, unknown>> {
   const source = locale === 'zh-CN' ? agentBuilderBlock1Zh : englishBlock1Text;
   const modelRule =

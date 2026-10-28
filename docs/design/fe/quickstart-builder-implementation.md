@@ -11,7 +11,7 @@
 对话构建位于 `web/src/features/managed-agents/quickstart/builder/`：
 
 - `model.ts` 定义可恢复的状态、模型协议消息、待处理工具、操作标识与资源引用。
-- `prompt.ts` 定义 OMA Builder 的系统提示词；`tools.ts` 定义并导出同一套执行 schema 与模型 JSON Schema。
+- `prompt.ts` 复用 `quickstartPromptText.ts` 已有的中英文构建流程，仅补充当前 OMA 接口与状态约束；`tools.ts` 定义并导出同一套执行 schema 与模型 JSON Schema。
 - `protocol.ts` 处理 Messages 与 Chat Completions 的完整流响应、分片工具参数和 DeepSeek reasoning continuation。不完整 JSON、截断及重复工具调用 ID 不进入执行队列。
 - `dispatch.ts` 校验阶段、依赖及目录引用，读取目录或暂停等待用户操作；`mutations.ts`、`api.ts` 调用既有工作区资源 API。
 - `useBuilder.ts` 串行处理工具结果和模型续轮，持久化用户确认后的操作标识。配置和资源写入成功后才向模型返回成功。
@@ -126,3 +126,18 @@ Chat 协议转换在助手工具调用中显式携带 `reasoning_content`，合�
 右侧始终显示「资源」分组；尚无已选环境、保险库或部署时显示图标与「暂无资源」，不添加未使用的 Skill 或凭据条目。分组下提供「导出配置」，复用现有文件下载能力生成 `agent.json`。文件包含当前 Agent 配置及实际 Session 资源引用，只在存在实际环境时导出 `environment_id`，保险库仅导出 ID，不包含构建对话、保险库凭据内容或占位资源 ID。
 
 验收：Quickstart 73 项测试通过，正式页面完成文件下载并核对内容包含实际 Agent ID、版本及系统提示词，无环境时不伪造引用。构建和静态质量检查通过。最终全量前端回归 1564 通过、0 失败。
+
+## 旧版对话构建复用（2026-10-28）
+
+Git 历史确认 PR #427（`ce4786b1`）把旧版对话构建替换为手动四步向导。该提交父版本中的 `AgentQuickstartPage.tsx` 已包含模型工具循环、完整配置提议、环境问答、保险库授权、试跑与接入；并非本次新增的产品能力。
+
+当前按能力复用旧实现：
+
+- 提示词以仍在仓库中的 `quickstartPromptText.ts` 中英文行为文本为共同来源，移除旧静态 MCP 目录，使用实际工作区目录。当前运行约束作为明确优先的适配块，覆盖未创建的描述草稿、真实模型列表、确认后写入、授权跳过、复盘继续和定时意图等差异。不发送旧版 API 文档块，也不恢复其过时接口示例。
+- `QuickstartQuestions.tsx` 从旧版 `questions/AskUserQuestionsCard.tsx` 恢复问答主体，继续使用共享 `Questionnaire` 和原有问题解析器。逐题展示、选项说明、单选/多选、自由回答、前后切换和跳过沿用旧交互；`BuilderQuestions` 只校验工具输入并接入当前工具结果。
+- 模板首条消息沿用旧版需求描述语义，优先展示模板 description，而非合成“使用模板：名称”。模板仍直接保存配置，描述输入仍先提议再确认。
+- 既有 `quickstartBuildAgentConfigInput`、Agent schema、SDK 资源客户端、凭据弹窗和 `useQuickstartConversation` 持续复用。未恢复旧页面内单体状态与旧资源写入代码；当前协议适配、版本冲突和结果未知恢复仍由现有模块承担，防止旧协议和无确认写入回退。
+
+本次不宣称逐行恢复旧版引擎。旧版只解析 Messages，当前需兼容 Chat Completions 和 reasoning continuation；旧版工具默认成功及写入未知后直接重试的路径不能照搬。
+
+本轮本地验证：前端完整套件 1568 项通过；Quickstart 77 项通过；构建、格式、命名、复杂度和重复代码门禁通过。另通过已登录正式页面与真实工作区模型，以“客服工单助手，先确认系统和范围，先不保存”验证返回逐题问答；选择 Intercom 后可进入下一题，返回仍保留选择，尚未保存 Agent。此证据覆盖模型问答，不表示外部工单连接、OAuth 或 Worker 试跑已验收。

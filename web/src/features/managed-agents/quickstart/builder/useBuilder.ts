@@ -353,6 +353,11 @@ export function useBuilder(input: BuilderInput) {
     resolve,
     confirm,
     startTemplate,
+    restart: () => {
+      if (current.current.operation || current.current.unconfirmedMessage || lock.current) return false;
+      update(() => newBuilderState(createDialogAgentConfig(blankAgentTemplate, locale, undefined, input.models[0])));
+      return true;
+    },
     recover,
     selectEnvironment,
     credentialDone,

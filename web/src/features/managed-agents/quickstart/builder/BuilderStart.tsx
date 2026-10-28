@@ -10,7 +10,15 @@ import {
 } from '../templates';
 import type { Builder } from './useBuilder';
 
-export function BuilderStart({ builder, composer }: { builder: Builder; composer: ReactNode }) {
+export function BuilderStart({
+  builder,
+  composer,
+  onStart,
+}: {
+  builder: Builder;
+  composer: ReactNode;
+  onStart: (action: () => void) => void;
+}) {
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
   const model = builder.state.config.model;
@@ -26,8 +34,8 @@ export function BuilderStart({ builder, composer }: { builder: Builder; composer
               aria-label={config.name}
               variant="ghost"
               className={quickstartTemplateCard}
-              disabled={builder.busy}
-              onClick={() => void builder.startTemplate(config)}
+              disabled={builder.busy || Boolean(builder.state.operation) || Boolean(builder.state.unconfirmedMessage)}
+              onClick={() => onStart(() => void builder.startTemplate(config))}
             >
               <QuickstartTemplateContent icon={Icon} title={config.name} description={description} />
             </Button>
@@ -36,10 +44,13 @@ export function BuilderStart({ builder, composer }: { builder: Builder; composer
         <Button
           variant="link"
           className="mt-7 font-normal text-muted-foreground"
-          disabled={builder.busy}
+          disabled={builder.busy || Boolean(builder.state.operation) || Boolean(builder.state.unconfirmedMessage)}
           onClick={() =>
-            void builder.reply(
-              zh ? '从空白开始，先问我想实现什么。' : 'Start from scratch. Ask what I want to build first.',
+            onStart(
+              () =>
+                void builder.reply(
+                  zh ? '从空白开始，先问我想实现什么。' : 'Start from scratch. Ask what I want to build first.',
+                ),
             )
           }
         >

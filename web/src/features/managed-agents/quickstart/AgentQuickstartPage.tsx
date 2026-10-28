@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from '@tanstack/react-router';
 import { Tabs, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { BuilderPage } from './builder/BuilderPage';
 import { useQuery } from '@tanstack/react-query';
@@ -9,16 +10,14 @@ import { isModelConfigurationUnavailable } from '../../../shared/api/client';
 import { Button } from '../../../shared/ui/button';
 import { LLMProviderRequired } from '../../llm-providers/LLMProviderRequired';
 import { ManagedErrorAlert } from '../components/common';
+import type { AgentModelOption } from '../agents/create-dialog-model';
 import { listCreateAgentModels } from '../agents/create-dialog-api';
 import { QuickstartWizardPage } from './QuickstartWizardPage';
 
 export function AgentQuickstartPage() {
   const { activeWorkspaceId, orgUuid } = useWorkspace();
-  const { msg, locale } = useI18n();
+  const { msg } = useI18n();
   const { account } = useAuth();
-  const [mode, setMode] = useState(() =>
-    new URLSearchParams(window.location.search).get('mode') === 'api' ? 'api' : 'chat',
-  );
   const models = useQuery({
     queryKey: ['agent-quickstart', 'models', account?.uuid, activeWorkspaceId],
     queryFn: () => listCreateAgentModels(activeWorkspaceId),
@@ -41,6 +40,42 @@ export function AgentQuickstartPage() {
         <Button onClick={() => void models.refetch()}>{msg('common.retry', 'Retry')}</Button>
       </div>
     );
+  return (
+    <QuickstartModes
+      accountId={account?.uuid ?? ''}
+      workspaceId={activeWorkspaceId}
+      orgUuid={orgUuid ?? ''}
+      models={models.data}
+    />
+  );
+}
+
+function QuickstartModes({
+  accountId,
+  workspaceId,
+  orgUuid,
+  models,
+}: {
+  accountId: string;
+  workspaceId: string;
+  orgUuid: string;
+  models: AgentModelOption[];
+}) {
+  const { locale } = useI18n();
+  const router = useRouter();
+  const [navigationKey, setNavigationKey] = useState(0);
+  const [mode, setMode] = useState(() =>
+    new URLSearchParams(window.location.search).get('mode') === 'api' ? 'api' : 'chat',
+  );
+  useEffect(
+    () =>
+      router.subscribe('onBeforeNavigate', ({ toLocation }) => {
+        if (!/^(?:\/quickstart|\/workspaces\/[^/]+\/agent-quickstart)\/?$/.test(toLocation.pathname)) return;
+        setNavigationKey((value) => value + 1);
+        setMode(new URLSearchParams(toLocation.searchStr).get('mode') === 'api' ? 'api' : 'chat');
+      }),
+    [router],
+  );
   const modeControl = (
     <Tabs
       className="items-center shrink-0"
@@ -49,7 +84,7 @@ export function AgentQuickstartPage() {
         setMode(String(value));
         const url = new URL(window.location.href);
         url.searchParams.set('mode', String(value));
-        window.history.replaceState(null, '', url);
+        window.history.replaceState(window.history.state, '', url);
       }}
     >
       <TabsList aria-label={locale === 'zh-CN' ? '创建方式' : 'Build method'}>
@@ -74,20 +109,20 @@ export function AgentQuickstartPage() {
     <div className="mx-auto flex h-full min-h-0 w-full min-w-0 flex-1 flex-col gap-6">
       {mode === 'chat' ? (
         <BuilderPage
-          key={`${account?.uuid}:${activeWorkspaceId}`}
+          key={`${accountId}:${workspaceId}:${navigationKey}`}
           startHeader={startHeader}
-          accountId={account?.uuid ?? ''}
-          workspaceId={activeWorkspaceId}
-          orgUuid={orgUuid ?? ''}
-          models={models.data.map((model) => model.id)}
+          accountId={accountId}
+          workspaceId={workspaceId}
+          orgUuid={orgUuid}
+          models={models.map((model) => model.id)}
         />
       ) : (
         <QuickstartWizardPage
-          key={`${account?.uuid}:${activeWorkspaceId}`}
+          key={`${accountId}:${workspaceId}:${navigationKey}`}
           startHeader={startHeader}
-          workspaceID={activeWorkspaceId}
-          accountID={account?.uuid ?? ''}
-          models={models.data}
+          workspaceID={workspaceId}
+          accountID={accountId}
+          models={models}
         />
       )}
     </div>

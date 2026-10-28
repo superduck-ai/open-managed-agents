@@ -76,6 +76,7 @@ test('a description proposes before writing; refresh preserves the pending propo
   expect(writes(api.requests)).toHaveLength(0);
   cleanup();
   renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
   await screen.findByRole('button', { name: 'Confirm', exact: true });
   expect(api.calls).toHaveLength(1);
   expect(writes(api.requests)).toHaveLength(0);
@@ -149,6 +150,7 @@ test('lost save response is recovered after refresh without repeating the write'
   await screen.findByRole('button', { name: 'Check saved result' });
   cleanup();
   renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Check saved result' }));
   await screen.findByRole('button', { name: 'Continue', exact: true });
   expect(writes(api.requests)).toHaveLength(1);
@@ -218,6 +220,7 @@ test('deployment integration uses the OMA deployment_runs endpoint with actual s
   value.queue = [value.gate];
   window.sessionStorage.setItem(builderStorageKey('acct_managed_agents_test', 'default'), JSON.stringify(value));
   renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
   await screen.findByText('Runs', { selector: 'h3' });
   expect(codeBlockContaining('/v1/deployment_runs?deployment_id=deployment_final').textContent).toContain('beta=true');
   expect(codeBlockContaining('/v1/sessions/SESSION_ID/events/stream').textContent).toContain('x-workspace-id: default');
@@ -280,4 +283,51 @@ test('both build methods share the header and templates, with manual selection s
   expect(screen.getByLabelText<HTMLInputElement>('Name').value).toBe('Structured extractor');
   expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toContain('valid JSON');
   expect(writes(api.requests)).toHaveLength(0);
+});
+
+test('navigating to quickstart opens the entry and explicitly resumes saved history without replaying writes', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([toolStream('offer_next_step', {})]);
+  const view = renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Deep research', exact: true }));
+  await screen.findByRole('button', { name: 'Continue', exact: true });
+  const saved = window.sessionStorage.getItem(builderStorageKey('acct_managed_agents_test', 'default'));
+  await act(async () => view.router.navigate({ href: '/workspaces/default/agent-quickstart' }));
+  expect(await screen.findByRole('heading', { name: 'What would you like to build?' })).toBeTruthy();
+  expect(screen.getByRole('tablist', { name: 'Build method' })).toBeTruthy();
+  expect(screen.queryByRole('group', { name: 'Saved result' })).toBeNull();
+  expect(window.sessionStorage.getItem(builderStorageKey('acct_managed_agents_test', 'default'))).toBe(saved);
+  fireEvent.click(screen.getByRole('button', { name: 'Continue previous build' }));
+  expect(await screen.findByRole('group', { name: 'Saved result' })).toBeTruthy();
+  expect(api.calls).toHaveLength(1);
+  expect(writes(api.requests)).toHaveLength(1);
+});
+
+test('starting over requires an explicit choice and cancel keeps both the saved history and typed message', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([
+    toolStream('offer_next_step', {}),
+    toolStream('build_agent_config', { name: 'New builder', system: 'A new task.' }),
+  ]);
+  const view = renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Deep research', exact: true }));
+  await screen.findByRole('button', { name: 'Continue', exact: true });
+  await act(async () => view.router.navigate({ href: '/workspaces/default/agent-quickstart' }));
+  await screen.findByRole('button', { name: 'Continue previous build' });
+  send('Start a different task.');
+  await screen.findByRole('alertdialog', { name: 'Start a new build?' });
+  expect(api.calls).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel', exact: true }));
+  expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Builder message' }).value).toBe(
+    'Start a different task.',
+  );
+  expect(
+    JSON.parse(window.sessionStorage.getItem(builderStorageKey('acct_managed_agents_test', 'default'))!).agent.name,
+  ).toBe('Deep research');
+  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Start new build', exact: true }));
+  await screen.findByRole('button', { name: 'Confirm', exact: true });
+  expect(screen.queryByRole('group', { name: 'Saved result' })).toBeNull();
+  expect(screen.getByRole('article', { name: 'User message' }).textContent).toBe('Start a different task.');
+  expect(writes(api.requests)).toHaveLength(1);
 });

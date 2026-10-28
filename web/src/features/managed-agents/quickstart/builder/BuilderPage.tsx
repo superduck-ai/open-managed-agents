@@ -1,8 +1,7 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowUp, ArrowRight, Square, Sparkles } from 'lucide-react';
+import { ArrowRight, Sparkles } from 'lucide-react';
 import { useI18n } from '../../../../shared/i18n';
 import { Button } from '../../../../shared/ui/button';
-import { Textarea } from '../../../../shared/ui/textarea';
 import { Card, CardContent } from '../../../../shared/ui/card';
 import {
   MessageScroller,
@@ -19,7 +18,8 @@ import { useBuilder, type Builder } from './useBuilder';
 import { BuilderGate } from './BuilderGate';
 import { BuilderTest } from './BuilderTest';
 import { BuilderIntegration } from './BuilderIntegration';
-import { BuilderStart } from './BuilderStart';
+import { BuilderEntry } from './BuilderEntry';
+import { BuilderComposer } from './BuilderComposer';
 
 export function BuilderPage({
   accountId,
@@ -38,6 +38,7 @@ export function BuilderPage({
   const zh = locale === 'zh-CN';
   const builder = useBuilder({ accountId, workspaceId, orgUuid, models });
   const { state } = builder;
+  const [active, setActive] = useState(false);
   if (builder.catalog.isPending) return <section className="min-h-96" aria-busy="true" />;
   if (builder.catalog.isError)
     return (
@@ -46,13 +47,7 @@ export function BuilderPage({
         <Button onClick={() => void builder.catalog.refetch()}>{zh ? '重试' : 'Retry'}</Button>
       </div>
     );
-  if (!state.initialized)
-    return (
-      <>
-        {startHeader}
-        <BuilderStart builder={builder} composer={<BuilderComposer builder={builder} entry />} />
-      </>
-    );
+  if (!active) return <BuilderEntry builder={builder} startHeader={startHeader} onEnter={() => setActive(true)} />;
   return (
     <section className="mx-auto flex min-h-0 w-full min-w-0 max-w-[1440px] flex-1 flex-col gap-4">
       <div className={`grid min-h-0 min-w-0 flex-1 gap-8 ${builderColumns(state)}`}>
@@ -134,74 +129,6 @@ function BuilderStatus({ builder }: { builder: Builder }) {
         </div>
       )}
     </>
-  );
-}
-
-function BuilderComposer({ builder, entry = false }: { builder: Builder; entry?: boolean }) {
-  const { locale } = useI18n();
-  const zh = locale === 'zh-CN';
-  const state = builder.state;
-  const [draft, setDraft] = useState('');
-  const send = () => {
-    const text = draft.trim();
-    if (!text) return;
-    setDraft('');
-    void builder.reply(text);
-  };
-  return (
-    <form
-      className={`mx-auto flex w-full gap-2 border-[0.5px] border-input bg-card p-3 focus-within:border-foreground ${entry ? 'max-w-[728px] flex-col rounded-2xl' : 'max-w-[680px] items-end rounded-2xl'}`}
-      onSubmit={(event) => {
-        event.preventDefault();
-        send();
-      }}
-    >
-      <Textarea
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        placeholder={
-          entry
-            ? zh
-              ? '一个客服助手，根据我们的文档回答问题，遇到无法解决的问题时交给人工…'
-              : 'A customer support agent that answers from our docs and hands unresolved questions to a person…'
-            : zh
-              ? '描述你的需求…'
-              : 'Describe what you need…'
-        }
-        aria-label={zh ? '构建消息' : 'Builder message'}
-        className="max-h-48 min-h-16 resize-none border-0 bg-transparent px-1 pt-1 pb-3 text-sm leading-6 shadow-none focus-visible:ring-0 dark:bg-transparent"
-        disabled={Boolean(state.operation)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            if (!builder.busy) send();
-          }
-        }}
-      />
-      <div className={entry ? 'flex w-full items-center justify-between text-muted-foreground' : 'contents'}>
-        {entry && <Sparkles aria-hidden="true" className="ml-1 size-4" />}
-        {builder.busy ? (
-          <Button
-            type="button"
-            size="icon"
-            aria-label={zh ? '停止' : 'Stop'}
-            variant="outline"
-            onClick={builder.cancel}
-          >
-            <Square />
-          </Button>
-        ) : (
-          <Button
-            type="submit"
-            size="icon"
-            aria-label={zh ? '发送' : 'Send'}
-            disabled={!draft.trim() || Boolean(state.operation)}
-          >
-            <ArrowUp />
-          </Button>
-        )}
-      </div>
-    </form>
   );
 }
 

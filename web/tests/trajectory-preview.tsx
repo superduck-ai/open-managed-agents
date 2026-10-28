@@ -84,4 +84,6 @@ window.fetch = (input, init) => {
   return request(input, init);
 };
 const scope = { orgUuid: 'fixture', workspaceId: 'fixture' };
-createRoot(document.getElementById('root')!).render(<NativeTrajectory scope={scope} id="fixture" />);
+createRoot(document.getElementById('root')!).render(
+  <NativeTrajectory scope={scope} target={{ sessionId: 'fixture' }} />,
+);

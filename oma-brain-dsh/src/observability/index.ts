@@ -1,6 +1,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import OTel, { type SessionLogReporter } from "@deepseek-ai/dsh-otel";
 import { SessionId } from "@deepseek-ai/dsh-session";
+import { version as sessionVersion } from "@deepseek-ai/dsh-session/package.json";
 import { SessionTelemetryBackend, SessionTelemetryCoordinator, type SessionTelemetryRecord } from "@deepseek-ai/dsh-session-telemetry";
 import type { Assignment } from "../assignment.ts";
 import type { OmaApi } from "../api.ts";
@@ -84,7 +85,7 @@ export class NativeTelemetry extends SessionTelemetryBackend {
     if (existing) void this.closeReporter(id, existing);
     const credentials = { token: assignment.ingress_token, closed: false };
     const reporter = this.ctx.otel.createSessionLogReporter({
-      scope: { name: "@deepseek-ai/dsh-session", version: "0.2.1-alpha.2" },
+      scope: { name: "@deepseek-ai/dsh-session", version: sessionVersion },
       exporter: {
         url: `${this.api.base}/v1/code/sessions/${encodeURIComponent(id)}/worker/otlp/v1/logs`,
         headers: async () => {

@@ -796,7 +796,6 @@ export function AccountMenu({
     organizationAccess?.organization.name ||
     account?.memberships?.find((membership) => membership.organization?.uuid === orgUuid)?.organization?.name ||
     orgUuid;
-  const platformEntered = organizationAccess?.source === 'platform_admin';
   const { locale, setLocale, supportedLocales: locales } = useLocale();
   const { msg } = useI18n();
 
@@ -849,15 +848,6 @@ export function AccountMenu({
                     <span className="min-w-0 flex-1 truncate" title={organizationName}>
                       {organizationName}
                     </span>
-                    {platformEntered ? (
-                      <Badge
-                        variant="secondary"
-                        className="h-4 max-w-[45%] min-w-0 px-1 text-xs"
-                        title={msg('platformScope.administrator', 'Platform administrator')}
-                      >
-                        <span className="truncate">{msg('platformScope.administrator', 'Platform administrator')}</span>
-                      </Badge>
-                    ) : null}
                   </span>
                 </span>
                 <ChevronDown className="size-4 text-sidebar-foreground/70" aria-hidden />

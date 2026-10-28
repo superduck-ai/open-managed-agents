@@ -91,20 +91,18 @@ test('下层优先有效组织名，空名称回退当前成员组织名，未�
   expect(screen.getByRole('button', { name: '显示名称 current' })).toBeTruthy();
 });
 
-test('平台进入时显示目标组织名及紧凑平台标识，账号菜单不显示状态或返回项', () => {
+test('平台进入时显示目标组织名且不显示平台标识，账号菜单不显示状态或返回项', () => {
   mount(account, {
     source: 'platform_admin',
     organization: { uuid: 'target', name: '很长的目标组织名称' },
     organization_role: 'admin',
     workspace_role: 'workspace_admin',
   });
-  const trigger = screen.getByRole('button', { name: '显示名称 很长的目标组织名称 平台管理员' });
+  const trigger = screen.getByRole('button', { name: '显示名称 很长的目标组织名称' });
   const name = within(trigger).getByText('很长的目标组织名称');
   expect(name.classList.contains('truncate')).toBe(true);
   expect(name.getAttribute('title')).toBe('很长的目标组织名称');
-  expect(
-    within(trigger).getByText('平台管理员').closest('[data-slot="badge"]')?.classList.contains('max-w-[45%]'),
-  ).toBe(true);
+  expect(within(trigger).queryByText('平台管理员')).toBeNull();
   expect(trigger.querySelector('.text-sm')?.textContent).toBe('显示名称');
   expect(trigger.textContent).not.toContain('默认');
   expect(within(trigger).queryByText('管理员', { exact: true })).toBeNull();

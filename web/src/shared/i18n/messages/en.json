@@ -3320,6 +3320,5 @@
   "invitations.delivery.notConfigured": "Email delivery is not configured. Recipients can sign in with the invited email address to view and accept their invitations.",
   "platformScope.enter": "Enter organization console",
   "platformScope.failed": "Organization access failed. Please retry.",
-  "platformScope.administrator": "Platform administrator",
   "platformScope.exit": "Return to platform administration"
 }

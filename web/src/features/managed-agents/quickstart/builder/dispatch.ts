@@ -153,7 +153,8 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
   },
   show_integration_exits: ({ state, tool }) => {
     savedResources(state);
-    if (state.step !== 'integrate') throw new Error('Advance to integration first.');
+    if (state.step !== 'integrate' || !state.testClosed)
+      throw new Error('Finish testing and advance to integration first.');
     if (tool.input.agent_id && tool.input.agent_id !== state.agent?.id)
       throw new Error('Integration must use the saved agent.');
     if (tool.input.environment_id && tool.input.environment_id !== state.environment?.id)

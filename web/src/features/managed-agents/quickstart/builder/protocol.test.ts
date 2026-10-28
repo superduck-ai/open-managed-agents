@@ -167,3 +167,28 @@ test('legacy turn context follows every tool result in Chat Completions history'
   expect(messages[2]).toMatchObject({ tool_call_id: 'second' });
   expect(messages[3]).toMatchObject({ content: '[Current quickstart step: "environment".]' });
 });
+
+test('Chat accepts absent, empty and whitespace arguments for parameterless tools but rejects malformed JSON', async () => {
+  for (const argumentsValue of [undefined, '', '  ', '{']) {
+    globalThis.fetch = (async () =>
+      stream([
+        {
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  { index: 0, id: 'empty', function: { name: 'list_environments', arguments: argumentsValue } },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        },
+      ])) as typeof fetch;
+    if (argumentsValue === '{') await expect(streamBuilderTurn(input('chat_completions'))).rejects.toThrow();
+    else
+      expect((await streamBuilderTurn(input('chat_completions'))).tools).toEqual([
+        { id: 'empty', name: 'list_environments', input: {} },
+      ]);
+  }
+});

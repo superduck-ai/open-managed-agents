@@ -143,7 +143,13 @@ async function streamChatTurn(input: TurnInput): Promise<BuilderTurn> {
     throw new Error('Model response was incomplete. Retry before applying changes.');
   const parsed = [...calls.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([, call]) => builderToolSchema.parse({ id: call.id, name: call.name, input: JSON.parse(call.arguments) }));
+    .map(([, call]) =>
+      builderToolSchema.parse({
+        id: call.id,
+        name: call.name,
+        input: call.arguments.trim() ? JSON.parse(call.arguments) : {},
+      }),
+    );
   validateToolIDs(parsed);
   if (!text && !parsed.length) throw new Error('The model returned no content.');
   return {

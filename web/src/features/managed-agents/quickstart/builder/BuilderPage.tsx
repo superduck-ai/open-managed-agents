@@ -140,6 +140,18 @@ function BuilderStatus({ builder }: { builder: Builder }) {
           <Button disabled={builder.busy} onClick={() => void builder.recover()}>
             {zh ? '查询保存结果' : 'Check saved result'}
           </Button>
+          {builder.canAbandonPending && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                {zh
+                  ? '本次查询未发现保存结果。放弃只解除本地等待，不取消服务端请求；重试前请先检查资源列表。'
+                  : 'No saved result was found. Abandoning only clears the local wait; it does not cancel the server request. Check resources before retrying.'}
+              </p>
+              <Button variant="outline" onClick={builder.abandonPending}>
+                {zh ? '放弃等待保存' : 'Abandon pending save'}
+              </Button>
+            </>
+          )}
         </div>
       )}
     </>

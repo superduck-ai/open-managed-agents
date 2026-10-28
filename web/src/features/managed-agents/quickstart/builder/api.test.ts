@@ -3,6 +3,8 @@ import { afterEach, expect, test } from 'bun:test';
 import { newBuilderState } from './model';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
 import {
+  loadBuilderCatalog,
+  builderBackend,
   loadBuilderVaults,
   saveBuilderDeployment,
   saveBuilderSession,
@@ -144,6 +146,8 @@ test('restored session creation binds the saved agent version, environment, sele
 test('creating and recovering an additional vault preserves prior selections without duplicates', async () => {
   const value = state();
   value.vaults = [{ id: 'vault_existing', name: 'Existing' }];
+  value.testClosed = true;
+  value.testSummary = 'Old vault evidence';
   setConsoleRequestContext({ csrfToken: 'csrf_test' });
   globalThis.fetch = (async (_input, init) =>
     json(
@@ -167,6 +171,8 @@ test('creating and recovering an additional vault preserves prior selections wit
     'vault_operation',
     'workspace',
   );
+  expect(patch.testClosed).toBe(false);
+  expect(patch.testSummary).toBe('');
   expect(patch.vaults?.map((vault) => vault.id)).toEqual(['vault_existing', 'vault_new']);
   const recovered = await recoverBuilderOperation(
     { ...value, ...patch, operation: { id: 'vault_operation', kind: 'vault', toolId: 'create_vault' } },
@@ -174,4 +180,118 @@ test('creating and recovering an additional vault preserves prior selections wit
   );
   expect(recovered.vaults.map((vault) => vault.id)).toEqual(['vault_existing', 'vault_new']);
   expect(recovered.operation).toBeNull();
+});
+
+test('catalog includes organization models and resolves workspace precedence like the backend', async () => {
+  const workspace = { id: 'workspace_provider', slug: 'shared', api_backend: 'messages', models: [{ id: 'common' }] };
+  const organization = {
+    id: 'organization_provider',
+    slug: 'shared',
+    scope: 'organization',
+    api_backend: 'chat_completions',
+    models: [{ id: 'common' }, { id: 'org-only' }],
+  };
+  const urls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.endsWith('/workspaces/workspace/llm_providers')) return json([workspace]);
+    if (url.endsWith('/organizations/org/llm_providers')) return json([organization]);
+    return json({ data: [], servers: [], skills: [], next_page: null });
+  }) as typeof fetch;
+  const loaded = await loadBuilderCatalog('org', 'workspace');
+  expect(urls).toContain('/api/console/organizations/org/llm_providers');
+  expect(builderBackend('shared/org-only', loaded)).toBe('chat_completions');
+  expect(builderBackend('shared/common', loaded)).toBe('messages');
+  expect(builderBackend('common', loaded)).toBe('messages');
+  expect(builderBackend('org-only', loaded)).toBe('chat_completions');
+  expect(builderBackend('organization_provider/org-only', loaded)).toBe('chat_completions');
+  expect(() => builderBackend('missing', loaded)).toThrow('Unable to resolve');
+  expect(() =>
+    builderBackend('common', {
+      ...loaded,
+      providers: [loaded.providers[0], { ...loaded.providers[0], id: 'second', slug: 'second' }],
+    }),
+  ).toThrow('Unable to resolve');
+});
+
+test('recovering a second session clears the completed test lifecycle like successful creation', async () => {
+  const value = state();
+  value.agent = { id: 'agent_saved', name: 'Research', version: 4 };
+  value.environment = { id: 'environment_saved', name: 'Restricted' };
+  value.sessionID = 'session_old';
+  value.sessionBinding = 'old-binding';
+  value.testClosed = true;
+  value.firstMessage = 'Old request';
+  value.testSummary = 'Old result';
+  value.operation = { id: 'session_operation', kind: 'session', toolId: 'ready' };
+  globalThis.fetch = (async (_input, init) =>
+    json(
+      init?.method === 'POST'
+        ? { id: 'session_new' }
+        : {
+            data: [{ type: 'session', id: 'session_new', metadata: { quickstart_operation_id: 'session_operation' } }],
+            next_page: null,
+          },
+    )) as typeof fetch;
+  const expected = await performBuilderMutation(
+    value,
+    { id: 'ready', name: 'agent_ready', input: {} },
+    'session_operation',
+    'workspace',
+  );
+  const recovered = await recoverBuilderOperation(value, 'workspace');
+  expect(recovered).toMatchObject(expected);
+  expect(recovered.testClosed).toBe(false);
+  expect(recovered.firstMessage).toBe('');
+  expect(recovered.testSummary).toBe('');
+  expect(recovered.operation).toBeNull();
+  const next = await prepareBuilderTool({
+    state: recovered,
+    tool: { id: 'await', name: 'await_test_run', input: { until: 'session_closed' } },
+    catalog,
+    models: ['model'],
+    workspaceId: 'workspace',
+  });
+  expect(next.gate).toBe(true);
+});
+
+test('changing environment requires a fresh test before advance, deployment or integration', async () => {
+  const value = state();
+  value.agent = { id: 'agent', name: 'Agent', version: 1 };
+  value.savedConfig = value.config;
+  value.environment = { id: 'old', name: 'Old' };
+  value.testClosed = true;
+  value.testSummary = 'Old environment evidence';
+  globalThis.fetch = (async () => json({ id: 'new', name: 'New', archived_at: null })) as typeof fetch;
+  const changed = await prepareBuilderTool({
+    state: value,
+    tool: { id: 'env', name: 'create_environment', input: { reuse_environment_id: 'new' } },
+    catalog,
+    models: ['model'],
+    workspaceId: 'workspace',
+  });
+  const next = { ...value, ...changed.patch };
+  expect(next.testClosed).toBe(false);
+  expect(next.testSummary).toBe('');
+  for (const [step, name] of [
+    ['session', 'offer_next_step'],
+    ['deploy', 'create_deployment'],
+    ['integrate', 'show_integration_exits'],
+  ] as const) {
+    await expect(
+      prepareBuilderTool({
+        state: { ...next, step, wantsSchedule: true },
+        tool: {
+          id: 'next',
+          name,
+          input:
+            name === 'create_deployment' ? { name: 'Daily', cron_expression: '0 9 * * *', initial_message: 'Run' } : {},
+        },
+        catalog,
+        models: ['model'],
+        workspaceId: 'workspace',
+      }),
+    ).rejects.toThrow();
+  }
 });

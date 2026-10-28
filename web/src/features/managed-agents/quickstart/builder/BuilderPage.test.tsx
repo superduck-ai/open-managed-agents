@@ -39,16 +39,18 @@ function setup(turns: string[]) {
   });
   const baseFetch = globalThis.fetch;
   globalThis.fetch = (async (input, init) =>
-    String(input).endsWith('/llm_providers')
-      ? jsonResponse([
-          {
-            id: 'provider',
-            slug: 'provider',
-            api_backend: 'messages',
-            models: [{ id: 'claude-sonnet-4-6' }, { id: 'claude-opus-4-8' }],
-          },
-        ])
-      : baseFetch(input, init)) as typeof fetch;
+    String(input).endsWith('/llm_providers') && !String(input).includes('/workspaces/')
+      ? jsonResponse([])
+      : String(input).endsWith('/llm_providers')
+        ? jsonResponse([
+            {
+              id: 'provider',
+              slug: 'provider',
+              api_backend: 'messages',
+              models: [{ id: 'claude-sonnet-4-6' }, { id: 'claude-opus-4-8' }],
+            },
+          ])
+        : baseFetch(input, init)) as typeof fetch;
   return { ...api, calls };
 }
 function send(text = 'Extract company, product and quantity from orders. Missing fields should be null.') {
@@ -492,4 +494,86 @@ test('legacy usage question and schedule-intent tool control the deployment bran
   await screen.findByRole('heading', { name: 'Create scheduled deployment' });
   expect(api.calls).toHaveLength(4);
   expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/deployments'))).toBe(false);
+});
+
+test('chat reply completes only the active gate and executes remaining tools with real results', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([toolStream('offer_next_step', {})]);
+  const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  const calls = [
+    { id: 'proposal', name: 'build_agent_config', input: { name: 'Draft' } },
+    { id: 'list', name: 'list_environments', input: {} },
+    { id: 'pick', name: 'pick_environment', input: {} },
+  ];
+  value.initialized = true;
+  value.agent = { id: 'saved', name: 'Saved', version: 1 };
+  value.savedConfig = value.config;
+  value.queue = calls;
+  value.gate = calls[0];
+  value.messages = [{ role: 'assistant', content: calls.map((call) => ({ type: 'tool_use', ...call })) }];
+  window.sessionStorage.setItem(builderStorageKey('acct_managed_agents_test', 'default'), JSON.stringify(value));
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  send('Change the requested name');
+  await screen.findByRole('button', { name: 'New environment', exact: true });
+  const stored = JSON.parse(window.sessionStorage.getItem(builderStorageKey('acct_managed_agents_test', 'default'))!);
+  expect(stored.queue.map((tool: { id: string }) => tool.id)).toEqual(['pick']);
+  const results = stored.messages
+    .flatMap((message: { content: unknown }) => (Array.isArray(message.content) ? message.content : []))
+    .filter((block: { type: string }) => block.type === 'tool_result');
+  expect(results.map((block: { tool_use_id: string }) => block.tool_use_id)).toEqual(['proposal', 'list']);
+  expect(results[1].content).not.toContain('User replied');
+  expect(api.calls).toHaveLength(0);
+  expect(writes(api.requests)).toHaveLength(0);
+});
+
+test('pending writes can be abandoned only after a complete empty lookup, without replaying a write', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([]);
+  const baseFetch = globalThis.fetch;
+  let lookup: 'network' | 'duplicate' | 'empty' = 'network';
+  globalThis.fetch = (async (input, init) => {
+    if (String(input).startsWith('/v1/sessions?')) {
+      if (lookup === 'network') throw new TypeError('Lookup unavailable');
+      return jsonResponse({
+        data:
+          lookup === 'duplicate'
+            ? ['first', 'second'].map((id) => ({
+                id,
+                type: 'session',
+                metadata: { quickstart_operation_id: 'unknown' },
+              }))
+            : [],
+        next_page: null,
+      });
+    }
+    return baseFetch(input, init);
+  }) as typeof fetch;
+  const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  const call = { id: 'ready', name: 'agent_ready', input: {} };
+  value.initialized = true;
+  value.queue = [call];
+  value.gate = call;
+  value.operation = { id: 'unknown', kind: 'session', toolId: call.id };
+  window.sessionStorage.setItem(builderStorageKey('acct_managed_agents_test', 'default'), JSON.stringify(value));
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  expect(screen.queryByRole('button', { name: 'Abandon pending save' })).toBeNull();
+  fireEvent.click(await screen.findByRole('button', { name: 'Check saved result' }));
+  await screen.findByText('Connection error.');
+  expect(screen.queryByRole('button', { name: 'Abandon pending save' })).toBeNull();
+  lookup = 'duplicate';
+  fireEvent.click(screen.getByRole('button', { name: 'Check saved result' }));
+  await screen.findByText(/No unique saved session/);
+  expect(screen.queryByRole('button', { name: 'Abandon pending save' })).toBeNull();
+  lookup = 'empty';
+  fireEvent.click(screen.getByRole('button', { name: 'Check saved result' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Abandon pending save' }));
+  await screen.findByRole('button', { name: 'Continue', exact: true });
+  const stored = JSON.parse(window.sessionStorage.getItem(builderStorageKey('acct_managed_agents_test', 'default'))!);
+  expect(stored.operation).toBeNull();
+  expect(stored.queue).toEqual([]);
+  expect(stored.messages.at(-1).content[0]).toMatchObject({ tool_use_id: 'ready', is_error: true });
+  expect(api.calls).toHaveLength(0);
+  expect(api.requests.some((request) => request.method === 'POST')).toBe(false);
 });

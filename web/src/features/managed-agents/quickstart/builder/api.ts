@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { anthropicBetaApi } from '../../../../shared/api/anthropic';
-import { listLLMProviders } from '../../../llm-providers/api';
+import { listLLMProviders, listOrganizationLLMProviders } from '../../../llm-providers/api';
 import { listCreateAgentSkills, loadMcpDirectoryServers } from '../../agents/create-dialog-api';
 import { createAgentDraftSchema, normalizeCreateAgentDraft } from '../../agents/create-dialog-model';
 import { buildAgentUpdateInput } from '../../agentConfig';
@@ -15,27 +15,36 @@ import type {
 } from '../../types';
 import { allPages, loadQuickstartResources, findQuickstartSession, createQuickstartSession } from '../api';
 import { environmentInputSchema, validatedDeployment } from './tools';
-import { invalidateBuilderTest, type BuilderState, type BuilderTool } from './model';
+import { invalidateBuilderTest, builderTestBinding, type BuilderState, type BuilderTool } from './model';
 
 export async function loadBuilderCatalog(orgUuid: string, workspaceId: string) {
-  const [resources, directory, skills, providers] = await Promise.all([
+  const [resources, directory, skills, providers, organizationProviders] = await Promise.all([
     loadQuickstartResources(workspaceId),
     loadMcpDirectoryServers(),
     listCreateAgentSkills(workspaceId),
     listLLMProviders(orgUuid, workspaceId),
+    listOrganizationLLMProviders(orgUuid),
   ]);
-  return { ...resources, directory, skills, providers };
+  return { ...resources, directory, skills, providers: [...providers, ...organizationProviders] };
 }
 export type BuilderCatalog = Awaited<ReturnType<typeof loadBuilderCatalog>>;
 export function builderBackend(model: string, catalog: BuilderCatalog) {
-  const candidates = catalog.providers.filter((provider) =>
-    provider.models.some(
-      (item) => model === `${provider.id}/${item.id}` || model === `${provider.slug}/${item.id}` || model === item.id,
-    ),
-  );
-  if (candidates.length !== 1)
-    throw new Error('Unable to resolve the builder model provider. Refresh the model catalog.');
-  return candidates[0].api_backend;
+  const scopes = [
+    catalog.providers.filter((provider) => provider.scope !== 'organization'),
+    catalog.providers.filter((provider) => provider.scope === 'organization'),
+  ];
+  for (const providers of scopes) {
+    const qualified = providers.find((provider) =>
+      provider.models.some((item) => model === `${provider.id}/${item.id}` || model === `${provider.slug}/${item.id}`),
+    );
+    if (qualified) return qualified.api_backend;
+  }
+  for (const providers of scopes) {
+    const candidates = providers.filter((provider) => provider.models.some((item) => model === item.id));
+    if (candidates.length === 1) return candidates[0].api_backend;
+    if (candidates.length > 1) break;
+  }
+  throw new Error('Unable to resolve the builder model provider. Refresh the model catalog.');
 }
 const mcpSchema = z.object({ name: z.string(), url: z.string() });
 const credentialAuthSchema = z.object({ type: z.enum(['static_bearer', 'mcp_oauth']), mcp_server_url: z.string() });
@@ -108,7 +117,7 @@ export async function saveBuilderAgent(state: BuilderState, operationId: string,
   const saved = state.agent
     ? await updateAgentDetail(state.agent.id, buildAgentUpdateInput(state.agent.version, config), workspaceId)
     : await createAgent(config, workspaceId);
-  return { ...invalidateBuilderTest(state), ...savedBuilderAgent(saved), operation: null };
+  return { ...invalidateBuilderTest(state, true), ...savedBuilderAgent(saved), operation: null };
 }
 export async function selectBuilderEnvironment(id: string, workspaceId: string) {
   const environment = await anthropicBetaApi.environments.retrieve<EnvironmentApiResponse>(id, workspaceId);
@@ -178,6 +187,13 @@ const resourceIdentity = z
     metadata: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();
+export class BuilderOperationNotFoundError extends Error {}
+function requireUniqueResult<T>(results: T[], message: string): T {
+  if (!results.length)
+    throw new BuilderOperationNotFoundError('No saved result found yet. Check again before retrying.');
+  if (results.length !== 1) throw new Error(message);
+  return results[0];
+}
 export async function recoverBuilderOperation(state: BuilderState, workspaceId: string) {
   const operation = state.operation;
   if (!operation) throw new Error('There is no pending operation.');
@@ -186,18 +202,21 @@ export async function recoverBuilderOperation(state: BuilderState, workspaceId: 
       ? [await retrieveAgent(state.agent.id, workspaceId)]
       : (await loadQuickstartResources(workspaceId)).agents;
     const found = resources.filter((agent) => agent.metadata.quickstart_operation_id === operation.id);
-    if (found.length !== 1)
-      throw new Error(
-        found.length
-          ? 'Multiple saved results require review.'
-          : 'No saved result found yet. Check again before retrying.',
-      );
-    return { ...state, ...savedBuilderAgent(found[0]), operation: null };
+    const saved = requireUniqueResult(found, 'Multiple saved results require review.');
+    return { ...invalidateBuilderTest(state, true), ...savedBuilderAgent(saved), operation: null };
   }
   if (operation.kind === 'session') {
     const found = await findQuickstartSession(operation.id, workspaceId, state.agent?.id ?? '');
-    if (found.length !== 1) throw new Error('No unique saved session found yet. Check again before retrying.');
-    return { ...state, sessionID: found[0].id, operation: null };
+    const session = requireUniqueResult(found, 'No unique saved session found yet. Check again before retrying.');
+    return {
+      ...state,
+      sessionID: session.id,
+      sessionBinding: builderTestBinding(state),
+      testClosed: false,
+      firstMessage: '',
+      testSummary: '',
+      operation: null,
+    };
   }
   const section =
     operation.kind === 'vault' ? 'credential-vaults' : operation.kind === 'deployment' ? 'deployments' : 'environments';
@@ -207,8 +226,8 @@ export async function recoverBuilderOperation(state: BuilderState, workspaceId: 
   const matches = resources
     .map((item) => resourceIdentity.parse(item))
     .filter((item) => item.metadata?.quickstart_operation_id === operation.id);
-  if (matches.length !== 1) throw new Error('No unique saved result found yet. Check again before retrying.');
-  const reference = { id: matches[0].id, name: matches[0].name ?? matches[0].display_name ?? matches[0].id };
+  const saved = requireUniqueResult(matches, 'No unique saved result found yet. Check again before retrying.');
+  const reference = { id: saved.id, name: saved.name ?? saved.display_name ?? saved.id };
   if (operation.kind === 'environment')
     return { ...invalidateBuilderTest(state), environment: reference, operation: null };
   if (operation.kind === 'deployment') return { ...state, deployment: reference, operation: null };

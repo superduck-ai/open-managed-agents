@@ -97,32 +97,41 @@ export function saveBuilderState(key: string, state: BuilderState) {
 }
 export function toolResult(state: BuilderState, tool: BuilderTool, result: unknown, isError = false): BuilderState {
   if (!state.queue.some((item) => item.id === tool.id)) return state;
+  let resultIndex = state.messages.length;
+  while (
+    resultIndex > 0 &&
+    state.messages[resultIndex - 1].role === 'user' &&
+    typeof state.messages[resultIndex - 1].content === 'string'
+  )
+    resultIndex--;
   return {
     ...state,
     gate: null,
     queue: state.queue.filter((item) => item.id !== tool.id),
     messages: [
-      ...state.messages,
+      ...state.messages.slice(0, resultIndex),
       buildQuickstartToolResultMessage([
         toolResultBlock(tool.id, {
           content: typeof result === 'string' ? result : JSON.stringify(result),
           isError,
         }),
       ]),
+      ...state.messages.slice(resultIndex),
     ],
   };
 }
 export function builderTestBinding(state: BuilderState) {
   return state.agent && state.environment ? `${state.agent.id}:${state.agent.version}:${state.environment.id}` : '';
 }
-export function invalidateBuilderTest(state: BuilderState): BuilderState {
+export function invalidateBuilderTest(state: BuilderState, preserveClosedTest = false): BuilderState {
   return {
     ...state,
     sessionID: '',
     sessionBinding: '',
     unconfirmedMessage: '',
     firstMessage: '',
-    testClosed: state.testClosed,
+    testClosed: preserveClosedTest && state.testClosed,
+    testSummary: preserveClosedTest ? state.testSummary : '',
   };
 }
 export function builderNextStep(state: BuilderState): BuilderStep {

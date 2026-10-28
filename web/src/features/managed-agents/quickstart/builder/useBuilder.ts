@@ -10,6 +10,7 @@ import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
 import type { CreateAgentInput } from '../../types';
 import { errorMessage } from '../../utils';
 import {
+  BuilderOperationNotFoundError,
   authenticationServers,
   loadBuilderVaults,
   builderBackend,
@@ -52,6 +53,7 @@ export function useBuilder(input: BuilderInput) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [partial, setPartial] = useState('');
+  const [unmatchedOperationId, setUnmatchedOperationId] = useState('');
   const [vaults, setVaults] = useState<BuilderVaultOption[]>([]);
   const catalog = useQuery({
     queryKey: ['builder-catalog', input.accountId, input.workspaceId],
@@ -179,9 +181,9 @@ export function useBuilder(input: BuilderInput) {
     return run(async () => {
       if (current.current.operation) throw new Error('Check the pending save before continuing.');
       update((value) => {
-        let next = value;
-        for (const call of value.queue)
-          next = toolResult(next, call, quickstartChatReplyToolResult(call, trimmedReply, locale));
+        const call = value.gate;
+        if (!call && value.queue.length) throw new Error('Continue the pending tools before sending a message.');
+        const next = call ? toolResult(value, call, quickstartChatReplyToolResult(call, trimmedReply, locale)) : value;
         return { ...next, initialized: true, messages: [...next.messages, { role: 'user', content: trimmedReply }] };
       });
       await startQuickstartTurn();
@@ -282,7 +284,12 @@ export function useBuilder(input: BuilderInput) {
   const recover = () =>
     run(async () => {
       const tool = current.current.queue.find((item) => item.id === current.current.operation?.toolId);
-      const recovered = await recoverBuilderOperation(current.current, input.workspaceId);
+      setUnmatchedOperationId('');
+      const recovered = await recoverBuilderOperation(current.current, input.workspaceId).catch((cause) => {
+        if (mounted.current && cause instanceof BuilderOperationNotFoundError)
+          setUnmatchedOperationId(current.current.operation?.id ?? '');
+        throw cause;
+      });
       if (!mounted.current) return;
       const restored = {
         ...recovered,
@@ -392,6 +399,25 @@ export function useBuilder(input: BuilderInput) {
       return true;
     },
     recover,
+    canAbandonPending: Boolean(state.operation && state.operation.id === unmatchedOperationId && !busy),
+    abandonPending: () => {
+      const operation = current.current.operation;
+      if (!operation || operation.id !== unmatchedOperationId || lock.current) return;
+      update((value) => {
+        const tool = value.queue.find((call) => call.id === operation.toolId);
+        const next = { ...value, operation: null };
+        return tool
+          ? toolResult(
+              next,
+              tool,
+              'The user abandoned this pending save after no result was found. The write outcome remains unconfirmed; check resources before explicitly retrying.',
+              true,
+            )
+          : next;
+      });
+      setUnmatchedOperationId('');
+      setError('');
+    },
     selectEnvironment,
     credentialDone,
     closeTest,

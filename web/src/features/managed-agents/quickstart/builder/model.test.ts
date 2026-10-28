@@ -103,7 +103,7 @@ test('repair after explicit test close invalidates old session while retaining t
   state.sessionID = 'session_old';
   state.testClosed = true;
   state.testSummary = 'Actual events';
-  const next = invalidateBuilderTest(state);
+  const next = invalidateBuilderTest(state, true);
   expect(next.sessionID).toBe('');
   expect(next.testClosed).toBe(true);
   expect(next.testSummary).toBe('Actual events');
@@ -159,4 +159,30 @@ test('configuration export contains the current agent and real session reference
   });
   expect(JSON.stringify(exported)).not.toContain('Private build discussion');
   expect(JSON.stringify(exported)).not.toContain('ENVIRONMENT_ID');
+});
+
+test('dependency changes invalidate completed test evidence and block deployment', () => {
+  const state = initial();
+  state.testClosed = true;
+  state.testSummary = 'Old environment result';
+  state.sessionID = 'old';
+  const next = invalidateBuilderTest(state);
+  expect(next.testClosed).toBe(false);
+  expect(next.testSummary).toBe('');
+  expect(next.sessionID).toBe('');
+});
+
+test('remaining tool results precede chat replies in model history', () => {
+  const state = initial();
+  const first = { id: 'first', name: 'build_agent_config', input: {} };
+  const second = { id: 'second', name: 'list_environments', input: {} };
+  state.queue = [first, second];
+  state.messages = [{ role: 'assistant', content: [first, second].map((call) => ({ type: 'tool_use', ...call })) }];
+  const replied = toolResult(state, first, 'User requested a revision');
+  replied.messages.push({ role: 'user', content: 'Revise the name' });
+  const completed = toolResult(replied, second, []);
+  expect(completed.messages.at(-1)?.content).toBe('Revise the name');
+  expect(
+    completed.messages.slice(1, -1).map((message) => Array.isArray(message.content) && message.content[0].tool_use_id),
+  ).toEqual(['first', 'second']);
 });

@@ -279,3 +279,13 @@ func TestClearToolPermissionRequestMapper(t *testing.T) {
 		wantSQLFragments:  []string{"- ('managed_agent_tool_permission_request:' || $2)", "->>'public_event_id' = $1", "workspace_uuid = $3", "external_id = $4"},
 	})
 }
+
+func TestCodeSessionRuntimeAccountEmailScope(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: codeSessionMapperFindCredentialForIssueStatement,
+		bound:     buildCodeSessionMapperFindCredentialForIssue(yourbatis.DialectPostgres, "org", "workspace", "code"),
+		wantID:    "CodeSessionMapper.FindCredentialForIssue", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"codeSessionExternalID", "organizationUUID", "workspaceUUID"},
+		wantSQLFragments:  []string{"s.metadata->>'_oma_runtime_user_uuid' IS NOT NULL OR u.organization_uuid = cs.organization_uuid", "u.deleted_at IS NULL", "cs.organization_uuid = $2", "cs.workspace_uuid = $3"},
+	})
+}

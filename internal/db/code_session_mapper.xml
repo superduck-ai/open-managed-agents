@@ -62,7 +62,7 @@
         LEFT JOIN api_keys ak ON ak.uuid = s.created_by_api_key_uuid
             AND ak.workspace_uuid = w.uuid
         LEFT JOIN users u ON u.uuid = COALESCE(CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid), ak.created_by_user_uuid)
-            AND u.organization_uuid = cs.organization_uuid
+            AND (s.metadata->>'_oma_runtime_user_uuid' IS NOT NULL OR u.organization_uuid = cs.organization_uuid)
             AND u.deleted_at IS NULL
     </sql>
 

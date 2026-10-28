@@ -277,4 +277,4 @@ Workspace API Key 不依赖创建者的当前组织身份，不能取得组织�
 
 完整权限及进入/退出合同见 [平台超级管理员设计](../platform-super-admin.md)。
 
-平台进入的运行身份映射已经保存稳定 AccountUUID，但现有 Filestore 签发及 token 回查仍要求目标组织活跃成员，非成员平台账号不能直接复用该链路。普通成员删除后拒绝签发的合同保持不变；运行身份来源及 token 授权分支待补充确认，见平台设计 §11。未把请求级平台授权持久化为 Console 长期权限。
+平台运行身份沿用隐藏 RuntimeUserUUID 保存稳定 AccountUUID。Filestore 签发与 Code Session 邮箱映射按已保存 UUID 读取有效用户，不再要求它是目标组织成员；没有隐藏运行身份的 API Key 回退仍保持同组织条件。Filestore 每次 token 回查允许原目标成员，或与该 filesystem 所属 Session 的隐藏运行用户一致的账号；仍保留用户删除、组织/工作区/filesystem/Session 生命周期和当前安全策略校验，不接受其他跨组织账号。没有新增持久化来源标记或长期 Console 授权。

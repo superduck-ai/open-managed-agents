@@ -1,6 +1,6 @@
 # 超级管理员与全局组织管理后台
 
-状态：2026-10-28。目标组织进入功能已完成请求级授权与前端路径，运行身份的 Filestore 授权链尚有阻塞，不能标记完整交付，见 §11。审计独立保存在 `codex/platform-admin-audit`；当前版本不提供审计与操作原因表单。外部 SMTP 收件验收按用户要求跳过。
+状态：2026-10-28。目标组织进入功能已接通请求级授权、前端路径与已有运行身份链，验收范围见 §11。审计独立保存在 `codex/platform-admin-audit`；当前版本不提供审计与操作原因表单。外部 SMTP 收件验收按用户要求跳过。
 
 设计起点为 [PR #350](https://github.com/superduck-ai/open-managed-agents/pull/350)。该 PR 及其依赖已合并；实现最初基于主线 `e914f566`，后续已合并主线提交 `1c97f77b` 和 `ddd38a4c`，直接复用主线 User/Admin 两种组织角色和现有组织加入流程。
 
@@ -300,14 +300,13 @@ Console 成员写入由资源层根据已验证 Principal 提供校验回调，�
 
 ## 11. 当前实现与交付边界
 
-### 目标组织进入的未完成边界
+### 目标组织进入与运行身份
 
-实现核对发现：`internal/db/filestore_filesystem_mapper.xml` 的 FindSessionTokenScope 对 `_oma_runtime_user_uuid` 解析出的用户仍要求 `u.organization_uuid = o.uuid` 且 `u.deleted_at IS NULL`。FindTokenScope 在每次 token 使用时也要求账号属于目标组织的活跃成员。Runner 的 `internal/environments/rclone_filestore.go` 调用 GetFilestoreTokenScopeForSessionIssue，查询失败会中止 Filestore 启动准备。因此平台账号属于 A、会话属于未加入的 B 时，仅保存稳定 AccountUUID 不能让该运行链路成立。
+请求级 Principal、二次资源检查、bootstrap、标签页进入/退出、请求传播和有效权限门控已接通。运行身份继续使用既有 `_oma_runtime_user_uuid`，不持久化平台角色、授权副本或进入状态。
 
-`internal/db/code_session_mapper.xml` 的 credentialJoins 对运行用户邮箱同样保留组织归属及软删除过滤，也需要纳入同一运行身份合同核对。当前未修改这些 Mapper 或 Filestore JWT 权限边界。
+核对消费者时发现 Filestore 和 Code Session Mapper 仍把已保存运行用户限制为目标组织成员。实现复用隐藏运行身份修正该假设：Runner 签发按 Session 保存的 UUID 查找未删除用户；Filestore 每次回查只允许原目标组织成员，或与 filesystem 所属 Session 保存运行 UUID 一致的账号。后者仍绑定目标组织、工作区、filesystem 和 Session 生命周期；其他跨组织账号不能冒用。没有隐藏运行身份的 API Key 回退仍要求同组织有效用户，失效运行用户仍拒绝签发及回查。Code Session 邮箱映射复用相同的隐藏运行用户关系。
 
-这不是前端入口遗漏。直接移除成员约束可能放宽普通成员删除后的运行权限，而 `tests/platform_keyless_runtime_test.go` 明确要求已删除运行用户不能获得 token。需要补充确认平台运行账号如何与普通成员运行身份区分，以及签发和每次回查时的授权合同；本轮未自行增加持久化来源标记、进入状态或服务凭据授权分支。上文跨组织运行身份是目标合同，当前实现尚未覆盖此部分，不能以 Console API 与普通单测通过代替 Runner/Filestore 验收。
-
+以上修正不增加迁移、Actor 枚举、状态存储、授权锁或新 token 类型。普通成员和服务凭据原有资源范围保留；运行身份只服务于既有资源协议，不能用于 Console 权限提升。真实 PostgreSQL 回归覆盖账号冒用、第三工作区、运行账号失效、工作区归档、Session 终止及合法跨组织运行身份和原成员凭据对照；完整 Worker/FUSE 和外部服务验收单列，不能以这些数据库测试代替。
 
 - 新增迁移 `00100_platform_administration.sql`，最初包含独立平台授权、创建幂等记录、邀请投递队列及组织管理版本；独立投递表和创建请求表随后分别由 `00102`、`00103` 归并至邀请表和组织表并删除。新迁移不创建审计表，不回写已合并的历史迁移。
 - 组织角色只提供 `user` 与 `admin`；超级管理员身份独立存储，不增加组织角色枚举。邀请需显式选择角色，重发及撤销不改写原角色。

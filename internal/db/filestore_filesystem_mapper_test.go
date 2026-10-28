@@ -143,3 +143,20 @@ func TestFilestoreFilesystemMapperBuildsLifecycleQueries(t *testing.T) {
 		t.Fatalf("external-ID-only lookup = %#v", withoutUUID)
 	}
 }
+
+func TestFilestoreRuntimeIdentitySQL(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: filestoreFilesystemMapperFindTokenScopeStatement,
+		bound:     buildFilestoreFilesystemMapperFindTokenScope(yourbatis.DialectPostgres, "org", "account", "workspace", "tagged", "tagged", "filesystem", ""),
+		wantID:    "FilestoreFilesystemMapper.FindTokenScope", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"organizationUUID", "accountUUID", "workspaceUUID", "workspaceTaggedID", "resolvedWorkspaceTaggedID", "filesystemID", "filesystemID"},
+		wantSQLFragments:  []string{"u.deleted_at IS NULL", "u.organization_uuid = o.uuid OR u.uuid = CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid)", "s.uuid = fs.session_uuid", "s.organization_uuid = o.uuid", "s.workspace_uuid = w.uuid"},
+	})
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: filestoreFilesystemMapperFindSessionTokenScopeStatement,
+		bound:     buildFilestoreFilesystemMapperFindSessionTokenScope(yourbatis.DialectPostgres, "workspace", "session"),
+		wantID:    "FilestoreFilesystemMapper.FindSessionTokenScope", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID"},
+		wantSQLFragments:  []string{"s.metadata->>'_oma_runtime_user_uuid' IS NOT NULL OR u.organization_uuid = o.uuid", "u.deleted_at IS NULL", "fs.session_uuid = s.uuid"},
+	})
+}

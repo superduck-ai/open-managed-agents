@@ -11,10 +11,9 @@ import type {
   EnvironmentApiResponse,
   VaultApiResponse,
   VaultCredentialApiResponse,
-  SessionApiResponse,
   DeploymentApiResponse,
 } from '../../types';
-import { allPages, loadQuickstartResources, findQuickstartSession } from '../api';
+import { allPages, loadQuickstartResources, findQuickstartSession, createQuickstartSession } from '../api';
 import { environmentInputSchema, validatedDeployment } from './tools';
 import { invalidateBuilderTest, type BuilderState, type BuilderTool } from './model';
 
@@ -139,15 +138,12 @@ export async function saveBuilderVault(tool: BuilderTool, operationId: string, w
 }
 export async function saveBuilderSession(state: BuilderState, operationId: string, workspaceId: string) {
   if (!state.agent || !state.environment) throw new Error('Save an agent and choose an environment first.');
-  return anthropicBetaApi.sessions.create<SessionApiResponse>(
-    {
-      agent: { type: 'agent', id: state.agent.id, version: state.agent.version },
-      environment_id: state.environment.id,
-      vault_ids: state.vaults.map((vault) => vault.id),
-      metadata: { quickstart_operation_id: operationId },
-      resources: [],
-    },
+  return createQuickstartSession(
+    state.agent,
+    state.environment.id,
+    state.vaults.map((vault) => vault.id),
     workspaceId,
+    { quickstart_operation_id: operationId },
   );
 }
 export async function saveBuilderDeployment(
@@ -216,5 +212,9 @@ export async function recoverBuilderOperation(state: BuilderState, workspaceId: 
   if (operation.kind === 'environment')
     return { ...invalidateBuilderTest(state), environment: reference, operation: null };
   if (operation.kind === 'deployment') return { ...state, deployment: reference, operation: null };
-  return { ...invalidateBuilderTest(state), vaults: [reference], operation: null };
+  return {
+    ...invalidateBuilderTest(state),
+    vaults: [...state.vaults.filter((vault) => vault.id !== reference.id), reference],
+    operation: null,
+  };
 }

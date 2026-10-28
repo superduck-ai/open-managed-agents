@@ -1,7 +1,14 @@
+import { performBuilderMutation } from './mutations';
 import { afterEach, expect, test } from 'bun:test';
 import { newBuilderState } from './model';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
-import { loadBuilderVaults, saveBuilderDeployment, type BuilderCatalog } from './api';
+import {
+  loadBuilderVaults,
+  saveBuilderDeployment,
+  saveBuilderSession,
+  recoverBuilderOperation,
+  type BuilderCatalog,
+} from './api';
 import { prepareBuilderTool } from './dispatch';
 import { setConsoleRequestContext } from '../../../../shared/api/client';
 
@@ -108,4 +115,63 @@ test('deployment is blocked before testing and binds confirmed saved resources a
   expect(payload.metadata).toEqual({ quickstart_operation_id: 'operation_test' });
   expect(headers.get('X-Workspace-ID')).toBe('workspace');
   expect(headers.get('X-CSRF-Token')).toBe('csrf_test');
+});
+
+test('restored session creation binds the saved agent version, environment, selected vaults and recovery marker', async () => {
+  const value = state();
+  value.agent = { id: 'agent_saved', name: 'Research', version: 4 };
+  value.environment = { id: 'environment_saved', name: 'Restricted' };
+  value.vaults = [
+    { id: 'vault_first', name: 'First' },
+    { id: 'vault_second', name: 'Second' },
+  ];
+  let payload: Record<string, unknown> = {};
+  setConsoleRequestContext({ csrfToken: 'csrf_test' });
+  globalThis.fetch = (async (_input, init) => {
+    payload = JSON.parse(String(init?.body));
+    return json({ id: 'session_saved' });
+  }) as typeof fetch;
+  await saveBuilderSession(value, 'session_operation', 'workspace');
+  expect(payload).toMatchObject({
+    agent: { type: 'agent', id: 'agent_saved', version: 4 },
+    environment_id: 'environment_saved',
+    vault_ids: ['vault_first', 'vault_second'],
+    metadata: { quickstart_operation_id: 'session_operation' },
+    resources: [],
+  });
+});
+
+test('creating and recovering an additional vault preserves prior selections without duplicates', async () => {
+  const value = state();
+  value.vaults = [{ id: 'vault_existing', name: 'Existing' }];
+  setConsoleRequestContext({ csrfToken: 'csrf_test' });
+  globalThis.fetch = (async (_input, init) =>
+    json(
+      init?.method === 'POST'
+        ? { id: 'vault_new', display_name: 'New' }
+        : {
+            data: [
+              {
+                id: 'vault_new',
+                type: 'vault',
+                display_name: 'New',
+                metadata: { quickstart_operation_id: 'vault_operation' },
+              },
+            ],
+            next_page: null,
+          },
+    )) as typeof fetch;
+  const patch = await performBuilderMutation(
+    value,
+    { id: 'create_vault', name: 'create_vault', input: { name: 'New' } },
+    'vault_operation',
+    'workspace',
+  );
+  expect(patch.vaults?.map((vault) => vault.id)).toEqual(['vault_existing', 'vault_new']);
+  const recovered = await recoverBuilderOperation(
+    { ...value, ...patch, operation: { id: 'vault_operation', kind: 'vault', toolId: 'create_vault' } },
+    'workspace',
+  );
+  expect(recovered.vaults.map((vault) => vault.id)).toEqual(['vault_existing', 'vault_new']);
+  expect(recovered.operation).toBeNull();
 });

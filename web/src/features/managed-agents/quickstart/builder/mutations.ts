@@ -38,7 +38,10 @@ export async function performBuilderMutation(
   if (tool.name === 'create_environment')
     return { ...invalidateBuilderTest(state), environment: await saveBuilderEnvironment(tool, id, workspaceId) };
   if (tool.name === 'create_vault')
-    return { ...invalidateBuilderTest(state), vaults: [await saveBuilderVault(tool, id, workspaceId)] };
+    return {
+      ...invalidateBuilderTest(state),
+      vaults: [...state.vaults, await saveBuilderVault(tool, id, workspaceId)],
+    };
   if (tool.name === 'create_deployment')
     return { deployment: await saveBuilderDeployment(state, tool, id, workspaceId) };
   if (tool.name === 'agent_ready') {

@@ -1,3 +1,8 @@
+import {
+  quickstartChatReplyToolResult,
+  quickstartTurnMessages,
+  type QuickstartToolExecutionResult,
+} from '../chatModel';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '../../../../shared/i18n';
@@ -86,12 +91,13 @@ export function useBuilder(input: BuilderInput) {
   async function run(action: () => Promise<void>) {
     if (lock.current) return;
     lock.current = true;
+    controller.current = null;
     setBusy(true);
     setError('');
     try {
       await action();
     } catch (cause) {
-      if (mounted.current) setError(errorMessage(cause));
+      if (mounted.current && (cause as Error).name !== 'AbortError') setError(errorMessage(cause));
     } finally {
       lock.current = false;
       if (mounted.current) {
@@ -100,69 +106,96 @@ export function useBuilder(input: BuilderInput) {
       }
     }
   }
-  async function advance() {
+  async function executeQuickstartTool(call: BuilderTool): Promise<QuickstartToolExecutionResult | null> {
     if (!catalog.data) throw new Error('Load the workspace catalog before continuing.');
-    for (let round = 0; round < 16; round++) {
-      if (!mounted.current || current.current.operation || current.current.gate) return;
-      const tool = current.current.queue[0];
-      if (tool) {
-        try {
-          const prepared = await prepareBuilderTool({
-            state: current.current,
-            tool,
-            catalog: catalog.data,
-            models: input.models,
-            workspaceId: input.workspaceId,
-          });
-          if (!mounted.current) return;
-          if (prepared.vaults) setVaults(prepared.vaults);
-          update((value) => ({ ...value, ...prepared.patch, ...(prepared.gate ? { gate: tool } : {}) }));
-          if (prepared.gate) return;
-          update((value) => toolResult(value, tool, prepared.result));
-        } catch (cause) {
-          update((value) => toolResult(value, tool, { error: errorMessage(cause) }, true));
-        }
-        continue;
-      }
-      controller.current = new AbortController();
+    try {
+      const prepared = await prepareBuilderTool({
+        state: current.current,
+        tool: call,
+        catalog: catalog.data,
+        models: input.models,
+        workspaceId: input.workspaceId,
+      });
+      if (!mounted.current || controller.current?.signal.aborted) return null;
+      if (prepared.vaults) setVaults(prepared.vaults);
+      update((value) => ({ ...value, ...prepared.patch, ...(prepared.gate ? { gate: call } : {}) }));
+      if (prepared.gate) return null;
+      return {
+        content: typeof prepared.result === 'string' ? prepared.result : JSON.stringify(prepared.result ?? null),
+      };
+    } catch (cause) {
+      return { content: errorMessage(cause), isError: true };
+    }
+  }
+  async function startQuickstartTurn(round = 0): Promise<void> {
+    if (!catalog.data) throw new Error('Load the workspace catalog before continuing.');
+    if (!mounted.current || current.current.operation || current.current.gate) return;
+    if (round >= 16) throw new Error('The builder paused after several steps. Continue to resume.');
+    let toolCalls = current.current.queue;
+    if (!toolCalls.length) {
+      controller.current?.abort();
+      const turnController = new AbortController();
+      controller.current = turnController;
       const value = current.current;
+      const baseMessages = quickstartTurnMessages(value.messages, {
+        step: value.step,
+        wantsSchedule: value.wantsSchedule,
+        config: value.config,
+        modelID: input.models[0],
+        locale,
+      });
       const turn = await streamBuilderTurn({
         ...input,
         model: input.models[0],
         backend: builderBackend(input.models[0], catalog.data),
         system: builderSystem(value, locale, input.models, catalog.data.directory, catalog.data.skills),
         tools: builderTools(input.models),
-        messages: value.messages,
-        signal: controller.current.signal,
+        messages: baseMessages,
+        signal: turnController.signal,
         onText: (text) => {
-          if (mounted.current) setPartial(text);
+          if (mounted.current && !turnController.signal.aborted) setPartial(text);
         },
       });
-      if (!mounted.current) return;
+      if (!mounted.current || turnController.signal.aborted) return;
       update((value) => ({ ...value, messages: [...value.messages, turn.message], queue: turn.tools }));
       setPartial('');
-      if (!turn.tools.length) return;
+      toolCalls = turn.tools;
     }
-    throw new Error('The builder paused after several steps. Continue to resume.');
+    let hasAwaitingTool = false;
+    for (const call of toolCalls) {
+      if (!mounted.current || controller.current?.signal.aborted) return;
+      const result = await executeQuickstartTool(call);
+      if (!result) {
+        hasAwaitingTool = true;
+        break;
+      }
+      update((value) => toolResult(value, call, result.content, result.isError));
+    }
+    if (toolCalls.length && !hasAwaitingTool) await startQuickstartTurn(round + 1);
   }
-  function reply(text: string) {
+  function sendChatReply(text: string) {
+    const trimmedReply = text.trim();
+    if (!trimmedReply || current.current.gate?.name === 'ask_user_questions') return Promise.resolve();
     return run(async () => {
       if (current.current.operation) throw new Error('Check the pending save before continuing.');
       update((value) => {
         let next = value;
-        for (const tool of value.queue)
-          next = toolResult(next, tool, 'The user changed direction. Do not perform this pending action.');
-        return { ...next, initialized: true, messages: [...next.messages, { role: 'user', content: text }] };
+        for (const call of value.queue)
+          next = toolResult(next, call, quickstartChatReplyToolResult(call, trimmedReply, locale));
+        return { ...next, initialized: true, messages: [...next.messages, { role: 'user', content: trimmedReply }] };
       });
-      await advance();
+      await startQuickstartTurn();
     });
+  }
+  async function completeAwaitingTool(call: BuilderTool, result: unknown, patch: Partial<BuilderState> = {}) {
+    update((value) => toolResult({ ...value, ...patch }, call, result));
+    await startQuickstartTurn();
   }
   function resolve(result: unknown, patch: Partial<BuilderState> = {}) {
     return run(async () => {
-      const tool = current.current.gate;
-      if (!tool || current.current.operation) return;
-      update((value) => toolResult({ ...value, ...patch }, tool, result));
-      await advance();
+      const call = current.current.gate;
+      if (!call || current.current.operation) return;
+      await completeAwaitingTool(call, result, patch);
     });
   }
   async function write(tool: BuilderTool) {
@@ -216,13 +249,13 @@ export function useBuilder(input: BuilderInput) {
       });
       if (!prepared.gate) {
         update((value) => toolResult({ ...value, ...prepared.patch }, tool, prepared.result));
-        await advance();
+        await startQuickstartTurn();
         return;
       }
       if (prepared.patch) update((value) => ({ ...value, ...prepared.patch }));
       await write(tool);
       await catalog.refetch();
-      await advance();
+      await startQuickstartTurn();
     });
   const startTemplate = (config: CreateAgentInput) =>
     run(async () => {
@@ -244,7 +277,7 @@ export function useBuilder(input: BuilderInput) {
       }));
       await write(tool);
       await catalog.refetch();
-      await advance();
+      await startQuickstartTurn();
     });
   const recover = () =>
     run(async () => {
@@ -268,15 +301,14 @@ export function useBuilder(input: BuilderInput) {
           : restored,
       );
       await catalog.refetch();
-      await advance();
+      await startQuickstartTurn();
     });
   const selectEnvironment = (id: string) =>
     run(async () => {
       const tool = current.current.gate;
       if (!tool) return;
       const environment = await selectBuilderEnvironment(id, input.workspaceId);
-      update((value) => toolResult({ ...invalidateBuilderTest(value), environment }, tool, environment));
-      await advance();
+      await completeAwaitingTool(tool, environment, { ...invalidateBuilderTest(current.current), environment });
     });
   const credentialDone = () =>
     run(async () => {
@@ -296,13 +328,11 @@ export function useBuilder(input: BuilderInput) {
         throw new Error(
           'The required credential is still missing. Connect the configured service or explicitly skip it.',
         );
-      update((value) =>
-        toolResult({ ...value, skippedServers: value.skippedServers.filter((url) => url !== server.url) }, tool, {
-          authorized: true,
-          service: tool.input.mcp_server_name,
-        }),
+      await completeAwaitingTool(
+        tool,
+        { authorized: true, service: tool.input.mcp_server_name },
+        { skippedServers: current.current.skippedServers.filter((url) => url !== server.url) },
       );
-      await advance();
     });
   const closeTest = (summary: string) =>
     run(async () => {
@@ -325,21 +355,25 @@ export function useBuilder(input: BuilderInput) {
             ],
           };
         });
-      await advance();
+      await startQuickstartTurn();
     });
-  const next = (schedule?: boolean) =>
-    resolve(
-      { user_choice: locale === 'zh-CN' ? '继续' : 'Continue' },
-      {
-        step:
-          state.step === 'session'
-            ? (schedule ?? state.wantsSchedule)
-              ? 'deploy'
-              : 'integrate'
-            : builderNextStep(state),
-        ...(schedule !== undefined ? { wantsSchedule: schedule } : {}),
-      },
-    );
+  const completeOfferNextStep = () =>
+    run(async () => {
+      const call = current.current.gate;
+      if (!call || call.name !== 'offer_next_step' || current.current.operation) return;
+      const currentStep = current.current.step;
+      let nextStep = builderNextStep(current.current);
+      if (currentStep === 'agent') nextStep = 'environment';
+      else if (currentStep === 'environment') nextStep = 'session';
+      else if (currentStep === 'session') nextStep = current.current.wantsSchedule ? 'deploy' : 'integrate';
+      await completeAwaitingTool(
+        call,
+        { user_choice: locale === 'zh-CN' ? '继续' : 'Continue' },
+        {
+          step: nextStep,
+        },
+      );
+    });
   return {
     state,
     catalog,
@@ -348,7 +382,7 @@ export function useBuilder(input: BuilderInput) {
     partial,
     vaults,
     update,
-    reply,
+    reply: sendChatReply,
     resolve,
     confirm,
     startTemplate,
@@ -361,8 +395,8 @@ export function useBuilder(input: BuilderInput) {
     selectEnvironment,
     credentialDone,
     closeTest,
-    next,
-    resume: () => run(advance),
+    next: completeOfferNextStep,
+    resume: () => run(() => startQuickstartTurn()),
     cancel: () => controller.current?.abort(),
   };
 }

@@ -144,3 +144,26 @@ test('synthetic template tool history carries an empty reasoning field for think
   });
   expect(messages[2]).toMatchObject({ role: 'tool', tool_call_id: 'template-call' });
 });
+
+test('legacy turn context follows every tool result in Chat Completions history', () => {
+  const messages = chatMessages([
+    {
+      role: 'assistant',
+      content: [
+        { type: 'tool_use', id: 'first', name: 'list_environments', input: {} },
+        { type: 'tool_use', id: 'second', name: 'ask_user_questions', input: {} },
+      ],
+    },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'first', content: '[]' }] },
+    {
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 'second', content: 'User chose limited networking.' },
+        { type: 'text', text: '[Current quickstart step: "environment".]' },
+      ],
+    },
+  ]);
+  expect(messages.map((message) => message.role)).toEqual(['assistant', 'tool', 'tool', 'user']);
+  expect(messages[2]).toMatchObject({ tool_call_id: 'second' });
+  expect(messages[3]).toMatchObject({ content: '[Current quickstart step: "environment".]' });
+});

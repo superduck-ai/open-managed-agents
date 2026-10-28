@@ -247,24 +247,9 @@ function CredentialGate({ builder, workspaceId, orgUuid }: GateProps) {
 
 function NextStepGate({ builder }: GateProps) {
   const { locale } = useI18n();
-  const zh = locale === 'zh-CN';
-  const state = builder.state;
   return (
-    <div className="flex flex-wrap gap-2">
-      {state.step === 'session' && !state.wantsSchedule ? (
-        <>
-          <Button disabled={builder.busy} onClick={() => void builder.next(true)}>
-            {zh ? '定时运行' : 'Run on a schedule'}
-          </Button>
-          <Button variant="outline" disabled={builder.busy} onClick={() => void builder.next(false)}>
-            {zh ? '接入应用' : 'Use in an application'}
-          </Button>
-        </>
-      ) : (
-        <Button disabled={builder.busy} onClick={() => void builder.next()}>
-          {zh ? '继续' : 'Continue'}
-        </Button>
-      )}
-    </div>
+    <Button disabled={builder.busy} onClick={() => void builder.next()}>
+      {locale === 'zh-CN' ? '继续' : 'Continue'}
+    </Button>
   );
 }

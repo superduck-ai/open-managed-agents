@@ -84,10 +84,10 @@ export function chatMessages(messages: BuilderMessage[]) {
       ];
     }
     return [
-      ...(text ? [{ role: 'user', content: text }] : []),
       ...message.content
         .filter((block) => block.type === 'tool_result')
         .map((block) => ({ role: 'tool', tool_call_id: block.tool_use_id, content: String(block.content ?? '') })),
+      ...(text ? [{ role: 'user', content: text }] : []),
     ];
   });
 }

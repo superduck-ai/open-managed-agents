@@ -1,3 +1,4 @@
+import { buildQuickstartToolResultMessage, toolResultBlock } from '../chatModel';
 import { z } from 'zod';
 import { createAgentDraftSchema, normalizeCreateAgentDraft } from '../../agents/create-dialog-model';
 import type { CreateAgentInput } from '../../types';
@@ -102,17 +103,12 @@ export function toolResult(state: BuilderState, tool: BuilderTool, result: unkno
     queue: state.queue.filter((item) => item.id !== tool.id),
     messages: [
       ...state.messages,
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: tool.id,
-            content: typeof result === 'string' ? result : JSON.stringify(result),
-            ...(isError ? { is_error: true } : {}),
-          },
-        ],
-      },
+      buildQuickstartToolResultMessage([
+        toolResultBlock(tool.id, {
+          content: typeof result === 'string' ? result : JSON.stringify(result),
+          isError,
+        }),
+      ]),
     ],
   };
 }

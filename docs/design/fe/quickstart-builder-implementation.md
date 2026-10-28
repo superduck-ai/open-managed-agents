@@ -14,7 +14,7 @@
 - `prompt.ts` 复用 `quickstartPromptText.ts` 已有的中英文构建流程，仅补充当前 OMA 接口与状态约束；`tools.ts` 定义并导出同一套执行 schema 与模型 JSON Schema。
 - `protocol.ts` 处理 Messages 与 Chat Completions 的完整流响应、分片工具参数和 DeepSeek reasoning continuation。不完整 JSON、截断及重复工具调用 ID 不进入执行队列。
 - `dispatch.ts` 校验阶段、依赖及目录引用，读取目录或暂停等待用户操作；`mutations.ts`、`api.ts` 调用既有工作区资源 API。
-- `useBuilder.ts` 串行处理工具结果和模型续轮，持久化用户确认后的操作标识。配置和资源写入成功后才向模型返回成功。
+- `useBuilder.ts` 承载从旧版迁回的 `startQuickstartTurn`、`executeQuickstartTool`、`completeAwaitingTool`、`sendChatReply` 和 `completeOfferNextStep` 主流程，保留持久化和当前资源接口适配。配置和资源写入成功后才向模型返回成功。
 - 展示组件复用共享 Card、Button、RadioGroup、Checkbox、Accordion、MessageScroller 与现有凭据弹窗。Agent 提议默认显示名称、模型与指令；完整 JSON 按需展开。
 
 ```mermaid
@@ -54,7 +54,7 @@ flowchart TD
 
 复盘使用实际 Session 事件的有限摘要：用户和 Agent 文本、事件类型、工具名称、错误标识与停止原因，不发送原始凭据或工具输入。有具体问题才提出修复多选题；空选等同继续。修复后保存新版本可以直接继续，不强制再试跑。
 
-定时意图可以提前记录，Deployment 只能在试跑结束后确认创建。自然语言周期由模型转为 cron 和时区，并用现有 `previewSchedule` 校验 OMA 的 cron/DST 语义。确认绑定已保存 Agent 的具体版本、环境、保险库和初始消息。Deployment 创建成功后才出现在资源卡；接入分支展示 deployment runs 与运行 Session 的事件接口。
+试跑复盘后的使用方式选择沿用旧版 `ask_user_questions`：模型询问定时运行或应用调用；选择定时后由 `flag_schedule_intent` 记录。`offer_next_step` 仅显示继续，不再附带前端写死的第二套使用方式按钮。定时意图也可以提前记录，Deployment 只能在试跑结束后确认创建。自然语言周期由模型转为 cron 和时区，并用现有 `previewSchedule` 校验 OMA 的 cron/DST 语义。确认绑定已保存 Agent 的具体版本、环境、保险库和初始消息。Deployment 创建成功后才出现在资源卡；接入分支展示 deployment runs 与运行 Session 的事件接口。
 
 本 HAR 的 Builder 和内嵌试跑 composer 均未接附件入口，因此该实现保持文本输入。Files API 与 Session resources 的通用能力不等于本页面已有附件交互。
 
@@ -138,6 +138,32 @@ Git 历史确认 PR #427（`ce4786b1`）把旧版对话构建替换为手动四�
 - 模板首条消息沿用旧版需求描述语义，优先展示模板 description，而非合成“使用模板：名称”。模板仍直接保存配置，描述输入仍先提议再确认。
 - 既有 `quickstartBuildAgentConfigInput`、Agent schema、SDK 资源客户端、凭据弹窗和 `useQuickstartConversation` 持续复用。未恢复旧页面内单体状态与旧资源写入代码；当前协议适配、版本冲突和结果未知恢复仍由现有模块承担，防止旧协议和无确认写入回退。
 
-本次不宣称逐行恢复旧版引擎。旧版只解析 Messages，当前需兼容 Chat Completions 和 reasoning continuation；旧版工具默认成功及写入未知后直接重试的路径不能照搬。
+此前只复用了提示词和问答，主循环尚未迁回；本轮进一步以旧版主流程为基础迁移。来源固定为 `1033ab15bffa0c6be670195b29799290d92be458`（PR #427 的父提交），不是恢复整个旧页面或仅重命名现有函数。
+
+| 旧代码位置与职责 | 当前接入 | 必要适配 |
+| --- | --- | --- |
+| `AgentQuickstartPage.tsx` 的 `startQuickstartTurn`、`executeQuickstartTool`、`completeAwaitingTool` | `builder/useBuilder.ts` | 保留“执行自动工具 → 等待用户工具 → 工具结果续轮”的递归控制流；用可恢复的 queue/gate 替代旧页面 chatItems 的运行状态；每个自动结果立即保存，多个工具遇到等待时不丢弃已完成结果 |
+| 同文件 `sendChatReply`、`completeOfferNextStep` | `builder/useBuilder.ts` | 用户补充需求按旧版专门的工具结果语义返回；问答未完成时阻止从输入框绕过；按当前阶段推进，同时兼容可选 deploy 阶段 |
+| `chatModel.ts` 的 `quickstartChatReplyToolResult`、`toolResultBlock` 与旧页面工具结果消息 | `quickstart/chatModel.ts`、`builder/model.ts` | 统一 tool_result ID 与 is_error；不再把补充需求一律告知模型为“取消并改变方向” |
+| 旧页面 `buildCurrentQuickstartTurnContextBlock` | `quickstart/chatModel.ts` 的 `quickstartTurnMessages`，复用 `buildQuickstartTurnContextText` | 每次续轮附带最新阶段、配置与定时意图；仅进入模型请求，避免把内部状态行显示或保存成用户消息 |
+| `api.ts` 的 `createQuickstartSession` | `quickstart/api.ts` | 恢复共享的 Agent 版本、环境和 vault 绑定；手动配置与对话试跑共用；增加现有 operation metadata 以保留结果未知恢复 |
+
+原先 `advance` 的独立循环已经删除。`dispatch.ts` 只保留当前资源前置校验与暂停策略；`mutations.ts` 只保留版本冲突检查和 SDK 写入适配，它们均不再承担模型调用、用户回复或续轮控制。未为了声称复用而改名这两个适配模块。
+
+旧版只解析 Messages，当前协议层继续兼容 Chat Completions 和 reasoning continuation。附带 turn context 时，Chat Completions 必须先返回所有 tool 消息，再附加 context 用户消息；不能将 context 插到未完成的工具结果之间。旧版未知工具直接报告完成、配置修改总是新建 Agent、写入结果未知后直接重试等路径没有恢复。新建 vault 及写入结果恢复沿用旧版累加选择的语义，不覆盖先前选择。
 
 本轮本地验证：前端完整套件 1568 项通过；Quickstart 77 项通过；构建、格式、命名、复杂度和重复代码门禁通过。另通过已登录正式页面与真实工作区模型，以“客服工单助手，先确认系统和范围，先不保存”验证返回逐题问答；选择 Intercom 后可进入下一题，返回仍保留选择，尚未保存 Agent。此证据覆盖模型问答，不表示外部工单连接、OAuth 或 Worker 试跑已验收。
+
+### 主流程复用验收
+
+自动化回归覆盖：同轮多个工具在问答前后的结果顺序、刷新后恢复剩余工具而不重放模型或写入、配置确认前用文字修改提议、结构化问答阻止输入框绕过、当前阶段与完整配置的模型上下文、Chat 工具结果与上下文顺序。已有配置版本更新、授权跳过与重新授权、Session 显式结束后复盘、Deployment 依赖检查继续回归。
+
+本轮最终验证结果：前端完整套件 **1577 通过、0 失败**；Quickstart 定向回归 **86 通过、0 失败**。构建、格式、命名、复杂度与重复代码门禁通过；既有大 bundle 提示仍在。
+
+真实本地正式页面使用工作区 DeepSeek 模型完成了：三题字段问答 → 完整配置提议 → 确认前通过文字仅修改名称 → 保存 Agent v1 → 刷新后显式恢复 → 列举并复用已有环境 → 创建实际 Session → 发送订单 → 收到结构化 JSON。测试单号 `ACCEPT-001`，返回商品“测试键盘”、规格“白色”、数量 `2`、单价“99元”，没有提取额外字段。首轮完成后试跑保持打开，由用户动作“结束试跑”触发复盘。
+
+可检查的本地资源：Agent `agent_rPhZEPLsIDkiybpr0LdaYQLH`（旧流程复用验收助手，v1），Session `sesn_MA2PGwgwnnz2flmaVJcoyUgy`，复用环境 `env_xRKXrm1hkAQvRYO6r0a9CQgr`。没有新建环境、vault 或 deployment。证据覆盖此次本地 Provider/Worker 的单条文本运行，不代表外部 OAuth、多服务授权或定时调度验收；未运行 `verify-be`。
+
+环境实测中发现模型曾将已有环境选择与假设新建时的网络策略一起询问，已按旧版先后关系补足约束：第一轮仅问环境选择，确认新建后才问网络，此处补足旧版已有的提示词约束，不增加另一套环境问答流程。
+
+实际结束试跑后，模型已依据本次返回的订单字段复盘为无需修复；用户在模型的结构化问答中选择应用调用，随后只出现一个继续操作，没有再次询问使用方式。

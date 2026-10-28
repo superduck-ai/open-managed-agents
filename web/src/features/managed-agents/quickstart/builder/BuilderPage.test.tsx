@@ -208,7 +208,8 @@ test('test first reply does not close the session; explicit end returns actual e
   fireEvent.click(screen.getByRole('button', { name: 'End test' }));
   await screen.findByText('Missing quantity was invented. Choose a repair.');
   fireEvent.click(screen.getByRole('button', { name: 'Skip', exact: true }));
-  await screen.findByRole('button', { name: 'Use in an application' });
+  await screen.findByRole('button', { name: 'Continue', exact: true });
+  expect(screen.queryByRole('button', { name: 'Use in an application' })).toBeNull();
   expect(api.calls.some((body) => JSON.stringify(body.messages).includes('Quantity: 1.'))).toBe(true);
   expect(writes(api.requests)).toHaveLength(1);
 });
@@ -357,4 +358,138 @@ test('a used skill appears in resources without showing an empty state or adding
   expect(screen.queryByText('No resources yet')).toBeNull();
   expect(document.querySelectorAll('a[href*="/vaults/"]')).toHaveLength(0);
   expect(writes(api.requests)).toHaveLength(0);
+});
+
+test('legacy tool continuation preserves auto results and remaining tools across a question and refresh', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const calls = [
+    { id: 'schedule', name: 'flag_schedule_intent', input: { wants_schedule: true } },
+    {
+      id: 'question',
+      name: 'ask_user_questions',
+      input: {
+        questions: [
+          { header: 'Scope', question: 'Which sources?', options: [{ label: 'Documentation' }, { label: 'Issues' }] },
+        ],
+      },
+    },
+    { id: 'environments', name: 'list_environments', input: {} },
+  ];
+  const batch = [
+    ...calls.map((call, index) => ({
+      type: 'content_block_start',
+      index,
+      content_block: { type: 'tool_use', ...call },
+    })),
+    { type: 'message_delta', delta: { stop_reason: 'tool_use' } },
+    { type: 'message_stop' },
+  ]
+    .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+    .join('');
+  const done = [
+    {
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'text', text: 'I have the sources. Describe the report you need.' },
+    },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+    { type: 'message_stop' },
+  ]
+    .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+    .join('');
+  const api = setup([batch, done]);
+  renderManagedAgentsPage('quickstart');
+  await screen.findByRole('textbox', { name: 'Builder message' });
+  send('Build a daily research assistant.');
+  await screen.findByText('Which sources?');
+  expect(api.calls).toHaveLength(1);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Builder message' }), {
+    target: { value: 'Do not bypass this question.' },
+  });
+  expect(screen.getByRole('button', { name: 'Send', exact: true }).hasAttribute('disabled')).toBe(true);
+  cleanup();
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  await screen.findByText('Which sources?');
+  expect(api.calls).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Skip', exact: true }));
+  await screen.findByText('I have the sources. Describe the report you need.');
+  expect(api.calls).toHaveLength(2);
+  const messages = api.calls[1].messages as Array<{ role: string; content: unknown }>;
+  const blocks = messages.flatMap((message) =>
+    Array.isArray(message.content) ? (message.content as Array<Record<string, unknown>>) : [],
+  );
+  expect(blocks.filter((block) => block.type === 'tool_result').map((block) => block.tool_use_id)).toEqual([
+    'schedule',
+    'question',
+    'environments',
+  ]);
+  expect(JSON.stringify(messages)).toContain('[Deployment schedule planned: yes.]');
+  expect(screen.queryByText(/Current quickstart step/)).toBeNull();
+  expect(writes(api.requests)).toHaveLength(0);
+});
+
+test('legacy free-text reply completes a pending proposal with the actual request before asking the model again', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([
+    toolStream('build_agent_config', { name: 'Support', system: 'Draft replies.' }),
+    toolStream('build_agent_config', { name: 'Read-only support', system: 'Only read tickets. Never send replies.' }),
+  ]);
+  renderManagedAgentsPage('quickstart');
+  await screen.findByRole('textbox', { name: 'Builder message' });
+  send('Build a support assistant.');
+  await screen.findByRole('button', { name: 'Confirm', exact: true });
+  send('Only read tickets. Never send replies.');
+  await waitFor(() => expect(api.calls).toHaveLength(2));
+  await screen.findByText('Read-only support', { selector: 'h1' });
+  const messages = JSON.stringify(api.calls[1].messages);
+  expect(messages).toContain('User sent a message instead:');
+  expect(messages).toContain('Only read tickets. Never send replies.');
+  expect(messages).toContain('[Current quickstart step:');
+  expect(writes(api.requests)).toHaveLength(0);
+});
+
+test('legacy usage question and schedule-intent tool control the deployment branch without a second UI choice', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([
+    toolStream('ask_user_questions', {
+      questions: [
+        {
+          header: 'Usage',
+          question: 'How will you use it?',
+          options: [{ label: 'Schedule it' }, { label: 'Call from an application' }],
+        },
+      ],
+    }),
+    toolStream('flag_schedule_intent', { wants_schedule: true }),
+    toolStream('offer_next_step', {}),
+    toolStream('create_deployment', {
+      name: 'Daily acceptance',
+      cron_expression: '0 9 * * *',
+      timezone: 'Asia/Shanghai',
+      initial_message: 'Extract the supplied order',
+    }),
+  ]);
+  const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
+  value.initialized = true;
+  value.step = 'session';
+  value.agent = { id: 'agent_saved', name: 'Acceptance', version: 2 };
+  value.savedConfig = value.config;
+  value.environment = { id: 'environment_saved', name: 'Restricted' };
+  value.testClosed = true;
+  value.messages = [{ role: 'user', content: 'The test is closed and its result was correct.' }];
+  window.sessionStorage.setItem(builderStorageKey('acct_managed_agents_test', 'default'), JSON.stringify(value));
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
+  await screen.findByText('How will you use it?');
+  fireEvent.click(screen.getByRole('radio', { name: /Schedule it/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm', exact: true }));
+  await screen.findByRole('button', { name: 'Continue', exact: true });
+  expect(screen.queryByRole('button', { name: 'Run on a schedule' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Use in an application' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Continue', exact: true }));
+  await screen.findByRole('heading', { name: 'Create scheduled deployment' });
+  expect(api.calls).toHaveLength(4);
+  expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/deployments'))).toBe(false);
 });

@@ -20,7 +20,7 @@ export function BuilderComposer({
   const [draft, setDraft] = useState('');
   const send = () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text || state.gate?.name === 'ask_user_questions') return;
     if (onSend) {
       onSend(text);
       return;
@@ -75,7 +75,7 @@ export function BuilderComposer({
             type="submit"
             size="icon"
             aria-label={zh ? '发送' : 'Send'}
-            disabled={!draft.trim() || Boolean(state.operation)}
+            disabled={!draft.trim() || Boolean(state.operation) || state.gate?.name === 'ask_user_questions'}
           >
             <ArrowUp />
           </Button>

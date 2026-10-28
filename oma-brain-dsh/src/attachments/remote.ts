@@ -1,3 +1,4 @@
+import type { Assignment } from "../assignment.ts";
 import { RetryableInputError } from "../runtime/contracts.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
@@ -23,6 +24,7 @@ export default class RemoteAttachmentStore extends AttachmentStore {
     maxImageDimension: DEFAULT_MAX_IMAGE_DIMENSION, mediaTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"] as const };
   private readonly root: string;
   private readonly policy = { maxPixels: DEFAULT_NORMALIZED_IMAGE_MAX_PIXELS, maxDimension: DEFAULT_NORMALIZED_IMAGE_MAX_DIMENSION, maxBytes: DEFAULT_NORMALIZED_IMAGE_MAX_BYTES };
+  private readonly authorized = new WeakMap<Assignment, { epoch: number; hashes: Set<string> }>();
   private active = 0;
   private readonly waiting: (() => void)[] = [];
 
@@ -32,9 +34,9 @@ export default class RemoteAttachmentStore extends AttachmentStore {
 
   private async compress<T>(action: () => Promise<T>): Promise<T> {
     if (this.active >= 2) await new Promise<void>(resolve => this.waiting.push(resolve));
-    this.active++;
+    else this.active++;
     try { return await action(); }
-    finally { this.active--; this.waiting.shift()?.(); }
+    finally { const next = this.waiting.shift(); if (next) next(); else this.active--; }
   }
 
   async saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef> {
@@ -42,8 +44,6 @@ export default class RemoteAttachmentStore extends AttachmentStore {
     const digest = prepared.ref.attachmentId.slice("sha256:".length);
     const response = await this.remote(`image-attachments/${digest}`, "PUT", prepared.data, prepared.ref.mediaType);
     await response.body?.cancel();
-    if (response.status === 413) throw new AttachmentError("Normalized image exceeds the storage limit", "IMAGE_TOO_LARGE");
-    if (!response.ok) throw new AttachmentTransportError(new HttpError(response.status));
     await commitPreparedImageFile(this.root, prepared);
     return prepared.ref;
   }
@@ -51,13 +51,11 @@ export default class RemoteAttachmentStore extends AttachmentStore {
   async readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment> {
     if (!/^sha256:[0-9a-f]{64}$/.test(ref.attachmentId)) throw new AttachmentError("Invalid attachment reference", "INVALID_ATTACHMENT_REF");
     const path = `image-attachments/${ref.attachmentId.slice("sha256:".length)}`;
-    const authorization = await this.remote(path, "HEAD", undefined, undefined, signal);
-    if (!authorization.ok) throw new AttachmentTransportError(new HttpError(authorization.status));
+    await this.remote(path, "HEAD", undefined, undefined, signal);
     try { return await readImageFile(this.root, ref, signal); }
     catch (error) {
       signal?.throwIfAborted();
       const response = await this.remote(path, "GET", undefined, undefined, signal);
-      if (!response.ok) throw new AttachmentTransportError(new HttpError(response.status));
       const data = await boundedBytes(response, ref.bytes, signal);
       if (data.byteLength !== ref.bytes || `sha256:${new Bun.CryptoHasher("sha256").update(data).digest("hex")}` !== ref.attachmentId)
         throw new AttachmentError("Image attachment integrity check failed", "ATTACHMENT_CORRUPT");
@@ -74,7 +72,6 @@ export default class RemoteAttachmentStore extends AttachmentStore {
   async source(fileId: string, signal?: AbortSignal): Promise<SaveImageAttachment | undefined> {
     const response = await this.remote(`message-attachments/${encodeURIComponent(fileId)}/content`, "GET", undefined, undefined, signal);
     if (response.status === 404) return undefined;
-    if (!response.ok) throw new AttachmentTransportError(new HttpError(response.status));
     const mediaType = response.headers.get("content-type");
     if (!this.imageLimits.mediaTypes.includes(mediaType as never)) { await response.body?.cancel(); return undefined; }
     try {
@@ -91,14 +88,31 @@ export default class RemoteAttachmentStore extends AttachmentStore {
     if (!id) throw new Error("Image attachment access requires a session");
     const api = this.options.api;
     const assignment = api.assignment(api.modelSessions.get(id) ?? id);
+    let authorization = this.authorized.get(assignment);
+    if (!authorization || authorization.epoch !== assignment.worker_epoch) {
+      authorization = { epoch: assignment.worker_epoch, hashes: new Set() };
+      this.authorized.set(assignment, authorization);
+    }
+    const digest = path.startsWith("image-attachments/") ? path.slice("image-attachments/".length) : undefined;
+    if (method === "HEAD" && digest && authorization.hashes.has(digest)) return new Response(null);
+    let response: Response;
     try {
-      const response = await api.fetcher(`${api.base.replace(/\/$/, "")}/v1/code/sessions/${encodeURIComponent(assignment.session_id)}/worker/${path}`, {
+      response = await api.fetcher(`${api.base.replace(/\/$/, "")}/v1/code/sessions/${encodeURIComponent(assignment.session_id)}/worker/${path}`, {
         method, headers: { Authorization: `Bearer ${assignment.ingress_token}`, "X-Worker-Epoch": String(assignment.worker_epoch), ...(mediaType ? { "Content-Type": mediaType } : {}) },
         body: data ? new Uint8Array(data).buffer : undefined, redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
       });
-      if (!response.ok) await response.body?.cancel();
-      return response;
     } catch (error) { signal?.throwIfAborted(); throw new AttachmentTransportError(error); }
+    if (response.ok) {
+      if (digest && (method === "HEAD" || method === "PUT")) authorization.hashes.add(digest);
+      return response;
+    }
+    await response.body?.cancel();
+    if (digest) authorization.hashes.delete(digest);
+    if (response.status === 404 && path.startsWith("message-attachments/")) return response;
+    if (response.status === 409 || response.status === 503) throw new AttachmentTransportError(new HttpError(response.status));
+    if ([400, 404, 413, 415, 422].includes(response.status))
+      throw new AttachmentError("Image attachment unavailable", response.status === 413 ? "IMAGE_TOO_LARGE" : "INVALID_IMAGE");
+    throw new HttpError(response.status);
   }
 }
 

@@ -13,7 +13,7 @@ export class AiSdkAdapter extends LlmAdapter {
   }
 
   imageRequestPricing(provider: string, model: string): LlmImageRequestPricing {
-    return imagePricing(this.options.imageInput?.(provider, model), this.options.modelInfo?.(provider, model).inputModalities?.includes("image") ?? true);
+    return imagePricing(this.options.imageInput?.(provider, model), this.options.modelInfo?.(provider, model).inputModalities?.includes("image") ?? false);
   }
 
   async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {

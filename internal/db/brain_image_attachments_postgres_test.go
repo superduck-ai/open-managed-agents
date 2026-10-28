@@ -3,9 +3,11 @@
 package db
 
 import (
+	"context"
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
@@ -22,6 +24,28 @@ func TestBrainImageAttachmentsPostgres(t *testing.T) {
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
 	seedClaimCodeSession(t, ctx, database, 1, "claim", "running")
 	input := BrainImageAttachment{OrganizationUUID: claimTestOrganization, WorkspaceUUID: claimTestWorkspace, SessionUUID: "53000000-0000-0000-0001-000000000001", SHA256: "digest", MediaType: "image/png", SizeBytes: 42, Bucket: "images", ObjectKey: "images/session/digest"}
+	t.Run("upload does not hold a transaction connection", func(t *testing.T) {
+		maxConnections := database.Stats().MaxOpenConnections
+		database.SetMaxOpenConns(1)
+		defer database.SetMaxOpenConns(maxConnections)
+		failure := errors.New("deliberate upload failure")
+		_, err := store.PutBrainImageAttachment(ctx, input, func() error {
+			probe, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+			defer cancel()
+			connection, err := database.Conn(probe)
+			if err != nil {
+				return err
+			}
+			if err := connection.Close(); err != nil {
+				return err
+			}
+			return failure
+		})
+		if !errors.Is(err, failure) {
+			t.Fatalf("upload held the only database connection: %v", err)
+		}
+	})
+
 	uploads := 0
 	t.Run("failed upload stays pending and is not readable", func(t *testing.T) {
 		failure := errors.New("upload interrupted")
@@ -71,7 +95,7 @@ func TestBrainImageAttachmentsPostgres(t *testing.T) {
 		if err != nil || len(jobs) != 1 || jobs[0].Attempts != 1 {
 			t.Fatalf("retry jobs = %+v, %v", jobs, err)
 		}
-		if err := store.CompleteObjectCleanupJob(ctx, jobs[0].UUID); err != nil {
+		if err := store.CompleteObjectCleanupJob(ctx, jobs[0].UUID, jobs[0].ResourceType); err != nil {
 			t.Fatal(err)
 		}
 		_, found, err := NewBrainImageAttachmentMapper(store.mapperDB).Find(ctx, input.WorkspaceUUID, input.SessionUUID, input.SHA256, false)

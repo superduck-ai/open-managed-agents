@@ -95,7 +95,7 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 			}
 			continue
 		}
-		if err := w.database.CompleteObjectCleanupJob(ctx, job.UUID); err != nil {
+		if err := w.database.CompleteObjectCleanupJob(ctx, job.UUID, job.ResourceType); err != nil {
 			errs = append(errs, fmt.Errorf("complete cleanup job %s: %w", job.ExternalID, err))
 		}
 	}

@@ -2,23 +2,28 @@ package brainattachments
 
 import (
 	"errors"
+
+	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
-	"net/http"
 )
 
-func invalidImage(message string) *httpapi.Error {
-	return httpapi.NewError(http.StatusBadRequest, "invalid_request_error", message)
+var errImageInvalid = errors.New("invalid image attachment")
+var errImageTooLarge = errors.New("image attachment exceeds size limit")
+var errImageNotFound = errors.New("image attachment not found")
+var errImageUnavailable = errors.New("image attachment storage unavailable")
+
+func invalidImage(message string) error {
+	return apperr.New(apperr.InvalidArgument, message, errImageInvalid)
 }
 
-func imageTooLarge() *httpapi.Error {
-	return httpapi.NewError(http.StatusRequestEntityTooLarge, "request_too_large", "Image attachment exceeds the size limit")
+func imageTooLarge() error {
+	return apperr.New(apperr.RequestTooLarge, "Image attachment exceeds the size limit", errImageTooLarge)
 }
 
-func attachmentFailure(err error) *httpapi.Error {
+func attachmentFailure(err error) error {
 	if errors.Is(err, db.ErrNotFound) || errors.Is(err, storage.ErrNotFound) {
-		return httpapi.NewError(http.StatusNotFound, "not_found_error", "Image attachment not found")
+		return apperr.New(apperr.NotFound, "Image attachment not found", errors.Join(errImageNotFound, err))
 	}
-	return httpapi.NewError(http.StatusServiceUnavailable, "api_error", "Image attachment storage is unavailable")
+	return apperr.New(apperr.Unavailable, "Image attachment storage is unavailable", errors.Join(errImageUnavailable, err))
 }

@@ -1,9 +1,9 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { LlmError, type GenerateOptions } from "@deepseek-ai/dsh-llm";
+import { IMAGE_OFFLOAD_REQUIRED_CODE, LlmError, type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { OmaApi } from "./api.ts";
 import type { Assignment } from "./assignment.ts";
-import { DEFAULT_MAX_OUTPUT_TOKENS } from "./model-defaults.ts";
+import { DEFAULT_MAX_OUTPUT_TOKENS, MAX_MESSAGES_REQUEST_BODY_BYTES } from "./model-defaults.ts";
 import { normalizeChatReasoning } from "./chat-reasoning.ts";
 import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
 
@@ -53,9 +53,9 @@ function proxyFetch(api: OmaApi, endpoint: string, agentID: string | undefined,
     const url = input instanceof Request ? input.url : String(input);
     if (url !== endpoint || init?.method !== "POST")
       throw new LlmError("Model request must use the OMA proxy endpoint", "INVALID_ARGS");
-    if (typeof init.body === "string" && Buffer.byteLength(init.body) > 32 * 1024 * 1024) {
+    if (typeof init.body === "string" && Buffer.byteLength(init.body) > MAX_MESSAGES_REQUEST_BODY_BYTES) {
       const retainedImages = options?.messages.flatMap(message => message.content).filter(block => block.type === "image" && !block.offloaded).length ?? 0;
-      if (retainedImages > 0) throw new LlmError("Serialized model request exceeds the proxy limit", "IMAGE_OFFLOAD_REQUIRED", { offloadImages: 1 });
+      if (retainedImages > 0) throw new LlmError("Serialized model request exceeds the proxy limit", IMAGE_OFFLOAD_REQUIRED_CODE, { offloadImages: 1 });
       throw new LlmError("Serialized model request exceeds the proxy limit", "INVALID_ARGS");
     }
     const headers = new Headers(init.headers);

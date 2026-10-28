@@ -4,7 +4,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import RemoteAttachmentStore, { withAttachmentSession, AttachmentTransportError } from "../src/attachments/remote.ts";
+import { AttachmentId } from "@deepseek-ai/dsh-attachment";
 import { SessionId } from "@deepseek-ai/dsh-session";
+import { IMAGE_OFFLOAD_REQUIRED_CODE } from "@deepseek-ai/dsh-llm";
+import { MAX_MESSAGES_REQUEST_BODY_BYTES } from "../src/model-defaults.ts";
 import { AiSdkAdapter } from "../src/llm-ai-sdk/adapter.ts";
 import { omaModelOptions } from "../src/model.ts";
 import { OmaApi } from "../src/api.ts";
@@ -51,8 +54,7 @@ test("transport failures remain retryable and unavailable sources degrade one bl
 test("cache hits still authorize the session and corrupted remote bytes are rejected", async () => {
   const f = await storeFixture();
   const ref = await f.run(() => f.store.saveImage({ data: Buffer.from(png, "base64"), mediaType: "image/png" }));
-  f.backend.a.worker_epoch++;
-  f.api.assignments.set(f.backend.a.session_id, { ...f.backend.a, worker_epoch: 1 });
+  f.api.assignments.set(f.backend.a.session_id, { ...f.backend.a, worker_epoch: 2 });
   await expect(f.run(() => f.store.readImage(ref))).rejects.toBeInstanceOf(AttachmentTransportError);
   f.api.assignments.set(f.backend.a.session_id, f.backend.a);
   await rm(f.cacheRoot, { recursive: true, force: true });
@@ -195,4 +197,115 @@ test("oversized text without retained images fails before any proxy call", async
   };
   await expect(run()).rejects.toThrow("Serialized model request exceeds the proxy limit");
   expect(calls).toBe(0);
+});
+
+test.each([400, 404, 413])("permanent attachment rejection %i degrades the image and completes input", async status => {
+  const backend = new Backend();
+  backend.imageStatus = status;
+  const { session } = await openRuntime(backend);
+  await session.receive("rejected-image", { content: [
+    { type: "text", text: "continue" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
+  ] });
+  expect(backend.processed).toContain("rejected-image");
+  expect(backend.requests).toHaveLength(1);
+  expect(JSON.stringify(backend.requests[0])).toContain("Image attachment unavailable");
+  expect(backend.publicLog.get("rejected-image_result")?.is_error).toBe(false);
+});
+
+test.each([400, 404, 413])("permanent source rejection %i preserves neighboring text", async status => {
+  const f = await storeFixture();
+  f.backend.imageStatus = status;
+  const content = await f.run(() => userInputContent({ content: [
+    { type: "text", text: "before" }, { type: "image", source: { type: "file", file_id: "file_rejected" } }, { type: "text", text: "after" },
+  ] }, f.store));
+  expect(content).toEqual([{ type: "text", text: "before" }, { type: "text", text: "[Image attachment unavailable]" }, { type: "text", text: "after" }]);
+});
+
+test.each([409, 503])("attachment status %i remains retryable", async status => {
+  const f = await storeFixture();
+  f.backend.imageStatus = status;
+  await expect(f.run(() => f.store.saveImage({ data: Buffer.from(png, "base64"), mediaType: "image/png" }))).rejects.toBeInstanceOf(AttachmentTransportError);
+});
+
+test.each(["count", "bytes"])("message image %s limit degrades excess blocks without saving them", async limit => {
+  const f = await storeFixture();
+  if (limit === "count") f.store.imageLimits.maxImagesPerMessage = 1;
+  else f.store.imageLimits.maxMessageImageBytes = Buffer.from(png, "base64").byteLength;
+  let saves = 0;
+  const save = f.store.saveImage.bind(f.store);
+  f.store.saveImage = async input => { saves++; return save(input); };
+  const content = await f.run(() => userInputContent({ content: [
+    { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
+    { type: "text", text: "after" },
+  ] }, f.store));
+  expect(content.map(block => block.type)).toEqual(["image", "text", "text"]);
+  expect(saves).toBe(1);
+});
+
+test("image authorization is reused only within one session assignment and epoch", async () => {
+  const f = await storeFixture();
+  const ref = await f.run(() => f.store.saveImage({ data: Buffer.from(png, "base64"), mediaType: "image/png" }));
+  f.backend.imageStatus = 503;
+  await f.run(() => f.store.readImage(ref));
+  await f.run(() => f.store.readImage(ref));
+  f.backend.a.worker_epoch++;
+  await expect(f.run(() => f.store.readImage(ref))).rejects.toBeInstanceOf(AttachmentTransportError);
+  f.backend.imageStatus = undefined;
+  await f.run(() => f.store.readImage(ref));
+  f.backend.imageStatus = 503;
+  f.api.assignments.set("other", { ...f.backend.a, session_id: "other" });
+  await expect(withAttachmentSession("other", () => f.store.readImage(ref))).rejects.toBeInstanceOf(AttachmentTransportError);
+});
+
+test("compression hands a released slot to the waiting caller before a newcomer", async () => {
+  const f = await storeFixture();
+  const { store } = f;
+  const compress = (store as unknown as { compress(action: () => Promise<void>): Promise<void> }).compress.bind(store);
+  let active = 0;
+  let maximum = 0;
+  const releases: (() => void)[] = [];
+  const tasks: Promise<void>[] = [];
+  const action = () => { active++; maximum = Math.max(maximum, active); return new Promise<void>(resolve => releases.push(() => { active--; resolve(); })); };
+  tasks.push(compress(action), compress(action));
+  tasks.push(compress(action));
+  const waiting = (store as unknown as { waiting: (() => void)[] }).waiting;
+  const wake = waiting[0]!;
+  waiting[0] = () => { wake(); tasks.push(compress(action)); };
+  releases.shift()!();
+  for (let index = 0; index < 10; index++) {
+    await Promise.resolve();
+    while (releases.length) releases.shift()!();
+  }
+  await Promise.all(tasks);
+  expect(maximum).toBe(2);
+});
+
+test("adapter pricing defaults unspecified modalities to text", () => {
+  const adapter = new AiSdkAdapter({ route: () => { throw new Error("pricing must not request a route"); } });
+  const result = adapter.imageRequestPricing("test", "test").priceImages([{ type: "image", attachment: {
+    attachmentId: AttachmentId(`sha256:${"a".repeat(64)}`), mediaType: "image/png", bytes: 100, width: 1024, height: 1024,
+  } }]);
+  expect(result[0]!.visualTokens).toBe(0);
+});
+
+
+test("serialized image overflow preserves the native offload error contract", async () => {
+  const f = await storeFixture();
+  const ref = await f.run(() => f.store.saveImage({ data: Buffer.from(png, "base64"), mediaType: "image/png" }));
+  const adapter = new AiSdkAdapter(omaModelOptions(f.api, f.store, () => f.backend.a.session_id));
+  const run = async () => {
+    for await (const _chunk of adapter.stream({ provider: "oma", model: "test-model", sessionId: SessionId(f.backend.a.session_id),
+      messages: [{ role: "user", content: [{ type: "text", text: "x".repeat(MAX_MESSAGES_REQUEST_BODY_BYTES) }, { type: "image", attachment: ref }] }] })) {}
+  };
+  await expect(run()).rejects.toMatchObject({ code: IMAGE_OFFLOAD_REQUIRED_CODE, failure: { offloadImages: 1 } });
+  expect(f.backend.requests).toHaveLength(0);
+});
+
+test("Brain serialized request limit matches the Go proxy contract", async () => {
+  const source = await Bun.file(new URL("../../internal/llmproviders/request.go", import.meta.url)).text();
+  const limit = source.match(/const MaxMessagesRequestBodyBytes int64 = (\d+) << (\d+)/);
+  expect(limit).not.toBeNull();
+  expect(MAX_MESSAGES_REQUEST_BODY_BYTES).toBe(Number(limit![1]) * 2 ** Number(limit![2]));
 });

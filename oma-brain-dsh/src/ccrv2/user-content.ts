@@ -31,6 +31,8 @@ export async function userInputContent(payload: Payload, attachments: Attachment
     return [{ type: "text", text: content.map((block) => block.text).join("\n") }];
   if (attachments instanceof RemoteAttachmentStore) {
     const blocks: ContentBlock[] = [];
+    let imageCount = 0;
+    let imageBytes = 0;
     for (const value of content) {
       const block = object(value);
       const source = block.type === "image" ? object(block.source) : {};
@@ -41,10 +43,15 @@ export async function userInputContent(payload: Payload, attachments: Attachment
         else throw new Error("Unsupported user content block");
         continue;
       }
+      if (++imageCount > attachments.imageLimits.maxImagesPerMessage || imageBytes >= attachments.imageLimits.maxMessageImageBytes) {
+        blocks.push({ type: "text", text: "[Image attachment unavailable]" });
+        continue;
+      }
       try {
         const input = source.type === "file" ? await attachments.source(source.file_id)
           : source.type === "base64" ? { data: new Uint8Array(Buffer.from(source.data, "base64")), mediaType: source.media_type } : undefined;
-        blocks.push(input ? { type: "image", attachment: await attachments.saveImage(input) }
+        if (input) imageBytes += input.data.byteLength;
+        blocks.push(input && imageBytes <= attachments.imageLimits.maxMessageImageBytes ? { type: "image", attachment: await attachments.saveImage(input) }
           : { type: "text", text: "[Image attachment unavailable]" });
       } catch (error) {
         if (error instanceof AttachmentTransportError) throw error;

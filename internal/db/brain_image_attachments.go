@@ -31,8 +31,21 @@ func (d *DB) PutBrainImageAttachment(ctx context.Context, input BrainImageAttach
 	if _, err := NewBrainImageAttachmentMapper(d.mapperDB).Insert(ctx, input); err != nil {
 		return false, err
 	}
+	row, found, err := NewBrainImageAttachmentMapper(d.mapperDB).Find(ctx, input.WorkspaceUUID, input.SessionUUID, input.SHA256, false)
+	if err != nil {
+		return false, err
+	}
+	if !found || row.State == "deleting" {
+		return false, ErrNotFound
+	}
+	if row.State == "attached" {
+		return false, nil
+	}
+	if err := upload(); err != nil {
+		return false, err
+	}
 	created := false
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		mapper := NewBrainImageAttachmentMapper(executor)
 		row, found, err := mapper.Find(ctx, input.WorkspaceUUID, input.SessionUUID, input.SHA256, true)
 		if err != nil {
@@ -43,9 +56,6 @@ func (d *DB) PutBrainImageAttachment(ctx context.Context, input BrainImageAttach
 		}
 		if row.State == "attached" {
 			return nil
-		}
-		if err := upload(); err != nil {
-			return err
 		}
 		rows, err := mapper.Attach(ctx, input.WorkspaceUUID, input.SessionUUID, input.SHA256)
 		if err != nil {

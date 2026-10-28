@@ -29,7 +29,7 @@
 
 当前覆盖消息 file_id/base64 图片、Read 图片结果、模型预算、原生计量与 offload、跨实例恢复和删除清理。URL、PDF、普通文件和历史 oma-image 计量扩展留待后续。
 
-上传先在固定大小缓冲内校验字节，再发布对象，防止坏请求覆盖内容寻址键。采用现有数据库事务与行锁协调短小的归一化对象写入和清理，不新增分布式租约服务。
+上传先在固定大小缓冲内校验字节，再发布对象，防止坏请求覆盖内容寻址键。对象上传在事务外进行，现有数据库事务与行锁只协调状态发布和清理，不新增分布式租约服务。
 
 ## 存储与协议
 
@@ -46,11 +46,11 @@ Worker 路由位于 `/v1/code/sessions/{code_session_id}/worker`：
 
 所有接口复用当前 worker ingress 凭证，并核对 `X-Worker-Epoch`。会话标识从可信 claims 与 DB 解析，其他 Session 的相同摘要不可访问。存储暂时失败为 503；摘要/类型错误为 400；不存在为 404；超限为 413。
 
-`brain_image_attachments.max_object_bytes` 默认为 4 MiB，可降低，不能超过 4 MiB。Brain 使用 DSH 默认的源字节、像素和尺寸限制；逐张入库，不因批次张数拒绝已接受的整条消息。源附件缺失、解码失败或存储上限拒绝时，仅将该图片降级为附件不可用文本。传输失败不 ACK，运行时停止当前实例的处理，由投递与认领恢复重试。
+`brain_image_attachments.max_object_bytes` 默认为 4 MiB，可降低，不能超过 4 MiB。Brain 使用 DSH 默认的源字节、像素和尺寸限制；逐张入库并累计原始图片张数与源字节。超出 maxImagesPerMessage 或 maxMessageImageBytes 的图片降级为附件不可用文本，超限后不再读取后续图片，不拒绝已接受的整条消息。源附件缺失、解码失败、400/404/413/415/422 永久拒绝只降级该图片。仅网络错误、503 与 epoch 冲突作为可重试传输错误，不 ACK，由投递与认领恢复重试；其他 HTTP 错误沿正常失败路径处理。
 
-Pending 登记先持久化；上传与 attached 状态推进在持有该行锁的事务中进行，上传有 30 秒超时。清理调度使用 SKIP LOCKED，标记 deleting 与创建 object_cleanup job 同事务提交。Session 删除或 pending 超过 24 小时后回收；任务删除全部版本，完成事务删除登记。没有固定 TTL。
+Pending 登记先持久化；上传在事务外进行，有 30 秒超时，上传完成后短事务锁定该行并推进 attached。若上传期间登记已进入 deleting 或已被清理，拒绝发布。事务外上传与清理恰好交错时可能留下迟到的未引用对象，严格消除该窗口需要另行确认上传租约或清理握手的范围，本轮未增加这类机制。清理调度分别选择过期 pending 与软删除 Session 的图片，使用 SKIP LOCKED；标记 deleting 与创建任务同事务提交。新增 migration 00109 为后者添加部分索引。只有 brain_image_attachment 类型的任务完成时关联删除图片登记，其他任务直接完成。任务删除全部对象版本，没有固定 TTL。Session 按既有软删除流程保留登记，未增加物理删除 Session 后的孤儿扫描。
 
-本地缓存按内容寻址共享，每次读前通过 HEAD 检查 Session 授权，不维护额外授权缓存。远端 GET 与本地读取均检查完整性，imageHostPath 不暴露 Brain 路径。归一化和请求变体处理共用两个并发槽。本地缓存清理、指标聚合和 Session 图片总配额暂未实现。
+本地缓存按内容寻址共享。每个 Session assignment 与 worker epoch 首次使用哈希时经 PUT 或 HEAD 确认授权，后续复用内存结果；epoch 改变或 assignment 替换后重新确认，其他 Session 不共享授权。授权集合使用弱引用，不保留已释放的 assignment。远端 GET 与本地读取均检查完整性，imageHostPath 不暴露 Brain 路径。归一化和请求变体处理共用两个并发槽，释放时先将名额直接交给已等待的调用者。本地缓存清理、指标聚合和 Session 图片总配额暂未实现。
 
 ## 模型预算与计量
 
@@ -65,11 +65,11 @@ Pending 登记先持久化；上传与 attached 状态推进在持有该行锁�
 | max_pixels | 1048576 | 像素面积 |
 | tokens_per_megapixel | 1600 | 估算视觉 token / 百万像素 |
 
-目录值需是 0 至 33554432 的整数；这些缺省值是平台保守策略，不是上游能力或计费保证。视觉模型必须显式声明 input_modalities 包含 image，否则 DSH 投影为文本占位。
+目录值需是 0 至 33554432 的整数；这些缺省值是平台保守策略，不是上游能力或计费保证。视觉模型必须显式声明 input_modalities 包含 image，否则 DSH 投影为文本占位；Read 与适配器计价均以未声明 image 为不支持图片。
 
 适配器先按张数决定是否卸载，再使用 DSH readImageRequest 按面积和长边生成变体。字节预算调用 requiredImageOffload，representation=base64，因此预算转换为 base64 后的字节。计量使用同一尺寸策略；文本模型和 offloaded 图片只计实际占位文本。
 
-请求还预留 128 KiB 协议开销并估算其余 prompt/schema；SDK 序列化后再检查实际 32 MiB 请求体。可卸载图片超限时抛 IMAGE_OFFLOAD_REQUIRED，由已挂载插件记录 image/offload，普通轮次和 summary 均可重试。卸载文本不包含本机路径或重新上传要求；纯文本已超限时明确失败。此检查只约束 Brain 发送的请求，旧 oma-image 和 document 后续由代理展开造成的膨胀仍是已知限制。
+请求还预留 128 KiB 协议开销并估算其余 prompt/schema；SDK 序列化后用 MAX_MESSAGES_REQUEST_BODY_BYTES 检查实际 32 MiB 请求体，与 Go MaxMessagesRequestBodyBytes 的一致性由合同测试检查，offload 错误码统一引用 DSH IMAGE_OFFLOAD_REQUIRED_CODE。可卸载图片超限时抛 IMAGE_OFFLOAD_REQUIRED，由已挂载插件记录 image/offload，普通轮次和 summary 均可重试。卸载文本不包含本机路径或重新上传要求；纯文本已超限时明确失败。此检查只约束 Brain 发送的请求，旧 oma-image 和 document 后续由代理展开造成的膨胀仍是已知限制。
 
 新实例重放远端 dsh 日志后，用当前凭证从远端读取图片并重新生成变体。本地缓存不影响正确性，已经 offload 的图片无需读取字节。URL、PDF、普通文件和历史 oma-image 迁移不在此阶段范围。
 
@@ -127,3 +127,11 @@ DSH 在首次图片操作时动态加载 Sharp。独立构建将该调用改为�
 Worker 镜像摘要为 `sha256:b3a09eb84545362778315d0364affc2368d638f28555f783f4befdc97d6b0d3c`。已同步主分支并将新增 migration 编号更新为 `00108`，随后重跑上述两个场景。验收源码在运行期间保持不变；本节在两轮报告和清理完成后补充。报告位于本地忽略目录，不进入版本控制。
 
 未覆盖其他模型与 Chat Completions 后端、真实模型超预算 offload/summary、跨实例恢复、云端沙箱、计费或性能基线。`chat.roundtrip` 使用脚本上游模型，其通过不作为额外的真实视觉证据。
+
+### 2026-10-28 审查修正
+
+修复审查项 1、3 至 10。资源包错误通过 sentinel、apperr.New 和 HTTP ErrorAdapter 输出，413 使用统一的 invalid_request_error。补充永久错误单图降级与输入确认、瞬时错误重试、批次限额、授权范围与 epoch 失效、压缩名额交接、缺省图片能力、最终请求体错误码及跨语言大小合同测试。PostgreSQL 回归覆盖上传不占连接、过期和软删除两类调度，以及非图片任务不访问图片表。
+
+审查项 2 按用户要求暂不修改：切换前仅存在 Brain 本地的原生图片，远端没有登记时仍不可解析。历史 oma-image 保持既有兼容路径。本轮未重新运行 verify-be，之前的真实链路报告保留为当时版本的记录。
+
+本轮验证：`just test`、`just lint`、`just dead-code`、`just duplicates`、`just complexity`、Brain typecheck 与独立构建通过。Brain 全套 675 通过、5 跳过，随后最终图片边界组 25 项通过。隔离 PostgreSQL 17 执行 `just test-integration ./internal/db -run 'TestBrainImageAttachmentsPostgres|TestObjectCleanupJobsPostgres|TestEventPayloadBlobsPostgres' -v`，三个测试组通过，无跳过；未连接开发环境依赖，测试容器已停止。

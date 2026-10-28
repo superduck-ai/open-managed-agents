@@ -43,13 +43,14 @@ type Handler struct {
 	store          storage.ObjectStore
 	authorize      func(http.ResponseWriter, *http.Request) (Scope, bool)
 	logger         *slog.Logger
+	errors         *httpapi.ErrorAdapter
 }
 
 func NewHandler(database Database, store storage.ObjectStore, authorize func(http.ResponseWriter, *http.Request) (Scope, bool), maxObjectBytes int64, logger *slog.Logger) *Handler {
 	if maxObjectBytes <= 0 {
 		maxObjectBytes = MaxObjectBytes
 	}
-	return &Handler{maxObjectBytes: maxObjectBytes, database: database, store: store, authorize: authorize, logger: logging.LoggerOrDefault(logger)}
+	return &Handler{maxObjectBytes: maxObjectBytes, database: database, store: store, authorize: authorize, logger: logging.LoggerOrDefault(logger), errors: httpapi.NewErrorAdapter(logger)}
 }
 
 func (h *Handler) RegisterRoutes(router chi.Router) {
@@ -66,16 +67,16 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	}
 	digest := chi.URLParam(r, "sha256")
 	if !digestPattern.MatchString(digest) {
-		httpapi.WriteError(w, r, invalidImage("Invalid image attachment digest"))
+		h.errors.Write(w, r, invalidImage("Invalid image attachment digest"))
 		return
 	}
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, h.maxObjectBytes))
 	if err != nil {
 		var limit *http.MaxBytesError
 		if errors.As(err, &limit) {
-			httpapi.WriteError(w, r, imageTooLarge())
+			h.errors.Write(w, r, imageTooLarge())
 		} else {
-			httpapi.WriteError(w, r, invalidImage("Incomplete image attachment"))
+			h.errors.Write(w, r, invalidImage("Incomplete image attachment"))
 		}
 		return
 	}
@@ -83,11 +84,11 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	mime := http.DetectContentType(data)
 	supported := mime == "image/png" || mime == "image/jpeg" || mime == "image/gif" || mime == "image/webp"
 	if !supported || r.Header.Get("Content-Type") != mime || hex.EncodeToString(sum[:]) != digest || r.ContentLength >= 0 && r.ContentLength != int64(len(data)) {
-		httpapi.WriteError(w, r, invalidImage("Image attachment digest, length or media type does not match"))
+		h.errors.Write(w, r, invalidImage("Image attachment digest, length or media type does not match"))
 		return
 	}
 	if h.store == nil {
-		httpapi.WriteError(w, r, attachmentFailure(errors.New("storage unavailable")))
+		h.errors.Write(w, r, attachmentFailure(errors.New("storage unavailable")))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -119,7 +120,7 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 	}
 	digest := chi.URLParam(r, "sha256")
 	if !digestPattern.MatchString(digest) {
-		httpapi.WriteError(w, r, invalidImage("Invalid image attachment digest"))
+		h.errors.Write(w, r, invalidImage("Invalid image attachment digest"))
 		return
 	}
 	image, err := h.database.GetBrainImageAttachment(r.Context(), scope.WorkspaceUUID, scope.SessionUUID, digest)
@@ -162,7 +163,7 @@ func (h *Handler) source(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "file_id")
 	if !filePattern.MatchString(id) {
-		httpapi.WriteError(w, r, invalidImage("Invalid message attachment ID"))
+		h.errors.Write(w, r, invalidImage("Invalid message attachment ID"))
 		return
 	}
 	file, err := h.database.GetSessionAttachmentFile(r.Context(), scope.WorkspaceUUID, scope.SessionUUID, id)
@@ -188,8 +189,5 @@ func (h *Handler) source(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) failure(w http.ResponseWriter, r *http.Request, err error) {
-	if !errors.Is(err, db.ErrNotFound) {
-		h.logger.ErrorContext(r.Context(), "access brain image attachment", "error", err)
-	}
-	httpapi.WriteError(w, r, attachmentFailure(err))
+	h.errors.Write(w, r, attachmentFailure(err))
 }

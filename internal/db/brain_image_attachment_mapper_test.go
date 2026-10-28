@@ -27,7 +27,7 @@ func TestBrainImageAttachmentMapperBindings(t *testing.T) {
 		t.Fatalf("attach = %+v", attach)
 	}
 	cleanup := buildBrainImageAttachmentMapperScheduleCleanup(yourbatis.DialectPostgres, 10)
-	if !strings.Contains(cleanup.SQL, "SKIP LOCKED") || !reflect.DeepEqual(argumentValues(cleanup.Args), []any{10}) {
+	if !strings.Contains(cleanup.SQL, "SKIP LOCKED") || !strings.Contains(cleanup.SQL, "UNION") || strings.Contains(cleanup.SQL, "NOT EXISTS") || !reflect.DeepEqual(argumentValues(cleanup.Args), []any{10, 10, 10}) {
 		t.Fatalf("cleanup = %+v", cleanup)
 	}
 	completed := buildBrainImageAttachmentMapperDeleteCompleted(yourbatis.DialectPostgres, "job")

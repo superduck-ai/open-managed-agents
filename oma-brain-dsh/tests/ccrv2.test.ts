@@ -56,7 +56,7 @@ class MemoryBackend implements CcrBackend {
 class TextModel extends LlmAdapter {
   readonly requests: GenerateOptions[] = [];
   async resolveModel(provider: string, model: string) {
-    return { provider, id: model, name: model };
+    return { provider, id: model, name: model, context: { contextWindow: 200000 } };
   }
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options);
@@ -342,13 +342,14 @@ test("worker metadata restores the model across logged history and set_model wai
     try {
       await started.promise;
       expect(backend.acknowledged).not.toContain("model-session:change");
-      expect(first.session.agent.options.model).toBe("restored-model");
+      expect(first.session.agent.model.current()?.model).toBe("restored-model");
       release.resolve();
       await changing;
     } finally { release.resolve(); backend.reportMetadata = patch; }
     await eventually(() => backend.acknowledged.includes("model-session:change"));
     expect(backend.acknowledged).toContain("model-session:change");
     await first.session.receive("second", { content: "continue" });
+    expect(backend.output.get("model-session")!.filter(event => event.type === "result" && event.is_error)).toEqual([]);
     expect(first.model.requests[1]!.model).toBe("changed-model");
   } finally { await first.ctx.fiber.dispose(); }
   // Deliberately differ from the last logged request, which used changed-model.

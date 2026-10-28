@@ -78,7 +78,6 @@ export class CcrSession {
     this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID);
     this.runtime = new SessionRuntime(ctx, { ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); } }, {
       onDiagnostic: diagnostic => recordRuntimeDiagnostic(this.id, diagnostic),
-      selectModel: model => this.modelOverride ?? model,
       onExternalMcpConnectionFailure: (serverName) => this.reportError({
         type: "session.error", uuid: crypto.randomUUID(), processed_at: new Date().toISOString(),
         error: { type: "mcp_connection_failed_error", mcp_server_name: serverName,
@@ -165,7 +164,7 @@ export class CcrSession {
     this.modelOverride = model;
     this.config.model = model;
     this.runtime.config.model = model;
-    if (this.runtime.handle) this.agent.options.model = model;
+    if (this.runtime.handle) this.agent.model.select({ provider: this.config.provider, model });
   }
 
   private async openState(setStage: (stage: string) => void): Promise<void> {
@@ -173,6 +172,7 @@ export class CcrSession {
     this.restoredFromRemote = await this.ctx.ccrReplication.ensure(this.id);
     setStage("runtime_open");
     await this.runtime.open();
+    if (this.modelOverride) this.agent.model.select({ provider: this.config.provider, model: this.modelOverride });
     setStage("subagents_restore");
     await this.subagents.restore();
     const recoveryEvents = this.pendingEvents.splice(0);

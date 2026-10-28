@@ -6,9 +6,9 @@ The application entry creates a Cordis Context and loads the OMA host plugin. Th
 
 ## Run
 
-Requires Bun 1.3 or newer and an OMA backend exposing the claim and CCRv2 contracts below. The pinned dsh version is `0.2.1-rc.4`, with Cordis `4.0.5`.
+Requires Bun 1.3 or newer and an OMA backend exposing the claim and CCRv2 contracts below. The pinned dsh version is `0.2.2-alpha.2`, with Cordis `4.0.6-alpha.1`.
 
-The matching upstream release is [`dsh-v0.2.1-rc.4`](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.4). Development references are pinned to commit `504a01a9578abc2c6f1fb896b1dc322c9fe24f66`; see the [runtime compatibility baseline](../docs/design/be/brain-runtime.md#dsh-版本与文档基准). Upgrade Brain and the console trajectory packages together, using exact versions and both Bun lockfiles. Historical reports under `verification/` retain their original runtime versions.
+The matching upstream release is [`dsh-v0.2.2-alpha.2`](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-alpha.2). Development references are pinned to commit `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`; see the [runtime compatibility baseline](../docs/design/be/brain-runtime.md#dsh-版本与文档基准). This alpha requires the native tool executor plugin and agent-owned model selection; it is not a drop-in dependency bump. Upgrade Brain and the console trajectory packages together, using exact versions and both Bun lockfiles. Historical reports under `verification/` retain their original runtime versions.
 
 ```sh
 bun install --frozen-lockfile

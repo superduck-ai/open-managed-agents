@@ -7,37 +7,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/go-chi/chi/v5"
-
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 var apiClientUserAgentPattern = regexp.MustCompile(`\b(anthropic-sdk|curl|httpie|postman|insomnia|python-requests|okhttp)\b`)
 
-func requestLoggingMiddleware(logger *slog.Logger, routes chi.Routes) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			fields := requestLogFields(r)
-			requestID := httpapi.RequestID(r.Context())
-			startedAt := time.Now()
-			logger.DebugContext(r.Context(), "http request", httpLogAttrs("request", requestID, fields)...)
-
-			response := serveObserved(w, r, next)
-			elapsed := time.Since(startedAt)
-			attrs := httpLogAttrs("response", requestID, fields,
-				"status", response.status,
-				"duration_ms", durationMilliseconds(elapsed),
-			)
-			attrs = append(attrs, routeParamLogAttrs(r)...)
-			logger.Log(r.Context(), responseLogLevel(response.status, response.canceled, elapsed, requestTelemetryFor(routes, r).longPoll), "http response", attrs...)
-		})
-	}
-}
-
 type logRequestFields struct {
 	method                  string
-	url                     string
 	path                    string
 	host                    string
 	userAgent               string
@@ -53,7 +28,6 @@ func requestLogFields(r *http.Request) logRequestFields {
 	}
 	return logRequestFields{
 		method:                  r.Method,
-		url:                     requestLogURL(r),
 		path:                    path,
 		host:                    r.Host,
 		userAgent:               strings.TrimSpace(r.Header.Get("User-Agent")),
@@ -63,25 +37,15 @@ func requestLogFields(r *http.Request) logRequestFields {
 	}
 }
 
-func requestLogURL(r *http.Request) string {
-	if r.URL == nil {
-		return ""
-	}
-	// Query values commonly carry OAuth state/code and other credentials. Access
-	// logs keep the established "url" field but intentionally store path only.
-	return r.URL.Path
-}
-
-func httpLogAttrs(event string, requestID string, fields logRequestFields, afterURL ...any) []any {
+func httpLogAttrs(event string, requestID string, fields logRequestFields, afterPath ...any) []any {
 	attrs := []any{
 		"event", event,
 		"request_id", requestID,
 		"method", fields.method,
-		"url", fields.url,
-	}
-	attrs = append(attrs, afterURL...)
-	attrs = append(attrs,
 		"path", fields.path,
+	}
+	attrs = append(attrs, afterPath...)
+	attrs = append(attrs,
 		"host", fields.host,
 		"user_agent", fields.userAgent,
 		"client_kind", fields.clientKind,

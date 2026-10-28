@@ -25,10 +25,11 @@ import (
 func TestHTTPTraceMiddleware(t *testing.T) {
 	recorder := telemetrytest.SpanRecorder(t)
 	reader := telemetrytest.MetricReader(t)
-	t.Run("excluded routes produce no spans or metrics", func(t *testing.T) {
+	t.Run("excluded routes produce no spans or metrics but still log", func(t *testing.T) {
 		before := len(recorder.Ended())
+		var logs bytes.Buffer
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware(router))
+		router.Use(observeRequests(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), router))
 		noContent := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
 		router.Get("/healthz", noContent)
 		router.Get("/v1/code/sessions/{code_session_id}/worker/events/stream", noContent)
@@ -48,11 +49,14 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 		if data := telemetrytest.Collect(t, reader); len(data) != 0 {
 			t.Fatal("excluded routes produced metrics")
 		}
+		if records := parseSlogJSONLines(t, logs.String()); len(records) != 8 {
+			t.Fatalf("excluded routes log records = %d, want 8", len(records))
+		}
 	})
 	t.Run("heartbeat measured without span", func(t *testing.T) {
 		before := len(recorder.Ended())
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware(router))
+		router.Use(observeRequests(slog.New(slog.DiscardHandler), router))
 		router.Post("/v1/code/sessions/{code_session_id}/worker/heartbeat", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusGone) })
 		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/code/sessions/cse_a/worker/heartbeat", nil))
 		if len(recorder.Ended()) != before {
@@ -64,7 +68,7 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 	})
 	t.Run("worker routes link caller trace without parenting", func(t *testing.T) {
 		traceParent := "00-01010101010101010101010101010101-0202020202020202-01"
-		handler := telemetryMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+		handler := observeRequests(slog.New(slog.DiscardHandler), nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 		for path, links := range map[string]int{
 			"/v1/agents": 0,
 			"/v1/code/sessions/cse_a/worker/register": 1,
@@ -93,7 +97,7 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 	})
 	t.Run("unmatched route", func(t *testing.T) {
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware(router))
+		router.Use(observeRequests(slog.New(slog.DiscardHandler), router))
 		router.Get("/known", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/unknown-secret-id", nil))
 		spans := recorder.Ended()
@@ -103,7 +107,7 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 	})
 	t.Run("server error", func(t *testing.T) {
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware(router))
+		router.Use(observeRequests(slog.New(slog.DiscardHandler), router))
 		router.Get("/failure", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
 		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/failure", nil))
 		spans := recorder.Ended()
@@ -113,7 +117,7 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 	})
 	t.Run("client canceled server error", func(t *testing.T) {
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware(router))
+		router.Use(observeRequests(slog.New(slog.DiscardHandler), router))
 		router.Get("/canceled", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -131,7 +135,7 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 	t.Run("panic recovered before span ends", func(t *testing.T) {
 		server := &Server{logger: slog.New(slog.DiscardHandler)}
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware(router))
+		router.Use(observeRequests(slog.New(slog.DiscardHandler), router))
 		router.Use(server.recoverMiddleware)
 		router.Get("/panic", func(http.ResponseWriter, *http.Request) { panic("test panic") })
 		response := httptest.NewRecorder()
@@ -145,8 +149,7 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 		var logs bytes.Buffer
 		logger := slog.New(logging.NewContextHandler(slog.NewJSONHandler(&logs, nil), traceLogAttrs))
 		router := chi.NewRouter()
-		router.Use(telemetryMiddleware(router))
-		router.Use(requestLoggingMiddleware(logger, router))
+		router.Use(observeRequests(logger, router))
 		router.Post("/v1/sessions/{session_id}/events", func(w http.ResponseWriter, r *http.Request) {
 			annotatePrincipalSpan(r.Context(), auth.Principal{OrganizationUUID: "org-test", WorkspaceUUID: "workspace-test"})
 			w.WriteHeader(http.StatusCreated)

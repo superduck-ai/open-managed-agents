@@ -26,7 +26,7 @@ func TestOperationalStateCountsPostgres(t *testing.T) {
 	}
 	var heartbeatIndexes, liveStateIndexes int
 	if err := standard.QueryRowContext(ctx, `
-		select count(*) filter (where indexdef like '%updated_at%'), count(*) filter (where indexname = 'environment_work_live_state_v2_idx')
+		select count(*) filter (where indexdef like '%updated_at%'), count(*) filter (where indexname = 'environment_work_live_state_v1_idx')
 		from pg_indexes where schemaname = current_schema() and tablename = 'environment_work'
 	`).Scan(&heartbeatIndexes, &liveStateIndexes); err != nil {
 		t.Fatal(err)

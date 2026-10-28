@@ -114,7 +114,6 @@ func (r *Reporter) refresh(ctx context.Context) {
 	states, err := r.deps.DB.OperationalStateCounts(queryCtx, now.Add(-r.deps.Config.StaleRunningAfter), now.Add(-r.deps.Config.StuckStartingAfter))
 	if err != nil {
 		r.logger.WarnContext(ctx, "collect operational state counts", "error", err)
-		recordCollectFailure(ctx, "database")
 		r.store(snapshot{})
 		return
 	}
@@ -144,13 +143,11 @@ func (r *Reporter) collectStreams(ctx context.Context, now time.Time) []streamSt
 		stream, err := r.js.Stream(ctx, name)
 		if err != nil {
 			r.logger.WarnContext(ctx, "collect NATS stream", "stream", name, "error", err)
-			recordCollectFailure(ctx, "nats")
 			continue
 		}
 		info, err := stream.Info(ctx)
 		if err != nil {
 			r.logger.WarnContext(ctx, "collect NATS stream info", "stream", name, "error", err)
-			recordCollectFailure(ctx, "nats")
 			continue
 		}
 		state := streamState{name: name, messages: int64(info.State.Msgs)}
@@ -168,13 +165,11 @@ func (r *Reporter) collectConsumers(ctx context.Context) []consumerState {
 		consumer, err := r.js.Consumer(ctx, target.Stream, target.Consumer)
 		if err != nil {
 			r.logger.WarnContext(ctx, "collect NATS consumer", "stream", target.Stream, "consumer", target.Consumer, "error", err)
-			recordCollectFailure(ctx, "nats")
 			continue
 		}
 		info, err := consumer.Info(ctx)
 		if err != nil {
 			r.logger.WarnContext(ctx, "collect NATS consumer info", "stream", target.Stream, "consumer", target.Consumer, "error", err)
-			recordCollectFailure(ctx, "nats")
 			continue
 		}
 		states = append(states, consumerState{stream: target.Stream, name: target.Consumer, pending: int64(info.NumPending), ackPending: int64(info.NumAckPending), redelivered: int64(info.NumRedelivered)})
@@ -273,12 +268,4 @@ func (r *Reporter) observe(_ context.Context, observer metric.Observer) error {
 		observer.ObserveInt64(r.gauges.natsConsumerRedelivered, state.redelivered, attrs)
 	}
 	return nil
-}
-
-var collectFailures = telemetry.NewInstruments(func(meter metric.Meter) metric.Int64Counter {
-	return telemetry.Counter(meter, "oma.state_metrics.collect.failures", "{failure}", "Operational state collection failures")
-})
-
-func recordCollectFailure(ctx context.Context, reason string) {
-	collectFailures.Get().Add(ctx, 1, metric.WithAttributes(telemetry.AttrReason.String(reason)))
 }

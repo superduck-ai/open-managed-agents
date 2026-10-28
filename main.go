@@ -75,7 +75,8 @@ func run(bootstrap *slog.Logger) error {
 		return fmt.Errorf("setup telemetry: %w", err)
 	}
 	defer shutdownTelemetry(telemetryRuntime, bootstrap)
-	logger := newApplicationLogger(bootstrap.Handler(), telemetryRuntime, cfg.Telemetry.Logs.SlogLevel())
+	level := cfg.Telemetry.Logs.SlogLevel()
+	logger := newApplicationLogger(logging.NewConsoleHandler(os.Stdout, level), telemetryRuntime, level)
 	slog.SetDefault(logger)
 
 	closeDiagnostics, err := diagnostics.Start(cfg.Server.DiagnosticsAddr, os.Getenv("OMA_DIAGNOSTICS_LISTENER_FD"), logger.With("component", "diagnostics"))

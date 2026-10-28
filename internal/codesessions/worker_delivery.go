@@ -71,11 +71,7 @@ func (s *Service) applyWorkerDeliveryUpdates(
 			err = s.db.WithLockedCodeSessionWorkerEpoch(ackCtx, codeSessionID, epoch, apply)
 		}
 	}
-	if err != nil {
-		recordFailedWorkerDeliveryUpdates(ctx, updates, err)
-	} else {
-		observeSettledWorkerDeliveries(ctx, codeSessionID, result.settled)
-	}
+	recordWorkerDeliveryOutcome(ctx, codeSessionID, updates, result, err)
 	cancel()
 	// 对象清理会访问 jobs 表，必须在释放 Code Session 事务后执行，避免回调
 	// 另取 DB 连接。即使后续 update 失败，已 DoubleAck 的对象仍可以清理。
@@ -126,6 +122,14 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 		result.Applied++
 	}
 	return result, cleanupJobIDs, nil
+}
+
+func recordWorkerDeliveryOutcome(ctx context.Context, codeSessionID string, updates []workerDeliveryUpdate, result workerDeliveryResult, err error) {
+	if err != nil {
+		recordFailedWorkerDeliveryUpdates(ctx, updates, err)
+		return
+	}
+	observeSettledWorkerDeliveries(ctx, codeSessionID, result.settled)
 }
 
 func observeSettledWorkerDeliveries(ctx context.Context, codeSessionID string, settled []settledWorkerDelivery) {

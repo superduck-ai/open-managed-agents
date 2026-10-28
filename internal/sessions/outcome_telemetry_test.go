@@ -16,14 +16,15 @@ import (
 
 func TestSessionOutcomeTelemetry(t *testing.T) {
 	recorder := telemetrytest.SpanRecorder(t)
-	reader := telemetrytest.MetricReader(t)
 	var output bytes.Buffer
 	handler := &Handler{logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))}
 	handler.observeSessionOutcomeEvents(t.Context(), []db.SessionEvent{
+		{EventType: "session.status_idle", ExternalID: "evt_invalid", SessionExternalID: "sesn_a", Payload: json.RawMessage(`not json`)},
 		{EventType: "session.error", ExternalID: "evt_malformed", SessionExternalID: "sesn_a", Payload: json.RawMessage(`{"error":{"type":"Private Detail","message":"private message"}}`)},
 		{EventType: "session.error", ExternalID: "evt_error", SessionExternalID: "sesn_a", Payload: json.RawMessage(`{"type":"session.error","error":{"type":"unknown_error","message":"private message","retry_status":{"type":"exhausted"}}}`)},
 		{EventType: "session.status_idle", ExternalID: "evt_idle", SessionExternalID: "sesn_a", Payload: json.RawMessage(`{"type":"session.status_idle","stop_reason":{"type":"retries_exhausted"}}`)},
 		{EventType: "session.status_idle", ExternalID: "evt_unknown", SessionExternalID: "sesn_a", Payload: json.RawMessage(`{"type":"session.status_idle","stop_reason":{"type":"private_reason"}}`)},
+		{EventType: "session.status_idle", ExternalID: "evt_budget", SessionExternalID: "sesn_a", Payload: json.RawMessage(`{"type":"session.status_idle","stop_reason":{"type":"budget_reached"}}`)},
 	})
 	if strings.Contains(output.String(), "private") {
 		t.Fatalf("payload content leaked to logs: %s", output.String())
@@ -36,42 +37,25 @@ func TestSessionOutcomeTelemetry(t *testing.T) {
 		}
 		records = append(records, record)
 	}
-	if len(records) != 4 || records[2]["level"] != "DEBUG" || records[3]["stop_reason"] != "other" || records[0]["level"] != "WARN" || records[0]["error_type"] != "other" || records[0]["retry_status"] != "other" ||
-		records[1]["error_type"] != "unknown_error" || records[1]["retry_status"] != "exhausted" ||
-		records[2]["msg"] != "session status event" || records[2]["stop_reason"] != "retries_exhausted" {
+	if len(records) != 7 ||
+		records[0]["level"] != "WARN" || records[0]["msg"] != "session outcome payload not decoded" || records[0]["event_id"] != "evt_invalid" || records[0]["event_type"] != "session.status_idle" ||
+		records[1]["msg"] != "session status event" || records[1]["stop_reason"] != nil ||
+		records[2]["level"] != "WARN" || records[2]["error_type"] != "other" || records[2]["retry_status"] != "other" ||
+		records[3]["error_type"] != "unknown_error" || records[3]["retry_status"] != "exhausted" ||
+		records[4]["level"] != "DEBUG" || records[4]["msg"] != "session status event" || records[4]["stop_reason"] != "retries_exhausted" ||
+		records[5]["stop_reason"] != "other" || records[6]["stop_reason"] != "budget_reached" {
 		t.Fatalf("records: %v", records)
 	}
 	spans := recorder.Ended()
-	if len(spans) != 4 || spans[1].Name() != "oma.session.error" || spans[1].Status().Code != codes.Error || spans[2].Name() != "oma.session.status" {
+	if len(spans) != 6 || spans[2].Name() != "oma.session.error" || spans[2].Status().Code != codes.Error || spans[3].Name() != "oma.session.status" {
 		t.Fatalf("spans: %v", spans)
 	}
 	attrs := map[string]string{}
-	for _, attr := range spans[2].Attributes() {
+	for _, attr := range spans[3].Attributes() {
 		attrs[string(attr.Key)] = attr.Value.Emit()
 	}
 	if attrs["oma.stop_reason"] != "retries_exhausted" {
 		t.Fatalf("status attributes: %v", attrs)
-	}
-	data := telemetrytest.Collect(t, reader)
-	counts := map[string]int64{}
-	for _, name := range []string{"oma.session.errors", "oma.session.turns"} {
-		for _, point := range telemetrytest.Points(t, data, name) {
-			key := name
-			for _, attr := range point.Attributes.ToSlice() {
-				key += "," + string(attr.Key) + "=" + attr.Value.Emit()
-			}
-			counts[key] = int64(point.Value)
-		}
-	}
-	for key, want := range map[string]int64{
-		"oma.session.errors,error.type=other,oma.retry_status=other":             1,
-		"oma.session.errors,error.type=unknown_error,oma.retry_status=exhausted": 1,
-		"oma.session.turns,oma.stop_reason=retries_exhausted":                    1,
-		"oma.session.turns,oma.stop_reason=other":                                1,
-	} {
-		if counts[key] != want {
-			t.Fatalf("metrics = %v", counts)
-		}
 	}
 }
 

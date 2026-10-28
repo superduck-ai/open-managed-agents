@@ -158,7 +158,6 @@ func (s *Service) claimNextBrainWorker(ctx context.Context, workerID string) (Br
 			return BrainClaim{}, false, err
 		}
 		if claim.Exhausted {
-			recordBrainClaimExhausted(ctx, "attempts")
 			s.failExhaustedBrainClaim(ctx, claim)
 			continue
 		}
@@ -219,8 +218,7 @@ func (s *Service) failExhaustedBrainClaim(ctx context.Context, claim db.CodeSess
 	s.logger.WarnContext(ctx, "brain worker claims exhausted", "code_session_id", claim.CodeSessionExternalID, "attempts", brainClaimMaxAttempts)
 }
 
-func (s *Service) ReleaseBrainClaim(ctx context.Context, codeSessionID, workerID string, epoch int64, reason BrainClaimReleaseReason) (err error) {
-	defer func() { recordBrainClaimRelease(ctx, reason, err) }()
+func (s *Service) ReleaseBrainClaim(ctx context.Context, codeSessionID, workerID string, epoch int64, reason BrainClaimReleaseReason) error {
 	if reason == BrainClaimPermanent {
 		claim, err := s.db.FailCodeSessionClaimPermanently(ctx, db.FailCodeSessionClaimInput{
 			CodeSessionExternalID: codeSessionID, WorkerID: workerID, WorkerEpoch: epoch,
@@ -230,7 +228,6 @@ func (s *Service) ReleaseBrainClaim(ctx context.Context, codeSessionID, workerID
 			return err
 		}
 		s.logger.WarnContext(ctx, "brain worker reported permanent admission failure", "code_session_id", codeSessionID, "worker_id", workerID, "worker_epoch", epoch)
-		recordBrainClaimExhausted(ctx, "permanent")
 		s.failExhaustedBrainClaim(ctx, claim)
 		return nil
 	}

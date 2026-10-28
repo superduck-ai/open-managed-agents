@@ -442,7 +442,7 @@
         {
           "id": "Panel_overview_5",
           "type": "metric",
-          "title": "工具调用失败率",
+          "title": "沙箱工具调用失败率",
           "description": "沙箱 tools/call 中 outcome 不是 ok/canceled 的比例（tool_error、sandbox_unavailable 等）",
           "config": {
             "show_legends": true,
@@ -3667,7 +3667,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum(max_over_time(oma_sse_subscribers_dropped{service_instance_id=~\"$instance\"}[1d]))",
+              "query": "sum(max_over_time(oma_sse_subscribers_dropped{service_instance_id=~\"$instance\"}[1d])) or vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -3752,7 +3752,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum(max_over_time(oma_fanout_publish_failures{service_instance_id=~\"$instance\"}[1d]))",
+              "query": "sum(max_over_time(oma_fanout_publish_failures{service_instance_id=~\"$instance\"}[1d])) or vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -3922,7 +3922,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum by (oma_reason) (max_over_time(oma_session_events_rejected{service_instance_id=~\"$instance\"}[1d]))",
+              "query": "sum by (oma_reason) (max_over_time(oma_session_events_rejected{service_instance_id=~\"$instance\"}[1d])) or on() vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -4401,7 +4401,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum by (oma_worker_event_lane) (increase(oma_worker_event_redeliveries{service_instance_id=~\"$instance\"}[5m]))",
+              "query": "sum by (oma_worker_event_lane) (increase(oma_worker_event_redeliveries{service_instance_id=~\"$instance\"}[5m])) or on() vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -4741,7 +4741,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum by (http_response_status_code) (increase(http_server_request_duration_count{service_instance_id=~\"$instance\",http_route=\"/v1/code/sessions/{code_session_id}/worker/heartbeat\",http_response_status_code!=\"200\"}[5m]))",
+              "query": "sum by (http_response_status_code) (increase(http_server_request_duration_count{service_instance_id=~\"$instance\",http_route=\"/v1/code/sessions/{code_session_id}/worker/heartbeat\",http_response_status_code!=\"200\"}[5m])) or on() vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -4911,7 +4911,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum by (oma_reason) (max_over_time(oma_session_handoff_failures{service_instance_id=~\"$instance\"}[1d]))",
+              "query": "sum by (oma_reason) (max_over_time(oma_session_handoff_failures{service_instance_id=~\"$instance\"}[1d])) or on() vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -5662,7 +5662,7 @@
         {
           "id": "Panel_exec_7",
           "type": "stacked",
-          "title": "工具调用（按工具 / 结果）",
+          "title": "沙箱工具调用（按工具 / 结果）",
           "description": "沙箱 tools/call 逐条统计",
           "config": {
             "show_legends": true,
@@ -5780,7 +5780,7 @@
         {
           "id": "Panel_exec_8",
           "type": "line",
-          "title": "工具调用耗时 p95（按工具）",
+          "title": "沙箱工具调用耗时 p95（按工具）",
           "description": "含首次调用时的惰性建沙箱",
           "config": {
             "show_legends": true,
@@ -6101,7 +6101,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum by (oma_behavior, oma_source) (increase(oma_tool_permission_responses{service_instance_id=~\"$instance\"}[5m]))",
+              "query": "sum by (oma_behavior, oma_source) (increase(oma_tool_permission_responses{service_instance_id=~\"$instance\"}[5m])) or on() vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -10189,7 +10189,7 @@
           "queryType": "promql",
           "queries": [
             {
-              "query": "sum by (oma_outcome) (increase(oma_webhook_deliveries{service_instance_id=~\"$instance\"}[5m]))",
+              "query": "sum by (oma_outcome) (increase(oma_webhook_deliveries{service_instance_id=~\"$instance\"}[5m])) or on() vector(0)",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -10498,7 +10498,7 @@
           "queryType": "sql",
           "queries": [
             {
-              "query": "SELECT service_instance_id, body, COALESCE(stream, '') AS stream, COALESCE(consumer, '') AS consumer, count(*) AS n, to_timestamp_micros(max(_timestamp)) AS last_seen FROM oma_server WHERE body LIKE 'collect %' GROUP BY service_instance_id, body, stream, consumer ORDER BY n DESC LIMIT 20",
+              "query": "SELECT service_instance_id, body, CASE WHEN body LIKE 'collect NATS%' THEN 'nats' ELSE 'database' END AS source, count(*) AS n, to_timestamp_micros(max(_timestamp)) AS last_seen FROM oma_server WHERE body LIKE 'collect %' GROUP BY service_instance_id, body, source ORDER BY n DESC LIMIT 20",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -10526,19 +10526,9 @@
                     "functionName": null
                   },
                   {
-                    "label": "stream",
-                    "alias": "stream",
-                    "column": "stream",
-                    "color": null,
-                    "isDerived": false,
-                    "type": "custom",
-                    "args": [],
-                    "functionName": null
-                  },
-                  {
-                    "label": "consumer",
-                    "alias": "consumer",
-                    "column": "consumer",
+                    "label": "来源",
+                    "alias": "source",
+                    "column": "source",
                     "color": null,
                     "isDerived": false,
                     "type": "custom",
@@ -11977,7 +11967,7 @@
           "queryType": "sql",
           "queries": [
             {
-              "query": "SELECT to_timestamp_micros(_timestamp) AS time, severity, service_name, body, reason, error_type, trace_id FROM oma_server WHERE body NOT IN ('http request', 'http response') AND (session_id = '$session_id' OR code_session_id IN (SELECT DISTINCT code_session_id FROM oma_server WHERE session_id = '$session_id' AND code_session_id IS NOT NULL) OR trace_id IN (SELECT DISTINCT trace_id FROM oma_server WHERE session_id = '$session_id')) ORDER BY _timestamp ASC",
+              "query": "SELECT to_timestamp_micros(_timestamp) AS time, severity, service_name, body, trace_id FROM oma_server WHERE body NOT IN ('http request', 'http response') AND (session_id = '$session_id' OR code_session_id IN (SELECT DISTINCT code_session_id FROM oma_server WHERE session_id = '$session_id' AND code_session_id IS NOT NULL) OR trace_id IN (SELECT DISTINCT trace_id FROM oma_server WHERE session_id = '$session_id')) ORDER BY _timestamp ASC",
               "vrlFunctionQuery": "",
               "customQuery": true,
               "fields": {
@@ -12018,26 +12008,6 @@
                     "label": "消息",
                     "alias": "body",
                     "column": "body",
-                    "color": null,
-                    "isDerived": false,
-                    "type": "custom",
-                    "args": [],
-                    "functionName": null
-                  },
-                  {
-                    "label": "原因",
-                    "alias": "reason",
-                    "column": "reason",
-                    "color": null,
-                    "isDerived": false,
-                    "type": "custom",
-                    "args": [],
-                    "functionName": null
-                  },
-                  {
-                    "label": "错误类型",
-                    "alias": "error_type",
-                    "column": "error_type",
                     "color": null,
                     "isDerived": false,
                     "type": "custom",

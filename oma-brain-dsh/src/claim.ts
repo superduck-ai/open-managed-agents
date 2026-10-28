@@ -2,7 +2,6 @@ import { HttpError, type OmaApi } from "./api.ts";
 import { ConfigurationError } from "./config.ts";
 import { failureDiagnostic, workerDiagnostic } from "./ccrv2/diagnostics.ts";
 import { canonicalTraceParent, parseTraceParent } from "./observability/trace-context.ts";
-import { brainMetrics } from "./telemetry.ts";
 
 export type TaskAdmissionStage = "validate_assignment" | "retire_session"
   | "register_worker" | "create_session" | "open_session" | "start_inbound";
@@ -97,7 +96,6 @@ export async function releaseClaim(client: ClaimClient, task: ClaimedTask, reaso
     workerDiagnostic("warn", "oma_task_release_failed", {
       session_id: task.session_id, worker_epoch: task.worker_epoch, reason, ...failure,
     }, task.trace_parent);
-    brainMetrics().claimFailures.add(1, { operation: "release", failure_reason: String(failure.failure_reason) });
   }
 }
 
@@ -116,7 +114,6 @@ async function admitClaim(
   try {
     await admit(value, (next) => { stage = next; });
     workerDiagnostic("info", "oma_task_admitted", { ...fields, duration_ms: Date.now() - startMs }, traceParent);
-    brainMetrics().taskAdmissions.add(1, { outcome: "admitted" });
   } catch (error) {
     const reason = releaseReason(error, signal);
     if (task) await releaseClaim(client, task, reason);
@@ -125,9 +122,6 @@ async function admitClaim(
       workerDiagnostic("error", "oma_task_admission_failed", {
         ...fields, stage, release_reason: reason, duration_ms: Date.now() - startMs, ...failure,
       }, traceParent);
-      brainMetrics().taskAdmissions.add(1, {
-        outcome: "failed", stage, release_reason: reason, failure_reason: String(failure.failure_reason),
-      });
     }
   }
 }
@@ -179,7 +173,6 @@ export async function claimTasks(client: ClaimClient, signal: AbortSignal, optio
         if (signal.aborted) break;
         const rejected = claimRejection(error);
         const failure = failureDiagnostic(error);
-        brainMetrics().claimFailures.add(1, { operation: "claim", failure_reason: String(failure.failure_reason) });
         if (rejected === undefined) workerDiagnostic("warn", "oma_task_claim_failed", failure);
         else if (!rejectionReported) {
           rejectionReported = true;

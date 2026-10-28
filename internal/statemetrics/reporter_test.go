@@ -17,7 +17,6 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/telemetry/telemetrytest"
 )
 
 type testStateDatabase struct {
@@ -174,24 +173,6 @@ func TestReporterStartStopUnregisters(t *testing.T) {
 			if _, ok := m.Data.(metricdata.Gauge[int64]); ok {
 				t.Fatalf("callback remained registered: %s", m.Name)
 			}
-		}
-	}
-}
-
-func TestCollectFailureLabels(t *testing.T) {
-	reader := telemetrytest.MetricReader(t)
-	for _, reason := range []string{"database", "nats"} {
-		recordCollectFailure(t.Context(), reason)
-	}
-	points := telemetrytest.Points(t, telemetrytest.Collect(t, reader), "oma.state_metrics.collect.failures")
-	if len(points) != 2 {
-		t.Fatalf("failure points: %v", points)
-	}
-	for _, point := range points {
-		reason, _ := point.Attributes.Value("oma.reason")
-		telemetrytest.AssertAttributes(t, "oma.state_metrics.collect.failures", point.Attributes, map[string]string{"oma.reason": reason.AsString()})
-		if point.Value != 1 || (reason.AsString() != "database" && reason.AsString() != "nats") {
-			t.Fatalf("failure point: %+v", point)
 		}
 	}
 }

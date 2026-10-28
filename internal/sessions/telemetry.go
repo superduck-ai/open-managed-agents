@@ -20,8 +20,6 @@ import (
 type sessionInstruments struct {
 	eventsAccepted        metric.Int64Counter
 	eventsRejected        metric.Int64Counter
-	turns                 metric.Int64Counter
-	errors                metric.Int64Counter
 	handoffFailures       metric.Int64Counter
 	inputQueueWait        metric.Float64Histogram
 	sseSubscribersDropped metric.Int64Counter
@@ -32,8 +30,6 @@ var sessionMetrics = telemetry.NewInstruments(func(meter metric.Meter) sessionIn
 	return sessionInstruments{
 		eventsAccepted:        telemetry.Counter(meter, "oma.session.events.accepted", "{event}", "Session events accepted"),
 		eventsRejected:        telemetry.Counter(meter, "oma.session.events.rejected", "{request}", "Session event requests rejected"),
-		turns:                 telemetry.Counter(meter, "oma.session.turns", "{turn}", "Session turns ended by stop reason"),
-		errors:                telemetry.Counter(meter, "oma.session.errors", "{error}", "Session error events"),
 		handoffFailures:       telemetry.Counter(meter, "oma.session.handoff.failures", "{failure}", "Session handoff failures"),
 		inputQueueWait:        telemetry.Histogram(meter, "oma.session.input.queue_wait", "s", "Session input wait before worker processing", telemetry.LongWaitBuckets()),
 		sseSubscribersDropped: telemetry.Counter(meter, "oma.sse.subscribers.dropped", "{subscriber}", "SSE subscribers dropped"),
@@ -64,6 +60,10 @@ type sessionInputShape struct {
 }
 
 func annotateSessionInputShape(ctx context.Context, inputs []json.RawMessage) {
+	span := trace.SpanFromContext(ctx)
+	if !span.IsRecording() {
+		return
+	}
 	eventTypes, blockTypes := map[string]bool{}, map[string]bool{}
 	size := 0
 	for _, raw := range inputs {
@@ -77,7 +77,7 @@ func annotateSessionInputShape(ctx context.Context, inputs []json.RawMessage) {
 			blockTypes[telemetry.Token(block.Type)] = true
 		}
 	}
-	trace.SpanFromContext(ctx).SetAttributes(
+	span.SetAttributes(
 		attribute.StringSlice("oma.input.event_types", slices.Sorted(maps.Keys(eventTypes))),
 		attribute.StringSlice("oma.input.block_types", slices.Sorted(maps.Keys(blockTypes))),
 		attribute.Int("oma.input.bytes", size),

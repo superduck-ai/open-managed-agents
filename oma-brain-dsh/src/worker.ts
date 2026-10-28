@@ -56,7 +56,6 @@ export async function startWorkers(
       console.error("OMA session task stopped");
       const failure = failureDiagnostic(error);
       workerDiagnostic("error", "oma_session_task_failed", { ...(sessionId ? { session_id: sessionId } : {}), ...failure });
-      brainMetrics().sessionTasksStopped.add(1, { reason: "task_failed", failure_reason: String(failure.failure_reason) });
     }).finally(() => { running.delete(task); });
     running.add(task);
   };
@@ -67,7 +66,6 @@ export async function startWorkers(
     workerDiagnostic("info", "oma_session_retired", {
       session_id: session.id, worker_epoch: api.assignment(session.id).worker_epoch, reason, busy: session.busy,
     });
-    brainMetrics().sessionTasksStopped.add(1, { reason });
     session.stop();
     const result = session.close().finally(() => { void api.telemetry?.close(session.id); }).finally(() => {
       ctx.ccrv2.forget(session.id);

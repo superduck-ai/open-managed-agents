@@ -1,6 +1,5 @@
 import type { CcrPersistArgs } from "./persistence-contracts.ts";
 import { createHash } from "node:crypto";
-import { brainMetrics } from "../telemetry.ts";
 import type { CcrBackend } from "./contracts.ts";
 import type {
   ClientEvent, DeliveryUpdate, InternalEvent,
@@ -714,7 +713,6 @@ export class CcrClient implements CcrBackend {
     const code = error instanceof Error && "code" in error ? error.code : undefined;
     const failure = leaseFailure(error, epoch);
     const failureReason = failure.status === "confirmed" ? undefined : failure.reason;
-    brainMetrics().workerRequestFailures.add(1, { path: `/worker${path}`, failure_reason: failureReason ?? "unknown" });
     workerDiagnostic("warn", httpStatus === undefined ? "cli_worker_request_error" : "cli_worker_request_failed", {
       method: "post", path: `/worker${path}`, session_ref: createHash("sha256").update(id).digest("hex"), worker_epoch: epoch,
       batch_size: batchSize, status: httpStatus,

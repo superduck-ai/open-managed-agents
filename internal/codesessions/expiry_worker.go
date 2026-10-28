@@ -111,7 +111,6 @@ func (s *Service) expireWorkerEvent(ctx context.Context, codeSession db.CodeSess
 	}, codeSession.ExternalID); err != nil {
 		return err
 	}
-	codeSessionMetrics.Get().workerEventsExpired.Add(ctx, 1)
 	if envelope.PayloadRef != nil {
 		s.triggerPayloadCleanupNow(ctx, envelope.PayloadRef.CleanupJobID)
 	}

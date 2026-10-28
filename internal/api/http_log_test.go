@@ -19,7 +19,7 @@ import (
 func TestRequestLoggingMiddlewareLogsRequestAndResponse(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "http")
-	handler := requestLoggingMiddleware(logger, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := observeRequests(logger, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/v1/files?beta=true&state=secret-state", nil)
@@ -47,7 +47,6 @@ func TestRequestLoggingMiddlewareLogsRequestAndResponse(t *testing.T) {
 		requestEntry["event"] != "request" ||
 		requestEntry["request_id"] != "req_test" ||
 		requestEntry["method"] != "GET" ||
-		requestEntry["url"] != "/v1/files" ||
 		requestEntry["path"] != "/v1/files" ||
 		requestEntry["host"] != "127.0.0.1:18080" ||
 		requestEntry["client_kind"] != "web" ||
@@ -73,7 +72,7 @@ func TestRequestLoggingMiddlewareLogsRequestAndResponse(t *testing.T) {
 func TestRequestLoggingMiddlewareLogsServerError(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil)).With("component", "http")
-	handler := requestLoggingMiddleware(logger, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := observeRequests(logger, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/v1/files?beta=true", nil)
@@ -112,23 +111,6 @@ func parseSlogJSONLines(t *testing.T, logs string) []map[string]any {
 	return entries
 }
 
-func TestRequestLoggingResponseLevels(t *testing.T) {
-	for _, tc := range []struct {
-		status int
-		level  string
-	}{{500, "ERROR"}, {404, "WARN"}, {400, "WARN"}} {
-		t.Run(http.StatusText(tc.status), func(t *testing.T) {
-			var output bytes.Buffer
-			handler := requestLoggingMiddleware(slog.New(slog.NewJSONHandler(&output, nil)), nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tc.status) }))
-			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/example", nil))
-			records := parseSlogJSONLines(t, output.String())
-			if len(records) != 1 || records[0]["level"] != tc.level {
-				t.Fatalf("records = %v, want %s", records, tc.level)
-			}
-		})
-	}
-}
-
 func TestResponseLogLevel(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -156,7 +138,7 @@ func TestResponseLogLevel(t *testing.T) {
 func TestRequestLoggingClientCancellationAndRouteIDs(t *testing.T) {
 	var output bytes.Buffer
 	router := chi.NewRouter()
-	router.Use(requestLoggingMiddleware(slog.New(slog.NewJSONHandler(&output, nil)), router))
+	router.Use(observeRequests(slog.New(slog.NewJSONHandler(&output, nil)), router))
 	router.Post("/v1/code/sessions/{code_session_id}/worker/events", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})

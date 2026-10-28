@@ -35,10 +35,6 @@ func TestSetupDisabled(t *testing.T) {
 	if otel.GetTracerProvider() != before {
 		t.Fatal("disabled setup changed tracer provider")
 	}
-	var absent *Runtime
-	if absent.LogHandler() != nil || absent.Shutdown(t.Context()) != nil {
-		t.Fatal("nil runtime must be harmless")
-	}
 }
 
 func TestOTLPEndpointsAndHeaders(t *testing.T) {

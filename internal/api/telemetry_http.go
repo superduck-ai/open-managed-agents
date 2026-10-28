@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -68,24 +69,6 @@ var routeTelemetry = map[string]requestTelemetry{
 	"/v1/code/brain/claims":                                     longPollRequest,
 }
 
-type observedResponse struct {
-	status   int
-	canceled bool
-}
-
-func serveObserved(w http.ResponseWriter, r *http.Request, next http.Handler) observedResponse {
-	wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
-	next.ServeHTTP(wrapped, r)
-	response := observedResponse{status: wrapped.Status()}
-	if response.status == 0 {
-		response.status = http.StatusOK
-	}
-	if response.status >= http.StatusInternalServerError && httpapi.ClientGone(r) {
-		response.status, response.canceled = clientClosedRequestStatus, true
-	}
-	return response
-}
-
 func eachRouteParam(r *http.Request, visit func(routeParam, string)) {
 	routeContext := chi.RouteContext(r.Context())
 	if routeContext == nil {
@@ -116,46 +99,72 @@ func routeParamAttributes(r *http.Request) []attribute.KeyValue {
 	return attrs
 }
 
-func telemetryMiddleware(routes chi.Routes) func(http.Handler) http.Handler {
+func observeRequests(logger *slog.Logger, routes chi.Routes) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return observeRequests(routes, next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			policy := requestTelemetryFor(routes, r)
+			startedAt := time.Now()
+			requestID := httpapi.RequestID(r.Context())
+			ctx, span := r.Context(), trace.SpanFromContext(r.Context())
+			if policy.traced {
+				ctx, span = telemetry.StartRoot(ctx, r.Method, workerTraceParent(r),
+					attribute.String("http.request.method", r.Method),
+					telemetry.AttrRequestID.String(requestID),
+				)
+				r = r.WithContext(ctx)
+			}
+			requestLogged := logger.Enabled(ctx, slog.LevelDebug)
+			var fields logRequestFields
+			if requestLogged {
+				fields = requestLogFields(r)
+				logger.DebugContext(ctx, "http request", httpLogAttrs("request", requestID, fields)...)
+			}
+
+			wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			next.ServeHTTP(wrapped, r)
+			elapsed := time.Since(startedAt)
+			status, canceled := wrapped.Status(), false
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if status >= http.StatusInternalServerError && httpapi.ClientGone(r) {
+				status, canceled = clientClosedRequestStatus, true
+			}
+			route := requestRoutePattern(r)
+			if policy.traced {
+				endRequestSpan(span, r, route, status, canceled)
+			}
+			if policy.measured {
+				httpRequestDuration.Get().Record(ctx, elapsed.Seconds(), metric.WithAttributes(
+					attribute.String("http.request.method", r.Method),
+					attribute.String("http.route", route),
+					attribute.Int("http.response.status_code", status),
+				))
+			}
+			level := responseLogLevel(status, canceled, elapsed, policy.longPoll)
+			if !logger.Enabled(ctx, level) {
+				return
+			}
+			if !requestLogged {
+				fields = requestLogFields(r)
+			}
+			attrs := httpLogAttrs("response", requestID, fields, "status", status, "duration_ms", durationMilliseconds(elapsed))
+			logger.Log(ctx, level, "http response", append(attrs, routeParamLogAttrs(r)...)...)
+		})
 	}
 }
 
-func observeRequests(routes chi.Routes, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		policy := requestTelemetryFor(routes, r)
-		if !policy.measured {
-			next.ServeHTTP(w, r)
-			return
-		}
-		startedAt := time.Now()
-		ctx, span := r.Context(), trace.SpanFromContext(r.Context())
-		if policy.traced {
-			ctx, span = telemetry.StartRoot(ctx, r.Method, workerTraceParent(r),
-				attribute.String("http.request.method", r.Method),
-				telemetry.AttrRequestID.String(httpapi.RequestID(r.Context())),
-			)
-		}
-		r = r.WithContext(ctx)
-		response := serveObserved(w, r, next)
-		if response.canceled {
-			span.SetAttributes(attribute.Bool("oma.client_canceled", true))
-		}
-		route := requestRoutePattern(r)
-		span.SetName(r.Method + " " + route)
-		span.SetAttributes(attribute.String("http.route", route), attribute.Int("http.response.status_code", response.status))
-		span.SetAttributes(routeParamAttributes(r)...)
-		if response.status >= http.StatusInternalServerError {
-			span.SetStatus(codes.Error, http.StatusText(response.status))
-		}
-		span.End()
-		httpRequestDuration.Get().Record(ctx, time.Since(startedAt).Seconds(), metric.WithAttributes(
-			attribute.String("http.request.method", r.Method),
-			attribute.String("http.route", route),
-			attribute.Int("http.response.status_code", response.status),
-		))
-	})
+func endRequestSpan(span trace.Span, r *http.Request, route string, status int, canceled bool) {
+	if canceled {
+		span.SetAttributes(attribute.Bool("oma.client_canceled", true))
+	}
+	span.SetName(r.Method + " " + route)
+	span.SetAttributes(attribute.String("http.route", route), attribute.Int("http.response.status_code", status))
+	span.SetAttributes(routeParamAttributes(r)...)
+	if status >= http.StatusInternalServerError {
+		span.SetStatus(codes.Error, http.StatusText(status))
+	}
+	span.End()
 }
 
 func workerTraceParent(r *http.Request) string {

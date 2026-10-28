@@ -372,7 +372,7 @@ telemetry:
   enabled: false
   service_name: oma-server
   otlp:
-    base_url: http://openobserve:5080 # 只写协议、主机与端口，不带路径
+    base_url: http://openobserve:5080 # 只写协议、主机与端口，不带路径、query 或 fragment
     organization: oma
     username: ""
     password: "" # 敏感值：OpenObserve 写入账号密码
@@ -386,7 +386,7 @@ telemetry:
     export_interval: 30s
   logs:
     enabled: true
-    level: info
+    level: info # console 与 OTLP 日志共用的最低级别；设为 debug 可看到 2xx 访问日志
   state_metrics:
     interval: 60s
     stale_running_after: 10m

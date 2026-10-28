@@ -208,8 +208,7 @@ func NewServer(deps ServerDeps) *Server {
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
-	router.Use(telemetryMiddleware(router))
-	router.Use(requestLoggingMiddleware(componentLogger("http"), router))
+	router.Use(observeRequests(componentLogger("http"), router))
 	router.Use(s.recoverMiddleware)
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -401,7 +400,7 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Mount("/messages/batches", s.batch)
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)
-	r.Mount("/sessions", s.sessions)
+	r.Mount("/sessions", s.sessions.Router())
 	r.Mount("/skills", s.skills)
 	if s.tunnels != nil {
 		r.Mount("/tunnels", s.tunnels)

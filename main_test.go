@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,8 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -151,5 +155,22 @@ func TestLogContextAttrs(t *testing.T) {
 	}
 	if attrs := requestIDAttrs(ctx); len(attrs) != 1 || attrs[0].Key != "request_id" || attrs[0].Value.String() != "req_test" {
 		t.Fatalf("OTLP context attrs = %v", attrs)
+	}
+}
+
+func TestApplicationLoggerHonorsLevel(t *testing.T) {
+	runtime, err := telemetry.Setup(t.Context(), config.TelemetryConfig{}, "test", slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		level slog.Level
+		want  bool
+	}{{slog.LevelInfo, false}, {slog.LevelDebug, true}} {
+		var output bytes.Buffer
+		newApplicationLogger(logging.NewConsoleHandler(&output, tc.level), runtime, tc.level).Debug("debug probe")
+		if got := bytes.Contains(output.Bytes(), []byte("debug probe")); got != tc.want {
+			t.Fatalf("level %v: debug written = %v, want %v", tc.level, got, tc.want)
+		}
 	}
 }

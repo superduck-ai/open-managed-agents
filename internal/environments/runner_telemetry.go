@@ -20,22 +20,20 @@ const (
 )
 
 type runnerInstruments struct {
-	queueWait           metric.Float64Histogram
-	runs                metric.Int64Counter
-	runDuration         metric.Float64Histogram
-	stageDuration       metric.Float64Histogram
-	staleRecoveryClaims metric.Int64Counter
-	sandboxEnsure       metric.Float64Histogram
+	queueWait     metric.Float64Histogram
+	runs          metric.Int64Counter
+	runDuration   metric.Float64Histogram
+	stageDuration metric.Float64Histogram
+	sandboxEnsure metric.Float64Histogram
 }
 
 var runnerMetrics = telemetry.NewInstruments(func(meter metric.Meter) runnerInstruments {
 	return runnerInstruments{
-		queueWait:           telemetry.Histogram(meter, "oma.runner.queue_wait", "s", "Runner queue wait", telemetry.LongWaitBuckets()),
-		runs:                telemetry.Counter(meter, "oma.runner.runs", "{run}", "Runner runs"),
-		runDuration:         telemetry.Histogram(meter, "oma.runner.run.duration", "s", "Runner run duration", telemetry.LatencyBuckets()),
-		stageDuration:       telemetry.Histogram(meter, "oma.runner.stage.duration", "s", "Runner stage duration", telemetry.LatencyBuckets()),
-		staleRecoveryClaims: telemetry.Counter(meter, "oma.runner.stale_recovery_claims", "{work}", "Runner stale work recovery claims"),
-		sandboxEnsure:       telemetry.Histogram(meter, "oma.sandbox.ensure.duration", "s", "Session sandbox ensure duration", telemetry.LatencyBuckets()),
+		queueWait:     telemetry.Histogram(meter, "oma.runner.queue_wait", "s", "Runner queue wait", telemetry.LongWaitBuckets()),
+		runs:          telemetry.Counter(meter, "oma.runner.runs", "{run}", "Runner runs"),
+		runDuration:   telemetry.Histogram(meter, "oma.runner.run.duration", "s", "Runner run duration", telemetry.LatencyBuckets()),
+		stageDuration: telemetry.Histogram(meter, "oma.runner.stage.duration", "s", "Runner stage duration", telemetry.LatencyBuckets()),
+		sandboxEnsure: telemetry.Histogram(meter, "oma.sandbox.ensure.duration", "s", "Session sandbox ensure duration", telemetry.LatencyBuckets()),
 	}
 })
 
@@ -58,14 +56,12 @@ func startRunnerRun(ctx context.Context, work db.EnvironmentWork) (context.Conte
 	}
 	ctx, span := telemetry.StartRoot(ctx, "oma.runner.run", work.TraceParent, runnerRunAttributes(work, trigger)...)
 	now := time.Now()
-	instruments := runnerMetrics.Get()
 	if trigger == runnerTriggerStaleRecovery {
 		span.SetAttributes(staleRecoveryAttributes(work, now)...)
-		instruments.staleRecoveryClaims.Add(ctx, 1)
 	} else if work.QueuedAt != nil {
 		queueWait := now.Sub(*work.QueuedAt)
 		span.SetAttributes(attribute.Float64("oma.runner.queue_wait_s", queueWait.Seconds()))
-		telemetry.RecordWait(ctx, instruments.queueWait, queueWait)
+		telemetry.RecordWait(ctx, runnerMetrics.Get().queueWait, queueWait)
 	}
 	run := &runnerRun{span: span, sessionID: work.SessionExternalID, startedAt: now, trigger: trigger, endRun: func(err error) {
 		telemetry.SetErrorStatus(span, err)

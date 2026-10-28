@@ -281,9 +281,9 @@ handler 只调用这些函数；DB 层返回 `ErrPreconditionFailed`、`ErrNotFo
 - `Request` 在 `worker_claim_requested_at` 为空时写入 `worker_claim_trace_parent`，同一请求周期内的重复派发不覆盖首个值。
 - 领取长轮询（`POST /v1/code/brain/claims`）不建 HTTP span、不计入 `http.server.request.duration`，访问日志不适用 2 秒慢响应规则；由 `oma.brain_claim.poll.duration{oma.outcome=claimed|empty|error|canceled|timeout}` 覆盖。
 - 领取成功时建根 span `oma.brain_claim.issue` 并 link 到派发 trace，带 requested 标记的领取记录 `oma.brain_claim.queue_wait`。
-- 释放与耗尽分别计入 `oma.brain_claim.releases{oma.reason,oma.outcome}`、`oma.brain_claim.exhausted{oma.reason=attempts|permanent}`。
+- 释放与耗尽只记日志：`brain worker released code session`（Info，带 `reason`）、`brain worker claims exhausted`、`brain worker reported permanent admission failure`（Warn），看板按 `body` 统计。
 - 状态快照提供 `oma.brain_claims.pending{oma.state=waiting|claimed|takeover}` 与 `oma.brain_claims.oldest_waiting_age`，替代原 `OMA_BRAIN_TASKS` stream/consumer gauge；`takeover` 统计执行端崩溃后、公共会话仍在运行而等待接管的行，DSH 另报 `oma.brain.sessions.capacity` 用于计算利用率。
-- DSH 侧 `oma.brain.task.admissions{outcome,stage,release_reason,failure_reason}` 与 `oma.brain.claim.failures{operation,failure_reason}` 覆盖准入结果和服务端看不到的领取请求失败。
+- DSH 侧由 `oma_task_admitted`/`oma_task_admission_failed`、`oma_task_claim_failed`/`oma_task_release_failed` 日志覆盖准入结果和服务端看不到的领取请求失败。
 
 ## 测试与验证
 

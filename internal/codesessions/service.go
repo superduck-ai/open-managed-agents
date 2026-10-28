@@ -196,13 +196,11 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 
 func (s *Service) resumeSandboxForCodeSession(ctx context.Context, codeSession db.CodeSession) error {
 	ctx, span := telemetry.Start(ctx, "oma.sandbox.resume", telemetry.AttrCodeSessionID.String(codeSession.ExternalID), telemetry.AttrSessionID.String(codeSession.SessionExternalID))
-	startedAt := time.Now()
 	outcome, err := s.resumeSandbox(ctx, codeSession)
 	if err != nil {
 		outcome = telemetry.OutcomeError
 	}
 	span.SetAttributes(telemetry.AttrOutcome.String(outcome))
-	observeOperation(ctx, codeSessionMetrics.Get().sandboxResume, outcome, startedAt)
 	telemetry.SetErrorStatus(span, err)
 	span.End()
 	return err

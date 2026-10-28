@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { context, createNoopMeter, trace, TraceFlags, type Attributes, type Counter, type Meter, type UpDownCounter } from "@opentelemetry/api";
+import { context, createNoopMeter, trace, TraceFlags, type Attributes, type Meter, type UpDownCounter } from "@opentelemetry/api";
 import { SeverityNumber, type Logger } from "@opentelemetry/api-logs";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
@@ -19,11 +19,6 @@ const SCOPE = "oma-brain-dsh";
 interface BrainInstruments {
   sessionsActive: UpDownCounter;
   sessionsCapacity: UpDownCounter;
-  taskAdmissions: Counter;
-  claimFailures: Counter;
-  sessionTasksStopped: Counter;
-  workerRequestFailures: Counter;
-  leaseLost: Counter;
 }
 
 let logger: Logger | undefined;
@@ -83,11 +78,6 @@ function createInstruments(meter: Meter): BrainInstruments {
   return {
     sessionsActive: meter.createUpDownCounter("oma.brain.sessions.active", { unit: "{session}", description: "Sessions owned by this Brain process" }),
     sessionsCapacity: meter.createUpDownCounter("oma.brain.sessions.capacity", { unit: "{session}", description: "Maximum sessions this Brain process accepts" }),
-    taskAdmissions: meter.createCounter("oma.brain.task.admissions", { unit: "{task}", description: "Brain task admissions by outcome" }),
-    claimFailures: meter.createCounter("oma.brain.claim.failures", { unit: "{request}", description: "Failed Brain claim and release requests" }),
-    sessionTasksStopped: meter.createCounter("oma.brain.session_tasks.stopped", { unit: "{session}", description: "Brain session tasks stopped by reason" }),
-    workerRequestFailures: meter.createCounter("oma.brain.worker_requests.failed", { unit: "{request}", description: "Failed CCRv2 worker requests" }),
-    leaseLost: meter.createCounter("oma.brain.lease.lost", { unit: "{session}", description: "CCRv2 leases lost by stop reason" }),
   };
 }
 

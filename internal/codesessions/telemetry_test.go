@@ -137,9 +137,7 @@ func TestWorkerDeliveryTelemetryCompatibility(t *testing.T) {
 			if len(recorder.Ended()) != 0 {
 				t.Fatal("ACK span emitted before commit")
 			}
-			if err == nil {
-				observeSettledWorkerDeliveries(t.Context(), "cse_test", result.settled)
-			}
+			recordWorkerDeliveryOutcome(t.Context(), "cse_test", []workerDeliveryUpdate{{EventID: "evt_test", Status: tc.status}}, result, err)
 			spans := recorder.Ended()
 			if len(spans) != tc.spans {
 				t.Fatalf("span count = %d, want %d", len(spans), tc.spans)
@@ -230,23 +228,4 @@ func TestBrainClaimIssueLinksDispatchTrace(t *testing.T) {
 	if point := telemetrytest.Single(t, telemetrytest.Collect(t, reader), "oma.brain_claim.queue_wait"); point.Count != 1 || point.Value < 3 || point.Value > 5 {
 		t.Fatalf("queue wait: %+v", point)
 	}
-}
-
-func TestBrainClaimReleaseAndExhaustionCounters(t *testing.T) {
-	reader := telemetrytest.MetricReader(t)
-	recordBrainClaimRelease(t.Context(), BrainClaimShutdown, nil)
-	recordBrainClaimRelease(t.Context(), BrainClaimIdle, db.ErrPreconditionFailed)
-	recordBrainClaimRelease(t.Context(), BrainClaimAdmissionFailed, errors.New("database unavailable"))
-	recordBrainClaimExhausted(t.Context(), "permanent")
-	data := telemetrytest.Collect(t, reader)
-	releases := map[string]float64{}
-	for _, point := range telemetrytest.Points(t, data, "oma.brain_claim.releases") {
-		reason, _ := point.Attributes.Value(telemetry.AttrReason)
-		outcome, _ := point.Attributes.Value(telemetry.AttrOutcome)
-		releases[reason.AsString()+"/"+outcome.AsString()] = point.Value
-	}
-	if len(releases) != 3 || releases["shutdown/ok"] != 1 || releases["idle/conflict"] != 1 || releases["admission_failed/error"] != 1 {
-		t.Fatalf("releases: %v", releases)
-	}
-	telemetrytest.AssertSingle(t, data, "oma.brain_claim.exhausted", 1, map[string]string{"oma.reason": "permanent"})
 }

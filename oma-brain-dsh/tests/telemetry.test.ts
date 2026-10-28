@@ -76,22 +76,19 @@ test("Brain metrics use bounded attributes", async () => {
   startTelemetry(ENV, { metricReader: reader });
   brainMetrics().sessionsActive.add(1);
   brainMetrics().sessionsCapacity.add(8);
-  brainMetrics().sessionTasksStopped.add(1, { reason: "idle" });
   await reader.forceFlush();
   const names = exporter.getMetrics().flatMap((batch) => batch.scopeMetrics.flatMap((scope) => scope.metrics))
     .map((metric) => metric.descriptor.name);
-  expect(names).toEqual(expect.arrayContaining(["oma.brain.sessions.active", "oma.brain.sessions.capacity", "oma.brain.session_tasks.stopped"]));
+  expect(names).toEqual(expect.arrayContaining(["oma.brain.sessions.active", "oma.brain.sessions.capacity"]));
   const active = brainMetrics();
   await stopTelemetry();
   expect(brainMetrics()).not.toBe(active);
-  expect(() => brainMetrics().leaseLost.add(1, { stop_reason: "request_rejected" })).not.toThrow();
+  expect(() => brainMetrics().sessionsActive.add(1)).not.toThrow();
 });
 
-test("claim admissions carry the dispatch trace context and record bounded outcomes", async () => {
+test("claim admissions carry the dispatch trace context", async () => {
   const logs = new InMemoryLogRecordExporter();
-  const metrics = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
-  const reader = new PeriodicExportingMetricReader({ exporter: metrics, exportIntervalMillis: 60_000 });
-  startTelemetry(ENV, { logProcessor: new SimpleLogRecordProcessor(logs), metricReader: reader });
+  startTelemetry(ENV, { logProcessor: new SimpleLogRecordProcessor(logs) });
   const traceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01";
   const queue: unknown[] = [
     { session_id: "cse_ok", worker_epoch: 2, trace_parent: traceParent },
@@ -123,11 +120,5 @@ test("claim admissions carry the dispatch trace context and record bounded outco
   const failed = records.find((record) => record.body === "oma_task_admission_failed");
   expect(failed?.attributes.release_reason).toBe("permanent");
   expect(failed?.spanContext).toBeUndefined();
-  await reader.forceFlush();
-  const admissions = metrics.getMetrics().flatMap((batch) => batch.scopeMetrics.flatMap((scope) => scope.metrics))
-    .find((metric) => metric.descriptor.name === "oma.brain.task.admissions");
-  expect(admissions?.dataPoints.map((point) => point.attributes)).toEqual(expect.arrayContaining([
-    { outcome: "admitted" },
-    { outcome: "failed", stage: "validate_assignment", release_reason: "permanent", failure_reason: "unexpected_error" },
-  ]));
+  expect(failed?.attributes.failure_reason).toBe("unexpected_error");
 });

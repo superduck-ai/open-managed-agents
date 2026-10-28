@@ -125,11 +125,11 @@ func formatHTTPLine(r slog.Record, values map[string]string, order []string) str
 		b.WriteString("ms")
 	}
 	b.WriteString(" ")
-	b.WriteString(values["url"])
+	b.WriteString(values["path"])
 
 	skip := map[string]bool{
 		"component": true, "event": true, "client_kind": true,
-		"method": true, "status": true, "duration_ms": true, "url": true,
+		"method": true, "status": true, "duration_ms": true, "path": true,
 	}
 	appendRest(&b, values, order, skip)
 	return b.String()

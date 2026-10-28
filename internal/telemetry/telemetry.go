@@ -81,16 +81,13 @@ func (r *Runtime) setupProviders(ctx context.Context, cfg config.TelemetryConfig
 }
 
 func (r *Runtime) LogHandler() slog.Handler {
-	if r == nil || r.loggerProvider == nil {
+	if r.loggerProvider == nil {
 		return nil
 	}
 	return newScalarValueHandler(otelslog.NewHandler(InstrumentationName, otelslog.WithLoggerProvider(r.loggerProvider)))
 }
 
 func (r *Runtime) Shutdown(ctx context.Context) error {
-	if r == nil {
-		return nil
-	}
 	var errs []error
 	for index := len(r.shutdowns) - 1; index >= 0; index-- {
 		errs = append(errs, r.shutdowns[index](ctx))

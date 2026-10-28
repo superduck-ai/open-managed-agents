@@ -92,7 +92,7 @@ flowchart LR
 | SSE 循环不发 NAK，消息至少等 1 分钟重投 | `oma.worker_event.redeliveries`、`oma.worker_event.queue_wait` |
 | Redis ack 引用缺失时回执被静默忽略 | `oma.worker_event.updates{oma.result=ignored}` |
 | 扇出发布失败只打 Warn | `oma.fanout.publish.failures` |
-| 过期 worker 终止 code session 但公开状态不变 | `oma.worker_event.expired` |
+| 过期 worker 终止 code session 但公开状态不变 | Error 日志 `code session worker event expired` |
 
 ## 3. 总体架构
 
@@ -120,7 +120,9 @@ flowchart TB
   `telemetry.state_metrics`、指标 `oma.state_metrics.*` 保持一致。
 - 部署上不新增任何组件：只需要在配置中填写现有 OpenObserve 的地址和写入账号。
 - 全局 provider 通过 `otel.SetTracerProvider`、`otel.SetMeterProvider`、`global.SetLoggerProvider`
-  在启动早期设置一次；未启用时保持 OTel 默认的 no-op 实现，所有埋点调用都是廉价空操作。
+  在启动早期设置一次；未启用时保持 OTel 默认的 no-op 实现。需要额外解析或分配才能得到的 span 属性
+  （输入形状、worker 事件批次类型、路由参数、访问日志字段）先检查 `span.IsRecording()`、`policy.traced` 或
+  `logger.Enabled`，未启用时不做这部分工作。
 - OpenObserve 端点沿用 worker OTLP 转发的格式：`{base_url}/api/{organization}/v1/{traces|metrics|logs}`，
   使用 Basic 认证，traces 和 logs 通过 `stream-name` 头写入独立流 `oma_server`，
   不与 worker 的 `oma_claude_code` 混用。
@@ -181,8 +183,10 @@ sequenceDiagram
 ### 4.3 不建 span 的路由与长连接
 
 观测策略按 chi 路由模板决定，而不是按请求路径做前后缀匹配。`internal/api/telemetry_http.go` 的
-`routeTelemetry` 以完整路由模板为键；中间件在调用处理器前用 `chi.Routes.Find` 解析当前请求的模板，未声明的
-路由默认建 span 并记录 HTTP 耗时。`sessions.Handler` 实现 `chi.Routes`，挂载后其内部路由对 `Find` 可见；
+`routeTelemetry` 以完整路由模板为键；`observeRequests` 是唯一的 HTTP 观测中间件，同时负责 span、HTTP 耗时与访问日志，
+每个请求只包装一次 ResponseWriter、只做一次 `chi.Routes.Find`。它在调用处理器前解析当前请求的模板，未声明的
+路由默认建 span 并记录 HTTP 耗时；不建 span、不记指标的路由仍写访问日志。`sessions.Handler.Router()` 返回内部
+`chi.Router` 供 `Mount`，挂载后其内部路由对 `Find` 可见；
 filestore 与 connector 以挂载点 `/*` 整体声明。`TestRequestTelemetryPolicyFollowsServerRoutes` 用真实服务路由
 校验每个声明模板都已注册、示例请求解析到预期策略，路由改名会使测试失败。
 
@@ -281,7 +285,9 @@ E2B 单次调用等更细的子 span 不要求带会话属性，在时间线里�
   OTLP 一路由 otelslog 从 ctx 写入原生 trace/span ID，`ContextHandler` 只补 `request_id`，
   避免同一条导出记录同时带属性与原生字段两份 trace ID。记录中已显式携带的同名键
   （例如访问日志和既有日志传入的 `request_id`）保持原值，不重复追加。
-- 启用 `telemetry.logs` 时，日志同时写 console 和 OTLP；OTLP 一路受 `telemetry.logs.level` 过滤。
+- 启用 `telemetry.logs` 时，日志同时写 console 和 OTLP；console 与 OTLP 两路都受 `telemetry.logs.level` 过滤
+  （默认 `info`，读取配置前的启动日志固定为 Info）。默认级别下 2xx 访问日志仍是 Debug，不在 console 输出；
+  设为 `debug` 即可看到。
 - 字段名一律 snake_case。访问日志字段在 P1 改为 snake_case（第 P1 节）。
 - `session status event` 为 Debug，状态时间线默认使用 `oma.session.status` span；
   `session error event` 为 Warn。Runner 失败日志补充 `session_id`、`work_id`。
@@ -311,7 +317,6 @@ E2B 单次调用等更细的子 span 不要求带会话属性，在时间线里�
 | `oma.worker_event.redeliveries` | Int64Counter | — | `oma.worker_event.lane` | 投递次数大于 1 时 |
 | `oma.worker_event.processed.latency` | Float64Histogram | longWait | `oma.worker_event.lane` | 回执 `processed` 时，从发布到处理完成 |
 | `oma.worker_event.updates` | Int64Counter | — | `oma.delivery.status`=`received`、`processing`、`processed`、`other`；`oma.outcome`=`applied`、`ignored`、`error`、`canceled`、`timeout` | `applyWorkerDeliveryUpdates`：锁事务成功提交后才按 `applied`/`ignored` 记录；任一步失败则整批按失败 outcome 记录，`publishProcessingInputs` 失败记 `processing`/`error` |
-| `oma.sandbox.resume.duration` | Float64Histogram | latency | `oma.outcome`=`extended`、`recovery_requested`、`recovery_scheduled`、`no_provider_id`、`no_sandbox`、`disabled`、`brain_claim`、`self_hosted`、`error` | `resumeSandboxForCodeSession` |
 | `oma.worker.register.delay` | Float64Histogram | latency | 无 | 注册成功时，`now - JWT iat`，仅记录不超过 900 秒的值 |
 | `oma.tool_permission.decisions` | Int64Counter | — | `oma.decision`、`oma.tool.kind` | `handleToolPermissionRequest` |
 | `oma.tool_permission.responses` | Int64Counter | — | `oma.behavior`、`oma.source`=`respondToToolPermissionRequest` 的 source 字面量 | `respondToToolPermissionRequest` |
@@ -321,17 +326,17 @@ E2B 单次调用等更细的子 span 不要求带会话属性，在时间线里�
 | `oma.sse.subscribers.dropped` | Int64Counter | — | 无 | `streamHub.enqueue` 丢弃订阅者 |
 | `oma.fanout.publish.failures` | Int64Counter | — | 无 | `publishSessionEvents` |
 | `oma.fanout.lag` | Float64Histogram | latency | 无 | `NATSBus.receiveMessage` |
-| `oma.session.turns` | Int64Counter | — | `oma.stop_reason`，白名单见 P2.11 | idle 且有 stop_reason 时 |
-| `oma.session.errors` | Int64Counter | — | `error.type`、`oma.retry_status`，白名单见 P2.11 | session.error |
 
 已移除的创建/注册/心跳计数器由 HTTP 指标替代；定时部署创建量继续从部署任务结果观察。
+同一事实只保留一份记录：回合结局与 session.error 由 `oma.session.status`/`oma.session.error` span 回答，
+沙箱唤醒结果由 `oma.sandbox.resume` span 的 `oma.outcome` 回答，不再另设 `oma.session.turns`、
+`oma.session.errors`、`oma.sandbox.resume.duration` 计数器。
 
 ### 6.3 Runner 与沙箱（P3）
 
 | 名称 | 类型 | 分桶 | 属性与取值 | 记录位置 |
 | --- | --- | --- | --- | --- |
 | `oma.runner.queue_wait` | Float64Histogram | longWait | 无 | 领取 queued Work 成功后，`now - queued_at`；恢复领取不记录 |
-| `oma.runner.stale_recovery_claims` | Int64Counter | — | 无 | 领取到非 queued 的过期 Work（P8） |
 | `oma.runner.runs` | Int64Counter | — | `oma.runner.trigger`、`oma.outcome`、`oma.runner.recovered` | `runnerRun.end` |
 | `oma.runner.run.duration` | Float64Histogram | latency | `oma.runner.trigger`、`oma.outcome`、`oma.runner.recovered` | `runnerRun.end` |
 | `oma.runner.stage.duration` | Float64Histogram | latency | `oma.runner.trigger`、`oma.stage`、`oma.outcome` | `runnerRun.begin` 与 `end` |
@@ -368,13 +373,13 @@ NATS Work）、`lazy_mcp`（首次工具调用触发沙箱创建）、`prewarm`�
 | `oma.river.job.queue_wait` | Float64Histogram | longWait | `oma.river.kind`、`oma.river.queue` |
 | `oma.webhook.deliveries` | Int64Counter | — | `oma.outcome`=`ok`、`retry`、`dropped` |
 | `oma.webhook.delivery.duration` | Float64Histogram | latency | `oma.outcome` |
-| `oma.worker_event.expired` | Int64Counter | — | 无 |
 
 River job kind 和 queue 都是代码中的有限常量，可以作为指标属性。
 
 ### 6.6 状态与积压 gauge（P6）
 
-状态量为 `Int64ObservableGauge`，每个副本都会上报，全局状态对同一组属性取 `max`。连接池按实例聚合；采集失败是计数器。
+状态量为 `Int64ObservableGauge`，每个副本都会上报，全局状态对同一组属性取 `max`。连接池按实例聚合；采集失败只写
+Warn 日志（`collect operational state counts`、`collect NATS stream|consumer[ info]`），不另设计数器。
 
 | 名称 | 属性与取值 | 来源 |
 | --- | --- | --- |
@@ -391,7 +396,6 @@ River job kind 和 queue 都是代码中的有限常量，可以作为指标属�
 | `oma.nats.consumer.ack_pending` | `oma.nats.stream`、`oma.nats.consumer` | `NumAckPending` |
 | `oma.nats.consumer.redelivered` | `oma.nats.stream`、`oma.nats.consumer` | `NumRedelivered` |
 | `oma.db.pool.connections` | `oma.state`=`acquired`、`idle`、`total`、`max` | `pgxpool.Stat`，按实例求和 |
-| `oma.state_metrics.collect.failures` | `oma.reason`=`database`、`nats` | Int64Counter |
 
 ## 7. 配置
 
@@ -429,8 +433,8 @@ telemetry:
 验证位于 `internal/config/telemetry.go`。完整字段契约见 [配置参考](../../configuration-reference.yaml)。
 外部字符串在配置边界修剪一次，密码不修剪。
 
-开启遥测后要求服务名、组织非空，`base_url` 为不带路径的 HTTP(S) 地址（服务端自行拼接 `/api/{organization}/v1/{signal}`，
-与 DSH 使用的标准 OTel `OTEL_EXPORTER_OTLP_ENDPOINT=.../api/{organization}` 约定不同，带路径的值会被拒绝），认证用户名/密码成对出现；
+开启遥测后要求服务名、组织非空，`base_url` 为不带路径、query 与 fragment 的 HTTP(S) 地址（服务端自行拼接 `/api/{organization}/v1/{signal}`，
+与 DSH 使用的标准 OTel `OTEL_EXPORTER_OTLP_ENDPOINT=.../api/{organization}` 约定不同，带路径、query 或 fragment 的值会被拒绝），认证用户名/密码成对出现；
 启用的 traces/logs 流名非空，日志级别合法，超时为正，指标导出间隔至少 1 秒，状态刷新至少 10 秒，
 stale/stuck 阈值为正。状态指标没有独立开关：`StateMetricsActive` 只要求遥测与 metrics 同时开启，
 状态 gauge 是排查积压与卡死的基础数据，采集成本为每副本每个刷新周期约十条带部分索引的查询。
@@ -472,7 +476,8 @@ OTel 自身的导出错误只发往 bootstrap console logger，避免写回 OTLP
 实现：[internal/logging/context.go](../../../internal/logging/context.go)。
 
 `ContextHandler` 使用构造时注入的非 nil extractor 为日志补充上下文属性，保留记录中已显式设置的同名字段。
-`LevelHandler` 控制 OTLP 一路的最低级别，多路分发使用标准库 `slog.NewMultiHandler`。
+console 一路由 `ConsoleHandler` 自身按 `telemetry.logs.level` 过滤，`LevelHandler` 控制 OTLP 一路的最低级别，
+多路分发使用标准库 `slog.NewMultiHandler`。
 `scalarValueHandler` 把具名类型转换为可导出的标量，避免 UUID 被当作数组、自定义类型出现 `unhandled:`。
 
 ### P0.5 日志上下文组装
@@ -500,10 +505,11 @@ HTTP server、River、NATS 等组件关闭后执行。启动失败由 console-on
 实现：[internal/api/telemetry_http.go](../../../internal/api/telemetry_http.go)、
 [internal/api/http_log.go](../../../internal/api/http_log.go)。
 
-请求策略分别决定是否建 span、是否记 HTTP 指标，具体路径见第 4.3 节。中间件顺序为请求 ID、遥测、
-访问日志、panic recovery，使日志能关联 trace，恢复后的 500 能被观测。
-两层共用 `serveObserved` 完成响应状态归一：未显式写状态为 200，请求取消导致的 5xx 在遥测中记为 499，
-不改变已写出的 HTTP 响应。路由属性与日志字段共用同一张参数映射表。
+请求策略分别决定是否建 span、是否记 HTTP 指标，具体路径见第 4.3 节。中间件顺序为请求 ID、`observeRequests`
+（span、HTTP 耗时、访问日志合为一层）、panic recovery，使日志能关联 trace，恢复后的 500 能被观测。
+`observeRequests` 只包装一次 ResponseWriter 并完成响应状态归一：未显式写状态为 200，请求取消导致的 5xx 记为 499，
+不改变已写出的 HTTP 响应。路由属性与日志字段共用同一张参数映射表，路由参数 span 属性只在建 span 时计算，
+日志字段只在对应级别启用时计算。
 
 ### P1.2 Principal 属性
 
@@ -521,7 +527,8 @@ HTTP instrument 定义在 `internal/api/telemetry_http.go`。其他指标同样�
 
 ### P1.4 访问日志与取消
 
-字段统一为 snake_case。请求日志为 Debug；响应小于 400 且耗时小于 2 秒为 Debug，慢响应为 Info，
+字段统一为 snake_case。路径只写 `path`（不含 query，凭据常出现在 query 中），不再重复写同值的 `url`；
+console 行首打印 `path`。请求日志为 Debug；响应小于 400 且耗时小于 2 秒为 Debug，慢响应为 Info，
 4xx 为 Warn，5xx 为 Error，客户端取消导致的 499 为 Info。Brain 领取长轮询（第 4.3 节）按设计阻塞，
 不适用慢响应规则，成功与空轮询都保持 Debug。
 
@@ -530,8 +537,9 @@ HTTP instrument 定义在 `internal/api/telemetry_http.go`。其他指标同样�
 
 ### P1.5 测试与验收
 
-`internal/api/telemetry_http_test.go` 验证跳过路径、心跳只记指标、路由命名、租户属性、错误状态、
-499 与日志关联。`http_log_test.go` 与 `internal/httpapi/client_gone_test.go` 验证级别与取消边界。
+`internal/api/telemetry_http_test.go` 验证跳过路径（不建 span、不记指标但仍写访问日志）、心跳只记指标、路由命名、
+租户属性、错误状态、panic 后的 500、499 与日志关联。`http_log_test.go` 与 `internal/httpapi/client_gone_test.go`
+验证级别映射、query 不入日志与取消边界；`main_test.go` 的 `TestApplicationLoggerHonorsLevel` 验证 console 级别跟随配置。
 
 ## P2. 会话、消息队列与工具确认
 
@@ -561,8 +569,9 @@ SSE 请求本身无 HTTP span，因此 `Mark` 生成根 span，并 link 到生�
 ### P2.5 回执
 
 `internal/codesessions/worker_delivery.go` 记录 `applied`、`ignored`、`error`、`canceled`、`timeout`。
-`applyLockedWorkerDeliveryUpdates` 只收集每条回执的结果，锁事务提交后才统一记录指标与 span；
-事务失败时整批记失败 outcome，避免回滚后的重投把同一批回执重复计为 `applied`。
+`applyLockedWorkerDeliveryUpdates` 只收集每条回执的结果，锁事务结束后由 `recordWorkerDeliveryOutcome` 统一决定：
+提交成功按 `applied`/`ignored` 记录指标与 span，失败时整批记失败 outcome 且不产生 ACK span，
+避免回滚后的重投把同一批回执重复计为 `applied`；该分支由 `TestRecordWorkerDeliveryOutcome` 覆盖。
 成功处理 `processed` 时记录发布到处理完成的延迟，并以 `Mark` 生成 `oma.worker_event.ack`：
 它是当前 delivery HTTP 请求的子 span，另 link 到 `AckRef.TraceParent`，不再创建孤立的根 trace。
 
@@ -605,14 +614,18 @@ worker 输出事件的 span 标注在 `prepareWorkerOutputEvents` 中复用已�
 
 实现：[internal/sessions/outcome_telemetry.go](../../../internal/sessions/outcome_telemetry.go)。
 
-| 事件 | 日志 | span | 指标 |
-| --- | --- | --- | --- |
-| `session.status_*` | Debug `session status event` | `Mark` 生成 `oma.session.status`，包含事件类型与 stop_reason | idle 且存在 stop_reason 时计入 `oma.session.turns` |
-| `session.error` | Warn `session error event` | 零时长 `oma.session.error`，状态 Error | `oma.session.errors` |
+| 事件 | 日志 | span |
+| --- | --- | --- |
+| `session.status_*` | Debug `session status event` | `Mark` 生成 `oma.session.status`，包含事件类型与 stop_reason |
+| `session.error` | Warn `session error event` | 零时长 `oma.session.error`，状态 Error |
 
-指标标签使用白名单，未知值统一为 `other`：
+回合与错误只由这两类 span 记录，看板从 span 聚合，不另设计数器。payload 无法解析为 JSON 时输出一次 Warn
+`session outcome payload not decoded`（`session_id`、`event_id`、`event_type`、`error`），标签按缺失处理。
 
-- stop_reason：`end_turn`、`requires_action`、`retries_exhausted`。
+span 属性使用白名单，未知值统一为 `other`：
+
+- stop_reason：`end_turn`、`requires_action`、`retries_exhausted`、`budget_reached`（会话预算达到上限时
+  `budgetReachedIdleEvent` 发出的 idle）。
 - error.type：`unknown_error`、`billing_error`、`model_overloaded_error`、`model_rate_limited_error`、
   `model_request_failed_error`、`mcp_connection_failed_error`、`mcp_authentication_failed_error`、`mcp_egress_blocked_error`。
 - retry_status：`retrying`、`exhausted`、`terminal`。
@@ -715,7 +728,8 @@ Provider 测试覆盖 NotFound 等结果；`tests/sandbox_observability_test.go`
 
 ### P5.3 过期 worker
 
-`internal/codesessions/expiry_worker.go` 每成功终止一个过期 code session，累加 `oma.worker_event.expired`。
+`internal/codesessions/expiry_worker.go` 终止过期 code session 前写 Error 日志 `code session worker event expired`，
+看板按该日志计数，不另设计数器。
 
 ### P5.4 测试与验收
 
@@ -727,11 +741,11 @@ Provider 测试覆盖 NotFound 等结果；`tests/sandbox_observability_test.go`
 
 ### P6.1 索引迁移
 
-`00110_operational_metrics_indexes.sql` 创建四个状态部分索引，其中 Work 使用仅含 `state` 的
-`environment_work_live_state_v2_idx`，并清理旧版 `environment_work_live_state_v1_idx`。
+`00110_operational_metrics_indexes.sql` 创建四个 `v1` 状态部分索引，其中 Work 使用仅含 `state` 的
+`environment_work_live_state_v1_idx`，并删除分支开发期遗留的 `environment_work_live_state_v2_idx`（main 上不存在，删除为空操作）。
 观测迁移已重编号为 `00109`–`00111` 以避开 main 的 `00084`–`00108`；曾以旧编号 `00092`–`00094` 运行过本分支的库
-会把 main 的同号迁移视为已应用，须重建隔离库。
-迁移使用 `NO TRANSACTION` 与 `CONCURRENTLY`，先清理失败构建的遗留索引，再构建替代索引。
+会把 main 的同号迁移视为已应用，须重建隔离库；已按旧版 `00110` 建过 `v2` 索引的开发库 goose 不会重跑，索引定义相同，不影响运行。
+迁移使用 `NO TRANSACTION`、`CONCURRENTLY` 与 `IF NOT EXISTS`，已存在同名索引（部分执行或手工补建）时不会失败。
 
 Work 心跳更新 `updated_at`；把它放入索引会阻止 HOT 更新。状态计数只依赖 `state`，
 `stuck_starting` 可在少量 starting 行中筛选，因此 v2 不包含 `updated_at`。
@@ -788,22 +802,32 @@ drilldown（`type: byDashboard`，按文件夹名、看板标题与标签页名�
 - logs 流：消息文本在 `body` 列，级别在 `severity` 列（不是 `message`、`level`）；其他 slog 属性
   （`session_id`、`trace_id`、`request_id`、`component`、`error` 等）直接成为列。
 - SQL 引用的列如果从未写入过，整条查询报错（v0.91.1 为 `unknown field '<列名>'`，错误码 20004），CTE、
-  子查询或 `SELECT *` 都不能绕过，OpenObserve SQL 也没有"列存在才引用"的写法。日志面板只选用默认 `info`
-  导出级别下一定会写入的列（`reason`、`error_type`），不引用只由 Debug 记录写入的 `stop_reason` 或尚未出现的 `error`。
+  子查询或 `SELECT *` 都不能绕过，OpenObserve SQL 也没有"列存在才引用"的写法。日志面板只选用每条记录都会写入的列
+  （`severity`、`service_name`、`body`、`trace_id`、`session_id`/`code_session_id`），`reason`、`error_type`、
+  `failure_reason`、`stop_reason`、`error` 只在特定事件写入，引用它们会在首次写入前让整条查询失败；
+  状态采集失败面板从 `body` 推导来源（`collect NATS%` 为 `nats`，其余为 `database`），不引用 `stream`/`consumer`。
 - 已知限制：以下面板依赖只在特定流量中出现的列，在该类流量首次写入对应列之前会报错而不是显示 "No Data"，
   属于预期行为，流量出现后自动恢复：
   - 工具/沙箱 MCP（`oma_mcp_method`、`oma_tool_name`、`oma_tool_permission_wait_s`）：会话诊断的会话概要、
-    耗时构成、工具调用与权限、时间线，总览的工具调用失败率，执行页的工具调用与沙箱 MCP 非成功面板。
+    耗时构成、工具调用与权限、时间线，总览的沙箱工具调用失败率，执行页的沙箱工具调用与沙箱 MCP 非成功面板。
     纯对话会话所在的新流上，会话诊断只有回合、失败的 span 与日志面板可用。
   - 成功的模型调用（`oma_model_time_to_first_token_s`、`gen_ai_response_finish_reasons`）：总览首 token、
     执行页模型结束原因、会话诊断的模型调用。
   - DSH 服务级日志（`failure_reason`，`service_name='oma-brain'`）：Brain 页的准入结果与 DSH 警告与错误事件，
     需要 DSH 按 P9.3 开启 OTLP 日志并至少出现一次失败事件；字段名与 DSH `workerDiagnostic`/`failureDiagnostic`
     输出一致。
-  - NATS 采集失败（`stream`）：平台依赖页的状态采集失败面板。
+  - Brain 释放原因（`reason`）：Brain 页的"释放与耗尽"按 `'释放·' || reason` 分组，`reason` 只由
+    `brain worker released code session` 写入，首次释放前该面板报错；释放是常规事件，部署后很快自愈。
   `oma_worker_register_delay_s` 只在对应 span 上查看。
 - OTel SDK 只在计数器第一次累加后才导出该指标，失败类计数器（交接失败、River 丢弃等）在首次失败前
-  不存在对应的流，看板面板显示 "No Data" 不代表异常。
+  不存在对应的流。只在失败或稀有事件时累加的 PromQL 面板（SSE 订阅者丢弃、跨实例广播失败、输入拒绝、重投、
+  心跳被拒、交接失败、权限答复、webhook 投递结果）在查询末尾追加 `or vector(0)`（单值）或 `or on() vector(0)`
+  （分组；`on()` 只在左侧当步无样本时补 0，不会与已有序列并存），健康时显示 0 而不是 "No Data"；v0.91.1 已核对
+  指标流不存在时也返回 0。耗时分位数面板不补零，避免把"无样本"显示成 0 秒。
+- 看板中 `service_name="oma-server"`、`service_name='oma-brain'` 的过滤写死为默认服务名
+  （`telemetry.service_name`、DSH `OTEL_SERVICE_NAME`）；改名后对应面板为空且不报错，使用随仓库提供的看板时须保持默认名。
+- 工具面板只覆盖沙箱工具：外部 MCP 服务器的工具调用经 `/v2/ccr-sessions/{code_session_id}/mcp` 转发，不产生
+  `oma.sandbox_mcp.call` span，因此面板标题写作"沙箱工具"。
 - 看板面板按可见区域懒加载，滚动到视口外的面板在首次进入视口前显示 "No Data"，不代表查询失败。
 
 ### 7.1 看板结构
@@ -821,7 +845,7 @@ flowchart TB
 
 | 问题 | 数据源 | 原因 |
 | --- | --- | --- |
-| 稀有事件的计数与列表：错误、失败回合、启动失败、领取耗尽、接管、5xx | traces/logs SQL | 逐条记录、计数精确。OTel 计数器在第一次累加后才导出，新标签组合的第一个点已包含整段突发，`increase()` 会把它算成 0；OpenObserve 的 PromQL 对 `空向量 or X` 也返回空，无法在查询层补零 |
+| 稀有事件的计数与列表：错误、失败回合、启动失败、领取耗尽、接管、5xx | traces/logs SQL | 逐条记录、计数精确。OTel 计数器在第一次累加后才导出，新标签组合的第一个点已包含整段突发，`increase()` 会把它算成 0 |
 | 高频请求的速率与耗时分位数 | PromQL 指标 | 采样充分、聚合便宜 |
 | 当前状态与积压 | 状态 gauge（取 `max`） | 由 Reporter 定期快照 |
 | 用户体感延迟 | traces SQL 窗口函数 | 用户等首 token：`user.message` 写入的 `POST .../events` span 到同会话下一次 `chat` span 开始再加其首 token 时间；回合时长：`session.status_running` 到随后 `session.status_idle`。均用 `LEAD() OVER (PARTITION BY oma_session_id ORDER BY _timestamp)` |
@@ -832,7 +856,7 @@ flowchart TB
 看板默认时间范围 6 小时，drilldown 保留当前时间范围。第一层"总览"标签页：
 
 - 两行 8 个数字：回合成功率（`end_turn` / 除 `requires_action` 外的已结束回合）、已结束回合、用户等首 token p95、
-  模型调用错误率（排除 `canceled`）、工具调用失败率（`tools/call` 中非 `ok`/`canceled`）、卡住的会话、等待执行端
+  模型调用错误率（排除 `canceled`）、沙箱工具调用失败率（`tools/call` 中非 `ok`/`canceled`）、卡住的会话、等待执行端
   （Brain 等待领取 + 排队中的启动任务）、ERROR 日志条数。
 - 趋势：回合结果（按 stop reason）、问题事件（按类型）、用户等首 token p50/p95、回合时长 p50/p95。
 - 最近有问题的会话：按会话聚合 session.error、失败回合、工具失败、模型错误、启动失败，点击行进入会话诊断。
@@ -845,7 +869,7 @@ flowchart TB
 | --- | --- |
 | 会话启动 | 新建会话、Runner 运行（触发/结果）、排队与总耗时、阶段 p95、启动失败（阶段/E2B 操作，SQL）、沙箱准备、E2B 调用、Brain 领取等待与派发/接管、worker 注册、code session 激活、沙箱唤醒结果、work 与沙箱状态 |
 | 输入与投递 | 接受与拒绝的输入、输入排队、worker 事件过期、SSE 订阅者丢弃、广播失败、事件排队与处理完成、JetStream 发布、回执、重投、SSE 连接数与时长、心跳拒绝、流内保留消息数、交接失败 |
-| 执行 | 模型调用量/耗时/首字节与首 token/错误（SQL）/token（输入、输出、缓存读写）/结束原因，工具调用（工具 × 结果，SQL）与耗时、沙箱 MCP 非成功，权限决策、权限答复（自动放行 / 用户确认）、确认等待 |
+| 执行 | 模型调用量/耗时/首字节与首 token/错误（SQL）/token（输入、输出、缓存读写）/结束原因，沙箱工具调用（工具 × 结果，SQL）与耗时、沙箱 MCP 非成功，权限决策、权限答复（自动放行 / 用户确认）、确认等待 |
 | 回合结果 | 已结束回合、session.error、回合结果、回合时长 p50/p95 与分布、最慢的回合（drilldown）、会话与 code session 状态 |
 | Brain | 在线 DSH 节点、活跃会话、舰队与各节点利用率（活跃 / `oma.brain.sessions.capacity`，`max_over_time(...[2m])` 只统计在线节点）、等待执行端的会话（waiting/claimed/takeover）与最老等待、接管次数、准入失败与耗尽、派发→领取与领取→准入完成耗时、领取来源（派发/接管）、领取请求结果（不含长轮询自然超时）、准入结果、释放与耗尽、会话退役原因、按节点的租约丢失与心跳失败、按节点的 DSH 警告与错误事件 |
 | 平台依赖 | HTTP 5xx（SQL）、ERROR 日志、状态采集失败（按实例与来源）、HTTP 路由 p95 与请求量、数据库连接池、River 结果/耗时/排队、webhook 结果/耗时/consumer 积压、ERROR 日志按组件聚合 |
@@ -909,7 +933,7 @@ ORDER BY _timestamp ASC
 **面板 4：该会话的日志（logs 流表格）**
 
 ```sql
-SELECT to_timestamp_micros(_timestamp) AS time, severity, service_name, body, reason, error_type, trace_id
+SELECT to_timestamp_micros(_timestamp) AS time, severity, service_name, body, trace_id
 FROM oma_server
 WHERE body NOT IN ('http request', 'http response')
   AND (session_id = '$session_id'
@@ -983,7 +1007,7 @@ sequenceDiagram
 | --- | --- | --- |
 | `queue`，沙箱模式 | 根 span，link 到 `environment_work.trace_parent` | `claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`packages`、`filestore`、`mark_running`、`code_session`、`manager_start`、`publish_runtime` |
 | `queue`，brain 模式 | 同上 | `claim`、`prepare`、`code_session`、`mark_running`、[`sandbox_prewarm`]、`publish_runtime`、`brain_dispatch` |
-| `stale_recovery` | 根 span，link 到 Work 上保存的旧 `trace_parent` | 同 brain 模式；不记录 `oma.runner.queue_wait`，计入 `oma.runner.stale_recovery_claims` |
+| `stale_recovery` | 根 span，link 到 Work 上保存的旧 `trace_parent` | 同 brain 模式；不记录 `oma.runner.queue_wait`，span 带 `oma.runner.trigger=stale_recovery`，同时输出恢复 Warn 日志 |
 | `lazy_mcp`、`prewarm` | 当前 span 的子 span（MCP 网关或 `sandbox_prewarm` 阶段） | `prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`packages`、`filestore`、`mark_running`、`manager_start`、`sandbox_mcp_ready` |
 
 `queue_wait` 只对 `queue` 有意义：恢复领取的 Work 保留最初的 `queued_at`，直接计算会得到数小时的假值。
@@ -997,13 +1021,10 @@ sequenceDiagram
 | --- | --- | --- | --- | --- |
 | `oma.brain_claim.poll.duration` | Float64Histogram | latency | `oma.outcome`=`claimed`、`empty`、`error`、`canceled`、`timeout` | `Service.ClaimBrainWorker` |
 | `oma.brain_claim.queue_wait` | Float64Histogram | latency | 无；只记录带 requested 标记的领取 | `observeBrainClaimIssued`，领取时刻减 `worker_claim_requested_at` |
-| `oma.brain_claim.releases` | Int64Counter | — | `oma.reason`=`admission_failed`、`shutdown`、`idle`、`permanent`；`oma.outcome`=`ok`、`conflict`、`error`、`canceled`、`timeout` | `Service.ReleaseBrainClaim` |
-| `oma.brain_claim.exhausted` | Int64Counter | — | `oma.reason`=`attempts`、`permanent` | `claimNextBrainWorker`、`ReleaseBrainClaim` |
 | `oma.brain_claims.pending` | Int64ObservableGauge | — | `oma.state`=`waiting`、`claimed`、`takeover` | 状态快照 `CountRequestedBrainClaimsByState`、`CountTakeoverPendingBrainClaims` |
 | `oma.brain_claims.oldest_waiting_age` | Int64ObservableGauge | —（单位 s） | 无 | 状态快照 `OldestWaitingBrainClaimAgeSeconds` |
 | `oma.sandbox_mcp.duration` | Float64Histogram | latency | `oma.mcp.method`=`server/discover`、`initialize`、`notifications/initialized`、`ping`、`tools/list`、`tools/call`、`notifications/cancelled`、`other`；`oma.outcome`=`ok`、`tool_error`、`rpc_error`、`canceled`、`invalid_request`、`policy_error`、`tool_denied`、`sandbox_unavailable`、`epoch_mismatch`、`memory_commit_error`、`upstream_error`、`upstream_status`；`tools/call` 另带 `oma.tool.name`=`bash`、`read`、`write`、`edit`、`grep`、`glob`、`other` | `serveSandboxMCP` |
 | `oma.sandbox.ensure.duration` | Float64Histogram | latency | `oma.runner.trigger`=`lazy_mcp`、`prewarm`；`oma.outcome`=`reused`、`created`、`joined`、`error`、`canceled`、`timeout` | `Runner.ensureSessionSandbox` |
-| `oma.runner.stale_recovery_claims` | Int64Counter | — | 无 | `startRunnerRun` |
 | `oma.session.input.queue_wait` | Float64Histogram | longWait | 无 | `ProcessCodeSessionInputs`，`processed_at - created_at` |
 
 - `oma.sandbox_mcp.duration` 包含惰性建沙箱、工具执行和 SSE 流式返回的时间，不能与普通 HTTP 延迟
@@ -1066,9 +1087,9 @@ flowchart LR
 | --- | --- | --- |
 | 工具结果 | `tools/call` 解析 JSON（在 Memory 版本确认改写响应之后）或 SSE 中第一个 reply 帧的 `result.isError` / `error`，分类后即停止检查 SSE，单行与单事件均以 1 MiB 为上限且只扫描新到达的字节；outcome 记 `tool_error`、`rpc_error`；span 加 `oma.tool.name`（白名单）、`oma.mcp.request_id`；非 ok/canceled 的 span 设 Error | `internal/codesessions/sandbox_mcp.go`、`sandbox_mcp_outcome.go` |
 | 调用方取消 | 网关在请求上下文已取消时记 `canceled`；HTTP 中间件把客户端断开导致的 5xx 记为 499 并加 `oma.client_canceled=true`，不设 Error；错误边界对 `context.Canceled` 改记 Info `http request canceled by client`；模型代理遥测把下游断开归一为 `canceled`，不再混入 `stream_error`；回执失败按 `canceled`、`timeout`、`error` 计入 `oma.worker_event.updates` | `internal/api/telemetry_http.go`、`internal/httpapi/app_error.go`、`internal/messages/model_request.go`、`internal/codesessions/worker_delivery.go` |
-| 回合结局 | 见 P2.11：`oma.stop_reason`、`oma.session.error`、`oma.session.turns`、`oma.session.errors` | `internal/sessions/outcome_telemetry.go` |
+| 回合结局 | 见 P2.11：`oma.session.status` 的 `oma.stop_reason` 与 `oma.session.error` span | `internal/sessions/outcome_telemetry.go` |
 | 恢复上下文 | stale_recovery 的 `oma.runner.run` 加 `oma.environment_work.state`、`heartbeat_age_s`，并输出 Warn `environment work stale recovery claimed`（日志只带 `work_id`、`session_id`、`state`，心跳年龄以 span 为准）；不记录 Work 空闲时长（领取语句会刷新 `updated_at`，输入到被恢复的等待由 `oma.session.input.queue_wait` 度量）；lazy_mcp/prewarm 不再标 `oma.runner.recovered=true` | `internal/environments/runner.go`、`runner_telemetry.go` |
-| 输入时执行端可用性 | 输入写入 worker 队列时，请求 span 加 `oma.connection.status`、`oma.worker.status`、`oma.worker.lease_active`；未连接或租约失效时输出 Warn `session input queued without connected worker`（含 `lease_expired_s`），标明该输入要等恢复派发 | `internal/codesessions/service.go`、`telemetry.go` |
+| 输入时执行端可用性 | 输入写入 worker 队列时，请求 span 加 `oma.connection.status`、`oma.worker.status`、`oma.worker.lease_active`；未连接或租约失效时输出 Warn `session input queued without connected worker`（含 `lease_expired_s`），标明该输入要等恢复派发；claim 传输（Brain）在空闲退役后关闭 worker 流是正常交接，下一轮首个输入不输出该 Warn | `internal/codesessions/service.go`、`telemetry.go` |
 | 执行端连接 | worker 输入流 Info `code session worker stream opened/closed`，带 `code_session_id`、`session_id`、`worker_epoch`、`close_reason`（`client_closed`、`server_shutdown`、`server_closed`）、`duration_s`；这两条日志同时也是诊断看板从公开会话关联 code session 日志的桥 | `internal/codesessions/ingress.go` |
 | 输入形态 | `POST /v1/sessions/{id}/events` span 加 `oma.input.event_types`、`oma.input.block_types`、`oma.input.bytes`、`oma.input.events`（类型按枚举模式归一，正文不进入遥测） | `internal/sessions/telemetry.go` |
 | 拒绝原因 | 409 中"工具调用不在待确认状态"拆出 `tool_use_not_pending`（未知与重复确认无法区分，合并为一类）；拒绝原因同时写入请求 span 的 `oma.reason`；`oma.session.events.accepted` 只计客户端输入 | `internal/db/db.go`、`session_events.go`，`internal/codesessions/tool_permissions.go`，`internal/sessions/telemetry.go` |
@@ -1112,12 +1133,11 @@ OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Basic%20<base64>,stream-name=oma_s
   blocked、inbound_ended、admission_failed、aborted、idle、shutdown）、`oma_session_task_failed`（含
   `failure_reason` 与 `error_stack` 代码位置）、`oma_brain_ready`、`oma_brain_shutdown_started/failed`、
   `oma_brain_startup_failed`；`ccrv2_lease_lost`、`ccrv2_heartbeat_failed/recovered` 同步导出。
-- 指标：`oma.brain.sessions.active`、`oma.brain.sessions.capacity`（就绪时加 `OMA_BRAIN_MAX_SESSIONS`、退出时减回）、`oma.brain.task.admissions{outcome,stage,release_reason,failure_reason}`
-  （`outcome`=`admitted`、`failed`，失败时 `release_reason` 为回报给服务端的释放原因）、
-  `oma.brain.claim.failures{operation,failure_reason}`（`operation`=`claim`、`release`，覆盖服务端看不到的
-  网络与鉴权失败）、`oma.brain.session_tasks.stopped{reason,failure_reason}`、
-  `oma.brain.worker_requests.failed{path,failure_reason}`、`oma.brain.lease.lost{stop_reason}`，属性均为有限枚举，
-  不含会话标识。
+- 指标：`oma.brain.sessions.active`、`oma.brain.sessions.capacity`（就绪时加 `OMA_BRAIN_MAX_SESSIONS`、退出时减回），
+  不含会话标识。准入、领取/释放失败、会话任务停止、租约丢失与 worker 请求失败只记日志
+  （`oma_task_admitted`/`oma_task_admission_failed`、`oma_task_claim_failed`/`oma_task_release_failed`、
+  `oma_session_retired`/`oma_session_task_failed`、`ccrv2_lease_lost`、`cli_worker_request_failed`/`cli_worker_request_error`），
+  看板按 `body` 统计，不再保留同一事实的计数器。
 - 字段约束沿用 `workerDiagnostic`：不记录凭据、payload 与异常正文。
 
 `brainMetrics()` 始终返回 instrument 集合，关闭时使用 noop meter，调用方无需可选链。`oma.brain.sessions.active` 在就绪时

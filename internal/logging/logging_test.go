@@ -18,10 +18,9 @@ func TestConsoleHandlerFormatsHTTPLine(t *testing.T) {
 		"event", "response",
 		"request_id", "req_test",
 		"method", "GET",
-		"url", "/v1/files",
+		"path", "/v1/files",
 		"status", 200,
 		"duration_ms", 12.3,
-		"path", "/v1/files",
 		"host", "127.0.0.1:18080",
 		"user_agent", "anthropic-sdk-go/1.0.0",
 		"client_kind", "api",
@@ -34,7 +33,7 @@ func TestConsoleHandlerFormatsHTTPLine(t *testing.T) {
 	if !strings.Contains(line, " [api] GET 200 12.3ms /v1/files ") {
 		t.Fatalf("unexpected http log line: %q", line)
 	}
-	for _, want := range []string{"request_id=req_test", "path=/v1/files", "host=127.0.0.1:18080"} {
+	for _, want := range []string{"request_id=req_test", "host=127.0.0.1:18080"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("http log line missing %q: %q", want, line)
 		}

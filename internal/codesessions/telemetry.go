@@ -2,7 +2,6 @@ package codesessions
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"slices"
 	"time"
@@ -18,41 +17,33 @@ import (
 
 type codeSessionInstruments struct {
 	activation              metric.Float64Histogram
-	workerEventsExpired     metric.Int64Counter
 	workerRegisterDelay     metric.Float64Histogram
 	workerEventQueueWait    metric.Float64Histogram
 	workerEventRedeliveries metric.Int64Counter
 	workerEventProcessed    metric.Float64Histogram
 	workerEventUpdates      metric.Int64Counter
-	sandboxResume           metric.Float64Histogram
 	sandboxMCP              metric.Float64Histogram
 	toolPermissionDecisions metric.Int64Counter
 	toolPermissionResponses metric.Int64Counter
 	toolPermissionWait      metric.Float64Histogram
 	brainClaimPoll          metric.Float64Histogram
 	brainClaimQueueWait     metric.Float64Histogram
-	brainClaimReleases      metric.Int64Counter
-	brainClaimExhausted     metric.Int64Counter
 }
 
 var codeSessionMetrics = telemetry.NewInstruments(func(meter metric.Meter) codeSessionInstruments {
 	return codeSessionInstruments{
 		activation:              telemetry.Histogram(meter, "oma.code_session.activation.duration", "s", "Code session activation duration", telemetry.LatencyBuckets()),
-		workerEventsExpired:     telemetry.Counter(meter, "oma.worker_event.expired", "{code_session}", "Code sessions expired after worker event retention"),
 		workerRegisterDelay:     telemetry.Histogram(meter, "oma.worker.register.delay", "s", "Worker registration delay", telemetry.LatencyBuckets()),
 		workerEventQueueWait:    telemetry.Histogram(meter, "oma.worker_event.queue_wait", "s", "Worker event queue wait", telemetry.LongWaitBuckets()),
 		workerEventRedeliveries: telemetry.Counter(meter, "oma.worker_event.redeliveries", "{event}", "Worker event redeliveries"),
 		workerEventProcessed:    telemetry.Histogram(meter, "oma.worker_event.processed.latency", "s", "Worker event processing latency", telemetry.LongWaitBuckets()),
 		workerEventUpdates:      telemetry.Counter(meter, "oma.worker_event.updates", "{update}", "Worker event updates"),
-		sandboxResume:           telemetry.Histogram(meter, "oma.sandbox.resume.duration", "s", "Sandbox resume duration", telemetry.LatencyBuckets()),
 		sandboxMCP:              telemetry.Histogram(meter, "oma.sandbox_mcp.duration", "s", "Sandbox MCP gateway call duration", telemetry.LatencyBuckets()),
 		toolPermissionDecisions: telemetry.Counter(meter, "oma.tool_permission.decisions", "{decision}", "Tool permission decisions"),
 		toolPermissionResponses: telemetry.Counter(meter, "oma.tool_permission.responses", "{response}", "Tool permission responses"),
 		toolPermissionWait:      telemetry.Histogram(meter, "oma.tool_permission.wait", "s", "Tool permission wait", telemetry.LongWaitBuckets()),
 		brainClaimPoll:          telemetry.Histogram(meter, "oma.brain_claim.poll.duration", "s", "Brain claim long-poll duration", telemetry.LatencyBuckets()),
 		brainClaimQueueWait:     telemetry.Histogram(meter, "oma.brain_claim.queue_wait", "s", "Wait from Brain worker request to claim", telemetry.LatencyBuckets()),
-		brainClaimReleases:      telemetry.Counter(meter, "oma.brain_claim.releases", "{release}", "Brain claim releases"),
-		brainClaimExhausted:     telemetry.Counter(meter, "oma.brain_claim.exhausted", "{code_session}", "Brain claims that exhausted admission attempts"),
 	}
 })
 
@@ -76,19 +67,6 @@ func observeBrainClaimIssued(ctx context.Context, workerID string, claim db.Code
 	if claim.RequestedAt != nil {
 		telemetry.RecordWait(ctx, codeSessionMetrics.Get().brainClaimQueueWait, time.Since(*claim.RequestedAt))
 	}
-}
-
-func recordBrainClaimRelease(ctx context.Context, reason BrainClaimReleaseReason, err error) {
-	outcome := telemetry.Outcome(err)
-	if errors.Is(err, db.ErrPreconditionFailed) {
-		outcome = "conflict"
-	}
-	codeSessionMetrics.Get().brainClaimReleases.Add(ctx, 1, metric.WithAttributes(
-		telemetry.AttrReason.String(string(reason)), telemetry.AttrOutcome.String(outcome)))
-}
-
-func recordBrainClaimExhausted(ctx context.Context, reason string) {
-	codeSessionMetrics.Get().brainClaimExhausted.Add(ctx, 1, metric.WithAttributes(telemetry.AttrReason.String(reason)))
 }
 
 func observeOperation(ctx context.Context, histogram metric.Float64Histogram, outcome string, startedAt time.Time) {
@@ -124,11 +102,15 @@ func recordWorkerEventUpdate(ctx context.Context, status, outcome string) {
 }
 
 func annotateWorkerEventBatch(ctx context.Context, count int, eventTypes []string) {
+	span := trace.SpanFromContext(ctx)
+	if !span.IsRecording() {
+		return
+	}
 	types := map[string]bool{}
 	for _, eventType := range eventTypes {
 		types[telemetry.Token(eventType)] = true
 	}
-	trace.SpanFromContext(ctx).SetAttributes(
+	span.SetAttributes(
 		attribute.Int("oma.worker_event.count", count),
 		attribute.StringSlice("oma.worker_event.types", slices.Sorted(maps.Keys(types))),
 	)
@@ -141,7 +123,7 @@ func (s *Service) observeInputWorkerAvailability(ctx context.Context, codeSessio
 		telemetry.AttrWorkerStatus.String(codeSession.WorkerStatus),
 		attribute.Bool("oma.worker.lease_active", leaseActive),
 	)
-	if codeSession.ConnectionStatus == "connected" && leaseActive {
+	if codeSession.ConnectionStatus == "connected" && leaseActive || usesBrainClaimTransport(codeSession) {
 		return
 	}
 	attrs := []any{"code_session_id", codeSession.ExternalID, "session_id", codeSession.SessionExternalID,

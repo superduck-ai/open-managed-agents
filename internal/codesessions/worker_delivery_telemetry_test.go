@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry/telemetrytest"
+	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
 func TestRecordFailedWorkerDeliveryUpdates(t *testing.T) {
@@ -37,6 +39,42 @@ func TestRecordFailedWorkerDeliveryUpdates(t *testing.T) {
 		if got[key] != value {
 			t.Fatalf("updates = %v", got)
 		}
+	}
+}
+
+func TestRecordWorkerDeliveryOutcome(t *testing.T) {
+	reference := workerevents.AckRef{Lane: "task", PublishedAt: time.Now().Add(-time.Second), TraceParent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"}
+	updates := []workerDeliveryUpdate{{EventID: "a", Status: "processed"}, {EventID: "b", Status: "received"}}
+	result := workerDeliveryResult{Applied: 1, Ignored: 1, settled: []settledWorkerDelivery{
+		{update: updates[0], outcome: "applied", reference: reference},
+		{update: updates[1], outcome: "ignored"},
+	}}
+	for _, tc := range []struct {
+		name  string
+		err   error
+		want  map[string]int64
+		spans int
+	}{
+		{"commit failed", errors.New("private failure"), map[string]int64{"processed/error": 1, "received/error": 1}, 0},
+		{"committed", nil, map[string]int64{"processed/applied": 1, "received/ignored": 1}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := telemetrytest.SpanRecorder(t)
+			reader := telemetrytest.MetricReader(t)
+			recordWorkerDeliveryOutcome(t.Context(), "cse_test", updates, result, tc.err)
+			got := map[string]int64{}
+			for _, point := range telemetrytest.Points(t, telemetrytest.Collect(t, reader), "oma.worker_event.updates") {
+				status, _ := point.Attributes.Value(attribute.Key("oma.delivery.status"))
+				outcome, _ := point.Attributes.Value(attribute.Key("oma.outcome"))
+				got[status.AsString()+"/"+outcome.AsString()] = int64(point.Value)
+			}
+			if !maps.Equal(got, tc.want) {
+				t.Fatalf("updates = %v, want %v", got, tc.want)
+			}
+			if spans := recorder.Ended(); len(spans) != tc.spans {
+				t.Fatalf("ACK spans = %d, want %d", len(spans), tc.spans)
+			}
+		})
 	}
 }
 
@@ -83,6 +121,7 @@ func TestObserveInputWorkerAvailability(t *testing.T) {
 	}{
 		{"retired after idle", db.CodeSession{ExternalID: "cse_a", SessionExternalID: "sesn_a", ConnectionStatus: "disconnected", WorkerStatus: "idle", WorkerLeaseExpiresAt: &expired}, "false", true, true},
 		{"never leased", db.CodeSession{ExternalID: "cse_b", SessionExternalID: "sesn_b", ConnectionStatus: "disconnected", WorkerStatus: "idle"}, "false", true, false},
+		{"claim transport cold turn", db.CodeSession{ExternalID: "cse_d", SessionExternalID: "sesn_d", ConnectionStatus: "disconnected", WorkerStatus: "idle", WorkerLeaseExpiresAt: &expired, Metadata: []byte(`{"config":{"worker_transport":"claim"}}`)}, "false", false, false},
 		{"connected", db.CodeSession{ExternalID: "cse_c", SessionExternalID: "sesn_c", ConnectionStatus: "connected", WorkerStatus: "idle", WorkerLeaseExpiresAt: &active}, "true", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,5 +1,4 @@
 import { OmaApi } from "./api.ts";
-import { brainMetrics } from "./telemetry.ts";
 import { workerDiagnostic } from "./ccrv2/diagnostics.ts";
 import {
   CcrClient, type CcrSession, type CcrLeaseFailure, type CcrHeartbeatHealth,
@@ -18,7 +17,6 @@ export function stopOmaSessionOnLeaseLoss(session: Pick<CcrSession, "id" | "stop
     stop_reason: stopReason,
     consecutive_failures: failure.consecutiveFailures,
   };
-  brainMetrics().leaseLost.add(1, { stop_reason: stopReason });
   workerDiagnostic("warn", "ccrv2_lease_lost", fields);
 }
 

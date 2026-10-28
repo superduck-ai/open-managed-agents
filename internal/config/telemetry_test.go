@@ -18,6 +18,8 @@ func TestTelemetryValidationRejectsInvalidConfig(t *testing.T) {
 		{"URL scheme", "base_url", func(c *TelemetryConfig) { c.OTLP.BaseURL = "ftp://example.com" }},
 		{"URL host", "base_url", func(c *TelemetryConfig) { c.OTLP.BaseURL = "http:///path" }},
 		{"URL path", "base_url", func(c *TelemetryConfig) { c.OTLP.BaseURL = "http://openobserve:5080/api/oma" }},
+		{"URL query", "base_url", func(c *TelemetryConfig) { c.OTLP.BaseURL = "http://openobserve:5080?x=1" }},
+		{"URL fragment", "base_url", func(c *TelemetryConfig) { c.OTLP.BaseURL = "http://openobserve:5080#frag" }},
 		{"timeout", "timeout", func(c *TelemetryConfig) { c.OTLP.Timeout = 0 }},
 		{"username only", "username", func(c *TelemetryConfig) { c.OTLP.Username = "writer" }},
 		{"password only", "password", func(c *TelemetryConfig) { c.OTLP.Password = "password" }},

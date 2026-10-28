@@ -1,4 +1,4 @@
-import { ArrowRight, Bot, Plus, Sparkles } from 'lucide-react';
+import { ArrowRight, Bot, Plus } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
@@ -11,7 +11,7 @@ import type { AgentModelOption } from '../agents/create-dialog-model';
 import { environmentFormValues } from '../environments/model';
 import { quickstartEnvironmentBody } from './api';
 import { quickstartCopy } from './copy';
-import { quickstartAgentBody, quickstartScenarios } from './model';
+import { quickstartAgentBody } from './model';
 import { quickstartCurl, RequestPreview } from './RequestPreview';
 import type { QuickstartWizard } from './useQuickstartWizard';
 import { QuickstartFooter } from './QuickstartFooter';
@@ -33,7 +33,6 @@ export function QuickstartStart({ wizard, onStart }: { wizard: QuickstartWizard;
     name: config.name,
     description,
   }));
-  const extras = quickstartScenarios(locale).filter((item) => item.id === 'hello' || item.id === 'custom');
   const disabled = wizard.busy || Boolean(wizard.progress.pending);
   return (
     <div className="min-h-0 flex-1 overflow-y-auto pb-12">
@@ -45,6 +44,21 @@ export function QuickstartStart({ wizard, onStart }: { wizard: QuickstartWizard;
           disabled={disabled}
           className="gap-4"
         >
+          <FieldLabel
+            htmlFor="scenario-hello"
+            className={`flex w-full cursor-pointer items-center gap-4 rounded-xl border-[0.5px] p-5 font-normal ${wizard.progress.scenarioID === 'hello' ? 'border-foreground bg-accent/40' : 'border-border hover:bg-accent/50'}`}
+          >
+            <Bot aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 space-y-1">
+              <span className="block text-sm font-medium">{zh ? 'Hello World 示例' : 'Hello World example'}</span>
+              <span className="block text-sm leading-5 text-muted-foreground">
+                {zh
+                  ? '从一句问候开始，了解智能体创建、试跑与 API 调用。'
+                  : 'Start with a greeting to explore agent creation, a test conversation and an API call.'}
+              </span>
+            </span>
+            <RadioGroupItem id="scenario-hello" value="hello" aria-label="Hello World Agent" />
+          </FieldLabel>
           <div className={quickstartTemplateGrid}>
             {templates.map(({ id, icon, name, description }) => (
               <FieldLabel
@@ -56,24 +70,6 @@ export function QuickstartStart({ wizard, onStart }: { wizard: QuickstartWizard;
                 <QuickstartTemplateContent icon={icon} title={name} description={description} />
               </FieldLabel>
             ))}
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {extras.map((item) => {
-              const Icon = item.id === 'hello' ? Bot : Sparkles;
-              return (
-                <FieldLabel
-                  key={item.id}
-                  htmlFor={`scenario-${item.id}`}
-                  className={`flex w-full min-w-0 cursor-pointer items-center gap-3 rounded-xl border-[0.5px] px-4 py-3 text-sm font-normal ${wizard.progress.scenarioID === item.id ? 'border-foreground bg-accent/40' : 'border-border hover:bg-accent/50'}`}
-                >
-                  <Icon aria-hidden="true" className="size-4 text-muted-foreground" />
-                  <span className="min-w-0 flex-1">
-                    {item.id === 'hello' ? 'Hello World' : zh ? '从空白开始' : 'Start from scratch'}
-                  </span>
-                  <RadioGroupItem id={`scenario-${item.id}`} value={item.id} aria-label={item.name} />
-                </FieldLabel>
-              );
-            })}
           </div>
         </RadioGroup>
         <div className="mt-6 flex justify-end">

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ArrowUp, Square, Sparkles } from 'lucide-react';
 import { useI18n } from '../../../../shared/i18n';
 import { Button, ButtonLink } from '../../../../shared/ui/button';
@@ -24,11 +24,13 @@ export function BuilderPage({
   workspaceId,
   orgUuid,
   models,
+  startHeader,
 }: {
   accountId: string;
   workspaceId: string;
   orgUuid: string;
   models: string[];
+  startHeader?: ReactNode;
 }) {
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
@@ -43,7 +45,12 @@ export function BuilderPage({
       </div>
     );
   if (!state.initialized)
-    return <BuilderStart builder={builder} composer={<BuilderComposer builder={builder} entry />} />;
+    return (
+      <>
+        {startHeader}
+        <BuilderStart builder={builder} composer={<BuilderComposer builder={builder} entry />} />
+      </>
+    );
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
       <div className={`grid min-h-0 min-w-0 flex-1 gap-6 ${builderColumns(state)}`}>

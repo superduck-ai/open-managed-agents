@@ -62,17 +62,20 @@ export function AgentQuickstartPage() {
       </TabsList>
     </Tabs>
   );
+  const startHeader = (
+    <header className="mx-auto flex w-full max-w-[880px] shrink-0 flex-col items-center gap-6 pt-[clamp(2rem,7vh,5rem)]">
+      <h1 id="quickstart-start-title" className="text-center text-2xl font-semibold">
+        {locale === 'zh-CN' ? '你想构建什么？' : 'What would you like to build?'}
+      </h1>
+      {modeControl}
+    </header>
+  );
   return (
     <div className="mx-auto flex h-full min-h-0 w-full min-w-0 flex-1 flex-col gap-6">
-      <header className="mx-auto flex w-full max-w-[880px] shrink-0 flex-col items-center gap-6 pt-[clamp(2rem,7vh,5rem)]">
-        <h1 id="quickstart-start-title" className="text-center text-2xl font-semibold">
-          {locale === 'zh-CN' ? '你想构建什么？' : 'What would you like to build?'}
-        </h1>
-        {modeControl}
-      </header>
       {mode === 'chat' ? (
         <BuilderPage
           key={`${account?.uuid}:${activeWorkspaceId}`}
+          startHeader={startHeader}
           accountId={account?.uuid ?? ''}
           workspaceId={activeWorkspaceId}
           orgUuid={orgUuid ?? ''}
@@ -81,6 +84,7 @@ export function AgentQuickstartPage() {
       ) : (
         <QuickstartWizardPage
           key={`${account?.uuid}:${activeWorkspaceId}`}
+          startHeader={startHeader}
           workspaceID={activeWorkspaceId}
           accountID={account?.uuid ?? ''}
           models={models.data}

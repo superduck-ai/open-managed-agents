@@ -71,6 +71,8 @@ test('a description proposes before writing; refresh preserves the pending propo
   await screen.findByRole('textbox', { name: 'Builder message' });
   send();
   await screen.findByRole('button', { name: 'Confirm', exact: true });
+  expect(screen.queryByRole('tablist', { name: 'Build method' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'What would you like to build?' })).toBeNull();
   expect(writes(api.requests)).toHaveLength(0);
   cleanup();
   renderManagedAgentsPage('quickstart');
@@ -253,16 +255,25 @@ test('both build methods share the header and templates, with manual selection s
   );
   fireEvent.click(screen.getByRole('tab', { name: 'Manual setup', exact: true }));
   await screen.findByRole('button', { name: 'Start configuring' });
-  expect(screen.getByRole('heading', { name: 'What would you like to build?' })).toBe(heading);
-  expect(screen.getByRole('tablist', { name: 'Build method' })).toBe(modes);
+  expect(screen.getByRole('heading', { name: 'What would you like to build?' })).toHaveProperty(
+    'textContent',
+    heading.textContent,
+  );
+  expect(screen.getByRole('tablist', { name: 'Build method' })).toHaveProperty('textContent', modes.textContent);
   expect(screen.queryByRole('navigation', { name: 'Start with your first Agent' })).toBeNull();
   const radios = screen.getAllByRole('radio');
-  expect(radios.slice(0, 6).map((radio) => radio.getAttribute('aria-label'))).toEqual(names);
+  expect(radios.slice(1, 7).map((radio) => radio.getAttribute('aria-label'))).toEqual(names);
   fireEvent.click(screen.getByRole('radio', { name: /Structured extractor/ }));
   expect(screen.getByRole('radio', { name: /Structured extractor/ }).getAttribute('aria-checked')).toBe('true');
   expect(writes(api.requests)).toHaveLength(0);
   fireEvent.click(screen.getByRole('button', { name: 'Start configuring' }));
   expect(screen.getByRole('navigation', { name: 'Start with your first Agent' })).toBeTruthy();
+  expect(screen.queryByRole('tablist', { name: 'Build method' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'What would you like to build?' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Back', exact: true }));
+  expect(screen.getByRole('tablist', { name: 'Build method' })).toBeTruthy();
+  expect(screen.queryByRole('radio', { name: /Start from scratch/ })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Start configuring' }));
   expect(screen.getByLabelText<HTMLInputElement>('Name').value).toBe('Structured extractor');
   expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toContain('valid JSON');
   expect(writes(api.requests)).toHaveLength(0);

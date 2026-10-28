@@ -425,16 +425,17 @@ test('all environment pages are scanned before choosing Default or reusing a sam
   ).toHaveLength(0);
 });
 
-test('selecting the same scenario or returning home keeps custom drafts and required-field validation', async () => {
+test('selecting the same scenario or returning home keeps edited drafts and required-field validation', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);
   renderManagedAgentsPage('quickstart');
-  fireEvent.click(await screen.findByRole('radio', { name: /Start from scratch/ }));
+  fireEvent.click(await screen.findByRole('radio', { name: /Structured extractor/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Start configuring' }));
+  fireEvent.change(screen.getByLabelText('System prompt'), { target: { value: '' } });
   expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Create and continue' }).disabled).toBe(true);
   fireEvent.change(screen.getByLabelText('System prompt'), { target: { value: 'Keep my draft.' } });
   fireEvent.click(screen.getByRole('button', { name: 'Back', exact: true }));
-  fireEvent.click(screen.getByRole('radio', { name: /Start from scratch/ }));
+  fireEvent.click(screen.getByRole('radio', { name: /Structured extractor/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Start configuring' }));
   expect(screen.getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('Keep my draft.');
   expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(0);

@@ -40,7 +40,6 @@
   "account.organizationSettings": "组织设置",
   "account.role.workspace_admin": "管理员",
   "account.role.workspace_user": "用户",
-  "account.role.unknown": "成员",
   "analytics.caching.title": "缓存",
   "analytics.caching.alreadyCaching": "已经在使用缓存？新的用量可能需要几分钟才会显示。",
   "analytics.caching.body": "将 {code} 添加到符合条件的提示块，以复用常用上下文并降低输入成本。",
@@ -3321,6 +3320,6 @@
   "invitations.delivery.notConfigured": "未启用邮件通知，受邀人可使用受邀邮箱登录，在组织邀请中查看并接受邀请。",
   "platformScope.enter": "进入组织工作台",
   "platformScope.failed": "组织访问失败，请重试。",
-  "platformScope.active": "平台管理员进入 · {organization}",
+  "platformScope.administrator": "平台管理员",
   "platformScope.exit": "返回平台管理"
 }

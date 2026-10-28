@@ -63,7 +63,7 @@ function mount(initialAccount = account, collapsed = false) {
     </I18nProvider>,
   );
 }
-test('切换组织和刷新恢复后保留用户名，角色工作区副标题与组织菜单保持一致', async () => {
+test('切换组织和刷新恢复后保留用户名，组织副标题与组织菜单保持一致', async () => {
   resetTestDom('https://oma.duck.ai/dashboard');
   globalThis.fetch = mock(async (input) => {
     const url = String(input);
@@ -81,21 +81,21 @@ test('切换组织和刷新恢复后保留用户名，角色工作区副标题�
   }) as typeof fetch;
   const view = mount();
   await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('ws-a'));
-  fireEvent.click(screen.getByRole('button', { name: 'guanpeixian 管理员 默认' }));
+  fireEvent.click(screen.getByRole('button', { name: 'guanpeixian 组织 A' }));
   expect(screen.getByText(account.email_address)).toBeTruthy();
-  const trigger = screen.getByRole('button', { name: 'guanpeixian 管理员 默认' });
+  const trigger = screen.getByRole('button', { name: 'guanpeixian 组织 A' });
   const title = trigger.querySelector('.text-sm');
   expect(title?.textContent).toBe('guanpeixian');
-  expect(title?.nextElementSibling?.textContent).toBe('管理员默认');
+  expect(title?.nextElementSibling?.textContent).toBe('组织 A');
   fireEvent.click(await screen.findByRole('menuitemradio', { name: '组织 B 用户' }));
   await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('ws-b'));
   expect(trigger.querySelector('.text-sm')?.textContent).toBe('guanpeixian');
-  expect(trigger.querySelector('.text-xs')?.textContent).toBe('用户默认');
+  expect(trigger.querySelector('.text-xs')?.textContent).toBe('组织 B');
   expect(screen.getByRole('menuitemradio', { name: '组织 B 用户' }).getAttribute('aria-checked')).toBe('true');
   view.unmount();
   mount();
   await waitFor(() => expect(screen.getByTestId('scope').textContent).toBe('ws-b'));
-  expect(screen.getByRole('button', { name: 'guanpeixian 用户 默认' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'guanpeixian 组织 B' })).toBeTruthy();
 });
 test('折叠菜单保持账号名称，不依赖当前组织是否命名或存在', async () => {
   resetTestDom('https://oma.duck.ai/dashboard');

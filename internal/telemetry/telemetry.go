@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
+	otelruntime "go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
@@ -121,8 +122,18 @@ func newMeterProvider(ctx context.Context, cfg config.TelemetryConfig, res *reso
 	if err != nil {
 		return nil, fmt.Errorf("create metric exporter: %w", err)
 	}
-	reader := sdkmetric.NewPeriodicReader(exporter, sdkmetric.WithInterval(cfg.Metrics.ExportInterval))
-	return sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader), sdkmetric.WithResource(res)), nil
+	return newRuntimeMeterProvider(sdkmetric.NewPeriodicReader(exporter,
+		sdkmetric.WithInterval(cfg.Metrics.ExportInterval),
+		sdkmetric.WithProducer(otelruntime.NewProducer()),
+	), res)
+}
+
+func newRuntimeMeterProvider(reader sdkmetric.Reader, res *resource.Resource) (*sdkmetric.MeterProvider, error) {
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader), sdkmetric.WithResource(res))
+	if err := otelruntime.Start(otelruntime.WithMeterProvider(provider)); err != nil {
+		return nil, errors.Join(fmt.Errorf("start runtime metrics: %w", err), provider.Shutdown(context.Background()))
+	}
+	return provider, nil
 }
 
 func newLoggerProvider(ctx context.Context, cfg config.TelemetryConfig, res *resource.Resource) (*sdklog.LoggerProvider, error) {

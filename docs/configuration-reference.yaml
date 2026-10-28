@@ -382,7 +382,7 @@ telemetry:
   traces:
     enabled: true
   metrics:
-    enabled: true
+    enabled: true # 同时导出 Go 运行时指标（go.goroutine.count、go.memory.*、go.schedule.duration 等）
     export_interval: 30s
   logs:
     enabled: true

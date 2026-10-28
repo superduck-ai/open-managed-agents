@@ -398,6 +398,27 @@ Warn 日志（`collect operational state counts`、`collect NATS stream|consumer
 | `oma.nats.consumer.redelivered` | `oma.nats.stream`、`oma.nats.consumer` | `NumRedelivered` |
 | `oma.db.pool.connections` | `oma.state`=`acquired`、`idle`、`total`、`max` | `pgxpool.Stat`，按实例求和 |
 
+### 6.7 Go 运行时
+
+开启 `telemetry.metrics` 时，`go.opentelemetry.io/contrib/instrumentation/runtime`（与 OTel SDK 同一发布批次的版本）
+随 server MeterProvider 启动，导出间隔沿用 `telemetry.metrics.export_interval`，没有独立配置项。使用当前 runtime semconv
+指标名，不导出 `runtime.go.*` 旧指标（只在设置 `OTEL_GO_X_DEPRECATED_RUNTIME_METRICS=true` 时才会出现）。
+
+| 名称 | 类型 | 属性 | 说明 |
+| --- | --- | --- | --- |
+| `go.goroutine.count` | Int64ObservableUpDownCounter | 无 | 存活 goroutine 数 |
+| `go.memory.used` | Int64ObservableUpDownCounter | `go.memory.type`=`stack`、`other` | runtime 占用内存（不含已归还 OS 的部分） |
+| `go.memory.limit` | Int64ObservableUpDownCounter | 无 | `GOMEMLIMIT`；未设置限额时不上报 |
+| `go.memory.allocated` | Int64ObservableCounter | 无 | 累计堆分配字节，看板取 `rate` |
+| `go.memory.allocations` | Int64ObservableCounter | 无 | 累计堆分配次数 |
+| `go.memory.gc.goal` | Int64ObservableUpDownCounter | 无 | 本轮 GC 结束时的堆目标 |
+| `go.processor.limit` | Int64ObservableUpDownCounter | 无 | `GOMAXPROCS` |
+| `go.config.gogc` | Int64ObservableUpDownCounter | 无 | `GOGC` 百分比，默认 100 |
+| `go.schedule.duration` | Float64Histogram（producer） | 无 | goroutine 可运行到开始运行的等待；由 `NewProducer` 挂在 PeriodicReader 上，桶边界来自 `runtime/metrics` |
+
+runtime 读取 `runtime/metrics` 的最小间隔为库默认的 15 秒，开销与导出间隔无关。资源属性 `service.instance.id`
+区分副本，看板按实例展示（第 7.1 节平台依赖）。
+
 ## 7. 配置
 
 ### 7.1 YAML
@@ -457,7 +478,8 @@ stale/stuck 阈值为正。状态指标没有独立开关：`StateMetricsActive`
 实现：[internal/telemetry/telemetry.go](../../../internal/telemetry/telemetry.go)。
 
 `Setup` 根据各信号开关构造 provider，统一 resource 属性与 OTLP/HTTP 端点，启动早期注册全局
-provider。关闭时按逆序刷新与释放；部分初始化失败也释放已创建的 provider。关闭遥测时不创建 exporter。
+provider。metrics 开启时 `newRuntimeMeterProvider` 在同一 MeterProvider 上启动 Go 运行时指标（第 6.7 节），
+启动失败时关闭刚创建的 provider 并返回错误。关闭时按逆序刷新与释放；部分初始化失败也释放已创建的 provider。关闭遥测时不创建 exporter。
 OTel 自身的导出错误只发往 bootstrap console logger，避免写回 OTLP。
 
 ### P0.3 Trace 辅助函数
@@ -496,6 +518,7 @@ HTTP server、River、NATS 等组件关闭后执行。启动失败由 console-on
 ### P0.7 测试与验收
 
 `internal/telemetry` 测试覆盖禁用、端点和头构造、部分失败清理、traceparent 校验和取消分类；
+`TestRuntimeMetrics` 用 ManualReader 验证九个 runtime 指标（设置临时 `GOMEMLIMIT` 以产生 `go.memory.limit`）；
 `internal/logging` 测试检查结构化 record、多路分发、显式属性优先及级别过滤。
 `main_test.go` 验证日志上下文映射。OpenObserve 实际导出需要单独运行期验收。
 
@@ -853,8 +876,9 @@ flowchart TB
 | 当前状态与积压 | 状态 gauge（取 `max`） | 由 Reporter 定期快照 |
 | 用户体感延迟 | traces SQL 窗口函数 | 用户等首 token：`user.message` 写入的 `POST .../events` span 到同会话下一次 `chat` span 开始再加其首 token 时间；回合时长：`session.status_running` 到随后 `session.status_idle`。均用 `LEAD() OVER (PARTITION BY oma_session_id ORDER BY _timestamp)` |
 
-只在进程启动以来有意义的稀有计数器（输入拒绝原因、SSE 订阅者丢弃、广播失败、交接失败、重投、心跳被拒、权限答复）用
-`sum by (...) (max_over_time(x[1d]))` 展示累计值（标题注明"进程启动以来"），不用 `increase()`：计数器的首个导出样本
+稀有计数器（输入拒绝原因、SSE 订阅者丢弃、广播失败、交接失败、重投、心跳被拒、权限答复）用
+`sum by (...) (max_over_time(x[1d]))` 展示累计值（标题注明"近 1 天累计"），不用 `increase()`。该值是近 1 天内每个实例
+（含已重启的旧进程）各自计数器最大值之和，不是单个进程启动以来的值，也不受看板时间范围限制。不用 `increase()` 的原因：计数器的首个导出样本
 已包含整段突发，`increase()` 没有前一个样本可比，一次性的事件会显示为 0。仍用 `increase(...[5m])` 的面板（Runner 运行、
 接受的输入、回执结果、工具权限决策、领取请求结果、River 任务结果、webhook 投递结果）对应每个回合、每次工具调用或每个
 定时任务都会累加的计数器，序列持续存在，速率形状有意义；其中的稀有失败另有 SQL 面板逐条计数（启动失败、5xx、
@@ -879,7 +903,7 @@ DSH 警告与错误事件）。低流量时 p95 会贴近直方图分桶边界�
 | 执行 | 模型调用量/耗时/首字节与首 token/错误（SQL）/token（输入、输出、缓存读写）/结束原因，沙箱工具调用（工具 × 结果，SQL）与耗时、沙箱 MCP 非成功，权限决策、权限答复（自动放行 / 用户确认）、确认等待 |
 | 回合结果 | 已结束回合、session.error、回合结果、回合时长 p50/p95 与分布、最慢的回合（drilldown）、会话与 code session 状态 |
 | Brain | 在线 DSH 节点、活跃会话、舰队与各节点利用率（活跃 / `oma.brain.sessions.capacity`，`max_over_time(...[2m])` 只统计在线节点）、等待执行端的会话（waiting/claimed/takeover）与最老等待、接管次数、准入失败与耗尽、派发→领取与领取→准入完成耗时、领取来源（派发/接管）、领取请求结果（不含长轮询自然超时）、准入结果、释放与耗尽、会话退役原因、按节点的租约丢失与心跳失败、按节点的 DSH 警告与错误事件 |
-| 平台依赖 | HTTP 5xx（SQL）、ERROR 日志、状态采集失败（按实例与来源）、HTTP 路由 p95 与请求量、数据库连接池、River 结果/耗时/排队、webhook 结果/耗时/consumer 积压、ERROR 日志按组件聚合 |
+| 平台依赖 | HTTP 5xx（SQL）、ERROR 日志、状态采集失败（按实例与来源）、HTTP 路由 p95 与请求量、数据库连接池、River 结果/耗时/排队、webhook 结果/耗时/consumer 积压、ERROR 日志按组件聚合；按实例的 Go goroutine 数、内存已用与 GC 目标、堆分配速率、调度延迟 p95（第 6.7 节） |
 
 入站流 `OMA_WORKER_INBOUND` 是工作队列且逻辑保留 30 天，已放弃会话的消息会一直留到过期，因此流内消息数与最老
 消息年龄只作参考，不再放在总览；投递积压看输入排队与事件排队等待。

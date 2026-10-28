@@ -7,12 +7,17 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"runtime/debug"
 	"sync"
 	"testing"
 	"time"
 
+	otelruntime "go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/log/global"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/trace"
 	tracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
@@ -141,5 +146,34 @@ func TestSetupExportsAllSignals(t *testing.T) {
 	}
 	if attrs["service.name"] != "oma-server" || attrs["deployment.environment.name"] != "test" || attrs["service.instance.id"] == "" || attrs["service.version"] == "" {
 		t.Fatalf("resource = %v", attrs)
+	}
+}
+
+func TestRuntimeMetrics(t *testing.T) {
+	previousLimit := debug.SetMemoryLimit(1 << 40)
+	t.Cleanup(func() { debug.SetMemoryLimit(previousLimit) })
+	reader := sdkmetric.NewManualReader(sdkmetric.WithProducer(otelruntime.NewProducer()))
+	provider, err := newRuntimeMeterProvider(reader, resource.Empty())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	var data metricdata.ResourceMetrics
+	if err := reader.Collect(t.Context(), &data); err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, scope := range data.ScopeMetrics {
+		for _, metric := range scope.Metrics {
+			names[metric.Name] = true
+		}
+	}
+	for _, name := range []string{
+		"go.goroutine.count", "go.memory.used", "go.memory.limit", "go.memory.allocated", "go.memory.allocations",
+		"go.memory.gc.goal", "go.processor.limit", "go.config.gogc", "go.schedule.duration",
+	} {
+		if !names[name] {
+			t.Errorf("runtime metric %s not produced: %v", name, names)
+		}
 	}
 }

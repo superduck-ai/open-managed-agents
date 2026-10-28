@@ -3878,7 +3878,7 @@
         {
           "id": "Panel_delivery_8",
           "type": "bar",
-          "title": "被拒绝的输入（按原因，进程启动以来）",
+          "title": "被拒绝的输入（按原因，近 1 天累计）",
           "description": "archived、conflict、paused 等；用累计值避免漏掉首次出现的原因",
           "config": {
             "show_legends": true,
@@ -4357,7 +4357,7 @@
         {
           "id": "Panel_delivery_13",
           "type": "bar",
-          "title": "重投（按通道，进程启动以来）",
+          "title": "重投（按通道，近 1 天累计）",
           "description": "投递次数大于 1 的 worker 事件；健康时应接近 0，用累计值避免漏掉首次重投",
           "config": {
             "show_legends": true,
@@ -4697,7 +4697,7 @@
         {
           "id": "Panel_delivery_17",
           "type": "bar",
-          "title": "心跳被拒（按状态码，进程启动以来）",
+          "title": "心跳被拒（按状态码，近 1 天累计）",
           "description": "心跳只记 HTTP 指标、不建 span；用累计值避免漏掉一次性的拒绝",
           "config": {
             "show_legends": true,
@@ -6057,7 +6057,7 @@
         {
           "id": "Panel_exec_11",
           "type": "bar",
-          "title": "权限答复（按结果 / 来源，进程启动以来）",
+          "title": "权限答复（按结果 / 来源，近 1 天累计）",
           "description": "auto-approve 为策略自动放行；tool-confirmation 为用户确认；用累计值避免漏掉单次答复",
           "config": {
             "show_legends": true,
@@ -10720,6 +10720,373 @@
             "w": 192,
             "h": 18,
             "i": 15
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_infra_16",
+          "type": "line",
+          "title": "Go goroutine 数（按实例）",
+          "description": "go.goroutine.count；持续上涨通常是泄漏的 goroutine（未关闭的流、卡住的请求）",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "default",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "linear",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max by (service_instance_id) (go_goroutine_count{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "go_goroutine_count",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{service_instance_id}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 126,
+            "w": 96,
+            "h": 18,
+            "i": 16
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_infra_17",
+          "type": "line",
+          "title": "Go 内存已用 / GC 目标（按实例）",
+          "description": "go.memory.used（栈 + 其他）与 go.memory.gc.goal；未设置 GOMEMLIMIT 时不上报 go.memory.limit",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "bytes",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "linear",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (service_instance_id) (go_memory_used{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "go_memory_used",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{service_instance_id} 已用",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            },
+            {
+              "query": "max by (service_instance_id) (go_memory_gc_goal{service_instance_id=~\"$instance\"})",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "go_memory_gc_goal",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{service_instance_id} GC 目标",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 96,
+            "y": 126,
+            "w": 96,
+            "h": 18,
+            "i": 17
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_infra_18",
+          "type": "line",
+          "title": "Go 堆分配速率（字节/秒，按实例）",
+          "description": "rate(go.memory.allocated)；与请求量一起看，判断是否有异常分配",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "bytes",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "linear",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (service_instance_id) (rate(go_memory_allocated{service_instance_id=~\"$instance\"}[5m]))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "go_memory_allocated",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{service_instance_id}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 144,
+            "w": 96,
+            "h": 18,
+            "i": 18
+          },
+          "htmlContent": "",
+          "markdownContent": "",
+          "customChartContent": ""
+        },
+        {
+          "id": "Panel_infra_19",
+          "type": "line",
+          "title": "Go 调度延迟 p95（按实例）",
+          "description": "go.schedule.duration：goroutine 可运行到真正运行的等待；升高说明 CPU 饱和或 GOMAXPROCS 不足",
+          "config": {
+            "show_legends": true,
+            "legends_position": "bottom",
+            "unit": "seconds",
+            "decimals": 2.0,
+            "line_thickness": 1.5,
+            "top_results_others": false,
+            "axis_border_show": false,
+            "label_option": {
+              "rotate": 0.0
+            },
+            "show_symbol": false,
+            "line_interpolation": "linear",
+            "legend_width": {
+              "unit": "px"
+            },
+            "base_map": null,
+            "map_view": null,
+            "drilldown": [],
+            "mark_line": [],
+            "override_config": [],
+            "connect_nulls": true,
+            "no_value_replacement": "",
+            "wrap_table_cells": false,
+            "table_transpose": false,
+            "table_dynamic_columns": false,
+            "mappings": [],
+            "color": {
+              "mode": "palette-classic-by-series",
+              "fixedColor": [
+                "#53ca53"
+              ],
+              "seriesBy": "last"
+            },
+            "trellis": {
+              "layout": null,
+              "num_of_columns": 1
+            }
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (le, service_instance_id) (rate(go_schedule_duration_bucket{service_instance_id=~\"$instance\"}[5m])))",
+              "vrlFunctionQuery": "",
+              "customQuery": true,
+              "fields": {
+                "stream": "go_schedule_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "breakdown": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{service_instance_id}",
+                "layer_type": "scatter",
+                "weight_fixed": 1.0,
+                "limit": 0.0,
+                "min": 0.0,
+                "max": 100.0,
+                "time_shift": []
+              }
+            }
+          ],
+          "layout": {
+            "x": 96,
+            "y": 144,
+            "w": 96,
+            "h": 18,
+            "i": 19
           },
           "htmlContent": "",
           "markdownContent": "",

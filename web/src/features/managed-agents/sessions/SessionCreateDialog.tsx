@@ -57,6 +57,7 @@ export function SessionCreateDialog({
       setValues((current) => (current.environmentId ? current : { ...current, environmentId: firstEnvironmentId }));
   }, [references.environments]);
   const patch = (changes: Partial<ManagedEntityFormValues>) => setValues((current) => ({ ...current, ...changes }));
+  const editing = Boolean(entity);
   const canSubmit =
     !references.error &&
     values.name.trim().length <= 500 &&
@@ -64,6 +65,7 @@ export function SessionCreateDialog({
       submitting,
       loadingOptions: references.loading,
       needsReferences: true,
+      editing,
       vaultAcknowledged: acknowledged,
     });
   const close = () => {
@@ -157,13 +159,14 @@ export function SessionCreateDialog({
                 label={msg('managedAgents.credentialVaults.title', 'Credential vaults')}
                 optional
                 presentation="add"
+                readOnly={editing}
                 workspaceId={workspaceId}
                 selectedIds={values.vaultIds}
                 options={references.vaults}
                 manageHref={`/workspaces/${encodeURIComponent(workspaceId)}/vaults`}
                 manageLabel={msg('managedAgents.credentialVaults.manage', 'Manage credential vaults')}
                 acknowledged={acknowledged}
-                onAcknowledgedChange={setAcknowledged}
+                onAcknowledgedChange={editing ? undefined : setAcknowledged}
                 onChange={(vaultIds) => patch({ vaultIds })}
               />
               <ManagedResourceFields

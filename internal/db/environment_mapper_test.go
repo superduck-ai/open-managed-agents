@@ -194,13 +194,13 @@ func TestEnvironmentWorkMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.EnvironmentUUID", "params.EnvironmentExternalID", "params.SessionUUID", "params.Metadata",
-				"params.Secret", "params.State", "params.CreatedAt", "params.CreatedAt",
+				"params.Secret", "params.State", "params.CreatedAt", "params.CreatedAt", "params.CreatedAt", "params.TraceParent",
 				"params.OrganizationUUID", "params.WorkspaceUUID", "params.EnvironmentUUID", "params.SessionUUID",
 			},
 			wantSensitiveArgumentNames: []string{"params.Metadata", "params.Secret"},
 			wantSQLFragments: []string{
 				"WITH changed AS", "INSERT INTO environment_work", "session_uuid", "CAST($8 AS jsonb)",
-				"FROM sessions source_session", "source_session.uuid = $16", "RETURNING", "JOIN sessions session",
+				"FROM sessions source_session", "source_session.uuid = $18", "RETURNING", "JOIN sessions session",
 			},
 		}},
 		{"count active", mapperBuilderContract{
@@ -271,11 +271,11 @@ func TestEnvironmentWorkMapperBuilderContracts(t *testing.T) {
 			bound:     buildEnvironmentWorkMapperRequeueIfRecoverable(yourbatis.DialectPostgres, recoveryParams),
 			wantID:    "EnvironmentWorkMapper.RequeueIfRecoverable", wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
-				"params.RetryAt", "params.OrganizationUUID", "params.WorkspaceUUID",
+				"params.RetryAt", "params.RetryAt", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.EnvironmentUUID", "params.WorkUUID",
 			},
 			wantSQLFragments: []string{
-				"state = 'queued'", "claim_expires_at = $1", "state IN ('starting', 'active')",
+				"state = 'queued'", "queued_at = $1", "claim_expires_at = $2", "state IN ('starting', 'active')",
 				"EXISTS", "code_session.session_uuid = environment_work.session_uuid",
 			},
 		}},
@@ -382,7 +382,7 @@ func TestEnvironmentSandboxMapperBuilderContracts(t *testing.T) {
 			wantID:   "EnvironmentSandboxMapper.ScheduleRecoveryForCodeSession",
 			wantKind: yourbatis.StatementUpdate,
 			wantArgumentNames: []string{
-				"params.ProviderSandboxID", "params.CodeSessionExternalID", "params.LastError",
+				"params.ProviderSandboxID", "params.CodeSessionExternalID", "params.LastError", "params.TraceParent",
 			},
 			wantSensitiveArgumentNames: []string{"params.LastError"},
 			wantSQLFragments: []string{
@@ -570,7 +570,7 @@ func environmentWorkMapperTestColumns() []string {
 		"uuid", "external_id", "organization_uuid", "workspace_uuid", "environment_uuid",
 		"environment_external_id", "session_uuid", "session_external_id", "metadata", "secret", "state", "claimed_by_worker_id",
 		"claim_expires_at", "acknowledged_at", "started_at", "latest_heartbeat_at", "heartbeat_ttl_seconds",
-		"stop_requested_at", "stopped_at", "created_at", "updated_at", "deleted_at",
+		"stop_requested_at", "stopped_at", "created_at", "updated_at", "deleted_at", "queued_at", "trace_parent",
 	}
 }
 
@@ -579,7 +579,7 @@ func environmentWorkMapperTestRow() []driver.Value {
 	return []driver.Value{
 		"00000000-0000-4000-8000-000000000004", "work_test", "00000000-0000-4000-8000-000000000001",
 		"00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", "env_test",
-		"00000000-0000-4000-8000-000000000006", "ses_test", []byte(`{}`), "secret", "queued", nil, nil, nil, nil, nil, nil, nil, nil, now, now, nil,
+		"00000000-0000-4000-8000-000000000006", "ses_test", []byte(`{}`), "secret", "queued", nil, nil, nil, nil, nil, nil, nil, nil, now, now, nil, nil, nil,
 	}
 }
 

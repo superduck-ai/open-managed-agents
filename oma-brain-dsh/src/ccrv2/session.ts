@@ -25,6 +25,7 @@ import { CcrAssistantStream, type AssistantBlockOutput } from "./assistant.ts";
 import { withAttachmentSession } from "../attachments/remote.ts";
 import { userInputContent } from "./user-content.ts";
 import { appendedSystemContext } from "./system-context.ts";
+import { TRACE_TURNS_METADATA, traceHooks, traceTurnsOf, type TurnTrace } from "../observability/trace-context.ts";
 
 export class CcrSession {
   inputId = "";
@@ -50,6 +51,8 @@ export class CcrSession {
   private readonly dispatchWaiters = new Set<() => void>();
   private waitingOnInterruptedChild = false;
   private readonly interruptedApprovals = new Set<string>();
+  private restoredTraceTurns: TurnTrace[] | undefined;
+  private reportedTraceTurns: string | undefined;
   readonly approvals = new Map<
     string,
     { phase: "policy" | "confirmation" | "resolved"; resolve: (decision: Payload) => void; reject: (error: Error) => void; threadId: string; details: import("./wire.ts").RequiresActionDetails }
@@ -76,7 +79,6 @@ export class CcrSession {
     this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID, config.modelRequestID);
     this.runtime = new SessionRuntime(ctx, { ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); } }, {
       onDiagnostic: diagnostic => recordRuntimeDiagnostic(this.id, diagnostic),
-      selectModel: model => this.modelOverride ?? model,
       onExternalMcpConnectionFailure: (serverName) => this.reportError({
         type: "session.error", uuid: crypto.randomUUID(), processed_at: new Date().toISOString(),
         error: { type: "mcp_connection_failed_error", mcp_server_name: serverName,
@@ -138,6 +140,7 @@ export class CcrSession {
       this.abort.signal.throwIfAborted();
       const model = metadata?.model;
       if (typeof model === "string" && model.trim()) this.applyModel(model);
+      this.restoredTraceTurns = traceTurnsOf(metadata?.[TRACE_TURNS_METADATA]);
       await this.openState((next) => { stage = next; });
       this.abort.signal.throwIfAborted();
       workerDiagnostic("info", "ccrv2_worker_lifecycle_initialized", {
@@ -162,7 +165,7 @@ export class CcrSession {
     this.modelOverride = model;
     this.config.model = model;
     this.runtime.config.model = model;
-    if (this.runtime.handle) this.agent.options.model = model;
+    if (this.runtime.handle) this.agent.model.select({ provider: this.config.provider, model });
   }
 
   private async openState(setStage: (stage: string) => void): Promise<void> {
@@ -170,6 +173,7 @@ export class CcrSession {
     this.restoredFromRemote = await this.ctx.ccrReplication.ensure(this.id);
     setStage("runtime_open");
     await this.runtime.open();
+    if (this.modelOverride) this.agent.model.select({ provider: this.config.provider, model: this.modelOverride });
     setStage("subagents_restore");
     await this.subagents.restore();
     const recoveryEvents = this.pendingEvents.splice(0);
@@ -180,6 +184,8 @@ export class CcrSession {
       finally { await handle.close(); }
     }
     this.pendingEvents.push(...recoveryEvents);
+    traceHooks.turnsInterrupted(this.id, this.restoredTraceTurns);
+    this.restoredTraceTurns = undefined;
     this.opening = false;
     await this.checkpoint();
     setStage("report_metadata");
@@ -226,6 +232,16 @@ export class CcrSession {
   async checkpoint(): Promise<void> {
     await this.runtime.flushLog();
     await this.ctx.ccrReplication.flush(this.id);
+    this.reportTraceTurns();
+  }
+
+  private reportTraceTurns(): void {
+    const turns = traceHooks.openTurns(this.id) ?? null;
+    const reported = JSON.stringify(turns);
+    if (reported === this.reportedTraceTurns) return;
+    this.reportedTraceTurns = reported;
+    this.backend.reportMetadata(this.id, { [TRACE_TURNS_METADATA]: turns })
+      .catch(() => { if (this.reportedTraceTurns === reported) this.reportedTraceTurns = undefined; });
   }
 
   private replay(events: readonly SessionEvent[], threadId?: string): void {
@@ -342,11 +358,13 @@ export class CcrSession {
         const approval = this.approvals.get(requestId);
         if (pending && approval?.phase === "policy") {
           approval.phase = "confirmation";
+          traceHooks.approvalPending(ownerId, request.callId);
           await this.updateStatus();
         }
       }
       decision = await decisionPromise;
       signal.throwIfAborted();
+      traceHooks.approvalResolved(ownerId, request.callId, decision.externalResult !== undefined ? "external" : decision.behavior === "allow" ? "allowed" : "denied");
     } finally {
       signal.removeEventListener("abort", cancel);
       this.approvals.delete(requestId);
@@ -508,6 +526,8 @@ export class CcrSession {
     }
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
+    const traceContext = payload.trace_context;
+    traceHooks.inputReceived(this.id, traceContext && typeof traceContext === "object" && !Array.isArray(traceContext) ? traceContext as Payload : undefined);
     let stopProgress = () => {};
     try {
       await this.runtime.run(() => {

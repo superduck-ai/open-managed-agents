@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,11 +9,16 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/listeners"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestShutdownHTTPDeadlineClosesActiveRequests(t *testing.T) {
@@ -130,5 +136,41 @@ func waitForShutdownEvent(t *testing.T, event <-chan struct{}) {
 	case <-event:
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for shutdown event")
+	}
+}
+
+func TestLogContextAttrs(t *testing.T) {
+	if got := logContextAttrs(context.Background()); len(got) != 0 {
+		t.Fatalf("unexpected empty-context attrs: %v", got)
+	}
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}})
+	ctx := trace.ContextWithSpanContext(httpapi.WithRequestID(t.Context(), "req_test"), spanContext)
+	got := map[string]string{}
+	for _, attr := range logContextAttrs(ctx) {
+		got[attr.Key] = attr.Value.String()
+	}
+	want := map[string]string{"request_id": "req_test", "trace_id": spanContext.TraceID().String(), "span_id": spanContext.SpanID().String()}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("context attrs = %v, want %v", got, want)
+	}
+	if attrs := requestIDAttrs(ctx); len(attrs) != 1 || attrs[0].Key != "request_id" || attrs[0].Value.String() != "req_test" {
+		t.Fatalf("OTLP context attrs = %v", attrs)
+	}
+}
+
+func TestApplicationLoggerHonorsLevel(t *testing.T) {
+	runtime, err := telemetry.Setup(t.Context(), config.TelemetryConfig{}, "test", slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		level slog.Level
+		want  bool
+	}{{slog.LevelInfo, false}, {slog.LevelDebug, true}} {
+		var output bytes.Buffer
+		newApplicationLogger(logging.NewConsoleHandler(&output, tc.level), runtime, tc.level).Debug("debug probe")
+		if got := bytes.Contains(output.Bytes(), []byte("debug probe")); got != tc.want {
+			t.Fatalf("level %v: debug written = %v, want %v", tc.level, got, tc.want)
+		}
 	}
 }

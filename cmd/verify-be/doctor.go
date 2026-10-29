@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const openObserveImage = "public.ecr.aws/zinclabs/openobserve:v1.1.2"
+
 const defaultWorker = "ghcr.io/superduck-ai/managed-agent-sandbox:latest"
 const minimumDiskKiB = 1 << 20
 
@@ -69,6 +71,9 @@ func doctor(ctx context.Context, root, worker, selected string, apiPort int) (do
 		result.Versions[name] = strings.Split(value, "\n")[0]
 	}
 	images := map[string]string{"postgres": "postgres:17", "redis": "redis:8", "nats": "nats:2.14.6-alpine", "minio": "pgsty/minio:latest"}
+	if selected == "chat.brain-observability" {
+		images["openobserve"] = openObserveImage
+	}
 	if worker != "" {
 		images["worker"] = worker
 	}

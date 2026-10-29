@@ -13,14 +13,62 @@ import {
 import { Label } from '../../../shared/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../shared/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../../shared/ui/tooltip';
-import { Check, ChevronsUpDown, Plus, X } from 'lucide-react';
+import { Check, ChevronsUpDown, CircleAlert, Plus, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { DeploymentFieldHeader } from '../components/common';
 import { type EntityOption } from '../types';
 import { vaultCreatedAbsoluteLabel, vaultCreatedLabel, vaultSelectionEquals } from './model';
 import { useVaultCredentialSummaries } from './use-vault-credential-summaries';
 
+function vaultSelectFieldId(label: string) {
+  return `managed-vault-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+}
+
 export function ManagedVaultSelectField({
+  readOnly = false,
+  label,
+  optional = false,
+  selectedIds,
+  options,
+  ...props
+}: {
+  label: string;
+  optional?: boolean;
+  workspaceId: string;
+  selectedIds: string[];
+  options: EntityOption[];
+  manageHref: string;
+  manageLabel: string;
+  acknowledged?: boolean;
+  onAcknowledgedChange?: (value: boolean) => void;
+  onChange: (value: string[]) => void;
+  presentation?: 'select' | 'add';
+  readOnly?: boolean;
+}) {
+  if (readOnly) {
+    return (
+      <VaultSelectionReadOnly
+        id={vaultSelectFieldId(label)}
+        label={label}
+        optional={optional}
+        options={selectedIds.map(
+          (selectedId) => options.find((option) => option.id === selectedId) ?? { id: selectedId, label: selectedId },
+        )}
+      />
+    );
+  }
+  return (
+    <InteractiveVaultSelectField
+      label={label}
+      optional={optional}
+      selectedIds={selectedIds}
+      options={options}
+      {...props}
+    />
+  );
+}
+
+function InteractiveVaultSelectField({
   label,
   optional = false,
   workspaceId,
@@ -55,7 +103,7 @@ export function ManagedVaultSelectField({
     enabled: open,
     msg,
   });
-  const id = `managed-vault-select-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  const id = vaultSelectFieldId(label);
   const ackId = `${id}-ack`;
   const selectedOptions = options.filter((option) => selectedIds.includes(option.id));
   const emptyPlaceholder = options.length
@@ -260,6 +308,69 @@ export function ManagedVaultSelectField({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function VaultSelectionReadOnly({
+  id,
+  label,
+  optional,
+  options,
+}: {
+  id: string;
+  label: string;
+  optional: boolean;
+  options: EntityOption[];
+}) {
+  const { msg } = useI18n();
+  return (
+    <div>
+      <DeploymentFieldHeader id={id} label={label} optional={optional} accessory={<VaultLockedHint />} />
+      {options.length ? (
+        <div className="flex flex-wrap gap-2">
+          {options.map((option) => (
+            <span
+              key={option.id}
+              className="inline-flex max-w-full items-center rounded-md border-[0.5px] border-border bg-secondary px-2 py-1 text-sm"
+            >
+              <span className="truncate">{option.label}</span>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p id={id} className="text-sm text-muted-foreground">
+          {msg('managedAgents.credentialVaults.emptyTitle', 'No vaults yet')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function VaultLockedHint() {
+  const { msg } = useI18n();
+  const label = msg('managedAgents.credentialVaults.sessionLocked.label', "Why vaults can't be changed");
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="size-4 text-muted-foreground hover:text-foreground"
+            aria-label={label}
+          />
+        }
+      >
+        <CircleAlert className="size-3.5" aria-hidden />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-64 text-sm leading-5">
+        {msg(
+          'managedAgents.credentialVaults.sessionLocked.description',
+          "Vaults are attached when the session is created and can't be changed afterward. Create a new session to use a different vault.",
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 

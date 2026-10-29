@@ -8,13 +8,15 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper CodeSessionClaimMapper -sql ./code_session_claim_mapper.xml -out ./code_session_claim_mapper.sqlmap.gen.go -dialect postgres
 
 type codeSessionClaimCandidateRow struct {
-	UUID                string `db:"uuid"`
-	ExternalID          string `db:"external_id"`
-	OrganizationUUID    string `db:"organization_uuid"`
-	WorkspaceUUID       string `db:"workspace_uuid"`
-	SessionExternalID   string `db:"session_external_id"`
-	CurrentWorkerEpoch  int64  `db:"current_worker_epoch"`
-	WorkerClaimAttempts int    `db:"worker_claim_attempts"`
+	UUID                string     `db:"uuid"`
+	ExternalID          string     `db:"external_id"`
+	OrganizationUUID    string     `db:"organization_uuid"`
+	WorkspaceUUID       string     `db:"workspace_uuid"`
+	SessionExternalID   string     `db:"session_external_id"`
+	CurrentWorkerEpoch  int64      `db:"current_worker_epoch"`
+	WorkerClaimAttempts int        `db:"worker_claim_attempts"`
+	RequestedAt         *time.Time `db:"worker_claim_requested_at"`
+	TraceParent         *string    `db:"worker_claim_trace_parent"`
 }
 
 type claimCodeSessionParams struct {
@@ -52,5 +54,5 @@ type CodeSessionClaimMapper interface {
 	FailPermanently(ctx context.Context, params failCodeSessionClaimParams) (failedCodeSessionClaimRow, error)
 	Release(ctx context.Context, params releaseCodeSessionClaimParams) (int64, error)
 	FindWorkerTransport(ctx context.Context, externalID string) (string, error)
-	Request(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (int64, error)
+	Request(ctx context.Context, organizationUUID, workspaceUUID, externalID string, traceParent *string) (int64, error)
 }

@@ -56,7 +56,9 @@ type yamlConfig struct {
 	EnvironmentRunner      EnvironmentRunnerConfig    `yaml:"environment_runner"`
 	CodeSession            yamlCodeSessionConfig      `yaml:"code_session"`
 	Observability          ObservabilityConfig        `yaml:"observability"`
+	Telemetry              TelemetryConfig            `yaml:"telemetry"`
 	Webhook                yamlWebhookConfig          `yaml:"webhook"`
+	TelemetryExport        yamlWebhookConfig          `yaml:"telemetry_export"`
 	Vault                  VaultConfig                `yaml:"vault"`
 	Bootstrap              yamlBootstrapConfig        `yaml:"bootstrap"`
 }
@@ -105,11 +107,12 @@ type yamlDatabaseConfig struct {
 }
 
 type yamlNATSConfig struct {
-	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
-	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
-	URL               string                  `yaml:"url"`
-	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
-	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
+	WebhookStream         WebhookStreamConfig     `yaml:"webhook_stream"`
+	TelemetryExportStream WebhookStreamConfig     `yaml:"telemetry_export_stream"`
+	WorkerEventStream     WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL                   string                  `yaml:"url"`
+	ConnectTimeout        time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout          time.Duration           `yaml:"drain_timeout"`
 }
 
 type yamlCodeSessionConfig struct {
@@ -150,11 +153,12 @@ func newYAMLConfig() yamlConfig {
 		Database:      yamlDatabaseConfig{URL: defaults.Database.URL},
 		Redis:         defaults.Redis,
 		NATS: yamlNATSConfig{
-			WorkerEventStream: defaults.NATS.WorkerEventStream,
-			WebhookStream:     defaults.NATS.WebhookStream,
-			URL:               defaults.NATS.URL,
-			ConnectTimeout:    defaults.NATS.ConnectTimeout,
-			DrainTimeout:      defaults.NATS.DrainTimeout,
+			WorkerEventStream:     defaults.NATS.WorkerEventStream,
+			WebhookStream:         defaults.NATS.WebhookStream,
+			TelemetryExportStream: defaults.NATS.TelemetryExportStream,
+			URL:                   defaults.NATS.URL,
+			ConnectTimeout:        defaults.NATS.ConnectTimeout,
+			DrainTimeout:          defaults.NATS.DrainTimeout,
 		},
 		WebTools:              defaults.WebTools,
 		Auth:                  defaults.Auth,
@@ -177,12 +181,20 @@ func newYAMLConfig() yamlConfig {
 			BrainClaimTokenFile:                defaults.CodeSession.BrainClaimTokenFile,
 		},
 		Observability: defaults.Observability,
+		Telemetry:     defaults.Telemetry,
 		Webhook: yamlWebhookConfig{
 			Concurrency:         defaults.Webhook.Concurrency,
 			Timeout:             defaults.Webhook.Timeout,
 			MaxAttempts:         defaults.Webhook.MaxAttempts,
 			FailureDisableAfter: defaults.Webhook.FailureDisableAfter,
 			AllowInsecure:       defaults.Webhook.AllowInsecure,
+		},
+		TelemetryExport: yamlWebhookConfig{
+			Concurrency:         defaults.TelemetryExport.Concurrency,
+			Timeout:             defaults.TelemetryExport.Timeout,
+			MaxAttempts:         defaults.TelemetryExport.MaxAttempts,
+			FailureDisableAfter: defaults.TelemetryExport.FailureDisableAfter,
+			AllowInsecure:       defaults.TelemetryExport.AllowInsecure,
 		},
 		Vault: defaults.Vault,
 		Bootstrap: yamlBootstrapConfig{
@@ -206,11 +218,12 @@ func (input yamlConfig) resolve() Config {
 		Database:               DatabaseConfig{URL: input.Database.URL},
 		Redis:                  input.Redis,
 		NATS: NATSConfig{
-			WorkerEventStream: input.NATS.WorkerEventStream,
-			WebhookStream:     input.NATS.WebhookStream,
-			URL:               input.NATS.URL,
-			ConnectTimeout:    input.NATS.ConnectTimeout,
-			DrainTimeout:      input.NATS.DrainTimeout,
+			WorkerEventStream:     input.NATS.WorkerEventStream,
+			WebhookStream:         input.NATS.WebhookStream,
+			TelemetryExportStream: input.NATS.TelemetryExportStream,
+			URL:                   input.NATS.URL,
+			ConnectTimeout:        input.NATS.ConnectTimeout,
+			DrainTimeout:          input.NATS.DrainTimeout,
 		},
 		WebTools:              input.WebTools,
 		Auth:                  input.Auth,
@@ -233,12 +246,20 @@ func (input yamlConfig) resolve() Config {
 			BrainClaimTokenFile:                input.CodeSession.BrainClaimTokenFile,
 		},
 		Observability: input.Observability,
+		Telemetry:     input.Telemetry,
 		Webhook: WebhookConfig{
 			Concurrency:         input.Webhook.Concurrency,
 			Timeout:             input.Webhook.Timeout,
 			MaxAttempts:         input.Webhook.MaxAttempts,
 			FailureDisableAfter: input.Webhook.FailureDisableAfter,
 			AllowInsecure:       input.Webhook.AllowInsecure,
+		},
+		TelemetryExport: TelemetryExportConfig{
+			Concurrency:         input.TelemetryExport.Concurrency,
+			Timeout:             input.TelemetryExport.Timeout,
+			MaxAttempts:         input.TelemetryExport.MaxAttempts,
+			FailureDisableAfter: input.TelemetryExport.FailureDisableAfter,
+			AllowInsecure:       input.TelemetryExport.AllowInsecure,
 		},
 		Vault: input.Vault,
 		Bootstrap: BootstrapConfig{
@@ -253,6 +274,7 @@ func (input yamlConfig) resolve() Config {
 	}
 	cfg.Database.AutoMigrate = input.Database.AutoMigrate.valueOr(defaultDatabaseAutoMigrate(cfg.Env))
 	cfg.Webhook.WorkerEnabled = input.Webhook.WorkerEnabled.valueOr(true)
+	cfg.TelemetryExport.WorkerEnabled = input.TelemetryExport.WorkerEnabled.valueOr(true)
 	if input.Bootstrap.SeedAPIKeys.set {
 		cfg.Bootstrap.SeedAPIKeys = input.Bootstrap.SeedAPIKeys.value
 	} else {

@@ -284,9 +284,9 @@ func TestValidateObservabilityConfigOpenObserveBaseURL(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.baseURL, func(t *testing.T) {
 			cfg.OpenObserve.BaseURL = test.baseURL
-			err := validateObservabilityConfig(cfg)
+			err := ValidateObservabilityConfig(cfg)
 			if (err != nil) != test.wantError {
-				t.Fatalf("validateObservabilityConfig() error = %v, wantError %v", err, test.wantError)
+				t.Fatalf("ValidateObservabilityConfig() error = %v, wantError %v", err, test.wantError)
 			}
 		})
 	}
@@ -295,9 +295,9 @@ func TestValidateObservabilityConfigOpenObserveBaseURL(t *testing.T) {
 func TestValidateObservabilityConfigRejectsUnsupportedBackend(t *testing.T) {
 	cfg := enabledOpenObserveConfig()
 	cfg.Backend = "clickhouse"
-	err := validateObservabilityConfig(cfg)
+	err := ValidateObservabilityConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "observability.backend") {
-		t.Fatalf("validateObservabilityConfig() error = %v, want backend error", err)
+		t.Fatalf("ValidateObservabilityConfig() error = %v, want backend error", err)
 	}
 }
 
@@ -305,17 +305,17 @@ func TestValidateObservabilityConfigRequiresQueryBlock(t *testing.T) {
 	t.Run("missing query username", func(t *testing.T) {
 		cfg := enabledOpenObserveConfig()
 		cfg.OpenObserve.Query.Username = ""
-		err := validateObservabilityConfig(cfg)
+		err := ValidateObservabilityConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "observability.openobserve.query.username") {
-			t.Fatalf("validateObservabilityConfig() error = %v, want query.username error", err)
+			t.Fatalf("ValidateObservabilityConfig() error = %v, want query.username error", err)
 		}
 	})
 	t.Run("non-positive query timeout", func(t *testing.T) {
 		cfg := enabledOpenObserveConfig()
 		cfg.OpenObserve.Query.Timeout = 0
-		err := validateObservabilityConfig(cfg)
+		err := ValidateObservabilityConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "observability.openobserve.query.timeout") {
-			t.Fatalf("validateObservabilityConfig() error = %v, want query.timeout error", err)
+			t.Fatalf("ValidateObservabilityConfig() error = %v, want query.timeout error", err)
 		}
 	})
 }
@@ -323,12 +323,12 @@ func TestValidateObservabilityConfigRequiresQueryBlock(t *testing.T) {
 func enabledOpenObserveConfig() ObservabilityConfig {
 	return ObservabilityConfig{
 		Enabled: true,
+		OTLP:    ObservabilityOTLPConfig{MaxRequestBytes: 1024, ForwardTimeout: time.Second},
 		Backend: ObservabilityBackendOpenObserve,
 		OpenObserve: OpenObserveConfig{
 			BaseURL:      "http://openobserve:5080",
 			Organization: "oma",
 			LogsStream:   "logs",
-			TracesStream: "traces",
 			Ingestion:    BackendCredentialsConfig{Username: "ingest", Password: "ingest-secret"},
 			Query:        BackendQueryConfig{Username: "query", Password: "query-secret", Timeout: 15 * time.Second},
 		},
@@ -340,19 +340,18 @@ func TestValidateCodeSessionSandboxAPIBaseURL(t *testing.T) {
 		name        string
 		environment string
 		config      CodeSessionConfig
-		enabled     bool
 		wantError   bool
 	}{
 		{name: "observability disabled with no URL", environment: EnvironmentProd},
-		{name: "missing URL", environment: EnvironmentProd, enabled: true, wantError: true},
+		{name: "missing URL", environment: EnvironmentProd, wantError: false},
 		{name: "invalid URL with observability disabled", environment: EnvironmentProd, config: CodeSessionConfig{SandboxAPIBaseURL: "openobserve.local"}, wantError: true},
-		{name: "production HTTPS", environment: EnvironmentProd, config: CodeSessionConfig{SandboxAPIBaseURL: "https://oma.example"}, enabled: true},
+		{name: "production HTTPS", environment: EnvironmentProd, config: CodeSessionConfig{SandboxAPIBaseURL: "https://oma.example"}},
 		{name: "production HTTP rejected with observability disabled", environment: EnvironmentProd, config: CodeSessionConfig{SandboxAPIBaseURL: "http://oma.internal"}, wantError: true},
 		{name: "development HTTP", environment: EnvironmentDev, config: CodeSessionConfig{SandboxAPIBaseURL: "http://host.docker.internal:38080"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateCodeSessionSandboxAPIBaseURL(test.environment, test.config, test.enabled)
+			err := validateCodeSessionSandboxAPIBaseURL(test.environment, test.config)
 			if (err != nil) != test.wantError {
 				t.Fatalf("validateCodeSessionSandboxAPIBaseURL() error = %v, wantError %v", err, test.wantError)
 			}
@@ -714,8 +713,8 @@ func TestDockerComposeDeclaresDevelopmentCredentialPosture(t *testing.T) {
 	if strings.TrimSpace(cfg.CodeSession.JWTSigningPrivateKeyFile) != "" {
 		t.Fatalf("Compose development jwt_signing_private_key_file = %q, want process-local ephemeral key", cfg.CodeSession.JWTSigningPrivateKeyFile)
 	}
-	if !cfg.Observability.Enabled || !cfg.Observability.ContentCaptureEnabled {
-		t.Fatalf("Compose observability enabled/content_capture_enabled = %t/%t, want true/true", cfg.Observability.Enabled, cfg.Observability.ContentCaptureEnabled)
+	if cfg.Observability.Enabled || !cfg.Observability.ContentCaptureEnabled {
+		t.Fatalf("Compose observability enabled/content_capture_enabled = %t/%t, want false/true", cfg.Observability.Enabled, cfg.Observability.ContentCaptureEnabled)
 	}
 	if cfg.Observability.Backend != ObservabilityBackendOpenObserve {
 		t.Fatalf("Compose observability backend = %q, want %q", cfg.Observability.Backend, ObservabilityBackendOpenObserve)
@@ -1218,5 +1217,38 @@ func TestLoadWebToolsAPIKey(t *testing.T) {
 	}
 	if cfg.WebTools.SearchProvider != "deepseek" || cfg.WebTools.Providers["deepseek"].APIKey != "private-test-key" {
 		t.Fatal("API key was not preserved")
+	}
+}
+
+func TestLoadIncompleteObservabilityDoesNotRejectPlatformConfig(t *testing.T) {
+	prepareLoadTest(t)
+	cfg, err := loadConfigTestYAML(t, "observability:\n  enabled: true\n  otlp:\n    forward_timeout: 0s\n")
+	if err != nil {
+		t.Fatalf("optional observability blocked config loading: %v", err)
+	}
+	if err := ValidateObservabilityConfig(cfg.Observability); err == nil {
+		t.Fatal("optional configuration still needs degradation at server assembly")
+	}
+}
+
+func TestOpenObserveComposeVersionsMatch(t *testing.T) {
+	for _, path := range []string{"docker-compose.yml", "deploy/docker-compose/dev-env.yaml"} {
+		t.Run(path, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var compose struct {
+				Services map[string]struct {
+					Image string `yaml:"image"`
+				} `yaml:"services"`
+			}
+			if err := yaml.Unmarshal(data, &compose); err != nil {
+				t.Fatal(err)
+			}
+			if got := compose.Services["openobserve"].Image; got != "public.ecr.aws/zinclabs/openobserve:v1.1.2" {
+				t.Fatalf("OpenObserve image = %q, want shared query-contract version v1.1.2", got)
+			}
+		})
 	}
 }

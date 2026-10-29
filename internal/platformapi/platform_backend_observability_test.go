@@ -2,255 +2,125 @@ package platformapi
 
 import (
 	"context"
-	"encoding/json"
+	"github.com/go-chi/chi/v5"
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/observability"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/observability"
-
-	"github.com/go-chi/chi/v5"
 )
 
-type recordingBackend struct {
-	scope observability.TenantScope
-	bound observability.BoundVariables
+type recordingTrajectoryProvider struct {
+	scope     observability.Scope
+	query     observability.ListQuery
+	dashboard observability.DashboardRequest
+	versions  []int
+	target    observability.Target
+	after     int64
 }
 
-func (b *recordingBackend) PanelRows(_ context.Context, _ string, bound observability.BoundVariables) ([]observability.Row, error) {
-	b.scope = bound.Scope
-	b.bound = bound
-	current := 4.0
-	return []observability.Row{{"current": current, "previous": 2.0, "change_percent": 100.0}}, nil
+func (p *recordingTrajectoryProvider) List(_ context.Context, scope observability.Scope, _ observability.Window, query observability.ListQuery) (observability.List, error) {
+	p.scope = scope
+	p.query = query
+	return observability.List{Items: []observability.SessionTrajectory{}}, nil
+}
+func (p *recordingTrajectoryProvider) Dashboard(_ context.Context, scope observability.Scope, _ observability.Window, request observability.DashboardRequest) (observability.Dashboard, error) {
+	p.scope = scope
+	p.versions = scope.AgentVersions
+	p.dashboard = request
+	return observability.Dashboard{}, nil
+}
+func (p *recordingTrajectoryProvider) Page(_ context.Context, scope observability.Scope, _ observability.Window, target observability.Target, after int64) (observability.Page, error) {
+	p.scope = scope
+	p.target = target
+	p.after = after
+	return observability.Page{}, nil
 }
 
-func (b *recordingBackend) TraceListRows(_ context.Context, q observability.TraceListQuery) ([]observability.Row, error) {
-	b.scope = q.Bound.Scope
-	b.bound = q.Bound
-	return nil, nil
-}
-
-func (b *recordingBackend) TraceSpans(_ context.Context, q observability.TraceDetailQuery) (observability.TraceSpansResult, error) {
-	b.scope = q.Bound.Scope
-	b.bound = q.Bound
-	return observability.TraceSpansResult{Truncated: true}, nil
-}
-
-type stubStore struct {
-	agentErr error
-}
-
-func (s stubStore) GetAgent(context.Context, string, string) error { return s.agentErr }
-func (s stubStore) GetSession(context.Context, string, string) error {
-	return nil
-}
-
-func TestObservabilityPanelQueryContract(t *testing.T) {
-	backend := &recordingBackend{}
-	handler := observability.NewHandler(backend, stubStore{}, nil)
-	router := observabilityRouter(handler, auth.Principal{OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"})
-
-	t.Run("200", func(t *testing.T) {
-		recorder := doPanelQuery(router, `{"query_ref":"overview.interactions","variables":{"start_time":"2026-08-12T00:00:00Z","end_time":"2026-08-13T00:00:00Z"}}`)
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-		}
-		var payload map[string]any
-		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-			t.Fatal(err)
-		}
-		if payload["render_type"] != "stat" || payload["query_ref"] != "overview.interactions" || payload["data_as_of"] == nil {
-			t.Fatalf("payload = %#v", payload)
-		}
-		if backend.scope.OrganizationUUID != "org_1" || backend.scope.WorkspaceUUID != "ws_1" {
-			t.Fatalf("scope = %+v", backend.scope)
-		}
-	})
-
-	t.Run("200-agent-version", func(t *testing.T) {
-		recorder := doPanelQuery(router, `{"query_ref":"overview.interactions","variables":{"start_time":"2026-08-12T00:00:00Z","end_time":"2026-08-13T00:00:00Z","agent_version":[3,4]}}`)
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-		}
-		if got := backend.scope.AgentVersions; len(got) != 2 || got[0] != 3 || got[1] != 4 {
-			t.Fatalf("AgentVersions = %#v", backend.scope.AgentVersions)
-		}
-	})
-
-	t.Run("400", func(t *testing.T) {
-		recorder := doPanelQuery(router, `{"query_ref":"overview.interactions","variables":{"start_time":"2026-08-13T00:00:00Z","end_time":"2026-08-12T00:00:00Z"}}`)
-		assertAnthropicError(t, recorder, http.StatusBadRequest, "invalid_request_error")
-	})
-
-	t.Run("413", func(t *testing.T) {
-		body := `{"query_ref":"overview.interactions","variables":{"model":["` + strings.Repeat("x", maxObservabilityPanelQueryBodyBytes) + `"]}}`
-		recorder := doPanelQuery(router, body)
-		assertAnthropicError(t, recorder, http.StatusRequestEntityTooLarge, "invalid_request_error")
-	})
-
-	t.Run("400-unknown-field", func(t *testing.T) {
-		recorder := doPanelQuery(router, `{"query_ref":"overview.interactions","variables":{},"extra":true}`)
-		assertAnthropicError(t, recorder, http.StatusBadRequest, "invalid_request_error")
-	})
-
-	t.Run("404-query-ref", func(t *testing.T) {
-		recorder := doPanelQuery(router, `{"query_ref":"does.not.exist","variables":{"start_time":"2026-08-12T00:00:00Z","end_time":"2026-08-13T00:00:00Z"}}`)
-		assertAnthropicError(t, recorder, http.StatusNotFound, "not_found_error")
-	})
-
-	t.Run("404-agent", func(t *testing.T) {
-		missing := observability.NewHandler(&recordingBackend{}, stubStore{agentErr: db.ErrNotFound}, nil)
-		router := observabilityRouter(missing, auth.Principal{OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"})
-		recorder := doPanelQuery(router, `{"query_ref":"overview.interactions","variables":{"start_time":"2026-08-12T00:00:00Z","end_time":"2026-08-13T00:00:00Z","agent_id":"agent_missing"}}`)
-		assertAnthropicError(t, recorder, http.StatusNotFound, "not_found_error")
-	})
-}
-
-func TestObservabilityTraceListAgentVersion(t *testing.T) {
-	backend := &recordingBackend{}
-	handler := observability.NewHandler(backend, stubStore{}, nil)
-	router := observabilityRouter(handler, auth.Principal{OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"})
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/organizations/org_1/observability/traces?start_time=2026-08-12T00:00:00Z&end_time=2026-08-13T00:00:00Z&agent_version=4&agent_version=3", nil)
-	router.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if got := backend.scope.AgentVersions; len(got) != 2 || got[0] != 3 || got[1] != 4 {
-		t.Fatalf("AgentVersions = %#v", got)
-	}
-
-	recorder = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/api/organizations/org_1/observability/traces?start_time=2026-08-12T00:00:00Z&end_time=2026-08-13T00:00:00Z&agent_version=7,8", nil)
-	router.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("comma list status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if got := backend.scope.AgentVersions; len(got) != 2 || got[0] != 7 || got[1] != 8 {
-		t.Fatalf("comma AgentVersions = %#v", got)
-	}
-}
-
-func TestObservabilityGetTraceTimeWindow(t *testing.T) {
-	backend := &recordingBackend{}
-	handler := observability.NewHandler(backend, stubStore{}, nil)
-	router := observabilityRouter(handler, auth.Principal{OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"})
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/organizations/org_1/observability/traces/abc", nil)
-	router.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var detail observability.TraceDetailResult
-	if err := json.Unmarshal(recorder.Body.Bytes(), &detail); err != nil || !detail.Truncated {
-		t.Fatalf("detail = %+v err=%v", detail, err)
-	}
-	if backend.bound.Window.End.Sub(backend.bound.Window.Start) != 30*24*time.Hour+time.Hour {
-		t.Fatalf("default detail window = %+v", backend.bound.Window)
-	}
-
-	recorder = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/api/organizations/org_1/observability/traces/abc?start_time=2026-08-12T00:00:00Z&end_time=2026-08-13T00:00:00Z&agent_version=4", nil)
-	router.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("bounded detail status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if !backend.bound.Window.Start.Equal(time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)) || len(backend.bound.Scope.AgentVersions) != 1 || backend.bound.Scope.AgentVersions[0] != 4 {
-		t.Fatalf("bounded detail = %+v", backend.bound)
-	}
-
-	recorder = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/api/organizations/org_1/observability/traces/abc?start_time=2026-08-12T00:00:00Z", nil)
-	router.ServeHTTP(recorder, req)
-	assertAnthropicError(t, recorder, http.StatusBadRequest, "invalid_request_error")
-}
-
-func TestObservabilityMirrorOrganizationScope(t *testing.T) {
-	backend := &recordingBackend{}
-	handler := observability.NewHandler(backend, stubStore{}, nil)
-	router := observabilityRouter(handler, auth.Principal{OrganizationUUID: "local-org", WorkspaceUUID: "ws_1"})
-	body := `{"query_ref":"overview.interactions","variables":{"start_time":"2026-08-12T00:00:00Z","end_time":"2026-08-13T00:00:00Z"}}`
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "https://platform.claude.com/api/organizations/official-org/observability/panels/query", strings.NewReader(body))
-	req = req.WithContext(auth.WithPlatformMirrorOrganizationAlias(req.Context(), "official-org"))
-	router.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK || backend.scope.OrganizationUUID != "local-org" {
-		t.Fatalf("mirror status = %d scope = %+v body=%s", recorder.Code, backend.scope, recorder.Body.String())
-	}
-
-	backend.scope = observability.TenantScope{}
-	recorder = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "http://oma.local/api/organizations/official-org/observability/panels/query", strings.NewReader(body))
-	req = req.WithContext(auth.WithPlatformMirrorOrganizationAlias(req.Context(), "official-org"))
-	router.ServeHTTP(recorder, req)
-	assertAnthropicError(t, recorder, http.StatusNotFound, "not_found_error")
-	if backend.scope.OrganizationUUID != "" {
-		t.Fatalf("rejected mirror reached backend with scope = %+v", backend.scope)
-	}
-}
-
-// 投影内容（含 sql/stream 不泄漏）由 observability 包的
-// TestDashboardProjectionOmitsSQLAndStream 保证；observability 关闭时路由不注册
-// （404）由 tests/platform_console_backend_api_test.go 端到端覆盖。
-func TestObservabilityDashboardEndpoint(t *testing.T) {
-	handler := observability.NewHandler(&recordingBackend{}, stubStore{}, nil)
-	router := observabilityRouter(handler, auth.Principal{OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"})
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/organizations/org_1/observability/dashboard", nil)
-	router.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var payload struct {
-		Tabs []any `json:"tabs"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil || len(payload.Tabs) == 0 {
-		t.Fatalf("dashboard payload = %s err=%v", recorder.Body.String(), err)
-	}
-}
-
-func observabilityRouter(provider ObservabilityProvider, principal auth.Principal) http.Handler {
-	r := chi.NewRouter()
-	r.Route("/api/organizations/{orgUuid}", func(r chi.Router) {
+func TestTrajectoryRoutes(t *testing.T) {
+	provider := &recordingTrajectoryProvider{}
+	router := chi.NewRouter()
+	router.Route("/api/organizations/{orgUuid}", func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				next.ServeHTTP(w, req.WithContext(auth.WithPrincipal(req.Context(), principal)))
+				next.ServeHTTP(w, req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"})))
 			})
 		})
 		RegisterOrganizationObservabilityRoutes(r, provider, nil)
 	})
-	return r
+	for _, test := range []struct {
+		path   string
+		status int
+	}{
+		{"/trajectories/id?after_seq=oops", 400},
+		{"/trajectories?offset=-1", 400},
+		{"/trajectories?offset=100001", 400},
+		{"/trajectories?offset=999999999999999999999", 400},
+		{"/trajectories/id?after_seq=-2", 400},
+		{"/trajectories?start_time=2020-01-01T00:00:00Z&end_time=2022-01-01T00:00:00Z", 400},
+		{"/trajectories?start_time=invalid", 400},
+		{"/traces", 404},
+		{"/dashboard", 404},
+		{"/overview", 404},
+		{"/dashboards/models?start_time=invalid", 400},
+		{"/dashboards/models?agent_id=agent_1&agent_version=0", 400},
+		{"/dashboards/models?agent_id=agent_1&agent_version=2&agent_version=1&model=%20model-a%20&tool=Bash", 200},
+		{"/trajectories?agent_id=agent_1&sort=%20errors", 200},
+		{"/trajectories/sesn_1?after_seq=20&thread_id=%20sthr_1%20&segment=%20sthr_1&agent_id=agent_1", 200},
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/organizations/org_1/observability"+test.path, nil))
+		if response.Code != test.status {
+			t.Fatalf("%s: status %d: %s", test.path, response.Code, response.Body.String())
+		}
+	}
+	if provider.scope.OrganizationUUID != "org_1" || provider.scope.WorkspaceUUID != "ws_1" || provider.scope.AgentID != "" || provider.after != 20 {
+		t.Fatalf("invalid scope or cursor: %+v", provider)
+	}
+	if provider.dashboard != (observability.DashboardRequest{Tab: "models", Model: "model-a", Tool: "Bash"}) || len(provider.versions) != 2 || provider.versions[0] != 1 || provider.query.Sort != "errors" {
+		t.Fatalf("dashboard = %+v versions = %v, list query = %+v", provider.dashboard, provider.versions, provider.query)
+	}
+	if provider.target != (observability.Target{SessionID: "sesn_1", ThreadID: "sthr_1", Segment: "sthr_1"}) {
+		t.Fatalf("invalid trajectory target: %+v", provider.target)
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/organizations/org_1/observability/trajectories?agent_id=agent_1&session_id=%20sesn_1%20", nil))
+	if response.Code != 200 || provider.scope.AgentID != "agent_1" || provider.scope.SessionID != "sesn_1" {
+		t.Fatalf("list scope = %+v", provider.scope)
+	}
 }
 
-func doPanelQuery(handler http.Handler, body string) *httptest.ResponseRecorder {
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/organizations/org_1/observability/panels/query", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	handler.ServeHTTP(recorder, req)
-	return recorder
-}
-
-func assertAnthropicError(t *testing.T, recorder *httptest.ResponseRecorder, status int, errorType string) {
-	t.Helper()
-	if recorder.Code != status {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload["type"] != "error" {
-		t.Fatalf("payload = %#v", payload)
-	}
-	errBody, _ := payload["error"].(map[string]any)
-	if errBody["type"] != errorType {
-		t.Fatalf("error = %#v", payload["error"])
+func TestTrajectoryVisibilityAndWorkspaceErrors(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		principal *auth.Principal
+		org       string
+		status    int
+		message   string
+	}{
+		{"invisible organization", &auth.Principal{OrganizationUUID: "other", WorkspaceUUID: "ws_1"}, "org_1", 404, "organization not found"},
+		{"missing principal", nil, "org_1", 404, "organization not found"},
+		{"missing workspace", &auth.Principal{OrganizationUUID: "org_1"}, "org_1", 400, "workspace is required"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, suffix := range []string{"/trajectories", "/trajectories/id", "/dashboards/overview"} {
+				provider := &recordingTrajectoryProvider{}
+				router := chi.NewRouter()
+				router.Route("/api/organizations/{orgUuid}", func(r chi.Router) { RegisterOrganizationObservabilityRoutes(r, provider, nil) })
+				request := httptest.NewRequest(http.MethodGet, "/api/organizations/"+test.org+"/observability"+suffix, nil)
+				if test.principal != nil {
+					request = request.WithContext(auth.WithPrincipal(request.Context(), *test.principal))
+				}
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				if response.Code != test.status || !strings.Contains(response.Body.String(), test.message) {
+					t.Fatalf("%s: %d %s", suffix, response.Code, response.Body.String())
+				}
+				if provider.scope.OrganizationUUID != "" {
+					t.Fatal("queried storage before authorization")
+				}
+			}
+		})
 	}
 }

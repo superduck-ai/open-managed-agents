@@ -35,6 +35,7 @@ Use this workflow when implementing or fixing Deployment/River, Memory/Filestore
 | Session creation, Runner, mounts or Worker startup | `chat.public` |
 | Bound Skill discovery, permission, body/reference loading or readonly mounts | `chat.skills-loading`; read [Skill loading](features/skills-loading.md) |
 | Configured subagents, child skills/MCP, child tool policy or thread continuation | `chat.subagents`; read [Subagents](features/subagents.md) |
+| DSH native event export or OpenObserve trajectory queries | `chat.brain-observability`; read [Observability](features/observability.md) |
 | Chat queries, scheduling, streaming latency or other performance-sensitive paths | `chat.performance` with a baseline comparison |
 | Upstream model authentication errors and failed-turn completion | `chat.upstream-errors`; read [Upstream errors](features/upstream-errors.md) |
 

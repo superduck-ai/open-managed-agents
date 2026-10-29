@@ -144,8 +144,20 @@ func TestMemoryToolStreamPreservesEventsAndWaitsBeforeCompletion(t *testing.T) {
 			}
 			return memoryToolVersion{ID: "new", SessionID: "owned"}, nil
 		}}
-		if err := streamMemoryToolResponse(context.Background(), writer, strings.NewReader(progress+complete), memoryCommitTestCall("Edit", "/mnt/memory/project/file"), commit); err != nil || calls != 1 || writer.Body.String() != progress+complete {
+		if confirmErr, err := streamMemoryToolResponse(context.Background(), writer, strings.NewReader(progress+complete), memoryCommitTestCall("Edit", "/mnt/memory/project/file"), commit); confirmErr != nil || err != nil || calls != 1 || writer.Body.String() != progress+complete {
 			t.Fatalf("stream changed: %q calls%d err%v", writer.Body.String(), calls, err)
 		}
+	}
+}
+
+func TestMemoryToolStreamSeparatesConfirmationFailure(t *testing.T) {
+	writer := httptest.NewRecorder()
+	commit := &memoryToolCommit{Load: func(context.Context) (memoryToolVersion, error) {
+		return memoryToolVersion{}, errors.New("memory store race")
+	}}
+	complete := "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"content\":[]}}\n\n"
+	confirmErr, err := streamMemoryToolResponse(context.Background(), writer, strings.NewReader(complete), memoryCommitTestCall("Write", "/mnt/memory/project/file"), commit)
+	if confirmErr == nil || err != nil {
+		t.Fatalf("confirmErr=%v err=%v", confirmErr, err)
 	}
 }

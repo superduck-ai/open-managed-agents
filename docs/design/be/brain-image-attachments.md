@@ -58,7 +58,7 @@ Worker 路由位于 `/v1/code/sessions/{code_session_id}/worker`：
 
 可恢复错误保持 RetryableInputError 类型与 RETRYABLE_INPUT 工具错误码。Read 重试耗尽后保留该结构化错误及明确的重试提示，不包装成 unsupported result。401/403 在此处是服务端签发的 Worker ingress 凭证错误，与用户图片内容无关；重新认领与同一请求上的存储重试分开处理。
 
-Pending 登记先持久化；上传在事务外进行，有 30 秒超时，上传完成后短事务锁定该行并推进 attached。若上传期间登记已进入 deleting 或已被清理，拒绝发布。事务外上传与清理恰好交错时可能留下迟到的未引用对象，严格消除该窗口需要另行确认上传租约或清理握手的范围，本轮未增加这类机制。清理调度分别选择过期 pending 与软删除 Session 的图片，使用 SKIP LOCKED；标记 deleting 与创建任务同事务提交。新增 migration 00109 为后者添加部分索引。只有 brain_image_attachment 类型的任务完成时关联删除图片登记，其他任务直接完成。任务删除全部对象版本，没有固定 TTL。Session 按既有软删除流程保留登记，未增加物理删除 Session 后的孤儿扫描。
+Pending 登记先持久化；上传在事务外进行，有 30 秒超时，上传完成后短事务锁定该行并推进 attached。若上传期间登记已进入 deleting 或已被清理，拒绝发布。事务外上传与清理恰好交错时可能留下迟到的未引用对象，严格消除该窗口需要另行确认上传租约或清理握手的范围，本轮未增加这类机制。清理调度分别选择过期 pending 与软删除 Session 的图片，使用 SKIP LOCKED；标记 deleting 与创建任务同事务提交。图片表使用 migration 00112，清理部分索引使用 migration 00113；编号在合并主分支时避开已占用的迁移版本。只有 brain_image_attachment 类型的任务完成时关联删除图片登记，其他任务直接完成。任务删除全部对象版本，没有固定 TTL。Session 按既有软删除流程保留登记，未增加物理删除 Session 后的孤儿扫描。
 
 本地缓存按内容寻址共享。每个 Session assignment 与 worker epoch 首次使用哈希时经 PUT 或 HEAD 确认授权，后续复用内存结果；epoch 改变或 assignment 替换后重新确认，其他 Session 不共享授权。授权集合使用弱引用，不保留已释放的 assignment。只有 saveImage/readImage 操作授权集合，通用 remote HTTP 函数不按路由或方法推断缓存行为。远端 GET 与本地读取均检查完整性，imageHostPath 不暴露 Brain 路径。归一化和请求变体处理共用两个并发槽，释放时先将名额直接交给已等待的调用者。本地缓存清理、指标聚合和 Session 图片总配额暂未实现。
 

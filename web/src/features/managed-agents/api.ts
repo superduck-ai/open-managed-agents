@@ -1747,7 +1747,6 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
         title: name || null,
         agent: values.agentId || undefined,
         environment_id: values.environmentId || undefined,
-        vault_ids: values.vaultIds,
         ...(budgetUpdateBody(values) !== undefined ? { budget: budgetUpdateBody(values) } : {}),
       };
     case 'deployments':

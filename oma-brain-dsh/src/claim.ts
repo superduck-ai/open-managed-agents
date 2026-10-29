@@ -1,6 +1,7 @@
 import { HttpError, type OmaApi } from "./api.ts";
 import { ConfigurationError } from "./config.ts";
 import { failureDiagnostic, workerDiagnostic } from "./ccrv2/diagnostics.ts";
+import { canonicalTraceParent, parseTraceParent } from "./observability/trace-context.ts";
 
 export type TaskAdmissionStage = "validate_assignment" | "retire_session"
   | "register_worker" | "create_session" | "open_session" | "start_inbound";
@@ -10,6 +11,7 @@ export type ReleaseReason = "admission_failed" | "shutdown" | "permanent" | "idl
 export interface ClaimedTask {
   session_id: string;
   worker_epoch: number;
+  trace_parent?: string;
 }
 
 export interface ClaimClient {
@@ -69,8 +71,9 @@ export class BrainClaimClient implements ClaimClient {
 function claimedTask(value: unknown): ClaimedTask | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const task = value as Record<string, unknown>;
-  return typeof task.session_id === "string" && typeof task.worker_epoch === "number"
-    ? { session_id: task.session_id, worker_epoch: task.worker_epoch } : undefined;
+  if (typeof task.session_id !== "string" || typeof task.worker_epoch !== "number") return undefined;
+  const traceParent = canonicalTraceParent(task.trace_parent);
+  return { session_id: task.session_id, worker_epoch: task.worker_epoch, ...(traceParent ? { trace_parent: traceParent } : {}) };
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -89,9 +92,10 @@ export async function releaseClaim(client: ClaimClient, task: ClaimedTask, reaso
   try {
     await client.release(task, reason);
   } catch (error) {
+    const failure = failureDiagnostic(error);
     workerDiagnostic("warn", "oma_task_release_failed", {
-      session_id: task.session_id, worker_epoch: task.worker_epoch, reason, ...failureDiagnostic(error),
-    });
+      session_id: task.session_id, worker_epoch: task.worker_epoch, reason, ...failure,
+    }, task.trace_parent);
   }
 }
 
@@ -100,17 +104,25 @@ async function admitClaim(
 ): Promise<void> {
   const startMs = Date.now();
   const task = claimedTask(value);
-  const fields: Record<string, unknown> = { session_id: task?.session_id, worker_epoch: task?.worker_epoch };
+  const traceParent = task?.trace_parent;
+  const traceId = parseTraceParent({ traceparent: traceParent })?.traceId;
+  const fields: Record<string, unknown> = {
+    session_id: task?.session_id, worker_epoch: task?.worker_epoch, ...(traceId ? { trace_id: traceId } : {}),
+  };
   let stage = "validate_assignment";
-  workerDiagnostic("info", "oma_task_admission_started", fields);
+  workerDiagnostic("info", "oma_task_admission_started", fields, traceParent);
   try {
     await admit(value, (next) => { stage = next; });
-    workerDiagnostic("info", "oma_task_admitted", { ...fields, duration_ms: Date.now() - startMs });
+    workerDiagnostic("info", "oma_task_admitted", { ...fields, duration_ms: Date.now() - startMs }, traceParent);
   } catch (error) {
-    if (task) await releaseClaim(client, task, releaseReason(error, signal));
-    if (!signal.aborted) workerDiagnostic("error", "oma_task_admission_failed", {
-      ...fields, stage, duration_ms: Date.now() - startMs, ...failureDiagnostic(error),
-    });
+    const reason = releaseReason(error, signal);
+    if (task) await releaseClaim(client, task, reason);
+    if (!signal.aborted) {
+      const failure = failureDiagnostic(error);
+      workerDiagnostic("error", "oma_task_admission_failed", {
+        ...fields, stage, release_reason: reason, duration_ms: Date.now() - startMs, ...failure,
+      }, traceParent);
+    }
   }
 }
 
@@ -160,7 +172,8 @@ export async function claimTasks(client: ClaimClient, signal: AbortSignal, optio
       } catch (error) {
         if (signal.aborted) break;
         const rejected = claimRejection(error);
-        if (rejected === undefined) workerDiagnostic("warn", "oma_task_claim_failed", failureDiagnostic(error));
+        const failure = failureDiagnostic(error);
+        if (rejected === undefined) workerDiagnostic("warn", "oma_task_claim_failed", failure);
         else if (!rejectionReported) {
           rejectionReported = true;
           console.error(claimRejectedMessage(rejected));

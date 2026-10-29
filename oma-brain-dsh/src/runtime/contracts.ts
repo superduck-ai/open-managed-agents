@@ -147,7 +147,6 @@ export type RuntimeDiagnostic =
 
 export interface SessionRuntimeHooks {
   onDiagnostic?(diagnostic: RuntimeDiagnostic): void;
-  selectModel?(model: string): string;
   onOpen?(session: Session): Promise<void>;
   afterFlushLog?(session: Session): Promise<void>;
   onExternalMcpConnectionFailure?(serverName: string): Promise<void>;

@@ -1,132 +1,147 @@
-import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { consoleApi } from '../../shared/api/client';
-import type {
-  ObservabilityDashboard,
-  ObservabilityPanelResult,
-  ObservabilityScopeOption,
-  ObservabilityTraceDetail,
-  ObservabilityTraceList,
-  PanelQueryVariables,
-} from './types';
+import type { NativeEvent, NativeHeader } from './trajectory/native-types';
 
-const SCOPE_LIST_LIMIT = 100;
-
-function orgPath(orgUuid: string, suffix: string) {
-  return `/api/organizations/${encodeURIComponent(orgUuid)}/observability${suffix}`;
+export type ObservabilityScope = { kind: 'workspace' } | { kind: 'agent'; agentId: string };
+export type SessionSort = 'recent' | 'duration' | 'errors';
+export interface SessionTrajectorySummary {
+  session_id: string;
+  title: string | null;
+  agent_id: string;
+  agent_version: number;
+  status: string;
+  subagent_count: number;
+  started_at: number;
+  last_event_at: number;
+  duration_ms: number;
+  error_turns: number;
+}
+export interface TrajectorySegment {
+  id: string;
+  started_at: string;
+}
+export interface TrajectoryPage {
+  header: NativeHeader | null;
+  events: NativeEvent[];
+  next_seq: number;
+  has_more: boolean;
+  segment: string;
+  segments: TrajectorySegment[];
+}
+export interface QueryScope {
+  orgUuid: string;
+  workspaceId: string;
+  agentId?: string;
+  sessionId?: string;
+  startTime?: string;
+  endTime?: string;
+}
+export interface TrajectoryTarget {
+  sessionId: string;
+  threadId?: string;
+  segment?: string;
 }
 
-type AgentListRow = { id: string; name?: string | null };
-type SessionListRow = { id: string; title?: string | null };
-
-export function listObservabilityAgents(workspaceId: string) {
-  return anthropicBetaApi.agents
-    .list<AgentListRow>({ limit: SCOPE_LIST_LIMIT, include_archived: true }, workspaceId)
-    .then(
-      (page) =>
-        (page.data ?? []).map((agent) => ({
-          id: agent.id,
-          label: agent.name?.trim() || agent.id,
-          description: agent.name?.trim() ? agent.id : undefined,
-        })) satisfies ObservabilityScopeOption[],
-    );
+function path(scope: QueryScope, suffix: string, params: Record<string, string>) {
+  const query = new URLSearchParams(params);
+  if (scope.agentId) query.set('agent_id', scope.agentId);
+  if (scope.sessionId) query.set('session_id', scope.sessionId);
+  if (scope.startTime) query.set('start_time', scope.startTime);
+  if (scope.endTime) query.set('end_time', scope.endTime);
+  return `/api/organizations/${encodeURIComponent(scope.orgUuid)}/observability/trajectories${suffix}?${query}`;
 }
 
-type AgentVersionRow = { version: number };
-
-export function listObservabilityAgentVersions(agentId: string, workspaceId: string) {
-  return anthropicBetaApi.agents.versions
-    .list<AgentVersionRow>(agentId, { limit: SCOPE_LIST_LIMIT }, workspaceId)
-    .then((page) => {
-      const versions = [
-        ...new Set(
-          (page.data ?? []).map((row) => row.version).filter((version) => Number.isInteger(version) && version > 0),
-        ),
-      ].sort((left, right) => right - left);
-      return versions.map((version) => ({
-        id: String(version),
-        label: `v${version}`,
-      })) satisfies ObservabilityScopeOption[];
-    });
-}
-
-export function listObservabilitySessions(workspaceId: string, agentId?: string) {
-  const params: Record<string, unknown> = {
-    limit: SCOPE_LIST_LIMIT,
-    include_archived: true,
-  };
-  if (agentId) {
-    params.agent_id = agentId;
-  }
-  return anthropicBetaApi.sessions.list<SessionListRow>(params, workspaceId).then(
-    (page) =>
-      (page.data ?? []).map((session) => ({
-        id: session.id,
-        label: session.title?.trim() || session.id,
-        description: session.title?.trim() ? session.id : undefined,
-      })) satisfies ObservabilityScopeOption[],
+export function listTrajectories(scope: QueryScope, offset = 0, sort: SessionSort = 'recent') {
+  return consoleApi<{ items: SessionTrajectorySummary[]; next_offset: number | null }>(
+    path(scope, '', { offset: String(offset), sort }),
+    { headers: { 'X-Workspace-ID': scope.workspaceId } },
   );
 }
 
-function workspaceHeaders(workspaceId: string) {
-  return { 'X-Workspace-ID': workspaceId };
+export const DASHBOARD_TABS = [
+  ['overview', 'Overview'],
+  ['models', 'Models'],
+  ['tools', 'Tools'],
+  ['subagents', 'Sub-agents'],
+] as const;
+
+export type DashboardTab = (typeof DASHBOARD_TABS)[number][0];
+export type PanelUnit = 'count' | 'tokens' | 'duration_ms' | 'percent' | 'version' | 'text';
+export interface DashboardColumn {
+  key: string;
+  unit: PanelUnit;
+}
+interface PanelBase {
+  id: string;
+  span: number;
+  unit?: PanelUnit;
+  chart?: 'bar' | 'line' | 'area';
+  stacked?: boolean;
+  compare?: boolean;
+  columns?: DashboardColumn[];
+}
+export interface StatData {
+  value: number | null;
+  previous?: number | null;
+  secondary?: number | null;
+  trend?: SeriesPoint[];
+}
+export interface PercentilesData {
+  p50: number | null;
+  p90: number | null;
+  p95: number | null;
+}
+export interface SeriesPoint {
+  t: number;
+  v: number | null;
+}
+export interface SeriesData {
+  key: string;
+  points: SeriesPoint[];
+}
+export interface BarData {
+  name: string;
+  value: number;
+}
+export type TableRowData = Record<string, string | number | null>;
+export type DashboardPanel =
+  | (PanelBase & { render: 'stat'; data: StatData })
+  | (PanelBase & { render: 'percentiles'; data: PercentilesData })
+  | (PanelBase & { render: 'series'; data: SeriesData[] })
+  | (PanelBase & { render: 'bars'; data: BarData[] })
+  | (PanelBase & { render: 'table' | 'subagents'; data: { rows: TableRowData[] } });
+export interface ObservabilityDashboard {
+  tab: DashboardTab;
+  interval_ms: number;
+  filter_options: string[];
+  panels: DashboardPanel[];
+}
+export interface DashboardQuery {
+  agentVersions: number[];
+  model?: string;
+  tool?: string;
 }
 
-export function getObservabilityDashboard(orgUuid: string, workspaceId: string) {
-  return consoleApi<ObservabilityDashboard>(orgPath(orgUuid, '/dashboard'), {
-    headers: workspaceHeaders(workspaceId),
-  });
+export function observabilityDashboard(scope: QueryScope, tab: DashboardTab, filters: DashboardQuery) {
+  const query = new URLSearchParams();
+  if (scope.agentId) query.set('agent_id', scope.agentId);
+  if (scope.sessionId) query.set('session_id', scope.sessionId);
+  if (scope.startTime) query.set('start_time', scope.startTime);
+  if (scope.endTime) query.set('end_time', scope.endTime);
+  filters.agentVersions.forEach((version) => query.append('agent_version', String(version)));
+  if (filters.model) query.set('model', filters.model);
+  if (filters.tool) query.set('tool', filters.tool);
+  return consoleApi<ObservabilityDashboard>(
+    `/api/organizations/${encodeURIComponent(scope.orgUuid)}/observability/dashboards/${tab}?${query}`,
+    { headers: { 'X-Workspace-ID': scope.workspaceId } },
+  );
 }
 
-export function queryObservabilityPanel(
-  orgUuid: string,
-  workspaceId: string,
-  queryRef: string,
-  variables: Record<string, unknown>,
-) {
-  return consoleApi<ObservabilityPanelResult>(orgPath(orgUuid, '/panels/query'), {
-    method: 'POST',
-    headers: workspaceHeaders(workspaceId),
-    body: JSON.stringify({ query_ref: queryRef, variables }),
-  });
-}
-
-export function listObservabilityTraces(
-  orgUuid: string,
-  workspaceId: string,
-  params: PanelQueryVariables & { trace_id?: string; status?: string; offset?: number },
-) {
-  const search = new URLSearchParams({
-    start_time: params.start_time,
-    end_time: params.end_time,
-  });
-  if (params.agent_id) search.set('agent_id', params.agent_id);
-  if (params.session_id) search.set('session_id', params.session_id);
-  for (const version of params.agent_version ?? []) {
-    search.append('agent_version', String(version));
-  }
-  if (params.trace_id) search.set('trace_id', params.trace_id);
-  if (params.status) search.set('status', params.status);
-  if (params.offset) search.set('offset', String(params.offset));
-  return consoleApi<ObservabilityTraceList>(`${orgPath(orgUuid, '/traces')}?${search.toString()}`, {
-    headers: workspaceHeaders(workspaceId),
-  });
-}
-
-export function getObservabilityTrace(
-  orgUuid: string,
-  workspaceId: string,
-  traceId: string,
-  params: Pick<PanelQueryVariables, 'start_time' | 'end_time' | 'agent_id' | 'session_id' | 'agent_version'>,
-) {
-  const search = new URLSearchParams({ start_time: params.start_time, end_time: params.end_time });
-  if (params.agent_id) search.set('agent_id', params.agent_id);
-  if (params.session_id) search.set('session_id', params.session_id);
-  for (const version of params.agent_version ?? []) {
-    search.append('agent_version', String(version));
-  }
-  const query = search.toString();
-  const path = orgPath(orgUuid, `/traces/${encodeURIComponent(traceId)}`);
-  return consoleApi<ObservabilityTraceDetail>(`${path}?${query}`, {
-    headers: workspaceHeaders(workspaceId),
+export function trajectoryPage(scope: QueryScope, target: TrajectoryTarget, after = -1, signal?: AbortSignal) {
+  const params: Record<string, string> = { after_seq: String(after) };
+  if (target.threadId) params.thread_id = target.threadId;
+  if (target.segment) params.segment = target.segment;
+  return consoleApi<TrajectoryPage>(path(scope, `/${encodeURIComponent(target.sessionId)}`, params), {
+    signal,
+    headers: { 'X-Workspace-ID': scope.workspaceId },
   });
 }

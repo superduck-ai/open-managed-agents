@@ -85,6 +85,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.router.ServeHTTP(w, r)
 }
 
+func (h *Handler) Router() chi.Router {
+	return h.router
+}
+
 func (h *Handler) notFound(http.ResponseWriter, *http.Request) error {
 	return sessionRouteNotFound()
 }

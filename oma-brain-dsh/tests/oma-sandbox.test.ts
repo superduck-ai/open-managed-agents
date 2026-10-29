@@ -167,10 +167,10 @@ test("children share the root provider and archiving a child preserves its execu
     for (const consumer of f.consumers()) expect(consumer.ctx.get("sandboxExecutor")).toBe(executor);
     const agent = f.session.agent;
     const archived = await agent.ctx.tools.execute({
-      callId: ToolCallId("archive_child"), name: "archive_agent", arguments: { thread_id: report.thread_id },
+      calls: [{ type: "tool-call", id: ToolCallId("archive_child"), name: "archive_agent", arguments: JSON.stringify({ thread_id: report.thread_id }) }],
       agent, signal: new AbortController().signal,
     });
-    expect(archived.isError).toBe(false);
+    expect(archived.results[0]!.result.isError).toBe(false);
     expect(f.consumers()).toHaveLength(1);
     expect(provider.ctx.get("sandboxExecutor")).toBe(executor);
     f.b.modelScript = [toolEvents("parent", "parent_call"), textEvents("done")];

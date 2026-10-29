@@ -17,10 +17,14 @@ export type ModelConfig = {
 };
 
 export interface Assignment {
+  observability_enabled?: boolean;
+  trace_export?: { content: boolean };
+  registered_at?: number;
   session_id: string;
   worker_epoch: number;
   ingress_token: string;
   model_token: string;
+  trace_parent?: string;
   mcp_config: unknown;
   external_mcp_config?: unknown;
   launch: {

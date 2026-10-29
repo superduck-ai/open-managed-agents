@@ -18,10 +18,11 @@ func defaultConfig() Config {
 			},
 		},
 		NATS: NATSConfig{
-			WebhookStream:     WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: 24 * time.Hour, Replicas: 3},
-			WorkerEventStream: WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3},
-			ConnectTimeout:    5 * time.Second,
-			DrainTimeout:      10 * time.Second,
+			WebhookStream:         WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: 24 * time.Hour, Replicas: 3},
+			TelemetryExportStream: WebhookStreamConfig{MaxBytes: 256 << 20, MaxAge: time.Hour, Replicas: 3},
+			WorkerEventStream:     WorkerEventStreamConfig{ConsumerInactiveThreshold: 5 * time.Minute, MaxBytes: 1 << 28, MaxMsgSize: 1 << 20, Replicas: 3},
+			ConnectTimeout:        5 * time.Second,
+			DrainTimeout:          10 * time.Second,
 		},
 		Storage: StorageConfig{
 			MaxFileBytes:        500 * 1024 * 1024,
@@ -76,16 +77,30 @@ func defaultConfig() Config {
 			OpenObserve: OpenObserveConfig{
 				BaseURL:      "http://openobserve:5080",
 				Organization: "oma",
-				LogsStream:   "oma_claude_code",
-				TracesStream: "oma_claude_code",
+				LogsStream:   "oma_dsh",
 				Query: BackendQueryConfig{
 					Timeout: 15 * time.Second,
 				},
 			},
 		},
+		Telemetry: TelemetryConfig{
+			ServiceName:  "oma-server",
+			OTLP:         TelemetryOTLPConfig{BaseURL: "http://openobserve:5080", Organization: "oma", TracesStream: "oma_server", LogsStream: "oma_server", Timeout: 10 * time.Second},
+			Traces:       TelemetryTracesConfig{Enabled: true},
+			Metrics:      TelemetryMetricsConfig{Enabled: true, ExportInterval: 30 * time.Second},
+			Logs:         TelemetryLogsConfig{Enabled: true, Level: "info"},
+			StateMetrics: TelemetryStateMetricsConfig{Interval: time.Minute, StaleRunningAfter: 10 * time.Minute, StuckStartingAfter: 10 * time.Minute},
+		},
 		Webhook: WebhookConfig{
 			Concurrency:         10,
 			WorkerEnabled:       true,
+			Timeout:             10 * time.Second,
+			MaxAttempts:         3,
+			FailureDisableAfter: 24 * time.Hour,
+		},
+		TelemetryExport: TelemetryExportConfig{
+			WorkerEnabled:       true,
+			Concurrency:         10,
 			Timeout:             10 * time.Second,
 			MaxAttempts:         3,
 			FailureDisableAfter: 24 * time.Hour,

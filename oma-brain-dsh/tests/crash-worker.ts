@@ -17,6 +17,7 @@ await session.open();
 const lines = createInterface({ input: process.stdin });
 const task = session.receive("crash_input", {
   message: { content: "execute a command" },
+  ...(process.env.TEST_TRACEPARENT ? { trace_context: { traceparent: process.env.TEST_TRACEPARENT } } : {}),
 });
 for await (const line of lines) await session.control(JSON.parse(line));
 await task;

@@ -17,9 +17,9 @@
 - Build：Files、Skills、MCP Servers。真实 Workbench、Batches 仍保留路由，暂时隐藏导航入口。
 - Managed Agents：Quickstart、Agents、Sessions、Observability、Deployments、Environments、Credential vaults、Memory stores。
 - Analytics 与 Claude Code 的导航定义、可见性和页面保持原有行为。
-- 工作区设置：Members、API keys、Webhooks、MCP tunnels（Preview）。密钥、Webhook、隧道使用当前工作区的规范设置路径。Members 使用当前工作区上下文；默认工作区引导到组织成员管理。
+- 工作区设置：Members、API keys、Webhooks、OpenTelemetry、MCP tunnels（Preview）。密钥、Webhook、OpenTelemetry、隧道使用当前工作区的规范设置路径（`/settings/workspaces/{workspaceId}/telemetry`，`/telemetry` 重定向到当前工作区）。Members 使用当前工作区上下文；默认工作区引导到组织成员管理。
 
-组织设置独立侧栏只包含组织、成员、工作区。个人资料入口位于账号菜单，其页面使用个人设置侧栏。账号菜单“外观”行直接提供跟随系统、浅色、深色三个图标选项，无需进入外观设置页；个人设置侧栏仍可进入完整外观页面。语言保留原子菜单。
+组织设置独立侧栏只包含组织、LLM 配置、成员、工作区、OpenTelemetry。个人资料入口位于账号菜单，其页面使用个人设置侧栏。账号菜单“外观”行直接提供跟随系统、浅色、深色三个图标选项，无需进入外观设置页；个人设置侧栏仍可进入完整外观页面。语言保留原子菜单。
 
 ```mermaid
 flowchart TD
@@ -27,9 +27,9 @@ flowchart TD
   Console --> Build[Build]
   Console --> Agents[Managed Agents]
   Console --> Analytics[Analytics：保持原样]
-  Console --> Workspace[工作区设置：成员 / 密钥 / Webhook / 隧道]
+  Console --> Workspace[工作区设置：成员 / 密钥 / Webhook / OpenTelemetry / 隧道]
   Console --> Account[账号菜单]
-  Account --> Org[组织设置：组织 / 成员 / 工作区]
+  Account --> Org[组织设置：组织 / LLM 配置 / 成员 / 工作区 / OpenTelemetry]
   Account --> Personal[个人资料与设置侧栏]
   Account --> Theme[外观：跟随系统 / 浅色 / 深色]
 ```

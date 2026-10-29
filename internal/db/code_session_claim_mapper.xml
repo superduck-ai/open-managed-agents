@@ -6,7 +6,8 @@
 <mapper namespace="CodeSessionClaimMapper">
     <select id="LockNextClaimable" result="optional" resultType="codeSessionClaimCandidateRow">
         SELECT cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid, cs.session_external_id,
-               cs.current_worker_epoch, cs.worker_claim_attempts
+               cs.current_worker_epoch, cs.worker_claim_attempts, cs.worker_claim_requested_at,
+               CASE WHEN cs.worker_claim_requested_at IS NOT NULL THEN cs.worker_claim_trace_parent END AS worker_claim_trace_parent
         FROM code_sessions cs
         LEFT JOIN sessions s
           ON s.uuid = cs.session_uuid
@@ -117,7 +118,8 @@
 
     <update id="Request" result="rows">
         UPDATE code_sessions
-        SET worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW()),
+        SET worker_claim_trace_parent = CASE WHEN worker_claim_requested_at IS NULL THEN #{traceParent} ELSE worker_claim_trace_parent END,
+            worker_claim_requested_at = COALESCE(worker_claim_requested_at, NOW()),
             updated_at = NOW()
         WHERE organization_uuid = #{organizationUUID}
           AND workspace_uuid = #{workspaceUUID}

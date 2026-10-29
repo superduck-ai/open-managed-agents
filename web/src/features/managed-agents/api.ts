@@ -42,6 +42,7 @@ import {
   type PageCursor,
   type PageResponse,
   type QuickstartSessionEvent,
+  type SessionMessageContentBlock,
   type QuickstartStreamEvent,
   type SessionApiResponse,
   type SessionDetailDeltaFrames,
@@ -799,11 +800,17 @@ export function sessionThreadListSignature(threads: SessionThreadApiResponse[]) 
     .join('|');
 }
 
-export function postQuickstartSessionMessage(sessionId: string, message: string, workspaceId: string) {
+export function postQuickstartSessionMessage(
+  sessionId: string,
+  message: string | SessionMessageContentBlock[],
+  workspaceId: string,
+) {
   return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
     sessionId,
     {
-      events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }],
+      events: [
+        { type: 'user.message', content: typeof message === 'string' ? [{ type: 'text', text: message }] : message },
+      ],
     },
     workspaceId,
   );

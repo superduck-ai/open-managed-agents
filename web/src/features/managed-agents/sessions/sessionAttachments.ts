@@ -1,6 +1,6 @@
 import { anthropicBetaApi } from '../../../shared/api/anthropic';
 import { addSessionFileResource } from '../api';
-import type { FileMetadataApiResponse } from '../types';
+import type { FileMetadataApiResponse, SessionMessageContentBlock } from '../types';
 import { sessionFileRuntimePath } from './file-resource-path';
 
 export type SessionAttachment = {
@@ -40,11 +40,16 @@ export async function prepareSessionAttachments(
   onResourcesChanged: () => void,
 ) {
   const paths: string[] = [];
+  const images: SessionMessageContentBlock[] = [];
   for (const attachment of attachments) {
     attachment.metadata ??= await anthropicBetaApi.files.upload<FileMetadataApiResponse>(
       await sessionAttachmentUploadFile(attachment.file),
       workspaceId,
     );
+    if (['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(attachment.metadata.mime_type)) {
+      images.push({ type: 'image', source: { type: 'file', file_id: attachment.metadata.id } });
+      continue;
+    }
     if (!attachment.mounted) {
       attachment.mountPath = sessionAttachmentMountPath(attachment.id, attachment.file);
       await addSessionFileResource(
@@ -57,9 +62,13 @@ export async function prepareSessionAttachments(
     }
     paths.push(sessionFileRuntimePath(attachment.mountPath));
   }
-  return paths;
+  return { paths, images };
 }
 
-export function sessionAttachmentMessage(message: string, paths: string[]) {
-  return [message, ...paths].filter(Boolean).join('\n\n');
+export function sessionAttachmentMessage(
+  message: string,
+  attachments: Awaited<ReturnType<typeof prepareSessionAttachments>>,
+): SessionMessageContentBlock[] {
+  const text = [message, ...attachments.paths].filter(Boolean).join('\n\n');
+  return [...(text ? [{ type: 'text' as const, text }] : []), ...attachments.images];
 }

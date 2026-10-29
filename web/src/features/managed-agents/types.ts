@@ -344,6 +344,9 @@ export type SessionThreadApiResponse = {
   updated_at?: string;
 };
 
+export type SessionMessageContentBlock =
+  { type: 'text'; text: string } | { type: 'image'; source: { type: 'file'; file_id: string } };
+
 export type QuickstartSessionEvent = Record<string, unknown>;
 
 export type SessionToolConfirmationInput = {

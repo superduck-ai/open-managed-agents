@@ -232,3 +232,86 @@ function jsonResponse(value: unknown) {
     headers: { 'Content-Type': 'application/json' },
   });
 }
+
+test.each(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])(
+  'sends %s as a file image block without mounting and reuses the upload after send failure',
+  async (mimeType) => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/session-test');
+    const requests: string[] = [];
+    const messages: unknown[] = [];
+    let fail = true;
+    const onError = mock(() => {});
+    const onMessageSent = mock(() => {});
+    const onResourcesChanged = mock(() => {});
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'https://oma.duck.ai').pathname;
+      requests.push(path);
+      if (path === '/v1/files')
+        return jsonResponse({ id: 'file_picture', type: 'file', filename: 'picture', mime_type: mimeType });
+      if (path.endsWith('/events')) {
+        messages.push(JSON.parse(String(init?.body)));
+        if (fail) return Response.json({ error: { message: 'Try again' } }, { status: 500 });
+      }
+      return jsonResponse({ data: [] });
+    }) as typeof fetch;
+    renderComposer({ onError, onMessageSent, onResourcesChanged });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: '这个图片里有什么' } });
+    fireEvent.change(screen.getByLabelText('Choose files to upload'), {
+      target: { files: [new File(['image bytes'], 'picture', { type: mimeType })] },
+    });
+    fireEvent.submit(screen.getByTestId('session-message-composer'));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Try again'));
+    fail = false;
+    fireEvent.submit(screen.getByTestId('session-message-composer'));
+    await waitFor(() => expect(onMessageSent).toHaveBeenCalledTimes(1));
+    expect(requests).toEqual(['/v1/files', '/v1/sessions/session-test/events', '/v1/sessions/session-test/events']);
+    const expected = {
+      events: [
+        {
+          type: 'user.message',
+          content: [
+            { type: 'text', text: '这个图片里有什么' },
+            { type: 'image', source: { type: 'file', file_id: 'file_picture' } },
+          ],
+        },
+      ],
+    };
+    expect(messages).toEqual([expected, expected]);
+    expect(onResourcesChanged).not.toHaveBeenCalled();
+  },
+);
+
+test.each([false, true])('sends an image with ordinary file present=%s', async (withFile) => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/session-test');
+  const mounts: string[] = [];
+  let message: { events: { content: unknown[] }[] } | undefined;
+  const onMessageSent = mock(() => {});
+  const onResourcesChanged = mock(() => {});
+  globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), 'https://oma.duck.ai').pathname;
+    if (path === '/v1/files') {
+      const file = (init?.body as FormData).get('file') as File;
+      const image = file.name === 'photo.jpg';
+      return jsonResponse({
+        id: image ? 'file_photo' : 'file_csv',
+        type: 'file',
+        mime_type: image ? 'image/jpeg' : 'text/csv',
+      });
+    }
+    if (path.endsWith('/resources')) mounts.push(JSON.parse(String(init?.body)).mount_path);
+    if (path.endsWith('/events')) message = JSON.parse(String(init?.body));
+    return jsonResponse({ data: [] });
+  }) as typeof fetch;
+  renderComposer({ onMessageSent, onResourcesChanged });
+  const files = [new File(['jpg'], 'photo.jpg')];
+  if (withFile) files.push(new File(['a,b'], 'data.csv', { type: 'text/csv' }));
+  fireEvent.change(screen.getByLabelText('Choose files to upload'), { target: { files } });
+  fireEvent.submit(screen.getByTestId('session-message-composer'));
+  await waitFor(() => expect(onMessageSent).toHaveBeenCalledTimes(1));
+  expect(mounts).toHaveLength(withFile ? 1 : 0);
+  expect(onResourcesChanged).toHaveBeenCalledTimes(withFile ? 1 : 0);
+  expect(message?.events[0].content).toEqual([
+    ...(withFile ? [{ type: 'text', text: `/mnt/session/uploads${mounts[0]}` }] : []),
+    { type: 'image', source: { type: 'file', file_id: 'file_photo' } },
+  ]);
+});

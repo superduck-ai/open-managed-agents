@@ -399,3 +399,6 @@ channel_bridge:
 web_tools:
   search_provider: ""
   providers: {}
+
+brain_image_attachments:
+  max_object_bytes: 4194304

@@ -10,6 +10,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
+var errMessageImageRejected = errors.New("message image source rejected")
 var errNativeTrajectoryPayload = errors.New("invalid DSH event envelope")
 
 var errRuntimeSubagentConfig = errors.New("invalid runtime subagent configuration")

@@ -1,3 +1,4 @@
+import { RetryableInputError } from "./contracts.ts";
 import type { Context, Fiber } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import { freezeMessage, MessageId, createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
@@ -206,6 +207,7 @@ export class SessionRuntime {
       try {
         content = typeof input === "string" ? [{ type: "text", text: input }] : await input();
       } catch (error) {
+        if (error instanceof RetryableInputError) throw error;
         this.hooks.onDiagnostic?.({ kind: "input-failed", error });
         await hooks.afterRun(false);
         return;

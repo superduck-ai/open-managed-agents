@@ -17,31 +17,32 @@ type ChannelBridgeConfig struct {
 }
 
 type Config struct {
-	ChannelBridge          ChannelBridgeConfig       `yaml:"channel_bridge"`
-	LLMProviderPresetsFile string                    `yaml:"llm_provider_presets_file"`
-	WebTools               WebToolsConfig            `yaml:"web_tools"`
-	EnvironmentPackages    EnvironmentPackageConfig  `yaml:"environment_packages"`
-	EnvironmentPrebuilds   EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
-	TranscriptArchive      TranscriptArchiveConfig   `yaml:"transcript_archive"`
-	Env                    string                    `yaml:"env"`
-	Server                 ServerConfig              `yaml:"server"`
-	Database               DatabaseConfig            `yaml:"database"`
-	Redis                  RedisConfig               `yaml:"redis"`
-	NATS                   NATSConfig                `yaml:"nats"`
-	Auth                   AuthConfig                `yaml:"auth"`
-	Tunnel                 TunnelConfig              `yaml:"tunnel"`
-	Storage                StorageConfig             `yaml:"storage"`
-	Batch                  BatchConfig               `yaml:"batch"`
-	SandboxLifecycle       SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
-	E2B                    E2BConfig                 `yaml:"e2b"`
-	EnvironmentRunner      EnvironmentRunnerConfig   `yaml:"environment_runner"`
-	CodeSession            CodeSessionConfig         `yaml:"code_session"`
-	Observability          ObservabilityConfig       `yaml:"observability"`
-	Telemetry              TelemetryConfig           `yaml:"telemetry"`
-	Webhook                WebhookConfig             `yaml:"webhook"`
-	TelemetryExport        TelemetryExportConfig     `yaml:"telemetry_export"`
-	Vault                  VaultConfig               `yaml:"vault"`
-	Bootstrap              BootstrapConfig           `yaml:"bootstrap"`
+	BrainImageAttachments  BrainImageAttachmentConfig `yaml:"brain_image_attachments"`
+	ChannelBridge          ChannelBridgeConfig        `yaml:"channel_bridge"`
+	LLMProviderPresetsFile string                     `yaml:"llm_provider_presets_file"`
+	WebTools               WebToolsConfig             `yaml:"web_tools"`
+	EnvironmentPackages    EnvironmentPackageConfig   `yaml:"environment_packages"`
+	EnvironmentPrebuilds   EnvironmentPrebuildConfig  `yaml:"environment_prebuilds"`
+	TranscriptArchive      TranscriptArchiveConfig    `yaml:"transcript_archive"`
+	Env                    string                     `yaml:"env"`
+	Server                 ServerConfig               `yaml:"server"`
+	Database               DatabaseConfig             `yaml:"database"`
+	Redis                  RedisConfig                `yaml:"redis"`
+	NATS                   NATSConfig                 `yaml:"nats"`
+	Auth                   AuthConfig                 `yaml:"auth"`
+	Tunnel                 TunnelConfig               `yaml:"tunnel"`
+	Storage                StorageConfig              `yaml:"storage"`
+	Batch                  BatchConfig                `yaml:"batch"`
+	SandboxLifecycle       SandboxLifecycleConfig     `yaml:"sandbox_lifecycle"`
+	E2B                    E2BConfig                  `yaml:"e2b"`
+	EnvironmentRunner      EnvironmentRunnerConfig    `yaml:"environment_runner"`
+	CodeSession            CodeSessionConfig          `yaml:"code_session"`
+	Observability          ObservabilityConfig        `yaml:"observability"`
+	Telemetry              TelemetryConfig            `yaml:"telemetry"`
+	Webhook                WebhookConfig              `yaml:"webhook"`
+	TelemetryExport        TelemetryExportConfig      `yaml:"telemetry_export"`
+	Vault                  VaultConfig                `yaml:"vault"`
+	Bootstrap              BootstrapConfig            `yaml:"bootstrap"`
 }
 
 type WebToolsConfig struct {
@@ -347,6 +348,9 @@ type TranscriptArchiveConfig struct {
 	MaxRowsPerJob         int           `yaml:"max_rows_per_job"`
 }
 
+type BrainImageAttachmentConfig struct {
+	MaxObjectBytes int64 `yaml:"max_object_bytes"`
+}
 type TelemetryConfig struct {
 	Enabled      bool                        `yaml:"enabled"`
 	ServiceName  string                      `yaml:"service_name"`

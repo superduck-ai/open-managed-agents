@@ -35,31 +35,32 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
-	ChannelBridge          ChannelBridgeConfig       `yaml:"channel_bridge"`
-	LLMProviderPresetsFile string                    `yaml:"llm_provider_presets_file"`
-	WebTools               WebToolsConfig            `yaml:"web_tools"`
-	EnvironmentPackages    EnvironmentPackageConfig  `yaml:"environment_packages"`
-	EnvironmentPrebuilds   EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
-	TranscriptArchive      TranscriptArchiveConfig   `yaml:"transcript_archive"`
-	Env                    string                    `yaml:"env"`
-	Server                 ServerConfig              `yaml:"server"`
-	Database               yamlDatabaseConfig        `yaml:"database"`
-	Redis                  RedisConfig               `yaml:"redis"`
-	NATS                   yamlNATSConfig            `yaml:"nats"`
-	Auth                   AuthConfig                `yaml:"auth"`
-	Tunnel                 TunnelConfig              `yaml:"tunnel"`
-	Storage                StorageConfig             `yaml:"storage"`
-	Batch                  BatchConfig               `yaml:"batch"`
-	SandboxLifecycle       SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
-	E2B                    E2BConfig                 `yaml:"e2b"`
-	EnvironmentRunner      EnvironmentRunnerConfig   `yaml:"environment_runner"`
-	CodeSession            yamlCodeSessionConfig     `yaml:"code_session"`
-	Observability          ObservabilityConfig       `yaml:"observability"`
-	Telemetry              TelemetryConfig           `yaml:"telemetry"`
-	Webhook                yamlWebhookConfig         `yaml:"webhook"`
-	TelemetryExport        yamlWebhookConfig         `yaml:"telemetry_export"`
-	Vault                  VaultConfig               `yaml:"vault"`
-	Bootstrap              yamlBootstrapConfig       `yaml:"bootstrap"`
+	BrainImageAttachments  BrainImageAttachmentConfig `yaml:"brain_image_attachments"`
+	ChannelBridge          ChannelBridgeConfig        `yaml:"channel_bridge"`
+	LLMProviderPresetsFile string                     `yaml:"llm_provider_presets_file"`
+	WebTools               WebToolsConfig             `yaml:"web_tools"`
+	EnvironmentPackages    EnvironmentPackageConfig   `yaml:"environment_packages"`
+	EnvironmentPrebuilds   EnvironmentPrebuildConfig  `yaml:"environment_prebuilds"`
+	TranscriptArchive      TranscriptArchiveConfig    `yaml:"transcript_archive"`
+	Env                    string                     `yaml:"env"`
+	Server                 ServerConfig               `yaml:"server"`
+	Database               yamlDatabaseConfig         `yaml:"database"`
+	Redis                  RedisConfig                `yaml:"redis"`
+	NATS                   yamlNATSConfig             `yaml:"nats"`
+	Auth                   AuthConfig                 `yaml:"auth"`
+	Tunnel                 TunnelConfig               `yaml:"tunnel"`
+	Storage                StorageConfig              `yaml:"storage"`
+	Batch                  BatchConfig                `yaml:"batch"`
+	SandboxLifecycle       SandboxLifecycleConfig     `yaml:"sandbox_lifecycle"`
+	E2B                    E2BConfig                  `yaml:"e2b"`
+	EnvironmentRunner      EnvironmentRunnerConfig    `yaml:"environment_runner"`
+	CodeSession            yamlCodeSessionConfig      `yaml:"code_session"`
+	Observability          ObservabilityConfig        `yaml:"observability"`
+	Telemetry              TelemetryConfig            `yaml:"telemetry"`
+	Webhook                yamlWebhookConfig          `yaml:"webhook"`
+	TelemetryExport        yamlWebhookConfig          `yaml:"telemetry_export"`
+	Vault                  VaultConfig                `yaml:"vault"`
+	Bootstrap              yamlBootstrapConfig        `yaml:"bootstrap"`
 }
 
 // Legacy flat fields exist only at the YAML boundary. All consumers use Local.
@@ -159,17 +160,18 @@ func newYAMLConfig() yamlConfig {
 			ConnectTimeout:        defaults.NATS.ConnectTimeout,
 			DrainTimeout:          defaults.NATS.DrainTimeout,
 		},
-		WebTools:             defaults.WebTools,
-		Auth:                 defaults.Auth,
-		Tunnel:               defaults.Tunnel,
-		Storage:              defaults.Storage,
-		Batch:                defaults.Batch,
-		E2B:                  defaults.E2B,
-		EnvironmentPrebuilds: defaults.EnvironmentPrebuilds,
-		EnvironmentPackages:  defaults.EnvironmentPackages,
-		TranscriptArchive:    defaults.TranscriptArchive,
-		SandboxLifecycle:     defaults.SandboxLifecycle,
-		EnvironmentRunner:    defaults.EnvironmentRunner,
+		WebTools:              defaults.WebTools,
+		Auth:                  defaults.Auth,
+		Tunnel:                defaults.Tunnel,
+		Storage:               defaults.Storage,
+		BrainImageAttachments: defaults.BrainImageAttachments,
+		Batch:                 defaults.Batch,
+		E2B:                   defaults.E2B,
+		EnvironmentPrebuilds:  defaults.EnvironmentPrebuilds,
+		EnvironmentPackages:   defaults.EnvironmentPackages,
+		TranscriptArchive:     defaults.TranscriptArchive,
+		SandboxLifecycle:      defaults.SandboxLifecycle,
+		EnvironmentRunner:     defaults.EnvironmentRunner,
 		CodeSession: yamlCodeSessionConfig{
 			SandboxAPIBaseURL:                  defaults.CodeSession.SandboxAPIBaseURL,
 			JWTSigningPrivateKeyFile:           defaults.CodeSession.JWTSigningPrivateKeyFile,
@@ -223,17 +225,18 @@ func (input yamlConfig) resolve() Config {
 			ConnectTimeout:        input.NATS.ConnectTimeout,
 			DrainTimeout:          input.NATS.DrainTimeout,
 		},
-		WebTools:             input.WebTools,
-		Auth:                 input.Auth,
-		Tunnel:               input.Tunnel,
-		Storage:              input.Storage,
-		Batch:                input.Batch,
-		E2B:                  input.E2B,
-		EnvironmentPrebuilds: input.EnvironmentPrebuilds,
-		EnvironmentPackages:  input.EnvironmentPackages,
-		TranscriptArchive:    input.TranscriptArchive,
-		SandboxLifecycle:     input.SandboxLifecycle,
-		EnvironmentRunner:    input.EnvironmentRunner,
+		WebTools:              input.WebTools,
+		Auth:                  input.Auth,
+		Tunnel:                input.Tunnel,
+		Storage:               input.Storage,
+		BrainImageAttachments: input.BrainImageAttachments,
+		Batch:                 input.Batch,
+		E2B:                   input.E2B,
+		EnvironmentPrebuilds:  input.EnvironmentPrebuilds,
+		EnvironmentPackages:   input.EnvironmentPackages,
+		TranscriptArchive:     input.TranscriptArchive,
+		SandboxLifecycle:      input.SandboxLifecycle,
+		EnvironmentRunner:     input.EnvironmentRunner,
 		CodeSession: CodeSessionConfig{
 			SandboxAPIBaseURL:                  input.CodeSession.SandboxAPIBaseURL,
 			JWTSigningPrivateKeyFile:           input.CodeSession.JWTSigningPrivateKeyFile,

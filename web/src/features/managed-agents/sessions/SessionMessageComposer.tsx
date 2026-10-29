@@ -65,10 +65,10 @@ export function SessionMessageComposer({
     setSending(true);
     onError(null);
     try {
-      const paths = await prepareSessionAttachments(attachments, sessionId, workspaceId, onResourcesChanged);
+      const prepared = await prepareSessionAttachments(attachments, sessionId, workspaceId, onResourcesChanged);
       const response = await postQuickstartSessionMessage(
         sessionId,
-        sessionAttachmentMessage(trimmedDraft, paths),
+        sessionAttachmentMessage(trimmedDraft, prepared),
         workspaceId,
       );
       setDraft('');

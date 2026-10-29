@@ -225,3 +225,18 @@ test("Chat adapter numbers a tool when its name arrives, matching the Go observe
   ]);
   expect(chunks).toContainEqual({ type: "block-end", index: 1, block: { type: "tool-call", id: ToolCallId("call_1"), name: "Bash", arguments: '{"a":1}' } });
 });
+
+test("Chat adapter preserves text then thinking then text even when the SDK reuses block IDs", async () => {
+  const { a, adapter } = setup([
+    textChunk("first", null),
+    { id: "chat_1", choices: [{ index: 0, delta: { reasoning_content: "think" } }] },
+    textChunk("last"), "[DONE]",
+  ]);
+  const chunks = await collect(adapter.stream(options(a.session_id)));
+  expect(chunks.filter(chunk => chunk.type === "block-end").map(chunk => chunk.block.type)).toEqual(["text", "reasoning", "text"]);
+  const assembler = new BlockAssembler();
+  for (const chunk of chunks) assembler.push(chunk);
+  expect(assembler.message({ provider: "oma", model: "chat-model" }).content).toEqual([
+    { type: "text", text: "first" }, { type: "reasoning", text: "think" }, { type: "text", text: "last" },
+  ]);
+});

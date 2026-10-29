@@ -46,7 +46,7 @@ const definitions: RemoteTool[] = [
     "name": "Read",
     "remoteName": "read",
     "readOnly": true,
-    "description": "Read a text file in the remote sandbox. file_path must be absolute. start_line is 0-based and end_line is exclusive, so start_line=0 with end_line=50 returns the first 50 lines; omit both to read the whole file. Binary files and images are not supported.",
+    "description": "Read a text file or PNG/JPEG/WebP/GIF image in the remote sandbox. file_path must be absolute. start_line is 0-based and end_line is exclusive, so start_line=0 with end_line=50 returns the first 50 lines; omit both to read the whole file. Images are returned as visual content when the current model supports image input; line ranges apply only to text. Other binary files are not supported.",
     "inputSchema": {
       "properties": {
         "end_line": {

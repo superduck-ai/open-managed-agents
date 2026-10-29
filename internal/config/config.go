@@ -495,6 +495,7 @@ func validatePositiveValues(cfg Config) error {
 		name  string
 		valid bool
 	}{
+		{name: "brain_image_attachments.max_object_bytes", valid: cfg.BrainImageAttachments.MaxObjectBytes > 0 && cfg.BrainImageAttachments.MaxObjectBytes <= 4<<20},
 		{name: "storage.max_file_bytes", valid: cfg.Storage.MaxFileBytes > 0},
 		{name: "nats.connect_timeout", valid: cfg.NATS.ConnectTimeout > 0},
 		{name: "nats.drain_timeout", valid: cfg.NATS.DrainTimeout > 0},

@@ -72,6 +72,7 @@ export async function startWorkers(
       if (sessions.delete(session.id)) brainMetrics().sessionsActive.add(-1);
       api.assignments.delete(session.id);
       api.modelResponses.delete(session.id);
+      api.modelRequestIDs.delete(session.id);
       retiring.delete(session.id);
       notifySlot();
     });

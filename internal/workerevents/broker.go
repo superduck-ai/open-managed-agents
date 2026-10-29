@@ -106,6 +106,7 @@ type Broker interface {
 	Subscribe(context.Context, string) (Subscription, error)
 	InProgress(ctx context.Context, ackSubject string) error
 	DoubleAck(ctx context.Context, ackSubject string) error
+	Nak(ctx context.Context, ackSubject string) error
 	ScanExpired(context.Context, uint64, int, time.Time) ([]ExpiredEvent, uint64, error)
 	PurgeSession(context.Context, string) error
 }
@@ -268,6 +269,13 @@ func (b *JetStreamBroker) DoubleAck(ctx context.Context, ackSubject string) erro
 		return fmt.Errorf("confirm worker event ACK: %w", err)
 	}
 	return nil
+}
+
+func (b *JetStreamBroker) Nak(_ context.Context, ackSubject string) error {
+	if ackSubject == "" {
+		return errAckSubjectEmpty
+	}
+	return b.connection.Publish(ackSubject, []byte("-NAK"))
 }
 
 // ScanExpired 扫描逻辑到期事件；唯一的删除副作用是移除无法归属 Session 的非法 subject。
@@ -556,6 +564,22 @@ func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
 	return nil
 }
 
+func (b *MemoryBroker) Nak(_ context.Context, ackSubject string) error {
+	if ackSubject == "" {
+		return errAckSubjectEmpty
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	message := b.ackSubjectMap[ackSubject]
+	if message == nil {
+		return nil
+	}
+	message.delivered = false
+	delete(b.ackSubjectMap, ackSubject)
+	b.dispatchLocked(message.envelope.CodeSessionID)
+	return nil
+}
+
 func (b *MemoryBroker) undeliverLocked(codeSessionID string) {
 	for _, lane := range deliveryLanes {
 		queue := b.queues[codeSessionID+string(lane)]
@@ -660,6 +684,7 @@ func (s *memorySubscription) Close() error {
 			s.broker.undeliverLocked(s.codeSessionID)
 		}
 		close(s.done)
+		close(s.messages)
 		s.broker.mu.Unlock()
 	})
 	return nil

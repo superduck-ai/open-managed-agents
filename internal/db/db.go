@@ -36,6 +36,7 @@ var (
 	ErrVersionConflict                = errors.New("version conflict")
 	ErrIncompleteSecretEnvelope       = errors.New("incomplete vault credential secret envelope")
 	ErrWorkerEpochMismatch            = errors.New("worker epoch mismatch")
+	ErrWorkerClaimReleased            = errors.New("worker claim released")
 	ErrWorkerNotRegistered            = errors.New("worker not registered")
 	ErrWorkerLeaseExpired             = errors.New("worker lease expired")
 	ErrStorageLimitExceeded           = errors.New("storage limit exceeded")

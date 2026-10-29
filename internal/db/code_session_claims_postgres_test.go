@@ -353,3 +353,71 @@ func TestCodeSessionClaimsPostgresIdleReleaseClearsLease(t *testing.T) {
 func fixedWorkerLease(ttl, grace time.Duration) WorkerLeasePolicy {
 	return func(string) WorkerLeaseTimings { return WorkerLeaseTimings{TTL: ttl, Grace: grace} }
 }
+
+func claimAndRegister(t *testing.T, ctx context.Context, store *DB, codeSessionID, workerID string) int64 {
+	t.Helper()
+	claim, found, err := store.ClaimNextCodeSession(ctx, claimTestInput(workerID))
+	if err != nil || !found || claim.CodeSessionExternalID != codeSessionID {
+		t.Fatalf("claim = %+v found=%t err=%v", claim, found, err)
+	}
+	if _, _, err := store.RegisterCodeSessionWorkerAtEpoch(ctx, codeSessionID, claim.WorkerEpoch, CodeSessionWorkerBinding{}, 20*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	return claim.WorkerEpoch
+}
+
+func TestCodeSessionClaimsPostgresWorkerClaimStateReportsReleasedAndSupersededEpochs(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	if err := store.ValidateCodeSessionWorkerClaim(ctx, claimTestOrganization, claimTestWorkspace, "cse_missing", 1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing code session: %v", err)
+	}
+	for index, kind := range []CodeSessionClaimReleaseKind{CodeSessionClaimReleaseIdle, CodeSessionClaimReleaseHandoff, CodeSessionClaimReleaseRetry} {
+		codeSessionID := seedClaimCodeSession(t, ctx, database, index+1, "claim", "running")
+		owner, successor := fmt.Sprintf("worker-a-%d", index), fmt.Sprintf("worker-b-%d", index)
+		epoch := claimAndRegister(t, ctx, store, codeSessionID, owner)
+		if err := store.ValidateCodeSessionWorkerClaim(ctx, claimTestOrganization, "53000000-0000-0000-0000-0000000000ff", codeSessionID, epoch); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s: other workspace read the claim: %v", kind, err)
+		}
+		if err := store.MarkCodeSessionWorkerDisconnectedForEpoch(ctx, codeSessionID, epoch); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.ReleaseCodeSessionClaim(ctx, codeSessionID, owner, epoch, kind); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.ValidateCodeSessionWorkerClaim(ctx, claimTestOrganization, claimTestWorkspace, codeSessionID, epoch); !errors.Is(err, ErrWorkerClaimReleased) {
+			t.Fatalf("%s release at the same epoch: %v", kind, err)
+		}
+		execClaimTest(t, ctx, database, `update code_sessions set worker_claim_expires_at = NOW() - INTERVAL '1 second' where external_id = $1`, codeSessionID)
+		next := claimAndRegister(t, ctx, store, codeSessionID, successor)
+		if err := store.ValidateCodeSessionWorkerClaim(ctx, claimTestOrganization, claimTestWorkspace, codeSessionID, epoch); !errors.Is(err, ErrWorkerEpochMismatch) {
+			t.Fatalf("%s superseded epoch %d (current %d): %v", kind, epoch, next, err)
+		}
+		execClaimTest(t, ctx, database, `update code_sessions set status = 'terminated' where external_id = $1`, codeSessionID)
+	}
+}
+
+func TestCodeSessionClaimsPostgresWorkerClaimStateKeepsRegisteredEpoch(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	legacy := seedClaimCodeSession(t, ctx, database, 1, "nats", "running")
+	if err := store.ValidateCodeSessionWorkerClaim(ctx, claimTestOrganization, claimTestWorkspace, legacy, 1); err != nil {
+		t.Fatalf("unclaimed transport: %v", err)
+	}
+	codeSessionID := seedClaimCodeSession(t, ctx, database, 2, "claim", "running")
+	epoch := claimAndRegister(t, ctx, store, codeSessionID, "worker-a")
+	for _, step := range []func() error{
+		func() error { return nil },
+		func() error { return store.MarkCodeSessionWorkerDisconnectedForEpoch(ctx, codeSessionID, epoch) },
+		func() error {
+			_, err := store.HeartbeatCodeSessionWorker(ctx, codeSessionID, epoch, 20*time.Second)
+			return err
+		},
+		func() error { return store.MarkCodeSessionWorkerConnectedForEpoch(ctx, codeSessionID, epoch) },
+	} {
+		if err := step(); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.ValidateCodeSessionWorkerClaim(ctx, claimTestOrganization, claimTestWorkspace, codeSessionID, epoch); err != nil {
+			t.Fatalf("registered epoch lost its claim: %v", err)
+		}
+	}
+}

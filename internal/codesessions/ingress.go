@@ -230,6 +230,8 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 		h.errorAdapter.Write(w, r, workerEventStreamUnavailable(err))
 		return
 	}
+	deliveries := &workerStreamDeliveries{}
+	defer h.service.redeliverAbandonedWorkerEvents(codeSession, epoch, subscription, deliveries)
 	streamStartedAt := time.Now()
 	defer httpapi.ObserveSSEStream(r.Context(), "worker")()
 	defer disconnect()
@@ -250,7 +252,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 	h.logger.InfoContext(r.Context(), "code session worker stream opened", "code_session_id", codeSessionID, "session_id", codeSession.SessionExternalID, "worker_epoch", epoch)
-	h.streamCodeSessionWorkerEvents(r.Context(), w, flusher, subscription, codeSession, epoch)
+	h.streamCodeSessionWorkerEvents(r.Context(), w, flusher, subscription, deliveries, codeSession, epoch)
 	h.logger.InfoContext(r.Context(), "code session worker stream closed", "code_session_id", codeSessionID, "session_id", codeSession.SessionExternalID, "worker_epoch", epoch,
 		"close_reason", workerStreamCloseReason(requestCtx, r.Context()), "duration_s", time.Since(streamStartedAt).Seconds())
 }
@@ -307,7 +309,7 @@ func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http
 }
 
 func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer, flusher http.Flusher,
-	subscription workerevents.Subscription, codeSession db.CodeSession, epoch int64) {
+	subscription workerevents.Subscription, deliveries *workerStreamDeliveries, codeSession db.CodeSession, epoch int64) {
 
 	keepAlive := time.NewTicker(15 * time.Second)
 	defer keepAlive.Stop()
@@ -329,11 +331,17 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 			if !open {
 				return
 			}
-			if time.Since(lastEpochValidation) >= workerEpochValidationInterval {
+			if err := deliveries.accept(delivery.AckSubject, func() error {
+				if time.Since(lastEpochValidation) < workerEpochValidationInterval {
+					return nil
+				}
 				if err := h.db.ValidateCodeSessionWorkerEpoch(ctx, codeSession.ExternalID, epoch); err != nil {
-					return
+					return err
 				}
 				lastEpochValidation = time.Now()
+				return nil
+			}); err != nil {
+				return
 			}
 			envelope := delivery.Envelope
 			if envelope.Version != 2 || envelope.CodeSessionID != codeSession.ExternalID {

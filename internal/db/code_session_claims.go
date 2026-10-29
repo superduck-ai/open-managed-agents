@@ -139,6 +139,21 @@ func (d *DB) ReleaseCodeSessionClaim(ctx context.Context, codeSessionExternalID,
 	return nil
 }
 
+func (d *DB) ValidateCodeSessionWorkerClaim(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string, epoch int64) error {
+	row, found, err := NewCodeSessionClaimMapper(d.mapperDB).FindWorkerClaimState(ctx, organizationUUID, workspaceUUID, codeSessionExternalID)
+	switch {
+	case err != nil:
+		return err
+	case !found:
+		return ErrNotFound
+	case row.CurrentWorkerEpoch != epoch:
+		return ErrWorkerEpochMismatch
+	case row.ClaimReleased:
+		return ErrWorkerClaimReleased
+	}
+	return nil
+}
+
 func (d *DB) RequestCodeSessionWorker(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID, traceParent string) error {
 	rows, err := NewCodeSessionClaimMapper(d.mapperDB).Request(ctx, organizationUUID, workspaceUUID, codeSessionExternalID, nullableString(traceParent))
 	if err != nil {

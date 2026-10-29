@@ -46,6 +46,11 @@ type failCodeSessionClaimParams struct {
 	HoldUntil   time.Time
 }
 
+type codeSessionWorkerClaimStateRow struct {
+	CurrentWorkerEpoch int64 `db:"current_worker_epoch"`
+	ClaimReleased      bool  `db:"claim_released"`
+}
+
 type CodeSessionClaimMapper interface {
 	LockNextClaimable(ctx context.Context, leaseGraceMicros int64) (codeSessionClaimCandidateRow, bool, error)
 	Claim(ctx context.Context, params claimCodeSessionParams) (int64, error)
@@ -54,5 +59,6 @@ type CodeSessionClaimMapper interface {
 	FailPermanently(ctx context.Context, params failCodeSessionClaimParams) (failedCodeSessionClaimRow, error)
 	Release(ctx context.Context, params releaseCodeSessionClaimParams) (int64, error)
 	FindWorkerTransport(ctx context.Context, externalID string) (string, error)
+	FindWorkerClaimState(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (codeSessionWorkerClaimStateRow, bool, error)
 	Request(ctx context.Context, organizationUUID, workspaceUUID, externalID string, traceParent *string) (int64, error)
 }

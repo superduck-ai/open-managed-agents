@@ -25,7 +25,7 @@ test("telemetry stays disabled without an OTLP endpoint or when the SDK is disab
 test("telemetry starts only the signals with a configured endpoint", async () => {
   const noop = brainMetrics();
   const logs = new InMemoryLogRecordExporter();
-  startTelemetry({ OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://127.0.0.1:1/v1/logs" }, { logProcessor: new SimpleLogRecordProcessor(logs) });
+  startTelemetry({ OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://127.0.0.1:1/v1/logs" }, { logProcessor: new SimpleLogRecordProcessor({ exporter: logs }) });
   emitBrainLog("info", "logs_only", {});
   expect(logs.getFinishedLogRecords().map((record) => record.body)).toEqual(["logs_only"]);
   expect(brainMetrics()).toBe(noop);
@@ -34,19 +34,19 @@ test("telemetry starts only the signals with a configured endpoint", async () =>
   const metrics = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
   const reader = new PeriodicExportingMetricReader({ exporter: metrics, exportIntervalMillis: 60_000 });
   const unused = new InMemoryLogRecordExporter();
-  startTelemetry({ ...ENV, OTEL_LOGS_EXPORTER: "none" }, { logProcessor: new SimpleLogRecordProcessor(unused), metricReader: reader });
+  startTelemetry({ ...ENV, OTEL_LOGS_EXPORTER: "none" }, { logProcessor: new SimpleLogRecordProcessor({ exporter: unused }), metricReader: reader });
   emitBrainLog("info", "logs_disabled", {});
   expect(unused.getFinishedLogRecords()).toEqual([]);
   expect(brainMetrics()).not.toBe(noop);
   await stopTelemetry();
 
-  startTelemetry({ ...ENV, OTEL_METRICS_EXPORTER: "none" }, { logProcessor: new SimpleLogRecordProcessor(new InMemoryLogRecordExporter()) });
+  startTelemetry({ ...ENV, OTEL_METRICS_EXPORTER: "none" }, { logProcessor: new SimpleLogRecordProcessor({ exporter: new InMemoryLogRecordExporter() }) });
   expect(brainMetrics()).toBe(noop);
 });
 
 test("diagnostics export structured log records with code session identity and dispatch trace context", () => {
   const exporter = new InMemoryLogRecordExporter();
-  startTelemetry(ENV, { logProcessor: new SimpleLogRecordProcessor(exporter) });
+  startTelemetry(ENV, { logProcessor: new SimpleLogRecordProcessor({ exporter }) });
   const original = console.error;
   console.error = () => {};
   try {
@@ -88,7 +88,7 @@ test("Brain metrics use bounded attributes", async () => {
 
 test("claim admissions carry the dispatch trace context", async () => {
   const logs = new InMemoryLogRecordExporter();
-  startTelemetry(ENV, { logProcessor: new SimpleLogRecordProcessor(logs) });
+  startTelemetry(ENV, { logProcessor: new SimpleLogRecordProcessor({ exporter: logs }) });
   const traceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01";
   const queue: unknown[] = [
     { session_id: "cse_ok", worker_epoch: 2, trace_parent: traceParent },

@@ -3,7 +3,7 @@ import { context, createNoopMeter, trace, TraceFlags, type Attributes, type Mete
 import { SeverityNumber, type Logger } from "@opentelemetry/api-logs";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
-import { Resource } from "@opentelemetry/resources";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BatchLogRecordProcessor, LoggerProvider, type LogRecordProcessor } from "@opentelemetry/sdk-logs";
 import { MeterProvider, PeriodicExportingMetricReader, type MetricReader } from "@opentelemetry/sdk-metrics";
 import { parseTraceParent } from "./observability/trace-context.ts";
@@ -42,13 +42,15 @@ export interface TelemetryExporters {
 
 export function startTelemetry(env: Record<string, string | undefined> = process.env, exporters: TelemetryExporters = {}): void {
   if (shutdowns.length || !telemetryEnabled(env)) return;
-  const resource = new Resource({
+  const resource = resourceFromAttributes({
     "service.name": env.OTEL_SERVICE_NAME || "oma-brain",
     "service.instance.id": `${hostname()}:${process.pid}`,
   });
   if (signalEnabled(env, "LOGS")) {
-    const loggerProvider = new LoggerProvider({ resource });
-    loggerProvider.addLogRecordProcessor(exporters.logProcessor ?? new BatchLogRecordProcessor(new OTLPLogExporter()));
+    const loggerProvider = new LoggerProvider({
+      resource,
+      processors: [exporters.logProcessor ?? new BatchLogRecordProcessor({ exporter: new OTLPLogExporter() })],
+    });
     logger = loggerProvider.getLogger(SCOPE);
     shutdowns.push(() => loggerProvider.shutdown());
   }

@@ -1156,7 +1156,7 @@ DSH 进程的服务级数据与 oma-server 同属服务端数据，写入同一�
 （不注册全局 Provider，避免与二期插件冲突）。日志与指标按信号分别启用：只有配置了通用
 `OTEL_EXPORTER_OTLP_ENDPOINT` 或对应的 `OTEL_EXPORTER_OTLP_{LOGS,METRICS}_ENDPOINT` 的信号才创建导出器，
 `OTEL_LOGS_EXPORTER=none` / `OTEL_METRICS_EXPORTER=none` 关闭对应信号，避免未配置的信号退回
-`localhost:4318` 被静默丢弃。traceparent 解析与格式化统一使用 `src/observability/trace-context.ts`。
+`localhost:4318` 被静默丢弃。traceparent 解析与格式化统一使用 `src/observability/trace-context.ts`。Brain 的 OTel 版本必须与 `@deepseek-ai/dsh-otel` 对齐。
 
 ```bash
 OTEL_SERVICE_NAME=oma-brain

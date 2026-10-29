@@ -23,6 +23,7 @@ import (
 
 type responseObservation struct {
 	chat              *chatObservation
+	firstTokenAt      time.Time
 	publishThinking   func(string, int) bool
 	thinkingPublished map[int]bool
 	onComplete        func()
@@ -36,13 +37,15 @@ type responseObservation struct {
 	messageID         string
 	blocks            map[int]*responseContentBlock
 	contentBytes      int
+	stopReason        string
 }
 
 type responseMessage struct {
-	ID      string                         `json:"id"`
-	Type    string                         `json:"type"`
-	Usage   codesessions.ModelRequestUsage `json:"usage"`
-	Content []responseContentBlock         `json:"content"`
+	ID         string                         `json:"id"`
+	Type       string                         `json:"type"`
+	Usage      codesessions.ModelRequestUsage `json:"usage"`
+	Content    []responseContentBlock         `json:"content"`
+	StopReason string                         `json:"stop_reason"`
 }
 
 type responseContentBlock struct {
@@ -53,6 +56,7 @@ type responseContentBlock struct {
 	Name        string            `json:"name"`
 	Input       jsonv1.RawMessage `json:"input"`
 	PartialJSON string            `json:"partial_json"`
+	StopReason  string            `json:"stop_reason"`
 	textBuffer  strings.Builder
 	inputBuffer strings.Builder
 }
@@ -74,8 +78,9 @@ func (h *Handler) beginModelRequest(r *http.Request, principal auth.Principal, m
 		principal.CodeSessionExternalID, strings.TrimSpace(r.Header.Get("X-Claude-Code-Agent-Id")), model)
 }
 
-func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest) {
+func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest, call *modelCall) {
 	observation := &responseObservation{request: request}
+	call.observation = observation
 	if r.URL.Path == "/v1/chat/completions" {
 		observation.chat = &chatObservation{}
 	}
@@ -101,6 +106,7 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
+	call.received(response.StatusCode)
 	defer response.Body.Close()
 	if request != nil {
 		observation.result.UpstreamRequestID = response.Header.Get("Request-Id")
@@ -122,10 +128,12 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		response.Body = &observedResponseBody{Reader: io.TeeReader(response.Body, observation), Closer: response.Body}
 	}
 	if err := writeProxyResponse(w, response); err != nil {
-		observation.result.ErrorType = "stream_error"
-		if r.Context().Err() == nil {
-			h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
+		if httpapi.ClientGone(r) {
+			observation.result.ErrorType = "cancelled"
+			return
 		}
+		observation.result.ErrorType = "stream_error"
+		h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
 	}
 }
 
@@ -244,6 +252,9 @@ func (o *responseObservation) observeFrame(data []byte) {
 		o.observeContentDelta(event)
 	case "message_delta":
 		mergeRequestUsage(&o.result.Usage, event.Usage)
+		if event.Delta.StopReason != "" {
+			o.stopReason = event.Delta.StopReason
+		}
 	case "message_stop":
 		if o.messageID == "" {
 			o.malformed = true
@@ -266,10 +277,17 @@ func (o *responseObservation) observeFrame(data []byte) {
 	}
 }
 
+func (o *responseObservation) markFirstToken() {
+	if o.firstTokenAt.IsZero() {
+		o.firstTokenAt = time.Now()
+	}
+}
+
 func (o *responseObservation) observeContentDelta(event responseStreamEvent) {
 	if event.Delta.Type != "text_delta" && event.Delta.Type != "input_json_delta" && event.Delta.Type != "thinking_delta" {
 		return
 	}
+	o.markFirstToken()
 	o.contentBytes += len(event.Delta.Text) + len(event.Delta.Thinking) + len(event.Delta.PartialJSON)
 	if o.contentBytes > 4*1024*1024 {
 		o.malformed = true
@@ -314,6 +332,7 @@ func (o *responseObservation) finish() {
 		} else {
 			o.messageID = message.ID
 			o.result.Usage = message.Usage
+			o.stopReason = message.StopReason
 			for index, block := range message.Content {
 				o.addEventID(index, block.Type)
 				o.addMessage(index, block)
@@ -408,4 +427,11 @@ func mergeRequestUsage(target *codesessions.ModelRequestUsage, delta codesession
 	target.OutputTokens = cmp.Or(delta.OutputTokens, target.OutputTokens)
 	target.CacheCreationInputTokens = cmp.Or(delta.CacheCreationInputTokens, target.CacheCreationInputTokens)
 	target.CacheReadInputTokens = cmp.Or(delta.CacheReadInputTokens, target.CacheReadInputTokens)
+}
+
+func (o *responseObservation) timeToFirstToken(startedAt time.Time) time.Duration {
+	if o.firstTokenAt.IsZero() {
+		return 0
+	}
+	return o.firstTokenAt.Sub(startedAt)
 }

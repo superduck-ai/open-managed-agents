@@ -31,7 +31,9 @@ func TestSandboxPreparationKeepsCreatingLease(t *testing.T) {
 	cfg.EnvironmentPackages.PIP.IndexURL = "https://packages.example/simple"
 	runner := &Runner{db: database, provider: provider, cfg: cfg, logger: logging.LoggerOrDefault(nil)}
 	env := db.Environment{UUID: work.EnvironmentUUID, ExternalID: work.EnvironmentExternalID, Config: []byte(`{}`)}
-	if _, err := runner.createEnvironmentSandbox(t.Context(), env, &work, nil); err != nil {
+	ctx, run := startRunnerRun(t.Context(), work)
+	defer run.end(ctx, nil)
+	if _, err := runner.createEnvironmentSandbox(ctx, run, env, &work, nil); err != nil {
 		t.Fatal(err)
 	}
 	provider.mu.Lock()

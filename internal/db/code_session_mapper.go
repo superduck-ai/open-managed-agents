@@ -51,6 +51,11 @@ type codeSessionInputStateRow struct {
 	WorkerExternalMetadata []byte `db:"worker_external_metadata"`
 }
 
+type codeSessionSegmentRow struct {
+	ExternalID string    `db:"external_id"`
+	CreatedAt  time.Time `db:"created_at"`
+}
+
 type createCodeSessionParams struct {
 	ExternalID            string
 	OrganizationUUID      string
@@ -175,6 +180,7 @@ type CodeSessionMapper interface {
 	FindByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)
 	FindActiveForEnvironmentWork(ctx context.Context, organizationUUID, workspaceUUID, environmentUUID, sessionUUID string) ([]codeSessionRow, error)
 	FindLatestBySessionExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (codeSessionRow, error)
+	ListSegmentsBySessionExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) ([]codeSessionSegmentRow, error)
 	LockCodeSessionByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)
 	LockInitializingCodeSession(ctx context.Context, workspaceUUID, codeSessionUUID string) (codeSessionRow, bool, error)
 	LockWorkerLeaseByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionWorkerLeaseRow, error)

@@ -2,7 +2,6 @@ package environments
 
 import (
 	"encoding/json"
-	urlpkg "net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -179,7 +178,6 @@ func buildEnvironmentManagerV0Payload(codeSessionID string, sessionIngressToken 
 	for key, value := range claudeRuntimeModelEnvironment(stringFromMap(startupContext, "model")) {
 		environmentVariables[key] = value
 	}
-	applyCodeSessionOTLPEnvironment(environmentVariables, cfg.Observability, apiBaseURL, codeSessionID, sessionIngressToken)
 	for key, placeholder := range vaultEnvPlaceholders {
 		if _, exists := environmentVariables[key]; exists {
 			continue
@@ -226,48 +224,6 @@ func claudeRuntimeModelEnvironment(modelID string) map[string]string {
 		"ANTHROPIC_DEFAULT_OPUS_MODEL":   modelID,
 		"ANTHROPIC_DEFAULT_SONNET_MODEL": modelID,
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  modelID,
-	}
-}
-
-// applyCodeSessionOTLPEnvironment 对采集选项只补默认值；连接 OMA 所需的
-// endpoint 和 Authorization 由平台覆盖，兼容不会动态配置 OTLP 的旧版
-// environment-manager。OTLP ingress 仍会校验 session token 与 active lease。
-func applyCodeSessionOTLPEnvironment(environmentVariables map[string]any, cfg config.ObservabilityConfig, apiBaseURL, codeSessionID, sessionIngressToken string) {
-	if !cfg.Enabled {
-		return
-	}
-	setDefaultEnvironmentVariable(environmentVariables, "CLAUDE_CODE_ENABLE_TELEMETRY", "1")
-	// Runner shell defaults this to 1 to skip marketplace/auto-update. Claude Code
-	// treats a non-empty value as "essential traffic only" and will not export OTEL.
-	setDefaultEnvironmentVariable(environmentVariables, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "")
-	setDefaultEnvironmentVariable(environmentVariables, "OTEL_METRICS_EXPORTER", "otlp")
-	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf")
-	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", "delta")
-	setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOGS_EXPORTER", "otlp")
-	setDefaultEnvironmentVariable(environmentVariables, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
-	setDefaultEnvironmentVariable(environmentVariables, "ENABLE_BETA_TRACING_DETAILED", "1")
-	if cfg.ContentCaptureEnabled {
-		// Without these grants Claude Code exports user_prompt="<REDACTED>" and
-		// omits tool input/output; detailed tracing alone only carries structure.
-		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_USER_PROMPTS", "1")
-		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_TOOL_DETAILS", "1")
-		setDefaultEnvironmentVariable(environmentVariables, "OTEL_LOG_TOOL_CONTENT", "1")
-	}
-
-	otlpBaseURL := strings.TrimRight(apiBaseURL, "/") + "/v1/code/sessions/" + urlpkg.PathEscape(codeSessionID) + "/worker/otlp"
-	headers := "Authorization=Bearer " + sessionIngressToken
-	environmentVariables["OTEL_EXPORTER_OTLP_HEADERS"] = ""
-	environmentVariables["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] = otlpBaseURL + "/metrics"
-	environmentVariables["OTEL_EXPORTER_OTLP_METRICS_HEADERS"] = headers
-	environmentVariables["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] = otlpBaseURL + "/logs"
-	environmentVariables["OTEL_EXPORTER_OTLP_LOGS_HEADERS"] = headers
-	environmentVariables["BETA_TRACING_ENDPOINT"] = otlpBaseURL
-	environmentVariables["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] = headers
-}
-
-func setDefaultEnvironmentVariable(environmentVariables map[string]any, key string, value string) {
-	if _, configured := environmentVariables[key]; !configured {
-		environmentVariables[key] = value
 	}
 }
 

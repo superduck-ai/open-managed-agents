@@ -35,6 +35,7 @@ Use this workflow when implementing or fixing Deployment/River, Memory/Filestore
 | Session creation, Runner, mounts or Worker startup | `chat.public` |
 | Bound Skill discovery, permission, body/reference loading or readonly mounts | `chat.skills-loading`; read [Skill loading](features/skills-loading.md) |
 | Configured subagents, child skills/MCP, child tool policy or thread continuation | `chat.subagents`; read [Subagents](features/subagents.md) |
+| DSH native event export or OpenObserve trajectory queries | `chat.brain-observability`; read [Observability](features/observability.md) |
 | Chat queries, scheduling, streaming latency or other performance-sensitive paths | `chat.performance` with a baseline comparison |
 | Upstream model authentication errors and failed-turn completion | `chat.upstream-errors`; read [Upstream errors](features/upstream-errors.md) |
 
@@ -157,3 +158,7 @@ Scenario deadlines default to 3m for roundtrip/tools/instances, 5m for reliabili
 Memory deadlines default to 3m for portable scenarios and 8m for `mounts`.
 
 CLI migration: `verify-chat run chat.roundtrip` is replaced by `verify-be chat roundtrip`. There are no aliases for the old command. Move local Worker settings to `.verify-be.local.json`. Reports and resource labels now use `verify-be`; old evidence remains where it was generated. Root `doctor` checks only common dependencies.
+
+## Explicit vision scenario
+
+`chat brain-images` is the exception to scripted upstream models. Set `VERIFY_BE_VISION_PROVIDERS` to an explicit private model-providers.yaml file and `VERIFY_BE_VISION_MODEL` to a model declared by exactly one provider in that file. Run `chat doctor brain-images` first. It verifies message images and real Worker Read with a real vision model; see [Brain image coverage](features/brain.md#真实视觉模型与图片). Other scenarios never use these credentials. Include `chat roundtrip` as the chat smoke regression.

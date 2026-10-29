@@ -2,6 +2,7 @@ package codesessions
 
 import (
 	"context"
+	"github.com/superduck-ai/open-managed-agents/internal/brainattachments"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetryexport"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/webtools"
@@ -39,8 +41,11 @@ type Handler struct {
 	loadMemoryToolVersion     func(context.Context, db.CodeSession, string, string) (memoryToolVersion, error)
 	otlpSink                  otlpSink
 	otlpAdmission             *otlpAdmission
+	traceExporter             *telemetryexport.Exporter
+	traceAdmission            *otlpAdmission
 	brainClaims               BrainClaimAuthenticator
 	webTools                  *webtools.Client
+	imageAttachments          *brainattachments.Handler
 }
 
 // TunnelInvoker is implemented by the Tunnel DataPlane. Named Runtime Gateway
@@ -88,6 +93,7 @@ func NewHandler(cfg config.Config, service *Service, sandboxTimeoutExtender Sand
 		mcpProxyTransport:      newMCPProxyTransport(cfg.CodeSession.UpstreamProxyDisableSSRFProtection),
 		otlpSink:               newOTLPSink(cfg.Observability),
 		otlpAdmission:          newOTLPAdmission(defaultOTLPGlobalConcurrency, defaultOTLPSessionConcurrency),
+		traceAdmission:         newOTLPAdmission(defaultOTLPGlobalConcurrency, defaultOTLPSessionConcurrency),
 	}
 	handler.loadUpstreamPolicyContext = handler.loadUpstreamProxyPolicyContext
 	handler.loadMCPPolicyContext = handler.loadMCPProxyPolicyContext

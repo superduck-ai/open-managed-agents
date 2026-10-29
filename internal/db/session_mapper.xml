@@ -95,6 +95,20 @@ RETURNING <include refid="columns"/>
         AND deleted_at IS NULL
     </select>
 
+    <select id="ListTrajectorySummaries" resultType="sessionTrajectoryRow">
+        SELECT s.external_id, s.agent_external_id, s.agent_version, s.title, s.status,
+            (SELECT COUNT(*) FROM session_threads t
+             WHERE t.workspace_uuid = s.workspace_uuid
+               AND t.session_uuid = s.uuid
+               AND t.parent_thread_uuid IS NOT NULL
+               AND t.deleted_at IS NULL) AS subagent_count
+        FROM sessions s
+        WHERE s.workspace_uuid = #{workspaceUUID}
+        AND s.deleted_at IS NULL
+        AND s.external_id IN
+        <foreach collection="externalIDs" item="externalID" open="(" separator="," close=")">#{externalID}</foreach>
+    </select>
+
     <select id="FindByUUID" resultType="sessionRow">
         SELECT <include refid="columns"/>
         FROM sessions

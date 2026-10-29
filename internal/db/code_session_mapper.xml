@@ -195,6 +195,15 @@
         LIMIT 2
     </select>
 
+    <select id="ListSegmentsBySessionExternalID" resultType="codeSessionSegmentRow">
+        SELECT external_id, created_at
+        FROM code_sessions
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND session_external_id = #{sessionExternalID}
+          AND deleted_at IS NULL
+        ORDER BY created_at ASC, uuid ASC
+    </select>
+
     <select id="FindLatestBySessionExternalID" resultType="codeSessionRow">
         SELECT
         <include refid="columns"/>

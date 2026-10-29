@@ -85,7 +85,7 @@ Inspector header 与 tab 控件共用 `32px` 总高度。外壳始终使用 pane
 3. **Tools**：展示 Name、Permission、Calls、Failed、p50，并提供工具搜索和 `All threads / Current agent / Current thread` Scope；`Current agent` 只按 Lane 的既有 `group` 归属筛选，不按名称猜测。配置工具按 Built-in、Custom 和 MCP Server 分组，未出现在当前 Agent 配置中的实际调用单列为 `Called, not configured`；只有主 Agent 配置可用时才展示其 `Configured on`。默认 detail 是带 `64×64` CSS conic-gradient 结果环的 Overview；Failed 非零时同时展示失败率，Failed/Denied 为零时使用国际化 `none`，Completed 始终保留数字。选择工具后展示调用表，调用行与转录的选择和悬浮状态联动，清除选择后回到 Overview。调用表仅在存在审批时展示 Waited，仅在当前 Scope 跨多个线程时展示 Thread。p50 仅统计已完成或失败的调用，优先使用有效的执行耗时（包括明确的 `0`），缺失或无效时才使用确认（若有）或调用至结果事件的时间差，与调用表保持一致。Total time in tools、Execution time 和 Waiting for approval 对同一线程内重叠的调用区间做并集合并，不重复累计同一 Tool Batch 中的并行墙钟时间；不同线程分别累计。
 4. **Resources**：提供常驻资源筛选，按 Path/Size 展示 Session 挂载资源（File 用挂载路径与文件元数据；Memory Store 用快照 `name`/`memory_store_id`，Size 为 `—`）。可通过 `+ Resource → File` 挂载已有文件；Memory Store 在创建 Session/Deployment 表单中挂载，Inspector 只读展示。当前产品不展示 GitHub Repository 入口。
 5. **Threads**：展示有真实数据来源的 Thread、Status、Context；在后端提供线程级费用前不展示 Cost 占位列。detail 始终绑定 active thread，不提供本地关闭态。detail 显示 Agent、Model、Effort 和 `140px`、step-after area 的 Context usage 图；图上 model-request point hover 与 Transcript/Events 使用同一个 event ID 联动。单时间点只显示一个 X 轴标签，短会话显示秒，避免重复时间标签叠加。
-6. **Traces**：仅在 `observability.enabled=true` 时查询当前 Session 的 OpenObserve traces。选中 trace 后使用 `trace_id` 查询参数保存详情状态；返回列表或切换到其他 Inspector 页签时删除该参数。observability 路由返回 404 时展示 “Observability is not enabled”，不使用通用加载错误。
+6. **Trajectory**：一个 OMA Session 只有一条轨迹，跟随会话页当前泳道 `activeLane`：主线程泳道（lane 0）显示该 Session 的 code session，子 agent 泳道显示对应 `sthr_*` 线程，切换泳道、线程 tab 跳转或 minimap 选择时同步切换；不再出现轨迹列表、返回按钮或 `cse_*`。从 OpenObserve 查询 DSH 原生 Session v4 事件，直接使用 Harness 的 ConversationNodeAssembler 和 TrajectoryView 渲染。主线程存在多个 code session 时以“运行”选择器按时间切换，默认最新一段；首次返回的分段会被固定，后续轮询不会因新分段出现而跳段。详情按 seq 增量刷新，只追加服务端已通过连续性和冲突校验的事件；连续三次请求失败后暂停自动查询，保留已加载内容并允许手动重试。缺少工作区时展示占位，查询错误使用不含存储产品名的提示。实现边界和验收见 [DSH 可观测性](../../be/ccrv2/dsh-observability.md)。
 
 事件详情标题栏按“事件类型与标题”和“ID、相对时间与关闭操作”两组组织，空间不足时自然换行；为标题保留可读宽度，常见事件类型不做多余截断，长类型通过原有提示提供全值。复制按钮的可访问名称包含完整事件ID并按当前语言显示，视觉摘要不改变复制值。标题栏、消息时间及状态标签遵循规范最小字号，中点分隔改由间距组织。Raw/Deltas 在中文显示为“原始数据 / 增量帧”，缺少当前标签页实时帧时继续禁用增量视图，并以本地化提示说明；不从历史伪造帧。event_start 的预览只展示内部原始事件类型，不重复起始前缀。
 
@@ -128,7 +128,7 @@ flowchart LR
 
 - `Enter` 发送，`Shift+Enter` 换行；输入法合成中和键盘长按不得触发发送。
 - Composer 使用 shadcn InputGroup 和语义化 form：空状态高 `56px`、圆角 `22px`、单行起步并按内容增长至 `160px`；Send 是 submit，Stop 是普通 button。输入框使用柔和的语义底色区分区域，移除常驻描边和聚焦投影，仅在聚焦时显示低对比度的 `1px` 焦点环。附件标签使用无描边的浅底色和 `8px` 圆角，文件图标与移除按钮弱化为次级文字色；浅色、深色和窄屏保持同样的轻量层级。
-- 通过附件按钮选择多个本地文件，可移除待发送附件，也允许仅附件发送。发送时依次上传到 Files API，再调用 Session resources add 挂载到 `/attachments/{随机 ID}/{文件名}`；每个文件路径独立，同名文件不会相互覆盖。上传名与挂载名统一替换控制字符（Unicode Cc）、路径分隔符和上传接口禁止的文件名字符，空名及点路径使用 `file`；保留原始附件标签、文件内容、类型和修改时间。未挂载附件重试时重新计算合法挂载路径，也可修复已有上传 metadata 的非法路径，继续复用 file ID。消息文本附带 `/mnt/session/uploads/attachments/{随机 ID}/{文件名}`，让 Agent 通过工具读取文件，不改变 `user.message` 文本事件合同。挂载成功后刷新资源及 Files 选择缓存。上传、挂载或发送失败时保留文本与附件；重试复用已成功上传的 file ID 和已完成的挂载，避免重复操作。切换 workspace/session 后清空当前输入状态。
+- 通过附件按钮选择多个本地文件，可移除待发送附件，也允许仅附件发送。发送时依次上传到 Files API，受支持图片以 image/file_id 内容块发送；普通文件再调用 Session resources add 挂载到 `/attachments/{随机 ID}/{文件名}`；每个文件路径独立，同名文件不会相互覆盖。上传名与挂载名统一替换控制字符（Unicode Cc）、路径分隔符和上传接口禁止的文件名字符，空名及点路径使用 `file`；保留原始附件标签、文件内容、类型和修改时间。未挂载附件重试时重新计算合法挂载路径，也可修复已有上传 metadata 的非法路径，继续复用 file ID。普通文件的消息文本附带 `/mnt/session/uploads/attachments/{随机 ID}/{文件名}`，让 Agent 通过工具读取文件；图片作为独立内容块直接进入视觉请求。挂载成功后刷新资源及 Files 选择缓存。上传、挂载或发送失败时保留文本与附件；重试复用已成功上传的 file ID 和已完成的挂载，避免重复操作。切换 workspace/session 后清空当前输入状态。
 - 无文本且无附件、发送中、已归档、已终止或已删除的 Session 不能发送；只有 idle 或初始 queued Session 可提交新消息。运行期间保留输入框草稿，但 Send 和 Enter 不发请求；草稿只在当前页面内存中，刷新后丢失。本次不增加客户端待发队列或自动重发。
 - running、queued 或 rescheduled Session 显示停止按钮，并通过既有 `user.interrupt` 合同停止。
 - `user.interrupt` 是控制事件，在用户消息命名空间分类之前归为状态，不生成 User 气泡或原始 JSON 正文。对话中的中断提示在请求未处理或本轮尚未回到 idle 时显示「正在停止」，已处理且观察到同一执行范围的 idle 后显示中性的方形图标、「已停止」与「已由用户停止」。停止请求成功仅表示已提交中断，Composer 保持停止按钮禁用，直到服务端确认 Session 不再运行；请求失败恢复重试，草稿不清空。
@@ -168,6 +168,10 @@ stateDiagram-v2
 
 ## 附件与资源验收
 
+- Inspector Events 的 Raw JSON 直接使用完整事件，每条原始事件对应一条 Debug 详情，不经过 Transcript 的文本、Thinking、工具内容块拆分。图片、文档和混合内容必须原样保留，复制按钮与详情显示同一完整内容。`SessionTracePanel.test.tsx` 覆盖用户图片/文档和 Agent 混合内容的原始详情；浏览器验收使用真实 history 样本复现修复前的图片块丢失，并确认修复后 Raw JSON 保留 `image.source.file_id`。
+- 事件缓存不能把 `processed_at` 当作内容版本号。同 ID、同处理时间的完整事件内容发生变化时，history 与 SSE 合并都在原位置替换整条记录，包括图片块、元数据的补齐和删除；不逐字段拼接旧内容。未处理事件或流式占位不能覆盖已处理记录。结构相同的重复事件保留原缓存引用，JSON 对象字段顺序不影响比较。`api.test.ts` 覆盖缓存替换、重复内容、正式记录保护及主/子线程 history 刷新补回图片。
+- Composer 上传附件后，按 Files 返回的 `mime_type` 将 PNG、JPEG、WebP、GIF 作为 `image.source = {type: "file", file_id}` 与用户文本一起发送。图片不添加 Session resource，也不把沙箱路径加入消息；仅图片消息省略文本块。服务端沿用消息图片物化、投递和 Brain attachment 链路。普通文件继续挂载并把运行时路径加入文本，混合附件同时包含路径文本和图片块。发送失败时保留已上传 metadata，重试不重复上传图片。
+- 图片回归覆盖四种 MIME、无沙箱挂载、发送失败重用上传结果、仅图片与图片/普通文件混合发送。
 - `SessionMessageComposer.test.tsx` 覆盖上传/挂载/发送失败后的恢复、多附件、同名文件隔离、仅附件发送、移除附件和重复提交保护。
 - `sessionAttachments.test.ts` 覆盖 C0/C1/DEL 控制字符、空名与点路径、上传名和挂载名一致、原始附件与内容保留，以及已有上传 metadata 的非法挂载路径恢复；资源刷新测试验证非资源字段变化保留 Session 对象、资源内容变化仍能同步。
 - `useSessionResourceRefresh.test.tsx` 覆盖运行期发现输出文件、idle 时立即刷新、刷新失败保留旧列表、重试和 workspace 切换的旧响应隔离。

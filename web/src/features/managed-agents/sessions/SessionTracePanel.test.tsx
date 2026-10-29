@@ -13,6 +13,39 @@ const { cleanup, fireEvent, render, screen } = await import('@testing-library/re
 afterEach(cleanup);
 
 describe('DebugDetailPanel', () => {
+  test.each(['user.message', 'agent.message'])('preserves complete %s content in the raw inspector', (type) => {
+    resetTestDom();
+    const event = {
+      id: 'sevt_media',
+      type,
+      processed_at: '2026-10-29T03:59:14.989319Z',
+      content: [
+        { type: 'text', text: 'Describe this image' },
+        { type: 'image', source: { type: 'file', file_id: 'file_image' } },
+        { type: 'document', source: { type: 'file', file_id: 'file_document' } },
+        ...(type === 'agent.message'
+          ? [
+              { type: 'thinking', thinking: 'Inspect the image' },
+              { type: 'tool_use', id: 'tool_read', name: 'Read', input: { file_path: '/tmp/image.png' } },
+            ]
+          : []),
+      ],
+    };
+    const entries = buildSessionEventEntries([event], 'debug');
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    if (!entry || !('traceEntry' in entry)) throw new Error('Expected a debug event entry');
+    expect(entry.event).toEqual(event);
+    const { container } = render(
+      <I18nProvider initialLocale="en">
+        <TooltipProvider>
+          <DebugDetailPanel entry={entry} />
+        </TooltipProvider>
+      </I18nProvider>,
+    );
+    expect(JSON.parse(container.querySelector('code')?.textContent ?? '')).toEqual(event);
+  });
+
   test.each([
     ['en', 'Copy event-localized', 'Close detail panel', 'Event view', 'Deltas'],
     ['zh-CN', '复制 event-localized', '关闭详情面板', '事件视图', '增量帧'],

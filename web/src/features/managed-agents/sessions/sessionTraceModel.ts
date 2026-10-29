@@ -354,7 +354,17 @@ export function buildSessionEventEntries(
   options: SessionTraceBuildOptions = {},
 ): SessionEventListEntry[] {
   const rawEvents = events.map(sessionCanonicalDisplayEvent);
-  if (view !== 'debug' && rawEvents.some((event) => event.type === 'user.interrupt')) {
+  if (view === 'debug') {
+    return rawEvents.map((event, index) =>
+      displayEntryFromTraceEntry(
+        sessionTraceEntryFromEvent(event, index, sessionEventFamily(event), undefined, undefined, traceStartMs, msg),
+        'debug',
+        traceStartMs,
+        msg,
+      ),
+    );
+  }
+  if (rawEvents.some((event) => event.type === 'user.interrupt')) {
     rawEvents.sort((left, right) => {
       const leftAt = sessionEventTimestamp(left);
       const rightAt = sessionEventTimestamp(right);
@@ -363,10 +373,6 @@ export function buildSessionEventEntries(
     });
   }
   const traceEntries = buildSessionTraceEntries(rawEvents, view, traceStartMs, msg, options);
-  if (view === 'debug') {
-    return traceEntries.map((traceEntry) => displayEntryFromTraceEntry(traceEntry, 'debug', traceStartMs, msg));
-  }
-
   const entries: SessionEventListEntry[] = [];
   let lastIdleAt = 0;
   const rawEventKeys = new Set(rawEvents.map(sessionEventKey));

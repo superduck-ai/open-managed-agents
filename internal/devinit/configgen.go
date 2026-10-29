@@ -29,6 +29,11 @@ func GenerateConfig(baseConfigPath string, layout Layout, base config.Config, sp
 		return fmt.Errorf("base config %s must be a single YAML mapping", baseConfigPath)
 	}
 	root := document.Content[0]
+	if spec.LocalOpenObserve {
+		if err := configureLocalOpenObserve(root, layout.RepoRoot, runtime.OpenObservePort); err != nil {
+			return err
+		}
+	}
 
 	apiAddr := "127.0.0.1:" + strconv.Itoa(runtime.APIPort)
 	setMappingValue(root, "server", "addr", apiAddr)

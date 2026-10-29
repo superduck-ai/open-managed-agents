@@ -10,6 +10,9 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
+var errMessageImageRejected = errors.New("message image source rejected")
+var errNativeTrajectoryPayload = errors.New("invalid DSH event envelope")
+
 var errRuntimeSubagentConfig = errors.New("invalid runtime subagent configuration")
 var errSandboxUnavailable = errors.New("sandbox is unavailable")
 var errSessionIngressIdentity = errors.New("session ingress identity does not match an active code session")

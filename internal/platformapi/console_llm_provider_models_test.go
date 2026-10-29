@@ -10,7 +10,7 @@ import (
 )
 
 func TestProviderModelsValidation(t *testing.T) {
-	for _, models := range []string{`[{"id":"model","context_window":0}]`, `[{"id":"model","max_output_tokens":0}]`, `[{"id":"model","context_window":-1}]`, `[{"id":"model","max_output_tokens":1.5}]`, `[{"id":"model","context_window":9007199254740992}]`, `[{"id":"model","input_modalities":[]}]`, `[{"id":"model","input_modalities":["audio"]}]`, `[{"id":"model","input_modalities":["text","text"]}]`, `[{"id":""}]`, `[{"id":"model"},{"id":"model"}]`} {
+	for _, models := range []string{`[{"id":"model","image_input":{"max_images":-1}}]`, `[{"id":"model","image_input":{"max_image_bytes":33554433}}]`, `[{"id":"model","image_input":{"max_pixels":1.5}}]`, `[{"id":"model","context_window":0}]`, `[{"id":"model","max_output_tokens":0}]`, `[{"id":"model","context_window":-1}]`, `[{"id":"model","max_output_tokens":1.5}]`, `[{"id":"model","context_window":9007199254740992}]`, `[{"id":"model","input_modalities":[]}]`, `[{"id":"model","input_modalities":["audio"]}]`, `[{"id":"model","input_modalities":["text","text"]}]`, `[{"id":""}]`, `[{"id":"model"},{"id":"model"}]`} {
 		request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"name":"Provider","base_url":"https://models.example.com","models":`+models+`}`))
 		response := httptest.NewRecorder()
 		body, ok := decodeLLMProviderRequest(response, request)
@@ -21,7 +21,7 @@ func TestProviderModelsValidation(t *testing.T) {
 			t.Fatalf("accepted %s", models)
 		}
 	}
-	for _, models := range []string{`[]`, `[{"id":"model"}]`, `[{"id":"model","context_window":1000000,"max_output_tokens":128000,"input_modalities":["text","image"]}]`, `[{"id":"model","input_modalities":["image"]}]`} {
+	for _, models := range []string{`[{"id":"model","image_input":{"max_images":3,"max_pixels":1048576}}]`, `[]`, `[{"id":"model"}]`, `[{"id":"model","context_window":1000000,"max_output_tokens":128000,"input_modalities":["text","image"]}]`, `[{"id":"model","input_modalities":["image"]}]`} {
 		request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"name":"Provider","base_url":"https://models.example.com","models":`+models+`}`))
 		response := httptest.NewRecorder()
 		body, ok := decodeLLMProviderRequest(response, request)

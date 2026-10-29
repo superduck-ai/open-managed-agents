@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
+import { pluginRecordOf } from "@deepseek-ai/dsh-session";
 import { LlmAttemptId } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
@@ -57,7 +58,7 @@ test("a delayed preview checkpoint cannot let a later delta overtake its start",
   }
 });
 
-test.each([false, true])("Brain reply waits for its owning assistant journal to replicate (child=%s)", async child => {
+test.each([false, true])("Brain reply waits for its owning completed-block journal to replicate (child=%s)", async child => {
   const { backend, session } = await fixture();
   const release = Promise.withResolvers<void>();
   const persist = session.backend.persist.bind(session.backend);
@@ -67,7 +68,7 @@ test.each([false, true])("Brain reply waits for its owning assistant journal to 
   const text = "durable Brain reply";
   session.backend.persist = async (...args) => {
     const data = args[2];
-    if ("seq" in data && data.type === "assistant/message") {
+    if ("seq" in data && pluginRecordOf(data)?.type === "plugin:oma/assistant-block") {
       held = true;
       await release.promise;
       await persist(...args);

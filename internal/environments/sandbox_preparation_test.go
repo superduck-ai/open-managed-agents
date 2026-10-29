@@ -144,7 +144,7 @@ func TestSandboxPreparationHandoffFailureCleansPublishedRuntime(t *testing.T) {
 				cancel(failure)
 			}
 			cleanups := 0
-			err := runner.finishSandboxPreparation(finish, preparation, launch, func(cause error) {
+			err := runner.finishSandboxPreparation(finish, db.EnvironmentWork{}, preparation, launch, func(cause error) {
 				cleanups++
 				if !errors.Is(cause, failure) {
 					t.Fatalf("cleanup lost handoff cause: %v", cause)

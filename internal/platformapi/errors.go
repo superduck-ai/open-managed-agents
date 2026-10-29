@@ -91,3 +91,7 @@ func writeUsageScopeConflict(w http.ResponseWriter) {
 func writeLLMProviderBackendError(w http.ResponseWriter) {
 	writeLLMProviderError(w, http.StatusBadRequest, "api_backend_invalid", "api_backend must be messages or chat_completions")
 }
+
+func trajectoryWorkspaceRequired() error {
+	return apperr.New(apperr.InvalidArgument, "workspace is required", nil)
+}

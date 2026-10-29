@@ -89,7 +89,7 @@ func TestEventPayloadBlobsPostgres(t *testing.T) {
 	if err := attachEventPayloadBlob(ctx, store.mapperDB, blob.WorkspaceUUID, &blob.UUID); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("cleanup claimed blob attached: %v", err)
 	}
-	if err := store.CompleteObjectCleanupJob(ctx, jobs[0].UUID); err != nil {
+	if err := store.CompleteObjectCleanupJob(ctx, jobs[0].UUID, jobs[0].ResourceType); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(ctx, "update event_payload_blobs set updated_at=now()-interval '2 days'"); err != nil {

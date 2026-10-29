@@ -1,3 +1,4 @@
+import { RetryableInputError } from "./contracts.ts";
 import type { Context, Fiber } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import { freezeMessage, MessageId, createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
@@ -9,6 +10,7 @@ import { approveToolCall, releaseToolApproval, clearToolApprovals, prefetchMcpAp
 import * as UserQuestions from "../user-questions/index.ts";
 import { SHUTDOWN_CANCEL } from "./contracts.ts";
 import { object } from "../json.ts";
+import { traceHooks } from "../observability/trace-context.ts";
 import type {
   SessionRuntimeConfig,
   SessionRuntimeHooks,
@@ -97,15 +99,16 @@ export class SessionRuntime {
           await this.ctx.get("ccrReplication")?.flush(exec.agent.session.id);
         }
         exec.signal.throwIfAborted();
-        if (exec.name === "AskUserQuestion") return next();
-        if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return next();
+        const dispatch = () => traceHooks.runTool(this.config.id, exec.callId, next);
+        if (exec.name === "AskUserQuestion") return dispatch();
+        if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return dispatch();
         prefetchMcpApprovals(this.bridge, this.toolCalls, exec.callId,
           name => name.startsWith("mcp__") && !!scope.tools.get(name, exec.agent), exec.signal);
         const approval = await approveToolCall(this.bridge, {
           callId: exec.callId, toolName: exec.name, input: object(exec.arguments), available: true,
         }, exec.signal);
         if (!approval.allowed) throw new Error(approval.reason || "Tool use denied by OMA");
-        return next();
+        return dispatch();
       });
       scope.on("session/event", (session, event) => {
         if (session.id !== this.config.id) return;
@@ -130,9 +133,7 @@ export class SessionRuntime {
         await this.hooks.beforeRequest?.();
         signal.throwIfAborted();
         const call = await next();
-        const model = this.hooks.selectModel?.(call.model) ?? call.model;
-        const selected = model === call.model ? call : { ...call, model };
-        return this.config.configureModel?.(selected) ?? selected;
+        return this.config.configureModel?.(call) ?? call;
       });
       scope.on("agent/request-error", async ({ failure, turn, step, signal }, next) => {
         signal.throwIfAborted();
@@ -206,6 +207,7 @@ export class SessionRuntime {
       try {
         content = typeof input === "string" ? [{ type: "text", text: input }] : await input();
       } catch (error) {
+        if (error instanceof RetryableInputError) throw error;
         this.hooks.onDiagnostic?.({ kind: "input-failed", error });
         await hooks.afterRun(false);
         return;

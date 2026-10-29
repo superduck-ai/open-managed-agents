@@ -17,29 +17,32 @@ type ChannelBridgeConfig struct {
 }
 
 type Config struct {
-	ChannelBridge          ChannelBridgeConfig       `yaml:"channel_bridge"`
-	LLMProviderPresetsFile string                    `yaml:"llm_provider_presets_file"`
-	WebTools               WebToolsConfig            `yaml:"web_tools"`
-	EnvironmentPackages    EnvironmentPackageConfig  `yaml:"environment_packages"`
-	EnvironmentPrebuilds   EnvironmentPrebuildConfig `yaml:"environment_prebuilds"`
-	TranscriptArchive      TranscriptArchiveConfig   `yaml:"transcript_archive"`
-	Env                    string                    `yaml:"env"`
-	Server                 ServerConfig              `yaml:"server"`
-	Database               DatabaseConfig            `yaml:"database"`
-	Redis                  RedisConfig               `yaml:"redis"`
-	NATS                   NATSConfig                `yaml:"nats"`
-	Auth                   AuthConfig                `yaml:"auth"`
-	Tunnel                 TunnelConfig              `yaml:"tunnel"`
-	Storage                StorageConfig             `yaml:"storage"`
-	Batch                  BatchConfig               `yaml:"batch"`
-	SandboxLifecycle       SandboxLifecycleConfig    `yaml:"sandbox_lifecycle"`
-	E2B                    E2BConfig                 `yaml:"e2b"`
-	EnvironmentRunner      EnvironmentRunnerConfig   `yaml:"environment_runner"`
-	CodeSession            CodeSessionConfig         `yaml:"code_session"`
-	Observability          ObservabilityConfig       `yaml:"observability"`
-	Webhook                WebhookConfig             `yaml:"webhook"`
-	Vault                  VaultConfig               `yaml:"vault"`
-	Bootstrap              BootstrapConfig           `yaml:"bootstrap"`
+	BrainImageAttachments  BrainImageAttachmentConfig `yaml:"brain_image_attachments"`
+	ChannelBridge          ChannelBridgeConfig        `yaml:"channel_bridge"`
+	LLMProviderPresetsFile string                     `yaml:"llm_provider_presets_file"`
+	WebTools               WebToolsConfig             `yaml:"web_tools"`
+	EnvironmentPackages    EnvironmentPackageConfig   `yaml:"environment_packages"`
+	EnvironmentPrebuilds   EnvironmentPrebuildConfig  `yaml:"environment_prebuilds"`
+	TranscriptArchive      TranscriptArchiveConfig    `yaml:"transcript_archive"`
+	Env                    string                     `yaml:"env"`
+	Server                 ServerConfig               `yaml:"server"`
+	Database               DatabaseConfig             `yaml:"database"`
+	Redis                  RedisConfig                `yaml:"redis"`
+	NATS                   NATSConfig                 `yaml:"nats"`
+	Auth                   AuthConfig                 `yaml:"auth"`
+	Tunnel                 TunnelConfig               `yaml:"tunnel"`
+	Storage                StorageConfig              `yaml:"storage"`
+	Batch                  BatchConfig                `yaml:"batch"`
+	SandboxLifecycle       SandboxLifecycleConfig     `yaml:"sandbox_lifecycle"`
+	E2B                    E2BConfig                  `yaml:"e2b"`
+	EnvironmentRunner      EnvironmentRunnerConfig    `yaml:"environment_runner"`
+	CodeSession            CodeSessionConfig          `yaml:"code_session"`
+	Observability          ObservabilityConfig        `yaml:"observability"`
+	Telemetry              TelemetryConfig            `yaml:"telemetry"`
+	Webhook                WebhookConfig              `yaml:"webhook"`
+	TelemetryExport        TelemetryExportConfig      `yaml:"telemetry_export"`
+	Vault                  VaultConfig                `yaml:"vault"`
+	Bootstrap              BootstrapConfig            `yaml:"bootstrap"`
 }
 
 type WebToolsConfig struct {
@@ -148,11 +151,12 @@ type WebhookStreamConfig struct {
 }
 
 type NATSConfig struct {
-	WebhookStream     WebhookStreamConfig     `yaml:"webhook_stream"`
-	WorkerEventStream WorkerEventStreamConfig `yaml:"worker_event_stream"`
-	URL               string                  `yaml:"url"`
-	ConnectTimeout    time.Duration           `yaml:"connect_timeout"`
-	DrainTimeout      time.Duration           `yaml:"drain_timeout"`
+	WebhookStream         WebhookStreamConfig     `yaml:"webhook_stream"`
+	TelemetryExportStream WebhookStreamConfig     `yaml:"telemetry_export_stream"`
+	WorkerEventStream     WorkerEventStreamConfig `yaml:"worker_event_stream"`
+	URL                   string                  `yaml:"url"`
+	ConnectTimeout        time.Duration           `yaml:"connect_timeout"`
+	DrainTimeout          time.Duration           `yaml:"drain_timeout"`
 }
 
 type AuthConfig struct {
@@ -258,11 +262,7 @@ type CodeSessionConfig struct {
 }
 
 type ObservabilityConfig struct {
-	Enabled bool `yaml:"enabled"`
-	// ContentCaptureEnabled defaults to true. It authorizes prompt originals,
-	// model output, and tool input/output payloads to enter the observability
-	// store. Set false to keep structural telemetry only (spans, durations,
-	// tokens, tool names).
+	Enabled               bool                    `yaml:"enabled"`
 	ContentCaptureEnabled bool                    `yaml:"content_capture_enabled"`
 	OTLP                  ObservabilityOTLPConfig `yaml:"otlp"`
 	Backend               string                  `yaml:"backend"`
@@ -273,7 +273,6 @@ type OpenObserveConfig struct {
 	BaseURL      string                   `yaml:"base_url"`
 	Organization string                   `yaml:"organization"`
 	LogsStream   string                   `yaml:"logs_stream"`
-	TracesStream string                   `yaml:"traces_stream"`
 	Ingestion    BackendCredentialsConfig `yaml:"ingestion"`
 	Query        BackendQueryConfig       `yaml:"query"`
 }
@@ -300,6 +299,15 @@ type WebhookConfig struct {
 	Timeout             time.Duration `yaml:"timeout"`
 	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`
 	MaxAttempts         int           `yaml:"max_attempts"`
+	AllowInsecure       bool          `yaml:"allow_insecure"`
+}
+
+type TelemetryExportConfig struct {
+	WorkerEnabled       bool          `yaml:"worker_enabled"`
+	Concurrency         int           `yaml:"concurrency"`
+	Timeout             time.Duration `yaml:"timeout"`
+	MaxAttempts         int           `yaml:"max_attempts"`
+	FailureDisableAfter time.Duration `yaml:"failure_disable_after"`
 	AllowInsecure       bool          `yaml:"allow_insecure"`
 }
 
@@ -338,4 +346,47 @@ type TranscriptArchiveConfig struct {
 	TargetSegmentRawBytes int           `yaml:"target_segment_raw_bytes"`
 	DeleteBatchRows       int           `yaml:"delete_batch_rows"`
 	MaxRowsPerJob         int           `yaml:"max_rows_per_job"`
+}
+
+type BrainImageAttachmentConfig struct {
+	MaxObjectBytes int64 `yaml:"max_object_bytes"`
+}
+type TelemetryConfig struct {
+	Enabled      bool                        `yaml:"enabled"`
+	ServiceName  string                      `yaml:"service_name"`
+	OTLP         TelemetryOTLPConfig         `yaml:"otlp"`
+	Traces       TelemetryTracesConfig       `yaml:"traces"`
+	Metrics      TelemetryMetricsConfig      `yaml:"metrics"`
+	Logs         TelemetryLogsConfig         `yaml:"logs"`
+	StateMetrics TelemetryStateMetricsConfig `yaml:"state_metrics"`
+}
+
+type TelemetryOTLPConfig struct {
+	BaseURL      string        `yaml:"base_url"`
+	Organization string        `yaml:"organization"`
+	Username     string        `yaml:"username"`
+	Password     string        `yaml:"password"`
+	TracesStream string        `yaml:"traces_stream"`
+	LogsStream   string        `yaml:"logs_stream"`
+	Timeout      time.Duration `yaml:"timeout"`
+}
+
+type TelemetryTracesConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+type TelemetryMetricsConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	ExportInterval time.Duration `yaml:"export_interval"`
+}
+
+type TelemetryLogsConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Level   string `yaml:"level"`
+}
+
+type TelemetryStateMetricsConfig struct {
+	Interval           time.Duration `yaml:"interval"`
+	StaleRunningAfter  time.Duration `yaml:"stale_running_after"`
+	StuckStartingAfter time.Duration `yaml:"stuck_starting_after"`
 }

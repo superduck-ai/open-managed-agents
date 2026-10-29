@@ -8,7 +8,7 @@ import {
 } from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
 import { consoleResourceListLimit } from '../../shared/console-list';
-import { type QueryClient } from '@tanstack/react-query';
+import { type QueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, credentialDisplayName, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { sessionFileResourcePayload } from './sessions/file-resource-form';
@@ -42,6 +42,7 @@ import {
   type PageCursor,
   type PageResponse,
   type QuickstartSessionEvent,
+  type SessionMessageContentBlock,
   type QuickstartStreamEvent,
   type SessionApiResponse,
   type SessionDetailDeltaFrames,
@@ -799,11 +800,17 @@ export function sessionThreadListSignature(threads: SessionThreadApiResponse[]) 
     .join('|');
 }
 
-export function postQuickstartSessionMessage(sessionId: string, message: string, workspaceId: string) {
+export function postQuickstartSessionMessage(
+  sessionId: string,
+  message: string | SessionMessageContentBlock[],
+  workspaceId: string,
+) {
   return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
     sessionId,
     {
-      events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }],
+      events: [
+        { type: 'user.message', content: typeof message === 'string' ? [{ type: 'text', text: message }] : message },
+      ],
     },
     workspaceId,
   );
@@ -1023,13 +1030,10 @@ export function sessionStableEventId(event: QuickstartSessionEvent) {
 export function sessionIncomingEventShouldReplace(existing: QuickstartSessionEvent, incoming: QuickstartSessionEvent) {
   const existingProcessedAt = sessionNullableProcessedAt(existing);
   const incomingProcessedAt = sessionNullableProcessedAt(incoming);
-  if (existingProcessedAt === null && incomingProcessedAt !== null) {
-    return true;
+  if (existingProcessedAt !== null && (incomingProcessedAt === null || incoming.is_streaming === true)) {
+    return false;
   }
-  if (incomingProcessedAt !== null && existingProcessedAt !== incomingProcessedAt) {
-    return true;
-  }
-  return false;
+  return replaceEqualDeep(existing, incoming) !== existing;
 }
 
 export function sessionNullableProcessedAt(event: QuickstartSessionEvent) {
@@ -1743,7 +1747,6 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
         title: name || null,
         agent: values.agentId || undefined,
         environment_id: values.environmentId || undefined,
-        vault_ids: values.vaultIds,
         ...(budgetUpdateBody(values) !== undefined ? { budget: budgetUpdateBody(values) } : {}),
       };
     case 'deployments':

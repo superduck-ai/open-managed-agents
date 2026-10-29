@@ -1,5 +1,6 @@
 import type { LanguageModelV4StreamResult } from "@ai-sdk/provider";
-import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { LlmAdapter, type GenerateOptions, type LlmImageRequestPricing, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { imagePricing } from "./images.ts";
 import { callOptions } from "./prompt.ts";
 import type { AiSdkAdapterOptions } from "./route.ts";
 import { AiSdkStream, modelError } from "./stream.ts";
@@ -11,19 +12,26 @@ export class AiSdkAdapter extends LlmAdapter {
     return this.options.modelInfo?.(provider, model) ?? { provider, id: model, name: model };
   }
 
+  imageRequestPricing(provider: string, model: string): LlmImageRequestPricing {
+    return imagePricing(this.options.imageInput?.(provider, model), this.options.modelInfo?.(provider, model).inputModalities?.includes("image") ?? false);
+  }
+
   async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {
     request.signal?.throwIfAborted();
     const route = this.options.route(request);
     let result: LanguageModelV4StreamResult;
     try {
-      const call = await callOptions(this.options.history?.(request) ?? request, route, this.options.attachments);
+      const build = () => callOptions(this.options.history?.(request) ?? request, route, this.options.attachments);
+      const call = await (this.options.callScope ? this.options.callScope(request, build) : build());
       this.options.onCallStart?.(request);
       result = await route.model.doStream(call);
     } catch (error) { throw modelError(error, request.signal); }
     const body = result.request?.body;
     if (body && typeof body === "object") this.options.onRequestBody?.(request, body as Record<string, unknown>);
     const headers = result.response?.headers;
-    yield* this.read(request, new AiSdkStream(route.replayFormat, headers?.["request-id"] ?? headers?.["x-request-id"]), result);
+    const requestID = headers?.["request-id"] ?? headers?.["x-request-id"];
+    if (requestID) this.options.onRequestID?.(request, requestID);
+    yield* this.read(request, new AiSdkStream(route.replayFormat, requestID), result);
   }
 
   private async *read(request: GenerateOptions, stream: AiSdkStream, result: LanguageModelV4StreamResult): AsyncIterable<StreamChunk> {

@@ -106,11 +106,11 @@ func sandboxPreparationBackgroundContext(parent, preparation context.Context) (c
 	}
 }
 
-func (r *Runner) finishSandboxPreparation(finishBackground func(bool) error, preparation *managedAgentLaunchPreparation, launch *managedAgentRuntimeLaunch, failSandbox func(error)) error {
+func (r *Runner) finishSandboxPreparation(finishBackground func(bool) error, work db.EnvironmentWork, preparation *managedAgentLaunchPreparation, launch *managedAgentRuntimeLaunch, failSandbox func(error)) error {
 	err := finishBackground(true)
 	if err != nil {
 		if preparation != nil && launch != nil {
-			r.terminateFailedManagedAgentRuntime(preparation.Session, *launch, err)
+			r.terminateFailedManagedAgentRuntime(work, preparation.Session, *launch, err)
 		}
 		failSandbox(err)
 	}

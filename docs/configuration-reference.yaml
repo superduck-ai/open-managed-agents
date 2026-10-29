@@ -33,6 +33,11 @@ nats:
     max_bytes: 268435456
     max_age: 24h
     replicas: 3 # Set 1 for a single-node JetStream deployment.
+  # Short-lived OTLP span delivery queue for telemetry destinations; spans are never stored elsewhere.
+  telemetry_export_stream:
+    max_bytes: 268435456
+    max_age: 1h
+    replicas: 3
   worker_event_stream:
     consumer_inactive_threshold: 5m
     max_bytes: 268435456
@@ -137,8 +142,7 @@ environment_runner:
 
 code_session:
   # Set when a sandbox must call this service through a specific reachable URL.
-  # Required when observability.enabled is true: workers derive their OTLP
-  # export endpoints from this URL, so telemetry silently stops without it.
+  # Sandbox callbacks use this URL. Brain telemetry uses OMA_API_URL.
   sandbox_api_base_url: ""
   # Derived default: true for dev and false for prod.
   # Required in prod; also signs CCRv2 Git commits. Dev creates an in-memory key when empty.
@@ -158,7 +162,7 @@ observability:
   # Content capture sends prompt originals, model output, and tool input/output
   # (which may include source code, command output, and secrets) to the
   # observability store. It is enabled by default when observability is on; set
-  # false to keep structure-only telemetry (spans, durations, tokens, tool names).
+  # false to keep structure-only DSH telemetry (event types, durations, tokens, tool names).
   content_capture_enabled: true
   otlp:
     max_request_bytes: 16777216
@@ -167,8 +171,7 @@ observability:
   openobserve:
     base_url: http://openobserve:5080
     organization: oma
-    logs_stream: oma_claude_code
-    traces_stream: oma_claude_code
+    logs_stream: oma_dsh
     ingestion:
       username: ""
       password: ""
@@ -188,6 +191,19 @@ webhook:
   failure_disable_after: 24h
   # Webhooks connect directly; HTTP_PROXY/HTTPS_PROXY are not used.
   # Verify direct egress before upgrading a proxy-dependent deployment.
+  allow_insecure: false
+
+# Delivers Brain spans to organization telemetry destinations (OTLP/HTTP protobuf).
+telemetry_export:
+  # Set false to stop consuming the delivery queue on this instance.
+  worker_enabled: true
+  concurrency: 10
+  # Total time per delivery attempt, including TLS and response headers.
+  timeout: 10s
+  max_attempts: 3
+  # A destination that fails continuously for this long is disabled with reason sustained_failure.
+  failure_disable_after: 24h
+  # Development only: allow http, private addresses and non-443 ports for destinations.
   allow_insecure: false
 
 vault:
@@ -352,6 +368,30 @@ transcript_archive:
   delete_batch_rows: 500
   max_rows_per_job: 50000
 
+telemetry:
+  enabled: false
+  service_name: oma-server
+  otlp:
+    base_url: http://openobserve:5080 # 只写协议、主机与端口，不带路径、query 或 fragment
+    organization: oma
+    username: ""
+    password: "" # 敏感值：OpenObserve 写入账号密码
+    traces_stream: oma_server
+    logs_stream: oma_server
+    timeout: 10s
+  traces:
+    enabled: true
+  metrics:
+    enabled: true # 同时导出 Go 运行时指标（go.goroutine.count、go.memory.*、go.schedule.duration 等）
+    export_interval: 30s
+  logs:
+    enabled: true
+    level: info # console 与 OTLP 日志共用的最低级别；设为 debug 可看到 2xx 访问日志
+  state_metrics:
+    interval: 60s
+    stale_running_after: 10m
+    stuck_starting_after: 10m
+
 # 飞书渠道桥接服务；令牌仅用于 OMA 到桥接服务的内部调用。
 channel_bridge:
   url: ""
@@ -359,3 +399,6 @@ channel_bridge:
 web_tools:
   search_provider: ""
   providers: {}
+
+brain_image_attachments:
+  max_object_bytes: 4194304

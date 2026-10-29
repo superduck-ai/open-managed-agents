@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="BrainImageAttachmentMapper">
+  <sql id="columns">workspace_uuid, session_uuid, sha256, media_type, size_bytes, bucket, object_key, state</sql>
+  <insert id="Insert" result="rows">
+    INSERT INTO brain_image_attachments (external_id, organization_uuid, workspace_uuid, session_uuid, sha256, media_type, size_bytes, bucket, object_key)
+    SELECT concat('bimg_', replace(CAST(gen_random_uuid() AS text), '-', '')), #{params.OrganizationUUID}, #{params.WorkspaceUUID}, #{params.SessionUUID}, #{params.SHA256}, #{params.MediaType}, #{params.SizeBytes}, #{params.Bucket}, #{params.ObjectKey}
+    WHERE EXISTS (SELECT 1 FROM sessions WHERE uuid = #{params.SessionUUID} AND workspace_uuid = #{params.WorkspaceUUID} AND organization_uuid = #{params.OrganizationUUID} AND deleted_at IS NULL)
+    ON CONFLICT (workspace_uuid, session_uuid, sha256) DO NOTHING
+  </insert>
+  <select id="Find" resultType="brainImageAttachmentRow">
+    SELECT <include refid="columns"/> FROM brain_image_attachments
+    WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID} AND sha256 = #{digest}
+    <if test="lock">FOR UPDATE</if>
+  </select>
+  <update id="Attach" result="rows">
+    UPDATE brain_image_attachments SET state = 'attached', attached_at = now(), updated_at = now()
+    WHERE workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID} AND sha256 = #{digest} AND state = 'pending'
+  </update>
+  <update id="ScheduleCleanup" result="returning" resultType="brainImageAttachmentRow">
+    WITH candidate_ids AS (
+      (SELECT image.uuid FROM brain_image_attachments image
+       WHERE image.state = 'pending' AND image.created_at &lt; now() - interval '24 hours'
+       ORDER BY image.created_at LIMIT #{limit})
+      UNION
+      (SELECT image.uuid FROM sessions s JOIN brain_image_attachments image
+       ON image.session_uuid = s.uuid AND image.workspace_uuid = s.workspace_uuid
+       WHERE s.deleted_at IS NOT NULL AND image.state IN ('pending', 'attached')
+       ORDER BY image.created_at LIMIT #{limit})
+    ), candidates AS (
+      SELECT image.uuid FROM brain_image_attachments image JOIN candidate_ids candidate ON candidate.uuid = image.uuid
+      ORDER BY image.created_at LIMIT #{limit} FOR UPDATE OF image SKIP LOCKED
+    )
+    UPDATE brain_image_attachments image SET state = 'deleting', updated_at = now()
+    FROM candidates WHERE image.uuid = candidates.uuid
+    RETURNING image.workspace_uuid, image.session_uuid, image.sha256, image.media_type, image.size_bytes, image.bucket, image.object_key, image.state
+  </update>
+  <delete id="DeleteCompleted" result="exec">
+    DELETE FROM brain_image_attachments image USING jobs job
+    WHERE job.uuid = #{jobUUID} AND job.type = 'object_cleanup'
+      AND job.payload-&gt;&gt;'resource_type' = 'brain_image_attachment'
+      AND image.workspace_uuid = job.workspace_uuid
+      AND image.object_key = job.payload-&gt;&gt;'key' AND image.state = 'deleting'
+  </delete>
+</mapper>

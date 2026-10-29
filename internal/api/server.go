@@ -33,7 +33,6 @@ import (
 	messagesapi "github.com/superduck-ai/open-managed-agents/internal/messages"
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
 	"github.com/superduck-ai/open-managed-agents/internal/observability"
-	"github.com/superduck-ai/open-managed-agents/internal/observability/openobserve"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
@@ -43,6 +42,8 @@ import (
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetrydestinations"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetryexport"
 	tunnelsapi "github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
 	webhooksapi "github.com/superduck-ai/open-managed-agents/internal/webhooks"
@@ -102,6 +103,7 @@ type ServerDeps struct {
 	DB                     *db.DB
 	Deployments            *deploymentsapi.Store
 	WebhookEnqueuer        *webhooksapi.Enqueuer
+	TelemetryExporter      *telemetryexport.Exporter
 	ObjectStore            storage.ObjectStore
 	Logger                 *slog.Logger
 	PlatformStore          platformsession.Store
@@ -125,6 +127,10 @@ type ServerDeps struct {
 // 注入 CodeSessionCredentials，保证 HTTP 验签与 sandbox 启动签发使用同一公钥身份。
 func NewServer(deps ServerDeps) *Server {
 	rootLogger := logging.LoggerOrDefault(deps.Logger)
+	if err := config.ValidateObservabilityConfig(deps.Config.Observability); err != nil {
+		deps.Config.Observability.Enabled = false
+		rootLogger.With("component", "observability").Warn("observability disabled", "error", err)
+	}
 	componentLogger := func(component string) *slog.Logger {
 		return rootLogger.With("component", component)
 	}
@@ -155,7 +161,7 @@ func NewServer(deps ServerDeps) *Server {
 	if filestoreService == nil {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.DB, deps.ObjectStore)
 	}
-	codeSessionService.WithSessionAttachments(filestoreService)
+	codeSessionService.WithSessionAttachments(filestoreService, deps.Config.Storage.MaxFileBytes)
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease
 	if deps.Redis != nil {
@@ -175,23 +181,26 @@ func NewServer(deps ServerDeps) *Server {
 		platformAuth:         deps.PlatformAuth,
 		filestoreCredentials: deps.FilestoreCredentials,
 		vaultSecrets:         deps.VaultSecrets,
-		admin:                adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")),
-		agents:               agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(channels.NewHandler(deps.Config.ChannelBridge, deps.DB, componentLogger("channels"))),
-		batch:                batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:         codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools),
-		deployments:          deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
-		deploymentRuns:       deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
-		envs:                 environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
-		files:                files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
-		filestore:            filestoreHandler,
-		memory:               memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
-		messages:             messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
-		models:               modelsapi.NewHandler(deps.DB),
-		sessions:             sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
-		skills:               skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
-		vaults:               vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
-		webhooks:             webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
-		tunnelBroker:         deps.TunnelBroker,
+		admin: adminapi.NewHandler(deps.Config, deps.DB, componentLogger("admin")).WithTelemetryDestinations(telemetrydestinations.NewHandler(
+			telemetrydestinations.NewService(deps.DB, deps.VaultSecrets, telemetryexport.NewTester(deps.VaultSecrets, telemetryexport.Config{AllowInsecure: deps.Config.TelemetryExport.AllowInsecure, Timeout: deps.Config.TelemetryExport.Timeout}), deps.Config.TelemetryExport.AllowInsecure),
+			componentLogger("telemetry_destinations"),
+		)),
+		agents:         agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(channels.NewHandler(deps.Config.ChannelBridge, deps.DB, componentLogger("channels"))),
+		batch:          batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
+		codeSessions:   codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore),
+		deployments:    deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
+		deploymentRuns: deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
+		envs:           environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
+		files:          files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
+		filestore:      filestoreHandler,
+		memory:         memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
+		messages:       messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
+		models:         modelsapi.NewHandler(deps.DB),
+		sessions:       sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
+		skills:         skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
+		vaults:         vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
+		webhooks:       webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
+		tunnelBroker:   deps.TunnelBroker,
 	}
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
@@ -199,7 +208,7 @@ func NewServer(deps ServerDeps) *Server {
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
-	router.Use(requestLoggingMiddleware(componentLogger("http")))
+	router.Use(observeRequests(componentLogger("http"), router))
 	router.Use(s.recoverMiddleware)
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -329,8 +338,8 @@ func (s *Server) registerPlatformConsoleRoutes(
 			if s.cfg.Observability.Enabled {
 				obsLogger := s.logger.With("component", "observability")
 				// 配置校验保证 enabled 时 backend 只会是受支持的值。
-				backend := openobserve.New(s.cfg.Observability.OpenObserve, obsLogger)
-				handler := observability.NewHandler(backend, observability.DBStore{DB: s.db}, obsLogger)
+				backend := observability.NewOpenObserve(s.cfg.Observability.OpenObserve, nil)
+				handler := observability.New(backend, s.db)
 				platformapi.RegisterOrganizationObservabilityRoutes(r, handler, obsLogger)
 			}
 		})
@@ -391,7 +400,7 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Mount("/messages/batches", s.batch)
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)
-	r.Mount("/sessions", s.sessions)
+	r.Mount("/sessions", s.sessions.Router())
 	r.Mount("/skills", s.skills)
 	if s.tunnels != nil {
 		r.Mount("/tunnels", s.tunnels)
@@ -470,6 +479,7 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Action not allowed"))
 			return
 		}
+		annotatePrincipalSpan(r.Context(), principal)
 		ctx := auth.WithPrincipal(r.Context(), principal)
 		if orgAlias := s.platformMirrorOrganizationAlias(r, principal); orgAlias != "" {
 			ctx = auth.WithPlatformMirrorOrganizationAlias(ctx, orgAlias)
@@ -514,6 +524,7 @@ func (s *Server) authenticated(next http.Handler, authenticate func(*http.Reques
 			httpapi.WriteError(w, r, err)
 			return
 		}
+		annotatePrincipalSpan(r.Context(), principal)
 		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 	})
 }

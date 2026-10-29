@@ -10,6 +10,9 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -20,9 +23,8 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/webtools"
-
-	"github.com/go-chi/chi/v5"
 )
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
@@ -147,6 +149,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		},
 		Resources: resourceInputs,
 		Work: db.EnvironmentWork{
+			TraceParent:           telemetry.TraceParent(r.Context()),
 			UUID:                  uuid.NewV4().String(),
 			ExternalID:            workID,
 			OrganizationUUID:      principal.OrganizationUUID,
@@ -164,6 +167,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
+	attachTraceContext(r, events)
 	prepared, err := h.eventPayloads.PreparePublic(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, events)
 	if err != nil {
 		return internalError("Could not prepare initial events", err)
@@ -178,7 +182,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if len(events) == 0 {
 		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_idled", created.ExternalID, nil, created.CreatedAt)
 	} else {
-		persisted = eventpayload.RestoreCreatedPublic(persisted, events)
+		persisted, err = eventpayload.RestoreCreatedPublic(persisted, events)
+		if err != nil {
+			return internalError("Could not create session", fmt.Errorf("restore session %q events: %w", sessionID, err))
+		}
 		h.publishSessionEvents(r.Context(), persisted)
 		h.enqueueWebhooksForSessionEvents(r.Context(), created.WorkspaceUUID, created.ExternalID, persisted)
 	}
@@ -186,6 +193,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return internalError("Could not create session", fmt.Errorf("load session %q response: %w", sessionID, err))
 	}
+	trace.SpanFromContext(r.Context()).SetAttributes(telemetry.AttrSessionID.String(sessionID))
 	httpapi.WriteJSON(w, http.StatusOK, response)
 	return nil
 }
@@ -647,6 +655,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 			return nil
 		}
 	}
+	annotateSessionInputShape(r.Context(), inputs)
 	now := time.Now().UTC()
 	events := make([]db.SessionEvent, 0, len(inputs))
 	var outcomesChanged bool
@@ -654,6 +663,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	for _, raw := range inputs {
 		event, outcomes, changed, err := normalizeInputEvent(normalizedSession, raw, now)
 		if err != nil {
+			recordSessionEventsRejected(r.Context(), "invalid")
 			return invalidRequest(err)
 		}
 		if changed {
@@ -665,12 +675,14 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if err := h.validateMessageFileSources(r.Context(), session, events); err != nil {
 		return err
 	}
+	attachTraceContext(r, events)
 	var outcomeEvaluations json.RawMessage
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
 	changes, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
 	if err != nil {
+		recordSessionEventsRejected(r.Context(), sessionEventRejectionReason(err))
 		if errors.Is(err, db.ErrInvalidState) {
 			return invalidRequest(errors.New("archived sessions do not accept new events"))
 		}
@@ -678,11 +690,13 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	}
 	h.codeSessions.PurgeWorkerEvents(r.Context(), changes.RetiredCodeSessionIDs)
 	created := changes.Events
+	recordAcceptedSessionEvents(r.Context(), created)
 	h.publishSessionEvents(r.Context(), created)
 	h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, created)
 	if h.codeSessions != nil {
 		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, changes.WorkerInputEvents()); err != nil {
 			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
+			recordSessionHandoffFailure(r.Context(), err)
 			return queueCodeSessionEventsError(err)
 		}
 	}

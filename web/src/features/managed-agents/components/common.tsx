@@ -256,25 +256,30 @@ export function DeploymentFieldHeader({
   optional = false,
   manageHref,
   manageLabel,
+  accessory,
 }: {
   id: string;
   label: string;
   optional?: boolean;
   manageHref?: string;
   manageLabel?: string;
+  accessory?: ReactNode;
 }) {
   const { msg } = useI18n();
 
   return (
     <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
-      <Label htmlFor={id} className="text-sm font-medium leading-5 text-foreground">
-        {label}{' '}
-        {optional ? (
-          <span className="font-normal text-muted-foreground">
-            {msg('managedAgents.common.optionalParen', '(optional)')}
-          </span>
-        ) : null}
-      </Label>
+      <div className="flex min-w-0 items-center gap-1">
+        <Label htmlFor={id} className="text-sm font-medium leading-5 text-foreground">
+          {label}{' '}
+          {optional ? (
+            <span className="font-normal text-muted-foreground">
+              {msg('managedAgents.common.optionalParen', '(optional)')}
+            </span>
+          ) : null}
+        </Label>
+        {accessory}
+      </div>
       {manageHref && manageLabel ? (
         <a
           href={manageHref}

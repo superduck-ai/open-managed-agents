@@ -110,7 +110,7 @@ func newLiveEnv(t *testing.T) *liveEnv {
 	e.credentials, err = codesessions.NewSessionCredentials(cfg)
 	requireOK(t, err)
 	e.service = codesessions.NewServiceWithCredentials(e.database, e.credentials, nil).WithWorkerEventBroker(e.broker).WithWorkerEventState(e.acks, e.objects)
-	e.service.WithSessionAttachments(filestore.NewService(cfg, e.database, e.database, e.objects))
+	e.service.WithSessionAttachments(filestore.NewService(cfg, e.database, e.database, e.objects), cfg.Storage.MaxFileBytes)
 	if os.Getenv("LIVE_WORKER_REAL_CLAUDE") == "1" {
 		ensureRealWorkerProvider(t, e, cfg)
 	}

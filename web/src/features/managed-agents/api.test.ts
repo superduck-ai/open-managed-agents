@@ -837,6 +837,105 @@ describe('managed agents API', () => {
     expect(updated.events[0]?.content).toBe('final');
   });
 
+  test('replaces changed content with the same ID and processing time in place', () => {
+    const existing = {
+      id: 'sevt_image',
+      type: 'user.message',
+      processed_at: '2026-10-29T02:46:01.100614Z',
+      content: [{ type: 'text', text: 'Describe the image' }],
+    };
+    const before = { id: 'sevt_before', type: 'session.status_idle' };
+    const after = { id: 'sevt_after', type: 'agent.message' };
+    const cache = mergeSessionEventCache(undefined, [before, existing, after]);
+    const incoming = {
+      ...existing,
+      content: [...existing.content, { type: 'image', source: { type: 'file', file_id: 'file_image' } }],
+    };
+    const updated = mergeSessionEventCache(cache, [incoming]);
+    expect(updated.events).toEqual([before, incoming, after]);
+    expect(updated.events[0]).toBe(before);
+    expect(updated.events[2]).toBe(after);
+    expect(cache.events[1]).toBe(existing);
+    expect(mergeSessionEventCache(updated, [structuredClone(incoming)])).toBe(updated);
+
+    const corrected = { ...existing, content: [{ type: 'text', text: 'Corrected content' }] };
+    expect(mergeSessionEventCache(updated, [corrected]).events[1]).toEqual(corrected);
+  });
+
+  test('updates changed metadata and preserves equal events regardless of JSON property order', () => {
+    const existing = {
+      id: 'sevt_tool',
+      type: 'agent.tool_result',
+      processed_at: '2026-10-29T02:46:01Z',
+      usage: { input_tokens: 1, output_tokens: 2 },
+      obsolete: true,
+    };
+    const cache = mergeSessionEventCache(undefined, [existing]);
+    const reordered = {
+      obsolete: true,
+      usage: { output_tokens: 2, input_tokens: 1 },
+      processed_at: existing.processed_at,
+      type: existing.type,
+      id: existing.id,
+    };
+    expect(mergeSessionEventCache(cache, [reordered])).toBe(cache);
+    const corrected = {
+      id: existing.id,
+      type: existing.type,
+      processed_at: existing.processed_at,
+      usage: { input_tokens: 3 },
+    };
+    expect(mergeSessionEventCache(cache, [corrected]).events[0]).toEqual(corrected);
+  });
+
+  test.each([
+    { processed_at: null },
+    { processed_at: undefined },
+    { processed_at: null, is_streaming: true },
+    { processed_at: '2026-10-29T02:46:01Z', is_streaming: true },
+  ])('keeps a processed event when a pending or preview event arrives: %j', (patch) => {
+    const existing = {
+      id: 'sevt_final',
+      type: 'agent.message',
+      processed_at: '2026-10-29T02:46:01Z',
+      content: [{ type: 'text', text: 'Final answer' }],
+    };
+    const cache = mergeSessionEventCache(undefined, [existing]);
+    expect(mergeSessionEventCache(cache, [{ ...existing, ...patch, content: [] }])).toBe(cache);
+  });
+
+  test.each(['', 'sthr_child'])('history refresh restores image content in cached scope %j', async (threadId) => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_images';
+    const sessionId = 'sesn_images';
+    const existing = {
+      id: 'sevt_image',
+      ...(threadId ? { session_thread_id: threadId } : {}),
+      type: 'user.message',
+      processed_at: '2026-10-29T02:46:01.100614Z',
+      content: [{ type: 'text', text: 'Describe the image' }],
+    };
+    const complete = {
+      ...existing,
+      content: [...existing.content, { type: 'image', source: { type: 'file', file_id: 'file_image' } }],
+    };
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, existing);
+    globalThis.fetch = async () => Response.json({ data: [complete], next_page: null });
+    try {
+      await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, mode: 'refresh' });
+      expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [threadId])).toEqual([complete]);
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        ...complete,
+        content: [{ type: 'text', text: 'Updated' }],
+      });
+      expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [threadId])[0].content).toEqual([
+        { type: 'text', text: 'Updated' },
+      ]);
+    } finally {
+      queryClient.clear();
+    }
+  });
+
   test('omits an idle result that duplicates an agent message with the same timestamp', () => {
     const createdAt = '2026-08-26T13:13:00Z';
     const entries = buildSessionEventEntries(

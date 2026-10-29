@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func streamMemoryToolResponse(ctx context.Context, w http.ResponseWriter, body io.Reader, call sandboxRPCRequest, commit *memoryToolCommit) error {
+func streamMemoryToolResponse(ctx context.Context, w http.ResponseWriter, body io.Reader, call sandboxRPCRequest, commit *memoryToolCommit) (confirmErr error, err error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 32<<10), 8<<20)
 	scanner.Split(scanMemoryEventLine)
@@ -20,7 +20,7 @@ func streamMemoryToolResponse(ctx context.Context, w http.ResponseWriter, body i
 	for scanner.Scan() {
 		line := scanner.Text()
 		if frame.Len()+len(line) > 8<<20 {
-			return io.ErrUnexpectedEOF
+			return confirmationErr, io.ErrUnexpectedEOF
 		}
 		frame.WriteString(line)
 		if strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r") != "" {
@@ -29,10 +29,10 @@ func streamMemoryToolResponse(ctx context.Context, w http.ResponseWriter, body i
 		updated, err := confirmMemoryToolEvent(ctx, frame.Bytes(), call, commit)
 		confirmationErr = errors.Join(confirmationErr, err)
 		if _, err := w.Write(updated); err != nil {
-			return err
+			return confirmationErr, err
 		}
 		if err := controller.Flush(); err != nil {
-			return err
+			return confirmationErr, err
 		}
 		frame.Reset()
 	}
@@ -40,10 +40,10 @@ func streamMemoryToolResponse(ctx context.Context, w http.ResponseWriter, body i
 		updated, err := confirmMemoryToolEvent(ctx, frame.Bytes(), call, commit)
 		confirmationErr = errors.Join(confirmationErr, err)
 		if _, err := w.Write(updated); err != nil {
-			return err
+			return confirmationErr, err
 		}
 	}
-	return errors.Join(confirmationErr, scanner.Err())
+	return confirmationErr, scanner.Err()
 }
 
 func confirmMemoryToolEvent(ctx context.Context, frame []byte, call sandboxRPCRequest, commit *memoryToolCommit) ([]byte, error) {

@@ -56,7 +56,7 @@ func TestObjectCleanupJobsPostgres(t *testing.T) {
 		if err != nil || len(jobs) != 1 || jobs[0].Attempts != 1 {
 			t.Fatalf("retry jobs = %+v, %v", jobs, err)
 		}
-		if err := store.CompleteObjectCleanupJob(ctx, job.UUID); err != nil {
+		if err := store.CompleteObjectCleanupJob(ctx, job.UUID, job.ResourceType); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.ExpediteObjectCleanupJob(ctx, job.ExternalID); err != nil {
@@ -75,6 +75,10 @@ func TestObjectCleanupJobsPostgres(t *testing.T) {
 		jobs, err := store.LeaseObjectCleanupJobs(ctx, "worker", 10)
 		if err != nil || len(jobs) != 1 || jobs[0].FileExternalID != "file_test" {
 			t.Fatalf("file cleanup jobs = %+v, %v", jobs, err)
+		}
+		execClaimTest(t, ctx, database, "DROP TABLE brain_image_attachments")
+		if err := store.CompleteObjectCleanupJob(ctx, jobs[0].UUID, jobs[0].ResourceType); err != nil {
+			t.Fatalf("non-image completion accessed the image table: %v", err)
 		}
 	})
 }

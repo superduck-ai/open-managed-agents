@@ -1,7 +1,7 @@
-import type { SessionEvent } from "@deepseek-ai/dsh-session";
+import { pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
 import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
 import { isShutdownCancel } from "../runtime/contracts.ts";
-import { assistantMessages } from "./assistant.ts";
+import { assistantMessages, type AssistantBlockOutput } from "./assistant.ts";
 import type { Payload } from "./protocol.ts";
 
 export function terminalOutput(inputId: string, reason: Extract<SessionEvent, { type: "turn/end" }>["data"]["reason"]): Payload[] {
@@ -26,6 +26,8 @@ export function failedOutput(inputId: string, text: string, suffix = "failed"): 
 }
 
 export function nativeOutput(sessionId: string, inputId: string, event: SessionEvent, toolName?: string, threadId?: string): Payload[] {
+  const record = pluginRecordOf(event);
+  if (record) return record.type === "plugin:oma/assistant-block" ? [(record.data as { output: AssistantBlockOutput }).output] : [];
   const prefix = threadId ? `${sessionId}_${threadId}` : inputId;
   if (!prefix) return [];
   if (event.type === "assistant/message") {

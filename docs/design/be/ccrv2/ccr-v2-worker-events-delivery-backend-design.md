@@ -163,6 +163,10 @@ SSE 写失败不删除映射：旧连接的写失败可能晚于重连重投，�
 本身不会 ACK 消息，保留到 TTL 即可。worker 的 processing 应早于首次 1 分钟 ACK 窗口，建议每
 20–30 秒一次；20 分钟 TTL 不是处理心跳间隔。
 
+SSE 连接结束后，若其 epoch 已被推进，服务对该连接拉取过的消息发送 NAK，令 JetStream 立即重投，而不是等待首个
+1 分钟重投窗口；epoch 仍为当前值时保持原有超时重投。订阅关闭时已 Fetch 但尚未写出的消息直接 NAK。触发条件、顺序与
+边界见 `docs/design/be/brain-worker-claim.md` 的“release 后旧事件流上的投递”。
+
 ## 大 payload
 
 原始 payload 超过 16 MiB 时在存储前拒绝，与 hydrate 的大小上限一致。实现按原始 payload 的实际字节数判断 32 KiB（32768 bytes）阈值；严格超过时：

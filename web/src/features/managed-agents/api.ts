@@ -8,7 +8,7 @@ import {
 } from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
 import { consoleResourceListLimit } from '../../shared/console-list';
-import { type QueryClient } from '@tanstack/react-query';
+import { type QueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, credentialDisplayName, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { sessionFileResourcePayload } from './sessions/file-resource-form';
@@ -1030,13 +1030,10 @@ export function sessionStableEventId(event: QuickstartSessionEvent) {
 export function sessionIncomingEventShouldReplace(existing: QuickstartSessionEvent, incoming: QuickstartSessionEvent) {
   const existingProcessedAt = sessionNullableProcessedAt(existing);
   const incomingProcessedAt = sessionNullableProcessedAt(incoming);
-  if (existingProcessedAt === null && incomingProcessedAt !== null) {
-    return true;
+  if (existingProcessedAt !== null && (incomingProcessedAt === null || incoming.is_streaming === true)) {
+    return false;
   }
-  if (incomingProcessedAt !== null && existingProcessedAt !== incomingProcessedAt) {
-    return true;
-  }
-  return false;
+  return replaceEqualDeep(existing, incoming) !== existing;
 }
 
 export function sessionNullableProcessedAt(event: QuickstartSessionEvent) {

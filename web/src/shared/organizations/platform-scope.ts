@@ -22,11 +22,19 @@ export function readPlatformScope(accountUuid: string): PlatformScope | undefine
 }
 
 export function savePlatformScope(scope: PlatformScope) {
-  window.sessionStorage.setItem(storageKey, JSON.stringify(scope));
+  try {
+    window.sessionStorage.setItem(storageKey, JSON.stringify(scope));
+  } catch {
+    return;
+  }
 }
 
 export function clearPlatformScope() {
-  window.sessionStorage.removeItem(storageKey);
+  try {
+    window.sessionStorage.removeItem(storageKey);
+  } catch {
+    return;
+  }
 }
 
 export function isPlatformOrganizationAccess(access: OrganizationAccess | null | undefined, organizationUuid: string) {

@@ -27,6 +27,22 @@ test('标签保存目标上下文且退出只清进入偏好', () => {
   expect(window.sessionStorage.getItem('oma.organization.account')).toBe('home');
 });
 
+test('存储不可用时保存与清理静默降级', () => {
+  const original = window.sessionStorage;
+  Object.defineProperty(window, 'sessionStorage', {
+    configurable: true,
+    get() {
+      throw new Error('storage blocked');
+    },
+  });
+  try {
+    expect(() => savePlatformScope({ accountUuid: 'account', targetOrganizationUuid: 'target' })).not.toThrow();
+    expect(() => clearPlatformScope()).not.toThrow();
+  } finally {
+    Object.defineProperty(window, 'sessionStorage', { configurable: true, value: original });
+  }
+});
+
 test('平台组织访问只接受目标一致的平台来源', () => {
   const access: OrganizationAccess = {
     source: 'platform_admin',

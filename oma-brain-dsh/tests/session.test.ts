@@ -148,7 +148,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.publicLog.get("image_input_result")?.is_error).toBe(false);
   });
 
-  test("private image references become native images while URL references remain opaque", async () => {
+  test("private image references become native images without legacy reference blocks", async () => {
     const b = backend();
     b.modelScript = [textEvents("seen")];
     const { session } = await open(b);
@@ -156,14 +156,12 @@ describe("original dsh loop over CCRv2", () => {
     b.messageImages.set("file_attachment", { data: new Uint8Array(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC", "base64")), mediaType: "image/png" });
     const content = [
       { type: "image", source: { type: "file", file_id: "file_attachment" } },
-      { type: "image", source: { type: "url", url: "https://example.com/cat.png" } },
     ];
     await session.receive("image_refs", { content });
     const requestContent = b.requests[0]!.messages.find((m: Payload) => m.role === "user").content;
     expect(requestContent).toHaveLength(content.length + 1);
     expect(requestContent[0].type).toBe("image");
     expect(requestContent[0].source.type).toBe("base64");
-    expect(requestContent[1].source).toEqual(content[1]!.source);
     expect(requestContent[content.length].text).toStartWith("\n\n<system-reminder>\n");
     expect(requestContent[content.length].text).toContain("Time sampled while preparing turn");
     expect(requestContent.at(-1).text).toEndWith("\n</system-reminder>\n\n");

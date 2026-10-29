@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -37,6 +38,9 @@ type Service struct {
 	workerEventObjects     storage.ObjectStore
 	billing                *billing.Calculator
 	attachments            SessionAttachmentStore
+	attachmentFiles        sessionAttachmentFiles
+	attachmentHTTP         *http.Client
+	attachmentMaxBytes     int64
 }
 
 func (s *Service) PurgeWorkerEvents(ctx context.Context, codeSessionIDs []string) {
@@ -83,8 +87,10 @@ func NewServiceWithCredentials(database *db.DB, credentials *SessionCredentials,
 	logger = logging.LoggerOrDefault(logger)
 	broker := workerevents.NewMemory()
 	return &Service{
-		eventPayloads: eventpayload.New(database, nil),
-		db:            database, credentials: credentials, logger: logger,
+		eventPayloads:   eventpayload.New(database, nil),
+		attachmentFiles: database,
+		attachmentHTTP:  newMessageImageHTTPClient(),
+		db:              database, credentials: credentials, logger: logger,
 		workerEvents: broker, workerEventAcks: workerevents.NewMemoryAcknowledgementStore(),
 	}
 }

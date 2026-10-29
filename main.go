@@ -170,7 +170,7 @@ func run(logger *slog.Logger) error {
 	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeRuntime.credentials, environmentLogger).
 		WithWorkerEventBroker(workerEventBroker).
 		WithWorkerEventState(workerEventAcks, objectStore).
-		WithSessionAttachments(filestoreService)
+		WithSessionAttachments(filestoreService, cfg.Storage.MaxFileBytes)
 	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,

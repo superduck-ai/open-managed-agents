@@ -94,11 +94,6 @@ async function userPart(block: ContentBlock, versions: Map<string, RequestImageA
     const image = versions.get(block.attachment.attachmentId)!;
     return { type: "file", mediaType: image.mediaType, data: { type: "data", data: image.data } };
   }
-  if (block.type === "oma-image") {
-    const { source } = block;
-    return { type: "file", mediaType: "image/*", data: source.type === "url"
-      ? { type: "url", url: new URL(source.url) } : { type: "reference", reference: { anthropic: source.file_id } } };
-  }
   if (block.type === "oma-document") {
     const { source, title, context, citations } = block.document;
     if (source.type === "text" && !citations?.enabled)

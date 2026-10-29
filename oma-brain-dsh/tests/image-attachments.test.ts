@@ -357,3 +357,21 @@ test.each([401, 403, 500, 502, 504])("HTTP %i does not acknowledge a failed imag
   expect(backend.processed).not.toContain("recoverable-image");
   expect(session.receivedInputIds.has("recoverable-image")).toBe(false);
 });
+
+test("Brain rejects unmaterialized image sources instead of creating legacy custom blocks", async () => {
+  const f = await storeFixture();
+  await expect(f.run(() => userInputContent({ content: [
+    { type: "image", source: { type: "url", url: "https://images.example/image.png" } },
+  ] }, f.store))).rejects.toThrow("Unsupported image source");
+});
+
+test("legacy custom image blocks have no request encoder compatibility", async () => {
+  const f = await storeFixture();
+  const legacy = JSON.parse('{"type":"oma-image","source":{"type":"file","file_id":"file_legacy"}}');
+  const adapter = new AiSdkAdapter(omaModelOptions(f.api, f.store));
+  await expect((async () => {
+    for await (const _chunk of adapter.stream({ provider: "oma", model: "test-model", sessionId: SessionId(f.backend.a.session_id),
+      messages: [{ role: "user", content: [legacy] }] })) {}
+  })()).rejects.toMatchObject({ code: "INVALID_ARGS", message: "Unsupported model input block: oma-image" });
+  expect(f.backend.requests).toHaveLength(0);
+});

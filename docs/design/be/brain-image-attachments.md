@@ -21,13 +21,13 @@
 | 重复投递 | 相同图片多次投递、上传成功后进程退出 | 会话内内容寻址幂等；恢复不重复提交已经持久化的输入 |
 | 跨实例 | 清空本地缓存，在新 Brain 重放日志 | 使用新凭证读取远端图片；已 offload 图片不读取字节 |
 | 清理 | 删除 Session 或 pending 超过保留期 | 创建持久化清理任务，删除全部对象版本后回收登记；失败保留任务重试 |
-| 兼容 | URL、document、历史 oma-image、Claude Code | 保持既有请求语义；本阶段不承诺这些块的图片预算恢复 |
+| 兼容 | document、Claude Code | 保持既有请求语义；旧 oma-image 日志不再兼容 |
 
 ## 实现边界
 
 服务端保存归一化不可变图片，复用现有对象存储与 object cleanup worker，不使用 Filestore 保存归一化结果。原始消息附件继续由现有 Filestore 管理。Brain 复用 DSH 编码器生成原生 ImageAttachmentRef 和请求变体，本地文件仅为缓存；不向模型暴露本机路径。
 
-当前覆盖消息 file_id/base64 图片、Read 图片结果、模型预算、原生计量与 offload、跨实例恢复和删除清理。URL、PDF、普通文件和历史 oma-image 计量扩展留待后续。
+当前覆盖后端 URL 物化、消息 file_id/base64 图片、Read 图片结果、模型预算、原生计量与 offload、跨实例恢复和删除清理。PDF 与普通文件接入留待后续；不迁移旧 oma-image 日志。
 
 上传先在固定大小缓冲内校验字节，再发布对象，防止坏请求覆盖内容寻址键。对象上传在事务外进行，现有数据库事务与行锁只协调状态发布和清理，不新增分布式租约服务。
 
@@ -79,9 +79,9 @@ Pending 登记先持久化；上传在事务外进行，有 30 秒超时，上�
 
 适配器先按张数决定是否卸载，再使用 DSH readImageRequest 按面积和长边生成变体。字节预算调用 requiredImageOffload，representation=base64，因此预算转换为 base64 后的字节。计量使用同一尺寸策略；文本模型和 offloaded 图片只计实际占位文本。
 
-请求还预留 128 KiB 协议开销并估算其余 prompt/schema；SDK 序列化后用 MAX_MESSAGES_REQUEST_BODY_BYTES 检查实际 32 MiB 请求体，与 Go MaxMessagesRequestBodyBytes 的一致性由合同测试检查，offload 错误码统一引用 DSH IMAGE_OFFLOAD_REQUIRED_CODE。可卸载图片超限时抛 IMAGE_OFFLOAD_REQUIRED，由已挂载插件记录 image/offload，普通轮次和 summary 均可重试。卸载文本不包含本机路径或重新上传要求；纯文本已超限时明确失败。此检查只约束 Brain 发送的请求，旧 oma-image 和 document 后续由代理展开造成的膨胀仍是已知限制。
+请求还预留 128 KiB 协议开销并估算其余 prompt/schema；SDK 序列化后用 MAX_MESSAGES_REQUEST_BODY_BYTES 检查实际 32 MiB 请求体，与 Go MaxMessagesRequestBodyBytes 的一致性由合同测试检查，offload 错误码统一引用 DSH IMAGE_OFFLOAD_REQUIRED_CODE。可卸载图片超限时抛 IMAGE_OFFLOAD_REQUIRED，由已挂载插件记录 image/offload，普通轮次和 summary 均可重试。卸载文本不包含本机路径或重新上传要求；纯文本已超限时明确失败。此检查只约束 Brain 发送的请求，document 后续由代理展开造成的膨胀仍是已知限制。
 
-新实例重放远端 dsh 日志后，用当前凭证从远端读取图片并重新生成变体。本地缓存不影响正确性，已经 offload 的图片无需读取字节。URL、PDF、普通文件和历史 oma-image 迁移不在此阶段范围。
+新实例重放远端 dsh 日志后，用当前凭证从远端读取图片并重新生成变体。本地缓存不影响正确性，已经 offload 的图片无需读取字节。URL 图片在投递前已转换为私有 file_id；PDF、普通文件接入及历史 oma-image 迁移不在此阶段范围。
 
 ## 验证记录
 
@@ -144,7 +144,7 @@ Worker 镜像摘要为 `sha256:b3a09eb84545362778315d0364affc2368d638f28555f783f
 
 修复审查项 1、3 至 10。资源包错误通过 sentinel、apperr.New 和 HTTP ErrorAdapter 输出，413 使用统一的 invalid_request_error。补充永久错误单图降级与输入确认、瞬时错误重试、批次限额、授权范围与 epoch 失效、压缩名额交接、缺省图片能力、最终请求体错误码及跨语言大小合同测试。PostgreSQL 回归覆盖上传不占连接、过期和软删除两类调度，以及非图片任务不访问图片表。
 
-审查项 2 按用户要求暂不修改：切换前仅存在 Brain 本地的原生图片，远端没有登记时仍不可解析。历史 oma-image 保持既有兼容路径。本轮未重新运行 verify-be，之前的真实链路报告保留为当时版本的记录。
+审查项 2 按用户要求暂不修改：切换前仅存在 Brain 本地的原生图片，远端没有登记时仍不可解析。旧 oma-image 类型及编码路径已删除，不再提供历史兼容。本轮未重新运行 verify-be，之前的真实链路报告保留为当时版本的记录。
 
 本轮验证：`just test`、`just lint`、`just dead-code`、`just duplicates`、`just complexity`、Brain typecheck 与独立构建通过。Brain 全套 675 通过、5 跳过，随后最终图片边界组 25 项通过。隔离 PostgreSQL 17 执行 `just test-integration ./internal/db -run 'TestBrainImageAttachmentsPostgres|TestObjectCleanupJobsPostgres|TestEventPayloadBlobsPostgres' -v`，三个测试组通过，无跳过；未连接开发环境依赖，测试容器已停止。
 

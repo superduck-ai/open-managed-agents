@@ -103,7 +103,7 @@ DSH 开始模型执行前等待首个 `processing` 回执确认；后端通过�
 
 队列非空时，前一轮的普通 `idle/end_turn` 不结束公开会话；最后一条处理完成后才公开 idle。处于 `requires_action` 或 `budget_reached` 暂停时，新消息返回 400，仍需先提交相应工具结果或解除预算暂停。显式中断继续保留 `user.interrupt`，公开 stop reason 为 `end_turn`，不添加取消提示消息。
 
-用户消息可以包含 `image` 和 `document` 块。服务端投递前把内联内容和 Files 引用物化为会话私有文件。Brain 将 file_id 图片读取并归一化为远端存储支持的原生 DSH image，AI SDK 适配器按模型图片预算生成内联变体，参与能力投影、计量及 offload；base64 图片走同一路径。URL 与历史 oma-image、oma-document 保持代理展开语义。私有日志只保存引用，本地图片缓存不是恢复依赖。详见 [消息附件](message-media-attachments.md) 与 [远端图片附件](brain-image-attachments.md)。
+用户消息可以包含 `image` 和 `document` 块。服务端投递前把内联内容和 Files 引用物化为会话私有文件；Brain/claim 模式的 URL 图片先由后端下载并走同一物化路径。Brain 将 file_id 图片读取并归一化为远端存储支持的原生 DSH image，AI SDK 适配器按模型图片预算生成内联变体，参与能力投影、计量及 offload；base64 图片走同一路径。Brain 不再定义 oma-image，旧日志不兼容；oma-document 保持代理展开语义。私有日志只保存引用，本地图片缓存不是恢复依赖。详见 [消息附件](message-media-attachments.md) 与 [远端图片附件](brain-image-attachments.md)。
 
 本地测试覆盖并发提交、批量及大消息、处理时间、暂停拒绝和队列排空，以及工具执行中追加多条输入时的回合隔离、完成顺序、重复投递去重和控制通道独立处理；真实模型的 `session-active-input` 用例需单独运行验证。
 
@@ -430,7 +430,7 @@ flowchart LR
     Adapter --> Request[Selected model output cap for AI SDK]
 ```
 
-Image-offload recovery follows the native `IMAGE_OFFLOAD_REQUIRED` contract. OMA's adapter enforces configured image count, request variant bytes and the serialized proxy request limit; native image pricing uses the same target dimensions. Previously offloaded native images serialize as OMA placeholders without reading bytes. The remote AttachmentStore preserves normalized images across Brain instances. Opaque historical/URL `oma-image` and `oma-document` blocks retain their existing behavior and do not participate in offload. A huge uncompressible system prompt, tool schema, document or indivisible message can still exceed the upstream window. See [remote image attachments](brain-image-attachments.md).
+Image-offload recovery follows the native `IMAGE_OFFLOAD_REQUIRED` contract. OMA's adapter enforces configured image count, request variant bytes and the serialized proxy request limit; native image pricing uses the same target dimensions. Previously offloaded native images serialize as OMA placeholders without reading bytes. The remote AttachmentStore preserves normalized images across Brain instances. URL images are materialized by the backend into private file references before Brain delivery. The oma-image type and its historical decoding path have been removed; oma-document blocks retain proxy expansion and do not participate in offload. A huge uncompressible system prompt, tool schema, document or indivisible message can still exceed the upstream window. See [remote image attachments](brain-image-attachments.md).
 
 Regression coverage uses in-process fake models and persistence. It covers pressure-triggered conversation summaries, summary failure, one bounded overflow retry, root/child Bash-result pruning, journal durability before retry and notification, public result uniqueness, replay and process restart, request-budget parity for both backends, auxiliary-response identity and offloaded-image placeholders. Compaction-budget tests exercise real AI SDK serialization with an in-process upstream that rejects budgets above configured limits, including native summary execution, root/child routes, missing limits, smaller explicit budgets and ordinary-call precedence. They do not establish real-provider summary quality, billing, image-budget behavior or production performance; verify-be remains an explicitly requested acceptance path.
 

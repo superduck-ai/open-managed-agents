@@ -47,7 +47,7 @@ function registerTools(ctx: Context, config: Config): void {
       parameters: tool.inputSchema,
       output: tool.name === "Read" ? {
         schema: { type: "array", items: { type: "object" } },
-        render: (_args, value) => value as ContentBlock[],
+        render: (_args, value) => value as unknown as ContentBlock[],
       } : {
         schema: { type: "string" },
         render: (_args, value) => [{ type: "text", text: String(value) }],

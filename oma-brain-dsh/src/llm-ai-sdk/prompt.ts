@@ -24,20 +24,22 @@ export async function callOptions(options: GenerateOptions, route: AiSdkRoute, a
   const maxOutputTokens = route.maxOutputTokensLimit === undefined ? requestedMaxOutputTokens
     : Math.min(requestedMaxOutputTokens ?? route.maxOutputTokensLimit, route.maxOutputTokensLimit);
   const versions = new Map<string, RequestImageAttachment>();
-  const images = options.messages.flatMap(message => message.content).filter((block): block is Extract<ContentBlock, { type: "image" }> => block.type === "image" && !block.offloaded);
+  const messages = options.messages.map(message => message.role === "tool" && message.isError
+    ? { ...message, content: message.content.filter(block => block.type === "text") } : message);
+  const images = messages.flatMap(message => message.content).filter((block): block is Extract<ContentBlock, { type: "image" }> => block.type === "image" && !block.offloaded);
   const policy = imagePolicy(route.imageInput);
-  const countOffload = requiredImageOffload(options.messages, { representation: "base64", maxImages: policy.maxImages }, () => 0);
+  const countOffload = requiredImageOffload(messages, { representation: "base64", maxImages: policy.maxImages }, () => 0);
   if (countOffload > 0) throw new LlmError("Image count budget exceeded", IMAGE_OFFLOAD_REQUIRED_CODE, { offloadImages: countOffload });
   for (const image of images) {
     if (!attachments) throw new LlmError("Image attachment storage is unavailable", "INVALID_ARGS");
     if (!versions.has(image.attachment.attachmentId)) versions.set(image.attachment.attachmentId,
       await attachments.readImageRequest(image.attachment, imageTarget(image.attachment, route.imageInput), options.signal));
   }
-  const content = await prompt(options, route, versions);
+  const content = await prompt({ ...options, messages }, route, versions);
   const requestBytes = Buffer.byteLength(JSON.stringify({ prompt: content, tools: options.tools }, (_key, value) => value instanceof Uint8Array ? Buffer.from(value).toString("base64") : value));
   const imageBytes = images.reduce((sum, block) => sum + 4 * Math.ceil(versions.get(block.attachment.attachmentId)!.bytes / 3), 0);
   const available = Math.max(0, (route.maxRequestBodyBytes ?? Infinity) - 128 * 1024 - (requestBytes - imageBytes));
-  const offloadImages = requiredImageOffload(options.messages,
+  const offloadImages = requiredImageOffload(messages,
     { representation: "base64", maxImages: policy.maxImages, maxBytes: Math.min(4 * Math.ceil(policy.maxBytes / 3), available) },
     block => versions.get(block.attachment.attachmentId)!.bytes);
   if (offloadImages > 0) throw new LlmError("Image request budget exceeded", IMAGE_OFFLOAD_REQUIRED_CODE, { offloadImages });

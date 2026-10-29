@@ -117,6 +117,8 @@ Read 的图片内容在 `sandbox-tools/read.ts` 完成 MCP 数据校验和远端
 
 Messages 将图片序列化到对应的 tool_result.content。Chat Completions 的 tool 消息仍为文本，连续工具结果收齐后追加一条 user 消息，按工具调用 ID 标明各图片来源；这一调整只发生在请求投影中，不额外持久化 user 消息。工具图片使用相同的原生计量、请求变体和 offload 策略，卸载后只保留占位文本。读取与保存使用实际执行 Agent 的 Session ID，子线程通过既有映射使用根 Session 的远端权限。
 
+工具结果标记为 `isError` 时，请求投影先生成只含原有文本的副本，再计算图片预算或读取附件。两种后端都只输出 `error-text`；错误结果中的图片不读取字节、不占用请求图片预算，也不进入 Chat 的图片 user 消息。原始 DSH 消息和日志不变。`read-images.test.ts` 覆盖错误结果、两处图片 flush、混合工具/内容顺序、offload、默认路由和原生日志隔离。
+
 Read 图片链路验收记录（2026-10-27）：先新增黑盒测试，初次执行为 2 通过、6 失败；实现后 9 个 Read 场景全部通过，连同附件、工具执行与 Chat 恢复的定向回归共 28 项通过。完整 Brain 测试为 656 通过、5 跳过，typecheck 与 build 通过。`just test`、`just duplicates`、`just complexity` 通过。跳过项需要真实 Rust MCP 二进制；本轮没有运行真实 Worker、模型或 verify-be，不能作为这些外部依赖的集成验收结果。
 
 ### 独立可执行文件的图片依赖

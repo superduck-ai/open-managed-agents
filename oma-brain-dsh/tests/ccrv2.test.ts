@@ -213,9 +213,9 @@ test("completed blocks flush earlier previews and input acknowledgement waits fo
     session = ctx.ccrv2.createSession({ id: "buffered", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
     await session.open();
     turn = session.receive("input", { content: "hello" });
-    await eventually(() => previewCalls === 2);
+    await eventually(() => previewCalls === 3);
     await completed.promise;
-    expect(previewCalls).toBe(2);
+    expect(previewCalls).toBe(3);
     expect(timers.size).toBe(0);
     expect(session.pendingEvents.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);

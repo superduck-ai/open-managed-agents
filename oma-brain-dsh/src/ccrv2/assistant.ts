@@ -78,12 +78,13 @@ export class CcrAssistantStream {
     }
     if (frame.type !== "chunk") return [];
     const chunk = frame.chunk;
-    if (chunk.type === "block-start" && chunk.blockType === "reasoning") {
+    if (chunk.type === "block-start" && (chunk.blockType === "reasoning" || chunk.blockType === "text")) {
       if (stream.seen.has(chunk.index)) return [];
-      const id = assistantEventID(this.codeSessionID, this.messageID?.(key), chunk.index, "agent.thinking", stream.fallback);
+      const type = chunk.blockType === "reasoning" ? "agent.thinking" : "agent.message";
+      const id = assistantEventID(this.codeSessionID, this.messageID?.(key), chunk.index, type, stream.fallback);
       stream.seen.add(chunk.index);
       stream.blocks.set(chunk.index, id);
-      return [{ type: "event_start", event: { type: "agent.thinking", id } }];
+      return [{ type: "event_start", event: { type, id } }];
     }
     if (chunk.type === "block-end") {
       const type = chunk.block.type === "reasoning" ? "agent.thinking" : "agent.message";

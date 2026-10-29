@@ -62,6 +62,7 @@ export async function startWorkers(
       sessions.delete(session.id);
       api.assignments.delete(session.id);
       api.modelResponses.delete(session.id);
+      api.modelRequestIDs.delete(session.id);
       retiring.delete(session.id);
       notifySlot();
     });

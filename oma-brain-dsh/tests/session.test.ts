@@ -209,7 +209,9 @@ describe("original dsh loop over CCRv2", () => {
     ]);
     const replay = session.pendingEvents;
     expect(replay).toEqual([]);
-    expect(b.timeline.filter((event) => event.type === "event_start" && event.event.id === messages[0]!.id)).toHaveLength(0);
+    expect(b.timeline.filter((event) => event.type === "event_start" && event.event.id === messages[0]!.id)).toHaveLength(1);
+    expect(b.timeline.findIndex(event => event.type === "event_start" && event.event.id === messages[0]!.id))
+      .toBeLessThan(b.timeline.findIndex(event => event.type === "event_start" && event.event.id === messages[1]!.id));
     for (const message of messages.slice(1)) {
       expect(message.id).toMatch(/^sevt_[a-f0-9]{32}$/);
       expect(b.timeline.filter((event) => event.type === "event_start" && event.event.id === message.id)).toHaveLength(1);

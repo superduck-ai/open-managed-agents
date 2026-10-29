@@ -299,7 +299,7 @@ Session 创建在解析实际 Agent 版本快照和 Environment 后、生成 Ses
 
 DSH Brain 是 `agent.message`、`agent.thinking` 及其流式预览的唯一来源。模型代理按服务端已保存的 `metadata.config.worker_transport=claim` 识别 Brain，会记录原有鉴权、模型请求 start/end、usage、上游 request ID 和工具关联，但不生成普通回复、thinking 或对应的 span `event_ids`。无需模型请求用途 header；原生摘要和标题等内部调用不会因为代理观察到模型文本就成为公开回复。Claude Code 的代理发布路径保持原行为；工具权限、审批和代理已有的工具调用投影不随回复职责迁移而删除。
 
-Brain 在 reasoning `block-start` 生成无正文 `event_start`，忽略 reasoning 正文 delta；普通文本使用 `event_start` 和 `event_delta`。AI SDK 的 `reasoning-end`、`text-end` 到达时立即产出对应 DSH `block-end`；工具参数的 `tool-input-end` 等待规范化 `tool-call` 后结束工具块，不提前派发工具。整个响应结束时仅结算 usage 与 finish，不再补发块结束；有未闭合块则返回传输错误。SDK 重新使用已结束的块 ID 时，为新片段分配新的原生 block index，保留文字、思考交替输出的顺序。块身份由 code session ID、上游 message ID、原生 block index 和事件类型派生，最终回复与恢复补发使用相同 ID。内部签名推理及原始模型响应仍用于续聊，公开边界继续清除 thinking 正文。
+Brain 对文字和思考都在 `block-start` 生成 `event_start`，包括随后没有正文的空文字块；不等待首个文字 delta，也不根据类型调整开始顺序。思考开始不含正文，reasoning 正文 delta 不公开；普通文本使用 `event_delta`。AI SDK 的 `reasoning-end`、`text-end` 到达时立即产出对应 DSH `block-end`；工具参数的 `tool-input-end` 等待规范化 `tool-call` 后结束工具块，不提前派发工具。整个响应结束时仅结算 usage 与 finish，不再补发块结束；有未闭合块则返回传输错误。SDK 重新使用已结束的块 ID 时，为新片段分配新的原生 block index，保留文字、思考交替输出的顺序。块身份由 code session ID、上游 message ID、原生 block index 和事件类型派生，最终回复与恢复补发使用相同 ID。内部签名推理及原始模型响应仍用于续聊，公开边界继续清除 thinking 正文。
 
 预览与完成块先经过串行的持久化检查点，再按模型帧到达顺序加入同一个 CCRv2 FIFO 上传队列，不在前端重排。检查点串行保证较晚 delta 不会越过等待日志确认的起始帧或完成块；入队后不逐帧等待 HTTP 确认，因此预览仍可复用 100ms 批处理。文本或思考 `block-end` 生成最终公共事件，先把公开内容和稳定 ID 写入所属原生 Session 的 `plugin:oma/assistant-block` 可忽略记录，远端确认后才投递；思考记录不含推理正文。完成块会刷新此前的预览批次。完整 `assistant/message` 仍用于模型历史，但不再重复发布本轮已逐块投递的消息。输入 processed 确认继续等待整轮日志复制及公开事件写入成功。子线程使用自己的日志及公开线程身份。
 

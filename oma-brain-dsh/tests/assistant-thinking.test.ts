@@ -85,3 +85,14 @@ test("public block completion follows model order when text precedes thinking an
   expect(stream.complete(finals)).toEqual([]);
   expect(stream.complete([{ type: "agent.message", id: "unstreamed" }])).toEqual([{ type: "agent.message", id: "unstreamed" }]);
 });
+
+test("a model text block starts publicly before later thinking even when its first text delta is delayed", () => {
+  const stream = new CcrAssistantStream("cse_starts", () => "msg_starts");
+  stream.record(start(), "input");
+  const first = stream.record(chunk({ type: "block-start", index: 0, blockType: "text" }), "input");
+  expect(first).toMatchObject([{ type: "event_start", event: { type: "agent.message" } }]);
+  const thinking = stream.record(chunk({ type: "block-start", index: 1, blockType: "reasoning" }), "input");
+  expect(thinking).toMatchObject([{ type: "event_start", event: { type: "agent.thinking" } }]);
+  expect(stream.record(chunk({ type: "text-delta", index: 0, text: "delayed" }), "input"))
+    .toMatchObject([{ type: "event_delta", event_id: first[0]!.event.id }]);
+});

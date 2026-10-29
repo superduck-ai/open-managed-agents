@@ -113,6 +113,7 @@ export interface SessionRuntimeConfig {
   /** Host binds a child model identity to the parent's credentials. */
   bindThread?(id: string): () => void;
   modelMessageID?(sessionId: string): string | undefined;
+  modelRequestID?(sessionId: string): string | undefined;
 }
 
 export type ToolExecutionContext = Pick<

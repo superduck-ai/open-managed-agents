@@ -11,6 +11,7 @@ export class OmaApi {
   readonly assignments = new Map<string, Assignment>();
   readonly modelSessions = new Map<string, string>();
   readonly modelResponses = new Map<string, string>();
+  readonly modelRequestIDs = new Map<string, string>();
   constructor(
     readonly base: string,
     readonly fetcher: typeof fetch = fetch,

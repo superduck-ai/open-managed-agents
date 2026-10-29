@@ -158,3 +158,24 @@ test("invalid remote history fails reacquisition without changing the existing l
   expect(backend.requests).toHaveLength(requests);
   expect([...backend.publicLog.values()]).toEqual(publicEvents);
 });
+
+test("completed-block journals restore unpublished output in recorded order on another Brain", async () => {
+  const { backend, rootA, rootB } = await fixture();
+  const first = await mount(backend, rootA);
+  backend.modelScript = [textEvents("initial reply")];
+  await first.session.receive("block-input", { content: "Reply" });
+  const outputs = [
+    { type: "agent.message" as const, id: "sevt_first_block", uuid: "sevt_first_block", content: [{ type: "text" as const, text: "before thinking" }] },
+    { type: "agent.thinking" as const, id: "sevt_thinking_block", uuid: "sevt_thinking_block" },
+    { type: "agent.message" as const, id: "sevt_last_block", uuid: "sevt_last_block", content: [{ type: "text" as const, text: "after thinking" }] },
+  ];
+  for (const output of outputs) appendPluginRecord(first.session.agent.session, "plugin:oma/assistant-block", { output });
+  await first.session.checkpoint();
+  expect(outputs.every(output => !backend.publicLog.has(output.uuid))).toBe(true);
+  await first.close();
+  const requests = backend.requests.length;
+  const second = await mount(backend, rootB);
+  expect(second.session.restoredFromRemote).toBe(true);
+  expect([...backend.publicLog.values()].filter(event => outputs.some(output => output.uuid === event.uuid))).toEqual(outputs);
+  expect(backend.requests).toHaveLength(requests);
+});

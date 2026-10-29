@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { SessionId } from "@deepseek-ai/dsh-session";
+import { SessionId, pluginRecordOf } from "@deepseek-ai/dsh-session";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
@@ -47,7 +47,7 @@ test("native-only crash recovery never re-executes an accepted input or tool", a
   expect(b.processed).toContain("accepted-before-crash");
 });
 
-test("external input identity uses the native id and every replicated record matches the untouched native log", async () => {
+test("external input identity uses the native id and every replicated record matches the native log", async () => {
   const b = backend();
   b.modelScript = [textEvents("first"), textEvents("second")];
   const { session, ctx } = await mount(b);
@@ -58,7 +58,8 @@ test("external input identity uses the native id and every replicated record mat
   const events = session.agent.session.snapshotEvents();
   expect(events.flatMap(event => event.type === "user/message" && event.data.source.kind === "user" ? [String(event.data.id)] : []))
     .toEqual(["first-input", "second-input"]);
-  expect(events.some(event => String(event.type).startsWith("plugin:oma/"))).toBe(false);
+  expect(events.map(pluginRecordOf).filter(Boolean).map(record => record!.type))
+    .toEqual(["plugin:oma/assistant-block", "plugin:oma/assistant-block"]);
   expect(JSON.stringify(events)).not.toContain("oma-interruption");
   const handle = await ctx.sessionPersistence.open(SessionId(session.id), "read");
   try { expect((await handle.read()).events).toEqual([...events]); }
@@ -67,7 +68,7 @@ test("external input identity uses the native id and every replicated record mat
   expect(remote).toEqual([session.agent.session.header, ...events]);
 });
 
-test("native history regenerates stable public events after response loss without a persisted outbox", async () => {
+test("native history regenerates stable public events after response loss", async () => {
   const b = backend();
   b.modelScript = [textEvents("confirmed native answer")];
   const first = await mount(b);

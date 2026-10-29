@@ -161,7 +161,7 @@ test("persistence stores a separate header and individual events and restores du
   }
 });
 
-test("session previews enter one stream window and terminal publication still waits for their HTTP confirmation", async () => {
+test("completed blocks flush earlier previews and input acknowledgement waits for HTTP confirmation", async () => {
   const backend = new MemoryBackend();
   const ctx = new Context();
   const timers = new Set<() => void>();
@@ -216,11 +216,9 @@ test("session previews enter one stream window and terminal publication still wa
     await eventually(() => previewCalls === 2);
     await completed.promise;
     expect(previewCalls).toBe(2);
-    expect(timers.size).toBe(1);
-    expect(batches.flat().filter((event) => event.ephemeral)).toEqual([]);
+    expect(timers.size).toBe(0);
     expect(session.pendingEvents.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);
-    [...timers][0]!();
     await sending.promise;
     const previews = batches.flat().filter((event) => event.ephemeral);
     expect(previews.map((event) => event.payload.type)).toEqual(["event_start", "event_delta", "event_delta"]);

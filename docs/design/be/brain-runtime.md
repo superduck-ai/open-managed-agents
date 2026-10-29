@@ -24,7 +24,7 @@ DSH 日志统一使用 `type: "dsh_log"`，`data` 原样保存原生 `SessionHea
 
 日志格式版本直接使用原生 Header 的 version，恢复时由 DSH assertVersion 校验，不写额外的 schema_version。恢复使用原生 seq 字段识别 Event，其他日志记录按 Header 校验；先读取 Header，再逐条校验 Event 的类型与序号连续性。相同 seq、相同内容的重复记录只应用一次，不同内容则报错。当前仍不支持 fork，内存 inherited 固定为 0，不写入原生对象。会话恢复直接使用 DSH `agents.resume()`，不再保存 BrainState、逐调用阶段或工具结果副本。本次不兼容旧批次和额外包装格式，不提供迁移或回滚读取兼容。
 
-私有事件 UUID 不哈希完整 data。Event UUID 为 `dsh_log:<code-session-id>:<dsh-session-id>:<seq>`，Header UUID 为 `dsh_log:<code-session-id>:<dsh-session-id>:header`。ID 各部分使用 encodeURIComponent 编码。主线程的 DSH Session ID 使用 code-session-id，子线程使用传输层 agent_id；Header 的 Session ID 使用原生 id。传输层保留 uuid 和 agent_id，不将其注入 data。读取子线程历史时以 agentId 选择 subagents 私有流，并按返回记录的传输层 agent_id 过滤每一页结果，再将原始 payload 交给恢复逻辑，避免不同子线程相同 seq 相互混淆。不写 OMA 交付插件事件或额外远程交付快照。同一 Event 的身份不受 flush 分组或 JSON 属性顺序影响，入队前 JSON 快照和 HTTP 确认行为保持不变。
+私有事件 UUID 不哈希完整 data。Event UUID 为 `dsh_log:<code-session-id>:<dsh-session-id>:<seq>`，Header UUID 为 `dsh_log:<code-session-id>:<dsh-session-id>:header`。ID 各部分使用 encodeURIComponent 编码。主线程的 DSH Session ID 使用 code-session-id，子线程使用传输层 agent_id；Header 的 Session ID 使用原生 id。传输层保留 uuid 和 agent_id，不将其注入 data。读取子线程历史时以 agentId 选择 subagents 私有流，并按返回记录的传输层 agent_id 过滤每一页结果，再将原始 payload 交给恢复逻辑，避免不同子线程相同 seq 相互混淆。不写输入交付阶段插件事件或额外远程交付快照；逐块输出的恢复记录使用下文定义的原生可忽略插件记录。同一 Event 的身份不受 flush 分组或 JSON 属性顺序影响，入队前 JSON 快照和 HTTP 确认行为保持不变。
 
 ccrv2-client.test.ts 覆盖原生对象直存、单事件身份、跨页子线程隔离和重试稳定性。local-transcript.test.ts 覆盖原生可忽略扩展保留、必需未知事件拒绝和 Header 规范化与直接使用原生 JSONL 一致；ccrv2.test.ts 覆盖 Header 与 Event 直接保存和恢复，拒绝不支持的 Header 版本、缺失 Header、序号缺口及冲突事件。session、subagents 和 crash 测试覆盖持久化顺序、子线程恢复和工具结果不重复执行。
 
@@ -299,9 +299,9 @@ Session 创建在解析实际 Agent 版本快照和 Environment 后、生成 Ses
 
 DSH Brain 是 `agent.message`、`agent.thinking` 及其流式预览的唯一来源。模型代理按服务端已保存的 `metadata.config.worker_transport=claim` 识别 Brain，会记录原有鉴权、模型请求 start/end、usage、上游 request ID 和工具关联，但不生成普通回复、thinking 或对应的 span `event_ids`。无需模型请求用途 header；原生摘要和标题等内部调用不会因为代理观察到模型文本就成为公开回复。Claude Code 的代理发布路径保持原行为；工具权限、审批和代理已有的工具调用投影不随回复职责迁移而删除。
 
-Brain 在 reasoning `block-start` 生成无正文 `event_start`，忽略 reasoning 正文 delta；普通文本使用 `event_start` 和 `event_delta`。块身份由 code session ID、上游 message ID、原生 block index 和事件类型派生，最终回复与恢复补发使用相同 ID。内部签名推理及原始模型响应仍用于续聊，公开边界继续清除 thinking 正文。
+Brain 在 reasoning `block-start` 生成无正文 `event_start`，忽略 reasoning 正文 delta；普通文本使用 `event_start` 和 `event_delta`。AI SDK 的 `reasoning-end`、`text-end` 到达时立即产出对应 DSH `block-end`；工具参数的 `tool-input-end` 等待规范化 `tool-call` 后结束工具块，不提前派发工具。整个响应结束时仅结算 usage 与 finish，不再补发块结束；有未闭合块则返回传输错误。SDK 重新使用已结束的块 ID 时，为新片段分配新的原生 block index，保留文字、思考交替输出的顺序。块身份由 code session ID、上游 message ID、原生 block index 和事件类型派生，最终回复与恢复补发使用相同 ID。内部签名推理及原始模型响应仍用于续聊，公开边界继续清除 thinking 正文。
 
-预览先经过串行的持久化检查点，再按原始帧顺序加入 CCRv2 上传队列。检查点串行保证较晚 delta 不会越过等待日志确认的起始帧；入队后不逐帧等待 HTTP 确认，因此仍可复用 100ms 批处理。最终回复在原生 assistant 日志远端确认且先前预览发送完成后发布，输入 processed 确认继续等待公开事件写入成功。子线程使用自己的日志及公开线程身份。
+预览与完成块先经过串行的持久化检查点，再按模型帧到达顺序加入同一个 CCRv2 FIFO 上传队列，不在前端重排。检查点串行保证较晚 delta 不会越过等待日志确认的起始帧或完成块；入队后不逐帧等待 HTTP 确认，因此预览仍可复用 100ms 批处理。文本或思考 `block-end` 生成最终公共事件，先把公开内容和稳定 ID 写入所属原生 Session 的 `plugin:oma/assistant-block` 可忽略记录，远端确认后才投递；思考记录不含推理正文。完成块会刷新此前的预览批次。完整 `assistant/message` 仍用于模型历史，但不再重复发布本轮已逐块投递的消息。输入 processed 确认继续等待整轮日志复制及公开事件写入成功。子线程使用自己的日志及公开线程身份。
 
 ```mermaid
 sequenceDiagram
@@ -315,14 +315,18 @@ sequenceDiagram
     Proxy->>Events: 模型 span 与 usage，保留工具事件链路
     Brain->>Log: 保存并确认检查点
     Brain->>Events: 按序上传 event_start / event_delta
-    Brain->>Log: 保存 assistant/message 并远端确认
-    Brain->>Events: 预览确认后发布最终回复
+    Upstream->>Brain: 当前块结束
+    Brain->>Log: 保存所属 Session 的完成块记录并远端确认
+    Brain->>Events: FIFO 发布当前块的 thinking/message
+    Upstream->>Brain: 后续内容块与增量
+    Brain->>Events: 按原顺序上传后续预览及完成块
+    Brain->>Log: 保存完整 assistant/message，确认后续整轮日志
     Note over Brain,Events: 若复制完成后崩溃，新节点从日志以同一 ID 补发
 ```
 
-恢复仅从原生日志重建回复，不再次调用模型。若日志已复制但公开回复未确认，replacement 发布同一稳定 ID；后端去重已接收但确认丢失的回复。预览尚未确认不能充当最终回复的持久化事实，恢复以已保存的原生 assistant 事件为准。模型 span 结束可先于 Brain 最终回复，客户端不能将 span end 当成消息已发布或用户回合已完成。
+恢复仅从原生日志重建回复，不再次调用模型。完成块记录按原生 seq 参与重放，即使整个 assistant message 尚未保存，也能补发已确认的完整块；旧日志继续从 `assistant/message` 重建。相同公共 UUID 在重放批次中合并，后端去重已接收但确认丢失的回复。记录不进入模型可见的 surface，也不增加私有 HTTP payload 类型。预览尚未确认不能充当最终回复的持久化事实。模型 span 结束可先于 Brain 最终回复，客户端不能将 span end 当成消息已发布或用户回合已完成。
 
-回归入口为 `TestModelReplyPublicationOwnership`、`TestBrainModelThinkingIsPublishedOnlyByWorker`、`TestModelThinkingStartHasStableIdentityAndNoContent`，以及 `model-replication.test.ts`、`crash.test.ts`。覆盖非 Brain 发布行为保持、Brain 模型 usage 与工具关联保留、预览检查点乱序、根/子回复复制屏障、公开事件确认屏障，以及 SIGKILL 后从远端日志补发唯一回复且不重调模型。真实服务验收需另行明确运行，普通单测不代替该验收。
+回归入口为 `TestModelReplyPublicationOwnership`、`TestBrainModelThinkingIsPublishedOnlyByWorker`、`TestModelThinkingStartHasStableIdentityAndNoContent`，以及 `model-output-order.test.ts`、`model-replication.test.ts`、`assistant-thinking.test.ts`、`session-reacquisition.test.ts`、`chat-completions.test.ts`、`crash.test.ts`。覆盖模型块边界即时推进、文字先于思考、块交错结束、SDK ID 复用、根/子完成块复制屏障、公开事件确认屏障，以及跨实例补发唯一回复且不重调模型。真实服务验收需另行明确运行，普通单测不代替该验收。
 
 
 ## Vault environment placeholders in Brain sandboxes

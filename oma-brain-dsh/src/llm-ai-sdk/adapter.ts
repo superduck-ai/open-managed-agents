@@ -29,7 +29,9 @@ export class AiSdkAdapter extends LlmAdapter {
     const body = result.request?.body;
     if (body && typeof body === "object") this.options.onRequestBody?.(request, body as Record<string, unknown>);
     const headers = result.response?.headers;
-    yield* this.read(request, new AiSdkStream(route.replayFormat, headers?.["request-id"] ?? headers?.["x-request-id"]), result);
+    const requestID = headers?.["request-id"] ?? headers?.["x-request-id"];
+    if (requestID) this.options.onRequestID?.(request, requestID);
+    yield* this.read(request, new AiSdkStream(route.replayFormat, requestID), result);
   }
 
   private async *read(request: GenerateOptions, stream: AiSdkStream, result: LanguageModelV4StreamResult): AsyncIterable<StreamChunk> {

@@ -25,4 +25,5 @@ export interface AiSdkAdapterOptions {
   onCallStart?(options: GenerateOptions): void;
   onRequestBody?(options: GenerateOptions, body: Record<string, unknown>): void;
   onMessageID?(options: GenerateOptions, messageID: string): void;
+  onRequestID?(options: GenerateOptions, requestID: string): void;
 }

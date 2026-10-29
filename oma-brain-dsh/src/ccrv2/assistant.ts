@@ -1,7 +1,31 @@
 import { createHash } from "node:crypto";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
-import type { AssistantMessage } from "@deepseek-ai/dsh-llm";
+import type { AssistantMessage, ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { Payload } from "./protocol.ts";
+
+export interface AssistantBlockOutput {
+  type: "agent.thinking" | "agent.message";
+  id: string;
+  uuid: string;
+  content?: { type: "text"; text: string }[];
+  model_request_start_id?: string;
+  session_thread_id?: string;
+}
+
+declare module "@deepseek-ai/dsh-session" {
+  interface PluginRecordMap {
+    "plugin:oma/assistant-block": { output: AssistantBlockOutput };
+  }
+}
+
+function assistantBlockOutput(id: string, block: ContentBlock, requestID?: string, threadId?: string): AssistantBlockOutput | undefined {
+  if (block.type !== "text" && block.type !== "reasoning") return undefined;
+  return { type: block.type === "reasoning" ? "agent.thinking" : "agent.message", id, uuid: id,
+    ...(block.type === "text" ? { content: [{ type: "text", text: block.text }] } : {}),
+    ...(requestID ? { model_request_start_id: requestID } : {}),
+    ...(threadId ? { session_thread_id: threadId } : {}),
+  };
+}
 
 interface MessageReplay {
   response?: { format?: string; messageID?: string; requestID?: string };
@@ -21,22 +45,28 @@ export function assistantMessages(codeSessionID: string, fallback: string, messa
     if (block.type !== "text" && block.type !== "reasoning") return [];
     const type = block.type === "reasoning" ? "agent.thinking" : "agent.message";
     const id = assistantEventID(codeSessionID, identity?.response?.messageID, identity?.blocks?.[index]?.index ?? index, type, fallback);
-    return [{ type, id, uuid: id,
-      ...(block.type === "text" ? { content: [{ type: "text", text: block.text }] } : {}),
-      ...(identity?.response?.requestID ? { model_request_start_id: identity.response.requestID } : {}),
-      ...(threadId ? { session_thread_id: threadId } : {}),
-    }];
+    return [assistantBlockOutput(id, block, identity?.response?.requestID, threadId)!];
   });
 }
 
 export class CcrAssistantStream {
   private readonly streams = new Map<string, { fallback: string; blocks: Map<number, string>; seen: Set<number> }>();
+  private readonly completed = new Map<string, Set<string>>();
 
-  constructor(private readonly codeSessionID: string, private readonly messageID?: (sessionId: string) => string | undefined) {}
+  constructor(private readonly codeSessionID: string, private readonly messageID?: (sessionId: string) => string | undefined,
+    private readonly requestID?: (sessionId: string) => string | undefined) {}
+
+  complete(payloads: Payload[], threadId?: string): Payload[] {
+    const key = threadId ?? this.codeSessionID;
+    const completed = this.completed.get(key);
+    this.completed.delete(key);
+    return payloads.filter(payload => !completed?.has(payload.id));
+  }
 
   record(frame: AssistantStreamFrame, inputId: string, threadId?: string): Payload[] {
     const key = threadId ?? this.codeSessionID;
     if (frame.type === "start") {
+      this.completed.set(key, new Set());
       this.streams.set(key, { fallback: `${inputId}_${threadId ? `${threadId}_` : ""}message_${frame.turn}_${frame.step}`, blocks: new Map(), seen: new Set() });
       return [];
     }
@@ -56,8 +86,14 @@ export class CcrAssistantStream {
       return [{ type: "event_start", event: { type: "agent.thinking", id } }];
     }
     if (chunk.type === "block-end") {
+      const type = chunk.block.type === "reasoning" ? "agent.thinking" : "agent.message";
+      const id = stream.blocks.get(chunk.index)
+        ?? assistantEventID(this.codeSessionID, this.messageID?.(key), chunk.index, type, stream.fallback);
       stream.blocks.delete(chunk.index);
-      return [];
+      const output = assistantBlockOutput(id, chunk.block, this.requestID?.(key), threadId);
+      if (!output || this.completed.get(key)?.has(id)) return [];
+      this.completed.get(key)?.add(id);
+      return [output];
     }
     if (chunk.type !== "text-delta" || !chunk.text) return [];
     const type = "agent.message";

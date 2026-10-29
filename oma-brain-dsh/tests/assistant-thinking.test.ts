@@ -27,7 +27,8 @@ test("empty thinking starts once before answer and shares backend identity", () 
     ]);
     expect(stream.record(blockStart, "input")).toEqual([]);
     expect(stream.record(chunk({ type: "reasoning-delta", index: vector.index, text: "private reasoning" }), "input")).toEqual([]);
-    expect(stream.record(chunk({ type: "block-end", index: vector.index, block: { type: "reasoning", text: "private reasoning" } }), "input")).toEqual([]);
+    expect(stream.record(chunk({ type: "block-end", index: vector.index, block: { type: "reasoning", text: "private reasoning" } }), "input"))
+      .toEqual([{ type: "agent.thinking", id: vector.eventID, uuid: vector.eventID }]);
     expect(stream.record(blockStart, "input")).toEqual([]);
     const answer = stream.record(chunk({ type: "text-delta", index: vector.index + 1, text: "answer" }), "input");
     expect(answer[0]?.event.type).toBe("agent.message");
@@ -62,4 +63,25 @@ test("text preview explicitly indexes its public single-block message even for n
     expect(final[0]!.id).toBe(id);
     expect(final[0]!.content).toEqual([{ type: "text", text: "AB" }]);
   }
+});
+
+test("public block completion follows model order when text precedes thinking and multiple text blocks close out of index order", () => {
+  const stream = new CcrAssistantStream("cse_order", () => "msg_order", () => "request_order");
+  stream.record(start(), "input");
+  const payloads = [
+    chunk({ type: "text-delta", index: 0, text: "first" }),
+    chunk({ type: "block-end", index: 0, block: { type: "text", text: "first" } }),
+    chunk({ type: "block-start", index: 1, blockType: "reasoning" }),
+    chunk({ type: "text-delta", index: 2, text: "later" }),
+    chunk({ type: "block-end", index: 2, block: { type: "text", text: "later" } }),
+    chunk({ type: "block-end", index: 1, block: { type: "reasoning", text: "private" } }),
+  ].flatMap(frame => stream.record(frame, "input"));
+  expect(payloads.map(payload => payload.type)).toEqual([
+    "event_start", "event_delta", "agent.message", "event_start", "event_start", "event_delta", "agent.message", "agent.thinking",
+  ]);
+  const finals = payloads.filter(payload => payload.type.startsWith("agent."));
+  expect(finals.every(payload => payload.model_request_start_id === "request_order")).toBe(true);
+  expect(JSON.stringify(finals)).not.toContain("private");
+  expect(stream.complete(finals)).toEqual([]);
+  expect(stream.complete([{ type: "agent.message", id: "unstreamed" }])).toEqual([{ type: "agent.message", id: "unstreamed" }]);
 });

@@ -46,13 +46,15 @@ func (s *Server) loadPlatformSession(r *http.Request) (platformsession.Session, 
 	return enriched, nil
 }
 
-func (s *Server) resolvePlatformSessionPrincipal(r *http.Request, session platformsession.Session) (auth.Principal, *httpapi.Error) {
-	header := strings.TrimSpace(r.Header.Get("X-Organization-UUID"))
+func (s *Server) resolvePlatformSessionPrincipal(r *http.Request, session platformsession.Session, header string) (auth.Principal, *httpapi.Error) {
 	query := strings.TrimSpace(r.URL.Query().Get("organization_uuid"))
 	if header != "" && query != "" && header != query {
 		return auth.Principal{}, platformOrganizationInvalid()
 	}
-	organizationUUID := platformOrganizationOverrideID(r)
+	organizationUUID := header
+	if organizationUUID == "" {
+		organizationUUID = query
+	}
 	if organizationUUID == "" {
 		organizationUUID = session.OrganizationUUID
 	}

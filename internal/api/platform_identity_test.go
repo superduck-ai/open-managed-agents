@@ -75,7 +75,7 @@ func TestPlatformOrganizationHeaderValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "/api/bootstrap?organization_uuid="+tc.query, nil)
 			request.Header.Set("X-Organization-UUID", tc.header)
-			_, err := (&Server{}).resolvePlatformSessionPrincipal(request, platformsession.Session{})
+			_, err := (&Server{}).resolvePlatformSessionPrincipal(request, platformsession.Session{}, tc.header)
 			if err == nil || err.Status != http.StatusBadRequest {
 				t.Fatalf("err=%v", err)
 			}

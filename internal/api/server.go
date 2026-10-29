@@ -492,8 +492,9 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		orgHeader := strings.TrimSpace(r.Header.Get("X-Organization-UUID"))
 		if auth.ExtractPlatformSessionKey(r) == "" {
-			if strings.TrimSpace(r.Header.Get("X-Organization-UUID")) != "" {
+			if orgHeader != "" {
 				httpapi.WriteError(w, r, platformIdentityUnauthorized())
 				return
 			}
@@ -505,7 +506,7 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 			if err.Status == http.StatusUnauthorized {
 				clearPlatformSessionCookies(w)
 			}
-			if err.Status >= http.StatusInternalServerError || strings.TrimSpace(r.Header.Get("X-Organization-UUID")) != "" {
+			if err.Status >= http.StatusInternalServerError || orgHeader != "" {
 				httpapi.WriteError(w, r, err)
 				return
 			}
@@ -513,9 +514,9 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 			return
 		}
 		ctx := platformsession.WithSession(r.Context(), session)
-		if principal, scopeErr := s.resolvePlatformSessionPrincipal(r, session); scopeErr == nil {
+		if principal, scopeErr := s.resolvePlatformSessionPrincipal(r, session, orgHeader); scopeErr == nil {
 			ctx = auth.WithPrincipal(ctx, principal)
-		} else if strings.TrimSpace(r.Header.Get("X-Organization-UUID")) != "" {
+		} else if orgHeader != "" {
 			httpapi.WriteError(w, r, scopeErr)
 			return
 		}
@@ -554,7 +555,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 	if err != nil {
 		return auth.Principal{}, err
 	}
-	return s.resolvePlatformSessionPrincipal(r, session)
+	return s.resolvePlatformSessionPrincipal(r, session, strings.TrimSpace(r.Header.Get("X-Organization-UUID")))
 }
 
 func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
@@ -601,18 +602,6 @@ func (s *Server) platformMirrorOrganizationAlias(r *http.Request, principal auth
 		return orgID
 	}
 	s.logger.ErrorContext(r.Context(), "load platform mirror organization alias", "error", err)
-	return ""
-}
-
-func platformOrganizationOverrideID(r *http.Request) string {
-	for _, value := range []string{
-		r.Header.Get("X-Organization-UUID"),
-		r.URL.Query().Get("organization_uuid"),
-	} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
 	return ""
 }
 

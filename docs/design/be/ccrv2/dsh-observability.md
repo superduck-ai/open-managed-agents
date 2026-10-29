@@ -86,7 +86,9 @@ Token 口径：`oma-brain-dsh/src/llm-ai-sdk/stream.ts` 输出 `inputTokens` 为
 
 ### 5.2 去重与连续性
 
-查询按 `dsh_session_id + CAST(dsh_event_seq AS BIGINT)` 分组，用 `ARRAY_AGG(DISTINCT ...)` 返回候选；多个候选时以 UseNumber 解析比较，字段顺序或空白不同视为等价，真正差异返回 409 conflict。保留第一份原始 JSON，不重新序列化。单次查询最多 501 个序号，用于输出 500 条及 `has_more`。序号缺口返回 503 history gap，客户端只追加服务端接受的事件。错误合同集中在 `internal/observability/errors.go`。
+查询按 `dsh_session_id + CAST(dsh_event_seq AS BIGINT)` 分组，用 `ARRAY_AGG(DISTINCT ...)` 返回候选；多个候选时以 UseNumber 解析比较，字段顺序或空白不同视为等价，真正差异返回 409 conflict。保留第一份原始 JSON，不重新序列化。
+
+重新领取时 Brain 以 `includeHistory: true` 重放历史，写入端不去重，因此同一序号会有多份记录。内存中新建的 Session header 省略可选的 `delegationDepth`，从 JSONL 恢复的 header 则总是带该字段（持久化写入 `delegationDepth ?? 0`），两者在首次领取与重新领取后的重放间不同。比较 header 前把缺失的 `delegationDepth` 视为 `0`；其他字段（`cwd`、`parentSession`、`origin`、`agentPreset`、`isSeeded`）在恢复时原样保留，不做归一化。显式不同的深度（例如 `0` 与 `1`）和 event content 的任何差异仍返回 409。已写入的混合数据无需迁移即可读取。单次查询最多 501 个序号，用于输出 500 条及 `has_more`。序号缺口返回 503 history gap，客户端只追加服务端接受的事件。错误合同集中在 `internal/observability/errors.go`。
 
 ### 5.3 UI
 
@@ -154,7 +156,7 @@ flowchart LR
 
 ## 7. 测试与验收
 
-- **普通单测**：OTLP 单次改写、数字精确脱敏、结构化属性与 token 解析（负数、缺失、非整数）、泳道映射与 404、已删除会话过滤、分页 offset、等价重放与冲突、缺口、组织可见性、exporter 关闭与 assignment 替换；看板目录校验、SQL 渲染与租户条件、上一周期拆分、回看、分桶、补零与 `trend`；轮询的失败预算、恢复与取消。
+- **普通单测**：OTLP 单次改写、数字精确脱敏、结构化属性与 token 解析（负数、缺失、非整数）、泳道映射与 404、已删除会话过滤、分页 offset、等价重放与冲突（含缺失与 `0` 等价、不同 `delegationDepth` 冲突）、缺口、组织可见性、exporter 关闭与 assignment 替换；看板目录校验、SQL 渲染与租户条件、上一周期拆分、回看、分桶、补零与 `trend`；轮询的失败预算、恢复与取消。
 - **前端**：各 tab 的加载/空/错误状态、会话选择器、时间表达式解析、平移/缩小、URL 状态、非法范围、查看面板与 `Esc`、CSV 生成。拖选与十字线依赖真实布局，在浏览器中验证。`web/tests/trajectory.html` 仅用于 Vite 开发预览，不进入自动回归与生产构建。
 - **真实验收**：`just verify-be chat doctor brain-observability` 与 `just verify-be chat brain-observability`（需 `OMA_BRAIN_BINARY`）以真实 Brain、OMA、PostgreSQL/Redis/NATS 与 OpenObserve 运行，上游模型固定脚本。阶段覆盖公开消息往返、原生事件与私有 `dsh_log` 一致、跨租户隔离、子 agent 泳道与按 Session 聚合、四个看板 tab 的聚合、已删除会话不可见，以及 OTel 导出（见 [DSH OTel 导出](dsh-otel-export.md)）。不覆盖 retention、长期断网与生产负载。
 

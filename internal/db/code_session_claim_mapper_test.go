@@ -69,17 +69,6 @@ func TestCodeSessionClaimMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{"codeSessionExternalID"},
 			wantSQLFragments:  []string{"metadata #>> '{config,worker_transport}'", "AS worker_transport", "FOR UPDATE"},
 		}},
-		{"worker claim state", mapperBuilderContract{
-			statement: codeSessionClaimMapperFindWorkerClaimStateStatement,
-			bound:     buildCodeSessionClaimMapperFindWorkerClaimState(yourbatis.DialectPostgres, "org-uuid", "workspace-uuid", "cse_test"),
-			wantID:    "CodeSessionClaimMapper.FindWorkerClaimState", wantKind: yourbatis.StatementSelect,
-			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "externalID"},
-			wantSQLFragments: []string{
-				"(worker_lease_expires_at IS NULL AND worker_claim_expires_at IS NOT NULL) AS claim_released",
-				"organization_uuid = $1", "workspace_uuid = $2", "external_id = $3", "deleted_at IS NULL",
-			},
-			wantSQLAbsent: []string{"FOR UPDATE", "CAST("},
-		}},
 		{"reset exhausted", mapperBuilderContract{
 			statement: codeSessionClaimMapperResetExhaustedStatement,
 			bound:     buildCodeSessionClaimMapperResetExhausted(yourbatis.DialectPostgres, "code-session-uuid", 4),

@@ -231,7 +231,7 @@ func (h *Handler) handleCodeSessionWorkerEventsStream(w http.ResponseWriter, r *
 		return
 	}
 	deliveries := &workerStreamDeliveries{}
-	defer h.service.redeliverAbandonedWorkerEvents(codeSession, epoch, subscription, deliveries)
+	defer h.service.redeliverAbandonedWorkerEvents(codeSession, epoch, deliveries)
 	streamStartedAt := time.Now()
 	defer httpapi.ObserveSSEStream(r.Context(), "worker")()
 	defer disconnect()
@@ -331,17 +331,12 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 			if !open {
 				return
 			}
-			if err := deliveries.accept(delivery.AckSubject, func() error {
-				if time.Since(lastEpochValidation) < workerEpochValidationInterval {
-					return nil
-				}
+			deliveries.track(delivery.AckSubject)
+			if time.Since(lastEpochValidation) >= workerEpochValidationInterval {
 				if err := h.db.ValidateCodeSessionWorkerEpoch(ctx, codeSession.ExternalID, epoch); err != nil {
-					return err
+					return
 				}
 				lastEpochValidation = time.Now()
-				return nil
-			}); err != nil {
-				return
 			}
 			envelope := delivery.Envelope
 			if envelope.Version != 2 || envelope.CodeSessionID != codeSession.ExternalID {

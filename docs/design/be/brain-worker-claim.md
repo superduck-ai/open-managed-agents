@@ -206,18 +206,16 @@ RETURNING current_worker_epoch;
 
 #### release 后旧事件流上的投递
 
-release 不推进 epoch。DSH 退役时先关闭事件流再 release，但服务前若有延迟拆除上游连接的代理（如 service mesh sidecar），服务端看到的旧流仍会存活数十秒；这段时间内到达的新输入仍可能被旧 epoch 的流从 JetStream 拉走并写入已无人读取的连接。旧流之后可能因新领取推进 epoch 而在一秒校验间隔内退出，也可能在新领取之前就因代理拆连、Brain 被终止或网络中断以 `client_closed` 退出；无论哪种，这些消息此前都要等 consumer 首个 1 分钟重投窗口。
+release 不推进 epoch。DSH 退役时先关闭事件流再 release，但服务前若有延迟拆除上游连接的代理（如 service mesh sidecar），服务端看到的旧流仍会存活数十秒；这段时间内到达的新输入会被 epoch N 的旧流从 JetStream 拉走并写入已无人读取的连接，同时触发重新领取，epoch 推进为 N+1 后旧流在一秒校验间隔内退出。旧流拉走的消息此前只能等 consumer 首个 1 分钟重投窗口。
 
-流循环对每条拉到的消息先记录 ack subject、再做（按一秒间隔复用的）epoch 校验，两步收在 `workerStreamDeliveries.accept` 中，保证因校验失败而被丢弃的那条也会被记录。旧流退出时按以下顺序处理：
+修复只在旧流退出时归还消息，不改变 release、epoch、租约、接管、宽限期、`FailPermanently` 与耗尽 hold/reset 的状态机：
 
-1. 关闭订阅（停止从 JetStream 拉取）；
-2. 以独立的五秒超时把该 epoch 标记为断开（`MarkCodeSessionWorkerDisconnectedForEpoch`，既有行为）；
-3. 以独立的一秒预算读空订阅中已拉取但未写出的消息，一并记录；
-4. 以独立的五秒超时（`workerDeliveryTimeout`）只读查询该 epoch 是否仍持有领取，并据此决定是否 NAK。
+- 流循环对每条拉到的消息先记录 ack subject，再做（按一秒间隔复用的）epoch 校验，因此因校验失败而被丢弃的那条也会被记录。
+- 旧流退出时依次关闭订阅、标记该 epoch 断开，再以独立的五秒超时（`workerDeliveryTimeout`）调用 `ValidateCodeSessionWorkerEpoch`。返回 `ErrWorkerEpochMismatch` 时，对该连接记录过的所有 ack subject 发送 NAK，令 JetStream 立即重投给后续 epoch 的流；已 ACK 的消息由 JetStream 忽略 NAK。epoch 被取代后 ACK 映射与 delivery API 都会拒绝旧 epoch，这些消息只能靠重投。
+- epoch 仍是 N（普通断线，worker 可能以同一 epoch 重连并确认）、Code Session 已不存在或校验失败时不 NAK，保持原有的超时重投；校验或 NAK 失败只记录 Warn。
+- JetStream 订阅关闭时，读取协程已经 Fetch 但尚未交给流循环的消息会被直接 NAK。这条消息从未写给任何 worker，无条件归还是安全的。
 
-“是否仍持有领取”由 `CodeSessionClaimMapper.FindWorkerClaimState` 按组织、工作区与 Code Session ID 读取，`DB.ValidateCodeSessionWorkerClaim` 映射为：`current_worker_epoch` 不再是 N 时返回 `ErrWorkerEpochMismatch`；epoch 仍是 N 但 `worker_lease_expires_at IS NULL AND worker_claim_expires_at IS NOT NULL` 时返回 `ErrWorkerClaimReleased`。这两列正是 `Release`（三种 kind 都）写入的状态：清空租约并设置领取期限；`RegisterWorker` 会设置租约并清空领取期限，心跳只续租约，普通断开只改 `connection_status`，因此注册后的 epoch 在断线、心跳、重连时都判为仍持有。非 `claim` transport 从不写领取期限，判定与原先只比较 epoch 时相同。
-
-返回 `ErrWorkerEpochMismatch` 或 `ErrWorkerClaimReleased` 时，对该连接拉取过的所有消息发送 NAK，使它们立即重投给后续 epoch 的流；已 ACK 的消息由 JetStream 忽略 NAK。epoch 被取代后，ACK 映射与 delivery API 都会拒绝旧 epoch，这些消息只能靠重投；领取在同一 epoch 被释放时 delivery API 仍按 epoch 接受确认，但 release 只在 DSH 已退役该会话（`idle`）、准入失败（`admission_failed`）或已对会话调用 `stop()` 后交接（`shutdown`）时发出，旧 worker 不会再处理新拉到的消息。shutdown 交接时正在处理的那条可能既被旧 worker 收尾确认、又被重投给新 worker，这与原先 1 分钟后重投的结果相同，只是提前，仍由至少一次投递与 worker 按事件 ID 幂等兜底。仍持有领取（普通断线，worker 可能以同一 epoch 重连并确认）、Code Session 已不存在或查询失败时不 NAK，保持原有的超时重投；查询或 NAK 失败只记录 Warn。该查询只用于流退出时的 NAK 决策，**不用于投递前拦截**：重新领取之前旧流可能是唯一的投递目标，拦截会造成空档内反复重投；release、epoch、租约、接管、宽限期、`FailPermanently` 与耗尽 hold/reset 的状态机均不变。
+代理在新领取之前就拆除旧连接（例如 release 后 Brain 被终止、暂无可用容量）时，旧流以 `client_closed` 退出且 epoch 仍为 N，已写出的消息仍等待首个 1 分钟重投窗口；该场景不在本次修复范围内。
 
 ```mermaid
 sequenceDiagram
@@ -230,14 +228,10 @@ sequenceDiagram
     Note over Proxy,API: 上游连接仍存活，旧流继续拉取
     API->>JS: 新输入发布
     JS-->>API: 投递到 epoch N 旧流（写入无人读取的连接）
-    alt 新领取先到
-        DSH->>API: 领取，epoch 推进为 N+1，打开新流
-        API->>API: 旧流一秒内校验失败并退出
-    else 代理先拆连
-        Proxy-->>API: 旧流 client_closed（epoch 仍为 N，领取已释放）
-    end
-    API->>API: 关闭订阅 → 标记断开 → 读空 → 查询领取状态
-    API->>JS: 领取已释放或被取代：对旧流拉取过的消息 NAK
+    DSH->>API: 领取，epoch 推进为 N+1，打开新流
+    API->>API: 旧流一秒内校验失败并退出
+    API->>API: 关闭订阅 → 标记断开 → 校验 epoch
+    API->>JS: epoch 已被取代：对旧流拉取过的消息 NAK
     JS-->>API: 立即重投到后续 epoch 的流
 ```
 
@@ -330,7 +324,7 @@ handler 只调用这些函数；DB 层返回 `ErrPreconditionFailed`、`ErrNotFo
 - `internal/db/code_session_claims_postgres_test.go`（`TEST_MIGRATION_DATABASE_URL`）：非 claim transport、idle 会话、跨组织请求和未持有领取的 release 被拒绝；8 个并发领取只成功 1 个；领取期限、release 退避与立即释放；旧 epoch 注册被拒；注册清除请求、连接重置 attempts；宽限期内不可领取且旧心跳仍成功，超过宽限期后接管并拒绝旧心跳；耗尽后的 hold、以 epoch 守卫的 reset 与新输入后恢复领取；注册后、连接前崩溃残留的过期租约在耗尽时被清空，reset 后可再次领取；`FailPermanently` 只允许当前领取者调用，并使会话在 reset 前保持耗尽；耗尽与永久失败都推进 epoch，旧 epoch 的注册被拒，发布失败后再次 hold 时 epoch 不变，以被围栏的旧 epoch reset 失败；`idle` release 只允许当前领取者调用，清空租约后 idle 会话不可领取、新输入后立即可领取；首个请求的 trace 不被重复请求覆盖并随领取返回，租约接管领取不返回 trace。
 - `internal/workerevents/brain_test.go`：取消订阅后不再收到通知；Core NATS 与内存 broker 都能唤醒订阅者，且不再创建 `OMA_BRAIN_TASKS`。
 - `internal/codesessions/brain_dispatch_test.go`：fleet token 文件长度与读取校验、Bearer 比较、`block_ms` 边界、transport 判定与租约参数。
-- `internal/codesessions/worker_stream_redelivery_test.go`：旧流退出时 epoch 未推进但领取已释放、epoch 已被取代都对已写出与关闭后读空的消息去重 NAK；领取仍持有（普通断线）、Code Session 不存在、查询失败与没有投递时都不 NAK，NAK 失败返回错误；读空在自身预算内返回；`accept` 在校验前记录 ack subject。`internal/db/code_session_claim_mapper_test.go` 覆盖 `FindWorkerClaimState` 的 SQL 与参数绑定；`internal/db/code_session_claims_postgres_test.go` 在真实 PostgreSQL 上验证三种 release 后同 epoch 判为已释放、重新领取后旧 epoch 判为被取代、其他工作区读不到，以及注册后的断开、心跳、重连与非 claim transport 都判为仍持有。`internal/workerevents/nak_test.go`：嵌入式 JetStream 中被放弃的消息在 NAK 前不会重投、NAK 后立即以第二次投递到达新订阅、已 ACK 的消息忽略 NAK；内存 broker 仅重新分发未确认消息，关闭订阅（包括已被新订阅取代的旧订阅）时结束消息通道。
+- `internal/codesessions/worker_stream_redelivery_test.go`：旧流退出时 epoch 已被取代则对记录的消息去重 NAK；epoch 仍为当前值（普通断线）、Code Session 不存在、校验失败与没有投递时都不 NAK，NAK 失败返回错误。`internal/workerevents/nak_test.go`：嵌入式 JetStream 中被放弃的消息在 NAK 前不会重投、NAK 后立即以第二次投递到达新订阅、已 ACK 的消息忽略 NAK；订阅关闭时已 Fetch 但未交出的消息立即以第二次投递到达新订阅；内存 broker 仅重新分发未确认消息。
 - `internal/codesessions/telemetry_test.go`：领取轮询 outcome、`oma.brain_claim.issue` 的 link 与排队等待、释放 conflict 归类、耗尽计数，claim transport 唤醒时跳过沙箱续期（`brain_claim`）。
 - `internal/config`：brain 模式缺少 `code_session.brain_claim_token_file` 时拒绝启动。
 - `tests/brain_worker_claim_test.go`（真实 PostgreSQL 与 HTTP 服务）：鉴权与参数错误；长轮询在派发后被唤醒、第二个 worker 领不到、注册成功且心跳返回约 20 秒租约；宽限期边界接管与旧 worker fence；release 冲突、失败退避、5 次后发布 `session.error` 与 `retries_exhausted` 并保持 idle；耗尽与 `permanent` 后旧凭据注册被拒；`permanent` release 立即发布同样的事件，新输入后可重新领取；`idle` release 后无新输入不可领取，会话回到 running 后立即可领取；公共会话已删除时不会被领取（epoch 与 attempts 不变）。`tests/brain_sandbox_provisioning_test.go` 改为统计 `DispatchWorker` 调用。

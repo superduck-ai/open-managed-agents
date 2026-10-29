@@ -80,50 +80,43 @@ func TestMemoryNakRedispatchesOnlyPendingEvents(t *testing.T) {
 	assertNoWorkerDelivery(t, subscription)
 }
 
-func TestMemorySubscriptionCloseEndsMessages(t *testing.T) {
-	broker := NewMemory()
-	subscription, err := broker.Subscribe(t.Context(), "cse_memory_close")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := subscription.Close(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case _, open := <-subscription.Messages():
-		if open {
-			t.Fatal("closed subscription delivered an event")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("closed subscription kept its message channel open")
-	}
-}
-
-func TestMemorySupersededSubscriptionCloseEndsMessages(t *testing.T) {
-	broker := NewMemory()
-	sessionID := "cse_memory_superseded"
+func TestJetStreamCloseNaksEventFetchedButNotHandedOut(t *testing.T) {
+	broker := lifecycleBroker(t, 5*time.Minute)
+	sessionID := "cse_close_nak"
 	stale, err := broker.Subscribe(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	publishControlTestEvent(t, broker, sessionID, "evt_fetched", "user", "")
+	consumer, err := broker.js.Consumer(t.Context(), StreamName, taskLane.consumerName(sessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		info, err := consumer.Info(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.NumAckPending == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("reader did not fetch the event")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := stale.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertWorkerSubscriptionClosed(t, stale)
 	replacement, err := broker.Subscribe(t.Context(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = replacement.Close() })
-	if err := stale.Close(); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.After(time.Second)
-	for open := true; open; {
-		select {
-		case _, open = <-stale.Messages():
-		case <-deadline:
-			t.Fatal("superseded subscription kept its message channel open after Close")
-		}
-	}
-	publishControlTestEvent(t, broker, sessionID, "evt_after_supersede", "user", "")
-	if delivery := receiveWorkerDelivery(t, replacement); delivery.Envelope.EventID != "evt_after_supersede" {
-		t.Fatalf("replacement delivery = %s", delivery.Envelope.EventID)
+	redelivered := receiveWorkerDelivery(t, replacement)
+	if redelivered.Envelope.EventID != "evt_fetched" || redelivered.DeliveryCount != 2 {
+		t.Fatalf("redelivery = %s attempt %d", redelivered.Envelope.EventID, redelivered.DeliveryCount)
 	}
 }

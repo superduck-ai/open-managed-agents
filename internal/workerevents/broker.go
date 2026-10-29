@@ -408,6 +408,7 @@ func (s *jetStreamSubscription) receive(consumer jetstream.Consumer) {
 			select {
 			case s.messages <- delivery:
 			case <-s.ctx.Done():
+				_ = message.Nak()
 				return
 			}
 		}
@@ -684,7 +685,6 @@ func (s *memorySubscription) Close() error {
 			s.broker.undeliverLocked(s.codeSessionID)
 		}
 		close(s.done)
-		close(s.messages)
 		s.broker.mu.Unlock()
 	})
 	return nil

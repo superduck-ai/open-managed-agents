@@ -219,7 +219,7 @@ Console 成员写入由资源层根据已验证 Principal 提供校验回调，�
 
 每标签 sessionStorage 仅保存账号 UUID 及目标组织/工作区。进入依次取消旧请求和缓存、带目标头 bootstrap、加载目标真实工作区、选择 Default 并安装；失败保留原 scope。刷新先无头身份 bootstrap，核对账号后验证标签目标，完成前不渲染业务子树。恢复时若 bootstrap 明确返回非平台来源、账号或目标组织不匹配，则清除平台偏好并回落普通组织；临时网络或服务故障保留平台偏好和重试入口。进入期间不写普通组织/工作区偏好；普通切换器先清目标再切真实组织。
 
-退出先使 generation 失效、取消 SSE/读取和下载、清头及缓存、删除标签目标，清空当前 Console scope，随后通过 TanStack Router 返回刚访问的目标组织详情页 `/platform-admin/organizations/{targetOrganizationUuid}`；目标缺失时回退 `/platform-admin`。退出无需网络请求，不恢复进入前的组织或工作区，也不跳转原工作区。退出不撤销平台授权；原组织后续带头请求仍按统一规则计算有效 Admin。已创建资源与在途外部副作用继续存在。
+退出先使 generation 失效，阻止在途 SSE/读取和下载的结果提交，清头及缓存，删除标签目标，清空当前 Console scope，随后通过 TanStack Router 返回刚访问的目标组织详情页 `/platform-admin/organizations/{targetOrganizationUuid}`；目标缺失时回退 `/platform-admin`。退出无需网络请求，不恢复进入前的组织或工作区，也不跳转原工作区。退出不撤销平台授权；原组织后续带头请求仍按统一规则计算有效 Admin。已创建资源与在途外部副作用继续存在。
 
 ## 8. API 草案
 

@@ -6,6 +6,7 @@ import type { Assignment } from "./assignment.ts";
 import { DEFAULT_MAX_OUTPUT_TOKENS } from "./model-defaults.ts";
 import { normalizeChatReasoning } from "./chat-reasoning.ts";
 import type { AiSdkRoute } from "./llm-ai-sdk/index.ts";
+import { traceHeaders } from "./observability/trace-context.ts";
 
 type ModelBackend = "messages" | "chat_completions";
 
@@ -24,13 +25,14 @@ export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
   const backend = modelBackend(assignment, options.model);
   const root = `${api.base.replace(/\/$/, "")}/v1`;
   const agentID = sessionId === assignment.session_id ? undefined : sessionId;
+  const extraHeaders = { ...traceHeaders(assignment.trace_parent), ...(agentID ? { "X-Claude-Code-Agent-Id": agentID } : {}) };
   if (backend === "messages") {
-    const fetcher = proxyFetch(api, `${root}/messages`, agentID);
+    const fetcher = proxyFetch(api, `${root}/messages`, extraHeaders);
     return { model: createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(options.model),
       replayFormat: "oma-messages-v1", signedReasoning: true, maxOutputTokens: output, maxOutputTokensLimit,
       providerOptions: { anthropic: { toolStreaming: false } } };
   }
-  const fetcher = proxyFetch(api, `${root}/chat/completions`, agentID, normalizeChatReasoning);
+  const fetcher = proxyFetch(api, `${root}/chat/completions`, extraHeaders, normalizeChatReasoning);
   return { model: createOpenAICompatible({ name: "oma", baseURL: root, apiKey: assignment.model_token, includeUsage: true,
     fetch: fetcher, transformRequestBody: chatRequestBody })(options.model), maxOutputTokens: output, maxOutputTokensLimit, replayFormat: "oma-chat-completions-v1" };
 }
@@ -46,7 +48,7 @@ function chatRequestBody({ max_tokens: maxTokens, ...body }: Record<string, any>
   return maxTokens === undefined ? body : { ...body, max_completion_tokens: maxTokens };
 }
 
-function proxyFetch(api: OmaApi, endpoint: string, agentID: string | undefined,
+function proxyFetch(api: OmaApi, endpoint: string, extraHeaders: Record<string, string>,
   response: (value: Response) => Response = (value) => value): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
@@ -54,7 +56,7 @@ function proxyFetch(api: OmaApi, endpoint: string, agentID: string | undefined,
       throw new LlmError("Model request must use the OMA proxy endpoint", "INVALID_ARGS");
     const headers = new Headers(init.headers);
     headers.delete("x-api-key");
-    if (agentID) headers.set("X-Claude-Code-Agent-Id", agentID);
+    for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
     const idle = new IdleTimeout(MODEL_IDLE_TIMEOUT_MS);
     try {
       const result = await api.fetcher(endpoint, { method: "POST", headers, body: init.body, redirect: "error",

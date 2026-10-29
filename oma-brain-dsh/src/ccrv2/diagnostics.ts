@@ -1,7 +1,11 @@
+import { emitBrainLog } from "../telemetry.ts";
 /** Protocol fields only: callers must not include tokens, payloads or error messages. */
-export function workerDiagnostic(level: "info" | "warn" | "error", event: string, fields: Record<string, unknown>): void {
+export function workerDiagnostic(
+  level: "info" | "warn" | "error", event: string, fields: Record<string, unknown>, traceParent?: string,
+): void {
   try { console[level](JSON.stringify({ event, ...fields })); }
   catch { /* A log sink cannot alter protocol completion or retries. */ }
+  emitBrainLog(level, event, fields, traceParent);
 }
 import { CcrRecoveryError } from "./recovery.ts";
 import { CcrHttpError } from "./client.ts";

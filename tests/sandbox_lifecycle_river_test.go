@@ -16,6 +16,7 @@ import (
 	"uuid"
 
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/superduck-ai/open-managed-agents/internal/api"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
@@ -63,9 +64,18 @@ func testSandboxLifecycleSchedule(t *testing.T, archived bool) {
 		}
 	}()
 	const sweepQueue = "sandbox_lifecycle_test_sweep"
-	client, err := riverjobs.NewClient(f.app.db, logger, workers, map[string]river.QueueConfig{
-		sweepQueue:                         {MaxWorkers: 1, FetchPollInterval: time.Hour},
-		environments.SandboxLifecycleQueue: {MaxWorkers: 4, FetchPollInterval: time.Hour},
+	client, err := river.NewClient(riverdatabasesql.NewWithPgxListener(f.app.db.SQLDB(), f.app.db.ListenerPool()), &river.Config{
+		Schema:  "public",
+		Workers: workers,
+		Queues: map[string]river.QueueConfig{
+			sweepQueue:                         {MaxWorkers: 1, FetchPollInterval: time.Hour},
+			environments.SandboxLifecycleQueue: {MaxWorkers: 4, FetchPollInterval: time.Hour},
+		},
+		Logger:              logger,
+		JobTimeout:          2 * time.Minute,
+		SoftStopTimeout:     10 * time.Second,
+		DurablePeriodicJobs: river.DurablePeriodicJobsConfig{Enabled: true},
+		Test:                river.TestConfig{Time: lifecycleTestClock{}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -385,4 +395,15 @@ func serveArchiveWithLifecycle(t *testing.T, app *testApp, lifecycle *environmen
 		app.baseURL, app.client = previousURL, previousClient
 		server.Close()
 	})
+}
+
+type lifecycleTestClock struct{}
+
+func (lifecycleTestClock) Now() time.Time {
+	return time.Now()
+}
+
+func (clock lifecycleTestClock) NowOrNil() *time.Time {
+	now := clock.Now()
+	return &now
 }

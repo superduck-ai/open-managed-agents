@@ -82,6 +82,14 @@ func defaultConfig() Config {
 				},
 			},
 		},
+		Telemetry: TelemetryConfig{
+			ServiceName:  "oma-server",
+			OTLP:         TelemetryOTLPConfig{BaseURL: "http://openobserve:5080", Organization: "oma", TracesStream: "oma_server", LogsStream: "oma_server", Timeout: 10 * time.Second},
+			Traces:       TelemetryTracesConfig{Enabled: true},
+			Metrics:      TelemetryMetricsConfig{Enabled: true, ExportInterval: 30 * time.Second},
+			Logs:         TelemetryLogsConfig{Enabled: true, Level: "info"},
+			StateMetrics: TelemetryStateMetricsConfig{Interval: time.Minute, StaleRunningAfter: 10 * time.Minute, StuckStartingAfter: 10 * time.Minute},
+		},
 		Webhook: WebhookConfig{
 			Concurrency:         10,
 			WorkerEnabled:       true,

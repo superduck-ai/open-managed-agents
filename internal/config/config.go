@@ -41,6 +41,14 @@ func Load() (Config, error) {
 	cfg.E2B.SandboxURL = strings.TrimSpace(cfg.E2B.SandboxURL)
 	cfg.E2B.Template = strings.TrimSpace(cfg.E2B.Template)
 
+	cfg.Telemetry.OTLP.BaseURL = strings.TrimSpace(cfg.Telemetry.OTLP.BaseURL)
+	cfg.Telemetry.OTLP.Organization = strings.TrimSpace(cfg.Telemetry.OTLP.Organization)
+	cfg.Telemetry.OTLP.Username = strings.TrimSpace(cfg.Telemetry.OTLP.Username)
+	cfg.Telemetry.ServiceName = strings.TrimSpace(cfg.Telemetry.ServiceName)
+	cfg.Telemetry.Logs.Level = strings.TrimSpace(cfg.Telemetry.Logs.Level)
+	cfg.Telemetry.OTLP.TracesStream = strings.TrimSpace(cfg.Telemetry.OTLP.TracesStream)
+	cfg.Telemetry.OTLP.LogsStream = strings.TrimSpace(cfg.Telemetry.OTLP.LogsStream)
+
 	normalizeEnvironmentPrebuildConfig(&cfg.EnvironmentPrebuilds)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
@@ -54,6 +62,28 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func validateStorageConfig(storage StorageConfig) error {
+	if strings.TrimSpace(storage.Type) == "" {
+		return errors.New("storage.type is required")
+	}
+	if storage.Type != StorageTypeS3 {
+		return fmt.Errorf("storage.type must be %q", StorageTypeS3)
+	}
+	if strings.TrimSpace(storage.S3.Endpoint) == "" {
+		return errors.New("storage.s3.endpoint is required")
+	}
+	if strings.TrimSpace(storage.S3.Bucket) == "" {
+		return errors.New("storage.s3.bucket is required")
+	}
+	if strings.TrimSpace(storage.S3.Region) == "" {
+		return errors.New("storage.s3.region is required")
+	}
+	if strings.TrimSpace(storage.S3.AccessKeyID) == "" || strings.TrimSpace(storage.S3.SecretAccessKey) == "" {
+		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
+	}
+	return nil
 }
 
 func validate(cfg Config) error {
@@ -93,23 +123,8 @@ func validate(cfg Config) error {
 	if err := validateEnvironmentPackageConfig(cfg.EnvironmentPackages); err != nil {
 		return err
 	}
-	if strings.TrimSpace(cfg.Storage.Type) == "" {
-		return errors.New("storage.type is required")
-	}
-	if cfg.Storage.Type != StorageTypeS3 {
-		return fmt.Errorf("storage.type must be %q", StorageTypeS3)
-	}
-	if strings.TrimSpace(cfg.Storage.S3.Endpoint) == "" {
-		return errors.New("storage.s3.endpoint is required")
-	}
-	if strings.TrimSpace(cfg.Storage.S3.Bucket) == "" {
-		return errors.New("storage.s3.bucket is required")
-	}
-	if strings.TrimSpace(cfg.Storage.S3.Region) == "" {
-		return errors.New("storage.s3.region is required")
-	}
-	if strings.TrimSpace(cfg.Storage.S3.AccessKeyID) == "" || strings.TrimSpace(cfg.Storage.S3.SecretAccessKey) == "" {
-		return errors.New("storage.s3.access_key_id and storage.s3.secret_access_key are required")
+	if err := validateStorageConfig(cfg.Storage); err != nil {
+		return err
 	}
 	if err := validatePositiveValues(cfg); err != nil {
 		return err
@@ -124,6 +139,9 @@ func validate(cfg Config) error {
 		return err
 	}
 	if err := ValidateMasterKey(cfg.Vault.MasterKey); err != nil {
+		return err
+	}
+	if err := validateTelemetryConfig(cfg.Telemetry); err != nil {
 		return err
 	}
 	if err := validateCodeSessionSandboxAPIBaseURL(cfg.Env, cfg.CodeSession); err != nil {

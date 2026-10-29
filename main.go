@@ -39,13 +39,16 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
+	"github.com/superduck-ai/open-managed-agents/internal/statemetrics"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetryexport"
 	"github.com/superduck-ai/open-managed-agents/internal/transcriptretention"
 	"github.com/superduck-ai/open-managed-agents/internal/tunnels"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func main() {
@@ -53,12 +56,19 @@ func main() {
 	slog.SetDefault(logger)
 
 	if err := run(logger); err != nil {
-		logger.Error("application stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
+func run(bootstrap *slog.Logger) (err error) {
+	logger := bootstrap
+	shutdown := func() {}
+	defer func() {
+		if err != nil {
+			logger.Error("application stopped", "error", err)
+		}
+		shutdown()
+	}()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	context.AfterFunc(ctx, stop)
@@ -67,6 +77,15 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	telemetryRuntime, err := telemetry.Setup(ctx, cfg.Telemetry, cfg.Env, bootstrap)
+	if err != nil {
+		return fmt.Errorf("setup telemetry: %w", err)
+	}
+	shutdown = func() { shutdownTelemetry(telemetryRuntime, bootstrap) }
+	level := cfg.Telemetry.Logs.SlogLevel()
+	logger = newApplicationLogger(logging.NewConsoleHandler(os.Stdout, level), telemetryRuntime, level)
+	slog.SetDefault(logger)
+
 	closeDiagnostics, err := diagnostics.Start(cfg.Server.DiagnosticsAddr, os.Getenv("OMA_DIAGNOSTICS_LISTENER_FD"), logger.With("component", "diagnostics"))
 	if err != nil {
 		return fmt.Errorf("start diagnostics: %w", err)
@@ -79,18 +98,8 @@ func run(logger *slog.Logger) error {
 	}
 	defer database.Close()
 
-	if cfg.Database.AutoMigrate {
-		if err := database.Migrate(ctx); err != nil {
-			return fmt.Errorf("migrate database: %w", err)
-		}
-		if err := riverjobs.Migrate(ctx, database, logger.With("component", "river_jobs")); err != nil {
-			return fmt.Errorf("migrate River: %w", err)
-		}
-	} else {
-		logger.Info("database auto migration disabled", "env", cfg.Env)
-	}
-	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
-		return fmt.Errorf("seed database: %w", err)
+	if err := initializeDatabase(ctx, cfg, database, logger); err != nil {
+		return err
 	}
 	syncModelPrices(ctx, database, logger)
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
@@ -242,6 +251,12 @@ func run(logger *slog.Logger) error {
 		}
 	}()
 
+	stopReporter, err := startStateMetrics(ctx, cfg, database, natsConnection, logger)
+	if err != nil {
+		return err
+	}
+	defer stopReporter()
+
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
@@ -317,6 +332,77 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve: %w", err)
 		}
+	}
+	return nil
+}
+
+func newApplicationLogger(console slog.Handler, telemetryRuntime *telemetry.Runtime, level slog.Level) *slog.Logger {
+	var handler slog.Handler = logging.NewContextHandler(console, logContextAttrs)
+	if otelHandler := telemetryRuntime.LogHandler(); otelHandler != nil {
+		handler = slog.NewMultiHandler(handler, logging.NewContextHandler(logging.NewLevelHandler(otelHandler, level), requestIDAttrs))
+	}
+	return slog.New(handler)
+}
+
+func logContextAttrs(ctx context.Context) []slog.Attr {
+	attrs := make([]slog.Attr, 0, 3)
+	if spanContext := trace.SpanContextFromContext(ctx); spanContext.IsValid() {
+		attrs = append(attrs,
+			slog.String("trace_id", spanContext.TraceID().String()),
+			slog.String("span_id", spanContext.SpanID().String()),
+		)
+	}
+	return append(attrs, requestIDAttrs(ctx)...)
+}
+
+func requestIDAttrs(ctx context.Context) []slog.Attr {
+	if requestID := httpapi.RequestID(ctx); requestID != "" {
+		return []slog.Attr{slog.String("request_id", requestID)}
+	}
+	return nil
+}
+
+func shutdownTelemetry(telemetryRuntime *telemetry.Runtime, bootstrap *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := telemetryRuntime.Shutdown(ctx); err != nil {
+		bootstrap.WarnContext(ctx, "shutdown telemetry", "error", err)
+	}
+}
+
+func startStateMetrics(ctx context.Context, cfg config.Config, database *db.DB, natsConnection *nats.Conn, logger *slog.Logger) (func(), error) {
+	if !cfg.Telemetry.StateMetricsActive() {
+		return func() {}, nil
+	}
+	reporter, err := statemetrics.New(statemetrics.Dependencies{
+		DB: database, NATS: natsConnection, Config: cfg.Telemetry.StateMetrics,
+		Streams:   []string{workerevents.StreamName, webhooks.StreamName, tunnels.CommandStreamName, telemetryexport.StreamName},
+		Consumers: []statemetrics.ConsumerTarget{{Stream: webhooks.StreamName, Consumer: webhooks.DeliveryConsumerName}},
+		Logger:    logger.With("component", "state_metrics"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create state metrics reporter: %w", err)
+	}
+	stop, err := reporter.Start(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("start state metrics reporter: %w", err)
+	}
+	return stop, nil
+}
+
+func initializeDatabase(ctx context.Context, cfg config.Config, database *db.DB, logger *slog.Logger) error {
+	if cfg.Database.AutoMigrate {
+		if err := database.Migrate(ctx); err != nil {
+			return fmt.Errorf("migrate database: %w", err)
+		}
+		if err := riverjobs.Migrate(ctx, database, logger.With("component", "river_jobs")); err != nil {
+			return fmt.Errorf("migrate River: %w", err)
+		}
+	} else {
+		logger.Info("database auto migration disabled", "env", cfg.Env)
+	}
+	if err := database.Seed(ctx, cfg.Bootstrap); err != nil {
+		return fmt.Errorf("seed database: %w", err)
 	}
 	return nil
 }

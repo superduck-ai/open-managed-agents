@@ -35,6 +35,7 @@ type codeSessionStreamFanout struct {
 }
 
 func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionEvent) {
+	h.observeSessionOutcomeEvents(ctx, events)
 	if len(events) == 0 {
 		return
 	}
@@ -53,6 +54,7 @@ func (h *Handler) publishSessionEvents(ctx context.Context, events []db.SessionE
 		payload := payloads[sessionID]
 		if err := h.publishFanout(ctx, sessionID, sessionfanout.KindSessionEvents, payload); err != nil {
 			h.logger.WarnContext(ctx, "publish session events fanout", "session_id", sessionID, "event_count", len(payload.Events), "error", err)
+			sessionMetrics.Get().fanoutPublishFailures.Add(ctx, 1)
 		}
 	}
 }

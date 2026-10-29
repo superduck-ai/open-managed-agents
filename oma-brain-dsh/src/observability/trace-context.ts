@@ -28,6 +28,15 @@ export function formatTraceParent(traceId: string, spanId: string, sampled = tru
   return `00-${traceId}-${spanId}-${sampled ? "01" : "00"}`;
 }
 
+export function canonicalTraceParent(value: unknown): string | undefined {
+  const parsed = parseTraceParent({ traceparent: value });
+  return parsed ? formatTraceParent(parsed.traceId, parsed.spanId, parsed.sampled) : undefined;
+}
+
+export function traceHeaders(traceParent: string | undefined): Record<string, string> {
+  return traceParent ? { traceparent: traceParent } : {};
+}
+
 export function newTraceId(): string {
   return randomBytes(16).toString("hex");
 }

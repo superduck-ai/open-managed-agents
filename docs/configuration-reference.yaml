@@ -368,6 +368,30 @@ transcript_archive:
   delete_batch_rows: 500
   max_rows_per_job: 50000
 
+telemetry:
+  enabled: false
+  service_name: oma-server
+  otlp:
+    base_url: http://openobserve:5080 # 只写协议、主机与端口，不带路径、query 或 fragment
+    organization: oma
+    username: ""
+    password: "" # 敏感值：OpenObserve 写入账号密码
+    traces_stream: oma_server
+    logs_stream: oma_server
+    timeout: 10s
+  traces:
+    enabled: true
+  metrics:
+    enabled: true # 同时导出 Go 运行时指标（go.goroutine.count、go.memory.*、go.schedule.duration 等）
+    export_interval: 30s
+  logs:
+    enabled: true
+    level: info # console 与 OTLP 日志共用的最低级别；设为 debug 可看到 2xx 访问日志
+  state_metrics:
+    interval: 60s
+    stale_running_after: 10m
+    stuck_starting_after: 10m
+
 # 飞书渠道桥接服务；令牌仅用于 OMA 到桥接服务的内部调用。
 channel_bridge:
   url: ""

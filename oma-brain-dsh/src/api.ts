@@ -1,5 +1,6 @@
 import type { Assignment } from "./assignment.ts";
 import type { Payload } from "./json.ts";
+import { traceHeaders } from "./observability/trace-context.ts";
 
 export class HttpError extends Error {
   constructor(readonly status: number) {
@@ -66,6 +67,10 @@ export class OmaApi {
         redirect: "error",
       },
     );
+  }
+
+  traceHeaders(id: string): Record<string, string> {
+    return traceHeaders(this.assignments.get(id)?.trace_parent);
   }
 
   assignment(id: string): Assignment {

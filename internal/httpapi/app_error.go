@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -48,6 +49,17 @@ func (a *ErrorAdapter) Write(w http.ResponseWriter, r *http.Request, err error) 
 }
 
 func (a *ErrorAdapter) log(r *http.Request, kind string, err error) {
+	if ClientGone(r) && errors.Is(err, context.Canceled) {
+		a.logger.InfoContext(
+			r.Context(),
+			"http request canceled by client",
+			"request_id", RequestID(r.Context()),
+			"method", r.Method,
+			"path", r.URL.Path,
+			"error_kind", kind,
+		)
+		return
+	}
 	a.logger.ErrorContext(
 		r.Context(),
 		"http request failed",

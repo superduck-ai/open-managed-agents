@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
@@ -18,6 +19,13 @@ type workerDeliveryUpdate struct {
 type workerDeliveryResult struct {
 	Applied int
 	Ignored int
+	settled []settledWorkerDelivery
+}
+
+type settledWorkerDelivery struct {
+	update    workerDeliveryUpdate
+	outcome   string
+	reference workerevents.AckRef
 }
 
 func (s *Service) applyWorkerDeliveryUpdates(
@@ -63,6 +71,7 @@ func (s *Service) applyWorkerDeliveryUpdates(
 			err = s.db.WithLockedCodeSessionWorkerEpoch(ackCtx, codeSessionID, epoch, apply)
 		}
 	}
+	recordWorkerDeliveryOutcome(ctx, codeSessionID, updates, result, err)
 	cancel()
 	// 对象清理会访问 jobs 表，必须在释放 Code Session 事务后执行，避免回调
 	// 另取 DB 连接。即使后续 update 失败，已 DoubleAck 的对象仍可以清理。
@@ -84,6 +93,7 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 	for _, update := range updates {
 		reference, found := references[update.EventID]
 		if !found {
+			result.settled = append(result.settled, settledWorkerDelivery{update: update, outcome: "ignored"})
 			result.Ignored++
 			continue
 		}
@@ -108,9 +118,37 @@ func (s *Service) applyLockedWorkerDeliveryUpdates(
 		default:
 			return result, cleanupJobIDs, db.ErrInvalidState
 		}
+		result.settled = append(result.settled, settledWorkerDelivery{update: update, outcome: "applied", reference: reference})
 		result.Applied++
 	}
 	return result, cleanupJobIDs, nil
+}
+
+func recordWorkerDeliveryOutcome(ctx context.Context, codeSessionID string, updates []workerDeliveryUpdate, result workerDeliveryResult, err error) {
+	if err != nil {
+		recordFailedWorkerDeliveryUpdates(ctx, updates, err)
+		return
+	}
+	observeSettledWorkerDeliveries(ctx, codeSessionID, result.settled)
+}
+
+func observeSettledWorkerDeliveries(ctx context.Context, codeSessionID string, settled []settledWorkerDelivery) {
+	for _, delivery := range settled {
+		if delivery.outcome == "applied" && delivery.update.Status == "processed" {
+			observeWorkerEventAck(ctx, codeSessionID, delivery.update.EventID, delivery.reference)
+		}
+		recordWorkerEventUpdate(ctx, delivery.update.Status, delivery.outcome)
+	}
+}
+
+func recordFailedWorkerDeliveryUpdates(ctx context.Context, updates []workerDeliveryUpdate, err error) {
+	outcome := telemetry.Outcome(err)
+	if ctx.Err() != nil {
+		outcome = telemetry.OutcomeCanceled
+	}
+	for _, update := range updates {
+		recordWorkerEventUpdate(ctx, update.Status, outcome)
+	}
 }
 
 func (s *Service) publishProcessingInputs(ctx context.Context, codeSessionID string, epoch int64, updates []workerDeliveryUpdate, references map[string]workerevents.AckRef) error {

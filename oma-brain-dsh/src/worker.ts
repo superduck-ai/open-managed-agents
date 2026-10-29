@@ -5,8 +5,12 @@ import { createOmaSession } from "./oma-session.ts";
 import { registerWorkerTask, validateBrainTask } from "./worker-registration.ts";
 import { claimTasks, releaseClaim, type ClaimClient, type TaskAdmissionStage } from "./claim.ts";
 import { SessionCapacity } from "./capacity.ts";
+import { failureDiagnostic, workerDiagnostic } from "./ccrv2/diagnostics.ts";
 import { SHUTDOWN_SETTLE_MS } from "./config.ts";
+import { brainMetrics } from "./telemetry.ts";
 import { openWorkerSession } from "./worker-session.ts";
+
+type RetireReason = "superseded" | "capacity" | "inbound_ended" | "admission_failed" | "aborted" | "idle" | "shutdown";
 
 declare module "@deepseek-ai/cordis" {
   interface Events {
@@ -46,20 +50,26 @@ export async function startWorkers(
     slotWaiters.push(done);
     signal.addEventListener("abort", done, { once: true });
   });
-  const watch = (promise: Promise<void>) => {
-    const task = promise.catch(() => {
-      if (!abort.signal.aborted) console.error("OMA session task stopped");
+  const watch = (promise: Promise<void>, sessionId?: string) => {
+    const task = promise.catch((error) => {
+      if (abort.signal.aborted) return;
+      console.error("OMA session task stopped");
+      const failure = failureDiagnostic(error);
+      workerDiagnostic("error", "oma_session_task_failed", { ...(sessionId ? { session_id: sessionId } : {}), ...failure });
     }).finally(() => { running.delete(task); });
     running.add(task);
   };
-  const retire = (session: CcrSession): Promise<void> => {
+  const retire = (session: CcrSession, reason: RetireReason): Promise<void> => {
     if (sessions.get(session.id) !== session) return Promise.resolve();
     const existing = retiring.get(session.id);
     if (existing) return existing;
+    workerDiagnostic("info", "oma_session_retired", {
+      session_id: session.id, worker_epoch: api.assignment(session.id).worker_epoch, reason, busy: session.busy,
+    });
     session.stop();
     const result = session.close().finally(() => { void api.telemetry?.close(session.id); }).finally(() => {
       ctx.ccrv2.forget(session.id);
-      sessions.delete(session.id);
+      if (sessions.delete(session.id)) brainMetrics().sessionsActive.add(-1);
       api.assignments.delete(session.id);
       api.modelResponses.delete(session.id);
       retiring.delete(session.id);
@@ -72,12 +82,12 @@ export async function startWorkers(
     const assignment = api.assignments.get(session.id);
     return assignment && { session_id: session.id, worker_epoch: assignment.worker_epoch };
   };
-  const retireIdle = async (session: CcrSession): Promise<void> => {
+  const retireIdle = async (session: CcrSession, reason: "idle" | "capacity"): Promise<void> => {
     const task = sessions.get(session.id) === session && !retiring.has(session.id) ? claimedTask(session) : undefined;
-    await retire(session);
+    await retire(session, reason);
     if (task) await releaseClaim(claims, task, "idle");
   };
-  const capacity = new SessionCapacity(maxSessions, sessions, retiring, (idle) => watch(retireIdle(idle)));
+  const capacity = new SessionCapacity(maxSessions, sessions, retiring, (idle) => watch(retireIdle(idle, "capacity"), idle.id));
   const admit = async (value: unknown, stage: (stage: TaskAdmissionStage) => void) => {
     abort.signal.throwIfAborted();
     stage("validate_assignment");
@@ -86,7 +96,7 @@ export async function startWorkers(
     const existing = sessions.get(task.session_id);
     if (existing) {
       stage("retire_session");
-      await retire(existing);
+      await retire(existing, "superseded");
     }
     const releaseSlot = capacity.reserve();
     let session: CcrSession;
@@ -97,22 +107,24 @@ export async function startWorkers(
       stage("create_session");
       session = createOmaSession(ctx, api, assignment);
       sessions.set(session.id, session);
+      brainMetrics().sessionsActive.add(1);
     } finally {
       releaseSlot();
     }
     try {
-      await openWorkerSession(session, client, watch, retire, stage);
+      await openWorkerSession(session, client, (task) => watch(task, session.id), (opened) => retire(opened, "inbound_ended"), stage);
     } catch (error) {
-      await retire(session);
+      await retire(session, "admission_failed");
       throw error;
     }
   };
   const timer = setInterval(() => {
     for (const session of sessions.values()) {
-      if (session.abort.signal.aborted) watch(retire(session));
-      else if (!session.busy && Date.now() - session.lastIdle > 60_000) watch(retireIdle(session));
+      if (session.abort.signal.aborted) watch(retire(session, "aborted"), session.id);
+      else if (!session.busy && Date.now() - session.lastIdle > 60_000) watch(retireIdle(session, "idle"), session.id);
     }
   }, 3000);
+  let capacityReported = false;
   let draining: Promise<void> | undefined;
   const drainSessions = async () => {
     abort.abort();
@@ -123,6 +135,7 @@ export async function startWorkers(
   };
   ctx.on("oma/shutdown-drain", () => draining ??= drainSessions());
   ctx.effect(() => async () => {
+    if (capacityReported) brainMetrics().sessionsCapacity.add(-maxSessions);
     abort.abort();
     clearInterval(timer);
     const current = [...sessions.values()];
@@ -132,7 +145,7 @@ export async function startWorkers(
     for (const session of sessions.values()) session.stop();
     await Promise.allSettled(handoff.map((task) => releaseClaim(claims, task, "shutdown")));
     await Promise.allSettled([...running]);
-    await Promise.allSettled([...sessions.values()].map(retire));
+    await Promise.allSettled([...sessions.values()].map((session) => retire(session, "shutdown")));
     await Promise.allSettled(idle.map((task) => releaseClaim(claims, task, "idle")));
   });
   const ready = Promise.withResolvers<void>();
@@ -142,4 +155,8 @@ export async function startWorkers(
   watch(claiming.catch((error) => { ready.reject(error); throw error; }));
   await ready.promise;
   console.info("oma-brain-dsh ready");
+  brainMetrics().sessionsActive.add(0);
+  brainMetrics().sessionsCapacity.add(maxSessions);
+  capacityReported = true;
+  workerDiagnostic("info", "oma_brain_ready", { max_sessions: maxSessions, claim_concurrency: options.claimConcurrency });
 }

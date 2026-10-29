@@ -121,6 +121,12 @@ func (o *responseObservation) mergeChatUsage(usage *chatUsage) {
 }
 
 func (c *chatObservation) observeDelta(o *responseObservation, delta chatDelta) {
+	contentBytes := o.contentBytes
+	defer func() {
+		if o.contentBytes > contentBytes {
+			o.markFirstToken()
+		}
+	}()
 	if reasoning := firstChatReasoning(delta); reasoning != "" {
 		c.block(o, "thinking", "thinking")
 		if o.thinkingPublished == nil {
@@ -221,9 +227,12 @@ func (c *chatObservation) complete(o *responseObservation) {
 			o.result.ToolUseIDs = append(o.result.ToolUseIDs, block.ID)
 		}
 	}
+	o.stopReason = chatStopReasons[c.finishReason]
 	o.complete = true
 	o.result.EndedAt = time.Now().UTC().Truncate(time.Microsecond)
 }
+
+var chatStopReasons = map[string]string{"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens"}
 
 func validChatFinish(reason string, blocks map[int]*responseContentBlock) bool {
 	hasTools := false

@@ -80,6 +80,40 @@ func TestMemoryNakRedispatchesOnlyPendingEvents(t *testing.T) {
 	assertNoWorkerDelivery(t, subscription)
 }
 
+func TestMemoryStaleNakDoesNotRedispatchSupersedingDelivery(t *testing.T) {
+	broker := NewMemory()
+	sessionID := "cse_memory_stale_nak"
+	stale, err := broker.Subscribe(t.Context(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishControlTestEvent(t, broker, sessionID, "evt_superseded", "user", "")
+	abandoned := receiveWorkerDelivery(t, stale)
+	replacement, err := broker.Subscribe(t.Context(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = replacement.Close() })
+	current := receiveWorkerDelivery(t, replacement)
+	if current.AckSubject == abandoned.AckSubject {
+		t.Fatalf("redelivery reused ACK subject %s", current.AckSubject)
+	}
+	if err := stale.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Nak(t.Context(), abandoned.AckSubject); err != nil {
+		t.Fatal(err)
+	}
+	assertNoWorkerDelivery(t, replacement)
+	if err := broker.DoubleAck(t.Context(), abandoned.AckSubject); err != nil {
+		t.Fatalf("ACK of an earlier delivery: %v", err)
+	}
+	if err := broker.Nak(t.Context(), current.AckSubject); err != nil {
+		t.Fatal(err)
+	}
+	assertNoWorkerDelivery(t, replacement)
+}
+
 func TestJetStreamCloseNaksEventFetchedButNotHandedOut(t *testing.T) {
 	broker := lifecycleBroker(t, 5*time.Minute)
 	sessionID := "cse_close_nak"

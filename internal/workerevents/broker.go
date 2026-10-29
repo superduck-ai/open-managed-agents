@@ -432,9 +432,10 @@ func (s *jetStreamSubscription) Close() error {
 }
 
 type memoryMessage struct {
-	id        uint64
-	envelope  EnvelopeV1
-	delivered bool
+	id         uint64
+	envelope   EnvelopeV1
+	delivered  bool
+	deliveries uint64
 }
 
 type MemoryBroker struct {
@@ -546,9 +547,10 @@ func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
 	if ackSubject == "" {
 		return errAckSubjectEmpty
 	}
+	key, _, _ := strings.Cut(ackSubject, ".")
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	message := b.ackSubjectMap[ackSubject]
+	message := b.ackSubjectMap[key]
 	if message == nil {
 		return errMemoryAckNotFound
 	}
@@ -559,7 +561,7 @@ func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
 	if index < 0 {
 		return errMemoryAckNotFound
 	}
-	delete(b.ackSubjectMap, ackSubject)
+	delete(b.ackSubjectMap, key)
 	b.queues[queueKey] = slices.Delete(queue, index, index+1)
 	b.dispatchLocked(sessionID)
 	return nil
@@ -569,14 +571,15 @@ func (b *MemoryBroker) Nak(_ context.Context, ackSubject string) error {
 	if ackSubject == "" {
 		return errAckSubjectEmpty
 	}
+	key, delivery, _ := strings.Cut(ackSubject, ".")
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	message := b.ackSubjectMap[ackSubject]
-	if message == nil {
+	message := b.ackSubjectMap[key]
+	if message == nil || delivery != strconv.FormatUint(message.deliveries, 10) {
 		return nil
 	}
 	message.delivered = false
-	delete(b.ackSubjectMap, ackSubject)
+	delete(b.ackSubjectMap, key)
 	b.dispatchLocked(message.envelope.CodeSessionID)
 	return nil
 }
@@ -586,7 +589,7 @@ func (b *MemoryBroker) undeliverLocked(codeSessionID string) {
 		queue := b.queues[codeSessionID+string(lane)]
 		for _, message := range queue {
 			message.delivered = false
-			delete(b.ackSubjectMap, b.ackSubject(message))
+			delete(b.ackSubjectMap, b.ackKey(message))
 		}
 	}
 }
@@ -627,7 +630,7 @@ func (b *MemoryBroker) PurgeSession(_ context.Context, codeSessionID string) err
 	for _, lane := range deliveryLanes {
 		queueKey := codeSessionID + string(lane)
 		for _, message := range b.queues[queueKey] {
-			delete(b.ackSubjectMap, b.ackSubject(message))
+			delete(b.ackSubjectMap, b.ackKey(message))
 		}
 		delete(b.queues, queueKey)
 	}
@@ -651,18 +654,19 @@ func (b *MemoryBroker) dispatchLocked(codeSessionID string) {
 
 func (b *MemoryBroker) dispatchHeadLocked(subscription *memorySubscription, message *memoryMessage) {
 	message.delivered = true
-	ackSubject := b.ackSubject(message)
-	b.ackSubjectMap[ackSubject] = message
-	delivery := Delivery{Envelope: message.envelope, AckSubject: ackSubject}
+	message.deliveries++
+	key := b.ackKey(message)
+	b.ackSubjectMap[key] = message
+	delivery := Delivery{Envelope: message.envelope, AckSubject: key + "." + strconv.FormatUint(message.deliveries, 10)}
 	select {
 	case subscription.messages <- delivery:
 	default:
 		message.delivered = false
-		delete(b.ackSubjectMap, ackSubject)
+		delete(b.ackSubjectMap, key)
 	}
 }
 
-func (b *MemoryBroker) ackSubject(message *memoryMessage) string {
+func (b *MemoryBroker) ackKey(message *memoryMessage) string {
 	return "memory-worker-event-ack-" + strconv.FormatUint(message.id, 10)
 }
 

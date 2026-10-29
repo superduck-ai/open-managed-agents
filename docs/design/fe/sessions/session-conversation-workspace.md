@@ -168,6 +168,7 @@ stateDiagram-v2
 
 ## 附件与资源验收
 
+- Inspector Events 的 Raw JSON 直接使用完整事件，每条原始事件对应一条 Debug 详情，不经过 Transcript 的文本、Thinking、工具内容块拆分。图片、文档和混合内容必须原样保留，复制按钮与详情显示同一完整内容。`SessionTracePanel.test.tsx` 覆盖用户图片/文档和 Agent 混合内容的原始详情；浏览器验收使用真实 history 样本复现修复前的图片块丢失，并确认修复后 Raw JSON 保留 `image.source.file_id`。
 - 事件缓存不能把 `processed_at` 当作内容版本号。同 ID、同处理时间的完整事件内容发生变化时，history 与 SSE 合并都在原位置替换整条记录，包括图片块、元数据的补齐和删除；不逐字段拼接旧内容。未处理事件或流式占位不能覆盖已处理记录。结构相同的重复事件保留原缓存引用，JSON 对象字段顺序不影响比较。`api.test.ts` 覆盖缓存替换、重复内容、正式记录保护及主/子线程 history 刷新补回图片。
 - Composer 上传附件后，按 Files 返回的 `mime_type` 将 PNG、JPEG、WebP、GIF 作为 `image.source = {type: "file", file_id}` 与用户文本一起发送。图片不添加 Session resource，也不把沙箱路径加入消息；仅图片消息省略文本块。服务端沿用消息图片物化、投递和 Brain attachment 链路。普通文件继续挂载并把运行时路径加入文本，混合附件同时包含路径文本和图片块。发送失败时保留已上传 metadata，重试不重复上传图片。
 - 图片回归覆盖四种 MIME、无沙箱挂载、发送失败重用上传结果、仅图片与图片/普通文件混合发送。

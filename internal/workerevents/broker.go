@@ -106,6 +106,7 @@ type Broker interface {
 	Subscribe(context.Context, string) (Subscription, error)
 	InProgress(ctx context.Context, ackSubject string) error
 	DoubleAck(ctx context.Context, ackSubject string) error
+	Nak(ctx context.Context, ackSubject string) error
 	ScanExpired(context.Context, uint64, int, time.Time) ([]ExpiredEvent, uint64, error)
 	PurgeSession(context.Context, string) error
 }
@@ -270,6 +271,13 @@ func (b *JetStreamBroker) DoubleAck(ctx context.Context, ackSubject string) erro
 	return nil
 }
 
+func (b *JetStreamBroker) Nak(_ context.Context, ackSubject string) error {
+	if ackSubject == "" {
+		return errAckSubjectEmpty
+	}
+	return b.connection.Publish(ackSubject, []byte("-NAK"))
+}
+
 // ScanExpired 扫描逻辑到期事件；唯一的删除副作用是移除无法归属 Session 的非法 subject。
 // 合法 subject 即使正文损坏也保留。返回错误时仍返回已处理事件，避免丢失删除告警。
 func (b *JetStreamBroker) ScanExpired(ctx context.Context, cursor uint64, limit int, now time.Time) ([]ExpiredEvent, uint64, error) {
@@ -400,6 +408,7 @@ func (s *jetStreamSubscription) receive(consumer jetstream.Consumer) {
 			select {
 			case s.messages <- delivery:
 			case <-s.ctx.Done():
+				_ = message.Nak()
 				return
 			}
 		}
@@ -423,9 +432,10 @@ func (s *jetStreamSubscription) Close() error {
 }
 
 type memoryMessage struct {
-	id        uint64
-	envelope  EnvelopeV1
-	delivered bool
+	id         uint64
+	envelope   EnvelopeV1
+	delivered  bool
+	deliveries uint64
 }
 
 type MemoryBroker struct {
@@ -537,9 +547,10 @@ func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
 	if ackSubject == "" {
 		return errAckSubjectEmpty
 	}
+	key, _, _ := strings.Cut(ackSubject, ".")
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	message := b.ackSubjectMap[ackSubject]
+	message := b.ackSubjectMap[key]
 	if message == nil {
 		return errMemoryAckNotFound
 	}
@@ -550,9 +561,26 @@ func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
 	if index < 0 {
 		return errMemoryAckNotFound
 	}
-	delete(b.ackSubjectMap, ackSubject)
+	delete(b.ackSubjectMap, key)
 	b.queues[queueKey] = slices.Delete(queue, index, index+1)
 	b.dispatchLocked(sessionID)
+	return nil
+}
+
+func (b *MemoryBroker) Nak(_ context.Context, ackSubject string) error {
+	if ackSubject == "" {
+		return errAckSubjectEmpty
+	}
+	key, delivery, _ := strings.Cut(ackSubject, ".")
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	message := b.ackSubjectMap[key]
+	if message == nil || delivery != strconv.FormatUint(message.deliveries, 10) {
+		return nil
+	}
+	message.delivered = false
+	delete(b.ackSubjectMap, key)
+	b.dispatchLocked(message.envelope.CodeSessionID)
 	return nil
 }
 
@@ -561,7 +589,7 @@ func (b *MemoryBroker) undeliverLocked(codeSessionID string) {
 		queue := b.queues[codeSessionID+string(lane)]
 		for _, message := range queue {
 			message.delivered = false
-			delete(b.ackSubjectMap, b.ackSubject(message))
+			delete(b.ackSubjectMap, b.ackKey(message))
 		}
 	}
 }
@@ -602,7 +630,7 @@ func (b *MemoryBroker) PurgeSession(_ context.Context, codeSessionID string) err
 	for _, lane := range deliveryLanes {
 		queueKey := codeSessionID + string(lane)
 		for _, message := range b.queues[queueKey] {
-			delete(b.ackSubjectMap, b.ackSubject(message))
+			delete(b.ackSubjectMap, b.ackKey(message))
 		}
 		delete(b.queues, queueKey)
 	}
@@ -626,18 +654,19 @@ func (b *MemoryBroker) dispatchLocked(codeSessionID string) {
 
 func (b *MemoryBroker) dispatchHeadLocked(subscription *memorySubscription, message *memoryMessage) {
 	message.delivered = true
-	ackSubject := b.ackSubject(message)
-	b.ackSubjectMap[ackSubject] = message
-	delivery := Delivery{Envelope: message.envelope, AckSubject: ackSubject}
+	message.deliveries++
+	key := b.ackKey(message)
+	b.ackSubjectMap[key] = message
+	delivery := Delivery{Envelope: message.envelope, AckSubject: key + "." + strconv.FormatUint(message.deliveries, 10)}
 	select {
 	case subscription.messages <- delivery:
 	default:
 		message.delivered = false
-		delete(b.ackSubjectMap, ackSubject)
+		delete(b.ackSubjectMap, key)
 	}
 }
 
-func (b *MemoryBroker) ackSubject(message *memoryMessage) string {
+func (b *MemoryBroker) ackKey(message *memoryMessage) string {
 	return "memory-worker-event-ack-" + strconv.FormatUint(message.id, 10)
 }
 

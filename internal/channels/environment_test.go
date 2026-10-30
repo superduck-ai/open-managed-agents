@@ -21,6 +21,7 @@ func TestChannelEnvironmentSettings(t *testing.T) {
 		{"拒绝跨工作区环境", `{"environment_id":"env-other"}`, 400},
 		{"拒绝已归档环境", `{"environment_id":"env-archived"}`, 400},
 		{"拒绝空对象", `null`, 400},
+		{"拒绝缺少环境字段", `{}`, 400},
 		{"拒绝无效类型", `{"environment_id":123}`, 400},
 		{"拒绝任意运行凭据", `{"environment_id":"env-a","api_key":"secret"}`, 400},
 		{"保存当前工作区环境", `{"environment_id":"env-a"}`, 200},
@@ -67,7 +68,7 @@ func TestChannelSaveRequiresSelectedEnvironment(t *testing.T) {
 		{"其他工作区环境不能保存", `"env-other"`, 400},
 		{"有效环境允许保存", `"env-a"`, 200},
 	} {
-		for _, suffix := range []string{"", "/channel-a", "/channel-a/qr"} {
+		for _, suffix := range []string{"", "/channel-a", "/channel-a/qr", "/pairings-channel", "/pairings-channel/qr"} {
 			t.Run(test.name+suffix, func(t *testing.T) {
 				saves := 0
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

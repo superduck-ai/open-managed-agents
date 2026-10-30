@@ -55,6 +55,8 @@ func TestChannelScopeAndProxy(t *testing.T) {
 		{name: "生成二维码路径", workspace: "workspace-a", method: "POST", suffix: "/ch1/qr", want: 200},
 		{name: "读取二维码路径", workspace: "workspace-a", method: "GET", suffix: "/ch1/qr", want: 200},
 		{name: "读取配对路径", workspace: "workspace-a", method: "GET", suffix: "/ch1/pairings", want: 200},
+		{name: "配对ID与设置同名", workspace: "workspace-a", method: "POST", suffix: "/ch1/pairings/settings", want: 200},
+		{name: "配对ID与二维码同名", workspace: "workspace-a", method: "POST", suffix: "/ch1/pairings/qr", want: 200},
 		{name: "批准配对路径", workspace: "workspace-a", method: "POST", suffix: "/ch1/pairings/pair-9", want: 200},
 	} {
 		t.Run(test.name, func(t *testing.T) {

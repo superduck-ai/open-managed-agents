@@ -59,7 +59,7 @@ export function useChannelEditor({ agentId, workspaceId, channel, onClose, onSav
       setError(errorMessage(environment.error));
       return;
     }
-    if (!environment.data?.environment_id) {
+    if (!environment.selectedEnvironment) {
       setError(msg('managedAgents.channels.environmentRequired', '请先选择执行环境，再保存渠道'));
       return;
     }

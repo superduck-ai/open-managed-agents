@@ -46,7 +46,7 @@ func (h *handler) checkEnvironment(ctx context.Context, workspaceUUID, id string
 		return environmentRequired()
 	}
 	env, err := h.store.GetEnvironment(ctx, workspaceUUID, id)
-	if errors.Is(err, db.ErrNotFound) || (err == nil && (env.ArchivedAt != nil || env.DeletedAt != nil)) {
+	if errors.Is(err, db.ErrNotFound) || (err == nil && env.ArchivedAt != nil) {
 		return invalidEnvironment(err)
 	}
 	if err != nil {
@@ -55,15 +55,14 @@ func (h *handler) checkEnvironment(ctx context.Context, workspaceUUID, id string
 	return nil
 }
 
-func (h *handler) requireEnvironment(upstream *http.Request, workspaceUUID, channelID string) error {
+func (h *handler) requireEnvironment(upstream *http.Request, workspaceUUID string) error {
+	endpoint, err := h.endpoint(upstream, true)
+	if err != nil {
+		return err
+	}
 	request := upstream.Clone(upstream.Context())
 	request.Method, request.Body, request.GetBody, request.ContentLength = http.MethodGet, nil, nil, 0
-	request.URL = upstream.URL.Clone()
-	request.URL.Path = strings.TrimSuffix(request.URL.Path, "/qr")
-	if channelID != "" {
-		request.URL.Path = strings.TrimSuffix(request.URL.Path, "/"+channelID)
-	}
-	request.URL.Path += "/settings"
+	request.URL = endpoint
 	response, err := h.client.Do(request)
 	if err != nil {
 		return unavailable(err)

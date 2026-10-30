@@ -55,10 +55,11 @@ test('仅展示可选环境并携带工作区和 CSRF保存选择', async () => 
   mount();
   const select = await screen.findByRole('combobox');
   await waitFor(() => expect(select.hasAttribute('disabled')).toBe(false));
-  fireEvent.click(select);
   expect((await screen.findByRole('link', { name: '前往环境管理' })).getAttribute('href')).toBe(
     '/workspaces/workspace-a/environments',
   );
+  fireEvent.click(select);
+  expect(screen.getByRole('listbox').contains(screen.getByRole('link', { name: '前往环境管理' }))).toBe(false);
   expect(screen.queryByRole('option', { name: '使用预设或默认环境' })).toBeNull();
   fireEvent.click(await screen.findByRole('option', { name: '测试环境' }));
   await waitFor(() => expect(select.textContent).toContain('测试环境'));

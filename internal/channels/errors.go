@@ -21,3 +21,7 @@ func archivedAgent() error {
 func csrfRejected() error {
 	return apperr.New(apperr.PermissionDenied, "Invalid CSRF token", nil)
 }
+
+func invalidEnvironment(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "请选择当前工作区中未归档的执行环境", cause)
+}

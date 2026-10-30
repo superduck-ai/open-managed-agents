@@ -12,6 +12,12 @@ afterEach(() => {
   setConsoleRequestContext({});
 });
 function mount(locale: 'zh-CN' | 'en' = 'zh-CN') {
+  const fetch = globalThis.fetch;
+  globalThis.fetch = ((input, init) => {
+    if (String(input).includes('/environments')) return Promise.resolve(Response.json({ data: [], has_more: false }));
+    if (String(input).includes('/channels/settings')) return Promise.resolve(Response.json({ environment_id: null }));
+    return fetch(input, init);
+  }) as typeof globalThis.fetch;
   resetTestDom('/');
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(

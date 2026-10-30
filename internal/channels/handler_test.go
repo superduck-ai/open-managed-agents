@@ -18,6 +18,17 @@ import (
 
 type scopedStore struct{ archived bool }
 
+func (s scopedStore) GetEnvironment(_ context.Context, workspace, id string) (db.Environment, error) {
+	if workspace != "workspace-a" || (id != "env-a" && id != "env-archived") {
+		return db.Environment{}, db.ErrNotFound
+	}
+	env := db.Environment{}
+	if id == "env-archived" {
+		env.ArchivedAt = new(time.Now())
+	}
+	return env, nil
+}
+
 func (s scopedStore) GetAgent(_ context.Context, workspace, id string) (db.Agent, error) {
 	if workspace != "workspace-a" || id != "agent-a" {
 		return db.Agent{}, db.ErrNotFound

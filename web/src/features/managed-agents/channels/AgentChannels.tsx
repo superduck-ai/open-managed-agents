@@ -6,6 +6,7 @@ import { Button } from '../../../shared/ui/button';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../shared/ui/dialog';
 import feishuLogo from './feishu.ico';
+import { ChannelEnvironment } from './ChannelEnvironment';
 import { ChannelRow } from './ChannelRow';
 import { ChannelDialog } from './ChannelDialog';
 import { PairingsDialog } from './PairingsDialog';
@@ -76,9 +77,10 @@ export function AgentChannels({
           <p className="text-sm leading-6 text-muted-foreground">
             {msg('managedAgents.channels.scopeHint', '仅显示当前模板下创建的渠道。配对管理中批准申请时绑定当前模板。')}
           </p>
-          <h2 className="pt-3 text-base font-semibold">{msg('managedAgents.channels.connections', 'IM 连接管理')}</h2>
         </div>
       </div>
+      <ChannelEnvironment agentId={agentId} workspaceId={workspaceId} canEdit={canEdit} />
+      <h2 className="text-base font-semibold">{msg('managedAgents.channels.connections', 'IM 连接管理')}</h2>
       {(error || query.error) && (
         <Alert variant="destructive">
           <AlertDescription>

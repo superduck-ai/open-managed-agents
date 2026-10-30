@@ -31,3 +31,25 @@ func (a WorkspaceAccess) Permissions() []string {
 	}
 	return permissions
 }
+
+func (p Principal) PlatformOrganizationAdmin(organizationUUID string) bool {
+	return organizationUUID != "" && p.OrganizationUUID == organizationUUID &&
+		p.CredentialType == CredentialTypePlatformSession && p.AccountUUID != "" &&
+		p.OrganizationAccessSource == OrganizationAccessPlatformAdmin &&
+		p.WorkspaceAccess.ManageOrganization() && p.WorkspaceAccess.ManageMembers() &&
+		p.WorkspaceAccess.Source == string(OrganizationAccessPlatformAdmin)
+}
+
+func (p Principal) RuntimeUserUUID() string {
+	if p.PlatformOrganizationAdmin(p.OrganizationUUID) {
+		return p.AccountUUID
+	}
+	return p.UserUUID
+}
+
+func (p Principal) ActorUserID() string {
+	if p.PlatformOrganizationAdmin(p.OrganizationUUID) {
+		return p.AccountExternalID
+	}
+	return p.UserExternalID
+}

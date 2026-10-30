@@ -75,3 +75,22 @@ func accessError(err error) error {
 	}
 	return err
 }
+
+func (s *Service) ResolvePrincipal(ctx context.Context, principal auth.Principal, workspaceID string) (db.AdminWorkspace, auth.WorkspaceAccess, error) {
+	if !principal.PlatformOrganizationAdmin(principal.OrganizationUUID) {
+		if principal.UserExternalID == "" {
+			return db.AdminWorkspace{}, auth.WorkspaceAccess{}, ErrDenied
+		}
+		return s.Resolve(ctx, principal.OrganizationUUID, principal.UserExternalID, workspaceID)
+	}
+	workspace, err := s.store.GetAdminWorkspace(ctx, principal.OrganizationUUID, workspaceID)
+	if err != nil {
+		return workspace, auth.WorkspaceAccess{}, accessError(err)
+	}
+	if workspace.OrganizationUUID != principal.OrganizationUUID || workspace.ArchivedAt != nil {
+		return workspace, auth.WorkspaceAccess{}, ErrDenied
+	}
+	access, err := Effective("admin", workspace.IsDefault, "")
+	access.Source = string(auth.OrganizationAccessPlatformAdmin)
+	return workspace, access, err
+}

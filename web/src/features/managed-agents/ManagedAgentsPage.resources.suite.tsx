@@ -42,7 +42,7 @@ function appendRowPastPage<T>(rows: T[], create: (index: number, hidden: boolean
 
 async function confirmFirstRowAction(menuName: string, confirmName: string) {
   fireEvent.click(screen.getAllByRole('button', { name: 'More actions' })[0]);
-  fireEvent.click(screen.getByRole('menuitem', { name: menuName }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: menuName }));
   const dialog = await screen.findByRole('alertdialog');
   fireEvent.click(within(dialog).getByRole('button', { name: confirmName }));
 }

@@ -27,7 +27,7 @@ func (h *workbenchHandler) authorizeWorkspace(next http.Handler) http.Handler {
 		}
 		resolver := workspaceaccess.New(h.database)
 		if promptID == "" && r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/prompts") {
-			if _, _, err := resolver.Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, workspaceID); err != nil {
+			if _, _, err := resolver.ResolvePrincipal(r.Context(), principal, workspaceID); err != nil {
 				writeWorkbenchWorkspaceError(w, r, err)
 				return
 			}
@@ -43,7 +43,7 @@ func (h *workbenchHandler) authorizeWorkspace(next http.Handler) http.Handler {
 				workspaceID = record.WorkspaceUUID
 			}
 		}
-		workspace, access, err := resolver.Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, workspaceID)
+		workspace, access, err := resolver.ResolvePrincipal(r.Context(), principal, workspaceID)
 		if err != nil {
 			writeWorkbenchWorkspaceError(w, r, err)
 			return

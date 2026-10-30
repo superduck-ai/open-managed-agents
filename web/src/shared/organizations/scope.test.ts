@@ -82,3 +82,20 @@ describe('组织作用域策略', () => {
     expect(isBusinessQuery({ queryKey: ['invitations'] })).toBe(false);
   });
 });
+
+test('普通成员使用工作区目录的当前有效角色而不是 Default bootstrap 权限', () => {
+  const member = { ...account, permissions: ['workspaces:view', 'members:view'] };
+  const scoped = scopedAccount(
+    member,
+    'b',
+    { id: 'custom', type: 'workspace', name: 'Custom', effective_role: 'workspace_admin' },
+    {
+      source: 'organization_member',
+      organization: { uuid: 'b', name: 'B' },
+      organization_role: 'user',
+      workspace_role: 'workspace_user',
+    },
+  );
+  expect(scoped?.permissions).toContain('workspace:members:manage');
+  expect(scoped?.permissions).not.toContain('members:manage');
+});

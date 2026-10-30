@@ -158,3 +158,22 @@ func TestBootstrapStableAccount(t *testing.T) {
 		})
 	}
 }
+
+func (s *sessionBootstrapStore) GetPlatformOrganization(_ context.Context, id string) (*OrganizationRecord, error) {
+	return &OrganizationRecord{UUID: id, Name: "目标组织"}, nil
+}
+
+func TestBootstrapPlatformOrganizationWithoutMembership(t *testing.T) {
+	store := &sessionBootstrapStore{orgs: []UserOrganizationRecord{{OrganizationRecord: OrganizationRecord{UUID: "home"}, UserUUID: "member", Role: "user"}}}
+	principal := auth.Principal{AccountUUID: "stable-login", OrganizationUUID: "target", CredentialType: auth.CredentialTypePlatformSession, OrganizationAccessSource: auth.OrganizationAccessPlatformAdmin, WorkspaceAccess: auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: "platform_admin"}}
+	ctx := platformsession.WithSession(auth.WithPrincipal(t.Context(), principal), platformsession.Session{UserUUID: "stable-login", VerifiedEmail: "verified@example.com", HomeOrganizationUUID: "home"})
+	response := httptest.NewRecorder()
+	handleBootstrap(store, nil)(response, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+	var body BootstrapCompatibilityResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 200 || body.OrganizationAccess == nil || body.OrganizationAccess.Organization.UUID != "target" || body.OrganizationAccess.Source != auth.OrganizationAccessPlatformAdmin || body.Account.UUID != "stable-login" || body.Account.DefaultOrganizationUUID != "home" || len(body.Account.Memberships) != 1 || !slices.Contains(body.Account.Permissions, "organization:manage") {
+		t.Fatalf("body=%+v", body)
+	}
+}

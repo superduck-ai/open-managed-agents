@@ -63,3 +63,16 @@ func TestConsoleMemberErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestPlatformConsoleMemberActorValidator(t *testing.T) {
+	principal := auth.Principal{AccountUUID: "account", OrganizationUUID: "org", CredentialType: auth.CredentialTypePlatformSession, OrganizationAccessSource: auth.OrganizationAccessPlatformAdmin, WorkspaceAccess: auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: "platform_admin"}}
+	if consoleMemberActorValidator(auth.Principal{}, "org")("") == nil {
+		t.Fatal("空成员不得授权")
+	}
+	if consoleMemberActorValidator(principal, "other")("") == nil {
+		t.Fatal("跨组织不得授权")
+	}
+	if err := consoleMemberActorValidator(principal, "org")(""); err != nil {
+		t.Fatal(err)
+	}
+}

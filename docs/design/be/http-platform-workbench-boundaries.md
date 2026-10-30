@@ -98,3 +98,9 @@ flowchart LR
 若全量测试失败，应先区分是否来自既有 platform-host 分流/会话恢复问题，避免把行为修复混入包边界迁移。
 
 Workbench 上游测试必须覆盖 workspace Provider 解析、真实模型 ID 原样使用，以及未配置 Provider 时失败关闭。
+
+## 平台管理员目标组织访问（2026-10-28）
+
+Console 目标头平台来源由请求 Principal 表达，资源层仍验证路径组织与真实工作区归属。Bootstrap 返回 organization_access 与有效权限，账号和 memberships 保持真实身份。SSE/下载/同源受保护图片传播请求头并随 scope 取消，后台 client 与外部资源不传播目标头。
+
+完整权限及进入/退出合同见 [平台超级管理员设计](../platform-super-admin.md)。

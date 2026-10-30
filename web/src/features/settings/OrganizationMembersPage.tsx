@@ -95,14 +95,16 @@ export function OrganizationMembersPage() {
 
 function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string }) {
   const { msg } = useI18n();
-  const { account, csrfToken } = useAuth();
+  const { account, csrfToken, organizationAccess } = useAuth();
   const canManage = canManageMembers(account, activeOrgUuid);
   const { activeWorkspace } = useWorkspace();
   const queryClient = useQueryClient();
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
   const activeOrganization =
-    account?.memberships?.find((membership) => membership.organization?.uuid === activeOrgUuid)?.organization ??
-    bootstrapOrganization;
+    organizationAccess?.organization.uuid === activeOrgUuid
+      ? organizationAccess.organization
+      : (account?.memberships?.find((membership) => membership.organization?.uuid === activeOrgUuid)?.organization ??
+        bootstrapOrganization);
   const [memberSearch, setMemberSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [inviteOpen, setInviteOpen] = useState(false);

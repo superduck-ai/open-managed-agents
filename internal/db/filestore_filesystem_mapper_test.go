@@ -1,6 +1,8 @@
 package db
 
 import (
+	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -141,5 +143,56 @@ func TestFilestoreFilesystemMapperBuildsLifecycleQueries(t *testing.T) {
 	)
 	if strings.Contains(withoutUUID.SQL, "OR uuid =") || len(withoutUUID.Args) != 3 {
 		t.Fatalf("external-ID-only lookup = %#v", withoutUUID)
+	}
+}
+
+func TestFilestoreRuntimeIdentitySQL(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: filestoreFilesystemMapperFindTokenScopeStatement,
+		bound:     buildFilestoreFilesystemMapperFindTokenScope(yourbatis.DialectPostgres, "org", "account", "workspace", "tagged", "tagged", "filesystem", ""),
+		wantID:    "FilestoreFilesystemMapper.FindTokenScope", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"organizationUUID", "accountUUID", "workspaceUUID", "workspaceTaggedID", "resolvedWorkspaceTaggedID", "filesystemID", "filesystemID"},
+		wantSQLFragments:  []string{"u.deleted_at IS NULL", "u.organization_uuid = o.uuid OR u.uuid = CASE WHEN s.metadata->>'_oma_runtime_user_uuid' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid) END", "s.uuid = fs.session_uuid", "s.organization_uuid = o.uuid", "s.workspace_uuid = w.uuid"},
+	})
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: filestoreFilesystemMapperFindSessionTokenScopeStatement,
+		bound:     buildFilestoreFilesystemMapperFindSessionTokenScope(yourbatis.DialectPostgres, "workspace", "session"),
+		wantID:    "FilestoreFilesystemMapper.FindSessionTokenScope", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID"},
+		wantSQLFragments:  []string{"s.metadata->>'_oma_runtime_user_uuid' IS NOT NULL OR u.organization_uuid = o.uuid", "u.deleted_at IS NULL", "fs.session_uuid = s.uuid", "CASE WHEN s.metadata->>'_oma_runtime_user_uuid' IS NULL THEN ak.created_by_user_uuid ELSE CASE WHEN s.metadata->>'_oma_runtime_user_uuid' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid) END END"},
+	})
+}
+
+func TestRuntimeIdentityMapperUUIDGuard(t *testing.T) {
+	queries := []yourbatis.BoundSQL{
+		buildFilestoreFilesystemMapperFindTokenScope(yourbatis.DialectPostgres, "org", "account", "workspace", "tagged", "tagged", "filesystem", ""),
+		buildFilestoreFilesystemMapperFindSessionTokenScope(yourbatis.DialectPostgres, "workspace", "session"),
+		buildCodeSessionMapperFindCredentialForIssue(yourbatis.DialectPostgres, "org", "workspace", "code"),
+	}
+	for index, query := range queries {
+		pattern := regexp.MustCompile(`CASE WHEN s.metadata->>'_oma_runtime_user_uuid' ~ '([^']+)' THEN CAST\(s.metadata->>'_oma_runtime_user_uuid' AS uuid\) END`).FindStringSubmatch(query.SQL)
+		if len(pattern) != 2 {
+			t.Fatalf("查询 %d 缺少安全转换: %s", index, query.SQL)
+		}
+		guard := regexp.MustCompile(pattern[1])
+		for _, tc := range []struct {
+			metadata string
+			valid    bool
+		}{
+			{`{}`, false},
+			{`{"_oma_runtime_user_uuid":""}`, false},
+			{`{"_oma_runtime_user_uuid":"not-a-uuid"}`, false},
+			{`{"_oma_runtime_user_uuid":"63000000-0000-4000-8000-000000000004"}`, true},
+		} {
+			var metadata struct {
+				RuntimeUserUUID string `json:"_oma_runtime_user_uuid"`
+			}
+			if err := json.Unmarshal([]byte(tc.metadata), &metadata); err != nil {
+				t.Fatal(err)
+			}
+			if guard.MatchString(metadata.RuntimeUserUUID) != tc.valid {
+				t.Fatalf("查询 %d 元数据 %s 校验不符", index, tc.metadata)
+			}
+		}
 	}
 }

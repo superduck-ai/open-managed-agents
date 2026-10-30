@@ -1,3 +1,4 @@
+import { cancelScopeRequests, setConsoleRequestContext } from '../../../shared/api/client';
 import { SessionFileContext } from './SessionFileContext';
 import { I18nProvider } from '../../../shared/i18n';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
@@ -163,5 +164,45 @@ test('downloads path links through Files API with the current workspace and pres
     globalThis.fetch = originalFetch;
     URL.createObjectURL = originalCreate;
     window.HTMLAnchorElement.prototype.click = originalClick;
+  }
+});
+
+test('受保护图片带目标头读取并在切换时撤销，外部图片不发送上下文', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  const originalFetch = globalThis.fetch;
+  const create = URL.createObjectURL;
+  const revoke = URL.revokeObjectURL;
+  const revoked = mock(() => {});
+  URL.createObjectURL = mock(() => 'blob:protected');
+  URL.revokeObjectURL = revoked;
+  const calls: Array<{ url: string; headers: Headers }> = [];
+  globalThis.fetch = mock(async (input, options) => {
+    calls.push({ url: String(input), headers: new Headers(options?.headers) });
+    return new Response('image', { headers: { 'Content-Type': 'image/png' } });
+  }) as typeof fetch;
+  setConsoleRequestContext({ organizationUuid: 'target', workspaceId: 'workspace' });
+  try {
+    render(
+      <MarkdownTranscriptContent
+        value={'![private](/api/workspace/files/file/thumbnail)\n\n![external](https://images.example.com/picture.png)'}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('img', { name: 'private' }).getAttribute('src')).toBe('blob:protected'),
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].headers.get('X-Organization-UUID')).toBe('target');
+    expect(calls[0].headers.get('X-Workspace-ID')).toBe('workspace');
+    expect(screen.getByRole('img', { name: 'external' }).getAttribute('src')).toBe(
+      'https://images.example.com/picture.png',
+    );
+    cancelScopeRequests();
+    await waitFor(() => expect(revoked).toHaveBeenCalledWith('blob:protected'));
+  } finally {
+    cleanup();
+    setConsoleRequestContext({});
+    globalThis.fetch = originalFetch;
+    URL.createObjectURL = create;
+    URL.revokeObjectURL = revoke;
   }
 });

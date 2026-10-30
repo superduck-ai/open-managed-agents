@@ -14,11 +14,11 @@
 
 邮箱在认证输入边界规范化，邀请匹配只使用服务端已验证的登录邮箱，不接受请求 body/query 中声明的邮箱作为身份。新邮箱首次登录即使存在 pending 邀请，也创建自己的注册组织和真实 Default 工作区，不消费邀请。用户随后明确接受或拒绝。
 
-登录账号 UUID 与组织成员 UUID 分离。同一个账号可以对应多个组织中的 user；切换组织时 `account.uuid` 保持注册身份，业务 Principal 必须使用目标组织内有效的 `user_uuid` / `user_id`。会话和资源不得借用目标组织的管理员、seed 用户或 API key。
+登录账号 UUID 与组织成员 UUID 分离。同一个账号可以对应多个组织中的 user；切换组织时 `account.uuid` 保持注册身份，普通成员来源的业务 Principal 使用目标组织内有效的 `user_uuid` / `user_id`；可信平台来源的成员字段为空，稳定账号独立放在 Account 字段。会话和资源不得借用目标组织的管理员、seed 用户或 API key。
 
 `GET /api/bootstrap` 的 `account.memberships` 包含组织对象、角色和组织内 `user_uuid` / `user_id`；`account.default_organization_uuid` 优先指向实际注册组织。注册身份应由持久标记确定，不能简单选取最早出现的同邮箱邀请成员。历史账号使用兼容回退，不能因切换组织改写账号身份。
 
-旧会话补齐 Home 来源时，同邮箱的 `registration_identity=true` 记录优先于当前受邀组织身份，按注册时间与 UUID 稳定选择；已记录的 Home 保持不变，无注册标记时保留原来源组织的历史回退。来源查询不改变当前组织、成员身份或工作区授权；注册身份软删除后也不能获得该组织权限。
+旧会话补齐 Home 来源时，同邮箱的 `registration_identity=true` 记录优先于当前受邀组织身份，按注册时间与 UUID 稳定选择；已记录的 Home 保持不变，无注册标记时保留原来源组织的历史回退。来源查询不改变当前组织、成员身份或工作区授权；注册身份软删除后不再获得该组织的成员权限；独立平台授权按目标头请求单独判断。
 
 ```mermaid
 sequenceDiagram
@@ -80,7 +80,7 @@ Yourbatis 事务在同一 executor 内锁定邀请，校验邮箱、状态和过
 
 邀请 POST 必须携带从当前登录 `GET /api/bootstrap.csrf_token` 获取的 `X-CSRF-Token`，缺失、错误或来自其他会话的 token 返回 403。CSRF 校验与邮箱身份均来自服务端会话，不使用邀请 ID 充当凭据。
 
-同一 cookie 会话通过 `X-Organization-UUID` 选择组织，通过 `X-Workspace-ID` 选择工作区。每个业务请求重新解析有效成员和当前权限；长期会话不缓存授权快照。成员撤销立即影响后续请求。权限不足为 403，并保留登录 cookie；会话失效才进入 401/退出流程。
+同一 cookie 会话通过 `X-Organization-UUID` 选择组织，通过 `X-Workspace-ID` 选择工作区。每个业务请求重新解析成员来源或实时平台来源的当前权限；长期会话不缓存授权快照。成员撤销立即影响后续成员请求，不自动撤销独立平台授权。权限不足为 403，并保留登录 cookie；会话失效才进入 401/退出流程。
 
 bootstrap 是恢复账号上下文的入口，过期或无权的组织/工作区选择不能阻断它。目标组织被移除后，bootstrap 仍返回账号与剩余有效 memberships，客户端回到注册组织或剩余可访问组织。
 
@@ -214,3 +214,9 @@ Go 全量 `just test` 中，`internal/workerevents` 的四个 JetStream 用例�
 ## 超级管理员集成
 
 平台管理后台加入后，接受邀请、普通 Console 重发和撤销、Admin API 撤销都先取得目标组织锁，再修改邀请。该顺序与后台的组织版本检查一致，避免邀请行锁与组织行锁反向等待。接受已有成员邀请仍复用原角色，不自动提权。真实 PostgreSQL 邀请回归通过。 详细边界见 [平台超级管理员方案](platform-super-admin.md)。
+
+## 平台管理员目标组织访问（2026-10-28）
+
+平台后台组织详情可进入未加入组织的 Console，但不会创建、恢复或提升成员；真实 memberships、邀请及组织切换器保持成员事实。侧栏账号区上方的独立“返回平台管理”按钮用于退出，清空平台与 Console scope 后返回刚访问的目标组织详情页 `/platform-admin/organizations/{targetOrganizationUuid}`，目标缺失时回退 `/platform-admin`；不恢复原组织或工作区，资源不随退出删除。
+
+完整权限及进入/退出合同见 [平台超级管理员设计](platform-super-admin.md)。

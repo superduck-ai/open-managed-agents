@@ -19,12 +19,16 @@ func requireConsoleOrganizationAdmin(store OrganizationStore) func(http.Handler)
 			if !ok {
 				return
 			}
+			principal, _ := auth.PrincipalFromContext(r.Context())
+			if principal.PlatformOrganizationAdmin(orgUUID) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			actorStore, ok := store.(consoleMemberActorStore)
 			if !ok {
 				internalError(w, "failed to authorize organization member operation")
 				return
 			}
-			principal, _ := auth.PrincipalFromContext(r.Context())
 			actor, err := actorStore.GetAdminUser(r.Context(), orgUUID, principal.UserExternalID)
 			if err != nil {
 				writeConsoleMemberError(w, err)
@@ -36,5 +40,14 @@ func requireConsoleOrganizationAdmin(store OrganizationStore) func(http.Handler)
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+func consoleMemberActorValidator(principal auth.Principal, organizationUUID string) func(string) error {
+	return func(role string) error {
+		if principal.PlatformOrganizationAdmin(organizationUUID) {
+			return nil
+		}
+		return validateConsoleOrganizationAdminRole(role)
 	}
 }

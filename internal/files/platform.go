@@ -225,7 +225,7 @@ func (h *Handler) streamPlatformFileVariant(w http.ResponseWriter, r *http.Reque
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not retrieve file"))
 		return
 	}
-	_, access, err := workspaceaccess.New(h.db).Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, record.WorkspaceUUID)
+	_, access, err := workspaceaccess.New(h.db).ResolvePrincipal(r.Context(), principal, record.WorkspaceUUID)
 	if err == nil && !access.UseResources() {
 		err = workspaceaccess.ErrDenied
 	}

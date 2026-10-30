@@ -1,4 +1,4 @@
-import { getConsoleRequestContext, getScopeSignal, reportApiAuthFailure } from './client';
+import { consoleRequestHeaders, getConsoleRequestContext, getScopeSignal, reportApiAuthFailure } from './client';
 
 export type ServerSentEvent<TData = Record<string, unknown>> = {
   event?: string;
@@ -22,8 +22,13 @@ export async function postJsonSseStream<TData = Record<string, unknown>>({
   onEvent: (event: ServerSentEvent<TData>) => void;
   errorFromResponse?: (response: Response) => Promise<Error>;
 }) {
-  const requestHeaders = new Headers(headers);
   const context = getConsoleRequestContext();
+  const provided = new Headers(headers);
+  const target = provided.get('X-Organization-UUID');
+  if (context.organizationUuid && target && target !== context.organizationUuid)
+    throw new Error('Conflicting organization scope');
+  const requestHeaders = consoleRequestHeaders(headers, context);
+  if (context.csrfToken) requestHeaders.set('X-CSRF-Token', context.csrfToken);
   const scopeSignal = getScopeSignal();
   signal = AbortSignal.any([scopeSignal, ...(signal ? [signal] : [])]);
   requestHeaders.set('Accept', 'text/event-stream');

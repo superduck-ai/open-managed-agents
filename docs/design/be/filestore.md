@@ -73,7 +73,7 @@ Filestore 是服务的固定能力，对象存储在应用启动阶段初始化�
 
 Filestore 只接受 `Authorization: Bearer` 中的专用 Filestore JWT。它使用原始 compact JWT，不带 `sk-ant-si-` 前缀；验证器固定 EdDSA、`kid` 与严格 Base64URL 解码。生产环境与 session ingress 可读取同一份 Ed25519 私钥文件，但两者的 claims、token 外形和验证入口完全分离。`X-Api-Key`、workspace API key、`sk-ant-oat01-` OAuth-compatible token 与 `sk-ant-si-` session-ingress JWT 均不能访问 Filestore；Code Session Ingress 和 `/v1/messages` 的鉴权逻辑保持不变。
 
-Runner 签发时优先从 session 的服务端运行上下文取得用户 UUID，再查询同组织内有效用户；平台 session 因此不要求存在 API key。仅未保存运行身份的旧/API-key session 才通过真实 `created_by_api_key_uuid` 找用户，不得用任意组织管理员补位。已有运行身份失效时拒绝签发，不回退换人。用户身份仍是必需的，JWT 的 `account_uuid` 不允许为空。服务端元数据保护、deployment 身份传递与迁移兼容见 [认证路由](auth-credential-routing.md#42-与-api-key-解耦的运行身份)。Session 文件系统创建也允许 NULL API-key 创建者，但请求提供 key 时仍验证其 workspace 归属。
+Runner 签发时优先从 session 的服务端运行上下文取得用户 UUID，按已保存 UUID 查询未删除运行用户，该用户可以是目标组织外的稳定平台账号；平台 session 因此不要求存在 API key。仅未保存运行身份的旧/API-key session 才通过真实 `created_by_api_key_uuid` 查找同组织有效用户，不得用任意组织管理员补位。已有运行身份失效时拒绝签发，不回退换人。用户身份仍是必需的，JWT 的 `account_uuid` 不允许为空。服务端元数据保护、deployment 身份传递与迁移兼容见 [认证路由](auth-credential-routing.md#42-与-api-key-解耦的运行身份)。Session 文件系统创建也允许 NULL API-key 创建者，但请求提供 key 时仍验证其 workspace 归属。
 
 Filestore JWT 包含以下注册 claims 与业务 claims：
 
@@ -84,7 +84,7 @@ Filestore JWT 包含以下注册 claims 与业务 claims：
 | `aud`                                                  | 必须包含 `filestore`                                                 |
 | `iat` / `exp`                                          | 签发时间与到期时间必填；当前有效期固定为 1 小时                      |
 | `org_uuid`                                             | 必须匹配文件系统所属组织                                             |
-| `account_uuid`                                         | 必须匹配同组织内未删除账号                                           |
+| `account_uuid`                                         | 必须匹配未删除账号，且属于目标组织或等于该 filesystem 所属 Session 的已保存运行账号                                           |
 | `workspace_uuid`                                       | 必须匹配未归档工作区                                                 |
 | `workspace_tagged_id` / `resolved_workspace_tagged_id` | 当前未引入 workspace alias，两者均必须匹配 `workspace.external_id`   |
 | `filesystem_id`                                        | 绑定唯一 filesystem，请求中改用同工作区的其他 ID 也会被拒绝          |

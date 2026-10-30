@@ -88,3 +88,30 @@ func TestUsageRecordsPostgres(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderCostFinalizationPostgres(t *testing.T) {
+	store, database := newTranscriptArchiveTestDB(t)
+	now := time.Now().UTC()
+	record := UsageRecord{OrganizationUUID: uuid.NewV4().String(), WorkspaceUUID: uuid.NewV4().String(), AttemptID: "provider-cost", Source: "api", Model: "test/model", StartedAt: now, EndedAt: now, Version: "request_cents_v1"}
+	if err := store.InsertUsageRecord(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	record.Finalized = true
+	record.ModelCents = new(int64(100))
+	record.ProviderCost = []byte(`{"amount":"7.2","currency":"CNY","exchange_rate":"7.2","usd_cents":100}`)
+	if err := store.InsertUsageRecord(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	record.ModelCents = new(int64(200))
+	if err := store.InsertUsageRecord(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	var amount string
+	var cents int64
+	if err := database.QueryRowContext(t.Context(), "SELECT provider_cost->>'amount', model_cents FROM usage_records WHERE attempt_id = 'provider-cost'").Scan(&amount, &cents); err != nil {
+		t.Fatal(err)
+	}
+	if amount != "7.2" || cents != 100 {
+		t.Fatalf("原币费用丢失或重复结算：%s %d", amount, cents)
+	}
+}

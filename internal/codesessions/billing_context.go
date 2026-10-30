@@ -60,7 +60,7 @@ func makeRuntimeBilling(session db.Session, totals db.SessionUsageTotals, models
 		Usage:         billing.CostAmount{Amount: cost, Currency: billing.CurrencyUSD},
 		BudgetReached: session.BudgetReachedAt != nil,
 		ObservedAt:    time.Now().UTC(), Pricing: make(map[string]*billing.ModelPrice),
-		CalculationPolicy: "server_authoritative_per_request_usd_cents;unpriced_usage_excluded;budget_missing_cache_rate_falls_back_to_input",
+		CalculationPolicy: "server_authoritative_per_request_usd_cents;provider_cost_preferred;unpriced_usage_excluded;budget_missing_cache_rate_falls_back_to_input",
 	}
 	if len(session.Budget) > 0 {
 		budget, err := billing.ParseBudget(session.Budget)

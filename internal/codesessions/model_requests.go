@@ -25,6 +25,7 @@ type ModelRequest struct {
 	Model                string
 	codeSession          db.CodeSession
 	toolThreadID         string
+	ResponseCost *billing.ResponseCostRule
 }
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.
@@ -48,6 +49,7 @@ type ModelRequestCacheUsage struct {
 }
 
 type ModelRequestResult struct {
+	ProviderCost      *billing.ProviderCost
 	Messages          []ModelRequestMessage
 	ToolUseIDs        []string
 	ToolUses          []ModelRequestToolUse
@@ -79,22 +81,23 @@ type ModelRequestContent struct {
 }
 
 type modelRequestEvent struct {
-	PriceSnapshot     *billing.ModelPrice `json:"_model_price,omitzero"`
-	Billing           map[string]string   `json:"billing,omitempty"`
-	IsError           *bool               `json:"is_error,omitzero"`
-	ToolUseIDs        []string            `json:"tool_use_ids,omitempty"`
-	ID                string              `json:"id"`
-	Type              string              `json:"type"`
-	OwnerThreadID     string              `json:"_owner_session_thread_id,omitempty"`
-	Model             string              `json:"model"`
-	RequestID         string              `json:"request_id"`
-	CreatedAt         time.Time           `json:"created_at"`
-	ProcessedAt       time.Time           `json:"processed_at"`
-	StartID           string              `json:"model_request_start_id,omitempty"`
-	Usage             *ModelRequestUsage  `json:"model_usage,omitzero"`
-	EventIDs          []string            `json:"event_ids,omitempty"`
-	UpstreamRequestID string              `json:"upstream_request_id,omitempty"`
-	Error             *modelRequestError  `json:"error,omitzero"`
+	ProviderCost      *billing.ProviderCost `json:"_provider_cost,omitzero"`
+	PriceSnapshot     *billing.ModelPrice   `json:"_model_price,omitzero"`
+	Billing           map[string]string     `json:"billing,omitempty"`
+	IsError           *bool                 `json:"is_error,omitzero"`
+	ToolUseIDs        []string              `json:"tool_use_ids,omitempty"`
+	ID                string                `json:"id"`
+	Type              string                `json:"type"`
+	OwnerThreadID     string                `json:"_owner_session_thread_id,omitempty"`
+	Model             string                `json:"model"`
+	RequestID         string                `json:"request_id"`
+	CreatedAt         time.Time             `json:"created_at"`
+	ProcessedAt       time.Time             `json:"processed_at"`
+	StartID           string                `json:"model_request_start_id,omitempty"`
+	Usage             *ModelRequestUsage    `json:"model_usage,omitzero"`
+	EventIDs          []string              `json:"event_ids,omitempty"`
+	UpstreamRequestID string                `json:"upstream_request_id,omitempty"`
+	Error             *modelRequestError    `json:"error,omitzero"`
 }
 
 type modelRequestError struct {
@@ -134,7 +137,7 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 	if len(publicSession.Budget) > 0 && !calculator.HasModel(model) {
 		return nil, ErrModelPriceUnavailable
 	}
-	request := &ModelRequest{calculator: calculator, StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession}
+	request := &ModelRequest{ResponseCost: calculator.ResponseCost(model), calculator: calculator, StartID: startID, CodeSessionID: codeSessionID, ThreadID: threadID, Model: model, codeSession: codeSession}
 	if agentID != "" {
 		request.toolThreadID = threadID
 	}
@@ -191,6 +194,10 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 		event.Error = &modelRequestError{Type: result.ErrorType}
 	}
 	event.Billing = modelRequestBilling(request.calculator, request.Model, result.Usage)
+	if result.ProviderCost != nil {
+		event.ProviderCost = result.ProviderCost
+		event.Billing = map[string]string{"list_cost": strconv.FormatInt(result.ProviderCost.USDCents, 10), "currency": "USD", "source": "provider"}
+	}
 	event.PriceSnapshot = request.calculator.PriceSnapshot(request.Model)
 	tools, err := s.modelToolUsePayloads(ctx, request, modelRequestPublicTools(result), result.EndedAt)
 	if err != nil {

@@ -258,6 +258,9 @@ func (o *responseObservation) observeFrame(data []byte) {
 			o.stopReason = event.Delta.StopReason
 		}
 	case "message_stop":
+		if o.request != nil && o.request.ResponseCost != nil && o.request.ResponseCost.StreamEvent == event.Type {
+			o.result.ProviderCost = o.request.ResponseCost.Extract(data)
+		}
 		if o.messageID == "" {
 			o.malformed = true
 		}
@@ -332,6 +335,9 @@ func (o *responseObservation) finish() {
 		if err := json.Unmarshal(o.buffer, &message); err != nil || message.ID == "" || message.Type != "message" {
 			o.malformed = true
 		} else {
+			if o.request != nil {
+				o.result.ProviderCost = o.request.ResponseCost.Extract(o.buffer)
+			}
 			o.messageID = message.ID
 			o.result.Usage = message.Usage
 			o.stopReason = message.StopReason

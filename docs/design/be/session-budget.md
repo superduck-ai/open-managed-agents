@@ -51,3 +51,13 @@
 Brain 从 `session_context.billing` 读取共享会话预算和当前模型价格；`narrows` 与兼容 slug `default` 读取 Narrows 源，工作区其他 slug 使用 OpenRouter 参考价。固定 slug 为 `organization` 的组织 Provider，仅在 BaseURL 主机名精确等于 `narrows-gateway.test.seewo.com` 时兼容使用 Narrows；其余组织 Provider 使用 OpenRouter。Narrows 缺价不跨来源回退。有预算且缺价的请求在上游调用前拒绝，预算触顶仍由开始事件事务做最终门禁。协议和文件部署说明见 [标价文件缓存](model-price-file-cache.md)。
 
 预算触顶后，状态写入事务忽略迟到的会话／主线程 running、rescheduling 和非 budget_reached 的 idle，避免 Worker 报告覆盖公开暂停原因。子线程状态、在途请求结算以及终止／删除仍允许写入。提高或移除预算清除触顶标记后，普通运行与结束状态恢复接收。
+
+### 供应商实际费用
+
+部署可通过 `pricing.response_costs` 按供应商 slug 配置 Anthropic Messages 响应费用，配置包含 `amount_pointer`（JSON 对象字段路径）、`stream_event: message_stop`、`currency`（USD 或 CNY）和 `exchange_rate`（每美元对应的原币金额，USD 为 `"1"`）。路径、内网供应商标识和地址由私有部署配置管理，公共示例不包含供应商私有字段。
+
+非流式从完整响应读取，流式只读取最终 `message_stop`。金额必须为非负十进制字符串，最多 12 位小数；明确的零费用有效。缺失、非法或未收到最终事件时使用请求开始时固定的标价估算，不把缺失视为零。费用从可信上游响应提取，不采纳客户端提交的费用。
+
+普通 API 和会话代理共用解析和精确有理数换算。实际费用优先于标价计算，按现有合同四舍五入至美元美分；`usage_records.provider_cost` 保留原币小数金额、币种、汇率和换算后的美分，避免丢失小额请求原值。无实际费用时该字段为空。会话结束事件的 `billing.list_cost` 使用换算值，`billing.source` 为 `provider`，现有预算累计、触顶暂停和预算调整恢复因此使用同一金额。原值保存在事件 `_provider_cost` 中并写入账本。请求仍只结算一次，实际费用不与标价估算相加。
+
+模型标价继续用于请求前的预算可用性校验和 Brain 价格上下文；配置响应费用不能绕过缺价门禁。当前按请求取整的预算精度不变，低于半美分的实际费用可能折算为零美分，原币金额可用于后续对账；此变更不引入跨请求小数累加。

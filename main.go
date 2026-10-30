@@ -265,14 +265,11 @@ func run(bootstrap *slog.Logger) (err error) {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
-<<<<<<< HEAD
 			ToolCallNotifications:  natsConnection,
 			ToolCallContext:        ctx,
 			InvitationJobs:         jobClient,
 			EvaluationRunner:       evaluationRunner,
-=======
 			Prices:                 prices,
->>>>>>> 0a78b100 (feat(pricing): refresh JSON catalogs asynchronously and expose prices to Brain)
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,
 			Config:                 cfg,
@@ -370,7 +367,6 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 	return nil
 }
 
-<<<<<<< HEAD
 func newApplicationLogger(console slog.Handler, telemetryRuntime *telemetry.Runtime, level slog.Level) *slog.Logger {
 	var handler slog.Handler = logging.NewContextHandler(console, logContextAttrs)
 	if otelHandler := telemetryRuntime.LogHandler(); otelHandler != nil {
@@ -462,17 +458,6 @@ func initializeDatabase(ctx context.Context, cfg config.Config, database *db.DB,
 	return nil
 }
 
-func syncModelPrices(ctx context.Context, database *db.DB, logger *slog.Logger) {
-	if err := pricing.Sync(ctx, database); err != nil {
-		logger.Warn("sync model prices", "source", "openrouter", "error", err)
-	}
-	if err := pricing.SyncNarrows(ctx, database); err != nil {
-		logger.Warn("sync model prices", "source", "narrows", "error", err)
-	}
-}
-
-=======
->>>>>>> 0a78b100 (feat(pricing): refresh JSON catalogs asynchronously and expose prices to Brain)
 func shutdownHTTP(ctx context.Context, server *http.Server) error {
 	if err := server.Shutdown(ctx); err != nil {
 		return errors.Join(fmt.Errorf("shutdown server: %w", err), server.Close())

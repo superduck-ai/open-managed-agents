@@ -47,17 +47,11 @@ export function createOmaSession(
     refreshSessionContext: async (signal, threadId) => {
       const response = await api.request(`/v2/sessions/${encodeURIComponent(assignment.session_id)}`,
         assignment.ingress_token, "GET", undefined, threadId ? { "X-OMA-Session-Thread-ID": threadId } : undefined, signal);
-<<<<<<< HEAD
       const models = response.session_context?.models;
       validateModels(models);
-=======
-      validateModels(response.session_context?.models);
-      assignment.launch.models = response.session_context?.models;
-
       const billing = sessionBilling(response.session_context?.billing);
       assignment.launch.billing = billing;
       checkSessionBudget(billing);
->>>>>>> 0a78b100 (feat(pricing): refresh JSON catalogs asynchronously and expose prices to Brain)
       const permissions = response.session_context?.runtime_tool_permissions;
       validateToolPermissions(permissions);
       assignment.launch.models = models;

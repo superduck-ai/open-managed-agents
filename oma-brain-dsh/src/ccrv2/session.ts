@@ -415,14 +415,9 @@ export class CcrSession {
       });
       this.outcomeConfirmations.add(confirmation);
     }
-<<<<<<< HEAD
     if (!threadId && event.type === "turn/end") return;
     const output = sessionEventOutput(this.id, this.inputId, event, toolName, threadId);
     this.pendingEvents.push(...(event.type === "assistant/message" ? this.assistantStream.complete(output, threadId) : output));
-=======
-    if (threadId || event.type !== "turn/end" || !this.budgetPaused)
-      this.pendingEvents.push(...nativeOutput(this.id, this.inputId, event, toolName, threadId));
->>>>>>> 0a78b100 (feat(pricing): refresh JSON catalogs asynchronously and expose prices to Brain)
   }
 
   async approve(request: ToolApproval, signal: AbortSignal, threadId?: string): Promise<ApprovalDecision> {

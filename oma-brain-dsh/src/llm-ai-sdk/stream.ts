@@ -120,15 +120,10 @@ export class AiSdkStream {
 
 export function modelError(error: unknown, signal?: AbortSignal): unknown {
   if (signal?.aborted || error instanceof LlmError) return error;
-<<<<<<< HEAD
   if (APICallError.isInstance(error)) {
     const message = apiErrorMessage(error);
-    return providerError(message, error.statusCode, retryAfterMs(error.responseHeaders), inputRangeOverflow(error, message));
+    return billingError(error.responseBody, error.statusCode) ?? providerError(message, error.statusCode, retryAfterMs(error.responseHeaders), inputRangeOverflow(error, message));
   }
-=======
-  if (APICallError.isInstance(error))
-    return billingError(error.responseBody, error.statusCode) ?? providerError(apiErrorMessage(error), error.statusCode, retryAfterMs(error.responseHeaders));
->>>>>>> 0a78b100 (feat(pricing): refresh JSON catalogs asynchronously and expose prices to Brain)
   if (error instanceof Error) return providerError(error.message);
   const message = typeof error === "object" && error && "message" in error ? String(error.message) : String(error);
   return providerError(message);

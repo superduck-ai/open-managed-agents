@@ -88,7 +88,9 @@ func (c *Calculator) Scope(ctx context.Context, org, workspace string, models ..
 	if err != nil {
 		return nil, err
 	}
-	return NewCalculator(prices), nil
+	scoped := NewCalculator(prices)
+	scoped.ResponseCosts = c.ResponseCosts
+	return scoped, nil
 }
 
 func (c *Calculator) ValidateSnapshot(ctx context.Context, org, workspace string, snapshot json.RawMessage) error {

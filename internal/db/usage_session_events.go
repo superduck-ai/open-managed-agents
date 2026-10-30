@@ -11,12 +11,13 @@ import (
 )
 
 type sessionUsageEvent struct {
-	PriceSnapshot *billing.ModelPrice  `json:"_model_price"`
-	Model         string               `json:"model"`
-	Usage         *billing.Usage       `json:"model_usage"`
-	LegacyUsage   *billing.Usage       `json:"usage"`
-	IsError       bool                 `json:"is_error"`
-	Billing       *sessionUsageBilling `json:"billing"`
+	ProviderCost  *billing.ProviderCost `json:"_provider_cost"`
+	PriceSnapshot *billing.ModelPrice   `json:"_model_price"`
+	Model         string                `json:"model"`
+	Usage         *billing.Usage        `json:"model_usage"`
+	LegacyUsage   *billing.Usage        `json:"usage"`
+	IsError       bool                  `json:"is_error"`
+	Billing       *sessionUsageBilling  `json:"billing"`
 }
 
 type sessionUsageBilling struct {
@@ -45,6 +46,9 @@ func sessionUsageRecord(event SessionEvent) (UsageRecord, error) {
 		return UsageRecord{}, fmt.Errorf("decode session usage event: %w", err)
 	}
 	record.Model = payload.Model
+	if payload.ProviderCost != nil {
+		record.ProviderCost, _ = json.Marshal(payload.ProviderCost)
+	}
 	if payload.PriceSnapshot != nil {
 		var err error
 		record.PriceSnapshot, err = json.Marshal(payload.PriceSnapshot)
@@ -60,7 +64,9 @@ func sessionUsageRecord(event SessionEvent) (UsageRecord, error) {
 		ApplyUsage(&record, *usage)
 		record.Complete = usage.Complete() && !payload.IsError
 	}
-	if payload.PriceSnapshot != nil {
+	if payload.ProviderCost != nil {
+		record.ModelCents = new(payload.ProviderCost.USDCents)
+	} else if payload.PriceSnapshot != nil {
 		calculator := billing.NewCalculator(map[string]billing.ModelPrice{record.Model: *payload.PriceSnapshot})
 		if usage != nil && usage.InputTokens != nil {
 			if cents, ok := calculator.ModelRequestCents(record.Model, usage.Tokens()); ok {

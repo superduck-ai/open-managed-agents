@@ -1,11 +1,7 @@
-<<<<<<< HEAD
 import { MAX_MESSAGES_REQUEST_BODY_BYTES } from "./model-defaults.ts";
 import type { CcrSubagentConfig } from "./ccrv2/contracts.ts";
 import type { ToolPermissions } from "./runtime/contracts.ts";
-=======
 import { sessionBilling, type SessionBilling } from "./billing.ts";
-import type { SubagentConfig, ToolPermissions } from "./runtime/contracts.ts";
->>>>>>> 0a78b100 (feat(pricing): refresh JSON catalogs asynchronously and expose prices to Brain)
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
 import { portToolDefinition } from "./port-tools/definitions.ts";

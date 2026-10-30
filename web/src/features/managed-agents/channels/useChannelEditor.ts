@@ -1,6 +1,7 @@
 import { useI18n } from '../../../shared/i18n';
 import { useEffect, useState } from 'react';
 import { channelApi, type Channel, type ChannelInput, type ChannelQr } from './api';
+import { useChannelEnvironment } from './useChannelEnvironment';
 import { errorMessage } from '../utils';
 
 export interface ChannelEditorProps {
@@ -13,6 +14,7 @@ export interface ChannelEditorProps {
 }
 export function useChannelEditor({ agentId, workspaceId, channel, onClose, onSaved }: ChannelEditorProps) {
   const { msg } = useI18n();
+  const environment = useChannelEnvironment(agentId, workspaceId);
   const [value, setValue] = useState<ChannelInput>({
     name: channel?.name ?? '',
     mode: channel?.mode ?? 'open',
@@ -53,6 +55,14 @@ export function useChannelEditor({ agentId, workspaceId, channel, onClose, onSav
   }, [agentId, workspaceId, saved, qr?.status, onSaved]);
 
   const submit = async (generateQr: boolean) => {
+    if (environment.error) {
+      setError(errorMessage(environment.error));
+      return;
+    }
+    if (!environment.selectedEnvironment) {
+      setError(msg('managedAgents.channels.environmentRequired', '请先选择执行环境，再保存渠道'));
+      return;
+    }
     const validationError = validateChannelInput(value, binding, saved, msg);
     if (validationError) {
       setError(validationError);
@@ -78,7 +88,7 @@ export function useChannelEditor({ agentId, workspaceId, channel, onClose, onSav
       setBusy(false);
     }
   };
-  return { value, setValue, binding, setBinding, saved, qr, busy, error, submit };
+  return { value, setValue, binding, setBinding, saved, qr, busy: busy || environment.isPending, error, submit };
 }
 
 export function validateChannelInput(

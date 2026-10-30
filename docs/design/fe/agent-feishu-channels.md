@@ -39,6 +39,7 @@ Go 是控制台的唯一后端入口。新增 `internal/channels` 资源，通�
 | 路径                                           | 方法          | 行为                                |
 | ---------------------------------------------- | ------------- | ----------------------------------- |
 | `/channels`                                    | GET / POST    | 列表 / 创建                         |
+| `/channels/settings`                           | GET / POST    | 读取 / 保存智能体渠道环境           |
 | `/channels/{channel_id}`                       | POST / DELETE | 修改 / 停止并软删除                 |
 | `/channels/{channel_id}/qr`                    | POST / GET    | 创建或复用有效二维码 / 查询扫码状态 |
 | `/channels/{channel_id}/pairings`              | GET           | 配对申请及已批准项                  |
@@ -60,13 +61,12 @@ Go 是控制台的唯一后端入口。新增 `internal/channels` 资源，通�
 {
   "组织UUID/工作区UUID": {
     "baseUrl": "http://oma-server:38080",
-    "apiKey": "${OMA_WORKSPACE_API_KEY}",
-    "environmentId": "env_已存在的执行环境"
+    "apiKey": "${OMA_WORKSPACE_API_KEY}"
   }
 }
 ```
 
-4. 通过部署环境注入该工作区的 `OMA_WORKSPACE_API_KEY`；多个工作区分别使用不同环境变量及独立密钥。执行环境须可用且属于同一工作区。运行 `node dist/managed-channels.js`。默认监听 `127.0.0.1:39100`，可用 `OMA_CHANNEL_BRIDGE_HOST`、`OMA_CHANNEL_BRIDGE_PORT` 调整。该入口也支持既有密钥读取协议。
+4. 通过部署环境注入该工作区的 `OMA_WORKSPACE_API_KEY`；多个工作区分别使用不同环境变量及独立密钥。执行环境在渠道页显式选择，须可用且属于同一工作区。运行 `node dist/managed-channels.js`。默认监听 `127.0.0.1:39100`，可用 `OMA_CHANNEL_BRIDGE_HOST`、`OMA_CHANNEL_BRIDGE_PORT` 调整。该入口也支持既有密钥读取协议。
 5. 在 OMA 配置中添加：
 
 ```yaml
@@ -97,3 +97,15 @@ channel_bridge:
 飞书分组使用飞书官网的品牌图标（来源：https://www.feishu.cn/favicon.ico），作为本地静态资源随前端打包。
 
 渠道界面文案（含状态、表单校验和无障碍标签）复用现有 i18n catalogs，支持中英文切换；测试覆盖英文表单及校验提示，并锁定二维码与配对请求的上游路径及方法。
+
+## 智能体渠道环境
+
+渠道页在 IM 连接管理之前展示环境选择，选项仅包含当前工作区未归档的环境，并在字段标题旁提供环境管理入口。不提供默认环境或自动选择，未设置时显示“选择环境”。选择后立即保存，刷新页面后回显。无编辑权限时只展示当前值，保存失败保留原值并显示错误。
+
+`GET /v1/agents/{agent_id}/channels/settings` 返回 `{"environment_id": null}`（未设置）或显式环境 ID；`POST` 必须提交非空环境 ID，不接受清除环境。OMA 验证平台会话 CSRF、Agent 归属和归档状态，并按当前工作区查询环境，拒绝不存在或已归档的环境。桥接控制面对应路径为 `/api/managed-channels/settings`，以组织 UUID、工作区 UUID 和 Agent ID 为保存范围。
+
+保存渠道或发起绑定前，页面先检查是否已选择环境；OMA 再读取当前桥接设置，检查环境仍属于当前工作区且未归档。未选择、已归档或跨工作区的环境返回 400，不转发保存或绑定请求。
+
+桥接 MySQL 模式将选择保存为独立配置记录，文件模式使用独立配置文件。运行配置必须使用智能体显式选择的环境，不回退部署默认值；既有未配置的渠道也须先选择环境。环境配置的修订纳入 MySQL 运行配置代次，使已有机器人重新加载配置；文件模式保存后重新协调当前智能体的机器人。新建 OMA 会话使用所选环境，既有会话继续保留创建时的环境。
+
+本功能需要同时升级 `lark-channel` 桥接服务的 settings 接口与运行环境解析。工作区 OMA 地址、API Key 和飞书租户身份仍由部署者配置；选择环境不会自动创建凭据，也不会跨工作区复用其他身份。工作区未配置身份时，创建机器人仍会明确失败。

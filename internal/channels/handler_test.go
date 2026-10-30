@@ -18,6 +18,17 @@ import (
 
 type scopedStore struct{ archived bool }
 
+func (s scopedStore) GetEnvironment(_ context.Context, workspace, id string) (db.Environment, error) {
+	if workspace != "workspace-a" || (id != "env-a" && id != "env-archived") {
+		return db.Environment{}, db.ErrNotFound
+	}
+	env := db.Environment{}
+	if id == "env-archived" {
+		env.ArchivedAt = new(time.Now())
+	}
+	return env, nil
+}
+
 func (s scopedStore) GetAgent(_ context.Context, workspace, id string) (db.Agent, error) {
 	if workspace != "workspace-a" || id != "agent-a" {
 		return db.Agent{}, db.ErrNotFound
@@ -44,11 +55,18 @@ func TestChannelScopeAndProxy(t *testing.T) {
 		{name: "生成二维码路径", workspace: "workspace-a", method: "POST", suffix: "/ch1/qr", want: 200},
 		{name: "读取二维码路径", workspace: "workspace-a", method: "GET", suffix: "/ch1/qr", want: 200},
 		{name: "读取配对路径", workspace: "workspace-a", method: "GET", suffix: "/ch1/pairings", want: 200},
+		{name: "配对ID与设置同名", workspace: "workspace-a", method: "POST", suffix: "/ch1/pairings/settings", want: 200},
+		{name: "配对ID与二维码同名", workspace: "workspace-a", method: "POST", suffix: "/ch1/pairings/qr", want: 200},
 		{name: "批准配对路径", workspace: "workspace-a", method: "POST", suffix: "/ch1/pairings/pair-9", want: 200},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/managed-channels/settings" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"environment_id":"env-a"}`))
+					return
+				}
 				calls++
 				if r.Header.Get("Authorization") != "Bearer bridge-token" || r.Header.Get("X-OMA-Workspace") != "workspace-a" || r.Header.Get("X-OMA-Organization") != "organization-a" || r.Header.Get("X-OMA-Agent") != "agent-a" {
 					t.Error("桥接范围或身份错误")
@@ -101,7 +119,12 @@ func TestChannelPlatformSessionCSRF(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/managed-channels/settings" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"environment_id":"env-a"}`))
+					return
+				}
 				calls++
 				_, _ = w.Write([]byte(`{"data":[]}`))
 			}))

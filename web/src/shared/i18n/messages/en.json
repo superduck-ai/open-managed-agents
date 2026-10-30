@@ -2719,6 +2719,7 @@
   "managedAgents.dreams.unavailable": "Dreaming is not connected.",
   "managedAgents.sessions.trace.eventView": "Event view",
   "managedAgents.sessions.trace.deltas": "Deltas",
+  "managedAgents.sessions.trace.ephemeralFrames": "Ephemeral data — only events streamed live in this browser tab are captured.",
   "managedAgents.sessions.trace.deltasUnavailable": "Deltas are only captured for messages streamed live in this browser tab — they are not stored in history.",
   "managedAgents.sessions.trace.frame": "Frame",
   "managedAgents.sessions.trace.text": "Text",

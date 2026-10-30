@@ -2719,6 +2719,7 @@
   "managedAgents.dreams.unavailable": "Dreaming 尚未接入。",
   "managedAgents.sessions.trace.eventView": "事件视图",
   "managedAgents.sessions.trace.deltas": "增量帧",
+  "managedAgents.sessions.trace.ephemeralFrames": "临时数据 — 仅捕获此标签页中实时流式传输的事件",
   "managedAgents.sessions.trace.deltasUnavailable": "增量帧仅保留在当前标签页的实时会话中，历史记录不包含该数据。",
   "managedAgents.sessions.trace.frame": "帧类型",
   "managedAgents.sessions.trace.text": "内容",

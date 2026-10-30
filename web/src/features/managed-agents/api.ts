@@ -1124,7 +1124,7 @@ export async function syncSessionEventHistory({
         });
         response.data.forEach((event) => {
           const finalId = sessionFinalAgentEventId(event);
-          if (finalId) removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+          if (finalId) reconcileSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
         });
         page = nextPage;
       } while (page);
@@ -1164,7 +1164,7 @@ export function mergeSessionStreamFrame(
   queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => mergeSessionEventCache(cache, [event]));
   const finalId = sessionFinalAgentEventId(event);
   if (finalId) {
-    removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+    reconcileSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
   }
   if (eventType === 'span.model_request_end' && Array.isArray(event.event_ids)) {
     cleanupIncompleteSessionStreamEvents(
@@ -1187,7 +1187,7 @@ function sessionFinalAgentEventId(event: QuickstartSessionEvent) {
     : null;
 }
 
-function removeSessionDeltaFrame(
+function reconcileSessionDeltaFrame(
   queryClient: QueryClient,
   workspaceId: string,
   sessionId: string,
@@ -1198,6 +1198,23 @@ function removeSessionDeltaFrame(
   queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => {
     if (!cache?.[eventId]) {
       return cache;
+    }
+    const completed = queryClient
+      .getQueryData<SessionDetailEventCache>(sessionDetailEventCacheKey(workspaceId, sessionId, threadId))
+      ?.events.find((event) => sessionStableEventId(event) === eventId && sessionFinalAgentEventId(event) !== null);
+    if (completed) {
+      return {
+        ...cache,
+        [eventId]: {
+          message: completed,
+          frames: [
+            ...cache[eventId].frames.filter((frame) =>
+              ['event_start', 'event_delta'].includes(sessionEventType(frame)),
+            ),
+            completed,
+          ],
+        },
+      };
     }
     const next = { ...cache };
     delete next[eventId];
@@ -1248,7 +1265,7 @@ export function mergeSessionDeltaFrame(
   }
   queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => {
     const current = cache?.[eventId];
-    if (!current) {
+    if (!current || current.frames.some((frame) => sessionFinalAgentEventId(frame) !== null)) {
       return cache ?? {};
     }
     return {

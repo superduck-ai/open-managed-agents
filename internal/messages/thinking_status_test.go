@@ -46,14 +46,14 @@ func TestThinkingStatusPublishesBeforeAnswerWithoutBody(t *testing.T) {
 			o.observeFrame([]byte(`{"type":"message_start","message":{"id":"msg_test"}}`))
 			start, _ := json.Marshal(responseStreamEvent{Type: "content_block_start", Index: 0, ContentBlock: responseContentBlock{Type: kind}})
 			o.observeFrame(start)
-			if len(ids) != 1 || o.complete {
+			if len(ids) != 1 || o.complete || len(o.result.Messages) != 0 {
 				t.Fatalf("thinking not published at block start: %v", ids)
 			}
 			for _, frame := range []string{`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"private reasoning"}}`, `{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"answer"}}`, `{"type":"message_stop"}`} {
 				o.observeFrame([]byte(frame))
 			}
 			o.finish()
-			if o.result.ErrorType != "" || len(o.result.Messages) != 1 || o.result.Messages[0].Type != "agent.message" || !slices.Equal(o.result.EventIDs, []string{ids[0], o.result.Messages[0].ID}) {
+			if o.result.ErrorType != "" || len(o.result.Messages) != 2 || o.result.Messages[0].Type != "agent.thinking" || o.result.Messages[0].ID != ids[0] || o.result.Messages[1].Type != "agent.message" || !slices.Equal(o.result.EventIDs, []string{ids[0], o.result.Messages[1].ID}) {
 				t.Fatalf("events=%+v result=%+v", ids, o.result)
 			}
 			encoded, _ := json.Marshal(o.result.Messages)

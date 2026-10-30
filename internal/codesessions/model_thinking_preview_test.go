@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -31,7 +32,7 @@ func TestModelThinkingPreviewPrecedesBufferedRetirement(t *testing.T) {
 			if err := service.StartModelThinking(t.Context(), request, "msg_test", 0); err != nil {
 				t.Fatal(err)
 			}
-			if len(sink.order) != 2 || sink.order[0] != "preview" || sink.order[1] != "buffered" || len(sink.publications) != 1 {
+			if len(sink.order) != 1 || sink.order[0] != "preview" || len(sink.events) != 0 || len(sink.publications) != 1 {
 				t.Fatalf("thinking preview was retired before publication: %v", sink.order)
 			}
 			p := sink.publications[0]
@@ -47,12 +48,24 @@ func TestModelThinkingPreviewPrecedesBufferedRetirement(t *testing.T) {
 			if err := json.Unmarshal(p.payload, &preview); err != nil {
 				t.Fatal(err)
 			}
-			var buffered map[string]any
+			if preview.Type != "event_start" || preview.Event.Type != "agent.thinking" || preview.Event.ID == "" || preview.Thread != child || len(preview.Content) != 0 || p.workerEpoch != 7 || p.route.WorkspaceUUID != "workspace" || p.route.SessionExternalID != "session" || p.route.CodeSessionID != "cse_test" {
+				t.Fatalf("invalid routed nonsecret preview: %s", p.payload)
+			}
+			if err := service.EndModelRequest(t.Context(), request, ModelRequestResult{EndedAt: time.Now().UTC(), Messages: []ModelRequestMessage{{ID: preview.Event.ID, Type: "agent.thinking"}}}); err != nil {
+				t.Fatal(err)
+			}
+			var buffered struct {
+				ID   string `json:"id"`
+				Type string `json:"type"`
+			}
+			if len(sink.events) != 2 {
+				t.Fatalf("completion events=%d", len(sink.events))
+			}
 			if err := json.Unmarshal(sink.events[0], &buffered); err != nil {
 				t.Fatal(err)
 			}
-			if preview.Type != "event_start" || preview.Event.Type != "agent.thinking" || preview.Event.ID != buffered["id"] || preview.Thread != child || len(preview.Content) != 0 || p.workerEpoch != 7 || p.route.WorkspaceUUID != "workspace" || p.route.SessionExternalID != "session" || p.route.CodeSessionID != "cse_test" {
-				t.Fatalf("invalid routed nonsecret preview: %s", p.payload)
+			if buffered.ID != preview.Event.ID || buffered.Type != "agent.thinking" {
+				t.Fatalf("completion=%+v", buffered)
 			}
 		})
 	}

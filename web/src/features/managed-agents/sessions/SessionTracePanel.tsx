@@ -1,4 +1,5 @@
 import { useFormatters, useI18n } from '../../../shared/i18n';
+import { EventDeltasDetail } from './EventDeltasDetail';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
 import {
@@ -9,7 +10,6 @@ import {
   InputGroupTextarea,
 } from '../../../shared/ui/input-group';
 import { ScrollArea } from '../../../shared/ui/scroll-area';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../shared/ui/tooltip';
 import {
@@ -33,7 +33,7 @@ import {
   type ToolCallEntry,
   type ToolLifecycle,
 } from '../types';
-import { copyText, toRecord } from '../utils';
+import { copyText } from '../utils';
 import clsx from 'clsx';
 import { ArrowUp, Loader2, Search, Timer, X } from 'lucide-react';
 import { type ReactNode, useContext, useEffect, useRef, useState } from 'react';
@@ -657,6 +657,9 @@ export function DebugDetailPanel({ entry }: { entry: Exclude<SessionEventListEnt
           {frame ? (
             <TabsTrigger value="deltas" className="h-5 px-2 text-xs">
               {msg('managedAgents.sessions.trace.deltas', 'Deltas')}
+              {entry.type === 'agent.message'
+                ? ` (${frame.frames.filter((event) => sessionEventType(event) === 'event_delta').length})`
+                : ''}
             </TabsTrigger>
           ) : (
             <Tooltip>
@@ -678,56 +681,10 @@ export function DebugDetailPanel({ entry }: { entry: Exclude<SessionEventListEnt
         <DebugEventDetail event={contentEvent} type={entry.type} />
       </TabsContent>
       <TabsContent value="deltas">
-        <DebugDeltasDetail frames={frame?.frames ?? []} />
+        <EventDeltasDetail eventId={entry.displayEvent.id} eventType={entry.type} frames={frame?.frames ?? []} />
       </TabsContent>
     </Tabs>
   );
-}
-
-export function DebugDeltasDetail({ frames }: { frames: QuickstartSessionEvent[] }) {
-  const { msg } = useI18n();
-  let deltaNumber = 0;
-  return (
-    <div className="px-3 pb-5 pt-2">
-      <Table className="table-fixed text-xs">
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead className="h-7 w-10 px-1.5 text-right">#</TableHead>
-            <TableHead className="h-7 w-24 px-1.5">{msg('managedAgents.sessions.trace.frame', 'Frame')}</TableHead>
-            <TableHead className="h-7 px-1.5">{msg('managedAgents.sessions.trace.text', 'Text')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {frames.map((frame, index) => {
-            const isDelta = sessionEventType(frame) === 'event_delta';
-            if (isDelta) deltaNumber += 1;
-            const text = sessionDeltaFramePreview(frame);
-            return (
-              <TableRow key={index} aria-label={isDelta ? `event_delta #${deltaNumber}` : sessionEventType(frame)}>
-                <TableCell className="h-7 px-1.5 text-right font-mono tabular-nums text-muted-foreground">
-                  {isDelta ? deltaNumber : ''}
-                </TableCell>
-                <TableCell className="h-7 truncate px-1.5 font-mono">{sessionEventType(frame)}</TableCell>
-                <TableCell className="h-7 truncate px-1.5 font-mono text-muted-foreground" title={text}>
-                  {text}
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </div>
-  );
-}
-
-function sessionDeltaFramePreview(frame: QuickstartSessionEvent) {
-  if (sessionEventType(frame) === 'event_start') {
-    return sessionEventType(toRecord(frame.event) ?? {});
-  }
-  const delta = toRecord(frame.delta);
-  const content = toRecord(delta?.content);
-  const text = content?.text ?? content?.thinking;
-  return typeof text === 'string' ? text.replaceAll('\n', '↵') : '';
 }
 
 export function LiveMessageContent({ displayEvent }: { displayEvent: DisplayEvent }) {

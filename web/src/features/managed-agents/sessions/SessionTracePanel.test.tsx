@@ -180,8 +180,49 @@ describe('DebugDetailPanel', () => {
     );
 
     expect(screen.getByRole('tab', { name: 'Raw' }).getAttribute('data-active')).not.toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: 'Deltas' }));
-    expect(screen.getByRole('columnheader', { name: 'Frame' })).toBeTruthy();
-    expect(screen.getByRole('row', { name: 'event_delta #1' }).textContent).toContain('Hel↵');
+    fireEvent.click(screen.getByRole('tab', { name: 'Deltas (1)' }));
+    const delta = screen.getByRole('button', { name: 'event_delta Hel↵' });
+    expect(delta.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(delta);
+    expect(delta.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('tabpanel', { name: 'Deltas (1)' }).textContent).toContain('Hel\\n');
+    expect(screen.getAllByRole('button', { name: 'Copy code' }).length).toBeGreaterThanOrEqual(1);
   });
+});
+
+test('shows captured thinking start and completion as expandable JSON', () => {
+  resetTestDom();
+  const event: QuickstartSessionEvent = {
+    id: 'sevt_thinking',
+    type: 'agent.thinking',
+    processed_at: '2026-10-30T08:00:00Z',
+  };
+  const [entry] = buildSessionEventEntries([event], 'debug');
+  if (!entry || !('traceEntry' in entry)) throw new Error('Expected a debug event entry');
+  render(
+    <I18nProvider initialLocale="en">
+      <TooltipProvider>
+        <SessionDetailDeltaFramesContext.Provider
+          value={{
+            sevt_thinking: {
+              message: event,
+              frames: [{ type: 'event_start', event: { id: event.id, type: event.type } }, event],
+            },
+          }}
+        >
+          <DebugDetailPanel entry={entry} />
+        </SessionDetailDeltaFramesContext.Provider>
+      </TooltipProvider>
+    </I18nProvider>,
+  );
+  fireEvent.click(screen.getByRole('tab', { name: 'Deltas' }));
+  const start = screen.getByRole('button', { name: 'event_start sevt_thinking' });
+  expect(start.getAttribute('aria-expanded')).toBe('true');
+  expect(screen.getByRole('button', { name: 'agent.thinking sevt_thinking' })).toBeTruthy();
+  expect(document.querySelectorAll('code.language-json').length).toBeGreaterThanOrEqual(2);
+  fireEvent.click(start);
+  expect(start.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.getByRole('button', { name: 'agent.thinking sevt_thinking' }).getAttribute('aria-expanded')).toBe(
+    'true',
+  );
 });

@@ -120,8 +120,9 @@ type ModelPrice struct {
 
 // Calculator prices model requests from configured list prices.
 type Calculator struct {
-	loader PriceLoader
-	Models map[string]ModelPrice
+	ResponseCosts map[string]ResponseCostRule
+	loader        PriceLoader
+	Models        map[string]ModelPrice
 }
 
 // NewCalculator builds a calculator from configuration prices keyed by model

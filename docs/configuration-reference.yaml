@@ -19,6 +19,7 @@ database:
   auto_migrate: true
 
 pricing:
+  response_costs: {}
   snapshot_file: ./data/model-prices.json
   read_only: false
   refresh_interval: 6h

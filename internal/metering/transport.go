@@ -55,7 +55,7 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	}
 	request = request.Clone(request.Context())
 	request.Header.Del("Accept-Encoding")
-	observer := &observation{}
+	observer := &observation{rule: calculator.ResponseCost(record.Model)}
 	finish := sync.OnceFunc(func() { t.finish(request.Context(), record, observer) })
 	response, err := t.Base.RoundTrip(request)
 	if err != nil {
@@ -111,6 +111,10 @@ func (t *Transport) finish(ctx context.Context, record db.UsageRecord, observer 
 	}
 	if cents, ok := calculator.ModelRequestCents(record.Model, observer.usage.Tokens()); ok && observer.usage.InputTokens != nil {
 		record.ModelCents = new(cents)
+	}
+	if observer.cost != nil {
+		record.ModelCents = new(observer.cost.USDCents)
+		record.ProviderCost, _ = json.Marshal(observer.cost)
 	}
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()

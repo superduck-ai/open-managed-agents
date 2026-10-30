@@ -8,6 +8,8 @@ import (
 )
 
 type observation struct {
+	rule      *billing.ResponseCostRule
+	cost      *billing.ProviderCost
 	usage     billing.Usage
 	streaming bool
 	failed    bool
@@ -61,8 +63,12 @@ func (o *observation) frame(data []byte) {
 	case "message_delta":
 		mergeUsage(&o.usage, event.Usage)
 	case "message_stop":
+		if o.rule != nil && o.rule.StreamEvent == event.Type {
+			o.cost = o.rule.Extract(data)
+		}
 		o.complete = true
 	case "message":
+		o.cost = o.rule.Extract(data)
 		o.usage, o.complete = event.Usage, true
 	case "error":
 		o.failed = true

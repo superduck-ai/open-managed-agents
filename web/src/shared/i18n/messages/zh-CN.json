@@ -3321,6 +3321,6 @@
   "invitations.delivery.created": "邀请成功。",
   "invitations.delivery.failed": "{count} 封邀请邮件发送失败，可在邀请菜单中重发。",
   "invitations.delivery.notConfigured": "未启用邮件通知，受邀人可使用受邀邮箱登录，在组织邀请中查看并接受邀请。",
-  "managedAgents.channels.defaultEnvironment": "使用预设或默认环境",
-  "managedAgents.channels.manageEnvironments": "前往环境管理"
+  "managedAgents.channels.manageEnvironments": "前往环境管理",
+  "managedAgents.channels.environmentRequired": "请先选择执行环境，再保存渠道"
 }

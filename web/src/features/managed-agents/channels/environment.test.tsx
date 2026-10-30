@@ -34,9 +34,9 @@ test('保存失败保留原环境，展示错误', async () => {
   fireEvent.click(select);
   fireEvent.click(await screen.findByRole('option', { name: '测试环境' }));
   expect(await screen.findByText('环境已归档')).toBeTruthy();
-  expect(select.textContent).toContain('使用预设或默认环境');
+  expect(select.textContent).toContain('选择环境');
 });
-test('保存选择、恢复默认值并携带工作区和 CSRF', async () => {
+test('仅展示可选环境并携带工作区和 CSRF保存选择', async () => {
   const posted: unknown[] = [];
   globalThis.fetch = (async (input, init) => {
     if (String(input).includes('/environments'))
@@ -59,11 +59,10 @@ test('保存选择、恢复默认值并携带工作区和 CSRF', async () => {
   expect((await screen.findByRole('link', { name: '前往环境管理' })).getAttribute('href')).toBe(
     '/workspaces/workspace-a/environments',
   );
+  expect(screen.queryByRole('option', { name: '使用预设或默认环境' })).toBeNull();
   fireEvent.click(await screen.findByRole('option', { name: '测试环境' }));
   await waitFor(() => expect(select.textContent).toContain('测试环境'));
-  fireEvent.click(select);
-  fireEvent.click(await screen.findByRole('option', { name: '使用预设或默认环境' }));
-  await waitFor(() => expect(posted).toEqual([{ environment_id: 'env_a' }, { environment_id: null }]));
+  expect(posted).toEqual([{ environment_id: 'env_a' }]);
 });
 
 test('加载后续分页并在只读模式禁止修改', async () => {

@@ -3321,6 +3321,6 @@
   "invitations.delivery.created": "Invitation created successfully.",
   "invitations.delivery.failed": "{count, plural, one {# invitation email} other {# invitation emails}} could not be sent. You can resend from the invitation menu.",
   "invitations.delivery.notConfigured": "Email delivery is not configured. Recipients can sign in with the invited email address to view and accept their invitations.",
-  "managedAgents.channels.defaultEnvironment": "Use preset or default environment",
-  "managedAgents.channels.manageEnvironments": "Manage environments"
+  "managedAgents.channels.manageEnvironments": "Manage environments",
+  "managedAgents.channels.environmentRequired": "Select an environment before saving the channel"
 }

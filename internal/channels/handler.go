@@ -93,6 +93,11 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	if p.CredentialType == auth.CredentialTypeAPIKey {
 		upstream.Header.Set("X-OMA-Source", "api")
 	}
+	if r.Method == http.MethodPost && !settings && !strings.Contains(r.URL.Path, "/pairings") {
+		if err := h.requireEnvironment(upstream, p.WorkspaceUUID, chi.URLParam(r, "channel_id")); err != nil {
+			return err
+		}
+	}
 	response, err := h.client.Do(upstream)
 	if err != nil {
 		return unavailable(err)

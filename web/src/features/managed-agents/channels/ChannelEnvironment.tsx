@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight } from 'lucide-react';
 import { channelApi } from './api';
+import { useChannelEnvironment, type EnvironmentSettings } from './useChannelEnvironment';
 import { anthropicBetaApi } from '../../../shared/api/anthropic';
 import { useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
@@ -16,9 +17,6 @@ import {
 import type { EnvironmentApiResponse } from '../types';
 import { errorMessage } from '../utils';
 
-interface EnvironmentSettings {
-  environment_id: string | null;
-}
 export function ChannelEnvironment({
   agentId,
   workspaceId,
@@ -31,11 +29,7 @@ export function ChannelEnvironment({
   const { msg } = useI18n();
   const client = useQueryClient();
   const queryKey = ['channel-environment', workspaceId, agentId];
-  const settings = useQuery({
-    queryKey,
-    queryFn: () => channelApi<EnvironmentSettings>(agentId, workspaceId, '/settings'),
-    retry: false,
-  });
+  const settings = useChannelEnvironment(agentId, workspaceId);
   const environments = useQuery({
     queryKey: ['channel-environment-options', workspaceId],
     queryFn: async () => {
@@ -56,18 +50,15 @@ export function ChannelEnvironment({
   const mutation = useMutation({
     mutationFn: (environmentId: string) =>
       channelApi<EnvironmentSettings>(agentId, workspaceId, '/settings', 'POST', {
-        environment_id: environmentId || null,
+        environment_id: environmentId,
       }),
     onSuccess: (data) => client.setQueryData(queryKey, data),
   });
-  const defaultLabel = msg('managedAgents.channels.defaultEnvironment', '使用预设或默认环境');
-  const value = settings.data?.environment_id ?? '';
   const options = environments.data ?? [];
-  const items = [
-    { value: '', label: defaultLabel },
-    ...options.map((env) => ({ value: env.id, label: env.name || env.id })),
-  ];
-  if (value && !options.some((env) => env.id === value)) items.push({ value, label: value });
+  const value = options.some((env) => env.id === settings.data?.environment_id)
+    ? (settings.data?.environment_id ?? null)
+    : null;
+  const items = options.map((env) => ({ value: env.id, label: env.name || env.id }));
   const error = mutation.error || settings.error || environments.error;
   return (
     <div className="space-y-3">
@@ -85,11 +76,11 @@ export function ChannelEnvironment({
             mutation.isPending
           }
           onValueChange={(next) => {
-            if (next !== null && next !== value) mutation.mutate(next);
+            if (next && next !== value) mutation.mutate(next);
           }}
         >
           <SelectTrigger id="channel-environment" className="h-11 w-full">
-            <SelectValue />
+            <SelectValue placeholder={msg('managedAgents.quickstart.selectEnvironment', '请选择环境')} />
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false}>
             {items.map((item) => (

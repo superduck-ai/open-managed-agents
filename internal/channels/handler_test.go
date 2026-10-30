@@ -60,6 +60,11 @@ func TestChannelScopeAndProxy(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/managed-channels/settings" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"environment_id":"env-a"}`))
+					return
+				}
 				calls++
 				if r.Header.Get("Authorization") != "Bearer bridge-token" || r.Header.Get("X-OMA-Workspace") != "workspace-a" || r.Header.Get("X-OMA-Organization") != "organization-a" || r.Header.Get("X-OMA-Agent") != "agent-a" {
 					t.Error("桥接范围或身份错误")
@@ -112,7 +117,12 @@ func TestChannelPlatformSessionCSRF(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/managed-channels/settings" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"environment_id":"env-a"}`))
+					return
+				}
 				calls++
 				_, _ = w.Write([]byte(`{"data":[]}`))
 			}))

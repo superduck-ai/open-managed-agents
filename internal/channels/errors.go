@@ -25,3 +25,7 @@ func csrfRejected() error {
 func invalidEnvironment(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "请选择当前工作区中未归档的执行环境", cause)
 }
+
+func environmentRequired() error {
+	return apperr.New(apperr.InvalidArgument, "请先选择执行环境，再保存渠道", nil)
+}

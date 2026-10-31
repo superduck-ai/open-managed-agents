@@ -91,6 +91,17 @@ export function BuilderPanels({
         }}
       >
         <div hidden={open && !split} className="builder-conversation flex min-h-0 min-w-0 flex-col">
+          {!open && builder.draftEditing && (
+            <div className="flex shrink-0 flex-wrap items-center gap-2 pb-3 text-sm" role="status">
+              <span>{zh ? '有未应用修改' : 'Unapplied changes'}</span>
+              <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+                {zh ? '继续编辑' : 'Continue editing'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => builder.setDraftEditing(false)}>
+                {zh ? '放弃编辑' : 'Discard edits'}
+              </Button>
+            </div>
+          )}
           {children}
         </div>
         <aside

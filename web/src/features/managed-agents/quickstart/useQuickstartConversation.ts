@@ -53,7 +53,8 @@ export function useQuickstartConversation(
     staleTime: 1000,
   });
   const bindingValid = sessionMatchesQuickstart(session.data, binding);
-  const terminal = ['terminated', 'deleted'].includes(session.data?.status ?? '');
+  const savedStatus = savedConversationStatus(session.data);
+  const terminal = ['terminated', 'deleted'].includes(savedStatus);
   const [refreshKey, setRefreshKey] = useState(0);
   const data = useSessionDetailEventData({
     sessionId: sessionID || null,
@@ -126,7 +127,7 @@ export function useQuickstartConversation(
   );
   const { status, complete, running, waiting, failedTurn, stopped } = quickstartConversationState(
     data.events,
-    session.data?.status ?? 'idle',
+    savedStatus,
     Boolean(action),
   );
   const disabled =
@@ -241,4 +242,8 @@ export function useQuickstartConversation(
       (data.connected || terminal),
     openModelRequest: latestOpenModelRequest(data.events),
   };
+}
+
+function savedConversationStatus(session: SessionApiResponse | undefined) {
+  return session?.archived_at ? 'terminated' : (session?.status ?? 'idle');
 }

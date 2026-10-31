@@ -1576,3 +1576,112 @@ test('version review shows actual removed and added config without putting the p
   expect(screen.getByText('The config panel shows the proposed version.')).toBeTruthy();
   expect(writes(api.requests)).toHaveLength(1);
 });
+
+const reviewEvents = [
+  {
+    id: 'review_user',
+    type: 'user.message',
+    content: [{ type: 'text', text: 'Calculate 8 * 5.' }],
+    processed_at: '2026-10-31T12:00:00Z',
+  },
+  {
+    id: 'review_tool',
+    type: 'agent.tool_use',
+    name: 'Bash',
+    input: { command: 'echo $((8 * 5))' },
+    processed_at: '2026-10-31T12:00:01Z',
+  },
+  {
+    id: 'review_tool_result',
+    type: 'agent.tool_result',
+    tool_use_id: 'review_tool',
+    content: '40',
+    is_error: false,
+    processed_at: '2026-10-31T12:00:02Z',
+  },
+  {
+    id: 'review_answer',
+    type: 'agent.message',
+    content: [{ type: 'text', text: 'Actual answer: 40' }],
+    processed_at: '2026-10-31T12:00:03Z',
+  },
+  {
+    id: 'review_idle',
+    type: 'session.status_idle',
+    stop_reason: { type: 'end_turn' },
+    processed_at: '2026-10-31T12:00:04Z',
+  },
+];
+
+test('live review receives actual input, output and tool evidence', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = restoreOpenTest('idle', '', false, reviewEvents);
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+  await screen.findByText('Actual answer: 40');
+  const composer = screen.getByRole('textbox', { name: 'Builder message' });
+  fireEvent.change(composer, { target: { value: 'Review this test result.' } });
+  fireEvent.submit(composer.closest('form')!);
+  await waitFor(() => expect(api.calls.length).toBeGreaterThan(0));
+  const system = JSON.stringify(api.calls.at(-1)?.system);
+  expect(system).toContain('Calculate 8 * 5.');
+  expect(system).toContain('Actual answer: 40');
+  expect(system).toContain('echo $((8 * 5))');
+  expect(system).toContain('review_tool_result');
+});
+
+test('hidden unapplied edits can be resumed or discarded without creating a resource', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([toolStream('build_agent_config', { name: 'Draft', system: 'Answer briefly.' })]);
+  renderManagedAgentsPage('quickstart');
+  await screen.findByRole('textbox', { name: 'Builder message' });
+  send('Create a simple assistant.');
+  fireEvent.click(await screen.findByRole('button', { name: 'Review configuration' }));
+  await screen.findByRole('textbox', { name: 'Agent configuration content' });
+  setAgentConfigEditorValue(document.body, '{', 'Agent configuration content');
+  fireEvent.click(screen.getByRole('button', { name: 'Close configuration panel' }));
+  expect(screen.getByRole('textbox', { name: 'Builder message' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByRole('status').textContent).toContain('Unapplied changes');
+  fireEvent.click(screen.getByRole('button', { name: 'Continue editing' }));
+  expect(screen.getByRole('button', { name: 'Apply draft' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Close configuration panel' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Discard edits' }));
+  expect(screen.getByRole('textbox', { name: 'Builder message' }).hasAttribute('disabled')).toBe(false);
+  expect(screen.getByRole('button', { name: 'Create agent', exact: true }).hasAttribute('disabled')).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Review configuration' }));
+  expect(screen.queryByRole('button', { name: 'Apply draft' })).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'Agent configuration content' }).textContent).toContain('Draft'),
+  );
+  expect(screen.queryByRole('button', { name: 'Apply draft' })).toBeNull();
+  expect(writes(api.requests)).toHaveLength(0);
+});
+
+test.each(['idle', 'terminated'])(
+  'archived %s test can review history without sending or exposing evidence',
+  async (status) => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+    const api = restoreOpenTest(status, '', true, reviewEvents);
+    const previous = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const response = await previous(input, init);
+      if (String(input).includes('/sessions/session_saved?'))
+        return jsonResponse({ ...(await response.json()), archived_at: '2026-10-31T12:02:00Z' });
+      return response;
+    }) as typeof fetch;
+    renderManagedAgentsPage('quickstart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
+    await screen.findByText('Actual answer: 40');
+    expect(screen.getByRole('textbox', { name: 'Test message' }).hasAttribute('disabled')).toBe(true);
+    const end = screen.getByRole('button', { name: 'End test and review' });
+    await waitFor(() => expect(end.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(end);
+    await waitFor(() => expect(api.calls.length).toBeGreaterThan(0));
+    expect(JSON.stringify(api.calls.at(-1)?.system)).toContain('Actual answer: 40');
+    expect(JSON.stringify(api.calls.at(-1)?.system)).toContain('closedTestEvents');
+    expect(await screen.findByText('End the test and review the results.')).toBeTruthy();
+    expect(screen.queryByText(/The user explicitly ended the test/)).toBeNull();
+    expect(screen.queryByText(/review_tool_result/)).toBeNull();
+    expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/sessions'))).toBe(false);
+  },
+);

@@ -9,6 +9,7 @@ import {
   sessionEventTranscriptText,
   sessionToolDisplayName,
   sessionToolResultText,
+  sessionToolUseInput,
 } from '../../sessions/sessionTraceModel';
 import type { Builder } from './useBuilder';
 
@@ -75,7 +76,12 @@ export function BuilderTest({
   );
   const summary = relevantEvents.slice(-40).map((event) => {
     const type = sessionEventType(event);
-    const content = type === 'agent.tool_result' ? sessionToolResultText(event) : sessionEventTranscriptText(event);
+    const content =
+      type === 'agent.tool_use'
+        ? (JSON.stringify(sessionToolUseInput(event)) ?? '')
+        : type === 'agent.tool_result'
+          ? sessionToolResultText(event)
+          : sessionEventTranscriptText(event);
     return {
       type,
       text: content.slice(0, 1000) || undefined,
@@ -99,10 +105,7 @@ export function BuilderTest({
     omitted ? [{ type: 'evidence.truncated', omitted_events: omitted }, ...summary] : summary,
   );
   useEffect(() => {
-    const metadata = summary.map(({ text: _text, ...event }) => event);
-    builder.observeTest(
-      JSON.stringify(omitted ? [{ type: 'evidence.truncated', omitted_events: omitted }, ...metadata] : metadata),
-    );
+    builder.observeTest(evidence);
   }, [evidence]);
   const end = () => {
     void builder.closeTest(evidence);

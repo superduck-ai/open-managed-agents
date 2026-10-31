@@ -42,6 +42,11 @@ function EnvironmentPreview({ tool }: { tool: BuilderTool }) {
   const zh = locale === 'zh-CN';
   const input = environmentInputSchema.parse(tool.input);
   const network = input.config?.networking;
+  const packages = Object.entries(input.config?.packages ?? {})
+    .flatMap(([key, value]) =>
+      key !== 'type' && Array.isArray(value) && value.length > 0 ? [`${key}: ${value.join(', ')}`] : [],
+    )
+    .join('\n');
   return (
     <dl className="space-y-3">
       <div>
@@ -55,25 +60,24 @@ function EnvironmentPreview({ tool }: { tool: BuilderTool }) {
             ? zh
               ? '允许访问互联网'
               : 'Internet access'
-            : network?.allowed_hosts.join(', ')}
+            : network
+              ? `${zh ? '受限网络' : 'Restricted network'} · ${network.allowed_hosts.join(', ') || (zh ? '白名单为空' : 'Empty allowlist')}`
+              : zh
+                ? '默认网络配置'
+                : 'Default network configuration'}
         </dd>
       </div>
-      {input.config?.packages && (
-        <div>
-          <dt className="text-xs text-muted-foreground">{zh ? '运行时软件包配置' : 'Runtime package configuration'}</dt>
-          <dd>
-            <p className="text-xs text-muted-foreground">
-              {zh
-                ? '保存配置不表示安装已完成，安装与工具执行结果以试跑事件为准。'
-                : 'Saving this configuration does not confirm installation. Check actual test events for installation and execution results.'}
-            </p>
-            {Object.entries(input.config.packages)
-              .filter(([key]) => key !== 'type')
-              .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
-              .join('\n')}
+      <div>
+        <dt className="text-xs text-muted-foreground">{zh ? '运行时软件包配置' : 'Runtime package configuration'}</dt>
+        <dd className="whitespace-pre-wrap">{packages || (zh ? '无额外软件包' : 'No additional packages')}</dd>
+        {packages && (
+          <dd className="text-xs text-muted-foreground">
+            {zh
+              ? '保存配置不表示安装已完成，安装与工具执行结果以试跑事件为准。'
+              : 'Saving this configuration does not confirm installation. Check actual test events for installation and execution results.'}
           </dd>
-        </div>
-      )}
+        )}
+      </div>
     </dl>
   );
 }

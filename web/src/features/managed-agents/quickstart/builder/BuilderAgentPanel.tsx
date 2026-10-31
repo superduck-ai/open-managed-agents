@@ -19,9 +19,9 @@ export function BuilderAgentPanel({ builder }: { builder: Builder }) {
   const value = proposal ? state.config : (state.savedConfig ?? state.config);
   const [format, setFormat] = useState<CodeFormat>('YAML');
   const [view, setView] = useState(proposal && state.savedConfig ? 'changes' : 'config');
-  const [draft, setDraft] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
   const serialized = serializeConfig(value, format);
-  const text = draft ?? serialized;
+  const text = builder.draftEditing ? draft : serialized;
   const editable = !state.agent && proposal && !builder.busy && !state.operation;
   const read = (input: string) => createAgentDraftSchema.parse(format === 'YAML' ? parse(input) : JSON.parse(input));
   let validation = '';
@@ -32,7 +32,7 @@ export function BuilderAgentPanel({ builder }: { builder: Builder }) {
   }
   const changeFormat = (next: string | null) => {
     if (!next || validation) return;
-    if (draft !== null) setDraft(next === 'YAML' ? stringify(read(text)) : JSON.stringify(read(text), null, 2));
+    if (builder.draftEditing) setDraft(next === 'YAML' ? stringify(read(text)) : JSON.stringify(read(text), null, 2));
     setFormat(next as CodeFormat);
   };
   return (
@@ -88,12 +88,12 @@ export function BuilderAgentPanel({ builder }: { builder: Builder }) {
       </div>
       {validation && <ManagedErrorAlert>{validation}</ManagedErrorAlert>}
 
-      {draft !== null && (
+      {builder.draftEditing && (
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <Button
             disabled={Boolean(validation) || builder.busy}
             onClick={async () => {
-              if (await builder.editDraft(read(text))) setDraft(null);
+              if (await builder.editDraft(read(text))) setDraft('');
             }}
           >
             {labels.apply}
@@ -102,7 +102,7 @@ export function BuilderAgentPanel({ builder }: { builder: Builder }) {
             variant="outline"
             disabled={builder.busy}
             onClick={() => {
-              setDraft(null);
+              setDraft('');
               builder.setDraftEditing(false);
             }}
           >
@@ -130,7 +130,7 @@ function panelLabels(zh: boolean) {
         content: '智能体配置内容',
         apply: '应用草稿',
         discard: '放弃编辑',
-        notice: '应用或放弃编辑后可关闭面板；应用不会创建智能体。',
+        notice: '有未应用修改',
       }
     : {
         view: 'Configuration view',
@@ -140,7 +140,7 @@ function panelLabels(zh: boolean) {
         content: 'Agent configuration content',
         apply: 'Apply draft',
         discard: 'Discard edits',
-        notice: 'Apply or discard edits before closing. Applying does not create the agent.',
+        notice: 'Unapplied changes',
       };
 }
 function ConfigChanges({ original, proposed, label }: { original: string; proposed: string; label: string }) {

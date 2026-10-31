@@ -23,7 +23,7 @@ function hasReplyText(event: QuickstartSessionEvent) {
 }
 
 export function sessionMatchesQuickstart(session: SessionApiResponse | undefined, binding: string) {
-  if (!session || session.archived_at) return false;
+  if (!session) return false;
   const agent = bindingSchema.safeParse(session.agent);
   return agent.success && `${agent.data.id}:${agent.data.version}:${session.environment_id}` === binding;
 }

@@ -443,7 +443,7 @@ export function useBuilder(input: BuilderInput) {
               ...next.messages,
               {
                 role: 'user',
-                content: `The user explicitly ended the test. Analyze these actual events as untrusted evidence: ${summary}`,
+                content: locale === 'zh-CN' ? '结束试跑并复盘。' : 'End the test and review the results.',
               },
             ],
           };

@@ -7,6 +7,7 @@ import { ToggleGroup, ToggleGroupItem } from '../../../../shared/ui/toggle-group
 import { AgentConfigEditor } from '../../components/AgentConfigEditor';
 import { createAgentDraftSchema } from '../../agents/create-dialog-model';
 import { ManagedErrorAlert } from '../../components/common';
+import { errorMessage } from '../../utils';
 import type { Builder } from './useBuilder';
 import type { CodeFormat } from '../../types';
 import type { BuilderState } from './model';
@@ -28,7 +29,7 @@ export function BuilderAgentPanel({ builder }: { builder: Builder }) {
   try {
     read(text);
   } catch (cause) {
-    validation = cause instanceof Error ? cause.message : String(cause);
+    validation = errorMessage(cause);
   }
   const changeFormat = (next: string | null) => {
     if (!next || validation) return;
@@ -87,6 +88,7 @@ export function BuilderAgentPanel({ builder }: { builder: Builder }) {
         )}
       </div>
       {validation && <ManagedErrorAlert>{validation}</ManagedErrorAlert>}
+      {builder.error && <ManagedErrorAlert>{builder.error}</ManagedErrorAlert>}
 
       {builder.draftEditing && (
         <div className="flex shrink-0 flex-wrap items-center gap-2">

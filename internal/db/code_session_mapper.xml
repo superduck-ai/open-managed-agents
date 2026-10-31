@@ -513,4 +513,19 @@
           AND external_id = #{codeSessionExternalID}
           AND deleted_at IS NULL
     </update>
+    <update id="TerminateLaunch" result="rows">
+        UPDATE code_sessions
+        SET status = 'terminated',
+            oauth_access_token_hash = NULL,
+            worker_lease_expires_at = NULL,
+            connection_status = 'disconnected',
+            updated_at = NOW()
+        WHERE organization_uuid = #{organizationUUID}
+          AND workspace_uuid = #{workspaceUUID}
+          AND external_id = #{codeSessionExternalID}
+          AND deleted_at IS NULL
+          AND current_worker_epoch = #{workerEpoch}
+          AND current_worker_epoch > 0
+          AND status = 'active'
+    </update>
 </mapper>

@@ -1152,7 +1152,7 @@ test('R4-01 agent version read failure is a pre-write failure', async () => {
   renderManagedAgentsPage('quickstart');
   fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Save as v2' }));
-  await screen.findByText(/Connection error/);
+  await screen.findAllByText(/Connection error/);
   expect(agentPosts).toBe(0);
   expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toBeNull();
   expect(screen.queryByRole('button', { name: 'Check saved result' })).toBeNull();
@@ -1478,7 +1478,7 @@ test('R4-02 test transcript exposes actual session output for download even when
   }
 });
 
-test.each(['preflight', 'response'] as const)(
+test.each(['preflight', 'response', 'reload failure'] as const)(
   'R4-01 %s agent version conflict reloads without an unknown operation',
   async (conflict) => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
@@ -1505,6 +1505,8 @@ test.each(['preflight', 'response'] as const)(
           );
         }
         reads++;
+        if (conflict === 'reload failure' && reads > 1)
+          return new Response(JSON.stringify({ error: { message: 'Reload unavailable' } }), { status: 503 });
         return jsonResponse({
           id: 'agent_saved',
           version: conflict === 'preflight' || reads > 1 ? 2 : 1,
@@ -1518,9 +1520,15 @@ test.each(['preflight', 'response'] as const)(
     renderManagedAgentsPage('quickstart');
     fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Save as v2' }));
-    await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).agent.version).toBe(2));
-    expect(reads).toBe(2);
-    expect(posts).toBe(conflict === 'response' ? 1 : 0);
+    if (conflict === 'reload failure') {
+      await screen.findAllByText('Reload unavailable');
+      expect(screen.getByRole('button', { name: 'Save as v2' }).hasAttribute('disabled')).toBe(false);
+      expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).agent.version).toBe(1);
+    } else {
+      await waitFor(() => expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).agent.version).toBe(2));
+      expect(reads).toBe(2);
+    }
+    expect(posts).toBe(conflict === 'preflight' ? 0 : 1);
     expect(JSON.parse(window.sessionStorage.getItem(storageKey)!).operation).toBeNull();
     expect(screen.queryByRole('button', { name: 'Check saved result' })).toBeNull();
   },
@@ -1544,6 +1552,20 @@ test('draft editor blocks invalid writes and applies edits without creating an a
   setAgentConfigEditorValue(document.body, '{', 'Agent configuration content');
   expect(screen.getByRole('button', { name: 'Create agent', exact: true }).hasAttribute('disabled')).toBe(true);
   expect(screen.getByRole('button', { name: 'Apply draft' }).hasAttribute('disabled')).toBe(true);
+  expect(writes(api.requests)).toHaveLength(0);
+  setAgentConfigEditorValue(
+    document.body,
+    JSON.stringify({ ...value, model: { id: 'unavailable-model' } }),
+    'Agent configuration content',
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Apply draft' }));
+  await waitFor(() =>
+    expect(document.querySelector('aside.builder-config-panel')?.textContent).toContain(
+      'The proposed model is not available',
+    ),
+  );
+  expect(document.querySelector('.builder-conversation')?.hasAttribute('hidden')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Apply draft' }).hasAttribute('disabled')).toBe(false);
   expect(writes(api.requests)).toHaveLength(0);
   setAgentConfigEditorValue(
     document.body,

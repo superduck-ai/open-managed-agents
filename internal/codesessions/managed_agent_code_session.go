@@ -266,3 +266,11 @@ func (s *Service) SandboxIngressToken(ctx context.Context, session db.Session, c
 	}
 	return s.credentials.IssueSandbox(sessionCredentialIdentity(credentials, 0), sandboxUUID)
 }
+
+func (s *Service) TerminateManagedAgentLaunch(ctx context.Context, session db.Session, codeSessionID string, workerEpoch int64) error {
+	terminated, err := s.db.TerminateManagedAgentLaunch(ctx, session, codeSessionID, workerEpoch)
+	if err != nil || !terminated {
+		return err
+	}
+	return s.workerEvents.PurgeSession(ctx, codeSessionID)
+}

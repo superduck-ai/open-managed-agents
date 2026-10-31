@@ -129,6 +129,7 @@ JetStream。这样输入若先于回收领取提交，候选会失效；直接�
 - 删除完成后收到输入：正常消息入口找不到 running 沙箱时调用同一恢复方法。空 Provider ID 只允许
   匹配 `stopped + idle_timeout` 且 `idle_since IS NULL` 的沙箱，不能恢复任意缺失目标。
 - 恢复沿用现有路径：旧沙箱记录标为 failed，Work 改为 queued，Runner 复用 Code Session 并创建新沙箱。
+- 启动失败清理必须按该次启动的 `worker_epoch` 原子终止 Code Session。恢复已轮转 epoch 时，旧启动清理不修改状态、凭据或 Worker 事件队列；只有匹配 epoch 的活动实例实际被终止后才清理队列。若清理先完成，恢复不能重新激活已终止的 Code Session。
   `stop_reason=idle_timeout` 保留原回收原因。旧记录被退役后不能再次重排新 Work。
 - 对仍为 running 的沙箱，正常消息入口的 SetTimeout、worker lease 恢复和 Provider not-found 处理保持不变。
 

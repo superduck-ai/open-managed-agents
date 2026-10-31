@@ -107,6 +107,8 @@ export function proposedAgentConfig(tool: BuilderTool, state: BuilderState, mode
     requirements === undefined ? previousRequirements : JSON.stringify(environmentPackagesSchema.parse(requirements));
   if (savedRequirements !== undefined)
     config.metadata = { ...config.metadata, [environmentPackagesMetadataKey]: savedRequirements };
+  if (Object.keys({ ...config.metadata, quickstart_operation_id: '' }).length > 16)
+    throw new Error('Builder metadata allows at most 15 keys plus quickstart_operation_id.');
   return createAgentDraftSchema.parse(config);
 }
 export function validatedDeployment(tool: BuilderTool) {

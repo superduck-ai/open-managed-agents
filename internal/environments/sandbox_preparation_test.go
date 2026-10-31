@@ -8,6 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
@@ -134,7 +135,7 @@ func TestSandboxPreparationHandoffFailureCleansPublishedRuntime(t *testing.T) {
 			var launch *managedAgentRuntimeLaunch
 			if tc.managed {
 				preparation = &managedAgentLaunchPreparation{Session: db.Session{ExternalID: "session_test"}}
-				launch = &managedAgentRuntimeLaunch{CodeSessionID: "cse_published", Recovered: tc.recovered}
+				launch = &managedAgentRuntimeLaunch{CodeSessionID: "cse_published", Recovered: tc.recovered, Credentials: codesessions.ManagedAgentCreateResult{WorkerEpoch: 3}}
 			}
 			failure := errors.New("preparation lease failed after publication")
 			if tc.parentCanceled {
@@ -162,7 +163,7 @@ func TestSandboxPreparationHandoffFailureCleansPublishedRuntime(t *testing.T) {
 			if cleanups != tc.wantSandboxCleanups || len(runtime.terminated) != tc.wantTerminations {
 				t.Fatalf("cleanups=%d terminations=%v", cleanups, runtime.terminated)
 			}
-			if tc.wantTerminations == 1 && (runtime.terminated[0] != "cse_published" || runtime.sessionID != "session_test" || runtime.cleanupContextErr != nil) {
+			if tc.wantTerminations == 1 && (runtime.terminated[0] != "cse_published" || runtime.sessionID != "session_test" || runtime.cleanupContextErr != nil || runtime.workerEpoch != 3) {
 				t.Fatalf("wrong cleanup identity or canceled context: ids=%v session=%s context=%v", runtime.terminated, runtime.sessionID, runtime.cleanupContextErr)
 			}
 		})
@@ -174,9 +175,11 @@ type handoffCodeSessionRuntime struct {
 	sessionID         string
 	cleanupContextErr error
 	terminationError  error
+	workerEpoch       int64
 }
 
-func (r *handoffCodeSessionRuntime) TerminateManagedAgentCodeSession(ctx context.Context, session db.Session, id string) error {
+func (r *handoffCodeSessionRuntime) TerminateManagedAgentLaunch(ctx context.Context, session db.Session, id string, workerEpoch int64) error {
+	r.workerEpoch = workerEpoch
 	r.terminated = append(r.terminated, id)
 	r.sessionID = session.ExternalID
 	r.cleanupContextErr = ctx.Err()

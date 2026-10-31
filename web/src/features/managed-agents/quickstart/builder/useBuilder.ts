@@ -272,6 +272,7 @@ export function useBuilder(input: BuilderInput) {
       if (!mounted.current) return;
       const status = typeof cause === 'object' && cause && 'status' in cause ? Number(cause.status) : 0;
       if ((cause instanceof BuilderVersionConflictError || status === 409) && tool.name === 'build_agent_config') {
+        update((value) => ({ ...value, operation: null }));
         const patch = await reloadBuilderAgent(current.current, input.workspaceId);
         update((value) =>
           toolResult(

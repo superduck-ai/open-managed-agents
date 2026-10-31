@@ -52,13 +52,17 @@ export async function loadBuilderCapabilities(orgUuid: string, workspaceId: stri
   return results.flat();
 }
 
-export function builderCapabilityDirectory(capabilities: BuilderCapability[]): McpDirectoryServer[] {
+export function builderCapabilityDirectory(
+  capabilities: BuilderCapability[],
+  directory: McpDirectoryServer[],
+): McpDirectoryServer[] {
   return capabilities
     .filter((item) => item.status === 'ready' && item.tools.length > 0)
     .map((item) => ({
       slug: item.name,
       displayName: item.name,
       url: item.url,
+      authless: directory.find((server) => server.url === item.url)?.authless === true,
       toolNames: item.tools.map((tool) => tool.name),
     }));
 }
@@ -74,10 +78,17 @@ export function assertBuilderCapabilities(config: CreateAgentInput, capabilities
       );
     const toolset = config.tools.find((tool) => tool.type === 'mcp_toolset' && tool.mcp_server_name === server.name);
     const parsed = z
-      .object({ configs: z.array(z.object({ name: z.string(), enabled: z.boolean().optional() })).optional() })
+      .object({
+        default_config: z.object({ enabled: z.boolean().optional() }).optional(),
+        configs: z.array(z.object({ name: z.string(), enabled: z.boolean().optional() })).optional(),
+      })
       .parse(toolset);
     if (parsed.configs?.some((tool) => tool.enabled !== false && !names.has(tool.name)))
       throw new Error(`The proposed tool is not in the discovered workspace tools for ${server.name}.`);
+    if (parsed.default_config?.enabled !== false)
+      throw new Error(
+        `Set default_config.enabled to false for ${server.name} and explicitly enable only discovered tools in configs.`,
+      );
   }
   if (config.tools.some((tool) => tool.type === 'custom'))
     throw new Error(

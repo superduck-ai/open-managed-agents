@@ -5,6 +5,7 @@ import {
 } from './environmentRequirements';
 import { z } from 'zod';
 import { loadBuilderCapabilities, builderCapabilityDirectory } from './capabilities';
+import { loadMcpDirectoryServers } from '../../agents/tools/api';
 import { errorMessage } from '../../utils';
 import { anthropicBetaApi } from '../../../../shared/api/anthropic';
 import { listLLMProviders, listOrganizationLLMProviders } from '../../../llm-providers/api';
@@ -32,7 +33,8 @@ export async function loadBuilderCatalog(orgUuid: string, workspaceId: string) {
     listOrganizationLLMProviders(orgUuid),
   ]);
   const capabilities = await loadBuilderCapabilities(orgUuid, workspaceId, resources.agents);
-  const directory = builderCapabilityDirectory(capabilities);
+  const metadata = capabilities.length ? await loadMcpDirectoryServers().catch(() => []) : [];
+  const directory = builderCapabilityDirectory(capabilities, metadata);
   return { ...resources, capabilities, directory, skills, providers: [...providers, ...organizationProviders] };
 }
 export type BuilderCatalog = Awaited<ReturnType<typeof loadBuilderCatalog>>;
@@ -129,7 +131,10 @@ export function savedBuilderAgent(agent: AgentApiResponse) {
   };
 }
 export function prepareBuilderAgent(state: BuilderState, operationId: string, workspaceId: string) {
-  const config = { ...state.config, metadata: { ...state.config.metadata, quickstart_operation_id: operationId } };
+  const config = createAgentDraftSchema.parse({
+    ...state.config,
+    metadata: { ...state.config.metadata, quickstart_operation_id: operationId },
+  });
   const agent = state.agent;
   const update = agent ? buildAgentUpdateInput(agent.version, config) : null;
   return async () => {

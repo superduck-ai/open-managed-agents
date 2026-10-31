@@ -31,6 +31,18 @@ const reply = (config: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   });
 
+test('agent proposals reserve metadata capacity for the save recovery marker', () => {
+  const value = state();
+  value.config.metadata = {};
+  const metadata = Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`key${index}`, 'value']));
+  const tool = { id: 'proposal', name: 'build_agent_config', input: { metadata } };
+  expect(() => proposedAgentConfig(tool, value, ['model'])).toThrow('15 keys');
+  delete metadata.key15;
+  expect(Object.keys(proposedAgentConfig(tool, value, ['model']).metadata ?? {})).toHaveLength(15);
+  metadata.quickstart_operation_id = 'previous';
+  expect(Object.keys(proposedAgentConfig(tool, value, ['model']).metadata ?? {})).toHaveLength(16);
+});
+
 test('reuse rejects an environment without the saved dependencies without modifying it', async () => {
   const calls: string[] = [];
   globalThis.fetch = (async (_input, init) => {

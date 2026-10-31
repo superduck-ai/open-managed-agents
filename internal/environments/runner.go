@@ -46,6 +46,7 @@ type CodeSessionRuntime interface {
 	CreateManagedAgentCodeSession(context.Context, codesessions.ManagedAgentCreateInput) (codesessions.ManagedAgentCreateResult, error)
 	RecoverManagedAgentCodeSession(context.Context, codesessions.ManagedAgentRecoverInput) (codesessions.ManagedAgentCreateResult, error)
 	TerminateManagedAgentCodeSession(context.Context, db.Session, string) error
+	TerminateManagedAgentLaunch(context.Context, db.Session, string, int64) error
 }
 
 // RuntimeSkillResolver resolves the immutable agent snapshot into skills that
@@ -518,7 +519,7 @@ func (r *Runner) terminateFailedManagedAgentRuntime(work db.EnvironmentWork, ses
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := r.codeSessions.TerminateManagedAgentCodeSession(cleanupCtx, session, launch.CodeSessionID); err != nil {
+	if err := r.codeSessions.TerminateManagedAgentLaunch(cleanupCtx, session, launch.CodeSessionID, launch.Credentials.WorkerEpoch); err != nil {
 		r.logger.ErrorContext(
 			cleanupCtx,
 			"terminate failed managed agent runtime",

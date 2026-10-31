@@ -1,9 +1,12 @@
 import { prepareBuilderMutation } from './mutations';
+import { resetMcpDirectoryCacheForTests } from '../../agents/tools/api';
 import { afterEach, expect, test } from 'bun:test';
 import { newBuilderState } from './model';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
 import {
   loadBuilderCatalog,
+  authenticationServers,
+  prepareBuilderAgent,
   builderBackend,
   loadBuilderVaults,
   prepareBuilderDeployment,
@@ -17,6 +20,7 @@ import { setConsoleRequestContext } from '../../../../shared/api/client';
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  resetMcpDirectoryCacheForTests();
   setConsoleRequestContext({});
 });
 const json = (value: unknown) =>
@@ -32,6 +36,62 @@ const catalog: BuilderCatalog = {
   directory: [],
   skills: [],
 };
+for (const directoryAvailable of [false, true]) {
+  test(`catalog authless metadata cannot add capabilities (directory available: ${directoryAvailable})`, async () => {
+    resetMcpDirectoryCacheForTests();
+    const config = state().config;
+    config.mcp_servers = [{ type: 'url', name: 'public', url: 'https://public.example/mcp' }];
+    config.tools = [
+      {
+        type: 'mcp_toolset',
+        mcp_server_name: 'public',
+        default_config: { enabled: false },
+        configs: [{ name: 'search', enabled: true }],
+      },
+    ];
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.includes('/directory/servers'))
+        return directoryAvailable
+          ? json({
+              servers: [
+                { type: 'remote', slug: 'public', remote: { url: 'https://public.example/mcp', is_authless: true } },
+                {
+                  type: 'remote',
+                  slug: 'unavailable',
+                  remote: { url: 'https://unavailable.example/mcp', is_authless: true },
+                },
+              ],
+            })
+          : new Response('', { status: 503 });
+      if (url.includes('/mcp_tool_catalogs'))
+        return json({ version: 1, data: [{ server_name: 'public', status: 'ready', tools: [{ name: 'search' }] }] });
+      if (url.includes('/v1/agents'))
+        return json({
+          data: [{ ...config, id: 'agent', type: 'agent', version: 1, archived_at: null }],
+          next_page: null,
+        });
+      if (url.endsWith('/llm_providers')) return json([]);
+      return json({ data: [], skills: [], next_page: null });
+    }) as typeof fetch;
+    const loaded = await loadBuilderCatalog('org', 'workspace');
+    expect(loaded.directory).toHaveLength(1);
+    expect(loaded.directory[0]).toMatchObject({ url: 'https://public.example/mcp', authless: directoryAvailable });
+    expect(authenticationServers(config, loaded)).toHaveLength(directoryAvailable ? 0 : 1);
+    expect(
+      authenticationServers(
+        { ...config, mcp_servers: [{ type: 'url', name: 'unavailable', url: 'https://unavailable.example/mcp' }] },
+        loaded,
+      ),
+    ).toHaveLength(1);
+  });
+}
+
+test('restored metadata overflow fails before a save operation can be prepared', () => {
+  const value = state();
+  value.config.metadata = Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`key${index}`, 'value']));
+  expect(() => prepareBuilderAgent(value, 'operation', 'workspace')).toThrow();
+});
 test('credential coverage reads every page and returns only safe resource summaries', async () => {
   const urls: string[] = [];
   globalThis.fetch = (async (input) => {

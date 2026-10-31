@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { assertBuilderCapabilities, builderAgentSummaries, loadBuilderCapabilities } from './capabilities';
+import { configuredAgentToolPermission } from '../../agents/tools/model';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
 import type { AgentApiResponse } from '../../types';
 
@@ -62,7 +63,27 @@ test('ready discovery exposes only permitted actual tools and rejects invented a
   const capabilities = await loadBuilderCapabilities('org', 'workspace', [agent()]);
   expect(request).toContain('/organizations/org/workspaces/workspace/agents/agent_test/mcp_tool_catalogs?version=2');
   expect(capabilities[0].tools).toEqual([{ name: 'search', description: 'Search supplied policies' }]);
-  expect(() => assertBuilderCapabilities(agent(), capabilities)).not.toThrow();
+  for (const defaultConfig of [undefined, { enabled: true, permission_policy: { type: 'always_allow' } }]) {
+    const wildcard = {
+      ...agent(),
+      tools: [{ type: 'mcp_toolset', mcp_server_name: 'support', default_config: defaultConfig, configs: [] }],
+    };
+    expect(() => assertBuilderCapabilities(wildcard, capabilities)).toThrow('default_config.enabled');
+  }
+  const restricted = {
+    ...agent(),
+    tools: [
+      {
+        type: 'mcp_toolset',
+        mcp_server_name: 'support',
+        default_config: { enabled: false },
+        configs: [{ name: 'search', enabled: true }],
+      },
+    ],
+  };
+  expect(() => assertBuilderCapabilities(restricted, capabilities)).not.toThrow();
+  expect(configuredAgentToolPermission(restricted, 'mcp__support__send')).toBe('always_deny');
+  expect(configuredAgentToolPermission(restricted, 'mcp__support__search')).toBe('always_ask');
   const invented = {
     ...agent(),
     tools: [{ type: 'mcp_toolset', mcp_server_name: 'support', configs: [{ name: 'handoff', enabled: true }] }],

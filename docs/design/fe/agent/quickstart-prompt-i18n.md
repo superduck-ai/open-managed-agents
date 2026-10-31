@@ -1,6 +1,6 @@
 # Quickstart / Agent Builder 提示词 i18n
 
-> 2026-10-08：四步 Quickstart 已改为固定配置表单，不再调用 Builder 模型。本文保留此前提示词方案的历史记录；仍使用 `platformQuickstartRequest` 与 `quickstartPromptText` 的 Agent 创建 Builder 保持原合同。当前 Quickstart 见 [四步交互契约](../managed-agent-quickstart-interactions.md)。
+> Quickstart 包含对话构建与手动配置两种入口。对话构建复用本文的提示词语言边界，当前流程见 [对话构建设计](../quickstart-builder-implementation.md)；不调用 Builder 模型的表单流程见 [手动配置交互](../managed-agent-quickstart-interactions.md)。
 
 > 关联 issue：[#12 提示词增加 i18n](https://github.com/superduck-ai/open-managed-agents/issues/12)。当前状态：**已实现**；验证范围见文末。
 

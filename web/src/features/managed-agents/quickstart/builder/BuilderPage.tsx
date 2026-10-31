@@ -92,7 +92,7 @@ function BuilderWorkspace({
   return (
     <BuilderPanels builder={builder} workspaceId={workspaceId}>
       <section className="mx-auto flex min-h-0 w-full min-w-0 max-w-[1440px] flex-1 flex-col gap-4">
-        <BuilderHeader builder={builder} workspaceId={workspaceId} task={task} onBack={onBack} />
+        <BuilderHeader builder={builder} task={task} onBack={onBack} />
         {task && <BuilderPanelSwitch panel={panel} onChange={setPanel} testing={testing} />}
         <div
           className={`builder-content-grid grid min-h-0 min-w-0 flex-1 gap-6 ${task ? 'xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]' : 'xl:grid-cols-[minmax(0,1fr)_280px]'}`}
@@ -132,17 +132,7 @@ function BuilderWorkspace({
   );
 }
 
-function BuilderHeader({
-  builder,
-  workspaceId,
-  task,
-  onBack,
-}: {
-  builder: Builder;
-  workspaceId: string;
-  task: boolean;
-  onBack: () => void;
-}) {
+function BuilderHeader({ builder, task, onBack }: { builder: Builder; task: boolean; onBack: () => void }) {
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
   const { state } = builder;
@@ -161,7 +151,7 @@ function BuilderHeader({
       <h1 title={name} className="min-w-0 flex-1 truncate text-base font-medium">
         {name}
       </h1>
-      {state.initialized && <BuilderConfiguration builder={builder} workspaceId={workspaceId} task={task} />}
+      {state.initialized && <BuilderConfiguration task={task} />}
     </header>
   );
 }
@@ -207,7 +197,7 @@ function BuilderConversation({
   );
 }
 
-function BuilderConfiguration({ task }: { builder: Builder; workspaceId: string; task: boolean }) {
+function BuilderConfiguration({ task }: { task: boolean }) {
   const { locale } = useI18n();
   const openPanel = useBuilderPanel();
   return (

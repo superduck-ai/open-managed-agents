@@ -30,7 +30,6 @@ type ToolContext = {
 };
 function savedResources(state: BuilderState) {
   if (!state.agent || !state.environment) throw new Error('Save the agent and choose an environment first.');
-  return { agent: state.agent, environment: state.environment };
 }
 function beforeTest(state: BuilderState) {
   if (state.sessionID && !state.testClosed)

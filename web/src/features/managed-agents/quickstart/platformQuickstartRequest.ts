@@ -30,7 +30,6 @@ export type PlatformQuickstartRequest = {
 };
 
 export const platformQuickstartMaxTokens = platformQuickstartOfficialRequest.max_tokens;
-export const platformQuickstartSystem = platformQuickstartOfficialRequest.system;
 export const platformQuickstartTools = platformQuickstartOfficialRequest.tools;
 export const platformQuickstartToolChoice = platformQuickstartOfficialRequest.tool_choice;
 

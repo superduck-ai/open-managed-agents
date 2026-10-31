@@ -454,16 +454,11 @@ export function useBuilder(input: BuilderInput) {
     run(async () => {
       const call = current.current.gate;
       if (!call || call.name !== 'offer_next_step' || current.current.operation) return;
-      const currentStep = current.current.step;
-      let nextStep = builderNextStep(current.current);
-      if (currentStep === 'agent') nextStep = 'environment';
-      else if (currentStep === 'environment') nextStep = 'session';
-      else if (currentStep === 'session') nextStep = current.current.wantsSchedule ? 'deploy' : 'integrate';
       await completeAwaitingTool(
         call,
         { user_choice: locale === 'zh-CN' ? '继续' : 'Continue' },
         {
-          step: nextStep,
+          step: builderNextStep(current.current),
         },
       );
     });

@@ -42,12 +42,6 @@ export function BuilderGate({
   if (tool.name === 'pick_environment') return <EnvironmentGate {...{ builder, workspaceId, orgUuid }} />;
   if (['pick_vault', 'select_vault'].includes(tool.name)) return <VaultGate {...{ builder, workspaceId, orgUuid }} />;
   if (tool.name === 'create_vault_credential') return <CredentialGate {...{ builder, workspaceId, orgUuid }} />;
-  if (tool.name === 'await_test_run')
-    return (
-      <p className="text-muted-foreground">
-        {zh ? '在试跑中继续对话，结束后回来复盘。' : 'Continue in the test, then end it to review.'}
-      </p>
-    );
   if (tool.name === 'offer_next_step') return <NextStepGate {...{ builder, workspaceId, orgUuid }} />;
   return <ConfirmationGate {...{ builder, workspaceId, orgUuid }} />;
 }
@@ -57,7 +51,6 @@ function ConfirmationGate({ builder }: GateProps) {
   const zh = locale === 'zh-CN';
   const state = builder.state;
   const tool = state.gate!;
-  if (tool.name === 'show_integration_exits') return null;
   return (
     <div className="space-y-4">
       {tool.name === 'build_agent_config' && (

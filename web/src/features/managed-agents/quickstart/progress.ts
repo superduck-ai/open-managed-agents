@@ -5,7 +5,7 @@ const draftSchema = z.object({ name: z.string(), description: z.string(), modelI
 const progressSchema = z.object({
   version: z.literal(1),
   step: z.number().int().min(0).max(3),
-  scenarioID: z.enum(['hello', 'research', 'analysis', 'tracking', 'review', 'custom']),
+  scenarioID: z.enum(['hello', 'research', 'analysis', 'tracking', 'review', 'extract', 'support', 'custom']),
   drafts: z.record(z.string(), draftSchema),
   agentID: z.string(),
   environmentID: z.string(),

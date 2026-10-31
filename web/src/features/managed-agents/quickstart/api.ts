@@ -3,7 +3,7 @@ import { listAgents, listManagedEntities } from '../api';
 import type { AgentApiResponse, EnvironmentApiResponse, PageResponse, SessionApiResponse } from '../types';
 import { environmentFormBody, environmentFormValues } from '../environments/model';
 
-async function allPages<T>(load: (page?: string) => Promise<PageResponse<T>>) {
+export async function allPages<T>(load: (page?: string) => Promise<PageResponse<T>>) {
   const items: T[] = [];
   const cursors = new Set<string>();
   let cursor: string | undefined;
@@ -42,22 +42,32 @@ export function saveQuickstartEnvironment(name: string, operationID: string, wor
   );
 }
 
+export function createQuickstartSession(
+  agent: Pick<AgentApiResponse, 'id' | 'version'>,
+  environmentId: string,
+  vaultIds: string[],
+  workspaceId: string,
+  metadata: Record<string, string> = {},
+) {
+  return anthropicBetaApi.sessions.create<SessionApiResponse>(
+    {
+      agent: { type: 'agent', id: agent.id, version: agent.version },
+      environment_id: environmentId,
+      vault_ids: vaultIds,
+      metadata,
+      resources: [],
+    },
+    workspaceId,
+  );
+}
+
 export function saveQuickstartSession(
   agent: AgentApiResponse,
   environmentID: string,
   operationID: string,
   workspaceID: string,
 ) {
-  return anthropicBetaApi.sessions.create<SessionApiResponse>(
-    {
-      agent: { type: 'agent', id: agent.id, version: agent.version },
-      environment_id: environmentID,
-      metadata: { quickstart_operation_id: operationID },
-      vault_ids: [],
-      resources: [],
-    },
-    workspaceID,
-  );
+  return createQuickstartSession(agent, environmentID, [], workspaceID, { quickstart_operation_id: operationID });
 }
 
 export async function findQuickstartSession(operationID: string, workspaceID: string, agentID: string) {

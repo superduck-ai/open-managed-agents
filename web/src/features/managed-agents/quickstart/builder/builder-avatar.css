@@ -1,0 +1,53 @@
+.builder-avatar {
+  overflow: visible;
+}
+
+.builder-avatar-body {
+  fill: var(--amber-9);
+}
+
+.builder-avatar-eye {
+  fill: var(--sand-12);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.dark .builder-avatar-eye {
+  fill: var(--sand-1);
+}
+
+.builder-avatar-beak {
+  fill: var(--orange-9);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.builder-avatar-orbit {
+  opacity: 0;
+}
+
+.builder-avatar[data-state='idle'] .builder-avatar-eye {
+  animation: builder-avatar-blink 0.7s ease-in-out 0.2s 1;
+}
+
+.builder-avatar[data-state='speaking'] .builder-avatar-eye {
+  animation: builder-avatar-blink 6s ease-in-out infinite;
+}
+
+@keyframes builder-avatar-blink {
+  0%,
+  42%,
+  48%,
+  100% {
+    transform: scaleY(1);
+  }
+  45% {
+    transform: scaleY(0.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .builder-avatar * {
+    animation: none !important;
+  }
+}

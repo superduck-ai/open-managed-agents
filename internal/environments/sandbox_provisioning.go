@@ -125,7 +125,12 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 		if sandbox.State == "running" && sandbox.ProviderSandboxID != nil {
 			return r.sessionSandboxEndpoint(ctx, sandbox)
 		}
-		if sandbox.CreatedAt.Add(3 * time.Minute).Before(time.Now()) {
+		if sandbox.CreatedAt.Add(sandboxPreparationMaxAge).Before(time.Now()) {
+			providerID := ""
+			if sandbox.ProviderSandboxID != nil {
+				providerID = *sandbox.ProviderSandboxID
+			}
+			r.failCreatedSandbox(ctx, sandbox, &work, providerID, fmt.Errorf("sandbox preparation expired: %w", context.DeadlineExceeded))
 			return "", db.EnvironmentSandbox{}, db.ErrInvalidState
 		}
 		select {

@@ -15,7 +15,7 @@ func TestMemoryRootProtectionStartup(t *testing.T) {
 	t.Run("seal failure prevents startup", func(t *testing.T) {
 		provider := &rcloneTestProvider{ready: true, runErrors: []error{nil, nil, nil, nil, errors.New("secret provider detail")}}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", launch)
+		err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", launch)
 		if err == nil || !strings.Contains(err.Error(), "memory mount root protection failed") || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("root protection failure must stop startup with sanitized error: %v", err)
 		}
@@ -23,7 +23,7 @@ func TestMemoryRootProtectionStartup(t *testing.T) {
 	t.Run("bind before children and seal after ready and index", func(t *testing.T) {
 		provider := &rcloneTestProvider{ready: true}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		if err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", launch); err != nil {
+		if err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", launch); err != nil {
 			t.Fatal(err)
 		}
 		if len(provider.runCommands) != 5 || provider.runCommands[0] != "mkdir -p '/mnt/memory' && mount --bind '/mnt/memory' '/mnt/memory'" || provider.runCommands[4] != "mount -o remount,bind,ro '/mnt/memory'" {

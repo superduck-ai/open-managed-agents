@@ -184,6 +184,20 @@ const customToolSchema = z
 
 const toolSchema = z.discriminatedUnion('type', [builtInToolsetSchema, mcpToolsetSchema, customToolSchema]);
 
+export const environmentPackagesMetadataKey = 'quickstart_environment_packages';
+const metadataSchema = z.record(z.string().min(1), z.string()).superRefine((metadata, context) => {
+  const entries = Object.entries(metadata);
+  if (entries.length > 16) context.addIssue({ code: 'custom', message: 'Metadata must contain at most 16 keys.' });
+  for (const [key, value] of entries) {
+    const size = new TextEncoder().encode(value).length;
+    const limit = key === environmentPackagesMetadataKey ? 1 << 20 : 512;
+    if (new TextEncoder().encode(key).length > 64)
+      context.addIssue({ code: 'custom', message: 'Metadata keys must be at most 64 bytes.', path: [key] });
+    if (size > limit)
+      context.addIssue({ code: 'custom', message: `Metadata value must be at most ${limit} bytes.`, path: [key] });
+  }
+});
+
 export const createAgentDraftSchema = z
   .object({
     name: z.string().trim().min(1, 'Name is required.'),
@@ -193,10 +207,7 @@ export const createAgentDraftSchema = z
     mcp_servers: z.array(mcpServerSchema).max(20),
     tools: z.array(toolSchema),
     skills: z.array(skillSchema).max(20),
-    metadata: z
-      .record(z.string().min(1).max(64), z.string().max(512))
-      .refine((metadata) => Object.keys(metadata).length <= 16, 'Metadata must contain at most 16 keys.')
-      .optional(),
+    metadata: metadataSchema.optional(),
     multiagent: multiagentSchema.nullable().optional(),
   })
   .strict()

@@ -41,6 +41,7 @@ export type McpDirectoryServer = {
   url?: string;
   iconUrl?: string;
   toolNames: string[];
+  authless?: boolean;
   source?: 'directory' | 'tunnel';
   group?: string;
   tunnel?: {
@@ -383,6 +384,7 @@ export function normalizeMcpDirectoryServers(payload: unknown): McpDirectoryServ
       {
         slug,
         displayName,
+        authless: directoryAuthless(remote),
         ...(url ? { url } : {}),
         iconUrl: optionalStringValue(server.icon_url) ?? optionalStringValue(server.iconUrl),
         toolNames: rawToolNames.filter((name): name is string => typeof name === 'string' && Boolean(name)),
@@ -486,4 +488,8 @@ function stringValue(value: unknown) {
 
 function optionalStringValue(value: unknown) {
   return typeof value === 'string' && value ? value : undefined;
+}
+
+function directoryAuthless(remote: Record<string, unknown>) {
+  return typeof remote.is_authless === 'boolean' ? remote.is_authless : undefined;
 }

@@ -1376,6 +1376,10 @@ func (p *recordingRunnerProvider) Create(_ context.Context, _ db.Environment, wo
 	return e2bruntime.Sandbox{ID: p.sandboxID}, nil
 }
 
+func (p *recordingRunnerProvider) SetTimeout(context.Context, string, time.Duration) error {
+	return nil
+}
+
 func (p *recordingRunnerProvider) Kill(_ context.Context, sandboxID string) error {
 	p.kills = append(p.kills, sandboxID)
 	return nil

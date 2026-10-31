@@ -674,3 +674,16 @@ test.each([
   });
   expect(result.success).toBe(valid);
 });
+
+test('only the reserved package metadata value accepts more than 512 UTF-8 bytes with a bounded limit', () => {
+  const key = 'quickstart_environment_packages';
+  const parse = (metadata: Record<string, string>) =>
+    createAgentDraftSchema.safeParse({ ...baseDraft, metadata }).success;
+  expect(parse({ ordinary: 'a'.repeat(513) })).toBe(false);
+  expect(parse({ ordinary: 'é'.repeat(257) })).toBe(false);
+  expect(parse({ [key]: 'x'.repeat((1 << 20) + 1) })).toBe(false);
+  expect(parse({ [key]: 'é'.repeat((1 << 19) + 1) })).toBe(false);
+  expect(parse({ [key]: 'a'.repeat(513) })).toBe(true);
+  expect(parse({ [key]: 'é'.repeat(1 << 19) })).toBe(true);
+  expect(parse({ ordinary: 'a'.repeat(512) })).toBe(true);
+});

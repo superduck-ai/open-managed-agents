@@ -19,12 +19,25 @@ import {
   sessionEventType,
 } from '../sessions/sessionTraceModel';
 import { quickstartCopy } from './copy';
-import type { QuickstartWizard } from './useQuickstartWizard';
+import type { SessionApiResponse } from '../types';
+
+export type ConversationProgress = {
+  sessionID: string;
+  sessionBinding: string;
+  unconfirmedMessage: string;
+  pending: unknown;
+};
+export type ConversationHost = {
+  progress: ConversationProgress;
+  busy: boolean;
+  createSession: () => Promise<SessionApiResponse | undefined | null>;
+  patchSession: (patch: Partial<ConversationProgress>) => void;
+};
 
 const noThreads: SessionThreadApiResponse[] = [];
 
 export function useQuickstartConversation(
-  wizard: QuickstartWizard,
+  wizard: ConversationHost,
   workspaceID: string,
   accountID: string,
   binding: string,
@@ -40,13 +53,15 @@ export function useQuickstartConversation(
     staleTime: 1000,
   });
   const bindingValid = sessionMatchesQuickstart(session.data, binding);
+  const savedStatus = savedConversationStatus(session.data);
+  const terminal = ['terminated', 'deleted'].includes(savedStatus);
   const [refreshKey, setRefreshKey] = useState(0);
   const data = useSessionDetailEventData({
     sessionId: sessionID || null,
     workspaceId: workspaceID,
     threads: noThreads,
     includeArchivedThreads: false,
-    live: bindingValid && !['terminated', 'deleted'].includes(session.data?.status ?? ''),
+    live: bindingValid && !terminal,
     refreshKey,
   });
   const latestData = useRef(data);
@@ -107,12 +122,12 @@ export function useQuickstartConversation(
     [data.events, msg],
   );
   const action = useMemo(
-    () => findActiveAwaitingToolCall(entries, latestRequiresActionEventIDs(data.events)),
-    [data.events, entries],
+    () => (terminal ? null : findActiveAwaitingToolCall(entries, latestRequiresActionEventIDs(data.events))),
+    [data.events, entries, terminal],
   );
-  const { status, complete, running, failedTurn, stopped } = quickstartConversationState(
+  const { status, complete, running, waiting, failedTurn, stopped } = quickstartConversationState(
     data.events,
-    session.data?.status ?? 'idle',
+    savedStatus,
     Boolean(action),
   );
   const disabled =
@@ -121,17 +136,17 @@ export function useQuickstartConversation(
     Boolean(wizard.progress.pending);
   const unconfirmed = wizard.progress.sessionBinding === binding && Boolean(wizard.progress.unconfirmedMessage);
   const submitMessage = async (id: string, body: string) => {
-    wizard.update((value) => ({ ...value, unconfirmedMessage: body }));
+    wizard.patchSession({ unconfirmedMessage: body });
     try {
       const response = await postQuickstartSessionMessage(id, body, workspaceID);
       if (!mounted.current) return;
       latestData.current.appendPrimaryEvents(response.data ?? []);
-      wizard.update((value) => ({ ...value, unconfirmedMessage: '' }));
+      wizard.patchSession({ unconfirmedMessage: '' });
       setMessage('');
       setSentVersion((value) => value + 1);
     } catch (cause) {
       const status = typeof cause === 'object' && cause && 'status' in cause ? Number(cause.status) : 0;
-      if (status >= 400 && status < 500) wizard.update((value) => ({ ...value, unconfirmedMessage: '' }));
+      if (status >= 400 && status < 500) wizard.patchSession({ unconfirmedMessage: '' });
       throw cause;
     }
   };
@@ -188,19 +203,22 @@ export function useQuickstartConversation(
   };
   const newConversation = () => {
     if (sending || running || action || wizard.busy || wizard.progress.pending || unconfirmed) return;
-    wizard.update((value) => ({ ...value, sessionID: '', sessionBinding: '', unconfirmedMessage: '' }));
+    wizard.patchSession({ sessionID: '', sessionBinding: '', unconfirmedMessage: '' });
     setError(null);
     setMessage(text.suggested);
   };
   return {
+    dismissUnconfirmed: () => wizard.patchSession({ unconfirmedMessage: '' }),
     sessionID,
     session,
     data,
     entries,
     action,
+    status,
     complete,
     stopped,
     running,
+    waiting,
     disabled,
     unconfirmed,
     message,
@@ -215,6 +233,17 @@ export function useQuickstartConversation(
     newConversation,
     failedTurn,
     bindingValid,
+    historyReady:
+      bindingValid &&
+      !session.isFetching &&
+      !session.isError &&
+      !data.loading &&
+      !data.error &&
+      (data.connected || terminal),
     openModelRequest: latestOpenModelRequest(data.events),
   };
+}
+
+function savedConversationStatus(session: SessionApiResponse | undefined) {
+  return session?.archived_at ? 'terminated' : (session?.status ?? 'idle');
 }

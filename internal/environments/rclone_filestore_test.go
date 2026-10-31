@@ -160,7 +160,7 @@ func TestStartRcloneFilestoreFailures(t *testing.T) {
 				provider: test.provider,
 				logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
-			err := runner.startRcloneFilestore(context.Background(), "sandbox_test", rcloneFilestoreLaunch{
+			err := runner.startRcloneFilestore(context.Background(), context.Background(), "sandbox_test", rcloneFilestoreLaunch{
 				ConfigPayload: []byte(`{"mounts":[]}`),
 			})
 			if !errors.Is(err, test.wantError) {
@@ -199,7 +199,7 @@ func TestStartManagedAgentSessionFilesystemWritesLocalMemoryMarkdown(t *testing.
 	t.Run("writes mkdir and markdown after rclone ready", func(t *testing.T) {
 		provider := &rcloneTestProvider{ready: true}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		if err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", launch); err != nil {
+		if err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", launch); err != nil {
 			t.Fatalf("startManagedAgentSessionFilesystem() error = %v", err)
 		}
 		if len(provider.runCommands) == 0 || provider.runCommands[0] != memoryRootMkdirCommand() {
@@ -222,7 +222,7 @@ func TestStartManagedAgentSessionFilesystemWritesLocalMemoryMarkdown(t *testing.
 		provider := &rcloneTestProvider{ready: true}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 		emptyLaunch := rcloneFilestoreLaunch{ConfigPayload: []byte(`{"mounts":[]}`)}
-		if err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", emptyLaunch); err != nil {
+		if err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", emptyLaunch); err != nil {
 			t.Fatalf("startManagedAgentSessionFilesystem() error = %v", err)
 		}
 		for _, command := range provider.runCommands {
@@ -243,7 +243,7 @@ func TestStartManagedAgentSessionFilesystemWritesLocalMemoryMarkdown(t *testing.
 			},
 		}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", launch)
+		err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", launch)
 		if !errors.Is(err, errMemoryMarkdownWrite) {
 			t.Fatalf("error = %v, want %v", err, errMemoryMarkdownWrite)
 		}
@@ -255,7 +255,7 @@ func TestStartManagedAgentSessionFilesystemWritesLocalMemoryMarkdown(t *testing.
 	t.Run("mkdir failure is fail-closed before rclone", func(t *testing.T) {
 		provider := &rcloneTestProvider{runErrors: []error{providerFailure}}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", launch)
+		err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", launch)
 		if !errors.Is(err, errMemoryRootCreate) {
 			t.Fatalf("error = %v, want %v", err, errMemoryRootCreate)
 		}
@@ -306,6 +306,8 @@ type rcloneTestProvider struct {
 	writes          map[string][]byte
 	configExists    bool
 }
+
+func (*rcloneTestProvider) SetTimeout(context.Context, string, time.Duration) error { return nil }
 
 func (*rcloneTestProvider) Create(context.Context, db.Environment, *db.EnvironmentWork, e2bruntime.Resolution) (e2bruntime.Sandbox, error) {
 	panic("unexpected Create call")

@@ -2,7 +2,7 @@ import { type Locale } from '../../../shared/i18n';
 import { platformQuickstartOfficialRequest } from './platformQuickstartOfficialRequest.generated';
 import { resolveQuickstartSystem } from './quickstartPromptText';
 
-export type QuickstartStep = 'agent' | 'environment' | 'session' | 'integrate';
+export type QuickstartStep = 'agent' | 'environment' | 'session' | 'deploy' | 'integrate';
 
 export type QuickstartMessage = {
   role: 'user' | 'assistant';
@@ -30,7 +30,6 @@ export type PlatformQuickstartRequest = {
 };
 
 export const platformQuickstartMaxTokens = platformQuickstartOfficialRequest.max_tokens;
-export const platformQuickstartSystem = platformQuickstartOfficialRequest.system;
 export const platformQuickstartTools = platformQuickstartOfficialRequest.tools;
 export const platformQuickstartToolChoice = platformQuickstartOfficialRequest.tool_choice;
 

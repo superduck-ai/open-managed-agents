@@ -134,6 +134,54 @@ ${mcpCatalog}
   LINKS：
   - Anthropic Console 位于 https://platform.claude.com。给用户链接到 Console 时使用该 URL（而不是 console.anthropic.com）。`;
 
+export function quickstartBuilderBehavior(locale: Locale): string {
+  const source = locale === 'zh-CN' ? agentBuilderBlock1Zh : englishBlock1Text;
+  return source
+    .replace(mcpCatalog, '')
+    .replace(
+      /^- (?:Unverified integrations|未确认的集成).*$/gm,
+      '- Before asking for integration URLs, recipients, scopes or authorization, check list_capabilities. Only ready discovered tools can support a proposal. If none match, explain the unavailable capability first and offer an optional pasted-text alternative. Do not imply that adding a URL or credential makes a service supported.',
+    )
+    .replace(/^  (?:If the user names a service not in this list|如果用户指名的服务不在此列表中).*$/gm, '')
+    .replace(
+      /^- (?:For tools, ALWAYS include|对于 tools，始终包含).*$/gm,
+      '- Enable only the tools required by the user task. Pure text tasks need no tools. MCP tools must be present in the actual workspace discovery result; do not grant unrelated actions.',
+    )
+    .replace(
+      /═══ STEP 2: CONFIGURE ENVIRONMENT ═══[\s\S]*?(?=═══ STEP 3: START SESSION ═══)/,
+      `═══ STEP 2: CONFIGURE ENVIRONMENT ═══
+Call pick_environment without introductory text: its card explains environments and presents the workspace choices. Never ask which environment to use yourself. If the user requests a new environment, ask 1-2 networking questions using ask_user_questions, then propose create_environment and wait for confirmation. After selection or creation, confirm in at most one short sentence and call offer_next_step: it immediately advances to step 3 because the user already made the choice.
+
+`,
+    )
+    .replace(
+      /^The user has already CREATED.*$/m,
+      'Actual builder state determines whether an agent exists. Propose an unsaved configuration with build_agent_config and wait for user confirmation; only a successful save result means it exists.',
+    )
+    .replace(
+      /^用户已经创建了 agent.*$/m,
+      '以 Actual builder state 判断是否已创建智能体。未保存时先调用 build_agent_config 提议配置并等待用户确认；只有保存成功的工具结果才能证明已创建。',
+    )
+    .replace('═══ STEP 1: CREATE AGENT (already done — review only) ═══', '═══ STEP 1: CREATE OR UPDATE AGENT ═══')
+    .replace('═══ STEP 1: CREATE AGENT（已完成 —— 仅需复核）═══', '═══ STEP 1: CREATE OR UPDATE AGENT ═══')
+    .replace(
+      /^The config shown in context is already live in the editor.*$/m,
+      'The context contains a draft, not proof of saving. Call build_agent_config for new agents or requested changes; unchanged saved configurations need no new version.',
+    )
+    .replace(
+      /^上下文中显示的配置已经在编辑器里生效.*$/m,
+      '上下文中的配置只是草稿，不代表已保存。新建或修改配置须调用 build_agent_config；已保存且未变更的配置无需创建新版本。',
+    )
+    .replace(
+      'After the review, call offer_next_step.',
+      'After the configuration is saved successfully, call offer_next_step.',
+    )
+    .replace('复核完成后，调用 offer_next_step。', '配置保存成功后，调用 offer_next_step。')
+    .replaceAll('Claude Managed Agent', 'Open Managed Agent')
+    .replace(/^.*vault_sharing_notice.*$/gm, '')
+    .replace(/^- (?:model 必须|Pick the most appropriate model).*$/gm, '- Choose a model from availableModels.');
+}
+
 export function resolveQuickstartSystem(locale: Locale, modelID: string): Array<Record<string, unknown>> {
   const source = locale === 'zh-CN' ? agentBuilderBlock1Zh : englishBlock1Text;
   const modelRule =

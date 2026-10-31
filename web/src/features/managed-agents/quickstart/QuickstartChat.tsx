@@ -1,4 +1,5 @@
 import { ArrowDown, ArrowUp, Square } from 'lucide-react';
+import { cn } from '../../../shared/lib/utils';
 import { useI18n } from '../../../shared/i18n';
 import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Field, FieldLabel } from '../../../shared/ui/field';
@@ -15,9 +16,9 @@ import { errorMessage } from '../utils';
 import { FollowSentSessionMessage } from '../sessions/FollowSentSessionMessage';
 import { SessionDetailDeltaFramesContext } from '../sessions/sessionDetailData';
 import { SessionTranscriptView } from '../sessions/SessionTranscriptView';
+import { SessionOutputFiles } from '../sessions/SessionOutputFiles';
 import { SessionRequiresActionCard } from '../sessions/SessionRequiresActionCard';
 import { quickstartCopy } from './copy';
-import type { QuickstartWizard } from './useQuickstartWizard';
 import type { useQuickstartConversation } from './useQuickstartConversation';
 
 type QuickstartConversation = ReturnType<typeof useQuickstartConversation>;
@@ -25,17 +26,32 @@ const noThreadNames = new Map<string, string>();
 
 export function QuickstartChat({
   conversation,
-  wizard,
   workspaceID,
+  className,
 }: {
   conversation: QuickstartConversation;
-  wizard: QuickstartWizard;
   workspaceID: string;
+  className?: string;
 }) {
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
+  const transcript = (
+    <SessionTranscriptView
+      entries={conversation.entries}
+      selectedEntryId={null}
+      onSelectEntry={() => {}}
+      threadNameById={noThreadNames}
+      onThreadClick={() => {}}
+      openModelRequest={conversation.openModelRequest}
+    />
+  );
   return (
-    <div className="order-first flex h-[380px] min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border-[0.5px] border-border bg-card min-[860px]:order-last min-[860px]:h-full">
+    <div
+      className={cn(
+        'flex h-[380px] min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border-[0.5px] border-border bg-card min-[860px]:h-full',
+        className,
+      )}
+    >
       <div className="flex shrink-0 flex-wrap items-start justify-between gap-2 border-b-[0.5px] border-border px-4 py-3">
         <div>
           <h2 className="font-semibold">{text.test}</h2>
@@ -62,14 +78,21 @@ export function QuickstartChat({
                     {conversation.sending || conversation.data.loading ? text.sending : text.firstMessage}
                   </div>
                 )}
-                <SessionTranscriptView
-                  entries={conversation.entries}
-                  selectedEntryId={null}
-                  onSelectEntry={() => {}}
-                  threadNameById={noThreadNames}
-                  onThreadClick={() => {}}
-                  openModelRequest={conversation.openModelRequest}
-                />
+                {conversation.bindingValid && conversation.session.data ? (
+                  <SessionOutputFiles
+                    session={{
+                      ...conversation.session.data,
+                      status: conversation.running ? 'running' : conversation.status,
+                      resources: conversation.session.data.resources ?? [],
+                    }}
+                    workspaceId={workspaceID}
+                    refreshKey={conversation.sentVersion}
+                  >
+                    {transcript}
+                  </SessionOutputFiles>
+                ) : (
+                  transcript
+                )}
                 {conversation.action && (
                   <SessionRequiresActionCard
                     toolCall={conversation.action}
@@ -77,7 +100,7 @@ export function QuickstartChat({
                     disabled={conversation.sending || conversation.unconfirmed}
                   />
                 )}
-                <QuickstartConversationAlerts conversation={conversation} wizard={wizard} />
+                <QuickstartConversationAlerts conversation={conversation} />
               </MessageScrollerContent>
             </MessageScrollerViewport>
             <MessageScrollerButton
@@ -132,15 +155,23 @@ function QuickstartComposer({ conversation }: { conversation: QuickstartConversa
       </Field>
       <div className="flex min-w-0 items-center justify-between gap-2">
         <p role="status" className="min-w-0 text-xs text-muted-foreground">
-          {conversation.complete
-            ? text.complete
-            : conversation.stopped
-              ? text.stopped
-              : conversation.running
-                ? text.running
-                : conversation.sessionID
-                  ? text.saved
-                  : text.firstMessage}
+          {conversation.sending
+            ? text.sending
+            : conversation.action
+              ? text.awaiting
+              : conversation.failedTurn
+                ? text.failedTurn
+                : conversation.waiting
+                  ? text.waiting
+                  : conversation.complete
+                    ? text.complete
+                    : conversation.stopped
+                      ? text.stopped
+                      : conversation.running
+                        ? text.running
+                        : conversation.sessionID
+                          ? text.saved
+                          : text.firstMessage}
         </p>
         {conversation.running || conversation.action ? (
           <Button
@@ -170,13 +201,7 @@ function QuickstartComposer({ conversation }: { conversation: QuickstartConversa
   );
 }
 
-function QuickstartConversationAlerts({
-  conversation,
-  wizard,
-}: {
-  conversation: QuickstartConversation;
-  wizard: QuickstartWizard;
-}) {
+function QuickstartConversationAlerts({ conversation }: { conversation: QuickstartConversation }) {
   const { locale } = useI18n();
   const text = quickstartCopy(locale);
   return (
@@ -185,6 +210,11 @@ function QuickstartConversationAlerts({
         <ManagedErrorAlert>
           {conversation.error ?? conversation.data.error ?? errorMessage(conversation.session.error)}
         </ManagedErrorAlert>
+      )}
+      {(conversation.data.error || conversation.session.error) && (
+        <Button variant="outline" size="sm" onClick={() => void conversation.refresh()}>
+          {locale === 'zh-CN' ? '重试加载试跑' : 'Retry loading test'}
+        </Button>
       )}
       {conversation.failedTurn && (
         <p role="status" className="text-sm text-destructive">
@@ -202,8 +232,8 @@ function QuickstartConversationAlerts({
           <Button
             variant="ghost"
             size="sm"
-            disabled={conversation.data.loading || !conversation.data.connected}
-            onClick={() => wizard.update((value) => ({ ...value, unconfirmedMessage: '' }))}
+            disabled={!conversation.historyReady}
+            onClick={conversation.dismissUnconfirmed}
           >
             {text.reviewed}
           </Button>

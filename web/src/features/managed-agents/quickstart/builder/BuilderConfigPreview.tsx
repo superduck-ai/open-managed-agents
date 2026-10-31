@@ -1,69 +1,12 @@
-import { requiredEnvironmentPackages } from './environmentRequirements';
 import { useI18n } from '../../../../shared/i18n';
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '../../../../shared/ui/accordion';
-import { SyntaxCodeBlock } from '../../components/CodeBlocks';
 import { environmentInputSchema, validatedDeployment } from './tools';
 import type { BuilderState, BuilderTool } from './model';
-import { stableStringify } from '../platformQuickstartRequest';
 import { cronToSchedule, previewSchedule } from '../../resources/deployment-schedule';
 
 export function BuilderConfigPreview({ state, tool }: { state: BuilderState; tool: BuilderTool }) {
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
-  if (tool.name === 'build_agent_config')
-    return (
-      <div className="space-y-4">
-        <h4 className="break-words text-base font-medium">{state.config.name}</h4>
-        <EnvironmentRequirementsPreview state={state} />
-        {state.agent && state.savedConfig && (
-          <div className="space-y-2 text-sm">
-            <p className="font-mono text-xs text-muted-foreground">
-              v{state.agent.version} → v{state.agent.version + 1}
-            </p>
-            <p>
-              {zh ? '变更字段：' : 'Changed fields: '}
-              {Object.keys(state.config)
-                .filter(
-                  (key) =>
-                    stableStringify(state.config[key as keyof typeof state.config]) !==
-                    stableStringify(state.savedConfig![key as keyof typeof state.config]),
-                )
-                .map(
-                  (key) =>
-                    ({
-                      name: zh ? '名称' : 'Name',
-                      description: zh ? '描述' : 'Description',
-                      model: zh ? '模型' : 'Model',
-                      system: zh ? '系统提示词' : 'System prompt',
-                      mcp_servers: 'MCP',
-                      tools: zh ? '工具' : 'Tools',
-                      skills: zh ? '技能' : 'Skills',
-                      metadata: zh ? '元数据' : 'Metadata',
-                    })[key] ?? key,
-                )
-                .join(', ')}
-            </p>
-          </div>
-        )}
-        <p className="text-xs text-muted-foreground">
-          {typeof state.config.model === 'string' ? state.config.model : state.config.model.id}
-        </p>
-        <p className="max-h-40 overflow-y-auto break-words whitespace-pre-wrap text-sm leading-6">
-          {state.config.system}
-        </p>
-        {state.config.mcp_servers.length > 0 && (
-          <p>{state.config.mcp_servers.map((server) => server.name).join(', ')}</p>
-        )}
-        <Accordion>
-          <AccordionItem value="config">
-            <AccordionTrigger>JSON</AccordionTrigger>
-            <AccordionContent>
-              <SyntaxCodeBlock language="json" value={JSON.stringify(state.config, null, 2)} />
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      </div>
-    );
   if (tool.name === 'create_environment') return <EnvironmentPreview tool={tool} />;
   const deployment = validatedDeployment(tool);
   return (
@@ -91,26 +34,6 @@ export function BuilderConfigPreview({ state, tool }: { state: BuilderState; too
       <dt>{zh ? '初始消息' : 'Initial message'}</dt>
       <dd className="whitespace-pre-wrap">{deployment.initial_message}</dd>
     </dl>
-  );
-}
-
-function EnvironmentRequirementsPreview({ state }: { state: BuilderState }) {
-  const { locale } = useI18n();
-  const entries = Object.entries(requiredEnvironmentPackages(state.config)).filter(
-    ([manager, specs]) => manager !== 'type' && specs.length > 0,
-  );
-  if (!entries.length) return null;
-  return (
-    <div className="space-y-1 text-sm">
-      <p>
-        {locale === 'zh-CN'
-          ? '环境依赖要求（配置后在运行时准备）'
-          : 'Required environment packages (prepared at runtime after configuration)'}
-      </p>
-      <p>
-        {entries.map(([manager, specs]) => `${manager}: ${Array.isArray(specs) ? specs.join(', ') : specs}`).join('; ')}
-      </p>
-    </div>
   );
 }
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { Bot, Check, Layers, Sparkles } from 'lucide-react';
+import { BuilderAvatar } from './BuilderAvatar';
+import { Bot, Check, Layers } from 'lucide-react';
 import { useI18n } from '../../../../shared/i18n';
 import { MarkdownTranscriptContent } from '../../sessions/SessionTranscriptContent';
 import { builderHistoryText, type BuilderMessage } from './model';
@@ -26,9 +27,22 @@ function resultContent(message: BuilderMessage): unknown {
   }
 }
 
-export function BuilderHistory({ messages, pendingToolId }: { messages: BuilderMessage[]; pendingToolId?: string }) {
+export function BuilderHistory({
+  messages,
+  pendingToolId,
+  busy = false,
+}: {
+  messages: BuilderMessage[];
+  pendingToolId?: string;
+  busy?: boolean;
+}) {
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
+  const latestAssistant = messages.reduce(
+    (latest, message, index) =>
+      message.role === 'assistant' && builderHistoryText(message, zh, pendingToolId) ? index : latest,
+    -1,
+  );
   return messages.map((message, index) => {
     const content = resultContent(message);
     const result = savedResultSchema.safeParse(content);
@@ -52,7 +66,12 @@ export function BuilderHistory({ messages, pendingToolId }: { messages: BuilderM
             : 'flex min-w-0 items-start gap-3 text-sm leading-6'
         }
       >
-        {!isUser && <Sparkles aria-hidden="true" className="mt-1 size-4 shrink-0 text-muted-foreground" />}
+        {!isUser &&
+          (!busy && index === latestAssistant ? (
+            <BuilderAvatar state="idle" />
+          ) : (
+            <span aria-hidden="true" className="size-8 shrink-0" />
+          ))}
         {isUser ? (
           <p className="break-words whitespace-pre-wrap">{text}</p>
         ) : (

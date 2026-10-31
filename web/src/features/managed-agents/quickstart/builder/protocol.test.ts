@@ -197,3 +197,25 @@ test('Chat accepts absent, empty and whitespace arguments for parameterless tool
       ]);
   }
 });
+
+test('text-only optimization requests omit tool configuration for both backends', async () => {
+  for (const backend of ['messages', 'chat_completions'] as const) {
+    let body: Record<string, unknown> = {};
+    globalThis.fetch = (async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return stream(
+        backend === 'messages'
+          ? [
+              { type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'Improved draft' } },
+              { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+              { type: 'message_stop' },
+            ]
+          : [{ choices: [{ delta: { content: 'Improved draft' }, finish_reason: 'stop' }] }],
+      );
+    }) as typeof fetch;
+    const result = await streamBuilderTurn(input(backend));
+    expect(body).not.toHaveProperty('tools');
+    expect(body).not.toHaveProperty('tool_choice');
+    expect(result.tools).toEqual([]);
+  }
+});

@@ -190,6 +190,7 @@ export function AgentConfigEditor({
   lineNumbers: showLineNumbers = false,
   validate,
   minHeight = '220px',
+  readOnly = false,
 }: {
   value: string;
   format: CodeFormat;
@@ -199,6 +200,7 @@ export function AgentConfigEditor({
   lineNumbers?: boolean;
   validate?: (text: string, format: CodeFormat) => string | null;
   minHeight?: string;
+  readOnly?: boolean;
 }) {
   const { msg } = useI18n();
   const label = ariaLabel ?? `Agent config ${format}`;
@@ -265,6 +267,8 @@ export function AgentConfigEditor({
         basicSetup={agentConfigEditorBasicSetup}
         extensions={extensions}
         theme="none"
+        readOnly={readOnly}
+        editable={!readOnly}
         indentWithTab={false}
         onChange={handleChange}
         onCreateEditor={handleCreateEditor}

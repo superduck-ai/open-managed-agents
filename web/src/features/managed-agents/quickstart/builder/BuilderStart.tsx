@@ -1,3 +1,4 @@
+import { QuickstartEntrySlot } from '../QuickstartEntrySlot';
 import type { ReactNode } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Button } from '../../../../shared/ui/button';
@@ -13,10 +14,12 @@ import type { Builder } from './useBuilder';
 export function BuilderStart({
   builder,
   composer,
+  resume,
   onStart,
 }: {
   builder: Builder;
   composer: ReactNode;
+  resume?: ReactNode;
   onStart: (action: () => void) => void;
 }) {
   const { locale } = useI18n();
@@ -26,7 +29,7 @@ export function BuilderStart({
   return (
     <section aria-labelledby="quickstart-start-title" className="min-h-0 min-w-0 flex-1 overflow-y-auto pb-12">
       <div className="mx-auto flex w-full max-w-[880px] flex-col items-center">
-        <div className="w-full max-w-[728px]">{composer}</div>
+        <QuickstartEntrySlot accessory={resume}>{composer}</QuickstartEntrySlot>
         <div aria-label={zh ? '快速开始模板' : 'Quickstart templates'} className={`mt-10 ${quickstartTemplateGrid}`}>
           {templates.map(({ id, icon: Icon, config, description }) => (
             <Button

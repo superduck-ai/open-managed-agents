@@ -30,8 +30,9 @@ async function streamMessagesTurn(input: TurnInput): Promise<BuilderTurn> {
       max_tokens: 8192,
       system: input.system,
       messages: input.messages.map(({ role, content }) => ({ role, content })),
-      tools: input.tools,
-      tool_choice: { type: 'auto', disable_parallel_tool_use: true },
+      ...(input.tools.length
+        ? { tools: input.tools, tool_choice: { type: 'auto', disable_parallel_tool_use: true } }
+        : {}),
       stream: true,
     },
     onEvent: (event) => {
@@ -110,8 +111,7 @@ async function streamChatTurn(input: TurnInput): Promise<BuilderTurn> {
         { role: 'system', content: input.system.map((block) => block.text).join('\n\n') },
         ...chatMessages(input.messages),
       ],
-      tools,
-      tool_choice: 'auto',
+      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
       stream: true,
       stream_options: { include_usage: true },
     },

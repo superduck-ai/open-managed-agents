@@ -1,3 +1,4 @@
+import { builderActionSystem } from './capabilities';
 import { environmentPackagesSchema, environmentPackagesMetadataKey } from './environmentRequirements';
 import { builderFileDeliverySystem } from './fileDelivery';
 import { z } from 'zod';
@@ -66,6 +67,9 @@ const configInput = z
 export const builderToolInputs = {
   ask_user_questions: questionInputSchema,
   build_agent_config: configInput,
+  list_agents: empty,
+  read_agent: z.object({ agent_id: z.string().min(1) }).strict(),
+  list_capabilities: empty,
   list_environments: empty,
   pick_environment: empty,
   create_environment: environmentInputSchema,
@@ -96,7 +100,7 @@ export function proposedAgentConfig(tool: BuilderTool, state: BuilderState, mode
   const model = typeof config.model === 'string' ? config.model : config.model.id;
   if (!models.includes(model)) throw new Error('The proposed model is not available in this workspace.');
   if (tool.input.system !== undefined && config.system && config.system !== state.savedConfig?.system)
-    config.system = builderFileDeliverySystem(config.system);
+    config.system = builderFileDeliverySystem(builderActionSystem(config.system));
   const requirements = tool.input.environment_packages;
   const previousRequirements = state.config.metadata?.[environmentPackagesMetadataKey];
   const savedRequirements =
@@ -121,7 +125,15 @@ export function builderTools(models: string[]) {
     return {
       name,
       description:
-        (name === 'build_agent_config' ? configurationDescription : official?.description) ??
+        (name === 'build_agent_config'
+          ? configurationDescription
+          : ({
+              list_agents: 'List actual active workspace agents to find reusable knowledge and configurations.',
+              read_agent:
+                'Read an existing workspace agent as reference for a new confirmed proposal. This does not select or modify that agent.',
+              list_capabilities:
+                'Inspect configured workspace MCP discovery status and actual tool names. Unknown or error entries are not usable; authorization and runtime success are separate.',
+            }[name] ?? official?.description)) ??
         (name === 'pick_environment'
           ? 'Choose an existing environment or request a new one.'
           : 'Choose vaults by credential coverage, or request a new vault.'),

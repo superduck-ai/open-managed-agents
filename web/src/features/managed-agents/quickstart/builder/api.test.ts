@@ -24,7 +24,14 @@ const json = (value: unknown) =>
 function state() {
   return newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'model'));
 }
-const catalog: BuilderCatalog = { agents: [], environments: [], providers: [], directory: [], skills: [] };
+const catalog: BuilderCatalog = {
+  agents: [],
+  capabilities: [],
+  environments: [],
+  providers: [],
+  directory: [],
+  skills: [],
+};
 test('credential coverage reads every page and returns only safe resource summaries', async () => {
   const urls: string[] = [];
   globalThis.fetch = (async (input) => {
@@ -209,6 +216,7 @@ test('catalog includes organization models and resolves workspace precedence lik
   }) as typeof fetch;
   const loaded = await loadBuilderCatalog('org', 'workspace');
   expect(urls).toContain('/api/console/organizations/org/llm_providers');
+  expect(urls.some((url) => url.includes('/directory/servers'))).toBe(false);
   expect(builderBackend('shared/org-only', loaded)).toBe('chat_completions');
   expect(builderBackend('shared/common', loaded)).toBe('messages');
   expect(builderBackend('common', loaded)).toBe('messages');

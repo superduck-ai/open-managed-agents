@@ -11,6 +11,7 @@ import { invalidateBuilderTest } from './model';
 import { environmentFormValues } from '../../environments/model';
 import { ManagedErrorAlert } from '../../components/common';
 import type { Builder } from './useBuilder';
+import { useBuilderPanel } from './panelContext';
 
 type GateProps = { builder: Builder; workspaceId: string; orgUuid: string };
 export function BuilderGate({
@@ -51,6 +52,7 @@ export function BuilderGate({
   return <ConfirmationGate {...{ builder, workspaceId, orgUuid }} />;
 }
 function ConfirmationGate({ builder }: GateProps) {
+  const openPanel = useBuilderPanel();
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
   const state = builder.state;
@@ -63,7 +65,13 @@ function ConfirmationGate({ builder }: GateProps) {
           <h3 className="font-medium">
             {state.agent ? (zh ? '保存新版本' : 'Save new version') : zh ? '创建智能体' : 'Create agent'}
           </h3>
-          <BuilderConfigPreview state={state} tool={tool} />
+          <h4 className="break-words text-base font-medium">{state.config.name}</h4>
+          <p className="text-sm text-muted-foreground">
+            {zh ? '配置面板显示了本次提议，请确认后保存。' : 'The config panel shows the proposed version.'}
+          </p>
+          <Button variant="outline" onClick={() => openPanel({ kind: 'agent' })}>
+            {zh ? '查看配置' : 'Review configuration'}
+          </Button>
         </>
       )}
       {tool.name === 'create_environment' && (
@@ -81,12 +89,15 @@ function ConfirmationGate({ builder }: GateProps) {
         </>
       )}
       <div className="flex gap-2">
-        <Button disabled={builder.busy || Boolean(state.operation)} onClick={() => void builder.confirm()}>
+        <Button
+          disabled={builder.busy || builder.draftEditing || Boolean(state.operation)}
+          onClick={() => void builder.confirm()}
+        >
           {confirmationLabel(tool.name, state.agent?.version, zh)}
         </Button>
         <Button
           variant="ghost"
-          disabled={builder.busy || Boolean(state.operation)}
+          disabled={builder.busy || builder.draftEditing || Boolean(state.operation)}
           onClick={() =>
             void builder.resolve(
               { user_choice: zh ? '修改' : 'Change', decision: 'declined action; ask what to change' },
@@ -108,6 +119,12 @@ function EnvironmentGate({ builder }: GateProps) {
   const zh = locale === 'zh-CN';
   return (
     <div className="space-y-3">
+      <h3 className="font-medium">{zh ? '选择运行环境' : 'Choose an environment'}</h3>
+      <p className="text-sm text-muted-foreground">
+        {zh
+          ? '环境决定智能体可以访问的网络和使用的软件。选择已有环境，或创建一个新环境。'
+          : 'An environment defines the network and software available to your agent. Choose an existing environment or create one.'}
+      </p>
       {builder.catalog.data?.environments
         .filter((environment) => !environment.archived_at)
         .map((environment) => (

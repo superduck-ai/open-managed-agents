@@ -1,3 +1,4 @@
+import { optimizeBuilderPrompt } from './optimizePrompt';
 import { requiredEnvironmentPackages } from './environmentRequirements';
 import {
   quickstartChatReplyToolResult,
@@ -59,6 +60,7 @@ export function useBuilder(input: BuilderInput) {
   const lock = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const [busy, setBusy] = useState(false);
+  const [draftEditing, setDraftEditing] = useState(false);
   const [error, setError] = useState('');
   const [partial, setPartial] = useState('');
   const [unmatchedOperationId, setUnmatchedOperationId] = useState('');
@@ -178,9 +180,10 @@ export function useBuilder(input: BuilderInput) {
           value,
           locale,
           input.models,
-          catalog.data.directory,
           catalog.data.skills,
           value.sessionID && !value.testClosed ? testEvents.current : '',
+          catalog.data.agents,
+          catalog.data.capabilities,
         ),
         tools: builderTools(input.models),
         messages: baseMessages,
@@ -244,7 +247,13 @@ export function useBuilder(input: BuilderInput) {
     const operation = { id: crypto.randomUUID(), kind: operationKind(tool), toolId: tool.id };
     const action = controller.current;
     try {
-      const sendMutation = await prepareBuilderMutation(current.current, tool, operation.id, input.workspaceId);
+      const sendMutation = await prepareBuilderMutation(
+        current.current,
+        tool,
+        operation.id,
+        input.workspaceId,
+        input.orgUuid,
+      );
       if (!isCurrentWrite(action, tool)) return;
       update((value) => ({ ...value, operation }));
       const patch = await sendMutation();
@@ -276,10 +285,43 @@ export function useBuilder(input: BuilderInput) {
       throw cause;
     }
   }
+  const editDraft = async (config: CreateAgentInput) => {
+    let applied = false;
+    await run(async () => {
+      const value = current.current;
+      if (value.agent || value.operation || value.gate?.name !== 'build_agent_config' || !catalog.data) return;
+      const tool = { ...value.gate, input: config };
+      const prepared = await prepareBuilderTool({
+        state: value,
+        tool,
+        catalog: catalog.data,
+        models: input.models,
+        workspaceId: input.workspaceId,
+      });
+      update((state) => ({
+        ...state,
+        ...prepared.patch,
+        gate: tool,
+        queue: state.queue.map((item) => (item.id === tool.id ? tool : item)),
+        messages: state.messages.map((message) => ({
+          ...message,
+          content:
+            typeof message.content === 'string'
+              ? message.content
+              : message.content.map((block) =>
+                  block.type === 'tool_use' && block.id === tool.id ? { ...block, input: config } : block,
+                ),
+        })),
+      }));
+      applied = true;
+      setDraftEditing(false);
+    });
+    return applied;
+  };
   const confirm = () =>
     run(async () => {
       const tool = current.current.gate;
-      if (!tool || current.current.operation) return;
+      if (!tool || current.current.operation || draftEditing) return;
       if (!catalog.data) throw new Error('Load the workspace catalog before saving.');
       const prepared = await prepareBuilderTool({
         state: current.current,
@@ -442,18 +484,20 @@ export function useBuilder(input: BuilderInput) {
         await startQuickstartTurn();
       }),
     update,
+    optimizePrompt: async (text: string, signal: AbortSignal) => {
+      const available = await catalog.refetch();
+      if (!available.data || available.error)
+        throw new Error(
+          locale === 'zh-CN' ? '无法读取工作区能力，请重试。' : 'Unable to load workspace capabilities. Retry.',
+        );
+      return optimizeBuilderPrompt({ ...input, model: input.models[0], catalog: available.data, text, signal });
+    },
     reply: sendChatReply,
     resolve,
     confirm,
     startTemplate,
     restart: () => {
-      if (
-        current.current.operation ||
-        current.current.unconfirmedMessage ||
-        (current.current.sessionID && !current.current.testClosed) ||
-        lock.current
-      )
-        return false;
+      if (current.current.operation || current.current.unconfirmedMessage || lock.current) return false;
       update(() => newBuilderState(createDialogAgentConfig(blankAgentTemplate, locale, undefined, input.models[0])));
       return true;
     },
@@ -478,6 +522,9 @@ export function useBuilder(input: BuilderInput) {
       setError('');
     },
     selectEnvironment,
+    editDraft,
+    draftEditing,
+    setDraftEditing,
     credentialDone,
     closeTest,
     observeTest: (summary: string) => {

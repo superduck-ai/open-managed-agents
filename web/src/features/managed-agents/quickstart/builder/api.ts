@@ -4,10 +4,11 @@ import {
   type EnvironmentPackages,
 } from './environmentRequirements';
 import { z } from 'zod';
+import { loadBuilderCapabilities, builderCapabilityDirectory } from './capabilities';
 import { errorMessage } from '../../utils';
 import { anthropicBetaApi } from '../../../../shared/api/anthropic';
 import { listLLMProviders, listOrganizationLLMProviders } from '../../../llm-providers/api';
-import { listCreateAgentSkills, loadMcpDirectoryServers } from '../../agents/create-dialog-api';
+import { listCreateAgentSkills } from '../../agents/create-dialog-api';
 import { createAgentDraftSchema, normalizeCreateAgentDraft } from '../../agents/create-dialog-model';
 import { buildAgentUpdateInput } from '../../agentConfig';
 import { createAgent, updateAgentDetail, retrieveAgent, listManagedEntities, listVaultCredentials } from '../../api';
@@ -24,14 +25,15 @@ import { environmentInputSchema, validatedDeployment } from './tools';
 import { invalidateBuilderTest, builderTestBinding, type BuilderState, type BuilderTool } from './model';
 
 export async function loadBuilderCatalog(orgUuid: string, workspaceId: string) {
-  const [resources, directory, skills, providers, organizationProviders] = await Promise.all([
+  const [resources, skills, providers, organizationProviders] = await Promise.all([
     loadQuickstartResources(workspaceId),
-    loadMcpDirectoryServers(),
     listCreateAgentSkills(workspaceId),
     listLLMProviders(orgUuid, workspaceId),
     listOrganizationLLMProviders(orgUuid),
   ]);
-  return { ...resources, directory, skills, providers: [...providers, ...organizationProviders] };
+  const capabilities = await loadBuilderCapabilities(orgUuid, workspaceId, resources.agents);
+  const directory = builderCapabilityDirectory(capabilities);
+  return { ...resources, capabilities, directory, skills, providers: [...providers, ...organizationProviders] };
 }
 export type BuilderCatalog = Awaited<ReturnType<typeof loadBuilderCatalog>>;
 export function builderBackend(model: string, catalog: BuilderCatalog) {

@@ -9,7 +9,14 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
-const catalog: BuilderCatalog = { agents: [], environments: [], providers: [], directory: [], skills: [] };
+const catalog: BuilderCatalog = {
+  agents: [],
+  capabilities: [],
+  environments: [],
+  providers: [],
+  directory: [],
+  skills: [],
+};
 function state() {
   const value = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'model'));
   value.config.metadata = {

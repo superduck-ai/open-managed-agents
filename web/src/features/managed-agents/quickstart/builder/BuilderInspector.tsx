@@ -2,7 +2,7 @@ import {
   Bot,
   Check,
   ChevronRight,
-  Layers,
+  Cloud,
   ShieldCheck,
   CalendarClock,
   Sparkles,
@@ -12,12 +12,11 @@ import {
 import { useI18n } from '../../../../shared/i18n';
 import { Button, ButtonLink } from '../../../../shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../../shared/ui/card';
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '../../../../shared/ui/accordion';
-import { SyntaxCodeBlock } from '../../components/CodeBlocks';
 import { stableStringify } from '../platformQuickstartRequest';
 import { downloadTextFile } from '../../utils';
 import { builderExportConfig } from './model';
 import type { Builder } from './useBuilder';
+import { useBuilderPanel } from './panelContext';
 
 export function BuilderInspector({ builder, workspaceId }: { builder: Builder; workspaceId: string }) {
   const { locale } = useI18n();
@@ -39,7 +38,7 @@ export function BuilderInspector({ builder, workspaceId }: { builder: Builder; w
       section: 'skills',
       icon: Sparkles,
     })),
-    ...(state.environment ? [{ ...state.environment, section: 'environments', icon: Layers }] : []),
+    ...(state.environment ? [{ ...state.environment, section: 'environments', icon: Cloud }] : []),
     ...state.vaults.map((vault) => ({ ...vault, section: 'vaults', icon: ShieldCheck })),
     ...(state.deployment ? [{ ...state.deployment, section: 'deployments', icon: CalendarClock }] : []),
   ];
@@ -71,7 +70,7 @@ export function BuilderInspector({ builder, workspaceId }: { builder: Builder; w
           </ol>
         </CardContent>
       </Card>
-      <SavedAgent builder={builder} workspaceId={workspaceId} />
+      <SavedAgent builder={builder} />
       <BuilderResources resources={resources} workspaceId={workspaceId} />
       <SkippedAuthorization builder={builder} />
       <Button
@@ -94,6 +93,7 @@ function BuilderResources({
   resources: Array<{ id: string; name: string; section: string; icon: LucideIcon }>;
   workspaceId: string;
 }) {
+  const openPanel = useBuilderPanel();
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
   return (
@@ -105,41 +105,45 @@ function BuilderResources({
         {!resources.length && (
           <p className="text-sm text-muted-foreground">{zh ? '暂无关联资源' : 'No resources yet'}</p>
         )}
-        {resources.map((resource) => (
-          <Accordion key={resource.id}>
-            <AccordionItem value={resource.id}>
-              <AccordionTrigger>
-                <span className="min-w-0 truncate" title={resource.name}>
-                  {resource.name}
-                </span>
-              </AccordionTrigger>
-              <AccordionContent className="space-y-2">
-                <p className="break-all font-mono text-xs text-muted-foreground">{resource.id}</p>
-                {resource.section === 'environments' && (
-                  <p className="text-xs text-muted-foreground">
-                    {zh
-                      ? '环境配置已保存。运行环境准备、软件包安装与工具执行结果以实际会话事件为准。'
-                      : 'Environment configuration is saved. Runtime preparation, package installation and tool execution require actual session evidence.'}
-                  </p>
-                )}
-                <a
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={zh ? `在管理页查看 ${resource.name}` : `Manage ${resource.name}`}
-                  className="flex min-w-0 items-center gap-3 rounded-lg py-2 text-sm hover:bg-accent focus-visible:outline focus-visible:outline-ring"
-                  title={resource.name}
-                  href={`/workspaces/${encodeURIComponent(workspaceId)}/${resource.section}/${encodeURIComponent(resource.id)}`}
-                >
-                  <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
-                    <resource.icon aria-hidden="true" className="size-4" />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{resource.name}</span>
-                  <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-                </a>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-        ))}
+        {resources.map((resource) => {
+          const content = (
+            <>
+              <span
+                className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground"
+                title={resource.section === 'environments' ? (zh ? '环境' : 'Environment') : resource.section}
+              >
+                <resource.icon aria-hidden="true" className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-left">{resource.name}</span>
+              <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            </>
+          );
+          const className = 'h-auto w-full min-w-0 justify-start gap-3 px-0 py-2 font-normal';
+          return resource.section === 'environments' ? (
+            <Button
+              key={resource.id}
+              variant="ghost"
+              className={className}
+              aria-label={`${zh ? '环境' : 'Environment'}: ${resource.name}`}
+              title={resource.name}
+              onClick={() => openPanel({ kind: 'environment', id: resource.id, name: resource.name })}
+            >
+              {content}
+            </Button>
+          ) : (
+            <ButtonLink
+              key={resource.id}
+              variant="ghost"
+              className={className}
+              title={resource.name}
+              href={`/workspaces/${encodeURIComponent(workspaceId)}/${resource.section}/${encodeURIComponent(resource.id)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {content}
+            </ButtonLink>
+          );
+        })}
       </CardContent>
     </Card>
   );
@@ -174,7 +178,8 @@ function SkippedAuthorization({ builder }: { builder: Builder }) {
   );
 }
 
-function SavedAgent({ builder, workspaceId }: { builder: Builder; workspaceId: string }) {
+function SavedAgent({ builder }: { builder: Builder }) {
+  const openPanel = useBuilderPanel();
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
   const { state } = builder;
@@ -186,31 +191,21 @@ function SavedAgent({ builder, workspaceId }: { builder: Builder; workspaceId: s
             <CardTitle className="text-sm">{zh ? '智能体' : 'Agent'}</CardTitle>
           </CardHeader>
           <CardContent>
-            <ButtonLink
+            <Button
               variant="ghost"
-              aria-label={zh ? '在管理页查看智能体' : 'Manage agent'}
-              target="_blank"
-              rel="noopener noreferrer"
+              aria-label={zh ? '查看智能体配置' : 'View agent configuration'}
               className="h-auto w-full min-w-0 justify-start gap-3 px-0 py-2 font-normal"
-              href={`/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(state.agent.id)}`}
+              onClick={() => openPanel({ kind: 'agent' })}
             >
               <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
                 <Bot className="size-4" />
               </span>
-              <span className="min-w-0 flex-1 truncate text-left" title={state.config.name}>
+              <span className="min-w-0 flex-1 truncate text-left" title={state.agent.name}>
                 {state.agent.name}
               </span>
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">{`v${state.agent.version}`}</span>
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">v{state.agent.version}</span>
               <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-            </ButtonLink>
-            <Accordion>
-              <AccordionItem value="config">
-                <AccordionTrigger>{zh ? '查看已保存配置' : 'View saved configuration'}</AccordionTrigger>
-                <AccordionContent>
-                  <SyntaxCodeBlock language="json" value={JSON.stringify(state.savedConfig, null, 2)} />
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
+            </Button>
             {stableStringify(state.savedConfig) !== stableStringify(state.config) && (
               <p className="text-xs text-muted-foreground">
                 {zh

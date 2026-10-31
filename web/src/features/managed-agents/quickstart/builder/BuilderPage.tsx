@@ -1,10 +1,9 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Sparkles, Settings2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Settings2 } from 'lucide-react';
 import { useI18n } from '../../../../shared/i18n';
 import { Button } from '../../../../shared/ui/button';
 import { Card, CardContent } from '../../../../shared/ui/card';
 import { ToggleGroup, ToggleGroupItem } from '../../../../shared/ui/toggle-group';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '../../../../shared/ui/sheet';
 import {
   MessageScroller,
   MessageScrollerContent,
@@ -14,12 +13,15 @@ import {
 import { ManagedErrorAlert } from '../../components/common';
 import { errorMessage } from '../../utils';
 import { BuilderHistory } from './BuilderHistory';
+import { BuilderAvatar } from './BuilderAvatar';
 import { BuilderInspector } from './BuilderInspector';
 import { useBuilder, type Builder } from './useBuilder';
 import { BuilderGate } from './BuilderGate';
 import { BuilderTest } from './BuilderTest';
 import { BuilderIntegration } from './BuilderIntegration';
 import { BuilderEntry } from './BuilderEntry';
+import { BuilderPanels } from './BuilderPanels';
+import { useBuilderPanel } from './panelContext';
 import { BuilderComposer } from './BuilderComposer';
 
 export function BuilderPage({
@@ -88,43 +90,45 @@ function BuilderWorkspace({
   const integrating = state.step === 'integrate' && state.gate?.name === 'show_integration_exits';
   const task = testing || integrating;
   return (
-    <section className="mx-auto flex min-h-0 w-full min-w-0 max-w-[1440px] flex-1 flex-col gap-4">
-      <BuilderHeader builder={builder} workspaceId={workspaceId} task={task} onBack={onBack} />
-      {task && <BuilderPanelSwitch panel={panel} onChange={setPanel} testing={testing} />}
-      <div
-        className={`grid min-h-0 min-w-0 flex-1 gap-6 ${task ? 'xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]' : 'xl:grid-cols-[minmax(0,1fr)_280px]'}`}
-      >
+    <BuilderPanels builder={builder} workspaceId={workspaceId}>
+      <section className="mx-auto flex min-h-0 w-full min-w-0 max-w-[1440px] flex-1 flex-col gap-4">
+        <BuilderHeader builder={builder} workspaceId={workspaceId} task={task} onBack={onBack} />
+        {task && <BuilderPanelSwitch panel={panel} onChange={setPanel} testing={testing} />}
         <div
-          id="builder-build-panel"
-          className={`${task && panel !== 'build' ? 'hidden xl:flex' : 'flex'} min-h-0 min-w-0 flex-col gap-4 pb-3`}
+          className={`builder-content-grid grid min-h-0 min-w-0 flex-1 gap-6 ${task ? 'xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]' : 'xl:grid-cols-[minmax(0,1fr)_280px]'}`}
         >
-          <BuilderConversation builder={builder} workspaceId={workspaceId} orgUuid={orgUuid} task={task} />
-        </div>
-        {testing && (
           <div
-            id="builder-task-panel"
-            className={`${panel === 'task' ? 'flex' : 'hidden xl:flex'} min-h-0 min-w-0 flex-col`}
+            id="builder-build-panel"
+            className={`${task && panel !== 'build' ? 'hidden xl:flex' : 'flex'} mx-auto w-full max-w-[880px] min-h-0 min-w-0 flex-col gap-4 pb-3`}
           >
-            <BuilderTest key={state.sessionID} builder={builder} workspaceId={workspaceId} accountId={accountId} />
+            <BuilderConversation builder={builder} workspaceId={workspaceId} orgUuid={orgUuid} task={task} />
           </div>
-        )}
-        {integrating && (
-          <section
-            id="builder-task-panel"
-            aria-label={zh ? '应用接入' : 'Application integration'}
-            className={`${panel === 'task' ? 'block' : 'hidden xl:block'} min-h-0 min-w-0 overflow-y-auto rounded-xl border-[0.5px] border-border bg-card p-4`}
-          >
-            <h2 className="mb-5 text-base font-medium">{zh ? '应用接入' : 'Application integration'}</h2>
-            <BuilderIntegration state={state} workspaceId={workspaceId} accountId={accountId} />
-          </section>
-        )}
-        {!task && state.initialized && (
-          <div className="hidden min-h-0 xl:block">
-            <BuilderInspector builder={builder} workspaceId={workspaceId} />
-          </div>
-        )}
-      </div>
-    </section>
+          {testing && (
+            <div
+              id="builder-task-panel"
+              className={`builder-secondary-panel ${panel === 'task' ? 'flex' : 'hidden xl:flex'} min-h-0 min-w-0 flex-col`}
+            >
+              <BuilderTest key={state.sessionID} builder={builder} workspaceId={workspaceId} accountId={accountId} />
+            </div>
+          )}
+          {integrating && (
+            <section
+              id="builder-task-panel"
+              aria-label={zh ? '应用接入' : 'Application integration'}
+              className={`builder-secondary-panel ${panel === 'task' ? 'block' : 'hidden xl:block'} min-h-0 min-w-0 overflow-y-auto rounded-xl border-[0.5px] border-border bg-card p-4`}
+            >
+              <h2 className="mb-5 text-base font-medium">{zh ? '应用接入' : 'Application integration'}</h2>
+              <BuilderIntegration state={state} workspaceId={workspaceId} accountId={accountId} />
+            </section>
+          )}
+          {!task && state.initialized && (
+            <div className="builder-secondary-panel hidden min-h-0 xl:block">
+              <BuilderInspector builder={builder} workspaceId={workspaceId} />
+            </div>
+          )}
+        </div>
+      </section>
+    </BuilderPanels>
   );
 }
 
@@ -145,7 +149,13 @@ function BuilderHeader({
   const name = state.agent?.name ?? state.config.name;
   return (
     <header className="flex min-h-10 shrink-0 items-center gap-2">
-      <Button variant="ghost" size="icon" aria-label={zh ? '返回快速开始' : 'Back to quickstart'} onClick={onBack}>
+      <Button
+        variant="ghost"
+        size="icon"
+        disabled={builder.draftEditing}
+        aria-label={zh ? '返回快速开始' : 'Back to quickstart'}
+        onClick={onBack}
+      >
         <ArrowLeft />
       </Button>
       <h1 title={name} className="min-w-0 flex-1 truncate text-base font-medium">
@@ -177,7 +187,7 @@ function BuilderConversation({
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport className="py-4">
             <MessageScrollerContent className="mx-auto w-full max-w-[760px] space-y-5">
-              <BuilderHistory messages={state.messages} pendingToolId={state.gate?.id} />
+              <BuilderHistory messages={state.messages} pendingToolId={state.gate?.id} busy={builder.busy} />
               <BuilderStatus builder={builder} />
               <BuilderActiveGate builder={builder} workspaceId={workspaceId} orgUuid={orgUuid} />
               {state.initialized && !state.gate && !state.operation && !builder.busy && (
@@ -197,30 +207,14 @@ function BuilderConversation({
   );
 }
 
-function BuilderConfiguration({
-  builder,
-  workspaceId,
-  task,
-}: {
-  builder: Builder;
-  workspaceId: string;
-  task: boolean;
-}) {
+function BuilderConfiguration({ task }: { builder: Builder; workspaceId: string; task: boolean }) {
   const { locale } = useI18n();
-  const zh = locale === 'zh-CN';
+  const openPanel = useBuilderPanel();
   return (
-    <Sheet>
-      <SheetTrigger render={<Button variant="outline" className={task ? '' : 'xl:hidden'} />}>
-        <Settings2 aria-hidden="true" />
-        {zh ? '配置' : 'Configuration'}
-      </SheetTrigger>
-      <SheetContent className="p-4">
-        <SheetHeader className="shrink-0 pr-8">
-          <SheetTitle>{zh ? '构建配置' : 'Build configuration'}</SheetTitle>
-        </SheetHeader>
-        <BuilderInspector builder={builder} workspaceId={workspaceId} />
-      </SheetContent>
-    </Sheet>
+    <Button variant="outline" className={task ? '' : 'xl:hidden'} onClick={() => openPanel({ kind: 'overview' })}>
+      <Settings2 aria-hidden="true" />
+      {locale === 'zh-CN' ? '配置' : 'Configuration'}
+    </Button>
   );
 }
 
@@ -253,7 +247,7 @@ function BuilderStatus({ builder }: { builder: Builder }) {
     <>
       {builder.busy && !state.operation && (
         <div role="status" className="flex min-w-0 items-start gap-3 text-sm leading-6">
-          <Sparkles aria-hidden="true" className="mt-1 size-4 shrink-0 text-muted-foreground" />
+          <BuilderAvatar state={builder.partial ? 'speaking' : 'thinking'} />
           <p className="min-w-0 break-words whitespace-pre-wrap">
             {builder.partial || (zh ? '正在处理…' : 'Working…')}
           </p>

@@ -18,6 +18,7 @@ function initial() {
 }
 const catalog: BuilderCatalog = {
   agents: [],
+  capabilities: [],
   environments: [],
   skills: [],
   providers: [],
@@ -282,3 +283,42 @@ for (const step of ['agent', 'environment', 'session', 'integrate'] as const) {
     expect(planned.deployment).toBeNull();
   });
 }
+
+test('selected environment advances to session preparation without another gate or a session write', async () => {
+  const state = initial();
+  state.agent = { id: 'agent', name: 'Agent', version: 1 };
+  state.savedConfig = state.config;
+  state.step = 'environment';
+  const context = {
+    state,
+    tool: { id: 'advance', name: 'offer_next_step', input: {} },
+    catalog,
+    models: ['model'],
+    workspaceId: 'workspace',
+  };
+  await expect(prepareBuilderTool(context)).rejects.toThrow('Choose an environment');
+  state.environment = { id: 'environment', name: 'Chosen' };
+  const prepared = await prepareBuilderTool(context);
+  expect(prepared.gate).toBeUndefined();
+  expect(prepared.patch).toEqual({ step: 'session' });
+  expect(state.sessionID).toBe('');
+});
+
+test('builder rejects MCP proposals without workspace discovery evidence', async () => {
+  await expect(
+    prepareBuilderTool({
+      state: initial(),
+      models: ['model'],
+      workspaceId: 'workspace',
+      catalog,
+      tool: {
+        id: 'unsupported',
+        name: 'build_agent_config',
+        input: {
+          mcp_servers: [{ type: 'url', name: 'public', url: 'https://public.example/mcp' }],
+          tools: [{ type: 'mcp_toolset', mcp_server_name: 'public' }],
+        },
+      },
+    }),
+  ).rejects.toThrow('discovered');
+});

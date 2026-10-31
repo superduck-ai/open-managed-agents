@@ -1,3 +1,5 @@
+import { assertBuilderCapabilities, loadBuilderCapabilities } from './capabilities';
+import { loadQuickstartResources } from '../api';
 import { requiredEnvironmentPackages } from './environmentRequirements';
 import { retrieveAgent } from '../../api';
 import {
@@ -29,8 +31,14 @@ export async function prepareBuilderMutation(
   tool: BuilderTool,
   id: string,
   workspaceId: string,
+  orgUuid?: string,
 ): Promise<() => Promise<Partial<BuilderState>>> {
   if (tool.name === 'build_agent_config') {
+    const capabilities =
+      state.config.mcp_servers.length && orgUuid
+        ? await loadBuilderCapabilities(orgUuid, workspaceId, (await loadQuickstartResources(workspaceId)).agents)
+        : [];
+    assertBuilderCapabilities(state.config, capabilities);
     if (state.agent) {
       const latest = await retrieveAgent(state.agent.id, workspaceId);
       if (latest.version !== state.agent.version) throw new BuilderVersionConflictError('The agent changed elsewhere.');

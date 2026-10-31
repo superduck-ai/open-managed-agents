@@ -1,3 +1,4 @@
+import { builderActionSystem } from './capabilities';
 import { builderFileDeliverySystem } from './fileDelivery';
 import { builderStorageKey, builderTestBinding, newBuilderState } from './model';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
@@ -16,6 +17,7 @@ import {
   jsonResponse,
   codeBlockContaining,
   selectManagedComboboxOption,
+  setAgentConfigEditorValue,
 } from '../../ManagedAgentsPage.test-utils';
 
 function toolStream(name: string, input: unknown) {
@@ -170,22 +172,24 @@ test('reference knowledge reaches model context, confirmation and saved payload 
   send('Build an archive policy assistant. I will paste its reference knowledge here; no external systems.');
   await screen.findByRole('button', { name: /^(Create agent|Save as v\d+)$/ });
   send(reference);
-  await screen.findByText(
-    (_, element) => element?.tagName === 'P' && element.textContent === builderFileDeliverySystem(instructions),
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'Agent configuration content', hidden: true }).textContent).toContain(
+      'each person may borrow 7 files',
+    ),
   );
   expect(JSON.stringify(api.calls[1].messages)).toContain(reference);
   expect(writes(api.requests)).toHaveLength(0);
   send('Rename it to Renamed archive assistant.');
   await screen.findByRole('heading', { name: 'Renamed archive assistant', level: 4 });
-  expect(
-    screen.getByText(
-      (_, element) => element?.tagName === 'P' && element.textContent === builderFileDeliverySystem(instructions),
-    ),
-  ).toBeTruthy();
+  expect(screen.getByRole('textbox', { name: 'Agent configuration content', hidden: true }).textContent).toContain(
+    'each person may borrow 7 files',
+  );
   fireEvent.click(screen.getByRole('button', { name: /^(Create agent|Save as v\d+)$/ }));
   await screen.findByRole('button', { name: 'Continue', exact: true });
   expect(writes(api.requests)).toHaveLength(1);
-  expect((writes(api.requests)[0].body as { system: string }).system).toBe(builderFileDeliverySystem(instructions));
+  expect((writes(api.requests)[0].body as { system: string }).system).toBe(
+    builderFileDeliverySystem(builderActionSystem(instructions)),
+  );
   expect(
     api.requests.filter((request) => request.method === 'POST' && /\/v1\/sessions/.test(request.url)),
   ).toHaveLength(0);
@@ -206,7 +210,9 @@ test('template creates immediately; confirmed rename retains saved ID, instructi
   expect(screen.getByRole('article', { name: 'User message' }).textContent).toBe(
     (writes(api.requests)[0].body as { description: string }).description,
   );
-  expect(screen.getByRole('link', { name: 'Manage agent' }).textContent).toContain('Structured extractor');
+  expect(screen.getByRole('button', { name: 'View agent configuration' }).textContent).toContain(
+    'Structured extractor',
+  );
   expect(screen.getByText('No resources yet')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Export configuration' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Back to quickstart' }));
@@ -298,7 +304,6 @@ test('test first reply does not close the session; explicit end returns actual e
   fireEvent.click(await screen.findByRole('button', { name: /Structured extractor/ }));
   fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
   fireEvent.click(await screen.findByRole('button', { name: /Option environment/ }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
   fireEvent.click(await screen.findByRole('button', { name: 'Start test', exact: true }));
   await screen.findByRole('textbox', { name: 'Test message' });
   await waitFor(() =>
@@ -360,7 +365,6 @@ test('test review marks omitted events and truncated or missing tool output', as
   fireEvent.click(await screen.findByRole('button', { name: /Structured extractor/ }));
   fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
   fireEvent.click(await screen.findByRole('button', { name: /Option environment/ }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
   fireEvent.click(await screen.findByRole('button', { name: 'Start test', exact: true }));
   await screen.findByRole('textbox', { name: 'Test message' });
   await waitFor(() =>
@@ -525,8 +529,7 @@ test('a used skill appears in resources without showing an empty state or adding
   window.sessionStorage.setItem(builderStorageKey('acct_managed_agents_test', 'default'), JSON.stringify(state));
   renderManagedAgentsPage('quickstart');
   fireEvent.click(await screen.findByRole('button', { name: 'Continue previous build' }));
-  fireEvent.click(screen.getByRole('button', { name: 'skill_used' }));
-  expect(screen.getByRole('link', { name: 'Manage skill_used' }).getAttribute('href')).toBe(
+  expect(screen.getByRole('link', { name: 'skill_used' }).getAttribute('href')).toBe(
     '/workspaces/default/skills/skill_used',
   );
   expect(screen.queryByText('No resources yet')).toBeNull();
@@ -750,7 +753,7 @@ test('pending writes can be abandoned only after a complete empty lookup, withou
   expect(api.requests.some((request) => request.method === 'POST')).toBe(false);
 });
 
-test('an open test cannot be abandoned by starting a new build from the entry', async () => {
+test('an open test can be left intact when explicitly starting a new build', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
   const api = setup([]);
   const state = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'claude-sonnet-4-6'));
@@ -761,11 +764,15 @@ test('an open test cannot be abandoned by starting a new build from the entry', 
   await screen.findByRole('textbox', { name: 'Builder message' });
   send('A new build');
   await screen.findByRole('alertdialog', { name: 'Start a new build?' });
-  expect(screen.getByRole('button', { name: 'Start new build', exact: true }).hasAttribute('disabled')).toBe(true);
-  expect(
-    screen.getByText('Continue the previous build and end its open test before starting a new build.'),
-  ).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Start new build', exact: true }).hasAttribute('disabled')).toBe(false);
+  expect(screen.getByText(/The previous test session will remain available/)).toBeTruthy();
   expect(api.calls).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Start new build', exact: true }));
+  await waitFor(() => expect(api.calls).toHaveLength(1));
+  const stored = JSON.parse(window.sessionStorage.getItem(builderStorageKey('acct_managed_agents_test', 'default'))!);
+  expect(stored.sessionID).toBe('');
+  expect(screen.getByRole('article', { name: 'User message' }).textContent).toBe('A new build');
+  expect(api.requests.some((request) => request.method !== 'GET' && request.url.includes('session_open'))).toBe(false);
 });
 
 test('a vault load error has a local retry and cannot masquerade as an empty successful selection', async () => {
@@ -801,14 +808,15 @@ test.each([false, true])('R1 rename receipt reports only the actual agent write 
     toolStream('offer_next_step', {}),
     toolStream('pick_environment', {}),
     toolStream('offer_next_step', {}),
+    toolStream('agent_ready', { suggested_first_message: 'Try the agent' }),
     toolStream('build_agent_config', { name: 'Renamed only' }),
-    toolStream('offer_next_step', {}),
+    toolStream('agent_ready', { suggested_first_message: 'Try renamed agent' }),
   ]);
   renderManagedAgentsPage('quickstart');
   fireEvent.click(await screen.findByRole('button', { name: 'Structured extractor', exact: true }));
   fireEvent.click(await screen.findByRole('button', { name: 'Continue', exact: true }));
   fireEvent.click(await screen.findByRole('button', { name: /Option environment/ }));
-  await screen.findByRole('button', { name: 'Continue', exact: true });
+  await screen.findByRole('button', { name: 'Start test', exact: true });
   send('Only rename the agent.');
   await screen.findByRole('button', { name: 'Save as v2', exact: true });
   const baseFetch = globalThis.fetch;
@@ -823,7 +831,7 @@ test.each([false, true])('R1 rename receipt reports only the actual agent write 
   }) as typeof fetch;
   fireEvent.click(screen.getByRole('button', { name: 'Save as v2', exact: true }));
   if (recover) fireEvent.click(await screen.findByRole('button', { name: 'Check saved result' }));
-  await screen.findByRole('button', { name: 'Continue', exact: true });
+  await screen.findByRole('button', { name: 'Start test', exact: true });
   const result = screen.getAllByRole('group', { name: 'Saved result' }).at(-1)!;
   expect(result.textContent).toContain('Renamed only');
   expect(result.textContent).toContain('v2');
@@ -1517,3 +1525,54 @@ test.each(['preflight', 'response'] as const)(
     expect(screen.queryByRole('button', { name: 'Check saved result' })).toBeNull();
   },
 );
+
+test('draft editor blocks invalid writes and applies edits without creating an agent', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([
+    toolStream('build_agent_config', { name: 'Draft name', system: 'Answer briefly.' }),
+    toolStream('offer_next_step', {}),
+  ]);
+  renderManagedAgentsPage('quickstart');
+  await screen.findByRole('textbox', { name: 'Builder message' });
+  send('Create a simple assistant.');
+  fireEvent.click(await screen.findByRole('button', { name: 'Review configuration' }));
+  await screen.findByRole('textbox', { name: 'Agent configuration content' });
+  fireEvent.click(screen.getByRole('button', { name: 'JSON', exact: true }));
+  const value = JSON.parse(
+    window.sessionStorage.getItem(builderStorageKey('acct_managed_agents_test', 'default'))!,
+  ).config;
+  setAgentConfigEditorValue(document.body, '{', 'Agent configuration content');
+  expect(screen.getByRole('button', { name: 'Create agent', exact: true }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Apply draft' }).hasAttribute('disabled')).toBe(true);
+  expect(writes(api.requests)).toHaveLength(0);
+  setAgentConfigEditorValue(
+    document.body,
+    JSON.stringify({ ...value, name: 'Edited draft' }),
+    'Agent configuration content',
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Apply draft' }));
+  fireEvent.click(screen.getAllByRole('button', { name: 'Back to conversation' })[0]);
+  await screen.findByRole('heading', { name: 'Edited draft', level: 4 });
+  expect(writes(api.requests)).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Create agent', exact: true }));
+  await waitFor(() => expect(writes(api.requests)).toHaveLength(1));
+  expect((writes(api.requests)[0].body as { name: string }).name).toBe('Edited draft');
+});
+
+test('version review shows actual removed and added config without putting the prompt in the chat card', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
+  const api = setup([
+    toolStream('offer_next_step', {}),
+    toolStream('build_agent_config', { name: 'Renamed extractor' }),
+  ]);
+  renderManagedAgentsPage('quickstart');
+  fireEvent.click(await screen.findByRole('button', { name: 'Structured extractor', exact: true }));
+  await screen.findByRole('button', { name: 'Continue', exact: true });
+  send('Rename the agent.');
+  fireEvent.click(await screen.findByRole('button', { name: 'Review configuration' }));
+  const changes = await screen.findByRole('region', { name: 'Changes' });
+  expect(changes.textContent).toContain('− name: Structured extractor');
+  expect(changes.textContent).toContain('+ name: Renamed extractor');
+  expect(screen.getByText('The config panel shows the proposed version.')).toBeTruthy();
+  expect(writes(api.requests)).toHaveLength(1);
+});

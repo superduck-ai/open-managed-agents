@@ -1,3 +1,5 @@
+import { QuickstartEntrySlot } from './QuickstartEntrySlot';
+import { Label } from '../../../shared/ui/label';
 import { ArrowRight, Bot, Plus } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Badge } from '../../../shared/ui/badge';
@@ -28,12 +30,7 @@ export function QuickstartStart({ wizard, onStart }: { wizard: QuickstartWizard;
   const { locale } = useI18n();
   const zh = locale === 'zh-CN';
   const text = quickstartCopy(locale);
-  const templates = quickstartTemplates(locale, wizard.draft.modelID).map(({ id, icon, config, description }) => ({
-    id,
-    icon,
-    name: config.name,
-    description,
-  }));
+  const templates = quickstartTemplates(locale, wizard.draft.modelID);
   const disabled = wizard.busy || Boolean(wizard.progress.pending);
   return (
     <div className="min-h-0 flex-1 overflow-y-auto pb-12">
@@ -43,33 +40,48 @@ export function QuickstartStart({ wizard, onStart }: { wizard: QuickstartWizard;
           onValueChange={(value) => wizard.chooseScenario(value)}
           aria-label={text.scenarios}
           disabled={disabled}
-          className="gap-4"
+          className="gap-0"
         >
-          <FieldLabel
-            htmlFor="scenario-hello"
-            className={`flex w-full cursor-pointer items-center gap-4 rounded-xl border-[0.5px] p-5 font-normal ${wizard.progress.scenarioID === 'hello' ? 'border-foreground bg-accent/40' : 'border-border hover:bg-accent/50'}`}
+          <QuickstartEntrySlot
+            accessory={
+              wizard.resources.isPending ? (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {text.restore}
+                </p>
+              ) : undefined
+            }
           >
-            <Bot aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 space-y-1">
-              <span className="block text-sm font-medium">{zh ? 'Hello World 示例' : 'Hello World example'}</span>
-              <span className="block text-sm leading-5 text-muted-foreground">
-                {zh
-                  ? '从一句问候开始，了解智能体创建、试跑与 API 调用。'
-                  : 'Start with a greeting to explore agent creation, a test conversation and an API call.'}
+            <Label
+              htmlFor="scenario-hello"
+              className={`flex h-full w-full cursor-pointer focus-within:outline focus-within:outline-[0.5px] focus-within:outline-offset-2 items-center gap-4 rounded-2xl border-[0.5px] p-5 font-normal ${wizard.progress.scenarioID === 'hello' ? 'border-foreground bg-muted' : 'border-border hover:bg-muted'}`}
+            >
+              <Bot aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 space-y-1">
+                <span className="block text-sm font-medium">{zh ? 'Hello World 示例' : 'Hello World example'}</span>
+                <span className="block text-sm leading-5 text-muted-foreground">
+                  {zh
+                    ? '从一句问候开始，了解智能体创建、试跑与 API 调用。'
+                    : 'Start with a greeting to explore agent creation, a test conversation and an API call.'}
+                </span>
               </span>
-            </span>
-            <RadioGroupItem id="scenario-hello" value="hello" aria-label="Hello World Agent" />
-          </FieldLabel>
-          <div className={quickstartTemplateGrid}>
-            {templates.map(({ id, icon, name, description }) => (
-              <FieldLabel
+              <RadioGroupItem
+                className="sr-only absolute"
+                id="scenario-hello"
+                value="hello"
+                aria-label="Hello World Agent"
+              />
+            </Label>
+          </QuickstartEntrySlot>
+          <div className={`mt-10 ${quickstartTemplateGrid}`}>
+            {templates.map(({ id, icon, config: { name }, description }) => (
+              <Label
                 key={id}
                 htmlFor={`scenario-${id}`}
-                className={`${quickstartTemplateCard} cursor-pointer ${wizard.progress.scenarioID === id ? 'border-foreground bg-accent/40' : 'hover:bg-accent/50'}`}
+                className={`${quickstartTemplateCard} cursor-pointer focus-within:outline focus-within:outline-[0.5px] focus-within:outline-offset-2 ${wizard.progress.scenarioID === id ? 'border-foreground bg-muted' : 'hover:bg-muted'}`}
               >
-                <RadioGroupItem className="absolute top-5 right-5" id={`scenario-${id}`} value={id} aria-label={name} />
+                <RadioGroupItem className="sr-only absolute" id={`scenario-${id}`} value={id} aria-label={name} />
                 <QuickstartTemplateContent icon={icon} title={name} description={description} />
-              </FieldLabel>
+              </Label>
             ))}
           </div>
         </RadioGroup>

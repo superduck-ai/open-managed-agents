@@ -75,12 +75,13 @@ test('legacy questionnaire skip resolves the waiting tool with an empty answer',
 test('builder uses the existing localized flow with actual catalog and current runtime contract', () => {
   const state = newBuilderState(createDialogAgentConfig(blankAgentTemplate, 'en', undefined, 'workspace-model'));
   for (const locale of ['en', 'zh-CN'] as const) {
-    const system = builderSystem(state, locale, ['workspace-model'], [], []);
+    const system = builderSystem(state, locale, ['workspace-model'], []);
     expect(system[0].text).toBe(quickstartBuilderBehavior(locale));
     expect(system[0].text).not.toContain('https://mcp.notion.com/mcp');
     expect(system[0].text).not.toContain('vault_sharing_notice');
     expect(system[0].text).not.toContain('claude-sonnet-4-6');
     expect(system[1].text).toContain('take precedence');
-    expect(system[2].text).toContain('workspace-model');
+    expect(system[2].text).toContain('No usable external MCP tools');
+    expect(system[3].text).toContain('workspace-model');
   }
 });

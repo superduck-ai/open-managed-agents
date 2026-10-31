@@ -71,7 +71,7 @@ export function QuickstartWizardPage({
           </nav>
         )}
         <div className="max-h-24 shrink-0 overflow-y-auto">
-          {wizard.resources.isPending && (
+          {wizard.resources.isPending && wizard.progress.step !== 0 && (
             <p role="status" className="mt-6 text-sm text-muted-foreground">
               {text.restore}
             </p>

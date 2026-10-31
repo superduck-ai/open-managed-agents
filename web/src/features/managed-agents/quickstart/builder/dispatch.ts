@@ -1,3 +1,6 @@
+import { assertBuilderCapabilities, builderAgentSummaries } from './capabilities';
+import { retrieveAgent } from '../../api';
+import { loadQuickstartResources } from '../api';
 import { assertEnvironmentPackages, requiredEnvironmentPackages } from './environmentRequirements';
 import { z } from 'zod';
 import {
@@ -43,6 +46,7 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
   build_agent_config: ({ state, tool, models, catalog }) => {
     beforeTest(state);
     const config = proposedAgentConfig(tool, state, models);
+    assertBuilderCapabilities(config, catalog.capabilities);
     for (const skill of config.skills)
       if (!catalog.skills.some((option) => option.id === skill.skill_id))
         throw new Error('The proposed skill is not available in this workspace.');
@@ -50,6 +54,34 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
       return { result: 'Configuration is unchanged; no new version was created.', patch: { config } };
     return { gate: true, patch: { config } };
   },
+  list_agents: async ({ workspaceId }) => ({
+    result: builderAgentSummaries((await loadQuickstartResources(workspaceId)).agents),
+  }),
+  read_agent: async ({ tool, workspaceId }) => {
+    const agent = await retrieveAgent(String(tool.input.agent_id), workspaceId);
+    if (agent.archived_at) throw new Error('This agent is archived.');
+    return {
+      result: {
+        reference_agent: {
+          id: agent.id,
+          version: agent.version,
+          name: agent.name,
+          description: agent.description,
+          system: agent.system,
+          model: agent.model,
+          skills: agent.skills,
+        },
+        reuse:
+          'Reference only. Propose a new agent for confirmation; do not inherit credentials, sessions or tool permissions.',
+      },
+    };
+  },
+  list_capabilities: ({ catalog }) => ({
+    result: {
+      servers: catalog.capabilities,
+      authorization: 'Not verified for this session. Discovery is not an execution result.',
+    },
+  }),
   list_environments: ({ catalog }) => ({
     result: catalog.environments
       .filter((environment) => !environment.archived_at)
@@ -149,6 +181,11 @@ const handlers: Record<string, (context: ToolContext) => Promise<PreparedTool> |
       throw new Error('End the test and analyze its events before advancing.');
     if (state.step === 'deploy' && state.wantsSchedule && !state.deployment)
       throw new Error('Create the planned deployment, or withdraw the schedule, before advancing.');
+    if (state.step === 'environment' && state.environment)
+      return {
+        result: 'Environment selected. Begin step 3: session. Wait for the user to start the test.',
+        patch: { step: 'session' },
+      };
     if (builderNextStep(state) === state.step) throw new Error('Already on the final step. Show integration instead.');
     return { gate: true };
   },

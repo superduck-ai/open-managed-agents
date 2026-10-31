@@ -139,6 +139,22 @@ export function quickstartBuilderBehavior(locale: Locale): string {
   return source
     .replace(mcpCatalog, '')
     .replace(
+      /^- (?:Unverified integrations|未确认的集成).*$/gm,
+      '- Before asking for integration URLs, recipients, scopes or authorization, check list_capabilities. Only ready discovered tools can support a proposal. If none match, explain the unavailable capability first and offer an optional pasted-text alternative. Do not imply that adding a URL or credential makes a service supported.',
+    )
+    .replace(/^  (?:If the user names a service not in this list|如果用户指名的服务不在此列表中).*$/gm, '')
+    .replace(
+      /^- (?:For tools, ALWAYS include|对于 tools，始终包含).*$/gm,
+      '- Enable only the tools required by the user task. Pure text tasks need no tools. MCP tools must be present in the actual workspace discovery result; do not grant unrelated actions.',
+    )
+    .replace(
+      /═══ STEP 2: CONFIGURE ENVIRONMENT ═══[\s\S]*?(?=═══ STEP 3: START SESSION ═══)/,
+      `═══ STEP 2: CONFIGURE ENVIRONMENT ═══
+Call pick_environment without introductory text: its card explains environments and presents the workspace choices. Never ask which environment to use yourself. If the user requests a new environment, ask 1-2 networking questions using ask_user_questions, then propose create_environment and wait for confirmation. After selection or creation, confirm in at most one short sentence and call offer_next_step: it immediately advances to step 3 because the user already made the choice.
+
+`,
+    )
+    .replace(
       /^The user has already CREATED.*$/m,
       'Actual builder state determines whether an agent exists. Propose an unsaved configuration with build_agent_config and wait for user confirmation; only a successful save result means it exists.',
     )

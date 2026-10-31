@@ -39,23 +39,23 @@ export function BuilderEntry({
   return (
     <>
       {startHeader}
-      {builder.state.initialized && (
-        <div className="mx-auto w-full max-w-[728px]">
-          <Button
-            variant="ghost"
-            className="h-auto max-w-full justify-start gap-2 font-normal"
-            aria-label={zh ? '继续上次构建' : 'Continue previous build'}
-            onClick={onEnter}
-          >
-            <span className="shrink-0">{zh ? '继续上次构建' : 'Continue previous build'}</span>
-            <span className="min-w-0 truncate text-muted-foreground">{builder.state.config.name}</span>
-            <ArrowRight className="shrink-0" />
-          </Button>
-        </div>
-      )}
       <BuilderStart
         builder={builder}
         onStart={begin}
+        resume={
+          builder.state.initialized && (
+            <Button
+              variant="ghost"
+              className="h-8 max-w-full justify-start gap-2 font-normal"
+              aria-label={zh ? '继续上次构建' : 'Continue previous build'}
+              onClick={onEnter}
+            >
+              <span className="shrink-0">{zh ? '继续上次构建' : 'Continue previous build'}</span>
+              <span className="min-w-0 truncate text-muted-foreground">{builder.state.config.name}</span>
+              <ArrowRight className="shrink-0" />
+            </Button>
+          )
+        }
         composer={<BuilderComposer builder={builder} entry onSend={(text) => begin(() => void builder.reply(text))} />}
       />
       <AlertDialog
@@ -70,8 +70,8 @@ export function BuilderEntry({
             <AlertDialogDescription>
               {builder.state.sessionID && !builder.state.testClosed
                 ? zh
-                  ? '请先继续上次构建并结束当前试跑，再开始新的构建。'
-                  : 'Continue the previous build and end its open test before starting a new build.'
+                  ? '当前本地构建记录将被替换。旧试跑会话和已创建资源会保留，可在“会话”页继续查看；正在运行的任务不会被停止。'
+                  : 'The current local build history will be replaced. The previous test session will remain available on the Sessions page, along with saved resources. Running tasks will not be stopped.'
                 : zh
                   ? '当前本地构建记录将被替换，已创建的智能体和环境仍会保留。'
                   : 'This replaces the current local build history. Saved agents and environments remain available.'}
@@ -80,12 +80,7 @@ export function BuilderEntry({
           <AlertDialogFooter>
             <AlertDialogCancel>{zh ? '取消' : 'Cancel'}</AlertDialogCancel>
             <AlertDialogAction
-              disabled={
-                builder.busy ||
-                Boolean(builder.state.operation) ||
-                Boolean(builder.state.unconfirmedMessage) ||
-                Boolean(builder.state.sessionID && !builder.state.testClosed)
-              }
+              disabled={builder.busy || Boolean(builder.state.operation) || Boolean(builder.state.unconfirmedMessage)}
               onClick={() => {
                 if (!builder.restart()) return;
                 onEnter();

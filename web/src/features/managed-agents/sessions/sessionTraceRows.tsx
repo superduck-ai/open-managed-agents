@@ -223,7 +223,7 @@ function TranscriptMessageRow({
             className={clsx(
               'max-w-full !rounded-[10px] !px-[11px] !py-[6px] text-sm leading-5 whitespace-pre-wrap text-foreground shadow-none transition-colors duration-150 ease-out motion-reduce:transition-none',
               speaker === 'user'
-                ? '!border-[0.5px] !border-session-border !bg-session-speaker-user/10 group-hover/event:!bg-session-hover'
+                ? '!border-[0.5px] !border-session-border !bg-accent group-hover/event:!bg-session-hover'
                 : '!w-full !border-0 !bg-transparent !px-1.5 !py-0.5 group-hover/event:!bg-session-hover',
               selected && '!bg-session-selected',
               entry.isError && '!bg-destructive/5 text-destructive',
@@ -293,7 +293,7 @@ export function TranscriptSpeakerHeader({
         aria-label={msg('managedAgents.sessions.trace.selectEvent', 'Select {label} event', { label })}
         className={clsx(
           'h-auto min-w-0 gap-2 rounded-sm border-transparent px-0 py-0 font-semibold hover:bg-transparent focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground',
-          speaker === 'agent' ? 'text-session-speaker-agent' : 'text-session-speaker-user',
+          speaker === 'agent' ? 'text-session-speaker-agent' : 'text-muted-foreground',
         )}
         onClick={onSelect}
       >

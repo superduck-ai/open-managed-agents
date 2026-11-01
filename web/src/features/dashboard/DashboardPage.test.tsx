@@ -838,6 +838,7 @@ describe('Skills page', () => {
               display_title: 'xlsx',
               latest_version: '20260203',
               source: 'anthropic',
+              publisher: 'OMA',
               created_at: new Date(Date.now() - 240_000).toISOString(),
               updated_at: new Date(Date.now() - 240_000).toISOString(),
             },
@@ -860,7 +861,8 @@ describe('Skills page', () => {
     expect(await screen.findByText('emoji-translator')).toBeTruthy();
     expect(screen.getAllByText('xlsx').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Custom')).toBeTruthy();
-    expect(screen.getByText('Anthropic')).toBeTruthy();
+    expect(screen.getByText('System built-in')).toBeTruthy();
+    expect(screen.queryByText('System built-in / OMA')).toBeNull();
     expect(screen.getByText('Jul 8, 2026')).toBeTruthy();
     expect(screen.getByText('Feb 3, 2026')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Actions' })).toHaveLength(1);

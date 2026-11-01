@@ -117,3 +117,53 @@ func TestAdministrationAuditIsNotAvailable(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemSkillsUsePlatformAdministrationGuard(t *testing.T) {
+	session := platformsession.Session{UserUUID: "stable-account", VerifiedEmail: "admin@example.com", AuthenticationMethod: "email_code_v1"}
+	h := NewHandler(New(nil, nil), func(*http.Request) (platformsession.Session, error) { return session, nil }, true)
+	verifications := 0
+	granted := true
+	h.verify = func(context.Context, string) (db.PlatformAdminAccount, error) {
+		verifications++
+		if !granted {
+			return db.PlatformAdminAccount{}, ErrDenied
+		}
+		return db.PlatformAdminAccount{UUID: session.UserUUID}, nil
+	}
+	called := false
+	child := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		principal, ok := auth.PrincipalFromContext(r.Context())
+		if !ok || principal.UserUUID != session.UserUUID || principal.CredentialType != auth.CredentialTypePlatformSession {
+			t.Error("missing authorized actor")
+		}
+		w.WriteHeader(204)
+	})
+	routes := h.Routes(child)
+	for _, tc := range []struct {
+		csrf    bool
+		granted bool
+		status  int
+	}{
+		{false, true, 403},
+		{true, false, 403},
+		{true, true, 204},
+	} {
+		granted = tc.granted
+		called = false
+		verifications = 0
+		request := httptest.NewRequest(http.MethodPost, "/skills/", nil)
+		request.AddCookie(&http.Cookie{Name: "sessionKey", Value: "test-session"})
+		if tc.csrf {
+			request.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken("test-session"))
+		}
+		response := httptest.NewRecorder()
+		routes.ServeHTTP(response, request)
+		if verifications != 1 {
+			t.Fatalf("authorization calls=%d want=1", verifications)
+		}
+		if response.Code != tc.status || called != (tc.status == 204) {
+			t.Fatalf("csrf=%v granted=%v status=%d child called=%v", tc.csrf, tc.granted, response.Code, called)
+		}
+	}
+}

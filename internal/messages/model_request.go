@@ -22,22 +22,22 @@ import (
 )
 
 type responseObservation struct {
-	chat              *chatObservation
-	firstTokenAt      time.Time
-	publishThinking   func(string, int) bool
-	thinkingPublished map[int]bool
-	onComplete        func()
-	request           *codesessions.ModelRequest
-	result            codesessions.ModelRequestResult
-	streaming         bool
-	buffer            []byte
-	line              []byte
-	malformed         bool
-	complete          bool
-	messageID         string
-	blocks            map[int]*responseContentBlock
-	contentBytes      int
-	stopReason        string
+	chat            *chatObservation
+	firstTokenAt    time.Time
+	publishThinking func(string, int) bool
+	thinkingStarted map[int]bool
+	onComplete      func()
+	request         *codesessions.ModelRequest
+	result          codesessions.ModelRequestResult
+	streaming       bool
+	buffer          []byte
+	line            []byte
+	malformed       bool
+	complete        bool
+	messageID       string
+	blocks          map[int]*responseContentBlock
+	contentBytes    int
+	stopReason      string
 }
 
 type responseMessage struct {
@@ -91,7 +91,7 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		upstream.Header.Del("Accept-Encoding")
 		observation.publishThinking = func(messageID string, index int) bool {
 			if err := h.codeSessions.StartModelThinking(r.Context(), request, messageID, index); err != nil {
-				h.logger.ErrorContext(r.Context(), "persist thinking start", "model_request_start_id", request.StartID, "error", err)
+				h.logger.ErrorContext(r.Context(), "publish thinking preview", "model_request_start_id", request.StartID, "error", err)
 				return false
 			}
 			return true
@@ -225,7 +225,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 		o.messageID = event.Message.ID
 		o.result.Usage = event.Message.Usage
 		o.blocks = make(map[int]*responseContentBlock)
-		o.thinkingPublished = make(map[int]bool)
+		o.thinkingStarted = make(map[int]bool)
 	case "content_block_start":
 		if o.blocks == nil || o.messageID == "" || event.Index < 0 || o.blocks[event.Index] != nil {
 			o.malformed = true
@@ -243,7 +243,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 		o.blocks[event.Index] = &block
 		o.addEventID(event.Index, block.Type)
 		if (block.Type == "thinking" || block.Type == "redacted_thinking") && o.publishThinking != nil {
-			o.thinkingPublished[event.Index] = o.publishThinking(o.messageID, event.Index)
+			o.thinkingStarted[event.Index] = o.publishThinking(o.messageID, event.Index)
 		}
 		if event.ContentBlock.Type == "tool_use" && event.ContentBlock.ID != "" {
 			o.result.ToolUseIDs = append(o.result.ToolUseIDs, event.ContentBlock.ID)
@@ -363,9 +363,6 @@ func (o *responseObservation) addMessage(index int, block responseContentBlock) 
 		o.addToolUse(block)
 		return
 	case "thinking", "redacted_thinking":
-		if o.thinkingPublished[index] {
-			return
-		}
 		message.Type = "agent.thinking"
 	case "text":
 		message.Content = []codesessions.ModelRequestContent{{Type: "text", Text: &block.Text}}

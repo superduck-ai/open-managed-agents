@@ -24,6 +24,7 @@ export async function postJsonSseStream<TData = Record<string, unknown>>({
 }) {
   const requestHeaders = new Headers(headers);
   const context = getConsoleRequestContext();
+  if (url.startsWith('/api/') && context.csrfToken) requestHeaders.set('X-CSRF-Token', context.csrfToken);
   const scopeSignal = getScopeSignal();
   signal = AbortSignal.any([scopeSignal, ...(signal ? [signal] : [])]);
   requestHeaders.set('Accept', 'text/event-stream');

@@ -22,9 +22,14 @@ func RegisterOrganizationProxyRoutes(r chi.Router, database *db.DB, secretServic
 	client := llmproviders.NewHTTPClient(0)
 	client.Transport = &metering.Transport{Base: client.Transport, Store: database, Calculator: calculator, Source: "api", Logger: logger}
 	r.Post("/proxy/v1/messages", handleProxyMessages(database, secretService, client))
+	r.Post("/proxy/v1/chat/completions", handleProxyModel(database, secretService, client, llmproviders.ChatCompletions))
 }
 
 func handleProxyMessages(database *db.DB, secretService *secrets.Service, client *http.Client) http.HandlerFunc {
+	return handleProxyModel(database, secretService, client, llmproviders.Messages)
+}
+
+func handleProxyModel(database *db.DB, secretService *secrets.Service, client *http.Client, backend string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := visibleOrgUUID(w, r); !ok {
 			return
@@ -42,8 +47,7 @@ func handleProxyMessages(database *db.DB, secretService *secrets.Service, client
 		r.Body = http.MaxBytesReader(w, r.Body, llmproviders.MaxMessagesRequestBodyBytes)
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			var maxBytesErr *http.MaxBytesError
-			if errors.As(err, &maxBytesErr) {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 				writeProxyRequestTooLarge(w)
 				return
 			}
@@ -67,7 +71,7 @@ func handleProxyMessages(database *db.DB, secretService *secrets.Service, client
 			writeProxyProviderError(w, err)
 			return
 		}
-		if err := upstream.RequireBackend(llmproviders.Messages); err != nil {
+		if err := upstream.RequireBackend(backend); err != nil {
 			writeProxyProviderError(w, err)
 			return
 		}
@@ -76,7 +80,11 @@ func handleProxyMessages(database *db.DB, secretService *secrets.Service, client
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_request_error", "message": err.Error()})
 			return
 		}
-		targetURL, err := llmproviders.Endpoint(upstream.BaseURL, "/v1/messages", "")
+		endpoint := "/v1/messages"
+		if backend == llmproviders.ChatCompletions {
+			endpoint = "/v1/chat/completions"
+		}
+		targetURL, err := llmproviders.Endpoint(upstream.BaseURL, endpoint, "")
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": "LLM provider is unavailable"})
 			return
@@ -87,7 +95,7 @@ func handleProxyMessages(database *db.DB, secretService *secrets.Service, client
 			return
 		}
 		upstreamReq.ContentLength = int64(len(body))
-		upstreamReq.Header = proxyMessagesHeaders(r.Header, upstream.APIKey)
+		upstreamReq.Header = proxyModelHeaders(r.Header, upstream)
 
 		upstreamRes, err := client.Do(upstreamReq)
 		if err != nil {
@@ -129,6 +137,14 @@ func writeProxyRequestTooLarge(w http.ResponseWriter) {
 		"error":   "request_too_large",
 		"message": "Request body exceeds maximum size",
 	})
+}
+
+func proxyModelHeaders(source http.Header, upstream llmproviders.Upstream) http.Header {
+	headers := proxyMessagesHeaders(source, upstream.APIKey)
+	if upstream.APIBackend == llmproviders.ChatCompletions {
+		upstream.ApplyHeaders(headers)
+	}
+	return headers
 }
 
 func proxyMessagesHeaders(source http.Header, apiKey string) http.Header {

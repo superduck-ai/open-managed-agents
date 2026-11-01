@@ -327,7 +327,10 @@ describe('managed agents API', () => {
       'sevt_other',
       'sevt_end',
     ]);
-    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_other']);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([
+      'sevt_done',
+      'sevt_other',
+    ]);
   });
 
   test.each(['', 'sthr_child'])('late previews cannot revive ended model output in scope %s', (threadId) => {
@@ -438,7 +441,10 @@ describe('managed agents API', () => {
       otherId,
     ]);
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toEqual(final);
-    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([
+      eventId,
+      otherId,
+    ]);
 
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       type: 'event_start',
@@ -449,7 +455,10 @@ describe('managed agents API', () => {
       eventId,
       otherId,
     ]);
-    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([
+      eventId,
+      otherId,
+    ]);
   });
 
   test('history sync replaces a same-ID preview after reconnecting', async () => {
@@ -487,7 +496,10 @@ describe('managed agents API', () => {
       otherId,
     ]);
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toEqual(final);
-    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([
+      eventId,
+      otherId,
+    ]);
   });
 
   test('does not match a final message to a different preview ID', () => {
@@ -666,7 +678,7 @@ describe('managed agents API', () => {
       'sevt_preview',
       'sevt_idle',
     ]);
-    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_preview']);
   });
 
   test('keeps incomplete previews when idle history sync fails', async () => {
@@ -1361,4 +1373,44 @@ test('keeps both thread message perspectives and separates owner from peer', () 
   ]);
   expect(events.map((event) => sessionEventLaneId(event, lanes))).toEqual(['main', 'main', 'child', 'child']);
   queryClient.clear();
+});
+
+test('retains live thinking start and completion for inspection without accepting late frames', () => {
+  const queryClient = new QueryClient();
+  const start = { type: 'event_start', event: { id: 'sevt_thinking', type: 'agent.thinking' } };
+  const final = { id: 'sevt_thinking', type: 'agent.thinking', processed_at: '2026-10-30T08:00:00Z' };
+  mergeSessionStreamFrame(queryClient, 'workspace', 'session', '', start);
+  mergeSessionStreamFrame(queryClient, 'workspace', 'session', '', final);
+  mergeSessionStreamFrame(queryClient, 'workspace', 'session', '', start);
+  mergeSessionStreamFrame(queryClient, 'workspace', 'session', '', {
+    type: 'event_delta',
+    event_id: final.id,
+    delta: { type: 'content_delta', index: 0, content: { type: 'text', text: 'late' } },
+  });
+  expect(sessionDetailDeltaFrames(queryClient, 'workspace', 'session', [''])[final.id]).toEqual({
+    message: final,
+    frames: [start, final],
+  });
+});
+
+test('retains message deltas and reconciles repeated completion without accepting late text', () => {
+  const queryClient = new QueryClient();
+  const start = { type: 'event_start', event: { id: 'sevt_text', type: 'agent.message' } };
+  const delta = {
+    type: 'event_delta',
+    event_id: 'sevt_text',
+    delta: { type: 'content_delta', index: 0, content: { type: 'text', text: 'Hello' } },
+  };
+  const final = {
+    id: 'sevt_text',
+    type: 'agent.message',
+    processed_at: '2026-10-30T08:00:00Z',
+    content: [{ type: 'text', text: 'Hello world' }],
+  };
+  for (const frame of [start, delta, final, final, start, delta])
+    mergeSessionStreamFrame(queryClient, 'workspace', 'session', '', frame);
+  expect(sessionDetailDeltaFrames(queryClient, 'workspace', 'session', [''])[final.id]).toEqual({
+    message: final,
+    frames: [start, delta, final],
+  });
 });

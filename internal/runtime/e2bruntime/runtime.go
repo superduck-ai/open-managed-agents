@@ -45,6 +45,7 @@ type CommandResult struct {
 }
 
 type Provider interface {
+	SetTimeout(ctx context.Context, sandboxID string, timeout time.Duration) error
 	Create(ctx context.Context, env db.Environment, work *db.EnvironmentWork, resolution Resolution) (Sandbox, error)
 	Kill(ctx context.Context, sandboxID string) error
 	Resolve(env db.Environment, work *db.EnvironmentWork) (Resolution, error)

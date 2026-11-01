@@ -198,6 +198,7 @@ type CodeSessionMapper interface {
 	CountActiveIngressWorkerEpoch(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string, workerEpoch int64) (int64, error)
 	CountActiveSandbox(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID, sandboxUUID string) (int64, error)
 	RotateCredentials(ctx context.Context, params rotateCodeSessionCredentialsParams) (int64, error)
+	TerminateLaunch(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string, workerEpoch int64) (int64, error)
 	TerminateByExternalID(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (int64, error)
 }
 

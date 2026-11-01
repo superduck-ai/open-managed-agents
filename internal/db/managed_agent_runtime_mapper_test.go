@@ -227,3 +227,32 @@ func managedAgentRuntimeRotateParams(sessionParams sessionMetadataPatchParams) r
 		OAuthAccessTokenHash:  "oauth-hash",
 	}
 }
+
+func TestTerminateManagedAgentLaunchGuardsWorkerEpoch(t *testing.T) {
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: codeSessionMapperTerminateLaunchStatement,
+		bound:     buildCodeSessionMapperTerminateLaunch(yourbatis.DialectPostgres, "org", "workspace", "code", 7),
+		wantID:    "CodeSessionMapper.TerminateLaunch", wantKind: yourbatis.StatementUpdate,
+		wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "codeSessionExternalID", "workerEpoch"},
+		wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid = $2", "external_id = $3", "current_worker_epoch = $4", "current_worker_epoch > 0", "status = 'active'", "deleted_at IS NULL", "oauth_access_token_hash = NULL"},
+	})
+	failure := errors.New("database unavailable")
+	for _, tc := range []struct {
+		name       string
+		rows       int64
+		err        error
+		terminated bool
+	}{
+		{name: "stale epoch"}, {name: "database failure", err: failure}, {name: "current launch", rows: 1, terminated: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			executor := newMapperTestExecutor(t, mapperTestResponse{rowsAffected: tc.rows, execErr: tc.err})
+			rows, err := NewCodeSessionMapper(executor).TerminateLaunch(t.Context(), "org", "workspace", "code", 7)
+			terminated := rows == 1
+			if terminated != tc.terminated || !errors.Is(err, tc.err) {
+				t.Fatalf("termination = (%t, %v)", terminated, err)
+			}
+			assertMapperTestExecution(t, executor, "CodeSessionMapper.TerminateLaunch", yourbatis.StatementUpdate, []any{"org", "workspace", "code", int64(7)})
+		})
+	}
+}

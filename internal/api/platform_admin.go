@@ -39,5 +39,5 @@ func (s *Server) registerPlatformAdminRoutes(router chi.Router) {
 		}
 		return session, nil
 	}
-	router.Mount("/api/platform-admin", platformadmin.NewHandler(service, loader, s.platformAuth.VerifiedLoginEnabled()).Routes())
+	router.Mount("/api/platform-admin", platformadmin.NewHandler(service, loader, s.platformAuth.VerifiedLoginEnabled()).Routes(s.skills.AdminRoutes()))
 }

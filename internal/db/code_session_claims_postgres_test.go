@@ -353,3 +353,45 @@ func TestCodeSessionClaimsPostgresIdleReleaseClearsLease(t *testing.T) {
 func fixedWorkerLease(ttl, grace time.Duration) WorkerLeasePolicy {
 	return func(string) WorkerLeaseTimings { return WorkerLeaseTimings{TTL: ttl, Grace: grace} }
 }
+
+func TestManagedAgentLaunchCleanupPostgres(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	codeID := seedClaimCodeSession(t, ctx, database, 1, "nats", "running")
+	session := Session{OrganizationUUID: claimTestOrganization, WorkspaceUUID: claimTestWorkspace, ExternalID: "sesn_claim_1"}
+	epoch, err := store.RotateManagedAgentCodeSessionCredentials(ctx, session, codeID, "replacement-hash")
+	if err != nil || epoch != 2 {
+		t.Fatalf("recovery = (%d, %v)", epoch, err)
+	}
+	for _, tc := range []struct {
+		name    string
+		session Session
+		epoch   int64
+	}{
+		{"stale launch", session, 1}, {"missing epoch", session, 0},
+		{"other workspace", Session{OrganizationUUID: claimTestOrganization, WorkspaceUUID: claimTestOrganization}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			terminated, err := store.TerminateManagedAgentLaunch(ctx, tc.session, codeID, tc.epoch)
+			if err != nil || terminated {
+				t.Fatalf("incorrect cleanup = (%t, %v)", terminated, err)
+			}
+		})
+	}
+	var status, hash string
+	if err := database.QueryRowContext(ctx, `select status, oauth_access_token_hash from code_sessions where external_id = $1`, codeID).Scan(&status, &hash); err != nil {
+		t.Fatal(err)
+	}
+	if status != "active" || hash != "replacement-hash" {
+		t.Fatalf("recovered session changed: %s %s", status, hash)
+	}
+	terminated, err := store.TerminateManagedAgentLaunch(ctx, session, codeID, epoch)
+	if err != nil || !terminated {
+		t.Fatalf("current cleanup = (%t, %v)", terminated, err)
+	}
+	if _, err := store.RotateManagedAgentCodeSessionCredentials(ctx, session, codeID, "too-late"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("recovered a terminated launch: %v", err)
+	}
+	if terminated, err := store.TerminateManagedAgentLaunch(ctx, session, codeID, epoch); err != nil || terminated {
+		t.Fatalf("repeated cleanup = (%t, %v)", terminated, err)
+	}
+}

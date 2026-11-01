@@ -76,3 +76,19 @@ for (const code of ['platform_access_denied', 'verified_login_required', 'invali
     expect(client.csrfToken).toBe(accessDenied ? '' : 'current-token');
   });
 }
+
+test('系统技能 ZIP 使用 multipart 并保留平台 CSRF', async () => {
+  let captured: RequestInit | undefined;
+  globalThis.fetch = mock(async (_url: RequestInfo | URL, options?: RequestInit) => {
+    captured = options;
+    return Response.json({ name: 'demo' });
+  }) as unknown as typeof fetch;
+  const client = new PlatformAdminClient(() => {});
+  client.setCSRFToken('platform-token');
+  const body = new FormData();
+  body.append('files[]', new Blob(['test']), 'demo.zip');
+  await client.request('/skills/inspect', { method: 'POST', body });
+  expect(captured?.body).toBe(body);
+  expect(new Headers(captured?.headers).has('Content-Type')).toBe(false);
+  expect(new Headers(captured?.headers).get('X-CSRF-Token')).toBe('platform-token');
+});

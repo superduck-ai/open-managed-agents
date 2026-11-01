@@ -12,6 +12,8 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/common/collections"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -44,6 +46,7 @@ type CodeSessionRuntime interface {
 	CreateManagedAgentCodeSession(context.Context, codesessions.ManagedAgentCreateInput) (codesessions.ManagedAgentCreateResult, error)
 	RecoverManagedAgentCodeSession(context.Context, codesessions.ManagedAgentRecoverInput) (codesessions.ManagedAgentCreateResult, error)
 	TerminateManagedAgentCodeSession(context.Context, db.Session, string) error
+	TerminateManagedAgentLaunch(context.Context, db.Session, string, int64) error
 }
 
 // RuntimeSkillResolver resolves the immutable agent snapshot into skills that
@@ -305,6 +308,17 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 	}
 	providerSandboxID := sandbox.ID
 
+	parentCtx := ctx
+	preparationCtx, stopLease, err := r.startSandboxPreparation(ctx, record, *work, providerSandboxID)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return true, err
+	}
+	defer stopLease()
+	runtimeCtx, finishBackground := sandboxPreparationBackgroundContext(parentCtx, preparationCtx)
+	defer finishBackground(false)
+	ctx = preparationCtx
+
 	// 将 E2B ID 写入 Work metadata；Managed Agent preparation 可能还加入了 skill
 	// mount，所以即使 Provider ID 为空，也要为该分支持久化更新后的 metadata。
 	ctx = run.begin(ctx, "work_metadata")
@@ -355,7 +369,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, fmt.Errorf("prepare rclone-filestore launch: %w", err)
 		}
-		if err := r.startManagedAgentSessionFilesystem(ctx, providerSandboxID, rcloneLaunch); err != nil {
+		if err := r.startManagedAgentSessionFilesystem(ctx, runtimeCtx, providerSandboxID, rcloneLaunch); err != nil {
 			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 			return true, err
 		}
@@ -373,6 +387,8 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 		return true, err
 	}
 
+	var startedLaunch *managedAgentRuntimeLaunch
+
 	// Cloud Session 还需创建 Code Session，并在 Sandbox 内启动 Environment Manager。
 	if preparation != nil {
 		launch, err := r.prepareSandboxRuntimeLaunch(ctx, run, env, *work, *preparation, existingLaunch, record.UUID)
@@ -381,7 +397,8 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 			return true, fmt.Errorf("create managed-agent runtime launch: %w", err)
 		}
 		ctx = run.begin(ctx, "manager_start")
-		if err := r.provider.StartBackgroundCommand(ctx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
+		managerCtx := trace.ContextWithSpan(runtimeCtx, trace.SpanFromContext(ctx))
+		if err := r.provider.StartBackgroundCommand(managerCtx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
 			publicError := r.logManagedAgentRuntimeStageFailure(
 				ctx,
 				"environment_manager_start",
@@ -405,11 +422,12 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 				return true, fmt.Errorf("publish managed-agent runtime metadata: %w", err)
 			}
 		}
-
+		startedLaunch = &launch
 	}
 
-	// true 表示本轮确实消费了一条 Work；nil 表示所需启动阶段全部完成。
-	return true, nil
+	return true, r.finishSandboxPreparation(finishBackground, *work, preparation, startedLaunch, func(err error) {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+	})
 }
 
 func (r *Runner) markSandboxRunningAfterFilesystem(ctx context.Context, record db.EnvironmentSandbox, providerSandboxID string, managed bool) error {
@@ -491,21 +509,26 @@ func (r *Runner) failManagedAgentRuntime(
 	launch managedAgentRuntimeLaunch,
 	cause error,
 ) {
+	r.terminateFailedManagedAgentRuntime(*work, session, launch, cause)
+	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
+}
+
+func (r *Runner) terminateFailedManagedAgentRuntime(work db.EnvironmentWork, session db.Session, launch managedAgentRuntimeLaunch, cause error) {
+	if launch.Recovered {
+		return
+	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if !launch.Recovered {
-		if err := r.codeSessions.TerminateManagedAgentCodeSession(cleanupCtx, session, launch.CodeSessionID); err != nil {
-			r.logger.ErrorContext(
-				cleanupCtx,
-				"terminate failed managed agent runtime",
-				"session_id", work.SessionExternalID, "work_id", work.ExternalID,
-				"code_session_id", launch.CodeSessionID,
-				"stage_error_type", fmt.Sprintf("%T", cause),
-				"error", err,
-			)
-		}
+	if err := r.codeSessions.TerminateManagedAgentLaunch(cleanupCtx, session, launch.CodeSessionID, launch.Credentials.WorkerEpoch); err != nil {
+		r.logger.ErrorContext(
+			cleanupCtx,
+			"terminate failed managed agent runtime",
+			"session_id", work.SessionExternalID, "work_id", work.ExternalID,
+			"code_session_id", launch.CodeSessionID,
+			"stage_error_type", fmt.Sprintf("%T", cause),
+			"error", err,
+		)
 	}
-	r.failCreatedSandbox(ctx, record, work, providerSandboxID, cause)
 }
 
 func (r *Runner) failWorkBeforeSandbox(ctx context.Context, work db.EnvironmentWork) {
@@ -550,9 +573,24 @@ func (r *Runner) requeueFailedRecoverySandbox(
 	return err == nil && requeued
 }
 
-// failCreatedSandbox returns true when a concurrent user stop already won and
-// the sandbox was kept stopped instead of being rewritten as failed.
 func (r *Runner) failCreatedSandbox(ctx context.Context, record db.EnvironmentSandbox, work *db.EnvironmentWork, providerSandboxID string, cause error) bool {
+	cause = errors.Join(cause, context.Cause(ctx))
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	ctx = cleanupCtx
+	pending, found, pendingErr := r.db.GetPendingEnvironmentSandboxForWork(ctx, *work)
+	if pendingErr == nil && found && pending.UUID != record.UUID {
+		now := time.Now().UTC()
+		message := cause.Error()
+		if err := r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceUUID, record.ExternalID, "failed", &providerSandboxID, &message, &now); err != nil {
+			r.logger.ErrorContext(ctx, "retire replaced sandbox preparation", "sandbox_id", record.ExternalID, "error", err)
+			return true
+		}
+		if providerSandboxID != "" && (pending.ProviderSandboxID == nil || *pending.ProviderSandboxID != providerSandboxID) {
+			_ = r.provider.Kill(ctx, providerSandboxID)
+		}
+		return true
+	}
 	currentWork, err := r.db.GetEnvironmentWork(ctx, work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID)
 	if err == nil && (currentWork.State == "stopping" || currentWork.State == "stopped") {
 		*work = currentWork
@@ -819,7 +857,7 @@ func (r *Runner) publishManagedAgentRuntime(
 	)
 }
 
-func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
+func (r *Runner) startManagedAgentSessionFilesystem(ctx, runtimeCtx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
 	if len(launch.MemoryMounts) > 0 {
 		if err := r.runSandboxCommand(ctx, sandboxID, memoryRootMkdirCommand(), rcloneCommandGraceTimeout); err != nil {
 			return r.logManagedAgentRuntimeStageFailure(ctx, "memory_root_mkdir", errMemoryRootCreate, err)
@@ -828,7 +866,7 @@ func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandbox
 	if err := r.runSandboxCommand(ctx, sandboxID, sessionOutputsAliasCommand(rcloneOutputsDestination, sessionOutputsPath), rcloneCommandGraceTimeout); err != nil {
 		return r.logManagedAgentRuntimeStageFailure(ctx, "outputs_alias", errOutputsAliasCreate, err)
 	}
-	if err := r.startRcloneFilestore(ctx, sandboxID, launch); err != nil {
+	if err := r.startRcloneFilestore(ctx, runtimeCtx, sandboxID, launch); err != nil {
 		return err
 	}
 	if len(launch.MemoryMounts) == 0 {
@@ -843,7 +881,7 @@ func (r *Runner) startManagedAgentSessionFilesystem(ctx context.Context, sandbox
 	return nil
 }
 
-func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
+func (r *Runner) startRcloneFilestore(ctx, runtimeCtx context.Context, sandboxID string, launch rcloneFilestoreLaunch) error {
 	if err := r.provider.WriteFile(ctx, sandboxID, rcloneConfigPath, launch.ConfigPayload); err != nil {
 		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return r.logRcloneStageFailure(ctx, "config_write", errRcloneConfigWrite, err)
@@ -852,7 +890,7 @@ func (r *Runner) startRcloneFilestore(ctx context.Context, sandboxID string, lau
 		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return r.logRcloneStageFailure(ctx, "config_permissions", errRcloneConfigPermissions, err)
 	}
-	if err := r.provider.StartBackgroundCommand(ctx, sandboxID, rcloneStartCommand(), nil); err != nil {
+	if err := r.provider.StartBackgroundCommand(runtimeCtx, sandboxID, rcloneStartCommand(), nil); err != nil {
 		_ = r.runSandboxCommand(ctx, sandboxID, rcloneConfigCleanupCommand(), rcloneCommandGraceTimeout)
 		return r.logRcloneStageFailure(ctx, "process_start", errRcloneProcessStart, err)
 	}

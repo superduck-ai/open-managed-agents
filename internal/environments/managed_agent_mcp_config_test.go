@@ -386,3 +386,7 @@ func TestManagedAgentWithoutMCPDoesNotCreateConfigFile(t *testing.T) {
 func (r *mcpConfigCodeSessionRuntime) SandboxIngressToken(context.Context, db.Session, string, string) (string, error) {
 	return "test-ingress", nil
 }
+
+func (r *mcpConfigCodeSessionRuntime) TerminateManagedAgentLaunch(ctx context.Context, session db.Session, id string, _ int64) error {
+	return r.TerminateManagedAgentCodeSession(ctx, session, id)
+}

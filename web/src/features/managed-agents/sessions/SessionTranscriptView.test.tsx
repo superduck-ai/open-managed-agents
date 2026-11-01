@@ -556,7 +556,7 @@ describe('SessionTranscriptView', () => {
     expect(userMessageBody?.className).toContain('!rounded-[10px]');
     expect(userMessageBody?.className).toContain('!px-[11px]');
     expect(userMessageBody?.className).toContain('!py-[6px]');
-    expect(userMessageBody?.className).toContain('!bg-session-speaker-user/10');
+    expect(userMessageBody?.className).toContain('!bg-accent');
     expect(userMessageBody?.className).toContain('!border-[0.5px]');
     expect(userMessageBody?.className).not.toContain('min-h-10');
     const agentIteration = agentMessage?.querySelector('[data-transcript-iteration]');

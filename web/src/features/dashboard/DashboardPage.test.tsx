@@ -860,7 +860,7 @@ describe('Skills page', () => {
     expect(await screen.findByText('emoji-translator')).toBeTruthy();
     expect(screen.getAllByText('xlsx').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Custom')).toBeTruthy();
-    expect(screen.getByText('Anthropic')).toBeTruthy();
+    expect(screen.getByText('System built-in')).toBeTruthy();
     expect(screen.getByText('Jul 8, 2026')).toBeTruthy();
     expect(screen.getByText('Feb 3, 2026')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Actions' })).toHaveLength(1);

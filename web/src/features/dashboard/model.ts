@@ -69,6 +69,9 @@ export type MessageBatchesPageCursor = {
 };
 
 export type ConsoleSkill = {
+  publisher?: string;
+  source_url?: string;
+  license?: string;
   id: string;
   type: 'skill';
   display_title: string;
@@ -393,8 +396,8 @@ export function formatBatchDateTime(value?: string | null, locale = 'en') {
 
 export function formatSkillSource(source: string, msg?: ReturnType<typeof useI18n>['msg']) {
   const normalized = source.trim().toLowerCase();
-  if (normalized === 'anthropic') {
-    return 'Anthropic';
+  if (normalized === 'anthropic' || normalized === 'anthropic_example') {
+    return msg ? msg('systemSkills.builtin', 'System built-in') : 'System built-in';
   }
   if (normalized === 'custom') {
     return msg ? msg('skills.source.custom', 'Custom') : 'Custom';

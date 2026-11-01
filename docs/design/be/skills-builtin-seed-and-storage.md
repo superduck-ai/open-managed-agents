@@ -155,3 +155,7 @@ Builtin 写操作保持只读：
 - 两套删除语义、无版本 Skill 的正式列表过滤和 archive 保留。
 - 正式根目录上传、slug 校验与旧版目录上传兼容。
 - custom 单 `.zip` / `.skill` archive 与目录 multipart 上传。
+
+## 超管管理入口
+
+系统技能的在线导入、版本发布、默认切换、上下架与来源说明见 [系统 Skill 管理](system-skills-administration.md)。工作区目录仅展示已上架且有已发布默认版本的技能；历史已发布引用保留。seed CLI 继续用于运维导入，不由页面自动触发。

@@ -117,3 +117,37 @@ func TestAdministrationAuditIsNotAvailable(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemSkillsUsePlatformAdministrationGuard(t *testing.T) {
+	session := platformsession.Session{UserUUID: "stable-account", VerifiedEmail: "admin@example.com", AuthenticationMethod: "email_code_v1"}
+	h := NewHandler(New(nil, nil), func(*http.Request) (platformsession.Session, error) { return session, nil }, true)
+	h.verify = func(context.Context, string) (db.PlatformAdminAccount, error) {
+		return db.PlatformAdminAccount{UUID: session.UserUUID}, nil
+	}
+	called := false
+	child := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		principal, ok := auth.PrincipalFromContext(r.Context())
+		if !ok || principal.UserUUID != session.UserUUID {
+			t.Error("missing authorized actor")
+		}
+		w.WriteHeader(204)
+	})
+	routes := h.Routes(child)
+	for _, csrf := range []bool{false, true} {
+		called = false
+		request := httptest.NewRequest(http.MethodPost, "/skills/", nil)
+		request.AddCookie(&http.Cookie{Name: "sessionKey", Value: "test-session"})
+		if csrf {
+			request.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken("test-session"))
+		}
+		response := httptest.NewRecorder()
+		routes.ServeHTTP(response, request)
+		if csrf && (response.Code != 204 || !called) {
+			t.Fatalf("authorized request: %d", response.Code)
+		}
+		if !csrf && (response.Code != 403 || called) {
+			t.Fatalf("CSRF guard not enforced: %d", response.Code)
+		}
+	}
+}

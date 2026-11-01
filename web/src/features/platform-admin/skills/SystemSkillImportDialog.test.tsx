@@ -223,3 +223,46 @@ test('文件夹检查和导入均保留完整目录、中文路径和空辅助�
     expect(uploaded[2].size).toBe(0);
   }
 });
+
+for (const recheck of [false, true]) {
+  test(`同技能部分导入成功后重试保留修订号，重新检查=${recheck}`, async () => {
+    const revisions: string[] = [];
+    let writes = 0;
+    let inspections = 0;
+    globalThis.fetch = mock(async (url: RequestInfo | URL, options?: RequestInit) => {
+      if (String(url).endsWith('/inspect')) {
+        inspections++;
+        return Response.json({
+          name: 'demo',
+          existing: { id: 'demo', display_title: 'Demo', revision: inspections > 2 ? 8 : 3 },
+        });
+      }
+      const body = options?.body as FormData;
+      revisions.push(String(body.get('revision')));
+      writes++;
+      if (writes === 2)
+        return Response.json({ error: { code: 'unavailable', message: 'Temporary failure' } }, { status: 503 });
+      return Response.json({ skill: { id: 'demo', revision: writes === 1 ? 4 : 9 }, duplicate: false });
+    }) as typeof fetch;
+    const { onClose } = renderImport();
+    fireEvent.change(screen.getByLabelText('选择 ZIP 包'), {
+      target: { files: [new File(['one'], 'one.zip'), new File(['two'], 'two.zip')] },
+    });
+    await waitFor(() => expect(screen.getAllByText('检查通过')).toHaveLength(2));
+    fireEvent.change(screen.getByLabelText('one.zip 的版本'), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText('two.zip 的版本'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    fireEvent.click(screen.getByRole('button', { name: '导入并发布' }));
+    expect(await screen.findByText('Temporary failure')).toBeTruthy();
+    if (recheck) {
+      fireEvent.click(screen.getByRole('button', { name: '重新检查' }));
+      await waitFor(() => expect(screen.queryByText('Temporary failure')).toBeNull());
+    } else {
+      fireEvent.change(screen.getByLabelText('two.zip 的版本'), { target: { value: '3' } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    fireEvent.click(screen.getByRole('button', { name: '导入并发布' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(revisions).toEqual(['3', '4', recheck ? '8' : '4']);
+  });
+}

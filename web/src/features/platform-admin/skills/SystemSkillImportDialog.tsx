@@ -38,6 +38,7 @@ export function SystemSkillImportDialog({
   const { client } = usePlatformAdmin();
   const input = useRef<HTMLInputElement>(null);
   const directoryInput = useRef<HTMLInputElement>(null);
+  const revisions = useRef(new Map<string, number>());
   const [items, setItems] = useState<ImportItem[]>([]);
   const [step, setStep] = useState<'select' | 'review' | 'confirm'>('select');
   const [busy, setBusy] = useState(false);
@@ -64,6 +65,7 @@ export function SystemSkillImportDialog({
     if (target) body.append('skill_id', target.id);
     try {
       const preview = await client.request<SystemPackage>('/skills/inspect', { method: 'POST', body });
+      if (preview.existing) revisions.current.set(preview.existing.id, preview.existing.revision);
       return {
         ...item,
         preview,
@@ -104,6 +106,7 @@ export function SystemSkillImportDialog({
     setError('');
     setStep('review');
     setItems(selected);
+    revisions.current.clear();
     try {
       for (const item of selected) update(item.key, await inspect(item));
     } finally {
@@ -122,13 +125,12 @@ export function SystemSkillImportDialog({
     if (busy || finished) return;
     setBusy(true);
     setError('');
-    const revisions = new Map<string, number>();
     let failed = false;
     let lastID = '';
     try {
       for (const item of items.filter((entry) => !entry.done && entry.preview)) {
         const preview = item.preview!;
-        const body = systemImportBody(item, preview, publish, revisions, target);
+        const body = systemImportBody(item, preview, publish, revisions.current, target);
         try {
           const result = await client.request<{ skill: SystemSkill; duplicate: boolean }>('/skills', {
             method: 'POST',
@@ -141,7 +143,7 @@ export function SystemSkillImportDialog({
                 version: item.version,
               }),
             );
-          revisions.set(result.skill.id, result.skill.revision);
+          revisions.current.set(result.skill.id, result.skill.revision);
           update(item.key, { done: true, error: undefined });
           lastID = result.skill.id;
         } catch (cause) {

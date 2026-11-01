@@ -85,6 +85,7 @@
             NULL
         )
         ON CONFLICT (skill_uuid, version) DO UPDATE SET
+            state = 'published',
             name = EXCLUDED.name,
             description = EXCLUDED.description,
             directory = EXCLUDED.directory,

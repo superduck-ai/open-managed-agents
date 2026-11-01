@@ -90,7 +90,7 @@ func (h *Handler) requireSystemAdministrator(next http.Handler) http.Handler {
 	return h.systemWrap(func(w http.ResponseWriter, r *http.Request) error {
 		principal, ok := auth.PrincipalFromContext(r.Context())
 		if !ok || principal.CredentialType != auth.CredentialTypePlatformSession || principal.UserUUID == "" {
-			return db.ErrSystemSkillDenied
+			return errSystemSkillDenied
 		}
 		next.ServeHTTP(w, r)
 		return nil
@@ -225,7 +225,12 @@ func (h *Handler) changeSystemSkill(w http.ResponseWriter, r *http.Request) erro
 		return systemInvalid("版本或修订号无效")
 	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	result, err := h.db.ChangeSystemSkill(r.Context(), db.SystemSkillChange{ActorUUID: principal.UserUUID, SkillID: chi.URLParam(r, "skill_id"), Revision: input.Revision, Action: input.Action, Version: input.Version})
+	var result db.SystemSkill
+	err := h.withSystemSkillWrite(r.Context(), principal.UserUUID, func(tx *db.PlatformAdminTx) error {
+		var err error
+		result, err = tx.ChangeSystemSkill(r.Context(), db.SystemSkillChange{ActorUUID: principal.UserUUID, SkillID: chi.URLParam(r, "skill_id"), Revision: input.Revision, Action: input.Action, Version: input.Version})
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -266,6 +271,9 @@ func systemPackageDTO(pkg skillPackage) (systemPackageResponse, error) {
 		result.Files = append(result.Files, file.Name)
 		if file.Name == pkg.Directory+"/SKILL.md" {
 			data, err := readZipFile(file, 256*1024)
+			if budget, ok := errors.AsType[packageError](err); ok && budget.Status == http.StatusRequestEntityTooLarge {
+				return result, systemSkillPreviewTooLarge()
+			}
 			if err != nil {
 				return result, err
 			}
@@ -330,7 +338,13 @@ func (h *Handler) importSystemPackage(w http.ResponseWriter, r *http.Request) er
 	if _, err := h.store.Upload(r.Context(), input.Version.S3Key, bytes.NewReader(pkg.Zip), storage.UploadOptions{Size: pkg.Size, ContentType: skillArchiveContentType}); err != nil {
 		return err
 	}
-	skill, duplicate, err := h.db.ImportSystemSkill(r.Context(), input)
+	var skill db.SystemSkill
+	duplicate := false
+	err = h.withSystemSkillWrite(r.Context(), input.ActorUUID, func(tx *db.PlatformAdminTx) error {
+		var err error
+		skill, duplicate, err = tx.ImportSystemSkill(r.Context(), input)
+		return err
+	})
 	if err != nil || duplicate {
 		h.cleanupSystemUpload(r.Context(), input.Version.S3Key)
 	}
@@ -412,4 +426,17 @@ func validSystemVersion(value string, allowEmpty bool) bool {
 		}
 	}
 	return true
+}
+
+func (h *Handler) withSystemSkillWrite(ctx context.Context, actor string, write func(*db.PlatformAdminTx) error) error {
+	return h.db.WithPlatformAdminTx(ctx, func(tx *db.PlatformAdminTx) error {
+		granted, err := tx.LockGrant(ctx, actor)
+		if errors.Is(err, db.ErrNotFound) || (err == nil && !granted) {
+			return errSystemSkillDenied
+		}
+		if err != nil {
+			return err
+		}
+		return write(tx)
+	})
 }

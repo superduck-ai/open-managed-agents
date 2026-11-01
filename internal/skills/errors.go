@@ -92,6 +92,8 @@ func skillNameImmutable() error {
 	return apperr.New(apperr.InvalidArgument, "Skill name cannot change across versions", nil)
 }
 
+var errSystemSkillDenied = errors.New("system skill administration denied")
+
 type systemSkillPublicError struct {
 	Status  int    `json:"-"`
 	Code    string `json:"code"`
@@ -112,7 +114,7 @@ func systemSkillError(err error) *systemSkillPublicError {
 		return &systemSkillPublicError{Status: pkg.Status, Code: "invalid_package", Message: pkg.Message}
 	}
 	switch {
-	case errors.Is(err, db.ErrSystemSkillDenied):
+	case errors.Is(err, errSystemSkillDenied):
 		return &systemSkillPublicError{Status: 403, Code: "platform_access_denied", Message: "仅超级管理员可管理系统技能"}
 	case errors.Is(err, db.ErrNotFound):
 		return &systemSkillPublicError{Status: 404, Code: "not_found", Message: "技能或版本不存在"}
@@ -127,4 +129,8 @@ func systemSkillError(err error) *systemSkillPublicError {
 	default:
 		return &systemSkillPublicError{Status: 503, Code: "unavailable", Message: "系统技能服务暂不可用，请稍后重试"}
 	}
+}
+
+func systemSkillPreviewTooLarge() error {
+	return &systemSkillPublicError{Status: 413, Code: "preview_too_large", Message: "SKILL.md 超过 256 KiB 预览限制"}
 }

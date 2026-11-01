@@ -43,7 +43,7 @@
     </update>
     <select id="Events" resultType="SystemSkillEvent">
         SELECT uuid, skill_uuid, actor_uuid, action, version, created_at FROM system_skill_events
-        WHERE skill_uuid = #{skillUUID} ORDER BY created_at DESC, uuid DESC LIMIT #{limit} OFFSET #{offset}
+        WHERE skill_uuid = #{skillUUID} ORDER BY created_at DESC, id DESC LIMIT #{limit} OFFSET #{offset}
     </select>
     <insert id="Record" result="exec">
         INSERT INTO system_skill_events (skill_uuid, actor_uuid, action, version) VALUES (#{event.SkillUUID}, #{event.ActorUUID}, #{event.Action}, #{event.Version})

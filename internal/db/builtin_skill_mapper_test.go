@@ -73,7 +73,7 @@ func TestBuiltinSkillMapperStatements(t *testing.T) {
 			},
 			fragments: []string{
 				"INSERT INTO builtin_skill_versions", "ON CONFLICT (skill_uuid, version)",
-				"builtin_skill_versions.sha256 = EXCLUDED.sha256", "RETURNING",
+				"builtin_skill_versions.sha256 = EXCLUDED.sha256", "state = 'published'", "RETURNING",
 			},
 		},
 		{

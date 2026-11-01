@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -346,22 +347,49 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		t.Fatalf("published import audit order: %+v %v", events, err)
 	}
 
+	requireStatus(upload("6.0.0", get().Revision, false, archive("fixture-system-skill", "seed collision")), 200)
+	existing, err := database.GetSystemSkill(t.Context(), "fixture-system-skill")
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := database.SystemSkillVersion(t.Context(), existing.UUID, "6.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = database.UpsertBuiltinSkillWithVersion(t.Context(), db.BuiltinSkill{ExternalID: existing.ExternalID, DisplayTitle: existing.DisplayTitle}, db.BuiltinSkillVersion{
+		ExternalID: draft.ExternalID, Version: draft.Version, Name: draft.Name, Description: draft.Description, Directory: draft.Directory, S3Bucket: draft.S3Bucket, S3Key: draft.S3Key, SizeBytes: draft.SizeBytes, SHA256: draft.SHA256, CreatedAt: draft.CreatedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := database.GetBuiltinSkillVersion(t.Context(), existing.ExternalID, "latest")
+	if err != nil || seeded.Version != "6.0.0" {
+		t.Fatalf("seeded draft must resolve: %+v %v", seeded, err)
+	}
+	if _, err := database.SoftDeleteMissingBuiltinSkills(t.Context(), []string{existing.ExternalID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	objects := store.count()
+	requireStatus(uploadTo("", "2.0.0", 0, true, archive("immediate-publish", "pruned name")), 409)
+	if store.count() != objects {
+		t.Fatal("pruned name rejection leaked archive")
+	}
+
 	requireStatus(send("GET", "/skills/fixture-system-skill/events", nil, "", false), 200)
 	if err := service.SetAdministrator(t.Context(), actor, "fixture operator", "", false); err != nil {
 		t.Fatal(err)
 	}
 	requireStatus(send("GET", "/skills/", nil, "", false), 403)
-	_, err = database.ChangeSystemSkill(t.Context(), db.SystemSkillChange{ActorUUID: actor, SkillID: skill.ID, Revision: getRevisionForRevokedTest(t, database, skill.ID), Action: "unlist"})
-	if !errors.Is(err, db.ErrSystemSkillDenied) {
-		t.Fatalf("revoked actor wrote through transaction: %v", err)
+	staleAuthorization := NewHandler(service, func(*http.Request) (platformsession.Session, error) {
+		return platformsession.Session{UserUUID: actor, VerifiedEmail: actor + "@example.com", AuthenticationMethod: "email_code_v1"}, nil
+	}, true)
+	staleAuthorization.verify = func(context.Context, string) (db.PlatformAdminAccount, error) {
+		return db.PlatformAdminAccount{UUID: actor, Granted: true}, nil
 	}
-}
-
-func getRevisionForRevokedTest(t *testing.T, database *db.DB, id string) int64 {
-	t.Helper()
-	skill, err := database.GetSystemSkill(t.Context(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return skill.Revision
+	request := httptest.NewRequest("POST", "/skills/fixture-system-skill/actions", bytes.NewBufferString(`{"action":"unlist","revision":1}`))
+	request.AddCookie(&http.Cookie{Name: "sessionKey", Value: actor})
+	request.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken(actor))
+	response := httptest.NewRecorder()
+	staleAuthorization.Routes(handler.AdminRoutes()).ServeHTTP(response, request)
+	requireStatus(response, 403)
 }

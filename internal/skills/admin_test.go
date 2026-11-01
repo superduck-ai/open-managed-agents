@@ -57,7 +57,7 @@ func TestSystemSkillErrorsPreservePublicBoundary(t *testing.T) {
 		status int
 		code   string
 	}{
-		{db.ErrSystemSkillDenied, 403, "platform_access_denied"},
+		{errSystemSkillDenied, 403, "platform_access_denied"},
 		{db.ErrNotFound, 404, "not_found"},
 		{db.ErrSystemSkillRevision, 409, "revision_conflict"},
 		{db.ErrVersionConflict, 409, "version_conflict"},
@@ -89,5 +89,25 @@ func TestSystemSkillRoutesRejectMissingPlatformIdentity(t *testing.T) {
 				t.Fatalf("%s %s: %d %s", principal.CredentialType, method, response.Code, response.Body.String())
 			}
 		}
+	}
+}
+
+func TestSystemSkillPreviewLimit(t *testing.T) {
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	file, err := writer.Create("demo/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(bytes.Repeat([]byte("x"), 256*1024+1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = systemPackageDTO(skillPackage{Zip: archive.Bytes(), Directory: "demo"})
+	public := systemSkillError(err)
+	if public.Status != 413 || public.Code != "preview_too_large" || !strings.Contains(public.Message, "256 KiB") {
+		t.Fatalf("preview error: %+v", public)
 	}
 }

@@ -81,6 +81,8 @@ for (const duplicate of [true, false]) {
         });
         expect(await screen.findByText('检查通过')).toBeTruthy();
         expect(writes).toHaveLength(0);
+        for (const label of ['发布者', '授权说明', '来源说明或原始链接', '更新说明'])
+          expect(screen.queryByLabelText(label)).toBeNull();
         expect((screen.getByLabelText('demo.zip 的版本') as HTMLInputElement).value).toBe('1.0.0');
         expect((screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement).disabled).toBe(false);
         expect(screen.queryByText(/支持多个独立 ZIP/)).toBeNull();
@@ -94,6 +96,7 @@ for (const duplicate of [true, false]) {
         const body = writes[0].body as FormData;
         expect(body.get('version')).toBe('1.0.0');
         expect(body.get('publish')).toBe('true');
+        for (const field of ['publisher', 'source_url', 'license', 'notes']) expect(body.has(field)).toBe(false);
         expect(new Headers(writes[0].headers).get('X-CSRF-Token')).toBe('test-token');
         if (duplicate) expect(notice).toHaveBeenCalledWith('demo 1.0.0 已存在，无需重复导入，内容未改变。');
         else expect(notice).not.toHaveBeenCalled();

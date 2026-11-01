@@ -34,15 +34,14 @@ export function SystemSkillsPage() {
   const selected = useSearch({ strict: false }).skill;
   const [upload, setUpload] = useState<{ target?: SystemSkill } | null>(null);
   const [search, setSearch] = useState('');
-  const [publisher, setPublisher] = useState('');
-  const [filter, setFilter] = useState({ query: '', publisher: '' });
+  const [filter, setFilter] = useState('');
   const [status, setStatus] = useState('all');
   const [offset, setOffset] = useState(0);
   const query = useQuery({
     queryKey: [...systemSkillsKey, 'list', filter, status, offset],
     queryFn: ({ signal }) =>
       client.request<SystemPage<SystemSkill>>(
-        `/skills?${new URLSearchParams({ ...filter, status: status === 'all' ? '' : status, offset: String(offset), limit: String(systemSkillPageSize) })}`,
+        `/skills?${new URLSearchParams({ query: filter, status: status === 'all' ? '' : status, offset: String(offset), limit: String(systemSkillPageSize) })}`,
         { signal },
       ),
   });
@@ -81,11 +80,6 @@ export function SystemSkillsPage() {
           </Button>
         ),
       },
-      {
-        header: msg('systemSkills.publisher', 'Publisher'),
-        accessorKey: 'publisher',
-        cell: ({ row }) => row.original.publisher || msg('systemSkills.unattributed', 'Unattributed'),
-      },
       { header: msg('systemSkills.status', 'Status'), cell: ({ row }) => <SystemSkillStatus skill={row.original} /> },
       {
         header: msg('systemSkills.defaultVersion', 'Default version'),
@@ -123,7 +117,7 @@ export function SystemSkillsPage() {
         onSubmit={(event) => {
           event.preventDefault();
           setOffset(0);
-          setFilter({ query: search.trim(), publisher: publisher.trim() });
+          setFilter(search.trim());
         }}
       >
         <Input
@@ -165,13 +159,6 @@ export function SystemSkillsPage() {
             ))}
           </SelectContent>
         </Select>
-        <Input
-          className="w-40"
-          aria-label={msg('systemSkills.publisher', 'Publisher')}
-          placeholder={msg('systemSkills.publisher', 'Publisher')}
-          value={publisher}
-          onChange={(event) => setPublisher(event.target.value)}
-        />
         <Button type="submit" variant="outline">
           <Search className="size-4" aria-hidden />
           {msg('platformAdmin.search', 'Search')}
@@ -188,7 +175,7 @@ export function SystemSkillsPage() {
           body={msg('systemSkills.emptyBody', 'Import a ZIP package or change the filters.')}
         />
       ) : (
-        <Table className={`${dataTableClassName} min-w-[940px]`}>
+        <Table className={`${dataTableClassName} min-w-[780px]`}>
           <TableHeader>
             {table.getHeaderGroups().map((group) => (
               <TableRow key={group.id} className={dataTableHeaderRowClassName}>

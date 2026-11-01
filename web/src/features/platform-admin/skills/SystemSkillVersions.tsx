@@ -61,7 +61,7 @@ export function SystemSkillVersions({
               <Badge variant="outline">{msg('systemSkills.default', 'Default')}</Badge>
             )}
           </div>
-          <p className="mt-2 text-sm whitespace-pre-wrap break-words">{version.notes || version.description}</p>
+          <p className="mt-2 text-sm whitespace-pre-wrap break-words">{version.description}</p>
           <p className="mt-2 text-xs text-muted-foreground">{new Date(version.created_at).toLocaleString(locale)}</p>
           <div className="mt-3 flex gap-2">
             {version.state === 'draft' ? (

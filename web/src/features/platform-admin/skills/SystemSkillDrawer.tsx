@@ -201,35 +201,11 @@ function SystemSkillImpact({ action }: { action: SystemAction }) {
 
 function SystemSkillOverview({ skill }: { skill: SystemSkill }) {
   const { msg } = useI18n();
-  const fields = [
-    [msg('systemSkills.publisher', 'Publisher'), skill.publisher || msg('systemSkills.unattributed', 'Unattributed')],
-    [msg('systemSkills.defaultVersion', 'Default version'), skill.default_version || '—'],
-    [msg('systemSkills.sourceURL', 'Source or original URL'), skill.source_url || '—'],
-    [msg('systemSkills.license', 'License'), skill.license || '—'],
-  ];
   return (
-    <>
-      <dl className="grid gap-5 sm:grid-cols-2">
-        {fields.map(([label, value]) => (
-          <div key={label}>
-            <dt className="mb-1 text-xs text-muted-foreground">{label}</dt>
-            <dd className="text-sm whitespace-pre-wrap break-words">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="mt-6 text-sm leading-6 text-muted-foreground">
-        {msg(
-          'systemSkills.runtimeNote',
-          'Skills contain instructions and supporting files. Prepare CLI tools, libraries, browsers and model credentials in the sandbox separately. Package validation is not a runtime acceptance test.',
-        )}
-      </p>
-      <p className="mt-4 text-xs leading-5 text-muted-foreground">
-        {msg(
-          'systemSkills.publisherNote',
-          'System built-in describes distribution scope. Publisher describes provenance, not official certification. Workspaces use system skills read-only.',
-        )}
-      </p>
-    </>
+    <dl>
+      <dt className="mb-1 text-xs text-muted-foreground">{msg('systemSkills.defaultVersion', 'Default version')}</dt>
+      <dd className="text-sm">{skill.default_version || '—'}</dd>
+    </dl>
   );
 }
 

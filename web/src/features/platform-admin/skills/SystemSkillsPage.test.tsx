@@ -27,9 +27,6 @@ test('系统技能列表点击详情、关闭后打开导入仍可响应', async
   const skill: SystemSkill = {
     id: 'demo',
     display_title: 'Demo',
-    publisher: 'OMA',
-    source_url: '',
-    license: '',
     listed: true,
     default_version: '1.0.0',
     revision: 1,
@@ -69,7 +66,10 @@ test('系统技能列表点击详情、关闭后打开导入仍可响应', async
       </PlatformAdminContext.Provider>
     </QueryClientProvider>,
   );
-  fireEvent.click(await screen.findByRole('button', { name: 'Demo', exact: true }));
+  expect(await screen.findByRole('button', { name: 'Demo', exact: true })).toBeTruthy();
+  expect(screen.queryByRole('columnheader', { name: '发布者' })).toBeNull();
+  expect(screen.queryByRole('textbox', { name: '发布者' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Demo', exact: true }));
   expect(await screen.findByRole('heading', { name: 'Demo' })).toBeTruthy();
   expect(router.state.location.search).toMatchObject({ skill: 'demo' });
   fireEvent.click(screen.getByRole('button', { name: '关闭' }));

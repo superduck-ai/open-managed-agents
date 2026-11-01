@@ -2,9 +2,6 @@ export type SystemSkill = {
   id: string;
   display_title: string;
   default_version: string | null;
-  publisher: string;
-  source_url: string;
-  license: string;
   listed: boolean;
   revision: number;
   created_at: string;
@@ -16,7 +13,6 @@ export type SystemVersion = {
   name: string;
   description: string;
   state: 'draft' | 'published';
-  notes: string;
   size_bytes: number;
   sha256: string;
   created_at: string;

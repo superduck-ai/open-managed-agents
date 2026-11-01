@@ -15,9 +15,6 @@ afterEach(() => {
 const skill: SystemSkill = {
   id: 'demo',
   display_title: 'Demo',
-  publisher: 'OMA',
-  source_url: '',
-  license: '',
   listed: true,
   default_version: '1.0.0',
   revision: 8,

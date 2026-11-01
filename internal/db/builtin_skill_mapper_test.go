@@ -276,7 +276,7 @@ func TestBuiltinSkillMapperResultSemantics(t *testing.T) {
 
 func builtinSkillMapperTestColumns() []string {
 	return []string{
-		"id", "uuid", "external_id", "display_title", "latest_version", "created_at", "updated_at", "deleted_at", "publisher", "source_url", "license",
+		"id", "uuid", "external_id", "display_title", "latest_version", "created_at", "updated_at", "deleted_at",
 	}
 }
 

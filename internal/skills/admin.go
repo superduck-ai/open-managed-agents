@@ -26,9 +26,6 @@ type systemSkillResponse struct {
 	ID             string    `json:"id"`
 	DisplayTitle   string    `json:"display_title"`
 	DefaultVersion *string   `json:"default_version"`
-	Publisher      string    `json:"publisher"`
-	SourceURL      string    `json:"source_url"`
-	License        string    `json:"license"`
 	Listed         bool      `json:"listed"`
 	Revision       int64     `json:"revision"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -41,7 +38,6 @@ type systemVersionResponse struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	State       string    `json:"state"`
-	Notes       string    `json:"notes"`
 	SizeBytes   int64     `json:"size_bytes"`
 	SHA256      string    `json:"sha256"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -124,7 +120,7 @@ func (h *Handler) systemWrap(next httpapi.Endpoint) http.HandlerFunc {
 }
 
 func systemSkillDTO(s db.SystemSkill) systemSkillResponse {
-	return systemSkillResponse{ID: s.ExternalID, DisplayTitle: s.DisplayTitle, DefaultVersion: s.LatestVersion, Publisher: s.Publisher, SourceURL: s.SourceURL, License: s.License, Listed: s.Listed, Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
+	return systemSkillResponse{ID: s.ExternalID, DisplayTitle: s.DisplayTitle, DefaultVersion: s.LatestVersion, Listed: s.Listed, Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
 }
 
 func systemPaging(r *http.Request) (int, int, error) {
@@ -155,11 +151,10 @@ func (h *Handler) listSystemSkills(w http.ResponseWriter, r *http.Request) error
 		return systemInvalid("技能状态无效")
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("query"))
-	publisher := strings.TrimSpace(r.URL.Query().Get("publisher"))
-	if len(query) > 256 || len(publisher) > 256 {
+	if len(query) > 256 {
 		return systemInvalid("搜索内容过长")
 	}
-	records, err := h.db.ListSystemSkills(r.Context(), db.SystemSkillQuery{Query: query, Status: status, Publisher: publisher, Limit: limit + 1, Offset: offset})
+	records, err := h.db.ListSystemSkills(r.Context(), db.SystemSkillQuery{Query: query, Status: status, Limit: limit + 1, Offset: offset})
 	if err != nil {
 		return err
 	}
@@ -199,7 +194,7 @@ func (h *Handler) systemVersions(w http.ResponseWriter, r *http.Request) error {
 	records = records[:min(len(records), limit)]
 	data := make([]systemVersionResponse, 0, len(records))
 	for _, v := range records {
-		data = append(data, systemVersionResponse{ID: v.ExternalID, Version: v.Version, Name: v.Name, Description: v.Description, State: v.State, Notes: v.Notes, SizeBytes: v.SizeBytes, SHA256: v.SHA256, CreatedAt: v.CreatedAt})
+		data = append(data, systemVersionResponse{ID: v.ExternalID, Version: v.Version, Name: v.Name, Description: v.Description, State: v.State, SizeBytes: v.SizeBytes, SHA256: v.SHA256, CreatedAt: v.CreatedAt})
 	}
 	httpapi.WriteJSON(w, 200, systemPage[systemVersionResponse]{Data: data, HasMore: more})
 	return nil
@@ -400,12 +395,11 @@ func systemImportInput(r *http.Request, pkg skillPackage) (db.SystemSkillImport,
 		}
 		skillID = target
 	}
-	publisher, sourceURL, license := strings.TrimSpace(r.FormValue("publisher")), strings.TrimSpace(r.FormValue("source_url")), strings.TrimSpace(r.FormValue("license"))
-	title, notes := strings.TrimSpace(r.FormValue("display_title")), strings.TrimSpace(r.FormValue("notes"))
+	title := strings.TrimSpace(r.FormValue("display_title"))
 	if title == "" {
 		title = pkg.Name
 	}
-	if len(publisher) > 256 || len(sourceURL) > 2048 || len(license) > 1024 || len(title) > 256 || len(notes) > 4096 {
+	if len(title) > 256 {
 		return db.SystemSkillImport{}, systemInvalid("技能说明字段过长")
 	}
 	publish := r.FormValue("publish")
@@ -413,7 +407,7 @@ func systemImportInput(r *http.Request, pkg skillPackage) (db.SystemSkillImport,
 		return db.SystemSkillImport{}, systemInvalid("请选择发布或保存草稿")
 	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return db.SystemSkillImport{ActorUUID: principal.UserUUID, ExpectedRevision: revision, Publish: publish == "true", Skill: db.SystemSkill{UUID: uuid.NewV4().String(), ExternalID: skillID, DisplayTitle: title, Publisher: publisher, SourceURL: sourceURL, License: license}, Version: db.SystemSkillVersion{UUID: uuid.NewV4().String(), Version: version, Name: pkg.Name, Description: pkg.Description, Directory: pkg.Directory, Notes: notes, SizeBytes: pkg.Size, SHA256: pkg.SHA256, CreatedAt: time.Now().UTC()}}, nil
+	return db.SystemSkillImport{ActorUUID: principal.UserUUID, ExpectedRevision: revision, Publish: publish == "true", Skill: db.SystemSkill{UUID: uuid.NewV4().String(), ExternalID: skillID, DisplayTitle: title}, Version: db.SystemSkillVersion{UUID: uuid.NewV4().String(), Version: version, Name: pkg.Name, Description: pkg.Description, Directory: pkg.Directory, SizeBytes: pkg.Size, SHA256: pkg.SHA256, CreatedAt: time.Now().UTC()}}, nil
 }
 
 func validSystemVersion(value string, allowEmpty bool) bool {

@@ -16,9 +16,6 @@ type builtinSkillRow struct {
 	CreatedAt     time.Time  `db:"created_at"`
 	UpdatedAt     time.Time  `db:"updated_at"`
 	DeletedAt     *time.Time `db:"deleted_at"`
-	Publisher     string     `db:"publisher"`
-	SourceURL     string     `db:"source_url"`
-	License       string     `db:"license"`
 }
 
 type builtinSkillVersionRow struct {

@@ -70,9 +70,6 @@ export type MessageBatchesPageCursor = {
 };
 
 export type ConsoleSkill = {
-  publisher?: string;
-  source_url?: string;
-  license?: string;
   id: string;
   type: 'skill';
   display_title: string;

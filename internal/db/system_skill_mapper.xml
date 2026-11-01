@@ -1,12 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="SystemSkillMapper">
-    <sql id="skillColumns">uuid, external_id, display_title, latest_version, publisher, source_url, license, listed, revision, created_at, updated_at</sql>
-    <sql id="versionColumns">uuid, external_id, skill_uuid, skill_external_id, version, name, description, directory, state, notes, s3_bucket, s3_key, size_bytes, sha256, created_at</sql>
+    <sql id="skillColumns">uuid, external_id, display_title, latest_version, listed, revision, created_at, updated_at</sql>
+    <sql id="versionColumns">uuid, external_id, skill_uuid, skill_external_id, version, name, description, directory, state, s3_bucket, s3_key, size_bytes, sha256, created_at</sql>
     <select id="List" resultType="SystemSkill">
         SELECT <include refid="skillColumns"/> FROM builtin_skills s
         WHERE s.deleted_at IS NULL
         <if test="query.Query != &quot;&quot;">AND (strpos(lower(display_title), lower(#{query.Query})) &gt; 0 OR strpos(lower(external_id), lower(#{query.Query})) &gt; 0)</if>
-        <if test="query.Publisher != &quot;&quot;">AND publisher = #{query.Publisher}</if>
         <choose>
             <when test="query.Status == &quot;listed&quot;">AND listed</when>
             <when test="query.Status == &quot;unlisted&quot;">AND NOT listed AND latest_version IS NOT NULL</when>
@@ -19,8 +18,8 @@
         <if test="lock">FOR UPDATE</if>
     </select>
     <insert id="InsertSkill" result="rows">
-        INSERT INTO builtin_skills (uuid, external_id, display_title, publisher, source_url, license, listed)
-        VALUES (#{skill.UUID}, #{skill.ExternalID}, #{skill.DisplayTitle}, #{skill.Publisher}, #{skill.SourceURL}, #{skill.License}, false)
+        INSERT INTO builtin_skills (uuid, external_id, display_title, listed)
+        VALUES (#{skill.UUID}, #{skill.ExternalID}, #{skill.DisplayTitle}, false)
         ON CONFLICT (external_id) DO NOTHING
     </insert>
     <update id="UpdateSkill" result="rows">
@@ -36,8 +35,8 @@
         WHERE skill_uuid = #{skillUUID} AND version = #{version} AND deleted_at IS NULL
     </select>
     <insert id="InsertVersion" result="exec">
-        INSERT INTO builtin_skill_versions (uuid, external_id, skill_uuid, skill_external_id, version, name, description, directory, state, notes, s3_bucket, s3_key, size_bytes, sha256, created_at)
-        VALUES (#{version.UUID}, #{version.ExternalID}, #{version.SkillUUID}, #{version.SkillExternalID}, #{version.Version}, #{version.Name}, #{version.Description}, #{version.Directory}, 'draft', #{version.Notes}, #{version.S3Bucket}, #{version.S3Key}, #{version.SizeBytes}, #{version.SHA256}, #{version.CreatedAt})
+        INSERT INTO builtin_skill_versions (uuid, external_id, skill_uuid, skill_external_id, version, name, description, directory, state, s3_bucket, s3_key, size_bytes, sha256, created_at)
+        VALUES (#{version.UUID}, #{version.ExternalID}, #{version.SkillUUID}, #{version.SkillExternalID}, #{version.Version}, #{version.Name}, #{version.Description}, #{version.Directory}, 'draft', #{version.S3Bucket}, #{version.S3Key}, #{version.SizeBytes}, #{version.SHA256}, #{version.CreatedAt})
     </insert>
     <update id="Publish" result="rows">
         UPDATE builtin_skill_versions SET state = 'published' WHERE skill_uuid = #{skillUUID} AND version = #{version} AND state = 'draft' AND deleted_at IS NULL

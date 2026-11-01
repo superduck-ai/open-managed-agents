@@ -12,9 +12,6 @@ type SystemSkill struct {
 	ExternalID    string    `db:"external_id"`
 	DisplayTitle  string    `db:"display_title"`
 	LatestVersion *string   `db:"latest_version"`
-	Publisher     string    `db:"publisher"`
-	SourceURL     string    `db:"source_url"`
-	License       string    `db:"license"`
 	Listed        bool      `db:"listed"`
 	Revision      int64     `db:"revision"`
 	CreatedAt     time.Time `db:"created_at"`
@@ -31,7 +28,6 @@ type SystemSkillVersion struct {
 	Description     string    `db:"description"`
 	Directory       string    `db:"directory"`
 	State           string    `db:"state"`
-	Notes           string    `db:"notes"`
 	S3Bucket        string    `db:"s3_bucket"`
 	S3Key           string    `db:"s3_key"`
 	SizeBytes       int64     `db:"size_bytes"`
@@ -49,11 +45,10 @@ type SystemSkillEvent struct {
 }
 
 type SystemSkillQuery struct {
-	Query     string
-	Status    string
-	Publisher string
-	Limit     int
-	Offset    int
+	Query  string
+	Status string
+	Limit  int
+	Offset int
 }
 
 type SystemSkillMapper interface {

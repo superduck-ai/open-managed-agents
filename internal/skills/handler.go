@@ -44,9 +44,6 @@ type Handler struct {
 }
 
 type skillResponse struct {
-	Publisher     string `json:"publisher,omitempty"`
-	SourceURL     string `json:"source_url,omitempty"`
-	License       string `json:"license,omitempty"`
 	ID            string `json:"id"`
 	CreatedAt     string `json:"created_at"`
 	DisplayTitle  string `json:"display_title"`
@@ -736,9 +733,8 @@ func responseFromBuiltinSkill(skill db.BuiltinSkill) skillResponse {
 		DisplayTitle:  firstNonEmpty(skill.DisplayTitle, skill.ExternalID),
 		LatestVersion: valueOrEmpty(skill.LatestVersion),
 		Source:        "anthropic",
-		Publisher:     skill.Publisher, SourceURL: skill.SourceURL, License: skill.License,
-		Type:      "skill",
-		UpdatedAt: formatTime(skill.UpdatedAt),
+		Type:          "skill",
+		UpdatedAt:     formatTime(skill.UpdatedAt),
 	}
 }
 

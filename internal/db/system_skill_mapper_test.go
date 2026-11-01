@@ -10,9 +10,9 @@ import (
 
 func TestSystemSkillMapperBindings(t *testing.T) {
 	for _, status := range []string{"", "listed", "unlisted", "draft"} {
-		query := SystemSkillQuery{Query: "%_ search", Publisher: "OMA", Status: status, Limit: 21, Offset: 20}
+		query := SystemSkillQuery{Query: "%_ search", Status: status, Limit: 21, Offset: 20}
 		bound := buildSystemSkillMapperList(yourbatis.DialectPostgres, query)
-		want := []any{query.Query, query.Query, query.Publisher, 21, 20}
+		want := []any{query.Query, query.Query, 21, 20}
 		values := make([]any, len(bound.Args))
 		for i, p := range bound.Args {
 			values[i] = p.Value
@@ -20,7 +20,7 @@ func TestSystemSkillMapperBindings(t *testing.T) {
 		if !reflect.DeepEqual(values, want) {
 			t.Fatalf("list values=%v want=%v", values, want)
 		}
-		for _, fragment := range []string{"deleted_at IS NULL", "ORDER BY created_at DESC, uuid DESC", "LIMIT $4 OFFSET $5"} {
+		for _, fragment := range []string{"deleted_at IS NULL", "ORDER BY created_at DESC, uuid DESC", "LIMIT $3 OFFSET $4"} {
 			if !strings.Contains(bound.SQL, fragment) {
 				t.Errorf("missing %s: %s", fragment, bound.SQL)
 			}
@@ -50,16 +50,16 @@ func TestSystemSkillMapperBindings(t *testing.T) {
 }
 
 func TestSystemSkillMapperWritesAndPages(t *testing.T) {
-	skill := SystemSkill{UUID: "11111111-1111-4111-8111-111111111111", ExternalID: "demo", DisplayTitle: "Demo", Publisher: "OMA", SourceURL: "source", License: "license"}
-	version := SystemSkillVersion{UUID: "22222222-2222-4222-8222-222222222222", ExternalID: "skver_demo", SkillUUID: skill.UUID, SkillExternalID: skill.ExternalID, Version: "1", Name: "demo", Description: "Description", Directory: "demo", Notes: "Notes", S3Bucket: "bucket", S3Key: "key", SizeBytes: 100, SHA256: "hash"}
+	skill := SystemSkill{UUID: "11111111-1111-4111-8111-111111111111", ExternalID: "demo", DisplayTitle: "Demo"}
+	version := SystemSkillVersion{UUID: "22222222-2222-4222-8222-222222222222", ExternalID: "skver_demo", SkillUUID: skill.UUID, SkillExternalID: skill.ExternalID, Version: "1", Name: "demo", Description: "Description", Directory: "demo", S3Bucket: "bucket", S3Key: "key", SizeBytes: 100, SHA256: "hash"}
 	event := SystemSkillEvent{SkillUUID: skill.UUID, ActorUUID: "33333333-3333-4333-8333-333333333333", Action: "publish", Version: "1"}
 	for _, tc := range []struct {
 		bound    yourbatis.BoundSQL
 		values   []any
 		fragment string
 	}{
-		{buildSystemSkillMapperInsertSkill(yourbatis.DialectPostgres, skill), []any{skill.UUID, skill.ExternalID, skill.DisplayTitle, skill.Publisher, skill.SourceURL, skill.License}, "ON CONFLICT (external_id) DO NOTHING"},
-		{buildSystemSkillMapperInsertVersion(yourbatis.DialectPostgres, version), []any{version.UUID, version.ExternalID, version.SkillUUID, version.SkillExternalID, version.Version, version.Name, version.Description, version.Directory, version.Notes, version.S3Bucket, version.S3Key, version.SizeBytes, version.SHA256, version.CreatedAt}, "'draft'"},
+		{buildSystemSkillMapperInsertSkill(yourbatis.DialectPostgres, skill), []any{skill.UUID, skill.ExternalID, skill.DisplayTitle}, "ON CONFLICT (external_id) DO NOTHING"},
+		{buildSystemSkillMapperInsertVersion(yourbatis.DialectPostgres, version), []any{version.UUID, version.ExternalID, version.SkillUUID, version.SkillExternalID, version.Version, version.Name, version.Description, version.Directory, version.S3Bucket, version.S3Key, version.SizeBytes, version.SHA256, version.CreatedAt}, "'draft'"},
 		{buildSystemSkillMapperVersions(yourbatis.DialectPostgres, skill.UUID, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, uuid DESC"},
 		{buildSystemSkillMapperVersion(yourbatis.DialectPostgres, skill.UUID, "1"), []any{skill.UUID, "1"}, "deleted_at IS NULL"},
 		{buildSystemSkillMapperEvents(yourbatis.DialectPostgres, skill.UUID, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, uuid DESC"},

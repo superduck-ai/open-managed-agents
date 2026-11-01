@@ -5,7 +5,6 @@ import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { Checkbox } from '@/shared/ui/checkbox';
-import { Textarea } from '@/shared/ui/textarea';
 import { Badge } from '@/shared/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { usePlatformAdmin } from '../context';
@@ -42,11 +41,6 @@ export function SystemSkillImportDialog({
   const [items, setItems] = useState<ImportItem[]>([]);
   const [step, setStep] = useState<'select' | 'review' | 'confirm'>('select');
   const [busy, setBusy] = useState(false);
-  const initialSource = target ?? { publisher: 'OMA', source_url: '', license: '' };
-  const [publisher, setPublisher] = useState(initialSource.publisher);
-  const [sourceURL, setSourceURL] = useState(initialSource.source_url);
-  const [license, setLicense] = useState(initialSource.license);
-  const [notes, setNotes] = useState('');
   const [publish, setPublish] = useState(!target);
   const [error, setError] = useState('');
   const [finished, setFinished] = useState(false);
@@ -134,13 +128,7 @@ export function SystemSkillImportDialog({
     try {
       for (const item of items.filter((entry) => !entry.done && entry.preview)) {
         const preview = item.preview!;
-        const body = systemImportBody(
-          item,
-          preview,
-          { publisher, sourceURL, license, notes, publish },
-          revisions,
-          target,
-        );
+        const body = systemImportBody(item, preview, publish, revisions, target);
         try {
           const result = await client.request<{ skill: SystemSkill; duplicate: boolean }>('/skills', {
             method: 'POST',
@@ -248,48 +236,6 @@ export function SystemSkillImportDialog({
                 />
               ))}
             </div>
-          )}
-          {step === 'review' && (
-            <>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <label className="space-y-2 text-sm">
-                  {msg('systemSkills.publisher', 'Publisher')}
-                  <Input
-                    disabled={busy || !!target}
-                    maxLength={256}
-                    value={publisher}
-                    onChange={(event) => setPublisher(event.target.value)}
-                  />
-                </label>
-                <label className="space-y-2 text-sm">
-                  {msg('systemSkills.license', 'License')}
-                  <Input
-                    disabled={busy || !!target}
-                    maxLength={1024}
-                    value={license}
-                    onChange={(event) => setLicense(event.target.value)}
-                  />
-                </label>
-              </div>
-              <label className="mt-4 block space-y-2 text-sm">
-                {msg('systemSkills.sourceURL', 'Source or original URL')}
-                <Input
-                  disabled={busy || !!target}
-                  maxLength={2048}
-                  value={sourceURL}
-                  onChange={(event) => setSourceURL(event.target.value)}
-                />
-              </label>
-              <label className="mt-4 block space-y-2 text-sm">
-                {msg('systemSkills.notes', 'Release notes')}
-                <Textarea
-                  disabled={busy}
-                  maxLength={4096}
-                  value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
-                />
-              </label>
-            </>
           )}
           {step === 'confirm' && (
             <>
@@ -461,23 +407,17 @@ function SystemImportItem({
   );
 }
 
-type SystemImportSettings = { publisher: string; sourceURL: string; license: string; notes: string; publish: boolean };
 function systemImportBody(
   item: ImportItem,
   preview: SystemPackage,
-  settings: SystemImportSettings,
+  publish: boolean,
   revisions: Map<string, number>,
   target?: SystemSkill,
 ) {
-  const { publisher, sourceURL, license, notes, publish } = settings;
   const body = systemPackageBody(item);
   const existing = preview.existing ?? target;
   body.append('version', item.version.trim());
   body.append('display_title', item.title?.trim() || preview.name);
-  body.append('publisher', existing?.publisher ?? publisher.trim());
-  body.append('source_url', existing?.source_url ?? sourceURL.trim());
-  body.append('license', existing?.license ?? license.trim());
-  body.append('notes', notes.trim());
   body.append('publish', String(publish));
   body.append('revision', String(revisions.get(existing?.id ?? preview.name) ?? existing?.revision ?? 0));
   if (existing) body.append('skill_id', existing.id);

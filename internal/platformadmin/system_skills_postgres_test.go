@@ -136,7 +136,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		if _, err := file.Write(data); err != nil {
 			t.Fatal(err)
 		}
-		for key, value := range map[string]string{"version": version, "revision": strconv.FormatInt(revision, 10), "publish": strconv.FormatBool(publish), "publisher": "OMA", "source_url": "Fixture only", "license": "Test"} {
+		for key, value := range map[string]string{"version": version, "revision": strconv.FormatInt(revision, 10), "publish": strconv.FormatBool(publish)} {
 			if err := form.WriteField(key, value); err != nil {
 				t.Fatal(err)
 			}

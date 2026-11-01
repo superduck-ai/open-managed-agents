@@ -19,9 +19,6 @@ type BuiltinSkill struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	DeletedAt     *time.Time
-	Publisher     string
-	SourceURL     string
-	License       string
 }
 
 type BuiltinSkillVersion struct {
@@ -212,11 +209,10 @@ func (d *DB) SoftDeleteMissingBuiltinSkills(
 
 func (r builtinSkillRow) skill() BuiltinSkill {
 	return BuiltinSkill{
-		ID:           r.ID,
-		UUID:         r.UUID,
-		ExternalID:   r.ExternalID,
-		DisplayTitle: r.DisplayTitle,
-		Publisher:    r.Publisher, SourceURL: r.SourceURL, License: r.License,
+		ID:            r.ID,
+		UUID:          r.UUID,
+		ExternalID:    r.ExternalID,
+		DisplayTitle:  r.DisplayTitle,
 		LatestVersion: r.LatestVersion,
 		CreatedAt:     r.CreatedAt,
 		UpdatedAt:     r.UpdatedAt,

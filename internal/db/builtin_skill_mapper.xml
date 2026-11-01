@@ -8,7 +8,7 @@
         latest_version,
         created_at,
         updated_at,
-        deleted_at, publisher, source_url, license
+        deleted_at
     </sql>
 
     <sql id="versionColumns">

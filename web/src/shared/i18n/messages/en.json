@@ -3341,7 +3341,6 @@
   "systemSkills.folderRoot": "Choose one skill folder containing SKILL.md at its root.",
   "systemSkills.batchLimit": "Import at most 20 ZIP packages at a time.",
   "systemSkills.uploadVersion": "Upload new version",
-  "systemSkills.uploadHelp": "Choose ZIP packages or one skill folder containing SKILL.md and optional supporting files.",
   "systemSkills.stepSelect": "1. Select files",
   "systemSkills.stepReview": "2. Check packages and versions",
   "systemSkills.stepConfirm": "3. Confirm import",
@@ -3357,13 +3356,12 @@
   "systemSkills.version": "Version",
   "systemSkills.versionFor": "Version for {file}",
   "systemSkills.recheck": "Check again",
-  "systemSkills.checkNote": "Structure checks do not verify runtime compatibility. Existing contents cannot be overwritten with the same version.",
   "systemSkills.license": "License",
   "systemSkills.sourceURL": "Source or original URL",
   "systemSkills.notes": "Release notes",
   "systemSkills.publishOnImport": "Publish immediately after import",
-  "systemSkills.importImpact": "New skills become visible in all workspaces with their first version as default. New versions of existing skills keep the current default. Existing sessions are unchanged.",
-  "systemSkills.draftImpact": "Save as drafts, hidden from workspaces until published. No Agent bindings will be changed.",
+  "systemSkills.importImpact": "Available to all workspaces after publishing.",
+  "systemSkills.draftImpact": "Drafts are hidden from workspaces.",
   "systemSkills.confirmImport": "Import and publish",
   "systemSkills.saveDraft": "Save drafts",
   "systemSkills.immutable": "Uploaded version contents are immutable. Use a new version for changes.",
@@ -3393,5 +3391,7 @@
   "systemSkills.noEvents": "No recorded activity yet.",
   "systemSkills.operator": "Operator",
   "common.next": "Next",
-  "common.previous": "Previous"
+  "common.previous": "Previous",
+  "systemSkills.requiredVersion": "Enter a version",
+  "systemSkills.invalidVersion": "Invalid version identifier"
 }

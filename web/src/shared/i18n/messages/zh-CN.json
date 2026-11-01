@@ -3341,7 +3341,6 @@
   "systemSkills.folderRoot": "请选择单个技能文件夹，根目录需包含 SKILL.md。",
   "systemSkills.batchLimit": "每次最多导入 20 个 ZIP 包。",
   "systemSkills.uploadVersion": "上传新版本",
-  "systemSkills.uploadHelp": "支持多个独立 ZIP，或选择一个技能文件夹；文件夹根目录需包含 SKILL.md，可带脚本和参考文件。",
   "systemSkills.stepSelect": "1. 选择文件",
   "systemSkills.stepReview": "2. 检查包与版本",
   "systemSkills.stepConfirm": "3. 确认导入",
@@ -3357,13 +3356,12 @@
   "systemSkills.version": "版本",
   "systemSkills.versionFor": "{file} 的版本",
   "systemSkills.recheck": "重新检查",
-  "systemSkills.checkNote": "结构检查不能替代运行验收。同版本内容不可覆盖，修改时请使用新版本。",
   "systemSkills.license": "授权说明",
   "systemSkills.sourceURL": "来源说明或原始链接",
   "systemSkills.notes": "更新说明",
   "systemSkills.publishOnImport": "导入后立即发布",
-  "systemSkills.importImpact": "新技能的首个发布版本会设为默认并对所有工作区可见。既有技能的新版本保留原默认版本，已有会话不受影响。",
-  "systemSkills.draftImpact": "保存为草稿，发布前对工作区隐藏。不改变任何 Agent 绑定。",
+  "systemSkills.importImpact": "发布后对所有工作区可用。",
+  "systemSkills.draftImpact": "草稿对工作区隐藏。",
   "systemSkills.confirmImport": "导入并发布",
   "systemSkills.saveDraft": "保存草稿",
   "systemSkills.immutable": "上传的版本内容不可覆盖，修改时请使用新版本。",
@@ -3393,5 +3391,7 @@
   "systemSkills.noEvents": "暂无操作记录。",
   "systemSkills.operator": "操作人",
   "common.next": "下一步",
-  "common.previous": "上一步"
+  "common.previous": "上一步",
+  "systemSkills.requiredVersion": "请输入版本号",
+  "systemSkills.invalidVersion": "版本号格式无效"
 }

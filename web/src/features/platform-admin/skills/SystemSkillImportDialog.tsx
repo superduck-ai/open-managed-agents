@@ -21,6 +21,7 @@ type ImportItem = {
   version: string;
   title?: string;
   error?: string;
+  versionError?: string;
   done: boolean;
 };
 const maxUploadSize = 8 * 1024 * 1024;
@@ -69,7 +70,13 @@ export function SystemSkillImportDialog({
     if (target) body.append('skill_id', target.id);
     try {
       const preview = await client.request<SystemPackage>('/skills/inspect', { method: 'POST', body });
-      return { ...item, preview, title: preview.existing?.display_title ?? preview.name, error: undefined };
+      return {
+        ...item,
+        preview,
+        title: preview.existing?.display_title ?? preview.name,
+        version: item.version || (preview.existing || target ? '' : '1.0.0'),
+        error: undefined,
+      };
     } catch (cause) {
       return { ...item, preview: undefined, error: systemSkillErrorMessage(cause) };
     }
@@ -170,6 +177,19 @@ export function SystemSkillImportDialog({
       setBusy(false);
     }
   };
+  const continueImport = () => {
+    const invalid = items.find((item) => !item.done && !validSystemVersion(item.version));
+    if (invalid) {
+      update(invalid.key, {
+        versionError: invalid.version.trim()
+          ? msg('systemSkills.invalidVersion', 'Invalid version identifier')
+          : msg('systemSkills.requiredVersion', 'Enter a version'),
+      });
+      document.getElementById(`system-skill-version-${invalid.key}`)?.focus();
+      return;
+    }
+    setStep('confirm');
+  };
   const canContinue = systemImportReady(items, busy);
   return (
     <Dialog
@@ -185,14 +205,7 @@ export function SystemSkillImportDialog({
               ? msg('systemSkills.uploadVersion', 'Upload new version')
               : msg('systemSkills.import', 'Import skills')}
           </DialogTitle>
-          <DialogDescription>
-            {target
-              ? target.display_title
-              : msg(
-                  'systemSkills.uploadHelp',
-                  'Choose ZIP packages or one skill folder containing SKILL.md and optional supporting files.',
-                )}
-          </DialogDescription>
+          {target && <DialogDescription>{target.display_title}</DialogDescription>}
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           <p className="mb-4 text-xs text-muted-foreground">
@@ -238,12 +251,6 @@ export function SystemSkillImportDialog({
           )}
           {step === 'review' && (
             <>
-              <p className="mt-4 text-xs leading-5 text-muted-foreground">
-                {msg(
-                  'systemSkills.checkNote',
-                  'Structure checks do not verify runtime compatibility. Existing contents cannot be overwritten with the same version.',
-                )}
-              </p>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <label className="space-y-2 text-sm">
                   {msg('systemSkills.publisher', 'Publisher')}
@@ -290,16 +297,10 @@ export function SystemSkillImportDialog({
                 <Checkbox checked={publish} disabled={busy} onCheckedChange={(value) => setPublish(!!value)} />
                 {msg('systemSkills.publishOnImport', 'Publish immediately after import')}
               </label>
-              <p className="text-sm leading-6 text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {publish
-                  ? msg(
-                      'systemSkills.importImpact',
-                      'New skills become visible in all workspaces with their first version as default. New versions of existing skills keep the current default. Existing sessions are unchanged.',
-                    )
-                  : msg(
-                      'systemSkills.draftImpact',
-                      'Save as drafts, hidden from workspaces until published. No Agent bindings will be changed.',
-                    )}
+                  ? msg('systemSkills.importImpact', 'Available to all workspaces after publishing.')
+                  : msg('systemSkills.draftImpact', 'Drafts are hidden from workspaces.')}
               </p>
             </>
           )}
@@ -339,7 +340,7 @@ export function SystemSkillImportDialog({
             {step === 'select' ? msg('common.cancel', 'Cancel') : msg('common.previous', 'Previous')}
           </Button>
           {step === 'review' && (
-            <Button disabled={!canContinue} onClick={() => setStep('confirm')}>
+            <Button disabled={!canContinue} onClick={continueImport}>
               {msg('common.next', 'Next')}
             </Button>
           )}
@@ -422,17 +423,30 @@ function SystemImportItem({
               />
             </label>
           )}
-          <label className="flex items-center gap-2 text-xs">
-            {msg('systemSkills.version', 'Version')}
-            <Input
-              className="h-7 w-36"
-              aria-label={msg('systemSkills.versionFor', 'Version for {file}', { file: item.label })}
-              disabled={busy || item.done || step === 'confirm'}
-              value={item.version}
-              placeholder="1.0.0"
-              onChange={(event) => onChange({ version: event.target.value, error: undefined })}
-            />
-          </label>
+          <div className="space-y-1">
+            <label className="flex items-center gap-2 text-xs">
+              {msg('systemSkills.version', 'Version')}
+              <Input
+                id={`system-skill-version-${item.key}`}
+                className="h-7 w-36"
+                aria-label={msg('systemSkills.versionFor', 'Version for {file}', { file: item.label })}
+                aria-required
+                aria-invalid={!!item.versionError}
+                aria-describedby={item.versionError ? `system-skill-version-error-${item.key}` : undefined}
+                disabled={busy || item.done || step === 'confirm'}
+                value={item.version}
+                placeholder={msg('systemSkills.requiredVersion', 'Enter a version')}
+                onChange={(event) =>
+                  onChange({ version: event.target.value, error: undefined, versionError: undefined })
+                }
+              />
+            </label>
+            {item.versionError && (
+              <p id={`system-skill-version-error-${item.key}`} role="alert" className="text-xs text-destructive">
+                {item.versionError}
+              </p>
+            )}
+          </div>
         </div>
       )}
       {item.error && (
@@ -478,15 +492,10 @@ function systemPackageBody(item: ImportItem) {
 
 function systemImportReady(items: ImportItem[], busy: boolean) {
   const pendingItems = items.filter((item) => !item.done);
-  return (
-    !busy &&
-    pendingItems.length > 0 &&
-    pendingItems.every(
-      (item) =>
-        item.preview &&
-        !item.error &&
-        /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(item.version.trim()) &&
-        item.version.trim() !== 'latest',
-    )
-  );
+  return !busy && pendingItems.length > 0 && pendingItems.every((item) => item.preview && !item.error);
+}
+
+function validSystemVersion(version: string) {
+  const value = version.trim();
+  return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(value) && value !== 'latest';
 }

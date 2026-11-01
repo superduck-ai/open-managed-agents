@@ -81,9 +81,12 @@ for (const duplicate of [true, false]) {
         });
         expect(await screen.findByText('检查通过')).toBeTruthy();
         expect(writes).toHaveLength(0);
-        fireEvent.change(screen.getByLabelText('demo.zip 的版本'), { target: { value: '1.0.0' } });
+        expect((screen.getByLabelText('demo.zip 的版本') as HTMLInputElement).value).toBe('1.0.0');
+        expect((screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.queryByText(/支持多个独立 ZIP/)).toBeNull();
+        expect(screen.queryByText(/结构检查不能替代运行验收/)).toBeNull();
         fireEvent.click(screen.getByRole('button', { name: '下一步' }));
-        expect(screen.getByText(/新技能的首个发布版本/)).toBeTruthy();
+        expect(screen.getByRole('checkbox', { name: '导入后立即发布' })).toBeTruthy();
         fireEvent.click(screen.getByRole('button', { name: '导入并发布' }));
         await waitFor(() => expect(onImported).toHaveBeenCalledWith('demo'));
         expect(onClose).toHaveBeenCalled();
@@ -100,6 +103,53 @@ for (const duplicate of [true, false]) {
     },
   );
 }
+
+for (const [value, message] of [
+  ['', '请输入版本号'],
+  ['latest', '版本号格式无效'],
+  ['bad/version', '版本号格式无效'],
+]) {
+  test(`版本 ${JSON.stringify(value)} 就地提示，修正后可继续且无需重新检查包`, async () => {
+    const fetch = mock(async () => Response.json({ name: 'demo', existing: null }));
+    globalThis.fetch = fetch as typeof globalThis.fetch;
+    renderImport();
+    fireEvent.change(screen.getByLabelText('选择 ZIP 包'), {
+      target: { files: [new File(['fixture'], 'demo.zip')] },
+    });
+    expect(await screen.findByText('检查通过')).toBeTruthy();
+    const version = screen.getByLabelText('demo.zip 的版本') as HTMLInputElement;
+    fireEvent.change(version, { target: { value } });
+    expect((screen.getByRole('button', { name: '下一步' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    expect(screen.getByRole('alert').textContent).toBe(message);
+    expect(version.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(version);
+    expect(screen.getByText('检查通过')).toBeTruthy();
+    fireEvent.change(version, { target: { value: '2.0.0' } });
+    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+    expect(screen.getByRole('button', { name: '导入并发布' })).toBeTruthy();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+}
+
+test('已有技能追加版本保持空值，填写新版本后才能确认', async () => {
+  globalThis.fetch = mock(async () =>
+    Response.json({ name: 'demo', existing: { id: 'demo', display_title: 'Demo', revision: 3 } }),
+  ) as typeof fetch;
+  renderImport();
+  fireEvent.change(screen.getByLabelText('选择 ZIP 包'), {
+    target: { files: [new File(['fixture'], 'demo.zip')] },
+  });
+  expect(await screen.findByText('检查通过')).toBeTruthy();
+  const version = screen.getByLabelText('demo.zip 的版本') as HTMLInputElement;
+  expect(version.value).toBe('');
+  expect(version.placeholder).toBe('请输入版本号');
+  fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+  expect(screen.getByRole('alert').textContent).toBe('请输入版本号');
+  fireEvent.change(version, { target: { value: '2.0.0' } });
+  fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+  expect(screen.getByRole('button', { name: '导入并发布' })).toBeTruthy();
+});
 
 function directoryFile(path: string, content: string | ArrayBuffer = 'fixture') {
   const file = new File([content], path.split('/').at(-1)!);

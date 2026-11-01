@@ -1,3 +1,4 @@
+import { SystemSkillsPage } from '../features/platform-admin/skills/SystemSkillsPage';
 import { createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router';
 import { PlatformAdminLayout } from '../features/platform-admin/PlatformAdminLayout';
 import { SuperAdministratorsPage } from '../features/platform-admin/SuperAdministratorsPage';
@@ -52,6 +53,14 @@ const platformAdministratorsRoute = createRoute({
   getParentRoute: () => platformAdminRoute,
   path: 'administrators',
   component: SuperAdministratorsPage,
+});
+const platformSkillsRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: 'skills',
+  validateSearch: (search: Record<string, unknown>): { skill?: string } => ({
+    skill: typeof search.skill === 'string' ? search.skill : undefined,
+  }),
+  component: SystemSkillsPage,
 });
 const platformOrganizationDetailRoute = createRoute({
   getParentRoute: () => platformAdminRoute,
@@ -577,6 +586,7 @@ const routeTree = rootRoute.addChildren([
     platformOrganizationsRoute,
     platformOrganizationDetailRoute,
     platformAdministratorsRoute,
+    platformSkillsRoute,
   ]),
   loginRoute,
   invitationsRoute,

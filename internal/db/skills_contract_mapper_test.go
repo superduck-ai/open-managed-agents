@@ -25,7 +25,7 @@ func TestSkillContractMapperBranches(t *testing.T) {
 			order string
 		}{
 			{buildSkillVersionMapperListPageBySkillUUID(yourbatis.DialectPostgres, "workspace", "skill", 21, 0, !stable), "uuid"},
-			{buildBuiltinSkillMapperListVersionsPage(yourbatis.DialectPostgres, 1, 21, 0, !stable), "id"},
+			{buildBuiltinSkillMapperListVersionsPage(yourbatis.DialectPostgres, "skill", 21, 0, !stable), "id"},
 		} {
 			direction := "ASC"
 			if stable {

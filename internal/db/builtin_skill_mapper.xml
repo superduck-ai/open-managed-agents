@@ -15,7 +15,7 @@
         id,
         uuid,
         external_id,
-        skill_id,
+        skill_uuid,
         skill_external_id,
         version,
         name,
@@ -57,7 +57,7 @@
     <insert id="UpsertVersion" result="returning" resultType="builtinSkillVersionRow">
         INSERT INTO builtin_skill_versions (
             external_id,
-            skill_id,
+            skill_uuid,
             skill_external_id,
             version,
             name,
@@ -71,7 +71,7 @@
             deleted_at
         ) VALUES (
             #{params.ExternalID},
-            #{params.SkillID},
+            #{params.SkillUUID},
             #{params.SkillExternalID},
             #{params.Version},
             #{params.Name},
@@ -84,7 +84,8 @@
             #{params.CreatedAt},
             NULL
         )
-        ON CONFLICT (skill_id, version) DO UPDATE SET
+        ON CONFLICT (skill_uuid, version) DO UPDATE SET
+            state = 'published',
             name = EXCLUDED.name,
             description = EXCLUDED.description,
             directory = EXCLUDED.directory,
@@ -106,7 +107,7 @@
         SELECT
         <include refid="skillColumns"/>
         FROM builtin_skills
-        WHERE deleted_at IS NULL
+        WHERE deleted_at IS NULL AND listed AND latest_version IS NOT NULL
         ORDER BY created_at DESC, id DESC
         LIMIT #{limit}
         OFFSET #{offset}
@@ -115,7 +116,7 @@
     <select id="CountSkills" result="scalar">
         SELECT COUNT(*)
         FROM builtin_skills
-        WHERE deleted_at IS NULL
+        WHERE deleted_at IS NULL AND listed AND latest_version IS NOT NULL
     </select>
 
     <select id="FindSkillByExternalID" resultType="builtinSkillRow">
@@ -123,11 +124,12 @@
         <include refid="skillColumns"/>
         FROM builtin_skills
         WHERE external_id = #{externalID}
+        AND latest_version IS NOT NULL
         AND deleted_at IS NULL
     </select>
 
-    <select id="FindSkillIDByExternalID" result="scalar">
-        SELECT id
+    <select id="FindSkillUUIDByExternalID" result="scalar">
+        SELECT uuid
         FROM builtin_skills
         WHERE external_id = #{externalID}
         AND deleted_at IS NULL
@@ -137,7 +139,8 @@
         SELECT
         <include refid="versionColumns"/>
         FROM builtin_skill_versions
-        WHERE skill_id = #{skillID}
+        WHERE skill_uuid = #{skillUUID}
+        AND state = 'published'
         AND deleted_at IS NULL
         ORDER BY <choose><when test="oldestFirst">created_at ASC, id ASC</when><otherwise>created_at DESC, id DESC</otherwise></choose>
         LIMIT #{limit}
@@ -149,6 +152,7 @@
         <include refid="versionColumns"/>
         FROM builtin_skill_versions
         WHERE skill_external_id = #{skillExternalID}
+        AND state = 'published'
         AND (version = #{version} OR external_id = #{version} OR external_id = replace(#{version}, 'skill_version_', 'skver_'))
         AND deleted_at IS NULL
     </select>

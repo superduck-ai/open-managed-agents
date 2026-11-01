@@ -36,7 +36,7 @@ func Permissions(granted bool) Access {
 	a := Access{Permissions: []string{}}
 	if granted {
 		a.Role = new("super_admin")
-		a.Permissions = []string{"platform:access", "platform:organizations:read", "platform:organizations:write", "platform:organization-admins:manage", "platform:administrators:manage"}
+		a.Permissions = []string{"platform:access", "platform:organizations:read", "platform:organizations:write", "platform:organization-admins:manage", "platform:administrators:manage", "platform:skills:manage"}
 	}
 	return a
 }

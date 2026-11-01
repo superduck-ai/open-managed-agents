@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
@@ -61,6 +62,7 @@ func TestSystemSkillErrorsPreservePublicBoundary(t *testing.T) {
 		{db.ErrSystemSkillRevision, 409, "revision_conflict"},
 		{db.ErrVersionConflict, 409, "version_conflict"},
 		{db.ErrInvalidState, 409, "state_conflict"},
+		{db.ErrSystemSkillNameMismatch, 400, "skill_name_mismatch"},
 		{packageError{Status: 413, Message: "too large"}, 413, "invalid_package"},
 		{errors.New("private credential detail"), 503, "unavailable"},
 	} {
@@ -73,11 +75,19 @@ func TestSystemSkillErrorsPreservePublicBoundary(t *testing.T) {
 
 func TestSystemSkillRoutesRejectMissingPlatformIdentity(t *testing.T) {
 	routes := NewHandler(nil, nil, nil).AdminRoutes()
-	for _, method := range []string{http.MethodGet, http.MethodPost} {
-		response := httptest.NewRecorder()
-		routes.ServeHTTP(response, httptest.NewRequest(method, "/", nil))
-		if response.Code != http.StatusForbidden {
-			t.Fatalf("%s: %d %s", method, response.Code, response.Body.String())
+	for _, principal := range []auth.Principal{
+		{},
+		{CredentialType: auth.CredentialTypeAPIKey, UserUUID: "account"},
+		{CredentialType: auth.CredentialTypePlatformSession},
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(method, "/", nil)
+			request = request.WithContext(auth.WithPrincipal(request.Context(), principal))
+			routes.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("%s %s: %d %s", principal.CredentialType, method, response.Code, response.Body.String())
+			}
 		}
 	}
 }

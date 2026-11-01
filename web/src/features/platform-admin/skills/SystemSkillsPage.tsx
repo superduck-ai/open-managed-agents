@@ -36,6 +36,12 @@ export function SystemSkillsPage() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('');
   const [status, setStatus] = useState('all');
+  const statusLabels: Record<string, string> = {
+    all: msg('systemSkills.allStatuses', 'All statuses'),
+    listed: msg('systemSkills.listed', 'Listed'),
+    unlisted: msg('systemSkills.unlisted', 'Unlisted'),
+    draft: msg('systemSkills.draft', 'Draft'),
+  };
   const [offset, setOffset] = useState(0);
   const query = useQuery({
     queryKey: [...systemSkillsKey, 'list', filter, status, offset],
@@ -135,24 +141,10 @@ export function SystemSkillsPage() {
           }}
         >
           <SelectTrigger aria-label={msg('systemSkills.status', 'Status')}>
-            <SelectValue>
-              {
-                {
-                  all: msg('systemSkills.allStatuses', 'All statuses'),
-                  listed: msg('systemSkills.listed', 'Listed'),
-                  unlisted: msg('systemSkills.unlisted', 'Unlisted'),
-                  draft: msg('systemSkills.draft', 'Draft'),
-                }[status]
-              }
-            </SelectValue>
+            <SelectValue>{statusLabels[status]}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {Object.entries({
-              all: msg('systemSkills.allStatuses', 'All statuses'),
-              listed: msg('systemSkills.listed', 'Listed'),
-              unlisted: msg('systemSkills.unlisted', 'Unlisted'),
-              draft: msg('systemSkills.draft', 'Draft'),
-            }).map(([value, label]) => (
+            {Object.entries(statusLabels).map(([value, label]) => (
               <SelectItem key={value} value={value}>
                 {label}
               </SelectItem>

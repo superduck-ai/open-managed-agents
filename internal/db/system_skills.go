@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	ErrSystemSkillDenied   = errors.New("system skill administration denied")
-	ErrSystemSkillRevision = errors.New("system skill revision changed")
+	ErrSystemSkillDenied       = errors.New("system skill administration denied")
+	ErrSystemSkillRevision     = errors.New("system skill revision changed")
+	ErrSystemSkillNameMismatch = errors.New("system skill name does not match")
 )
 
 type SystemSkillImport struct {
@@ -102,7 +103,7 @@ func (d *DB) ImportSystemSkill(ctx context.Context, input SystemSkillImport) (Sy
 				return err
 			}
 			if len(versions) > 0 && versions[0].Name != input.Version.Name {
-				return ErrInvalidState
+				return ErrSystemSkillNameMismatch
 			}
 		}
 		version := input.Version
@@ -110,18 +111,17 @@ func (d *DB) ImportSystemSkill(ctx context.Context, input SystemSkillImport) (Sy
 		if err := mapper.InsertVersion(ctx, version); err != nil {
 			return err
 		}
+		published := false
 		if input.Publish {
-			if _, err := mapper.Publish(ctx, skill.UUID, version.Version); err != nil {
+			published, err = publishSystemSkill(ctx, mapper, &skill, version.Version)
+			if err != nil {
 				return err
-			}
-			if skill.LatestVersion == nil {
-				skill.LatestVersion, skill.Listed = new(version.Version), true
 			}
 		}
 		if err := saveSystemSkill(ctx, mapper, skill, input.ActorUUID, "import_draft", version.Version); err != nil {
 			return err
 		}
-		if input.Publish {
+		if published {
 			if err := mapper.Record(ctx, SystemSkillEvent{SkillUUID: skill.UUID, ActorUUID: input.ActorUUID, Action: "publish", Version: version.Version}); err != nil {
 				return err
 			}
@@ -157,8 +157,13 @@ func (d *DB) ChangeSystemSkill(ctx context.Context, input SystemSkillChange) (Sy
 		if skill.Revision != input.Revision {
 			return ErrSystemSkillRevision
 		}
-		if err := changeSystemSkill(ctx, mapper, &skill, input); err != nil {
+		changed, err := changeSystemSkill(ctx, mapper, &skill, input)
+		if err != nil {
 			return err
+		}
+		if !changed {
+			result = skill
+			return nil
 		}
 		if err := saveSystemSkill(ctx, mapper, skill, input.ActorUUID, input.Action, input.Version); err != nil {
 			return err
@@ -169,43 +174,59 @@ func (d *DB) ChangeSystemSkill(ctx context.Context, input SystemSkillChange) (Sy
 	return result, err
 }
 
-func changeSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill *SystemSkill, input SystemSkillChange) error {
+func publishSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill *SystemSkill, version string) (bool, error) {
+	current, err := mapper.Version(ctx, skill.UUID, version)
+	if err != nil {
+		return false, mapNoRows(err)
+	}
+	if current.State == "published" {
+		return false, nil
+	}
+	changed, err := mapper.Publish(ctx, skill.UUID, version)
+	if err != nil {
+		return false, err
+	}
+	if changed != 1 {
+		return false, ErrInvalidState
+	}
+	if skill.LatestVersion == nil {
+		skill.LatestVersion, skill.Listed = new(version), true
+	}
+	return true, nil
+}
+
+func changeSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill *SystemSkill, input SystemSkillChange) (bool, error) {
 	switch input.Action {
-	case "publish", "set_default":
+	case "publish":
+		return publishSystemSkill(ctx, mapper, skill, input.Version)
+	case "set_default":
 		version, err := mapper.Version(ctx, skill.UUID, input.Version)
 		if err != nil {
-			return mapNoRows(err)
+			return false, mapNoRows(err)
 		}
-		if input.Action == "set_default" && version.State != "published" {
-			return ErrInvalidState
-		}
-		if input.Action == "publish" {
-			if _, err := mapper.Publish(ctx, skill.UUID, version.Version); err != nil {
-				return err
-			}
+		if version.State != "published" {
+			return false, ErrInvalidState
 		}
 		if skill.LatestVersion == nil {
-			skill.LatestVersion, skill.Listed = new(version.Version), true
+			skill.Listed = true
 		}
-		if input.Action == "set_default" {
-			skill.LatestVersion = new(version.Version)
-		}
+		skill.LatestVersion = new(version.Version)
 	case "list":
 		if skill.LatestVersion == nil {
-			return ErrInvalidState
+			return false, ErrInvalidState
 		}
 		version, err := mapper.Version(ctx, skill.UUID, *skill.LatestVersion)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if version.State != "published" {
-			return ErrInvalidState
+			return false, ErrInvalidState
 		}
 		skill.Listed = true
 	case "unlist":
 		skill.Listed = false
 	default:
-		return ErrInvalidState
+		return false, ErrInvalidState
 	}
-	return nil
+	return true, nil
 }

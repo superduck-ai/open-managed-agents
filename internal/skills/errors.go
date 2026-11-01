@@ -120,6 +120,8 @@ func systemSkillError(err error) *systemSkillPublicError {
 		return &systemSkillPublicError{Status: 409, Code: "revision_conflict", Message: "技能已被更新，请刷新后重新确认"}
 	case errors.Is(err, db.ErrVersionConflict):
 		return &systemSkillPublicError{Status: 409, Code: "version_conflict", Message: "相同版本已存在且内容不同，请使用新版本号"}
+	case errors.Is(err, db.ErrSystemSkillNameMismatch):
+		return &systemSkillPublicError{Status: 400, Code: "skill_name_mismatch", Message: "技能名称必须与目标技能名称一致"}
 	case errors.Is(err, db.ErrInvalidState):
 		return &systemSkillPublicError{Status: 409, Code: "state_conflict", Message: "当前状态不允许此操作，请检查目标技能和已发布版本"}
 	default:

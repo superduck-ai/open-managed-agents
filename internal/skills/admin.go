@@ -92,13 +92,6 @@ func (h *Handler) requireSystemAdministrator(next http.Handler) http.Handler {
 		if !ok || principal.CredentialType != auth.CredentialTypePlatformSession || principal.UserUUID == "" {
 			return db.ErrSystemSkillDenied
 		}
-		account, err := h.db.GetPlatformAdminAccount(r.Context(), principal.UserUUID)
-		if err != nil {
-			return err
-		}
-		if !account.Granted {
-			return db.ErrSystemSkillDenied
-		}
 		next.ServeHTTP(w, r)
 		return nil
 	})
@@ -255,13 +248,6 @@ func (h *Handler) inspectSystemPackage(w http.ResponseWriter, r *http.Request) e
 	}
 	skill, err := h.db.GetSystemSkill(r.Context(), id)
 	if err == nil {
-		versions, lookupErr := h.db.SystemSkillVersions(r.Context(), skill.UUID, 1, 0)
-		if lookupErr != nil {
-			return lookupErr
-		}
-		if len(versions) > 0 && versions[0].Name != pkg.Name {
-			return systemInvalid("技能名称必须与目标技能名称一致")
-		}
 		result.Existing = new(systemSkillDTO(skill))
 	} else if !errors.Is(err, db.ErrNotFound) {
 		return err

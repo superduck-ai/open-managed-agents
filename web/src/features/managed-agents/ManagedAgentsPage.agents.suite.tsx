@@ -493,6 +493,7 @@ export function registerManagedAgentsAgentsTests() {
       ],
       {
         skills: [
+          { id: 'system_skill', displayTitle: 'System skill', latestVersion: '1', source: 'anthropic' },
           {
             id: 'skill_reporting',
             displayTitle: 'Reporting skill',
@@ -531,6 +532,9 @@ export function registerManagedAgentsAgentsTests() {
     expect(await within(dialog).findByText('Helper agent')).toBeTruthy();
 
     fireEvent.click(within(dialog).getByRole('combobox', { name: 'Add skill' }));
+    const systemSkillOption = await screen.findByRole('option', { name: /System skill/ });
+    expect(systemSkillOption.textContent).toContain('System built-in');
+    expect(systemSkillOption.textContent).not.toContain('anthropic');
     fireEvent.click(await screen.findByRole('option', { name: /Reporting skill/ }));
     expect(within(dialog).getByText('Reporting skill')).toBeTruthy();
 
@@ -1143,7 +1147,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(within(skillsCard).getByText('reporting').closest('code')).toBeTruthy();
     expect(within(skillsCard).getByText('v2026-07-01')).toBeTruthy();
     expect(within(skillsCard).queryByText('Update available (v20260708)')).toBeNull();
-    expect(within(skillsCard).getAllByText('Anthropic').length).toBeGreaterThan(0);
+    expect(within(skillsCard).getAllByText('System built-in').length).toBeGreaterThan(0);
     expect(within(skillsCard).getAllByText('Custom').length).toBeGreaterThan(0);
     const triageHoverTarget = screen
       .getByText('Customer triage')
@@ -1156,7 +1160,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(screen.getByText('Agent version')).toBeTruthy();
     expect(screen.getByText('2026-07-01')).toBeTruthy();
     expect(screen.getByText('Resolved')).toBeTruthy();
-    expect(screen.getAllByText('Anthropic').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('System built-in').length).toBeGreaterThan(0);
     fireEvent.click(triageHoverTarget);
     await waitFor(() => expect(screen.queryByText('Source')).toBeNull());
     expect(screen.queryByRole('columnheader', { name: 'Skill' })).toBeNull();

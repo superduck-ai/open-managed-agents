@@ -387,7 +387,7 @@ function SkillsTable({
                   {skill.display_title || skill.id}
                 </DataTableCell>
                 <DataTableCell className="truncate">
-                  <SkillSourceBadge source={skill.source} publisher={skill.publisher} />
+                  <SkillSourceBadge source={skill.source} />
                 </DataTableCell>
                 <DataTableCell className="truncate text-muted-foreground" title={skill.latest_version}>
                   {formatSkillVersionDate(skill.latest_version, locale)}
@@ -438,7 +438,7 @@ function SkillDrawerHeader({
             <SheetTitle className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]" title={title}>
               {title}
             </SheetTitle>
-            {skill ? <SkillSourceBadge source={skill.source} publisher={skill.publisher} /> : null}
+            {skill ? <SkillSourceBadge source={skill.source} /> : null}
           </div>
           {skill ? (
             <SheetDescription className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -1128,19 +1128,12 @@ function DeleteSkillDialog({
   );
 }
 
-function SkillSourceBadge({ source, publisher }: { source: string; publisher?: string }) {
+function SkillSourceBadge({ source }: { source: string }) {
   const { msg } = useI18n();
   const label = formatSkillSource(source, msg);
   return (
-    <Badge
-      variant="secondary"
-      className="max-w-full rounded-md text-muted-foreground"
-      title={publisher ? `${label} / ${publisher}` : label}
-    >
-      <span className="truncate">
-        {label}
-        {publisher ? ` / ${publisher}` : ''}
-      </span>
+    <Badge variant="secondary" className="max-w-full rounded-md text-muted-foreground" title={label}>
+      <span className="truncate">{label}</span>
     </Badge>
   );
 }

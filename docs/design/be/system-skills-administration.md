@@ -61,7 +61,7 @@ flowchart LR
 
 ## 工作区与会话兼容
 
-旧 `/v1/skills` beta 的内置 source 值仍为 anthropic，稳定接口仍为 anthropic_example，Agent 引用 type 不变；这些兼容类别不再被界面误解为发布者。beta 列表与详情可附带 publisher/source_url/license，工作区界面用“系统内置 / 发布者”展示。
+旧 `/v1/skills` beta 的内置 source 值仍为 anthropic，稳定接口仍为 anthropic_example，Agent 引用 type 不变；这些兼容类别不再被界面误解为发布者。beta 列表与详情可附带 publisher/source_url/license，工作区技能列表、详情、Agent 配置与技能选择器统一用“系统内置”展示，通过共享来源映射转换兼容值，不拼接发布者。发布者仅在超管列表与详情中展示，API 的来源与绑定类型保持不变。
 
 工作区技能列表和组合分页计数只包含 listed 且有默认版本的系统技能。草稿不在公开技能详情、版本列表、内容下载和运行时解析中暴露。
 

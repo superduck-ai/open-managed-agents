@@ -735,7 +735,7 @@ function AgentSkillsList({
                           variant="secondary"
                           className="h-auto rounded-md px-1.5 py-0.5 text-xs font-normal text-muted-foreground bg-secondary/80"
                         >
-                          {formatAgentSkillSource(skill.source)}
+                          {formatAgentSkillSource(skill.source, msg)}
                         </Badge>
                       </div>
                       <SkillVersionBadges requestedVersion={skill.requestedVersion} msg={msg} />
@@ -789,7 +789,7 @@ function AgentSkillsList({
                       </dt>
                       <dd className="text-foreground">
                         <Badge variant="secondary" className="h-auto rounded-md px-2 py-0.5 text-xs font-normal">
-                          {formatAgentSkillSource(skill.source)}
+                          {formatAgentSkillSource(skill.source, msg)}
                         </Badge>
                       </dd>
                     </div>

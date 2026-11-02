@@ -63,7 +63,9 @@ function AdminSidebar({ email }: { email: string }) {
       </SidebarHeader>
       <SidebarContent className="px-2 py-2">
         <SidebarGroup className="p-0">
-          <SidebarGroupLabel>{msg('platformAdmin.globalAdministration', 'Global administration')}</SidebarGroupLabel>
+          {!organizationUuid && (
+            <SidebarGroupLabel>{msg('platformAdmin.globalAdministration', 'Global administration')}</SidebarGroupLabel>
+          )}
           <SidebarGroupContent>
             <nav aria-label={msg('platformAdmin.administrationNavigation', 'Administration navigation')}>
               <SidebarMenu>

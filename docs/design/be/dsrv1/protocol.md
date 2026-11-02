@@ -1,6 +1,6 @@
 # DSRv1：DSH Session Remote 协议
 
-状态：设计草案（第 4 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`；修订记录见第 18 节。
+状态：设计草案（第 5 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
 
 冻结条件：第 7（审批）、第 9（输入与 turn）、第 10（公开状态 reducer）三个状态机的不变量经评审确认，第 17 节待定问题关闭。
 
@@ -90,7 +90,7 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 - 执行端接口挂载在 `/v1/dsr/` 下，按 chi 子路由注册，不走 `/v1/*` workspace API key 鉴权回退。
 - 每个请求携带 `DSR-Protocol: 1`。缺失或不支持返回 `400`，`DSR-Error: unsupported_protocol`。
 - 注册响应包含 `capabilities`（字符串数组），表示后端接受的输出类型与输入 kind。DSH 不发送不在其中的类型。v1 的输出与输入词汇固定，新增类型必须先扩展 `capabilities`，所以未知类型返回 400 不会在滚动升级中误伤（切流顺序见 13.3）。
-- 所有 ID、epoch、序号在 JSON 中均为字符串。
+- DSR 自有的 ID、epoch 与游标（`next_seq`、`from_seq`、`next_from_seq`）在 JSON 中为字符串。内嵌的原生 Header/Event 保持原样，`SessionEvent.seq` 仍是 number，服务端校验它是非负安全整数（≤ 2^53 − 1）。
 
 ### 4.2 鉴权
 
@@ -106,7 +106,10 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 - `POST /v1/dsr/claims?block_ms=25000`：请求与响应字段同现行 claim（`session_id`、`worker_epoch`、`ingress_token`、`model_token`、`claim_expires_at`、`trace_parent`），token 增加 `protocol` claim。**不合并注册，不内嵌 context。**
 - 领取 SQL 增加 `metadata.config.worker_protocol = 'dsr1'`；`migrating` 状态的会话不被任何一侧领取（13.2）。
-- **可领取条件增加 open turn**：除现行的"存在领取请求或公开会话 running/rescheduling"外，若存在 `processing` 且非 terminal 的 turn，并且租约加宽限已过，也可领取。这覆盖了等待审批时崩溃的情形：此时公开会话为 `idle(requires_action)`，现行条件不会命中，注册时的接管清理（4.4）也就永远无法触发。
+- **可领取条件增加未结算 turn**：除现行的"存在领取请求或公开会话 running/rescheduling"外，若租约加宽限已过，且存在以下任一 turn，也可领取：
+  - `processing` 且非 terminal（等待审批时崩溃：公开会话为 `idle(requires_action)`，现行条件不会命中，注册时的接管清理（4.4）也就无法触发）；
+  - terminal 但 `acked_at` 为空（`complete` 已提交、`ack processed` 前崩溃：公开会话可能已经 idle，未 ACK 的输入仍需新 owner 补 ACK）。
+- 这一扩展仍排除：`budget_reached` 暂停中的会话、`worker_claim_expires_at` 未到期的耗尽 hold 与退避行、非 active 或已终止的 Code Session。
 - 旧 claim 接口**必须**同时增加 `worker_protocol IS NULL OR worker_protocol = 'ccrv2'`，否则新 DSH 以 `idle` 释放后，旧 DSH 可以重新领取并写入旧路径，造成 split-brain。这两个过滤属于 P1 的正确性要求。
 - `worker_claim_expires_at` 保持现有职责：领取到注册的窗口，以及 `HoldExhausted`、`FailPermanently`、`admission_failed` 退避的停车列，`ResetExhausted` 与指标照常读取。
 - `POST /v1/dsr/claims/{code_session_id}/release`：同现行，字段名不变。
@@ -161,6 +164,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 | --- | --- | --- |
 | 400 | `invalid_request` | 视为缺陷，不重试 |
 | 400 | `unsupported_protocol` | 停止进程 |
+| 400 | `unsupported_trajectory_version` | 以 `permanent` 释放会话（6.9） |
 | 401/403 | `unauthorized` | 停止该会话 |
 | 404 | `session_not_found` | 退役会话 |
 | 409 | `epoch_superseded` | fence 主线程与全部子线程，停止写入 |
@@ -174,7 +178,8 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 | 409 | `input_not_eligible` | 视为缺陷，停止该会话 |
 | 409 | `input_not_completed` | 不 ACK，先完成 `complete` |
 | 410 | `lease_expired` | 同 epoch 重新 register（4.4） |
-| 413 | `payload_too_large` | 当前输入以 `failed` 结束 |
+| 410 | `trajectory_purged` | 退役会话，不再恢复（6.8） |
+| 413 | `payload_too_large` | 本地日志尚未写入时：当前输入以 `failed` 结束；已写入不可复制的事件时：以 `permanent` 释放会话（6.5） |
 | 429/5xx | — | 有界退避重试 |
 
 - 缺少 `DSR-Error` 的 4xx（例如中间代理生成的错误）按 `epoch_superseded` 的保守路径处理：fence、停止写入、不 release，等待租约过期后重新领取。
@@ -246,7 +251,13 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 4. 第一条未确认条目必须等于 `next_seq`，否则返回 `409 trajectory_gap`，并在 `DSR-Next-Seq` 中给出当前值。
 5. 超过 32 KiB 的原始 JSON 走 `eventpayload` 外置；插入 internal event 行，分配全局 `sequence_num`，更新 `next_seq`。
 
-响应 `200 {"next_seq": "42"}`。单条事件上限 16 MiB（与对象存储上限一致），请求体上限沿用 ingress 的 16 MiB；单条过大返回 `413`，不靠拆批解决。
+响应 `200 {"next_seq": "42"}`。
+
+大小限制：
+
+- 单条原生事件的原始 JSON 上限 **15 MiB**，请求体上限沿用 ingress 的 16 MiB，留出 1 MiB 给请求封装；单条超限返回 `413`，不靠拆批解决。
+- **超限必须在写入本地日志之前拦截。** DSH 在追加原生事件前检查大小；工具结果等大内容沿用现有的外置与截断（例如外部 MCP 大结果落盘），使事件不超过上限。
+- 若超限事件仍进入了本地不可变日志，它和其后的所有事件都无法复制，屏障 1、2、4 再也无法满足。此时不能只把当前输入标为 `failed`：DSH 以 `permanent` 释放会话，后端按现有永久失败路径发布 `session.error` 与 `idle(retries_exhausted)`，该会话不再被领取。
 
 ### 6.6 存储
 
@@ -282,20 +293,26 @@ dsr_trajectories
 - `GET /v1/dsr/sessions/{id}/trajectories` → `{"data": [{"dsh_session_id","parent_dsh_session_id","session_thread_id","header_present","next_seq"}]}`。
 - `GET /v1/dsr/sessions/{id}/trajectories/{dsh_session_id}?from_seq=0&limit_bytes=4194304` → `{"header": {...}|null, "events": [...], "next_from_seq": "37"|null}`。
   - `from_seq` 包含该序号，`header` 只在 `from_seq = 0` 时返回。
-  - 按原始字节累计分页，至少一条，`limit_bytes` 上限 8 MiB。
+  - `limit_bytes` 是软预算（上限 8 MiB），按原始字节累计，Header 计入预算。每页至少返回一条；单条超过预算时该页只含这一条，响应仍可达 15 MiB 加封装。
   - 使用现有"归档 + PostgreSQL"合并读回与外置 payload 还原路径；已归档行不会被判为缺口。
+- 定位：`dsr_trajectories` 只记录水位，不记录每条事件的位置。PostgreSQL 行已物理删除时，读取按 Code Session 扫描其归档段，再按 v2 字段或幂等键（6.6）过滤出目标 trajectory。扫描成本与会话总日志量成正比，可以接受；若测量证明不可接受，再为归档段增加 `dsh_session_id` 索引。
 - GET 只做鉴权与归属校验，不要求当前 epoch。旧 epoch 的 token 可以读，不能写。
+- **接管时的前缀核对保留不变**：服务端 `next_seq` 只能证明远端长度，不能证明内容一致。DSH 现行流程（读取并校验远程历史，判断本地与远端是否互为前缀，再水合或追加）照常执行；本地更长且已确认部分内容不同的情况，仍按现行规则报错并保留本地文件。
 
 ### 6.8 保留与压缩
 
 - trajectory 是长期日志，沿用 internal events 的保留、归档与物理删除规则，不适用入站消息的 30 天期限。
+- 需要区分两种删除：**归档后删除 PostgreSQL 行**（归档段仍是完整副本，读取、幂等比较与还原照常工作）与**删除最后一份副本**（归档段或对象也被删除）。后者发生后，`dsr_trajectories` 标记为 `purged`：读取返回 `410`，`DSR-Error: trajectory_purged`；追加返回同一错误；领取 SQL 排除该会话。不能返回看似完整、实际有缺口的日志。
 - 不再使用 `is_compaction` 过滤；原生压缩事件是普通 Event。
 
 ### 6.9 DSH 原生格式升级
 
 trajectory 一经确认不可改写，而 DSH 升级可能改变 Header 结构、版本号或 seq 的生成方式（例如上游 Session 格式迁移在读取时重写记录）。约束如下：
 
-- 一条 trajectory 的 Header `version` 在创建时固定。DSH 升级后，已有 trajectory 继续按原版本追加；新版本只用于新建的 trajectory。
+- 区分两种迁移：OMA 传输层的回填（第 13 节，不改写 payload）与 DSH 原生格式迁移（例如上游 v3 到 v4 的迁移会修改 Header、插入事件并重新映射 seq）。后者产生的是"同一 Session 的另一份日志"，不能接续到已确认的 trajectory 上。
+- **DSRv1 只支持固定的原生格式版本 4**，与当前 `0.2.2-alpha.2` 一致。Header PUT 校验 `version` 在服务端允许列表 `[4]` 内，否则返回 `400 unsupported_trajectory_version`；不接受迁移后的接续写入。
+- 一条 trajectory 的 Header `version` 在创建时固定。DSH 升级后，已有 trajectory 继续按原版本追加。
+- 支持新的原生版本需要引入按 generation 划分的 trajectory（同一 `dsh_session_id` 下多代日志，旧代只读），属于 DSRv2 的范围。
 - DSH 可以在内存中把旧版本记录升级后使用，但**不得把改写后的 Header 或 Event 重新上传**。服务端对已确认序号的任何差异都按 6.5 判为 `trajectory_conflict`。
 - 需要改写已确认记录或改变 seq 语义的格式变更，与 DSRv1 不兼容。这类变更必须先给出显式迁移方案（新 trajectory 版本、离线转换工具与回滚），评审通过后才能升级 DSH 依赖。
 - DSH 依赖升级的检查清单增加一项：对照上游 [Session 格式与发布状态](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/session-format-status.zh.md)，确认新版本能以原版本继续追加已有日志。
@@ -319,7 +336,9 @@ trajectory 一经确认不可改写，而 DSH 升级可能改变 Header 结构�
 ```
 
 - **身份**：`request_id = "dsrp_" + base32(sha256(code_session_id, dsh_session_id, tool_use_id))`，由服务端派生并在响应中返回；DSH 用同样规则在本地计算。审批按 `(dsh_session_id, tool_use_id)` 去重，恢复者无需知道旧进程的随机 ID 就能取消或查询。
-- **归属**：`input_id` 必须是该 Code Session 下处于 `processing` 的 task turn；`dsh_session_id` 对应的线程必须是该输入的目标线程或其委派出的子线程。不满足返回 `409 input_not_eligible`。
+- **归属**：`input_id` 必须是该 Code Session 下处于 `processing` 的 task turn；`dsh_session_id` 对应的线程必须是该输入的目标线程，或同一 Code Session 内的子线程。不满足返回 `409 input_not_eligible`。
+- **子线程执行与输入的关联**：同一子线程可以被多次委派，静态的 parent 关系只能证明它属于该会话，不能证明某次调用属于当前输入。DSRv1 以 DSH 声明的 `input_id` 为准；服务端能校验的只有"该输入正在 processing"和"线程在同一会话树内"。由于 DSH 串行处理 task 输入，同一时刻至多有一个 processing turn，这一约束足以排除跨输入串扰。
+- **接管不继承审批**：新 owner 不恢复旧 owner 的等待项（4.4 把它们标为 `superseded`），恢复后的新调用使用新的 `tool_use_id`，从而得到新的 `request_id`。
 - **工具身份**：
   - `builtin`：DSH 内置工具，按 Agent 快照的内置工具集策略判定。
   - `mcp`：外部 MCP 工具，`server` 必填。
@@ -378,6 +397,8 @@ dsr_permission_requests
 | 重试，摘要相同 | 返回当前状态；`resolved` 附 `decision`（含 `external_result`），终态附 `state` |
 | 重试，摘要不同 | `409 permission_idempotency_mismatch` |
 | 已有墓碑 | `200 {"state": "cancelled"}`，不写公开事件 |
+
+校验顺序：鉴权与 epoch → **按 `request_id` 查找已有记录**（墓碑或任何终态、pending，命中则按上表返回，不再做后续校验）→ 新建前的归属校验（`input_id` 处于 processing、线程归属）→ 权限计算。终态重试和墓碑因此不会因为输入已不再 processing 而被拒绝。
 
 - 重试返回首次判定，不随后续策略变化改变。执行时的重验由 `/sandbox/mcp` 网关负责（每次 `tools/call` 重算，现行行为）；不经过网关的工具以本接口判定为准，与现行一致。
 - 云沙箱内策略为 `allow` 的内置工具继续由 DSH 本地放行，不调用本接口。
@@ -502,7 +523,7 @@ dsr_turns
   reason text null                      -- 见 9.4
   request_sha256 bytea null
   worker_epoch bigint null              -- processing/terminal 时的 epoch
-  accepted_at, processing_at, completed_at timestamptz
+  accepted_at, processing_at, completed_at, acked_at timestamptz
   unique (code_session_uuid, input_id)
 ```
 
@@ -521,6 +542,8 @@ stateDiagram-v2
 - **终态优先**：对 terminal turn 的任何重试，都先按幂等规则返回首次结果，不再检查 processing 前置条件。
 - 接管不重置 turn：新 owner 收到重投后以新 epoch 再次回执 `processing`，`worker_epoch` 更新为新值。
 - terminal 行永久保留到会话删除或保留期清理，用于幂等与接管补 ACK；跨进程按 `(code_session_uuid, input_id)` 查询。
+- `acked_at` 由 `ack processed` 在 DoubleAck 成功的同一事务内写入，只用于领取资格（4.3）与诊断，不参与 reducer。DoubleAck 成功但事务提交失败时，`acked_at` 为空，会话可能被多领取一次，新 owner 的补 ACK 被 JetStream 忽略，结果正确。
+- DSH 现行"已完成输入的重投直接补发事件并 ACK"的恢复分支不能机械迁移：DSRv1 中该分支依次执行 `processing`（no-op）、补发输出、`complete`（返回首次结果）、`ack processed`。
 
 ### 9.4 Complete
 
@@ -581,9 +604,9 @@ stateDiagram-v2
 | 4 | 子线程由 DSH 报告为 running | `running` |
 | 5 | 否则 | `idle`，stop reason 取最近 terminal：`success`/`cancelled` → `end_turn`，`failed`/`recovered` → `retries_exhausted` |
 
-Session 聚合：任一线程 `requires_action` → `idle(requires_action)`；否则任一线程 `running` → `running`；否则取主线程的 idle 原因。主线程失败后子线程结束不覆盖失败 stop reason；`retries_exhausted` 的粘滞与时间戳规则按现行 `resolveIdleStopReasonTx` 迁移。
+Session 聚合**沿用现行 `sessionStatusAfterThread` 的优先级**：任一线程 `running` → `running`；否则任一线程 `rescheduling` → `rescheduling`；否则 `idle`，原因按以下顺序取第一个命中：`budget_reached`、任一线程 `requires_action`、主线程的 idle 原因。因此一个子线程等待审批时，其他线程可以继续执行，Session 保持 `running`，与现行并行语义一致。输入准入不随之改变：只要任一线程存在 pending 审批，新的 `user.message` 仍按 10.5 被拒绝。主线程失败后子线程结束不覆盖失败 stop reason；`retries_exhausted` 的粘滞与时间戳规则按现行 `resolveIdleStopReasonTx` 迁移。
 
-**失败后仍有排队输入**：A 以 `failed` 结束且 B 已 accepted 时，按上表 B 使主线程保持 `running`，`session.error` 照常发布，DSH 继续处理 B。实现前需要与现行 `HasInputBlockingIdle` 等规则逐条核对；不一致时以现行行为为准并修订本节。
+**失败后仍有排队输入**：保留现行行为。现行 `resolveIdleStopReasonTx` 对 `retries_exhausted` 分支先返回，不执行 `HasInputBlockingIdle`。因此 A 以 `failed`/`recovered` 结束时，即使 B 已排队，也照常发布 `session.error` 与 `idle(retries_exhausted)`；B 开始处理时再回到 `running`。时间戳对齐规则（取最近 turn start 与上一状态的较晚者）按现行实现迁移。只有 `success`/`cancelled` 的 idle 受排队输入抑制。表中优先级 3 因此只用于 `success`/`cancelled` 之后的判断。
 
 ### 10.3 触发点
 
@@ -603,7 +626,12 @@ reducer 只在以下事务内运行，每个触发点都在同一事务内写入
 
 ### 10.4 状态事件 ID
 
-状态事件 ID 由 `(code_session_id, session_thread_id, 触发类型, 触发 ID, 结果状态, stop_reason)` 确定性派生；Session 级事件与每个线程的 `session.thread_status_*` 各自独立派生，同一触发引起多个线程变化时不会相互碰撞。该规则替代现行 `syncPublicSessionFromWorker` 与预算 idle 使用的随机 `ids.New("sevt_")`。同一触发的重试不会追加新的状态事件；结果状态与当前相同时不写事件，与现行"状态未变则丢弃"一致。
+状态事件 ID 替代现行 `syncPublicSessionFromWorker` 与预算 idle 使用的随机 `ids.New("sevt_")`：
+
+- **输入字段**：`code_session_id`、目标（`session` 或具体 `session_thread_id`）、完整公开事件类型（如 `session.status_idle`、`session.thread_status_idle`）、触发类型、触发 ID、`stop_reason.type`、`stop_reason.detail`，以及排序去重后的 `stop_reason.event_ids`。
+- **编码**：固定域前缀 `oma.dsr.status.v1`，各字段按上述固定顺序以"长度前缀 + UTF-8 字节"拼接，`event_ids` 内部同样逐项长度前缀，取 SHA-256 后以 `sevt_` 加 base32 前 26 位表示。
+- 同一触发改变多个线程时，目标与事件类型不同，ID 不冲突；同一触发的重试得到相同 ID，不追加事件。
+- **等价判断比较完整可观察状态**：状态、`stop_reason.type`、`detail`，以及排序去重后的 `event_ids`，与现行 `session_event_state.go` 的比较一致。两个 pending 解决一个后，状态仍是 `requires_action`，但 `event_ids` 变了，必须写入新事件。
 
 ### 10.5 依赖迁移
 
@@ -692,17 +720,19 @@ stateDiagram-v2
    - 公开会话 idle，且不是 `requires_action` 或 `budget_reached`；
    - 不存在 `processed_at IS NULL` 的 `user.message`；
    - `external_metadata` 中没有待确认工具请求。
+   - 进入 `migrating`（epoch 已推进，旧 owner 无法再拉取）后，该会话两个 durable consumer 的 `num_pending` 与 `num_ack_pending` 都为 0。`processed_at` 只表示已开始处理，不能证明已结算；"已完成但未 ACK"的旧输入只能通过 consumer 状态排除。检查不通过时转回 `ccrv2`。
 
    不满足的会话保持 `ccrv2`，由旧 DSH 继续服务，之后再试；始终不静止的会话可以一直留在旧协议上直到结束。
-3. 旧 DSH 与新 DSH 并存，旧 DSH 只领取 `ccrv2` 会话；存量会话全部转换或结束后下线旧 DSH。
-4. 稳定一个发布周期后进入第 14 节清理。
+3. 旧 DSH 与新 DSH 并存，旧 DSH 只领取 `ccrv2` 会话。
+4. **legacy 退出条件**：设定截止日期。届时仍为 `ccrv2` 的会话（回填失败或始终不静止）先按归档流程保存历史，再以 `session.error` 加 `session.status_terminated` 结束，并在发布说明中告知。P5 的可检查条件是"`worker_protocol` 为 `ccrv2` 的 active Code Session 数量为 0"，由指标给出。
+5. 满足退出条件并稳定一个发布周期后，下线旧 DSH，进入第 14 节清理。
 
 ### 13.4 存量输入事实
 
 静止检查保证转换时没有进行中的旧输入，但 JetStream 里仍可能有边界情况：静止检查之前接纳的输入在提交后才发布，或者旧 owner 已拉取但未 ACK。DSRv1 不依赖"转换瞬间队列为空"，而是在投递时补齐事实：
 
 - **转换后接纳的输入**：接纳事务写入 `accepted` turn（13.2）。
-- **投递时没有 turn 的 task 输入**：DSR 输入流写出前，在事务内按其 `session_events` 行补建 turn：`processed_at IS NULL` 建为 `accepted`；`processed_at` 非空建为 `processing`，说明旧 owner 已开始处理，新 owner 收到后按恢复路径以 `recovered` 结束。补建按 `(code_session_uuid, input_id)` 唯一键幂等。
+- **投递时没有 turn 的 task 输入**：静止检查已经排除了这种情况，这里只是防御性兜底。DSR 输入流写出前，在事务内按其 `session_events` 行补建 turn：`processed_at IS NULL` 建为 `accepted`；`processed_at` 非空建为 `processing`，说明旧 owner 已开始处理，新 owner 收到后按恢复路径以 `recovered` 结束。补建按 `(code_session_uuid, input_id)` 唯一键幂等。
 - **找不到 `session_events` 行的 task 输入**：视为协议错误，NAK 并告警，不投递。
 - **转换前已完成的历史输入**：不建 turn。没有 turn 的历史输入不参与 reducer，也不影响删除准入。
 - 旧 owner 在 `ccrv2` 时期写入 `external_metadata` 的待确认记录不迁移；静止检查已排除存在这类记录的会话。
@@ -763,6 +793,22 @@ stateDiagram-v2
 - **DSH**：现有 `ccrv2.test.ts`、`session-reacquisition.test.ts`、`crash.test.ts`、`parallel-tools.test.ts`、`parallel-subagents.test.ts`、`model-replication.test.ts`、`input-recovery.test.ts` 的场景迁移到 DSR 客户端，覆盖 3.1 的全部屏障、A→B→A 接管与 SIGKILL 恢复。
 - **集成**：需要真实验证时，按 verify-be Skill 选择 chat 域受影响的最小场景，以及 Transcript 归档、还原、物理删除场景；是否运行由用户决定。
 
+### 15.1 冻结验收条件
+
+以下是冻结前必须通过的场景，尚未执行：
+
+- [ ] pending 审批时 SIGKILL，租约到期后无需用户操作即可接管；审批变为 `superseded`，输入以 `recovered` 结束，新输入不再被拒。
+- [ ] `complete` 提交后分别丢失响应、丢失 ACK：公开会话已 idle 时仍按 `acked_at` 为空被重新领取，重投只补结算，不重做工具。
+- [ ] legacy 会话中已排队、processing、已完成未 ACK 三类输入：静止检查拒绝转换，或转换后安全结算。
+- [ ] 回填两个批次之间，旧 owner 尝试 register 和写入，全部被围栏拒绝。
+- [ ] 记录不存在时先 cancel 再晚到 create：墓碑落库，不会重新打开审批；终态重试不因输入已结束被拒。
+- [ ] 子线程首次创建时，不需要放松工具执行或公开输出的复制屏障。
+- [ ] 归档、删除 PG 行、读取、重复追加、还原之后，trajectory 身份与 `next_seq` 保持一致；删除最后副本后返回 `trajectory_purged`。
+- [ ] 一个触发改变多个线程时事件 ID 不冲突；pending 集合缩小但状态仍为 requires_action 时，照常发布状态变化。
+- [ ] reducer 行为对照表覆盖失败后排队、并行审批（其他线程继续执行时 Session 为 running）、预算暂停与线程终止，并与现行测试一致。
+- [ ] 原生格式版本策略（仅 v4）、超限事件的永久失败规则、legacy 截止日期与退出指标已确定。
+- [ ] 接管时本地更长且已确认部分内容不同，仍按现行规则报错并保留本地文件。
+
 ## 16. 已决定
 
 - 基于 CCRv2 传输内核演进，协议名 DSRv1，路径前缀 `/v1/dsr/`；收益定位为边界清晰、删除兼容代码与显式不变量。
@@ -780,15 +826,23 @@ stateDiagram-v2
 - 唯一索引不以 `deleted_at` 为条件；archive codec v2 保存身份列，v1 段按幂等键重建。
 - 子线程 Header 不依赖公开线程，由 `thread_created` 绑定；线程事件 ID 确定性派生。
 - 取消请求必须携带 `dsh_session_id` 与 `tool_use_id`；状态事件 ID 包含线程维度。
-- 已确认的 trajectory 不可改写；需要改写的 DSH 格式变更另行设计迁移。
+- 已确认的 trajectory 不可改写；DSRv1 只支持原生格式 v4，迁移后的接续写入一律拒绝，generation 化留给 DSRv2。
+- 可领取条件同时覆盖 processing 未结算与 terminal 未 ACK 的 turn，`acked_at` 由 ACK 事务写入。
+- 审批按 `request_id` 查找已有记录，先于新建前的归属校验。
+- Session 聚合沿用现行优先级（running 优先），子线程等待审批时其他线程可继续执行。
+- 失败后有排队输入时保留现行行为：照常发布 `idle(retries_exhausted)`。
+- 状态事件 ID 的输入包含目标与完整事件类型，按固定域与长度前缀编码；等价判断比较完整可观察状态。
+- 单条原生事件上限 15 MiB；超限事件已进入本地日志时永久失败。
+- 区分"归档后删 PG 行"与"删除最后副本"，后者标记 `purged`。
+- 静止检查包含 consumer 的 `num_pending` 与 `num_ack_pending`；legacy 会话设截止日期，退出条件可由指标检查。
+- 原生 seq 保持 number，字符串只用于 DSR 自有 ID 与游标。
 
 ## 17. 待定问题
 
-- 10.2 失败后排队输入的行为，需与现行 `HasInputBlockingIdle` 等规则核对。
 - `dsr_trajectories` 是否属于需要 `external_id` 的核心业务表。
 - 中断时由服务端自动关闭目标线程的 pending（7.6）会改变现行"中断不清理待确认记录"的行为，需要确认公开 API 对迟到确认的现有响应是否保持。
 - 等待审批时崩溃后主动撤回审批（3.3）是可见的行为变化，需要确认产品可以接受；否则需要另一种方案：保留 pending，用户响应后再领取，并接受"批准后工具不会执行"的现行语义。
-- 静止检查是否需要额外核对 JetStream consumer 的 `num_pending` 与 `num_ack_pending`，还是只依赖 13.4 的投递时补建。
+- legacy 截止日期的长度，以及到期强制结束会话是否需要提前通知客户。
 - `session.set_model` 是否需要公开的确认事件。
 - 读取分页 `limit_bytes` 默认值与 DSH 恢复内存预算是否匹配。
 
@@ -800,3 +854,4 @@ stateDiagram-v2
 | 2 | seq 从 0 起；审批增加 `input_id` 与持久化状态机；输入增加持久化事实与 complete 事务；迁移改为全量后端升级后按会话切流 |
 | 3 | 补充收益与成本定位及职责对照；claim 与 register 恢复分离，保留 `worker_claim_expires_at` hold 职责，明确 410 恢复与两侧协议过滤；`external_metadata` 依赖清单与有类型 worker state（保留 `model`、`trace_turns` 读回）；身份词汇表；trajectory 改为原地存放在 internal events，复用归档、blob 与保留机制，按 trajectory 拆批，语义比较与 JCS，序号用字符串，新增 `DSR-Next-Seq` 与独立错误码；审批 ID 确定性派生、同事务发布、接管/中断/子线程终止自动关闭；新增 `dsr_turns` 与显式 reducer（移植现行规则、线程维度、触发点、确定性状态事件 ID、依赖迁移）；complete 改为枚举 reason；output 独立 schema、`preview.*` 边界映射、`capabilities` 协商、双写者合同；可观测与容量；P0 两版本弃用；状态来源替换先于同步审批；回填为后台任务且失败回退 |
 | 4 | 等待审批时崩溃的领取条件（open turn）；terminal 优先的重试与 no-op processing；协议状态 `migrating` 进入即推进 epoch、两侧注册拒绝；存量会话静止转换与投递时补建 turn；唯一索引去掉 `deleted_at` 条件、archive codec v2 与 v1 按幂等键重建；子线程 Header 不依赖公开线程、由 `thread_created` 绑定、线程事件 ID 确定性派生；取消墓碑必填身份字段；状态事件 ID 增加线程维度；新增 DSH 原生格式升级约束（6.9） |
+| 5 | 可领取条件增加 terminal 未 ACK 的 turn（`acked_at`），并排除预算暂停与耗尽 hold；审批先按 `request_id` 查找已有记录再做归属校验，说明子线程多次委派时的输入关联与接管不继承；Session 聚合改为沿用现行 running 优先；失败后排队输入保留现行 `idle(retries_exhausted)`；状态事件 ID 增加目标与事件类型并定义编码，等价判断包含 `event_ids`；原生 seq 保持 number；原生格式固定 v4 并区分传输回填与原生迁移；单条事件 15 MiB、超限进入本地日志即永久失败；软页预算；归档中的 trajectory 定位与 `purged`；接管时保留前缀核对；静止检查加入 consumer 状态；legacy 截止日期与退出指标；新增 15.1 冻结验收条件 |

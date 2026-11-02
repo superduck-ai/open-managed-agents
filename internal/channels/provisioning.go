@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -23,6 +22,12 @@ func (h *handler) syncWorkspaceCredentials(upstream *http.Request, principal aut
 	if errors.Is(err, db.ErrChannelCredentialInactive) {
 		return credentialInactive(err)
 	}
+	if errors.Is(err, db.ErrChannelCredentialUnreadable) {
+		return credentialUnreadable(err)
+	}
+	if errors.Is(err, db.ErrNotFound) {
+		return credentialWorkspaceNotFound(err)
+	}
 	if err != nil {
 		return credentialProvisionFailed(err)
 	}
@@ -32,11 +37,11 @@ func (h *handler) syncWorkspaceCredentials(upstream *http.Request, principal aut
 	if err != nil {
 		return unavailable(err)
 	}
-	endpoint, err := h.endpoint(upstream, true)
+	endpoint, err := h.baseEndpoint()
 	if err != nil {
 		return err
 	}
-	endpoint.Path = strings.TrimSuffix(endpoint.Path, "/settings") + "/internal/workspace-runtime"
+	endpoint.Path += "/internal/workspace-runtime"
 	request := upstream.Clone(upstream.Context())
 	request.URL = endpoint
 	request.GetBody = nil

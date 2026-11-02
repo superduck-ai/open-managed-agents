@@ -3,6 +3,8 @@
 package db
 
 import (
+	"bytes"
+	"encoding/json/v2"
 	"errors"
 	"strings"
 	"sync"
@@ -13,10 +15,22 @@ import (
 	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 )
 
+type channelMigrationTarget struct{ secrets.KeyProvider }
+
+func (p channelMigrationTarget) Name() string { return "hashicorp_vault" }
+
 func TestChannelWorkspaceCredentialsPostgreSQL(t *testing.T) {
 	ctx, database, store := newCodeSessionClaimTestStore(t)
 	identity := devIdentityFixture()
 	if err := store.CreateDevIdentity(ctx, identity); err != nil {
+		t.Fatal(err)
+	}
+	otherIdentity := devIdentityFixture()
+	otherIdentity.User.ExternalID, otherIdentity.User.Email = "user_channel_other", "channel-other@oma.ai"
+	for i := range otherIdentity.Workspaces {
+		otherIdentity.Workspaces[i].ExternalID += "_other"
+	}
+	if err := store.CreateDevIdentity(ctx, otherIdentity); err != nil {
 		t.Fatal(err)
 	}
 	provider, err := localkeys.New(localkeys.KeyMaterial{Version: 1, KEK: make([]byte, 32)}, nil)
@@ -27,9 +41,22 @@ func TestChannelWorkspaceCredentialsPostgreSQL(t *testing.T) {
 	input := platform.CreateConsoleAPIKeyInput{OrgUUID: identity.OrganizationUUID, WorkspaceUUID: identity.Workspaces[0].UUID}
 	t.Run("跨组织不能签发工作区身份", func(t *testing.T) {
 		wrong := input
-		wrong.OrgUUID = identity.Workspaces[1].UUID
-		if _, err := store.EnsureChannelWorkspaceCredential(ctx, wrong, cipher); err == nil {
-			t.Fatal("错误组织签发了凭据")
+		wrong.OrgUUID = otherIdentity.OrganizationUUID
+		if _, err := store.EnsureChannelWorkspaceCredential(ctx, wrong, cipher); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("另一合法组织应返回工作区不存在: %v", err)
+		}
+	})
+	t.Run("已归档工作区不可签发凭据", func(t *testing.T) {
+		archived := input
+		archived.WorkspaceUUID = identity.Workspaces[1].UUID
+		if _, err := database.ExecContext(ctx, `UPDATE workspaces SET archived_at=now() WHERE organization_uuid=$1 AND uuid=$2`, input.OrgUUID, archived.WorkspaceUUID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.EnsureChannelWorkspaceCredential(ctx, archived, cipher); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("已归档工作区应返回不存在: %v", err)
+		}
+		if _, err := database.ExecContext(ctx, `UPDATE workspaces SET archived_at=NULL WHERE organization_uuid=$1 AND uuid=$2`, input.OrgUUID, archived.WorkspaceUUID); err != nil {
+			t.Fatal(err)
 		}
 	})
 	t.Run("身份与 Key 写入失败时整体回滚", func(t *testing.T) {
@@ -77,6 +104,48 @@ func TestChannelWorkspaceCredentialsPostgreSQL(t *testing.T) {
 			t.Fatalf("专用 Key 数量=%d，错误=%v", len(keys), err)
 		}
 	})
+	t.Run("迁移整份信封后只保留新 Provider 仍可读取凭据", func(t *testing.T) {
+		rows, err := store.ListSecretMigrationPage(ctx, "channel_workspace_credentials", "")
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("迁移扫描失败: %v", err)
+		}
+		var original secrets.Envelope
+		if err := json.Unmarshal(rows[0].Document, &original); err != nil {
+			t.Fatal(err)
+		}
+		localTarget, err := localkeys.New(localkeys.KeyMaterial{Version: 2, KEK: bytes.Repeat([]byte{2}, 32)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := channelMigrationTarget{KeyProvider: localTarget}
+		migrated, err := secrets.NewService(target, provider).MigrateEnvelope(ctx, original)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(migrated.Ciphertext, original.Ciphertext) || !bytes.Equal(migrated.Nonce, original.Nonce) {
+			t.Fatal("迁移改变业务密文")
+		}
+		next, err := json.Marshal(migrated)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrong := rows[0]
+		wrong.OrganizationUUID = otherIdentity.OrganizationUUID
+		if err := store.SaveMigratedSecret(ctx, "channel_workspace_credentials", wrong, next); !errors.Is(err, ErrVersionConflict) {
+			t.Fatalf("跨组织迁移未被拒绝: %v", err)
+		}
+		if err := store.SaveMigratedSecret(ctx, "channel_workspace_credentials", rows[0], next); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveMigratedSecret(ctx, "channel_workspace_credentials", rows[0], next); !errors.Is(err, ErrVersionConflict) {
+			t.Fatalf("过期 CAS 未被拒绝: %v", err)
+		}
+		cipher = secrets.NewService(target)
+		key, err := store.EnsureChannelWorkspaceCredential(ctx, input, cipher)
+		if err != nil || key != first {
+			t.Fatalf("移除旧 Provider 后无法读取原凭据: %v", err)
+		}
+	})
 	t.Run("不同工作区身份独立且密文不能换工作区解密", func(t *testing.T) {
 		other := input
 		other.WorkspaceUUID = identity.Workspaces[1].UUID
@@ -87,8 +156,8 @@ func TestChannelWorkspaceCredentialsPostgreSQL(t *testing.T) {
 		if _, err := database.ExecContext(ctx, `UPDATE channel_workspace_credentials SET envelope=(SELECT envelope FROM channel_workspace_credentials WHERE organization_uuid=$1 AND workspace_uuid=$2) WHERE organization_uuid=$1 AND workspace_uuid=$3`, input.OrgUUID, input.WorkspaceUUID, other.WorkspaceUUID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.EnsureChannelWorkspaceCredential(ctx, other, cipher); err == nil {
-			t.Fatal("跨工作区密文成功解密")
+		if _, err := store.EnsureChannelWorkspaceCredential(ctx, other, cipher); !errors.Is(err, ErrChannelCredentialUnreadable) {
+			t.Fatalf("跨工作区密文应返回明确解密错误: %v", err)
 		}
 	})
 	t.Run("停用 Key 后不自动新建", func(t *testing.T) {

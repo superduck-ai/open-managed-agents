@@ -82,6 +82,10 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
+	runtimeRequired, err := requiresRuntime(w, r, settings)
+	if err != nil {
+		return err
+	}
 	endpoint, err := h.endpoint(r, settings)
 	if err != nil {
 		return err
@@ -98,7 +102,7 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	if p.CredentialType == auth.CredentialTypeAPIKey {
 		upstream.Header.Set("X-OMA-Source", "api")
 	}
-	if r.Method == http.MethodPost && !settings && chi.URLParam(r, "pairing_id") == "" {
+	if runtimeRequired {
 		if err := h.requireEnvironment(upstream, p.WorkspaceUUID); err != nil {
 			return err
 		}
@@ -126,11 +130,11 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *handler) endpoint(r *http.Request, settings bool) (*url.URL, error) {
-	endpoint, err := url.Parse(h.cfg.URL)
-	if err != nil || endpoint.Host == "" || endpoint.User != nil || h.cfg.Token == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
-		return nil, unavailable(err)
+	endpoint, err := h.baseEndpoint()
+	if err != nil {
+		return nil, err
 	}
-	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/api/managed-channels"
+
 	if settings {
 		endpoint.Path += "/settings"
 	} else if channelID := chi.URLParam(r, "channel_id"); channelID != "" {
@@ -145,6 +149,15 @@ func (h *handler) endpoint(r *http.Request, settings bool) (*url.URL, error) {
 			endpoint.Path += "/" + url.PathEscape(pairingID)
 		}
 	}
+	return endpoint, nil
+}
+
+func (h *handler) baseEndpoint() (*url.URL, error) {
+	endpoint, err := url.Parse(h.cfg.URL)
+	if err != nil || endpoint.Host == "" || endpoint.User != nil || h.cfg.Token == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+		return nil, unavailable(err)
+	}
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/api/managed-channels"
 	endpoint.RawQuery = ""
 	return endpoint, nil
 }

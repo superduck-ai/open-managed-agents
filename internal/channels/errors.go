@@ -45,3 +45,15 @@ func credentialSyncUnavailable(cause error) error {
 func credentialSyncRejected(cause error) error {
 	return apperr.New(apperr.Unavailable, "同步渠道工作区凭据失败，请检查桥接版本与配置", cause)
 }
+
+func credentialUnreadable(cause error) error {
+	return apperr.New(apperr.Unavailable, "渠道工作区凭据无法解密，请联系管理员检查主密钥或恢复备份", cause)
+}
+
+func credentialWorkspaceNotFound(cause error) error {
+	return apperr.New(apperr.NotFound, "工作区不存在或已归档", cause)
+}
+
+func invalidChannelUpdate(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "渠道更新请求正文无效", cause)
+}

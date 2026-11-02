@@ -3,7 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json/v2"
-	"errors"
+	"fmt"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
@@ -11,15 +11,13 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
-var ErrChannelCredentialInactive = errors.New("渠道专用 API Key 已停用，请在 API 密钥管理中恢复")
-
 func (d *DB) EnsureChannelWorkspaceCredential(ctx context.Context, input platform.CreateConsoleAPIKeyInput, cipher *secrets.Service) (string, error) {
 	var rawKey string
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		mapper := NewChannelCredentialMapper(executor)
 		displayID, err := mapper.LockWorkspace(ctx, input.OrgUUID, input.WorkspaceUUID)
 		if err != nil {
-			return err
+			return mapNoRows(err)
 		}
 		row, found, err := mapper.Find(ctx, input.OrgUUID, input.WorkspaceUUID)
 		if err != nil {
@@ -32,12 +30,12 @@ func (d *DB) EnsureChannelWorkspaceCredential(ctx context.Context, input platfor
 			}
 			var envelope secrets.Envelope
 			if err := json.Unmarshal([]byte(row.Envelope), &envelope); err != nil {
-				return err
+				return fmt.Errorf("%w: %w", ErrChannelCredentialUnreadable, err)
 			}
 			plaintext, err := cipher.Open(ctx, binding, envelope)
 			defer clear(plaintext)
 			if err != nil {
-				return err
+				return fmt.Errorf("%w: %w", ErrChannelCredentialUnreadable, err)
 			}
 			rawKey = string(plaintext)
 			return nil

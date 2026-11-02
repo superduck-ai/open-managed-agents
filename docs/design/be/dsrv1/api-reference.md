@@ -16,10 +16,10 @@
 | 8 | `GET /v1/dsr/sessions/{id}/inputs/stream` | session | SSE 接收输入 | 9.2 |
 | 9 | `POST /v1/dsr/sessions/{id}/inputs/ack` | session | 输入进度回执 | 9.2 |
 | 10 | `POST /v1/dsr/sessions/{id}/inputs/{input_id}/complete` | session | 结束 task 输入 | 9.4 |
-| 11 | `PUT /v1/dsr/sessions/{id}/trajectories/{dsh_session_id}/header` | session | 写原生日志 Header | 6.4 |
-| 12 | `POST /v1/dsr/sessions/{id}/trajectories/{dsh_session_id}/events` | session | 追加原生日志 Event | 6.5 |
-| 13 | `GET /v1/dsr/sessions/{id}/trajectories` | session | 列出会话下的原生日志 | 6.7 |
-| 14 | `GET /v1/dsr/sessions/{id}/trajectories/{dsh_session_id}` | session | 分页读取一条原生日志 | 6.7 |
+| 11 | `PUT /v1/dsr/sessions/{id}/transcripts/{dsh_session_id}/header` | session | 写原生日志 Header | 6.4 |
+| 12 | `POST /v1/dsr/sessions/{id}/transcripts/{dsh_session_id}/events` | session | 追加原生日志 Event | 6.5 |
+| 13 | `GET /v1/dsr/sessions/{id}/transcripts` | session | 列出会话下的原生日志 | 6.7 |
+| 14 | `GET /v1/dsr/sessions/{id}/transcripts/{dsh_session_id}` | session | 分页读取一条原生日志 | 6.7 |
 | 15 | `POST /v1/dsr/sessions/{id}/permissions` | session | 创建或查询工具审批 | 7.1–7.3 |
 | 16 | `POST /v1/dsr/sessions/{id}/permissions/{request_id}/cancel` | session | 取消工具审批 | 7.5 |
 | 17 | `POST /v1/dsr/sessions/{id}/output` | session | 发布公开输出 | 第 8 节 |
@@ -95,8 +95,8 @@ sequenceDiagram
 | 接口 | 幂等键 | 冲突时 |
 | --- | --- | --- |
 | 10 complete | `(code_session, input_id)` | `409 turn_idempotency_mismatch` |
-| 11 header | `(code_session, dsh_session_id)` | `409 trajectory_conflict` |
-| 12 events | `(code_session, dsh_session_id, seq)` | `409 trajectory_conflict` |
+| 11 header | `(code_session, dsh_session_id)` | `409 transcript_conflict` |
+| 12 events | `(code_session, dsh_session_id, seq)` | `409 transcript_conflict` |
 | 15 permissions | 派生的 `request_id` | `409 permission_idempotency_mismatch` |
 | 16 cancel | `request_id` | 返回当前终态 |
 | 17 output | `(code_session, id)` | `409 output_idempotency_mismatch` |
@@ -217,7 +217,7 @@ Content-Type: application/json
 | 状态 | `DSR-Error` | DSH 处理 |
 | --- | --- | --- |
 | 409 | `epoch_superseded` | 退役 |
-| 409 | `trajectory_migrating` | 以 `shutdown` release |
+| 409 | `session_migrating` | 以 `shutdown` release |
 | 404 | `session_not_found` | 退役，不 release |
 | 401/403 | `unauthorized` | 以 `admission_failed` release |
 
@@ -434,7 +434,7 @@ data: {"id":"evt_01J...","lane":"task","kind":"user.message","session_thread_id"
 { "outcome": "recovered", "public_status": "idle" }
 ```
 
-## 11. `PUT /v1/dsr/sessions/{id}/trajectories/{dsh_session_id}/header`
+## 11. `PUT /v1/dsr/sessions/{id}/transcripts/{dsh_session_id}/header`
 
 写入一条原生日志的 Header。必须先于该日志的任何 Event；子线程的 Header 还必须先于它的 `session.thread_created` 输出。
 
@@ -460,11 +460,11 @@ data: {"id":"evt_01J...","lane":"task","kind":"user.message","session_thread_id"
 
 | 状态 | `DSR-Error` | 说明 |
 | --- | --- | --- |
-| 409 | `trajectory_conflict` | 已存在且 parent 或 Header 内容不同 |
-| 400 | `unsupported_trajectory_version` | `version` 不是 4 |
+| 409 | `transcript_conflict` | 已存在且 parent 或 Header 内容不同 |
+| 400 | `unsupported_transcript_version` | `version` 不是 4 |
 | 400 | `invalid_request` | `header.id` 或 `parentSession` 与请求不符、父日志不存在、JSON 含重复键 |
 
-## 12. `POST /v1/dsr/sessions/{id}/trajectories/{dsh_session_id}/events`
+## 12. `POST /v1/dsr/sessions/{id}/transcripts/{dsh_session_id}/events`
 
 向一条原生日志追加 Event。服务端保证从 seq 0 起连续、已确认内容不可变。DSH 以响应中的 `next_seq` 作为"远程已确认"的依据，供工具执行等屏障使用。
 
@@ -493,11 +493,11 @@ data: {"id":"evt_01J...","lane":"task","kind":"user.message","session_thread_id"
 
 | 状态 | `DSR-Error` | 说明与处理 |
 | --- | --- | --- |
-| 409 | `trajectory_header_required` | 尚未写 Header：先调用接口 11 |
-| 409 | `trajectory_gap` | 第一条未确认条目不等于 `next_seq`：按 `DSR-Next-Seq` 补发 |
-| 409 | `trajectory_conflict` | 已确认的 seq 内容不同：停止恢复，保留本地文件 |
-| 409 | `trajectory_migrating` | 会话迁移中 |
-| 410 | `trajectory_purged` | 最后一份副本已删除，会话不可恢复 |
+| 409 | `transcript_header_required` | 尚未写 Header：先调用接口 11 |
+| 409 | `transcript_gap` | 第一条未确认条目不等于 `next_seq`：按 `DSR-Next-Seq` 补发 |
+| 409 | `transcript_conflict` | 已确认的 seq 内容不同：停止恢复，保留本地文件 |
+| 409 | `session_migrating` | 会话迁移中 |
+| 410 | `transcript_purged` | 最后一份副本已删除，会话不可恢复 |
 | 413 | `payload_too_large` | 单条或请求体超限 |
 
 **示例**
@@ -513,7 +513,7 @@ data: {"id":"evt_01J...","lane":"task","kind":"user.message","session_thread_id"
 { "next_seq": "43" }
 ```
 
-## 13. `GET /v1/dsr/sessions/{id}/trajectories`
+## 13. `GET /v1/dsr/sessions/{id}/transcripts`
 
 列出本会话下的全部原生日志，用于接管时发现其他实例新增的子线程。
 
@@ -527,7 +527,7 @@ data: {"id":"evt_01J...","lane":"task","kind":"user.message","session_thread_id"
 | `data[].header_present` | boolean | 是否已写 Header |
 | `data[].next_seq` | string | 已确认条数 |
 
-## 14. `GET /v1/dsr/sessions/{id}/trajectories/{dsh_session_id}`
+## 14. `GET /v1/dsr/sessions/{id}/transcripts/{dsh_session_id}`
 
 分页读取一条原生日志，用于冷恢复与前缀核对。读取合并已归档段与 PostgreSQL 行，并还原外置 payload。
 
@@ -546,7 +546,7 @@ data: {"id":"evt_01J...","lane":"task","kind":"user.message","session_thread_id"
 | `events` | array | 原生 `SessionEvent`，按 seq 升序；每页至少一条（日志为空时为空数组），单条超出预算时该页只含这一条 |
 | `next_from_seq` | string \| null | 下一页的 `from_seq`；已读到末尾时为 `null` |
 
-**错误**：`409 trajectory_migrating`、`410 trajectory_purged`、`404 session_not_found`（日志不存在）。
+**错误**：`409 session_migrating`、`410 transcript_purged`、`404 session_not_found`（日志不存在）。
 
 ## 15. `POST /v1/dsr/sessions/{id}/permissions`
 

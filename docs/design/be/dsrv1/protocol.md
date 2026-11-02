@@ -21,7 +21,7 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 
 **收益定位**：边界更清楚、删除兼容代码、把隐式状态变成显式不变量。没有测量依据支持性能收益，本文不以减少往返或降低延迟为目标。
 
-**成本定位**：DSRv1 不只是换词汇，它新增了三个需要单独维护的状态机：trajectory 写入与迁移、审批记录生命周期、公开状态 reducer。第 2 节列出删除与新增的职责对照，作为是否值得实施的判断依据。
+**成本定位**：DSRv1 不只是换词汇，它新增了三个需要单独维护的状态机：transcript 写入与迁移、审批记录生命周期、公开状态 reducer。第 2 节列出删除与新增的职责对照，作为是否值得实施的判断依据。
 
 ## 2. 删除与新增的职责对照
 
@@ -32,12 +32,12 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 | `parseClaudeToolIdentity` 与名称反解 | 结构化工具身份（7.1） |
 | 审批状态轮询与 `external_metadata` 中的待确认键 | `dsr_permission_requests` 与状态机（第 7 节） |
 | `worker_turn_started` 与 worker 状态驱动的公开状态 | `dsr_turns` 与显式 reducer（第 9、10 节） |
-| DSH 端 trajectory 前缀对账中的去重与冲突判定 | 服务端条件追加与 `dsr_trajectories` 元数据（第 6 节） |
+| DSH 端 transcript 前缀对账中的去重与冲突判定 | 服务端条件追加与 `dsr_transcripts` 元数据（第 6 节） |
 | `external_metadata` 的自由 merge patch | 有类型的 worker state（4.6） |
 | sandbox 模式、`session_ingress/*`、60+10 秒租约参数 | — |
 | — | 回填任务与迁移围栏（第 13 节） |
 
-不新建事件表：trajectory 继续存放在 `code_session_internal_events`，增加身份列，从而复用已有的全局 `sequence_num`、对象存储、归档、还原与物理删除机制（6.6）。
+不新建事件表：transcript 继续存放在 `code_session_internal_events`，增加身份列，从而复用已有的全局 `sequence_num`、对象存储、归档、还原与物理删除机制（6.6）。
 
 ## 3. 目标、非目标与兼容边界
 
@@ -60,10 +60,10 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 
 ### 3.1 保持不变的执行屏障
 
-1. 工具体执行前，刷新本地日志并等待该工具调用所在前缀的 trajectory 远程确认；任一失败时不执行工具体。
-2. 公开消息、工具结果与回合终态发布前，等待其来源事件的 trajectory 远程确认。
+1. 工具体执行前，刷新本地日志并等待该工具调用所在前缀的 transcript 远程确认；任一失败时不执行工具体。
+2. 公开消息、工具结果与回合终态发布前，等待其来源事件的 transcript 远程确认。
 3. 持久公开输出在发送前，等待捕获时已有的流式预览确认。
-4. task 输入按"trajectory 终态确认 → 公开输出确认 → `complete` 确认 → `ack processed`"的顺序结束。
+4. task 输入按"transcript 终态确认 → 公开输出确认 → `complete` 确认 → `ack processed`"的顺序结束。
 5. 结果已到达但复制未确认时，不得 release 领取。
 6. 模型请求前不无条件等待复制。
 
@@ -124,7 +124,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 - 语义同现行 `worker/register`：同一 epoch 允许重复注册，在同一事务内清空领取请求与期限，写入租约与连接状态。
 - **410 恢复路径**：租约过期但 epoch 未被推进时，DSH 以同一 epoch 重新 register 恢复租约，不需要重新 claim 和全量恢复；只有 `409 epoch_superseded` 才需要退役。
 - **接管清理**：当本次注册的 epoch 高于审批记录或 turn 记录上的 epoch 时，同一事务内按 7.6 关闭旧 epoch 的 pending 审批，并按 10.3 重新计算公开状态。open turn 不在注册时结束：它仍是 `processing`，未 ACK 的输入会重投给新 owner，由新 owner 按原生日志恢复后调用 `complete`（通常是 `recovered`）。
-- 两种协议的 register 都拒绝 `worker_protocol = 'migrating'` 的会话（`409 trajectory_migrating`）。
+- 两种协议的 register 都拒绝 `worker_protocol = 'migrating'` 的会话（`409 session_migrating`）。
 - 响应：
 
 ```json
@@ -161,27 +161,27 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 ### 4.7 错误
 
-错误体保持 `internal/httpapi.WriteError` 的 Anthropic 兼容形状。机器可读的分支由响应头承载：`DSR-Error` 给出 code，`DSR-Next-Seq` 在 trajectory 错误时给出服务端水位。
+错误体保持 `internal/httpapi.WriteError` 的 Anthropic 兼容形状。机器可读的分支由响应头承载：`DSR-Error` 给出 code，`DSR-Next-Seq` 在 transcript 错误时给出服务端水位。
 
 | HTTP | `DSR-Error` | DSH 处理 |
 | --- | --- | --- |
 | 400 | `invalid_request` | 视为缺陷，不重试 |
 | 400 | `unsupported_protocol` | 停止进程 |
-| 400 | `unsupported_trajectory_version` | 以 `permanent` 释放会话（6.9） |
+| 400 | `unsupported_transcript_version` | 以 `permanent` 释放会话（6.9） |
 | 401/403 | `unauthorized` | 停止该会话 |
 | 404 | `session_not_found` | 退役会话 |
 | 409 | `epoch_superseded` | fence 主线程与全部子线程，停止写入 |
-| 409 | `trajectory_header_required` | 先写 Header 再追加 |
-| 409 | `trajectory_gap` | 从 `DSR-Next-Seq` 补发 |
-| 409 | `trajectory_conflict` | 停止恢复，保留本地文件 |
-| 409 | `trajectory_migrating` | 释放为 `shutdown`，稍后重试 |
+| 409 | `transcript_header_required` | 先写 Header 再追加 |
+| 409 | `transcript_gap` | 从 `DSR-Next-Seq` 补发 |
+| 409 | `transcript_conflict` | 停止恢复，保留本地文件 |
+| 409 | `session_migrating` | 释放为 `shutdown`，稍后重试 |
 | 409 | `permission_idempotency_mismatch` | 视为缺陷，停止该会话 |
 | 409 | `output_idempotency_mismatch` | 视为缺陷，停止该会话 |
 | 409 | `turn_idempotency_mismatch` | 视为缺陷，停止该会话 |
 | 409 | `input_not_eligible` | 视为缺陷，停止该会话 |
 | 409 | `input_not_completed` | 不 ACK，先完成 `complete` |
 | 410 | `lease_expired` | 同 epoch 重新 register（4.4） |
-| 410 | `trajectory_purged` | 退役会话，不再恢复（6.8） |
+| 410 | `transcript_purged` | 退役会话，不再恢复（6.8） |
 | 413 | `payload_too_large` | 本地日志尚未写入时：当前输入以 `failed` 结束；已写入不可复制的事件时：以 `permanent` 释放会话（6.5） |
 | 429/5xx | — | 有界退避重试 |
 
@@ -195,19 +195,21 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 | --- | --- | --- | --- |
 | `session_id`（`sesn_*`） | 公开 API | Managed Agents Session | 是 |
 | `session_thread_id`（`sthr_*`） | 公开 API | 公开线程；主线程与子 Agent 线程 | 是 |
-| `code_session_id`（`cse_*`） | 执行端 | 一个公开 Session 的执行容器，epoch、租约与 trajectory 的作用域 | 否 |
+| `code_session_id`（`cse_*`） | 执行端 | 一个公开 Session 的执行容器，epoch、租约与 transcript 的作用域 | 否 |
 | `dsh_session_id` | 执行端 | DSH 原生 Session ID；主线程等于 `code_session_id`，子线程为原生 subagent Session ID（即现行传输层 `agent_id`） | 否，不是新的公开身份 |
-| trajectory | 执行端 | 一个 `dsh_session_id` 的 Header 与 Event 序列 | 否 |
+| transcript | 执行端 | 一个 `dsh_session_id` 的 Header 与 Event 序列 | 否 |
 | `input_id` | 执行端 | task/control 输入的传输稳定 ID（5.1） | 否 |
 | `request_id` | 执行端 | 审批记录 ID，确定性派生（7.1） | 否 |
 
 映射关系：子线程的公开 `session_thread_id` **等于**其 `dsh_session_id`（现行 `ccrv2/subagents.ts` 直接以 DSH 生成的 UUID 作为线程 ID），主线程的 `session_thread_id` 是公开 Session 的主线程，`dsh_session_id` 等于 `code_session_id`。该对应关系在子线程的 `session.thread_created` 被接受时固定，之后不可变（8.2）；`parent_dsh_session_id` 必须与原生 `header.parentSession` 一致，服务端校验两者相等。
 
-## 6. Trajectory（私有日志）
+## 6. Transcript（DSH 原生日志）
+
+术语说明：本文的 transcript 指 **DSH 原生 Session 日志**（Header + Event），存放在 `code_session_internal_events`，由 `transcriptarchive` 与 `transcriptretention` 归档、还原与删除。它不是 CCRv2 时代的 Claude Code transcript 格式，也不是可观测性功能中经 OTLP 导出、在 Console 展示的会话轨迹（trajectory）。
 
 ### 6.1 资源模型
 
-- 每个 `dsh_session_id` 一条 trajectory，由一个 Header 与**从 0 开始**连续递增的 Event 组成，序号即原生 `SessionEvent.seq`。
+- 每个 `dsh_session_id` 一条 transcript，由一个 Header 与**从 0 开始**连续递增的 Event 组成，序号即原生 `SessionEvent.seq`。
 - 服务端维护 `next_seq`（已确认条数，空日志为 `"0"`；确认 seq 0、1 后为 `"2"`）与 `header_present`，两者独立表达。
 
 ### 6.2 服务端校验的原生身份字段
@@ -230,28 +232,28 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 ### 6.4 写 Header
 
-`PUT /v1/dsr/sessions/{id}/trajectories/{dsh_session_id}/header`：
+`PUT /v1/dsr/sessions/{id}/transcripts/{dsh_session_id}/header`：
 
 ```json
 { "parent_dsh_session_id": "cse_...", "header": { "...": "原生 SessionHeader" } }
 ```
 
-- 幂等比较覆盖 `(parent_dsh_session_id, header)`：全部相同返回 `200 {"dsh_session_id", "next_seq"}`，任一不同返回 `409 trajectory_conflict`。
-- 子线程的 parent 必须是同一 Code Session 下已存在的 trajectory。
-- **Header 不要求公开线程已存在。** 现行创建路径先刷新含子线程 Header 的日志并等待远程确认（屏障 2），再发布 `session.thread_created`；若 Header 依赖公开线程，就会形成循环依赖。依赖方向因此固定为：Header 先写入，`session.thread_created` 被接受时校验对应 trajectory 已存在并绑定线程（8.2）。
+- 幂等比较覆盖 `(parent_dsh_session_id, header)`：全部相同返回 `200 {"dsh_session_id", "next_seq"}`，任一不同返回 `409 transcript_conflict`。
+- 子线程的 parent 必须是同一 Code Session 下已存在的 transcript。
+- **Header 不要求公开线程已存在。** 现行创建路径先刷新含子线程 Header 的日志并等待远程确认（屏障 2），再发布 `session.thread_created`；若 Header 依赖公开线程，就会形成循环依赖。依赖方向因此固定为：Header 先写入，`session.thread_created` 被接受时校验对应 transcript 已存在并绑定线程（8.2）。
 
 ### 6.5 追加
 
-`POST /v1/dsr/sessions/{id}/trajectories/{dsh_session_id}/events`，请求体 `{"events": [<原生 SessionEvent>, ...]}`。
+`POST /v1/dsr/sessions/{id}/transcripts/{dsh_session_id}/events`，请求体 `{"events": [<原生 SessionEvent>, ...]}`。
 
-**一个请求只属于一条 trajectory**。DSH 现行上传队列按 root code session 组织，一个批次可能混合主线程、子线程与子线程 Header；DSR 客户端必须按 `dsh_session_id` 拆分队列，每条 trajectory 内保持顺序，Header 先于 Event。不同 trajectory 之间没有顺序要求。
+**一个请求只属于一条 transcript**。DSH 现行上传队列按 root code session 组织，一个批次可能混合主线程、子线程与子线程 Header；DSR 客户端必须按 `dsh_session_id` 拆分队列，每条 transcript 内保持顺序，Header 先于 Event。不同 transcript 之间没有顺序要求。
 
 事务（all-or-nothing）：
 
 1. 锁定 Code Session 并校验 token epoch；不匹配返回 `409 epoch_superseded`。
-2. 锁定 `dsr_trajectories` 行；Header 不存在返回 `409 trajectory_header_required`。
-3. 请求内 seq 必须连续递增。`seq < next_seq` 的条目按 6.3 与已存条目比较：相同则跳过，不同返回 `409 trajectory_conflict`。已存条目可能已归档并从 PostgreSQL 软删除，比较使用合并读回路径（6.7），不能因为在 PostgreSQL 中找不到就当作新条目写入。`next_seq` 只增不减，不随归档、软删除或还原改变。
-4. 第一条未确认条目必须等于 `next_seq`，否则返回 `409 trajectory_gap`，并在 `DSR-Next-Seq` 中给出当前值。
+2. 锁定 `dsr_transcripts` 行；Header 不存在返回 `409 transcript_header_required`。
+3. 请求内 seq 必须连续递增。`seq < next_seq` 的条目按 6.3 与已存条目比较：相同则跳过，不同返回 `409 transcript_conflict`。已存条目可能已归档并从 PostgreSQL 软删除，比较使用合并读回路径（6.7），不能因为在 PostgreSQL 中找不到就当作新条目写入。`next_seq` 只增不减，不随归档、软删除或还原改变。
+4. 第一条未确认条目必须等于 `next_seq`，否则返回 `409 transcript_gap`，并在 `DSR-Next-Seq` 中给出当前值。
 5. 超过 32 KiB 的原始 JSON 走 `eventpayload` 外置；插入 internal event 行，分配全局 `sequence_num`，更新 `next_seq`。
 
 响应 `200 {"next_seq": "42"}`。
@@ -264,7 +266,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 ### 6.6 存储
 
-trajectory 存放在现有 `code_session_internal_events`，新增 goose migration：
+transcript 存放在现有 `code_session_internal_events`，新增 goose migration：
 
 - `code_session_internal_events` 增加 `dsh_session_id text null`、`dsh_seq bigint null`，以及唯一索引 `(code_session_uuid, dsh_session_id, dsh_seq) WHERE dsh_session_id IS NOT NULL`。索引**不以 `deleted_at` 为条件**，否则归档软删后同序号可以再次插入。Header 行 `dsh_seq` 为空，由元数据表引用。
 - 行身份沿用现行规则：`event_type = 'dsh_log'`，幂等键与 payload UUID 为 `dsh_log:<code_session_id>:<dsh_session_id>:<seq>`（Header 为 `:header`，各段 `encodeURIComponent`），子线程的 `agent_id` 等于 `dsh_session_id`。`payload` 直接是原生对象，不再包装 `{type, uuid, data}`。
@@ -273,7 +275,7 @@ trajectory 存放在现有 `code_session_internal_events`，新增 goose migrati
 - 新增元数据表，不创建外键：
 
 ```text
-dsr_trajectories
+dsr_transcripts
   id bigint generated always as identity
   uuid uuid default gen_random_uuid()
   organization_uuid, workspace_uuid, code_session_uuid uuid not null
@@ -293,31 +295,31 @@ dsr_trajectories
 
 ### 6.7 读取
 
-- `GET /v1/dsr/sessions/{id}/trajectories` → `{"data": [{"dsh_session_id","parent_dsh_session_id","session_thread_id","header_present","next_seq"}]}`。
-- `GET /v1/dsr/sessions/{id}/trajectories/{dsh_session_id}?from_seq=0&limit_bytes=4194304` → `{"header": {...}|null, "events": [...], "next_from_seq": "37"|null}`。
+- `GET /v1/dsr/sessions/{id}/transcripts` → `{"data": [{"dsh_session_id","parent_dsh_session_id","session_thread_id","header_present","next_seq"}]}`。
+- `GET /v1/dsr/sessions/{id}/transcripts/{dsh_session_id}?from_seq=0&limit_bytes=4194304` → `{"header": {...}|null, "events": [...], "next_from_seq": "37"|null}`。
   - `from_seq` 包含该序号，`header` 只在 `from_seq = 0` 时返回。
   - `limit_bytes` 是软预算（上限 8 MiB），按原始字节累计，Header 计入预算。每页至少返回一条；单条超过预算时该页只含这一条，响应仍可达 15 MiB 加封装。
   - 使用现有"归档 + PostgreSQL"合并读回与外置 payload 还原路径；已归档行不会被判为缺口。
-- 定位：`dsr_trajectories` 只记录水位，不记录每条事件的位置。PostgreSQL 行已物理删除时，读取按 Code Session 扫描其归档段，再按 v2 字段或幂等键（6.6）过滤出目标 trajectory。扫描成本与会话总日志量成正比，可以接受；若测量证明不可接受，再为归档段增加 `dsh_session_id` 索引。
+- 定位：`dsr_transcripts` 只记录水位，不记录每条事件的位置。PostgreSQL 行已物理删除时，读取按 Code Session 扫描其归档段，再按 v2 字段或幂等键（6.6）过滤出目标 transcript。扫描成本与会话总日志量成正比，可以接受；若测量证明不可接受，再为归档段增加 `dsh_session_id` 索引。
 - GET 只做鉴权与归属校验，不要求当前 epoch。旧 epoch 的 token 可以读，不能写。
 - **接管时的前缀核对保留不变**：服务端 `next_seq` 只能证明远端长度，不能证明内容一致。DSH 现行流程（读取并校验远程历史，判断本地与远端是否互为前缀，再水合或追加）照常执行；本地更长且已确认部分内容不同的情况，仍按现行规则报错并保留本地文件。
 
 ### 6.8 保留与压缩
 
-- trajectory 是长期日志，沿用 internal events 的保留、归档与物理删除规则，不适用入站消息的 30 天期限。
-- 需要区分两种删除：**归档后删除 PostgreSQL 行**（归档段仍是完整副本，读取、幂等比较与还原照常工作）与**删除最后一份副本**（归档段或对象也被删除）。后者发生后，`dsr_trajectories` 标记为 `purged`：读取返回 `410`，`DSR-Error: trajectory_purged`；追加返回同一错误；领取 SQL 排除该会话。不能返回看似完整、实际有缺口的日志。
+- transcript 是长期日志，沿用 internal events 的保留、归档与物理删除规则，不适用入站消息的 30 天期限。
+- 需要区分两种删除：**归档后删除 PostgreSQL 行**（归档段仍是完整副本，读取、幂等比较与还原照常工作）与**删除最后一份副本**（归档段或对象也被删除）。后者发生后，`dsr_transcripts` 标记为 `purged`：读取返回 `410`，`DSR-Error: transcript_purged`；追加返回同一错误；领取 SQL 排除该会话。不能返回看似完整、实际有缺口的日志。
 - 不再使用 `is_compaction` 过滤；原生压缩事件是普通 Event。
 
 ### 6.9 DSH 原生格式升级
 
-trajectory 一经确认不可改写，而 DSH 升级可能改变 Header 结构、版本号或 seq 的生成方式（例如上游 Session 格式迁移在读取时重写记录）。约束如下：
+transcript 一经确认不可改写，而 DSH 升级可能改变 Header 结构、版本号或 seq 的生成方式（例如上游 Session 格式迁移在读取时重写记录）。约束如下：
 
-- 区分两种迁移：OMA 传输层的回填（第 13 节，不改写 payload）与 DSH 原生格式迁移（例如上游 v3 到 v4 的迁移会修改 Header、插入事件并重新映射 seq）。后者产生的是"同一 Session 的另一份日志"，不能接续到已确认的 trajectory 上。
-- **DSRv1 只支持固定的原生格式版本 4**，与当前 `0.2.2-alpha.2` 一致。Header PUT 校验 `version` 在服务端允许列表 `[4]` 内，否则返回 `400 unsupported_trajectory_version`；不接受迁移后的接续写入。
-- 一条 trajectory 的 Header `version` 在创建时固定。DSH 升级后，已有 trajectory 继续按原版本追加。
-- 支持新的原生版本需要引入按 generation 划分的 trajectory（同一 `dsh_session_id` 下多代日志，旧代只读），属于 DSRv2 的范围。
-- DSH 可以在内存中把旧版本记录升级后使用，但**不得把改写后的 Header 或 Event 重新上传**。服务端对已确认序号的任何差异都按 6.5 判为 `trajectory_conflict`。
-- 需要改写已确认记录或改变 seq 语义的格式变更，与 DSRv1 不兼容。这类变更必须先给出显式迁移方案（新 trajectory 版本、离线转换工具与回滚），评审通过后才能升级 DSH 依赖。
+- 区分两种迁移：OMA 传输层的回填（第 13 节，不改写 payload）与 DSH 原生格式迁移（例如上游 v3 到 v4 的迁移会修改 Header、插入事件并重新映射 seq）。后者产生的是"同一 Session 的另一份日志"，不能接续到已确认的 transcript 上。
+- **DSRv1 只支持固定的原生格式版本 4**，与当前 `0.2.2-alpha.2` 一致。Header PUT 校验 `version` 在服务端允许列表 `[4]` 内，否则返回 `400 unsupported_transcript_version`；不接受迁移后的接续写入。
+- 一条 transcript 的 Header `version` 在创建时固定。DSH 升级后，已有 transcript 继续按原版本追加。
+- 支持新的原生版本需要引入按 generation 划分的 transcript（同一 `dsh_session_id` 下多代日志，旧代只读），属于 DSRv2 的范围。
+- DSH 可以在内存中把旧版本记录升级后使用，但**不得把改写后的 Header 或 Event 重新上传**。服务端对已确认序号的任何差异都按 6.5 判为 `transcript_conflict`。
+- 需要改写已确认记录或改变 seq 语义的格式变更，与 DSRv1 不兼容。这类变更必须先给出显式迁移方案（新 transcript 版本、离线转换工具与回滚），评审通过后才能升级 DSH 依赖。
 - DSH 依赖升级的检查清单增加一项：对照上游 [Session 格式与发布状态](https://github.com/deepseek-ai/deepseek-harness/blob/f3803c96974ad4a94195fb97e5c637e9c2a3afe3/docs/session-format-status.zh.md)，确认新版本能以原版本继续追加已有日志。
 
 ## 7. 工具审批
@@ -472,7 +474,7 @@ DSH 收到时若本地等待项不存在（已取消、turn 已结束或属于�
 | `agent.thread_message_sent`/`_received`、`agent.thread_context_compacted` | CMA 字段 | 原样 |
 | `session.error` | `error`（仅 MCP 连接/鉴权失败类） | 原样 |
 
-- `session.thread_created` 被接受的前提：对应 `dsh_session_id` 的 trajectory 已存在，且其 parent 与事件中的 `parent_thread_id` 一致；接受时把 `session_thread_id` 写入 `dsr_trajectories`。重复的同一事件幂等，同一 trajectory 绑定不同线程返回 `409 output_idempotency_mismatch`。
+- `session.thread_created` 被接受的前提：对应 `dsh_session_id` 的 transcript 已存在，且其 parent 与事件中的 `parent_thread_id` 一致；接受时把 `session_thread_id` 写入 `dsr_transcripts`。重复的同一事件幂等，同一 transcript 绑定不同线程返回 `409 output_idempotency_mismatch`。
 - 线程状态与线程消息事件的 `id` 必须由原生身份确定性派生（例如 `<thread>_<kind>_<turn>_<seq>`），替代现行 `crypto.randomUUID()`，以便重启后补发时去重。
 - `system.message` 也是客户端可提交的输入类型（用于拒答问题的结算）。两者以写入路径区分：本端点的写入不进入输入接纳与 Worker 投递，这与现行 `/worker/events` 一致，DSRv1 不引入新的冲突。
 - 删除 Claude Code 的 `assistant`、`user`、`result`、`task_started`、`task_notification`、`compact_boundary`，以及从 internal subagent transcript 投影公开事件的路径。
@@ -568,7 +570,7 @@ stateDiagram-v2
   6. 写入公开 `system.message`（failed/recovered）与 `session.error`，事件 ID 由 `input_id` 与 outcome 确定性派生。
   7. 按 10.3 计算并写入状态事件。
 - 响应 `200 {"outcome", "public_status"}`。
-- DSH 在本地 trajectory 中保留 `plugin:oma/input-completion`，用它决定何时调用 `complete`；输入在子线程全部结束或被中断后才算整体完成，由 DSH 在调用前保证。
+- DSH 在本地 transcript 中保留 `plugin:oma/input-completion`，用它决定何时调用 `complete`；输入在子线程全部结束或被中断后才算整体完成，由 DSH 在调用前保证。
 
 ### 9.5 接管、重试与并发
 
@@ -671,7 +673,7 @@ reducer 只在以下事务内运行，每个触发点都在同一事务内写入
 
 指标与日志（扩展现有 `oma.brain_claim.*`，字段遵循 Go 日志规范，不记录 payload）：
 
-- trajectory：追加延迟、批大小、`gap`/`conflict` 次数、DSH 端待确认积压。
+- transcript：追加延迟、批大小、`gap`/`conflict` 次数、DSH 端待确认积压。
 - permission：创建结果分布（allow/deny/pending）、pending 时长、自动关闭原因（closed/superseded）。
 - turn：`complete` outcome 与 reason 分布、`input_not_completed` 次数、processing 到 terminal 时长。
 - 回填：会话状态分布、批次耗时、失败原因。
@@ -679,9 +681,9 @@ reducer 只在以下事务内运行，每个触发点都在同一事务内写入
 
 容量：
 
-- 单条 trajectory 事件 16 MiB，请求体 16 MiB，读取页 8 MiB；单会话 trajectory 无硬上限，按 internal events 现有保留规则治理。
+- 单条 transcript 事件 16 MiB，请求体 16 MiB，读取页 8 MiB；单会话 transcript 无硬上限，按 internal events 现有保留规则治理。
 - 追加、审批、`complete` 都锁 `code_sessions` 行，与现行 internal events 写入相同；审批与 `complete` 额外锁公开 Session，锁顺序固定为公开 Session → Code Session → 业务行。
-- trajectory 原地存放在 internal events，不存在双份存储窗口。
+- transcript 原地存放在 internal events，不存在双份存储窗口。
 
 ## 13. 迁移与发布
 
@@ -693,9 +695,9 @@ reducer 只在以下事务内运行，每个触发点都在同一事务内写入
 | --- | --- |
 | P0 | sandbox 模式弃用。版本 N：`agent_mode: sandbox` 启动时输出弃用警告，行为不变。版本 N+1：删除 sandbox 分支，所有 `== "brain"` 判断变为无条件，`agent_mode` 字段被忽略并告警（不报错，避免旧部署起不来）。P0 前先核对配置模板、Runner、镜像与部署入口 |
 | P1 | 后端状态来源替换：`dsr_turns`、`dsr_permission_requests`、reducer、输入拒绝与删除准入改读新表、确定性状态事件 ID；先只对 dsr1 会话生效 |
-| P2 | 后端 DSR 接口：claim/register/heartbeat/state/context、inputs、trajectory、permissions（含同事务发布）、output、complete；协议围栏与两侧 claim 过滤；切换开关默认关闭 |
+| P2 | 后端 DSR 接口：claim/register/heartbeat/state/context、inputs、transcript、permissions（含同事务发布）、output、complete；协议围栏与两侧 claim 过滤；切换开关默认关闭 |
 | P3 | 协议状态转换、静止检查、投递时补建 turn 与回填任务（13.2–13.5） |
-| P4 | DSH `src/dsr/` 客户端，按 trajectory 拆队列，完整替换 `src/ccrv2/`；同一构建只说一种协议 |
+| P4 | DSH `src/dsr/` 客户端，按 transcript 拆队列，完整替换 `src/ccrv2/`；同一构建只说一种协议 |
 | P5 | 切流（13.3），稳定后清理（第 14 节） |
 
 P1 先于 P2：同步审批与 `complete` 依赖新的状态来源，反过来做会与旧 worker 状态机冲突。
@@ -711,7 +713,7 @@ stateDiagram-v2
     migrating --> ccrv2: 校验失败，epoch + 1
 ```
 
-- **进入 `migrating` 时就推进 epoch**，而不是到 ready 才推进。此后旧 owner 的 token 全部失效。两种协议的 claim 都不选中该会话，两种协议的 register 都返回 `409 trajectory_migrating`，因此回填批次之间不会有旧 owner 重新注册写入。
+- **进入 `migrating` 时就推进 epoch**，而不是到 ready 才推进。此后旧 owner 的 token 全部失效。两种协议的 claim 都不选中该会话，两种协议的 register 都返回 `409 session_migrating`，因此回填批次之间不会有旧 owner 重新注册写入。
 - 每次状态转换都推进 epoch，任何一侧的旧 token 都不能跨越转换继续写入。
 - `migrating` 期间公开输入照常接纳，并按目标协议写入 `dsr_turns`（13.4）；消息留在 JetStream 中，待 dsr1 owner 领取后投递。
 
@@ -744,7 +746,7 @@ stateDiagram-v2
 
 ### 13.5 回填
 
-由于 trajectory 原地存放，回填只为已有 `dsh_log` 行补齐身份列并创建元数据行，不复制 payload。
+由于 transcript 原地存放，回填只为已有 `dsh_log` 行补齐身份列并创建元数据行，不复制 payload。
 
 - **执行位置**：后台 River 任务，不在 claim 或 register 请求路径上。
 - **批次**：会话已是 `migrating`（13.2），每批一个事务，事务内校验状态与 epoch 未变，并写入 `migration_checkpoint`；崩溃后从检查点续跑，可重入。
@@ -774,7 +776,7 @@ stateDiagram-v2
 - **Claim 与 Register**
   - 失败：旧 claim 不选中 dsr1 会话、新 claim 不选中非 dsr1 或 `migrating` 会话；耗尽 hold 与 `FailPermanently` 行为不变；旧 epoch 注册被拒；协议 token 与路由不匹配被拒。
   - 成功：410 后同 epoch 重新 register 恢复，不全量恢复；接管注册关闭旧 epoch 的 pending，并发布 running/idle。
-- **Trajectory**（Mapper SQL 与参数绑定单测；真实 PostgreSQL 验证 bytea、jsonb、nullable 与部分唯一索引）
+- **Transcript**（Mapper SQL 与参数绑定单测；真实 PostgreSQL 验证 bytea、jsonb、nullable 与部分唯一索引）
   - 失败：Header 缺失、seq 缺口、同序号语义不同、Header id 或 parent 不符、parent 或线程不存在、重复键、单条超过 16 MiB、旧 epoch 追加、`migrating` 时读写。
   - 成功：从 seq 0 首次追加返回 `"1"`；重复追加幂等；`from_seq = 0` 返回 Header 与 seq 0；按字节分页；外置 payload 还原；归档后合并读回无缺口；主线程与子线程分队列并行追加。
   - 比较：`1`/`1.0`、指数、键序、转义、大整数的 TS/Go 共用样本；摘要不同但语义相同时不判冲突。
@@ -792,10 +794,10 @@ stateDiagram-v2
   - 失败：进入 `migrating` 后旧 owner 的 register 与写入均被拒（批次之间也不例外）；非静止会话（租约有效、requires_action、有未处理输入或待确认记录）不转换；软删除缺口回退为 `ccrv2` 并推进 epoch；投递时找不到 `session_events` 行的输入被 NAK。
   - 成功：归档历史回填（v1 段按幂等键重建身份）；半途崩溃后从检查点续跑；`migrating` 期间接纳的输入在 dsr1 领取后投递且有 turn；转换前已拉取未 ACK 的输入在投递时补建为 `processing` 并以 `recovered` 结束；旧 DSH、新 DSH 与升级后端并存。
 - **接管**：等待审批时 SIGKILL，公开会话为 `idle(requires_action)`，租约过期后被 open turn 条件领取，pending 变为 `superseded`，输入以 `recovered` 结束，新 `user.message` 不再被拒；terminal 输入重投时 `processing` 为 no-op，`complete` 返回首次结果。
-- **子线程引导**：子线程 Header 在 `thread_created` 之前写入成功；`thread_created` 在 trajectory 不存在或 parent 不符时被拒；同一 trajectory 绑定不同线程被拒；线程状态事件重启补发后不重复。
+- **子线程引导**：子线程 Header 在 `thread_created` 之前写入成功；`thread_created` 在 transcript 不存在或 parent 不符时被拒；同一 transcript 绑定不同线程被拒；线程状态事件重启补发后不重复。
 - **归档保真**：归档后同序号重复追加被判为重复或冲突，而不是插入新行；v2 段还原后两列与原值一致；v1 段重建的 seq 与 payload 不符时还原失败。
 - **取消墓碑**：缺少 `dsh_session_id` 或 `tool_use_id` 被拒；派生 ID 与路径不符被拒；墓碑后到的创建返回 `cancelled`。
-- **原生格式**：DSH 升级后继续向旧版本 trajectory 追加；改写已确认 Header 被判为冲突。
+- **原生格式**：DSH 升级后继续向旧版本 transcript 追加；改写已确认 Header 被判为冲突。
 - **DSH**：现有 `ccrv2.test.ts`、`session-reacquisition.test.ts`、`crash.test.ts`、`parallel-tools.test.ts`、`parallel-subagents.test.ts`、`model-replication.test.ts`、`input-recovery.test.ts` 的场景迁移到 DSR 客户端，覆盖 3.1 的全部屏障、A→B→A 接管与 SIGKILL 恢复。
 - **集成**：需要真实验证时，按 verify-be Skill 选择 chat 域受影响的最小场景，以及 Transcript 归档、还原、物理删除场景；是否运行由用户决定。
 
@@ -809,7 +811,7 @@ stateDiagram-v2
 - [ ] 回填两个批次之间，旧 owner 尝试 register 和写入，全部被围栏拒绝。
 - [ ] 记录不存在时先 cancel 再晚到 create：墓碑落库，不会重新打开审批；终态重试不因输入已结束被拒。
 - [ ] 子线程首次创建时，不需要放松工具执行或公开输出的复制屏障。
-- [ ] 归档、删除 PG 行、读取、重复追加、还原之后，trajectory 身份与 `next_seq` 保持一致；删除最后副本后返回 `trajectory_purged`。
+- [ ] 归档、删除 PG 行、读取、重复追加、还原之后，transcript 身份与 `next_seq` 保持一致；删除最后副本后返回 `transcript_purged`。
 - [ ] 一个触发改变多个线程时事件 ID 不冲突；pending 集合缩小但状态仍为 requires_action 时，照常发布状态变化。
 - [ ] reducer 行为对照表覆盖失败后排队、并行审批（其他线程继续执行时 Session 为 running）、预算暂停与线程终止，并与现行测试一致。
 - [ ] 原生格式版本策略（仅 v4）、超限事件的永久失败规则、legacy 截止日期与退出指标已确定。
@@ -821,7 +823,7 @@ stateDiagram-v2
 - 执行屏障保持不变。
 - claim 与 register 保持分离，context 独立读取；`worker_claim_expires_at` 保留 hold 职责；两侧 claim 都加协议过滤。
 - epoch 只来自 session token。
-- trajectory 原地存放在 `code_session_internal_events`，以 `dsh_session_id`/`dsh_seq` 与元数据表表达；seq 从 0 起，`next_seq`/`from_seq` 为字符串；比较按语义，摘要用 JCS。
+- transcript 原地存放在 `code_session_internal_events`，以 `dsh_session_id`/`dsh_seq` 与元数据表表达；seq 从 0 起，`next_seq`/`from_seq` 为字符串；比较按语义，摘要用 JCS。
 - 审批 ID 确定性派生，按 `(dsh_session_id, tool_use_id)` 去重；持久化与公开事件同事务；终态不可逆；complete、中断、接管、子线程终止自动关闭。
 - `dsr_turns` 作为 turn 事实来源；`complete` 只接受枚举 reason。
 - 公开状态由移植自现行规则的单一 reducer 计算，状态事件 ID 确定性派生。
@@ -832,7 +834,7 @@ stateDiagram-v2
 - 唯一索引不以 `deleted_at` 为条件；archive codec v2 保存身份列，v1 段按幂等键重建。
 - 子线程 Header 不依赖公开线程，由 `thread_created` 绑定；线程事件 ID 确定性派生。
 - 取消请求必须携带 `dsh_session_id` 与 `tool_use_id`；状态事件 ID 包含线程维度。
-- 已确认的 trajectory 不可改写；DSRv1 只支持原生格式 v4，迁移后的接续写入一律拒绝，generation 化留给 DSRv2。
+- 已确认的 transcript 不可改写；DSRv1 只支持原生格式 v4，迁移后的接续写入一律拒绝，generation 化留给 DSRv2。
 - 可领取条件同时覆盖 processing 未结算与 terminal 未 ACK 的 turn，`acked_at` 由 ACK 事务写入。
 - 审批按 `request_id` 查找已有记录，先于新建前的归属校验。
 - Session 聚合沿用现行优先级（running 优先），子线程等待审批时其他线程可继续执行。
@@ -853,7 +855,7 @@ stateDiagram-v2
 | 等待审批时崩溃：主动撤回，还是保留审批等用户响应 | **主动撤回**（3.3、4.3）。新 owner 把 pending 标为 `superseded`，输入以 `recovered` 结束，公开会话收到固定恢复文案与 `idle(retries_exhausted)` | 恢复不重放未完成的调用，保留的审批即使被批准，工具也不会执行，界面上的审批请求实际已经失效。保留方案还需要另外设计"用户响应才触发领取"的路径，并且在用户响应之前持续拒绝新输入。主动撤回让状态与事实一致，用户可以立刻重新提问 |
 | 中断时服务端是否自动关闭目标线程的 pending | **关闭**（7.6），终态为 `closed`。之后迟到的确认按现行"工具确认已过期"响应 | DSH 收到中断后本来就放弃等待，只是把清理交给可能丢失的 cancel 请求。由服务端在接纳中断的事务内关闭，不依赖执行端存活，也避免中断后会话停在 requires_action、新输入被拒。迟到确认沿用已有的过期响应，公开 API 不新增错误类型 |
 | legacy 截止日期与通知 | 默认 **开启切换后 30 天**，可通过部署配置调整；通知方式为发布说明与部署文档，到期前 7 天起在后端启动日志与指标告警中提示剩余的 legacy 会话数 | OMA 是自托管部署，直接受影响的是部署运维者，而不是最终用户；平台没有逐客户通知的通道，也不应为此新建。30 天覆盖常见的长时间空闲会话，只有回填失败或始终不静止的会话会走到截止日 |
-| `dsr_trajectories`、`dsr_turns`、`dsr_permission_requests` 是否需要 `external_id` | **不需要** | `external_id` 的作用是兼容 Anthropic API 的资源 ID。这三张表是执行端内部的元数据与状态，不通过任何公开 API 暴露，也不进入事件 payload；`uuid` 已满足稳定标识与跨表引用规则。日后若需要对外暴露，再通过迁移补列 |
+| `dsr_transcripts`、`dsr_turns`、`dsr_permission_requests` 是否需要 `external_id` | **不需要** | `external_id` 的作用是兼容 Anthropic API 的资源 ID。这三张表是执行端内部的元数据与状态，不通过任何公开 API 暴露，也不进入事件 payload；`uuid` 已满足稳定标识与跨表引用规则。日后若需要对外暴露，再通过迁移补列 |
 | `session.set_model` 是否需要公开确认事件 | **不新增**，保持现行：成功只体现在后续模型请求中，失败时 DSH 以 `processed` + `error` 回执，后端发布 `session.error` | 现行没有确认事件，增加它属于公开 API 变更，超出本协议的兼容边界 |
 | `limit_bytes` 默认值 | 默认 **4 MiB**，上限 8 MiB，保持 6.7 | 冷恢复逐页写入临时 JSONL 再回读校验，内存占用以单页为界，不需要整条日志常驻；4 MiB 让常见会话一到两页读完，单条超大事件按软预算例外处理 |
 
@@ -869,3 +871,4 @@ stateDiagram-v2
 | 6 | 关闭全部待定问题：等待审批时崩溃主动撤回审批；中断由服务端关闭目标线程 pending；legacy 截止默认 30 天并经发布说明、启动日志与指标告警通知；三张内部表不设 `external_id`；`session.set_model` 不新增公开事件；`limit_bytes` 默认 4 MiB |
 | 7 | 删除 register 响应中的 `capabilities`，原因是单个实例的回答无法代表滚动升级中的整个后端，且只覆盖后端到 DSH 一个方向；改为词汇由协议版本固定，版本在 register 时绑定到会话并在响应中回显，词汇变化发布新版本，按先后端、后 DSH 的顺序部署 |
 | 7.1 | 新增 [接口参考](api-reference.md)，逐个说明请求、响应、状态码与示例；同步明确 `/output` 每批 1–200 条及响应 `{accepted, duplicates}`、`inputs/ack` 遇到 `input_not_completed` 时整批不执行、Header 写入的响应字段 |
+| 7.2 | 把原生日志从 trajectory 改名为 transcript，避免与可观测性的会话轨迹撞名：路径 `/transcripts`、表 `dsr_transcripts`、错误码 `transcript_*` 与 `unsupported_transcript_version`；迁移中的错误码改为 `session_migrating`，因为它表示整个会话处于迁移状态。修订记录中的历史条目保留原名 |

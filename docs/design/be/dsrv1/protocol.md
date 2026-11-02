@@ -1,8 +1,8 @@
 # DSRv1：DSH Session Remote 协议
 
-状态：设计草案（第 5 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
+状态：设计草案（第 6 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
 
-冻结条件：第 7（审批）、第 9（输入与 turn）、第 10（公开状态 reducer）三个状态机的不变量经评审确认，第 17 节待定问题关闭。
+冻结条件：第 7（审批）、第 9（输入与 turn）、第 10（公开状态 reducer）三个状态机的不变量经评审确认。第 17 节的待定问题已在第 6 版全部决定，冻结前只需评审这些决定，并确认 15.1 的验收条件。
 
 ## 1. 背景与结论
 
@@ -837,14 +837,18 @@ stateDiagram-v2
 - 静止检查包含 consumer 的 `num_pending` 与 `num_ack_pending`；legacy 会话设截止日期，退出条件可由指标检查。
 - 原生 seq 保持 number，字符串只用于 DSR 自有 ID 与游标。
 
-## 17. 待定问题
+## 17. 产品与运维决定
 
-- `dsr_trajectories` 是否属于需要 `external_id` 的核心业务表。
-- 中断时由服务端自动关闭目标线程的 pending（7.6）会改变现行"中断不清理待确认记录"的行为，需要确认公开 API 对迟到确认的现有响应是否保持。
-- 等待审批时崩溃后主动撤回审批（3.3）是可见的行为变化，需要确认产品可以接受；否则需要另一种方案：保留 pending，用户响应后再领取，并接受"批准后工具不会执行"的现行语义。
-- legacy 截止日期的长度，以及到期强制结束会话是否需要提前通知客户。
-- `session.set_model` 是否需要公开的确认事件。
-- 读取分页 `limit_bytes` 默认值与 DSH 恢复内存预算是否匹配。
+第 6 版关闭了此前的全部待定问题。每条决定都给出理由与可撤回的边界。
+
+| 问题 | 决定 | 理由 |
+| --- | --- | --- |
+| 等待审批时崩溃：主动撤回，还是保留审批等用户响应 | **主动撤回**（3.3、4.3）。新 owner 把 pending 标为 `superseded`，输入以 `recovered` 结束，公开会话收到固定恢复文案与 `idle(retries_exhausted)` | 恢复不重放未完成的调用，保留的审批即使被批准，工具也不会执行，界面上的审批请求实际已经失效。保留方案还需要另外设计"用户响应才触发领取"的路径，并且在用户响应之前持续拒绝新输入。主动撤回让状态与事实一致，用户可以立刻重新提问 |
+| 中断时服务端是否自动关闭目标线程的 pending | **关闭**（7.6），终态为 `closed`。之后迟到的确认按现行"工具确认已过期"响应 | DSH 收到中断后本来就放弃等待，只是把清理交给可能丢失的 cancel 请求。由服务端在接纳中断的事务内关闭，不依赖执行端存活，也避免中断后会话停在 requires_action、新输入被拒。迟到确认沿用已有的过期响应，公开 API 不新增错误类型 |
+| legacy 截止日期与通知 | 默认 **开启切换后 30 天**，可通过部署配置调整；通知方式为发布说明与部署文档，到期前 7 天起在后端启动日志与指标告警中提示剩余的 legacy 会话数 | OMA 是自托管部署，直接受影响的是部署运维者，而不是最终用户；平台没有逐客户通知的通道，也不应为此新建。30 天覆盖常见的长时间空闲会话，只有回填失败或始终不静止的会话会走到截止日 |
+| `dsr_trajectories`、`dsr_turns`、`dsr_permission_requests` 是否需要 `external_id` | **不需要** | `external_id` 的作用是兼容 Anthropic API 的资源 ID。这三张表是执行端内部的元数据与状态，不通过任何公开 API 暴露，也不进入事件 payload；`uuid` 已满足稳定标识与跨表引用规则。日后若需要对外暴露，再通过迁移补列 |
+| `session.set_model` 是否需要公开确认事件 | **不新增**，保持现行：成功只体现在后续模型请求中，失败时 DSH 以 `processed` + `error` 回执，后端发布 `session.error` | 现行没有确认事件，增加它属于公开 API 变更，超出本协议的兼容边界 |
+| `limit_bytes` 默认值 | 默认 **4 MiB**，上限 8 MiB，保持 6.7 | 冷恢复逐页写入临时 JSONL 再回读校验，内存占用以单页为界，不需要整条日志常驻；4 MiB 让常见会话一到两页读完，单条超大事件按软预算例外处理 |
 
 ## 18. 修订记录
 
@@ -855,3 +859,4 @@ stateDiagram-v2
 | 3 | 补充收益与成本定位及职责对照；claim 与 register 恢复分离，保留 `worker_claim_expires_at` hold 职责，明确 410 恢复与两侧协议过滤；`external_metadata` 依赖清单与有类型 worker state（保留 `model`、`trace_turns` 读回）；身份词汇表；trajectory 改为原地存放在 internal events，复用归档、blob 与保留机制，按 trajectory 拆批，语义比较与 JCS，序号用字符串，新增 `DSR-Next-Seq` 与独立错误码；审批 ID 确定性派生、同事务发布、接管/中断/子线程终止自动关闭；新增 `dsr_turns` 与显式 reducer（移植现行规则、线程维度、触发点、确定性状态事件 ID、依赖迁移）；complete 改为枚举 reason；output 独立 schema、`preview.*` 边界映射、`capabilities` 协商、双写者合同；可观测与容量；P0 两版本弃用；状态来源替换先于同步审批；回填为后台任务且失败回退 |
 | 4 | 等待审批时崩溃的领取条件（open turn）；terminal 优先的重试与 no-op processing；协议状态 `migrating` 进入即推进 epoch、两侧注册拒绝；存量会话静止转换与投递时补建 turn；唯一索引去掉 `deleted_at` 条件、archive codec v2 与 v1 按幂等键重建；子线程 Header 不依赖公开线程、由 `thread_created` 绑定、线程事件 ID 确定性派生；取消墓碑必填身份字段；状态事件 ID 增加线程维度；新增 DSH 原生格式升级约束（6.9） |
 | 5 | 可领取条件增加 terminal 未 ACK 的 turn（`acked_at`），并排除预算暂停与耗尽 hold；审批先按 `request_id` 查找已有记录再做归属校验，说明子线程多次委派时的输入关联与接管不继承；Session 聚合改为沿用现行 running 优先；失败后排队输入保留现行 `idle(retries_exhausted)`；状态事件 ID 增加目标与事件类型并定义编码，等价判断包含 `event_ids`；原生 seq 保持 number；原生格式固定 v4 并区分传输回填与原生迁移；单条事件 15 MiB、超限进入本地日志即永久失败；软页预算；归档中的 trajectory 定位与 `purged`；接管时保留前缀核对；静止检查加入 consumer 状态；legacy 截止日期与退出指标；新增 15.1 冻结验收条件 |
+| 6 | 关闭全部待定问题：等待审批时崩溃主动撤回审批；中断由服务端关闭目标线程 pending；legacy 截止默认 30 天并经发布说明、启动日志与指标告警通知；三张内部表不设 `external_id`；`session.set_model` 不新增公开事件；`limit_bytes` 默认 4 MiB |

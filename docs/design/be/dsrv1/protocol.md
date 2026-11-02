@@ -1,6 +1,6 @@
 # DSRv1：DSH Session Remote 协议
 
-状态：设计草案（第 6 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
+状态：设计草案（第 7 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
 
 冻结条件：第 7（审批）、第 9（输入与 turn）、第 10（公开状态 reducer）三个状态机的不变量经评审确认。第 17 节的待定问题已在第 6 版全部决定，冻结前只需评审这些决定，并确认 15.1 的验收条件。
 
@@ -85,11 +85,14 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 
 ## 4. 通用约定与生命周期
 
-### 4.1 路径、版本与能力
+### 4.1 路径与版本
 
 - 执行端接口挂载在 `/v1/dsr/` 下，按 chi 子路由注册，不走 `/v1/*` workspace API key 鉴权回退。
 - 每个请求携带 `DSR-Protocol: 1`。缺失或不支持返回 `400`，`DSR-Error: unsupported_protocol`。
-- 注册响应包含 `capabilities`（字符串数组），表示后端接受的输出类型与输入 kind。DSH 不发送不在其中的类型。v1 的输出与输入词汇固定，新增类型必须先扩展 `capabilities`，所以未知类型返回 400 不会在滚动升级中误伤（切流顺序见 13.3）。
+- **词汇由协议版本固定，不在运行时协商。** v1 的输出类型（8.2）与输入 kind（9.1）以本文白名单为准。任何增删或字段语义变化都必须发布新的协议版本（例如 `DSR-Protocol: 2`），不在 v1 内追加。
+- **版本绑定到会话**：register 把请求头中的版本记录到 Code Session（`metadata.config.dsr_protocol_version`）。此后该 epoch 的所有请求必须携带同一版本，否则返回 `400 unsupported_protocol`；后端只向该会话投递该版本定义过的输入 kind。新 epoch 注册时可以换成另一个受支持的版本。
+- **部署顺序**：新版本先在全部后端实例上线（后端可同时支持多个版本，按请求头分派），确认没有旧实例后再升级 DSH 使用新版本；下线旧版本前，确认没有会话仍记录旧版本。这与 13.3 的"后端先全量升级"是同一条纪律，因为版本支持是全后端统一的规则，不依赖单个实例在某次请求中的回答。
+- 因此 `/output` 对未知类型严格返回 400 不会在升级中误伤：DSH 只发送它注册时所用版本定义的类型，而所有后端实例都已支持该版本。
 - DSR 自有的 ID、epoch 与游标（`next_seq`、`from_seq`、`next_from_seq`）在 JSON 中为字符串。内嵌的原生 Header/Event 保持原样，`SessionEvent.seq` 仍是 number，服务端校验它是非负安全整数（≤ 2^53 − 1）。
 
 ### 4.2 鉴权
@@ -127,8 +130,8 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 ```json
 {
   "epoch": "7",
-  "lease": { "ttl_ms": 20000, "grace_ms": 10000, "heartbeat_interval_ms": 6000 },
-  "capabilities": ["output:agent.message", "input:user.message", "..."]
+  "protocol": "1",
+  "lease": { "ttl_ms": 20000, "grace_ms": 10000, "heartbeat_interval_ms": 6000 }
 }
 ```
 
@@ -454,7 +457,7 @@ DSH 收到时若本地等待项不存在（已取消、turn 已结束或属于�
 
 - `id` 是**客户端幂等键**，必填；公开事件 ID 由服务端从它稳定派生（沿用现有派生规则），两者不同。新端点有独立的请求 schema，不复用要求 `uuid` 的 CCRv2 校验。
 - 批次 all-or-nothing：任一条校验失败则整批 400，不部分写入。同 `id` 不同内容返回 `409 output_idempotency_mismatch`。
-- 类型白名单由注册时的 `capabilities` 声明，未知类型返回 400。
+- 类型白名单由会话注册时的协议版本决定（4.1），未知类型返回 400。
 
 ### 8.2 词汇与边界映射
 
@@ -502,6 +505,7 @@ DSH 收到时若本地等待项不存在（已取消、turn 已结束或属于�
 ### 9.2 输入流与回执
 
 - `GET /v1/dsr/sessions/{id}/inputs/stream`：SSE，帧为 `event: input`，`data` 为 `{"id","lane","kind",...}`；两路 consumer、Redis ACK 定位、`Last-Event-ID` 语义同现行。`keep_alive` 改为 SSE 注释行。
+  - 后端只投递会话注册版本定义的 kind（4.1），所以收到未知 kind 属于协议缺陷。DSH 不执行、不停止会话，以 `processed` 加 `error: "unsupported_input"` 回执并记录 error 日志；后端发布 `session.error` 并计入指标，避免用户消息被静默吞掉。
 - `POST /v1/dsr/sessions/{id}/inputs/ack`：`{"updates": [{"id", "status": "received"|"processing"|"processed", "error"?}]}`，语义同 [Worker Events Delivery](../ccrv2/ccr-v2-api-worker-events-delivery.md)，另加：
   - task 输入的 `processing` 在同一事务内把 turn 从 `accepted` 推进到 `processing`，并写入 `processed_at`。turn 已是 `processing` 时只更新 `worker_epoch`；**已是 terminal 时为 no-op 并计入 applied**，不回退状态。
   - task 输入的 `processed` 必须已有 terminal turn，否则该项 `409 input_not_completed`，不 DoubleAck。
@@ -781,6 +785,7 @@ stateDiagram-v2
   - 成功：complete 成功但 ACK 失败后接管，不重做工具、不重复终态；complete A 与接纳 B 并发不覆盖 running；A failed 且 B 排队时继续处理 B。
 - **Reducer**：以现行 `session_event_state.go` 测试为基线逐条迁移；增加子线程 pending 对 Session 与线程状态的不同影响、`budget_reached` 粘滞、`retries_exhausted` 不被子线程覆盖、确定性状态事件 ID 重试不重复。
 - **删除与归档准入**：processing 未完成时拒绝，accepted 未处理时允许，与现行行为对照。
+- **协议版本**：缺失或不支持的版本返回 `unsupported_protocol`；同一 epoch 内换版本被拒；后端不向会话投递其注册版本未定义的输入 kind；同时支持两个版本的后端按请求头正确分派。
 - **Output**：未知类型 400、整批原子、重复 `id` 幂等、`preview.*` 映射进入既有预览路径、`tool.result` 映射、模型代理与 DSH 双写去重。
 - **迁移**
   - 失败：进入 `migrating` 后旧 owner 的 register 与写入均被拒（批次之间也不例外）；非静止会话（租约有效、requires_action、有未处理输入或待确认记录）不转换；软删除缺口回退为 `ccrv2` 并推进 epoch；投递时找不到 `session_events` 行的输入被 NAK。
@@ -836,6 +841,7 @@ stateDiagram-v2
 - 区分"归档后删 PG 行"与"删除最后副本"，后者标记 `purged`。
 - 静止检查包含 consumer 的 `num_pending` 与 `num_ack_pending`；legacy 会话设截止日期，退出条件可由指标检查。
 - 原生 seq 保持 number，字符串只用于 DSR 自有 ID 与游标。
+- 不设 `capabilities`：词汇由协议版本固定，版本在 register 时绑定到会话；词汇变化发布新版本，先全量升级后端再升级 DSH。
 
 ## 17. 产品与运维决定
 
@@ -860,3 +866,4 @@ stateDiagram-v2
 | 4 | 等待审批时崩溃的领取条件（open turn）；terminal 优先的重试与 no-op processing；协议状态 `migrating` 进入即推进 epoch、两侧注册拒绝；存量会话静止转换与投递时补建 turn；唯一索引去掉 `deleted_at` 条件、archive codec v2 与 v1 按幂等键重建；子线程 Header 不依赖公开线程、由 `thread_created` 绑定、线程事件 ID 确定性派生；取消墓碑必填身份字段；状态事件 ID 增加线程维度；新增 DSH 原生格式升级约束（6.9） |
 | 5 | 可领取条件增加 terminal 未 ACK 的 turn（`acked_at`），并排除预算暂停与耗尽 hold；审批先按 `request_id` 查找已有记录再做归属校验，说明子线程多次委派时的输入关联与接管不继承；Session 聚合改为沿用现行 running 优先；失败后排队输入保留现行 `idle(retries_exhausted)`；状态事件 ID 增加目标与事件类型并定义编码，等价判断包含 `event_ids`；原生 seq 保持 number；原生格式固定 v4 并区分传输回填与原生迁移；单条事件 15 MiB、超限进入本地日志即永久失败；软页预算；归档中的 trajectory 定位与 `purged`；接管时保留前缀核对；静止检查加入 consumer 状态；legacy 截止日期与退出指标；新增 15.1 冻结验收条件 |
 | 6 | 关闭全部待定问题：等待审批时崩溃主动撤回审批；中断由服务端关闭目标线程 pending；legacy 截止默认 30 天并经发布说明、启动日志与指标告警通知；三张内部表不设 `external_id`；`session.set_model` 不新增公开事件；`limit_bytes` 默认 4 MiB |
+| 7 | 删除 register 响应中的 `capabilities`，原因是单个实例的回答无法代表滚动升级中的整个后端，且只覆盖后端到 DSH 一个方向；改为词汇由协议版本固定，版本在 register 时绑定到会话并在响应中回显，词汇变化发布新版本，按先后端、后 DSH 的顺序部署 |

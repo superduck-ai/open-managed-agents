@@ -100,14 +100,14 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 | 凭据 | 用途 | 说明 |
 | --- | --- | --- |
 | fleet token | `claims`、`release` | 沿用 `code_session.brain_claim_token_file` |
-| session token | `/v1/dsr/code-sessions/{code_session_id}/*` | claim 签发的 JWT，claims 含 `code_session_id`、`epoch`、`protocol: "dsr1"` 与租户身份 |
+| session token | `/v1/dsr/sessions/{code_session_id}/*` | claim 签发的 JWT，claims 含 `code_session_id`、`epoch`、`protocol: "dsr1"` 与租户身份 |
 | model token | `/v1/messages` | 沿用现行 |
 
 epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在执行授权阶段与写事务内做 fence。CCRv2 路由拒绝 `protocol: "dsr1"` 的 token，DSR 路由拒绝不带该 claim 的 token。
 
 ### 4.3 Claim 与 Release
 
-- `POST /v1/dsr/claims?block_ms=25000`：请求与响应字段同现行 claim（`session_id`、`worker_epoch`、`session_token`、`model_token`、`claim_expires_at`、`trace_parent`），token 增加 `protocol` claim。**不合并注册，不内嵌 context。**
+- `POST /v1/dsr/claims?block_ms=25000`：请求与响应字段同现行 claim，仅两处改名：`session_id` 改为 `code_session_id`，`ingress_token` 改为 `session_token`（字段为 `code_session_id`、`worker_epoch`、`session_token`、`model_token`、`claim_expires_at`、`trace_parent`），token 增加 `protocol` claim。**不合并注册，不内嵌 context。**
 - 领取 SQL 增加 `metadata.config.worker_protocol = 'dsr1'`；`migrating` 状态的会话不被任何一侧领取（13.2）。
 - **可领取条件增加未结算 turn**：除现行的"存在领取请求或公开会话 running/rescheduling"外，若租约加宽限已过，且存在以下任一 turn，也可领取：
   - `processing` 且非 terminal（等待审批时崩溃：公开会话为 `idle(requires_action)`，现行条件不会命中，注册时的接管清理（4.4）也就无法触发）；
@@ -119,7 +119,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 ### 4.4 Register
 
-`POST /v1/dsr/code-sessions/{code_session_id}/register`，请求体 `{}`。
+`POST /v1/dsr/sessions/{code_session_id}/register`，请求体 `{}`。
 
 - 语义同现行 `worker/register`：同一 epoch 允许重复注册，在同一事务内清空领取请求与期限，写入租约与连接状态。
 - **410 恢复路径**：租约过期但 epoch 未被推进时，DSH 以同一 epoch 重新 register 恢复租约，不需要重新 claim 和全量恢复；只有 `409 epoch_superseded` 才需要退役。
@@ -137,8 +137,8 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 ### 4.5 Heartbeat 与 Context
 
-- `POST /v1/dsr/code-sessions/{code_session_id}/heartbeat`，请求体 `{}`，响应 `{"lease_expires_at": "..."}`；`409 epoch_superseded`、`410 lease_expired`。
-- `GET /v1/dsr/code-sessions/{code_session_id}/context`，可选 `DSR-Thread-ID`；内容同现行 `session_context`，`Cache-Control: no-store`。
+- `POST /v1/dsr/sessions/{code_session_id}/heartbeat`，请求体 `{}`，响应 `{"lease_expires_at": "..."}`；`409 epoch_superseded`、`410 lease_expired`。
+- `GET /v1/dsr/sessions/{code_session_id}/context`，可选 `DSR-Thread-ID`；内容同现行 `session_context`，`Cache-Control: no-store`。
 
 ### 4.6 Worker state
 
@@ -156,8 +156,8 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 接口：
 
-- `GET /v1/dsr/code-sessions/{code_session_id}/worker-state` → `{"status": "idle"|"running", "model": "...", "trace_turns": {...}}`。
-- `PUT /v1/dsr/code-sessions/{code_session_id}/worker-state`：字段级 patch，只接受上述字段，未知字段 400。
+- `GET /v1/dsr/sessions/{code_session_id}/worker-state` → `{"status": "idle"|"running", "model": "...", "trace_turns": {...}}`。
+- `PUT /v1/dsr/sessions/{code_session_id}/worker-state`：字段级 patch，只接受上述字段，未知字段 400。
 
 ### 4.7 错误
 
@@ -232,7 +232,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 ### 6.4 写 Header
 
-`PUT /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}/header`：
+`PUT /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/header`：
 
 ```json
 { "parent_dsh_session_id": "cse_...", "header": { "...": "原生 SessionHeader" } }
@@ -244,7 +244,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 ### 6.5 追加
 
-`POST /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}/events`，请求体 `{"events": [<原生 SessionEvent>, ...]}`。
+`POST /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/events`，请求体 `{"events": [<原生 SessionEvent>, ...]}`。
 
 **一个请求只属于一条 transcript**。DSH 现行上传队列按 root code session 组织，一个批次可能混合主线程、子线程与子线程 Header；DSR 客户端必须按 `dsh_session_id` 拆分队列，每条 transcript 内保持顺序，Header 先于 Event。不同 transcript 之间没有顺序要求。
 
@@ -295,8 +295,8 @@ dsr_transcripts
 
 ### 6.7 读取
 
-- `GET /v1/dsr/code-sessions/{code_session_id}/transcripts` → `{"data": [{"dsh_session_id","parent_dsh_session_id","session_thread_id","header_present","next_seq"}]}`。
-- `GET /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}?from_seq=0&limit_bytes=4194304` → `{"header": {...}|null, "events": [...], "next_from_seq": "37"|null}`。
+- `GET /v1/dsr/sessions/{code_session_id}/transcripts` → `{"data": [{"dsh_session_id","parent_dsh_session_id","session_thread_id","header_present","next_seq"}]}`。
+- `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}?from_seq=0&limit_bytes=4194304` → `{"header": {...}|null, "events": [...], "next_from_seq": "37"|null}`。
   - `from_seq` 包含该序号，`header` 只在 `from_seq = 0` 时返回。
   - `limit_bytes` 是软预算（上限 8 MiB），按原始字节累计，Header 计入预算。每页至少返回一条；单条超过预算时该页只含这一条，响应仍可达 15 MiB 加封装。
   - 使用现有"归档 + PostgreSQL"合并读回与外置 payload 还原路径；已归档行不会被判为缺口。
@@ -326,7 +326,7 @@ transcript 一经确认不可改写，而 DSH 升级可能改变 Header 结构�
 
 ### 7.1 请求
 
-`POST /v1/dsr/code-sessions/{code_session_id}/permission-requests`：
+`POST /v1/dsr/sessions/{code_session_id}/permission-requests`：
 
 ```json
 {
@@ -424,7 +424,7 @@ DSH 收到时若本地等待项不存在（已取消、turn 已结束或属于�
 
 ### 7.5 取消
 
-`POST /v1/dsr/code-sessions/{code_session_id}/permission-requests/{request_id}/cancel`：
+`POST /v1/dsr/sessions/{code_session_id}/permission-requests/{request_id}/cancel`：
 
 ```json
 { "dsh_session_id": "cse_...", "tool_use_id": "toolu_...", "input_id": "<input_id>" }
@@ -451,7 +451,7 @@ DSH 收到时若本地等待项不存在（已取消、turn 已结束或属于�
 
 ### 8.1 接口
 
-`POST /v1/dsr/code-sessions/{code_session_id}/public-events`：
+`POST /v1/dsr/sessions/{code_session_id}/public-events`：
 
 ```json
 { "events": [ { "id": "<client idempotency key>", "type": "agent.message", "session_thread_id": "sthr_...", "...": "..." } ] }
@@ -509,9 +509,9 @@ DSH 收到时若本地等待项不存在（已取消、turn 已结束或属于�
 
 ### 9.2 输入流与回执
 
-- `GET /v1/dsr/code-sessions/{code_session_id}/inputs/stream`：SSE，帧为 `event: input`，`data` 为 `{"id","lane","kind",...}`；两路 consumer、Redis ACK 定位、`Last-Event-ID` 语义同现行。`keep_alive` 改为 SSE 注释行。
+- `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`：SSE，帧为 `event: input`，`data` 为 `{"id","lane","kind",...}`；两路 consumer、Redis ACK 定位、`Last-Event-ID` 语义同现行。`keep_alive` 改为 SSE 注释行。
   - 后端只投递会话注册版本定义的 kind（4.1），所以收到未知 kind 属于协议缺陷。DSH 不执行、不停止会话，以 `processed` 加 `error: "unsupported_input"` 回执并记录 error 日志；后端发布 `session.error` 并计入指标，避免用户消息被静默吞掉。
-- `POST /v1/dsr/code-sessions/{code_session_id}/inputs/delivery`：`{"updates": [{"id", "status": "received"|"processing"|"processed", "error"?}]}`，语义同 [Worker Events Delivery](../ccrv2/ccr-v2-api-worker-events-delivery.md)，另加：
+- `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery`：`{"updates": [{"id", "status": "received"|"processing"|"processed", "error"?}]}`，语义同 [Worker Events Delivery](../ccrv2/ccr-v2-api-worker-events-delivery.md)，另加：
   - task 输入的 `processing` 在同一事务内把 turn 从 `accepted` 推进到 `processing`，并写入 `processed_at`。turn 已是 `processing` 时只更新 `worker_epoch`；**已是 terminal 时为 no-op 并计入 applied**，不回退状态。
   - task 输入的 `processed` 必须已有 terminal turn。批次中任一 task 输入不满足时，整批返回 `409 finish_required`，不执行任何 DoubleAck，错误消息给出第一个违规的 `id`。
   - `error` 只允许出现在 control lane 的 `processed` 上。
@@ -556,7 +556,7 @@ stateDiagram-v2
 
 ### 9.4 结束上报
 
-`POST /v1/dsr/code-sessions/{code_session_id}/inputs/{input_id}/finish`：
+`POST /v1/dsr/sessions/{code_session_id}/inputs/{input_id}/finish`：
 
 ```json
 { "result": "success" | "cancelled" | "failed" | "recovered", "reason": "turn_failed" | "worker_shutdown" | "interrupted_recovery" | "quota_exhausted" }
@@ -657,7 +657,7 @@ reducer 只在以下事务内运行，每个触发点都在同一事务内写入
 
 ## 11. 运行时能力接口
 
-以下接口语义不变，路径迁移到 `/v1/dsr/code-sessions/{code_session_id}/` 下并改用 session token：
+以下接口语义不变，路径迁移到 `/v1/dsr/sessions/{code_session_id}/` 下并改用 session token：
 
 | 现路径 | DSRv1 路径 |
 | --- | --- |
@@ -876,3 +876,4 @@ stateDiagram-v2
 | 7.2 | 把原生日志从 trajectory 改名为 transcript，避免与可观测性的会话轨迹撞名：路径 `/transcripts`、表 `dsr_transcripts`、错误码 `transcript_*` 与 `unsupported_transcript_version`；迁移中的错误码改为 `session_migrating`，因为它表示整个会话处于迁移状态。修订记录中的历史条目保留原名 |
 | 7.3 | 接口改名：路径前缀 `/v1/dsr/sessions/{id}` 改为 `/v1/dsr/code-sessions/{code_session_id}`，`output` 改为 `public-events`，`inputs/ack` 改为 `inputs/delivery`，`inputs/{input_id}/complete` 改为 `inputs/{input_id}/outcome`，`state` 改为 `worker-state`，`permissions` 改为 `permission-requests`；错误码 `input_not_completed`、`turn_idempotency_mismatch`、`output_idempotency_mismatch` 改为 `outcome_required`、`outcome_idempotency_mismatch`、`public_event_idempotency_mismatch`；claim 响应的 `ingress_token` 改为 `session_token`；明确预览事件不落库、逐条扇出、不参与整批原子性与幂等 |
 | 7.4 | 为避免与 CMA Outcomes 功能（`user.define_outcome`、`span.outcome_evaluation_*`、会话配置 `outcomes`）混淆，结束接口改为 `inputs/{input_id}/finish`，请求与响应字段 `outcome` 改为 `result`，`dsr_turns.outcome` 列改为 `result`，错误码改为 `finish_required` 与 `finish_idempotency_mismatch`，正文称为"结束上报" |
+| 7.5 | 路径前缀改回 `/v1/dsr/sessions/{code_session_id}`：`/v1/dsr/` 命名空间只面向执行端，公开 Session 不会出现在这些路径中，且 ID 自带 `cse_` 前缀；保留路径参数名 `{code_session_id}` 以示区分。claim 响应字段 `session_id` 改为 `code_session_id`，与路径参数和 release 路径一致 |

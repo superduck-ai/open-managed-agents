@@ -8,21 +8,21 @@
 | --- | --- | --- | --- | --- | --- |
 | 1 | `POST /v1/dsr/claims` | fleet | 长轮询领取一个会话 | `POST /v1/code/brain/claims` | 4.3 |
 | 2 | `POST /v1/dsr/claims/{code_session_id}/release` | fleet | 释放领取 | `POST /v1/code/brain/claims/{id}/release` | 4.3 |
-| 3 | `POST /v1/dsr/code-sessions/{code_session_id}/register` | session | 在当前 epoch 接管会话、开始租约 | `worker/register` | 4.4 |
-| 4 | `POST /v1/dsr/code-sessions/{code_session_id}/heartbeat` | session | 续租 | `worker/heartbeat` | 4.5 |
-| 5 | `GET /v1/dsr/code-sessions/{code_session_id}/context` | session | 读取会话上下文 | `GET /v2/sessions/{id}` | 4.5 |
-| 6 | `GET /v1/dsr/code-sessions/{code_session_id}/worker-state` | session | 读取 worker state | `GET worker` | 4.6 |
-| 7 | `PUT /v1/dsr/code-sessions/{code_session_id}/worker-state` | session | 更新 worker state | `PUT worker` | 4.6 |
-| 8 | `GET /v1/dsr/code-sessions/{code_session_id}/inputs/stream` | session | SSE 接收输入 | `worker/events/stream` | 9.2 |
-| 9 | `POST /v1/dsr/code-sessions/{code_session_id}/inputs/delivery` | session | 输入进度回执 | `worker/events/delivery` | 9.2 |
-| 10 | `POST /v1/dsr/code-sessions/{code_session_id}/inputs/{input_id}/finish` | session | 结束 task 输入 | `worker/events` 中的 `result` 事件 | 9.4 |
-| 11 | `PUT /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}/header` | session | 写原生日志 Header | `worker/internal-events`（POST） | 6.4 |
-| 12 | `POST /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}/events` | session | 追加原生日志 Event | `worker/internal-events`（POST） | 6.5 |
-| 13 | `GET /v1/dsr/code-sessions/{code_session_id}/transcripts` | session | 列出会话下的原生日志 | `worker/internal-events?subagents` | 6.7 |
-| 14 | `GET /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}` | session | 分页读取一条原生日志 | `worker/internal-events`（GET） | 6.7 |
-| 15 | `POST /v1/dsr/code-sessions/{code_session_id}/permission-requests` | session | 创建或查询工具审批 | `worker/events` 中的 `can_use_tool` 控制请求，加轮询 `GET worker` | 7.1–7.3 |
-| 16 | `POST /v1/dsr/code-sessions/{code_session_id}/permission-requests/{request_id}/cancel` | session | 取消工具审批 | 无 | 7.5 |
-| 17 | `POST /v1/dsr/code-sessions/{code_session_id}/public-events` | session | 发布公开输出 | `worker/events` 中的公开输出 | 第 8 节 |
+| 3 | `POST /v1/dsr/sessions/{code_session_id}/register` | session | 在当前 epoch 接管会话、开始租约 | `worker/register` | 4.4 |
+| 4 | `POST /v1/dsr/sessions/{code_session_id}/heartbeat` | session | 续租 | `worker/heartbeat` | 4.5 |
+| 5 | `GET /v1/dsr/sessions/{code_session_id}/context` | session | 读取会话上下文 | `GET /v2/sessions/{id}` | 4.5 |
+| 6 | `GET /v1/dsr/sessions/{code_session_id}/worker-state` | session | 读取 worker state | `GET worker` | 4.6 |
+| 7 | `PUT /v1/dsr/sessions/{code_session_id}/worker-state` | session | 更新 worker state | `PUT worker` | 4.6 |
+| 8 | `GET /v1/dsr/sessions/{code_session_id}/inputs/stream` | session | SSE 接收输入 | `worker/events/stream` | 9.2 |
+| 9 | `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery` | session | 输入进度回执 | `worker/events/delivery` | 9.2 |
+| 10 | `POST /v1/dsr/sessions/{code_session_id}/inputs/{input_id}/finish` | session | 结束 task 输入 | `worker/events` 中的 `result` 事件 | 9.4 |
+| 11 | `PUT /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/header` | session | 写原生日志 Header | `worker/internal-events`（POST） | 6.4 |
+| 12 | `POST /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/events` | session | 追加原生日志 Event | `worker/internal-events`（POST） | 6.5 |
+| 13 | `GET /v1/dsr/sessions/{code_session_id}/transcripts` | session | 列出会话下的原生日志 | `worker/internal-events?subagents` | 6.7 |
+| 14 | `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}` | session | 分页读取一条原生日志 | `worker/internal-events`（GET） | 6.7 |
+| 15 | `POST /v1/dsr/sessions/{code_session_id}/permission-requests` | session | 创建或查询工具审批 | `worker/events` 中的 `can_use_tool` 控制请求，加轮询 `GET worker` | 7.1–7.3 |
+| 16 | `POST /v1/dsr/sessions/{code_session_id}/permission-requests/{request_id}/cancel` | session | 取消工具审批 | 无 | 7.5 |
+| 17 | `POST /v1/dsr/sessions/{code_session_id}/public-events` | session | 发布公开输出 | `worker/events` 中的公开输出 | 第 8 节 |
 
 CCRv2 列中的相对路径都以 `/v1/code/sessions/{id}/` 为前缀。另有 10 个只迁移路径的运行时能力接口，见第 18 节。
 
@@ -172,7 +172,7 @@ AND 不在 budget_reached 暂停中
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `session_id` | string | Code Session ID（`cse_*`），即后续路径中的 `{code_session_id}` |
+| `code_session_id` | string | Code Session ID（`cse_*`），即后续路径中的 `{code_session_id}`；现行 claim 中该字段名为 `session_id`，容易被误认为公开 Session ID，DSRv1 改名 |
 | `worker_epoch` | string | 本次领取分配的 epoch |
 | `session_token` | string | session token（JWT） |
 | `model_token` | string | 模型代理凭据，见下文 |
@@ -195,7 +195,7 @@ DSH 把 OMA 当作 Anthropic 或 OpenAI 兼容的模型服务，把 `model_token
 
 | 原因 | 说明 |
 | --- | --- |
-| 鉴权路径不同 | session token 的校验要求路径绑定到 `/v1/dsr/code-sessions/{code_session_id}/...`；`/v1/messages` 路径里没有会话 ID，走的是 `/v1/*` 的 API key 鉴权链，需要一个形如 API key 的不透明凭据 |
+| 鉴权路径不同 | session token 的校验要求路径绑定到 `/v1/dsr/sessions/{code_session_id}/...`；`/v1/messages` 路径里没有会话 ID，走的是 `/v1/*` 的 API key 鉴权链，需要一个形如 API key 的不透明凭据 |
 | SDK 兼容 | SDK 只会把凭据放进 `x-api-key` 或 `Authorization` 头，不透明 token 不需要改造 SDK |
 | 不读 body 也能归属 | 服务端按 hash 反查会话与租户，计量、计费、审计不必解析请求体 |
 | 最小权限 | model token 只能调模型，泄露后也写不了会话 |
@@ -216,7 +216,7 @@ Content-Type: application/json
 
 ```json
 {
-  "session_id": "cse_01HZX...",
+  "code_session_id": "cse_01HZX...",
   "worker_epoch": "7",
   "session_token": "eyJhbGciOi...",
   "model_token": "oma_mt_...",
@@ -320,7 +320,7 @@ DSR-Protocol: 1
           → C 立即 claim cse_3 并恢复
 ```
 
-## 3. `POST /v1/dsr/code-sessions/{code_session_id}/register`
+## 3. `POST /v1/dsr/sessions/{code_session_id}/register`
 
 ### 作用
 
@@ -388,7 +388,7 @@ DSH 启动该会话前校验 `heartbeat_interval × (1 + jitter) + timeout < ttl
 ### 示例
 
 ```http
-POST /v1/dsr/code-sessions/cse_abc/register
+POST /v1/dsr/sessions/cse_abc/register
 Authorization: Bearer <session token（epoch=7, protocol=dsr1）>
 DSR-Protocol: 1
 
@@ -417,7 +417,7 @@ C. 在迁移窗口里注册
    旧进程用 epoch 7 的 token 注册 → 409 → 回填期间无法写入
 ```
 
-## 4. `POST /v1/dsr/code-sessions/{code_session_id}/heartbeat`
+## 4. `POST /v1/dsr/sessions/{code_session_id}/heartbeat`
 
 ### 作用
 
@@ -448,7 +448,7 @@ register 成功后按 `heartbeat_interval_ms`（6 秒）固定节奏发送，抖
 
 `POST /v1/code/sessions/{id}/worker/heartbeat`，语义不变；请求体不再带 epoch。
 
-## 5. `GET /v1/dsr/code-sessions/{code_session_id}/context`
+## 5. `GET /v1/dsr/sessions/{code_session_id}/context`
 
 ### 作用
 
@@ -486,7 +486,7 @@ DSH 下一次模型请求前 GET context → bash 变为 ask
 
 `GET /v2/sessions/{id}`，响应字段从 `session_context` 改为 `context`；子线程选择头从 CCRv2 的线程头改为 `DSR-Thread-ID`。
 
-## 6. `GET /v1/dsr/code-sessions/{code_session_id}/worker-state`
+## 6. `GET /v1/dsr/sessions/{code_session_id}/worker-state`
 
 ### 作用
 
@@ -515,7 +515,7 @@ DSH 下一次模型请求前 GET context → bash 变为 ask
 { "status": "idle", "model": "model-a", "trace_turns": { "3": "00-4bf9...-01" } }
 ```
 
-## 7. `PUT /v1/dsr/code-sessions/{code_session_id}/worker-state`
+## 7. `PUT /v1/dsr/sessions/{code_session_id}/worker-state`
 
 ### 作用
 
@@ -557,7 +557,7 @@ DSH 下一次模型请求前 GET context → bash 变为 ask
 { "status": "running", "model": "model-b", "trace_turns": { "3": "00-4bf9...-01" } }
 ```
 
-## 8. `GET /v1/dsr/code-sessions/{code_session_id}/inputs/stream`
+## 8. `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`
 
 ### 作用
 
@@ -640,7 +640,7 @@ A 完成 → output → finish(A) → delivery(A processed)
 B 开始 → delivery(B processing) → 执行时可以看到 A 的完整历史
 ```
 
-## 9. `POST /v1/dsr/code-sessions/{code_session_id}/inputs/delivery`
+## 9. `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery`
 
 ### 作用
 
@@ -703,7 +703,7 @@ DSH 用一个串行的批量上传器发送回执，网络错误与 5xx 一直�
 { "applied": 1, "ignored": 0 }
 ```
 
-## 10. `POST /v1/dsr/code-sessions/{code_session_id}/inputs/{input_id}/finish`
+## 10. `POST /v1/dsr/sessions/{code_session_id}/inputs/{input_id}/finish`
 
 ### 作用
 
@@ -793,7 +793,7 @@ B：`processing` 回执（no-op）→ 从原生日志发现已完成 → 补发�
 不重做工具，也不重复发布结束事件
 ```
 
-## 11. `PUT /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}/header`
+## 11. `PUT /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/header`
 
 ### 作用
 
@@ -852,7 +852,7 @@ Header 记录日志格式版本与父子关系，服务端据此校验后续 Eve
 { "dsh_session_id": "sub_9f2c...", "next_seq": "0" }
 ```
 
-## 12. `POST /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}/events`
+## 12. `POST /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/events`
 
 ### 作用
 
@@ -935,7 +935,7 @@ C. 重复上传
    响应丢失后重发 seq 41–42 → 内容相同，跳过 → 200 {"next_seq": "43"}
 ```
 
-## 13. `GET /v1/dsr/code-sessions/{code_session_id}/transcripts`
+## 13. `GET /v1/dsr/sessions/{code_session_id}/transcripts`
 
 ### 作用
 
@@ -964,7 +964,7 @@ C. 重复上传
 ] }
 ```
 
-## 14. `GET /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}`
+## 14. `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}`
 
 ### 作用
 
@@ -1005,7 +1005,7 @@ C. 重复上传
 ### 示例
 
 ```http
-GET /v1/dsr/code-sessions/cse_abc/transcripts/sub_9f2c...?from_seq=0&limit_bytes=4194304
+GET /v1/dsr/sessions/cse_abc/transcripts/sub_9f2c...?from_seq=0&limit_bytes=4194304
 ```
 
 ```json
@@ -1016,7 +1016,7 @@ GET /v1/dsr/code-sessions/cse_abc/transcripts/sub_9f2c...?from_seq=0&limit_bytes
 }
 ```
 
-## 15. `POST /v1/dsr/code-sessions/{code_session_id}/permission-requests`
+## 15. `POST /v1/dsr/sessions/{code_session_id}/permission-requests`
 
 ### 作用
 
@@ -1134,7 +1134,7 @@ C. 等待审批时崩溃（无需用户操作）
    用户看到审批被撤回和恢复提示，可以马上发新消息
 ```
 
-## 16. `POST /v1/dsr/code-sessions/{code_session_id}/permission-requests/{request_id}/cancel`
+## 16. `POST /v1/dsr/sessions/{code_session_id}/permission-requests/{request_id}/cancel`
 
 ### 作用
 
@@ -1177,7 +1177,7 @@ DSH：用户中断 → POST cancel → 记录不存在 → 写墓碑 → 200 can
 不会出现"已中断却还挂着一个待确认审批"的残留
 ```
 
-## 17. `POST /v1/dsr/code-sessions/{code_session_id}/public-events`
+## 17. `POST /v1/dsr/sessions/{code_session_id}/public-events`
 
 ### 作用
 
@@ -1281,7 +1281,7 @@ DSH 创建子 Agent sub_9f2c
 
 ## 18. 只迁移路径的运行时能力接口
 
-以下接口请求与响应格式不变，只把路径迁到 `/v1/dsr/code-sessions/{code_session_id}/` 下并改用 session token：
+以下接口请求与响应格式不变，只把路径迁到 `/v1/dsr/sessions/{code_session_id}/` 下并改用 session token：
 
 | 现路径 | DSRv1 路径 | 说明 |
 | --- | --- | --- |

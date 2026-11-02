@@ -15,7 +15,7 @@
 | 7 | `PUT /v1/dsr/code-sessions/{code_session_id}/worker-state` | session | 更新 worker state | `PUT worker` | 4.6 |
 | 8 | `GET /v1/dsr/code-sessions/{code_session_id}/inputs/stream` | session | SSE 接收输入 | `worker/events/stream` | 9.2 |
 | 9 | `POST /v1/dsr/code-sessions/{code_session_id}/inputs/delivery` | session | 输入进度回执 | `worker/events/delivery` | 9.2 |
-| 10 | `POST /v1/dsr/code-sessions/{code_session_id}/inputs/{input_id}/outcome` | session | 结束 task 输入 | `worker/events` 中的 `result` 事件 | 9.4 |
+| 10 | `POST /v1/dsr/code-sessions/{code_session_id}/inputs/{input_id}/finish` | session | 结束 task 输入 | `worker/events` 中的 `result` 事件 | 9.4 |
 | 11 | `PUT /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}/header` | session | 写原生日志 Header | `worker/internal-events`（POST） | 6.4 |
 | 12 | `POST /v1/dsr/code-sessions/{code_session_id}/transcripts/{dsh_session_id}/events` | session | 追加原生日志 Event | `worker/internal-events`（POST） | 6.5 |
 | 13 | `GET /v1/dsr/code-sessions/{code_session_id}/transcripts` | session | 列出会话下的原生日志 | `worker/internal-events?subagents` | 6.7 |
@@ -46,7 +46,7 @@ sequenceDiagram
     D->>A: 11 / 12 写原生日志
     D->>A: 15 permission-requests（需要审批时）
     D->>A: 17 public-events
-    D->>A: 10 outcome
+    D->>A: 10 finish
     D->>A: 9 `processed` 回执
     D->>A: 2 release（空闲或退出时）
 ```
@@ -105,7 +105,7 @@ DSH 的每个写操作都可能因网络中断而不知道是否成功，所以�
 
 | 接口 | 幂等键 | 内容不同时 |
 | --- | --- | --- |
-| 10 outcome | `(code_session, input_id)` | `409 outcome_idempotency_mismatch` |
+| 10 finish | `(code_session, input_id)` | `409 finish_idempotency_mismatch` |
 | 11 header | `(code_session, dsh_session_id)` | `409 transcript_conflict` |
 | 12 events | `(code_session, dsh_session_id, seq)` | `409 transcript_conflict` |
 | 15 permission-requests | 派生的 `request_id` | `409 permission_idempotency_mismatch` |
@@ -142,12 +142,12 @@ AND (
       worker_claim_requested_at 非空               -- Runner 派发，或 release 请求重领
    OR 公开会话为 running / rescheduling            -- 有输入在等待执行
    OR 存在 processing 且未结束的 turn               -- 等待审批时崩溃，公开会话停在 requires_action
-   OR 存在已结束但 acked_at 为空的 turn             -- outcome 上报 之后、ACK 之前崩溃
+   OR 存在已结束但 acked_at 为空的 turn             -- 结束上报之后、ACK 之前崩溃
 )
 AND 不在 budget_reached 暂停中
 ```
 
-后两种"未结算 turn"条件是 DSRv1 新增的。没有它们，等待审批时崩溃或 outcome 上报 后 ACK 前崩溃的会话会永远卡住：此时公开会话已是 idle，现行条件不会命中，也就没有人去注册和收尾。
+后两种"未结算 turn"条件是 DSRv1 新增的。没有它们，等待审批时崩溃或结束上报后 ACK 前崩溃的会话会永远卡住：此时公开会话已是 idle，现行条件不会命中，也就没有人去注册和收尾。
 
 ### 请求
 
@@ -307,7 +307,7 @@ DSR-Protocol: 1
 ### 场景
 
 ```text
-10:00:00  A claim cse_1（epoch 7）→ register → 执行用户输入 → outcome 上报 → processed 回执
+10:00:00  A claim cse_1（epoch 7）→ register → 执行用户输入 → 结束上报 → processed 回执
 10:01:00  cse_1 空闲 60 秒 → A 关闭输入流 → release(idle)
 10:05:00  用户发来新消息 → 会话变为 running → B 立即 claim（epoch 8）
           （如果 A 不 release，要等 A 最后一次心跳之后的 20 + 10 秒）
@@ -356,7 +356,7 @@ CCRv2 的 brain 模式本来就是"claim 分配 → register 接管"两步（`in
 2. 校验会话 active、`worker_protocol = dsr1`（`migrating` 时返回 `409 session_migrating`）、token epoch 等于 `current_worker_epoch`。
 3. 写入 `worker_lease_expires_at = now + 20s`、连接状态与活动时间，清空 `worker_claim_requested_at` 与 `worker_claim_expires_at`，记录 `dsr_protocol_version`。
 4. **仅在该 epoch 的首次注册时**：把更早 epoch 的 pending 审批标为 `superseded`，并按 reducer 重算公开状态、写入状态事件。例如原来停在 `requires_action`，清理后仍有 processing 的 turn，就转为 `running`。
-5. **不结束** open turn：未 ACK 的输入会被 JetStream 重投给新 owner，由新 owner 按原生日志恢复后调用 outcome 上报。
+5. **不结束** open turn：未 ACK 的输入会被 JetStream 重投给新 owner，由新 owner 按原生日志恢复后调用结束上报。
 
 ### 响应 200
 
@@ -405,7 +405,7 @@ DSR-Protocol: 1
 A. 正常接管（上一任 owner 在等待审批时崩溃）
    claim → epoch 7
    register → 租约开始；epoch 6 留下的审批 dsrp_x 标为 superseded；公开状态 requires_action → running
-   读取原生日志恢复 → 连接 inputs/stream → 重投的输入 A 到达 → outcome(recovered) → processed 回执
+   读取原生日志恢复 → 连接 inputs/stream → 重投的输入 A 到达 → finish(recovered) → processed 回执
 
 B. 网络抖动后恢复
    心跳连续失败约 30 秒 → 410 lease_expired → 用同一 token 再 register
@@ -521,7 +521,7 @@ DSH 下一次模型请求前 GET context → bash 变为 ask
 
 按字段更新 worker state。**只用于诊断、空闲退役判断与恢复读回，不产生公开事件，也不影响公开会话状态、输入准入或删除准入。**
 
-这是和 CCRv2 最大的区别：CCRv2 的 `PUT /worker` 上报 `running` 会触发公开的 `session.status_running`，上报 `requires_action` 会暂停会话，还附带一个自由 merge 的 `external_metadata`。DSRv1 把公开状态交给服务端 reducer，由输入接纳、审批与 outcome 上报 驱动；这个接口只剩下有类型的私有字段。
+这是和 CCRv2 最大的区别：CCRv2 的 `PUT /worker` 上报 `running` 会触发公开的 `session.status_running`，上报 `requires_action` 会暂停会话，还附带一个自由 merge 的 `external_metadata`。DSRv1 把公开状态交给服务端 reducer，由输入接纳、审批与结束上报驱动；这个接口只剩下有类型的私有字段。
 
 ### 什么时候调用
 
@@ -592,13 +592,13 @@ data: {"id":"evt_01J...","lane":"task","kind":"user.message","session_thread_id"
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | string | `input_id`：有稳定 payload UUID 时取该 UUID，否则取传输 ID；重投时不变。回执、outcome 上报 与审批都用它 |
+| `id` | string | `input_id`：有稳定 payload UUID 时取该 UUID，否则取传输 ID；重投时不变。回执、结束上报与审批都用它 |
 | `lane` | string | `task` 或 `control` |
 | `kind` | string | 见下表 |
 
 **按 kind 的字段**
 
-| `kind` | lane | 字段 | 需要 outcome 上报 |
+| `kind` | lane | 字段 | 需要结束上报 |
 | --- | --- | --- | --- |
 | `user.message` | task | `session_thread_id`、`content`（CMA 内容块，文件与图片已物化为会话私有文件） | 是 |
 | `user.interrupt` | control | `session_thread_id`（可选，缺省为全部线程） | 否 |
@@ -618,7 +618,7 @@ data: {"id":"evt_01J...","lane":"task","kind":"user.message","session_thread_id"
 
 ### 处理方式
 
-DSH 把 task 输入接到一条串行队列：上一条的工具调用、回复、持久化、输出、outcome 上报 与 ACK 全部完成后，才开始下一条。control 输入走另一条队列，立即处理。
+DSH 把 task 输入接到一条串行队列：上一条的工具调用、回复、持久化、输出、结束上报与 ACK 全部完成后，才开始下一条。control 输入走另一条队列，立即处理。
 
 | kind | DSH 处理 |
 | --- | --- |
@@ -636,7 +636,7 @@ DSH 把 task 输入接到一条串行队列：上一条的工具调用、回复�
 ```text
 A 到达 → delivery(received) → delivery(processing) → 执行 A（调用工具中）
 B 到达 → delivery(received) → 进入队列等待
-A 完成 → output → outcome(A) → delivery(A processed)
+A 完成 → output → finish(A) → delivery(A processed)
 B 开始 → delivery(B processing) → 执行时可以看到 A 的完整历史
 ```
 
@@ -652,7 +652,7 @@ B 开始 → delivery(B processing) → 执行时可以看到 A 的完整历史
 | --- | --- | --- |
 | `received` | SSE 收到每条输入后立即异步发送 | 延长投递时限（InProgress），刷新 Redis ACK 定位的 TTL（20 分钟） |
 | `processing` | task 输入开始执行前；长任务周期性重发 | 同上；task 输入的 turn 从 accepted 变为 processing，写入 `processed_at`，首次向公开 SSE 发布这条用户消息；turn 已结束时不做改动 |
-| `processed` | task 输入在 outcome 上报 成功之后；control 输入处理完成后 | DoubleAck 确认 JetStream 消息，写入 turn 的 `acked_at`，删除 Redis 定位 |
+| `processed` | task 输入在结束上报成功之后；control 输入处理完成后 | DoubleAck 确认 JetStream 消息，写入 turn 的 `acked_at`，删除 Redis 定位 |
 
 用户消息在排队期间不出现在公开 SSE 中，`processing` 时才首次发布，因为 CMA 约定排队期间 `processed_at` 为 null。所以 DSH 必须等首个 `processing` 回执成功后再开始调用模型。
 
@@ -678,7 +678,7 @@ DSH 用一个串行的批量上传器发送回执，网络错误与 5xx 一直�
 
 | 状态 | `DSR-Error` | 说明 |
 | --- | --- | --- |
-| 409 | `outcome_required` | 批次中有 task 输入在 outcome 上报 之前报了 `processed`；整批不执行，错误消息给出第一个违规的 `id` |
+| 409 | `finish_required` | 批次中有 task 输入在结束上报之前报了 `processed`；整批不执行，错误消息给出第一个违规的 `id` |
 | 409 | `epoch_superseded` | — |
 | 400 | `invalid_request` | 条数越界、status 非法、在 task 输入上带 `error` |
 
@@ -689,7 +689,7 @@ DSH 用一个串行的批量上传器发送回执，网络错误与 5xx 一直�
 | | CCRv2 | DSRv1 |
 | --- | --- | --- |
 | 请求体 | `{"worker_epoch", "updates": [{"event_id", "status"}]}` | `{"updates": [{"id", "status", "error"?}]}` |
-| `processed` 的前置条件 | 无 | task 输入必须已完成 outcome 上报 |
+| `processed` 的前置条件 | 无 | task 输入必须已完成结束上报 |
 | 只发 `processed` 不发 `processing` | 兼容，视为开始处理 | 不再兼容 |
 | control 输入的处理结果 | DSH 另发 `control_response` 事件 | 在 `processed` 上附带 `error` |
 
@@ -703,7 +703,7 @@ DSH 用一个串行的批量上传器发送回执，网络错误与 5xx 一直�
 { "applied": 1, "ignored": 0 }
 ```
 
-## 10. `POST /v1/dsr/code-sessions/{code_session_id}/inputs/{input_id}/outcome`
+## 10. `POST /v1/dsr/code-sessions/{code_session_id}/inputs/{input_id}/finish`
 
 ### 作用
 
@@ -718,22 +718,22 @@ CCRv2 没有这个接口。DSH 往公开输出里发一条 Claude Code 格式的
 ```text
 原生日志终态确认（next_seq 覆盖 turn/end）
 → 该输入的公开输出确认（POST public-events 成功）
-→ POST inputs/{input_id}/outcome
+→ POST inputs/{input_id}/finish
 → POST inputs/delivery processed
 ```
 
-接管恢复时，对已在原生日志里完成、但可能还没 outcome 上报 或 ACK 的输入，按同样顺序补做：先回执 `processing`（已结束时不做改动），补发输出，再 outcome 上报（返回首次结果），最后 ACK。
+接管恢复时，对已在原生日志里完成、但可能还没结束上报或 ACK 的输入，按同样顺序补做：先回执 `processing`（已结束时不做改动），补发输出，再结束上报（返回首次结果），最后 ACK。
 
 ### 请求
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `outcome` | string | 是 | `success`、`cancelled`、`failed`、`recovered` |
+| `result` | string | 是 | `success`、`cancelled`、`failed`、`recovered` |
 | `reason` | string | `failed`/`recovered` 时必填 | `turn_failed`、`worker_shutdown`、`interrupted_recovery`、`quota_exhausted` |
 
 **不接受自由文本**。服务端把 `reason` 映射为固定的公开文案与安全错误分类，避免把 provider 错误、凭据或堆栈带进公开事件。
 
-| outcome | 何时使用 | 公开效果 |
+| result | 何时使用 | 公开效果 |
 | --- | --- | --- |
 | `success` | 回合正常结束 | 无排队输入时 `idle(end_turn)`；有排队输入时保持 running |
 | `cancelled` | 用户中断 | 同 `success`，允许同会话继续 |
@@ -744,13 +744,13 @@ CCRv2 没有这个接口。DSH 往公开输出里发一条 Claude Code 格式的
 
 校验 epoch → turn 存在且属于本会话 → **若已结束，按幂等返回首次结果**（即使是更早的 epoch 写入的）→ 否则要求 turn 处于 processing → 写终态、关闭该输入的 pending 审批、写公开事件与状态。
 
-"已结束优先"是为了让"outcome 上报 成功但响应丢失"的重试，以及新 owner 的补做，都能拿到首次结果，而不是因为 processing 前置条件被拒绝。
+"已结束优先"是为了让"结束上报成功但响应丢失"的重试，以及新 owner 的补做，都能拿到首次结果，而不是因为 processing 前置条件被拒绝。
 
 ### 响应 200
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `outcome` | string | 首次写入的 outcome |
+| `result` | string | 首次写入的 result |
 | `public_status` | string | 提交后的公开会话状态：`running`、`idle`、`requires_action` |
 
 ### 错误
@@ -758,15 +758,15 @@ CCRv2 没有这个接口。DSH 往公开输出里发一条 Claude Code 格式的
 | 状态 | `DSR-Error` | 说明 |
 | --- | --- | --- |
 | 409 | `input_not_eligible` | 输入不存在、不属于本会话、不是 task 输入，或尚未 processing |
-| 409 | `outcome_idempotency_mismatch` | 已结束，但 outcome 或 reason 与首次不同 |
+| 409 | `finish_idempotency_mismatch` | 已结束，但 result 或 reason 与首次不同 |
 | 400 | `invalid_request` | 缺少必填的 `reason`，或 `success`/`cancelled` 带了 `reason` |
 
 ### 对应 CCRv2
 
-| | CCRv2 `result` 事件 | DSRv1 outcome 上报 |
+| | CCRv2 `result` 事件 | DSRv1 结束上报 |
 | --- | --- | --- |
 | 形式 | 混在公开输出批次里的一条事件 | 独立接口，路径带 `input_id` |
-| 结果分类 | `subtype` + `is_error`，只分成功与失败 | 四种 outcome |
+| 结果分类 | `subtype` + `is_error`，只分成功与失败 | 四种 result |
 | 失败文案 | DSH 自己发 `system.message`，自由文本 | 枚举 `reason`，服务端映射固定文案 |
 | 关联哪个输入 | 隐式，靠 uuid 前缀约定 | 显式校验 |
 | 持久化的事实 | 公开事件加 `worker_turn_started` 标记 | `dsr_turns` 终态记录 |
@@ -775,21 +775,21 @@ CCRv2 没有这个接口。DSH 往公开输出里发一条 Claude Code 格式的
 ### 示例
 
 ```json
-{ "outcome": "recovered", "reason": "interrupted_recovery" }
+{ "result": "recovered", "reason": "interrupted_recovery" }
 ```
 
 ```json
-{ "outcome": "recovered", "public_status": "idle" }
+{ "result": "recovered", "public_status": "idle" }
 ```
 
-### 场景：outcome 上报 成功但 ACK 前崩溃
+### 场景：结束上报成功但 ACK 前崩溃
 
 ```text
-A：outcome(success) 已提交 → 崩溃，没来得及 `processed` 回执
+A：finish(success) 已提交 → 崩溃，没来得及 `processed` 回执
 公开会话已 idle，但 turn 的 acked_at 为空 → 租约过期后满足领取条件
 B：claim → register → 输入被重投
 B：`processing` 回执（no-op）→ 从原生日志发现已完成 → 补发输出（幂等）
-   → outcome(success)，返回首次结果 → `processed` 回执
+   → finish(success)，返回首次结果 → `processed` 回执
 不重做工具，也不重复发布结束事件
 ```
 
@@ -1088,7 +1088,7 @@ CCRv2 的流程是：DSH 往公开输出里发一条 `can_use_tool` 控制请求
 | `pending` | 等待用户确认或外部结果 | 本接口 |
 | `resolved` | 已判定：allow、deny 或外部结果 | 本接口（自动判定），或用户确认、custom 结果 |
 | `cancelled` | DSH 放弃等待 | 接口 16 |
-| `closed` | 所属输入已完成 outcome 上报、被中断或子线程已终止 | 服务端自动 |
+| `closed` | 所属输入已完成结束上报、被中断或子线程已终止 | 服务端自动 |
 | `superseded` | 被更高 epoch 接管 | register 时服务端自动 |
 
 终态不可逆；竞争时只有一次转换成功，另一方读取并返回当前终态。
@@ -1130,7 +1130,7 @@ B. 结果比 202 先到
 C. 等待审批时崩溃（无需用户操作）
    A：202 pending → 崩溃 → 租约过期 → 存在 processing 的 turn，会话可领取
    B：claim → register → dsrp_k3m9 变为 superseded，公开状态重算
-   B：恢复，原生日志中该工具无结果 → 不重放 → outcome(recovered)
+   B：恢复，原生日志中该工具无结果 → 不重放 → finish(recovered)
    用户看到审批被撤回和恢复提示，可以马上发新消息
 ```
 

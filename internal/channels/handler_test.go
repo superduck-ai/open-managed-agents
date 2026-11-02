@@ -68,7 +68,7 @@ func TestChannelScopeAndProxy(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/managed-channels/runtime" {
+				if r.URL.Path == "/api/managed-channels/internal/workspace-runtime" {
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}
@@ -130,7 +130,7 @@ func TestChannelPlatformSessionCSRF(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/managed-channels/runtime" {
+				if r.URL.Path == "/api/managed-channels/internal/workspace-runtime" {
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}

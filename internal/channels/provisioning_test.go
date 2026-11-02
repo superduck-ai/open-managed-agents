@@ -54,7 +54,7 @@ func TestChannelProvisioning(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/managed-channels/settings":
 					_, _ = io.WriteString(w, `{"environment_id":"env-a"}`)
-				case "/api/managed-channels/runtime":
+				case "/api/managed-channels/internal/workspace-runtime":
 					body, _ := io.ReadAll(r.Body)
 					if string(body) != `{"api_key":"sk-ant-api03-workspace-only"}` {
 						t.Error("同步载荷不正确")
@@ -83,7 +83,7 @@ func TestChannelProvisioning(t *testing.T) {
 			if store.calls != 1 || store.input.OrgUUID != "organization-a" || store.input.WorkspaceUUID != "workspace-a" || *store.input.CreatedByUserUUID != "user-a" {
 				t.Fatal("身份创建未使用已认证范围")
 			}
-			if test.want == 201 && strings.Join(paths, ",") != "/api/managed-channels/settings,/api/managed-channels/runtime,/api/managed-channels" {
+			if test.want == 201 && strings.Join(paths, ",") != "/api/managed-channels/settings,/api/managed-channels/internal/workspace-runtime,/api/managed-channels" {
 				t.Fatalf("调用顺序错误: %v", paths)
 			}
 			if test.want != 201 && paths[len(paths)-1] == "/api/managed-channels" {
@@ -93,5 +93,18 @@ func TestChannelProvisioning(t *testing.T) {
 				t.Fatal("凭据泄露到浏览器")
 			}
 		})
+	}
+}
+
+func TestChannelRuntimeSyncIsNotPublic(t *testing.T) {
+	store := &provisioningStore{}
+	router := chi.NewRouter()
+	router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: "http://127.0.0.1:1", Token: "bridge-token"}, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+	request := httptest.NewRequest(http.MethodPost, "/agents/agent-a/channels/internal/workspace-runtime", strings.NewReader(`{"api_key":"browser-supplied"}`))
+	request = request.WithContext(auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: "organization-a", WorkspaceUUID: "workspace-a"}))
+	result := httptest.NewRecorder()
+	router.ServeHTTP(result, request)
+	if result.Code != http.StatusNotFound || store.calls != 0 {
+		t.Fatal("浏览器可以访问内部凭据登记路由")
 	}
 }

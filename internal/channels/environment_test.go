@@ -73,7 +73,7 @@ func TestChannelSaveRequiresSelectedEnvironment(t *testing.T) {
 				saves := 0
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
-					if r.URL.Path == "/api/managed-channels/runtime" {
+					if r.URL.Path == "/api/managed-channels/internal/workspace-runtime" {
 						w.WriteHeader(http.StatusNoContent)
 						return
 					}

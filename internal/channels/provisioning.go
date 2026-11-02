@@ -37,7 +37,7 @@ func (h *handler) syncWorkspaceCredentials(upstream *http.Request, principal aut
 	if err != nil {
 		return err
 	}
-	endpoint.Path = strings.TrimSuffix(endpoint.Path, "/settings") + "/runtime"
+	endpoint.Path = strings.TrimSuffix(endpoint.Path, "/settings") + "/internal/workspace-runtime"
 	request := upstream.Clone(upstream.Context())
 	request.URL = endpoint
 	request.GetBody = nil

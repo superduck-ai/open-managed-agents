@@ -2,6 +2,7 @@ package codesessions
 
 import (
 	"context"
+	"github.com/superduck-ai/open-managed-agents/internal/brainattachments"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -44,6 +45,7 @@ type Handler struct {
 	traceAdmission            *otlpAdmission
 	brainClaims               BrainClaimAuthenticator
 	webTools                  *webtools.Client
+	imageAttachments          *brainattachments.Handler
 }
 
 // TunnelInvoker is implemented by the Tunnel DataPlane. Named Runtime Gateway

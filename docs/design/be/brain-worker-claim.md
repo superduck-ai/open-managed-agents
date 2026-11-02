@@ -79,6 +79,7 @@ sequenceDiagram
 | `worker_claimed_by` | `text null` | 最近一次领取者的 `X-Worker-ID`，仅用于诊断和释放校验 |
 | `worker_claim_expires_at` | `timestamptz null` | 领取期限；注册前保护该行不被他人领取 |
 | `worker_claim_attempts` | `integer not null default 0` | 连续未完成准入的领取次数 |
+| `worker_claim_trace_parent` | `text null` | 首次请求执行端时 Runner 的 W3C `traceparent`（migration `00111_code_session_worker_claim_trace.sql`）；仅随带 requested 标记的领取下发，用于把 DSH 回调 link 到派发 span |
 
 部分索引：
 
@@ -141,7 +142,7 @@ stateDiagram-v2
 - 请求体：空对象。容量由 DSH 自行控制，一次请求最多领取一个。
 - `block_ms`：0 到 30000。
 - 响应：
-  - `200`：`{"session_id","worker_epoch","ingress_token","model_token","claim_expires_at"}`，设置 `Cache-Control: no-store`。
+  - `200`：`{"session_id","worker_epoch","ingress_token","model_token","claim_expires_at","trace_parent"}`，设置 `Cache-Control: no-store`。`trace_parent` 可省略：租约过期接管等没有 requested 标记的领取不复用旧派发 trace。
   - `204`：期限内无可领取任务。
   - `401`：fleet token 无效。
   - `400`：缺少 `X-Worker-ID` 或参数越界。
@@ -151,7 +152,8 @@ stateDiagram-v2
 ```sql
 -- LockNextClaimable
 SELECT cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid, cs.session_external_id,
-       cs.current_worker_epoch, cs.worker_claim_attempts
+       cs.current_worker_epoch, cs.worker_claim_attempts, cs.worker_claim_requested_at,
+       CASE WHEN cs.worker_claim_requested_at IS NOT NULL THEN cs.worker_claim_trace_parent END AS worker_claim_trace_parent
 FROM code_sessions cs
 LEFT JOIN sessions s
   ON s.uuid = cs.session_uuid
@@ -201,6 +203,38 @@ RETURNING current_worker_epoch;
 - `shutdown` 立即可领取，并把 attempts 减一，不计为失败，同时通过 Core NATS 唤醒其他长轮询。DSH 本地容量竞争导致的放弃也使用 `shutdown`。
 - `idle` 用于 DSH 关闭空闲会话（60 秒空闲退役、为新领取腾出容量、正常退出）：只清空租约并让领取期限立即过期，不设置 requested 标记、不改变 attempts。公共会话保持 idle 时不会被领取；之后的新输入让会话回到 running，任一进程即可立即领取，不必等待旧进程最后一次心跳的 20 秒租约与 10 秒宽限。
 - 不满足条件返回 `409`，DSH 只记录告警。
+
+#### release 后旧事件流上的投递
+
+release 不推进 epoch。DSH 退役时先关闭事件流再 release，但服务前若有延迟拆除上游连接的代理（如 service mesh sidecar），服务端看到的旧流仍会存活数十秒；这段时间内到达的新输入会被 epoch N 的旧流从 JetStream 拉走并写入已无人读取的连接，同时触发重新领取，epoch 推进为 N+1 后旧流在一秒校验间隔内退出。旧流拉走的消息此前只能等 consumer 首个 1 分钟重投窗口。
+
+修复只在旧流退出时归还消息，不改变 release、epoch、租约、接管、宽限期、`FailPermanently` 与耗尽 hold/reset 的状态机：
+
+- 流循环对每条拉到的消息先记录 ack subject，再做（按一秒间隔复用的）epoch 校验，因此因校验失败而被丢弃的那条也会被记录。
+- 旧流退出时依次关闭订阅、标记该 epoch 断开，再以独立的五秒超时（`workerDeliveryTimeout`）调用 `ValidateCodeSessionWorkerEpoch`。返回 `ErrWorkerEpochMismatch` 时，对该连接记录过的所有 ack subject 发送 NAK，令 JetStream 立即重投给后续 epoch 的流；已 ACK 的消息由 JetStream 忽略 NAK。epoch 被取代后 ACK 映射与 delivery API 都会拒绝旧 epoch，这些消息只能靠重投。
+- epoch 仍是 N（普通断线，worker 可能以同一 epoch 重连并确认）、Code Session 已不存在或校验失败时不 NAK，保持原有的超时重投；校验或 NAK 失败只记录 Warn。
+- JetStream 订阅关闭时，读取协程已经 Fetch 但尚未交给流循环的消息会被直接 NAK。这条消息从未写给任何 worker，无条件归还是安全的。
+- JetStream 按 stream 序号处理 NAK，不区分是第几次投递：若消息已按退避重投给新流、旧流之后才退出，旧 subject 的 NAK 会再触发一次投递。这只在旧流跨过首个 1 分钟重投窗口后才退出时出现，仍属于至少一次投递。内存 broker 的 ack subject 带投递序号，ACK 接受任一次投递的 subject，NAK 只作用于当前投递，旧投递的 NAK 被忽略。
+
+代理在新领取之前就拆除旧连接（例如 release 后 Brain 被终止、暂无可用容量）时，旧流以 `client_closed` 退出且 epoch 仍为 N，已写出的消息仍等待首个 1 分钟重投窗口；该场景不在本次修复范围内。
+
+```mermaid
+sequenceDiagram
+    participant DSH
+    participant Proxy as 延迟拆连代理
+    participant API as oma-server
+    participant JS as JetStream
+    DSH->>Proxy: 关闭 epoch N 事件流
+    DSH->>API: release(idle, N)
+    Note over Proxy,API: 上游连接仍存活，旧流继续拉取
+    API->>JS: 新输入发布
+    JS-->>API: 投递到 epoch N 旧流（写入无人读取的连接）
+    DSH->>API: 领取，epoch 推进为 N+1，打开新流
+    API->>API: 旧流一秒内校验失败并退出
+    API->>API: 关闭订阅 → 标记断开 → 校验 epoch
+    API->>JS: epoch 已被取代：对旧流拉取过的消息 NAK
+    JS-->>API: 立即重投到后续 epoch 的流
+```
 
 ### 现有接口的变化
 
@@ -272,14 +306,27 @@ RETURNING current_worker_epoch;
 
 handler 只调用这些函数；DB 层返回 `ErrPreconditionFailed`、`ErrNotFound` 等现有可识别错误。`code_session.brain_claim_token_file` 由 `main` 在组装阶段通过 `codesessions.LoadBrainClaimAuthenticator` 读取，经 `ServerDeps.BrainClaims` 注入 Handler；文件少于 32 个字符或无法读取时 `run` 返回错误，服务以可读的启动错误退出，资源包不 panic。
 
+## 可观测
+
+链路、指标与日志约定见 `server-observability.md` 的 P8 节，本节只列与领取直接相关的部分：
+
+- `Request` 在 `worker_claim_requested_at` 为空时写入 `worker_claim_trace_parent`，同一请求周期内的重复派发不覆盖首个值。
+- 领取长轮询（`POST /v1/code/brain/claims`）不建 HTTP span、不计入 `http.server.request.duration`，访问日志不适用 2 秒慢响应规则；由 `oma.brain_claim.poll.duration{oma.outcome=claimed|empty|error|canceled|timeout}` 覆盖。
+- 领取成功时建根 span `oma.brain_claim.issue` 并 link 到派发 trace，带 requested 标记的领取记录 `oma.brain_claim.queue_wait`。
+- 释放与耗尽只记日志：`brain worker released code session`（Info，带 `reason`）、`brain worker claims exhausted`、`brain worker reported permanent admission failure`（Warn），看板按 `body` 统计。
+- 状态快照提供 `oma.brain_claims.pending{oma.state=waiting|claimed|takeover}` 与 `oma.brain_claims.oldest_waiting_age`，替代原 `OMA_BRAIN_TASKS` stream/consumer gauge；`takeover` 统计执行端崩溃后、公共会话仍在运行而等待接管的行，DSH 另报 `oma.brain.sessions.capacity` 用于计算利用率。
+- DSH 侧由 `oma_task_admitted`/`oma_task_admission_failed`、`oma_task_claim_failed`/`oma_task_release_failed` 日志覆盖准入结果和服务端看不到的领取请求失败。
+
 ## 测试与验证
 
 已实现的自动化测试（失败场景在前）：
 
-- `internal/db/code_session_claim_mapper_test.go`：领取、释放、请求、耗尽保持、重置与永久失败语句的 SQL 片段与参数绑定，token hash 标记为 sensitive；心跳行锁查询带出 `worker_transport`。
-- `internal/db/code_session_claims_postgres_test.go`（`TEST_MIGRATION_DATABASE_URL`）：非 claim transport、idle 会话、跨组织请求和未持有领取的 release 被拒绝；8 个并发领取只成功 1 个；领取期限、release 退避与立即释放；旧 epoch 注册被拒；注册清除请求、连接重置 attempts；宽限期内不可领取且旧心跳仍成功，超过宽限期后接管并拒绝旧心跳；耗尽后的 hold、以 epoch 守卫的 reset 与新输入后恢复领取；注册后、连接前崩溃残留的过期租约在耗尽时被清空，reset 后可再次领取；`FailPermanently` 只允许当前领取者调用，并使会话在 reset 前保持耗尽；耗尽与永久失败都推进 epoch，旧 epoch 的注册被拒，发布失败后再次 hold 时 epoch 不变，以被围栏的旧 epoch reset 失败；`idle` release 只允许当前领取者调用，清空租约后 idle 会话不可领取、新输入后立即可领取。
+- `internal/db/code_session_claim_mapper_test.go`：领取、释放、请求、耗尽保持、重置与永久失败语句的 SQL 片段与参数绑定，token hash 标记为 sensitive；心跳行锁查询带出 `worker_transport`；请求只在首次写入 trace，领取只对 requested 行返回 trace。
+- `internal/db/code_session_claims_postgres_test.go`（`TEST_MIGRATION_DATABASE_URL`）：非 claim transport、idle 会话、跨组织请求和未持有领取的 release 被拒绝；8 个并发领取只成功 1 个；领取期限、release 退避与立即释放；旧 epoch 注册被拒；注册清除请求、连接重置 attempts；宽限期内不可领取且旧心跳仍成功，超过宽限期后接管并拒绝旧心跳；耗尽后的 hold、以 epoch 守卫的 reset 与新输入后恢复领取；注册后、连接前崩溃残留的过期租约在耗尽时被清空，reset 后可再次领取；`FailPermanently` 只允许当前领取者调用，并使会话在 reset 前保持耗尽；耗尽与永久失败都推进 epoch，旧 epoch 的注册被拒，发布失败后再次 hold 时 epoch 不变，以被围栏的旧 epoch reset 失败；`idle` release 只允许当前领取者调用，清空租约后 idle 会话不可领取、新输入后立即可领取；首个请求的 trace 不被重复请求覆盖并随领取返回，租约接管领取不返回 trace。
 - `internal/workerevents/brain_test.go`：取消订阅后不再收到通知；Core NATS 与内存 broker 都能唤醒订阅者，且不再创建 `OMA_BRAIN_TASKS`。
 - `internal/codesessions/brain_dispatch_test.go`：fleet token 文件长度与读取校验、Bearer 比较、`block_ms` 边界、transport 判定与租约参数。
+- `internal/codesessions/worker_stream_redelivery_test.go`：旧流退出时 epoch 已被取代则对记录的消息去重 NAK；epoch 仍为当前值（普通断线）、Code Session 不存在、校验失败与没有投递时都不 NAK，NAK 失败返回错误。`internal/workerevents/nak_test.go`：嵌入式 JetStream 中被放弃的消息在 NAK 前不会重投、NAK 后立即以第二次投递到达新订阅、已 ACK 的消息忽略 NAK；订阅关闭时已 Fetch 但未交出的消息立即以第二次投递到达新订阅；内存 broker 仅重新分发未确认消息，新订阅接管后旧投递的 NAK 不会重复分发，旧投递的 subject 仍可 ACK。
+- `internal/codesessions/telemetry_test.go`：领取轮询 outcome、`oma.brain_claim.issue` 的 link 与排队等待、释放 conflict 归类、耗尽计数，claim transport 唤醒时跳过沙箱续期（`brain_claim`）。
 - `internal/config`：brain 模式缺少 `code_session.brain_claim_token_file` 时拒绝启动。
 - `tests/brain_worker_claim_test.go`（真实 PostgreSQL 与 HTTP 服务）：鉴权与参数错误；长轮询在派发后被唤醒、第二个 worker 领不到、注册成功且心跳返回约 20 秒租约；宽限期边界接管与旧 worker fence；release 冲突、失败退避、5 次后发布 `session.error` 与 `retries_exhausted` 并保持 idle；耗尽与 `permanent` 后旧凭据注册被拒；`permanent` release 立即发布同样的事件，新输入后可重新领取；`idle` release 后无新输入不可领取，会话回到 running 后立即可领取；公共会话已删除时不会被领取（epoch 与 attempts 不变）。`tests/brain_sandbox_provisioning_test.go` 改为统计 `DispatchWorker` 调用。
 - DSH：`tests/capacity.test.ts` 复现评审中的并发准入场景（上限 2、空闲 A/B、并发准入 C/D 最终只保留 C/D）及预留释放；`tests/claim-loop.test.ts` 覆盖 401 启动失败、启动探测的临时错误重试、运行中 401 只报告一次并继续重试、准入失败按原因（`admission_failed`/`permanent`/`shutdown`）release 且不阻塞后续领取、容量为零时停止领取、准入中停机 release、临时错误退避恢复；`tests/claim-process.test.ts` 用独立进程覆盖错误或缺失 token 的启动失败、领取到 SSE 审批的完整回合，以及 SIGTERM 时忙碌会话以 `shutdown`、空闲会话以 `idle` 交还；`tests/oma-heartbeat.test.ts` 覆盖心跳与租约约束和领取配置。

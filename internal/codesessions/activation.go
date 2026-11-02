@@ -8,6 +8,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
+	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 )
 
 type activationSnapshot struct {
@@ -18,10 +19,20 @@ type activationSnapshot struct {
 // ActivateManagedAgentCodeSession 在锁外准备对象，在重新锁定并核对完整历史后发布。
 // 准备期间新增的历史会触发重试；发布与 active 切换仍在同一个 Session/Code Session
 // 行锁事务中，不允许 realtime cutover 或 termination 插入其中。
-func (s *Service) ActivateManagedAgentCodeSession(ctx context.Context, codeSession db.CodeSession) error {
+func (s *Service) ActivateManagedAgentCodeSession(ctx context.Context, codeSession db.CodeSession) (err error) {
 	if s == nil || s.db == nil {
 		return db.ErrNotFound
 	}
+	ctx, span := telemetry.Start(ctx, "oma.code_session.activate",
+		telemetry.AttrCodeSessionID.String(codeSession.ExternalID),
+		telemetry.AttrSessionID.String(codeSession.SessionExternalID),
+	)
+	startedAt := time.Now()
+	defer func() {
+		observeOperation(ctx, codeSessionMetrics.Get().activation, telemetry.Outcome(err), startedAt)
+		telemetry.SetErrorStatus(span, err)
+		span.End()
+	}()
 	ctx, cancel := context.WithTimeout(ctx, workerPublicationTimeout)
 	defer cancel()
 	for {

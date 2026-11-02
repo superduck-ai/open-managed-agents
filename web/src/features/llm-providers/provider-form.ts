@@ -30,6 +30,7 @@ export function providerForm(
           provider.models.length > 0
             ? provider.models.map((model) => ({
                 ...newModelDraft(model.id),
+                imageInput: model.image_input,
                 name: model.name ?? '',
                 maxOutputTokens: String(model.max_output_tokens ?? ''),
                 inputModalities: model.input_modalities ?? ['text'],
@@ -99,6 +100,7 @@ export function providerFormInput(
         ...(model.contextWindow.trim() ? { context_window: parseContextWindow(model.contextWindow)! } : {}),
         ...(model.maxOutputTokens.trim() ? { max_output_tokens: parseContextWindow(model.maxOutputTokens)! } : {}),
         input_modalities: model.inputModalities,
+        ...(model.imageInput ? { image_input: model.imageInput } : {}),
       })),
   };
   if (form.apiKey.trim()) {

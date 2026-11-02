@@ -377,5 +377,9 @@ test('keeps history ahead of a live final while a later page is pending and remo
   const events = sessionDetailScopeEvents(queryClient, 'workspace_123', 'sesn_123', ['']);
   expect(events.map((event) => event.id)).toEqual(['sevt_first', 'sevt_second', 'sevt_answer']);
   expect(events[2]).toEqual(final);
-  expect(sessionDetailDeltaFrames(queryClient, 'workspace_123', 'sesn_123', [''])).toEqual({});
+  expect(
+    sessionDetailDeltaFrames(queryClient, 'workspace_123', 'sesn_123', [''])[final.id]?.frames.map(
+      (frame) => frame.type,
+    ),
+  ).toEqual(['event_start', 'event_delta', 'agent.message']);
 });

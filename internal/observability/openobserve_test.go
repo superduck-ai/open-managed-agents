@@ -63,6 +63,44 @@ func TestNativePageAcceptsEquivalentReplaysAndPreservesOriginal(t *testing.T) {
 	}
 }
 
+func TestNativePageTreatsMissingHeaderDelegationDepthAsRoot(t *testing.T) {
+	live := `{"version":4,"id":"native","createdAt":100,"cwd":"/home/user","isSeeded":false}`
+	for _, test := range []struct {
+		name     string
+		headers  []string
+		contents []string
+	}{
+		{"missing versus nested depth", []string{live, `{"version":4,"id":"native","createdAt":100,"cwd":"/home/user","isSeeded":false,"delegationDepth":1}`}, nil},
+		{"different restored depths", []string{`{"version":4,"id":"native","delegationDepth":0}`, `{"version":4,"id":"native","delegationDepth":2}`}, nil},
+		{"content is not normalized", nil, []string{`{"seq":0,"time":100,"type":"turn/start","data":{}}`, `{"seq":0,"time":100,"type":"turn/start","data":{"delegationDepth":0}}`}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			hit := nativeHit(0)
+			if test.headers != nil {
+				hit.Headers = test.headers
+			}
+			if test.contents != nil {
+				hit.Contents = test.contents
+			}
+			if _, err := nativePage("native", -1, []eventHit{hit}); !errors.Is(err, ErrEventConflict) {
+				t.Fatalf("error %v, want %v", err, ErrEventConflict)
+			}
+		})
+	}
+	restored := `{"version":4,"id":"native","createdAt":100,"cwd":"/home/user","isSeeded":false,"delegationDepth":0}`
+	for _, headers := range [][]string{{live, restored}, {restored, live}} {
+		hit := nativeHit(0)
+		hit.Headers = headers
+		page, err := nativePage("native", -1, []eventHit{hit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(page.Header) != headers[0] || len(page.Events) != 1 {
+			t.Fatalf("invalid page: %+v", page)
+		}
+	}
+}
+
 func TestNativePageCursorAndLookahead(t *testing.T) {
 	hits := make([]eventHit, trajectoryPageSize+1)
 	for i := range hits {

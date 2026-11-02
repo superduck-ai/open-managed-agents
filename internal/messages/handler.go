@@ -20,7 +20,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
 
-// requestHeadersToRemove 包含 hop-by-hop header、调用方凭证和不可由 sandbox 伪造的租户 header。
 var requestHeadersToRemove = map[string]struct{}{
 	"Authorization":       {},
 	"Connection":          {},
@@ -31,6 +30,8 @@ var requestHeadersToRemove = map[string]struct{}{
 	"Proxy-Authorization": {},
 	"Proxy-Connection":    {},
 	"Te":                  {},
+	"Traceparent":         {},
+	"Tracestate":          {},
 	"Trailer":             {},
 	"Transfer-Encoding":   {},
 	"Upgrade":             {},
@@ -119,13 +120,18 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 		h.writeProviderError(w, r, err)
 		return
 	}
+	call := startModelCall(r.Context(), principal, modelID)
+	defer call.end()
+	r = r.WithContext(call.ctx)
 	if err := upstream.RequireBackend(backend); err != nil {
+		call.failBeforeProxy("backend_mismatch")
 		httpapi.WriteError(w, r, backendMismatchError())
 		return
 	}
 	if backend == llmproviders.Messages {
 		resolvedBody, fileErr := h.managedFileReferences(r.Context(), principal, body)
 		if fileErr != nil {
+			call.failBeforeProxy("file_reference")
 			httpapi.WriteError(w, r, fileErr)
 			return
 		}
@@ -134,6 +140,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	path := "/v1/messages"
 	if backend == llmproviders.ChatCompletions {
 		if err := validateChatRequest(body); err != nil {
+			call.failBeforeProxy("invalid_request")
 			httpapi.WriteError(w, r, invalidRequestError(err))
 			return
 		}
@@ -146,12 +153,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	}
 	target, err := llmproviders.Endpoint(upstream.BaseURL, path, r.URL.RawQuery)
 	if err != nil {
+		call.failBeforeProxy("build_request")
 		h.logger.ErrorContext(r.Context(), "build messages upstream endpoint", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
 	upstreamRequest, err := http.NewRequestWithContext(metering.WithModel(r.Context(), upstream.QualifiedModelID), http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
+		call.failBeforeProxy("build_request")
 		h.logger.ErrorContext(r.Context(), "build messages upstream request", "error", err)
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
@@ -167,14 +176,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
 		if errors.Is(err, db.ErrSessionBudgetReached) {
+			call.failBeforeProxy("budget_reached")
 			w.Header().Set("X-Should-Retry", "false")
 		} else {
+			call.failBeforeProxy("begin_model_request")
 			h.logger.ErrorContext(r.Context(), "start model request", "error", err)
 		}
 		httpapi.WriteError(w, r, modelRequestStartError(err))
 		return
 	}
-	h.proxyModelRequest(w, r, upstreamRequest, request)
+	h.proxyModelRequest(w, r, upstreamRequest, request, call)
 }
 
 func (h *Handler) writeProviderError(w http.ResponseWriter, r *http.Request, err error) {

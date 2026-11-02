@@ -2386,6 +2386,38 @@ export function registerManagedAgentsResourceTests() {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   });
 
+  test('shows attached vaults as read-only when editing a session and omits vault_ids from the update', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
+    const api = mockManagedResourceApi();
+    render(<ManagedAgentsPage section="sessions" />);
+    const row = (await screen.findByText('Session one')).closest('tr')!;
+    fireEvent.click(within(row).getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit session' });
+    expect(await within(dialog).findByText('Vault one')).toBeTruthy();
+    expect(within(dialog).queryByRole('combobox', { name: /Credential vaults/ })).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: 'Add vault' })).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: 'Remove Vault one' })).toBeNull();
+    expect(within(dialog).queryByRole('checkbox')).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: "Why vaults can't be changed" }));
+    expect(
+      await screen.findByText(
+        "Vaults are attached when the session is created and can't be changed afterward. Create a new session to use a different vault.",
+      ),
+    ).toBeTruthy();
+    fireEvent.change(within(dialog).getByLabelText(/Title/), { target: { value: 'Renamed session' } });
+    await waitFor(() =>
+      expect((within(dialog).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    await act(async () => fireEvent.submit(dialog.querySelector('form')!));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const updateRequest = api.requests.find(
+      (request) => request.method === 'POST' && request.url.startsWith('/v1/sessions/sesn_one123456'),
+    );
+    expect(updateRequest?.body).not.toHaveProperty('vault_ids');
+    expect(updateRequest?.body?.title).toBe('Renamed session');
+  });
+
   test('synchronizes exact session ID results after editing, archiving, and deleting', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
     const api = mockManagedResourceApi();

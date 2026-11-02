@@ -43,9 +43,12 @@ func NewHandler(service *Service, load SessionLoader, enabled bool) *Handler {
 	return &Handler{service: service, load: load, verify: service.Authorize, enabled: enabled, lookups: make(map[string]time.Time)}
 }
 
-func (h *Handler) Routes() http.Handler {
+func (h *Handler) Routes(systemSkills ...http.Handler) http.Handler {
 	r := chi.NewRouter()
 	r.Use(h.authorize)
+	if len(systemSkills) > 0 && systemSkills[0] != nil {
+		r.Mount("/skills", systemSkills[0])
+	}
 	r.Get("/bootstrap", h.bootstrap)
 	r.Get("/accounts", h.accounts)
 	r.Get("/administrators", h.administrators)
@@ -100,7 +103,9 @@ func (h *Handler) authorize(next http.Handler) http.Handler {
 			h.fail(w, r, ErrCSRF)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), accountContextKey{}, account)))
+		ctx := context.WithValue(r.Context(), accountContextKey{}, account)
+		ctx = auth.WithPrincipal(ctx, auth.Principal{UserUUID: account.UUID, CredentialType: auth.CredentialTypePlatformSession})
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

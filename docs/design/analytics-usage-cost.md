@@ -239,10 +239,21 @@ Narrows 解析回归使用合成规则验证固定汇率、分档上下界及无
 
 用量和成本的模型筛选项合并账本中已有的模型值与当前供应商目录的限定模型名，再排序去重。配置中的模型不再以短名额外加入选项，避免与精确匹配的账本查询不一致；历史账本中的短名仍原样保留并可筛选。
 
-Chat Completions 当前仅允许 Brain 模型凭据及流式调用，由现有 `chatObservation` 将普通输入、缓存输入和输出转成会话模型请求用量，随后通过会话结束事件入账。通用计量 Transport 跳过这类请求，避免重复计费；没有新增普通凭据的 Chat Completions 能力。
+公开 `/v1/chat/completions` 入口仅允许 Brain 模型凭据及流式调用，由现有 `chatObservation` 将普通输入、缓存输入和输出转成会话模型请求用量，随后通过会话结束事件入账。通用计量 Transport 按主体判断：没有 Principal 或 `CodeSessionExternalID` 非空时直接透传，后者由会话事件计量以避免重复；其他组织 API 主体进入通用计量，并按上游路径选择 Chat 或 Messages 观察器。组织 Console 的 Chat Completions 代理及其主体计量见下节。
 
 ### 组织模型与预算兜底的边界
 
 模型筛选目录同时包含工作区与组织 Provider 的限定模型 ID。计费匹配遵循实际路由的优先级：工作区裸名优先、工作区同名歧义不回退、组织默认只在工作区没有对应模型时生效。
 
 Managed Agents 的预算事件允许对缺失的缓存单价兜底，但分析账本使用请求快照严格计价，与普通 API、Workbench 保持一致；缺单价仍计入未定价请求。大事件外置后的摘要必须保留模型身份、价格快照和错误标记，供事务内账本写入使用。旧事件缺少价格快照时保留其已记录金额，不按当前价格重算。
+
+
+## Console Chat Completions 计量
+
+组织 Console 的 `/proxy/v1/chat/completions` 与 Messages 共用 `metering.Transport`、请求尝试 ID、价格快照与入账流程。Transport 按实际上游 URL 的 `/chat/completions` 路径后缀选择 Chat 观察器，兼容 Provider Base URL 的路径前缀；Messages 继续使用原观察器，不靠响应 JSON 字段猜测协议，不转换或改写上游响应。
+
+Chat 非流式响应和流式 usage 尾帧采用同一分项：`completion_tokens` 为输出，`prompt_tokens_details.cached_tokens` 为缓存读取，非缓存输入为 `prompt_tokens - cached_tokens`。缺失字段保持未知，零值保留为已确认零；负数或缓存数超过输入数视为畸形响应。仍沿用同一请求美分舍入和价格快照，已确认的部分消费可计入，但 `complete` 必须为 false，不能把缺失 usage 补成完整零消费。
+
+SSE 按空行分隔完整事件，支持 CRLF、多行 data 和任意读取分片。finish reason 不提前结束观察，继续读取 usage 尾帧；`[DONE]` 是终止标记而非 JSON，只有已观察到的 choices 均正常结束才确认完成。有效 finish 后的正常 EOF 兼容已有 Brain Chat 合同；断流、解析错误、provider error、未结束 choice、未完整尾帧或提前关闭不构成完整成功。无论终止方式，只有输入与输出 usage 完整时才将入账记录标为 complete；错误前已确认的 usage 不丢弃。
+
+Builder Chat 调用方必须发送 `stream_options: { include_usage: true }`，由前端协议请求及断言配套整合；Messages 请求无此字段。供应商即使不返回 usage 也继续透明返回内容，但计量明确不完整，不凭文本估算消费。本次普通回归覆盖 JSON、usage 尾帧、DONE/EOF、分片、多行、错误、取消式提前关闭、缺失/真实零/非法用量、费用和字节透传；未执行真实供应商或数据库集成验收。

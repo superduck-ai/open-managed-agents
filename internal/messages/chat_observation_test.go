@@ -61,7 +61,7 @@ func TestChatObservationFragmentedToolsAndUsage(t *testing.T) {
 	for _, size := range []int{1, 17, len(body)} {
 		observation := observeChat(t, body, size)
 		result := observation.result
-		if result.ErrorType != "" || !observation.complete || len(result.ToolUses) != 2 || len(result.Messages) != 1 {
+		if result.ErrorType != "" || !observation.complete || observation.stopReason != "tool_use" || len(result.ToolUses) != 2 || len(result.Messages) != 1 {
 			t.Fatalf("result=%+v", result)
 		}
 		if *result.Usage.InputTokens != 8 || *result.Usage.OutputTokens != 5 || *result.Usage.CacheReadInputTokens != 12 {
@@ -72,6 +72,16 @@ func TestChatObservationFragmentedToolsAndUsage(t *testing.T) {
 		}
 		if result.ToolUses[0].ID != "call_b" || string(result.ToolUses[1].Input) != `{"command":"pwd"}` || result.ToolUses[1].ID != "call_a" {
 			t.Fatalf("tools=%+v", result.ToolUses)
+		}
+	}
+}
+
+func TestChatObservationMapsFinishReasonToStopReason(t *testing.T) {
+	for _, test := range []struct{ finish, want string }{{"stop", "end_turn"}, {"length", "max_tokens"}} {
+		body := chatFrame(`{"id":"chat_1","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":"`+test.finish+`"}]}`) + chatFrame(`[DONE]`)
+		observation := observeChat(t, body, len(body))
+		if !observation.complete || observation.stopReason != test.want || modelStopReasons.Normalize(observation.stopReason) != test.want {
+			t.Fatalf("finish=%s stop=%q", test.finish, observation.stopReason)
 		}
 	}
 }

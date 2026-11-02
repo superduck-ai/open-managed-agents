@@ -16,6 +16,7 @@ func (h *Handler) ProcessCodeSessionInputs(ctx context.Context, codeSession db.C
 	if err != nil {
 		return err
 	}
+	recordSessionInputQueueWait(ctx, events)
 	events, err = h.eventPayloads.RestorePublicPage(ctx, events)
 	if err != nil {
 		return err

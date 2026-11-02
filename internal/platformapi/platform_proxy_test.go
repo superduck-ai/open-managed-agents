@@ -148,3 +148,29 @@ func TestProxyProviderErrorDistinguishesMissingProviderFromLoadFailure(t *testin
 		})
 	}
 }
+
+func TestProxyChatHeadersExcludeBrowserAndMessagesCredentials(t *testing.T) {
+	headers := proxyModelHeaders(http.Header{
+		"Cookie":            {"sessionKey=browser"},
+		"Authorization":     {"Bearer browser"},
+		"Anthropic-Version": {"2023-06-01"},
+		"Anthropic-Beta":    {"private-beta"},
+		"X-Csrf-Token":      {"browser"},
+		"Content-Type":      {"application/json"},
+	}, llmproviders.Upstream{APIBackend: llmproviders.ChatCompletions, APIKey: "provider-key"})
+	if headers.Get("Authorization") != "Bearer provider-key" || headers.Get("Content-Type") != "application/json" || len(headers) != 2 {
+		t.Fatalf("outbound chat headers = %#v", headers)
+	}
+}
+
+func TestProxyChatRequiresOrganizationAuthentication(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/organizations/org_test/proxy/v1/chat/completions", nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("orgUuid", "org_test")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+	recorder := httptest.NewRecorder()
+	handleProxyModel(nil, nil, http.DefaultClient, llmproviders.ChatCompletions)(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want hidden organization", recorder.Code)
+	}
+}

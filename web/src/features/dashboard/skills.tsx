@@ -1132,8 +1132,8 @@ function SkillSourceBadge({ source }: { source: string }) {
   const { msg } = useI18n();
   const label = formatSkillSource(source, msg);
   return (
-    <Badge variant="secondary" className="rounded-md text-muted-foreground">
-      {label}
+    <Badge variant="secondary" className="max-w-full rounded-md text-muted-foreground" title={label}>
+      <span className="truncate">{label}</span>
     </Badge>
   );
 }

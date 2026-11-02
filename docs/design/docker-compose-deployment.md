@@ -112,6 +112,10 @@ oma-server 在 compose 网络中，e2b-local 在 host 网络中。`extra_hosts` 
 
 e2b-local 配置文件 `deploy/docker-compose/e2b-local.yaml` 使用 `__ENVD_BIN_DIR__` 占位符。启动时通过 `sed` 替换为宿主机真实路径，确保 Docker daemon 能找到 envd 二进制。模板配置与 §8.2 推荐的本地配置对齐（`enable_fuse: true`、`published_ports`、`traffic.advertised_probe_addr`）；per-worktree 开发环境栈（见 [多 worktree 开发环境](development-worktree-environments.md)）复用同一模板，由 dev-init 渲染端口、sandbox 容器名前缀与 envd 路径。
 
+### 4.3.1 发布沙箱 MCP 端口
+
+`environment_runner.agent_mode: brain` 时，惰性创建的沙箱在 3001 端口提供嵌入式 `/mcp`，oma-server 通过 e2b-local 的端口查询解析其地址。e2b-local 只为 `docker.published_ports` 中声明或镜像 `EXPOSE` 的端口建立映射，因此 `deploy/docker-compose/e2b-local.yaml` 声明 `published_ports: [3001]`；缺少该项时首次工具调用的沙箱就绪探测失败，网关返回 503。修改该文件后需重启 e2b-local 容器。
+
 ### 4.4 前端内建到 oma-server 镜像
 
 Dockerfile 多阶段构建：Go 编译阶段 + Node/Bun 前端构建阶段。前端产物（`/web-dist`）嵌入镜像，init-web 容器提取到 volume 供 Caddy 使用。
@@ -209,6 +213,26 @@ OpenObserve 是可选依赖，位于 `observability` Compose profile。普通 `d
 OpenObserve 数据保存在独立的 `openobservedata` named volume。Compose 设置
 `ZO_COMPACT_DATA_RETENTION_DAYS=61` 和 `ZO_IGNORE_FILE_RETENTION_BY_STREAM=true`，让原生 Session 日志保存 61 天。Stream 设置不能延长全局保留期。本地调试端口只绑定 `127.0.0.1`；OMA 服务间访问
 使用 `http://openobserve:5080`。
+
+服务端可观测看板定义在 `deploy/openobserve-dashboard.json`（"OMA 可观测"）。它不随 Compose 自动导入：在 OpenObserve 的
+Dashboards → Import 中选择该文件，放在 `default` 文件夹；看板设计见 `docs/design/be/server-observability.md` P7。
+看板的数据来自服务端遥测，它与上面的 `observability` 开关相互独立，默认关闭。需要看板数据时，在 OMA 配置中加入并开启
+`telemetry`，凭据使用 Compose 中 OpenObserve 的写入账号：
+
+```yaml
+telemetry:
+  enabled: false # 改为 true 后导出 traces、metrics 与 logs
+  service_name: oma-server
+  otlp:
+    base_url: http://openobserve:5080 # 只写协议、主机与端口，不带路径
+    organization: oma
+    # username: <OpenObserve 写入账号>
+    # password: <OpenObserve 写入密码>
+    traces_stream: oma_server
+    logs_stream: oma_server
+```
+
+其余字段的默认值与含义见 `docs/configuration-reference.yaml`。
 
 新生成的 `oma-server.local.yaml` 默认关闭 Observability，保留内容采集策略与 Compose 的
 OpenObserve 本地账号配置，供显式启用时使用。修改 Compose 账号时需同步修改该文件；生产环境必须使用独立 Secret。

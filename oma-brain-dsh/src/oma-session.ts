@@ -59,9 +59,10 @@ export function createOmaSession(
       scope.plugin(WebTools, { client: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId), bridge, tools, permissions }),
     subagents: assignment.launch.subagents,
     modelMessageID: (id) => api.modelResponses.get(id),
+    modelRequestID: (id) => api.modelRequestIDs.get(id),
     bindThread: (id) => {
       api.modelSessions.set(id, assignment.session_id);
-      return () => { api.modelSessions.delete(id); api.modelResponses.delete(id); };
+      return () => { api.modelSessions.delete(id); api.modelResponses.delete(id); api.modelRequestIDs.delete(id); };
     },
   });
 }

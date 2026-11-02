@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { ImageInput } from './api';
 import { ChevronDown, Download, Loader2, Plus, X } from 'lucide-react';
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
@@ -8,6 +9,7 @@ import { Checkbox } from '../../shared/ui/checkbox';
 import { Input } from '../../shared/ui/input';
 
 export type ProviderModelDraft = {
+  imageInput?: ImageInput;
   key: string;
   id: string;
   name: string;

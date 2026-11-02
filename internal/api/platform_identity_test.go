@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 )
 
@@ -133,6 +136,57 @@ func TestTargetBootstrapCannotSwallowAuthenticationFailure(t *testing.T) {
 			server.optionalPlatformAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })).ServeHTTP(response, request)
 			if response.Code != tc.status {
 				t.Fatalf("status=%d want=%d", response.Code, tc.status)
+			}
+		})
+	}
+}
+
+func TestLogoutIgnoresOrganizationScope(t *testing.T) {
+	credentials, err := codesessions.NewSessionCredentials(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	filestoreCredentials, err := filestore.NewTokenCredentials(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := platformsession.NewMemoryStore()
+	server := NewServer(ServerDeps{PlatformStore: store, CodeSessionCredentials: credentials, FilestoreCredentials: filestoreCredentials})
+	for _, path := range []string{"/api/auth/logout", "/auth/logout"} {
+		t.Run(path, func(t *testing.T) {
+			sessionKey := "logout-session"
+			if err := store.Save(t.Context(), sessionKey, platformsession.Session{UserUUID: "account", VerifiedEmail: "member@example.local", OrganizationUUID: "removed-organization", ExpiresAt: new(time.Now().Add(time.Hour))}); err != nil {
+				t.Fatal(err)
+			}
+			bootstrap := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
+			bootstrap.AddCookie(&http.Cookie{Name: "sessionKey", Value: sessionKey})
+			bootstrap.Header.Set("X-Organization-UUID", "invalid-organization")
+			denied := httptest.NewRecorder()
+			server.ServeHTTP(denied, bootstrap)
+			if denied.Code != http.StatusBadRequest {
+				t.Fatalf("bootstrap status=%d", denied.Code)
+			}
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			request.AddCookie(&http.Cookie{Name: "sessionKey", Value: sessionKey})
+			request.Header.Set("X-Organization-UUID", "invalid-organization")
+			request.Header.Set("X-Workspace-ID", "archived-workspace")
+			request.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken(sessionKey))
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("logout status=%d body=%s", response.Code, response.Body.String())
+			}
+			if _, err := store.Get(t.Context(), sessionKey); err == nil {
+				t.Fatal("退出后登录会话仍存在")
+			}
+			cookies := response.Result().Cookies()
+			if len(cookies) == 0 {
+				t.Fatal("退出未清除 cookie")
+			}
+			for _, cookie := range cookies {
+				if cookie.MaxAge >= 0 {
+					t.Fatalf("cookie %s 未过期", cookie.Name)
+				}
 			}
 		})
 	}

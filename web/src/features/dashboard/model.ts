@@ -2,6 +2,7 @@ import { getScopeSignal } from '../../shared/api/client';
 import type { ComponentType } from 'react';
 import { useLocation } from '@tanstack/react-router';
 import { copyText } from '@/shared/lib/clipboard';
+import { skillSourceLabel } from '@/shared/lib/skill-source';
 import { downloadApiFile } from '../../shared/api/file-download';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { messageBatchesRequestHeaders, skillsRequestHeaders } from '../../shared/api/client';
@@ -394,13 +395,7 @@ export function formatBatchDateTime(value?: string | null, locale = 'en') {
 
 export function formatSkillSource(source: string, msg?: ReturnType<typeof useI18n>['msg']) {
   const normalized = source.trim().toLowerCase();
-  if (normalized === 'anthropic') {
-    return 'Anthropic';
-  }
-  if (normalized === 'custom') {
-    return msg ? msg('skills.source.custom', 'Custom') : 'Custom';
-  }
-  return titleize(normalized || 'custom');
+  return skillSourceLabel(source, msg) ?? titleize(normalized || 'custom');
 }
 
 export function errorMessage(error: unknown) {

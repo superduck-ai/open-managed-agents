@@ -2,7 +2,17 @@ import { consoleApi } from '../../shared/api/client';
 
 export type APIBackend = 'messages' | 'chat_completions';
 
+export type ImageInput = {
+  max_images?: number;
+  max_request_image_bytes?: number;
+  max_image_bytes?: number;
+  max_long_edge?: number;
+  max_pixels?: number;
+  tokens_per_megapixel?: number;
+};
+
 export type LLMModel = {
+  image_input?: ImageInput;
   name?: string;
   id: string;
   context_window?: number;

@@ -170,3 +170,9 @@ flowchart LR
 ```
 
 验证配置沿用默认开启的 HTTPS MITM。每个隔离运行生成独立的 ECDSA P-256 CA 私钥并通过 `code_session.upstream_proxy_ca_key_file` 提供，权限为 `0600`；清理与 JWT 私钥一并删除，报告不包含私钥。
+
+## 真实视觉模型图片验收
+
+`chat brain-images` 使用显式的 `VERIFY_BE_VISION_PROVIDERS` 私有配置路径与 `VERIFY_BE_VISION_MODEL`，doctor 校验配置和唯一模型归属。其他场景仍清除继承的模型环境，不改变其脚本上游。凭据只在本次隔离 workspace 中保存，报告只记录模型 ID 与 backend，不记录 API key。
+
+该场景验证随机颜色消息图片、真实 Worker/FUSE Read 第二张不同图片，以及原生引用与 MinIO 字节完整性。三个 proof 为 message_image_seen、read_image_seen、native_images_persisted。使用真实模型的次数与耗时不构成质量、价格或性能基准；源代码指纹和清理要求不变。

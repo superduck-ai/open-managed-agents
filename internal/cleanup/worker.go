@@ -71,6 +71,9 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 	if err := w.database.ScheduleTranscriptArchiveCleanup(ctx, defaultBatchSize); err != nil {
 		return err
 	}
+	if err := w.database.ScheduleBrainImageAttachmentCleanup(ctx, defaultBatchSize); err != nil {
+		return err
+	}
 	jobs, err := w.database.LeaseObjectCleanupJobs(ctx, workerID, defaultBatchSize)
 	if err != nil {
 		return err
@@ -85,14 +88,14 @@ func (w *Worker) RunOnce(ctx context.Context, workerID string) error {
 			continue
 		}
 
-		if err := store.Delete(ctx, job.Key, storage.DeleteOptions{AllVersions: job.ResourceType == "memory_version" || job.ResourceType == "event_payload" || job.ResourceType == "transcript_archive" || job.ResourceType == "tunnel_payload"}); err != nil {
+		if err := store.Delete(ctx, job.Key, storage.DeleteOptions{AllVersions: job.ResourceType == "brain_image_attachment" || job.ResourceType == "memory_version" || job.ResourceType == "event_payload" || job.ResourceType == "transcript_archive" || job.ResourceType == "tunnel_payload"}); err != nil {
 			delay := retryDelay(job.Attempts + 1)
 			if markErr := w.database.FailObjectCleanupJob(ctx, job.UUID, job.Attempts, err.Error(), delay, defaultMaxAttempts); markErr != nil {
 				errs = append(errs, fmt.Errorf("mark cleanup job %s retry: %w", job.ExternalID, markErr))
 			}
 			continue
 		}
-		if err := w.database.CompleteObjectCleanupJob(ctx, job.UUID); err != nil {
+		if err := w.database.CompleteObjectCleanupJob(ctx, job.UUID, job.ResourceType); err != nil {
 			errs = append(errs, fmt.Errorf("complete cleanup job %s: %w", job.ExternalID, err))
 		}
 	}

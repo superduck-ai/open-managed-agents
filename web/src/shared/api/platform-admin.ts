@@ -20,7 +20,8 @@ export class PlatformAdminClient {
   ): Promise<T> {
     const scope = this.controller.signal;
     const headers = new Headers({ Accept: 'application/json' });
-    if (options.body !== undefined) headers.set('Content-Type', 'application/json');
+    const multipart = options.body instanceof FormData;
+    if (options.body !== undefined && !multipart) headers.set('Content-Type', 'application/json');
     if (options.method && options.method !== 'GET') headers.set('X-CSRF-Token', this.csrfToken);
     if (options.key) headers.set('Idempotency-Key', options.key);
     const read = !options.method || options.method === 'GET';
@@ -29,7 +30,11 @@ export class PlatformAdminClient {
       headers,
       credentials: 'include',
       cache: 'no-store',
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: multipart
+        ? (options.body as FormData)
+        : options.body === undefined
+          ? undefined
+          : JSON.stringify(options.body),
       signal: read ? AbortSignal.any([scope, ...(options.signal ? [options.signal] : [])]) : undefined,
     });
     const body = await response.json().catch(() => null);

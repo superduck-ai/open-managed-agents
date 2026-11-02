@@ -16,10 +16,10 @@ export const name = "oma-brain";
 
 /** Host composition: native kernel, CCRv2 bridge and OMA model route. */
 export async function mountOma(
-  ctx: Context, api: OmaApi, heartbeat: CcrBridge.CcrHeartbeatOptions = {}, localRoot?: string,
+  ctx: Context, api: OmaApi, heartbeat: CcrBridge.CcrHeartbeatOptions = {}, localRoot?: string, imageCacheRoot?: string,
 ): Promise<CcrClient> {
   const heartbeatOptions = CcrBridge.resolveHeartbeatOptions(heartbeat);
-  await mountKernel(ctx);
+  await mountKernel(ctx, api, imageCacheRoot);
   if (localRoot !== undefined) await checkWritableDirectory(localRoot, "OMA_BRAIN_TRANSCRIPT_DIR");
   const client = createOmaCcrClient(api);
   await ctx.plugin(CcrBridge, {

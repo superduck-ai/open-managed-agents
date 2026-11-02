@@ -206,11 +206,11 @@ func nativePage(id string, after int64, hits []eventHit) (Page, error) {
 		hits = hits[:trajectoryPageSize]
 	}
 	for _, hit := range hits {
-		headerJSON, err := replayValue(hit.Headers)
+		headerJSON, err := replayValue(hit.Headers, defaultHeaderDelegationDepth)
 		if err != nil {
 			return Page{}, err
 		}
-		content, err := replayValue(hit.Contents)
+		content, err := replayValue(hit.Contents, nil)
 		if err != nil {
 			return Page{}, err
 		}
@@ -231,7 +231,15 @@ func nativePage(id string, after int64, hits []eventHit) (Page, error) {
 	return page, nil
 }
 
-func replayValue(values []string) (string, error) {
+func defaultHeaderDelegationDepth(value any) {
+	if header, ok := value.(map[string]any); ok {
+		if _, found := header["delegationDepth"]; !found {
+			header["delegationDepth"] = json.Number("0")
+		}
+	}
+}
+
+func replayValue(values []string, normalize func(any)) (string, error) {
 	if len(values) == 0 {
 		return "", invalidResponse(fmt.Errorf("missing native trajectory payload"))
 	}
@@ -248,6 +256,9 @@ func replayValue(values []string) (string, error) {
 		}
 		if err := decoder.Decode(new(any)); err != io.EOF {
 			return "", invalidResponse(fmt.Errorf("invalid native trajectory JSON"))
+		}
+		if normalize != nil {
+			normalize(value)
 		}
 		if index == 0 {
 			first = value

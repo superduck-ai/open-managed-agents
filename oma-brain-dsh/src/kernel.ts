@@ -5,10 +5,13 @@ import SessionStore from "@deepseek-ai/dsh-session";
 import SessionProjectionRegistry from "@deepseek-ai/dsh-session-projection";
 import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import ToolRuntime from "@deepseek-ai/dsh-tools";
+import * as NativeToolExecutor from "@deepseek-ai/dsh-tool-executor-native";
 import AgentRegistry from "@deepseek-ai/dsh-agent";
 import AgentLoop from "@deepseek-ai/dsh-agent-loop";
 import * as TimeContext from "./plugins/time-context.ts";
 import LocalAttachmentStore from "@deepseek-ai/dsh-attachment-local";
+import RemoteAttachmentStore from "./attachments/remote.ts";
+import type { OmaApi } from "./api.ts";
 import TokenMeter from "@deepseek-ai/dsh-token-meter";
 import BasicCompaction from "@deepseek-ai/dsh-compaction-basic";
 import * as ImageOffload from "@deepseek-ai/dsh-compaction-image-offload";
@@ -16,12 +19,13 @@ import ToolResultPruner from "@deepseek-ai/dsh-compaction-tool-result-pruner";
 import { checkWritableDirectory, resolveBrainHome } from "./storage.ts";
 
 /** Native dsh runtime only. Persistence and platform adapters are installed by the host. */
-export async function mountKernel(ctx: Context): Promise<void> {
+export async function mountKernel(ctx: Context, api?: OmaApi, cacheRoot?: string): Promise<void> {
   const home = resolveBrainHome();
   await checkWritableDirectory(home, "DSH_HOME");
   await checkWritableDirectory(join(home, "attachments", "v1"), "DSH_HOME");
   process.env.DSH_HOME = home;
-  await ctx.plugin(LocalAttachmentStore);
+  if (api) await ctx.plugin(RemoteAttachmentStore, { api, cacheRoot });
+  else await ctx.plugin(LocalAttachmentStore);
   await ctx.plugin(LlmRuntime);
   await ctx.plugin(SessionStore);
   await ctx.plugin(SessionProjectionRegistry);
@@ -33,7 +37,8 @@ export async function mountKernel(ctx: Context): Promise<void> {
     includeHarnessIdentity: false,
     includeRuntimeContext: false,
   });
-  await ctx.plugin(ToolRuntime, { mode: "native" });
+  await ctx.plugin(ToolRuntime);
+  await ctx.plugin(NativeToolExecutor);
   await ctx.plugin(AgentRegistry);
   await ctx.plugin(TimeContext, { timeZone: "Asia/Shanghai" });
   await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 25 });

@@ -210,7 +210,7 @@ function EnvironmentApi({ entity }: { entity: EnvironmentApiResponse }) {
   );
 }
 
-function EnvironmentSummary({ entity }: { entity: EnvironmentApiResponse }) {
+export function EnvironmentSummary({ entity }: { entity: EnvironmentApiResponse }) {
   const { msg } = useI18n();
   const format = useFormatters();
   const values = environmentFormValues(entity);

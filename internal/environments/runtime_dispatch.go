@@ -10,7 +10,8 @@ type sandboxEndpointResolver interface {
 	ServiceEndpoint(context.Context, string, int, string) (string, error)
 }
 
-func (r *Runner) finishManagedAgentRuntime(ctx context.Context, session db.Session, work db.EnvironmentWork, launch managedAgentRuntimeLaunch) error {
+func (r *Runner) finishManagedAgentRuntime(ctx context.Context, run *runnerRun, session db.Session, work db.EnvironmentWork, launch managedAgentRuntimeLaunch) error {
+	ctx = run.begin(ctx, "publish_runtime")
 	if err := r.publishManagedAgentRuntime(ctx, session, work, launch); err != nil {
 		return err
 	}
@@ -23,6 +24,7 @@ func (r *Runner) finishManagedAgentRuntime(ctx context.Context, session db.Sessi
 	if !ok {
 		return errWorkerDispatchUnavailable
 	}
+	ctx = run.begin(ctx, "brain_dispatch")
 	return dispatcher.DispatchWorker(ctx, session, launch.CodeSessionID)
 }
 

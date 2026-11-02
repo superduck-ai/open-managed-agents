@@ -5,6 +5,7 @@ import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
 import { listWorkspaceMCPServers } from '../../../shared/api/workspaceMCPServers';
 import { cn } from '../../../shared/lib/utils';
+import { skillSourceLabel } from '../../../shared/lib/skill-source';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
 import {
@@ -90,7 +91,7 @@ export function AgentConfigRenderedEditor({
   const skillPickerOptions = skillOptions.map((skill) => ({
     id: skill.id,
     label: skill.displayTitle,
-    description: `${skill.id}  ${skill.source}`,
+    description: `${skillSourceLabel(skill.source, msg) ?? skill.source}  ${skill.id}`,
     disabled: selectedSkills.length >= 20 && !selectedSkills.some((reference) => reference.skill_id === skill.id),
   }));
   const mcpServers = [

@@ -2,7 +2,7 @@ import { recordRuntimeDiagnostic, recordRuntimeEvent } from "./runtime-diagnosti
 import { createHash } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
-import { SessionId, pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
+import { SessionId, appendPluginRecord, pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
 import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
 import { ToolNotForwardedError } from "../runtime/contracts.ts";
 import { SessionRuntime } from "../runtime/session.ts";
@@ -21,7 +21,8 @@ import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
 import { CcrCompaction } from "./compaction.ts";
 import { nativeOutput, failedOutput } from "./native-output.ts";
 import { CcrToolResults } from "./tool-results.ts";
-import { CcrAssistantStream } from "./assistant.ts";
+import { CcrAssistantStream, type AssistantBlockOutput } from "./assistant.ts";
+import { withAttachmentSession } from "../attachments/remote.ts";
 import { userInputContent } from "./user-content.ts";
 import { appendedSystemContext } from "./system-context.ts";
 import { TRACE_TURNS_METADATA, traceHooks, traceTurnsOf, type TurnTrace } from "../observability/trace-context.ts";
@@ -75,10 +76,9 @@ export class CcrSession {
       id => this.compactionSequences.get(id),
       (id, tokens, sequence) => this.contextCompacted(tokens, sequence, id === this.id ? undefined : id));
     this.defaultModel = config.model;
-    this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID);
+    this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID, config.modelRequestID);
     this.runtime = new SessionRuntime(ctx, { ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); } }, {
       onDiagnostic: diagnostic => recordRuntimeDiagnostic(this.id, diagnostic),
-      selectModel: model => this.modelOverride ?? model,
       onExternalMcpConnectionFailure: (serverName) => this.reportError({
         type: "session.error", uuid: crypto.randomUUID(), processed_at: new Date().toISOString(),
         error: { type: "mcp_connection_failed_error", mcp_server_name: serverName,
@@ -165,7 +165,7 @@ export class CcrSession {
     this.modelOverride = model;
     this.config.model = model;
     this.runtime.config.model = model;
-    if (this.runtime.handle) this.agent.options.model = model;
+    if (this.runtime.handle) this.agent.model.select({ provider: this.config.provider, model });
   }
 
   private async openState(setStage: (stage: string) => void): Promise<void> {
@@ -173,6 +173,7 @@ export class CcrSession {
     this.restoredFromRemote = await this.ctx.ccrReplication.ensure(this.id);
     setStage("runtime_open");
     await this.runtime.open();
+    if (this.modelOverride) this.agent.model.select({ provider: this.config.provider, model: this.modelOverride });
     setStage("subagents_restore");
     await this.subagents.restore();
     const recoveryEvents = this.pendingEvents.splice(0);
@@ -202,8 +203,13 @@ export class CcrSession {
     const payloads = this.assistantStream.record(frame, inputId, threadId);
     if (payloads.length && inputId) {
       for (const payload of payloads) {
-        payload.uuid = crypto.randomUUID();
+        payload.uuid ??= crypto.randomUUID();
         if (threadId) payload.session_thread_id = threadId;
+        if (payload.type === "agent.message" || payload.type === "agent.thinking") {
+          const owner = threadId ? this.ctx.sessions.get(SessionId(threadId)) : this.agent.session;
+          if (!owner) throw new Error("Missing assistant block journal owner");
+          appendPluginRecord(owner, "plugin:oma/assistant-block", { output: payload as AssistantBlockOutput });
+        }
       }
       // Enqueue immediately so one 100ms window can hold multiple frames.
       // The uploader preserves order; this barrier still waits for every HTTP confirmation.
@@ -299,7 +305,8 @@ export class CcrSession {
       });
       this.outcomeConfirmations.add(confirmation);
     }
-    this.pendingEvents.push(...nativeOutput(this.id, this.inputId, event, toolName, threadId));
+    const output = nativeOutput(this.id, this.inputId, event, toolName, threadId);
+    this.pendingEvents.push(...(event.type === "assistant/message" ? this.assistantStream.complete(output, threadId) : output));
   }
 
   async approve(request: ToolApproval, signal: AbortSignal, threadId?: string): Promise<ApprovalDecision> {
@@ -526,7 +533,7 @@ export class CcrSession {
       await this.runtime.run(() => {
         const system = appendedSystemContext(payload);
         if (system !== undefined) this.runtime.appendedSystem = system;
-        return userInputContent(payload, this.ctx.attachments);
+        return withAttachmentSession(this.id, () => userInputContent(payload, this.ctx.attachments));
       }, {
         messageId: inputId,
         beforeRun: async () => {

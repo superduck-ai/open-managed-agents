@@ -56,7 +56,7 @@ class MemoryBackend implements CcrBackend {
 class TextModel extends LlmAdapter {
   readonly requests: GenerateOptions[] = [];
   async resolveModel(provider: string, model: string) {
-    return { provider, id: model, name: model };
+    return { provider, id: model, name: model, context: { contextWindow: 200000 } };
   }
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options);
@@ -161,7 +161,7 @@ test("persistence stores a separate header and individual events and restores du
   }
 });
 
-test("session previews enter one stream window and terminal publication still waits for their HTTP confirmation", async () => {
+test("completed blocks flush earlier previews and input acknowledgement waits for HTTP confirmation", async () => {
   const backend = new MemoryBackend();
   const ctx = new Context();
   const timers = new Set<() => void>();
@@ -213,14 +213,12 @@ test("session previews enter one stream window and terminal publication still wa
     session = ctx.ccrv2.createSession({ id: "buffered", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
     await session.open();
     turn = session.receive("input", { content: "hello" });
-    await eventually(() => previewCalls === 2);
+    await eventually(() => previewCalls === 3);
     await completed.promise;
-    expect(previewCalls).toBe(2);
-    expect(timers.size).toBe(1);
-    expect(batches.flat().filter((event) => event.ephemeral)).toEqual([]);
+    expect(previewCalls).toBe(3);
+    expect(timers.size).toBe(0);
     expect(session.pendingEvents.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);
-    [...timers][0]!();
     await sending.promise;
     const previews = batches.flat().filter((event) => event.ephemeral);
     expect(previews.map((event) => event.payload.type)).toEqual(["event_start", "event_delta", "event_delta"]);
@@ -342,13 +340,14 @@ test("worker metadata restores the model across logged history and set_model wai
     try {
       await started.promise;
       expect(backend.acknowledged).not.toContain("model-session:change");
-      expect(first.session.agent.options.model).toBe("restored-model");
+      expect(first.session.agent.model.current()?.model).toBe("restored-model");
       release.resolve();
       await changing;
     } finally { release.resolve(); backend.reportMetadata = patch; }
     await eventually(() => backend.acknowledged.includes("model-session:change"));
     expect(backend.acknowledged).toContain("model-session:change");
     await first.session.receive("second", { content: "continue" });
+    expect(backend.output.get("model-session")!.filter(event => event.type === "result" && event.is_error)).toEqual([]);
     expect(first.model.requests[1]!.model).toBe("changed-model");
   } finally { await first.ctx.fiber.dispose(); }
   // Deliberately differ from the last logged request, which used changed-model.

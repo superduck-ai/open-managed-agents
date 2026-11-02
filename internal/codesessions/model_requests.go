@@ -149,11 +149,7 @@ func (s *Service) StartModelThinking(ctx context.Context, request *ModelRequest,
 		CodeSessionID: request.CodeSessionID, WorkspaceUUID: request.codeSession.WorkspaceUUID,
 		SessionExternalID: request.codeSession.SessionExternalID,
 	}, request.codeSession.CurrentWorkerEpoch, raw)
-	payload, err := modelMessagePayload(request, message, time.Now().UTC().Truncate(time.Microsecond))
-	if err != nil {
-		return err
-	}
-	return s.sink.PublishCodeSessionEvents(ctx, request.codeSession, []json.RawMessage{payload})
+	return nil
 }
 
 func modelMessagePayload(request *ModelRequest, message ModelRequestMessage, processedAt time.Time) (json.RawMessage, error) {

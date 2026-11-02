@@ -60,6 +60,60 @@ test("sandbox tool calls disable Bun's socket idle timeout and bound the request
   } finally { await executor.close(); }
 });
 
+function flakySandbox(options: { failFirstPost?: boolean; holdDiscover?: Promise<void> } = {}) {
+  const requests: string[] = [];
+  let posts = 0;
+  const api = new OmaApi("http://oma.test", (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    const body = await request.json() as Payload;
+    posts++;
+    if (options.failFirstPost && posts === 1) {
+      requests.push(`503:${body.method}`);
+      return Response.json({ type: "error", error: { type: "api_error", message: "Sandbox is unavailable" } }, { status: 503 });
+    }
+    requests.push(body.method);
+    if (body.method === "server/discover") {
+      await options.holdDiscover;
+      return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }, { status: 404 });
+    }
+    if (body.method === "initialize") return Response.json({ jsonrpc: "2.0", id: body.id, result: {
+      protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "sandbox", version: "1" },
+    } });
+    if (body.method !== "tools/call") return new Response(null, { status: 202 });
+    return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } });
+  }) as typeof fetch);
+  const a = assignment(); api.assignments.set(a.session_id, a);
+  return { requests, executor: new SandboxMcp(api, a.session_id) };
+}
+
+test("a failed sandbox MCP initialization is retried by the next call", async () => {
+  const { requests, executor } = flakySandbox({ failFirstPost: true });
+  const bash = sandboxToolDefinitions().find((tool) => tool.name === "Bash")!;
+  try {
+    await expect(executor.call(bash, { command: "true" }, new AbortController().signal)).rejects.toThrow("HTTP 503");
+    expect(await executor.call(bash, { command: "true" }, new AbortController().signal)).toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(await executor.call(bash, { command: "true" }, new AbortController().signal)).toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(requests).toEqual(["503:server/discover", "server/discover", "initialize", "notifications/initialized", "tools/call", "tools/call"]);
+  } finally { await executor.close(); }
+});
+
+test("interrupting the first caller does not fail the shared sandbox MCP initialization", async () => {
+  let release!: () => void;
+  const { requests, executor } = flakySandbox({ holdDiscover: new Promise<void>((resolve) => { release = resolve; }) });
+  const bash = sandboxToolDefinitions().find((tool) => tool.name === "Bash")!;
+  const interrupted = new AbortController();
+  try {
+    const first = executor.call(bash, { command: "true" }, interrupted.signal);
+    const second = executor.call(bash, { command: "true" }, new AbortController().signal);
+    interrupted.abort(new Error("user interrupt"));
+    await expect(first).rejects.toThrow("user interrupt");
+    release();
+    expect(await second).toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(requests).toEqual(["server/discover", "initialize", "notifications/initialized", "tools/call"]);
+  } finally { await executor.close(); }
+});
+
 test("OMA providers isolate roots, initialize lazily and retain separate MCP sessions", async () => {
   const ctx = new Context();
   const requests: { id: string; method: string; mcpSession: string | null }[] = [];
@@ -167,10 +221,10 @@ test("children share the root provider and archiving a child preserves its execu
     for (const consumer of f.consumers()) expect(consumer.ctx.get("sandboxExecutor")).toBe(executor);
     const agent = f.session.agent;
     const archived = await agent.ctx.tools.execute({
-      callId: ToolCallId("archive_child"), name: "archive_agent", arguments: { thread_id: report.thread_id },
+      calls: [{ type: "tool-call", id: ToolCallId("archive_child"), name: "archive_agent", arguments: JSON.stringify({ thread_id: report.thread_id }) }],
       agent, signal: new AbortController().signal,
     });
-    expect(archived.isError).toBe(false);
+    expect(archived.results[0]!.result.isError).toBe(false);
     expect(f.consumers()).toHaveLength(1);
     expect(provider.ctx.get("sandboxExecutor")).toBe(executor);
     f.b.modelScript = [toolEvents("parent", "parent_call"), textEvents("done")];

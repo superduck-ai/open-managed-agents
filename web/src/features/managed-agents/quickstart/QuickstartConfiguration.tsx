@@ -1,85 +1,97 @@
-import { ArrowRight, Bot, Code, Plus, Search, BarChart3, Radar, Sparkles } from 'lucide-react';
+import { QuickstartEntrySlot } from './QuickstartEntrySlot';
+import { Label } from '../../../shared/ui/label';
+import { ArrowRight, Bot, Plus } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
 import { Field, FieldLabel } from '../../../shared/ui/field';
 import { Input } from '../../../shared/ui/input';
 import { Textarea } from '../../../shared/ui/textarea';
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '../../../shared/ui/accordion';
 import { RadioGroup, RadioGroupItem } from '../../../shared/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import type { AgentModelOption } from '../agents/create-dialog-model';
 import { environmentFormValues } from '../environments/model';
 import { quickstartEnvironmentBody } from './api';
 import { quickstartCopy } from './copy';
-import { quickstartAgentBody, quickstartScenarios } from './model';
+import { quickstartAgentBody } from './model';
 import { quickstartCurl, RequestPreview } from './RequestPreview';
 import type { QuickstartWizard } from './useQuickstartWizard';
 import { QuickstartFooter } from './QuickstartFooter';
 import { QuickstartApiKey } from './QuickstartApiKey';
+import {
+  quickstartTemplates,
+  quickstartTemplateCard,
+  quickstartTemplateGrid,
+  QuickstartTemplateContent,
+} from './templates';
 
-const scenarioIcons = {
-  hello: Bot,
-  research: Search,
-  analysis: BarChart3,
-  tracking: Radar,
-  review: Code,
-  custom: Sparkles,
-};
-
-export function QuickstartStart({ wizard }: { wizard: QuickstartWizard }) {
+export function QuickstartStart({ wizard, onStart }: { wizard: QuickstartWizard; onStart: () => void }) {
   const { locale } = useI18n();
+  const zh = locale === 'zh-CN';
   const text = quickstartCopy(locale);
+  const templates = quickstartTemplates(locale, wizard.draft.modelID);
+  const disabled = wizard.busy || Boolean(wizard.progress.pending);
   return (
-    <div className="flex min-h-0 flex-1 flex-col pt-(--quickstart-gap)">
-      <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
-        <div className="mb-(--quickstart-gap) space-y-2">
-          <h1 className="text-xl leading-7 font-semibold tracking-tight">{text.title}</h1>
-        </div>
+    <div className="min-h-0 flex-1 overflow-y-auto pb-12">
+      <div className="mx-auto w-full max-w-[880px]">
         <RadioGroup
           value={wizard.progress.scenarioID}
           onValueChange={(value) => wizard.chooseScenario(value)}
           aria-label={text.scenarios}
-          disabled={wizard.busy || Boolean(wizard.progress.pending)}
-          className="grid gap-[clamp(0.5rem,1.5dvh,0.75rem)] sm:grid-cols-2"
+          disabled={disabled}
+          className="gap-0"
         >
-          {quickstartScenarios(locale).map((scenario) => {
-            const Icon = scenarioIcons[scenario.id];
-            const featured = scenario.id === 'hello';
-            const custom = scenario.id === 'custom';
-            return (
-              <FieldLabel
-                key={scenario.id}
-                htmlFor={`scenario-${scenario.id}`}
-                className={`flex w-full cursor-pointer flex-col items-stretch gap-2 rounded-xl border-[0.5px] px-4 py-3 ${featured || custom ? 'sm:col-span-2' : ''} ${wizard.progress.scenarioID === scenario.id ? 'border-foreground bg-accent/40' : 'border-border bg-card hover:bg-accent/20'}`}
+          <QuickstartEntrySlot
+            accessory={
+              wizard.resources.isPending ? (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {text.restore}
+                </p>
+              ) : undefined
+            }
+          >
+            <Label
+              htmlFor="scenario-hello"
+              className={`flex h-full w-full cursor-pointer focus-within:outline focus-within:outline-[0.5px] focus-within:outline-offset-2 items-center gap-4 rounded-2xl border-[0.5px] p-5 font-normal ${wizard.progress.scenarioID === 'hello' ? 'border-foreground bg-muted' : 'border-border hover:bg-muted'}`}
+            >
+              <Bot aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 space-y-1">
+                <span className="block text-sm font-medium">{zh ? 'Hello World 示例' : 'Hello World example'}</span>
+                <span className="block text-sm leading-5 text-muted-foreground">
+                  {zh
+                    ? '从一句问候开始，了解智能体创建、试跑与 API 调用。'
+                    : 'Start with a greeting to explore agent creation, a test conversation and an API call.'}
+                </span>
+              </span>
+              <RadioGroupItem
+                className="sr-only absolute"
+                id="scenario-hello"
+                value="hello"
+                aria-label="Hello World Agent"
+              />
+            </Label>
+          </QuickstartEntrySlot>
+          <div className={`mt-10 ${quickstartTemplateGrid}`}>
+            {templates.map(({ id, icon, config: { name }, description }) => (
+              <Label
+                key={id}
+                htmlFor={`scenario-${id}`}
+                className={`${quickstartTemplateCard} cursor-pointer focus-within:outline focus-within:outline-[0.5px] focus-within:outline-offset-2 ${wizard.progress.scenarioID === id ? 'border-foreground bg-muted' : 'hover:bg-muted'}`}
               >
-                <div className="flex items-center gap-2.5">
-                  <span
-                    className={
-                      featured
-                        ? 'grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground'
-                        : 'shrink-0'
-                    }
-                  >
-                    <Icon className={featured ? 'size-[18px]' : 'size-4'} />
-                  </span>
-                  <span className="min-w-0 flex-1 space-y-1">
-                    <span className="block text-sm font-medium">{scenario.name}</span>
-                  </span>
-                  {featured && <Badge>{text.recommended}</Badge>}
-                  <RadioGroupItem id={`scenario-${scenario.id}`} value={scenario.id} />
-                </div>
-                <p className="text-xs leading-5 font-normal text-muted-foreground">{scenario.summary}</p>
-              </FieldLabel>
-            );
-          })}
+                <RadioGroupItem className="sr-only absolute" id={`scenario-${id}`} value={id} aria-label={name} />
+                <QuickstartTemplateContent icon={icon} title={name} description={description} />
+              </Label>
+            ))}
+          </div>
         </RadioGroup>
+        <div className="mt-6 flex justify-end">
+          <Button disabled={disabled} onClick={onStart}>
+            {text.start}
+            <ArrowRight />
+          </Button>
+        </div>
       </div>
-      <QuickstartFooter wizard={wizard}>
-        <Button disabled={wizard.busy || Boolean(wizard.progress.pending)} onClick={() => wizard.navigate(1)}>
-          {text.start}
-          <ArrowRight />
-        </Button>
-      </QuickstartFooter>
     </div>
   );
 }
@@ -118,16 +130,6 @@ export function QuickstartAgent({
           if (valid && !disabled) void wizard.saveAgent();
         }}
       >
-        <Field>
-          <FieldLabel htmlFor="quickstart-name">{text.name}</FieldLabel>
-          <Input
-            id="quickstart-name"
-            value={draft.name}
-            disabled={disabled || Boolean(agent)}
-            onChange={(event) => wizard.editDraft({ name: event.target.value })}
-            maxLength={256}
-          />
-        </Field>
         {(candidates.length > 0 || agent) && (
           <div className="space-y-3 border-b-[0.5px] border-border pb-4">
             <p className="text-sm text-muted-foreground">{text.existingAgent}</p>
@@ -166,45 +168,99 @@ export function QuickstartAgent({
             {agent && <p className="text-xs text-muted-foreground">{text.usingAgent}</p>}
           </div>
         )}
-        <Field>
-          <FieldLabel htmlFor="quickstart-description">{text.description}</FieldLabel>
-          <Input
-            id="quickstart-description"
-            value={draft.description}
-            disabled={disabled || Boolean(agent)}
-            onChange={(event) => wizard.editDraft({ description: event.target.value })}
-          />
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="quickstart-model">{text.model}</FieldLabel>
-          <Select
-            value={draft.modelID}
-            disabled={disabled || Boolean(agent)}
-            onValueChange={(value) => wizard.editDraft({ modelID: value ?? '' })}
-          >
-            <SelectTrigger id="quickstart-model" className="h-auto! min-h-10 w-full py-2.5">
-              <SelectValue>{draft.modelID}</SelectValue>
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false} align="start" className="max-h-80 p-1.5">
-              {models.map((model) => (
-                <SelectItem key={model.id} value={model.id} className="py-3 pl-3">
-                  {model.displayName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="quickstart-system">{text.system}</FieldLabel>
-          <Textarea
-            id="quickstart-system"
-            value={draft.system}
-            disabled={disabled || Boolean(agent)}
-            rows={7}
-            onChange={(event) => wizard.editDraft({ system: event.target.value })}
-            className="h-[clamp(6rem,18dvh,10rem)] resize-y"
-          />
-        </Field>
+        {agent ? (
+          <div aria-label={locale === 'zh-CN' ? '复用智能体摘要' : 'Reused agent summary'} className="space-y-5">
+            <div className="flex flex-wrap items-baseline gap-3">
+              <h2 className="min-w-0 break-words text-base font-medium">{agent.name}</h2>
+              <span className="font-mono text-xs text-muted-foreground">v{agent.version}</span>
+            </div>
+            <dl className="space-y-3 text-sm">
+              <div>
+                <dt className="text-xs text-muted-foreground">{text.model}</dt>
+                <dd className="break-all">{draft.modelID}</dd>
+              </div>
+              {draft.description && (
+                <div>
+                  <dt className="text-xs text-muted-foreground">{text.description}</dt>
+                  <dd className="break-words">{draft.description}</dd>
+                </div>
+              )}
+            </dl>
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium">{text.system}</h3>
+              <p className="line-clamp-3 break-words whitespace-pre-wrap text-sm leading-6">{draft.system}</p>
+              <Accordion>
+                <AccordionItem value="system">
+                  <AccordionTrigger>
+                    {locale === 'zh-CN' ? '展开完整提示词' : 'Show full system prompt'}
+                  </AccordionTrigger>
+                  <AccordionContent className="break-words whitespace-pre-wrap leading-6">
+                    {draft.system}
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            </div>
+            <Button
+              variant="outline"
+              disabled={disabled}
+              onClick={() => wizard.update((value) => ({ ...value, agentID: 'new' }))}
+            >
+              {locale === 'zh-CN' ? '改为新建' : 'Create a new agent instead'}
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Field>
+              <FieldLabel htmlFor="quickstart-name">{text.name}</FieldLabel>
+              <Input
+                id="quickstart-name"
+                value={draft.name}
+                disabled={disabled}
+                onChange={(event) => wizard.editDraft({ name: event.target.value })}
+                maxLength={256}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="quickstart-description">{text.description}</FieldLabel>
+              <Input
+                id="quickstart-description"
+                value={draft.description}
+                disabled={disabled}
+                onChange={(event) => wizard.editDraft({ description: event.target.value })}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="quickstart-model">{text.model}</FieldLabel>
+              <Select
+                value={draft.modelID}
+                disabled={disabled}
+                onValueChange={(value) => wizard.editDraft({ modelID: value ?? '' })}
+              >
+                <SelectTrigger id="quickstart-model" className="h-auto! min-h-10 w-full py-2.5">
+                  <SelectValue>{draft.modelID}</SelectValue>
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false} align="start" className="max-h-80 p-1.5">
+                  {models.map((model) => (
+                    <SelectItem key={model.id} value={model.id} className="py-3 pl-3">
+                      {model.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="quickstart-system">{text.system}</FieldLabel>
+              <Textarea
+                id="quickstart-system"
+                value={draft.system}
+                disabled={disabled}
+                rows={7}
+                onChange={(event) => wizard.editDraft({ system: event.target.value })}
+                className="h-[clamp(6rem,18dvh,10rem)] resize-y"
+              />
+            </Field>
+          </>
+        )}
         {!valid && (
           <p role="status" className="text-sm text-muted-foreground">
             {modelAvailable ? text.required : text.modelUnavailable}
@@ -342,14 +398,14 @@ function ConfigurationLayout({
       <div className="mb-(--quickstart-gap) shrink-0 space-y-2">
         <h1 className="text-2xl leading-8 font-semibold tracking-tight">{title}</h1>
       </div>
-      <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max gap-(--quickstart-gap) overflow-y-auto min-[860px]:grid-cols-2 min-[860px]:grid-rows-[minmax(0,1fr)] min-[860px]:overflow-hidden">
-        <div className="min-h-0 min-w-0 max-w-xl pr-1 min-[860px]:overflow-y-auto">{children}</div>
-        <aside className="min-h-0 min-w-0 border-t-[0.5px] border-border pt-6 min-[860px]:overflow-y-auto min-[860px]:border-t-0 min-[860px]:border-l-[0.5px] min-[860px]:pt-0 min-[860px]:pl-6">
+      <div className="grid min-h-0 min-w-0 flex-1 auto-rows-max gap-(--quickstart-gap) overflow-y-auto xl:grid-cols-[minmax(0,560px)_minmax(0,1fr)] xl:grid-rows-[minmax(0,1fr)] xl:overflow-hidden">
+        <div className="min-h-0 min-w-0 max-w-xl pr-1 xl:overflow-y-auto">{children}</div>
+        <aside className="min-h-0 min-w-0 border-t-[0.5px] border-border pt-6 xl:overflow-y-auto xl:border-t-0 xl:border-l-[0.5px] xl:pt-0 xl:pl-6">
           <div className="min-w-0">
             <QuickstartApiKey workspaceID={workspaceID} />
             <div className="mt-(--quickstart-gap) border-t-[0.5px] border-border pt-(--quickstart-gap)">
               <h2 className="mb-3 text-sm font-medium">{text.api}</h2>
-              <RequestPreview code={code} />
+              <RequestPreview code={code} hint={false} />
             </div>
           </div>
         </aside>

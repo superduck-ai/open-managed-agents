@@ -6,7 +6,8 @@ const DefaultE2BTemplate = "managed-agent-sandbox"
 
 func defaultConfig() Config {
 	cfg := Config{
-		CodeSession: CodeSessionConfig{UpstreamProxyMITMEnabled: true},
+		BrainImageAttachments: BrainImageAttachmentConfig{MaxObjectBytes: 4 << 20},
+		CodeSession:           CodeSessionConfig{UpstreamProxyMITMEnabled: true},
 		EnvironmentPrebuilds: EnvironmentPrebuildConfig{
 			Timeout: time.Hour,
 			Template: TemplateBuildConfig{
@@ -81,6 +82,14 @@ func defaultConfig() Config {
 					Timeout: 15 * time.Second,
 				},
 			},
+		},
+		Telemetry: TelemetryConfig{
+			ServiceName:  "oma-server",
+			OTLP:         TelemetryOTLPConfig{BaseURL: "http://openobserve:5080", Organization: "oma", TracesStream: "oma_server", LogsStream: "oma_server", Timeout: 10 * time.Second},
+			Traces:       TelemetryTracesConfig{Enabled: true},
+			Metrics:      TelemetryMetricsConfig{Enabled: true, ExportInterval: 30 * time.Second},
+			Logs:         TelemetryLogsConfig{Enabled: true, Level: "info"},
+			StateMetrics: TelemetryStateMetricsConfig{Interval: time.Minute, StaleRunningAfter: 10 * time.Minute, StuckStartingAfter: 10 * time.Minute},
 		},
 		Webhook: WebhookConfig{
 			Concurrency:         10,

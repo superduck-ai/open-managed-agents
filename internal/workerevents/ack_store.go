@@ -14,9 +14,12 @@ import (
 )
 
 type AckRef struct {
-	PublicEventID string `json:"public_event_id,omitempty"`
-	AckSubject    string `json:"ack_subject"`
-	CleanupJobID  string `json:"cleanup_job_id,omitempty"`
+	Lane          string    `json:"lane,omitempty"`
+	PublishedAt   time.Time `json:"published_at,omitzero"`
+	TraceParent   string    `json:"trace_parent,omitempty"`
+	PublicEventID string    `json:"public_event_id,omitempty"`
+	AckSubject    string    `json:"ack_subject"`
+	CleanupJobID  string    `json:"cleanup_job_id,omitempty"`
 }
 
 // AckStore 保存业务事件与 JetStream ACK subject 之间的短期映射。

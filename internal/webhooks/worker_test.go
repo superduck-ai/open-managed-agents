@@ -13,6 +13,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -38,16 +39,22 @@ func (s *resultStore) RecordWebhookDeliveryFailure(context.Context, string, stri
 }
 
 type testMessage struct {
+	headers nats.Header
 	jetstream.Msg
 	body            []byte
 	deliveries      uint64
 	ackErr          error
+	metadataErr     error
 	acknowledgments int
 	delay           time.Duration
 }
 
-func (m *testMessage) Data() []byte { return m.body }
+func (m *testMessage) Data() []byte         { return m.body }
+func (m *testMessage) Headers() nats.Header { return m.headers }
 func (m *testMessage) Metadata() (*jetstream.MsgMetadata, error) {
+	if m.metadataErr != nil {
+		return nil, m.metadataErr
+	}
 	return &jetstream.MsgMetadata{NumDelivered: m.deliveries}, nil
 }
 func (m *testMessage) DoubleAck(context.Context) error        { m.acknowledgments++; return m.ackErr }

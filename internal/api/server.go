@@ -163,7 +163,7 @@ func NewServer(deps ServerDeps) *Server {
 	if filestoreService == nil {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.DB, deps.ObjectStore)
 	}
-	codeSessionService.WithSessionAttachments(filestoreService)
+	codeSessionService.WithSessionAttachments(filestoreService, deps.Config.Storage.MaxFileBytes)
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease
 	if deps.Redis != nil {
@@ -190,7 +190,7 @@ func NewServer(deps ServerDeps) *Server {
 		)),
 		agents:         agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(channels.NewHandler(deps.Config.ChannelBridge, deps.DB, componentLogger("channels"))),
 		batch:          batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:   codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter),
+		codeSessions:   codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore),
 		deployments:    deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
 		deploymentRuns: deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:           environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
@@ -211,7 +211,7 @@ func NewServer(deps ServerDeps) *Server {
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
-	router.Use(requestLoggingMiddleware(componentLogger("http")))
+	router.Use(observeRequests(componentLogger("http"), router))
 	router.Use(s.recoverMiddleware)
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
@@ -310,6 +310,8 @@ func (s *Server) registerPlatformConsoleRoutes(
 	mcpServerHandler *mcpservers.Handler,
 ) {
 	s.registerPlatformAdminRoutes(router)
+	secureCookies := s.cfg.Env == config.EnvironmentProd || strings.HasPrefix(s.cfg.Auth.ConsoleURL, "https://")
+	platformapi.RegisterPlatformEmailLoginRoutes(router, s.db, s.platformAuth, s.platformStore, secureCookies)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformIdentityMiddleware)
 		r.Route("/api/invitations", func(r chi.Router) {
@@ -320,8 +322,6 @@ func (s *Server) registerPlatformConsoleRoutes(
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
 		s.registerPlatformAccountRoutes(r)
-		secureCookies := s.cfg.Env == config.EnvironmentProd || strings.HasPrefix(s.cfg.Auth.ConsoleURL, "https://")
-		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, s.platformAuth, s.platformStore, secureCookies)
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
@@ -403,7 +403,7 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Mount("/messages/batches", s.batch)
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)
-	r.Mount("/sessions", s.sessions)
+	r.Mount("/sessions", s.sessions.Router())
 	r.Mount("/skills", s.skills)
 	if s.tunnels != nil {
 		r.Mount("/tunnels", s.tunnels)
@@ -482,6 +482,7 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "Action not allowed"))
 			return
 		}
+		annotatePrincipalSpan(r.Context(), principal)
 		ctx := auth.WithPrincipal(r.Context(), principal)
 		if orgAlias := s.platformMirrorOrganizationAlias(r, principal); orgAlias != "" {
 			ctx = auth.WithPlatformMirrorOrganizationAlias(ctx, orgAlias)
@@ -534,6 +535,7 @@ func (s *Server) authenticated(next http.Handler, authenticate func(*http.Reques
 			httpapi.WriteError(w, r, err)
 			return
 		}
+		annotatePrincipalSpan(r.Context(), principal)
 		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 	})
 }

@@ -109,6 +109,7 @@ test('严格模式重挂载后可重试授权故障并显示无组织账号的�
   expect(screen.queryByRole('link', { name: '审计记录' })).toBeNull();
   expect(screen.getByRole('link', { name: '超级管理员' })).toBeTruthy();
   expect(screen.getByText('全局管理')).toBeTruthy();
+  expect(screen.getByRole('link', { name: '系统技能' })).toBeTruthy();
 });
 
 test('组织菜单每次只加载对应列表，直达与返回保留当前菜单', async () => {
@@ -141,6 +142,7 @@ test('组织菜单每次只加载对应列表，直达与返回保留当前菜�
   expect(await screen.findByText('还没有成员')).toBeTruthy();
   expect(screen.queryByRole('link', { name: '超级管理员' })).toBeNull();
   expect(screen.queryByText('全局管理')).toBeNull();
+  expect(screen.queryByRole('link', { name: '系统技能' })).toBeNull();
   expect(screen.queryByRole('table')).toBeTruthy();
   expect(screen.getByRole('link', { name: '组织成员' }).getAttribute('aria-current')).toBe('page');
   expect(requests.some((path) => path.includes('/workspaces') || path.includes('/invitations'))).toBe(false);
@@ -167,10 +169,12 @@ test('组织菜单每次只加载对应列表，直达与返回保留当前菜�
   expect(screen.getByRole('link', { name: '基础资料' }).getAttribute('aria-current')).toBe('page');
   expect(screen.queryByRole('link', { name: '超级管理员' })).toBeNull();
   expect(screen.queryByText('全局管理')).toBeNull();
+  expect(screen.queryByRole('link', { name: '系统技能' })).toBeNull();
   fireEvent.click(screen.getByRole('link', { name: '返回组织列表' }));
   expect(await screen.findByRole('heading', { name: '受保护组织目录' })).toBeTruthy();
   expect(screen.getByRole('link', { name: '超级管理员' })).toBeTruthy();
   expect(screen.getByText('全局管理')).toBeTruthy();
+  expect(screen.getByRole('link', { name: '系统技能' })).toBeTruthy();
 });
 
 for (const [locale, label] of [

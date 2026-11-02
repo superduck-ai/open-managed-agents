@@ -153,7 +153,7 @@ func TestSessionArchiveSandboxDeletionRetriesAndPreservesHistory(t *testing.T) {
 	if err != nil || len(events) == 0 {
 		t.Fatalf("archive lost history: %d, %v", len(events), err)
 	}
-	if queued, err := f.app.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, f.code.ExternalID, f.target.ProviderSandboxID, nil); err != nil || queued {
+	if queued, err := f.app.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, f.code.ExternalID, f.target.ProviderSandboxID, nil, ""); err != nil || queued {
 		t.Fatalf("archived sandbox recovered: %t, %v", queued, err)
 	}
 }

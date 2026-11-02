@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useI18n } from '../../shared/i18n';
+import { useEffect, useRef, useState } from 'react';
 import { Building2, Check } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '../../shared/ui/command';
@@ -25,23 +26,39 @@ export function OrganizationSwitcher({
   switching: boolean;
   onSelect: (orgUuid: string) => void;
 }) {
+  const { msg } = useI18n();
   const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!open) setQuery('');
   }, [open]);
   const result = filterOrganizations(items, query, currentOrgUuid);
-  const remainder = organizationPickerRemainder(result);
+  const remainder = organizationPickerRemainder(result, msg);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md">
+      <DialogContent initialFocus={searchRef} className="gap-0 overflow-hidden p-0 sm:max-w-md">
         <DialogHeader className="px-4 pt-4 pb-2">
-          <DialogTitle>切换组织</DialogTitle>
-          <DialogDescription>按部门名称或完整路径搜索。</DialogDescription>
+          <DialogTitle>{msg('organizations.switch', 'Switch organization')}</DialogTitle>
+          <DialogDescription>
+            {msg('organizations.searchDescription', 'Search by department name or full path.')}
+          </DialogDescription>
         </DialogHeader>
-        <Command shouldFilter={false}>
-          <CommandInput autoFocus aria-label="搜索组织" placeholder="搜索组织" value={query} onValueChange={setQuery} />
-          <CommandList className="max-h-80 overflow-y-auto [scrollbar-gutter:stable] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/40">
-            {result.searching && result.matches.length === 0 ? <CommandEmpty>没有匹配的组织。</CommandEmpty> : null}
+        <Command
+          defaultValue={currentOrgUuid}
+          label={msg('organizations.search', 'Search organizations')}
+          shouldFilter={false}
+        >
+          <CommandInput
+            ref={searchRef}
+            aria-label={msg('organizations.search', 'Search organizations')}
+            placeholder={msg('organizations.search', 'Search organizations')}
+            value={query}
+            onValueChange={setQuery}
+          />
+          <CommandList className="max-h-80 [scrollbar-gutter:stable]">
+            {result.searching && result.matches.length === 0 ? (
+              <CommandEmpty>{msg('organizations.noMatches', 'No matching organizations.')}</CommandEmpty>
+            ) : null}
             {result.matches.map((item) => {
               const parts = organizationNameParts(item.name);
               const current = item.uuid === currentOrgUuid;
@@ -62,7 +79,9 @@ export function OrganizationSwitcher({
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline gap-2">
                       <span className="truncate">{parts.title}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{organizationRoleLabel(item.role)}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {organizationRoleLabel(item.role, msg)}
+                      </span>
                     </span>
                     {parts.detail ? (
                       <span className="block truncate text-xs text-muted-foreground">{parts.detail}</span>
@@ -75,7 +94,7 @@ export function OrganizationSwitcher({
           </CommandList>
         </Command>
         {remainder ? (
-          <p className="border-t border-border px-4 py-2 text-xs text-muted-foreground">{remainder}</p>
+          <p className="border-t-[0.5px] border-border px-4 py-2 text-xs text-muted-foreground">{remainder}</p>
         ) : null}
       </DialogContent>
     </Dialog>

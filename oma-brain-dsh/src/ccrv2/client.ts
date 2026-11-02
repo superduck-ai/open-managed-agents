@@ -80,6 +80,7 @@ interface EventQueue<T> {
 }
 
 export interface CcrHttpRequest {
+  sessionId: string;
   path: string;
   token: string;
   method: string;
@@ -156,6 +157,7 @@ export class CcrClient implements CcrBackend {
     workerDiagnostic("info", "ccrv2_worker_register_started", fields);
     try {
       response = await this.config.request({
+        sessionId: id,
         path: `/v1/code/sessions/${encodeURIComponent(id)}/worker/register`,
         token, method: "POST", body: {}, signal,
       });
@@ -245,6 +247,7 @@ export class CcrClient implements CcrBackend {
         const credentials = this.config.credentials(id);
         if (credentials.workerEpoch !== epoch) throw new CcrHttpError(409);
         const response = await this.config.request({
+          sessionId: id,
           path: `/v1/code/sessions/${encodeURIComponent(id)}/worker/events/stream?worker_epoch=${epoch}${cursor}`,
           token: credentials.token, method: "GET", signal: combined, timeout: 0, headers,
         });
@@ -330,6 +333,7 @@ export class CcrClient implements CcrBackend {
     let response: Response;
     try {
       response = await this.config.request({
+        sessionId: id,
         path: `/v1/code/sessions/${encodeURIComponent(id)}/worker${path}`,
         token: credentials.token,
         method,
@@ -708,10 +712,11 @@ export class CcrClient implements CcrBackend {
     const httpStatus = error instanceof CcrHttpError ? error.status : undefined;
     const code = error instanceof Error && "code" in error ? error.code : undefined;
     const failure = leaseFailure(error, epoch);
+    const failureReason = failure.status === "confirmed" ? undefined : failure.reason;
     workerDiagnostic("warn", httpStatus === undefined ? "cli_worker_request_error" : "cli_worker_request_failed", {
       method: "post", path: `/worker${path}`, session_ref: createHash("sha256").update(id).digest("hex"), worker_epoch: epoch,
       batch_size: batchSize, status: httpStatus,
-      failure_reason: failure.status === "confirmed" ? undefined : failure.reason,
+      failure_reason: failureReason,
       error_code: typeof code === "string" && ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN"].includes(code)
         ? code : undefined,
     });

@@ -21,6 +21,7 @@ type CreateInput struct {
 }
 
 type Session struct {
+	AuthenticationMethod string     `json:"authentication_method,omitempty"`
 	VerifiedEmail        string     `json:"verified_email,omitempty"`
 	HomeOrganizationUUID string     `json:"home_organization_uuid,omitempty"`
 	ExternalID           string     `json:"external_id"`
@@ -32,6 +33,10 @@ type Session struct {
 	APIKeyUUID           string     `json:"api_key_uuid"`
 	APIKeyExternalID     string     `json:"api_key_external_id"`
 	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
+}
+
+func (s Session) VerifiedLogin() bool {
+	return s.AuthenticationMethod == "email_code_v1" && s.VerifiedEmail != "" && s.UserUUID != ""
 }
 
 type sessionContextKey struct{}

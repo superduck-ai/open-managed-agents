@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"github.com/superduck-ai/yourbatis"
 	"time"
 )
 
@@ -69,7 +70,11 @@ func (d *DB) ListAdminInvitesPage(ctx context.Context, params ListAdminInvitesPa
 }
 
 func (d *DB) DeleteAdminInvite(ctx context.Context, organizationUUID, externalID string) (AdminInvite, error) {
-	mapper := NewAdminInviteMapper(d.mapperDB)
-	invite, err := mapper.SoftDeleteByExternalID(ctx, organizationUUID, externalID)
+	var invite AdminInvite
+	err := d.withInvitationOrganizationLock(ctx, organizationUUID, func(executor yourbatis.Executor) error {
+		var err error
+		invite, err = NewAdminInviteMapper(executor).SoftDeleteByExternalID(ctx, organizationUUID, externalID)
+		return err
+	})
 	return invite, mapNoRows(err)
 }

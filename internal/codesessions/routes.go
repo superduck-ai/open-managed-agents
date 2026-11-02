@@ -48,6 +48,9 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 		sessionRouter.MethodNotAllowed(handleRemovedCodeSessionPoll)
 		sessionRouter.Post("/sign-commit", h.errorAdapter.Wrap(h.handleSignCommit))
 		sessionRouter.Route("/worker", func(workerRouter chi.Router) {
+			if h.imageAttachments != nil {
+				h.imageAttachments.RegisterRoutes(workerRouter)
+			}
 			workerRouter.Get("/", h.handleGetCodeSessionWorker)
 			workerRouter.Get("/subagent-threads/{thread_id}", h.handleGetCodeSessionSubagentThread)
 			workerRouter.Put("/", h.handlePutCodeSessionWorker)
@@ -58,10 +61,8 @@ func (h *Handler) registerCodeSessionRoutes(router chi.Router) {
 			workerRouter.Post("/events/delivery", h.handleCodeSessionWorkerDelivery)
 			workerRouter.Post("/diagnostics", h.handleCodeSessionWorkerDiagnostics)
 			workerRouter.Post("/heartbeat", h.handleCodeSessionWorkerHeartbeat)
-			workerRouter.Post("/otlp/metrics", h.handleCodeSessionWorkerOTLP)
-			workerRouter.Post("/otlp/logs", h.handleCodeSessionWorkerOTLP)
 			workerRouter.Post("/otlp/v1/logs", h.handleCodeSessionWorkerOTLP)
-			workerRouter.Post("/otlp/v1/traces", h.handleCodeSessionWorkerOTLP)
+			workerRouter.Post("/otlp/v1/traces", h.handleCodeSessionWorkerTraces)
 		})
 	})
 }

@@ -2,7 +2,6 @@ package vaults
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"net/http"
 
@@ -38,13 +37,11 @@ func (e *MITMEgress) authorizeGitResource(ctx context.Context, identity EgressSe
 		if resource.ResourceType != "github_repository" || resource.DeletedAt != nil {
 			continue
 		}
-		var payload struct {
-			URL string `json:"url"`
-		}
-		if err := json.Unmarshal(resource.Payload, &payload); err != nil {
+		spec, err := sessionresource.StoredGitRepositorySpec(resource.GitHubRepository)
+		if err != nil {
 			return false, gitResourceAuthorizationRejected(err)
 		}
-		resourceKey, err := sessionresource.GitRepositoryKey(payload.URL)
+		resourceKey, err := sessionresource.GitRepositoryKey(spec.URL)
 		if err != nil {
 			return false, gitResourceAuthorizationRejected(err)
 		}

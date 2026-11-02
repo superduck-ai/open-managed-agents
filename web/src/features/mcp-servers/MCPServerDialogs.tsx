@@ -1,5 +1,5 @@
 import { AlertCircle, RefreshCw, X } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import {
   mcpServerErrorMessage,
@@ -58,15 +58,17 @@ export function MCPServerPanel({
   onEdit: (server: WorkspaceMCPServer) => void;
   onDelete: (server: WorkspaceMCPServer) => void;
 }) {
+  const [open, setOpen] = useState(Boolean(target));
+  useEffect(() => setOpen(Boolean(target)), [target]);
   return (
-    <Sheet open={Boolean(target)} onOpenChange={(open) => !open && onClose()}>
+    <Sheet open={open} onOpenChange={setOpen} onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}>
       <SheetContent showCloseButton={false} showOverlay={false} side="right" className="gap-0 p-0 sm:!max-w-md">
         <MCPServerDetailPanel
           server={detailServer}
           isLoading={detailLoading}
           error={detailError}
           formatter={formatter}
-          onClose={onClose}
+          onClose={() => setOpen(false)}
           onRetry={onRetry}
           onEdit={onEdit}
           onDelete={onDelete}
@@ -96,51 +98,65 @@ function MCPServerDetailPanel({
   onDelete: (server: WorkspaceMCPServer) => void;
 }) {
   const { msg } = useI18n();
+  const header = (
+    <SheetHeader className="shrink-0 border-b-[0.5px] border-border px-4 py-4 pr-24">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <SheetTitle className="line-clamp-2 [overflow-wrap:anywhere]" title={server?.name}>
+            {server?.name || msg('nav.mcpServers', 'MCP servers')}
+          </SheetTitle>
+          {server ? (
+            <SheetDescription className="mt-1 break-all font-mono text-xs">{server.id}</SheetDescription>
+          ) : null}
+        </div>
+        <div className="absolute right-4 top-4 flex items-center gap-1">
+          {server && !isLoading && !error ? (
+            <MCPServerActionsMenu server={server} onEdit={onEdit} onDelete={onDelete} />
+          ) : null}
+          <PanelCloseButton onClose={onClose} />
+        </div>
+      </div>
+    </SheetHeader>
+  );
   if (isLoading) {
     return (
-      <div className="p-4 text-sm text-muted-foreground">
-        <RefreshCw className="mr-2 inline size-4 animate-spin" aria-hidden />
-        {msg('mcpServers.detail.loading', 'Loading MCP server...')}
-      </div>
+      <>
+        {header}
+        <div role="status" className="p-4 text-sm text-muted-foreground">
+          <RefreshCw className="mr-2 inline size-4 animate-spin motion-reduce:animate-none" aria-hidden />
+          {msg('mcpServers.detail.loading', 'Loading MCP server...')}
+        </div>
+      </>
     );
   }
   if (error || !server) {
     return (
-      <div className="p-4">
-        <Alert variant="destructive">
-          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <AlertTitle>{msg('mcpServers.detail.error', 'MCP server could not be loaded.')}</AlertTitle>
-          <AlertDescription>
-            <p>{mcpServerErrorMessage(error)}</p>
-            <Button type="button" size="sm" variant="outline" className="mt-3" onClick={onRetry}>
-              <RefreshCw className="size-3.5" aria-hidden />
-              {msg('common.retry', 'Retry')}
-            </Button>
-          </AlertDescription>
-        </Alert>
-      </div>
+      <>
+        {header}
+        <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto p-4 [overflow-wrap:anywhere]">
+          <Alert variant="destructive">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <AlertTitle>{msg('mcpServers.detail.error', 'MCP server could not be loaded.')}</AlertTitle>
+            <AlertDescription>
+              <p>{mcpServerErrorMessage(error)}</p>
+              <Button type="button" size="sm" variant="outline" className="mt-3" onClick={onRetry}>
+                <RefreshCw className="size-3.5" aria-hidden />
+                {msg('common.retry', 'Retry')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </div>
+      </>
     );
   }
   return (
     <>
-      <SheetHeader className="border-b border-border px-4 py-4 pr-12">
-        <div className="flex min-w-0 items-start justify-between gap-3">
-          <div className="min-w-0">
-            <SheetTitle className="truncate">{server.name}</SheetTitle>
-            <SheetDescription className="mt-1 font-mono">{server.id}</SheetDescription>
-          </div>
-          <div className="absolute right-4 top-4 flex items-center gap-1">
-            <MCPServerActionsMenu server={server} onEdit={onEdit} onDelete={onDelete} />
-            <PanelCloseButton onClose={onClose} />
-          </div>
-        </div>
-      </SheetHeader>
-      <div className="subtle-scrollbar flex-1 space-y-5 overflow-y-auto px-4 py-4">
+      {header}
+      <div className="subtle-scrollbar min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
         <DetailSection title={msg('mcpServers.endpointUrl', 'Endpoint URL')}>
           <p className="break-all font-mono text-sm leading-6 text-foreground">{server.url}</p>
         </DetailSection>
         <DetailSection title={msg('mcpServers.configuration', 'Configuration')} bordered>
-          <DetailRow label={msg('common.name', 'Name')} value={server.name} />
           <DetailRow label={msg('mcpServers.transport', 'Transport')} value={server.transport_type} mono />
         </DetailSection>
         <DetailSection title={msg('mcpServers.lifecycle', 'Lifecycle')} bordered>
@@ -178,6 +194,7 @@ function MCPServerEditorDialog({
   onSubmit: (input: MCPServerMutation) => Promise<void>;
 }) {
   const { msg } = useI18n();
+  const [open, setOpen] = useState(true);
   const [name, setName] = useState(target.mode === 'edit' ? target.server.name : '');
   const [url, setURL] = useState(target.mode === 'edit' ? target.server.url : '');
   const [inputErrors, setInputErrors] = useState<ReturnType<typeof validateMCPServerInput>>({});
@@ -210,9 +227,19 @@ function MCPServerEditorDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !saving && onClose()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen, details) => {
+        if (!nextOpen && saving) {
+          details.cancel();
+          return;
+        }
+        setOpen(nextOpen);
+      }}
+      onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}
+    >
+      <DialogContent closeButtonDisabled={saving} className="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-lg">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {msg(
@@ -221,7 +248,7 @@ function MCPServerEditorDialog({
             )}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="subtle-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto">
           <Field data-invalid={Boolean(inputErrors.name)}>
             <FieldLabel htmlFor="mcp-server-name">
               {msg('managedAgents.agents.createDialog.customMcpName', 'Name')}
@@ -260,14 +287,14 @@ function MCPServerEditorDialog({
             </FieldDescription>
             <FieldError>{mcpInputError('url', inputErrors.url, msg)}</FieldError>
           </Field>
-          {error ? (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
         </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" disabled={saving} onClick={onClose}>
+        {error ? (
+          <Alert variant="destructive" className="shrink-0">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+        <DialogFooter className="shrink-0">
+          <Button type="button" variant="outline" disabled={saving} onClick={() => setOpen(false)}>
             {msg('common.cancel', 'Cancel')}
           </Button>
           <Button type="button" disabled={saving} onClick={() => void submit()}>
@@ -330,7 +357,7 @@ function DetailSection({
   children: ReactNode;
 }) {
   return (
-    <section className={bordered ? 'space-y-3 border-t border-border pt-4' : 'space-y-2'}>
+    <section className={bordered ? 'space-y-3 border-t-[0.5px] border-border pt-4' : 'space-y-2'}>
       <h2 className="text-sm font-medium text-foreground">{title}</h2>
       {children}
     </section>
@@ -341,7 +368,10 @@ function DetailRow({ label, value, mono = false }: { label: string; value: strin
   return (
     <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3 text-sm">
       <span className="text-muted-foreground">{label}</span>
-      <span className={mono ? 'truncate font-mono text-foreground' : 'truncate text-foreground'} title={value}>
+      <span
+        className={mono ? 'break-all font-mono text-xs text-foreground' : 'break-words text-foreground'}
+        title={value}
+      >
         {value}
       </span>
     </div>

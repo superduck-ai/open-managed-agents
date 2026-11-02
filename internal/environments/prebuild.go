@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,10 +49,12 @@ func (svc *Prebuilds) Register(workers *river.Workers) {
 func (svc *Prebuilds) Configure(client *river.Client[*sql.Tx]) { svc.client = client }
 
 type prebuildJobArgs struct {
-	WorkspaceUUID   string `json:"workspace_uuid"`
-	EnvironmentUUID string `json:"environment_uuid"`
-	ProviderKey     string `json:"provider_key"`
-	Dockerfile      string `json:"dockerfile"`
+	WorkspaceUUID   string              `json:"workspace_uuid"`
+	EnvironmentUUID string              `json:"environment_uuid"`
+	ProviderKey     string              `json:"provider_key"`
+	Dockerfile      string              `json:"dockerfile"`
+	BaseImage       string              `json:"base_image,omitempty"`
+	Template        *templateBuildInput `json:"template,omitempty"`
 }
 
 func (prebuildJobArgs) Kind() string { return PrebuildQueue }
@@ -167,20 +170,29 @@ func decodePrebuildTask(row *rivertype.JobRow) (prebuildTask, error) {
 	}
 	err := json.Unmarshal(row.Metadata, &metadata)
 	task.output = metadata.Output
+	if task.job.Args.Dockerfile == "" && task.output.ImageRef == "" {
+		task.output.ImageRef = task.job.Args.BaseImage
+	}
 	return task, err
 }
 
 // The environment update and job insertion commit together. Each job owns
 // an immutable Dockerfile and a unique image tag, even for identical packages.
-func (svc *Prebuilds) enqueue(ctx context.Context, tx *yourbatis.Tx, env *db.Environment, packages *environmentPackages) error {
+func (svc *Prebuilds) enqueue(ctx context.Context, tx *yourbatis.Tx, env *db.Environment, spec *environmentBuildSpec) error {
 	if svc.client == nil {
 		return errPrebuildUnavailable
 	}
+	template := svc.templateInput(spec.Resources)
 	args := prebuildJobArgs{
 		WorkspaceUUID:   env.WorkspaceUUID,
 		EnvironmentUUID: env.UUID,
 		ProviderKey:     svc.providerKey,
-		Dockerfile:      packageDockerfile(svc.cfg.Image.BaseImage, packages, svc.packages),
+		Template:        &template,
+	}
+	if spec.needsImage() {
+		args.Dockerfile = templateDockerfile(svc.cfg.Image.BaseImage, spec, svc.packages)
+	} else {
+		args.BaseImage = svc.cfg.Image.BaseImage
 	}
 	result, err := svc.client.InsertTx(ctx, tx.SQLTx(), args, nil)
 	if err != nil {
@@ -192,15 +204,15 @@ func (svc *Prebuilds) enqueue(ctx context.Context, tx *yourbatis.Tx, env *db.Env
 }
 
 func (svc *Prebuilds) reconcilePrebuild(ctx context.Context, tx *yourbatis.Tx, current *db.Environment, next *db.Environment) error {
-	packages, err := decodeEnvironmentPackages(next.Config)
+	spec, err := decodeEnvironmentBuildSpec(next.Config)
 	if err != nil {
 		return err
 	}
 	if current != nil {
-		previous, err := decodeEnvironmentPackages(current.Config)
+		previous, err := decodeEnvironmentBuildSpec(current.Config)
 		// A valid replacement can repair malformed packages already stored in the row.
 		// In that case the old prebuild must be treated as superseded.
-		if err == nil && samePackages(previous, packages) {
+		if err == nil && sameBuildSpec(previous, spec) {
 			next.BuildJobID = current.BuildJobID
 			if current.BuildJobID != nil {
 				next.ResolvedTemplate = current.ResolvedTemplate
@@ -209,10 +221,10 @@ func (svc *Prebuilds) reconcilePrebuild(ctx context.Context, tx *yourbatis.Tx, c
 		}
 	}
 	next.BuildJobID = nil
-	if packages == nil || next.ArchivedAt != nil || svc == nil || !svc.cfg.Enabled {
+	if spec == nil || next.ArchivedAt != nil || svc == nil || !svc.cfg.Enabled {
 		return nil
 	}
-	return svc.enqueue(ctx, tx, next, packages)
+	return svc.enqueue(ctx, tx, next, spec)
 }
 
 // The environment row serializes API mutations and worker checkpoints. A stale
@@ -275,14 +287,14 @@ func (svc *Prebuilds) StartOrRetryPrebuild(ctx context.Context, env db.Environme
 		if task.active() {
 			return nil
 		}
-		packages, err := decodeEnvironmentPackages(current.Config)
+		spec, err := decodeEnvironmentBuildSpec(current.Config)
 		if err != nil {
 			return err
 		}
-		if packages == nil {
+		if spec == nil {
 			return errPrebuildConflict
 		}
-		if err := svc.enqueue(ctx, tx, &current, packages); err != nil {
+		if err := svc.enqueue(ctx, tx, &current, spec); err != nil {
 			return err
 		}
 		current.UpdatedAt = time.Now().UTC()
@@ -345,6 +357,38 @@ func (svc *Prebuilds) readLogs(ctx context.Context, task prebuildTask, stage, cu
 		return buildLogChunk{}, errPrebuildStageNotStarted
 	}
 	return svc.templates.ReadLogs(ctx, task.output.TemplateJobRef, cursor)
+}
+
+func templateDockerfile(base string, spec *environmentBuildSpec, sources config.EnvironmentPackageConfig) string {
+	packages := spec.Packages
+	if packages == nil {
+		packages = emptyPackages()
+	}
+	dockerfile := packageDockerfile(base, packages, sources)
+	if persist := packageSourcePersistScript(sources); persist != "" {
+		encoded, _ := json.Marshal([]string{"sh", "-c", persist})
+		dockerfile += "RUN " + string(encoded) + "\n"
+	}
+	if spec.InitScript == "" {
+		return dockerfile
+	}
+	encoded, _ := json.Marshal([]string{"bash", "-eo", "pipefail", "-c", spec.InitScript})
+	return dockerfile + "RUN " + string(encoded) + "\n"
+}
+
+func (svc *Prebuilds) templateInput(resources templateResources) templateBuildInput {
+	settings := svc.cfg.Template
+	input := templateBuildInput{CPU: settings.CPU, Memory: settings.Memory, DiskSize: settings.DiskSize}
+	if resources.CPU > 0 {
+		input.CPU = resources.CPU
+	}
+	if resources.Memory > 0 {
+		input.Memory = resources.Memory
+	}
+	if resources.Disk > 0 {
+		input.DiskSize = strconv.FormatUint(uint64(resources.Disk), 10) + "G"
+	}
+	return input
 }
 
 func packageDockerfile(base string, packages *environmentPackages, sources config.EnvironmentPackageConfig) string {
@@ -427,6 +471,8 @@ func prebuildProviderKey(cfg config.Config) string {
 		AllowInternet      bool                             `json:"allow_internet"`
 		InjectEgressCA     bool                             `json:"inject_egress_ca"`
 		PackageSources     *config.EnvironmentPackageConfig `json:"package_sources,omitempty"`
+		ExposedPorts       []int                            `json:"exposed_ports"`
+		ProbePort          int                              `json:"probe_port"`
 	}{
 		PipelineURL: settings.Image.Flow.PipelineURL, Repository: settings.Image.Repository(),
 		APIURL:   cfg.E2B.APIURL,
@@ -434,7 +480,7 @@ func prebuildProviderKey(cfg config.Config) string {
 		DNSServers: settings.Template.Network.DNSServers, AllowOutboundCIDRs: settings.Template.Network.AllowOutboundCIDRs,
 		DenyOutboundCIDRs: settings.Template.Network.DenyOutboundCIDRs,
 		AllowInternet:     settings.Template.Network.AllowInternet, InjectEgressCA: settings.Template.Network.InjectEgressCA,
-		PackageSources: packageSources,
+		PackageSources: packageSources, ExposedPorts: settings.Template.ExposedPorts, ProbePort: settings.Template.ProbePort,
 	})
 
 	sum := sha256.Sum256(data)

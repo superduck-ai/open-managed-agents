@@ -2,12 +2,14 @@
 
 | User symptom | Map | Runnable coverage |
 | --- | --- | --- |
+| 消息图片或 Read 图片无法被视觉模型识别 | [Brain 图片](brain.md#真实视觉模型与图片) | `chat brain-images`，显式私有模型配置 |
 | DSH 压缩通知、压缩上下文恢复和原子线程续聊 | [Brain](brain.md) | `chat brain-compaction` |
 | Rust Brain multi-node ownership, native loop or MCP execution | [Rust Brain](brain.md) | `chat brain` |
 | Brain owner replacement invalidates Bash HTTPS proxy credentials | [Rust Brain](brain.md) | `chat brain-proxy` with actual public HTTPS |
 | Brain system prompt composition or Skill discovery and loading | [Rust Brain](brain.md) | `chat brain-skills` |
 | Attached Memory store metadata or body loading is missing | [Memory](memory.md) | `chat brain-memory` for Brain catalog/approval/MCP; six `memory` scenarios for storage and mounts |
 | Bound Skill instructions/references cannot be read or followed | [Skill loading](skills-loading.md) | `chat skills-loading` verifies Brain and Claude; real-model Skill selection remains unverified |
+| Brain telemetry is missing from OpenObserve | [Brain observability](observability.md) | `chat brain-observability` |
 | Sending a message produces no reply | [Roundtrip](roundtrip.md) | `chat roundtrip` |
 | Upstream authentication failure or interruption during retry backoff ends incorrectly | [Upstream errors](upstream-errors.md) | `chat upstream-errors` |
 | A reply disappears after reopening | [History](history.md) | Successful-turn history in `chat.roundtrip`; mid-stream interruption in `chat.reliability` |
@@ -19,7 +21,7 @@
 | Configured child Agent is unavailable, uses parent permissions or loses its thread | [Subagent delegation](subagents.md) | `chat subagents` with real Runner, skills, MCP and same-thread continuation |
 | Chat latency regresses | [Performance](performance.md) | `chat performance --baseline REPORT` |
 
-The upstream model is scripted. The local chat scenarios do not verify cloud allocation, automatic cloud fault detection, browser rendering, real model quality or concurrent capacity. The optional cloud adapter scenarios below verify provider operations separately. Each scenario's final report must pass; a successful individual stage is insufficient.
+The upstream model is scripted except for the explicitly configured chat.brain-images scenario. The local chat scenarios do not verify cloud allocation, automatic cloud fault detection, browser rendering, real model quality or concurrent capacity. The optional cloud adapter scenarios below verify provider operations separately. Each scenario's final report must pass; a successful individual stage is insufficient.
 
 ## Files
 

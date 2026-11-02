@@ -1,12 +1,12 @@
+import { resetTestDom } from '../../../test/setup';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { I18nProvider } from '../../../shared/i18n';
 import { TooltipProvider } from '../../../shared/ui/tooltip';
-import { resetTestDom } from '../../../test/setup';
 import { type DisplayEventEntry, type QuickstartSessionEvent, type SessionApiResponse } from '../types';
 import { SessionInspector } from './SessionInspector';
 
-const { act, cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
@@ -131,7 +131,7 @@ describe('SessionInspector', () => {
     expect(screen.getByText('Cache write').parentElement?.textContent).toContain('50');
     expect(screen.getByText('Web searches').parentElement?.textContent).toContain('4');
     expect(screen.getByText('Active time').parentElement?.textContent).toContain('4.0s');
-    expect(firstPoint.getAttribute('aria-label')).toContain('This step $1.25');
+    expect(firstPoint.getAttribute('aria-label')).toContain('this step $1.25');
     fireEvent.pointerEnter(firstPoint);
     expect(onHoverEvent).toHaveBeenCalledWith('usage_first');
     fireEvent.pointerLeave(firstPoint);
@@ -213,8 +213,8 @@ describe('SessionInspector', () => {
 
     const rows = screen.getAllByRole('option');
     expect(rows.map((row) => row.getAttribute('data-event-id'))).toEqual(['queued-input', answer.id]);
-    expect(rows[0]?.textContent).toContain('queued');
-    expect(rows[1]?.textContent).not.toContain('queued');
+    expect(rows[0]?.textContent).toContain('Queued');
+    expect(rows[1]?.textContent).not.toContain('Queued');
   });
 
   test('renders the Claude events filter without changing backend event order or selected detail', async () => {
@@ -246,6 +246,57 @@ describe('SessionInspector', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
     expect(screen.getByTestId('session-inspector-event-detail-content')).toBeTruthy();
   });
+
+  test.each([
+    [
+      'en',
+      'Filter events',
+      'Search event types',
+      'Transcript',
+      'Transcript events',
+      'No matching event types.',
+      'Clear filters',
+    ],
+    ['zh-CN', '筛选事件', '搜索事件类型', '转录', '转录事件', '没有匹配的事件类型。', '清除筛选'],
+  ] as const)(
+    'searches event types and translated options without changing events until selection in %s',
+    async (locale, filterLabel, searchLabel, transcriptQuery, transcriptLabel, emptyLabel, clearLabel) => {
+      resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+      renderInspector(
+        {
+          activeTab: 'events',
+          events: [
+            sessionEvent(),
+            { id: 'status', type: 'session.status_running', processed_at: '2026-08-27T07:25:12.000Z' },
+          ],
+        },
+        locale,
+      );
+      await act(async () => Promise.resolve());
+      const eventCount = () => document.querySelectorAll('[data-event-id]').length;
+      const trigger = screen.getByRole('combobox', { name: filterLabel });
+      fireEvent.pointerDown(trigger);
+      fireEvent.pointerUp(trigger);
+      fireEvent.click(trigger);
+      await waitFor(() => expect(trigger.getAttribute('aria-expanded')).toBe('true'));
+      const search = await screen.findByRole('combobox', { name: searchLabel });
+      fireEvent.change(search, { target: { value: 'agent.message' } });
+      await waitFor(() =>
+        expect(screen.queryByRole('option', { name: 'session.status_running', exact: true })).toBeNull(),
+      );
+      expect(eventCount()).toBe(2);
+      fireEvent.click(screen.getByRole('option', { name: 'agent.message', exact: true }));
+      await waitFor(() => expect(eventCount()).toBe(1));
+      fireEvent.click(screen.getByRole('button', { name: clearLabel }));
+      await waitFor(() => expect(eventCount()).toBe(2));
+      fireEvent.change(search, { target: { value: 'no-such-event' } });
+      await waitFor(() => expect(screen.getByText(emptyLabel)).toBeTruthy());
+      fireEvent.change(search, { target: { value: transcriptQuery } });
+      const option = await screen.findByRole('option', { name: transcriptLabel, exact: true });
+      fireEvent.click(option);
+      await waitFor(() => expect(eventCount()).toBe(1));
+    },
+  );
 
   test('keeps related entity links usable when metadata requests fail', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
@@ -285,6 +336,7 @@ describe('SessionInspector', () => {
 
     expect(screen.getByText('No events yet')).toBeTruthy();
     expect(screen.queryByText('No matching events.')).toBeNull();
+    expect(screen.queryByTestId('session-inspector-events-header')).toBeNull();
   });
 
   test('renders calls, failures, finished-call p50, and outcome totals from raw events', async () => {
@@ -314,7 +366,7 @@ describe('SessionInspector', () => {
     expect(toolHeaders[1]?.className).toContain('w-[88px]');
     expect(toolHeaders[2]?.className).toContain('w-14');
     expect(toolHeaders[3]?.className).toContain('w-[72px]');
-    expect(toolHeaders[4]?.className).toContain('w-16');
+    expect(toolHeaders[4]?.className).toContain('w-28');
     expect(bashCells?.[0]?.className).toContain('h-6');
     expect(bashCells?.[2]?.textContent).toBe('2');
     expect(bashCells?.[3]?.textContent).toBe('1');
@@ -323,7 +375,7 @@ describe('SessionInspector', () => {
     expect(writeCells?.[2]?.textContent).toBe('1');
     expect(writeCells?.[3]?.textContent).toBe('0');
     expect(writeCells?.[4]?.textContent).toBe('—');
-    expect(screen.getByText('2 tools · 2 used · 3 calls')).toBeTruthy();
+    expect(screen.getByText('2 tools, 2 used, 3 calls')).toBeTruthy();
     const outcomeRing = screen.getByRole('img', {
       name: '1 completed, 1 failed, 0 denied, 0 interrupted, 1 in flight',
     });
@@ -331,7 +383,7 @@ describe('SessionInspector', () => {
     expect(outcomeRing.style.background).toContain('conic-gradient');
     expect(outcomeRing.querySelector('svg')).toBeNull();
     expect(screen.getByText('In flight')).toBeTruthy();
-    expect(screen.getByText('Executing')).toBeTruthy();
+    expect(screen.getByText('Execution time')).toBeTruthy();
     const failedLegend = screen.getAllByText('Failed').find((element) => element.tagName === 'DT');
     expect(failedLegend?.nextElementSibling?.textContent).toBe('1 (33%)');
     expect(screen.getByRole('separator', { name: 'Resize tool detail' })).toBeTruthy();
@@ -497,7 +549,7 @@ describe('SessionInspector', () => {
 
     const headers = screen.getAllByRole('columnheader');
     expect(headers.map((header) => header.textContent)).toEqual(['Thread', 'Status', 'Context']);
-    expect(headers[1]?.className).toContain('w-24');
+    expect(headers[1]?.className).toContain('w-28');
     expect(headers[2]?.className).toContain('w-[72px]');
     const threadCell = screen.getAllByText('Main').find((element) => element.tagName === 'TD');
     const childCell = screen.getAllByText('Researcher').find((element) => element.tagName === 'TD');
@@ -509,6 +561,7 @@ describe('SessionInspector', () => {
     expect(contextChart.querySelectorAll('path')).toHaveLength(2);
     expect(contextChart.querySelector('path')?.getAttribute('fill')).toBe('var(--chart-1)');
     const contextPoint = contextChart.querySelector('[data-context-event-id="model_request_end"]')!;
+    expect(contextPoint.querySelector('circle[r="3"]')?.classList.contains('opacity-100')).toBe(true);
     fireEvent.pointerEnter(contextPoint);
     expect(onHoverEvent).toHaveBeenCalledWith('model_request_end');
     fireEvent.pointerLeave(contextPoint);
@@ -659,6 +712,125 @@ test('child thread details show the pinned snapshot even when current Agent data
   });
   await act(async () => Promise.resolve());
   expect(screen.getByRole('link', { name: 'Pinned reviewer' }).getAttribute('href')).toContain('agent_child');
+  expect(screen.getByRole('link', { name: 'Pinned reviewer' }).getAttribute('title')).toBe('Pinned reviewer');
+  expect(
+    screen.getAllByText('Reviewer thread').some((element) => element.getAttribute('title') === 'Reviewer thread'),
+  ).toBe(true);
   expect(screen.getByText('v1')).toBeTruthy();
-  expect(screen.getByText('deepseek-flash')).toBeTruthy();
+  expect(screen.getByText('deepseek-flash').getAttribute('title')).toBe('deepseek-flash');
 });
+
+test('keeps the resource draft through a failed add, blocks duplicate actions, and returns focus after retry', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_resource_add');
+  globalThis.fetch = async () =>
+    Response.json({
+      data: [
+        {
+          id: 'file_resource_fixture',
+          type: 'file',
+          filename: 'report.pdf',
+          mime_type: 'application/pdf',
+          size_bytes: 2048,
+          downloadable: false,
+          created_at: '2026-10-26T00:00:00Z',
+        },
+      ],
+      has_more: false,
+    });
+  let rejectAdd: (error: Error) => void = () => {};
+  let fail = true;
+  const calls: Array<{ fileId: string; mountPath: string }> = [];
+  renderInspector({
+    activeTab: 'resources',
+    onAddFileResource: async (resource) => {
+      calls.push(resource);
+      if (fail)
+        return new Promise<void>((_, reject) => {
+          rejectAdd = reject;
+        });
+    },
+  });
+  const trigger = screen.getByRole('button', { name: 'Resource', exact: true });
+  fireEvent.click(trigger);
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'File', exact: true }));
+  const dialog = await screen.findByRole('dialog', { name: 'Add resource' });
+  expect(within(dialog).queryByRole('button', { name: 'Remove file resource 1' })).toBeNull();
+  expect(within(dialog).queryByRole('heading', { name: 'Resources', exact: true })).toBeNull();
+  const file = within(dialog).getByRole('combobox', { name: 'File ID', exact: true });
+  fireEvent.keyDown(file, { key: 'ArrowDown', code: 'ArrowDown' });
+  fireEvent.click(await screen.findByRole('option', { name: /report\.pdf/ }));
+  const mount = within(dialog).getByLabelText('Mount path (optional)');
+  fireEvent.change(mount, { target: { value: 'reports/research.pdf' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add', exact: true }));
+  fireEvent.submit(dialog.querySelector('form')!);
+  fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+  expect(screen.getByRole('dialog')).toBe(dialog);
+  expect(within(dialog).getByRole('button', { name: 'Close' }).hasAttribute('disabled')).toBe(true);
+  expect(within(dialog).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true);
+  expect(mount.closest('fieldset')?.disabled).toBe(true);
+  expect(calls).toEqual([{ fileId: 'file_resource_fixture', mountPath: 'reports/research.pdf' }]);
+  await act(async () => rejectAdd(new Error('Fixture attach failed')));
+  const error = await within(dialog).findByRole('alert');
+  expect(error.textContent).toBe('Fixture attach failed');
+  expect(document.activeElement).toBe(error);
+  expect(mount).toHaveProperty('value', 'reports/research.pdf');
+  fail = false;
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add', exact: true }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+  expect(calls).toHaveLength(2);
+  expect(calls[1]).toEqual(calls[0]);
+});
+
+for (const [locale, expected] of [
+  ['en', 'No matching resources'],
+  ['zh-CN', '没有匹配的资源'],
+] as const) {
+  test(`distinguishes filtered resources from an empty session in ${locale}`, () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_resource_filter');
+    renderInspector(
+      {
+        activeTab: 'resources',
+        session: {
+          ...session(),
+          resources: [
+            {
+              type: 'github_repository',
+              id: 'sesrsc_git_fixture',
+              url: 'https://github.com/research/docs',
+              mount_path: '/repo',
+              checkout: { type: 'branch', name: 'main' },
+            },
+          ],
+        },
+      },
+      locale,
+    );
+    expect(screen.queryByRole('table')).toBeNull();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'missing' } });
+    expect(screen.getByText(expected)).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
+  });
+}
+
+for (const [locale, emptyText, filterText] of [
+  ['en', 'No tools', 'No matching tools.'],
+  ['zh-CN', '暂无工具', '没有匹配的工具。'],
+] as const) {
+  test(`keeps the tools empty state distinct from a filtered result in ${locale}`, async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/sessions/sesn_test');
+    const view = renderInspector({ activeTab: 'tools' }, locale);
+    await act(async () => Promise.resolve());
+    expect(screen.getByText(emptyText)).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
+    view.unmount();
+    renderInspector(
+      { activeTab: 'tools', events: [toolUseEvent('tool_filter_fixture', 'Bash', '2026-10-26T00:00:00Z')] },
+      locale,
+    );
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'missing-tool' } });
+    expect(screen.getByText(filterText)).toBeTruthy();
+    expect(screen.queryByText(emptyText)).toBeNull();
+    expect(screen.queryByRole('table')).toBeNull();
+  });
+}

@@ -45,7 +45,7 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) (manage
 		resource := &resources[index]
 		switch resource.ResourceType {
 		case sessionresource.GitRepositoryType:
-			spec, err := sessionresource.ParseStoredGitRepositorySpec(resource.Payload)
+			spec, err := sessionresource.StoredGitRepositorySpec(resource.GitHubRepository)
 			if err != nil {
 				return managedAgentRuntimeResources{}, fmt.Errorf("git resource %s: %w", resource.ExternalID, err)
 			}
@@ -80,7 +80,7 @@ func resolveManagedAgentRuntimeResources(resources []db.SessionResource) (manage
 			}
 			resolved.sources = append(resolved.sources, source)
 		case sessionresource.MemoryStoreType:
-			mount, ok := parseMemoryRuntimeMount(resource.Payload)
+			mount, ok := memoryRuntimeMountFromResource(resource.MemoryStore)
 			if !ok {
 				return managedAgentRuntimeResources{}, fmt.Errorf("memory resource %s: %w", resource.ExternalID, errMemorySnapshotInvalid)
 			}

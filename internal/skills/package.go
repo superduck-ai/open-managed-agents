@@ -11,6 +11,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -42,6 +43,10 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 	if allowRoot {
 		maxBytes = 30 * 1024 * 1024
 	}
+	return readSkillPackageOptions(w, r, maxBytes, allowRoot)
+}
+
+func readSkillPackageOptions(w http.ResponseWriter, r *http.Request, maxBytes int64, allowRoot bool) (skillPackage, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+1024*1024)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		var maxBytesErr *http.MaxBytesError
@@ -119,12 +124,18 @@ func skillPackageFromArchive(data []byte, maxBytes int64, allowRoot bool) (skill
 		return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: "Skill package archive is not a valid zip file"}
 	}
 
+	if len(reader.File) > 4096 {
+		return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: "Skill package contains too many entries"}
+	}
 	var files []normalizedSkillFile
 	var total int64
 	for _, file := range reader.File {
 		name := strings.ReplaceAll(file.Name, "\\", "/")
 		if shouldSkipArchiveEntry(name) || file.FileInfo().IsDir() {
 			continue
+		}
+		if file.Mode()&os.ModeType != 0 {
+			return skillPackage{}, packageError{Status: http.StatusBadRequest, Message: "Skill package cannot contain symbolic links or special files"}
 		}
 		normalized, _, err := validateArchivePath(name, allowRoot)
 		if err != nil {

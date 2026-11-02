@@ -7,7 +7,10 @@ import {
   SdkHttpError,
   SSEClientTransport,
   StreamableHTTPClientTransport,
+  TRACEPARENT_META_KEY,
+  TRACESTATE_META_KEY,
 } from "@modelcontextprotocol/client";
+import { currentToolTrace, traceHooks } from "../observability/trace-context.ts";
 import { object, type Payload } from "../json.ts";
 import { type RemoteTool } from "../runtime/contracts.ts";
 import type { ExternalServer } from "./config.ts";
@@ -23,6 +26,7 @@ export class ExternalMcpClient {
   get authenticationFailed(): boolean { return this.authenticationRejected; }
 
   constructor(readonly server: ExternalServer, fetcher: typeof fetch = fetch) {
+    traceHooks.registerMcpServer(server.prefix, server.name);
     this.client = this.createClient();
     this.options = {
       requestInit: { headers: server.headers, redirect: "error" as const },
@@ -128,8 +132,10 @@ export class ExternalMcpClient {
 
   private requestTool(tool: RemoteTool, args: Payload, signal: AbortSignal) {
     this.notForwarded = undefined;
+    const trace = currentToolTrace();
+    const meta = trace ? { _meta: { [TRACEPARENT_META_KEY]: trace.traceparent, ...(trace.tracestate ? { [TRACESTATE_META_KEY]: trace.tracestate } : {}) } } : {};
     return this.client.callTool(
-      { name: tool.remoteName, arguments: args },
+      { name: tool.remoteName, arguments: args, ...meta },
       { signal, timeout: 185_000 },
     );
   }

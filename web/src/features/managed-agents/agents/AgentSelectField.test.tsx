@@ -50,6 +50,7 @@ test('keeps the first page when the next page fails and retries the same cursor'
     return jsonResponse(JSON.stringify({ data: [first], next_page: 'next' }));
   };
   mountPicker();
+  expect(screen.getByRole('combobox', { name: 'Search by name or agent ID...' })).toBeTruthy();
   await screen.findByText('First agent');
   fireEvent.click(await screen.findByRole('button', { name: 'Load more' }));
   await screen.findByRole('alert');
@@ -112,6 +113,27 @@ test('finds an agent by exact ID without a name search request', async () => {
   await screen.findByText('Later agent');
   expect(requests).toEqual(['/v1/agents', '/v1/agents/' + last.id]);
 });
+
+for (const action of ['dismiss', 'select']) {
+  test(`clears the search when reopening after ${action}`, async () => {
+    globalThis.fetch = async (input) => {
+      const url = new URL(String(input), 'https://oma.duck.ai');
+      return jsonResponse(JSON.stringify({ data: [url.pathname.endsWith(':search') ? last : first], next_page: null }));
+    };
+    const selected = mountPicker();
+    await screen.findByText('First agent');
+    fireEvent.change(screen.getByPlaceholderText('Search by name or agent ID...'), { target: { value: 'Later' } });
+    await screen.findByText('Later agent');
+    if (action === 'select') fireEvent.click(screen.getByText('Later agent'));
+    else fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }));
+    await waitFor(() => expect(screen.queryByPlaceholderText('Search by name or agent ID...')).toBeNull());
+    fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }));
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Search by name or agent ID...') as HTMLInputElement).value).toBe(''),
+    );
+    expect(selected).toEqual(action === 'select' ? [last.id] : []);
+  });
+}
 
 for (const failed of [false, true]) {
   test(`Enter on ${failed ? 'Retry' : 'Load more'} preserves button activation without selecting an agent`, async () => {

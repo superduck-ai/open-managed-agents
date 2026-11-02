@@ -53,6 +53,11 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 	keyPath := filepath.Join(configDir, "secrets", "upstream-proxy-ca-key.pem")
 	writeTestProxyKey(t, keyPath)
 	contents := strings.Replace(minimalBaseConfig, "upstream_proxy_mitm_enabled: false", fmt.Sprintf("upstream_proxy_ca_key_file: %q", keyPath), 1)
+	presetPath := filepath.Join(configDir, "providers.json")
+	if err := os.WriteFile(presetPath, []byte(`{"version":1,"providers":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	contents += "\nllm_provider_presets_file: ./providers.json\n"
 	if err := os.WriteFile(baseConfigPath, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}

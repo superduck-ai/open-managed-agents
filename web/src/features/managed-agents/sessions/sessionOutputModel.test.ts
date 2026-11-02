@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
-import { sessionOutputFileForPath, sessionOutputFilePaths } from './sessionOutputModel';
+import { sessionOutputFileForPath, sessionOutputFilePaths, sessionMessageOutputFiles } from './sessionOutputModel';
+import { buildSessionEventEntries } from './sessionTraceModel';
 
 const metadata = (id: string) => ({
   id,
@@ -34,4 +35,37 @@ test('decodes hrefs once while retaining literal percent characters in filesyste
   ];
   expect(sessionOutputFileForPath(files, '/outputs/a%2520b.txt')?.id).toBe('percent');
   expect(sessionOutputFileForPath(files, '/outputs/a%20b.txt')?.id).toBe('space');
+});
+
+test('undated completed turns only attach explicitly referenced output files', () => {
+  const files = [
+    { ...metadata('unrelated'), path: '/outputs/old.txt' },
+    { ...metadata('referenced'), path: '/outputs/referenced.txt' },
+  ];
+  const entries = buildSessionEventEntries([
+    { id: 'user', type: 'user.message', content: 'question', processed_at: null },
+    {
+      id: 'answer',
+      type: 'agent.message',
+      content: '[file](/outputs/referenced.txt)',
+      processed_at: '2026-10-15T00:00:01Z',
+    },
+  ]);
+  expect(
+    sessionMessageOutputFiles(entries, files, false)
+      .get(entries.at(-1)!.id)
+      ?.map((file) => file.id),
+  ).toEqual(['referenced']);
+});
+
+test('dated completed turns retain creation-time file matching', () => {
+  const entries = buildSessionEventEntries([
+    { id: 'user', type: 'user.message', content: 'question', processed_at: '2026-10-14T00:00:00Z' },
+    { id: 'answer', type: 'agent.message', content: 'answer', processed_at: '2026-10-15T00:00:01Z' },
+  ]);
+  expect(
+    sessionMessageOutputFiles(entries, [metadata('created')], false)
+      .get(entries.at(-1)!.id)
+      ?.map((file) => file.id),
+  ).toEqual(['created']);
 });

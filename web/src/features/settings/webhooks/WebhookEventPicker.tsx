@@ -45,7 +45,7 @@ export function WebhookEventPicker({
       <legend className="mb-3 text-sm font-medium text-foreground">
         {msg('webhooks.eventsToSubscribe', 'Events to subscribe')}
       </legend>
-      <div className="space-y-4 border-t border-border pt-3">
+      <div className="space-y-4 border-t-[0.5px] border-border pt-3">
         <EventGroupToggle
           label={msg('webhooks.selectAll', 'Select all')}
           selectedCount={selected.length}

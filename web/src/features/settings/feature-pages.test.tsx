@@ -73,6 +73,7 @@ describe('Settings feature pages', () => {
       '/settings/llm',
       '/settings/members',
       '/settings/workspaces',
+      '/settings/telemetry',
     ]);
   });
 });

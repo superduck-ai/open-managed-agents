@@ -62,7 +62,7 @@ export type AgentPageResponse = {
   total_count?: number;
 };
 
-export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability';
+export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability' | 'channels';
 
 export type AgentDetailVersionFilter = number | null;
 
@@ -343,6 +343,9 @@ export type SessionThreadApiResponse = {
   type: string;
   updated_at?: string;
 };
+
+export type SessionMessageContentBlock =
+  { type: 'text'; text: string } | { type: 'image'; source: { type: 'file'; file_id: string } };
 
 export type QuickstartSessionEvent = Record<string, unknown>;
 
@@ -844,4 +847,9 @@ export type EnvironmentEditValues = {
   allowedHostsText: string;
   packages: EnvironmentPackageRow[];
   metadataRows: EnvironmentMetadataRow[];
+  initScript: string;
+  environmentRows: EnvironmentMetadataRow[];
+  resources: EnvironmentResourceValues;
 };
+
+export type EnvironmentResourceValues = { cpu: string; memory: string; disk: string };

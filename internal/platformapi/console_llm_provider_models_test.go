@@ -10,23 +10,23 @@ import (
 )
 
 func TestProviderModelsValidation(t *testing.T) {
-	for _, models := range []string{`[{"id":"model","context_window":0}]`, `[{"id":"model","max_output_tokens":0}]`, `[{"id":"model","context_window":-1}]`, `[{"id":"model","max_output_tokens":1.5}]`, `[{"id":"model","context_window":9007199254740992}]`, `[{"id":"model","input_modalities":[]}]`, `[{"id":"model","input_modalities":["audio"]}]`, `[{"id":"model","input_modalities":["text","text"]}]`, `[{"id":""}]`, `[{"id":"model"},{"id":"model"}]`} {
+	for _, models := range []string{`[{"id":"model","image_input":{"max_images":-1}}]`, `[{"id":"model","image_input":{"max_image_bytes":33554433}}]`, `[{"id":"model","image_input":{"max_pixels":1.5}}]`, `[{"id":"model","context_window":0}]`, `[{"id":"model","max_output_tokens":0}]`, `[{"id":"model","context_window":-1}]`, `[{"id":"model","max_output_tokens":1.5}]`, `[{"id":"model","context_window":9007199254740992}]`, `[{"id":"model","input_modalities":[]}]`, `[{"id":"model","input_modalities":["audio"]}]`, `[{"id":"model","input_modalities":["text","text"]}]`, `[{"id":""}]`, `[{"id":"model"},{"id":"model"}]`} {
 		request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"name":"Provider","base_url":"https://models.example.com","models":`+models+`}`))
 		response := httptest.NewRecorder()
 		body, ok := decodeLLMProviderRequest(response, request)
 		if ok {
-			_, _, _, ok = validateLLMProviderInput(response, body)
+			_, _, _, ok = validateLLMProviderInput(response, body, "my-provider")
 		}
 		if ok || response.Code != http.StatusBadRequest {
 			t.Fatalf("accepted %s", models)
 		}
 	}
-	for _, models := range []string{`[]`, `[{"id":"model"}]`, `[{"id":"model","context_window":1000000,"max_output_tokens":128000,"input_modalities":["text","image"]}]`, `[{"id":"model","input_modalities":["image"]}]`} {
+	for _, models := range []string{`[{"id":"model","image_input":{"max_images":3,"max_pixels":1048576}}]`, `[]`, `[{"id":"model"}]`, `[{"id":"model","context_window":1000000,"max_output_tokens":128000,"input_modalities":["text","image"]}]`, `[{"id":"model","input_modalities":["image"]}]`} {
 		request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"name":"Provider","base_url":"https://models.example.com","models":`+models+`}`))
 		response := httptest.NewRecorder()
 		body, ok := decodeLLMProviderRequest(response, request)
 		if ok {
-			_, _, _, ok = validateLLMProviderInput(response, body)
+			_, _, _, ok = validateLLMProviderInput(response, body, "my-provider")
 		}
 		if !ok {
 			t.Fatalf("rejected %s: %s", models, response.Body.String())
@@ -46,7 +46,7 @@ func TestProviderEmptyModelsResponse(t *testing.T) {
 		if !ok {
 			t.Fatal(response.Body.String())
 		}
-		_, _, models, ok := validateLLMProviderInput(response, body)
+		_, _, models, ok := validateLLMProviderInput(response, body, "my-provider")
 		if !ok {
 			t.Fatal(response.Body.String())
 		}
@@ -59,6 +59,25 @@ func TestProviderEmptyModelsResponse(t *testing.T) {
 		}
 		if string(encoded.Models) != "[]" {
 			t.Fatalf("models response: %s", encoded.Models)
+		}
+	}
+}
+
+func TestProviderNameRejectsLongValuesAndDefaultsToFinalID(t *testing.T) {
+	response := httptest.NewRecorder()
+	if _, _, _, ok := validateLLMProviderInput(response, llmProviderRequest{Name: strings.Repeat("x", 101), BaseURL: "https://example.test"}, "my-provider"); ok || response.Code != http.StatusBadRequest {
+		t.Fatal("overlong display name was accepted")
+	}
+	for _, test := range []struct{ name, slug, want string }{
+		{"", "my-provider", "my-provider"},
+		{"  ", "default-2", "default-2"},
+		{"", "organization", "organization"},
+		{" Research ", "my-provider", "Research"},
+	} {
+		response := httptest.NewRecorder()
+		name, _, _, ok := validateLLMProviderInput(response, llmProviderRequest{Name: test.name, BaseURL: "https://example.test"}, test.slug)
+		if !ok || name != test.want {
+			t.Fatalf("name %q with ID %q=%q (%v)", test.name, test.slug, name, ok)
 		}
 	}
 }

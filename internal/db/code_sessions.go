@@ -419,6 +419,23 @@ func (d *DB) GetCodeSessionBySessionExternalID(ctx context.Context, workspaceUUI
 	return row.session(), nil
 }
 
+type CodeSessionSegment struct {
+	ExternalID string
+	CreatedAt  time.Time
+}
+
+func (d *DB) ListCodeSessionSegments(ctx context.Context, workspaceUUID, sessionExternalID string) ([]CodeSessionSegment, error) {
+	rows, err := NewCodeSessionMapper(d.mapperDB).ListSegmentsBySessionExternalID(ctx, workspaceUUID, sessionExternalID)
+	if err != nil {
+		return nil, err
+	}
+	segments := make([]CodeSessionSegment, 0, len(rows))
+	for _, row := range rows {
+		segments = append(segments, CodeSessionSegment(row))
+	}
+	return segments, nil
+}
+
 func (d *DB) GetActiveCodeSessionForEnvironmentWork(ctx context.Context, work EnvironmentWork, sessionUUID string) (CodeSession, error) {
 	mapper := NewCodeSessionMapper(d.mapperDB)
 	rows, err := mapper.FindActiveForEnvironmentWork(

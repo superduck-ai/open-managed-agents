@@ -248,6 +248,10 @@ flowchart TD
   K --> L["Dial the locked public IP"]
 ```
 
+### 缺省 networking
+
+Cloud Environment 未提供 `networking` 或未指定 `type` 时按 `unrestricted` 处理：创建与更新写入 `{"type":"unrestricted"}`，`networkpolicy.ParseConfig` 按不受限放行，控制台 API 响应同样补全为 `unrestricted`，前端环境页与快速开始新建表单的默认选项与之一致。
+
 ### limited 语义
 
 `limited` 默认拒绝，三类 host 合并放行：

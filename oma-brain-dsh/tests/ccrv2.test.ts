@@ -56,7 +56,7 @@ class MemoryBackend implements CcrBackend {
 class TextModel extends LlmAdapter {
   readonly requests: GenerateOptions[] = [];
   async resolveModel(provider: string, model: string) {
-    return { provider, id: model, name: model };
+    return { provider, id: model, name: model, context: { contextWindow: 200000 } };
   }
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options);
@@ -161,7 +161,7 @@ test("persistence stores a separate header and individual events and restores du
   }
 });
 
-test("session previews enter one stream window and terminal publication still waits for their HTTP confirmation", async () => {
+test("completed blocks flush earlier previews and input acknowledgement waits for HTTP confirmation", async () => {
   const backend = new MemoryBackend();
   const ctx = new Context();
   const timers = new Set<() => void>();
@@ -213,14 +213,12 @@ test("session previews enter one stream window and terminal publication still wa
     session = ctx.ccrv2.createSession({ id: "buffered", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
     await session.open();
     turn = session.receive("input", { content: "hello" });
-    await eventually(() => previewCalls === 2);
+    await eventually(() => previewCalls === 3);
     await completed.promise;
-    expect(previewCalls).toBe(2);
-    expect(timers.size).toBe(1);
-    expect(batches.flat().filter((event) => event.ephemeral)).toEqual([]);
+    expect(previewCalls).toBe(3);
+    expect(timers.size).toBe(0);
     expect(session.pendingEvents.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);
-    [...timers][0]!();
     await sending.promise;
     const previews = batches.flat().filter((event) => event.ephemeral);
     expect(previews.map((event) => event.payload.type)).toEqual(["event_start", "event_delta", "event_delta"]);
@@ -342,13 +340,14 @@ test("worker metadata restores the model across logged history and set_model wai
     try {
       await started.promise;
       expect(backend.acknowledged).not.toContain("model-session:change");
-      expect(first.session.agent.options.model).toBe("restored-model");
+      expect(first.session.agent.model.current()?.model).toBe("restored-model");
       release.resolve();
       await changing;
     } finally { release.resolve(); backend.reportMetadata = patch; }
     await eventually(() => backend.acknowledged.includes("model-session:change"));
     expect(backend.acknowledged).toContain("model-session:change");
     await first.session.receive("second", { content: "continue" });
+    expect(backend.output.get("model-session")!.filter(event => event.type === "result" && event.is_error)).toEqual([]);
     expect(first.model.requests[1]!.model).toBe("changed-model");
   } finally { await first.ctx.fiber.dispose(); }
   // Deliberately differ from the last logged request, which used changed-model.
@@ -1237,4 +1236,64 @@ test("native tool errors remain resumable without operator reconciliation", asyn
     expect(executions).toBe(1);
     expect(backend.metadata.get(config.id)).not.toHaveProperty("unknown_tool_outcomes");
   } finally { resumed.restore(); await resumed.ctx.fiber.dispose(); }
+});
+
+test.each([false, true])("next native request waits for tool-result publication (child=%s)", async child => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  const publishing = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let toolRequests = 0;
+  let parentRequests = 0;
+  let resumed = false;
+  const events = backend.events.bind(backend);
+  backend.events = async (id, payloads) => {
+    if (payloads.some(event => event.message?.content?.some((block: Payload) => block.type === "tool_result" && block.tool_use_id === "ordered-call"))) {
+      publishing.resolve();
+      await release.promise;
+    }
+    await events(id, payloads);
+  };
+  model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
+    if (options.model === "parent" && parentRequests++ === 0) {
+      yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate-order"), name: "send_to_agent",
+        arguments: JSON.stringify({ agent_name: "reader", message: "Run Bash" }) } };
+      yield { type: "finish", reason: { kind: "tool-calls" } };
+      return;
+    }
+    if (options.model !== "parent") {
+      if (toolRequests++ === 0) {
+        yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("ordered-call"), name: "Bash", arguments: '{"command":"printf ordered"}' } };
+        yield { type: "finish", reason: { kind: "tool-calls" } };
+        return;
+      }
+      resumed = true;
+      expect((backend.output.get("request-order") ?? []).flatMap(event => event.message?.content ?? [])
+        .some(block => block.type === "tool_result" && block.tool_use_id === "ordered-call")).toBe(true);
+    }
+    yield { type: "block-end", index: 0, block: { type: "text", text: "done" } };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+  let turn: Promise<void> | undefined;
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession({ id: "request-order", provider: "test", model: child ? "parent" : "text",
+      workDir: "/workspace", systemPrompt: "", tools: ["Bash"],
+      subagents: child ? { inlineAgents: false, agents: [{ name: "reader", description: "Reader", systemPrompt: "Read", model: "text", tools: ["Bash"] }] } : undefined,
+      setup: async scope => { await scope.plugin({ name: "ordered-sandbox", apply(scope: Context) {
+        scope.provide("sandboxExecutor", { async provision() {}, async call() { return { content: [{ type: "text", text: "ordered" }] }; } });
+      } }); } });
+    await session.open();
+    spyOn(session, "approve").mockResolvedValue({ allowed: true });
+    turn = session.receive("ordered-input", { content: "Run Bash" });
+    await publishing.promise;
+    expect(resumed).toBe(false);
+    release.resolve();
+    await turn;
+    expect(resumed).toBe(true);
+    await session.close();
+  } finally { release.resolve(); await turn?.catch(() => {}); await ctx.fiber.dispose(); }
 });

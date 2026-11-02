@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { assertPersistenceFormat } from "./recovery.ts";
 import { workerDiagnostic } from "./diagnostics.ts";
 import type { DshLogData } from "./persistence-contracts.ts";

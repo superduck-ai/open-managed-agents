@@ -1,5 +1,7 @@
 import { useI18n } from '../../../shared/i18n';
-import { Bot, BriefcaseBusiness, Cloud, Database, LockKeyhole, MessageCircle } from 'lucide-react';
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '../../../shared/ui/empty';
+import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
+import { Bot, Brain, BriefcaseBusiness, Cloud, Database, LockKeyhole, MessageCircle } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { AgentDetailPage, AgentsResourcePage } from '../agents/AgentsResourcePage';
 import { CompactChip, StatusPill } from '../components/common';
@@ -211,15 +213,15 @@ export function DreamingPage() {
   const { msg } = useI18n();
   return (
     <section className="min-h-[calc(100vh-48px)] text-foreground">
-      <h1 className="text-[32px] font-semibold leading-tight text-foreground">
-        {msg('managedAgents.dreams.title', 'Dreaming')}
-      </h1>
-      <p className="mt-3 text-[15px] text-foreground">
-        {msg('managedAgents.dreams.description', 'Review recent sessions to verify memory and surface new learnings.')}
-      </p>
-      <div className="mt-9 rounded-lg border border-border bg-popover px-6 py-6 text-[15px] text-foreground">
-        {msg('managedAgents.dreams.loading', 'Captured Dreaming assets are loading.')}
-      </div>
+      <ResourcePageHeader title={msg('managedAgents.dreams.title', 'Dreaming')} contentGap="content" />
+      <Empty className="min-h-[260px] py-12">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Brain className="size-5" aria-hidden />
+          </EmptyMedia>
+          <EmptyTitle>{msg('managedAgents.dreams.unavailable', 'Dreaming is not connected.')}</EmptyTitle>
+        </EmptyHeader>
+      </Empty>
     </section>
   );
 }

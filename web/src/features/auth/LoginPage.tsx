@@ -4,7 +4,7 @@ import { ArrowLeft, CircleAlert, Loader2, MailCheck } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button, ButtonLink } from '@/shared/ui/button';
-import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/shared/ui/card';
+import { Card, CardAction, CardContent, CardFooter, CardHeader } from '@/shared/ui/card';
 import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { sendMagicLink, verifyMagicLink } from '../../shared/auth/api';
@@ -24,7 +24,6 @@ type LoginFlowProps = {
 const topNavItems = [
   { id: 'auth.login.topNav.developerDocs', label: 'Developer Docs', path: 'overview' },
   { id: 'auth.login.topNav.apiReference', label: 'API Reference', path: 'api/overview' },
-  { id: 'auth.login.topNav.cookbooks', label: 'Cookbooks', path: 'quickstart' },
   { id: 'auth.login.topNav.quickstarts', label: 'Quickstarts', path: 'quickstart' },
 ] as const;
 
@@ -102,7 +101,6 @@ export function LoginFlow({
       await onSendMagicLink(normalizedEmail);
       setSubmittedEmail(normalizedEmail);
       setStep('code');
-      setNotice(msg('auth.login.codeNotice', 'Enter the 6-digit code sent to your email.'));
     } catch (err) {
       setError(loginErrorMessage(err, msg('auth.login.sendCodeFailed', 'Could not send a code. Try again.')));
     } finally {
@@ -152,30 +150,12 @@ export function LoginFlow({
 
   return (
     <LoginShell>
-      <section className="grid min-h-[calc(100vh-9rem)] gap-8 py-10 lg:grid-cols-[minmax(0,1.05fr)_420px] lg:items-center">
-        <div className="max-w-3xl space-y-3">
-          <h1 className="max-w-3xl text-4xl font-semibold leading-tight text-foreground sm:text-5xl">
-            {msg('auth.login.title', 'Build with Open Managed Agents')}
-          </h1>
-          <p className="max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-            {msg(
-              'auth.login.valueProp',
-              'Create agents and applications with frontier models, durable sessions, and managed agent infrastructure.',
-            )}
-          </p>
-        </div>
-
+      <section className="flex min-h-[calc(100dvh-4rem)] items-center justify-center py-10">
         {step === 'email' ? (
-          <form onSubmit={handleEmailSubmit}>
-            <Card className="mx-auto w-full max-w-[420px]">
+          <form className="w-full max-w-[420px]" onSubmit={handleEmailSubmit}>
+            <Card className="w-full">
               <CardHeader className="space-y-2">
-                <CardTitle>{msg('auth.login.continueWithEmail', 'Continue with email')}</CardTitle>
-                <CardDescription>
-                  {msg(
-                    'auth.login.emailStepDescription',
-                    'Enter the email address associated with your Open Managed Agents account.',
-                  )}
-                </CardDescription>
+                <h1 className="text-2xl font-medium leading-8">{msg('auth.login.signIn', 'Sign in')}</h1>
               </CardHeader>
               <CardContent className="space-y-5">
                 <Field className="gap-2">
@@ -208,8 +188,8 @@ export function LoginFlow({
             </Card>
           </form>
         ) : (
-          <form onSubmit={handleCodeSubmit}>
-            <Card className="mx-auto w-full max-w-[420px]">
+          <form className="w-full max-w-[420px]" onSubmit={handleCodeSubmit}>
+            <Card className="w-full">
               <CardHeader className="space-y-2">
                 <CardAction>
                   <Button
@@ -227,20 +207,14 @@ export function LoginFlow({
                     {msg('auth.login.changeEmail', 'Change email')}
                   </Button>
                 </CardAction>
-                <CardTitle>{msg('auth.login.verifyEmail', 'Verify email')}</CardTitle>
-                <CardDescription>
-                  {msg(
-                    'auth.login.codeStepDescription',
-                    'Use the verification code from your inbox to finish signing in.',
-                  )}
-                </CardDescription>
+                <h1 className="text-2xl font-medium leading-8">{msg('auth.login.verifyEmail', 'Verify email')}</h1>
               </CardHeader>
               <CardContent className="space-y-5">
                 <Field className="gap-2">
                   <FieldLabel htmlFor="login-code">
                     {msg('auth.login.verificationCode', 'Verification code')}
                   </FieldLabel>
-                  <FieldDescription>
+                  <FieldDescription className="break-words">
                     {msg('auth.login.codeSentTo', 'We sent a 6-digit code to {email}.', {
                       email: submittedEmail,
                     })}
@@ -248,7 +222,7 @@ export function LoginFlow({
                   <Input
                     id="login-code"
                     autoComplete="one-time-code"
-                    className="h-12 text-center text-xl font-semibold tracking-[0.32em]"
+                    className="h-12 text-center font-mono font-medium tracking-[0.24em]"
                     inputMode="numeric"
                     maxLength={6}
                     onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
@@ -289,11 +263,11 @@ function LoginShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border bg-background/95 backdrop-blur-sm">
+      <header className="border-b-[0.5px] border-border bg-background">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 lg:px-8">
           <a className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight text-foreground" href="/">
             <BrandLogo decorative />
-            <span className="ml-2 border-l border-border pl-4 text-xs text-muted-foreground sm:text-sm">
+            <span className="ml-2 border-l-[0.5px] border-border pl-4 text-xs text-muted-foreground sm:text-sm">
               {msg('app.productName', 'Open Managed Agents')}
             </span>
           </a>

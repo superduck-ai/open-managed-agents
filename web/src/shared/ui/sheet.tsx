@@ -5,17 +5,17 @@ import { XIcon } from 'lucide-react';
 
 import { cn } from '@/shared/lib/utils';
 import { Button } from '@/shared/ui/button';
+import { useI18n } from '@/shared/i18n';
 
 const sheetVariants = cva(
-  'fixed z-50 flex flex-col gap-4 border-border bg-background text-foreground shadow-lg ring-1 ring-foreground/10 outline-none duration-150 data-open:animate-in data-closed:animate-out',
+  'fixed z-50 flex flex-col gap-4 border-border bg-popover text-popover-foreground shadow-md outline-none',
   {
     variants: {
       side: {
-        top: 'inset-x-0 top-0 border-b data-open:slide-in-from-top data-closed:slide-out-to-top',
-        right:
-          'inset-y-0 right-0 h-full w-full border-l data-open:slide-in-from-right data-closed:slide-out-to-right sm:max-w-[clamp(420px,46vw,960px)]',
-        bottom: 'inset-x-0 bottom-0 border-t data-open:slide-in-from-bottom data-closed:slide-out-to-bottom',
-        left: 'inset-y-0 left-0 h-full w-full border-r data-open:slide-in-from-left data-closed:slide-out-to-left sm:max-w-[clamp(420px,46vw,960px)]',
+        top: 'inset-x-0 top-0 border-b-[0.5px]',
+        right: 'inset-y-0 right-0 h-full w-full border-l-[0.5px] sm:max-w-[clamp(420px,46vw,960px)]',
+        bottom: 'inset-x-0 bottom-0 border-t-[0.5px]',
+        left: 'inset-y-0 left-0 h-full w-full border-r-[0.5px] sm:max-w-[clamp(420px,46vw,960px)]',
       },
     },
     defaultVariants: {
@@ -45,7 +45,7 @@ function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
     <SheetPrimitive.Backdrop
       data-slot="sheet-overlay"
       className={cn(
-        'fixed inset-0 isolate z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0',
+        'fixed inset-0 isolate z-50 bg-[var(--black-a6)] supports-backdrop-filter:backdrop-blur-xs',
         className,
       )}
       {...props}
@@ -56,7 +56,7 @@ function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
 function SheetContent({
   className,
   children,
-  side,
+  side = 'right',
   showCloseButton = true,
   showOverlay = true,
   ...props
@@ -65,6 +65,7 @@ function SheetContent({
     showCloseButton?: boolean;
     showOverlay?: boolean;
   }) {
+  const { msg } = useI18n();
   return (
     <SheetPortal>
       {showOverlay ? <SheetOverlay /> : null}
@@ -81,7 +82,7 @@ function SheetContent({
             render={<Button variant="ghost" className="absolute top-2 right-2" size="icon-sm" />}
           >
             <XIcon />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{msg('common.close', 'Close')}</span>
           </SheetPrimitive.Close>
         ) : null}
       </SheetPrimitive.Popup>
@@ -98,7 +99,13 @@ function SheetFooter({ className, ...props }: React.ComponentProps<'div'>) {
 }
 
 function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
-  return <SheetPrimitive.Title data-slot="sheet-title" className={cn('text-base font-medium', className)} {...props} />;
+  return (
+    <SheetPrimitive.Title
+      data-slot="sheet-title"
+      className={cn('text-xl leading-7 font-medium', className)}
+      {...props}
+    />
+  );
 }
 
 function SheetDescription({ className, ...props }: SheetPrimitive.Description.Props) {

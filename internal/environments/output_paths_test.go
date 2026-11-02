@@ -132,7 +132,7 @@ func TestAgentScoreContractAliasStartup(t *testing.T) {
 	t.Run("alias failure prevents mount startup", func(t *testing.T) {
 		provider := &rcloneTestProvider{runErrors: []error{nil, errors.New("alias failed")}}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", rcloneFilestoreLaunch{ScoreContractAliases: true})
+		err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", rcloneFilestoreLaunch{ScoreContractAliases: true})
 		if !errors.Is(err, errScoreContractAliasCreate) || provider.backgroundCalls != 0 || len(provider.writes) != 0 {
 			t.Fatalf("score alias failure did not stop startup: error=%v, provider=%+v", err, provider)
 		}
@@ -144,7 +144,7 @@ func TestAgentScoreContractAliasStartup(t *testing.T) {
 		provider := &rcloneTestProvider{ready: true}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 		launch := rcloneFilestoreLaunch{ConfigPayload: []byte(`{"mounts":[]}`), ScoreContractAliases: true}
-		if err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", launch); err != nil {
+		if err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", launch); err != nil {
 			t.Fatal(err)
 		}
 		commands := agentScoreContractAliasCommands()
@@ -158,7 +158,7 @@ func TestAgentScoreContractAliasStartup(t *testing.T) {
 	t.Run("ordinary session omits contract aliases", func(t *testing.T) {
 		provider := &rcloneTestProvider{ready: true}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		if err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", rcloneFilestoreLaunch{ConfigPayload: []byte(`{"mounts":[]}`)}); err != nil {
+		if err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", rcloneFilestoreLaunch{ConfigPayload: []byte(`{"mounts":[]}`)}); err != nil {
 			t.Fatal(err)
 		}
 		for _, command := range provider.runCommands {
@@ -173,7 +173,7 @@ func TestSessionOutputsAliasStartup(t *testing.T) {
 	t.Run("failure prevents mount startup", func(t *testing.T) {
 		provider := &rcloneTestProvider{ready: true, runErrors: []error{errors.New("alias failed")}}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", rcloneFilestoreLaunch{})
+		err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", rcloneFilestoreLaunch{})
 		if !errors.Is(err, errOutputsAliasCreate) || provider.backgroundCalls != 0 || len(provider.writes) != 0 {
 			t.Fatalf("alias failure did not stop startup: error=%v, provider=%+v", err, provider)
 		}
@@ -181,7 +181,7 @@ func TestSessionOutputsAliasStartup(t *testing.T) {
 	t.Run("alias ready before mount startup", func(t *testing.T) {
 		provider := &rcloneTestProvider{ready: true}
 		runner := &Runner{provider: provider, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-		if err := runner.startManagedAgentSessionFilesystem(context.Background(), "sandbox_test", rcloneFilestoreLaunch{}); err != nil {
+		if err := runner.startManagedAgentSessionFilesystem(context.Background(), context.Background(), "sandbox_test", rcloneFilestoreLaunch{}); err != nil {
 			t.Fatal(err)
 		}
 		if len(provider.runCommands) == 0 || provider.runCommands[0] != sessionOutputsAliasCommand(rcloneOutputsDestination, sessionOutputsPath) {

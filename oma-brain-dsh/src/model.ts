@@ -1,3 +1,4 @@
+import { withAttachmentSession } from "./attachments/remote.ts";
 import type { AttachmentStore } from "@deepseek-ai/dsh-attachment";
 import type { GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { OmaApi } from "./api.ts";
@@ -14,6 +15,11 @@ interface PiAiReplay {
 export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore, currentSession?: () => string | undefined): AiSdkAdapterOptions {
   return {
     attachments,
+    callScope: (request, action) => withAttachmentSession(modelSessionID(request), action),
+    imageInput: (_provider, model) => {
+      const id = currentSession?.();
+      return id === undefined ? undefined : api.assignment(api.modelSessions.get(id) ?? id).launch.models?.[model]?.image_input;
+    },
     modelInfo: (provider, model) => {
       const id = currentSession?.();
       const assignment = id === undefined ? undefined : api.assignment(api.modelSessions.get(id) ?? id);
@@ -21,9 +27,15 @@ export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore, curr
     },
     route: (options) => omaRoute(api, options),
     history: legacyReplay,
-    onCallStart: (options) => { if (options.purpose !== "compaction") api.modelResponses.delete(modelSessionID(options)); },
+    onCallStart: (options) => {
+      if (options.purpose !== "compaction") {
+        api.modelResponses.delete(modelSessionID(options));
+        api.modelRequestIDs.delete(modelSessionID(options));
+      }
+    },
     onRequestBody: (options, body) => { logSystemPrompt(modelSessionID(options), body); },
     onMessageID: (options, messageID) => { if (options.purpose !== "compaction") api.modelResponses.set(modelSessionID(options), messageID); },
+    onRequestID: (options, requestID) => { if (options.purpose !== "compaction") api.modelRequestIDs.set(modelSessionID(options), requestID); },
   };
 }
 

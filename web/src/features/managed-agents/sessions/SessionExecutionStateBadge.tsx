@@ -33,11 +33,11 @@ export function SessionExecutionStateBadge({ state, tool = false }: { state: Ses
       data-tool-lifecycle={tool ? state : undefined}
       role={pending ? 'status' : undefined}
       className={clsx(
-        'h-4 shrink-0 gap-1 rounded px-1 py-0 text-[10px] leading-none font-medium',
+        'h-5 shrink-0 gap-1 rounded px-1 py-0 text-xs leading-none font-medium',
         state === 'failed' ? 'bg-destructive/10 text-destructive' : 'bg-secondary text-secondary-foreground',
       )}
     >
-      <Icon className={clsx('size-2.5!', pending && 'animate-spin')} aria-hidden />
+      <Icon className={clsx('size-3!', pending && 'animate-spin motion-reduce:animate-none')} aria-hidden />
       {sessionExecutionStateLabel(state, msg)}
     </Badge>
   );

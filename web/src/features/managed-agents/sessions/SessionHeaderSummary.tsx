@@ -13,10 +13,10 @@ export function SessionHeaderSummary({
   archivedLabel: string;
 }) {
   return (
-    <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+    <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
       <div className="flex min-w-0 max-w-full items-center gap-2">
-        <h1 className="min-w-0 truncate font-serif text-[28px] font-medium leading-[1.3] tracking-[-0.015em] text-foreground">
-          {session.title || <ResourceIdButton value={session.id} className="[&_span]:text-[28px]" />}
+        <h1 className="min-w-0 truncate font-serif text-2xl font-medium leading-[1.3] tracking-[-0.015em] text-foreground">
+          {session.title || <ResourceIdButton value={session.id} className="[&_span]:text-2xl" />}
         </h1>
         <SessionStatusPill status={session.archived_at ? archivedLabel : summary.statusLabel} />
       </div>

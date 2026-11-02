@@ -34,19 +34,19 @@ func TestLLMProviderMapperTenantScope(t *testing.T) {
 		}},
 		{"list", mapperBuilderContract{
 			statement:         lLMProviderMapperListByWorkspaceStatement,
-			bound:             buildLLMProviderMapperListByWorkspace(yourbatis.DialectPostgres, organizationUUID, workspaceUUID),
+			bound:             buildLLMProviderMapperListByWorkspace(yourbatis.DialectPostgres, organizationUUID, nullableString(workspaceUUID)),
 			wantID:            "LLMProviderMapper.ListByWorkspace",
 			wantKind:          yourbatis.StatementSelect,
 			wantArgumentNames: []string{"organizationUUID", "workspaceUUID"},
-			wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid = $2"},
+			wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid IS NOT DISTINCT FROM $2"},
 		}},
 		{"find", mapperBuilderContract{
 			statement:         lLMProviderMapperFindByExternalIDStatement,
-			bound:             buildLLMProviderMapperFindByExternalID(yourbatis.DialectPostgres, organizationUUID, workspaceUUID, externalID),
+			bound:             buildLLMProviderMapperFindByExternalID(yourbatis.DialectPostgres, organizationUUID, nullableString(workspaceUUID), externalID),
 			wantID:            "LLMProviderMapper.FindByExternalID",
 			wantKind:          yourbatis.StatementSelect,
 			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "externalID"},
-			wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid = $2", "external_id = $3"},
+			wantSQLFragments:  []string{"organization_uuid = $1", "workspace_uuid IS NOT DISTINCT FROM $2", "external_id = $3"},
 		}},
 		{"update", mapperBuilderContract{
 			statement: lLMProviderMapperUpdateByExternalIDStatement,
@@ -144,5 +144,22 @@ func TestLLMProviderEmptyModelsRoundTrip(t *testing.T) {
 		if provider.Models == nil || len(provider.Models) != 0 {
 			t.Fatalf("decoded models: %#v", provider.Models)
 		}
+	}
+}
+
+func TestLLMProviderOrganizationListAndNullableScopeBinding(t *testing.T) {
+	organization := "00000000-0000-4000-8000-000000000001"
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: lLMProviderMapperListByOrganizationStatement,
+		bound:     buildLLMProviderMapperListByOrganization(yourbatis.DialectPostgres, organization),
+		wantID:    "LLMProviderMapper.ListByOrganization", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"organizationUUID"}, wantSQLFragments: []string{"organization_uuid = $1", "ORDER BY created_at, uuid"},
+	})
+	bound := buildLLMProviderMapperFindByExternalID(yourbatis.DialectPostgres, organization, nil, "provider")
+	if len(bound.Args) != 3 {
+		t.Fatal("missing tenant-scoped bindings")
+	}
+	if value, ok := bound.Args[1].Value.(*string); !ok || value != nil {
+		t.Fatalf("organization scope=%#v", bound.Args[1].Value)
 	}
 }

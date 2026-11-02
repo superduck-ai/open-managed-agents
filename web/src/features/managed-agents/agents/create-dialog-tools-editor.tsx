@@ -70,9 +70,9 @@ import {
 } from '../../mcp-tunnels/config';
 
 const permissionOptions = [
-  { value: 'always_allow' as const, icon: CheckCircle2 },
-  { value: 'always_ask' as const, icon: Hand },
-  { value: 'always_deny' as const, icon: Ban },
+  { value: 'always_allow' as const, icon: CheckCircle2, tone: 'text-[var(--green-11)]' },
+  { value: 'always_ask' as const, icon: Hand, tone: 'text-[var(--amber-11)]' },
+  { value: 'always_deny' as const, icon: Ban, tone: 'text-[var(--red-11)]' },
 ];
 
 type PendingTunnelSelection = {
@@ -455,10 +455,10 @@ function PendingTunnelCard({
   return (
     <Card
       id={pendingTunnelCardID(server)}
-      className="gap-0 overflow-hidden rounded-xl border-destructive/40 py-0 shadow-none ring-1 ring-destructive/10"
+      className="gap-0 overflow-hidden rounded-xl border-destructive/40 py-0 shadow-none ring-[0.5px] ring-inset ring-destructive/40"
     >
       <div className="flex items-center gap-3 px-4 py-3">
-        <span className="flex size-9 items-center justify-center rounded-lg border border-border bg-background">
+        <span className="flex size-9 items-center justify-center rounded-lg border-[0.5px] border-border bg-background">
           <Cable className="size-4" aria-hidden />
         </span>
         <span className="min-w-0 flex-1">
@@ -541,7 +541,7 @@ function TunnelChannelEditor({
   });
   const inputKey = currentServerName ?? tunnel.id;
   return (
-    <div className="grid gap-4 border-t border-border bg-muted/20 px-4 py-4">
+    <div className="grid gap-4 border-t-[0.5px] border-border bg-muted/20 px-4 py-4">
       <TunnelConnectionWarning connected={tunnel.connectionState === 'connected'} />
       <div className="grid content-start gap-2">
         <span className="flex flex-wrap items-center gap-2">
@@ -765,7 +765,7 @@ function configuredMcpServerTitle(
   tunnelChannel: string | undefined,
 ) {
   const displayName = server?.displayName ?? serverName;
-  return tunnelChannel ? `${displayName} · ${tunnelChannel}` : displayName;
+  return tunnelChannel ? `${displayName} (${tunnelChannel})` : displayName;
 }
 
 function configuredMcpTools(
@@ -907,9 +907,9 @@ function ToolsetCard({
   const aggregate = toolsetPermission(toolset, names, fallback);
   const defaultPermission = effectiveToolPermission(toRecord(toolset.default_config) ?? undefined, fallback);
   return (
-    <Card id={cardID} className="gap-0 overflow-hidden rounded-xl py-0 shadow-none">
+    <Card id={cardID} className="@container/toolset gap-0 overflow-hidden rounded-xl py-0 shadow-none ring-inset">
       <div className="flex items-center gap-3 px-4 py-3">
-        <span className="flex size-9 items-center justify-center rounded-lg border border-border bg-background">
+        <span className="flex size-9 items-center justify-center rounded-lg border-[0.5px] border-border bg-background">
           {icon}
         </span>
         <span className="min-w-0 flex-1">
@@ -942,12 +942,18 @@ function ToolsetCard({
       </div>
       {configuration}
       <Collapsible open={open} onOpenChange={setOpen}>
-        <div className="flex items-center gap-2 border-t border-border px-3 py-2">
+        <div className="flex items-center gap-2 border-t-[0.5px] border-border px-3 py-2">
           <CollapsibleTrigger
             type="button"
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left text-sm text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left text-sm text-muted-foreground focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground focus-visible:outline-none"
           >
-            <ChevronDown className={cn('size-4 transition-transform', !open && '-rotate-90')} aria-hidden />
+            <ChevronDown
+              className={cn(
+                'size-4 transition-transform duration-220 ease-out motion-reduce:transition-none',
+                !open && '-rotate-90',
+              )}
+              aria-hidden
+            />
             <span>{msg('managedAgents.agents.createDialog.toolPermissions', 'Tool permissions')}</span>
             <Badge variant="secondary">
               {toolsLoading ? <LoaderCircle className="size-3 animate-spin" aria-hidden /> : tools.length}
@@ -955,13 +961,13 @@ function ToolsetCard({
           </CollapsibleTrigger>
           <PermissionMenu value={aggregate} onChange={onGroupPermission} />
         </div>
-        <CollapsibleContent className="overflow-x-auto border-t border-border">
+        <CollapsibleContent className="border-t-[0.5px] border-border">
           {toolsLoading ? (
             <p className="px-4 py-3 text-sm text-muted-foreground">
               {msg('managedAgents.agents.createDialog.discoveringMcpTools', 'Discovering MCP tools...')}
             </p>
           ) : tools.length ? (
-            <div className="min-w-[560px]">
+            <div className="min-w-0">
               {tools.map((tool) => {
                 const override = Array.isArray(toolset.configs)
                   ? toolset.configs.map(toRecord).find((config) => config?.name === tool.name)
@@ -970,13 +976,15 @@ function ToolsetCard({
                 return (
                   <div
                     key={tool.name}
-                    className="grid grid-cols-[150px_1fr_auto] items-center gap-4 border-b border-border/70 px-4 py-2 last:border-b-0"
+                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b-[0.5px] border-border/70 px-4 py-2 last:border-b-0 @min-[32rem]/toolset:grid-cols-[140px_minmax(0,1fr)_auto]"
                   >
-                    <code className="text-xs">{tool.name}</code>
-                    <span className="truncate text-xs text-muted-foreground">
+                    <code className="min-w-0 break-all text-xs">{tool.name}</code>
+                    <span className="col-start-1 row-start-2 min-w-0 break-words text-xs text-muted-foreground @min-[32rem]/toolset:col-start-2 @min-[32rem]/toolset:row-start-1">
                       {builtInAgentToolDescription({ name: tool.name, description: tool.description ?? '' }, msg)}
                     </span>
-                    <PermissionButtons value={permission} onChange={(next) => onToolPermission(tool.name, next)} />
+                    <div className="col-start-2 row-span-2 row-start-1 self-center @min-[32rem]/toolset:col-start-3 @min-[32rem]/toolset:row-span-1">
+                      <PermissionButtons value={permission} onChange={(next) => onToolPermission(tool.name, next)} />
+                    </div>
                   </div>
                 );
               })}
@@ -1013,14 +1021,16 @@ function PermissionMenu({
           />
         }
       >
-        {permissionLabel(value, msg)}
+        <span className={permissionOptions.find((option) => option.value === value)?.tone}>
+          {permissionLabel(value, msg)}
+        </span>
         <ChevronDown className="size-3.5" aria-hidden />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-max min-w-40">
         <DropdownMenuRadioGroup value={value} onValueChange={(next) => onChange(next as EditablePermission)}>
-          {permissionOptions.map(({ value: permission, icon: PermissionIcon }) => (
+          {permissionOptions.map(({ value: permission, icon: PermissionIcon, tone }) => (
             <DropdownMenuRadioItem key={permission} value={permission} className="whitespace-nowrap">
-              <PermissionIcon data-slot="permission-option-icon" className="size-4 text-muted-foreground" aria-hidden />
+              <PermissionIcon data-slot="permission-option-icon" className={cn('size-4', tone)} aria-hidden />
               {permissionLabel(permission, msg)}
             </DropdownMenuRadioItem>
           ))}
@@ -1040,7 +1050,7 @@ function PermissionButtons({
   const { msg } = useI18n();
   return (
     <div className="flex rounded-lg bg-muted p-0.5">
-      {permissionOptions.map(({ value: permission, icon: PermissionIcon }) => {
+      {permissionOptions.map(({ value: permission, icon: PermissionIcon, tone }) => {
         const label = permissionLabel(permission, msg);
         return (
           <Button
@@ -1049,14 +1059,12 @@ function PermissionButtons({
             variant="ghost"
             size="icon-sm"
             aria-label={label}
+            aria-pressed={value === permission}
             title={label}
-            className={cn(
-              'size-7 text-muted-foreground',
-              value === permission && 'bg-background text-foreground shadow-sm',
-            )}
+            className={cn('size-7 text-muted-foreground', value === permission && 'bg-background shadow-sm')}
             onClick={() => onChange(permission)}
           >
-            <PermissionIcon className="size-4" aria-hidden />
+            <PermissionIcon className={cn('size-4', value === permission && tone)} aria-hidden />
           </Button>
         );
       })}
@@ -1085,9 +1093,9 @@ function CustomToolCard({
     setSchemaText(serializedSchema);
   }, [serializedSchema]);
   return (
-    <Card className="gap-4 rounded-xl p-4 shadow-none">
+    <Card className="gap-4 rounded-xl p-4 shadow-none ring-inset">
       <div className="flex items-center gap-3">
-        <span className="flex size-9 items-center justify-center rounded-lg border border-border bg-background">
+        <span className="flex size-9 items-center justify-center rounded-lg border-[0.5px] border-border bg-background">
           <Server className="size-4" aria-hidden />
         </span>
         <span className="flex-1 text-sm font-medium">

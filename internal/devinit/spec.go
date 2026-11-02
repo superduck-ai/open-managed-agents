@@ -26,6 +26,7 @@ const (
 
 // Spec is the strict dev-init.yaml contract.
 type Spec struct {
+	LocalOpenObserve bool
 	Version          int
 	FixedSecretsDir  string
 	OrganizationName string
@@ -191,9 +192,10 @@ func rejectUnknownNestedYAMLFields(node *yaml.Node, fieldType reflect.Type, path
 }
 
 type rawSpec struct {
-	Version         int    `yaml:"version"`
-	FixedSecretsDir string `yaml:"fixed_secrets_dir"`
-	Organization    struct {
+	LocalOpenObserve bool   `yaml:"local_openobserve"`
+	Version          int    `yaml:"version"`
+	FixedSecretsDir  string `yaml:"fixed_secrets_dir"`
+	Organization     struct {
 		Name string `yaml:"name"`
 	} `yaml:"organization"`
 	User struct {
@@ -223,6 +225,7 @@ func LoadSpec(path string) (Spec, error) {
 		return Spec{}, err
 	}
 	spec := Spec{
+		LocalOpenObserve: raw.LocalOpenObserve,
 		Version:          raw.Version,
 		FixedSecretsDir:  raw.FixedSecretsDir,
 		OrganizationName: raw.Organization.Name,

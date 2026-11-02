@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
 import { Input } from '../../../shared/ui/input';
-import { Label } from '../../../shared/ui/label';
+import { Field, FieldError, FieldLabel } from '../../../shared/ui/field';
 import { Textarea } from '../../../shared/ui/textarea';
 import { useI18n } from '../../../shared/i18n';
 
@@ -48,39 +48,47 @@ export function WebhookFields({
   const invalidUrl = url.length > 0 && !isValidWebhookUrl(url);
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-4">
-      <Label htmlFor={`${prefix}-url`}>{msg('webhooks.endpointUrl', 'Endpoint URL')}</Label>
-      <Input
-        ref={urlRef}
-        id={`${prefix}-url`}
-        value={url}
-        maxLength={2048}
-        placeholder="https://example.com/webhooks"
-        onChange={(event) => onUrl(event.target.value)}
-        aria-invalid={invalidUrl}
-        aria-describedby={invalidUrl ? `${prefix}-url-error` : undefined}
-      />
-      {invalidUrl ? (
-        <p id={`${prefix}-url-error`} role="alert" className="text-sm text-destructive">
-          {msg('webhooks.invalidUrl', 'Must be a valid HTTPS URL on port 443, without credentials or a fragment.')}
-        </p>
-      ) : null}
-      <Label htmlFor={`${prefix}-name`}>{msg('webhooks.nameOptional', 'Name (optional)')}</Label>
-      <Input
-        id={`${prefix}-name`}
-        value={name}
-        maxLength={255}
-        placeholder={msg('webhooks.namePlaceholder', 'My webhook endpoint')}
-        onChange={(event) => onName(event.target.value)}
-      />
-      <Label htmlFor={`${prefix}-description`}>{msg('webhooks.descriptionOptional', 'Description (optional)')}</Label>
-      <Textarea
-        id={`${prefix}-description`}
-        value={description}
-        maxLength={2048}
-        placeholder={msg('webhooks.descriptionPlaceholder', 'Receives session lifecycle events')}
-        className="min-h-[78px] resize-y"
-        onChange={(event) => onDescription(event.target.value)}
-      />
+      <Field className="gap-2">
+        <FieldLabel htmlFor={`${prefix}-url`}>{msg('webhooks.endpointUrl', 'Endpoint URL')}</FieldLabel>
+        <Input
+          ref={urlRef}
+          id={`${prefix}-url`}
+          value={url}
+          maxLength={2048}
+          placeholder="https://example.com/webhooks"
+          onChange={(event) => onUrl(event.target.value)}
+          aria-invalid={invalidUrl}
+          aria-describedby={invalidUrl ? `${prefix}-url-error` : undefined}
+        />
+        {invalidUrl ? (
+          <FieldError id={`${prefix}-url-error`} role="alert">
+            {msg('webhooks.invalidUrl', 'Must be a valid HTTPS URL on port 443, without credentials or a fragment.')}
+          </FieldError>
+        ) : null}
+      </Field>
+      <Field className="gap-2">
+        <FieldLabel htmlFor={`${prefix}-name`}>{msg('webhooks.nameOptional', 'Name (optional)')}</FieldLabel>
+        <Input
+          id={`${prefix}-name`}
+          value={name}
+          maxLength={255}
+          placeholder={msg('webhooks.namePlaceholder', 'My webhook endpoint')}
+          onChange={(event) => onName(event.target.value)}
+        />
+      </Field>
+      <Field className="gap-2">
+        <FieldLabel htmlFor={`${prefix}-description`}>
+          {msg('webhooks.descriptionOptional', 'Description (optional)')}
+        </FieldLabel>
+        <Textarea
+          id={`${prefix}-description`}
+          value={description}
+          maxLength={2048}
+          placeholder={msg('webhooks.descriptionPlaceholder', 'Receives session lifecycle events')}
+          className="min-h-[78px] resize-y"
+          onChange={(event) => onDescription(event.target.value)}
+        />
+      </Field>
     </fieldset>
   );
 }

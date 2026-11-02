@@ -1,5 +1,5 @@
-import { mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readdir } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -30,6 +30,74 @@ const filename =
 const outfile = join(root, "dist", filename);
 await mkdir(join(root, "dist"), { recursive: true });
 
+const platform =
+  process.platform === "linux" &&
+  !(process.report.getReport() as { header: { glibcVersionRuntime?: string } })
+    .header.glibcVersionRuntime
+    ? "linuxmusl"
+    : process.platform;
+const imagePackages = [
+  `sharp-${platform}-${process.arch}`,
+  `sharp-libvips-${platform}-${process.arch}`,
+];
+const imageFiles: { path: string; destination: string }[] = [];
+for (const name of imagePackages) {
+  const directory = dirname(require.resolve(`@img/${name}/package`));
+  const library = join(directory, "lib");
+  for (const entry of await readdir(library, {
+    recursive: true,
+    withFileTypes: true,
+  })) {
+    if (entry.isFile())
+      imageFiles.push({
+        path: join(entry.parentPath, entry.name),
+        destination: join(
+          "@img",
+          name,
+          "lib",
+          relative(library, join(entry.parentPath, entry.name)),
+        ),
+      });
+  }
+}
+const imageHash = new Bun.CryptoHasher("sha256");
+for (const file of imageFiles) {
+  imageHash.update(file.destination);
+  imageHash.update(await Bun.file(file.path).arrayBuffer());
+}
+const imageBinding = imageFiles.find((file) =>
+  file.destination.endsWith(".node"),
+);
+if (!imageBinding) throw new Error("Sharp native binding is missing");
+const imageLoader =
+  imageFiles
+    .map(
+      (file, index) =>
+        `import file${index} from ${JSON.stringify(file.path)} with { type: "file" };`,
+    )
+    .join("\n") +
+  `
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
+import { createRequire } from "node:module";
+const root = join(homedir(), ".cache", "oma-brain", "native", ${JSON.stringify(imageHash.digest("hex"))});
+${imageFiles
+  .map(
+    (file, index) => `{
+  const path = join(root, ${JSON.stringify(file.destination)});
+  if (!existsSync(path)) {
+    mkdirSync(dirname(path), { recursive: true });
+    const pending = path + "." + process.pid;
+    writeFileSync(pending, readFileSync(file${index}));
+    renameSync(pending, path);
+  }
+}`,
+  )
+  .join("\n")}
+module.exports = createRequire(import.meta.url)(join(root, ${JSON.stringify(imageBinding.destination)}));
+`;
+
 const result = await Bun.build({
   entrypoints: [join(root, "src/main.ts")],
   target: "bun",
@@ -48,6 +116,29 @@ const result = await Bun.build({
     {
       name: "bundle-dsh-llm-version",
       setup(build) {
+        build.onLoad({ filter: /[\\/]sharp\.cjs$/ }, () => ({
+          contents: imageLoader,
+          loader: "js",
+        }));
+        build.onLoad(
+          { filter: /[\\/]dsh-attachment-local[\\/]lib[\\/]index\.js$/ },
+          async ({ path }) => {
+            const contents = await Bun.file(path).text();
+            const dynamic =
+              'const requireSharp = createLazyRequire("sharp", import.meta.url);';
+            if (contents.split(dynamic).length !== 2)
+              throw new Error(
+                "DSH image loader changed; review the executable build adapter",
+              );
+            return {
+              contents: contents.replace(
+                dynamic,
+                `const requireSharp = () => require(${JSON.stringify(require.resolve("sharp"))});`,
+              ),
+              loader: "js",
+            };
+          },
+        );
         if (flockPath)
           build.onLoad(
             {

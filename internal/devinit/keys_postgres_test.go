@@ -93,32 +93,7 @@ func TestAPIKeyRecoveryPostgreSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		providers := ModelProvidersSpec{Providers: []ProviderSpec{
-			{Name: "first", APIBackend: "messages", BaseURL: "https://api.anthropic.com", APIKey: "first-key", ModelIDs: []string{"shared-model"}},
-			{Name: "second", Slug: "compatible", APIBackend: "chat_completions", BaseURL: "https://provider.example", APIKey: "second-key", ModelIDs: []string{"shared-model"}},
-		}}
-		for range 2 {
-			if err := reconcileProviders(t.Context(), database, vault, providers, &state, Options{}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		for _, workspace := range state.Workspaces {
-			items, err := database.ListLLMProviders(t.Context(), state.Organization.UUID, workspace.UUID)
-			if err != nil || len(items) != 2 {
-				t.Fatalf("providers: %+v, %v", items, err)
-			}
-			byName := map[string]string{}
-			for _, item := range items {
-				byName[item.Name] = item.Slug
-			}
-			if byName["first"] != "default" || byName["second"] != "compatible" {
-				t.Fatalf("provider slugs: %v", byName)
-			}
-		}
-		providers.Providers[1].Slug = "renamed"
-		if err := reconcileProviders(t.Context(), database, vault, providers, &state, Options{Update: true}); err == nil {
-			t.Fatal("immutable slug change was accepted")
-		}
+		testProviderRecovery(t, database, vault, layout, &state)
 	})
 	t.Run("default environments recover committed creation", func(t *testing.T) {
 		if err := SaveState(layout, state); err != nil {

@@ -1,4 +1,9 @@
-import { type I18nMsg, type EnvironmentEditValues, type ManagedEntitySection } from '../types';
+import {
+  type I18nMsg,
+  type EnvironmentEditValues,
+  type EnvironmentResourceValues,
+  type ManagedEntitySection,
+} from '../types';
 import { errorMessage } from '../utils';
 import { environmentConfigBody, environmentMetadataBody } from './model';
 
@@ -9,7 +14,55 @@ export type EnvironmentValidationErrors = {
   packages: Record<number, string>;
   metadataRows: Record<number, { key?: string; value?: string }>;
   metadata?: string;
+  initScript?: string;
+  environmentRows?: Record<number, { key?: string; value?: string }>;
+  resources?: Partial<Record<keyof EnvironmentResourceValues, string>>;
 };
+
+const environmentVariableName = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function environmentVariableKeyError(key: string, counts: Map<string, number>, msg: I18nMsg) {
+  if (!environmentVariableName.test(key)) {
+    return msg(
+      'environmentTemplate.validation.variableName',
+      'Use letters, digits and underscores, not starting with a digit.',
+    );
+  }
+  if ((counts.get(key) ?? 0) > 1) {
+    return msg('environmentTemplate.validation.variableDuplicate', 'Environment variable names must be unique.');
+  }
+  return undefined;
+}
+
+export function validateEnvironmentTemplate(values: EnvironmentEditValues, msg: I18nMsg) {
+  const errors: Pick<EnvironmentValidationErrors, 'initScript' | 'environmentRows' | 'resources'> = {
+    environmentRows: {},
+    resources: {},
+  };
+  if (utf8ByteLength(values.initScript.trim()) > 64 * 1024) {
+    errors.initScript = msg(
+      'environmentTemplate.validation.scriptLength',
+      'The init script must be 64 KiB or smaller.',
+    );
+  }
+  const counts = new Map<string, number>();
+  values.environmentRows.forEach((row) => counts.set(row.key.trim(), (counts.get(row.key.trim()) ?? 0) + 1));
+  values.environmentRows.forEach((row, index) => {
+    const key = row.key.trim();
+    if (!key && !row.value) return;
+    const error = key
+      ? environmentVariableKeyError(key, counts, msg)
+      : msg('environmentTemplate.validation.variableRequired', 'Enter a variable name.');
+    if (error) errors.environmentRows![index] = { key: error };
+  });
+  for (const name of ['cpu', 'memory', 'disk'] as const) {
+    const text = values.resources[name].trim();
+    if (text && !/^[1-9][0-9]*$/.test(text)) {
+      errors.resources![name] = msg('environmentTemplate.validation.resource', 'Enter a positive whole number.');
+    }
+  }
+  return errors;
+}
 
 const environmentErrorPatterns: Array<{ pattern: RegExp; key: string; fallback: string }> = [
   {
@@ -128,6 +181,7 @@ export function validateEnvironment(
 ): EnvironmentValidationErrors {
   const errors: EnvironmentValidationErrors = { packages: {}, metadataRows: {} };
   const initialMetadata = initialValues ? environmentMetadataBody(initialValues) : {};
+  Object.assign(errors, validateEnvironmentTemplate(values, msg));
   if (!values.name.trim()) {
     errors.name = msg('managedAgents.environments.validation.nameRequired', 'Enter an environment name.');
   }
@@ -191,7 +245,13 @@ export function validateEnvironment(
 
 export function hasEnvironmentValidationErrors(errors: EnvironmentValidationErrors) {
   return Boolean(
-    errors.name || errors.metadata || Object.keys(errors.packages).length || Object.keys(errors.metadataRows).length,
+    errors.name ||
+    errors.metadata ||
+    errors.initScript ||
+    Object.keys(errors.packages).length ||
+    Object.keys(errors.metadataRows).length ||
+    Object.keys(errors.environmentRows ?? {}).length ||
+    Object.keys(errors.resources ?? {}).length,
   );
 }
 

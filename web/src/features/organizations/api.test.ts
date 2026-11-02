@@ -8,6 +8,6 @@ test('网络及未知状态使用可重试文案，未知冲突不会误报已�
 });
 
 test('组织只有用户和管理员角色', () => {
-  expect(['admin', 'user'].map(organizationRoleLabel)).toEqual(['管理员', '用户']);
+  expect(['admin', 'user'].map((role) => organizationRoleLabel(role))).toEqual(['管理员', '用户']);
   expect(organizationRoleLabel()).toBe('成员');
 });

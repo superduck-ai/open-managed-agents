@@ -30,6 +30,8 @@ type environmentWorkMapperRow struct {
 	CreatedAt             time.Time  `db:"created_at"`
 	UpdatedAt             time.Time  `db:"updated_at"`
 	DeletedAt             *time.Time `db:"deleted_at"`
+	QueuedAt              *time.Time `db:"queued_at"`
+	TraceParent           *string    `db:"trace_parent"`
 }
 
 type environmentWorkWriteParams struct {
@@ -44,6 +46,7 @@ type environmentWorkWriteParams struct {
 	Secret                *string
 	State                 string
 	CreatedAt             time.Time
+	TraceParent           *string
 }
 
 type environmentWorkPageMapperParams struct {

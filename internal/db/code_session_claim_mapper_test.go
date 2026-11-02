@@ -22,6 +22,7 @@ func TestCodeSessionClaimMapperBuilderContracts(t *testing.T) {
 				"worker_transport}' = 'claim'", "worker_lease_expires_at + $1 * INTERVAL '1 microsecond'",
 				"s.status IN ('running', 'rescheduling')", "s.organization_uuid = cs.organization_uuid", "AND s.uuid IS NOT NULL",
 				"FOR UPDATE OF cs SKIP LOCKED",
+				"CASE WHEN cs.worker_claim_requested_at IS NOT NULL THEN cs.worker_claim_trace_parent END AS worker_claim_trace_parent",
 			},
 		}},
 		{"claim", mapperBuilderContract{
@@ -93,10 +94,13 @@ func TestCodeSessionClaimMapperBuilderContracts(t *testing.T) {
 		}},
 		{"request", mapperBuilderContract{
 			statement: codeSessionClaimMapperRequestStatement,
-			bound:     buildCodeSessionClaimMapperRequest(yourbatis.DialectPostgres, "org-uuid", "workspace-uuid", "cse_test"),
+			bound:     buildCodeSessionClaimMapperRequest(yourbatis.DialectPostgres, "org-uuid", "workspace-uuid", "cse_test", new("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")),
 			wantID:    "CodeSessionClaimMapper.Request", wantKind: yourbatis.StatementUpdate,
-			wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "externalID"},
-			wantSQLFragments:  []string{"COALESCE(worker_claim_requested_at, NOW())", "status = 'active'"},
+			wantArgumentNames: []string{"traceParent", "organizationUUID", "workspaceUUID", "externalID"},
+			wantSQLFragments: []string{
+				"worker_claim_trace_parent = CASE WHEN worker_claim_requested_at IS NULL THEN $1 ELSE worker_claim_trace_parent END",
+				"COALESCE(worker_claim_requested_at, NOW())", "status = 'active'",
+			},
 		}},
 	}
 	for _, test := range tests {

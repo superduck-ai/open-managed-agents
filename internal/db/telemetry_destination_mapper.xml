@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<mapper namespace="TelemetryDestinationMapper">
+    <sql id="columns">
+        uuid, external_id, organization_uuid, display_name, endpoint_url, traces_enabled, traces_endpoint_url,
+        traces_content_mode, traces_max_content_bytes, workspace_scope, header_names,
+        headers_ciphertext, headers_nonce, headers_wrapped_dek, headers_format_version, headers_key_provider, headers_key_version,
+        state, disabled_reason, failure_started_at, last_error, last_error_at, last_success_at, last_test_at, created_at, updated_at
+    </sql>
+
+    <select id="LockOrganization" result="scalar">
+        SELECT uuid FROM organizations WHERE uuid = #{organizationUUID} FOR UPDATE
+    </select>
+
+    <select id="CountActive" result="scalar">
+        SELECT COUNT(*) FROM telemetry_destinations
+        WHERE organization_uuid = #{organizationUUID} AND deleted_at IS NULL
+    </select>
+
+    <insert id="Insert" result="returning" resultType="telemetryDestinationRow">
+        INSERT INTO telemetry_destinations (
+            uuid, external_id, organization_uuid, display_name, endpoint_url, traces_enabled, traces_endpoint_url,
+            traces_content_mode, traces_max_content_bytes, workspace_scope, header_names,
+            headers_ciphertext, headers_nonce, headers_wrapped_dek, headers_format_version, headers_key_provider, headers_key_version,
+            state, disabled_reason, created_at, updated_at
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.DisplayName}, #{params.EndpointURL},
+            #{params.TracesEnabled}, #{params.TracesEndpointURL}, #{params.TracesContentMode}, #{params.TracesMaxContentBytes},
+            #{params.WorkspaceScope}, CAST(#{params.HeaderNames} AS jsonb),
+            #{params.HeadersCiphertext,sensitive=true}, #{params.HeadersNonce,sensitive=true}, #{params.HeadersWrappedDEK,sensitive=true},
+            #{params.HeadersFormatVersion}, #{params.HeadersKeyProvider}, #{params.HeadersKeyVersion},
+            #{params.State}, #{params.DisabledReason}, #{params.Now}, #{params.Now}
+        )
+        RETURNING <include refid="columns"/>
+    </insert>
+
+    <update id="Update" result="returning" resultType="telemetryDestinationRow">
+        UPDATE telemetry_destinations SET
+            display_name = #{params.DisplayName},
+            endpoint_url = #{params.EndpointURL},
+            traces_enabled = #{params.TracesEnabled},
+            traces_endpoint_url = #{params.TracesEndpointURL},
+            traces_content_mode = #{params.TracesContentMode},
+            traces_max_content_bytes = #{params.TracesMaxContentBytes},
+            workspace_scope = #{params.WorkspaceScope},
+            header_names = CAST(#{params.HeaderNames} AS jsonb),
+            headers_ciphertext = #{params.HeadersCiphertext,sensitive=true},
+            headers_nonce = #{params.HeadersNonce,sensitive=true},
+            headers_wrapped_dek = #{params.HeadersWrappedDEK,sensitive=true},
+            headers_format_version = #{params.HeadersFormatVersion},
+            headers_key_provider = #{params.HeadersKeyProvider},
+            headers_key_version = #{params.HeadersKeyVersion},
+            failure_started_at = CASE WHEN state = 'disabled' AND #{params.State} = 'enabled' THEN NULL ELSE failure_started_at END,
+            state = #{params.State},
+            disabled_reason = #{params.DisabledReason},
+            updated_at = #{params.Now}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+          AND external_id = #{params.ExternalID}
+          AND deleted_at IS NULL
+          AND updated_at = #{params.ExpectedUpdatedAt}
+        RETURNING <include refid="columns"/>
+    </update>
+
+    <select id="FindByExternalID" result="optional" resultType="telemetryDestinationRow">
+        SELECT <include refid="columns"/> FROM telemetry_destinations
+        WHERE organization_uuid = #{organizationUUID} AND external_id = #{externalID} AND deleted_at IS NULL
+    </select>
+
+    <select id="FindByUUID" result="optional" resultType="telemetryDestinationRow">
+        SELECT <include refid="columns"/> FROM telemetry_destinations
+        WHERE uuid = #{destinationUUID} AND deleted_at IS NULL
+    </select>
+
+    <select id="ListPage" resultType="telemetryDestinationRow">
+        SELECT <include refid="columns"/> FROM telemetry_destinations d
+        WHERE d.organization_uuid = #{organizationUUID} AND d.deleted_at IS NULL
+        <if test="len(workspaceUUIDs) &gt; 0">
+            AND (d.workspace_scope = 'all'
+              OR (d.workspace_scope = 'include' AND EXISTS (
+                    SELECT 1 FROM telemetry_destination_workspaces w
+                    WHERE w.destination_uuid = d.uuid AND w.organization_uuid = d.organization_uuid AND w.workspace_uuid IN
+                    <foreach collection="workspaceUUIDs" item="workspaceUUID" open="(" separator="," close=")">#{workspaceUUID}</foreach>))
+              OR (d.workspace_scope = 'exclude' AND EXISTS (
+                    SELECT 1 FROM unnest(ARRAY[<foreach collection="workspaceUUIDs" item="candidateUUID" separator=",">CAST(#{candidateUUID} AS uuid)</foreach>]) AS candidate(workspace_uuid)
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM telemetry_destination_workspaces w
+                        WHERE w.destination_uuid = d.uuid AND w.organization_uuid = d.organization_uuid AND w.workspace_uuid = candidate.workspace_uuid))))
+        </if>
+        ORDER BY d.created_at ASC, d.uuid ASC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="ListWorkspaces" resultType="telemetryDestinationWorkspaceRow">
+        SELECT destination_uuid, workspace_uuid FROM telemetry_destination_workspaces
+        WHERE organization_uuid = #{organizationUUID} AND destination_uuid IN
+        <foreach collection="destinationUUIDs" item="destinationUUID" open="(" separator="," close=")">#{destinationUUID}</foreach>
+        ORDER BY created_at ASC, workspace_uuid ASC
+    </select>
+
+    <delete id="DeleteWorkspaces" result="exec">
+        DELETE FROM telemetry_destination_workspaces
+        WHERE organization_uuid = #{organizationUUID} AND destination_uuid = #{destinationUUID}
+    </delete>
+
+    <insert id="InsertWorkspace" result="exec">
+        INSERT INTO telemetry_destination_workspaces (destination_uuid, organization_uuid, workspace_uuid)
+        VALUES (#{destinationUUID}, #{organizationUUID}, #{workspaceUUID})
+        ON CONFLICT (destination_uuid, workspace_uuid) DO NOTHING
+    </insert>
+
+    <update id="SoftDelete" result="rows">
+        UPDATE telemetry_destinations SET deleted_at = #{now}, updated_at = #{now},
+            headers_ciphertext = NULL, headers_nonce = NULL, headers_wrapped_dek = NULL,
+            headers_format_version = NULL, headers_key_provider = NULL, headers_key_version = NULL
+        WHERE organization_uuid = #{organizationUUID} AND external_id = #{externalID} AND deleted_at IS NULL
+    </update>
+
+    <select id="ListActiveForWorkspace" resultType="telemetryDestinationRow">
+        SELECT <include refid="columns"/> FROM telemetry_destinations d
+        WHERE d.organization_uuid = #{organizationUUID}
+          AND d.deleted_at IS NULL
+          AND d.state = 'enabled'
+          AND d.traces_enabled
+          AND (d.workspace_scope = 'all'
+            OR (d.workspace_scope = 'include' AND EXISTS (
+                SELECT 1 FROM telemetry_destination_workspaces w
+                WHERE w.destination_uuid = d.uuid AND w.organization_uuid = d.organization_uuid AND w.workspace_uuid = #{workspaceUUID}))
+            OR (d.workspace_scope = 'exclude' AND NOT EXISTS (
+                SELECT 1 FROM telemetry_destination_workspaces w
+                WHERE w.destination_uuid = d.uuid AND w.organization_uuid = d.organization_uuid AND w.workspace_uuid = #{workspaceUUID})))
+        ORDER BY d.created_at ASC, d.uuid ASC
+    </select>
+
+    <update id="MarkTested" result="rows">
+        UPDATE telemetry_destinations SET last_test_at = #{now}
+        WHERE organization_uuid = #{organizationUUID} AND external_id = #{externalID} AND deleted_at IS NULL
+          AND (last_test_at IS NULL OR last_test_at &lt;= #{notAfter})
+    </update>
+
+    <update id="RecordDeliverySuccess" result="exec">
+        UPDATE telemetry_destinations
+        SET last_success_at = #{now}, failure_started_at = NULL
+        WHERE uuid = #{destinationUUID} AND deleted_at IS NULL
+    </update>
+
+    <select id="RecordDeliveryFailure" result="scalar">
+        WITH target AS (
+            SELECT uuid, COALESCE(failure_started_at, #{params.Now}) AS started_at
+            FROM telemetry_destinations
+            WHERE uuid = #{params.DestinationUUID} AND deleted_at IS NULL AND state = 'enabled'
+            FOR UPDATE
+        ), decision AS (
+            SELECT uuid, started_at,
+                CASE WHEN #{params.ImmediateReason} != '' THEN #{params.ImmediateReason}
+                     WHEN #{params.Now} &gt;= started_at + make_interval(secs =&gt; #{params.DisableAfterSeconds}) THEN 'sustained_failure'
+                     ELSE '' END AS reason
+            FROM target
+        ), updated AS (
+            UPDATE telemetry_destinations d SET
+                last_error = #{params.Error},
+                last_error_at = #{params.Now},
+                failure_started_at = decision.started_at,
+                state = CASE WHEN decision.reason != '' THEN 'disabled' ELSE d.state END,
+                disabled_reason = CASE WHEN decision.reason != '' THEN decision.reason ELSE d.disabled_reason END,
+                updated_at = CASE WHEN decision.reason != '' THEN #{params.Now} ELSE d.updated_at END
+            FROM decision WHERE d.uuid = decision.uuid
+            RETURNING d.state
+        )
+        SELECT COALESCE((SELECT state = 'disabled' FROM updated), false)
+    </select>
+
+    <select id="ResolveWorkspaces" resultType="telemetryWorkspaceIdentityRow">
+        SELECT uuid, external_id FROM workspaces
+        WHERE organization_uuid = #{organizationUUID} AND archived_at IS NULL AND external_id IN
+        <foreach collection="externalIDs" item="externalID" open="(" separator="," close=")">#{externalID}</foreach>
+    </select>
+
+    <select id="WorkspaceIdentities" resultType="telemetryWorkspaceIdentityRow">
+        SELECT uuid, external_id FROM workspaces
+        WHERE organization_uuid = #{organizationUUID} AND archived_at IS NULL AND uuid IN
+        <foreach collection="workspaceUUIDs" item="workspaceUUID" open="(" separator="," close=")">#{workspaceUUID}</foreach>
+    </select>
+</mapper>

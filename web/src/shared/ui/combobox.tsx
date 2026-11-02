@@ -37,7 +37,7 @@ function ComboboxInput({
         {...props}
       />
       {showTrigger ? (
-        <InputGroupAddon align="inline-end">
+        <InputGroupAddon align="inline-end" className="py-0 pr-1 has-[>button]:mr-0">
           <InputGroupButton
             size="icon-xs"
             variant="ghost"
@@ -57,7 +57,7 @@ function ComboboxContent({
   className,
   children,
   side = 'bottom',
-  sideOffset = 4,
+  sideOffset = 6,
   align = 'start',
   alignOffset = 0,
   ...props
@@ -75,7 +75,7 @@ function ComboboxContent({
         <ComboboxPrimitive.Popup
           data-slot="combobox-content"
           className={cn(
-            'relative isolate z-50 w-(--anchor-width) min-w-48 origin-(--transform-origin) overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-hidden duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+            'relative isolate z-50 w-(--anchor-width) min-w-48 origin-(--transform-origin) overflow-hidden rounded-[calc(var(--radius-md)+0.25rem)] bg-popover text-popover-foreground shadow-md ring-[0.5px] ring-border outline-hidden ',
             className,
           )}
           {...props}
@@ -91,7 +91,7 @@ function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
   return (
     <ComboboxPrimitive.List
       data-slot="combobox-list"
-      className={cn('max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto p-1', className)}
+      className={cn('subtle-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto p-1', className)}
       {...props}
     />
   );

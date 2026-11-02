@@ -1329,16 +1329,16 @@ func clearTestLLMProviders(t *testing.T, app *testApp) {
 			t.Fatalf("delete test LLM provider %s: %v", provider.ExternalID, err)
 		}
 	}
-	organization, err := app.db.GetOrganizationLLMProvider(context.Background(), ids.OrganizationUUID)
-	if errors.Is(err, db.ErrNotFound) {
-		return
-	}
+	organizations, err := app.db.ListLLMProviders(t.Context(), ids.OrganizationUUID, "")
 	if err != nil {
-		t.Fatalf("load organization LLM provider: %v", err)
+		t.Fatalf("list organization LLM providers: %v", err)
 	}
-	if err := app.db.DeleteLLMProvider(context.Background(), ids.OrganizationUUID, "", organization.ExternalID); err != nil {
-		t.Fatalf("delete organization LLM provider: %v", err)
+	for _, organization := range organizations {
+		if err := app.db.DeleteLLMProvider(t.Context(), ids.OrganizationUUID, "", organization.ExternalID); err != nil {
+			t.Fatalf("delete organization LLM provider: %v", err)
+		}
 	}
+
 }
 
 func openTestPool(t *testing.T, cfg config.Config) *pgxpool.Pool {

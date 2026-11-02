@@ -337,24 +337,14 @@ func marshalSessionCaseFiles(refs []sessionCaseFileRef) (json.RawMessage, error)
 }
 
 func sessionCaseFileCandidate(resource db.SessionResource) (sessionCaseFileRef, bool, bool) {
-	if resource.DeletedAt != nil || resource.ResourceType != sessioncontract.FileResourceType {
+	if resource.DeletedAt != nil || resource.ResourceType != sessioncontract.FileResourceType || resource.File == nil {
 		return sessionCaseFileRef{}, false, false
 	}
-	var payload struct {
-		FileID    string `json:"file_id"`
-		MountPath string `json:"mount_path"`
-		Name      string `json:"name"`
-	}
-	if len(resource.Payload) > 0 && json.Unmarshal(resource.Payload, &payload) != nil {
-		return sessionCaseFileRef{}, false, false
-	}
-	mountPath := strings.TrimSpace(payload.MountPath)
-	output := sessionCaseOutputPath(resource.Path) || sessionCaseOutputPath(mountPath)
-	fileID := strings.TrimSpace(payload.FileID)
-	if fileID == "" {
-		fileID = strings.TrimSpace(resource.FileExternalID)
-	}
-	name := firstSessionFileName(strings.TrimSpace(payload.Name), mountPath, strings.TrimSpace(resource.Path), fileID)
+	mountPath := strings.TrimSpace(resource.File.MountPath)
+	namespacePath := strings.TrimSpace(resource.File.NamespacePath)
+	output := sessionCaseOutputPath(namespacePath) || sessionCaseOutputPath(mountPath)
+	fileID := strings.TrimSpace(resource.File.FileID)
+	name := firstSessionFileName(mountPath, namespacePath, fileID)
 	if name == "" {
 		return sessionCaseFileRef{}, false, false
 	}

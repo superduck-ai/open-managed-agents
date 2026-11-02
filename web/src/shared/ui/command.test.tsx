@@ -19,7 +19,7 @@ describe('CommandInput', () => {
 
     expect(input.dataset.slot).toBe('command-input');
     expect(wrapper?.dataset.slot).toBe('command-input-wrapper');
-    expect(wrapper?.className).toContain('has-[[data-slot=command-input]:focus-visible]:ring-2');
+    expect(wrapper?.className).toContain('has-[[data-slot=command-input]:focus-visible]:ring-inset');
   });
 
   test('keeps command focus on its wrapper and scopes native search cancel suppression', async () => {

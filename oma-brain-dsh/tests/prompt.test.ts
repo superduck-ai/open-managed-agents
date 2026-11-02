@@ -134,3 +134,16 @@ test("predefined-only prompt prohibits inline agents", () => {
   expect(prompt).toContain("You cannot define inline agents");
   expect(prompt).toContain("agent_name");
 });
+
+for (const mode of ["root", "child"]) {
+  test(`${mode} prompt distinguishes empty skills from an absent catalog`, () => {
+    const render = (skills: ReturnType<typeof launch>["skills"] | undefined) => {
+      const config = { ...launch(), skills };
+      return mode === "root" ? rootSystemPrompt(config) : childSystemPrompt(config, thread);
+    };
+    expect(render([])).toContain("# Skills\n\nAvailable skills: []");
+    expect(render(undefined)).not.toContain("# Skills");
+    expect(render(launch().skills)).toContain("- pdf: Read PDF files");
+    expect(render(launch().skills)).not.toContain("Available skills: []");
+  });
+}

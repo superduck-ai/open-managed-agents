@@ -109,13 +109,13 @@ export function SubagentsEditor({
                     'managedAgents.agents.createDialog.searchAgents',
                     'Search agents by name or exact ID',
                   )}
-                  emptyLabel={msg('managedAgents.agents.createDialog.noAgents', 'No agents yet.')}
+                  emptyLabel={msg('managedAgents.agents.createDialog.noAgents', 'No agents found.')}
                   options={(agents.data ?? [])
                     .filter((agent) => !selected.some((entry) => entry.type === 'agent' && entry.id === agent.id))
                     .map((agent) => ({
                       id: agent.id,
                       label: agent.name,
-                      description: `${agent.id} · v${agent.version}`,
+                      description: `${agent.id}  v${agent.version}`,
                     }))}
                   selectedIds={[]}
                   searchValue={search}

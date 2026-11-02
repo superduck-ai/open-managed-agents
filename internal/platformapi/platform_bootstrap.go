@@ -14,11 +14,15 @@ type bootstrapAccountStore interface {
 	ListBootstrapOrganizationsByEmail(ctx context.Context, email string) ([]UserOrganizationRecord, error)
 }
 
-func handleBootstrap(store OrganizationStore) http.HandlerFunc {
+type PlatformAccessResolver func(context.Context, platformsession.Session) (PlatformAccess, error)
+
+func handleBootstrap(store OrganizationStore, resolveAccess PlatformAccessResolver) http.HandlerFunc {
 	bootstrapStore, _ := store.(bootstrapAccountStore)
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		orgUUID := ""
 		var account *Account
+		platformAccess := PlatformAccess{Permissions: []string{}}
 		if session, ok := platformsession.SessionFromContext(r.Context()); ok && bootstrapStore != nil {
 			built, selectedOrgUUID, err := buildBootstrapAccount(r.Context(), bootstrapStore, session)
 			if err != nil {
@@ -27,8 +31,16 @@ func handleBootstrap(store OrganizationStore) http.HandlerFunc {
 			}
 			account = &built
 			orgUUID = selectedOrgUUID
+			if resolveAccess != nil {
+				platformAccess, err = resolveAccess(r.Context(), session)
+				if err != nil {
+					platformAccessUnavailable(w)
+					return
+				}
+			}
 		}
 		response := buildBootstrapCompatibilityResponse(account, orgUUID != "", bootstrapGrowthbookHashingAlgorithm(r))
+		response.PlatformAccess = platformAccess
 		if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
 			response.CurrentUserAccess = buildCurrentUserAccess(principal.WorkspaceAccess)
 			if account != nil {

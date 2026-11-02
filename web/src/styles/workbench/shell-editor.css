@@ -57,10 +57,6 @@
   line-height: 16px;
 }
 
-.workbench-save-separator {
-  color: var(--muted-foreground);
-}
-
 .workbench-save-link {
   color: var(--muted-foreground);
   text-decoration-line: underline;
@@ -100,7 +96,7 @@
   width: 32px;
   height: 32px;
   place-items: center;
-  border: 1px solid var(--border);
+  border: 0.5px solid var(--border);
   border-radius: 6px;
   background: transparent;
   color: var(--foreground);
@@ -113,7 +109,7 @@
 
 .workbench-new-prompt-button,
 .workbench-new-prompt-button:hover {
-  color: #d97757;
+  color: var(--orange-11);
 }
 
 .workbench-mini-button:disabled {
@@ -139,6 +135,7 @@
 
 .workbench-toolbar {
   display: flex;
+  flex-wrap: wrap;
   width: 100%;
   max-width: 661px;
   min-height: 32px;
@@ -154,7 +151,7 @@
   height: 32px;
   align-items: center;
   gap: 8px;
-  border: 1px solid transparent;
+  border: 0.5px solid transparent;
   border-radius: 8px;
   padding: 0 8px;
   color: var(--muted-foreground);
@@ -221,7 +218,7 @@
   border-radius: 4px;
   background: var(--accent);
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 16px;
 }
 
@@ -249,11 +246,6 @@
   cursor: pointer;
 }
 
-.workbench-system-card[aria-label='Click to open system prompt']:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
-}
-
 .workbench-system-card.is-open {
   min-height: 78px;
 }
@@ -267,7 +259,7 @@
 }
 
 .workbench-system-expanded-title {
-  color: rgb(195, 194, 183);
+  color: var(--foreground);
   font-size: 14px;
   font-weight: var(--workbench-field-weight);
   line-height: 20px;
@@ -281,7 +273,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 0 12px;
-  color: rgb(137, 135, 129);
+  color: var(--muted-foreground);
   font-size: 14px;
   line-height: 20px;
   text-align: left;
@@ -300,14 +292,14 @@
 
 .workbench-system-copy strong {
   flex-shrink: 0;
-  color: rgb(195, 194, 183);
+  color: var(--foreground);
   font-weight: 400;
 }
 
 .workbench-system-meta {
   min-width: 0;
   overflow: hidden;
-  color: rgb(137, 135, 129);
+  color: var(--muted-foreground);
   text-overflow: ellipsis;
 }
 
@@ -357,7 +349,7 @@
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  color: rgb(137, 135, 129);
+  color: var(--muted-foreground);
 }
 
 .workbench-system-icon-button {
@@ -372,7 +364,7 @@
 
 .workbench-system-icon-button:hover,
 .workbench-system-icon-button:focus-visible {
-  color: rgb(195, 194, 183);
+  color: var(--foreground);
 }
 
 .workbench-message-header {
@@ -411,8 +403,8 @@
 .workbench-attachment-trigger:hover,
 .workbench-attachment-trigger:focus-visible,
 .workbench-attachment-trigger.is-open {
-  background: rgb(10, 10, 9);
-  color: rgb(244, 241, 234);
+  background: var(--accent);
+  color: var(--foreground);
   outline: none;
 }
 
@@ -537,7 +529,7 @@
 }
 
 .workbench-message-input-wrap.has-variable-layer .workbench-message-textarea::selection {
-  background: rgba(237, 136, 129, 0.28);
+  background: var(--accent);
   color: transparent;
 }
 
@@ -559,12 +551,12 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #efa09a;
+  color: var(--syntax-keyword);
   vertical-align: baseline;
 }
 
 .workbench-message-variable-name {
-  border-bottom: 1px dotted #f08c83;
+  border-bottom: 0.5px dotted currentColor;
   line-height: 18px;
 }
 
@@ -575,16 +567,16 @@
   height: 22px;
   place-items: center;
   transform: translateY(3px);
-  border: 0.5px solid rgba(255, 255, 255, 0.18);
+  border: 0.5px solid var(--input);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--secondary);
   color: var(--muted-foreground);
 }
 
 .workbench-message-variable-token button:hover,
 .workbench-message-variable-token button:focus-visible {
-  border-color: rgba(255, 255, 255, 0.3);
-  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--ring);
+  background: var(--accent);
   color: var(--foreground);
 }
 
@@ -602,7 +594,7 @@
   gap: 8px;
   border: 0.5px solid var(--border);
   border-radius: 5px;
-  background: rgba(25, 25, 23, 0.38);
+  background: var(--secondary);
   padding: 4px 8px 4px 6px;
   color: var(--foreground);
   font-size: 12px;
@@ -615,10 +607,10 @@
   height: 24px;
   align-items: center;
   justify-content: center;
-  border: 0.5px solid rgba(255, 255, 255, 0.16);
+  border: 0.5px solid var(--border);
   border-radius: 4px;
-  background: rgba(244, 241, 234, 0.1);
-  color: rgba(244, 241, 234, 0.72);
+  background: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .workbench-message-attachment-name {
@@ -626,9 +618,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: rgb(244, 241, 234);
-  font-size: 13px;
-  line-height: 18px;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .workbench-message-attachment-actions {
@@ -644,12 +636,12 @@
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  color: rgba(244, 241, 234, 0.58);
+  color: var(--muted-foreground);
 }
 
 .workbench-message-attachment-actions button:hover,
 .workbench-message-attachment-actions button:focus-visible {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--accent);
   color: var(--foreground);
   outline: none;
 }
@@ -672,7 +664,7 @@
 }
 
 .workbench-message-card.is-drag-over {
-  border-color: rgba(244, 241, 234, 0.32);
+  border-color: var(--ring);
 }
 
 .workbench-message-card:focus-within {
@@ -689,18 +681,18 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px dashed rgba(244, 241, 234, 0.36);
+  border: 0.5px dashed var(--ring);
   border-radius: 6px;
-  background: rgba(34, 34, 31, 0.92);
-  color: rgba(244, 241, 234, 0.92);
-  font-size: 13px;
+  background: var(--popover);
+  color: var(--foreground);
+  font-size: 14px;
   font-weight: 500;
-  line-height: 18px;
+  line-height: 20px;
   text-align: center;
 }
 
 .workbench-message-drop-target small {
-  color: rgba(244, 241, 234, 0.58);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 400;
   line-height: 16px;
@@ -722,4 +714,33 @@
   flex-wrap: wrap;
   gap: 22px;
   padding: 8px 0 0;
+}
+
+@media (width < 1024px) {
+  .workbench-shell {
+    height: auto;
+    min-height: 100dvh;
+    margin-inline: -24px;
+    overflow: visible;
+  }
+
+  .workbench-view-switcher {
+    position: static;
+    margin: 0 20px 16px;
+    transform: none;
+  }
+
+  .workbench-header-actions {
+    padding-top: 0;
+    padding-bottom: 12px;
+  }
+
+  .workbench-grid {
+    height: auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workbench-main {
+    overflow: visible;
+  }
 }

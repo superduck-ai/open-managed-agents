@@ -30,7 +30,7 @@ export function BudgetField({
         value={values.budgetUsd}
         placeholder={msg('managedAgents.budget.placeholder', 'e.g. 25')}
         aria-invalid={invalid || undefined}
-        className="managed-resource-field mt-2 h-10 border-border bg-secondary px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:shadow-none focus-visible:shadow-none focus-visible:ring-0"
+        className="mt-2 h-10"
         onChange={(event) => onChange({ budgetUsd: event.target.value, budgetChanged: true })}
       />
       <p className={`mt-1.5 text-xs ${invalid ? 'text-destructive' : 'text-muted-foreground'}`}>

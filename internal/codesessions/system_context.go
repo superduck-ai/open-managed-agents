@@ -78,7 +78,7 @@ func workerPayloadWithSystemContext(payload json.RawMessage, contexts []sessionS
 }
 
 func (s *Service) publicWorkerPayload(ctx context.Context, codeSession db.CodeSession, event db.SessionEvent) (json.RawMessage, error) {
-	event, err := s.materializeMessageAttachments(ctx, event)
+	event, err := s.materializeMessageAttachments(ctx, event, usesBrainClaimTransport(codeSession))
 	if err != nil {
 		return nil, err
 	}

@@ -57,7 +57,7 @@ func TestFileMapperBuildsPostgresArguments(t *testing.T) {
 			name:         "get visible file",
 			bound:        buildFileMapperGetFile(yourbatis.DialectPostgres, workspaceUUID, file.ExternalID),
 			wantArgCount: 2,
-			wantClauses:  []string{"owner.payload IS NULL", "'/outputs/'", "session.uuid = owner.session_uuid", "session.workspace_uuid = owner.workspace_uuid", "session.deleted_at IS NULL"},
+			wantClauses:  []string{"'/outputs/'"},
 		},
 		{
 			name:         "list scoped files",
@@ -212,7 +212,11 @@ func TestFileMapperOwnedBuilderContracts(t *testing.T) {
 				wantID:            "FileMapper.GetFileForShare",
 				wantKind:          yourbatis.StatementSelect,
 				wantArgumentNames: []string{"workspaceUUID", "fileExternalID"},
-				wantSQLFragments:  []string{"workspace_uuid = $1", "external_id = $2", "FOR SHARE"},
+				wantSQLFragments: []string{
+					"workspace_uuid = $1", "external_id = $2",
+					"FOR SHARE",
+				},
+				wantSQLAbsent: []string{"owner.deleted_at IS NULL"},
 			},
 		},
 		{
@@ -250,7 +254,7 @@ func TestFileMapperOwnedBuilderContracts(t *testing.T) {
 				wantID:            "FileMapper.RetireOwnedFile",
 				wantKind:          yourbatis.StatementUpdate,
 				wantArgumentNames: []string{"params.RetiredAt", "params.WorkspaceUUID", "params.ResourceUUID", "params.WorkspaceUUID"},
-				wantSQLFragments:  []string{"UPDATE files", "deleted_at = COALESCE(file.deleted_at, $1)", "resource.payload IS NULL"},
+				wantSQLFragments:  []string{"UPDATE files", "deleted_at = COALESCE(file.deleted_at, $1)", "resource.file_ownership = 'owned'"},
 			},
 		},
 		{
@@ -312,7 +316,7 @@ func TestFileMapperFileAndSkillBuilderContracts(t *testing.T) {
 			wantID:            "FileMapper.GetFile",
 			wantKind:          yourbatis.StatementSelect,
 			wantArgumentNames: []string{"workspaceUUID", "fileExternalID"},
-			wantSQLFragments:  []string{"workspace_uuid = $1", "external_id = $2", "owner.payload IS NULL"},
+			wantSQLFragments:  []string{"workspace_uuid = $1", "external_id = $2", "owner.file_ownership = 'owned'", "owner.resource_type = 'skill_archive'"},
 		}},
 		{name: "get session attachment by path", contract: mapperBuilderContract{
 			statement:         fileMapperGetSessionAttachmentFileByPathStatement,
@@ -320,7 +324,7 @@ func TestFileMapperFileAndSkillBuilderContracts(t *testing.T) {
 			wantID:            "FileMapper.GetSessionAttachmentFileByPath",
 			wantKind:          yourbatis.StatementSelect,
 			wantArgumentNames: []string{"workspaceUUID", "sessionUUID", "entryPath"},
-			wantSQLFragments:  []string{"file.workspace_uuid = $1", "resource.session_uuid = $2", "resource.payload IS NULL", "'/uploads/message_attachments/'", "resource.path = $3"},
+			wantSQLFragments:  []string{"file.workspace_uuid = $1", "resource.session_uuid = $2", "resource.file_ownership = 'owned'", "'/uploads/message_attachments/'", "resource.path = $3"},
 		}},
 		{name: "get session attachment by id", contract: mapperBuilderContract{
 			statement:         fileMapperGetSessionAttachmentFileStatement,
@@ -595,7 +599,7 @@ func TestSessionFileCatalogRequiresInputInstanceReferences(t *testing.T) {
 			if !strings.Contains(bound.SQL, "resource.source_file_uuid IS NOT NULL") {
 				t.Fatalf("session catalog does not distinguish input instances: %s", bound.SQL)
 			}
-			for _, clause := range []string{"resource.workspace_uuid = $1", "resource.session_external_id = $2", "resource.payload IS NULL", "'/outputs/'"} {
+			for _, clause := range []string{"resource.workspace_uuid = $1", "resource.session_external_id = $2", "resource.file_ownership = 'owned'", "'/outputs/'"} {
 				if !strings.Contains(bound.SQL, clause) {
 					t.Fatalf("session catalog missing %q: %s", clause, bound.SQL)
 				}

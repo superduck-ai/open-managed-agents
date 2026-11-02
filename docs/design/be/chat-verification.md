@@ -249,3 +249,12 @@ CI 进一步要求该提交等于 PR base SHA。编排单测覆盖配置隔离�
 证据流。stderr 仅用于本地诊断，不加入 CI 上传产物，也不替代测试退出码与阶段断言。
 
 基线夹具的 Go overlay 仅替换对应 Mapper 中基线已有的 SQL builder 与行扫描函数，保留当前生成接口实现及新增方法。这样旧数据库沿用原 SQL，当前夹具仍可编译；不能整文件替换生成 Mapper，否则新增接口方法（例如 `SetBudgetReached`）会造成基线在编译阶段失败。overlay 不修改基线源码、迁移或被测二进制，也不放宽负载断言与性能阈值。
+
+
+Session 固定目录的基线写入单独适配：`session_resource_mapper` 仅替换
+`buildSessionResourceMapperInsertDirectory`，保留当前 Resource scanner 和其他资源 SQL。
+当前 `DB.CreateSession` 即使没有附加资源也会创建五个固定目录；旧基线 schema 尚无
+`file_ownership`，因此不能使用候选版本的目录 INSERT。指定 builder 在当前或基线生成文件中
+缺失，或文件路径不可读时，夹具准备直接失败，不静默回退。该适配不向基线数据库应用候选迁移。
+非性能兼容烟测只调用 `DB.CreateSession`，核对固定目录、stopped work 与旧 schema；
+它不启动 Worker、不采样，也不替代 CI 的完整基线测量和候选比较。

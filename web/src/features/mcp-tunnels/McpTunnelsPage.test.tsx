@@ -128,8 +128,8 @@ describe('MCP tunnels list page', () => {
     expect(await screen.findByText('Private tools')).toBeTruthy();
 
     fireEvent.change(search, { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Status Active' }));
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'All' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Status Active' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'All' }));
     expect(await screen.findByText('Archived tools')).toBeTruthy();
     expect(api.requests.some((request) => request.url.includes('include_archived=true'))).toBe(true);
   });

@@ -102,7 +102,7 @@ function ChartHoverCard({
   return (
     <div
       className={cn(
-        'flex w-max max-w-[min(22rem,100%)] min-w-0 flex-col gap-1.5 overflow-hidden rounded-lg border border-border/50 bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md',
+        'flex w-max max-w-[min(22rem,100%)] min-w-0 flex-col gap-1.5 overflow-hidden rounded-lg border-[0.5px] border-border/50 bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md',
         className,
       )}
       style={style}

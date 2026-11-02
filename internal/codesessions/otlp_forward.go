@@ -21,7 +21,7 @@ const maxOpenObserveResponseBytes = 1 << 20
 // 目前唯一实现是 openObserveOTLPForwarder；接入新后端（如 otel-collector）时
 // 增加实现并在 newOTLPSink 按 observability.backend 装配即可，ingress 不感知后端。
 type otlpSink interface {
-	forward(ctx context.Context, signal string, protocol otlpProtocol, body []byte) (otlpSinkResponse, error)
+	forward(ctx context.Context, protocol otlpProtocol, body []byte) (otlpSinkResponse, error)
 }
 
 // openObserveOTLPForwarder 把 OTLP 请求转发到 OpenObserve。其中 OpenObserve
@@ -33,7 +33,6 @@ type openObserveOTLPForwarder struct {
 	baseURL      string
 	organization string
 	logsStream   string
-	tracesStream string
 	username     string
 	password     string
 	client       *http.Client
@@ -78,7 +77,6 @@ func newOpenObserveOTLPForwarder(cfg config.ObservabilityConfig) *openObserveOTL
 		baseURL:      strings.TrimRight(strings.TrimSpace(cfg.OpenObserve.BaseURL), "/"),
 		organization: strings.TrimSpace(cfg.OpenObserve.Organization),
 		logsStream:   strings.TrimSpace(cfg.OpenObserve.LogsStream),
-		tracesStream: strings.TrimSpace(cfg.OpenObserve.TracesStream),
 		username:     strings.TrimSpace(cfg.OpenObserve.Ingestion.Username),
 		password:     cfg.OpenObserve.Ingestion.Password,
 		client: &http.Client{
@@ -90,11 +88,11 @@ func newOpenObserveOTLPForwarder(cfg config.ObservabilityConfig) *openObserveOTL
 	}
 }
 
-func (f *openObserveOTLPForwarder) forward(ctx context.Context, signal string, protocol otlpProtocol, body []byte) (otlpSinkResponse, error) {
+func (f *openObserveOTLPForwarder) forward(ctx context.Context, protocol otlpProtocol, body []byte) (otlpSinkResponse, error) {
 	if f == nil || !f.enabled {
 		return otlpSinkResponse{}, &otlpSinkError{statusCode: http.StatusServiceUnavailable, cause: errors.New("agent observability is not enabled")}
 	}
-	endpoint, err := f.endpoint(signal)
+	endpoint, err := f.endpoint()
 	if err != nil {
 		return otlpSinkResponse{}, &otlpSinkError{statusCode: http.StatusServiceUnavailable, cause: err}
 	}
@@ -105,7 +103,7 @@ func (f *openObserveOTLPForwarder) forward(ctx context.Context, signal string, p
 	contentType := otlpContentType(protocol)
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Accept", contentType)
-	if stream := f.streamForSignal(signal); stream != "" {
+	if stream := f.logsStream; stream != "" {
 		request.Header.Set("stream-name", stream)
 	}
 	request.SetBasicAuth(f.username, f.password)
@@ -139,33 +137,15 @@ func (f *openObserveOTLPForwarder) forward(ctx context.Context, signal string, p
 	return otlpSinkResponse{body: responseBody}, nil
 }
 
-func (f *openObserveOTLPForwarder) endpoint(signal string) (string, error) {
+func (f *openObserveOTLPForwarder) endpoint() (string, error) {
 	parsed, err := url.Parse(f.baseURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", errors.New("invalid OpenObserve base URL")
 	}
-	if signal != "metrics" && signal != "logs" && signal != "traces" {
-		return "", fmt.Errorf("unsupported OTLP signal %q", signal)
-	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/api/" + url.PathEscape(f.organization) + "/v1/" + signal
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/api/" + url.PathEscape(f.organization) + "/v1/logs"
 	return parsed.String(), nil
 }
 
-func (f *openObserveOTLPForwarder) streamForSignal(signal string) string {
-	switch signal {
-	case "logs":
-		return f.logsStream
-	case "traces":
-		return f.tracesStream
-	default:
-		return ""
-	}
-}
-
-// normalizeOTLPSinkStatus 把上游状态码翻译成对 worker 安全的状态码。
-// 上游 401/403 说明是 OMA 侧凭据配置问题，映射为 503，避免让 worker 误以为
-// 自己的 session token 失效；白名单内的状态原样透传；其余 4xx 归一为 400，
-// 未知错误一律 503。
 func normalizeOTLPSinkStatus(statusCode int) int {
 	switch statusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:

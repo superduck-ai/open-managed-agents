@@ -404,7 +404,7 @@ export function quickstartBuildAgentConfigInput(
 
 export function quickstartModelInput(value: unknown, fallback: AgentModelInput): AgentModelInput {
   if (typeof value === 'string' && value !== '') {
-    return value;
+    return typeof fallback === 'object' && fallback.id === value ? fallback : value;
   }
   const record = toRecord(value);
   if (record && typeof record.id === 'string' && record.id !== '') {

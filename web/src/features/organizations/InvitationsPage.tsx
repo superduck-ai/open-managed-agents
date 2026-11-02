@@ -1,3 +1,4 @@
+import { useI18n } from '../../shared/i18n';
 import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { useCallback, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from '@tanstack/react-router';
@@ -9,6 +10,7 @@ import { InvitationList } from './InvitationList';
 import { invitationReturnTo, listInvitations } from './api';
 
 export function InvitationsPage() {
+  const { msg } = useI18n();
   const { status, refresh } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -21,24 +23,24 @@ export function InvitationsPage() {
   return (
     <div className="flex min-h-svh flex-col bg-background text-foreground">
       <header className="flex justify-center px-6 py-8">
-        <a
-          href="/"
-          aria-label="Open Managed Agents"
-          className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
+        <a href="/" aria-label="Open Managed Agents" className="rounded-sm">
           <BrandLogo decorative className="h-10 w-[119px]" />
         </a>
       </header>
       <main className="flex flex-1 items-center justify-center px-6 pb-24">
-        <section className="w-full max-w-md space-y-6 text-center" aria-label="组织邀请">
+        <section
+          className="w-full max-w-md space-y-6 text-center text-sm"
+          aria-label={msg('invitations.title', 'Organization invitations')}
+        >
           {status === 'authenticated' ? (
             <AuthenticatedInvitationsPage />
           ) : status === 'error' ? (
-            <div role="alert">
-              登录信息加载失败。<Button onClick={() => void refresh().catch(() => undefined)}>重试</Button>
+            <div role="alert" className="space-y-3">
+              <p>{msg('invitations.auth.loadError', 'Sign-in information could not be loaded.')}</p>
+              <Button onClick={() => void refresh().catch(() => undefined)}>{msg('common.retry', 'Retry')}</Button>
             </div>
           ) : (
-            <p role="status">正在验证登录身份…</p>
+            <p role="status">{msg('invitations.auth.checking', 'Checking sign-in status…')}</p>
           )}
         </section>
       </main>
@@ -47,6 +49,7 @@ export function InvitationsPage() {
 }
 
 function AuthenticatedInvitationsPage() {
+  const { msg } = useI18n();
   const { account, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -60,7 +63,9 @@ function AuthenticatedInvitationsPage() {
   );
   return (
     <>
-      <h1 className="text-xl font-medium">接受组织邀请</h1>
+      <h1 className="text-2xl font-medium leading-8">
+        {msg('invitations.page.title', 'Accept organization invitations')}
+      </h1>
       <InvitationList
         invitations={invitations.data?.data}
         error={invitations.error}
@@ -71,10 +76,12 @@ function AuthenticatedInvitationsPage() {
       />
       <div className="flex flex-col items-center gap-2">
         <Button variant="ghost" onClick={() => void navigate({ href: returnTo, replace: true })}>
-          {invitations.data?.data.length ? '稍后处理，返回控制台' : '返回控制台'}
+          {invitations.data?.data.length
+            ? msg('invitations.page.later', 'Return to console')
+            : msg('invitations.backToConsole', 'Return to console')}
         </Button>
         <Button variant="link" onClick={() => void logout()}>
-          退出登录
+          {msg('account.logout', 'Log out')}
         </Button>
       </div>
     </>

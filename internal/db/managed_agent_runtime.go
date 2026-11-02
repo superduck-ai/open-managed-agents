@@ -101,3 +101,8 @@ func (d *DB) TerminateManagedAgentCodeSession(
 	}
 	return nil
 }
+
+func (d *DB) TerminateManagedAgentLaunch(ctx context.Context, session Session, codeSessionID string, workerEpoch int64) (bool, error) {
+	rows, err := NewCodeSessionMapper(d.mapperDB).TerminateLaunch(ctx, session.OrganizationUUID, session.WorkspaceUUID, codeSessionID, workerEpoch)
+	return rows == 1, err
+}

@@ -21,7 +21,7 @@ export function LLMProviderRequired({ compact = false, onConfigure }: LLMProvide
   return (
     <Empty
       data-testid="llm-provider-required"
-      className={compact ? 'min-h-[220px] p-4' : 'min-h-[320px] max-w-xl border border-dashed border-border bg-card'}
+      className={compact ? 'min-h-[220px] p-4' : 'min-h-[320px] max-w-xl border-0'}
     >
       <EmptyHeader>
         <EmptyMedia variant="icon">

@@ -1,10 +1,14 @@
+import { MAX_MESSAGES_REQUEST_BODY_BYTES } from "./model-defaults.ts";
 import type { CcrSubagentConfig } from "./ccrv2/contracts.ts";
 import type { ToolPermissions } from "./runtime/contracts.ts";
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { sandboxEndpoint } from "./oma-sandbox/config.ts";
 import { webToolDefinitions } from "./web-tools/definitions.ts";
 
+import type { ImageInput } from "./llm-ai-sdk/images.ts";
+
 export type ModelConfig = {
+  image_input?: ImageInput;
   id: string;
   api_backend: "messages" | "chat_completions";
   context_window?: number;
@@ -13,10 +17,14 @@ export type ModelConfig = {
 };
 
 export interface Assignment {
+  observability_enabled?: boolean;
+  trace_export?: { content: boolean };
+  registered_at?: number;
   session_id: string;
   worker_epoch: number;
   ingress_token: string;
   model_token: string;
+  trace_parent?: string;
   mcp_config: unknown;
   external_mcp_config?: unknown;
   launch: {
@@ -106,6 +114,9 @@ export function validateModels(value: unknown): asserts value is Record<string, 
       if (capacity !== undefined && (!Number.isSafeInteger(capacity) || capacity <= 0))
         throw new Error("Invalid model capacity");
     }
+    if (model.image_input !== undefined && (!model.image_input || typeof model.image_input !== "object" || Array.isArray(model.image_input)
+      || Object.values(model.image_input).some(value => !Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > MAX_MESSAGES_REQUEST_BODY_BYTES)))
+      throw new Error("Invalid image input limits");
     const inputs = model.input_modalities;
     if (
       inputs !== undefined &&

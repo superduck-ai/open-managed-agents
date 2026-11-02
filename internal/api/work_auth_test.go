@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"testing"
 	"time"
@@ -10,8 +9,8 @@ import (
 func TestWorkCredentialLeastPrivilege(t *testing.T) {
 	work := db.EnvironmentWork{ExternalID: "work_owned", EnvironmentExternalID: "env_owned", SessionExternalID: "sesn_owned"}
 	resources := []db.SessionResource{
-		{ResourceType: db.SessionResourceTypeMemoryStore, Payload: json.RawMessage(`{"memory_store_id":"mem_read","access":"read_only"}`)},
-		{ResourceType: db.SessionResourceTypeMemoryStore, Payload: json.RawMessage(`{"memory_store_id":"mem_write","access":"read_write"}`)},
+		{ResourceType: db.SessionResourceTypeMemoryStore, MemoryStore: &db.SessionResourceMemoryStore{ExternalID: "mem_read", Access: new("read_only")}},
+		{ResourceType: db.SessionResourceTypeMemoryStore, MemoryStore: &db.SessionResourceMemoryStore{ExternalID: "mem_write", Access: new("read_write")}},
 	}
 	for _, tc := range []struct {
 		method, path string

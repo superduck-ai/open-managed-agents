@@ -9,6 +9,7 @@ import type { CcrSession } from "./session.ts";
 import type { Payload } from "../json.ts";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
+import { traceHooks } from "../observability/trace-context.ts";
 
 export function runtimeSubagentConfig(config?: CcrSubagentConfig): SubagentConfig | undefined {
   if (!config) return undefined;
@@ -98,6 +99,7 @@ export class CcrSubagentBridge implements SubagentBridge {
     let fields: Payload;
     switch (event.kind) {
       case "created":
+        traceHooks.subagentCreated(thread.id, { name: thread.name, inline: thread.inline === true });
         fields = { type: "session.thread_created", parent_thread_id: this.session.id };
         if (thread.inline) fields.agent = { type: "inline", name: thread.name, system: thread.systemPrompt };
         else {
@@ -132,7 +134,7 @@ export class CcrSubagentBridge implements SubagentBridge {
   onDiagnostic(threadId: string, diagnostic: RuntimeDiagnostic): void { recordRuntimeDiagnostic(threadId, diagnostic); }
   onOpen(session: Session): Promise<void> { return this.session.compaction.restore(session); }
   afterFlushLog(session: Session): Promise<void> { return this.session.compaction.flush(session); }
-  beforeRequest(): Promise<void> { return this.session.publishCompaction(); }
+  beforeRequest(threadId: string): Promise<void> { return this.session.beforeModelRequest(threadId); }
   onEvent(threadId: string, event: SessionEvent, session: Session): void {
     recordRuntimeEvent(session, event);
     this.session.compaction.record(session, event);

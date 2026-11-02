@@ -118,7 +118,7 @@ func removeLocalState(binding EnvBinding) error {
 func teardownCommand(ctx context.Context, repoRoot string, binding EnvBinding) *exec.Cmd {
 	command := exec.CommandContext(ctx, "docker", "compose", "-p", composeProjectName(binding),
 		"--project-directory", repoRoot, "-f", "deploy/docker-compose/dev-env.yaml",
-		"down", "--volumes", "--remove-orphans")
+		"--profile", "*", "down", "--volumes", "--remove-orphans")
 	command.Dir = repoRoot
 	command.Env = os.Environ()
 	for _, key := range []string{"OMA_PG_PORT", "OMA_REDIS_PORT", "OMA_NATS_PORT", "OMA_NATS_PORT_2", "OMA_NATS_PORT_3", "OMA_MINIO_PORT", "OMA_E2B_PORT"} {

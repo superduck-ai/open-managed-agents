@@ -1,7 +1,11 @@
 import { Navigate } from '@tanstack/react-router';
 import { useWorkspace } from '../../shared/workspaces/context';
 
-export function WorkspaceSettingsRedirect({ resource }: { resource: 'keys' | 'webhooks' | 'mcp-tunnels' }) {
+export function WorkspaceSettingsRedirect({
+  resource,
+}: {
+  resource: 'keys' | 'webhooks' | 'telemetry' | 'mcp-tunnels';
+}) {
   const { activeWorkspaceId } = useWorkspace();
   return (
     <Navigate

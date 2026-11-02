@@ -101,11 +101,11 @@ export function CredentialMcpServerField({
           <InputGroupInput
             id={fieldId}
             readOnly
-            value={selectedDirectory?.label ? `${selectedDirectory.label} · ${value}` : value}
+            value={selectedDirectory?.label ? `${selectedDirectory.label} (${value})` : value}
             aria-label={label}
             className="truncate bg-transparent"
           />
-          <InputGroupAddon align="inline-end">
+          <InputGroupAddon align="inline-end" className="has-[>button]:mr-0">
             <InputGroupButton
               type="button"
               size="icon-xs"
@@ -168,7 +168,7 @@ export function CredentialMcpServerField({
               }
             }}
           />
-          <InputGroupAddon align="inline-end">
+          <InputGroupAddon align="inline-end" className="has-[>button]:mr-0">
             <InputGroupButton
               type="button"
               size="icon-xs"
@@ -227,9 +227,13 @@ export function CredentialMcpServerField({
         <PopoverContent
           align="start"
           sideOffset={4}
-          className="w-[min(var(--anchor-width),calc(100vw-2rem))] min-w-[var(--anchor-width)] gap-0 overflow-hidden rounded-lg p-0 shadow-md ring-1 ring-foreground/10"
+          className="w-[min(var(--anchor-width),calc(100vw-2rem))] min-w-[var(--anchor-width)] gap-0 overflow-hidden p-0"
         >
-          <Command className="rounded-none bg-transparent" shouldFilter>
+          <Command
+            label={msg('managedAgents.credentialVaults.credentialDialog.mcpDirectorySearch', 'Search MCP directory...')}
+            className="rounded-none bg-transparent"
+            shouldFilter
+          >
             <CommandInput
               value={search}
               onValueChange={setSearch}

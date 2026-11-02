@@ -310,6 +310,24 @@ export const anthropicBetaApi = {
     },
   },
   agents: {
+    channels<T>(
+      agentId: string,
+      workspaceId: string,
+      suffix = '',
+      method: 'GET' | 'POST' | 'PATCH' | 'DELETE' = 'GET',
+      body?: unknown,
+    ) {
+      return sdkCall(() =>
+        getAnthropicClient().request<T>({
+          path: `/v1/agents/${encodeURIComponent(agentId)}/channels${suffix}`,
+          method: ({ GET: 'get', POST: 'post', PATCH: 'patch', DELETE: 'delete' } as const)[method],
+          query: { beta: true },
+          headers: { ...anthropicRequestHeaders({ workspaceId }), 'anthropic-beta': 'managed-agents-2026-04-01' },
+          signal: getScopeSignal(),
+          ...(body === undefined ? {} : { body }),
+        }),
+      );
+    },
     create<T>(params: Record<string, unknown>, workspaceId?: string) {
       return sdkCall(() =>
         getAnthropicClient().beta.agents.create(sdkParams(params), requestOptions(workspaceId)),

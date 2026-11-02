@@ -3,6 +3,7 @@ package platformapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -12,9 +13,69 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 )
 
+func TestBootstrapPlatformAccessBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		withSession bool
+		lookupErr   error
+		want        int
+	}{
+		{name: "查询失败不得返回成功", withSession: true, lookupErr: errors.New("database unavailable"), want: http.StatusServiceUnavailable},
+		{name: "无会话不查询全局授权", want: http.StatusOK},
+		{name: "全局授权与组织权限独立", withSession: true, want: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			handler := handleBootstrap(&sessionBootstrapStore{}, func(_ context.Context, session platformsession.Session) (PlatformAccess, error) {
+				calls++
+				if session.UserUUID != "stable-login" {
+					t.Fatalf("收到组织成员而非登录身份：%q", session.UserUUID)
+				}
+				return PlatformAccess{Role: new("super_admin"), Permissions: []string{"platform:access"}}, tc.lookupErr
+			})
+			workspaceAccess := auth.WorkspaceAccess{OrganizationRole: "user", Role: "workspace_developer"}
+			ctx := auth.WithPrincipal(t.Context(), auth.Principal{UserUUID: "org-member", WorkspaceAccess: workspaceAccess})
+			if tc.withSession {
+				ctx = platformsession.WithSession(ctx, platformsession.Session{UserUUID: "stable-login", VerifiedEmail: "admin@example.com"})
+			}
+			w := httptest.NewRecorder()
+			handler(w, httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil).WithContext(ctx))
+			if w.Code != tc.want {
+				t.Fatalf("状态 = %d，预期 %d：%s", w.Code, tc.want, w.Body.String())
+			}
+			if w.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("授权响应（含故障响应）不得缓存")
+			}
+			if !tc.withSession && calls != 0 {
+				t.Fatal("无会话触发了授权查询")
+			}
+			if tc.lookupErr != nil {
+				return
+			}
+			var body BootstrapCompatibilityResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(body.CurrentUserAccess.Permissions, workspaceAccess.Permissions()) {
+				t.Fatal("全局权限污染了组织权限")
+			}
+			if tc.withSession {
+				if calls != 1 || body.PlatformAccess.Role == nil || *body.PlatformAccess.Role != "super_admin" || !slices.Equal(body.PlatformAccess.Permissions, []string{"platform:access"}) {
+					t.Fatalf("全局授权映射错误：%+v", body.PlatformAccess)
+				}
+				if !slices.Equal(body.Account.Permissions, workspaceAccess.Permissions()) {
+					t.Fatal("全局权限污染了账号组织权限")
+				}
+			} else if body.PlatformAccess.Role != nil || body.PlatformAccess.Permissions == nil || len(body.PlatformAccess.Permissions) != 0 {
+				t.Fatalf("无授权必须返回 null 角色和空权限数组：%+v", body.PlatformAccess)
+			}
+		})
+	}
+}
+
 func TestBootstrapSessionAndCurrentPermissions(t *testing.T) {
 	store := &sessionBootstrapStore{}
-	handler := handleBootstrap(store)
+	handler := handleBootstrap(store, nil)
 	for _, withSession := range []bool{false, true} {
 		session := platformsession.Session{UserUUID: "stable-login", VerifiedEmail: "verified@example.com"}
 		access := auth.WorkspaceAccess{OrganizationRole: "user", Role: "workspace_developer"}

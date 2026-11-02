@@ -101,7 +101,7 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 
 ## 数据模型
 
-`00100_evaluation_datasets.sql` 接在 main 的 `00099_model_price_catalog.sql` 之后。不改 `internal/db/schema.go`，不建外键。租户条件同时带 `organization_uuid` 和 `workspace_uuid`。
+`00115_evaluation_datasets.sql` 接在 main 的 `00114_system_skill_administration.sql` 之后。不改 `internal/db/schema.go`，不建外键。租户条件同时带 `organization_uuid` 和 `workspace_uuid`。
 
 `evaluation_datasets`
 
@@ -125,7 +125,7 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 - `checkpoints` 可空，只接受 JSON 字符串数组。空字符串拒绝。这是给评估器核对的验收要求，不是发给被测 Agent 的指令
 - `input_files`、`reference_files` 可空，只接受 JSON 数组，不解释元素。`reference_files` 留到评估器使用
 
-`00101_evaluation_evaluators.sql` 增加自定义评估器。不建实验表或 memory pin 表。预置评估器不写进这张表。
+`00116_evaluation_evaluators.sql` 增加自定义评估器。不建实验表或 memory pin 表。预置评估器不写进这张表。
 
 `evaluation_evaluators`
 
@@ -145,7 +145,7 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 - `variables` 是 JSON 数组，元素只能是 `input`、`output`、`checkpoints`、`agent_trajectory`、`invocation_result`。LLM 至少选一个。prompt 里的 `{{name}}` 必须落在已选变量里
 - Agent 响应带固定契约：读 `/data/session/result.json` 和 artifacts，写 `/output/score.json`，字段为 `score`、`explanation`、`details`。这些路径不入库
 
-`00102_evaluation_experiments.sql` 增加实验。不建外键，不写入预置数据，不记账。
+`00117_evaluation_experiments.sql` 增加实验。不建外键，不写入预置数据，不记账。
 
 `evaluation_experiments`
 
@@ -168,7 +168,7 @@ Workbench Evaluate 继续做 prompt 变量实验。评测集的 case 是 `turns`
 - 每个 case 一行，`session_external_id` 在 Session 创建成功后写入
 - 状态与实验相同。`error_message` 最长 1024。case 的 `turns` 超过 Session `initial_events` 的 50 条上限时，这一行失败，不另写执行引擎
 
-`00103_evaluation_experiment_item_session_idx.sql` 为 `(organization_uuid, workspace_uuid, session_external_id)` 加索引，供终态事件按 Session 找到仍在 running 的 item。
+`00118_evaluation_experiment_item_session_idx.sql` 为 `(organization_uuid, workspace_uuid, session_external_id)` 加索引，供终态事件按 Session 找到仍在 running 的 item。
 
 Session 完成：`sessions.Handler.publishSessionEvents` 在 SSE fanout 之后调用评估观察者。观察者只看已经写入的 Session 事件，收口 item，再按 item 汇总实验状态。整批 item 都离开 pending 和 running 之后，才把 completed 且有 session 的 item 插入 River 队列 `evaluation_score`，不在 Brain 的 `worker/events` 请求里打分。没有配置这条队列时仍在观察者里同步打分，单元测试走这条路径。
 
@@ -182,7 +182,7 @@ Session 完成：`sessions.Handler.publishSessionEvents` 在 SSE fanout 之后�
 
 创建 Session 时 item 还没写成 running，所以创建当下的初始事件不会把实验提前收口。
 
-`00104_evaluation_experiment_scores.sql` 增加 `evaluation_experiment_scores`（`evalscore_`）。一行对应一个 item 和一个冻结评估器版本，`(item_uuid, version_uuid)` 唯一。`status` 为 `completed` 或 `failed`。`completed` 必须有 `score`。`explanation` 最长 4000，`error_message` 最长 1024，`details` 可空或为 JSON 对象。
+`00119_evaluation_experiment_scores.sql` 增加 `evaluation_experiment_scores`（`evalscore_`）。一行对应一个 item 和一个冻结评估器版本，`(item_uuid, version_uuid)` 唯一。`status` 为 `completed` 或 `failed`。`completed` 必须有 `score`。`explanation` 最长 4000，`error_message` 最长 1024，`details` 可空或为 JSON 对象。
 
 打分发生在这条实验的全部 item 都变成 completed、failed 或 cancelled 之后。只给 completed 且有 session 的 item 打分，每个 item 只跑这一次。生产环境由 `evaluation_score_item` 执行，不占用上报请求的 10 秒。任务跳过 `(item, 评估器版本)` 上已经存在的分数。每分钟扫描已完成但分数不齐、且同一实验已经没有 pending 或 running item 的记录，补进同一条任务。单个评估器调用超时后，失败行用脱离该超时的短写入落库。打分失败只把该 score 行标成 failed，不改 case item 的 completed，也不改实验的 completed。
 

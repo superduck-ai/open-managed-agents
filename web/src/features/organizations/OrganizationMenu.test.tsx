@@ -1,3 +1,4 @@
+import { I18nProvider, type Locale } from '../../shared/i18n';
 import { afterEach, expect, mock, test } from 'bun:test';
 import { resetTestDom } from '../../test/setup';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -24,7 +25,10 @@ afterEach(() => {
   setConsoleRequestContext({});
 });
 
-function mount(memberships = [{ organization: { uuid: 'current', name: '当前组织' }, role: 'admin' }]) {
+function mount(
+  memberships = [{ organization: { uuid: 'current', name: '当前组织' }, role: 'admin' }],
+  locale: Locale = 'zh-CN',
+) {
   resetTestDom('https://oma.duck.ai/dashboard');
   const switchOrganization = mock(async () => true);
   const refresh = mock(async () => ({ account: null }));
@@ -35,36 +39,52 @@ function mount(memberships = [{ organization: { uuid: 'current', name: '当前�
   };
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <QueryClientProvider client={queryClient}>
-      <AuthContext.Provider value={{ account, status: 'authenticated', refresh, logout: async () => {} }}>
-        <OrganizationContext.Provider
-          value={{
-            memberships: account.memberships,
-            orgUuid: 'current',
-            switching: false,
-            error: null,
-            switchOrganization,
-            retry: async () => true,
-          }}
-        >
-          <DropdownMenu defaultOpen>
-            <DropdownMenuTrigger render={<Button />}>账号</DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <OrganizationMenu />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </OrganizationContext.Provider>
-      </AuthContext.Provider>
-    </QueryClientProvider>,
+    <I18nProvider initialLocale={locale}>
+      <QueryClientProvider client={queryClient}>
+        <AuthContext.Provider value={{ account, status: 'authenticated', refresh, logout: async () => {} }}>
+          <OrganizationContext.Provider
+            value={{
+              memberships: account.memberships,
+              orgUuid: 'current',
+              switching: false,
+              error: null,
+              switchOrganization,
+              retry: async () => true,
+            }}
+          >
+            <DropdownMenu defaultOpen>
+              <DropdownMenuTrigger render={<Button />}>账号</DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <OrganizationMenu />
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </OrganizationContext.Provider>
+        </AuthContext.Provider>
+      </QueryClientProvider>
+    </I18nProvider>,
   );
   return { switchOrganization, refresh, queryClient };
 }
+
+test('打开邀请时聚焦弹窗并保留邀请身份，不自动聚焦接受操作', async () => {
+  const fetchMock = mock(async (_input: RequestInfo | URL, _options?: RequestInit) =>
+    Response.json({ data: [invitation] }),
+  );
+  globalThis.fetch = fetchMock as typeof fetch;
+  mount();
+  fireEvent.click(await screen.findByRole('menuitem', { name: '组织邀请 (1)' }));
+  const dialog = await screen.findByRole('dialog', { name: '组织邀请' });
+  await waitFor(() => expect(document.activeElement).toBe(dialog));
+  expect(screen.getByText('受邀组织')).toBeTruthy();
+  expect(screen.getByRole('button', { name: '接受', exact: true })).not.toBe(document.activeElement);
+  expect(fetchMock.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+});
 
 test('邀请加载失败可以重试，不自动循环', async () => {
   const fetchMock = mock(async () => Response.json({ message: 'offline' }, { status: 503 }));
   globalThis.fetch = fetchMock as typeof fetch;
   mount();
-  fireEvent.click(await screen.findByRole('menuitem', { name: /组织邀请/ }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: '组织邀请（加载失败）' }));
   await screen.findByText('加载邀请失败。');
   globalThis.fetch = mock(async () => Response.json({ data: [invitation] })) as typeof fetch;
   fireEvent.click(screen.getByRole('button', { name: '重试' }));
@@ -118,7 +138,8 @@ test('组织菜单显示当前 membership 的中文角色，邀请卡片也显�
   expect(screen.getByText('管理员')).toBeTruthy();
   expect(screen.queryByRole('menuitem', { name: '切换组织' })).toBeNull();
   fireEvent.click(await screen.findByRole('menuitem', { name: '组织邀请 (1)' }));
-  expect(await screen.findByText(/用户 · 有效期至/)).toBeTruthy();
+  expect(await screen.findByText('用户')).toBeTruthy();
+  expect(screen.getByText(/有效期至/)).toBeTruthy();
 });
 
 test('组织很多时菜单只保留当前组织，搜索后再切换', async () => {
@@ -137,11 +158,11 @@ test('组织很多时菜单只保留当前组织，搜索后再切换', async ()
   expect(screen.getByText('财务中心 / 总部 / 集团')).toBeTruthy();
   fireEvent.click(screen.getByRole('menuitem', { name: '切换组织' }));
   expect(await screen.findByText(/还有 9 个组织/)).toBeTruthy();
-  fireEvent.change(screen.getByPlaceholderText('搜索组织'), { target: { value: '星河' } });
+  fireEvent.change(screen.getByRole('combobox', { name: '搜索组织' }), { target: { value: '星河' } });
   fireEvent.click(await screen.findByRole('option', { name: /星河/ }));
   expect(switchOrganization).toHaveBeenCalledWith('other');
   fireEvent.click(screen.getByRole('menuitem', { name: '切换组织' }));
-  expect(screen.getByPlaceholderText('搜索组织')).toHaveProperty('value', '');
+  expect(screen.getByRole('combobox', { name: '搜索组织' })).toHaveProperty('value', '');
   expect(await screen.findByText(/还有 9 个组织/)).toBeTruthy();
   expect(screen.queryByRole('option', { name: /星河/ })).toBeNull();
 });
@@ -192,4 +213,52 @@ test('拒绝后刷新使用服务端列表，迟到旧列表不会复活已处�
   completeOld(Response.json({ data: [invitation] }));
   await waitFor(() => expect(queryClient.getQueryData(['invitations', 'account'])).toEqual({ data: [] }));
   expect(screen.queryByRole('button', { name: '拒绝' })).toBeNull();
+});
+
+test('uses English organization search, counts and roles while preserving the selected identity', async () => {
+  globalThis.fetch = mock(async () => Response.json({ data: [invitation] })) as typeof fetch;
+  const memberships = [
+    { organization: { uuid: 'current', name: 'Current organization' }, role: 'admin' },
+    ...Array.from({ length: 45 }, (_, index) => ({
+      organization: { uuid: `org-${index}`, name: `Research Department ${index}` },
+      role: 'user',
+    })),
+  ];
+  const { switchOrganization } = mount(memberships, 'en');
+  expect(await screen.findByRole('menuitem', { name: 'Organization invitations (1)' })).toBeTruthy();
+  expect(screen.getByText('Admin')).toBeTruthy();
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Switch organization' }));
+  const search = await screen.findByRole('combobox', { name: 'Search organizations' });
+  expect(screen.getByText(/45 more organizations/)).toBeTruthy();
+  fireEvent.change(search, { target: { value: 'Research' } });
+  expect(await screen.findByText(/5 more matches/)).toBeTruthy();
+  expect(screen.getAllByRole('option')).toHaveLength(40);
+  expect(screen.getAllByText('User').length).toBeGreaterThan(0);
+  fireEvent.change(search, { target: { value: 'no matching organization' } });
+  expect(await screen.findByText('No matching organizations.')).toBeTruthy();
+  expect(switchOrganization).not.toHaveBeenCalled();
+});
+
+test('returns focus to the organization menu after dismissing search and clears the next search', async () => {
+  globalThis.fetch = mock(async () => Response.json({ data: [invitation] })) as typeof fetch;
+  const memberships = [
+    { organization: { uuid: 'current', name: 'Current organization' }, role: 'admin' },
+    ...Array.from({ length: 4 }, (_, index) => ({
+      organization: { uuid: `org-${index}`, name: `Research Department ${index}` },
+      role: 'user',
+    })),
+  ];
+  const { switchOrganization } = mount(memberships, 'en');
+  const trigger = await screen.findByRole('menuitem', { name: 'Switch organization' });
+  trigger.focus();
+  fireEvent.click(trigger);
+  const search = await screen.findByRole('combobox', { name: 'Search organizations' });
+  await waitFor(() => expect(document.activeElement).toBe(search));
+  fireEvent.change(search, { target: { value: 'Research' } });
+  fireEvent.keyDown(search, { key: 'Escape', code: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Switch organization' })).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+  fireEvent.click(trigger);
+  expect((await screen.findByRole('combobox', { name: 'Search organizations' })).getAttribute('value')).toBe('');
+  expect(switchOrganization).not.toHaveBeenCalled();
 });

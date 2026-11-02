@@ -147,8 +147,20 @@ describe('AgentToolsSection manual MCP refresh', () => {
         await directoryWait;
         return jsonResponse({
           servers: [
-            { type: 'remote', slug: 'weather', display_name: 'Weather Service', tool_names: ['forecast'] },
-            { type: 'remote', slug: 'maps', display_name: 'Maps Service', tool_names: ['directions'] },
+            {
+              type: 'remote',
+              slug: 'weather',
+              url: 'https://weather.example/mcp',
+              display_name: 'Weather Service',
+              tool_names: ['forecast'],
+            },
+            {
+              type: 'remote',
+              slug: 'maps',
+              url: 'https://maps.example/mcp',
+              display_name: 'Maps Service',
+              tool_names: ['directions'],
+            },
           ],
         });
       }

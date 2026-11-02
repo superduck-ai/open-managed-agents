@@ -1,4 +1,5 @@
 import { Trash2 } from 'lucide-react';
+import { useState } from 'react';
 import { useI18n } from '../../shared/i18n';
 import {
   AlertDialog,
@@ -28,10 +29,18 @@ export function ProviderDeleteDialog({
   onConfirm: (provider: LLMProvider) => void;
 }) {
   const { msg } = useI18n();
+  const [content, setContent] = useState({ provider, error });
+  if (provider && (provider !== content.provider || error !== content.error)) {
+    setContent({ provider, error });
+  }
   return (
     <AlertDialog
       open={Boolean(provider)}
-      onOpenChange={(open) => {
+      onOpenChange={(open, details) => {
+        if (!open && isPending) {
+          details.cancel();
+          return;
+        }
         if (!open) onClose();
       }}
     >
@@ -42,17 +51,17 @@ export function ProviderDeleteDialog({
           </AlertDialogMedia>
           <AlertDialogTitle>{msg('llmModels.deleteTitle', 'Delete provider?')}</AlertDialogTitle>
           <AlertDialogDescription>
-            {provider?.scope === 'organization'
+            {content.provider?.scope === 'organization'
               ? msg(
                   'llmModels.deleteOrganizationDescription',
-                  'This removes the organization default for every workspace. Workspace providers remain available. Models referenced through this organization provider will stop working.',
+                  'This removes this provider for every workspace. Workspace providers remain available. Models referenced through this organization provider will stop working.',
                 )
               : msg('llmModels.deleteDescription', 'Its models will stop working immediately in this workspace.')}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {error ? <FieldError>{error}</FieldError> : null}
+        {content.error ? <FieldError>{content.error}</FieldError> : null}
         <AlertDialogFooter>
-          <AlertDialogCancel>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
+          <AlertDialogCancel disabled={isPending}>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
           <AlertDialogAction
             variant="destructive"
             disabled={isPending}

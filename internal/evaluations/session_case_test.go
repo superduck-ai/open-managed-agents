@@ -65,13 +65,12 @@ func TestCreateCaseFromSessionCopiesUserTurns(t *testing.T) {
 			{
 				SessionExternalID: "sesn_case",
 				ResourceType:      "file",
-				Payload:           json.RawMessage(`{"file_id":"file_in","mount_path":"/uploads/brief.txt"}`),
+				File:              &db.SessionResourceFileReference{FileID: "file_in", MountPath: "/uploads/brief.txt"},
 			},
 			{
 				SessionExternalID: "sesn_case",
 				ResourceType:      "file",
-				Path:              "/outputs/report.txt",
-				FileExternalID:    "file_out",
+				File:              &db.SessionResourceFileReference{FileID: "file_out", NamespacePath: "/outputs/report.txt"},
 			},
 			{SessionExternalID: "sesn_case", ResourceType: "memory_store"},
 		},
@@ -108,7 +107,7 @@ func TestCreateCaseFromSessionCopiesFileBytes(t *testing.T) {
 	store.resources = append(store.resources, db.SessionResource{
 		SessionExternalID: "sesn_case",
 		ResourceType:      "file",
-		Payload:           json.RawMessage(`{"file_id":"file_missing","mount_path":"/uploads/gone.txt"}`),
+		File:              &db.SessionResourceFileReference{FileID: "file_missing", MountPath: "/uploads/gone.txt"},
 	})
 	handler := NewHandler(store, nil).WithCaseFileCopier(copier)
 	body := `{"session_id":"sesn_case","include_output_files":false}`
@@ -187,13 +186,12 @@ func sessionCaseStore() *evaluationStoreStub {
 			{
 				SessionExternalID: "sesn_case",
 				ResourceType:      "file",
-				Payload:           json.RawMessage(`{"file_id":"file_in","mount_path":"/uploads/brief.txt"}`),
+				File:              &db.SessionResourceFileReference{FileID: "file_in", MountPath: "/uploads/brief.txt"},
 			},
 			{
 				SessionExternalID: "sesn_case",
 				ResourceType:      "file",
-				Path:              "/outputs/report.txt",
-				FileExternalID:    "file_out",
+				File:              &db.SessionResourceFileReference{FileID: "file_out", NamespacePath: "/outputs/report.txt"},
 			},
 		},
 	}

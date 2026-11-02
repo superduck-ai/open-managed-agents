@@ -28,9 +28,6 @@ export function CreateAgentPageLayout({
           <h1 className="text-2xl font-semibold leading-8">
             {msg('managedAgents.agents.createLabel', 'Create agent')}
           </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {msg('managedAgents.agents.createDialog.description', 'Start from a template or describe what you need.')}
-          </p>
         </header>
         {children}
       </div>

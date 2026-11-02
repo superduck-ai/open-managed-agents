@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
+import { pluginRecordOf } from "@deepseek-ai/dsh-session";
 import { LlmAttemptId } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
@@ -57,7 +58,7 @@ test("a delayed preview checkpoint cannot let a later delta overtake its start",
   }
 });
 
-test.each([false, true])("Brain reply waits for its owning assistant journal to replicate (child=%s)", async child => {
+test.each([false, true])("Brain reply waits for its owning completed-block journal to replicate (child=%s)", async child => {
   const { backend, session } = await fixture();
   const release = Promise.withResolvers<void>();
   const persist = session.backend.persist.bind(session.backend);
@@ -67,7 +68,7 @@ test.each([false, true])("Brain reply waits for its owning assistant journal to 
   const text = "durable Brain reply";
   session.backend.persist = async (...args) => {
     const data = args[2];
-    if ("seq" in data && data.type === "assistant/message") {
+    if ("seq" in data && pluginRecordOf(data)?.type === "plugin:oma/assistant-block") {
       held = true;
       await release.promise;
       await persist(...args);
@@ -196,7 +197,7 @@ test("input ACK still waits for public event confirmation", async () => {
   } finally { release.resolve(); await turn.catch(() => {}); session.backend.events = events; }
 });
 
-test("completed tools publish confirmed results while the next model request is still running", async () => {
+test("completed tools confirm persistence and publication before the next model request", async () => {
   const { backend, session } = await fixture();
   const releaseModel = Promise.withResolvers<ReturnType<typeof textEvents>>();
   const releaseResult = Promise.withResolvers<void>();
@@ -216,11 +217,12 @@ test("completed tools publish confirmed results while the next model request is 
   const turn = session.receive("live-tool-result", { content: "Run a tool and explain" });
   turn.catch(() => {});
   try {
-    await eventually(() => held && backend.requests.length === 2);
+    await eventually(() => held);
+    expect(backend.requests).toHaveLength(1);
     expect(backend.executions).toHaveLength(1);
     expect(publishedResult()).toBe(false);
     releaseResult.resolve();
-    await eventually(publishedResult);
+    await eventually(() => publishedResult() && backend.requests.length === 2);
     expect(backend.processed).toEqual([]);
     expect([...backend.publicLog.values()].some(event => event.type === "result")).toBe(false);
   } finally {

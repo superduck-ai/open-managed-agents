@@ -31,17 +31,22 @@ func TestPrebuildCubeSandboxContracts(t *testing.T) {
 	}{
 		{
 			name:     "cluster resources and network defaults",
-			template: config.TemplateBuildConfig{DiskSize: "10G", Network: config.TemplateNetworkConfig{AllowInternet: true, InjectEgressCA: true}},
-			request:  `{"image":"repo:attempt","writableLayerSize":"10G","exposedPorts":[49983],"probePort":49983,"probePath":"/health","allowInternetAccess":true,"with_cube_ca":true}`,
+			template: config.TemplateBuildConfig{DiskSize: "10G", Network: config.TemplateNetworkConfig{AllowInternet: true, InjectEgressCA: true}, ExposedPorts: []int{3001, 49983}, ProbePort: 49983},
+			request:  `{"image":"repo:attempt","writableLayerSize":"10G","exposedPorts":[3001,49983],"probePort":49983,"probePath":"/health","allowInternetAccess":true,"with_cube_ca":true}`,
 		},
 		{
 			name: "custom resources and restricted network",
 			template: config.TemplateBuildConfig{
-				DiskSize: "20G", CPU: 2000, Memory: 4096,
+				DiskSize: "20G", CPU: 2000, Memory: 4096, ExposedPorts: []int{3001, 49983}, ProbePort: 49983,
 				Network:      config.TemplateNetworkConfig{DNSServers: []string{"10.0.0.2"}, AllowOutboundCIDRs: []string{"10.0.0.0/8"}, DenyOutboundCIDRs: []string{"169.254.0.0/16"}},
 				RegistryAuth: config.RegistryAuthConfig{Username: "test-user", Password: "test-password"},
 			},
-			request: `{"image":"repo:attempt","registryUsername":"test-user","registryPassword":"test-password","writableLayerSize":"20G","cpu":2000,"memory":4096,"dns":["10.0.0.2"],"allowOut":["10.0.0.0/8"],"denyOut":["169.254.0.0/16"],"allowInternetAccess":false,"with_cube_ca":false,"exposedPorts":[49983],"probePort":49983,"probePath":"/health"}`,
+			request: `{"image":"repo:attempt","registryUsername":"test-user","registryPassword":"test-password","writableLayerSize":"20G","cpu":2000,"memory":4096,"dns":["10.0.0.2"],"allowOut":["10.0.0.0/8"],"denyOut":["169.254.0.0/16"],"allowInternetAccess":false,"with_cube_ca":false,"exposedPorts":[3001,49983],"probePort":49983,"probePath":"/health"}`,
+		},
+		{
+			name:     "configured exposed and probe ports",
+			template: config.TemplateBuildConfig{DiskSize: "10G", ExposedPorts: []int{8080, 9000}, ProbePort: 9000},
+			request:  `{"image":"repo:attempt","writableLayerSize":"10G","exposedPorts":[8080,9000],"probePort":9000,"probePath":"/health","allowInternetAccess":false,"with_cube_ca":false}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,7 +79,8 @@ func TestPrebuildCubeSandboxContracts(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := config.Config{EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Template: tc.template}, E2B: config.E2BConfig{APIURL: server.URL, APIKey: "key"}}
-			c := NewPrebuilds(nil, cfg, nil).templates.(*cubeSandboxTemplateBuilder)
+			svc := NewPrebuilds(nil, cfg, nil)
+			c := svc.templates.(*cubeSandboxTemplateBuilder)
 			c.http.client = server.Client()
 			if err := c.Cancel(context.Background(), "anything"); !errors.Is(err, errPrebuildUnsupported) {
 				t.Fatal(err)
@@ -82,7 +88,9 @@ func TestPrebuildCubeSandboxContracts(t *testing.T) {
 			if _, err := c.ReadLogs(context.Background(), "anything", ""); !errors.Is(err, errPrebuildUnsupported) {
 				t.Fatal(err)
 			}
-			ref, err := c.Start(context.Background(), "repo:attempt")
+			input := svc.templateInput(templateResources{})
+			input.ImageRef = "repo:attempt"
+			ref, err := c.Start(context.Background(), input)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,7 +112,7 @@ func TestPrebuildProviderConfiguration(t *testing.T) {
 	base := config.Config{
 		EnvironmentPrebuilds: config.EnvironmentPrebuildConfig{Enabled: true, Timeout: time.Hour,
 			Image:    config.ImageBuildConfig{BaseImage: "registry/base@sha256:pinned", Flow: config.AliyunFlowConfig{PipelineURL: "https://flow.example/1", Token: "token"}},
-			Template: config.TemplateBuildConfig{DiskSize: "10G", Network: config.TemplateNetworkConfig{AllowInternet: true, InjectEgressCA: true}},
+			Template: config.TemplateBuildConfig{DiskSize: "10G", Network: config.TemplateNetworkConfig{AllowInternet: true, InjectEgressCA: true}, ExposedPorts: []int{3001, 49983}, ProbePort: 49983},
 		},
 		E2B: config.E2BConfig{APIURL: "https://cube.example", APIKey: "key", Domain: "sandbox.example"},
 	}
@@ -131,6 +139,8 @@ func TestPrebuildProviderConfiguration(t *testing.T) {
 		{"deny CIDRs", func(c *config.Config) {
 			c.EnvironmentPrebuilds.Template.Network.DenyOutboundCIDRs = []string{"169.254.0.0/16"}
 		}, false},
+		{"exposed ports", func(c *config.Config) { c.EnvironmentPrebuilds.Template.ExposedPorts = []int{8080, 49983} }, false},
+		{"probe port", func(c *config.Config) { c.EnvironmentPrebuilds.Template.ProbePort = 8080 }, false},
 		{"internet", func(c *config.Config) { c.EnvironmentPrebuilds.Template.Network.AllowInternet = false }, false},
 		{"CA injection", func(c *config.Config) { c.EnvironmentPrebuilds.Template.Network.InjectEgressCA = false }, false},
 		{"registry credentials", func(c *config.Config) {

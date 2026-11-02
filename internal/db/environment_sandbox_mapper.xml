@@ -185,6 +185,8 @@
         )
         UPDATE environment_work work
         SET state = 'queued',
+            queued_at = NOW(),
+            trace_parent = COALESCE(#{params.TraceParent}, work.trace_parent),
             claimed_by_worker_id = NULL,
             claim_expires_at = NULL,
             latest_heartbeat_at = NULL,

@@ -1,3 +1,4 @@
+import { useI18n, useFormatters } from '../../shared/i18n';
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../shared/auth/context';
@@ -19,6 +20,8 @@ export function InvitationList({
   onResolved?: (action: 'accept' | 'decline' | null, remaining: number) => Promise<void>;
   standalone?: boolean;
 }) {
+  const { msg } = useI18n();
+  const formatters = useFormatters();
   const { account, refresh } = useAuth();
   const queryClient = useQueryClient();
   const [pending, setPending] = useState<string | null>(null);
@@ -36,7 +39,16 @@ export function InvitationList({
       setCompletedAction(null);
     } catch (cause) {
       setRefreshFailed(true);
-      setActionError(invitationErrorMessage(cause, '邀请已处理，但账户信息刷新失败，请重试刷新。'));
+      setActionError(
+        invitationErrorMessage(
+          cause,
+          msg(
+            'invitations.refreshFailed',
+            'The invitation was processed, but account information could not be refreshed. Retry the refresh.',
+          ),
+          msg,
+        ),
+      );
     }
   };
   useEffect(() => {
@@ -44,9 +56,15 @@ export function InvitationList({
       return;
     void onResolved?.(null, 0).catch((cause) => {
       setRefreshFailed(true);
-      setActionError(invitationErrorMessage(cause, '返回控制台失败，请重试。'));
+      setActionError(
+        invitationErrorMessage(
+          cause,
+          msg('invitations.returnFailed', 'Could not return to the console. Try again.'),
+          msg,
+        ),
+      );
     });
-  }, [standalone, loading, error, pending, completedAction, refreshFailed, invitations, onResolved]);
+  }, [standalone, loading, error, pending, completedAction, refreshFailed, invitations, onResolved, msg]);
   const respond = async (invitation: Invitation, action: 'accept' | 'decline') => {
     if (pending || refreshFailed) return;
     setPending(invitation.id);
@@ -60,19 +78,21 @@ export function InvitationList({
       }));
       await refreshAfterResponse(action);
     } catch (cause) {
-      setActionError(invitationErrorMessage(cause));
+      setActionError(invitationErrorMessage(cause, undefined, msg));
     } finally {
       setPending(null);
     }
   };
   return (
-    <div className="max-h-[60vh] space-y-3 overflow-y-auto">
-      {loading && <p role="status">正在加载邀请…</p>}
+    <div
+      className={`subtle-scrollbar min-h-0 min-w-0 space-y-3 overflow-y-auto text-sm [overflow-wrap:anywhere] ${standalone ? 'max-h-[60vh]' : ''}`}
+    >
+      {loading && <p role="status">{msg('invitations.loading', 'Loading invitations…')}</p>}
       {error ? (
-        <div role="alert">
-          {invitationErrorMessage(error, '加载邀请失败。')}
+        <div role="alert" className="space-y-3">
+          <p>{invitationErrorMessage(error, msg('invitations.loadFailed', 'Invitations could not be loaded.'), msg)}</p>
           <Button variant="outline" onClick={retry}>
-            重试
+            {msg('common.retry', 'Retry')}
           </Button>
         </div>
       ) : null}
@@ -83,29 +103,42 @@ export function InvitationList({
       )}
       {refreshFailed && (
         <Button variant="outline" onClick={() => void refreshAfterResponse()}>
-          重试刷新
+          {msg('invitations.retryRefresh', 'Retry refresh')}
         </Button>
       )}
-      {!loading && !error && !invitations?.length && <p>没有待处理邀请。</p>}
+      {!loading && !error && !invitations?.length && <p>{msg('invitations.empty', 'No pending invitations.')}</p>}
       {invitations?.map((invitation) => (
-        <div key={invitation.id} className={standalone ? 'space-y-4 py-3' : 'space-y-2 rounded-md border p-3'}>
+        <div
+          key={invitation.id}
+          className={standalone ? 'space-y-4 py-3' : 'space-y-2 rounded-md border-[0.5px] border-border p-3'}
+        >
           <p className="break-words font-medium">
-            {standalone && '管理员邀请你加入 '}
-            {invitation.organization_name}
+            {standalone
+              ? msg('invitations.invitedToJoin', 'An administrator invited you to join {organization}.', {
+                  organization: invitation.organization_name,
+                })
+              : invitation.organization_name}
           </p>
-          <p className="text-xs text-muted-foreground">
-            {organizationRoleLabel(invitation.role)} · 有效期至 {new Date(invitation.expires_at).toLocaleString()}
-          </p>
+          <div
+            className={`flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground ${standalone ? 'justify-center' : ''}`}
+          >
+            <span>{organizationRoleLabel(invitation.role, msg)}</span>
+            <span>
+              {msg('invitations.expiresAt', 'Expires {date}', {
+                date: formatters.date(invitation.expires_at, { dateStyle: 'medium', timeStyle: 'short' }),
+              })}
+            </span>
+          </div>
           <div className={standalone ? 'mx-auto flex max-w-xs flex-col gap-2' : 'flex gap-2'}>
             <Button disabled={Boolean(pending) || refreshFailed} onClick={() => void respond(invitation, 'accept')}>
-              接受
+              {msg('invitations.accept', 'Accept')}
             </Button>
             <Button
               variant={standalone ? 'link' : 'outline'}
               disabled={Boolean(pending) || refreshFailed}
               onClick={() => void respond(invitation, 'decline')}
             >
-              拒绝
+              {msg('invitations.decline', 'Decline')}
             </Button>
           </div>
         </div>

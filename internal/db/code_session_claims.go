@@ -27,6 +27,8 @@ type CodeSessionClaim struct {
 	WorkerEpoch           int64
 	ClaimExpiresAt        time.Time
 	Exhausted             bool
+	RequestedAt           *time.Time
+	TraceParent           string
 }
 
 func (d *DB) ClaimNextCodeSession(ctx context.Context, input ClaimCodeSessionInput) (CodeSessionClaim, bool, error) {
@@ -46,6 +48,8 @@ func (d *DB) ClaimNextCodeSession(ctx context.Context, input ClaimCodeSessionInp
 			OrganizationUUID:      row.OrganizationUUID,
 			WorkspaceUUID:         row.WorkspaceUUID,
 			SessionExternalID:     row.SessionExternalID,
+			RequestedAt:           row.RequestedAt,
+			TraceParent:           stringFromNullable(row.TraceParent),
 		}
 		if row.WorkerClaimAttempts >= input.MaxAttempts {
 			claim.Exhausted = true
@@ -135,8 +139,8 @@ func (d *DB) ReleaseCodeSessionClaim(ctx context.Context, codeSessionExternalID,
 	return nil
 }
 
-func (d *DB) RequestCodeSessionWorker(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) error {
-	rows, err := NewCodeSessionClaimMapper(d.mapperDB).Request(ctx, organizationUUID, workspaceUUID, codeSessionExternalID)
+func (d *DB) RequestCodeSessionWorker(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID, traceParent string) error {
+	rows, err := NewCodeSessionClaimMapper(d.mapperDB).Request(ctx, organizationUUID, workspaceUUID, codeSessionExternalID, nullableString(traceParent))
 	if err != nil {
 		return err
 	}

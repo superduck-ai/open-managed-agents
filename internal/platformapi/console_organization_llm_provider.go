@@ -28,7 +28,7 @@ func getConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 			internalError(w, "failed to load LLM provider")
 			return
 		}
-		writeJSON(w, http.StatusOK, formatOrganizationLLMProvider(provider))
+		writeJSON(w, http.StatusOK, formatLLMProvider(provider))
 	}
 }
 
@@ -46,7 +46,7 @@ func putConsoleOrganizationLLMProvider(database *db.DB, secretService *secrets.S
 			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeSlugImmutable, "organization provider slug must be organization")
 			return
 		}
-		name, baseURL, models, ok := validateLLMProviderInput(w, body)
+		name, baseURL, models, ok := validateLLMProviderInput(w, body, llmproviders.OrganizationSlug)
 		if !ok {
 			return
 		}
@@ -101,7 +101,7 @@ func createConsoleOrganizationLLMProvider(
 		return
 	}
 	created, err := database.CreateLLMProvider(r.Context(), provider)
-	if errors.Is(err, db.ErrOrganizationLLMProviderExists) {
+	if errors.Is(err, db.ErrLLMProviderSlugConflict) {
 		writeLLMProviderError(w, http.StatusConflict, llmProviderCodeOrganizationExists, "organization default provider already exists")
 		return
 	}
@@ -109,7 +109,7 @@ func createConsoleOrganizationLLMProvider(
 		internalError(w, "failed to create LLM provider")
 		return
 	}
-	writeJSON(w, http.StatusCreated, formatOrganizationLLMProvider(created))
+	writeJSON(w, http.StatusCreated, formatLLMProvider(created))
 }
 
 func updateConsoleOrganizationLLMProvider(
@@ -146,7 +146,7 @@ func updateConsoleOrganizationLLMProvider(
 		internalError(w, "failed to update LLM provider")
 		return
 	}
-	writeJSON(w, http.StatusOK, formatOrganizationLLMProvider(updated))
+	writeJSON(w, http.StatusOK, formatLLMProvider(updated))
 }
 
 func deleteConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
@@ -205,10 +205,4 @@ func llmProviderOrganization(w http.ResponseWriter, r *http.Request, database *d
 		return "", false
 	}
 	return orgUUID, true
-}
-
-func formatOrganizationLLMProvider(provider db.LLMProvider) llmProviderResponse {
-	response := formatLLMProvider(provider)
-	response.Scope = "organization"
-	return response
 }

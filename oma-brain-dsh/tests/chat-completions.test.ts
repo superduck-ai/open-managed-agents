@@ -87,6 +87,15 @@ test("Chat adapter parses large streamed tool arguments in linear time", async (
   expect(chunks).toContainEqual(expect.objectContaining({ type: "block-end", block: expect.objectContaining({ arguments: json }) }));
 });
 
+test("Chat adapter keeps gateways that report prompt tokens without the cache", async () => {
+  const { a, adapter } = setup([
+    { id: "chat_2", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }] },
+    { id: "chat_2", choices: [], usage: { prompt_tokens: 287, completion_tokens: 178, total_tokens: 5201, prompt_tokens_details: { cached_tokens: 4736 } } }, "[DONE]",
+  ]);
+  const result = await collect(adapter.stream(options(a.session_id)));
+  expect(result).toContainEqual({ type: "usage", usage: { inputTokens: 287, outputTokens: 178, cacheReadTokens: 4736 } });
+});
+
 test("Chat adapter assembles reasoning, fragmented parallel tools and usage", async () => {
   const { a, api, adapter, requests } = setup([
     { id: "chat_1", choices: [{ index: 0, delta: { reasoning_content: "thinking" } }] },
@@ -215,4 +224,19 @@ test("Chat adapter numbers a tool when its name arrives, matching the Go observe
     { type: "block-start", index: 0, blockType: "text" }, { type: "block-start", index: 1, blockType: "tool-call" },
   ]);
   expect(chunks).toContainEqual({ type: "block-end", index: 1, block: { type: "tool-call", id: ToolCallId("call_1"), name: "Bash", arguments: '{"a":1}' } });
+});
+
+test("Chat adapter preserves text then thinking then text even when the SDK reuses block IDs", async () => {
+  const { a, adapter } = setup([
+    textChunk("first", null),
+    { id: "chat_1", choices: [{ index: 0, delta: { reasoning_content: "think" } }] },
+    textChunk("last"), "[DONE]",
+  ]);
+  const chunks = await collect(adapter.stream(options(a.session_id)));
+  expect(chunks.filter(chunk => chunk.type === "block-end").map(chunk => chunk.block.type)).toEqual(["text", "reasoning", "text"]);
+  const assembler = new BlockAssembler();
+  for (const chunk of chunks) assembler.push(chunk);
+  expect(assembler.message({ provider: "oma", model: "chat-model" }).content).toEqual([
+    { type: "text", text: "first" }, { type: "reasoning", text: "think" }, { type: "text", text: "last" },
+  ]);
 });

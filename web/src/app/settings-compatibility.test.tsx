@@ -27,9 +27,7 @@ test.each([
   resetTestDom(`https://oma.duck.ai${path}`);
   Object.assign(globalThis, { scrollTo: () => undefined });
   globalThis.fetch = (async (input: RequestInfo | URL) =>
-    String(input).endsWith('/llm_provider')
-      ? Response.json({ error: 'not found' }, { status: 404 })
-      : Response.json({ data: [] })) as typeof fetch;
+    String(input).endsWith('/llm_providers') ? Response.json([]) : Response.json({ data: [] })) as typeof fetch;
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const history = createMemoryHistory({ initialEntries: [path] });
   const router = createRouter({ routeTree: appRouter.options.routeTree, history });

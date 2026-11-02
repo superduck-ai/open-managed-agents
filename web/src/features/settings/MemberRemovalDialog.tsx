@@ -1,8 +1,9 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useI18n } from '../../shared/i18n';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -29,27 +30,35 @@ export function MemberRemovalDialog({
   onConfirm: () => void;
 }) {
   const { msg } = useI18n();
+  const [content, setContent] = useState({ title, children, error });
+  if (open && (title !== content.title || children !== content.children || error !== content.error)) {
+    setContent({ title, children, error });
+  }
   return (
     <AlertDialog
       open={open}
-      onOpenChange={(next) => {
-        if (!next && !pending) onClose();
+      onOpenChange={(next, details) => {
+        if (!next && pending) {
+          details.cancel();
+          return;
+        }
+        if (!next) onClose();
       }}
     >
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{children}</AlertDialogDescription>
+      <AlertDialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] overflow-clip">
+        <AlertDialogHeader className="min-w-0">
+          <AlertDialogTitle>{content.title}</AlertDialogTitle>
         </AlertDialogHeader>
-        {error ? (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
+        <div className="subtle-scrollbar min-h-0 min-w-0 space-y-4 overflow-y-auto">
+          <AlertDialogDescription className="[overflow-wrap:anywhere]">{content.children}</AlertDialogDescription>
+          {content.error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{content.error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </div>
         <AlertDialogFooter>
-          <Button variant="outline" disabled={pending} onClick={onClose}>
-            {msg('members.cancel', 'Cancel')}
-          </Button>
+          <AlertDialogCancel disabled={pending}>{msg('members.cancel', 'Cancel')}</AlertDialogCancel>
           <Button variant="destructive" disabled={pending} onClick={onConfirm}>
             {pending ? msg('members.removing', 'Removing...') : msg('members.remove', 'Remove')}
           </Button>

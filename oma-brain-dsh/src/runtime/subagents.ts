@@ -131,7 +131,7 @@ export class Subagents {
         name: definition?.name ?? args.name,
         systemPrompt: definition?.systemPrompt ?? args.system_prompt,
         model: definition?.model ?? this.parent.config.model,
-        tools: inheritedTools(definition?.tools, this.parent.config.tools), status: "idle" };
+        tools: definition ? [...(definition.tools ?? [])] : this.parent.config.tools, status: "idle" };
       this.threads.push(thread);
       this.bridge.bindPersistence(thread.id);
     }
@@ -234,7 +234,7 @@ export class Subagents {
         ?? `${config.systemPrompt}\n\nYou are subagent ${thread.name}. Your conversation is isolated. Delegation tools are unavailable. Report your findings to the parent.\nSpecialist instructions:\n${thread.systemPrompt}`,
     }, {
       onExternalMcpAuthenticationFailure: (serverName, phase) => this.parent.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase) ?? Promise.resolve(),
-      beforeRequest: async () => { await child.flushLog(); await this.bridge.beforeRequest?.(); },
+      beforeRequest: async () => { await child.flushLog(); await this.bridge.beforeRequest?.(thread.id); },
       onDiagnostic: diagnostic => this.bridge.onDiagnostic?.(thread.id, diagnostic),
       onOpen: session => this.bridge.onOpen?.(session) ?? Promise.resolve(),
       afterFlushLog: session => this.bridge.afterFlushLog?.(session) ?? Promise.resolve(),
@@ -261,9 +261,4 @@ export class Subagents {
     for (const unbind of this.unbind.values()) unbind();
     this.unbind.clear();
   }
-}
-
-function inheritedTools(own: string[] | undefined, parent: string[] | undefined): string[] | undefined {
-  if (!own) return parent;
-  return parent ? own.filter((name) => parent.includes(name)) : own;
 }

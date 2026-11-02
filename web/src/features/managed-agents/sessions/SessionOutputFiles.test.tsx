@@ -10,7 +10,7 @@ import { useSessionFiles } from './SessionFileContext';
 import { SessionOutputFileList, SessionOutputFiles } from './SessionOutputFiles';
 import { sessionFilesQueryKey } from './sessionFiles';
 
-const { act, cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import('@testing-library/react');
 const originalFetch = globalThis.fetch;
 const originalCreateObjectURL = URL.createObjectURL;
 const originalClick = window.HTMLAnchorElement.prototype.click;
@@ -113,7 +113,9 @@ test('renders all scoped pages, excludes uploads, and deduplicates files outside
   await screen.findByRole('button', { name: 'Download extra.pdf' });
   expect(screen.getAllByRole('button', { name: 'Download result.csv' })).toHaveLength(1);
   expect(screen.queryByRole('button', { name: 'Download input.csv' })).toBeNull();
-  expect(screen.getByText('CSV · 0 B')).toBeTruthy();
+  const outputCard = screen.getByRole('button', { name: 'Download result.csv' });
+  expect(within(outputCard).getByText('CSV')).toBeTruthy();
+  expect(within(outputCard).getByText('0 B')).toBeTruthy();
   expect(requests).toHaveLength(2);
   expect(requests.every((url) => url.searchParams.get('scope_id') === 'sesn_outputs')).toBe(true);
 });

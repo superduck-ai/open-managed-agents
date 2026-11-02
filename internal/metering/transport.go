@@ -3,6 +3,7 @@ package metering
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -56,6 +57,9 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	request = request.Clone(request.Context())
 	request.Header.Del("Accept-Encoding")
 	observer := &observation{}
+	if strings.HasSuffix(request.URL.Path, "/chat/completions") {
+		observer.chat = &chatObservation{}
+	}
 	finish := sync.OnceFunc(func() { t.finish(request.Context(), record, observer) })
 	response, err := t.Base.RoundTrip(request)
 	if err != nil {
@@ -138,7 +142,11 @@ func (b *observedBody) Read(data []byte) (int, error) {
 	n, err := b.ReadCloser.Read(data)
 	b.observer.write(data[:n])
 	if err != nil {
-		if err != io.EOF {
+		b.observer.eof = errors.Is(err, io.EOF)
+		if !b.observer.eof {
+			if b.observer.chat != nil {
+				b.observer.end()
+			}
 			b.observer.failed = true
 		}
 		b.finish()

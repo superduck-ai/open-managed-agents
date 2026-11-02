@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription, AlertTitle } from '../../../shared/ui/alert';
 import { listEnvironmentWork } from '../api';
-import { DetailCard, DetailKV, DetailTableCard } from '../components/common';
+import { DetailKV, DetailTableCard } from '../components/common';
 import { type EnvironmentApiResponse, type EnvironmentWorkApiResponse } from '../types';
 import { compactEntityId, objectRecord } from '../utils';
 import { environmentPackageRows } from './model';
@@ -38,12 +38,6 @@ export function EnvironmentReadOnlySections({ entity }: { entity: EnvironmentApi
         <h2 className="text-[20px] font-semibold text-foreground">
           {msg('managedAgents.environments.networking.title', 'Networking')}
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {msg(
-            'managedAgents.environments.networking.description',
-            'Configure network access policies for this environment.',
-          )}
-        </p>
         <DetailKV
           label={msg('managedAgents.environments.networking.type', 'Type')}
           value={
@@ -53,36 +47,24 @@ export function EnvironmentReadOnlySections({ entity }: { entity: EnvironmentApi
           }
         />
       </div>
-      <div className="border-t border-border pt-7">
+      <div className="border-t-[0.5px] border-border pt-7">
         <h2 className="text-[20px] font-semibold text-foreground">
           {msg('managedAgents.environments.packages.title', 'Packages')}
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {msg(
-            'managedAgents.environments.packages.description',
-            'Specify packages and versions available in this environment. Separate multiple values with spaces.',
-          )}
-        </p>
         {packages.length ? (
           <div className="mt-3 text-sm text-foreground">
             {packages.map((row) => `${row.manager}: ${row.value}`).join('  ')}
           </div>
         ) : (
-          <div className="mt-3 text-sm text-muted-foreground/70">
+          <div className="mt-3 text-sm text-muted-foreground">
             {msg('managedAgents.environments.packages.empty', 'No packages configured')}
           </div>
         )}
       </div>
-      <div className="border-t border-border pt-7">
+      <div className="border-t-[0.5px] border-border pt-7">
         <h2 className="text-[20px] font-semibold text-foreground">
           {msg('managedAgents.environments.metadata.title', 'Metadata')}
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {msg(
-            'managedAgents.environments.metadata.description',
-            'Add up to 16 unique key-value pairs. Keys can use uppercase or lowercase letters.',
-          )}
-        </p>
         {Object.keys(metadata).length ? (
           <div className="mt-3 grid gap-2 text-sm text-foreground">
             {Object.entries(metadata).map(([key, value]) => (
@@ -92,7 +74,7 @@ export function EnvironmentReadOnlySections({ entity }: { entity: EnvironmentApi
             ))}
           </div>
         ) : (
-          <div className="mt-3 text-sm text-muted-foreground/70">
+          <div className="mt-3 text-sm text-muted-foreground">
             {msg('managedAgents.environments.metadata.empty', 'No metadata')}
           </div>
         )}
@@ -136,20 +118,11 @@ export function EnvironmentWorkPanel({
     'managedAgents.environments.work.description',
     'Inspect pending or claimed work for this environment.',
   );
-  if (state.loading) {
-    return (
-      <DetailCard title={title} description={description}>
-        <div className="rounded-lg border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
-          {msg('managedAgents.environments.work.loading', 'Loading work queue...')}
-        </div>
-      </DetailCard>
-    );
-  }
   return (
     <DetailTableCard
       title={title}
       description={description}
-      loading={false}
+      loading={state.loading}
       error={state.error}
       emptyTitle={msg('managedAgents.environments.work.empty', 'No work queued')}
       columns={[

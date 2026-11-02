@@ -1,4 +1,6 @@
 import { type ReactNode } from 'react';
+import type { useI18n } from '@/shared/i18n';
+import { skillSourceLabel } from '@/shared/lib/skill-source';
 import { createdFilterStartISOString } from '../api';
 import { StatusPill } from '../components/common';
 import {
@@ -133,22 +135,19 @@ export function agentSkillSnapshotSource(skill: unknown) {
   return '';
 }
 
-export function formatAgentSkillSource(source: string) {
+export function formatAgentSkillSource(source: string, msg?: ReturnType<typeof useI18n>['msg']) {
   const normalized = source.trim().toLowerCase();
   if (!normalized) {
     return 'Unknown';
   }
-  if (normalized === 'anthropic') {
-    return 'Anthropic';
-  }
-  if (normalized === 'custom') {
-    return 'Custom';
-  }
-  return normalized
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+  return (
+    skillSourceLabel(source, msg) ??
+    normalized
+      .split(/[_\s-]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ')
+  );
 }
 
 export function agentMatchesClientFilters(
@@ -177,6 +176,7 @@ export function agentDetailTabFromSearch(): AgentDetailTab {
     case 'sessions':
     case 'deployments':
     case 'observability':
+    case 'channels':
       return tab;
     case 'agent':
     case 'config':

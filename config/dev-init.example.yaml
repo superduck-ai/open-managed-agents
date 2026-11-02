@@ -30,3 +30,5 @@ workspaces:
         name: secondary-key-2
 
 model_providers_file: /absolute/path/to/.oma-dev/model-providers.yaml
+
+local_openobserve: true

@@ -62,6 +62,8 @@ func seedClaimCodeSession(t *testing.T, ctx context.Context, database *sql.DB, i
 	return codeSessionID
 }
 
+const claimTestTraceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+
 func claimTestInput(workerID string) ClaimCodeSessionInput {
 	return ClaimCodeSessionInput{
 		WorkerID: workerID, OAuthAccessTokenHash: "hash-" + workerID,
@@ -83,7 +85,7 @@ func TestCodeSessionClaimsPostgresRejectsIneligibleSessions(t *testing.T) {
 	live := seedClaimCodeSession(t, ctx, database, 3, "claim", "running")
 	execClaimTest(t, ctx, database, `update code_sessions set worker_lease_expires_at = now() - interval '5 seconds' where external_id = $1`, live)
 	deleted := seedClaimCodeSession(t, ctx, database, 4, "claim", "running")
-	if err := store.RequestCodeSessionWorker(ctx, claimTestOrganization, claimTestWorkspace, deleted); err != nil {
+	if err := store.RequestCodeSessionWorker(ctx, claimTestOrganization, claimTestWorkspace, deleted, ""); err != nil {
 		t.Fatal(err)
 	}
 	execClaimTest(t, ctx, database, `update sessions set deleted_at = now() where external_id = 'sesn_claim_4'`)
@@ -91,7 +93,7 @@ func TestCodeSessionClaimsPostgresRejectsIneligibleSessions(t *testing.T) {
 	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a")); err != nil || found {
 		t.Fatalf("ineligible sessions claimed: found=%t err=%v", found, err)
 	}
-	if err := store.RequestCodeSessionWorker(ctx, claimTestWorkspace, claimTestWorkspace, idle); !errors.Is(err, ErrNotFound) {
+	if err := store.RequestCodeSessionWorker(ctx, claimTestWorkspace, claimTestWorkspace, idle, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign organization request: %v", err)
 	}
 	if err := store.ReleaseCodeSessionClaim(ctx, idle, "worker-a", 1, CodeSessionClaimReleaseRetry); !errors.Is(err, ErrPreconditionFailed) {
@@ -102,7 +104,7 @@ func TestCodeSessionClaimsPostgresRejectsIneligibleSessions(t *testing.T) {
 func TestCodeSessionClaimsPostgresConcurrentClaimsAreExclusive(t *testing.T) {
 	ctx, database, store := newCodeSessionClaimTestStore(t)
 	codeSessionID := seedClaimCodeSession(t, ctx, database, 1, "claim", "idle")
-	if err := store.RequestCodeSessionWorker(ctx, claimTestOrganization, claimTestWorkspace, codeSessionID); err != nil {
+	if err := store.RequestCodeSessionWorker(ctx, claimTestOrganization, claimTestWorkspace, codeSessionID, ""); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -134,12 +136,18 @@ func TestCodeSessionClaimsPostgresConcurrentClaimsAreExclusive(t *testing.T) {
 func TestCodeSessionClaimsPostgresLifecycle(t *testing.T) {
 	ctx, database, store := newCodeSessionClaimTestStore(t)
 	codeSessionID := seedClaimCodeSession(t, ctx, database, 1, "claim", "idle")
-	if err := store.RequestCodeSessionWorker(ctx, claimTestOrganization, claimTestWorkspace, codeSessionID); err != nil {
+	if err := store.RequestCodeSessionWorker(ctx, claimTestOrganization, claimTestWorkspace, codeSessionID, claimTestTraceParent); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RequestCodeSessionWorker(ctx, claimTestOrganization, claimTestWorkspace, codeSessionID, "00-ffffffffffffffffffffffffffffffff-ffffffffffffffff-01"); err != nil {
 		t.Fatal(err)
 	}
 	claim, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-a"))
 	if err != nil || !found || claim.Exhausted || claim.CodeSessionExternalID != codeSessionID || claim.WorkerEpoch != 2 {
 		t.Fatalf("first claim = %+v found=%t err=%v", claim, found, err)
+	}
+	if claim.TraceParent != claimTestTraceParent || claim.RequestedAt == nil {
+		t.Fatalf("first claim trace=%q requested_at=%v, want the first request's trace", claim.TraceParent, claim.RequestedAt)
 	}
 	if _, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-b")); err != nil || found {
 		t.Fatalf("claim within claim TTL: found=%t err=%v", found, err)
@@ -199,6 +207,9 @@ func TestCodeSessionClaimsPostgresLifecycle(t *testing.T) {
 	takeover, found, err := store.ClaimNextCodeSession(ctx, claimTestInput("worker-d"))
 	if err != nil || !found || takeover.WorkerEpoch != 5 {
 		t.Fatalf("takeover after grace = %+v found=%t err=%v", takeover, found, err)
+	}
+	if takeover.TraceParent != "" || takeover.RequestedAt != nil {
+		t.Fatalf("lease takeover reused dispatch trace=%q requested_at=%v", takeover.TraceParent, takeover.RequestedAt)
 	}
 	if _, err := store.RecordCodeSessionWorkerHeartbeat(ctx, codeSessionID, third.WorkerEpoch, fixedWorkerLease(20*time.Second, 10*time.Second)); err == nil {
 		t.Fatal("stale worker heartbeat accepted after takeover")
@@ -341,4 +352,46 @@ func TestCodeSessionClaimsPostgresIdleReleaseClearsLease(t *testing.T) {
 
 func fixedWorkerLease(ttl, grace time.Duration) WorkerLeasePolicy {
 	return func(string) WorkerLeaseTimings { return WorkerLeaseTimings{TTL: ttl, Grace: grace} }
+}
+
+func TestManagedAgentLaunchCleanupPostgres(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	codeID := seedClaimCodeSession(t, ctx, database, 1, "nats", "running")
+	session := Session{OrganizationUUID: claimTestOrganization, WorkspaceUUID: claimTestWorkspace, ExternalID: "sesn_claim_1"}
+	epoch, err := store.RotateManagedAgentCodeSessionCredentials(ctx, session, codeID, "replacement-hash")
+	if err != nil || epoch != 2 {
+		t.Fatalf("recovery = (%d, %v)", epoch, err)
+	}
+	for _, tc := range []struct {
+		name    string
+		session Session
+		epoch   int64
+	}{
+		{"stale launch", session, 1}, {"missing epoch", session, 0},
+		{"other workspace", Session{OrganizationUUID: claimTestOrganization, WorkspaceUUID: claimTestOrganization}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			terminated, err := store.TerminateManagedAgentLaunch(ctx, tc.session, codeID, tc.epoch)
+			if err != nil || terminated {
+				t.Fatalf("incorrect cleanup = (%t, %v)", terminated, err)
+			}
+		})
+	}
+	var status, hash string
+	if err := database.QueryRowContext(ctx, `select status, oauth_access_token_hash from code_sessions where external_id = $1`, codeID).Scan(&status, &hash); err != nil {
+		t.Fatal(err)
+	}
+	if status != "active" || hash != "replacement-hash" {
+		t.Fatalf("recovered session changed: %s %s", status, hash)
+	}
+	terminated, err := store.TerminateManagedAgentLaunch(ctx, session, codeID, epoch)
+	if err != nil || !terminated {
+		t.Fatalf("current cleanup = (%t, %v)", terminated, err)
+	}
+	if _, err := store.RotateManagedAgentCodeSessionCredentials(ctx, session, codeID, "too-late"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("recovered a terminated launch: %v", err)
+	}
+	if terminated, err := store.TerminateManagedAgentLaunch(ctx, session, codeID, epoch); err != nil || terminated {
+		t.Fatalf("repeated cleanup = (%t, %v)", terminated, err)
+	}
 }

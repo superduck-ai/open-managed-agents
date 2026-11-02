@@ -512,3 +512,10 @@ tool call 行本身不做 token 级 streaming preview。实时增量主要作用
 - 使用 MCP weather agent 跑子代理调用三个城市时，后端只有三次 tool execution，Transcript 中同一可见流不重复显示同一 `tool_use_id`。
 - 列表分页历史事件 + SSE 新事件合并后，tool result 能回填到已有 tool call。
 - 切换 Transcript / Debug 后，选中 entry 与详情面板保持可理解的对应关系。
+
+
+## 检查器耗时列的可读性
+
+工具列表p50、调用执行耗时及等待确认耗时列统一112px，耗时单元格允许换行，不能把本地化单位当作可省略的次要内容。列表最小宽度464px；调用明细根据可选的等待和线程列采用520/642/732px最小宽度。窄屏继续使用共享Table容器内部横向滚动，避免整个页面溢出；工具名称和输入预览仍使用原有截断规则。
+
+2026-10-26真实页面测量：旧p50列64px且“744 毫秒”scrollWidth65px，实际出现省略；新列112px，样本scrollWidth与clientWidth均112px。390px视口body390px，两个表格分别464px和520px。前后截图及补充状态位于独立目录 `session-inspector-review-2026-10-26/`。

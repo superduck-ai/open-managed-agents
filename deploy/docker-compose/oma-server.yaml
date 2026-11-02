@@ -60,7 +60,7 @@ code_session:
   sandbox_api_base_url: http://host.docker.internal:38080
 
 observability:
-  enabled: true
+  enabled: false
   # May capture prompts, model output, tool data, source code, and secrets.
   # Set false for structure-only telemetry.
   content_capture_enabled: true
@@ -71,8 +71,7 @@ observability:
   openobserve:
     base_url: http://openobserve:5080
     organization: oma
-    logs_stream: oma_claude_code
-    traces_stream: oma_claude_code
+    logs_stream: oma_dsh
     # Local credentials must match docker-compose.yml.
     ingestion:
       username: root@example.com

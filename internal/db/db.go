@@ -28,6 +28,7 @@ var (
 	ErrSessionInputPaused             = errors.New("session input is paused; resolve pending tools or budget first")
 	ErrSessionInterruptTargetInvalid  = errors.New("interrupt target is terminated or invalid")
 	ErrSessionInputConflict           = errors.New("session cannot accept input")
+	ErrSessionToolUseNotPending       = fmt.Errorf("%w: tool use is not pending", ErrSessionInputConflict)
 	ErrSessionToolConfirmationInvalid = errors.New("tool confirmation requires a pending ask event")
 	ErrInvalidCursor                  = errors.New("invalid page cursor")
 	ErrPreconditionFailed             = errors.New("precondition failed")
@@ -112,9 +113,7 @@ func newDB(pool *pgxpool.Pool, logger *slog.Logger) *DB {
 		sqlDB,
 		yourbatis.DialectPostgres,
 		yourbatis.WithDatabaseID("postgres"),
-		yourbatis.WithLogger(yourbatis.SlogLogger{
-			Logger: logging.LoggerOrDefault(logger),
-		}),
+		yourbatis.WithLogger(newStatementLogger(logging.LoggerOrDefault(logger))),
 	)
 	return &DB{
 		pool:     pool,

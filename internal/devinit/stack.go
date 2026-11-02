@@ -19,15 +19,16 @@ import (
 // are probed once per stack start and reused while every service stays
 // healthy; restart scripts persist them in state.json runtime.
 type StackPorts struct {
-	APIPort   int `json:"api_port"`
-	WebPort   int `json:"web_port"`
-	PGPort    int `json:"pg_port"`
-	RedisPort int `json:"redis_port"`
-	NATSPort  int `json:"nats_port"`
-	NATSPort2 int `json:"nats_port_2"`
-	NATSPort3 int `json:"nats_port_3"`
-	MinIOPort int `json:"minio_port"`
-	E2BPort   int `json:"e2b_port"`
+	OpenObservePort int `json:"openobserve_port,omitempty"`
+	APIPort         int `json:"api_port"`
+	WebPort         int `json:"web_port"`
+	PGPort          int `json:"pg_port"`
+	RedisPort       int `json:"redis_port"`
+	NATSPort        int `json:"nats_port"`
+	NATSPort2       int `json:"nats_port_2"`
+	NATSPort3       int `json:"nats_port_3"`
+	MinIOPort       int `json:"minio_port"`
+	E2BPort         int `json:"e2b_port"`
 }
 
 const (
@@ -51,7 +52,15 @@ func EnsureStack(ctx context.Context, repoRoot string, binding EnvBinding, previ
 	if err := checkStackOwnership(ctx, binding); err != nil {
 		return StackPorts{}, err
 	}
+	spec, err := LoadSpec(binding.InitFile)
+	if err != nil {
+		return StackPorts{}, err
+	}
 	ports, err := reconcileStack(ctx, repoRoot, binding, previous)
+	if err == nil && spec.LocalOpenObserve {
+		ports.OpenObservePort, err = ensureLocalOpenObserve(ctx, repoRoot, binding)
+	}
+
 	if previous != nil {
 		ports.APIPort, ports.WebPort = previous.APIPort, previous.WebPort
 	}
@@ -176,7 +185,7 @@ func TeardownStack(ctx context.Context, repoRoot string, binding EnvBinding) err
 	if err != nil && !strings.Contains(string(output), "no such project") {
 		return fmt.Errorf("compose down for %s: %s: %w", binding.Name, strings.TrimSpace(string(output)), err)
 	}
-	return nil
+	return checkStackRemoved(ctx, binding)
 }
 
 func composeProjectName(binding EnvBinding) string {

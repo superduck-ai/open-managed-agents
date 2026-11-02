@@ -61,8 +61,8 @@ test('partial batch archive marks only successful agents as archived in the All 
     agentArchiveErrorOnce: true,
   });
   render(<ManagedAgentsPage section="agents" />);
-  fireEvent.click(screen.getByRole('button', { name: 'Status Active' }));
-  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'All' }));
+  fireEvent.click(screen.getByRole('combobox', { name: 'Status Active' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'All' }));
   fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Server agent' }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Select Second agent' }));
   fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }));
@@ -220,8 +220,8 @@ test('archived agents can be previewed but cannot start a conversation', async (
   resetTestDom('https://oma.duck.ai/workspaces/default/agents');
   mockAgentsApi([{ ...serverAgent, archived_at: '2026-10-01T00:00:00Z' }]);
   render(<ManagedAgentsPage section="agents" />);
-  fireEvent.click(screen.getByRole('button', { name: 'Status Active' }));
-  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'All' }));
+  fireEvent.click(screen.getByRole('combobox', { name: 'Status Active' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'All' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Quick view Server agent' }));
   const panel = screen.getByRole('dialog', { name: 'Agent' });
   expect((await within(panel).findByRole('button', { name: 'Start conversation' })).hasAttribute('disabled')).toBe(

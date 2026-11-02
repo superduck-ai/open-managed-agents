@@ -156,6 +156,26 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  openobserve:
+    profiles: [observability]
+    labels: *oma-labels
+    image: public.ecr.aws/zinclabs/openobserve:v1.1.2
+    cpus: 2
+    mem_limit: 1g
+    env_file:
+      - path: .run/generated/openobserve.env
+        required: false
+    environment:
+      ZO_CPU_NUM: "2"
+      ZO_DATA_DIR: /data
+      ZO_TELEMETRY: "false"
+      ZO_REPORTING_ENABLED: "false"
+    ports:
+      - "127.0.0.1::5080"
+    volumes:
+      - openobservedata:/data
+    restart: unless-stopped
+
   # e2b-local — sandbox gateway (host network, manages host sandbox containers).
   # Per-environment server port and sandbox container name prefix keep
   # multiple instances apart on the shared Docker daemon.
@@ -173,6 +193,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  openobservedata:
+    labels: *oma-labels
   pgdata:
     labels: *oma-labels
   redisdata:

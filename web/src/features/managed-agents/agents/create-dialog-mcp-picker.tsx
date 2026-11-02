@@ -143,9 +143,13 @@ export function CreateDialogMcpPicker({
         {msg('managedAgents.agents.createDialog.addMcpServer', 'Add MCP server')}
         <ChevronsUpDown className="ml-auto size-3.5 text-muted-foreground" aria-hidden />
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[min(420px,calc(100vw-2rem))] gap-0 p-0">
-        <Tabs value={activeTab} className="gap-0" onValueChange={(value) => setActiveTab(value as McpPickerTab)}>
-          <div className="border-b border-border p-2">
+      <PopoverContent align="start" className="w-[min(420px,calc(100vw-2rem))] gap-0 overflow-hidden p-0">
+        <Tabs
+          value={activeTab}
+          className="min-h-0 gap-0"
+          onValueChange={(value) => setActiveTab(value as McpPickerTab)}
+        >
+          <div className="shrink-0 border-b-[0.5px] border-border p-2">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="directory">
                 {msg('managedAgents.agents.createDialog.mcpDirectoryTab', 'Directory')}
@@ -155,7 +159,7 @@ export function CreateDialogMcpPicker({
               </TabsTrigger>
             </TabsList>
           </div>
-          <TabsContent value="directory" className="mt-0">
+          <TabsContent value="directory" className="mt-0 flex min-h-0 flex-col">
             <CreateDialogPickerList
               searchPlaceholder={msg('managedAgents.agents.createDialog.searchMcpServers', 'Search MCP servers...')}
               emptyLabel={msg('managedAgents.agents.createDialog.noMcpServers', 'No MCP servers found.')}
@@ -164,13 +168,13 @@ export function CreateDialogMcpPicker({
                 label: server.displayName,
                 description:
                   server.source === 'tunnel'
-                    ? `${msg(`mcpTunnels.connection.${server.tunnel?.connectionState ?? 'unknown'}`, 'Unknown')} · ${server.url ?? ''}`
+                    ? `${msg(`mcpTunnels.connection.${server.tunnel?.connectionState ?? 'unknown'}`, 'Unknown')}  ${server.url ?? ''}`
                     : server.url,
                 group: server.group,
                 disabled: atLimit,
                 icon:
                   server.source === 'tunnel' ? (
-                    <span className="flex size-8 items-center justify-center rounded-lg border border-border bg-background">
+                    <span className="flex size-8 items-center justify-center rounded-lg border-[0.5px] border-border bg-background">
                       <Cable className="size-4" aria-hidden />
                     </span>
                   ) : (
@@ -187,8 +191,11 @@ export function CreateDialogMcpPicker({
             />
             <MCPPickerAlerts atLimit={atLimit} addFailed={addFailed} />
           </TabsContent>
-          <TabsContent value="custom" className="mt-0">
-            <p className="border-b border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
+          <TabsContent
+            value="custom"
+            className="subtle-scrollbar mt-0 min-h-0 overflow-y-auto [&_[data-slot=command-list]]:max-h-none [&_[data-slot=command]]:h-auto"
+          >
+            <p className="border-b-[0.5px] border-border px-3 py-2 text-xs leading-5 text-muted-foreground">
               {msg(
                 'managedAgents.agents.createDialog.customMcpCopyHint',
                 'Selecting an entry copies its name and endpoint into the Agent configuration. Later directory changes do not update the Agent.',
@@ -217,7 +224,7 @@ export function CreateDialogMcpPicker({
             />
             <MCPPickerAlerts atLimit={atLimit} addFailed={addFailed} />
             {conflictingWorkspaceServers.length > 0 ? (
-              <p role="alert" className="border-t border-border px-3 py-2 text-sm text-destructive">
+              <p role="alert" className="border-t-[0.5px] border-border px-3 py-2 text-sm text-destructive">
                 {msg(
                   'managedAgents.agents.createDialog.mcpNameUrlConflict',
                   'This Agent already uses {names} with a different URL. Remove the existing MCP before adding the workspace version.',
@@ -225,7 +232,7 @@ export function CreateDialogMcpPicker({
                 )}
               </p>
             ) : null}
-            <div className="border-t border-border p-1.5">
+            <div className="border-t-[0.5px] border-border p-1.5">
               <Button
                 type="button"
                 variant="ghost"
@@ -252,12 +259,12 @@ function MCPPickerAlerts({ atLimit, addFailed }: { atLimit: boolean; addFailed: 
   return (
     <>
       {atLimit ? (
-        <p role="alert" className="border-t border-border px-3 py-2 text-sm text-destructive">
+        <p role="alert" className="border-t-[0.5px] border-border px-3 py-2 text-sm text-destructive">
           {msg('managedAgents.agents.createDialog.mcpServerLimit', 'An agent can use at most 20 MCP servers.')}
         </p>
       ) : null}
       {addFailed ? (
-        <p role="alert" className="border-t border-border px-3 py-2 text-sm text-destructive">
+        <p role="alert" className="border-t-[0.5px] border-border px-3 py-2 text-sm text-destructive">
           {msg('managedAgents.agents.createDialog.mcpAddFailed', 'Could not add this MCP server.')}
         </p>
       ) : null}

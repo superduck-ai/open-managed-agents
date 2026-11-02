@@ -1,16 +1,16 @@
 package config
 
-import "errors"
+import "fmt"
 
-func validateWebhookStream(cfg WebhookStreamConfig) error {
+func validateStreamLimits(name string, cfg WebhookStreamConfig) error {
 	if cfg.MaxBytes <= 0 {
-		return errors.New("nats.webhook_stream.max_bytes must be positive")
+		return fmt.Errorf("%s.max_bytes must be positive", name)
 	}
 	if cfg.MaxAge <= 0 {
-		return errors.New("nats.webhook_stream.max_age must be positive")
+		return fmt.Errorf("%s.max_age must be positive", name)
 	}
 	if cfg.Replicas < 1 || cfg.Replicas > 5 {
-		return errors.New("nats.webhook_stream.replicas must be between 1 and 5")
+		return fmt.Errorf("%s.replicas must be between 1 and 5", name)
 	}
 	return nil
 }

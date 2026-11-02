@@ -20,12 +20,15 @@ export function environmentFormValues(entity?: EnvironmentApiResponse): Environm
       name: '',
       description: '',
       hosting: 'cloud',
-      networkType: 'limited',
+      networkType: 'unrestricted',
       allowMcpServers: false,
       allowPackageManagers: false,
       allowedHostsText: '',
       packages: [],
       metadataRows: [],
+      initScript: '',
+      environmentRows: [],
+      resources: { cpu: '', memory: '', disk: '' },
     };
   const values = environmentEditValues(entity);
   return {
@@ -33,6 +36,7 @@ export function environmentFormValues(entity?: EnvironmentApiResponse): Environm
     hosting: objectRecord(entity.config).type === 'self_hosted' ? 'self_hosted' : 'cloud',
     packages: values.packages.filter((row) => row.value),
     metadataRows: values.metadataRows.filter((row) => row.key || row.value),
+    environmentRows: values.environmentRows.filter((row) => row.key || row.value),
   };
 }
 

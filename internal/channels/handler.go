@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,21 +16,25 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/platform"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 type agentStore interface {
 	GetAgent(context.Context, string, string) (db.Agent, error)
 	GetEnvironment(context.Context, string, string) (db.Environment, error)
+	EnsureChannelWorkspaceCredential(context.Context, platform.CreateConsoleAPIKeyInput, *secrets.Service) (string, error)
 }
 
 type handler struct {
 	store  agentStore
 	cfg    config.ChannelBridgeConfig
 	client *http.Client
+	cipher *secrets.Service
 }
 
-func NewHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger) http.Handler {
-	h := &handler{store: store, cfg: cfg, client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+func NewHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger, cipher *secrets.Service) http.Handler {
+	h := &handler{store: store, cfg: cfg, cipher: cipher, client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	r := chi.NewRouter()
 	wrap := httpapi.NewErrorAdapter(logger).Wrap
 	r.Get("/", wrap(h.forward))
@@ -97,6 +102,9 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 		if err := h.requireEnvironment(upstream, p.WorkspaceUUID); err != nil {
 			return err
 		}
+		if err := h.syncWorkspaceCredentials(upstream, p); err != nil {
+			return err
+		}
 	}
 	response, err := h.client.Do(upstream)
 	if err != nil {
@@ -104,7 +112,7 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 500 || response.StatusCode == 401 || response.StatusCode == 403 {
-		return unavailable(nil)
+		return unavailable(fmt.Errorf("桥接请求返回 HTTP %d", response.StatusCode))
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {

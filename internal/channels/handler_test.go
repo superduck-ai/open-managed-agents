@@ -14,9 +14,15 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/platform"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 type scopedStore struct{ archived bool }
+
+func (s scopedStore) EnsureChannelWorkspaceCredential(context.Context, platform.CreateConsoleAPIKeyInput, *secrets.Service) (string, error) {
+	return "test-workspace-key", nil
+}
 
 func (s scopedStore) GetEnvironment(_ context.Context, workspace, id string) (db.Environment, error) {
 	if workspace != "workspace-a" || (id != "env-a" && id != "env-archived") {
@@ -62,6 +68,10 @@ func TestChannelScopeAndProxy(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/managed-channels/runtime" {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
 				if r.URL.Path == "/api/managed-channels/settings" {
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = w.Write([]byte(`{"environment_id":"env-a"}`))
@@ -85,7 +95,7 @@ func TestChannelScopeAndProxy(t *testing.T) {
 			}))
 			defer upstream.Close()
 			router := chi.NewRouter()
-			router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, scopedStore{archived: test.archived}, slog.New(slog.NewTextHandler(io.Discard, nil))))
+			router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, scopedStore{archived: test.archived}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 			request := httptest.NewRequest(test.method, "/agents/agent-a/channels"+test.suffix+"?workspace=evil", strings.NewReader(`{"name":"飞书"}`))
 			request.Header.Set("Cookie", "session=private")
 			request.Header.Set("X-OMA-Workspace", "evil")
@@ -120,6 +130,10 @@ func TestChannelPlatformSessionCSRF(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/managed-channels/runtime" {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
 				if r.URL.Path == "/api/managed-channels/settings" {
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = w.Write([]byte(`{"environment_id":"env-a"}`))
@@ -130,7 +144,7 @@ func TestChannelPlatformSessionCSRF(t *testing.T) {
 			}))
 			defer upstream.Close()
 			router := chi.NewRouter()
-			router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, scopedStore{}, slog.New(slog.NewTextHandler(io.Discard, nil))))
+			router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, scopedStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 			request := httptest.NewRequestWithContext(t.Context(), test.method, "/agents/agent-a/channels", strings.NewReader(`{}`))
 			if test.cookie != "" {
 				request.AddCookie(&http.Cookie{Name: "sessionKey", Value: test.cookie})

@@ -2,7 +2,7 @@
 
 当前执行端为 `oma-brain-dsh`。Go 后端负责准备 Code Session 并接受执行端领取，执行端通过原有 CCRv2 完成注册、输入接收、模型代理、工具审批、事件持久化、状态更新和心跳。后端没有独立的 Brain assignment 表或完成状态补丁；领取状态保存在 `code_sessions` 行上。领取接口、状态机、并发与测试的完整设计见 [Brain Worker 领取](brain-worker-claim.md)。
 
-执行端协议的后续演进见 [DSRv1：DSH Session Remote 协议](dsrv1/protocol.md)（设计草案）；该协议落地前，本文描述的 CCRv2 合同仍是现行实现。
+执行端协议的后续演进见 [DSRv1：DSH Session Remote 协议](dsrv1/protocol.md)（设计草案，未冻结）；该协议落地前，本文描述的 CCRv2 合同仍是现行实现。
 
 本地在仓库根目录运行 `just restart-brain`，复用 `oma-brain-dsh/scripts/restart.sh`，先构建，再停止当前 Brain 目录启动的 Bun 入口进程，并在前台启动新进程。构建失败时保留旧进程，旧进程未能在 30 秒内退出时取消重启。
 

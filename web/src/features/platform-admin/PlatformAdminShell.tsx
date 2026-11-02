@@ -87,21 +87,23 @@ function AdminSidebar({ email }: { email: string }) {
                     </span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={administratorsActive}
-                    render={
-                      <Link
-                        to="/platform-admin/administrators"
-                        onClick={closeMenu}
-                        aria-current={administratorsActive ? 'page' : undefined}
-                      />
-                    }
-                  >
-                    <ShieldCheck aria-hidden />
-                    <span>{msg('platformAdmin.superAdministrators', 'Super administrators')}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                {!organizationUuid && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      isActive={administratorsActive}
+                      render={
+                        <Link
+                          to="/platform-admin/administrators"
+                          onClick={closeMenu}
+                          aria-current={administratorsActive ? 'page' : undefined}
+                        />
+                      }
+                    >
+                      <ShieldCheck aria-hidden />
+                      <span>{msg('platformAdmin.superAdministrators', 'Super administrators')}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
               </SidebarMenu>
             </nav>
           </SidebarGroupContent>

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
@@ -22,10 +21,10 @@ func (h *handler) syncWorkspaceCredentials(upstream *http.Request, principal aut
 	}
 	key, err := h.store.EnsureChannelWorkspaceCredential(upstream.Context(), input, h.cipher)
 	if errors.Is(err, db.ErrChannelCredentialInactive) {
-		return apperr.New(apperr.Conflict, "渠道专用 API Key 已停用，请在 API 密钥管理中恢复", err)
+		return credentialInactive(err)
 	}
 	if err != nil {
-		return apperr.New(apperr.Unavailable, "创建渠道工作区凭据失败，请联系管理员", err)
+		return credentialProvisionFailed(err)
 	}
 	body, err := json.Marshal(struct {
 		APIKey string `json:"api_key"`
@@ -45,11 +44,11 @@ func (h *handler) syncWorkspaceCredentials(upstream *http.Request, principal aut
 	request.Body = io.NopCloser(bytes.NewReader(body))
 	response, err := h.client.Do(request)
 	if err != nil {
-		return apperr.New(apperr.Unavailable, "同步渠道工作区凭据失败，请检查桥接服务", err)
+		return credentialSyncUnavailable(err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
-		return apperr.New(apperr.Unavailable, "同步渠道工作区凭据失败，请检查桥接版本与配置", fmt.Errorf("桥接运行配置同步返回 HTTP %d", response.StatusCode))
+		return credentialSyncRejected(fmt.Errorf("桥接运行配置同步返回 HTTP %d", response.StatusCode))
 	}
 	return nil
 }

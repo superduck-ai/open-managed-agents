@@ -31,6 +31,8 @@
     </update>
     <select id="ListMembers" resultType="PlatformAdminMember">
         SELECT uuid, email, name, role FROM users WHERE organization_uuid = #{params.OrganizationUUID} AND deleted_at IS NULL
+        <if test="params.Query != ''">AND (name ILIKE '%' || #{params.Query} || '%' OR email ILIKE '%' || #{params.Query} || '%')</if>
+        <if test="params.Role != ''">AND role = #{params.Role}</if>
         <if test="params.After != ''">AND uuid &gt; #{params.After}</if>
         ORDER BY uuid LIMIT #{params.Limit}
     </select>

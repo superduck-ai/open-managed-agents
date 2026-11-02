@@ -126,7 +126,6 @@ function OrganizationDetail({ organizationUuid, view }: { organizationUuid: stri
           organization={organization}
           onChanged={(updated) => {
             queries.setQueryData(key, updated);
-            setNotice('platformAdmin.organizationAdministratorsUpdated');
             void queries.invalidateQueries({ queryKey: ['platform-admin', 'organizations'] });
           }}
         />

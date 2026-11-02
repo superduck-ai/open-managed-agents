@@ -135,9 +135,9 @@ test('组织菜单每次只加载对应列表，直达与返回保留当前菜�
     return Response.json({ data: [], next_cursor: '' });
   }) as unknown as typeof fetch;
   const router = mount('/platform-admin/organizations/target?view=members');
-  expect(await screen.findByRole('heading', { name: '组织成员' })).toBeTruthy();
-  expect(await screen.findByText('暂无组织成员。')).toBeTruthy();
-  expect(screen.queryByRole('table')).toBeNull();
+  expect(await screen.findByRole('heading', { name: '成员' })).toBeTruthy();
+  expect(await screen.findByText('还没有成员')).toBeTruthy();
+  expect(screen.queryByRole('table')).toBeTruthy();
   expect(screen.getByRole('link', { name: '组织成员' }).getAttribute('aria-current')).toBe('page');
   expect(requests.some((path) => path.includes('/workspaces') || path.includes('/invitations'))).toBe(false);
 
@@ -145,7 +145,7 @@ test('组织菜单每次只加载对应列表，直达与返回保留当前菜�
   expect(await screen.findByRole('heading', { name: '工作区目录' })).toBeTruthy();
   expect(await screen.findByText('暂无工作区。')).toBeTruthy();
   expect(screen.queryByRole('table')).toBeNull();
-  expect(screen.queryByRole('heading', { name: '组织成员' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: '成员' })).toBeNull();
   expect(screen.getByRole('link', { name: '工作区' }).getAttribute('aria-current')).toBe('page');
   expect(router.state.location.search).toEqual({ view: 'workspaces' });
 
@@ -259,8 +259,8 @@ for (const view of ['members', 'invitations'] as const) {
       return Response.json({ data: [], next_cursor: '' });
     }) as typeof fetch;
     mount(`/platform-admin/organizations/target?view=${view}`);
-    const openLabel = view === 'members' ? '设置管理员' : '发送邀请';
-    const submitLabel = view === 'members' ? '确认变更' : '确认';
+    const openLabel = view === 'members' ? '添加成员' : '发送邀请';
+    const submitLabel = view === 'members' ? '添加' : '确认';
     async function submit() {
       fireEvent.click(await screen.findByRole('button', { name: openLabel, exact: true }));
       if (view === 'members') {

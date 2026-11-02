@@ -61,7 +61,7 @@ export function AccountPicker({
         </Button>
       </div>
       {selected.length > 0 && (
-        <ul aria-label={msg('platformAdmin.selectedAdministrators', 'Selected administrators')} className="space-y-1">
+        <ul aria-label={msg('platformAdmin.selectedAccounts', 'Selected accounts')} className="space-y-1">
           {selected.map((account) => (
             <li key={account.uuid} className="flex items-center justify-between gap-2 rounded-md bg-muted px-3 py-1">
               <span className="min-w-0" title={[account.name, account.email].filter(Boolean).join(' ')}>

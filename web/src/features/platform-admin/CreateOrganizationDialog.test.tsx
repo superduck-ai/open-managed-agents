@@ -56,7 +56,7 @@ test('创建失败保留管理员与名称，重试复用幂等键', async () =>
   fireEvent.click(screen.getByRole('button', { name: '创建组织' }));
   expect((await screen.findByRole('alert')).textContent).toContain('管理服务暂不可用');
   expect(screen.queryByLabelText('操作原因')).toBeNull();
-  expect(screen.getByLabelText('已选管理员').textContent).toContain('alice@example.com');
+  expect(screen.getByLabelText('已选账号').textContent).toContain('alice@example.com');
   fireEvent.click(screen.getByRole('button', { name: '创建组织' }));
   await waitFor(() => expect(created).toHaveBeenCalledTimes(1));
   expect(requests).toHaveLength(2);

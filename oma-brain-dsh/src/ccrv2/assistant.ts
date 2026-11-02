@@ -45,7 +45,8 @@ export function assistantMessages(codeSessionID: string, fallback: string, messa
     if (block.type !== "text" && block.type !== "reasoning") return [];
     const type = block.type === "reasoning" ? "agent.thinking" : "agent.message";
     const id = assistantEventID(codeSessionID, identity?.response?.messageID, identity?.blocks?.[index]?.index ?? index, type, fallback);
-    return [assistantBlockOutput(id, block, identity?.response?.requestID, threadId)!];
+    const output = assistantBlockOutput(id, block, identity?.response?.requestID, threadId);
+    return output ? [output] : [];
   });
 }
 

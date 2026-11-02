@@ -134,8 +134,8 @@ test("child requests and restored sessions use their selected model config", asy
   backend.onModel = async request => {
     if (request.model === "child-model") return textEvents("child done");
     if (parentCalls++ === 0) return toolEvents().map(event => event.type === "content_block_start"
-      ? { ...event, content_block: { ...event.content_block, name: "send_to_agent" } }
-      : event.type === "content_block_delta" ? { ...event, delta: { type: "input_json_delta", partial_json: JSON.stringify({ agent_name: "specialist", message: "help" }) } } : event);
+      ? { ...event, content_block: { ...event.content_block, name: "subagent" } }
+      : event.type === "content_block_delta" ? { ...event, delta: { type: "input_json_delta", partial_json: JSON.stringify({ agent_preset: `${backend.a.session_id}/specialist`, description: "specialist", prompt: "help" }) } } : event);
     return textEvents("parent done");
   };
   let ctx = new Context();

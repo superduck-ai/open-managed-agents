@@ -19,11 +19,20 @@ func TestDelegationPermissionRequiresEnabledConfiguration(t *testing.T) {
 		{`{"type":"multiagent_20261001"}`, true},
 		{`{"type":"multiagent_20261001","subagents":{"type":"enabled"}}`, true},
 	} {
-		for _, name := range []string{"list_agents", "send_to_agent", "archive_agent"} {
+		for _, name := range []string{"list_agents", "subagent", "send_message", "interrupt_agent"} {
 			permission, identity := resolveToolPermissionFromAgentSnapshot(json.RawMessage(`{"multiagent":`+tc.multiagent+`}`), name)
 			if (permission == resolvedToolPermissionAllow) != tc.allowed || identity.Kind != "delegation" {
 				t.Fatalf("%s %s: %s %+v", tc.multiagent, name, permission, identity)
 			}
+		}
+	}
+}
+
+func TestUnknownDelegationNamesRemainUnavailable(t *testing.T) {
+	for _, name := range []string{"send_to_agent", "archive_agent", "subagent_specialist_1", "subagent_specialist_25", "subagent_fork", "subagent_specialist_", "subagent_specialist_0", "subagent_specialist_-1", "subagent_specialist_01", "subagent_specialist_reader", "subagent_specialist_1_extra"} {
+		permission, identity := resolveToolPermissionFromAgentSnapshot(json.RawMessage(`{"multiagent":{"type":"multiagent_20261001"}}`), name)
+		if permission != resolvedToolPermissionDeny || identity.Kind == "delegation" {
+			t.Fatalf("%s: %s %+v", name, permission, identity)
 		}
 	}
 }

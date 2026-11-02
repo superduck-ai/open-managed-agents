@@ -1,30 +1,24 @@
-import type {
-  NativeAssembler,
-  NativeConversationModule,
-  NativeEvent,
-  NativeTrajectoryModule,
-  NativeView,
-} from './native-types';
+import type { DshAssembler, DshConversationModule, DshEvent, DshTrajectoryModule, DshView } from './dsh-types';
 
 type Dictionary = Record<string, string>;
 type Translator = (key: string, variables?: Record<string, unknown>) => string;
 
 export interface Projection {
-  engine: NativeAssembler;
-  view: NativeView;
+  engine: DshAssembler;
+  view: DshView;
   translate: Translator;
-  append(events: NativeEvent[]): unknown;
+  append(events: DshEvent[]): unknown;
 }
 
 export function createProjection(
-  native: NativeConversationModule,
-  trajectory: NativeTrajectoryModule,
+  native: DshConversationModule,
+  trajectory: DshTrajectoryModule,
   language: string,
 ): Projection {
   const definitions: unknown[] = [];
   const views: unknown[] = [];
   const dictionaries = new Map<string, Dictionary>();
-  let view: NativeView | undefined;
+  let view: DshView | undefined;
   const translate: Translator = (key, variables = {}) => {
     const text = dictionaries.get(language.startsWith('zh') ? 'zh' : 'en')?.[key] ?? key;
     return text.replace(/\{([^}]+)\}/g, (_, name: string) => String(variables[name] ?? ''));
@@ -61,7 +55,7 @@ export function createProjection(
     sessions: { binding: () => ({ session: { loadOlder: async () => {} } }) },
     slots: {
       inject: (_name: string, install: () => unknown) => install(),
-      register: (entry: Omit<NativeView, 'Component'>, Component: NativeView['Component']) => {
+      register: (entry: Omit<DshView, 'Component'>, Component: DshView['Component']) => {
         view = { ...entry, Component };
       },
     },

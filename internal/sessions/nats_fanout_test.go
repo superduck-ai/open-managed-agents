@@ -70,6 +70,13 @@ func TestNATSFanoutDeliversPreviewAndFinalAcrossInstances(t *testing.T) {
 		EventType:         "agent.message",
 		Payload:           json.RawMessage(`{"type":"agent.message","content":[{"type":"text","text":"hello"}]}`),
 	}, {
+		ExternalID:        "event-end",
+		WorkspaceUUID:     "workspace-test",
+		SessionExternalID: sessionID,
+		ThreadExternalID:  &threadID,
+		EventType:         "span.model_request_end",
+		Payload:           json.RawMessage(`{"type":"span.model_request_end","event_ids":["event-final"]}`),
+	}, {
 		ExternalID:        "event-terminal",
 		WorkspaceUUID:     "workspace-test",
 		SessionExternalID: sessionID,
@@ -81,7 +88,7 @@ func TestNATSFanoutDeliversPreviewAndFinalAcrossInstances(t *testing.T) {
 		t.Run(fmt.Sprintf("connection-%d", i), func(t *testing.T) {
 			connection := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
 			response := httptest.NewRecorder()
-			for _, eventType := range []string{previewEventStart, previewEventDelta, "agent.message", "session.status_terminated"} {
+			for _, eventType := range []string{previewEventStart, previewEventDelta, "agent.message", "span.model_request_end", "session.status_terminated"} {
 				select {
 				case delivery := <-stream:
 					event, accepted := connection.event(delivery)

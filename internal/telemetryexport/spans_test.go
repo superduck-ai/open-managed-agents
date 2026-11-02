@@ -15,7 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-var testSource = Source{OrganizationUUID: "org-uuid", WorkspaceUUID: "ws-uuid", WorkspaceID: "wrkspc_1", SessionID: "sesn_1", CodeSessionID: "cse_1", PrimaryThreadID: "sthr_primary", AgentID: "agent_trusted"}
+var testSource = Source{OrganizationUUID: "org-uuid", WorkspaceUUID: "ws-uuid", WorkspaceID: "wrkspc_1", SessionID: "sesn_1", CodeSessionID: "cse_1", PrimaryThreadID: "sthr_primary", SubagentThreadIDs: []string{"sthr_child-1", "sthr_child", "f3803c96-974a-44a9-8195-fb97e5c637e9"}, AgentID: "agent_trusted"}
 
 func id(size int, fill byte) []byte {
 	value := make([]byte, size)
@@ -110,6 +110,33 @@ func TestSanitizeKeepsOnlyAllowedAttributesAndMapsConversations(t *testing.T) {
 	}
 }
 
+func TestSanitizeNativeSubagentConversationIDs(t *testing.T) {
+	for _, tc := range []struct {
+		id    string
+		valid bool
+	}{
+		{id: "not-a-thread"},
+		{id: "f3803c96-974a-d4a9-4195-fb97e5c637e"},
+		{id: "f3803c96-974a-44a9-8195-fb97e5c637e9", valid: true},
+		{id: "sthr_child", valid: true},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			result := sanitizeSpan(span("oma.tool_use Bash", stringAttribute(conversationKey, tc.id), stringAttribute("gen_ai.tool.call.id", "same-call")), testSource)
+			conversation, thread := testSource.PrimaryThreadID, ""
+			if tc.valid {
+				conversation, thread = tc.id, tc.id
+			}
+			values := attributes(result)
+			if values[conversationKey].GetStringValue() != conversation {
+				t.Fatalf("conversation = %q, want %q", values[conversationKey].GetStringValue(), conversation)
+			}
+			if values["gen_ai.tool.call.id"].GetStringValue() != managedagentsevents.ToolUseEventID(testSource.CodeSessionID, "same-call", thread) {
+				t.Fatal("tool result identity lost its child thread")
+			}
+		})
+	}
+}
+
 func TestDeliveriesApplyEachDestinationContentPolicy(t *testing.T) {
 	turn := span("oma.session.turn",
 		stringAttribute("gen_ai.agent.name", "model-named-helper"),
@@ -181,3 +208,15 @@ func TestDeliveriesSplitLargeBatches(t *testing.T) {
 }
 
 const DefaultBudget = 786432
+
+func TestSanitizeUnrelatedUUIDDoesNotBecomeChildThread(t *testing.T) {
+	unrelated := "902a387e-5210-4e6b-ae6d-cf2a120621dd"
+	result := sanitizeSpan(span("oma.tool_use Bash", stringAttribute(conversationKey, unrelated), stringAttribute("gen_ai.tool.call.id", "call")), testSource)
+	values := attributes(result)
+	if got := values[conversationKey].GetStringValue(); got != testSource.PrimaryThreadID {
+		t.Fatalf("unrelated UUID became conversation: %s", got)
+	}
+	if got := values["gen_ai.tool.call.id"].GetStringValue(); got != managedagentsevents.ToolUseEventID(testSource.CodeSessionID, "call", "") {
+		t.Fatalf("unrelated UUID changed public tool identity: %s", got)
+	}
+}

@@ -282,7 +282,7 @@ curl -fsS http://localhost:38080/v1/agents \
 
 #### 顾问线程
 
-顾问不是名单智能体：它对协调器的 `list_agents` 工具不可见，无法通过 `send_to_agent` 向其发送消息，且只有会话的主线程可以咨询它。名单智能体不能咨询顾问。
+顾问不是名单智能体：它对协调器的 `list_agents` 工具不可见，无法通过 `send_message` 向其发送消息，且只有会话的主线程可以咨询它。名单智能体不能咨询顾问。
 
 顾问线程不受并发线程限制的约束。它们会出现在会话的[线程列表](/docs/zh/multiagent-orchestration#threads)中，其 `agent` 设置为与配置完全一致的顾问形式（`{"type": "advisor", "model": ...}`），`parent_thread_id` 设置为主线程。
 

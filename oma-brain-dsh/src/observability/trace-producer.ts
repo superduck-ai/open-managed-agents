@@ -1,7 +1,7 @@
 import { formatTraceParent, newSpanId, newTraceId, parseTraceParent, traceHooks, type InputTraceContext, type ToolTraceScope, type TraceHookTarget, type TurnTrace } from "./trace-context.ts";
 import type { SpanExporter, SpanRecord } from "./span-exporter.ts";
 
-const DELEGATION_TOOLS = new Set(["send_to_agent", "list_agents", "archive_agent"]);
+const DELEGATION_TOOLS = new Set(["subagent", "send_message", "interrupt_agent", "list_agents"]);
 const MAX_CONTENT_CHARS = 786_432;
 
 type Payload = Record<string, unknown>;

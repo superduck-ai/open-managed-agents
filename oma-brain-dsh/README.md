@@ -265,18 +265,17 @@ Idle children count toward the limit. Each child has a separate native dsh log
 and conversation history, and shares the parent's sandbox, model credential and
 approval channel. No additional worker lease is claimed.
 
-The primary agent receives three local tools:
+The primary agent receives four local tools:
 
-- `list_agents` lists predefined specialists and retained threads.
-- `send_to_agent` creates a child and waits for its report. Pass `thread_id` on a
-  later call to continue the same child's conversation.
-- `archive_agent` archives an idle child, rejects future messages to it and
-  frees its place under the limit. Its stored history remains available.
+- `subagent` creates a child and returns its DSH UUID before the report arrives.
+- `send_message` steers a running child or continues an idle child using `agent_id` and `message`.
+- `list_agents` lists retained children.
+- `interrupt_agent` stops a child using `agent_id`.
 
-For an inline agent, call `send_to_agent` with `name`, `system_prompt` and
-`message`. Inline agents inherit the parent's model and sandbox tools. For a
-predefined specialist, use `agent_name` and `message`. A follow-up accepts only
-`thread_id` and `message`.
+For an inline agent, call `subagent` with `description` and `prompt`. The initial
+prompt also defines its system instructions. Inline agents inherit the parent's
+model and sandbox tools. For a predefined specialist, also pass the advertised
+`agent_preset` ID. Archiving uses the OMA session API and retains stored history.
 
 The host's optional `launch.subagents` configuration defines specialists:
 
@@ -324,11 +323,11 @@ that child; the primary receives the failed delegation tool result and can
 continue. Closing or losing the parent lease cancels and disposes all children.
 
 Independent delegations run in parallel when the model emits multiple
-`send_to_agent` calls in one response. The dsh tool pool allows up to 25
-concurrent coordination calls. Each call waits for its child's report, so the
-primary continues after the batch settles; this does not detach background
-turns. A retained child accepts only one active turn, reserved before any
-awaited setup. Read, Glob and Grep can overlap within each thread. Bash, Write
+`subagent` calls in one response. Each call returns a child ID immediately.
+Reports arrive separately. When only waiting remains, the primary ends its turn;
+the host joins children and DSH resumes the primary with their reports.
+A retained child accepts follow-up messages through `send_message`.
+Read, Glob and Grep can overlap within each thread. Bash, Write
 and Edit wait for preceding calls and finish before subsequent calls start.
 Shared filesystem writes across threads must be coordinated by the agent.
 

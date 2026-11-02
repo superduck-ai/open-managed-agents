@@ -282,7 +282,7 @@ A failed or interrupted consultation never fails the agent's turn: the agent con
 
 #### Advisor threads
 
-The advisor is not a roster agent: it is invisible to the coordinator's `list_agents` tool, it cannot be messaged with `send_to_agent`, and only the session's primary thread can consult it. Roster agents cannot.
+The advisor is not a roster agent: it is invisible to the coordinator's `list_agents` tool, it cannot be messaged with `send_message`, and only the session's primary thread can consult it. Roster agents cannot.
 
 Advisor threads are exempt from the concurrent-thread limit. They appear in the session's [thread list](/docs/en/multiagent-orchestration#threads) with `agent` set to the advisor form exactly as configured (`{"type": "advisor", "model": ...}`) and `parent_thread_id` set to the primary thread.
 

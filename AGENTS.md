@@ -13,7 +13,7 @@
 - 使用 `just dev-recycle --yes` 依次停止三个本地服务、删除本环境 Compose 容器和 volume、清理 alias、登记与生成状态；可从同一 clone 的其他 checkout 使用 `--worktree /absolute/path` 指定目标。保留 worktree 目录、Git 登记、源码改动、人工配置、本地私钥和共享 LLM 配置，允许主 checkout、锁定或有未提交改动的 worktree。外部流程仅在命令成功后删除 worktree；服务停止或 Compose 清理失败时保留环境登记供重试。不要并发初始化、重启与回收。
 - 绑定后 `.run/env.json` 与 `.run/generated/` 生效：`just restart-server`、`just restart-web` 与 `just restart-brain` 只读取生成的 `.run/generated/config.yaml`；监听端口每次启动动态探测（写入 `state.json` 的 runtime），重启脚本先停旧实例再探测新端口；基础设施为每环境一个 compose 栈（`docker compose -p oma-<name> -f deploy/docker-compose/dev-env.yaml`，含 pg/redis/nats/minio/e2b-local；e2b-local 需 OrbStack 或 Linux host 网络，`set-runtime` 自动复用健康栈或重建）；三个入口拒绝使用未完成初始化的环境。
 - 对外访问统一走 portless（`--no-tls` 纯 HTTP，首次需 `sudo portless proxy start --no-tls`）：重启入口自动注册 `oma-<name>-api` / `oma-<name>-web` 静态 alias，浏览器和服务间使用 `http://oma-<name>-{api,web}.localhost`（Vite 代理目标直连后端 loopback 端口避免二次经过代理触发 loop guard；DSH `OMA_API_URL` 按名字解析）；未安装 portless 时绑定环境拒绝启动，未绑定 worktree 保持原端口语义。
-- 绑定后端口被其他 worktree 或进程占用时报错，不会停止对方服务；未绑定的 worktree 保持原有重启语义。
+- 绑定环境记录的旧端口被其他 worktree 或进程占用、或无法确认归属时，保留对方进程并探测空闲端口，更新 runtime 与 alias；未绑定的 worktree 保持原有重启语义。
 
 ## GitHub PR 提交身份
 

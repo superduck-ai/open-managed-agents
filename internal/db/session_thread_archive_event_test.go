@@ -5,6 +5,32 @@ import (
 	"testing"
 )
 
+func TestArchiveDoesNotMirrorAnExistingPrimaryStatusCopy(t *testing.T) {
+	primary := SessionThread{UUID: "primary-uuid", ExternalID: "primary"}
+	child := SessionThread{UUID: "child-uuid", ExternalID: "child"}
+	source := SessionEvent{UUID: "source-uuid", ExternalID: "event-child", EventType: "session.thread_status_terminated", ThreadExternalID: &child.ExternalID, StatusThreadID: child.ExternalID, Payload: []byte(`{"id":"event-child","type":"session.thread_status_terminated","session_thread_id":"child"}`)}
+	events, err := sessionThreadStatusCopies(source, primary, child)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("status insertion copies=%d err=%v", len(events), err)
+	}
+	if archivedThreadNeedsPrimaryCopy(events[1], primary) {
+		t.Fatal("archive would mirror the primary copy into a second primary event")
+	}
+	if !archivedThreadNeedsPrimaryCopy(events[0], primary) {
+		t.Fatal("child source must retain its primary delivery")
+	}
+	copy, err := archivedThreadPrimaryCopy(events[0], primary)
+	if err != nil || copy.ExternalID != events[1].ExternalID {
+		t.Fatal("archive must reuse the existing deterministic primary event identity")
+	}
+	for _, eventType := range []string{"session.thread_status_running", "session.thread_status_idle", "session.thread_created"} {
+		source.EventType = eventType
+		if archivedThreadNeedsPrimaryCopy(source, primary) {
+			t.Fatal("archive projected an unrelated event", eventType)
+		}
+	}
+}
+
 func TestArchivedThreadPrimaryCopyRetainsTargetWithDistinctStableEventIdentity(t *testing.T) {
 	child := "child"
 	original := SessionEvent{UUID: "original-uuid", ExternalID: "event-child", EventType: "session.thread_status_terminated", ThreadExternalID: &child, StatusThreadID: child, Payload: []byte(`{"id":"event-child","type":"session.thread_status_terminated","session_thread_id":"child","agent_name":"worker","processed_at":"2026-10-19T14:00:00Z"}`)}

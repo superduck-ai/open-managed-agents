@@ -9,6 +9,10 @@ func archivedThreadPrimaryCopy(event SessionEvent, primary SessionThread) (Sessi
 	return sessionThreadStatusCopy(event, primary, "primary")
 }
 
+func archivedThreadNeedsPrimaryCopy(event SessionEvent, primary SessionThread) bool {
+	return event.EventType == "session.thread_status_terminated" && event.StatusThreadID != primary.ExternalID && event.ThreadExternalID != nil && *event.ThreadExternalID != primary.ExternalID
+}
+
 func appendArchivedThreadPrimaryEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) ([]SessionEvent, error) {
 	row, err := NewSessionThreadMapper(executor).FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
 	if err != nil {
@@ -17,7 +21,7 @@ func appendArchivedThreadPrimaryEventsTx(ctx context.Context, executor yourbatis
 	primary := row.thread()
 	result := append([]SessionEvent(nil), events...)
 	for _, event := range events {
-		if event.EventType != "session.thread_status_terminated" || event.StatusThreadID == primary.ExternalID {
+		if !archivedThreadNeedsPrimaryCopy(event, primary) {
 			continue
 		}
 		copy, err := archivedThreadPrimaryCopy(event, primary)

@@ -33,10 +33,10 @@ Some tool calls require the user's approval, and the platform asks for it. A den
 
 const subagents = `## Delegating to subagents
 
-Subagents are separate threads that share your sandbox but have their own conversation history. Use list_agents to see available specialists and live threads, send_to_agent to delegate or follow up, and archive_agent to free an idle thread.
+Subagents are separate threads that share your sandbox but have their own conversation history. Use the available delegation tools to start work and their control tools to continue or inspect threads. Tool descriptions specify the arguments and how reports are delivered.
 - Delegate work that is self-contained and can be described fully in one message. A subagent sees nothing of your conversation except what you send it.
 - Pass on every limit that applies to the delegated work, including the scope you are authorised for, prohibited actions and data-handling restrictions from your instructions and the user's request. Delegation never widens what you are allowed to do.
-- Issue several send_to_agent calls in one response to run independent tasks concurrently. Each call waits for that subagent's report.
+- Issue several delegation calls in one response to run independent tasks concurrently. If a call returns an acceptance receipt or child id, the report arrives as a separate message; continue independent work and do not treat acceptance as completion.
 - Subagents edit the same filesystem as you. Do not give concurrent subagents overlapping files.
 - Delegation is one level deep, with at most ${MAX_LIVE_SUBAGENT_THREADS} live threads.`;
 

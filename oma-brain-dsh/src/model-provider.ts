@@ -26,7 +26,7 @@ export function omaRoute(api: OmaApi, options: GenerateOptions): AiSdkRoute {
   const backend = modelBackend(assignment, options.model);
   const root = `${api.base.replace(/\/$/, "")}/v1`;
   const agentID = sessionId === assignment.session_id ? undefined : sessionId;
-  const extraHeaders = { ...traceHeaders(assignment.trace_parent), ...(agentID ? { "X-Claude-Code-Agent-Id": agentID } : {}) };
+  const extraHeaders = { ...(options.purpose ? { "X-OMA-Model-Purpose": options.purpose } : {}), ...traceHeaders(assignment.trace_parent), ...(agentID ? { "X-Claude-Code-Agent-Id": agentID } : {}) };
   if (backend === "messages") {
     const fetcher = proxyFetch(api, `${root}/messages`, extraHeaders, undefined, options);
     return { model: createAnthropic({ baseURL: root, authToken: assignment.model_token, fetch: fetcher })(options.model),

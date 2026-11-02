@@ -1,3 +1,4 @@
+import { runSubagent } from "./subagent-tools.ts";
 import { nativeOutcomes, completedInputs } from "./session-log.ts";
 import { eventually } from "./backend.ts";
 import { expect, spyOn, test } from "bun:test";
@@ -567,17 +568,15 @@ test("child history resumes from individually persisted scoped events", async ()
   let threadId: string;
   try {
     await first.session.receive("root", { content: "parent task" });
-    const report = JSON.parse(await first.session.subagents.send({
-      name: "child", system_prompt: "Child instructions", message: "original child task",
-    }, first.session.abort.signal));
-    threadId = report.thread_id;
+    const report = await runSubagent(first.session, "subagent", { description: "child", prompt: ["Child instructions", "original child task"].filter(Boolean).join("\n") });
+    threadId = report.subagentId;
     expect(typeof threadId).toBe("string");
   } finally { await first.ctx.fiber.dispose(); }
   const logs = backend.logs.get("parent")!;
   expect(logs.some((event) => event.agent_id === threadId! && event.type === "dsh_log")).toBe(true);
   const second = await mount();
   try {
-    await second.session.subagents.send({ thread_id: threadId!, message: "child follow-up" }, second.session.abort.signal);
+    await runSubagent(second.session, "send_message", { agent_id: threadId!, message: "child follow-up" });
     const history = JSON.stringify(second.model.requests[0]!.messages);
     expect(history).toContain("original child task");
     expect(history).toContain("child follow-up");
@@ -585,7 +584,7 @@ test("child history resumes from individually persisted scoped events", async ()
   } finally { await second.ctx.fiber.dispose(); }
   const third = await mount();
   try {
-    await third.session.subagents.send({ thread_id: threadId!, message: "third child task" }, third.session.abort.signal);
+    await runSubagent(third.session, "send_message", { agent_id: threadId!, message: "third child task" });
     const history = JSON.stringify(third.model.requests[0]!.messages);
     expect(history).toContain("original child task");
     expect(history).toContain("child follow-up");
@@ -816,7 +815,7 @@ test("user interrupts settle the tool locally, finish successfully and survive r
       expect(session.abort.signal.aborted).toBe(false);
       expect(session.abort.signal.aborted).toBe(false);
       expect(completedInputs(session)).toContain(session.inputId);
-      expect(nativeOutcomes(session)["cancelled-call"]).toMatchObject({ failed: true });
+      expect((await nativeOutcomes(session))["cancelled-call"]).toMatchObject({ failed: true });
       expect(backend.output.get(config.id)!.filter((event) => event.type === "result"))
         .toEqual([{ type: "result", uuid: "first_result", subtype: "success", is_error: false }]);
       expect(JSON.stringify(backend.output.get(config.id))).not.toContain("Remote tool outcome is unknown");
@@ -833,7 +832,7 @@ test("user interrupts settle the tool locally, finish successfully and survive r
       session = ctx.ccrv2.createSession(config);
       await session.open();
       expect(session.abort.signal.aborted).toBe(false);
-      expect(nativeOutcomes(session)["cancelled-call"]?.failed).toBe(true);
+      expect((await nativeOutcomes(session))["cancelled-call"]?.failed).toBe(true);
       await session.receive("first", { content: "Duplicate delivery" });
       expect(resumed.requests).toHaveLength(0);
       await session.receive("next", { content: "Continue" });
@@ -1114,7 +1113,7 @@ test.each([false, true])("native compaction recovers overflow and preserves root
     }
     if (options.model === "parent" && parentRequests++ === 0) {
       yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate"),
-        name: "send_to_agent", arguments: JSON.stringify({ agent_name: "reader", message: "remember FACT-REAL" }) } };
+        name: "subagent", arguments: JSON.stringify({ agent_preset: "native-compaction/reader", description: "reader", prompt: "remember FACT-REAL" }) } };
       yield { type: "finish", reason: { kind: "tool-calls" } };
       return;
     }
@@ -1162,12 +1161,15 @@ test.each([false, true])("native compaction recovers overflow and preserves root
     const results = output.flatMap(event => event.message?.content ?? []).filter(block => block.type === "tool_result" && block.tool_use_id.startsWith("bash-"));
     expect(results).toHaveLength(4);
     expect(results.every(block => JSON.stringify(block).includes("original:"))).toBe(true);
-    const native = child ? ctx.sessions.get(SessionId(session.subagents.threads![0]!.id))! : session.runtime.agent.session;
-    expect(native.snapshotEvents().filter(event => event.type === "compaction/prune")).toHaveLength(4);
-    expect(native.snapshotEvents().filter(event => event.type === "compaction/summary")).toHaveLength(1);
-    const replay = ctx.sessions.create(undefined, { seed: native.snapshotEvents() });
-    expect(replay.deriveMessages()).toEqual(native.deriveMessages());
-    expect(native.snapshotEvents().filter(event => event.type === "tool/result" && event.surfaceOp === "append")).toHaveLength(4);
+    const handle = await ctx.sessionPersistence.open(SessionId(child ? session.subagents.threads[0]!.id : session.id), "read");
+    try {
+      const { events } = await handle.read();
+      expect(events.filter(event => event.type === "compaction/prune")).toHaveLength(4);
+      expect(events.filter(event => event.type === "compaction/summary")).toHaveLength(1);
+      const replay = ctx.sessions.create(undefined, { seed: events });
+      expect(JSON.stringify(replay.deriveMessages())).toContain("FACT-REAL");
+      expect(events.filter(event => event.type === "tool/result" && event.surfaceOp === "append")).toHaveLength(4);
+    } finally { await handle.close(); }
     await session.close();
   } finally { await ctx.fiber.dispose(); }
 });
@@ -1220,7 +1222,7 @@ test("native tool errors remain resumable without operator reconciliation", asyn
     await first.session.open();
     await first.session.receive("first", { content: "Deploy" });
     expect(executions).toBe(1);
-    expect(nativeOutcomes(first.session)["lost-call"]?.text).toContain("Do not retry blindly");
+    expect((await nativeOutcomes(first.session))["lost-call"]?.text).toContain("Do not retry blindly");
     expect(first.session.abort.signal.aborted).toBe(false);
     expect(first.session).not.toHaveProperty("delivery");
   } finally { first.restore(); await first.ctx.fiber.dispose(); }
@@ -1257,8 +1259,8 @@ test.each([false, true])("next native request waits for tool-result publication 
   };
   model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
     if (options.model === "parent" && parentRequests++ === 0) {
-      yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate-order"), name: "send_to_agent",
-        arguments: JSON.stringify({ agent_name: "reader", message: "Run Bash" }) } };
+      yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate-order"), name: "subagent",
+        arguments: JSON.stringify({ agent_preset: "request-order/reader", description: "reader", prompt: "Run Bash" }) } };
       yield { type: "finish", reason: { kind: "tool-calls" } };
       return;
     }
@@ -1296,4 +1298,59 @@ test.each([false, true])("next native request waits for tool-result publication 
     expect(resumed).toBe(true);
     await session.close();
   } finally { release.resolve(); await turn?.catch(() => {}); await ctx.fiber.dispose(); }
+});
+
+test("ordinary model turns report running while the request is in flight", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const statuses: SessionState[] = [];
+  backend.setStatus = async (_id, status) => { statuses.push(status); };
+  const model = new TextModel();
+  const stream = model.stream.bind(model);
+  model.stream = async function* (options) {
+    entered.resolve();
+    await release.promise;
+    yield* stream(options);
+  };
+  let turn: Promise<void> | undefined;
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession({ id: "status-regression", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
+    await session.open();
+    turn = session.receive("status-input", { content: "Reply" });
+    await entered.promise;
+    await Bun.sleep(10);
+    expect(statuses.at(-1)).toBe("running");
+    release.resolve();
+    await turn;
+    expect(statuses.at(-1)).toBe("idle");
+    await session.close();
+  } finally { release.resolve(); await turn?.catch(() => {}); await ctx.fiber.dispose(); }
+});
+
+test("shutdown while waiting for children overrides a completed root turn", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], new TextModel());
+    const session = ctx.ccrv2.createSession({ id: "shutdown-regression", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
+    await session.open();
+    spyOn(session.subagents, "wait").mockImplementation(async () => {
+      await session.interruptForShutdown(0);
+      return false;
+    });
+    await session.receive("shutdown-input", { content: "Delegate" });
+    const output = backend.output.get(session.id)!;
+    expect(output.some(event => event.type === "result" && event.is_error === false)).toBe(false);
+    expect(output.some(event => event.type === "result" && event.is_error === true)).toBe(true);
+    expect(JSON.stringify(output)).toContain("worker shut down");
+    expect(backend.acknowledged).toContain(`${session.id}:shutdown-input`);
+    await session.close();
+  } finally { await ctx.fiber.dispose(); }
 });

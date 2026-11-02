@@ -1,3 +1,4 @@
+import { runSubagent } from "./subagent-tools.ts";
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import { SessionId } from "@deepseek-ai/dsh-session";
@@ -39,7 +40,7 @@ test("restart between root and child hydration recovers children from native del
   const first = await mount(backend);
   await first.session.open();
   backend.modelScript = [textEvents("child completed")];
-  await first.session.subagents.send({ name: "specialist", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal);
+  await runSubagent(first.session, "subagent", { description: "specialist", prompt: ["Inspect", "Inspect files"].filter(Boolean).join("\n") });
   const childId = first.session.subagents.threads[0]!.id;
   await first.session.checkpoint();
   expect(first.session.pendingEvents).toEqual([]);

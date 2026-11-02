@@ -132,7 +132,8 @@ test("empty configured instructions are omitted", () => {
 test("predefined-only prompt prohibits inline agents", () => {
   const prompt = rootSystemPrompt({ ...launch(), subagents: { inlineAgents: false } });
   expect(prompt).toContain("You cannot define inline agents");
-  expect(prompt).toContain("agent_name");
+  expect(prompt).toContain("subagent with an allowed agent_preset");
+  expect(prompt).toContain("send_message with agent_id");
 });
 
 for (const mode of ["root", "child"]) {

@@ -84,6 +84,7 @@ export function toolEvents(command = "original", callId = "call_1"): Payload[] {
 }
 
 export class Backend {
+  skillDocuments: Payload[] = [];
   readonly a = assignment();
   readonly privateLog = new Map<string, Payload>();
   readonly privateAgentIds = new Map<string, string>();
@@ -250,6 +251,10 @@ export class Backend {
       this.registrations++;
       this.timeline.push({ type: "worker.register" });
       return json({ worker_epoch: String(this.a.worker_epoch), observability_enabled: this.a.observability_enabled === true });
+    }
+    if (path === `/v2/sessions/${this.a.session_id}/skills`) {
+      const directory = new URL(request.url).searchParams.get("directory");
+      return json({ skills: this.skillDocuments.filter(skill => !directory || skill.path.split("/").at(-2) === directory) });
     }
     if (path === `/v2/sessions/${this.a.session_id}`) return json({session_context: {
       runtime_tools: this.a.launch.tools, mcp_config: this.a.external_mcp_config ?? {},

@@ -162,6 +162,7 @@ func NewServer(deps ServerDeps) *Server {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.DB, deps.ObjectStore)
 	}
 	codeSessionService.WithSessionAttachments(filestoreService, deps.Config.Storage.MaxFileBytes)
+	codeSessionService.WithSessionSkills(filestoreService)
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease
 	if deps.Redis != nil {

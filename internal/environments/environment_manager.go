@@ -76,14 +76,14 @@ func managedAgentSessionConfig(
 	}
 	if len(mcpSource.Multiagent) > 0 && string(mcpSource.Multiagent) != "null" {
 		body["multiagent"] = mcpSource.Multiagent
-		directories := make(map[string]string, len(runtimeSkills))
-		for _, skill := range runtimeSkills {
-			prefix := skill.Source + ":" + skill.SkillID + ":"
-			directories[prefix+skill.Version] = skill.Directory
-			directories[prefix+skill.RequestedVersion] = skill.Directory
-		}
-		body["skill_directories"] = directories
 	}
+	directories := make(map[string]string, len(runtimeSkills))
+	for _, skill := range runtimeSkills {
+		prefix := skill.Source + ":" + skill.SkillID + ":"
+		directories[prefix+skill.Version] = skill.Directory
+		directories[prefix+skill.RequestedVersion] = skill.Directory
+	}
+	body["skill_directories"] = directories
 	if len(session.VaultIDs) > 0 {
 		body["vault_ids"] = session.VaultIDs
 	}

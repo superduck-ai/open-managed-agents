@@ -189,7 +189,7 @@ test("predefined specialist uses its own prompt, model and restricted tools", as
   expect(created?.agent).toEqual(agentSnapshot);
   expect(f.session.subagents.threads?.[0]?.inline).toBe(false);
   expect(modelSystemText(child)).toContain("Review only");
-  expect(child.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
+  expect(child.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read", "skill"]);
   await expect(runSubagent(f.session, "subagent", { description: "inline", prompt: ["test", "test"].filter(Boolean).join("\n") })).rejects.toThrow();
 });
 
@@ -326,7 +326,7 @@ test("configured presets are advertised by the official delegation tool without 
   const child = b.requests[2]!;
   expect(child.model).toBe("fast-model");
   expect(modelSystemText(child)).toContain("Pinned fast instructions");
-  expect(child.tools ?? []).toEqual([]);
+  expect((child.tools ?? []).map((tool: Payload) => tool.name)).toEqual(["skill"]);
   expect(f.session.subagents.threads!.map((thread) => thread.name)).toEqual(["fast_probe"]);
   expect(f.ctx.tools.get("subagent", f.session.agent)).toBeDefined();
 });
@@ -369,8 +369,8 @@ test("root registers only enabled sandbox tools and inline agents inherit them",
   subagentScripts(b, [call("subagent", { description: "inline", prompt: ["Inspect only", "Inspect"].filter(Boolean).join("\n") }, "delegate"), textEvents("done")], [textEvents("inline report")]);
   await f.session.receive("restricted", { content: "Inspect" });
   const root = b.requests[0]!;
-  expect(root.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read", "interrupt_agent", "list_agents", "send_message", "subagent"]);
-  expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
+  expect(root.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read", "interrupt_agent", "list_agents", "send_message", "skill", "subagent"]);
+  expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read", "skill"]);
 });
 
 test("predefined specialist uses its own enabled tools independently of the parent", async () => {
@@ -384,7 +384,7 @@ test("predefined specialist uses its own enabled tools independently of the pare
   subagentScripts(b, [call("subagent", { agent_preset: `${f.session.id}/writer`, description: "writer", prompt: "Write" }, "delegate"), textEvents("done")], [textEvents("writer report")]);
   await f.session.receive("intersect", { content: "Write" });
   expect(b.requests[0]!.tools.map((tool: Payload) => tool.name)).not.toContain("Write");
-  expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Edit", "Grep", "Read", "Write"]);
+  expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Edit", "Grep", "Read", "Write", "skill"]);
   expect(b.requests[1]!.tools.map((tool: Payload) => tool.name)).not.toContain("Glob");
 });
 
@@ -461,7 +461,7 @@ test.each([false, true])("predefined specialist without enabled tools does not i
   subagentScripts(b, [call("subagent", { agent_preset: `${f.session.id}/text-only`, description: "text-only", prompt: "Answer" }, "delegate"), textEvents("done")], [textEvents("report")]);
   await f.session.receive("empty-specialist", { content: "Delegate" });
   expect(b.requests[0]!.tools.map((tool: Payload) => tool.name)).toContain("Write");
-  expect(b.requests[1]!.tools ?? []).toEqual([]);
+  expect((b.requests[1]!.tools ?? []).map((tool: Payload) => tool.name)).toEqual(["skill"]);
   expect(f.session.subagents.threads[0]?.tools).toEqual([]);
 });
 

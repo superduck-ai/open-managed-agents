@@ -136,7 +136,7 @@ DSH 开始模型执行前等待首个 `processing` 回执确认；后端通过�
 启动数据统一放在 `code_sessions.metadata.config`。公共 `GET /v2/sessions/{id}` 返回 `{ "session_context": { ... } }`。执行端必须从 `session_context` 对象读取以下字段；缺失或非对象的响应应拒绝启动：
 
 - `cwd`、`model`、`system_prompt`、`custom_system_prompt`、`append_system_prompt`。
-- `runtime_skills`：Skill 名称、描述、固定版本及沙箱内 `SKILL.md` 路径。
+- `runtime_skills`：Skill 名称、描述、固定版本及沙箱内 `SKILL.md` 路径。Brain 的 OMA Skill provider 通过内部 Session Skills 接口读取相同快照，以 DSH 原生 `skill` 工具加载；目录以持久化 user-role 消息发布，不进入 system prompt。详见 [Skill 运行时](managed-agent-skills-runtime.md)。
 - `runtime_tools`：从 Session 固化的工具配置解析出的内置工具白名单，使用 DSH 工具名。禁用工具不列入，需审批工具仍列入；没有内置 toolset 时返回空数组。
 - `subagents`：由会话 Agent 快照中的固定版本引用解析出的子 Agent 定义及工具权限。
 - `runtime_tools`：主 Agent 启用的沙箱工具名，按与权限执行相同的规则从会话 Agent 快照计算；缺失时注册全部沙箱工具。

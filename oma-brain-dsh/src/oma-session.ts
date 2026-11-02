@@ -9,6 +9,7 @@ import * as LlmAiSdk from "./llm-ai-sdk/index.ts";
 import { omaModelOptions } from "./model.ts";
 import { configureOmaModel } from "./model-configs.ts";
 import { WebClient } from "./web-tools/client.ts";
+import * as Skills from "./skills/index.ts";
 import * as WebTools from "./web-tools/index.ts";
 
 /** Bind OMA credentials and launch metadata before opening the protocol bridge. */
@@ -55,8 +56,10 @@ export function createOmaSession(
         adapter: omaModelOptions(api, scope.get("attachments"), () => assignment.session_id) });
       await scope.plugin(OmaSandboxProvider, { api, sessionId: assignment.session_id });
     },
-    setupTools: async (scope, bridge, tools, threadId, permissions) =>
-      scope.plugin(WebTools, { client: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId), bridge, tools, permissions }),
+    setupTools: async (scope, bridge, tools, threadId, permissions) => {
+      await scope.plugin(Skills, { api, sessionId: assignment.session_id, threadId, workDir: assignment.launch.work_dir });
+      return scope.plugin(WebTools, { client: new WebClient(api, assignment.session_id, scope.get("sandboxExecutor"), threadId), bridge, tools, permissions });
+    },
     subagents: assignment.launch.subagents,
     modelMessageID: (id) => api.modelResponses.get(id),
     modelRequestID: (id) => api.modelRequestIDs.get(id),

@@ -73,7 +73,7 @@ func TestChatBrainSkills(t *testing.T) {
 	defer second.stop(t)
 	f := createPublicChat(t, e)
 	sessions = append(sessions, f)
-	catalog := brainSkillsModel(t, false, firstVersion.LatestVersion, "v1")
+	catalog := brainSkillsModel(t, false, "v1")
 	configureChatModel(t, e, catalog.URL)
 	brainSkillTurn(t, f, catalog.preview, "请说明你能使用的 skill。", 1, 1)
 	if provider.created.Load() != 0 || catalog.calls.Load() != 1 {
@@ -84,11 +84,11 @@ func TestChatBrainSkills(t *testing.T) {
 	if secondVersion.Version == firstVersion.LatestVersion {
 		t.Fatal("new skill version reused the previous version")
 	}
-	read := brainSkillsModel(t, true, firstVersion.LatestVersion, "v1")
+	read := brainSkillsModel(t, true, "v1")
 	configureChatModel(t, e, read.URL)
 	brainSkillTurn(t, f, read.preview, "使用 brain-proof skill，并读取它要求的参考文件。", 2, 4)
 	if read.calls.Load() != 3 || provider.created.Load() != 1 {
-		t.Fatal("skill loading did not use two MCP reads in one sandbox")
+		t.Fatal("skill loading did not load instructions and read the reference in one sandbox")
 	}
 	chatProof(t, started, "brain_skills_read")
 	container := fmt.Sprintf("%s-1", provider.name)
@@ -105,7 +105,7 @@ func TestChatBrainSkills(t *testing.T) {
 	chatProof(t, started, "brain_skills_readonly")
 	latest := createPublicChat(t, e)
 	sessions = append(sessions, latest)
-	newRead := brainSkillsModel(t, true, secondVersion.Version, "v2")
+	newRead := brainSkillsModel(t, true, "v2")
 	configureChatModel(t, e, newRead.URL)
 	brainSkillTurn(t, latest, newRead.preview, "使用 brain-proof skill，并读取它要求的参考文件。", 1, 3)
 	if newRead.calls.Load() != 3 || provider.created.Load() != 2 {
@@ -211,7 +211,7 @@ type brainSkillModel struct {
 	preview chan struct{}
 }
 
-func brainSkillsModel(t *testing.T, read bool, version, marker string) *brainSkillModel {
+func brainSkillsModel(t *testing.T, read bool, marker string) *brainSkillModel {
 	t.Helper()
 	model := &brainSkillModel{preview: make(chan struct{}, 4)}
 	model.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -226,20 +226,33 @@ func brainSkillsModel(t *testing.T, read bool, version, marker string) *brainSki
 		if r.Header.Get("Anthropic-Version") != "2023-06-01" {
 			t.Error("missing Anthropic-Version")
 		}
-		for _, fragment := range []string{"All filesystem and command tools execute in the remote sandbox.", "OMA environment:", "Available skills, read SKILL.md through Read before use:", "Configured agent instructions:", "You are a research agent", "${{ agent_example }}", "Verify Brain skill loading", brainSkillPath, version} {
+		for _, fragment := range []string{"# Platform rules", "# Managed-agent environment", "# Agent instructions", "You are a research agent", "${{ agent_example }}"} {
 			if !bytes.Contains(request.System, []byte(fragment)) {
 				t.Errorf("missing Brain prompt fragment %q", fragment)
 			}
 		}
+		messages, err := json.Marshal(request.Messages)
+		requireOK(t, err)
+		for _, fragment := range []string{"available_skills", "brain-proof", "Verify Brain skill loading"} {
+			if !bytes.Contains(messages, []byte(fragment)) {
+				t.Errorf("missing Brain catalog fragment %q", fragment)
+			}
+		}
+		if bytes.Contains(request.System, []byte(brainSkillPath)) {
+			t.Error("skill path leaked into the system prompt")
+		}
+
 		if bytes.Contains(request.System, []byte("oma-skill-body-")) {
 			t.Error("skill body was eagerly inserted into the system prompt")
 		}
 		name := ""
 		input := map[string]string{}
 		if read && step < 3 {
-			name = "Read"
-			input["file_path"] = brainSkillPath
+			name = "skill"
+			input["name"] = "brain-proof"
 			if step == 2 {
+				name = "Read"
+				delete(input, "name")
 				input["file_path"] = strings.TrimSuffix(brainSkillPath, "SKILL.md") + "references/proof.md"
 			}
 		}
@@ -249,7 +262,7 @@ func brainSkillsModel(t *testing.T, read bool, version, marker string) *brainSki
 				fragment = "oma-skill-reference-" + marker
 			}
 			if !bytes.Contains(request.Messages[len(request.Messages)-1].Content, []byte(fragment)) {
-				t.Errorf("fresh MCP result did not load %q", fragment)
+				t.Errorf("fresh skill or sandbox result did not load %q", fragment)
 			}
 		}
 		w.Header().Set("Content-Type", "text/event-stream")

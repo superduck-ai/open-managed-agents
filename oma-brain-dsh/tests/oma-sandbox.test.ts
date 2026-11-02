@@ -339,7 +339,7 @@ test("root model requests expose only the session's enabled sandbox tools", asyn
       await f.session.receive("allowlist_input", { content: "Inspect available tools" });
       expect(f.b.requests).toHaveLength(1);
       expect((f.b.requests[0]!.tools ?? []).map((tool: { name: string }) => tool.name))
-        .toEqual([...tools, "interrupt_agent", "list_agents", "send_message", "subagent"].sort());
+        .toEqual([...tools, "interrupt_agent", "list_agents", "send_message", "skill", "subagent"].sort());
       expect(f.b.sandboxCount).toBe(0);
       expect(f.b.mcpMethods).toEqual([]);
     } finally { await f.close(); }

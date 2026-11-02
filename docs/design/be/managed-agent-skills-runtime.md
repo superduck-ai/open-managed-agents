@@ -7,8 +7,8 @@ built-in skill 的每个具体版本都已经是一个规范化的不可变 zip�
 记录对象存储 bucket、key、大小、SHA-256 和顶层目录。
 
 Skill 解析、版本固定与文件投影由 Environment Runner 统一负责，不根据 `agent_mode` 分支。
-Claude Code 从本地 discovery 目录发现 Skill；Brain 接收名称、描述、具体版本和 SKILL.md 路径，
-再通过沙箱中的 MCP Read 按需加载内容。两种模式使用同一份只读文件视图。
+Claude Code 从本地 discovery 目录发现 Skill；Brain 使用 DSH 原生 `skill` 工具按需加载正文。
+Brain provider 与沙箱挂载读取同一份只读 File/Resource 快照，附属文件继续通过沙箱工具读取。
 运行时把 zip 内容作为 Filestore 的虚拟只读目录直接映射到 `/root/.claude/skills`，
 不再建立 E2B skill volume，也不由 Runner 或 Environment Manager 预热、复制或解压文件。
 
@@ -60,8 +60,16 @@ flowchart LR
     D --> F["rclone readonly mount"]
     F --> G["/root/.claude/skills"]
     G --> H["Claude Code discovery"]
-    G --> I["Brain 通过 MCP Read 加载"]
+    D --> I["Brain skill 工具通过内部接口加载"]
 ```
+
+## Brain Skill 接口
+
+`GET /v2/sessions/{code_session_id}/skills` 使用现有 ingress 凭据及活动身份校验，按根 Session 或 `X-OMA-Session-Thread-ID` 指定线程的 Agent snapshot 筛选引用。创建 launch 时保存所有 Skill 引用到安装目录的映射 `skill_directories`，同时保存请求版本与解析版本，恢复时不重新解析 `latest`。旧单 Agent launch 没有映射且引用数与固定目录数完全一致时复用原目录；无法确认映射时失败，不重新查询 catalog。
+
+无 query 时返回固定名称、描述、版本、沙箱路径和 `SKILL.md` frontmatter，正文不下发。`?directory=<directory>` 只读取当前 Agent 可见的指定目录并返回完整文件；未选中的目录返回 not found。接口通过 Filestore 服务按 workspace、Session filesystem 和 `/skills/<directory>/SKILL.md` 读取，复用 archive 校验与缓存，不创建沙箱、不经过通用 MCP、不接受任意文件路径，也不查询已软删除的 catalog version。响应禁止 HTTP 缓存。
+
+Brain 每个 Agent 独立注册 OMA provider 和 DSH consumer。目录读取失败作为不完整发现重试；正文读取失败作为工具失败返回。YAML frontmatter 的调用策略由 provider 解析，consumer 强制执行模型与用户入口策略。同一 Agent 下出现相同名称时拒绝建立可调用目录，不按顺序静默选择。版本固定、只读挂载和对象保留规则不变。会话目录与 Skill 正文结果进入 DSH 历史，恢复与压缩后的目录重建由原生 consumer 处理。具体提示词规则见 [Agent 系统提示词](agent-system-prompt.md)。
 
 ## 虚拟目录合同
 

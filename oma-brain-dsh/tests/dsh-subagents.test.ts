@@ -119,7 +119,7 @@ test("predefined-only composition rejects missing and foreign presets", async ()
     { kind: "child", id: child.subagentId, label: "Read files", status: "inactive" },
   ]);
   const request = f.b.requests.find(request => modelSystemText(request).includes("# Subagent rules"))!;
-  expect(request.tools.map((tool: Payload) => tool.name)).toEqual(["Read"]);
+  expect(request.tools.map((tool: Payload) => tool.name)).toEqual(["Read", "skill"]);
 });
 
 test("DSH parallel children isolate identical call IDs and interrupt only the addressed child", async () => {
@@ -188,7 +188,7 @@ test("DSH predefined specialists retain their own tool set and model", async () 
   expect(children).toHaveLength(3);
   for (const request of children) {
     expect(request.model).toBe("specialist");
-    expect(request.tools.map((tool: Payload) => tool.name)).toEqual(["Read"]);
+    expect(request.tools.map((tool: Payload) => tool.name)).toEqual(["Read", "skill"]);
     expect(modelSystemText(request)).toContain("Only inspect");
   }
 });

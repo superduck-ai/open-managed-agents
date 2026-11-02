@@ -11,7 +11,15 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   setConsoleRequestContext({});
 });
-function mount(locale: 'zh-CN' | 'en' = 'zh-CN') {
+function mount(locale: 'zh-CN' | 'en' = 'zh-CN', environmentId: string | null = 'env_test') {
+  const fetch = globalThis.fetch;
+  globalThis.fetch = ((input, init) => {
+    if (String(input).includes('/environments'))
+      return Promise.resolve(Response.json({ data: [{ id: 'env_test', name: '测试环境' }], has_more: false }));
+    if (String(input).includes('/channels/settings'))
+      return Promise.resolve(Response.json({ environment_id: environmentId }));
+    return fetch(input, init);
+  }) as typeof globalThis.fetch;
   resetTestDom('/');
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -80,4 +88,19 @@ test('英文界面翻译渠道列表、表单和校验提示', async () => {
   expect(screen.getByRole('button', { name: 'Generate QR code' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
   await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Enter a bot name'));
+});
+
+test.each([null, 'env_archived'])('环境未选择或已失效时阻止保存：%s', async (environmentId) => {
+  let saves = 0;
+  globalThis.fetch = (async (_input, init) => {
+    if (init?.method === 'POST') saves++;
+    return Response.json({ data: [] });
+  }) as typeof fetch;
+  mount('zh-CN', environmentId);
+  await waitFor(() => expect(screen.getByRole('button', { name: '创建机器人' }).hasAttribute('disabled')).toBe(false));
+  fireEvent.click(screen.getByRole('button', { name: '创建机器人' }));
+  fireEvent.change(await screen.findByLabelText('名称 *'), { target: { value: '测试机器人' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存', exact: true }));
+  expect(await screen.findByText('请先选择执行环境，再保存渠道')).toBeTruthy();
+  expect(saves).toBe(0);
 });

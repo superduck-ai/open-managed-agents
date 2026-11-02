@@ -19,6 +19,7 @@ import (
 
 type agentStore interface {
 	GetAgent(context.Context, string, string) (db.Agent, error)
+	GetEnvironment(context.Context, string, string) (db.Environment, error)
 }
 
 type handler struct {
@@ -33,6 +34,8 @@ func NewHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.L
 	wrap := httpapi.NewErrorAdapter(logger).Wrap
 	r.Get("/", wrap(h.forward))
 	r.Post("/", wrap(h.forward))
+	r.Get("/settings", wrap(h.forward))
+	r.Post("/settings", wrap(h.forward))
 	r.Post("/{channel_id}", wrap(h.forward))
 	r.Delete("/{channel_id}", wrap(h.forward))
 	r.Post("/{channel_id}/qr", wrap(h.forward))
@@ -68,24 +71,16 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	if agent.ArchivedAt != nil && r.Method != http.MethodGet {
 		return archivedAgent()
 	}
-	endpoint, err := url.Parse(h.cfg.URL)
-	if err != nil || endpoint.Host == "" || endpoint.User != nil || h.cfg.Token == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
-		return unavailable(err)
-	}
-	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/api/managed-channels"
-	if channelID := chi.URLParam(r, "channel_id"); channelID != "" {
-		endpoint.Path += "/" + url.PathEscape(channelID)
-		if strings.HasSuffix(r.URL.Path, "/qr") {
-			endpoint.Path += "/qr"
-		}
-		if strings.Contains(r.URL.Path, "/pairings") {
-			endpoint.Path += "/pairings"
-		}
-		if pairingID := chi.URLParam(r, "pairing_id"); pairingID != "" {
-			endpoint.Path += "/" + url.PathEscape(pairingID)
+	settings := strings.HasSuffix(chi.RouteContext(r.Context()).RoutePattern(), "/settings")
+	if settings && r.Method == http.MethodPost {
+		if err := h.validateEnvironment(w, r, p.WorkspaceUUID); err != nil {
+			return err
 		}
 	}
-	endpoint.RawQuery = ""
+	endpoint, err := h.endpoint(r, settings)
+	if err != nil {
+		return err
+	}
 	upstream, err := http.NewRequestWithContext(r.Context(), r.Method, endpoint.String(), http.MaxBytesReader(w, r.Body, 32<<10))
 	if err != nil {
 		return unavailable(err)
@@ -97,6 +92,11 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	upstream.Header.Set("X-OMA-Agent", agentID)
 	if p.CredentialType == auth.CredentialTypeAPIKey {
 		upstream.Header.Set("X-OMA-Source", "api")
+	}
+	if r.Method == http.MethodPost && !settings && chi.URLParam(r, "pairing_id") == "" {
+		if err := h.requireEnvironment(upstream, p.WorkspaceUUID); err != nil {
+			return err
+		}
 	}
 	response, err := h.client.Do(upstream)
 	if err != nil {
@@ -115,4 +115,28 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	w.WriteHeader(response.StatusCode)
 	_, err = w.Write(body)
 	return err
+}
+
+func (h *handler) endpoint(r *http.Request, settings bool) (*url.URL, error) {
+	endpoint, err := url.Parse(h.cfg.URL)
+	if err != nil || endpoint.Host == "" || endpoint.User != nil || h.cfg.Token == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+		return nil, unavailable(err)
+	}
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/api/managed-channels"
+	if settings {
+		endpoint.Path += "/settings"
+	} else if channelID := chi.URLParam(r, "channel_id"); channelID != "" {
+		endpoint.Path += "/" + url.PathEscape(channelID)
+		if strings.HasSuffix(chi.RouteContext(r.Context()).RoutePattern(), "/qr") {
+			endpoint.Path += "/qr"
+		}
+		if strings.Contains(chi.RouteContext(r.Context()).RoutePattern(), "/pairings") {
+			endpoint.Path += "/pairings"
+		}
+		if pairingID := chi.URLParam(r, "pairing_id"); pairingID != "" {
+			endpoint.Path += "/" + url.PathEscape(pairingID)
+		}
+	}
+	endpoint.RawQuery = ""
+	return endpoint, nil
 }

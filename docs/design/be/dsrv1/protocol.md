@@ -168,7 +168,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 | 400 | `invalid_request` | 视为缺陷，不重试 |
 | 400 | `unsupported_protocol` | 停止进程 |
 | 400 | `unsupported_transcript_version` | 以 `permanent` 释放会话（6.9） |
-| 401/403 | `unauthorized` | 停止该会话 |
+| 401/403 | `unauthorized` | 准入阶段（claim 之后、输入流连上之前）以 `admission_failed` release，由服务端 attempts 裁决；运行中停止该会话 |
 | 404 | `session_not_found` | 退役会话 |
 | 409 | `epoch_superseded` | fence 主线程与全部子线程，停止写入 |
 | 409 | `transcript_header_required` | 先写 Header 再追加 |

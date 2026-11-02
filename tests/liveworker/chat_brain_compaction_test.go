@@ -48,7 +48,15 @@ type compactionModel struct {
 type compactionRequest struct {
 	Model     string `json:"model"`
 	MaxTokens int    `json:"max_tokens"`
-	Messages  []struct {
+	Tools     []struct {
+		Name        string `json:"name"`
+		InputSchema struct {
+			Properties map[string]struct {
+				Enum []string `json:"enum"`
+			} `json:"properties"`
+		} `json:"input_schema"`
+	} `json:"tools"`
+	Messages []struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"messages"`
 }
@@ -117,11 +125,29 @@ func (m *compactionModel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if m.rootCalls == 3 {
 		message = strings.Repeat("user-padding-", 12000)
 	}
-	args := map[string]string{"thread_id": m.childID, "message": message}
+	tool := "send_message"
+	args := map[string]string{"agent_id": m.childID, "message": message}
 	if m.rootCalls == 1 {
-		args = map[string]string{"agent_name": "compaction-child", "message": compactionFact + strings.Repeat("user-padding-", 12000)}
+		preset := ""
+		for _, tool := range request.Tools {
+			if tool.Name != "subagent" {
+				continue
+			}
+			for _, candidate := range tool.InputSchema.Properties["agent_preset"].Enum {
+				if strings.HasSuffix(candidate, "/compaction-child") {
+					preset = candidate
+				}
+			}
+		}
+		if preset == "" {
+			m.t.Error("compaction child preset is absent from the delegation schema")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		tool = "subagent"
+		args = map[string]string{"agent_preset": preset, "description": "compaction-child", "prompt": compactionFact + strings.Repeat("user-padding-", 12000)}
 	}
-	writeCompactionResponse(w, request.Model, max(1, len(prompt)/4), "", "send_to_agent", args)
+	writeCompactionResponse(w, request.Model, max(1, len(prompt)/4), "", tool, args)
 }
 
 func writeCompactionResponse(w http.ResponseWriter, model string, inputTokens int, text, tool string, args map[string]string) {

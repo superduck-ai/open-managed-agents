@@ -128,10 +128,11 @@ func TestSanitizedRequestHeadersDropTraceContext(t *testing.T) {
 	source := http.Header{}
 	source.Set("Traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
 	source.Set("Tracestate", "oma=internal")
+	source.Set("X-OMA-Model-Purpose", "compaction")
 	source.Set("Authorization", "Bearer secret")
 	source.Set("Anthropic-Version", "2023-06-01")
 	headers := sanitizedRequestHeaders(source)
-	for _, name := range []string{"Traceparent", "Tracestate", "Authorization"} {
+	for _, name := range []string{"Traceparent", "Tracestate", "Authorization", "X-OMA-Model-Purpose"} {
 		if headers.Get(name) != "" {
 			t.Fatalf("%s forwarded upstream", name)
 		}

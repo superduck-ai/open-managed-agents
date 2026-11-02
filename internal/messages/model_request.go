@@ -85,6 +85,8 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		observation.chat = &chatObservation{}
 	}
 	if request != nil {
+		purpose := strings.TrimSpace(r.Header.Get("X-OMA-Model-Purpose"))
+		request.SuppressPublicOutput = purpose == "compaction" || purpose == "session-title"
 		// Claude Code copies this header to assistant.request_id, including HTTP errors.
 		w.Header().Set("Request-Id", request.StartID)
 		// A forwarded Accept-Encoding disables Transport decompression and hides the frames from the observer.

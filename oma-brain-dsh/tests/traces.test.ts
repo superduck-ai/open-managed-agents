@@ -63,12 +63,12 @@ test("history replay, unsampled turns and skipped tools produce no spans", () =>
   traces.observe("cse_root", "cse_root", undefined, "turn/end", 2_200, { turn: 2, reason: { kind: "completed" } }, {});
   expect(spans).toEqual([]);
   traces.observe("cse_root", "cse_root", undefined, "turn/start", 3_000, { turn: 3 }, {});
-  for (const [callId, name] of [["c1", "send_to_agent"], ["c2", "Write"], ["c3", "Custom"]] as const)
+  for (const [callId, name] of [["c1", "subagent"], ["c2", "Write"], ["c3", "Custom"], ["c4", "send_message"], ["c5", "interrupt_agent"], ["c6", "list_agents"]] as const)
     traces.observe("cse_root", "cse_root", undefined, "tool/call", 3_010, { callId, name, step: 1, arguments: "{}" }, {});
   traces.approvalResolved("cse_root", "c2", "denied");
   traces.approvalResolved("cse_root", "c3", "external");
   expect(traces.toolDispatched("cse_root", "c2")).toBeUndefined();
-  for (const callId of ["c1", "c2", "c3"])
+  for (const callId of ["c1", "c2", "c3", "c4", "c5", "c6"])
     traces.observe("cse_root", "cse_root", undefined, "tool/result", 3_020, { message: { toolCallId: callId, isError: false, content: [] } }, {});
   traces.observe("cse_root", "cse_root", undefined, "turn/end", 3_030, { turn: 3, reason: { kind: "completed" } }, {});
   expect(spans.map((span) => span.name)).toEqual(["oma.session.turn"]);

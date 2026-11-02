@@ -1,6 +1,7 @@
 import type { CcrSubagentConfig } from "./contracts.ts";
 import { recordRuntimeDiagnostic, recordRuntimeEvent } from "./runtime-diagnostics.ts";
 import type { SubagentBridge, SubagentEvent, SubagentThread, ToolExecutionBridge, RuntimeDiagnostic, SubagentConfig } from "../runtime/contracts.ts";
+import { dshThreadConfig } from "../runtime/dsh-subagents.ts";
 import { foldSubagentDescriptor } from "@deepseek-ai/dsh-subagent";
 import { SessionId, interruptedTurnClosers } from "@deepseek-ai/dsh-session";
 import { CcrHttpError } from "./client.ts";
@@ -39,12 +40,14 @@ export class CcrSubagentBridge implements SubagentBridge {
       await this.session.ctx.ccrReplication.ensure(id);
       const handle = await this.session.ctx.sessionPersistence.open(SessionId(id), "read");
       let descriptor;
+      let dshConfig;
       let interrupted: boolean;
       let hasTurns: boolean;
       try {
         const { events } = await handle.read();
         hasTurns = events.some((event) => event.type === "turn/start");
         descriptor = foldSubagentDescriptor(events);
+        dshConfig = dshThreadConfig(events);
         interrupted = interruptedTurnClosers(events).length > 0;
         const lastEnd = events.findLast(event => event.type === "turn/end");
         this.recoveredCompletions.set(id, !interrupted && lastEnd?.type === "turn/end" && lastEnd.data.reason.kind === "completed");
@@ -60,15 +63,18 @@ export class CcrSubagentBridge implements SubagentBridge {
       if (state.id !== id) throw new Error("Invalid authoritative subagent thread identity");
       if (!descriptor && !hasTurns && (state.archived || state.status === "terminated")) continue;
       if (!descriptor || descriptor.mode !== "continuable") throw new Error("Subagent is missing its native descriptor");
+      if (!dshConfig && !hasTurns && (state.archived || state.status === "terminated")) continue;
+      if (!dshConfig) throw new Error("Subagent is missing its OMA DSH configuration; legacy OMA threads require a new session");
       this.retained.push({
-        id, name: descriptor.label, inline: descriptor.provider === "oma-inline",
-        systemPrompt: descriptor.persona ?? "", model: descriptor.agentModel ?? this.session.config.model,
-        tools: descriptor.toolFilter?.allow ? [...descriptor.toolFilter.allow] : undefined,
+        id, name: dshConfig.name ?? descriptor.label,
+        inline: dshConfig.inline ?? descriptor.provider === "oma-dsh-inline",
+        systemPrompt: dshConfig.systemPrompt, model: dshConfig.model ?? descriptor.agentModel ?? this.session.config.model,
+        tools: dshConfig.tools,
         status: state.archived || state.status === "terminated" ? "terminated" : state.status === "idle" && !interrupted ? "idle" : "running",
       });
     }
   }
-  async validateThread(threadId: string, signal: AbortSignal): Promise<void> {
+  async validateThread(threadId: string, signal: AbortSignal, allowRunning = false): Promise<void> {
     if (!this.session.backend.getSubagentThread) throw new Error("Authoritative subagent thread state is unavailable");
     const state = await this.session.backend.getSubagentThread(this.session.id, threadId, signal);
     if (state.id !== threadId) throw new Error("Invalid authoritative subagent thread identity");
@@ -77,7 +83,7 @@ export class CcrSubagentBridge implements SubagentBridge {
       if (thread) thread.status = "terminated";
       throw new Error("Subagent thread is archived");
     }
-    if (state.status !== "idle") throw new Error("Subagent thread is running or archived");
+    if (state.status !== "idle" && !(allowRunning && state.status === "running")) throw new Error("Subagent thread is running or archived");
   }
   async archivedThreads(threadIds: string[], signal: AbortSignal): Promise<string[]> {
     if (!this.session.backend.getSubagentThread) throw new Error("Authoritative subagent thread state is unavailable");
@@ -89,7 +95,6 @@ export class CcrSubagentBridge implements SubagentBridge {
     }
     return archived;
   }
-  createThreadId(): string { return `sthr_${crypto.randomUUID()}`; }
   threads(): SubagentThread[] { return this.retained; }
   bindPersistence(threadId: string): void {
     this.session.ctx.ccrReplication.bindThread(threadId, this.session.id);

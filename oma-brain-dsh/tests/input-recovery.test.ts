@@ -33,7 +33,7 @@ function backend() {
   return backend;
 }
 
-test("native-only crash recovery never re-executes an accepted input or tool", async () => {
+test("session-log crash recovery never re-executes an accepted input or tool", async () => {
   const b = backend();
   const first = await mount(b);
   await seedInterruptedTool(first.session, "accepted-before-crash");
@@ -47,7 +47,7 @@ test("native-only crash recovery never re-executes an accepted input or tool", a
   expect(b.processed).toContain("accepted-before-crash");
 });
 
-test("external input identity uses the native id and every replicated record matches the native log", async () => {
+test("external input identity uses the DSH message id and every replicated record matches the unchanged DSH session log", async () => {
   const b = backend();
   b.modelScript = [textEvents("first"), textEvents("second")];
   const { session, ctx } = await mount(b);
@@ -58,8 +58,7 @@ test("external input identity uses the native id and every replicated record mat
   const events = session.agent.session.snapshotEvents();
   expect(events.flatMap(event => event.type === "user/message" && event.data.source.kind === "user" ? [String(event.data.id)] : []))
     .toEqual(["first-input", "second-input"]);
-  expect(events.map(pluginRecordOf).filter(Boolean).map(record => record!.type))
-    .toEqual(["plugin:oma/assistant-block", "plugin:oma/assistant-block"]);
+  expect(events.map(pluginRecordOf).filter(Boolean).map(record => record!.type)).toEqual(["plugin:oma/subagent-runtime", "plugin:oma/assistant-block", "plugin:oma/input-completion", "plugin:oma/assistant-block", "plugin:oma/input-completion"]);
   expect(JSON.stringify(events)).not.toContain("oma-interruption");
   const handle = await ctx.sessionPersistence.open(SessionId(session.id), "read");
   try { expect((await handle.read()).events).toEqual([...events]); }
@@ -68,7 +67,7 @@ test("external input identity uses the native id and every replicated record mat
   expect(remote).toEqual([session.agent.session.header, ...events]);
 });
 
-test("native history regenerates stable public events after response loss", async () => {
+test("session history regenerates stable public events after response loss without a persisted outbox", async () => {
   const b = backend();
   b.modelScript = [textEvents("confirmed native answer")];
   const first = await mount(b);
@@ -83,7 +82,7 @@ test("native history regenerates stable public events after response loss", asyn
 });
 
 
-test("approval context remains native and cannot replace the accepted input identity on resume", async () => {
+test("approval context stays in the DSH session log and cannot replace the accepted input identity on resume", async () => {
   const b = backend();
   b.modelScript = [toolEvents(), textEvents("approved execution complete")];
   const first = await mount(b);

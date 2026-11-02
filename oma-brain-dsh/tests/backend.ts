@@ -389,7 +389,7 @@ export class Backend {
               public_event_id: event.payload.request_id, request_id: event.payload.request_id,
               provider_tool_use_id: event.payload.request.tool_use_id,
             };
-            const delegation = ["list_agents", "send_to_agent", "archive_agent"].includes(event.payload.request.tool_name);
+            const delegation = ["list_agents", "subagent", "send_message", "interrupt_agent"].includes(event.payload.request.tool_name);
             await (delegation && this.onDelegationApproval ? this.onDelegationApproval : this.onApproval)?.(event.payload);
           }
         }

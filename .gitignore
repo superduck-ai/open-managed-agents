@@ -95,3 +95,5 @@ AGENTS.override.md
 /oma-brain-dsh/.env
 /oma-brain-dsh/.env.*
 !/oma-brain-dsh/.env.example
+
+/.archify/

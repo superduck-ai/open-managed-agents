@@ -80,7 +80,7 @@ Token 口径：`oma-brain-dsh/src/llm-ai-sdk/stream.ts` 输出 `inputTokens` 为
 - `GET /api/organizations/{organization_id}/observability/trajectories`：按当前 workspace 以 `oma_session_id` 聚合，可带 `agent_id`、`session_id`、`start_time`、`end_time`、`offset`、`sort=recent|duration|errors`。默认最近一个月，最大一年，每页最多 50 条，返回 `items` 与 `next_offset`（无下一页为 null）。OpenObserve 只返回 Session ID 与首末事件时间，服务端再批量从 PostgreSQL 补全标题、Agent/版本、状态与子 agent 线程数，已删除或不存在的 Session 直接丢弃，因此单页可能少于 50 条。
 - `GET /api/organizations/{organization_id}/observability/trajectories/{session_id}`：可带 `thread_id`、`segment`、`after_seq`（默认 -1）。每页最多 500 条，返回原生 `header`、`events`、`next_seq`、`has_more`、`segment` 与 `segments`（该泳道全部分段，按创建时间升序）。详情从存储起点查询，避免时间窗口截断 Session 前缀。
 
-泳道映射：未带 `thread_id` 或为主线程时取该 Session 全部未删除 code session（`cse_*`），默认最新一段；子 agent 线程的原生 Session 即线程 ID（`sthr_*`），只有一段。活动 code session 终止后再次调度会新建 code session，因此主线程可能有多段。Session、线程或分段不属于当前 workspace 时返回同一个 404，不查询存储；存储查询同时带 `oma_session_id` 条件。
+泳道映射：未带 `thread_id` 或为主线程时取该 Session 全部未删除 code session（`cse_*`），默认最新一段；子 agent 线程的原生 Session 即线程 ID（历史 `sthr_*` 或 DSH 标准 UUID），只有一段。活动 code session 终止后再次调度会新建 code session，因此主线程可能有多段。Session、线程或分段不属于当前 workspace 时返回同一个 404，不查询存储；存储查询同时带 `oma_session_id` 条件。
 
 所有 SQL 强制带服务端 organization/workspace，Session 与 Agent 过滤先做本地存在性检查；stream 名限定为 SQL identifier，外部值转义；查询与写入凭据分离，响应 no-store，搜索响应上限 16MiB。
 
@@ -117,7 +117,7 @@ Vite 插件将发布包的客户端 factory 转为静态 ESM 引用（不使用 
 
 口径：
 
-- 交互只算主线程（`cse_*`）turn，子 agent 的 turn 在子 agent tab；取消和崩溃中断单列，不计入错误。
+- 交互只算主线程（`cse_*`）turn，子 agent 的 turn 在子 agent tab；取消和崩溃中断单列，不计入错误。子线程同时识别历史 `sthr_*` 和 DSH 标准 UUID；turn 趋势、耗时与 token 聚合使用相同判定。
 - 同一会话 `(turn, step)` 相同的多次模型请求计为重试；缺少 turn 或 step 的请求视为独立请求。
 - 聚合先按 `(dsh_session_id, turn)`、`(dsh_session_id, seq)` 或 `(dsh_session_id, call_id)` 去重配对。已删除会话在保留期内仍计入聚合（OpenObserve 无法按删除状态过滤），会话选择器排除它们。
 - 不提供会话失败率、估算成本（无价格来源）和看板内轨迹。

@@ -99,7 +99,7 @@ func (h *Handler) receiveFanout(ctx context.Context, _ string, envelope sessionf
 			h.logger.WarnContext(ctx, "discard code session stream fanout", "error", err)
 			return
 		}
-		event, emit := nativeStreamPreview(payload)
+		event, emit := messageStreamPreview(payload)
 		if !emit {
 			event, emit = h.previews.convert(payload)
 		}

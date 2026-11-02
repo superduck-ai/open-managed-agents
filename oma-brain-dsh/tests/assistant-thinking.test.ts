@@ -17,6 +17,24 @@ test("reasoning deltas without a block start do not publish content", () => {
   expect(stream.record(chunk({ type: "reasoning-delta", index: 0, text: "private" }), "input")).toEqual([]);
 });
 
+test.each(["oma-messages-v1", "oma-chat-completions-v1"])("proxied %s responses retain idempotent Brain fallback blocks, including replay", format => {
+  const stream = new CcrAssistantStream("cse_proxy", () => "msg_proxy", () => "request_proxy");
+  stream.record(start(), "input");
+  const preview = stream.record(chunk({ type: "text-delta", index: 0, text: "answer" }), "input");
+  expect(preview.map(event => event.type)).toEqual(["event_start", "event_delta"]);
+  for (const block of [{ type: "text", text: "answer" }, { type: "reasoning", text: "private" }] as const) {
+    const completed = stream.record(chunk({ type: "block-end", index: 0, block }), "input");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]!.model_request_start_id).toBe("request_proxy");
+    const message: AssistantMessage = { id: MessageId("reply"), role: "assistant", content: [block], source: {
+      kind: "model", provider: "oma", model: "test-model", replayState: {
+        response: { format, messageID: "msg_proxy", requestID: "request_proxy" }, blocks: [{ index: 0 }],
+      },
+    } };
+    expect(assistantMessages("cse_proxy", "fallback", message)).toEqual(completed);
+  }
+});
+
 test("empty thinking starts once before answer and shares backend identity", () => {
   for (const vector of vectors) {
     const stream = new CcrAssistantStream(vector.codeSessionID, () => vector.messageID);
@@ -66,7 +84,7 @@ test("text preview explicitly indexes its public single-block message even for n
 });
 
 test("public block completion follows model order when text precedes thinking and multiple text blocks close out of index order", () => {
-  const stream = new CcrAssistantStream("cse_order", () => "msg_order", () => "request_order");
+  const stream = new CcrAssistantStream("cse_order", () => "msg_order");
   stream.record(start(), "input");
   const payloads = [
     chunk({ type: "text-delta", index: 0, text: "first" }),
@@ -80,7 +98,7 @@ test("public block completion follows model order when text precedes thinking an
     "event_start", "event_delta", "agent.message", "event_start", "event_start", "event_delta", "agent.message", "agent.thinking",
   ]);
   const finals = payloads.filter(payload => payload.type.startsWith("agent."));
-  expect(finals.every(payload => payload.model_request_start_id === "request_order")).toBe(true);
+  expect(finals.every(payload => payload.model_request_start_id === undefined)).toBe(true);
   expect(JSON.stringify(finals)).not.toContain("private");
   expect(stream.complete(finals)).toEqual([]);
   expect(stream.complete([{ type: "agent.message", id: "unstreamed" }])).toEqual([{ type: "agent.message", id: "unstreamed" }]);

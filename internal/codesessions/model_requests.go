@@ -17,13 +17,14 @@ import (
 
 // ModelRequest owns one proxy attempt. Each worker retry gets a new span.
 type ModelRequest struct {
-	calculator    *billing.Calculator
-	StartID       string
-	CodeSessionID string
-	ThreadID      string
-	Model         string
-	codeSession   db.CodeSession
-	toolThreadID  string
+	calculator           *billing.Calculator
+	SuppressPublicOutput bool
+	StartID              string
+	CodeSessionID        string
+	ThreadID             string
+	Model                string
+	codeSession          db.CodeSession
+	toolThreadID         string
 }
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.
@@ -133,7 +134,7 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 }
 
 func (s *Service) StartModelThinking(ctx context.Context, request *ModelRequest, messageID string, index int) error {
-	if usesBrainClaimTransport(request.codeSession) {
+	if request.SuppressPublicOutput || usesBrainClaimTransport(request.codeSession) {
 		return nil
 	}
 	message := ModelRequestMessage{ID: maevents.StableAssistantEventID(request.CodeSessionID, messageID, index, "agent.thinking"), Type: "agent.thinking"}
@@ -165,9 +166,11 @@ func modelMessagePayload(request *ModelRequest, message ModelRequestMessage, pro
 }
 
 func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, result ModelRequestResult) error {
-	if usesBrainClaimTransport(request.codeSession) {
+	if request.SuppressPublicOutput {
 		result.Messages = nil
 		result.EventIDs = nil
+		result.ToolUses = nil
+		result.ToolUseIDs = nil
 	}
 	event := modelRequestEvent{ID: request.StartID + "_end", Type: "span.model_request_end", StartID: request.StartID,
 		CreatedAt: result.EndedAt, ProcessedAt: result.EndedAt, IsError: new(result.ErrorType != "" && result.ErrorType != "observation_limit"), Usage: &result.Usage, EventIDs: result.EventIDs, ToolUseIDs: result.ToolUseIDs, UpstreamRequestID: result.UpstreamRequestID}

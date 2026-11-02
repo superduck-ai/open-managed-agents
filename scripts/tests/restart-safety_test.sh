@@ -9,7 +9,8 @@ export MOCK_ROOT="$fixture/repo"
 git init -q "$MOCK_ROOT"
 mkdir -p "$MOCK_ROOT/.worktrees/other"
 git init -q "$MOCK_ROOT/.worktrees/other"
-cp "$repo_root/scripts/restart-server.sh" "$MOCK_ROOT/scripts/"
+cp "$repo_root/scripts/restart-server.sh" "$repo_root/scripts/restart-web.sh" "$MOCK_ROOT/scripts/"
+mkdir -p "$MOCK_ROOT/web"
 cp "$repo_root/oma-brain-dsh/scripts/restart.sh" "$MOCK_ROOT/oma-brain-dsh/scripts/"
 printf '{"name":"test"}\n' > "$MOCK_ROOT/.run/env.json"
 printf '{"phase": "complete", "api_port": 40123}\n' > "$MOCK_ROOT/.run/generated/state.json"
@@ -55,10 +56,6 @@ for scenario in missing empty whitespace valid; do
   fi
   echo "brain token $scenario: passed"
 done
-status=0
-OMA_START_LOCK_FD=3 bash "$MOCK_ROOT/scripts/restart-server.sh" --start-locked > "$fixture/output" 2>&1 || status=$?
-[[ "$status" -ne 0 ]] && grep -q 'outside this worktree' "$fixture/output"
-echo 'backend nested worktree listener: passed'
 cat > "$fixture/bin/go" <<'MOCK'
 #!/bin/bash
 set -euo pipefail
@@ -84,7 +81,8 @@ cat > "$fixture/bin/lsof" <<'MOCK'
 #!/bin/sh
 case " $* " in
   *' -p '*'-iTCP:'*) echo listening >> "$MOCK_ROOT/events"; cat "$MOCK_ROOT/server.pid" 2>/dev/null || true ;;
-  *'40123'*) exit 0 ;;
+  *' -d cwd '*) echo "n$MOCK_ROOT/.worktrees/other" ;;
+  *'40123'*|*'61000'*|*'61001'*) echo 99999999 ;;
   *) echo probe >> "$MOCK_ROOT/events" ;;
 esac
 MOCK
@@ -101,4 +99,14 @@ wait "$restart_pid" || status=$?
 [[ "$status" -eq 0 ]] && [[ "$(cat "$MOCK_ROOT/ready")" == . ]]
 [[ "$(head -n 1 "$MOCK_ROOT/events")" == build ]]
 grep -q listening "$MOCK_ROOT/events"
-echo 'backend build and listener lock handoff: passed'
+grep -q 'outside this worktree' "$fixture/output"
+echo 'backend stale foreign listener and lock handoff: passed'
+cat > "$fixture/bin/bun" <<'MOCK'
+#!/bin/sh
+[ "$*" = 'run dev -- --host 127.0.0.1 --port 61002 --strictPort' ]
+MOCK
+printf '{"phase": "complete", "web_port": 61001, "api_port": 40123}\n' > "$MOCK_ROOT/.run/generated/state.json"
+bash "$MOCK_ROOT/scripts/restart-web.sh" > "$fixture/output" 2>&1
+grep -q 'outside this worktree' "$fixture/output"
+grep -q 'Using frontend port :61002' "$fixture/output"
+echo 'frontend stale foreign listener: passed'

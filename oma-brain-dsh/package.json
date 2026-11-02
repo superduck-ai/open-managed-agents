@@ -49,7 +49,15 @@
     "@opentelemetry/exporter-metrics-otlp-http": "0.222.0",
     "@opentelemetry/resources": "2.11.0",
     "@opentelemetry/sdk-logs": "0.222.0",
-    "@opentelemetry/sdk-metrics": "2.11.0"
+    "@opentelemetry/sdk-metrics": "2.11.0",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.7-alpha.1",
+    "@deepseek-ai/dsh-agent-preset": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-agent-preset-registry": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-session-query-sqlite": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-subagent-spawn-in-process": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-tool-subagent": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-tool-subagent-control": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-working-directory": "0.2.2-alpha.2"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",

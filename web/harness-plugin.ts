@@ -7,7 +7,7 @@ const packages = new Set(['@deepseek-ai/dsh-client-ui-trajectory', '@deepseek-ai
 
 export function harnessPlugin(): Plugin {
   return {
-    name: 'harness-native-modules',
+    name: 'harness-dsh-modules',
     resolveId(id) {
       if (!id.startsWith('harness:')) return;
       const name = id.slice('harness:'.length);

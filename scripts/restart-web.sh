@@ -66,8 +66,8 @@ stop_previous_listener() {
   [[ -n "$pids" ]] || return 0
   for pid in $pids; do
     if ! pid_is_from_current_repo "$pid"; then
-      echo "Port :$port is owned by a process outside this worktree; refusing to stop it" >&2
-      exit 1
+      echo "Port :$port is owned by a process outside this worktree; leaving it running and selecting a free port" >&2
+      return 0
     fi
   done
   echo "Stopping previous frontend listener on :$port"

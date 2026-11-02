@@ -304,7 +304,7 @@ func brainToolCallModel(t *testing.T, toolName, arguments string, checkResult fu
 				names = append(names, tool.Name)
 			}
 			slices.Sort(names)
-			want := []string{"Bash", "Edit", "Glob", "Grep", "Read", "Write", "archive_agent", "list_agents", "send_to_agent", "web_fetch", "web_search"}
+			want := []string{"Bash", "Edit", "Glob", "Grep", "Read", "Write", "interrupt_agent", "list_agents", "send_message", "subagent", "web_fetch", "web_search"}
 			if len(expectedTools) != 0 {
 				want = expectedTools[0]
 			}

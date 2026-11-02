@@ -338,7 +338,7 @@ describe("original dsh loop over CCRv2", () => {
     release.resolve();
     expect(await draining).toBe(true);
     await turn;
-    expect(nativeOutcomes(session).call_1).toEqual({ text: "drained\n", failed: false });
+    expect((await nativeOutcomes(session)).call_1).toEqual({ text: "drained\n", failed: false });
     expect(session.abort.signal.aborted).toBe(false);
   });
 

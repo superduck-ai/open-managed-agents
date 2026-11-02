@@ -23,7 +23,7 @@ func TestSessionActivityMetricsPostgres(t *testing.T) {
 		databaseURL = cfg.Database.URL
 	}
 	ctx, database, _ := newIsolatedMigrationTestDatabase(t, databaseURL)
-	ddl := `CREATE TABLE sessions(uuid uuid PRIMARY KEY,workspace_uuid uuid,status text,updated_at timestamptz,deleted_at timestamptz);
+	ddl := `CREATE TABLE sessions(uuid uuid PRIMARY KEY,workspace_uuid uuid,status text,updated_at timestamptz,deleted_at timestamptz,external_id text);
  CREATE TABLE session_threads(session_uuid uuid,workspace_uuid uuid,external_id text,status text,updated_at timestamptz,archived_at timestamptz,deleted_at timestamptz);
  CREATE TABLE session_events(id bigint GENERATED ALWAYS AS IDENTITY,workspace_uuid uuid,session_uuid uuid,thread_external_id text,event_type text,payload jsonb,processed_at timestamptz,deleted_at timestamptz);`
 	if _, err := database.ExecContext(ctx, ddl); err != nil {
@@ -39,7 +39,7 @@ func TestSessionActivityMetricsPostgres(t *testing.T) {
 	const workspace = "98000000-0000-0000-0000-000000000001"
 	const sid = "98000000-0000-0000-0000-000000000002"
 	base := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
-	if _, err := database.ExecContext(ctx, `INSERT INTO sessions VALUES($1,$2,'idle',$3,NULL)`, sid, workspace, base.Add(10*time.Second)); err != nil {
+	if _, err := database.ExecContext(ctx, `INSERT INTO sessions VALUES($1,$2,'idle',$3,NULL,'activity-session')`, sid, workspace, base.Add(10*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	add := func(thread string, start, end int) {
@@ -74,6 +74,23 @@ func TestSessionActivityMetricsPostgres(t *testing.T) {
 		}
 	}
 	check(nil, base.Add(20*time.Second), 10, 22)
+	activityMapper := NewSessionUsageMapper(yourbatis.NewDB(database, yourbatis.DialectPostgres))
+	for _, tc := range []struct {
+		workspace, session, thread string
+		want                       float64
+	}{
+		{workspace, "activity-session", "", 10},
+		{workspace, "activity-session", "a", 6},
+		{workspace, "activity-session", "missing", 0},
+		{workspace, "other-session", "", 0},
+		{"98000000-0000-0000-0000-000000000099", "activity-session", "", 0},
+	} {
+		got, err := activityMapper.SumActiveSeconds(ctx, usageTotalsParams(tc.workspace, tc.session, tc.thread))
+		if err != nil || got != tc.want {
+			t.Fatalf("scoped activity aggregate=%g want=%g error=%v", got, tc.want, err)
+		}
+	}
+
 	check("a", base.Add(20*time.Second), 6, 6)
 	if _, err := database.ExecContext(ctx, `INSERT INTO session_events(workspace_uuid,session_uuid,thread_external_id,event_type,payload,processed_at) VALUES($1,$2,'primary','session.thread_status_running','{"session_thread_id":"b"}',$3)`, workspace, sid, base.Add(time.Second)); err != nil {
 		t.Fatal(err)

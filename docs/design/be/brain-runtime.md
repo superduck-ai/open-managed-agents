@@ -6,7 +6,7 @@
 
 ## DSH 版本与文档基准
 
-Brain 的 21 个直接 DSH 依赖与控制台轨迹视图的 7 个直接 DSH 依赖统一固定为 `0.2.2-alpha.2`，Cordis 固定为 `4.0.6-alpha.1`，满足上游 `~4.0.6-alpha.1` 的 peer 约束。两个应用各自提交 Bun lockfile，传递的 DSH 包也必须解析到同一发布版本；不能用 `latest`、`next` 或版本范围替代精确依赖。
+Brain 的直接 DSH 依赖与控制台轨迹视图的 7 个直接 DSH 依赖统一固定为 `0.2.2-alpha.2`，Cordis 固定为 `4.0.6-alpha.1`，满足上游 `~4.0.6-alpha.1` 的 peer 约束。两个应用各自提交 Bun lockfile，传递的 DSH 包也必须解析到同一发布版本；不能用 `latest`、`next` 或版本范围替代精确依赖。
 
 官方发布标签为 `dsh-v0.2.2-alpha.2`，文档固定到提交 `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`：
 
@@ -46,11 +46,13 @@ DSH 日志统一使用 `type: "dsh_log"`，`data` 原样保存原生 `SessionHea
 
 日志格式版本直接使用原生 Header 的 version，恢复时由 DSH assertVersion 校验，不写额外的 schema_version。恢复使用原生 seq 字段识别 Event，其他日志记录按 Header 校验；先读取 Header，再逐条校验 Event 的类型与序号连续性。相同 seq、相同内容的重复记录只应用一次，不同内容则报错。当前仍不支持 fork，内存 inherited 固定为 0，不写入原生对象。会话恢复直接使用 DSH `agents.resume()`，不再保存 BrainState、逐调用阶段或工具结果副本。本次不兼容旧批次和额外包装格式，不提供迁移或回滚读取兼容。
 
-私有事件 UUID 不哈希完整 data。Event UUID 为 `dsh_log:<code-session-id>:<dsh-session-id>:<seq>`，Header UUID 为 `dsh_log:<code-session-id>:<dsh-session-id>:header`。ID 各部分使用 encodeURIComponent 编码。主线程的 DSH Session ID 使用 code-session-id，子线程使用传输层 agent_id；Header 的 Session ID 使用原生 id。传输层保留 uuid 和 agent_id，不将其注入 data。读取子线程历史时以 agentId 选择 subagents 私有流，并按返回记录的传输层 agent_id 过滤每一页结果，再将原始 payload 交给恢复逻辑，避免不同子线程相同 seq 相互混淆。不写输入交付阶段插件事件或额外远程交付快照；逐块输出的恢复记录使用下文定义的原生可忽略插件记录。同一 Event 的身份不受 flush 分组或 JSON 属性顺序影响，入队前 JSON 快照和 HTTP 确认行为保持不变。
+私有事件 UUID 不哈希完整 data。Event UUID 为 `dsh_log:<code-session-id>:<dsh-session-id>:<seq>`，Header UUID 为 `dsh_log:<code-session-id>:<dsh-session-id>:header`。ID 各部分使用 encodeURIComponent 编码。主线程的 DSH Session ID 使用 code-session-id，子线程使用传输层 agent_id；Header 的 Session ID 使用原生 id。传输层保留 uuid 和 agent_id，不将其注入 data。读取子线程历史时以 agentId 选择 subagents 私有流，并按返回记录的传输层 agent_id 过滤每一页结果，再将原始 payload 交给恢复逻辑，避免不同子线程相同 seq 相互混淆。Brain 统一使用 DSH 原生 subagent，在根日志写入 `plugin:oma/subagent-runtime` 固定会话归属，并用 `plugin:oma/input-completion` 区分父 agent 的单个 turn 结束与包含子任务的整个输入完成；它们仍走同一 Header/Event 复制链，不引入独立远程状态表。恢复与终态合同见 [子智能体委派设计](subagent-delegation.md#dsh-原生-subagent-委派)。同一 Event 的身份不受 flush 分组或 JSON 属性顺序影响，入队前 JSON 快照和 HTTP 确认行为保持不变。
 
 ccrv2-client.test.ts 覆盖原生对象直存、单事件身份、跨页子线程隔离和重试稳定性。local-transcript.test.ts 覆盖原生可忽略扩展保留、必需未知事件拒绝和 Header 规范化与直接使用原生 JSONL 一致；ccrv2.test.ts 覆盖 Header 与 Event 直接保存和恢复，拒绝不支持的 Header 版本、缺失 Header、序号缺口及冲突事件。session、subagents 和 crash 测试覆盖持久化顺序、子线程恢复和工具结果不重复执行。
 
 ## 本地主存储与异步复制
+
+模型流中断后，DSH 会以 `assistant/message` 的 `interrupted: true` 保存已经收到的文本前缀。该记录保留在原生日志中，供恢复和上下文使用；Brain 不再把它投影为新的公开缓冲消息。模型代理已经负责公开请求的输出及取消结束事件，重新投影这个前缀会在 `span.model_request_end` 后产生没有所属开放请求的消息。普通完成消息的投影和已经发布的预览保持原有路径；主线程和子线程采用相同规则。
 
 `JsonlPersistence` 直接拥有 sessionPersistence 服务、固定 session 路径和原生 session.lock。每次领取后的首次打开都先读取并校验远程历史，再获取本地原生写锁对账，同一领取代内不重复对账。本地缺失则补齐 Header/Event；本地是远程前缀时追加远程尾部，再交给 agents.resume；本地领先时保留本地尾部并异步上传。历史或 Header 不一致且互不为前缀时直接报错并停止恢复，保留原 session 路径和日志内容，不自动移动、覆盖、拼接或重建。远程缺失时保留并上传已有本地日志；远程读取失败、记录损坏或本地锁冲突时不恢复执行，保留本地文件。没有本地盘的新实例只能恢复远程已确认前缀，未复制的普通尾部依赖保留原磁盘。
 
@@ -138,7 +140,7 @@ DSH 开始模型执行前等待首个 `processing` 回执确认；后端通过�
 - `runtime_tools`：从 Session 固化的工具配置解析出的内置工具白名单，使用 DSH 工具名。禁用工具不列入，需审批工具仍列入；没有内置 toolset 时返回空数组。
 - `subagents`：由会话 Agent 快照中的固定版本引用解析出的子 Agent 定义及工具权限。
 - `runtime_tools`：主 Agent 启用的沙箱工具名，按与权限执行相同的规则从会话 Agent 快照计算；缺失时注册全部沙箱工具。
-- `runtime_tool_permissions`：以沙箱 MCP 工具名（`bash`、`read`、`write`、`edit`、`grep`、`glob`）为键的策略表，值为 `allow`、`ask` 或 `deny`，由 Go 用与 `can_use_tool` 审批相同的 `resolveAgentToolPermission` 从当前线程的 Agent 快照计算。创建时写入 Code Session 的表仅用于启动；`session_context` 每次读取最新 Session 或子线程快照重新计算权限，包括创建时未带权限表的旧会话。DSH 在每次模型请求前读取该上下文并更新权限表。自托管会话不下发本地放行表，所有调用都通过后端审批和外部结果路由。读取或校验失败时不发送模型请求，不沿用旧的放行结果；响应缺失该字段时清空本地表，所有工具走审批请求。会话只允许在 idle 时更新工具策略，因此下一轮模型执行前即可应用 `allow` 改为 `ask` 或 `deny` 的变化。
+- `runtime_tool_permissions`：以沙箱 MCP 工具名（`bash`、`read`、`write`、`edit`、`grep`、`glob`）为键的策略表，值为 `allow`、`ask` 或 `deny`，由 Go 用与 `can_use_tool` 审批相同的 `resolveAgentToolPermission` 从当前线程的 Agent 快照计算。 API 的 `auto` 策略在这个运行时提示表中映射为 `ask`，表示必须把调用交给 Go 原有自动权限引擎判定，而不是本地放行或预先创建用户确认；服务端仍从真实线程快照解析 Automatic 标记、真实用户意图和实际审批结果。不得将 `auto` 原样下发给仅接受三态提示的 Brain，或将其映射为 `allow`。创建时写入 Code Session 的表仅用于启动；`session_context` 每次读取最新 Session 或子线程快照重新计算权限，包括创建时未带权限表的旧会话。DSH 在每次模型请求前读取该上下文并更新权限表。自托管会话不下发本地放行表，所有调用都通过后端审批和外部结果路由。读取或校验失败时不发送模型请求，不沿用旧的放行结果；响应缺失该字段时清空本地表，所有工具走审批请求。会话只允许在 idle 时更新工具策略，因此下一轮模型执行前即可应用 `allow` 改为 `ask` 或 `deny` 的变化。
 - 原有 `outcomes` 和 `mcp_config`。DSH 目前不使用这两个字段：执行端只连接 Go 构造的沙箱 MCP（`/v2/ccr-sessions/{id}/sandbox/mcp`），不连接 `mcp_config` 中的用户 MCP 服务器，因此 Agent 上配置的 `mcp_toolset` 在 brain 模式下不可用，也不执行 outcomes。这是当前的范围限制，扩展时可复用沙箱工具的 `RemoteTool` 与网关转发模型。
 
 创建 Code Session 时，Go 对 prompt、Skill 和子 Agent 字段按 schema 解析，拒绝类型错误；子 Agent 定义从固定版本快照解析后写入配置。MCP 声明、outcomes 与未识别扩展字段在 JSON 边界原样透传，避免改写第三方字段或高精度数字。
@@ -149,7 +151,7 @@ DSH 在本地把公共配置转换为运行时对象，并根据 `OMA_API_URL` �
 
 ## 惰性沙箱
 
-已注册工具的权限预检挂在每个运行时可并发的 `tools/execute` 包装层，在工具定义校验与执行前调用现有 Go 权限桥，覆盖普通工具、外部 MCP 与内部委派工具。未知工具在 `tools/pre-execute` 入口报告不可用，后端直接拒绝，不进入用户审批等待。不能在已注册工具的串行预调度阶段等待审批，否则会阻止同一批并行工具发起各自的审批。后端仍是公开调用事件的唯一发布者。`ToolExecution` 复用同一 bridge、同一 call ID 的预检结果，不重复审批或发布。结果进入日志后释放预检缓存，轮次结束清空残留；缓存不是执行恢复依据，重启仍依赖持久日志和后端稳定事件 ID。内部 `list_agents`、`send_to_agent`、`archive_agent` 仅在会话配置启用 subagents 时允许，子线程不获得再次委派权限。未知工具及运行时报告不可用的工具直接拒绝，不生成审批等待或伪造策略评估。预检不会创建沙箱，也不执行工具。调用事件和结果使用原有同线程稳定 ID 关联，线程消息事件继续保留。
+已注册工具的权限预检挂在每个运行时可并发的 `tools/execute` 包装层，在工具定义校验与执行前调用现有 Go 权限桥，覆盖普通工具、外部 MCP 与内部委派工具。未知工具在 `tools/pre-execute` 入口报告不可用，后端直接拒绝，不进入用户审批等待。不能在已注册工具的串行预调度阶段等待审批，否则会阻止同一批并行工具发起各自的审批。后端仍是公开调用事件的唯一发布者。`ToolExecution` 复用同一 bridge、同一 call ID 的预检结果，不重复审批或发布。结果进入日志后释放预检缓存，轮次结束清空残留；缓存不是执行恢复依据，重启仍依赖持久日志和后端稳定事件 ID。内部委派工具仅在会话配置启用 subagents 时允许。旧 `send_to_agent`、`archive_agent` 已移除；统一加载官方 `subagent`、`list_agents`、`send_message`、`interrupt_agent`，后端按同一委派权限规则校验，子线程不获得再次委派权限。未知工具及运行时报告不可用的工具直接拒绝，不生成审批等待或伪造策略评估。预检不会创建沙箱，也不执行工具。调用事件和结果使用原有同线程稳定 ID 关联，线程消息事件继续保留。
 
 ```mermaid
 sequenceDiagram
@@ -267,7 +269,7 @@ DSH 的工具执行屏障直接建立在原生日志上：在工具体执行前�
 
 CCRv2 传输层的旧 subtype envelope、Brain/Grok checkpoint、独立交付快照和批量 dsh_log 仍由协议适配层拒绝，不自动迁移。原生 JSONL 内的 Header 和 Event 则统一交给 dsh 原生格式校验：保留可忽略的未知扩展，拒绝原生不支持的必需事件，不按平台专属类型名称增设判断。Header 的缺省值和规范化直接采用原生 JSONL 回读结果，Brain 不手工补字段。主线程、子线程和已有本地日志遵循同一原生规则。
 
-`tests/model-replication.test.ts` 覆盖主线程及子线程在复制延迟时继续请求模型、工具执行前确认、工具结果确认后在下一模型请求期间发布，以及公开结果确认前禁止 ACK、持久消息不能越过先前未确认的预览。`tests/native-input-recovery.test.ts` 覆盖原生身份去重、同内容不同输入、重启补发稳定身份、无额外交付记录及原生本地/远程事件一致性。`tests/session-reacquisition.test.ts` 覆盖 A→B→A 接管、远程新增子线程、历史不一致时保留原路径及损坏历史拒绝。`tests/review-reproduction.test.ts` 覆盖预览增量读取、会话 writer 故障隔离和原生持久化屏障。
+`tests/model-replication.test.ts` 覆盖主线程及子线程在复制延迟时继续请求模型、工具执行前确认、工具结果确认后在下一模型请求期间发布，以及公开结果确认前禁止 ACK、持久消息不能越过先前未确认的预览。`tests/input-recovery.test.ts` 覆盖原生身份去重、同内容不同输入、重启补发稳定身份、无额外交付记录及原生本地/远程事件一致性。`tests/session-reacquisition.test.ts` 覆盖 A→B→A 接管、远程新增子线程、历史不一致时保留原路径及损坏历史拒绝。`tests/review-reproduction.test.ts` 覆盖预览增量读取、会话 writer 故障隔离和原生持久化屏障。
 
 ```mermaid
 sequenceDiagram
@@ -290,7 +292,7 @@ sequenceDiagram
 
 恢复工具名称同时读取 assistant/message 的原生 tool-call block，覆盖尚未产生 tool/call 的调用。DSH 的 `interruptedTurnClosers` 区分模型请求但未记录开始的 `TOOL_NOT_STARTED`，以及已记录 tool/call 但没有结果的 `TOOL_OUTCOME_UNKNOWN`。未知结果的原生错误提示模型先检查外部状态或询问用户，不盲目重试。OMA 不再维护 dispatch/blocked/result 状态机，不发布 unknown_tool_outcomes，不消费 tool_outcome_reconciliation，并移除对应运维 CLI 及专用 DB 入口。恢复不会自动重放未完成的输入；它完成该输入的失败交付，然后接受新输入。公开事件重发使用同一 UUID，依赖后端幂等去重；这不是跨系统的 exactly-once 事务。
 
-子线程的名称、persona、模型和工具限制使用 DSH 原生 `subagent/descriptor` 保存，Header 的 parentSession 和传输层 agent_id 保留归属关系。恢复先从本地原生列表发现子线程；每次恢复枚举远程子线程并补齐缺失本地文件，以覆盖根日志未变化而子线程在其他实例新增的情况。通过原生描述符重建配置，并查询后端归档状态。恢复期间暂存线程 idle 通知，完成主线程和子线程原生日志重放后再排入发布队列，保证修复出的工具结果先于对应 idle 通知发布，公开恢复结果确认后才更新 Worker idle；远程恢复失败时不提前发布 idle。归档状态由服务端确认结果决定，不从未发送的进程内通知恢复。已完成原生回合恢复为 end_turn，未闭合回合恢复为 interrupted。无论公开状态是否 idle，只要 DSH 判断日志存在未闭合回合，就调用原生 resume 修复该线程；不采样模型、不重放工具。初始化中断只留下 Header 且后端没有公开线程、日志未开始 turn 时忽略该孤立记录；已开始执行的线程或其他查询错误不得被静默跳过。
+OMA 同步路径的子线程名称、persona、模型和工具限制使用 DSH 原生 `subagent/descriptor` 保存；DSH 官方工具路径由原生 descriptor 保存执行信息，`plugin:oma/subagent-config` 保存 OMA 名称、inline 属性、系统指令与工具清单。Header 的 parentSession 和传输层 agent_id 保留归属关系。恢复先从本地原生列表发现子线程；每次恢复枚举远程子线程并补齐缺失本地文件，以覆盖根日志未变化而子线程在其他实例新增的情况。通过原生描述符重建配置，并查询后端归档状态。恢复期间暂存线程 idle 通知，完成主线程和子线程原生日志重放后再排入发布队列，保证修复出的工具结果先于对应 idle 通知发布，公开恢复结果确认后才更新 Worker idle；远程恢复失败时不提前发布 idle。归档状态由服务端确认结果决定，不从未发送的进程内通知恢复。已完成原生回合恢复为 end_turn，未闭合回合恢复为 interrupted。无论公开状态是否 idle，只要 DSH 判断日志存在未闭合回合，就调用原生 resume 修复该线程；不采样模型、不重放工具。初始化中断只留下 Header 且后端没有公开线程、日志未开始 turn 时忽略该孤立记录；已开始执行的线程或其他查询错误不得被静默跳过。
 
 `tests/crash.test.ts` 覆盖 SIGKILL 后主线程与并行子线程的原生日志修复、已确认兄弟结果保留、旧输入去重和新输入继续。`tests/session.test.ts` 覆盖原生日志检查点失败、公开事件重试、原生终态、公开发布与 ACK 顺序。`tests/parallel-subagents.test.ts` 覆盖独立子线程的失败隔离，不再测试已删除的运维解锁流程。
 
@@ -325,36 +327,34 @@ Session 创建在解析实际 Agent 版本快照和 Environment 后、生成 Ses
 
 ### Brain 公开回复与 Thinking 状态
 
-DSH Brain 是 `agent.message`、`agent.thinking` 及其流式预览的唯一来源。模型代理按服务端已保存的 `metadata.config.worker_transport=claim` 识别 Brain，会记录原有鉴权、模型请求 start/end、usage、上游 request ID 和工具关联，但不生成普通回复、thinking 或对应的 span `event_ids`。无需模型请求用途 header；原生摘要和标题等内部调用不会因为代理观察到模型文本就成为公开回复。Claude Code 的代理发布路径保持原行为；工具权限、审批和代理已有的工具调用投影不随回复职责迁移而删除。
+普通模型请求的完整 `agent.message`、无正文 `agent.thinking` 与 `span.model_request_end` 统一由 Go 模型代理发布，包括 `worker_transport=claim` 的 DSH Brain。响应观察器在 Messages 的 `message_stop`、Chat Completions 的 `[DONE]` 或响应结束时汇总结果。`EndModelRequest` 按完整消息、已有工具事件、end 的顺序提交同一批次；现有 Session 事务保证批次原子写入，fanout 保持批次顺序。消息与 end 使用实际请求结束时间，历史分页用数据库插入次序处理同时间戳事件。错误或取消可只有 end，不制造完整回复。
 
-Brain 对文字和思考都在 `block-start` 生成 `event_start`，包括随后没有正文的空文字块；不等待首个文字 delta，也不根据类型调整开始顺序。思考开始不含正文，reasoning 正文 delta 不公开；普通文本使用 `event_delta`。AI SDK 的 `reasoning-end`、`text-end` 到达时立即产出对应 DSH `block-end`；工具参数的 `tool-input-end` 等待规范化 `tool-call` 后结束工具块，不提前派发工具。整个响应结束时仅结算 usage 与 finish，不再补发块结束；有未闭合块则返回传输错误。SDK 重新使用已结束的块 ID 时，为新片段分配新的原生 block index，保留文字、思考交替输出的顺序。块身份由 code session ID、上游 message ID、原生 block index 和事件类型派生，最终回复与恢复补发使用相同 ID。内部签名推理及原始模型响应仍用于续聊，公开边界继续清除 thinking 正文。
+Brain 在 `block-start` 生成 `event_start`，普通文本生成 `event_delta`，思考正文与签名不公开。预览经过串行检查点和 CCRv2 FIFO 上传队列。代理和 Brain 使用 code session ID、上游 message ID、原始 block index 与事件类型生成一致的事件 ID；end 保留本请求的 `event_ids`。SSE 收到完整消息或 end 后丢弃相关的迟到预览，其他并行请求和子线程的预览不受影响。
 
-预览与完成块先经过串行的持久化检查点，再按模型帧到达顺序加入同一个 CCRv2 FIFO 上传队列，不在前端重排。检查点串行保证较晚 delta 不会越过等待日志确认的起始帧或完成块；入队后不逐帧等待 HTTP 确认，因此预览仍可复用 100ms 批处理。文本或思考 `block-end` 生成最终公共事件，先把公开内容和稳定 ID 写入所属原生 Session 的 `plugin:oma/assistant-block` 可忽略记录，远端确认后才投递；思考记录不含推理正文。完成块会刷新此前的预览批次。完整 `assistant/message` 仍用于模型历史，但不再重复发布本轮已逐块投递的消息。输入 processed 确认继续等待整轮日志复制及公开事件写入成功。子线程使用自己的日志及公开线程身份。
+Brain 在 `block-end` 或完整 `assistant/message` 路径保留带 `model_request_start_id` 的完成块回传，并在恢复时重放完成块日志。代理观察超过 4 MiB 的帧、响应或累计内容时，会保留转发并记录 `observation_limit`；Brain 的完整块因此仍能进入公开 transcript。代理成功观察时，现有稳定事件 ID 和 Session 事务内的 Worker/proxy echo 去重避免重复消息。该回传可能晚于 end，end 仅退休预览，不禁止随后持久化完整消息。思考块仍不携带正文。无代理请求 ID 的独立模型沿用原有完成块路径。
+
+DSH 的 `compaction` 和 `session-title` 内部调用通过 `X-OMA-Model-Purpose` 声明用途。代理在请求边界读取并移除该 header，不转发给模型供应商；这些调用保留 span、usage 和计费，不生成完整消息、thinking 预览、工具投影或公开消息关联 ID。内部调用不覆盖 Brain 的业务响应 ID。普通调用不发送用途 header。
 
 ```mermaid
 sequenceDiagram
     participant Upstream as 模型上游
-    participant Proxy as 模型代理
+    participant Proxy as Go 模型代理
     participant Brain as DSH Brain
-    participant Log as 原生日志与远端复制
-    participant Events as 公开事件服务
-    Upstream->>Proxy: 模型响应
-    Proxy->>Brain: 原始 SSE，保留 Request-Id
-    Proxy->>Events: 模型 span 与 usage，保留工具事件链路
-    Brain->>Log: 保存并确认检查点
-    Brain->>Events: 按序上传 event_start / event_delta
-    Upstream->>Brain: 当前块结束
-    Brain->>Log: 保存所属 Session 的完成块记录并远端确认
-    Brain->>Events: FIFO 发布当前块的 thinking/message
-    Upstream->>Brain: 后续内容块与增量
-    Brain->>Events: 按原顺序上传后续预览及完成块
-    Brain->>Log: 保存完整 assistant/message，确认后续整轮日志
-    Note over Brain,Events: 若复制完成后崩溃，新节点从日志以同一 ID 补发
+    participant Events as 事件事务与 fanout
+    Upstream->>Proxy: 模型增量
+    Proxy->>Brain: 原始 SSE 与请求 ID
+    Brain->>Events: event_start / event_delta
+    Upstream->>Proxy: 响应完成
+    Proxy->>Events: 同批写入完整消息、工具事件、model_request_end
+    Events-->>Events: 按批次顺序广播，关闭相关预览
+    Proxy->>Brain: 转发完成帧
+    Brain->>Brain: 保存原生 assistant/message
+    Note over Brain,Events: 迟到预览被过滤，恢复不重复发布代理拥有的完整消息
 ```
 
-恢复仅从原生日志重建回复，不再次调用模型。完成块记录按原生 seq 参与重放，即使整个 assistant message 尚未保存，也能补发已确认的完整块；旧日志继续从 `assistant/message` 重建。相同公共 UUID 在重放批次中合并，后端去重已接收但确认丢失的回复。记录不进入模型可见的 surface，也不增加私有 HTTP payload 类型。预览尚未确认不能充当最终回复的持久化事实。模型 span 结束可先于 Brain 最终回复，客户端不能将 span end 当成消息已发布或用户回合已完成。
+Server 与 Brain 必须成对更新，升级前排空正在执行的请求；混合版本可能重复发布或缺少完整回复。历史事件不重排、不回填。旧版已保存但未公开的代理关联回复仍可在原生 transcript 中读取，新版恢复不会把它追加到旧 end 之后。
 
-回归入口为 `TestModelReplyPublicationOwnership`、`TestBrainModelThinkingIsPublishedOnlyByWorker`、`TestModelThinkingStartHasStableIdentityAndNoContent`，以及 `model-output-order.test.ts`、`model-replication.test.ts`、`assistant-thinking.test.ts`、`session-reacquisition.test.ts`、`chat-completions.test.ts`、`crash.test.ts`。覆盖模型块边界即时推进、文字先于思考、块交错结束、SDK ID 复用、根/子完成块复制屏障、公开事件确认屏障，以及跨实例补发唯一回复且不重调模型。真实服务验收需另行明确运行，普通单测不代替该验收。
+普通单测覆盖 `TestModelReplyPublicationOwnership`、`TestModelProxyPublishesReplyAndEndTogether`、`TestStreamConnectionRequestEndRetiresOnlyItsPreviews`、`TestNATSFanoutDeliversPreviewAndFinalAcrossInstances`，以及 `assistant-thinking.test.ts`、`model-output-order.test.ts`、`session-reacquisition.test.ts`、`chat-completions.test.ts`、`model-metadata.test.ts`、`compaction-budget.test.ts`。验证同一次读取内的最终内容与结束帧、Messages/Chat/非流式响应、失败与取消、单批顺序、主/子线程预览、恢复不重复发布及内部摘要隔离。跨实例 fanout 顺序使用嵌入式 NATS 验证；真实 PostgreSQL、完整服务 SSE 和真实模型的验收需另行运行。
 
 
 ## Vault environment placeholders in Brain sandboxes
@@ -399,7 +399,7 @@ New self-hosted session Work items with attached Memory Stores carry a URL-safe 
 
 - `ccrv2/runtime-diagnostics.ts` 把通用 `model-retry` / `input-failed` 事实和原生 Session/Event 映射成现有 Worker 日志字段。根会话与子 Agent 分别使用自己的 session ID；错误正文、模型响应及输入内容不进入运行日志，日志 sink 失败不改变执行结果。
 - `ccrv2/tool-transport.ts` 解析 OMA 网关未转发响应和连接失败。runtime 仅接收 `ToolNotForwardedError` 这个执行事实，不解析 HTTP Response。
-- `ccrv2/subagents.ts` 生成 `sthr_` ID，把预定义 Agent 快照映射到公开线程创建事件。传给 runtime 的子 Agent 配置只包含名称、说明、提示词、模型和工具；恢复从原生 subagent descriptor 重建线程，并查询后端确认线程状态。
+- `ccrv2/subagents.ts` 直接接收 DSH 生成的 UUID，把预定义 Agent 快照映射到公开线程创建事件。传给 runtime 的子 Agent 配置只包含名称、说明、提示词、模型和工具；恢复从原生 subagent descriptor 重建线程，并查询后端确认线程状态。
 - `oma-sandbox/output.ts` 在沙箱 MCP 边界投影成功 Bash 的结构化 stdout；失败、stderr、截断或不一致元数据保留完整诊断文本。runtime 只做通用 MCP 文本提取。投影不修改原始响应；格式异常仍交给工具结果校验，避免被误判成远端执行结果未知。
 - 已有 MCP 连接与鉴权通知由 CCRv2 回调构造公开 `session.error`。runtime 保留发现失败的事实回调，以等待适配层完成处理，不构造协议字段。
 
@@ -425,7 +425,7 @@ flowchart TD
     Notify --> Request[Next model request]
 ```
 
-Summary requests use the same authenticated OMA model route with `purpose=compaction` and the native structured checkpoint instruction. The native requested generation budget defaults to 65536 tokens. OMA sets a route output ceiling for compaction requests from the selected model's `max_output_tokens`, or 32768 when omitted. Before invoking the AI SDK, the request converter takes the smaller of the requested budget and this ceiling; a smaller explicit summary budget stays unchanged. The route resolves the actual request session and model, including child sessions and the legacy `oma` provider, rather than applying a process-wide model limit. This rule applies to both Messages and Chat Completions and does not change ordinary calls' explicit-budget precedence. The native pressure headroom remains 65536 tokens, and its journal records the requested summary budget while the adapter enforces the wire-level ceiling. Compaction calls need no transport-purpose header. Brain owns public replies for all DSH model requests, so the proxy records request spans and usage without projecting model text or thinking into public replies. Existing tool permission and tool-event handling remains at the backend boundary. Summaries reuse the conversation prefix and tool schemas. They do not replace the business model-response ID or publish an assistant response to CCRv2. Native `compaction/start`, `compaction/summary`, `compaction/end`, `compaction/prune` and replacement events remain in the private append-only DSH journal; summaries replace the model-visible surface through a checkpoint user message. Original user, assistant and tool events remain available for history and replay. This reduces model context, not stored transcript size.
+Summary requests use the same authenticated OMA model route with `purpose=compaction` and the native structured checkpoint instruction. The native requested generation budget defaults to 65536 tokens. OMA sets a route output ceiling for compaction requests from the selected model's `max_output_tokens`, or 32768 when omitted. Before invoking the AI SDK, the request converter takes the smaller of the requested budget and this ceiling; a smaller explicit summary budget stays unchanged. The route resolves the actual request session and model, including child sessions and the legacy `oma` provider, rather than applying a process-wide model limit. This rule applies to both Messages and Chat Completions and does not change ordinary calls' explicit-budget precedence. The native pressure headroom remains 65536 tokens, and its journal records the requested summary budget while the adapter enforces the wire-level ceiling. Compaction calls declare `X-OMA-Model-Purpose: compaction`; the proxy strips this internal header before forwarding and records spans and usage without publishing summary text. Ordinary model replies and request ends are finalized together by the proxy. Existing tool permission and tool-event handling remains at the backend boundary. Summaries reuse the conversation prefix and tool schemas. They do not replace the business model-response ID or publish an assistant response to CCRv2. Native `compaction/start`, `compaction/summary`, `compaction/end`, `compaction/prune` and replacement events remain in the private append-only DSH journal; summaries replace the model-visible surface through a checkpoint user message. Original user, assistant and tool events remain available for history and replay. This reduces model context, not stored transcript size.
 
 The CCRv2 adapter in `src/ccrv2/compaction.ts` owns compaction notification state and coalesces successful summary and prune changes until the next log flush. The runtime only forwards native session events and invokes generic `onOpen` and `afterFlushLog` adapter hooks; it does not inspect compaction events, measure pressure, track notification sequences or scan recovery history. The event hook includes the owning native session, and child bridges forward the same lifecycle hooks. Each native session has independent transient state. After the runtime flushes the owning root or child journal, the adapter publishes `agent.thread_context_compacted` with the token-meter's estimated pre-compaction pressure, before the next ordinary model request. A coalesced notification reports the first available pre-compaction measurement in the pending batch; the latest journal sequence is only its deduplication cursor and is not exposed as a public pressure timestamp. Each summary end clears the transient start measurement, including failed attempts, so an end without a matching live start measures current pressure rather than reusing an earlier episode. Failed summary attempts alone do not publish success. Replacement tool results stay private so each real execution still has exactly one public tool result. Failed persistence prevents the next model request and success notification.
 

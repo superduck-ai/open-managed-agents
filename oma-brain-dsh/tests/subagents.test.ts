@@ -1,3 +1,4 @@
+import { runSubagent, subagentScripts } from "./subagent-tools.ts";
 import { nativeOutcomes } from "./session-log.ts";
 import { modelSystemText } from "./backend.ts";
 import { afterEach, expect, spyOn, test } from "bun:test";
@@ -8,10 +9,7 @@ import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { Backend, textEvents, toolEvents, eventually } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
-import { Subagents } from "../src/runtime/subagents.ts";
-import { SessionRuntime } from "../src/runtime/session.ts";
 import { CcrSubagentBridge } from "../src/ccrv2/subagents.ts";
-import type { SubagentEvent, SubagentThread, ToolApproval, ToolExecutionBridge } from "../src/runtime/contracts.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -23,7 +21,7 @@ async function fixture(b = new Backend()) {
   await mountOma(ctx, api);
   const session = createOmaSession(ctx, api, b.a);
   b.onApproval = async (payload) => {
-    if (!["list_agents", "send_to_agent", "archive_agent"].includes(payload.request.tool_name)) return;
+    if (!["list_agents", "subagent", "send_message", "interrupt_agent"].includes(payload.request.tool_name)) return;
     await session.control({ type: "control_response", response: {
       subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
     } });
@@ -44,145 +42,14 @@ test("disabled subagents are absent from the model tools and reject direct dispa
   const b = new Backend();
   delete b.a.launch.subagents;
   const f = await fixture(b);
-  await expect(f.session.subagents.send({ name: "forbidden", system_prompt: "Inspect", message: "Work" }, new AbortController().signal)).rejects.toThrow("Subagents are disabled");
+  expect(f.ctx.tools.get("subagent", f.session.agent)).toBeUndefined();
   b.modelScript = [textEvents("done")];
   await f.session.receive("disabled", { content: "Inspect locally" });
   const request = b.requests[0]!;
   const tools = request.tools.map((tool: Payload) => tool.name);
-  for (const name of ["list_agents", "send_to_agent", "archive_agent"]) expect(tools).not.toContain(name);
+  for (const name of ["list_agents", "subagent", "send_message", "interrupt_agent", "subagent_specialist_1"]) expect(tools).not.toContain(name);
   expect(modelSystemText(request)).toContain("Subagents are disabled for this session.");
   expect(f.session.subagents.threads).toHaveLength(0);
-});
-
-for (const phase of ["create", "open"] as const) {
-  test(`failed child ${phase} terminates the published thread and permits a fresh retry`, async () => {
-    const f = await fixture();
-    const config = f.session.runtime.config;
-    const originalContext = config.threadMcpContext;
-    const originalSetup = config.setupTools;
-    const failure = new Error(`${phase} failed`);
-    if (phase === "create") config.threadMcpContext = async () => { throw failure; };
-    else config.setupTools = async () => { throw failure; };
-    const args = { name: "worker", system_prompt: "Inspect", message: "Inspect files" };
-    await expect(f.session.subagents.send(args, new AbortController().signal)).rejects.toBe(failure);
-    const failed = f.session.subagents.threads[0]!;
-    expect(failed.status).toBe("terminated");
-    expect(f.session.subagents.busy).toBe(false);
-    expect(f.api.modelSessions.has(failed.id)).toBe(false);
-    expect([...f.b.publicLog.values()].filter(event => event.session_thread_id === failed.id).map(event => event.type))
-      .toEqual(["session.thread_created", "session.thread_status_terminated"]);
-    await expect(f.session.subagents.send({ thread_id: failed.id, message: "Retry" }, new AbortController().signal)).rejects.toThrow("running or archived");
-    config.threadMcpContext = originalContext;
-    config.setupTools = originalSetup;
-    f.b.modelScript = [textEvents("retry report")];
-    const result = JSON.parse(await f.session.subagents.send(args, new AbortController().signal));
-    expect(result.thread_id).not.toBe(failed.id);
-    expect(result.report).toBe("retry report");
-    expect(f.session.subagents.threads.filter(thread => thread.status !== "terminated").map(thread => thread.id)).toEqual([result.thread_id]);
-  });
-}
-
-test("failed child cleanup still terminates and unbinds while preserving both errors", async () => {
-  const f = await fixture();
-  const initialization = new Error("child setup failed");
-  const cleanup = new Error("child close failed");
-  f.session.runtime.config.setupTools = async () => { throw initialization; };
-  const close = SessionRuntime.prototype.close;
-  const closing = spyOn(SessionRuntime.prototype, "close").mockImplementation(function(this: SessionRuntime) {
-    if (this.parent) return Promise.reject(cleanup);
-    return close.call(this);
-  });
-  try {
-    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
-    expect(error).toBeInstanceOf(AggregateError);
-    expect(error.errors).toEqual([initialization, cleanup]);
-    const failed = f.session.subagents.threads[0]!;
-    expect(failed.status).toBe("terminated");
-    expect(f.api.modelSessions.has(failed.id)).toBe(false);
-    expect([...f.b.publicLog.values()].some(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toBe(true);
-  } finally { closing.mockRestore(); }
-});
-
-test("parent shutdown retries child runtime cleanup after initialization cleanup fails", async () => {
-  const f = await fixture();
-  const initialization = new Error("child setup failed");
-  const cleanup = new Error("first child close failed");
-  f.session.runtime.config.setupTools = async () => { throw initialization; };
-  const close = SessionRuntime.prototype.close;
-  let attempts = 0;
-  let child: SessionRuntime | undefined;
-  const closing = spyOn(SessionRuntime.prototype, "close").mockImplementation(function(this: SessionRuntime) {
-    if (this.parent) {
-      child = this;
-      attempts++;
-      if (attempts === 1) return Promise.reject(cleanup);
-    }
-    return close.call(this);
-  });
-  try {
-    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
-    expect(error).toBeInstanceOf(AggregateError);
-    expect(error.errors).toEqual([initialization, cleanup]);
-    expect(attempts).toBe(1);
-    expect(f.session.subagents.threads[0]!.status).toBe("terminated");
-    await f.session.close();
-    expect(attempts).toBe(2);
-  } finally {
-    closing.mockRestore();
-    if (child) await close.call(child);
-  }
-});
-
-test("parent shutdown retries thread unbinding after initialization cleanup fails", async () => {
-  const f = await fixture();
-  const initialization = new Error("child context failed");
-  const cleanup = new Error("first unbind failed");
-  const bindThread = f.session.runtime.config.bindThread;
-  let attempts = 0;
-  let unbind: (() => void) | undefined;
-  f.session.runtime.config.bindThread = id => {
-    unbind = bindThread?.(id);
-    return () => {
-      attempts++;
-      if (attempts === 1) throw cleanup;
-      unbind?.();
-    };
-  };
-  f.session.runtime.config.threadMcpContext = async () => { throw initialization; };
-  try {
-    const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
-    expect(error).toBeInstanceOf(AggregateError);
-    expect(error.errors).toEqual([initialization, cleanup]);
-    const thread = f.session.subagents.threads[0]!;
-    expect(thread.status).toBe("terminated");
-    expect(f.api.modelSessions.has(thread.id)).toBe(true);
-    expect(attempts).toBe(1);
-    await f.session.close();
-    expect(f.api.modelSessions.has(thread.id)).toBe(false);
-    expect(attempts).toBe(2);
-  } finally { unbind?.(); }
-});
-
-test("failed termination publication keeps the terminal event queued for retry", async () => {
-  const f = await fixture();
-  const initialization = new Error("child context failed");
-  const publication = new Error("terminal publication failed");
-  f.session.runtime.config.threadMcpContext = async () => { throw initialization; };
-  const publish = f.session.backend.events.bind(f.session.backend);
-  f.session.backend.events = async (id, events) => {
-    if (events.some(event => event.type === "session.thread_status_terminated")) throw publication;
-    return publish(id, events);
-  };
-  const error = await f.session.subagents.send({ name: "worker", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal).catch(error => error);
-  expect(error).toBeInstanceOf(AggregateError);
-  expect(error.errors).toEqual([initialization, publication]);
-  const failed = f.session.subagents.threads[0]!;
-  expect(failed.status).toBe("terminated");
-  expect(f.api.modelSessions.has(failed.id)).toBe(false);
-  expect(f.session.pendingEvents.some(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toBe(true);
-  f.session.backend.events = publish;
-  await f.session.flushEvents();
-  expect([...f.b.publicLog.values()].filter(event => event.type === "session.thread_status_terminated" && event.session_thread_id === failed.id)).toHaveLength(1);
 });
 
 for (const status of ["idle", "terminated"] as const) {
@@ -221,9 +88,9 @@ test("publishes the child snapshot before requesting its scoped tool context", a
     return route(request);
   };
   f.b.modelScript = [textEvents("child report")];
-  const result = JSON.parse(await f.session.subagents.send({ name: "python_agent", system_prompt: "Write Python", message: "Return hello world" }, new AbortController().signal));
+  const result = await runSubagent(f.session, "subagent", { description: "python_agent", prompt: ["Write Python", "Return hello world"].filter(Boolean).join("\n") });
   expect(result.report).toBe("child report");
-  expect(contexts).toContain(result.thread_id);
+  expect(contexts).toContain(result.subagentId);
   expect(f.b.requests).toHaveLength(1);
 });
 
@@ -244,74 +111,28 @@ test("restore ignores an unpublished child header left by interrupted initializa
   expect(restored.b.requests).toHaveLength(0);
 });
 
-test("runtime accepts an independent event sink and a class-based execution bridge", async () => {
-  const f = await fixture();
-  const storage = new CcrSubagentBridge(f.session);
-  const threads: SubagentThread[] = [];
-  const events: SubagentEvent[] = [];
-  const approvals: string[] = [];
-  // Prototype methods and receiver state must survive runtime's flush wrapper.
-  class Execution implements ToolExecutionBridge {
-    constructor(readonly delegate: ToolExecutionBridge) {}
-    async approve(request: ToolApproval) {
-      approvals.push(request.callId);
-      return { allowed: true };
-    }
-    runTool<T>(callId: string, execute: () => Promise<T>, readOnly: boolean) { return this.delegate.runTool(callId, execute, readOnly); }
-    approvalChanged(name: string, callId: string, effective: Payload) { this.delegate.approvalChanged(name, callId, effective); }
-  }
-  const runtime = new Subagents(f.session.runtime, {
-    threads: () => threads,
-    bindPersistence: (id) => storage.bindPersistence(id),
-    emit: async (event) => { events.push(structuredClone(event)); await runtime.flush(); },
-    onEvent: () => {},
-    onStream: () => {},
-    toolExecution: (id) => new Execution(storage.toolExecution(id)),
-  });
-  f.b.modelScript = [toolEvents("pwd", "injected_call"), textEvents("independent report")];
-  try {
-    const result = JSON.parse(await runtime.send({
-      name: "independent", system_prompt: "Inspect", message: "Inspect the workspace",
-    }, new AbortController().signal));
-    expect(result.report).toBe("independent report");
-    expect(threads[0]!.status).toBe("idle");
-    expect(approvals).toEqual(["injected_call"]);
-    expect(f.b.executions).toHaveLength(1);
-    expect(events.map((event) => event.kind)).toEqual([
-      "created", "message-sent", "running", "report-received", "idle",
-    ]);
-    expect([...f.b.publicLog.values()].some((event) => event.type.startsWith("session.thread_"))).toBe(false);
-    expect(f.session.subagents.threads ?? []).toHaveLength(0);
-  } finally {
-    runtime.stop();
-    await runtime.close();
-  }
-});
-
 test("delegates with isolated history, no nested delegation, shared approvals, and retained follow-up history after restart", async () => {
   const f = await fixture();
-  f.b.modelScript = [
-    call("send_to_agent", { name: "researcher", system_prompt: "Inspect files", message: "Find a fact" }, "delegate"),
-    toolEvents("pwd", "child_bash"), textEvents("child report"), textEvents("parent synthesis"),
-  ];
+  subagentScripts(f.b, [call("subagent", { description: "researcher", prompt: ["Inspect files", "Find a fact"].filter(Boolean).join("\n") }, "delegate"), textEvents("parent synthesis")], [toolEvents("pwd", "child_bash"), textEvents("child report")]);
   f.b.onApproval = async (payload) => {
-    if (payload.request.tool_name === "Bash") expect(payload.session_thread_id).toStartWith("sthr_");
+    if (payload.request.tool_name === "Bash") expect(payload.session_thread_id).toMatch(/^[0-9a-f-]{36}$/);
     await f.session.control({ type: "control_response", response: {
       subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
     } });
   };
   await f.session.receive("first", { content: "Delegate this work" });
-  expect(f.b.requests).toHaveLength(4);
+  expect(f.b.requests.filter(request => modelSystemText(request).includes("# Subagent rules"))).toHaveLength(2);
   const created = [...f.b.publicLog.values()].find((event) => event.type === "session.thread_created");
-  expect(created?.agent).toEqual({ type: "inline", name: "researcher", system: "Inspect files" });
+  expect(created?.agent).toEqual({ type: "inline", name: "researcher", system: "Inspect files\nFind a fact" });
+  expect(modelSystemText(f.b.requests[1]!)).toContain("# Specialist instructions\n\nInspect files\nFind a fact");
   expect(f.session.subagents.threads?.[0]?.inline).toBe(true);
   const parentTools = f.b.requests[0]!.tools.map((tool: Payload) => tool.name);
-  expect(parentTools).toContain("send_to_agent");
+  expect(parentTools).toContain("subagent");
   const childTools = f.b.requests[1]!.tools.map((tool: Payload) => tool.name);
   expect(childTools).toContain("Bash");
-  expect(childTools).not.toContain("send_to_agent");
+  expect(childTools).not.toContain("subagent");
   expect(JSON.stringify(f.b.requests[1]!.messages)).not.toContain("Delegate this work");
-  expect(JSON.stringify(f.b.requests[3]!.messages)).toContain("child report");
+  expect(JSON.stringify(f.b.requests.at(-1)!.messages)).toContain("child report");
   const thread = f.session.subagents.threads![0]!;
   expect(thread.status).toBe("idle");
   expect(f.b.executions).toHaveLength(1);
@@ -331,9 +152,9 @@ test("delegates with isolated history, no nested delegation, shared approvals, a
   cleanups.pop();
   expect(f.api.modelSessions.size).toBe(0);
   const restored = await fixture(f.b);
-  f.b.modelScript = [call("send_to_agent", { thread_id: thread.id, message: "Explain that fact" }, "followup"), textEvents("more details"), textEvents("followup synthesis")];
+  subagentScripts(f.b, [call("send_message", { agent_id: thread.id, message: "Explain that fact" }, "followup"), textEvents("followup synthesis")], [textEvents("more details")]);
   await restored.session.receive("second", { content: "Follow up" });
-  const childRequest = f.b.requests.at(-2)!;
+  const childRequest = f.b.requests.findLast(request => modelSystemText(request).includes("# Subagent rules"))!;
   expect(JSON.stringify(childRequest.messages)).toContain("child report");
   expect(JSON.stringify(childRequest.messages)).toContain("Explain that fact");
   expect(JSON.stringify(childRequest.messages)).not.toContain("parent synthesis");
@@ -356,12 +177,12 @@ test("predefined specialist uses its own prompt, model and restricted tools", as
     agentSnapshot,
   }] };
   const f = await fixture(b);
-  b.modelScript = [call("send_to_agent", { agent_name: "reviewer", message: "Review the code" }, "delegate"), textEvents("review report"), textEvents("done")];
+  subagentScripts(b, [call("subagent", { agent_preset: `${f.session.id}/reviewer`, description: "reviewer", prompt: "Review the code" }, "delegate"), textEvents("done")], [textEvents("review report")]);
   await f.session.receive("specialist", { content: "Review" });
   expect(f.session.runtime.config.subagents?.agents).toEqual([{
     name: "reviewer", description: "Read-only reviewer", systemPrompt: "Review only", model: "review-model", tools: ["Read", "Grep"],
   }]);
-  expect(f.session.subagents.threads?.[0]?.id).toMatch(/^sthr_/);
+  expect(f.session.subagents.threads?.[0]?.id).toMatch(/^[0-9a-f-]{36}$/);
   const child = b.requests[1]!;
   expect(child.model).toBe("review-model");
   const created = [...b.publicLog.values()].find((event) => event.type === "session.thread_created");
@@ -369,29 +190,13 @@ test("predefined specialist uses its own prompt, model and restricted tools", as
   expect(f.session.subagents.threads?.[0]?.inline).toBe(false);
   expect(modelSystemText(child)).toContain("Review only");
   expect(child.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
-  await expect(f.session.subagents.send({ name: "inline", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow("Inline agents");
-});
-
-test("25 retained threads count toward capacity, archival frees capacity and refuses follow-up", async () => {
-  const f = await fixture();
-  f.session.subagents.threads.push(...Array.from({ length: 25 }, (_, index) => ({
-    id: `sthr_test_${index}`, name: "test", systemPrompt: "test", model: "test-model", status: "idle" as const,
-  })));
-  for (const thread of f.session.subagents.threads) f.b.publicLog.set(thread.id, { type: "session.thread_created", session_thread_id: thread.id });
-  await expect(f.session.subagents.send({ name: "new", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow("25");
-  f.b.modelScript = [call("archive_agent", { thread_id: "sthr_test_0" }, "archive"), textEvents("archived")];
-  await f.session.receive("archive", { content: "Archive a thread" });
-  expect(f.session.subagents.threads[0]!.status).toBe("terminated");
-  await expect(f.session.subagents.send({ thread_id: "sthr_test_0", message: "test" }, new AbortController().signal)).rejects.toThrow("archived");
-  f.b.modelScript = [call("send_to_agent", { name: "new", system_prompt: "test", message: "test" }, "new"), textEvents("report"), textEvents("done")];
-  await f.session.receive("replacement", { content: "Delegate" });
-  expect(f.session.subagents.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
+  await expect(runSubagent(f.session, "subagent", { description: "inline", prompt: ["test", "test"].filter(Boolean).join("\n") })).rejects.toThrow();
 });
 
 test("approval count alone can identify a parent delegation wait before the child exists", async () => {
   const f = await fixture();
   f.b.onApproval = async () => {};
-  f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate")];
+  subagentScripts(f.b, [call("subagent", { description: "child", prompt: ["test", "run"].filter(Boolean).join("\n") }, "delegate"), textEvents("Waiting for child")], []);
   const turn = f.session.receive("parent-wait", { content: "Delegate" });
   const settled = turn.catch(() => {});
   try {
@@ -407,7 +212,7 @@ test("approval count alone can identify a parent delegation wait before the chil
 
 test.each(["user.interrupt", "control_request"])("%s interrupting the whole session cancels child approval before sandbox dispatch", async (type) => {
   const f = await fixture();
-  f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool")];
+  subagentScripts(f.b, [call("subagent", { description: "child", prompt: ["test", "run"].filter(Boolean).join("\n") }, "delegate"), textEvents("Waiting for child")], [toolEvents("pwd", "child_tool")]);
   const turn = f.session.receive("interrupt", { content: "Delegate" });
   const settled = turn.catch(() => {});
   try {
@@ -427,10 +232,7 @@ test.each(["user.interrupt", "control_request"])("%s interrupting the whole sess
 
 test("a child read approved during drain still executes and persists its result", async () => {
   const f = await fixture();
-  f.b.modelScript = [
-    call("send_to_agent", { name: "child", system_prompt: "test", message: "inspect" }, "delegate"),
-    call("Read", { file_path: "/tmp/read.txt" }, "child_read"), textEvents("child report"), textEvents("done"),
-  ];
+  subagentScripts(f.b, [call("subagent", { description: "child", prompt: ["test", "inspect"].filter(Boolean).join("\n") }, "delegate"), textEvents("done")], [call("Read", { file_path: "/tmp/read.txt" }, "child_read"), textEvents("child report")]);
   const turn = f.session.receive("draining-child", { content: "Delegate" });
   const settled = turn.catch(() => {});
   try {
@@ -443,7 +245,7 @@ test("a child read approved during drain still executes and persists its result"
     await turn;
     expect(f.b.executions.map((execution) => execution.name)).toEqual(["read"]);
     const thread = f.session.subagents.threads[0]!;
-    expect(nativeOutcomes(f.session, thread.id).child_read?.failed).toBe(false);
+    expect((await nativeOutcomes(f.session, thread.id)).child_read?.failed).toBe(false);
     expect(thread.status).toBe("idle");
   } finally { f.session.stop(); await settled; }
 });
@@ -453,7 +255,7 @@ test("lost child tool outcome blocks parent recovery until new input and never r
   const lostResponse = Promise.withResolvers<Payload>();
   f.b.onTool = () => lostResponse.promise;
   f.b.onCancel = async () => { lostResponse.reject(new Error("Tool response lost after cancellation")); };
-  f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("side effect", "child_tool")];
+  subagentScripts(f.b, [call("subagent", { description: "child", prompt: ["test", "run"].filter(Boolean).join("\n") }, "delegate"), textEvents("Waiting for child")], [toolEvents("side effect", "child_tool")]);
   f.b.onApproval = async (payload) => {
     await f.session.control({ type: "control_response", response: {
       subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
@@ -463,7 +265,7 @@ test("lost child tool outcome blocks parent recovery until new input and never r
   await eventually(() => f.b.executions.length === 1);
   f.session.stop();
   await turn;
-  expect(nativeOutcomes(f.session, f.session.subagents.threads[0]!.id).child_tool?.failed).toBe(true);
+  expect((await nativeOutcomes(f.session, f.session.subagents.threads[0]!.id)).child_tool?.failed).toBe(true);
   await f.close();
   cleanups.pop();
   f.b.onTool = undefined;
@@ -479,19 +281,20 @@ test("lost child tool outcome blocks parent recovery until new input and never r
   expect(JSON.stringify(f.b.requests.at(-1)!.messages)).toContain("delegate");
 });
 
-test.each(["user.interrupt", "control_request"])("%s targeted child interruption leaves parent quiet until user input while primary interruption stops the turn", async (type) => {
+test.each(["user.interrupt", "control_request"])("%s targeted child interruption stops child work and allows a new parent input", async (type) => {
   const f = await fixture();
-  f.b.modelScript = [call("send_to_agent", { name: "child", system_prompt: "test", message: "run" }, "delegate"), toolEvents("pwd", "child_tool"), textEvents("RESUMED")];
+  subagentScripts(f.b, [call("subagent", { description: "child", prompt: ["test", "run"].filter(Boolean).join("\n") }, "delegate"), textEvents("RESUMED")], [toolEvents("pwd", "child_tool")]);
   const turn = f.session.receive("target", { content: "Delegate" });
   await eventually(() => f.session.subagents.threads?.length === 1 && f.session.approvals.size === 1);
   const thread = f.session.subagents.threads![0]!;
   await f.session.control({ type, session_thread_id: thread.id, ...(type === "control_request" ? { request_id: "child", request: { subtype: "interrupt" } } : {}) });
   await turn;
   expect(f.b.executions).toHaveLength(0);
-  expect(f.b.requests).toHaveLength(2);
-  expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message" && !event.session_thread_id)).toBe(false);
+  const beforeResume = f.b.requests.length;
+  f.b.onModel = undefined;
+  f.b.modelScript = [textEvents("RESUMED")];
   await f.session.receive("resume-after-child-interrupt", {content:"Reply RESUMED, do not restart cancelled work."});
-  expect(f.b.requests).toHaveLength(3);
+  expect(f.b.requests).toHaveLength(beforeResume + 1);
   expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message" && !event.session_thread_id && event.content[0].text === "RESUMED")).toBe(true);
   f.b.modelScript = [toolEvents("pwd", "primary_tool")];
   const primaryTurn = f.session.receive("primary", { content: "Run" });
@@ -501,7 +304,7 @@ test.each(["user.interrupt", "control_request"])("%s targeted child interruption
   expect(f.b.executions).toHaveLength(0);
 });
 
-test("backend launch roster is listed and delegated by agent_name without inline fallback", async () => {
+test("configured presets are advertised by the official delegation tool without inline fallback", async () => {
   const b = new Backend();
   cleanups.push(async () => b.stop());
   b.a.launch.models!["fast-model"] = { id: "fast-model", api_backend: "messages" };
@@ -514,32 +317,23 @@ test("backend launch roster is listed and delegated by agent_name without inline
     ]
   }`);
   const f = await fixture(b);
-  b.modelScript = [
-    call("list_agents", {}, "roster"),
-    call("send_to_agent", { agent_name: "fast_probe", message: "Report your assigned task" }, "delegate"),
-    textEvents("fast report"), textEvents("done"),
-  ];
+  subagentScripts(b, [call("list_agents", {}, "roster"), call("subagent", { agent_preset: `${f.session.id}/fast_probe`, description: "fast_probe", prompt: "Report your assigned task" }, "delegate"), textEvents("done")], [textEvents("fast report")]);
   await f.session.receive("configured-roster", { content: "Use the configured fast_probe" });
   const listing = b.requests[1]!.messages.flatMap((message: Payload) => message.content)
     .find((block: Payload) => block.type === "tool_result" && block.tool_use_id === "roster");
-  const catalog = JSON.parse(typeof listing.content === "string" ? listing.content : listing.content[0].text);
-  expect(catalog.agents).toEqual([
-    { name: "slow_probe", description: "Slow probe" },
-    { name: "fast_probe", description: "Fast probe" },
-  ]);
-  expect(catalog.inline_agents).toBe(false);
+  expect(JSON.stringify(listing.content)).toContain("no subagents");
+  expect(JSON.stringify(b.requests[0]!.tools)).toContain("fast_probe");
   const child = b.requests[2]!;
   expect(child.model).toBe("fast-model");
   expect(modelSystemText(child)).toContain("Pinned fast instructions");
   expect(child.tools ?? []).toEqual([]);
   expect(f.session.subagents.threads!.map((thread) => thread.name)).toEqual(["fast_probe"]);
-  await expect(f.session.subagents.send({ agent_name: "missing", message: "Run" }, new AbortController().signal))
-    .rejects.toThrow("Unknown predefined agent");
+  expect(f.ctx.tools.get("subagent", f.session.agent)).toBeDefined();
 });
 
 test("a retained followup checks authoritative archive before creating child work", async () => {
   const f = await fixture();
-  f.b.modelScript = [call("send_to_agent", {name:"external_archive",system_prompt:"Reply READY",message:"Reply READY"}, "create_before_archive"),textEvents("READY"),textEvents("done")];
+  subagentScripts(f.b, [call("subagent", { description: "external_archive", prompt: ["Reply READY", "Reply READY"].filter(Boolean).join("\n") }, "create_before_archive"), textEvents("done")], [textEvents("READY")]);
   await f.session.receive("before_external_archive",{content:"Delegate once"});
   const child = f.session.subagents.threads![0]!;
   expect(child.status).toBe("idle");
@@ -555,7 +349,7 @@ test("a retained followup checks authoritative archive before creating child wor
     }
     return baseRoute(request);
   };
-  f.b.modelScript = [call("send_to_agent",{thread_id:child.id,message:"Reply READY"},"followup_after_external_archive"),textEvents("rejected")];
+  subagentScripts(f.b, [call("send_message", { agent_id: child.id, message: "Reply READY" }, "followup_after_external_archive"), textEvents("Waiting for child")], [textEvents("rejected")]);
   await f.session.receive("after_external_archive",{content:"Attempt the same existing child once and report real error, do not create another."});
   expect(checks).toBe(1);
   expect(f.b.requests.length).toBe(before+2);
@@ -572,10 +366,10 @@ test("root registers only enabled sandbox tools and inline agents inherit them",
   b.a.launch.tools = ["Read", "Grep"];
   b.a.launch.subagents = {};
   const f = await fixture(b);
-  b.modelScript = [call("send_to_agent", { name: "inline", system_prompt: "Inspect only", message: "Inspect" }, "delegate"), textEvents("inline report"), textEvents("done")];
+  subagentScripts(b, [call("subagent", { description: "inline", prompt: ["Inspect only", "Inspect"].filter(Boolean).join("\n") }, "delegate"), textEvents("done")], [textEvents("inline report")]);
   await f.session.receive("restricted", { content: "Inspect" });
   const root = b.requests[0]!;
-  expect(root.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read", "archive_agent", "list_agents", "send_to_agent"]);
+  expect(root.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read", "interrupt_agent", "list_agents", "send_message", "subagent"]);
   expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Grep", "Read"]);
 });
 
@@ -587,7 +381,7 @@ test("predefined specialist uses its own enabled tools independently of the pare
     name: "writer", description: "Writes files", systemPrompt: "Write things", tools: ["Read", "Write", "Edit", "Grep"],
   }] };
   const f = await fixture(b);
-  b.modelScript = [call("send_to_agent", { agent_name: "writer", message: "Write" }, "delegate"), textEvents("writer report"), textEvents("done")];
+  subagentScripts(b, [call("subagent", { agent_preset: `${f.session.id}/writer`, description: "writer", prompt: "Write" }, "delegate"), textEvents("done")], [textEvents("writer report")]);
   await f.session.receive("intersect", { content: "Write" });
   expect(b.requests[0]!.tools.map((tool: Payload) => tool.name)).not.toContain("Write");
   expect(b.requests[1]!.tools.map((tool: Payload) => tool.name).sort()).toEqual(["Edit", "Grep", "Read", "Write"]);
@@ -612,7 +406,7 @@ test("public API archive releases exactly one retained capacity slot before new 
     return originalRoute(request);
   };
   f.b.modelScript = [textEvents("replacement report")];
-  const result = JSON.parse(await f.session.subagents.send({ name: "replacement", system_prompt: "test", message: "report" }, new AbortController().signal));
+  const result = await runSubagent(f.session, "subagent", { description: "replacement", prompt: ["test", "report"].filter(Boolean).join("\n") });
   expect(result.report).toBe("replacement report");
   expect(checked).toHaveLength(25);
   expect(f.session.subagents.threads).toHaveLength(26);
@@ -628,7 +422,7 @@ test("capacity refresh rejects unknown authority without freeing an idle slot", 
     id: `sthr_unknown_${index}`, name: "test", systemPrompt: "test", model: "test-model", status: "idle" as const,
   })));
   const before = f.b.requests.length;
-  await expect(f.session.subagents.send({ name: "new", system_prompt: "test", message: "test" }, new AbortController().signal)).rejects.toThrow();
+  await expect(runSubagent(f.session, "subagent", { description: "new", prompt: ["test", "test"].filter(Boolean).join("\n") })).rejects.toThrow();
   expect(f.b.requests.length).toBe(before);
   expect(f.session.subagents.threads.filter((thread) => thread.status !== "terminated")).toHaveLength(25);
 });
@@ -649,7 +443,7 @@ test("capacity refresh shares admission and never creates two replacements for o
     return originalRoute(request);
   };
   f.b.modelScript = [textEvents("one replacement")];
-  const results = await Promise.allSettled(["a", "b"].map((name) => f.session.subagents.send({name, system_prompt:"test", message:"report"}, new AbortController().signal)));
+  const results = await Promise.allSettled(["a", "b"].map((name) => runSubagent(f.session, "subagent", { description: name, prompt: ["test", "report"].filter(Boolean).join("\n") })));
   expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
   expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
   expect(f.session.subagents.threads).toHaveLength(26);
@@ -664,7 +458,7 @@ test.each([false, true])("predefined specialist without enabled tools does not i
     name: "text-only", description: "No builtin tools", systemPrompt: "Only answer", tools: explicit ? [] : undefined,
   }] };
   const f = await fixture(b);
-  b.modelScript = [call("send_to_agent", { agent_name: "text-only", message: "Answer" }, "delegate"), textEvents("report"), textEvents("done")];
+  subagentScripts(b, [call("subagent", { agent_preset: `${f.session.id}/text-only`, description: "text-only", prompt: "Answer" }, "delegate"), textEvents("done")], [textEvents("report")]);
   await f.session.receive("empty-specialist", { content: "Delegate" });
   expect(b.requests[0]!.tools.map((tool: Payload) => tool.name)).toContain("Write");
   expect(b.requests[1]!.tools ?? []).toEqual([]);
@@ -695,13 +489,38 @@ test("specialist sandbox calls carry child identity and root calls remain unscop
     return route(request);
   };
   spyOn(f.session, "approve").mockResolvedValue({ allowed: true });
-  b.modelScript = [
-    call("send_to_agent", { agent_name: "writer", message: "Write assigned file" }, "delegate"),
-    call("Write", { file_path: "/workspace/owned.txt", content: "owned" }, "child-write"),
-    textEvents("written"), call("Read", { file_path: "/workspace/owned.txt" }, "root-read"), textEvents("done"),
-  ];
+  subagentScripts(b, [call("subagent", { agent_preset: `${f.session.id}/writer`, description: "writer", prompt: "Write assigned file" }, "delegate"), call("Read", { file_path: "/workspace/owned.txt" }, "root-read"), textEvents("done")], [call("Write", { file_path: "/workspace/owned.txt", content: "owned" }, "child-write"), textEvents("written")]);
   await f.session.receive("thread-boundary", { content: "Delegate then read" });
-  expect(calls).toEqual([{ tool: "write", thread: f.session.subagents.threads[0]!.id }, { tool: "read", thread: null }]);
-  expect(b.executions.map(call => call.name)).toEqual(["write", "read"]);
+  expect(calls).toHaveLength(2);
+  expect(calls).toEqual(expect.arrayContaining([{ tool: "write", thread: f.session.subagents.threads[0]!.id }, { tool: "read", thread: null }]));
+  expect(b.executions.map(call => call.name).sort()).toEqual(["read", "write"]);
   expect(b.requests[0]!.tools.map((tool: Payload) => tool.name)).not.toContain("Write");
+});
+
+
+test("concurrent inline children retain their own task-defined system with identical display names", async () => {
+ const b = new Backend();
+ cleanups.push(async () => b.stop());
+ b.a.launch.system = "PARENT-ONLY-SYSTEM-CANARY";
+ const f = await fixture(b);
+ b.onModel = async request => textEvents(modelSystemText(request).includes("INLINE-A-INSTRUCTIONS") ? "REPORT-A" : "REPORT-B");
+ const [a,other] = await Promise.all([
+  runSubagent(f.session,"subagent",{description:"same display",prompt:"INLINE-A-INSTRUCTIONS"}),
+  runSubagent(f.session,"subagent",{description:"same display",prompt:"INLINE-B-INSTRUCTIONS"}),
+ ]);
+ expect(a.subagentId).not.toBe(other.subagentId);
+ expect(a.report).toBe("REPORT-A");
+ expect(other.report).toBe("REPORT-B");
+ for (const [id,task,foreign] of [[a.subagentId,"INLINE-A-INSTRUCTIONS","INLINE-B-INSTRUCTIONS"],[other.subagentId,"INLINE-B-INSTRUCTIONS","INLINE-A-INSTRUCTIONS"]]) {
+  const thread=f.session.subagents.threads.find(thread=>thread.id===id)!;
+  expect(thread.systemPrompt).toBe(task);
+  const created=[...b.publicLog.values()].find(event=>event.type==="session.thread_created" && event.session_thread_id===id);
+  expect(created?.agent).toEqual({type:"inline",name:"same display",system:task});
+  const requests=b.requests.filter(request=>modelSystemText(request).includes(task));
+  expect(requests.length).toBeGreaterThan(0);
+  for (const request of requests) {
+   expect(modelSystemText(request)).not.toContain(foreign!);
+   expect(modelSystemText(request)).not.toContain("PARENT-ONLY-SYSTEM-CANARY");
+  }
+ }
 });

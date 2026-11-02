@@ -2,7 +2,6 @@ package telemetryexport
 
 import (
 	"bytes"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,8 +30,6 @@ const (
 	conversationKey      = "gen_ai.conversation.id"
 )
 
-var threadIDPattern = regexp.MustCompile(`^sthr_[A-Za-z0-9_-]{1,120}$`)
-
 var fixedSpanNames = []string{"oma.session.turn", "oma.model_request", "oma.compaction"}
 
 var toolSpanPrefixes = []string{"oma.tool_use ", "oma.mcp_tool_use "}
@@ -47,13 +44,14 @@ var metadataAttributes = map[string]bool{
 var ContentAttributes = []string{"gen_ai.system_instructions", "gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.tool.call.arguments", "oma.tool_result.content"}
 
 type Source struct {
-	OrganizationUUID string
-	WorkspaceUUID    string
-	WorkspaceID      string
-	SessionID        string
-	CodeSessionID    string
-	PrimaryThreadID  string
-	AgentID          string
+	OrganizationUUID  string
+	WorkspaceUUID     string
+	WorkspaceID       string
+	SessionID         string
+	CodeSessionID     string
+	PrimaryThreadID   string
+	SubagentThreadIDs []string
+	AgentID           string
 }
 
 type Delivery struct {
@@ -128,7 +126,7 @@ func sanitizeSpan(span *tracepb.Span, source Source) *tracepb.Span {
 		key, value := attribute.GetKey(), attribute.GetValue()
 		switch {
 		case key == conversationKey:
-			if thread := value.GetStringValue(); threadIDPattern.MatchString(thread) {
+			if thread := value.GetStringValue(); slices.Contains(source.SubagentThreadIDs, thread) {
 				conversation = thread
 			}
 		case key == "gen_ai.tool.call.id":

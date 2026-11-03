@@ -6,7 +6,7 @@ import { analyzeAlertText } from './alertText';
 
 export function AlertMessage({ children }: { children: ReactNode }) {
   const { msg } = useI18n();
-  const [expanded, setExpanded] = useState(false);
+  const [expandedMessage, setExpandedMessage] = useState<string | null>(null);
   if (typeof children !== 'string') {
     return <>{children}</>;
   }
@@ -14,6 +14,7 @@ export function AlertMessage({ children }: { children: ReactNode }) {
   if (!analysis) {
     return null;
   }
+  const expanded = expandedMessage === children;
   const summary = analysis.html
     ? analysis.status === null
       ? msg('common.errorUnexpectedResponse', 'Request failed: the server returned an unrecognized response.')
@@ -32,7 +33,7 @@ export function AlertMessage({ children }: { children: ReactNode }) {
     <div className="grid min-w-0 gap-1.5">
       <div className="min-w-0 whitespace-pre-wrap break-words">{summary}</div>
       {analysis.detail ? (
-        <Collapsible open={expanded} onOpenChange={setExpanded}>
+        <Collapsible open={expanded} onOpenChange={(open) => setExpandedMessage(open ? children : null)}>
           <CollapsibleTrigger
             render={
               <Button

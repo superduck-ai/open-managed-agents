@@ -6,6 +6,8 @@ import { analyzeAlertText } from './alertText';
 
 const htmlError =
   '404 <!DOCTYPE html><html lang="en"><head><title>404 - Not Found</title><style>body { margin: 0; }</style></head><body>404 Not Found</body></html>';
+const secondHtmlError =
+  '500 <!DOCTYPE html><html lang="en"><head><title>500 - Server Error</title></head><body>500 Server Error</body></html>';
 
 afterEach(cleanup);
 
@@ -48,6 +50,11 @@ describe('alert text analysis', () => {
     expect(analysis?.summary.length).toBeLessThan(message.length);
   });
 
+  test('does not split a surrogate pair when summarizing', () => {
+    const message = `${'a'.repeat(239)}😀tail`;
+    expect(analyzeAlertText(message)?.summary).toBe(`${'a'.repeat(239)}…`);
+  });
+
   test('keeps a plain message that mentions an HTML closing tag intact', () => {
     expect(analyzeAlertText('Unexpected token </body> in template.')).toEqual({
       detail: null,
@@ -73,6 +80,21 @@ describe('alert message presentation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Hide raw error' }));
     expect(screen.queryByText(/<!DOCTYPE html>/)).toBeNull();
+  });
+
+  test('collapses the raw detail when the alert message changes', () => {
+    const view = renderAlert(htmlError);
+    fireEvent.click(screen.getByRole('button', { name: 'Show raw error' }));
+    expect(screen.getByText(htmlError)).toBeTruthy();
+
+    view.rerender(
+      <I18nProvider initialLocale="en">
+        <ManagedWarningAlert>{secondHtmlError}</ManagedWarningAlert>
+      </I18nProvider>,
+    );
+
+    expect(screen.queryByText(secondHtmlError)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show raw error' })).toBeTruthy();
   });
 
   test('localizes the HTTP summary and toggle labels', () => {

@@ -29,5 +29,10 @@ function summarize(text: string) {
   if (text.length <= MAX_SUMMARY_LENGTH) {
     return text;
   }
-  return `${text.slice(0, MAX_SUMMARY_LENGTH).trimEnd()}…`;
+  let end = MAX_SUMMARY_LENGTH;
+  const boundary = text.charCodeAt(end - 1);
+  if (boundary >= 0xd800 && boundary <= 0xdbff) {
+    end -= 1;
+  }
+  return `${text.slice(0, end).trimEnd()}…`;
 }

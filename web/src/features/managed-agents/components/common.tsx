@@ -45,6 +45,7 @@ import {
   type ResourceConfig,
   type VaultCredentialApiResponse,
 } from '../types';
+import { AlertMessage } from './AlertMessage';
 
 export function DetailKV({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -110,7 +111,9 @@ export function ManagedErrorAlert({ children, className }: { children: ReactNode
   return (
     <Alert variant="destructive" className={className}>
       <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <AlertDescription>{children}</AlertDescription>
+      <AlertDescription>
+        <AlertMessage>{children}</AlertMessage>
+      </AlertDescription>
     </Alert>
   );
 }
@@ -119,7 +122,9 @@ export function ManagedWarningAlert({ children, className }: { children: ReactNo
   return (
     <Alert className={clsx('border-[var(--amber-7)] bg-[var(--warning-bg)] text-[var(--warning)]', className)}>
       <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <AlertDescription className="text-inherit">{children}</AlertDescription>
+      <AlertDescription className="text-inherit">
+        <AlertMessage>{children}</AlertMessage>
+      </AlertDescription>
     </Alert>
   );
 }

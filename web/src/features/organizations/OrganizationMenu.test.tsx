@@ -157,13 +157,15 @@ test('组织很多时菜单只保留当前组织，搜索后再切换', async ()
   expect(screen.getAllByRole('menuitemradio')).toHaveLength(3);
   expect(screen.getByText('财务中心 / 总部 / 集团')).toBeTruthy();
   fireEvent.click(screen.getByRole('menuitem', { name: '切换组织' }));
-  expect(await screen.findByText(/还有 9 个组织/)).toBeTruthy();
+  expect(await screen.findByRole('option', { name: /星河/ })).toBeTruthy();
+  expect(screen.queryByText(/还有 \d+ 个组织/)).toBeNull();
   fireEvent.change(screen.getByRole('combobox', { name: '搜索组织' }), { target: { value: '星河' } });
   fireEvent.click(await screen.findByRole('option', { name: /星河/ }));
   expect(switchOrganization).toHaveBeenCalledWith('other');
   fireEvent.click(screen.getByRole('menuitem', { name: '切换组织' }));
   expect(screen.getByRole('combobox', { name: '搜索组织' })).toHaveProperty('value', '');
-  expect(await screen.findByText(/还有 9 个组织/)).toBeTruthy();
+  expect(await screen.findByRole('option', { name: /星河/ })).toBeTruthy();
+  fireEvent.change(screen.getByRole('combobox', { name: '搜索组织' }), { target: { value: '不存在' } });
   expect(screen.queryByRole('option', { name: /星河/ })).toBeNull();
 });
 
@@ -229,7 +231,8 @@ test('uses English organization search, counts and roles while preserving the se
   expect(screen.getByText('Admin')).toBeTruthy();
   fireEvent.click(screen.getByRole('menuitem', { name: 'Switch organization' }));
   const search = await screen.findByRole('combobox', { name: 'Search organizations' });
-  expect(screen.getByText(/45 more organizations/)).toBeTruthy();
+  expect(screen.getAllByRole('option')).toHaveLength(40);
+  expect(screen.getByText(/6 more organizations/)).toBeTruthy();
   fireEvent.change(search, { target: { value: 'Research' } });
   expect(await screen.findByText(/5 more matches/)).toBeTruthy();
   expect(screen.getAllByRole('option')).toHaveLength(40);

@@ -3066,7 +3066,7 @@
   "invitations.error.changed": "此邀请状态已变更，请刷新后重试。",
   "invitations.error.generic": "操作失败，请重试。",
   "organizations.switch": "切换组织",
-  "organizations.searchDescription": "按部门名称或完整路径搜索。",
+  "organizations.searchDescription": "直接选择，或按部门名称、完整路径搜索。",
   "organizations.search": "搜索组织",
   "organizations.noMatches": "没有匹配的组织。",
   "organizations.remaining": "还有 {count, number} 个组织，输入关键词查看。",

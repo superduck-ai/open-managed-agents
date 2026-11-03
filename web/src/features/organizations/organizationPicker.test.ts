@@ -28,14 +28,19 @@ test('组织名保留末级部门，路径包含五级及以下', () => {
   expect(organizationNameParts('甲班-12')).toEqual({ title: '甲班-12', detail: '' });
 });
 
-test('未搜索时只保留当前组织', () => {
-  const result = filterOrganizations(items, '  ', 'current');
-  expect(result).toEqual({
-    searching: false,
-    matches: [items[0]],
-    hiddenCount: items.length - 1,
-  });
-  expect(organizationPickerRemainder(result)).toBe(`还有 ${items.length - 1} 个组织，输入关键词查看。`);
+test('未搜索时列出组织，当前组织排在前面，超出上限才收起', () => {
+  const few = filterOrganizations(items.slice(0, 4), '  ', 'current');
+  expect(few.searching).toBe(false);
+  expect(few.matches.map((item) => item.uuid)).toEqual(['current', 'other', 'shift-0', 'shift-1']);
+  expect(few.hiddenCount).toBe(0);
+  expect(organizationPickerRemainder(few)).toBe('');
+
+  const result = filterOrganizations(items, '', 'current');
+  expect(result.searching).toBe(false);
+  expect(result.matches).toHaveLength(organizationPickerResultLimit);
+  expect(result.matches[0]?.uuid).toBe('current');
+  expect(result.hiddenCount).toBe(items.length - organizationPickerResultLimit);
+  expect(organizationPickerRemainder(result)).toBe(`还有 ${result.hiddenCount} 个组织，输入关键词查看。`);
 });
 
 test('按完整路径过滤，当前组织排在前面，超出上限的匹配被收起', () => {

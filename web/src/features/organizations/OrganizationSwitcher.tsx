@@ -40,7 +40,10 @@ export function OrganizationSwitcher({
         <DialogHeader className="px-4 pt-4 pb-2">
           <DialogTitle>{msg('organizations.switch', 'Switch organization')}</DialogTitle>
           <DialogDescription>
-            {msg('organizations.searchDescription', 'Search by department name or full path.')}
+            {msg(
+              'organizations.searchDescription',
+              'Choose an organization, or search by department name or full path.',
+            )}
           </DialogDescription>
         </DialogHeader>
         <Command

@@ -3066,7 +3066,7 @@
   "invitations.error.changed": "This invitation has changed. Refresh and try again.",
   "invitations.error.generic": "The action could not be completed. Try again.",
   "organizations.switch": "Switch organization",
-  "organizations.searchDescription": "Search by department name or full path.",
+  "organizations.searchDescription": "Choose an organization, or search by department name or full path.",
   "organizations.search": "Search organizations",
   "organizations.noMatches": "No matching organizations.",
   "organizations.remaining": "{count, plural, one {# more organization.} other {# more organizations.}} Enter a keyword to view them.",

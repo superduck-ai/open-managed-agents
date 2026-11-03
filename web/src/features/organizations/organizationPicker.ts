@@ -37,29 +37,23 @@ export function menuOrganizationPreview(items: OrganizationPickerItem[], current
   return [...(current ? [current] : []), ...others].slice(0, organizationMenuPreviewLimit);
 }
 
+function compareOrganizations(left: OrganizationPickerItem, right: OrganizationPickerItem, currentUuid?: string) {
+  if (left.uuid === currentUuid) return -1;
+  if (right.uuid === currentUuid) return 1;
+  return left.name.localeCompare(right.name, 'zh');
+}
+
 export function filterOrganizations(
   items: OrganizationPickerItem[],
   query: string,
   currentUuid?: string,
 ): OrganizationPickerResult {
   const normalized = query.trim().toLowerCase();
-  if (!normalized) {
-    const current = items.find((item) => item.uuid === currentUuid);
-    return {
-      searching: false,
-      matches: current ? [current] : [],
-      hiddenCount: Math.max(0, items.length - (current ? 1 : 0)),
-    };
-  }
   const matches = items
-    .filter((item) => item.name.toLowerCase().includes(normalized))
-    .sort((left, right) => {
-      if (left.uuid === currentUuid) return -1;
-      if (right.uuid === currentUuid) return 1;
-      return left.name.localeCompare(right.name, 'zh');
-    });
+    .filter((item) => !normalized || item.name.toLowerCase().includes(normalized))
+    .sort((left, right) => compareOrganizations(left, right, currentUuid));
   return {
-    searching: true,
+    searching: normalized.length > 0,
     matches: matches.slice(0, organizationPickerResultLimit),
     hiddenCount: Math.max(0, matches.length - organizationPickerResultLimit),
   };

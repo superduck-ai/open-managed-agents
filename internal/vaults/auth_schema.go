@@ -26,6 +26,7 @@ type credentialAuthVariant interface {
 }
 
 type mcpOAuthCredentialAuth struct {
+	OAuthServiceURL        string             `json:"oauth_service_url,omitempty"`
 	Type                   credentialAuthType `json:"type"`
 	MCPServerURL           string             `json:"mcp_server_url"`
 	ClientCredentialSource string             `json:"client_credential_source,omitempty"`

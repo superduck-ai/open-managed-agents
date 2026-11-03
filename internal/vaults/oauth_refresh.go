@@ -295,6 +295,7 @@ func exchangeMCPOAuthRefresh(
 	nextAuth := mcpOAuthCredentialAuth{
 		Type:                   credentialAuthTypeMCPOAuth,
 		MCPServerURL:           publicAuth.MCPServerURL,
+		OAuthServiceURL:        publicAuth.OAuthServiceURL,
 		ClientCredentialSource: source,
 		ExpiresAt:              resolveExpiresAtAfterRefresh(now, publicAuth.ExpiresAt, token.ExpiresIn),
 		Refresh:                &nextRefresh,

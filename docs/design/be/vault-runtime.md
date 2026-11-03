@@ -335,7 +335,7 @@ API 响应。`internal/vaults` 在数据库边界按 `auth.type` 判别并解析
 
 KEK 版本由 config 管（`version` current + `decrypt_only` 旧列表）。每条凭证用 `key_version` 标明自己用的是哪把。KEK 本身不进库。
 
-`mcp_oauth_flows` 的 `code_verifier` 与 flow-owned `client_secret`（BYO / DCR）写入 Secret envelope（与凭证同一 `secrets.Service`）；`client_credential_source` 为 `platform | sealed`。平台 client secret **不落用户 flow 行，也不写入 `vault_credentials` 的 sealed refresh payload**；token exchange（以及日后 refresh）按 `mcp_server_url` 从 `vault.platform_oauth_clients` 再解析。Complete/Fail 清空信封列。
+`mcp_oauth_flows` 的 `code_verifier` 与 flow-owned `client_secret`（BYO / DCR）写入 Secret envelope（与凭证同一 `secrets.Service`）；`client_credential_source` 为 `platform | sealed`。平台 client secret **不落用户 flow 行，也不写入 `vault_credentials` 的 sealed refresh payload**；token exchange 按 flow 的 `mcp_server_url`（refresh 按凭据的 `oauth_service_url`，旧凭据回退到 `mcp_server_url`）从 `vault.platform_oauth_clients` 再解析。Complete/Fail 清空信封列。
 
 Provider/KMS 调用放在 DB 事务外。
 
@@ -622,3 +622,24 @@ expires_in 在 token endpoint 解析边界检查可表示的正秒数范围，�
 失败诊断的脱敏不依赖完整业务 schema。独立流式读取 token 响应的 access_token/refresh_token 字符串，包含重复字段的各次值，再按已有编码变体脱敏。JSON 结构损坏或后接额外 JSON 值时省略正文，不回显部分解析内容；HTTP 状态、内容类型及正文省略标记保留。此处理不将非法响应改成成功。
 
 Archived MCP OAuth credentials are rejected by diagnostics before opening the secret envelope or making downstream requests. The API returns the existing invalid-argument credential-archived error, including after archival purges the envelope.
+
+
+### OAuth 服务与凭据目标分离
+
+部署方通过 `vault.oauth_service_bindings` 将 `service_url` 精确绑定到
+`credential_target_url`，例如 `https://feishu-auth.example.com` 对应
+`https://open.feishu.cn/open-apis`。前端继续填写授权服务 URL；未配置映射时保持原行为。
+现有 `vault.platform_oauth_clients` 配置和 OAuth 发现、授权、换码流程保持原样。
+
+开始授权时按当前映射检查重复凭据。授权回调时重新查询部署映射，再将业务目标存入凭据
+已有 JSON 的 `auth.mcp_server_url`，CredentialKey 同样使用业务目标；服务地址不同于目标时，
+额外写入同一 JSON 的 `auth.oauth_service_url`。不新增数据库字段，不改变 OAuth flow 表和
+Mapper，不需要数据库迁移。授权期间更改映射时，以回调所读配置为准；唯一约束仍处理重复凭据。
+
+刷新按 `oauth_service_url` 查找原有平台客户端 Secret，旧凭据缺少该字段时回退到
+`mcp_server_url`；连续刷新保留两个地址。平台 Secret 不写入凭据信封。
+注入匹配仍使用 `mcp_server_url` 的原有算法，服务地址不会额外扩大业务令牌的注入范围。
+`oauth_service_url` 仅由服务端授权流程写入，普通凭据创建和更新不接受它。
+
+回归覆盖非法/重复映射、未绑定兼容、回调凭据构造、重新授权、连续两轮平台客户端刷新、
+业务目标路径匹配与服务地址隔离。普通单测使用本地 HTTP fake；真实飞书授权和集成链路需独立验收。

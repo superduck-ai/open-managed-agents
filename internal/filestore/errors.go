@@ -10,11 +10,20 @@ import (
 )
 
 var (
-	errNotFound           = errors.New("filestore resource not found")
-	errFailedPrecondition = errors.New("filestore precondition failed")
+	errNotFound            = errors.New("filestore resource not found")
+	errFailedPrecondition  = errors.New("filestore precondition failed")
+	errSessionFileTooLarge = errors.New("session file is too large")
 
 	ErrSessionAttachmentRejected = errors.New("session attachment rejected")
 )
+
+func IsNotFound(err error) bool {
+	var apiErr *apiError
+	if errors.As(err, &apiErr) {
+		return apiErr != nil && apiErr.Status == http.StatusNotFound
+	}
+	return errors.Is(err, errNotFound)
+}
 
 type apiError struct {
 	Status  int

@@ -2,6 +2,7 @@ import { budgetErrorMessage } from '../resources/budget-errors';
 import { useSessionBudgetSync } from './useSessionBudgetSync';
 import { FollowSentSessionMessage } from './FollowSentSessionMessage';
 import { useQueryClient } from '@tanstack/react-query';
+import { AddSessionToEvaluationDataset } from '../../evaluations/AddSessionToEvaluationDataset';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import {
@@ -756,6 +757,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
               className="min-w-0"
             />
             <div className="flex items-center gap-2 @min-[768px]:justify-self-end">
+              <AddSessionToEvaluationDataset sessionId={session.id} />
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={

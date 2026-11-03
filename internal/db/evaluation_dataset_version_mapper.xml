@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EvaluationDatasetVersionMapper">
+    <sql id="columns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        dataset_uuid,
+        version,
+        created_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="evaluationDatasetVersionRow">
+        INSERT INTO evaluation_dataset_versions (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            dataset_uuid,
+            version,
+            created_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.DatasetUUID},
+            #{params.Version},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="columns"/>
+    </insert>
+
+    <select id="FindLatest" resultType="evaluationDatasetVersionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM evaluation_dataset_versions
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND dataset_uuid = #{datasetUUID}
+        ORDER BY version DESC, uuid DESC
+        LIMIT 1
+    </select>
+
+    <select id="FindScopedByExternalID" resultType="evaluationDatasetVersionScopeRow">
+        SELECT
+            v.uuid,
+            v.external_id,
+            v.organization_uuid,
+            v.workspace_uuid,
+            v.dataset_uuid,
+            d.external_id AS dataset_external_id,
+            v.version,
+            v.created_at
+        FROM evaluation_dataset_versions AS v
+        JOIN evaluation_datasets AS d
+            ON d.uuid = v.dataset_uuid
+            AND d.organization_uuid = v.organization_uuid
+            AND d.workspace_uuid = v.workspace_uuid
+        WHERE v.organization_uuid = #{organizationUUID}
+        AND v.workspace_uuid = #{workspaceUUID}
+        AND v.external_id = #{externalID}
+        AND d.archived_at IS NULL
+    </select>
+</mapper>

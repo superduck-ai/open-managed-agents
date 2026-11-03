@@ -243,7 +243,7 @@ func (s *Service) resumeSandbox(ctx context.Context, codeSession db.CodeSession)
 		return "no_provider_id", nil
 	}
 	providerSandboxID := *sandbox.ProviderSandboxID
-	err = s.sandboxTimeoutExtender.SetTimeout(ctx, providerSandboxID, s.sandboxTimeout)
+	err = s.sandboxTimeoutExtender.SetTimeout(ctx, providerSandboxID, sandboxLifetime(s.sandboxTimeout, sandbox.Metadata))
 	if err == nil {
 		_, err = s.db.ResumeCodeSessionWorkerLeaseForSandbox(
 			ctx,

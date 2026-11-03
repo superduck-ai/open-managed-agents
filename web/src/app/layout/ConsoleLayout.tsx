@@ -949,6 +949,7 @@ const managedAgentPathByHref: Record<string, string> = {
   '/quickstart': 'agent-quickstart',
   '/agents': 'agents',
   '/sessions': 'sessions',
+  '/evaluations': 'evaluations',
   '/observability': 'observability',
   '/deployments': 'deployments',
   '/environments': 'environments',
@@ -1092,13 +1093,25 @@ function isActivePath(currentPath: string, href: string) {
   }
   const managedPath = managedAgentPathByHref[href];
   if (managedPath) {
+    return isManagedAgentNavActive(currentPath, href, managedPath);
+  }
+  return currentPath === href || currentPath.startsWith(`${href}/`);
+}
+
+function isManagedAgentNavActive(currentPath: string, href: string, managedPath: string) {
+  if (managedPath === 'evaluations') {
     return (
       currentPath === href ||
+      currentPath.startsWith(`${href}/`) ||
       currentPath === `/workspaces/default/${managedPath}` ||
       new RegExp(`^/workspaces/[^/]+/${managedPath}(/|$)`).test(currentPath)
     );
   }
-  return currentPath === href || currentPath.startsWith(`${href}/`);
+  return (
+    currentPath === href ||
+    currentPath === `/workspaces/default/${managedPath}` ||
+    new RegExp(`^/workspaces/[^/]+/${managedPath}(/|$)`).test(currentPath)
+  );
 }
 
 function isWideConsolePath(currentPath: string) {
@@ -1150,6 +1163,9 @@ function isManagedAgentsPath(currentPath: string) {
       '/quickstart',
       '/agents',
       '/sessions',
+      '/evaluations',
+      '/evaluations/evaluators',
+      '/evaluations/experiments',
       '/observability',
       '/deployments',
       '/environments',
@@ -1157,7 +1173,8 @@ function isManagedAgentsPath(currentPath: string) {
       '/memory-stores',
       '/dreams',
     ].includes(currentPath) ||
-    /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|observability|deployments|environments|vaults|memory-stores|dreams)(\/|$)/.test(
+    currentPath.startsWith('/evaluations/experiments/') ||
+    /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|evaluations|observability|deployments|environments|vaults|memory-stores|dreams)(\/|$)/.test(
       currentPath,
     )
   );

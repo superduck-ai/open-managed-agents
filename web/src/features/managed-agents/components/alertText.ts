@@ -1,5 +1,5 @@
 const HTML_DOCUMENT_PATTERN = /<!doctype\s+html|<html[\s>]|<\/html>|<body[\s>]|<\/body>/i;
-const HTTP_STATUS_PREFIX = /^(\d{3})(?:\s|$)/;
+const HTTP_STATUS_PREFIX = /^([1-5]\d{2})(?:\s|$)/;
 const MAX_SUMMARY_LENGTH = 240;
 
 export type AlertTextAnalysis = {

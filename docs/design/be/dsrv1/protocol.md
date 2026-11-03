@@ -1,6 +1,6 @@
 # DSRv1：DSH Session Remote 协议
 
-状态：设计草案（第 8 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。各接口的请求、响应、状态码与示例见 [DSRv1 接口参考](api-reference.md)。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
+状态：设计草案（第 9 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。各接口的请求、响应、状态码与示例见 [DSRv1 接口参考](api-reference.md)。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
 
 冻结条件：第 7（审批）、第 9（输入与 turn）、第 10（公开状态 reducer）三个状态机的不变量经评审确认。第 17 节的待定问题已在第 6 版全部决定，冻结前只需评审这些决定，并确认 15.1 的验收条件。
 
@@ -37,7 +37,7 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 | sandbox 模式、`session_ingress/*`、60+10 秒租约参数 | — |
 | — | 回填任务与迁移围栏（第 13 节） |
 
-不新建事件表：transcript 继续存放在 `code_session_internal_events`，增加身份列，从而复用已有的全局 `sequence_num`、对象存储、归档、还原与物理删除机制（6.6）。
+**DSRv1 的数据只写新表，不修改现有表结构**：transcript 事件写入新表 `dsr_transcript_events`，归档写入新表 `dsr_transcript_archives`，与 `dsr_transcripts`、`dsr_turns`、`dsr_permission_requests` 一起构成 DSR 的全部持久化。所有 migration 都是新增表，不 ALTER、不在现有大表上建索引、不原地改写历史行；新旧协议的数据完全隔离，回退时旧路径的数据保持原样（6.6）。
 
 ## 3. 目标、非目标与兼容边界
 
@@ -206,7 +206,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 ## 6. Transcript（DSH 原生日志）
 
-术语说明：本文的 transcript 指 **DSH 原生 Session 日志**（Header + Event），存放在 `code_session_internal_events`，由 `transcriptarchive` 与 `transcriptretention` 归档、还原与删除。它不是 CCRv2 时代的 Claude Code transcript 格式，也不是可观测性功能中经 OTLP 导出、在 Console 展示的会话轨迹（trajectory）。
+术语说明：本文的 transcript 指 **DSH 原生 Session 日志**（Header + Event），存放在新表 `dsr_transcripts` 与 `dsr_transcript_events`，由 `transcriptarchive` 与 `transcriptretention` 扩展后归档、还原与删除。CCRv2 时期写入 `code_session_internal_events` 的 `dsh_log` 行只作为回填来源（13.5）。它不是 CCRv2 时代的 Claude Code transcript 格式，也不是可观测性功能中经 OTLP 导出、在 Console 展示的会话轨迹（trajectory）。
 
 ### 6.1 资源模型
 
@@ -255,7 +255,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 2. 锁定 `dsr_transcripts` 行；Header 不存在返回 `409 transcript_header_required`。
 3. 请求内 seq 必须连续递增。`seq < next_seq` 的条目按 6.3 与已存条目比较：相同则跳过，不同返回 `409 transcript_conflict`。已存条目可能已归档并从 PostgreSQL 软删除，比较使用合并读回路径（6.7），不能因为在 PostgreSQL 中找不到就当作新条目写入。`next_seq` 只增不减，不随归档、软删除或还原改变。
 4. 第一条未确认条目必须等于 `next_seq`，否则返回 `409 transcript_gap`，并在 `DSR-Next-Seq` 中给出当前值。
-5. 超过 32 KiB 的原始 JSON 走 `eventpayload` 外置；插入 internal event 行，分配全局 `sequence_num`，更新 `next_seq`。
+5. 超过 32 KiB 的原始 JSON 走 `eventpayload` 外置；插入 `dsr_transcript_events` 行，分配该 Code Session 内的 `sequence_num`，更新 `next_seq`。
 
 响应 `200 {"next_seq": "42"}`。
 
@@ -267,32 +267,68 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 ### 6.6 存储
 
-transcript 存放在现有 `code_session_internal_events`，新增 goose migration：
+**原则：只新增表，不修改现有表。** DSRv1 不在 `code_session_internal_events`、`transcript_archives` 等现有表上加列、加索引或改写历史行。理由：
 
-- `code_session_internal_events` 增加 `dsh_session_id text null`、`dsh_seq bigint null`，以及唯一索引 `(code_session_uuid, dsh_session_id, dsh_seq) WHERE dsh_session_id IS NOT NULL`。索引**不以 `deleted_at` 为条件**，否则归档软删后同序号可以再次插入。Header 行 `dsh_seq` 为空，由元数据表引用。
-- 行身份沿用现行规则：`event_type = 'dsh_log'`，幂等键与 payload UUID 为 `dsh_log:<code_session_id>:<dsh_session_id>:<seq>`（Header 为 `:header`，各段 `encodeURIComponent`），子线程的 `agent_id` 等于 `dsh_session_id`。`payload` 直接是原生对象，不再包装 `{type, uuid, data}`。
-- **归档保真**：archive codec 升级为 v2，`DecodedEvent` 增加 `dsh_session_id` 与 `dsh_seq`，还原时原样写回。v1 段（含回填前的历史段）按幂等键无损重建两列，并校验重建出的 seq 等于 payload 中的 `seq`；不一致视为损坏，还原失败。v1 段保持可读。
-- 全局 `sequence_num`、`payload_blob_uuid`、`payload_hash`、`deleted_at`、`uuid` 与租户列保持现有含义；归档分段、物理删除与 blob GC 继续按全局 `sequence_num` 工作，`transcript_archives` 的唯一键不变，codec 只做上述字段扩展。
-- 新增元数据表，不创建外键：
+- 现有表数据量大，goose migration 在事务内执行，无法 `CREATE INDEX CONCURRENTLY`，在大表上建唯一索引会长时间锁表；
+- 同一张表混放旧的 `{type, uuid, data}` 包装行与新的原生行，读取路径要长期兼容两种格式；
+- 原地回填会改写旧协议仍在使用的数据，回退到 CCRv2 时无法保证旧数据原样；
+- 新表可以直接删除回滚，新旧协议的约束互不影响。
+
+代价是归档、还原、物理删除与 blob GC 要扩展到新表（6.8），回填期间存在双份存储（12）。
+
+新增 goose migration，全部为 CREATE TABLE，不创建外键：
 
 ```text
-dsr_transcripts
+dsr_transcripts                         -- 每个 DSH 原生 Session 一行
   id bigint generated always as identity
   uuid uuid default gen_random_uuid()
   organization_uuid, workspace_uuid, code_session_uuid uuid not null
   dsh_session_id text not null
   parent_dsh_session_id text null
   session_thread_id text null          -- thread_created 被接受时写入，之后不可变
-  header_event_uuid uuid null          -- 指向 code_session_internal_events.uuid
+  header_raw bytea null                -- 原生 Header 原始字节
+  header_sha256 bytea null
   next_seq bigint not null default 0
+  state text not null                  -- active | purged
   migration_state text not null        -- legacy | migrating | ready
   migration_checkpoint jsonb null
   created_at, updated_at, deleted_at
   unique (code_session_uuid, dsh_session_id)
+
+dsr_transcript_events                   -- 原生 Event，一行一条
+  id bigint generated always as identity
+  uuid uuid default gen_random_uuid()
+  organization_uuid, workspace_uuid, code_session_uuid uuid not null
+  dsh_session_id text not null
+  seq bigint not null                  -- 原生 SessionEvent.seq，从 0 开始
+  sequence_num bigint not null         -- 同一 Code Session 内跨全部 transcript 的递增序号，用于归档分段与合并读取
+  data_raw bytea null                  -- 原始字节；外置时为空
+  data_sha256 bytea not null           -- JCS 摘要（6.3）
+  payload_blob_uuid uuid null          -- 指向 event_payload_blob
+  size bigint not null
+  archived_at timestamptz null
+  created_at, deleted_at
+  unique (code_session_uuid, dsh_session_id, seq)
+  unique (code_session_uuid, sequence_num)
+
+dsr_transcript_archives                 -- 归档段
+  id bigint generated always as identity
+  uuid uuid default gen_random_uuid()
+  organization_uuid, workspace_uuid, code_session_uuid uuid not null
+  from_sequence_num bigint not null
+  to_sequence_num bigint not null
+  object_key text not null
+  codec_version int not null           -- 新 codec，记录携带 dsh_session_id 与 seq
+  sha256 bytea not null
+  created_at
+  unique (code_session_uuid, from_sequence_num)
 ```
 
-- 该表不对外暴露，不设 `external_id`；`id` 只承担 identity。若评审认为它属于核心业务表，再补 `external_id`。
-- Mapper 按 [Yourbatis 指南](../yourbatis-guidelines.md) 拆分文件；bytea、jsonb、nullable 与部分唯一索引需要真实 PostgreSQL 测试。
+- 两个唯一索引都**不以 `deleted_at` 为条件**，否则归档软删后同序号可以再次插入。
+- `sequence_num` 沿用现有 internal events 的做法：在锁定 Code Session 的事务内分配，`dsr_transcripts` 之外再在 Code Session 级维护一个 DSR 专用计数（放在 `dsr_transcripts` 的主线程行或单独的计数表中，实现时选定，不加到 `code_sessions` 上）。这样归档仍能按"每个 Code Session 一条递增序列"分段，复用 `transcriptarchive` 的分段与校验逻辑。
+- 归档记录（新 codec）显式包含 `dsh_session_id`、`seq`、`sequence_num`、摘要与外置 payload 的还原信息；还原时原样写回，不依赖幂等键重建。新 codec 只用于新表，旧 `transcript_archives` 与旧 codec 不变。
+- 表名前缀 `dsr_` 标明归属；这些表不对外暴露，不设 `external_id`（第 17 节）。
+- 每张表按 [Yourbatis 指南](../yourbatis-guidelines.md) 拆分 Mapper 文件；bytea、jsonb、nullable 与唯一索引需要真实 PostgreSQL 测试。
 
 ### 6.7 读取
 
@@ -301,13 +337,15 @@ dsr_transcripts
   - `from_seq` 包含该序号，`header` 只在 `from_seq = 0` 时返回。
   - `limit_bytes` 是软预算（上限 8 MiB），按原始字节累计，Header 计入预算。每页至少返回一条；单条超过预算时该页只含这一条，响应仍可达 15 MiB 加封装。
   - 使用现有"归档 + PostgreSQL"合并读回与外置 payload 还原路径；已归档行不会被判为缺口。
-- 定位：`dsr_transcripts` 只记录水位，不记录每条事件的位置。PostgreSQL 行已物理删除时，读取按 Code Session 扫描其归档段，再按 v2 字段或幂等键（6.6）过滤出目标 transcript。扫描成本与会话总日志量成正比，可以接受；若测量证明不可接受，再为归档段增加 `dsh_session_id` 索引。
+- 定位：PostgreSQL 行已物理删除时，读取按 Code Session 扫描 `dsr_transcript_archives` 中的归档段，按记录中的 `dsh_session_id` 过滤出目标 transcript。扫描成本与会话总日志量成正比，可以接受；若测量证明不可接受，再为归档段增加按 transcript 的索引表。
 - GET 只做鉴权与归属校验，不要求当前 epoch。旧 epoch 的 token 可以读，不能写。
 - **接管时的前缀核对保留不变**：服务端 `next_seq` 只能证明远端长度，不能证明内容一致。DSH 现行流程（读取并校验远程历史，判断本地与远端是否互为前缀，再水合或追加）照常执行；本地更长且已确认部分内容不同的情况，仍按现行规则报错并保留本地文件。
 
 ### 6.8 保留与压缩
 
-- transcript 是长期日志，沿用 internal events 的保留、归档与物理删除规则，不适用入站消息的 30 天期限。
+- transcript 是长期日志，保留期与现有 Transcript 规则一致，不适用入站消息的 30 天期限。
+- `transcriptretention` 扩展为同时处理新表：归档 `dsr_transcript_events` 写入 `dsr_transcript_archives`、软删已归档行、按需还原、物理删除前校验对象完整性。旧表的归档流程不变。
+- blob GC 现在按引用表判断 `event_payload_blob` 是否仍被引用（`event_payload_blob_mapper.xml` 对 `session_events` 与 `code_session_internal_events` 做 `NOT EXISTS`）。新表引用外置 payload，必须把 `dsr_transcript_events` 加入这组判断，否则新表的外置对象会被误回收。这是 Mapper SQL 变更，不涉及 schema。
 - 需要区分两种删除：**归档后删除 PostgreSQL 行**（归档段仍是完整副本，读取、幂等比较与还原照常工作）与**删除最后一份副本**（归档段或对象也被删除）。后者发生后，`dsr_transcripts` 标记为 `purged`：读取返回 `410`，`DSR-Error: transcript_purged`；追加返回同一错误；领取 SQL 排除该会话。不能返回看似完整、实际有缺口的日志。
 - 不再使用 `is_compaction` 过滤；原生压缩事件是普通 Event。
 
@@ -705,9 +743,9 @@ reducer 只在以下事务内运行，每个触发点都在同一事务内写入
 
 容量：
 
-- 单条 transcript 事件 16 MiB，请求体 16 MiB，读取页 8 MiB；单会话 transcript 无硬上限，按 internal events 现有保留规则治理。
-- 追加、审批、结束上报都锁 `code_sessions` 行，与现行 internal events 写入相同；审批与结束上报额外锁公开 Session，锁顺序固定为公开 Session → Code Session → 业务行。
-- transcript 原地存放在 internal events，不存在双份存储窗口。
+- 单条 transcript 事件 15 MiB，请求体 16 MiB，读取页软预算 8 MiB；单会话 transcript 无硬上限，按 Transcript 保留规则治理。
+- 追加、审批、结束上报都锁 `code_sessions` 行，与现行 internal events 的写入方式相同；审批与结束上报额外锁公开 Session，锁顺序固定为公开 Session → Code Session → 业务行。
+- 回填期间存在双份存储：已转换会话的历史同时存在于旧 internal events 与新表。旧行不删除，按现有保留规则自然过期；需要尽早释放空间时，可在会话转换完成且新表确认可读后，由运维任务按会话清理旧 `dsh_log` 行。
 
 ## 13. 迁移与发布
 
@@ -770,15 +808,16 @@ stateDiagram-v2
 
 ### 13.5 回填
 
-由于 transcript 原地存放，回填只为已有 `dsh_log` 行补齐身份列并创建元数据行，不复制 payload。
+回填把旧 `dsh_log` 行**复制**到新表，旧行保持原样，不改写、不加列。
 
 - **执行位置**：后台 River 任务，不在 claim 或 register 请求路径上。
 - **批次**：会话已是 `migrating`（13.2），每批一个事务，事务内校验状态与 epoch 未变，并写入 `migration_checkpoint`；崩溃后从检查点续跑，可重入。
-- **读取**：通过"归档 + PostgreSQL"合并读回，并还原外置 payload。已归档段由 v2 codec 或幂等键重建身份（6.6）；从 `encodeURIComponent` 编码的幂等键解析 `dsh_session_id` 与 seq，Header 由 `:header` 后缀识别。子线程的 parent 取自 Header `parentSession`，公开线程等于 `dsh_session_id`（第 5 节），并核对现有子线程记录。
-- **格式**：旧行 payload 为 `{type: "dsh_log", uuid, data}` 包装形式。回填不改写 payload，读取路径同时接受包装与原生两种形式，返回 `data` 或原生对象。
+- **读取**：通过"归档 + PostgreSQL"合并读回，并还原外置 payload。旧表的已归档段沿用旧 codec 读取，身份由幂等键解析；从 `encodeURIComponent` 编码的幂等键解析 `dsh_session_id` 与 seq，Header 由 `:header` 后缀识别。子线程的 parent 取自 Header `parentSession`，公开线程等于 `dsh_session_id`（第 5 节），并核对现有子线程记录。
+- **格式**：旧行 payload 为 `{type: "dsh_log", uuid, data}` 包装形式；回填时解包，只把 `data` 中的原生对象写入新表，新表只有一种格式，读取路径不需要兼容包装。外置 payload 按需还原后重新计算 JCS 摘要。
 - **校验**：按 6.2 与 6.3 检查从 seq 0 起连续、身份一致、无冲突。历史上的保留与删除可能造成缺口，`last_internal_sequence_num` 也可能大于可见最大序号，这些都按校验失败处理。
 - **失败**：转回 `ccrv2`（再推进一次 epoch），继续由旧 DSH 服务直到会话结束，并记录告警；不以 `permanent` 公开失败，不拼接修复。
-- 旧路径在全部会话转换且新路径确认可用后才停止写入；由于原地存放，不需要删除旧行。
+- 回填是幂等的：按 `(code_session_uuid, dsh_session_id, seq)` 唯一键插入，重复执行跳过已存在的行；校验失败转回 `ccrv2` 时，删除该会话已写入新表的行，旧数据不受影响。
+- 旧路径在全部会话转换且新路径确认可用后才停止写入。
 
 ## 14. 删除范围
 
@@ -819,7 +858,8 @@ stateDiagram-v2
   - 成功：归档历史回填（v1 段按幂等键重建身份）；半途崩溃后从检查点续跑；`migrating` 期间接纳的输入在 dsr1 领取后投递且有 turn；转换前已拉取未 ACK 的输入在投递时补建为 `processing` 并以 `recovered` 结束；旧 DSH、新 DSH 与升级后端并存。
 - **接管**：等待审批时 SIGKILL，会话保持 `idle(requires_action)` 且不被领取；用户批准后唤醒领取，新 owner 用同一 `request_id` 取回 allow 并执行工具；用户拒绝或中断后同样唤醒，新 owner 按拒绝或 `cancelled` 结束；执行中 SIGKILL 后按 processing turn 领取，已记录的模型步骤不重新请求，结果未知的工具不重放；terminal 输入重投时 `processing` 为 no-op，结束上报返回首次结果。
 - **子线程引导**：子线程 Header 在 `thread_created` 之前写入成功；`thread_created` 在 transcript 不存在或 parent 不符时被拒；同一 transcript 绑定不同线程被拒；线程状态事件重启补发后不重复。
-- **归档保真**：归档后同序号重复追加被判为重复或冲突，而不是插入新行；v2 段还原后两列与原值一致；v1 段重建的 seq 与 payload 不符时还原失败。
+- **归档保真**：归档后同序号重复追加被判为重复或冲突，而不是插入新行；新 codec 段还原后 `dsh_session_id`、`seq`、`sequence_num` 与摘要和原值一致；物理删除后仍能从归档段读回完整 transcript。
+- **新表隔离**：migration 只包含 CREATE TABLE；回填不修改旧表任何行；回填失败回退后旧路径读写正常；blob GC 不回收新表引用的外置对象。
 - **取消墓碑**：缺少 `dsh_session_id` 或 `tool_use_id` 被拒；派生 ID 与路径不符被拒；墓碑后到的创建返回 `cancelled`。
 - **原生格式**：DSH 升级后继续向旧版本 transcript 追加；改写已确认 Header 被判为冲突。
 - **DSH**：现有 `ccrv2.test.ts`、`session-reacquisition.test.ts`、`crash.test.ts`、`parallel-tools.test.ts`、`parallel-subagents.test.ts`、`model-replication.test.ts`、`input-recovery.test.ts` 的场景迁移到 DSR 客户端，覆盖 3.1 的全部屏障、A→B→A 接管与 SIGKILL 恢复。
@@ -849,7 +889,7 @@ stateDiagram-v2
 - 执行屏障保持不变。
 - claim 与 register 保持分离，context 独立读取；`worker_claim_expires_at` 保留 hold 职责；两侧 claim 都加协议过滤。
 - epoch 只来自 session token。
-- transcript 原地存放在 `code_session_internal_events`，以 `dsh_session_id`/`dsh_seq` 与元数据表表达；seq 从 0 起，`next_seq`/`from_seq` 为字符串；比较按语义，摘要用 JCS。
+- DSRv1 只写新表（`dsr_transcripts`、`dsr_transcript_events`、`dsr_transcript_archives`、`dsr_turns`、`dsr_permission_requests`），不修改现有表结构；回填复制而不原地改写；seq 从 0 起，`next_seq`/`from_seq` 为字符串；比较按语义，摘要用 JCS。
 - 审批 ID 确定性派生，按 `(dsh_session_id, tool_use_id)` 去重；持久化与公开事件同事务；终态不可逆；结束上报、中断、接管、子线程终止自动关闭。
 - `dsr_turns` 作为 turn 事实来源；结束上报只接受枚举 reason。
 - 公开状态由移植自现行规则的单一 reducer 计算，状态事件 ID 确定性派生。
@@ -903,3 +943,4 @@ stateDiagram-v2
 | 7.4 | 为避免与 CMA Outcomes 功能（`user.define_outcome`、`span.outcome_evaluation_*`、会话配置 `outcomes`）混淆，结束接口改为 `inputs/{input_id}/finish`，请求与响应字段 `outcome` 改为 `result`，`dsr_turns.outcome` 列改为 `result`，错误码改为 `finish_required` 与 `finish_idempotency_mismatch`，正文称为"结束上报" |
 | 7.5 | 路径前缀改回 `/v1/dsr/sessions/{code_session_id}`：`/v1/dsr/` 命名空间只面向执行端，公开 Session 不会出现在这些路径中，且 ID 自带 `cse_` 前缀；保留路径参数名 `{code_session_id}` 以示区分。claim 响应字段 `session_id` 改为 `code_session_id`，与路径参数和 release 路径一致 |
 | 8 | 等待审批时崩溃由"撤回审批"改为"保留审批、恢复后继续"：删除 `superseded` 状态与注册时的接管清理；领取条件只对没有 pending 审批的 processing turn 生效；审批解决、取消、关闭或中断时在无有效租约的情况下唤醒领取；新增 7.7 节定义 DSH 回合中途恢复规则与等待审批时挂起，并列为 P4 前置条件 |
+| 9 | 存储改为只用新表：transcript 事件写入 `dsr_transcript_events`、归档写入 `dsr_transcript_archives`，Header 存于 `dsr_transcripts`；不再给 `code_session_internal_events` 加列和索引；回填改为解包后复制，旧行不动；`transcriptretention` 与 blob GC 扩展到新表；补充双份存储窗口与新表隔离测试 |

@@ -1,6 +1,6 @@
 # DSRv1 接口参考
 
-本文逐个说明 DSRv1 执行端接口：为什么需要它、什么时候调用和不该调用、请求与响应字段、状态码、对应的 CCRv2 接口，以及典型场景的时序示例。语义、状态机与不变量以 [DSRv1 协议](protocol.md) 为准；两者冲突时以协议文档为准，并同步修正本文。本文对应协议第 8 版，仍是未冻结的设计草案。
+本文逐个说明 DSRv1 执行端接口：为什么需要它、什么时候调用和不该调用、请求与响应字段、状态码、对应的 CCRv2 接口，以及典型场景的时序示例。语义、状态机与不变量以 [DSRv1 协议](protocol.md) 为准；两者冲突时以协议文档为准，并同步修正本文。本文对应协议第 9 版，仍是未冻结的设计草案。
 
 ## 0. 总览
 
@@ -908,7 +908,7 @@ Header 记录日志格式版本与父子关系，服务端据此校验后续 Eve
 
 ### 对应 CCRv2
 
-`POST /v1/code/sessions/{id}/worker/internal-events`。CCRv2 把每条原生事件包成 `{type: "dsh_log", uuid: "dsh_log:<cs>:<dsh>:<seq>", data}`，后端只按 uuid 去重，序号连续性、Header 前缀与冲突检测全在 DSH 端完成。DSRv1 把这些规则移到服务端的写入路径，存储位置仍是 `code_session_internal_events`。
+`POST /v1/code/sessions/{id}/worker/internal-events`。CCRv2 把每条原生事件包成 `{type: "dsh_log", uuid: "dsh_log:<cs>:<dsh>:<seq>", data}`，后端只按 uuid 去重，序号连续性、Header 前缀与冲突检测全在 DSH 端完成。DSRv1 把这些规则移到服务端的写入路径，数据写入新表 `dsr_transcript_events`，不再写 `code_session_internal_events`。
 
 ### 示例
 

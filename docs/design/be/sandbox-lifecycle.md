@@ -229,3 +229,11 @@ flowchart LR
 ```
 
 replacement 回归明确构造旧行仍为 creating 的场景，不先将其标为 failed，并分别检查不同和共享 Provider ID。回归用隔离 PostgreSQL schema 驱动真实 Runner 准备路径，验证短 TTL 下超过 TTL 的准备过程实际续期；虚拟时间测试原30秒 TTL 下准备75秒、续租错误、取消、截止与 handoff。普通回归使用对 context 敏感的 Provider 覆盖 rclone 真实文件系统启动链和 Manager 后台启动合同：成功交接后停止续租并跨越准备 deadline 不终止后台命令，父取消仍终止；准备过程中父取消、续租失败和 deadline 到期打断阻塞启动；后续准备失败及已取消 owner 拒绝交接并终止已启动命令。CI Docker Provider 保留原 `CommandContext` 行为，不通过修改 fixture 隐藏失败。终止、归档、替换、取消清理和超龄 attempt 退役单独检查。受控准备测试不证明真实包源、pandas 安装或 import 成功，后者仍由新 SHA 的独立黑盒验收。
+
+### Brain 沙箱环境变量
+
+Brain 的首次启动、恢复和惰性 MCP 沙箱准备均将 Environment 的 `config.environment` 传入
+Manager 的 `startup_context.environment_variables`。不能只传给 Provider 创建参数，因为工具
+子进程依赖 Manager 的启动环境。Vault 占位变量覆盖同名配置，平台的 remote-session 和代理
+开关最后写入，不能由用户配置覆盖。无配置时保持原行为；校验沿用 Environment 的变量名和大小限制。
+这属于通用环境传递，不增加 CLI 专用变量、登录脚本或真实令牌传递。

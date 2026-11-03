@@ -748,7 +748,7 @@ func (r *Runner) prepareSandboxRuntimeLaunch(ctx context.Context, run *runnerRun
 		if err != nil {
 			return managedAgentRuntimeLaunch{}, err
 		}
-		manager, err := brainSandboxManagerCommand(launch.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, token, preparation.RuntimeSources)
+		manager, err := brainSandboxManagerCommand(launch.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, token, preparation.RuntimeSources, env.Config)
 		if err != nil {
 			return managedAgentRuntimeLaunch{}, err
 		}
@@ -787,7 +787,7 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 		return managedAgentRuntimeLaunch{}, err
 	}
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
-		manager, err := brainSandboxManagerCommand(local.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, local.SessionIngressToken, preparation.RuntimeSources)
+		manager, err := brainSandboxManagerCommand(local.CodeSessionID, preparation.WorkDir, r.cfg, preparation.EnvPlaceholders, local.SessionIngressToken, preparation.RuntimeSources, env.Config)
 		if err != nil {
 			return managedAgentRuntimeLaunch{}, err
 		}

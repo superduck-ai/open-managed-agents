@@ -17,7 +17,7 @@ import (
 func TestBrainSandboxManagerStartsEmbeddedMCP(t *testing.T) {
 	cfg := config.Config{CodeSession: config.CodeSessionConfig{SandboxAPIBaseURL: "http://sandbox.example"}}
 	cfg.EnvironmentRunner.AgentMode = "brain"
-	launch, err := brainSandboxManagerCommand("cse_test", "/workspace/project", cfg, nil, "ingress-test", nil)
+	launch, err := brainSandboxManagerCommand("cse_test", "/workspace/project", cfg, nil, "ingress-test", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestBrainSandboxManagerReceivesRepositorySources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	launch, err := brainSandboxManagerCommand("cse_owned", resolved.workDir, config.Config{}, nil, "ingress-test", resolved.sources)
+	launch, err := brainSandboxManagerCommand("cse_owned", resolved.workDir, config.Config{}, nil, "ingress-test", resolved.sources, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,5 +125,24 @@ func TestBrainSandboxManagerReceivesRepositorySources(t *testing.T) {
 	}
 	if strings.Contains(string(launch.Payload), "private-test-material") {
 		t.Fatal("repository secret forwarded to sandbox")
+	}
+}
+
+func TestBrainSandboxManagerEnvironmentVariables(t *testing.T) {
+	if _, err := brainSandboxManagerCommand("cse_test", "/workspace", config.Config{}, nil, "token", nil, json.RawMessage(`{"type":"cloud","environment":{"INVALID-NAME":"value"}}`)); err == nil {
+		t.Fatal("invalid environment accepted")
+	}
+	raw := json.RawMessage(`{"type":"cloud","environment":{"APP_MODE":"test","AUTH_TOKEN":"configured","CLAUDE_CODE_REMOTE":"false"}}`)
+	launch, err := brainSandboxManagerCommand("cse_test", "/workspace", config.Config{}, map[string]string{"AUTH_TOKEN": "placeholder"}, "token", nil, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload brainSandboxManagerPayload
+	if err := json.Unmarshal(launch.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	variables := payload.StartupContext.EnvironmentVariables
+	if variables["APP_MODE"] != "test" || variables["AUTH_TOKEN"] != "placeholder" || variables["CLAUDE_CODE_REMOTE"] != "true" || variables["CCR_UPSTREAM_PROXY_ENABLED"] != "1" {
+		t.Fatalf("unexpected startup environment: %v", variables)
 	}
 }

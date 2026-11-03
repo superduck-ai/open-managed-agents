@@ -97,7 +97,7 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 	if err != nil {
 		return "", db.EnvironmentSandbox{}, err
 	}
-	manager, err := brainSandboxManagerCommand(code.ExternalID, code.WorkDir, r.cfg, nil, "", resolved.sources)
+	manager, err := brainSandboxManagerCommand(code.ExternalID, code.WorkDir, r.cfg, nil, "", resolved.sources, env.Config)
 	if err != nil {
 		return "", db.EnvironmentSandbox{}, err
 	}
@@ -164,17 +164,21 @@ type brainSandboxManagerPayload struct {
 	} `json:"environment"`
 }
 
-func brainSandboxManagerCommand(codeSessionID, workDir string, cfg config.Config, placeholders map[string]string, ingressToken string, sources []json.RawMessage) (environmentManagerCommand, error) {
+func brainSandboxManagerCommand(codeSessionID, workDir string, cfg config.Config, placeholders map[string]string, ingressToken string, sources []json.RawMessage, environmentConfig json.RawMessage) (environmentManagerCommand, error) {
+	if len(environmentConfig) == 0 {
+		environmentConfig = json.RawMessage(`{}`)
+	}
+	variables, err := environmentVariablesFromConfig(environmentConfig)
+	if err != nil {
+		return environmentManagerCommand{}, err
+	}
 	request := brainSandboxManagerPayload{}
 	request.StartupContext.Sources = sources
 	if request.StartupContext.Sources == nil {
 		request.StartupContext.Sources = []json.RawMessage{}
 	}
 	request.StartupContext.APIBaseURL = codeSessionSandboxAPIBaseURL(cfg)
-	request.StartupContext.EnvironmentVariables = make(map[string]string, len(placeholders)+2)
-	for key, value := range placeholders {
-		request.StartupContext.EnvironmentVariables[key] = value
-	}
+	request.StartupContext.EnvironmentVariables = sandboxEnvironmentVariables(variables, placeholders)
 	request.StartupContext.EnvironmentVariables["CLAUDE_CODE_REMOTE"] = "true"
 	request.StartupContext.EnvironmentVariables["CCR_UPSTREAM_PROXY_ENABLED"] = "1"
 	request.StartupContext.UseCodeSessions = true

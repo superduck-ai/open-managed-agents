@@ -136,7 +136,7 @@ DSH 开始模型执行前等待首个 `processing` 回执确认；后端通过�
 启动数据统一放在 `code_sessions.metadata.config`。公共 `GET /v2/sessions/{id}` 返回 `{ "session_context": { ... } }`。执行端必须从 `session_context` 对象读取以下字段；缺失或非对象的响应应拒绝启动：
 
 - `cwd`、`model`、`system_prompt`、`custom_system_prompt`、`append_system_prompt`。
-- `runtime_skills`：Skill 名称、描述、固定版本及沙箱内 `SKILL.md` 路径。
+- `runtime_skills`：Skill 名称、描述、固定版本及沙箱内 `SKILL.md` 路径。Brain 的 OMA Skill provider 通过内部 Session Skills 接口读取相同快照，以 DSH 原生 `skill` 工具加载；目录以持久化 user-role 消息发布，不进入 system prompt。详见 [Skill 运行时](managed-agent-skills-runtime.md)。
 - `runtime_tools`：从 Session 固化的工具配置解析出的内置工具白名单，使用 DSH 工具名。禁用工具不列入，需审批工具仍列入；没有内置 toolset 时返回空数组。
 - `subagents`：由会话 Agent 快照中的固定版本引用解析出的子 Agent 定义及工具权限。
 - `runtime_tools`：主 Agent 启用的沙箱工具名，按与权限执行相同的规则从会话 Agent 快照计算；缺失时注册全部沙箱工具。
@@ -258,6 +258,10 @@ DSH 将等待后端权限判定与等待用户确认分开：发送 `can_use_too
 权限更新回归由 `tests/brain_tool_permission_updates_test.go` 覆盖同一会话的更新 API、最新上下文和网关拒绝，DSH 的 `tests/parallel-tools.test.ts` 覆盖 `allow` 改为 `ask` 后等待审批、改为 `deny` 后不再执行、刷新失败时停止模型请求，以及缺失权限表时回退审批；`tests/parallel-subagents.test.ts` 对保留的子 Agent 线程验证相同的策略更新。每次模型请求增加一次上下文读取，工具调用仍跳过 `allow` 的审批与状态写入。
 
 DSH 的工具执行屏障直接建立在原生日志上：在工具体执行前刷新本地日志并等待远程复制确认，任一失败时不执行工具体。模型请求沿用 dsh 原生流程，日志异步复制，不无条件等待远程确认；完成 turn 后确认原生终态日志，再发布由其生成的公开结果，最后 ACK。审批参数变化时先确认公开参数提示，并保留原有模型上下文，不再保存 approvedCalls 或工具结果副本。只读失败仍最多重试一次；其他调用不自动重试。排空使用进程内活动副作用调用和结果确认队列，结果已到达但复制未确认时不能提前释放领取；这些集合不作为恢复日志。
+
+控制输入的 processed 回执先显式排入当前状态发布队列，等待该 HTTP 发布确认及原生日志检查点后再发送，避免审批解除时运行状态已落库、却被后发确认回执越过。回执链独立于控制输入接收；状态或回执等待不能阻止后续审批和中断。本屏障约束 Brain 自身的因果发布，不提供所有 API 并发写入的全局 outbox 顺序保证。
+
+带代理请求身份的文本块在 block-end 时立即写入原生 assistant-block 日志，待该次模型流的 end 帧后发布持久 fallback。文本增量继续实时发送，thinking 完成及无代理身份的输出保持原有时点。此顺序使 Messages 代理已有的 message_stop 完成屏障先发布消息和结束 span，避免 Brain 的 block-end 抢存消息后，代理按更早 EndedAt 写入结束 span 导致历史与实时顺序反转。缓存按线程和 attempt 隔离；日志恢复与同身份幂等规则不变。父、子线程的延迟终态回归同时检查实时增量、提前落盘、终态前未发布最终文本及终态后恰一次来源正确的最终文本。
 
 ### 原生日志恢复与协议输出
 
@@ -585,3 +589,6 @@ Brain 保持运行而沙箱已被 Provider 删除时，下一次 MCP 调用先�
 沿用 `agent.custom_tool_use` / `user.custom_tool_result` 和现有控制通道，按调用 ID、问题 ID 关联答案。
 服务端通过 `externalResult` 返回结果，不再兼容旧 Claude Code 的 `updatedInput.answers`。
 不新增依赖、接口或存储；取消、线程归属、epoch 与恢复沿用现有机制。
+
+
+供应商 HTTP429 的明确 `concurrency allocated quota exceeded. please try again later.` 并发限流信息按 `RATE_LIMIT` 处理，复用每步最多4次的现有有限退避和 Retry-After 上限。其他真实账户余额、credit 或 insufficient_quota 耗尽继续为不可重试 `QUOTA`，400工具输入错误和 context overflow 也不变。回归使用同一真实供应商文字通过实际 HTTP适配器及完整 Brain 重试流程验证，原失败及尝试不会改判或重置。

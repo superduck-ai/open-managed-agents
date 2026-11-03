@@ -26,6 +26,7 @@ import (
 // Service 封装会被 sessions、environment runner 与 code-session HTTP handler 共同复用的业务能力。
 // 它不持有 HTTP 鉴权、代理连接或日志状态，因而可以安全地注入非 HTTP 调用方。
 type Service struct {
+	skillReader            SessionSkillReader
 	sandboxProvisioner     SandboxProvisioner
 	eventPayloads          *eventpayload.Store
 	db                     *db.DB

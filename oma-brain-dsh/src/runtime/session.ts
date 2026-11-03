@@ -103,7 +103,7 @@ export class SessionRuntime {
       }
       exec.signal.throwIfAborted();
       const dispatch = () => traceHooks.runTool(this.config.id, exec.callId, next);
-      if (exec.name === "AskUserQuestion") return dispatch();
+      if (exec.name === "AskUserQuestion" || exec.name === "skill") return dispatch();
       if (!exec.name.startsWith("mcp__") && toolPermissions[exec.name.toLowerCase()] === "allow") return dispatch();
       prefetchMcpApprovals(this.bridge, this.toolCalls, exec.callId,
         name => name.startsWith("mcp__") && !!scope.tools.get(name, exec.agent), exec.signal);

@@ -51,6 +51,7 @@ export class CcrSession {
   private readonly controlReceipts = new Set<Promise<void>>();
   private readonly handledControls = new Set<string>();
   private readonly assistantStream: CcrAssistantStream;
+  private readonly proxyTextCompletions = new Map<string, Payload[]>();
   private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
   private interrupted = false;
@@ -232,7 +233,9 @@ export class CcrSession {
     else if (frame.type === "end") this.activity.end(threadId ?? this.id, "api_call", frame.attemptId);
     const inputId = threadId ? this.id : this.inputId;
     const payloads = this.assistantStream.record(frame, inputId, threadId);
-    if (payloads.length && inputId) {
+    const ready: Payload[] = [];
+    const attempt = `${threadId ?? this.id}\0${frame.attemptId}`;
+    if (inputId) {
       for (const payload of payloads) {
         payload.uuid ??= crypto.randomUUID();
         if (threadId) payload.session_thread_id = threadId;
@@ -241,10 +244,17 @@ export class CcrSession {
           if (!owner) throw new Error("Missing assistant block journal owner");
           appendPluginRecord(owner, "plugin:oma/assistant-block", { output: payload as AssistantBlockOutput });
         }
+        if (payload.type === "agent.message" && payload.model_request_start_id) {
+          const pending = this.proxyTextCompletions.get(attempt) ?? [];
+          pending.push(payload);
+          this.proxyTextCompletions.set(attempt, pending);
+        } else ready.push(payload);
       }
-      // Enqueue immediately so one 100ms window can hold multiple frames.
-      // The uploader preserves order; this barrier still waits for every HTTP confirmation.
-      this.previews = Promise.all([this.previews, this.publishPreview(payloads)]).then(() => {});
+      if (frame.type === "end") {
+        ready.push(...(this.proxyTextCompletions.get(attempt) ?? []));
+        this.proxyTextCompletions.delete(attempt);
+      }
+      if (ready.length) this.previews = Promise.all([this.previews, this.publishPreview(ready)]).then(() => {});
     }
   }
 
@@ -562,9 +572,8 @@ export class CcrSession {
     const repeatedControl = isControlInput(payload.type) && this.handledControls.has(inputId);
     if (repeatedControl || await this.control(payload)) {
       this.rememberControl(inputId);
-      // Control effects/publication finish first, but delivery retries must not
-      // hold the control queue and prevent a later approval or interrupt.
-      const receipt = this.checkpoint().then(() => this.backend.acknowledge(this.id, inputId, this.abort.signal))
+      const receipt = this.updateStatus().then(() => this.checkpoint())
+        .then(() => this.backend.acknowledge(this.id, inputId, this.abort.signal))
         .catch(() => { if (!this.abort.signal.aborted) this.stop(); })
         .finally(() => { this.controlReceipts.delete(receipt); });
       this.controlReceipts.add(receipt);

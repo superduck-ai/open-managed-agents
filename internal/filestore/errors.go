@@ -10,8 +10,10 @@ import (
 )
 
 var (
-	errNotFound           = errors.New("filestore resource not found")
-	errFailedPrecondition = errors.New("filestore precondition failed")
+	errSessionSkillDirectory = errors.New("invalid skill directory")
+	errSessionSkillTooLarge  = errors.New("skill instructions exceed size limit")
+	errNotFound              = errors.New("filestore resource not found")
+	errFailedPrecondition    = errors.New("filestore precondition failed")
 
 	ErrSessionAttachmentRejected = errors.New("session attachment rejected")
 )

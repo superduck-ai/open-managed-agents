@@ -69,7 +69,7 @@ flowchart LR
 
 无 query 时返回固定名称、描述、版本、沙箱路径和 `SKILL.md` frontmatter，正文不下发。`?directory=<directory>` 只读取当前 Agent 可见的指定目录并返回完整文件；未选中的目录返回 not found。接口通过 Filestore 服务按 workspace、Session filesystem 和 `/skills/<directory>/SKILL.md` 读取，复用 archive 校验与缓存，不创建沙箱、不经过通用 MCP、不接受任意文件路径，也不查询已软删除的 catalog version。响应禁止 HTTP 缓存。
 
-Brain 每个 Agent 独立注册 OMA provider 和 DSH consumer。目录读取失败作为不完整发现重试；正文读取失败作为工具失败返回。YAML frontmatter 的调用策略由 provider 解析，consumer 强制执行模型与用户入口策略。同一 Agent 下出现相同名称时拒绝建立可调用目录，不按顺序静默选择。版本固定、只读挂载和对象保留规则不变。会话目录与 Skill 正文结果进入 DSH 历史，恢复与压缩后的目录重建由原生 consumer 处理。具体提示词规则见 [Agent 系统提示词](agent-system-prompt.md)。
+Brain 每个 Agent 独立注册 OMA provider 和 DSH consumer。目录读取失败作为不完整发现重试；正文读取失败作为工具失败返回。YAML frontmatter 的调用策略由 provider 解析，consumer 强制执行模型与用户入口策略。同一 Agent 下出现相同名称时拒绝建立可调用目录，不按顺序静默选择。版本固定、只读挂载和对象保留规则不变。原生 `skill` 加载调用与结果仅保留在 DSH 历史，不投影为公开 `agent_toolset_20260401` 的工具结果；附属文件的真实 Read/Bash 等公开调用与结果仍正常保留。会话目录与 Skill 正文结果进入 DSH 历史，恢复与压缩后的目录重建由原生 consumer 处理。具体提示词规则见 [Agent 系统提示词](agent-system-prompt.md)。
 
 ## 虚拟目录合同
 
@@ -178,3 +178,24 @@ PostgreSQL 外键。
 - Runner 不写 legacy mount metadata，E2B runtime 不创建 skill volume；
 - catalog soft delete/prune 不破坏活动 Session Skill File，读取路径不 JOIN version 表；
 - Session filesystem cleanup 会软删除 Skill Archive Resource 与 File 快照，但不删除 catalog object。
+
+创建 Session 时，在持久化 Session/Thread/Environment Work 前，按当前 workspace 验证 snapshot 中根 Agent 与预定义 Agent 的 Skill 引用确实存在且指定版本属于该 Skill。缺失或跨 Skill 的版本返回 `400 invalid_request_error`，不留下无运行时消费者的 running Session。验证只读取并丢弃解析结果，`latest` 仍按首次启动时的 catalog 状态固定；不同 Agent 的安装目录冲突检查仍属于启动投影阶段。
+# Independent Agent version mounts
+
+The primary Agent and each predefined Agent retain independent immutable Skill
+references. When their resolved versions share a package directory, runtime
+mounts use `<directory>--<version UUID>` so one version cannot replace another.
+An ambiguous directory binding within one Agent still fails. Identical immutable
+versions share one mount; directories without a collision retain their names.
+
+The original ZIP top-level directory is retained separately from the mount name.
+Archive resource writes validate the original directory, workspace, exact version,
+object identity, size and SHA256 against the catalogue. File metadata records that
+original directory. Filestore validates every original ZIP entry before mapping
+it into the mounted directory; neither ZIP bytes nor source hashes are rewritten.
+Cache identity includes the directory metadata as well as object/hash/mount.
+Per-thread catalogues continue to select only the actual Agent's references.
+
+## Skill 来源范围
+
+平台只加载 Agent snapshot 中显式配置的 Skill 引用，并使用已固定的 Session File/Resource 快照。挂载 Git 仓库不会增加可用 Skill；Brain 不扫描仓库中的 `.claude/skills`，也不为发现 Skill 创建沙箱或执行扫描程序。Skill 中引用的 reference 文件继续通过沙箱 Read 按需读取。

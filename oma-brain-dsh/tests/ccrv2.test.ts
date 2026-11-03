@@ -759,6 +759,48 @@ test("only backend-confirmed user approvals pause the worker and late lookups ca
 });
 
 
+test("approval processing receipts wait for preceding status publication without blocking controls", async () => {
+  const backend = new MemoryBackend();
+  const { ctx, session } = await mountMediaKernel(backend);
+  const requested = Promise.withResolvers<string>();
+  const paused = Promise.withResolvers<void>();
+  const statusStarted = Promise.withResolvers<void>();
+  const releaseStatus = Promise.withResolvers<void>();
+  const order: string[] = [];
+  backend.isToolConfirmationPending = async () => true;
+  backend.events = async (_id, events) => {
+    const request = events.find(event => event.type === "control_request");
+    if (request) requested.resolve(request.request_id);
+  };
+  let resolved = false;
+  backend.setStatus = async (_id, status) => {
+    if (status === "requires_action") paused.resolve();
+    if (resolved) { statusStarted.resolve(); await releaseStatus.promise; order.push("status"); }
+  };
+  backend.acknowledge = async (_id, inputId) => { order.push(inputId); };
+  try {
+    const decision = session.approve({ callId: "read", toolName: "Read", input: {} }, new AbortController().signal);
+    const requestId = await requested.promise;
+    await paused.promise;
+    resolved = true;
+    await session.receive("confirmation", { type: "control_response", response: {
+      subtype: "success", request_id: requestId, response: { behavior: "allow" },
+    } });
+    await statusStarted.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(order).toEqual([]);
+    const cancel = spyOn(session.agent, "cancel");
+    await session.receive("interrupt", { type: "interrupt" });
+    expect(cancel).toHaveBeenCalled();
+    expect(order).toEqual([]);
+    releaseStatus.resolve();
+    expect(await decision).toEqual({ allowed: true, input: undefined });
+    await eventually(() => order.includes("confirmation") && order.includes("interrupt"));
+    expect(order.indexOf("status")).toBeLessThan(order.indexOf("confirmation"));
+    expect(order.filter(value => value === "confirmation")).toHaveLength(1);
+  } finally { releaseStatus.resolve(); await ctx.fiber.dispose(); }
+});
+
 test("user interrupts settle the tool locally, finish successfully and survive recovery without replay", async () => {
   for (const control of [{ type: "user.interrupt" }, { type: "control_request", request_id: "interrupt", request: { subtype: "interrupt" } }]) {
     const backend = new MemoryBackend();

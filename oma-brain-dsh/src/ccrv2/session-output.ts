@@ -74,6 +74,7 @@ export function sessionEventOutput(sessionId: string, inputId: string, event: Se
     const uuid = `${prefix}_message_${event.data.turn}_${event.data.step}`;
     return assistantMessages(sessionId, uuid, event.data.message, threadId);
   }
+  if (event.type === "tool/result" && toolName === "skill") return [];
   if (event.type === "tool/result" && event.surfaceOp === "append") return [{
     type: "user", uuid: `${prefix}_dsh_${event.seq}`,
     ...(threadId ? { session_thread_id: threadId } : {}),

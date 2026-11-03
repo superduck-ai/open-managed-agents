@@ -259,6 +259,10 @@ DSH 将等待后端权限判定与等待用户确认分开：发送 `can_use_too
 
 DSH 的工具执行屏障直接建立在原生日志上：在工具体执行前刷新本地日志并等待远程复制确认，任一失败时不执行工具体。模型请求沿用 dsh 原生流程，日志异步复制，不无条件等待远程确认；完成 turn 后确认原生终态日志，再发布由其生成的公开结果，最后 ACK。审批参数变化时先确认公开参数提示，并保留原有模型上下文，不再保存 approvedCalls 或工具结果副本。只读失败仍最多重试一次；其他调用不自动重试。排空使用进程内活动副作用调用和结果确认队列，结果已到达但复制未确认时不能提前释放领取；这些集合不作为恢复日志。
 
+控制输入的 processed 回执先显式排入当前状态发布队列，等待该 HTTP 发布确认及原生日志检查点后再发送，避免审批解除时运行状态已落库、却被后发确认回执越过。回执链独立于控制输入接收；状态或回执等待不能阻止后续审批和中断。本屏障约束 Brain 自身的因果发布，不提供所有 API 并发写入的全局 outbox 顺序保证。
+
+带代理请求身份的文本块在 block-end 时立即写入原生 assistant-block 日志，待该次模型流的 end 帧后发布持久 fallback。文本增量继续实时发送，thinking 完成及无代理身份的输出保持原有时点。此顺序使 Messages 代理已有的 message_stop 完成屏障先发布消息和结束 span，避免 Brain 的 block-end 抢存消息后，代理按更早 EndedAt 写入结束 span 导致历史与实时顺序反转。缓存按线程和 attempt 隔离；日志恢复与同身份幂等规则不变。父、子线程的延迟终态回归同时检查实时增量、提前落盘、终态前未发布最终文本及终态后恰一次来源正确的最终文本。
+
 ### 原生日志恢复与协议输出
 
 不保存额外交付快照、完成列表、发布游标或独立 outbox 文件，也不新增平台专属日志类型。dsh 原生日志格式、Header 和已产生的事件保持原样。外部普通输入已有的身份通过原生 `MessageId` 和 `freezeMessage` 公开 API 构造用户消息，使用原生 `id` 字段，不添加 inputId 字段或自定义 source。进程内维护已接纳输入的索引及待发队列，关闭后不单独保存。重启时从每个原生 turn 的首条 user-source 消息恢复输入身份，避免把审批参数上下文误认成新输入；原生回合终态用于生成完成或中断结果。无效输入和在原生接纳前被取消的输入，依赖服务端已确认的 processed 状态，不额外写占位日志。
@@ -585,3 +589,6 @@ Brain 保持运行而沙箱已被 Provider 删除时，下一次 MCP 调用先�
 沿用 `agent.custom_tool_use` / `user.custom_tool_result` 和现有控制通道，按调用 ID、问题 ID 关联答案。
 服务端通过 `externalResult` 返回结果，不再兼容旧 Claude Code 的 `updatedInput.answers`。
 不新增依赖、接口或存储；取消、线程归属、epoch 与恢复沿用现有机制。
+
+
+供应商 HTTP429 的明确 `concurrency allocated quota exceeded. please try again later.` 并发限流信息按 `RATE_LIMIT` 处理，复用每步最多4次的现有有限退避和 Retry-After 上限。其他真实账户余额、credit 或 insufficient_quota 耗尽继续为不可重试 `QUOTA`，400工具输入错误和 context overflow 也不变。回归使用同一真实供应商文字通过实际 HTTP适配器及完整 Brain 重试流程验证，原失败及尝试不会改判或重置。

@@ -14,6 +14,7 @@ func TestAutoPermissionIndeterminateRequiresConfirmation(t *testing.T) {
 	}{
 		{"disabled", `{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","enabled":false,"permission_policy":{"type":"auto"}}]}]}`, "Write", resolvedToolPermissionDeny, false},
 		{"unknown", `{"tools":[]}`, "unknown", resolvedToolPermissionDeny, false},
+		{"ask default", `{"tools":[{"type":"agent_toolset_20260401","default_config":{"permission_policy":{"type":"always_ask"}}}]}`, "Read", resolvedToolPermissionAsk, false},
 		{"explicit override", `{"tools":[{"type":"agent_toolset_20260401","default_config":{"permission_policy":{"type":"auto"}},"configs":[{"name":"write","permission_policy":{"type":"always_allow"}}]}]}`, "Write", resolvedToolPermissionAllow, false},
 		{"auto override", `{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"write","permission_policy":{"type":"auto"}}]}]}`, "Write", resolvedToolPermissionAsk, true},
 		{"auto default", `{"tools":[{"type":"agent_toolset_20260401","default_config":{"permission_policy":{"type":"auto"}}}]}`, "Write", resolvedToolPermissionAsk, true},
@@ -43,6 +44,9 @@ func TestAutoPermissionIndeterminateRequiresConfirmation(t *testing.T) {
 			}
 			if (event.Evaluation.Type == "auto") != tc.auto {
 				t.Fatalf("%s", raw)
+			}
+			if !tc.auto && tc.want == resolvedToolPermissionAsk && event.Evaluation.Type != "always_ask" {
+				t.Fatalf("resolved explicit ask policy missing: %s", raw)
 			}
 			if tc.auto && (event.Permission != "ask" || event.Evaluation.Permission.Type != "ask" || event.Evaluation.Permission.Reason != "indeterminate") {
 				t.Fatalf("%s", raw)

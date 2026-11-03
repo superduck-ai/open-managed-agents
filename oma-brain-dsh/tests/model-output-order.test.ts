@@ -132,3 +132,35 @@ test.each([false, true])("a proxied reply beyond 4 MiB is published once by Brai
     expect(replies[0]!.session_thread_id).toBe(child ? session.subagents.threads[0]!.id : undefined);
   } finally { await session.close(); await ctx.fiber.dispose(); await backend.stop(); }
 });
+
+test.each([false, true])("proxied completed text waits for the model terminal while deltas remain live (child=%s)", async child => {
+  const backend = new Backend(); await backend.ready;
+  const ctx = new Context();
+  const api = new OmaApi(backend.url); await mountOma(ctx, api);
+  const session = createOmaSession(ctx, api, backend.a);
+  const release = Promise.withResolvers<void>();
+  let turn: Promise<unknown> | undefined;
+  backend.onModel = async request => child && !modelSystemText(request).includes("# Subagent rules") ? textEvents("parent report") : new Response(new ReadableStream<Uint8Array>({ async start(controller) {
+    const emit = (event: Record<string, unknown>) => controller.enqueue(new TextEncoder().encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+    const events = textEvents("owned final text");
+    events[0]!.message.id = "msg_terminal_barrier";
+    for (const event of events.slice(0, 4)) emit(event);
+    await release.promise;
+    for (const event of events.slice(4)) emit(event);
+    controller.close();
+  } }), { headers: { "content-type": "text/event-stream", "request-id": "request_terminal_barrier" } });
+  try {
+    await session.open();
+    turn = child ? runSubagent(session, "subagent", { description: "worker", prompt: "Reply" }) : session.receive("terminal-barrier", { content: "Reply" });
+    turn.catch(() => {});
+    await eventually(() => [...backend.privateLog.values()].some(event => event.type === "dsh_log" && pluginRecordOf(event.data)?.type === "plugin:oma/assistant-block"));
+    await eventually(() => backend.timeline.some(event => event.type === "event_delta"));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect([...backend.publicLog.values()].filter(event => event.type === "agent.message" && event.model_request_start_id === "request_terminal_barrier")).toHaveLength(0);
+    release.resolve(); await turn;
+    const finals = [...backend.publicLog.values()].filter(event => event.type === "agent.message" && event.model_request_start_id === "request_terminal_barrier");
+    expect(finals).toHaveLength(1);
+    expect(finals[0]!.content).toEqual([{ type: "text", text: "owned final text" }]);
+    expect(finals[0]!.session_thread_id).toBe(child ? session.subagents.threads[0]!.id : undefined);
+  } finally { release.resolve(); await turn?.catch(() => {}); await session.close(); await ctx.fiber.dispose(); backend.stop(); }
+});

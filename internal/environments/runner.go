@@ -1091,6 +1091,7 @@ func (r *Runner) replaceRuntimeSkillArchives(
 			Source:           skill.Source,
 			SkillVersionUUID: skill.VersionUUID,
 			Directory:        skill.Directory,
+			ArchiveDirectory: skill.ArchiveDirectory,
 			S3Bucket:         skill.S3Bucket,
 			S3Key:            skill.S3Key,
 			SizeBytes:        skill.SizeBytes,

@@ -47,7 +47,7 @@ func TestSessionSkillArchiveResourceMapperBuildsPostgresArguments(t *testing.T) 
 		},
 		{"retire", buildSessionResourceMapperRetireSkillArchiveResources(yourbatis.DialectPostgres, retireParams), 4},
 		{"retire files", buildFileMapperRetireSkillArchiveFiles(yourbatis.DialectPostgres, retireParams), 4},
-		{"insert file", buildFileMapperInsertSkillArchiveFile(yourbatis.DialectPostgres, insertParams), 11},
+		{"insert file", buildFileMapperInsertSkillArchiveFile(yourbatis.DialectPostgres, insertParams), 12},
 		{"insert", buildSessionResourceMapperInsertSkillArchiveResource(yourbatis.DialectPostgres, insertParams), 8},
 		{"list", buildSessionResourceFileMapperListSkillArchiveResources(yourbatis.DialectPostgres, workspaceUUID, filesystemUUID), 3},
 	}
@@ -70,6 +70,27 @@ func TestNormalizeSessionSkillArchiveResources(t *testing.T) {
 		SizeBytes:        1024,
 		SHA256:           strings.Repeat("A", 64),
 	}
+	t.Run("only exact immutable version alias", func(t *testing.T) {
+		input := valid
+		input.ArchiveDirectory = "demo"
+		input.Directory = "demo--" + input.SkillVersionUUID
+		rows, err := normalizeSessionSkillArchiveResources([]SessionSkillArchiveResourceInput{input})
+		if err != nil || len(rows) != 1 || rows[0].ArchiveDirectory != "demo" || rows[0].Path != "/skills/"+input.Directory {
+			t.Fatal(rows, err)
+		}
+		input.Directory = "demo--00000000-0000-4000-8000-000000000099"
+		if _, err := normalizeSessionSkillArchiveResources([]SessionSkillArchiveResourceInput{input}); err == nil {
+			t.Fatal("foreign version alias accepted")
+		}
+		input.Directory = "arbitrary"
+		if _, err := normalizeSessionSkillArchiveResources([]SessionSkillArchiveResourceInput{input}); err == nil {
+			t.Fatal("arbitrary archive alias accepted")
+		}
+		input.ArchiveDirectory = "../demo"
+		if _, err := normalizeSessionSkillArchiveResources([]SessionSkillArchiveResourceInput{input}); err == nil {
+			t.Fatal("archive source traversal accepted")
+		}
+	})
 	for _, test := range []struct {
 		name   string
 		mutate func(*SessionSkillArchiveResourceInput)

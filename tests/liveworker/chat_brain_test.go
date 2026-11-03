@@ -38,9 +38,10 @@ func TestChatBrain(t *testing.T) {
 	stop := sync.OnceFunc(stopRunner)
 	defer stop()
 	e.request(t, "POST", "/v1/agents/"+e.agent.ExternalID, e.apiKey, map[string]any{
-		"version": e.agent.CurrentVersion,
-		"model":   map[string]string{"id": "claude-sonnet-4-6"},
-		"tools":   []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"enabled": true, "permission_policy": map[string]string{"type": "always_allow"}}}},
+		"version":    e.agent.CurrentVersion,
+		"model":      map[string]string{"id": "claude-sonnet-4-6"},
+		"tools":      []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"enabled": true, "permission_policy": map[string]string{"type": "always_allow"}}}},
+		"multiagent": map[string]any{"type": "multiagent_20261001", "subagents": map[string]string{"type": "enabled"}},
 	}, 200)
 	f := createPublicChat(t, e)
 	previewSeen := make(chan struct{}, 4)

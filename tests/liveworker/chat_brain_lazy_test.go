@@ -64,8 +64,9 @@ func verifyLazyBrain(t *testing.T, started time.Time) {
 	second := startBrainNode(t, e, cfg, "lazy-second")
 	defer second.stop(t)
 	e.request(t, "POST", "/v1/agents/"+e.agent.ExternalID, e.apiKey, map[string]any{
-		"version": e.agent.CurrentVersion,
-		"tools":   []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"enabled": false, "permission_policy": map[string]string{"type": "always_allow"}}}},
+		"version":    e.agent.CurrentVersion,
+		"tools":      []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"enabled": false, "permission_policy": map[string]string{"type": "always_allow"}}}},
+		"multiagent": map[string]any{"type": "multiagent_20261001", "subagents": map[string]string{"type": "enabled"}},
 	}, 200)
 	e.agent, err = e.database.GetAgent(t.Context(), e.key.WorkspaceUUID.String(), e.agent.ExternalID)
 	requireOK(t, err)

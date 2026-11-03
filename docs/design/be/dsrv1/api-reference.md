@@ -1,6 +1,6 @@
 # DSRv1 接口参考
 
-本文逐个说明 DSRv1 执行端接口：为什么需要它、什么时候调用和不该调用、请求与响应字段、状态码、对应的 CCRv2 接口，以及典型场景的时序示例。语义、状态机与不变量以 [DSRv1 协议](protocol.md) 为准；两者冲突时以协议文档为准，并同步修正本文。本文对应协议第 7 版（修订 7.3），仍是未冻结的设计草案。
+本文逐个说明 DSRv1 执行端接口：为什么需要它、什么时候调用和不该调用、请求与响应字段、状态码、对应的 CCRv2 接口，以及典型场景的时序示例。语义、状态机与不变量以 [DSRv1 协议](protocol.md) 为准；两者冲突时以协议文档为准，并同步修正本文。本文对应协议第 8 版，仍是未冻结的设计草案。
 
 ## 0. 总览
 
@@ -141,13 +141,15 @@ AND (租约为空，或租约 + 10 秒宽限已过)              -- 没有活着
 AND (
       worker_claim_requested_at 非空               -- Runner 派发，或 release 请求重领
    OR 公开会话为 running / rescheduling            -- 有输入在等待执行
-   OR 存在 processing 且未结束的 turn               -- 等待审批时崩溃，公开会话停在 requires_action
-   OR 存在已结束但 acked_at 为空的 turn             -- 结束上报之后、ACK 之前崩溃
+   OR 存在 processing、未结束且没有 pending 审批的 turn   -- 执行中崩溃
+   OR 存在已结束但 acked_at 为空的 turn                  -- 结束上报之后、ACK 之前崩溃
 )
 AND 不在 budget_reached 暂停中
 ```
 
-后两种"未结算 turn"条件是 DSRv1 新增的。没有它们，等待审批时崩溃或结束上报后 ACK 前崩溃的会话会永远卡住：此时公开会话已是 idle，现行条件不会命中，也就没有人去注册和收尾。
+后两种"未结算 turn"条件是 DSRv1 新增的。没有它们，执行中崩溃或结束上报后 ACK 前崩溃的会话可能卡住：公开会话可能已显示 idle，现行条件不会命中，也就没有人去注册和收尾。
+
+**只在等待审批的 turn 不会被领取**：它在等用户，没有可执行的工作。审批被解决、取消、关闭或收到中断时，那次事务置位 `worker_claim_requested_at` 并发出领取唤醒，会话随即满足第一个条件。这也让等待审批可以挂起：执行端释放会话，用户响应后再由任意进程接手。
 
 ### 请求
 
@@ -258,6 +260,7 @@ DSH 主动告诉后端"这次领取我不要了"，让会话按指定原因尽�
 | 运行中出现不可复制的日志 | 超过 15 MiB 的事件已写进本地日志，之后的事件都无法复制 | `permanent` | 同上 |
 | 领到了但没容量 | 准入预留槽位时没有可淘汰的空闲会话 | `shutdown` | 立即可被其他进程领取，attempts 减一，不算失败 |
 | 会话迁移中 | register 返回 `409 session_migrating` | `shutdown` | 迁移完成后再被领取 |
+| 等待审批时挂起 | 会话的所有 open turn 都只在等待审批，且已超过空闲时限（默认 60 秒） | `idle` | 只清租约；turn 与审批保持不变，用户响应时服务端唤醒领取 |
 | 空闲退役 | 会话空闲 60 秒，或为新领取腾容量而淘汰最久空闲的会话 | `idle` | 只清租约，不请求重领；有新输入时任何进程都能立即领取 |
 | 进程正常退出 | 收到 SIGTERM 并排空之后 | 有活跃回合或仍在准入：`shutdown`；空闲：`idle` | 同上 |
 
@@ -355,8 +358,7 @@ CCRv2 的 brain 模式本来就是"claim 分配 → register 接管"两步（`in
 1. 锁定 Code Session 行，与 claim、heartbeat、日志追加串行。
 2. 校验会话 active、`worker_protocol = dsr1`（`migrating` 时返回 `409 session_migrating`）、token epoch 等于 `current_worker_epoch`。
 3. 写入 `worker_lease_expires_at = now + 20s`、连接状态与活动时间，清空 `worker_claim_requested_at` 与 `worker_claim_expires_at`，记录 `dsr_protocol_version`。
-4. **仅在该 epoch 的首次注册时**：把更早 epoch 的 pending 审批标为 `superseded`，并按 reducer 重算公开状态、写入状态事件。例如原来停在 `requires_action`，清理后仍有 processing 的 turn，就转为 `running`。
-5. **不结束** open turn：未 ACK 的输入会被 JetStream 重投给新 owner，由新 owner 按原生日志恢复后调用结束上报。
+4. **不清理审批，也不结束 open turn**：pending 审批与 processing 的 turn 都由新 owner 继承。未 ACK 的输入会被 JetStream 重投给新 owner，新 owner 按原生日志从回合中途恢复：已解决的审批用同一 `request_id` 取回结果后继续，仍 pending 的继续等待或挂起。注册本身不改变公开状态。
 
 ### 响应 200
 
@@ -402,10 +404,12 @@ DSR-Protocol: 1
 ### 场景
 
 ```text
-A. 正常接管（上一任 owner 在等待审批时崩溃）
-   claim → epoch 7
-   register → 租约开始；epoch 6 留下的审批 dsrp_x 标为 superseded；公开状态 requires_action → running
-   读取原生日志恢复 → 连接 inputs/stream → 重投的输入 A 到达 → finish(recovered) → processed 回执
+A. 正常接管（上一任 owner 在等待审批时崩溃，用户随后批准）
+   epoch 6 的 owner 崩溃；会话保持 requires_action，不被领取
+   用户批准 dsrp_x → 审批变为 resolved，并唤醒领取
+   claim → epoch 7 → register → 租约开始（公开状态由批准事务改为 running）
+   读取原生日志：该工具有调用块、没有 tool/call → 用同一 request_id 调用 permission-requests → 取回 allow
+   执行工具 → 继续回合 → public-events → finish(success) → processed 回执
 
 B. 网络抖动后恢复
    心跳连续失败约 30 秒 → 410 lease_expired → 用同一 token 再 register
@@ -1068,7 +1072,7 @@ CCRv2 的流程是：DSH 往公开输出里发一条 `can_use_tool` 控制请求
 | `200` | `{"request_id","state":"resolved","decision":{"behavior":"deny","message":"..."}}` | 不执行，生成拒绝的工具结果 |
 | `200` | `{"request_id","state":"resolved","decision":{"behavior":"external_result","external_result":{...}}}` | 重试时 custom 或外部执行已有结果，直接使用 |
 | `202` | `{"request_id","state":"pending"}` | 进入等待：结果经输入流的 `permission.resolved` 送达；投递丢失时用相同请求重试取得 |
-| `200` | `{"request_id","state":"cancelled" \| "closed" \| "superseded"}` | 不得执行 |
+| `200` | `{"request_id","state":"cancelled" \| "closed"}` | 不得执行，按拒绝处理该工具调用 |
 
 `decision` 字段：
 
@@ -1089,9 +1093,10 @@ CCRv2 的流程是：DSH 往公开输出里发一条 `can_use_tool` 控制请求
 | `resolved` | 已判定：allow、deny 或外部结果 | 本接口（自动判定），或用户确认、custom 结果 |
 | `cancelled` | DSH 放弃等待 | 接口 16 |
 | `closed` | 所属输入已完成结束上报、被中断或子线程已终止 | 服务端自动 |
-| `superseded` | 被更高 epoch 接管 | register 时服务端自动 |
 
 终态不可逆；竞争时只有一次转换成功，另一方读取并返回当前终态。
+
+接管不改变审批状态：新 owner 用原生日志中的 `tool_use_id` 算出同一个 `request_id`，以相同请求重新调用即可继承——`pending` 时继续等待，`resolved` 时直接拿到决定。
 
 ### 错误
 
@@ -1127,11 +1132,17 @@ B. 结果比 202 先到
    DSH 本地登记 dsrp_k3m9 → 发送 POST → 用户秒批 → permission.resolved 先到
    → 本地等待项完成 → 202 随后到达，忽略即可
 
-C. 等待审批时崩溃（无需用户操作）
-   A：202 pending → 崩溃 → 租约过期 → 存在 processing 的 turn，会话可领取
-   B：claim → register → dsrp_k3m9 变为 superseded，公开状态重算
-   B：恢复，原生日志中该工具无结果 → 不重放 → finish(recovered)
-   用户看到审批被撤回和恢复提示，可以马上发新消息
+C. 等待审批时崩溃
+   A：202 pending → 崩溃 → 租约过期
+   会话保持 requires_action：该 turn 只在等审批，不满足领取条件，也不占用执行端
+   用户在 Console 批准 → dsrp_k3m9 变为 resolved → 没有有效租约，唤醒领取
+   B：claim → register → 恢复：该工具没有 tool/call，说明尚未执行
+   B：POST permission-requests（同一请求）→ 200 resolved allow → 执行工具 → 继续回合
+   用户感知不到执行端换过；如果用户拒绝或中断，B 按拒绝或 cancelled 结束
+
+D. 等待审批时挂起
+   A：202 pending → 等待超过 60 秒 → 关闭输入流 → release(idle)，执行端容量释放
+   之后与 C 相同：用户响应时唤醒领取，由任意进程从回合中途恢复
 ```
 
 ## 16. `POST /v1/dsr/sessions/{code_session_id}/permission-requests/{request_id}/cancel`

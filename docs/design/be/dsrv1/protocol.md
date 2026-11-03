@@ -1,6 +1,6 @@
 # DSRv1：DSH Session Remote 协议
 
-状态：设计草案（第 7 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。各接口的请求、响应、状态码与示例见 [DSRv1 接口参考](api-reference.md)。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
+状态：设计草案（第 8 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。各接口的请求、响应、状态码与示例见 [DSRv1 接口参考](api-reference.md)。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
 
 冻结条件：第 7（审批）、第 9（输入与 turn）、第 10（公开状态 reducer）三个状态机的不变量经评审确认。第 17 节的待定问题已在第 6 版全部决定，冻结前只需评审这些决定，并确认 15.1 的验收条件。
 
@@ -44,7 +44,7 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 目标：
 
 - 私有日志由服务端保证每个 DSH Session 的序号连续、身份一致、内容不可变。
-- 审批有持久化记录、确定性身份、终态与接管清理；持久化与公开事件同事务。
+- 审批有持久化记录、确定性身份与终态，接管后由新 owner 继承；持久化与公开事件同事务。
 - task 输入与 turn 有持久化事实，公开状态由一个显式 reducer 计算。
 - 公开输出使用 DSR 事件词汇，后端只做校验、身份派生与 CMA 映射。
 - 删除 sandbox 模式与 CCRv2 Worker 路由。
@@ -81,7 +81,7 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 - `session.status_idle(requires_action)` 的发布时刻改为审批记录提交时，恢复路径由审批状态机决定。
 - 状态事件 ID 改为确定性派生（10.4），重试不再追加内容相同而 ID 不同的状态事件。
 - webhook 的 idle 映射与 `stop_reason.event_ids` 的取值来源改为审批表与 turn 表。
-- **等待审批时执行端崩溃**：现行会话停在 `requires_action`，直到用户响应才触发重新领取，而恢复后并不会执行该工具。DSRv1 在租约过期后主动领取（4.3），新 owner 将待确认审批标为 `superseded`，并以 `recovered` 结束该输入。用户看到的审批请求会被撤回，取而代之的是恢复提示与 idle。
+- **等待审批时执行端崩溃**：现行会话停在 `requires_action`，用户响应后才重新领取，而恢复时会把未执行的工具调用直接结束，所以批准实际上不会生效。DSRv1 保留审批请求：会话保持 `idle(requires_action)`，不占用执行端；用户响应后唤醒领取，新 owner 从回合中途恢复（7.7），批准的工具照常执行。对用户而言，审批请求不会因为执行端崩溃而消失，也不会出现"批准了却没有执行"。
 
 ## 4. 通用约定与生命周期
 
@@ -110,8 +110,9 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 - `POST /v1/dsr/claims?block_ms=25000`：请求与响应字段同现行 claim，仅两处改名：`session_id` 改为 `code_session_id`，`ingress_token` 改为 `session_token`（字段为 `code_session_id`、`worker_epoch`、`session_token`、`model_token`、`claim_expires_at`、`trace_parent`），token 增加 `protocol` claim。**不合并注册，不内嵌 context。**
 - 领取 SQL 增加 `metadata.config.worker_protocol = 'dsr1'`；`migrating` 状态的会话不被任何一侧领取（13.2）。
 - **可领取条件增加未结算 turn**：除现行的"存在领取请求或公开会话 running/rescheduling"外，若租约加宽限已过，且存在以下任一 turn，也可领取：
-  - `processing` 且非 terminal（等待审批时崩溃：公开会话为 `idle(requires_action)`，现行条件不会命中，注册时的接管清理（4.4）也就无法触发）；
+  - `processing` 且非 terminal，**并且该 turn 没有 pending 审批**（执行中崩溃：公开会话可能已显示 idle 或 running，需要新 owner 接着执行）；
   - terminal 但 `acked_at` 为空（结束上报已提交、`processed` 回执 前崩溃：公开会话可能已经 idle，未 ACK 的输入仍需新 owner 补 ACK）。
+- **只在等待审批的 turn 不会被领取**：它在等用户，没有可执行的工作，领取只会让新 owner 在内存里继续空等。审批被解决、取消或关闭时，该事务置位 `worker_claim_requested_at` 并发出领取唤醒（7.4），会话随即满足"存在领取请求"的条件。这也让等待审批成为挂起：执行端可以释放会话（7.7）。
 - 这一扩展仍排除：`budget_reached` 暂停中的会话、`worker_claim_expires_at` 未到期的耗尽 hold 与退避行、非 active 或已终止的 Code Session。
 - 旧 claim 接口**必须**同时增加 `worker_protocol IS NULL OR worker_protocol = 'ccrv2'`，否则新 DSH 以 `idle` 释放后，旧 DSH 可以重新领取并写入旧路径，造成 split-brain。这两个过滤属于 P1 的正确性要求。
 - `worker_claim_expires_at` 保持现有职责：领取到注册的窗口，以及 `HoldExhausted`、`FailPermanently`、`admission_failed` 退避的停车列，`ResetExhausted` 与指标照常读取。
@@ -123,7 +124,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 - 语义同现行 `worker/register`：同一 epoch 允许重复注册，在同一事务内清空领取请求与期限，写入租约与连接状态。
 - **410 恢复路径**：租约过期但 epoch 未被推进时，DSH 以同一 epoch 重新 register 恢复租约，不需要重新 claim 和全量恢复；只有 `409 epoch_superseded` 才需要退役。
-- **接管清理**：当本次注册的 epoch 高于审批记录或 turn 记录上的 epoch 时，同一事务内按 7.6 关闭旧 epoch 的 pending 审批，并按 10.3 重新计算公开状态。open turn 不在注册时结束：它仍是 `processing`，未 ACK 的输入会重投给新 owner，由新 owner 按原生日志恢复后调用结束上报（通常是 `recovered`）。
+- **接管不清理审批与 turn**：pending 审批与 open turn 都由新 owner 继承。未 ACK 的输入会重投给新 owner，新 owner 按原生日志从回合中途恢复（7.7）：已解决的审批用同一 `request_id` 取回结果后继续执行，仍 pending 的审批继续等待或挂起。注册本身不改变公开状态。
 - 两种协议的 register 都拒绝 `worker_protocol = 'migrating'` 的会话（`409 session_migrating`）。
 - 响应：
 
@@ -343,7 +344,7 @@ transcript 一经确认不可改写，而 DSH 升级可能改变 Header 结构�
 - **身份**：`request_id = "dsrp_" + base32(sha256(code_session_id, dsh_session_id, tool_use_id))`，由服务端派生并在响应中返回；DSH 用同样规则在本地计算。审批按 `(dsh_session_id, tool_use_id)` 去重，恢复者无需知道旧进程的随机 ID 就能取消或查询。
 - **归属**：`input_id` 必须是该 Code Session 下处于 `processing` 的 task turn；`dsh_session_id` 对应的线程必须是该输入的目标线程，或同一 Code Session 内的子线程。不满足返回 `409 input_not_eligible`。
 - **子线程执行与输入的关联**：同一子线程可以被多次委派，静态的 parent 关系只能证明它属于该会话，不能证明某次调用属于当前输入。DSRv1 以 DSH 声明的 `input_id` 为准；服务端能校验的只有"该输入正在 processing"和"线程在同一会话树内"。由于 DSH 串行处理 task 输入，同一时刻至多有一个 processing turn，这一约束足以排除跨输入串扰。
-- **接管不继承审批**：新 owner 不恢复旧 owner 的等待项（4.4 把它们标为 `superseded`），恢复后的新调用使用新的 `tool_use_id`，从而得到新的 `request_id`。
+- **接管继承审批**：`request_id` 由 `(code_session_id, dsh_session_id, tool_use_id)` 派生，新 owner 从原生日志得到同一个 `tool_use_id`，就能算出同一个 `request_id`，用相同请求重新调用即可取得当前状态：`resolved` 时直接拿到决定，`pending` 时继续等待（7.7）。审批记录上的 `worker_epoch` 只是审计值，不影响继承。
 - **工具身份**：
   - `builtin`：DSH 内置工具，按 Agent 快照的内置工具集策略判定。
   - `mcp`：外部 MCP 工具，`server` 必填。
@@ -361,12 +362,11 @@ stateDiagram-v2
     [*] --> cancelled: 取消先于创建（墓碑）
     pending --> resolved: 用户确认 / 外部结果
     pending --> cancelled: DSH 取消
-    pending --> closed: 所属 turn 结束
-    pending --> superseded: 更高 epoch 注册
+    pending --> closed: 所属 turn 结束、中断或子线程终止
 ```
 
 - 每个 `request_id` 一行；所有转换都是对同一行的条件更新（`WHERE state = 'pending'`），竞争时只有一个成功，失败方读取并返回当前终态。
-- 终态（resolved、cancelled、closed、superseded）不可再转换。
+- 终态（resolved、cancelled、closed）不可再转换。
 
 ```text
 dsr_permission_requests
@@ -380,7 +380,7 @@ dsr_permission_requests
   session_thread_id text null
   tool_use_id text not null            -- 墓碑也必填，由取消请求提供
   request_sha256 bytea null
-  state text not null
+  state text not null                    -- pending | resolved | cancelled | closed
   decision jsonb null
   public_event_id text null
   worker_epoch bigint not null
@@ -410,7 +410,7 @@ dsr_permission_requests
 
 ### 7.4 解决
 
-用户确认或外部结果到达时，公开 API 在事务内把记录从 `pending` 改为 `resolved`，**并在同一事务内按 10.3 重新计算状态**；全部待确认解决后由该事务发布 `session.status_running`。更新失败（记录已是其他终态）时按现行"工具确认已过期"处理公开请求，不投递。成功后经 control lane 投递：
+用户确认或外部结果到达时，公开 API 在事务内把记录从 `pending` 改为 `resolved`，**并在同一事务内按 10.3 重新计算状态**；全部待确认解决后由该事务发布 `session.status_running`。如果此时没有有效租约（执行端崩溃或已挂起），同一事务置位 `worker_claim_requested_at`，提交后发出领取唤醒，使会话被重新领取。取消（7.5）与自动关闭（7.6）同样在没有有效租约时请求领取，以便新 owner 结束该 turn。更新失败（记录已是其他终态）时按现行"工具确认已过期"处理公开请求，不投递。成功后经 control lane 投递：
 
 ```json
 {
@@ -442,10 +442,32 @@ DSH 收到时若本地等待项不存在（已取消、turn 已结束或属于�
 | --- | --- | --- |
 | 结束上报（9.3） | 该 `input_id` 下的 pending | `closed` |
 | 公开 `user.interrupt` 被接纳 | 目标线程（缺省为全部线程）的 pending | `closed` |
-| 更高 epoch 注册（4.4） | `worker_epoch` 低于新 epoch 的 pending | `superseded` |
 | 子线程终止 | 该线程的 pending | `closed` |
 
-接管清理保证：DSH 崩溃后新进程即使不知道旧审批，公开状态也不会停在 `requires_action`，新 `user.message` 不会因残留记录被持续拒绝。
+接管不关闭审批。执行端崩溃后，pending 审批原样保留，公开状态保持 `requires_action`，这与事实一致：会话确实在等用户。用户可以批准、拒绝或中断；任何一种都会关闭等待并唤醒领取。
+
+### 7.7 接管恢复与挂起
+
+**DSH 的恢复要求**（P4 的前置条件）：新 owner 从原生日志**从回合中途继续**，而不是把未完成的回合直接结束。按日志中最后一个工具调用的状态处理：
+
+| 原生日志中的状态 | 含义 | 恢复动作 |
+| --- | --- | --- |
+| 模型步骤已记录（`assistant/message`），后续没有工具调用 | 模型已经回答 | 从下一步继续，不重新请求模型 |
+| 有工具调用块，但没有 `tool/call` | 工具没有开始执行（屏障 1 保证 `tool/call` 先于执行落盘） | 需要审批的工具：用同一 `request_id` 调用 permission-requests，`resolved` 按决定执行或拒绝，`pending` 继续等待；不需要审批的工具：直接执行 |
+| 有 `tool/call`，没有 `tool/result` | 工具可能已经执行，结果未知 | **不重放**，沿用 `TOOL_OUTCOME_UNKNOWN`，提示模型先核实 |
+| 有 `tool/result` | 工具已完成 | 从下一步继续 |
+
+审批记录为 `cancelled` 或 `closed` 时，按拒绝处理该工具调用；所属输入已被中断时，以 `cancelled` 结束该 turn。
+
+**挂起**：会话的所有 open turn 都只在等待 pending 审批时，DSH 可以在等待超过空闲退役时限（默认 60 秒）后关闭输入流并以 `idle` release，释放执行端容量。此时：
+
+- turn 保持 `processing`，审批保持 `pending`，公开状态保持 `requires_action`；
+- 任务输入不 ACK，留在 JetStream 中，重新领取后会被重投；
+- 审批被解决、取消、关闭，或收到中断时，服务端唤醒领取（7.4），新 owner 按上表恢复。
+
+挂起不改变任何公开事件，用户感知不到执行端是否在内存中等待。
+
+**边界**：等待超过入站消息的 30 天逻辑期限时，输入会过期，turn 无法再恢复。此时服务端以 `failed` 结束该 turn 并关闭其审批，公开 `session.error`。
 
 ## 8. 公开输出
 
@@ -579,7 +601,8 @@ stateDiagram-v2
 | 场景 | 行为 |
 | --- | --- |
 | 结束上报成功，响应丢失或 ACK 失败 | 输入重投给后续 owner；新 owner 回执 `processing`（no-op），从原生日志识别已完成输入，补发输出（幂等），重调结束上报（终态优先，返回首次结果），再 `processed` 回执；不重做工具、不重复终态 |
-| 等待审批时崩溃 | 租约过期后按 open turn 领取（4.3）；注册时 pending 变为 `superseded`；重投的输入由新 owner 恢复并以 `recovered` 结束 |
+| 等待审批时崩溃 | 不立即领取，会话保持 `requires_action`；审批被解决、取消或中断时唤醒领取；新 owner 按 7.7 从回合中途恢复，已批准的工具照常执行 |
+| 执行中崩溃 | 租约过期后按 processing turn 领取（4.3）；新 owner 按 7.7 恢复，结果未知的工具不重放 |
 | `processed` 回执 早于结束上报 | `409 finish_required` |
 | 结束上报早于 `processing` | `409 input_not_eligible` |
 | 结束上报 A 与接纳 B 并发 | 共享公开 Session 锁串行；reducer 在锁内看到 B 是否已接纳 |
@@ -625,9 +648,8 @@ reducer 只在以下事务内运行，每个触发点都在同一事务内写入
 | --- | --- |
 | 公开 `user.message` 接纳 | idle → running |
 | 审批创建为 pending | running → requires_action |
-| 审批 resolved/cancelled/closed/superseded | requires_action → running 或 idle |
+| 审批 resolved/cancelled/closed | requires_action → running 或 idle |
 | 结束上报 | running → idle 或保持 running |
-| 更高 epoch 注册 | 清理旧 pending 后重新计算 |
 | DSH 输出子线程状态事件 | 聚合变化 |
 | 预算暂停与解除 | 按现行 |
 
@@ -676,7 +698,7 @@ reducer 只在以下事务内运行，每个触发点都在同一事务内写入
 指标与日志（扩展现有 `oma.brain_claim.*`，字段遵循 Go 日志规范，不记录 payload）：
 
 - transcript：追加延迟、批大小、`gap`/`conflict` 次数、DSH 端待确认积压。
-- permission：创建结果分布（allow/deny/pending）、pending 时长、自动关闭原因（closed/superseded）。
+- permission：创建结果分布（allow/deny/pending）、pending 时长、自动关闭原因（complete、中断、子线程终止）、挂起时长与唤醒领取次数。
 - turn：结束上报的 result 与 reason 分布、`finish_required` 次数、processing 到 terminal 时长。
 - 回填：会话状态分布、批次耗时、失败原因。
 - reducer：每个触发点的状态转换次数。
@@ -699,7 +721,7 @@ reducer 只在以下事务内运行，每个触发点都在同一事务内写入
 | P1 | 后端状态来源替换：`dsr_turns`、`dsr_permission_requests`、reducer、输入拒绝与删除准入改读新表、确定性状态事件 ID；先只对 dsr1 会话生效 |
 | P2 | 后端 DSR 接口：claim/register/heartbeat/worker-state/context、inputs、transcript、permission-requests（含同事务发布）、public-events、result；协议围栏与两侧 claim 过滤；切换开关默认关闭 |
 | P3 | 协议状态转换、静止检查、投递时补建 turn 与回填任务（13.2–13.5） |
-| P4 | DSH `src/dsr/` 客户端，按 transcript 拆队列，完整替换 `src/ccrv2/`；同一构建只说一种协议 |
+| P4 | DSH `src/dsr/` 客户端，按 transcript 拆队列，完整替换 `src/ccrv2/`；同一构建只说一种协议；**实现回合中途恢复与等待审批时挂起（7.7）**，未完成前不得切流 |
 | P5 | 切流（13.3），稳定后清理（第 14 节） |
 
 P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来做会与旧 worker 状态机冲突。
@@ -784,7 +806,7 @@ stateDiagram-v2
   - 比较：`1`/`1.0`、指数、键序、转义、大整数的 TS/Go 共用样本；摘要不同但语义相同时不判冲突。
 - **Permission**
   - 失败：`input_id` 不属于该会话或未 processing、线程不属于该输入、同 `request_id` 不同内容、取消先到后创建不重开、resolved 与 cancel 竞争只有一个生效、结束上报后迟到的确认不执行工具、旧 epoch 迟到审批、事务失败时不出现公开 requires_action。
-  - 成功：allow/deny/pending、custom 与外部执行先经策略、delegation 按 multiagent 配置、子线程终止拒绝；resolved 早于 202 仍完成等待；POST 响应丢失后重试取得终态；接管时旧 pending 被 superseded，新输入不再 400；中断与 allow 竞态的两种结果。
+  - 成功：allow/deny/pending、custom 与外部执行先经策略、delegation 按 multiagent 配置、子线程终止拒绝；resolved 早于 202 仍完成等待；POST 响应丢失后重试取得终态；接管后新 owner 用同一 `request_id` 继承 pending 或取回结果；中断与 allow 竞态的两种结果。
 - **Turn 与结束上报**
   - 失败：任意或其他会话的 `input_id`、未 processing 即结束上报、同 result 不同 reason、`processed` 回执 早于结束上报、旧 epoch 结束上报、自由文本被拒。
   - 成功：结束上报成功但 ACK 失败后接管，不重做工具、不重复终态；结束上报 A 与接纳 B 并发不覆盖 running；A failed 且 B 排队时继续处理 B。
@@ -795,7 +817,7 @@ stateDiagram-v2
 - **迁移**
   - 失败：进入 `migrating` 后旧 owner 的 register 与写入均被拒（批次之间也不例外）；非静止会话（租约有效、requires_action、有未处理输入或待确认记录）不转换；软删除缺口回退为 `ccrv2` 并推进 epoch；投递时找不到 `session_events` 行的输入被 NAK。
   - 成功：归档历史回填（v1 段按幂等键重建身份）；半途崩溃后从检查点续跑；`migrating` 期间接纳的输入在 dsr1 领取后投递且有 turn；转换前已拉取未 ACK 的输入在投递时补建为 `processing` 并以 `recovered` 结束；旧 DSH、新 DSH 与升级后端并存。
-- **接管**：等待审批时 SIGKILL，公开会话为 `idle(requires_action)`，租约过期后被 open turn 条件领取，pending 变为 `superseded`，输入以 `recovered` 结束，新 `user.message` 不再被拒；terminal 输入重投时 `processing` 为 no-op，结束上报返回首次结果。
+- **接管**：等待审批时 SIGKILL，会话保持 `idle(requires_action)` 且不被领取；用户批准后唤醒领取，新 owner 用同一 `request_id` 取回 allow 并执行工具；用户拒绝或中断后同样唤醒，新 owner 按拒绝或 `cancelled` 结束；执行中 SIGKILL 后按 processing turn 领取，已记录的模型步骤不重新请求，结果未知的工具不重放；terminal 输入重投时 `processing` 为 no-op，结束上报返回首次结果。
 - **子线程引导**：子线程 Header 在 `thread_created` 之前写入成功；`thread_created` 在 transcript 不存在或 parent 不符时被拒；同一 transcript 绑定不同线程被拒；线程状态事件重启补发后不重复。
 - **归档保真**：归档后同序号重复追加被判为重复或冲突，而不是插入新行；v2 段还原后两列与原值一致；v1 段重建的 seq 与 payload 不符时还原失败。
 - **取消墓碑**：缺少 `dsh_session_id` 或 `tool_use_id` 被拒；派生 ID 与路径不符被拒；墓碑后到的创建返回 `cancelled`。
@@ -807,7 +829,9 @@ stateDiagram-v2
 
 以下是冻结前必须通过的场景，尚未执行：
 
-- [ ] pending 审批时 SIGKILL，租约到期后无需用户操作即可接管；审批变为 `superseded`，输入以 `recovered` 结束，新输入不再被拒。
+- [ ] pending 审批时 SIGKILL：会话保持 `requires_action`、不被领取；用户批准后由新 owner 执行该工具，拒绝或中断后正确结束。
+- [ ] 等待审批超过空闲时限后挂起（release idle），解决后唤醒领取并从回合中途恢复，公开事件与未挂起时一致。
+- [ ] 执行中崩溃后从回合中途恢复：已记录的模型步骤不重新请求，未开始的工具照常执行，结果未知的工具不重放。
 - [ ] 结束上报提交后分别丢失响应、丢失 ACK：公开会话已 idle 时仍按 `acked_at` 为空被重新领取，重投只补结算，不重做工具。
 - [ ] legacy 会话中已排队、processing、已完成未 ACK 三类输入：静止检查拒绝转换，或转换后安全结算。
 - [ ] 回填两个批次之间，旧 owner 尝试 register 和写入，全部被围栏拒绝。
@@ -830,7 +854,8 @@ stateDiagram-v2
 - `dsr_turns` 作为 turn 事实来源；结束上报只接受枚举 reason。
 - 公开状态由移植自现行规则的单一 reducer 计算，状态事件 ID 确定性派生。
 - 开发分阶段，状态来源替换先于同步审批；切流在后端全量升级后按会话进行；回填异步且失败回退。
-- 存在 open turn 且租约过期时可被领取；等待审批时崩溃由系统主动恢复，不等待用户响应。
+- 存在 processing 且没有 pending 审批的 turn、租约过期时可被领取；只在等待审批的 turn 不被领取，审批解决、取消、关闭或中断时唤醒领取。
+- 接管继承审批与 turn，不再有 `superseded` 状态；DSH 从回合中途恢复（7.7）是 P4 的前置条件；等待审批时允许挂起。
 - terminal 优先：终态之后的 `processing` 为 no-op，结束上报先返回首次结果，再检查前置条件。
 - 进入 `migrating` 即推进 epoch 并拒绝两侧注册；存量会话只在静止时转换；没有 turn 的在途输入在投递时补建。
 - 唯一索引不以 `deleted_at` 为条件；archive codec v2 保存身份列，v1 段按幂等键重建。
@@ -854,7 +879,7 @@ stateDiagram-v2
 
 | 问题 | 决定 | 理由 |
 | --- | --- | --- |
-| 等待审批时崩溃：主动撤回，还是保留审批等用户响应 | **主动撤回**（3.3、4.3）。新 owner 把 pending 标为 `superseded`，输入以 `recovered` 结束，公开会话收到固定恢复文案与 `idle(retries_exhausted)` | 恢复不重放未完成的调用，保留的审批即使被批准，工具也不会执行，界面上的审批请求实际已经失效。保留方案还需要另外设计"用户响应才触发领取"的路径，并且在用户响应之前持续拒绝新输入。主动撤回让状态与事实一致，用户可以立刻重新提问 |
+| 等待审批时崩溃：主动撤回，还是保留审批等用户响应 | **保留审批，恢复后继续**（第 8 版改定，见 3.3、4.3、7.7）。会话保持 `requires_action`，用户响应后唤醒领取，新 owner 从回合中途恢复并按决定执行 | 第 6 版选择撤回，是因为当时 DSH 恢复会放弃未完成的回合，批准不会生效。确定性 `request_id` 与原生日志已经足以让新 owner 取回审批结果并继续，缺的只是 DSH 的回合中途恢复能力，因此改为把它列为 P4 前置条件。这样审批不会因执行端故障消失，等待期间还能挂起、释放执行端 |
 | 中断时服务端是否自动关闭目标线程的 pending | **关闭**（7.6），终态为 `closed`。之后迟到的确认按现行"工具确认已过期"响应 | DSH 收到中断后本来就放弃等待，只是把清理交给可能丢失的 cancel 请求。由服务端在接纳中断的事务内关闭，不依赖执行端存活，也避免中断后会话停在 requires_action、新输入被拒。迟到确认沿用已有的过期响应，公开 API 不新增错误类型 |
 | legacy 截止日期与通知 | 默认 **开启切换后 30 天**，可通过部署配置调整；通知方式为发布说明与部署文档，到期前 7 天起在后端启动日志与指标告警中提示剩余的 legacy 会话数 | OMA 是自托管部署，直接受影响的是部署运维者，而不是最终用户；平台没有逐客户通知的通道，也不应为此新建。30 天覆盖常见的长时间空闲会话，只有回填失败或始终不静止的会话会走到截止日 |
 | `dsr_transcripts`、`dsr_turns`、`dsr_permission_requests` 是否需要 `external_id` | **不需要** | `external_id` 的作用是兼容 Anthropic API 的资源 ID。这三张表是执行端内部的元数据与状态，不通过任何公开 API 暴露，也不进入事件 payload；`uuid` 已满足稳定标识与跨表引用规则。日后若需要对外暴露，再通过迁移补列 |
@@ -877,3 +902,4 @@ stateDiagram-v2
 | 7.3 | 接口改名：路径前缀 `/v1/dsr/sessions/{id}` 改为 `/v1/dsr/code-sessions/{code_session_id}`，`output` 改为 `public-events`，`inputs/ack` 改为 `inputs/delivery`，`inputs/{input_id}/complete` 改为 `inputs/{input_id}/outcome`，`state` 改为 `worker-state`，`permissions` 改为 `permission-requests`；错误码 `input_not_completed`、`turn_idempotency_mismatch`、`output_idempotency_mismatch` 改为 `outcome_required`、`outcome_idempotency_mismatch`、`public_event_idempotency_mismatch`；claim 响应的 `ingress_token` 改为 `session_token`；明确预览事件不落库、逐条扇出、不参与整批原子性与幂等 |
 | 7.4 | 为避免与 CMA Outcomes 功能（`user.define_outcome`、`span.outcome_evaluation_*`、会话配置 `outcomes`）混淆，结束接口改为 `inputs/{input_id}/finish`，请求与响应字段 `outcome` 改为 `result`，`dsr_turns.outcome` 列改为 `result`，错误码改为 `finish_required` 与 `finish_idempotency_mismatch`，正文称为"结束上报" |
 | 7.5 | 路径前缀改回 `/v1/dsr/sessions/{code_session_id}`：`/v1/dsr/` 命名空间只面向执行端，公开 Session 不会出现在这些路径中，且 ID 自带 `cse_` 前缀；保留路径参数名 `{code_session_id}` 以示区分。claim 响应字段 `session_id` 改为 `code_session_id`，与路径参数和 release 路径一致 |
+| 8 | 等待审批时崩溃由"撤回审批"改为"保留审批、恢复后继续"：删除 `superseded` 状态与注册时的接管清理；领取条件只对没有 pending 审批的 processing turn 生效；审批解决、取消、关闭或中断时在无有效租约的情况下唤醒领取；新增 7.7 节定义 DSH 回合中途恢复规则与等待审批时挂起，并列为 P4 前置条件 |

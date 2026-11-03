@@ -48,6 +48,15 @@ describe('alert text analysis', () => {
     expect(analysis?.summary.length).toBeLessThan(message.length);
   });
 
+  test('keeps a plain message that mentions an HTML closing tag intact', () => {
+    expect(analyzeAlertText('Unexpected token </body> in template.')).toEqual({
+      detail: null,
+      html: false,
+      status: null,
+      summary: 'Unexpected token </body> in template.',
+    });
+  });
+
   test('returns null for blank text', () => {
     expect(analyzeAlertText('   ')).toBeNull();
   });

@@ -1,6 +1,6 @@
 # DSRv1：DSH Session Remote 协议
 
-状态：设计草案（第 9 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。各接口的请求、响应、状态码与示例见 [DSRv1 接口参考](api-reference.md)。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
+状态：设计草案（第 10 版），**尚未冻结**，不进入实现。本文定义 `oma-brain-dsh`（下称 DSH）与 OMA 后端之间的执行端协议合同，用于替代当前 Brain 使用的 CCRv2。现行实现见 [沙箱外 Agent 与 CCRv2](../brain-runtime.md)、[Brain Worker 领取](../brain-worker-claim.md) 与 `docs/design/be/ccrv2/`。各接口的请求、响应、状态码与示例见 [DSRv1 接口参考](api-reference.md)。评审依据为 OMA 提交 `64f3332` 与 deepseek-harness 提交 `f3803c9697`（即 [沙箱外 Agent 与 CCRv2](../brain-runtime.md) 记录的 `dsh-v0.2.2-alpha.2` 发布标签所在提交；OMA 通过 npm 固定依赖该发布的包，实现时仍以 lockfile 解析出的版本为准）；修订记录见第 18 节。
 
 冻结条件：第 7（审批）、第 9（输入与 turn）、第 10（公开状态 reducer）三个状态机的不变量经评审确认。第 17 节的待定问题已在第 6 版全部决定，冻结前只需评审这些决定，并确认 15.1 的验收条件。
 
@@ -35,9 +35,9 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 | DSH 端 transcript 前缀对账中的去重与冲突判定 | 服务端条件追加与 `dsr_transcripts` 元数据（第 6 节） |
 | `external_metadata` 的自由 merge patch | 有类型的 worker state（4.6） |
 | sandbox 模式、`session_ingress/*`、60+10 秒租约参数 | — |
-| — | 回填任务与迁移围栏（第 13 节） |
+| — | 一次性切换与存量会话终止（第 13 节） |
 
-**DSRv1 的数据只写新表，不修改现有表结构**：transcript 事件写入新表 `dsr_transcript_events`，归档写入新表 `dsr_transcript_archives`，与 `dsr_transcripts`、`dsr_turns`、`dsr_permission_requests` 一起构成 DSR 的全部持久化。所有 migration 都是新增表，不 ALTER、不在现有大表上建索引、不原地改写历史行；新旧协议的数据完全隔离，回退时旧路径的数据保持原样（6.6）。
+**DSRv1 的数据只写新表，不修改现有表结构**：transcript 事件写入新表 `dsr_transcript_events`，归档写入新表 `dsr_transcript_archives`，与 `dsr_transcripts`、`dsr_turns`、`dsr_permission_requests` 一起构成 DSR 的全部持久化。所有 migration 都是新增表，不 ALTER、不在现有大表上建索引、不原地改写历史行；新旧数据完全隔离（6.6），历史执行数据不迁移（第 13 节）。
 
 ## 3. 目标、非目标与兼容边界
 
@@ -91,7 +91,7 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 - 每个请求携带 `DSR-Protocol: 1`。缺失或不支持返回 `400`，`DSR-Error: unsupported_protocol`。
 - **词汇由协议版本固定，不在运行时协商。** v1 的输出类型（8.2）与输入 kind（9.1）以本文白名单为准。任何增删或字段语义变化都必须发布新的协议版本（例如 `DSR-Protocol: 2`），不在 v1 内追加。
 - **版本绑定到会话**：register 把请求头中的版本记录到 Code Session（`metadata.config.dsr_protocol_version`）。此后该 epoch 的所有请求必须携带同一版本，否则返回 `400 unsupported_protocol`；后端只向该会话投递该版本定义过的输入 kind。新 epoch 注册时可以换成另一个受支持的版本。
-- **部署顺序**：新版本先在全部后端实例上线（后端可同时支持多个版本，按请求头分派），确认没有旧实例后再升级 DSH 使用新版本；下线旧版本前，确认没有会话仍记录旧版本。这与 13.3 的"后端先全量升级"是同一条纪律，因为版本支持是全后端统一的规则，不依赖单个实例在某次请求中的回答。
+- **部署顺序**：新版本先在全部后端实例上线（后端可同时支持多个版本，按请求头分派），确认没有旧实例后再升级 DSH 使用新版本；下线旧版本前，确认没有会话仍记录旧版本。这与 13.2 的切换顺序（先后端、后 DSH）是同一条纪律，因为版本支持是全后端统一的规则，不依赖单个实例在某次请求中的回答。
 - 因此 `/public-events` 对未知类型严格返回 400 不会在升级中误伤：DSH 只发送它注册时所用版本定义的类型，而所有后端实例都已支持该版本。
 - DSR 自有的 ID、epoch 与游标（`next_seq`、`from_seq`、`next_from_seq`）在 JSON 中为字符串。内嵌的原生 Header/Event 保持原样，`SessionEvent.seq` 仍是 number，服务端校验它是非负安全整数（≤ 2^53 − 1）。
 
@@ -103,18 +103,17 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 | session token | `/v1/dsr/sessions/{code_session_id}/*` | claim 签发的 JWT，claims 含 `code_session_id`、`epoch`、`protocol: "dsr1"` 与租户身份 |
 | model token | `/v1/messages` | 沿用现行 |
 
-epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在执行授权阶段与写事务内做 fence。CCRv2 路由拒绝 `protocol: "dsr1"` 的 token，DSR 路由拒绝不带该 claim 的 token。
+epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在执行授权阶段与写事务内做 fence。DSR 路由拒绝不带该 claim 的 token，旧 CCRv2 签发的 token 因此无法访问 DSR 接口。
 
 ### 4.3 Claim 与 Release
 
 - `POST /v1/dsr/claims?block_ms=25000`：请求与响应字段同现行 claim，仅两处改名：`session_id` 改为 `code_session_id`，`ingress_token` 改为 `session_token`（字段为 `code_session_id`、`worker_epoch`、`session_token`、`model_token`、`claim_expires_at`、`trace_parent`），token 增加 `protocol` claim。**不合并注册，不内嵌 context。**
-- 领取 SQL 增加 `metadata.config.worker_protocol = 'dsr1'`；`migrating` 状态的会话不被任何一侧领取（13.2）。
+- 领取 SQL 增加 `metadata.config.worker_protocol = 'dsr1'`：新后端创建的会话都带这个标记，切换前创建的 CCRv2 会话没有它，不会被 DSH 领取（13.2）。
 - **可领取条件增加未结算 turn**：除现行的"存在领取请求或公开会话 running/rescheduling"外，若租约加宽限已过，且存在以下任一 turn，也可领取：
   - `processing` 且非 terminal，**并且该 turn 没有 pending 审批**（执行中崩溃：公开会话可能已显示 idle 或 running，需要新 owner 接着执行）；
   - terminal 但 `acked_at` 为空（结束上报已提交、`processed` 回执 前崩溃：公开会话可能已经 idle，未 ACK 的输入仍需新 owner 补 ACK）。
 - **只在等待审批的 turn 不会被领取**：它在等用户，没有可执行的工作，领取只会让新 owner 在内存里继续空等。审批被解决、取消或关闭时，该事务置位 `worker_claim_requested_at` 并发出领取唤醒（7.4），会话随即满足"存在领取请求"的条件。这也让等待审批成为挂起：执行端可以释放会话（7.7）。
 - 这一扩展仍排除：`budget_reached` 暂停中的会话、`worker_claim_expires_at` 未到期的耗尽 hold 与退避行、非 active 或已终止的 Code Session。
-- 旧 claim 接口**必须**同时增加 `worker_protocol IS NULL OR worker_protocol = 'ccrv2'`，否则新 DSH 以 `idle` 释放后，旧 DSH 可以重新领取并写入旧路径，造成 split-brain。这两个过滤属于 P1 的正确性要求。
 - `worker_claim_expires_at` 保持现有职责：领取到注册的窗口，以及 `HoldExhausted`、`FailPermanently`、`admission_failed` 退避的停车列，`ResetExhausted` 与指标照常读取。
 - `POST /v1/dsr/claims/{code_session_id}/release`：同现行，字段名不变。
 
@@ -125,7 +124,6 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 - 语义同现行 `worker/register`：同一 epoch 允许重复注册，在同一事务内清空领取请求与期限，写入租约与连接状态。
 - **410 恢复路径**：租约过期但 epoch 未被推进时，DSH 以同一 epoch 重新 register 恢复租约，不需要重新 claim 和全量恢复；只有 `409 epoch_superseded` 才需要退役。
 - **接管不清理审批与 turn**：pending 审批与 open turn 都由新 owner 继承。未 ACK 的输入会重投给新 owner，新 owner 按原生日志从回合中途恢复（7.7）：已解决的审批用同一 `request_id` 取回结果后继续执行，仍 pending 的审批继续等待或挂起。注册本身不改变公开状态。
-- 两种协议的 register 都拒绝 `worker_protocol = 'migrating'` 的会话（`409 session_migrating`）。
 - 响应：
 
 ```json
@@ -175,7 +173,6 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 | 409 | `transcript_header_required` | 先写 Header 再追加 |
 | 409 | `transcript_gap` | 从 `DSR-Next-Seq` 补发 |
 | 409 | `transcript_conflict` | 停止恢复，保留本地文件 |
-| 409 | `session_migrating` | 释放为 `shutdown`，稍后重试 |
 | 409 | `permission_idempotency_mismatch` | 视为缺陷，停止该会话 |
 | 409 | `public_event_idempotency_mismatch` | 视为缺陷，停止该会话 |
 | 409 | `finish_idempotency_mismatch` | 视为缺陷，停止该会话 |
@@ -206,7 +203,7 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 ## 6. Transcript（DSH 原生日志）
 
-术语说明：本文的 transcript 指 **DSH 原生 Session 日志**（Header + Event），存放在新表 `dsr_transcripts` 与 `dsr_transcript_events`，由 `transcriptarchive` 与 `transcriptretention` 扩展后归档、还原与删除。CCRv2 时期写入 `code_session_internal_events` 的 `dsh_log` 行只作为回填来源（13.5）。它不是 CCRv2 时代的 Claude Code transcript 格式，也不是可观测性功能中经 OTLP 导出、在 Console 展示的会话轨迹（trajectory）。
+术语说明：本文的 transcript 指 **DSH 原生 Session 日志**（Header + Event），存放在新表 `dsr_transcripts` 与 `dsr_transcript_events`，由 `transcriptarchive` 与 `transcriptretention` 扩展后归档、还原与删除。CCRv2 时期写入 `code_session_internal_events` 的 `dsh_log` 行不迁移（第 13 节）。它不是 CCRv2 时代的 Claude Code transcript 格式，也不是可观测性功能中经 OTLP 导出、在 Console 展示的会话轨迹（trajectory）。
 
 ### 6.1 资源模型
 
@@ -271,10 +268,10 @@ epoch 只来自 session token，请求体不携带 `worker_epoch`；服务端在
 
 - 现有表数据量大，goose migration 在事务内执行，无法 `CREATE INDEX CONCURRENTLY`，在大表上建唯一索引会长时间锁表；
 - 同一张表混放旧的 `{type, uuid, data}` 包装行与新的原生行，读取路径要长期兼容两种格式；
-- 原地回填会改写旧协议仍在使用的数据，回退到 CCRv2 时无法保证旧数据原样；
-- 新表可以直接删除回滚，新旧协议的约束互不影响。
+- 历史执行数据不迁移（第 13 节），新表不需要承载旧格式，旧表也不需要为新协议改造；
+- 新表可以直接删除回滚，与旧表的约束互不影响。
 
-代价是归档、还原、物理删除与 blob GC 要扩展到新表（6.8），回填期间存在双份存储（12）。
+代价是归档、还原、物理删除与 blob GC 要扩展到新表（6.8）。
 
 新增 goose migration，全部为 CREATE TABLE，不创建外键：
 
@@ -290,8 +287,6 @@ dsr_transcripts                         -- 每个 DSH 原生 Session 一行
   header_sha256 bytea null
   next_seq bigint not null default 0
   state text not null                  -- active | purged
-  migration_state text not null        -- legacy | migrating | ready
-  migration_checkpoint jsonb null
   created_at, updated_at, deleted_at
   unique (code_session_uuid, dsh_session_id)
 
@@ -353,7 +348,7 @@ dsr_transcript_archives                 -- 归档段
 
 transcript 一经确认不可改写，而 DSH 升级可能改变 Header 结构、版本号或 seq 的生成方式（例如上游 Session 格式迁移在读取时重写记录）。约束如下：
 
-- 区分两种迁移：OMA 传输层的回填（第 13 节，不改写 payload）与 DSH 原生格式迁移（例如上游 v3 到 v4 的迁移会修改 Header、插入事件并重新映射 seq）。后者产生的是"同一 Session 的另一份日志"，不能接续到已确认的 transcript 上。
+- DSH 原生格式迁移（例如上游 v3 到 v4 的迁移会修改 Header、插入事件并重新映射 seq）产生的是"同一 Session 的另一份日志"，不能接续到已确认的 transcript 上。
 - **DSRv1 只支持固定的原生格式版本 4**，与当前 `0.2.2-alpha.2` 一致。Header PUT 校验 `version` 在服务端允许列表 `[4]` 内，否则返回 `400 unsupported_transcript_version`；不接受迁移后的接续写入。
 - 一条 transcript 的 Header `version` 在创建时固定。DSH 升级后，已有 transcript 继续按原版本追加。
 - 支持新的原生版本需要引入按 generation 划分的 transcript（同一 `dsh_session_id` 下多代日志，旧代只读），属于 DSRv2 的范围。
@@ -738,86 +733,53 @@ reducer 只在以下事务内运行，每个触发点都在同一事务内写入
 - transcript：追加延迟、批大小、`gap`/`conflict` 次数、DSH 端待确认积压。
 - permission：创建结果分布（allow/deny/pending）、pending 时长、自动关闭原因（complete、中断、子线程终止）、挂起时长与唤醒领取次数。
 - turn：结束上报的 result 与 reason 分布、`finish_required` 次数、processing 到 terminal 时长。
-- 回填：会话状态分布、批次耗时、失败原因。
+- 切换：被终止的存量会话数、切换后仍尝试访问旧接口的请求数。
 - reducer：每个触发点的状态转换次数。
 
 容量：
 
 - 单条 transcript 事件 15 MiB，请求体 16 MiB，读取页软预算 8 MiB；单会话 transcript 无硬上限，按 Transcript 保留规则治理。
 - 追加、审批、结束上报都锁 `code_sessions` 行，与现行 internal events 的写入方式相同；审批与结束上报额外锁公开 Session，锁顺序固定为公开 Session → Code Session → 业务行。
-- 回填期间存在双份存储：已转换会话的历史同时存在于旧 internal events 与新表。旧行不删除，按现有保留规则自然过期；需要尽早释放空间时，可在会话转换完成且新表确认可读后，由运维任务按会话清理旧 `dsh_log` 行。
+- 旧 `code_session_internal_events` 中的 `dsh_log` 行不迁移、不再写入，按现有保留规则自然过期；新旧数据不存在需要同步的双份窗口。
 
-## 13. 迁移与发布
+## 13. 发布与切换
 
-开发分阶段与生产切流分开：开发可以多个 PR 合入，新接口在切流前不承接生产会话；切流按会话进行，一个会话任一时刻只允许一种协议写入。
+**不兼容历史执行数据。** 切换前由 CCRv2 执行的会话，其私有执行状态（`code_session_internal_events` 中的 `dsh_log`、`external_metadata` 中的待确认记录、`worker_turn_started` 等）不迁移到 DSRv1，这些会话也不能在 DSRv1 上继续执行。公开历史（`session_events`）不受影响，用户仍可查看。由此省去协议并存期、迁移状态、静止检查与回填。
 
 ### 13.1 开发阶段
 
 | 阶段 | 内容 |
 | --- | --- |
 | P0 | sandbox 模式弃用。版本 N：`agent_mode: sandbox` 启动时输出弃用警告，行为不变。版本 N+1：删除 sandbox 分支，所有 `== "brain"` 判断变为无条件，`agent_mode` 字段被忽略并告警（不报错，避免旧部署起不来）。P0 前先核对配置模板、Runner、镜像与部署入口 |
-| P1 | 后端状态来源替换：`dsr_turns`、`dsr_permission_requests`、reducer、输入拒绝与删除准入改读新表、确定性状态事件 ID；先只对 dsr1 会话生效 |
-| P2 | 后端 DSR 接口：claim/register/heartbeat/worker-state/context、inputs、transcript、permission-requests（含同事务发布）、public-events、result；协议围栏与两侧 claim 过滤；切换开关默认关闭 |
-| P3 | 协议状态转换、静止检查、投递时补建 turn 与回填任务（13.2–13.5） |
-| P4 | DSH `src/dsr/` 客户端，按 transcript 拆队列，完整替换 `src/ccrv2/`；同一构建只说一种协议；**实现回合中途恢复与等待审批时挂起（7.7）**，未完成前不得切流 |
-| P5 | 切流（13.3），稳定后清理（第 14 节） |
+| P1 | 后端状态来源：新表（第 6、7、9 节）、reducer、输入拒绝与删除准入改读新表、确定性状态事件 ID；只对带 `worker_protocol = dsr1` 的会话生效 |
+| P2 | 后端 DSR 接口：claim/register/heartbeat/worker-state/context、inputs、transcript、permission-requests（含同事务发布）、public-events、finish；部署开关 `code_session.worker_protocol` 默认 `ccrv2`，开关为 `dsr1` 时新会话写入标记并只由 DSR 领取 |
+| P3 | DSH `src/dsr/` 客户端，按 transcript 拆队列，完整替换 `src/ccrv2/`；同一构建只说一种协议；**实现回合中途恢复与等待审批时挂起（7.7）** |
+| P4 | 一次性切换（13.2） |
+| P5 | 删除 CCRv2 代码与文档（第 14 节） |
 
-P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来做会与旧 worker 状态机冲突。
+P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来做会与旧 worker 状态机冲突。P1–P3 可以分多个 PR 合入，开关保持 `ccrv2` 时不影响生产。
 
-### 13.2 会话协议状态与围栏
+### 13.2 一次性切换
 
-`metadata.config.worker_protocol` 取值 `ccrv2`（含缺省）、`migrating`、`dsr1`。转换在锁定公开 Session 与 Code Session 的事务内进行：
+前置条件：新后端与新 DSH 在测试环境通过 15.1 的冻结验收；DSH 已实现 7.7。
 
-```mermaid
-stateDiagram-v2
-    ccrv2 --> migrating: 静止检查通过，epoch + 1
-    migrating --> dsr1: 回填完成，epoch + 1
-    migrating --> ccrv2: 校验失败，epoch + 1
-```
+在同一个发布窗口内依次执行：
 
-- **进入 `migrating` 时就推进 epoch**，而不是到 ready 才推进。此后旧 owner 的 token 全部失效。两种协议的 claim 都不选中该会话，两种协议的 register 都返回 `409 session_migrating`，因此回填批次之间不会有旧 owner 重新注册写入。
-- 每次状态转换都推进 epoch，任何一侧的旧 token 都不能跨越转换继续写入。
-- `migrating` 期间公开输入照常接纳，并按目标协议写入 `dsr_turns`（13.4）；消息留在 JetStream 中，待 dsr1 owner 领取后投递。
+1. **停止旧 DSH**：旧进程停止领取并以 `shutdown` 释放会话。
+2. **部署新后端并打开开关**（`code_session.worker_protocol: dsr1`）：新建的会话写入 `worker_protocol = dsr1`；CCRv2 Worker 路由与旧 claim 接口返回 `404`，不再接受任何写入。
+3. **终止存量会话**：一次性任务找出所有 active 且没有 `dsr1` 标记的 Code Session，逐个复用现有会话终止路径：推进 epoch 使旧 token 失效，终止 Code Session 与关联 Work，对仍为 active 的公开 Session 发布 `session.error`（固定文案：执行端已升级，此会话无法继续，请新建会话）与 `session.status_terminated`。任务按会话幂等，可以重复执行。
+4. **部署新 DSH**：开始领取 `dsr1` 会话。
 
-### 13.3 切流步骤
+说明：
 
-前置条件：全部后端实例已升级到 P2 版本（旧后端的领取 SQL 没有协议过滤，存在旧后端时不得开启）；回填在目标环境完成演练。
+- 步骤 2 到 4 之间新会话可以创建、输入照常接纳，只是暂时没有执行端，等新 DSH 上线后被领取。
+- 不存在两种协议同时写同一会话的情况，所以不需要协议过滤以外的围栏，也不需要迁移状态。
+- 回滚只适用于切换的早期窗口：回滚到旧版本后，切换后新建的 DSR 会话同样无法被旧 DSH 执行，按同样方式终止。
 
-1. 开启开关后，新建的 Code Session 直接写入 `worker_protocol = dsr1`，从第一条输入起就有 `dsr_turns`。
-2. 存量会话**只在静止时**转换。静止的定义是在同一事务内检查以下条件：
-   - 无有效租约；
-   - 公开会话 idle，且不是 `requires_action` 或 `budget_reached`；
-   - 不存在 `processed_at IS NULL` 的 `user.message`；
-   - `external_metadata` 中没有待确认工具请求。
-   - 进入 `migrating`（epoch 已推进，旧 owner 无法再拉取）后，该会话两个 durable consumer 的 `num_pending` 与 `num_ack_pending` 都为 0。`processed_at` 只表示已开始处理，不能证明已结算；"已完成但未 ACK"的旧输入只能通过 consumer 状态排除。检查不通过时转回 `ccrv2`。
+### 13.3 旧数据
 
-   不满足的会话保持 `ccrv2`，由旧 DSH 继续服务，之后再试；始终不静止的会话可以一直留在旧协议上直到结束。
-3. 旧 DSH 与新 DSH 并存，旧 DSH 只领取 `ccrv2` 会话。
-4. **legacy 退出条件**：设定截止日期。届时仍为 `ccrv2` 的会话（回填失败或始终不静止）先按归档流程保存历史，再以 `session.error` 加 `session.status_terminated` 结束，并在发布说明中告知。P5 的可检查条件是"`worker_protocol` 为 `ccrv2` 的 active Code Session 数量为 0"，由指标给出。
-5. 满足退出条件并稳定一个发布周期后，下线旧 DSH，进入第 14 节清理。
-
-### 13.4 存量输入事实
-
-静止检查保证转换时没有进行中的旧输入，但 JetStream 里仍可能有边界情况：静止检查之前接纳的输入在提交后才发布，或者旧 owner 已拉取但未 ACK。DSRv1 不依赖"转换瞬间队列为空"，而是在投递时补齐事实：
-
-- **转换后接纳的输入**：接纳事务写入 `accepted` turn（13.2）。
-- **投递时没有 turn 的 task 输入**：静止检查已经排除了这种情况，这里只是防御性兜底。DSR 输入流写出前，在事务内按其 `session_events` 行补建 turn：`processed_at IS NULL` 建为 `accepted`；`processed_at` 非空建为 `processing`，说明旧 owner 已开始处理，新 owner 收到后按恢复路径以 `recovered` 结束。补建按 `(code_session_uuid, input_id)` 唯一键幂等。
-- **找不到 `session_events` 行的 task 输入**：视为协议错误，NAK 并告警，不投递。
-- **转换前已完成的历史输入**：不建 turn。没有 turn 的历史输入不参与 reducer，也不影响删除准入。
-- 旧 owner 在 `ccrv2` 时期写入 `external_metadata` 的待确认记录不迁移；静止检查已排除存在这类记录的会话。
-
-### 13.5 回填
-
-回填把旧 `dsh_log` 行**复制**到新表，旧行保持原样，不改写、不加列。
-
-- **执行位置**：后台 River 任务，不在 claim 或 register 请求路径上。
-- **批次**：会话已是 `migrating`（13.2），每批一个事务，事务内校验状态与 epoch 未变，并写入 `migration_checkpoint`；崩溃后从检查点续跑，可重入。
-- **读取**：通过"归档 + PostgreSQL"合并读回，并还原外置 payload。旧表的已归档段沿用旧 codec 读取，身份由幂等键解析；从 `encodeURIComponent` 编码的幂等键解析 `dsh_session_id` 与 seq，Header 由 `:header` 后缀识别。子线程的 parent 取自 Header `parentSession`，公开线程等于 `dsh_session_id`（第 5 节），并核对现有子线程记录。
-- **格式**：旧行 payload 为 `{type: "dsh_log", uuid, data}` 包装形式；回填时解包，只把 `data` 中的原生对象写入新表，新表只有一种格式，读取路径不需要兼容包装。外置 payload 按需还原后重新计算 JCS 摘要。
-- **校验**：按 6.2 与 6.3 检查从 seq 0 起连续、身份一致、无冲突。历史上的保留与删除可能造成缺口，`last_internal_sequence_num` 也可能大于可见最大序号，这些都按校验失败处理。
-- **失败**：转回 `ccrv2`（再推进一次 epoch），继续由旧 DSH 服务直到会话结束，并记录告警；不以 `permanent` 公开失败，不拼接修复。
-- 回填是幂等的：按 `(code_session_uuid, dsh_session_id, seq)` 唯一键插入，重复执行跳过已存在的行；校验失败转回 `ccrv2` 时，删除该会话已写入新表的行，旧数据不受影响。
-- 旧路径在全部会话转换且新路径确认可用后才停止写入。
+- `code_session_internal_events` 中的 `dsh_log` 行、`external_metadata`、`requires_action_details`、`worker_turn_started` 不再写入，也不迁移，按现有保留规则自然过期。
+- 不写清理 migration。旧列与旧表是否 DROP，在 P5 删除代码后另行评估。
 
 ## 14. 删除范围
 
@@ -825,7 +787,7 @@ stateDiagram-v2
 | --- | --- |
 | sandbox 分支与 `agent_mode` 语义 | P0（两个版本） |
 | `/v1` 与 `/v2` 的 `session_ingress/*`、`diag_logs`、WebSocket 退役占位 | P0 版本 N+1 |
-| `/v1/code/sessions/{id}/worker/*`、`/v2/sessions/{id}`、`/v2/ccr-sessions/*` | P5 |
+| `/v1/code/sessions/{id}/worker/*`、`/v2/sessions/{id}`、`/v2/ccr-sessions/*`、旧 claim 接口 | P4 切换时返回 404，P5 删除代码 |
 | Claude Code 输出 schema 与 mapper 分支、`IsClaudeCodeTranscriptEvent` | P5 |
 | `is_compaction` 过滤、按 agent_id 的子线程分页 | P5 |
 | `external_metadata`、`requires_action_details`、`worker_turn_started`、60+10 秒租约参数 | P5，删除前用代码搜索确认读点已全部迁移 |
@@ -837,10 +799,10 @@ stateDiagram-v2
 按"先失败场景，后成功场景"组织。以下为新增验收项，尚未执行。
 
 - **Claim 与 Register**
-  - 失败：旧 claim 不选中 dsr1 会话、新 claim 不选中非 dsr1 或 `migrating` 会话；耗尽 hold 与 `FailPermanently` 行为不变；旧 epoch 注册被拒；协议 token 与路由不匹配被拒。
+  - 失败：DSR claim 不选中没有 `dsr1` 标记的会话；耗尽 hold 与 `FailPermanently` 行为不变；旧 epoch 注册被拒；协议 token 与路由不匹配被拒。
   - 成功：410 后同 epoch 重新 register 恢复，不全量恢复；接管注册关闭旧 epoch 的 pending，并发布 running/idle。
 - **Transcript**（Mapper SQL 与参数绑定单测；真实 PostgreSQL 验证 bytea、jsonb、nullable 与部分唯一索引）
-  - 失败：Header 缺失、seq 缺口、同序号语义不同、Header id 或 parent 不符、parent 或线程不存在、重复键、单条超过 16 MiB、旧 epoch 追加、`migrating` 时读写。
+  - 失败：Header 缺失、seq 缺口、同序号语义不同、Header id 或 parent 不符、parent 或线程不存在、重复键、单条超过 15 MiB、旧 epoch 追加。
   - 成功：从 seq 0 首次追加返回 `"1"`；重复追加幂等；`from_seq = 0` 返回 Header 与 seq 0；按字节分页；外置 payload 还原；归档后合并读回无缺口；主线程与子线程分队列并行追加。
   - 比较：`1`/`1.0`、指数、键序、转义、大整数的 TS/Go 共用样本；摘要不同但语义相同时不判冲突。
 - **Permission**
@@ -853,13 +815,13 @@ stateDiagram-v2
 - **删除与归档准入**：processing 未完成时拒绝，accepted 未处理时允许，与现行行为对照。
 - **协议版本**：缺失或不支持的版本返回 `unsupported_protocol`；同一 epoch 内换版本被拒；后端不向会话投递其注册版本未定义的输入 kind；同时支持两个版本的后端按请求头正确分派。
 - **Output**：未知类型 400、整批原子、重复 `id` 幂等、`preview.*` 映射进入既有预览路径、`tool.result` 映射、模型代理与 DSH 双写去重。
-- **迁移**
-  - 失败：进入 `migrating` 后旧 owner 的 register 与写入均被拒（批次之间也不例外）；非静止会话（租约有效、requires_action、有未处理输入或待确认记录）不转换；软删除缺口回退为 `ccrv2` 并推进 epoch；投递时找不到 `session_events` 行的输入被 NAK。
-  - 成功：归档历史回填（v1 段按幂等键重建身份）；半途崩溃后从检查点续跑；`migrating` 期间接纳的输入在 dsr1 领取后投递且有 turn；转换前已拉取未 ACK 的输入在投递时补建为 `processing` 并以 `recovered` 结束；旧 DSH、新 DSH 与升级后端并存。
+- **切换**
+  - 失败：开关打开后旧接口返回 404；旧 token 访问 DSR 接口被拒；存量会话终止任务重复执行不重复发布事件。
+  - 成功：存量会话被终止并发布固定文案的 `session.error`，公开历史仍可读取；新会话从第一条输入起就有 `dsr_turns`；新 DSH 上线前接纳的输入在上线后被领取执行。
 - **接管**：等待审批时 SIGKILL，会话保持 `idle(requires_action)` 且不被领取；用户批准后唤醒领取，新 owner 用同一 `request_id` 取回 allow 并执行工具；用户拒绝或中断后同样唤醒，新 owner 按拒绝或 `cancelled` 结束；执行中 SIGKILL 后按 processing turn 领取，已记录的模型步骤不重新请求，结果未知的工具不重放；terminal 输入重投时 `processing` 为 no-op，结束上报返回首次结果。
 - **子线程引导**：子线程 Header 在 `thread_created` 之前写入成功；`thread_created` 在 transcript 不存在或 parent 不符时被拒；同一 transcript 绑定不同线程被拒；线程状态事件重启补发后不重复。
 - **归档保真**：归档后同序号重复追加被判为重复或冲突，而不是插入新行；新 codec 段还原后 `dsh_session_id`、`seq`、`sequence_num` 与摘要和原值一致；物理删除后仍能从归档段读回完整 transcript。
-- **新表隔离**：migration 只包含 CREATE TABLE；回填不修改旧表任何行；回填失败回退后旧路径读写正常；blob GC 不回收新表引用的外置对象。
+- **新表隔离**：migration 只包含 CREATE TABLE；blob GC 不回收新表引用的外置对象。
 - **取消墓碑**：缺少 `dsh_session_id` 或 `tool_use_id` 被拒；派生 ID 与路径不符被拒；墓碑后到的创建返回 `cancelled`。
 - **原生格式**：DSH 升级后继续向旧版本 transcript 追加；改写已确认 Header 被判为冲突。
 - **DSH**：现有 `ccrv2.test.ts`、`session-reacquisition.test.ts`、`crash.test.ts`、`parallel-tools.test.ts`、`parallel-subagents.test.ts`、`model-replication.test.ts`、`input-recovery.test.ts` 的场景迁移到 DSR 客户端，覆盖 3.1 的全部屏障、A→B→A 接管与 SIGKILL 恢复。
@@ -873,14 +835,13 @@ stateDiagram-v2
 - [ ] 等待审批超过空闲时限后挂起（release idle），解决后唤醒领取并从回合中途恢复，公开事件与未挂起时一致。
 - [ ] 执行中崩溃后从回合中途恢复：已记录的模型步骤不重新请求，未开始的工具照常执行，结果未知的工具不重放。
 - [ ] 结束上报提交后分别丢失响应、丢失 ACK：公开会话已 idle 时仍按 `acked_at` 为空被重新领取，重投只补结算，不重做工具。
-- [ ] legacy 会话中已排队、processing、已完成未 ACK 三类输入：静止检查拒绝转换，或转换后安全结算。
-- [ ] 回填两个批次之间，旧 owner 尝试 register 和写入，全部被围栏拒绝。
+- [ ] 在测试环境演练 13.2 的切换步骤：存量会话全部终止且公开历史可读，旧接口返回 404，新会话正常执行。
 - [ ] 记录不存在时先 cancel 再晚到 create：墓碑落库，不会重新打开审批；终态重试不因输入已结束被拒。
 - [ ] 子线程首次创建时，不需要放松工具执行或公开输出的复制屏障。
 - [ ] 归档、删除 PG 行、读取、重复追加、还原之后，transcript 身份与 `next_seq` 保持一致；删除最后副本后返回 `transcript_purged`。
 - [ ] 一个触发改变多个线程时事件 ID 不冲突；pending 集合缩小但状态仍为 requires_action 时，照常发布状态变化。
 - [ ] reducer 行为对照表覆盖失败后排队、并行审批（其他线程继续执行时 Session 为 running）、预算暂停与线程终止，并与现行测试一致。
-- [ ] 原生格式版本策略（仅 v4）、超限事件的永久失败规则、legacy 截止日期与退出指标已确定。
+- [ ] 原生格式版本策略（仅 v4）、超限事件的永久失败规则、切换步骤与存量会话终止任务已确定。
 - [ ] 接管时本地更长且已确认部分内容不同，仍按现行规则报错并保留本地文件。
 
 ## 16. 已决定
@@ -893,11 +854,10 @@ stateDiagram-v2
 - 审批 ID 确定性派生，按 `(dsh_session_id, tool_use_id)` 去重；持久化与公开事件同事务；终态不可逆；结束上报、中断、接管、子线程终止自动关闭。
 - `dsr_turns` 作为 turn 事实来源；结束上报只接受枚举 reason。
 - 公开状态由移植自现行规则的单一 reducer 计算，状态事件 ID 确定性派生。
-- 开发分阶段，状态来源替换先于同步审批；切流在后端全量升级后按会话进行；回填异步且失败回退。
+- 开发分阶段，状态来源替换先于同步审批；不兼容历史执行数据，一次性切换并终止存量会话，不做回填与协议并存。
 - 存在 processing 且没有 pending 审批的 turn、租约过期时可被领取；只在等待审批的 turn 不被领取，审批解决、取消、关闭或中断时唤醒领取。
 - 接管继承审批与 turn，不再有 `superseded` 状态；DSH 从回合中途恢复（7.7）是 P4 的前置条件；等待审批时允许挂起。
 - terminal 优先：终态之后的 `processing` 为 no-op，结束上报先返回首次结果，再检查前置条件。
-- 进入 `migrating` 即推进 epoch 并拒绝两侧注册；存量会话只在静止时转换；没有 turn 的在途输入在投递时补建。
 - 唯一索引不以 `deleted_at` 为条件；archive codec v2 保存身份列，v1 段按幂等键重建。
 - 子线程 Header 不依赖公开线程，由 `thread_created` 绑定；线程事件 ID 确定性派生。
 - 取消请求必须携带 `dsh_session_id` 与 `tool_use_id`；状态事件 ID 包含线程维度。
@@ -909,7 +869,6 @@ stateDiagram-v2
 - 状态事件 ID 的输入包含目标与完整事件类型，按固定域与长度前缀编码；等价判断比较完整可观察状态。
 - 单条原生事件上限 15 MiB；超限事件已进入本地日志时永久失败。
 - 区分"归档后删 PG 行"与"删除最后副本"，后者标记 `purged`。
-- 静止检查包含 consumer 的 `num_pending` 与 `num_ack_pending`；legacy 会话设截止日期，退出条件可由指标检查。
 - 原生 seq 保持 number，字符串只用于 DSR 自有 ID 与游标。
 - 不设 `capabilities`：词汇由协议版本固定，版本在 register 时绑定到会话；词汇变化发布新版本，先全量升级后端再升级 DSH。
 
@@ -921,7 +880,7 @@ stateDiagram-v2
 | --- | --- | --- |
 | 等待审批时崩溃：主动撤回，还是保留审批等用户响应 | **保留审批，恢复后继续**（第 8 版改定，见 3.3、4.3、7.7）。会话保持 `requires_action`，用户响应后唤醒领取，新 owner 从回合中途恢复并按决定执行 | 第 6 版选择撤回，是因为当时 DSH 恢复会放弃未完成的回合，批准不会生效。确定性 `request_id` 与原生日志已经足以让新 owner 取回审批结果并继续，缺的只是 DSH 的回合中途恢复能力，因此改为把它列为 P4 前置条件。这样审批不会因执行端故障消失，等待期间还能挂起、释放执行端 |
 | 中断时服务端是否自动关闭目标线程的 pending | **关闭**（7.6），终态为 `closed`。之后迟到的确认按现行"工具确认已过期"响应 | DSH 收到中断后本来就放弃等待，只是把清理交给可能丢失的 cancel 请求。由服务端在接纳中断的事务内关闭，不依赖执行端存活，也避免中断后会话停在 requires_action、新输入被拒。迟到确认沿用已有的过期响应，公开 API 不新增错误类型 |
-| legacy 截止日期与通知 | 默认 **开启切换后 30 天**，可通过部署配置调整；通知方式为发布说明与部署文档，到期前 7 天起在后端启动日志与指标告警中提示剩余的 legacy 会话数 | OMA 是自托管部署，直接受影响的是部署运维者，而不是最终用户；平台没有逐客户通知的通道，也不应为此新建。30 天覆盖常见的长时间空闲会话，只有回填失败或始终不静止的会话会走到截止日 |
+| 历史执行数据是否兼容 | **不兼容**（第 10 版改定，见第 13 节）：一次性切换，终止存量会话，公开历史保留 | 省去协议并存、迁移状态、静止检查与回填，切换路径简单可演练；代价是切换时进行中的会话需要用户新建。第 6 版的 legacy 截止日期因此不再需要 |
 | `dsr_transcripts`、`dsr_turns`、`dsr_permission_requests` 是否需要 `external_id` | **不需要** | `external_id` 的作用是兼容 Anthropic API 的资源 ID。这三张表是执行端内部的元数据与状态，不通过任何公开 API 暴露，也不进入事件 payload；`uuid` 已满足稳定标识与跨表引用规则。日后若需要对外暴露，再通过迁移补列 |
 | `session.set_model` 是否需要公开确认事件 | **不新增**，保持现行：成功只体现在后续模型请求中，失败时 DSH 以 `processed` + `error` 回执，后端发布 `session.error` | 现行没有确认事件，增加它属于公开 API 变更，超出本协议的兼容边界 |
 | `limit_bytes` 默认值 | 默认 **4 MiB**，上限 8 MiB，保持 6.7 | 冷恢复逐页写入临时 JSONL 再回读校验，内存占用以单页为界，不需要整条日志常驻；4 MiB 让常见会话一到两页读完，单条超大事件按软预算例外处理 |
@@ -944,3 +903,4 @@ stateDiagram-v2
 | 7.5 | 路径前缀改回 `/v1/dsr/sessions/{code_session_id}`：`/v1/dsr/` 命名空间只面向执行端，公开 Session 不会出现在这些路径中，且 ID 自带 `cse_` 前缀；保留路径参数名 `{code_session_id}` 以示区分。claim 响应字段 `session_id` 改为 `code_session_id`，与路径参数和 release 路径一致 |
 | 8 | 等待审批时崩溃由"撤回审批"改为"保留审批、恢复后继续"：删除 `superseded` 状态与注册时的接管清理；领取条件只对没有 pending 审批的 processing turn 生效；审批解决、取消、关闭或中断时在无有效租约的情况下唤醒领取；新增 7.7 节定义 DSH 回合中途恢复规则与等待审批时挂起，并列为 P4 前置条件 |
 | 9 | 存储改为只用新表：transcript 事件写入 `dsr_transcript_events`、归档写入 `dsr_transcript_archives`，Header 存于 `dsr_transcripts`；不再给 `code_session_internal_events` 加列和索引；回填改为解包后复制，旧行不动；`transcriptretention` 与 blob GC 扩展到新表；补充双份存储窗口与新表隔离测试 |
+| 10 | 不兼容历史执行数据：删除回填、迁移状态（`migrating`、`migration_state`）、静止检查、存量输入补建、协议并存期与 legacy 截止日期，以及 `session_migrating` 错误码与旧 claim 的协议过滤；改为一次性切换：停止旧 DSH、部署新后端并打开开关、终止存量会话、部署新 DSH |

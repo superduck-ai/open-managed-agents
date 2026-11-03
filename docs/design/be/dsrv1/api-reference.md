@@ -1,6 +1,6 @@
 # DSRv1 接口参考
 
-本文逐个说明 DSRv1 执行端接口：为什么需要它、什么时候调用和不该调用、请求与响应字段、状态码、对应的 CCRv2 接口，以及典型场景的时序示例。语义、状态机与不变量以 [DSRv1 协议](protocol.md) 为准；两者冲突时以协议文档为准，并同步修正本文。本文对应协议第 9 版，仍是未冻结的设计草案。
+本文逐个说明 DSRv1 执行端接口：为什么需要它、什么时候调用和不该调用、请求与响应字段、状态码、对应的 CCRv2 接口，以及典型场景的时序示例。语义、状态机与不变量以 [DSRv1 协议](protocol.md) 为准；两者冲突时以协议文档为准，并同步修正本文。本文对应协议第 10 版，仍是未冻结的设计草案。
 
 ## 0. 总览
 
@@ -135,7 +135,7 @@ claim 推进 epoch，签发 session token 与 model token，但**不产生租约
 ```text
 Code Session active 且未删除
 AND worker_transport = 'claim'
-AND worker_protocol = 'dsr1'                     -- 旧 claim 对称地只领 ccrv2；migrating 两边都不领
+AND worker_protocol = 'dsr1'                     -- 切换前创建的 CCRv2 会话没有这个标记，不会被领取
 AND worker_claim_expires_at 为空或已过期            -- 不在领取窗口、退避或耗尽 hold 中
 AND (租约为空，或租约 + 10 秒宽限已过)              -- 没有活着的 owner
 AND (
@@ -259,7 +259,6 @@ DSH 主动告诉后端"这次领取我不要了"，让会话按指定原因尽�
 | 准入时永久失败 | 任务信封、`session_context` 或 assignment 校验失败；原生日志版本不受支持 | `permanent` | 立即推进 epoch 并停车，几秒内公开 `session.error` 与 `idle(retries_exhausted)`，不再重试 |
 | 运行中出现不可复制的日志 | 超过 15 MiB 的事件已写进本地日志，之后的事件都无法复制 | `permanent` | 同上 |
 | 领到了但没容量 | 准入预留槽位时没有可淘汰的空闲会话 | `shutdown` | 立即可被其他进程领取，attempts 减一，不算失败 |
-| 会话迁移中 | register 返回 `409 session_migrating` | `shutdown` | 迁移完成后再被领取 |
 | 等待审批时挂起 | 会话的所有 open turn 都只在等待审批，且已超过空闲时限（默认 60 秒） | `idle` | 只清租约；turn 与审批保持不变，用户响应时服务端唤醒领取 |
 | 空闲退役 | 会话空闲 60 秒，或为新领取腾容量而淘汰最久空闲的会话 | `idle` | 只清租约，不请求重领；有新输入时任何进程都能立即领取 |
 | 进程正常退出 | 收到 SIGTERM 并排空之后 | 有活跃回合或仍在准入：`shutdown`；空闲：`idle` | 同上 |
@@ -356,7 +355,7 @@ CCRv2 的 brain 模式本来就是"claim 分配 → register 接管"两步（`in
 在一个事务内：
 
 1. 锁定 Code Session 行，与 claim、heartbeat、日志追加串行。
-2. 校验会话 active、`worker_protocol = dsr1`（`migrating` 时返回 `409 session_migrating`）、token epoch 等于 `current_worker_epoch`。
+2. 校验会话 active、`worker_protocol = dsr1`、token epoch 等于 `current_worker_epoch`。
 3. 写入 `worker_lease_expires_at = now + 20s`、连接状态与活动时间，清空 `worker_claim_requested_at` 与 `worker_claim_expires_at`，记录 `dsr_protocol_version`。
 4. **不清理审批，也不结束 open turn**：pending 审批与 processing 的 turn 都由新 owner 继承。未 ACK 的输入会被 JetStream 重投给新 owner，新 owner 按原生日志从回合中途恢复：已解决的审批用同一 `request_id` 取回结果后继续，仍 pending 的继续等待或挂起。注册本身不改变公开状态。
 
@@ -377,7 +376,6 @@ DSH 启动该会话前校验 `heartbeat_interval × (1 + jitter) + timeout < ttl
 | 状态 | `DSR-Error` | DSH 处理 |
 | --- | --- | --- |
 | 409 | `epoch_superseded` | 退役，fence 主线程与全部子线程 |
-| 409 | `session_migrating` | 以 `shutdown` release，稍后重领 |
 | 404 | `session_not_found` | 退役，不 release |
 | 401/403 | `unauthorized` | 以 `admission_failed` release，由服务端 attempts 裁决；不判为 `permanent`，以免部署级配置问题让所有会话同时失败 |
 | 5xx | — | 在 30 秒领取窗口内有界重试 |
@@ -415,10 +413,6 @@ B. 网络抖动后恢复
    心跳连续失败约 30 秒 → 410 lease_expired → 用同一 token 再 register
      epoch 仍是 7：200，租约恢复，继续执行
      别人已 claim，epoch 变为 8：409 epoch_superseded，退役
-
-C. 在迁移窗口里注册
-   后台把会话转为 migrating（epoch 已 + 1）
-   旧进程用 epoch 7 的 token 注册 → 409 → 回填期间无法写入
 ```
 
 ## 4. `POST /v1/dsr/sessions/{code_session_id}/heartbeat`
@@ -902,7 +896,6 @@ Header 记录日志格式版本与父子关系，服务端据此校验后续 Eve
 | 409 | `transcript_header_required` | 尚未写 Header：先调用接口 11 |
 | 409 | `transcript_gap` | 第一条未确认条目不等于 `next_seq`：按 `DSR-Next-Seq` 补发 |
 | 409 | `transcript_conflict` | 已确认的 seq 内容不同：停止恢复，保留本地文件 |
-| 409 | `session_migrating` | 会话迁移中 |
 | 410 | `transcript_purged` | 最后一份副本已删除，会话不可恢复 |
 | 413 | `payload_too_large` | 单条或请求体超限 |
 
@@ -1004,7 +997,7 @@ C. 重复上传
 
 ### 错误
 
-`409 session_migrating`、`410 transcript_purged`、`404 session_not_found`（日志不存在）。
+`410 transcript_purged`、`404 session_not_found`（日志不存在）。
 
 ### 示例
 

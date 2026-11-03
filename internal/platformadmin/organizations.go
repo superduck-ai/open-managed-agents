@@ -49,9 +49,8 @@ type OrganizationPatch struct {
 
 type AdministratorChange struct {
 	Change
-	AccountUUID        string `json:"account_uuid"`
-	Role               string `json:"role"`
-	PreviousMemberUUID string `json:"previous_member_uuid"`
+	AccountUUID string `json:"account_uuid"`
+	Role        string `json:"role"`
 }
 
 func (s *Service) CreateOrganization(ctx context.Context, actor Actor, input CreateOrganization, key string) (Organization, bool, error) {
@@ -201,28 +200,6 @@ func demoteAdministrator(ctx context.Context, tx *db.PlatformAdminTx, org, membe
 		return ErrLastOrganizationAdmin
 	}
 	return tx.SetMemberRole(ctx, org, memberUUID, role)
-}
-
-func (s *Service) TransferAdministrator(ctx context.Context, actor Actor, org string, input AdministratorChange) (Organization, error) {
-	if !nonAdminRole(input.Role) {
-		return Organization{}, invalid("请选择原管理员的新角色")
-	}
-	if _, err := uuid.Parse(input.AccountUUID); err != nil {
-		return Organization{}, invalid("新管理员账号 UUID 无效")
-	}
-	if _, err := uuid.Parse(input.PreviousMemberUUID); err != nil {
-		return Organization{}, invalid("原管理员成员 UUID 无效")
-	}
-	return s.changeOrganization(ctx, actor, org, input.Change, func(tx *db.PlatformAdminTx) error {
-		member, err := grantOrganizationAdmin(ctx, tx, org, input.AccountUUID)
-		if err != nil {
-			return err
-		}
-		if member.UUID == input.PreviousMemberUUID {
-			return invalid("新旧管理员不能是同一个账号")
-		}
-		return demoteAdministrator(ctx, tx, org, input.PreviousMemberUUID, input.Role)
-	})
 }
 
 func nonAdminRole(role string) bool {

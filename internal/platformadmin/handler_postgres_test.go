@@ -124,6 +124,39 @@ func TestAdministrationHTTPPostgres(t *testing.T) {
 			t.Fatalf("拒绝请求修改了组织：%+v，%v", after, err)
 		}
 	})
+	t.Run("后台成员写入鉴权及完整生命周期", func(t *testing.T) {
+		memberInput := MemberChange{Change: Change{ExpectedVersion: org.Version}, AccountUUID: operator, Role: "user"}
+		wantStatus(request("POST", path+"/members", ordinary, memberInput, true), 403)
+		wantStatus(request("POST", path+"/members", operator, memberInput, false), 403)
+		wantStatus(request("POST", path+"/members", operator, memberInput, true), 200)
+		fresh, err := database.GetPlatformAdminOrganization(t.Context(), org.UUID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		org = organizationDTO(fresh)
+		memberInput.ExpectedVersion = org.Version
+		wantStatus(request("POST", path+"/members", operator, memberInput, true), 409)
+		wantStatus(request("PATCH", path+"/members/not-a-uuid", operator, memberInput, true), 400)
+		wantStatus(request("PATCH", path+"/members/"+operator, operator, memberInput, true), 404)
+		rows, err := database.ListPlatformAdminMembers(t.Context(), db.PlatformAdminPageQuery{OrganizationUUID: org.UUID, Role: "user", Limit: 10})
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("添加未生效：%+v %v", rows, err)
+		}
+		memberPath := path + "/members/" + rows[0].UUID
+		wantStatus(request("PATCH", memberPath, operator, MemberChange{Change: Change{ExpectedVersion: org.Version}, Role: "admin"}, true), 200)
+		fresh, err = database.GetPlatformAdminOrganization(t.Context(), org.UUID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		org = organizationDTO(fresh)
+		wantStatus(request("DELETE", memberPath, operator, Change{ExpectedVersion: org.Version}, true), 200)
+		fresh, err = database.GetPlatformAdminOrganization(t.Context(), org.UUID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		org = organizationDTO(fresh)
+		wantStatus(request("DELETE", memberPath, operator, Change{ExpectedVersion: org.Version}, true), 404)
+	})
 	t.Run("待接受邀请不增加有效管理员且邀请不能跨组织撤销", func(t *testing.T) {
 		invite := InviteChange{Change: Change{ExpectedVersion: org.Version, Reason: "邀请验收"}, Email: "invitee@example.com", Role: "admin"}
 		created := request("POST", path+"/invitations", operator, invite, true)

@@ -216,7 +216,13 @@ export const anthropicApi = {
 export const anthropicBetaApi = {
   files: {
     download(fileId: string, workspaceId?: string) {
-      return sdkCall(() => getAnthropicClient().beta.files.download(fileId, {}, requestOptions(workspaceId)));
+      return sdkCall(() =>
+        getAnthropicClient().beta.files.download(
+          fileId,
+          {},
+          { ...requestOptions(workspaceId), signal: getScopeSignal() },
+        ),
+      );
     },
     list<T>(params: Record<string, unknown>, workspaceId?: string, signal?: AbortSignal) {
       return sdkPage<T>(() =>

@@ -40,6 +40,8 @@ test.each([
           account: {
             uuid: 'acct_test',
             email_address: 'test@example.com',
+            effectiveOrganizationUuid: 'org_test',
+            permissions: ['organization:manage', 'members:manage', 'members:view'],
             memberships: [{ organization: { uuid: 'org_test', name: 'default' }, role: 'admin' }],
           },
           status: 'authenticated',

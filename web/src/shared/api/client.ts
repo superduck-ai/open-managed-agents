@@ -164,6 +164,7 @@ export function webhooksRequestHeaders(headers?: HeadersInit) {
 }
 
 function applyConsoleRequestContext(headers: Headers, context: ConsoleRequestContext = consoleRequestContext) {
+  if (context.csrfToken && !headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', context.csrfToken);
   if (context.organizationUuid && !headers.has('X-Organization-UUID')) {
     headers.set('X-Organization-UUID', context.organizationUuid);
   }

@@ -80,6 +80,8 @@ function renderPage(role: string, workspaceId?: string, locale: 'en' | 'zh-CN' =
     account: {
       uuid: 'acct',
       email_address: 'a@example.com',
+      effectiveOrganizationUuid: 'org_test',
+      permissions: role === 'admin' ? ['organization:manage', 'members:manage'] : [],
       memberships: [{ role, organization: { uuid: 'org_test' } }],
     },
     status: 'authenticated',

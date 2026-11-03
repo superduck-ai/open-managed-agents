@@ -19,21 +19,28 @@ export function OrganizationMemberRemoval({
   member,
   csrfToken,
   disabled,
+  remove,
+  onRemoved,
+  formatError,
 }: {
   orgUuid: string;
   organizationName: string;
   member: OrganizationMember;
   csrfToken?: string;
   disabled?: boolean;
+  remove?: () => Promise<unknown>;
+  onRemoved?: () => Promise<void>;
+  formatError?: (error: unknown) => string;
 }) {
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
   const removal = useMutation({
-    mutationFn: () => removeOrganizationMember(orgUuid, member.id, csrfToken),
+    mutationFn: remove ?? (() => removeOrganizationMember(orgUuid, member.id, csrfToken)),
     onSuccess: async () => {
       setOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ['console', 'organization-members', orgUuid] });
+      if (onRemoved) await onRemoved();
+      else await queryClient.invalidateQueries({ queryKey: ['console', 'organization-members', orgUuid] });
       toast.success(msg('members.removedToast', 'Member removed.'));
     },
   });
@@ -72,7 +79,7 @@ export function OrganizationMemberRemoval({
         open={open}
         title={msg('members.orgRemoveDialogTitle', 'Remove member?')}
         pending={removal.isPending}
-        error={removal.error?.message}
+        error={removal.error ? (formatError ? formatError(removal.error) : removal.error.message) : undefined}
         onClose={() => setOpen(false)}
         onConfirm={() => removal.mutate()}
       >

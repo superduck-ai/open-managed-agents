@@ -80,3 +80,15 @@ func (tx *PlatformAdminTx) SetMemberRole(ctx context.Context, organizationUUID, 
 func (tx *PlatformAdminTx) CountOrganizationAdmins(ctx context.Context, organizationUUID string) (int64, error) {
 	return NewOrganizationMemberMapper(tx.executor).CountAdmins(ctx, organizationUUID)
 }
+
+func (tx *PlatformAdminTx) RemoveMember(ctx context.Context, organizationUUID, memberUUID string) error {
+	params := consoleUserIdentifierParams{OrgUUID: organizationUUID, UserID: memberUUID, UserUUID: memberUUID}
+	rows, err := NewConsoleUserMapper(tx.executor).SoftDeleteOrganizationMember(ctx, params)
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return NewConsoleWorkspaceMemberMapper(tx.executor).SoftDeleteByOrganizationUser(ctx, params)
+}

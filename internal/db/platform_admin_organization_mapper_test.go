@@ -89,7 +89,7 @@ func TestPlatformAdminOrganizationMapperPagination(t *testing.T) {
 			cursorColumn string
 		}{
 			{"List", func(m PlatformAdminOrganizationMapper) error { _, err := m.List(t.Context(), query); return err }, []any{query.Query, query.Query}, []string{"uuid", "name", "website", "industry", "management_version", "created_at", "member_count", "admin_count", "workspace_count"}, []string{"o.name ILIKE '%' || $1 || '%' OR o.uuid::text = $2", "ORDER BY o.uuid LIMIT"}, "o.uuid"},
-			{"ListMembers", func(m PlatformAdminOrganizationMapper) error { _, err := m.ListMembers(t.Context(), query); return err }, []any{query.OrganizationUUID}, []string{"uuid", "email", "name", "role"}, []string{"organization_uuid = $1 AND deleted_at IS NULL", "ORDER BY uuid LIMIT"}, "uuid"},
+			{"ListMembers", func(m PlatformAdminOrganizationMapper) error { _, err := m.ListMembers(t.Context(), query); return err }, []any{query.OrganizationUUID, query.Query, query.Query}, []string{"uuid", "email", "name", "role"}, []string{"organization_uuid = $1 AND deleted_at IS NULL", "ORDER BY uuid LIMIT"}, "uuid"},
 			{"ListWorkspaces", func(m PlatformAdminOrganizationMapper) error {
 				_, err := m.ListWorkspaces(t.Context(), query)
 				return err
@@ -147,4 +147,13 @@ func TestPlatformAdminOrganizationMapperMissingAndInvalidRows(t *testing.T) {
 	if _, err := m.Insert(t.Context(), PlatformAdminOrganizationInput{}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("并发已创建：%v", err)
 	}
+}
+
+func TestPlatformAdminMemberRoleFilterBindings(t *testing.T) {
+	query := PlatformAdminPageQuery{OrganizationUUID: "org", Role: "admin", Limit: 21}
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid", "email", "name", "role"}})
+	if _, err := NewPlatformAdminOrganizationMapper(executor).ListMembers(t.Context(), query); err != nil {
+		t.Fatal(err)
+	}
+	assertMapperTestExecution(t, executor, "PlatformAdminOrganizationMapper.ListMembers", yourbatis.StatementSelect, []any{"org", "admin", 21}, "organization_uuid = $1", "role = $2", "LIMIT $3")
 }

@@ -39,8 +39,24 @@ func handleBootstrap(store OrganizationStore, resolveAccess PlatformAccessResolv
 				}
 			}
 		}
+		var organizationAccess *OrganizationAccess
+		if principal, ok := auth.PrincipalFromContext(r.Context()); ok && principal.OrganizationUUID != "" {
+			getter, available := store.(platformOrganizationGetter)
+			if !available {
+				internalError(w, "failed to load current organization")
+				return
+			}
+			organization, err := getter.GetPlatformOrganization(r.Context(), principal.OrganizationUUID)
+			if err != nil || organization == nil {
+				internalError(w, "failed to load current organization")
+				return
+			}
+			orgUUID = organization.UUID
+			organizationAccess = &OrganizationAccess{Source: principal.OrganizationAccessSource, Organization: OrganizationAccessOrganization{UUID: organization.UUID, Name: organization.Name}, OrganizationRole: principal.WorkspaceAccess.OrganizationRole, WorkspaceRole: principal.WorkspaceAccess.Role}
+		}
 		response := buildBootstrapCompatibilityResponse(account, orgUUID != "", bootstrapGrowthbookHashingAlgorithm(r))
 		response.PlatformAccess = platformAccess
+		response.OrganizationAccess = organizationAccess
 		if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
 			response.CurrentUserAccess = buildCurrentUserAccess(principal.WorkspaceAccess)
 			if account != nil {

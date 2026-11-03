@@ -30,6 +30,9 @@ func (d *DB) withOrganizationMemberChange(ctx context.Context, organizationUUID,
 }
 
 func validateOrganizationMemberActor(ctx context.Context, executor yourbatis.Executor, organizationUUID, actorID string, validate func(string) error) error {
+	if actorID == "" {
+		return validate("")
+	}
 	role, err := NewOrganizationMemberMapper(executor).FindRole(ctx, organizationUUID, actorID)
 	if err != nil {
 		return mapNoRows(err)

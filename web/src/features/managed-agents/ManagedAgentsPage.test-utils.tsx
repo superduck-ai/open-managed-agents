@@ -43,6 +43,8 @@ const managedAgentsAuthContextValue: AuthContextValue = {
     uuid: 'acct_managed_agents_test',
     email_address: 'managed-agents-test@example.com',
     display_name: 'Managed Agents Test User',
+    effectiveOrganizationUuid: 'org_test',
+    permissions: ['organization:manage', 'members:manage', 'members:view'],
     memberships: [{ role: 'admin', organization: { uuid: 'org_test' } }],
   },
   status: 'authenticated',

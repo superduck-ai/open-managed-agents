@@ -40,10 +40,10 @@ func ChangeMember(ctx context.Context, database *db.DB, principal auth.Principal
 }
 
 func authorizeMemberChange(ctx context.Context, tx *db.WorkspaceMemberTx, principal auth.Principal, workspaceID string) error {
-	if principal.UserExternalID == "" {
+	if principal.UserExternalID == "" && !principal.PlatformOrganizationAdmin(principal.OrganizationUUID) {
 		return ErrDenied
 	}
-	_, access, err := New(tx).Resolve(ctx, principal.OrganizationUUID, principal.UserExternalID, workspaceID)
+	_, access, err := New(tx).ResolvePrincipal(ctx, principal, workspaceID)
 	if err != nil {
 		return err
 	}

@@ -129,6 +129,11 @@ func (h *Handler) members(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	query.Role = r.URL.Query().Get("role")
+	if query.Role != "" && query.Role != "user" && query.Role != "admin" {
+		h.fail(w, r, invalid("请选择 User 或 Admin 组织角色"))
+		return
+	}
 	rows, err := h.service.db.ListPlatformAdminMembers(r.Context(), query)
 	if err != nil {
 		h.fail(w, r, err)

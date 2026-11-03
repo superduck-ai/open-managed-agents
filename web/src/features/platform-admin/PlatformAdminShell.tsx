@@ -64,7 +64,9 @@ function AdminSidebar({ email }: { email: string }) {
       </SidebarHeader>
       <SidebarContent className="px-2 py-2">
         <SidebarGroup className="p-0">
-          <SidebarGroupLabel>{msg('platformAdmin.globalAdministration', 'Global administration')}</SidebarGroupLabel>
+          {!organizationUuid && (
+            <SidebarGroupLabel>{msg('platformAdmin.globalAdministration', 'Global administration')}</SidebarGroupLabel>
+          )}
           <SidebarGroupContent>
             <nav aria-label={msg('platformAdmin.administrationNavigation', 'Administration navigation')}>
               <SidebarMenu>
@@ -88,36 +90,40 @@ function AdminSidebar({ email }: { email: string }) {
                     </span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={administratorsActive}
-                    render={
-                      <Link
-                        to="/platform-admin/administrators"
-                        onClick={closeMenu}
-                        aria-current={administratorsActive ? 'page' : undefined}
-                      />
-                    }
-                  >
-                    <ShieldCheck aria-hidden />
-                    <span>{msg('platformAdmin.superAdministrators', 'Super administrators')}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={skillsActive}
-                    render={
-                      <Link
-                        to="/platform-admin/skills"
-                        onClick={closeMenu}
-                        aria-current={skillsActive ? 'page' : undefined}
-                      />
-                    }
-                  >
-                    <Blocks aria-hidden />
-                    <span>{msg('systemSkills.title', 'System skills')}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                {!organizationUuid && (
+                  <>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        isActive={administratorsActive}
+                        render={
+                          <Link
+                            to="/platform-admin/administrators"
+                            onClick={closeMenu}
+                            aria-current={administratorsActive ? 'page' : undefined}
+                          />
+                        }
+                      >
+                        <ShieldCheck aria-hidden />
+                        <span>{msg('platformAdmin.superAdministrators', 'Super administrators')}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        isActive={skillsActive}
+                        render={
+                          <Link
+                            to="/platform-admin/skills"
+                            onClick={closeMenu}
+                            aria-current={skillsActive ? 'page' : undefined}
+                          />
+                        }
+                      >
+                        <Blocks aria-hidden />
+                        <span>{msg('systemSkills.title', 'System skills')}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  </>
+                )}
               </SidebarMenu>
             </nav>
           </SidebarGroupContent>

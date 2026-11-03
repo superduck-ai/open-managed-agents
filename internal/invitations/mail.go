@@ -50,6 +50,9 @@ func (m *Mailer) Notify(ctx context.Context, principal auth.Principal, recipient
 		return "failed"
 	}
 	inviter := "Organization administrator"
+	if principal.PlatformOrganizationAdmin(principal.OrganizationUUID) {
+		return m.NotifyPlatform(ctx, principal.OrganizationUUID, recipient, expiresAt)
+	}
 	if principal.UserExternalID != "" {
 		user, err := m.db.GetAdminUser(ctx, principal.OrganizationUUID, principal.UserExternalID)
 		if err != nil {

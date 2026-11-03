@@ -24,6 +24,7 @@ var (
 	ErrLastOrganizationAdmin = &Error{http.StatusConflict, "last_organization_admin", "必须保留至少一位组织管理员"}
 	ErrVersion               = &Error{http.StatusConflict, "version_conflict", "组织信息已变更，请刷新后重试"}
 	ErrIdempotency           = &Error{http.StatusConflict, "idempotency_conflict", "相同幂等键不能用于不同的创建请求"}
+	ErrMemberExists          = &Error{http.StatusConflict, "member_already_exists", "该账号已是组织成员，请直接修改其角色"}
 	ErrState                 = &Error{http.StatusConflict, "state_conflict", "当前状态不允许此操作"}
 	ErrNotFound              = &Error{http.StatusNotFound, "not_found", "目标不存在"}
 	ErrUnavailable           = &Error{http.StatusServiceUnavailable, "unavailable", "管理服务暂不可用"}

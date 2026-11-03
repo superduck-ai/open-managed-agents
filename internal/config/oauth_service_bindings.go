@@ -23,7 +23,7 @@ func validateOAuthServiceBindings(bindings []OAuthServiceBindingConfig) error {
 		binding.CredentialTargetURL = strings.TrimSpace(binding.CredentialTargetURL)
 		for _, value := range []string{binding.ServiceURL, binding.CredentialTargetURL} {
 			parsed, err := url.Parse(value)
-			if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || strings.ContainsAny(value, "?#") {
 				return fmt.Errorf("vault.oauth_service_bindings[%d] requires absolute HTTP URLs without userinfo, query or fragment", i)
 			}
 		}

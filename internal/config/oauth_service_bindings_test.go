@@ -6,7 +6,11 @@ func TestOAuthServiceBindings(t *testing.T) {
 	for _, bindings := range [][]OAuthServiceBindingConfig{
 		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "relative"}},
 		{{ServiceURL: "https://user:secret@bridge.example", CredentialTargetURL: "https://api.example"}},
+		{{ServiceURL: "https://bridge.example?", CredentialTargetURL: "https://api.example"}},
+		{{ServiceURL: "https://bridge.example#", CredentialTargetURL: "https://api.example"}},
 		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example?q=1"}},
+		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example?"}},
+		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example#"}},
 		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example"}, {ServiceURL: " https://bridge.example ", CredentialTargetURL: "https://other.example"}},
 	} {
 		if err := validateOAuthServiceBindings(bindings); err == nil {
@@ -22,5 +26,12 @@ func TestOAuthServiceBindings(t *testing.T) {
 	}
 	if got := OAuthCredentialTargetURL(bindings, "https://ordinary.example/mcp"); got != "https://ordinary.example/mcp" {
 		t.Fatalf("unbound target = %s", got)
+	}
+	bindings = []OAuthServiceBindingConfig{{ServiceURL: "https://bridge.example/%3F", CredentialTargetURL: "https://api.example/%23"}}
+	if err := validateOAuthServiceBindings(bindings); err != nil {
+		t.Fatal(err)
+	}
+	if got := OAuthCredentialTargetURL(bindings, "https://bridge.example/%3F"); got != "https://api.example/%23" {
+		t.Fatalf("encoded target = %s", got)
 	}
 }

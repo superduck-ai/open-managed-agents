@@ -205,6 +205,8 @@ Console 成员写入由资源层根据已验证 Principal 提供校验回调，�
 | `/platform-admin/organizations/new`               | 组织名称、已注册管理员选择、创建结果与可重试错误                             |
 | `/platform-admin/organizations/$organizationUuid` | 基础资料、管理员、成员目录、工作区目录                                       |
 
+从平台管理返回普通 Console（包括浏览器后退）时，重新获取普通 bootstrap 与组织工作区列表，再按有效组织和工作区偏好安装请求上下文。账号 UUID 未变化也必须刷新；失败进入既有可重试状态，不循环请求。后台内切换菜单不触发普通 Console 刷新。
+
 进入后台先完成专用 bootstrap 和路由权限守卫，再请求组织数据。没有权限时不闪现表格；已登录非超级管理员直达 URL 显示 403，未登录跳转登录并保留站内返回地址。
 
 `/platform-admin` 位于身份层级，与 Console 的组织/工作区布局平级；#347 根级 `InvitationEntryGate` 对此后台分支不强制跳转邀请页，账号菜单仍保留邀请入口。唯一“进入组织工作台”按钮位于组织详情公共标题操作区，与编辑资料并列。普通组织切换器只列真实 memberships；后台“返回工作台”保留本标签当前 Console scope。

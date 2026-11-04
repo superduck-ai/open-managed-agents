@@ -12,7 +12,7 @@ Deployment 支持 `deployment.created`、`deployment.updated`、`deployment.paus
 
 Environment 支持 `environment.created`、`environment.updated`、`environment.archived`、`environment.deleted`。创建指环境记录创建，不等待 sandbox 就绪；只有实际持久化属性改变才发送 updated。无变化更新及重复归档保持时间戳，不新增通知。删除沿用现有事务和活跃 work 检查，成功删除已归档环境也通知，不额外补发 archived。work/心跳/sandbox 状态变化不产生这些资源事件。生产 SDK fixture 绕过已移除，所有身份遵循相同的持久化与通知规则。payload 仅包含标识；投递只使用 workspace 数据库订阅。
 
-Deployment 手动或定时运行创建 Session 后，在事务提交成功时产生 `session.status_idled`。创建主线程不会产生子线程事件。失败运行和重复定时执行不新增通知，两次独立手动运行分别通知。
+Deployment 手动或定时运行创建 Session 后，在事务提交成功时产生 `session.status_idled`。创建主线程不会产生子线程事件，定义初始 outcome 不会产生 `session.outcome_evaluation_ended`，该通知由真实评估结束事件触发。失败运行和重复定时执行不新增通知，两次独立手动运行分别通知。
 
 会话是长时间运行的交互。虽然大多数实时交互通过 [SSE 事件流](/docs/zh/events-and-streaming)进行，但 Webhook 会在发生重大状态变化时通知您。
 
@@ -26,12 +26,13 @@ Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收�
     | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
     | `session.status_run_started`       | 智能体开始执行。每次会话状态转换为 `running` 时都会触发此事件。                                                                                                                                                                                                               |
     | `session.status_idled`             | 智能体正在等待输入，例如工具权限审批或新的用户消息。                                                                                                                                                                                                                          |
-    | `session.budget_reached`           | OMA 预留订阅：可选择并保存，当前不发送通知；尚未实现预算控制。 |
+    | `session.budget_reached`           | OMA 预留订阅：可选择并保存，当前不发送通知；会话预算控制已实现，仅该通知未发出。 |
     | `session.status_rescheduled`       | 发生了暂时性错误，会话正在自动重试。                                                                                                                                                                                                                                  |
     | `session.status_terminated`        | 会话已终止，原因可能是发生了不可恢复的错误，或会话已被归档。                                                                                                                                                                                                                      |
     | `session.thread_created` | 新的[子线程](/docs/zh/multiagent-orchestration)开始工作。 |
     | `session.thread_idled`             | [多智能体交互](/docs/zh/multiagent-orchestration)中的某个智能体正在等待输入。                                                                                                                                              |
     | `session.thread_terminated` | 子线程终止，例如被归档或耗尽重试次数。 |
+    | `session.outcome_evaluation_ended` | 单次迭代的[结果评估](/docs/zh/define-outcomes)已完成。 |
     | `session.updated`                  | 会话属性已更改（例如，其名称或配置已更新）。                                                                                                                                                                                                                              |
     | `session.deleted`                  | 会话已被永久删除。没有可获取的对象，因此请将该事件本身视为最终状态。                                                                                                                                                                                                                  |
   </Tab>

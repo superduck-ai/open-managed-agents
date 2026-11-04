@@ -51,7 +51,7 @@ worker 通过轮询环境的队列来认领：可以使用持续轮询的**常�
 * **一个现有的智能体。** 如果您还没有，请先完成[快速入门](/docs/zh/quickstart)并记下其智能体 ID。
 * **一台 Linux 主机**，且 `/bin/bash` 位于该确切路径。worker 的 bash 工具会直接调用它，而不查询 `PATH`。TypeScript SDK 还需要 `PATH` 中有 `unzip` 和 `tar`，以及 Node.js 22 或更高版本；Python 和 Go SDK 使用其标准库进行归档提取，没有额外的二进制文件要求。
 * worker 主机上安装有 **`ant` CLI 或 OMA SDK**（Python、TypeScript 或 Go）。
-* **两个凭据：** 环境密钥（在后续步骤中通过 OMA 控制台 生成）用于向队列验证 worker 身份；您的 OMA API 密钥用于从 worker 主机外部创建会话和读取队列统计信息。密钥生成仅限 OMA 控制台。
+* **两个凭据：** 环境密钥（在后续步骤中向部署管理员获取）用于向队列验证 worker 身份；您的 OMA API 密钥用于从 worker 主机外部创建会话和读取队列统计信息。凭据签发方式取决于部署。
 
 <Note>
   环境 worker 使用 OMA 生成的环境密钥向队列认证。如果在 AWS 等云平台上运行 worker，请继续使用部署自身的 IAM、AWS Secrets Manager 和网络策略保护主机；OMA 不依赖第三方托管策略。
@@ -170,7 +170,7 @@ worker 通过轮询环境的队列来认领：可以使用持续轮询的**常�
     </CodeGroup>
   </Step>
 
-  <Step title="生成环境密钥">
+  <Step title="获取环境密钥">
     向部署管理员确认当前环境的 worker 凭据获取方式，再在 worker 主机上配置环境 ID 和密钥。具体签发方式取决于部署；不要将凭据写入镜像：
 
     ```bash
@@ -274,7 +274,7 @@ worker 通过轮询环境的队列来认领：可以使用持续轮询的**常�
   <Tab title="常驻（SDK）">
     <Steps>
       <Step title="运行 worker">
-        `EnvironmentWorker` 认领分配给该环境的 worker，下载技能，在工作目录中执行工具调用，并将结果回传。使用您在[开始之前](/docs/zh/self-hosted-sandboxes#before-you-begin)中生成的环境密钥进行身份验证。
+        `EnvironmentWorker` 认领分配给该环境的 worker，下载技能，在工作目录中执行工具调用，并将结果回传。使用您在[开始之前](/docs/zh/self-hosted-sandboxes#before-you-begin)中获取的环境密钥进行身份验证。
 
         <CodeGroup exclude="shell">
           ```python Python

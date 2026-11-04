@@ -48,7 +48,7 @@ The `workflows` and `advisor` fields are accepted for configuration compatibilit
 
 After delegation, a subagent produces its own messages and tool events in its thread. Inspect threads in the session or read them through the [event stream](/docs/en/events-and-streaming). When a tool needs confirmation, use the thread and tool-call details in the request to respond to the right call.
 
-Subagent tool permissions use the session's permission policy. MCP connectivity and sandbox access also depend on the runtime path and environment configuration. Configure the tools and network access the session needs before testing delegated work.
+Predefined subagents use the tool permissions from their own agent configuration; inline subagents inherit the session's tool configuration. MCP connectivity and sandbox access also depend on the runtime path and environment configuration. Configure each referenced agent's permissions and the session's network access before testing delegated work.
 
 <CardGroup cols={2}>
   <Card title="Start a session" href="/docs/en/sessions">Select an agent and environment and start work.</Card>

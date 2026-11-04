@@ -835,7 +835,7 @@ description: "在创建会话时注册每个用户的凭据。"
 
 * 当没有 MCP 凭据通过 `mcp_server_url` 匹配时，连接会以未经身份验证的方式尝试，如果服务器要求身份验证则会出错。
 * 当多个密钥库包含匹配的凭据时，系统按顺序尝试；认证失败后的处理取决于注入路径和凭据类型。
-* 在[多智能体会话](/docs/zh/multiagent-orchestration)中，密钥库凭据适用于每个线程。如果某个智能体自身的定义声明了匹配的 MCP 服务器，则该智能体使用这些凭据进行身份验证。请参阅[将智能体连接到 MCP 服务器](/docs/zh/multiagent-orchestration#connect-agents-to-mcp-servers)。
+* 在[多智能体会话](/docs/zh/multiagent-orchestration)中，密钥库凭据适用于每个线程。如果某个智能体自身的定义声明了匹配的 MCP 服务器，则该智能体使用这些凭据进行身份验证。请参阅[MCP 连接器](/docs/zh/mcp-connector)。
 
 ## 轮换凭据
 

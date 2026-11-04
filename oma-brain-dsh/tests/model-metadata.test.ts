@@ -41,8 +41,9 @@ test.each(["messages", "chat_completions"] as const)("injected model metadata an
   expect(bodies.map(body => body[field])).toEqual([32000, 64000, 1234]);
 });
 
-test("auxiliary compaction requests preserve the business response identity", async () => {
-  const api = new OmaApi("http://model.test", (async (_input, _init) => {
+test.each(["compaction", "session-title"] as const)("auxiliary %s requests declare their purpose and preserve business response identity", async purpose => {
+  const api = new OmaApi("http://model.test", (async (_input, init) => {
+    expect(new Headers(init?.headers).get("X-OMA-Model-Purpose")).toBe(purpose);
     const events = textEvents("summary");
     events[0]!.message.id = "summary-response";
     return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
@@ -52,7 +53,7 @@ test("auxiliary compaction requests preserve the business response identity", as
   api.modelResponses.set(task.session_id, "business-response");
   const adapter = new AiSdkAdapter(omaModelOptions(api));
   for await (const _chunk of adapter.stream({ provider: "oma", model: "test-model", sessionId: SessionId(task.session_id),
-    purpose: "compaction", maxTokens: 65536, messages: [{ role: "user", content: [{ type: "text", text: "summarize" }] }] })) {}
+    purpose, maxTokens: 65536, messages: [{ role: "user", content: [{ type: "text", text: "summarize" }] }] })) {}
   expect(api.modelResponses.get(task.session_id)).toBe("business-response");
 });
 

@@ -1,4 +1,4 @@
-import type { AuthAccount } from '../auth/api';
+import type { AuthAccount, OrganizationAccess } from '../auth/api';
 import type { Workspace } from '../workspaces/api';
 
 export function fallbackOrganization(account: AuthAccount | null, preferred?: string) {
@@ -12,10 +12,19 @@ export function scopedAccount(
   account: AuthAccount | null,
   orgUuid?: string,
   workspace?: Workspace,
+  access?: OrganizationAccess | null,
 ): AuthAccount | null {
   if (!account) return null;
   const memberships = account.memberships?.filter((item) => item.organization?.uuid === orgUuid) ?? [];
-  return { ...account, permissions: scopePermissions(memberships[0]?.role, workspace?.effective_role), memberships };
+  return {
+    ...account,
+    effectiveOrganizationUuid: orgUuid,
+    permissions:
+      access?.source === 'platform_admin' && access.organization.uuid === orgUuid
+        ? (account.permissions ?? [])
+        : scopePermissions(memberships[0]?.role, workspace?.effective_role),
+    memberships,
+  };
 }
 
 export function scopePermissions(organizationRole?: string, workspaceRole?: string) {
@@ -55,4 +64,23 @@ export function savePreference(accountUuid: string, orgUuid: string, workspaceId
 
 export function isBusinessQuery(query: { queryKey: readonly unknown[] }) {
   return !['auth', 'invitations'].includes(String(query.queryKey[0]));
+}
+
+export function scopeAccountForSwitch(
+  refresh: boolean,
+  refreshed: AuthAccount | null | undefined,
+  known: AuthAccount | null | undefined,
+  current: AuthAccount | null,
+) {
+  if (refresh) return refreshed ?? null;
+  return known === undefined ? current : known;
+}
+
+export function workspacePreference(
+  accountUuid: string,
+  orgUuid: string,
+  initial: string | undefined,
+  navigate: boolean,
+) {
+  return !navigate && initial ? initial : readPreference(accountUuid, orgUuid);
 }

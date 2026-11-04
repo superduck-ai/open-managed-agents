@@ -7,7 +7,7 @@
   {{.Source}} AND dsh_event_type IN ('turn/start', 'turn/end') AND dsh_turn > 0
   GROUP BY dsh_session_id, dsh_turn
 ), complete AS (
-  SELECT sid, session_id, agent_version, turn, ended_at, CAST(ended_at - started_at AS DOUBLE) AS duration_ms, reason, error_code, starts_with(sid, 'sthr_') AS child
+  SELECT sid, session_id, agent_version, turn, ended_at, CAST(ended_at - started_at AS DOUBLE) AS duration_ms, reason, error_code, (starts_with(sid, 'sthr_') OR sid LIKE '________-____-____-____-____________') AS child
   FROM turns WHERE started_at IS NOT NULL AND ended_at IS NOT NULL AND ended_at >= started_at AND ended_at >= {{.From}}
 ){{end}}
 
@@ -239,7 +239,7 @@ FROM complete WHERE child GROUP BY (ended_at / {{.Interval}}) * {{.Interval}}, C
   SELECT sid, COUNT(*) AS turns, SUM(CASE WHEN reason = 'error' THEN 1 ELSE 0 END) AS failures, SUM(duration_ms) AS total_ms, MAX(duration_ms) AS max_ms
   FROM complete WHERE child GROUP BY sid
 ), thread_tokens AS (
-  SELECT sid, SUM(tokens) AS tokens FROM timed WHERE starts_with(sid, 'sthr_') GROUP BY sid
+  SELECT sid, SUM(tokens) AS tokens FROM timed WHERE (starts_with(sid, 'sthr_') OR sid LIKE '________-____-____-____-____________') GROUP BY sid
 )
 SELECT thread_turns.sid AS thread_id, thread_turns.turns, thread_turns.failures, thread_turns.total_ms, thread_turns.max_ms, COALESCE(thread_tokens.tokens, 0) AS tokens
 FROM thread_turns LEFT JOIN thread_tokens ON thread_turns.sid = thread_tokens.sid ORDER BY thread_turns.turns DESC LIMIT 500

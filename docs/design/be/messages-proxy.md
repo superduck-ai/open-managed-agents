@@ -329,9 +329,9 @@ Console API（相对 `/api/console/organizations/{orgUuid}`）：
 
 ## DSH 公开回复来源
 
-DSH 的公开回复由 Brain 独占发布。后端按已保存的 `metadata.config.worker_transport=claim` 识别该执行路径，Messages 和 Chat Completions 继续执行模型路由、权限/epoch 校验、请求 span、usage 和工具关联，但代理不发布 `agent.message`、`agent.thinking` 或 thinking 起始预览，也不在 span 的 `event_ids` 中宣称这些回复已发布。判断不依赖客户端用途 header；压缩请求与普通请求均遵守同一来源规则。Brain 在原生日志复制确认后发布回复，恢复可用稳定 ID 补发；压缩摘要保留在私有日志，并用 CCRv2 的 `agent.thread_context_compacted` 表达结果。Claude Code 路径与原有工具权限、审批、工具调用事件处理保持不变。
+DSH 普通请求由 Go 模型代理发布完整 `agent.message`、无正文 `agent.thinking` 和请求 end。Brain 同时保留经过日志复制确认的完成块回传，并在恢复时补发，携带 `model_request_start_id`；现有稳定 ID 和 Session 事务内的 Worker/proxy echo 去重避免重复回复。代理超过 4 MiB 观察上限时继续转发，记录 `observation_limit`，由 Brain 回传完整回复。DSH 的 thinking 起始预览仍由 Brain 发布。内部压缩与标题请求通过 `X-OMA-Model-Purpose` 保留 span、usage 和计费，不公开摘要或回复关联 ID；摘要保留在私有日志，并用 CCRv2 的 `agent.thread_context_compacted` 表达结果。原有工具权限、审批、工具调用事件处理保持不变。
 
-`TestModelReplyPublicationOwnership` 覆盖 Brain 与非 Brain 的发布职责、请求关联、usage 和工具 ID 保留，`TestBrainModelThinkingIsPublishedOnlyByWorker` 覆盖无代理 thinking 预览。Brain 单测覆盖无用途 header 的摘要预算、流式顺序、日志复制屏障和 SIGKILL 后回复补发。真实代理链路通过显式运行 `chat brain-compaction` 与 `chat brain` 验收，本次普通测试不代表真实服务集成已通过。
+`TestModelReplyPublicationOwnership` 覆盖 Brain 与非 Brain 的发布职责、请求关联、usage 和工具 ID 保留，`TestBrainModelThinkingIsPublishedOnlyByWorker` 覆盖无代理 thinking 预览。`TestObservationLimitPreservesUpstreamReply` 和 `proxy-reply-fallback.test.ts` 覆盖观察上限与完整块回传，`model-output-order.test.ts` 覆盖主、子线程超过 4 MiB 的回复。Brain 单测还覆盖摘要预算、流式顺序、日志复制屏障和 SIGKILL 后回复补发。真实代理链路通过显式运行 `chat brain-compaction` 与 `chat brain` 验收，本次普通测试不代表真实服务集成已通过。
 
 ### Thinking 预览与完成事件
 

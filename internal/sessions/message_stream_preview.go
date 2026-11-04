@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func nativeStreamPreview(batch codeSessionStreamFanout) (sessionStreamEvent, bool) {
+func messageStreamPreview(batch codeSessionStreamFanout) (sessionStreamEvent, bool) {
 	var payload struct {
 		Type     string `json:"type"`
 		EventID  string `json:"event_id"`

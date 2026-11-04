@@ -12,7 +12,7 @@ import (
 )
 
 func (s *Server) registerPlatformAccountRoutes(router chi.Router) {
-	service := platformadmin.New(s.db, s.logger.With("component", "platform_access"))
+	service := s.platformAccess
 	platformapi.RegisterPlatformAccountRoutes(router, s.db, func(ctx context.Context, session platformsession.Session) (platformapi.PlatformAccess, error) {
 		access := platformadmin.Permissions(false)
 		if s.platformAuth.VerifiedLoginEnabled() && session.VerifiedLogin() {

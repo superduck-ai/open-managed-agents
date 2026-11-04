@@ -61,8 +61,8 @@
             AND s.deleted_at IS NULL
         LEFT JOIN api_keys ak ON ak.uuid = s.created_by_api_key_uuid
             AND ak.workspace_uuid = w.uuid
-        LEFT JOIN users u ON u.uuid = COALESCE(CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid), ak.created_by_user_uuid)
-            AND u.organization_uuid = cs.organization_uuid
+        LEFT JOIN users u ON u.uuid = CASE WHEN s.metadata->>'_oma_runtime_user_uuid' IS NULL THEN ak.created_by_user_uuid ELSE CASE WHEN s.metadata->>'_oma_runtime_user_uuid' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid) END END
+            AND (s.metadata->>'_oma_runtime_user_uuid' IS NOT NULL OR u.organization_uuid = cs.organization_uuid)
             AND u.deleted_at IS NULL
     </sql>
 

@@ -4,16 +4,16 @@ import { Button } from '../../../shared/ui/button';
 import type { QueryScope, TrajectoryPage, TrajectoryTarget } from '../api';
 import { pollTrajectory } from './poll';
 import { createProjection, type Projection } from './projection';
-import type { NativeStore } from './native-types';
-import './native-theme.css';
+import type { DshStore } from './dsh-types';
+import './dsh-theme.css';
 
 const sessionState = { openState: 'open', hasMore: false, loadingOlder: false };
 
-function NativeView({ projection, snapshot }: { projection: Projection; snapshot: unknown }) {
+function DshView({ projection, snapshot }: { projection: Projection; snapshot: unknown }) {
   const injected = useMemo(() => projection.view.inject('trajectory'), [projection]);
   const Component = projection.view.Component;
   function useDuration<T>(selector: (value: boolean) => T) {
-    const source: NativeStore<boolean> = injected.hooks.duration;
+    const source: DshStore<boolean> = injected.hooks.duration;
     return selector(useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot));
   }
   return (
@@ -35,7 +35,7 @@ function NativeView({ projection, snapshot }: { projection: Projection; snapshot
   );
 }
 
-export function NativeTrajectory({
+export function DshTrajectory({
   scope,
   target,
   onPage,
@@ -107,7 +107,7 @@ export function NativeTrajectory({
       )}
       {state.projection ? (
         <div className="harness-trajectory min-h-[400px] flex-1">
-          <NativeView projection={state.projection} snapshot={state.snapshot} />
+          <DshView projection={state.projection} snapshot={state.snapshot} />
         </div>
       ) : (
         !state.error && (

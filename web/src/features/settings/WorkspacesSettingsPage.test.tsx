@@ -214,6 +214,8 @@ function renderWorkspacesSettings({
         uuid: 'acct_test',
         email_address: 'ada@example.com',
         display_name: 'Ada Lovelace',
+        effectiveOrganizationUuid: 'org_test',
+        permissions: ['organization:manage', 'members:manage', 'members:view'],
         memberships: [{ organization: { uuid: 'org_test', name: 'default' }, role: 'admin' }],
       }}
       onLogout={() => undefined}

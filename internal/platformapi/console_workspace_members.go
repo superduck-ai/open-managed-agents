@@ -39,7 +39,7 @@ func handleListConsoleWorkspaceMembers(store OrganizationStore) http.HandlerFunc
 			return
 		}
 		principal, _ := auth.PrincipalFromContext(r.Context())
-		workspace, access, ok := resolveConsoleWorkspace(w, r, memberStore, orgUUID, principal.UserExternalID, chi.URLParam(r, "workspaceId"))
+		workspace, access, ok := resolveConsoleWorkspace(w, r, memberStore, principal, chi.URLParam(r, "workspaceId"))
 		if !ok {
 			return
 		}
@@ -81,7 +81,7 @@ func handleListConsoleWorkspaceMemberCandidates(store OrganizationStore) http.Ha
 			return
 		}
 		principal, _ := auth.PrincipalFromContext(r.Context())
-		workspace, access, ok := resolveConsoleWorkspace(w, r, memberStore, orgUUID, principal.UserExternalID, chi.URLParam(r, "workspaceId"))
+		workspace, access, ok := resolveConsoleWorkspace(w, r, memberStore, principal, chi.URLParam(r, "workspaceId"))
 		if !ok {
 			return
 		}
@@ -151,7 +151,7 @@ func applyConsoleWorkspaceMemberChange(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	workspace, access, ok := resolveConsoleWorkspace(w, r, memberStore, orgUUID, principal.UserExternalID, chi.URLParam(r, "workspaceId"))
+	workspace, access, ok := resolveConsoleWorkspace(w, r, memberStore, principal, chi.URLParam(r, "workspaceId"))
 	if !ok {
 		return
 	}
@@ -199,8 +199,8 @@ func consoleMemberChangeStore(w http.ResponseWriter, store OrganizationStore) (*
 	return database, true
 }
 
-func resolveConsoleWorkspace(w http.ResponseWriter, r *http.Request, store workspaceaccess.Store, orgUUID, userID, workspaceID string) (db.AdminWorkspace, auth.WorkspaceAccess, bool) {
-	workspace, access, err := workspaceaccess.New(store).Resolve(r.Context(), orgUUID, userID, workspaceID)
+func resolveConsoleWorkspace(w http.ResponseWriter, r *http.Request, store workspaceaccess.Store, principal auth.Principal, workspaceID string) (db.AdminWorkspace, auth.WorkspaceAccess, bool) {
+	workspace, access, err := workspaceaccess.New(store).ResolvePrincipal(r.Context(), principal, workspaceID)
 	if errors.Is(err, workspaceaccess.ErrDenied) {
 		writeConsoleWorkspaceMemberError(w, err)
 		return db.AdminWorkspace{}, auth.WorkspaceAccess{}, false

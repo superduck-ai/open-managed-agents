@@ -21,6 +21,7 @@ import (
 )
 
 var requestHeadersToRemove = map[string]struct{}{
+	"X-Oma-Model-Purpose": {},
 	"Authorization":       {},
 	"Connection":          {},
 	"Cookie":              {},

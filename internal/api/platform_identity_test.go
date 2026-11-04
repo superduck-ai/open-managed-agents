@@ -1,12 +1,18 @@
 package api
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 )
 
@@ -59,6 +65,128 @@ func TestPlatformIdentityMiddleware(t *testing.T) {
 			}
 			if tc.status == http.StatusForbidden && len(response.Result().Cookies()) != 0 {
 				t.Fatal("权限拒绝不应清除登录会话")
+			}
+		})
+	}
+}
+
+func TestPlatformOrganizationHeaderValidation(t *testing.T) {
+	for _, tc := range []struct{ name, header, query string }{
+		{"非法头", "invalid", ""},
+		{"冲突目标", "aa000000-0000-4000-8000-000000000002", "aa000000-0000-4000-8000-000000000003"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/bootstrap?organization_uuid="+tc.query, nil)
+			request.Header.Set("X-Organization-UUID", tc.header)
+			_, err := (&Server{}).resolvePlatformSessionPrincipal(request, platformsession.Session{}, tc.header)
+			if err == nil || err.Status != http.StatusBadRequest {
+				t.Fatalf("err=%v", err)
+			}
+		})
+	}
+}
+
+func TestPlatformOrganizationLog(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		handler func(http.ResponseWriter, *http.Request)
+		status  int
+	}{
+		{"仅 Flush", func(w http.ResponseWriter, _ *http.Request) { w.(http.Flusher).Flush() }, http.StatusOK},
+		{"显式状态", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) }, http.StatusCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			server := &Server{logger: slog.New(slog.NewJSONHandler(&output, nil))}
+			principal := auth.Principal{AccountUUID: "actor", OrganizationUUID: "target", WorkspaceUUID: "workspace", CredentialType: auth.CredentialTypePlatformSession, OrganizationAccessSource: auth.OrganizationAccessPlatformAdmin, WorkspaceAccess: auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: "platform_admin"}}
+			request := httptest.NewRequest(http.MethodPost, "/v1/agents?secret=private", strings.NewReader("sensitive body"))
+			request.Header.Set("Authorization", "secret")
+			request.AddCookie(&http.Cookie{Name: "sessionKey", Value: "session-secret"})
+			server.servePlatformPrincipal(httptest.NewRecorder(), request, http.HandlerFunc(tc.handler), principal)
+			records := parseSlogJSONLines(t, output.String())
+			if len(records) != 1 || records[0]["actor_account_uuid"] != "actor" || records[0]["access_source"] != "platform_admin" || records[0]["outcome"] != "success" || records[0]["status"] != float64(tc.status) {
+				t.Fatalf("records=%+v", records)
+			}
+			for _, sensitive := range []string{"secret", "sensitive body", "private"} {
+				if strings.Contains(output.String(), sensitive) {
+					t.Fatal("日志泄漏敏感值")
+				}
+			}
+		})
+	}
+}
+
+func TestTargetBootstrapCannotSwallowAuthenticationFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, cookie, header string
+		status               int
+	}{
+		{"目标无登录", "", "target", 401},
+		{"目标会话失效", "unknown", "target", 401},
+		{"身份查询无登录保留匿名合同", "", "", 204},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := &Server{platformStore: platformsession.NewMemoryStore()}
+			request := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
+			request.Header.Set("X-Organization-UUID", tc.header)
+			if tc.cookie != "" {
+				request.AddCookie(&http.Cookie{Name: "sessionKey", Value: tc.cookie})
+			}
+			response := httptest.NewRecorder()
+			server.optionalPlatformAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })).ServeHTTP(response, request)
+			if response.Code != tc.status {
+				t.Fatalf("status=%d want=%d", response.Code, tc.status)
+			}
+		})
+	}
+}
+
+func TestLogoutIgnoresOrganizationScope(t *testing.T) {
+	credentials, err := codesessions.NewSessionCredentials(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	filestoreCredentials, err := filestore.NewTokenCredentials(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := platformsession.NewMemoryStore()
+	server := NewServer(ServerDeps{PlatformStore: store, CodeSessionCredentials: credentials, FilestoreCredentials: filestoreCredentials})
+	for _, path := range []string{"/api/auth/logout", "/auth/logout"} {
+		t.Run(path, func(t *testing.T) {
+			sessionKey := "logout-session"
+			if err := store.Save(t.Context(), sessionKey, platformsession.Session{UserUUID: "account", VerifiedEmail: "member@example.local", OrganizationUUID: "removed-organization", ExpiresAt: new(time.Now().Add(time.Hour))}); err != nil {
+				t.Fatal(err)
+			}
+			bootstrap := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
+			bootstrap.AddCookie(&http.Cookie{Name: "sessionKey", Value: sessionKey})
+			bootstrap.Header.Set("X-Organization-UUID", "invalid-organization")
+			denied := httptest.NewRecorder()
+			server.ServeHTTP(denied, bootstrap)
+			if denied.Code != http.StatusBadRequest {
+				t.Fatalf("bootstrap status=%d", denied.Code)
+			}
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			request.AddCookie(&http.Cookie{Name: "sessionKey", Value: sessionKey})
+			request.Header.Set("X-Organization-UUID", "invalid-organization")
+			request.Header.Set("X-Workspace-ID", "archived-workspace")
+			request.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken(sessionKey))
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("logout status=%d body=%s", response.Code, response.Body.String())
+			}
+			if _, err := store.Get(t.Context(), sessionKey); err == nil {
+				t.Fatal("退出后登录会话仍存在")
+			}
+			cookies := response.Result().Cookies()
+			if len(cookies) == 0 {
+				t.Fatal("退出未清除 cookie")
+			}
+			for _, cookie := range cookies {
+				if cookie.MaxAge >= 0 {
+					t.Fatalf("cookie %s 未过期", cookie.Name)
+				}
 			}
 		})
 	}

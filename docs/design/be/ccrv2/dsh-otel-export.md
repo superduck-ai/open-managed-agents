@@ -88,7 +88,7 @@ Brain 接收输入时记下 trace context：turn 以它为父 span；采样位�
 |---|---|---|---|
 | `oma.session.turn` | `turn/start` 或审批后恢复 | `turn/end` 或进入人工确认 | 进入人工确认时以 `requires_action` 结束，确认后新开 turn |
 | `oma.model_request` | 请求开始时间（start 帧，见 [结构化属性](dsh-observability.md#4-结构化属性)） | `assistant/message`/`attempt` 落账 | 失败尝试为 `ERROR` 并映射 `error.type`（如 `rate_limit_error`），取消为未设置 |
-| `oma.tool_use` / `oma.mcp_tool_use` | 实际派发，缺省为 `tool/call` 落账 | `tool/result` 落账 | 多智能体工具（`send_to_agent`、`list_agents`、`archive_agent`）、被拒绝的调用、客户端执行的自定义工具与 `AskUserQuestion` 不产出 |
+| `oma.tool_use` / `oma.mcp_tool_use` | 实际派发，缺省为 `tool/call` 落账 | `tool/result` 落账 | 多智能体工具（`subagent`、`send_message`、`list_agents`、`interrupt_agent`）、被拒绝的调用、客户端执行的自定义工具与 `AskUserQuestion` 不产出 |
 | `oma.compaction` | `compaction/start` | `compaction/end` | 只覆盖 DSH 压缩事件 |
 
 状态：完成为 `OK`，失败为 `ERROR`，被用户中断为未设置。
@@ -98,7 +98,7 @@ Brain 接收输入时记下 trace context：turn 以它为父 span；采样位�
 | 范围 | 属性 |
 |---|---|
 | 资源 / scope | `service.name=oma-platform`、`oma.organization.id`、`oma.workspace.id`、`oma.session.id`；scope `oma.platform` |
-| 所有 span | `gen_ai.conversation.id`：code session 映射为会话主线程 ID，`sthr_*` 保留 |
+| 所有 span | `gen_ai.conversation.id`：code session 映射为会话主线程 ID，仅保留数据库中属于当前 workspace 与 session 的已登记子线程 ID，包括 `sthr_*` 与 DSH UUID；其他值回退主线程，工具事件 ID 同步按主线程生成 |
 | `oma.session.turn` | `gen_ai.operation.name=invoke_agent`、`gen_ai.agent.id`（主线程，OMA 写入可信值）、`gen_ai.agent.name`（仅内联子 agent 且只发给 content 目标）、`gen_ai.request.model`、`oma.session.turn.stop_reason`、`error.type` |
 | `oma.model_request` | `gen_ai.operation.name=chat`、`gen_ai.request.model`、`gen_ai.provider.name`、`oma.step`、`oma.model_request.ttft_ms`、`error.type` |
 | 工具 | `gen_ai.operation.name=execute_tool`、`gen_ai.tool.name`、`gen_ai.tool.call.id`（OMA 映射为公共 `agent.tool_use` 事件 ID）、`oma.mcp.server.name`、`oma.tool.evaluated_permission`（`allow`/`ask`）、`oma.step`、`error.type` |

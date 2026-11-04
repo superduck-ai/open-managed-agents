@@ -1179,6 +1179,8 @@ function renderPage(locale: Locale = 'en', role = 'admin', scope: 'workspace' | 
     account: {
       uuid: 'acct_test',
       email_address: 'test@example.com',
+      effectiveOrganizationUuid: 'org_test',
+      permissions: role === 'admin' ? ['organization:manage', 'members:manage'] : [],
       memberships: [{ role, organization: { uuid: 'org_test' } }],
     },
     status: 'authenticated',

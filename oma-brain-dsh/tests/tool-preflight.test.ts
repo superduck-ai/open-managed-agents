@@ -10,7 +10,7 @@ test("tool preflight publishes each attempted call once before failed or success
   for (const scenario of [
     { name: "Bash", args: {}, allowed: true, failed: true, executions: 0 },
     { name: "unknown_tool", args: {}, allowed: false, failed: true, executions: 0 },
-    { name: "archive_agent", args: { thread_id: "missing" }, allowed: true, failed: true, executions: 0 },
+    { name: "send_message", args: { agent_id: "missing", message: "Continue" }, allowed: true, failed: true, executions: 0 },
     { name: "list_agents", args: {}, allowed: true, failed: false, executions: 0 },
     { name: "Bash", args: { command: "pwd" }, allowed: true, failed: false, executions: 1 },
   ]) {

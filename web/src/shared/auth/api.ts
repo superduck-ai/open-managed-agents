@@ -1,6 +1,7 @@
-import { consoleApi } from '../api/client';
+import { consoleApi, type ConsoleRequestContext } from '../api/client';
 
 export type AuthAccount = {
+  effectiveOrganizationUuid?: string;
   default_organization_uuid?: string;
   permissions?: string[];
   uuid: string;
@@ -27,7 +28,15 @@ export type AuthMembership = {
   };
 };
 
+export type OrganizationAccess = {
+  source: 'organization_member' | 'platform_admin';
+  organization: { uuid: string; name: string };
+  organization_role: string;
+  workspace_role: string;
+};
+
 export type BootstrapResponse = {
+  organization_access?: OrganizationAccess | null;
   platform_access?: PlatformAccess;
   account: AuthAccount | null;
   csrf_token?: string;
@@ -48,8 +57,8 @@ export type VerifyMagicLinkResponse = {
   account?: AuthAccount;
 };
 
-export function fetchBootstrap() {
-  return consoleApi<BootstrapResponse>('/api/bootstrap', { context: {} });
+export function fetchBootstrap(context: ConsoleRequestContext = {}) {
+  return consoleApi<BootstrapResponse>('/api/bootstrap', { context });
 }
 
 export function sendMagicLink(emailAddress: string) {

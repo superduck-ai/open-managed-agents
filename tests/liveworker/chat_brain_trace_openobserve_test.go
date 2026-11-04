@@ -277,7 +277,7 @@ func verifyOpenObserveStream(t *testing.T, stream string, rows []openObserveRow,
 				succeeded++
 			}
 		}
-		if strings.HasPrefix(operation, "oma.tool_use send_to_agent") {
+		if strings.HasPrefix(operation, "oma.tool_use subagent") {
 			t.Fatalf("OpenObserve %s has a multi-agent delegation tool span", stream)
 		}
 		if operation == "oma.tool_use Write" {

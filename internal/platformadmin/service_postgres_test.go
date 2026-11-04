@@ -183,22 +183,16 @@ func TestAdministrationServicePostgres(t *testing.T) {
 			t.Fatalf("错误 = %v", err)
 		}
 	})
-	t.Run("交接失败回滚新管理员", func(t *testing.T) {
-		_, err := service.TransferAdministrator(ctx, actor, org.UUID, AdministratorChange{Change: Change{ExpectedVersion: org.Version, Reason: "测试"}, AccountUUID: b, PreviousMemberUUID: uuid.NewV4().String(), Role: "user"})
-		if !errors.Is(err, db.ErrNotFound) {
-			t.Fatalf("错误 = %v", err)
+	t.Run("先添加管理员再降级并拒绝旧版本", func(t *testing.T) {
+		added, err := service.AddMember(ctx, actor, org.UUID, MemberChange{Change: Change{ExpectedVersion: org.Version}, AccountUUID: b, Role: "admin"})
+		if err != nil {
+			t.Fatal(err)
 		}
-		rows, err := database.ListPlatformAdminMembers(ctx, db.PlatformAdminPageQuery{OrganizationUUID: org.UUID, Limit: 10})
-		if err != nil || len(rows) != 1 {
-			t.Fatalf("交接未回滚：%+v，%v", rows, err)
-		}
-	})
-	t.Run("原子交接并拒绝旧版本", func(t *testing.T) {
-		updated, err := service.TransferAdministrator(ctx, actor, org.UUID, AdministratorChange{Change: Change{ExpectedVersion: org.Version, Reason: "交接"}, AccountUUID: b, PreviousMemberUUID: first, Role: "user"})
+		updated, err := service.ChangeMember(ctx, actor, org.UUID, first, MemberChange{Change: Change{ExpectedVersion: added.Version}, Role: "user"}, false)
 		if err != nil || updated.AdminCount != 1 || updated.MemberCount != 2 {
-			t.Fatalf("交接：%+v，%v", updated, err)
+			t.Fatalf("管理员更换：%+v %v", updated, err)
 		}
-		_, err = service.UpdateOrganization(ctx, actor, org.UUID, OrganizationPatch{Change: Change{ExpectedVersion: org.Version, Reason: "旧资料"}, Name: new("不得覆盖")})
+		_, err = service.UpdateOrganization(ctx, actor, org.UUID, OrganizationPatch{Change: Change{ExpectedVersion: org.Version}, Name: new("不得覆盖")})
 		if !errors.Is(err, ErrVersion) {
 			t.Fatalf("旧版本未拒绝：%v", err)
 		}

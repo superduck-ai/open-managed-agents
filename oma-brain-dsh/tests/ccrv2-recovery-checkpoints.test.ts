@@ -1,3 +1,4 @@
+import { runSubagent } from "./subagent-tools.ts";
 import { completedInputs } from "./session-log.ts";
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
@@ -114,7 +115,7 @@ test("completed native child history repairs a stale running status with end_tur
   cleanups.push(async () => { backend.stop(); });
   const first = await mount(backend);
   backend.modelScript = [textEvents("child completed")];
-  await first.session.subagents.send({ name: "specialist", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal);
+  await runSubagent(first.session, "subagent", { description: "specialist", prompt: ["Inspect", "Inspect files"].filter(Boolean).join("\n") });
   const childId = first.session.subagents.threads[0]!.id;
   await first.session.checkpoint();
   await first.close();
@@ -138,7 +139,7 @@ test("an unconfirmed in-memory archive does not override authoritative child sta
   cleanups.push(async () => { backend.stop(); });
   const first = await mount(backend);
   backend.modelScript = [textEvents("child completed")];
-  await first.session.subagents.send({ name: "specialist", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal);
+  await runSubagent(first.session, "subagent", { description: "specialist", prompt: ["Inspect", "Inspect files"].filter(Boolean).join("\n") });
   const childId = first.session.subagents.threads[0]!.id;
   first.session.pendingEvents.push({ type: "session.thread_status_terminated", uuid: "pending-child-archive", session_thread_id: childId });
   await first.session.checkpoint();
@@ -148,7 +149,7 @@ test("an unconfirmed in-memory archive does not override authoritative child sta
   expect(backend.publicLog.has("pending-child-archive")).toBe(false);
   expect(restored.session.subagents.threads[0]?.status).toBe("idle");
   backend.modelScript = [textEvents("follow-up")];
-  await restored.session.subagents.send({ thread_id: childId, message: "Do more work" }, new AbortController().signal);
+  await runSubagent(restored.session, "send_message", { agent_id: childId, message: "Do more work" });
   expect(restored.session.subagents.threads[0]?.status).toBe("idle");
 });
 
@@ -157,7 +158,7 @@ test("child discovery rejects incomplete remote inventory instead of trusting on
   cleanups.push(async () => { backend.stop(); });
   const { session } = await mount(backend);
   backend.modelScript = [textEvents("child completed")];
-  await session.subagents.send({ name: "specialist", system_prompt: "Inspect", message: "Inspect files" }, new AbortController().signal);
+  await runSubagent(session, "subagent", { description: "specialist", prompt: ["Inspect", "Inspect files"].filter(Boolean).join("\n") });
   const childId = session.subagents.threads[0]!.id;
   const privateEvents = session.backend.privateEvents.bind(session.backend);
   let inventoryRequests = 0;

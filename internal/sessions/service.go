@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/networkpolicy"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetry"
 	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 )
@@ -60,6 +61,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	}
 	if err := networkpolicy.ValidateSessionMCPHosts(env.Config, snapshot); err != nil {
 		return invalidRequest(err)
+	}
+	if err := skillsapi.NewRuntimeResolver(h.db).ValidateAgentSnapshot(r.Context(), principal.WorkspaceUUID, snapshot); err != nil {
+		return mapSkillReferenceValidationError(err)
 	}
 	metadata, err := httpapi.NormalizeMetadata(rawOrDefault(body.Metadata, `{}`), validateMetadataEntries)
 	if err != nil {
@@ -117,7 +121,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 			OrganizationUUID:      principal.OrganizationUUID,
 			WorkspaceUUID:         principal.WorkspaceUUID,
 			CreatedByAPIKeyUUID:   principal.APIKeyUUID,
-			RuntimeUserUUID:       principal.UserUUID,
+			RuntimeUserUUID:       principal.RuntimeUserUUID(),
 			EnvironmentUUID:       env.UUID,
 			EnvironmentExternalID: env.ExternalID,
 			AgentUUID:             agent.UUID,

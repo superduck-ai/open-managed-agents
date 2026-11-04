@@ -3,6 +3,7 @@ package platformapi
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -210,7 +211,7 @@ func consoleWorkspaceAPIKeyTestRequest(workspaceReference string) *http.Request 
 	routeContext.URLParams.Add("orgUuid", orgUUID)
 	routeContext.URLParams.Add("workspaceId", workspaceReference)
 	contextWithRoute := context.WithValue(request.Context(), chi.RouteCtxKey, routeContext)
-	contextWithPrincipal := auth.WithPrincipal(contextWithRoute, auth.Principal{OrganizationUUID: orgUUID})
+	contextWithPrincipal := auth.WithPrincipal(contextWithRoute, auth.Principal{OrganizationUUID: orgUUID, UserExternalID: "actor"})
 	return request.WithContext(contextWithPrincipal)
 }
 
@@ -386,5 +387,18 @@ func TestArchiveConsoleWorkspaceRejectsDefaultWorkspace(t *testing.T) {
 	}
 	if store.archiveCalls != 1 {
 		t.Fatalf("archive calls = %d, want 1", store.archiveCalls)
+	}
+}
+
+func TestPlatformAPIKeyCreatorIsNullable(t *testing.T) {
+	request := consoleWorkspaceAPIKeyTestRequest("workspace_test")
+	request.Method = http.MethodPost
+	request.Body = io.NopCloser(strings.NewReader(`{"name":"platform key"}`))
+	principal := auth.Principal{AccountUUID: "account", OrganizationUUID: "00000000-0000-4000-8000-000000000002", CredentialType: auth.CredentialTypePlatformSession, OrganizationAccessSource: auth.OrganizationAccessPlatformAdmin, WorkspaceAccess: auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: "platform_admin"}}
+	store := &consoleAPIKeyScopeStore{workspaces: []ConsoleWorkspace{{UUID: "00000000-0000-4000-8000-000000000001", ExternalID: "workspace_test"}}}
+	response := httptest.NewRecorder()
+	handleCreateConsoleWorkspaceAPIKey(store).ServeHTTP(response, request.WithContext(auth.WithPrincipal(request.Context(), principal)))
+	if response.Code != 200 || store.createInput == nil || store.createInput.CreatedByUserUUID != nil {
+		t.Fatalf("status=%d creator=%+v", response.Code, store.createInput)
 	}
 }

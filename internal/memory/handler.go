@@ -1128,7 +1128,7 @@ func optionalActor(actor *db.MemoryActor) *actorResponse {
 
 func principalActor(principal auth.Principal) db.MemoryActor {
 	if principal.CredentialType == auth.CredentialTypePlatformSession {
-		return db.MemoryActor{Type: "user_actor", UserID: principal.UserExternalID}
+		return db.MemoryActor{Type: "user_actor", UserID: principal.ActorUserID()}
 	}
 	return db.MemoryActor{
 		Type:             db.MemoryActorTypeAPI,

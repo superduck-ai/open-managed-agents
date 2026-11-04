@@ -17,10 +17,7 @@ afterEach(() => {
 });
 
 describe('ConsoleShell', () => {
-  test.each([
-    ['en', 'User', 'Default'],
-    ['zh-CN', '用户', '默认'],
-  ] as const)('用户角色在 %s 显示正确名称', (locale, label, workspaceName) => {
+  test.each(['en', 'zh-CN'] as const)('账号区在 %s 显示用户名和当前组织，不显示角色与工作区', (locale) => {
     resetTestDom('https://oma.duck.ai/dashboard');
     renderWithWorkspaces(
       <ConsoleShell currentPath="/dashboard" account={testAccount('user')} onLogout={() => undefined}>
@@ -28,10 +25,10 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
       { locale, effectiveRole: 'workspace_user' },
     );
-    const account = screen.getByRole('button', { name: /test/i });
-    expect(within(account).getByText(label)).toBeTruthy();
-    expect(within(account).getByText(workspaceName)).toBeTruthy();
-    expect(account.textContent).not.toContain('·');
+    const account = screen.getByRole('button', { name: 'test org_test' });
+    expect(within(account).getByText('test')).toBeTruthy();
+    expect(within(account).getByText('org_test')).toBeTruthy();
+    expect(account.querySelector('.text-xs')?.textContent).toBe('org_test');
   });
 
   test.each(['/settings/workspaces/default/mcp-tunnels', '/settings/workspaces/default/mcp-tunnels/tunnel_test'])(
@@ -656,7 +653,7 @@ describe('ConsoleShell', () => {
     await waitFor(() => expect(screen.queryByRole('menuitem', { name: /Default/i })).toBeNull());
   });
 
-  test('selects a workspace and updates the account subtitle', async () => {
+  test('切换工作区不改变账号区的当前组织', async () => {
     resetTestDom('https://oma.duck.ai/dashboard');
 
     renderWithWorkspaces(
@@ -682,11 +679,11 @@ describe('ConsoleShell', () => {
       fireEvent.click(screen.getByRole('button', { name: /test/i }));
     });
     const account = screen.getByRole('button', { name: /test/i });
-    expect(within(account).getByText('Member')).toBeTruthy();
-    expect(within(account).getByText('foo')).toBeTruthy();
+    expect(within(account).getByText('org_test')).toBeTruthy();
+    expect(within(account).queryByText('foo')).toBeNull();
   });
 
-  test('shows the role for the active organization instead of the first membership', () => {
+  test('账号区显示当前组织而不是首个成员组织', () => {
     resetTestDom('https://oma.duck.ai/dashboard');
 
     renderWithWorkspaces(
@@ -708,8 +705,8 @@ describe('ConsoleShell', () => {
     );
 
     const account = screen.getByRole('button', { name: /test/i });
-    expect(within(account).getByText('Admin')).toBeTruthy();
-    expect(within(account).getByText('Default')).toBeTruthy();
+    expect(within(account).getByText('org_test')).toBeTruthy();
+    expect(within(account).queryByText('org_other')).toBeNull();
   });
 
   test('uses client navigation when selecting a workspace on managed routes', async () => {

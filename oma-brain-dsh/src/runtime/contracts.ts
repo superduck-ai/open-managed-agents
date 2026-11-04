@@ -1,5 +1,4 @@
 import { HarnessError } from "@deepseek-ai/dsh-llm";
-import type { ContinuableSubagentDescriptorData } from "@deepseek-ai/dsh-subagent";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
@@ -40,9 +39,8 @@ export type SubagentEvent =
 
 /** Awaited storage, policy and event adapters for child orchestration. */
 export interface SubagentBridge {
-  validateThread?(threadId: string, signal: AbortSignal): Promise<void>;
+  validateThread?(threadId: string, signal: AbortSignal, allowRunning?: boolean): Promise<void>;
   archivedThreads?(threadIds: string[], signal: AbortSignal): Promise<string[]>;
-  createThreadId?(): string;
   threads(): SubagentThread[];
   restoreThreads?(): Promise<void>;
   bindPersistence(threadId: string): void;
@@ -97,7 +95,6 @@ export interface SessionRuntimeConfig {
   externalMcpConfig?: unknown;
   externalMcpFetch?: typeof fetch;
   id: string;
-  descriptor?: ContinuableSubagentDescriptorData;
   provider: string;
   model: string;
   workDir: string;
@@ -151,8 +148,9 @@ export interface SessionRuntimeHooks {
   afterFlushLog?(session: Session): Promise<void>;
   onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
   onExternalMcpAuthenticationFailure?(serverName: string, phase?: "discovery" | "tool_call"): Promise<void>;
-  setupTools?(scope: Context): void;
+  setupTools?(scope: Context): void | Promise<void>;
   beforeRequest?(): Promise<void>;
+  waitForChildren?(): Promise<boolean>;
   onEvent(event: SessionEvent, session: Session): void;
   onStream(frame: AssistantStreamFrame): void;
   stop(): void;

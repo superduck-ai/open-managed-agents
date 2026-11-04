@@ -34,6 +34,7 @@ import (
 	modelsapi "github.com/superduck-ai/open-managed-agents/internal/models"
 	"github.com/superduck-ai/open-managed-agents/internal/observability"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
+	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
@@ -57,6 +58,7 @@ import (
 )
 
 type Server struct {
+	platformAccess       *platformadmin.Service
 	invitationJobs       *river.Client[*sql.Tx]
 	workspaceAccess      *workspaceaccess.Service
 	cfg                  config.Config
@@ -162,6 +164,7 @@ func NewServer(deps ServerDeps) *Server {
 		filestoreService = filestoreapi.NewService(deps.Config, deps.DB, deps.DB, deps.ObjectStore)
 	}
 	codeSessionService.WithSessionAttachments(filestoreService, deps.Config.Storage.MaxFileBytes)
+	codeSessionService.WithSessionSkills(filestoreService)
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease
 	if deps.Redis != nil {
@@ -172,6 +175,7 @@ func NewServer(deps ServerDeps) *Server {
 		oauthRefreshLease = lease
 	}
 	s := &Server{
+		platformAccess:       platformadmin.New(deps.DB, componentLogger("platform_access")),
 		invitationJobs:       deps.InvitationJobs,
 		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
@@ -307,6 +311,8 @@ func (s *Server) registerPlatformConsoleRoutes(
 	mcpServerHandler *mcpservers.Handler,
 ) {
 	s.registerPlatformAdminRoutes(router)
+	secureCookies := s.cfg.Env == config.EnvironmentProd || strings.HasPrefix(s.cfg.Auth.ConsoleURL, "https://")
+	platformapi.RegisterPlatformEmailLoginRoutes(router, s.db, s.platformAuth, s.platformStore, secureCookies)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformIdentityMiddleware)
 		r.Route("/api/invitations", func(r chi.Router) {
@@ -317,8 +323,6 @@ func (s *Server) registerPlatformConsoleRoutes(
 		r.Use(s.optionalPlatformAuthMiddleware)
 		platformapi.RegisterDirectoryRoutes(r)
 		s.registerPlatformAccountRoutes(r)
-		secureCookies := s.cfg.Env == config.EnvironmentProd || strings.HasPrefix(s.cfg.Auth.ConsoleURL, "https://")
-		platformapi.RegisterPlatformEmailLoginRoutes(r, s.db, s.platformAuth, s.platformStore, secureCookies)
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
@@ -484,13 +488,18 @@ func (s *Server) platformAuthMiddleware(next http.Handler) http.Handler {
 		if orgAlias := s.platformMirrorOrganizationAlias(r, principal); orgAlias != "" {
 			ctx = auth.WithPlatformMirrorOrganizationAlias(ctx, orgAlias)
 		}
-		next.ServeHTTP(w, r.WithContext(ctx))
+		s.servePlatformPrincipal(w, r.WithContext(ctx), next, principal)
 	})
 }
 
 func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		orgHeader := strings.TrimSpace(r.Header.Get("X-Organization-UUID"))
 		if auth.ExtractPlatformSessionKey(r) == "" {
+			if orgHeader != "" {
+				httpapi.WriteError(w, r, platformIdentityUnauthorized())
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -499,7 +508,7 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 			if err.Status == http.StatusUnauthorized {
 				clearPlatformSessionCookies(w)
 			}
-			if err.Status >= http.StatusInternalServerError {
+			if err.Status >= http.StatusInternalServerError || orgHeader != "" {
 				httpapi.WriteError(w, r, err)
 				return
 			}
@@ -507,8 +516,11 @@ func (s *Server) optionalPlatformAuthMiddleware(next http.Handler) http.Handler 
 			return
 		}
 		ctx := platformsession.WithSession(r.Context(), session)
-		if principal, scopeErr := s.resolvePlatformSessionPrincipal(r, session); scopeErr == nil {
+		if principal, scopeErr := s.resolvePlatformSessionPrincipal(r, session, orgHeader); scopeErr == nil {
 			ctx = auth.WithPrincipal(ctx, principal)
+		} else if orgHeader != "" {
+			httpapi.WriteError(w, r, scopeErr)
+			return
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -546,7 +558,7 @@ func (s *Server) authenticatePlatformSession(r *http.Request) (auth.Principal, *
 	if err != nil {
 		return auth.Principal{}, err
 	}
-	return s.resolvePlatformSessionPrincipal(r, session)
+	return s.resolvePlatformSessionPrincipal(r, session, strings.TrimSpace(r.Header.Get("X-Organization-UUID")))
 }
 
 func (s *Server) resolvePlatformWorkspaceScope(r *http.Request, principal auth.Principal) (auth.Principal, *httpapi.Error) {
@@ -557,7 +569,7 @@ func (s *Server) resolvePlatformWorkspace(r *http.Request, principal auth.Princi
 	if workspaceID == "" {
 		workspaceID = "default"
 	}
-	workspace, access, err := s.workspaceAccess.Resolve(r.Context(), principal.OrganizationUUID, principal.UserExternalID, workspaceID)
+	workspace, access, err := s.workspaceAccess.ResolvePrincipal(r.Context(), principal, workspaceID)
 	if err != nil {
 		if errors.Is(err, workspaceaccess.ErrDenied) {
 			return auth.Principal{}, httpapi.NewError(http.StatusForbidden, "permission_error", "Workspace not allowed")
@@ -572,6 +584,9 @@ func (s *Server) resolvePlatformWorkspace(r *http.Request, principal auth.Princi
 }
 
 func (s *Server) platformMirrorOrganizationAlias(r *http.Request, principal auth.Principal) string {
+	if principal.PlatformOrganizationAdmin(principal.OrganizationUUID) {
+		return ""
+	}
 	if s.db == nil {
 		return ""
 	}
@@ -590,18 +605,6 @@ func (s *Server) platformMirrorOrganizationAlias(r *http.Request, principal auth
 		return orgID
 	}
 	s.logger.ErrorContext(r.Context(), "load platform mirror organization alias", "error", err)
-	return ""
-}
-
-func platformOrganizationOverrideID(r *http.Request) string {
-	for _, value := range []string{
-		r.Header.Get("X-Organization-UUID"),
-		r.URL.Query().Get("organization_uuid"),
-	} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
 	return ""
 }
 

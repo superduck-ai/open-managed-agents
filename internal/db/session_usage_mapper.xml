@@ -33,19 +33,14 @@
     </select>
 
     <select id="SumActiveSeconds" result="scalar">
-        SELECT COALESCE(SUM(GREATEST(EXTRACT(EPOCH FROM (e.created_at - s.created_at)), 0)), 0)
-        FROM session_events e
-        JOIN session_events s
-            ON s.workspace_uuid = e.workspace_uuid
-            AND s.session_external_id = e.session_external_id
-            AND s.external_id = e.payload->>'model_request_start_id'
+        SELECT COALESCE((
+            SELECT CAST(oma_session_activity_metrics(
+                s.workspace_uuid, s.uuid, NULLIF(#{params.ThreadExternalID}, ''), NOW()
+            )->>'active_seconds' AS double precision)
+            FROM sessions s
+            WHERE s.workspace_uuid = #{params.WorkspaceUUID}
+            AND s.external_id = #{params.SessionExternalID}
             AND s.deleted_at IS NULL
-        WHERE e.workspace_uuid = #{params.WorkspaceUUID}
-        AND e.session_external_id = #{params.SessionExternalID}
-        AND e.event_type = 'span.model_request_end'
-        AND e.deleted_at IS NULL
-        <if test="params.ThreadExternalID != ''">
-            AND e.thread_external_id = #{params.ThreadExternalID}
-        </if>
+        ), 0)
     </select>
 </mapper>

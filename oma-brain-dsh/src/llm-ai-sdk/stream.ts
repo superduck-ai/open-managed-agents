@@ -159,6 +159,7 @@ function inputRangeOverflow(error: APICallError, message: string): boolean {
 function providerError(detail: string, status?: number, providerRetryAfterMs?: number, contextOverflow = false): LlmError {
   const message = detail || "Model stream error";
   const code = contextOverflow || isContextWindowExceededError(message) ? "CONTEXT_WINDOW_EXCEEDED"
+    : status === 429 && /^concurrency allocated quota exceeded(?:[.!]?\s*please try again later[.!]?)?$/i.test(message.trim()) ? "RATE_LIMIT"
     : isQuotaExceededError(message) ? "QUOTA" : status === 429 ? "RATE_LIMIT"
     : status === 401 || status === 403 ? "AUTH" : status === 408 ? "TIMEOUT"
     : status && status >= 500 ? "SERVER" : status && status >= 400 ? "HTTP_ERROR" : "TRANSPORT";

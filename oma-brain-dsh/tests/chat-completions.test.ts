@@ -142,9 +142,8 @@ test("Chat adapter sends tool history and retains OMA event identity after repla
   const assembler = new BlockAssembler(); for (const chunk of await collect(adapter.stream(request))) assembler.push(chunk);
   const saved = assembler.message({ provider: "oma", model: "chat-model", replayState: assembler.replayState });
   expect(saved.source.replayState).toMatchObject({ blocks: [{ index: 0 }, { index: 1 }] });
-  const first = assistantMessages(a.session_id, "fallback", saved)[0]!;
-  expect(first.model_request_start_id).toBe("span_chat");
-  expect(assistantMessages(a.session_id, "other", saved)[0]!.id).toBe(first.id);
+  expect(saved.source.replayState).toMatchObject({ response: { requestID: "span_chat", messageID: "chat_1" } });
+  expect(assistantMessages(a.session_id, "fallback", saved)).toMatchObject([{ type: "agent.message", model_request_start_id: expect.any(String) }]);
   const body = await requests[0]!.json();
   expect(body).toMatchObject({ model: "chat-model", stream: true, max_completion_tokens: 100, temperature: 0.5,
     tools: [{ type: "function", function: { name: "Bash" } }] });

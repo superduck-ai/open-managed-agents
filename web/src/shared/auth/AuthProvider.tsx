@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { cancelScopeRequests, onApiAuthFailure, setConsoleRequestContext, type ApiError } from '../api/client';
+import { clearPlatformScope } from '../organizations/platform-scope';
 import { fetchBootstrap, logout, type BootstrapResponse } from './api';
 import { AuthContext, type AuthContextValue, type AuthStatus } from './context';
 
@@ -8,7 +9,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const bootstrapQuery = useQuery({
     queryKey: ['auth', 'bootstrap'],
-    queryFn: fetchBootstrap,
+    queryFn: () => fetchBootstrap(),
     retry: false,
   });
 
@@ -17,6 +18,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () =>
       onApiAuthFailure((status) => {
         if (status !== 401) return;
+        clearPlatformScope();
         cancelScopeRequests();
         setConsoleRequestContext({});
         queryClient.setQueryData(['auth', 'bootstrap'], { account: null });
@@ -44,6 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       logout: async () => {
         await logout();
+        clearPlatformScope();
         cancelScopeRequests();
         setConsoleRequestContext({});
         queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== 'auth' });

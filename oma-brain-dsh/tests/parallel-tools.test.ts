@@ -1,3 +1,4 @@
+import { runSubagent } from "./subagent-tools.ts";
 import { nativeOutcomes, completedInputs } from "./session-log.ts";
 import { afterEach, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
@@ -119,9 +120,7 @@ test("drain waits for every active tool and rejects new work without a persisten
     return toolEvents(name, name);
   };
   b.onTool = async (params) => result(await (params.arguments.command === "first" ? first.promise : second.promise));
-  const calls = ["alpha", "beta"].map((name) => session.subagents.send({
-    name, system_prompt: name, message: "Run a command",
-  }, new AbortController().signal));
+  const calls = ["alpha", "beta"].map((name) => runSubagent(session, "subagent", { description: name, prompt: [name, "Run a command"].filter(Boolean).join("\n") }));
   try {
     await eventually(() => b.executions.length === 2);
     expect(await session.drain(0)).toBe(false);
@@ -152,7 +151,7 @@ test.each([
   await session.receive("read-during-drain", { content: "Inspect files" });
   expect(b.executions).toHaveLength(1);
   expect(b.executions[0]!.name).toBe(call.name.toLowerCase());
-  expect(nativeOutcomes(session).call_0?.failed).toBe(false);
+  expect((await nativeOutcomes(session)).call_0?.failed).toBe(false);
   expect(session.dispatching()).toBe(false);
 });
 
@@ -168,7 +167,7 @@ test("active reads do not extend the side-effect drain budget", async () => {
     expect(await session.drain(0)).toBe(true);
     release.resolve(result("read completed"));
     await turn;
-    expect(nativeOutcomes(session).call_0?.failed).toBe(false);
+    expect((await nativeOutcomes(session)).call_0?.failed).toBe(false);
   } finally { release.resolve(result("cleanup")); session.stop(); await settled; }
 });
 
@@ -231,7 +230,7 @@ test("denying one parallel read leaves its sibling executable", async () => {
     } });
     await turn;
     expect(b.executions).toHaveLength(1);
-    expect(nativeOutcomes(session, session.id).call_1).toBeDefined();
+    expect((await nativeOutcomes(session, session.id)).call_1).toBeDefined();
     expect(session.abort.signal.aborted).toBe(false);
     expect(completedInputs(session)).toContain(session.inputId);
   } finally { session.stop(); await settled; }
@@ -257,7 +256,7 @@ test("Read, Glob and Grep overlap in the native loop and accept results in rever
     await turn;
     expect(completedInputs(session)).toContain(session.inputId);
     for (const index of [0, 1, 2]) {
-      expect(nativeOutcomes(session, session.id)[`call_${index}`]!.text).toBe(`output_${index}`);
+      expect((await nativeOutcomes(session, session.id))[`call_${index}`]!.text).toBe(`output_${index}`);
       expect(JSON.stringify(b.requests.at(-1)!.messages)).toContain(`output_${index}`);
     }
   } finally {
@@ -317,7 +316,7 @@ test("a failed read-only call is retried once without blocking", async () => {
   await session.receive("retry-read", { content: "Read it" });
   expect(attempts).toBe(2);
   expect(session.abort.signal.aborted).toBe(false);
-  expect(nativeOutcomes(session, session.id).call_0).toEqual({ text: "read after retry", failed: false });
+  expect((await nativeOutcomes(session, session.id)).call_0).toEqual({ text: "read after retry", failed: false });
   expect(JSON.stringify(b.requests.at(-1)!.messages)).toContain("read after retry");
 });
 
@@ -329,7 +328,7 @@ test("a read-only call that fails twice returns an error result to the model wit
   expect(b.executions).toHaveLength(2);
   expect(session.abort.signal.aborted).toBe(false);
   expect(completedInputs(session)).toContain(session.inputId);
-  expect(nativeOutcomes(session, session.id).call_0).toEqual({ text: "Error: Read-only tool outcome is unknown", failed: true });
+  expect((await nativeOutcomes(session, session.id)).call_0).toEqual({ text: "Error: Read-only tool outcome is unknown", failed: true });
   const toolResult = JSON.stringify(b.requests.at(-1)!.messages);
   expect(toolResult).toContain('"is_error":true');
   expect(toolResult).toContain("Read-only tool outcome is unknown");
@@ -343,7 +342,7 @@ test("a gateway rejection before forwarding becomes a failed result instead of a
   expect(b.executions).toHaveLength(0);
   expect(session.abort.signal.aborted).toBe(false);
   expect(completedInputs(session)).toContain(session.inputId);
-  expect(nativeOutcomes(session, session.id).call_bash).toEqual({
+  expect((await nativeOutcomes(session, session.id)).call_bash).toEqual({
     text: "Error: Sandbox tool call was not executed: Sandbox MCP request exceeds 1 MiB", failed: true,
   });
   const messages = JSON.stringify(b.requests.at(-1)!.messages);
@@ -359,7 +358,7 @@ test("an executed call with unsupported content becomes a failed result instead 
   expect(b.executions).toHaveLength(1);
   expect(session.abort.signal.aborted).toBe(false);
   expect(completedInputs(session)).toContain(session.inputId);
-  expect(nativeOutcomes(session, session.id).call_bash).toEqual({
+  expect((await nativeOutcomes(session, session.id)).call_bash).toEqual({
     text: "Error: Sandbox tool returned an unsupported result: Only text MCP results are supported", failed: true,
   });
   expect(JSON.stringify(b.requests.at(-1)!.messages)).toContain('"is_error":true');

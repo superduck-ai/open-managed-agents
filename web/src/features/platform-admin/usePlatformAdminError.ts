@@ -17,6 +17,10 @@ export function usePlatformAdminError() {
       'platformAdmin.errors.idempotencyConflict',
       'This request key was already used for different organization details.',
     ),
+    member_already_exists: msg(
+      'platformAdmin.errors.memberAlreadyExists',
+      'This account is already a member. Change its role in the member list.',
+    ),
     state_conflict: msg('platformAdmin.errors.stateConflict', 'This action is not available in the current state.'),
     rate_limited: msg('platformAdmin.errors.rateLimited', 'Too many requests. Please try again later.'),
     invalid_request: msg('platformAdmin.errors.invalidRequest', 'Check the form values and try again.'),

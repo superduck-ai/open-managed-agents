@@ -107,6 +107,9 @@ test('严格模式重挂载后可重试授权故障并显示无组织账号的�
   expect(screen.getByRole('navigation', { name: '后台导航' })).toBeTruthy();
   expect(screen.getByRole('link', { name: '组织管理' }).getAttribute('aria-current')).toBe('page');
   expect(screen.queryByRole('link', { name: '审计记录' })).toBeNull();
+  expect(screen.getByRole('link', { name: '超级管理员' })).toBeTruthy();
+  expect(screen.getByText('全局管理')).toBeTruthy();
+  expect(screen.getByRole('link', { name: '系统技能' })).toBeTruthy();
 });
 
 test('组织菜单每次只加载对应列表，直达与返回保留当前菜单', async () => {
@@ -135,9 +138,12 @@ test('组织菜单每次只加载对应列表，直达与返回保留当前菜�
     return Response.json({ data: [], next_cursor: '' });
   }) as unknown as typeof fetch;
   const router = mount('/platform-admin/organizations/target?view=members');
-  expect(await screen.findByRole('heading', { name: '组织成员' })).toBeTruthy();
-  expect(await screen.findByText('暂无组织成员。')).toBeTruthy();
-  expect(screen.queryByRole('table')).toBeNull();
+  expect(await screen.findByRole('heading', { name: '成员' })).toBeTruthy();
+  expect(await screen.findByText('还没有成员')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: '超级管理员' })).toBeNull();
+  expect(screen.queryByText('全局管理')).toBeNull();
+  expect(screen.queryByRole('link', { name: '系统技能' })).toBeNull();
+  expect(screen.queryByRole('table')).toBeTruthy();
   expect(screen.getByRole('link', { name: '组织成员' }).getAttribute('aria-current')).toBe('page');
   expect(requests.some((path) => path.includes('/workspaces') || path.includes('/invitations'))).toBe(false);
 
@@ -145,7 +151,7 @@ test('组织菜单每次只加载对应列表，直达与返回保留当前菜�
   expect(await screen.findByRole('heading', { name: '工作区目录' })).toBeTruthy();
   expect(await screen.findByText('暂无工作区。')).toBeTruthy();
   expect(screen.queryByRole('table')).toBeNull();
-  expect(screen.queryByRole('heading', { name: '组织成员' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: '成员' })).toBeNull();
   expect(screen.getByRole('link', { name: '工作区' }).getAttribute('aria-current')).toBe('page');
   expect(router.state.location.search).toEqual({ view: 'workspaces' });
 
@@ -161,6 +167,14 @@ test('组织菜单每次只加载对应列表，直达与返回保留当前菜�
   expect(await screen.findByRole('button', { name: '编辑资料' })).toBeTruthy();
   expect(screen.queryByRole('table')).toBeNull();
   expect(screen.getByRole('link', { name: '基础资料' }).getAttribute('aria-current')).toBe('page');
+  expect(screen.queryByRole('link', { name: '超级管理员' })).toBeNull();
+  expect(screen.queryByText('全局管理')).toBeNull();
+  expect(screen.queryByRole('link', { name: '系统技能' })).toBeNull();
+  fireEvent.click(screen.getByRole('link', { name: '返回组织列表' }));
+  expect(await screen.findByRole('heading', { name: '受保护组织目录' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: '超级管理员' })).toBeTruthy();
+  expect(screen.getByText('全局管理')).toBeTruthy();
+  expect(screen.getByRole('link', { name: '系统技能' })).toBeTruthy();
 });
 
 for (const [locale, label] of [
@@ -259,8 +273,8 @@ for (const view of ['members', 'invitations'] as const) {
       return Response.json({ data: [], next_cursor: '' });
     }) as typeof fetch;
     mount(`/platform-admin/organizations/target?view=${view}`);
-    const openLabel = view === 'members' ? '设置管理员' : '发送邀请';
-    const submitLabel = view === 'members' ? '确认变更' : '确认';
+    const openLabel = view === 'members' ? '添加成员' : '发送邀请';
+    const submitLabel = view === 'members' ? '添加' : '确认';
     async function submit() {
       fireEvent.click(await screen.findByRole('button', { name: openLabel, exact: true }));
       if (view === 'members') {

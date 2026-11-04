@@ -113,16 +113,19 @@ ant --version
   </Tab>
 </Tabs>
 
-将您的 API 密钥设置为环境变量：
+设置 OMA 服务地址和 API 密钥：
 
 ```bash
+export OMA_BASE_URL="http://localhost:38080"
 export OMA_API_KEY="your-api-key-here"
 ```
+
+示例中的 `claude-opus-5` 仅为占位模型名称；请替换为工作区模型提供商中实际配置且可用的模型 ID。
 
 ## 创建您的第一个会话
 
 <Note>
-  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+  不同资源的 Beta 要求不同。环境 API 需要 `?beta=true`；其他资源请参阅[版本与 Beta 功能](/docs/zh/api/versioning-beta)。使用 SDK 时请确认它向 OMA 发送所需参数。
 </Note>
 
 <Steps>
@@ -134,7 +137,7 @@ export OMA_API_KEY="your-api-key-here"
       set -euo pipefail
 
       agent=$(
-        curl -sS --fail-with-body http://localhost:38080/v1/agents \
+        curl -sS --fail-with-body "$OMA_BASE_URL/v1/agents" \
           -H "x-api-key: $OMA_API_KEY" \
           -H "anthropic-version: 2023-06-01" \
           -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -169,9 +172,13 @@ export OMA_API_KEY="your-api-key-here"
       ```
 
       ```python Python
+      import os
       from anthropic import Anthropic
 
-      client = Anthropic()
+      client = Anthropic(
+          base_url=os.environ["OMA_BASE_URL"],
+          api_key=os.environ["OMA_API_KEY"],
+      )
 
       agent = client.beta.agents.create(
           name="Coding Assistant",
@@ -188,7 +195,10 @@ export OMA_API_KEY="your-api-key-here"
       ```typescript TypeScript
       import Anthropic from "@anthropic-ai/sdk";
 
-      const client = new Anthropic();
+      const client = new Anthropic({
+        baseURL: process.env.OMA_BASE_URL,
+        apiKey: process.env.OMA_API_KEY,
+      });
 
       const agent = await client.beta.agents.create({
         name: "Coding Assistant",
@@ -322,7 +332,7 @@ export OMA_API_KEY="your-api-key-here"
       ```
     </CodeGroup>
 
-    `agent_toolset_20260401` 工具类型启用了完整的预构建智能体工具集（bash、文件操作、网络搜索等）。请参阅[工具](/docs/zh/tools)以获取完整列表和每个工具的配置选项。
+    `agent_toolset_20260401` 提供 bash、文件操作和网页工具等。`ask_user_question` 默认关闭；网页搜索还需要部署配置搜索服务。请参阅[工具](/docs/zh/tools)了解配置。
 
     保存返回的 `agent.id`。您将在创建的每个会话中引用它。
   </Step>
@@ -333,7 +343,7 @@ export OMA_API_KEY="your-api-key-here"
     <CodeGroup defaultLanguage="CLI">
       ```bash cURL
       environment=$(
-        curl -sS --fail-with-body http://localhost:38080/v1/environments \
+        curl -sS --fail-with-body "$OMA_BASE_URL/v1/environments?beta=true" \
           -H "x-api-key: $OMA_API_KEY" \
           -H "anthropic-version: 2023-06-01" \
           -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -462,7 +472,7 @@ export OMA_API_KEY="your-api-key-here"
     <CodeGroup>
       ```bash cURL
       session=$(
-        curl -sS --fail-with-body http://localhost:38080/v1/sessions \
+        curl -sS --fail-with-body "$OMA_BASE_URL/v1/sessions" \
           -H "x-api-key: $OMA_API_KEY" \
           -H "anthropic-version: 2023-06-01" \
           -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -568,12 +578,30 @@ export OMA_API_KEY="your-api-key-here"
   </Step>
 
   <Step title="发送消息并流式传输响应">
-    打开一个流，发送一个用户事件，然后在事件到达时进行处理：
+    在两个终端中使用相同的 `OMA_BASE_URL`、`OMA_API_KEY` 和 `SESSION_ID`。先在第一个终端打开事件流：
+
+    ```bash
+    curl -sS --fail-with-body -N \
+      "$OMA_BASE_URL/v1/sessions/$SESSION_ID/events/stream" \
+      -H "x-api-key: $OMA_API_KEY" \
+      -H "accept: text/event-stream"
+    ```
+
+    看到 `: connected` 后，在第二个终端发送消息：
+
+    ```bash
+    curl -sS --fail-with-body \
+      "$OMA_BASE_URL/v1/sessions/$SESSION_ID/events" \
+      -H "x-api-key: $OMA_API_KEY" \
+      -H "content-type: application/json" \
+      -d '{"events":[{"type":"user.message","content":[{"type":"text","text":"你好，请介绍一下你能做什么。"}]}]}'
+    ```
+
+    返回第一个终端查看事件。`agent.message` 包含回复；`session.status_idle` 表示会话进入空闲，请结合 `stop_reason` 判断是否正常完成、达到预算或需要进一步操作。使用 Ctrl+C 关闭流。工具需要审批时，请在控制台处理审批请求。
 
     <CodeGroup>
       ```bash cURL
-      # 此工作流不适合转换为一次性的 shell 命令。
-      # 请改用此代码组中的某个 SDK 示例。
+      # 使用上面的两个终端分别读取事件流和发送消息。
       ```
 
       ```bash CLI
@@ -608,7 +636,7 @@ export OMA_API_KEY="your-api-key-here"
                   case "agent.tool_use":
                       print(f"\n[Using tool: {event.name}]")
                   case "session.status_idle":
-                      print("\n\nAgent finished.")
+                      print("\n\nSession idle; inspect stop_reason.")
                       break
       ```
 
@@ -639,7 +667,7 @@ export OMA_API_KEY="your-api-key-here"
         } else if (event.type === "agent.tool_use") {
           console.log(`\n[Using tool: ${event.name}]`);
         } else if (event.type === "session.status_idle") {
-          console.log("\n\nAgent finished.");
+          console.log("\n\nSession idle; inspect stop_reason.");
           break;
         }
       }
@@ -684,7 +712,7 @@ export OMA_API_KEY="your-api-key-here"
           }
           else if (ev.Value is BetaManagedAgentsSessionStatusIdleEvent)
           {
-              Console.WriteLine("\n\nAgent finished.");
+              Console.WriteLine("\n\nSession idle; inspect stop_reason.");
               break;
           }
       }
@@ -723,7 +751,7 @@ export OMA_API_KEY="your-api-key-here"
               case anthropic.BetaManagedAgentsAgentToolUseEvent:
                   fmt.Printf("\n[Using tool: %s]\n", event.Name)
               case anthropic.BetaManagedAgentsSessionStatusIdleEvent:
-                  fmt.Print("\n\nAgent finished.\n")
+                  fmt.Print("\n\nSession idle; inspect stop_reason.\n")
                   break loop
               }
           }
@@ -749,7 +777,7 @@ export OMA_API_KEY="your-api-key-here"
               } else if (event.isAgentToolUse()) {
                   IO.println("\n[Using tool: " + event.asAgentToolUse().name() + "]");
               } else if (event.isSessionStatusIdle()) {
-                  IO.println("\n\nAgent finished.");
+                  IO.println("\n\nSession idle; inspect stop_reason.");
                   break;
               }
           }
@@ -777,7 +805,7 @@ export OMA_API_KEY="your-api-key-here"
           match ($event->type) {
               'agent.message' => print(implode('', array_map(fn($block) => $block->text, $event->content))),
               'agent.tool_use' => print("\n[Using tool: {$event->name}]\n"),
-              'session.status_idle' => print("\n\nAgent finished.\n"),
+              'session.status_idle' => print("\n\nSession idle; inspect stop_reason.\n"),
               default => null,
           };
           if ($event->type === 'session.status_idle') {
@@ -806,7 +834,7 @@ export OMA_API_KEY="your-api-key-here"
         in :"agent.tool_use"
           puts "\n[Using tool: #{event.name}]"
         in :"session.status_idle"
-          puts "\n\nAgent finished."
+          puts "\n\nSession idle; inspect stop_reason."
           break
         else
           # 忽略其他事件类型
@@ -825,7 +853,7 @@ export OMA_API_KEY="your-api-key-here"
     [Using tool: bash]
     fibonacci.txt contains the first 20 Fibonacci numbers (0 through 4181).
 
-    Agent finished.
+    Session idle; inspect stop_reason.
     ```
   </Step>
 </Steps>
@@ -838,25 +866,7 @@ export OMA_API_KEY="your-api-key-here"
 2. **运行智能体循环：** 智能体根据您的消息确定要使用哪些工具。
 3. **运行工具：** 文件写入、bash 命令和其他工具调用都在沙箱内运行。
 4. **流式传输事件：** 在智能体工作时，您会收到实时更新。
-5. **进入空闲状态：** 当智能体没有更多任务要执行时，会发出 `session.status_idle` 事件。
-
-## 构建完整应用
-
-以下每个快速入门都将 Open Managed Agents 与一个流行的聊天框架配对，构建出一个完整的、可运行的应用程序。在每个示例中，框架负责渲染聊天界面，而托管会话在服务器端运行智能体循环：会话保存对话记录、在沙箱中运行工具，并流式传输事件供前端渲染。
-
-<CardGroup cols={3}>
-  <Card title="Chat SDK">
-    使用 Vercel 的 Chat SDK 构建的浏览器聊天中的研究分析师。每个对话都是一个持久会话，在流式传输回复的同时，实时信息流会显示工具调用。更换 Chat SDK 适配器即可将同一处理程序迁移到 Slack、Teams、Discord 或 WhatsApp。
-  </Card>
-
-  <Card title="assistant-ui">
-    使用 assistant-ui 基础组件构建的聊天中的电子表格分析师。会话即线程列表，一个 reducer 将会话事件日志转换为消息和工具卡片，每个 bash 命令在运行前都会渲染一个内联的允许/拒绝确认框。
-  </Card>
-
-  <Card title="CopilotKit (AG-UI)">
-    CopilotKit 聊天中的个人财务助手。Open Managed Agents 的 AG-UI 适配器将每个聊天线程映射到一个托管会话，并逐个令牌流式传输回复，自定义工具会在对话中内联渲染交互式图表。
-  </Card>
-</CardGroup>
+5. **进入空闲状态：** 会话进入空闲时会发出 `session.status_idle`；请检查 `stop_reason` 了解原因。
 
 ## 后续步骤
 
@@ -881,7 +891,4 @@ export OMA_API_KEY="your-api-key-here"
     按照定期 cron 计划运行您的智能体
   </Card>
 
-  <Card title="知识 Wiki 快速入门">
-    将文档语料库一次性提炼为知识 Wiki，然后以极低的成本从中回答重复性问题
-  </Card>
 </CardGroup>

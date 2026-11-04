@@ -4,12 +4,12 @@ sidebarTitle: "Authenticate with vaults"
 description: "Register per-user credentials when creating sessions."
 ---
 
-Vaults and credentials are authentication primitives that let you register credentials for third-party services once and reference them by ID at session creation. This means you don't need to run your own secret store, transmit tokens on every call, or lose track of which end user an agent acted on behalf of.
+Vaults and credentials let you register credentials for third-party services and reference them by ID at session creation. The OMA deployment must configure a secret service or KMS to protect stored credentials.
 
 The vault reference is a per-session parameter, so you can manage your product at the `agent` resource granularity and your users at the `session` resource granularity.
 
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
 ## Create a vault
@@ -22,7 +22,7 @@ A vault is the collection of `credentials` associated with an end user. Give it 
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  vault_id=$(curl --fail-with-body -sS http://localhost:38080/v1/vaults \
+  vault_id=$(curl --fail-with-body -sS "http://localhost:38080/v1/vaults?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -126,8 +126,8 @@ The response is the full vault record:
 
 Two credential categories are supported:
 
-* **MCP credentials** (`mcp_oauth`, `static_bearer`): each credential is keyed by an `mcp_server_url`. When the agent connects to a server at that URL at session runtime, the token is injected automatically.
-* **Environment variables** (`environment_variable`): each credential is keyed by a `secret_name` (the environment variable name) and stored in the sandbox as an opaque placeholder. When the agent initiates an outbound request, the opaque placeholder is substituted with the real secret at egress. The agent never sees the secret value. Use this for any service that authenticates through an environment variable, such as CLIs, SDKs, or direct API calls.
+* **MCP credentials** (`mcp_oauth`, `static_bearer`): each credential is keyed by an `mcp_server_url`. Automatic injection for ordinary Managed Agent MCP connections requires CONNECT MITM to be enabled in the deployment; Tunnel uses a separate path that does not pass through the same Vault transport.
+* **Environment variables** (`environment_variable`): each credential is keyed by a `secret_name`, with an opaque placeholder in the sandbox. With CONNECT MITM enabled, supported outbound HTTP requests can substitute the secret according to the destination host and `injection_location`; this does not guarantee support for every CLI or protocol. Assess risks such as a destination service echoing the request.
 
 The actual credential values you supply (`token`, `access_token`, `refresh_token`, `client_secret`, `secret_value`) are treated as sensitive, write-only fields and never returned in API responses.
 
@@ -147,7 +147,7 @@ The actual credential values you supply (`token`, `access_token`, `refresh_token
 
     <CodeGroup defaultLanguage="CLI">
       ```bash cURL
-      credential_id=$(curl --fail-with-body -sS "http://localhost:38080/v1/vaults/$vault_id/credentials" \
+      credential_id=$(curl --fail-with-body -sS "http://localhost:38080/v1/vaults/$vault_id/credentials?beta=true" \
         -H "x-api-key: $OMA_API_KEY" \
         -H "anthropic-version: 2023-06-01" \
         -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -365,7 +365,7 @@ The actual credential values you supply (`token`, `access_token`, `refresh_token
 
     <CodeGroup defaultLanguage="CLI">
       ```bash cURL
-      curl --fail-with-body -sS "http://localhost:38080/v1/vaults/$vault_id/credentials" \
+      curl --fail-with-body -sS "http://localhost:38080/v1/vaults/$vault_id/credentials?beta=true" \
         -H "x-api-key: $OMA_API_KEY" \
         -H "anthropic-version: 2023-06-01" \
         -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -498,7 +498,7 @@ The actual credential values you supply (`token`, `access_token`, `refresh_token
 
     <CodeGroup defaultLanguage="CLI">
       ```bash cURL
-      curl --fail-with-body -sS "http://localhost:38080/v1/vaults/$vault_id/credentials" \
+      curl --fail-with-body -sS "http://localhost:38080/v1/vaults/$vault_id/credentials?beta=true" \
         -H "x-api-key: $OMA_API_KEY" \
         -H "anthropic-version: 2023-06-01" \
         -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -834,8 +834,8 @@ Pass `vault_ids` when creating a session:
 Runtime behavior:
 
 * When no MCP credential matches by `mcp_server_url`, the connection is attempted unauthenticated and will error if the server requires authentication.
-* When multiple vaults contain a matching credential, the first vault with a match wins.
-* In [multiagent sessions](/docs/en/multiagent-orchestration), vault credentials apply to every thread. An agent whose own definition declares the matching MCP server authenticates with these credentials. See [Connect agents to MCP servers](/docs/en/multiagent-orchestration#connect-agents-to-mcp-servers).
+* When multiple vaults contain matching credentials, they are attempted in order; behavior after an authentication failure depends on the injection path and credential type.
+* In [multiagent sessions](/docs/en/multiagent-orchestration), vault credentials apply to every thread. An agent whose own definition declares the matching MCP server authenticates with these credentials. See [MCP connector](/docs/en/mcp-connector).
 
 ## Rotate a credential
 
@@ -844,7 +844,7 @@ Secret values, `display_name`, and (on environment variable credentials) `inject
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
   curl --fail-with-body -sS \
-    "http://localhost:38080/v1/vaults/$vault_id/credentials/$credential_id" \
+    "http://localhost:38080/v1/vaults/$vault_id/credentials/$credential_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -978,7 +978,7 @@ Secret values, `display_name`, and (on environment variable credentials) `inject
 
 ## Credential lifecycle
 
-Credentials are re-resolved periodically, both during a session and during the vault lifecycle. This ensures that credential rotation, archival, or deletion propagates to running sessions without a restart.
+Supported injection paths can re-resolve or refresh credentials. When a rotation takes effect for a running session depends on the injection path and deployment; verify it in your environment.
 
 To be notified if a credential is archived, deleted, or fails to refresh, you can subscribe to the vault and credential [webhooks](/docs/en/webhooks) associated with those lifecycle changes.
 

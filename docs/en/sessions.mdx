@@ -6,8 +6,23 @@ description: "Create a session to run your agent and begin executing tasks."
 
 A session is an agent instance within an environment. Each session references an [agent](/docs/en/agent-setup) and an [environment](/docs/en/environments) (both created separately), and maintains conversation history across multiple interactions. Sessions follow a two-step lifecycle: first [create the session](/docs/en/sessions#creating-a-session), then [send a user event](/docs/en/sessions#starting-the-session) to start work. You can also collapse both steps into one call with [`initial_events`](/docs/en/sessions#seed-the-session-with-initial-events).
 
+The diagram shows a typical session: choose an existing agent and environment, create a session, send a task, and inspect the agent messages and tool events. You can also provide the first task in the create request with `initial_events`.
+
+```mermaid
+flowchart TD
+  Agent[Existing agent] --> Create[Create session]
+  Environment[Existing environment] --> Create
+  Create -->|Send a task after creation| Message[User message]
+  Create -->|Include initial_events| Run[Agent processes task]
+  Message --> Run
+  Run --> Events[Inspect messages and tool events]
+  Events -->|Continue conversation| Message
+```
+
+A session may request tool confirmation. Respond to the event before the agent can continue the associated operation.
+
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
 ## Creating a session
@@ -193,7 +208,7 @@ To pin a session to a specific agent version, pass an object. This lets you cont
 
 ### Seed the session with initial events
 
-You can create a session and start its work in one call. `initial_events` is an optional array of initial [events](/docs/en/reference#event-types) to send to the session at creation, processed in order. It supports `user.message` and [`user.define_outcome`](/docs/en/define-outcomes) events, and accepts a maximum of 50 events. A non-empty list starts the agent loop in the same call: the session is created directly in the `running` status, with no further request.
+You can create a session and submit work in one call. `initial_events` is an optional array of initial [events](/docs/en/reference) processed in order. Use `user.message` to send a task; the array accepts up to 50 events. A non-empty list schedules work for the session; execution depends on the environment runner and worker.
 
 The following example creates a session with a single `user.message` in `initial_events`:
 
@@ -443,7 +458,7 @@ The following example creates a session with a single `user.message` in `initial
   ```
 </CodeGroup>
 
-No other event type is accepted. Events that respond to an agent turn (`user.tool_confirmation`, `user.tool_result`, and `user.custom_tool_result`) aren't accepted because no agent turn exists yet, and `user.interrupt` isn't accepted because there is no turn to stop. Unlike `initial_events` on a scheduled deployment, a session's `initial_events` don't accept `system.message`.
+Events that respond to an agent turn (`user.tool_confirmation`, `user.tool_result`, and `user.custom_tool_result`) aren't accepted because no agent turn exists yet, and `user.interrupt` isn't accepted because there is no turn to stop. Unlike `initial_events` on a scheduled deployment, a session's `initial_events` don't accept `system.message`.
 
 Each event in `initial_events` is validated and persisted before the create response returns, in list order, with a server-assigned ID, exactly as if you had posted it to the [send events](/docs/en/events-and-streaming) endpoint immediately after creation. Per-event content rules are also the same as on that endpoint. An empty list is equivalent to omitting the field. Validation is all-or-nothing: if any event fails validation, the whole request is rejected and no session is created.
 
@@ -451,12 +466,8 @@ The create request is rejected in the following cases:
 
 | Condition                                                                                                                                                 | Status |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| More than one `user.define_outcome` event                                                                                                                 | 400    |
-| A `user.define_outcome` event without a `rubric`                                                                                                          | 400    |
 | More than 100 file-sourced [`document` content blocks](/docs/en/api/files/list-files) across the whole list | 400    |
 | A request body over 32 MB                                                                                                                                 | 413    |
-
-A `user.define_outcome` event in `initial_events` is accepted under the same conditions as sending one to an existing session; see [Define outcomes](/docs/en/define-outcomes).
 
 ### Override agent configuration for a session
 
@@ -472,7 +483,7 @@ Each overridable field follows the same three rules:
   * Clearing `tools` returns a 400 error when the session's effective `skills` is non-empty, because skills require the `read` tool. Otherwise, `tools: null` and `tools: []` clear the field.
   * Clearing `mcp_servers` returns a 400 error when the session's effective `tools` still contains an `mcp_toolset` that references one of the agent's servers. Override `tools` in the same request to remove those `mcp_toolset` entries, then clear `mcp_servers`.
 
-* **Set the field to a value:** The value replaces the agent's value in full. Overrides never merge with the agent's configuration, so a `tools` override must list every tool the session should have. There is one exception:
+* **Set the field to a value:** The value replaces rather than merges with the agent configuration, so a `tools` override must list every tool the session needs. Accepted `effort` in a `model` override is stored in the session configuration snapshot; its effect depends on the provider and runtime.
   * An `effort` level inside a per-session `model` override isn't applied, and because the override replaces the agent's `model` object in full, the agent's own `effort` isn't carried over either: a session created with a `model` override runs at the model's default effort level. To run at a specific effort level, set `effort` on the [agent](/docs/en/agent-setup#agent-configuration-fields) and don't override `model` for that session.
 
 Overrides apply only to the session you create. They do not modify the agent resource or create a new agent version, so other sessions that reference the same agent are unaffected.
@@ -647,168 +658,9 @@ The following example starts a session that overrides the model and clears the s
   ```
 </CodeGroup>
 
-#### Pin the inference geo for a session
-
-Because a `model` override replaces the agent's `model` object in full, it also sets or clears the model's `inference_geo` pin for the session: an override that includes `inference_geo` pins the geography that serves the session's model requests, and one that omits it clears the agent's pin so the session follows the workspace's `default_inference_geo`. The overridden value is validated against the workspace's `allowed_inference_geos` when the session is created.
-
-The following example starts a session from an agent whose model has no geo pin, pins the session's model requests to US inference by including `inference_geo` in the `model` override, and prints the value echoed in the response's `agent.model`:
-
-<CodeGroup defaultLanguage="CLI">
-  ```bash cURL
-  # Replaces the agent's `model` in full: restate `id`, add `inference_geo` to pin.
-  session=$(curl -fsSL http://localhost:38080/v1/sessions \
-    -H "x-api-key: $OMA_API_KEY" \
-    -H "anthropic-version: 2023-06-01" \
-    -H "anthropic-beta: managed-agents-2026-04-01" \
-    -H "content-type: application/json" \
-    -d @- <<EOF
-  {
-    "agent": {
-      "type": "agent_with_overrides",
-      "id": "$AGENT_ID",
-      "model": {"id": "claude-opus-5", "inference_geo": "us"}
-    },
-    "environment_id": "$ENVIRONMENT_ID"
-  }
-  EOF
-  )
-  echo "Inference geo: $(jq -r '.agent.model.inference_geo' <<< "$session")"
-  ```
-
-  ```bash CLI
-  # Replaces the agent's `model` in full: restate `id`, add `inference_geo` to pin.
-  session=$(ant beta:sessions create <<YAML
-  agent:
-    type: agent_with_overrides
-    id: $AGENT_ID
-    model:
-      id: claude-opus-5
-      inference_geo: us
-  environment_id: $ENVIRONMENT_ID
-  YAML
-  )
-  echo "Inference geo: $(jq -r '.agent.model.inference_geo' <<< "$session")"
-  ```
-
-  ```python Python
-  session = client.beta.sessions.create(
-      agent={
-          "type": "agent_with_overrides",
-          "id": agent.id,
-          # Replaces the agent's `model` in full: restate `id`, add `inference_geo` to pin.
-          "model": {"id": "claude-opus-5", "inference_geo": "us"},
-      },
-      environment_id=environment.id,
-  )
-  print(f"Inference geo: {session.agent.model.inference_geo}")
-  ```
-
-  ```typescript TypeScript
-  const session = await client.beta.sessions.create({
-    agent: {
-      type: "agent_with_overrides",
-      id: agent.id,
-      // Replaces the agent's `model` in full: restate `id`, add `inference_geo` to pin.
-      model: { id: "claude-opus-5", inference_geo: "us" }
-    },
-    environment_id: environment.id
-  });
-  console.log(`Inference geo: ${session.agent.model.inference_geo}`);
-  ```
-
-  ```csharp C#
-  var session = await client.Beta.Sessions.Create(new()
-  {
-      Agent = new BetaManagedAgentsAgentWithOverridesParams
-      {
-          Type = BetaManagedAgentsAgentWithOverridesParamsType.AgentWithOverrides,
-          ID = agent.ID,
-          // Replaces the agent's `model` in full: restate `id`, add `inference_geo` to pin.
-          Model = new BetaManagedAgentsModelConfigParams
-          {
-              ID = BetaManagedAgentsModel.ClaudeOpus5,
-              InferenceGeo = "us",
-          },
-      },
-      EnvironmentID = environment.ID,
-  });
-  Console.WriteLine($"Inference geo: {session.Agent.Model.InferenceGeo}");
-  ```
-
-  ```go Go
-  session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
-      Agent: anthropic.BetaSessionNewParamsAgentUnion{
-          OfBetaManagedAgentsAgentWithOverridess: &anthropic.BetaManagedAgentsAgentWithOverridesParams{
-              Type: anthropic.BetaManagedAgentsAgentWithOverridesParamsTypeAgentWithOverrides,
-              ID:   agent.ID,
-              // Replaces the agent's `model` in full: restate `id`, add `inference_geo` to pin.
-              Model: anthropic.BetaManagedAgentsModelConfigParams{
-                  ID:           anthropic.BetaManagedAgentsModelClaudeOpus5,
-                  InferenceGeo: anthropic.String("us"),
-              },
-          },
-      },
-      EnvironmentID: environment.ID,
-  })
-  if err != nil {
-      panic(err)
-  }
-  fmt.Printf("Inference geo: %s\n", session.Agent.Model.InferenceGeo)
-  ```
-
-  ```java Java
-  var session = client.beta().sessions().create(SessionCreateParams.builder()
-      .agent(BetaManagedAgentsAgentWithOverridesParams.builder()
-          .type(BetaManagedAgentsAgentWithOverridesParams.Type.AGENT_WITH_OVERRIDES)
-          .id(agent.id())
-          // Replaces the agent's `model` in full: restate `id`, add `inference_geo` to pin.
-          .model(BetaManagedAgentsModelConfigParams.builder()
-              .id(BetaManagedAgentsModel.CLAUDE_OPUS_5)
-              .inferenceGeo("us")
-              .build())
-          .build())
-      .environmentId(environment.id())
-      .build());
-  IO.println("Inference geo: " + session.agent().model().inferenceGeo().orElseThrow());
-  ```
-
-  ```php PHP
-  $session = $client->beta->sessions->create(
-      agent: BetaManagedAgentsAgentWithOverridesParams::with(
-          id: $agent->id,
-          type: 'agent_with_overrides',
-          // Replaces the agent's `model` in full: restate `id`, add `inference_geo` to pin.
-          model: BetaManagedAgentsModelConfigParams::with(
-              id: 'claude-opus-5',
-              inferenceGeo: 'us',
-          ),
-      ),
-      environmentID: $environment->id,
-  );
-  echo "Inference geo: {$session->agent->model->inferenceGeo}\n";
-  ```
-
-  ```ruby Ruby
-  session = client.beta.sessions.create(
-    agent: {
-      type: :agent_with_overrides,
-      id: agent.id,
-      # Replaces the agent's `model` in full: restate `id`, add `inference_geo` to pin.
-      model: {id: "claude-opus-5", inference_geo: "us"}
-    },
-    environment_id: environment.id
-  )
-  puts "Inference geo: #{session.agent.model.inference_geo}"
-  ```
-</CodeGroup>
-
-<Tip>
-  The agent defines model behavior within the session, including the model, system prompt, tools, and MCP servers. See [Define your agent](/docs/en/agent-setup) for details.
-</Tip>
-
 ### Set a session budget
 
-To cap what a session can spend, pass the optional `budget` object when you create it. A budget is a hard ceiling on the session's list cost: the platform prices everything the session consumes at public list rates, and the session stops issuing new model requests once that running total reaches `max_list_cost`. Set `type` to `limit` and give `max_list_cost` an `amount` and a `currency`. `amount` is a whole number of US cents written as a string, such as `"2500"` for $25.00; the API takes a string rather than a number so no floating-point rounding is ever applied. `USD` is the only currency currently supported. When the session reaches the cap, it pauses and goes idle with the stop reason `budget_reached`. The cap is enforced between model requests, so the request that crosses it finishes first and the session's final list cost can land [a fraction past the cap](/docs/en/budgets#when-a-session-reaches-its-budget). A budget can only be attached at creation: you can [change or remove](/docs/en/session-operations#updating-the-session-budget) it later, but you can't add one to a session created without it.
+Set `budget` at session creation to limit the cost tracked by OMA. The amount is a positive integer number of cents as a string, with currency `USD`; the model must have a configured price. In-flight work can cause the total to exceed the cap. A budget can only be added at creation and can later be changed or removed.
 
 The following example creates a session with a $25.00 budget; the response echoes the `budget` on the session resource:
 
@@ -830,7 +682,32 @@ curl -fsSL http://localhost:38080/v1/sessions \
 EOF
 ```
 
-See [Session budgets](/docs/en/budgets) for how enforcement works, what counts toward list cost, and how budgets behave in multiagent sessions.
+<a id="when-a-session-reaches-its-budget" />
+
+#### Metering and the limit
+
+OMA prices input, output, and cache tokens using configured model prices; each model request's cost is rounded to cents. Web search is metered at one cent per request, and active time at eight cents per hour, rounded to cents. The session's `usage.list_cost` is the accumulated amount used for budget enforcement; it may differ from the provider's bill.
+
+After worker events are persisted, OMA aggregates usage. On reaching the budget it emits `session.usage` and `session.status_idle` with `stop_reason` of `budget_reached`. Because the check follows request completion, the final total can exceed the limit. At the limit, new work-starting events such as `user.message` are rejected; settlement events such as tool confirmations, tool results, and interrupts remain accepted.
+
+<a id="resume-a-session-at-its-budget" />
+
+#### Change or remove a budget
+
+A session created with a budget can have its cap updated. The new amount must exceed the current `usage.list_cost`:
+
+```bash
+curl -sS --fail-with-body "$OMA_BASE_URL/v1/sessions/$SESSION_ID" \
+  -H "x-api-key: $OMA_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"budget":{"type":"limit","max_list_cost":{"amount":"4000","currency":"USD"}}}'
+```
+
+Send `{"budget":null}` to remove the budget. Once removed, it cannot be re-added to that session; raise the cap instead if you need to retain a limit. Updating clears the reached marker; inspect the session status and send a new message as needed to continue work.
+
+#### Inspect usage
+
+Retrieve the session's `budget` and `usage.list_cost`, or inspect `session.usage` and status events in the [session event stream](/docs/en/events-and-streaming). Threads share the session budget. A deployment budget applies to each session it starts, not to cumulative deployment spend; changes apply to subsequent sessions.
 
 ## MCP authentication through vaults
 
@@ -928,7 +805,7 @@ If your agent uses MCP tools that require authentication, pass `vault_ids` at se
 
 ## Starting the session
 
-Creating a session without `initial_events` registers the session but does not start any work; the environment's sandbox begins provisioning as soon as the session is created, so the first tool call does not wait on it. To delegate a task, send events to the session using a [user event](/docs/en/reference#event-types). To supply the first event in the create request instead, see [Seed the session with initial events](/docs/en/sessions#seed-the-session-with-initial-events). The session acts as a state machine that tracks progress while events drive the actual execution.
+Creating a session without `initial_events` does not start a task. Send a user message or [send the first message when creating the session](/docs/en/sessions). Execution requires an available environment runner and worker; startup can take time.
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL

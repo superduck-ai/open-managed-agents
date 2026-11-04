@@ -6,8 +6,23 @@ description: "创建会话以运行您的智能体并开始执行任务。"
 
 "会话"（会话）是环境中的一个智能体实例。每个会话都引用一个[智能体](/docs/zh/agent-setup)和一个[环境](/docs/zh/environments)（两者均需单独创建），并在多次交互中维护对话历史记录。会话遵循两步生命周期：首先[创建会话](/docs/zh/sessions#creating-a-session)，然后[发送用户事件](/docs/zh/sessions#starting-the-session)以开始工作。您也可以使用 [`initial_events`](/docs/zh/sessions#seed-the-session-with-initial-events) 将这两个步骤合并为一次调用。
 
+下图展示一次典型会话：选择已有的智能体和环境，创建会话后发送任务，再查看智能体消息和工具事件。也可以在创建请求中通过 `initial_events` 提供首条任务。
+
+```mermaid
+flowchart TD
+  Agent[已有智能体] --> Create[创建会话]
+  Environment[已有环境] --> Create
+  Create -->|创建后发送任务| Message[用户消息]
+  Create -->|包含 initial_events| Run[智能体处理任务]
+  Message --> Run
+  Run --> Events[查看消息与工具事件]
+  Events -->|继续对话| Message
+```
+
+会话可在需要时请求工具确认；根据事件作出回应后，智能体才能继续相关操作。
+
 <Note>
-  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+  各资源的 Beta 要求不同，请参阅[版本与 Beta 功能](/docs/zh/api/versioning-beta)，并确认 SDK 向 OMA 发送了所需参数。
 </Note>
 
 ## 创建会话
@@ -191,9 +206,9 @@ description: "创建会话以运行您的智能体并开始执行任务。"
   ```
 </CodeGroup>
 
-### 使用初始事件为会话提供种子
+### 创建会话时发送第一条消息
 
-您可以在一次调用中创建会话并启动其工作。`initial_events` 是一个可选数组，包含在创建时发送给会话的初始[事件](/docs/zh/reference#event-types)，按顺序处理。它支持 `user.message` 和 [`user.define_outcome`](/docs/zh/define-outcomes) 事件，最多接受 50 个事件。非空列表会在同一次调用中启动智能体循环：会话直接以 `running` 状态创建，无需进一步请求。
+通常先创建会话，再发送消息。如果希望创建后立即开始任务，可以在创建请求中通过 `initial_events` 一并提交消息，省去单独发送消息的步骤。该字段是可选的事件数组，按顺序处理，最多包含 50 个事件。非空列表会为会话安排工作；实际执行取决于环境运行器和工作进程。
 
 以下示例创建了一个在 `initial_events` 中包含单个 `user.message` 的会话：
 
@@ -443,7 +458,7 @@ description: "创建会话以运行您的智能体并开始执行任务。"
   ```
 </CodeGroup>
 
-不接受其他事件类型。响应智能体回合的事件（`user.tool_confirmation`、`user.tool_result` 和 `user.custom_tool_result`）不被接受，因为此时还不存在智能体回合；`user.interrupt` 也不被接受，因为没有可停止的回合。与计划部署上的 `initial_events` 不同，会话的 `initial_events` 不接受 `system.message`。
+响应智能体回合的事件（`user.tool_confirmation`、`user.tool_result` 和 `user.custom_tool_result`）不被接受，因为此时还不存在智能体回合；`user.interrupt` 也不被接受，因为没有可停止的回合。与计划部署上的 `initial_events` 不同，会话的 `initial_events` 不接受 `system.message`。
 
 `initial_events` 中的每个事件都会在创建响应返回之前按列表顺序进行验证和持久化，并分配服务器生成的 ID，就像您在创建后立即将其发布到[发送事件](/docs/zh/events-and-streaming)端点一样。每个事件的内容规则也与该端点相同。空列表等同于省略该字段。验证是全有或全无的：如果任何事件验证失败，整个请求将被拒绝，且不会创建会话。
 
@@ -451,12 +466,8 @@ description: "创建会话以运行您的智能体并开始执行任务。"
 
 | 条件                                                                                                                  | 状态码 |
 | ------------------------------------------------------------------------------------------------------------------- | --- |
-| 超过一个 `user.define_outcome` 事件                                                                                       | 400 |
-| `user.define_outcome` 事件没有 `rubric`                                                                                 | 400 |
 | 整个列表中来自文件的 [`document` 内容块](/docs/zh/api/files/list-files)超过 100 个 | 400 |
 | 请求体超过 32 MB                                                                                                         | 413 |
-
-`initial_events` 中的 `user.define_outcome` 事件在与向现有会话发送该事件相同的条件下被接受；请参阅[定义结果](/docs/zh/define-outcomes)。
 
 ### 为会话覆盖智能体配置
 
@@ -472,8 +483,8 @@ description: "创建会话以运行您的智能体并开始执行任务。"
   * 当会话的有效 `skills` 非空时，清除 `tools` 会返回 400 错误，因为技能需要 `read` 工具。否则，`tools: null` 和 `tools: []` 会清除该字段。
   * 当会话的有效 `tools` 仍包含引用智能体某个服务器的 `mcp_toolset` 时，清除 `mcp_servers` 会返回 400 错误。请在同一请求中覆盖 `tools` 以移除这些 `mcp_toolset` 条目，然后再清除 `mcp_servers`。
 
-* **将字段设置为某个值：** 该值会完全替换智能体的值。覆盖永远不会与智能体的配置合并，因此 `tools` 覆盖必须列出会话应拥有的每个工具。有一个例外：
-  * 会话级 `model` 覆盖中的 `effort` 不会生效。由于覆盖会完全替换智能体的 `model` 对象，智能体自身的 `effort` 也不会被保留：使用 `model` 覆盖创建的会话将以模型的默认推理强度运行。要使用特定的推理强度，请在[智能体](/docs/zh/agent-setup#agent-configuration-fields)上设置 `effort`，并且不要为该会话覆盖 `model`。
+* **将字段设置为某个值：** 该值会完全替换智能体的值，不与原配置合并，因此 `tools` 覆盖必须列出会话需要的全部工具。`model` 覆盖接受的 `effort` 会保存在会话配置快照中；实际效果取决于模型提供商和运行环境。
+
 
 覆盖仅适用于您创建的会话。它们不会修改智能体资源或创建新的智能体版本，因此引用同一智能体的其他会话不受影响。
 
@@ -647,168 +658,9 @@ description: "创建会话以运行您的智能体并开始执行任务。"
   ```
 </CodeGroup>
 
-#### 为会话固定推理地理位置
-
-由于 `model` 覆盖会完全替换智能体的 `model` 对象，它也会为会话设置或清除模型的 `inference_geo` 固定设置：包含 `inference_geo` 的覆盖会固定为会话的模型请求提供服务的地理位置，而省略它的覆盖会清除智能体的固定设置，使会话遵循工作区的 `default_inference_geo`。覆盖的值会在创建会话时根据工作区的 `allowed_inference_geos` 进行验证。
-
-以下示例从一个模型没有地理位置固定的智能体启动会话，通过在 `model` 覆盖中包含 `inference_geo` 将会话的模型请求固定到美国推理，并打印响应的 `agent.model` 中回显的值：
-
-<CodeGroup defaultLanguage="CLI">
-  ```bash cURL
-  # 完整替换智能体的 `model`：重新声明 `id`，并添加 `inference_geo` 以固定。
-  session=$(curl -fsSL http://localhost:38080/v1/sessions \
-    -H "x-api-key: $OMA_API_KEY" \
-    -H "anthropic-version: 2023-06-01" \
-    -H "anthropic-beta: managed-agents-2026-04-01" \
-    -H "content-type: application/json" \
-    -d @- <<EOF
-  {
-    "agent": {
-      "type": "agent_with_overrides",
-      "id": "$AGENT_ID",
-      "model": {"id": "claude-opus-5", "inference_geo": "us"}
-    },
-    "environment_id": "$ENVIRONMENT_ID"
-  }
-  EOF
-  )
-  echo "Inference geo: $(jq -r '.agent.model.inference_geo' <<< "$session")"
-  ```
-
-  ```bash CLI
-  # 完整替换智能体的 `model`：重新声明 `id`，并添加 `inference_geo` 以固定。
-  session=$(ant beta:sessions create <<YAML
-  agent:
-    type: agent_with_overrides
-    id: $AGENT_ID
-    model:
-      id: claude-opus-5
-      inference_geo: us
-  environment_id: $ENVIRONMENT_ID
-  YAML
-  )
-  echo "Inference geo: $(jq -r '.agent.model.inference_geo' <<< "$session")"
-  ```
-
-  ```python Python
-  session = client.beta.sessions.create(
-      agent={
-          "type": "agent_with_overrides",
-          "id": agent.id,
-          # 完整替换智能体的 `model`：重新声明 `id`，添加 `inference_geo` 以固定。
-          "model": {"id": "claude-opus-5", "inference_geo": "us"},
-      },
-      environment_id=environment.id,
-  )
-  print(f"Inference geo: {session.agent.model.inference_geo}")
-  ```
-
-  ```typescript TypeScript
-  const session = await client.beta.sessions.create({
-    agent: {
-      type: "agent_with_overrides",
-      id: agent.id,
-      // 完整替换智能体的 `model`：重新声明 `id`，添加 `inference_geo` 以固定。
-      model: { id: "claude-opus-5", inference_geo: "us" }
-    },
-    environment_id: environment.id
-  });
-  console.log(`Inference geo: ${session.agent.model.inference_geo}`);
-  ```
-
-  ```csharp C#
-  var session = await client.Beta.Sessions.Create(new()
-  {
-      Agent = new BetaManagedAgentsAgentWithOverridesParams
-      {
-          Type = BetaManagedAgentsAgentWithOverridesParamsType.AgentWithOverrides,
-          ID = agent.ID,
-          // 完整替换智能体的 `model`：重新声明 `id`，添加 `inference_geo` 以固定。
-          Model = new BetaManagedAgentsModelConfigParams
-          {
-              ID = BetaManagedAgentsModel.ClaudeOpus5,
-              InferenceGeo = "us",
-          },
-      },
-      EnvironmentID = environment.ID,
-  });
-  Console.WriteLine($"Inference geo: {session.Agent.Model.InferenceGeo}");
-  ```
-
-  ```go Go
-  session, err := client.Beta.Sessions.New(ctx, anthropic.BetaSessionNewParams{
-      Agent: anthropic.BetaSessionNewParamsAgentUnion{
-          OfBetaManagedAgentsAgentWithOverridess: &anthropic.BetaManagedAgentsAgentWithOverridesParams{
-              Type: anthropic.BetaManagedAgentsAgentWithOverridesParamsTypeAgentWithOverrides,
-              ID:   agent.ID,
-              // 完整替换智能体的 `model`：重新声明 `id`，添加 `inference_geo` 以固定。
-              Model: anthropic.BetaManagedAgentsModelConfigParams{
-                  ID:           anthropic.BetaManagedAgentsModelClaudeOpus5,
-                  InferenceGeo: anthropic.String("us"),
-              },
-          },
-      },
-      EnvironmentID: environment.ID,
-  })
-  if err != nil {
-      panic(err)
-  }
-  fmt.Printf("Inference geo: %s\n", session.Agent.Model.InferenceGeo)
-  ```
-
-  ```java Java
-  var session = client.beta().sessions().create(SessionCreateParams.builder()
-      .agent(BetaManagedAgentsAgentWithOverridesParams.builder()
-          .type(BetaManagedAgentsAgentWithOverridesParams.Type.AGENT_WITH_OVERRIDES)
-          .id(agent.id())
-          // 完整替换智能体的 `model`：重新声明 `id`，并添加 `inference_geo` 以固定。
-          .model(BetaManagedAgentsModelConfigParams.builder()
-              .id(BetaManagedAgentsModel.CLAUDE_OPUS_5)
-              .inferenceGeo("us")
-              .build())
-          .build())
-      .environmentId(environment.id())
-      .build());
-  IO.println("Inference geo: " + session.agent().model().inferenceGeo().orElseThrow());
-  ```
-
-  ```php PHP
-  $session = $client->beta->sessions->create(
-      agent: BetaManagedAgentsAgentWithOverridesParams::with(
-          id: $agent->id,
-          type: 'agent_with_overrides',
-          // 完整替换智能体的 `model`：重新声明 `id`，并添加 `inference_geo` 以固定。
-          model: BetaManagedAgentsModelConfigParams::with(
-              id: 'claude-opus-5',
-              inferenceGeo: 'us',
-          ),
-      ),
-      environmentID: $environment->id,
-  );
-  echo "Inference geo: {$session->agent->model->inferenceGeo}\n";
-  ```
-
-  ```ruby Ruby
-  session = client.beta.sessions.create(
-    agent: {
-      type: :agent_with_overrides,
-      id: agent.id,
-      # 完整替换智能体的 `model`：重新声明 `id`，并添加 `inference_geo` 以固定。
-      model: {id: "claude-opus-5", inference_geo: "us"}
-    },
-    environment_id: environment.id
-  )
-  puts "Inference geo: #{session.agent.model.inference_geo}"
-  ```
-</CodeGroup>
-
-<Tip>
-  智能体定义了模型在会话中的行为方式，包括模型、系统提示、工具和 MCP 服务器。详情请参阅[定义您的智能体](/docs/zh/agent-setup)。
-</Tip>
-
 ### 设置会话预算
 
-要限制会话的支出上限，请在创建会话时传入可选的 `budget` 对象。预算是会话标价成本的硬性上限：平台按公开标价对会话消耗的所有内容进行计价，一旦累计总额达到 `max_list_cost`，会话就会停止发出新的模型请求。将 `type` 设置为 `limit`，并为 `max_list_cost` 提供 `amount` 和 `currency`。`amount` 是以字符串形式表示的美分整数，例如 `"2500"` 表示 $25.00；API 采用字符串而非数字，以确保不会应用任何浮点舍入。`USD` 是目前唯一支持的货币。当会话达到上限时，它会暂停并进入空闲状态，停止原因为 `budget_reached`。该上限在模型请求之间强制执行，因此超过上限的那个请求会先完成，会话的最终标价成本可能会[略微超过上限](/docs/zh/budgets#when-a-session-reaches-its-budget)。预算只能在创建时附加：您可以稍后[更改或移除](/docs/zh/session-operations#updating-the-session-budget)它，但无法为创建时没有预算的会话添加预算。
+创建会话时可以设置 `budget` 限制 OMA 跟踪的成本。金额是以美分为单位的正整数字符串，货币为 `USD`；模型需要配置价格。达到预算后，进行中的请求可能使总额超过上限。预算只能在创建时添加，之后可以修改或移除。
 
 以下示例创建一个预算为 $25.00 的会话；响应会在会话资源上回显 `budget`：
 
@@ -830,7 +682,32 @@ curl -fsSL http://localhost:38080/v1/sessions \
 EOF
 ```
 
-请参阅[会话预算](/docs/zh/budgets)，了解强制执行的工作方式、哪些内容计入标价成本，以及预算在多智能体会话中的行为。
+<a id="when-a-session-reaches-its-budget" />
+
+#### 计量与触顶
+
+OMA 按配置的模型价格计算输入、输出和缓存令牌费用；模型请求费用按请求舍入到美分。网络搜索按每次 1 美分计量，活动时间按每小时 8 美分计算并舍入到美分。会话返回的 `usage.list_cost` 是这些费用的累计值；它用于预算判断，不一定等于供应商实际账单。
+
+工作进程事件持久化后，OMA 汇总使用量。达到预算时会产生 `session.usage` 和 `stop_reason` 为 `budget_reached` 的 `session.status_idle`。由于检查发生在请求完成后，最终累计成本可能超过预算。达到上限后，新的 `user.message` 等启动工作事件会被拒绝；工具确认、工具结果和中断等用于结算已有工作的事件仍可提交。
+
+<a id="resume-a-session-at-its-budget" />
+
+#### 修改或移除预算
+
+已设置预算的会话可以更新上限。新金额必须大于当前 `usage.list_cost`：
+
+```bash
+curl -sS --fail-with-body "$OMA_BASE_URL/v1/sessions/$SESSION_ID" \
+  -H "x-api-key: $OMA_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"budget":{"type":"limit","max_list_cost":{"amount":"4000","currency":"USD"}}}'
+```
+
+发送 `{"budget":null}` 可移除预算。移除后不能为该会话重新添加预算；如需继续限制成本，请提高上限。更新会清除触顶标记；请检查会话状态并按需发送新消息继续工作。
+
+#### 查看使用量
+
+查询会话的 `budget` 和 `usage.list_cost`，或查看[会话事件流](/docs/zh/events-and-streaming)中的 `session.usage` 与状态事件。多线程共享会话预算；部署预算限制每次新启动的会话，而非所有运行的累计金额。修改部署预算只影响之后启动的会话。
 
 ## 通过密钥库进行 MCP 身份验证
 
@@ -928,7 +805,7 @@ EOF
 
 ## 启动会话
 
-在不使用 `initial_events` 的情况下创建会话只会注册该会话，但不会启动任何工作；环境的沙箱会在会话创建后立即开始配置，因此第一次工具调用无需等待它。要委派任务，请使用[用户事件](/docs/zh/reference#event-types)向会话发送事件。如需在创建请求中提供第一个事件，请参阅[使用初始事件为会话提供种子](/docs/zh/sessions#seed-the-session-with-initial-events)。会话充当跟踪进度的状态机，而事件驱动实际的执行。
+在不使用 `initial_events` 的情况下创建会话不会启动任务。向会话发送用户消息，或在[创建会话时发送第一条消息](/docs/zh/sessions)。实际执行需要可用的环境运行器和 worker，启动可能需要等待。
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL

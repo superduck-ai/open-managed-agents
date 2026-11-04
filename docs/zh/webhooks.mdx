@@ -26,13 +26,13 @@ Webhook 事件返回事件的 `type` 和 `id`，而非完整对象。当您收�
     | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
     | `session.status_run_started`       | 智能体开始执行。每次会话状态转换为 `running` 时都会触发此事件。                                                                                                                                                                                                               |
     | `session.status_idled`             | 智能体正在等待输入，例如工具权限审批或新的用户消息。                                                                                                                                                                                                                          |
-    | `session.budget_reached`           | OMA 预留订阅：可选择并保存，当前不发送通知；尚未实现预算控制。 |
+    | `session.budget_reached`           | OMA 预留订阅：可选择并保存，当前不发送通知；会话预算控制已实现，仅该通知未发出。 |
     | `session.status_rescheduled`       | 发生了暂时性错误，会话正在自动重试。                                                                                                                                                                                                                                  |
     | `session.status_terminated`        | 会话已终止，原因可能是发生了不可恢复的错误，或会话已被归档。                                                                                                                                                                                                                      |
-    | `session.thread_created`           | 新的[多智能体线程](/docs/zh/multiagent-orchestration)已开启：协调器调用的另一个智能体正在开始工作，或正在咨询会话的[顾问](/docs/zh/multiagent-orchestration#give-the-session-an-advisor)。          |
+    | `session.thread_created` | 新的[子线程](/docs/zh/multiagent-orchestration)开始工作。 |
     | `session.thread_idled`             | [多智能体交互](/docs/zh/multiagent-orchestration)中的某个智能体正在等待输入。                                                                                                                                              |
-    | `session.thread_terminated`        | 某个[多智能体线程](/docs/zh/multiagent-orchestration)已终止，原因可能是该线程被归档，或其重试次数已耗尽。由协调器派生的子线程在完成工作后会进入 `idle` 状态，而非 `terminated`（顾问线程在其咨询完成后会终止）。此事件仅针对子线程触发；主线程的结束（包括归档整个会话）仅以 `session.status_terminated` 的形式呈现。 |
-    | `session.outcome_evaluation_ended` | 单次迭代的[结果评估](/docs/zh/define-outcomes)已完成。                                                                                                                                                              |
+    | `session.thread_terminated` | 子线程终止，例如被归档或耗尽重试次数。 |
+    | `session.outcome_evaluation_ended` | 单次迭代的[结果评估](/docs/zh/define-outcomes)已完成。 |
     | `session.updated`                  | 会话属性已更改（例如，其名称或配置已更新）。                                                                                                                                                                                                                              |
     | `session.deleted`                  | 会话已被永久删除。没有可获取的对象，因此请将该事件本身视为最终状态。                                                                                                                                                                                                                  |
   </Tab>
@@ -361,7 +361,7 @@ Webhook 端点由以下部分组成：
 
 ## 处理事件
 
-解析请求体，根据 `data.type` 进行分支处理，并按 ID 获取资源。返回任何 `2xx` 状态码以确认接收。任何其他响应都会计入该端点的失败记录：`3xx` 会立即禁用端点（永远不会跟随重定向），而其他失败会被重试；有关重试和自动禁用规则，请参阅[传递行为](/docs/zh/webhooks#delivery-behavior)。
+解析请求体，根据 `data.type` 进行分支处理，并按 ID 获取资源。返回任何 `2xx` 状态码以确认接收。任何其他响应都会计入该端点的失败记录：`3xx` 会触发禁用端点的尝试（不会跟随重定向），而其他失败会被重试；有关重试和自动禁用规则，请参阅[传递行为](/docs/zh/webhooks#delivery-behavior)。
 
 每个事件负载都具有相同的结构，包括事件类型、标识符以及事件发生时的时间戳。
 
@@ -446,9 +446,9 @@ Webhook 端点由以下部分组成：
 
 * **重复：** 端点可能多次收到同一事件，且每次尝试传递的顶层 `event.id` 都相同（与 `webhook-id` 标头的值相同）。请基于该值进行去重。
 
-* **订阅范围：** 事件仅传递给在其发出时刻已订阅该类型的端点。如果事件发出时没有任何端点订阅其类型，则该事件永远不会被传递，且之后订阅也不会回填该事件，因此请在需要某个事件类型之前就订阅它。
+* **订阅范围：** 发布通知时查找当前启用且订阅了该类型的端点；如果没有匹配端点，则不会为该事件创建投递，之后订阅也不会回填。
 
-* **不保证顺序。** 事件不会按其发生的顺序传递：即使结果先产生，`session.status_idled` 也可能在 `session.outcome_evaluation_ended` 之前到达；同一资源的 `.deleted` 事件也可能在 `.archived` 事件之前到达。请根据您获取的资源来驱动状态，而不是根据事件到达的顺序。
+* **不保证顺序。** 事件不一定按发生顺序传递。请根据获取的资源状态处理事件。
 
 * **重试：** webhook.max_attempts 默认 3 次 JetStream 消费机会，不保证发出 3 次 HTTP；数据库查询故障与进程中断也会消耗机会。第 n 次普通失败通过延迟 NAK 在 [5 秒,min(120 秒,5 秒×2ⁿ)) 内均匀采样，积压可能延后发送。崩溃或确认丢失由 AckWait 恢复，不使用相同抖动。
 

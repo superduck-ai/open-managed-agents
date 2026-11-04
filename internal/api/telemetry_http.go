@@ -66,7 +66,12 @@ var routeTelemetry = map[string]requestTelemetry{
 	"/v1/code/sessions/{code_session_id}/worker/otlp/v1/logs":   unobservedRequest,
 	"/v1/code/sessions/{code_session_id}/worker/otlp/v1/traces": unobservedRequest,
 	"/v1/code/sessions/{code_session_id}/worker/heartbeat":      measuredRequest,
-	"/v1/code/brain/claims":                                     longPollRequest,
+	"/v1/dsr/sessions/{code_session_id}/inputs/stream":          unobservedRequest,
+	"/v1/dsr/sessions/{code_session_id}/otlp/v1/logs":           unobservedRequest,
+	"/v1/dsr/sessions/{code_session_id}/otlp/v1/traces":         unobservedRequest,
+	"/v1/dsr/sessions/{code_session_id}/heartbeat":              measuredRequest,
+	"/v1/dsr/claims":        longPollRequest,
+	"/v1/code/brain/claims": longPollRequest,
 }
 
 func eachRouteParam(r *http.Request, visit func(routeParam, string)) {
@@ -163,7 +168,7 @@ func endRequestSpan(span trace.Span, r *http.Request, route string, status int, 
 
 func workerTraceParent(r *http.Request) string {
 	path := r.URL.Path
-	if path == "/v1/messages" || path == "/v1/chat/completions" || strings.HasPrefix(path, "/v1/code/") || strings.HasPrefix(path, "/v2/ccr-sessions/") || strings.HasPrefix(path, "/v2/sessions/") {
+	if path == "/v1/messages" || path == "/v1/chat/completions" || strings.HasPrefix(path, "/v1/code/") || strings.HasPrefix(path, "/v1/dsr/") || strings.HasPrefix(path, "/v2/ccr-sessions/") || strings.HasPrefix(path, "/v2/sessions/") {
 		return r.Header.Get(telemetry.TraceParentHeader)
 	}
 	return ""

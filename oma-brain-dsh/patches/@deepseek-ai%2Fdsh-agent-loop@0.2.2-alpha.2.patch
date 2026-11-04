@@ -1,0 +1,69 @@
+diff --git a/lib/index.js b/lib/index.js
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -633,0 +634,38 @@
++	resumeContinuation() {
++        if (this.phase.kind !== "idle") throw new Error("Cannot continue an active agent");
++        const events = this.session.snapshotEvents();
++        let open;
++        for (const event of events) {
++            if (event.type === "turn/start") open = { turn: event.data.turn, step: 0, stepOpen: false };
++            if (open && event.type === "step/start") { open.step = event.data.step; open.stepOpen = true; }
++            if (open && event.type === "step/end") open.stepOpen = false;
++            if (event.type === "turn/end") open = undefined;
++        }
++        if (!open) throw new Error("No open turn to continue");
++        const driver = Promise.withResolvers();
++        this.activityDone = driver.promise;
++        this.setPhase({ kind: "running", abort: new AbortController(), turn: open.turn, step: open.step, wakeRequested: false, continuation: open });
++        this.loopCtx.agents.withInitiator(this, () => this.kick()).then(driver.resolve, driver.reject);
++    }
++    async continueStep(open) {
++        if (open.step === 0) return null;
++        const events = this.session.snapshotEvents();
++        const response = events.findLast(event => event.type === "assistant/message" && event.data.turn === open.turn && event.data.step === open.step);
++        let end = null;
++        if (response) {
++            const calls = response.data.message.content.filter(block => block.type === "tool-call");
++            const completed = new Set(events.filter(event => event.type === "tool/result" && event.data.turn === open.turn && event.data.step === open.step).map(event => event.data.message.toolCallId));
++            const pending = calls.filter(call => !completed.has(call.id));
++            if (pending.length) {
++                const toolSet = await this.loopCtx.tools.resolve({ agent: this, modelSelection: this.model.current(), signal: this.phase.abort.signal });
++                try {
++                    const result = await this.loopCtx.tools.execute({ calls: pending, signal: this.phase.abort.signal, agent: this, log: {turn: open.turn, step: open.step}, maxParallelToolCalls: 1, toolSet });
++                    for (const context of result.additionalContexts) this.inbox.splice("next-step", this.inbox.nextStep.length, 0, [context]);
++                    if (result.concluded) end = { kind: "completed" };
++                } finally { toolSet.dispose(); }
++            }
++            if (calls.length === 0) end = { kind: "completed" };
++        }
++        if (open.stepOpen) this.session.append("step/end", {turn: open.turn, step: open.step});
++        return end;
++    }
+@@ -729 +767,3 @@
+-		const turn = phase.turn + 1;
++		const continuation = phase.continuation;
++        phase.continuation = undefined;
++        const turn = continuation ? phase.turn : phase.turn + 1;
+@@ -731 +771 @@
+-			this.session.append("turn/start", { turn });
++			if (!continuation) this.session.append("turn/start", { turn });
+@@ -737 +777,2 @@
+-		let target = "next-turn";
++        let suspended = false;
++		let target = continuation ? "next-step" : "next-turn";
+@@ -738,0 +780 @@
++            if (continuation) turnEnds = await this.continueStep(continuation);
+@@ -769,0 +812 @@
++                        if (error?.code === "OMA_DSR_SUSPEND") { suspended = true; throw error; }
+@@ -781 +824 @@
+-						this.session.append("step/end", {
++						if (!suspended) this.session.append("step/end", {
+@@ -800,0 +844 @@
++            if (error?.code === "OMA_DSR_SUSPEND") { suspended = true; return false; }
+@@ -819 +863 @@
+-				this.session.append("turn/end", {
++				if (!suspended) this.session.append("turn/end", {
+@@ -1739 +1783 @@
+-					const closers = interruptedTurnClosers(persisted);
++					const closers = (options.preserveOpenTurns || ownerCtx.get("dsrContinuation")) ? [] : interruptedTurnClosers(persisted);

@@ -141,6 +141,7 @@ environment_runner:
   #   - gitlab.xxxx.cn
 
 code_session:
+  brain_worker_protocol: dsr1
   # Set when a sandbox must call this service through a specific reachable URL.
   # Sandbox callbacks use this URL. Brain telemetry uses OMA_API_URL.
   sandbox_api_base_url: ""

@@ -42,6 +42,7 @@ type SessionCredentialClaims struct {
 	Role             string `json:"role"`
 	AccountEmail     string `json:"account_email,omitempty"`
 	WorkerEpoch      int64  `json:"worker_epoch,omitempty"`
+	Protocol         string `json:"protocol,omitempty"`
 	SandboxUUID      string `json:"sandbox_uuid,omitempty"`
 }
 
@@ -55,6 +56,7 @@ type SessionCredentialIdentity struct {
 	WorkspaceUUID    string
 	AccountEmail     string
 	WorkerEpoch      int64
+	Protocol         string
 }
 
 // SessionCredentials 持有同一进程使用的 Ed25519 签发与验证密钥。
@@ -171,6 +173,7 @@ func (c *SessionCredentials) issue(identity SessionCredentialIdentity, sandboxUU
 		Role:             "worker",
 		AccountEmail:     strings.TrimSpace(identity.AccountEmail),
 		WorkerEpoch:      identity.WorkerEpoch,
+		Protocol:         identity.Protocol,
 		SandboxUUID:      sandboxUUID,
 	}
 	if sandboxUUID != "" {

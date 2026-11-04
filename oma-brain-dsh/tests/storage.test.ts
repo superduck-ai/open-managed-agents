@@ -1,10 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { afterEach,expect,test } from "bun:test";
+import { chmod,mkdir,mkdtemp,readdir,rm,writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join,resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkWritableDirectory, resolveBrainHome, resolveTranscriptRoot } from "../src/storage.ts";
-import { Backend } from "./backend.ts";
+import { checkWritableDirectory,resolveBrainHome,resolveTranscriptRoot } from "../src/storage.ts";
+import { DsrBackend as Backend } from "./dsr-backend.ts";
 
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -47,7 +47,7 @@ for (const [setting, readOnly] of [
     const entry = resolve(process.env.BRAIN_TEST_ENTRY ?? fileURLToPath(new URL("../src/main.ts", import.meta.url)));
     const child = Bun.spawn(binary ? [binary] : [process.execPath, entry], {
       cwd: root,
-      env: { ...process.env, OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: backend.claimToken,
+      env: { ...process.env, OMA_BRAIN_PROTOCOL: "dsr1", OMA_API_URL: backend.url, OMA_BRAIN_CLAIM_TOKEN: backend.claimToken,
         DSH_HOME: join(root, "home"), OMA_BRAIN_TRANSCRIPT_DIR: join(root, "transcripts"), [setting]: blocked },
       stdout: "pipe", stderr: "pipe",
     });

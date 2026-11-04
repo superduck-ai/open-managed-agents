@@ -1,8 +1,13 @@
 # 沙箱外 Agent 与 CCRv2
 
-当前执行端为 `oma-brain-dsh`。Go 后端负责准备 Code Session 并接受执行端领取，执行端通过原有 CCRv2 完成注册、输入接收、模型代理、工具审批、事件持久化、状态更新和心跳。后端没有独立的 Brain assignment 表或完成状态补丁；领取状态保存在 `code_sessions` 行上。领取接口、状态机、并发与测试的完整设计见 [Brain Worker 领取](brain-worker-claim.md)。
+当前 Brain 仅支持 DSRv1。旧 CCRv2 Brain bridge 已备份后从生产源码移除，OMA_BRAIN_PROTOCOL 只接受 dsr1。后端旧接口和其他 Worker 保留，旧协议存量会话需要对应历史 Brain 或新建 DSR 会话。当前入口、模块边界和测试范围见 [DSRv1 实现](dsrv1/implementation.md) 与 oma-brain-dsh/README.md；本文涉及 CCRv2 的实现细节作为历史设计保留。
 
-执行端协议的后续演进见 [DSRv1：DSH Session Remote 协议](dsrv1/protocol.md)（设计草案，未冻结）；该协议落地前，本文描述的 CCRv2 合同仍是现行实现。
+
+当前执行端为 `oma-brain-dsh`，新建 Brain 会话与新启动进程默认使用 DSRv1。DSR 的接口、持久化和验收范围见 [DSRv1 实现](dsrv1/implementation.md)。本页保留 CCRv2 兼容模式及共享运行时设计。
+
+CCRv2 模式下，Go 后端负责准备 Code Session 并接受执行端领取，执行端通过原有 CCRv2 完成注册、输入接收、模型代理、工具审批、事件持久化、状态更新和心跳。后端没有独立的 Brain assignment 表或完成状态补丁；领取状态保存在 `code_sessions` 行上。领取接口、状态机、并发与测试的完整设计见 [Brain Worker 领取](brain-worker-claim.md)。
+
+DSRv1 协议仍未冻结。后端 `code_session.brain_worker_protocol` 与 Brain `OMA_BRAIN_PROTOCOL` 默认均为 `dsr1`；使用 CCRv2 时须在两侧显式设置 `ccrv2`。默认切换不回写已有会话的协议标记。
 
 本地在仓库根目录运行 `just restart-brain`，复用 `oma-brain-dsh/scripts/restart.sh`，先构建，再停止当前 Brain 目录启动的 Bun 入口进程，并在前台启动新进程。构建失败时保留旧进程，旧进程未能在 30 秒内退出时取消重启。
 

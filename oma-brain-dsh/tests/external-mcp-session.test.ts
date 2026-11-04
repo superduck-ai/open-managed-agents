@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect,test } from "bun:test";
 import { ExternalMcpClient } from "../src/external-mcp/client.ts";
 
 function statefulPeer(rejection: number, issueSession = true, rejectFresh = false, loseFreshResponse = false) {
@@ -67,7 +67,6 @@ for (const [status, issueSession] of [[503, true], [404, false]] as const) {
   });
 }
 
-
 test("a second stateful404 never causes an unbounded replay loop", async () => {
   const p = statefulPeer(404, true, true);
   try {
@@ -81,7 +80,6 @@ test("a second stateful404 never causes an unbounded replay loop", async () => {
     expect(p.executed()).toBe(1);
   } finally { await p.close(); }
 });
-
 
 test("a safely retried MCP call clears the expired request's not-forwarded evidence", async () => {
   const p = statefulPeer(404, true, false, true);

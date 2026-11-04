@@ -1,9 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect,test } from "bun:test";
+
 import type { Context } from "@deepseek-ai/cordis";
+
 import { DshSubagents } from "../src/runtime/dsh-subagents.ts";
+
 import { SessionRuntime } from "../src/runtime/session.ts";
-import type { SubagentBridge, SubagentThread } from "../src/runtime/contracts.ts";
-import { CcrSession } from "../src/ccrv2/session.ts";
+
+import type { SubagentBridge,SubagentThread } from "../src/runtime/contracts.ts";
 
 function harness(existing = true) {
   const handlers = new Map<string, (...args: any[]) => any>();
@@ -25,15 +28,6 @@ test("subagents stop and close before the root agent is initialized", async () =
   expect(() => f.dsh.interrupt()).not.toThrow();
   await f.dsh.close();
   expect(f.handlers.size).toBe(0);
-});
-
-test("stop still aborts the runtime and rejects approvals when child interruption throws", () => {
-  let stopped = false;
-  let rejected = false;
-  const session = { subagents: { stop: () => { throw new Error("interrupt failed"); } }, runtime: { stop: () => { stopped = true; } }, approvals: new Map([["approval", { reject: () => { rejected = true; } }]]) };
-  expect(() => CcrSession.prototype.stop.call(session as unknown as CcrSession)).toThrow("interrupt failed");
-  expect(stopped).toBe(true);
-  expect(rejected).toBe(true);
 });
 
 test("a rejected event publication stops the parent without poisoning later events or close", async () => {
@@ -63,34 +57,4 @@ test("cold child initialization failure does not publish an interrupted turn", a
   expect(f.events).toEqual([]);
   expect(f.bridge.threads()[0]!.status).toBe("idle");
   await f.dsh.close();
-});
-
-test("runtime marker lookup stops before inspecting a large log tail", async () => {
-  let visited = 0;
-  const events = [{ type: "plugin:oma/subagent-runtime", ignorable: true, data: { version: 1, runtime: "dsh" } }, ...Array.from({ length: 100_000 }, () => ({ get type() { visited++; return "turn/start"; } }))];
-  const done = new Error("lookup complete");
-  const session = {
-    id: "root", ctx: { ccrReplication: { ensure: async () => false, acquiredEvents: () => events }, sessionPersistence: {
-      stat: async () => true, open: async () => ({ read: async () => ({ events }), close: async () => {} }),
-    } }, subagents: { loadThreads: async () => {} }, runtime: { open: async () => { throw done; } },
-  };
-  const methods = CcrSession.prototype as unknown as { openState: (stage: (value: string) => void) => Promise<void> };
-  await expect(methods.openState.call(session, () => {})).rejects.toBe(done);
-  expect(visited).toBe(0);
-});
-
-test("runtime preflight reuses acquired events even when the marker is last", async () => {
-  let reads = 0;
-  let visited = 0;
-  const events = [...Array.from({ length: 100_000 }, () => ({ get type() { visited++; return "turn/start"; } })), { type: "plugin:oma/subagent-runtime", ignorable: true, data: { version: 1, runtime: "dsh" } }];
-  const done = new Error("preflight complete");
-  const session = {
-    id: "root", ctx: { ccrReplication: { ensure: async () => false, acquiredEvents: () => events }, sessionPersistence: {
-      stat: async () => true, open: async () => ({ read: async () => { reads++; return { events }; }, close: async () => {} }),
-    } }, subagents: { loadThreads: async () => {} }, runtime: { open: async () => { throw done; } },
-  };
-  const methods = CcrSession.prototype as unknown as { openState: (stage: (value: string) => void) => Promise<void> };
-  await expect(methods.openState.call(session, () => {})).rejects.toBe(done);
-  expect(reads).toBe(0);
-  expect(visited).toBe(100_000);
 });

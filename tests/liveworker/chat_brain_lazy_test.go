@@ -32,7 +32,7 @@ func (p *chatDockerProvider) ServiceEndpoint(ctx context.Context, sandbox string
 	output, err := exec.CommandContext(ctx, "docker", "port", sandbox, strconv.Itoa(port)+"/tcp").Output()
 	if err != nil {
 		inspection, inspectErr := exec.CommandContext(ctx, "docker", "inspect", sandbox).CombinedOutput()
-		if inspectErr != nil && strings.Contains(string(inspection), "No such") {
+		if inspectErr != nil && strings.Contains(strings.ToLower(string(inspection)), "no such") {
 			return "", sandboxruntime.ErrSandboxNotFound
 		}
 		return "", err
@@ -64,8 +64,9 @@ func verifyLazyBrain(t *testing.T, started time.Time) {
 	second := startBrainNode(t, e, cfg, "lazy-second")
 	defer second.stop(t)
 	e.request(t, "POST", "/v1/agents/"+e.agent.ExternalID, e.apiKey, map[string]any{
-		"version": e.agent.CurrentVersion,
-		"tools":   []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"enabled": false, "permission_policy": map[string]string{"type": "always_allow"}}}},
+		"multiagent": map[string]any{"type": "multiagent_20261001", "subagents": map[string]any{"type": "enabled", "inline_agents": map[string]string{"type": "enabled"}}},
+		"version":    e.agent.CurrentVersion,
+		"tools":      []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"enabled": false, "permission_policy": map[string]string{"type": "always_allow"}}}},
 	}, 200)
 	e.agent, err = e.database.GetAgent(t.Context(), e.key.WorkspaceUUID.String(), e.agent.ExternalID)
 	requireOK(t, err)
@@ -176,9 +177,10 @@ func startLazyBrainRunner(t *testing.T, e *liveEnv, cfg config.Config) (*chatDoc
 	handler := codesessions.NewHandler(cfg, service, provider, slog.Default())
 	router := chi.NewRouter()
 	router.Route("/v2", handler.RegisterV2Routes)
+	router.Route("/v1", handler.RegisterV1Routes)
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v2/ccr-sessions/") && strings.HasSuffix(r.URL.Path, "/sandbox/mcp") {
+		if (strings.HasPrefix(r.URL.Path, "/v2/ccr-sessions/") || strings.HasPrefix(r.URL.Path, "/v1/dsr/sessions/")) && strings.HasSuffix(r.URL.Path, "/sandbox/mcp") {
 			router.ServeHTTP(w, r)
 			return
 		}

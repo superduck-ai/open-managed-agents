@@ -33,6 +33,15 @@ export class Subagents {
         try {
           child = await this.createRuntime(thread);
           await child.open();
+          if (this.parent.config.preserveOpenTurns) {
+            let open = false;
+            for (const event of child.agent.session.snapshotEvents()) { if (event.type === "turn/start") open = true; if (event.type === "turn/end") open = false; }
+            if (open) {
+              await child.run("", { continuation: true, beforeRun: async () => {}, afterRun: async () => {} });
+              for (const event of child.agent.session.snapshotEvents()) { if (event.type === "turn/start") open = true; if (event.type === "turn/end") open = false; }
+              if (open) throw Object.assign(new Error("Child turn is suspended"), { code: "OMA_DSR_SUSPEND" });
+            }
+          }
           await child.flushLog();
           await this.bridge.emit({ kind: "idle", thread, completed: false });
         } finally {
@@ -87,6 +96,7 @@ export class Subagents {
       onExternalMcpAuthenticationFailure: (serverName, phase) => this.parent.hooks.onExternalMcpAuthenticationFailure?.(serverName, phase) ?? Promise.resolve(),
       beforeRequest: async () => { await this.settleEvents(); await child.flushLog(); await this.bridge.beforeRequest?.(thread.id); },
       onDiagnostic: diagnostic => this.bridge.onDiagnostic?.(thread.id, diagnostic),
+      setupTools: scope => this.bridge.setupTools?.(scope),
       onOpen: session => this.bridge.onOpen?.(session) ?? Promise.resolve(),
       afterFlushLog: session => this.bridge.afterFlushLog?.(session) ?? Promise.resolve(),
       onEvent: (event, session) => this.bridge.onEvent(thread.id, event, session),

@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { APICallError } from "@ai-sdk/provider";
+import { expect,test } from "bun:test";
 import { modelError } from "../src/llm-ai-sdk/stream.ts";
 
 const observedRangeError = "<400> InternalError.Algo.InvalidParameter: Range of input length should be [1, 260096]";

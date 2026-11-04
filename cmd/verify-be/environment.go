@@ -91,7 +91,7 @@ func (e *environment) writeConfig(ctx context.Context) error {
 		"tunnel":       map[string]string{"public_base_url": "http://" + e.apiAddress()},
 		"storage":      map[string]any{"type": "s3", "s3": map[string]any{"endpoint": "http://127.0.0.1:" + ports["minio"], "bucket": "verify-be", "region": "us-east-1", "access_key_id": "verifychat", "secret_access_key": "verifychat-local-only", "force_path_style": true}},
 		"vault":        map[string]any{"master_key": map[string]any{"version": 1, "kek": base64.StdEncoding.EncodeToString(kek)}},
-		"code_session": map[string]string{"jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem"), "upstream_proxy_ca_key_file": filepath.Join(e.directory, "proxy-ca.pem")},
+		"code_session": map[string]string{"brain_worker_protocol": "ccrv2", "jwt_signing_private_key_file": filepath.Join(e.directory, "jwt.pem"), "upstream_proxy_ca_key_file": filepath.Join(e.directory, "proxy-ca.pem")},
 	}
 	if e.observability {
 		port, err := e.port(ctx, "openobserve", 5080)

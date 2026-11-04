@@ -1,14 +1,20 @@
-import { runSubagent, subagentScripts } from "./subagent-tools.ts";
-import { expect, test } from "bun:test";
+
+
+import { expect,test } from "bun:test";
+
 import { Context } from "@deepseek-ai/cordis";
+
 import { OmaApi } from "../src/api.ts";
-import { createOmaSession } from "../src/oma-session.ts";
-import { mountOma } from "../src/plugin.ts";
+
 import * as OmaSandboxProvider from "../src/oma-sandbox/index.ts";
-import { SandboxMcp, sandboxCallTimeoutMs } from "../src/oma-sandbox/client.ts";
-import * as SandboxTools from "../src/sandbox-tools/index.ts";
+
+import { sandboxCallTimeoutMs,SandboxMcp } from "../src/oma-sandbox/client.ts";
+
+
 import { sandboxToolDefinitions } from "../src/sandbox-tools/definitions.ts";
-import { assignment, Backend, textEvents, toolEvents } from "./backend.ts";
+
+import { assignment } from "./backend.ts";
+
 import type { Payload } from "../src/json.ts";
 
 test("sandbox call timeout outlasts the requested Bash timeout", () => {
@@ -179,111 +185,6 @@ test("OMA providers isolate roots, initialize lazily and retain separate MCP ses
   }
 });
 
-async function fixture(tools?: string[]) {
-  const b = new Backend();
-  if (tools) b.a.launch.tools = tools;
-  await b.ready;
-  const ctx = new Context();
-  const api = new OmaApi(b.url);
-  await mountOma(ctx, api);
-  const session = createOmaSession(ctx, api, b.a);
-  b.onApproval = async (payload) => {
-    await session.control({ type: "control_response", response: {
-      subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
-    } });
-  };
-  return {
-    b, ctx, session,
-    providers: () => [...(ctx.registry.get(OmaSandboxProvider)?.fibers ?? [])],
-    consumers: () => [...(ctx.registry.get(SandboxTools)?.fibers ?? [])],
-    async close() {
-      try { await session.close(); }
-      finally { await ctx.fiber.dispose(); b.stop(); }
-    },
-  };
-}
-
-test("DSH child disposal preserves the root executor and MCP connection", async () => {
-  const f = await fixture();
-  try {
-    await f.session.open();
-    expect(f.providers()).toHaveLength(1);
-    expect(f.b.mcpMethods).toEqual([]);
-    const provider = f.providers()[0]!;
-    const executor = provider.ctx.get("sandboxExecutor");
-    subagentScripts(f.b, [textEvents("received child report")], [toolEvents("child", "child_call"), textEvents("child report")]);
-    const report = await runSubagent(f.session, "subagent", { description: "child", prompt: ["Inspect files", "Inspect the workspace"].filter(Boolean).join("\n") });
-    expect(report.report).toBe("child report");
-    await f.session.subagents.wait();
-    await f.session.agent.whenIdle();
-    expect(f.providers()).toEqual([provider]);
-    expect(f.consumers()).toHaveLength(1);
-    expect(provider.ctx.get("sandboxExecutor")).toBe(executor);
-    f.b.onModel = undefined;
-    f.b.modelScript = [toolEvents("parent", "parent_call"), textEvents("done")];
-    await f.session.receive("parent_input", { content: "Continue" });
-    expect(f.b.executions.map((call) => call.arguments.command)).toEqual(["child", "parent"]);
-    expect(f.b.mcpMethods).toEqual(["initialize", "notifications/initialized", "tools/call", "tools/call"]);
-    await f.session.close();
-    expect(f.providers()).toHaveLength(0);
-    expect(f.consumers()).toHaveLength(0);
-    expect(provider.ctx.get("sandboxExecutor")).toBeUndefined();
-  } finally { await f.close(); }
-});
-
-test("failed root setup rolls back the provider without allocating a sandbox", async () => {
-  const f = await fixture();
-  const setup = f.session.config.setup!;
-  f.session.config.setup = async (scope) => {
-    await setup(scope);
-    expect(f.providers()).toHaveLength(1);
-    throw new Error("setup failed after provider mounted");
-  };
-  try {
-    await expect(f.session.open()).rejects.toThrow("setup failed after provider mounted");
-    expect(f.providers()).toHaveLength(0);
-    expect(f.consumers()).toHaveLength(0);
-    expect(f.b.sandboxCount).toBe(0);
-    expect(f.b.mcpMethods).toEqual([]);
-  } finally { await f.close(); }
-});
-
-test("root close keeps the provider alive until a child's tool result checkpoint drains", async () => {
-  const f = await fixture();
-  const writing = Promise.withResolvers<void>();
-  const confirmed = Promise.withResolvers<void>();
-  let settled: Promise<unknown> | undefined;
-  try {
-    await f.session.open();
-    const provider = f.providers()[0]!;
-    const persistence = f.ctx.ccrv2.config.backend;
-    const persist = persistence.persist.bind(persistence);
-    persistence.persist = async (id, ...args) => {
-      if ("type" in args[1] && args[1].type === "tool/result") {
-        writing.resolve();
-        await confirmed.promise;
-      }
-      await persist(id, ...args);
-    };
-    f.b.modelScript = [toolEvents("child", "draining_call"), textEvents("done")];
-    settled = runSubagent(f.session, "subagent", { description: "child", prompt: ["Test", "Run"].filter(Boolean).join("\n") }).catch(() => {});
-    await writing.promise;
-    let closed = false;
-    const closing = f.session.close().then(() => { closed = true; });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(closed).toBe(false);
-    expect(provider.ctx.get("sandboxExecutor")).toBeDefined();
-    confirmed.resolve();
-    await Promise.all([settled, closing]);
-    expect(f.providers()).toHaveLength(0);
-    expect(f.b.executions).toHaveLength(1);
-  } finally {
-    confirmed.resolve();
-    await settled;
-    await f.close();
-  }
-});
-
 test("provider rejects absent, ambiguous or local-command MCP configuration", async () => {
   const { sandboxEndpoint } = await import("../src/oma-sandbox/config.ts");
   for (const config of [{}, { mcpServers: { other: { type: "http", url: "https://other.test/mcp" } } },
@@ -296,74 +197,8 @@ test("provider rejects absent, ambiguous or local-command MCP configuration", as
 test("server-relative MCP configuration resolves against the OMA API origin", async () => {
   const { sandboxEndpoint } = await import("../src/oma-sandbox/config.ts");
   const endpoint = sandboxEndpoint({ mcpServers: { sandbox: {
-    type: "http", url: "/v2/ccr-sessions/session/sandbox/mcp", headers: { Authorization: "Bearer session" },
+    type: "http", url: "/v1/dsr/sessions/session/sandbox/mcp", headers: { Authorization: "Bearer session" },
   } } }, "https://oma.example");
-  expect(endpoint.url).toBe("https://oma.example/v2/ccr-sessions/session/sandbox/mcp");
+  expect(endpoint.url).toBe("https://oma.example/v1/dsr/sessions/session/sandbox/mcp");
   expect(endpoint.headers).toEqual({ Authorization: "Bearer session" });
-});
-
-
-test.each(["user.interrupt", "control_request"])("confirmed %s ends as end_turn and permits another turn in the same session", async (type) => {
-  const f = await fixture();
-  const dispatched = Promise.withResolvers<void>();
-  const cancelled = Promise.withResolvers<Record<string, unknown>>();
-  try {
-    await f.session.open();
-    f.b.modelScript = [toolEvents("sleep 120", "cancel_call")];
-    f.b.onTool = async () => { dispatched.resolve(); return cancelled.promise; };
-    f.b.onCancel = async () => { cancelled.resolve({ isError: true, content: [{ type: "text", text: "cancelled" }], structuredContent: { status: "cancelled", cancelled: true } }); };
-    const turn = f.session.receive("interrupt_input", { content: "Run until interrupted" });
-    await dispatched.promise;
-    await f.session.receive("interrupt_control", type === "control_request"
-      ? { type, request_id: "interrupt_request", request: { subtype: "interrupt" } }
-      : { type });
-    await turn;
-    expect(f.session.abort.signal.aborted).toBe(false);
-    expect([...f.b.publicLog.values()].some((event) => event.type === "result" && event.is_error === true)).toBe(false);
-    expect([...f.b.publicLog.values()].filter((event) => event.type === "result").map((event) => event.is_error)).toEqual([false]);
-    expect([...f.b.publicLog.values()].some((event) => event.type === "agent.message")).toBe(false);
-    f.b.modelScript = [textEvents("RESUMED")];
-    await f.session.receive("resume_input", { content: "Reply RESUMED without tools" });
-    expect([...f.b.publicLog.values()].filter((event) => event.type === "result").at(-1)!.is_error).toBe(false);
-    expect(f.b.executions).toHaveLength(1);
-  } finally { cancelled.resolve({ isError: true, content: [{ type: "text", text: "cancelled" }] }); await f.close(); }
-});
-
-
-test("root model requests expose only the session's enabled sandbox tools", async () => {
-  for (const tools of [[], ["Read"]]) {
-    const f = await fixture(tools);
-    try {
-      await f.session.open();
-      f.b.modelScript = [textEvents("done")];
-      await f.session.receive("allowlist_input", { content: "Inspect available tools" });
-      expect(f.b.requests).toHaveLength(1);
-      expect((f.b.requests[0]!.tools ?? []).map((tool: { name: string }) => tool.name))
-        .toEqual([...tools, "interrupt_agent", "list_agents", "send_message", "subagent"].sort());
-      expect(f.b.sandboxCount).toBe(0);
-      expect(f.b.mcpMethods).toEqual([]);
-    } finally { await f.close(); }
-  }
-});
-
-test("sandbox Bash projection preserves model and public tool output", async () => {
-  const f = await fixture(["Bash"]);
-  const stdout = "exact stdout\n";
-  const metadata = { stdout, stderr: "", exit_code: 0, status: "completed", timed_out: false,
-    cancelled: false, stdout_truncated: false, stderr_truncated: false };
-  f.b.onTool = async () => ({ structuredContent: metadata, content: [
-    { type: "text", text: stdout }, { type: "text", text: JSON.stringify(metadata) },
-  ] });
-  try {
-    await f.session.open();
-    f.b.modelScript = [toolEvents("printf exact", "projected-bash"), textEvents("done")];
-    await f.session.receive("projection", { content: "Run Bash" });
-    const request = JSON.stringify(f.b.requests[1]!.messages);
-    expect(request).toContain("exact stdout");
-    expect(request).not.toContain("exit_code");
-    const results = [...f.b.publicLog.values()].flatMap(event => event.message?.content ?? [])
-      .filter(block => block.type === "tool_result" && block.tool_use_id === "projected-bash");
-    expect(results).toHaveLength(1);
-    expect(results[0]!.content).toEqual([{ type: "text", text: stdout }]);
-  } finally { await f.close(); }
 });

@@ -370,12 +370,27 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 				h.logger.ErrorContext(ctx, "decode code session worker event ID", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
 				return
 			}
-			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID, PublicEventID: publicEvent.ID, Lane: delivery.Lane, PublishedAt: delivery.PublishedAt, TraceParent: delivery.TraceParent}); err != nil {
+			if isDSHCodeSession(codeSession) && envelope.EventType == "user.message" {
+				scope := db.DSHScope{CodeSessionID: codeSession.ExternalID, CodeSessionUUID: codeSession.UUID, SessionID: codeSession.SessionExternalID, OrganizationUUID: codeSession.OrganizationUUID, WorkspaceUUID: codeSession.WorkspaceUUID, Epoch: epoch}
+				completed, err := h.db.RecordDSHDelivery(ctx, scope, eventID, delivery.AckSubject, cleanupJobID)
+				if err != nil {
+					return
+				}
+				if completed {
+					continue
+				}
+			} else if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID, PublicEventID: publicEvent.ID, Lane: delivery.Lane, PublishedAt: delivery.PublishedAt, TraceParent: delivery.TraceParent}); err != nil {
 				h.logger.WarnContext(ctx, "store code session worker event ACK", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
 				return
 			}
 			h.observeWorkerEventDelivery(ctx, codeSession, epoch, delivery, eventID)
-			if err := writeCodeSessionWorkerSSEEvent(w, flusher, event); err != nil {
+			var writeErr error
+			if isDSHCodeSession(codeSession) {
+				writeErr = writeDSHInput(w, flusher, event)
+			} else {
+				writeErr = writeCodeSessionWorkerSSEEvent(w, flusher, event)
+			}
+			if writeErr != nil {
 				// 保留到 TTL：旧连接写失败时，新连接可能已重投并覆盖同一个 key。
 				// 无条件删除会抹掉新投递的 ACK 定位；未 flush 的映射本身不会 ACK 消息。
 				return

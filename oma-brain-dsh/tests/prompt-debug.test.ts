@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach,expect,spyOn,test } from "bun:test";
 import { logSystemPrompt } from "../src/prompt/debug.ts";
 
 const original = process.env.OMA_DEBUG_SYSTEM_PROMPT;
@@ -42,7 +42,6 @@ test("system prompt is logged once per session until it changes", () => {
   ]);
   expect(records.every((record) => record.event === "oma_system_prompt" && /^[0-9a-f]{64}$/.test(String(record.sha256)))).toBe(true);
 });
-
 
 test("official model payloads keep system prompt diagnostics for both protocols", () => {
   process.env.OMA_DEBUG_SYSTEM_PROMPT = "1";

@@ -1,5 +1,8 @@
 # Brain 验证
 
+当前 oma-brain-dsh 仅支持 DSRv1，使用下文 chat brain-dsr。本文历史 chat brain、brain-proxy 等强制 CCRv2 的夹具不能直接搭配当前二进制，必须先迁移其协议或使用对应历史二进制；它们的历史通过记录不代表当前 DSR 覆盖。本次删除未移除后端旧接口或其他 Worker。
+
+
 `just verify-be chat doctor brain-proxy` 和 `just verify-be chat brain-proxy` 专门验证沙箱代理在 owner 接管后继续工作，需要同样的 `OMA_BRAIN_BINARY` 与本地 Worker 镜像。该场景启动真实 Brain 进程，让脚本模型两次请求 Bash，使用自动继承的代理访问 `https://1.1.1.1/cdn-cgi/trace`。第一次成功后杀掉 owner，等待真实租约失效，再启动 replacement。必须观察 epoch 增长、同一个旧 worker token 在接管前后读取 session_context 均返回 200（`brain_proxy_old_token_identity`）、旧 worker token 调用沙箱网关返回 409 epoch 冲突、沙箱 UUID/provider ID/relay 地址全部不变，以及第二次 HTTP 200、CONNECT 200 和 TLS 校验成功。它使用隔离依赖和实际公网 HTTPS，不修改现存开发会话；公网不可达时不能报告通过。
 
 运行前构建 oma-brain-dsh，设置 `OMA_BRAIN_BINARY` 为该可执行文件的绝对路径。
@@ -21,7 +24,7 @@ Doctor 检查 Brain binary 的可执行性并记录 SHA-256；沙箱镜像必须
 `brain_mcp_loop` 让真实原生循环请求 sandbox MCP Write，核对沙箱文件字节及下一次模型请求中的
 工具结果。上游模型请求必须携带 `anthropic-version: 2023-06-01`，并且工具列表严格为
 `Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`web_search`、`web_fetch` 以及 dsh 内置的 `subagent`、`send_message`、`list_agents`、`interrupt_agent`。
-每次模型响应使用独立 message ID，避免不同回合被当作重复事件。任务通过 NATS 分发；输出、审批、状态和心跳复用 CCRv2 worker 接口，输入与回复通过 Worker SSE 接收，
+每次模型响应使用独立 message ID 与 tool-call ID，避免不同回合被当作重复事件。任务通过 NATS 分发；输出、审批、状态和心跳复用 CCRv2 worker 接口，输入与回复通过 Worker SSE 接收，
 processed 回执通过 CCRv2 delivery 接口确认。
 `brain_takeover` 杀掉节点，先投递待恢复输入，再等待真实租约过期，重新派发任务并启动新节点，检查 epoch 增长、旧节点
 MCP 请求被拒绝以及 CCRv2 私有 dsh_log 事件保存的原生模型历史可继续对话。
@@ -37,7 +40,7 @@ MCP 请求被拒绝以及 CCRv2 私有 dsh_log 事件保存的原生模型历史
 
 整个场景使用真实 Go 后端、PostgreSQL、Redis、三节点 NATS 和 Docker MCP；只模拟上游 LLM。
 退出时终止所有 run-owned Brain 进程并删除 MCP 容器；源码保持不变。
-不覆盖网络分区、云端 TTL、长 Bash、自动工具对账、真实模型或生产性能。
+不覆盖网络分区、云端 TTL、长 Bash、自动工具对账、真实模型或生产性能。夹具显式启用委派配置，Docker 不存在错误兼容大小写变化，过期后仍必须实际创建 replacement。
 
 `chat brain-memory` 从旧 Crush 方案迁入 Memory 目录与加载回归。首次模型请求必须看到
 已 attach store 的名称、路径、权限、description 和 instructions，但不包含正文。
@@ -73,3 +76,21 @@ run-owned 节点和容器清理形成 `brain_skills_cleanup`。
 使用公开 Session、生产 Runner、真实 DSH 进程、Docker Worker、FUSE 与隔离依赖。验证共享 fixture 的 CodeSession Service 也按生产组装注入附件 Filestore。不覆盖视觉准确率基准、计费、所有模型后端、跨实例恢复或云端沙箱。报告不能把此场景描述为脚本模型。临时配置、Brain 与 Worker/Compose 清理沿用现有 verify-be。
 
 Brain doctor 同时检查 Worker 的 `environment-manager task-run --help` 声明 `--claude-agent-version` 与 `--claude-path`。旧测试镜像缺少这两个启动参数时提前拒绝，不能用 FUSE preflight 成功代替 Manager 启动兼容性。
+
+## DSR 原生执行链路
+
+`chat doctor brain-dsr` / `chat brain-dsr` 使用真实 Brain 可执行文件、公开 Session API、Runner、Docker MCP、PostgreSQL、Redis、JetStream 与 MinIO，仅脚本化上游模型。后端显式选择 `brain_worker_protocol: dsr1`，Brain 设置 `OMA_BRAIN_PROTOCOL=dsr1`。
+
+必需阶段为 `dsr_roundtrip`、`dsr_transcript_contracts`、`dsr_tool_approval`、`dsr_cancel`、`dsr_ack_recovery`、`dsr_claim_release`、`dsr_takeover`。场景检查全部 17 个主接口，中文预览/最终消息/历史，日志重复与冲突，审批确认后实际工具写入，取消后无沙箱副作用，以及 SIGKILL 后真实租约过期、claim/release、冷接管和旧 epoch 拒绝。报告必须包含全部阶段及资源清理成功。
+
+此场景不验证新 transcript 归档、全部子线程/附件/压缩能力、真实模型质量、云端网络分区或性能。普通原生运行时测试另覆盖审批挂起与双工具批次在 SIGKILL 后的防重放，不能代替这个真实后端场景。
+
+DSR 输入执行模型验收同时检查 delivery 的 execution_status=completed、旧 turn_state/cancel_requested 字段消失，finish 拒绝 recovered 与旧 reason，且不可改写已提交结果。表结构通过全新隔离数据库应用原始 goose 定义。
+
+DSR 独立 ACK 补偿新增 dsr_ack_recovery 阶段：停止真实 Brain，先确认已完成输入的投递行已删除，再发布并消费 run-owned JetStream 测试投递取得 Reply Subject，创建该输入的无效 pending 投递，等待真实后端自动重试；确认执行结果仍 completed/success，过期 owner 也不会仅因 pending ACK 被领取。恢复真实 Reply Subject 后，不启动 Brain 即须由后端确认。仅故障注入 run-owned 投递元数据，不新增生产故障开关。数据库测试另覆盖租约过期、旧租约/新投递 CAS、租户隔离、对象 cleanup 联动与已结算记录清理。
+
+独立 ACK 场景会显式推进 owner 租约过期，检查 pending ACK 不触发领取，不测量 DSR 的完整 TTL 等待时序。
+
+DSR 第 18 版还通过真实 HTTP 检查 worker-state 无 status、status/无版本模型写入返回 400，模型控制高版本生效、旧版本忽略、相同版本身份或内容变化返回 409、null 清除及接管后水位保留。公开 system.message 原始 JSON 调整字段顺序与空白后仍 duplicate，内容变化返回 409。该探针在停止首个 Brain 后构造版本，不替代真实 broker 控制流所有乱序与崩溃窗口验收。
+
+DSR ACK 第 19 版以 delivery 行消失断言确认完成，不再查询 acked/acked_at。数据库回归覆盖 cleanup 更新失败时删除回滚、旧租约/跨租户/新投递 CAS，以及删除后的重投只补 ACK。discarded 仍在 7 天后分批清理。

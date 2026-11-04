@@ -63,7 +63,11 @@ func managedAgentSessionConfig(
 		"memory_catalog_prompt": memoryPrompt,
 		"runtime_skills":        skills,
 		"worker_transport":      runtimeResources.workerTransport,
+
 		"sandbox_memory_stores": memoryStoreDefinitions(runtimeResources.memoryMounts),
+	}
+	if runtimeResources.workerProtocol != "" {
+		body["worker_protocol"] = runtimeResources.workerProtocol
 	}
 	if system, ok := agentSnapshot["system"].(string); ok && system != "" {
 		body["system_prompt"] = system

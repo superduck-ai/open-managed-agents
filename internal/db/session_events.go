@@ -25,6 +25,13 @@ type sessionEventWriteResult struct {
 // The caller holds the Session lock. Lock the Worker second, decide acceptance,
 // then persist each action's events and state in their public order.
 func insertSessionEventsTx(ctx context.Context, executor yourbatis.Executor, session Session, events []SessionEvent) (sessionEventBatchResult, error) {
+	code, dsr, err := NewDSHExecutionMapper(executor).FindCode(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
+	if err != nil {
+		return sessionEventBatchResult{}, err
+	}
+	if dsr && slices.ContainsFunc(events, func(event SessionEvent) bool { return maevents.IsPublicWorkerInputEvent(event.EventType) }) {
+		return insertDSHInputs(ctx, executor, session, code, events)
+	}
 	primary, worker, err := lockSessionEventStateTx(ctx, executor, session)
 	if err != nil {
 		return sessionEventBatchResult{}, err

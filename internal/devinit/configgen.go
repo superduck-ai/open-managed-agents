@@ -120,6 +120,7 @@ func absolutizeConfigPaths(root *yaml.Node, base config.Config) {
 	setPathIfPresent(root, []string{"code_session", "jwt_signing_private_key_file"}, base.CodeSession.JWTSigningPrivateKeyFile)
 	setPathIfPresent(root, []string{"code_session", "upstream_proxy_ca_key_file"}, base.CodeSession.UpstreamProxyCAKeyFile)
 	setPathIfPresent(root, []string{"code_session", "brain_claim_token_file"}, base.CodeSession.BrainClaimTokenFile)
+	setPathIfPresent(root, []string{"code_session", "brain_worker_protocol"}, base.CodeSession.BrainWorkerProtocol)
 	if local := base.Vault.MasterKey.Local; local != nil && local.KekFile != "" {
 		setPathIfPresent(root, []string{"vault", "master_key", "local", "kek_file"}, local.KekFile)
 	}

@@ -1,12 +1,12 @@
-import { expect, test } from "bun:test";
-import { BlockAssembler, MessageId, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { BlockAssembler,MessageId,ToolCallId,type GenerateOptions,type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
+import { expect,test } from "bun:test";
 import { OmaApi } from "../src/api.ts";
+import type { Payload } from "../src/json.ts";
 import { AiSdkAdapter } from "../src/llm-ai-sdk/index.ts";
 import { omaModelOptions } from "../src/model.ts";
-import { assistantMessages } from "../src/ccrv2/assistant.ts";
-import { assignment, textEvents } from "./backend.ts";
-import type { Payload } from "../src/json.ts";
+import { assistantMessages } from "../src/runtime/assistant.ts";
+import { assignment,textEvents } from "./backend.ts";
 
 function response(chunks: (Payload | string)[]) {
   return new Response(chunks.map((chunk) => `data: ${typeof chunk === "string" ? chunk : JSON.stringify(chunk)}\r\n\r\n`).join(""),

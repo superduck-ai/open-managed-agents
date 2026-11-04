@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="DSHWorkerMapper">
+    <sql id="scope">organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID} AND code_session_uuid = #{scope.CodeSessionUUID}</sql>
+    <update id="Register" result="rows">
+        UPDATE code_sessions SET worker_lease_expires_at = #{expiresAt}, worker_registered_at = NOW(),
+            worker_token_session_id = external_id, worker_status = COALESCE(worker_status, 'idle'), worker_binding = '{"auth_mode":"session_ingress_token"}',
+            worker_last_heartbeat_at = NULL, connection_status = 'connected', last_worker_connected_at = NOW(),
+            last_worker_activity_at = NOW(), worker_claim_requested_at = NULL, worker_claim_expires_at = NULL, updated_at = NOW()
+        WHERE organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}
+          AND uuid = #{scope.CodeSessionUUID} AND current_worker_epoch = #{scope.Epoch}
+          AND status = 'active' AND deleted_at IS NULL
+    </update>
+    <update id="Heartbeat" result="rows">
+        UPDATE code_sessions SET worker_lease_expires_at = #{expiresAt}, worker_last_heartbeat_at = NOW(),
+            last_worker_activity_at = NOW(), connection_status = 'connected', updated_at = NOW()
+        WHERE organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}
+          AND uuid = #{scope.CodeSessionUUID} AND current_worker_epoch = #{scope.Epoch}
+          AND status = 'active' AND deleted_at IS NULL
+    </update>
+    <insert id="EnsureState" result="rows">
+        INSERT INTO dsh_worker_states (organization_uuid, workspace_uuid, code_session_uuid)
+        VALUES (#{scope.OrganizationUUID}, #{scope.WorkspaceUUID}, #{scope.CodeSessionUUID})
+        ON CONFLICT (organization_uuid, workspace_uuid, code_session_uuid) DO NOTHING
+    </insert>
+    <select id="State" result="optional" resultType="dshWorkerStateRow">
+        SELECT model, trace_turns, CAST(model_control_sequence AS text) AS model_control_sequence, model_control_input_id FROM dsh_worker_states WHERE <include refid="scope"/>
+    </select>
+    <update id="Patch" result="rows">
+        UPDATE dsh_worker_states
+        <set>
+            <if test="patch.ModelSet">model = #{patch.Model}, model_control_sequence = #{patch.ControlSequence}, model_control_input_id = #{patch.ControlInputID},</if>
+            <if test="patch.TraceTurnsSet">trace_turns = #{patch.TraceTurns},</if>
+            updated_at = NOW()
+        </set>
+        WHERE <include refid="scope"/>
+    </update>
+</mapper>

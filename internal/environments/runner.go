@@ -690,6 +690,10 @@ func (r *Runner) prepareManagedAgentLaunch(
 	runtimeResources.environmentConfig = env.Config
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" {
 		runtimeResources.workerTransport = "claim"
+		runtimeResources.workerProtocol = r.cfg.CodeSession.BrainWorkerProtocol
+		if runtimeResources.workerProtocol == "" {
+			runtimeResources.workerProtocol = config.DefaultBrainWorkerProtocol
+		}
 	}
 	sessionConfig, err := managedAgentSessionConfig(session, runtimeResources, runtimeSkills, r.cfg.Env)
 	if err != nil {

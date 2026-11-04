@@ -1,11 +1,11 @@
-import { expect, test } from "bun:test";
 import { AttachmentId } from "@deepseek-ai/dsh-attachment";
 import { SessionId } from "@deepseek-ai/dsh-session";
+import { expect,test } from "bun:test";
+import { OmaApi } from "../src/api.ts";
+import type { Payload } from "../src/json.ts";
 import { AiSdkAdapter } from "../src/llm-ai-sdk/index.ts";
 import { omaModelOptions } from "../src/model.ts";
-import { OmaApi } from "../src/api.ts";
-import { assignment, textEvents } from "./backend.ts";
-import type { Payload } from "../src/json.ts";
+import { assignment,textEvents } from "./backend.ts";
 
 test("unconfigured model limits use the unified catalog defaults", async () => {
   const api = new OmaApi("http://model.test");

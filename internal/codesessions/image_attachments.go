@@ -17,7 +17,11 @@ func (h *Handler) WithImageAttachments(store storage.ObjectStore) *Handler {
 		if !ok {
 			return brainattachments.Scope{}, false
 		}
-		epoch, err := strconv.ParseInt(r.Header.Get("X-Worker-Epoch"), 10, 64)
+		epoch := claims.WorkerEpoch
+		var err error
+		if claims.Protocol != "dsr1" {
+			epoch, err = strconv.ParseInt(r.Header.Get("X-Worker-Epoch"), 10, 64)
+		}
 		if err != nil || claims.WorkerEpoch <= 0 || epoch != claims.WorkerEpoch {
 			h.errorAdapter.Write(w, r, workerIngressAuthorizationFailure(db.ErrWorkerEpochMismatch))
 			return brainattachments.Scope{}, false

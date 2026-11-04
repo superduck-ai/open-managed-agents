@@ -1,4 +1,4 @@
-import { isConnectFailure, notForwardedDetail } from "../ccrv2/tool-transport.ts";
+import { isConnectFailure, notForwardedDetail } from "../runtime/tool-transport.ts";
 import { isDeepStrictEqual } from "node:util";
 import {
   Client,

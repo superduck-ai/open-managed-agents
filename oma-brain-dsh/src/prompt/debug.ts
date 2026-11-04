@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Payload } from "../json.ts";
-import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
+import { workerDiagnostic } from "../observability/diagnostics.ts";
 
 const MAX_TRACKED_SESSIONS = 1000;
 const logged = new Map<string, string>();

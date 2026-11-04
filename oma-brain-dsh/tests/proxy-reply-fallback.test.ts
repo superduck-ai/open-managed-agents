@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
-import { MessageId, type AssistantMessage } from "@deepseek-ai/dsh-llm";
-import { assistantMessages } from "../src/ccrv2/assistant.ts";
+import { MessageId,type AssistantMessage } from "@deepseek-ai/dsh-llm";
+import { expect,test } from "bun:test";
+import { assistantMessages } from "../src/runtime/assistant.ts";
 
 test.each(["oma-messages-v1", "oma-chat-completions-v1"])("%s retains a complete reply beyond the proxy observation limit", format => {
   const text = "x".repeat(4 * 1024 * 1024 + 1);

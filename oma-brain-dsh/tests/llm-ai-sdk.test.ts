@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { expect,test } from "bun:test";
+import { readdirSync,readFileSync } from "node:fs";
 import { join } from "node:path";
 
 test("AI SDK adapter module depends only on DSH and AI SDK packages", () => {

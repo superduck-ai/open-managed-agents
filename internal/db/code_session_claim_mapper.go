@@ -47,6 +47,7 @@ type failCodeSessionClaimParams struct {
 }
 
 type CodeSessionClaimMapper interface {
+	LockNextDSHClaimable(ctx context.Context, leaseGraceMicros int64) (codeSessionClaimCandidateRow, bool, error)
 	LockNextClaimable(ctx context.Context, leaseGraceMicros int64) (codeSessionClaimCandidateRow, bool, error)
 	Claim(ctx context.Context, params claimCodeSessionParams) (int64, error)
 	HoldExhausted(ctx context.Context, uuid string, holdUntil time.Time) (int64, error)

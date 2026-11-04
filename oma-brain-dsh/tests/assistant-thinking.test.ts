@@ -1,8 +1,8 @@
-import { expect, test } from "bun:test";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
-import { MessageId, type AssistantMessage, type StreamChunk } from "@deepseek-ai/dsh-llm";
-import { assistantMessages, CcrAssistantStream } from "../src/ccrv2/assistant.ts";
+import { MessageId,type AssistantMessage,type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { expect,test } from "bun:test";
 import vectors from "../../internal/managedagentsevents/testdata/thinking-identity.json";
+import { assistantMessages,AssistantStream } from "../src/runtime/assistant.ts";
 
 function start(): AssistantStreamFrame {
   return { type: "start", attemptId: "attempt", revision: 1, turn: 1, step: 1 } as AssistantStreamFrame;
@@ -12,13 +12,13 @@ function chunk(value: StreamChunk): AssistantStreamFrame {
 }
 
 test("reasoning deltas without a block start do not publish content", () => {
-  const stream = new CcrAssistantStream("cse_test", () => "msg_test");
+  const stream = new AssistantStream("cse_test", () => "msg_test");
   stream.record(start(), "input");
   expect(stream.record(chunk({ type: "reasoning-delta", index: 0, text: "private" }), "input")).toEqual([]);
 });
 
 test.each(["oma-messages-v1", "oma-chat-completions-v1"])("proxied %s responses retain idempotent Brain fallback blocks, including replay", format => {
-  const stream = new CcrAssistantStream("cse_proxy", () => "msg_proxy", () => "request_proxy");
+  const stream = new AssistantStream("cse_proxy", () => "msg_proxy", () => "request_proxy");
   stream.record(start(), "input");
   const preview = stream.record(chunk({ type: "text-delta", index: 0, text: "answer" }), "input");
   expect(preview.map(event => event.type)).toEqual(["event_start", "event_delta"]);
@@ -37,7 +37,7 @@ test.each(["oma-messages-v1", "oma-chat-completions-v1"])("proxied %s responses 
 
 test("empty thinking starts once before answer and shares backend identity", () => {
   for (const vector of vectors) {
-    const stream = new CcrAssistantStream(vector.codeSessionID, () => vector.messageID);
+    const stream = new AssistantStream(vector.codeSessionID, () => vector.messageID);
     stream.record(start(), "input");
     const blockStart = chunk({ type: "block-start", index: vector.index, blockType: "reasoning" });
     expect(stream.record(blockStart, "input")).toEqual([
@@ -59,10 +59,9 @@ test("empty thinking starts once before answer and shares backend identity", () 
   }
 });
 
-
 test("text preview explicitly indexes its public single-block message even for nonzero native blocks", () => {
   for (const index of [0, 3]) {
-    const stream = new CcrAssistantStream("cse_preview", () => "msg_preview");
+    const stream = new AssistantStream("cse_preview", () => "msg_preview");
     stream.record(start(), "input");
     const first = stream.record(chunk({ type: "text-delta", index, text: "A" }), "input");
     const next = stream.record(chunk({ type: "text-delta", index, text: "B" }), "input");
@@ -84,7 +83,7 @@ test("text preview explicitly indexes its public single-block message even for n
 });
 
 test("public block completion follows model order when text precedes thinking and multiple text blocks close out of index order", () => {
-  const stream = new CcrAssistantStream("cse_order", () => "msg_order");
+  const stream = new AssistantStream("cse_order", () => "msg_order");
   stream.record(start(), "input");
   const payloads = [
     chunk({ type: "text-delta", index: 0, text: "first" }),
@@ -105,7 +104,7 @@ test("public block completion follows model order when text precedes thinking an
 });
 
 test("a model text block starts publicly before later thinking even when its first text delta is delayed", () => {
-  const stream = new CcrAssistantStream("cse_starts", () => "msg_starts");
+  const stream = new AssistantStream("cse_starts", () => "msg_starts");
   stream.record(start(), "input");
   const first = stream.record(chunk({ type: "block-start", index: 0, blockType: "text" }), "input");
   expect(first).toMatchObject([{ type: "event_start", event: { type: "agent.message" } }]);

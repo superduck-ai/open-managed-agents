@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="DSHTranscriptMapper">
+    <sql id="scope">
+        organization_uuid = #{scope.OrganizationUUID}
+        AND workspace_uuid = #{scope.WorkspaceUUID}
+        AND code_session_uuid = #{scope.CodeSessionUUID}
+    </sql>
+    <sql id="columns">uuid, dsh_session_id, parent_dsh_session_id, session_thread_id, header, next_seq</sql>
+    <select id="LockWorker" result="optional" resultType="dshWorkerScopeRow">
+        SELECT uuid, current_worker_epoch,
+               COALESCE(worker_lease_expires_at + INTERVAL '10 seconds' &gt; NOW(), false) AS lease_valid
+        FROM code_sessions
+        WHERE organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}
+          AND uuid = #{scope.CodeSessionUUID} AND status = 'active' AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+    <select id="Find" result="optional" resultType="dshTranscriptRow">
+        SELECT <include refid="columns"/> FROM dsh_transcripts
+        WHERE <include refid="scope"/> AND dsh_session_id = #{dshSessionID}
+    </select>
+    <insert id="Insert" result="rows">
+        INSERT INTO dsh_transcripts (organization_uuid, workspace_uuid, code_session_uuid, dsh_session_id, parent_dsh_session_id, header)
+        VALUES (#{input.Scope.OrganizationUUID}, #{input.Scope.WorkspaceUUID}, #{input.Scope.CodeSessionUUID},
+                #{input.DSHSessionID}, #{input.ParentDSHSessionID}, #{input.Header,sensitive=true})
+        ON CONFLICT (organization_uuid, workspace_uuid, code_session_uuid, dsh_session_id) DO NOTHING
+    </insert>
+    <select id="List" result="many" resultType="dshTranscriptRow">
+        SELECT <include refid="columns"/> FROM dsh_transcripts
+        WHERE <include refid="scope"/> AND dsh_session_id &gt; #{after}
+        ORDER BY dsh_session_id LIMIT #{limit}
+    </select>
+    <select id="ReadEvents" result="many" resultType="dshTranscriptEventRow">
+        SELECT seq, payload FROM dsh_transcript_events
+        WHERE <include refid="scope"/> AND transcript_uuid = #{transcriptUUID} AND seq &gt;= #{fromSeq}
+        ORDER BY seq LIMIT #{limit}
+    </select>
+    <insert id="InsertEvent" result="rows">
+        INSERT INTO dsh_transcript_events (organization_uuid, workspace_uuid, code_session_uuid, transcript_uuid, seq, payload)
+        VALUES (#{input.Scope.OrganizationUUID}, #{input.Scope.WorkspaceUUID}, #{input.Scope.CodeSessionUUID},
+                #{input.TranscriptUUID}, #{input.Seq}, #{input.Payload,sensitive=true})
+    </insert>
+    <update id="SetNextSeq" result="rows">
+        UPDATE dsh_transcripts SET next_seq = #{nextSeq}, updated_at = NOW()
+        WHERE <include refid="scope"/> AND uuid = #{transcriptUUID}
+    </update>
+</mapper>

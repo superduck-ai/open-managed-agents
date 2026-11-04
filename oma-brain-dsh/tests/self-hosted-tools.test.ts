@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
 import { ToolCallId } from "@deepseek-ai/dsh-llm";
+import { expect,test } from "bun:test";
+import type { ApprovalDecision,ToolExecutionBridge } from "../src/runtime/contracts.ts";
 import { ToolExecution } from "../src/runtime/execution.ts";
-import type { ApprovalDecision, ToolExecutionBridge } from "../src/runtime/contracts.ts";
 
 const tool = {name:"Write",remoteName:"write",description:"write",inputSchema:{type:"object",properties:{content:{type:"string"}},required:["content"]}};
 function fixture(decision: ApprovalDecision) {

@@ -5,7 +5,7 @@ import { version as sessionVersion } from "@deepseek-ai/dsh-session/package.json
 import { SessionTelemetryBackend, SessionTelemetryCoordinator, type SessionTelemetryRecord } from "@deepseek-ai/dsh-session-telemetry";
 import type { Assignment } from "../assignment.ts";
 import type { OmaApi } from "../api.ts";
-import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
+import { workerDiagnostic } from "../observability/diagnostics.ts";
 import { ModelRequestClock } from "./model-requests.ts";
 import { SpanExporter } from "./span-exporter.ts";
 import { traceHooks } from "./trace-context.ts";
@@ -87,10 +87,10 @@ export class NativeTelemetry extends SessionTelemetryBackend {
     const reporter = this.ctx.otel.createSessionLogReporter({
       scope: { name: "@deepseek-ai/dsh-session", version: sessionVersion },
       exporter: {
-        url: `${this.api.base}/v1/code/sessions/${encodeURIComponent(id)}/worker/otlp/v1/logs`,
+        url: `${this.api.base}/v1/dsr/sessions/${encodeURIComponent(id)}/otlp/v1/logs`,
         headers: async () => {
           if (!credentials.closed) credentials.token = assignment.ingress_token;
-          return { Authorization: `Bearer ${credentials.token}` };
+          return { Authorization: `Bearer ${credentials.token}`, "DSR-Protocol": "1" };
         },
         timeoutMillis: 2_000,
       },
@@ -125,8 +125,8 @@ export class NativeTelemetry extends SessionTelemetryBackend {
     if (!assignment?.trace_export || this.stopped || this.closed.has(assignment)) return false;
     if (!this.traces.owned(owner)) {
       this.traces.attach(owner, {
-        exporter: new SpanExporter(`${this.api.base}/v1/code/sessions/${encodeURIComponent(owner)}/worker/otlp/v1/traces`,
-          () => assignment.ingress_token, this.api.fetcher, owner),
+        exporter: new SpanExporter(`${this.api.base}/v1/dsr/sessions/${encodeURIComponent(owner)}/otlp/v1/traces`,
+          () => assignment.ingress_token, this.api.fetcher, owner, { "DSR-Protocol": "1" }),
         content: assignment.trace_export.content, model: assignment.launch.model, systemPrompt: assignment.launch.system, liveSince: assignment.registered_at ?? Date.now(),
       });
     }

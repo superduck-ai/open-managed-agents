@@ -340,7 +340,9 @@ func TestWorkerDeliveryLaneClassification(t *testing.T) {
 		{"control_response", "error", replyLane},
 		{"control_cancel_request", "", taskLane},
 		{"control_request", "interrupt", replyLane},
-		{"user.interrupt", "", taskLane},
+		{"user.interrupt", "", replyLane},
+		{"permission.resolved", "", replyLane},
+		{"session.set_model", "", replyLane},
 		{"user.tool_result", "", taskLane},
 		{"user.custom_tool_result", "", taskLane},
 	} {

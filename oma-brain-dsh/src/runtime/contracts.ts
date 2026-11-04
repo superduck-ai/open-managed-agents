@@ -9,6 +9,7 @@ import type { Context, Fiber } from "@deepseek-ai/cordis";
 export const MAX_LIVE_SUBAGENT_THREADS = 25;
 
 export interface SubagentDefinition {
+  agentSnapshot?: Record<string, unknown>;
   name: string;
   description: string;
   systemPrompt: string;
@@ -39,6 +40,7 @@ export type SubagentEvent =
 
 /** Awaited storage, policy and event adapters for child orchestration. */
 export interface SubagentBridge {
+  setupTools?(scope: Context): void | Promise<void>;
   validateThread?(threadId: string, signal: AbortSignal, allowRunning?: boolean): Promise<void>;
   archivedThreads?(threadIds: string[], signal: AbortSignal): Promise<string[]>;
   threads(): SubagentThread[];
@@ -89,6 +91,8 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export interface SessionRuntimeConfig {
+  preserveOpenTurns?: boolean;
+  cancelRestoredTurn?(): boolean;
   configureModel?(call: LlmCallConfig): LlmCallConfig;
   refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; externalMcpConfig: unknown }>;
   threadMcpContext?(threadId: string): Promise<{ config: unknown; fetcher: typeof fetch }>;
@@ -157,6 +161,7 @@ export interface SessionRuntimeHooks {
 }
 
 export interface TurnHooks {
+  continuation?: boolean;
   messageId?: string;
   beforeRun(): Promise<void | boolean>;
   afterRun(completed: boolean): Promise<void>;

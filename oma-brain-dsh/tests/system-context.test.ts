@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { appendedSystemContext } from "../src/ccrv2/system-context.ts";
+import { expect,test } from "bun:test";
+import { appendedSystemContext } from "../src/runtime/system-context.ts";
 
 test("system context snapshots retain order and reject corrupt or duplicate identities", () => {
   expect(appendedSystemContext({})).toBeUndefined();

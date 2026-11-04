@@ -85,6 +85,11 @@ func (s *Service) activateSnapshot(ctx context.Context, codeSession db.CodeSessi
 		if !snapshot.matches(current) {
 			return errActivationSnapshotChanged
 		}
+		if isDSHCodeSession(current.codeSession) {
+			if err := tx.AcceptDSHActivationInputs(ctx, current.codeSession, current.events); err != nil {
+				return err
+			}
+		}
 		if err := batch.publish(ctx); err != nil {
 			return err
 		}
@@ -100,6 +105,9 @@ func (s *Service) activateSnapshot(ctx context.Context, codeSession db.CodeSessi
 }
 
 func (s *Service) prepareActivation(ctx context.Context, snapshot activationSnapshot, batch *inboundPublicationBatch) error {
+	if isDSHCodeSession(snapshot.codeSession) {
+		return s.prepareDSHActivation(ctx, snapshot, batch)
+	}
 	configRaw, err := marshalRaw(codeSessionConfig(snapshot.codeSession.Metadata))
 	if err != nil {
 		return err

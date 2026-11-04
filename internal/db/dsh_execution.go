@@ -1,0 +1,332 @@
+package db
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+	"uuid"
+
+	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
+	"github.com/superduck-ai/yourbatis"
+)
+
+type DSHDeliveryUpdate struct {
+	ID     string
+	Status string
+	Error  string
+}
+
+type DSHDeliveryItem struct {
+	CancelRequestedAt *time.Time
+	ID                string
+	Status            string
+	Outcome           string
+	ExecutionStatus   string
+}
+
+type DSHFinish struct {
+	Result      string
+	FailureCode *string
+}
+
+type DSHPublicEvent struct {
+	ID           string
+	Payload      []byte
+	Events       []SessionEvent
+	Thread       *SessionThread
+	DSHSessionID string
+}
+
+type DSHPublishResult struct {
+	Accepted   int
+	Duplicates int
+	Changes    SessionEventChanges
+}
+
+type DSHPermission struct {
+	RequestID     string
+	InputID       string
+	DSHSessionID  string
+	ToolUseID     string
+	ThreadID      string
+	Turn          string
+	Tool          []byte
+	Input         []byte
+	Available     *bool
+	PublicEventID string
+	State         string
+	Decision      []byte
+}
+
+func lockDSHSession(ctx context.Context, executor yourbatis.Executor, scope DSHScope) (Session, SessionThread, error) {
+	session, err := lockSessionForEvents(ctx, NewSessionMapper(executor), scope.WorkspaceUUID, scope.SessionID)
+	if err != nil {
+		return Session{}, SessionThread{}, err
+	}
+	if session.OrganizationUUID != scope.OrganizationUUID || session.ArchivedAt != nil || session.Status == "terminated" {
+		return Session{}, SessionThread{}, ErrInvalidState
+	}
+	code, found, err := NewDSHExecutionMapper(executor).FindCode(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
+	if err != nil {
+		return Session{}, SessionThread{}, err
+	}
+	if !found || code.UUID != scope.CodeSessionUUID {
+		return Session{}, SessionThread{}, ErrNotFound
+	}
+	if err := lockDSHWorker(ctx, executor, scope); err != nil {
+		return Session{}, SessionThread{}, err
+	}
+	primary, err := NewSessionThreadMapper(executor).FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
+	return session, primary.thread(), err
+}
+
+func (d *DB) DeliverDSHInputs(ctx context.Context, scope DSHScope, updates []DSHDeliveryUpdate) ([]DSHDeliveryItem, SessionEventChanges, error) {
+	results := make([]DSHDeliveryItem, 0, len(updates))
+	var changes SessionEventChanges
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		session, primary, err := lockDSHSession(ctx, executor, scope)
+		if err != nil {
+			return err
+		}
+		mapper := NewDSHExecutionMapper(executor)
+		for _, update := range updates {
+			execution, found, err := mapper.Execution(ctx, scope, update.ID)
+			if err != nil {
+				return err
+			}
+			if found {
+				if update.Error != "" {
+					return ErrInvalidState
+				}
+				if update.Status == "processed" && execution.Status != "completed" {
+					return ErrDSHFinishRequired
+				}
+				if update.Status == "processing" && execution.Status == "accepted" {
+					event, changed, err := startDSHInput(ctx, executor, scope, execution, session.BudgetReachedAt != nil)
+					if err != nil {
+						return err
+					}
+					execution.Status = "running"
+					if changed {
+						changes.Events = append(changes.Events, event)
+					}
+				}
+			} else if update.Status == "processing" {
+				return ErrDSHInputNotEligible
+			}
+			outcome := "ignored"
+			if found {
+				outcome = "applied"
+				if update.Status == "processed" {
+					outcome = "scheduled"
+				}
+			}
+			results = append(results, DSHDeliveryItem{ID: update.ID, Status: update.Status, Outcome: outcome, ExecutionStatus: execution.Status, CancelRequestedAt: execution.CancelRequestedAt})
+		}
+		events, err := reduceDSHState(ctx, executor, &session, primary, scope, "delivery:"+deliverySeed(updates))
+		changes.Events = append(changes.Events, events...)
+		return err
+	})
+	if err != nil {
+		return nil, SessionEventChanges{}, err
+	}
+	return results, changes, nil
+}
+
+func startDSHInput(ctx context.Context, executor yourbatis.Executor, scope DSHScope, execution dshInputExecutionRow, budget bool) (SessionEvent, bool, error) {
+	mapper := NewDSHExecutionMapper(executor)
+	summary, err := mapper.Summary(ctx, scope)
+	if err != nil {
+		return SessionEvent{}, false, err
+	}
+	status, _ := dshPrimaryState(summary, nil, budget)
+	if status != "running" {
+		return SessionEvent{}, false, ErrDSHInputNotEligible
+	}
+	if summary.ActiveInputID != nil && *summary.ActiveInputID != execution.InputID {
+		return SessionEvent{}, false, ErrDSHInputNotEligible
+	}
+	if _, err := mapper.StartExecution(ctx, scope, execution.InputID); err != nil {
+		return SessionEvent{}, false, err
+	}
+	event, changed, err := NewSessionEventMapper(executor).MarkInputProcessed(ctx, scope.WorkspaceUUID, scope.SessionID, execution.InputID, time.Now().UTC())
+	return event.event(), changed, err
+}
+
+func deliverySeed(updates []DSHDeliveryUpdate) string {
+	values := make([][]string, len(updates))
+	for i, update := range updates {
+		values[i] = []string{update.ID, update.Status, update.Error}
+	}
+	raw, _ := json.Marshal(values)
+	return string(raw)
+}
+
+func (d *DB) FinishDSHInput(ctx context.Context, scope DSHScope, inputID string, completion DSHFinish) (DSHFinish, SessionEventChanges, error) {
+	var changes SessionEventChanges
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		session, primary, err := lockDSHSession(ctx, executor, scope)
+		if err != nil {
+			return err
+		}
+		mapper := NewDSHExecutionMapper(executor)
+		execution, found, err := mapper.Execution(ctx, scope, inputID)
+		if err != nil {
+			return err
+		}
+		if !found || execution.Status == "accepted" {
+			return ErrDSHInputNotEligible
+		}
+		if execution.Status == "completed" {
+			if execution.Result == nil || *execution.Result != completion.Result || !sameDSHParent(execution.FailureCode, completion.FailureCode) {
+				return ErrDSHFinishConflict
+			}
+			return nil
+		}
+		if _, err := mapper.FinishExecution(ctx, scope, inputID, completion.Result, completion.FailureCode); err != nil {
+			return err
+		}
+		if _, err := NewDSHDeliveryMapper(executor).Ready(ctx, scope, inputID); err != nil {
+			return err
+		}
+		if _, err := mapper.ClosePermissions(ctx, scope, inputID, ""); err != nil {
+			return err
+		}
+		events, err := reduceDSHState(ctx, executor, &session, primary, scope, "finish:"+inputID)
+		changes.Events = events
+		return err
+	})
+	return completion, changes, err
+}
+
+func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPublicEvent) (DSHPublishResult, error) {
+	var result DSHPublishResult
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		session, primary, err := lockDSHSession(ctx, executor, scope)
+		if err != nil {
+			return err
+		}
+		mapper := NewDSHExecutionMapper(executor)
+		for _, item := range batch {
+			digest, err := jsoncanonical.Digest(item.Payload)
+			if err != nil {
+				return ErrInvalidState
+			}
+			old, found, err := mapper.Receipt(ctx, scope, item.ID)
+			if err != nil {
+				return err
+			}
+			if found {
+				if old != digest {
+					return ErrDSHPublicConflict
+				}
+				result.Duplicates++
+				continue
+			}
+			if item.Thread != nil {
+				if err := createDSHThread(ctx, executor, scope, session, primary, item); err != nil {
+					return err
+				}
+			}
+			if _, err := mapper.InsertReceipt(ctx, scope, item.ID, digest); err != nil {
+				return err
+			}
+			for _, event := range item.Events {
+				if event.EventType == "session.thread_status_terminated" {
+					if _, err := mapper.ClosePermissions(ctx, scope, "", event.StatusThreadID); err != nil {
+						return err
+					}
+				}
+			}
+			events, err := insertDSHHistory(ctx, executor, &session, primary, item.Events)
+			if err != nil {
+				return err
+			}
+			result.Changes.Events = append(result.Changes.Events, events...)
+			result.Accepted++
+		}
+		events, err := reduceDSHState(ctx, executor, &session, primary, scope, "public:"+publicSeed(batch))
+		result.Changes.Events = append(result.Changes.Events, events...)
+		return err
+	})
+	if err != nil {
+		return DSHPublishResult{}, err
+	}
+	return result, nil
+}
+
+func publicSeed(batch []DSHPublicEvent) string {
+	ids := make([]string, len(batch))
+	for i, item := range batch {
+		ids[i] = item.ID
+	}
+	raw, _ := json.Marshal(ids)
+	return string(raw)
+}
+
+func insertDSHHistory(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, events []SessionEvent) ([]SessionEvent, error) {
+	var result []SessionEvent
+	for _, event := range events {
+		if event.UUID == "" {
+			event.UUID = uuid.NewV4().String()
+		}
+		write, err := insertSessionEventIfAbsentTx(ctx, executor, session, primary, event)
+		if err != nil {
+			return nil, err
+		}
+		if write.Inserted {
+			result = append(result, write.Event)
+		}
+	}
+	return result, nil
+}
+
+func createDSHThread(ctx context.Context, executor yourbatis.Executor, scope DSHScope, session Session, primary SessionThread, item DSHPublicEvent) error {
+	transcript, found, err := NewDSHTranscriptMapper(executor).Find(ctx, scope, item.DSHSessionID)
+	if err != nil {
+		return err
+	}
+	if !found || transcript.ParentDSHSessionID == nil {
+		return ErrDSHInputNotEligible
+	}
+	parent, found, err := NewDSHTranscriptMapper(executor).Find(ctx, scope, *transcript.ParentDSHSessionID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrDSHInputNotEligible
+	}
+	parentID := primary.ExternalID
+	if parent.SessionThreadID != nil {
+		parentID = *parent.SessionThreadID
+	}
+	thread := *item.Thread
+	thread.OrganizationUUID, thread.WorkspaceUUID = session.OrganizationUUID, session.WorkspaceUUID
+	thread.SessionUUID, thread.SessionExternalID = session.UUID, session.ExternalID
+	parentThread, err := NewSessionThreadMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, parentID)
+	if err != nil {
+		return err
+	}
+	thread.ParentThreadUUID, thread.ParentThreadExternalID = &parentThread.UUID, &parentID
+	if thread.UUID == "" {
+		thread.UUID = uuid.NewV4().String()
+	}
+	if _, _, err := NewSessionThreadMapper(executor).InsertIfAbsent(ctx, sessionThreadWriteParameters(thread)); err != nil {
+		return err
+	}
+	existing, err := NewSessionThreadMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, thread.ExternalID)
+	if err != nil {
+		return mapNoRows(err)
+	}
+	if existing.ParentThreadUUID == nil || *existing.ParentThreadUUID != parentThread.UUID {
+		return ErrDSHPublicConflict
+	}
+	rows, err := NewDSHExecutionMapper(executor).BindTranscript(ctx, scope, item.DSHSessionID, thread.ExternalID)
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return ErrDSHPublicConflict
+	}
+	return nil
+}

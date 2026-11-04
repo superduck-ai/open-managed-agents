@@ -1,5 +1,5 @@
 import { MAX_MESSAGES_REQUEST_BODY_BYTES } from "./model-defaults.ts";
-import type { CcrSubagentConfig } from "./ccrv2/contracts.ts";
+import type { SubagentConfig } from "./runtime/contracts.ts";
 import type { ToolPermissions } from "./runtime/contracts.ts";
 import { sandboxToolDefinitions } from "./sandbox-tools/definitions.ts";
 import { sandboxEndpoint } from "./oma-sandbox/config.ts";
@@ -17,11 +17,11 @@ export type ModelConfig = {
 };
 
 export interface Assignment {
+  worker_epoch: string;
   observability_enabled?: boolean;
   trace_export?: { content: boolean };
   registered_at?: number;
   session_id: string;
-  worker_epoch: number;
   ingress_token: string;
   model_token: string;
   trace_parent?: string;
@@ -34,7 +34,7 @@ export interface Assignment {
     work_dir: string;
     system: string;
     tools: string[];
-    subagents?: CcrSubagentConfig;
+    subagents?: SubagentConfig;
     tool_permissions?: ToolPermissions;
     environment_prompt?: string;
     memory_catalog_prompt?: string;
@@ -55,7 +55,7 @@ export function validateAssignment(a: Assignment): void {
     if (typeof a[key] !== "string" || !a[key])
       throw new Error(`Missing assignment ${key}`);
   }
-  if (!Number.isSafeInteger(a.worker_epoch) || a.worker_epoch <= 0)
+  if (typeof a.worker_epoch !== "string" || !/^[1-9][0-9]*$/.test(a.worker_epoch))
     throw new Error("Invalid assignment epoch");
   sandboxEndpoint(a.mcp_config);
   if (![1, 2].includes(a.launch.version))

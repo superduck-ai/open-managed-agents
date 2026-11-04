@@ -14,6 +14,7 @@ import (
 type managedAgentRuntimeResources struct {
 	runtimeSkills     []skillsapi.RuntimeSkill
 	workerTransport   string
+	workerProtocol    string
 	sources           []json.RawMessage
 	workDir           string
 	memoryMounts      []memoryRuntimeMount

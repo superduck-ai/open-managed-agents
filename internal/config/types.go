@@ -259,6 +259,7 @@ type CodeSessionConfig struct {
 	// UpstreamProxyDisableSSRFProtection 是仅供本地 fake-IP/TUN 排障使用的危险开关；生产环境必须保持 false。
 	UpstreamProxyDisableSSRFProtection bool   `yaml:"upstream_proxy_disable_ssrf_protection"`
 	BrainClaimTokenFile                string `yaml:"brain_claim_token_file"`
+	BrainWorkerProtocol                string `yaml:"brain_worker_protocol"`
 }
 
 type ObservabilityConfig struct {

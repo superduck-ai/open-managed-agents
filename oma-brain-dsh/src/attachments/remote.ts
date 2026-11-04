@@ -31,7 +31,7 @@ export default class RemoteAttachmentStore extends AttachmentStore {
     maxImageDimension: DEFAULT_MAX_IMAGE_DIMENSION, mediaTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"] as const };
   private readonly root: string;
   private readonly policy = { maxPixels: DEFAULT_NORMALIZED_IMAGE_MAX_PIXELS, maxDimension: DEFAULT_NORMALIZED_IMAGE_MAX_DIMENSION, maxBytes: DEFAULT_NORMALIZED_IMAGE_MAX_BYTES };
-  private readonly authorized = new WeakMap<Assignment, { epoch: number; hashes: Set<string> }>();
+  private readonly authorized = new WeakMap<Assignment, { epoch: string; hashes: Set<string> }>();
   private active = 0;
   private readonly waiting: (() => void)[] = [];
 
@@ -121,8 +121,8 @@ export default class RemoteAttachmentStore extends AttachmentStore {
     const assignment = this.assignment();
     let response: Response;
     try {
-      response = await api.fetcher(`${api.base.replace(/\/$/, "")}/v1/code/sessions/${encodeURIComponent(assignment.session_id)}/worker/${path}`, {
-        method, headers: { Authorization: `Bearer ${assignment.ingress_token}`, "X-Worker-Epoch": String(assignment.worker_epoch), ...(mediaType ? { "Content-Type": mediaType } : {}) },
+      response = await api.fetcher(`${api.base.replace(/\/$/, "")}/v1/dsr/sessions/${encodeURIComponent(assignment.session_id)}/${path}`, {
+        method, headers: { Authorization: `Bearer ${assignment.ingress_token}`, "DSR-Protocol": "1", ...(mediaType ? { "Content-Type": mediaType } : {}) },
         body: data ? new Uint8Array(data).buffer : undefined, redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
       });
     } catch (error) { signal?.throwIfAborted(); throw new AttachmentTransportError(error); }

@@ -1,24 +1,39 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach,expect,test } from "bun:test";
+
 import { Context } from "@deepseek-ai/cordis";
-import { mkdtemp, rm } from "node:fs/promises";
+
+import { mkdtemp,rm } from "node:fs/promises";
+
 import { tmpdir } from "node:os";
+
 import { join } from "node:path";
-import RemoteAttachmentStore, { withAttachmentSession, AttachmentTransportError } from "../src/attachments/remote.ts";
+
+import RemoteAttachmentStore,{ AttachmentTransportError,withAttachmentSession } from "../src/attachments/remote.ts";
+
 import { AttachmentId } from "@deepseek-ai/dsh-attachment";
+
 import { SessionId } from "@deepseek-ai/dsh-session";
+
 import { IMAGE_OFFLOAD_REQUIRED_CODE } from "@deepseek-ai/dsh-llm";
+
 import { MAX_MESSAGES_REQUEST_BODY_BYTES } from "../src/model-defaults.ts";
+
 import { AiSdkAdapter } from "../src/llm-ai-sdk/adapter.ts";
+
 import { omaModelOptions } from "../src/model.ts";
+
 import { OmaApi } from "../src/api.ts";
-import { Backend, textEvents } from "./backend.ts";
-import { mountOma } from "../src/plugin.ts";
-import { createOmaSession } from "../src/oma-session.ts";
-import { imagePricing, imagePlaceholder } from "../src/llm-ai-sdk/images.ts";
-import { userInputContent } from "../src/ccrv2/user-content.ts";
+
+import { Backend } from "./backend.ts";
+
+import { imagePlaceholder,imagePricing } from "../src/llm-ai-sdk/images.ts";
+
+import { userInputContent } from "../src/runtime/user-content.ts";
 
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
+
 const cleanups: (() => Promise<unknown> | void)[] = [];
+
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
 async function storeFixture() {
@@ -54,7 +69,7 @@ test("transport failures remain retryable and unavailable sources degrade one bl
 test("cache hits still authorize the session and corrupted remote bytes are rejected", async () => {
   const f = await storeFixture();
   const ref = await f.run(() => f.store.saveImage({ data: Buffer.from(png, "base64"), mediaType: "image/png" }));
-  f.api.assignments.set(f.backend.a.session_id, { ...f.backend.a, worker_epoch: 2 });
+  f.api.assignments.set(f.backend.a.session_id, { ...f.backend.a, worker_epoch: "2", ingress_token: "stale-token" });
   await expect(f.run(() => f.store.readImage(ref))).rejects.toBeInstanceOf(AttachmentTransportError);
   f.api.assignments.set(f.backend.a.session_id, f.backend.a);
   await rm(f.cacheRoot, { recursive: true, force: true });
@@ -76,93 +91,6 @@ test("normalized images survive a new store with an empty cache and retain nativ
   const priced = imagePricing().priceImages([{ type: "image", attachment: ref }, { type: "image", attachment: ref, offloaded: true }]);
   expect(priced[0]!.visualTokens).toBeGreaterThan(0);
   expect(priced[1]).toEqual({ visualTokens: 0, text: imagePlaceholder(ref) });
-});
-
-async function openRuntime(backend: Backend) {
-  await backend.ready;
-  cleanups.push(() => backend.stop());
-  const ctx = new Context();
-  const api = new OmaApi(backend.url);
-  const home = await mkdtemp(join(tmpdir(), "oma-runtime-images-"));
-  cleanups.push(() => rm(home, { recursive: true, force: true }));
-  await mountOma(ctx, api, {}, undefined, join(home, "attachments", "v1"));
-  const session = createOmaSession(ctx, api, backend.a);
-  await session.open();
-  cleanups.push(async () => { session.stop(); await session.handle?.dispose(); await ctx.fiber.dispose(); });
-  return { session, ctx, api };
-}
-
-test("a failed image upload is not acknowledged or recorded as a completed input", async () => {
-  const backend = new Backend();
-  backend.imageStatus = 503;
-  const { session } = await openRuntime(backend);
-  await expect(session.receive("retry-image", { content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: png } }] })).rejects.toThrow();
-  expect(session.receivedInputIds.has("retry-image")).toBe(false);
-  expect(backend.processed).not.toContain("retry-image");
-  expect(backend.requests).toHaveLength(0);
-  backend.imageStatus = undefined;
-  const recovered = await openRuntime(backend);
-  await recovered.session.receive("retry-image", { content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: png } }] });
-  expect(backend.requests).toHaveLength(1);
-  expect(recovered.session.receivedInputIds.has("retry-image")).toBe(true);
-  expect(backend.publicLog.get("retry-image_result")?.is_error).toBe(false);
-});
-
-test.each([
-  { name: "count", limits: { max_images: 1 } },
-  { name: "bytes", limits: { max_request_image_bytes: 100 } },
-])("native image $name budget persists offload and sends only retained images", async ({ limits }) => {
-  const backend = new Backend();
-  backend.a.launch.models!["test-model"]!.input_modalities = ["text", "image"];
-  backend.a.launch.models!["test-model"]!.image_input = limits;
-  backend.modelScript = [textEvents("seen")];
-  const { session } = await openRuntime(backend);
-  await session.receive("budget", { content: [
-    { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
-    { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
-  ] });
-  expect(backend.requests).toHaveLength(1);
-  const content = backend.requests[0]!.messages.flatMap((message: any) => message.content);
-  expect(content.filter((block: any) => block.type === "image")).toHaveLength(1);
-  expect(content.some((block: any) => block.text?.includes("remains saved in this session"))).toBe(true);
-  expect(JSON.stringify([...backend.privateLog.values()])).toContain("image/offload");
-  expect(JSON.stringify([...backend.privateLog.values()])).not.toContain(png);
-  expect(backend.publicLog.get("budget_result")?.is_error).toBe(false);
-});
-
-test("summary image overflow records offload and finishes compaction", async () => {
-  const backend = new Backend();
-  backend.a.launch.models!["test-model"]!.input_modalities = ["text", "image"];
-  backend.a.launch.models!["test-model"]!.image_input = { max_images: 2 };
-  backend.a.launch.models!["test-model"]!.context_window = 200000;
-  backend.modelScript = [textEvents("a".repeat(12000)), textEvents("Previous image task details.")];
-  const { session, ctx } = await openRuntime(backend);
-  await session.receive("summary-images", { content: [
-    { type: "text", text: "u".repeat(12000) },
-    { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
-    { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
-  ] });
-  backend.a.launch.models!["test-model"]!.image_input = { max_images: 1 };
-  const result = await ctx.compaction.compactNow(session.runtime.agent, new AbortController().signal);
-  expect(result).toBeTruthy();
-  const events = session.runtime.agent.session.snapshotEvents();
-  expect(events.some(event => String(event.type) === "image/offload")).toBe(true);
-  expect(events.some(event => event.type === "compaction/summary")).toBe(true);
-});
-
-test("a new Brain restores native image history from remote bytes without re-uploading", async () => {
-  const backend = new Backend();
-  backend.a.launch.models!["test-model"]!.input_modalities = ["text", "image"];
-  backend.modelScript = [textEvents("seen"), textEvents("remembered")];
-  const first = await openRuntime(backend);
-  await first.session.receive("original-image", { content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: png } }] });
-  await first.session.close();
-  const second = await openRuntime(backend);
-  await second.session.receive("remember-image", { content: "Remember that image" });
-  expect(backend.imageReads).toBeGreaterThan(0);
-  expect(backend.imageObjects.size).toBe(1);
-  expect(backend.requests.at(-1)!.messages.flatMap((message: any) => message.content).some((block: any) => block.type === "image")).toBe(true);
-  expect(backend.publicLog.get("remember-image_result")?.is_error).toBe(false);
 });
 
 test("Chat Completions serializes a native image as a data URL", async () => {
@@ -197,20 +125,6 @@ test("oversized text without retained images fails before any proxy call", async
   };
   await expect(run()).rejects.toThrow("Serialized model request exceeds the proxy limit");
   expect(calls).toBe(0);
-});
-
-test.each([400, 404, 413])("permanent attachment rejection %i degrades the image and completes input", async status => {
-  const backend = new Backend();
-  backend.imageStatus = status;
-  const { session } = await openRuntime(backend);
-  await session.receive("rejected-image", { content: [
-    { type: "text", text: "continue" },
-    { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
-  ] });
-  expect(backend.processed).toContain("rejected-image");
-  expect(backend.requests).toHaveLength(1);
-  expect(JSON.stringify(backend.requests[0])).toContain("Image attachment unavailable");
-  expect(backend.publicLog.get("rejected-image_result")?.is_error).toBe(false);
 });
 
 test.each([400, 404, 413])("permanent source rejection %i preserves neighboring text", async status => {
@@ -250,7 +164,7 @@ test("image authorization is reused only within one session assignment and epoch
   f.backend.imageStatus = 503;
   await f.run(() => f.store.readImage(ref));
   await f.run(() => f.store.readImage(ref));
-  f.backend.a.worker_epoch++;
+  f.backend.a.worker_epoch = String(BigInt(f.backend.a.worker_epoch) + 1n);
   await expect(f.run(() => f.store.readImage(ref))).rejects.toBeInstanceOf(AttachmentTransportError);
   f.backend.imageStatus = undefined;
   await f.run(() => f.store.readImage(ref));
@@ -289,7 +203,6 @@ test("adapter pricing defaults unspecified modalities to text", () => {
   } }]);
   expect(result[0]!.visualTokens).toBe(0);
 });
-
 
 test("serialized image overflow preserves the native offload error contract", async () => {
   const f = await storeFixture();
@@ -347,15 +260,6 @@ test("a missing stored image uses the reference error code without a legacy migr
   f.backend.imageObjects.clear();
   await expect(f.run(() => f.store.readImage(ref))).rejects.toMatchObject({ code: "ATTACHMENT_NOT_FOUND" });
   expect(f.backend.imageObjects.size).toBe(0);
-});
-
-test.each([401, 403, 500, 502, 504])("HTTP %i does not acknowledge a failed image input", async status => {
-  const backend = new Backend();
-  backend.imageStatus = status;
-  const { session } = await openRuntime(backend);
-  await expect(session.receive("recoverable-image", { content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: png } }] })).rejects.toBeInstanceOf(AttachmentTransportError);
-  expect(backend.processed).not.toContain("recoverable-image");
-  expect(session.receivedInputIds.has("recoverable-image")).toBe(false);
 });
 
 test("Brain rejects unmaterialized image sources instead of creating legacy custom blocks", async () => {

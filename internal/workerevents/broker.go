@@ -445,13 +445,14 @@ type MemoryBroker struct {
 	subs          map[string]*memorySubscription
 	ackSubjectMap map[string]*memoryMessage
 	messageIDs    map[string]time.Time
+	acknowledged  map[string]time.Time
 	brainWork     brainWorkHub
 }
 
 func NewMemory() *MemoryBroker {
 	return &MemoryBroker{
 		queues: make(map[string][]*memoryMessage), subs: make(map[string]*memorySubscription),
-		ackSubjectMap: make(map[string]*memoryMessage), messageIDs: make(map[string]time.Time),
+		ackSubjectMap: make(map[string]*memoryMessage), messageIDs: make(map[string]time.Time), acknowledged: make(map[string]time.Time),
 	}
 }
 
@@ -552,6 +553,9 @@ func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
 	defer b.mu.Unlock()
 	message := b.ackSubjectMap[key]
 	if message == nil {
+		if _, found := b.acknowledged[key]; found {
+			return nil
+		}
 		return errMemoryAckNotFound
 	}
 	sessionID := message.envelope.CodeSessionID
@@ -562,6 +566,15 @@ func (b *MemoryBroker) DoubleAck(_ context.Context, ackSubject string) error {
 		return errMemoryAckNotFound
 	}
 	delete(b.ackSubjectMap, key)
+	now := time.Now()
+	if len(b.acknowledged) >= 1024 {
+		for old, at := range b.acknowledged {
+			if at.Before(now.Add(-LogicalRetention)) {
+				delete(b.acknowledged, old)
+			}
+		}
+	}
+	b.acknowledged[key] = now
 	b.queues[queueKey] = slices.Delete(queue, index, index+1)
 	b.dispatchLocked(sessionID)
 	return nil

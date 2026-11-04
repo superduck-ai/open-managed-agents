@@ -42,7 +42,7 @@ func doctor(ctx context.Context, root, worker, selected string, apiPort int) (do
 		path := os.Getenv("OMA_BRAIN_BINARY")
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() || info.Mode()&0111 == 0 {
-			return result, errors.New("chat brain requires OMA_BRAIN_BINARY pointing to the built Rust executable")
+			return result, errors.New("chat brain requires OMA_BRAIN_BINARY pointing to the built Brain executable")
 		}
 		digest, err := fileSHA256(path)
 		if err != nil {

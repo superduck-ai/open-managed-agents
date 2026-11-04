@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/dsh"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
@@ -15,12 +16,15 @@ func (h *Handler) authorizeRuntimeSession(w http.ResponseWriter, r *http.Request
 		return SessionCredentialClaims{}, "", false
 	}
 	claims, err := h.service.authenticateRuntimeCredential(r.Context(), token, "")
-	if err != nil {
+	if err != nil || !workerProtocolMatchesPath(claims, r.URL.Path) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid code session token"))
 		return SessionCredentialClaims{}, "", false
 	}
 	if claims.Role == "worker" {
 		if err := h.service.authorizeWorkerClaims(r.Context(), claims); err != nil {
+			if claims.Protocol == "dsr1" {
+				dsh.SetLifecycleErrorHeaders(w, err)
+			}
 			h.errorAdapter.Write(w, r, workerIngressAuthorizationFailure(err))
 			return SessionCredentialClaims{}, "", false
 		}
@@ -35,11 +39,14 @@ func (h *Handler) authenticateMCPProxyRequest(w http.ResponseWriter, r *http.Req
 		return SessionCredentialClaims{}, false
 	}
 	claims, err := h.service.AuthenticateSessionIngress(r.Context(), token, codeSessionID)
-	if err != nil || claims.SessionID != codeSessionID || claims.WorkerEpoch <= 0 {
+	if err != nil || claims.SessionID != codeSessionID || claims.WorkerEpoch <= 0 || !workerProtocolMatchesPath(claims, r.URL.Path) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusUnauthorized, "authentication_error", "Invalid MCP proxy token"))
 		return SessionCredentialClaims{}, false
 	}
 	if err := h.service.authorizeWorkerClaims(r.Context(), claims); err != nil {
+		if claims.Protocol == "dsr1" {
+			dsh.SetLifecycleErrorHeaders(w, err)
+		}
 		h.errorAdapter.Write(w, r, workerIngressAuthorizationFailure(err))
 		return SessionCredentialClaims{}, false
 	}
@@ -62,6 +69,9 @@ func (h *Handler) sessionIngressAccessClaims(w http.ResponseWriter, r *http.Requ
 		err = h.service.authorizeIngressIdentity(r.Context(), claims)
 	}
 	if err != nil {
+		if claims.Protocol == "dsr1" {
+			dsh.SetLifecycleErrorHeaders(w, err)
+		}
 		h.errorAdapter.Write(w, r, workerIngressAuthorizationFailure(err))
 		return SessionCredentialClaims{}, false
 	}
@@ -80,6 +90,9 @@ func (h *Handler) sessionIngressClaims(r *http.Request, codeSessionID string) (S
 		return SessionCredentialClaims{}, sessionIngressTokenRequired()
 	}
 	claims, err := h.service.AuthenticateSessionIngress(r.Context(), token, codeSessionID)
+	if err == nil && !workerProtocolMatchesPath(claims, r.URL.Path) {
+		err = errSessionIngressIdentity
+	}
 	if err != nil {
 		return SessionCredentialClaims{}, sessionIngressTokenInvalid(err)
 	}
@@ -92,4 +105,12 @@ func codeSessionStreamRouteFromClaims(claims SessionCredentialClaims) CodeSessio
 		WorkspaceUUID:     claims.WorkspaceUUID,
 		SessionExternalID: claims.PublicSessionID,
 	}
+}
+
+func workerProtocolMatchesPath(claims SessionCredentialClaims, path string) bool {
+	dsr := strings.HasPrefix(path, "/v1/dsr/") || strings.HasPrefix(path, "/.well-known/oauth-protected-resource/v1/dsr/")
+	if dsr {
+		return claims.Protocol == "dsr1"
+	}
+	return claims.Protocol == ""
 }

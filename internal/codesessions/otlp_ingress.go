@@ -11,6 +11,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/dsh"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 
 	"github.com/go-chi/chi/v5"
@@ -201,6 +202,9 @@ func credentialContextMatchesClaims(context db.CodeSessionCredentialContext, cla
 }
 
 func (h *Handler) writeOTLPDatabaseError(w http.ResponseWriter, r *http.Request, protocol otlpProtocol, codeSessionID string, err error) {
+	if runtimeMCPProtocol(r) == "dsr1" {
+		dsh.SetLifecycleErrorHeaders(w, err)
+	}
 	switch {
 	case errors.Is(err, errSessionIngressIdentity):
 		writeOTLPStatus(w, protocol, http.StatusUnauthorized, "session ingress identity is no longer active", "")

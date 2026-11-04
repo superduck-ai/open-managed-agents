@@ -4,7 +4,12 @@ import (
 	"errors"
 )
 
+const DefaultBrainWorkerProtocol = "dsr1"
+
 func validateBrainRuntimeConfig(cfg EnvironmentRunnerConfig, codeSession CodeSessionConfig) error {
+	if codeSession.BrainWorkerProtocol != "" && codeSession.BrainWorkerProtocol != "ccrv2" && codeSession.BrainWorkerProtocol != "dsr1" {
+		return errors.New("code_session.brain_worker_protocol must be ccrv2 or dsr1")
+	}
 	if cfg.AgentMode != "" && cfg.AgentMode != "sandbox" && cfg.AgentMode != "brain" {
 		return errors.New("environment_runner.agent_mode must be sandbox or brain")
 	}

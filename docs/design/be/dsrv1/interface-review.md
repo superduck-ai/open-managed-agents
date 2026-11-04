@@ -2,7 +2,7 @@
 
 评审日期：2026-11-03。结论：17 个主接口都有明确的 Brain 调用职责，但需要修订部分请求、响应和错误处理。第 18 节的运行时能力还依赖 MCP、附件和 OTLP 原生协议，不能统一套用 JSON 请求、Anthropic 错误体或自动重试。
 
-本报告覆盖接口参考中的全部接口，包括展开后的附件、MCP metadata、模型和沙箱侧路由。所有“未来调用方”都是建议的职责，尚未创建 `src/dsr/` 实现。当前代码路径相对于 `oma-brain-dsh/src/`，服务端路径相对于仓库根目录。版本依据与第一轮恢复探针见 [兼容性验证](compatibility-review.md)。
+本报告覆盖接口参考中的全部接口，包括展开后的附件、MCP metadata、模型和沙箱侧路由。本文保留实现前评审。已新增并接通 `src/dsr/` 原生 host，默认使用 DSRv1，支持显式 CCRv2 回退，当前逐接口实现状态见 [实验实现状态](implementation.md)。当前代码路径相对于 `oma-brain-dsh/src/`，服务端路径相对于仓库根目录。版本依据与第一轮恢复探针见 [兼容性验证](compatibility-review.md)。
 
 ## 1. 验证方式和结果
 
@@ -18,7 +18,7 @@
 
 5 个 skip 分别为 Rust 沙箱工具定义一致性、丢失 MCP server 的结果分类、普通 Bash 取消、用户中断 Bash、普通工具完成。本次没有把这些项计为通过。
 
-DSR 路由、Mapper、审批表和 reducer 尚未实现，因此下面是逐接口代码与协议核对，不是已调用新端点的集成验收。未执行 `verify-be`、真实数据库/对象存储/模型或新协议 SIGKILL 验证。
+以下测试数字是实现前的评审基线。本轮已补齐 17 个端点、审批表、turn reducer 与原生 host，并新增 PostgreSQL、原生 SIGKILL 与 `chat brain-dsr` 验证；实际执行结果和未覆盖范围以 [实验实现状态](implementation.md) 及交付报告为准。
 
 ## 2. 建议的调用职责
 
@@ -93,13 +93,9 @@ DSR 路由、Mapper、审批表和 reducer 尚未实现，因此下面是逐接�
 
 ### 7. PUT worker-state
 
-当前对应 `CcrSession.updateStatus`、`reportTraceTurns` 与 set_model 控制路径。未来用串行字段 patch writer，防止旧 status/model 请求晚到覆盖新值。
+当前 DsrSession 只在模型控制和 trace checkpoint 调用。已删除 status；任何 status 字段均拒绝。model 必须附带 control_input_id/control_sequence；trace_turns 可独立 patch 或 null 清除。
 
-请求允许省略字段；只有 model、trace_turns 可为 null，status:null 无效。响应为完整 state，足够确认提交。model patch 应在应用模型并 ACK 控制输入之前确认；trace 失败可以补发，不能把不同可靠性要求混成一个 fire-and-forget 调用。
-
-需要单独解决 set_model 的跨重投回退：旧控制 A 被新 owner 重放，可能覆盖后来的选择 B。现有 256 项内存去重不能解决跨进程问题。建议给模型修改传入 control input identity，并在后端按首次处理持久去重，或新增独立有去重身份的模型修改操作；冻结前必须选择，不能宣称普通字段 patch 已满足。
-
-判断：trace/null 类型已修正；模型更新幂等仍待设计。
+后端持久最高模型版本及最新 input ID，低版本忽略，等版本内容或身份冲突拒绝，高版本原子更新。新 owner 读回当前模型与水位。已删除历史 control receipts，任意历史版本的内容冲突检测不再提供。完整 schema 和测试边界见 api-reference 与 implementation 第 18 版。
 
 ### 8. GET inputs/stream
 
@@ -115,9 +111,9 @@ SSE 帧 id 是重连游标，data.id 是输入身份，二者不能混用；评�
 
 当前 `CcrClient.reportDelivery/acknowledge`、inbound 自动 received、`CcrSession.receive` 首次 processing 及 `delivery-progress.ts` 周期续报。
 
-请求 1–64 项合理。原响应只有 applied/ignored，批中存在 ignored 时不能定位哪条输入已 processing，当前客户端还会丢弃响应体。建议增加逐项 results：`{id,status,outcome,turn_state?}`。已知 task 的 processing 应独立于 Redis ACK 定位推进数据库 turn；ACK 定位只决定 InProgress/DoubleAck 是否执行。
+请求 1–64 项合理。原响应只有 applied/ignored，批中存在 ignored 时不能定位哪条输入已 processing，当前客户端还会丢弃响应体。建议增加逐项 results：`{id,status,outcome,execution_status?}`。已知 task 的 processing 应独立于 Redis ACK 定位推进数据库 turn；ACK 定位只决定 InProgress/DoubleAck 是否执行。
 
-Brain 必须确认对应结果的 turn_state 为 processing 或 terminal 后，才开始执行或走已完成补结算。不能把任意 200 等同于 processing 成立。processed 若 ignored，不可伪造 acked_at，留待重投补 ACK。
+Brain 必须确认对应结果的 execution_status 为 running 或 completed 后，才开始执行或走已完成补结算。不能把任意 200 等同于 processing 成立。processed 若 ignored，不可伪造确认成功或删除投递记录，留待重投补 ACK。
 
 finish_required 要定位违规 input、补 finish 后重试原批，不得像 epoch_superseded 一样 fence。原文“一直重试”与通用有界重试冲突，需统一预算，耗尽不越过执行或 ACK 屏障。本次已在草案新增逐项结果 DTO 并标明这些要求；它是待实现的协议响应，不能按现有服务端已支持处理。
 
@@ -263,3 +259,5 @@ MCP工具允许修改参数时，执行的是有效参数，permission重试仍�
 | 模型与沙箱 | 模型线程/purpose/request ID保持，sandbox token和CA例外保持，不将DSR头泄露到外部上游 |
 
 当前测试为这些已有能力提供基线，新的DSR请求响应fixture和集成场景必须在实现后补齐。本次设计修改没有改变生产运行时。
+
+输入执行模型的当前合同为 execution_status=accepted/running/completed、cancel_requested_at 与 finish.failure_code；本文早期 turn 评审术语以第 16 版协议与接口参考为准。

@@ -62,5 +62,8 @@
   "devDependencies": {
     "@types/bun": "^1.3.0",
     "typescript": "^5.9.3"
+  },
+  "patchedDependencies": {
+    "@deepseek-ai/dsh-agent-loop@0.2.2-alpha.2": "patches/@deepseek-ai%2Fdsh-agent-loop@0.2.2-alpha.2.patch"
   }
 }

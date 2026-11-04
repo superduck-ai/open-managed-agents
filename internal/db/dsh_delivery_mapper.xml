@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="DSHDeliveryMapper">
+    <sql id="scope">organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID} AND code_session_uuid = #{scope.CodeSessionUUID}</sql>
+    <sql id="columns">uuid, organization_uuid, workspace_uuid, code_session_uuid, input_id, ack_subject, cleanup_job_uuid, status, attempts, lease_token</sql>
+    <sql id="leased">organization_uuid = #{item.OrganizationUUID} AND workspace_uuid = #{item.WorkspaceUUID} AND code_session_uuid = #{item.CodeSessionUUID} AND uuid = #{item.UUID} AND lease_token = #{item.LeaseToken} AND status = 'pending'</sql>
+    <insert id="Record" result="rows">
+        INSERT INTO dsh_input_deliveries (organization_uuid, workspace_uuid, code_session_uuid, input_execution_uuid, input_id, ack_subject, cleanup_job_uuid, status)
+        SELECT organization_uuid, workspace_uuid, code_session_uuid, uuid, input_id, #{ackSubject,sensitive=true},
+            (SELECT uuid FROM jobs WHERE workspace_uuid = #{scope.WorkspaceUUID} AND external_id = #{cleanupJobID} AND type = 'object_cleanup'),
+            CASE WHEN status = 'completed' THEN 'pending' ELSE 'waiting' END
+        FROM dsh_input_executions WHERE <include refid="scope"/> AND input_id = #{inputID}
+        ON CONFLICT (organization_uuid, workspace_uuid, code_session_uuid, input_id) DO UPDATE
+        SET ack_subject = EXCLUDED.ack_subject, cleanup_job_uuid = EXCLUDED.cleanup_job_uuid, status = EXCLUDED.status,
+            delivered_at = NOW(), attempts = 0, next_attempt_at = NOW(), lease_token = NULL, lease_until = NULL
+        WHERE dsh_input_deliveries.ack_subject IS DISTINCT FROM EXCLUDED.ack_subject
+    </insert>
+    <select id="Find" result="optional" resultType="dshDeliveryRow">
+        SELECT <include refid="columns"/> FROM dsh_input_deliveries WHERE <include refid="scope"/> AND input_id = #{inputID}
+    </select>
+    <update id="Ready" result="rows">
+        UPDATE dsh_input_deliveries SET status = 'pending', next_attempt_at = NOW()
+        WHERE <include refid="scope"/> AND input_id = #{inputID} AND status = 'waiting'
+    </update>
+    <delete id="PruneDiscarded" result="rows">
+        DELETE FROM dsh_input_deliveries WHERE uuid IN (
+            SELECT uuid FROM dsh_input_deliveries
+            WHERE status = 'discarded' AND delivered_at &lt; NOW() - INTERVAL '7 days'
+            ORDER BY uuid LIMIT 256 FOR UPDATE SKIP LOCKED
+        )
+    </delete>
+    <update id="DiscardRetired" result="rows">
+        UPDATE dsh_input_deliveries AS d SET status = 'discarded', lease_token = NULL, lease_until = NULL
+        WHERE d.status IN ('waiting', 'pending') AND NOT EXISTS (
+            SELECT 1 FROM code_sessions AS c JOIN sessions AS s ON s.uuid = c.session_uuid AND s.organization_uuid = c.organization_uuid AND s.workspace_uuid = c.workspace_uuid
+            WHERE c.uuid = d.code_session_uuid AND c.organization_uuid = d.organization_uuid AND c.workspace_uuid = d.workspace_uuid
+                AND c.status = 'active' AND c.deleted_at IS NULL AND s.deleted_at IS NULL AND s.archived_at IS NULL AND s.status != 'terminated'
+        )
+    </update>
+    <update id="Lease" result="returning" resultType="dshDeliveryRow">
+        WITH candidates AS (
+            SELECT uuid FROM dsh_input_deliveries
+            WHERE status = 'pending' AND next_attempt_at &lt;= NOW() AND (lease_until IS NULL OR lease_until &lt;= NOW())
+            ORDER BY next_attempt_at, uuid LIMIT 16 FOR UPDATE SKIP LOCKED
+        )
+        UPDATE dsh_input_deliveries AS d SET lease_token = gen_random_uuid(), lease_until = NOW() + INTERVAL '30 seconds'
+        FROM candidates AS c WHERE d.uuid = c.uuid
+        RETURNING d.uuid, d.organization_uuid, d.workspace_uuid, d.code_session_uuid, d.input_id, d.ack_subject,
+            d.cleanup_job_uuid, d.status, d.attempts, d.lease_token
+    </update>
+    <delete id="DeleteAcknowledged" result="rows">
+        DELETE FROM dsh_input_deliveries WHERE <include refid="leased"/>
+    </delete>
+    <update id="Retry" result="rows">
+        UPDATE dsh_input_deliveries SET attempts = attempts + 1,
+            next_attempt_at = NOW() + LEAST(60, POWER(2, LEAST(attempts, 6))) * INTERVAL '1 second', lease_token = NULL, lease_until = NULL
+        WHERE <include refid="leased"/>
+    </update>
+    <update id="ExpediteCleanup" result="rows">
+        UPDATE jobs SET status = 'pending', run_after = NOW(), locked_by = NULL, locked_until = NULL, updated_at = NOW()
+        WHERE workspace_uuid = #{item.WorkspaceUUID} AND uuid = #{item.CleanupJobUUID} AND type = 'object_cleanup' AND status != 'completed'
+    </update>
+</mapper>

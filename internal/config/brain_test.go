@@ -27,3 +27,19 @@ func TestBrainRuntimeConfigRequiresClaimToken(t *testing.T) {
 		t.Fatalf("Brain config: %v", err)
 	}
 }
+
+func TestBrainWorkerProtocolDefaultsAndOverride(t *testing.T) {
+	if _, err := loadConfigTestYAML(t, "code_session:\n  brain_worker_protocol: unsupported\n"); err == nil {
+		t.Fatal("unsupported Brain protocol accepted")
+	}
+	for _, tc := range []struct{ yaml, want string }{
+		{"", "dsr1"},
+		{"code_session:\n  brain_worker_protocol: ccrv2\n", "ccrv2"},
+		{"code_session:\n  brain_worker_protocol: dsr1\n", "dsr1"},
+	} {
+		cfg, err := loadConfigTestYAML(t, tc.yaml)
+		if err != nil || cfg.CodeSession.BrainWorkerProtocol != tc.want {
+			t.Fatalf("protocol=%q want=%q err=%v", cfg.CodeSession.BrainWorkerProtocol, tc.want, err)
+		}
+	}
+}

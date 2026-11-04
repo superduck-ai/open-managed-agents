@@ -1,26 +1,22 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { OmaApi } from "./api.ts";
-import { externalMcpFetch } from "./external-mcp/proxy.ts";
-import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
-import { validateAssignment, validateToolPermissions, validateModels, type Assignment } from "./assignment.ts";
-import type { CcrSession } from "./ccrv2/index.ts";
-import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
+import { validateModels,validateToolPermissions,type Assignment } from "./assignment.ts";
+import { createDsrMcpFetch } from "./dsr/mcp-fetch.ts";
 import * as LlmAiSdk from "./llm-ai-sdk/index.ts";
-import { omaModelOptions } from "./model.ts";
 import { configureOmaModel } from "./model-configs.ts";
+import { omaModelOptions } from "./model.ts";
+import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
+import { childSystemPrompt,rootSystemPrompt } from "./prompt/assemble.ts";
+import type { SessionRuntimeConfig } from "./runtime/contracts.ts";
 import { WebClient } from "./web-tools/client.ts";
 import * as WebTools from "./web-tools/index.ts";
 
-/** Bind OMA credentials and launch metadata before opening the protocol bridge. */
-export function createOmaSession(
-  ctx: Context,
-  api: OmaApi,
-  assignment: Assignment,
-): CcrSession {
-  validateAssignment(assignment);
-  api.assignments.set(assignment.session_id, assignment);
+export function omaRuntimeConfig(ctx: Context, api: OmaApi, assignment: Assignment,
+  readContext: (thread?: string, signal?: AbortSignal) => Promise<Record<string, unknown>>): SessionRuntimeConfig {
+  const fetcher = (thread?: string) => createDsrMcpFetch(api.base, { code_session_id: assignment.session_id, session_token: assignment.ingress_token }, api.fetcher, thread);
+  const contextOf = readContext;
   const provider = `oma:${assignment.session_id}`;
-  return ctx.ccrv2.createSession({
+  return {
     id: assignment.session_id,
     provider,
     configureModel: call => configureOmaModel(assignment, provider, call),
@@ -28,22 +24,21 @@ export function createOmaSession(
     workDir: assignment.launch.work_dir,
     tools: assignment.launch.tools,
     externalMcpConfig: assignment.external_mcp_config,
-    externalMcpFetch: externalMcpFetch(api, assignment.session_id),
+    externalMcpFetch: fetcher(),
     threadMcpContext: async (threadId) => {
-      const context = await omaToolContext(api, assignment.session_id, threadId);
-      return { config: context.mcp_config, fetcher: externalMcpFetch(api, assignment.session_id, threadId) };
+      const context = await omaToolContext(api, assignment.session_id, threadId, undefined, contextOf);
+      return { config: context.mcp_config, fetcher: fetcher(threadId) };
     },
     refreshTools: async (signal) => {
-      const context = await omaToolContext(api, assignment.session_id, undefined, signal);
-      return { tools: context.runtime_tools, externalMcpConfig: context.mcp_config };
+      const context = await omaToolContext(api, assignment.session_id, undefined, signal, contextOf);
+      return { tools: context.runtime_tools as string[], externalMcpConfig: context.mcp_config };
     },
     toolPermissions: { ...assignment.launch.tool_permissions },
     refreshSessionContext: async (signal, threadId) => {
-      const response = await api.request(`/v2/sessions/${encodeURIComponent(assignment.session_id)}`,
-        assignment.ingress_token, "GET", undefined, threadId ? { "X-OMA-Session-Thread-ID": threadId } : undefined, signal);
-      const models = response.session_context?.models;
+      const context = await contextOf(threadId, signal);
+      const models = context.models;
       validateModels(models);
-      const permissions = response.session_context?.runtime_tool_permissions;
+      const permissions = context.runtime_tool_permissions;
       validateToolPermissions(permissions);
       assignment.launch.models = models;
       return { toolPermissions: permissions };
@@ -64,14 +59,11 @@ export function createOmaSession(
       api.modelSessions.set(id, assignment.session_id);
       return () => { api.modelSessions.delete(id); api.modelResponses.delete(id); api.modelRequestIDs.delete(id); };
     },
-  });
+  };
 }
 
-async function omaToolContext(api: OmaApi, sessionId: string, threadId?: string, signal?: AbortSignal) {
-  const response = await api.request(`/v2/sessions/${encodeURIComponent(sessionId)}`,
-    api.assignment(sessionId).ingress_token, "GET", undefined,
-    threadId ? { "X-OMA-Session-Thread-ID": threadId } : undefined, signal);
-  const context = response.session_context;
+async function omaToolContext(api: OmaApi, sessionId: string, threadId: string | undefined, signal: AbortSignal | undefined, readContext: (thread?: string, signal?: AbortSignal) => Promise<Record<string, unknown>>) {
+  const context = await readContext(threadId, signal);
   if (!context || typeof context !== "object" || Array.isArray(context)
     || !Array.isArray(context.runtime_tools) || context.runtime_tools.some((tool: unknown) => typeof tool !== "string")
     || !context.mcp_config || typeof context.mcp_config !== "object" || Array.isArray(context.mcp_config))

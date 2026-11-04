@@ -1,6 +1,7 @@
 package workerevents
 
 import (
+	"context"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -102,6 +103,11 @@ func TestJetStreamBrokerDeliversOrderedInputsBeforeAckAndKeepsDurableConsumer(t 
 	}
 	if err := subscriber.DoubleAck(t.Context(), first.AckSubject); err != nil {
 		t.Fatal(err)
+	}
+	retryCtx, cancelRetry := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancelRetry()
+	if err := subscriber.DoubleAck(retryCtx, first.AckSubject); err != nil {
+		t.Fatalf("duplicate ACK after lost database commit: %v", err)
 	}
 	if err := subscriber.DoubleAck(t.Context(), delivered.AckSubject); err != nil {
 		t.Fatal(err)

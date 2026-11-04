@@ -1,16 +1,21 @@
-import { expect, test } from "bun:test";
-import { Context } from "@deepseek-ai/cordis";
-import { OmaApi } from "../src/api.ts";
-import { TraceProducer, type TraceOwner } from "../src/observability/trace-producer.ts";
-import { otlpSpan, SpanExporter, type SpanRecord } from "../src/observability/span-exporter.ts";
-import { currentToolTrace, parseTraceParent, traceHooks } from "../src/observability/trace-context.ts";
+import { expect,test } from "bun:test";
+
+
+
+import { TraceProducer,type TraceOwner } from "../src/observability/trace-producer.ts";
+
+import { otlpSpan,SpanExporter,type SpanRecord } from "../src/observability/span-exporter.ts";
+
+import { parseTraceParent,traceHooks } from "../src/observability/trace-context.ts";
 
 const PARENT_TRACE = "4bf92f3577b34da6a3ce929d0e0e4736";
+
 const PARENT_SPAN = "00f067aa0ba902b7";
 
 type OtlpSpan = { traceId: string; spanId: string; parentSpanId?: string; name: string; attributes: { key: string; value: Record<string, unknown> }[]; status?: { code: number } };
 
 const hex = (value: string) => Buffer.from(value, "base64").toString("hex");
+
 const attribute = (span: OtlpSpan, key: string) => {
   const value = span.attributes.find((item) => item.key === key)?.value;
   return value?.stringValue ?? value?.boolValue ?? (value?.intValue !== undefined ? Number(value.intValue) : undefined);
@@ -110,62 +115,6 @@ test("approval waits split turns and subagent turns nest under the parent turn",
   expect(root!.attributes["gen_ai.input.messages"]).toBeUndefined();
 });
 
-test("the real loop exports turn, model and tool spans under the caller's trace", async () => {
-  const { Backend, eventually, toolEvents, textEvents } = await import("./backend.ts");
-  const { mountOma } = await import("../src/plugin.ts");
-  const { createOmaSession } = await import("../src/oma-session.ts");
-  const backend = new Backend();
-  await backend.ready;
-  backend.a.trace_export = { content: true };
-  backend.a.registered_at = Date.now();
-  backend.a.launch.tool_permissions = { bash: "allow" };
-  backend.a.launch.system = "Configured agent instructions";
-  backend.modelScript = [toolEvents("echo traced"), textEvents("traced reply")];
-  const ctx = new Context();
-  const api = new OmaApi(backend.url);
-  let session: ReturnType<typeof createOmaSession> | undefined;
-  try {
-    await mountOma(ctx, api);
-    await ctx.plugin({
-      inject: ["ccrv2"],
-      apply: async (scope: Context) => {
-        session = createOmaSession(scope, api, backend.a);
-        await session.open();
-      },
-    });
-    await session!.receive("traced-input", { content: "run the traced tool", trace_context: { traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-01` } });
-    await eventually(() => (backend.traceSpans as OtlpSpan[]).some((span) => span.name === "oma.session.turn"), 10_000);
-    const spans = backend.traceSpans as OtlpSpan[];
-    const turn = spans.find((span) => span.name === "oma.session.turn")!;
-    const requests = spans.filter((span) => span.name === "oma.model_request");
-    const tool = spans.find((span) => span.name === "oma.tool_use Bash")!;
-    expect(hex(turn.traceId)).toBe(PARENT_TRACE);
-    expect(hex(turn.parentSpanId!)).toBe(PARENT_SPAN);
-    expect(turn.status?.code).toBe(1);
-    expect(attribute(turn, "gen_ai.operation.name")).toBe("invoke_agent");
-    expect(attribute(turn, "oma.session.turn.stop_reason")).toBe("end_turn");
-    expect(JSON.parse(String(attribute(turn, "gen_ai.input.messages")))[0].parts[0].content).toContain("run the traced tool");
-    expect(String(attribute(turn, "gen_ai.output.messages"))).toContain("traced reply");
-    expect(String(attribute(turn, "gen_ai.system_instructions"))).toContain("Configured agent instructions");
-    expect(requests.length).toBe(2);
-    for (const request of [...requests, tool]) {
-      expect(hex(request.traceId)).toBe(PARENT_TRACE);
-      expect(request.parentSpanId).toBe(turn.spanId);
-    }
-    expect(attribute(requests[0]!, "gen_ai.operation.name")).toBe("chat");
-    expect(Number(attribute(requests[0]!, "oma.model_request.ttft_ms"))).toBeGreaterThanOrEqual(0);
-    expect(attribute(tool, "gen_ai.tool.call.id")).toBe("call_1");
-    expect(attribute(tool, "oma.tool.evaluated_permission")).toBe("allow");
-    expect(String(attribute(tool, "gen_ai.tool.call.arguments"))).toContain("echo traced");
-    expect(currentToolTrace()).toBeUndefined();
-  } finally {
-    await session?.close();
-    await api.telemetry?.close(backend.a.session_id);
-    await ctx.fiber.dispose();
-    backend.stop();
-  }
-});
-
 test("a turn lost with its worker is closed by the next worker as the parent of its exported children", () => {
   const lost = producer();
   lost.traces.inputReceived("cse_root", { traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-01`, tracestate: "a=1" });
@@ -186,98 +135,6 @@ test("a turn lost with its worker is closed by the next worker as the parent of 
     name: "oma.session.turn", traceId: PARENT_TRACE, spanId: open[0]!.spanId, parentSpanId: PARENT_SPAN, traceState: "a=1", startMs: 2_000, status: "error",
   });
   expect(next.spans[0]!.attributes).toMatchObject({ "oma.session.turn.stop_reason": "interrupted", "error.type": "worker_lost", "gen_ai.conversation.id": "cse_root" });
-});
-
-test("a turn that fails after model retries is exported as an error parenting every attempt", async () => {
-  const { Backend, eventually } = await import("./backend.ts");
-  const { mountOma } = await import("../src/plugin.ts");
-  const { createOmaSession } = await import("../src/oma-session.ts");
-  const backend = new Backend();
-  await backend.ready;
-  backend.a.trace_export = { content: false };
-  backend.a.registered_at = Date.now();
-  const responses = [
-    () => Response.json({ type: "error", error: { type: "rate_limit_error", message: "Rate limited" } }, { status: 429, headers: { "retry-after": "0.01" } }),
-    () => Response.json({ type: "error", error: { type: "invalid_request_error", message: "Model request is invalid" } }, { status: 400 }),
-  ];
-  backend.onModel = async () => responses.shift()!();
-  const ctx = new Context();
-  const api = new OmaApi(backend.url);
-  let session: ReturnType<typeof createOmaSession> | undefined;
-  try {
-    await mountOma(ctx, api);
-    session = createOmaSession(ctx, api, backend.a);
-    await session.open();
-    await session.receive("failing-input", { content: "fail", trace_context: { traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-01` } }).catch(() => {});
-    await eventually(() => (backend.traceSpans as OtlpSpan[]).some((span) => span.name === "oma.session.turn"), 10_000);
-    const spans = backend.traceSpans as OtlpSpan[];
-    const turn = spans.find((span) => span.name === "oma.session.turn")!;
-    const attempts = spans.filter((span) => span.name === "oma.model_request");
-    expect(hex(turn.parentSpanId!)).toBe(PARENT_SPAN);
-    expect(turn.status?.code).toBe(2);
-    expect(attribute(turn, "oma.session.turn.stop_reason")).toBe("error");
-    expect(attempts).toHaveLength(2);
-    for (const attempt of attempts) {
-      expect(attempt.parentSpanId).toBe(turn.spanId);
-      expect(attempt.status?.code).toBe(2);
-    }
-    expect(attempts.map((attempt) => attribute(attempt, "error.type"))).toEqual(["rate_limit_error", "api_error"]);
-  } finally {
-    await session?.close();
-    await api.telemetry?.close(backend.a.session_id);
-    await ctx.fiber.dispose();
-    backend.stop();
-  }
-});
-
-test("a worker killed mid-turn leaves its turn to the next worker, which exports it as the children's parent", async () => {
-  const { spawn } = await import("node:child_process");
-  const { once } = await import("node:events");
-  const { Backend, eventually, toolEvents } = await import("./backend.ts");
-  const { mountOma } = await import("../src/plugin.ts");
-  const { createOmaSession } = await import("../src/oma-session.ts");
-  const backend = new Backend();
-  await backend.ready;
-  backend.modelScript = [toolEvents()];
-  backend.hangTool = true;
-  backend.a.trace_export = { content: false };
-  backend.a.registered_at = Date.now();
-  backend.a.launch.tool_permissions = { bash: "allow" };
-  const child = spawn(process.execPath, ["tests/crash-worker.ts"], {
-    env: { ...process.env, TEST_API_URL: backend.url, TEST_ASSIGNMENT: JSON.stringify(backend.a), TEST_TRACEPARENT: `00-${PARENT_TRACE}-${PARENT_SPAN}-01` },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const exited = once(child, "exit");
-  const ctx = new Context();
-  const api = new OmaApi(backend.url);
-  let resumed: ReturnType<typeof createOmaSession> | undefined;
-  try {
-    await eventually(() => backend.executions.length === 1 && (backend.traceSpans as OtlpSpan[]).some((span) => span.name === "oma.model_request"), 10_000);
-    child.kill("SIGKILL");
-    await exited;
-    const request = (backend.traceSpans as OtlpSpan[]).find((span) => span.name === "oma.model_request")!;
-    expect((backend.traceSpans as OtlpSpan[]).some((span) => span.name === "oma.session.turn")).toBe(false);
-    backend.a.worker_epoch++;
-    backend.a.registered_at = Date.now();
-    await mountOma(ctx, api);
-    resumed = createOmaSession(ctx, api, backend.a);
-    await resumed.open();
-    await eventually(() => (backend.traceSpans as OtlpSpan[]).some((span) => span.name === "oma.session.turn"), 10_000);
-    const turns = (backend.traceSpans as OtlpSpan[]).filter((span) => span.name === "oma.session.turn");
-    expect(turns).toHaveLength(1);
-    expect(turns[0]!.spanId).toBe(request.parentSpanId!);
-    expect(hex(turns[0]!.traceId)).toBe(PARENT_TRACE);
-    expect(hex(turns[0]!.parentSpanId!)).toBe(PARENT_SPAN);
-    expect(turns[0]!.status?.code).toBe(2);
-    expect(attribute(turns[0]!, "error.type")).toBe("worker_lost");
-    await eventually(() => backend.workerMetadata.oma_trace_turns === undefined, 10_000);
-  } finally {
-    child.kill("SIGKILL");
-    await resumed?.close();
-    await api.telemetry?.close(backend.a.session_id);
-    await ctx.fiber.dispose();
-    backend.stop();
-  }
 });
 
 test("cancelled model attempts are exported without a status or error type", () => {

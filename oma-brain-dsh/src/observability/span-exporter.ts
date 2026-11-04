@@ -1,4 +1,4 @@
-import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
+import { workerDiagnostic } from "../observability/diagnostics.ts";
 
 export type SpanAttributeValue = string | number | boolean;
 
@@ -63,6 +63,7 @@ export class SpanExporter {
     private readonly token: () => string,
     private readonly fetcher: typeof fetch,
     private readonly sessionId: string,
+    private readonly extraHeaders: Record<string, string> = {},
   ) {}
 
   add(span: SpanRecord): void {
@@ -109,7 +110,7 @@ export class SpanExporter {
     try {
       const response = await this.fetcher(this.url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.token()}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.token()}`, ...this.extraHeaders },
         body,
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });

@@ -1,6 +1,6 @@
+import { expect,test } from "bun:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { expect, test } from "bun:test";
 import { eventually } from "./backend.ts";
 
 async function checkShutdown(

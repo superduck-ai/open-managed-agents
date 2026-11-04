@@ -1,8 +1,8 @@
-import { expect, test } from "bun:test";
-import { HarnessError, ToolCallId } from "@deepseek-ai/dsh-llm";
+import { HarnessError,ToolCallId } from "@deepseek-ai/dsh-llm";
+import { expect,test } from "bun:test";
+import type { RemoteTool,SandboxExecutor,ToolExecutionBridge,ToolExecutionContext } from "../src/runtime/contracts.ts";
+import { RetryableInputError,SHUTDOWN_CANCEL,ToolNotForwardedError } from "../src/runtime/contracts.ts";
 import { ToolExecution } from "../src/runtime/execution.ts";
-import { RetryableInputError, SHUTDOWN_CANCEL, ToolNotForwardedError } from "../src/runtime/contracts.ts";
-import type { RemoteTool, SandboxExecutor, ToolExecutionBridge, ToolExecutionContext } from "../src/runtime/contracts.ts";
 
 const tool: RemoteTool = {
   name: "Bash", remoteName: "bash", description: "Test execution",
@@ -100,7 +100,6 @@ test("read-only retry preserves its originating child thread identity", async ()
   expect(await execution.execute({ ...tool, readOnly: true }, { command: "original" }, f.exec)).toBe("confirmed");
   expect(threads).toEqual(["child-scope", "child-scope"]);
 });
-
 
 test("content conversion preserves retryable errors and their structured tool code", async () => {
   const f = fixture();

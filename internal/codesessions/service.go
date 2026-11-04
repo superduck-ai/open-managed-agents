@@ -159,6 +159,9 @@ func (s *Service) QueuePublicSessionEvents(ctx context.Context, session db.Sessi
 	if codeSession.Status != "active" {
 		return nil
 	}
+	if isDSHCodeSession(codeSession) {
+		return s.queueDSHPublicEvents(ctx, codeSession, events)
+	}
 	payloads := make([]json.RawMessage, 0, len(events))
 	queued := false
 	for _, event := range events {

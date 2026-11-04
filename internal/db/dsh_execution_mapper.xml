@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="DSHExecutionMapper">
+    <sql id="scope">organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID} AND code_session_uuid = #{scope.CodeSessionUUID}</sql>
+    <sql id="executionColumns">input_id, session_thread_id, status, result, failure_code, accepted_at, started_at, completed_at, cancel_requested_at</sql>
+    <sql id="permissionColumns">request_id, input_id, dsh_session_id, session_thread_id, tool_use_id, turn, tool, input, available, public_event_id, state, decision</sql>
+    <select id="FindCode" result="optional" resultType="dshCodeRow">
+        SELECT uuid, external_id, session_external_id FROM code_sessions
+        WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}
+          AND metadata #>> '{config,worker_protocol}' = 'dsr1' AND status = 'active' AND deleted_at IS NULL
+        ORDER BY created_at DESC, uuid DESC LIMIT 1
+    </select>
+    <insert id="InsertExecution" result="rows">
+        INSERT INTO dsh_input_executions (organization_uuid, workspace_uuid, code_session_uuid, input_id, session_thread_id, accepted_at)
+        VALUES (#{scope.OrganizationUUID}, #{scope.WorkspaceUUID}, #{scope.CodeSessionUUID}, #{inputID}, #{threadID}, #{acceptedAt})
+        ON CONFLICT (organization_uuid, workspace_uuid, code_session_uuid, input_id) DO NOTHING
+    </insert>
+    <select id="Execution" result="optional" resultType="dshInputExecutionRow">
+        SELECT <include refid="executionColumns"/> FROM dsh_input_executions WHERE <include refid="scope"/> AND input_id = #{inputID}
+    </select>
+    <select id="Summary" result="one" resultType="dshExecutionSummary">
+        WITH last_completed AS (
+            SELECT result, completed_at FROM dsh_input_executions
+            WHERE <include refid="scope"/> AND status = 'completed'
+            ORDER BY accepted_at DESC, input_id DESC LIMIT 1
+        )
+        SELECT (SELECT input_id FROM dsh_input_executions WHERE <include refid="scope"/> AND status = 'running' LIMIT 1) AS active_input_id,
+            EXISTS (SELECT 1 FROM dsh_input_executions WHERE <include refid="scope"/> AND status = 'accepted'
+                AND (NOT EXISTS (SELECT 1 FROM last_completed) OR (SELECT result FROM last_completed) IN ('success', 'cancelled')
+                    OR accepted_at > (SELECT completed_at FROM last_completed))) AS has_eligible_accepted,
+            (SELECT result FROM last_completed) AS last_result
+    </select>
+    <update id="StartExecution" result="rows">
+        UPDATE dsh_input_executions SET status = 'running', started_at = NOW()
+        WHERE <include refid="scope"/> AND input_id = #{inputID} AND status = 'accepted'
+    </update>
+    <update id="FinishExecution" result="rows">
+        UPDATE dsh_input_executions SET status = 'completed', result = #{result}, failure_code = #{failureCode}, completed_at = NOW()
+        WHERE <include refid="scope"/> AND input_id = #{inputID} AND status = 'running'
+    </update>
+    <select id="Permission" result="optional" resultType="dshPermissionRow">
+        SELECT <include refid="permissionColumns"/> FROM dsh_permission_requests WHERE <include refid="scope"/> AND request_id = #{requestID}
+    </select>
+    <select id="Permissions" result="many" resultType="dshPermissionRow">
+        SELECT <include refid="permissionColumns"/> FROM dsh_permission_requests WHERE <include refid="scope"/> ORDER BY request_id
+    </select>
+    <insert id="InsertPermission" result="rows">
+        INSERT INTO dsh_permission_requests (organization_uuid, workspace_uuid, code_session_uuid, request_id, input_id, dsh_session_id,
+            session_thread_id, tool_use_id, turn, tool, input, available, worker_epoch, public_event_id, state, decision)
+        VALUES (#{input.Scope.OrganizationUUID}, #{input.Scope.WorkspaceUUID}, #{input.Scope.CodeSessionUUID}, #{input.RequestID}, #{input.InputID}, #{input.DSHSessionID},
+            #{input.ThreadID}, #{input.ToolUseID}, #{input.Turn}, #{input.Tool,sensitive=true}, #{input.Input,sensitive=true}, #{input.Available}, #{input.Scope.Epoch}, #{input.PublicEventID}, #{input.State}, #{input.Decision,sensitive=true})
+    </insert>
+    <update id="SetPermission" result="rows">
+        UPDATE dsh_permission_requests SET state = #{state}, decision = #{decision,sensitive=true}, resolved_at = NOW()
+        WHERE <include refid="scope"/> AND request_id = #{requestID} AND state = 'pending'
+    </update>
+    <update id="ClosePermissions" result="rows">
+        UPDATE dsh_permission_requests SET state = 'closed', resolved_at = NOW()
+        WHERE <include refid="scope"/> AND state = 'pending'
+        <if test="inputID != ''">AND input_id = #{inputID}</if>
+        <if test="threadID != ''">AND session_thread_id = #{threadID}</if>
+    </update>
+    <select id="Receipt" result="optional" resultType="string">
+        SELECT payload_digest FROM dsh_public_receipts WHERE <include refid="scope"/> AND event_id = #{eventID}
+    </select>
+    <insert id="InsertReceipt" result="rows">
+        INSERT INTO dsh_public_receipts (organization_uuid, workspace_uuid, code_session_uuid, event_id, payload_digest)
+        VALUES (#{scope.OrganizationUUID}, #{scope.WorkspaceUUID}, #{scope.CodeSessionUUID}, #{eventID}, #{payloadDigest,sensitive=true})
+    </insert>
+    <update id="BindTranscript" result="rows">
+        UPDATE dsh_transcripts SET session_thread_id = #{threadID}
+        WHERE <include refid="scope"/> AND dsh_session_id = #{dshSessionID} AND (session_thread_id IS NULL OR session_thread_id = #{threadID})
+    </update>
+    <update id="InterruptExecution" result="rows">
+        UPDATE dsh_input_executions SET cancel_requested_at = COALESCE(cancel_requested_at, NOW())
+        WHERE <include refid="scope"/> AND input_id = (
+            SELECT input_id FROM dsh_input_executions WHERE <include refid="scope"/> AND status IN ('accepted','running')
+            <if test="threadID != ''">AND session_thread_id = #{threadID}</if>
+            ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, accepted_at, input_id LIMIT 1
+        )
+    </update>
+</mapper>

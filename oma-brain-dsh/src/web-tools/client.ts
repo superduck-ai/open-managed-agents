@@ -10,8 +10,8 @@ export class WebClient {
     try {
       const assignment = this.api.assignment(this.sessionId);
       const response = await this.api.requestResponse(
-        `/v2/ccr-sessions/${encodeURIComponent(this.sessionId)}/web/${tool.remoteName}`,
-        assignment.ingress_token, "POST", args, this.threadId ? { "X-OMA-Session-Thread-ID": this.threadId } : undefined, signal, 35_000,
+        `/v1/dsr/sessions/${encodeURIComponent(this.sessionId)}/web/${tool.remoteName}`,
+        assignment.ingress_token, "POST", args, { "DSR-Protocol": "1", ...(this.threadId ? { "X-OMA-Session-Thread-ID": this.threadId } : {}) }, signal, 35_000,
       );
       const body = await response.json();
       if (response.ok) {

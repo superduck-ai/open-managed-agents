@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect,test } from "bun:test";
 import { ExternalMcpClient } from "../src/external-mcp/client.ts";
 import { traceHooks } from "../src/observability/trace-context.ts";
 

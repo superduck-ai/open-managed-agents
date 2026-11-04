@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { childSystemPrompt, rootSystemPrompt } from "../src/prompt/assemble.ts";
+import { expect,test } from "bun:test";
+import { childSystemPrompt,rootSystemPrompt } from "../src/prompt/assemble.ts";
 import type { SubagentThread } from "../src/runtime/contracts.ts";
 import { assignment } from "./backend.ts";
 
@@ -127,7 +127,6 @@ test("empty configured instructions are omitted", () => {
   expect(root).toContain("# Skills");
   expect(root).toContain("# This session");
 });
-
 
 test("predefined-only prompt prohibits inline agents", () => {
   const prompt = rootSystemPrompt({ ...launch(), subagents: { inlineAgents: false } });

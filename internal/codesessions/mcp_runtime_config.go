@@ -14,6 +14,7 @@ import (
 // MCPRuntimeIdentity is provided by an authenticated runtime boundary, never by
 // the persisted MCP declaration. It is shared by launch and session_context.
 type MCPRuntimeIdentity struct {
+	Protocol            string
 	CodeSessionID       string
 	SessionIngressToken string
 	APIBaseURL          string
@@ -219,8 +220,11 @@ func (s tunnelMCPServer) build(identity MCPRuntimeIdentity) (json.RawMessage, er
 	}
 	target := mcpClientTarget{
 		Type:    "http",
-		URL:     strings.TrimRight(identity.APIBaseURL, "/") + "/v2/ccr-sessions/" + url.PathEscape(identity.CodeSessionID) + "/mcp/" + url.PathEscape(s.name),
+		URL:     strings.TrimRight(identity.APIBaseURL, "/") + runtimeMCPBasePath(identity.CodeSessionID, identity.Protocol) + "/mcp/" + url.PathEscape(s.name),
 		Headers: map[string]string{"Authorization": "Bearer " + identity.SessionIngressToken},
+	}
+	if identity.Protocol == "dsr1" {
+		target.Headers["DSR-Protocol"] = "1"
 	}
 	encoded, err := json.Marshal(target)
 	if err != nil {
@@ -244,4 +248,11 @@ func remoteMCPTransportType(serverType string, _ string) string {
 		return "ws"
 	}
 	return "http"
+}
+
+func runtimeMCPBasePath(id, protocol string) string {
+	if protocol == "dsr1" {
+		return "/v1/dsr/sessions/" + url.PathEscape(id)
+	}
+	return "/v2/ccr-sessions/" + url.PathEscape(id)
 }

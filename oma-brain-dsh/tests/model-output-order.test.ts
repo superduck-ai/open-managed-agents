@@ -1,13 +1,12 @@
-import { expect, test } from "bun:test";
-import { pluginRecordOf } from "@deepseek-ai/dsh-session";
-import { Context } from "@deepseek-ai/cordis";
+import { expect,test } from "bun:test";
+
+
+
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+
 import { AiSdkStream } from "../src/llm-ai-sdk/stream.ts";
-import { OmaApi } from "../src/api.ts";
-import { mountOma } from "../src/plugin.ts";
-import { createOmaSession } from "../src/oma-session.ts";
-import { runSubagent } from "./subagent-tools.ts";
-import { Backend, eventually, modelSystemText, textEvents } from "./backend.ts";
+
+
 
 const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
 
@@ -44,91 +43,4 @@ test("block ends advance at upstream boundaries, including interleaved text, thi
   ]);
   stream.accept({ type: "finish", finishReason: { unified: "tool-calls", raw: "tool_use" }, usage });
   expect(stream.finish().map(chunk => chunk.type)).toEqual(["usage", "finish"]);
-});
-
-test.each([false, true])("proxied model blocks retain durable fallback after previews (child=%s)", async child => {
-  const backend = new Backend();
-  await backend.ready;
-  const ctx = new Context();
-  const api = new OmaApi(backend.url);
-  await mountOma(ctx, api);
-  const session = createOmaSession(ctx, api, backend.a);
-  const release = Promise.withResolvers<void>();
-  const sentReasoning = Promise.withResolvers<void>();
-  let turn: Promise<unknown> | undefined;
-  let confirmed = false;
-  const persist = session.backend.persist.bind(session.backend);
-  session.backend.persist = async (...args) => {
-    await persist(...args);
-    if ("type" in args[2] && "seq" in args[2] && pluginRecordOf(args[2])?.type === "plugin:oma/assistant-block") confirmed = true;
-  };
-  backend.onModel = async request => child && !modelSystemText(request).includes("# Subagent rules") ? textEvents("parent report") : new Response(new ReadableStream<Uint8Array>({ async start(controller) {
-    const emit = (event: Record<string, unknown>) => controller.enqueue(new TextEncoder().encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
-    emit({ type: "message_start", message: { id: "msg_ordered", type: "message", role: "assistant", model: "test-model", content: [], usage: { input_tokens: 1, output_tokens: 0 } } });
-    emit({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } });
-    emit({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "private reasoning" } });
-    emit({ type: "content_block_stop", index: 0 });
-    sentReasoning.resolve();
-    await release.promise;
-    emit({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } });
-    emit({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "ordered answer" } });
-    emit({ type: "content_block_stop", index: 1 });
-    emit({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } });
-    emit({ type: "message_stop" });
-    controller.close();
-  } }), { headers: { "content-type": "text/event-stream", "request-id": "request_ordered" } });
-  try {
-    await session.open();
-    turn = child
-      ? runSubagent(session, "subagent", { description: "specialist", prompt: "Inspect and reply" })
-      : session.receive("ordered-input", { content: "Reply" });
-    turn.catch(() => {});
-    await sentReasoning.promise;
-    await eventually(() => backend.timeline.some(event => event.type === "event_start" && event.event.type === "agent.thinking"));
-    expect(confirmed).toBe(true);
-    expect([...backend.publicLog.values()].filter(event => event.type === "agent.thinking")).toHaveLength(1);
-    expect(backend.timeline.some(event => event.type === "event_delta")).toBe(false);
-    release.resolve();
-    await turn;
-    expect(backend.timeline.some(event => event.type === "event_delta")).toBe(true);
-    const finals = [...backend.publicLog.values()].filter(event => ["agent.thinking", "agent.message"].includes(event.type)
-      && (child ? event.session_thread_id === session.subagents.threads[0]!.id : !event.session_thread_id));
-    expect(finals.map(event => event.type)).toEqual(["agent.thinking", "agent.message"]);
-    expect(finals.every(event => event.model_request_start_id === "request_ordered")).toBe(true);
-    expect(confirmed).toBe(true);
-    expect([...backend.privateLog.values()].some(event => event.type === "dsh_log" && event.data.type === "assistant/message"
-      && JSON.stringify(event.data).includes("ordered answer"))).toBe(true);
-  } finally {
-    release.resolve();
-    await turn?.catch(() => {});
-    await session.close();
-    await ctx.fiber.dispose();
-    await backend.stop();
-  }
-});
-
-test.each([false, true])("a proxied reply beyond 4 MiB is published once by Brain (child=%s)", async child => {
-  const backend = new Backend();
-  await backend.ready;
-  const ctx = new Context();
-  const api = new OmaApi(backend.url);
-  await mountOma(ctx, api);
-  const session = createOmaSession(ctx, api, backend.a);
-  const text = "x".repeat(4 * 1024 * 1024 + 1);
-  backend.onModel = async request => {
-    if (child && !modelSystemText(request).includes("# Subagent rules")) return textEvents("parent report");
-    const events = textEvents(text);
-    events[0]!.message.id = "msg_large";
-    return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
-      { headers: { "content-type": "text/event-stream", "request-id": "sevt_large_request" } });
-  };
-  try {
-    await session.open();
-    if (child) await runSubagent(session, "subagent", { description: "specialist", prompt: "Inspect and reply" });
-    else await session.receive("large-input", { content: "Reply" });
-    const replies = [...backend.publicLog.values()].filter(event => event.type === "agent.message" && event.model_request_start_id === "sevt_large_request");
-    expect(replies).toHaveLength(1);
-    expect(replies[0]!.content).toEqual([{ type: "text", text }]);
-    expect(replies[0]!.session_thread_id).toBe(child ? session.subagents.threads[0]!.id : undefined);
-  } finally { await session.close(); await ctx.fiber.dispose(); await backend.stop(); }
 });

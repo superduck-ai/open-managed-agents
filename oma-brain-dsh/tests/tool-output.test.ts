@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect,test } from "bun:test";
 import { normalizeSandboxResult } from "../src/oma-sandbox/output.ts";
 import { toolText } from "../src/runtime/tools.ts";
 

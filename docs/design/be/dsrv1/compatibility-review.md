@@ -1,6 +1,8 @@
 # DSRv1 与当前 Brain、deepseek-harness 的兼容性验证
 
-核对日期：2026-11-03。结论：DSRv1 可以复用当前 Brain 的本地原生日志、异步复制、执行屏障和远程工具架构，但当前依赖不支持方案要求的回合中途恢复与挂起。应先完成这两项运行时能力的隔离验证，再冻结协议。仅替换 HTTP 路径不能实现第 7.7 节。
+本文保留实现前的依赖复核。后续已通过仓库内 Bun patch 和 DSR 执行器补齐同 turn continuation、挂起与执行标记；17 接口真实后端验收及范围见 [实验实现状态](implementation.md)。
+
+核对日期：2026-11-03。原始结论：DSRv1 可以复用当前 Brain 的本地原生日志、异步复制、执行屏障和远程工具架构，但当前依赖不支持方案要求的回合中途恢复与挂起。应先完成这两项运行时能力的隔离验证，再冻结协议。仅替换 HTTP 路径不能实现第 7.7 节。
 
 后续全部接口的调用位置、请求响应和扩展测试见 [逐接口评审](interface-review.md)。该报告覆盖后续第 12 版修订；本文保留第一轮恢复与审批顺序的证据。
 
@@ -82,7 +84,7 @@ Harness `packages/core/tools/src/batch.ts:157–159` 的顺序为先 `settlement
 | 审批 ID 算法 | 草案仅写 `sha256` 三元组与 base32 | 固定字段字节编码、域分隔、base32 大小写及填充；增加 TS/Go 共用样本 |
 | `updated_input` | 远程工具已有 effective 参数适配，原生委派工具仍使用原参数 | 恢复查询使用原始参数，取得首次 decision 后再应用修改；明确委派工具是否支持修改，未支持时不能静默忽略 |
 | `AskUserQuestion` | `user-questions/index.ts:48` 必须取得 externalResult；不是普通 allow 后本地执行 | 明确 builtin 特例及公开 custom 结果映射；审批允许与问答结果到达不可混淆 |
-| 本地 input completion | `ccrv2/session-output.ts:7–49` 保存 success/failed/recovery 与文本，中断也映射 success | 新记录保存精确的 finish result/reason，支持 cancelled/recovered；重启后重建相同请求，不从文案反推 |
+| 本地 input completion | `ccrv2/session-output.ts:7–49` 保存 success/failed/recovery 与文本，中断也映射 success | 新记录保存精确的 finish result/failure_code，支持 success/cancelled/failed；恢复属于执行过程；重启后重建相同请求，不从文案反推 |
 | 重投与结束顺序 | `ccrv2/session.ts:573` 直接 publish/checkpoint/ACK | 统一 processing → 日志/输出确认 → finish → processed，terminal 重试不重新执行 |
 | 注册响应 | 当前从 register 读取遥测配置，DSR 原草案遗漏 | 保留 `observability_enabled`、`trace_export`；本次已补入两份草案 |
 | 输入信封 | 当前使用 `oma_system_context`、`oma_refresh_tools`、`trace_context`，DSR 原字段表遗漏 | 保留服务端可信注入与缺省语义；本次已补入两份草案 |

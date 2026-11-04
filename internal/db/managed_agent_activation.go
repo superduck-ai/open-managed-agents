@@ -9,6 +9,8 @@ import (
 // ManagedAgentActivationTx exposes the resource-scoped SQL operations used by
 // the code-session service while it publishes and activates startup events.
 type ManagedAgentActivationTx struct {
+	dshMapper          DSHExecutionMapper
+	dshThreadMapper    SessionThreadMapper
 	codeSessionMapper  CodeSessionMapper
 	sessionMapper      SessionMapper
 	sessionEventMapper SessionEventMapper
@@ -22,6 +24,8 @@ func (d *DB) WithManagedAgentActivationTx(
 ) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		return fn(ManagedAgentActivationTx{
+			dshMapper:          NewDSHExecutionMapper(executor),
+			dshThreadMapper:    NewSessionThreadMapper(executor),
 			codeSessionMapper:  NewCodeSessionMapper(executor),
 			sessionMapper:      NewSessionMapper(executor),
 			sessionEventMapper: NewSessionEventMapper(executor),

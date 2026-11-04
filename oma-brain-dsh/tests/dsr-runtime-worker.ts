@@ -1,0 +1,22 @@
+import { Context } from "@deepseek-ai/cordis";
+import { OmaApi } from "../src/api.ts";
+import { dsrAssignment } from "../src/dsr/assignment.ts";
+import { DsrClient } from "../src/dsr/client.ts";
+import { DsrSession } from "../src/dsr/session.ts";
+import { createDsrTransport } from "../src/dsr/transport.ts";
+import type { Claim } from "../src/dsr/wire.ts";
+import { mountDsr } from "../src/dsr/worker.ts";
+import { omaRuntimeConfig } from "../src/oma-session.ts";
+
+const ctx = new Context();
+const api = new OmaApi(process.env.TEST_API_URL!);
+const clients = await mountDsr(ctx, api, process.env.TEST_DSR_ROOT!);
+const client = new DsrClient(createDsrTransport(api), JSON.parse(process.env.TEST_DSR_CLAIM!) as Claim);
+clients.set(client.claim.code_session_id, client);
+const assignment = dsrAssignment(api, client.claim, await client.register(), await client.context());
+api.assignments.set(assignment.session_id, assignment);
+const session = new DsrSession(ctx, client, omaRuntimeConfig(ctx, api, assignment, (thread, signal) => client.context(thread, signal)));
+await session.open();
+await session.receive({ id: "input_crash", kind: "user.message", lane: "task", content: [{ type: "text", text: "run both tools" }] });
+await session.close();
+await ctx.fiber.dispose();

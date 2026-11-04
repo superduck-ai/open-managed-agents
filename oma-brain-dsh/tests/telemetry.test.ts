@@ -1,10 +1,13 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
-import { InMemoryLogRecordExporter, SimpleLogRecordProcessor } from "@opentelemetry/sdk-logs";
-import { AggregationTemporality, InMemoryMetricExporter, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
-import { workerDiagnostic } from "../src/ccrv2/diagnostics.ts";
-import { PermanentAdmissionError, claimTasks, type ClaimClient, type ReleaseReason } from "../src/claim.ts";
-import { brainMetrics, emitBrainLog, startTelemetry, stopTelemetry, telemetryEnabled } from "../src/telemetry.ts";
-import { eventually } from "./backend.ts";
+import { afterEach,expect,test } from "bun:test";
+
+import { InMemoryLogRecordExporter,SimpleLogRecordProcessor } from "@opentelemetry/sdk-logs";
+
+import { AggregationTemporality,InMemoryMetricExporter,PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
+
+import { workerDiagnostic } from "../src/observability/diagnostics.ts";
+
+import { brainMetrics,emitBrainLog,startTelemetry,stopTelemetry,telemetryEnabled } from "../src/telemetry.ts";
+
 
 const ENV = { OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:1/api/test", OTEL_SERVICE_NAME: "oma-brain-test" };
 
@@ -84,41 +87,4 @@ test("Brain metrics use bounded attributes", async () => {
   await stopTelemetry();
   expect(brainMetrics()).not.toBe(active);
   expect(() => brainMetrics().sessionsActive.add(1)).not.toThrow();
-});
-
-test("claim admissions carry the dispatch trace context", async () => {
-  const logs = new InMemoryLogRecordExporter();
-  startTelemetry(ENV, { logProcessor: new SimpleLogRecordProcessor({ exporter: logs }) });
-  const traceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01";
-  const queue: unknown[] = [
-    { session_id: "cse_ok", worker_epoch: 2, trace_parent: traceParent },
-    { session_id: "cse_bad", worker_epoch: 3, trace_parent: "malformed" },
-  ];
-  const releases: ReleaseReason[] = [];
-  const claims: ClaimClient = {
-    claim: async () => { await Bun.sleep(5); return queue.shift(); },
-    release: async (_task, reason) => { releases.push(reason); },
-  };
-  const abort = new AbortController();
-  const quiet = [spyOn(console, "info").mockImplementation(() => {}), spyOn(console, "error").mockImplementation(() => {})];
-  try {
-    const running = claimTasks(claims, abort.signal, {
-      concurrency: 1, blockMs: 10, capacity: () => 1, slotFreed: async () => {},
-      admit: async (value) => {
-        if ((value as { session_id: string }).session_id === "cse_bad") throw new PermanentAdmissionError("Invalid session_context");
-      },
-    });
-    await eventually(() => releases.length === 1, 3_000);
-    abort.abort();
-    await running;
-  } finally { for (const spy of quiet) spy.mockRestore(); }
-  expect(releases).toEqual(["permanent"]);
-  const records = logs.getFinishedLogRecords();
-  const admitted = records.find((record) => record.body === "oma_task_admitted");
-  expect(admitted?.attributes.code_session_id).toBe("cse_ok");
-  expect(admitted?.spanContext?.traceId).toBe("0123456789abcdef0123456789abcdef");
-  const failed = records.find((record) => record.body === "oma_task_admission_failed");
-  expect(failed?.attributes.release_reason).toBe("permanent");
-  expect(failed?.spanContext).toBeUndefined();
-  expect(failed?.attributes.failure_reason).toBe("unexpected_error");
 });

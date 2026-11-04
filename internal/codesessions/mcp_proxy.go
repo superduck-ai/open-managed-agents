@@ -250,22 +250,25 @@ func (h *Handler) namedTargetIsTunnel(target *url.URL) bool {
 
 func sanitizedMCPProxyHeaders(source http.Header) http.Header {
 	headers := source.Clone()
-	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection", runtimeThreadHeader} {
+	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection", "DSR-Protocol", "DSR-Thread-ID", runtimeThreadHeader} {
 		headers.Del(name)
 	}
 	return headers
 }
 
+func runtimeMCPProtocol(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/v1/dsr/") || strings.HasPrefix(r.URL.Path, "/.well-known/oauth-protected-resource/v1/dsr/") {
+		return "dsr1"
+	}
+	return ""
+}
+
 func runtimeMCPResourceURL(r *http.Request, codeSessionID, serverName string) string {
-	return strings.TrimRight(httpapi.RequestBaseURL(r), "/") +
-		"/v2/ccr-sessions/" + url.PathEscape(codeSessionID) +
-		"/mcp/" + url.PathEscape(serverName)
+	return strings.TrimRight(httpapi.RequestBaseURL(r), "/") + runtimeMCPBasePath(codeSessionID, runtimeMCPProtocol(r)) + "/mcp/" + url.PathEscape(serverName)
 }
 
 func runtimeMCPMetadataURL(r *http.Request, codeSessionID, serverName string) string {
-	return strings.TrimRight(httpapi.RequestBaseURL(r), "/") +
-		"/.well-known/oauth-protected-resource/v2/ccr-sessions/" + url.PathEscape(codeSessionID) +
-		"/mcp/" + url.PathEscape(serverName)
+	return strings.TrimRight(httpapi.RequestBaseURL(r), "/") + "/.well-known/oauth-protected-resource" + runtimeMCPBasePath(codeSessionID, runtimeMCPProtocol(r)) + "/mcp/" + url.PathEscape(serverName)
 }
 
 type mcpGatewayResponseWriter struct {

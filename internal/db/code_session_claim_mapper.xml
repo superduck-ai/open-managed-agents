@@ -17,11 +17,41 @@
         WHERE cs.deleted_at IS NULL
           AND cs.status = 'active'
           AND cs.metadata #>> '{config,worker_transport}' = 'claim'
+          AND COALESCE(cs.metadata #>> '{config,worker_protocol}', 'ccrv2') = 'ccrv2'
           AND s.uuid IS NOT NULL
           AND (cs.worker_claim_expires_at IS NULL OR cs.worker_claim_expires_at &lt;= NOW())
           AND (cs.worker_lease_expires_at IS NULL
                OR cs.worker_lease_expires_at + #{leaseGraceMicros} * INTERVAL '1 microsecond' &lt; NOW())
           AND (cs.worker_claim_requested_at IS NOT NULL OR s.status IN ('running', 'rescheduling'))
+        ORDER BY COALESCE(cs.worker_claim_requested_at, cs.worker_lease_expires_at, cs.updated_at) ASC, cs.uuid ASC
+        LIMIT 1
+        FOR UPDATE OF cs SKIP LOCKED
+    </select>
+
+    <select id="LockNextDSHClaimable" result="optional" resultType="codeSessionClaimCandidateRow">
+        SELECT cs.uuid, cs.external_id, cs.organization_uuid, cs.workspace_uuid, cs.session_external_id,
+               cs.current_worker_epoch, cs.worker_claim_attempts, cs.worker_claim_requested_at,
+               CASE WHEN cs.worker_claim_requested_at IS NOT NULL THEN cs.worker_claim_trace_parent END AS worker_claim_trace_parent
+        FROM code_sessions cs
+        LEFT JOIN sessions s
+          ON s.uuid = cs.session_uuid
+         AND s.organization_uuid = cs.organization_uuid
+         AND s.workspace_uuid = cs.workspace_uuid
+         AND s.deleted_at IS NULL
+        WHERE cs.deleted_at IS NULL
+          AND cs.status = 'active'
+          AND cs.metadata #>> '{config,worker_transport}' = 'claim'
+          AND cs.metadata #>> '{config,worker_protocol}' = 'dsr1'
+          AND s.uuid IS NOT NULL
+          AND (cs.worker_claim_expires_at IS NULL OR cs.worker_claim_expires_at &lt;= NOW())
+          AND (cs.worker_lease_expires_at IS NULL
+               OR cs.worker_lease_expires_at + #{leaseGraceMicros} * INTERVAL '1 microsecond' &lt; NOW())
+          AND (cs.worker_claim_requested_at IS NOT NULL OR EXISTS (
+              SELECT 1 FROM dsh_input_executions t WHERE t.organization_uuid = cs.organization_uuid AND t.workspace_uuid = cs.workspace_uuid AND t.code_session_uuid = cs.uuid
+                AND ((t.status = 'accepted' AND s.status IN ('running','rescheduling') AND s.budget_reached_at IS NULL) OR
+                  (t.status = 'running' AND NOT EXISTS (SELECT 1 FROM dsh_permission_requests p
+                    WHERE p.organization_uuid = cs.organization_uuid AND p.workspace_uuid = cs.workspace_uuid AND p.code_session_uuid = cs.uuid AND p.input_id = t.input_id AND p.state = 'pending')))
+          ))
         ORDER BY COALESCE(cs.worker_claim_requested_at, cs.worker_lease_expires_at, cs.updated_at) ASC, cs.uuid ASC
         LIMIT 1
         FOR UPDATE OF cs SKIP LOCKED

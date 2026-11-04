@@ -93,3 +93,48 @@ func (h *Handler) appendAndBroadcastInternal(r *http.Request, sessionID string, 
 	h.codeSessions.PurgeWorkerEvents(r.Context(), changes.RetiredCodeSessionIDs)
 	h.publishSessionEvents(r.Context(), changes.Events)
 }
+
+func (h *Handler) PublishCommittedCodeSessionEvents(ctx context.Context, code db.CodeSession, changes db.SessionEventChanges) error {
+	events, err := h.eventPayloads.RestorePublicPage(ctx, changes.Events)
+	if err != nil {
+		return err
+	}
+	h.publishSessionEvents(ctx, events)
+	h.enqueueWebhooksForSessionEvents(ctx, code.WorkspaceUUID, code.SessionExternalID, events)
+	return nil
+}
+
+func (h *Handler) PublishDSHPreviews(ctx context.Context, scope db.DSHScope, payloads []json.RawMessage) error {
+	for _, raw := range payloads {
+		var schema struct {
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			ThreadID string `json:"session_thread_id"`
+			EventID  string `json:"event_id"`
+			Event    struct {
+				ID string `json:"id"`
+			} `json:"event"`
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			return err
+		}
+		thread := schema.ThreadID
+		if thread == "" {
+			value, found, err := h.db.GetPrimarySessionThreadExternalID(ctx, scope.WorkspaceUUID, scope.SessionID)
+			if err != nil {
+				return err
+			}
+			if !found {
+				return db.ErrNotFound
+			}
+			thread = value
+		}
+		eventID := schema.EventID
+		if schema.Type == "event_start" {
+			eventID = schema.Event.ID
+		}
+		event := db.SessionEvent{ExternalID: eventID, EventType: schema.Type, Payload: raw, WorkspaceUUID: scope.WorkspaceUUID, SessionExternalID: scope.SessionID, ThreadExternalID: &thread, ProcessedAt: time.Now().UTC()}
+		h.publishSessionEvents(ctx, []db.SessionEvent{event})
+	}
+	return nil
+}

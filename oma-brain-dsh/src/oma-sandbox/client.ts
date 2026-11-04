@@ -1,12 +1,12 @@
-import { isConnectFailure, notForwardedDetail } from "../ccrv2/tool-transport.ts";
+import { isConnectFailure, notForwardedDetail } from "../runtime/tool-transport.ts";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { OmaApi } from "../api.ts";
 import { object, type Payload } from "../json.ts";
 import { normalizeSandboxResult } from "./output.ts";
 import { sandboxEndpoint } from "./config.ts";
 import { ToolNotForwardedError, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
-import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
-import { abortable } from "../ccrv2/retry.ts";
+import { workerDiagnostic } from "../observability/diagnostics.ts";
+import { abortable } from "../runtime/abortable.ts";
 
 /** Use the same MCP SDK as DSH, with initialization gated by the approval checkpoint. */
 export class SandboxMcp implements SandboxExecutor {

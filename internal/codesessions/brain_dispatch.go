@@ -53,6 +53,7 @@ type BrainClaim struct {
 type codeSessionTransportMetadata struct {
 	Config struct {
 		WorkerTransport string `json:"worker_transport"`
+		WorkerProtocol  string `json:"worker_protocol"`
 	} `json:"config"`
 }
 
@@ -101,13 +102,17 @@ func (s *Service) notifyBrainWork(ctx context.Context, codeSessionID string) {
 }
 
 func (s *Service) ClaimBrainWorker(ctx context.Context, workerID string, block time.Duration) (BrainClaim, bool, error) {
+	return s.claimBrainWorkerForProtocol(ctx, workerID, block, "ccrv2")
+}
+
+func (s *Service) claimBrainWorkerForProtocol(ctx context.Context, workerID string, block time.Duration, protocol string) (BrainClaim, bool, error) {
 	startedAt := time.Now()
-	claim, found, err := s.waitForBrainClaim(ctx, workerID, block)
+	claim, found, err := s.waitForBrainClaim(ctx, workerID, block, protocol)
 	observeBrainClaimPoll(ctx, startedAt, found, err)
 	return claim, found, err
 }
 
-func (s *Service) waitForBrainClaim(ctx context.Context, workerID string, block time.Duration) (BrainClaim, bool, error) {
+func (s *Service) waitForBrainClaim(ctx context.Context, workerID string, block time.Duration, protocol string) (BrainClaim, bool, error) {
 	deadline := time.Now().Add(min(block, brainClaimMaxBlock))
 	waitCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -120,7 +125,7 @@ func (s *Service) waitForBrainClaim(ctx context.Context, workerID string, block 
 		signals = subscribed
 	}
 	for {
-		claim, found, err := s.claimNextBrainWorker(ctx, workerID)
+		claim, found, err := s.claimNextBrainWorker(ctx, workerID, protocol)
 		if err != nil || found {
 			return claim, found, err
 		}
@@ -140,7 +145,7 @@ func (s *Service) waitForBrainClaim(ctx context.Context, workerID string, block 
 	}
 }
 
-func (s *Service) claimNextBrainWorker(ctx context.Context, workerID string) (BrainClaim, bool, error) {
+func (s *Service) claimNextBrainWorker(ctx context.Context, workerID, protocol string) (BrainClaim, bool, error) {
 	for range brainClaimExhaustedLimit {
 		modelToken, err := newOAuthCompatibleToken()
 		if err != nil {
@@ -148,6 +153,7 @@ func (s *Service) claimNextBrainWorker(ctx context.Context, workerID string) (Br
 		}
 		claim, found, err := s.db.ClaimNextCodeSession(ctx, db.ClaimCodeSessionInput{
 			WorkerID:             workerID,
+			WorkerProtocol:       protocol,
 			OAuthAccessTokenHash: auth.HashAPIKey(modelToken),
 			ClaimTTL:             brainClaimTTL,
 			LeaseGrace:           brainWorkerLeaseGrace,
@@ -169,7 +175,11 @@ func (s *Service) claimNextBrainWorker(ctx context.Context, workerID string) (Br
 		if err != nil {
 			return BrainClaim{}, false, err
 		}
-		ingressToken, err := s.issueSessionIngressToken(credentialContext, claim.WorkerEpoch)
+		identity := sessionCredentialIdentity(credentialContext, claim.WorkerEpoch)
+		if protocol == "dsr1" {
+			identity.Protocol = protocol
+		}
+		ingressToken, err := s.credentials.Issue(identity)
 		if err != nil {
 			return BrainClaim{}, false, err
 		}

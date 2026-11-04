@@ -38,9 +38,10 @@ func TestChatBrain(t *testing.T) {
 	stop := sync.OnceFunc(stopRunner)
 	defer stop()
 	e.request(t, "POST", "/v1/agents/"+e.agent.ExternalID, e.apiKey, map[string]any{
-		"version": e.agent.CurrentVersion,
-		"model":   map[string]string{"id": "claude-sonnet-4-6"},
-		"tools":   []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"enabled": true, "permission_policy": map[string]string{"type": "always_allow"}}}},
+		"multiagent": map[string]any{"type": "multiagent_20261001", "subagents": map[string]any{"type": "enabled", "inline_agents": map[string]string{"type": "enabled"}}},
+		"version":    e.agent.CurrentVersion,
+		"model":      map[string]string{"id": "claude-sonnet-4-6"},
+		"tools":      []any{map[string]any{"type": "agent_toolset_20260401", "default_config": map[string]any{"enabled": true, "permission_policy": map[string]string{"type": "always_allow"}}}},
 	}, 200)
 	f := createPublicChat(t, e)
 	previewSeen := make(chan struct{}, 4)
@@ -206,7 +207,14 @@ func startBrainNode(t *testing.T, e *liveEnv, cfg config.Config, name string) *b
 	command := exec.Command(os.Getenv("OMA_BRAIN_BINARY"))
 	claimToken, err := os.ReadFile(cfg.CodeSession.BrainClaimTokenFile)
 	requireOK(t, err)
-	command.Env = append(os.Environ(), "OMA_API_URL="+e.url, "OMA_BRAIN_CLAIM_TOKEN="+string(bytes.TrimSpace(claimToken)))
+	protocol := cfg.CodeSession.BrainWorkerProtocol
+	if protocol == "" {
+		protocol = config.DefaultBrainWorkerProtocol
+	}
+	command.Env = append(os.Environ(), "OMA_API_URL="+e.url, "OMA_BRAIN_CLAIM_TOKEN="+string(bytes.TrimSpace(claimToken)), "OMA_BRAIN_PROTOCOL="+protocol)
+	if protocol == "dsr1" {
+		command.Env = append(command.Env, "DSH_HOME="+filepath.Join(filepath.Dir(log.Name()), "dsr-home-"+name), "OMA_BRAIN_TRANSCRIPT_DIR="+filepath.Join(filepath.Dir(log.Name()), "dsr-transcripts-"+name))
+	}
 	command.Stdout, command.Stderr = log, log
 	requireOK(t, command.Start())
 	node := &brainNode{command: command, done: make(chan error, 1)}
@@ -267,6 +275,11 @@ func brainToolModel(t *testing.T) *httptest.Server {
 
 func brainToolCallModel(t *testing.T, toolName, arguments string, checkResult func(json.RawMessage), expectedTools ...[]string) *httptest.Server {
 	t.Helper()
+	return brainToolCallModelWithID(t, "call_brain_"+uuid.NewString(), toolName, arguments, checkResult, expectedTools...)
+}
+
+func brainToolCallModelWithID(t *testing.T, toolCallID, toolName, arguments string, checkResult func(json.RawMessage), expectedTools ...[]string) *httptest.Server {
+	t.Helper()
 	toolModelCalls.Store(0)
 	messagePrefix := "msg_brain_" + uuid.NewString()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -312,7 +325,7 @@ func brainToolCallModel(t *testing.T, toolName, arguments string, checkResult fu
 				t.Errorf("unexpected Brain model tools: %v", names)
 			}
 
-			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": "call_brain_write", "name": toolName, "input": map[string]any{}}})
+			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": toolCallID, "name": toolName, "input": map[string]any{}}})
 			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": arguments}})
 			stop = "tool_use"
 		} else {

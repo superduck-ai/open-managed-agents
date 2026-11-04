@@ -2,7 +2,7 @@ import { RetryableInputError } from "./contracts.ts";
 import type { Context, Fiber } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import { freezeMessage, MessageId, createUserMessage, type ContentBlock, type ToolCallBlock } from "@deepseek-ai/dsh-llm";
-import { SessionId } from "@deepseek-ai/dsh-session";
+import { interruptedTurnClosers, SessionId } from "@deepseek-ai/dsh-session";
 import { ModelRetry } from "./model-retry.ts";
 import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
@@ -99,7 +99,7 @@ export class SessionRuntime {
     scope.on("tools/execute", async (exec, next) => {
       if (exec.agent) {
         await this.ctx.sessions.flush(exec.agent.session);
-        await this.ctx.get("ccrReplication")?.flush(exec.agent.session.id);
+        await (this.ctx.get("sessionReplication") ?? this.ctx.get("ccrReplication"))?.flush(exec.agent.session.id);
       }
       exec.signal.throwIfAborted();
       const dispatch = () => traceHooks.runTool(this.config.id, exec.callId, next);
@@ -158,12 +158,13 @@ export class SessionRuntime {
 
   async open(): Promise<void> {
     const options = {
+      preserveOpenTurns: this.config.preserveOpenTurns,
       agentOptions: { provider: this.config.provider, model: this.config.model },
       setup: (scope: Context) => this.install(scope),
       parentAgent: this.parent?.agent,
       signal: this.abort.signal,
     };
-    await this.ctx.get("ccrReplication")?.ensure(this.config.id);
+    await (this.ctx.get("sessionReplication") ?? this.ctx.get("ccrReplication"))?.ensure(this.config.id);
     this.handle = (await this.ctx.sessionPersistence.stat(SessionId(this.config.id)))
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(this.config.id), ...options })
       : await this.ctx.agents.create({
@@ -224,7 +225,12 @@ export class SessionRuntime {
       const message = hooks.messageId === undefined
         ? createUserMessage({ source: { kind: "user" }, content })
         : freezeMessage({ id: MessageId(hooks.messageId), role: "user", source: { kind: "user" }, content });
-      this.agent.followup(message);
+      if (hooks.continuation && this.config.cancelRestoredTurn?.()) this.cancelOpenTurn();
+      else if (hooks.continuation) {
+        const agent = this.agent as typeof this.agent & { resumeContinuation?: () => void };
+        if (!agent.resumeContinuation) throw new Error("DSR requires the patched native continuation API");
+        agent.resumeContinuation();
+      } else this.agent.followup(message);
       do { await this.agent.whenIdle(); } while (await this.hooks.waitForChildren?.());
       await this.flushLog();
       await hooks.afterRun(this.turnCompleted);
@@ -235,6 +241,16 @@ export class SessionRuntime {
       this.busy = false;
       this.lastIdle = Date.now();
       this.finishing.resolve();
+    }
+  }
+
+  cancelOpenTurn(): void {
+    for (const event of interruptedTurnClosers(this.agent.session.snapshotEvents())) {
+      switch (event.type) {
+        case "tool/result": this.agent.session.append(event.type, event.data, { surfaceOp: event.surfaceOp ?? "append", ...(event.sourceEventSeqs ? { sourceEventSeqs: event.sourceEventSeqs } : {}) }); break;
+        case "step/end": this.agent.session.append(event.type, event.data); break;
+        case "turn/end": this.agent.session.append(event.type, { turn: event.data.turn, reason: { kind: "aborted", reason: { kind: "user" } } }); break;
+      }
     }
   }
 

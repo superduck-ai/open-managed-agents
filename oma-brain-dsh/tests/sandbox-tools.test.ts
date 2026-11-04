@@ -1,10 +1,10 @@
-import { expect, test } from "bun:test";
-import { Context, type Fiber } from "@deepseek-ai/cordis";
-import { SessionId } from "@deepseek-ai/dsh-session";
+import { Context,type Fiber } from "@deepseek-ai/cordis";
 import { ToolCallId } from "@deepseek-ai/dsh-llm";
+import { SessionId } from "@deepseek-ai/dsh-session";
+import { expect,test } from "bun:test";
 import { mountKernel } from "../src/kernel.ts";
+import type { SandboxExecutor,ToolExecutionBridge } from "../src/runtime/contracts.ts";
 import * as SandboxTools from "../src/sandbox-tools/index.ts";
-import type { SandboxExecutor, ToolExecutionBridge } from "../src/runtime/contracts.ts";
 
 test("sandbox tools are built in, isolated per agent and removed with their plugin", async () => {
   const ctx = new Context();

@@ -11,11 +11,9 @@ const (
 
 var deliveryLanes = [...]deliveryLane{taskLane, replyLane}
 
-// laneForEvent only bypasses task ordering for messages that can unblock an
-// executing command. Initialization and unknown requests retain task ordering.
 func laneForEvent(envelope EnvelopeV1) deliveryLane {
 	switch envelope.EventType {
-	case "control_response":
+	case "control_response", "user.interrupt", "permission.resolved", "session.set_model":
 		return replyLane
 	case "control_request":
 		if envelope.EventSubtype == "interrupt" {

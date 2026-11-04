@@ -10,6 +10,7 @@ import (
 )
 
 type ClaimCodeSessionInput struct {
+	WorkerProtocol       string
 	WorkerID             string
 	OAuthAccessTokenHash string
 	ClaimTTL             time.Duration
@@ -36,7 +37,14 @@ func (d *DB) ClaimNextCodeSession(ctx context.Context, input ClaimCodeSessionInp
 	var found bool
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		mapper := NewCodeSessionClaimMapper(executor)
-		row, ok, err := mapper.LockNextClaimable(ctx, input.LeaseGrace.Microseconds())
+		var row codeSessionClaimCandidateRow
+		var ok bool
+		var err error
+		if input.WorkerProtocol == "dsr1" {
+			row, ok, err = mapper.LockNextDSHClaimable(ctx, input.LeaseGrace.Microseconds())
+		} else {
+			row, ok, err = mapper.LockNextClaimable(ctx, input.LeaseGrace.Microseconds())
+		}
 		if err != nil || !ok {
 			return err
 		}

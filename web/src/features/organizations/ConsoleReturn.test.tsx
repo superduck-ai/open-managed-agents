@@ -8,8 +8,8 @@ import {
   RouterProvider,
 } from '@tanstack/react-router';
 import { AuthProvider } from '../../shared/auth/AuthProvider';
-import { useAuth } from '../../shared/auth/context';
-import { useOrganizations } from '../../shared/organizations/context';
+import { AuthContext, useAuth } from '../../shared/auth/context';
+import { OrganizationContext, useOrganizations } from '../../shared/organizations/context';
 import { WorkspaceProvider } from '../../shared/workspaces/WorkspaceProvider';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { getConsoleRequestContext, setConsoleRequestContext } from '../../shared/api/client';
@@ -31,13 +31,14 @@ afterEach(() => {
 
 function ScopeProbe() {
   const organizations = useOrganizations()!;
-  const { activeWorkspaceId } = useWorkspace();
+  const { activeWorkspaceId, workspaces } = useWorkspace();
   const { account } = useAuth();
   return (
     <>
       <output data-testid="scope">
         {account?.memberships?.[0]?.organization?.name}:{activeWorkspaceId}
       </output>
+      <output data-testid="workspaces">{workspaces.map((workspace) => workspace.name).join(',')}</output>
       <output data-testid="state">
         {organizations.switching ? 'loading' : organizations.error ? 'error' : 'ready'}
       </output>
@@ -63,6 +64,7 @@ for (const { fail, back, initialOrganization } of [
       window.localStorage.setItem('oma.workspace.operator.org', expectedWorkspace);
     }
     let offline = false;
+    let returning = false;
     const fetchMock = mock(async (input: RequestInfo | URL) => {
       const path = String(input);
       if (path === '/api/bootstrap') {
@@ -72,7 +74,12 @@ for (const { fail, back, initialOrganization } of [
             uuid: 'operator',
             email_address: 'operator@example.com',
             memberships: hasOrganization
-              ? [{ organization: { uuid: 'org', name: organizationName }, role: 'admin' }]
+              ? [
+                  ...(initialOrganization
+                    ? [{ organization: { uuid: 'first', name: '第一个组织' }, role: 'admin' }]
+                    : []),
+                  { organization: { uuid: 'org', name: organizationName }, role: 'admin' },
+                ]
               : [],
           },
           csrf_token: 'csrf',
@@ -81,7 +88,12 @@ for (const { fail, back, initialOrganization } of [
       if (path === '/api/invitations') return Response.json({ data: [] });
       return Response.json([
         { id: 'ws', type: 'workspace', name: 'Default', is_default: true, effective_role: 'workspace_admin' },
-        { id: 'ws-preferred', type: 'workspace', name: '自选工作区', effective_role: 'workspace_admin' },
+        {
+          id: 'ws-preferred',
+          type: 'workspace',
+          name: returning ? '更新工作区' : '自选工作区',
+          effective_role: 'workspace_admin',
+        },
       ]);
     });
     globalThis.fetch = fetchMock as typeof fetch;
@@ -122,6 +134,10 @@ for (const { fail, back, initialOrganization } of [
     }
     hasOrganization = true;
     organizationName = '我的组织';
+    const workspaceCallsBefore = fetchMock.mock.calls.filter(
+      ([input]) => String(input) === '/api/console/organizations/org/workspaces',
+    ).length;
+    returning = true;
     offline = fail;
     await act(async () => {
       if (back) router.history.back();
@@ -139,6 +155,10 @@ for (const { fail, back, initialOrganization } of [
       workspaceId: expectedWorkspace,
       csrfToken: 'csrf',
     });
+    expect(screen.getByTestId('workspaces').textContent).toContain('更新工作区');
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === '/api/console/organizations/org/workspaces'),
+    ).toHaveLength(workspaceCallsBefore + 1);
     const callCount = fetchMock.mock.calls.length;
     await act(async () => router.navigate({ to: '/' }));
     expect(fetchMock.mock.calls.length).toBe(callCount);
@@ -146,3 +166,60 @@ for (const { fail, back, initialOrganization } of [
     queries.clear();
   });
 }
+
+test('进入平台组织工作台不重复进入或触发可能拒绝的重试', async () => {
+  resetTestDom('https://oma.duck.ai/platform-admin');
+  Object.assign(globalThis, { scrollTo: () => {} });
+  const retry = mock(async () => {
+    throw new Error('不应调用平台重试');
+  });
+  globalThis.fetch = mock(async () => Response.json({ data: [] })) as typeof fetch;
+  const root = createRootRoute({ component: InvitationEntryGate });
+  const admin = createRoute({
+    getParentRoute: () => root,
+    path: '/platform-admin',
+    component: () => <h1>平台管理</h1>,
+  });
+  const consoleRoute = createRoute({
+    getParentRoute: () => root,
+    path: '/workbench',
+    component: () => <h1>目标工作台</h1>,
+  });
+  const router = createRouter({
+    routeTree: root.addChildren([admin, consoleRoute]),
+    history: createMemoryHistory({ initialEntries: ['/platform-admin'] }),
+  });
+  const queries = new QueryClient();
+  render(
+    <QueryClientProvider client={queries}>
+      <AuthContext.Provider
+        value={{
+          status: 'authenticated',
+          account: { uuid: 'operator', email_address: 'operator@example.com' },
+          refresh: async () => undefined,
+          logout: async () => {},
+        }}
+      >
+        <OrganizationContext.Provider
+          value={{
+            platformScope: { accountUuid: 'operator', targetOrganizationUuid: 'target' },
+            orgUuid: 'target',
+            memberships: [],
+            switching: false,
+            error: null,
+            switchOrganization: retry,
+            retry,
+          }}
+        >
+          <RouterProvider router={router} />
+        </OrganizationContext.Provider>
+      </AuthContext.Provider>
+    </QueryClientProvider>,
+  );
+  await screen.findByText('平台管理');
+  await act(async () => router.navigate({ to: '/workbench' }));
+  await screen.findByText('目标工作台');
+  expect(retry).not.toHaveBeenCalled();
+  cleanup();
+  queries.clear();
+});

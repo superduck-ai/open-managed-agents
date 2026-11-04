@@ -4,6 +4,7 @@ import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../shared/auth/context';
 import { useOrganizations } from '../../shared/organizations/context';
+import { readPreference } from '../../shared/organizations/scope';
 import { returnToFromSearch } from '../../shared/auth/redirects';
 import { Button } from '../../shared/ui/button';
 import { invitationReturnTo, listInvitations } from './api';
@@ -17,8 +18,9 @@ export function InvitationEntryGate() {
   useEffect(() => {
     const returning = wasInPlatformAdmin.current && !inPlatformAdmin;
     wasInPlatformAdmin.current = inPlatformAdmin;
-    if (returning && status === 'authenticated') void organizations?.retry();
-  }, [inPlatformAdmin, organizations, status]);
+    if (returning && status === 'authenticated' && account && !organizations?.platformScope)
+      void organizations?.switchOrganization(readPreference(account.uuid));
+  }, [account, inPlatformAdmin, organizations, status]);
   if (inPlatformAdmin) return <Outlet />;
   if (status !== 'authenticated' || !account) return <Outlet />;
   return (

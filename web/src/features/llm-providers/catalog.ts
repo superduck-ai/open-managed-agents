@@ -66,7 +66,7 @@ const PROVIDER_ERROR_MESSAGES: Record<string, { id: string; defaultMessage: stri
   },
   llm_provider_permission_denied: {
     id: 'llmModels.errorPermissionDenied',
-    defaultMessage: 'Administrator access is required to manage LLM providers.',
+    defaultMessage: 'You do not have permission to manage LLM providers.',
   },
 };
 

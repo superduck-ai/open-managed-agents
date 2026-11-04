@@ -19,7 +19,6 @@ const (
 	llmProviderCodeSlugConflict         = "llm_provider_slug_conflict"
 	llmProviderCodeSlugImmutable        = "llm_provider_slug_immutable"
 	llmProviderCodeSlugInvalid          = "llm_provider_slug_invalid"
-	llmProviderCodePermissionDenied     = "llm_provider_permission_denied"
 	llmProviderCodeUpstreamUnavailable  = "upstream_models_unavailable"
 )
 
@@ -44,12 +43,4 @@ func (e *llmProviderInputError) Error() string {
 
 func writeLLMProviderError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, llmProviderErrorResponse{Error: "invalid_request", Code: code, Message: message})
-}
-
-func writeLLMProviderPermissionDenied(w http.ResponseWriter) {
-	writeJSON(w, http.StatusForbidden, llmProviderErrorResponse{
-		Error:   "permission_denied",
-		Code:    llmProviderCodePermissionDenied,
-		Message: "Administrator access is required to manage LLM providers",
-	})
 }

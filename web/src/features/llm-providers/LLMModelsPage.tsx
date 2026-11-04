@@ -396,7 +396,7 @@ function CatalogBody({
         title={msg('llmModels.accessDeniedTitle', 'Access denied')}
         description={msg(
           'llmModels.accessDeniedDescription',
-          'You do not have permission to view models in this workspace. Workspace members can view the catalog read-only, and only organization administrators can manage providers.',
+          'You do not have permission to view models in this workspace.',
         )}
       />
     );

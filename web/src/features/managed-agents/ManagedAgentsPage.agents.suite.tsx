@@ -49,7 +49,7 @@ export function registerManagedAgentsAgentsTests() {
     expect(within(emptyState).queryByRole('alert')).toBeNull();
   });
 
-  test('does not send non-administrators from agent creation to model configuration', async () => {
+  test('guides workspace members from agent creation to model configuration', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agents');
     mockAgentsApi([], { modelsNotConfigured: true });
     render(
@@ -65,8 +65,9 @@ export function registerManagedAgentsAgentsTests() {
     const emptyState = await within(screen.getByRole('main', { name: 'Create agent' })).findByTestId(
       'llm-provider-required',
     );
-    expect(emptyState.textContent).toContain('Contact your organization administrator to configure a model.');
-    expect(within(emptyState).queryByRole('button', { name: 'Configure models' })).toBeNull();
+    expect(emptyState.textContent).toContain('Configure a model to get started.');
+    expect(within(emptyState).getByRole('button', { name: 'Configure models' })).toBeTruthy();
+    expect(within(emptyState).queryByRole('alert')).toBeNull();
   });
 
   test('does not mark the create dialog busy after model configuration loading fails', async () => {
@@ -2746,6 +2747,10 @@ function managedAgentsAuth(role: string): AuthContextValue {
     account: {
       uuid: 'acct_managed_agents_test',
       email_address: 'managed-agents-test@example.com',
+      permissions:
+        role === 'admin'
+          ? ['organization:manage', 'members:manage', 'workspace:api:resource_manage']
+          : ['workspace:api:resource_manage'],
       memberships: [{ role, organization: { uuid: 'org_test' } }],
     },
     status: 'authenticated',

@@ -487,9 +487,7 @@ describe('LLM models page', () => {
     renderPage('zh-CN', 'user');
 
     expect(await screen.findByText('无权限访问')).toBeTruthy();
-    expect(
-      screen.getByText('你没有权限查看此工作区的模型。工作区成员可以只读查看目录，只有组织管理员可以管理供应商。'),
-    ).toBeTruthy();
+    expect(screen.getByText('你没有权限查看此工作区的模型。如需访问，请联系组织管理员。')).toBeTruthy();
     expect(screen.queryByText('请求失败，请重试。')).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('button', { name: '添加 Provider' })).toBeNull();
@@ -510,7 +508,7 @@ describe('LLM models page', () => {
     expect(await screen.findByText('Access denied')).toBeTruthy();
     expect(
       screen.getByText(
-        'You do not have permission to view models in this workspace. Workspace members can view the catalog read-only, and only organization administrators can manage providers.',
+        'You do not have permission to view models in this workspace. Ask an organization administrator if you need access.',
       ),
     ).toBeTruthy();
     expect(screen.queryByText('Request failed. Please try again.')).toBeNull();
@@ -532,26 +530,31 @@ describe('LLM models page', () => {
     expect(screen.queryByText('Access denied')).toBeNull();
   });
 
-  test('用户可以读取模型目录但不能新增供应商', async () => {
+  test('普通用户可以在工作区新增供应商', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     const api = mockProvidersApi();
     renderPage('en', 'user');
     await screen.findByText('No providers yet');
-    expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
-    expect(api.requests.length).toBeGreaterThan(0);
-    expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Add provider' })).toBeTruthy();
+    await createProvider('MemberGateway', 'https://user.example.test', 'user-key', ['user-model']);
+    const created = api.requests.find((request) => request.method === 'POST');
+    expect(created?.url).toContain('/workspaces/default/llm_providers');
+    expect(created?.body?.models).toMatchObject([{ id: 'user-model' }]);
+    expect(
+      api.requests.some((request) => request.method === 'GET' && request.url.endsWith('/llm_provider_presets')),
+    ).toBe(true);
   });
 
-  test('用户可筛选全部模型且刷新不会触发同步', async () => {
+  test('工作区成员可筛选全部模型并刷新同步供应商', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
-    const api = mockProvidersApi([], {
+    const api = mockProvidersApi(['model-three'], {
       initialProviders: [
         {
           api_backend: 'messages',
           type: 'llm_provider',
-          id: 'provider_readonly',
-          slug: 'readonly',
-          name: 'Read gateway',
+          id: 'provider_member',
+          slug: 'member',
+          name: 'Member gateway',
           base_url: 'https://llm.example.com',
           has_api_key: true,
           api_key_last4: '1234',
@@ -562,19 +565,21 @@ describe('LLM models page', () => {
       ],
     });
     renderPage('en', 'user');
-    fireEvent.click(await screen.findByRole('button', { name: 'Read gateway models' }));
-    await screen.findByText('readonly/model-one');
-    expect(screen.getByText('readonly/model-two')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Read gateway' }));
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: 'Member gateway models' }));
+    await screen.findByText('member/model-one');
+    expect(screen.getByText('member/model-two')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Member gateway' }));
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add provider' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Search models'), { target: { value: 'new-model' } });
-    expect(screen.queryByRole('button', { name: /Add new-model/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Add new-model/ })).toBeTruthy();
     const reads = api.requests.length;
     fireEvent.click(screen.getByRole('button', { name: 'Refresh model list' }));
     await waitFor(() => expect(api.requests.length).toBeGreaterThan(reads));
-    expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
+    expect(api.requests.some((request) => request.method === 'POST' && request.url.endsWith('/models/sync'))).toBe(
+      true,
+    );
   });
 
   test('creates and edits a Chat Completions provider and discovers using its backend', async () => {
@@ -1103,7 +1108,7 @@ for (const role of ['admin', 'user'] as const) {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(catalogAttempts).toBe(2);
     expect(methods.every((method) => method === 'GET')).toBe(true);
-    if (role === 'user') expect(screen.queryByRole('button', { name: 'Add provider', exact: true })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add provider', exact: true })).toBeTruthy();
   });
 }
 
@@ -1180,7 +1185,10 @@ function renderPage(locale: Locale = 'en', role = 'admin', scope: 'workspace' | 
       uuid: 'acct_test',
       email_address: 'test@example.com',
       effectiveOrganizationUuid: 'org_test',
-      permissions: role === 'admin' ? ['organization:manage', 'members:manage'] : [],
+      permissions:
+        role === 'admin'
+          ? ['organization:manage', 'members:manage', 'workspace:api:resource_manage']
+          : ['workspace:api:resource_manage'],
       memberships: [{ role, organization: { uuid: 'org_test' } }],
     },
     status: 'authenticated',

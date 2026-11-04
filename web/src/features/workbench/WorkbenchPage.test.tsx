@@ -268,14 +268,15 @@ describe('WorkbenchPage', () => {
     expect(within(emptyState).queryByRole('alert')).toBeNull();
   });
 
-  test('tells non-administrators to contact an administrator when no provider exists', async () => {
+  test('guides workspace members to LLM configuration when no provider exists', async () => {
     resetTestDom('https://oma.duck.ai/workbench');
     mockWorkbenchApi({ modelsNotConfigured: true });
     renderWorkbench({ auth: authContextValue(defaultAuthAccount('user')) });
 
     const emptyState = await screen.findByTestId('llm-provider-required');
-    expect(emptyState.textContent).toContain('Contact your organization administrator to configure a model.');
-    expect(within(emptyState).queryByRole('button', { name: 'Configure models' })).toBeNull();
+    expect(emptyState.textContent).toContain('Configure a model to get started.');
+    expect(within(emptyState).getByRole('button', { name: 'Configure models' })).toBeTruthy();
+    expect(within(emptyState).queryByRole('alert')).toBeNull();
   });
 
   test('uses the first prompt message as the visible title for unnamed non-empty prompts', async () => {
@@ -3047,7 +3048,10 @@ function defaultAuthAccount(role = 'admin') {
     full_name: 'Local Admin',
     display_name: 'Local Admin',
     effectiveOrganizationUuid: 'org_test',
-    permissions: role === 'admin' ? ['organization:manage', 'members:manage'] : [],
+    permissions:
+      role === 'admin'
+        ? ['organization:manage', 'members:manage', 'workspace:api:resource_manage']
+        : ['workspace:api:resource_manage'],
     memberships: [{ role, organization: { uuid: 'org_test', name: 'Claude Platform' } }],
   };
 }

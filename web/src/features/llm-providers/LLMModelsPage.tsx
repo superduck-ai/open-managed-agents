@@ -6,7 +6,10 @@ import { AlertCircle, Bot, Plus } from 'lucide-react';
 import type { ApiError } from '../../shared/api/client';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
-import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
+import {
+  canManageOrganizationLLMProviders,
+  canManageWorkspaceLLMProviders,
+} from '../../shared/permissions/llm-providers';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
 import { AccessDenied } from '../../shared/ui/access-denied';
@@ -55,7 +58,10 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
   const { msg } = useI18n();
   const queryClient = useQueryClient();
   const { orgUuid, activeWorkspaceId, selectWorkspace } = useWorkspace();
-  const canManage = canManageLLMProviders(account, orgUuid);
+  const canManage =
+    scope === 'organization'
+      ? canManageOrganizationLLMProviders(account, orgUuid)
+      : canManageWorkspaceLLMProviders(account);
   const workspaceId = routeWorkspaceId ?? activeWorkspaceId;
   const [editing, setEditing] = useState<LLMProvider | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -396,7 +402,7 @@ function CatalogBody({
         title={msg('llmModels.accessDeniedTitle', 'Access denied')}
         description={msg(
           'llmModels.accessDeniedDescription',
-          'You do not have permission to view models in this workspace. Workspace members can view the catalog read-only, and only organization administrators can manage providers.',
+          'You do not have permission to view models in this workspace. Ask an organization administrator if you need access.',
         )}
       />
     );

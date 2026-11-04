@@ -38,7 +38,7 @@ export function registerManagedAgentsQuickstartTests() {
     expect(within(emptyState).queryByRole('alert')).toBeNull();
   });
 
-  test('does not send non-administrators from quickstart to model configuration', async () => {
+  test('guides workspace members from quickstart to model configuration', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart');
     mockAgentsApi([], { modelsNotConfigured: true });
     render(
@@ -52,8 +52,9 @@ export function registerManagedAgentsQuickstartTests() {
     );
 
     const emptyState = await screen.findByTestId('llm-provider-required');
-    expect(emptyState.textContent).toContain('Contact your organization administrator to configure a model.');
-    expect(within(emptyState).queryByRole('button', { name: 'Configure models' })).toBeNull();
+    expect(emptyState.textContent).toContain('Configure a model to get started.');
+    expect(within(emptyState).getByRole('button', { name: 'Configure models' })).toBeTruthy();
+    expect(within(emptyState).queryByRole('alert')).toBeNull();
   });
 
   test('keeps quickstart model loading failures distinct from the provider empty state', async () => {
@@ -159,6 +160,10 @@ function quickstartAuth(role: string): AuthContextValue {
     account: {
       uuid: 'acct_managed_agents_test',
       email_address: 'managed-agents-test@example.com',
+      permissions:
+        role === 'admin'
+          ? ['organization:manage', 'members:manage', 'workspace:api:resource_manage']
+          : ['workspace:api:resource_manage'],
       memberships: [{ role, organization: { uuid: 'org_test' } }],
     },
     status: 'authenticated',

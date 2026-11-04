@@ -48,7 +48,7 @@ type llmProviderResponse struct {
 }
 
 func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretService *secrets.Service, presetsFile string) {
-	registerConsoleLLMProviderPresets(r, database, presetsFile)
+	registerConsoleLLMProviderPresets(r, presetsFile)
 	client := llmproviders.NewHTTPClient(15 * time.Second)
 	r.Route("/llm_provider", func(r chi.Router) {
 		r.Get("/", getConsoleOrganizationLLMProvider(database))
@@ -252,7 +252,7 @@ func llmProviderScope(w http.ResponseWriter, r *http.Request, database *db.DB) (
 		return orgUUID, WorkspaceScope{}, true
 	}
 	scope, ok := consoleWorkspaceScopeFromRequest(w, r, database, orgUUID)
-	if !ok || (r.Method != http.MethodGet && !requireLLMProviderAdministrator(w, r, database, orgUUID)) {
+	if !ok {
 		return "", WorkspaceScope{}, false
 	}
 	return orgUUID, scope, true

@@ -287,7 +287,7 @@ func TestWorkspaceLLMProvidersBYOKLifecycle(t *testing.T) {
 	assertError(t, message, http.StatusServiceUnavailable, "api_error")
 }
 
-func TestWorkspaceLLMProvidersRequireAdministrator(t *testing.T) {
+func TestWorkspaceLLMProvidersAvailableToMembers(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-permission-bucket"))
 	defer app.close()
 	clearTestLLMProviders(t, app)
@@ -307,13 +307,46 @@ func TestWorkspaceLLMProvidersRequireAdministrator(t *testing.T) {
 	if listed.StatusCode != http.StatusOK {
 		t.Fatalf("用户读取模型状态 = %d", listed.StatusCode)
 	}
-	response := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{}`), cookies)
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", response.StatusCode, readAll(t, response.Body))
+	created := createConsoleLLMProvider(t, app, path, cookies, `{
+		"name":"Member gateway",
+		"slug":"member-gateway",
+		"base_url":"https://member.example.com",
+		"api_key":"member-provider-key",
+		"model_ids":["member-model"]
+	}`)
+	if created["scope"] != nil || created["api_key_last4"] != "-key" {
+		t.Fatalf("member workspace provider = %#v", created)
+	}
+
+	updated := app.platformRequest(t, http.MethodPut, path+"/"+created["id"].(string), strings.NewReader(`{
+		"name":"Member gateway updated",
+		"base_url":"https://member.example.com",
+		"model_ids":["member-model"]
+	}`), cookies)
+	updated.Body.Close()
+	if updated.StatusCode != http.StatusOK {
+		t.Fatalf("member update status = %d, want 200", updated.StatusCode)
+	}
+
+	presets := app.platformRequest(t, http.MethodGet, "/api/console/organizations/"+orgUUID+"/llm_provider_presets", nil, cookies)
+	presets.Body.Close()
+	if presets.StatusCode != http.StatusOK {
+		t.Fatalf("member preset catalog status = %d, want 200", presets.StatusCode)
+	}
+
+	organization := app.platformRequest(t, http.MethodPost, "/api/console/organizations/"+orgUUID+"/llm_providers", strings.NewReader(`{
+		"name":"Organization provider",
+		"slug":"organization-provider",
+		"base_url":"https://organization.example.com",
+		"api_key":"organization-provider-key",
+		"model_ids":["organization-model"]
+	}`), cookies)
+	defer organization.Body.Close()
+	if organization.StatusCode != http.StatusForbidden {
+		t.Fatalf("member organization provider status = %d, want 403: %s", organization.StatusCode, readAll(t, organization.Body))
 	}
 	var body map[string]any
-	decodeJSON(t, response.Body, &body)
+	decodeJSON(t, organization.Body, &body)
 	if body["code"] != "llm_provider_permission_denied" {
 		t.Fatalf("permission error = %#v", body)
 	}

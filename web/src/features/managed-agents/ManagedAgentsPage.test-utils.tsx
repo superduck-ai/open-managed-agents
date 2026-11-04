@@ -44,7 +44,7 @@ const managedAgentsAuthContextValue: AuthContextValue = {
     email_address: 'managed-agents-test@example.com',
     display_name: 'Managed Agents Test User',
     effectiveOrganizationUuid: 'org_test',
-    permissions: ['organization:manage', 'members:manage', 'members:view'],
+    permissions: ['organization:manage', 'members:manage', 'members:view', 'workspace:api:resource_manage'],
     memberships: [{ role: 'admin', organization: { uuid: 'org_test' } }],
   },
   status: 'authenticated',

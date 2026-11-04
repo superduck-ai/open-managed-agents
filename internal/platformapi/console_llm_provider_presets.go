@@ -5,12 +5,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func registerConsoleLLMProviderPresets(r chi.Router, database *db.DB, path string) {
+func registerConsoleLLMProviderPresets(r chi.Router, path string) {
 	r.Get("/llm_provider_presets", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := llmProviderOrganization(w, r, database); !ok {
+		if _, ok := visibleOrgUUID(w, r); !ok {
 			return
 		}
 		catalog, err := config.ReadLLMProviderPresetCatalog(path)

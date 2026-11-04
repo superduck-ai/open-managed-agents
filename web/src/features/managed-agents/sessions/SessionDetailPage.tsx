@@ -1274,7 +1274,7 @@ export function EventsTab({
                 </div>
               ) : null}
               {alerts ? (
-                <div className="flex-none px-4 pt-2" data-testid="session-alerts">
+                <div className="max-h-48 flex-none overflow-y-auto px-4 pt-2" data-testid="session-alerts">
                   <div className="mx-auto w-full max-w-[720px]">{alerts}</div>
                 </div>
               ) : null}

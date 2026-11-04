@@ -95,6 +95,15 @@ describe('alert message presentation', () => {
 
     expect(screen.queryByText(secondHtmlError)).toBeNull();
     expect(screen.getByRole('button', { name: 'Show raw error' })).toBeTruthy();
+
+    view.rerender(
+      <I18nProvider initialLocale="en">
+        <ManagedWarningAlert>{htmlError}</ManagedWarningAlert>
+      </I18nProvider>,
+    );
+
+    expect(screen.queryByText(htmlError)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show raw error' })).toBeTruthy();
   });
 
   test('localizes the HTTP summary and toggle labels', () => {

@@ -3,9 +3,11 @@ name: oma
 description: 使用 ant CLI 接入 Open Managed Agents，设计和创建 Agent、选择运行环境、执行 Session、检查结果并生成应用接入代码。用于 OMA onboarding、运行和接入排障。
 ---
 
-# OMA onboarding
+# OMA 中文接入助手
 
 使用原版 ant 操作用户指定的 OMA 实例。默认实例为 `https://oma.gz.cvte.cn`。开始前读取 [CLI 与兼容边界](references/cli.md)。本 Skill 的安装位置属于客户端，不是上传给运行中 Agent 的运行时 Skill。
+
+所有问答、配置提案、错误解释和验收回执使用中文；命令、协议字段和资源 ID 保留原文。
 
 ## 连接
 
@@ -35,7 +37,7 @@ description: 使用 ant CLI 接入 Open Managed Agents，设计和创建 Agent�
 
 从 apply lockfile 读取真实 Agent ID，使用真实 Environment ID 创建新 Session。保存 ID，发送一条与任务相关、成本适当的探测输入。只重试安全读取；发送返回不确定时先查事件，避免重复任务。
 
-参考中的命令支持投递、Session 查询与事件历史。以当前 Session 内的 agent.message、模型请求结束事件及 stop_reason 联合判断；请求接受或创建成功不是任务成功。普通 end_turn 仅代表本轮完成。requires_action 应展示实际待确认工具及参数，按用户授权提交确认；budget_reached 和错误要明确报告，不无限轮询或自动提高预算。
+参考中的命令支持投递、Session 查询与事件历史。按本次投递事件 ID 和历史游标区分轮次，不用上一轮结果判断本轮完成。以当前 Session 内的 agent.message、模型请求结束事件及 stop_reason 联合判断；请求接受或创建成功不是任务成功。普通 end_turn 仅代表本轮完成。requires_action 应展示实际待确认工具及参数，按用户授权提交确认；budget_reached 和错误要明确报告，不无限轮询或自动提高预算。
 
 当前验证未确认原版 ant SSE 可用，可靠路径是有截止时间的事件历史查询，按事件 ID 去重并检查分页。不要把空 SSE 当作没有执行。依赖 MCP、文件或工具的业务需增加对应真实探测；纯文本 smoke test 不证明这些能力。
 
@@ -47,3 +49,7 @@ description: 使用 ant CLI 接入 Open Managed Agents，设计和创建 Agent�
 - 每次运行：只引用已有 Agent/Environment ID 创建 Session、发送输入、消费事件和提取结果；不要每次运行都创建 Agent。
 
 给出实际资源 ID、已验证功能、失败/未验证项和后续命令。应用集成优先提供基于当前 OMA 合同的 HTTP 示例；未验证 SDK 不宣称兼容。只清理本次明确创建且用户不需要保留的资源，不删除复用环境。
+
+## 验证范围
+
+复测时读取 [中文验收记录](references/validation.md)，如实区分已通过、失败与未覆盖场景。

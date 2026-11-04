@@ -66,7 +66,7 @@ curl --fail-with-body --silent --show-error \
   --data '{"name":"OMA Assistant Environment","config":{"type":"cloud","networking":{"type":"limited","allowed_hosts":[],"allow_mcp_servers":false,"allow_package_managers":false}}}'
 ```
 
-读取响应中的实际 `id`，赋值给 `ENV_ID`。受限示例需要单独验证具体业务访问；本次线上 smoke test 创建的环境为 unrestricted，不能声称已验证受限网络行为。
+读取响应中的实际 `id`，赋值给 `ENV_ID`。受限示例需要单独验证具体业务访问；后续中文验收已在上述 limited 配置中完成两轮真实运行；不代表外部主机隔离效果已验证。
 
 ## 每次运行
 
@@ -91,10 +91,14 @@ ant beta:sessions:events stream --session-id "$SESSION_ID" --format jsonl
 
 ## 能力边界与来源
 
-已验证：模型查询、Agent 创建、Agent 文件 apply、无改动重复 apply、修改 system 更新、Session 创建、消息投递、模型回复、事件历史与本轮 idle。Environment 通过上述 HTTP 接口验证。SSE、工具确认、Files/MCP/Vault/Memory/Deployment、受限网络与并发恢复不属于该 smoke test 的通过范围。
+已验证：模型查询、Agent 创建、Agent 文件 apply、无改动重复 apply、修改 system 更新、Session 创建、消息投递、模型回复、事件历史与本轮 idle。Environment 通过上述 HTTP 接口验证。后续中文验收覆盖多轮、分页、409 冲突、版本快照、limited 环境运行和文件上传/删除；上传文件下载返回 HTTP 400。其余高级能力尚未验证，见 [中文验收记录](validation.md)。
 
 流程参考 Claude 的需求 → Agent → Environment → Session → 接入，OMA 指令独立编写，字段以 OMA 实际行为为准：
 
 - https://github.com/anthropics/skills/blob/main/skills/claude-api/shared/managed-agents-onboarding.md
 - https://github.com/anthropics/skills/blob/main/skills/claude-api/shared/anthropic-cli.md
 - https://github.com/anthropics/anthropic-cli
+
+## 文件上传限制
+
+`ant files upload --file ./input.txt --format json` 已通过。当前实例返回 downloadable=false，随后 `ant files download --file-id <文件ID> --output ./downloaded.txt` 返回 HTTP 400。不能承诺上传文件可下载；生成文件交付需单独验收。清理本次上传文件使用 `ant files delete --file-id <文件ID>`。

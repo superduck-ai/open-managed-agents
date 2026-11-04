@@ -73,3 +73,9 @@ Session 创建不代表运行成功，消息投递的 processed_at 可能为 nul
 连接合同位于 Skill 的 `references/connection.md`。URL 按本次用户指定、OMA_BASE_URL、默认实例排序；key 必须绑定当前 origin，不从官方 Anthropic 配置自动继承。OMA 变量显式映射给原版 ant，不修改 ant 本身。公网 HTTPS、拒绝路径和 URL 内嵌凭据、实例切换重新选择 key，子 shell 临时配置不持久化秘密。
 
 本次只交付客户端 Skill 与文档，不新增平台 API key 服务或 Console 页面。key 的创建和权限仍由现有 OMA 管理入口负责；轮换、错误诊断和退出清理均在连接合同中说明。
+
+## 中文验收补充（2026-11-05）
+
+最终用户材料统一中文输出，命令和协议字段保留原名。新增 `.agents/skills/oma/references/validation.md` 记录失败路径、中文双轮上下文、limited 环境运行、事件分页、版本冲突和 Session 配置快照的真实结果。文件上传/删除通过，下载返回 400，保持明确限制。测试不等同于独立模型执行 Skill，也不覆盖未列出的高级功能。
+
+多轮验收按本次输入事件与历史游标定位，不用上一轮 end_turn 误判本轮完成。配置解析仍为 Skill 合同而非新 CLI 的自动执行器；未将指令校验声称为可执行配置安全测试。

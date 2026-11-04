@@ -7,7 +7,7 @@ description: "Move an existing agent built on the Messages API or a local Agent 
 Open Managed Agents replaces your hand-written agent loop with managed infrastructure. This page covers what changes when you migrate from a custom loop built on the [Messages API](/docs/en/api/messages/create-a-message) or from a local Agent SDK.
 
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
 ## From a Messages API agent loop
@@ -1298,7 +1298,7 @@ The tradeoff for OMA running the agent loop is that a few things the SDK handled
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Plan mode                          | Run a planning-only session first, then a second session to run the plan.                                                                                     |
 | Output styles, slash commands      | Apply in your client before sending `user.message` or after receiving `agent.message`.                                                                        |
-| `PreToolUse` / `PostToolUse` hooks | Your client already sees every `agent.custom_tool_use` event before responding; put the logic there. For built-in tools, use `permission_policy: always_ask`. |
+| `PreToolUse` / `PostToolUse` hooks | The client can handle custom tool events. For built-in tools, `permission_policy: always_ask` requests confirmation before execution; it does not provide arbitrary pre- and post-execution hooks. |
 | `max_turns`                        | Count turns client-side.                                                                                                                                      |
 
 ## Migration checklist

@@ -1,6 +1,6 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "luma",
+  "theme": "aspen",
   "name": "Open Managed Agents",
   "description": "Open-source, self-hosted infrastructure for managed AI agents.",
   "colors": {
@@ -211,9 +211,7 @@
                   "docs/zh/sessions",
                   "docs/zh/session-operations",
                   "docs/zh/events-and-streaming",
-                  "docs/zh/budgets",
                   "docs/zh/webhooks",
-                  "docs/zh/define-outcomes",
                   "docs/zh/vaults"
                 ]
               },
@@ -536,9 +534,7 @@
                   "docs/en/sessions",
                   "docs/en/session-operations",
                   "docs/en/events-and-streaming",
-                  "docs/en/budgets",
                   "docs/en/webhooks",
-                  "docs/en/define-outcomes",
                   "docs/en/vaults"
                 ]
               },

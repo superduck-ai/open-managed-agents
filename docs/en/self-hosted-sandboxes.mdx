@@ -4,7 +4,7 @@ sidebarTitle: "Integration guide"
 description: "Run Open Managed Agents sessions in self-hosted sandboxes, keeping tool execution, files, and network egress in your own infrastructure."
 ---
 
-By default, Managed Agents executes tools and code inside [OMA-managed cloud sandboxes](/docs/en/cloud-sandboxes-reference). Self-hosted sandboxes keep the orchestration on OMA's side but move tool execution into infrastructure you control, so the agent's code, filesystem, and network egress never leave your environment.
+Self-hosted sandboxes keep orchestration on the OMA control plane and move tool execution to infrastructure you control. Cloud sandboxes use the environment runner configured by the deployment; see [Cloud sandboxes](/docs/en/cloud-sandboxes-reference).
 
 Tool execution stays on your host: the filesystem the agent reads and writes, the processes it spawns, and the network it can reach are all under your control. Tool inputs and outputs still flow to OMA's control plane so the model can see results and determine what to do next. See the [security model](/docs/en/self-hosted-sandboxes-security) for the full data-flow boundary.
 
@@ -21,9 +21,7 @@ Tool execution stays on your host: the filesystem the agent reads and writes, th
 | File and GitHub repo mounting | Managed by OMA        | Managed by you      |
 | Lifecycle                     | Managed by OMA        | Managed by you      |
 
-Self-hosting is a good fit when the agent needs to operate on data that cannot leave your network boundary, reach internal services that are not publicly routable, or run under your organization's own compliance and audit controls.
-
-For Zero Data Retention and HIPAA BAA eligibility, see API and data retention.
+Self-hosting can be useful when tools need to run on infrastructure you control or reach internal services. Tool inputs, outputs and model requests may flow through the control plane and model provider; data boundaries depend on your deployment.
 
 ## When to combine with MCP tunnels
 
@@ -31,15 +29,15 @@ Self-hosting controls *where the agent's code executes*. [MCP tunnels](/docs/en/
 
 ## Environment worker
 
-<Tip>
-  This guide describes how to build a worker with any generic sandboxing platform. Additional, platform-specific guides are available for AWS Lambda MicroVMs, Blaxel, Cloudflare, Daytona, E2B, Fly.io, GKE Agent Sandbox, Modal, Namespace, Superserve, and Vercel.
-</Tip>
+<Note>
+  The third-party CLI, SDK worker and platform examples on this page should first be checked for version, endpoint and credential compatibility with your OMA deployment.
+</Note>
 
 An environment worker is a process you run on your own infrastructure. It receives tool execution requests from OMA and runs them locally. The `self_hosted` environment acts as a work queue: when a [session](/docs/en/sessions) is assigned to it, OMA enqueues the session as a work item. Your worker claims work items from that queue, spawns an execution context for each one, downloads the agent's [skills](/docs/en/skills) (reusable, filesystem-based resources that give the agent domain-specific expertise), runs the tool calls, and posts the results back.
 
 Work items are claimed by polling the environment's queue: either by an **always-on worker** that polls continuously, or a **webhook-triggered handler** that wakes on `session.status_run_started` and starts polling.
 
-The CLI and SDK both ship pre-built workers. The `ant` CLI supports the always-on pattern only; the SDK supports both always-on and webhook-triggered. Both are configurable: see [Self-hosted worker](/docs/en/reference#self-hosted-worker) in the reference for CLI flags, and [SDK helpers](/docs/en/self-hosted-sandboxes#sdk-helpers) on this page for the SDK options. For more control, call the [Environments Work endpoints](/docs/en/api/environment-work/list-work-items) directly and implement your own worker.
+The `ant` CLI and SDK worker examples on this page are third-party references; compatibility with OMA depends on the versions used and should be verified in a test environment. You can also implement a worker using the [Environment Work endpoints](/docs/en/api/environment-work/list-work-items).
 
 ### Sandbox filesystem
 
@@ -67,7 +65,7 @@ You need:
 
     <CodeGroup>
       ```bash cURL
-      curl -sS --fail-with-body http://localhost:38080/v1/environments \
+      curl -sS --fail-with-body "http://localhost:38080/v1/environments?beta=true" \
         -H "x-api-key: $OMA_API_KEY" \
         -H "anthropic-version: 2023-06-01" \
         -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -173,7 +171,7 @@ You need:
   </Step>
 
   <Step title="Generate an environment key">
-    In the Console, open the environment and click **Generate environment key**. Key generation is Console-only, regardless of whether you created the environment through the Console or the API. Then export the environment ID and key on the worker host:
+    Ask your deployment administrator how to obtain worker credentials for this environment. Configure the environment ID and key on the worker host; do not bake credentials into an image:
 
     ```bash
     export ANTHROPIC_ENVIRONMENT_KEY="sk-ant-oat01-..."
@@ -1548,13 +1546,13 @@ These calls run from your monitoring or operations tooling, authenticated with y
 `work.stats` returns the queue state for an environment:
 
 * `depth` is the number of items waiting to be claimed. Scale your worker fleet or alert on backlog based on this value.
-* `pending` is the number of items claimed by a worker but not yet acknowledged. The worker helpers acknowledge each item before processing it, so this value stays near zero in normal operation; a sustained non-zero value means a worker stalled between claiming and acknowledging.
-* `oldest_queued_at` is the timestamp of the oldest item still in the queue, waiting to be claimed or claimed but not yet acknowledged, or `null` when there is none.
+* `pending` is the number of work items not yet in the `stopped` state, including queued and running items.
+* `oldest_queued_at` is the creation time of the oldest item in `queued` state, or `null` when there is none.
 * `workers_polling` is the number of workers that have polled in the last 30 seconds. Use this for liveness alerting.
 
 <CodeGroup>
   ```bash cURL
-  curl -sS "http://localhost:38080/v1/environments/$ANTHROPIC_ENVIRONMENT_ID/work/stats" \
+  curl -sS "http://localhost:38080/v1/environments/$ANTHROPIC_ENVIRONMENT_ID/work/stats?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
     -H "anthropic-version: 2023-06-01"
@@ -1683,7 +1681,7 @@ Because these calls run from your operations tooling rather than the worker host
 
 <CodeGroup>
   ```bash cURL
-  curl -sS "http://localhost:38080/v1/environments/$ANTHROPIC_ENVIRONMENT_ID/work/$ANTHROPIC_WORK_ID/stop" \
+  curl -sS "http://localhost:38080/v1/environments/$ANTHROPIC_ENVIRONMENT_ID/work/$ANTHROPIC_WORK_ID/stop?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
     -H "anthropic-version: 2023-06-01" \

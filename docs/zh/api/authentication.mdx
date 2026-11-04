@@ -1,37 +1,57 @@
 ---
 title: "认证"
-description: "使用 Bearer 令牌或 X-Api-Key 调用 OMA。"
+description: "使用工作区 API 密钥调用 OMA。"
 ---
 
-OMA 的公共 `/v1` 资源接受工作区 API 密钥。每个 API 密钥都关联一个组织和工作区，资源访问会在该租户范围内执行。
+OMA 的公共 `/v1` 资源使用工作区 API 密钥。密钥关联组织和工作区，请求在对应的租户范围内执行。
 
-## Bearer 认证
+## 1. 获取工作区 API 密钥
+
+登录 OMA 控制台，切换到要使用的工作区，在 **API 密钥** 页面获取该工作区的密钥。如果无法访问或创建密钥，请联系工作区管理员。不要在截图或分享的示例中展示密钥。
+
+## 2. 设置环境变量
+
+将基础地址替换为你的 OMA 部署地址。下面的地址适用于默认本地部署；输入密钥时不会在终端回显。
 
 ```bash
-curl http://localhost:38080/v1/models \
-  -H 'Authorization: Bearer sk-ant-local-default'
+export OMA_BASE_URL="http://localhost:38080"
+printf '工作区 API 密钥: '
+read -rs OMA_API_KEY; echo
+export OMA_API_KEY
 ```
 
-## X-Api-Key 认证
+上述命令适用于 bash 和 zsh。远程部署请使用 HTTPS。
+
+## 3. 发送第一个请求
+
+使用 Bearer 认证查询模型列表：
 
 ```bash
-curl http://localhost:38080/v1/models \
-  -H 'X-Api-Key: sk-ant-local-default'
+curl "$OMA_BASE_URL/v1/models" \
+  -H "Authorization: Bearer $OMA_API_KEY"
 ```
 
-如果两个请求头同时出现，OMA 优先读取 `X-Api-Key`。
+也可以使用 `X-Api-Key`，两种方式任选一种：
+
+```bash
+curl "$OMA_BASE_URL/v1/models" \
+  -H "X-Api-Key: $OMA_API_KEY"
+```
+
+如果同时提供两个请求头，OMA 优先读取 `X-Api-Key`。如果收到认证错误，请检查密钥、工作区和请求地址；参见[错误](/docs/zh/api/errors)。
 
 ## SDK 配置
 
-将兼容 SDK 的基础 URL 指向 OMA，并通过标准 API 密钥参数提供密钥。
+兼容 SDK 可以使用相同的环境变量：
 
 <CodeGroup>
 ```python Python
+import os
 from anthropic import Anthropic
 
 client = Anthropic(
-    api_key="sk-ant-local-default",
-    base_url="http://localhost:38080",
+    api_key=os.environ["OMA_API_KEY"],
+    base_url=os.environ["OMA_BASE_URL"],
 )
 ```
 
@@ -39,20 +59,19 @@ client = Anthropic(
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({
-  apiKey: "sk-ant-local-default",
-  baseURL: "http://localhost:38080",
+  apiKey: process.env.OMA_API_KEY,
+  baseURL: process.env.OMA_BASE_URL,
 });
 ```
 </CodeGroup>
 
-## 安全建议
+## 安全与凭据范围
 
 - 开发环境默认密钥仅用于本地验证，不要用于生产。
-- 不要把密钥放在 URL、日志、截图或前端静态代码中。
-- 为不同工作区和用途创建独立密钥，以便撤销和审计。
-- 通过 TLS 调用远程 OMA 实例。
-- 控制台 Cookie 会话和 `/v1` API 密钥是不同的认证边界。
+- 不要把密钥放在 URL、日志、截图或前端静态代码中；通过环境变量或密钥管理服务提供。
+- 为不同工作区和用途使用独立密钥，以便撤销和审计。
+- 控制台 Cookie 会话与工作区 API 密钥是不同的认证边界。
 
 <Warning>
-  文件存储服务和代码会话运行时使用各自的协议凭证。不要把这些内部凭证当作普通 `/v1` API 密钥使用。
+  Filestore、环境 worker 和代码会话运行时使用用途受限的专用凭据。这些凭据与工作区 API 密钥不能互换；Filestore 使用自己的 Bearer 凭据。
 </Warning>

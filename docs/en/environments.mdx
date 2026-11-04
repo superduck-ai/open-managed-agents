@@ -9,14 +9,20 @@ Environments define the sandbox configuration where your agent runs. You create 
 This page covers `type: cloud` environments. To run sandboxes on your own infrastructure, see [Self-hosted sandboxes](/docs/en/self-hosted-sandboxes).
 
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
 ## Create an environment
 
+In the console, open **Environments** and select **Create environment** to configure the name, network access, packages, and initialization script. The example below shows the Chinese interface; available options may vary by deployment.
+
+<Frame>
+  <img src="/docs/images/console/environment-create-zh.jpg" alt="Environment creation form showing basic information, network access, packages, and initialization script" />
+</Frame>
+
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  environment=$(curl -fsS http://localhost:38080/v1/environments \
+  environment=$(curl -fsS "http://localhost:38080/v1/environments?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -216,11 +222,11 @@ Pass the environment ID as a string when [creating a session](/docs/en/sessions)
 
 ### Packages
 
-The `packages` field pre-installs packages into the sandbox before the agent starts. Packages are installed by their respective package managers and cached across sessions that share the same environment. When multiple package managers are specified, they run in alphabetical order (apt, cargo, gem, go, npm, pip). You can optionally pin specific versions. Unpinned packages install the latest version.
+The `packages` field pre-installs packages into the sandbox before the agent starts. Packages are installed by their respective package managers. When prebuilds are enabled, a built template can be reused; a packages-only environment can install packages at sandbox startup while its template is not ready. When multiple package managers are specified, they run in alphabetical order (apt, cargo, gem, go, npm, pip). You can optionally pin specific versions. Unpinned packages install the latest version.
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  environment=$(curl -fsS http://localhost:38080/v1/environments \
+  environment=$(curl -fsS "http://localhost:38080/v1/environments?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -381,9 +387,32 @@ Supported package managers:
 | `npm`   | Node.js (npm)             | `"express@4.18.0"`                          |
 | `pip`   | Python (pip)              | `"pandas==2.2.0"`                           |
 
+### Init script, resources, and environment variables
+
+The init script field on the Create Environment page (shown in Chinese; the command is a placeholder):
+
+![Init script field on the Create Environment page](/docs/images/console/environment-init-script.jpg)
+
+Cloud environment `config` also supports:
+
+```json
+{
+  "type": "cloud",
+  "init_script": "mkdir -p /home/user/project",
+  "resources": {"cpu": 2000, "memory": 4096, "disk": 20},
+  "environment": {"MODE": "development"}
+}
+```
+
+- `init_script` runs with Bash as root in `/home/user` after packages are installed during prebuild. It is limited to 64 KiB and cannot contain NUL or credentials in URLs. It appears in API responses, build logs, and image layers; do not put secrets in it.
+- `resources` sets template CPU (millicores), memory (MiB), and writable disk (GiB). Each value must be a positive integer; availability and limits depend on deployment configuration.
+- `environment` contains string variables injected at sandbox creation, limited to 64 entries and 64 KiB total for names and values. Names must match `[A-Za-z_][A-Za-z0-9_]*`; values cannot contain NUL. Platform variables take precedence on name collisions. Values appear in API responses; do not store secrets here.
+
+A nonempty `init_script` or `resources` requires environment prebuilds to be enabled, otherwise creation or update returns 400. Changing packages, script, or resources triggers a rebuild; changing only environment variables does not. Environments requiring a template cannot start a sandbox until it is ready. On update, each field replaces the previous value; omission preserves it, while `null`, an empty string (script), or an empty object (resources or variables) clears it.
+
 ### Networking
 
-The `networking` field controls the sandbox's outbound network access. It does not affect the allowed domains for the `web_search` or `web_fetch` tools.
+The `networking` field controls the sandbox's outbound network access. With `limited` networking, the environment's allowed hosts also filter `web_search` results and govern `web_fetch` requests and redirects. Tool-specific domain settings can further restrict access. At session creation, enabled Web tools' `allowed_domains` must be within the environment's `allowed_hosts`.
 
 | Mode           | Description                                                                                                                                                  |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -394,7 +423,7 @@ The following example creates an environment with `limited` networking:
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -fsS http://localhost:38080/v1/environments \
+  curl -fsS "http://localhost:38080/v1/environments?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -549,8 +578,8 @@ The following example creates an environment with `limited` networking:
 
 When using `limited` networking:
 
-* `allowed_hosts` specifies domains the sandbox can reach. Specify bare hostnames or wildcard patterns (such as `*.example.com`). Do not include a URL scheme, port, or path.
-* `allow_mcp_servers` allows outbound access to MCP server endpoints configured on the agent, beyond those listed in the `allowed_hosts` array. Defaults to `false`.
+* `allowed_hosts` specifies hosts the sandbox can reach. It accepts hostnames, IP addresses, and wildcard patterns (such as `*.example.com`), optionally with a port (such as `api.example.com:443`). Do not include a URL scheme or path. A wildcard does not match the root domain itself.
+* `allow_mcp_servers` allows outbound access to MCP server endpoints configured on the agent, beyond those listed in the `allowed_hosts` array. Defaults to `false`; in that case, session creation fails if an MCP server is outside the allowed list.
 * `allow_package_managers` allows outbound access to public package registries (such as PyPI and npm) beyond those listed in the `allowed_hosts` array. Defaults to `false`.
 
 ## Environment lifecycle
@@ -564,25 +593,25 @@ When using `limited` networking:
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
   # List environments
-  environments=$(curl -fsS http://localhost:38080/v1/environments \
+  environments=$(curl -fsS "http://localhost:38080/v1/environments?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01")
 
   # Retrieve a specific environment
-  env=$(curl -fsS "http://localhost:38080/v1/environments/$environment_id" \
+  env=$(curl -fsS "http://localhost:38080/v1/environments/$environment_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01")
 
   # Archive an environment (read-only, existing sessions continue)
-  curl -fsS -X POST "http://localhost:38080/v1/environments/$environment_id/archive" \
+  curl -fsS -X POST "http://localhost:38080/v1/environments/$environment_id/archive?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01"
 
   # Delete an environment (only if no sessions reference it)
-  curl -fsS -X DELETE "http://localhost:38080/v1/environments/$environment_id" \
+  curl -fsS -X DELETE "http://localhost:38080/v1/environments/$environment_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01"

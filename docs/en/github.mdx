@@ -9,7 +9,7 @@ You can mount a GitHub repository to your session sandbox and connect to the Git
 GitHub repositories are cached, so future sessions that use the same repository start faster.
 
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
 ## GitHub MCP and session resources
@@ -379,7 +379,6 @@ Then create a session that mounts the GitHub repository:
 
 The `resources[].authorization_token` authenticates the repository clone operation and is not echoed in API responses.
 
-Mounting a repository also loads any skills stored in its root `.claude/skills` directory. Skills are discovered once per session, from the repository state checked out at session start. See [Load skills from a GitHub repository](/docs/en/skills#load-skills-from-a-github-repository).
 
 ## Token permissions
 
@@ -561,7 +560,7 @@ Mount multiple repositories by adding entries to the `resources` array:
 
 ## Managing repositories on a running session
 
-After a session is created, you can list its repository resources and rotate their authorization tokens. Each resource has an `id` returned at session creation time (or through `resources.list`) that you use for updates. Repositories are attached for the lifetime of the session; to change which repositories are mounted, create a new session.
+After a session is created, you can list its repository resources and rotate their authorization tokens. Each resource has an `id` returned at session creation time (or through `resources.list`) that you use for updates. To change repository resources, create a new session. A sandbox can be reclaimed and recreated, and temporary working-directory changes may be lost.
 
 <CodeGroup>
   ```bash cURL
@@ -570,12 +569,13 @@ After a session is created, you can list its repository resources and rotate the
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
-    -H "content-type: application/json" | jq -r '.data[0].id')
+    -H "content-type: application/json" | jq -er '[.data[] | select(.type == "github_repository")][0].id')
   echo "$repo_resource_id"  # "sesrsc_01ABC..."
 
   # Rotate the authorization token
   curl -fsS "http://localhost:38080/v1/sessions/$session_id/resources/$repo_resource_id" \
-  # ...
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "content-type: application/json" \
     -o /dev/null \
     --data @- <<JSON
   {

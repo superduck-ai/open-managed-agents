@@ -996,10 +996,32 @@ function SessionDetailAlerts({
   mutationError: string | null;
   warningError?: string | null;
 }) {
+  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  const dismiss = (key: string) =>
+    setDismissed((current) => {
+      const next = new Set(current);
+      next.add(key);
+      return next;
+    });
+  const visibleMutation = mutationError && !dismissed.has(`mutation:${mutationError}`) ? mutationError : null;
+  const visibleWarning = warningError && !dismissed.has(`warning:${warningError}`) ? warningError : null;
+  if (!visibleMutation && !visibleWarning) {
+    return null;
+  }
   return (
-    <div className="grid gap-2">
-      {mutationError ? <ManagedErrorAlert>{mutationError}</ManagedErrorAlert> : null}
-      {warningError ? <ManagedWarningAlert>{warningError}</ManagedWarningAlert> : null}
+    <div className="max-h-48 flex-none overflow-y-auto px-4 pt-2" data-testid="session-alerts">
+      <div className="mx-auto grid w-full max-w-[720px] gap-2">
+        {visibleMutation ? (
+          <ManagedErrorAlert onDismiss={() => dismiss(`mutation:${visibleMutation}`)}>
+            {visibleMutation}
+          </ManagedErrorAlert>
+        ) : null}
+        {visibleWarning ? (
+          <ManagedWarningAlert onDismiss={() => dismiss(`warning:${visibleWarning}`)}>
+            {visibleWarning}
+          </ManagedWarningAlert>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1273,11 +1295,7 @@ export function EventsTab({
                   <div className="mx-auto w-full max-w-[720px]">{pendingAction}</div>
                 </div>
               ) : null}
-              {alerts ? (
-                <div className="max-h-48 flex-none overflow-y-auto px-4 pt-2" data-testid="session-alerts">
-                  <div className="mx-auto w-full max-w-[720px]">{alerts}</div>
-                </div>
-              ) : null}
+              {alerts}
               {composer}
             </div>
           }

@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import {
   cleanup,
+  fireEvent,
   mockManagedResourceApi,
   renderManagedAgentsPage,
   resetTestDom,
@@ -36,4 +37,6 @@ test('shows session sync errors above the composer instead of under the page hea
   expect(screen.getByTestId('session-detail-header').contains(alerts)).toBe(false);
   expect(screen.queryByText(/<!DOCTYPE html>/)).toBeNull();
   expect(within(alerts).getByRole('button', { name: 'Show raw error' })).toBeTruthy();
+  fireEvent.click(within(alerts).getByRole('button', { name: 'Close' }));
+  expect(screen.queryByTestId('session-alerts')).toBeNull();
 });

@@ -63,7 +63,7 @@ Viewer 包含两个区域：
 - 常规双栏状态只有两个主要纵向 scrollport：Transcript 的 shadcn MessageScroller viewport，以及当前 Inspector panel 的 Base UI ScrollArea viewport。
 - Composer、Action Card、Viewer、ResizablePanel 和 Inspector 外壳不得声明纵向滚动；textarea 只有超过 `160px` 后才局部滚动。
 - Transcript 内容本身不追加底部 spacer；底部呼吸区只由 MessageScroller 内容列统一提供，避免短回复与 Composer 之间重复叠加空白。
-- Session 级同步与操作错误不占用标题下方的页面空间，显示在 Transcript 滚动区与 Composer 之间的 `720px` 内容轨内；错误保留可读摘要和就地展开的原始详情，Composer 仍贴近底部。
+- Session 级同步与操作错误不占用标题下方的页面空间，显示在 Transcript 滚动区与 Composer 之间的 `720px` 内容轨内；错误保留可读摘要、就地展开的原始详情和关闭按钮，关闭后不再为该条错误保留空间，Composer 仍贴近底部。
 - Events 页签可将列表和详情划分为两个独立 scrollport，但详情内部的 `pre/code` 不得再创建第三层纵向滚动。
 - Inspector tabs、lane tabs 和 minimap 的横向滚动条默认隐藏；活动 Inspector 标签必须自动滚入可见范围，不使用 scroll-timeline 或自定义属性维护渐隐动画。
 

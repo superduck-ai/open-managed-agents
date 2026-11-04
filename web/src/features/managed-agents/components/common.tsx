@@ -107,24 +107,58 @@ export function DetailTableCard({
   );
 }
 
-export function ManagedErrorAlert({ children, className }: { children: ReactNode; className?: string }) {
+function AlertDismissButton({ onDismiss }: { onDismiss: () => void }) {
+  const { msg } = useI18n();
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      className="absolute top-2 right-2 text-inherit hover:bg-current/10"
+      aria-label={msg('common.close', 'Close')}
+      onClick={onDismiss}
+    >
+      <X className="size-3.5" aria-hidden />
+    </Button>
+  );
+}
+
+export function ManagedErrorAlert({
+  children,
+  className,
+  onDismiss,
+}: {
+  children: ReactNode;
+  className?: string;
+  onDismiss?: () => void;
+}) {
   return (
     <Alert variant="destructive" className={className}>
       <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <AlertDescription>
+      <AlertDescription className={onDismiss ? 'pr-7' : undefined}>
         <AlertMessage>{children}</AlertMessage>
       </AlertDescription>
+      {onDismiss ? <AlertDismissButton onDismiss={onDismiss} /> : null}
     </Alert>
   );
 }
 
-export function ManagedWarningAlert({ children, className }: { children: ReactNode; className?: string }) {
+export function ManagedWarningAlert({
+  children,
+  className,
+  onDismiss,
+}: {
+  children: ReactNode;
+  className?: string;
+  onDismiss?: () => void;
+}) {
   return (
     <Alert className={clsx('border-[var(--amber-7)] bg-[var(--warning-bg)] text-[var(--warning)]', className)}>
       <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <AlertDescription className="text-inherit">
+      <AlertDescription className={clsx('text-inherit', onDismiss && 'pr-7')}>
         <AlertMessage>{children}</AlertMessage>
       </AlertDescription>
+      {onDismiss ? <AlertDismissButton onDismiss={onDismiss} /> : null}
     </Alert>
   );
 }

@@ -137,7 +137,7 @@
   "llmModels.errorNameLength": "显示名称须为 1 到 100 个字符。",
   "llmModels.errorProviderNameExists": "已存在同名 Provider。",
   "llmModels.errorProviderNotFound": "未找到该 LLM Provider。",
-  "llmModels.errorPermissionDenied": "只有组织管理员可以管理 LLM Provider。",
+  "llmModels.errorPermissionDenied": "你没有权限管理 LLM Provider。",
   "llmModels.errorSlugExists": "该 Provider ID 已在组织中使用。",
   "llmModels.errorSlugImmutable": "Provider ID 创建后不可修改。",
   "llmModels.errorSlugInvalid": "Provider ID 须为 1 到 32 个小写字母、数字、“.”、“_”或“-”，且以字母或数字开头。",

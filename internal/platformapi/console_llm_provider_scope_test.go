@@ -17,7 +17,7 @@ func TestLLMProviderOrganizationScope(t *testing.T) {
 		status                     int
 	}{
 		{"other organization", http.MethodPost, "other", false, http.StatusNotFound},
-		{"member cannot delete", http.MethodDelete, "org", false, http.StatusForbidden},
+		{"member can delete", http.MethodDelete, "org", true, http.StatusOK},
 		{"member can create", http.MethodPost, "org", true, http.StatusOK},
 		{"member can update", http.MethodPut, "org", true, http.StatusOK},
 	} {

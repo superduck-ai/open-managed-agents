@@ -409,7 +409,7 @@ describe('LLM models page', () => {
     expect(within(dialog).getByText(description)).toBeTruthy();
   });
 
-  test('organization members can edit defaults but cannot delete', async () => {
+  test('organization members can edit and delete defaults', async () => {
     resetTestDom('https://oma.duck.ai/settings/llm');
     const api = mockProvidersApi([], { organizationProvider: organizationProvider() });
     renderPage('en', 'user', 'organization');
@@ -417,7 +417,7 @@ describe('LLM models page', () => {
     expect(await screen.findByText('organization/shared-model')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Organization default' }));
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add provider' })).toBeTruthy();
     expect(api.requests.every((request) => !request.url.includes('/workspaces/'))).toBe(true);
   });
@@ -534,7 +534,7 @@ describe('LLM models page', () => {
     expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
   });
 
-  test('用户可筛选和同步模型，但不能删除供应商', async () => {
+  test('用户可筛选、同步和删除供应商', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     const api = mockProvidersApi([], {
       initialProviders: [
@@ -559,7 +559,7 @@ describe('LLM models page', () => {
     expect(screen.getByText('readonly/model-two')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Read gateway' }));
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add provider' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Search models'), { target: { value: 'new-model' } });
     expect(screen.getByRole('button', { name: /Add new-model/ })).toBeTruthy();

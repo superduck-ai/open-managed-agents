@@ -34,7 +34,7 @@ func getConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 
 func putConsoleOrganizationLLMProvider(database *db.DB, secretService *secrets.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, ok := llmProviderOrganization(w, r, database)
+		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
 			return
 		}
@@ -151,7 +151,7 @@ func updateConsoleOrganizationLLMProvider(
 
 func deleteConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, ok := llmProviderOrganization(w, r, database)
+		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
 			return
 		}
@@ -179,7 +179,7 @@ func deleteConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 
 func syncConsoleOrganizationLLMProviderModels(database *db.DB, secretService *secrets.Service, client *http.Client, persist bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, ok := llmProviderOrganization(w, r, database)
+		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
 			return
 		}
@@ -194,15 +194,4 @@ func syncConsoleOrganizationLLMProviderModels(database *db.DB, secretService *se
 		}
 		syncProviderFromUpstream(w, r, database, secretService, client, provider, persist)
 	}
-}
-
-func llmProviderOrganization(w http.ResponseWriter, r *http.Request, database *db.DB) (string, bool) {
-	orgUUID, ok := visibleOrgUUID(w, r)
-	if !ok {
-		return "", false
-	}
-	if r.Method == http.MethodDelete && !requireLLMProviderAdministrator(w, r, database, orgUUID) {
-		return "", false
-	}
-	return orgUUID, true
 }

@@ -66,7 +66,7 @@ PUT    /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_provide
 DELETE /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers/{providerId}
 ```
 
-工作区成员可读取、新增、更新、预览和同步工作区 Provider；删除仅限组织管理员。读取接口只返回 `has_api_key` 与 `api_key_last4`，不返回明文 Key。更新时省略或留空 `api_key` 表示保留原 Key。
+工作区成员可读取、新增、更新、删除、预览和同步工作区 Provider。读取接口只返回 `has_api_key` 与 `api_key_last4`，不返回明文 Key。更新时省略或留空 `api_key` 表示保留原 Key。
 
 控制台在「获取模型列表」时可通过下列接口向该网关请求模型列表，而不会把 Key 回写到响应里：
 
@@ -95,7 +95,7 @@ Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 
 
 ## 组织与工作区的 Provider 范围
 
-组织 Provider 的 `workspace_uuid` 为 NULL，当前工作区 Provider 则保存对应 workspace UUID。新组织集合 API 为 `/api/console/organizations/{orgUuid}/llm_providers`，支持 GET/POST，`/{providerId}` 支持 PUT/DELETE，模型预览及同步路径与工作区集合保持一致。组织成员可新增、更新、预览和同步，删除仅限组织管理员；操作均校验组织可见性。每个查询和写入都绑定组织及对应 workspace（含 NULL），工作区 API 无法操作组织连接或其他工作区连接。
+组织 Provider 的 `workspace_uuid` 为 NULL，当前工作区 Provider 则保存对应 workspace UUID。新组织集合 API 为 `/api/console/organizations/{orgUuid}/llm_providers`，支持 GET/POST，`/{providerId}` 支持 PUT/DELETE，模型预览及同步路径与工作区集合保持一致。组织成员可新增、更新、删除、预览和同步；操作均校验组织可见性。每个查询和写入都绑定组织及对应 workspace（含 NULL），工作区 API 无法操作组织连接或其他工作区连接。
 
 运行时只加载当前组织共享连接和当前 workspace 的连接，不加载其他 workspace。完整模型引用使用 `<slug>/<upstream-model-id>`，上游 ID 允许包含 `/`。裸 ID 先在当前工作区匹配：一个匹配则使用，多个匹配则拒绝；无匹配时在组织连接中执行同样的唯一匹配规则。歧义返回可选完整引用；Brain 派生索引不导出有歧义的裸 ID。计费目录使用相同优先级，组织连接的请求仍归属实际工作区。
 
@@ -318,7 +318,7 @@ Console API（相对 `/api/console/organizations/{orgUuid}`）：
 | --- | --- | --- |
 | GET | `/llm_provider` | 当前组织成员只读 |
 | PUT | `/llm_provider` | 组织成员 |
-| DELETE | `/llm_provider` | 组织管理员 |
+| DELETE | `/llm_provider` | 组织成员 |
 | POST | `/llm_provider/preview_models` | 组织成员 |
 | POST | `/llm_provider/models/sync` | 组织成员 |
 

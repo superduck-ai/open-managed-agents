@@ -323,10 +323,9 @@ func TestWorkspaceLLMProvidersAllowMembers(t *testing.T) {
 	}
 	deleted := app.platformRequest(t, http.MethodDelete, path+"/"+provider.ID, nil, cookies)
 	defer deleted.Body.Close()
-	if deleted.StatusCode != http.StatusForbidden {
+	if deleted.StatusCode != http.StatusNoContent {
 		t.Fatalf("member delete status = %d", deleted.StatusCode)
 	}
-
 }
 
 func TestWorkspaceLLMProviderRejectsMalformedBaseURLs(t *testing.T) {
@@ -680,6 +679,11 @@ func TestOrganizationLLMProviderIsReadableByMembers(t *testing.T) {
 		t.Fatal("member response contains an API key field")
 	}
 	assertJSONDoesNotContain(t, body, "organization-provider-secret")
+	deleted := app.platformRequest(t, http.MethodDelete, "/api/console/organizations/"+orgUUID+"/llm_provider", nil, cookies)
+	defer deleted.Body.Close()
+	if deleted.StatusCode != http.StatusNoContent {
+		t.Fatalf("member delete status = %d", deleted.StatusCode)
+	}
 }
 
 func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {

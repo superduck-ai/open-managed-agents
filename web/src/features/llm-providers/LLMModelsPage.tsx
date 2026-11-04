@@ -6,7 +6,7 @@ import { AlertCircle, Bot, Plus } from 'lucide-react';
 import type { ApiError } from '../../shared/api/client';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
-import { canDeleteLLMProviders, canManageLLMProviders } from '../../shared/permissions/llm-providers';
+import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
 import { useWorkspace } from '../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../shared/workspaces/presentation';
 import { AccessDenied } from '../../shared/ui/access-denied';
@@ -255,7 +255,6 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
 
       <CatalogBody
         canManage={canManage}
-        canDelete={canDeleteLLMProviders(account, orgUuid)}
         organizationEditable={scope === 'organization'}
         providers={providers}
         catalog={catalog}
@@ -351,7 +350,6 @@ function CatalogHeader({
 
 function CatalogBody({
   canManage,
-  canDelete,
   organizationEditable,
   organizationError,
   providers,
@@ -372,7 +370,6 @@ function CatalogBody({
   onAddModel,
 }: {
   canManage: boolean;
-  canDelete: boolean;
   organizationEditable: boolean;
   organizationError: unknown;
   providers: LLMProvider[];
@@ -453,7 +450,6 @@ function CatalogBody({
         <ModelCatalog
           organizationEditable={organizationEditable}
           canManage={canManage}
-          canDelete={canDelete}
           providers={providers}
           models={catalog}
           selectedProviderId={selectedProviderId}

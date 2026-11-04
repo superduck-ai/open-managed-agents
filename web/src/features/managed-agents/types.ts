@@ -730,6 +730,7 @@ export type ResourceConfig = {
 export type EventsTabProps = {
   emptyState?: ReactNode;
   activeLane: string;
+  alerts?: ReactNode;
   archivedLaneCount: number;
   childLoading: boolean;
   composer?: ReactNode;

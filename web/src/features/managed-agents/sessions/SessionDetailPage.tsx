@@ -716,6 +716,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const archived = Boolean(session.archived_at);
   const conversationState = sessionConversationState(session, events, budgetReached);
   const warningError = [resourceRefreshError, metadataError, eventError].find(Boolean);
+  const alerts = buildSessionDetailAlerts(budgetErrorMessage(mutationError, msg, budgetReached), warningError);
 
   return (
     <TooltipProvider>
@@ -830,10 +831,6 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
           />
         </header>
 
-        <SessionDetailAlerts
-          mutationError={budgetErrorMessage(mutationError, msg, budgetReached)}
-          warningError={warningError}
-        />
         <SessionBudgetBannerSection
           budget={budget}
           archived={archived}
@@ -845,6 +842,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
           <SessionDetailDeltaFramesContext.Provider value={eventData.deltaFrames}>
             <EventsTab
               activeLane={activeLane}
+              alerts={alerts}
               archivedLaneCount={archivedLaneCount}
               childLoading={eventsLoading}
               composer={
@@ -984,6 +982,13 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   );
 }
 
+function buildSessionDetailAlerts(mutationError: string | null, warningError?: string | null) {
+  if (!mutationError && !warningError) {
+    return null;
+  }
+  return <SessionDetailAlerts mutationError={mutationError} warningError={warningError} />;
+}
+
 function SessionDetailAlerts({
   mutationError,
   warningError,
@@ -992,18 +997,10 @@ function SessionDetailAlerts({
   warningError?: string | null;
 }) {
   return (
-    <>
-      {mutationError ? (
-        <ManagedErrorAlert className="mx-4 mb-4 max-w-xl @min-[640px]:mx-6 @min-[1024px]:mx-8">
-          {mutationError}
-        </ManagedErrorAlert>
-      ) : null}
-      {warningError ? (
-        <ManagedWarningAlert className="mx-4 mb-4 max-w-xl @min-[640px]:mx-6 @min-[1024px]:mx-8">
-          {warningError}
-        </ManagedWarningAlert>
-      ) : null}
-    </>
+    <div className="grid gap-2">
+      {mutationError ? <ManagedErrorAlert>{mutationError}</ManagedErrorAlert> : null}
+      {warningError ? <ManagedWarningAlert>{warningError}</ManagedWarningAlert> : null}
+    </div>
   );
 }
 
@@ -1032,6 +1029,7 @@ function sessionConversationState(
 export function EventsTab({
   emptyState,
   activeLane,
+  alerts,
   archivedLaneCount,
   childLoading,
   composer,
@@ -1273,6 +1271,11 @@ export function EventsTab({
               {pendingAction ? (
                 <div className="flex-none px-4 pt-2" data-testid="session-pending-action">
                   <div className="mx-auto w-full max-w-[720px]">{pendingAction}</div>
+                </div>
+              ) : null}
+              {alerts ? (
+                <div className="flex-none px-4 pt-2" data-testid="session-alerts">
+                  <div className="mx-auto w-full max-w-[720px]">{alerts}</div>
                 </div>
               ) : null}
               {composer}

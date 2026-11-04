@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { canManageLLMProviders } from './llm-providers';
+import { canDeleteLLMProviders, canManageLLMProviders } from './llm-providers';
 import type { AuthAccount } from '../auth/api';
 
 const account: AuthAccount = {
@@ -10,13 +10,11 @@ const account: AuthAccount = {
   memberships: [],
 };
 
-test('普通账号和伪造成员角色不能授予模型管理', () => {
-  expect(
-    canManageLLMProviders(
-      { ...account, permissions: [], memberships: [{ role: 'admin', organization: { uuid: 'target' } }] },
-      'target',
-    ),
-  ).toBe(false);
+test('普通成员可以管理模型，只有管理员可以删除', () => {
+  const member = { ...account, permissions: [] };
+  expect(canManageLLMProviders(member, 'target')).toBe(true);
+  expect(canDeleteLLMProviders(member, 'target')).toBe(false);
+  expect(canDeleteLLMProviders(account, 'target')).toBe(true);
   expect(canManageLLMProviders(null, 'target')).toBe(false);
   expect(canManageLLMProviders(account, undefined)).toBe(false);
 });

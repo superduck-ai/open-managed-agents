@@ -107,7 +107,7 @@
   "llmModels.addModel": "Add model",
   "llmModels.addModelToProvider": "Add {modelId} to {provider}",
   "llmModels.addProvider": "Add provider",
-  "llmModels.accessDeniedDescription": "You do not have permission to view models in this workspace. Workspace members can view the catalog read-only, and only organization administrators can manage providers.",
+  "llmModels.accessDeniedDescription": "You do not have permission to view models in this workspace.",
   "llmModels.accessDeniedTitle": "Access denied",
   "llmModels.allProviders": "All providers",
   "llmModels.apiKey": "API key",

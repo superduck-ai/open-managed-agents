@@ -3,7 +3,7 @@ import { FlaskConical, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
-import { canManageLLMProviders } from '../../shared/permissions/llm-providers';
+import { canDeleteLLMProviders } from '../../shared/permissions/llm-providers';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -193,7 +193,7 @@ export function TelemetryDestinationsPage({ workspaceId }: { workspaceId?: strin
   const { account } = useAuth();
   const { orgUuid } = useWorkspace();
   const queryClient = useQueryClient();
-  const canManage = canManageLLMProviders(account, orgUuid);
+  const canManage = canDeleteLLMProviders(account, orgUuid);
   const [editor, setEditor] = useState<Editor>(null);
   const [deleting, setDeleting] = useState<TelemetryDestination | null>(null);
   const query = useQuery({

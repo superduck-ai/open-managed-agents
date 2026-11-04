@@ -246,13 +246,13 @@ func llmProviderScope(w http.ResponseWriter, r *http.Request, database *db.DB) (
 		return "", WorkspaceScope{}, false
 	}
 	if chi.URLParam(r, "workspaceId") == "" {
-		if r.Method != http.MethodGet && !requireLLMProviderAdministrator(w, r, database, orgUUID) {
+		if r.Method == http.MethodDelete && !requireLLMProviderAdministrator(w, r, database, orgUUID) {
 			return "", WorkspaceScope{}, false
 		}
 		return orgUUID, WorkspaceScope{}, true
 	}
 	scope, ok := consoleWorkspaceScopeFromRequest(w, r, database, orgUUID)
-	if !ok || (r.Method != http.MethodGet && !requireLLMProviderAdministrator(w, r, database, orgUUID)) {
+	if !ok || (r.Method == http.MethodDelete && !requireLLMProviderAdministrator(w, r, database, orgUUID)) {
 		return "", WorkspaceScope{}, false
 	}
 	return orgUUID, scope, true

@@ -201,7 +201,7 @@ func llmProviderOrganization(w http.ResponseWriter, r *http.Request, database *d
 	if !ok {
 		return "", false
 	}
-	if !requireLLMProviderAdministrator(w, r, database, orgUUID) {
+	if r.Method == http.MethodDelete && !requireLLMProviderAdministrator(w, r, database, orgUUID) {
 		return "", false
 	}
 	return orgUUID, true

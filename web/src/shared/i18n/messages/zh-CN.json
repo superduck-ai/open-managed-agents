@@ -107,7 +107,7 @@
   "llmModels.addModel": "添加模型",
   "llmModels.addModelToProvider": "将 {modelId} 添加到 {provider}",
   "llmModels.addProvider": "添加 Provider",
-  "llmModels.accessDeniedDescription": "你没有权限查看此工作区的模型。工作区成员可以只读查看目录，只有组织管理员可以管理供应商。",
+  "llmModels.accessDeniedDescription": "你没有权限查看此工作区的模型。",
   "llmModels.accessDeniedTitle": "无权限访问",
   "llmModels.allProviders": "全部 Provider",
   "llmModels.apiKey": "API 密钥",

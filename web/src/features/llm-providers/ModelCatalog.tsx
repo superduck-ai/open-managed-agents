@@ -21,6 +21,7 @@ import {
 
 type ModelCatalogProps = {
   canManage: boolean;
+  canDelete: boolean;
   organizationEditable: boolean;
   providers: LLMProvider[];
   models: CatalogModel[];
@@ -38,6 +39,7 @@ type ModelCatalogProps = {
 
 export function ModelCatalog({
   canManage,
+  canDelete,
   organizationEditable,
   providers,
   models,
@@ -104,6 +106,7 @@ export function ModelCatalog({
           openProviders={openProviders}
           onOpenChange={setOpenProviders}
           editableProviderId={canEditSelected ? selected?.id : undefined}
+          canDelete={canDelete}
           onEditProvider={onEditProvider}
           onDeleteProvider={onDeleteProvider}
         />
@@ -249,6 +252,7 @@ function ProviderModelGroups({
   openProviders,
   onOpenChange,
   editableProviderId,
+  canDelete,
   onEditProvider,
   onDeleteProvider,
 }: {
@@ -259,6 +263,7 @@ function ProviderModelGroups({
   openProviders: string[];
   onOpenChange: (ids: string[]) => void;
   editableProviderId?: string;
+  canDelete: boolean;
   onEditProvider: (provider: LLMProvider) => void;
   onDeleteProvider: (provider: LLMProvider) => void;
 }) {
@@ -292,6 +297,7 @@ function ProviderModelGroups({
             query={query}
             organizationEditable={organizationEditable}
             canManage={provider.id === editableProviderId}
+            canDelete={canDelete}
             onEdit={() => onEditProvider(provider)}
             onDelete={() => onDeleteProvider(provider)}
           />
@@ -307,6 +313,7 @@ function ProviderModelGroup({
   query,
   organizationEditable,
   canManage,
+  canDelete,
   onEdit,
   onDelete,
 }: {
@@ -315,6 +322,7 @@ function ProviderModelGroup({
   query: string;
   organizationEditable: boolean;
   canManage: boolean;
+  canDelete: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -345,15 +353,17 @@ function ProviderModelGroup({
             >
               <Pencil aria-hidden />
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={msg('common.delete', 'Delete')}
-              onClick={onDelete}
-            >
-              <Trash2 aria-hidden />
-            </Button>
+            {canDelete ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={msg('common.delete', 'Delete')}
+                onClick={onDelete}
+              >
+                <Trash2 aria-hidden />
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>

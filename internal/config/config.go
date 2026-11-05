@@ -147,6 +147,9 @@ func validate(cfg Config) error {
 	if err := validateCodeSessionSandboxAPIBaseURL(cfg.Env, cfg.CodeSession); err != nil {
 		return err
 	}
+	if err := validateOAuthServiceBindings(cfg.Vault.OAuthServiceBindings); err != nil {
+		return err
+	}
 	if err := validatePlatformOAuthClients(cfg.Vault.PlatformOAuthClients); err != nil {
 		return err
 	}

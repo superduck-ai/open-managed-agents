@@ -57,8 +57,14 @@ type WebToolProviderConfig struct {
 // VaultConfig configures at-rest encryption for vault credential secrets and
 // optional Platform OAuth Clients used during vault MCP OAuth enrollment.
 type VaultConfig struct {
+	OAuthServiceBindings []OAuthServiceBindingConfig `yaml:"oauth_service_bindings"`
 	MasterKey            MasterKeyConfig             `yaml:"master_key"`
 	PlatformOAuthClients []PlatformOAuthClientConfig `yaml:"platform_oauth_clients"`
+}
+
+type OAuthServiceBindingConfig struct {
+	ServiceURL          string `yaml:"service_url"`
+	CredentialTargetURL string `yaml:"credential_target_url"`
 }
 
 // PlatformOAuthClientConfig is one deployment-owned OAuth client bound to an

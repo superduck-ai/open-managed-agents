@@ -18,6 +18,9 @@ func (r *Runner) resolveEnvironmentSandbox(env db.Environment, work *db.Environm
 	if err != nil {
 		return e2bruntime.Resolution{}, false, err
 	}
+	if !preinstalled {
+		env.ResolvedTemplate = ""
+	}
 	resolution, err := r.provider.Resolve(env, work)
 	if err != nil {
 		return e2bruntime.Resolution{}, false, err

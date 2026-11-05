@@ -68,7 +68,7 @@ Handler 内部依次做三层校验：
    通过 ResolvePrincipal 检查当前请求的 `UseResources()` 能力；无权或空间已归档返回 403。此检查覆盖工作区 Key 的
    列表、创建、更新和计数，在 `CreateConsoleAPIKey` 等 DB 操作前完成。
 
-通过校验后，普通成员来源读取 `auth.Principal.UserUUID` 作为 `createdByUserUUID`，平台来源传 nil。连同 org UUID、
+通过校验后，普通成员来源读取 `auth.Principal.UserUUID` 作为 `createdByUserUUID`；平台来源通过稳定账号邮箱解析目标组织的有效成员，有成员才保存其 UUID，没有成员保持 nil，解析能力缺失或查询失败拒绝创建。连同 org UUID、
 workspace UUID、name 和 expires_at 一起传入 DB 层。这里不接受前端提交的创建者，也不使用
 `UserExternalID` 或 `user_...` 派生值。HTTP/resource 边界负责清理和校验这些 UUID 字符串，DB 层
 按调用契约直接绑定到 PostgreSQL 的 `uuid` 列，不再重复调用 `TrimSpace`、`parseDBUUID`，也不添加

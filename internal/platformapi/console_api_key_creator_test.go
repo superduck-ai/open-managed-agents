@@ -15,11 +15,14 @@ import (
 
 type apiKeyCreatorStore struct {
 	consoleAPIKeyScopeStore
-	accountErr error
-	memberErr  error
+	accountErr   error
+	memberErr    error
+	accountCalls int
+	memberCalls  int
 }
 
 func (s *apiKeyCreatorStore) GetPlatformAdminAccount(_ context.Context, accountUUID string) (db.PlatformAdminAccount, error) {
+	s.accountCalls++
 	if accountUUID != "account" {
 		return db.PlatformAdminAccount{}, errors.New("账号范围不匹配")
 	}
@@ -27,6 +30,7 @@ func (s *apiKeyCreatorStore) GetPlatformAdminAccount(_ context.Context, accountU
 }
 
 func (s *apiKeyCreatorStore) GetActivePlatformUserByEmail(_ context.Context, organizationUUID, email string) (db.AdminUser, error) {
+	s.memberCalls++
 	if organizationUUID != "00000000-0000-4000-8000-000000000002" || email != "actor@example.com" {
 		return db.AdminUser{}, errors.New("组织成员范围不匹配")
 	}
@@ -76,6 +80,24 @@ func TestPlatformAPIKeyCreatorUsesExistingOrganizationMembership(t *testing.T) {
 			}
 			if tc.creator == "" && creator != nil || tc.creator != "" && (creator == nil || *creator != tc.creator) {
 				t.Fatalf("创建者 = %v，预期 %q", creator, tc.creator)
+			}
+		})
+	}
+}
+
+func TestConsoleAPIKeyCreatorSkipsResolverOutsidePlatformAccess(t *testing.T) {
+	for _, tc := range []struct{ name, user, want string }{
+		{"非平台来源且没有成员身份", "", ""},
+		{"真实成员使用自身身份", "member", "member"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &apiKeyCreatorStore{}
+			creator, err := consoleAPIKeyCreator(t.Context(), store, auth.Principal{AccountUUID: "account", UserUUID: tc.user, OrganizationUUID: "00000000-0000-4000-8000-000000000002"})
+			if err != nil || store.accountCalls != 0 || store.memberCalls != 0 {
+				t.Fatalf("不应解析账号或成员：账号=%d，成员=%d，错误=%v", store.accountCalls, store.memberCalls, err)
+			}
+			if tc.want == "" && creator != nil || tc.want != "" && (creator == nil || *creator != tc.want) {
+				t.Fatalf("创建者错误：%v", creator)
 			}
 		})
 	}

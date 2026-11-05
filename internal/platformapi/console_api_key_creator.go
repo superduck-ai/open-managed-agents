@@ -13,6 +13,8 @@ type consoleAPIKeyCreatorStore interface {
 	GetActivePlatformUserByEmail(context.Context, string, string) (db.AdminUser, error)
 }
 
+var _ consoleAPIKeyCreatorStore = (*db.DB)(nil)
+
 func consoleAPIKeyCreator(ctx context.Context, store OrganizationStore, principal auth.Principal) (*string, error) {
 	if principal.UserUUID != "" {
 		return new(principal.UserUUID), nil
@@ -22,7 +24,7 @@ func consoleAPIKeyCreator(ctx context.Context, store OrganizationStore, principa
 	}
 	resolver, ok := store.(consoleAPIKeyCreatorStore)
 	if !ok {
-		return nil, nil
+		return nil, errConsoleAPIKeyCreatorUnavailable
 	}
 	account, err := resolver.GetPlatformAdminAccount(ctx, principal.AccountUUID)
 	if err != nil {

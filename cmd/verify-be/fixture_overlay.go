@@ -17,16 +17,21 @@ type fixtureOverlay struct {
 }
 
 func (e *environment) baselineFixtureOverlay(selected scenario) (string, error) {
-	if e.backendCommit == "" || selected.Test != "TestChatPerformance" {
+	if e.backendCommit == "" || (selected.Test != "TestChatPerformance" && selected.Test != "TestFilesPerformance") {
 		return "", nil
 	}
 	overlay := fixtureOverlay{Replace: make(map[string]string)}
-	for _, mapper := range []struct{ name, function string }{
-		{"session_mapper", ""},
-		{"session_thread_mapper", ""},
-		{"session_resource_file_mapper", ""},
-		{"session_resource_mapper", "buildSessionResourceMapperInsertDirectory"},
-	} {
+	mappers := []struct{ name, function string }{{"admin_api_keys_mapper", ""}}
+	if selected.Test == "TestChatPerformance" {
+		mappers = append(mappers, []struct{ name, function string }{
+			{"code_session_mapper", ""},
+			{"session_mapper", ""},
+			{"session_thread_mapper", ""},
+			{"session_resource_file_mapper", ""},
+			{"session_resource_mapper", "buildSessionResourceMapperInsertDirectory"},
+		}...)
+	}
+	for _, mapper := range mappers {
 		name := mapper.name
 		filename := name + ".sqlmap.gen.go"
 		reference := filepath.Join(e.directory, "backend-source", "internal", "db", filename)

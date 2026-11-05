@@ -390,7 +390,7 @@ func TestArchiveConsoleWorkspaceRejectsDefaultWorkspace(t *testing.T) {
 	}
 }
 
-func TestPlatformAPIKeyCreatorIsNullable(t *testing.T) {
+func TestPlatformAPIKeyCreatorRejectsMissingResolver(t *testing.T) {
 	request := consoleWorkspaceAPIKeyTestRequest("workspace_test")
 	request.Method = http.MethodPost
 	request.Body = io.NopCloser(strings.NewReader(`{"name":"platform key"}`))
@@ -398,7 +398,7 @@ func TestPlatformAPIKeyCreatorIsNullable(t *testing.T) {
 	store := &consoleAPIKeyScopeStore{workspaces: []ConsoleWorkspace{{UUID: "00000000-0000-4000-8000-000000000001", ExternalID: "workspace_test"}}}
 	response := httptest.NewRecorder()
 	handleCreateConsoleWorkspaceAPIKey(store).ServeHTTP(response, request.WithContext(auth.WithPrincipal(request.Context(), principal)))
-	if response.Code != 200 || store.createInput == nil || store.createInput.CreatedByUserUUID != nil {
+	if response.Code != http.StatusInternalServerError || store.createInput != nil {
 		t.Fatalf("status=%d creator=%+v", response.Code, store.createInput)
 	}
 }

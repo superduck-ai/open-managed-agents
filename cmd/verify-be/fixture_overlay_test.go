@@ -16,7 +16,7 @@ func TestBaselineFixtureOverlayRejectsMissingReferenceMapper(t *testing.T) {
 	}
 }
 
-func TestBaselineFixtureOverlayOnlyAppliesToChatBaseline(t *testing.T) {
+func TestBaselineFixtureOverlayOnlyAppliesToPerformanceBaseline(t *testing.T) {
 	env := newEnvironment(t.TempDir(), t.TempDir(), "fixture-overlay-test")
 	for _, name := range []string{"chat.performance", "files.performance", "chat.roundtrip"} {
 		if path, err := env.baselineFixtureOverlay(scenarios[name]); err != nil || path != "" {
@@ -24,7 +24,7 @@ func TestBaselineFixtureOverlayOnlyAppliesToChatBaseline(t *testing.T) {
 		}
 	}
 	env.backendCommit = "reference-commit"
-	for _, name := range []string{"files.performance", "chat.roundtrip"} {
+	for _, name := range []string{"chat.roundtrip", "files.lifecycle"} {
 		if path, err := env.baselineFixtureOverlay(scenarios[name]); err != nil || path != "" {
 			t.Fatalf("%s unexpectedly used an overlay: %s, %v", name, path, err)
 		}
@@ -34,7 +34,7 @@ func TestBaselineFixtureOverlayOnlyAppliesToChatBaseline(t *testing.T) {
 func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 	env := newEnvironment(t.TempDir(), t.TempDir(), "fixture-overlay-test")
 	env.backendCommit = "reference-commit"
-	for _, name := range []string{"session_mapper", "session_thread_mapper", "session_resource_file_mapper", "session_resource_mapper"} {
+	for _, name := range []string{"admin_api_keys_mapper", "code_session_mapper", "session_mapper", "session_thread_mapper", "session_resource_file_mapper", "session_resource_mapper"} {
 		for _, root := range []string{env.root, filepath.Join(env.directory, "backend-source")} {
 			path := filepath.Join(root, "internal", "db", name+".sqlmap.gen.go")
 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -65,7 +65,7 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 	if err := json.Unmarshal(data, &overlay); err != nil {
 		t.Fatal(err)
 	}
-	if len(overlay.Replace) != 4 {
+	if len(overlay.Replace) != 6 {
 		t.Fatalf("unexpected fixture scope: %v", overlay.Replace)
 	}
 	if _, exists := overlay.Replace[filepath.Join(env.root, "internal", "db", "llm_provider_mapper.sqlmap.gen.go")]; exists {
@@ -143,5 +143,56 @@ func buildSessionResourceMapperInsert() string { return "old-resource" }
 		if strings.Contains(string(merged), unwanted) {
 			t.Fatalf("unexpected %s: %s", unwanted, merged)
 		}
+	}
+}
+
+func TestFilesBaselineOverlayUsesReferenceAPIKeySQLAndScanner(t *testing.T) {
+	env := newEnvironment(t.TempDir(), t.TempDir(), "files-fixture-overlay-test")
+	env.backendCommit = "reference-commit"
+	current := filepath.Join(env.root, "internal", "db", "admin_api_keys_mapper.sqlmap.gen.go")
+	reference := filepath.Join(env.directory, "backend-source", "internal", "db", filepath.Base(current))
+	for path, source := range map[string]string{
+		current: `package db
+func buildAdminAPIKeyMapperFindActiveByKeyHash() string { return "candidate-runtime-column" }
+func scanAdminAPIKeyMapperFindActiveByKeyHash() string { return "candidate-six-columns" }
+func candidateRuntimeBinding() {}
+`,
+		reference: `package db
+func buildAdminAPIKeyMapperFindActiveByKeyHash() string { return "baseline-five-columns" }
+func scanAdminAPIKeyMapperFindActiveByKeyHash() string { return "baseline-five-columns" }
+`,
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path, err := env.baselineFixtureOverlay(scenarios["files.performance"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var overlay fixtureOverlay
+	if err := json.Unmarshal(data, &overlay); err != nil {
+		t.Fatal(err)
+	}
+	if len(overlay.Replace) != 1 {
+		t.Fatalf("Files 基线不应覆盖其他夹具：%v", overlay.Replace)
+	}
+	merged, err := os.ReadFile(overlay.Replace[current])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(merged), "baseline-five-columns") != 2 || strings.Contains(string(merged), "candidate-runtime-column") || strings.Contains(string(merged), "candidate-six-columns") || !strings.Contains(string(merged), "candidateRuntimeBinding") {
+		t.Fatalf("基线查询与扫描不匹配：%s", merged)
+	}
+	original, err := os.ReadFile(current)
+	if err != nil || !strings.Contains(string(original), "candidate-runtime-column") {
+		t.Fatalf("候选源码不应被改写：%v", err)
 	}
 }

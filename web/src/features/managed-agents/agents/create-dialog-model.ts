@@ -100,6 +100,7 @@ const builtInToolNameSchema = z.enum([
 const builtInToolConfigSchema = permissionConfigSchema
   .extend({
     name: builtInToolNameSchema,
+    type: z.string().optional(),
     allowed_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
     blocked_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
     max_content_tokens: z.number().int().positive().nullable().optional(),

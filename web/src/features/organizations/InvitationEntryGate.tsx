@@ -3,6 +3,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../shared/auth/context';
+import { useOrganizations } from '../../shared/organizations/context';
+import { readPreference } from '../../shared/organizations/scope';
 import { returnToFromSearch } from '../../shared/auth/redirects';
 import { Button } from '../../shared/ui/button';
 import { invitationReturnTo, listInvitations } from './api';
@@ -10,7 +12,16 @@ import { invitationReturnTo, listInvitations } from './api';
 export function InvitationEntryGate() {
   const { status, account } = useAuth();
   const location = useLocation();
-  if (location.pathname === '/platform-admin' || location.pathname.startsWith('/platform-admin/')) return <Outlet />;
+  const organizations = useOrganizations();
+  const inPlatformAdmin = location.pathname === '/platform-admin' || location.pathname.startsWith('/platform-admin/');
+  const wasInPlatformAdmin = useRef(inPlatformAdmin);
+  useEffect(() => {
+    const returning = wasInPlatformAdmin.current && !inPlatformAdmin;
+    wasInPlatformAdmin.current = inPlatformAdmin;
+    if (returning && status === 'authenticated' && account && !organizations?.platformScope)
+      void organizations?.switchOrganization(readPreference(account.uuid));
+  }, [account, inPlatformAdmin, organizations, status]);
+  if (inPlatformAdmin) return <Outlet />;
   if (status !== 'authenticated' || !account) return <Outlet />;
   return (
     <AuthenticatedInvitationEntry key={account.uuid} accountUuid={account.uuid}>

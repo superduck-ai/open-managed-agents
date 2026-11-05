@@ -52,7 +52,7 @@ func TestDSHExecutionRejectsMalformedCommandsBeforeSideEffects(t *testing.T) {
 	tests := []struct{ path, body string }{
 		{"/inputs/delivery", `{"updates":[]}`},
 		{"/inputs/delivery", `{"updates":[{"id":"a","status":"received"},{"id":"a","status":"processed"}]}`},
-		{"/inputs/delivery", `{"updates":[{"id":"a","status":"processing","error":"invalid_model"}]}`},
+		{"/inputs/delivery", `{"updates":[{"id":"a","status":"processed","error":"invalid_model"}]}`},
 		{"/inputs/input/finish", `{"result":"success","failure_code":"execution_failed"}`},
 		{"/inputs/input/finish", `{"result":"failed"}`},
 		{"/inputs/input/finish", `{"result":"recovered","failure_code":"interrupted_recovery"}`},

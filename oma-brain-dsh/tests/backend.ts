@@ -6,6 +6,7 @@ import type { Payload } from "../src/json.ts";
 
 export function assignment(): Assignment {
   return {
+    subagent_contexts:{},
     session_id: `test_${crypto.randomUUID().replaceAll("-", "")}`,
     worker_epoch: "1",
     ingress_token: "test-ingress",
@@ -216,6 +217,19 @@ export class Backend {
     this.server.closeAllConnections();
     this.server.close();
   }
+  runtimeContext():Payload { return  {
+          runtime_tools: this.a.launch.tools,
+          mcp_config: this.a.external_mcp_config ?? {},
+          cwd: this.a.launch.work_dir,
+          model: this.a.launch.model,
+          system_prompt: this.a.launch.system,
+          append_system_prompt: this.a.launch.environment_prompt,
+          memory_catalog_prompt: this.a.launch.memory_catalog_prompt,
+          runtime_skills: this.a.launch.skills,
+          subagents: this.a.launch.subagents,
+          runtime_tool_permissions: this.a.launch.tool_permissions,
+          models: this.a.launch.models,
+        }; }
   async route(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -297,22 +311,6 @@ export class Backend {
       }
       return json({});
     }
-    if (path === `/v1/dsr/sessions/${this.a.session_id}/context`)
-      return json({
-        context: {
-          runtime_tools: this.a.launch.tools,
-          mcp_config: this.a.external_mcp_config ?? {},
-          cwd: this.a.launch.work_dir,
-          model: this.a.launch.model,
-          system_prompt: this.a.launch.system,
-          append_system_prompt: this.a.launch.environment_prompt,
-          memory_catalog_prompt: this.a.launch.memory_catalog_prompt,
-          runtime_skills: this.a.launch.skills,
-          subagents: this.a.launch.subagents,
-          runtime_tool_permissions: this.a.launch.tool_permissions,
-          models: this.a.launch.models,
-        },
-      });
     if (path === "/v1/messages") {
       expect(request.headers.get("Authorization")).toBe(
         `Bearer ${this.a.model_token}`,

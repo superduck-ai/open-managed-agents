@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
@@ -21,7 +20,7 @@ func TestDSHWorkersPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	var forbidden int
-	err := database.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='dsh_control_receipts') + (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='dsh_worker_states' AND column_name='status') + (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='dsh_public_receipts' AND column_name='payload')`).Scan(&forbidden)
+	err := database.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='dsh_control_receipts') + (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='dsh_worker_states' AND column_name IN ('status','model','trace_turns','model_control_sequence','model_control_input_id')) + (SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='dsh_public_receipts' AND column_name='payload')`).Scan(&forbidden)
 	if err != nil || forbidden != 0 {
 		t.Fatalf("obsolete schema=%d %v", forbidden, err)
 	}
@@ -44,99 +43,85 @@ func TestDSHWorkersPostgres(t *testing.T) {
 	if _, err := store.RegisterDSHWorker(ctx, scope); err != nil {
 		t.Fatal(err)
 	}
-	model := "selected"
-	traces := []byte(`[{"sessionId":"root","traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"00f067aa0ba902b7","startMs":0}]`)
-	state, err := store.PatchDSHWorkerState(ctx, scope, DSHWorkerPatch{ControlInputID: "initial", ControlSequence: "1", ModelSet: true, Model: &model, TraceTurnsSet: true, TraceTurns: traces})
-	if err != nil || state.Model == nil || *state.Model != "selected" || len(state.TraceTurns) == 0 {
-		t.Fatalf("patch=%+v,%v", state, err)
-	}
-	if _, err := store.RegisterDSHWorker(ctx, scope); err != nil {
-		t.Fatal(err)
-	}
-	state, err = store.GetDSHWorkerState(ctx, scope)
-	if err != nil || state.Model == nil || *state.Model != "selected" {
-		t.Fatalf("register reset state=%+v,%v", state, err)
-	}
-	if expiry, err := store.HeartbeatDSHWorker(ctx, scope); err != nil || !expiry.After(time.Now()) {
-		t.Fatalf("heartbeat=%v,%v", expiry, err)
-	}
-	state, err = store.PatchDSHWorkerState(ctx, scope, DSHWorkerPatch{ModelSet: true, ControlInputID: "clear", ControlSequence: "2", TraceTurnsSet: true})
-	if err != nil || state.Model != nil || state.TraceTurns != nil {
-		t.Fatalf("clear=%+v,%v", state, err)
-	}
-	t.Run("model controls are durable and ordered across replay", func(t *testing.T) {
-		for _, sequence := range []string{"", "0", "01", "18446744073709551616"} {
-			if _, err := store.PatchDSHWorkerState(ctx, scope, DSHWorkerPatch{ModelSet: true, ControlInputID: "bad", ControlSequence: sequence}); !errors.Is(err, ErrInvalidState) {
-				t.Fatalf("invalid sequence=%q %v", sequence, err)
+
+	t.Run("configuration freezes once across owner replacement", func(t *testing.T) {
+		other := scope
+		other.WorkspaceUUID = "53000000-0000-0000-0000-000000000099"
+		if _, err := store.FreezeDSHContext(ctx, other, []byte(`{"model":"cross-tenant"}`)); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("cross tenant snapshot=%v", err)
+		}
+		if _, err := store.FreezeDSHContext(ctx, old, []byte(`{"model":"stale"}`)); !errors.Is(err, ErrWorkerEpochMismatch) {
+			t.Fatalf("stale snapshot=%v", err)
+		}
+		for _, invalid := range []string{`[]`, `null`} {
+			if _, err := store.FreezeDSHContext(ctx, scope, []byte(invalid)); err == nil {
+				t.Fatalf("invalid snapshot=%s", invalid)
 			}
 		}
-		first, second := "model-a", "model-b"
-		a := DSHWorkerPatch{ModelSet: true, Model: &first, ControlInputID: "control-a", ControlSequence: "10"}
-		b := DSHWorkerPatch{ModelSet: true, Model: &second, ControlInputID: "control-b", ControlSequence: "20"}
-		if _, err := store.PatchDSHWorkerState(ctx, scope, a); err != nil {
+		first, err := store.FreezeDSHContext(ctx, scope, []byte(`{"model":"frozen","config":{}}`))
+		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.PatchDSHWorkerState(ctx, scope, b); err != nil {
+		second, err := store.FreezeDSHContext(ctx, scope, []byte(`{"model":"changed"}`))
+		if err != nil || string(first) != string(second) {
+			t.Fatalf("snapshot changed=%s %s %v", first, second, err)
+		}
+		if _, err := store.RegisterDSHWorker(ctx, scope); err != nil {
 			t.Fatal(err)
 		}
-		current, err := store.PatchDSHWorkerState(ctx, scope, a)
-		if err != nil || current.Model == nil || *current.Model != "model-b" {
-			t.Fatalf("old replay=%+v,%v", current, err)
+		actual, err := store.GetDSHContextSnapshot(ctx, scope)
+		if err != nil || string(actual) != string(first) {
+			t.Fatalf("register changed snapshot=%s %v", actual, err)
 		}
-		a.ControlInputID = "unseen-older"
-		a.ControlSequence = "15"
-		current, err = store.PatchDSHWorkerState(ctx, scope, a)
-		if err != nil || current.Model == nil || *current.Model != "model-b" {
-			t.Fatalf("out of order=%+v,%v", current, err)
-		}
-		duplicate, err := store.PatchDSHWorkerState(ctx, scope, b)
-		if err != nil || duplicate.ModelControlSequence == nil || *duplicate.ModelControlSequence != "20" {
-			t.Fatalf("duplicate=%+v,%v", duplicate, err)
-		}
-		collision := b
-		collision.ControlInputID = "same-version-new-id"
-		if _, err := store.PatchDSHWorkerState(ctx, scope, collision); !errors.Is(err, ErrDSHControlConflict) {
-			t.Fatalf("same version different identity=%v", err)
-		}
-		b.Model = &first
-		if _, err := store.PatchDSHWorkerState(ctx, scope, b); !errors.Is(err, ErrDSHControlConflict) {
-			t.Fatalf("changed control=%v", err)
-		}
-		a.Model = &second
-		a.ControlSequence = "10"
-		old, err := store.PatchDSHWorkerState(ctx, scope, a)
-		if err != nil || old.Model == nil || *old.Model != second {
-			t.Fatalf("historical changed payload must be ignored=%+v,%v", old, err)
-		}
+
 		execClaimTest(t, ctx, database, `UPDATE code_sessions SET current_worker_epoch=8 WHERE external_id=$1`, id)
-		stale := scope
 		scope.Epoch = 8
 		if _, err := store.RegisterDSHWorker(ctx, scope); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.PatchDSHWorkerState(ctx, stale, a); !errors.Is(err, ErrWorkerEpochMismatch) {
-			t.Fatalf("stale owner=%v", err)
+		replacement, err := store.FreezeDSHContext(ctx, scope, []byte(`{"model":"replacement"}`))
+		if err != nil || string(replacement) != string(first) {
+			t.Fatalf("replacement snapshot=%s %v", replacement, err)
 		}
-		latest := DSHWorkerPatch{ModelSet: true, ControlInputID: "clear-max", ControlSequence: "18446744073709551615"}
-		cleared, err := store.PatchDSHWorkerState(ctx, scope, latest)
-		if err != nil || cleared.Model != nil || cleared.ModelControlSequence == nil || *cleared.ModelControlSequence != latest.ControlSequence {
-			t.Fatalf("clear across owner=%+v,%v", cleared, err)
+		if _, err := store.HeartbeatDSHWorker(ctx, scope); err != nil {
+			t.Fatal(err)
 		}
-		current, err = store.PatchDSHWorkerState(ctx, scope, b)
-		if err != nil || current.Model != nil {
-			t.Fatalf("old after clear=%+v,%v", current, err)
+		actual, err = store.GetDSHContextSnapshot(ctx, other)
+		if err != nil || len(actual) != 0 {
+			t.Fatalf("snapshot leaked=%s %v", actual, err)
 		}
 	})
-	other := scope
-	other.WorkspaceUUID = "53000000-0000-0000-0000-000000000099"
-	if _, err := store.PatchDSHWorkerState(ctx, other, DSHWorkerPatch{ModelSet: true, Model: &model, ControlInputID: "other", ControlSequence: "30"}); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("cross tenant=%v", err)
-	}
 	execClaimTest(t, ctx, database, `UPDATE code_sessions SET worker_lease_expires_at=now()-interval '31 seconds' WHERE external_id=$1`, id)
 	if _, err := store.HeartbeatDSHWorker(ctx, scope); !errors.Is(err, ErrWorkerLeaseExpired) {
 		t.Fatalf("expired heartbeat=%v", err)
 	}
 	if _, err := store.RegisterDSHWorker(ctx, scope); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDSHRegistrationMigrationPostgres(t *testing.T) {
+	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if address == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, migrations := newIsolatedMigrationTestDatabase(t, address)
+	if _, err := migrations.UpTo(ctx, 119); err != nil {
+		t.Fatal(err)
+	}
+	_, err := database.ExecContext(ctx, `INSERT INTO dsh_worker_states (organization_uuid, workspace_uuid, code_session_uuid, model, trace_turns, model_control_sequence, model_control_input_id, context_snapshot) VALUES ('53000000-0000-0000-0000-000000000001', '53000000-0000-0000-0000-000000000002', '53000000-0000-0000-0000-000000000003', 'selected', '[]', 20, 'control', '{"model":"frozen"}')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrations.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot string
+	if err := database.QueryRowContext(ctx, `SELECT context_snapshot->>'model' FROM dsh_worker_states`).Scan(&snapshot); err != nil || snapshot != "frozen" {
+		t.Fatalf("snapshot=%s %v", snapshot, err)
+	}
+	var remaining int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='dsh_worker_states' AND column_name IN ('model','trace_turns','model_control_sequence','model_control_input_id')`).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("remaining=%d %v", remaining, err)
 	}
 }

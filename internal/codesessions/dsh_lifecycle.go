@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -39,33 +38,4 @@ func (l dshLifecycle) Telemetry(ctx context.Context, scope db.DSHScope) (bool, *
 		return l.handler.cfg.Observability.Enabled, nil
 	}
 	return l.handler.cfg.Observability.Enabled, &dsh.TraceExport{Content: settings["content"]}
-}
-
-func (l dshLifecycle) Context(ctx context.Context, scope db.DSHScope, token, thread string) (json.RawMessage, error) {
-	h := l.handler
-	record, err := h.requireCodeSession(ctx, scope.CodeSessionID)
-	if err != nil {
-		return nil, err
-	}
-	record, err = h.runtimeSessionToolContext(ctx, record, strings.TrimSpace(thread))
-	if err != nil {
-		return nil, err
-	}
-	value, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{Protocol: "dsr1", CodeSessionID: record.ExternalID, SessionIngressToken: token, APIBaseURL: h.cfg.CodeSession.SandboxAPIBaseURL}, h.cfg)
-	if err != nil {
-		return nil, err
-	}
-	external, err := h.service.selfHostedCodeSession(ctx, record.ExternalID)
-	if err != nil {
-		return nil, err
-	}
-	if external {
-		delete(value, "runtime_tool_permissions")
-	}
-	models, err := h.service.modelCatalog(ctx, record)
-	if err != nil {
-		return nil, err
-	}
-	value["models"] = models
-	return json.Marshal(value)
 }

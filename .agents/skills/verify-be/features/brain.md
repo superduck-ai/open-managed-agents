@@ -81,7 +81,7 @@ Brain doctor 同时检查 Worker 的 `environment-manager task-run --help` 声�
 
 `chat doctor brain-dsr` / `chat brain-dsr` 使用真实 Brain 可执行文件、公开 Session API、Runner、Docker MCP、PostgreSQL、Redis、JetStream 与 MinIO，仅脚本化上游模型。后端显式选择 `brain_worker_protocol: dsr1`，Brain 设置 `OMA_BRAIN_PROTOCOL=dsr1`。
 
-必需阶段为 `dsr_roundtrip`、`dsr_transcript_contracts`、`dsr_tool_approval`、`dsr_cancel`、`dsr_ack_recovery`、`dsr_claim_release`、`dsr_takeover`。场景检查全部 17 个主接口，中文预览/最终消息/历史，日志重复与冲突，审批确认后实际工具写入，取消后无沙箱副作用，以及 SIGKILL 后真实租约过期、claim/release、冷接管和旧 epoch 拒绝。报告必须包含全部阶段及资源清理成功。
+必需阶段为 `dsr_roundtrip`、`dsr_transcript_contracts`、`dsr_tool_approval`、`dsr_cancel`、`dsr_ack_recovery`、`dsr_claim_release`、`dsr_takeover`。场景检查当前 14 个主接口，中文预览/最终消息/历史，日志重复与冲突，审批确认后实际工具写入，取消后无沙箱副作用，以及 SIGKILL 后真实租约过期、claim/release、冷接管和旧 epoch 拒绝。报告必须包含全部阶段及资源清理成功。
 
 此场景不验证新 transcript 归档、全部子线程/附件/压缩能力、真实模型质量、云端网络分区或性能。普通原生运行时测试另覆盖审批挂起与双工具批次在 SIGKILL 后的防重放，不能代替这个真实后端场景。
 
@@ -91,6 +91,8 @@ DSR 独立 ACK 补偿新增 dsr_ack_recovery 阶段：停止真实 Brain，先�
 
 独立 ACK 场景会显式推进 owner 租约过期，检查 pending ACK 不触发领取，不测量 DSR 的完整 TTL 等待时序。
 
-DSR 第 18 版还通过真实 HTTP 检查 worker-state 无 status、status/无版本模型写入返回 400，模型控制高版本生效、旧版本忽略、相同版本身份或内容变化返回 409、null 清除及接管后水位保留。公开 system.message 原始 JSON 调整字段顺序与空白后仍 duplicate，内容变化返回 409。该探针在停止首个 Brain 后构造版本，不替代真实 broker 控制流所有乱序与崩溃窗口验收。
+公开 system.message 原始 JSON 调整字段顺序与空白后仍 duplicate，内容变化返回 409。
 
 DSR ACK 第 19 版以 delivery 行消失断言确认完成，不再查询 acked/acked_at。数据库回归覆盖 cleanup 更新失败时删除回滚、旧租约/跨租户/新投递 CAS，以及删除后的重投只补 ACK。discarded 仍在 7 天后分批清理。
+
+register 返回持久配置快照。子线程配置从注册模板派生，模型和工具使用固定配置。场景注册响应须包含 context；故障恢复继续使用相同快照和新 owner 凭证。实际覆盖以当次验收报告为准。

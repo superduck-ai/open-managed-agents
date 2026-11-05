@@ -1,6 +1,6 @@
 # DSRv1 实验实现状态
 
-17 个主接口均已有后端实现，Brain 已新增可选择的 DSR 原生执行路径。后端新建 Brain 会话和 Brain 进程默认使用 DSRv1；协议仍未冻结。验证结论与剩余限制见文末。
+当前 14 个主接口已有后端实现，Brain 使用 DSR 原生执行路径。后端新建 Brain 会话和 Brain 进程默认使用 DSRv1；协议仍未冻结。验证结论与剩余限制见文末。
 
 ## 逐接口实现与调用位置
 
@@ -12,20 +12,18 @@
 | 2 | release | `dsr/worker.ts` | 排空输入与复制后释放，拒绝旧 owner |
 | 3 | register | `dsr/worker.ts` | 同 epoch 恢复保留状态；补 ACK 由独立后台处理器负责 |
 | 4 | heartbeat | `dsr/lease.ts` | 注册后独立运行，不被模型或审批阻塞 |
-| 5 | context | `dsr/assignment.ts`、`oma-session.ts` | 准入与工具刷新复用配置组装 |
-| 6–7 | worker-state GET/PUT | `dsr/session.ts` | 恢复模型与 trace，按字段 patch；模型控制按最高 broker sequence 与最新 input ID 确保有序更新 |
-| 8 | inputs/stream | `dsr/worker.ts`、`dsr/input-stream.ts` | task/control 分别串行消费，审批等待时仍可处理控制输入 |
-| 9 | inputs/delivery | `dsr/worker.ts`、`dsr/session.ts` | received 续报；执行前 processing；completed 后 processed 返回 scheduled；响应含 execution_status 与 cancel_requested_at |
-| 10 | inputs/{id}/finish | `dsr/session.ts` | 日志与输出确认后写 finish，再 ACK；重复完成结果不可改变 |
-| 11 | Header PUT | `runtime/replication.ts`、`dsr/replication.ts` | Header 先于事件，不可变身份 |
-| 12 | events POST | 同上 | 每日志连续追加、JCS 重叠去重，冲突整批回滚 |
-| 13 | directory GET | `dsr/subagents.ts`、`dsr/replication.ts` | 接管时完整枚举根/子日志 |
-| 14 | transcript GET | `dsr/replication.ts`、`runtime/replication.ts` | 分页读取，校验原生结构与本地前缀 |
-| 15 | permission-requests POST | `dsr/session.ts`、`dsr/executor.ts` | 批次预审批，确定性 request_id，重查不可重新执行策略 |
-| 16 | permission cancel | `dsr/client.ts` | 显式放弃调用的接口；用户 interrupt 由后端事务关闭 pending 并持久标记 task 取消 |
-| 17 | public-events POST | `dsr/session.ts`、`dsr/subagents.ts` | 持久输出收据与公开事件同事务；预览不入历史 |
+| 5 | inputs/stream | `dsr/worker.ts`、`dsr/input-stream.ts` | task/control 分别串行消费，审批等待时仍可处理控制输入 |
+| 6 | inputs/delivery | `dsr/worker.ts`、`dsr/session.ts` | received 续报；执行前 processing；completed 后 processed 返回 scheduled；响应含 execution_status 与 cancel_requested_at |
+| 7 | inputs/{id}/finish | `dsr/session.ts` | 日志与输出确认后写 finish，再 ACK；重复完成结果不可改变 |
+| 8 | Header PUT | `runtime/replication.ts`、`dsr/replication.ts` | Header 先于事件，不可变身份 |
+| 9 | events POST | 同上 | 每日志连续追加、JCS 重叠去重，冲突整批回滚 |
+| 10 | directory GET | `dsr/subagents.ts`、`dsr/replication.ts` | 接管时完整枚举根/子日志 |
+| 11 | transcript GET | `dsr/replication.ts`、`runtime/replication.ts` | 分页读取，校验原生结构与本地前缀 |
+| 12 | permission-requests POST | `dsr/session.ts`、`dsr/executor.ts` | 批次预审批，确定性 request_id，重查不可重新执行策略 |
+| 13 | permission cancel | `dsr/client.ts` | 显式放弃调用的接口；用户 interrupt 由后端事务关闭 pending 并持久标记 task 取消 |
+| 14 | public-events POST | `dsr/session.ts`、`dsr/subagents.ts` | 持久输出收据与公开事件同事务；预览不入历史 |
 
-后端 `code_session.brain_worker_protocol` 与 Brain 的 `OMA_BRAIN_PROTOCOL` 均默认 `dsr1`。回退 CCRv2 时须在两侧显式设置 `ccrv2`。已有活动会话不自动转换协议。Sandbox MCP、外部 MCP、web、附件、OTLP 使用 DSR 原生路径与签名凭据；模型请求继续使用已有模型入口。
+后端 `code_session.brain_worker_protocol` 与 Brain 的 `OMA_BRAIN_PROTOCOL` 均默认 `dsr1`。已有活动会话不自动转换协议。Sandbox MCP、外部 MCP、web、附件、OTLP 使用 DSR 原生路径与签名凭据；模型请求继续使用已有模型入口。
 
 ## 执行、持久化与恢复
 
@@ -35,7 +33,7 @@ sequenceDiagram
     participant O as OMA
     participant T as Tool
     B->>O: register / heartbeat
-    B->>O: context、state、日志目录与读取
+    B->>O: 日志目录与读取
     O-->>B: task input
     B->>O: delivery processing
     B->>O: Header / native events
@@ -53,13 +51,13 @@ sequenceDiagram
 
 审批超时只挂起原生 turn，不生成虚假失败结果。冷接管从远程日志恢复同一 turn 的整个工具批次。`plugin:oma/dsr-dispatched` 必须在真实工具调用前复制确认；有标记而无持久结果时返回 `TOOL_OUTCOME_UNKNOWN`，不重放副作用，尚未派发的后续调用继续执行。该策略不提供外部系统 exactly-once 或自动对账。
 
-`dsh_input_deliveries.ack_subject` 保存 broker ACK 位置，避免 Redis 投递索引丢失后无法结算 completed 输入。用户中断与 `cancel_requested_at` 同事务提交，控制输入先于重投 task 到达也能阻止恢复执行。模型控制按 ID 和 broker sequence 去重，旧控制重投不会覆盖较新的模型。
+`dsh_input_deliveries.ack_subject` 保存 broker ACK 位置，避免 Redis 投递索引丢失后无法结算 completed 输入。用户中断与 `cancel_requested_at` 同事务提交，控制输入先于重投 task 到达也能阻止恢复执行。
 
 ## 数据与事务边界
 
-迁移 `00115` 至 `00118` 创建或演进 `dsh_transcripts`、`dsh_transcript_events`、`dsh_worker_states`、`dsh_input_executions`、`dsh_input_deliveries`、`dsh_permission_requests`、`dsh_public_receipts` 七张表。仅调整新增 DSH 表，不修改既有业务表 schema，不创建外键。应用 SQL 全部通过 Yourbatis。
+迁移 `00115` 至 `00120` 创建或演进 `dsh_transcripts`、`dsh_transcript_events`、`dsh_worker_states`、`dsh_input_executions`、`dsh_input_deliveries`、`dsh_permission_requests`、`dsh_public_receipts` 七张表。仅调整新增 DSH 表，不修改既有业务表 schema，不创建外键。应用 SQL 全部通过 Yourbatis。
 
-写入按所属 Session/Code Session 加锁，并显式检查组织、工作空间、协议、epoch 和租约。公开输入接纳与 input execution 创建、确认与审批解决、公开输出与收据、finish 与 pending 关闭、公开 reducer 更新分别在同一事务中完成。提交后的 SSE/webhook fanout 复用现有服务。Worker state 不再保存 status；模型与 trace 均为会话级恢复信息。
+写入按所属 Session/Code Session 加锁，并显式检查组织、工作空间、协议、epoch 和租约。公开输入接纳与 input execution 创建、确认与审批解决、公开输出与收据、finish 与 pending 关闭、公开 reducer 更新分别在同一事务中完成。提交后的 SSE/webhook fanout 复用现有服务。
 
 Header/Event 拒绝重复 JSON 键，使用 RFC 8785 JCS 比较。事件批次最多 200，单事件最多 15 MiB，请求体最多 16 MiB；读取为 1–8 MiB 软预算，默认 4 MiB。目录与读取均分页。
 
@@ -89,7 +87,7 @@ OMA_BRAIN_BINARY='<absolute-binary>' just verify-be chat brain-dsr --worker-imag
 
 ## 本轮最终结果
 
-`chat brain-dsr` 的 6 个必需阶段全部通过，17 个主接口均经过真实后端。显式 CCRv2 配置下的 `chat brain`、`chat roundtrip`、`chat tools`、`chat reliability`、`chat public` 同样通过，全部报告无 skip、无缺失阶段且清理成功。
+`chat brain-dsr` 的 6 个必需阶段全部通过，当时的主接口集合均经过真实后端。显式 CCRv2 配置下的 `chat brain`、`chat roundtrip`、`chat tools`、`chat reliability`、`chat public` 同样通过，全部报告无 skip、无缺失阶段且清理成功。
 
 Go 全部普通测试与要求的质量门禁、3 项独立 PostgreSQL 测试均通过。Brain frozen install、typecheck、构建通过；完整测试为 827 pass、5 skip、0 fail。5 项跳过沿用基线，不计入通过。
 
@@ -119,7 +117,7 @@ Mapper、claim 资格、公开 reducer、Brain wire/client、原生完成 checkp
 
 真实 `chat brain-dsr`、`brain`、`roundtrip`、`tools`、`reliability`、`public` 六个场景全部通过，资源清理成功。随后修正仅限 DSR 的队列准入，保留“新消息唤醒后按顺序恢复旧队列”的既有行为；Go 全部门禁与 PostgreSQL 三组测试再次通过，最终 `chat brain-dsr` 也重跑通过。CCRv2 实现未变化，未重复启动其五个场景。
 
-17 个接口的实际调用位置、请求/响应检查、最终 Markdown/JSON 报告与未覆盖范围见 [输入执行模型验收](../../../../tmp/dsh-input-executions/validation.md)。现有开发数据库和服务未重置或升级；历史 goose 定义的修改不会自动应用到已有库。
+当时接口的实际调用位置、请求/响应检查、最终 Markdown/JSON 报告与未覆盖范围见 [输入执行模型验收](../../../../tmp/dsh-input-executions/validation.md)。现有开发数据库和服务未重置或升级；历史 goose 定义的修改不会自动应用到已有库。
 
 ### 907e 开发库原地转换
 
@@ -149,13 +147,9 @@ Go 普通单测、lint、死代码、重复代码、复杂度与大文件门禁�
 
 ## 第 18 版：状态与回执收敛
 
-直接修改原始 goose 00116–00118，保留七张 DSH 表。worker-state 删除 status，Brain 取消回合开始/结束两次状态上报；响应增加 model_control_sequence 字符串或 null。model patch 强制携带控制 input ID 与正 uint64 版本，不保留无版本写入旁路。
-
-当前 model、水位和最新 input ID 同事务更新，跨 owner 保留。低版本忽略；等版本身份或模型变化冲突；高版本更新；null 清除模型仍保留新水位。删除 dsh_control_receipts，不再保证任意历史 input 的内容一致性。模型命令只有 model 一个业务值，直接比较当前 model 即可验证最高版本内容。
-
 公开回执改为 payload_digest，值为 jcs-sha256-v1 加规范化原始事件的 SHA-256 hex。与公开历史的事务关系、相同 ID 冲突规则、preview 边界不变。公开回执不独立过期，待日志重放窗口和 GC 一并设计。
 
-测试覆盖规范化等价与内容冲突、批次回滚、旧版本忽略、同版本 input/model 冲突、null 清除、uint64 边界、租户和 owner fencing。真实 brain-dsr 场景通过 HTTP 探针检查拒绝 status、无版本模型拒绝、模型乱序和清除、公开输出摘要重试，以及 replacement 读回水位。探针构造控制版本，不代表 NATS 控制输入的所有网络乱序场景。
+测试覆盖规范化等价与内容冲突、批次回滚、租户和 owner fencing。
 
 ## 第 19 版：ACK 成功即删除
 
@@ -174,3 +168,20 @@ Brain 已删除旧 worker bridge、client、claim/register/stream/delivery/heart
 删除前已备份完整 Brain src/tests/scripts/配置与锁文件到 tmp/brain-ccrv2-removal/brain-before.tar.gz，并保存 SHA-256 和文件清单。旧桥接协议专属测试随源码归档；混合文件保留协议中立用例。新增 DSR 进程和独立可执行文件测试，覆盖启动拒绝、领取、真实原生模型循环、批准工具、日志与投递结算。历史旧桥接场景并非全部迁移到 DSR，不将归档用例计为通过。
 
 Brain 的安装和使用以 oma-brain-dsh/README.md 为准。真实后端应选择 chat brain-dsr；历史强制旧协议的 Brain 场景需要先迁移夹具或使用对应历史二进制。
+
+## 第 20 版：注册配置不可变快照
+
+register 返回 context，Brain 使用它构建 Assignment。普通输入携带本轮系统上下文与 trace。
+
+dsh_worker_states 保存 context_snapshot，表结构由 goose 迁移管理。首次注册按 epoch 与租户锁定并冻结 Code Session 原始配置、初始模型、工作目录、模型目录及运行模式，之后 register/接管不覆盖。快照不包含当前 owner 运行时凭证，每次响应根据当前 token 组装 MCP 端点。配置组装完成后才建立租约，避免加载配置消耗新的租约时间。存量行首次下次注册初始化，无历史配置回填推断。
+
+预定义子 Agent 使用 register.context.subagent_contexts 中按名字索引的 MCP 和权限快照；inline 继承根配置。实际 MCP 调用继续携带子线程头，网关的授权、租户、epoch 和生命周期校验保留。模型使用注册配置中的初始值。
+
+当前主接口 14 个。协议仍为未冻结 DSR-Protocol:1，需要前后端同步升级。普通测试与定向 PostgreSQL 回归覆盖首次冻结、跨 owner 保留、租户与 epoch、配置加载失败不建租约、owner 凭证重绑和子 Agent 本地权限隔离；真实 DSR 验证是否执行以当次验收记录为准。
+
+
+## 当前验收，2026-11-05
+
+14 个主接口通过 `chat brain-dsr` 真实后端场景，7 个必需阶段及资源清理全部成功；`chat roundtrip` 验证中文预览、最终回复、历史恢复及队列清空。报告分别见 [DSR 验收](../../../../tmp/verify-be/verify-be-083b1d076872/report.md) 与 [聊天回归](../../../../tmp/verify-be/verify-be-05ec95247d31/report.md)。上游模型使用脚本，不涵盖真实模型质量、云端网络分区或生产性能。
+
+Go 普通单测及 5 组隔离 PostgreSQL 回归通过，包含数据库升级保留配置快照、租户与 epoch 栅栏，以及新 owner 复用原配置。Brain 类型检查和可执行文件测试通过，264 pass、5 项既有 skip、0 fail。lint、死代码、重复代码、复杂度及大文件门禁通过。

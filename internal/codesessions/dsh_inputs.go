@@ -96,7 +96,6 @@ func (s *Service) dshMessagePayload(ctx context.Context, code db.CodeSession, ev
 	if err := json.Unmarshal(materialized.Payload, &fields); err != nil {
 		return nil, err
 	}
-	setRawJSONField(fields, "oma_refresh_tools", true)
 	setRawJSONField(fields, "id", event.ExternalID)
 	setRawJSONField(fields, "uuid", event.ExternalID)
 	setRawJSONField(fields, "type", "user.message")

@@ -63,9 +63,9 @@ func TestChatBrainDSR(t *testing.T) {
 	token := dsrOwnerToken(t, f)
 	dsrRequest(t, e, "POST", "/v1/dsr/sessions/"+f.code.ExternalID+"/register", token, map[string]any{}, 200)
 	dsrRequest(t, e, "POST", "/v1/dsr/sessions/"+f.code.ExternalID+"/heartbeat", token, map[string]any{}, 200)
-	dsrRequest(t, e, "GET", "/v1/dsr/sessions/"+f.code.ExternalID+"/context", token, nil, 200)
-	dsrRequest(t, e, "GET", "/v1/dsr/sessions/"+f.code.ExternalID+"/worker-state", token, nil, 200)
-	dsrRequest(t, e, "PUT", "/v1/dsr/sessions/"+f.code.ExternalID+"/worker-state", token, map[string]any{}, 200)
+	dsrRequest(t, e, "GET", "/v1/dsr/sessions/"+f.code.ExternalID+"/context", token, nil, 404)
+	dsrRequest(t, e, "GET", "/v1/dsr/sessions/"+f.code.ExternalID+"/worker-state", token, nil, 404)
+	dsrRequest(t, e, "PUT", "/v1/dsr/sessions/"+f.code.ExternalID+"/worker-state", token, map[string]any{}, 404)
 	verifyDSRTranscriptInterfaces(t, e, f, token)
 	chatProof(t, started, "dsr_transcript_contracts")
 	verifyDSRTool(t, e, false)
@@ -99,7 +99,6 @@ func TestChatBrainDSR(t *testing.T) {
 	}
 	dsrRequest(t, e, "POST", "/v1/dsr/sessions/"+f.code.ExternalID+"/heartbeat", token, map[string]any{}, 409)
 	f.code = current
-	verifyDSRModelState(t, e, f, dsrOwnerToken(t, f), "30", nil)
 	chatProof(t, started, "dsr_takeover")
 }
 
@@ -369,20 +368,6 @@ func verifyDSRACKRecovery(t *testing.T, e *liveEnv, f *liveSession, inputID stri
 func verifyDSRStateContracts(t *testing.T, e *liveEnv, f *liveSession, token string) {
 	t.Helper()
 	base := "/v1/dsr/sessions/" + f.code.ExternalID
-	dsrRequest(t, e, "PUT", base+"/worker-state", token, map[string]any{"status": "idle"}, 400)
-	dsrRequest(t, e, "PUT", base+"/worker-state", token, map[string]any{"model": nil}, 400)
-	model := "claude-sonnet-4-6"
-	for _, command := range []struct {
-		id, sequence string
-		model        *string
-		status       int
-	}{
-		{"new", "20", &model, 200}, {"older", "10", nil, 200}, {"new", "20", &model, 200},
-		{"collision", "20", &model, 409}, {"new", "20", nil, 409}, {"clear", "30", nil, 200},
-	} {
-		dsrRequest(t, e, "PUT", base+"/worker-state", token, map[string]any{"model": command.model, "control_input_id": command.id, "control_sequence": command.sequence}, command.status)
-	}
-	verifyDSRModelState(t, e, f, token, "30", nil)
 	first := json.RawMessage(`{"id":"digest-probe","type":"system.message","content":[{"type":"text","text":"DSR receipt probe"}]}`)
 	same := json.RawMessage(`{ "content":[{"text":"DSR receipt probe","type":"text"}],"type":"system.message","id":"digest-probe" }`)
 	for index, event := range []json.RawMessage{first, same} {
@@ -395,22 +380,6 @@ func verifyDSRStateContracts(t *testing.T, e *liveEnv, f *liveSession, token str
 	}
 	changed := json.RawMessage(`{"id":"digest-probe","type":"system.message","content":[{"type":"text","text":"changed"}]}`)
 	dsrRequest(t, e, "POST", base+"/public-events", token, map[string]any{"events": []json.RawMessage{changed}}, 409)
-}
-
-func verifyDSRModelState(t *testing.T, e *liveEnv, f *liveSession, token, sequence string, model *string) {
-	t.Helper()
-	raw := dsrRequest(t, e, "GET", "/v1/dsr/sessions/"+f.code.ExternalID+"/worker-state", token, nil, 200)
-	var state struct {
-		Model    *string `json:"model"`
-		Sequence string  `json:"model_control_sequence"`
-	}
-	requireOK(t, json.Unmarshal(raw, &state))
-	var fields map[string]json.RawMessage
-	requireOK(t, json.Unmarshal(raw, &fields))
-	_, hasStatus := fields["status"]
-	if hasStatus || state.Sequence != sequence || (state.Model == nil) != (model == nil) || model != nil && *state.Model != *model {
-		t.Fatalf("model state=%s", raw)
-	}
 }
 
 func dsrACKProbeSubject(t *testing.T, e *liveEnv, f *liveSession, inputID string) string {

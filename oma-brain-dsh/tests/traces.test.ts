@@ -1,44 +1,104 @@
-import { expect,test } from "bun:test";
+import { expect, test } from "bun:test";
 
+import {
+  TraceProducer,
+  type TraceOwner,
+} from "../src/observability/trace-producer.ts";
 
+import {
+  otlpSpan,
+  SpanExporter,
+  type SpanRecord,
+} from "../src/observability/span-exporter.ts";
 
-import { TraceProducer,type TraceOwner } from "../src/observability/trace-producer.ts";
-
-import { otlpSpan,SpanExporter,type SpanRecord } from "../src/observability/span-exporter.ts";
-
-import { parseTraceParent,traceHooks } from "../src/observability/trace-context.ts";
+import {
+  parseTraceParent,
+  traceHooks,
+} from "../src/observability/trace-context.ts";
 
 const PARENT_TRACE = "4bf92f3577b34da6a3ce929d0e0e4736";
 
 const PARENT_SPAN = "00f067aa0ba902b7";
 
-type OtlpSpan = { traceId: string; spanId: string; parentSpanId?: string; name: string; attributes: { key: string; value: Record<string, unknown> }[]; status?: { code: number } };
+type OtlpSpan = {
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  name: string;
+  attributes: { key: string; value: Record<string, unknown> }[];
+  status?: { code: number };
+};
 
 const hex = (value: string) => Buffer.from(value, "base64").toString("hex");
 
 const attribute = (span: OtlpSpan, key: string) => {
   const value = span.attributes.find((item) => item.key === key)?.value;
-  return value?.stringValue ?? value?.boolValue ?? (value?.intValue !== undefined ? Number(value.intValue) : undefined);
+  return (
+    value?.stringValue ??
+    value?.boolValue ??
+    (value?.intValue !== undefined ? Number(value.intValue) : undefined)
+  );
 };
 
-function producer(content = true): { traces: TraceProducer; spans: SpanRecord[] } {
+function producer(content = true): {
+  traces: TraceProducer;
+  spans: SpanRecord[];
+} {
   const spans: SpanRecord[] = [];
   const traces = new TraceProducer();
   const owner: TraceOwner = {
-    exporter: { add: (span: SpanRecord) => spans.push(span), flush: async () => {}, close: async () => {} } as unknown as TraceOwner["exporter"],
-    content, model: "provider/model", systemPrompt: "agent system", liveSince: 1_000,
+    exporter: {
+      add: (span: SpanRecord) => spans.push(span),
+      flush: async () => {},
+      close: async () => {},
+    } as unknown as TraceOwner["exporter"],
+    content,
+    model: "provider/model",
+    systemPrompt: "agent system",
+    liveSince: 1_000,
   };
   traces.attach("cse_root", owner);
   return { traces, spans };
 }
 
 test("trace context parsing ignores invalid and unsampled headers safely", () => {
-  expect(parseTraceParent({ traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-01`, tracestate: "a=1" })).toEqual({ traceId: PARENT_TRACE, spanId: PARENT_SPAN, sampled: true, traceState: "a=1" });
-  expect(parseTraceParent({ traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-00` })?.sampled).toBe(false);
-  for (const traceparent of ["", `ff-${PARENT_TRACE}-${PARENT_SPAN}-01`, `00-${"0".repeat(32)}-${PARENT_SPAN}-01`, `00-${PARENT_TRACE}-${PARENT_SPAN}-01-extra`, 7])
+  expect(
+    parseTraceParent({
+      traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-01`,
+      tracestate: "a=1",
+    }),
+  ).toEqual({
+    traceId: PARENT_TRACE,
+    spanId: PARENT_SPAN,
+    sampled: true,
+    traceState: "a=1",
+  });
+  expect(
+    parseTraceParent({ traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-00` })
+      ?.sampled,
+  ).toBe(false);
+  for (const traceparent of [
+    "",
+    `ff-${PARENT_TRACE}-${PARENT_SPAN}-01`,
+    `00-${"0".repeat(32)}-${PARENT_SPAN}-01`,
+    `00-${PARENT_TRACE}-${PARENT_SPAN}-01-extra`,
+    7,
+  ])
     expect(parseTraceParent({ traceparent })).toBeUndefined();
-  expect(otlpSpan({ traceId: PARENT_TRACE, spanId: PARENT_SPAN, name: "x", startMs: 2, endMs: 1, attributes: { a: 1.5, b: "", c: undefined } }))
-    .toMatchObject({ startTimeUnixNano: "2000000", endTimeUnixNano: "2000000", attributes: [{ key: "a", value: { doubleValue: 1.5 } }] });
+  expect(
+    otlpSpan({
+      traceId: PARENT_TRACE,
+      spanId: PARENT_SPAN,
+      name: "x",
+      startMs: 2,
+      endMs: 1,
+      attributes: { a: 1.5, b: "", c: undefined },
+    }),
+  ).toMatchObject({
+    startTimeUnixNano: "2000000",
+    endTimeUnixNano: "2000000",
+    attributes: [{ key: "a", value: { doubleValue: 1.5 } }],
+  });
 });
 
 test("span batches stay below the ingress body limit", async () => {
@@ -47,102 +107,289 @@ test("span batches stay below the ingress body limit", async () => {
     bodies.push(String(init.body));
     return new Response(null, { status: 200 });
   }) as unknown as typeof fetch;
-  const exporter = new SpanExporter("http://oma/traces", () => "token", fetcher, "cse_root");
+  const exporter = new SpanExporter(
+    "http://oma/traces",
+    () => "token",
+    fetcher,
+    "cse_root",
+  );
   const content = "内".repeat(1_000_000);
   for (let index = 0; index < 4; index++)
-    exporter.add({ traceId: PARENT_TRACE, spanId: PARENT_SPAN, name: "oma.model_request", startMs: 1, endMs: 2, attributes: { "gen_ai.output.messages": content } });
+    exporter.add({
+      traceId: PARENT_TRACE,
+      spanId: PARENT_SPAN,
+      name: "oma.model_request",
+      startMs: 1,
+      endMs: 2,
+      attributes: { "gen_ai.output.messages": content },
+    });
   await exporter.close();
   expect(bodies.length).toBeGreaterThan(1);
-  for (const body of bodies) expect(Buffer.byteLength(body)).toBeLessThan(9 << 20);
-  expect(bodies.flatMap((body) => JSON.parse(body).resourceSpans[0].scopeSpans[0].spans)).toHaveLength(4);
+  for (const body of bodies)
+    expect(Buffer.byteLength(body)).toBeLessThan(9 << 20);
+  expect(
+    bodies.flatMap(
+      (body) => JSON.parse(body).resourceSpans[0].scopeSpans[0].spans,
+    ),
+  ).toHaveLength(4);
 });
 
 test("history replay, unsampled turns and skipped tools produce no spans", () => {
   const { traces, spans } = producer();
-  traces.observe("cse_root", "cse_root", undefined, "turn/start", 500, { turn: 1 }, {});
-  traces.observe("cse_root", "cse_root", undefined, "turn/end", 600, { turn: 1, reason: { kind: "completed" } }, {});
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "turn/start",
+    500,
+    { turn: 1 },
+    {},
+  );
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "turn/end",
+    600,
+    { turn: 1, reason: { kind: "completed" } },
+    {},
+  );
   expect(spans).toEqual([]);
-  traces.inputReceived("cse_root", { traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-00` });
-  traces.observe("cse_root", "cse_root", undefined, "turn/start", 2_000, { turn: 2 }, {});
-  traces.observe("cse_root", "cse_root", undefined, "assistant/message", 2_100, { step: 1, message: { content: [] } }, {});
-  traces.observe("cse_root", "cse_root", undefined, "turn/end", 2_200, { turn: 2, reason: { kind: "completed" } }, {});
+  traces.inputReceived("cse_root", {
+    traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-00`,
+  });
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "turn/start",
+    2_000,
+    { turn: 2 },
+    {},
+  );
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "assistant/message",
+    2_100,
+    { step: 1, message: { content: [] } },
+    {},
+  );
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "turn/end",
+    2_200,
+    { turn: 2, reason: { kind: "completed" } },
+    {},
+  );
   expect(spans).toEqual([]);
-  traces.observe("cse_root", "cse_root", undefined, "turn/start", 3_000, { turn: 3 }, {});
-  for (const [callId, name] of [["c1", "subagent"], ["c2", "Write"], ["c3", "Custom"], ["c4", "send_message"], ["c5", "interrupt_agent"], ["c6", "list_agents"]] as const)
-    traces.observe("cse_root", "cse_root", undefined, "tool/call", 3_010, { callId, name, step: 1, arguments: "{}" }, {});
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "turn/start",
+    3_000,
+    { turn: 3 },
+    {},
+  );
+  for (const [callId, name] of [
+    ["c1", "subagent"],
+    ["c2", "Write"],
+    ["c3", "Custom"],
+    ["c4", "send_message"],
+    ["c5", "interrupt_agent"],
+    ["c6", "list_agents"],
+  ] as const)
+    traces.observe(
+      "cse_root",
+      "cse_root",
+      undefined,
+      "tool/call",
+      3_010,
+      { callId, name, step: 1, arguments: "{}" },
+      {},
+    );
   traces.approvalResolved("cse_root", "c2", "denied");
   traces.approvalResolved("cse_root", "c3", "external");
   expect(traces.toolDispatched("cse_root", "c2")).toBeUndefined();
   for (const callId of ["c1", "c2", "c3", "c4", "c5", "c6"])
-    traces.observe("cse_root", "cse_root", undefined, "tool/result", 3_020, { message: { toolCallId: callId, isError: false, content: [] } }, {});
-  traces.observe("cse_root", "cse_root", undefined, "turn/end", 3_030, { turn: 3, reason: { kind: "completed" } }, {});
+    traces.observe(
+      "cse_root",
+      "cse_root",
+      undefined,
+      "tool/result",
+      3_020,
+      { message: { toolCallId: callId, isError: false, content: [] } },
+      {},
+    );
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "turn/end",
+    3_030,
+    { turn: 3, reason: { kind: "completed" } },
+    {},
+  );
   expect(spans.map((span) => span.name)).toEqual(["oma.session.turn"]);
   expect(spans[0]!.parentSpanId).toBeUndefined();
 });
 
 test("approval waits split turns and subagent turns nest under the parent turn", () => {
   const { traces, spans } = producer(false);
-  traces.inputReceived("cse_root", { traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-01` });
-  traces.observe("cse_root", "cse_root", undefined, "turn/start", 2_000, { turn: 1 }, {});
+  traces.inputReceived("cse_root", {
+    traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-01`,
+  });
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "turn/start",
+    2_000,
+    { turn: 1 },
+    {},
+  );
   traces.subagent("sthr_child", { name: "model-named", inline: true });
-  traces.observe("sthr_child", "cse_root", "cse_root", "turn/start", 2_100, { turn: 1 }, {});
-  traces.observe("sthr_child", "cse_root", "cse_root", "tool/call", 2_150, { callId: "mcp1", name: "mcp__docs__search", step: 1, arguments: "{\"q\":1}" }, {});
+  traces.observe(
+    "sthr_child",
+    "cse_root",
+    "cse_root",
+    "turn/start",
+    2_100,
+    { turn: 1 },
+    {},
+  );
+  traces.observe(
+    "sthr_child",
+    "cse_root",
+    "cse_root",
+    "tool/call",
+    2_150,
+    {
+      callId: "mcp1",
+      name: "mcp__docs__search",
+      step: 1,
+      arguments: '{"q":1}',
+    },
+    {},
+  );
   traceHooks.registerMcpServer("docs", "Docs Server");
   traces.approvalPending("sthr_child", "mcp1");
   traces.approvalResolved("sthr_child", "mcp1", "allowed");
   const scope = traces.toolDispatched("sthr_child", "mcp1")!;
-  traces.observe("sthr_child", "cse_root", "cse_root", "tool/result", 2_300, { message: { toolCallId: "mcp1", isError: true, content: [{ type: "text", text: "secret" }] }, error: { code: "MCP_AUTH" } }, {});
-  traces.observe("sthr_child", "cse_root", "cse_root", "turn/end", 2_400, { turn: 1, reason: { kind: "completed" } }, {});
-  traces.observe("cse_root", "cse_root", undefined, "turn/end", 2_500, { turn: 1, reason: { kind: "error", error: { code: "RATE_LIMIT" } } }, {});
+  traces.observe(
+    "sthr_child",
+    "cse_root",
+    "cse_root",
+    "tool/result",
+    2_300,
+    {
+      message: {
+        toolCallId: "mcp1",
+        isError: true,
+        content: [{ type: "text", text: "secret" }],
+      },
+      error: { code: "MCP_AUTH" },
+    },
+    {},
+  );
+  traces.observe(
+    "sthr_child",
+    "cse_root",
+    "cse_root",
+    "turn/end",
+    2_400,
+    { turn: 1, reason: { kind: "completed" } },
+    {},
+  );
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "turn/end",
+    2_500,
+    { turn: 1, reason: { kind: "error", error: { code: "RATE_LIMIT" } } },
+    {},
+  );
   const turns = spans.filter((span) => span.name === "oma.session.turn");
-  const [root] = turns.filter((span) => span.attributes["gen_ai.conversation.id"] === "cse_root");
-  const child = turns.filter((span) => span.attributes["gen_ai.conversation.id"] === "sthr_child");
+  const [root] = turns.filter(
+    (span) => span.attributes["gen_ai.conversation.id"] === "cse_root",
+  );
+  const child = turns.filter(
+    (span) => span.attributes["gen_ai.conversation.id"] === "sthr_child",
+  );
   expect(root!.traceId).toBe(PARENT_TRACE);
   expect(root!.parentSpanId).toBe(PARENT_SPAN);
   expect(root!.status).toBe("error");
   expect(root!.attributes["error.type"]).toBe("rate_limit_error");
-  expect(child.map((span) => span.attributes["oma.session.turn.stop_reason"])).toEqual(["requires_action", "end_turn"]);
-  expect(child.every((span) => span.parentSpanId === root!.spanId && span.traceId === PARENT_TRACE)).toBe(true);
+  expect(
+    child.map((span) => span.attributes["oma.session.turn.stop_reason"]),
+  ).toEqual(["requires_action", "end_turn"]);
+  expect(
+    child.every(
+      (span) =>
+        span.parentSpanId === root!.spanId && span.traceId === PARENT_TRACE,
+    ),
+  ).toBe(true);
   expect(child[0]!.status).toBeUndefined();
   expect(child[0]!.attributes["gen_ai.agent.name"]).toBe("model-named");
   expect(child[0]!.attributes["oma.agent.inline"]).toBe(true);
   const tool = spans.find((span) => span.name === "oma.mcp_tool_use search")!;
   expect(tool.parentSpanId).toBe(child[1]!.spanId);
   expect(scope.traceparent).toBe(`00-${PARENT_TRACE}-${tool.spanId}-01`);
-  expect(tool.attributes).toMatchObject({ "oma.mcp.server.name": "Docs Server", "oma.tool.evaluated_permission": "ask", "error.type": "mcp_authentication_failed_error", "gen_ai.tool.call.id": "mcp1" });
+  expect(tool.attributes).toMatchObject({
+    "oma.mcp.server.name": "Docs Server",
+    "oma.tool.evaluated_permission": "ask",
+    "error.type": "mcp_authentication_failed_error",
+    "gen_ai.tool.call.id": "mcp1",
+  });
   expect(tool.attributes["gen_ai.tool.call.arguments"]).toBeUndefined();
   expect(tool.attributes["oma.tool_result.content"]).toBeUndefined();
   expect(root!.attributes["gen_ai.input.messages"]).toBeUndefined();
 });
 
-test("a turn lost with its worker is closed by the next worker as the parent of its exported children", () => {
-  const lost = producer();
-  lost.traces.inputReceived("cse_root", { traceparent: `00-${PARENT_TRACE}-${PARENT_SPAN}-01`, tracestate: "a=1" });
-  const pending = lost.traces.openTurns("cse_root");
-  expect(pending).toHaveLength(1);
-  lost.traces.observe("cse_root", "cse_root", undefined, "turn/start", 2_000, { turn: 1 }, {});
-  lost.traces.observe("cse_root", "cse_root", undefined, "assistant/message", 2_100, { step: 1, message: { content: [] } }, {});
-  lost.traces.observe("cse_root", "cse_root", undefined, "tool/call", 2_110, { callId: "c1", name: "Write", step: 1, arguments: "{}" }, {});
-  const open = lost.traces.openTurns("cse_root");
-  expect(open).toEqual([{ sessionId: "cse_root", traceId: PARENT_TRACE, spanId: pending[0]!.spanId, parentSpanId: PARENT_SPAN, traceState: "a=1", startMs: 2_000 }]);
-  expect(lost.spans.map((span) => span.parentSpanId)).toEqual([open[0]!.spanId]);
-  expect(producer().traces.openTurns("cse_root")).toEqual([]);
-
-  const next = producer();
-  next.traces.turnsInterrupted("cse_root", open);
-  expect(next.spans).toHaveLength(1);
-  expect(next.spans[0]).toMatchObject({
-    name: "oma.session.turn", traceId: PARENT_TRACE, spanId: open[0]!.spanId, parentSpanId: PARENT_SPAN, traceState: "a=1", startMs: 2_000, status: "error",
-  });
-  expect(next.spans[0]!.attributes).toMatchObject({ "oma.session.turn.stop_reason": "interrupted", "error.type": "worker_lost", "gen_ai.conversation.id": "cse_root" });
-});
-
 test("cancelled model attempts are exported without a status or error type", () => {
   const { traces, spans } = producer(false);
-  traces.observe("cse_root", "cse_root", undefined, "turn/start", 2_000, { turn: 1 }, {});
-  const aborted = { type: "chunk", chunk: { type: "finish", reason: { kind: "aborted", failure: { code: "ABORTED", message: "cancelled" } } } };
-  traces.observe("cse_root", "cse_root", undefined, "assistant/attempt", 2_100, { step: 1, stream: [aborted] }, {});
-  traces.observe("cse_root", "cse_root", undefined, "assistant/message", 2_200, { step: 2, interrupted: true, message: { content: [] } }, {});
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "turn/start",
+    2_000,
+    { turn: 1 },
+    {},
+  );
+  const aborted = {
+    type: "chunk",
+    chunk: {
+      type: "finish",
+      reason: {
+        kind: "aborted",
+        failure: { code: "ABORTED", message: "cancelled" },
+      },
+    },
+  };
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "assistant/attempt",
+    2_100,
+    { step: 1, stream: [aborted] },
+    {},
+  );
+  traces.observe(
+    "cse_root",
+    "cse_root",
+    undefined,
+    "assistant/message",
+    2_200,
+    { step: 2, interrupted: true, message: { content: [] } },
+    {},
+  );
   const requests = spans.filter((span) => span.name === "oma.model_request");
   expect(requests).toHaveLength(2);
   for (const request of requests) {

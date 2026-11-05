@@ -1,6 +1,6 @@
 # DSRv1 逐接口调用与请求响应评审
 
-评审日期：2026-11-03。结论：17 个主接口都有明确的 Brain 调用职责，但需要修订部分请求、响应和错误处理。第 18 节的运行时能力还依赖 MCP、附件和 OTLP 原生协议，不能统一套用 JSON 请求、Anthropic 错误体或自动重试。
+评审日期：2026-11-03。结论：14 个主接口都有明确的 Brain 调用职责，但需要修订部分请求、响应和错误处理。第 15 节的运行时能力还依赖 MCP、附件和 OTLP 原生协议，不能统一套用 JSON 请求、Anthropic 错误体或自动重试。
 
 本报告覆盖接口参考中的全部接口，包括展开后的附件、MCP metadata、模型和沙箱侧路由。本文保留实现前评审。已新增并接通 `src/dsr/` 原生 host，默认使用 DSRv1，支持显式 CCRv2 回退，当前逐接口实现状态见 [实验实现状态](implementation.md)。当前代码路径相对于 `oma-brain-dsh/src/`，服务端路径相对于仓库根目录。版本依据与第一轮恢复探针见 [兼容性验证](compatibility-review.md)。
 
@@ -18,7 +18,7 @@
 
 5 个 skip 分别为 Rust 沙箱工具定义一致性、丢失 MCP server 的结果分类、普通 Bash 取消、用户中断 Bash、普通工具完成。本次没有把这些项计为通过。
 
-以下测试数字是实现前的评审基线。本轮已补齐 17 个端点、审批表、turn reducer 与原生 host，并新增 PostgreSQL、原生 SIGKILL 与 `chat brain-dsr` 验证；实际执行结果和未覆盖范围以 [实验实现状态](implementation.md) 及交付报告为准。
+以下测试数字是实现前的评审基线。本轮已补齐 14 个端点、审批表、turn reducer 与原生 host，并新增 PostgreSQL、原生 SIGKILL 与 `chat brain-dsr` 验证；实际执行结果和未覆盖范围以 [实验实现状态](implementation.md) 及交付报告为准。
 
 ## 2. 建议的调用职责
 
@@ -26,18 +26,16 @@
 | --- | --- | --- |
 | `DsrClaimClient` | `worker.ts` 的容量与准入循环 | 1、2 |
 | `DsrLeaseController` | register 后立即建立，同 epoch 重新注册共用一个恢复任务 | 3、4 |
-| `DsrContextClient` | 准入、每次模型请求前、工具刷新 | 5 |
-| `DsrWorkerStateWriter` | 模型选择、trace、私有运行状态 | 6、7 |
-| `DsrInputDispatcher` 与 delivery uploader | SSE 接收、task/control 两条处理队列 | 8、9 |
-| `DsrInputFinalizer` | 当前输入完成及完成输入重投 | 10 |
-| `DsrReplication` | 本地 Session 持久化、接管恢复与执行屏障 | 11、12、13、14 |
-| `DsrToolApproval` | 全部工具审批及调用放弃 | 15、16 |
-| `DsrPublicEvents` | 预览、完成块、工具结果和线程输出 | 17 |
-| 现有各运行时客户端 | sandbox、MCP、web、附件、遥测 | 第 18 节，保持原生协议 |
+| `DsrInputDispatcher` 与 delivery uploader | SSE 接收、task/control 两条处理队列 | 5、6 |
+| `DsrInputFinalizer` | 当前输入完成及完成输入重投 | 7 |
+| `DsrReplication` | 本地 Session 持久化、接管恢复与执行屏障 | 8、9、10、11 |
+| `DsrToolApproval` | 全部工具审批及调用放弃 | 12、13 |
+| `DsrPublicEvents` | 预览、完成块、工具结果和线程输出 | 14 |
+| 现有各运行时客户端 | sandbox、MCP、web、附件、遥测 | 第 15 节，保持原生协议 |
 
 不建议把这些状态机都塞进一个 `DsrClient`。可以共用 HTTP 传输、凭据、错误解析与路径构造，但租约、复制、输入结算与工具执行各自保留所有者。
 
-## 3. 接口 1–10：领取、租约和输入
+## 3. 接口 1–7：领取、租约和输入
 
 ### 1. POST claims
 
@@ -61,7 +59,7 @@
 
 生产入口是 `worker-registration.ts` 的 `registerWorkerTask`，不是旧 `CcrClient.register`。未来首次准入函数和 lease controller 的同 epoch 重新注册共用 HTTP 逻辑。
 
-请求 `{}` 合理。响应 epoch、protocol、lease、遥测配置均有消费者。首次成功后应立即启动 heartbeat，然后才读取 context、worker state 和日志。当前在构造 CcrSession 时才启 heartbeat，会留下 register 到 context 完成之间的租约空窗。
+请求 `{}` 合理。响应 epoch、protocol、lease、遥测配置和 context 均有消费者。根配置和子 Agent 模板在首次注册时冻结，重复注册与接管复用，并绑定当前 owner 凭证。注册成功后立即启动 heartbeat，然后构造 Agent、读取日志。
 
 410 后同 epoch register 不得调用旧 `resetClaim` 清空队列、水位或等待项。多个并发请求同时收到 410 应共享一个重新注册任务，期间暂停新工具派发。首次重试受 claim deadline 限制。
 
@@ -75,39 +73,17 @@
 
 判断：保留，改错误分类与启动时机。
 
-### 5. GET context
-
-当前在 `registerWorkerTask` 准入，以及 `oma-session.ts` 的 `refreshSessionContext`、`omaToolContext` 调用。未来保留这几个入口，统一由 context client 获取。
-
-响应改为 `{context}` 后，准入映射 cwd、models、prompt、skills、tools、subagents、MCP；每次模型前仅刷新 models 和 permissions；工具刷新入口读取 runtime_tools 与 mcp_config。不能把每次刷新都解释为重写已固定的 Agent/Skill 快照。子线程统一使用 `DSR-Thread-ID`。
-
-请求响应总体合理，但 `context:object` 不能替代字段 schema。实现前需为 models、工具权限、工具列表、子 Agent 与 MCP 分别定义并校验 DTO。缺权限表应清空本地 allow，读取或 schema 失败不得继续模型请求。后端下发的 MCP URL 和 credential 必须属于新 DSR 路径与本 epoch。
-
-### 6. GET worker-state
-
-当前 `CcrSession.open` 读取，恢复 model 和 `oma_trace_turns`。未来在输入开始前恢复，不用它推导公开状态。
-
-原草案的 `trace_turns:object` 和 `{"3":"00-..."}` 不被 `observability/trace-context.ts` 的 `traceTurnsOf` 接受，探针已确认。正确数据是 `TurnTrace[] | null`，每项含 sessionId、traceId、spanId、startMs，可选 parentSpanId、traceState。本次同步修正两份草案。
-
-无法读取与确实没有状态必须区分。当前旧客户端读取耗尽后返回 metadata:null，不能照搬成“丢用户模型但继续启动”。model:null 表示采用当前默认模型。
-
-### 7. PUT worker-state
-
-当前 DsrSession 只在模型控制和 trace checkpoint 调用。已删除 status；任何 status 字段均拒绝。model 必须附带 control_input_id/control_sequence；trace_turns 可独立 patch 或 null 清除。
-
-后端持久最高模型版本及最新 input ID，低版本忽略，等版本内容或身份冲突拒绝，高版本原子更新。新 owner 读回当前模型与水位。已删除历史 control receipts，任意历史版本的内容冲突检测不再提供。完整 schema 和测试边界见 api-reference 与 implementation 第 18 版。
-
-### 8. GET inputs/stream
+### 5. GET inputs/stream
 
 当前 `CcrClient.inbound/readInbound`、`consumeInbound`、`CcrSession.receive/control`。未来 SSE client 解析传输，dispatcher 按显式 lane 分发，不再从 payload.type 猜测通道。
 
-SSE 帧 id 是重连游标，data.id 是输入身份，二者不能混用；评论行只刷新 watchdog，不回执。task 串行、control 独立，原有系统上下文、工具刷新和 trace 字段均有消费者。首次 received 异步发送，但 task 执行必须等待自己的 processing 成立。
+SSE 帧 id 是重连游标，data.id 是输入身份，二者不能混用；评论行只刷新 watchdog，不回执。task 串行、control 独立，原有系统上下文和 trace 字段保留。首次 received 异步发送，但 task 执行必须等待自己的 processing 成立。
 
 两个阻断需要冻结前明确：unknown control 可 processed+error，但 unknown task 不能走同一路径，因为 task 禁止 error 且先要求 finish；task 的 session_thread_id 也不能默认支持任意子线程，因为当前 receive 总是执行根 runtime。建议 v1 task 仅主线程，子线程通过已有委派能力驱动，目标线程规则仍待冻结；本次明确未知 task 停止执行且不 ACK，按协议缺陷 permanent 退役，避免静默消费。
 
 判断：信封合理，未知输入和目标线程规则必须补全。
 
-### 9. POST inputs/delivery
+### 6. POST inputs/delivery
 
 当前 `CcrClient.reportDelivery/acknowledge`、inbound 自动 received、`CcrSession.receive` 首次 processing 及 `delivery-progress.ts` 周期续报。
 
@@ -117,7 +93,7 @@ Brain 必须确认对应结果的 execution_status 为 running 或 completed 后
 
 finish_required 要定位违规 input、补 finish 后重试原批，不得像 epoch_superseded 一样 fence。原文“一直重试”与通用有界重试冲突，需统一预算，耗尽不越过执行或 ACK 屏障。本次已在草案新增逐项结果 DTO 并标明这些要求；它是待实现的协议响应，不能按现有服务端已支持处理。
 
-### 10. POST inputs/{input_id}/finish
+### 7. POST inputs/{input_id}/finish
 
 未来从 `CcrSession.receive` 的 afterRun 以及已完成输入重投分支抽出 finalizer。顺序是写精确 completion → 本地与远端确认 → 已捕获预览与持久公开输出确认 → finish → processed。日志屏障必须覆盖 completion，不仅是 turn/end。
 
@@ -127,9 +103,9 @@ result/reason 有现成业务来源，但旧 `InputOutcome` 不能表达 cancell
 
 判断：结束动作必要，completion 和响应 schema 需调整。错误时保持 input 未 ACK，不能为了清理队列换一种结果再试。
 
-## 4. 接口 11–17：日志、审批和输出
+## 4. 接口 8–14：日志、审批和输出
 
-### 11. PUT transcripts/{dsh_session_id}/header
+### 8. PUT transcripts/{dsh_session_id}/header
 
 当前 `CcrReplication.synchronize/persistRecord` 获取原生 Header；未来 `DsrReplication.ensureHeader` 由后台复制与 flushThrough 共用。主线程先确认，随后才允许其子 Header；子 Header 在公开 thread_created 前确认。
 
@@ -137,7 +113,7 @@ result/reason 有现成业务来源，但旧 `InputOutcome` 不能表达 cancell
 
 判断：保留；conflict 停止并保留文件，版本不支持 permanent，429/5xx 同请求重试。
 
-### 12. POST transcripts/{dsh_session_id}/events
+### 9. POST transcripts/{dsh_session_id}/events
 
 当前复制器从本地 Session snapshot/handle 取增量，runtime 工具执行、公开输出和输入结算调用 checkpoint。未来每条原生日志独立有序队列，显式 `flushThrough(seq)` 与后台上传共用。
 
@@ -147,7 +123,7 @@ result/reason 有现成业务来源，但旧 `InputOutcome` 不能表达 cancell
 
 判断：响应足够，拆队列与拆批是必做适配。文档原生事件缩略示意不能当完整 schema fixture，真实样本须由固定版本 DSH 产生。
 
-### 13. GET transcripts
+### 10. GET transcripts
 
 当前 `CcrSubagentBridge.restoreThreads` 合并本地列表和 privateEvents 的子线程发现。未来 register 后、任何 runtime resume 前列目录，即使本地根日志存在也要调用，避免漏掉其他 owner 创建的子日志。
 
@@ -157,7 +133,7 @@ ID、parent、公开线程绑定、header_present、next_seq 足够发现目录�
 
 判断：必要，补分页和半创建状态规则后再冻结。
 
-### 14. GET transcripts/{dsh_session_id}
+### 11. GET transcripts/{dsh_session_id}
 
 当前 `CcrReplication.load/ensure/validateRemote`，未来逐页读取后继续使用临时 JSONL 完整校验，再做正式本地前缀对账。
 
@@ -167,7 +143,7 @@ Header、events、next_from_seq 已足够；首条 seq、连续性、Header ID/p
 
 判断：保留，补齐客户端一致性验证。
 
-### 15. POST permission-requests
+### 12. POST permission-requests
 
 当前各工具通过 `approveToolCall` 到 `CcrSession.approve`，包括远程工具、AskUserQuestion、原生委派和 unavailable 工具。未来单一 approval owner 先登记稳定 waiter，再发送。
 
@@ -179,7 +155,7 @@ input ID、turn、Session/call ID 已存在，但当前 ToolApproval 不携带�
 
 判断：保留；审批事实先于执行开始记录，全部有副作用路径在派发前经过屏障。
 
-### 16. POST permission-requests/{request_id}/cancel
+### 13. POST permission-requests/{request_id}/cancel
 
 当前只有本地 reject/delete waiter，没有持久取消端点。未来由“明确放弃调用”触发，用户 interrupt 已由服务端close时可不调；挂起保留审批时不得调用。
 
@@ -189,7 +165,7 @@ input ID、turn、Session/call ID 已存在，但当前 ToolApproval 不携带�
 
 判断：保留，补清理 signal 和竞争后的不执行保证。
 
-### 17. POST public-events
+### 14. POST public-events
 
 当前由 `CcrSession.record/replay/publish/publishPreview`、`CcrSubagentBridge.emit`、`CcrCompaction.flush` 产生。未来迁移到专用 publisher，移出审批、result和公开状态推导，保持捕获批次→日志确认→已有预览确认→持久输出的顺序。
 
@@ -201,7 +177,7 @@ accepted/duplicates足够确认持久批次，但两类冲突必须区分：同�
 
 判断：接口必要，身份与双写字段尚不足以机械映射；实现前需真实请求响应fixture。
 
-## 5. 第 18 节：逐个运行时路由
+## 5. 第 15 节：逐个运行时路由
 
 下表的 `S` 代表 `/v1/dsr/sessions/{code_session_id}`。这是建议的明确路径映射，不是已经存在的路由。DSR-Protocol与session token由面向OMA的transport注入，不得透传给外部MCP上游。
 
@@ -251,10 +227,9 @@ MCP工具允许修改参数时，执行的是有效参数，permission重试仍�
 | 范围 | 必须补的验证 |
 | --- | --- |
 | 1–4 | 大epoch无精度丢失、claim响应丢失、release重复与新owner竞争、准入慢读期间心跳、并发410只有一次重新注册 |
-| 5–7 | 无状态与读失败区别、trace数组往返、缺权限清空allow、模型null恢复默认、旧set_model重投不覆盖新值 |
-| 8–10 | task/control乱序独立、unknown task策略、逐项processing确认、ACK定位丢失、finish丢响应、completion先复制、终态重投只结算 |
-| 11–14 | 本地先append后写Header、分日志顺序、批次413拆分、单事件永久超限、目录分页、Header-only残留、跨归档分页和冷恢复校验 |
-| 15–17 | TS/Go审批ID样本、202控制丢失后查询、external_result、有效参数重取、cancel独立signal、未知工具身份、模型双写ID相同、线程输出重启去重 |
+| 5–7 | task/control乱序独立、unknown task策略、逐项processing确认、ACK定位丢失、finish丢响应、completion先复制、终态重投只结算 |
+| 8–11 | 本地先append后写Header、分日志顺序、批次413拆分、单事件永久超限、目录分页、Header-only残留、跨归档分页和冷恢复校验 |
+| 12–14 | TS/Go审批ID样本、202控制丢失后查询、external_result、有效参数重取、cancel独立signal、未知工具身份、模型双写ID相同、线程输出重启去重 |
 | 运行时路由 | MCP全部方法及OAuth发现、取消和未派发头、附件四个方法、子线程权限、web全文保存、OTLP原生状态与partial success |
 | 模型与沙箱 | 模型线程/purpose/request ID保持，sandbox token和CA例外保持，不将DSR头泄露到外部上游 |
 

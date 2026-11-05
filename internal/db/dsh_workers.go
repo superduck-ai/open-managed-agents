@@ -2,39 +2,16 @@ package db
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
 )
 
-type DSHWorkerState struct {
-	ModelControlSequence *string
-	Model                *string
-	TraceTurns           []byte
-}
-
-type DSHWorkerPatch struct {
-	ControlInputID  string
-	ControlSequence string
-	ModelSet        bool
-	Model           *string
-	TraceTurnsSet   bool
-	TraceTurns      []byte
-}
-
 func (d *DB) RegisterDSHWorker(ctx context.Context, scope DSHScope) (time.Time, error) {
 	expiresAt := time.Now().UTC().Add(20 * time.Second)
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		owner, found, err := NewDSHTranscriptMapper(executor).LockWorker(ctx, scope)
-		if err != nil {
+		if err := lockDSHRegistration(ctx, executor, scope); err != nil {
 			return err
-		}
-		if !found {
-			return ErrNotFound
-		}
-		if scope.Epoch <= 0 || owner.WorkerEpoch != scope.Epoch {
-			return ErrWorkerEpochMismatch
 		}
 		mapper := NewDSHWorkerMapper(executor)
 		rows, err := mapper.Register(ctx, scope, expiresAt)
@@ -68,71 +45,44 @@ func (d *DB) HeartbeatDSHWorker(ctx context.Context, scope DSHScope) (time.Time,
 	return expiresAt, err
 }
 
-func (d *DB) GetDSHWorkerState(ctx context.Context, scope DSHScope) (DSHWorkerState, error) {
-	row, found, err := NewDSHWorkerMapper(d.mapperDB).State(ctx, scope)
-	if err != nil {
-		return DSHWorkerState{}, err
-	}
-	if !found {
-		return DSHWorkerState{}, nil
-	}
-	return DSHWorkerState{ModelControlSequence: row.ModelControlSequence, Model: row.Model, TraceTurns: row.TraceTurns}, nil
+func (d *DB) GetDSHContextSnapshot(ctx context.Context, scope DSHScope) ([]byte, error) {
+	snapshot, _, err := NewDSHWorkerMapper(d.mapperDB).ContextSnapshot(ctx, scope)
+	return snapshot, err
 }
 
-func (d *DB) PatchDSHWorkerState(ctx context.Context, scope DSHScope, patch DSHWorkerPatch) (DSHWorkerState, error) {
-	var result DSHWorkerState
+func (d *DB) FreezeDSHContext(ctx context.Context, scope DSHScope, candidate []byte) ([]byte, error) {
+	if len(candidate) == 0 {
+		return nil, ErrInvalidState
+	}
+	var snapshot []byte
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		if err := lockDSHWorker(ctx, executor, scope); err != nil {
+		if err := lockDSHRegistration(ctx, executor, scope); err != nil {
 			return err
 		}
 		mapper := NewDSHWorkerMapper(executor)
 		if _, err := mapper.EnsureState(ctx, scope); err != nil {
 			return err
 		}
-		if patch.ModelSet {
-			var err error
-			patch, err = applyDSHModelVersion(ctx, mapper, scope, patch)
-			if err != nil {
-				return err
-			}
-		}
-		if _, err := mapper.Patch(ctx, scope, patch); err != nil {
+		if _, err := mapper.FreezeContext(ctx, scope, candidate); err != nil {
 			return err
 		}
-		row, found, err := mapper.State(ctx, scope)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return ErrNotFound
-		}
-		result = DSHWorkerState{ModelControlSequence: row.ModelControlSequence, Model: row.Model, TraceTurns: row.TraceTurns}
-		return nil
+		var err error
+		snapshot, _, err = mapper.ContextSnapshot(ctx, scope)
+		return err
 	})
-	return result, err
+	return snapshot, err
 }
 
-func applyDSHModelVersion(ctx context.Context, mapper DSHWorkerMapper, scope DSHScope, patch DSHWorkerPatch) (DSHWorkerPatch, error) {
-	incoming, err := strconv.ParseUint(patch.ControlSequence, 10, 64)
-	if err != nil || incoming == 0 || strconv.FormatUint(incoming, 10) != patch.ControlSequence || patch.ControlInputID == "" {
-		return patch, ErrInvalidState
-	}
-	row, _, err := mapper.State(ctx, scope)
+func lockDSHRegistration(ctx context.Context, executor yourbatis.Executor, scope DSHScope) error {
+	owner, found, err := NewDSHTranscriptMapper(executor).LockWorker(ctx, scope)
 	if err != nil {
-		return patch, err
+		return err
 	}
-	if row.ModelControlSequence == nil {
-		return patch, nil
+	if !found {
+		return ErrNotFound
 	}
-	current, err := strconv.ParseUint(*row.ModelControlSequence, 10, 64)
-	if err != nil {
-		return patch, err
+	if scope.Epoch <= 0 || owner.WorkerEpoch != scope.Epoch {
+		return ErrWorkerEpochMismatch
 	}
-	if incoming == current && (row.ModelControlInputID == nil || *row.ModelControlInputID != patch.ControlInputID || !sameDSHParent(row.Model, patch.Model)) {
-		return patch, ErrDSHControlConflict
-	}
-	if incoming <= current {
-		patch.ModelSet = false
-	}
-	return patch, nil
+	return nil
 }

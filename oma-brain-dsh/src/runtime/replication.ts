@@ -21,9 +21,9 @@ export class TranscriptBatchError extends Error {
   constructor(readonly failure: unknown, readonly fence: Error) { super("Transcript batch rejected"); }
 }
 
-export interface NativeTranscriptPort {
-  read(root: string, id: string): Promise<DshLogData[]>;
-  write(root: string, id: string, records: readonly DshLogData[]): Promise<void>;
+export interface RemoteTranscriptStore {
+  read(rootSessionId: string, id: string): Promise<DshLogData[]>;
+  write(rootSessionId: string, id: string, records: readonly DshLogData[]): Promise<void>;
   fenced(error: unknown): boolean;
 }
 
@@ -64,7 +64,7 @@ export class SessionReplication extends Service {
   private stopped = false;
   private readonly forgotten = new Set<SessionId>();
 
-  constructor(ctx: Context, readonly config: { remote: NativeTranscriptPort }, serviceName = "sessionReplication") {
+  constructor(ctx: Context, readonly config: { remote: RemoteTranscriptStore }, serviceName = "sessionReplication") {
     super(ctx, serviceName);
     ctx.on("agent/created", ({ agent }) => {
       agent.ctx.effect(() => async () => {

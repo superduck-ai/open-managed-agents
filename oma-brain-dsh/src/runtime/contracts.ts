@@ -36,12 +36,20 @@ export interface SubagentThread {
 export type SubagentEvent =
   | { kind: "created" | "running" | "terminated"; thread: SubagentThread }
   | { kind: "idle"; thread: SubagentThread; completed: boolean }
-  | { kind: "message-sent" | "report-received"; thread: SubagentThread; text: string };
+  | {
+      kind: "message-sent" | "report-received";
+      thread: SubagentThread;
+      text: string;
+    };
 
 /** Awaited storage, policy and event adapters for child orchestration. */
 export interface SubagentBridge {
   setupTools?(scope: Context): void | Promise<void>;
-  validateThread?(threadId: string, signal: AbortSignal, allowRunning?: boolean): Promise<void>;
+  validateThread?(
+    threadId: string,
+    signal: AbortSignal,
+    allowRunning?: boolean,
+  ): Promise<void>;
   archivedThreads?(threadIds: string[], signal: AbortSignal): Promise<string[]>;
   threads(): SubagentThread[];
   restoreThreads?(): Promise<void>;
@@ -70,17 +78,31 @@ export type ToolPermissions = Record<string, ToolPermission>;
 
 export class ToolNotForwardedError extends Error {}
 
-export const SHUTDOWN_CANCEL = { kind: "hook", reason: "oma-worker-shutdown" } as const;
+export const SHUTDOWN_CANCEL = {
+  kind: "hook",
+  reason: "oma-worker-shutdown",
+} as const;
 
 export function isShutdownCancel(reason: unknown): boolean {
-  return typeof reason === "object" && reason !== null && "kind" in reason && reason.kind === SHUTDOWN_CANCEL.kind
-    && "reason" in reason && reason.reason === SHUTDOWN_CANCEL.reason;
+  return (
+    typeof reason === "object" &&
+    reason !== null &&
+    "kind" in reason &&
+    reason.kind === SHUTDOWN_CANCEL.kind &&
+    "reason" in reason &&
+    reason.reason === SHUTDOWN_CANCEL.reason
+  );
 }
 
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
   provision?(signal: AbortSignal): Promise<void>;
-  call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string): Promise<Payload>;
+  call(
+    tool: RemoteTool,
+    args: Payload,
+    signal: AbortSignal,
+    threadId?: string,
+  ): Promise<Payload>;
 }
 
 declare module "@deepseek-ai/cordis" {
@@ -94,8 +116,11 @@ export interface SessionRuntimeConfig {
   preserveOpenTurns?: boolean;
   cancelRestoredTurn?(): boolean;
   configureModel?(call: LlmCallConfig): LlmCallConfig;
-  refreshTools?(signal: AbortSignal): Promise<{ tools: string[]; externalMcpConfig: unknown }>;
-  threadMcpContext?(threadId: string): Promise<{ config: unknown; fetcher: typeof fetch }>;
+  threadMcpContext?(thread: SubagentThread): Promise<{
+    config: unknown;
+    fetcher: typeof fetch;
+    toolPermissions?: ToolPermissions;
+  }>;
   externalMcpConfig?: unknown;
   externalMcpFetch?: typeof fetch;
   id: string;
@@ -105,11 +130,16 @@ export interface SessionRuntimeConfig {
   systemPrompt: string;
   /** Mount root-session services before tool registration. Children share these services. */
   setup?(scope: Context): Promise<void>;
-  setupTools?(scope: Context, bridge: ToolExecutionBridge, tools?: string[], threadId?: string, permissions?: ToolPermissions): Promise<Fiber | void>;
+  setupTools?(
+    scope: Context,
+    bridge: ToolExecutionBridge,
+    tools?: string[],
+    threadId?: string,
+    permissions?: ToolPermissions,
+  ): Promise<Fiber | void>;
   subagentSystemPrompt?(thread: SubagentThread): string;
   tools?: string[];
   toolPermissions?: ToolPermissions;
-  refreshSessionContext?(signal: AbortSignal, threadId?: string): Promise<{ toolPermissions?: ToolPermissions }>;
   subagents?: SubagentConfig;
   /** Host binds a child model identity to the parent's credentials. */
   bindThread?(id: string): () => void;
@@ -131,19 +161,38 @@ export interface ToolApproval {
 
 export interface ApprovalDecision {
   allowed: boolean;
-  externalResult?: { content: {type: "text"; text: string}[]; isError: boolean };
+  externalResult?: {
+    content: { type: "text"; text: string }[];
+    isError: boolean;
+  };
   input?: unknown;
   reason?: string;
 }
 
 export interface ToolExecutionBridge {
-  approve(request: ToolApproval, signal: AbortSignal): Promise<ApprovalDecision>;
-  runTool<T>(callId: string, execute: () => Promise<T>, readOnly: boolean): Promise<T>;
-  approvalChanged(name: string, callId: string, effective: Payload): void | Promise<void>;
+  approve(
+    request: ToolApproval,
+    signal: AbortSignal,
+  ): Promise<ApprovalDecision>;
+  runTool<T>(
+    callId: string,
+    execute: () => Promise<T>,
+    readOnly: boolean,
+  ): Promise<T>;
+  approvalChanged(
+    name: string,
+    callId: string,
+    effective: Payload,
+  ): void | Promise<void>;
 }
 
 export type RuntimeDiagnostic =
-  | { kind: "model-retry"; failure: LlmFailure; attempt: number; delayMs: number }
+  | {
+      kind: "model-retry";
+      failure: LlmFailure;
+      attempt: number;
+      delayMs: number;
+    }
   | { kind: "input-failed"; error: unknown };
 
 export interface SessionRuntimeHooks {
@@ -151,7 +200,10 @@ export interface SessionRuntimeHooks {
   onOpen?(session: Session): Promise<void>;
   afterFlushLog?(session: Session): Promise<void>;
   onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
-  onExternalMcpAuthenticationFailure?(serverName: string, phase?: "discovery" | "tool_call"): Promise<void>;
+  onExternalMcpAuthenticationFailure?(
+    serverName: string,
+    phase?: "discovery" | "tool_call",
+  ): Promise<void>;
   setupTools?(scope: Context): void | Promise<void>;
   beforeRequest?(): Promise<void>;
   waitForChildren?(): Promise<boolean>;
@@ -168,5 +220,7 @@ export interface TurnHooks {
 }
 
 export class RetryableInputError extends HarnessError {
-  constructor(message: string, options?: ErrorOptions) { super(message, "RETRYABLE_INPUT", options); }
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, "RETRYABLE_INPUT", options);
+  }
 }

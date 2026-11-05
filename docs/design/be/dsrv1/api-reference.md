@@ -1,8 +1,8 @@
 # DSRv1 接口参考
 
-本文逐个说明 DSRv1 执行端接口：为什么需要它、什么时候调用和不该调用、请求与响应字段、状态码、对应的 CCRv2 接口，以及典型场景的时序示例。语义、状态机与不变量以 [DSRv1 协议](protocol.md) 为准；两者冲突时以协议文档为准，并同步修正本文。本文对应协议第 17 版，仍未冻结。目标合同与当前实验实现的差异见 [实验实现状态](implementation.md)。
+本文逐个说明 DSRv1 执行端接口：为什么需要它、什么时候调用和不该调用、请求与响应字段、状态码、对应的 CCRv2 接口，以及典型场景的时序示例。语义、状态机与不变量以 [DSRv1 协议](protocol.md) 为准；两者冲突时以协议文档为准，并同步修正本文。本文对应协议第 20 版，仍未冻结。目标合同与当前实验实现的差异见 [实验实现状态](implementation.md)。
 
-原始依赖兼容性复核见 [当前 Brain 与 deepseek-harness 验证](compatibility-review.md)。本仓库通过 Bun patch 补齐 continuation 与挂起；17 个接口及当前验证范围见实验实现状态。
+原始依赖兼容性复核见 [当前 Brain 与 deepseek-harness 验证](compatibility-review.md)。本仓库通过 Bun patch 补齐 continuation 与挂起；当前 14 个主接口及验证范围见实验实现状态。
 
 逐个接口的调用职责、字段来源及历史合同评审见 [逐接口调用评审](interface-review.md)。当前 Brain 接线、真实 DSR 验收与未覆盖范围以实验实现状态为准。
 
@@ -14,21 +14,18 @@
 | 2 | `POST /v1/dsr/claims/{code_session_id}/release` | fleet | 释放领取 | `POST /v1/code/brain/claims/{id}/release` | 4.3 |
 | 3 | `POST /v1/dsr/sessions/{code_session_id}/register` | session | 在当前 epoch 接管会话、开始租约 | `worker/register` | 4.4 |
 | 4 | `POST /v1/dsr/sessions/{code_session_id}/heartbeat` | session | 续租 | `worker/heartbeat` | 4.5 |
-| 5 | `GET /v1/dsr/sessions/{code_session_id}/context` | session | 读取会话上下文 | `GET /v2/sessions/{id}` | 4.5 |
-| 6 | `GET /v1/dsr/sessions/{code_session_id}/worker-state` | session | 读取 worker state | `GET worker` | 4.6 |
-| 7 | `PUT /v1/dsr/sessions/{code_session_id}/worker-state` | session | 更新 worker state | `PUT worker` | 4.6 |
-| 8 | `GET /v1/dsr/sessions/{code_session_id}/inputs/stream` | session | SSE 接收输入 | `worker/events/stream` | 9.2 |
-| 9 | `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery` | session | 输入进度回执 | `worker/events/delivery` | 9.2 |
-| 10 | `POST /v1/dsr/sessions/{code_session_id}/inputs/{input_id}/finish` | session | 结束 task 输入 | `worker/events` 中的 `result` 事件 | 9.4 |
-| 11 | `PUT /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/header` | session | 写原生日志 Header | `worker/internal-events`（POST） | 6.4 |
-| 12 | `POST /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/events` | session | 追加原生日志 Event | `worker/internal-events`（POST） | 6.5 |
-| 13 | `GET /v1/dsr/sessions/{code_session_id}/transcripts` | session | 列出会话下的原生日志 | `worker/internal-events?subagents` | 6.7 |
-| 14 | `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}` | session | 分页读取一条原生日志 | `worker/internal-events`（GET） | 6.7 |
-| 15 | `POST /v1/dsr/sessions/{code_session_id}/permission-requests` | session | 创建或查询工具审批 | `worker/events` 中的 `can_use_tool` 控制请求，加轮询 `GET worker` | 7.1–7.3 |
-| 16 | `POST /v1/dsr/sessions/{code_session_id}/permission-requests/{request_id}/cancel` | session | 取消工具审批 | 无 | 7.5 |
-| 17 | `POST /v1/dsr/sessions/{code_session_id}/public-events` | session | 发布公开输出 | `worker/events` 中的公开输出 | 第 8 节 |
+| 5 | `GET /v1/dsr/sessions/{code_session_id}/inputs/stream` | session | SSE 接收输入 | `worker/events/stream` | 9.2 |
+| 6 | `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery` | session | 输入进度回执 | `worker/events/delivery` | 9.2 |
+| 7 | `POST /v1/dsr/sessions/{code_session_id}/inputs/{input_id}/finish` | session | 结束 task 输入 | `worker/events` 中的 `result` 事件 | 9.4 |
+| 8 | `PUT /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/header` | session | 写原生日志 Header | `worker/internal-events`（POST） | 6.4 |
+| 9 | `POST /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/events` | session | 追加原生日志 Event | `worker/internal-events`（POST） | 6.5 |
+| 10 | `GET /v1/dsr/sessions/{code_session_id}/transcripts` | session | 列出会话下的原生日志 | `worker/internal-events?subagents` | 6.7 |
+| 11 | `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}` | session | 分页读取一条原生日志 | `worker/internal-events`（GET） | 6.7 |
+| 12 | `POST /v1/dsr/sessions/{code_session_id}/permission-requests` | session | 创建或查询工具审批 | `worker/events` 中的 `can_use_tool` 控制请求，加轮询 `GET worker` | 7.1–7.3 |
+| 13 | `POST /v1/dsr/sessions/{code_session_id}/permission-requests/{request_id}/cancel` | session | 取消工具审批 | 无 | 7.5 |
+| 14 | `POST /v1/dsr/sessions/{code_session_id}/public-events` | session | 发布公开输出 | `worker/events` 中的公开输出 | 第 8 节 |
 
-CCRv2 列中的相对路径都以 `/v1/code/sessions/{id}/` 为前缀。另有运行时能力路由，见第 18 节；完整方法与子路由见逐接口评审，不能只按表中路径前缀实现。
+CCRv2 列中的相对路径都以 `/v1/code/sessions/{id}/` 为前缀。另有运行时能力路由，见第 15 节；完整方法与子路由见逐接口评审，不能只按表中路径前缀实现。
 
 ### 一个会话的完整调用顺序
 
@@ -38,21 +35,20 @@ sequenceDiagram
     participant A as OMA
     D->>A: 1 claim
     D->>A: 3 register（返回即启动独立 heartbeat）
-    D->>A: 5 context（准入配置）
-    D->>A: 6 worker-state（取回模型与 trace）
-    D->>A: 13 / 14 读取原生日志，与本地核对前缀
-    D->>A: 8 inputs/stream
+    D->>D: 使用 register.context（准入配置）
+    D->>A: 10 / 11 读取原生日志，与本地核对前缀
+    D->>A: 5 inputs/stream
     loop 每 6 秒
         D->>A: 4 heartbeat
     end
     A-->>D: input user.message
-    D->>A: 9 delivery received → processing
-    D->>A: 5 context（每次模型请求前）
-    D->>A: 11 / 12 写原生日志
-    D->>A: 15 permission-requests（需要审批时）
-    D->>A: 17 public-events
-    D->>A: 10 finish
-    D->>A: 9 `processed` 回执
+    D->>A: 6 delivery received → processing
+    D->>D: 使用本地固定配置
+    D->>A: 8 / 9 写原生日志
+    D->>A: 12 permission-requests（需要审批时）
+    D->>A: 14 public-events
+    D->>A: 7 finish
+    D->>A: 6 `processed` 回执
     D->>A: 2 release（空闲或退出时）
 ```
 
@@ -61,7 +57,7 @@ sequenceDiagram
 | 凭据 | 来源 | 用于 | 失效方式 |
 | --- | --- | --- | --- |
 | fleet token | 部署配置 `code_session.brain_claim_token_file` | 接口 1、2 | 运维轮换 |
-| session token | claim 响应的 `session_token` | 接口 3–17 与第 18 节 | epoch 被推进后写接口拒绝；读接口仍可用 |
+| session token | claim 响应的 `session_token` | 接口 3–14 与第 15 节 | epoch 被推进后写接口拒绝；读接口仍可用 |
 | model token | claim 响应的 `model_token` | `/v1/messages`、`/v1/chat/completions` | 下次 claim 时轮换；租约过期后暂时失效 |
 
 ## 通用约定
@@ -70,10 +66,10 @@ sequenceDiagram
 
 | 头 | 适用 | 说明 |
 | --- | --- | --- |
-| `DSR-Protocol` | 接口 1–17；第 18 节按各协议 transport 注入 | 协议版本，v1 固定为 `1`。缺失或不支持返回 `400 unsupported_protocol`。register 之后，同一 epoch 的请求必须使用注册时的版本 |
+| `DSR-Protocol` | 接口 1–14；第 15 节按各协议 transport 注入 | 协议版本，v1 固定为 `1`。缺失或不支持返回 `400 unsupported_protocol`。register 之后，同一 epoch 的请求必须使用注册时的版本 |
 | `Authorization: Bearer <token>` | 全部 | 接口 1、2 用 fleet token，其余用 session token |
 | `X-Worker-ID` | 1、2 | DSH 进程 UUID |
-| `Content-Type: application/json` | 接口 1–17 有 JSON 请求体时 | 第 18 节按 MCP/OTLP/图片实际类型设置 |
+| `Content-Type: application/json` | 接口 1–14 有 JSON 请求体时 | 第 15 节按 MCP/OTLP/图片实际类型设置 |
 
 ### 鉴权与 epoch
 
@@ -89,7 +85,7 @@ sequenceDiagram
 
 ### 错误
 
-接口 1–17 错误体沿用 Anthropic 兼容形状；第 18 节的 MCP、OTLP、附件按原生协议处理：
+接口 1–14 错误体沿用 Anthropic 兼容形状；第 15 节的 MCP、OTLP、附件按原生协议处理：
 
 ```json
 { "type": "error", "error": { "type": "conflict_error", "message": "Worker epoch has been superseded" } }
@@ -102,11 +98,11 @@ Anthropic 错误体只有 `type` 和 `message`，放不下机器可读的细节�
 | `DSR-Error` | 错误码，完整枚举与 DSH 处理见 [协议 4.7](protocol.md#47-错误) |
 | `DSR-Next-Seq` | 原生日志类错误时返回服务端的 `next_seq` |
 
-接口 1–17 中，已有 session owner 收到缺少 `DSR-Error` 的未知 4xx 时保守停止写入、不 release，等租约过期。claim 的鉴权错误仍按接口 1 的启动/运行规则处理。第 18 节的附件缺失、web 拒绝、MCP 上游错误和 OTLP 原生状态由各客户端处理，不一律 fence。429/5xx 只对可幂等重试的请求采用有界退避，工具执行不自动重放。各接口下文只列特有错误。
+接口 1–14 中，已有 session owner 收到缺少 `DSR-Error` 的未知 4xx 时保守停止写入、不 release，等租约过期。claim 的鉴权错误仍按接口 1 的启动/运行规则处理。第 15 节的附件缺失、web 拒绝、MCP 上游错误和 OTLP 原生状态由各客户端处理，不一律 fence。429/5xx 只对可幂等重试的请求采用有界退避，工具执行不自动重放。各接口下文只列特有错误。
 
 ### 幂等
 
-日志、审批、输出和结束上报可能因网络中断产生模糊结果，按下表身份重试。claim 不具备幂等键，丢响应会消耗 attempt；register、heartbeat 与 worker-state 是状态操作；MCP tools/call 不属于可自动重放的写入。
+日志、审批、输出和结束上报可能因网络中断产生模糊结果，按下表身份重试。claim 不具备幂等键，丢响应会消耗 attempt；register 与 heartbeat 是状态操作；MCP tools/call 不属于可自动重放的写入。
 
 | 接口 | 幂等键 | 内容不同时 |
 | --- | --- | --- |
@@ -264,7 +260,7 @@ DSH 主动告诉后端"这次领取我不要了"，让会话按指定原因尽�
 
 | 场景 | 时机 | `reason` | 后端随后的行为 |
 | --- | --- | --- | --- |
-| 准入时临时失败 | claim 之后、输入流连上之前：网络抖动、后端 5xx、register 返回 401/403、读 context 失败 | `admission_failed` | 按 5、10、20、40、80 秒退避后可再领取；连续 5 次（约 155 秒）后公开 `session.error` |
+| 准入时临时失败 | claim 之后、输入流连上之前：网络抖动、后端 5xx、register 返回 401/403、注册配置加载失败 | `admission_failed` | 按 5、10、20、40、80 秒退避后可再领取；连续 5 次（约 155 秒）后公开 `session.error` |
 | 准入时永久失败 | 任务信封、`session_context` 或 assignment 校验失败；原生日志版本不受支持 | `permanent` | 立即推进 epoch 并停车，几秒内公开 `session.error` 与 `idle(retries_exhausted)`，不再重试 |
 | 运行中出现不可复制的日志 | 超过 15 MiB 的事件已写进本地日志，之后的事件都无法复制 | `permanent` | 同上 |
 | 领到了但没容量 | 准入预留槽位时没有可淘汰的空闲会话 | `shutdown` | 立即可被其他进程领取，attempts 减一，不算失败 |
@@ -323,7 +319,7 @@ DSR-Protocol: 1
 10:05:00  用户发来新消息 → 会话变为 running → B 立即 claim（epoch 8）
           （如果 A 不 release，要等 A 最后一次心跳之后的 20 + 10 秒）
 
-10:06:00  A claim cse_2（epoch 3）→ 读 context 发现配置非法 → release(permanent)
+10:06:00  A claim cse_2（epoch 3）→ 校验注册配置发现配置非法 → release(permanent)
           → 后端几秒内公开 session.error，不再重试
           （如果误用 admission_failed，会白白重试约 155 秒）
 
@@ -350,7 +346,7 @@ CCRv2 的 brain 模式本来就是"claim 分配 → register 接管"两步（`in
 | 网络抖动约 30 秒后收到 410 | **同 epoch 重新 register 即可恢复**，内存状态、本地日志、模型流都保留 | 只能重新 claim，epoch + 1，退役并全量恢复，恢复原生执行后按实际结果结束 |
 | `worker_claim_expires_at` 的其他职责 | 继续承担耗尽 hold、退避与永久失败停车 | 失去这些职责，耗尽的行会被立即重新领取，`session.error` 重复发布 |
 
-合并只能省一次 HTTP 往返，相比准入还要读 context、恢复日志、连接输入流，这一次往返的占比很小。
+合并只能省一次 HTTP 往返，相比准入还要解析注册配置、恢复日志、连接输入流，这一次往返的占比很小。
 
 ### 什么时候调用
 
@@ -363,17 +359,17 @@ CCRv2 的 brain 模式本来就是"claim 分配 → register 接管"两步（`in
 
 ### 服务端处理
 
-在一个事务内：
+先读取已冻结快照；首次注册则加载 Code Session 初始配置与模型目录，在 epoch/租户锁保护的事务中执行首次写入，已有值不覆盖。配置声明与当前 owner 凭证在内存组装，不把运行时 token 写进快照。
 
-1. 锁定 Code Session 行，与 claim、heartbeat、日志追加串行。
-2. 校验会话 active、`worker_protocol = dsr1`、token epoch 等于 `current_worker_epoch`。
-3. 写入 `worker_lease_expires_at = now + 20s`、连接状态与活动时间，清空 `worker_claim_requested_at` 与 `worker_claim_expires_at`，记录 `dsr_protocol_version`。
-4. **不清理审批，也不结束 open turn**：pending 审批与 running 的 input execution 都由新 owner 继承。未 ACK 的输入会被 JetStream 重投给新 owner，新 owner 按原生日志从回合中途恢复：已解决的审批用同一 `request_id` 取回结果后继续，仍 pending 的继续等待或挂起。注册本身不改变公开状态。
+配置组装成功后，在注册事务中锁定 Code Session 并校验 active、DSR 标记、当前 epoch，写入 20 秒租约及连接状态，清除领取 hold。配置加载失败不建立新租约。两个事务各自幂等，注册阶段再次校验 epoch，旧 owner 不能因先前读取成功而获得新租约。
+
+不清理审批或结束 open turn，pending 审批及 running execution 由新 owner 继承。注册不改变公开状态。
 
 ### 响应 200
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
+| `context` | object | 必填固定配置，包含子 Agent 模板上下文，详见本节下文 |
 | `epoch` | string | 当前 epoch，供 DSH 核对 |
 | `protocol` | string | 绑定到本会话的协议版本，v1 为 `"1"` |
 | `lease.ttl_ms` | integer | 租约时长，当前 20000 |
@@ -396,7 +392,7 @@ DSH 启动该会话前校验 `heartbeat_interval × (1 + jitter) + timeout < ttl
 ### 注意
 
 - register 成功不代表准入完成。attempts 仍以**输入流连接成功**为归零信号；注册之后、连上流之前崩溃，仍算一次失败。
-- 从 register 返回起就要按 `heartbeat_interval_ms` 心跳，读取 context 和恢复日志期间也不能停。租约控制器应在构造 Agent 之前建立。
+- 从 register 返回起就要按 `heartbeat_interval_ms` 心跳，解析 register.context 和恢复日志期间也不能停。租约控制器应在构造 Agent 之前建立。
 - 多个请求同时收到 410 时共享一个重新注册任务；恢复期间暂停新工具派发，成功后保留同 epoch 的输入队列、复制水位与审批等待项，不能调用旧 resetClaim 清空。
 
 ### 示例
@@ -410,7 +406,7 @@ DSR-Protocol: 1
 ```
 
 ```json
-{ "epoch": "7", "protocol": "1", "lease": { "ttl_ms": 20000, "grace_ms": 10000, "heartbeat_interval_ms": 6000 }, "observability_enabled": false, "trace_export": { "content": false } }
+{ "epoch": "7", "protocol": "1", "lease": { "ttl_ms": 20000, "grace_ms": 10000, "heartbeat_interval_ms": 6000 }, "observability_enabled": false, "trace_export": { "content": false }, "context": { "model": "model-a", "models": { "model-a": { "id": "model-a", "api_backend": "messages" } }, "cwd": "/workspace", "runtime_tools": [], "mcp_config": {}, "subagent_contexts": {} } }
 ```
 
 ### 场景
@@ -428,6 +424,26 @@ B. 网络抖动后恢复
      epoch 仍是 7：200，租约恢复，继续执行
      别人已 claim，epoch 变为 8：409 epoch_superseded，退役
 ```
+
+### 注册上下文快照
+
+响应包含必填 context 对象，字段如下。缺失或格式不合法时 Brain 拒绝启动会话。
+
+| 字段 | 类型 | 用途 |
+| --- | --- | --- |
+| model / models | string / object | 会话初始模型及固定模型参数目录 |
+| cwd | string | 绝对工作目录 |
+| system_prompt / append_system_prompt / memory_catalog_prompt | string | 固定提示词与资源目录 |
+| runtime_tools / runtime_tool_permissions | array / object | 工具列表及本地审批策略 |
+| runtime_skills / subagents | array / object | Skill 和子 Agent 模板 |
+| mcp_config | object | 当前 owner 凭证绑定后的固定 MCP 配置 |
+| subagent_contexts | object | 按模板名称保存的子 Agent MCP 配置和权限 |
+
+数据库在 dsh_worker_states.context_snapshot 保存配置声明、初始模型、工作目录和模型目录，不保存当前 owner 的运行时 token。首次冻结按 scope 和 epoch 加锁，后续不覆盖；组装成功后建立注册租约。每次 register 只重新绑定当前会话凭证，不重新加载模型目录或公开 Session 工具配置。初始公开配置来自 Code Session 创建时的 config。
+
+dsh_worker_states 保存可空 context_snapshot；已有会话在下一次注册时初始化一次，七张 DSH 表数量不变。配置冻结不会替代网关的生命周期和授权校验。模型代理、工具执行和公网 MCP 仍可能因资源退役或凭证失效被拒绝。
+
+subagent_contexts 按预定义 Agent 名称索引，每项包含 mcp_config 和 runtime_tool_permissions。预定义子线程使用其模板快照；inline 子线程继承根快照。MCP 请求携带实际子线程的 X-OMA-Session-Thread-ID。
 
 ## 4. `POST /v1/dsr/sessions/{code_session_id}/heartbeat`
 
@@ -462,146 +478,7 @@ register 成功后按 `heartbeat_interval_ms`（6 秒）固定节奏发送，抖
 
 `POST /v1/code/sessions/{id}/worker/heartbeat`，语义不变；请求体不再带 epoch。
 
-## 5. `GET /v1/dsr/sessions/{code_session_id}/context`
-
-调用位置：`dsr/assignment.ts`、`oma-session.ts` 的配置组装与刷新。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
-
-### 作用
-
-读取会话上下文：Agent 配置、模型目录（`models`）、运行时工具权限（`runtime_tool_permissions`）、MCP 服务器与凭据引用等。权限可能在会话进行中被用户修改，所以 DSH 不能只在准入时读一次。
-
-### 什么时候调用
-
-- 准入时读一次，用于构造会话。
-- **每次模型请求前**再读一次，刷新工具权限与模型目录。读取失败时停止该次模型请求，避免用过期权限执行。
-- 子线程发起模型请求时带 `DSR-Thread-ID`，取得该子线程 Agent 快照对应的权限。
-
-### 请求
-
-| 位置 | 字段 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| header | `DSR-Thread-ID` | 否 | 子线程 ID |
-
-### 响应 200
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `context` | object | 与现行 `session_context` 相同 |
-
-带 `Cache-Control: no-store`。自托管环境不返回 `runtime_tool_permissions`，审批由外部执行方处理。
-
-### 场景：会话中途修改权限
-
-```text
-用户把 bash 从 allow 改为 ask
-DSH 下一次模型请求前 GET context → bash 变为 ask
-模型调用 bash → DSH 不再本地放行，改为 POST permission-requests → 202 pending → 等用户确认
-```
-
-### 对应 CCRv2
-
-`GET /v2/sessions/{id}`，响应字段从 `session_context` 改为 `context`；子线程选择头从 CCRv2 的线程头改为 `DSR-Thread-ID`。
-
-## 6. `GET /v1/dsr/sessions/{code_session_id}/worker-state`
-
-调用位置：`dsr/session.ts` 的 open。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
-
-### 作用
-
-读取 DSH 自己写入、恢复时需要取回的少量状态。它替代 CCRv2 的 `external_metadata` 中仍有读者的两个字段：
-
-| 字段 | 用途 |
-| --- | --- |
-| `model` | 用户用 `session.set_model` 选择的模型；新 owner 恢复时沿用，不回到默认模型 |
-| `trace_turns` | trace 连续性数据（原 `oma_trace_turns`），让接管后的回合仍挂在同一条 trace 上 |
-
-### 什么时候调用
-
-接管恢复时调用一次，在开始处理输入之前。
-
-### 响应 200
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `model_control_sequence` | string \| null | GET/PUT 响应中的最高已应用模型版本，十进制字符串；首次设置前为 null |
-| `model` | string \| null | 当前生效模型 |
-| `trace_turns` | array \| null | 当前打开回合的 TurnTrace 列表，字段见接口 6 |
-
-### trace_turns 元素
-
-沿用当前 Brain 的命名 schema，不将数组改成按 turn 索引的对象。
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `sessionId` | string | 原生根或子线程 Session ID |
-| `traceId` | string | 32 位小写十六进制 trace ID |
-| `spanId` | string | 16 位小写十六进制 span ID |
-| `startMs` | number | 有限的回合开始时间，Unix 毫秒 |
-| `parentSpanId` | string | 可选，16 位小写十六进制父 span ID |
-| `traceState` | string | 可选，W3C tracestate |
-
-model 为 null 时采用默认模型；读取失败不能当作没有状态继续准入。
-
-### 示例
-
-```json
-{ "model_control_sequence": "20", "model": "model-a", "trace_turns": [{ "sessionId": "cse_abc", "traceId": "4bf92f3577b34da6a3ce929d0e0e4736", "spanId": "00f067aa0ba902b7", "startMs": 1730541600000 }] }
-```
-
-## 7. `PUT /v1/dsr/sessions/{code_session_id}/worker-state`
-
-调用位置：`dsr/session.ts` 的模型控制与 checkpoint。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
-
-### 作用
-
-按字段更新 worker state。只保存会话模型选择与 trace 恢复快照，不产生公开事件，也不参与执行调度或进程活性判断。执行状态来自 input execution，活性来自 Code Session 租约。
-
-这是和 CCRv2 最大的区别：CCRv2 的 `PUT /worker` 上报 `running` 会触发公开的 `session.status_running`，上报 `requires_action` 会暂停会话，还附带一个自由 merge 的 `external_metadata`。DSRv1 把公开状态交给服务端 reducer，由输入接纳、审批与结束上报驱动；这个接口只剩下有类型的私有字段。
-
-### 什么时候调用
-
-| 时机 | 写入 |
-| --- | --- |
-| 处理 `session.set_model` 成功后、ACK 之前 | `model`、`control_input_id`、`control_sequence` |
-| 回合开始时记录 trace | `trace_turns` |
-
-### 请求
-
-省略保持不变，model 与 trace_turns 可用 null 清除。设置 model 时必须同时提交 control_input_id 与 control_sequence；无版本模型写入和任何 status 字段均返回 400：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `control_input_id` | string | 模型控制输入 ID，与 model 同时提交 |
-| `control_sequence` | string | 同一 Code Session 控制流的正 uint64 版本，十进制规范字符串，无前导零 |
-| `model` | string \| null | 当前生效模型 |
-| `trace_turns` | array \| null | 当前打开回合的 TurnTrace 列表，字段见接口 6 |
-
-未知字段返回 `400 invalid_request`，避免它重新变成自由存储。
-
-### 响应 200
-
-返回更新后的完整 state，形状同接口 6。Brain 串行发送 patch，模型变更提交确认后才 ACK 控制输入。后端锁定 owner 行，在同一事务比较版本并更新模型、水位及最新 input ID；旧请求返回当前完整 state，Brain 应使用返回模型。
-
-### 示例
-
-```json
-{ "model": "model-b", "control_input_id": "control-b", "control_sequence": "20" }
-```
-
-```json
-{ "trace_turns": null }
-```
-
-模型控制版本由 broker 为同一 Code Session 的控制流提供，Brain 原样回传 SSE sequence，不自行编号。模型与水位跨 owner 保留，不能因重新 register 而重置。版本范围为 1 至 18446744073709551615，始终以字符串传输。
-
-- 高于水位：原子更新 model、model_control_sequence、model_control_input_id。
-- 等于水位：input ID 和 model 均相同则幂等成功，否则返回 `409 control_idempotency_mismatch`。
-- 低于水位：直接忽略模型修改，返回当前 state，不再检查历史 input 内容一致性。
-- `model: null` 也必须递增版本，清除模型不会清除水位；trace patch 不改变水位。
-
-不再保存 dsh_control_receipts。当前 model 已覆盖模型命令的全部业务内容，因此相同最高版本直接比较 model，无需另存控制摘要。该合同信任已认证 owner 回传服务端 sequence，不把 worker 提交的任意版本当作额外授权证明。
-
-## 8. `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`
+## 5. `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`
 
 调用位置：`dsr/worker.ts`、`dsr/input-stream.ts` 的 task/control 分流。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
 
@@ -649,14 +526,12 @@ data: {"id":"evt_01J...","lane":"task","kind":"user.message","session_thread_id"
 | `user.message` | task | `session_thread_id`、`content`（CMA 内容块，文件与图片已物化为会话私有文件） | 是 |
 | `user.interrupt` | control | `session_thread_id`（可选，缺省为全部线程） | 否 |
 | `permission.resolved` | control | `request_id`、`resolution` | 否 |
-| `session.set_model` | control | `model`（string，`null` 表示默认模型） | 否 |
 
 `user.message` 保留以下执行端字段，由服务端可信上下文生成，不直接透传用户同名字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `oma_system_context` | array | 可选，元素为 `{id: string, text: string}`；供 Brain 更新本轮系统上下文 |
-| `oma_refresh_tools` | boolean | 可选，为 `true` 时在执行前刷新工具配置，缺省不触发 |
 | `trace_context` | object | 可选，沿用现行 trace 关联字段，供输入接收路径恢复 trace 上下文 |
 
 `oma_system_context` 缺省时沿用当前上下文，空数组时清空；非数组、重复 id 或元素类型错误时拒绝执行，保持现行校验。
@@ -681,7 +556,6 @@ DSH 把 task 输入接到一条串行队列：上一条的工具调用、回复�
 | `user.message` | 回执 `received`，排队；轮到时回执 `processing`，执行回合 |
 | `user.interrupt` | 取消目标线程的当前回合与待确认审批（服务端已在接纳中断时关闭 pending），回执 `processed` |
 | `permission.resolved` | 找到本地等待项则继续或拒绝工具；找不到（已取消、已结束或属于旧 epoch）只回执，不执行 |
-| `session.set_model` | 校验模型，`PUT worker-state` 写入 `model`，回执 `processed`；失败时带 `error: "invalid_model"` |
 
 ### 错误
 
@@ -696,7 +570,7 @@ A 完成 → output → finish(A) → delivery(A processed)
 B 开始 → delivery(B processing) → 执行时可以看到 A 的完整历史
 ```
 
-## 9. `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery`
+## 6. `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery`
 
 调用位置：`dsr/worker.ts`、`dsr/session.ts` 的 received、processing 和 processed。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
 
@@ -721,7 +595,7 @@ B 开始 → delivery(B processing) → 执行时可以看到 A 的完整历史
 | `updates` | array | 是 | 1–64 项 |
 | `updates[].id` | string | 是 | `input_id` |
 | `updates[].status` | string | 是 | `received`、`processing`、`processed` |
-| `updates[].error` | string | 否 | 仅 control 输入的 `processed` 可带，例如 `unsupported_input`、`invalid_model` |
+| `updates[].error` | string | 否 | 仅 control 输入的 `processed` 可带，`unsupported_input` |
 
 DSH 用串行批量上传器发送回执，网络错误与 429/5xx 有界退避；耗尽后不越过执行或 ACK 屏障，停止该会话。`epoch_superseded` fence；`finish_required` 定位违规 input，先补 finish 再重试原批，不把所有 409 都视为失去 owner。
 
@@ -785,7 +659,7 @@ DSH 用串行批量上传器发送回执，网络错误与 429/5xx 有界退避�
 
 finish 自动把持久 delivery 置为 pending；后端在没有 Brain owner 时也会重试确认。注册不再执行补 ACK，已完成但未 ACK 不构成 Brain 领取条件。ACK 地址仅保存在后端投递表，不进入请求或响应。
 
-## 10. `POST /v1/dsr/sessions/{code_session_id}/inputs/{input_id}/finish`
+## 7. `POST /v1/dsr/sessions/{code_session_id}/inputs/{input_id}/finish`
 
 该接口完成一个 input execution，事务内持久化结果、生成投递待办、关闭该输入 pending 审批并更新公开状态。它不代表 broker ACK。
 
@@ -812,7 +686,7 @@ finish 自动把持久 delivery 置为 pending；后端在没有 Brain owner 时
 
 本接口使用 `dsh_input_executions`，没有为单次 owner 或原生 turn 新建记录。CCRv2 仍通过其 result 事件处理结束，不使用本接口。version 1 的本地完成 checkpoint 重放时明确拒绝，不静默转换旧结果。
 
-## 11. `PUT /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/header`
+## 8. `PUT /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/header`
 
 调用位置：`runtime/replication.ts`、`dsr/replication.ts` 的 Header 屏障。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
 
@@ -830,7 +704,7 @@ Header 记录日志格式版本与父子关系，服务端据此校验后续 Eve
 | 子线程 | DSH 创建子 Agent 之后，**在发布它的 `session.thread_created` 之前** |
 | 恢复 | 远程缺少 Header 时补写；已存在时重复调用是安全的 |
 
-子线程的顺序很重要：DSH 现行流程先刷新含子线程 Header 的日志、等待远程确认，再发布 `thread_created`。所以 Header 不要求公开线程已存在，反过来由 `thread_created`（接口 17）校验日志已存在并绑定线程。
+子线程的顺序很重要：DSH 现行流程先刷新含子线程 Header 的日志、等待远程确认，再发布 `thread_created`。所以 Header 不要求公开线程已存在，反过来由 `thread_created`（接口 14）校验日志已存在并绑定线程。
 
 ### 路径
 
@@ -873,7 +747,7 @@ Header 记录日志格式版本与父子关系，服务端据此校验后续 Eve
 { "dsh_session_id": "sub_9f2c...", "next_seq": "0" }
 ```
 
-## 12. `POST /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/events`
+## 9. `POST /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/events`
 
 调用位置：`runtime/replication.ts`、`dsr/replication.ts` 的有序复制。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
 
@@ -918,7 +792,7 @@ Header 记录日志格式版本与父子关系，服务端据此校验后续 Eve
 
 | 状态 | `DSR-Error` | 说明与处理 |
 | --- | --- | --- |
-| 409 | `transcript_header_required` | 尚未写 Header：先调用接口 11 |
+| 409 | `transcript_header_required` | 尚未写 Header：先调用接口 8 |
 | 409 | `transcript_gap` | 第一条未确认条目不等于 `next_seq`：按 `DSR-Next-Seq` 补发 |
 | 409 | `transcript_conflict` | 已确认的 seq 内容不同：停止恢复，保留本地文件 |
 | 410 | `transcript_purged` | 最后一份副本已删除，会话不可恢复 |
@@ -958,7 +832,7 @@ C. 重复上传
    响应丢失后重发 seq 41–42 → 内容相同，跳过 → 200 {"next_seq": "43"}
 ```
 
-## 13. `GET /v1/dsr/sessions/{code_session_id}/transcripts`
+## 10. `GET /v1/dsr/sessions/{code_session_id}/transcripts`
 
 调用位置：`dsr/subagents.ts`、`dsr/replication.ts` 的接管枚举。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
 
@@ -968,7 +842,7 @@ C. 重复上传
 
 ### 什么时候调用
 
-每次接管恢复时完整枚举目录，在逐条读取（接口 14）之前。使用 `after` 继续分页，直到 `next_after` 为 null。
+每次接管恢复时完整枚举目录，在逐条读取（接口 11）之前。使用 `after` 继续分页，直到 `next_after` 为 null。
 
 ### 请求
 
@@ -999,7 +873,7 @@ C. 重复上传
 ], "next_after": null }
 ```
 
-## 14. `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}`
+## 11. `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}`
 
 调用位置：`dsr/replication.ts` 的分页读取。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
 
@@ -1015,7 +889,7 @@ C. 重复上传
 | --- | --- |
 | 本地没有 | 从 seq 0 读全量，写入临时 JSONL，关闭后回读并完整校验，通过后才写入正式本地文件 |
 | 本地是远端的前缀 | 从本地长度读到末尾，追加远端尾部 |
-| 本地比远端长 | 读远端全量核对前缀；一致则保留本地尾部，用接口 12 补传 |
+| 本地比远端长 | 读远端全量核对前缀；一致则保留本地尾部，用接口 9 补传 |
 | 互不为前缀 | 停止恢复，保留本地文件，不覆盖、不拼接 |
 
 服务端 `next_seq` 只能证明远端有多长，不能证明内容一致，所以这一步的前缀核对不能省略。
@@ -1053,7 +927,7 @@ GET /v1/dsr/sessions/cse_abc/transcripts/sub_9f2c...?from_seq=0&limit_bytes=4194
 }
 ```
 
-## 15. `POST /v1/dsr/sessions/{code_session_id}/permission-requests`
+## 12. `POST /v1/dsr/sessions/{code_session_id}/permission-requests`
 
 调用位置：`dsr/session.ts`、`dsr/executor.ts` 的批次预审批。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
 
@@ -1128,7 +1002,7 @@ CCRv2 的流程是：DSH 往公开输出里发一条 `can_use_tool` 控制请求
 | --- | --- | --- |
 | `pending` | 等待用户确认或外部结果 | 本接口 |
 | `resolved` | 已判定：allow、deny 或外部结果 | 本接口（自动判定），或用户确认、custom 结果 |
-| `cancelled` | DSH 放弃等待 | 接口 16 |
+| `cancelled` | DSH 放弃等待 | 接口 13 |
 | `closed` | 所属输入已完成结束上报、被中断或子线程已终止 | 服务端自动 |
 
 终态不可逆；竞争时只有一次转换成功，另一方读取并返回当前终态。
@@ -1182,7 +1056,7 @@ D. 等待审批时挂起
    之后与 C 相同：用户响应时唤醒领取，由任意进程从回合中途恢复
 ```
 
-## 16. `POST /v1/dsr/sessions/{code_session_id}/permission-requests/{request_id}/cancel`
+## 13. `POST /v1/dsr/sessions/{code_session_id}/permission-requests/{request_id}/cancel`
 
 调用位置：`dsr/client.ts` 的显式取消；用户 interrupt 由后端事务关闭审批。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
 
@@ -1209,7 +1083,7 @@ D. 等待审批时挂起
 | `tool_use_id` | string | 是 | 同上 |
 | `input_id` | string | 否 | 提供时校验归属 |
 
-服务端按接口 15 的规则重新派生 `request_id`，与路径不一致返回 `400 invalid_request`。
+服务端按接口 12 的规则重新派生 `request_id`，与路径不一致返回 `400 invalid_request`。
 
 ### 响应 200
 
@@ -1229,7 +1103,7 @@ DSH：用户中断 → POST cancel → 记录不存在 → 写墓碑 → 200 can
 不会出现"已中断却还挂着一个待确认审批"的残留
 ```
 
-## 17. `POST /v1/dsr/sessions/{code_session_id}/public-events`
+## 14. `POST /v1/dsr/sessions/{code_session_id}/public-events`
 
 调用位置：`dsr/session.ts`、`dsr/subagents.ts` 的输出投影。路径相对于 `oma-brain-dsh/src/`，实现及验证范围见 [实验实现状态](implementation.md)。
 
@@ -1306,7 +1180,7 @@ DSH：用户中断 → POST cancel → 记录不存在 → 写墓碑 → 200 can
 
 ### 对应 CCRv2
 
-CCRv2 的 `POST worker/events` 同时承载 Claude Code 格式的 `assistant` / `user` / `result`、CMA 原生事件和控制请求，后端 mapper 两套格式都要识别，未知类型静默丢弃。DSRv1 把它拆成三个接口：公开输出（本接口）、审批（接口 15）、回合结束（接口 10），本接口只接受 DSR 词汇。
+CCRv2 的 `POST worker/events` 同时承载 Claude Code 格式的 `assistant` / `user` / `result`、CMA 原生事件和控制请求，后端 mapper 两套格式都要识别，未知类型静默丢弃。DSRv1 把它拆成三个接口：公开输出（本接口）、审批（接口 12）、回合结束（接口 7），本接口只接受 DSR 词汇。
 
 ### 示例
 
@@ -1333,7 +1207,7 @@ DSH 创建子 Agent sub_9f2c
 → 子线程开始工作，事件写入 transcripts/sub_9f2c/events
 ```
 
-## 18. 运行时能力接口
+## 15. 运行时能力接口
 
 以下接口保留各自原生协议，把路径迁到 `/v1/dsr/sessions/{code_session_id}/` 下并改用 session token：
 
@@ -1352,7 +1226,7 @@ DSH 创建子 Agent sub_9f2c
 
 本节完整的方法、调用方与响应字段见 [逐接口评审第 5 节](interface-review.md)。MCP 需 GET/POST/DELETE 与 OAuth metadata 配套迁移；图片附件需 PUT/HEAD/GET，消息附件需 GET，不能只实现读取。diagnostics 目前无生产 Brain 调用，是否保留及 typed 白名单 schema 需在冻结前决定。
 
-MCP/OTLP 的原生错误体、附件二进制与 HEAD 响应不走通用 JSON 解码。网关 lifecycle 错误用 DSR-Error，普通资源和上游错误不 fence。sandbox/MCP/web 保留 X-OMA-Session-Thread-ID，context 使用 DSR-Thread-ID，模型 API 保留 X-Claude-Code-Agent-Id，不能全局机械替换。
+MCP/OTLP 的原生错误体、附件二进制与 HEAD 响应不走通用 JSON 解码。网关 lifecycle 错误用 DSR-Error，普通资源和上游错误不 fence。sandbox/MCP/web 保留 X-OMA-Session-Thread-ID，模型 API 保留 X-Claude-Code-Agent-Id，不能全局机械替换。
 
 不变的接口：`/v1/messages` 与 `/v1/chat/completions` 使用 model_token；沙箱 relay 与 sign-commit 保持既有凭据路径。`/v1/code/upstreamproxy/ca-cert` 当前不鉴权，是 sandbox JWT 描述的例外。Brain 没有新增沙箱侧调用职责，详见逐接口评审。
 

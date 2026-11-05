@@ -1,262 +1,623 @@
-import type {Context} from "@deepseek-ai/cordis";
+// ============================================================================
+// DSR Worker：Brain 进程里“认领并执行会话”的总入口
+// ============================================================================
+//
+// 先建立整体心智模型：
+//
+//   1. 服务器（platform）维护一堆待执行的 code session。
+//   2. Brain 进程启动后调用 startDsrWorkers()，用长轮询向服务器“认领”（claim）
+//      会话。一个 claim 就代表“这段会话接下来归我这个 worker_epoch 执行”。
+//   3. 认领成功后，为这个会话创建一个 DsrOwner。每个 DsrOwner 负责：
+//        - 向服务器 register，换取租约（lease）参数；
+//        - 起一个心跳循环，持续续租；
+//        - 拉取会话上下文（model / cwd / system prompt / tools ...），组装 Assignment；
+//        - 打开本地 DSH 会话；
+//        - 通过 SSE 输入流接收输入（用户消息、中断、模型切换、审批结果）；
+//        - 任务执行完后向服务器 finish，并把自己标记为 processed；
+//        - 会话结束（空闲 / 关闭 / 永久失败）时 release claim，让服务器可以再分配。
+//
+// 一次典型生命周期（括号里是对应的方法）：
+//
+//   poll() --claim--> admit() --new--> DsrOwner --run-->
+//     -> 等待输入 -> session.receive()/control() -> finish()
+//     -> 输入流结束 -> close session/lease -> claims.release()
+//
+// 并发模型：
+//   - 进程级：claimConcurrency 个 poll 循环并行拉 claim；owners 记录当前活跃会话。
+//   - 会话级：DsrOwner 内部把输入分成两条串行队列：
+//       tasks    —— 普通任务输入（user.message），可能执行很久；
+//       controls —— 控制输入（中断 / 切模型 / 审批结果），不能排在长任务后面。
+//     两条队列各自串行，互相不阻塞。
+//   - 投递语义：至少一次。收到输入先回 "received"，处理完才回 "processed"；
+//     未完成的输入会每 10 秒重报一次 received，进程崩溃后服务器可重投。
+//
+// 下面逐段解释。示例中的 ID、时间、数字都是为了直观，实际值由服务器决定。
+// ============================================================================
+
+import type { Context } from "@deepseek-ai/cordis";
 import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
-import {OmaApi} from "../api.ts";
-import {checkWritableDirectory} from "../storage.ts";
-import {mountKernel} from "../kernel.ts";
-import {mountDshSubagents} from "../runtime/dsh-subagents.ts";
-import {SessionReplication} from "../runtime/replication.ts";
-import {omaRuntimeConfig} from "../oma-session.ts";
-import {mountTelemetry} from "../observability/index.ts";
-import {workerDiagnostic} from "../observability/diagnostics.ts";
-import {ConfigurationError} from "../config.ts";
-import {brainMetrics} from "../telemetry.ts";
-import {DsrClient} from "./client.ts";
-import {DsrClaims} from "./claims.ts";
-import {DsrInputStream} from "./input-stream.ts";
-import {DsrSession} from "./session.ts";
-import {DsrLease} from "./lease.ts";
-import {dsrAssignment} from "./assignment.ts";
-import {dsrTranscriptPort} from "./replication.ts";
-import {createDsrTransport} from "./transport.ts";
-import {delay, DsrError} from "./http.ts";
-import type {Claim} from "./wire.ts";
+// OmaApi：访问 platform 的 HTTP 客户端 + 进程内共享的内存表（assignment、model 请求 ID 等）。
+import { OmaApi } from "../api.ts";
+// 启动前检查目录可写，避免跑到一半才发现 transcript 写不进去。
+import { checkWritableDirectory } from "../storage.ts";
+// 挂载原生 DSH 内核插件（session store、agent loop、tool runtime、LLM runtime ...）。
+import { mountKernel } from "../kernel.ts";
+// 子 agent（subagent）运行时；DSR 会话里也会用到。
+import { mountDshSubagents } from "../runtime/dsh-subagents.ts";
+// 会话 transcript 的复制层：把本地 DSH 会话事件同步到远端（这里是 DSR transcript API）。
+import { SessionReplication } from "../runtime/replication.ts";
+// 把一份 Assignment + OmaApi 转换成 SessionRuntimeConfig（模型、工具、系统提示词等）。
+import { omaRuntimeConfig } from "../oma-session.ts";
+import { mountTelemetry } from "../observability/index.ts";
+// 结构化诊断日志：JSON 一行，落到 console 和 brain 日志管道。
+import { workerDiagnostic } from "../observability/diagnostics.ts";
+// 配置错误：启动阶段直接失败，process 退出码非 0。
+import { ConfigurationError } from "../config.ts";
+// Prometheus/OTel 指标，例如活跃会话数。
+import { brainMetrics } from "../telemetry.ts";
+import { DsrClient } from "./client.ts";
+import { DsrClaims } from "./claims.ts";
+import { DsrInputStream } from "./input-stream.ts";
+import { DsrSession } from "./session.ts";
+import { DsrLease } from "./lease.ts";
+import { dsrAssignment } from "./assignment.ts";
+import { createRemoteTranscriptStore } from "./replication.ts";
+import { createDsrTransport } from "./transport.ts";
+// delay：可被 AbortSignal 打断的 sleep（测试里 transport.sleep 可注入假时钟）。
+// DsrError：带 HTTP status + 协议错误码的统一错误类型。
+import { delay, DsrError } from "./http.ts";
+import type { Claim } from "./wire.ts";
 
-export const dsrRuntimeServices = ["attachments", "llm", "tokenMeter", "sessions", "sessionPersistence", "sessionReplication", "agents", "agentLoop", "tools", "systemPrompt"];
+// 这些是 DSR worker 运行所必需的 cordis 服务名。
+// plugin.ts 用 `inject: dsrRuntimeServices` 声明依赖：只有这些服务都就绪后，
+// startDsrWorkers 才会被调用，避免在 session store / LLM runtime 尚未挂载时认领会话。
+// 例如 "sessions" 对应 SessionStore，"llm" 对应 LlmRuntime。
+export const dsrRuntimeServices = [
+  "attachments",
+  "llm",
+  "tokenMeter",
+  "sessions",
+  "sessionPersistence",
+  "sessionReplication",
+  "agents",
+  "agentLoop",
+  "tools",
+  "systemPrompt",
+];
 
+// worker 的可调参数。典型值：
+//   maxSessions: 8          —— 本进程最多同时拥有 8 个会话（每个会话可能长期占用内存）。
+//   claimConcurrency: 2     —— 同时开 2 个长轮询，一个阻塞等待 25s 时另一个仍能抢到活。
+//   shutdownDrainMs: 5000   —— 收到 SIGTERM 时，最多给在途任务 5s 收尾时间。
 export interface DsrWorkerOptions {
-    maxSessions: number;
-    claimConcurrency: number;
-    shutdownDrainMs: number;
+  maxSessions: number;
+  claimConcurrency: number;
+  shutdownDrainMs: number;
 }
 
+// TypeScript 的模块增强（module augmentation），只影响类型系统，不产生运行时代码：
+//   - dsrContinuation: 标记当前 cordis Context 运行在 DSR 模式下。
+//     session runtime 据此允许“保留未结束的 turn”（审批挂起、子 agent 未完成时
+//     暂停会话，等下次被认领后继续），而不是把它当成错误。
+//   - oma/shutdown-drain: 进程收到 SIGINT/SIGTERM 时，main.ts 会调用
+//     `ctx.parallel("oma/shutdown-drain")`，触发所有 worker 排空。
 declare module "@deepseek-ai/cordis" {
-    interface Context {
-        dsrContinuation: boolean;
-    }
+  interface Context {
+    dsrContinuation: boolean;
+  }
 
-    interface Events {
-        "oma/shutdown-drain"(): Promise<void>;
-    }
+  interface Events {
+    "oma/shutdown-drain"(): Promise<void>;
+  }
 }
 
-export async function mountDsr(ctx: Context, api: OmaApi, localRoot: string): Promise<Map<string, DsrClient>> {
-    await checkWritableDirectory(localRoot, "OMA_BRAIN_TRANSCRIPT_DIR");
-    await mountKernel(ctx, api);
-    ctx.provide("dsrContinuation", true);
-    await ctx.plugin(JsonlPersistence, {root: localRoot, compression: "none"});
-    const clients = new Map<string, DsrClient>();
-    await ctx.plugin(SessionReplication, {
-        remote: dsrTranscriptPort(id => {
-            const client = clients.get(id);
-            if (!client) throw new Error("DSR transcript owner is unavailable");
-            return client;
-        })
-    });
-    await mountDshSubagents(ctx);
-    await mountTelemetry(ctx, api);
-    return clients;
+/**
+ * 组装 DSR 运行环境，返回一个共享的 `clients` 表。
+ *
+ * 这一步只做“装配”，不认领会话：
+ *   1. 检查 transcript 目录可写（对应环境变量 OMA_BRAIN_TRANSCRIPT_DIR）。
+ *   2. 挂载原生 DSH 内核；之后 session / tools / agent loop 等能力才可用。
+ *   3. 打开 dsrContinuation 开关。
+ *   4. 挂载本地 JSONL 持久化（root 下按 session 存事件，compression: none）。
+ *   5. 挂载 transcript 复制层：DSH 产生的事件会写入 DSR 服务器。
+ *   6. 挂载子 agent 与 telemetry。
+ *
+ * `clients` 是 sessionId -> DsrClient 的表，两个地方会读它：
+ *   - startDsrWorkers 认领会话时写入；
+ *   - 复制层写 transcript / 读 transcript 时按根会话 ID 取对应 client。
+ * 之所以要这张表：复制层只拿到 root session id，需要找到“拥有者”的 client
+ * 才能带上正确的 session_token 访问该会话的远程资源。
+ *
+ * @example
+ *   const clients = await mountDsr(ctx, api, "/var/lib/oma/transcripts");
+ *   // 此时还没有任何会话，clients 为空 Map。
+ */
+export async function mountDsr(
+  ctx: Context,
+  api: OmaApi,
+  localRoot: string,
+): Promise<Map<string, DsrClient>> {
+  await checkWritableDirectory(localRoot, "OMA_BRAIN_TRANSCRIPT_DIR");
+  await mountKernel(ctx, api);
+  ctx.provide("dsrContinuation", true);
+  await ctx.plugin(JsonlPersistence, { root: localRoot, compression: "none" });
+  const clients = new Map<string, DsrClient>();
+  // 复制层写数据时传入的是“根会话 ID”。这里延迟查找 client：
+  // 只有该会话当前确实被本进程拥有时才允许写；否则抛错，让复制层把错误当作
+  // fenced（例如 epoch_superseded）处理，避免旧 owner 覆盖新 owner 的 transcript。
+  await ctx.plugin(SessionReplication, {
+    remote: createRemoteTranscriptStore((id) => {
+      const client = clients.get(id);
+      if (!client) throw new Error("DSR transcript owner is unavailable");
+      return client;
+    }),
+  });
+  await mountDshSubagents(ctx);
+  await mountTelemetry(ctx, api);
+  return clients;
 }
 
-export async function startDsrWorkers(ctx: Context, api: OmaApi, clients: Map<string, DsrClient>, claims: DsrClaims, options: DsrWorkerOptions): Promise<void> {
-    const abort = new AbortController();
-    const owners = new Map<string, DsrOwner>();
-    const work = new Set<Promise<void>>();
-    let reserved = 0;
-    const watch = (task: Promise<void>) => {
-        work.add(task);
-        void task.catch(() => workerDiagnostic("warn", "dsr_owner_failed", {})).finally(() => work.delete(task));
-    };
-    const admit = async (claim: Claim) => {
-        const previous = owners.get(claim.code_session_id);
-        if (previous) await previous.close();
-        const client = new DsrClient(createDsrTransport(api), claim);
-        clients.set(claim.code_session_id, client);
-        const owner = new DsrOwner(ctx, api, client, claims, options.shutdownDrainMs);
-        owners.set(claim.code_session_id, owner);
-        try {
-            await owner.run();
-        } finally {
-            if (owners.get(claim.code_session_id) === owner) {
-                owners.delete(claim.code_session_id);
-                if (clients.get(claim.code_session_id) === client) clients.delete(claim.code_session_id);
-                ctx.sessionReplication.forget(claim.code_session_id);
-                api.assignments.delete(claim.code_session_id);
-                api.modelResponses.delete(claim.code_session_id);
-                api.modelRequestIDs.delete(claim.code_session_id);
-                await api.telemetry?.close(claim.code_session_id);
-            }
-        }
-    };
-    const poll = async () => {
-        while (!abort.signal.aborted) {
-            if (owners.size + reserved >= options.maxSessions) {
-                await delay(claims.transport, 500, abort.signal);
-                continue;
-            }
-            reserved++;
-            try {
-                const claim = await claims.claim(25000, abort.signal);
-                if (claim) watch(admit(claim));
-            } catch (error) {
-                if (abort.signal.aborted) return;
-                if (error instanceof DsrError && [400, 401, 403].includes(error.status)) {
-                    abort.abort(error);
-                    throw error;
-                }
-                await delay(claims.transport, 1000, abort.signal);
-            } finally {
-                reserved--;
-            }
-        }
-    };
-    const shutdown = async () => {
-        abort.abort();
-        await Promise.allSettled([...owners.values()].map(owner => owner.close()));
-        await Promise.allSettled([...work]);
-    };
-    ctx.on("oma/shutdown-drain", shutdown);
-    ctx.effect(() => shutdown);
-    await claims.claim(0, abort.signal).then(claim => {
+/**
+ * 启动 claim 轮询与 worker 生命周期管理。
+ *
+ * 这个函数本身在“监听就绪”后就会返回，真正的会话执行发生在后台 Promise 中。
+ *
+ * @example
+ *   // plugin.ts 中的用法（服务就绪后）：
+ *   await startDsrWorkers(scope, api, clients, claims, {
+ *     maxSessions: 8,
+ *     claimConcurrency: 2,
+ *     shutdownDrainMs: 5000,
+ *   });
+ */
+export async function startDsrWorkers(
+  ctx: Context,
+  api: OmaApi,
+  clients: Map<string, DsrClient>,
+  claims: DsrClaims,
+  options: DsrWorkerOptions,
+): Promise<void> {
+  // 进程级总开关。abort 之后所有长轮询、SSE 输入流、等待中的 sleep 都会被唤醒退出。
+  const abort = new AbortController();
+  // sessionId -> 当前 owner。注意：同一个 session 可能被重新认领（例如轮到新 epoch），
+  // 新 owner 会替换旧 owner；旧 owner 收尾时用身份比较避免误删新 owner 的登记。
+  const owners = new Map<string, DsrOwner>();
+  // 所有后台任务的集合，仅用于 shutdown 时等待它们全部结束（防止“写了一半”）。
+  const work = new Set<Promise<void>>();
+  // 已通过容量检查、但还在等待 claim 返回的“预留名额”。
+  // 例：maxSessions=8，已有 7 个 owner，两个 poll 同时看到“还有空位”，
+  // 如果没有 reserved，两个都会发出 claim，瞬间变成 9 个会话。
+  // reserved 在同一个同步片段里自增，JS 单线程下不会交错，从而把检查变成准原子操作。
+  let reserved = 0;
+
+  // 把一个后台 Promise 纳入统一管理。
+  // 注意 catch 是空处理 + 诊断：owner.run() 内部已经记录了失败原因（fail()），
+  // 这里再抛会导致 unhandled rejection，所以只记录并吞掉；finally 负责从集合移除。
+  const watch = (task: Promise<void>) => {
+    work.add(task);
+    void task
+      .catch(() => workerDiagnostic("warn", "dsr_owner_failed", {}))
+      .finally(() => work.delete(task));
+  };
+
+  // 认领成功后的“收养”流程：建 client -> 建 owner -> 一直运行到会话结束 -> 清理。
+  // 每个 claim 都会独立跑在 watch() 管理的后台任务里。
+  const admit = async (claim: Claim) => {
+    // 同一个 code session 已经有 owner 了？说明它被重新分配（通常是新 epoch 接管）。
+    // 先把旧 owner 关掉，避免两个 owner 同时写同一份 transcript。
+    const previous = owners.get(claim.code_session_id);
+    if (previous) await previous.close();
+
+    // 每个会话一个 client，绑定本次 claim 的 session_token / worker_epoch。
+    const client = new DsrClient(createDsrTransport(api), claim);
+    // 先写入 clients 再启动 owner：session.open() 可能会触发 transcript 复制，
+    // 复制层必须能立刻按 sessionId 找到 client。
+    clients.set(claim.code_session_id, client);
+    const owner = new DsrOwner(
+      ctx,
+      api,
+      client,
+      claims,
+      options.shutdownDrainMs,
+    );
+    owners.set(claim.code_session_id, owner);
+    try {
+      // 注意 `await`：这个 Promise 直到会话真正结束（idle/shutdown/permanent）才 resolve。
+      await owner.run();
+    } finally {
+      // 只有“当前登记的仍是自己”时才清理。否则说明期间已有新 owner 接管，
+      // 删除操作会把新 owner 的登记、assignment、telemetry 一并误删。
+      if (owners.get(claim.code_session_id) === owner) {
+        owners.delete(claim.code_session_id);
+        if (clients.get(claim.code_session_id) === client)
+          clients.delete(claim.code_session_id);
+        ctx.sessionReplication.forget(claim.code_session_id);
+        // 清掉进程内共享的会话级内存：assignment、模型响应 ID 映射等。
+        api.assignments.delete(claim.code_session_id);
+        api.modelResponses.delete(claim.code_session_id);
+        api.modelRequestIDs.delete(claim.code_session_id);
+        // 关闭该会话的 telemetry（trace/log 导出器），避免泄漏。
+        await api.telemetry?.close(claim.code_session_id);
+      }
+    }
+  };
+
+  // 长轮询循环：不断问服务器“有没有活给我”。claimConcurrency 个实例同时跑。
+  const poll = async () => {
+    while (!abort.signal.aborted) {
+      // 容量已满（活跃 + 已预留 >= 上限）：短暂等待，避免空转占用 CPU。
+      // 例：8 个会话都在跑，就每 500ms 检查一次有没有会话结束。
+      if (owners.size + reserved >= options.maxSessions) {
+        await delay(claims.transport, 500, abort.signal);
+        continue;
+      }
+      reserved++;
+      try {
+        // block_ms=25000：服务器最多挂起 25 秒，有活立刻返回，没活返回 204/undefined。
+        // 这是长轮询而不是忙等，能显著降低请求频率。
+        const claim = await claims.claim(25000, abort.signal);
         if (claim) watch(admit(claim));
-    }).catch(error => {
-        if (error instanceof DsrError && [400, 401, 403].includes(error.status)) throw new ConfigurationError(`Brain claim rejected with HTTP ${error.status}`);
-        throw error;
+      } catch (error) {
+        if (abort.signal.aborted) return;
+        // 400/401/403 属于“配置/凭证/协议错误”，重试没有意义：
+        // 直接中止整个 worker，让进程退出并由上层报警。
+        // 例：worker token 过期 -> 401 -> 不再继续空转。
+        if (
+          error instanceof DsrError &&
+          [400, 401, 403].includes(error.status)
+        ) {
+          abort.abort(error);
+          throw error;
+        }
+        // 其他错误（网络抖动、5xx、超时）退避 1 秒后重试。
+        await delay(claims.transport, 1000, abort.signal);
+      } finally {
+        // 无论成功、失败、取消，都归还预留名额，让容量检查恢复准确。
+        reserved--;
+      }
+    }
+  };
+
+  // 排空：收到 SIGTERM/SIGINT 时调用。
+  // 1) 关掉总开关，停止认领新会话；
+  // 2) 并行关闭所有 owner（各自最多等待 drainMs 处理完手头任务）；
+  // 3) 等待所有后台任务真正结束。
+  const shutdown = async () => {
+    abort.abort();
+    await Promise.allSettled(
+      [...owners.values()].map((owner) => owner.close()),
+    );
+    await Promise.allSettled([...work]);
+  };
+  // 两种触发方式：
+  //   ctx.on(...)  —— 响应显式的 drain 事件（main.ts 的优雅退出流程）；
+  //   ctx.effect(...) —— cordis 释放该插件时自动执行 shutdown（兜底）。
+  //   注意 ctx.effect 的回调返回值就是 disposer，所以这里把 shutdown 函数本身返回。
+  ctx.on("oma/shutdown-drain", shutdown);
+  ctx.effect(() => shutdown);
+
+  // 启动时先做一次“立即认领”（block_ms=0，不等待）：
+  //   - 好处 1：本地开发/单会话场景可以立刻开跑，不必等第一次长轮询；
+  //   - 好处 2：如果 token 配置错了，服务器马上返回 401，这里映射成
+  //     ConfigurationError，让进程在启动阶段就失败，而不是后台静默重试。
+  // 例：worker token 无效 -> HTTP 401 -> ConfigurationError -> main.ts 打印启动失败并退出。
+  await claims
+    .claim(0, abort.signal)
+    .then((claim) => {
+      if (claim) watch(admit(claim));
+    })
+    .catch((error) => {
+      if (error instanceof DsrError && [400, 401, 403].includes(error.status))
+        throw new ConfigurationError(
+          `Brain claim rejected with HTTP ${error.status}`,
+        );
+      throw error;
     });
-    for (let i = 0; i < options.claimConcurrency; i++) watch(poll());
-    console.info("oma-brain-dsh ready");
-    workerDiagnostic("info", "dsr_brain_ready", {
-        max_sessions: options.maxSessions,
-        claim_concurrency: options.claimConcurrency
-    });
+
+  // 启动 claimConcurrency 个长轮询循环。它们不会被 await，会一直运行到 abort。
+  for (let i = 0; i < options.claimConcurrency; i++) watch(poll());
+  // 给人看的启动日志（stdout），以及给机器看的结构化诊断（带字段）。
+  console.info("oma-brain-dsh ready");
+  workerDiagnostic("info", "dsr_brain_ready", {
+    max_sessions: options.maxSessions,
+    claim_concurrency: options.claimConcurrency,
+  });
 }
 
+/**
+ * 一个会话的拥有者：从“认领成功”到“释放 claim”之间的全部状态都挂在这里。
+ *
+ * 为什么需要这个类而不是一个函数：会话生命周期长（几分钟到几小时），
+ * 期间有输入流、心跳、空闲检测、任务队列、关闭流程等多个并发活动，
+ * 需要集中管理它们的取消和收尾顺序。
+ */
 export class DsrOwner {
-    session?: DsrSession;
-    private lease?: DsrLease;
-    private readonly stream = new AbortController();
-    private tasks: Promise<void> = Promise.resolve();
-    private controls: Promise<void> = Promise.resolve();
-    private readonly unsettled = new Set<string>();
-    private closing?: Promise<void>;
-    private settled = Promise.withResolvers<void>();
-    private reason: "idle" | "shutdown" | "permanent" | "admission_failed" = "admission_failed";
-    private failure?: unknown;
-    private stage = "register";
+  session?: DsrSession;
+  // 心跳租约。start() 后每 heartbeat_interval_ms 续一次；续租失败会调用 fail()。
+  private lease?: DsrLease;
+  // 输入流（SSE）的生命周期开关。空闲/失败/关闭时 abort，for-await 随即结束。
+  private readonly stream = new AbortController();
+  // 普通任务输入的串行队列。用 Promise 链实现“前一个处理完再处理下一个”：
+  //   this.tasks = this.tasks.then(async () => { ... });
+  // 例：用户连续发两条消息，第二条一定等第一条的 turn 结束后才开始。
+  private tasks: Promise<void> = Promise.resolve();
+  // 控制输入的串行队列，独立于 tasks。
+  // 例：一个 10 分钟的工具调用还在跑时，用户按“中断”，中断必须立刻生效，
+  // 不能排在任务队列后面等 10 分钟。
+  private controls: Promise<void> = Promise.resolve();
+  // 已回 "received" 但还没回 "processed" 的输入 ID。
+  // 用途：每 10 秒重报一次 received，防止第一次 ack 丢包导致服务器以为输入没送到。
+  // 例：收到输入 input_42 -> 加入集合；处理完 -> 从集合删除。
+  private readonly unsettled = new Set<string>();
+  // close() 可能被调用多次（shutdown、替换旧 owner），缓存 Promise 使其幂等。
+  private closing?: Promise<void>;
+  // run() 的 finally 全部执行完（包括 release claim）后 resolve。
+  // close() 用它来等待“真的收尾干净”，而不是刚发出取消就返回。
+  private settled = Promise.withResolvers<void>();
+  // 释放 claim 时上报的原因，服务器据此决定是否立刻重新分配：
+  //   idle            —— 空闲超时，可以马上给别人；
+  //   shutdown        —— 本进程正常退出/输入流结束，可以重新分配；
+  //   permanent       —— 输入类型永久不支持，换谁都一样，别再重试；
+  //                      服务器可以尽快重试到别的 worker。
+  // 初始值是 admission_failed：如果 open 之前就抛错，语义正好吻合。
+  private reason: "idle" | "shutdown" | "permanent" | "admission_failed" =
+    "admission_failed";
+  // 记录第一个失败原因（fail() 可能被多个来源并发调用，只保留最早的）。
+  private failure?: unknown;
+  // 当前进行到哪一步，仅用于诊断日志。
+  private stage = "register";
 
-    constructor(readonly ctx: Context, readonly api: OmaApi, readonly client: DsrClient, readonly claims: DsrClaims, readonly drainMs: number) {
-    }
+  constructor(
+    readonly ctx: Context,
+    readonly api: OmaApi,
+    readonly client: DsrClient,
+    readonly claims: DsrClaims,
+    readonly drainMs: number,
+  ) {}
 
-    async run(): Promise<void> {
-        let timer: ReturnType<typeof setInterval> | undefined;
-        let progress: ReturnType<typeof setInterval> | undefined;
-        try {
-            const remaining = Date.parse(this.client.claim.claim_expires_at) - Date.now();
-            if (remaining <= 0) throw new DsrError(0, "claim_expired");
-            const registration = await this.client.register(AbortSignal.timeout(remaining));
-            this.lease = new DsrLease(this.client, registration, error => this.fail(error));
-            this.lease.start();
-            this.stage = "context";
-            const assignment = dsrAssignment(this.api, this.client.claim, registration, await this.client.context(undefined, this.stream.signal));
-            this.api.assignments.set(assignment.session_id, assignment);
-            this.session = new DsrSession(this.ctx, this.client, omaRuntimeConfig(this.ctx, this.api, assignment, (thread, signal) => this.client.context(thread, signal)));
-            brainMetrics().sessionsActive.add(1);
-            this.stage = "open";
-            await this.session.open();
-            this.stage = "inputs";
-            this.reason = "shutdown";
-            timer = setInterval(() => {
-                if (this.session && !this.session.busy && Date.now() - this.session.lastIdle > 60000) {
-                    this.reason = "idle";
-                    this.stream.abort();
-                }
-            }, 1000);
-            let reporting = false;
-            progress = setInterval(() => {
-                if (reporting) return;
-                reporting = true;
-                void this.reportReceived().catch(error => this.fail(error)).finally(() => {
-                    reporting = false;
-                });
-            }, 10000);
-            for await (const input of new DsrInputStream(this.client).read(this.stream.signal)) {
-                this.unsettled.add(input.id);
-                const received = this.client.delivery([{id: input.id, status: "received"}], this.stream.signal);
-                void received.catch(error => this.fail(error));
-                if (input.lane === "control") {
-                    this.controls = this.controls.then(async () => {
-                        await received;
-                        await this.session!.control(input, input.transportSequence);
-                        this.unsettled.delete(input.id);
-                    });
-                    void this.controls.catch(error => this.fail(error));
-                } else {
-                    this.tasks = this.tasks.then(async () => {
-                        await received;
-                        if (this.session!.suspended) return;
-                        await this.session!.receive(input);
-                        if (this.session!.suspended) {
-                            this.reason = "idle";
-                            this.stream.abort();
-                        } else this.unsettled.delete(input.id);
-                    });
-                    void this.tasks.catch(error => this.fail(error));
-                }
-            }
-        } catch (error) {
-            if (!this.stream.signal.aborted) this.fail(error);
-        } finally {
-            clearInterval(timer);
-            clearInterval(progress);
-            try {
-                await Promise.allSettled([this.tasks, this.controls]);
-                await this.session?.close();
-            } finally {
-                if (this.session) brainMetrics().sessionsActive.add(-1);
-                await this.lease?.close();
-                try {
-                    const rejected = this.failure instanceof DsrError && this.failure.status >= 400 && this.failure.status < 500;
-                    if (!rejected) await this.claims.release(this.client.claim, this.reason, AbortSignal.timeout(15000)).catch(() => {
-                    });
-                } finally {
-                    this.settled.resolve();
-                }
-            }
+  /**
+   * 会话主流程。只有 run() 结束（正常或异常）之后，admit() 才会执行清理。
+   *
+   * 阶段划分：
+   *   register  -> 拉租约参数并启动心跳
+   *   inputs    -> 持续消费 SSE 输入流，直到空闲/失败/关闭
+   */
+  async run(): Promise<void> {
+    // 空闲检测定时器（1s 精度）与 received 重报定时器（10s 精度）。
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let progress: ReturnType<typeof setInterval> | undefined;
+    try {
+      // claim 自带过期时间。注册请求必须在这之前完成，否则 claim 已经失效，
+      // 再注册也没有意义，直接按 claim_expired 失败（会被 release 掉）。
+      // 例：claim_expires_at 距今还有 30s，就用 30s 作为 register 的超时上限。
+      const remaining =
+        Date.parse(this.client.claim.claim_expires_at) - Date.now();
+      if (remaining <= 0) throw new DsrError(0, "claim_expired");
+      // register 返回协议版本、租约参数（ttl/grace/heartbeat interval）、可观测性开关。
+      const registration = await this.client.register(
+        AbortSignal.timeout(remaining),
+      );
+      // 心跳续租：每 heartbeat_interval_ms 调一次 /heartbeat。
+      // 续租失败（例如网络长期不通、epoch 被顶掉）回调 fail()，让会话尽快收尾。
+      this.lease = new DsrLease(this.client, registration, (error) =>
+        this.fail(error),
+      );
+      this.lease.start();
+      const assignment = dsrAssignment(
+        this.api,
+        this.client.claim,
+        registration,
+      );
+      this.api.assignments.set(assignment.session_id, assignment);
+      // DsrSession 封装了 DSH 会话运行时：工具执行、审批、消息发布、transcript 同步。
+      this.session = new DsrSession(
+        this.ctx,
+        this.client,
+        omaRuntimeConfig(this.api, assignment),
+      );
+      // 指标：active sessions +1。只有在 session 真正建立后才加，finally 里对应减 1。
+      brainMetrics().sessionsActive.add(1);
+      this.stage = "open";
+      // 确保 transcript 复制就绪、恢复子 agent 线程、打开本地会话并重放历史事件。
+      await this.session.open();
+      this.stage = "inputs";
+      // 从这里开始，除非被改成 idle/permanent，异常结束一律按 shutdown 释放。
+      // 因为此时进程已经“正常接管过”这个会话，服务器可以重新分配给别人。
+      this.reason = "shutdown";
+
+      // 空闲检测：每秒检查一次，连续 60 秒没有任务且没有子 agent 在跑，就判定空闲。
+      // 这里只 abort 输入流，不直接关闭 session；输入流结束后走 run() 的 finally，
+      // 按顺序关闭 session/lease 并 release(claim, "idle")，保证清理路径唯一。
+      // 例：用户 3 分钟没发消息 -> 空闲计时达到 60s -> abort -> release -> 进程腾出槽位。
+      timer = setInterval(() => {
+        if (
+          this.session &&
+          !this.session.busy &&
+          Date.now() - this.session.lastIdle > 60000
+        ) {
+          this.reason = "idle";
+          this.stream.abort();
         }
-    }
+      }, 1000);
 
-    private fail(error: unknown): void {
-        if (!this.failure) workerDiagnostic("warn", "dsr_owner_interrupted", {
-            stage: this.stage,
-            failure_reason: error instanceof DsrError ? error.code : "runtime_error", ...(error instanceof DsrError ? {status: error.status} : {})
-        });
-        this.failure ??= error;
-        if (error instanceof DsrError && error.code === "unsupported_task_input") this.reason = "permanent";
-        this.stream.abort();
-        this.session?.stop();
-    }
+      // received 重报：每 10 秒把所有未完成输入重新标记为 received。
+      // 用 reporting 防重入：上一次批量上报还没返回时跳过本轮，避免请求堆积。
+      let reporting = false;
+      progress = setInterval(() => {
+        if (reporting) return;
+        reporting = true;
+        void this.reportReceived()
+          .catch((error) => this.fail(error))
+          .finally(() => {
+            reporting = false;
+          });
+      }, 10000);
 
-    private async reportReceived(): Promise<void> {
-        const ids = [...this.unsettled];
-        for (let i = 0; i < ids.length; i += 64) await this.client.delivery(ids.slice(i, i + 64).map(id => ({
-            id,
-            status: "received"
-        })), this.stream.signal);
+      // 持续消费输入流。DsrInputStream 内部处理了 SSE 断线重连、
+      // Last-Event-ID 游标、指数退避和 45 秒无数据看门狗。
+      // stream 被 abort 时，for-await 正常结束，进入 finally。
+      for await (const input of new DsrInputStream(this.client).read(
+        this.stream.signal,
+      )) {
+        this.unsettled.add(input.id);
+        // 立即回执 "received"，但不 await——输入处理不能被网络往返阻塞。
+        // 失败则交给 fail()，因为这意味着服务器已经不认这个 claim 了。
+        const received = this.client.delivery(
+          [{ id: input.id, status: "received" }],
+          this.stream.signal,
+        );
+        void received.catch((error) => this.fail(error));
+        if (input.lane === "control") {
+          // 控制输入：排到 controls 队列。
+          // 必须等 received 回执完成后再处理，顺序是：回执 -> 执行控制动作 -> 标记已处理。
+          this.controls = this.controls.then(async () => {
+            await received;
+            await this.session!.control(input);
+            this.unsettled.delete(input.id);
+          });
+          // 队列中的错误同样要触发失败收尾，否则会话会卡在半关闭状态。
+          void this.controls.catch((error) => this.fail(error));
+        } else {
+          // 任务输入：排到 tasks 队列，串行执行。
+          this.tasks = this.tasks.then(async () => {
+            await received;
+            // suspended：会话因为审批挂起、子 agent 未完成等原因暂停。
+            // 此时不处理该输入，也不从 unsettled 删除——保留“未完成”状态，
+            // 等会话被重新认领后服务器会重投，从而实现跨 worker 的继续执行。
+            if (this.session!.suspended) return;
+            await this.session!.receive(input);
+            if (this.session!.suspended) {
+              // 处理过程中进入挂起（例如等待用户审批超时）：
+              // 主动结束输入流并释放 claim，把会话交还给调度器。
+              this.reason = "idle";
+              this.stream.abort();
+            } else this.unsettled.delete(input.id);
+          });
+          void this.tasks.catch((error) => this.fail(error));
+        }
+      }
+    } catch (error) {
+      // stream 被主动 abort（空闲/关闭）时，for-await 抛出的取消错误不是真失败，
+      // 只把真正的错误交给 fail()。
+      if (!this.stream.signal.aborted) this.fail(error);
+    } finally {
+      // 收尾顺序很重要：先停定时器，再排空队列，再关 session/lease，最后 release claim。
+      clearInterval(timer);
+      clearInterval(progress);
+      try {
+        // 等待两条输入队列自然结束（即使很快失败，也要把已入队的处理完/取消完）。
+        await Promise.allSettled([this.tasks, this.controls]);
+        await this.session?.close();
+      } finally {
+        if (this.session) brainMetrics().sessionsActive.add(-1);
+        await this.lease?.close();
+        try {
+          // 4xx 失败说明这个 claim 本身已被服务器判死（例如 epoch 被顶掉、
+          // token 失效、请求不合法），再调 release 没有意义甚至可能报错；
+          // 5xx/网络错误/主动结束则要显式 release，让服务器知道可以重新分配。
+          const rejected =
+            this.failure instanceof DsrError &&
+            this.failure.status >= 400 &&
+            this.failure.status < 500;
+          if (!rejected)
+            await this.claims
+              .release(
+                this.client.claim,
+                this.reason,
+                AbortSignal.timeout(15000),
+              )
+              .catch(() => {});
+        } finally {
+          // 通知 close()：清理完成，可以返回了。
+          this.settled.resolve();
+        }
+      }
     }
+  }
 
-    close(): Promise<void> {
-        return this.closing ??= (async () => {
-            this.stream.abort();
-            const waiting = Promise.allSettled([this.tasks, this.controls]);
-            const deadline = new Promise<void>(resolve => {
-                const timer = setTimeout(resolve, this.drainMs);
-                timer.unref();
-            });
-            await Promise.race([waiting, deadline]);
-            if (this.session?.busy) {
-                this.session.runtime.cancelForShutdown();
-                this.session.subagents.cancelForShutdown();
-            }
-            await this.settled.promise;
-        })();
-    }
+  /**
+   * 统一的失败入口。多个来源（心跳、输入流、任务队列、上报循环）都可能调用，
+   * 这里做幂等处理：只记录第一个原因，并尽快让主流程退出。
+   *
+   * @example
+   *   // 场景：处理 user.message 时发现输入类型不支持
+   *   // -> failure = DsrError("unsupported_task_input")
+   *   // -> reason = "permanent"（换 worker 重试也没用）
+   *   // -> abort 输入流 -> run() 进入 finally -> release(claim, "permanent")
+   */
+  private fail(error: unknown): void {
+    // 只给第一个失败写诊断，后续重复调用不刷日志。
+    if (!this.failure)
+      workerDiagnostic("warn", "dsr_owner_interrupted", {
+        stage: this.stage,
+        failure_reason:
+          error instanceof DsrError ? error.code : "runtime_error",
+        ...(error instanceof DsrError ? { status: error.status } : {}),
+      });
+    this.failure ??= error;
+    // unsupported_task_input 是“永久性”的：不是网络抖动，换机器也会失败。
+    // 用 permanent 告诉服务器不要再重试这个输入。
+    if (error instanceof DsrError && error.code === "unsupported_task_input")
+      this.reason = "permanent";
+    // 终止输入流和会话，让 run() 尽早进入 finally。
+    this.stream.abort();
+    this.session?.stop();
+  }
+
+  /**
+   * 把所有“已收到但未处理完”的输入重新标记为 received。
+   *
+   * 为什么需要它：SSE 是单向推送，如果进程在“收到”和“处理完”之间崩溃，
+   * 服务器并不知道输入是否送达。周期性重报 + 服务器端去重，构成至少一次投递。
+   *
+   * 每批最多 64 个，避免一次请求体过大；数量少时通常只有一批。
+   * 例：unsettled = [a, b, ..., z]（100 个）-> 发 2 个请求（64 + 36）。
+   */
+  private async reportReceived(): Promise<void> {
+    const ids = [...this.unsettled];
+    for (let i = 0; i < ids.length; i += 64)
+      await this.client.delivery(
+        ids.slice(i, i + 64).map((id) => ({
+          id,
+          status: "received",
+        })),
+        this.stream.signal,
+      );
+  }
+
+  /**
+   * 外部关闭入口（shutdown、被新 owner 替换时调用）。保证幂等。
+   *
+   * 关闭分两段，体现“先礼后兵”：
+   *   1. 先让在途任务最多跑 drainMs（例如工具调用正在写文件，给它时间收尾）；
+   *   2. 超过期限还在忙，就强制取消 runtime 与子 agent，解除阻塞；
+   *   3. 最后等待 run() 的 finally 完成（含 release claim），确保资源真的释放。
+   *
+   * @example
+   *   // drainMs = 5000：
+   *   // t=0 收到 SIGTERM -> close()
+   *   // t=3s 任务自己结束 -> 不必强制取消 -> 正常 release
+   *   // t=5s 任务仍在跑 -> cancelForShutdown() -> 任务抛取消错误 -> release
+   */
+  close(): Promise<void> {
+    return (this.closing ??= (async () => {
+      // 停止接收新输入（已经入队的仍会被排空）。
+      this.stream.abort();
+      const waiting = Promise.allSettled([this.tasks, this.controls]);
+      // 用一个 unref 的定时器做超时线：不阻止进程退出，到点自动 resolve。
+      const deadline = new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, this.drainMs);
+        timer.unref();
+      });
+      // 谁先完成都行：任务排空 或 到达排水上限。
+      await Promise.race([waiting, deadline]);
+      if (this.session?.busy) {
+        // 仍然忙：强制取消，避免 shutdown 被一个卡住的工具调用无限拖住。
+        this.session.runtime.cancelForShutdown();
+        this.session.subagents.cancelForShutdown();
+      }
+      // 等 run() 的 finally 全部执行完（关闭 session、lease、release claim）。
+      await this.settled.promise;
+    })());
+  }
 }

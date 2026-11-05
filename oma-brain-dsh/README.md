@@ -22,7 +22,7 @@ Run `just restart-brain` from the repository root for the current worktree's con
 
 ## Runtime responsibilities
 
-The entry creates a Cordis Context and mounts `src/dsr/worker.ts`. The host claims Code Sessions, registers the owner, starts its lease heartbeat, reads context and recovery state, then consumes the DSR input stream. Task inputs execute serially. Controls run separately so interruption and approval remain responsive.
+The entry creates a Cordis Context and mounts `src/dsr/worker.ts`. The host claims Code Sessions, registers the owner, starts its lease heartbeat, uses the context snapshot returned by registration, then consumes the DSR input stream. Task inputs execute serially. Controls run separately so interruption and approval remain responsive.
 
 `src/dsr/session.ts` maps native events to OMA public events, persists native logs, manages approval requests and reports input completion. Completion remains separate from transport acknowledgement. A processed task returns scheduled; the backend independently confirms its JetStream delivery. Brain never stores or constructs NATS ACK subjects.
 
@@ -33,8 +33,6 @@ The host uses only `/v1/dsr/claims` and `/v1/dsr/sessions/{code_session_id}/...`
 ## Persistence and recovery
 
 Native DSH logs use the original Session format and continuous numeric event sequences. Epochs, control versions and pagination watermarks use decimal strings. Transcript replication confirms native tool-call records before tool dispatch and tool-result records before continuation. Root and child logs retain their identities across owner replacement.
-
-The worker-state endpoint stores the current model, model control version and trace recovery snapshot. Execution status belongs to the backend input execution, and process liveness belongs to its lease. Model controls carry an input ID and version; an older version cannot overwrite a newer selection.
 
 Local JSONL transcripts are a cache. The remote DSR transcript remains the recovery source. Storage configuration is checked before claiming work. The host never converts historical transport envelopes into DSR logs automatically.
 
@@ -55,7 +53,7 @@ Heartbeat timing comes from the DSR registration response. Removed transport-spe
 
 ## Tools and models
 
-Sandbox creation belongs to the backend. The shared sandbox provider initializes lazily after tool validation, approval and the durable dispatch checkpoint. Root and child runtimes share the provider. Current permissions are refreshed before model requests, and the backend independently enforces them at the gateway.
+Sandbox creation belongs to the backend. The shared sandbox provider initializes lazily after tool validation, approval and the durable dispatch checkpoint. Root and child runtimes share the provider. Configuration and permissions come from the frozen registration snapshot. The backend independently enforces authorization and lifecycle checks at the gateway.
 
 Model translation uses the Vercel AI SDK adapters under `src/llm-ai-sdk/`. Response identities and replay formats `oma-messages-v1` / `oma-chat-completions-v1` remain unchanged. Model tokens are scoped to the owning root or child request, and ambient provider credentials are not used. The official MCP SDK handles MCP session negotiation and cancellation.
 
@@ -66,3 +64,5 @@ The active tests cover DSR clients, native execution, approvals and recovery, st
 Real backend verification uses the project's explicitly invoked `verify-be` workflow. `chat brain-dsr` is the DSR scenario. Historical Brain scenarios that force the removed transport cannot use this binary unchanged. The backend's legacy endpoints and other Workers remain outside this removal.
 
 See [DSRv1 implementation](../docs/design/be/dsrv1/implementation.md) for current contracts and integration limits. This checkout's removal backup is `tmp/brain-ccrv2-removal/brain-before.tar.gz`, with a SHA-256 receipt and archived test declarations alongside it. The backup is local and is not part of the shipped Brain.
+
+Registration returns the complete immutable context, including predefined child MCP/permission templates. The initial configuration and model catalog persist across owner replacement; runtime credentials are rebound on each registration. Configuration changes apply to newly initialized sessions.

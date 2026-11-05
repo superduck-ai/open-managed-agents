@@ -112,7 +112,7 @@ func (h *ExecutionHandler) delivery(w http.ResponseWriter, r *http.Request) {
 	}
 	seen := make(map[string]bool)
 	for _, update := range body.Updates {
-		if update.ID == "" || seen[update.ID] || update.Status != "received" && update.Status != "processing" && update.Status != "processed" || update.Error != "" && (update.Status != "processed" || update.Error != "unsupported_input" && update.Error != "invalid_model") {
+		if update.ID == "" || seen[update.ID] || update.Status != "received" && update.Status != "processing" && update.Status != "processed" || update.Error != "" && (update.Status != "processed" || update.Error != "unsupported_input") {
 			err = invalidRequest()
 			break
 		}

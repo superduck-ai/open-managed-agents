@@ -10,15 +10,20 @@ export class DsrBackend extends Backend {
   readonly finishes = new Map<string, Payload>();
   readonly permissions = new Map<string, Payload>();
   readonly routes = new Set<string>();
-  readonly state: Payload = {
-    model_control_sequence: null,
-    model: null,
-    trace_turns: null,
-  };
   permissionPending = false;
   cancelRequested = false;
   failDsrPublication = false;
 
+  private frozenContext?: Payload;
+  private async snapshotContext(): Promise<Payload> {
+    if (!this.frozenContext) {
+      this.frozenContext = structuredClone({
+        ...this.runtimeContext(),
+        subagent_contexts: {},
+      });
+    }
+    return structuredClone(this.frozenContext!);
+  }
   queueClaim() {
     this.claimQueue.push({
       code_session_id: this.a.session_id,
@@ -79,22 +84,13 @@ export class DsrBackend extends Backend {
         protocol: "1",
         lease: { ttl_ms: 20000, grace_ms: 10000, heartbeat_interval_ms: 6000 },
         observability_enabled: false,
+        context: await this.snapshotContext(),
       });
     if (path === "/heartbeat")
       return Response.json({
         lease_expires_at: new Date(Date.now() + 20000).toISOString(),
       });
-    if (path === "/context") return super.route(request);
-    if (path === "/worker-state") {
-      if (Object.hasOwn(body, "status"))
-        throw new Error("DSR no longer accepts worker status");
-      if (request.method === "PUT") {
-        Object.assign(this.state, body);
-        if (body.control_sequence)
-          this.state.model_control_sequence = body.control_sequence;
-      }
-      return Response.json(this.state);
-    }
+    if (path === "/context") return Response.json({}, { status: 404 });
     if (path === "/transcripts")
       return Response.json({
         data: [...this.transcripts]

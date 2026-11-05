@@ -13,7 +13,7 @@ var deliveryLanes = [...]deliveryLane{taskLane, replyLane}
 
 func laneForEvent(envelope EnvelopeV1) deliveryLane {
 	switch envelope.EventType {
-	case "control_response", "user.interrupt", "permission.resolved", "session.set_model":
+	case "control_response", "user.interrupt", "permission.resolved":
 		return replyLane
 	case "control_request":
 		if envelope.EventSubtype == "interrupt" {

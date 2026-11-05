@@ -75,8 +75,6 @@ func storageError(err error, nextSeq *int64) *protocolError {
 		result.status, result.code, result.message = 409, "transcript_conflict", "Transcript content conflicts with confirmed history"
 	case errors.Is(err, db.ErrDSHTranscriptGap):
 		result.status, result.code, result.message, result.nextSeq = 409, "transcript_gap", "Transcript has a sequence gap", nextSeq
-	case errors.Is(err, db.ErrDSHControlConflict):
-		result.status, result.code, result.message = 409, "control_idempotency_mismatch", "Control differs from confirmed input"
 	case errors.Is(err, db.ErrDSHInputNotEligible):
 		result.status, result.code, result.message = 409, "input_not_eligible", "Input is not eligible for this operation"
 	case errors.Is(err, db.ErrDSHFinishRequired):

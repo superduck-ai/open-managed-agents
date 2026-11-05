@@ -26,7 +26,7 @@ type Claim struct {
 type Lifecycle interface {
 	Claim(context.Context, string, time.Duration) (Claim, bool, error)
 	Release(context.Context, string, string, int64, string) error
-	Context(context.Context, db.DSHScope, string, string) (json.RawMessage, error)
+	RegistrationContext(context.Context, db.DSHScope, string) (json.RawMessage, error)
 	Telemetry(context.Context, db.DSHScope) (bool, *TraceExport)
 }
 
@@ -37,8 +37,6 @@ type TraceExport struct {
 type WorkerDatabase interface {
 	RegisterDSHWorker(context.Context, db.DSHScope) (time.Time, error)
 	HeartbeatDSHWorker(context.Context, db.DSHScope) (time.Time, error)
-	GetDSHWorkerState(context.Context, db.DSHScope) (db.DSHWorkerState, error)
-	PatchDSHWorkerState(context.Context, db.DSHScope, db.DSHWorkerPatch) (db.DSHWorkerState, error)
 }
 
 type ControlHandler struct {
@@ -61,9 +59,6 @@ func (h *ControlHandler) RegisterRoutes(router chi.Router) {
 		router.Use(middleware.authorize)
 		router.Post("/register", h.register)
 		router.Post("/heartbeat", h.heartbeat)
-		router.Get("/context", h.context)
-		router.Get("/worker-state", h.state)
-		router.Put("/worker-state", h.patchState)
 	})
 }
 
@@ -150,11 +145,12 @@ func validRelease(value string) bool {
 }
 
 type registrationResponse struct {
-	Epoch                string       `json:"epoch"`
-	Protocol             string       `json:"protocol"`
-	Lease                leaseConfig  `json:"lease"`
-	ObservabilityEnabled bool         `json:"observability_enabled"`
-	TraceExport          *TraceExport `json:"trace_export,omitempty"`
+	Context              json.RawMessage `json:"context"`
+	Epoch                string          `json:"epoch"`
+	Protocol             string          `json:"protocol"`
+	Lease                leaseConfig     `json:"lease"`
+	ObservabilityEnabled bool            `json:"observability_enabled"`
+	TraceExport          *TraceExport    `json:"trace_export,omitempty"`
 }
 type leaseConfig struct {
 	TTLMillis               int `json:"ttl_ms"`
@@ -168,13 +164,19 @@ func (h *ControlHandler) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := scopeFrom(r)
+	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	snapshot, err := h.lifecycle.RegistrationContext(r.Context(), scope, token)
+	if err != nil {
+		writeError(w, r, err, nil)
+		return
+	}
 	if _, err := h.database.RegisterDSHWorker(r.Context(), scope); err != nil {
 		writeError(w, r, err, nil)
 		return
 	}
 
 	enabled, export := h.lifecycle.Telemetry(r.Context(), scope)
-	writeJSON(w, registrationResponse{Epoch: strconv.FormatInt(scope.Epoch, 10), Protocol: "1", Lease: leaseConfig{20000, 10000, 6000}, ObservabilityEnabled: enabled, TraceExport: export})
+	writeJSON(w, registrationResponse{Context: snapshot, Epoch: strconv.FormatInt(scope.Epoch, 10), Protocol: "1", Lease: leaseConfig{20000, 10000, 6000}, ObservabilityEnabled: enabled, TraceExport: export})
 }
 
 func (h *ControlHandler) heartbeat(w http.ResponseWriter, r *http.Request) {
@@ -190,16 +192,4 @@ func (h *ControlHandler) heartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, struct {
 		LeaseExpiresAt string `json:"lease_expires_at"`
 	}{expiry.Format(time.RFC3339Nano)})
-}
-
-func (h *ControlHandler) context(w http.ResponseWriter, r *http.Request) {
-	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	value, err := h.lifecycle.Context(r.Context(), scopeFrom(r), token, r.Header.Get("DSR-Thread-ID"))
-	if err != nil {
-		writeError(w, r, err, nil)
-		return
-	}
-	writeJSON(w, struct {
-		Context json.RawMessage `json:"context"`
-	}{value})
 }

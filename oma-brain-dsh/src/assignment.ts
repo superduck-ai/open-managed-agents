@@ -27,6 +27,7 @@ export interface Assignment {
   trace_parent?: string;
   mcp_config: unknown;
   external_mcp_config?: unknown;
+  subagent_contexts: import("./dsr/wire.ts").RegistrationContext["subagent_contexts"];
   launch: {
     version: number;
     model: string;
@@ -47,15 +48,14 @@ export interface Assignment {
   };
 }
 export function validateAssignment(a: Assignment): void {
-  for (const key of [
-    "session_id",
-    "ingress_token",
-    "model_token",
-  ] as const) {
+  for (const key of ["session_id", "ingress_token", "model_token"] as const) {
     if (typeof a[key] !== "string" || !a[key])
       throw new Error(`Missing assignment ${key}`);
   }
-  if (typeof a.worker_epoch !== "string" || !/^[1-9][0-9]*$/.test(a.worker_epoch))
+  if (
+    typeof a.worker_epoch !== "string" ||
+    !/^[1-9][0-9]*$/.test(a.worker_epoch)
+  )
     throw new Error("Invalid assignment epoch");
   sandboxEndpoint(a.mcp_config);
   if (![1, 2].includes(a.launch.version))
@@ -63,42 +63,73 @@ export function validateAssignment(a: Assignment): void {
   if (!a.launch.model || !a.launch.work_dir.startsWith("/"))
     throw new Error("Invalid launch model or work directory");
   validateModels(a.launch.models);
-  const tools = new Set([...sandboxToolDefinitions(), ...webToolDefinitions()].map((tool) => tool.name));
+  const tools = new Set(
+    [...sandboxToolDefinitions(), ...webToolDefinitions()].map(
+      (tool) => tool.name,
+    ),
+  );
   tools.add("ask_user_question");
-  if (!Array.isArray(a.launch.tools)
-    || a.launch.tools.some((name) => !tools.has(name)))
+  if (
+    !Array.isArray(a.launch.tools) ||
+    a.launch.tools.some((name) => !tools.has(name))
+  )
     throw new Error("Invalid launch tools");
   validateToolPermissions(a.launch.tool_permissions);
   const config = a.launch.subagents;
   if (config) {
-    if (config.inlineAgents !== undefined && typeof config.inlineAgents !== "boolean")
+    if (
+      config.inlineAgents !== undefined &&
+      typeof config.inlineAgents !== "boolean"
+    )
       throw new Error("Invalid inlineAgents setting");
     if (config.agents !== undefined && !Array.isArray(config.agents))
       throw new Error("Invalid subagent definitions");
     const names = new Set<string>();
     for (const agent of config.agents ?? []) {
-      if (!agent || typeof agent.name !== "string" || !agent.name || names.has(agent.name)
-        || typeof agent.description !== "string" || typeof agent.systemPrompt !== "string"
-        || (agent.model !== undefined && (typeof agent.model !== "string" || !agent.model))
-        || (agent.tools !== undefined && (!Array.isArray(agent.tools)
-          || agent.tools.some((name) => !tools.has(name)))))
+      if (
+        !agent ||
+        typeof agent.name !== "string" ||
+        !agent.name ||
+        names.has(agent.name) ||
+        typeof agent.description !== "string" ||
+        typeof agent.systemPrompt !== "string" ||
+        (agent.model !== undefined &&
+          (typeof agent.model !== "string" || !agent.model)) ||
+        (agent.tools !== undefined &&
+          (!Array.isArray(agent.tools) ||
+            agent.tools.some((name) => !tools.has(name))))
+      )
         throw new Error("Invalid subagent definition");
       names.add(agent.name);
     }
     if (names.size > 20 || (config.inlineAgents === false && !names.size))
-      throw new Error("Subagents require 1–20 predefined agents when inline agents are disabled");
+      throw new Error(
+        "Subagents require 1–20 predefined agents when inline agents are disabled",
+      );
   }
 }
 
-export function validateToolPermissions(permissions: unknown): asserts permissions is ToolPermissions | undefined {
-  if (permissions !== undefined && (!permissions || typeof permissions !== "object" || Array.isArray(permissions)
-    || Object.values(permissions).some((policy) => !["allow", "ask", "deny"].includes(policy))))
+export function validateToolPermissions(
+  permissions: unknown,
+): asserts permissions is ToolPermissions | undefined {
+  if (
+    permissions !== undefined &&
+    (!permissions ||
+      typeof permissions !== "object" ||
+      Array.isArray(permissions) ||
+      Object.values(permissions).some(
+        (policy) => !["allow", "ask", "deny"].includes(policy),
+      ))
+  )
     throw new Error("Invalid launch tool permissions");
 }
 
-export function validateModels(value: unknown): asserts value is Record<string, ModelConfig> | undefined {
+export function validateModels(
+  value: unknown,
+): asserts value is Record<string, ModelConfig> | undefined {
   if (value === undefined) return;
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid model catalog");
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Invalid model catalog");
   for (const [key, model] of Object.entries(value)) {
     if (
       !key ||
@@ -111,11 +142,24 @@ export function validateModels(value: unknown): asserts value is Record<string, 
     )
       throw new Error("Invalid model catalog");
     for (const capacity of [model.context_window, model.max_output_tokens]) {
-      if (capacity !== undefined && (!Number.isSafeInteger(capacity) || capacity <= 0))
+      if (
+        capacity !== undefined &&
+        (!Number.isSafeInteger(capacity) || capacity <= 0)
+      )
         throw new Error("Invalid model capacity");
     }
-    if (model.image_input !== undefined && (!model.image_input || typeof model.image_input !== "object" || Array.isArray(model.image_input)
-      || Object.values(model.image_input).some(value => !Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > MAX_MESSAGES_REQUEST_BODY_BYTES)))
+    if (
+      model.image_input !== undefined &&
+      (!model.image_input ||
+        typeof model.image_input !== "object" ||
+        Array.isArray(model.image_input) ||
+        Object.values(model.image_input).some(
+          (value) =>
+            !Number.isSafeInteger(value) ||
+            (value as number) < 0 ||
+            (value as number) > MAX_MESSAGES_REQUEST_BODY_BYTES,
+        ))
+    )
       throw new Error("Invalid image input limits");
     const inputs = model.input_modalities;
     if (

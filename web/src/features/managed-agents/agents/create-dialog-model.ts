@@ -100,6 +100,7 @@ const builtInToolNameSchema = z.enum([
 const builtInToolConfigSchema = permissionConfigSchema
   .extend({
     name: builtInToolNameSchema,
+    type: builtInToolNameSchema.optional(),
     allowed_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
     blocked_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
     max_content_tokens: z.number().int().positive().nullable().optional(),
@@ -117,6 +118,9 @@ const builtInToolConfigSchema = permissionConfigSchema
   })
   .strict()
   .superRefine((config, ctx) => {
+    if (config.type !== undefined && config.type !== config.name) {
+      ctx.addIssue({ code: 'custom', path: ['type'], message: 'Tool config type must match name.' });
+    }
     for (const field of ['allowed_domains', 'blocked_domains'] as const) {
       if (config[field] !== undefined && !['web_search', 'web_fetch'].includes(config.name)) {
         ctx.addIssue({ code: 'custom', path: [field], message: 'Only Web tools support this setting.' });

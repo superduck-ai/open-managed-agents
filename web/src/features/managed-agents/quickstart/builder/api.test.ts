@@ -1,7 +1,7 @@
 import { prepareBuilderMutation } from './mutations';
 import { resetMcpDirectoryCacheForTests } from '../../agents/tools/api';
 import { afterEach, expect, test } from 'bun:test';
-import { newBuilderState } from './model';
+import { builderStateSchema, newBuilderState } from './model';
 import { blankAgentTemplate, createDialogAgentConfig } from '../../agentConfig';
 import {
   loadBuilderCatalog,
@@ -92,6 +92,49 @@ test('restored metadata overflow fails before a save operation can be prepared',
   value.config.metadata = Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`key${index}`, 'value']));
   expect(() => prepareBuilderAgent(value, 'operation', 'workspace')).toThrow();
 });
+test.each(['create', 'update', 'recover-new', 'recover-update'])(
+  '%s accepts saved tool config discriminators and clears the pending operation',
+  async (mode) => {
+    const value = state();
+    const configs = ['read', 'ask_user_question'].map((name) => ({
+      name,
+      enabled: true,
+      permission_policy: { type: 'always_allow' as const },
+    }));
+    value.config.tools = [{ type: 'agent_toolset_20260401', default_config: { enabled: false }, configs }];
+    const operation = { id: 'agent_operation', kind: 'agent' as const, toolId: 'build_agent_config' };
+    value.operation = operation;
+    if (mode.endsWith('update')) value.agent = { id: 'agent_saved', name: value.config.name, version: 1 };
+    const saved = {
+      ...value.config,
+      id: 'agent_saved',
+      type: 'agent',
+      version: value.agent ? 2 : 1,
+      metadata: { quickstart_operation_id: operation.id },
+      tools: [{ ...value.config.tools[0], configs: configs.map((config) => ({ ...config, type: config.name })) }],
+    };
+    const requests: string[] = [];
+    setConsoleRequestContext({ csrfToken: 'csrf_test' });
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      requests.push(init?.method ?? 'GET');
+      return json(
+        init?.method === 'POST' || url.includes('/agents/agent_saved?')
+          ? saved
+          : { data: url.includes('/v1/agents?') ? [saved] : [], next_page: null },
+      );
+    }) as typeof fetch;
+    const patch = mode.startsWith('recover')
+      ? await recoverBuilderOperation(value, 'workspace')
+      : await prepareBuilderAgent(value, operation.id, 'workspace')();
+    expect(patch.agent).toEqual({ id: saved.id, name: saved.name, version: saved.version });
+    expect(patch.operation).toBeNull();
+    expect(patch.savedConfig?.tools).toEqual(saved.tools);
+    expect(builderStateSchema.parse({ ...value, ...patch }).config.tools).toEqual(saved.tools);
+    expect(requests.filter((method) => method === 'POST')).toHaveLength(mode.startsWith('recover') ? 0 : 1);
+  },
+);
+
 test('credential coverage reads every page and returns only safe resource summaries', async () => {
   const urls: string[] = [];
   globalThis.fetch = (async (input) => {

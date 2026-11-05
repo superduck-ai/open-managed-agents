@@ -1,37 +1,40 @@
-# URL 与 API key 配置合同
+# 配置 OMA URL 与 API key
 
-## 配置来源
+## 选择目标
 
-连接由 endpoint 和属于该 endpoint 的 workspace-scoped API key 组成。Skill 不内置真实 key，不提供共享测试 key。
+URL 使用用户本次明确指定值，其次使用 `OMA_BASE_URL`；没有配置时询问，不预设任何固定域名。地址可随部署变化。URL 为 API origin，例如 `https://你的OMA域名`，不附加 `/v1`；移除尾部 `/`，拒绝 URL 内嵌用户名密码、query、fragment 和非根路径。
 
-- URL：用户本次显式指定 → `OMA_BASE_URL` → 默认 `https://oma.gz.cvte.cn`。
-- Key：用户为当前 URL 显式提供 → 当前会话中明确绑定该 URL 的 `OMA_API_KEY` → 提示用户在本地秘密输入。
-- 原版 ant 只读取映射后的 `ANTHROPIC_BASE_URL` 与 `ANTHROPIC_API_KEY`。不自动继承已有 `ANTHROPIC_API_KEY`、Bearer token 或官方登录 profile，避免混用平台凭据。
+公网使用 HTTPS；用户明确选择本地开发时支持 localhost、127.0.0.1、::1 的 HTTP。不要关闭 TLS 校验或跨 origin 转发 key。
 
-这是 Skill 的解析规则，不是 ant 新增的原生参数。当前不引入项目级配置文件或凭据存储服务。非交互调用缺少 key 时返回缺少配置，不等待输入。
-
-## URL 边界
-
-将 URL 解析为协议、主机、端口；移除尾部 `/`。当前支持部署在 origin 根路径的实例，拒绝 `/v1` 等路径、query、fragment 以及 URL 内嵌用户名密码。不猜测 API 子路径。公网只使用 HTTPS；HTTP 仅用于用户明确指定的 localhost、127.0.0.1 或 ::1 本地开发实例，不关闭 TLS 校验。
-
-在发出带 key 的请求前，确认当前目标与用户授权的 origin 一致。不同 origin（包括不同端口）不共用凭据。地址变化后重新选择该实例的 key，不沿用之前 key；不跟随跨 origin 重定向发送认证，也不使用 curl 的 `--location-trusted`。
+API key 使用用户为该 URL 提供的 key，或当前会话中明确绑定该 URL 的 `OMA_API_KEY`。切换域名、端口或 workspace 时重新核对 key，不自动沿用官方 Anthropic 或上一个实例的凭据。不要将 key 写入 Skill、Agent 文件、lockfile、日志或 Git。
 
 ## 临时配置
 
-参考 cli.md 在独立 Bash 子 shell 中设置 OMA 变量并映射给 ant，退出该 shell 即释放配置。用户在终端隐藏输入 key，不将真实值粘进可提交的 shell 文件。已有 AWS/Google 路由变量或认证 profile 可能改变 ant 目标；先检查变量名及已选 profile，存在冲突时在子 shell 中清除无关配置，不能输出秘密值或修改用户全局 profile。
+在独立 Bash 会话中输入真实 URL 和 key，以下地址是占位符，必须替换：
 
-建议每个 endpoint/workspace 使用独立工作目录保存 Agent 定义和 claude-lock.json。lockfile 是否包含上游添加的敏感字段需在提交前检查；API key 永远不进入 lockfile、Agent metadata、system 或项目配置。环境变量只是本地临时传递方式，不是秘密保险库。
-
-## Key 生命周期与错误
-
-API key 由用户在目标 OMA 的 API key 管理入口创建，并按当前实现的权限模型选择目标 workspace；不要承诺服务端尚未提供的细粒度 scope。Skill 不自动创建或扩大权限。业务 MCP/Vault 凭据和平台 API key 分开处理。
-
-`ant models list` 是首个只读连接探测。401：检查该实例 key 是否有效或已撤销；403：检查 workspace/权限；TLS 或网络失败：检查 endpoint 与连接。不要输出原始凭据，不对其他域名尝试同一 key，不通过写入操作探测权限。成功查询模型不证明所有写权限或模型运行能力。
-
-轮换时由用户在 OMA 创建替代 key，更新本地临时配置并验证，再撤销旧 key；Skill 不自行撤销用户现有 key。测试记录只保留 endpoint、CLI 版本、资源 ID、状态与脱敏错误。清理本地配置可退出子 shell，或执行：
-
-```sh
-unset OMA_API_KEY ANTHROPIC_API_KEY OMA_BASE_URL ANTHROPIC_BASE_URL
+```bash
+export OMA_BASE_URL='https://你的OMA域名'
+printf '请输入该 OMA 实例的 API key: '
+IFS= read -r -s OMA_API_KEY
+printf '\n'
+export OMA_API_KEY
+export ANTHROPIC_BASE_URL="${OMA_BASE_URL%/}"
+export ANTHROPIC_API_KEY="$OMA_API_KEY"
+ant models list --format jsonl
 ```
 
-本次历史验证使用用户临时提供的 workspace key；仓库和 Skill 不保存该值。发布或安装 Skill 不会赋予接收者访问该 workspace 的权限。
+原版 ant 读取 ANTHROPIC 变量，OMA 变量用于明确配置来源，不是新增 CLI 参数。检查已有云平台路由变量和 profile，避免它们改变请求目标；不要打印秘密或修改用户全局配置。非交互环境缺少配置时返回明确错误，不等待输入。
+
+模型列表查询只验证基础连接和认证，不证明写权限或模型可执行。401 检查该实例 key，403 检查权限和 workspace；连接失败检查 URL、TLS 和网络，不向其他域名试发相同 key。
+
+每个实例/workspace 使用独立目录保存资源定义和 claude-lock.json。更换部署前备份相应配置，不将旧资源 ID 当成新实例中的资源。
+
+## 轮换与退出
+
+key 由用户在目标 OMA 管理入口创建。需要轮换时配置新 key、验证，再由用户撤销旧 key；不自动扩大权限或撤销现有 key。第三方 MCP/Vault 凭据与平台 key 分开管理。
+
+退出临时 shell，或执行：
+
+```bash
+unset OMA_API_KEY ANTHROPIC_API_KEY OMA_BASE_URL ANTHROPIC_BASE_URL
+```

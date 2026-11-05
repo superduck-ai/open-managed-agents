@@ -5,7 +5,7 @@
 ```sh
 brew install anthropics/tap/ant
 ant --version
-export OMA_BASE_URL=https://oma.gz.cvte.cn
+export OMA_BASE_URL='https://你的OMA域名'
 printf 'OMA API key: '
 IFS= read -r -s OMA_API_KEY
 printf '\n'

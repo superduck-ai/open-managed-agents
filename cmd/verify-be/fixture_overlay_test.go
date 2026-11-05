@@ -45,6 +45,10 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 				source = "package db\nfunc buildExisting() string { return \"candidate\" }\nfunc candidateBudgetMethod() {}\n"
 			}
 			source += "func buildSessionResourceMapperInsertDirectory() string { return \"directory\" }\n"
+			if name == "admin_api_keys_mapper" {
+				source += "func buildAdminAPIKeyMapperFindActiveByKeyHash() {}\nfunc scanAdminAPIKeyMapperFindActiveByKeyHash() {}\n"
+			}
+
 			if name == "session_resource_mapper" && root != env.root {
 				source = "package db\nfunc buildSessionResourceMapperInsertDirectory() string { return \"reference\" }\n"
 			}
@@ -81,7 +85,11 @@ func TestBaselineFixtureOverlayPreservesCurrentSource(t *testing.T) {
 			t.Fatalf("mapper reference = %s, want %s", reference, expected)
 		}
 		merged, err := os.ReadFile(reference)
-		if err != nil || !strings.Contains(string(merged), `return "reference"`) || !strings.Contains(string(merged), "func candidateBudgetMethod()") {
+		want := `return "reference"`
+		if filepath.Base(current) == "admin_api_keys_mapper.sqlmap.gen.go" {
+			want = `return "candidate"`
+		}
+		if err != nil || !strings.Contains(string(merged), want) || !strings.Contains(string(merged), "func candidateBudgetMethod()") {
 			t.Fatalf("基线 SQL 或当前接口实现丢失：%s %v", merged, err)
 		}
 	}
@@ -194,5 +202,32 @@ func scanAdminAPIKeyMapperFindActiveByKeyHash() string { return "baseline-five-c
 	original, err := os.ReadFile(current)
 	if err != nil || !strings.Contains(string(original), "candidate-runtime-column") {
 		t.Fatalf("候选源码不应被改写：%v", err)
+	}
+}
+
+func TestBaselineAPIKeyOverlayRejectsMissingQueryOrScanner(t *testing.T) {
+	functions := []string{"buildAdminAPIKeyMapperFindActiveByKeyHash", "scanAdminAPIKeyMapperFindActiveByKeyHash"}
+	for _, missingSource := range []string{"current", "baseline"} {
+		for _, missingFunction := range functions {
+			t.Run(missingSource+"/"+missingFunction, func(t *testing.T) {
+				directory := t.TempDir()
+				current, baseline := filepath.Join(directory, "current.go"), filepath.Join(directory, "baseline.go")
+				for name, path := range map[string]string{"current": current, "baseline": baseline} {
+					source := "package db\n"
+					for _, function := range functions {
+						if name == missingSource && function == missingFunction {
+							continue
+						}
+						source += "func " + function + "() {}\n"
+					}
+					if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := baselineMapperSource(current, baseline, functions...); err == nil {
+					t.Fatal("认证查询或扫描函数缺失时不应使用候选实现")
+				}
+			})
+		}
 	}
 }

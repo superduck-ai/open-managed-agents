@@ -23,6 +23,28 @@ afterEach(() => {
 });
 
 describe('Workspace API keys page', () => {
+  const creators: WorkspaceApiKey['created_by'][] = [
+    null,
+    { id: 'creator-account' },
+    { name: '真实创建者', email: 'creator@example.com' },
+  ];
+  for (const creator of creators) {
+    test(`创建者 ${JSON.stringify(creator)} 不使用当前查看者补位`, async () => {
+      resetTestDom('https://oma.duck.ai/settings/workspaces/default/keys');
+      mockWorkspaceApiKeys([{ ...activeKey, created_by: creator, created_by_user_id: null }]);
+      render(
+        <WorkspaceApiKeysHarness>
+          <WorkspaceApiKeysContent routeWorkspaceId="default" />
+        </WorkspaceApiKeysHarness>,
+      );
+      const name = await screen.findByText('foo');
+      const row = name.closest('tr')!;
+      expect(within(row).queryByText('test@example.com')).toBeNull();
+      expect(within(row).getByText(creator?.name ?? creator?.id ?? 'Unknown')).toBeTruthy();
+      if (creator?.email) expect(within(row).getByText(creator.email)).toBeTruthy();
+    });
+  }
+
   test('shows a key count only after the directory loads and keeps empty headers out of loading state', async () => {
     resetTestDom('https://oma.duck.ai/settings/workspaces/default/keys');
     let finishLoading: (response: Response) => void = () => {};

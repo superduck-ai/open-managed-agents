@@ -365,6 +365,7 @@ func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 			Name:               name,
 			ExpiresAt:          expiresAt,
 			CreatedByUserUUID:  createdByUserUUID,
+			RuntimeUserUUID:    principal.RuntimeUserUUID(),
 		})
 		if err != nil {
 			internalError(w, "failed to create api key")

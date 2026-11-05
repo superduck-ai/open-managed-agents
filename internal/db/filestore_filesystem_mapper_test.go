@@ -152,14 +152,14 @@ func TestFilestoreRuntimeIdentitySQL(t *testing.T) {
 		bound:     buildFilestoreFilesystemMapperFindTokenScope(yourbatis.DialectPostgres, "org", "account", "workspace", "tagged", "tagged", "filesystem", ""),
 		wantID:    "FilestoreFilesystemMapper.FindTokenScope", wantKind: yourbatis.StatementSelect,
 		wantArgumentNames: []string{"organizationUUID", "accountUUID", "workspaceUUID", "workspaceTaggedID", "resolvedWorkspaceTaggedID", "filesystemID", "filesystemID"},
-		wantSQLFragments:  []string{"u.deleted_at IS NULL", "u.organization_uuid = o.uuid OR u.uuid = CASE WHEN s.metadata->>'_oma_runtime_user_uuid' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid) END", "s.uuid = fs.session_uuid", "s.organization_uuid = o.uuid", "s.workspace_uuid = w.uuid"},
+		wantSQLFragments:  []string{"u.deleted_at IS NULL", "u.organization_uuid = o.uuid OR u.uuid = CASE WHEN s.metadata->>'_oma_runtime_user_uuid' IS NULL THEN ak.runtime_user_uuid ELSE CASE WHEN s.metadata->>'_oma_runtime_user_uuid' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid) END END", "s.uuid = fs.session_uuid", "s.organization_uuid = o.uuid", "s.workspace_uuid = w.uuid"},
 	})
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: filestoreFilesystemMapperFindSessionTokenScopeStatement,
 		bound:     buildFilestoreFilesystemMapperFindSessionTokenScope(yourbatis.DialectPostgres, "workspace", "session"),
 		wantID:    "FilestoreFilesystemMapper.FindSessionTokenScope", wantKind: yourbatis.StatementSelect,
 		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID"},
-		wantSQLFragments:  []string{"s.metadata->>'_oma_runtime_user_uuid' IS NOT NULL OR u.organization_uuid = o.uuid", "u.deleted_at IS NULL", "fs.session_uuid = s.uuid", "CASE WHEN s.metadata->>'_oma_runtime_user_uuid' IS NULL THEN ak.created_by_user_uuid ELSE CASE WHEN s.metadata->>'_oma_runtime_user_uuid' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid) END END"},
+		wantSQLFragments:  []string{"s.metadata->>'_oma_runtime_user_uuid' IS NOT NULL OR ak.runtime_user_uuid IS NOT NULL OR u.organization_uuid = o.uuid", "u.deleted_at IS NULL", "fs.session_uuid = s.uuid", "CASE WHEN s.metadata->>'_oma_runtime_user_uuid' IS NULL THEN COALESCE(ak.runtime_user_uuid, ak.created_by_user_uuid) ELSE CASE WHEN s.metadata->>'_oma_runtime_user_uuid' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN CAST(s.metadata->>'_oma_runtime_user_uuid' AS uuid) END END"},
 	})
 }
 

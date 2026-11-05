@@ -14,7 +14,7 @@ import (
 )
 
 func (h *handler) syncWorkspaceCredentials(upstream *http.Request, principal auth.Principal) error {
-	input := platform.CreateConsoleAPIKeyInput{OrgUUID: principal.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID}
+	input := platform.CreateConsoleAPIKeyInput{OrgUUID: principal.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID, RuntimeUserUUID: principal.RuntimeUserUUID()}
 	if principal.UserUUID != "" {
 		input.CreatedByUserUUID = new(principal.UserUUID)
 	}

@@ -71,6 +71,9 @@ func TestPlatformAPIKeyCreatorUsesExistingOrganizationMembership(t *testing.T) {
 				return
 			}
 			creator := store.createInput.CreatedByUserUUID
+			if store.createInput.RuntimeUserUUID != "account" {
+				t.Fatalf("稳定运行账号丢失：%+v", store.createInput)
+			}
 			if tc.creator == "" && creator != nil || tc.creator != "" && (creator == nil || *creator != tc.creator) {
 				t.Fatalf("创建者 = %v，预期 %q", creator, tc.creator)
 			}

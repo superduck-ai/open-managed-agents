@@ -53,6 +53,22 @@ sequenceDiagram
 
 `dsh_input_deliveries.ack_subject` 保存 broker ACK 位置，避免 Redis 投递索引丢失后无法结算 completed 输入。用户中断与 `cancel_requested_at` 同事务提交，控制输入先于重投 task 到达也能阻止恢复执行。
 
+### Transcript 分批下载与导入
+
+`RemoteTranscriptStore.read(rootSessionId, id)` 返回 `AsyncIterable<readonly DshLogData[]>`。DSR 适配器按分页产出记录，消费者完成当前批次的临时 JSONL 写入后才请求下一页，形成背压。单次读取针对一条 transcript；目录接口返回根会话及子线程的元数据。
+
+```mermaid
+flowchart LR
+    A[DSR 分页读取] --> B[逐批校验并写临时 JSONL]
+    B --> C[原生持久化格式与生命周期校验]
+    C --> D[每批最多 200 条导入本地日志]
+    D --> E[运行时恢复]
+```
+
+下载过程中检查 Header 身份、版本、fork 限制、事件格式、连续序号及重叠内容。完整校验成功后才导入正式日志；已有本地日志须与远端保持前缀一致。下载失败或内容冲突不修改原有日志，临时目录在成功、异常及消费者提前结束后清理。复制确认水位仅在完整恢复成功后建立。
+
+网络下载和正式导入按批处理。固定版本 Harness 的原生 JSONL 校验仍会完整物化日志，以验证跨事件生命周期；已有本地前缀校验及运行时重放也有历史长度相关的内存开销。因此这一链路不承诺恒定内存。临时文件通过原生持久化适配器校验后释放，复制层保留确认水位与当前运行时需要的本地历史。
+
 ## 数据与事务边界
 
 迁移 `00115` 至 `00120` 创建或演进 `dsh_transcripts`、`dsh_transcript_events`、`dsh_worker_states`、`dsh_input_executions`、`dsh_input_deliveries`、`dsh_permission_requests`、`dsh_public_receipts` 七张表。仅调整新增 DSH 表，不修改既有业务表 schema，不创建外键。应用 SQL 全部通过 Yourbatis。

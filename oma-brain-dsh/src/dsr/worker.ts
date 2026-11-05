@@ -146,8 +146,8 @@ export async function mountDsr(
   // 只有该会话当前确实被本进程拥有时才允许写；否则抛错，让复制层把错误当作
   // fenced（例如 epoch_superseded）处理，避免旧 owner 覆盖新 owner 的 transcript。
   await ctx.plugin(SessionReplication, {
-    remote: createRemoteTranscriptStore((id) => {
-      const client = clients.get(id);
+    remote: createRemoteTranscriptStore((rootSessionId) => {
+      const client = clients.get(rootSessionId);
       if (!client) throw new Error("DSR transcript owner is unavailable");
       return client;
     }),

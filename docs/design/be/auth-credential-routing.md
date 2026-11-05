@@ -183,6 +183,8 @@ http.SetCookie(w, &http.Cookie{
 
 ### 4.2 与 API key 解耦的运行身份
 
+平台管理员创建工作区 API key 时，若请求没有组织成员身份，服务端按稳定账号的邮箱查找目标组织内的有效成员，并将该成员作为 key 的真实创建者。查询失败时拒绝创建；目标组织没有该成员时仍保留空创建者，不创建成员、不借用其他管理员，也不将跨组织账号直接写入组织成员引用。这样，已是组织成员的平台管理员通过控制台创建 key 后，其 API Session 可以沿既有创建 key 查询链取得 Filestore 运行身份。历史空创建者 key 不自动推断归属，应由真实组织成员重新签发。
+
 Session 创建时通过已鉴权 principal 的 RuntimeUserUUID 映射获取运行身份：普通来源取 `UserUUID`，平台来源取稳定 `AccountUUID`，保存到 session metadata 的服务端保留键 `_oma_runtime_user_uuid`。这不是资源所有者，不参与 workspace 操作授权。DB 模型单独提供 `RuntimeUserUUID`；所有 session/deployment 查询与 RETURNING 都剔除公开 metadata 中的保留键，更新和清空 metadata 时保留原运行身份，客户端不能指定、替换或删除它。可修改的 environment work metadata 不用于身份判断。
 
 Deployment 同样保存创建请求的运行身份，定时触发时传给新 session；手动触发则使用当前调用人的身份。异步工作和服务重启后均从持久化 session 读取，不依赖 cookie 或 key 的存在。Filestore token 签发与 code-session 的 Git email 优先读取这一身份；仅缺少运行身份的旧/API-key session 才兼容通过真实创建 key 查用户。运行身份已存在但用户失效时不得改用其他用户，Filestore 拒绝签发。

@@ -352,12 +352,11 @@ func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 			})
 			return
 		}
-		var createdByUserUUID *string
-		if principal, found := auth.PrincipalFromContext(r.Context()); found {
-			userUUID := principal.UserUUID
-			if userUUID != "" {
-				createdByUserUUID = &userUUID
-			}
+		principal, _ := auth.PrincipalFromContext(r.Context())
+		createdByUserUUID, err := consoleAPIKeyCreator(r.Context(), store, principal)
+		if err != nil {
+			internalError(w, "failed to resolve api key creator")
+			return
 		}
 		result, err := apiKeyStore.CreateConsoleAPIKey(r.Context(), CreateConsoleAPIKeyInput{
 			OrgUUID:            orgUUID,

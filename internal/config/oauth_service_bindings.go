@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -25,6 +26,11 @@ func validateOAuthServiceBindings(bindings []OAuthServiceBindingConfig) error {
 			parsed, err := url.Parse(value)
 			if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || strings.ContainsAny(value, "?#") {
 				return fmt.Errorf("vault.oauth_service_bindings[%d] requires absolute HTTP URLs without userinfo, query or fragment", i)
+			}
+			if port := parsed.Port(); port != "" {
+				if number, err := strconv.Atoi(port); err != nil || number < 1 || number > 65535 {
+					return fmt.Errorf("vault.oauth_service_bindings[%d] requires TCP ports between 1 and 65535", i)
+				}
 			}
 		}
 		if seen[binding.ServiceURL] {

@@ -11,6 +11,12 @@ func TestOAuthServiceBindings(t *testing.T) {
 		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example?q=1"}},
 		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example?"}},
 		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example#"}},
+		{{ServiceURL: "https://bridge.example:0", CredentialTargetURL: "https://api.example"}},
+		{{ServiceURL: "https://bridge.example:65536", CredentialTargetURL: "https://api.example"}},
+		{{ServiceURL: "https://bridge.example:99999999999999999999", CredentialTargetURL: "https://api.example"}},
+		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example:0/mcp"}},
+		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example:65536/mcp"}},
+		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example:99999999999999999999/mcp"}},
 		{{ServiceURL: "https://bridge.example", CredentialTargetURL: "https://api.example"}, {ServiceURL: " https://bridge.example ", CredentialTargetURL: "https://other.example"}},
 	} {
 		if err := validateOAuthServiceBindings(bindings); err == nil {
@@ -33,5 +39,11 @@ func TestOAuthServiceBindings(t *testing.T) {
 	}
 	if got := OAuthCredentialTargetURL(bindings, "https://bridge.example/%3F"); got != "https://api.example/%23" {
 		t.Fatalf("encoded target = %s", got)
+	}
+	for _, port := range []string{"1", "65535"} {
+		bindings = []OAuthServiceBindingConfig{{ServiceURL: "http://127.0.0.1:" + port, CredentialTargetURL: "https://[::1]:" + port + "/mcp"}}
+		if err := validateOAuthServiceBindings(bindings); err != nil {
+			t.Fatalf("rejected valid port %s: %v", port, err)
+		}
 	}
 }

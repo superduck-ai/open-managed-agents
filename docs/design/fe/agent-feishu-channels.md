@@ -26,9 +26,9 @@ sequenceDiagram
   B-->>F: 既有卡片与最终回复
 ```
 
-Go 是控制台的唯一后端入口。新增 `internal/channels` 资源，通过已有 Agent Mapper 查验租户归属，不新增业务 SQL。渠道运行数据由 bridge 的配置持久化层管理，OMA 数据库不保存飞书 App Secret。bridge 的 `managed-channels.json` 使用文件锁与原子写入，保存渠道、配对和软删除状态；`config.json` 保存加密密钥引用；App Secret 存入 profile 私有目录的既有 `secrets.enc`。运行目录须使用持久卷，首期部署一个 bridge 控制面实例，不支持跨主机共享本地文件作为高可用数据库。
+Go 是控制台的唯一后端入口。新增 `internal/channels` 资源，通过已有 Agent Mapper 查验租户归属。工作区专用 OMA 凭据通过独立关联表加密保存。渠道运行数据由 bridge 的配置持久化层管理，OMA 数据库不保存飞书 App Secret。bridge 的 `managed-channels.json` 使用文件锁与原子写入，保存渠道、配对和软删除状态；`config.json` 保存加密密钥引用；App Secret 存入 profile 私有目录的既有 `secrets.enc`。运行目录须使用持久卷，首期部署一个 bridge 控制面实例，不支持跨主机共享本地文件作为高可用数据库。
 
-每次 API 调用先验证 Agent 归属；浏览器不能选择桥接地址、服务令牌或 OMA 运行凭据。bridge 的管理接口只接受独立 Bearer 令牌，拒绝 Origin 和 UI Cookie 鉴权。跨主机连接应由受信私网及 TLS 保护。工作区运行凭据由部署者分别配置，必须属于相应组织和工作区，不使用全局默认密钥回退。
+每次 API 调用先验证 Agent 归属；浏览器不能选择桥接地址、服务令牌或 OMA 运行凭据。bridge 的管理接口只接受独立 Bearer 令牌，拒绝 Origin 和 UI Cookie 鉴权。跨主机连接应由受信私网及 TLS 保护。工作区运行凭据由 OMA 自动创建并同步，必须属于相应组织和工作区，不使用全局默认密钥回退。
 
 ## API
 
@@ -55,18 +55,8 @@ Go 是控制台的唯一后端入口。新增 `internal/channels` 资源，通�
 
 1. 在 bridge 仓库执行 `pnpm install --frozen-lockfile && pnpm build`。
 2. 设置 `LARK_CHANNEL_HOME` 为独立、持久化目录；设置 `OMA_CHANNEL_BRIDGE_TOKEN` 为随机服务令牌。
-3. 在该目录创建权限为 0600 的 `managed-channel-workspaces.json`。键使用 OMA 的组织 UUID/工作区 UUID，不使用展示名称或 external ID：
-
-```json
-{
-  "组织UUID/工作区UUID": {
-    "baseUrl": "http://oma-server:38080",
-    "apiKey": "${OMA_WORKSPACE_API_KEY}"
-  }
-}
-```
-
-4. 通过部署环境注入该工作区的 `OMA_WORKSPACE_API_KEY`；多个工作区分别使用不同环境变量及独立密钥。执行环境在渠道页显式选择，须可用且属于同一工作区。运行 `node dist/managed-channels.js`。默认监听 `127.0.0.1:39100`，可用 `OMA_CHANNEL_BRIDGE_HOST`、`OMA_CHANNEL_BRIDGE_PORT` 调整。该入口也支持既有密钥读取协议。
+3. 设置桥接 `OMA_BASE_URL` 为可访问的 OMA 服务地址；工作区专用 API Key 由 OMA 自动登记，不再要求手工维护工作区清单。
+4. 执行环境在渠道页显式选择，须可用且属于同一工作区。运行 `node dist/managed-channels.js`。默认监听 `127.0.0.1:39100`，可用 `OMA_CHANNEL_BRIDGE_HOST`、`OMA_CHANNEL_BRIDGE_PORT` 调整。该入口也支持既有密钥读取协议。
 5. 在 OMA 配置中添加：
 
 ```yaml
@@ -108,4 +98,24 @@ channel_bridge:
 
 桥接 MySQL 模式将选择保存为独立配置记录，文件模式使用独立配置文件。运行配置必须使用智能体显式选择的环境，不回退部署默认值；既有未配置的渠道也须先选择环境。环境配置的修订纳入 MySQL 运行配置代次，使已有机器人重新加载配置；文件模式保存后重新协调当前智能体的机器人。新建 OMA 会话使用所选环境，既有会话继续保留创建时的环境。
 
-本功能需要同时升级 `lark-channel` 桥接服务的 settings 接口与运行环境解析。工作区 OMA 地址、API Key 和飞书租户身份仍由部署者配置；选择环境不会自动创建凭据，也不会跨工作区复用其他身份。工作区未配置身份时，创建机器人仍会明确失败。
+本功能需要同时升级 `lark-channel` 桥接服务的 settings 接口、内部工作区凭据登记接口与运行环境解析。OMA 地址和飞书租户身份由部署者配置；OMA 在渠道变更前自动创建或复用当前工作区的专用 API Key 并同步给桥接，不跨工作区复用其他身份。环境选择本身只保存环境设置；凭据创建或同步失败时，不继续执行渠道变更。
+
+## 工作区运行凭据自动登记
+
+创建、启用、修改配置或发起绑定前，OMA 先校验当前智能体的环境，再确保当前组织、工作区拥有一把名为“飞书渠道专用”的 API Key。前端保持现有流程，不增加凭据表单。
+
+`channel_workspace_credentials` 按组织、工作区唯一关联专用 Key 及其加密副本；与现有控制台、鉴权 Key 记录在同一 Yourbatis 事务中创建。使用工作区行锁串行化首次签发，后续请求解密复用。密文的 AAD 绑定组织、工作区和 Key 标识。停用或归档 Key 后返回明确错误，不重新签发以绕过停用；原文不返回浏览器。该 Key 使用现有工作区级权限，没有新增更细的渠道权限模型。
+
+OMA 通过既有服务令牌调用桥接内部 `POST /api/managed-channels/internal/workspace-runtime`，请求仅包含 `api_key`，组织、工作区来自鉴权 Principal。桥接的 OMA 地址由部署 `OMA_BASE_URL` 提供，存储租户使用桥接配置；已有手工配置的存储租户保持不变。工作区凭据与按智能体保存的环境分开管理。需要运行身份的渠道变更前同步同一份凭据，桥接丢失配置或同步失败后可在下一次用户请求恢复，失败时不继续创建渠道。仅提交 `{"enabled":false}` 的停用请求和删除操作不要求执行环境或运行凭据可用；混合修改仍完整校验。配对审批只更新已有渠道的授权列表，复用已有运行身份，不触发凭据签发、同步或恢复。
+
+桥接新增接口应先部署，再部署 OMA；旧桥接不支持时返回“同步渠道工作区凭据失败，请检查桥接版本与配置”。MySQL 新配置按组织、工作区独立加密存储，保留旧整份工作区配置读取兼容；文件模式使用既有加密 keystore。该接口不暴露为 OMA 公共路由，不接受浏览器 Cookie 或 Origin。
+
+### 工作区凭据无法解密时的恢复
+
+凭据 JSON 损坏、旧 Provider 缺失或解密失败会返回“渠道工作区凭据无法解密”，并保留底层错误供服务日志排查。重复请求不更换 Key、不覆盖坏密文；停用或恢复 API Key 不能修复加密材料。
+
+1. 先核对主密钥配置、旧 Provider、KEK 版本和密钥文件。恢复旧解密材料后，按 `docs/design/be/vault-migrate.md` 完成预览、备份、停写和迁移，确认 `channel_workspace_credentials` 无失败记录后再下线旧 Provider。
+2. 若信封被损坏，从可信备份恢复同一关联记录的 `envelope`。组织、工作区、API Key 标识必须保持一致，并保留当前 Key 的停用/归档状态，不能复制其他工作区的密文。
+3. 若旧密钥与有效备份均已丢失，原凭据无法解密。管理员需在维护窗口停止渠道配置写入并备份，先停用或归档旧专用 Key，再按组织 UUID、工作区 UUID 和 API Key UUID 精确核对并移除损坏的关联记录；保留旧 Key 的审计记录。恢复后，由用户再次发起需运行身份的渠道操作，重新签发并同步新 Key。不得仅清空关联表或保留仍有效的旧 Key。
+
+第三步是显式的运维恢复流程，本版本不新增自动重建或对浏览器开放的凭据重置接口。

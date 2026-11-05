@@ -29,9 +29,8 @@ const baseDraft: CreateAgentInput = {
 
 describe('create agent draft model', () => {
   test.each([
-    { name: 'read', type: 'bash' },
-    { name: 'read', type: 'unknown' },
     { name: 'read', type: null },
+    { name: 'read', type: 123 },
     { name: 'read', unexpected: true },
   ])('rejects invalid built-in tool config fields: %j', (config) => {
     expect(
@@ -42,25 +41,32 @@ describe('create agent draft model', () => {
     ).toBe(false);
   });
 
-  test.each([false, true])('accepts built-in configs with response discriminators: %s', (includeType) => {
-    const configs = [
-      'ask_user_question',
-      'bash',
-      'edit',
-      'glob',
-      'grep',
-      'read',
-      'web_fetch',
-      'web_search',
-      'write',
-    ].map((name) => ({ name, ...(includeType ? { type: name } : {}), enabled: false }));
-    const draft = { ...baseDraft, tools: [{ type: 'agent_toolset_20260401', configs }] };
-    expect(normalizeCreateAgentDraft(draft).tools).toEqual(draft.tools);
-    const text = createAgentConfigText(draft, 'JSON');
-    const parsed = parseCreateAgentConfigText(text, 'JSON');
-    expect(parsed.ok).toBe(true);
-    if (parsed.ok) expect(parsed.input.tools).toEqual(draft.tools);
-  });
+  test.each([undefined, 'matching', 'bash', 'read_20261105'])(
+    'preserves optional tool config type without restricting its string value: %s',
+    (type) => {
+      const configs = [
+        'ask_user_question',
+        'bash',
+        'edit',
+        'glob',
+        'grep',
+        'read',
+        'web_fetch',
+        'web_search',
+        'write',
+      ].map((name) => ({
+        name,
+        ...(type === undefined ? {} : { type: type === 'matching' ? name : type }),
+        enabled: false,
+      }));
+      const draft = { ...baseDraft, tools: [{ type: 'agent_toolset_20260401', configs }] };
+      expect(normalizeCreateAgentDraft(draft).tools).toEqual(draft.tools);
+      const text = createAgentConfigText(draft, 'JSON');
+      const parsed = parseCreateAgentConfigText(text, 'JSON');
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(parsed.input.tools).toEqual(draft.tools);
+    },
+  );
 
   test('disables AskUserQuestion by default without overriding an explicit choice', () => {
     expect(normalizeCreateAgentDraft(baseDraft).tools[0]).toEqual({

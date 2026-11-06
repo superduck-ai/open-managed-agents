@@ -80,7 +80,7 @@ type envOAuthCallbackPayload struct {
 }
 
 func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeEnvOAuthOrganization(w, r) {
+	if _, ok := s.authorizeEnvOAuthOrganization(w, r); !ok {
 		return
 	}
 	providers, err := s.envOAuthProviders.ListProviders(r.Context())
@@ -106,41 +106,12 @@ func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeEnvOAuthOrganization(w, r) {
-		return
-	}
-	principal, ok := auth.PrincipalFromContext(r.Context())
+	principal, ok := s.authorizeEnvOAuthOrganization(w, r)
 	if !ok {
-		writeEnvOAuthStartError(w, http.StatusUnauthorized, envOAuthErrorInvalidRequest, "")
 		return
 	}
-	req, err := httpapi.DecodeObjectBodyAs[envOAuthVaultAuthStartRequest](w, r, 1<<20)
-	if err != nil {
-		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
-		return
-	}
-	req.ProviderID = strings.TrimSpace(req.ProviderID)
-	req.VaultID = strings.TrimSpace(req.VaultID)
-	req.WorkspaceID = strings.TrimSpace(req.WorkspaceID)
-	req.SecretName = strings.TrimSpace(req.SecretName)
-	req.DisplayName = strings.TrimSpace(req.DisplayName)
-	req.RedirectURL = strings.TrimSpace(req.RedirectURL)
-	if req.ProviderID == "" || req.VaultID == "" || req.WorkspaceID == "" || req.SecretName == "" || req.RedirectURL == "" || req.Networking == nil {
-		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
-		return
-	}
-	redirectURL, err := normalizeEnvOAuthURL(req.RedirectURL)
-	if err != nil {
-		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
-		return
-	}
-	secretName, err := vaultsapi.ParseEnvOAuthSecretName(req.SecretName)
-	if err != nil {
-		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
-		return
-	}
-	if err := vaultsapi.ValidateEnvOAuthNetworking(req.Networking.Type, req.Networking.AllowedHosts); err != nil {
-		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
+	req, redirectURL, secretName, ok := decodeEnvOAuthStartRequest(w, r)
+	if !ok {
 		return
 	}
 
@@ -440,18 +411,54 @@ func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlo
 	return created.ExternalID, nil
 }
 
-func (s *Server) authorizeEnvOAuthOrganization(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) authorizeEnvOAuthOrganization(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
 	if !ok {
 		httpapi.WriteJSON(w, http.StatusUnauthorized, envOAuthErrorResponse{ErrorCode: envOAuthErrorInvalidRequest})
-		return false
+		return auth.Principal{}, false
 	}
 	orgUUID := strings.TrimSpace(chi.URLParam(r, "orgUuid"))
 	if orgUUID == "" || orgUUID != principal.OrganizationUUID {
 		httpapi.WriteJSON(w, http.StatusNotFound, envOAuthErrorResponse{ErrorCode: envOAuthErrorInvalidRequest})
-		return false
+		return auth.Principal{}, false
 	}
-	return true
+	return principal, true
+}
+
+func decodeEnvOAuthStartRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+) (*envOAuthVaultAuthStartRequest, string, string, bool) {
+	req, err := httpapi.DecodeObjectBodyAs[envOAuthVaultAuthStartRequest](w, r, 1<<20)
+	if err != nil {
+		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
+		return req, "", "", false
+	}
+	req.ProviderID = strings.TrimSpace(req.ProviderID)
+	req.VaultID = strings.TrimSpace(req.VaultID)
+	req.WorkspaceID = strings.TrimSpace(req.WorkspaceID)
+	req.SecretName = strings.TrimSpace(req.SecretName)
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	req.RedirectURL = strings.TrimSpace(req.RedirectURL)
+	if req.ProviderID == "" || req.VaultID == "" || req.WorkspaceID == "" || req.SecretName == "" || req.RedirectURL == "" || req.Networking == nil {
+		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
+		return req, "", "", false
+	}
+	redirectURL, err := normalizeEnvOAuthURL(req.RedirectURL)
+	if err != nil {
+		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
+		return req, "", "", false
+	}
+	secretName, err := vaultsapi.ParseEnvOAuthSecretName(req.SecretName)
+	if err != nil {
+		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
+		return req, "", "", false
+	}
+	if err := vaultsapi.ValidateEnvOAuthNetworking(req.Networking.Type, req.Networking.AllowedHosts); err != nil {
+		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
+		return req, "", "", false
+	}
+	return req, redirectURL, secretName, true
 }
 
 func envOAuthSecretNameAvailable(credentials []db.VaultCredential, secretName, providerID string) bool {

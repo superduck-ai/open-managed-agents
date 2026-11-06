@@ -1,9 +1,12 @@
 package platformapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -64,7 +67,7 @@ func TestPlatformAPIKeyCreatorUsesExistingOrganizationMembership(t *testing.T) {
 				accountErr:              tc.accountErr, memberErr: tc.memberErr,
 			}
 			response := httptest.NewRecorder()
-			handleCreateConsoleWorkspaceAPIKey(store).ServeHTTP(response, request.WithContext(auth.WithPrincipal(request.Context(), principal)))
+			handleCreateConsoleWorkspaceAPIKey(store, testLogger()).ServeHTTP(response, request.WithContext(auth.WithPrincipal(request.Context(), principal)))
 			if response.Code != tc.status {
 				t.Fatalf("状态码 = %d，预期 %d：%s", response.Code, tc.status, response.Body.String())
 			}
@@ -82,6 +85,43 @@ func TestPlatformAPIKeyCreatorUsesExistingOrganizationMembership(t *testing.T) {
 				t.Fatalf("创建者 = %v，预期 %q", creator, tc.creator)
 			}
 		})
+	}
+}
+
+func TestPlatformAPIKeyCreatorLogsResolutionFailure(t *testing.T) {
+	const (
+		organizationUUID = "00000000-0000-4000-8000-000000000002"
+		workspaceUUID    = "00000000-0000-4000-8000-000000000001"
+	)
+	request := consoleWorkspaceAPIKeyTestRequest("workspace_test")
+	request.Method = http.MethodPost
+	request.Body = io.NopCloser(strings.NewReader(`{"name":"platform key"}`))
+	principal := auth.Principal{
+		AccountUUID: "account", OrganizationUUID: organizationUUID,
+		CredentialType: auth.CredentialTypePlatformSession, OrganizationAccessSource: auth.OrganizationAccessPlatformAdmin,
+		WorkspaceAccess: auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: "platform_admin"},
+	}
+	store := &apiKeyCreatorStore{
+		consoleAPIKeyScopeStore: consoleAPIKeyScopeStore{workspaces: []ConsoleWorkspace{{UUID: workspaceUUID, ExternalID: "workspace_test"}}},
+		accountErr:              errors.New("账号数据库不可用"),
+	}
+	var logs bytes.Buffer
+	response := httptest.NewRecorder()
+	handleCreateConsoleWorkspaceAPIKey(store, slog.New(slog.NewJSONHandler(&logs, nil))).ServeHTTP(
+		response,
+		request.WithContext(auth.WithPrincipal(request.Context(), principal)),
+	)
+	if response.Code != http.StatusInternalServerError || store.createInput != nil {
+		t.Fatalf("status=%d creator=%+v", response.Code, store.createInput)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record); err != nil {
+		t.Fatalf("解析日志 %q：%v", logs.String(), err)
+	}
+	if record["level"] != slog.LevelError.String() || record["msg"] != "failed to resolve api key creator" ||
+		record["error"] != "账号数据库不可用" || record["organization_id"] != organizationUUID ||
+		record["workspace_id"] != workspaceUUID {
+		t.Fatalf("错误日志不完整：%+v", record)
 	}
 }
 

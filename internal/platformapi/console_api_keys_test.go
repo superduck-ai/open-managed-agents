@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,12 +17,16 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
 func TestListConsoleWorkspaceAPIKeysRejectsUnknownWorkspaceBeforeStoreQuery(t *testing.T) {
 	store := &consoleAPIKeyScopeStore{}
 	request := consoleWorkspaceAPIKeyTestRequest("workspace_missing")
 	recorder := httptest.NewRecorder()
 
-	handleListConsoleWorkspaceAPIKeys(store).ServeHTTP(recorder, request)
+	handleListConsoleWorkspaceAPIKeys(store, testLogger()).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
@@ -42,7 +47,7 @@ func TestListConsoleWorkspaceAPIKeysResolvesExternalIDOnceAtBoundary(t *testing.
 	request := consoleWorkspaceAPIKeyTestRequest("workspace_test")
 	recorder := httptest.NewRecorder()
 
-	handleListConsoleWorkspaceAPIKeys(store).ServeHTTP(recorder, request)
+	handleListConsoleWorkspaceAPIKeys(store, testLogger()).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -83,7 +88,7 @@ func TestCreateConsoleWorkspaceAPIKeyUsesPrincipalUserUUID(t *testing.T) {
 	})
 	recorder := httptest.NewRecorder()
 
-	handleCreateConsoleWorkspaceAPIKey(store).ServeHTTP(recorder, request.WithContext(requestContext))
+	handleCreateConsoleWorkspaceAPIKey(store, testLogger()).ServeHTTP(recorder, request.WithContext(requestContext))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -397,7 +402,7 @@ func TestPlatformAPIKeyCreatorRejectsMissingResolver(t *testing.T) {
 	principal := auth.Principal{AccountUUID: "account", OrganizationUUID: "00000000-0000-4000-8000-000000000002", CredentialType: auth.CredentialTypePlatformSession, OrganizationAccessSource: auth.OrganizationAccessPlatformAdmin, WorkspaceAccess: auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: "platform_admin"}}
 	store := &consoleAPIKeyScopeStore{workspaces: []ConsoleWorkspace{{UUID: "00000000-0000-4000-8000-000000000001", ExternalID: "workspace_test"}}}
 	response := httptest.NewRecorder()
-	handleCreateConsoleWorkspaceAPIKey(store).ServeHTTP(response, request.WithContext(auth.WithPrincipal(request.Context(), principal)))
+	handleCreateConsoleWorkspaceAPIKey(store, testLogger()).ServeHTTP(response, request.WithContext(auth.WithPrincipal(request.Context(), principal)))
 	if response.Code != http.StatusInternalServerError || store.createInput != nil {
 		t.Fatalf("status=%d creator=%+v", response.Code, store.createInput)
 	}

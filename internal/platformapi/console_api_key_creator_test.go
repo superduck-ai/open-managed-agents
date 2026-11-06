@@ -132,7 +132,7 @@ func TestConsoleAPIKeyCreatorSkipsResolverOutsidePlatformAccess(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &apiKeyCreatorStore{}
-			creator, err := consoleAPIKeyCreator(t.Context(), store, auth.Principal{AccountUUID: "account", UserUUID: tc.user, OrganizationUUID: "00000000-0000-4000-8000-000000000002"})
+			creator, err := ResolveConsoleAPIKeyCreator(t.Context(), store, auth.Principal{AccountUUID: "account", UserUUID: tc.user, OrganizationUUID: "00000000-0000-4000-8000-000000000002"})
 			if err != nil || store.accountCalls != 0 || store.memberCalls != 0 {
 				t.Fatalf("不应解析账号或成员：账号=%d，成员=%d，错误=%v", store.accountCalls, store.memberCalls, err)
 			}

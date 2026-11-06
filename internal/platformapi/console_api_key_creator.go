@@ -15,7 +15,7 @@ type consoleAPIKeyCreatorStore interface {
 
 var _ consoleAPIKeyCreatorStore = (*db.DB)(nil)
 
-func consoleAPIKeyCreator(ctx context.Context, store OrganizationStore, principal auth.Principal) (*string, error) {
+func ResolveConsoleAPIKeyCreator(ctx context.Context, store OrganizationStore, principal auth.Principal) (*string, error) {
 	if principal.UserUUID != "" {
 		return new(principal.UserUUID), nil
 	}

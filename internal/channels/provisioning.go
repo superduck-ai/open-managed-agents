@@ -11,13 +11,15 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
+	"github.com/superduck-ai/open-managed-agents/internal/platformapi"
 )
 
 func (h *handler) syncWorkspaceCredentials(upstream *http.Request, principal auth.Principal) error {
-	input := platform.CreateConsoleAPIKeyInput{OrgUUID: principal.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID, RuntimeUserUUID: principal.RuntimeUserUUID()}
-	if principal.UserUUID != "" {
-		input.CreatedByUserUUID = new(principal.UserUUID)
+	createdByUserUUID, err := platformapi.ResolveConsoleAPIKeyCreator(upstream.Context(), h.store, principal)
+	if err != nil {
+		return credentialProvisionFailed(err)
 	}
+	input := platform.CreateConsoleAPIKeyInput{OrgUUID: principal.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID, CreatedByUserUUID: createdByUserUUID, RuntimeUserUUID: principal.RuntimeUserUUID()}
 	key, err := h.store.EnsureChannelWorkspaceCredential(upstream.Context(), input, h.cipher)
 	if errors.Is(err, db.ErrChannelCredentialInactive) {
 		return credentialInactive(err)

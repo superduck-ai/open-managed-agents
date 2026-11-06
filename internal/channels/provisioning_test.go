@@ -20,15 +20,38 @@ import (
 
 type provisioningStore struct {
 	scopedStore
-	input   platform.CreateConsoleAPIKeyInput
-	failure error
-	calls   int
+	input         platform.CreateConsoleAPIKeyInput
+	failure       error
+	accountErr    error
+	memberErr     error
+	creatorMember string
+	calls         int
 }
 
 func (s *provisioningStore) EnsureChannelWorkspaceCredential(_ context.Context, input platform.CreateConsoleAPIKeyInput, _ *secrets.Service) (string, error) {
 	s.calls++
 	s.input = input
 	return "sk-ant-api03-workspace-only", s.failure
+}
+
+func (s *provisioningStore) GetPlatformAdminAccount(_ context.Context, accountUUID string) (db.PlatformAdminAccount, error) {
+	if s.accountErr != nil {
+		return db.PlatformAdminAccount{}, s.accountErr
+	}
+	if accountUUID != "stable-account" {
+		return db.PlatformAdminAccount{}, db.ErrNotFound
+	}
+	return db.PlatformAdminAccount{UUID: accountUUID, Email: "actor@example.com"}, nil
+}
+
+func (s *provisioningStore) GetActivePlatformUserByEmail(_ context.Context, organizationUUID, email string) (db.AdminUser, error) {
+	if s.memberErr != nil {
+		return db.AdminUser{}, s.memberErr
+	}
+	if organizationUUID != "organization-a" || email != "actor@example.com" || s.creatorMember == "" {
+		return db.AdminUser{}, db.ErrNotFound
+	}
+	return db.AdminUser{UUID: s.creatorMember}, nil
 }
 
 func TestChannelProvisioning(t *testing.T) {

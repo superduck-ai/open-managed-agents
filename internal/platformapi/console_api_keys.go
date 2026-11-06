@@ -366,7 +366,7 @@ func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore, logger *slog.Lo
 			return
 		}
 		principal, _ := auth.PrincipalFromContext(r.Context())
-		createdByUserUUID, err := consoleAPIKeyCreator(r.Context(), store, principal)
+		createdByUserUUID, err := ResolveConsoleAPIKeyCreator(r.Context(), store, principal)
 		if err != nil {
 			logConsoleAPIKeyFailure(r, logger, "failed to resolve api key creator", err, orgUUID, workspaceScope.UUID)
 			internalError(w, "failed to resolve api key creator")

@@ -52,6 +52,16 @@ type environmentVariableCredentialCreateInput struct {
 	InjectionLocation json.RawMessage            `json:"injection_location"`
 }
 
+type envOAuthCredentialCreateInput struct {
+	Provider     string                     `json:"provider"`
+	SecretName   string                     `json:"secret_name"`
+	Networking   *credentialNetworkingInput `json:"networking"`
+	AccessToken  string                     `json:"access_token"`
+	RefreshToken string                     `json:"refresh_token"`
+	ExpiresAt    *string                    `json:"expires_at"`
+	Scope        *string                    `json:"scope"`
+}
+
 type credentialNetworkingInput struct {
 	Type         string   `json:"type"`
 	AllowedHosts []string `json:"allowed_hosts"`
@@ -85,6 +95,16 @@ type environmentVariableCredentialUpdateInput struct {
 	InjectionLocation json.RawMessage `json:"injection_location"`
 }
 
+type envOAuthCredentialUpdateInput struct {
+	Provider     *string         `json:"provider"`
+	SecretName   *string         `json:"secret_name"`
+	Networking   json.RawMessage `json:"networking"`
+	AccessToken  *string         `json:"access_token"`
+	RefreshToken *string         `json:"refresh_token"`
+	ExpiresAt    json.RawMessage `json:"expires_at"`
+	Scope        json.RawMessage `json:"scope"`
+}
+
 func normalizeCredentialAuthForCreate(raw json.RawMessage) (credentialAuthState, error) {
 	authType, err := credentialAuthTypeFromInput(raw)
 	if err != nil {
@@ -109,8 +129,14 @@ func normalizeCredentialAuthForCreate(raw json.RawMessage) (credentialAuthState,
 			return credentialAuthState{}, err
 		}
 		return normalizeEnvironmentVariableForCreate(input)
+	case credentialAuthTypeEnvOAuth:
+		var input envOAuthCredentialCreateInput
+		if err := decodeCredentialAuthInput(raw, &input); err != nil {
+			return credentialAuthState{}, err
+		}
+		return normalizeEnvOAuthForCreate(input)
 	default:
-		return credentialAuthState{}, errors.New("auth.type must be mcp_oauth, static_bearer, or environment_variable")
+		return credentialAuthState{}, errors.New("auth.type must be mcp_oauth, static_bearer, environment_variable, or env_oauth")
 	}
 }
 
@@ -288,6 +314,62 @@ func normalizeEnvironmentVariableForCreate(input environmentVariableCredentialCr
 	return credentialAuthStateFromValues(credentialAuthTypeEnvironmentVariable, secretName, publicAuth, secretPayload)
 }
 
+func normalizeEnvOAuthForCreate(input envOAuthCredentialCreateInput) (credentialAuthState, error) {
+	custom, providerID, err := ParseEnvOAuthProviderKey(input.Provider)
+	if err != nil {
+		return credentialAuthState{}, errors.New("auth.provider must be builtin:feishu or custom:<provider_id>")
+	}
+	provider := providerID
+	if custom {
+		provider = EnvOAuthCustomProviderKey(providerID)
+	}
+	secretName, err := parseSecretName(input.SecretName)
+	if err != nil {
+		return credentialAuthState{}, err
+	}
+	accessToken, err := requireNonEmptyString(input.AccessToken, "auth.access_token")
+	if err != nil {
+		return credentialAuthState{}, err
+	}
+	if input.Networking == nil {
+		return credentialAuthState{}, errors.New("auth.networking is required")
+	}
+	networking, err := normalizeCredentialNetworkingRequired(input.Networking)
+	if err != nil {
+		return credentialAuthState{}, err
+	}
+	expiresAt, err := optionalRFC3339String(input.ExpiresAt, "auth.expires_at")
+	if err != nil {
+		return credentialAuthState{}, err
+	}
+	scope, err := optionalTrimmedString(input.Scope, "auth.scope")
+	if err != nil {
+		return credentialAuthState{}, err
+	}
+	placeholder, err := generateOpaquePlaceholder()
+	if err != nil {
+		return credentialAuthState{}, err
+	}
+	refreshToken := strings.TrimSpace(input.RefreshToken)
+	publicAuth := &envOAuthCredentialAuth{
+		Type:              credentialAuthTypeEnvOAuth,
+		Provider:          provider,
+		SecretName:        secretName,
+		Placeholder:       placeholder,
+		Networking:        networking,
+		InjectionLocation: credentialInjectionLocation{Header: true},
+		ExpiresAt:         expiresAt,
+		Scope:             scope,
+		HasRefreshToken:   refreshToken != "",
+	}
+	secretPayload := envOAuthCredentialSecret{
+		Type:         credentialAuthTypeEnvOAuth,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+	}
+	return credentialAuthStateFromValues(credentialAuthTypeEnvOAuth, secretName, publicAuth, secretPayload)
+}
+
 func normalizeCredentialAuthForUpdate(current db.VaultCredential, currentSecret []byte, raw json.RawMessage) (credentialAuthState, error) {
 	authType, err := credentialAuthTypeFromInput(raw)
 	if err != nil {
@@ -332,6 +414,16 @@ func normalizeCredentialAuthForUpdate(current db.VaultCredential, currentSecret 
 			return credentialAuthState{}, err
 		}
 		return normalizeEnvironmentVariableForUpdate(current, currentSecret, input, publicAuth)
+	case credentialAuthTypeEnvOAuth:
+		var input envOAuthCredentialUpdateInput
+		if err := decodeCredentialAuthInput(raw, &input); err != nil {
+			return credentialAuthState{}, err
+		}
+		publicAuth, err := requireReadyEnvOAuthAuth(stored.value)
+		if err != nil {
+			return credentialAuthState{}, err
+		}
+		return normalizeEnvOAuthForUpdate(current, currentSecret, input, publicAuth)
 	default:
 		return credentialAuthState{}, errors.New("stored credential auth type is invalid")
 	}
@@ -463,6 +555,114 @@ func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSe
 		return credentialAuthState{}, ErrMissingSecretEnvelope
 	}
 	return credentialAuthStateFromValues(credentialAuthTypeEnvironmentVariable, current.CredentialKey, publicAuth, secretPayload)
+}
+
+func normalizeEnvOAuthForUpdate(current db.VaultCredential, currentSecret []byte, input envOAuthCredentialUpdateInput, publicAuth *envOAuthCredentialAuth) (credentialAuthState, error) {
+	secretPayload := envOAuthCredentialSecret{Type: credentialAuthTypeEnvOAuth}
+	if len(currentSecret) != 0 {
+		var err error
+		secretPayload, err = decodeEnvOAuthCredentialSecret(currentSecret)
+		if err != nil {
+			return credentialAuthState{}, err
+		}
+	}
+	if input.Provider != nil {
+		return credentialAuthState{}, errors.New("auth.provider is immutable")
+	}
+	if input.SecretName != nil {
+		return credentialAuthState{}, errors.New("auth.secret_name is immutable")
+	}
+	if input.AccessToken != nil {
+		accessToken, err := requireNonEmptyString(*input.AccessToken, "auth.access_token")
+		if err != nil {
+			return credentialAuthState{}, err
+		}
+		secretPayload.AccessToken = accessToken
+	}
+	if input.RefreshToken != nil {
+		refreshToken, err := requireNonEmptyString(*input.RefreshToken, "auth.refresh_token")
+		if err != nil {
+			return credentialAuthState{}, err
+		}
+		secretPayload.RefreshToken = refreshToken
+	}
+	if len(input.ExpiresAt) != 0 {
+		if isJSONNull(input.ExpiresAt) {
+			publicAuth.ExpiresAt = nil
+		} else {
+			var value string
+			if err := json.Unmarshal(input.ExpiresAt, &value); err != nil {
+				return credentialAuthState{}, errors.New("auth.expires_at must be a string")
+			}
+			trimmed, err := requireNonEmptyString(value, "auth.expires_at")
+			if err != nil {
+				return credentialAuthState{}, err
+			}
+			if err := validateRFC3339(trimmed, "auth.expires_at"); err != nil {
+				return credentialAuthState{}, err
+			}
+			publicAuth.ExpiresAt = &trimmed
+		}
+	}
+	if len(input.Scope) != 0 {
+		if isJSONNull(input.Scope) {
+			publicAuth.Scope = nil
+		} else {
+			var value string
+			if err := json.Unmarshal(input.Scope, &value); err != nil {
+				return credentialAuthState{}, errors.New("auth.scope must be a string")
+			}
+			trimmed, err := requireNonEmptyString(value, "auth.scope")
+			if err != nil {
+				return credentialAuthState{}, err
+			}
+			publicAuth.Scope = &trimmed
+		}
+	}
+	if len(input.Networking) != 0 {
+		var networkingInput *credentialNetworkingInput
+		if err := json.Unmarshal(input.Networking, &networkingInput); err != nil {
+			return credentialAuthState{}, errors.New("auth.networking must be an object")
+		}
+		if networkingInput == nil {
+			return credentialAuthState{}, errors.New("auth.networking is required")
+		}
+		networking, err := normalizeCredentialNetworkingRequired(networkingInput)
+		if err != nil {
+			return credentialAuthState{}, err
+		}
+		publicAuth.Networking = networking
+	}
+	publicAuth.HasRefreshToken = secretPayload.RefreshToken != ""
+	if secretPayload.AccessToken == "" {
+		return credentialAuthState{}, ErrMissingSecretEnvelope
+	}
+	return credentialAuthStateFromValues(credentialAuthTypeEnvOAuth, current.CredentialKey, publicAuth, secretPayload)
+}
+
+func optionalRFC3339String(value *string, name string) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	trimmed, err := requireNonEmptyString(*value, name)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateRFC3339(trimmed, name); err != nil {
+		return nil, err
+	}
+	return &trimmed, nil
+}
+
+func optionalTrimmedString(value *string, name string) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	trimmed, err := requireNonEmptyString(*value, name)
+	if err != nil {
+		return nil, err
+	}
+	return &trimmed, nil
 }
 
 func patchMCPOAuthRefreshForUpdate(publicAuth *mcpOAuthCredentialAuth, secretPayload *mcpOAuthCredentialSecret, raw json.RawMessage) error {

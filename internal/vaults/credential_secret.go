@@ -44,8 +44,11 @@ func SealCredentialSecret(ctx context.Context, secretSvc *secrets.Service, crede
 // bytes after use and must not persist or log them.
 func openCredentialSecret(ctx context.Context, secretSvc *secrets.Service, credential db.VaultCredential) ([]byte, error) {
 	if credential.SecretEnvelope == nil {
-		if credential.AuthType == "mcp_oauth" {
+		switch credential.AuthType {
+		case "mcp_oauth":
 			return nil, ErrMCPOAuthReauthorizationRequired
+		case "env_oauth":
+			return nil, ErrEnvOAuthReauthorizationRequired
 		}
 		return nil, ErrMissingSecretEnvelope
 	}

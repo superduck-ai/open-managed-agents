@@ -73,4 +73,16 @@ func TestDecodeCredentialSecrets(t *testing.T) {
 	if environment.SecretValue != "value" {
 		t.Fatalf("secret_value = %q", environment.SecretValue)
 	}
+
+	envOAuth, err := decodeEnvOAuthCredentialSecret([]byte(`{"type":"env_oauth","access_token":"access-token","refresh_token":"refresh-token"}`))
+	if err != nil {
+		t.Fatalf("decode env_oauth secret: %v", err)
+	}
+	if envOAuth.AccessToken != "access-token" || envOAuth.RefreshToken != "refresh-token" {
+		t.Fatalf("unexpected env_oauth secret: %+v", envOAuth)
+	}
+
+	if _, err := decodeEnvOAuthCredentialSecret([]byte(`{"type":"static_bearer","access_token":"token"}`)); err == nil {
+		t.Fatal("decode env_oauth secret with wrong type succeeded")
+	}
 }

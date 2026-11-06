@@ -19,6 +19,14 @@ var ErrMissingSecretEnvelope = errors.New("vault credential secret is missing; r
 // longer be used. It remains active to keep matching requests fail-closed.
 var ErrMCPOAuthReauthorizationRequired = errors.New("MCP OAuth credentials require reauthorization")
 
+// ErrEnvOAuthReauthorizationRequired indicates that the stored env_oauth grant
+// can no longer be refreshed; matching requests stay fail-closed.
+var ErrEnvOAuthReauthorizationRequired = errors.New("environment OAuth credentials require reauthorization")
+
+// ErrEnvOAuthProviderUnavailable indicates that the provider referenced by an
+// env_oauth credential cannot be resolved (deleted, disabled, or unconfigured).
+var ErrEnvOAuthProviderUnavailable = errors.New("environment OAuth provider is unavailable")
+
 // InjectionPublicMessage exposes the recovery action without leaking private causes.
 func InjectionPublicMessage(err error) string {
 	if errors.Is(err, ErrMCPOAuthReauthorizationRequired) {

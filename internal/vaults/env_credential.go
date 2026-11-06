@@ -61,9 +61,68 @@ func requireReadyEnvironmentAuth(value credentialAuthVariant) (*environmentVaria
 	return env, nil
 }
 
+func requireReadyEnvOAuthAuth(value credentialAuthVariant) (*envOAuthCredentialAuth, error) {
+	oauth, ok := value.(*envOAuthCredentialAuth)
+	if !ok || oauth == nil {
+		return nil, errors.New("credential is not env_oauth")
+	}
+	if strings.TrimSpace(oauth.Placeholder) == "" {
+		return nil, errors.New("env_oauth credential is missing placeholder; archive and recreate")
+	}
+	if strings.TrimSpace(oauth.Provider) == "" || strings.TrimSpace(oauth.SecretName) == "" {
+		return nil, errors.New("env_oauth credential is missing provider or secret_name; archive and recreate")
+	}
+	return oauth, nil
+}
+
+func decodeEnvOAuthCredentialAuth(authJSON []byte) (*envOAuthCredentialAuth, error) {
+	auth, err := decodeCredentialAuth(authJSON)
+	if err != nil {
+		return nil, fmt.Errorf("env_oauth credential auth is invalid: %w", err)
+	}
+	value, ok := auth.value.(*envOAuthCredentialAuth)
+	if !ok || value == nil {
+		return nil, errors.New("credential is not env_oauth")
+	}
+	if strings.TrimSpace(value.Placeholder) == "" {
+		return nil, errors.New("env_oauth credential is missing placeholder; archive and recreate")
+	}
+	return value, nil
+}
+
 type environmentCredential struct {
 	row   db.VaultCredential
 	value *environmentVariableCredentialAuth
+}
+
+type envOAuthCredential struct {
+	row   db.VaultCredential
+	value *envOAuthCredentialAuth
+}
+
+func uniqueEnvOAuthCredentials(credentials []db.VaultCredential) (bool, []envOAuthCredential, error) {
+	hasOAuth := false
+	seen := make(map[string]struct{})
+	bound := make([]envOAuthCredential, 0)
+	for i := range credentials {
+		if credentialAuthType(credentials[i].AuthType) != credentialAuthTypeEnvOAuth {
+			continue
+		}
+		hasOAuth = true
+		value, err := decodeEnvOAuthCredentialAuth(credentials[i].Auth)
+		if err != nil {
+			return false, nil, err
+		}
+		if PlatformReservedSecretName(value.SecretName) {
+			continue
+		}
+		if _, exists := seen[value.SecretName]; exists {
+			continue
+		}
+		seen[value.SecretName] = struct{}{}
+		bound = append(bound, envOAuthCredential{row: credentials[i], value: value})
+	}
+	return hasOAuth, bound, nil
 }
 
 // uniqueEnvironmentCredentials walks credentials in Vault Attachment Order.

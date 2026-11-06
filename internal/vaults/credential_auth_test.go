@@ -335,3 +335,170 @@ func TestNormalizeEnvironmentVariablePreservesSecretValueWhitespace(t *testing.T
 		t.Fatalf("update secret_value = %q, want verbatim %q", updateSecret.SecretValue, updateValue)
 	}
 }
+
+func TestNormalizeEnvOAuthCredentialForCreate(t *testing.T) {
+	t.Parallel()
+
+	_, err := normalizeCredentialAuthForCreate(json.RawMessage(`{
+		"type":"env_oauth",
+		"provider":"builtin:feishu",
+		"secret_name":"LARKSUITE_CLI_USER_ACCESS_TOKEN",
+		"access_token":"u-token"
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "auth.networking") {
+		t.Fatalf("error = %v, want auth.networking required", err)
+	}
+
+	state, err := normalizeCredentialAuthForCreate(json.RawMessage(`{
+		"type":"env_oauth",
+		"provider":"builtin:feishu",
+		"secret_name":" LARKSUITE_CLI_USER_ACCESS_TOKEN ",
+		"networking":{"type":"limited","allowed_hosts":["open.feishu.cn","accounts.feishu.cn"]},
+		"access_token":" u-token ",
+		"refresh_token":"ur-token",
+		"expires_at":"2099-12-31T23:59:59Z",
+		"scope":"offline_access"
+	}`))
+	if err != nil {
+		t.Fatalf("normalize create: %v", err)
+	}
+	if state.AuthType != "env_oauth" || state.Key != EnvOAuthFeishuDefaultSecretName {
+		t.Fatalf("state = %+v", state)
+	}
+	auth, err := decodeCredentialAuth(state.PublicAuth)
+	if err != nil {
+		t.Fatalf("decode public auth: %v", err)
+	}
+	value := auth.value.(*envOAuthCredentialAuth)
+	if value.Provider != EnvOAuthProviderBuiltinFeishu || value.SecretName != EnvOAuthFeishuDefaultSecretName {
+		t.Fatalf("unexpected auth: %+v", value)
+	}
+	if !value.InjectionLocation.Header || value.InjectionLocation.Body {
+		t.Fatalf("injection_location = %+v, want header only", value.InjectionLocation)
+	}
+	if !value.HasRefreshToken || value.ExpiresAt == nil || value.Scope == nil {
+		t.Fatalf("unexpected auth metadata: %+v", value)
+	}
+	if !strings.HasPrefix(value.Placeholder, opaquePlaceholderPrefix) {
+		t.Fatalf("placeholder = %q", value.Placeholder)
+	}
+	secret, err := decodeEnvOAuthCredentialSecret(state.SecretPayload)
+	if err != nil {
+		t.Fatalf("decode secret: %v", err)
+	}
+	if secret.AccessToken != "u-token" || secret.RefreshToken != "ur-token" {
+		t.Fatalf("unexpected secret: %+v", secret)
+	}
+}
+
+func TestNormalizeEnvOAuthCredentialForCreateRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "missing provider", raw: `{"type":"env_oauth","secret_name":"TOKEN","access_token":"token","networking":{"type":"unrestricted"}}`, want: "auth.provider"},
+		{name: "invalid provider", raw: `{"type":"env_oauth","provider":"unknown","secret_name":"TOKEN","access_token":"token","networking":{"type":"unrestricted"}}`, want: "auth.provider"},
+		{name: "reserved secret name", raw: `{"type":"env_oauth","provider":"builtin:feishu","secret_name":"ANTHROPIC_API_KEY","access_token":"token","networking":{"type":"unrestricted"}}`, want: "is reserved"},
+		{name: "limited without hosts", raw: `{"type":"env_oauth","provider":"builtin:feishu","secret_name":"TOKEN","access_token":"token","networking":{"type":"limited","allowed_hosts":[]}}`, want: "allowed_hosts"},
+		{name: "missing access token", raw: `{"type":"env_oauth","provider":"builtin:feishu","secret_name":"TOKEN","networking":{"type":"unrestricted"}}`, want: "auth.access_token"},
+		{name: "invalid expiry", raw: `{"type":"env_oauth","provider":"builtin:feishu","secret_name":"TOKEN","access_token":"token","networking":{"type":"unrestricted"},"expires_at":"tomorrow"}`, want: "RFC3339"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := normalizeCredentialAuthForCreate(json.RawMessage(test.raw))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeEnvOAuthCredentialForUpdate(t *testing.T) {
+	t.Parallel()
+
+	current := db.VaultCredential{
+		AuthType:      "env_oauth",
+		CredentialKey: EnvOAuthFeishuDefaultSecretName,
+		Auth: json.RawMessage(`{
+			"type":"env_oauth",
+			"provider":"builtin:feishu",
+			"secret_name":"LARKSUITE_CLI_USER_ACCESS_TOKEN",
+			"placeholder":"oma_ph_testplaceholder",
+			"networking":{"type":"limited","allowed_hosts":["open.feishu.cn"]},
+			"injection_location":{"header":true,"body":false},
+			"expires_at":"2099-12-31T23:59:59Z",
+			"has_refresh_token":true
+		}`),
+	}
+	secret := []byte(`{"type":"env_oauth","access_token":"old-access","refresh_token":"old-refresh"}`)
+
+	state, err := normalizeCredentialAuthForUpdate(current, secret, json.RawMessage(`{
+		"type":"env_oauth",
+		"networking":{"type":"unrestricted"},
+		"access_token":"new-access",
+		"refresh_token":"new-refresh",
+		"expires_at":"2098-01-01T00:00:00Z",
+		"scope":"docx:read"
+	}`))
+	if err != nil {
+		t.Fatalf("normalize update: %v", err)
+	}
+	auth, err := decodeCredentialAuth(state.PublicAuth)
+	if err != nil {
+		t.Fatalf("decode public auth: %v", err)
+	}
+	value := auth.value.(*envOAuthCredentialAuth)
+	if value.Networking.Type != "unrestricted" || !value.HasRefreshToken || value.ExpiresAt == nil || value.Scope == nil {
+		t.Fatalf("unexpected auth: %+v", value)
+	}
+	nextSecret, err := decodeEnvOAuthCredentialSecret(state.SecretPayload)
+	if err != nil {
+		t.Fatalf("decode secret: %v", err)
+	}
+	if nextSecret.AccessToken != "new-access" || nextSecret.RefreshToken != "new-refresh" {
+		t.Fatalf("unexpected secret: %+v", nextSecret)
+	}
+
+	cleared, err := normalizeCredentialAuthForUpdate(current, secret, json.RawMessage(`{"type":"env_oauth","expires_at":null,"scope":null}`))
+	if err != nil {
+		t.Fatalf("normalize clear: %v", err)
+	}
+	clearedAuth, err := decodeCredentialAuth(cleared.PublicAuth)
+	if err != nil {
+		t.Fatalf("decode cleared auth: %v", err)
+	}
+	clearedValue := clearedAuth.value.(*envOAuthCredentialAuth)
+	if clearedValue.ExpiresAt != nil || clearedValue.Scope != nil {
+		t.Fatalf("unexpected cleared auth: %+v", clearedValue)
+	}
+}
+
+func TestNormalizeEnvOAuthCredentialForUpdateRejectsImmutableFields(t *testing.T) {
+	t.Parallel()
+
+	current := db.VaultCredential{
+		AuthType:      "env_oauth",
+		CredentialKey: "TOKEN",
+		Auth: json.RawMessage(`{
+			"type":"env_oauth",
+			"provider":"builtin:feishu",
+			"secret_name":"TOKEN",
+			"placeholder":"oma_ph_testplaceholder",
+			"networking":{"type":"unrestricted"},
+			"injection_location":{"header":true,"body":false}
+		}`),
+	}
+	for _, raw := range []string{
+		`{"type":"env_oauth","provider":"builtin:feishu"}`,
+		`{"type":"env_oauth","secret_name":"OTHER"}`,
+	} {
+		_, err := normalizeCredentialAuthForUpdate(current, []byte(`{"type":"env_oauth","access_token":"token"}`), json.RawMessage(raw))
+		if err == nil || !strings.Contains(err.Error(), "immutable") {
+			t.Fatalf("error = %v, want immutable", err)
+		}
+	}
+}

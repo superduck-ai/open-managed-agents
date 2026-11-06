@@ -10,13 +10,21 @@ import { omaRuntimeConfig } from "../src/oma-session.ts";
 
 const ctx = new Context();
 const api = new OmaApi(process.env.TEST_API_URL!);
-const clients = await mountDsr(ctx, api, process.env.TEST_DSR_ROOT!);
-const client = new DsrClient(createDsrTransport(api), JSON.parse(process.env.TEST_DSR_CLAIM!) as Claim);
+const clients = await mountDsr(ctx, api);
+const client = new DsrClient(
+  createDsrTransport(api),
+  JSON.parse(process.env.TEST_DSR_CLAIM!) as Claim,
+);
 clients.set(client.claim.code_session_id, client);
 const assignment = dsrAssignment(api, client.claim, await client.register());
 api.assignments.set(assignment.session_id, assignment);
 const session = new DsrSession(ctx, client, omaRuntimeConfig(api, assignment));
 await session.open();
-await session.receive({ id: "input_crash", kind: "user.message", lane: "task", content: [{ type: "text", text: "run both tools" }] });
+await session.receive({
+  id: "input_crash",
+  kind: "user.message",
+  lane: "task",
+  content: [{ type: "text", text: "run both tools" }],
+});
 await session.close();
 await ctx.fiber.dispose();

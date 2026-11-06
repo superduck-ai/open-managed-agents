@@ -52,12 +52,10 @@ export interface SubagentBridge {
   ): Promise<void>;
   archivedThreads?(threadIds: string[], signal: AbortSignal): Promise<string[]>;
   threads(): SubagentThread[];
-  restoreThreads?(): Promise<void>;
   bindPersistence(threadId: string): void;
   emit(event: SubagentEvent): Promise<void>;
-  beforeRequest?(threadId: string): Promise<void>;
   onOpen?(session: Session): Promise<void>;
-  afterFlushLog?(session: Session): Promise<void>;
+  flushLog?(session: Session): Promise<void>;
   onDiagnostic?(threadId: string, diagnostic: RuntimeDiagnostic): void;
   onEvent(threadId: string, event: SessionEvent, session: Session): void;
   onStream(threadId: string, frame: AssistantStreamFrame): void;
@@ -198,7 +196,7 @@ export type RuntimeDiagnostic =
 export interface SessionRuntimeHooks {
   onDiagnostic?(diagnostic: RuntimeDiagnostic): void;
   onOpen?(session: Session): Promise<void>;
-  afterFlushLog?(session: Session): Promise<void>;
+  flushLog?(session: Session): Promise<void>;
   onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
   onExternalMcpAuthenticationFailure?(
     serverName: string,

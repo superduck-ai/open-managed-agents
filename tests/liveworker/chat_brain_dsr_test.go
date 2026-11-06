@@ -167,7 +167,7 @@ func verifyDSRTranscriptInterfaces(t *testing.T, e *liveEnv, f *liveSession, tok
 	t.Helper()
 	base := "/v1/dsr/sessions/" + f.code.ExternalID
 	dsrRequest(t, e, "GET", base+"/transcripts?limit=1", token, nil, 200)
-	raw := dsrRequest(t, e, "GET", base+"/transcripts/"+f.code.ExternalID+"?from_seq=0&limit_bytes=8388608", token, nil, 200)
+	raw := dsrRequest(t, e, "GET", base+"/transcripts/"+f.code.ExternalID+"?from_seq=0", token, nil, 200)
 	var page struct {
 		Header json.RawMessage   `json:"header"`
 		Events []json.RawMessage `json:"events"`

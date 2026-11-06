@@ -76,6 +76,10 @@ import { dsrToolIdentity } from "./tools.ts";
 import { DsrSubagentBridge } from "./subagents.ts";
 import type { DsrClient } from "./client.ts";
 import type { Decision, Finish, Input, PublicEvent } from "./wire.ts";
+import {
+  TranscriptPublication,
+  type PublicationTarget,
+} from "./publication.ts";
 
 // 扩展 DSH 插件记录类型：允许把“某个输入已经得出最终结论”写进会话事件流。
 // 这是 DSR 幂等恢复的关键：结论一旦落盘，重放同一个输入就不会再执行一遍。
@@ -94,6 +98,7 @@ export class DsrSession {
   readonly runtime: SessionRuntime;
   // 子 agent 管理器：负责创建/恢复/中断子线程。
   readonly subagents: Subagents;
+  private readonly subagentBridge: DsrSubagentBridge;
   // 当前正在处理的任务输入 ID。空字符串表示还没开始处理任何输入。
   inputId = "";
   // 会话是否处于“挂起”状态：不 finish 输入，等下次认领后继续。
@@ -104,6 +109,7 @@ export class DsrSession {
   private pending: PublicEvent[] = [];
   // 已入队的 assistant 事件 ID，防止同一条消息被 record 和 plugin record 重复入队。
   private readonly assistantIDs = new Set<string>();
+  private readonly publication = new TranscriptPublication();
   // 审批去重：key = "threadId:callId"。同一个工具调用只发一次审批请求，
   // 并发调用方共享同一个 Promise。
   private readonly approvals = new Map<string, Promise<ApprovalDecision>>();
@@ -149,16 +155,15 @@ export class DsrSession {
         onEvent: (event, session) => this.record(event, session),
         // 流式帧进入 stream()，生成 preview 事件。
         onStream: (frame) => this.stream(frame),
-        // 每次模型请求前、每次日志 flush 后都 checkpoint，保证恢复点清晰。
-        beforeRequest: () => this.checkpoint(),
-        afterFlushLog: () => this.checkpoint(),
+        flushLog: (session) => this.checkpoint(session),
         // 父会话结束前等待子 agent。
         waitForChildren: () => this.subagents.wait(),
         stop: () => this.stop(),
       },
       this.execution(),
     );
-    this.subagents = new Subagents(this.runtime, new DsrSubagentBridge(this));
+    this.subagentBridge = new DsrSubagentBridge(this);
+    this.subagents = new Subagents(this.runtime, this.subagentBridge);
   }
   // 根会话 ID（也就是 code_session_id）。
   get id(): string {
@@ -178,34 +183,59 @@ export class DsrSession {
   }
 
   async open(): Promise<void> {
-    await this.ctx.sessionReplication.ensure(this.id);
-    await this.subagents.loadThreads();
+    const directory = await this.client.listTranscripts(this.abort.signal);
+    const transcript = directory.find(
+      (entry) => entry.dsh_session_id === this.id,
+    );
+    await this.ctx.sessionReplication.ensure(
+      this.id,
+      transcript ? { nextSeq: transcript.next_seq } : null,
+    );
+    await this.subagentBridge.restoreThreads(directory);
     await this.runtime.open();
-    // 重新扫描快照并 record：这些事件可能上次没来得及发布，或者需要补发预览。
-    for (const event of this.runtime.agent.session.snapshotEvents())
-      this.record(event, this.runtime.agent.session);
+    this.replay(this.runtime.agent.session);
     await this.checkpoint();
   }
 
-  async checkpoint(): Promise<void> {
-    // 已经失败就不要再写：把错误抛给调用方，让 owner 走失败收尾。
-    if (this.failure) throw this.failure;
-    // runtime.handle 存在表示原生会话已经打开，可以 flush。
-    if (this.runtime.handle)
-      await this.ctx.sessions.flush(this.runtime.agent.session);
-    await this.ctx.sessionReplication.flush(this.id);
+  replay(session: Session): void {
+    this.publication.prepare(session);
+    for (const event of session.snapshotEvents()) this.record(event, session);
+  }
+
+  checkpoint(session?: Session): Promise<void> {
+    if (this.failure) return Promise.reject(this.failure);
     const pending = this.pending.splice(0);
-    if (pending.length)
-      this.publications = this.publications.then(async () => {
-        // 每批最多 200 个，避免请求体过大；批次之间严格串行。
-        for (let i = 0; i < pending.length; i += 200)
-          await this.client.publish(
-            pending.slice(i, i + 200),
-            this.abort.signal,
-          );
-      });
-    // 等待所有已排队的发布完成，确保 checkpoint 返回时事件真的发出去了。
-    await this.publications;
+    const targets = this.publication.targets();
+    const sessions = new Set<Session>();
+    if (this.runtime.handle) sessions.add(this.runtime.agent.session);
+    if (session) sessions.add(session);
+    this.publications = this.publications.then(() =>
+      this.commitPublication(pending, targets, [...sessions]),
+    );
+    return this.publications;
+  }
+
+  private async commitPublication(
+    pending: PublicEvent[],
+    targets: PublicationTarget[],
+    sessions: Session[],
+  ): Promise<void> {
+    await this.ctx.sessionReplication.waitForCapacity(
+      this.id,
+      this.abort.signal,
+    );
+    await this.ctx.sessionReplication.flush(this.id, this.abort.signal);
+    for (const session of sessions) await this.ctx.sessions.flush(session);
+    if (!pending.length) return;
+    for (let index = 0; index < pending.length; index += 200)
+      await this.client.publish(
+        pending.slice(index, index + 200),
+        this.abort.signal,
+      );
+    this.publication.acknowledge(targets);
+    if (!targets.length) return;
+    await this.ctx.sessionReplication.flush(this.id, this.abort.signal);
+    for (const target of targets) await this.ctx.sessions.flush(target.session);
   }
 
   /**
@@ -223,16 +253,18 @@ export class DsrSession {
    *   // -> this.ending = event（供 runtime.run 结束后生成 Finish）
    */
   record(event: SessionEvent, session: Session): void {
+    for (const entry of this.publication.read(event, session))
+      this.project(entry, session);
+  }
+
+  private project(event: SessionEvent, session: Session): void {
     const thread = session.id === this.id ? undefined : session.id;
-    // 记住根会话最后一个 turn/end；子线程的结束不影响根输入的完成判定。
+    const confirmed = this.publication.confirmed(session, event);
     if (!thread && event.type === "turn/end") this.ending = event;
     if (event.type === "assistant/message" && !event.data.interrupted) {
-      // 消息 ID 里的 inputID：子线程统一用根 inputId；根会话按 turn 反查，
-      // 找不到时退回当前 inputId。fallback 保证没有显式 ID 时也能生成稳定 ID。
       const inputID = thread
         ? this.id
-        : (inputIDForTurn(session.snapshotEvents(), event.data.turn) ??
-          this.inputId);
+        : (this.publication.input(session, event.data.turn) ?? this.inputId);
       const fallback = `${inputID}_${thread ? `${thread}_` : ""}message_${event.data.turn}_${event.data.step}`;
       const outputs = assistantMessages(
         this.id,
@@ -240,46 +272,29 @@ export class DsrSession {
         event.data.message,
         thread,
       );
-      for (const payload of this.assistant.complete(outputs, thread))
-        this.queueAssistant(payload as PublicEvent);
+      for (const payload of this.assistant.complete(outputs, thread)) {
+        if (confirmed) this.assistantIDs.add(payload.id);
+        else if (this.queueAssistant(payload as PublicEvent))
+          this.publication.queued(session, event);
+      }
     }
     const record = pluginRecordOf(event);
-    // 流式块在上报前已作为 plugin record 落盘，现在补发最终版。
-    if (record?.type === "plugin:oma/assistant-block")
-      this.queueAssistant((record.data as { output: PublicEvent }).output);
-    if (event.type === "tool/result" && event.surfaceOp === "append") {
-      // 工具名优先从 tool/call 事件取；没有时从 assistant 消息的 tool-call 块取。
-      const call = session
-        .snapshotEvents()
-        .find(
-          (item) =>
-            item.type === "tool/call" &&
-            item.data.callId === event.data.message.toolCallId,
-        );
-      const name =
-        call?.type === "tool/call"
-          ? call.data.name
-          : session
-              .snapshotEvents()
-              .flatMap((item) =>
-                item.type === "assistant/message"
-                  ? item.data.message.content
-                  : [],
-              )
-              .find(
-                (block) =>
-                  block.type === "tool-call" &&
-                  block.id === event.data.message.toolCallId,
-              );
-      const toolName =
-        typeof name === "string"
-          ? name
-          : name?.type === "tool-call"
-            ? name.name
-            : undefined;
-      // 无法确定工具身份说明会话事件已损坏，不能静默上报一个错误身份。
+    if (record?.type === "plugin:oma/assistant-block") {
+      const output = (record.data as { output: PublicEvent }).output;
+      if (confirmed) this.assistantIDs.add(output.id);
+      else if (this.queueAssistant(output))
+        this.publication.queued(session, event);
+    }
+    if (
+      event.type === "tool/result" &&
+      event.surfaceOp === "append" &&
+      !confirmed
+    ) {
+      const toolName = this.publication.tool(
+        session,
+        event.data.message.toolCallId,
+      );
       if (!toolName) throw new Error("Tool result has no call identity");
-      // id 用 session.id + seq，天然唯一且可重放（服务器按 id 去重）。
       this.pending.push({
         id: `${session.id}_result_${event.seq}`,
         type: "tool.result",
@@ -289,14 +304,16 @@ export class DsrSession {
         content: [...event.data.message.content],
         ...(thread ? { session_thread_id: thread } : {}),
       });
+      this.publication.queued(session, event);
     }
   }
 
   // assistant 事件去重入队：同一条消息可能由 record 和 plugin record 各触发一次。
-  private queueAssistant(event: PublicEvent): void {
-    if (this.assistantIDs.has(event.id)) return;
+  private queueAssistant(event: PublicEvent): boolean {
+    if (this.assistantIDs.has(event.id)) return false;
     this.assistantIDs.add(event.id);
     this.pending.push(event);
+    return true;
   }
 
   /**
@@ -727,10 +744,23 @@ export class DsrSession {
    *   2. 关闭原生 runtime（flush、释放工具/沙箱等）；
    *   3. 等待已排队的公共事件发布完成；发布失败忽略（会话已经在收尾）。
    */
-  async close(): Promise<void> {
-    await this.subagents.close();
-    await this.runtime.close();
-    await this.publications.catch(() => {});
+  async close(timeoutMs = 5000): Promise<void> {
+    const deadline = setTimeout(
+      () =>
+        this.ctx.sessionReplication.cancel(
+          this.id,
+          new Error("Transcript shutdown drain timed out"),
+        ),
+      timeoutMs,
+    );
+    try {
+      await this.subagents.close();
+      await this.runtime.close();
+      await this.ctx.sessionReplication.drain(this.id, timeoutMs);
+      await this.publications.catch(() => {});
+    } finally {
+      clearTimeout(deadline);
+    }
   }
 }
 
@@ -796,33 +826,6 @@ function inputTurn(
   for (const event of events) {
     if (event.type === "turn/start") turn = event.data.turn;
     if (event.type === "user/message" && event.data.id === id) return turn;
-  }
-  return undefined;
-}
-
-/**
- * 找出某个 turn 里“由用户发起”的 user/message 的 id。
- * 用于把 assistant 消息关联回触发它的输入。
- *
- * 只看 source.kind === "user"：工具回灌、系统注入的消息不算用户输入。
- *
- * @example
- *   inputIDForTurn([turn/start 2, user/message id="in_5", source.kind="user"], 2)
- *   // "in_5"
- */
-function inputIDForTurn(
-  events: readonly SessionEvent[],
-  target: number,
-): string | undefined {
-  let turn: number | undefined;
-  for (const event of events) {
-    if (event.type === "turn/start") turn = event.data.turn;
-    if (
-      event.type === "user/message" &&
-      turn === target &&
-      event.data.source.kind === "user"
-    )
-      return event.data.id;
   }
   return undefined;
 }

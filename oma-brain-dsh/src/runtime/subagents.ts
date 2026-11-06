@@ -33,10 +33,6 @@ export class Subagents {
     return this.bridge.threads();
   }
 
-  async loadThreads(): Promise<void> {
-    await this.bridge.restoreThreads?.();
-  }
-
   async restore(): Promise<void> {
     if (this.dsh) this.dsh.recovering = true;
     try {
@@ -124,7 +120,6 @@ export class Subagents {
   private async createRuntime(thread: SubagentThread): Promise<SessionRuntime> {
     const config = this.parent.config;
     const mcp = await config.threadMcpContext?.(thread);
-    let child: SessionRuntime;
     const execution = this.bridge.toolExecution(thread.id);
     const bridge: ToolExecutionBridge = {
       approve: (request, signal) => execution.approve(request, signal),
@@ -133,7 +128,7 @@ export class Subagents {
       approvalChanged: (name, callId, effective) =>
         execution.approvalChanged(name, callId, effective),
     };
-    child = new SessionRuntime(
+    return new SessionRuntime(
       this.parent.ctx,
       {
         ...config,
@@ -158,17 +153,12 @@ export class Subagents {
             serverName,
             phase,
           ) ?? Promise.resolve(),
-        beforeRequest: async () => {
-          await this.settleEvents();
-          await child.flushLog();
-          await this.bridge.beforeRequest?.(thread.id);
-        },
+        beforeRequest: () => this.settleEvents(),
         onDiagnostic: (diagnostic) =>
           this.bridge.onDiagnostic?.(thread.id, diagnostic),
         setupTools: (scope) => this.bridge.setupTools?.(scope),
         onOpen: (session) => this.bridge.onOpen?.(session) ?? Promise.resolve(),
-        afterFlushLog: (session) =>
-          this.bridge.afterFlushLog?.(session) ?? Promise.resolve(),
+        flushLog: this.bridge.flushLog?.bind(this.bridge),
         onEvent: (event, session) =>
           this.bridge.onEvent(thread.id, event, session),
         onStream: (frame) => this.bridge.onStream(thread.id, frame),
@@ -177,7 +167,6 @@ export class Subagents {
       bridge,
       this.parent,
     );
-    return child;
   }
 
   async flush(): Promise<void> {

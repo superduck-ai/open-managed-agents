@@ -40,7 +40,7 @@ import type {
 import type { DsrSession } from "./session.ts";
 import { openTurn } from "./session.ts";
 import { DsrError, object } from "./http.ts";
-import type { PublicEvent } from "./wire.ts";
+import type { PublicEvent, Transcript } from "./wire.ts";
 
 /**
  * 把所有子 agent 相关能力接到一个根会话（DsrSession）上。
@@ -88,17 +88,21 @@ export class DsrSubagentBridge implements SubagentBridge {
    *   //   {dsh_session_id: "ses_child", parent_dsh_session_id: "ses_root", ...}
    *   // 恢复后 retained = [{id: "ses_child", name: "researcher", status: "idle", ...}]
    */
-  async restoreThreads(): Promise<void> {
-    for (const transcript of await this.owner.client.listTranscripts(
-      this.owner.abort.signal,
-    )) {
+  async restoreThreads(directory?: readonly Transcript[]): Promise<void> {
+    const transcripts =
+      directory ??
+      (await this.owner.client.listTranscripts(this.owner.abort.signal));
+    for (const transcript of transcripts) {
       // 根会话本身不是子线程。
       if (transcript.dsh_session_id === this.owner.id) continue;
       // DSRv1 只支持一层子 agent；更深层级无法用现有协议表达。
       if (transcript.parent_dsh_session_id !== this.owner.id)
         throw new Error("DSRv1 supports one subagent level");
       this.bindPersistence(transcript.dsh_session_id);
-      await this.owner.ctx.sessionReplication.ensure(transcript.dsh_session_id);
+      await this.owner.ctx.sessionReplication.ensure(
+        transcript.dsh_session_id,
+        { nextSeq: transcript.next_seq },
+      );
       const handle = await this.owner.ctx.sessionPersistence.open(
         SessionId(transcript.dsh_session_id),
         "read",
@@ -298,16 +302,11 @@ export class DsrSubagentBridge implements SubagentBridge {
 
   // 子线程打开时：把已有事件补记到根会话的可观测事件流，然后刷盘。
   async onOpen(session: Session): Promise<void> {
-    for (const event of session.snapshotEvents())
-      this.owner.record(event, session);
-    await this.owner.checkpoint();
+    this.owner.replay(session);
+    await this.owner.checkpoint(session);
   }
-  // 每次日志刷新后 checkpoint，保证公开事件与 transcript 的进度一致。
-  async afterFlushLog(_session: Session): Promise<void> {
-    await this.owner.checkpoint();
-  }
-  async beforeRequest(): Promise<void> {
-    await this.owner.checkpoint();
+  async flushLog(session: Session): Promise<void> {
+    await this.owner.checkpoint(session);
   }
   // 子线程事件走和根会话相同的记录逻辑（record 内部用 session.id 区分线程）。
   onEvent(

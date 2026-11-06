@@ -5,12 +5,10 @@ import SessionStore, {
   type SessionEvent,
   type SessionHeader,
 } from "@deepseek-ai/dsh-session";
-import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import TranscriptPersistence from "../src/runtime/transcript-persistence.ts";
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { DsrClient } from "../src/dsr/client.ts";
+import { DsrError } from "../src/dsr/http.ts";
 import { createRemoteTranscriptStore } from "../src/dsr/replication.ts";
 import {
   SessionReplication,
@@ -43,10 +41,9 @@ async function* pages(...batches: DshLogData[][]) {
   yield* batches;
 }
 async function fixture(read: RemoteTranscriptStore["read"]) {
-  const root = await mkdtemp(join(tmpdir(), "oma-streaming-test-"));
   const ctx = new Context();
   await ctx.plugin(SessionStore);
-  await ctx.plugin(JsonlPersistence, { root, compression: "none" });
+  await ctx.plugin(TranscriptPersistence);
   const writes: DshLogData[][] = [];
   await ctx.plugin(SessionReplication, {
     remote: {
@@ -62,18 +59,18 @@ async function fixture(read: RemoteTranscriptStore["read"]) {
     writes,
     async close() {
       await ctx.fiber.dispose();
-      await rm(root, { recursive: true, force: true });
     },
   };
 }
-async function seed(ctx: Context, events: SessionEvent[]) {
-  const handle = await ctx.sessionPersistence.create(header);
-  try {
-    await handle.append(events);
-    await handle.flush();
-  } finally {
-    await handle.close();
-  }
+async function seed(ctx: Context, events: SessionEvent[], value = header) {
+  await withDownloadedTranscript(
+    value.id,
+    pages([value, ...events]),
+    () => {},
+    async (remote) => {
+      ctx.transcriptStore.replace(value.id, remote, () => {});
+    },
+  );
 }
 async function stored(ctx: Context) {
   const handle = await ctx.sessionPersistence.open(header.id, "read");
@@ -110,6 +107,19 @@ test("invalid and conflicting streamed records never reach the consumer", async 
     expect(consumed).toBe(false);
   }
 });
+test("the restore boundary rejects an incomplete custom source before replacing cache", async () => {
+  const f = await fixture(() => pages([header, event(0)]));
+  try {
+    await seed(f.ctx, [event(0), event(1)]);
+    await expect(
+      f.ctx.sessionReplication.ensure(header.id, { nextSeq: "2" }),
+    ).rejects.toThrow("directory watermark");
+    expect(await stored(f.ctx)).toEqual([event(0), event(1)]);
+  } finally {
+    await f.close();
+  }
+});
+
 test("a failed later page preserves the local transcript and can be retried", async () => {
   let fail = true;
   const f = await fixture(async function* () {
@@ -131,17 +141,15 @@ test("a failed later page preserves the local transcript and can be retried", as
     await f.close();
   }
 });
-test("a conflicting local prefix is preserved without appending the remote suffix", async () => {
+test("a conflicting local prefix is replaced with the validated remote transcript", async () => {
   const f = await fixture(() =>
     pages([header, event(0)], [event(1), event(2)]),
   );
   const local = [event(0), { ...event(1), time: 99 }];
   try {
     await seed(f.ctx, local);
-    await expect(f.ctx.sessionReplication.ensure(header.id)).rejects.toThrow(
-      "histories diverged",
-    );
-    expect(await stored(f.ctx)).toEqual(local);
+    expect(await f.ctx.sessionReplication.ensure(header.id)).toBe(true);
+    expect(await stored(f.ctx)).toEqual([event(0), event(1), event(2)]);
     expect(f.writes).toEqual([]);
   } finally {
     await f.close();
@@ -176,32 +184,25 @@ test("ownership loss closes the source and prevents hydration", async () => {
   expect(closed).toBe(true);
   expect(consumed).toBe(false);
 });
-test("failed downloads and failed consumers remove their temporary files", async () => {
-  for (const failDownload of [true, false]) {
-    const before = new Set(await readdir(tmpdir()));
-    let root: string | undefined;
-    const source = (async function* () {
-      yield [header, event(0)];
-      const names = (await readdir(tmpdir())).filter(
-        (name) => name.startsWith("oma-brain-transcript-") && !before.has(name),
-      );
-      expect(names).toHaveLength(1);
-      root = join(tmpdir(), names[0]!);
-      if (failDownload) throw new Error("download failure");
-    })();
-    await expect(
-      withDownloadedTranscript(
-        header.id,
-        source,
-        () => {},
-        async () => {
-          throw new Error("consumer failure");
-        },
-      ),
-    ).rejects.toThrow(failDownload ? "download failure" : "consumer failure");
-    expect(root).toBeDefined();
-    expect(await readdir(root!).catch(() => undefined)).toBeUndefined();
-  }
+test("a failed consumer can retry the download without filesystem state", async () => {
+  await expect(
+    withDownloadedTranscript(
+      header.id,
+      pages([header, event(0)]),
+      () => {},
+      async () => {
+        throw new Error("consumer failure");
+      },
+    ),
+  ).rejects.toThrow("consumer failure");
+  await withDownloadedTranscript(
+    header.id,
+    pages([header, event(0)]),
+    () => {},
+    async (remote) => {
+      expect(remote?.events).toEqual([event(0)]);
+    },
+  );
 });
 
 test("publishing refuses a remote log that is longer than the local prefix", async () => {
@@ -211,7 +212,7 @@ test("publishing refuses a remote log that is longer than the local prefix", asy
   try {
     await seed(f.ctx, [event(0)]);
     await expect(f.ctx.sessionReplication.flush(header.id)).rejects.toThrow(
-      "histories diverged",
+      "Transcript must be restored before uploading",
     );
     expect(f.writes).toEqual([]);
     expect(await stored(f.ctx)).toEqual([event(0)]);
@@ -220,39 +221,27 @@ test("publishing refuses a remote log that is longer than the local prefix", asy
   }
 });
 
-test("a page is on disk before the source produces its next page and temporary files are cleaned", async () => {
-  const before = new Set(await readdir(tmpdir()));
-  let path: string | undefined;
+test("pages are consumed incrementally and retained as validated events without files", async () => {
+  let pagesRead = 0;
   const source = (async function* () {
+    pagesRead++;
     yield [header, event(0)];
-    const names = (await readdir(tmpdir())).filter(
-      (name) => name.startsWith("oma-brain-transcript-") && !before.has(name),
-    );
-    expect(names).toHaveLength(1);
-    path = join(tmpdir(), names[0]!, "events.jsonl");
-    expect(
-      (await readFile(path, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line)),
-    ).toEqual([event(0)]);
+    pagesRead++;
     yield [event(1)];
   })();
   await withDownloadedTranscript(
     header.id,
     source,
     () => {},
-    async (transcript) => {
-      expect(transcript!.count).toBe(2);
-      const events: SessionEvent[] = [];
-      for await (const batch of transcript!.batches()) events.push(...batch);
-      expect(events).toEqual([event(0), event(1)]);
+    async (remote) => {
+      expect(pagesRead).toBe(2);
+      expect(remote!.count).toBe(2);
+      expect(remote!.events).toEqual([event(0), event(1)]);
+      expect(Object.isFrozen(remote!.events[0])).toBe(true);
     },
   );
-  expect(path).toBeDefined();
-  expect(await readFile(path!, "utf8").catch(() => undefined)).toBeUndefined();
 });
-test("fresh hydration appends bounded batches without fetching again after acquisition", async () => {
+test("hydration consumes pages once and reuses the acquired transcript", async () => {
   let reads = 0;
   const events = Array.from({ length: 650 }, (_, index) => event(index));
   const f = await fixture(async function* () {
@@ -262,17 +251,6 @@ test("fresh hydration appends bounded batches without fetching again after acqui
   });
   try {
     expect(await f.ctx.sessionReplication.ensure(header.id)).toBe(true);
-    await withDownloadedTranscript(
-      header.id,
-      pages([header, ...events]),
-      () => {},
-      async (transcript) => {
-        const sizes = [];
-        for await (const batch of transcript!.batches())
-          sizes.push(batch.length);
-        expect(sizes).toEqual([200, 200, 200, 50]);
-      },
-    );
     expect(await stored(f.ctx)).toEqual(events);
     expect(await f.ctx.sessionReplication.ensure(header.id)).toBe(false);
     expect(reads).toBe(1);
@@ -280,13 +258,14 @@ test("fresh hydration appends bounded batches without fetching again after acqui
     await f.close();
   }
 });
-test("a longer local prefix uploads only its unconfirmed tail", async () => {
+test("a longer local prefix is discarded without uploading its unconfirmed tail", async () => {
   const f = await fixture(() => pages([header, event(0)]));
   try {
     await seed(f.ctx, [event(0), event(1), event(2)]);
-    expect(await f.ctx.sessionReplication.ensure(header.id)).toBe(false);
+    expect(await f.ctx.sessionReplication.ensure(header.id)).toBe(true);
+    expect(await stored(f.ctx)).toEqual([event(0)]);
     await f.ctx.sessionReplication.flush(header.id);
-    expect(f.writes).toEqual([[event(1), event(2)]]);
+    expect(f.writes).toEqual([]);
   } finally {
     await f.close();
   }
@@ -309,9 +288,7 @@ test("identical overlap on and between pages does not duplicate events", async (
     () => {},
     async (transcript) => {
       expect(transcript!.count).toBe(2);
-      const batches = [];
-      for await (const batch of transcript!.batches()) batches.push(batch);
-      expect(batches).toEqual([[event(0), event(1)]]);
+      expect(transcript!.events).toEqual([event(0), event(1)]);
     },
   );
 });
@@ -319,7 +296,7 @@ test("the DSR adapter fetches another page only when its consumer advances", asy
   const calls: string[] = [];
   const client = {
     async listTranscripts() {
-      return [{ dsh_session_id: header.id }];
+      return [{ dsh_session_id: header.id, next_seq: "2" }];
     },
     async readTranscript(_id: string, cursor: string) {
       calls.push(cursor);
@@ -339,3 +316,195 @@ test("the DSR adapter fetches another page only when its consumer advances", asy
   await iterator.return?.();
   expect(calls).toEqual(["0"]);
 });
+
+test("invalid remote history preserves an existing local cache", async () => {
+  const f = await fixture(() => pages([header, event(1)]));
+  try {
+    await seed(f.ctx, [event(0)]);
+    await expect(f.ctx.sessionReplication.ensure(header.id)).rejects.toThrow();
+    expect(await stored(f.ctx)).toEqual([event(0)]);
+    expect(f.writes).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("an active writer prevents cache replacement", async () => {
+  const f = await fixture(() => pages([header, event(0), event(1)]));
+  try {
+    await seed(f.ctx, [event(0)]);
+    const handle = await f.ctx.sessionPersistence.open(header.id, "write");
+    try {
+      await expect(
+        f.ctx.sessionReplication.ensure(header.id),
+      ).rejects.toThrow();
+      expect(await stored(f.ctx)).toEqual([event(0)]);
+    } finally {
+      f.ctx.transcriptStore.release(header.id, handle);
+      await handle.close();
+    }
+    expect(await f.ctx.sessionReplication.ensure(header.id)).toBe(true);
+    expect(await stored(f.ctx)).toEqual([event(0), event(1)]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("replacement invalidates previously open read handles", async () => {
+  const f = await fixture(() => pages([header, event(0), event(1)]));
+  try {
+    await seed(f.ctx, [event(0)]);
+    const previous = await f.ctx.sessionPersistence.open(header.id, "read");
+    await f.ctx.sessionReplication.ensure(header.id);
+    await expect(previous.read()).rejects.toThrow();
+    await previous.close();
+    expect(await stored(f.ctx)).toEqual([event(0), event(1)]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("remote header and empty event history replace local metadata and events", async () => {
+  const remoteHeader = { ...header, cwd: "/remote/project", createdAt: 123 };
+  const f = await fixture(() => pages([remoteHeader]));
+  try {
+    await seed(f.ctx, [event(0)]);
+    expect(await f.ctx.sessionReplication.ensure(header.id)).toBe(true);
+    expect(await stored(f.ctx)).toEqual([]);
+    expect(
+      (await f.ctx.sessionPersistence.stat(header.id))!.header,
+    ).toMatchObject(remoteHeader);
+    expect((await f.ctx.sessionPersistence.list()).length).toBe(1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a missing remote transcript removes only the matching local cache", async () => {
+  const f = await fixture(() => pages());
+  try {
+    await seed(f.ctx, [event(0)]);
+    const other = { ...header, id: SessionId("unrelated") };
+    await seed(f.ctx, [], other);
+    expect(await f.ctx.sessionReplication.ensure(header.id)).toBe(false);
+    expect(await f.ctx.sessionPersistence.stat(header.id)).toBeUndefined();
+    expect(
+      (await f.ctx.sessionPersistence.stat(other.id))!.header,
+    ).toMatchObject(other);
+    await f.ctx.sessionReplication.flush(header.id);
+    expect(f.writes).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a newly created writer prevents remote cache replacement", async () => {
+  const f = await fixture(() => pages([header, event(0), event(1)]));
+  try {
+    const handle = await f.ctx.sessionPersistence.create(header);
+    try {
+      await expect(
+        f.ctx.sessionReplication.ensure(header.id),
+      ).rejects.toThrow();
+    } finally {
+      f.ctx.transcriptStore.release(header.id, handle);
+      await handle.close();
+    }
+    expect(await f.ctx.sessionReplication.ensure(header.id)).toBe(true);
+    expect(await stored(f.ctx)).toEqual([event(0), event(1)]);
+  } finally {
+    await f.close();
+  }
+});
+
+test.each(["ses/特殊~", ".."])(
+  "restoration preserves opaque session IDs including %s",
+  async (value) => {
+    const escaped = { ...header, id: SessionId(value) };
+    const f = await fixture(() => pages([escaped, event(0), event(1)]));
+    try {
+      await seed(f.ctx, [event(0)], escaped);
+      expect(await f.ctx.sessionReplication.ensure(escaped.id)).toBe(true);
+      const reader = await f.ctx.sessionPersistence.open(escaped.id, "read");
+      try {
+        expect((await reader.read()).events).toEqual([event(0), event(1)]);
+      } finally {
+        await reader.close();
+      }
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test("ownership lost at publication preserves the previous transcript", async () => {
+  const f = await fixture(() => pages([header, event(0), event(1)]));
+  try {
+    await seed(f.ctx, [event(0)]);
+    await expect(
+      withDownloadedTranscript(
+        header.id,
+        pages([header, event(0), event(1)]),
+        () => {},
+        async (remote) => {
+          f.ctx.transcriptStore.replace(header.id, remote, () => {
+            throw new Error("owner lost");
+          });
+        },
+      ),
+    ).rejects.toThrow("owner lost");
+    expect(await stored(f.ctx)).toEqual([event(0)]);
+    expect(await f.ctx.sessionReplication.ensure(header.id)).toBe(true);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a known transcript read failure does not fall back to an empty directory", async () => {
+  let lists = 0;
+  const client = {
+    async listTranscripts() {
+      lists++;
+      return [];
+    },
+    async readTranscript() {
+      throw new DsrError(404, "session_not_found");
+    },
+  } as unknown as DsrClient;
+  const store = createRemoteTranscriptStore(() => client);
+  await expect(
+    (async () => {
+      for await (const batch of store.read(header.id, header.id, undefined, {
+        nextSeq: "0",
+      }))
+        void batch;
+    })(),
+  ).rejects.toMatchObject({ status: 404, code: "session_not_found" });
+  expect(lists).toBe(0);
+});
+
+test.each([false, true])(
+  "an explicit directory snapshot %s skips directory enumeration",
+  async (exists) => {
+    let reads = 0;
+    const client = {
+      async listTranscripts() {
+        throw new Error("unexpected directory scan");
+      },
+      async readTranscript() {
+        reads++;
+        return { header, events: [], next_from_seq: null };
+      },
+    } as unknown as DsrClient;
+    const records = [];
+    for await (const batch of createRemoteTranscriptStore(() => client).read(
+      header.id,
+      header.id,
+      undefined,
+      exists ? { nextSeq: "0" } : null,
+    ))
+      records.push(...batch);
+    expect(reads).toBe(exists ? 1 : 0);
+    expect(records).toEqual(exists ? [header] : []);
+  },
+);

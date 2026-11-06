@@ -119,9 +119,9 @@ result/reason 有现成业务来源，但旧 `InputOutcome` 不能表达 cancell
 
 请求必须是落盘完成的连续 SessionEvent，不能照搬旧根会话混合 Header/Event 的队列。确认 seq X 的条件是 next_seq 大于 X。gap 补缺口，header_required 先补 Header，conflict 保留本地，purged 不重建。
 
-413 应区分批次超 16 MiB 和单事件超 15 MiB：批次可以拆小重试，只有已写本地且单条不可复制时才 permanent。Header 重复返回的水位、错误头水位都不能用于跳过内容核对。本次已澄清大小错误规则和执行开始屏障。
+当前客户端发送前按最多 200 条和常规请求体目标 4 MiB 主动组批，收到 413 不再拆批或重试，而是复制失败并以 permanent 释放。单事件 15 MiB 硬限制保持不变。Header 重复返回的水位、错误头水位都不能用于跳过内容核对。本次已澄清大小错误规则和执行开始屏障。
 
-判断：响应足够，拆队列与拆批是必做适配。文档原生事件缩略示意不能当完整 schema fixture，真实样本须由固定版本 DSH 产生。
+判断：响应足够，按 transcript 分流与发送前的条数、字节组批是必做适配。文档原生事件缩略示意不能当完整 schema fixture，真实样本须由固定版本 DSH 产生。
 
 ### 10. GET transcripts
 
@@ -135,11 +135,11 @@ ID、parent、公开线程绑定、header_present、next_seq 足够发现目录�
 
 ### 11. GET transcripts/{dsh_session_id}
 
-当前 `CcrReplication.load/ensure/validateRemote`，未来逐页读取后继续使用临时 JSONL 完整校验，再做正式本地前缀对账。
+DSRv1 恢复以远端为唯一依据，逐页从 seq 0 下载到进程内缓冲区并完整校验，核对目录 next_seq 后替换缓存，不比较本地前缀或补传本地尾部；替换拒绝活跃 Session 与写句柄。
 
-Header、events、next_from_seq 已足够；首条 seq、连续性、Header ID/parent/version、游标严格前进都必须校验。from_seq=0 返回 Header 和 seq0，分页预算按原始 Header/Event JSON 字节累计，外层封装不计；单事件超软预算仍要返回一条。
+Header、events、next_from_seq 已足够；首条 seq、连续性、Header ID/parent/version、游标严格前进都必须校验。from_seq=0 返回 Header 和 seq0，每页最多 200 条事件，按条数分页，不设置响应字节预算。
 
-已列出的日志若读取404，不可静默当作不存在并重建；410不可恢复。不同页的归档/还原不得改变逻辑事件序列。只读完整校验成功后才能修改正式文件。
+已列出的日志若读取404，不可静默当作不存在并重建；410不可恢复。不同页的归档/还原不得改变逻辑事件序列。完整校验和目录水位核对成功后才能替换进程内历史。
 
 判断：保留，补齐客户端一致性验证。
 
@@ -228,7 +228,7 @@ MCP工具允许修改参数时，执行的是有效参数，permission重试仍�
 | --- | --- |
 | 1–4 | 大epoch无精度丢失、claim响应丢失、release重复与新owner竞争、准入慢读期间心跳、并发410只有一次重新注册 |
 | 5–7 | task/control乱序独立、unknown task策略、逐项processing确认、ACK定位丢失、finish丢响应、completion先复制、终态重投只结算 |
-| 8–11 | 本地先append后写Header、分日志顺序、批次413拆分、单事件永久超限、目录分页、Header-only残留、跨归档分页和冷恢复校验 |
+| 8–11 | 本地先append后写Header、分日志顺序、主动字节组批与413永久失败、单事件永久超限、目录分页、Header-only残留、跨归档分页和冷恢复校验 |
 | 12–14 | TS/Go审批ID样本、202控制丢失后查询、external_result、有效参数重取、cancel独立signal、未知工具身份、模型双写ID相同、线程输出重启去重 |
 | 运行时路由 | MCP全部方法及OAuth发现、取消和未派发头、附件四个方法、子线程权限、web全文保存、OTLP原生状态与partial success |
 | 模型与沙箱 | 模型线程/purpose/request ID保持，sandbox token和CA例外保持，不将DSR头泄露到外部上游 |

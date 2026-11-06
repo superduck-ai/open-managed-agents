@@ -176,17 +176,11 @@ type transcriptPage struct {
 
 func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 	from := int64(0)
-	budget := int64(defaultPageBytes)
 	var err error
 	if value := r.URL.Query().Get("from_seq"); value != "" {
 		from, err = decimal(value)
 	}
-	if err == nil {
-		if value := r.URL.Query().Get("limit_bytes"); value != "" {
-			budget, err = decimal(value)
-		}
-	}
-	if err != nil || from > 9007199254740991 || budget < 1 || budget > maxPageBytes {
+	if err != nil || from > 9007199254740991 {
 		h.fail(w, r, invalidRequest(), nil)
 		return
 	}
@@ -196,17 +190,11 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := transcriptPage{Events: make([]json.RawMessage, 0, len(events))}
-	used := 0
 	if from == 0 {
 		response.Header = transcript.Header
-		used = len(transcript.Header)
 	}
 	for _, event := range events {
-		if len(response.Events) > 0 && used+len(event.Payload) > int(budget) {
-			break
-		}
 		response.Events = append(response.Events, json.RawMessage(event.Payload))
-		used += len(event.Payload)
 	}
 	next := from + int64(len(response.Events))
 	if next < transcript.NextSeq {

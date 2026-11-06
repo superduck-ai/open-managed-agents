@@ -34,7 +34,7 @@ The host uses only `/v1/dsr/claims` and `/v1/dsr/sessions/{code_session_id}/...`
 
 Native DSH logs use the original Session format and continuous numeric event sequences. Epochs, control versions and pagination watermarks use decimal strings. Transcript replication confirms native tool-call records before tool dispatch and tool-result records before continuation. Root and child logs retain their identities across owner replacement.
 
-Local JSONL transcripts are a cache. The remote DSR transcript remains the recovery source. Storage configuration is checked before claiming work. The host never converts historical transport envelopes into DSR logs automatically.
+Transcript persistence uses the OMA process-local adapter and the existing asynchronous DSR replication service. Only server-confirmed history survives a process crash; there is no local transcript WAL or JSONL cache. Attachment storage remains independent and is checked before claiming work. The host never converts historical transport envelopes into DSR logs automatically.
 
 ## Configuration
 
@@ -47,7 +47,6 @@ Local JSONL transcripts are a cache. The remote DSR transcript remains the recov
 | `OMA_BRAIN_CLAIM_CONCURRENCY` | `4` | Claim polling concurrency, 1–32 |
 | `OMA_BRAIN_SHUTDOWN_DRAIN_MS` | `20000` | Active tool drain deadline, 0–600000 ms |
 | `DSH_HOME` | `oma-brain-dsh/.dsh` | Local native runtime storage |
-| `OMA_BRAIN_TRANSCRIPT_DIR` | `$DSH_HOME/transcripts` | Local transcript cache |
 
 Heartbeat timing comes from the DSR registration response. Removed transport-specific heartbeat environment variables no longer configure the host. SIGINT/SIGTERM stop claims and drain active tool work before closing owners. The process enforces the drain deadline plus settlement/cleanup allowance; a second SIGINT forces exit.
 

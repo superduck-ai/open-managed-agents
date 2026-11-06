@@ -149,10 +149,12 @@ export class SessionRuntime {
     });
     scope.on("tools/execute", async (exec, next) => {
       if (exec.agent) {
+        const dsrReplication = this.ctx.get("sessionReplication");
+        const replication = dsrReplication ?? this.ctx.get("ccrReplication");
+        await replication?.waitForCapacity(exec.agent.session.id, exec.signal);
         await this.ctx.sessions.flush(exec.agent.session);
-        await (
-          this.ctx.get("sessionReplication") ?? this.ctx.get("ccrReplication")
-        )?.flush(exec.agent.session.id);
+        if (!dsrReplication)
+          await replication?.flush(exec.agent.session.id, exec.signal);
       }
       exec.signal.throwIfAborted();
       const dispatch = () =>
@@ -203,8 +205,8 @@ export class SessionRuntime {
     });
     scope.on("agent/request", async ({ signal }, next) => {
       signal.throwIfAborted();
-      await this.flushLog();
       await this.hooks.beforeRequest?.();
+      await this.flushLog();
       signal.throwIfAborted();
       const call = await next();
       return this.config.configureModel?.(call) ?? call;
@@ -370,8 +372,8 @@ export class SessionRuntime {
   }
 
   async flushLog(): Promise<void> {
-    await this.ctx.sessions.flush(this.agent.session);
-    await this.hooks.afterFlushLog?.(this.agent.session);
+    if (this.hooks.flushLog) await this.hooks.flushLog(this.agent.session);
+    else await this.ctx.sessions.flush(this.agent.session);
   }
 
   cancelForShutdown(): void {

@@ -59,13 +59,13 @@ CCRv2 的 Worker 协议来自沙箱内运行的 Claude Code（superduck-code）�
 - 不改变 JetStream 投递、三段 ACK、Redis ACK 定位与入站消息 30 天逻辑期限。
 - 不改变 claim 的领取条件、attempts、耗尽 hold、`FailPermanently` 与长轮询。claim 响应丢失会消耗一次 attempt 并等待领取期限，这是现行已接受的行为，本次不改。
 - 不改变沙箱侧（`role=sandbox` JWT）的上游代理、`sign-commit`、MITM 证书接口。
-- 不改变 DSH 原生 JSONL 格式、本地主存储与异步复制。恢复语义按 7.7 扩展为中途续执行，需要上游运行时能力。
+- 保留 DSH 原生事件格式，采用进程内持久化适配与异步服务端复制；不挂载本地 JSONL 后端。恢复语义按 7.7 扩展为中途续执行，需要上游运行时能力。
 - **不放松执行屏障**（3.1）。
 - 不引入 outbox，不改变数据库提交与 NATS 发布之间的现有失败语义（3.2）。
 
 ### 3.1 保持不变的执行屏障
 
-1. 工具体执行前，记录授权后的执行开始标记，刷新本地日志并等待覆盖该标记的 transcript 前缀远程确认；任一失败时不执行工具体。该标记见 7.7，是新增恢复能力的前置条件。
+1. 工具体执行前，记录授权后的执行开始标记，捕获原生事件并等待覆盖该标记的 transcript 前缀远程确认；任一失败时不执行工具体。该标记见 7.7，是新增恢复能力的前置条件。
 2. 公开消息、工具结果与回合终态发布前，等待其来源事件的 transcript 远程确认。
 3. 持久公开输出在发送前，等待捕获时已有的流式预览确认。
 4. task 输入按"transcript 终态确认 → 公开输出确认 → 结束上报确认 → `processed` 回执"的顺序结束。
@@ -163,7 +163,7 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 | 409 | `epoch_superseded` | fence 主线程与全部子线程，停止写入 |
 | 409 | `transcript_header_required` | 先写 Header 再追加 |
 | 409 | `transcript_gap` | 从 `DSR-Next-Seq` 补发 |
-| 409 | `transcript_conflict` | 停止恢复，保留本地文件 |
+| 409 | `transcript_conflict` | 停止恢复，保留已有进程内状态 |
 | 409 | `permission_idempotency_mismatch` | 视为缺陷，停止该会话 |
 | 409 | `public_event_idempotency_mismatch` | 视为缺陷，停止该会话 |
 | 409 | `finish_idempotency_mismatch` | 视为缺陷，停止该会话 |
@@ -171,7 +171,7 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 | 409 | `finish_required` | 不 ACK，先完成结束上报 |
 | 410 | `lease_expired` | 同 epoch 重新 register（4.4） |
 | 410 | `transcript_purged` | 退役会话，不再恢复（6.8） |
-| 413 | `payload_too_large` | 批次超限先拆小重试；单条事件超限且尚未写入时当前输入失败，已写入不可复制单条事件时以 `permanent` 释放（6.5） |
+| 413 | `payload_too_large` | 客户端主动按条数和字节组批；收到 413 不拆批、不重试，复制失败并以 `permanent` 释放（6.5） |
 | 429/5xx | — | 有界退避重试 |
 
 - 接口 1–14 中，已取得 session owner 的请求收到缺少 `DSR-Error` 的未知 4xx 时，按保守路径 fence、停止写入、不 release，等待租约过期。claim 启动与运行期鉴权错误仍按 4.3 的领取重试规则处理。运行时能力接口的业务与原生协议错误不套此规则：附件 404、web 策略拒绝、MCP 上游错误和 OTLP 失败由对应客户端处理；网关自身的 epoch/lease 拒绝仍须带明确的 `DSR-Error`。
@@ -253,6 +253,53 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 - **超限必须在写入本地日志之前拦截。** DSH 在追加原生事件前检查大小；工具结果等大内容沿用现有的外置与截断（例如外部 MCP 大结果落盘），使事件不超过上限。
 - 若超限事件仍进入了本地不可变日志，它和其后的所有事件都无法复制，屏障 1、2、4 再也无法满足。此时不能只把当前输入标为 `failed`：DSH 以 `permanent` 释放会话，后端按现有永久失败路径发布 `session.error` 与 `idle(retries_exhausted)`，该会话不再被领取。
 
+### 6.5.1 客户端批量复制与背压
+
+当前 DSR 客户端使用 OMA `sessionPersistence` 进程内适配器，以冻结的原生事件作为唯一待上传缓冲区，复制层借用其只读视图，不另存事件数组。没有本地 JSONL、WAL 或持久化 outbox；服务器确认是唯一持久化屏障。每条 transcript 使用以下下一序号水位：
+
+| 水位 | 含义 |
+|---|---|
+| `readyNext` | 已捕获且可上传的进程内事件前缀 |
+| `requestedNext` | drain 当前需要追赶的前缀 |
+| `confirmed` | 远端已经确认的前缀，等价于 `confirmedNext` |
+
+恢复使用一次目录枚举取得各 transcript 的 `next_seq`。分页接收的事件总数必须严格等于该水位，提前结束、读取超过水位或到达水位后仍返回续页游标均拒绝恢复；旧缓存与确认水位不提交。读取期间观察到增长也拒绝，由下个 owner 重新获取目录，不逐 transcript 重新枚举目录。根日志和子线程采用相同规则。
+
+恢复后，`readyNext` 与 `requestedNext` 直接从 `confirmed` 起步。字节索引以恢复时的已确认下一序号为基点，只计算之后新增事件的累计大小，不重新序列化已确认历史；背压继续包含在飞但尚未确认的事件。
+
+只有已捕获且完成事件格式校验的事件可以上传。Header 必须先于本 transcript 的 Event，父 transcript 的 Header 必须先于子 transcript 的 Header。每批最多 200 条，常规目标为完整 `{"events":[...]}` 请求体的 4 MiB UTF-8 字节，计入封装与逗号。超过目标、但不超过 15 MiB 硬限制的单条独立发送；收到 413 直接作为永久失败处理，不拆批、不重试。主动组批不会等待攒满。
+
+每个 root code session 使用一个 drain，最多一个 transcript 写请求在飞。新事件仅更新目标与合并调度，不为每个事件增加独立 Promise 同步任务。drain 每次只处理一个 Header 或一个 Event 批次，未完成的 transcript 放到队尾，与其它主、子 transcript 轮转；各 root 可独立复制。暂时失败的 transcript 退避期间不占用 root 的发送机会。
+
+每个成功 Event 请求必须校验响应 `next_seq` 等于本批末尾的下一序号。只在确认成功后推进对应批次的水位；后续批次失败不撤回已确认进度。响应丢失时重传相同原生 seq，服务端根据内容一致性去重。`transcript_gap` 停止当前 owner 的复制并释放执行权；后续 owner 完整恢复远端日志，不在活跃运行时中对账或拼接本地历史。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Queued: 新事件或 flush 更新目标
+    Queued --> Uploading: root drain 选择一个批次
+    Uploading --> Queued: 批次确认后仍有积压，放到队尾
+    Uploading --> Idle: 已确认目标前缀
+    Uploading --> Backoff: 暂时失败
+    Backoff --> Queued: 指数退避加抖动结束
+    Uploading --> Stopped: 永久错误或 owner 失效
+    Idle --> Stopped: drain 完成或取消
+    Queued --> Stopped: drain 超时或取消
+    Backoff --> Stopped: drain 超时或取消
+```
+
+背压按 root 汇总主、子 transcript 已捕获且远端未确认的原始事件字节，包含在飞批次和尚未确认的 Header。默认高水位为 32 MiB、低水位为 16 MiB，可通过复制服务配置覆盖。达到高水位后，模型请求与工具派发边界等待；降至低水位解除等待。正在执行的操作仍可追加并持久化结果，因此这是执行准入的软水位。持久化插件的 session/event 监听器同步捕获事件并通知复制泵，不等待网络；复制层不通过第二个监听维护事件副本。已有工具派发、模型请求、输入完成等强制复制屏障仍等待目标全部确认，不能被低水位放宽。
+
+`flush()` 捕获调用时主、子 transcript 的目标前缀；该范围内的 Header 和事件得到确认后返回，之后新增事件不延长这次等待。暂时错误使当前 flush 显式失败，后台继续退避重试；容量等待者可继续等待恢复。owner 失效、历史冲突、不可序列化或超限事件、永久请求错误均停止复制并拒绝相关等待者。非法事件等 `TranscriptUploadError` 通过 worker 的 `permanent` 释放路径处理，避免反复领取同一份不可复制日志。
+
+正常关闭先停止执行并捕获最终事件，再对最终目标执行有期限的 drain，默认 5 秒。超时或取消时中断在飞 HTTP、结束 flush 与容量等待，不推进确认水位，并报告未确认事件数、字节数和在飞状态。owner 的任务排空期限同样会中断复制，避免 shutdown 卡在网络等待。重新接管仅完整恢复远端日志，进程内未上传尾部不作为恢复依据；崩溃后可能丢失，不补传。
+
+`status()` 提供未确认事件数、字节数、最早积压时长和在飞状态；背压等待/解除与 drain 失败输出仅含计数和时长的诊断。背压限制未确认积压，不是整个进程或完整历史缓存的内存硬上限。已确认历史仍由原生运行时与进程内 transcript 缓冲区持有，复制调度层不另存历史数组；本次不改变历史保留策略。
+
+普通回归通过 `oma-brain-dsh/tests/transcript-upload.test.ts`、`replication-scheduling.test.ts`、`transcript-streaming.test.ts` 与 `dsr-runtime.test.ts` 覆盖 UTF-8 组批、非法水位、单条超限、413 不拆批且永久失败、主子公平调度、在飞背压、本地追加不受网络阻塞、flush 目标、响应丢失重传、部分批次成功、超时取消及原有冷接管/SIGKILL 行为。它们使用进程内持久化适配、fake 或临时 HTTP 服务，不代替真实 PostgreSQL、跨实例与对象存储验收。
+
+真实复制集成验收使用 `just verify-be chat doctor replication` 与 `just verify-be chat replication`，范围和四个强制证据阶段见 [复制功能地图](../../../../.agents/skills/verify-be/features/replication.md)。完整 DSR owner/模型/沙箱另行验收，不以组件集成代替。
+
 ### 6.6 存储
 
 **原则：只新增表，不修改现有表。** DSRv1 不在 `code_session_internal_events`、`transcript_archives` 等现有表上加列、加索引或改写历史行。理由：
@@ -319,13 +366,15 @@ dsh_transcript_archives                 -- 归档段
 ### 6.7 读取
 
 - `GET /v1/dsr/sessions/{code_session_id}/transcripts` → `{"data": [{"dsh_session_id","parent_dsh_session_id","session_thread_id","header_present","next_seq"}]}`。
-- `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}?from_seq=0&limit_bytes=4194304` → `{"header": {...}|null, "events": [...], "next_from_seq": "37"|null}`。
+  - 每次接管完整枚举一次目录，并向根日志和全部子线程恢复显式传递同一快照的存在性；每条日志读取不重复扫描目录。快照不跨 owner 缓存，已列出的日志读取失败不得降级为空日志。
+- `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}?from_seq=0` → `{"header": {...}|null, "events": [...], "next_from_seq": "37"|null}`。
   - `from_seq` 包含该序号，`header` 只在 `from_seq = 0` 时返回。
-  - `limit_bytes` 是软预算（上限 8 MiB），按原始字节累计，Header 计入预算。每页至少返回一条；单条超过预算时该页只含这一条，响应仍可达 15 MiB 加封装。
+  - 每页最多返回 200 条原生 Event，按条数分页，不设置响应字节预算；Header 不占事件条数。
   - 使用现有"归档 + PostgreSQL"合并读回与外置 payload 还原路径；已归档行不会被判为缺口。
 - 定位：PostgreSQL 行已物理删除时，读取按 Code Session 扫描 `dsh_transcript_archives` 中的归档段，按记录中的 `dsh_session_id` 过滤出目标 transcript。扫描成本与会话总日志量成正比，可以接受；若测量证明不可接受，再为归档段增加按 transcript 的索引表。
 - GET 只做鉴权与归属校验，不要求当前 epoch。旧 epoch 的 token 可以读，不能写。
-- **接管时的前缀核对保留不变**：服务端 `next_seq` 只能证明远端长度，不能证明内容一致。DSH 现行流程（读取并校验远程历史，判断本地与远端是否互为前缀，再水合或追加）照常执行；本地更长且已确认部分内容不同的情况，仍按现行规则报错并保留本地文件。
+- **远端 transcript 是恢复的唯一依据**：每次接管从 seq 0 完整下载并用原生 v4 关系与消息投影校验，成功后替换 OMA 进程内历史。没有本地 JSONL 文件、WAL、rename 或文件锁。同进程拒绝覆盖活跃写入者，跨进程归属由服务端 lease/epoch 保证。远端缺失时按新日志处理，已列出的日志读失败或校验失败时阻止恢复。未确认的内存尾部在进程崩溃后可能丢失。每条日志独立替换，不承诺整树原子提交。
+
 
 ### 6.8 保留与压缩
 
@@ -434,6 +483,8 @@ dsh_permission_requests
 
 ### 7.4 解决
 
+公开 `user.tool_confirmation`、`user.tool_result` 的 `tool_use_id` 和 `user.custom_tool_result` 的 `custom_tool_use_id` 在事件入口归一化为 `SessionEvent.ToolUseID`。DSR 在接纳结果及查询已解决审批时，使用这一字段匹配审批的 `public_event_id`；指定线程时还须符合审批归属。普通工具结果和自定义工具结果均映射为 `external_result`，保留 `content` 与 `is_error`。
+
 用户确认或外部结果到达时，公开 API 在事务内把记录从 `pending` 改为 `resolved`，**并在同一事务内按 10.3 重新计算状态**；全部待确认解决后由该事务发布 `session.status_running`。如果此时没有有效租约（执行端崩溃或已挂起），同一事务置位 `worker_claim_requested_at`，提交后发出领取唤醒，使会话被重新领取。取消（7.5）与自动关闭（7.6）同样在没有有效租约时请求领取，以便新 owner 结束该 turn。更新失败（记录已是其他终态）时按现行"工具确认已过期"处理公开请求，不投递。成功后经 control lane 投递：
 
 ```json
@@ -541,6 +592,36 @@ DSH 收到时若本地等待项不存在（已取消、turn 已结束或属于�
 | 状态事件 | 服务端 reducer（第 10 节） | 唯一写者 |
 
 两侧之间没有顺序保证；SSE 消费方按现行规则去重。
+
+### 8.4 接管时的增量公共发布
+
+DSR 使用每条原生 transcript 中的 `plugin:oma/dsr-publication` version 1 记录公共发布确认前缀。数据为 `{version: 1, through: number}`，`through` 表示已发布输出所属的原生事件前缀的下一序号，不能大于确认记录自身的 seq，也不能小于同一 transcript 先前的确认值。未知版本、倒退或越界均拒绝恢复，不能据此静默跳过输出。
+
+一个 checkpoint 同步捕获待发公共事件和各来源 transcript 的目标前缀，然后在同一发布 Promise 链中执行：
+
+```mermaid
+sequenceDiagram
+    participant L as OMA 进程内 transcript
+    participant C as DSR checkpoint
+    participant T as 远端 transcript
+    participant P as 公开事件接口
+    C->>L: 捕获待确认事件
+    C->>T: 确认来源日志复制
+    C->>P: 每批最多 200 条发布捕获的输出
+    P-->>C: 全部批次 accepted/duplicates 确认
+    C->>L: 在各来源日志追加 dsr-publication
+    C->>T: 确认发布前缀记录复制
+```
+
+确认记录仅在全部捕获批次成功后生成。发送期间的新事件保留在下一批队列，不扩大当前确认范围。只为实际捕获输出的 transcript 记录前缀，确认记录本身和无输出尾部不会触发额外确认记录，也不会尝试写入已关闭的其它子线程。主、子 transcript 分别维护前缀；子线程创建等由运行时直接提交的公共事件继续使用既有稳定 ID，不借用其它 transcript 的前缀跳过。
+
+服务端已经提交但响应丢失、后续批次失败、确认记录追加或远端持久化失败时，接管可重发尚无持久确认的范围，由既有服务端幂等兜底，不跳过可能缺失的输出。一个 checkpoint 的较早批次成功、后续批次失败时，较早批次在恢复中仍可能重复，不能将该前缀提前标为全部成功。接管只信任远端 transcript 中的确认记录；仅在旧本地缓存中的确认会被丢弃，缺少远端确认的公共输出安全重放。
+
+恢复仍需下载/校验和扫描原生历史，但只对未确认输出生成待发队列。已确认 assistant/assistant-block 的 ID 会恢复到内存去重集合，避免在确认边界之后出现同一消息的另一种原生表示时再次上报。旧日志没有确认记录时，首次由新版本完整重放并建立确认前缀；后续正常接管不再发送已确认公共正文。旧版本忽略此 ignorable plugin record 后仍会按原有方式重放，保持向后兼容。
+
+输入 turn→ID、显式 tool/call 和 assistant 工具块回退身份在每条日志首次打开时单次建索引，之后随原生事件增量更新。保持第一条用户输入、第一条显式调用优先于工具块回退的原有身份规则，不再对每个 assistant/tool result 扫描完整历史。接管投影为 O(原生事件数 + 消息块数)，仍有原生日志读取和验证成本，不承诺常数时间或恒定内存。
+
+普通回归为 `dsr-open-replay.test.ts` 和 `dsr-publication.test.ts`，覆盖 5000 条历史已确认输出零重发、历史规模增长时无重复 record 扫描、新尾部补发、响应丢失、部分批次成功、确认记录复制失败、发布期间追加事件、主子前缀隔离、未知/非法确认及工具身份回退。这些测试使用原生 DSH、OMA 进程内持久化与本地 HTTP fixture，不代替真实服务性能基线。
 
 ## 9. 输入与 input execution
 
@@ -806,7 +887,7 @@ P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来�
   - 成功：410 后同 epoch 重新 register 恢复，不全量恢复；接管注册继承 pending 与 open turn，注册本身不改变公开状态。
 - **Transcript**（Mapper SQL 与参数绑定单测；真实 PostgreSQL 验证 bytea、jsonb、nullable 与部分唯一索引）
   - 失败：Header 缺失、seq 缺口、同序号语义不同、Header id 或 parent 不符、parent 或线程不存在、重复键、单条超过 15 MiB、旧 epoch 追加。
-  - 成功：从 seq 0 首次追加返回 `"1"`；重复追加幂等；`from_seq = 0` 返回 Header 与 seq 0；按字节分页；外置 payload 还原；归档后合并读回无缺口；主线程与子线程分队列并行追加。
+  - 成功：从 seq 0 首次追加返回 `"1"`；重复追加幂等；`from_seq = 0` 返回 Header 与 seq 0；按每页最多 200 条事件分页；外置 payload 还原；归档后合并读回无缺口；主线程与子线程分队列并行追加。
   - 比较：`1`/`1.0`、指数、键序、转义、大整数的 TS/Go 共用样本；摘要不同但语义相同时不判冲突。
 - **Permission**
   - 失败：`input_id` 不属于该会话或未 processing、线程不属于该输入、同 `request_id` 不同内容、取消先到后创建不重开、resolved 与 cancel 竞争只有一个生效、结束上报后迟到的确认不执行工具、旧 epoch 迟到审批、事务失败时不出现公开 requires_action。
@@ -845,7 +926,7 @@ P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来�
 - [ ] 一个触发改变多个线程时事件 ID 不冲突；pending 集合缩小但状态仍为 requires_action 时，照常发布状态变化。
 - [ ] reducer 行为对照表覆盖失败后排队、并行审批（其他线程继续执行时 Session 为 running）、预算暂停与线程终止，并与现行测试一致。
 - [ ] 原生格式版本策略（仅 v4）、超限事件的永久失败规则、切换步骤与存量会话终止任务已确定。
-- [ ] 接管时本地更长且已确认部分内容不同，仍按现行规则报错并保留本地文件。
+- [ ] 接管时本地更长、内容不同或缓存损坏均被验证后的远端日志替换；下载、远端校验或替换前锁获取失败时保留旧缓存；远端不存在时清除本地缓存。
 - [ ] 审批等待时已有 `tool/call`，但没有执行开始标记：新 owner 取回 allow 后能执行，不能误判结果未知；有执行开始标记但无结果时不重放，覆盖主线程、子线程与同批多个工具。
 - [ ] 挂起不会写补偿工具结果、`turn/end`、input completion 或 finish，不关闭 pending、不 ACK task；仍有可运行线程或未确认结果时拒绝挂起。
 - [ ] 注册保留遥测开关，输入保留可信系统上下文及 trace 字段，配置随 register 冻结；问答工具与修改参数的恢复场景保持现有公开行为。
@@ -892,7 +973,6 @@ P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来�
 | 中断时服务端是否自动关闭目标线程的 pending | **关闭**（7.6），终态为 `closed`。之后迟到的确认按现行"工具确认已过期"响应 | DSH 收到中断后本来就放弃等待，只是把清理交给可能丢失的 cancel 请求。由服务端在接纳中断的事务内关闭，不依赖执行端存活，也避免中断后会话停在 requires_action、新输入被拒。迟到确认沿用已有的过期响应，公开 API 不新增错误类型 |
 | 历史执行数据是否兼容 | **不兼容**（第 10 版改定，见第 13 节）：一次性切换，终止存量会话，公开历史保留 | 省去协议并存、迁移状态、静止检查与回填，切换路径简单可演练；代价是切换时进行中的会话需要用户新建。第 6 版的 legacy 截止日期因此不再需要 |
 | `dsh_transcripts`、`dsh_input_executions`、`dsh_input_deliveries`、`dsh_permission_requests` 是否需要 `external_id` | **不需要** | `external_id` 的作用是兼容 Anthropic API 的资源 ID。这三张表是执行端内部的元数据与状态，不通过任何公开 API 暴露，也不进入事件 payload；`uuid` 已满足稳定标识与跨表引用规则。日后若需要对外暴露，再通过迁移补列 |
-| `limit_bytes` 默认值 | 默认 **4 MiB**，上限 8 MiB，保持 6.7 | 冷恢复逐页写入临时 JSONL 再回读校验，内存占用以单页为界，不需要整条日志常驻；4 MiB 让常见会话一到两页读完，单条超大事件按软预算例外处理 |
 
 ## 18. 修订记录
 
@@ -905,7 +985,7 @@ P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来�
 | 3 | 补充收益与成本定位及职责对照；claim 与 register 恢复分离，保留 `worker_claim_expires_at` hold 职责，明确 410 恢复与两侧协议过滤；身份词汇表；trajectory 改为原地存放在 internal events，复用归档、blob 与保留机制，按 trajectory 拆批，语义比较与 JCS，序号用字符串，新增 `DSR-Next-Seq` 与独立错误码；审批 ID 确定性派生、同事务发布、接管/中断/子线程终止自动关闭；新增 `dsh_input_executions` 与显式 reducer（移植现行规则、线程维度、触发点、确定性状态事件 ID、依赖迁移）；complete 改为枚举 reason；output 独立 schema、`preview.*` 边界映射、`capabilities` 协商、双写者合同；可观测与容量；P0 两版本弃用；状态来源替换先于同步审批；回填为后台任务且失败回退 |
 | 4 | 等待审批时崩溃的领取条件（open turn）；terminal 优先的重试与 no-op processing；协议状态 `migrating` 进入即推进 epoch、两侧注册拒绝；存量会话静止转换与投递时补建 turn；唯一索引去掉 `deleted_at` 条件、archive codec v2 与 v1 按幂等键重建；子线程 Header 不依赖公开线程、由 `thread_created` 绑定、线程事件 ID 确定性派生；取消墓碑必填身份字段；状态事件 ID 增加线程维度；新增 DSH 原生格式升级约束（6.9） |
 | 5 | 可领取条件增加 terminal 未 ACK 的 turn（`acked_at`），并排除预算暂停与耗尽 hold；审批先按 `request_id` 查找已有记录再做归属校验，说明子线程多次委派时的输入关联与接管不继承；Session 聚合改为沿用现行 running 优先；失败后排队输入保留现行 `idle(retries_exhausted)`；状态事件 ID 增加目标与事件类型并定义编码，等价判断包含 `event_ids`；原生 seq 保持 number；原生格式固定 v4 并区分传输回填与原生迁移；单条事件 15 MiB、超限进入本地日志即永久失败；软页预算；归档中的 trajectory 定位与 `purged`；接管时保留前缀核对；静止检查加入 consumer 状态；legacy 截止日期与退出指标；新增 15.1 冻结验收条件 |
-| 6 | 关闭全部待定问题：等待审批时崩溃主动撤回审批；中断由服务端关闭目标线程 pending；legacy 截止默认 30 天并经发布说明、启动日志与指标告警通知；三张内部表不设 `external_id`；`limit_bytes` 默认 4 MiB |
+| 6 | 关闭全部待定问题：等待审批时崩溃主动撤回审批；中断由服务端关闭目标线程 pending；legacy 截止默认 30 天并经发布说明、启动日志与指标告警通知；三张内部表不设 `external_id` |
 | 7 | 删除 register 响应中的 `capabilities`，原因是单个实例的回答无法代表滚动升级中的整个后端，且只覆盖后端到 DSH 一个方向；改为词汇由协议版本固定，版本在 register 时绑定到会话并在响应中回显，词汇变化发布新版本，按先后端、后 DSH 的顺序部署 |
 | 7.1 | 新增 [接口参考](api-reference.md)，逐个说明请求、响应、状态码与示例；同步明确 `/output` 每批 1–200 条及响应 `{accepted, duplicates}`、`inputs/ack` 遇到 `input_not_completed` 时整批不执行、Header 写入的响应字段 |
 | 7.2 | 把原生日志从 trajectory 改名为 transcript，避免与可观测性的会话轨迹撞名：路径 `/transcripts`、表 `dsh_transcripts`、错误码 `transcript_*` 与 `unsupported_transcript_version`；迁移中的错误码改为 `session_migrating`，因为它表示整个会话处于迁移状态。修订记录中的历史条目保留原名 |

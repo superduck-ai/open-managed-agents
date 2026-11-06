@@ -18,7 +18,7 @@
 | 8 | Header PUT | `runtime/replication.ts`、`dsr/replication.ts` | Header 先于事件，不可变身份 |
 | 9 | events POST | 同上 | 每日志连续追加、JCS 重叠去重，冲突整批回滚 |
 | 10 | directory GET | `dsr/subagents.ts`、`dsr/replication.ts` | 接管时完整枚举根/子日志 |
-| 11 | transcript GET | `dsr/replication.ts`、`runtime/replication.ts` | 分页读取，校验原生结构与本地前缀 |
+| 11 | transcript GET | `dsr/replication.ts`、`runtime/replication.ts` | 完整分页读取并验证远端原生日志，原子替换进程内历史 |
 | 12 | permission-requests POST | `dsr/session.ts`、`dsr/executor.ts` | 批次预审批，确定性 request_id，重查不可重新执行策略 |
 | 13 | permission cancel | `dsr/client.ts` | 显式放弃调用的接口；用户 interrupt 由后端事务关闭 pending 并持久标记 task 取消 |
 | 14 | public-events POST | `dsr/session.ts`、`dsr/subagents.ts` | 持久输出收据与公开事件同事务；预览不入历史 |
@@ -55,19 +55,65 @@ sequenceDiagram
 
 ### Transcript 分批下载与导入
 
-`RemoteTranscriptStore.read(rootSessionId, id)` 返回 `AsyncIterable<readonly DshLogData[]>`。DSR 适配器按分页产出记录，消费者完成当前批次的临时 JSONL 写入后才请求下一页，形成背压。单次读取针对一条 transcript；目录接口返回根会话及子线程的元数据。
+`RemoteTranscriptStore.read(rootSessionId, id)` 返回 `AsyncIterable<readonly DshLogData[]>`。DSR 适配器按分页产出记录，每批完成身份、格式、序号与重叠校验后才请求下一页。单次读取针对一条 transcript；目录接口返回根会话及子线程的元数据。
+
+每次 `DsrSession.open()` 只完整枚举一次远端目录，并将该快照用于根日志和全部子线程恢复。`ensure(id, snapshot)` 传递 `{ nextSeq }` 表示目录中已存在的 transcript，传 `null` 表示目录中不存在；未提供快照的独立读取自行枚举目录并取得 `next_seq`。分页适配器用 BigInt 计数，要求终页总量严格等于目录水位，未结束时总量必须小于该水位，拒绝提前结束、空尾页截断、超出水位或到达水位后仍要求续页。已列出的日志读取或水位校验失败会阻止恢复，不降级为空，不替换旧缓存，不建立较低的 confirmed；通用恢复边界也核对显式传入的期望总量。
+
+读取期间按目录快照的固定水位恢复，观察到增长同样拒绝，不追读到新水位；下个 owner 重新获取目录。此约束复用现有目录和分页字段，不增加逐日志目录请求，也不是额外的数据库 MVCC 快照或内容校验和。
 
 ```mermaid
 flowchart LR
-    A[DSR 分页读取] --> B[逐批校验并写临时 JSONL]
-    B --> C[原生持久化格式与生命周期校验]
-    C --> D[每批最多 200 条导入本地日志]
-    D --> E[运行时恢复]
+    A[DSR 分页读取] --> B[逐批校验并收集原生事件]
+    B --> C[原生 v4 关系校验与消息投影校验]
+    C --> D[替换进程内 transcript]
+    D --> E[agents.resume 复用已准备 Session]
 ```
 
-下载过程中检查 Header 身份、版本、fork 限制、事件格式、连续序号及重叠内容。完整校验成功后才导入正式日志；已有本地日志须与远端保持前缀一致。下载失败或内容冲突不修改原有日志，临时目录在成功、异常及消费者提前结束后清理。复制确认水位仅在完整恢复成功后建立。
+`runtime/transcript-persistence.ts` 提供原生 `sessionPersistence` 接口，运行时不挂载 JSONL 插件。Header 校验、连续序号、事件 envelope、未知必需事件拒绝，以及 v4 生命周期、工具、compaction 和历史引用规则继续使用原生依赖；恢复还使用原生 message projections 校验 image offload。事件深冻结后由恢复句柄返回 `shared-frozen`，不经 JSONL 编码、临时文件、缓存复制或文件锁。当前完整历史仍在内存中，关系校验和运行时重放并非恒定内存；本次没有实现流式关系校验。
 
-网络下载和正式导入按批处理。固定版本 Harness 的原生 JSONL 校验仍会完整物化日志，以验证跨事件生命周期；已有本地前缀校验及运行时重放也有历史长度相关的内存开销。因此这一链路不承诺恒定内存。临时文件通过原生持久化适配器校验后释放，复制层保留确认水位与当前运行时需要的本地历史。
+逐条 envelope 与 v4 row admission 校验只在下载接纳时执行，不在整份历史校验中重复。下载完成后执行原生 v4 关系校验；替换进程内历史前，使用当前 SessionStore 的消息投影准备一个尚未发布的 Session，保留 image offload 等投影拒绝规则。OMA 的 SessionStore 适配器在 `agents.resume` 请求相同 header、相同冻结事件引用与相同投影配置时，一次性交接该 Session，避免重建后丢弃。追加事件、元数据或投影变化、原生恢复补充中断闭合事件时改用原生重新构建；已有活跃 Session 仍按原生规则拒绝重复进入。该适配器只使用原生公开接口，不修改依赖。
+
+下载失败、校验失败或 owner 失效不替换现有进程内历史。替换拒绝活跃写入者，同一进程同一 session 只允许一个写句柄。跨进程归属由 DSR lease/epoch 与服务端写入检查保证。远端不存在时清除对应进程内记录；完整恢复后才建立复制确认水位。根日志和各子日志独立恢复，不提供整树原子提交。
+
+运行中 `append` 只接受并冻结事件，再触发既有批量复制，不逐条等待网络。句柄与服务级 `flush`、原生 `session/flush` 均等待调用时捕获前缀的服务端确认；复制泵只捕获可上传事件，不反向调用远端 flush，避免递归等待。关闭写句柄会对自身追加执行有限期确认，失败仍释放进程内写入归属。工具执行、公共输出、输入完成与 shutdown 的远端确认屏障保持有效。
+
+`TranscriptPersistence` 是插件层唯一的事件缓冲区。复制层通过只读 `view` 借用同一个 `record.events`，不再保存第二份事件数组，也不订阅 `session/event` 来维护副本；复制状态只保留调度、确认水位和累计字节索引。原生 Session 自身的模型日志仍由原生运行时持有。上传、flush 目标和背压计算都以这份 transcript 记录为准。
+
+Session 进入 store 时同步核对已有 transcript 的 header 与事件前缀，接纳种子后关联活跃 Session。此后由持久化插件的单个事件监听追加冻结事件；writer 关闭后，只要 Session 仍活跃就继续捕获，直到 `session/disposed` 解除关联。活跃 Session 期间禁止句柄直接 append，防止绕过原生模型产生另一条历史；Session 脱离后仍可通过写句柄追加。监听捕获失败会标记记录错误，复制与确认必须失败，不以原生事件监听异常被包含为由静默继续。forget 后旧 Session 不能通过延迟 capture 重建记录。恢复替换同时拒绝活跃 Session 与活跃写句柄。
+
+模型请求前先运行准备 hook，再执行一次 `SessionRuntime.flushLog()`；子 Agent 的准备阶段只等待事件队列处理完成，不嵌套刷新日志。`flushLog` hook 接管整次刷新，DSR 将其委派给根会话 checkpoint；没有 hook 时仍调用原生 `sessions.flush`。根、子请求都统一进入一次请求前 checkpoint，移除原先 `afterFlushLog` 与 `beforeRequest` 重复 checkpoint 的链路。
+
+checkpoint 的每个持久化阶段先等待整棵会话树的复制确认，再调用原生 `sessions.flush` 通知根 Session 与本次来源 Session。此时持久化监听对已确认前缀快速返回，原生 telemetry 的 flush 通知仍会送达；若通知前又有新事件，仍会确认新增前缀。公开事件发布后，有来源确认记录才执行第二个复制阶段并通知目标 Session；没有来源记录时不额外 flush。工具中间件在 DSR 下通过原生 flush 保留执行前确认，不再紧接着重复调用 replication.flush；未走 DSR 执行器的原生调用仍受该屏障保护，非 DSR 的复制兜底仍保留。工具 dispatched、结果、输入完成与关闭的必要确认边界不合并跨越。
+
+```mermaid
+flowchart LR
+    A[准备事件并调用 flushLog] --> B[复制树确认一次]
+    B --> C[原生 Session flush 通知]
+    C --> D{有公共事件}
+    D -->|否| G[返回]
+    D -->|是| E[发布公共事件]
+    E --> F{有来源确认记录}
+    F -->|否| G
+    F -->|是| H[写入确认记录并复制确认]
+    H --> I[目标 Session flush 通知]
+    I --> G
+```
+
+服务器是唯一持久恢复来源。进程崩溃或被 SIGKILL 时，未获服务器确认的内存尾部可能丢失，不再保留本地 WAL。旧 JSONL 目录不会读取、迁移或自动删除；`OMA_BRAIN_TRANSCRIPT_DIR` 不再参与启动或恢复。图片附件继续使用独立的远端存储与本地附件缓存。
+
+恢复完成后，复制计费的 `byteBase`、`readyNext` 和 `requestedNext` 从远端已确认下一序号开始，累计字节索引初值仅为 `[0]`。`updateReady` 只序列化该基点之后的新事件，不重新计费已确认 Header 或恢复历史；背压按相对基点的累计字节差计算，在飞批次仍计入，分批确认后只扣除已确认前缀。这避免恢复后的首次捕获为了重建字节索引再次序列化整份历史。该索引仍会随本次恢复后接纳的事件增长，不代表完整运行期内存有硬上限。
+
+### 复制背压的停止与归属校验
+
+容量等待在捕获待上传事件后，先检查调用方 AbortSignal，再核对等待开始时捕获的成员身份，以及当前根会话和全部子线程的运行状态。容量判断与 waiter 注册之间保持同步执行。cancel、fenced 失败、drain 超时、forget 或 owner 替换发生在捕获期间时，等待以错误结束；等待期间新增的已暂停子线程也阻止继续执行。成功注册的 waiter 随停止通知或调用方取消结束。
+
+普通回归使用受控事件捕获 Promise 固定交错顺序，覆盖上述状态变化、先前成员被释放和低于高水位时的取消。高水位在测试中缩小，验证相同的容量分支；不将这些测试作为默认 32 MiB 水位下的性能或真实心跳验收。
+
+## 接管公共输出恢复
+
+`DsrSession` 与子线程打开路径复用 `TranscriptPublication`。每条日志用单次索引维护 turn 输入和工具身份，按本地原生 `plugin:oma/dsr-publication` version 1 确认前缀跳过已发布输出。checkpoint 捕获待发队列及来源前缀，串行执行原生日志复制、公共发布和确认记录本地/远端持久化；在途新增事件不纳入较早确认。只为有输出的来源记录前缀，防止无输出尾部或已关闭子线程产生确认写入。
+
+此变更不新增 HTTP 接口、数据库表或后台 Worker。旧日志首次回放建立确认前缀；确认缺失时继续使用稳定 ID 重放，允许重复但不丢输出。详细故障窗口与原生记录合同见 [DSRv1 协议 §8.4](protocol.md#84-接管时的增量公共发布)。
 
 ## 数据与事务边界
 
@@ -75,7 +121,7 @@ flowchart LR
 
 写入按所属 Session/Code Session 加锁，并显式检查组织、工作空间、协议、epoch 和租约。公开输入接纳与 input execution 创建、确认与审批解决、公开输出与收据、finish 与 pending 关闭、公开 reducer 更新分别在同一事务中完成。提交后的 SSE/webhook fanout 复用现有服务。
 
-Header/Event 拒绝重复 JSON 键，使用 RFC 8785 JCS 比较。事件批次最多 200，单事件最多 15 MiB，请求体最多 16 MiB；读取为 1–8 MiB 软预算，默认 4 MiB。目录与读取均分页。
+Header/Event 拒绝重复 JSON 键，使用 RFC 8785 JCS 比较。事件批次最多 200，单事件最多 15 MiB，请求体最多 16 MiB；读取按每页最多 200 条事件分页，不设置响应字节预算。目录单独分页。
 
 ## 验证范围
 

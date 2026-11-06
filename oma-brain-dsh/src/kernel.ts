@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import LlmRuntime from "@deepseek-ai/dsh-llm";
-import SessionStore from "@deepseek-ai/dsh-session";
+import SessionStore from "./runtime/sessions.ts";
 import SessionProjectionRegistry from "@deepseek-ai/dsh-session-projection";
 import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import ToolRuntime from "@deepseek-ai/dsh-tools";

@@ -19,8 +19,6 @@ import (
 
 const maxRequestBytes = 16 << 20
 const maxEventBytes = 15 << 20
-const maxPageBytes = 8 << 20
-const defaultPageBytes = 4 << 20
 const maxPageEvents = 200
 
 type Database interface {

@@ -23,7 +23,7 @@ async function fixture(
   await backend.ready;
   const ctx = new Context();
   const api = new OmaApi(backend.url);
-  const clients = await mountDsr(ctx, api, root);
+  const clients = await mountDsr(ctx, api);
   const client = new DsrClient(createDsrTransport(api), {
     code_session_id: backend.a.session_id,
     session_token: backend.a.ingress_token,
@@ -368,6 +368,180 @@ test("registration configuration remains fixed across turns", async () => {
       [...backend.routes].some((route) => route.endsWith("/context")),
     ).toBe(false);
   } finally {
+    await session.close();
+    await ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("DSR model requests use one checkpoint and one replication barrier", async () => {
+  const backend = new DsrBackend();
+  const root = await mkdtemp(join(tmpdir(), "dsr-request-barrier-"));
+  const { ctx, session } = await fixture(backend, root);
+  const { SessionReplication } = await import("../src/runtime/replication.ts");
+  const checkpoint = spyOn(session, "checkpoint");
+  const flush = spyOn(SessionReplication.prototype, "flush");
+  const counts: { checkpoints: number; barriers: number }[] = [];
+  backend.onModel = async () => {
+    counts.push({
+      checkpoints: checkpoint.mock.calls.length,
+      barriers: flush.mock.calls.length,
+    });
+    return textEvents("done");
+  };
+  try {
+    await session.receive({
+      id: "one_barrier",
+      kind: "user.message",
+      lane: "task",
+      content: [{ type: "text", text: "hello" }],
+    });
+    expect(counts).toEqual([{ checkpoints: 1, barriers: 1 }]);
+    expect(backend.finishes.get("one_barrier")).toEqual({ result: "success" });
+  } finally {
+    checkpoint.mockRestore();
+    flush.mockRestore();
+    await session.close();
+    await ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("DSR child requests settle events before a single durable checkpoint and flush notification", async () => {
+  const backend = new DsrBackend();
+  const root = await mkdtemp(join(tmpdir(), "dsr-child-barrier-"));
+  const { ctx, session } = await fixture(backend, root);
+  const { SessionReplication } = await import("../src/runtime/replication.ts");
+  const { appendPluginRecord } = await import("@deepseek-ai/dsh-session");
+  const thread = {
+    id: "child-barrier",
+    name: "child",
+    inline: true,
+    systemPrompt: "",
+    model: session.config.model,
+    status: "idle" as const,
+  };
+  const factory = session.subagents as unknown as {
+    createRuntime(
+      thread: import("../src/runtime/contracts.ts").SubagentThread,
+    ): Promise<import("../src/runtime/session.ts").SessionRuntime>;
+  };
+  ctx.sessionReplication.bindThread(thread.id, session.id);
+  const unbind = session.config.bindThread?.(thread.id);
+  const child = await factory.createRuntime(thread);
+  await child.open();
+  const checkpoint = spyOn(session, "checkpoint");
+  const flush = spyOn(SessionReplication.prototype, "flush");
+  const settle = spyOn(session.subagents, "settleEvents").mockImplementation(
+    async () => {
+      appendPluginRecord(child.agent.session, "plugin:oma/dsr-dispatched", {
+        version: 1,
+        callId: "settled-before-request",
+      });
+    },
+  );
+  let notifications = 0;
+  const stopListening = ctx.on("session/flush", (value) => {
+    if (value.id === thread.id) notifications++;
+  });
+  const counts: {
+    checkpoints: number;
+    barriers: number;
+    settles: number;
+    notifications: number;
+    durable: boolean;
+  }[] = [];
+  backend.onModel = async () => {
+    counts.push({
+      checkpoints: checkpoint.mock.calls.length,
+      barriers: flush.mock.calls.length,
+      settles: settle.mock.calls.length,
+      notifications,
+      durable: backend.transcripts
+        .get(thread.id)!
+        .events.some(
+          (event) =>
+            event.type === "plugin:oma/dsr-dispatched" &&
+            event.data.callId === "settled-before-request",
+        ),
+    });
+    return textEvents("child done");
+  };
+  try {
+    await child.run("hello", {
+      beforeRun: async () => {},
+      afterRun: async () => {},
+    });
+    expect(counts).toEqual([
+      {
+        checkpoints: 1,
+        barriers: 1,
+        settles: 1,
+        notifications: 1,
+        durable: true,
+      },
+    ]);
+  } finally {
+    checkpoint.mockRestore();
+    flush.mockRestore();
+    settle.mockRestore();
+    stopListening();
+    await child.close();
+    unbind?.();
+    await session.close();
+    await ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("native tool calls outside the DSR executor retain one durability barrier", async () => {
+  const backend = new DsrBackend();
+  const root = await mkdtemp(join(tmpdir(), "dsr-tool-barrier-"));
+  const { ctx, session } = await fixture(backend, root);
+  const { SessionReplication } = await import("../src/runtime/replication.ts");
+  const { appendPluginRecord } = await import("@deepseek-ai/dsh-session");
+  const { ToolCallId } = await import("@deepseek-ai/dsh-llm");
+  const flush = spyOn(SessionReplication.prototype, "flush");
+  let durable = false;
+  let barriers = 0;
+  backend.onTool = async () => {
+    barriers = flush.mock.calls.length;
+    durable = backend.transcripts
+      .get(session.id)!
+      .events.some(
+        (event) =>
+          event.type === "plugin:oma/dsr-dispatched" &&
+          event.data.callId === "native-prefix",
+      );
+    return { content: [{ type: "text", text: "done" }] };
+  };
+  try {
+    session.config.toolPermissions!.bash = "allow";
+    appendPluginRecord(
+      session.runtime.agent.session,
+      "plugin:oma/dsr-dispatched",
+      { version: 1, callId: "native-prefix" },
+    );
+    const result = await session.runtime.agent.ctx.tools.execute({
+      agent: session.runtime.agent,
+      signal: session.abort.signal,
+      calls: [
+        {
+          type: "tool-call",
+          id: ToolCallId("native-call"),
+          name: "Bash",
+          arguments: JSON.stringify({ command: "printf done" }),
+        },
+      ],
+    });
+    expect(result.results[0]!.result.isError).not.toBe(true);
+    expect(durable).toBe(true);
+    expect(barriers).toBe(1);
+  } finally {
+    flush.mockRestore();
     await session.close();
     await ctx.fiber.dispose();
     backend.stop();

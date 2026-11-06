@@ -427,7 +427,6 @@ export class DsrClient {
     /**
      * 分页读取一个 transcript。
      *
-     * 单页最多约 4 MiB（limit_bytes=4194304）。
      * 校验：
      *   - 事件 seq 必须从 from 开始连续（seq = from + index）；
      *   - next_from_seq 必须严格大于 from，且等于 from + events.length；
@@ -446,7 +445,7 @@ export class DsrClient {
     ): Promise<TranscriptPage> {
         decimal(from);
         const response = await this.json(
-            `/transcripts/${encodeURIComponent(id)}?from_seq=${from}&limit_bytes=4194304`,
+            `/transcripts/${encodeURIComponent(id)}?from_seq=${from}`,
             "GET",
             undefined,
             signal,

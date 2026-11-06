@@ -9,7 +9,6 @@ import {
   readBrainClaimOptions,
   readShutdownDrainMs,
 } from "./config.ts";
-import { resolveTranscriptRoot } from "./storage.ts";
 
 export const name = "oma-brain";
 
@@ -21,7 +20,7 @@ export async function apply(ctx: Context): Promise<void> {
     throw new Error("OMA_BRAIN_MAX_SESSIONS must be positive");
   const claim = readBrainClaimOptions();
   const api = new OmaApi(base.replace(/\/$/, ""));
-  const clients = await mountDsr(ctx, api, resolveTranscriptRoot());
+  const clients = await mountDsr(ctx, api);
   const claims = new DsrClaims(
     createDsrTransport(api),
     claim.token,

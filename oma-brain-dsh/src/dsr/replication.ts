@@ -6,12 +6,14 @@
 //   - SessionHeader：会话头（没有 seq 字段），描述会话 id、父会话、模型等；
 //   - SessionEvent ：带 seq 的事件（user/message、assistant/message、tool/call...）。
 //
-// SessionReplication 只依赖一个抽象端口 RemoteTranscriptStore：
+// SessionReplication 只依赖一个抽象端口 RemoteTranscriptStore，本文件用 DSR
+// HTTP API 实现这个端口。每个方法都带两个会话标识，职责不同：
+//   - rootSessionId：权限域。整棵会话树共享一份 claim/lease，用它选择本进程
+//     持有的 DsrClient；查不到说明本进程已失去该会话树的所有权；
+//   - sessionId   ：数据域。决定读写远端哪一份 transcript（根会话自己或某个
+//     子线程，对应 DSR 目录里的 dsh_session_id）。
 //
-//   write(rootSessionId, sessionId, records)  -> 把本地记录写到远端
-//   fenced(error)             -> 判断错误是否表示“本 owner 已无权写入”
-//
-// 本文件用 DSR HTTP API 实现这个端口。典型场景：
+// 典型场景：
 //   - 会话被新 worker 接管时，新 owner 用 read 恢复历史；
 //   - 会话运行过程中，本地新增事件用 write 增量上传；
 //   - 旧 owner 的写入会收到 epoch_superseded 等错误，被 fenced 识别后停止重试。
@@ -25,10 +27,15 @@
 //   ]);
 // ============================================================================
 
-import type {SessionEvent, SessionHeader} from "@deepseek-ai/dsh-session";
-import type {RemoteTranscriptStore} from "../runtime/replication.ts";
-import {DsrError} from "./http.ts";
-import type {DsrClient} from "./client.ts";
+import type { SessionEvent, SessionHeader } from "@deepseek-ai/dsh-session";
+import type { RemoteTranscriptStore } from "../runtime/replication.ts";
+import {
+  transcriptBatch,
+  transcriptEventBytes,
+  TranscriptUploadError,
+} from "../runtime/transcript-batch.ts";
+import { DsrError, decimal } from "./http.ts";
+import type { DsrClient } from "./client.ts";
 
 /**
  * 构造 DSR 版本的 transcript 端口。
@@ -37,83 +44,118 @@ import type {DsrClient} from "./client.ts";
  *               应抛错，让复制层把写入视为 fenced，而不是写到错误的会话。
  */
 export function createRemoteTranscriptStore(
-    client: (rootSessionId: string) => DsrClient,
+  client: (rootSessionId: string) => DsrClient,
 ): RemoteTranscriptStore {
-    return {
-        read: async function* (rootSessionId, sessionId) {
-            const api = client(rootSessionId);
-            const directory = await api.listTranscripts();
-            if (!directory.some((item) => item.dsh_session_id === sessionId))
-                return;
-            let cursor: string | null = "0";
-            do {
-                const page = await api.readTranscript(sessionId, cursor);
-                yield page.header ? [page.header, ...page.events] : page.events;
-                cursor = page.next_from_seq;
-            } while (cursor !== null);
-        },
+  return {
+    read: async function* (rootSessionId, sessionId, signal, snapshot) {
+      const api = client(rootSessionId);
+      if (snapshot === null) return;
+      let expected = snapshot?.nextSeq;
+      if (expected === undefined) {
+        const directory = await api.listTranscripts(signal);
+        const transcript = directory.find(
+          (item) => item.dsh_session_id === sessionId,
+        );
+        if (!transcript) return;
+        expected = transcript.next_seq;
+      }
+      const end = BigInt(decimal(expected));
+      let count = 0n;
+      let cursor: string | null = "0";
+      do {
+        const page = await api.readTranscript(sessionId, cursor, signal);
+        count += BigInt(page.events.length);
+        if (
+          count > end ||
+          (page.next_from_seq === null ? count !== end : count >= end)
+        )
+          throw new DsrError(0, "invalid_response");
+        yield page.header ? [page.header, ...page.events] : page.events;
+        cursor = page.next_from_seq;
+      } while (cursor !== null);
+    },
 
-        // 写入：先写 header，再按顺序批量追加事件。
-        // 顺序必须保持，否则服务器无法保证 seq 连续。
-        write: async (rootSessionId, sessionId, records) => {
-            const api = client(rootSessionId);
-            // header 没有 seq 字段，用它和事件区分开。
-            const headers = records.filter(
-                (record): record is SessionHeader => !("seq" in record),
-            );
-            for (const header of headers)
-                await api.putHeader(sessionId, header, header.parentSession ?? null);
-            const events = records.filter(
-                (record): record is SessionEvent => "seq" in record,
-            );
-            // 每批 200 条，避免单次请求体过大；appendBounded 还会处理“按字节超限”的情况。
-            for (let i = 0; i < events.length; i += 200)
-                await appendBounded(api, sessionId, events.slice(i, i + 200));
-        },
+    // 写入：先写 header，再按顺序批量追加事件。
+    // 顺序必须保持，否则服务器无法保证 seq 连续。
+    write: async (rootSessionId, sessionId, records, signal) => {
+      const api = client(rootSessionId);
+      // header 没有 seq 字段，用它和事件区分开。
+      const headers = records.filter(
+        (record): record is SessionHeader => !("seq" in record),
+      );
+      for (const header of headers) {
+        // 单条记录超过 15 MiB 直接拒绝，重试无意义。
+        transcriptEventBytes(header);
+        // header 上传返回下一个可用 seq；header 不算事件，
+        // 全新 transcript 的 watermark 必须是 "0"。
+        const next = await upload(() =>
+          api.putHeader(
+            sessionId,
+            header,
+            header.parentSession ?? null,
+            signal,
+          ),
+        );
+        if (next !== "0")
+          throw new TranscriptUploadError(
+            "Unexpected transcript header watermark",
+          );
+      }
+      const events = records.filter(
+        (record): record is SessionEvent => "seq" in record,
+      );
+      // transcriptBatch 按条数（200）和字节数（4 MiB）双上限切批，
+      // 超限的单条事件已在 transcriptEventBytes 里被拦下。
+      for (let index = 0; index < events.length;) {
+        const batch = transcriptBatch(events, index);
+        const next = await upload(() =>
+          api.appendEvents(sessionId, batch, signal),
+        );
+        // 追加是幂等校验点：返回的 watermark 必须正好等于本批最后一条
+        // 事件的 seq + 1，说明中间没有丢事件、没有并发写入。
+        if (next !== String(batch.at(-1)!.seq + 1))
+          throw new TranscriptUploadError(
+            "Unexpected transcript append watermark",
+          );
+        index += batch.length;
+      }
+    },
 
-        // 这些错误表示“本次写入被 fence 掉了”，重试没有意义：
-        //   epoch_superseded     —— 已有更新的 worker_epoch 接管；
-        //   unauthorized         —— token 已失效；
-        //   transcript_conflict  —— 远端 seq 与本地不一致；
-        //   transcript_purged    —— 会话记录已被清理。
-        fenced: (error) =>
-            error instanceof DsrError &&
-            [
-                "epoch_superseded",
-                "unauthorized",
-                "transcript_conflict",
-                "transcript_purged",
-            ].includes(error.code),
-    };
+    // 这些错误表示“本次写入没有重试价值”，复制层应释放租约、停止重试：
+    //   TranscriptUploadError —— 单条记录过大或 watermark 校验失败，
+    //                           同样内容再传多少次结果都一样；
+    //   epoch_superseded      —— 已有更新的 worker_epoch 接管；
+    //   unauthorized          —— token 已失效；
+    //   transcript_conflict   —— 远端 seq 与本地不一致；
+    //   transcript_purged     —— 会话记录已被清理；
+    //   invalid_response      —— 服务器响应与请求对不上；
+    //   4xx/410 状态码        —— 请求本身或资源状态有问题，重试不会改变结果。
+    fenced: (error) =>
+      error instanceof TranscriptUploadError ||
+      (error instanceof DsrError &&
+        ([
+          "epoch_superseded",
+          "unauthorized",
+          "transcript_conflict",
+          "transcript_gap",
+          "transcript_purged",
+          "invalid_response",
+        ].includes(error.code) ||
+          [400, 401, 403, 404, 410, 413, 422].includes(error.status))),
+  };
 }
 
-/**
- * 追加事件；遇到 413（请求体过大）时二分重试。
- *
- * 例：一批 200 条事件因单条内容很长而 413：
- *   1. 拆成 100 + 100 分别提交；
- *   2. 若其中一半仍 413，继续对半拆；
- *   3. 直到单条事件仍 413 —— 这时无法再拆，原样抛出。
- *
- * 条件 `events.length < 2` 就是“只剩一条还超限”的终止条件。
- * 拆分后按前后顺序依次 await，保证 seq 顺序不变。
- */
-async function appendBounded(
-    client: DsrClient,
-    sessionId: string,
-    events: readonly SessionEvent[],
-): Promise<void> {
-    try {
-        await client.appendEvents(sessionId, events);
-    } catch (error) {
-        if (
-            !(error instanceof DsrError) ||
-            error.status !== 413 ||
-            events.length < 2
-        )
-            throw error;
-        const middle = Math.floor(events.length / 2);
-        await appendBounded(client, sessionId, events.slice(0, middle));
-        await appendBounded(client, sessionId, events.slice(middle));
-    }
+// 执行一次上传请求，把“再试也没用”的客户端/服务器错误统一翻译成
+// TranscriptUploadError（fenced），其余错误（网络抖动、5xx 等）原样抛出，
+// 由复制层的退避重试处理。
+async function upload<T>(send: () => Promise<T>): Promise<T> {
+  try {
+    return await send();
+  } catch (error) {
+    if (error instanceof DsrError && [400, 413, 422].includes(error.status))
+      throw new TranscriptUploadError("Transcript batch cannot be uploaded", {
+        cause: error,
+      });
+    throw error;
+  }
 }

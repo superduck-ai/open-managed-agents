@@ -443,3 +443,17 @@ test("registration carries the complete initial context", async () => {
     "/v1/dsr/sessions/cse_root/register",
   ]);
 });
+
+test("transcript reads send only the sequence cursor", async () => {
+  const { client, calls } = fixture(() =>
+    Response.json({
+      header: null,
+      events: [{ seq: 200 }],
+      next_from_seq: null,
+    }),
+  );
+  await client.readTranscript("cse_root", "200");
+  const url = new URL(calls[0]!.path, "http://localhost");
+  expect(url.pathname.endsWith("/transcripts/cse_root")).toBe(true);
+  expect([...url.searchParams.entries()]).toEqual([["from_seq", "200"]]);
+});

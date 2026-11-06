@@ -35,17 +35,17 @@
 // ============================================================================
 
 import type { Context } from "@deepseek-ai/cordis";
-import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import TranscriptPersistence from "../runtime/transcript-persistence.ts";
 // OmaApi：访问 platform 的 HTTP 客户端 + 进程内共享的内存表（assignment、model 请求 ID 等）。
 import { OmaApi } from "../api.ts";
 // 启动前检查目录可写，避免跑到一半才发现 transcript 写不进去。
-import { checkWritableDirectory } from "../storage.ts";
 // 挂载原生 DSH 内核插件（session store、agent loop、tool runtime、LLM runtime ...）。
 import { mountKernel } from "../kernel.ts";
 // 子 agent（subagent）运行时；DSR 会话里也会用到。
 import { mountDshSubagents } from "../runtime/dsh-subagents.ts";
 // 会话 transcript 的复制层：把本地 DSH 会话事件同步到远端（这里是 DSR transcript API）。
 import { SessionReplication } from "../runtime/replication.ts";
+import { TranscriptUploadError } from "../runtime/transcript-batch.ts";
 // 把一份 Assignment + OmaApi 转换成 SessionRuntimeConfig（模型、工具、系统提示词等）。
 import { omaRuntimeConfig } from "../oma-session.ts";
 import { mountTelemetry } from "../observability/index.ts";
@@ -111,36 +111,13 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
-/**
- * 组装 DSR 运行环境，返回一个共享的 `clients` 表。
- *
- * 这一步只做“装配”，不认领会话：
- *   1. 检查 transcript 目录可写（对应环境变量 OMA_BRAIN_TRANSCRIPT_DIR）。
- *   2. 挂载原生 DSH 内核；之后 session / tools / agent loop 等能力才可用。
- *   3. 打开 dsrContinuation 开关。
- *   4. 挂载本地 JSONL 持久化（root 下按 session 存事件，compression: none）。
- *   5. 挂载 transcript 复制层：DSH 产生的事件会写入 DSR 服务器。
- *   6. 挂载子 agent 与 telemetry。
- *
- * `clients` 是 sessionId -> DsrClient 的表，两个地方会读它：
- *   - startDsrWorkers 认领会话时写入；
- *   - 复制层写 transcript / 读 transcript 时按根会话 ID 取对应 client。
- * 之所以要这张表：复制层只拿到 root session id，需要找到“拥有者”的 client
- * 才能带上正确的 session_token 访问该会话的远程资源。
- *
- * @example
- *   const clients = await mountDsr(ctx, api, "/var/lib/oma/transcripts");
- *   // 此时还没有任何会话，clients 为空 Map。
- */
 export async function mountDsr(
   ctx: Context,
   api: OmaApi,
-  localRoot: string,
 ): Promise<Map<string, DsrClient>> {
-  await checkWritableDirectory(localRoot, "OMA_BRAIN_TRANSCRIPT_DIR");
   await mountKernel(ctx, api);
   ctx.provide("dsrContinuation", true);
-  await ctx.plugin(JsonlPersistence, { root: localRoot, compression: "none" });
+  await ctx.plugin(TranscriptPersistence);
   const clients = new Map<string, DsrClient>();
   // 复制层写数据时传入的是“根会话 ID”。这里延迟查找 client：
   // 只有该会话当前确实被本进程拥有时才允许写；否则抛错，让复制层把错误当作
@@ -507,7 +484,7 @@ export class DsrOwner {
       try {
         // 等待两条输入队列自然结束（即使很快失败，也要把已入队的处理完/取消完）。
         await Promise.allSettled([this.tasks, this.controls]);
-        await this.session?.close();
+        await this.session?.close(this.drainMs);
       } finally {
         if (this.session) brainMetrics().sessionsActive.add(-1);
         await this.lease?.close();
@@ -557,7 +534,10 @@ export class DsrOwner {
     this.failure ??= error;
     // unsupported_task_input 是“永久性”的：不是网络抖动，换机器也会失败。
     // 用 permanent 告诉服务器不要再重试这个输入。
-    if (error instanceof DsrError && error.code === "unsupported_task_input")
+    if (
+      error instanceof TranscriptUploadError ||
+      (error instanceof DsrError && error.code === "unsupported_task_input")
+    )
       this.reason = "permanent";
     // 终止输入流和会话，让 run() 尽早进入 finally。
     this.stream.abort();
@@ -605,12 +585,22 @@ export class DsrOwner {
       this.stream.abort();
       const waiting = Promise.allSettled([this.tasks, this.controls]);
       // 用一个 unref 的定时器做超时线：不阻止进程退出，到点自动 resolve。
+      let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, this.drainMs);
-        timer.unref();
+        deadlineTimer = setTimeout(resolve, this.drainMs);
+        deadlineTimer.unref();
       });
       // 谁先完成都行：任务排空 或 到达排水上限。
-      await Promise.race([waiting, deadline]);
+      const drained = await Promise.race([
+        waiting.then(() => true),
+        deadline.then(() => false),
+      ]);
+      clearTimeout(deadlineTimer);
+      if (!drained)
+        this.ctx.sessionReplication.cancel(
+          this.client.claim.code_session_id,
+          new Error("Transcript shutdown drain timed out"),
+        );
       if (this.session?.busy) {
         // 仍然忙：强制取消，避免 shutdown 被一个卡住的工具调用无限拖住。
         this.session.runtime.cancelForShutdown();

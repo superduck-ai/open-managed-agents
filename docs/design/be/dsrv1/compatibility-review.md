@@ -21,7 +21,7 @@
 
 | 能力 | 实现证据 | DSRv1 迁移要求 |
 | --- | --- | --- |
-| 本地持久化与远端复制分离 | `oma-brain-dsh/src/ccrv2/persistence.ts`、Harness `packages/session/session-persistence/src/handle.ts` | 保留本地单写、flush、前缀核对与分歧报错；替换远端读写协议 |
+| 本地持久化与远端复制分离 | `oma-brain-dsh/src/ccrv2/persistence.ts`、Harness `packages/session/session-persistence/src/handle.ts` | 保留本地单写与 flush；接管仅以验证后的远端日志替换缓存，不对账本地前缀或保留本地尾部 |
 | 工具执行与公开输出屏障 | `runtime/session.ts:99`、`ccrv2/session.ts:432`、`:650` | 保留 flush、远端确认、预览确认的顺序 |
 | 模型与工具隔离 | `runtime/execution.ts`、`oma-sandbox/client.ts`、`llm-ai-sdk/` | 模型代理、沙箱网关、挂载及共享 cwd 不需要并入 transcript 接口 |
 | 原生格式 v4 | Harness `packages/core/session/src/types.ts:90` | 保留原生 Header/Event；继续使用 Harness 完整日志校验 |

@@ -45,6 +45,8 @@ type Injector struct {
 	now                  func() time.Time
 	refreshLease         OAuthRefreshLease
 	platformOAuthClients []config.PlatformOAuthClientConfig
+	envOAuthProviders    EnvOAuthProviderResolver
+	envOAuthTokens       *envOAuthTokenResolver
 }
 
 func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logger) *Injector {
@@ -52,12 +54,14 @@ func NewInjector(database *db.DB, secretSvc *secrets.Service, logger *slog.Logge
 	if database != nil {
 		store = database
 	}
-	return &Injector{
+	injector := &Injector{
 		store:        store,
 		secretSvc:    secretSvc,
 		logger:       logging.LoggerOrDefault(logger),
 		refreshLease: newMemoryOAuthRefreshLease(),
 	}
+	injector.envOAuthTokens = newEnvOAuthTokenResolver(store, secretSvc, injector.logger, injector.refreshLease)
+	return injector
 }
 
 // WithWebhooks supplies the existing resource event enqueuer for permanent refresh failures.
@@ -73,7 +77,30 @@ func (i *Injector) WithRefreshLease(lease OAuthRefreshLease) *Injector {
 		return i
 	}
 	i.refreshLease = lease
+	if i.envOAuthTokens != nil {
+		i.envOAuthTokens.refreshLease = lease
+	}
 	return i
+}
+
+// WithEnvOAuthProviders supplies the provider registry used to refresh
+// env_oauth access tokens and to render placeholder substitution.
+func (i *Injector) WithEnvOAuthProviders(providers EnvOAuthProviderResolver) *Injector {
+	if i == nil {
+		return nil
+	}
+	i.envOAuthProviders = providers
+	if i.envOAuthTokens != nil {
+		i.envOAuthTokens.withProviders(providers)
+	}
+	return i
+}
+
+func (i *Injector) envOAuthTokenResolver() *envOAuthTokenResolver {
+	if i == nil {
+		return nil
+	}
+	return i.envOAuthTokens
 }
 
 // WithPlatformOAuthClients supplies vault.platform_oauth_clients so mcp_oauth

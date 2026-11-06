@@ -88,9 +88,10 @@ type envSecretOpener interface {
 // EgressSubstitutor performs Egress Secret Substitution for environment_variable
 // credentials. Git Smart HTTP Authorization is owned by MITMEgress, not this type.
 type EgressSubstitutor struct {
-	store     credentialStore
-	secretSvc *secrets.Service
-	logger    *slog.Logger
+	store       credentialStore
+	secretSvc   *secrets.Service
+	logger      *slog.Logger
+	oauthTokens *envOAuthTokenResolver
 }
 
 func newEgressSubstitutor(store credentialStore, secretSvc *secrets.Service, logger *slog.Logger) *EgressSubstitutor {
@@ -99,6 +100,13 @@ func newEgressSubstitutor(store credentialStore, secretSvc *secrets.Service, log
 		secretSvc: secretSvc,
 		logger:    logging.LoggerOrDefault(logger),
 	}
+}
+
+func (s *EgressSubstitutor) setEnvOAuthTokens(tokens *envOAuthTokenResolver) {
+	if s == nil {
+		return
+	}
+	s.oauthTokens = tokens
 }
 
 // SubstituteEnvSecrets loads session credentials then rewrites Opaque Placeholders.
@@ -158,8 +166,77 @@ func (s *EgressSubstitutor) applyEnvSubstitutions(
 	if err != nil {
 		return err
 	}
+	envNames, err := environmentSecretNames(credentials)
+	if err != nil {
+		return substitutionRejected(err)
+	}
+	oauthSubstitutions, err := s.planEnvOAuthSubstitutions(ctx, req, host, port, credentials, envNames)
+	if err != nil {
+		return err
+	}
+	substitutions = append(substitutions, oauthSubstitutions...)
 	applyEgressSubstitutions(req, body, substitutions)
 	return nil
+}
+
+func environmentSecretNames(credentials []db.VaultCredential) (map[string]struct{}, error) {
+	_, bound, err := uniqueEnvironmentCredentials(credentials)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[string]struct{}, len(bound))
+	for _, item := range bound {
+		names[item.value.SecretName] = struct{}{}
+	}
+	return names, nil
+}
+
+func (s *EgressSubstitutor) planEnvOAuthSubstitutions(
+	ctx context.Context,
+	req *http.Request,
+	host string,
+	port string,
+	credentials []db.VaultCredential,
+	envNames map[string]struct{},
+) ([]egressSubstitution, error) {
+	_, bound, err := uniqueEnvOAuthCredentials(credentials)
+	if err != nil {
+		return nil, substitutionRejected(err)
+	}
+	out := make([]egressSubstitution, 0)
+	for _, item := range bound {
+		if _, conflict := envNames[item.value.SecretName]; conflict {
+			continue
+		}
+		covers, err := credentialNetworkingCoversHost(item.value.Networking, host, port)
+		if err != nil {
+			return nil, substitutionRejected(err)
+		}
+		if !covers {
+			continue
+		}
+		if !requestNeedsPlaceholder(req, nil, item.value.Placeholder, item.value.InjectionLocation) {
+			continue
+		}
+		if s.oauthTokens == nil {
+			return nil, substitutionRejected(errEnvOAuthRefreshUnavailable)
+		}
+		token, err := s.oauthTokens.resolve(ctx, &item.row)
+		if err != nil {
+			s.logger.WarnContext(ctx, "resolve env oauth credential failed",
+				"credential_id", item.row.ExternalID,
+				"error", err,
+			)
+			return nil, substitutionRejected(err)
+		}
+		out = append(out, egressSubstitution{
+			placeholder: item.value.Placeholder,
+			secretValue: token,
+			header:      item.value.InjectionLocation.Header,
+			body:        item.value.InjectionLocation.Body,
+		})
+	}
+	return out, nil
 }
 
 func (s *EgressSubstitutor) planEnvSubstitutions(

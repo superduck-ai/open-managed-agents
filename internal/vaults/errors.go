@@ -141,6 +141,10 @@ func unsupportedTokenAuthMethod(method string) error {
 	return fmt.Errorf("unsupported token auth method %q", method)
 }
 
+func unsupportedTokenEndpointEncoding(encoding string) error {
+	return fmt.Errorf("unsupported token endpoint encoding %q", encoding)
+}
+
 type oauthTokenEndpointError struct{ status int }
 
 func (e oauthTokenEndpointError) Error() string {

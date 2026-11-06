@@ -442,7 +442,7 @@ function WebhookList({
         <Empty className="min-h-[320px]" data-testid="webhooks-empty-state">
           <EmptyHeader className="max-w-[360px]">
             <EmptyMedia>
-              <productIcons.webhooks className="size-14 stroke-[1.2] text-foreground" aria-hidden />
+              <productIcons.webhooks className="size-14 stroke-[1.5] text-foreground" aria-hidden />
             </EmptyMedia>
             <EmptyTitle>{msg('webhooks.emptyTitle', 'No webhook endpoints yet')}</EmptyTitle>
           </EmptyHeader>

@@ -15,9 +15,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
+	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
+	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
@@ -75,9 +79,22 @@ func newEnvOAuthFixtureWithFeishu(t *testing.T, clientID, clientSecret string) e
 		t.Fatal(err)
 	}
 	secretSvc := secrets.NewService(provider)
+	credentials, err := codesessions.NewSessionCredentials(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileCredentials, err := filestore.NewTokenCredentials(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := platformsession.NewMemoryStore()
 	server := NewServer(ServerDeps{
-		DB:           database,
-		VaultSecrets: secretSvc,
+		DB:                     database,
+		VaultSecrets:           secretSvc,
+		PlatformStore:          store,
+		PlatformAuth:           platformauth.New(config.AuthConfig{}, database, nil, nil),
+		CodeSessionCredentials: credentials,
+		FilestoreCredentials:   fileCredentials,
 		Config: config.Config{Vault: config.VaultConfig{FeishuOAuthClient: config.FeishuOAuthClientConfig{
 			ClientID: clientID, ClientSecret: clientSecret,
 		}}},

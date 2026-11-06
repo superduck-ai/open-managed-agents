@@ -2,6 +2,8 @@
 
 ## 页面模型
 
+模块空状态复用共享 `productIcons.skills`，与侧栏技能图标使用同一 Lucide BookOpenCheck 图标；创建和更新弹窗中的上传压缩包图标继续表示文件内容，不随模块图标替换。
+
 Skills 页面是单页管理器：
 
 - 列表展示所有可用 skill。

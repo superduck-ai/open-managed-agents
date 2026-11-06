@@ -1,3 +1,4 @@
+import { productIcons } from '@/shared/icons/product-icons';
 import { useDialogDismissal } from '../../shared/hooks/use-dialog-dismissal';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -267,7 +268,7 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
         </Table>
 
         {!keysQuery.isLoading && !errorMessage && keys.length === 0 ? (
-          <ResourceListState icon={KeyRound} title={msg('apiKeys.emptyTitle', 'No API keys yet')} />
+          <ResourceListState icon={productIcons.keys} title={msg('apiKeys.emptyTitle', 'No API keys yet')} />
         ) : null}
 
         {createOpen ? (

@@ -1,3 +1,4 @@
+import { productIcons } from '@/shared/icons/product-icons';
 import { AlertCircle, Check, FileArchive, FolderPlus, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
@@ -406,7 +407,7 @@ function SkillsTable({
         </TableBody>
       </Table>
       {!isLoading && !error && skills.length === 0 ? (
-        <ResourceListState icon={FileArchive} title={msg('skills.emptyTitle', 'No skills yet')} />
+        <ResourceListState icon={productIcons.skills} title={msg('skills.emptyTitle', 'No skills yet')} />
       ) : null}
       {isFetching && !isLoading ? <span className="sr-only">{msg('common.updating', 'Updating...')}</span> : null}
     </section>

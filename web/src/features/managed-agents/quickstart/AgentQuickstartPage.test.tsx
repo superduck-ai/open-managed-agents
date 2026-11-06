@@ -20,6 +20,27 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
+test.each(['chat', 'api'])('missing models route %s quickstart to workspace setup with a return path', async (mode) => {
+  resetTestDom(`https://oma.duck.ai/workspaces/default/agent-quickstart?mode=${mode}`);
+  mockAgentsApi([]);
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) =>
+    String(input).includes('/v1/models')
+      ? jsonResponse({ data: [], has_more: false })
+      : baseFetch(input, init)) as typeof fetch;
+  const assign = spyOn(window.location, 'assign').mockImplementation(() => undefined);
+  try {
+    renderManagedAgentsPage('quickstart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Configure models' }));
+    expect(assign).toHaveBeenCalledWith(
+      `/workspaces/default/llm-models?returnTo=${encodeURIComponent(`/workspaces/default/agent-quickstart?mode=${mode}`)}`,
+    );
+    expect(screen.queryByRole('heading', { name: 'What would you like to build?' })).toBeNull();
+  } finally {
+    assign.mockRestore();
+  }
+});
+
 test('refresh resets progress and the test conversation while keeping saved resources reusable', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);

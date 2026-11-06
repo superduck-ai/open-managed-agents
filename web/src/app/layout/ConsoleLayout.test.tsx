@@ -102,6 +102,40 @@ describe('ConsoleShell', () => {
     expect(workspaceIcon?.style.color).toBe('var(--violet-9)');
   });
 
+  test.each([
+    { origin: '/workspaces/default/agents/agent_one', target: '/workspaces/wrkspc_foo/agents' },
+    { origin: '/agents', target: '/workspaces/wrkspc_foo/agents' },
+    { origin: '/dashboard', target: '/dashboard' },
+  ])('returns from management in the selected workspace after entering from $origin', async ({ origin, target }) => {
+    resetTestDom(`https://oma.duck.ai${origin}`);
+    function Harness() {
+      const [path, setPath] = useState(origin);
+      return (
+        <ConsoleShell
+          currentPath={path}
+          account={testAccount()}
+          onLogout={() => undefined}
+          onNavigate={async (next) => setPath(next)}
+        >
+          <div data-testid="current-route">{path}</div>
+        </ConsoleShell>
+      );
+    }
+    renderWithWorkspaces(<Harness />);
+    fireEvent.click(screen.getByRole('link', { name: 'Workspace management' }));
+    expect(screen.getByRole('link', { name: 'Back to navigation' }).getAttribute('href')).toBe(origin);
+    await act(async () => fireEvent.click(getWorkspaceMenuButton(/Default/i)));
+    await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: /foo/i })));
+    const back = screen.getByRole('link', { name: 'Back to navigation' });
+    expect(back.getAttribute('href')).toBe(target);
+    fireEvent.click(back);
+    expect(screen.getByTestId('current-route').textContent).toBe(target);
+    expect(getWorkspaceMenuButton(/foo/i)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Agents', exact: true }).getAttribute('href')).toBe(
+      '/workspaces/wrkspc_foo/agents',
+    );
+  });
+
   test('remembers the last management module after leaving and remounting the console', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers');
     function Harness({ account = testAccount() }: { account?: AuthAccount }) {

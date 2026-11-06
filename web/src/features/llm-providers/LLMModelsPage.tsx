@@ -64,6 +64,7 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
   const [formOpen, setFormOpen] = useState(false);
   const [formError, setFormError] = useState('');
   const refreshAfterSaveRef = useRef(false);
+  const quickstartReturnVersion = useRef(0);
   const [deleting, setDeleting] = useState<LLMProvider | null>(null);
   const [query, setQuery] = useState('');
   const [selectedProviderId, setSelectedProviderId] = useState(ALL_PROVIDERS_ID);
@@ -210,20 +211,24 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
       const returnTo = scope === 'workspace' ? quickstartModelSetupReturn(window.location.search, workspaceId) : null;
       if (returnTo) {
         const setupHref = window.location.href;
+        const version = quickstartReturnVersion.current;
         void listCreateAgentModels(workspaceId)
           .then((models) => {
-            if (models.length > 0 && window.location.href === setupHref) window.location.assign(returnTo);
+            if (models.length > 0 && version === quickstartReturnVersion.current && window.location.href === setupHref)
+              window.location.assign(returnTo);
           })
           .catch(() => undefined);
       }
     }
   };
 
-  const openCreate = () => {
-    setEditing(null);
+  const openForm = (provider: LLMProvider | null) => {
+    quickstartReturnVersion.current++;
+    setEditing(provider);
     setFormError('');
     setFormOpen(true);
   };
+  const openCreate = () => openForm(null);
 
   const submitForm = async (input: LLMProviderInput) => {
     try {
@@ -282,11 +287,7 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
         onQueryChange={setQuery}
         onRefresh={() => void (canManage ? refreshCatalog() : invalidateCatalog())}
         onSelectProvider={setSelectedProviderId}
-        onEditProvider={(provider) => {
-          setEditing(provider);
-          setFormError('');
-          setFormOpen(true);
-        }}
+        onEditProvider={openForm}
         onDeleteProvider={setDeleting}
         onAddModel={addModel}
       />

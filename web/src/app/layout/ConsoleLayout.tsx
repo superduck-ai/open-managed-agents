@@ -267,12 +267,17 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
     .sort((a, b) => b.href.length - a.href.length)[0];
   const managementPage = Boolean(managementItem);
   const [directory, setDirectory] = useState(managementPage);
-  const mainOrigin = useRef(
-    managementPage
+  const routeWorkspaceId = workspaceIdFromPath(currentPath);
+  const mainOrigin = useRef({
+    href: managementPage
       ? quickstartModelSetupReturn(window.location.search, activeWorkspaceId) || '/dashboard'
       : currentPath,
-  );
-  const routeWorkspaceId = workspaceIdFromPath(currentPath);
+    workspaceId: routeWorkspaceId || activeWorkspaceId,
+  });
+  const returnHref =
+    mainOrigin.current.workspaceId === activeWorkspaceId
+      ? mainOrigin.current.href
+      : workspaceSwitchPath(mainOrigin.current.href, activeWorkspaceId);
   const rememberedManagementPage = useWorkspaceManagementHistory(
     account?.uuid,
     orgUuid,
@@ -292,8 +297,10 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
 
   useEffect(() => {
     setDirectory(managementPage);
-    if (!managementPage) mainOrigin.current = currentPath;
-  }, [currentPath, managementPage]);
+    if (!managementPage) {
+      mainOrigin.current = { href: currentPath, workspaceId: routeWorkspaceId || activeWorkspaceId };
+    }
+  }, [currentPath, managementPage, routeWorkspaceId, activeWorkspaceId]);
 
   return (
     <AppSidebar
@@ -320,11 +327,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
                     <SidebarMenuItem>
                       <SidebarMenuButton
                         render={
-                          <ShellLink
-                            href={mainOrigin.current}
-                            onNavigate={onNavigate}
-                            onClick={() => setDirectory(false)}
-                          />
+                          <ShellLink href={returnHref} onNavigate={onNavigate} onClick={() => setDirectory(false)} />
                         }
                         tooltip={msg('nav.backToNavigation', 'Back to navigation')}
                       >

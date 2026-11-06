@@ -502,3 +502,41 @@ func TestNormalizeEnvOAuthCredentialForUpdateRejectsImmutableFields(t *testing.T
 		}
 	}
 }
+
+func TestEnvOAuthInjectionLocationInput(t *testing.T) {
+	for _, location := range []string{`{"header":false,"body":true}`, `{"header":true,"body":true}`, `{"header":false,"body":false}`, `{"body":true}`, `null`, `"body"`, `{"header":"true"}`, `{}`, `{"header":true,"body":false}`} {
+		t.Run(location, func(t *testing.T) {
+			raw := json.RawMessage(`{"type":"env_oauth","provider":"builtin:feishu","secret_name":"TOKEN","access_token":"token","networking":{"type":"unrestricted"},"injection_location":` + location + `}`)
+			state, err := normalizeCredentialAuthForCreate(raw)
+			valid := location == `{}` || location == `{"header":true,"body":false}`
+			if !valid {
+				if err == nil || !strings.Contains(err.Error(), "injection_location") {
+					t.Fatalf("创建未拒绝非法位置: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			base, baseErr := normalizeCredentialAuthForCreate(json.RawMessage(`{"type":"env_oauth","provider":"builtin:feishu","secret_name":"TOKEN","access_token":"old-token","networking":{"type":"unrestricted"}}`))
+			if baseErr != nil {
+				t.Fatal(baseErr)
+			}
+			current := db.VaultCredential{AuthType: "env_oauth", CredentialKey: "TOKEN", Auth: base.PublicAuth}
+			updated, updateErr := normalizeCredentialAuthForUpdate(current, base.SecretPayload, json.RawMessage(`{"type":"env_oauth","injection_location":`+location+`}`))
+			if !valid {
+				if updateErr == nil || !strings.Contains(updateErr.Error(), "injection_location") {
+					t.Fatalf("更新未拒绝非法位置: %v", updateErr)
+				}
+				return
+			}
+			if updateErr != nil {
+				t.Fatal(updateErr)
+			}
+			for _, authJSON := range []json.RawMessage{state.PublicAuth, updated.PublicAuth} {
+				public, err := decodeEnvOAuthCredentialAuth(authJSON)
+				if err != nil || !public.InjectionLocation.Header || public.InjectionLocation.Body {
+					t.Fatalf("位置=%+v 错误=%v", public, err)
+				}
+			}
+		})
+	}
+}

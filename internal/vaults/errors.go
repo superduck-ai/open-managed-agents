@@ -27,6 +27,8 @@ var ErrEnvOAuthReauthorizationRequired = errors.New("environment OAuth credentia
 // env_oauth credential cannot be resolved (deleted, disabled, or unconfigured).
 var ErrEnvOAuthProviderUnavailable = errors.New("environment OAuth provider is unavailable")
 
+var errEnvOAuthInjectionLocation = errors.New("auth.injection_location must enable header and disable body")
+
 // InjectionPublicMessage exposes the recovery action without leaking private causes.
 func InjectionPublicMessage(err error) string {
 	if errors.Is(err, ErrMCPOAuthReauthorizationRequired) {

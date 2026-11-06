@@ -18,7 +18,7 @@
   信封；`created_by_platform_admin_uuid` 记录超管；`token_endpoint_auth_method` 与
   `token_endpoint_encoding` 决定换票方式。
 - `env_oauth_flows`：授权中间态，保存 provider 快照（端点、client_id、scope、认证方式/编码）、
-  `secret_name`、`networking_type`、`allowed_hosts`、创建者与过期时间；状态
+  `secret_name`、`networking_type`、`allowed_hosts`、创建者与过期时间；内置飞书的 client_id 不保存快照（固定空字符串），换票时与 client_secret 一同读取部署配置；自定义 provider 仍保存 client_id 快照。状态
   `pending → completed | failed`。
 
 ```mermaid
@@ -29,6 +29,8 @@ erDiagram
 ```
 
 Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
+
+迁移 `00117_env_oauth_builtin_client_id.sql` 清除历史内置飞书 flow 的 client_id，并添加仅允许其为空字符串的约束；自定义 provider 快照保持不变。回滚只移除约束，不恢复已清除的值。
 
 ## 凭证公开结构与秘密
 
@@ -55,7 +57,7 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 ```
 
 `credential_key = secret_name`，与 `environment_variable` 共用同一活动唯一索引。`injection_location`
-固定 header（`Authorization: Bearer <token>`），不接受 body 注入。Provider 与 `secret_name` 创建后不可变。
+固定 header（`Authorization: Bearer <token>`），不接受 body 注入。创建和更新时省略 injection_location 使用 header=true/body=false；显式禁用 header、启用 body、null 或类型错误均返回参数错误，不静默改写。Provider 与 `secret_name` 创建后不可变。
 
 ## Provider
 
@@ -79,6 +81,8 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 
 `start` 校验：org 与 principal 一致，按 body 目标工作区重新解析成员权限并要求资源使用权限（保留组织管理员和平台管理员授权语义），workspace/vault 存在且未归档、provider 可用、secret_name 合法、
 limited 必须有 allowed_hosts；同 vault 同名活动凭证若为同一 provider 的 `env_oauth` 允许重新授权，否则 409。
+
+已完成 state 的顺序重放返回 `status=error`、`error_code=invalid_request`，不再次换票、不返回 credential_id、不修改 flow 或凭证；这不改变并发回调认领与事务边界。
 
 回调保存前再次检查同名凭证的 provider；不同 provider 返回 `credential_key_conflict`，保留既有凭证及秘密。同 provider 允许原地重新授权。
 

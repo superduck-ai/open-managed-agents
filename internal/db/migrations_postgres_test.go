@@ -1414,3 +1414,45 @@ func assertUnifiedMigrationState(t *testing.T, ctx context.Context, database *sq
 		)
 	}
 }
+
+func TestEnvOAuthBuiltinClientIDMigration(t *testing.T) {
+	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if address == "" {
+		t.Skip("需要隔离 PostgreSQL；跳过不能视为通过")
+	}
+	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
+	if _, err := provider.UpTo(ctx, 116); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"builtin:feishu", "custom:example"} {
+		_, err := database.ExecContext(ctx, `INSERT INTO env_oauth_flows (
+   external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id, provider_key,
+   secret_name, redirect_url, authorize_endpoint, token_endpoint, client_id,
+   token_endpoint_auth_method, token_endpoint_encoding, networking_type, status, expires_at
+  ) VALUES ($1, '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
+  '33333333-3333-4333-8333-333333333333','vlt_migration',$1,'TOKEN','https://app.test/callback',
+  'https://provider.test/authorize','https://provider.test/token','deployment-client',
+  'client_secret_post','json','unrestricted','pending',now()+interval '15 minutes')`, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := provider.UpTo(ctx, 117); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE env_oauth_flows SET client_id = 'forbidden' WHERE provider_key = 'builtin:feishu'`); err == nil {
+		t.Fatal("约束未拒绝内置 client_id 明文")
+	}
+	for key, want := range map[string]string{"builtin:feishu": "", "custom:example": "deployment-client"} {
+		var got string
+		if err := database.QueryRowContext(ctx, `SELECT client_id FROM env_oauth_flows WHERE provider_key = $1`, key).Scan(&got); err != nil || got != want {
+			t.Fatalf("服务方=%s client_id=%q 错误=%v", key, got, err)
+		}
+	}
+	if _, err := provider.DownTo(ctx, 116); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 117); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -117,7 +117,7 @@ func (f envOAuthFixture) createFlow(t *testing.T, tokenEndpoint, secretName stri
 		ProviderKey: vaultsapi.EnvOAuthProviderBuiltinFeishu, SecretName: secretName,
 		DisplayName: "Feishu CLI", RedirectURL: "https://app.example.test/oauth/vault/env-success",
 		AuthorizeEndpoint: "https://accounts.feishu.cn/open-apis/authen/v1/authorize",
-		TokenEndpoint:     tokenEndpoint, ClientID: "feishu-client", Scope: "offline_access",
+		TokenEndpoint:     tokenEndpoint, Scope: "offline_access",
 		TokenEndpointAuthMethod: "client_secret_post", TokenEndpointEncoding: "json",
 		NetworkingType: "limited", AllowedHosts: []string{"open.feishu.cn"},
 		Status: "pending", CreatedByAPIKeyUUID: f.apiKey,
@@ -174,6 +174,9 @@ func TestEnvOAuthVaultAuthStartPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if flow.ClientID != "" {
+		t.Fatal("飞书 client_id 以明文写入 flow")
+	}
 	if flow.SecretName != vaultsapi.EnvOAuthFeishuDefaultSecretName || flow.NetworkingType != "limited" || len(flow.AllowedHosts) != 2 {
 		t.Fatalf("flow = %+v", flow)
 	}
@@ -199,6 +202,15 @@ func TestEnvOAuthVaultAuthCallbackPostgres(t *testing.T) {
 	var tokenRequests int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tokenRequests++
+		var request struct {
+			ClientID     string `json:"client_id"`
+			ClientSecret string `json:"client_secret"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.ClientID != "feishu-client" || request.ClientSecret != "feishu-secret" {
+			t.Errorf("换票未使用部署配置: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token": "u-access", "refresh_token": "ur-refresh", "expires_in": 3600, "scope": "offline_access",
 		})
@@ -246,6 +258,22 @@ func TestEnvOAuthVaultAuthCallbackPostgres(t *testing.T) {
 		t.Fatalf("placeholder = %q", placeholder)
 	}
 
+	beforeReplay, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, credential.ExternalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay := f.callback(t, flow.ExternalID, "auth-code")
+	if !strings.Contains(replay.Body.String(), `"status":"error"`) || strings.Contains(replay.Body.String(), `"credential_id"`) || tokenRequests != 1 {
+		t.Fatalf("重放响应=%s 换票次数=%d", replay.Body.String(), tokenRequests)
+	}
+	afterReplay, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, credential.ExternalID)
+	if err != nil || !reflect.DeepEqual(beforeReplay, afterReplay) {
+		t.Fatal("重放修改凭证", err)
+	}
+	replayFlow, err := f.database.GetEnvOAuthFlow(t.Context(), flow.ExternalID)
+	if err != nil || !reflect.DeepEqual(completed, replayFlow) {
+		t.Fatal("重放修改 flow", err)
+	}
 	second := f.createFlow(t, upstream.URL, vaultsapi.EnvOAuthFeishuDefaultSecretName, time.Now().UTC().Add(time.Minute))
 	if recorder := f.callback(t, second.ExternalID, "auth-code-2"); !strings.Contains(recorder.Body.String(), `"status":"ok"`) {
 		t.Fatalf("reauthorize callback = %s", recorder.Body.String())
@@ -437,5 +465,53 @@ func TestEnvOAuthCallbackRejectsDifferentProviderPostgres(t *testing.T) {
 	}
 	if after := list(); !reflect.DeepEqual(before, after) {
 		t.Fatal("跨服务方回调修改了既有凭证")
+	}
+}
+
+func TestEnvOAuthInjectionLocationHTTPPostgres(t *testing.T) {
+	f := newEnvOAuthFixture(t)
+	request := func(path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, path+"?beta=true", strings.NewReader(body))
+		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{CredentialType: auth.CredentialTypeAPIKey, APIKeyUUID: f.apiKey, OrganizationUUID: f.organization, WorkspaceUUID: f.workspace.UUID}))
+		response := httptest.NewRecorder()
+		f.server.vaults.ServeHTTP(response, req)
+		return response
+	}
+	path := "/" + f.vault.ExternalID + "/credentials/"
+	create := func(location string) string {
+		return `{"display_name":"Token","auth":{"type":"env_oauth","provider":"builtin:feishu","secret_name":"TOKEN","access_token":"access","networking":{"type":"unrestricted"},"injection_location":` + location + `}}`
+	}
+	for _, location := range []string{`{"header":false,"body":true}`, `{"header":true,"body":true}`} {
+		response := request(path, create(location))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("非法位置创建=%d %s", response.Code, response.Body.String())
+		}
+	}
+	rows, _, err := f.database.ListVaultCredentialsPage(t.Context(), db.ListVaultCredentialsPageParams{WorkspaceUUID: f.workspace.UUID, VaultExternalID: f.vault.ExternalID, Limit: 50})
+	if err != nil || len(rows) != 0 {
+		t.Fatal("非法输入落库", err)
+	}
+	response := request(path, create(`{"header":true,"body":false}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("合法创建=%d %s", response.Code, response.Body.String())
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil || created.ID == "" {
+		t.Fatal("创建响应缺 ID", err)
+	}
+	before, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = request(path+created.ID, `{"auth":{"type":"env_oauth","injection_location":{"header":false,"body":true},"access_token":"replacement"}}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("非法位置更新=%d %s", response.Code, response.Body.String())
+	}
+	after, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, created.ID)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("非法更新修改了凭证", err)
 	}
 }

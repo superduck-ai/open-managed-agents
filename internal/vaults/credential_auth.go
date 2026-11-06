@@ -53,13 +53,14 @@ type environmentVariableCredentialCreateInput struct {
 }
 
 type envOAuthCredentialCreateInput struct {
-	Provider     string                     `json:"provider"`
-	SecretName   string                     `json:"secret_name"`
-	Networking   *credentialNetworkingInput `json:"networking"`
-	AccessToken  string                     `json:"access_token"`
-	RefreshToken string                     `json:"refresh_token"`
-	ExpiresAt    *string                    `json:"expires_at"`
-	Scope        *string                    `json:"scope"`
+	InjectionLocation json.RawMessage            `json:"injection_location"`
+	Provider          string                     `json:"provider"`
+	SecretName        string                     `json:"secret_name"`
+	Networking        *credentialNetworkingInput `json:"networking"`
+	AccessToken       string                     `json:"access_token"`
+	RefreshToken      string                     `json:"refresh_token"`
+	ExpiresAt         *string                    `json:"expires_at"`
+	Scope             *string                    `json:"scope"`
 }
 
 type credentialNetworkingInput struct {
@@ -96,13 +97,14 @@ type environmentVariableCredentialUpdateInput struct {
 }
 
 type envOAuthCredentialUpdateInput struct {
-	Provider     *string         `json:"provider"`
-	SecretName   *string         `json:"secret_name"`
-	Networking   json.RawMessage `json:"networking"`
-	AccessToken  *string         `json:"access_token"`
-	RefreshToken *string         `json:"refresh_token"`
-	ExpiresAt    json.RawMessage `json:"expires_at"`
-	Scope        json.RawMessage `json:"scope"`
+	InjectionLocation json.RawMessage `json:"injection_location"`
+	Provider          *string         `json:"provider"`
+	SecretName        *string         `json:"secret_name"`
+	Networking        json.RawMessage `json:"networking"`
+	AccessToken       *string         `json:"access_token"`
+	RefreshToken      *string         `json:"refresh_token"`
+	ExpiresAt         json.RawMessage `json:"expires_at"`
+	Scope             json.RawMessage `json:"scope"`
 }
 
 func normalizeCredentialAuthForCreate(raw json.RawMessage) (credentialAuthState, error) {
@@ -315,6 +317,9 @@ func normalizeEnvironmentVariableForCreate(input environmentVariableCredentialCr
 }
 
 func normalizeEnvOAuthForCreate(input envOAuthCredentialCreateInput) (credentialAuthState, error) {
+	if err := validateEnvOAuthInjectionLocation(input.InjectionLocation); err != nil {
+		return credentialAuthState{}, err
+	}
 	custom, providerID, err := ParseEnvOAuthProviderKey(input.Provider)
 	if err != nil {
 		return credentialAuthState{}, errors.New("auth.provider must be builtin:feishu or custom:<provider_id>")
@@ -558,6 +563,9 @@ func normalizeEnvironmentVariableForUpdate(current db.VaultCredential, currentSe
 }
 
 func normalizeEnvOAuthForUpdate(current db.VaultCredential, currentSecret []byte, input envOAuthCredentialUpdateInput, publicAuth *envOAuthCredentialAuth) (credentialAuthState, error) {
+	if err := validateEnvOAuthInjectionLocation(input.InjectionLocation); err != nil {
+		return credentialAuthState{}, err
+	}
 	secretPayload := envOAuthCredentialSecret{Type: credentialAuthTypeEnvOAuth}
 	if len(currentSecret) != 0 {
 		var err error
@@ -817,6 +825,17 @@ func validateHTTPURL(value, name string) error {
 func validateRFC3339(value, name string) error {
 	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
 		return fmt.Errorf("%s must be RFC3339", name)
+	}
+	return nil
+}
+
+func validateEnvOAuthInjectionLocation(raw json.RawMessage) error {
+	location, err := applyInjectionLocation(credentialInjectionLocation{Header: true}, raw)
+	if err != nil {
+		return err
+	}
+	if !location.Header || location.Body {
+		return errEnvOAuthInjectionLocation
 	}
 	return nil
 }

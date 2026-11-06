@@ -1,10 +1,13 @@
 import { expect, test } from 'bun:test';
-import { consoleNavigation, visibleConsoleNavigation, workspaceManagementNavigation } from './navigation';
+import { consoleNavigation, workspaceManagementNavigation } from './navigation';
 
 test('retains implemented destinations without exposing placeholder pages or duplicate API key entries', () => {
-  const destinations = visibleConsoleNavigation([...consoleNavigation, workspaceManagementNavigation]).flatMap(
-    (item) => (item.type === 'link' ? [item.href] : item.children.map((child) => child.href)),
-  );
+  const destinations = [
+    ...consoleNavigation.flatMap((item) =>
+      item.type === 'link' ? [item.href] : item.children.map((child) => child.href),
+    ),
+    ...workspaceManagementNavigation.children.filter((item) => !item.hidden).map((item) => item.href),
+  ];
   expect(destinations.toSorted()).toEqual(
     [
       '/dashboard',
@@ -29,14 +32,6 @@ test('retains implemented destinations without exposing placeholder pages or dup
       '/mcp-tunnels',
     ].toSorted(),
   );
-});
-
-test('keeps the original hidden routes defined without exposing them', () => {
-  const resources = consoleNavigation.find((item) => item.label === 'Resources');
-  expect(
-    resources?.type === 'group' && resources.children.filter((child) => child.hidden).map((child) => child.href),
-  ).toEqual(['/workbench', '/batches']);
-  expect(consoleNavigation.find((item) => item.label === 'Claude Code')).toMatchObject({ hidden: true });
 });
 
 test('keeps placeholder routes defined but out of the workspace directory', () => {

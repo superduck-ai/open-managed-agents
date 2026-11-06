@@ -97,7 +97,7 @@ import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
   personalSettingsNavigation,
   settingsNavigation,
-  visibleConsoleNavigation,
+  consoleNavigation,
   workspaceManagementNavigation,
   workspaceManagementSections,
   type NavGroupItem,
@@ -288,7 +288,6 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
       ? managementItem?.href
       : undefined,
   );
-  const navigationItems = visibleConsoleNavigation();
 
   useEffect(() => {
     if (!routeWorkspaceId || routeWorkspaceId === activeWorkspaceId) return;
@@ -356,7 +355,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
                     ))}
                   </>
                 ) : (
-                  navigationItems.map((item) =>
+                  consoleNavigation.map((item) =>
                     item.type === 'link' ? (
                       <SidebarLink
                         key={item.href}

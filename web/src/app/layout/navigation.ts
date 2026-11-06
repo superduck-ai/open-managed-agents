@@ -48,7 +48,6 @@ export type NavGroupItem = {
   label: string;
   labelId: string;
   icon: IconComponent;
-  hidden?: boolean;
   children: Array<{
     href: string;
     label: string;
@@ -180,34 +179,9 @@ export const consoleNavigation: NavItem[] = [
         icon: navigationIcons.vaults,
       },
       { href: '/mcp-servers', label: 'MCP Servers', labelId: 'nav.mcpServers', icon: navigationIcons.mcp },
-      { href: '/workbench', label: 'Workbench', labelId: 'nav.workbench', hidden: true },
-      { href: '/batches', label: 'Batches', labelId: 'nav.batches', hidden: true },
-    ],
-  },
-  {
-    type: 'group',
-    label: 'Claude Code',
-    labelId: 'nav.claudeCode',
-    icon: TerminalSquare,
-    hidden: true,
-    children: [
-      { href: '/claude-code/usage', label: 'Usage', labelId: 'nav.usage' },
-      { href: '/claude-code/settings', label: 'Settings', labelId: 'nav.settings' },
     ],
   },
 ];
-
-export function visibleConsoleNavigation(items: readonly NavItem[] = consoleNavigation): NavItem[] {
-  return items.flatMap<NavItem>((item) => {
-    if (item.type === 'link') {
-      return [item];
-    }
-    if (item.hidden) {
-      return [];
-    }
-    return [{ ...item, children: item.children.filter((child) => !child.hidden) }];
-  });
-}
 
 export const settingsNavigation = [
   { href: '/settings/organization', label: 'Organization', labelId: 'nav.organization' },

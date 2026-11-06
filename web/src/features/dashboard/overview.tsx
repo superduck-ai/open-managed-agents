@@ -20,20 +20,20 @@ import { quickstartModelSetupHref } from '@/shared/workspaces/model-setup-naviga
 import { OverviewOperations } from './overview-operations';
 import { useDashboardWorkspaceScope } from './model';
 
-function overviewMetrics(data: WorkspaceOverview | undefined, unavailable: boolean, period: string, zh: boolean) {
+function overviewMetrics(data: WorkspaceOverview | undefined, period: string, zh: boolean) {
   const sessions = data?.session_count ?? 0;
   const errors = data?.failed_session_count ?? 0;
   return [
     {
       label: zh ? '会话数' : 'Sessions',
-      value: unavailable || !data ? '—' : sessions.toLocaleString(),
+      value: data ? sessions.toLocaleString() : '—',
       note: zh ? `过去 ${period} 天` : `Past ${period} days`,
       info: zh ? '所选时间范围内创建的会话总数。' : 'Sessions created within the selected period.',
       path: 'sessions',
     },
     {
       label: zh ? '错误率' : 'Error rate',
-      value: !unavailable && sessions > 0 ? `${((errors / sessions) * 100).toFixed(1)}%` : '—',
+      value: sessions > 0 ? `${((errors / sessions) * 100).toFixed(1)}%` : '—',
       note: zh ? '过去 ' + period + ' 天' : `Past ${period} days`,
       info: zh
         ? '同期创建的会话中，发生过终止性错误或重试耗尽的会话占比。同一会话只计一次。'
@@ -42,7 +42,7 @@ function overviewMetrics(data: WorkspaceOverview | undefined, unavailable: boole
     },
     {
       label: zh ? '活跃智能体' : 'Active agents',
-      value: unavailable || !data ? '—' : String(data.active_agent_count),
+      value: data ? String(data.active_agent_count) : '—',
       note: zh ? `过去 ${period} 天内有会话` : `With sessions in the past ${period} days`,
       info: zh
         ? '所选时间范围内至少创建过一个会话的智能体数。'
@@ -198,7 +198,7 @@ export function OverviewPage() {
         ) : null}
 
         <div className="grid grid-cols-3 divide-x-[0.5px] divide-border rounded-lg border-[0.5px] border-border">
-          {overviewMetrics(data, overview.isError, period, zh).map(({ label, value, note, info, path }) => (
+          {overviewMetrics(data, period, zh).map(({ label, value, note, info, path }) => (
             <div key={label} className="min-w-0 px-3 py-4 sm:px-5">
               <div className="flex min-h-6 flex-wrap items-center gap-1.5 text-sm">
                 <a

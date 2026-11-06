@@ -3395,5 +3395,12 @@
   "common.next": "Next",
   "common.previous": "Previous",
   "systemSkills.requiredVersion": "Enter a version",
-  "systemSkills.invalidVersion": "Invalid version identifier"
+  "systemSkills.invalidVersion": "Invalid version identifier",
+  "nav.overview": "Overview",
+  "nav.resources": "Resources",
+  "nav.workspaceManagement": "Workspace management",
+  "nav.backToNavigation": "Back to navigation",
+  "nav.modelsAndAccess": "Models and access",
+  "nav.usageAndOperations": "Usage and operations",
+  "nav.integrations": "Integrations"
 }

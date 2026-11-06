@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="WorkspaceOverviewMapper">
+    <select id="Aggregate" resultType="WorkspaceOverviewBucket">
+        SELECT to_char(s.created_at AT TIME ZONE #{query.Timezone}, 'YYYY-MM-DD') AS date,
+               s.agent_external_id AS agent_id,
+               COALESCE(a.name, s.agent_external_id) AS agent_name,
+               COUNT(*) AS session_count,
+               COUNT(*) FILTER (WHERE EXISTS (
+                   SELECT 1 FROM session_events e
+                   WHERE e.organization_uuid = #{query.OrganizationUUID}
+                   AND e.workspace_uuid = #{query.WorkspaceUUID}
+                   AND e.session_uuid = s.uuid
+                   AND e.created_at &gt;= #{query.Start} AND e.created_at &lt; #{query.End}
+                   AND e.deleted_at IS NULL
+                   AND (
+                       (e.event_type = 'session.status_idle' AND e.payload-&gt;'stop_reason'-&gt;&gt;'type' = 'retries_exhausted')
+                       OR (e.event_type = 'session.error' AND e.payload-&gt;'error'-&gt;'retry_status'-&gt;&gt;'type' IN ('exhausted', 'terminal'))
+                   )
+               )) AS failed_session_count,
+               MAX(s.created_at) AS last_run_at
+        FROM sessions s
+        LEFT JOIN agents a ON a.uuid = s.agent_uuid AND a.workspace_uuid = #{query.WorkspaceUUID}
+        WHERE s.organization_uuid = #{query.OrganizationUUID} AND s.workspace_uuid = #{query.WorkspaceUUID}
+        AND s.created_at &gt;= #{query.Start} AND s.created_at &lt; #{query.End}
+        AND s.deleted_at IS NULL
+        GROUP BY date, s.agent_external_id, a.name
+        ORDER BY date, s.agent_external_id
+    </select>
+    <select id="CountAgents" result="scalar">
+        SELECT COUNT(*) FROM agents a
+        WHERE a.workspace_uuid = #{workspaceUUID} AND a.deleted_at IS NULL AND a.archived_at IS NULL
+        AND EXISTS (SELECT 1 FROM workspaces w WHERE w.uuid = a.workspace_uuid AND w.organization_uuid = #{organizationUUID})
+    </select>
+</mapper>

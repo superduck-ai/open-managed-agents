@@ -3395,5 +3395,12 @@
   "common.next": "下一步",
   "common.previous": "上一步",
   "systemSkills.requiredVersion": "请输入版本号",
-  "systemSkills.invalidVersion": "版本号格式无效"
+  "systemSkills.invalidVersion": "版本号格式无效",
+  "nav.overview": "概览",
+  "nav.resources": "资源",
+  "nav.workspaceManagement": "工作区管理",
+  "nav.backToNavigation": "返回主导航",
+  "nav.modelsAndAccess": "模型与访问",
+  "nav.usageAndOperations": "用量与运行",
+  "nav.integrations": "集成"
 }

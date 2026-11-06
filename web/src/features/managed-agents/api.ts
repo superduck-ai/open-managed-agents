@@ -28,6 +28,7 @@ import {
   type CredentialFormValues,
   type DeploymentApiResponse,
   type DeploymentRunApiResponse,
+  type EnvOAuthProviderApiResponse,
   type EnvironmentApiResponse,
   type EnvironmentWorkApiResponse,
   type FileMetadataApiResponse,
@@ -1624,6 +1625,29 @@ export type StartMCPVaultAuthInput = {
 export function startMCPVaultAuth(orgUuid: string, input: StartMCPVaultAuthInput, csrfToken?: string) {
   return consoleApi<{ oauth_flow_id: string; redirect_url: string }>(
     `/api/organizations/${encodeURIComponent(orgUuid)}/mcp/vault-auth/start`,
+    { method: 'POST', body: JSON.stringify(input), csrfToken },
+  );
+}
+
+export type StartEnvOAuthVaultAuthInput = {
+  provider_id: string;
+  vault_id: string;
+  workspace_id: string;
+  secret_name: string;
+  display_name?: string;
+  networking: { type: 'limited'; allowed_hosts: string[] } | { type: 'unrestricted' };
+  redirect_url: string;
+};
+
+export function listEnvOAuthProviders(orgUuid: string) {
+  return consoleApi<EnvOAuthProviderApiResponse[]>(
+    `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/providers`,
+  );
+}
+
+export function startEnvOAuthVaultAuth(orgUuid: string, input: StartEnvOAuthVaultAuthInput, csrfToken?: string) {
+  return consoleApi<{ oauth_flow_id: string; authorize_url: string }>(
+    `/api/organizations/${encodeURIComponent(orgUuid)}/env-oauth/vault-auth/start`,
     { method: 'POST', body: JSON.stringify(input), csrfToken },
   );
 }

@@ -703,17 +703,27 @@ export function parseAllowedHostsText(text: string): string[] {
 
 export function credentialEnvHostsMissing(values: CredentialFormValues): boolean {
   return (
-    values.authType === 'environment_variable' &&
+    (values.authType === 'environment_variable' || values.authType === 'env_oauth') &&
     values.networkType === 'limited' &&
     parseAllowedHostsText(values.allowedHostsText).length === 0
   );
+}
+
+export function envOAuthProviderDefaults(provider: { default_secret_name: string; default_allowed_hosts: string[] }): {
+  secretName: string;
+  allowedHostsText: string;
+} {
+  return {
+    secretName: provider.default_secret_name,
+    allowedHostsText: provider.default_allowed_hosts.join('\n'),
+  };
 }
 
 export function credentialEnvInjectionMissing(values: CredentialFormValues): boolean {
   return values.authType === 'environment_variable' && !values.injectHeader && !values.injectBody;
 }
 
-function credentialNetworkingBody(values: CredentialFormValues) {
+export function credentialNetworkingBody(values: CredentialFormValues) {
   if (values.networkType === 'limited') {
     return {
       type: 'limited' as const,
@@ -842,6 +852,10 @@ export function emptyCredentialFormValues(): CredentialFormValues {
     refreshAuthType: 'none',
     oauthClientId: '',
     oauthClientSecret: '',
+    envOAuthProviderId: '',
+    envOAuthManualToken: '',
+    envOAuthRefreshToken: '',
+    envOAuthExpiresAt: '',
   };
 }
 
@@ -866,7 +880,7 @@ export function patchCredentialFormValues(
 }
 
 export function parseCredentialAuthType(value: string): CredentialFormValues['authType'] {
-  if (value === 'environment_variable' || value === 'mcp_oauth' || value === 'static_bearer') {
+  if (value === 'environment_variable' || value === 'mcp_oauth' || value === 'static_bearer' || value === 'env_oauth') {
     return value;
   }
   return '';
@@ -899,6 +913,9 @@ export function credentialDisplayName(values: CredentialFormValues): string {
   if (values.authType === 'environment_variable') {
     return 'Environment variable';
   }
+  if (values.authType === 'env_oauth') {
+    return values.secretName.trim() || 'ENV OAuth credential';
+  }
   if (values.authType === 'static_bearer') {
     return 'Static bearer credential';
   }
@@ -911,14 +928,17 @@ export function credentialFormValues(credential?: VaultCredentialApiResponse): C
   }
   const auth = objectRecord(credential.auth);
   const authType = parseExistingCredentialAuthType(typeof auth.type === 'string' ? auth.type : '');
-  const networking = authType === 'environment_variable' ? credentialNetworkingFromAuth(auth) : null;
-  const injection = authType === 'environment_variable' ? credentialInjectionLocationFromAuth(auth) : null;
+  const envBased = authType === 'environment_variable' || authType === 'env_oauth';
+  const networking = envBased ? credentialNetworkingFromAuth(auth) : null;
+  const injection = envBased ? credentialInjectionLocationFromAuth(auth) : null;
   return {
     ...emptyCredentialFormValues(),
     displayName: credential.display_name || '',
     authType,
     mcpServerUrl: typeof auth.mcp_server_url === 'string' ? auth.mcp_server_url : '',
     secretName: typeof auth.secret_name === 'string' ? auth.secret_name : '',
+    envOAuthProviderId: typeof auth.provider === 'string' ? auth.provider : '',
+    envOAuthExpiresAt: typeof auth.expires_at === 'string' ? auth.expires_at : '',
     ...(networking ?? {}),
     ...(injection ?? {}),
   };
@@ -973,6 +993,29 @@ export function credentialAuthBody(values: CredentialFormValues, mode: 'create' 
     }
     return body;
   }
+  if (values.authType === 'env_oauth') {
+    const accessToken = values.envOAuthManualToken.trim();
+    const refreshToken = values.envOAuthRefreshToken.trim();
+    const expiresAt = values.envOAuthExpiresAt.trim();
+    const body: Record<string, unknown> = {
+      type: 'env_oauth',
+      networking: credentialNetworkingBody(values),
+    };
+    if (mode === 'create') {
+      body.provider = values.envOAuthProviderId;
+      body.secret_name = values.secretName.trim();
+    }
+    if (accessToken) {
+      body.access_token = accessToken;
+    }
+    if (refreshToken) {
+      body.refresh_token = refreshToken;
+    }
+    if (expiresAt) {
+      body.expires_at = expiresAt;
+    }
+    return body;
+  }
   if (values.authType === 'mcp_oauth') {
     const accessToken = values.token.trim();
     const refresh = mode === 'create' ? credentialRefreshBody(values) : undefined;
@@ -992,6 +1035,10 @@ export function credentialAuthBody(values: CredentialFormValues, mode: 'create' 
     body.token = token;
   }
   return body;
+}
+
+function credentialEnvOAuthReady(values: CredentialFormValues): boolean {
+  return Boolean(values.envOAuthProviderId) && !credentialEnvHostsMissing(values) && Boolean(values.secretName.trim());
 }
 
 function credentialRefreshComplete(values: CredentialFormValues) {
@@ -1020,6 +1067,9 @@ export function credentialFormReady(values: CredentialFormValues, mode: 'create'
       return true;
     }
     return Boolean(values.secretName.trim() && values.secretValue.trim());
+  }
+  if (values.authType === 'env_oauth') {
+    return credentialEnvOAuthReady(values);
   }
   if (values.authType === 'static_bearer') {
     // Edit: token optional for the same sealed-secret reason (matches main canSubmit).
@@ -1054,6 +1104,9 @@ export function credentialAuthTypeLabel(authType: string, msg?: I18nMsg) {
     return msg
       ? msg('managedAgents.credentialVaults.credentialDialog.environmentVariable', 'Environment variable')
       : 'Environment variable';
+  }
+  if (authType === 'env_oauth') {
+    return msg ? msg('managedAgents.credentialVaults.credentialDialog.envOAuth', 'ENV OAuth') : 'ENV OAuth';
   }
   if (authType === 'mcp_oauth') {
     return msg ? msg('managedAgents.credentialVaults.credentialDialog.mcpOAuth', 'MCP OAuth') : 'MCP OAuth';
@@ -1229,6 +1282,16 @@ export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string 
       return msg(
         'managedAgents.credentialVaults.credentialDialog.oauthError.verificationFailed',
         'OAuth verification failed. Check the MCP server URL and try again.',
+      );
+    case 'platform_oauth_provider_unavailable':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.envOAuthError.providerUnavailable',
+        'This OAuth provider is not configured on the platform.',
+      );
+    case 'credential_key_conflict':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.envOAuthError.credentialKeyConflict',
+        'A credential with this variable name already exists in the vault.',
       );
     default:
       return msg(

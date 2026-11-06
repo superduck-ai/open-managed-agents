@@ -12,6 +12,7 @@ import {
 import {
   buildMemoryTreeNodes,
   credentialAuthBody,
+  credentialAuthTypeLabel,
   credentialDisplayName,
   credentialEnvInjectionMissing,
   credentialFormReady,
@@ -717,5 +718,88 @@ describe('vaultCredentialSummary', () => {
       trailing: 'No credentials',
       detail: 'No credentials',
     });
+  });
+});
+
+describe('env_oauth credentials', () => {
+  const envOAuthValues = (patch: Partial<CredentialFormValues>) => ({
+    ...emptyCredentialFormValues(),
+    authType: 'env_oauth' as const,
+    envOAuthProviderId: 'builtin:feishu',
+    secretName: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+    networkType: 'limited' as const,
+    allowedHostsText: 'open.feishu.cn\naccounts.feishu.cn',
+    ...patch,
+  });
+
+  test('credentialAuthBody builds create and update payloads', () => {
+    expect(credentialAuthBody(envOAuthValues({ envOAuthManualToken: 'u-token' }), 'create')).toEqual({
+      type: 'env_oauth',
+      provider: 'builtin:feishu',
+      secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+      networking: { type: 'limited', allowed_hosts: ['open.feishu.cn', 'accounts.feishu.cn'] },
+      access_token: 'u-token',
+    });
+    expect(
+      credentialAuthBody(
+        envOAuthValues({
+          envOAuthManualToken: 'u-new',
+          envOAuthRefreshToken: 'ur-new',
+          envOAuthExpiresAt: '2099-12-31T23:59:59Z',
+          networkType: 'unrestricted',
+        }),
+        'update',
+      ),
+    ).toEqual({
+      type: 'env_oauth',
+      networking: { type: 'unrestricted' },
+      access_token: 'u-new',
+      refresh_token: 'ur-new',
+      expires_at: '2099-12-31T23:59:59Z',
+    });
+  });
+
+  test('credentialFormReady requires provider, secret name and limited hosts', () => {
+    expect(credentialFormReady(envOAuthValues({}), 'create', true)).toBe(true);
+    expect(credentialFormReady(envOAuthValues({ envOAuthProviderId: '' }), 'create', true)).toBe(false);
+    expect(credentialFormReady(envOAuthValues({ secretName: '' }), 'create', true)).toBe(false);
+    expect(credentialFormReady(envOAuthValues({ allowedHostsText: '' }), 'create', true)).toBe(false);
+    expect(
+      credentialFormReady(envOAuthValues({ networkType: 'unrestricted', allowedHostsText: '' }), 'create', true),
+    ).toBe(true);
+  });
+
+  test('credentialFormValues restores provider and networking without tokens', () => {
+    const values = credentialFormValues({
+      id: 'vcrd_test',
+      archived_at: null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      display_name: 'Feishu CLI',
+      type: 'vault_credential',
+      vault_id: 'vlt_test',
+      auth: {
+        type: 'env_oauth',
+        provider: 'builtin:feishu',
+        secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+        placeholder: 'oma_ph_test',
+        networking: { type: 'limited', allowed_hosts: ['open.feishu.cn'] },
+        injection_location: { header: true, body: false },
+        expires_at: '2099-12-31T23:59:59Z',
+        has_refresh_token: true,
+      },
+    });
+    expect(values.authType).toBe('env_oauth');
+    expect(values.envOAuthProviderId).toBe('builtin:feishu');
+    expect(values.envOAuthExpiresAt).toBe('2099-12-31T23:59:59Z');
+    expect(values.networkType).toBe('limited');
+    expect(values.allowedHostsText).toBe('open.feishu.cn');
+    expect(values.envOAuthManualToken).toBe('');
+  });
+
+  test('credentialAuthTypeLabel and vaultOAuthErrorMessage cover env oauth', () => {
+    expect(credentialAuthTypeLabel('env_oauth', msgFallback)).toBe('ENV OAuth');
+    expect(vaultOAuthErrorMessage('platform_oauth_provider_unavailable', msgFallback)).toContain('not configured');
+    expect(vaultOAuthErrorMessage('credential_key_conflict', msgFallback)).toContain('already exists');
   });
 });

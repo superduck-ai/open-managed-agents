@@ -20,13 +20,14 @@ import {
 } from 'react';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
-import { startMCPVaultAuth } from '../api';
+import { listEnvOAuthProviders, startEnvOAuthVaultAuth, startMCPVaultAuth } from '../api';
 import { ManagedSelectField, ManagedTextArea, ManagedTextField, ManagedWarningAlert } from '../components/common';
 import { entityDialogSubtitle } from '../labels';
 import {
   type AgentApiResponse,
   type CredentialFormValues,
   type EntityOption,
+  type EnvOAuthProviderApiResponse,
   type ManagedEntityApiResponse,
   type ManagedEntityFormValues,
   type ManagedEntitySection,
@@ -37,10 +38,12 @@ import {
 } from '../types';
 import { errorMessage } from '../utils';
 import { EnvironmentVariableCredentialFields } from './credential-environment-fields';
+import { EnvOAuthCredentialFields } from './credential-env-oauth-fields';
 import { managedEntityDialogCanSubmit } from './entity-dialog-ready';
 import {
   credentialAuthTypeLabel,
   credentialFormReady,
+  credentialNetworkingBody,
   credentialFormValues,
   credentialDisplayName,
   initialFormValues,
@@ -109,7 +112,11 @@ function credentialDialogTypeSteps(values: CredentialFormValues, mode: 'create' 
     showBearerToken: values.authType === 'static_bearer' && (mode === 'edit' || mcpChosen),
     showOAuthFields: values.authType === 'mcp_oauth' && (mode === 'edit' || mcpChosen),
     // CMA: Bearer/OAuth show MCP first; token + shared-warning appear after a server is chosen.
-    showCredentialCommitment: mode === 'edit' || values.authType === 'environment_variable' || (mcpAuth && mcpChosen),
+    showCredentialCommitment:
+      mode === 'edit' ||
+      values.authType === 'environment_variable' ||
+      values.authType === 'env_oauth' ||
+      (mcpAuth && mcpChosen),
   };
 }
 
@@ -180,12 +187,16 @@ export function CredentialDialog({
   const [error, setError] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [directoryServers, setDirectoryServers] = useState<McpDirectoryServer[]>([]);
+  const [envOAuthProviders, setEnvOAuthProviders] = useState<EnvOAuthProviderApiResponse[] | null>(null);
   const pendingOAuthFlowIdRef = useRef<string | null>(null);
   const oauthPopupRef = useRef<Window | null>(null);
   const mode = credential ? 'edit' : 'create';
   const typeSelected = mode === 'edit' || Boolean(values.authType);
   const canSubmit = credentialFormReady(values, mode, acknowledged);
-  const needsOAuthConnect = mode === 'create' && values.authType === 'mcp_oauth' && !values.token.trim();
+  const needsOAuthConnect =
+    mode === 'create' &&
+    ((values.authType === 'mcp_oauth' && !values.token.trim()) ||
+      (values.authType === 'env_oauth' && !values.envOAuthManualToken.trim()));
   const waitingForOAuth = needsOAuthConnect && submitting;
   const { showMcpUrl, showDirectoryPicker, showBearerToken, showOAuthFields, showCredentialCommitment } =
     credentialDialogTypeSteps(values, mode);
@@ -221,6 +232,7 @@ export function CredentialDialog({
       { id: 'mcp_oauth', label: credentialAuthTypeLabel('mcp_oauth', msg) },
       { id: 'static_bearer', label: credentialAuthTypeLabel('static_bearer', msg) },
       { id: 'environment_variable', label: credentialAuthTypeLabel('environment_variable', msg) },
+      { id: 'env_oauth', label: credentialAuthTypeLabel('env_oauth', msg) },
     ];
   }, [credential, values.authType, msg]);
 
@@ -235,6 +247,27 @@ export function CredentialDialog({
         })),
     [directoryServers],
   );
+
+  useEffect(() => {
+    if (values.authType !== 'env_oauth' || !orgUuid) {
+      return;
+    }
+    let active = true;
+    void listEnvOAuthProviders(orgUuid)
+      .then((providers) => {
+        if (active) {
+          setEnvOAuthProviders(providers);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setEnvOAuthProviders([]);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [values.authType, orgUuid]);
 
   useEffect(() => {
     if (!showDirectoryPicker) {
@@ -285,7 +318,7 @@ export function CredentialDialog({
       }
       finish(event.data);
     };
-    const channel = new BroadcastChannel('vault-oauth');
+    const channel = new BroadcastChannel(values.authType === 'env_oauth' ? 'env-oauth' : 'vault-oauth');
     channel.onmessage = (event) => {
       if (isVaultOAuthCompleteMessage(event.data)) {
         finish(event.data);
@@ -318,7 +351,7 @@ export function CredentialDialog({
       window.removeEventListener('message', onMessage);
       channel.close();
     };
-  }, [msg, onOAuthComplete, vaultId, waitingForOAuth]);
+  }, [msg, onOAuthComplete, values.authType, vaultId, waitingForOAuth]);
 
   const submitDirect = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -348,9 +381,10 @@ export function CredentialDialog({
     // Open synchronously while we still have the click gesture; await would lose activation.
     // Keep a real popup (not a new tab). Size matters: GitHub enables Authorize via JS and
     // often leaves it unresponsive in tiny popups.
+    const envOAuth = values.authType === 'env_oauth';
     const popup = window.open(
       'about:blank',
-      'vault-oauth',
+      envOAuth ? 'env-oauth' : 'vault-oauth',
       'popup=yes,width=960,height=800,scrollbars=yes,resizable=yes',
     );
     if (!popup) {
@@ -368,6 +402,33 @@ export function CredentialDialog({
     pendingOAuthFlowIdRef.current = null;
     try {
       // GitHub Apps require an exact callback URL match with no extra query params.
+      if (envOAuth) {
+        const started = await startEnvOAuthVaultAuth(
+          orgUuid,
+          {
+            provider_id: values.envOAuthProviderId,
+            vault_id: vaultId,
+            workspace_id: workspaceId,
+            secret_name: values.secretName.trim(),
+            display_name: credentialDisplayName(values) || undefined,
+            networking: credentialNetworkingBody(values),
+            redirect_url: `${window.location.origin}/oauth/vault/env-success`,
+          },
+          csrfToken,
+        );
+        if (popup.closed) {
+          abandonOAuthWait(
+            msg(
+              'managedAgents.credentialVaults.credentialDialog.oauthWindowClosed',
+              'OAuth window was closed before completing.',
+            ),
+          );
+          return;
+        }
+        pendingOAuthFlowIdRef.current = started.oauth_flow_id;
+        popup.location.href = started.authorize_url;
+        return;
+      }
       const redirectUrl = `${window.location.origin}/oauth/vault/success`;
       const started = await startMCPVaultAuth(
         orgUuid,
@@ -475,6 +536,15 @@ export function CredentialDialog({
                   {values.authType === 'environment_variable' ? (
                     <EnvironmentVariableCredentialFields
                       values={values}
+                      secretNameLocked={Boolean(credential)}
+                      onChange={patchValues}
+                    />
+                  ) : null}
+                  {values.authType === 'env_oauth' ? (
+                    <EnvOAuthCredentialFields
+                      values={values}
+                      providers={envOAuthProviders ?? []}
+                      providersLoading={envOAuthProviders === null}
                       secretNameLocked={Boolean(credential)}
                       onChange={patchValues}
                     />

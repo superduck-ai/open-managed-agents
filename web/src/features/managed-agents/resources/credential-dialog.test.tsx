@@ -261,3 +261,75 @@ test('ignores unrelated OAuth completions and preserves one exit lifecycle for t
   expect(onOAuthComplete).toHaveBeenCalledTimes(1);
   await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
 });
+
+test('creates an ENV OAuth credential through the authorization popup', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
+  const popup = {
+    closed: false,
+    location: { href: '' },
+    close: mock(() => {
+      popup.closed = true;
+    }),
+  };
+  window.open = mock(() => popup as unknown as Window);
+  const writes: string[] = [];
+  globalThis.fetch = mock(async (input, init) => {
+    const url = String(input);
+    if (url.includes('/env-oauth/providers')) {
+      return Response.json([
+        {
+          id: 'builtin:feishu',
+          name: 'Feishu',
+          builtin: true,
+          authorize_endpoint: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize',
+          token_endpoint: 'https://open.feishu.cn/open-apis/authen/v2/oauth/token',
+          scope: 'offline_access',
+          default_secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+          default_allowed_hosts: ['open.feishu.cn', 'accounts.feishu.cn'],
+        },
+      ]);
+    }
+    if (url.includes('/env-oauth/vault-auth/start')) {
+      writes.push(String(init?.body));
+      return Response.json({ oauth_flow_id: 'flow_env', authorize_url: 'https://accounts.feishu.cn/authorize' });
+    }
+    return Response.json({});
+  }) as typeof fetch;
+  const onSubmit = mock(async () => {});
+  render(
+    <AuthHarness>
+      <CredentialDialog
+        vaultId="vlt_fixture"
+        workspaceId="default"
+        orgUuid="org_fixture"
+        onClose={() => {}}
+        onSubmit={onSubmit}
+        onOAuthComplete={() => {}}
+      />
+    </AuthHarness>,
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Add credential' });
+  fireEvent.click(within(dialog).getByRole('combobox', { name: 'Type' }));
+  fireEvent.click(await screen.findByText('ENV OAuth'));
+  fireEvent.click(await within(dialog).findByRole('combobox', { name: 'OAuth provider' }));
+  fireEvent.click(await screen.findByText('Built-in: Feishu'));
+  expect((within(dialog).getByLabelText('Variable name') as HTMLInputElement).value).toBe(
+    'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+  );
+  fireEvent.click(within(dialog).getByRole('checkbox'));
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+  });
+  await waitFor(() => expect(popup.location.href).toBe('https://accounts.feishu.cn/authorize'));
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(writes[0])).toEqual({
+    provider_id: 'builtin:feishu',
+    vault_id: 'vlt_fixture',
+    workspace_id: 'default',
+    secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+    display_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+    networking: { type: 'limited', allowed_hosts: ['open.feishu.cn', 'accounts.feishu.cn'] },
+    redirect_url: 'https://oma.duck.ai/oauth/vault/env-success',
+  });
+  expect(onSubmit).not.toHaveBeenCalled();
+});

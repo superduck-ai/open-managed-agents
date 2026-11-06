@@ -22,6 +22,10 @@ export function usePlatformAdminError() {
       'This account is already a member. Change its role in the member list.',
     ),
     state_conflict: msg('platformAdmin.errors.stateConflict', 'This action is not available in the current state.'),
+    oauth_provider_name_conflict: msg(
+      'platformAdmin.errors.oauthProviderNameConflict',
+      'An OAuth client with this name already exists.',
+    ),
     rate_limited: msg('platformAdmin.errors.rateLimited', 'Too many requests. Please try again later.'),
     invalid_request: msg('platformAdmin.errors.invalidRequest', 'Check the form values and try again.'),
     not_found: msg('platformAdmin.errors.notFound', 'The requested resource was not found.'),

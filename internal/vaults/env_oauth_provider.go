@@ -3,7 +3,6 @@ package vaults
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 )
 
@@ -86,24 +85,6 @@ func FeishuEnvOAuthProvider(clientID, clientSecret string) EnvOAuthProviderSnaps
 		TokenEndpointEncoding:   envOAuthTokenEndpointEncodingJSON,
 		DefaultSecretName:       EnvOAuthFeishuDefaultSecretName,
 		DefaultAllowedHosts:     append([]string(nil), envOAuthFeishuAllowedHosts...),
-	}
-}
-
-func ValidateEnvOAuthTokenEndpointAuthMethod(value string) error {
-	switch value {
-	case envOAuthTokenEndpointAuthPost, envOAuthTokenEndpointAuthBasic, envOAuthTokenEndpointAuthNone:
-		return nil
-	default:
-		return fmt.Errorf("token_endpoint_auth_method must be client_secret_post, client_secret_basic, or none")
-	}
-}
-
-func ValidateEnvOAuthTokenEndpointEncoding(value string) error {
-	switch value {
-	case envOAuthTokenEndpointEncodingForm, envOAuthTokenEndpointEncodingJSON:
-		return nil
-	default:
-		return fmt.Errorf("token_endpoint_encoding must be form or json")
 	}
 }
 

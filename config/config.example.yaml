@@ -80,3 +80,8 @@ vault:
   #   - mcp_server_url: "https://api.githubcopilot.com/mcp/"
   #     client_id: "Iv23..."
   #     client_secret: "..."
+  # Optional built-in Feishu OAuth client for env_oauth credentials. Configure
+  # both fields or neither; the built-in provider is unavailable when omitted.
+  # feishu_oauth_client:
+  #   client_id: "cli_..."
+  #   client_secret: "..."

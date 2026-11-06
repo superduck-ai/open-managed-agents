@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="PlatformOAuthProviderMapper">
+    <sql id="columns">
+        uuid, external_id, name, authorize_endpoint, token_endpoint, scope, client_id,
+        client_secret_envelope, token_endpoint_auth_method, token_endpoint_encoding,
+        created_by_platform_admin_uuid, created_at, updated_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="platformOAuthProviderRow">
+        INSERT INTO platform_oauth_providers (
+            uuid, external_id, name, authorize_endpoint, token_endpoint, scope, client_id,
+            client_secret_envelope, token_endpoint_auth_method, token_endpoint_encoding,
+            created_by_platform_admin_uuid, created_at, updated_at
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.Name}, #{params.AuthorizeEndpoint},
+            #{params.TokenEndpoint}, #{params.Scope}, #{params.ClientID},
+            #{params.ClientSecretEnvelope,sensitive=true}, #{params.TokenEndpointAuthMethod},
+            #{params.TokenEndpointEncoding}, #{params.CreatedByPlatformAdminUUID},
+            #{params.CreatedAt}, #{params.UpdatedAt}
+        )
+        RETURNING <include refid="columns"/>
+    </insert>
+
+    <select id="List" resultType="platformOAuthProviderRow">
+        SELECT <include refid="columns"/>
+        FROM platform_oauth_providers
+        ORDER BY created_at DESC, id DESC
+    </select>
+
+    <select id="FindByExternalID" resultType="platformOAuthProviderRow">
+        SELECT <include refid="columns"/>
+        FROM platform_oauth_providers
+        WHERE external_id = #{externalID}
+    </select>
+
+    <update id="UpdateByExternalID" result="returning" resultType="platformOAuthProviderRow">
+        UPDATE platform_oauth_providers
+        SET name = #{params.Name},
+            authorize_endpoint = #{params.AuthorizeEndpoint},
+            token_endpoint = #{params.TokenEndpoint},
+            scope = #{params.Scope},
+            client_id = #{params.ClientID},
+            client_secret_envelope = #{params.ClientSecretEnvelope,sensitive=true},
+            token_endpoint_auth_method = #{params.TokenEndpointAuthMethod},
+            token_endpoint_encoding = #{params.TokenEndpointEncoding},
+            updated_at = #{params.UpdatedAt}
+        WHERE external_id = #{params.ExternalID}
+        RETURNING <include refid="columns"/>
+    </update>
+
+    <delete id="DeleteByExternalID" result="rows">
+        DELETE FROM platform_oauth_providers
+        WHERE external_id = #{externalID}
+    </delete>
+</mapper>

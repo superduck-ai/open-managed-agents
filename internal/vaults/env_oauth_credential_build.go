@@ -5,6 +5,22 @@ import (
 	"time"
 )
 
+func EnvOAuthCredentialProvider(authJSON []byte) (string, error) {
+	value, err := decodeEnvOAuthCredentialAuth(authJSON)
+	if err != nil {
+		return "", err
+	}
+	return value.Provider, nil
+}
+
+func EnvOAuthCredentialPlaceholder(authJSON []byte) (string, bool) {
+	value, err := decodeEnvOAuthCredentialAuth(authJSON)
+	if err != nil {
+		return "", false
+	}
+	return value.Placeholder, true
+}
+
 type EnvOAuthCredentialBuildInput struct {
 	Provider         string
 	SecretName       string

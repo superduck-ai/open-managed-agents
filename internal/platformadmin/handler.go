@@ -19,12 +19,13 @@ import (
 type SessionLoader func(*http.Request) (platformsession.Session, error)
 
 type Handler struct {
-	service *Service
-	load    SessionLoader
-	verify  func(context.Context, string) (db.PlatformAdminAccount, error)
-	enabled bool
-	mu      sync.Mutex
-	lookups map[string]time.Time
+	service        *Service
+	oauthProviders *OAuthProviderService
+	load           SessionLoader
+	verify         func(context.Context, string) (db.PlatformAdminAccount, error)
+	enabled        bool
+	mu             sync.Mutex
+	lookups        map[string]time.Time
 }
 
 type accountContextKey struct{}
@@ -43,6 +44,14 @@ func NewHandler(service *Service, load SessionLoader, enabled bool) *Handler {
 	return &Handler{service: service, load: load, verify: service.Authorize, enabled: enabled, lookups: make(map[string]time.Time)}
 }
 
+func (h *Handler) WithOAuthProviders(service *OAuthProviderService) *Handler {
+	if h == nil {
+		return nil
+	}
+	h.oauthProviders = service
+	return h
+}
+
 func (h *Handler) Routes(systemSkills ...http.Handler) http.Handler {
 	r := chi.NewRouter()
 	r.Use(h.authorize)
@@ -56,6 +65,10 @@ func (h *Handler) Routes(systemSkills ...http.Handler) http.Handler {
 	r.Delete("/administrators/{accountUuid}", h.removePlatformAdministrator)
 	r.Get("/organizations", h.organizations)
 	r.Post("/organizations", h.createOrganization)
+	r.Get("/oauth-providers", h.listOAuthProviders)
+	r.Post("/oauth-providers", h.createOAuthProvider)
+	r.Patch("/oauth-providers/{providerId}", h.updateOAuthProvider)
+	r.Delete("/oauth-providers/{providerId}", h.deleteOAuthProvider)
 	r.Route("/organizations/{organizationUuid}", func(r chi.Router) {
 		r.Use(h.organizationScope)
 		r.Get("/", h.organization)
@@ -182,6 +195,71 @@ func decodeRequest[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 		return input, invalid("请求字段或 JSON 格式无效")
 	}
 	return input, nil
+}
+
+func (h *Handler) requireOAuthProviders(w http.ResponseWriter, r *http.Request) bool {
+	if h.oauthProviders != nil {
+		return true
+	}
+	h.fail(w, r, ErrUnavailable)
+	return false
+}
+
+func (h *Handler) listOAuthProviders(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOAuthProviders(w, r) {
+		return
+	}
+	views, err := h.oauthProviders.List(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	respond(w, http.StatusOK, views)
+}
+
+func (h *Handler) createOAuthProvider(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOAuthProviders(w, r) {
+		return
+	}
+	input, err := decodeRequest[OAuthProviderCreateInput](w, r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	view, err := h.oauthProviders.Create(r.Context(), actorFromRequest(r), input)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	respond(w, http.StatusCreated, view)
+}
+
+func (h *Handler) updateOAuthProvider(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOAuthProviders(w, r) {
+		return
+	}
+	input, err := decodeRequest[OAuthProviderUpdateInput](w, r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	view, err := h.oauthProviders.Update(r.Context(), actorFromRequest(r), chi.URLParam(r, "providerId"), input)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	respond(w, http.StatusOK, view)
+}
+
+func (h *Handler) deleteOAuthProvider(w http.ResponseWriter, r *http.Request) {
+	if !h.requireOAuthProviders(w, r) {
+		return
+	}
+	if err := h.oauthProviders.Delete(r.Context(), chi.URLParam(r, "providerId")); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) writeChange(w http.ResponseWriter, r *http.Request, result Organization, err error) {

@@ -400,6 +400,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
                   />
                 }
                 tooltip={msg('nav.workspaceManagement', 'Workspace management')}
+                title={msg('nav.workspaceManagement', 'Workspace management')}
                 aria-label={collapsed ? msg('nav.workspaceManagement', 'Workspace management') : undefined}
               >
                 <navigationIcons.settings className="size-4" aria-hidden />
@@ -442,7 +443,7 @@ function ResourceNavigation({
     <SidebarMenuItem>
       <SidebarMenuButton
         type="button"
-        isActive={!expanded && active}
+        isActive={active && (collapsed || !expanded)}
         tooltip={msg(item.labelId, item.label)}
         aria-label={collapsed ? msg(item.labelId, item.label) : undefined}
         aria-expanded={!collapsed && expanded}
@@ -475,7 +476,14 @@ function ResourceNavigation({
               return (
                 <SidebarMenuSubItem key={child.href}>
                   <SidebarMenuSubButton
-                    render={<ShellLink href={navigationHref(child.href, activeWorkspaceId)} onNavigate={onNavigate} />}
+                    render={
+                      <ShellLink
+                        href={navigationHref(child.href, activeWorkspaceId)}
+                        onNavigate={onNavigate}
+                        aria-current={isActivePath(currentPath, child.href) ? 'page' : undefined}
+                        title={msg(child.labelId, child.label)}
+                      />
+                    }
                     isActive={isActivePath(currentPath, child.href)}
                     className="h-9 translate-x-0 gap-3 pl-5 pr-2"
                   >
@@ -715,12 +723,17 @@ function WorkspaceSwitcher({
                   collapsed ? 'justify-center' : 'justify-start',
                 )}
                 aria-label={localizedWorkspaceName(activeWorkspace.name, msg)}
+                title={localizedWorkspaceName(activeWorkspace.name, msg)}
               />
             }
           >
             <span className="grid aspect-square size-8 shrink-0 place-items-center rounded-lg border-[0.5px] border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground">
               {consoleNavigation ? (
-                <navigationIcons.resources className="size-4" aria-hidden />
+                <navigationIcons.workspace
+                  className="size-4"
+                  style={{ color: workspaceColor(activeWorkspace) }}
+                  aria-hidden
+                />
               ) : (
                 <Box className="size-4" style={{ color: workspaceColor(activeWorkspace) }} aria-hidden />
               )}
@@ -760,7 +773,11 @@ function WorkspaceSwitcher({
                   >
                     <span className="grid size-6 shrink-0 place-items-center rounded-md border-[0.5px] bg-background text-muted-foreground">
                       {consoleNavigation ? (
-                        <navigationIcons.resources className="size-4" aria-hidden />
+                        <navigationIcons.workspace
+                          className="size-4"
+                          style={{ color: workspaceColor(workspace) }}
+                          aria-hidden
+                        />
                       ) : (
                         <Box className="size-4" style={{ color: workspaceColor(workspace) }} aria-hidden />
                       )}
@@ -837,7 +854,14 @@ function SidebarLink({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
-        render={<ShellLink href={href} onNavigate={onNavigate} />}
+        render={
+          <ShellLink
+            href={href}
+            onNavigate={onNavigate}
+            aria-current={isActivePath(currentPath, item.href) ? 'page' : undefined}
+            title={msg(item.labelId, item.label)}
+          />
+        }
         isActive={isActivePath(currentPath, item.href)}
         tooltip={msg(item.labelId, item.label)}
         className={interactiveMotionClass}
@@ -872,6 +896,7 @@ function SidebarFooter({
           <SidebarMenuButton
             render={<a href="https://oma.mintlifysite.com/" target="_blank" rel="noreferrer" />}
             tooltip={msg('nav.documentation', 'Documentation')}
+            title={msg('nav.documentation', 'Documentation')}
             className={interactiveMotionClass}
             aria-label={collapsed ? msg('nav.documentation', 'Documentation') : undefined}
           >

@@ -1,8 +1,42 @@
-import type { ComponentType, ReactNode } from 'react';
+import type { ComponentType, CSSProperties, ReactNode } from 'react';
 
-type IconComponent = ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
+type IconComponent = ComponentType<{ className?: string; style?: CSSProperties; 'aria-hidden'?: boolean }>;
 
 const shapes = {
+  workspace: (
+    <>
+      <path d="M10.25 8.75H7.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M7.75 12.75H10.25"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M22.25 19.25H1.75"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3.75 19.25V5.75C3.75 4.64543 4.64543 3.75 5.75 3.75H12.25C13.3546 3.75 14.25 4.64543 14.25 5.75V19.25"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M14.25 7.75H18.25C19.3546 7.75 20.25 8.64543 20.25 9.75V19.25"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </>
+  ),
+
   cost: (
     <>
       <path
@@ -394,6 +428,7 @@ function createProductIcon(name: keyof typeof shapes): IconComponent {
 }
 
 export const productIcons = {
+  workspace: createProductIcon('workspace'),
   cost: createProductIcon('cost'),
   tunnel: createProductIcon('tunnel'),
   documentation: createProductIcon('documentation'),

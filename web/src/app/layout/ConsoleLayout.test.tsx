@@ -65,6 +65,43 @@ describe('ConsoleShell', () => {
     },
   );
 
+  test('keeps the resource location selected when the sidebar is collapsed', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/workspaces/default/skills" account={testAccount()} onLogout={() => undefined}>
+        <div>Skills content</div>
+      </ConsoleShell>,
+    );
+    expect(screen.getByRole('link', { name: 'Skills', exact: true }).getAttribute('aria-current')).toBe('page');
+    const resources = screen.getByRole('button', { name: 'Resources', exact: true });
+    expect(resources.hasAttribute('data-active')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse', exact: true }));
+    expect(resources.hasAttribute('data-active')).toBe(true);
+    expect(resources.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand', exact: true }));
+    expect(resources.hasAttribute('data-active')).toBe(false);
+    fireEvent.click(resources);
+    expect(resources.hasAttribute('data-active')).toBe(true);
+  });
+
+  test('marks the current primary page and retains full navigation labels', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/environments');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/workspaces/default/environments" account={testAccount()} onLogout={() => undefined}>
+        <div>Environment content</div>
+      </ConsoleShell>,
+    );
+    const current = screen.getByRole('link', { name: 'Environments', exact: true });
+    expect(current.getAttribute('aria-current')).toBe('page');
+    expect(current.getAttribute('title')).toBe('Environments');
+    expect(screen.getByRole('link', { name: 'Overview', exact: true }).hasAttribute('aria-current')).toBe(false);
+    const workspaceIcon = getWorkspaceMenuButton(/Default/i).querySelector('svg');
+    expect(workspaceIcon?.innerHTML).not.toBe(
+      screen.getByRole('button', { name: 'Resources' }).querySelector('svg')?.innerHTML,
+    );
+    expect(workspaceIcon?.style.color).toBe('var(--violet-9)');
+  });
+
   test('remembers the last management module after leaving and remounting the console', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers');
     function Harness({ account = testAccount() }: { account?: AuthAccount }) {

@@ -121,7 +121,7 @@
     color 150ms ease-out;
 }
 
-[data-sidebar-navigation] [data-active='true'] {
+[data-sidebar-navigation] [data-active] {
   background: var(--slate-4);
   color: var(--sidebar-foreground);
   font-weight: 500;

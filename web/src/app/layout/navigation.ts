@@ -1,4 +1,4 @@
-import { navigationIcons } from './navigation-icons';
+import { productIcons as navigationIcons } from '@/shared/icons/product-icons';
 import {
   Activity,
   BarChart3,

@@ -2,7 +2,7 @@ import { useResourceNavigationExpansion } from './use-resource-navigation-expans
 import { useWorkspaceManagementHistory } from './use-workspace-management-history';
 import { quickstartModelSetupReturn } from '../../shared/workspaces/model-setup-navigation';
 import './console-navigation.css';
-import { navigationIcons } from './navigation-icons';
+import { productIcons as navigationIcons } from '@/shared/icons/product-icons';
 import { AppearanceMenuRow } from './AppearanceMenuRow';
 import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';

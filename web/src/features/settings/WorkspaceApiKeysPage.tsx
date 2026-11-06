@@ -716,7 +716,7 @@ function formatDate(
 function displayCreator(apiKey: WorkspaceApiKey, unknown: string): Identity {
   const createdBy = apiKey.created_by;
   return {
-    name: createdBy?.name || createdBy?.email || createdBy?.id || apiKey.created_by_user_id || unknown,
+    name: createdBy?.name || createdBy?.email || unknown,
     email: createdBy?.email ?? '',
   };
 }

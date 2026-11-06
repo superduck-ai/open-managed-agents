@@ -40,7 +40,8 @@ describe('Workspace API keys page', () => {
       const name = await screen.findByText('foo');
       const row = name.closest('tr')!;
       expect(within(row).queryByText('test@example.com')).toBeNull();
-      expect(within(row).getByText(creator?.name ?? creator?.id ?? 'Unknown')).toBeTruthy();
+      expect(within(row).getByText(creator?.name ?? creator?.email ?? 'Unknown')).toBeTruthy();
+      if (creator?.id) expect(within(row).queryByText(creator.id)).toBeNull();
       if (creator?.email) expect(within(row).getByText(creator.email)).toBeTruthy();
     });
   }

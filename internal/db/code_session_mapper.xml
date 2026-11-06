@@ -277,6 +277,7 @@
             worker_claim_expires_at = NULL,
             updated_at = #{params.Now}
         WHERE uuid = #{params.UUID}
+          AND EXISTS (SELECT 1 FROM code_sessions ownership WHERE ownership.uuid = code_sessions.uuid FOR UPDATE)
         RETURNING current_worker_epoch
     </update>
 
@@ -473,6 +474,7 @@
           AND external_id = #{params.CodeSessionExternalID}
           AND status = 'active'
           AND deleted_at IS NULL
+          AND EXISTS (SELECT 1 FROM code_sessions ownership WHERE ownership.uuid = code_sessions.uuid FOR UPDATE)
         RETURNING current_worker_epoch
     </update>
 
@@ -498,6 +500,7 @@
         WHERE organization_uuid = #{organizationUUID}
           AND workspace_uuid = #{workspaceUUID}
           AND session_uuid = #{sessionUUID}
+          AND EXISTS (SELECT 1 FROM code_sessions ownership WHERE ownership.uuid = code_sessions.uuid FOR UPDATE)
         RETURNING external_id
     </update>
 
@@ -512,6 +515,8 @@
           AND workspace_uuid = #{workspaceUUID}
           AND external_id = #{codeSessionExternalID}
           AND deleted_at IS NULL
+          AND EXISTS (SELECT 1 FROM code_sessions ownership WHERE ownership.uuid = code_sessions.uuid FOR UPDATE)
+
     </update>
     <update id="TerminateLaunch" result="rows">
         UPDATE code_sessions
@@ -527,5 +532,7 @@
           AND current_worker_epoch = #{workerEpoch}
           AND current_worker_epoch > 0
           AND status = 'active'
+          AND EXISTS (SELECT 1 FROM code_sessions ownership WHERE ownership.uuid = code_sessions.uuid FOR UPDATE)
+
     </update>
 </mapper>

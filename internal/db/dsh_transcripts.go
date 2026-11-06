@@ -39,10 +39,14 @@ func dshTranscriptFromRow(row dshTranscriptRow) DSHTranscript {
 }
 
 func lockDSHWorker(ctx context.Context, executor yourbatis.Executor, scope DSHScope) error {
-	row, found, err := NewDSHTranscriptMapper(executor).LockWorker(ctx, scope)
+	row, found, err := NewDSHTranscriptMapper(executor).ShareWorker(ctx, scope)
 	if err != nil {
 		return err
 	}
+	return validateDSHWorker(scope, row, found)
+}
+
+func validateDSHWorker(scope DSHScope, row dshWorkerScopeRow, found bool) error {
 	if !found {
 		return ErrNotFound
 	}
@@ -108,7 +112,7 @@ func (d *DB) AppendDSHTranscript(ctx context.Context, scope DSHScope, id string,
 			return err
 		}
 		mapper := NewDSHTranscriptMapper(executor)
-		row, found, err := mapper.Find(ctx, scope, id)
+		row, found, err := mapper.LockTranscript(ctx, scope, id)
 		if err != nil {
 			return err
 		}

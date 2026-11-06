@@ -239,7 +239,7 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 
 事务（all-or-nothing）：
 
-1. 锁定 Code Session 并校验 token epoch；不匹配返回 `409 epoch_superseded`。
+1. 对 Code Session 取得 `FOR KEY SHARE`，在同一事务内校验 token epoch 与租约；不匹配返回 `409 epoch_superseded`。再对目标 transcript 取得 `FOR UPDATE`，序列化该日志的追加。心跳使用兼容的短更新锁；所有 epoch 切换、release 和失效操作必须取得 Code Session 的 `FOR UPDATE` fence，等待在途旧写入完成，不能把身份校验拆到独立短事务。
 2. 锁定 `dsh_transcripts` 行；Header 不存在返回 `409 transcript_header_required`。
 3. 请求内 seq 必须连续递增。`seq < next_seq` 的条目按 6.3 与已存条目比较：相同则跳过，不同返回 `409 transcript_conflict`。已存条目可能已归档并从 PostgreSQL 软删除，比较使用合并读回路径（6.7），不能因为在 PostgreSQL 中找不到就当作新条目写入。`next_seq` 只增不减，不随归档、软删除或还原改变。
 4. 第一条未确认条目必须等于 `next_seq`，否则返回 `409 transcript_gap`，并在 `DSR-Next-Seq` 中给出当前值。

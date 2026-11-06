@@ -69,6 +69,7 @@
             worker_claim_attempts = worker_claim_attempts + 1,
             updated_at = NOW()
         WHERE uuid = #{params.UUID}
+          AND EXISTS (SELECT 1 FROM code_sessions ownership WHERE ownership.uuid = code_sessions.uuid FOR UPDATE)
         RETURNING current_worker_epoch
     </update>
 
@@ -82,6 +83,7 @@
             worker_claim_expires_at = #{holdUntil},
             updated_at = NOW()
         WHERE uuid = #{uuid}
+          AND EXISTS (SELECT 1 FROM code_sessions ownership WHERE ownership.uuid = code_sessions.uuid FOR UPDATE)
         RETURNING current_worker_epoch
     </update>
 
@@ -110,6 +112,7 @@
           AND worker_claimed_by = #{params.WorkerID}
           AND status = 'active'
           AND deleted_at IS NULL
+          AND EXISTS (SELECT 1 FROM code_sessions ownership WHERE ownership.uuid = code_sessions.uuid FOR UPDATE)
         RETURNING uuid, current_worker_epoch
     </update>
 
@@ -137,6 +140,8 @@
           AND worker_claimed_by = #{params.WorkerID}
           AND status = 'active'
           AND deleted_at IS NULL
+          AND EXISTS (SELECT 1 FROM code_sessions ownership WHERE ownership.uuid = code_sessions.uuid FOR UPDATE)
+
     </update>
 
     <select id="FindWorkerTransport" result="scalar" resultType="string">

@@ -77,6 +77,8 @@
                 AND work.organization_uuid = cs.organization_uuid AND work.workspace_uuid = cs.workspace_uuid
                 AND work.environment_uuid = cs.environment_uuid AND work.session_uuid = cs.session_uuid
                 AND work.state = 'active' AND work.deleted_at IS NULL)
+          AND EXISTS (SELECT 1 FROM code_sessions ownership WHERE ownership.uuid = cs.uuid FOR UPDATE)
+
     </update>
     <update id="BeginStop">
         UPDATE environment_sandboxes SET state = 'stopping', stop_reason = 'idle_timeout', updated_at = NOW()

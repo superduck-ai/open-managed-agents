@@ -121,6 +121,14 @@ flowchart LR
 
 写入按所属 Session/Code Session 加锁，并显式检查组织、工作空间、协议、epoch 和租约。公开输入接纳与 input execution 创建、确认与审批解决、公开输出与收据、finish 与 pending 关闭、公开 reducer 更新分别在同一事务中完成。提交后的 SSE/webhook fanout 复用现有服务。
 
+DSH 普通写事务通过 `code_sessions FOR KEY SHARE` 校验并保护 epoch 与有效租约，不再持有会话级排他锁。append 另外通过 `dsh_transcripts FOR UPDATE` 串行化同一条日志的序号、重复事件比较与水位推进；不同 transcript、公开输出及 finish 不因这把 worker 锁互相串行。Put Header 仍由唯一约束处理同名并发创建。公开状态写入继续保留公开 Session 的业务锁。
+
+心跳只取得兼容 `KEY SHARE` 的 `FOR NO KEY UPDATE`，完成校验和续租后提交。worker 查询通过物化 CTE 先取得锁，再以 `clock_timestamp()` 判断租约宽限期；Register/Heartbeat 在获锁后计算新的到期时间，避免等待消耗 TTL 或用等待前的时间复活已过期租约。注册与配置冻结继续使用排他锁。
+
+claim、worker 注册、凭据轮换、永久失败、release、终止及沙箱回收的所有权修改语句都包含关联到目标 UUID 的 `SELECT ... FOR UPDATE`。这个显式 fence 与普通写事务的 `KEY SHARE` 冲突，必须等旧写事务提交后才能改变所有权；epoch 是非键字段，不能仅依赖 UPDATE 自动取得的锁。已在 Go 编排中取得排他锁的路径仍保留原锁顺序。事务内不能先取得弱更新锁再升级为 ownership fence，也不能先短事务校验 epoch、释放锁后再追加日志。
+
+锁顺序保持为：公开 Session 业务锁（需要时）→ Code Session 身份锁 → transcript 或其他资源行锁。新增 Mapper 修改所有权时必须同样使用排他 fence，不能绕过该合同。真实 PostgreSQL 回归 `TestDSHLockingPostgres*` 用受控事务交错验证心跳、不同日志、公开输出及 finish 可继续，同日志追加串行，所有权变更等待且旧 epoch 被拒绝，以及获锁后的租约时钟和完整 TTL；该验证不代表生产大 payload 压测。
+
 Header/Event 拒绝重复 JSON 键，使用 RFC 8785 JCS 比较。事件批次最多 200，单事件最多 15 MiB，请求体最多 16 MiB；读取按每页最多 200 条事件分页，不设置响应字节预算。目录单独分页。
 
 ## 验证范围

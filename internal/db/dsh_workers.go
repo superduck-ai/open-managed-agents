@@ -8,11 +8,12 @@ import (
 )
 
 func (d *DB) RegisterDSHWorker(ctx context.Context, scope DSHScope) (time.Time, error) {
-	expiresAt := time.Now().UTC().Add(20 * time.Second)
+	var expiresAt time.Time
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		if err := lockDSHRegistration(ctx, executor, scope); err != nil {
 			return err
 		}
+		expiresAt = time.Now().UTC().Add(20 * time.Second)
 		mapper := NewDSHWorkerMapper(executor)
 		rows, err := mapper.Register(ctx, scope, expiresAt)
 		if err != nil {
@@ -28,11 +29,16 @@ func (d *DB) RegisterDSHWorker(ctx context.Context, scope DSHScope) (time.Time, 
 }
 
 func (d *DB) HeartbeatDSHWorker(ctx context.Context, scope DSHScope) (time.Time, error) {
-	expiresAt := time.Now().UTC().Add(20 * time.Second)
+	var expiresAt time.Time
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		if err := lockDSHWorker(ctx, executor, scope); err != nil {
+		row, found, err := NewDSHTranscriptMapper(executor).LockHeartbeat(ctx, scope)
+		if err != nil {
 			return err
 		}
+		if err := validateDSHWorker(scope, row, found); err != nil {
+			return err
+		}
+		expiresAt = time.Now().UTC().Add(20 * time.Second)
 		rows, err := NewDSHWorkerMapper(executor).Heartbeat(ctx, scope, expiresAt)
 		if err != nil {
 			return err

@@ -90,7 +90,7 @@ func TestDSHExecutionPostgres(t *testing.T) {
 		if _, _, err := store.RequestDSHPermission(ctx, scope, duplicate, nil); !errors.Is(err, ErrDSHPermissionConflict) {
 			t.Fatalf("changed=%v", err)
 		}
-		confirm := SessionEvent{UUID: uuid.NewV4().String(), ExternalID: "confirm", EventType: "user.tool_confirmation", Payload: json.RawMessage(`{"type":"user.tool_confirmation","tool_use_id":"tool_public","result":"allow"}`), CreatedAt: time.Now().UTC(), ProcessedAt: time.Now().UTC()}
+		confirm := SessionEvent{UUID: uuid.NewV4().String(), ExternalID: "confirm", EventType: "user.tool_confirmation", ToolUseID: &permission.PublicEventID, Payload: json.RawMessage(`{"type":"user.tool_confirmation","tool_use_id":"tool_public","result":"allow"}`), CreatedAt: time.Now().UTC(), ProcessedAt: time.Now().UTC()}
 		second := confirm
 		second.UUID, second.ExternalID = uuid.NewV4().String(), "contradictory-confirm"
 		second.Payload = []byte(`{"type":"user.tool_confirmation","tool_use_id":"tool_public","result":"deny"}`)

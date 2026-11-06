@@ -3,7 +3,7 @@
 状态：已实现。初始化 CLI 位于 `cmd/dev-init`（`just dev-init` / `just slot-info`），
 核心逻辑在 `internal/devinit`。本文描述当前行为、恢复约定与验收边界。
 
-开发者操作步骤见[本地开发环境使用指南](../development-guide.md)，包括首次初始化、Brain 模式配置和 Herdr 日常重启。
+开发者操作步骤见[本地开发环境使用指南](../development-guide.md)，包括首次初始化、Brain 模式配置和 Herdr / Rex 日常重启。
 
 ## 目标
 
@@ -86,29 +86,39 @@ just restart-web
 just restart-brain
 ```
 
-在 Herdr 终端内执行 `just restart`，可在同一个终端窗口中重启三个服务。
-`scripts/restart-dev.sh` 每次在当前 Herdr workspace 中按服务名称和 worktree
+在 Herdr 或 Rex 终端内执行 `just restart`，可在同一个终端窗口中重启三个服务。
+`scripts/restart-dev.sh` 自动识别终端：存在 `REX_SESSION` 和 `REX_BLOCK` 时使用 Rex，
+否则使用 `HERDR_ENV=1` 和 `HERDR_WORKSPACE_ID` 标识的 Herdr。Rex 优先，避免继承外层
+Herdr 环境时操作错误终端。终端适配分别位于 `restart-dev-herdr.sh` 和 `restart-dev-rex.sh`。
+每次在当前 Herdr workspace 或 Rex session 中按服务名称和 worktree
 工作目录查找旧服务分屏，确认是本环境服务后发送 Ctrl+C，等待最多 30 秒返回
 shell，全部停止后关闭这些旧分屏。未知程序和其他 worktree 的分屏不会被中断
 或关闭。从服务分屏自身执行会被拒绝，应在独立控制分屏执行。
+Rex 通过 `block call process` 返回的前台进程目录确认 worktree，再通过脚本路径或
+`argv0` 服务标识确认重启脚本归属。标识包含 recipe 和 worktree 路径的 SHA-256；
+启动时通过 Bash `exec -a` 设置，并检查前台进程及其祖先进程。
+这避免依赖 Rex 隐去的完整命令行，也兼容 Bash 未报告脚本路径的情况。
+进程信息读取失败时终止；未知程序不会被中断。
+Rex 不返回完整命令行，因此无法识别脚本调用链的手工服务需先手动停止。
 
 随后新建 `OMA services` 标签页：后端位于左侧，Brain 和 Web 位于右侧上下分屏。
 每个新分屏最多等待 30 秒进入空闲 shell；初始化期间出现临时前台进程只等待，
 不发送中断，也不提前写入启动命令。脚本先等待后端输出监听成功，再启动 Brain，
-等待 Brain 输出协议无关的 `oma-brain-dsh ready` 后启动 Web，每次使用唯一就绪标记。当前 DSRv1 host 在初始领取成功或确认暂时无任务后输出该标记；协议专用诊断日志不代替启动标记。各服务仍调用现有
+等待 Brain 输出协议无关的 `oma-brain-dsh ready` 后启动 Web，每次使用唯一就绪标记。Herdr 使用 `wait-output`，Rex 轮询 `capture --trim --unwrap`，避免把 shell 回显的启动命令当作就绪输出。当前 DSRv1 host 在初始领取成功或确认暂时无任务后输出该标记；协议专用诊断日志不代替启动标记。各服务仍调用现有
 `restart-*` 入口，使用当前 worktree 的配置和进程归属检查。
 
 启动全部成功后才切换到服务标签页；失败时控制分屏显示服务名、panel ID、
 失败阶段及该分屏最近 30 行输出，停止后续启动并保留新分屏。脚本回归入口为
-`bash scripts/tests/restart-dev_test.sh`，通过模拟 Herdr 验证等待、替换、拒绝误关及
+`bash scripts/tests/restart-dev_test.sh`，通过模拟 Herdr 和 Rex 验证等待、替换、拒绝误关及
 失败诊断，不操作开发者的真实分屏。
 
 三个服务就绪后，脚本汇总输出当前环境的 Web 与 API 完整 HTTP URL。
 交互终端使用 OSC 8 超链接，重定向输出或 `TERM=dumb` 时使用纯文本 URL。
 
-每个服务的启动等待默认最多 180 秒，可通过 `HERDR_DEV_START_TIMEOUT_MS` 调整。
+每个服务的启动等待默认最多 180 秒，可通过 `OMA_DEV_START_TIMEOUT_MS` 调整。
+兼容旧变量 `HERDR_DEV_START_TIMEOUT_MS`；同时设置时优先使用 `OMA_DEV_START_TIMEOUT_MS`。
 超时或命令失败时停止后续启动，保留分屏供排查；已经启动的服务继续运行。
-脚本依赖 Herdr、just 和 Bun，必须在 Herdr 内运行。退出或 detach Herdr 客户端
+脚本依赖当前终端 CLI、Git、just 和 Bun，必须在 Herdr 或 Rex 内运行。退出或 detach 终端客户端
 不等于停止服务；在对应分屏按 Ctrl+C 停止服务。
 
 | 命令                       | 职责                                               |

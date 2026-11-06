@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { SessionSeq, type SessionEvent } from "@deepseek-ai/dsh-session";
-import type { DsrClient } from "../src/dsr/client.ts";
-import { DsrError } from "../src/dsr/http.ts";
+import { DsrClient } from "../src/dsr/client.ts";
+import { DsrError, type HttpRequest } from "../src/dsr/http.ts";
 import { createRemoteTranscriptStore } from "../src/dsr/replication.ts";
 
 function event(seq: number, length = 0): SessionEvent {
@@ -25,18 +25,75 @@ function fixture(send: (events: readonly SessionEvent[]) => Promise<string>) {
   return { calls, remote: createRemoteTranscriptStore(() => client) };
 }
 
-test("an insufficient or impossible upload watermark is terminal", async () => {
-  for (const watermark of ["0", "3"]) {
-    const f = fixture(async () => watermark);
+function httpFixture(nextSeq: string) {
+  const calls: HttpRequest[] = [];
+  const client = new DsrClient(
+    {
+      request: async (request) => {
+        calls.push(request);
+        return Response.json({ next_seq: nextSeq });
+      },
+    },
+    {
+      code_session_id: "root",
+      worker_epoch: "1",
+      session_token: "session-token",
+      model_token: "model-token",
+      claim_expires_at: "2026-11-06T00:00:30Z",
+    },
+  );
+  return { calls, remote: createRemoteTranscriptStore(() => client) };
+}
+
+test("an insufficient or malformed HTTP upload watermark is terminal", async () => {
+  for (const watermark of ["0", "1", "-1", "02", "invalid"]) {
+    const f = httpFixture(watermark);
     let failure: unknown;
     try {
-      await f.remote.write("root", "root", [event(0)]);
+      await f.remote.write("root", "root", [event(0), event(1)]);
     } catch (error) {
       failure = error;
     }
     expect(failure).toBeDefined();
     expect(f.remote.fenced(failure)).toBe(true);
   }
+});
+
+test("write accepts an acknowledged older prefix when the server watermark is ahead", async () => {
+  for (const { nextSeq, events } of [
+    { nextSeq: "3", events: [event(0), event(1)] },
+    { nextSeq: "10", events: [event(8)] },
+    { nextSeq: "9007199254740993", events: [event(0)] },
+  ]) {
+    const f = httpFixture(nextSeq);
+    await f.remote.write("root", "root", events);
+    expect(f.calls).toHaveLength(1);
+    expect(f.calls[0]!.body).toEqual({ events });
+  }
+});
+
+test("write accepts a decimal HTTP watermark for a fresh append and exact replay", async () => {
+  const f = httpFixture("2");
+  const events = [event(0), event(1)];
+  await f.remote.write("root", "root", events);
+  await f.remote.write("root", "root", events);
+  expect(f.calls).toHaveLength(2);
+  for (const request of f.calls) {
+    expect(request.method).toBe("POST");
+    expect(request.path).toBe("/v1/dsr/sessions/root/transcripts/root/events");
+    expect(request.body).toEqual({ events });
+  }
+});
+
+test("write resends every batch when the server watermark already covers the full transcript", async () => {
+  const f = httpFixture("405");
+  const events = Array.from({ length: 405 }, (_, index) => event(index));
+  await f.remote.write("root", "root", events);
+  expect(f.calls.map((request) => request.body)).toEqual([
+    { events: events.slice(0, 200) },
+    { events: events.slice(200, 400) },
+    { events: events.slice(400) },
+  ]);
 });
 
 test("an oversized single event is rejected without issuing HTTP", async () => {

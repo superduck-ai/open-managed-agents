@@ -50,7 +50,7 @@ func doctor(ctx context.Context, root, worker, selected string, apiPort int) (do
 		}
 		result.Versions["brain_binary_sha256"] = digest
 	}
-	for _, name := range []string{"go", "docker", "bash", "git", "tar"} {
+	for _, name := range doctorTools(selected) {
 		if _, err := exec.LookPath(name); err != nil {
 			return result, fmt.Errorf("required tool %s: %w", name, err)
 		}
@@ -174,4 +174,12 @@ func checkBrainWorker(ctx context.Context, root, image string) error {
 		return errors.New("Brain scenario requires environment-manager task-run with --claude-agent-version and --claude-path in the sandbox image")
 	}
 	return nil
+}
+
+func doctorTools(selected string) []string {
+	names := []string{"go", "docker", "bash", "git", "tar"}
+	if selected == "chat.replication" {
+		names = append(names, "bun")
+	}
+	return names
 }

@@ -111,9 +111,7 @@ export function createRemoteTranscriptStore(
         const next = await upload(() =>
           api.appendEvents(sessionId, batch, signal),
         );
-        // 追加是幂等校验点：返回的 watermark 必须正好等于本批最后一条
-        // 事件的 seq + 1，说明中间没有丢事件、没有并发写入。
-        if (next !== String(batch.at(-1)!.seq + 1))
+        if (BigInt(decimal(next)) < BigInt(batch.at(-1)!.seq) + 1n)
           throw new TranscriptUploadError(
             "Unexpected transcript append watermark",
           );

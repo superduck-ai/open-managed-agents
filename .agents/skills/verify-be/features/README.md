@@ -3,6 +3,7 @@
 | User symptom | Map | Runnable coverage |
 | --- | --- | --- |
 | 消息图片或 Read 图片无法被视觉模型识别 | [Brain 图片](brain.md#真实视觉模型与图片) | `chat brain-images`，显式私有模型配置 |
+| Transcript 批量上传、背压、413 停止和复制关闭超时 | [复制验证](replication.md) | `chat replication` |
 | DSH 压缩通知、压缩上下文恢复和原子线程续聊 | [Brain](brain.md) | `chat brain-compaction` |
 | Rust Brain multi-node ownership, native loop or MCP execution | [Rust Brain](brain.md) | `chat brain` |
 | Brain owner replacement invalidates Bash HTTPS proxy credentials | [Rust Brain](brain.md) | `chat brain-proxy` with actual public HTTPS |

@@ -200,6 +200,7 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 
 - 每个 `dsh_session_id` 一条 transcript，由一个 Header 与**从 0 开始**连续递增的 Event 组成，序号即原生 `SessionEvent.seq`。
 - 服务端维护 `next_seq`（已确认条数，空日志为 `"0"`；确认 seq 0、1 后为 `"2"`）与 `header_present`，两者独立表达。
+- 当前存储模型在首次成功写入 Header 时创建 transcript，且 Header 不可为空；目录只列出已创建的 transcript，因此已列出条目的 `header_present` 恒为 `true`，不返回 `header_present: false` 的占位条目。完整枚举目录后没有对应条目，表示远端不存在该 transcript；有条目且 `next_seq: "0"` 表示 Header-only，不能视为从未创建。`session_thread_id: null` 表示尚未绑定公开线程，与是否已有 Event 独立，接管时需结合这些字段和日志内容处理创建中断残留。
 
 ### 6.2 服务端校验的原生身份字段
 

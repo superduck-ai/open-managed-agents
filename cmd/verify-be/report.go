@@ -28,6 +28,7 @@ type scenario struct {
 }
 
 var scenarios = map[string]scenario{
+	"chat.replication":         {Package: testPackage, Timeout: 3 * time.Minute, Test: "TestChatTranscriptReplication", Stages: []string{"replication_batches", "replication_backpressure", "replication_413_terminal", "replication_shutdown_deadline"}, Description: "生产 DSR 复制模块与真实 HTTP/PostgreSQL：主动组批、背压、413 停止与关闭超时"},
 	"chat.brain-dsr":           {Package: testPackage, Timeout: 8 * time.Minute, Test: "TestChatBrainDSR", Stages: []string{"dsr_roundtrip", "dsr_transcript_contracts", "dsr_tool_approval", "dsr_cancel", "dsr_ack_recovery", "dsr_claim_release", "dsr_takeover"}, Description: "DSRv1 全部主接口、真实 Brain 执行、审批、日志与替换 owner"},
 	"chat.brain-images":        {Package: testPackage, Timeout: 8 * time.Minute, Test: "TestChatBrainImages", Stages: []string{"message_image_seen", "read_image_seen", "native_images_persisted"}, Description: "真实视觉模型、Brain 与 Worker：消息图片识别、Read 读图及远端原生附件持久化"},
 	"chat.brain-observability": {Package: testPackage, Timeout: 8 * time.Minute, Test: "TestChatBrainObservability", Stages: []string{"brain_observability_roundtrip", "brain_observability_native_history", "brain_observability_isolation", "brain_observability_session_lanes", "brain_observability_overview", "brain_observability_deleted_session", "brain_observability_trace_export"}, Description: "真实 Brain 通过 OMA OTLP 写入 OpenObserve，核对原生事件、重放、租户隔离、会话泳道、看板聚合与已删除会话过滤，并经 JetStream 把 span 投递到客户 OTLP 目标"},
@@ -323,6 +324,8 @@ func writeReportCoverage(out *strings.Builder, r report) {
 		out.WriteString("Coverage: Memory/Filestore HTTP contracts with real PostgreSQL and MinIO; mounts additionally uses production Runner, local Docker sandbox and actual FUSE. Test-side faults and cleanup RunOnce do not certify cloud allocation, automatic background retry timing, process crash recovery, token renewal or concurrent editing throughput.\n\n")
 	} else if strings.HasPrefix(r.Scenario, "files.") {
 		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
+	} else if r.Scenario == "chat.replication" {
+		out.WriteString("Coverage: production TypeScript SessionReplication, DSR client and in-memory TranscriptPersistence against a real standalone backend and PostgreSQL. A run-scoped Go proxy measures batches, holds uploads and expands one envelope to trigger the backend's actual 413 limit. Default 32/16 MiB backpressure and five-second replication drain are tested. No model Worker, complete DsrOwner, sandbox, process-level SIGTERM, archival or performance verdict is included.\n\n")
 	} else if r.Scenario == "chat.shutdown" {
 		out.WriteString("Coverage: actual backend peer processes with disposable PostgreSQL, Redis, NATS and MinIO; ten-second HTTP drain expiry on a partial request, second SIGINT termination, and graceful closure of public/Worker SSE without retiring the Code Session. No model Worker, cloud shutdown, or total background cleanup deadline is verified.\n\n")
 	} else if r.Scenario == "chat.brain-images" {

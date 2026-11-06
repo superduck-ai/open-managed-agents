@@ -1,12 +1,12 @@
 # 本地开发环境使用指南
 
-本指南用于在当前 checkout 或 worktree 中初始化开发数据，并通过 Herdr 在一个终端窗口中运行 oma-server、oma-brain-dsh 和 Web。对话运行使用 Brain 模式。
+本指南用于在当前 checkout 或 worktree 中初始化开发数据，并通过 Herdr 或 Rex 在一个终端窗口中运行 oma-server、oma-brain-dsh 和 Web。对话运行使用 Brain 模式。
 
 LLM provider 定义和凭证在本机共享；运行配置、固定私钥、Vault KEK、环境身份和客户端 API key 按 worktree 隔离。首次只需填写一次共享 LLM 配置，后续 worktree 执行 `just dev-init` 即可准备环境。
 
 ## 安装必要工具
 
-需要 Git、Go、Bun、just、portless 和 Herdr，Go 版本以仓库 `go.mod` 为准。Docker 需要支持 Compose；本地 e2b-local 使用 host 网络，macOS 使用 OrbStack，Linux 使用 Docker Engine。
+需要 Git、Go、Bun、just、portless，以及 Herdr 或 Rex，Go 版本以仓库 `go.mod` 为准。Docker 需要支持 Compose；本地 e2b-local 使用 host 网络，macOS 使用 OrbStack，Linux 使用 Docker Engine。
 
 首次使用 portless 时，在普通终端执行一次：
 
@@ -91,7 +91,7 @@ just slot-info
 herdr
 ```
 
-在 Herdr 内的控制分屏中，进入同一个仓库根目录后执行：
+也可以打开 Rex，并进入仓库目录。在 Herdr 或 Rex 的控制分屏执行：
 
 ```bash
 just restart
@@ -99,7 +99,9 @@ just restart
 
 首次运行会创建 `OMA services` 标签页：左侧为 oma-server，右上为 oma-brain，右下为 Web。后端监听成功后才启动 Brain，Brain ready 后再启动 Web。
 
-再次执行 `just restart` 会安全停止并关闭当前 Herdr workspace 中属于这个 worktree 的旧服务分屏，然后新建三个分屏。新分屏等待 shell 就绪后才发送启动命令；全部启动成功后切换到服务页，失败原因和最近输出显示在控制分屏。请保留 `oma-server`、`oma-brain`、`web` 分屏名称，并从单独的控制分屏执行重启，不要在三个服务分屏自身运行。
+脚本通过终端环境变量自动选择 CLI，无需额外参数。Rex CLI 会自动加入其终端的 PATH，详见 [Rex agent 文档](https://www.superlogical.com/rex/docs/automate/agent-skill)。
+
+再次执行 `just restart` 会安全停止并关闭当前 Herdr workspace 或 Rex session 中属于这个 worktree 的旧服务分屏，然后新建三个分屏。新分屏等待 shell 就绪后才发送启动命令；全部启动成功后切换到服务页，失败原因和最近输出显示在控制分屏。请保留 `oma-server`、`oma-brain`、`web` 分屏名称，并从单独的控制分屏执行重启，不要在三个服务分屏自身运行。
 
 成功后控制分屏会汇总输出可点击地址，例如：
 
@@ -135,7 +137,7 @@ just dev-init --update
 
 `just restart` 不同步 provider 数据。共享文件变化不会自动写入所有环境数据库，需要对希望更新的每个 worktree 分别执行上面的命令。已有 Agent 保存了模型配置，变更 provider 模型列表后也应检查 Agent 使用的模型。
 
-修改 `.run/config.yaml` 中的 Brain 等运行配置后，在 Herdr 中执行 `just restart` 即可重新生成运行配置并重启。组织名称、用户邮箱和名称的变更当前不属于 `--update` 支持范围。
+修改 `.run/config.yaml` 中的 Brain 等运行配置后，在 Herdr 或 Rex 中执行 `just restart` 即可重新生成运行配置并重启。组织名称、用户邮箱和名称的变更当前不属于 `--update` 支持范围。
 
 ## 本地文件与清理
 
@@ -161,7 +163,7 @@ just dev-init --update
 
 初始化环境使用生成的客户端 API key，不要假定默认 key `sk-ant-local-default` 可用。provider API key 用于调用上游模型，与客户端 API key、Brain claim token 是不同凭证。
 
-在各服务分屏按 Ctrl+C 可停止服务。关闭或 detach Herdr 客户端不代表服务已经停止。
+在各服务分屏按 Ctrl+C 可停止服务。关闭或 detach 终端客户端不代表服务已经停止。
 
 确实需要删除本环境全部开发数据时，先停止三个服务，再执行：
 
@@ -185,11 +187,11 @@ just dev-recycle --yes
 just dev-recycle --yes --worktree /absolute/path/to/worktree
 ```
 
-命令先检查目标与环境归属，再停止该 worktree 的 oma-server、oma-brain-dsh 和 Web，等待进程退出；随后删除对应 Compose 容器、网络和数据卷，移除 portless alias、环境登记、`.run/env.json` 和 `.run/generated/`。无需进入 Herdr 分屏手动停止服务。未初始化或已经清理的 worktree 会跳过 Compose 清理，支持重复执行。
+命令先检查目标与环境归属，再停止该 worktree 的 oma-server、oma-brain-dsh 和 Web，等待进程退出；随后删除对应 Compose 容器、网络和数据卷，移除 portless alias、环境登记、`.run/env.json` 和 `.run/generated/`。无需进入服务分屏手动停止服务。未初始化或已经清理的 worktree 会跳过 Compose 清理，支持重复执行。
 
 命令保留 worktree 目录、Git 登记、分支、源码和未提交改动，也保留 `.run/config.yaml`、`.run/dev-init.yaml`、`.run/secrets/` 与共享 `~/.oma-dev/model-providers.yaml`。主 checkout、锁定或有改动的 worktree 也可以清理开发环境，不要求先提交或 stash。
 
-外部回收流程应先执行这个命令，只有退出码为 0 才继续删除 worktree。停止服务超过 30 秒或 Compose 清理失败时，命令报错并保留环境登记，排查后可重跑。不要同时运行初始化、重启和回收。Herdr 分屏会留下服务退出日志。
+外部回收流程应先执行这个命令，只有退出码为 0 才继续删除 worktree。停止服务超过 30 秒或 Compose 清理失败时，命令报错并保留环境登记，排查后可重跑。不要同时运行初始化、重启和回收。服务分屏会留下服务退出日志。
 
 已经手动停止服务时，也可继续使用 `just dev-teardown --yes` 清理环境。已经被外部删除 worktree 的遗留资源，使用保留 checkout 中的 `just dev-teardown --orphans --yes` 清理。
 
@@ -210,7 +212,7 @@ just dev-recycle --yes --worktree /absolute/path/to/worktree
      --env-file .run/generated/stack.env up --detach
    ```
 
-7. 在 Herdr 控制分屏运行 `just restart`。确认服务正常且 e2b-local 挂载已指向新路径后，删除本 worktree 中旧的 `config/config.yaml` 和 `tmp/dev-init/`。外部共享配置可能仍供其他 worktree 使用，不要一起删除。
+7. 在 Herdr 或 Rex 控制分屏运行 `just restart`。确认服务正常且 e2b-local 挂载已指向新路径后，删除本 worktree 中旧的 `config/config.yaml` 和 `tmp/dev-init/`。外部共享配置可能仍供其他 worktree 使用，不要一起删除。
 
 如果迁移过程中失败，保留备份和原环境身份，先修正路径再重试。不要通过清空绑定或生成新 key 处理路径问题。
 
@@ -218,10 +220,10 @@ just dev-recycle --yes --worktree /absolute/path/to/worktree
 
 | 现象 | 检查和处理 |
 | --- | --- |
-| 提示必须在 Herdr 内运行 | 普通终端先打开 `herdr`，再在其控制分屏运行 `just restart` |
+| 提示必须在 Herdr 或 Rex 内运行 | 打开 Herdr 或 Rex，再在其控制分屏运行 `just restart` |
 | 分屏被关闭 | 在原控制分屏重新执行 `just restart`，缺失分屏会补建 |
 | 提示无法识别分屏进程 | 检查是否在服务分屏中运行了其他程序，先手动退出该程序后重试 |
-| 启动等待超时 | 查看对应服务分屏中的错误；确实只是编译较慢时，可用 `HERDR_DEV_START_TIMEOUT_MS=300000 just restart` 延长等待 |
+| 启动等待超时 | 查看对应服务分屏中的错误；确实只是编译较慢时，可用 `OMA_DEV_START_TIMEOUT_MS=300000 just restart` 延长等待 |
 | 提示初始化未完成 | 执行 `just slot-info`，修复初始化报错后重跑 `just dev-init` |
 | portless 域名打不开 | 检查 proxy 是否以 `--no-tls` 启动，使用 `slot-info` 给出的完整 HTTP URL；首次启动代理可能需要 sudo |
 | Brain ready，但消息一直排队 | 确认基础配置与生成配置均为 `agent_mode: brain`；仅有进程 ready 不代表对话执行已验证 |

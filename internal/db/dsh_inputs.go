@@ -84,7 +84,6 @@ func eventBatchSeed(events []SessionEvent) string {
 }
 
 type dshConfirmation struct {
-	ToolUseID    string          `json:"tool_use_id"`
 	Result       string          `json:"result"`
 	DenyMessage  string          `json:"deny_message"`
 	UpdatedInput json.RawMessage `json:"updated_input"`
@@ -105,12 +104,15 @@ type dshExternalResult struct {
 }
 
 func resolveDSHConfirmation(ctx context.Context, executor yourbatis.Executor, scope DSHScope, permissions []dshPermissionRow, event SessionEvent) error {
+	if event.ToolUseID == nil || *event.ToolUseID == "" {
+		return ErrSessionToolUseNotPending
+	}
 	var input dshConfirmation
 	if err := json.Unmarshal(event.Payload, &input); err != nil {
 		return err
 	}
 	for _, permission := range permissions {
-		if permission.State != "pending" || permission.PublicEventID != input.ToolUseID {
+		if permission.State != "pending" || permission.PublicEventID != *event.ToolUseID {
 			continue
 		}
 		if event.ThreadExternalID != nil && *event.ThreadExternalID != permission.ThreadID {

@@ -176,3 +176,9 @@ flowchart LR
 `chat brain-images` 使用显式的 `VERIFY_BE_VISION_PROVIDERS` 私有配置路径与 `VERIFY_BE_VISION_MODEL`，doctor 校验配置和唯一模型归属。其他场景仍清除继承的模型环境，不改变其脚本上游。凭据只在本次隔离 workspace 中保存，报告只记录模型 ID 与 backend，不记录 API key。
 
 该场景验证随机颜色消息图片、真实 Worker/FUSE Read 第二张不同图片，以及原生引用与 MinIO 字节完整性。三个 proof 为 message_image_seen、read_image_seen、native_images_persisted。使用真实模型的次数与耗时不构成质量、价格或性能基准；源代码指纹和清理要求不变。
+
+## Transcript replication verification
+
+`chat doctor replication` checks Bun and common isolated dependencies. `chat replication` runs the production TypeScript replication/client/TranscriptPersistence modules against the real backend and PostgreSQL through a run-scoped Go fault proxy. Four required stages cover count/UTF-8 byte batching, the default 32/16 MiB backpressure with concurrent local append, an actual backend 413 with no split/retry, and the default five-second replication drain deadline with connection cancellation and preserved in-memory transcript records. The Go test owns orchestration, database comparisons and stage verdicts. It requires no sandbox image or model. See [replication coverage](../../../.agents/skills/verify-be/features/replication.md).
+
+This component integration does not certify DsrOwner permanent release, full-process SIGTERM, model/tool admission, child fairness, archival or performance. Use `chat brain-dsr` for full native execution and `chat roundtrip` for the required chat smoke regression. Reports retain the standard source fingerprint, skip rejection and cleanup requirements.

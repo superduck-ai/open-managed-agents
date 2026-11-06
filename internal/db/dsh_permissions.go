@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
 	"github.com/superduck-ai/yourbatis"
@@ -152,16 +151,15 @@ func (d *DB) GetDSHPermission(ctx context.Context, scope DSHScope, requestID str
 }
 
 func (d *DB) ResolvedDSHPermissionForInput(ctx context.Context, scope DSHScope, event SessionEvent) (DSHPermission, bool, error) {
-	var input dshConfirmation
-	if err := json.Unmarshal(event.Payload, &input); err != nil {
-		return DSHPermission{}, false, err
+	if event.ToolUseID == nil || *event.ToolUseID == "" {
+		return DSHPermission{}, false, nil
 	}
 	rows, err := NewDSHExecutionMapper(d.mapperDB).Permissions(ctx, scope)
 	if err != nil {
 		return DSHPermission{}, false, err
 	}
 	for _, row := range rows {
-		if row.PublicEventID == input.ToolUseID && row.State == "resolved" {
+		if row.PublicEventID == *event.ToolUseID && row.State == "resolved" {
 			return dshPermissionFromRow(row), true, nil
 		}
 	}

@@ -841,6 +841,8 @@ C. 重复上传
 
 列出本会话下的全部原生日志及其水位。接管时用它发现两类情况：其他实例新增的子线程（根日志没变，但子线程是新的），以及哪些日志远端比本地长。累计历史日志数不受最大活跃子线程数限制，因此目录采用稳定分页。Header-only、未绑定线程的创建中断残留需分类处理。
 
+当前存储模型在首次成功写入 Header 时创建 transcript，目录不返回未写 Header 的占位条目。因此，完整枚举后没有对应条目表示远端不存在该 transcript；有条目且 `header_present: true`、`next_seq: "0"` 表示 Header-only。`session_thread_id: null` 表示尚未绑定公开线程，与 Event 条数独立；接管时需结合这些字段和日志内容判断创建中断残留，不能把所有目录条目都视为可运行的子 Agent。
+
 ### 什么时候调用
 
 每次接管恢复时完整枚举目录，在逐条读取（接口 11）之前。使用 `after` 继续分页，直到 `next_after` 为 null。
@@ -863,8 +865,8 @@ C. 重复上传
 | `data[].dsh_session_id` | string | — |
 | `data[].parent_dsh_session_id` | string \| null | 主线程为 `null` |
 | `data[].session_thread_id` | string \| null | 已绑定的公开线程；子线程在 `thread_created` 被接受前为 `null` |
-| `data[].header_present` | boolean | 是否已写 Header |
-| `data[].next_seq` | string | 已确认条数 |
+| `data[].header_present` | boolean | 是否已写 Header；当前已列出的条目恒为 `true`，未创建的 transcript 不出现在目录中 |
+| `data[].next_seq` | string | 已确认的 Event 条数；`"0"` 表示 Header-only，不表示未写 Header |
 | `next_after` | string \| null | 还有下一页时为本页最后一项 ID，否则为 null |
 
 ### 示例

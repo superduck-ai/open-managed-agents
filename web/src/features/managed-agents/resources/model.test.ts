@@ -18,6 +18,7 @@ import {
   credentialFormReady,
   credentialFormValues,
   emptyCredentialFormValues,
+  envOAuthProviderDefaults,
   environmentConfigBody,
   environmentEditValues,
   isPlatformMemoryMarkdownPath,
@@ -802,4 +803,26 @@ describe('env_oauth credentials', () => {
     expect(vaultOAuthErrorMessage('platform_oauth_provider_unavailable', msgFallback)).toContain('not configured');
     expect(vaultOAuthErrorMessage('credential_key_conflict', msgFallback)).toContain('already exists');
   });
+});
+
+test('自定义 OAuth 服务方空域名不会阻断表单', () => {
+  for (const hosts of [null, []]) {
+    const defaults = envOAuthProviderDefaults({ default_secret_name: '', default_allowed_hosts: hosts });
+    expect(defaults.allowedHostsText).toBe('');
+    const values = {
+      ...emptyCredentialFormValues(),
+      authType: 'env_oauth' as const,
+      envOAuthProviderId: 'custom:test',
+      ...defaults,
+      secretName: 'TOKEN',
+    };
+    expect(credentialFormReady({ ...values, networkType: 'limited' }, 'create', true)).toBe(false);
+    expect(credentialFormReady({ ...values, networkType: 'unrestricted' }, 'create', true)).toBe(true);
+  }
+  expect(
+    envOAuthProviderDefaults({
+      default_secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+      default_allowed_hosts: ['open.feishu.cn', 'accounts.feishu.cn'],
+    }),
+  ).toEqual({ secretName: 'LARKSUITE_CLI_USER_ACCESS_TOKEN', allowedHostsText: 'open.feishu.cn\naccounts.feishu.cn' });
 });

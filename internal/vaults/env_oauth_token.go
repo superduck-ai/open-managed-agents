@@ -206,22 +206,19 @@ func (r *envOAuthTokenResolver) refreshAndPersist(ctx context.Context, current *
 		AccessToken:  token.AccessToken,
 		RefreshToken: refreshToken,
 	}
-	nextAuthJSON, err := json.Marshal(nextAuth)
-	if err != nil {
-		return "", err
-	}
 	nextSecretJSON, err := json.Marshal(nextSecret)
 	if err != nil {
 		return "", err
 	}
-	return r.persist(ctx, current, secret, nextAuthJSON, nextSecretJSON, token.AccessToken, now)
+	return r.persist(ctx, current, secret, nextAuth, nextSecretJSON, token.AccessToken, now)
 }
 
 func (r *envOAuthTokenResolver) persist(
 	ctx context.Context,
 	current *db.VaultCredential,
 	exchangedSecret envOAuthCredentialSecret,
-	nextAuth, nextSecret json.RawMessage,
+	nextAuth envOAuthCredentialAuth,
+	nextSecret json.RawMessage,
 	accessToken string,
 	now time.Time,
 ) (string, error) {
@@ -229,15 +226,28 @@ func (r *envOAuthTokenResolver) persist(
 		if err := ctx.Err(); err != nil {
 			return "", context.Cause(ctx)
 		}
+		publicAuth, err := decodeEnvOAuthCredentialAuth(current.Auth)
+		if err != nil {
+			return "", err
+		}
+		if publicAuth.Provider != nextAuth.Provider {
+			return "", errEnvOAuthRefreshUnavailable
+		}
+		publicAuth.ExpiresAt = nextAuth.ExpiresAt
+		publicAuth.Scope = nextAuth.Scope
+		publicAuth.HasRefreshToken = nextAuth.HasRefreshToken
 		updated := *current
-		updated.Auth = nextAuth
+		updated.Auth, err = json.Marshal(publicAuth)
+		if err != nil {
+			return "", err
+		}
 		updated.SecretPayload = append(json.RawMessage(nil), nextSecret...)
 		updated.UpdatedAt = now.UTC()
 		if err := SealCredentialSecret(ctx, r.secretSvc, &updated); err != nil {
 			clearCredentialSecretPayload(&updated)
 			return "", err
 		}
-		_, err := r.store.UpdateVaultCredential(ctx, updated.WorkspaceUUID, updated.VaultExternalID, updated.ExternalID, updated)
+		_, err = r.store.UpdateVaultCredential(ctx, updated.WorkspaceUUID, updated.VaultExternalID, updated.ExternalID, updated)
 		if err == nil {
 			return accessToken, nil
 		}
@@ -251,14 +261,15 @@ func (r *envOAuthTokenResolver) persist(
 		if openErr != nil {
 			return "", openErr
 		}
-		if secret.AccessToken != "" && secret.AccessToken != exchangedSecret.AccessToken {
+		if secret.AccessToken != exchangedSecret.AccessToken || secret.RefreshToken != exchangedSecret.RefreshToken {
 			expired, expiryErr := accessTokenExpired(publicAuth.ExpiresAt, now)
 			if expiryErr != nil {
 				return "", expiryErr
 			}
-			if !expired {
+			if !expired && secret.AccessToken != "" {
 				return secret.AccessToken, nil
 			}
+			return "", errEnvOAuthRefreshUnavailable
 		}
 	}
 	return "", errEnvOAuthRefreshUnavailable

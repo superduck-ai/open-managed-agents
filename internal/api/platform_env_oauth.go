@@ -16,6 +16,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
+	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -119,13 +120,17 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 	if workspaceID == "default" {
 		workspaceID = principal.WorkspaceExternalID
 	}
-	workspace, err := s.db.GetAdminWorkspace(r.Context(), principal.OrganizationUUID, workspaceID)
+	workspace, access, err := s.workspaceAccess.ResolvePrincipal(r.Context(), principal, workspaceID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, db.ErrNotFound) {
-			status = http.StatusNotFound
+		if errors.Is(err, workspaceaccess.ErrDenied) {
+			status = http.StatusForbidden
 		}
 		writeEnvOAuthStartError(w, status, envOAuthErrorInvalidRequest, "")
+		return
+	}
+	if !access.UseResources() {
+		writeEnvOAuthStartError(w, http.StatusForbidden, envOAuthErrorInvalidRequest, "")
 		return
 	}
 	if workspace.ArchivedAt != nil {
@@ -359,7 +364,7 @@ func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlo
 		if current.CredentialKey != flow.SecretName {
 			continue
 		}
-		if current.AuthType != "env_oauth" {
+		if !envOAuthSecretNameAvailable([]db.VaultCredential{current}, flow.SecretName, flow.ProviderKey) {
 			return "", db.ErrDuplicate
 		}
 		existingPlaceholder, ok := vaultsapi.EnvOAuthCredentialPlaceholder(current.Auth)

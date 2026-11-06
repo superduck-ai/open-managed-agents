@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ type envOAuthFixture struct {
 	workspace    db.AdminWorkspace
 	vault        db.Vault
 	apiKey       string
+	userID       string
 }
 
 func newEnvOAuthFixture(t *testing.T) envOAuthFixture {
@@ -101,7 +103,7 @@ func newEnvOAuthFixtureWithFeishu(t *testing.T, clientID, clientSecret string) e
 	})
 	return envOAuthFixture{
 		server: server, database: database, secretSvc: secretSvc,
-		organization: organization, workspace: workspace, vault: vault, apiKey: apiKey,
+		organization: organization, workspace: workspace, vault: vault, apiKey: apiKey, userID: "user_" + user,
 	}
 }
 
@@ -143,7 +145,7 @@ func TestEnvOAuthVaultAuthStartPostgres(t *testing.T) {
 	body := `{"provider_id":"builtin:feishu","vault_id":"` + f.vault.ExternalID + `","workspace_id":"default","secret_name":"` + vaultsapi.EnvOAuthFeishuDefaultSecretName + `","networking":{"type":"limited","allowed_hosts":["open.feishu.cn","accounts.feishu.cn"]},"redirect_url":"https://app.example.test/oauth/vault/env-success"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/organizations/"+f.organization+"/env-oauth/vault-auth/start", strings.NewReader(body))
 	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{
-		OrganizationUUID: f.organization, WorkspaceExternalID: "wrkspc_default", APIKeyUUID: f.apiKey,
+		UserExternalID: f.userID, OrganizationUUID: f.organization, WorkspaceExternalID: "wrkspc_default", APIKeyUUID: f.apiKey,
 	}))
 	routeCtx := chi.NewRouteContext()
 	routeCtx.URLParams.Add("orgUuid", f.organization)
@@ -181,7 +183,7 @@ func TestEnvOAuthVaultAuthStartRejectsDisabledBuiltin(t *testing.T) {
 	f := newEnvOAuthFixtureWithFeishu(t, "", "")
 	body := `{"provider_id":"builtin:feishu","vault_id":"` + f.vault.ExternalID + `","workspace_id":"default","secret_name":"TOKEN","networking":{"type":"unrestricted"},"redirect_url":"https://app.example.test/oauth/vault/env-success"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/organizations/"+f.organization+"/env-oauth/vault-auth/start", strings.NewReader(body))
-	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{OrganizationUUID: f.organization, WorkspaceExternalID: "wrkspc_default"}))
+	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{UserExternalID: f.userID, OrganizationUUID: f.organization, WorkspaceExternalID: "wrkspc_default"}))
 	routeCtx := chi.NewRouteContext()
 	routeCtx.URLParams.Add("orgUuid", f.organization)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
@@ -323,5 +325,117 @@ func TestPlatformOAuthProviderServicePostgres(t *testing.T) {
 	}
 	if err := service.Delete(t.Context(), created.ID); err != platformadmin.ErrNotFound {
 		t.Fatalf("second delete error = %v", err)
+	}
+}
+
+func (f envOAuthFixture) start(t *testing.T, principal auth.Principal) *httptest.ResponseRecorder {
+	t.Helper()
+	body := `{"provider_id":"builtin:feishu","vault_id":"` + f.vault.ExternalID + `","workspace_id":"` + f.workspace.ExternalID + `","secret_name":"TOKEN","networking":{"type":"unrestricted"},"redirect_url":"https://app.example.test/oauth/vault/env-success"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/organizations/"+f.organization+"/env-oauth/vault-auth/start", strings.NewReader(body))
+	req = req.WithContext(auth.WithPrincipal(req.Context(), principal))
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("orgUuid", f.organization)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+	recorder := httptest.NewRecorder()
+	f.server.handleEnvOAuthVaultAuthStart(recorder, req)
+	return recorder
+}
+
+func TestEnvOAuthStartTargetWorkspaceAccessPostgres(t *testing.T) {
+	f := newEnvOAuthFixture(t)
+	userUUID := uuid.NewV4().String()
+	userID := "user_" + userUUID
+	if err := f.database.WithPlatformAuthTx(t.Context(), func(tx db.PlatformAuthTxStore) error {
+		_, err := tx.InsertUser(t.Context(), db.PlatformAuthUserInput{UUID: userUUID, ExternalID: userID, OrganizationUUID: f.organization, Email: userUUID + "@example.com", Role: "user"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	workspace := f.workspace
+	workspace.Name = "Target"
+	workspace.UUID, workspace.ExternalID, workspace.IsDefault = uuid.NewV4().String(), "wrkspc_target", false
+	var err error
+	f.workspace, err = f.database.CreateAdminWorkspace(t.Context(), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault := f.vault
+	vault.UUID, vault.ExternalID, vault.WorkspaceUUID = uuid.NewV4().String(), "vlt_target", f.workspace.UUID
+	f.vault, err = f.database.CreateVault(t.Context(), vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := auth.Principal{OrganizationUUID: f.organization, UserExternalID: userID, WorkspaceExternalID: "wrkspc_default", APIKeyUUID: f.apiKey}
+	assertDenied := func() {
+		t.Helper()
+		response := f.start(t, principal)
+		if response.Code != http.StatusForbidden || strings.Contains(response.Body.String(), "eof_") {
+			t.Fatalf("denied response=%d %s", response.Code, response.Body.String())
+		}
+		credentials, _, err := f.database.ListVaultCredentialsPage(t.Context(), db.ListVaultCredentialsPageParams{WorkspaceUUID: f.workspace.UUID, VaultExternalID: f.vault.ExternalID, Limit: 50})
+		if err != nil || len(credentials) != 0 {
+			t.Fatalf("credentials=%d err=%v", len(credentials), err)
+		}
+	}
+	assertDenied()
+	if _, err := f.database.CreateAdminWorkspaceMember(t.Context(), db.AdminWorkspaceMember{ExternalID: "member_target", OrganizationUUID: f.organization, WorkspaceUUID: f.workspace.UUID, WorkspaceExternalID: f.workspace.ExternalID, UserUUID: userUUID, UserExternalID: userID, WorkspaceRole: "workspace_user", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if response := f.start(t, principal); response.Code != http.StatusOK {
+		t.Fatalf("member start=%d %s", response.Code, response.Body.String())
+	}
+	if _, err := f.database.DeleteAdminWorkspaceMember(t.Context(), f.organization, f.workspace.ExternalID, userID); err != nil {
+		t.Fatal(err)
+	}
+	assertDenied()
+	principal.UserExternalID = f.userID
+	if response := f.start(t, principal); response.Code != http.StatusOK {
+		t.Fatalf("admin start=%d %s", response.Code, response.Body.String())
+	}
+	principal.UserExternalID = ""
+	principal.CredentialType = auth.CredentialTypePlatformSession
+	principal.AccountUUID = uuid.NewV4().String()
+	principal.OrganizationAccessSource = auth.OrganizationAccessPlatformAdmin
+	principal.WorkspaceAccess = auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: string(auth.OrganizationAccessPlatformAdmin)}
+	if response := f.start(t, principal); response.Code != http.StatusOK {
+		t.Fatalf("platform admin start=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestEnvOAuthCallbackRejectsDifferentProviderPostgres(t *testing.T) {
+	f := newEnvOAuthFixture(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access", "refresh_token": "refresh", "expires_in": 3600})
+	}))
+	defer upstream.Close()
+	provider, err := platformadmin.NewOAuthProviderService(f.database, f.secretSvc, nil).Create(t.Context(), platformadmin.Actor{AccountUUID: uuid.NewV4().String()}, platformadmin.OAuthProviderCreateInput{Name: "Other", AuthorizeEndpoint: "https://other.example/authorize", TokenEndpoint: "https://other.example/token", ClientID: "client", ClientSecret: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := f.createFlow(t, upstream.URL, "TOKEN", time.Now().Add(time.Minute))
+	second := first
+	second.UUID, second.ExternalID, second.ProviderKey = uuid.NewV4().String(), uuid.NewV4().String(), "custom:"+provider.ID
+	second.NetworkingType, second.AllowedHosts = "unrestricted", nil
+	second, err = f.database.CreateEnvOAuthFlow(t.Context(), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := f.callback(t, first.ExternalID, "first"); !strings.Contains(response.Body.String(), `"status":"ok"`) {
+		t.Fatal(response.Body.String())
+	}
+	list := func() []db.VaultCredential {
+		t.Helper()
+		rows, _, err := f.database.ListVaultCredentialsPage(t.Context(), db.ListVaultCredentialsPageParams{WorkspaceUUID: f.workspace.UUID, VaultExternalID: f.vault.ExternalID, Limit: 50})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	before := list()
+	if response := f.callback(t, second.ExternalID, "second"); !strings.Contains(response.Body.String(), envOAuthErrorCredentialKeyConflict) {
+		t.Fatal(response.Body.String())
+	}
+	if after := list(); !reflect.DeepEqual(before, after) {
+		t.Fatal("跨服务方回调修改了既有凭证")
 	}
 }

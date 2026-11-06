@@ -67,6 +67,8 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 - `custom:<provider_external_id>`：来自 `platform_oauth_providers`，client secret 信封加密；运行时按
   provider key 重新解析。provider 被删除后存量凭证 refresh 失败并进入重新授权语义。
 
+自定义 provider 的 `default_allowed_hosts` 可为 `null`；前端将其视为空域名列表，limited 仍须填写域名，unrestricted 可直接继续。
+
 ## 组织侧接口
 
 | 方法 | 路径 | 说明 |
@@ -75,8 +77,10 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 | POST | `/api/organizations/{orgUuid}/env-oauth/vault-auth/start` | 校验并创建 flow，返回 `{oauth_flow_id, authorize_url}` |
 | GET | `/oauth/vault/env-success?code&state` | 公共回调；换票、落库、完成 flow，返回 postMessage HTML |
 
-`start` 校验：org 与 principal 一致、workspace/vault 存在且未归档、provider 可用、secret_name 合法、
+`start` 校验：org 与 principal 一致，按 body 目标工作区重新解析成员权限并要求资源使用权限（保留组织管理员和平台管理员授权语义），workspace/vault 存在且未归档、provider 可用、secret_name 合法、
 limited 必须有 allowed_hosts；同 vault 同名活动凭证若为同一 provider 的 `env_oauth` 允许重新授权，否则 409。
+
+回调保存前再次检查同名凭证的 provider；不同 provider 返回 `credential_key_conflict`，保留既有凭证及秘密。同 provider 允许原地重新授权。
 
 回调流程：
 
@@ -111,6 +115,7 @@ sequenceDiagram
 - token 未过期直接复用；过期后按 credential 级 refresh lease + CAS 单飞刷新，`expires_in > 0` 时更新
   `expires_at`，否则沿用未过期旧值或清空。刷新使用 provider 当前配置；失败 fail-closed（不替换、返回
   `ErrSubstitutionRejected`），永久失败（4xx 非 408/429、缺 refresh token）标记需重新授权。
+- refresh CAS 冲突后仅把刷新负责的到期时间、scope 和 refresh token 标记合并到最新 auth，保留最新 networking、provider、placeholder。若 access token 或 refresh token 来源已变更，复用未过期的最新 token；最新 token 不可用时拒绝覆盖，等待后续请求重新解析。
 - 读取信封缺失时 `openCredentialSecret` 返回 `ErrEnvOAuthReauthorizationRequired`。
 
 ```mermaid

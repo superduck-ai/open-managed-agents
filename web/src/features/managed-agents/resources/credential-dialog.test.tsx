@@ -333,3 +333,52 @@ test('creates an ENV OAuth credential through the authorization popup', async ()
   });
   expect(onSubmit).not.toHaveBeenCalled();
 });
+
+test('选择无默认域名的自定义 OAuth 服务方并使用无限制网络', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
+  const popup = { closed: false, location: { href: '' }, close: mock(() => {}) };
+  window.open = mock(() => popup as unknown as Window);
+  const writes: string[] = [];
+  globalThis.fetch = mock(async (input, init) => {
+    if (String(input).includes('/env-oauth/providers')) {
+      return Response.json([
+        { id: 'custom:example', name: 'Example', builtin: false, default_secret_name: '', default_allowed_hosts: null },
+      ]);
+    }
+    if (String(input).includes('/env-oauth/vault-auth/start')) {
+      writes.push(String(init?.body));
+      return Response.json({ oauth_flow_id: 'flow_custom', authorize_url: 'https://example.test/authorize' });
+    }
+    return Response.json({});
+  }) as typeof fetch;
+  render(
+    <AuthHarness>
+      <CredentialDialog
+        vaultId="vlt_fixture"
+        workspaceId="default"
+        orgUuid="org_fixture"
+        onClose={() => {}}
+        onSubmit={async () => {}}
+        onOAuthComplete={() => {}}
+      />
+    </AuthHarness>,
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Add credential' });
+  fireEvent.click(within(dialog).getByRole('combobox', { name: 'Type' }));
+  fireEvent.click(await screen.findByText('ENV OAuth'));
+  fireEvent.click(await within(dialog).findByRole('combobox', { name: 'OAuth provider' }));
+  fireEvent.click(await screen.findByText('Example'));
+  fireEvent.change(within(dialog).getByLabelText('Variable name'), { target: { value: 'TOKEN' } });
+  fireEvent.click(within(dialog).getByRole('checkbox'));
+  expect(within(dialog).getByRole('button', { name: 'Connect' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.click(within(dialog).getByRole('radio', { name: 'Unrestricted' }));
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+  });
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(JSON.parse(writes[0])).toMatchObject({
+    provider_id: 'custom:example',
+    secret_name: 'TOKEN',
+    networking: { type: 'unrestricted' },
+  });
+});

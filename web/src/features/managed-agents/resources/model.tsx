@@ -709,13 +709,16 @@ export function credentialEnvHostsMissing(values: CredentialFormValues): boolean
   );
 }
 
-export function envOAuthProviderDefaults(provider: { default_secret_name: string; default_allowed_hosts: string[] }): {
+export function envOAuthProviderDefaults(provider: {
+  default_secret_name: string;
+  default_allowed_hosts: string[] | null;
+}): {
   secretName: string;
   allowedHostsText: string;
 } {
   return {
     secretName: provider.default_secret_name,
-    allowedHostsText: provider.default_allowed_hosts.join('\n'),
+    allowedHostsText: provider.default_allowed_hosts?.join('\n') ?? '',
   };
 }
 

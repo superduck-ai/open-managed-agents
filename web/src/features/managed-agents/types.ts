@@ -257,7 +257,7 @@ export type EnvOAuthProviderApiResponse = {
   token_endpoint: string;
   scope: string;
   default_secret_name: string;
-  default_allowed_hosts: string[];
+  default_allowed_hosts: string[] | null;
 };
 
 export type MemoryApiResponse = {

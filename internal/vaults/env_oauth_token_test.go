@@ -254,3 +254,71 @@ func TestSubstituteEnvOAuthSecretsFailsClosedOnRefreshError(t *testing.T) {
 		t.Fatalf("Authorization mutated on failure: %q", req.Header.Get("Authorization"))
 	}
 }
+
+func TestEnvOAuthRefreshCASPreservesLatestMaterial(t *testing.T) {
+	for _, scenario := range []string{"expired access", "refresh source", "networking", "valid access"} {
+		t.Run(scenario, func(t *testing.T) {
+			svc := newTestSecretsService(t)
+			past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+			original := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "old.example", "old", "refresh", &past)
+			latest := original
+			latest.SecretVersion++
+			latestAuth, err := decodeEnvOAuthCredentialAuth(latest.Auth)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hosts := []string{"restricted.example"}
+			latestAuth.Networking = credentialAuthNetworking{Type: "limited", AllowedHosts: &hosts}
+			latest.Auth, err = json.Marshal(latestAuth)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario != "networking" {
+				access, refresh := "replacement", "refresh"
+				if scenario == "refresh source" {
+					access, refresh = "old", "replacement-refresh"
+				}
+				expiry := &past
+				if scenario == "valid access" {
+					expiry = nil
+				}
+				latest = sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "restricted.example", access, refresh, expiry)
+				latest.SecretVersion = original.SecretVersion + 1
+			}
+			store := &fakeCredentialStore{get: latest, updateErrs: []error{db.ErrVersionConflict, nil}}
+			resolver := newEnvOAuthTokenResolver(store, svc, nil, nil)
+			nextAuth, err := decodeEnvOAuthCredentialAuth(original.Auth)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nextAuth.ExpiresAt = nil
+			token, err := resolver.persist(t.Context(), &original, envOAuthCredentialSecret{AccessToken: "old", RefreshToken: "refresh"}, *nextAuth, json.RawMessage(`{"type":"env_oauth","access_token":"fresh","refresh_token":"fresh-refresh"}`), "fresh", time.Now())
+			if scenario == "expired access" || scenario == "refresh source" {
+				if !errors.Is(err, errEnvOAuthRefreshUnavailable) || store.updateCalls != 1 {
+					t.Fatalf("token=%q err=%v writes=%d", token, err, store.updateCalls)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "valid access" {
+				if token != "replacement" || store.updateCalls != 1 {
+					t.Fatalf("token=%q writes=%d", token, store.updateCalls)
+				}
+				return
+			}
+			saved, err := decodeEnvOAuthCredentialAuth(store.lastUpdate.Auth)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if saved.Networking.AllowedHosts == nil || (*saved.Networking.AllowedHosts)[0] != "restricted.example" || saved.Placeholder != latestAuth.Placeholder || saved.Provider != latestAuth.Provider || store.updateCalls != 2 {
+				t.Fatalf("saved=%+v writes=%d", saved, store.updateCalls)
+			}
+			_, secret, err := resolver.openMaterial(t.Context(), store.lastUpdate)
+			if err != nil || secret.AccessToken != token || token != "fresh" {
+				t.Fatalf("token=%q err=%v", token, err)
+			}
+		})
+	}
+}

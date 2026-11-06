@@ -57,10 +57,13 @@
         WHERE <include refid="scope"/> AND transcript_uuid = #{transcriptUUID} AND seq &gt;= #{fromSeq}
         ORDER BY seq LIMIT #{limit}
     </select>
-    <insert id="InsertEvent" result="rows">
+    <insert id="InsertEvents" result="rows">
         INSERT INTO dsh_transcript_events (organization_uuid, workspace_uuid, code_session_uuid, transcript_uuid, seq, payload)
-        VALUES (#{input.Scope.OrganizationUUID}, #{input.Scope.WorkspaceUUID}, #{input.Scope.CodeSessionUUID},
-                #{input.TranscriptUUID}, #{input.Seq}, #{input.Payload,sensitive=true})
+        VALUES
+        <foreach collection="input.Events" item="event" separator=",">
+            (#{input.Scope.OrganizationUUID}, #{input.Scope.WorkspaceUUID}, #{input.Scope.CodeSessionUUID},
+             #{input.TranscriptUUID}, #{event.Seq}, #{event.Payload,sensitive=true})
+        </foreach>
     </insert>
     <update id="SetNextSeq" result="rows">
         UPDATE dsh_transcripts SET next_seq = #{nextSeq}, updated_at = NOW()

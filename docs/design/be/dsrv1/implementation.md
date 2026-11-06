@@ -131,6 +131,8 @@ claim、worker 注册、凭据轮换、永久失败、release、终止及沙箱�
 
 Header/Event 拒绝重复 JSON 键，使用 RFC 8785 JCS 比较。事件批次最多 200，单事件最多 15 MiB，请求体最多 16 MiB；读取按每页最多 200 条事件分页，不设置响应字节预算。目录单独分页。
 
+事件追加通过 `DSHTranscriptMapper.InsertEvents` 的 foreach 绑定生成单条多行 INSERT。整批校验后仅插入新增尾部，重复事件只做语义比较；全重复批次不写入。200 条全新事件的事务包含 worker 行锁查询、transcript 查询、重叠事件查询、一次批量 INSERT 和一次水位 UPDATE 共五条 SQL，不含 BEGIN/COMMIT。普通单测验证 1/2/200 行绑定、敏感标记、只执行一次 INSERT、重复前缀和失败结果；`TestDSHTranscriptsPostgres` 验证真实 PostgreSQL JSONB 绑定、200 行写入、混合幂等、失败回滚和并发重复批次。
+
 ## 验证范围
 
 普通测试包含请求校验、Mapper SQL/参数、租户与凭据隔离、客户端响应解析，以及完整原生循环、审批冷恢复、真实 Bun 子进程 SIGKILL 双工具批次恢复和持久中断。真实 PostgreSQL 测试入口：

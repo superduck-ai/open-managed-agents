@@ -233,6 +233,8 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 
 ### 6.5 追加
 
+PostgreSQL 写入在同一 Yourbatis 事务内先完成整批 seq 校验和重复前缀语义比较，再将全部新增尾部通过一次多行 `INSERT ... VALUES (...), (...)` 写入，随后更新一次 `next_seq`。仅重复前缀不产生 INSERT 或 UPDATE。批量 INSERT 的影响行数必须等于新增事件数；任一校验、写入或水位更新失败均回滚整批。worker 行锁与唯一索引约束保持不变，减少的是数据库往返次数。
+
 `POST /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/events`，请求体 `{"events": [<原生 SessionEvent>, ...]}`。
 
 **一个请求只属于一条 transcript**。DSH 现行上传队列按 root code session 组织，一个批次可能混合主线程、子线程与子线程 Header；DSR 客户端必须按 `dsh_session_id` 拆分队列，每条 transcript 内保持顺序，Header 先于 Event。不同 transcript 之间没有顺序要求。

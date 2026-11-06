@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -51,6 +52,20 @@ func TestDSHTranscriptsPostgres(t *testing.T) {
 			t.Fatalf("header conflict=%v", err)
 		}
 	})
+	t.Run("batch insert errors leave no rows or watermark changes", func(t *testing.T) {
+		if _, err := store.PutDSHTranscript(ctx, scope, "batch", nil, []byte(`{"version":4,"id":"batch","createdAt":0,"isSeeded":false}`)); err != nil {
+			t.Fatal(err)
+		}
+		batch := dshBatchEvents(0, 2)
+		batch[1].Payload = []byte(`{"invalid":`)
+		if result, err := store.AppendDSHTranscript(ctx, scope, "batch", batch); err == nil || result.NextSeq != 0 {
+			t.Fatalf("invalid JSON batch=%+v error=%v", result, err)
+		}
+		transcript, events, err := store.ReadDSHTranscript(ctx, scope, "batch", 0, 200)
+		if err != nil || transcript.NextSeq != 0 || len(events) != 0 {
+			t.Fatalf("rollback transcript=%+v events=%d error=%v", transcript, len(events), err)
+		}
+	})
 	t.Run("seq zero and semantic duplicates are immutable", func(t *testing.T) {
 		result, err := store.AppendDSHTranscript(ctx, scope, "root", []DSHTranscriptEvent{first})
 		if err != nil || result.NextSeq != 1 {
@@ -90,6 +105,55 @@ func TestDSHTranscriptsPostgres(t *testing.T) {
 		transcript, events, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200)
 		if err != nil || transcript.NextSeq != 2 || len(events) != 2 {
 			t.Fatalf("concurrent=%+v,%d,%v", transcript, len(events), err)
+		}
+	})
+	t.Run("two hundred rows bind JSON and duplicate prefixes only insert their suffix", func(t *testing.T) {
+		batch := dshBatchEvents(0, 200)
+		batch[50].Payload = []byte(`{"seq":50,"text":"中文\\path\"quote","nested":{"items":[1,2,3]}}`)
+		result, err := store.AppendDSHTranscript(ctx, scope, "batch", batch)
+		if err != nil || result.NextSeq != 200 {
+			t.Fatalf("batch=%+v error=%v", result, err)
+		}
+		_, events, err := store.ReadDSHTranscript(ctx, scope, "batch", 0, 200)
+		if err != nil || len(events) != 200 {
+			t.Fatalf("read events=%d error=%v", len(events), err)
+		}
+		for index, event := range events {
+			equal, err := jsoncanonical.Equal(batch[index].Payload, event.Payload)
+			if err != nil || !equal || event.Seq != int64(index) {
+				t.Fatalf("row %d seq=%d equal=%v error=%v", index, event.Seq, equal, err)
+			}
+		}
+		if result, err = store.AppendDSHTranscript(ctx, scope, "batch", batch); err != nil || result.NextSeq != 200 {
+			t.Fatalf("duplicate batch=%+v error=%v", result, err)
+		}
+		mixed := dshBatchEvents(198, 4)
+		mixed[0].Payload = []byte(`{"value":1.0,"seq":198}`)
+		if result, err = store.AppendDSHTranscript(ctx, scope, "batch", mixed); err != nil || result.NextSeq != 202 {
+			t.Fatalf("mixed batch=%+v error=%v", result, err)
+		}
+		transcript, tail, err := store.ReadDSHTranscript(ctx, scope, "batch", 198, 200)
+		if err != nil || transcript.NextSeq != 202 || len(tail) != 4 {
+			t.Fatalf("mixed read=%+v events=%d error=%v", transcript, len(tail), err)
+		}
+	})
+	t.Run("concurrent duplicate batches remain two hundred rows", func(t *testing.T) {
+		if _, err := store.PutDSHTranscript(ctx, scope, "batch-concurrent", nil, []byte(`{"version":4,"id":"batch-concurrent","createdAt":0,"isSeeded":false}`)); err != nil {
+			t.Fatal(err)
+		}
+		batch := dshBatchEvents(0, 200)
+		var wait sync.WaitGroup
+		for range 4 {
+			wait.Go(func() {
+				if result, err := store.AppendDSHTranscript(ctx, scope, "batch-concurrent", batch); err != nil || result.NextSeq != 200 {
+					t.Errorf("concurrent batch=%+v error=%v", result, err)
+				}
+			})
+		}
+		wait.Wait()
+		transcript, events, err := store.ReadDSHTranscript(ctx, scope, "batch-concurrent", 0, 200)
+		if err != nil || transcript.NextSeq != 200 || len(events) != 200 {
+			t.Fatalf("concurrent transcript=%+v events=%d error=%v", transcript, len(events), err)
 		}
 	})
 }

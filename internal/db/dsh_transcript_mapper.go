@@ -31,11 +31,10 @@ type dshTranscriptInsert struct {
 	Header             []byte
 }
 
-type dshTranscriptEventInsert struct {
+type dshTranscriptEventsInsert struct {
 	Scope          DSHScope
 	TranscriptUUID string
-	Seq            int64
-	Payload        []byte
+	Events         []DSHTranscriptEvent
 }
 
 type DSHTranscriptMapper interface {
@@ -47,6 +46,6 @@ type DSHTranscriptMapper interface {
 	Insert(ctx context.Context, input dshTranscriptInsert) (int64, error)
 	List(ctx context.Context, scope DSHScope, after string, limit int) ([]dshTranscriptRow, error)
 	ReadEvents(ctx context.Context, scope DSHScope, transcriptUUID string, fromSeq int64, limit int) ([]dshTranscriptEventRow, error)
-	InsertEvent(ctx context.Context, input dshTranscriptEventInsert) (int64, error)
+	InsertEvents(ctx context.Context, input dshTranscriptEventsInsert) (int64, error)
 	SetNextSeq(ctx context.Context, scope DSHScope, transcriptUUID string, nextSeq int64) (int64, error)
 }

@@ -138,6 +138,7 @@ func appendDSHEvents(ctx context.Context, mapper DSHTranscriptMapper, scope DSHS
 		stored[event.Seq] = event.Payload
 	}
 	next := transcript.NextSeq
+	pending := make([]DSHTranscriptEvent, 0, len(events))
 	for index, event := range events {
 		if event.Seq < 0 || event.Seq >= 9007199254740991 || index > 0 && event.Seq != events[index-1].Seq+1 {
 			return ErrInvalidState
@@ -159,17 +160,18 @@ func appendDSHEvents(ctx context.Context, mapper DSHTranscriptMapper, scope DSHS
 		if event.Seq != next {
 			return ErrDSHTranscriptGap
 		}
-		rows, err := mapper.InsertEvent(ctx, dshTranscriptEventInsert{Scope: scope, TranscriptUUID: transcript.UUID, Seq: event.Seq, Payload: event.Payload})
+		pending = append(pending, event)
+		next++
+	}
+	if len(pending) > 0 {
+		rows, err := mapper.InsertEvents(ctx, dshTranscriptEventsInsert{Scope: scope, TranscriptUUID: transcript.UUID, Events: pending})
 		if err != nil {
 			return err
 		}
-		if rows != 1 {
+		if rows != int64(len(pending)) {
 			return ErrInvalidState
 		}
-		next++
-	}
-	if next != transcript.NextSeq {
-		rows, err := mapper.SetNextSeq(ctx, scope, transcript.UUID, next)
+		rows, err = mapper.SetNextSeq(ctx, scope, transcript.UUID, next)
 		if err != nil {
 			return err
 		}

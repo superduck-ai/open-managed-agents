@@ -90,6 +90,7 @@ func (s *Server) authenticateWorkspaceAPIKey(r *http.Request, apiKey string) (au
 		OrganizationUUID:    key.OrganizationUUID.String(),
 		WorkspaceUUID:       key.WorkspaceUUID.String(),
 		WorkspaceExternalID: key.WorkspaceExternalID,
+		AccountUUID:         key.RuntimeUserUUID,
 	}, true, nil
 }
 

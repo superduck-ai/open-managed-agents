@@ -354,7 +354,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 			r.Use(platformCSRFMiddleware)
 			platformapi.RegisterConsoleOrganizationWorkspaceRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationAdminRequestRoutes(r, s.db)
-			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db)
+			platformapi.RegisterConsoleOrganizationAPIKeyRoutes(r, s.db, s.logger.With("component", "console_api_keys"))
 			platformapi.RegisterConsoleLLMProviderRoutes(r, s.db, s.vaultSecrets, s.cfg.LLMProviderPresetsFile)
 			platformapi.RegisterConsoleOrganizationMemberRoutes(r, s.db)
 			platformapi.RegisterConsoleOrganizationInviteRoutes(r, s.db, invitations.NewMailer(s.cfg.Auth, s.db, s.logger.With("component", "invitation_mail")))

@@ -76,6 +76,7 @@ type CreateConsoleAPIKeyInput struct {
 	Name               string
 	ExpiresAt          *time.Time
 	CreatedByUserUUID  *string
+	RuntimeUserUUID    string
 }
 
 type CreateConsoleAPIKeyResult struct {

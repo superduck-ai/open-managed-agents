@@ -115,6 +115,15 @@ func insertConsoleAPIKey(ctx context.Context, executor yourbatis.Executor, input
 	}); insertErr != nil {
 		return platform.ConsoleAPIKey{}, insertErr
 	}
+	if input.RuntimeUserUUID != "" {
+		rows, err := adminMapper.BindEmptyRuntimeUser(ctx, input.OrgUUID, input.WorkspaceUUID, externalID, input.RuntimeUserUUID)
+		if err != nil {
+			return platform.ConsoleAPIKey{}, err
+		}
+		if rows != 1 {
+			return platform.ConsoleAPIKey{}, ErrNotFound
+		}
+	}
 	return row.key(), nil
 }
 

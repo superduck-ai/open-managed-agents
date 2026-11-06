@@ -79,17 +79,17 @@ func authFromContext(ctx context.Context) *workbenchAuthContext {
 	if !ok {
 		return nil
 	}
-	accountID := firstNonEmpty(principal.UserExternalID, principal.APIKeyExternalID, principal.PlatformSessionExternalID)
+	accountID := firstNonEmpty(principal.ActorUserID(), principal.APIKeyExternalID)
+	accountUUID := firstNonEmpty(principal.RuntimeUserUUID(), principal.APIKeyUUID, accountID)
 	displayName := accountID
 	if displayName == "" {
 		displayName = "local"
 	}
 	return &workbenchAuthContext{
 		Account: workbenchAccount{
-			TaggedID:     accountID,
-			UUID:         accountID,
-			EmailAddress: accountID,
-			DisplayName:  &displayName,
+			TaggedID:    accountID,
+			UUID:        accountUUID,
+			DisplayName: &displayName,
 		},
 	}
 }

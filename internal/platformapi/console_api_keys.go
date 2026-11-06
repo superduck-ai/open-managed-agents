@@ -3,12 +3,14 @@ package platformapi
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
 	"github.com/go-chi/chi/v5"
@@ -59,20 +61,29 @@ type updateConsoleAPIKeyRequest struct {
 	Status string `json:"status"`
 }
 
-func RegisterConsoleOrganizationAPIKeyRoutes(r chi.Router, store OrganizationStore) {
-	registerConsoleOrganizationAPIKeyRoutes(r, store)
+func RegisterConsoleOrganizationAPIKeyRoutes(r chi.Router, store OrganizationStore, logger *slog.Logger) {
+	registerConsoleOrganizationAPIKeyRoutes(r, store, logger)
 }
 
-func registerConsoleOrganizationAPIKeyRoutes(r chi.Router, store OrganizationStore) {
-	r.Get("/api_keys", handleListConsoleAPIKeys(store))
+func registerConsoleOrganizationAPIKeyRoutes(r chi.Router, store OrganizationStore, logger *slog.Logger) {
+	logger = logging.LoggerOrDefault(logger)
+	r.Get("/api_keys", handleListConsoleAPIKeys(store, logger))
 	r.Post("/workspaces", handleCreateConsoleWorkspace(store))
 	r.Patch("/workspaces/{workspaceId}", handleUpdateConsoleWorkspace(store))
 	r.Post("/workspaces/{workspaceId}/archive", handleArchiveConsoleWorkspace(store))
-	r.Get("/workspaces/{workspaceId}/api_keys", handleListConsoleWorkspaceAPIKeys(store))
-	r.Post("/workspaces/{workspaceId}/api_keys", handleCreateConsoleWorkspaceAPIKey(store))
-	r.Post("/workspaces/{workspaceId}/api_keys/{apiKeyId}", handleUpdateConsoleWorkspaceAPIKey(store))
+	r.Get("/workspaces/{workspaceId}/api_keys", handleListConsoleWorkspaceAPIKeys(store, logger))
+	r.Post("/workspaces/{workspaceId}/api_keys", handleCreateConsoleWorkspaceAPIKey(store, logger))
+	r.Post("/workspaces/{workspaceId}/api_keys/{apiKeyId}", handleUpdateConsoleWorkspaceAPIKey(store, logger))
 	r.Get("/workspaces/{workspaceId}/api_keys/policy", handleGetConsoleWorkspaceAPIKeyPolicy)
-	r.Get("/workspaces/{workspaceId}/api_key_count", handleCountConsoleWorkspaceAPIKeys(store))
+	r.Get("/workspaces/{workspaceId}/api_key_count", handleCountConsoleWorkspaceAPIKeys(store, logger))
+}
+
+func logConsoleAPIKeyFailure(r *http.Request, logger *slog.Logger, message string, err error, orgUUID, workspaceUUID string) {
+	attrs := []any{"error", err, "organization_id", orgUUID}
+	if workspaceUUID != "" {
+		attrs = append(attrs, "workspace_id", workspaceUUID)
+	}
+	logger.ErrorContext(r.Context(), message, attrs...)
 }
 
 func handleListConsoleWorkspaces(store OrganizationStore) http.HandlerFunc {
@@ -257,7 +268,7 @@ func handleArchiveConsoleWorkspace(store OrganizationStore) http.HandlerFunc {
 	}
 }
 
-func handleListConsoleAPIKeys(store OrganizationStore) http.HandlerFunc {
+func handleListConsoleAPIKeys(store OrganizationStore, logger *slog.Logger) http.HandlerFunc {
 	apiKeyStore, _ := store.(consoleAPIKeyStore)
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgUUID, ok := visibleOrgUUID(w, r)
@@ -273,6 +284,7 @@ func handleListConsoleAPIKeys(store OrganizationStore) http.HandlerFunc {
 		}
 		keys, err := apiKeyStore.ListConsoleAPIKeys(r.Context(), orgUUID, nil)
 		if err != nil {
+			logConsoleAPIKeyFailure(r, logger, "failed to list api keys", err, orgUUID, "")
 			internalError(w, "failed to list api keys")
 			return
 		}
@@ -280,7 +292,7 @@ func handleListConsoleAPIKeys(store OrganizationStore) http.HandlerFunc {
 	}
 }
 
-func handleListConsoleWorkspaceAPIKeys(store OrganizationStore) http.HandlerFunc {
+func handleListConsoleWorkspaceAPIKeys(store OrganizationStore, logger *slog.Logger) http.HandlerFunc {
 	apiKeyStore, _ := store.(consoleAPIKeyStore)
 	workspaceLister, _ := store.(consoleWorkspaceLister)
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -298,6 +310,7 @@ func handleListConsoleWorkspaceAPIKeys(store OrganizationStore) http.HandlerFunc
 		}
 		keys, err := apiKeyStore.ListConsoleAPIKeys(r.Context(), orgUUID, &workspaceScope.UUID)
 		if err != nil {
+			logConsoleAPIKeyFailure(r, logger, "failed to list api keys", err, orgUUID, workspaceScope.UUID)
 			internalError(w, "failed to list api keys")
 			return
 		}
@@ -305,7 +318,7 @@ func handleListConsoleWorkspaceAPIKeys(store OrganizationStore) http.HandlerFunc
 	}
 }
 
-func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFunc {
+func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore, logger *slog.Logger) http.HandlerFunc {
 	apiKeyStore, _ := store.(consoleAPIKeyStore)
 	workspaceLister, _ := store.(consoleWorkspaceLister)
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -352,12 +365,12 @@ func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 			})
 			return
 		}
-		var createdByUserUUID *string
-		if principal, found := auth.PrincipalFromContext(r.Context()); found {
-			userUUID := principal.UserUUID
-			if userUUID != "" {
-				createdByUserUUID = &userUUID
-			}
+		principal, _ := auth.PrincipalFromContext(r.Context())
+		createdByUserUUID, err := ResolveConsoleAPIKeyCreator(r.Context(), store, principal)
+		if err != nil {
+			logConsoleAPIKeyFailure(r, logger, "failed to resolve api key creator", err, orgUUID, workspaceScope.UUID)
+			internalError(w, "failed to resolve api key creator")
+			return
 		}
 		result, err := apiKeyStore.CreateConsoleAPIKey(r.Context(), CreateConsoleAPIKeyInput{
 			OrgUUID:            orgUUID,
@@ -366,8 +379,10 @@ func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 			Name:               name,
 			ExpiresAt:          expiresAt,
 			CreatedByUserUUID:  createdByUserUUID,
+			RuntimeUserUUID:    principal.RuntimeUserUUID(),
 		})
 		if err != nil {
+			logConsoleAPIKeyFailure(r, logger, "failed to create api key", err, orgUUID, workspaceScope.UUID)
 			internalError(w, "failed to create api key")
 			return
 		}
@@ -377,7 +392,7 @@ func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 	}
 }
 
-func handleUpdateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFunc {
+func handleUpdateConsoleWorkspaceAPIKey(store OrganizationStore, logger *slog.Logger) http.HandlerFunc {
 	apiKeyStore, _ := store.(consoleAPIKeyStore)
 	workspaceLister, _ := store.(consoleWorkspaceLister)
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +443,7 @@ func handleUpdateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": "api_key_not_found"})
 				return
 			}
+			logConsoleAPIKeyFailure(r, logger, "failed to update api key", err, orgUUID, workspaceScope.UUID)
 			internalError(w, "failed to update api key")
 			return
 		}
@@ -441,7 +457,7 @@ func handleGetConsoleWorkspaceAPIKeyPolicy(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func handleCountConsoleWorkspaceAPIKeys(store OrganizationStore) http.HandlerFunc {
+func handleCountConsoleWorkspaceAPIKeys(store OrganizationStore, logger *slog.Logger) http.HandlerFunc {
 	apiKeyStore, _ := store.(consoleAPIKeyStore)
 	workspaceLister, _ := store.(consoleWorkspaceLister)
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -459,6 +475,7 @@ func handleCountConsoleWorkspaceAPIKeys(store OrganizationStore) http.HandlerFun
 		}
 		count, err := apiKeyStore.CountConsoleAPIKeys(r.Context(), orgUUID, workspaceScope.UUID)
 		if err != nil {
+			logConsoleAPIKeyFailure(r, logger, "failed to count api keys", err, orgUUID, workspaceScope.UUID)
 			internalError(w, "failed to count api keys")
 			return
 		}

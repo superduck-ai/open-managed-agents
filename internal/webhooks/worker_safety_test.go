@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -73,19 +75,38 @@ func TestWebhookConsumePanicRecoveryAndRedelivery(t *testing.T) {
 		return err == nil && info.State.Msgs == 0 && store.successes.Load() == 2
 	})
 	stop()
-	var record struct {
-		Level   string `json:"level"`
-		Message string `json:"msg"`
-		Queue   string `json:"queue"`
-		Slot    int    `json:"consume_slot"`
-		Stack   string `json:"stack"`
+
+	worker.logger.Info("附加运行日志")
+	decoder := json.NewDecoder(bytes.NewReader(output.Bytes()))
+	found := false
+	for {
+		var record struct {
+			Level   string `json:"level"`
+			Message string `json:"msg"`
+			Queue   string `json:"queue"`
+			Slot    int    `json:"consume_slot"`
+			Stack   string `json:"stack"`
+		}
+		if err := decoder.Decode(&record); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if record.Message != "queued message processing panicked" {
+			continue
+		}
+		if found {
+			t.Fatal("不应重复记录同一次消费异常")
+		}
+		found = true
+		if record.Level != "ERROR" || record.Queue != "webhook" || record.Slot != 0 || record.Stack == "" {
+			t.Fatalf("异常记录字段错误：level=%s queue=%s slot=%d stack_bytes=%d", record.Level, record.Queue, record.Slot, len(record.Stack))
+		}
 	}
-	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
-		t.Fatal(err)
+	if !found {
+		t.Fatal("缺少消费异常的结构化日志")
 	}
-	if record.Level != "ERROR" || record.Message != "queued message processing panicked" || record.Queue != "webhook" || record.Slot != 0 || record.Stack == "" {
-		t.Fatalf("invalid panic record: level=%s message=%s slot=%d stack_bytes=%d", record.Level, record.Message, record.Slot, len(record.Stack))
-	}
+
 	if bytes.Contains(output.Bytes(), []byte("private-credential-must-not-be-logged")) {
 		t.Fatal("panic log exposed its value")
 	}

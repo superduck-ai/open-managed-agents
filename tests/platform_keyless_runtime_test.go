@@ -13,7 +13,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
@@ -31,12 +30,7 @@ type keylessPlatformFixture struct {
 
 func newKeylessPlatformFixture(t *testing.T) keylessPlatformFixture {
 	t.Helper()
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	app := newTestAppWithStore(t, &cfg, newFakeStore("keyless-runtime"))
-	t.Cleanup(app.close)
+	app := newPayloadIntegrationApp(t, newFakeStore("keyless-runtime"))
 	email := "keyless-runtime-" + uuid.NewV4().String() + "@example.com"
 	cookies := app.platformLoginCookies(t, email)
 	login, err := app.sessions.Get(context.Background(), responseCookie(cookies, "sessionKey").Value)

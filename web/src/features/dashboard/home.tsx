@@ -1,17 +1,5 @@
-import {
-  ChevronRight,
-  BookOpen,
-  Bot,
-  Boxes,
-  Database,
-  Folder,
-  KeyRound,
-  Layers,
-  MessagesSquare,
-  Server,
-  Shield,
-  Sparkles,
-} from 'lucide-react';
+import { productIcons } from '@/shared/icons/product-icons';
+import { ChevronRight, Folder } from 'lucide-react';
 import { ButtonLink } from '@/shared/ui/button';
 import { Card, CardContent } from '@/shared/ui/card';
 import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
@@ -31,31 +19,31 @@ const workspaceEntries = [
     title: 'Agents',
     description: 'Configure models, tools, and runtime environments.',
     path: 'agents',
-    icon: Bot,
+    icon: productIcons.agents,
   },
   {
     id: 'sessions',
     title: 'Sessions',
     description: 'View running sessions and conversation history.',
     path: 'sessions',
-    icon: MessagesSquare,
+    icon: productIcons.sessions,
   },
   {
     id: 'models',
     title: 'LLM models',
     description: 'Manage providers and available models.',
     path: 'llm-models',
-    icon: Sparkles,
+    icon: productIcons.models,
   },
 ];
 
 const resourceEntries = [
-  { id: 'environments', title: 'Environments', path: 'environments', icon: Server },
-  { id: 'deployments', title: 'Deployments', path: 'deployments', icon: Boxes },
-  { id: 'memory', title: 'Memory stores', path: 'memory-stores', icon: Database },
-  { id: 'vaults', title: 'Credential vaults', path: 'vaults', icon: Shield },
+  { id: 'environments', title: 'Environments', path: 'environments', icon: productIcons.environments },
+  { id: 'deployments', title: 'Deployments', path: 'deployments', icon: productIcons.deployments },
+  { id: 'memory', title: 'Memory stores', path: 'memory-stores', icon: productIcons.memory },
+  { id: 'vaults', title: 'Credential vaults', path: 'vaults', icon: productIcons.vaults },
   { id: 'files', title: 'Files', path: 'files', icon: Folder },
-  { id: 'skills', title: 'Skills', path: 'skills', icon: Layers },
+  { id: 'skills', title: 'Skills', path: 'skills', icon: productIcons.skills },
 ];
 
 export function DashboardHome() {
@@ -83,18 +71,18 @@ export function DashboardHome() {
                       size="icon"
                       aria-label={msg('dashboard.actions.exploreDocs', 'Explore docs')}
                     >
-                      <BookOpen className="size-4" aria-hidden />
+                      <productIcons.documentation className="size-4" aria-hidden />
                     </ButtonLink>
                   }
                 />
                 <TooltipContent>{msg('dashboard.actions.exploreDocs', 'Explore docs')}</TooltipContent>
               </Tooltip>
               <ButtonLink href={apiKeysHref} variant="outline">
-                <KeyRound className="size-4" aria-hidden />
+                <productIcons.keys className="size-4" aria-hidden />
                 {msg('dashboard.actions.getApiKey', 'Get API key')}
               </ButtonLink>
               <ButtonLink href={`${workspacePath}/agents/new`}>
-                <Bot className="size-4" aria-hidden />
+                <productIcons.agents className="size-4" aria-hidden />
                 {msg('dashboard.actions.createAgent', 'Create agent')}
               </ButtonLink>
             </div>

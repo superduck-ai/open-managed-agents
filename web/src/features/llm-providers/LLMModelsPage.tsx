@@ -1,8 +1,11 @@
+import { productIcons } from '@/shared/icons/product-icons';
+import { quickstartModelSetupReturn } from '../../shared/workspaces/model-setup-navigation';
+import { listCreateAgentModels } from '../managed-agents/agents/create-dialog-api';
 import type { APIBackend } from './api';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
-import { AlertCircle, Bot, Plus } from 'lucide-react';
+import { AlertCircle, Plus } from 'lucide-react';
 import type { ApiError } from '../../shared/api/client';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
@@ -204,6 +207,15 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
     if (refreshAfterSaveRef.current) {
       refreshAfterSaveRef.current = false;
       void invalidateCatalog();
+      const returnTo = scope === 'workspace' ? quickstartModelSetupReturn(window.location.search, workspaceId) : null;
+      if (returnTo) {
+        const setupHref = window.location.href;
+        void listCreateAgentModels(workspaceId)
+          .then((models) => {
+            if (models.length > 0 && window.location.href === setupHref) window.location.assign(returnTo);
+          })
+          .catch(() => undefined);
+      }
     }
   };
 
@@ -434,7 +446,7 @@ function CatalogBody({
         <Empty className="min-h-[320px] border-0">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <Bot aria-hidden />
+              <productIcons.models aria-hidden />
             </EmptyMedia>
             <EmptyTitle>{msg('llmModels.catalogEmptyTitle', 'No providers yet')}</EmptyTitle>
           </EmptyHeader>

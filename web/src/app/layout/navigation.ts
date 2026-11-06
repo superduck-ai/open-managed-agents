@@ -1,3 +1,4 @@
+import { navigationIcons } from './navigation-icons';
 import {
   Activity,
   BarChart3,
@@ -13,7 +14,6 @@ import {
   FileText,
   Gauge,
   KeyRound,
-  LayoutDashboard,
   LockKeyhole,
   Logs,
   Moon,
@@ -41,8 +41,6 @@ export type NavLinkItem = {
   label: string;
   labelId: string;
   icon?: IconComponent;
-  badge?: string;
-  badgeId?: string;
 };
 
 export type NavGroupItem = {
@@ -55,63 +53,139 @@ export type NavGroupItem = {
     href: string;
     label: string;
     labelId: string;
-    badge?: string;
-    badgeId?: string;
     hidden?: boolean;
+    section?: string;
+    icon?: IconComponent;
   }>;
 };
 
 export type NavItem = NavLinkItem | NavGroupItem;
 
+export const workspaceManagementSections = [
+  { id: 'access', label: 'Models and access', labelId: 'nav.modelsAndAccess' },
+  { id: 'activity', label: 'Usage and operations', labelId: 'nav.usageAndOperations' },
+  { id: 'integrations', label: 'Integrations', labelId: 'nav.integrations' },
+] as const;
+
+export const workspaceManagementNavigation: NavGroupItem = {
+  type: 'group',
+  label: 'Workspace management',
+  labelId: 'nav.workspaceManagement',
+  icon: navigationIcons.settings,
+  children: [
+    { href: '/members', section: 'access', label: 'Members', labelId: 'nav.members', icon: navigationIcons.members },
+    {
+      href: '/llm-models',
+      section: 'access',
+      label: 'LLM models',
+      labelId: 'nav.llmModels',
+      icon: navigationIcons.models,
+    },
+    { href: '/api-keys', section: 'access', label: 'API keys', labelId: 'nav.apiKeys', icon: navigationIcons.keys },
+    { href: '/usage', section: 'activity', label: 'Usage', labelId: 'nav.usage', icon: navigationIcons.usage },
+    { href: '/cost', section: 'activity', label: 'Cost', labelId: 'nav.cost', icon: navigationIcons.cost },
+    {
+      href: '/observability',
+      section: 'activity',
+      label: 'Observability',
+      labelId: 'nav.observability',
+      icon: navigationIcons.observability,
+    },
+    {
+      href: '/usage/cache',
+      hidden: true,
+      section: 'activity',
+      label: 'Caching',
+      labelId: 'nav.caching',
+      icon: navigationIcons.memory,
+    },
+    {
+      href: '/usage/limits',
+      hidden: true,
+      section: 'activity',
+      label: 'Rate limits',
+      labelId: 'nav.rateLimits',
+      icon: navigationIcons.settings,
+    },
+    {
+      href: '/logs',
+      hidden: true,
+      section: 'activity',
+      label: 'Logs',
+      labelId: 'nav.logs',
+      icon: navigationIcons.files,
+    },
+    {
+      href: '/mcp-tunnels',
+      section: 'integrations',
+      label: 'MCP tunnels',
+      labelId: 'nav.mcpTunnels',
+      icon: navigationIcons.tunnel,
+    },
+    {
+      href: '/webhooks',
+      section: 'integrations',
+      label: 'Webhooks',
+      labelId: 'nav.webhooks',
+      icon: navigationIcons.webhooks,
+    },
+    {
+      href: '/telemetry',
+      section: 'integrations',
+      label: 'OpenTelemetry',
+      labelId: 'nav.telemetry',
+      icon: navigationIcons.observability,
+    },
+  ],
+};
+
 export const consoleNavigation: NavItem[] = [
-  { type: 'link', href: '/dashboard', label: 'Dashboard', labelId: 'nav.dashboard', icon: LayoutDashboard },
-  { type: 'link', href: '/llm-models', label: 'LLM models', labelId: 'nav.llmModels', icon: Cpu },
-  { type: 'link', href: '/api-keys', label: 'API keys', labelId: 'nav.apiKeys', icon: KeyRound },
+  { type: 'link', href: '/dashboard', label: 'Overview', labelId: 'nav.overview', icon: navigationIcons.overview },
+  {
+    type: 'link',
+    href: '/quickstart',
+    label: 'Quickstart',
+    labelId: 'nav.quickstart',
+    icon: navigationIcons.quickstart,
+  },
+  { type: 'link', href: '/agents', label: 'Agents', labelId: 'nav.agents', icon: navigationIcons.agents },
+  { type: 'link', href: '/sessions', label: 'Sessions', labelId: 'nav.sessions', icon: navigationIcons.sessions },
+  {
+    type: 'link',
+    href: '/deployments',
+    label: 'Deployments',
+    labelId: 'nav.deployments',
+    icon: navigationIcons.deployments,
+  },
+  {
+    type: 'link',
+    href: '/environments',
+    label: 'Environments',
+    labelId: 'nav.environments',
+    icon: navigationIcons.environments,
+  },
   {
     type: 'group',
-    label: 'Build',
-    labelId: 'nav.build',
-    icon: Braces,
+    label: 'Resources',
+    labelId: 'nav.resources',
+    icon: navigationIcons.resources,
     children: [
-      // Temporarily hidden from the sidebar; this entry stays so the route can be restored.
+      { href: '/skills', label: 'Skills', labelId: 'nav.skills', icon: navigationIcons.skills },
+      { href: '/files', label: 'Files', labelId: 'nav.files', icon: navigationIcons.files },
+      { href: '/memory-stores', label: 'Memory stores', labelId: 'nav.memoryStores', icon: navigationIcons.memory },
+      {
+        href: '/credential-vaults',
+        label: 'Credential vaults',
+        labelId: 'nav.credentialVaults',
+        icon: navigationIcons.vaults,
+      },
+      { href: '/mcp-servers', label: 'MCP Servers', labelId: 'nav.mcpServers', icon: navigationIcons.mcp },
       { href: '/workbench', label: 'Workbench', labelId: 'nav.workbench', hidden: true },
-      { href: '/files', label: 'Files', labelId: 'nav.files' },
-      { href: '/skills', label: 'Skills', labelId: 'nav.skills' },
-      { href: '/mcp-servers', label: 'MCP Servers', labelId: 'nav.mcpServers' },
       { href: '/batches', label: 'Batches', labelId: 'nav.batches', hidden: true },
     ],
   },
+  workspaceManagementNavigation,
   {
-    type: 'group',
-    label: 'Managed Agents',
-    labelId: 'nav.managedAgents',
-    icon: Network,
-    children: [
-      { href: '/quickstart', label: 'Quickstart', labelId: 'nav.quickstart' },
-      { href: '/agents', label: 'Agents', labelId: 'nav.agents' },
-      { href: '/sessions', label: 'Sessions', labelId: 'nav.sessions' },
-      { href: '/observability', label: 'Observability', labelId: 'nav.observability' },
-      { href: '/deployments', label: 'Deployments', labelId: 'nav.deployments' },
-      { href: '/environments', label: 'Environments', labelId: 'nav.environments' },
-      { href: '/credential-vaults', label: 'Credential vaults', labelId: 'nav.credentialVaults' },
-      { href: '/memory-stores', label: 'Memory stores', labelId: 'nav.memoryStores' },
-    ],
-  },
-  {
-    type: 'group',
-    label: 'Analytics',
-    labelId: 'nav.analytics',
-    icon: BarChart3,
-    children: [
-      { href: '/usage', label: 'Usage', labelId: 'nav.usage' },
-      { href: '/usage/cache', label: 'Caching', labelId: 'nav.caching' },
-      { href: '/usage/limits', label: 'Rate limits', labelId: 'nav.rateLimits' },
-      { href: '/cost', label: 'Cost', labelId: 'nav.cost' },
-      { href: '/logs', label: 'Logs', labelId: 'nav.logs' },
-    ],
-  },
-  {
-    // Temporarily hidden from the sidebar; the group definition stays so it can be restored.
     type: 'group',
     label: 'Claude Code',
     labelId: 'nav.claudeCode',
@@ -120,25 +194,6 @@ export const consoleNavigation: NavItem[] = [
     children: [
       { href: '/claude-code/usage', label: 'Usage', labelId: 'nav.usage' },
       { href: '/claude-code/settings', label: 'Settings', labelId: 'nav.settings' },
-    ],
-  },
-  {
-    type: 'group',
-    label: 'Workspace settings',
-    labelId: 'nav.workspaceSettings',
-    icon: Settings,
-    children: [
-      { href: '/members', label: 'Members', labelId: 'nav.members' },
-      { href: '/api-keys', label: 'API keys', labelId: 'nav.apiKeys' },
-      { href: '/webhooks', label: 'Webhooks', labelId: 'nav.webhooks' },
-      { href: '/telemetry', label: 'OpenTelemetry', labelId: 'nav.telemetry' },
-      {
-        href: '/mcp-tunnels',
-        label: 'MCP tunnels',
-        labelId: 'nav.mcpTunnels',
-        badge: 'Preview',
-        badgeId: 'nav.preview',
-      },
     ],
   },
 ];

@@ -6,7 +6,7 @@ import {
   createRoute,
   createRouter,
 } from '@tanstack/react-router';
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { useEffect, type ReactNode } from 'react';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { I18nProvider } from '../../shared/i18n';
@@ -32,6 +32,32 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
+  test.each([false, true])('quickstart setup returns only after usable models exist: %s', async (available) => {
+    const returnTo = '/workspaces/default/agent-quickstart?mode=api';
+    resetTestDom(`https://oma.duck.ai/workspaces/default/llm-models?returnTo=${encodeURIComponent(returnTo)}`);
+    mockProvidersApi();
+    const baseFetch = globalThis.fetch;
+    let modelReads = 0;
+    globalThis.fetch = (async (input, init) => {
+      if (String(input).includes('/v1/models')) {
+        modelReads++;
+        return jsonResponse({ data: available ? [{ id: 'test-model' }] : [], has_more: false });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    const assign = spyOn(window.location, 'assign').mockImplementation(() => undefined);
+    try {
+      renderPage();
+      await screen.findByText('No providers yet');
+      await createProvider('Setup', 'https://model.example.test', 'test-key', ['test-model']);
+      await waitFor(() => expect(modelReads).toBe(1));
+      if (available) expect(assign).toHaveBeenCalledWith(returnTo);
+      else expect(assign).not.toHaveBeenCalled();
+    } finally {
+      assign.mockRestore();
+    }
+  });
+
   test.each(['context', 'output', 'image', 'whitespace'])(
     'rejects a model row with %s settings and no Model ID',
     async (setting) => {

@@ -1,3 +1,4 @@
+import { productIcons } from '@/shared/icons/product-icons';
 import { CalendarDays, Hand, Search } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { ResourceListState } from '../../../shared/ui/resource-list-state';
@@ -48,7 +49,7 @@ export function DeploymentEmptyState({ filtered }: { filtered: boolean }) {
   const { msg } = useI18n();
   return (
     <ResourceListState
-      icon={filtered ? Search : CalendarDays}
+      icon={filtered ? Search : productIcons.deployments}
       title={
         filtered
           ? msg('managedAgents.deployments.noMatches', 'No matching deployments')

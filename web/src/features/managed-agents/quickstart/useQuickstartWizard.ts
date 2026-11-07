@@ -44,9 +44,14 @@ export function useQuickstartWizard(
     queryFn: () => loadQuickstartResources(workspaceID),
     retry: false,
   });
-  const [progress, setProgress] = useState(
-    () => loadQuickstartProgress(storageKey) ?? initialQuickstartProgress(quickstartDraft('hello', locale, modelID)),
-  );
+  const [progress, setProgress] = useState(() => {
+    client.setQueryDefaults([storageKey], { gcTime: Infinity });
+    return (
+      client.getQueryData<QuickstartProgress>([storageKey]) ??
+      loadQuickstartProgress(storageKey) ??
+      initialQuickstartProgress(quickstartDraft('hello', locale, modelID))
+    );
+  });
   const current = useRef(progress);
   const lock = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -66,9 +71,10 @@ export function useQuickstartWizard(
       const next = change(current.current);
       current.current = next;
       setStorageAvailable(storeQuickstartProgress(storageKey, next));
+      client.setQueryData([storageKey], next);
       setProgress(next);
     },
-    [storageKey],
+    [storageKey, client],
   );
   const agents = resources.data?.agents ?? [];
   const environments = resources.data?.environments ?? [];

@@ -37,72 +37,73 @@ afterEach(() => {
 });
 
 describe('Dashboard i18n', () => {
-  test.each(['en', 'zh-CN'] as const)(
-    'prioritizes workspace resource links instead of static financial and model examples in %s',
-    (locale) => {
-      resetTestDom('https://oma.duck.ai/dashboard');
-      renderDashboardPage(<DashboardPage section="dashboard" />, { id: 'wrkspc_team', name: 'Team' }, locale);
-      for (const [label, path] of [
-        [locale === 'en' ? /^Agents/ : /^智能体/, 'agents'],
-        [locale === 'en' ? /^Sessions/ : /^会话/, 'sessions'],
-        [locale === 'en' ? /^LLM models/ : /^LLM 模型/, 'llm-models'],
-        [locale === 'en' ? /^Environments/ : /^环境/, 'environments'],
-        [locale === 'en' ? /^Credential vaults/ : /^凭据保险库/, 'vaults'],
-      ] as const) {
-        expect(screen.getByRole('link', { name: label }).getAttribute('href')).toBe(`/workspaces/wrkspc_team/${path}`);
-      }
-      expect(
-        screen.getByRole('link', { name: locale === 'en' ? 'Create agent' : '创建智能体' }).getAttribute('href'),
-      ).toBe('/workspaces/wrkspc_team/agents/new');
-      expect(screen.getByText('Team')).toBeTruthy();
-      expect(screen.queryByText('Fable 5')).toBeNull();
-      expect(screen.queryByText('$1.00')).toBeNull();
-      expect(screen.queryByText(/\$500/)).toBeNull();
-      expect(screen.queryByText(locale === 'en' ? 'Credit balance' : '信用余额')).toBeNull();
-      expect(screen.queryByText(locale === 'en' ? 'Example models' : '模型示例')).toBeNull();
-    },
-  );
-
-  test('renders dashboard and playground chrome in Chinese', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default');
-    const dashboard = renderDashboardPage(<DashboardPage section="dashboard" />, undefined, 'zh-CN');
-
-    await waitFor(() => expect(document.documentElement.lang).toBe('zh-CN'));
-    expect(screen.getByRole('heading', { name: '概览' })).toBeTruthy();
-    expect(screen.getByText('默认')).toBeTruthy();
-    expect(screen.queryByText('Default')).toBeNull();
-    const getApiKey = screen.getByRole('link', { name: '获取 API 密钥' });
-    expect(getApiKey.getAttribute('href')).toBe('/settings/workspaces/default/keys');
-    expect(getApiKey.dataset.slot).toBe('button');
-    const docsLink = screen.getByRole('link', { name: '查看文档' });
-    expect(docsLink.getAttribute('href')).toBe('https://oma.mintlifysite.com/docs/zh/overview');
-    expect(screen.getByRole('link', { name: '创建智能体' }).dataset.slot).toBe('button');
-    expect(screen.getByRole('heading', { name: '智能体' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '会话' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '工作区资源' })).toBeTruthy();
-
-    dashboard.unmount();
-
-    renderDashboardPage(<DashboardPage section="playground" />, undefined, 'zh-CN');
-
-    expect(screen.getByRole('heading', { name: 'Playground' })).toBeTruthy();
-    expect(screen.getByText('Playground 尚未接入模型服务。')).toBeTruthy();
-    expect(screen.queryByRole('combobox')).toBeNull();
-    expect(screen.queryByRole('textbox')).toBeNull();
-    expect(screen.queryByRole('button', { name: '发送' })).toBeNull();
-    expect(screen.getByRole('link', { name: '打开工作台' }).getAttribute('href')).toBe('/workbench');
+  test.each(['en', 'zh-CN'] as const)('loads scoped overview data and localized links in %s', async (locale) => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    const requests = mockOverview();
+    renderDashboardPage(<DashboardPage section="dashboard" />, { id: 'wrkspc_team', name: 'Team' }, locale);
+    expect(
+      await screen.findByRole('heading', { name: locale === 'en' ? 'Agent activity' : '智能体运行情况' }),
+    ).toBeTruthy();
+    expect(screen.getByText('Team')).toBeTruthy();
+    expect(screen.getByRole('link', { name: locale === 'en' ? 'Sessions' : '会话数' }).getAttribute('href')).toBe(
+      '/workspaces/wrkspc_team/sessions',
+    );
+    expect(screen.getByRole('link', { name: locale === 'en' ? 'Skills' : '技能' }).getAttribute('href')).toBe(
+      `https://oma.mintlifysite.com/docs/${locale === 'en' ? 'en' : 'zh'}/skills`,
+    );
+    expect(requests[0]?.url).toContain('/api/organizations/org_test_uuid/workspaces/wrkspc_team/overview?');
+    expect(requests[0]?.workspace).toBe('wrkspc_team');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const table = screen.getByRole('table');
+    expect(within(table).getByText('1').closest('button')).toBeNull();
   });
 
-  test('links the English dashboard to the corresponding OMA documentation pages', () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default');
-    renderDashboardPage(<DashboardPage section="dashboard" />);
+  test('shows unavailable data on failure and retries the real query', async () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    let calls = 0;
+    mockOverview(() => (++calls === 1 ? new Response('{}', { status: 500 }) : overviewFixture()));
+    renderDashboardPage(<DashboardPage section="dashboard" />, undefined, 'zh-CN');
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.queryByRole('table')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    expect(await screen.findByRole('table')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
 
-    expect(screen.getByRole('link', { name: 'Explore docs' }).getAttribute('href')).toBe(
-      'https://oma.mintlifysite.com/docs/en/overview',
+  test('does not suggest creating a first agent when agents exist outside the period', async () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    mockOverview(() => ({
+      ...overviewFixture(),
+      agent_count: 1,
+      session_count: 0,
+      failed_session_count: 0,
+      active_agent_count: 0,
+      daily: [],
+      agents: [],
+    }));
+    renderDashboardPage(<DashboardPage section="dashboard" />, undefined, 'zh-CN');
+    expect(await screen.findByRole('heading', { name: '当前时段暂无运行记录' })).toBeTruthy();
+    expect(screen.queryByText('创建你的第一个智能体')).toBeNull();
+    expect(screen.getByRole('link', { name: '查看智能体' }).getAttribute('href')).toBe('/workspaces/default/agents');
+  });
+
+  test('replaces data when the workspace changes', async () => {
+    resetTestDom('https://oma.duck.ai/dashboard');
+    const requests = mockOverview();
+    const view = renderDashboardPage(<DashboardPage section="dashboard" />);
+    await screen.findByRole('table');
+    view.rerenderWorkspace({ id: 'wrkspc_other', name: 'Other' });
+    await waitFor(() =>
+      expect(requests.some((request) => request.url.includes('/workspaces/wrkspc_other/overview?'))).toBe(true),
     );
-    expect(screen.getByRole('link', { name: /^LLM models/ }).getAttribute('href')).toBe(
-      '/workspaces/default/llm-models',
-    );
+    expect(screen.getByText('Other')).toBeTruthy();
+  });
+
+  test('renders disconnected playground chrome in Chinese', () => {
+    resetTestDom('https://oma.duck.ai/playground');
+    renderDashboardPage(<DashboardPage section="playground" />, undefined, 'zh-CN');
+    expect(screen.getByRole('heading', { name: 'Playground' })).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
   });
 
   test('renders files, skills, and batches empty states in Chinese', async () => {
@@ -229,17 +230,7 @@ describe('Dashboard i18n', () => {
     expect(api.requests[0]?.headers.get('x-workspace-id')).toBe(defaultWorkspace.id);
   });
 
-  test('uses shared cards for available dashboard resources and an empty state for disconnected usage', () => {
-    resetTestDom('https://oma.duck.ai/dashboard');
-    const dashboard = renderDashboardPage(<DashboardPage section="dashboard" />);
-
-    for (const label of ['Agents', 'LLM models']) {
-      const card = screen.getByText(label).closest('[data-slot="card"]') as HTMLElement | null;
-      expect(card).toBeTruthy();
-      expect(card?.className.includes('surface-card')).toBe(false);
-    }
-
-    dashboard.unmount();
+  test('uses an empty state for disconnected usage', () => {
     resetTestDom('https://oma.duck.ai/claude-code/usage');
     renderDashboardPage(<DashboardPage section="claude-code-usage" />);
 
@@ -2178,4 +2169,39 @@ function restoreObjectUrl() {
   } else {
     delete (URL as unknown as Record<string, unknown>).revokeObjectURL;
   }
+}
+
+function overviewFixture() {
+  return {
+    start_time: '2026-10-31T00:00:00Z',
+    end_time: '2026-11-06T12:00:00Z',
+    timezone: 'UTC',
+    agent_count: 2,
+    session_count: 9,
+    failed_session_count: 1,
+    active_agent_count: 1,
+    daily: [{ date: '2026-11-06', agent_id: 'agent_a', session_count: 9 }],
+    agents: [
+      {
+        agent_id: 'agent_a',
+        name: 'Research',
+        session_count: 9,
+        failed_session_count: 1,
+        last_run_at: '2026-11-06T10:00:00Z',
+      },
+    ],
+  };
+}
+
+function mockOverview(handler: () => unknown = overviewFixture) {
+  const requests: { url: string; workspace: string | null }[] = [];
+  globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    requests.push({ url, workspace: new Headers(init?.headers).get('x-workspace-id') });
+    const result = handler();
+    return result instanceof Response
+      ? result
+      : new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  return requests;
 }

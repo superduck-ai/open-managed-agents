@@ -1,3 +1,12 @@
+import { useResourceNavigationExpansion } from './use-resource-navigation-expansion';
+import {
+  initialWorkspaceManagementOrigin,
+  workspaceManagementReturnHref,
+  saveWorkspaceManagementOrigin,
+  useWorkspaceManagementHistory,
+} from './use-workspace-management-history';
+import './console-navigation.css';
+import { productIcons as navigationIcons } from '@/shared/icons/product-icons';
 import { AppearanceMenuRow } from './AppearanceMenuRow';
 import { BrandLogo } from '@/shared/brand/BrandLogo';
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
@@ -9,12 +18,9 @@ import { useOrganizations } from '../../shared/organizations/context';
 import {
   Activity,
   ArrowLeft,
-  BookOpen,
   Box,
   Building2,
   ChevronDown,
-  ChevronRight,
-  ChevronsUpDown,
   Cpu,
   Globe2,
   ListTree,
@@ -34,11 +40,11 @@ import {
   useRef,
   useState,
   type AnchorHTMLAttributes,
+  type CSSProperties,
   type MouseEvent,
   type ReactNode,
 } from 'react';
 import clsx from 'clsx';
-import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Collapsible, CollapsibleContent } from '@/shared/ui/collapsible';
 import {
@@ -51,7 +57,6 @@ import {
   SidebarHeader as AppSidebarHeader,
   SidebarInset,
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -96,7 +101,10 @@ import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
   personalSettingsNavigation,
   settingsNavigation,
-  visibleConsoleNavigation,
+  consoleNavigation,
+  workspaceManagementNavigation,
+  workspaceManagementSections,
+  type NavGroupItem,
   type NavLinkItem,
 } from './navigation';
 
@@ -172,12 +180,17 @@ export function ConsoleLayout() {
 
 export function ConsoleShell({ account, currentPath = '/', children, onLogout, onNavigate }: ConsoleShellProps) {
   const isWide = isWideConsolePath(currentPath);
+  const isOverview = currentPath === '/dashboard' || currentPath === '/';
   const isSessionWorkspace = isSessionDetailPath(currentPath);
   const isQuickstart = /^(?:\/quickstart|\/workspaces\/[^/]+\/agent-quickstart)\/?$/.test(currentPath);
   const { msg } = useI18n();
 
   return (
-    <SidebarProvider defaultOpen>
+    <SidebarProvider
+      defaultOpen
+      className="console-shell"
+      style={{ '--sidebar-width': 'var(--console-sidebar-width)', '--sidebar-width-icon': '64px' } as CSSProperties}
+    >
       <ConsoleSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
       <SidebarInset
         className={clsx(
@@ -206,7 +219,9 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
                 ? 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-[clamp(0.75rem,2dvh,1.5rem)] sm:px-6 lg:px-8'
                 : isWide
                   ? 'min-w-0 px-6 py-6 lg:px-8'
-                  : 'mx-auto min-w-0 w-full max-w-[928px] px-6 py-12 lg:px-0',
+                  : isOverview
+                    ? 'mx-auto min-w-0 w-full max-w-[1440px] px-6 py-12 lg:px-8'
+                    : 'mx-auto min-w-0 w-full max-w-[928px] px-6 py-12 lg:px-0',
           )}
         >
           {children}
@@ -251,34 +266,39 @@ export function SettingsShell({
 
 function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Omit<ConsoleShellProps, 'children'>) {
   const { msg } = useI18n();
-  const { activeWorkspaceId, selectWorkspace, workspaces } = useWorkspace();
-  const { setOpen, state } = useSidebar();
-  const collapsed = state === 'collapsed';
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => initialSidebarGroupExpansion(currentPath));
-  const expandedForPath = useRef(currentPath);
+  const { activeWorkspaceId, orgUuid, selectWorkspace, workspaces } = useWorkspace();
+  const { setOpen, state, isMobile } = useSidebar();
+  const collapsed = state === 'collapsed' && !isMobile;
+  const managementItem = workspaceManagementNavigation.children
+    .filter((item) => isActivePath(currentPath, item.href))
+    .sort((a, b) => b.href.length - a.href.length)[0];
+  const managementPage = Boolean(managementItem);
   const routeWorkspaceId = workspaceIdFromPath(currentPath);
-  const navigationItems = visibleConsoleNavigation();
+  const mainOrigin = useRef(
+    initialWorkspaceManagementOrigin(account?.uuid, orgUuid, activeWorkspaceId, currentPath, managementPage),
+  );
+  const returnHref = workspaceManagementReturnHref(mainOrigin.current, activeWorkspaceId);
+  const rememberedManagementPage = useWorkspaceManagementHistory(
+    account?.uuid,
+    orgUuid,
+    activeWorkspaceId,
+    !managementItem?.hidden && (!routeWorkspaceId || routeWorkspaceId === activeWorkspaceId)
+      ? managementItem?.href
+      : undefined,
+  );
 
   useEffect(() => {
-    if (!routeWorkspaceId || routeWorkspaceId === activeWorkspaceId) {
-      return;
-    }
-    if (workspaces.some((workspace) => workspace.id === routeWorkspaceId)) {
-      selectWorkspace(routeWorkspaceId);
-    }
+    if (!routeWorkspaceId || routeWorkspaceId === activeWorkspaceId) return;
+    if (workspaces.some((workspace) => workspace.id === routeWorkspaceId)) selectWorkspace(routeWorkspaceId);
   }, [activeWorkspaceId, routeWorkspaceId, selectWorkspace, workspaces]);
 
   useEffect(() => {
-    if (expandedForPath.current === currentPath) {
-      return;
+    if (!managementPage) {
+      mainOrigin.current = { href: currentPath, workspaceId: routeWorkspaceId || activeWorkspaceId };
+    } else {
+      saveWorkspaceManagementOrigin(account?.uuid, orgUuid, mainOrigin.current);
     }
-    expandedForPath.current = currentPath;
-    const labels = activeSidebarGroupLabels(currentPath);
-    if (labels.length === 0) {
-      return;
-    }
-    setExpanded((current) => openSidebarGroups(current, labels));
-  }, [currentPath]);
+  }, [currentPath, managementPage, routeWorkspaceId, activeWorkspaceId, account?.uuid, orgUuid]);
 
   return (
     <AppSidebar
@@ -286,15 +306,57 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
       className="border-r-[0.5px] border-sidebar-border"
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
-      <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
-      <AppSidebarContent className="scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
+      <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} consoleNavigation />
+      <AppSidebarContent className="console-sidebar-content scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
-            <nav aria-label={msg('nav.consoleNavigation', 'Console navigation')}>
+            <nav
+              key={managementPage ? 'workspace' : 'main'}
+              data-sidebar-navigation={managementPage ? 'workspace' : 'main'}
+              aria-label={
+                managementPage
+                  ? msg('nav.workspaceManagement', 'Workspace management')
+                  : msg('nav.consoleNavigation', 'Console navigation')
+              }
+            >
               <SidebarMenu>
-                {navigationItems.map((item) => {
-                  if (item.type === 'link') {
-                    return (
+                {managementPage ? (
+                  <>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        render={<ShellLink href={returnHref} onNavigate={onNavigate} />}
+                        tooltip={msg('nav.backToNavigation', 'Back to navigation')}
+                      >
+                        <navigationIcons.chevronRight className="size-4 rotate-180" aria-hidden />
+                        {collapsed ? null : <span>{msg('nav.backToNavigation', 'Back to navigation')}</span>}
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    {workspaceManagementSections.map((section) => (
+                      <SidebarMenuItem key={section.id} data-workspace-section={section.id}>
+                        {collapsed ? null : (
+                          <SidebarGroupLabel className="console-navigation-section-label">
+                            {msg(section.labelId, section.label)}
+                          </SidebarGroupLabel>
+                        )}
+                        <SidebarMenu>
+                          {workspaceManagementNavigation.children
+                            .filter((item) => !item.hidden && item.section === section.id)
+                            .map((item) => (
+                              <SidebarLink
+                                key={item.href}
+                                collapsed={collapsed}
+                                item={{ ...item, type: 'link' }}
+                                currentPath={currentPath}
+                                onNavigate={onNavigate}
+                              />
+                            ))}
+                        </SidebarMenu>
+                      </SidebarMenuItem>
+                    ))}
+                  </>
+                ) : (
+                  consoleNavigation.map((item) =>
+                    item.type === 'link' ? (
                       <SidebarLink
                         key={item.href}
                         collapsed={collapsed}
@@ -302,84 +364,139 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
                         currentPath={currentPath}
                         onNavigate={onNavigate}
                       />
-                    );
-                  }
-
-                  const Icon = item.icon;
-                  const isOpen = expanded[item.label] ?? false;
-                  const groupActive = item.children.some((child) => isActivePath(currentPath, child.href));
-
-                  return (
-                    <SidebarMenuItem key={item.label} className="pt-1">
-                      <SidebarMenuButton
-                        type="button"
-                        isActive={groupActive}
-                        tooltip={msg(item.labelId, item.label)}
-                        className={interactiveMotionClass}
-                        aria-label={collapsed ? msg(item.labelId, item.label) : undefined}
-                        aria-expanded={collapsed ? false : isOpen}
-                        onClick={() => {
-                          if (collapsed) {
-                            setOpen(true);
-                            setExpanded((value) => ({ ...value, [item.label]: true }));
-                            return;
-                          }
-                          setExpanded((value) => ({ ...value, [item.label]: !isOpen }));
-                        }}
-                      >
-                        <Icon className="size-4" aria-hidden />
-                        {collapsed ? null : (
-                          <>
-                            <span className="flex-1 truncate">{msg(item.labelId, item.label)}</span>
-                            <ChevronRight
-                              className={clsx(
-                                'size-3.5 text-muted-foreground transition-transform duration-[220ms] ease-out motion-reduce:transition-none',
-                                isOpen && 'rotate-90',
-                              )}
-                              aria-hidden
-                            />
-                          </>
-                        )}
-                      </SidebarMenuButton>
-                      <Collapsible open={!collapsed && isOpen}>
-                        <CollapsibleContent>
-                          <SidebarMenuSub>
-                            {item.children.map((child) => (
-                              <SidebarMenuSubItem key={child.href}>
-                                <SidebarMenuSubButton
-                                  render={
-                                    <ShellLink
-                                      href={navigationHref(child.href, activeWorkspaceId)}
-                                      onNavigate={onNavigate}
-                                    />
-                                  }
-                                  isActive={isActivePath(currentPath, child.href)}
-                                  className={interactiveMotionClass}
-                                >
-                                  <span className="flex-1 truncate">{msg(child.labelId, child.label)}</span>
-                                  {child.badge ? (
-                                    <Badge>{child.badgeId ? msg(child.badgeId, child.badge) : child.badge}</Badge>
-                                  ) : null}
-                                </SidebarMenuSubButton>
-                              </SidebarMenuSubItem>
-                            ))}
-                          </SidebarMenuSub>
-                        </CollapsibleContent>
-                      </Collapsible>
-                    </SidebarMenuItem>
-                  );
-                })}
+                    ) : (
+                      <ResourceNavigation
+                        key={item.label}
+                        item={item}
+                        currentPath={currentPath}
+                        onNavigate={onNavigate}
+                      />
+                    ),
+                  )
+                )}
               </SidebarMenu>
             </nav>
           </SidebarGroupContent>
         </SidebarGroup>
       </AppSidebarContent>
-      <SidebarFooter account={account} collapsed={collapsed} onLogout={onLogout} onNavigate={onNavigate} />
+      <SidebarFooter
+        account={account}
+        collapsed={collapsed}
+        onLogout={onLogout}
+        onNavigate={onNavigate}
+        workspaceEntry={
+          managementPage ? null : (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={
+                  <ShellLink
+                    href={navigationHref(rememberedManagementPage, activeWorkspaceId)}
+                    onNavigate={onNavigate}
+                    onClick={() => {
+                      mainOrigin.current.href = currentPath + window.location.search + window.location.hash;
+                      saveWorkspaceManagementOrigin(account?.uuid, orgUuid, mainOrigin.current);
+                      setOpen(true);
+                    }}
+                  />
+                }
+                tooltip={msg('nav.workspaceManagement', 'Workspace management')}
+                title={msg('nav.workspaceManagement', 'Workspace management')}
+                aria-label={collapsed ? msg('nav.workspaceManagement', 'Workspace management') : undefined}
+              >
+                <navigationIcons.settings className="size-4" aria-hidden />
+                {collapsed ? null : (
+                  <>
+                    <span className="flex-1 truncate">{msg('nav.workspaceManagement', 'Workspace management')}</span>
+                    <navigationIcons.chevronRight className="size-3.5" aria-hidden />
+                  </>
+                )}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )
+        }
+      />
       <SidebarRail
         aria-label={msg('common.toggleSidebar', 'Toggle Sidebar')}
         title={msg('common.toggleSidebar', 'Toggle Sidebar')}
       />
     </AppSidebar>
+  );
+}
+
+function ResourceNavigation({
+  item,
+  currentPath,
+  onNavigate,
+}: {
+  item: NavGroupItem;
+  currentPath: string;
+  onNavigate?: NavigateHandler;
+}) {
+  const { msg } = useI18n();
+  const { state, setOpen, isMobile } = useSidebar();
+  const { activeWorkspaceId } = useWorkspace();
+  const collapsed = state === 'collapsed' && !isMobile;
+  const active = item.children.some((child) => isActivePath(currentPath, child.href));
+  const { expanded, setExpanded } = useResourceNavigationExpansion(currentPath, active);
+  const Icon = item.icon;
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        type="button"
+        isActive={active && (collapsed || !expanded)}
+        tooltip={msg(item.labelId, item.label)}
+        aria-label={collapsed ? msg(item.labelId, item.label) : undefined}
+        aria-expanded={!collapsed && expanded}
+        onClick={() => {
+          if (collapsed) {
+            setOpen(true);
+            setExpanded(true);
+          } else setExpanded(!expanded);
+        }}
+      >
+        <Icon className="size-4" aria-hidden />
+        {collapsed ? null : (
+          <>
+            <span className="flex-1 truncate">{msg(item.labelId, item.label)}</span>
+            <navigationIcons.chevronRight
+              className={clsx(
+                'size-3.5 transition-transform duration-150 motion-reduce:transition-none',
+                expanded ? '-rotate-90' : 'rotate-90',
+              )}
+              aria-hidden
+            />
+          </>
+        )}
+      </SidebarMenuButton>
+      <Collapsible open={!collapsed && expanded}>
+        <CollapsibleContent>
+          <SidebarMenuSub className="mx-0 translate-x-0 border-0 px-0" data-resource-navigation="true">
+            {item.children.map((child) => {
+              const ChildIcon = child.icon;
+              return (
+                <SidebarMenuSubItem key={child.href}>
+                  <SidebarMenuSubButton
+                    render={
+                      <ShellLink
+                        href={navigationHref(child.href, activeWorkspaceId)}
+                        onNavigate={onNavigate}
+                        aria-current={isActivePath(currentPath, child.href) ? 'page' : undefined}
+                        title={msg(child.labelId, child.label)}
+                      />
+                    }
+                    isActive={isActivePath(currentPath, child.href)}
+                    className="h-9 translate-x-0 gap-3 pl-5 pr-2"
+                  >
+                    {ChildIcon ? <ChildIcon className="size-4" aria-hidden /> : null}
+                    <span className="flex-1 truncate">{msg(child.labelId, child.label)}</span>
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              );
+            })}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </Collapsible>
+    </SidebarMenuItem>
   );
 }
 
@@ -501,14 +618,25 @@ function ShellMobileBar({
   );
 }
 
-function ShellSidebarHeader({ currentPath, onNavigate }: { currentPath: string; onNavigate?: NavigateHandler }) {
+function ShellSidebarHeader({
+  currentPath,
+  onNavigate,
+  consoleNavigation = false,
+}: {
+  currentPath: string;
+  onNavigate?: NavigateHandler;
+  consoleNavigation?: boolean;
+}) {
   const { state, isMobile } = useSidebar();
   const { msg } = useI18n();
   const compact = state === 'collapsed' && !isMobile;
   const toggleLabel = compact ? msg('common.expand', 'Expand') : msg('common.collapse', 'Collapse');
 
   return (
-    <AppSidebarHeader>
+    <AppSidebarHeader
+      className={consoleNavigation ? 'console-sidebar-header' : undefined}
+      data-console-compact={consoleNavigation && compact ? 'true' : undefined}
+    >
       <div className={clsx('flex h-12 items-center', compact ? 'justify-center' : 'justify-between')}>
         {!compact && (
           <ShellLink
@@ -526,22 +654,32 @@ function ShellSidebarHeader({ currentPath, onNavigate }: { currentPath: string; 
             aria-expanded={!compact}
             title={toggleLabel}
             className="text-muted-foreground hover:text-foreground"
-          />
+          >
+            {consoleNavigation ? <navigationIcons.sidebar className="size-4" aria-hidden /> : undefined}
+          </SidebarTrigger>
         )}
       </div>
-      <WorkspaceSwitcher currentPath={currentPath} onNavigate={onNavigate} />
+      <WorkspaceSwitcher currentPath={currentPath} onNavigate={onNavigate} consoleNavigation={consoleNavigation} />
     </AppSidebarHeader>
   );
 }
 
-function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; onNavigate?: NavigateHandler }) {
+function WorkspaceSwitcher({
+  currentPath,
+  onNavigate,
+  consoleNavigation = false,
+}: {
+  currentPath: string;
+  onNavigate?: NavigateHandler;
+  consoleNavigation?: boolean;
+}) {
   const confirmation = useScopeConfirmation();
   const organizations = useOrganizations();
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const { isMobile, state } = useSidebar();
-  const collapsed = state === 'collapsed';
+  const collapsed = state === 'collapsed' && !(consoleNavigation && isMobile);
   const {
     canManageWorkspaces,
     workspaces,
@@ -585,11 +723,20 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                   collapsed ? 'justify-center' : 'justify-start',
                 )}
                 aria-label={localizedWorkspaceName(activeWorkspace.name, msg)}
+                title={localizedWorkspaceName(activeWorkspace.name, msg)}
               />
             }
           >
             <span className="grid aspect-square size-8 shrink-0 place-items-center rounded-lg border-[0.5px] border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground">
-              <Box className="size-4" style={{ color: workspaceColor(activeWorkspace) }} aria-hidden />
+              {consoleNavigation ? (
+                <navigationIcons.workspace
+                  className="size-4"
+                  style={{ color: workspaceColor(activeWorkspace) }}
+                  aria-hidden
+                />
+              ) : (
+                <Box className="size-4" style={{ color: workspaceColor(activeWorkspace) }} aria-hidden />
+              )}
             </span>
             {collapsed ? null : (
               <>
@@ -599,13 +746,16 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                     {msg('settings.workspaces.workspace', 'Workspace')}
                   </span>
                 </span>
-                <ChevronsUpDown className="ml-auto size-4 shrink-0 text-sidebar-foreground/70" aria-hidden />
+                <navigationIcons.chevronRight
+                  className="ml-auto size-4 shrink-0 rotate-90 text-sidebar-foreground/70"
+                  aria-hidden
+                />
               </>
             )}
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="start"
-            side={isMobile ? 'bottom' : 'right'}
+            side={consoleNavigation || isMobile ? 'bottom' : 'right'}
             sideOffset={4}
             className="w-(--anchor-width) min-w-56 max-w-[calc(100vw-2rem)] rounded-lg p-1"
           >
@@ -622,10 +772,18 @@ function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; o
                     onClick={() => handleSelect(workspace)}
                   >
                     <span className="grid size-6 shrink-0 place-items-center rounded-md border-[0.5px] bg-background text-muted-foreground">
-                      <Box className="size-4" style={{ color: workspaceColor(workspace) }} aria-hidden />
+                      {consoleNavigation ? (
+                        <navigationIcons.workspace
+                          className="size-4"
+                          style={{ color: workspaceColor(workspace) }}
+                          aria-hidden
+                        />
+                      ) : (
+                        <Box className="size-4" style={{ color: workspaceColor(workspace) }} aria-hidden />
+                      )}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{localizedWorkspaceName(workspace.name, msg)}</span>
-                    <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
+                    {consoleNavigation ? null : <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>}
                   </DropdownMenuItem>
                 ))}
               </div>
@@ -696,7 +854,14 @@ function SidebarLink({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
-        render={<ShellLink href={href} onNavigate={onNavigate} />}
+        render={
+          <ShellLink
+            href={href}
+            onNavigate={onNavigate}
+            aria-current={isActivePath(currentPath, item.href) ? 'page' : undefined}
+            title={msg(item.labelId, item.label)}
+          />
+        }
         isActive={isActivePath(currentPath, item.href)}
         tooltip={msg(item.labelId, item.label)}
         className={interactiveMotionClass}
@@ -705,9 +870,6 @@ function SidebarLink({
         {Icon ? <Icon className="size-4" aria-hidden /> : null}
         {collapsed ? null : <span className="truncate">{msg(item.labelId, item.label)}</span>}
       </SidebarMenuButton>
-      {item.badge ? (
-        <SidebarMenuBadge>{item.badgeId ? msg(item.badgeId, item.badge) : item.badge}</SidebarMenuBadge>
-      ) : null}
     </SidebarMenuItem>
   );
 }
@@ -717,28 +879,32 @@ function SidebarFooter({
   collapsed,
   onLogout,
   onNavigate,
+  workspaceEntry,
 }: {
   account?: AuthAccount | null;
   collapsed?: boolean;
   onLogout: () => Promise<void> | void;
   onNavigate?: NavigateHandler;
+  workspaceEntry?: ReactNode;
 }) {
   const { msg } = useI18n();
 
   return (
     <AppSidebarFooter className="mt-auto px-2 py-2">
-      <SidebarMenu>
+      <SidebarMenu data-console-footer-links>
         <SidebarMenuItem>
           <SidebarMenuButton
             render={<a href="https://oma.mintlifysite.com/" target="_blank" rel="noreferrer" />}
             tooltip={msg('nav.documentation', 'Documentation')}
+            title={msg('nav.documentation', 'Documentation')}
             className={interactiveMotionClass}
             aria-label={collapsed ? msg('nav.documentation', 'Documentation') : undefined}
           >
-            <BookOpen className="size-4" aria-hidden />
+            <navigationIcons.documentation className="size-4" aria-hidden />
             {collapsed ? null : <span className="truncate">{msg('nav.documentation', 'Documentation')}</span>}
           </SidebarMenuButton>
         </SidebarMenuItem>
+        {workspaceEntry}
       </SidebarMenu>
       <PlatformReturnButton collapsed={collapsed} />
       <AccountMenu account={account} collapsed={collapsed} onLogout={onLogout} onNavigate={onNavigate} />
@@ -972,36 +1138,6 @@ const workspaceBuildPathByHref: Record<string, string> = {
   '/mcp-servers': 'mcp-servers',
   '/batches': 'batches',
 };
-
-function activeSidebarGroupLabels(currentPath: string) {
-  return visibleConsoleNavigation().flatMap((item) => {
-    if (item.type !== 'group' || !item.children.some((child) => isActivePath(currentPath, child.href))) {
-      return [];
-    }
-    return [item.label];
-  });
-}
-
-function initialSidebarGroupExpansion(currentPath: string) {
-  const expanded: Record<string, boolean> = { 'Managed Agents': true };
-  for (const label of activeSidebarGroupLabels(currentPath)) {
-    expanded[label] = true;
-  }
-  return expanded;
-}
-
-function openSidebarGroups(current: Record<string, boolean>, labels: string[]) {
-  let changed = false;
-  const next = { ...current };
-  for (const label of labels) {
-    if (next[label]) {
-      continue;
-    }
-    next[label] = true;
-    changed = true;
-  }
-  return changed ? next : current;
-}
 
 function navigationHref(href: string, workspaceId: string) {
   if (href === '/cost' || href === '/logs') {

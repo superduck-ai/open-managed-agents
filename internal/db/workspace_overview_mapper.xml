@@ -3,7 +3,7 @@
     <select id="Aggregate" resultType="WorkspaceOverviewBucket">
         SELECT to_char(s.created_at AT TIME ZONE #{query.Timezone}, 'YYYY-MM-DD') AS date,
                s.agent_external_id AS agent_id,
-               COALESCE(a.name, s.agent_external_id) AS agent_name,
+               COALESCE(a.name, NULLIF(s.agent_snapshot->>'name', ''), s.agent_external_id) AS agent_name,
                COUNT(*) AS session_count,
                COUNT(*) FILTER (WHERE EXISTS (
                    SELECT 1 FROM session_events e
@@ -23,7 +23,7 @@
         WHERE s.organization_uuid = #{query.OrganizationUUID} AND s.workspace_uuid = #{query.WorkspaceUUID}
         AND s.created_at &gt;= #{query.Start} AND s.created_at &lt; #{query.End}
         AND s.deleted_at IS NULL
-        GROUP BY date, s.agent_external_id, a.name
+        GROUP BY date, s.agent_external_id, agent_name
         ORDER BY date, s.agent_external_id
     </select>
     <select id="CountAgents" result="scalar">

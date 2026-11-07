@@ -18,7 +18,7 @@ func TestWorkspaceOverviewPostgres(t *testing.T) {
 	ctx, database, _ := newIsolatedMigrationTestDatabase(t, address)
 	ddl := `CREATE TABLE workspaces(uuid uuid,organization_uuid uuid);
  CREATE TABLE agents(uuid uuid,workspace_uuid uuid,name text,archived_at timestamptz,deleted_at timestamptz);
- CREATE TABLE sessions(uuid uuid,organization_uuid uuid,workspace_uuid uuid,agent_uuid uuid,agent_external_id text,created_at timestamptz,deleted_at timestamptz);
+ CREATE TABLE sessions(uuid uuid,organization_uuid uuid,workspace_uuid uuid,agent_uuid uuid,agent_external_id text,agent_snapshot jsonb,created_at timestamptz,deleted_at timestamptz);
  CREATE TABLE session_events(organization_uuid uuid,workspace_uuid uuid,session_uuid uuid,event_type text,payload jsonb,created_at timestamptz,deleted_at timestamptz);`
 	if _, err := database.ExecContext(ctx, ddl); err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestWorkspaceOverviewPostgres(t *testing.T) {
 		{"98000000-0000-0000-0000-000000000016", ws, at.Add(-24 * time.Hour), nil},
 	}
 	for _, s := range sessions {
-		if _, err := database.ExecContext(ctx, `INSERT INTO sessions VALUES($1,$2,$3,$4,'agent_a',$5,$6)`, s.id, org, s.workspace, agent, s.created, s.deleted); err != nil {
+		if _, err := database.ExecContext(ctx, `INSERT INTO sessions VALUES($1,$2,$3,$4,'agent_a','{"name":"Snapshot agent"}',$5,$6)`, s.id, org, s.workspace, agent, s.created, s.deleted); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -78,6 +78,14 @@ func TestWorkspaceOverviewPostgres(t *testing.T) {
 	if rows[0].Date != "2026-11-06" || rows[0].SessionCount != 3 || rows[0].FailedSessionCount != 1 || !rows[0].LastRunAt.Equal(at.Add(2*time.Hour)) {
 		t.Fatalf("unexpected aggregate: %+v", rows)
 	}
+	if _, err := database.ExecContext(ctx, `UPDATE sessions SET agent_uuid=$1 WHERE workspace_uuid=$2`, other, ws); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = store.AggregateWorkspaceOverview(ctx, q)
+	if err != nil || len(rows) != 1 || rows[0].AgentName != "Snapshot agent" {
+		t.Fatalf("snapshot name missing: %+v %v", rows, err)
+	}
+
 	q.OrganizationUUID = other
 	rows, err = store.AggregateWorkspaceOverview(ctx, q)
 	if err != nil || len(rows) != 0 {

@@ -105,6 +105,27 @@ describe('ConsoleShell', () => {
     expect(workspaceIcon?.style.color).toBe('var(--violet-9)');
   });
 
+  test('preserves manual quickstart search and hash through workspace management', () => {
+    const origin = '/workspaces/default/agent-quickstart?mode=api#online-test';
+    resetTestDom(`https://oma.duck.ai${origin}`);
+    function Harness() {
+      const [path, setPath] = useState('/workspaces/default/agent-quickstart');
+      return (
+        <ConsoleShell
+          currentPath={path}
+          account={testAccount()}
+          onLogout={() => undefined}
+          onNavigate={async (next) => setPath(next)}
+        >
+          <div>{path}</div>
+        </ConsoleShell>
+      );
+    }
+    renderWithWorkspaces(<Harness />);
+    fireEvent.click(screen.getByRole('link', { name: 'Workspace management' }));
+    expect(screen.getByRole('link', { name: 'Back to navigation' }).getAttribute('href')).toBe(origin);
+  });
+
   test.each([
     { origin: '/workspaces/default/agents/agent_one', target: '/workspaces/wrkspc_foo/agents' },
     { origin: '/agents', target: '/workspaces/wrkspc_foo/agents' },

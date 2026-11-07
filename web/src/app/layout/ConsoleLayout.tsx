@@ -392,7 +392,10 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
                   <ShellLink
                     href={navigationHref(rememberedManagementPage, activeWorkspaceId)}
                     onNavigate={onNavigate}
-                    onClick={() => setOpen(true)}
+                    onClick={() => {
+                      mainOrigin.current.href = currentPath + window.location.search + window.location.hash;
+                      setOpen(true);
+                    }}
                   />
                 }
                 tooltip={msg('nav.workspaceManagement', 'Workspace management')}

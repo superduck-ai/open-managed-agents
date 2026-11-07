@@ -24,7 +24,7 @@ func TestWorkspaceOverviewMapper(t *testing.T) {
 		if err != nil || len(rows) != 1 || rows[0].FailedSessionCount != 1 || rows[0].SessionCount != 3 || !rows[0].LastRunAt.Equal(q.End) {
 			t.Fatalf("%+v %v", rows, err)
 		}
-		assertMapperTestExecution(t, ex, "WorkspaceOverviewMapper.Aggregate", yourbatis.StatementSelect, []any{q.Timezone, q.OrganizationUUID, q.WorkspaceUUID, q.Start, q.End, q.WorkspaceUUID, q.OrganizationUUID, q.WorkspaceUUID, q.Start, q.End}, "s.organization_uuid = $7", "s.workspace_uuid = $8", "s.deleted_at IS NULL", "COUNT(*) FILTER (WHERE EXISTS", "'exhausted', 'terminal'", "ORDER BY date, s.agent_external_id")
+		assertMapperTestExecution(t, ex, "WorkspaceOverviewMapper.Aggregate", yourbatis.StatementSelect, []any{q.Timezone, q.OrganizationUUID, q.WorkspaceUUID, q.Start, q.End, q.WorkspaceUUID, q.OrganizationUUID, q.WorkspaceUUID, q.Start, q.End}, "s.organization_uuid = $7", "s.workspace_uuid = $8", "s.deleted_at IS NULL", "COUNT(*) FILTER (WHERE EXISTS", "'exhausted', 'terminal'", "ORDER BY date, s.agent_external_id", "NULLIF(s.agent_snapshot->>'name', '')")
 	})
 	t.Run("counts only the scoped live agents", func(t *testing.T) {
 		ex := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"count"}, rows: [][]driver.Value{{int64(2)}}})

@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
-  test.each(['create', 'edit', 'cancel-create'])(
+  test.each(['create', 'edit', 'cancel-create', 'remount-create'])(
     'invalidates a pending quickstart return after reopening the provider form: %s',
     async (action) => {
       const returnTo = '/workspaces/default/agent-quickstart?mode=api';
@@ -57,6 +57,11 @@ describe('LLM models page', () => {
         await screen.findByText('No providers yet');
         await createProvider('Setup', 'https://model.example.test', 'test-key', ['test-model']);
         await waitFor(() => expect(modelReads).toBe(1));
+        if (action === 'remount-create') {
+          cleanup();
+          renderPage();
+          await screen.findByRole('button', { name: 'Add provider', exact: true });
+        }
         if (action === 'edit') {
           fireEvent.click(screen.getByRole('button', { name: 'Setup', exact: true }));
           fireEvent.click(await screen.findByRole('button', { name: 'Edit', exact: true }));

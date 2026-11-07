@@ -12,6 +12,9 @@ const { ConsoleShell, SettingsShell } = await import('./ConsoleLayout');
 const { act, cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
 
 function clearManagementHistory() {
+  for (const key of Object.keys(window.sessionStorage)) {
+    if (key.startsWith('oma.workspace-management.return:')) window.sessionStorage.removeItem(key);
+  }
   for (const key of Object.keys(window.localStorage)) {
     if (key.startsWith('oma.workspace-management.last-page:')) window.localStorage.removeItem(key);
   }
@@ -124,6 +127,32 @@ describe('ConsoleShell', () => {
     renderWithWorkspaces(<Harness />);
     fireEvent.click(screen.getByRole('link', { name: 'Workspace management' }));
     expect(screen.getByRole('link', { name: 'Back to navigation' }).getAttribute('href')).toBe(origin);
+  });
+
+  test('retains the management return origin after the console remounts in another workspace', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api#online-test');
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/workspaces/default/agent-quickstart"
+        account={testAccount()}
+        onLogout={() => undefined}
+        onNavigate={async () => undefined}
+      >
+        <div>Manual quickstart</div>
+      </ConsoleShell>,
+    );
+    fireEvent.click(screen.getByRole('link', { name: 'Workspace management' }));
+    cleanup();
+    resetTestDom('https://oma.duck.ai/workspaces/wrkspc_foo/llm-models');
+    renderWithWorkspaces(
+      <ConsoleShell currentPath="/workspaces/wrkspc_foo/llm-models" account={testAccount()} onLogout={() => undefined}>
+        <div>Workspace management</div>
+      </ConsoleShell>,
+      { initialWorkspaceId: 'wrkspc_foo' },
+    );
+    expect(screen.getByRole('link', { name: 'Back to navigation' }).getAttribute('href')).toBe(
+      '/workspaces/wrkspc_foo/agent-quickstart?mode=api#online-test',
+    );
   });
 
   test.each([
@@ -1131,6 +1160,7 @@ function testAccount(role = 'admin'): AuthAccount {
 function renderWithWorkspaces(
   children: ReactNode,
   options: {
+    initialWorkspaceId?: string;
     createWorkspace?: (input: CreateWorkspaceInput) => Promise<Workspace>;
     locale?: Locale;
     effectiveRole?: string;
@@ -1139,6 +1169,7 @@ function renderWithWorkspaces(
 ) {
   const tree = (
     <WorkspaceHarness
+      initialWorkspaceId={options.initialWorkspaceId}
       createWorkspace={options.createWorkspace}
       canManageWorkspaces={options.canManageWorkspaces}
       effectiveRole={options.effectiveRole}
@@ -1151,11 +1182,13 @@ function renderWithWorkspaces(
 
 function WorkspaceHarness({
   children,
+  initialWorkspaceId = defaultWorkspace.id,
   createWorkspace,
   canManageWorkspaces = true,
   effectiveRole,
 }: {
   children: ReactNode;
+  initialWorkspaceId?: string;
   createWorkspace?: (input: CreateWorkspaceInput) => Promise<Workspace>;
   canManageWorkspaces?: boolean;
   effectiveRole?: string;
@@ -1170,7 +1203,7 @@ function WorkspaceHarness({
       color: '#9B87F5',
     },
   ]);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(defaultWorkspace.id);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(initialWorkspaceId);
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? defaultWorkspace;
 
   const value = useMemo<WorkspaceContextValue>(

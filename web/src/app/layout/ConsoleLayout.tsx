@@ -1,6 +1,10 @@
 import { useResourceNavigationExpansion } from './use-resource-navigation-expansion';
-import { useWorkspaceManagementHistory } from './use-workspace-management-history';
-import { quickstartModelSetupReturn } from '../../shared/workspaces/model-setup-navigation';
+import {
+  initialWorkspaceManagementOrigin,
+  workspaceManagementReturnHref,
+  saveWorkspaceManagementOrigin,
+  useWorkspaceManagementHistory,
+} from './use-workspace-management-history';
 import './console-navigation.css';
 import { productIcons as navigationIcons } from '@/shared/icons/product-icons';
 import { AppearanceMenuRow } from './AppearanceMenuRow';
@@ -270,16 +274,10 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
     .sort((a, b) => b.href.length - a.href.length)[0];
   const managementPage = Boolean(managementItem);
   const routeWorkspaceId = workspaceIdFromPath(currentPath);
-  const mainOrigin = useRef({
-    href: managementPage
-      ? quickstartModelSetupReturn(window.location.search, activeWorkspaceId) || '/dashboard'
-      : currentPath,
-    workspaceId: routeWorkspaceId || activeWorkspaceId,
-  });
-  const returnHref =
-    mainOrigin.current.workspaceId === activeWorkspaceId
-      ? mainOrigin.current.href
-      : workspaceSwitchPath(mainOrigin.current.href, activeWorkspaceId);
+  const mainOrigin = useRef(
+    initialWorkspaceManagementOrigin(account?.uuid, orgUuid, activeWorkspaceId, currentPath, managementPage),
+  );
+  const returnHref = workspaceManagementReturnHref(mainOrigin.current, activeWorkspaceId);
   const rememberedManagementPage = useWorkspaceManagementHistory(
     account?.uuid,
     orgUuid,
@@ -297,8 +295,10 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
   useEffect(() => {
     if (!managementPage) {
       mainOrigin.current = { href: currentPath, workspaceId: routeWorkspaceId || activeWorkspaceId };
+    } else {
+      saveWorkspaceManagementOrigin(account?.uuid, orgUuid, mainOrigin.current);
     }
-  }, [currentPath, managementPage, routeWorkspaceId, activeWorkspaceId]);
+  }, [currentPath, managementPage, routeWorkspaceId, activeWorkspaceId, account?.uuid, orgUuid]);
 
   return (
     <AppSidebar
@@ -394,6 +394,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
                     onNavigate={onNavigate}
                     onClick={() => {
                       mainOrigin.current.href = currentPath + window.location.search + window.location.hash;
+                      saveWorkspaceManagementOrigin(account?.uuid, orgUuid, mainOrigin.current);
                       setOpen(true);
                     }}
                   />

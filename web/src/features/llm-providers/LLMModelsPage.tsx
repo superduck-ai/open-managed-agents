@@ -65,6 +65,12 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
   const [formError, setFormError] = useState('');
   const refreshAfterSaveRef = useRef(false);
   const quickstartReturnVersion = useRef(0);
+  useEffect(
+    () => () => {
+      quickstartReturnVersion.current++;
+    },
+    [],
+  );
   const [deleting, setDeleting] = useState<LLMProvider | null>(null);
   const [query, setQuery] = useState('');
   const [selectedProviderId, setSelectedProviderId] = useState(ALL_PROVIDERS_ID);

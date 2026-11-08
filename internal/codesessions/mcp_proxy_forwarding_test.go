@@ -81,7 +81,13 @@ func TestNamedMCPTunnelMarksOnlyUnservedRequestsAsNotForwarded(t *testing.T) {
 	targetURL := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
 	for _, served := range []bool{false, true} {
 		handler, token := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
-		handler.tunnelInvoker = tunnelInvokerFuncs{serve: func(w http.ResponseWriter, _ *http.Request, _, _ string, _ *url.URL) bool {
+		handler.tunnelInvoker = tunnelInvokerFuncs{serve: func(w http.ResponseWriter, r *http.Request, _, _ string, _ *url.URL) bool {
+			if values := r.Header.Values("X-OMA-Session-ID"); len(values) != 1 || values[0] != "sesn_test" {
+				t.Errorf("tunnel session header = %q", values)
+			}
+			if r.Header.Get("Connection") != "" {
+				t.Error("tunnel retained caller connection header")
+			}
 			if !served {
 				return false
 			}
@@ -92,6 +98,11 @@ func TestNamedMCPTunnelMarksOnlyUnservedRequestsAsNotForwarded(t *testing.T) {
 		router.Route("/v2", handler.RegisterV2Routes)
 		request := httptest.NewRequest(http.MethodPost, "/v2/ccr-sessions/cse_test/mcp/local_tunnel", bytes.NewReader(mcpProxyToolCallBody))
 		request.Header.Set("Authorization", "Bearer "+token)
+		if served {
+			request.Header.Add("x-oma-session-id", "forged-session")
+			request.Header.Add("X-OMA-Session-ID", "another-session")
+			request.Header.Set("Connection", "X-OMA-Session-ID")
+		}
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, request)
 

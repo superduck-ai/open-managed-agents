@@ -58,6 +58,7 @@ func TestPackageSourcePersistScriptRewritesManagerConfigIdempotently(t *testing.
 	if _, err := exec.LookPath("npm"); err == nil {
 		for key, want := range map[string]string{"registry": "https://packages.example.internal/npm/", "@example:registry": "https://packages.example.internal/npm-private/"} {
 			command := exec.Command("npm", "config", "get", key)
+			command.Dir = dir
 			command.Env = append(os.Environ(), "NPM_CONFIG_USERCONFIG="+npmrc, "npm_config_userconfig="+npmrc)
 			output, err := command.Output()
 			if err != nil || strings.TrimSpace(string(output)) != want {

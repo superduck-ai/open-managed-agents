@@ -211,6 +211,7 @@ func (h *Handler) forwardMCPProxy(
 	h.logger.InfoContext(r.Context(), "MCP proxy request received", attrs...)
 
 	headers := sanitizedMCPProxyHeaders(r.Header)
+	headers.Set(sessionIDHeader, claims.PublicSessionID)
 	request := r.Clone(r.Context())
 	request.Header = headers
 	if serverName == "" {
@@ -250,7 +251,12 @@ func (h *Handler) namedTargetIsTunnel(target *url.URL) bool {
 
 func sanitizedMCPProxyHeaders(source http.Header) http.Header {
 	headers := source.Clone()
-	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection", runtimeThreadHeader} {
+	for _, value := range source.Values("Connection") {
+		for name := range strings.SplitSeq(value, ",") {
+			headers.Del(strings.TrimSpace(name))
+		}
+	}
+	for _, name := range []string{"Connection", "Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection", runtimeThreadHeader} {
 		headers.Del(name)
 	}
 	return headers
@@ -436,6 +442,7 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			request.Out = traceConnection(request.Out, &connected)
 			request.Out.URL = &upstreamURL
 			request.Out.Host = target.Host
+			request.Out.Header.Set(sessionIDHeader, claims.PublicSessionID)
 		},
 		ModifyResponse: func(response *http.Response) error {
 			response.Header.Del(mcpNotForwardedHeader)

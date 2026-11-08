@@ -41,6 +41,10 @@ flowchart LR
     Cleanup --> Verdict[Report pass only after cleanup succeeds]
 ```
 
+## Session egress verification
+
+Run `just verify-be chat doctor egress`, then `just verify-be chat egress`. This dependencies-only scenario exercises `TestEgressPublicSessionHeader` against disposable PostgreSQL and production API handlers with a local HTTP receiver. The required proofs are `egress_credentials_rejected` and `egress_headers_forwarded`: cross-session credentials fail before forwarding, then two Sessions send 24 concurrent HTTP/MCP GET, POST and DELETE requests with absent or forged Session Headers. It checks the public Session ID, body, URI, business Authorization, MCP protocol Session and proxy credential stripping. No Worker image is required; a recording sandbox provider activates the fixtures. HTTPS MITM, SSE and Tunnel handoff remain covered by dedicated proxy unit tests; real CLI and external Tunnel connector execution are not certified by this scenario.
+
 ## Chat reliability contract
 
 `chat.reliability` accepts a second public input during a held active turn with HTTP 200,

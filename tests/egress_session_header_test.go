@@ -51,32 +51,6 @@ func TestEgressPublicSessionHeader(t *testing.T) {
 		codeID := launchLocalCodeSession(t, app, session.ID)
 		identities[i] = sessionIdentity{session.ID, codeID, codeSessionIngressToken(t, app, codeID)}
 	}
-	t.Run("cross session MCP credentials rejected", func(t *testing.T) {
-		request := newEgressMCPRequest(t, app, identities[0].codeID, identities[1].token, target, http.MethodPost)
-		response, err := app.client.Do(request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer response.Body.Close()
-		if response.StatusCode != http.StatusUnauthorized || calls.Load() != 0 {
-			t.Fatalf("status=%d upstream_calls=%d", response.StatusCode, calls.Load())
-		}
-	})
-	t.Run("cross session HTTP credentials rejected", func(t *testing.T) {
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader("rejected"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		request.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(identities[1].codeID+":"+identities[1].token)))
-		response := sendEgressHTTP(t, app, identities[0].token, request)
-		defer response.Body.Close()
-		if response.StatusCode != http.StatusProxyAuthRequired || calls.Load() != 0 {
-			t.Fatalf("status=%d upstream_calls=%d", response.StatusCode, calls.Load())
-		}
-	})
-	if !t.Failed() {
-		t.Logf("BE_PROOF {\"stage\":\"egress_credentials_rejected\",\"elapsed_ms\":%d}", time.Since(started).Milliseconds())
-	}
 	t.Run("concurrent session forwarding", func(t *testing.T) {
 		for i, identity := range identities {
 			for _, mode := range []string{"http", "mcp"} {

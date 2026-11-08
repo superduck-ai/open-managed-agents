@@ -55,7 +55,7 @@ func TestMCPThreadPinnedScopeAndIsolation(t *testing.T) {
 	headers := make(http.Header)
 	headers.Set(runtimeThreadHeader, "private")
 	headers.Set("Mcp-Session-Id", "upstream")
-	clean := sanitizedMCPProxyHeaders(headers)
+	clean := mcpProxyHeaders(headers, "sesn_test")
 	if clean.Get(runtimeThreadHeader) != "" || clean.Get("Mcp-Session-Id") != "upstream" || headers.Get(runtimeThreadHeader) != "private" {
 		t.Fatal("thread routing header leaked upstream or source changed")
 	}

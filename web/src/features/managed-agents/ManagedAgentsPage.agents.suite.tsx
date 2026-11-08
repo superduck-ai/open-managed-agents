@@ -357,6 +357,7 @@ export function registerManagedAgentsAgentsTests() {
     const proxyRequest = api.requests.find(
       (request) => request.url === '/api/organizations/org_test/proxy/v1/messages',
     );
+    expect(proxyRequest?.headers['anthropic-version']).toBe('2023-06-01');
     expect(proxyRequest?.body?.tool_choice).toEqual({
       type: 'tool',
       name: 'build_agent_config',

@@ -46,6 +46,15 @@ func TestHTTPProxyRejectsInvalidRequestsBeforeDial(t *testing.T) {
 }
 
 func TestHTTPProxyForwardsBodyAndStripsProxyAuthentication(t *testing.T) {
+	for _, connectionHeader := range []string{"", "X-OMA-Session-ID"} {
+		t.Run("connection="+connectionHeader, func(t *testing.T) {
+			testHTTPProxyForwarding(t, connectionHeader)
+		})
+	}
+}
+
+func testHTTPProxyForwarding(t *testing.T, connectionHeader string) {
+	t.Helper()
 	handler := NewHandler(config.Config{}, newTestService(t, nil), nil, nil)
 	stubUnrestrictedPolicyContext(t, handler)
 	received := make(chan string, 1)
@@ -74,7 +83,9 @@ func TestHTTPProxyForwardsBodyAndStripsProxyAuthentication(t *testing.T) {
 	request.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("cse_test:sk-ant-si-test")))
 	request.Header.Add("x-oma-session-id", "forged-session")
 	request.Header.Add("X-OMA-Session-ID", "another-session")
-	request.Header.Set("Connection", "X-OMA-Session-ID")
+	if connectionHeader != "" {
+		request.Header.Set("Connection", connectionHeader)
+	}
 	response := httptest.NewRecorder()
 	handler.forwardUpstreamProxyHTTP(response, request, testUpstreamProxyIdentity(), "sk-ant-si-test")
 	if response.Code != 200 || response.Body.String() != "ok" {

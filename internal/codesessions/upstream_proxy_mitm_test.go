@@ -278,6 +278,15 @@ func TestUpstreamProxyCACertificateHandlerReturnsGeneratedCertificate(t *testing
 }
 
 func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
+	for _, connectionHeader := range []string{"", "X-OMA-Session-ID"} {
+		t.Run("connection="+connectionHeader, func(t *testing.T) {
+			testUpstreamProxyMITMForwarding(t, connectionHeader)
+		})
+	}
+}
+
+func testUpstreamProxyMITMForwarding(t *testing.T, connectionHeader string) {
+	t.Helper()
 	t.Parallel()
 
 	files := writeTestUpstreamProxyCA(t, "tunnel")
@@ -345,7 +354,9 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 	request.Close = true
 	request.Header.Add("x-oma-session-id", "forged-session")
 	request.Header.Add("X-OMA-Session-ID", "another-session")
-	request.Header.Set("Connection", "X-OMA-Session-ID")
+	if connectionHeader != "" {
+		request.Header.Set("Connection", connectionHeader)
+	}
 	if err := request.Write(clientTLS); err != nil {
 		t.Fatalf("write decrypted HTTP request: %v", err)
 	}

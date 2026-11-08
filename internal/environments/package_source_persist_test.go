@@ -20,7 +20,10 @@ func TestPackageSourcePersistScriptRewritesManagerConfigIdempotently(t *testing.
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is required to rewrite pip.conf")
 	}
-	dir := t.TempDir()
+	dir, err := filepath.Abs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	npmrc := filepath.Join(dir, "npmrc")
 	pipConf := filepath.Join(dir, "pip.conf")
 	cargoHome := filepath.Join(dir, "cargo")
@@ -56,6 +59,7 @@ func TestPackageSourcePersistScriptRewritesManagerConfigIdempotently(t *testing.
 		t.Fatalf("cargo config =\n%s", cargo)
 	}
 	if _, err := exec.LookPath("npm"); err == nil {
+		writeTestFile(t, filepath.Join(dir, "package.json"), "{\"name\":\"fixture\",\"version\":\"1.0.0\"}\n")
 		for key, want := range map[string]string{"registry": "https://packages.example.internal/npm/", "@example:registry": "https://packages.example.internal/npm-private/"} {
 			command := exec.Command("npm", "config", "get", key)
 			command.Dir = dir

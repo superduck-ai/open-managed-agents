@@ -207,15 +207,15 @@ MITM 模式当前只协商 HTTP/1.1：
 
 ## 出站公共 Session Header
 
-OMA 在普通 HTTP 代理、HTTPS MITM 代理以及 MCP HTTP/Tunnel 转发中，统一设置 `X-OMA-Session-ID`。值来自已验证 session-ingress 凭证的 `PublicSessionID`，与创建 Session API 返回的公共 ID 一致，不使用内部 Code Session ID，也不使用 MCP 协议的 `Mcp-Session-Id`。
+OMA 在普通 HTTP 代理、HTTPS MITM 代理以及 MCP HTTP/Tunnel 转发中，统一设置 `X-OMA-Session-ID`。MCP Tunnel 的 OAuth discovery 交接同样在清理 Header 后写入该值。值来自已验证 session-ingress 凭证的 `PublicSessionID`，与创建 Session API 返回的公共 ID 一致，不使用内部 Code Session ID，也不使用 MCP 协议的 `Mcp-Session-Id`。
 
 该 Header 对这些出口已授权放行的目标统一生效，无新增开关、目标配置或 Vault 绑定。服务端覆盖调用方提供的同名值，并在清理 `Connection` 指定的逐跳 Header 后写入，避免客户端伪造或移除公共 Session 标识。现有目标授权、凭据注入与租户校验继续生效。
 
 业务后端先验证双方已有的服务间凭据，再按接入业务和公共 Session ID 查找用户映射并执行业务权限判断。Session Header 仅提供会话关联，不是用户登录凭据；OMA 不据此实现用户认证、Token 刷新或新的身份平台。
 
-关闭 MITM 时，HTTPS CONNECT 仅透传加密字节，无法注入该 Header。绕过 OMA 代理的直连请求、独立模型代理和不属于上述会话出口的 HTTP 请求不在此合同内。
+上述覆盖保证仅适用于普通 HTTP、开启 MITM 的 HTTPS 和 MCP 出口。关闭 MITM 时，HTTPS CONNECT 仅透传加密字节，无法注入、覆盖或移除该 Header；调用方可以在自己的 TLS 请求中携带任意同名值。绕过 OMA 代理的直连请求、独立模型代理和不属于上述会话出口的 HTTP 请求不在此合同内。业务接收方必须确认请求来自履行该覆盖合同的受信出口，不能仅凭 Header 存在或连接经过 CONNECT 代理，就把它当作 OMA 已验证的会话关联。
 
-回归测试覆盖 HTTP、HTTPS MITM、MCP HTTP 与 MCP Tunnel 的公共 ID 传递、客户端同名多值覆盖及 `Connection` 指定同名 Header 的处理。
+回归测试覆盖 HTTP、HTTPS MITM、MCP HTTP 与 MCP Tunnel 的公共 ID 传递、客户端同名多值覆盖及 `Connection` 指定同名 Header 的处理。HTTP 与 HTTPS MITM 分别验证带或不带 `Connection` 提名的伪造值；Tunnel OAuth discovery 验证无同名 Header、伪造多值和 `Connection` 提名三种输入。
 
 `TestEgressPublicSessionHeader` 使用真实数据库关系、Session 创建 API、签名凭证和 HTTP/WebSocket 入口，由独立 HTTP 接收端验证两个会话并发发起的 HTTP/MCP GET、POST、DELETE 请求。覆盖无同名 Header 与伪造多值两种输入、跨会话凭证拒绝、业务认证头与 MCP 协议 Session 保持、代理凭证剥离和请求 body/path/query 保持。`TestMCPProxySessionHeaderPreservesStreaming` 在上游完成响应前读取第一条 SSE，验证 Header 注入不会导致流式缓冲。
 

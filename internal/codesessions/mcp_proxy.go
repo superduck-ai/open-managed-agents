@@ -150,6 +150,7 @@ func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	headers := sanitizedMCPProxyHeaders(r.Header)
+	headers.Set(sessionIDHeader, claims.PublicSessionID)
 	request := r.Clone(r.Context())
 	request.Header = headers
 	if h.tunnelInvoker != nil {

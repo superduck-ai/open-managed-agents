@@ -23,6 +23,10 @@ import (
 )
 
 func testEgressTunnelSessionHeader(t *testing.T) {
+	runEgressTunnelSessionHeader(t, "")
+}
+
+func runEgressTunnelSessionHeader(t *testing.T, binary string) {
 	app := newTestAppWithStore(t, nil, newFakeStore("egress-tunnel-header"))
 	t.Cleanup(app.close)
 	startEgressTunnelBroker(t, app)
@@ -50,6 +54,10 @@ func testEgressTunnelSessionHeader(t *testing.T) {
 	t.Cleanup(func() { cleanupSession(t, app, session.ID) })
 	codeID := launchLocalCodeSession(t, app, session.ID)
 	ingressToken := codeSessionIngressToken(t, app, codeID)
+	exchange := exchangeEgressTunnelRequest
+	if binary != "" {
+		exchange = startEgressConnectorReceiver(t, app, binary, tunnel.ID, token.TunnelToken)
+	}
 	for _, mode := range []string{"direct discovery", "forged", "connection", "absent", "jsonrpc", "termination"} {
 		t.Run(mode, func(t *testing.T) {
 			method, path, body := http.MethodGet, "/.well-known/oauth-protected-resource/v2/ccr-sessions/"+codeID+"/mcp/local", ""
@@ -85,7 +93,7 @@ func testEgressTunnelSessionHeader(t *testing.T) {
 			if mode == "connection" {
 				request.Header.Set("Connection", "X-OMA-Session-ID")
 			}
-			command := exchangeEgressTunnelRequest(t, app, request, tunnel.ID, token.TunnelToken)
+			command := exchange(t, app, request, tunnel.ID, token.TunnelToken)
 			if command.CommandType != commandType || command.Headers.Get("X-OMA-Session-ID") != wantSession {
 				t.Fatalf("command=%s session=%q want=%s/%q", command.CommandType, command.Headers.Get("X-OMA-Session-ID"), commandType, wantSession)
 			}
@@ -102,7 +110,7 @@ func testEgressTunnelSessionHeader(t *testing.T) {
 				if wantSession == "" {
 					wantCount = 0
 				}
-				if len(command.Headers) != wantCount {
+				if binary == "" && len(command.Headers) != wantCount {
 					t.Errorf("discovery header count=%d want=%d", len(command.Headers), wantCount)
 				}
 			} else if command.Headers.Get("Mcp-Session-Id") != "protocol-session" || string(command.JSONRPC) != body {

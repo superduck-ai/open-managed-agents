@@ -3,6 +3,7 @@
 | User symptom | Map | Runnable coverage |
 | --- | --- | --- |
 | HTTP/MCP 出口缺少公共 Session Header 或请求透传异常 | [出口合同](../../../../docs/design/be/ccrv2/upstream-proxy-and-model-runtime.md#出站公共-session-header) | `chat egress`，真实 PostgreSQL、HTTP 接收端、24 组并发请求及 NATS/Redis Tunnel 入队与 connector HTTP 领取；无需 Worker |
+| 独立 Tunnel connector 丢失 Session Header | [出口合同](../../../../docs/design/be/ccrv2/upstream-proxy-and-model-runtime.md#出站公共-session-header) | `chat egress-connector`，设置 `TEST_TUNNEL_CLIENT_BINARY` 后先运行同名 doctor；真实 PostgreSQL/NATS/Redis、独立 connector 进程和私有 HTTP 接收端；二进制 SHA256 写入报告 |
 | 消息图片或 Read 图片无法被视觉模型识别 | [Brain 图片](brain.md#真实视觉模型与图片) | `chat brain-images`，显式私有模型配置 |
 | DSH 压缩通知、压缩上下文恢复和原子线程续聊 | [Brain](brain.md) | `chat brain-compaction` |
 | Rust Brain multi-node ownership, native loop or MCP execution | [Rust Brain](brain.md) | `chat brain` |

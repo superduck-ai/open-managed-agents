@@ -223,6 +223,8 @@ Tunnel OAuth discovery 入队时仅保留上述可信 Session Header，connector
 
 同一出口场景通过真实 NATS/Redis Tunnel broker 入队，由 connector HTTP poll 领取并通过 response 接口完成请求，验证 discovery、JSON-RPC 和会话终止命令中的 Header。discovery 覆盖无同名 Header、伪造多值、Connection 提名，以及无会话上下文的直接 Tunnel 入口；同时断言认证凭证和其他 discovery Header 没有泄漏。该测试不运行独立 connector 可执行文件。
 
+`chat egress-connector` / `TestEgressConnectorSessionHeader` 使用 `TEST_TUNNEL_CLIENT_BINARY` 指定的独立 connector，经过同样的真实 PostgreSQL/NATS/Redis 链路，直接断言私有 HTTP 服务收到的 discovery、JSON-RPC 和 DELETE Header。doctor 要求可执行文件并记录 SHA256；不能以入队或 poll 测试替代此验收。官方 `tunnel-client v0.0.14` 的 discovery 转发会丢失此 Header；仅更新 OMA 不足以修复，必须同步使用修复后的 connector。connector 应仅向配置的 MCP origin 传递命令中的 Session Header，不把命令里的认证凭据或 Session ID 转发到额外的 OAuth origin。
+
 ## 网络安全边界
 
 upstream proxy 是 code-session 级公开网络出口，不是任意 SSRF 转发器：

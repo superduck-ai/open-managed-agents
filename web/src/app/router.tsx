@@ -14,6 +14,8 @@ import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { WorkspaceSettingsRedirect } from '../features/settings/WorkspaceSettingsRedirect';
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
+import { DatasetDetailPage } from '../features/evaluations/DatasetDetailPage';
+import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
@@ -254,6 +256,24 @@ const sessionDetailSearch = (search: Record<string, unknown>) => ({
     typeof search.trace_id === 'string' && search.trace_id.trim() && search.trace_id.trim().length <= 128
       ? search.trace_id.trim()
       : undefined,
+});
+
+const evaluationsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'evaluations',
+  component: EvaluationsPage,
+});
+
+const workspaceEvaluationsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations',
+  component: EvaluationsPage,
+});
+
+const workspaceEvaluationDatasetRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/datasets/$datasetId',
+  component: DatasetDetailPage,
 });
 
 const workspaceSessionDetailRoute = createRoute({
@@ -624,6 +644,9 @@ const routeTree = rootRoute.addChildren([
       workspaceAgentDetailRoute,
       sessionsRoute,
       workspaceSessionsRoute,
+      evaluationsRoute,
+      workspaceEvaluationsRoute,
+      workspaceEvaluationDatasetRoute,
       workspaceSessionDetailRoute,
       observabilityRoute,
       workspaceObservabilityRoute,

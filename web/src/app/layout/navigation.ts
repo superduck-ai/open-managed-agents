@@ -151,6 +151,13 @@ export const consoleNavigation: NavItem[] = [
   { type: 'link', href: '/sessions', label: 'Sessions', labelId: 'nav.sessions', icon: navigationIcons.sessions },
   {
     type: 'link',
+    href: '/evaluations',
+    label: 'Evaluation',
+    labelId: 'nav.evaluations',
+    icon: navigationIcons.evaluations,
+  },
+  {
+    type: 'link',
     href: '/deployments',
     label: 'Deployments',
     labelId: 'nav.deployments',

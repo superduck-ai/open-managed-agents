@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
@@ -25,6 +28,32 @@ func TestSessionResourcesFromDeploymentRejectsNullResource(t *testing.T) {
 	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{}, nil)
 	if err == nil {
 		t.Fatal("sessionResourcesFromDeployment() error = nil")
+	}
+}
+
+func TestNormalizeDeploymentResourcesRejectsGitURLWithoutSuffix(t *testing.T) {
+	handler := &Handler{}
+	request := httptest.NewRequest(http.MethodPost, "/v1/deployments", nil)
+	for _, test := range []struct{ name, url string }{
+		{name: "missing .git suffix", url: "https://github.com/example/repo"},
+		{name: "trailing slash after .git", url: "https://github.com/example/repo.git/"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resources := json.RawMessage(`[{"type":"github_repository","url":"` + test.url + `"}]`)
+			if _, _, err := handler.normalizeResources(request, auth.Principal{}, resources, nil); err == nil || !strings.Contains(err.Error(), "ending in .git") {
+				t.Fatalf("normalizeResources() error = %v, want .git suffix validation", err)
+			}
+		})
+	}
+}
+
+func TestNormalizeDeploymentResourcesAcceptsGitURLWithSuffix(t *testing.T) {
+	handler := &Handler{}
+	request := httptest.NewRequest(http.MethodPost, "/v1/deployments", nil)
+	resources := json.RawMessage(`[{"type":"github_repository","url":"https://github.com/example/repo.git"}]`)
+	payload, _, err := handler.normalizeResources(request, auth.Principal{}, resources, nil)
+	if err != nil || !strings.Contains(string(payload), "https://github.com/example/repo.git") {
+		t.Fatalf("normalizeResources() = (%s, %v), want stored .git URL", payload, err)
 	}
 }
 

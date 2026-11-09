@@ -241,7 +241,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
     "resources": [
       {
         "type": "github_repository",
-        "url": "https://github.com/org/repo",
+        "url": "https://github.com/org/repo.git",
         "mount_path": "/workspace/repo",
         "authorization_token": "ghp_your_github_token"
       }
@@ -258,7 +258,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
     --transform id --raw-output <<'EOF'
   resources:
     - type: github_repository
-      url: https://github.com/org/repo
+      url: https://github.com/org/repo.git
       mount_path: /workspace/repo
       authorization_token: ghp_your_github_token
   EOF
@@ -272,7 +272,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
       resources=[
           {
               "type": "github_repository",
-              "url": "https://github.com/org/repo",
+              "url": "https://github.com/org/repo.git",
               "mount_path": "/workspace/repo",
               "authorization_token": "ghp_your_github_token",
           },
@@ -287,7 +287,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
     resources: [
       {
         type: "github_repository",
-        url: "https://github.com/org/repo",
+        url: "https://github.com/org/repo.git",
         mount_path: "/workspace/repo",
         authorization_token: "ghp_your_github_token",
       },
@@ -305,7 +305,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
           new BetaManagedAgentsGitHubRepositoryResourceParams
           {
               Type = "github_repository",
-              Url = "https://github.com/org/repo",
+              Url = "https://github.com/org/repo.git",
               MountPath = "/workspace/repo",
               AuthorizationToken = "ghp_your_github_token",
           },
@@ -321,7 +321,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
           {
               OfGitHubRepository: &anthropic.BetaManagedAgentsGitHubRepositoryResourceParams{
                   Type:               anthropic.BetaManagedAgentsGitHubRepositoryResourceParamsTypeGitHubRepository,
-                  URL:                "https://github.com/org/repo",
+                  URL:                "https://github.com/org/repo.git",
                   MountPath:          anthropic.String("/workspace/repo"),
                   AuthorizationToken: "ghp_your_github_token",
               },
@@ -339,7 +339,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
       .environmentId(environment.id())
       .addResource(BetaManagedAgentsGitHubRepositoryResourceParams.builder()
           .type(BetaManagedAgentsGitHubRepositoryResourceParams.Type.GITHUB_REPOSITORY)
-          .url("https://github.com/org/repo")
+          .url("https://github.com/org/repo.git")
           .mountPath("/workspace/repo")
           .authorizationToken("ghp_your_github_token")
           .build())
@@ -353,7 +353,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
       resources: [
           [
               'type' => 'github_repository',
-              'url' => 'https://github.com/org/repo',
+              'url' => 'https://github.com/org/repo.git',
               'mountPath' => '/workspace/repo',
               'authorizationToken' => 'ghp_your_github_token',
           ],
@@ -368,7 +368,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
     resources: [
       {
         type: "github_repository",
-        url: "https://github.com/org/repo",
+        url: "https://github.com/org/repo.git",
         mount_path: "/workspace/repo",
         authorization_token: "ghp_your_github_token"
       }
@@ -404,13 +404,13 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
   resources='[
     {
       "type": "github_repository",
-      "url": "https://github.com/org/frontend",
+      "url": "https://github.com/org/frontend.git",
       "mount_path": "/workspace/frontend",
       "authorization_token": "ghp_your_github_token"
     },
     {
       "type": "github_repository",
-      "url": "https://github.com/org/backend",
+      "url": "https://github.com/org/backend.git",
       "mount_path": "/workspace/backend",
       "authorization_token": "ghp_your_github_token"
     }
@@ -421,11 +421,11 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
   RESOURCES_BODY=$(cat <<'EOF'
   resources:
     - type: github_repository
-      url: https://github.com/org/frontend
+      url: https://github.com/org/frontend.git
       mount_path: /workspace/frontend
       authorization_token: ghp_your_github_token
     - type: github_repository
-      url: https://github.com/org/backend
+      url: https://github.com/org/backend.git
       mount_path: /workspace/backend
       authorization_token: ghp_your_github_token
   EOF
@@ -436,13 +436,13 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
   resources = [
       {
           "type": "github_repository",
-          "url": "https://github.com/org/frontend",
+          "url": "https://github.com/org/frontend.git",
           "mount_path": "/workspace/frontend",
           "authorization_token": "ghp_your_github_token",
       },
       {
           "type": "github_repository",
-          "url": "https://github.com/org/backend",
+          "url": "https://github.com/org/backend.git",
           "mount_path": "/workspace/backend",
           "authorization_token": "ghp_your_github_token",
       },
@@ -453,13 +453,13 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
   const resources = [
     {
       type: "github_repository",
-      url: "https://github.com/org/frontend",
+      url: "https://github.com/org/frontend.git",
       mount_path: "/workspace/frontend",
       authorization_token: "ghp_your_github_token",
     },
     {
       type: "github_repository",
-      url: "https://github.com/org/backend",
+      url: "https://github.com/org/backend.git",
       mount_path: "/workspace/backend",
       authorization_token: "ghp_your_github_token",
     },
@@ -472,14 +472,14 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
       new()
       {
           Type = "github_repository",
-          Url = "https://github.com/org/frontend",
+          Url = "https://github.com/org/frontend.git",
           MountPath = "/workspace/frontend",
           AuthorizationToken = "ghp_your_github_token",
       },
       new()
       {
           Type = "github_repository",
-          Url = "https://github.com/org/backend",
+          Url = "https://github.com/org/backend.git",
           MountPath = "/workspace/backend",
           AuthorizationToken = "ghp_your_github_token",
       },
@@ -491,7 +491,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
       {
           OfGitHubRepository: &anthropic.BetaManagedAgentsGitHubRepositoryResourceParams{
               Type:               anthropic.BetaManagedAgentsGitHubRepositoryResourceParamsTypeGitHubRepository,
-              URL:                "https://github.com/org/frontend",
+              URL:                "https://github.com/org/frontend.git",
               MountPath:          anthropic.String("/workspace/frontend"),
               AuthorizationToken: "ghp_your_github_token",
           },
@@ -499,7 +499,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
       {
           OfGitHubRepository: &anthropic.BetaManagedAgentsGitHubRepositoryResourceParams{
               Type:               anthropic.BetaManagedAgentsGitHubRepositoryResourceParamsTypeGitHubRepository,
-              URL:                "https://github.com/org/backend",
+              URL:                "https://github.com/org/backend.git",
               MountPath:          anthropic.String("/workspace/backend"),
               AuthorizationToken: "ghp_your_github_token",
           },
@@ -511,13 +511,13 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
   var resources = List.of(
       BetaManagedAgentsGitHubRepositoryResourceParams.builder()
           .type(BetaManagedAgentsGitHubRepositoryResourceParams.Type.GITHUB_REPOSITORY)
-          .url("https://github.com/org/frontend")
+          .url("https://github.com/org/frontend.git")
           .mountPath("/workspace/frontend")
           .authorizationToken("ghp_your_github_token")
           .build(),
       BetaManagedAgentsGitHubRepositoryResourceParams.builder()
           .type(BetaManagedAgentsGitHubRepositoryResourceParams.Type.GITHUB_REPOSITORY)
-          .url("https://github.com/org/backend")
+          .url("https://github.com/org/backend.git")
           .mountPath("/workspace/backend")
           .authorizationToken("ghp_your_github_token")
           .build());
@@ -527,13 +527,13 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
   $resources = [
       [
           'type' => 'github_repository',
-          'url' => 'https://github.com/org/frontend',
+          'url' => 'https://github.com/org/frontend.git',
           'mountPath' => '/workspace/frontend',
           'authorizationToken' => 'ghp_your_github_token',
       ],
       [
           'type' => 'github_repository',
-          'url' => 'https://github.com/org/backend',
+          'url' => 'https://github.com/org/backend.git',
           'mountPath' => '/workspace/backend',
           'authorizationToken' => 'ghp_your_github_token',
       ],
@@ -544,13 +544,13 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
   resources = [
     {
       type: "github_repository",
-      url: "https://github.com/org/frontend",
+      url: "https://github.com/org/frontend.git",
       mount_path: "/workspace/frontend",
       authorization_token: "ghp_your_github_token"
     },
     {
       type: "github_repository",
-      url: "https://github.com/org/backend",
+      url: "https://github.com/org/backend.git",
       mount_path: "/workspace/backend",
       authorization_token: "ghp_your_github_token"
     }

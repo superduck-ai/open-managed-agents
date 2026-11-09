@@ -1118,6 +1118,7 @@ const managedAgentPathByHref: Record<string, string> = {
   '/observability': 'observability',
   '/deployments': 'deployments',
   '/environments': 'environments',
+  '/channels': 'channels',
   '/credential-vaults': 'vaults',
   '/memory-stores': 'memory-stores',
   '/dreams': 'dreams',

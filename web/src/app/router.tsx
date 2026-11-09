@@ -15,6 +15,9 @@ import { WorkspaceSettingsRedirect } from '../features/settings/WorkspaceSetting
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
+import { ChannelsPage } from '../features/managed-agents/channels/ChannelsPage';
+import { ChannelWizardPage } from '../features/managed-agents/channels/ChannelWizardPage';
+import { ChannelDetailPage } from '../features/managed-agents/channels/ChannelDetailPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
 import { McpTunnelsPage } from '../features/mcp-tunnels/McpTunnelsPage';
@@ -309,6 +312,60 @@ const workspaceEnvironmentDetailRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/environments/$environmentId',
   component: () => <ManagedAgentsPage section="environments" />,
+});
+
+const channelsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels',
+  component: ChannelsPage,
+});
+
+const channelCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels/new',
+  validateSearch: (search: Record<string, unknown>) => ({
+    agentId: typeof search.agentId === 'string' ? search.agentId : undefined,
+  }),
+  component: () => <ChannelWizardPage mode="create" />,
+});
+
+const channelDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels/$agentId/$channelId',
+  component: ChannelDetailPage,
+});
+
+const channelEditRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels/$agentId/$channelId/edit',
+  component: () => <ChannelWizardPage mode="edit" />,
+});
+
+const workspaceChannelsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels',
+  component: ChannelsPage,
+});
+
+const workspaceChannelCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels/new',
+  validateSearch: (search: Record<string, unknown>) => ({
+    agentId: typeof search.agentId === 'string' ? search.agentId : undefined,
+  }),
+  component: () => <ChannelWizardPage mode="create" />,
+});
+
+const workspaceChannelDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels/$agentId/$channelId',
+  component: ChannelDetailPage,
+});
+
+const workspaceChannelEditRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels/$agentId/$channelId/edit',
+  component: () => <ChannelWizardPage mode="edit" />,
 });
 
 const credentialVaultsRoute = createRoute({
@@ -633,6 +690,14 @@ const routeTree = rootRoute.addChildren([
       environmentsRoute,
       workspaceEnvironmentsRoute,
       workspaceEnvironmentDetailRoute,
+      channelsRoute,
+      channelCreateRoute,
+      channelDetailRoute,
+      channelEditRoute,
+      workspaceChannelsRoute,
+      workspaceChannelCreateRoute,
+      workspaceChannelDetailRoute,
+      workspaceChannelEditRoute,
       credentialVaultsRoute,
       workspaceCredentialVaultsRoute,
       workspaceCredentialVaultDetailRoute,

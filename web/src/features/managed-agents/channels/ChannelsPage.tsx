@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from '@tanstack/react-router';
-import { Bot, ChevronDown, Plus, Search } from 'lucide-react';
+import { Bot, Box, ChevronDown, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { useWorkspace } from '../../../shared/workspaces/context';
@@ -189,7 +189,7 @@ export function ChannelsPageContent({
       ) : null}
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <Table>
-          <TableHeader>
+          <TableHeader className="bg-muted/40">
             <TableRow>
               <TableHead>{msg('managedAgents.channels.columnChannel', '渠道')}</TableHead>
               <TableHead>{msg('managedAgents.channels.columnApp', '应用')}</TableHead>
@@ -241,10 +241,12 @@ export function ChannelsPageContent({
                     </button>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2 text-sm">
-                      <img src={feishuLogo} alt="" className="size-4" width={16} height={16} />
-                      <span>{msg('managedAgents.channels.feishu', '飞书')}</span>
-                      <span className="font-mono text-xs text-muted-foreground">{row.app_id || '—'}</span>
+                    <div className="flex items-start gap-2 text-sm">
+                      <img src={feishuLogo} alt="" className="mt-0.5 size-4" width={16} height={16} />
+                      <div className="min-w-0">
+                        <div>{msg('managedAgents.channels.feishu', '飞书')}</div>
+                        <div className="truncate font-mono text-xs text-muted-foreground">{row.app_id || '—'}</div>
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell>
@@ -260,8 +262,9 @@ export function ChannelsPageContent({
                     </div>
                   </TableCell>
                   <TableCell>
-                    <span className="inline-flex items-center rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs">
-                      {environmentLabel(row.environmentId)}
+                    <span className="inline-flex max-w-[220px] items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs">
+                      <Box className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{environmentLabel(row.environmentId)}</span>
                     </span>
                   </TableCell>
                   <TableCell>

@@ -136,61 +136,65 @@ export function ChannelWizardFormPage({
         {title}
       </button>
       <div className="rounded-xl border border-border bg-card p-6">
-        <WizardStepper step={step} onStepChange={setStep} />
-        {step === 1 ? (
-          <StepConnect
-            value={value}
-            onChange={setValue}
-            binding={binding}
-            onBindingChange={setBinding}
-            saved={saved}
-            qr={qr}
-            busy={busy}
-            onGenerateQr={() => void persist(true, false)}
-          />
-        ) : null}
-        {step === 2 ? <StepStrategy value={value} onChange={setValue} modeLocked={Boolean(saved)} /> : null}
-        {step === 3 ? (
-          <StepMa
-            value={value}
-            onChange={setValue}
-            agents={agents}
-            environments={environments}
-            agentLocked={agentLocked}
-          />
-        ) : null}
-        {error ? (
-          <p role="alert" className="mt-4 text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
-        <div className="mt-6 flex items-center justify-between gap-3">
+        <div className="grid items-start gap-6 md:grid-cols-[220px_minmax(0,1fr)]">
+          <WizardStepper step={step} onStepChange={setStep} />
           <div>
-            {step < 3 ? (
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={!canGoNext || busy}
-                onClick={() => setStep((step + 1) as WizardStep)}
-              >
-                {msg('managedAgents.channels.nextStep', '下一步')}
-              </Button>
+            {step === 1 ? (
+              <StepConnect
+                value={value}
+                onChange={setValue}
+                binding={binding}
+                onBindingChange={setBinding}
+                saved={saved}
+                qr={qr}
+                busy={busy}
+                onGenerateQr={() => void persist(true, false)}
+              />
             ) : null}
-          </div>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={() => onNavigate(channelsListPath(workspaceId))}
-            >
-              {msg('managedAgents.channels.cancel', '取消')}
-            </Button>
-            <Button type="button" disabled={busy} onClick={() => void persist(false, true)}>
-              {busy
-                ? msg('managedAgents.channels.processing', '处理中…')
-                : msg('managedAgents.channels.saveConfig', '保存配置')}
-            </Button>
+            {step === 2 ? <StepStrategy value={value} onChange={setValue} modeLocked={Boolean(saved)} /> : null}
+            {step === 3 ? (
+              <StepMa
+                value={value}
+                onChange={setValue}
+                agents={agents}
+                environments={environments}
+                agentLocked={agentLocked}
+              />
+            ) : null}
+            {error ? (
+              <p role="alert" className="mt-4 text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
+            <div className="mt-6 flex items-center justify-between gap-3">
+              <div>
+                {step < 3 ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!canGoNext || busy}
+                    onClick={() => setStep((step + 1) as WizardStep)}
+                  >
+                    {msg('managedAgents.channels.nextStep', '下一步')}
+                  </Button>
+                ) : null}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => onNavigate(channelsListPath(workspaceId))}
+                >
+                  {msg('managedAgents.channels.cancel', '取消')}
+                </Button>
+                <Button type="button" disabled={busy} onClick={() => void persist(false, true)}>
+                  {busy
+                    ? msg('managedAgents.channels.processing', '处理中…')
+                    : msg('managedAgents.channels.saveConfig', '保存配置')}
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -142,6 +142,9 @@ export function StepConnect({
             ))}
           </SelectContent>
         </Select>
+        <p className="text-xs text-muted-foreground">
+          {msg('managedAgents.channels.typesUnavailable', '当前只接通飞书。钉钉、企业微信和微信暂未开放，不能选择。')}
+        </p>
       </div>
       <div className="space-y-3">
         <Label>{msg('managedAgents.channels.accessMethod', '接入方式')}</Label>

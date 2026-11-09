@@ -94,7 +94,7 @@ channel_bridge:
 | `.../channels/{agentId}/{channelId}` | 详情 |
 | `.../channels/{agentId}/{channelId}/edit` | 编辑向导 |
 
-工作区列表调用 `GET /v1/channels`。OMA 按当前工作区的活跃智能体分页读取，再复用既有桥接 `GET /api/managed-channels` 与 `/settings`（仍带 `X-OMA-Agent`）聚合。查询参数 `limit`（默认 20，最大 100）和 `page`（从 0 起的行偏移）只切分已经聚合好的渠道行，并返回 `next_page`。响应里的渠道对象追加 `agent_id`、`agent_name`、`environment_id`，并去掉 `app_secret`。单个智能体的桥接失败不会失败整次请求：该智能体被跳过，响应 `incomplete: true`。活跃智能体超过 200 个时截断并返回 `truncated: true`。控制台按 `limit=100` 跟随 `next_page`，最多 5 页，再在表格里按 10 条本地分页；不完整或截断时在表上方提示。列表里的 Environment 显示工作区环境名称，查不到名称时回落 ID。桥接没有工作区级列表接口，因此服务端仍按智能体扇出。创建向导选择智能体时仍读取智能体列表，渠道的创建、编辑、详情和配对继续走 `/v1/agents/{agent_id}/channels`。
+工作区列表调用 `GET /v1/channels`。OMA 按当前工作区的活跃智能体分页读取，再复用既有桥接 `GET /api/managed-channels` 与 `/settings`（仍带 `X-OMA-Agent`）聚合。查询参数 `limit`（默认 20，最大 100）和 `page`（从 0 起的行偏移）只切分已经聚合好的渠道行，并返回 `next_page`。响应里的渠道对象追加 `agent_id`、`agent_name`、`environment_id`，并去掉 `app_secret`。单个智能体的桥接失败不会失败整次请求：该智能体被跳过，响应 `incomplete: true`。活跃智能体超过 200 个时截断并返回 `truncated: true`。控制台按 `limit=100` 跟随 `next_page`，最多 5 页，再在表格里按 10 条本地分页；不完整或截断时在表上方提示。列表里的应用 ID 写在「飞书」下一行。创建向导在宽屏把步骤条放在表单左侧。Environment 显示工作区环境名称，查不到名称时回落 ID。`/channels/settings` 只接受 `environment_id`，未知字段会被拒绝，因此详情里的 Memory / Vault 继续显示「—」，向导里显示「不挂载」。桥接没有工作区级列表接口，因此服务端仍按智能体扇出。创建向导选择智能体时仍读取智能体列表，渠道的创建、编辑、详情和配对继续走 `/v1/agents/{agent_id}/channels`。
 
 连通状态把已返回的 `enabled`、`binding_status`、`connected` 映射为已连通、待测试、异常、已停用。「连接检测」只根据这些字段提示，不发起新的探测。
 

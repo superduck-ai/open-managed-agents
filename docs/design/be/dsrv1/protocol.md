@@ -168,7 +168,7 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 | 409 | `public_event_idempotency_mismatch` | 视为缺陷，停止该会话 |
 | 409 | `finish_idempotency_mismatch` | 视为缺陷，停止该会话 |
 | 409 | `input_not_eligible` | 视为缺陷，停止该会话 |
-| 409 | `finish_required` | 不 ACK，先完成结束上报 |
+| 409 | `finish_required` | 不 ACK，不自动补写完成结果；停止并尽力释放 owner，按持久记录恢复 |
 | 410 | `lease_expired` | 同 epoch 重新 register（4.4） |
 | 410 | `transcript_purged` | 退役会话，不再恢复（6.8） |
 | 413 | `payload_too_large` | 客户端主动按条数和字节组批；收到 413 不拆批、不重试，复制失败并以 `permanent` 释放（6.5） |
@@ -642,11 +642,11 @@ sequenceDiagram
 
 ### 9.2 输入流与回执
 
-- `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`：SSE，帧为 `event: input`，`data` 为 `{"id","lane","kind",...}`；两路 consumer、Redis ACK 定位、`Last-Event-ID` 语义同现行。`keep_alive` 改为 SSE 注释行。
+- `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`：SSE，帧为 `event: input`，`data` 为 `{"id","lane","kind",...}`；task/control 使用独立 consumer；task ACK 定位在 PostgreSQL，control ACK 定位在 Redis。`from_sequence_num` 与 `Last-Event-ID` 当前只校验非负十进制格式，不过滤未确认投递，恢复依赖 broker 重投。`keep_alive` 改为 SSE 注释行。
   - 后端只投递会话注册版本定义的 kind（4.1）。未知 control kind 不执行，以 `processed` 加 `error: "unsupported_input"` 回执；未知 task kind 或非法 lane 属于不可安全结算的协议缺陷，停止会话且不 ACK，关闭输入流后以 `permanent` release，公开失败并计入指标。不得对 task 发送仅 control 允许的 error 回执。
 - `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery`：`{"updates": [{"id", "status": "received"|"processing"|"processed", "error"?}]}`，语义同 [Worker Events Delivery](../ccrv2/ccr-v2-api-worker-events-delivery.md)，另加：
   - task 输入的 `processing` 在同一事务内把 input execution 从 `accepted` 推进到 `running`，写入 execution 的 `started_at` 与公开消息的 `processed_at`。推进持久 input execution 不依赖 Redis ACK 定位是否存在；定位只决定 InProgress 是否执行。execution 已是 `running` 时保留首次开始时间；**已是 completed 时为持久状态 no-op**，不回退状态；是否计入 applied 仍由 ACK 定位动作决定。
-  - task 输入的 `processed` 必须已有 completed execution。批次中任一 task 输入不满足时，整批返回 `409 finish_required`，不执行任何 DoubleAck，错误消息给出第一个违规的 `id`。
+  - task 输入的 `processed` 必须已有 completed execution。批次中任一 task 输入不满足时，整批返回 `409 finish_required`，不执行任何 DoubleAck，返回通用错误，不包含违规 input ID。Brain 不自动补 finish，不推测完成结果，停止并尽力释放当前 owner。
   - 响应返回 `applied`/`ignored`/`scheduled` 计数，并逐项返回 `results: [{id,status,outcome,execution_status?}]`；task processed 的 `outcome` 为 `scheduled`，其他命令为 `applied`/`ignored`，task 的 `execution_status` 表示本次确认的持久状态。Brain 必须确认对应 processing 项的 `execution_status` 为 `running` 或 `completed` 后才继续，不能只看 HTTP 200。
   - `error` 只允许出现在 control lane 的 `processed` 上。
 - 结束上报与 `processed` 回执 保持两个请求：PostgreSQL 与 JetStream 无法合并为一个事务，现行 ACK 依赖 Code Session 锁、DoubleAck 与重投；分离可以让两者的责任清楚。

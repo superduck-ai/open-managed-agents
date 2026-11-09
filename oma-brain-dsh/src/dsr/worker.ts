@@ -57,6 +57,7 @@ import { ConfigurationError } from "../config.ts";
 import { brainMetrics } from "../telemetry.ts";
 import { DsrClient } from "./client.ts";
 import { DsrClaims } from "./claims.ts";
+import { DsrInputInbox, DsrReceipts } from "./input-inbox.ts";
 import { DsrInputStream } from "./input-stream.ts";
 import { DsrSession } from "./session.ts";
 import { DsrLease } from "./lease.ts";
@@ -314,18 +315,7 @@ export class DsrOwner {
   private lease?: DsrLease;
   // 输入流（SSE）的生命周期开关。空闲/失败/关闭时 abort，for-await 随即结束。
   private readonly stream = new AbortController();
-  // 普通任务输入的串行队列。用 Promise 链实现“前一个处理完再处理下一个”：
-  //   this.tasks = this.tasks.then(async () => { ... });
-  // 例：用户连续发两条消息，第二条一定等第一条的 turn 结束后才开始。
-  private tasks: Promise<void> = Promise.resolve();
-  // 控制输入的串行队列，独立于 tasks。
-  // 例：一个 10 分钟的工具调用还在跑时，用户按“中断”，中断必须立刻生效，
-  // 不能排在任务队列后面等 10 分钟。
-  private controls: Promise<void> = Promise.resolve();
-  // 已回 "received" 但还没回 "processed" 的输入 ID。
-  // 用途：每 10 秒重报一次 received，防止第一次 ack 丢包导致服务器以为输入没送到。
-  // 例：收到输入 input_42 -> 加入集合；处理完 -> 从集合删除。
-  private readonly unsettled = new Set<string>();
+  private readonly inbox: DsrInputInbox;
   // close() 可能被调用多次（shutdown、替换旧 owner），缓存 Promise 使其幂等。
   private closing?: Promise<void>;
   // run() 的 finally 全部执行完（包括 release claim）后 resolve。
@@ -350,7 +340,25 @@ export class DsrOwner {
     readonly client: DsrClient,
     readonly claims: DsrClaims,
     readonly drainMs: number,
-  ) {}
+  ) {
+    const receipts = new DsrReceipts((updates) =>
+      this.client.delivery(updates, this.stream.signal),
+    );
+    this.inbox = new DsrInputInbox(receipts, {
+      task: async (input) => {
+        if (this.session!.suspended) return false;
+        await this.session!.receive(input);
+        if (this.session!.suspended) {
+          this.reason = "idle";
+          this.stream.abort();
+          return false;
+        }
+        return true;
+      },
+      control: (input, report) => this.session!.control(input, report),
+      fail: (error) => this.fail(error),
+    });
+  }
 
   /**
    * 会话主流程。只有 run() 结束（正常或异常）之后，admit() 才会执行清理。
@@ -410,6 +418,7 @@ export class DsrOwner {
         if (
           this.session &&
           !this.session.busy &&
+          this.inbox.unsettled.size === 0 &&
           Date.now() - this.session.lastIdle > 60000
         ) {
           this.reason = "idle";
@@ -423,7 +432,7 @@ export class DsrOwner {
       progress = setInterval(() => {
         if (reporting) return;
         reporting = true;
-        void this.reportReceived()
+        void this.inbox.reportReceived()
           .catch((error) => this.fail(error))
           .finally(() => {
             reporting = false;
@@ -436,42 +445,7 @@ export class DsrOwner {
       for await (const input of new DsrInputStream(this.client).read(
         this.stream.signal,
       )) {
-        this.unsettled.add(input.id);
-        // 立即回执 "received"，但不 await——输入处理不能被网络往返阻塞。
-        // 失败则交给 fail()，因为这意味着服务器已经不认这个 claim 了。
-        const received = this.client.delivery(
-          [{ id: input.id, status: "received" }],
-          this.stream.signal,
-        );
-        void received.catch((error) => this.fail(error));
-        if (input.lane === "control") {
-          // 控制输入：排到 controls 队列。
-          // 必须等 received 回执完成后再处理，顺序是：回执 -> 执行控制动作 -> 标记已处理。
-          this.controls = this.controls.then(async () => {
-            await received;
-            await this.session!.control(input);
-            this.unsettled.delete(input.id);
-          });
-          // 队列中的错误同样要触发失败收尾，否则会话会卡在半关闭状态。
-          void this.controls.catch((error) => this.fail(error));
-        } else {
-          // 任务输入：排到 tasks 队列，串行执行。
-          this.tasks = this.tasks.then(async () => {
-            await received;
-            // suspended：会话因为审批挂起、子 agent 未完成等原因暂停。
-            // 此时不处理该输入，也不从 unsettled 删除——保留“未完成”状态，
-            // 等会话被重新认领后服务器会重投，从而实现跨 worker 的继续执行。
-            if (this.session!.suspended) return;
-            await this.session!.receive(input);
-            if (this.session!.suspended) {
-              // 处理过程中进入挂起（例如等待用户审批超时）：
-              // 主动结束输入流并释放 claim，把会话交还给调度器。
-              this.reason = "idle";
-              this.stream.abort();
-            } else this.unsettled.delete(input.id);
-          });
-          void this.tasks.catch((error) => this.fail(error));
-        }
+        this.inbox.accept(input);
       }
     } catch (error) {
       // stream 被主动 abort（空闲/关闭）时，for-await 抛出的取消错误不是真失败，
@@ -483,19 +457,15 @@ export class DsrOwner {
       clearInterval(progress);
       try {
         // 等待两条输入队列自然结束（即使很快失败，也要把已入队的处理完/取消完）。
-        await Promise.allSettled([this.tasks, this.controls]);
+        await this.inbox.drain();
         await this.session?.close(this.drainMs);
       } finally {
         if (this.session) brainMetrics().sessionsActive.add(-1);
         await this.lease?.close();
         try {
-          // 4xx 失败说明这个 claim 本身已被服务器判死（例如 epoch 被顶掉、
-          // token 失效、请求不合法），再调 release 没有意义甚至可能报错；
-          // 5xx/网络错误/主动结束则要显式 release，让服务器知道可以重新分配。
           const rejected =
             this.failure instanceof DsrError &&
-            this.failure.status >= 400 &&
-            this.failure.status < 500;
+            this.failure.code === "epoch_superseded";
           if (!rejected)
             await this.claims
               .release(
@@ -545,27 +515,6 @@ export class DsrOwner {
   }
 
   /**
-   * 把所有“已收到但未处理完”的输入重新标记为 received。
-   *
-   * 为什么需要它：SSE 是单向推送，如果进程在“收到”和“处理完”之间崩溃，
-   * 服务器并不知道输入是否送达。周期性重报 + 服务器端去重，构成至少一次投递。
-   *
-   * 每批最多 64 个，避免一次请求体过大；数量少时通常只有一批。
-   * 例：unsettled = [a, b, ..., z]（100 个）-> 发 2 个请求（64 + 36）。
-   */
-  private async reportReceived(): Promise<void> {
-    const ids = [...this.unsettled];
-    for (let i = 0; i < ids.length; i += 64)
-      await this.client.delivery(
-        ids.slice(i, i + 64).map((id) => ({
-          id,
-          status: "received",
-        })),
-        this.stream.signal,
-      );
-  }
-
-  /**
    * 外部关闭入口（shutdown、被新 owner 替换时调用）。保证幂等。
    *
    * 关闭分两段，体现“先礼后兵”：
@@ -583,7 +532,7 @@ export class DsrOwner {
     return (this.closing ??= (async () => {
       // 停止接收新输入（已经入队的仍会被排空）。
       this.stream.abort();
-      const waiting = Promise.allSettled([this.tasks, this.controls]);
+      const waiting = this.inbox.drain();
       // 用一个 unref 的定时器做超时线：不阻止进程退出，到点自动 resolve。
       let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<void>((resolve) => {

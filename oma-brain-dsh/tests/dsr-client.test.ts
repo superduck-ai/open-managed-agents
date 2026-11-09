@@ -457,3 +457,23 @@ test("transcript reads send only the sequence cursor", async () => {
   expect(url.pathname.endsWith("/transcripts/cse_root")).toBe(true);
   expect([...url.searchParams.entries()]).toEqual([["from_seq", "200"]]);
 });
+
+test("finish_required stops delivery without inventing a finish or retrying the batch", async () => {
+  const { client, calls } = fixture(() =>
+    Response.json(
+      {},
+      {
+        status: 409,
+        headers: { "DSR-Error": "finish_required" },
+      },
+    ),
+  );
+  await expect(
+    client.delivery([{ id: "input", status: "processed" }]),
+  ).rejects.toMatchObject({
+    status: 409,
+    code: "finish_required",
+  });
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.path).toEndWith("/inputs/delivery");
+});

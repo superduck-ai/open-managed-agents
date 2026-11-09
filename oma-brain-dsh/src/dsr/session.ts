@@ -75,7 +75,7 @@ import { DsrError, delay, object } from "./http.ts";
 import { dsrToolIdentity } from "./tools.ts";
 import { DsrSubagentBridge } from "./subagents.ts";
 import type { DsrClient } from "./client.ts";
-import type { Decision, Finish, Input, PublicEvent } from "./wire.ts";
+import type { Decision, Delivery, Finish, Input, PublicEvent } from "./wire.ts";
 import {
   TranscriptPublication,
   type PublicationTarget,
@@ -550,7 +550,11 @@ export class DsrSession {
     );
   }
 
-  async control(input: Extract<Input, { lane: "control" }>): Promise<void> {
+  async control(
+    input: Extract<Input, { lane: "control" }>,
+    report: (update: Delivery) => Promise<unknown> = (update) =>
+      this.client.delivery([update], this.abort.signal),
+  ): Promise<void> {
     let error: "unsupported_input" | undefined;
     switch (input.kind) {
       // 审批结论可能比审批请求先到（长轮询期间用户已点击），先缓存。
@@ -568,11 +572,7 @@ export class DsrSession {
       default:
         error = "unsupported_input";
     }
-    // 无论成功与否都要回执；error 会告诉服务器这条控制输入未被接受的原因。
-    await this.client.delivery(
-      [{ id: input.id, status: "processed", ...(error ? { error } : {}) }],
-      this.abort.signal,
-    );
+    await report({ id: input.id, status: "processed", ...(error ? { error } : {}) });
   }
 
   /**

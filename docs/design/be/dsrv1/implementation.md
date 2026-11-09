@@ -12,7 +12,7 @@
 | 2 | release | `dsr/worker.ts` | 排空输入与复制后释放，拒绝旧 owner |
 | 3 | register | `dsr/worker.ts` | 同 epoch 恢复保留状态；补 ACK 由独立后台处理器负责 |
 | 4 | heartbeat | `dsr/lease.ts` | 注册后独立运行，不被模型或审批阻塞 |
-| 5 | inputs/stream | `dsr/worker.ts`、`dsr/input-stream.ts` | task/control 分别串行消费，审批等待时仍可处理控制输入 |
+| 5 | inputs/stream | `dsr/worker.ts`、`dsr/input-stream.ts` | task 有界串行消费；interrupt 立即应用；control 按 ID 去重，回执独立合批 |
 | 6 | inputs/delivery | `dsr/worker.ts`、`dsr/session.ts` | received 续报；执行前 processing；completed 后 processed 返回 scheduled；响应含 execution_status 与 cancel_requested_at |
 | 7 | inputs/{id}/finish | `dsr/session.ts` | 日志与输出确认后写 finish，再 ACK；重复完成结果不可改变 |
 | 8 | Header PUT | `runtime/replication.ts`、`dsr/replication.ts` | Header 先于事件，不可变身份 |
@@ -259,3 +259,21 @@ dsh_worker_states 保存 context_snapshot，表结构由 goose 迁移管理。�
 14 个主接口通过 `chat brain-dsr` 真实后端场景，7 个必需阶段及资源清理全部成功；`chat roundtrip` 验证中文预览、最终回复、历史恢复及队列清空。报告分别见 [DSR 验收](../../../../tmp/verify-be/verify-be-083b1d076872/report.md) 与 [聊天回归](../../../../tmp/verify-be/verify-be-05ec95247d31/report.md)。上游模型使用脚本，不涵盖真实模型质量、云端网络分区或生产性能。
 
 Go 普通单测及 5 组隔离 PostgreSQL 回归通过，包含数据库升级保留配置快照、租户与 epoch 栅栏，以及新 owner 复用原配置。Brain 类型检查和可执行文件测试通过，264 pass、5 项既有 skip、0 fail。lint、死代码、重复代码、复杂度及大文件门禁通过。
+
+## 输入流消费与恢复
+
+`dsr/input-inbox.ts` 按 input ID 合并 queued/running task，最多接纳 64 个 task 和 16 MiB 序列化 UTF-8 输入。容量不足时不回 received，继续读流以保持 interrupt 可达，由 JetStream 后续重投任务。该上限约束已接纳输入，不包含 SSE 解析缓冲及运行时模型上下文。任务保持接纳顺序，不保证跨拒收与重投的全局 FIFO。
+
+interrupt 的本地取消不等待回执网络请求；审批结果等待 received 后应用。控制记录在 owner 存活期间保留，重投只补回执，最多 4096 条，达到上限停止并释放 owner。received 与 control processed 共用串行上传器，每批最多 64 条且 input ID 不重复；同一输入的后续状态留到后续批次，重复待发状态共享确认 Promise；失败使所有待发回执失败并退出 owner。task 仍等待 processing 明确确认，完成仍先持久化 finish，再报告 processed。空闲释放还要求没有未完成输入。
+
+SSE 等待响应头最多 15 秒，建立后完整帧静默最多 45 秒。短连接 EOF 和网络错误均消耗连续 10 次失败预算；HTTP 200 不清零，完整帧活性持续 60 秒后清零。重连指数退避至 30 秒基数并加 ±25% 抖动，等待不少于 Retry-After。坏 JSON、非法输入和超限帧终止当前 owner，不重试坏帧。读取游标使用字符串和 BigInt，校验输入后推进，仅表示已读取位置；后端只校验游标，执行去重依赖稳定 input ID 和持久完成记录。
+
+普通回归位于 `dsr-input-inbox.test.ts`、`dsr-input-stream.test.ts` 和 `dsr-client.test.ts`，覆盖阻塞回执时的 interrupt、控制重投、任务去重、数量/字节容量、回执批次与顺序、短连接失败预算、坏帧、响应头超时及大整数游标。
+
+### delivery 批次与失败退出
+
+上传器按每个 input ID 的入队顺序取状态，每批至多出现一次该 ID。received 和 processed 不能在同一批发送，前一个响应不会提前确认后一个状态。task processing 与 task processed 继续直接请求并等待逐项确认。
+
+owner 只在明确收到 `epoch_superseded` 时跳过 release；其余错误均在停止后使用进程级凭证尽力释放，release 自身的 worker/epoch 校验防止影响新 owner。`finish_required` 表示完成前置条件被破坏，返回通用错误，不携带违规 input ID；Brain 不自动补写或猜测 finish，停止并释放后按持久记录恢复。
+
+关闭取消输入流，也取消共享 signal 的在途 received/control 回执；输入队列 drain 只等待处理路径结束，不保证回执网络排空。未结算投递交由后端重投或补偿。定向回归由 `dsr-input-inbox.test.ts` 验证同 ID 分批、状态确认及 interrupt，`dsr-owner-release.test.ts` 验证错误分类、独立释放凭证及释放失败清理，`dsr-client.test.ts` 验证 finish_required 不自动构造完成结果。

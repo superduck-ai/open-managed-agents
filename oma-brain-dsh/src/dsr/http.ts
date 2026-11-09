@@ -145,7 +145,8 @@ export async function errorOf(response: Response): Promise<DsrError> {
   const raw = response.headers.get("DSR-Error");
   const code = raw || (response.status === 429 ? "rate_limited" : response.status >= 500 ? "unavailable" : "unclassified_response");
   const cursor = response.headers.get("DSR-Next-Seq");
-  const seconds = Number(response.headers.get("Retry-After"));
+  const retryAfter = response.headers.get("Retry-After");
+  const seconds = retryAfter === null || retryAfter.trim() === "" ? NaN : Number(retryAfter);
   await response.body?.cancel().catch(() => {});
   return new DsrError(response.status, code, cursor === null ? undefined : decimal(cursor),
     Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds * 1000, 30_000) : undefined);

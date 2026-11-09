@@ -1,3 +1,5 @@
+export class SseProtocolError extends Error {}
+
 export interface SseFrame {
   id?: string;
   event?: string;
@@ -31,7 +33,7 @@ export async function* sse(
         if (line.startsWith("data:")) {
           const part = line.slice(5).replace(/^ /, "");
           size += part.length;
-          if (size > 4 * 1024 * 1024) throw new Error("SSE frame too large");
+          if (size > 4 * 1024 * 1024) throw new SseProtocolError("SSE frame too large");
           data.push(part);
         } else if (line.startsWith("id:")) {
           const value = line.slice(3).replace(/^ /, "");
@@ -52,7 +54,7 @@ export async function* sse(
           comment = false;
         }
       }
-      if (buffer.length + size > 4 * 1024 * 1024) throw new Error("SSE frame too large");
+      if (buffer.length + size > 4 * 1024 * 1024) throw new SseProtocolError("SSE frame too large");
     }
   } finally {
     signal?.removeEventListener("abort", cancel);

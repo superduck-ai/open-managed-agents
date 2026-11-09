@@ -484,20 +484,22 @@ register 成功后按 `heartbeat_interval_ms`（6 秒）固定节奏发送，抖
 
 ### 作用
 
-把发给这个会话的输入推送给 DSH：用户消息、中断、审批结果和切换模型。后端分别从任务与控制两个 JetStream durable consumer 拉取，task 写入 PostgreSQL 投递定位后再推送，control 使用 Redis 定位。控制输入（例如审批结果）可以越过排队中的用户消息先到，所以等待审批时不会被后面的消息堵住。
+把发给这个会话的输入推送给 DSH：用户消息、中断和审批结果。后端分别从任务与控制两个 JetStream durable consumer 拉取，task 写入 PostgreSQL 投递定位后再推送，control 使用 Redis 定位。控制输入（例如审批结果）可以越过排队中的用户消息先到，所以等待审批时不会被后面的消息堵住。
 
 输入是**至少一次**投递：未 ACK 的消息在断线、超时或换 owner 后会重投，`id` 保持不变，DSH 负责去重。
 
+Brain 按 input ID 合并已排队或运行中的 task，保持接纳顺序串行执行。每 owner 最多接纳 64 个未完成 task，总序列化 UTF-8 大小最多 16 MiB；超额 task 不接纳、不回 received，继续读取控制消息，等待 broker 后续重投。interrupt 立即应用，不等待 received 或之前 control 的 processed；审批结果仍等待 received 确认。控制动作在同一 owner 内仅应用一次，重投只补回执；最多保留 4096 条控制记录，达到上限释放 owner，由后续 owner 接管。received 和 control processed 合批串行上传，每批最多 64 条且 input ID 不重复，同一输入的状态按序分批，仍逐项验证响应。task 的 processing 确认和 finish 后 processed 顺序保持不变。
+
 ### 什么时候调用
 
-register 之后、恢复原生日志之后连接；断开后立即重连。连接成功是准入完成的信号（attempts 归零）。
+register 之后、恢复原生日志之后连接。断流按指数退避并加随机抖动重连，遵循 Retry-After；连续失败 10 次结束当前 owner。HTTP 200 不重置失败预算，完整帧活性持续至少 60 秒后才重置。等待响应头最多 15 秒，建立后完整帧静默最多 45 秒，注释心跳也计入活性。
 
 ### 请求
 
 | 位置 | 字段 | 说明 |
 | --- | --- | --- |
-| header | `Last-Event-ID` | 可选，语义同现行 |
-| query | `from_sequence_num` | 可选，语义同现行；不修改 JetStream ACK floor |
+| header | `Last-Event-ID` | 可选，非负十进制读取游标；后端当前只校验格式，不据此过滤投递 |
+| query | `from_sequence_num` | 可选，优先于 Last-Event-ID；恢复依赖未确认消息重投，不修改 JetStream ACK floor |
 
 ### 响应
 
@@ -597,7 +599,11 @@ B 开始 → delivery(B processing) → 执行时可以看到 A 的完整历史
 | `updates[].status` | string | 是 | `received`、`processing`、`processed` |
 | `updates[].error` | string | 否 | 仅 control 输入的 `processed` 可带，`unsupported_input` |
 
-DSH 用串行批量上传器发送回执，网络错误与 429/5xx 有界退避；耗尽后不越过执行或 ACK 屏障，停止该会话。`epoch_superseded` fence；`finish_required` 定位违规 input，先补 finish 再重试原批，不把所有 409 都视为失去 owner。
+Brain 的 received 与 control processed 共用串行批量上传器，每批最多 64 项且 input ID 不重复；同一 ID 的后续状态留到后续批次，分别等待各自响应确认。task processing 与 task processed 直接请求并等待确认，不进入该异步队列。网络错误与 429/5xx 有界退避，耗尽后停止当前 owner，不越过执行或 ACK 屏障。
+
+`epoch_superseded` 表示已失去 owner，停止且不再 release。业务错误、鉴权错误、限流重试耗尽等其他失败，停止后使用独立的进程级 claim 凭证尽力 release；release 仍校验 worker 身份与 epoch，失败不阻塞本地清理。`finish_required` 不触发自动补 finish 或原批重试，不推测输入完成结果，停止并释放 owner，保留后续恢复所需的持久记录。
+
+关闭 owner 会取消与输入流共用生命周期的在途 received/control 回执，再等待输入处理收尾；这不保证所有投递回执已经发送成功。未结算消息由后端重投或补偿，task 的持久 finish 与复制确认屏障保持不变。
 
 ### 响应 200
 
@@ -621,7 +627,7 @@ DSH 用串行批量上传器发送回执，网络错误与 429/5xx 有界退避�
 
 | 状态 | `DSR-Error` | 说明 |
 | --- | --- | --- |
-| 409 | `finish_required` | 批次中有 task 输入在结束上报之前报了 `processed`；整批不执行，错误消息给出第一个违规的 `id` |
+| 409 | `finish_required` | 批次中有 task 输入在结束上报之前报了 `processed`；整批不执行；返回通用错误，不包含违规 input ID |
 | 409 | `epoch_superseded` | — |
 | 400 | `invalid_request` | 条数越界、status 非法、在 task 输入上带 `error` |
 

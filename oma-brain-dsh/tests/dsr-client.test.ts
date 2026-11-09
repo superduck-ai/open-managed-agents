@@ -1,3 +1,4 @@
+import { transcriptResponse } from "./transcript-response.ts";
 import type { SessionHeader } from "@deepseek-ai/dsh-session";
 import { expect, test } from "bun:test";
 import { DsrClaims } from "../src/dsr/claims.ts";
@@ -72,38 +73,18 @@ test("DSR distinguishes a transcript gap from lost owner and retains its cursor"
       {},
       {
         status: 409,
-        headers: { "DSR-Error": "transcript_gap", "DSR-Next-Seq": "36" },
+        headers: { "DSR-Error": "transcript_gap", "DSR-Next-Offset": "36" },
       },
     ),
   );
-  await expect(client.appendEvents("cse_root", [])).rejects.toMatchObject({
+  await expect(
+    client.appendRecords("cse_root", "1", [], null),
+  ).rejects.toMatchObject({
     status: 409,
     code: "transcript_gap",
-    nextSeq: "36",
+    nextOffset: "36",
   });
   expect(calls).toHaveLength(1);
-});
-
-test("DSR requires per-input processing confirmation", async () => {
-  for (const response of [
-    { scheduled: 0, applied: 1, ignored: 0 },
-    {
-      scheduled: 0,
-      applied: 0,
-      ignored: 1,
-      results: [
-        {
-          id: "input",
-          status: "processing",
-          outcome: "ignored",
-          execution_status: "accepted",
-        },
-      ],
-    },
-  ]) {
-    const { client } = fixture(() => Response.json(response));
-    await expect(client.processing("input")).rejects.toBeInstanceOf(DsrError);
-  }
 });
 
 test("a different persisted failure code is not successful completion", async () => {
@@ -124,7 +105,13 @@ test("DSR rejects missing seq zero, stalled pagination and wrong transcript iden
     { header, events: [], next_from_seq: "0" },
     { header: { ...header, id: "other" }, events: [], next_from_seq: null },
   ]) {
-    const { client } = fixture(() => Response.json(page));
+    const { client } = fixture(() =>
+      transcriptResponse(
+        [page.header, ...page.events],
+        "2",
+        page.next_from_seq,
+      ),
+    );
     await expect(client.readTranscript("cse_root")).rejects.toMatchObject({
       code: "invalid_response",
     });
@@ -177,11 +164,21 @@ test("concurrent lease expiry shares one same-epoch registration", async () => {
         {},
         { status: 410, headers: { "DSR-Error": "lease_expired" } },
       );
-    return Response.json({ dsh_session_id: "root", next_seq: "0" });
+    return Response.json({ dsh_session_id: "root", next_offset: "1" });
   });
   await Promise.all([
-    client.putHeader("root", { id: "root", version: 4 } as never, null),
-    client.putHeader("root", { id: "root", version: 4 } as never, null),
+    client.appendRecords(
+      "root",
+      "0",
+      [{ id: "root", version: 4 } as never],
+      null,
+    ),
+    client.appendRecords(
+      "root",
+      "0",
+      [{ id: "root", version: 4 } as never],
+      null,
+    ),
   ]);
   expect(calls.filter((call) => call.path.endsWith("/register"))).toHaveLength(
     1,
@@ -195,30 +192,14 @@ test("concurrent lease expiry shares one same-epoch registration", async () => {
   ).toBe(true);
 });
 
-test("processing can succeed despite a missing ACK locator only with explicit durable state", async () => {
-  const { client } = fixture(() =>
-    Response.json({
-      scheduled: 0,
-      applied: 0,
-      ignored: 1,
-      results: [
-        {
-          id: "input",
-          status: "processing",
-          outcome: "ignored",
-          execution_status: "running",
-        },
-      ],
-    }),
-  );
-  expect(await client.processing("input")).toBe("running");
-});
-
 test("DSR retains immutable session bindings and string transcript watermarks", async () => {
   const { client, calls } = fixture(() =>
-    Response.json({ dsh_session_id: "cse_root", next_seq: "9007199254740991" }),
+    Response.json({
+      dsh_session_id: "cse_root",
+      next_offset: "9007199254740991",
+    }),
   );
-  expect(await client.putHeader("cse_root", header, null)).toBe(
+  expect(await client.appendRecords("cse_root", "0", [header], null)).toBe(
     "9007199254740991",
   );
   expect(
@@ -232,19 +213,19 @@ test("DSR retains immutable session bindings and string transcript watermarks", 
   ).toBe(true);
 });
 
-test("input stream preserves task identity separately from large SSE cursors", async () => {
+test("control stream preserves input identity without a resume cursor", async () => {
   const abort = new AbortController();
   const { client, calls } = fixture(
     () =>
       new Response(
-        ': keep-alive\n\nid: 9007199254740993\nevent: input\ndata: {"id":"input-a","lane":"task","kind":"user.message","content":[]}\n\n',
+        ': keep-alive\n\nid: 9007199254740993\nevent: input\ndata: {"id":"input-a","lane":"control","kind":"user.interrupt"}\n\n',
         { headers: { "Content-Type": "text/event-stream" } },
       ),
   );
   const stream = new DsrInputStream(client).read(abort.signal);
   expect((await stream.next()).value).toMatchObject({
     id: "input-a",
-    lane: "task",
+    lane: "control",
   });
   abort.abort();
   await stream.return(undefined);
@@ -306,7 +287,7 @@ test("directory enumeration uses advancing cursors and preserves header-only chi
           parent_dsh_session_id: "cse_root",
           session_thread_id: null,
           header_present: true,
-          next_seq: "0",
+          next_offset: "1",
         },
       ],
       next_after: index === 0 ? "child-a" : null,
@@ -338,83 +319,17 @@ test("public output response loss resends identical keys without accepting a pre
 test("directory and event cursors cannot skip unseen records", async () => {
   const invalid = fixture(() =>
     Response.json({
-      data: [{ dsh_session_id: "child-a", next_seq: "0" }],
+      data: [{ dsh_session_id: "child-a", next_offset: "1" }],
       next_after: "child-z",
     }),
   );
   await expect(invalid.client.listTranscripts()).rejects.toMatchObject({
     code: "invalid_response",
   });
-  const skipped = fixture(() =>
-    Response.json({ header, events: [], next_from_seq: "1" }),
-  );
+  const skipped = fixture(() => transcriptResponse([header], "1", "1"));
   await expect(skipped.client.readTranscript("cse_root")).rejects.toMatchObject(
     { code: "invalid_response" },
   );
-});
-
-test("DSR separates execution completion and cancellation intent from transport status", async () => {
-  for (const state of ["processing", "terminal", "accepted", undefined]) {
-    const { client } = fixture(() =>
-      Response.json({
-        scheduled: 0,
-        applied: 1,
-        ignored: 0,
-        results: [
-          {
-            id: "input",
-            status: "processing",
-            outcome: "applied",
-            execution_status: state,
-          },
-        ],
-      }),
-    );
-    await expect(client.processing("input")).rejects.toMatchObject({
-      code: "processing_unconfirmed",
-    });
-  }
-  const { client } = fixture(() =>
-    Response.json({
-      scheduled: 0,
-      applied: 1,
-      ignored: 0,
-      results: [
-        {
-          id: "input",
-          status: "processing",
-          outcome: "applied",
-          execution_status: "completed",
-          cancel_requested_at: "2026-11-04T00:00:00Z",
-        },
-      ],
-    }),
-  );
-  expect(await client.processing("input")).toBe("completed");
-  expect(client.inputCancelled("input")).toBe(true);
-});
-
-test("DSR treats scheduled task settlement as durable acceptance without claiming a broker ACK", async () => {
-  const { client } = fixture(() =>
-    Response.json({
-      applied: 0,
-      ignored: 0,
-      scheduled: 1,
-      results: [
-        {
-          id: "input",
-          status: "processed",
-          outcome: "scheduled",
-          execution_status: "completed",
-        },
-      ],
-    }),
-  );
-  const response = await client.delivery([
-    { id: "input", status: "processed" },
-  ]);
-  expect(response.scheduled).toBe(1);
-  expect(response.applied).toBe(0);
 });
 
 test("registration rejects missing or malformed frozen context", async () => {
@@ -446,25 +361,21 @@ test("registration carries the complete initial context", async () => {
 
 test("transcript reads send only the sequence cursor", async () => {
   const { client, calls } = fixture(() =>
-    Response.json({
-      header: null,
-      events: [{ seq: 200 }],
-      next_from_seq: null,
-    }),
+    transcriptResponse([{ seq: 199 }], "201"),
   );
   await client.readTranscript("cse_root", "200");
   const url = new URL(calls[0]!.path, "http://localhost");
-  expect(url.pathname.endsWith("/transcripts/cse_root")).toBe(true);
-  expect([...url.searchParams.entries()]).toEqual([["from_seq", "200"]]);
+  expect(url.pathname.endsWith("/transcripts/cse_root/records")).toBe(true);
+  expect([...url.searchParams.entries()]).toEqual([["from_offset", "200"]]);
 });
 
-test("finish_required stops delivery without inventing a finish or retrying the batch", async () => {
+test("input_not_eligible stops delivery without inventing a finish or retrying the batch", async () => {
   const { client, calls } = fixture(() =>
     Response.json(
       {},
       {
         status: 409,
-        headers: { "DSR-Error": "finish_required" },
+        headers: { "DSR-Error": "input_not_eligible" },
       },
     ),
   );
@@ -472,8 +383,41 @@ test("finish_required stops delivery without inventing a finish or retrying the 
     client.delivery([{ id: "input", status: "processed" }]),
   ).rejects.toMatchObject({
     status: 409,
-    code: "finish_required",
+    code: "input_not_eligible",
   });
   expect(calls).toHaveLength(1);
   expect(calls[0]!.path).toEndWith("/inputs/delivery");
+});
+
+test("claim rejects malformed inputs and cancellation timestamps", async () => {
+  for (const response of [
+    {},
+    { input: {} },
+    { input: { id: "a", lane: "control", kind: "user.interrupt" } },
+    {
+      input: { id: "a", lane: "task", kind: "user.message", content: [] },
+      cancel_requested_at: "bad",
+    },
+  ]) {
+    const { client } = fixture(() => Response.json(response));
+    await expect(client.claimInput()).rejects.toBeInstanceOf(DsrError);
+  }
+});
+
+test("claim returns durable task and cancellation without delivery receipts", async () => {
+  const input = {
+    id: "a",
+    lane: "task" as const,
+    kind: "user.message" as const,
+    content: [],
+  };
+  const { client, calls } = fixture(() =>
+    Response.json({ input, cancel_requested_at: "2026-11-04T00:00:00Z" }),
+  );
+  expect(await client.claimInput()).toEqual(input);
+  expect(client.inputCancelled("a")).toBe(true);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.path).toEndWith("/inputs/claim");
+  const empty = fixture(() => Response.json({ input: null }));
+  expect(await empty.client.claimInput()).toBeNull();
 });

@@ -1,9 +1,9 @@
 import { SseProtocolError, sse } from "../sse.ts";
-import { DsrError, decimal, delay, errorOf, object } from "./http.ts";
+import { DsrError, delay, errorOf, object } from "./http.ts";
 import type { DsrClient } from "./client.ts";
 import type { Input } from "./wire.ts";
 
-function parseInput(data: string): Input {
+export function parseInput(data: string): Input {
   let value: unknown;
   try {
     value = JSON.parse(data);
@@ -29,7 +29,6 @@ function parseInput(data: string): Input {
 }
 
 export class DsrInputStream {
-  private cursor = "0";
   constructor(readonly client: DsrClient) {}
 
   async *read(signal: AbortSignal): AsyncGenerator<Input> {
@@ -58,10 +57,9 @@ export class DsrInputStream {
           "DSR-Protocol": "1",
           Accept: "text/event-stream",
         };
-        if (this.cursor !== "0") headers["Last-Event-ID"] = this.cursor;
         arm(15000);
         const response = await this.client.transport.request({
-          path: `${this.client.root}/inputs/stream?from_sequence_num=${this.cursor}`,
+          path: `${this.client.root}/inputs/stream`,
           method: "GET",
           token: this.client.claim.session_token,
           headers,
@@ -75,10 +73,7 @@ export class DsrInputStream {
           if (!frame.data) continue;
           if (frame.event !== "input") throw new DsrError(0, "invalid_input");
           const input = parseInput(frame.data);
-          if (frame.id) {
-            decimal(frame.id);
-            if (BigInt(frame.id) > BigInt(this.cursor)) this.cursor = frame.id;
-          }
+          if (input.lane !== "control") throw new DsrError(0, "invalid_input");
           yield input;
         }
         if (signal.aborted) return;

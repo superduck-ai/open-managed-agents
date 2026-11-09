@@ -343,6 +343,15 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 				h.logger.WarnContext(ctx, "reject code session worker event envelope", "code_session_id", codeSession.ExternalID, "event_id", envelope.EventID)
 				return
 			}
+			if isDSHCodeSession(codeSession) && envelope.EventType == "user.message" {
+				if err := h.service.workerEvents.DoubleAck(ctx, delivery.AckSubject); err != nil {
+					return
+				}
+				if envelope.PayloadRef != nil {
+					h.service.triggerPayloadCleanupNow(ctx, envelope.PayloadRef.CleanupJobID)
+				}
+				continue
+			}
 			if envelope.IsExpired(time.Now().UTC()) {
 				if err := h.service.expireWorkerEvent(ctx, codeSession, envelope); err != nil {
 					h.logger.ErrorContext(ctx, "expire code session worker event", "code_session_id", codeSession.ExternalID, "error", err)
@@ -370,16 +379,7 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 				h.logger.ErrorContext(ctx, "decode code session worker event ID", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
 				return
 			}
-			if isDSHCodeSession(codeSession) && envelope.EventType == "user.message" {
-				scope := db.DSHScope{CodeSessionID: codeSession.ExternalID, CodeSessionUUID: codeSession.UUID, SessionID: codeSession.SessionExternalID, OrganizationUUID: codeSession.OrganizationUUID, WorkspaceUUID: codeSession.WorkspaceUUID, Epoch: epoch}
-				completed, err := h.db.RecordDSHDelivery(ctx, scope, eventID, delivery.AckSubject, cleanupJobID)
-				if err != nil {
-					return
-				}
-				if completed {
-					continue
-				}
-			} else if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID, PublicEventID: publicEvent.ID, Lane: delivery.Lane, PublishedAt: delivery.PublishedAt, TraceParent: delivery.TraceParent}); err != nil {
+			if err := h.service.workerEventAcks.Put(ctx, codeSession.ExternalID, epoch, eventID, workerevents.AckRef{AckSubject: delivery.AckSubject, CleanupJobID: cleanupJobID, PublicEventID: publicEvent.ID, Lane: delivery.Lane, PublishedAt: delivery.PublishedAt, TraceParent: delivery.TraceParent}); err != nil {
 				h.logger.WarnContext(ctx, "store code session worker event ACK", "code_session_id", codeSession.ExternalID, "event_id", eventID, "error", err)
 				return
 			}

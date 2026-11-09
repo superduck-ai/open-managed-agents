@@ -112,7 +112,7 @@ test("the restore boundary rejects an incomplete custom source before replacing 
   try {
     await seed(f.ctx, [event(0), event(1)]);
     await expect(
-      f.ctx.sessionReplication.ensure(header.id, { nextSeq: "2" }),
+      f.ctx.sessionReplication.ensure(header.id, { nextOffset: "3" }),
     ).rejects.toThrow("directory watermark");
     expect(await stored(f.ctx)).toEqual([event(0), event(1)]);
   } finally {
@@ -296,14 +296,14 @@ test("the DSR adapter fetches another page only when its consumer advances", asy
   const calls: string[] = [];
   const client = {
     async listTranscripts() {
-      return [{ dsh_session_id: header.id, next_seq: "2" }];
+      return [{ dsh_session_id: header.id, next_offset: "3" }];
     },
     async readTranscript(_id: string, cursor: string) {
       calls.push(cursor);
       return {
-        header: cursor === "0" ? header : null,
-        events: [event(Number(cursor))],
-        next_from_seq: cursor === "0" ? "1" : null,
+        records: cursor === "0" ? [header, event(0)] : [event(1)],
+        next_offset: "3",
+        next_from_offset: cursor === "0" ? "2" : null,
       };
     },
   } as unknown as DsrClient;
@@ -475,7 +475,7 @@ test("a known transcript read failure does not fall back to an empty directory",
   await expect(
     (async () => {
       for await (const batch of store.read(header.id, header.id, undefined, {
-        nextSeq: "0",
+        nextOffset: "1",
       }))
         void batch;
     })(),
@@ -493,7 +493,7 @@ test.each([false, true])(
       },
       async readTranscript() {
         reads++;
-        return { header, events: [], next_from_seq: null };
+        return { records: [header], next_from_offset: null, next_offset: "1" };
       },
     } as unknown as DsrClient;
     const records = [];
@@ -501,7 +501,7 @@ test.each([false, true])(
       header.id,
       header.id,
       undefined,
-      exists ? { nextSeq: "0" } : null,
+      exists ? { nextOffset: "1" } : null,
     ))
       records.push(...batch);
     expect(reads).toBe(exists ? 1 : 0);

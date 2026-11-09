@@ -9,12 +9,11 @@ type dshTranscriptRow struct {
 	DSHSessionID       string  `db:"dsh_session_id"`
 	ParentDSHSessionID *string `db:"parent_dsh_session_id"`
 	SessionThreadID    *string `db:"session_thread_id"`
-	Header             []byte  `db:"header"`
-	NextSeq            int64   `db:"next_seq"`
+	NextOffset         int64   `db:"next_offset"`
 }
 
-type dshTranscriptEventRow struct {
-	Seq     int64  `db:"seq"`
+type dshTranscriptRecordRow struct {
+	Offset  int64  `db:"record_offset"`
 	Payload []byte `db:"payload"`
 }
 
@@ -28,13 +27,12 @@ type dshTranscriptInsert struct {
 	Scope              DSHScope
 	DSHSessionID       string
 	ParentDSHSessionID *string
-	Header             []byte
 }
 
-type dshTranscriptEventsInsert struct {
+type dshTranscriptRecordsInsert struct {
 	Scope          DSHScope
 	TranscriptUUID string
-	Events         []DSHTranscriptEvent
+	Records        []DSHTranscriptRecord
 }
 
 type DSHTranscriptMapper interface {
@@ -45,7 +43,7 @@ type DSHTranscriptMapper interface {
 	Find(ctx context.Context, scope DSHScope, dshSessionID string) (dshTranscriptRow, bool, error)
 	Insert(ctx context.Context, input dshTranscriptInsert) (int64, error)
 	List(ctx context.Context, scope DSHScope, after string, limit int) ([]dshTranscriptRow, error)
-	ReadEvents(ctx context.Context, scope DSHScope, transcriptUUID string, fromSeq int64, limit int) ([]dshTranscriptEventRow, error)
-	InsertEvents(ctx context.Context, input dshTranscriptEventsInsert) (int64, error)
-	SetNextSeq(ctx context.Context, scope DSHScope, transcriptUUID string, nextSeq int64) (int64, error)
+	ReadRecords(ctx context.Context, scope DSHScope, transcriptUUID string, fromOffset int64, limit int) ([]dshTranscriptRecordRow, error)
+	InsertRecords(ctx context.Context, input dshTranscriptRecordsInsert) (int64, error)
+	SetNextOffset(ctx context.Context, scope DSHScope, transcriptUUID string, nextOffset int64) (int64, error)
 }

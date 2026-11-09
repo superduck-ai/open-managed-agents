@@ -21,7 +21,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/dsh"
-	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
 )
 
 func TestChatBrainDSR(t *testing.T) {
@@ -75,8 +74,8 @@ func TestChatBrainDSR(t *testing.T) {
 	firstInput, firstAnswer := input, final.ID
 	first.stop(t)
 	verifyDSRStateContracts(t, e, f, token)
-	verifyDSRACKRecovery(t, e, f, input)
-	chatProof(t, started, "dsr_ack_recovery")
+	verifyDSRCompletedInputNotClaimed(t, e, f)
+	chatProof(t, started, "dsr_completed_input_not_claimed")
 	input = submitChat(t, f, "请在接管后继续回复固定文本。")
 	configureChatModel(t, e, model.URL)
 	claimToken, err := os.ReadFile(cfg.CodeSession.BrainClaimTokenFile)
@@ -115,11 +114,16 @@ func dsrRequest(t *testing.T, e *liveEnv, method, path, token string, body any, 
 	t.Helper()
 	raw, err := json.Marshal(body)
 	requireOK(t, err)
+	contentType := "application/json"
+	if records, ok := body.([]byte); ok {
+		raw = records
+		contentType = "application/x-ndjson"
+	}
 	request, err := http.NewRequestWithContext(t.Context(), method, e.url+path, bytes.NewReader(raw))
 	requireOK(t, err)
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("DSR-Protocol", "1")
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("X-Worker-ID", "dsr-interface-probe")
 	response, err := http.DefaultClient.Do(request)
 	requireOK(t, err)
@@ -167,17 +171,13 @@ func verifyDSRTranscriptInterfaces(t *testing.T, e *liveEnv, f *liveSession, tok
 	t.Helper()
 	base := "/v1/dsr/sessions/" + f.code.ExternalID
 	dsrRequest(t, e, "GET", base+"/transcripts?limit=1", token, nil, 200)
-	raw := dsrRequest(t, e, "GET", base+"/transcripts/"+f.code.ExternalID+"?from_seq=0", token, nil, 200)
-	var page struct {
-		Header json.RawMessage   `json:"header"`
-		Events []json.RawMessage `json:"events"`
-	}
-	requireOK(t, json.Unmarshal(raw, &page))
-	if len(page.Events) == 0 {
+	raw := dsrRequest(t, e, "GET", base+"/transcripts/"+f.code.ExternalID+"/records?from_offset=0", token, nil, 200)
+	lines := bytes.Split(raw, []byte{'\n'})
+	if len(lines) < 3 {
 		t.Fatal("missing native log")
 	}
-	dsrRequest(t, e, "PUT", base+"/transcripts/"+f.code.ExternalID+"/header", token, map[string]any{"parent_dsh_session_id": nil, "header": page.Header}, 200)
-	dsrRequest(t, e, "POST", base+"/transcripts/"+f.code.ExternalID+"/events", token, map[string]any{"events": page.Events[:1]}, 200)
+	prefix := append(bytes.Join(lines[:2], []byte{'\n'}), '\n')
+	dsrRequest(t, e, "POST", base+"/transcripts/"+f.code.ExternalID+"/records?from_offset=0", token, prefix, 200)
 	dsrRequest(t, e, "POST", base+"/public-events", token, map[string]any{"events": []any{map[string]any{"id": "invalid-output", "type": "user.message", "content": []any{}}}}, 400)
 	dsrRequest(t, e, "POST", base+"/inputs/missing/finish", token, map[string]string{"result": "recovered", "failure_code": "interrupted_recovery"}, 400)
 	dsrRequest(t, e, "POST", base+"/inputs/missing/finish", token, map[string]string{"result": "failed", "reason": "turn_failed"}, 400)
@@ -185,18 +185,15 @@ func verifyDSRTranscriptInterfaces(t *testing.T, e *liveEnv, f *liveSession, tok
 		if event.Type != "user.message" {
 			continue
 		}
-		raw := dsrRequest(t, e, "POST", base+"/inputs/delivery", token, map[string]any{"updates": []any{map[string]string{"id": event.ID, "status": "processing"}}}, 200)
-		var response dsh.DeliveryResponse
-		requireOK(t, json.Unmarshal(raw, &response))
-		if len(response.Results) != 1 || response.Results[0].ExecutionStatus != "completed" || bytes.Contains(raw, []byte(`"turn_state"`)) || bytes.Contains(raw, []byte(`"cancel_requested"`)) {
-			t.Fatalf("execution response=%s", raw)
-		}
+		dsrRequest(t, e, "POST", base+"/inputs/delivery", token, map[string]any{"updates": []any{map[string]string{"id": event.ID, "status": "processing"}}}, 409)
 		dsrRequest(t, e, "POST", base+"/inputs/"+event.ID+"/finish", token, map[string]string{"result": "success"}, 200)
 		dsrRequest(t, e, "POST", base+"/inputs/"+event.ID+"/finish", token, map[string]string{"result": "failed", "failure_code": "execution_failed"}, 409)
-		raw = dsrRequest(t, e, "POST", base+"/inputs/delivery", token, map[string]any{"updates": []any{map[string]string{"id": event.ID, "status": "processed"}}}, 200)
+		dsrRequest(t, e, "POST", base+"/inputs/delivery", token, map[string]any{"updates": []any{map[string]string{"id": event.ID, "status": "processed"}}}, 409)
+		raw := dsrRequest(t, e, "POST", base+"/inputs/claim", token, map[string]any{}, 200)
+		var response dsh.InputClaim
 		requireOK(t, json.Unmarshal(raw, &response))
-		if response.Scheduled != 1 || response.Applied != 0 || response.Results[0].Outcome != "scheduled" {
-			t.Fatalf("asynchronous settlement response=%s", raw)
+		if string(response.Input) != "null" {
+			t.Fatalf("completed input claimed: %s", raw)
 		}
 
 		break
@@ -330,39 +327,13 @@ func answersThreadID(t *testing.T, f *liveSession) string {
 	return id
 }
 
-func verifyDSRACKRecovery(t *testing.T, e *liveEnv, f *liveSession, inputID string) {
+func verifyDSRCompletedInputNotClaimed(t *testing.T, e *liveEnv, f *liveSession) {
 	t.Helper()
-	database := e.database.SQLDB()
-	waitRealWorker(t, "initial acknowledged delivery removed", func() bool {
-		var remaining int
-		requireOK(t, database.QueryRowContext(t.Context(), `SELECT count(*) FROM dsh_input_deliveries WHERE organization_uuid=$1 AND workspace_uuid=$2 AND code_session_uuid=$3 AND input_id=$4`, f.code.OrganizationUUID, f.code.WorkspaceUUID, f.code.UUID, inputID).Scan(&remaining))
-		return remaining == 0
-	})
-	original := dsrACKProbeSubject(t, e, f, inputID)
-	_, err := database.ExecContext(t.Context(), `INSERT INTO dsh_input_deliveries (organization_uuid,workspace_uuid,code_session_uuid,input_execution_uuid,input_id,ack_subject,status) SELECT organization_uuid,workspace_uuid,code_session_uuid,uuid,input_id,'verify.invalid.ack','pending' FROM dsh_input_executions WHERE organization_uuid=$1 AND workspace_uuid=$2 AND code_session_uuid=$3 AND input_id=$4`, f.code.OrganizationUUID, f.code.WorkspaceUUID, f.code.UUID, inputID)
+	_, err := e.database.SQLDB().ExecContext(t.Context(), `UPDATE code_sessions SET worker_lease_expires_at=now()-interval '1 hour' WHERE organization_uuid=$1 AND workspace_uuid=$2 AND uuid=$3`, f.code.OrganizationUUID, f.code.WorkspaceUUID, f.code.UUID)
 	requireOK(t, err)
-	waitRealWorker(t, "backend ACK retry without Brain", func() bool {
-		var attempts int
-		requireOK(t, database.QueryRowContext(t.Context(), `SELECT attempts FROM dsh_input_deliveries WHERE organization_uuid=$1 AND workspace_uuid=$2 AND code_session_uuid=$3 AND input_id=$4`, f.code.OrganizationUUID, f.code.WorkspaceUUID, f.code.UUID, inputID).Scan(&attempts))
-		return attempts > 0
-	})
-	_, err = database.ExecContext(t.Context(), `UPDATE code_sessions SET worker_lease_expires_at=now()-interval '1 hour' WHERE organization_uuid=$1 AND workspace_uuid=$2 AND uuid=$3`, f.code.OrganizationUUID, f.code.WorkspaceUUID, f.code.UUID)
-	requireOK(t, err)
-	if _, found, err := e.database.ClaimNextCodeSession(t.Context(), db.ClaimCodeSessionInput{WorkerProtocol: "dsr1", WorkerID: "ack-must-not-claim", OAuthAccessTokenHash: "unused", ClaimTTL: 30 * time.Second, LeaseGrace: 10 * time.Second, MaxAttempts: 3, ExhaustedHold: time.Minute}); err != nil || found {
-		t.Fatalf("pending ACK caused Brain claim: found=%v err=%v", found, err)
+	if _, found, err := e.database.ClaimNextCodeSession(t.Context(), db.ClaimCodeSessionInput{WorkerProtocol: "dsr1", WorkerID: "completed-must-not-claim", OAuthAccessTokenHash: "unused", ClaimTTL: 30 * time.Second, LeaseGrace: 10 * time.Second, MaxAttempts: 3, ExhaustedHold: time.Minute}); err != nil || found {
+		t.Fatalf("completed input caused Brain claim: found=%v err=%v", found, err)
 	}
-	var status, result string
-	requireOK(t, database.QueryRowContext(t.Context(), `SELECT status,result FROM dsh_input_executions WHERE organization_uuid=$1 AND workspace_uuid=$2 AND code_session_uuid=$3 AND input_id=$4`, f.code.OrganizationUUID, f.code.WorkspaceUUID, f.code.UUID, inputID).Scan(&status, &result))
-	if status != "completed" || result != "success" {
-		t.Fatalf("ACK failure changed business result: status=%s result=%s", status, result)
-	}
-	_, err = database.ExecContext(t.Context(), `UPDATE dsh_input_deliveries SET ack_subject=$5,next_attempt_at=now(),lease_token=NULL,lease_until=NULL WHERE organization_uuid=$1 AND workspace_uuid=$2 AND code_session_uuid=$3 AND input_id=$4`, f.code.OrganizationUUID, f.code.WorkspaceUUID, f.code.UUID, inputID, original)
-	requireOK(t, err)
-	waitRealWorker(t, "backend settles ACK without Brain", func() bool {
-		var remaining int
-		requireOK(t, database.QueryRowContext(t.Context(), `SELECT count(*) FROM dsh_input_deliveries WHERE organization_uuid=$1 AND workspace_uuid=$2 AND code_session_uuid=$3 AND input_id=$4`, f.code.OrganizationUUID, f.code.WorkspaceUUID, f.code.UUID, inputID).Scan(&remaining))
-		return remaining == 0
-	})
 }
 
 func verifyDSRStateContracts(t *testing.T, e *liveEnv, f *liveSession, token string) {
@@ -380,27 +351,4 @@ func verifyDSRStateContracts(t *testing.T, e *liveEnv, f *liveSession, token str
 	}
 	changed := json.RawMessage(`{"id":"digest-probe","type":"system.message","content":[{"type":"text","text":"changed"}]}`)
 	dsrRequest(t, e, "POST", base+"/public-events", token, map[string]any{"events": []json.RawMessage{changed}}, 409)
-}
-
-func dsrACKProbeSubject(t *testing.T, e *liveEnv, f *liveSession, inputID string) string {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	envelope := workerevents.EventEnvelope(f.code.ExternalID, inputID, "", "user", "", json.RawMessage(`{"type":"user.message","content":[]}`), time.Now().Add(time.Hour))
-	requireOK(t, e.broker.Publish(ctx, "ack-delete-probe-"+inputID, envelope))
-	sub, err := e.broker.Subscribe(ctx, f.code.ExternalID)
-	requireOK(t, err)
-	defer sub.Close()
-	select {
-	case delivery := <-sub.Messages():
-		if delivery.Envelope.EventID != inputID || delivery.AckSubject == "" {
-			t.Fatal("unexpected ACK probe delivery")
-		}
-		return delivery.AckSubject
-	case err := <-sub.Errors():
-		t.Fatalf("ACK probe=%v", err)
-	case <-ctx.Done():
-		t.Fatal("ACK probe timed out")
-	}
-	return ""
 }

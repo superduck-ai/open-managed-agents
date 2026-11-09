@@ -81,15 +81,13 @@ Brain doctor 同时检查 Worker 的 `environment-manager task-run --help` 声�
 
 `chat doctor brain-dsr` / `chat brain-dsr` 使用真实 Brain 可执行文件、公开 Session API、Runner、Docker MCP、PostgreSQL、Redis、JetStream 与 MinIO，仅脚本化上游模型。后端显式选择 `brain_worker_protocol: dsr1`，Brain 设置 `OMA_BRAIN_PROTOCOL=dsr1`。
 
-必需阶段为 `dsr_roundtrip`、`dsr_transcript_contracts`、`dsr_tool_approval`、`dsr_cancel`、`dsr_ack_recovery`、`dsr_claim_release`、`dsr_takeover`。场景检查当前 14 个主接口，中文预览/最终消息/历史，日志重复与冲突，审批确认后实际工具写入，取消后无沙箱副作用，以及 SIGKILL 后真实租约过期、claim/release、冷接管和旧 epoch 拒绝。报告必须包含全部阶段及资源清理成功。
+必需阶段为 `dsr_roundtrip`、`dsr_transcript_contracts`、`dsr_tool_approval`、`dsr_cancel`、`dsr_completed_input_not_claimed`、`dsr_claim_release`、`dsr_takeover`。场景检查当前主接口，中文预览/最终消息/历史，日志重复与冲突，审批确认后实际工具写入，取消后无沙箱副作用，以及 SIGKILL 后真实租约过期、claim/release、冷接管和旧 epoch 拒绝。报告必须包含全部阶段及资源清理成功。
 
 此场景不验证新 transcript 归档、全部子线程/附件/压缩能力、真实模型质量、云端网络分区或性能。普通原生运行时测试另覆盖审批挂起与双工具批次在 SIGKILL 后的防重放，不能代替这个真实后端场景。
 
-DSR 输入执行模型验收同时检查 delivery 的 execution_status=completed、旧 turn_state/cancel_requested 字段消失，finish 拒绝 recovered 与旧 reason，且不可改写已提交结果。表结构通过全新隔离数据库应用原始 goose 定义。
+DSR 输入执行模型验收检查 task 使用 claim/finish，拒绝 task delivery 回执；完成后 claim 返回空，不重复执行。finish 拒绝 recovered 与旧 reason，且不可改写已提交结果。00121 migration 移除投递结算表。
 
-DSR 独立 ACK 补偿新增 dsr_ack_recovery 阶段：停止真实 Brain，先确认已完成输入的投递行已删除，再发布并消费 run-owned JetStream 测试投递取得 Reply Subject，创建该输入的无效 pending 投递，等待真实后端自动重试；确认执行结果仍 completed/success，过期 owner 也不会仅因 pending ACK 被领取。恢复真实 Reply Subject 后，不启动 Brain 即须由后端确认。仅故障注入 run-owned 投递元数据，不新增生产故障开关。数据库测试另覆盖租约过期、旧租约/新投递 CAS、租户隔离、对象 cleanup 联动与已结算记录清理。
-
-独立 ACK 场景会显式推进 owner 租约过期，检查 pending ACK 不触发领取，不测量 DSR 的完整 TTL 等待时序。
+`dsr_completed_input_not_claimed` 阶段停止真实 Brain 并显式推进 owner 租约过期，确认已完成输入不会触发新的 Brain claim。该阶段不测量完整 TTL 等待时序。数据库回归另覆盖稳定排序、并发领取重试、旧 epoch、跨租户拒绝以及 running 输入接管。
 
 公开 system.message 原始 JSON 调整字段顺序与空白后仍 duplicate，内容变化返回 409。
 

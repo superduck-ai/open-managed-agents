@@ -1,49 +1,3 @@
-// ============================================================================
-// DsrSession：一个被认领会话的“本地运行时 + 协议适配”
-// ============================================================================
-//
-// DsrOwner 负责会话级生命周期（租约、输入流、释放），DsrSession 负责
-// “这条会话内部到底怎么跑”。它是 DSH 运行时和 DSR 协议之间的桥：
-//
-//   ┌────────────────────── DsrSession ──────────────────────┐
-//   │                                                        │
-//   │  SessionRuntime（原生 agent loop / 模型 / 工具）        │
-//   │        │                                               │
-//   │        ├─ onEvent   -> record()   -> pending[]         │
-//   │        ├─ onStream  -> stream()   -> preview 事件       │
-//   │        └─ approve   -> requestApproval() -> 服务器审批  │
-//   │                                                        │
-//   │  Subagents（子线程）                                    │
-//   │        └─ DsrSubagentBridge -> PublicEvent              │
-//   │                                                        │
-//   │  checkpoint(): 本地 flush + transcript 上传 + 公共事件  │
-//   └────────────────────────────────────────────────────────┘
-//
-// 几个最重要的概念：
-//
-//   inputId   当前正在处理的任务输入 ID。审批请求、消息 ID 都要关联到它。
-//   turn      一次 user.message 到 turn/end 之间的原生执行区间。
-//   suspended 会话暂时无法继续（审批等待超时 / 子 agent 未完成）。
-//             此时不 finish 输入，保留打开状态，等重新认领后继续。
-//   finish 记录 plugin:oma/dsr-finish 把“这个输入已得出结论”持久化下来。
-//             进程崩溃后重放同一个输入时，直接复用结论，避免重复执行。
-//
-// 一次输入的典型路径：
-//
-//   Owner 收到 input
-//     -> receive(input)
-//        -> 已有 finish 记录？ 是 -> 幂等重放，直接 finish
-//        -> processing() 已完成？ 是 -> 只回 processed
-//        -> 已被取消？         是 -> cancelOpenTurn + completeCancelled
-//        -> 恢复子 agent；若挂起 -> suspended
-//        -> 执行 runtime.run(...)
-//           -> afterRun 有未闭合 turn？ -> suspended
-//           -> 否则 complete() -> 写 finish 记录 -> checkpoint -> finish + processed
-//
-// 关于“为什么每个关键步骤都要 checkpoint”：
-//   之后，这些状态才真正可见；崩溃恢复时才能知道“做到哪了”。
-// ============================================================================
-
 import type { Context } from "@deepseek-ai/cordis";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import {
@@ -71,6 +25,7 @@ import { appendedSystemContext } from "../runtime/system-context.ts";
 import { traceHooks } from "../observability/trace-context.ts";
 import { withAttachmentSession } from "../attachments/remote.ts";
 import { dsrExecutor, DsrSuspend } from "./executor.ts";
+import { DsrPreviewBuffer } from "./preview-buffer.ts";
 import { DsrError, delay, object } from "./http.ts";
 import { dsrToolIdentity } from "./tools.ts";
 import { DsrSubagentBridge } from "./subagents.ts";
@@ -105,6 +60,7 @@ export class DsrSession {
   suspended = false;
   // 公共事件的串行发布链。所有 publish 都排在这条链上，保证服务器看到的顺序。
   private publications: Promise<void> = Promise.resolve();
+  private readonly previews: DsrPreviewBuffer;
   // 待发布的公共事件缓冲区，由 checkpoint() 批量刷出。
   private pending: PublicEvent[] = [];
   // 已入队的 assistant 事件 ID，防止同一条消息被 record 和 plugin record 重复入队。
@@ -129,6 +85,15 @@ export class DsrSession {
     readonly config: SessionRuntimeConfig,
     readonly options: { approvalWaitMs?: number } = {},
   ) {
+    this.previews = new DsrPreviewBuffer((events) => {
+      this.publications = this.publications.then(() =>
+        this.client.publish(events, this.abort.signal),
+      );
+      void this.publications.catch((error) => {
+        this.failure = error;
+        this.stop();
+      });
+    });
     this.assistant = new AssistantStream(
       config.id,
       config.modelMessageID,
@@ -189,7 +154,7 @@ export class DsrSession {
     );
     await this.ctx.sessionReplication.ensure(
       this.id,
-      transcript ? { nextSeq: transcript.next_seq } : null,
+      transcript ? { nextOffset: transcript.next_offset } : null,
     );
     await this.subagentBridge.restoreThreads(directory);
     await this.runtime.open();
@@ -204,6 +169,7 @@ export class DsrSession {
 
   checkpoint(session?: Session): Promise<void> {
     if (this.failure) return Promise.reject(this.failure);
+    this.previews.flush();
     const pending = this.pending.splice(0);
     const targets = this.publication.targets();
     const sessions = new Set<Session>();
@@ -316,21 +282,6 @@ export class DsrSession {
     return true;
   }
 
-  /**
-   * 处理流式帧（模型边生成边推送）。
-   *
-   *   event_start / event_delta -> 立即作为 preview.start / preview.delta 发布，
-   *                               让前端实时看到内容；它们不落 transcript。
-   *   其他（块完成）            -> 作为 plugin record 写入对应会话，
-   *                               等 checkpoint 时随 transcript 一起持久化。
-   *
-   * preview 使用随机 UUID：它们是高频临时事件，不需要幂等。
-   * 发布失败会记录到 failure 并停止会话，避免继续产出无法送达的内容。
-   *
-   * @example
-   *   stream({type: "event_delta", ...}, "ses_child")
-   *   // -> {id: "<uuid>", type: "preview.delta", session_thread_id: "ses_child", ...}
-   */
   stream(frame: AssistantStreamFrame, thread?: string): void {
     for (const payload of this.assistant.record(
       frame,
@@ -345,14 +296,9 @@ export class DsrSession {
             payload.type === "event_start" ? "preview.start" : "preview.delta",
           ...(thread ? { session_thread_id: thread } : {}),
         } as PublicEvent;
-        this.publications = this.publications.then(() =>
-          this.client.publish([preview], this.abort.signal),
-        );
-        void this.publications.catch((error) => {
-          this.failure = error;
-          this.stop();
-        });
+        this.previews.enqueue(preview);
       } else {
+        this.previews.flush();
         // 块完成必须持久化：找到所属会话（子线程或根会话）后写入 plugin record。
         const session = thread
           ? this.ctx.sessions.get(SessionId(thread))
@@ -365,26 +311,6 @@ export class DsrSession {
     }
   }
 
-  /**
-   * 处理一条任务输入（lane="task"）。这是会话执行的主入口。
-   *
-   * 幂等/恢复顺序（每一步都很关键）：
-   *   1. 已有 dsr-finish 记录：说明这个输入之前已经得出结论（可能进程崩溃在
-   *      “写完结论但没来得及回执”之间），直接重放 finish + processed；
-   *   2. processing() 返回 completed：服务器侧已完成，只补一个 processed；
-   *   3. 输入已被取消：恢复子 agent、取消打开 turn、写 cancelled 结论；
-   *   4. 恢复子 agent；若需要挂起（审批未完成等），标记 suspended 并返回；
-   *   5. 历史里已有对应 turn/end：直接复用结论；
-   *   6. 历史里有打开 turn 但找不到这条输入：说明事件流与输入不一致，报错；
-   *   7. 正常执行 runtime.run，并在 afterRun 里决定 complete 还是 suspend。
-   *
-   * @example
-   *   // 正常：输入 in_1 -> runtime.run -> turn/end(completed)
-   *   // -> complete() -> finish("in_1", {result: "success"}) -> processed
-   *
-   *   // 崩溃重放：transcript 里已有 plugin:oma/dsr-finish(in_1, success)
-   *   // -> 不再执行模型，直接 finish 一次（服务器幂等）
-   */
   async receive(input: Extract<Input, { lane: "task" }>): Promise<void> {
     this.inputId = input.id;
     traceHooks.inputReceived(this.id, input.trace_context);
@@ -404,15 +330,6 @@ export class DsrSession {
       if (data.version !== 2)
         throw new DsrError(0, "unsupported_finish_version");
       await this.finish(input.id, data.completion);
-      return;
-    }
-    // 2. 询问服务器：这个输入之前是否已经执行完成。
-    const state = await this.client.processing(input.id, this.abort.signal);
-    if (state === "completed") {
-      await this.client.delivery(
-        [{ id: input.id, status: "processed" }],
-        this.abort.signal,
-      );
       return;
     }
     // 3. 等待期间用户取消了输入：取消当前打开 turn，并写 cancelled 结论。
@@ -535,19 +452,8 @@ export class DsrSession {
     await this.finish(id, completion);
   }
 
-  /**
-   * 提交结论并回执 processed。
-   *
-   * 顺序不能反：先 finish 告诉服务器“这个输入以什么结论结束”，
-   * 再 delivery processed 告诉服务器“可以合并/清理投递状态”。
-   * 服务器对 finish 做幂等校验，重复提交相同结论是安全的。
-   */
   private async finish(id: string, completion: Finish): Promise<void> {
     await this.client.finish(id, completion, this.abort.signal);
-    await this.client.delivery(
-      [{ id, status: "processed" }],
-      this.abort.signal,
-    );
   }
 
   async control(
@@ -572,7 +478,11 @@ export class DsrSession {
       default:
         error = "unsupported_input";
     }
-    await report({ id: input.id, status: "processed", ...(error ? { error } : {}) });
+    await report({
+      id: input.id,
+      status: "processed",
+      ...(error ? { error } : {}),
+    });
   }
 
   /**
@@ -735,6 +645,7 @@ export class DsrSession {
   }
   // 停止原生运行时和所有子 agent；不负责关闭持久化（由 close 做）。
   stop(): void {
+    this.previews.close();
     this.runtime.stop();
     this.subagents.stop();
   }
@@ -757,8 +668,10 @@ export class DsrSession {
       await this.subagents.close();
       await this.runtime.close();
       await this.ctx.sessionReplication.drain(this.id, timeoutMs);
+      this.previews.flush();
       await this.publications.catch(() => {});
     } finally {
+      this.previews.close();
       clearTimeout(deadline);
     }
   }

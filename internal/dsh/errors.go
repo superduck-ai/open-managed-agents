@@ -12,10 +12,10 @@ import (
 var ErrUnauthenticated = errors.New("invalid DSR session credential")
 
 type protocolError struct {
-	status  int
-	code    string
-	message string
-	nextSeq *int64
+	status     int
+	code       string
+	message    string
+	nextOffset *int64
 }
 
 func (e *protocolError) Error() string { return e.message }
@@ -26,9 +26,6 @@ func invalidRequest() error {
 func unsupportedProtocol() error {
 	return &protocolError{status: http.StatusBadRequest, code: "unsupported_protocol", message: "Unsupported DSR protocol"}
 }
-func unsupportedTranscript() error {
-	return &protocolError{status: http.StatusBadRequest, code: "unsupported_transcript_version", message: "Unsupported native transcript version"}
-}
 func unauthorized() error {
 	return &protocolError{status: http.StatusUnauthorized, code: "unauthorized", message: "Invalid DSR session token"}
 }
@@ -36,14 +33,14 @@ func payloadTooLarge() error {
 	return &protocolError{status: http.StatusRequestEntityTooLarge, code: "payload_too_large", message: "DSR payload exceeds the size limit"}
 }
 
-func writeError(w http.ResponseWriter, r *http.Request, err error, nextSeq *int64) {
+func writeError(w http.ResponseWriter, r *http.Request, err error, nextOffset *int64) {
 	var protocol *protocolError
 	if !errors.As(err, &protocol) {
-		protocol = storageError(err, nextSeq)
+		protocol = storageError(err, nextOffset)
 	}
 	w.Header().Set("DSR-Error", protocol.code)
-	if protocol.nextSeq != nil {
-		w.Header().Set("DSR-Next-Seq", strconv.FormatInt(*protocol.nextSeq, 10))
+	if protocol.nextOffset != nil {
+		w.Header().Set("DSR-Next-Offset", strconv.FormatInt(*protocol.nextOffset, 10))
 	}
 	kind := "invalid_request_error"
 	if protocol.status >= 500 {
@@ -58,7 +55,7 @@ func writeError(w http.ResponseWriter, r *http.Request, err error, nextSeq *int6
 	httpapi.WriteError(w, r, httpapi.NewError(protocol.status, kind, protocol.message))
 }
 
-func storageError(err error, nextSeq *int64) *protocolError {
+func storageError(err error, nextOffset *int64) *protocolError {
 	result := &protocolError{status: http.StatusInternalServerError, code: "internal_error", message: "DSR operation failed"}
 	switch {
 	case errors.Is(err, ErrUnauthenticated):
@@ -74,11 +71,9 @@ func storageError(err error, nextSeq *int64) *protocolError {
 	case errors.Is(err, db.ErrDSHTranscriptConflict):
 		result.status, result.code, result.message = 409, "transcript_conflict", "Transcript content conflicts with confirmed history"
 	case errors.Is(err, db.ErrDSHTranscriptGap):
-		result.status, result.code, result.message, result.nextSeq = 409, "transcript_gap", "Transcript has a sequence gap", nextSeq
+		result.status, result.code, result.message, result.nextOffset = 409, "transcript_gap", "Transcript has a sequence gap", nextOffset
 	case errors.Is(err, db.ErrDSHInputNotEligible):
 		result.status, result.code, result.message = 409, "input_not_eligible", "Input is not eligible for this operation"
-	case errors.Is(err, db.ErrDSHFinishRequired):
-		result.status, result.code, result.message = 409, "finish_required", "Finish must be confirmed before acknowledging the input"
 	case errors.Is(err, db.ErrDSHFinishConflict):
 		result.status, result.code, result.message = 409, "finish_idempotency_mismatch", "Finish differs from confirmed result"
 	case errors.Is(err, db.ErrDSHPermissionConflict):

@@ -237,8 +237,6 @@ export interface Delivery {
  * 回执接口的响应。results 必须与请求里的 updates 一一对应。
  *
  * outcome：applied（本次生效）/ ignored（重复或已处理）/ scheduled（排队）。
- * cancel_requested_at：服务器在回执里顺带告诉 worker“这个输入已被取消”。
- * execution_status：processing 回执专用，告诉 worker 当前执行状态。
  */
 export interface DeliveryResult {
   applied: number;
@@ -248,38 +246,20 @@ export interface DeliveryResult {
     id: string;
     status: Delivery["status"];
     outcome: "applied" | "ignored" | "scheduled";
-    cancel_requested_at?: string;
-    execution_status?: "accepted" | "running" | "completed";
   }[];
 }
 
-/**
- * transcript 目录项。next_seq 是该会话已持久化的下一个事件序号。
- *
- * @example
- *   {dsh_session_id: "ses_root", parent_dsh_session_id: null,
- *    session_thread_id: null, header_present: true, next_seq: "42"}
- */
 export interface Transcript {
   dsh_session_id: string;
   parent_dsh_session_id: string | null;
   session_thread_id: string | null;
-  header_present: boolean;
-  next_seq: string;
+  next_offset: string;
 }
 
-/**
- * transcript 分页读取结果。
- *
- * header 只在 from_seq=0 时返回；next_from_seq 为 null 表示读完了。
- *
- * @example
- *   {header: {...}, events: [seq 0..199], next_from_seq: "200"}
- */
 export interface TranscriptPage {
-  header: SessionHeader | null;
-  events: SessionEvent[];
-  next_from_seq: string | null;
+  records: (SessionHeader | SessionEvent)[];
+  next_from_offset: string | null;
+  next_offset: string;
 }
 
 /**

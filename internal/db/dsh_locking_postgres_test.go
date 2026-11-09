@@ -31,7 +31,7 @@ func newDSHLockFixture(t *testing.T) dshLockFixture {
 		t.Fatalf("code=%v,%v", found, err)
 	}
 	scope := DSHScope{CodeSessionID: id, OrganizationUUID: code.OrganizationUUID, WorkspaceUUID: code.WorkspaceUUID, CodeSessionUUID: code.UUID, SessionID: code.SessionExternalID, Epoch: 7}
-	if _, err := store.PutDSHTranscript(ctx, scope, "root", nil, []byte(`{"version":4,"id":"root"}`)); err != nil {
+	if _, err := store.AppendDSHTranscript(ctx, scope, "root", nil, []DSHTranscriptRecord{{Offset: 0, Payload: []byte(`{"version":4,"id":"root"}`)}}); err != nil {
 		t.Fatal(err)
 	}
 	return dshLockFixture{ctx, database, store, scope, code}
@@ -89,7 +89,7 @@ func holdDSHAppend(t *testing.T, f dshLockFixture) func() {
 		if !found {
 			return ErrNotFound
 		}
-		return appendDSHEvents(f.ctx, mapper, f.scope, row, []DSHTranscriptEvent{{Seq: 0, Payload: []byte(`{"seq":0}`)}}, nil, &DSHTranscriptAppendResult{})
+		return appendDSHRecords(f.ctx, mapper, f.scope, row, []DSHTranscriptRecord{{Offset: 1, Payload: []byte(`{"seq":0}`)}}, nil, &DSHTranscriptAppendResult{})
 	})
 }
 
@@ -150,14 +150,14 @@ func TestDSHLockingPostgresOwnershipChangesWait(t *testing.T) {
 	if err != nil || epoch != 8 {
 		t.Fatalf("rotate=%d,%v", epoch, err)
 	}
-	if _, err := f.store.AppendDSHTranscript(f.ctx, f.scope, "root", []DSHTranscriptEvent{{Seq: 1, Payload: []byte(`{"seq":1}`)}}); !errors.Is(err, ErrWorkerEpochMismatch) {
+	if _, err := f.store.AppendDSHTranscript(f.ctx, f.scope, "root", nil, []DSHTranscriptRecord{{Offset: 2, Payload: []byte(`{"seq":1}`)}}); !errors.Is(err, ErrWorkerEpochMismatch) {
 		t.Fatalf("old worker write=%v", err)
 	}
 	f.scope.Epoch = 8
 	if _, err := f.store.RegisterDSHWorker(f.ctx, f.scope); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.AppendDSHTranscript(f.ctx, f.scope, "root", []DSHTranscriptEvent{{Seq: 1, Payload: []byte(`{"seq":1}`)}}); err != nil {
+	if _, err := f.store.AppendDSHTranscript(f.ctx, f.scope, "root", nil, []DSHTranscriptRecord{{Offset: 2, Payload: []byte(`{"seq":1}`)}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -165,7 +165,7 @@ func TestDSHLockingPostgresOwnershipChangesWait(t *testing.T) {
 func TestDSHLockingPostgresAppendIsolationAndHeartbeat(t *testing.T) {
 	f := newDSHLockFixture(t)
 	parent := "root"
-	if _, err := f.store.PutDSHTranscript(f.ctx, f.scope, "other", &parent, []byte(`{"version":4,"id":"other"}`)); err != nil {
+	if _, err := f.store.AppendDSHTranscript(f.ctx, f.scope, "other", &parent, []DSHTranscriptRecord{{Offset: 0, Payload: []byte(`{"version":4,"id":"other"}`)}}); err != nil {
 		t.Fatal(err)
 	}
 	release := holdDSHAppend(t, f)
@@ -175,19 +175,19 @@ func TestDSHLockingPostgresAppendIsolationAndHeartbeat(t *testing.T) {
 	if err != nil || time.Until(expires) < 19*time.Second {
 		t.Fatalf("heartbeat blocked by append: %v", err)
 	}
-	if _, err := f.store.AppendDSHTranscript(ctx, f.scope, "other", []DSHTranscriptEvent{{Seq: 0, Payload: []byte(`{"seq":0}`)}}); err != nil {
+	if _, err := f.store.AppendDSHTranscript(ctx, f.scope, "other", nil, []DSHTranscriptRecord{{Offset: 1, Payload: []byte(`{"seq":0}`)}}); err != nil {
 		t.Fatalf("different transcript blocked: %v", err)
 	}
-	if _, err := f.store.PutDSHTranscript(ctx, f.scope, "new-child", &parent, []byte(`{"version":4,"id":"new-child"}`)); err != nil {
+	if _, err := f.store.AppendDSHTranscript(ctx, f.scope, "new-child", &parent, []DSHTranscriptRecord{{Offset: 0, Payload: []byte(`{"version":4,"id":"new-child"}`)}}); err != nil {
 		t.Fatalf("header blocked: %v", err)
 	}
 	sameCtx, sameCancel := context.WithTimeout(f.ctx, 150*time.Millisecond)
 	defer sameCancel()
-	if _, err := f.store.AppendDSHTranscript(sameCtx, f.scope, "root", []DSHTranscriptEvent{{Seq: 1, Payload: []byte(`{"seq":1}`)}}); err == nil || sameCtx.Err() != context.DeadlineExceeded {
+	if _, err := f.store.AppendDSHTranscript(sameCtx, f.scope, "root", nil, []DSHTranscriptRecord{{Offset: 2, Payload: []byte(`{"seq":1}`)}}); err == nil || sameCtx.Err() != context.DeadlineExceeded {
 		t.Fatalf("same transcript was not serialized: %v", err)
 	}
 	release()
-	if _, err := f.store.AppendDSHTranscript(f.ctx, f.scope, "root", []DSHTranscriptEvent{{Seq: 1, Payload: []byte(`{"seq":1}`)}}); err != nil {
+	if _, err := f.store.AppendDSHTranscript(f.ctx, f.scope, "root", nil, []DSHTranscriptRecord{{Offset: 2, Payload: []byte(`{"seq":1}`)}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -244,7 +244,7 @@ func TestDSHLockingPostgresControlWrites(t *testing.T) {
 	if _, err := f.store.AppendSessionEvents(f.ctx, f.scope.WorkspaceUUID, f.scope.SessionID, []SessionEvent{input}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := f.store.DeliverDSHInputs(f.ctx, f.scope, []DSHDeliveryUpdate{{ID: input.ExternalID, Status: "processing"}}); err != nil {
+	if _, _, err := f.store.ClaimDSHInput(f.ctx, f.scope); err != nil {
 		t.Fatal(err)
 	}
 	release := holdDSHAppend(t, f)

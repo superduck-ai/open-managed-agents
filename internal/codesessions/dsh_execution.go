@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -34,52 +33,50 @@ func (e dshExecution) Stream(w http.ResponseWriter, r *http.Request, _ db.DSHSco
 }
 
 func (e dshExecution) Delivery(ctx context.Context, scope db.DSHScope, updates []dsh.DeliveryUpdate) (dsh.DeliveryResponse, error) {
-	values := make([]db.DSHDeliveryUpdate, len(updates))
+	ids := make([]string, len(updates))
 	for i, update := range updates {
-		values[i] = db.DSHDeliveryUpdate{ID: update.ID, Status: update.Status, Error: update.Error}
+		ids[i] = update.ID
 	}
-	results, changes, err := e.handler.db.DeliverDSHInputs(ctx, scope, values)
-	if err != nil {
+	if err := e.handler.db.ValidateDSHControlInputs(ctx, scope, ids); err != nil {
 		return dsh.DeliveryResponse{}, err
 	}
-	if err := e.committed(ctx, scope, changes); err != nil {
-		return dsh.DeliveryResponse{}, err
-	}
-	response := dsh.DeliveryResponse{Results: make([]dsh.DeliveryItem, 0, len(results))}
-	for _, result := range results {
-		if result.ExecutionStatus == "" {
-			result.Outcome, err = e.controlDelivery(ctx, scope, result)
-			if err != nil {
-				return dsh.DeliveryResponse{}, err
-			}
-		} else if result.Status != "processed" {
-			e.progressInput(ctx, scope, result.ID)
+	response := dsh.DeliveryResponse{Results: make([]dsh.DeliveryItem, 0, len(updates))}
+	for _, update := range updates {
+		outcome, err := e.controlDelivery(ctx, scope, update)
+		if err != nil {
+			return dsh.DeliveryResponse{}, err
 		}
-		response.Results = append(response.Results, dsh.DeliveryItem{ID: result.ID, Status: result.Status, Outcome: result.Outcome, ExecutionStatus: result.ExecutionStatus, CancelRequestedAt: result.CancelRequestedAt})
-		switch result.Outcome {
-		case "applied":
+		response.Results = append(response.Results, dsh.DeliveryItem{ID: update.ID, Status: update.Status, Outcome: outcome})
+		if outcome == "applied" {
 			response.Applied++
-		case "scheduled":
-			response.Scheduled++
-		default:
+		} else {
 			response.Ignored++
 		}
 	}
 	return response, nil
 }
 
-func (e dshExecution) progressInput(ctx context.Context, scope db.DSHScope, inputID string) {
-	service := e.handler.service
-	subject, err := e.handler.db.DSHDeliveryAckSubject(ctx, scope, inputID)
-	if err == nil && subject != "" {
-		err = service.workerEvents.InProgress(ctx, subject)
-	}
+func (e dshExecution) Claim(ctx context.Context, scope db.DSHScope) (dsh.InputClaim, error) {
+	claim, changes, err := e.handler.db.ClaimDSHInput(ctx, scope)
 	if err != nil {
-		service.logger.WarnContext(ctx, "extend DSR input delivery", "code_session_id", scope.CodeSessionID, "input_id", inputID, "error", err)
+		return dsh.InputClaim{}, err
 	}
+	if err := e.committed(ctx, scope, changes); err != nil {
+		return dsh.InputClaim{}, err
+	}
+	if claim.Event.ExternalID == "" {
+		return dsh.InputClaim{}, nil
+	}
+	event, err := e.handler.service.eventPayloads.RestorePublic(ctx, claim.Event)
+	if err != nil {
+		return dsh.InputClaim{}, err
+	}
+	code := db.CodeSession{ExternalID: scope.CodeSessionID, UUID: scope.CodeSessionUUID, OrganizationUUID: scope.OrganizationUUID, WorkspaceUUID: scope.WorkspaceUUID, SessionExternalID: scope.SessionID}
+	payload, err := e.handler.service.dshMessagePayload(ctx, code, event)
+	return dsh.InputClaim{Input: payload, CancelRequestedAt: claim.CancelRequestedAt}, err
 }
 
-func (e dshExecution) controlDelivery(ctx context.Context, scope db.DSHScope, result db.DSHDeliveryItem) (string, error) {
+func (e dshExecution) controlDelivery(ctx context.Context, scope db.DSHScope, result dsh.DeliveryUpdate) (string, error) {
 	service := e.handler.service
 	refs, err := service.workerEventAcks.GetMany(ctx, scope.CodeSessionID, scope.Epoch, []string{result.ID})
 	if err != nil {
@@ -224,7 +221,7 @@ func (e dshExecution) Publish(ctx context.Context, scope db.DSHScope, raws []jso
 	if err := e.validatePublicThreads(ctx, scope, batch); err != nil {
 		return dsh.PublishResponse{}, err
 	}
-	result, err := e.handler.db.PublishDSHEvents(ctx, scope, batch)
+	result, err := publishDSHBatch(ctx, e.handler.db, scope, batch)
 	if err != nil {
 		return dsh.PublishResponse{}, err
 	}
@@ -242,7 +239,7 @@ func (e dshExecution) Publish(ctx context.Context, scope db.DSHScope, raws []jso
 }
 
 func writeDSHInput(w io.Writer, flusher http.Flusher, event db.CodeSessionEvent) error {
-	if _, err := w.Write([]byte("id: " + strconv.FormatInt(event.SequenceNum, 10) + "\nevent: input\ndata: " + string(event.Payload) + "\n\n")); err != nil {
+	if _, err := w.Write([]byte("event: input\ndata: " + string(event.Payload) + "\n\n")); err != nil {
 		return err
 	}
 	flusher.Flush()

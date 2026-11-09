@@ -29,14 +29,14 @@ func newDSHConfirmationTestStore(t *testing.T, state string) (context.Context, *
 	if _, err := store.AppendSessionEvents(ctx, scope.WorkspaceUUID, scope.SessionID, []SessionEvent{input}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.DeliverDSHInputs(ctx, scope, []DSHDeliveryUpdate{{ID: "input", Status: "processing"}}); err != nil {
+	if _, _, err := store.ClaimDSHInput(ctx, scope); err != nil {
 		t.Fatal(err)
 	}
 	header, err := json.Marshal(map[string]any{"version": 4, "id": id, "createdAt": 0, "isSeeded": false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.PutDSHTranscript(ctx, scope, id, nil, header); err != nil {
+	if _, err := store.AppendDSHTranscript(ctx, scope, id, nil, []DSHTranscriptRecord{{Offset: 0, Payload: header}}); err != nil {
 		t.Fatal(err)
 	}
 	permission := DSHPermission{RequestID: "dsrp_confirmation", InputID: "input", DSHSessionID: id, ThreadID: primary.ExternalID, ToolUseID: "native-call", Turn: "1", Tool: json.RawMessage(`{"kind":"custom","name":"lookup"}`), Input: json.RawMessage(`{}`), PublicEventID: "public-call", State: state}

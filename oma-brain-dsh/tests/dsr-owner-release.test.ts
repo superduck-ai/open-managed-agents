@@ -7,7 +7,7 @@ import { DsrOwner } from "../src/dsr/worker.ts";
 import type { HttpRequest } from "../src/dsr/http.ts";
 
 for (const [status, code, release] of [
-  [409, "finish_required", true],
+  [409, "input_not_eligible", true],
   [400, "invalid_request", true],
   [429, "rate_limited", true],
   [401, "unauthorized", true],
@@ -66,7 +66,7 @@ test("a failed best-effort release still completes owner cleanup", async () => {
       }
       return Response.json(
         {},
-        { status: 409, headers: { "DSR-Error": "finish_required" } },
+        { status: 409, headers: { "DSR-Error": "input_not_eligible" } },
       );
     },
     sleep: async () => {},

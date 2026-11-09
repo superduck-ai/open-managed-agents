@@ -3,12 +3,12 @@
 package db
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"sync"
 	"testing"
 
-	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -29,131 +29,114 @@ func TestDSHTranscriptsPostgres(t *testing.T) {
 		t.Fatalf("code session=%v,%v", found, err)
 	}
 	scope := DSHScope{OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID, CodeSessionUUID: session.UUID, Epoch: 7}
-	header := []byte(`{"version":4,"id":"root","createdAt":0,"isSeeded":false}`)
-	first := DSHTranscriptEvent{Seq: 0, Payload: []byte(`{"seq":0,"type":"turn/start","data":{"turn":1}}`)}
-	t.Run("rejects missing header and wrong owner", func(t *testing.T) {
-		if _, err := store.AppendDSHTranscript(ctx, scope, "root", []DSHTranscriptEvent{first}); !errors.Is(err, ErrDSHHeaderRequired) {
-			t.Fatalf("missing=%v", err)
-		}
-		old := scope
-		old.Epoch = 6
-		if _, err := store.PutDSHTranscript(ctx, old, "root", nil, header); !errors.Is(err, ErrWorkerEpochMismatch) {
-			t.Fatalf("old owner=%v", err)
-		}
-	})
-	if _, err := store.PutDSHTranscript(ctx, scope, "root", nil, header); err != nil {
-		t.Fatal(err)
-	}
-	t.Run("gap and conflict roll back all rows", func(t *testing.T) {
-		if result, err := store.AppendDSHTranscript(ctx, scope, "root", []DSHTranscriptEvent{{Seq: 2, Payload: []byte(`{"seq":2}`)}}); !errors.Is(err, ErrDSHTranscriptGap) || result.NextSeq != 0 {
-			t.Fatalf("gap=%+v,%v", result, err)
-		}
-		if _, err := store.PutDSHTranscript(ctx, scope, "root", nil, []byte(`{"version":4,"id":"changed"}`)); !errors.Is(err, ErrDSHTranscriptConflict) {
-			t.Fatalf("header conflict=%v", err)
-		}
-	})
-	t.Run("batch insert errors leave no rows or watermark changes", func(t *testing.T) {
-		if _, err := store.PutDSHTranscript(ctx, scope, "batch", nil, []byte(`{"version":4,"id":"batch","createdAt":0,"isSeeded":false}`)); err != nil {
+
+	header := DSHTranscriptRecord{Offset: 0, Payload: []byte(` {"version":99,"unknown":9007199254740993} `)}
+	first := DSHTranscriptRecord{Offset: 1, Payload: []byte(`{"seq":0,"future":"中文"}`)}
+	t.Run("missing header", func(t *testing.T) {
+		if _, err := store.AppendDSHTranscript(ctx, scope, "root", nil, []DSHTranscriptRecord{first}); !errors.Is(err, ErrDSHHeaderRequired) {
 			t.Fatal(err)
 		}
-		batch := dshBatchEvents(0, 2)
-		batch[1].Payload = []byte(`{"invalid":`)
-		if result, err := store.AppendDSHTranscript(ctx, scope, "batch", batch); err == nil || result.NextSeq != 0 {
-			t.Fatalf("invalid JSON batch=%+v error=%v", result, err)
-		}
-		transcript, events, err := store.ReadDSHTranscript(ctx, scope, "batch", 0, 200)
-		if err != nil || transcript.NextSeq != 0 || len(events) != 0 {
-			t.Fatalf("rollback transcript=%+v events=%d error=%v", transcript, len(events), err)
+	})
+	t.Run("wrong owner", func(t *testing.T) {
+		old := scope
+		old.Epoch--
+		if _, err := store.AppendDSHTranscript(ctx, old, "root", nil, []DSHTranscriptRecord{header}); !errors.Is(err, ErrWorkerEpochMismatch) {
+			t.Fatal(err)
 		}
 	})
-	t.Run("seq zero and semantic duplicates are immutable", func(t *testing.T) {
-		result, err := store.AppendDSHTranscript(ctx, scope, "root", []DSHTranscriptEvent{first})
-		if err != nil || result.NextSeq != 1 {
-			t.Fatalf("first=%+v,%v", result, err)
+	t.Run("initial gap rolls back creation", func(t *testing.T) {
+		if _, err := store.AppendDSHTranscript(ctx, scope, "root", nil, []DSHTranscriptRecord{header, {Offset: 2, Payload: []byte(`{}`)}}); !errors.Is(err, ErrInvalidState) {
+			t.Fatal(err)
 		}
-		duplicate := DSHTranscriptEvent{Seq: 0, Payload: []byte(`{"data":{"turn":1.0},"type":"turn/start","seq":0}`)}
-		result, err = store.AppendDSHTranscript(ctx, scope, "root", []DSHTranscriptEvent{duplicate})
-		if err != nil || result.NextSeq != 1 {
-			t.Fatalf("duplicate=%+v,%v", result, err)
+		if _, _, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200); !errors.Is(err, ErrNotFound) {
+			t.Fatal(err)
 		}
-		if _, err := store.AppendDSHTranscript(ctx, scope, "root", []DSHTranscriptEvent{{Seq: 0, Payload: []byte(`{"seq":0,"type":"different"}`)}}); !errors.Is(err, ErrDSHTranscriptConflict) {
-			t.Fatalf("content conflict=%v", err)
+	})
+	if result, err := store.AppendDSHTranscript(ctx, scope, "root", nil, []DSHTranscriptRecord{header, first}); err != nil || result.NextOffset != 2 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	t.Run("byte conflict rejects semantic duplicate and suffix", func(t *testing.T) {
+		for _, record := range []DSHTranscriptRecord{
+			{Offset: 0, Payload: []byte(`{"version":99,"unknown":9007199254740993}`)},
+			{Offset: 1, Payload: []byte(`{"future":"中文","seq":0}`)},
+		} {
+			if _, err := store.AppendDSHTranscript(ctx, scope, "root", nil, []DSHTranscriptRecord{record}); !errors.Is(err, ErrDSHTranscriptConflict) {
+				t.Fatal(err)
+			}
 		}
-		transcript, events, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200)
-		if err != nil || transcript.NextSeq != 1 || len(events) != 1 || events[0].Seq != 0 {
-			t.Fatalf("read=%+v,%+v,%v", transcript, events, err)
+		if result, err := store.AppendDSHTranscript(ctx, scope, "root", nil, []DSHTranscriptRecord{{Offset: 3, Payload: []byte(`{}`)}}); !errors.Is(err, ErrDSHTranscriptGap) || result.NextOffset != 2 {
+			t.Fatalf("%+v %v", result, err)
 		}
 	})
 	t.Run("tenant isolation", func(t *testing.T) {
 		other := scope
 		other.WorkspaceUUID = "53000000-0000-0000-0000-000000000099"
 		if _, _, err := store.ReadDSHTranscript(ctx, other, "root", 0, 200); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("cross tenant=%v", err)
-		}
-	})
-	t.Run("concurrent identical appends remain one row", func(t *testing.T) {
-		next := DSHTranscriptEvent{Seq: 1, Payload: []byte(`{"seq":1,"type":"step/start","data":{"turn":1,"step":1}}`)}
-		var wait sync.WaitGroup
-		for range 4 {
-			wait.Go(func() {
-				if _, err := store.AppendDSHTranscript(ctx, scope, "root", []DSHTranscriptEvent{next}); err != nil {
-					t.Error(err)
-				}
-			})
-		}
-		wait.Wait()
-		transcript, events, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200)
-		if err != nil || transcript.NextSeq != 2 || len(events) != 2 {
-			t.Fatalf("concurrent=%+v,%d,%v", transcript, len(events), err)
-		}
-	})
-	t.Run("two hundred rows bind JSON and duplicate prefixes only insert their suffix", func(t *testing.T) {
-		batch := dshBatchEvents(0, 200)
-		batch[50].Payload = []byte(`{"seq":50,"text":"中文\\path\"quote","nested":{"items":[1,2,3]}}`)
-		result, err := store.AppendDSHTranscript(ctx, scope, "batch", batch)
-		if err != nil || result.NextSeq != 200 {
-			t.Fatalf("batch=%+v error=%v", result, err)
-		}
-		_, events, err := store.ReadDSHTranscript(ctx, scope, "batch", 0, 200)
-		if err != nil || len(events) != 200 {
-			t.Fatalf("read events=%d error=%v", len(events), err)
-		}
-		for index, event := range events {
-			equal, err := jsoncanonical.Equal(batch[index].Payload, event.Payload)
-			if err != nil || !equal || event.Seq != int64(index) {
-				t.Fatalf("row %d seq=%d equal=%v error=%v", index, event.Seq, equal, err)
-			}
-		}
-		if result, err = store.AppendDSHTranscript(ctx, scope, "batch", batch); err != nil || result.NextSeq != 200 {
-			t.Fatalf("duplicate batch=%+v error=%v", result, err)
-		}
-		mixed := dshBatchEvents(198, 4)
-		mixed[0].Payload = []byte(`{"value":1.0,"seq":198}`)
-		if result, err = store.AppendDSHTranscript(ctx, scope, "batch", mixed); err != nil || result.NextSeq != 202 {
-			t.Fatalf("mixed batch=%+v error=%v", result, err)
-		}
-		transcript, tail, err := store.ReadDSHTranscript(ctx, scope, "batch", 198, 200)
-		if err != nil || transcript.NextSeq != 202 || len(tail) != 4 {
-			t.Fatalf("mixed read=%+v events=%d error=%v", transcript, len(tail), err)
-		}
-	})
-	t.Run("concurrent duplicate batches remain two hundred rows", func(t *testing.T) {
-		if _, err := store.PutDSHTranscript(ctx, scope, "batch-concurrent", nil, []byte(`{"version":4,"id":"batch-concurrent","createdAt":0,"isSeeded":false}`)); err != nil {
 			t.Fatal(err)
 		}
-		batch := dshBatchEvents(0, 200)
+	})
+	t.Run("database unique constraint", func(t *testing.T) {
+		mapper := NewDSHTranscriptMapper(store.mapperDB)
+		row, found, err := mapper.Find(ctx, scope, "root")
+		if err != nil || !found {
+			t.Fatal(err)
+		}
+		if _, err := mapper.InsertRecords(ctx, dshTranscriptRecordsInsert{Scope: scope, TranscriptUUID: row.UUID, Records: []DSHTranscriptRecord{first}}); err == nil {
+			t.Fatal("duplicate offset accepted")
+		}
+	})
+	t.Run("raw bytes survive retries and read", func(t *testing.T) {
+		if result, err := store.AppendDSHTranscript(ctx, scope, "root", nil, []DSHTranscriptRecord{header, first}); err != nil || result.NextOffset != 2 {
+			t.Fatalf("%+v %v", result, err)
+		}
+		transcript, records, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200)
+		if err != nil || transcript.NextOffset != 2 || len(records) != 2 || !bytes.Equal(records[0].Payload, header.Payload) || !bytes.Equal(records[1].Payload, first.Payload) {
+			t.Fatalf("%+v %+v %v", transcript, records, err)
+		}
+	})
+	t.Run("concurrent duplicate batches and suffix", func(t *testing.T) {
+		batch := append([]DSHTranscriptRecord{header, first}, dshBatchRecords(2, 198)...)
 		var wait sync.WaitGroup
 		for range 4 {
 			wait.Go(func() {
-				if result, err := store.AppendDSHTranscript(ctx, scope, "batch-concurrent", batch); err != nil || result.NextSeq != 200 {
-					t.Errorf("concurrent batch=%+v error=%v", result, err)
+				if result, err := store.AppendDSHTranscript(ctx, scope, "root", nil, batch); err != nil || result.NextOffset != 200 {
+					t.Errorf("%+v %v", result, err)
 				}
 			})
 		}
 		wait.Wait()
-		transcript, events, err := store.ReadDSHTranscript(ctx, scope, "batch-concurrent", 0, 200)
-		if err != nil || transcript.NextSeq != 200 || len(events) != 200 {
-			t.Fatalf("concurrent transcript=%+v events=%d error=%v", transcript, len(events), err)
+		transcript, records, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200)
+		if err != nil || transcript.NextOffset != 200 || len(records) != 200 {
+			t.Fatalf("%+v %d %v", transcript, len(records), err)
+		}
+		if result, err := store.AppendDSHTranscript(ctx, scope, "root", nil, dshBatchRecords(198, 4)); err != nil || result.NextOffset != 202 {
+			t.Fatalf("%+v %v", result, err)
 		}
 	})
+}
+
+func TestDSHTranscriptRecordsMigrationPostgres(t *testing.T) {
+	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if address == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	ctx, database, migrations := newIsolatedMigrationTestDatabase(t, address)
+	if _, err := migrations.UpTo(ctx, 121); err != nil {
+		t.Fatal(err)
+	}
+	scope := DSHScope{OrganizationUUID: "53000000-0000-0000-0000-000000000001", WorkspaceUUID: "53000000-0000-0000-0000-000000000002", CodeSessionUUID: "53000000-0000-0000-0000-000000000003"}
+	transcriptUUID := "53000000-0000-0000-0000-000000000004"
+	execClaimTest(t, ctx, database, `INSERT INTO dsh_transcripts(uuid,organization_uuid,workspace_uuid,code_session_uuid,dsh_session_id,header,next_seq) VALUES($1,$2,$3,$4,'root','{"version":4}',1)`, transcriptUUID, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionUUID)
+	execClaimTest(t, ctx, database, `INSERT INTO dsh_transcript_events(organization_uuid,workspace_uuid,code_session_uuid,transcript_uuid,seq,payload) VALUES($1,$2,$3,$4,0,'{"seq":0}')`, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionUUID, transcriptUUID)
+	if _, err := migrations.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
+	transcript, records, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200)
+	if err != nil || transcript.NextOffset != 2 || len(records) != 2 || records[0].Offset != 0 || records[1].Offset != 1 || string(records[0].Payload) != `{"version": 4}` || string(records[1].Payload) != `{"seq": 0}` {
+		t.Fatalf("%+v %+v %v", transcript, records, err)
+	}
+	if _, err := migrations.Down(ctx); err == nil {
+		t.Fatal("lossy downgrade accepted")
+	}
 }

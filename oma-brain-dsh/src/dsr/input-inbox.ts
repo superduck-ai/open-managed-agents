@@ -56,21 +56,16 @@ export class DsrReceipts {
   }
 }
 
-type Task = Extract<Input, { lane: "task" }>;
 type Control = Extract<Input, { lane: "control" }>;
 
 export class DsrInputInbox {
   readonly unsettled = new Set<string>();
-  private readonly tasks = new Map<string, number>();
   private readonly controls = new Map<string, Delivery>();
-  private taskBytes = 0;
-  private taskQueue: Promise<void> = Promise.resolve();
   private controlQueue: Promise<void> = Promise.resolve();
 
   constructor(
     readonly receipts: DsrReceipts,
     private readonly handlers: {
-      task: (input: Task) => Promise<boolean>;
       control: (
         input: Control,
         report: (update: Delivery) => Promise<void>,
@@ -80,29 +75,11 @@ export class DsrInputInbox {
   ) {}
 
   accept(input: Input): boolean {
-    if (input.lane === "control") return this.acceptControl(input);
-    if (this.tasks.has(input.id)) {
-      this.received(input.id);
-      return true;
-    }
-    const bytes = new TextEncoder().encode(JSON.stringify(input)).byteLength;
-    if (this.tasks.size >= 64 || this.taskBytes + bytes > 16 * 1024 * 1024)
+    if (input.lane !== "control") {
+      this.handlers.fail(new DsrError(0, "unexpected_task_delivery"));
       return false;
-    this.tasks.set(input.id, bytes);
-    this.taskBytes += bytes;
-    this.unsettled.add(input.id);
-    const received = this.received(input.id);
-    this.taskQueue = this.taskQueue.then(async () => {
-      await received;
-      const completed = await this.handlers.task(input);
-      if (completed) {
-        this.unsettled.delete(input.id);
-        this.tasks.delete(input.id);
-        this.taskBytes -= bytes;
-      }
-    });
-    void this.taskQueue.catch(this.handlers.fail);
-    return true;
+    }
+    return this.acceptControl(input);
   }
 
   private acceptControl(input: Control): boolean {
@@ -149,6 +126,6 @@ export class DsrInputInbox {
   }
 
   async drain(): Promise<void> {
-    await Promise.allSettled([this.taskQueue, this.controlQueue]);
+    await this.controlQueue;
   }
 }

@@ -1,3 +1,4 @@
+import { transcriptResponse } from "./transcript-response.ts";
 import { Context } from "@deepseek-ai/cordis";
 import {
   SessionId,
@@ -49,16 +50,22 @@ async function fixture(nextSeq: string, pages: Page[]) {
                 dsh_session_id: id,
                 parent_dsh_session_id: null,
                 session_thread_id: null,
-                header_present: true,
-                next_seq: nextSeq,
+                next_offset: String(BigInt(nextSeq) + 1n),
               },
             ],
             next_after: null,
           });
         const index =
-          calls.filter((path) => path.includes("?from_seq=")).length - 1;
+          calls.filter((path) => path.includes("?from_offset=")).length - 1;
         if (!pages[index]) throw new Error("Unexpected extra page request");
-        return Response.json(pages[index]);
+        const page = pages[index]!;
+        return transcriptResponse(
+          [...(page.header ? [page.header] : []), ...page.events],
+          String(BigInt(nextSeq) + 1n),
+          page.next_from_seq === null
+            ? null
+            : String(BigInt(page.next_from_seq) + 1n),
+        );
       },
     },
     {
@@ -97,9 +104,10 @@ async function fixture(nextSeq: string, pages: Page[]) {
       confirmed: owner.confirmed,
       acquired: owner.acquired ?? false,
       validated: owner.validated ?? false,
-      directoryRequests: calls.filter((path) => !path.includes("?from_seq="))
+      directoryRequests: calls.filter((path) => !path.includes("?from_offset="))
         .length,
-      pageRequests: calls.filter((path) => path.includes("?from_seq=")).length,
+      pageRequests: calls.filter((path) => path.includes("?from_offset="))
+        .length,
     };
   };
   return {
@@ -119,11 +127,11 @@ for (const hinted of [false, true]) {
       { header, events: history.slice(0, 2), next_from_seq: null },
     ]);
     try {
-      let snapshotHint: { nextSeq: string } | undefined;
+      let snapshotHint: { nextOffset: string } | undefined;
       if (hinted) {
         const directory = await f.client.listTranscripts();
-        expect(directory[0]!.next_seq).toBe("4");
-        snapshotHint = { nextSeq: directory[0]!.next_seq };
+        expect(directory[0]!.next_offset).toBe("5");
+        snapshotHint = { nextOffset: directory[0]!.next_offset };
       }
       await expect(
         f.ctx.sessionReplication.ensure(id, snapshotHint),
@@ -148,7 +156,9 @@ test("a later empty terminal page cannot replace the existing transcript", async
   try {
     const directory = await f.client.listTranscripts();
     await expect(
-      f.ctx.sessionReplication.ensure(id, { nextSeq: directory[0]!.next_seq }),
+      f.ctx.sessionReplication.ensure(id, {
+        nextOffset: directory[0]!.next_offset,
+      }),
     ).rejects.toMatchObject({ code: "invalid_response" });
     const snapshot = f.snapshot();
     expect(snapshot.cachedCount).toBe(4);

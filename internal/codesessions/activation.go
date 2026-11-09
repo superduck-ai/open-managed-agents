@@ -106,7 +106,7 @@ func (s *Service) activateSnapshot(ctx context.Context, codeSession db.CodeSessi
 
 func (s *Service) prepareActivation(ctx context.Context, snapshot activationSnapshot, batch *inboundPublicationBatch) error {
 	if isDSHCodeSession(snapshot.codeSession) {
-		return s.prepareDSHActivation(ctx, snapshot, batch)
+		return nil
 	}
 	configRaw, err := marshalRaw(codeSessionConfig(snapshot.codeSession.Metadata))
 	if err != nil {

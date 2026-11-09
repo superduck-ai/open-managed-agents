@@ -17,7 +17,11 @@ function event(seq: number, length = 0): SessionEvent {
 function fixture(send: (events: readonly SessionEvent[]) => Promise<string>) {
   const calls: SessionEvent[][] = [];
   const client = {
-    appendEvents: async (_id: string, events: readonly SessionEvent[]) => {
+    appendRecords: async (
+      _id: string,
+      _from: string,
+      events: readonly SessionEvent[],
+    ) => {
       calls.push([...events]);
       return send(events);
     },
@@ -31,7 +35,7 @@ function httpFixture(nextSeq: string) {
     {
       request: async (request) => {
         calls.push(request);
-        return Response.json({ next_seq: nextSeq });
+        return Response.json({ next_offset: nextSeq });
       },
     },
     {
@@ -68,36 +72,42 @@ test("write accepts an acknowledged older prefix when the server watermark is ah
     const f = httpFixture(nextSeq);
     await f.remote.write("root", "root", events);
     expect(f.calls).toHaveLength(1);
-    expect(f.calls[0]!.body).toEqual({ events });
+    expect(f.calls[0]!.body).toEqual(
+      events.map((event) => JSON.stringify(event) + "\n").join(""),
+    );
   }
 });
 
 test("write accepts a decimal HTTP watermark for a fresh append and exact replay", async () => {
-  const f = httpFixture("2");
+  const f = httpFixture("3");
   const events = [event(0), event(1)];
   await f.remote.write("root", "root", events);
   await f.remote.write("root", "root", events);
   expect(f.calls).toHaveLength(2);
   for (const request of f.calls) {
     expect(request.method).toBe("POST");
-    expect(request.path).toBe("/v1/dsr/sessions/root/transcripts/root/events");
-    expect(request.body).toEqual({ events });
+    expect(request.path).toBe(
+      "/v1/dsr/sessions/root/transcripts/root/records?from_offset=1",
+    );
+    expect(request.body).toEqual(
+      events.map((event) => JSON.stringify(event) + "\n").join(""),
+    );
   }
 });
 
 test("write resends every batch when the server watermark already covers the full transcript", async () => {
-  const f = httpFixture("405");
+  const f = httpFixture("406");
   const events = Array.from({ length: 405 }, (_, index) => event(index));
   await f.remote.write("root", "root", events);
-  expect(f.calls.map((request) => request.body)).toEqual([
-    { events: events.slice(0, 200) },
-    { events: events.slice(200, 400) },
-    { events: events.slice(400) },
-  ]);
+  expect(f.calls.map((request) => request.body)).toEqual(
+    [events.slice(0, 200), events.slice(200, 400), events.slice(400)].map(
+      (batch) => batch.map((event) => JSON.stringify(event) + "\n").join(""),
+    ),
+  );
 });
 
 test("an oversized single event is rejected without issuing HTTP", async () => {
-  const f = fixture(async () => "1");
+  const f = fixture(async () => "2");
   let failure: unknown;
   try {
     await f.remote.write("root", "root", [event(0, 6 * 1024 * 1024)]);
@@ -139,7 +149,7 @@ test("a batch rejected with 413 is terminal and is never split", async () => {
 });
 
 test("uploads budget UTF-8 request bytes before sending and retain order", async () => {
-  const f = fixture(async (events) => String(events.at(-1)!.seq + 1));
+  const f = fixture(async (events) => String(events.at(-1)!.seq + 2));
   await f.remote.write("root", "root", [
     event(0, 750_000),
     event(1, 750_000),
@@ -155,14 +165,14 @@ test("uploads budget UTF-8 request bytes before sending and retain order", async
 });
 
 test("small events fill count bounded batches and oversized targets travel alone", async () => {
-  const f = fixture(async (events) => String(events.at(-1)!.seq + 1));
+  const f = fixture(async (events) => String(events.at(-1)!.seq + 2));
   await f.remote.write(
     "root",
     "root",
     Array.from({ length: 405 }, (_, i) => event(i)),
   );
   expect(f.calls.map((batch) => batch.length)).toEqual([200, 200, 5]);
-  const large = fixture(async () => "1");
+  const large = fixture(async () => "2");
   await large.remote.write("root", "root", [event(0, 1_500_000)]);
   expect(large.calls).toHaveLength(1);
 });

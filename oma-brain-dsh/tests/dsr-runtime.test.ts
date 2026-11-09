@@ -47,7 +47,7 @@ async function fixture(
       await session.open();
     },
   });
-  return { ctx, session };
+  return { ctx, session, client };
 }
 
 test("DSR refuses a v1 completion checkpoint before replay or acknowledgement", async () => {
@@ -80,7 +80,7 @@ test("DSR refuses a v1 completion checkpoint before replay or acknowledgement", 
   }
 });
 
-test("DSR performs a native model turn, persists output, finishes and ACKs without CCR worker calls", async () => {
+test("DSR performs a native model turn, persists output, finishes without task ACKs without CCR worker calls", async () => {
   const backend = new DsrBackend();
   const root = await mkdtemp(join(tmpdir(), "dsr-runtime-"));
   const { ctx, session } = await fixture(backend, root);
@@ -92,7 +92,7 @@ test("DSR performs a native model turn, persists output, finishes and ACKs witho
       content: [{ type: "text", text: "hello" }],
     });
     expect(backend.finishes.get("input_1")).toEqual({ result: "success" });
-    expect(backend.processed).toEqual(["input_1"]);
+    expect(backend.processed).toEqual([]);
     expect(
       [...backend.publicLog.values()].filter(
         (event) => event.type === "agent.message",
@@ -187,6 +187,8 @@ test("DSR suspends an approval without closing its native turn, then continues a
   backend.a.worker_epoch = String(BigInt(backend.a.worker_epoch) + 1n);
   const second = await fixture(backend, secondRoot);
   try {
+    backend.deliver(input.id, input);
+    await second.client.claimInput();
     await second.session.receive(input);
     expect(backend.executions).toHaveLength(1);
     expect(backend.requests).toHaveLength(2);
@@ -305,11 +307,13 @@ test("DSR applies a durable interrupt before continuing a recovered approval", a
   backend.a.worker_epoch = String(BigInt(backend.a.worker_epoch) + 1n);
   const second = await fixture(backend, cold);
   try {
+    backend.deliver(input.id, input);
+    await second.client.claimInput();
     await second.session.receive(input);
     expect(backend.executions).toHaveLength(0);
     expect(backend.requests).toHaveLength(1);
     expect(backend.finishes.get(input.id)).toEqual({ result: "cancelled" });
-    expect(backend.processed).toContain(input.id);
+    expect(backend.processed).toEqual([]);
   } finally {
     await second.session.close();
     await second.ctx.fiber.dispose();

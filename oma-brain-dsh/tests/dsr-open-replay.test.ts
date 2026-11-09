@@ -61,11 +61,14 @@ class ReplayBackend extends DsrBackend {
     if (
       this.rejectReceiptWrites &&
       request.method === "POST" &&
-      path.endsWith("/events")
+      path.endsWith("/records")
     ) {
-      const body = await request.clone().json();
+      const records = (await request.clone().text())
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line));
       if (
-        body.events.some(
+        records.some(
           (event: { type: string }) =>
             event.type === "plugin:oma/dsr-publication",
         )

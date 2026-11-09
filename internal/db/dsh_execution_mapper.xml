@@ -15,6 +15,11 @@
         VALUES (#{scope.OrganizationUUID}, #{scope.WorkspaceUUID}, #{scope.CodeSessionUUID}, #{inputID}, #{threadID}, #{acceptedAt})
         ON CONFLICT (organization_uuid, workspace_uuid, code_session_uuid, input_id) DO NOTHING
     </insert>
+    <select id="NextExecution" result="optional" resultType="dshInputExecutionRow">
+        SELECT <include refid="executionColumns"/> FROM dsh_input_executions
+        WHERE <include refid="scope"/> AND status IN ('accepted', 'running')
+        ORDER BY CASE WHEN status = 'running' THEN 0 ELSE 1 END, accepted_at, input_id LIMIT 1
+    </select>
     <select id="Execution" result="optional" resultType="dshInputExecutionRow">
         SELECT <include refid="executionColumns"/> FROM dsh_input_executions WHERE <include refid="scope"/> AND input_id = #{inputID}
     </select>

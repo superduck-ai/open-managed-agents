@@ -4,7 +4,7 @@
 //
 // 这一层是所有 DSR 网络调用的共同底座，回答四个问题：
 //
-//   1. 出错了怎么表示？        -> DsrError(status, code, nextSeq?, retryAfterMs?)
+//   1. 出错了怎么表示？        -> DsrError(status, code, nextOffset?, retryAfterMs?)
 //   2. 响应结构怎么防御？      -> decimal() / object() / parseClaim()
 //   3. HTTP 错误怎么分类？     -> errorOf() 读取 DSR-Error / Retry-After
 //   4. 哪些错误值得重试？      -> request() 只重试 408 / 429 / 5xx / 网络错误
@@ -47,7 +47,7 @@ export interface Transport {
  *
  * @param status       HTTP 状态码；0 表示本地协议/参数校验失败。
  * @param code         稳定的协议错误码，例如 "lease_expired" / "invalid_response"。
- * @param nextSeq      可选，服务器通过 DSR-Next-Seq 返回的续读游标。
+ * @param nextOffset      可选，服务器通过 DSR-Next-Offset 返回的续读游标。
  * @param retryAfterMs 可选，服务器建议的重试等待时间（来自 Retry-After）。
  *
  * @example
@@ -60,7 +60,12 @@ export interface Transport {
  *   }
  */
 export class DsrError extends Error {
-  constructor(readonly status: number, readonly code: string, readonly nextSeq?: string, readonly retryAfterMs?: number) {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    readonly nextOffset?: string,
+    readonly retryAfterMs?: number,
+  ) {
     super(`DSR ${code} (HTTP ${status})`);
   }
 }
@@ -78,7 +83,11 @@ export class DsrError extends Error {
  *   decimal("0", true)  // 抛 invalid_response（epoch 必须 > 0）
  */
 export function decimal(value: unknown, positive = false): string {
-  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value) || positive && value === "0")
+  if (
+    typeof value !== "string" ||
+    !/^(0|[1-9]\d*)$/.test(value) ||
+    (positive && value === "0")
+  )
     throw new DsrError(0, "invalid_response");
   return value;
 }
@@ -88,7 +97,8 @@ export function decimal(value: unknown, positive = false): string {
  * 用它包住所有外部 JSON，避免把数组/标量当对象访问时出现隐晦错误。
  */
 export function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new DsrError(0, "invalid_response");
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new DsrError(0, "invalid_response");
   return value as Record<string, unknown>;
 }
 
@@ -112,9 +122,14 @@ export function object(value: unknown): Record<string, unknown> {
 export function parseClaim(value: unknown): Claim {
   const body = object(value);
   for (const name of ["code_session_id", "session_token", "model_token"])
-    if (typeof body[name] !== "string" || !body[name]) throw new DsrError(0, "invalid_response");
+    if (typeof body[name] !== "string" || !body[name])
+      throw new DsrError(0, "invalid_response");
   decimal(body.worker_epoch, true);
-  if (typeof body.claim_expires_at !== "string" || !Number.isFinite(Date.parse(body.claim_expires_at))) throw new DsrError(0, "invalid_response");
+  if (
+    typeof body.claim_expires_at !== "string" ||
+    !Number.isFinite(Date.parse(body.claim_expires_at))
+  )
+    throw new DsrError(0, "invalid_response");
   return body as unknown as Claim;
 }
 
@@ -129,7 +144,7 @@ export function parseClaim(value: unknown): Claim {
  *        其他 -> unclassified_response
  *
  * 同时读取：
- *   - DSR-Next-Seq：续读游标；
+ *   - DSR-Next-Offset：续读游标；
  *   - Retry-After：秒数，转换成毫秒并封顶 30 秒。
  *
  * 最后会 cancel 响应体，避免连接资源泄漏。
@@ -143,13 +158,26 @@ export function parseClaim(value: unknown): Claim {
  */
 export async function errorOf(response: Response): Promise<DsrError> {
   const raw = response.headers.get("DSR-Error");
-  const code = raw || (response.status === 429 ? "rate_limited" : response.status >= 500 ? "unavailable" : "unclassified_response");
-  const cursor = response.headers.get("DSR-Next-Seq");
+  const code =
+    raw ||
+    (response.status === 429
+      ? "rate_limited"
+      : response.status >= 500
+        ? "unavailable"
+        : "unclassified_response");
+  const cursor = response.headers.get("DSR-Next-Offset");
   const retryAfter = response.headers.get("Retry-After");
-  const seconds = retryAfter === null || retryAfter.trim() === "" ? NaN : Number(retryAfter);
+  const seconds =
+    retryAfter === null || retryAfter.trim() === "" ? NaN : Number(retryAfter);
   await response.body?.cancel().catch(() => {});
-  return new DsrError(response.status, code, cursor === null ? undefined : decimal(cursor),
-    Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds * 1000, 30_000) : undefined);
+  return new DsrError(
+    response.status,
+    code,
+    cursor === null ? undefined : decimal(cursor),
+    Number.isFinite(seconds) && seconds >= 0
+      ? Math.min(seconds * 1000, 30_000)
+      : undefined,
+  );
 }
 
 /**
@@ -164,14 +192,24 @@ export async function errorOf(response: Response): Promise<DsrError> {
  *   setTimeout(() => abort.abort(), 1000);
  *   await delay(transport, 5000, abort.signal); // 约 1 秒后 reject，而不是等 5 秒
  */
-export async function delay(transport: Transport, ms: number, signal?: AbortSignal): Promise<void> {
+export async function delay(
+  transport: Transport,
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
   // 已经取消就不必再等，直接抛错。
   signal?.throwIfAborted();
   if (transport.sleep) return transport.sleep(ms, signal);
   await new Promise<void>((resolve, reject) => {
-    const complete = () => { signal?.removeEventListener("abort", cancel); resolve(); };
+    const complete = () => {
+      signal?.removeEventListener("abort", cancel);
+      resolve();
+    };
     const timer = setTimeout(complete, ms);
-    const cancel = () => { clearTimeout(timer); reject(signal?.reason); };
+    const cancel = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
     signal?.addEventListener("abort", cancel, { once: true });
   });
 }
@@ -195,26 +233,51 @@ export async function delay(transport: Transport, ms: number, signal?: AbortSign
  *   //
  *   // 若第 1 次就是 401 -> 立即抛 DsrError，不重试
  */
-export async function request(transport: Transport, options: HttpRequest, attempts = 4): Promise<Response> {
+export async function request(
+  transport: Transport,
+  options: HttpRequest,
+  attempts = 4,
+): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
     // 每次尝试前检查取消状态，避免在已关闭的会话上发请求。
     options.signal?.throwIfAborted();
     try {
       // 强制带协议版本头；调用方可以覆盖同名头（后展开的优先）。
-      const response = await transport.request({ ...options, headers: { "DSR-Protocol": "1", ...options.headers } });
+      const response = await transport.request({
+        ...options,
+        headers: { "DSR-Protocol": "1", ...options.headers },
+      });
       if (response.ok) return response;
       const error = await errorOf(response);
       // 非可重试的 4xx：立即失败。
-      if (response.status !== 408 && response.status !== 429 && response.status < 500) throw error;
+      if (
+        response.status !== 408 &&
+        response.status !== 429 &&
+        response.status < 500
+      )
+        throw error;
       // 重试次数用尽：抛出最后一次错误。
       if (attempt + 1 >= attempts) throw error;
       // 退避后重试。
-      await delay(transport, error.retryAfterMs ?? Math.min(100 * 2 ** attempt, 5000), options.signal);
+      await delay(
+        transport,
+        error.retryAfterMs ?? Math.min(100 * 2 ** attempt, 5000),
+        options.signal,
+      );
     } catch (error) {
       // DsrError 已经在上面处理过；取消或次数用尽也直接抛。
-      if (error instanceof DsrError || attempt + 1 >= attempts || options.signal?.aborted) throw error;
+      if (
+        error instanceof DsrError ||
+        attempt + 1 >= attempts ||
+        options.signal?.aborted
+      )
+        throw error;
       // 网络错误：指数退避后重试。
-      await delay(transport, Math.min(100 * 2 ** attempt, 5000), options.signal);
+      await delay(
+        transport,
+        Math.min(100 * 2 ** attempt, 5000),
+        options.signal,
+      );
     }
   }
 }

@@ -15,6 +15,11 @@ type executionStub struct {
 	err   error
 }
 
+func (e *executionStub) Claim(context.Context, db.DSHScope) (InputClaim, error) {
+	e.calls++
+	return InputClaim{}, e.err
+}
+
 func (e *executionStub) Stream(w http.ResponseWriter, _ *http.Request, _ db.DSHScope) {
 	e.calls++
 	w.WriteHeader(http.StatusOK)
@@ -80,7 +85,7 @@ func TestDSHExecutionReturnsDistinctRecoveryErrors(t *testing.T) {
 		err  error
 		code string
 	}{
-		{db.ErrDSHFinishRequired, "finish_required"}, {db.ErrDSHInputNotEligible, "input_not_eligible"}, {db.ErrDSHFinishConflict, "finish_idempotency_mismatch"},
+		{db.ErrDSHInputNotEligible, "input_not_eligible"}, {db.ErrDSHFinishConflict, "finish_idempotency_mismatch"},
 		{db.ErrDSHPermissionConflict, "permission_idempotency_mismatch"}, {db.ErrDSHPublicConflict, "public_event_idempotency_mismatch"},
 	} {
 		stub := &executionStub{err: test.err}
@@ -105,5 +110,18 @@ func TestDSHExecutionAcceptsBusinessOutcomes(t *testing.T) {
 		if response.Code != 200 || stub.calls != 1 || response.Body.String() != body+"\n" {
 			t.Fatalf("finish=%d %s calls=%d", response.Code, response.Body.String(), stub.calls)
 		}
+	}
+}
+
+func TestDSHInputClaimAndUnsupportedCursor(t *testing.T) {
+	stub := &executionStub{}
+	router := executionRouter(stub)
+	response := transcriptRequest(router, "GET", "/sessions/cse_root/inputs/stream?from_sequence_num=0", "", "1")
+	if response.Code != 400 || stub.calls != 0 {
+		t.Fatalf("cursor response=%d calls=%d", response.Code, stub.calls)
+	}
+	response = transcriptRequest(router, "POST", "/sessions/cse_root/inputs/claim", "{}", "1")
+	if response.Code != 200 || stub.calls != 1 || response.Body.String() != "{\"input\":null}\n" {
+		t.Fatalf("claim response=%d %s calls=%d", response.Code, response.Body.String(), stub.calls)
 	}
 }

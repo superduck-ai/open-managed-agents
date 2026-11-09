@@ -134,7 +134,9 @@ test("ensure and repeated flush skip charging the downloaded confirmed history",
     },
   });
   try {
-    await ctx.sessionReplication.ensure(id, { nextSeq: String(events.length) });
+    await ctx.sessionReplication.ensure(id, {
+      nextOffset: String(events.length + 1),
+    });
     const history = new Set(ctx.transcriptStore.view(id)!.events);
     const stringify = spyOn(JSON, "stringify");
     try {

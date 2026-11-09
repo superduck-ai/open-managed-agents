@@ -1,3 +1,4 @@
+import { transcriptResponse } from "./transcript-response.ts";
 import { expect } from "bun:test";
 import type { Payload } from "../src/json.ts";
 import { Backend } from "./backend.ts";
@@ -32,6 +33,10 @@ export class DsrBackend extends Backend {
       model_token: this.a.model_token,
       claim_expires_at: new Date(Date.now() + 30000).toISOString(),
     });
+  }
+  override deliver(id: string, payload: Payload) {
+    if (payload.lane === "task") this.delivered.set(id, payload);
+    else super.deliver(id, payload);
   }
   override frame(id: string, payload: Payload): Uint8Array {
     return new TextEncoder().encode(
@@ -77,7 +82,10 @@ export class DsrBackend extends Backend {
       path.startsWith("/otlp/")
     )
       return super.route(request);
-    const body: Payload = request.method === "GET" ? {} : await request.json();
+    const body: Payload =
+      request.method === "GET" || path.endsWith("/records")
+        ? {}
+        : await request.json();
     if (path === "/register")
       return Response.json({
         epoch: String(this.a.worker_epoch),
@@ -99,39 +107,45 @@ export class DsrBackend extends Backend {
             dsh_session_id: id,
             parent_dsh_session_id: value.header.parentSession ?? null,
             session_thread_id: id === this.a.session_id ? null : id,
-            header_present: true,
-            next_seq: String(value.events.length),
+            next_offset: String(value.events.length + 1),
           })),
         next_after: null,
       });
-    const transcript = /^\/transcripts\/([^/]+)(?:\/(header|events))?$/.exec(
-      path,
-    );
+    const transcript = /^\/transcripts\/([^/]+)\/records$/.exec(path);
     if (transcript) {
       const id = decodeURIComponent(transcript[1]!);
-      if (transcript[2] === "header") {
-        if (!this.transcripts.has(id))
-          this.transcripts.set(id, { header: body.header, events: [] });
+      const from = Number(url.searchParams.get("from_offset"));
+      if (request.method === "POST") {
+        expect(request.headers.get("Content-Type")).toBe(
+          "application/x-ndjson",
+        );
+        const raw = await request.text();
+        expect(raw.endsWith("\n")).toBe(true);
+        for (const [index, line] of raw.slice(0, -1).split("\n").entries()) {
+          const record = JSON.parse(line);
+          if (from + index === 0) {
+            if (!this.transcripts.has(id))
+              this.transcripts.set(id, { header: record, events: [] });
+            else expect(this.transcripts.get(id)!.header).toEqual(record);
+          } else {
+            const stored = this.transcripts.get(id)!;
+            expect(record.seq + 1).toBe(from + index);
+            expect(record.seq <= stored.events.length).toBe(true);
+            if (record.seq === stored.events.length) stored.events.push(record);
+            else expect(stored.events[record.seq]).toEqual(record);
+          }
+        }
         return Response.json({
-          dsh_session_id: id,
-          next_seq: String(this.transcripts.get(id)!.events.length),
+          next_offset: String(this.transcripts.get(id)!.events.length + 1),
         });
       }
       const stored = this.transcripts.get(id)!;
-      if (transcript[2] === "events") {
-        for (const event of body.events) {
-          expect(event.seq <= stored.events.length).toBe(true);
-          if (event.seq === stored.events.length)
-            stored.events.push(structuredClone(event));
-        }
-        return Response.json({ next_seq: String(stored.events.length) });
-      }
-      const from = Number(url.searchParams.get("from_seq") ?? "0");
-      return Response.json({
-        header: from === 0 ? stored.header : null,
-        events: stored.events.slice(from),
-        next_from_seq: null,
-      });
+      const all = [stored.header, ...stored.events];
+      return transcriptResponse(
+        all.slice(from, from + 200),
+        String(all.length),
+        from + 200 < all.length ? String(from + 200) : null,
+      );
     }
     if (path === "/inputs/stream") {
       this.connections++;
@@ -148,7 +162,7 @@ export class DsrBackend extends Backend {
           this.streams.add(value);
           value.enqueue(new TextEncoder().encode(": connected\n\n"));
           for (const [id, input] of this.delivered)
-            value.enqueue(this.frame(id, input));
+            if (input.lane !== "task") value.enqueue(this.frame(id, input));
           request.signal.addEventListener("abort", close, { once: true });
         },
         cancel: () => {
@@ -159,6 +173,18 @@ export class DsrBackend extends Backend {
       return new Response(stream, {
         headers: { "Content-Type": "text/event-stream" },
       });
+    }
+    if (path === "/inputs/claim") {
+      for (const [id, input] of this.delivered) {
+        if (input.lane !== "task" || this.finishes.has(id)) continue;
+        return Response.json({
+          input: { ...input, id },
+          cancel_requested_at: this.cancelRequested
+            ? "2026-11-04T00:00:00Z"
+            : undefined,
+        });
+      }
+      return Response.json({ input: null });
     }
     if (path === "/inputs/delivery") {
       for (const update of body.updates)

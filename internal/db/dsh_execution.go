@@ -10,20 +10,6 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
-type DSHDeliveryUpdate struct {
-	ID     string
-	Status string
-	Error  string
-}
-
-type DSHDeliveryItem struct {
-	CancelRequestedAt *time.Time
-	ID                string
-	Status            string
-	Outcome           string
-	ExecutionStatus   string
-}
-
 type DSHFinish struct {
 	Result      string
 	FailureCode *string
@@ -80,57 +66,23 @@ func lockDSHSession(ctx context.Context, executor yourbatis.Executor, scope DSHS
 	return session, primary.thread(), err
 }
 
-func (d *DB) DeliverDSHInputs(ctx context.Context, scope DSHScope, updates []DSHDeliveryUpdate) ([]DSHDeliveryItem, SessionEventChanges, error) {
-	results := make([]DSHDeliveryItem, 0, len(updates))
-	var changes SessionEventChanges
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		session, primary, err := lockDSHSession(ctx, executor, scope)
-		if err != nil {
+func (d *DB) ValidateDSHControlInputs(ctx context.Context, scope DSHScope, inputIDs []string) error {
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		if _, _, err := lockDSHSession(ctx, executor, scope); err != nil {
 			return err
 		}
 		mapper := NewDSHExecutionMapper(executor)
-		for _, update := range updates {
-			execution, found, err := mapper.Execution(ctx, scope, update.ID)
+		for _, id := range inputIDs {
+			_, found, err := mapper.Execution(ctx, scope, id)
 			if err != nil {
 				return err
 			}
 			if found {
-				if update.Error != "" {
-					return ErrInvalidState
-				}
-				if update.Status == "processed" && execution.Status != "completed" {
-					return ErrDSHFinishRequired
-				}
-				if update.Status == "processing" && execution.Status == "accepted" {
-					event, changed, err := startDSHInput(ctx, executor, scope, execution, session.BudgetReachedAt != nil)
-					if err != nil {
-						return err
-					}
-					execution.Status = "running"
-					if changed {
-						changes.Events = append(changes.Events, event)
-					}
-				}
-			} else if update.Status == "processing" {
 				return ErrDSHInputNotEligible
 			}
-			outcome := "ignored"
-			if found {
-				outcome = "applied"
-				if update.Status == "processed" {
-					outcome = "scheduled"
-				}
-			}
-			results = append(results, DSHDeliveryItem{ID: update.ID, Status: update.Status, Outcome: outcome, ExecutionStatus: execution.Status, CancelRequestedAt: execution.CancelRequestedAt})
 		}
-		events, err := reduceDSHState(ctx, executor, &session, primary, scope, "delivery:"+deliverySeed(updates))
-		changes.Events = append(changes.Events, events...)
-		return err
+		return nil
 	})
-	if err != nil {
-		return nil, SessionEventChanges{}, err
-	}
-	return results, changes, nil
 }
 
 func startDSHInput(ctx context.Context, executor yourbatis.Executor, scope DSHScope, execution dshInputExecutionRow, budget bool) (SessionEvent, bool, error) {
@@ -151,15 +103,6 @@ func startDSHInput(ctx context.Context, executor yourbatis.Executor, scope DSHSc
 	}
 	event, changed, err := NewSessionEventMapper(executor).MarkInputProcessed(ctx, scope.WorkspaceUUID, scope.SessionID, execution.InputID, time.Now().UTC())
 	return event.event(), changed, err
-}
-
-func deliverySeed(updates []DSHDeliveryUpdate) string {
-	values := make([][]string, len(updates))
-	for i, update := range updates {
-		values[i] = []string{update.ID, update.Status, update.Error}
-	}
-	raw, _ := json.Marshal(values)
-	return string(raw)
 }
 
 func (d *DB) FinishDSHInput(ctx context.Context, scope DSHScope, inputID string, completion DSHFinish) (DSHFinish, SessionEventChanges, error) {
@@ -184,9 +127,6 @@ func (d *DB) FinishDSHInput(ctx context.Context, scope DSHScope, inputID string,
 			return nil
 		}
 		if _, err := mapper.FinishExecution(ctx, scope, inputID, completion.Result, completion.FailureCode); err != nil {
-			return err
-		}
-		if _, err := NewDSHDeliveryMapper(executor).Ready(ctx, scope, inputID); err != nil {
 			return err
 		}
 		if _, err := mapper.ClosePermissions(ctx, scope, inputID, ""); err != nil {

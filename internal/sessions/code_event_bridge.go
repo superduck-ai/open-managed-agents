@@ -105,9 +105,30 @@ func (h *Handler) PublishCommittedCodeSessionEvents(ctx context.Context, code db
 }
 
 func (h *Handler) PublishDSHPreviews(ctx context.Context, scope db.DSHScope, payloads []json.RawMessage) error {
+	events, err := dshPreviewEvents(scope, payloads, func() (string, error) {
+		id, found, err := h.db.GetPrimarySessionThreadExternalID(ctx, scope.WorkspaceUUID, scope.SessionID)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			return "", db.ErrNotFound
+		}
+		return id, nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, event := range events {
+		h.publishSessionEvents(ctx, []db.SessionEvent{event})
+	}
+	return nil
+}
+
+func dshPreviewEvents(scope db.DSHScope, payloads []json.RawMessage, resolvePrimary func() (string, error)) ([]db.SessionEvent, error) {
+	events := make([]db.SessionEvent, 0, len(payloads))
+	primary := ""
 	for _, raw := range payloads {
 		var schema struct {
-			ID       string `json:"id"`
 			Type     string `json:"type"`
 			ThreadID string `json:"session_thread_id"`
 			EventID  string `json:"event_id"`
@@ -116,25 +137,24 @@ func (h *Handler) PublishDSHPreviews(ctx context.Context, scope db.DSHScope, pay
 			} `json:"event"`
 		}
 		if err := json.Unmarshal(raw, &schema); err != nil {
-			return err
+			return nil, err
 		}
 		thread := schema.ThreadID
 		if thread == "" {
-			value, found, err := h.db.GetPrimarySessionThreadExternalID(ctx, scope.WorkspaceUUID, scope.SessionID)
-			if err != nil {
-				return err
+			if primary == "" {
+				var err error
+				primary, err = resolvePrimary()
+				if err != nil {
+					return nil, err
+				}
 			}
-			if !found {
-				return db.ErrNotFound
-			}
-			thread = value
+			thread = primary
 		}
 		eventID := schema.EventID
 		if schema.Type == "event_start" {
 			eventID = schema.Event.ID
 		}
-		event := db.SessionEvent{ExternalID: eventID, EventType: schema.Type, Payload: raw, WorkspaceUUID: scope.WorkspaceUUID, SessionExternalID: scope.SessionID, ThreadExternalID: &thread, ProcessedAt: time.Now().UTC()}
-		h.publishSessionEvents(ctx, []db.SessionEvent{event})
+		events = append(events, db.SessionEvent{ExternalID: eventID, EventType: schema.Type, Payload: raw, WorkspaceUUID: scope.WorkspaceUUID, SessionExternalID: scope.SessionID, ThreadExternalID: &thread, ProcessedAt: time.Now().UTC()})
 	}
-	return nil
+	return events, nil
 }

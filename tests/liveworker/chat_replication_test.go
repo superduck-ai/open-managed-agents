@@ -253,10 +253,10 @@ func assertUploaded(t *testing.T, f *liveSession, count, payloadBytes int) {
 	scope := db.DSHScope{OrganizationUUID: f.code.OrganizationUUID, WorkspaceUUID: f.code.WorkspaceUUID, CodeSessionUUID: f.code.UUID}
 	expected := strings.Repeat("x", payloadBytes)
 	for from := 0; ; {
-		header, events, err := f.env.database.ReadDSHTranscript(t.Context(), scope, f.code.ExternalID, int64(from), 200)
+		header, events, err := f.env.database.ReadDSHTranscript(t.Context(), scope, f.code.ExternalID, int64(from+1), 200)
 		requireOK(t, err)
-		if header.NextSeq != int64(count) {
-			t.Fatalf("stored watermark=%d want=%d", header.NextSeq, count)
+		if header.NextOffset != int64(count+1) {
+			t.Fatalf("stored watermark=%d want=%d", header.NextOffset, count+1)
 		}
 		for _, event := range events {
 			var record struct {

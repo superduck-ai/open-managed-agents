@@ -6,22 +6,21 @@
 
 路径相对于 `oma-brain-dsh/src/`。请求、响应和错误码的完整定义见 [接口参考](api-reference.md)。
 
-| 编号 | 接口 | Brain 调用位置 | 关键边界 |
-| --- | --- | --- | --- |
-| 1 | claim | `dsr/worker.ts`、`dsr/claims.ts` | 按协议隔离领取，epoch 使用十进制字符串 |
-| 2 | release | `dsr/worker.ts` | 排空输入与复制后释放，拒绝旧 owner |
-| 3 | register | `dsr/worker.ts` | 同 epoch 恢复保留状态；补 ACK 由独立后台处理器负责 |
-| 4 | heartbeat | `dsr/lease.ts` | 注册后独立运行，不被模型或审批阻塞 |
-| 5 | inputs/stream | `dsr/worker.ts`、`dsr/input-stream.ts` | task 有界串行消费；interrupt 立即应用；control 按 ID 去重，回执独立合批 |
-| 6 | inputs/delivery | `dsr/worker.ts`、`dsr/session.ts` | received 续报；执行前 processing；completed 后 processed 返回 scheduled；响应含 execution_status 与 cancel_requested_at |
-| 7 | inputs/{id}/finish | `dsr/session.ts` | 日志与输出确认后写 finish，再 ACK；重复完成结果不可改变 |
-| 8 | Header PUT | `runtime/replication.ts`、`dsr/replication.ts` | Header 先于事件，不可变身份 |
-| 9 | events POST | 同上 | 每日志连续追加、JCS 重叠去重，冲突整批回滚 |
-| 10 | directory GET | `dsr/subagents.ts`、`dsr/replication.ts` | 接管时完整枚举根/子日志 |
-| 11 | transcript GET | `dsr/replication.ts`、`runtime/replication.ts` | 完整分页读取并验证远端原生日志，原子替换进程内历史 |
-| 12 | permission-requests POST | `dsr/session.ts`、`dsr/executor.ts` | 批次预审批，确定性 request_id，重查不可重新执行策略 |
-| 13 | permission cancel | `dsr/client.ts` | 显式放弃调用的接口；用户 interrupt 由后端事务关闭 pending 并持久标记 task 取消 |
-| 14 | public-events POST | `dsr/session.ts`、`dsr/subagents.ts` | 持久输出收据与公开事件同事务；预览不入历史 |
+| 编号 | 接口                     | Brain 调用位置                                 | 关键边界                                                                                                                |
+| ---- | ------------------------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 1    | claim                    | `dsr/worker.ts`、`dsr/claims.ts`               | 按协议隔离领取，epoch 使用十进制字符串                                                                                  |
+| 2    | release                  | `dsr/worker.ts`                                | 排空输入与复制后释放，拒绝旧 owner                                                                                      |
+| 3    | register                 | `dsr/worker.ts`                                | 同 epoch 恢复保留状态；补 ACK 由独立后台处理器负责                                                                      |
+| 4    | heartbeat                | `dsr/lease.ts`                                 | 注册后独立运行，不被模型或审批阻塞                                                                                      |
+| 5    | inputs/stream            | `dsr/worker.ts`、`dsr/input-stream.ts`         | task 有界串行消费；interrupt 立即应用；control 按 ID 去重，回执独立合批                                                 |
+| 6    | inputs/delivery          | `dsr/worker.ts`、`dsr/session.ts`              | received 续报；执行前 processing；completed 后 processed 返回 scheduled；响应含 execution_status 与 cancel_requested_at |
+| 7    | inputs/{id}/finish       | `dsr/session.ts`                               | 日志与输出确认后写 finish，再 ACK；重复完成结果不可改变                                                                 |
+| 8    | records POST             | `runtime/replication.ts`、`dsr/replication.ts` | Header 与事件共用 JSONL，offset 连续，原始字节幂等                                                                      |
+| 10   | directory GET            | `dsr/subagents.ts`、`dsr/replication.ts`       | 接管时完整枚举根/子日志                                                                                                 |
+| 11   | transcript GET           | `dsr/replication.ts`、`runtime/replication.ts` | 完整分页读取并验证远端原生日志，原子替换进程内历史                                                                      |
+| 12   | permission-requests POST | `dsr/session.ts`、`dsr/executor.ts`            | 批次预审批，确定性 request_id，重查不可重新执行策略                                                                     |
+| 13   | permission cancel        | `dsr/client.ts`                                | 显式放弃调用的接口；用户 interrupt 由后端事务关闭 pending 并持久标记 task 取消                                          |
+| 14   | public-events POST       | `dsr/session.ts`、`dsr/subagents.ts`           | 持久输出收据与公开事件同事务；预览不入历史                                                                              |
 
 后端 `code_session.brain_worker_protocol` 与 Brain 的 `OMA_BRAIN_PROTOCOL` 均默认 `dsr1`。已有活动会话不自动转换协议。Sandbox MCP、外部 MCP、web、附件、OTLP 使用 DSR 原生路径与签名凭据；模型请求继续使用已有模型入口。
 
@@ -57,7 +56,7 @@ sequenceDiagram
 
 `RemoteTranscriptStore.read(rootSessionId, id)` 返回 `AsyncIterable<readonly DshLogData[]>`。DSR 适配器按分页产出记录，每批完成身份、格式、序号与重叠校验后才请求下一页。单次读取针对一条 transcript；目录接口返回根会话及子线程的元数据。
 
-每次 `DsrSession.open()` 只完整枚举一次远端目录，并将该快照用于根日志和全部子线程恢复。`ensure(id, snapshot)` 传递 `{ nextSeq }` 表示目录中已存在的 transcript，传 `null` 表示目录中不存在；未提供快照的独立读取自行枚举目录并取得 `next_seq`。分页适配器用 BigInt 计数，要求终页总量严格等于目录水位，未结束时总量必须小于该水位，拒绝提前结束、空尾页截断、超出水位或到达水位后仍要求续页。已列出的日志读取或水位校验失败会阻止恢复，不降级为空，不替换旧缓存，不建立较低的 confirmed；通用恢复边界也核对显式传入的期望总量。
+每次 `DsrSession.open()` 只完整枚举一次远端目录，并将该快照用于根日志和全部子线程恢复。`ensure(id, snapshot)` 传递 `{ nextOffset }` 表示目录中已存在的 transcript，传 `null` 表示目录中不存在；未提供快照的独立读取自行枚举目录并取得 `next_offset`。分页适配器用 BigInt 计算包含 Header 的记录条数，要求终页总量严格等于目录水位，未结束时总量必须小于该水位，拒绝提前结束、空尾页截断、超出水位或到达水位后仍要求续页。已列出的日志读取或水位校验失败会阻止恢复，不降级为空，不替换旧缓存，不建立较低的 confirmed；通用恢复边界也核对显式传入的期望总量。
 
 读取期间按目录快照的固定水位恢复，观察到增长同样拒绝，不追读到新水位；下个 owner 重新获取目录。此约束复用现有目录和分页字段，不增加逐日志目录请求，也不是额外的数据库 MVCC 快照或内容校验和。
 
@@ -77,7 +76,7 @@ flowchart LR
 
 运行中 `append` 只接受并冻结事件，再触发既有批量复制，不逐条等待网络。句柄与服务级 `flush`、原生 `session/flush` 均等待调用时捕获前缀的服务端确认；复制泵只捕获可上传事件，不反向调用远端 flush，避免递归等待。关闭写句柄会对自身追加执行有限期确认，失败仍释放进程内写入归属。工具执行、公共输出、输入完成与 shutdown 的远端确认屏障保持有效。
 
-Brain 的事件追加适配器按十进制整数比较响应水位，要求 `next_seq` 不小于本批末条 `seq + 1`。服务端已确认更多事件时，重发旧前缀返回更高水位属于合法幂等成功；水位不足或格式非法仍视为永久失败。客户端继续逐批发送和确认本地事件，不因远端水位更高而跳过尚未比对的批次。普通回归通过真实 `DsrClient` 和模拟 HTTP 响应覆盖首次追加、相同批次重发、旧前缀重发、跨批重发及非法水位。
+Brain 的事件追加适配器按十进制整数比较响应水位，要求 `next_offset` 不小于本批末条 `seq + 2`。服务端已确认更多事件时，重发旧前缀返回更高水位属于合法幂等成功；水位不足或格式非法仍视为永久失败。客户端继续逐批发送和确认本地事件，不因远端水位更高而跳过尚未比对的批次。普通回归通过真实 `DsrClient` 和模拟 HTTP 响应覆盖首次追加、相同批次重发、旧前缀重发、跨批重发及非法水位。
 
 `TranscriptPersistence` 是插件层唯一的事件缓冲区。复制层通过只读 `view` 借用同一个 `record.events`，不再保存第二份事件数组，也不订阅 `session/event` 来维护副本；复制状态只保留调度、确认水位和累计字节索引。原生 Session 自身的模型日志仍由原生运行时持有。上传、flush 目标和背压计算都以这份 transcript 记录为准。
 
@@ -123,7 +122,7 @@ flowchart LR
 
 写入按所属 Session/Code Session 加锁，并显式检查组织、工作空间、协议、epoch 和租约。公开输入接纳与 input execution 创建、确认与审批解决、公开输出与收据、finish 与 pending 关闭、公开 reducer 更新分别在同一事务中完成。提交后的 SSE/webhook fanout 复用现有服务。
 
-DSH 普通写事务通过 `code_sessions FOR KEY SHARE` 校验并保护 epoch 与有效租约，不再持有会话级排他锁。append 另外通过 `dsh_transcripts FOR UPDATE` 串行化同一条日志的序号、重复事件比较与水位推进；不同 transcript、公开输出及 finish 不因这把 worker 锁互相串行。Put Header 仍由唯一约束处理同名并发创建。公开状态写入继续保留公开 Session 的业务锁。
+DSH 普通写事务通过 `code_sessions FOR KEY SHARE` 校验并保护 epoch 与有效租约，不再持有会话级排他锁。append 另外通过 `dsh_transcripts FOR UPDATE` 串行化同一条日志的序号、重复事件比较与水位推进；不同 transcript、公开输出及 finish 不因这把 worker 锁互相串行。首次从 offset 0 写入时由 transcript 身份唯一约束处理同名并发创建。公开状态写入继续保留公开 Session 的业务锁。
 
 心跳只取得兼容 `KEY SHARE` 的 `FOR NO KEY UPDATE`，完成校验和续租后提交。worker 查询通过物化 CTE 先取得锁，再以 `clock_timestamp()` 判断租约宽限期；Register/Heartbeat 在获锁后计算新的到期时间，避免等待消耗 TTL 或用等待前的时间复活已过期租约。注册与配置冻结继续使用排他锁。
 
@@ -131,9 +130,9 @@ claim、worker 注册、凭据轮换、永久失败、release、终止及沙箱�
 
 锁顺序保持为：公开 Session 业务锁（需要时）→ Code Session 身份锁 → transcript 或其他资源行锁。新增 Mapper 修改所有权时必须同样使用排他 fence，不能绕过该合同。真实 PostgreSQL 回归 `TestDSHLockingPostgres*` 用受控事务交错验证心跳、不同日志、公开输出及 finish 可继续，同日志追加串行，所有权变更等待且旧 epoch 被拒绝，以及获锁后的租约时钟和完整 TTL；该验证不代表生产大 payload 压测。
 
-Header/Event 拒绝重复 JSON 键，使用 RFC 8785 JCS 比较。事件批次最多 200，单事件最多 15 MiB，请求体最多 16 MiB；读取按每页最多 200 条事件分页，不设置响应字节预算。目录单独分页。
+日志使用 JSONL。后端只校验 JSON 对象及顶层 seq，拒绝重复 seq；其余字段保持不透明。每批最多 200 条记录，单条最多 15 MiB，请求体最多 16 MiB；读取每页最多 200 条，Header 计入条数。目录独立分页。
 
-事件追加通过 `DSHTranscriptMapper.InsertEvents` 的 foreach 绑定生成单条多行 INSERT。整批校验后仅插入新增尾部，重复事件只做语义比较；全重复批次不写入。200 条全新事件的事务包含 worker 行锁查询、transcript 查询、重叠事件查询、一次批量 INSERT 和一次水位 UPDATE 共五条 SQL，不含 BEGIN/COMMIT。普通单测验证 1/2/200 行绑定、敏感标记、只执行一次 INSERT、重复前缀和失败结果；`TestDSHTranscriptsPostgres` 验证真实 PostgreSQL JSONB 绑定、200 行写入、混合幂等、失败回滚和并发重复批次。
+记录追加通过 `DSHTranscriptMapper.InsertRecords` 的 foreach 绑定生成单条多行 INSERT。整批检查位置连续性和重复前缀字节一致性后，只插入新增尾部并更新一次 next_offset。全重复批次不写入；首次创建的元数据和记录一并回滚。普通单测覆盖绑定、敏感标记、批量写入、重复前缀和失败结果；PostgreSQL 回归覆盖 bytea、唯一约束、并发、回滚和旧 JSONB 迁移。
 
 ## 验证范围
 
@@ -253,7 +252,6 @@ dsh_worker_states 保存 context_snapshot，表结构由 goose 迁移管理。�
 
 当前主接口 14 个。协议仍为未冻结 DSR-Protocol:1，需要前后端同步升级。普通测试与定向 PostgreSQL 回归覆盖首次冻结、跨 owner 保留、租户与 epoch、配置加载失败不建租约、owner 凭证重绑和子 Agent 本地权限隔离；真实 DSR 验证是否执行以当次验收记录为准。
 
-
 ## 当前验收，2026-11-05
 
 14 个主接口通过 `chat brain-dsr` 真实后端场景，7 个必需阶段及资源清理全部成功；`chat roundtrip` 验证中文预览、最终回复、历史恢复及队列清空。报告分别见 [DSR 验收](../../../../tmp/verify-be/verify-be-083b1d076872/report.md) 与 [聊天回归](../../../../tmp/verify-be/verify-be-05ec95247d31/report.md)。上游模型使用脚本，不涵盖真实模型质量、云端网络分区或生产性能。
@@ -277,3 +275,27 @@ SSE 等待响应头最多 15 秒，建立后完整帧静默最多 45 秒。短�
 owner 只在明确收到 `epoch_superseded` 时跳过 release；其余错误均在停止后使用进程级凭证尽力释放，release 自身的 worker/epoch 校验防止影响新 owner。`finish_required` 表示完成前置条件被破坏，返回通用错误，不携带违规 input ID；Brain 不自动补写或猜测 finish，停止并释放后按持久记录恢复。
 
 关闭取消输入流，也取消共享 signal 的在途 received/control 回执；输入队列 drain 只等待处理路径结束，不保证回执网络排空。未结算投递交由后端重投或补偿。定向回归由 `dsr-input-inbox.test.ts` 验证同 ID 分批、状态确认及 interrupt，`dsr-owner-release.test.ts` 验证错误分类、独立释放凭证及释放失败清理，`dsr-client.test.ts` 验证 finish_required 不自动构造完成结果。
+
+## 数据库 task 队列，2026-11-09
+
+本节取代上文 task 投递结算与后台补偿方案。task 接纳与公开输入仍同事务提交，新增 inputs/claim 负责有序领取、开始执行与 running 恢复；Brain 串行领取和执行，无任务时每秒重查。NATS 不再保存新 task，control 仍使用原投递与回执机制。会话级 Brain claim 继续数据库轮询，因此唤醒通知丢失不影响最终发现任务。
+
+删除 DSHDeliveryWorker 与投递 Mapper，通过新增 00121 migration 提前调度旧对象清理 job 并删除投递表。旧 broker task 消息直接确认和清理，不再发给 Brain。后端与 Brain 必须停旧后协调升级，不能混跑。
+
+普通回归覆盖领取响应校验、控制流无游标、无 task 回执、Brain 进程领取执行；隔离 PostgreSQL 回归覆盖旧 epoch/跨租户拒绝、领取重试、运行任务优先、稳定排序、失败暂停及 finish 幂等。真实 Worker、外部模型与 verify-be 场景需单独授权，不由上述测试代表。
+
+## 流式预览批次
+
+`dsr/preview-buffer.ts` 将原始 preview 事件缓冲最多 100ms，达到 200 条或 4 MiB 目标时提前发送，单条超目标独立发送。payload、事件 ID 和线程标识原样保留，不做累计文本快照或文本拼接。块完成及 checkpoint 主动刷新预览，随后持久消息进入同一串行发布链；网络阻塞仍可能推迟后续正式发布，本次没有引入独立预览连接或跳过既有持久确认屏障。
+
+纯预览经过轻量 worker 有效性检查后扇出，不进入 PublishDSHEvents 的 Session 锁、回执与 reducer 事务。检查复用已有 Yourbatis ShareWorker 查询和租约宽限规则；这是单条数据库校验，不是完全零数据库访问。主线程 ID 在一个 fanout 批次内只解析一次，子线程目标原样传递。含持久事件的混合批次继续使用原事务和提交后扇出顺序。
+
+回归包括 `dsr-preview-buffer.test.ts` 的定时器、原始 delta、条数与字节边界，`dsr-preview-publication.test.ts` 的真实 Session checkpoint 顺序，以及 Go 的纯预览快速分支、失效 worker 拒绝和批次主线程解析。普通测试不代表真实 PostgreSQL 锁竞争、跨实例扇出延迟或生产吞吐基线。
+
+## JSONL 记录流改造
+
+日志读写统一为 `/transcripts/{dsh_session_id}/records`，传输使用 JSONL，游标为 `from_offset/next_offset`。后端仅校验 JSON 对象与顶层 seq：缺少 seq 的首条记录为 offset 0，有 seq 的记录映射为 seq+1。Harness 版本、字段与身份校验保留在 Brain。
+
+Migration 00122 用 bytea 记录表替换分离的 JSONB header/events，保留 `UNIQUE(transcript_uuid,record_offset)`。幂等改为原始字节比较，父级单独传递；旧 JSONB 只能迁移其数据库文本表示。新旧协议不兼容，需要同步部署，Down 明确拒绝有损降级。
+
+普通回归覆盖 JSONL 边界、序号映射、字节冲突、批量写入、恢复水位、租约重注册与 JSONL HTTP 传输。定向 PostgreSQL 回归覆盖 bytea 绑定、唯一约束、并发与事务回滚。实际执行情况以本次交付结果为准；本次不自动运行 verify-be。

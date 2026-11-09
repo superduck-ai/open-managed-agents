@@ -42,7 +42,7 @@ for (const mode of ["eof", "network", "503"] as const) {
 
 for (const data of [
   "{",
-  '{"id":"","lane":"task","kind":"user.message","content":[]}',
+  '{"id":"","lane":"control","kind":"user.interrupt"}',
   '"' + "x".repeat(4 * 1024 * 1024) + '"',
 ]) {
   test(`invalid protocol input terminates without reconnect (${data.length} bytes)`, async () => {
@@ -118,7 +118,7 @@ test("waiting for response headers has a deadline", async () => {
   }
 });
 
-test("reconnect retains a lossless cursor but still yields redelivered input", async () => {
+test("control reconnect does not advertise an unsupported cursor", async () => {
   const calls: HttpRequest[] = [];
   const abort = new AbortController();
   const stream = new DsrInputStream(
@@ -126,7 +126,7 @@ test("reconnect retains a lossless cursor but still yields redelivered input", a
       request: async (request) => {
         calls.push(request);
         return new Response(
-          'id: 9007199254740993\nevent: input\ndata: {"id":"a","lane":"task","kind":"user.message","content":[]}\n\n',
+          'id: 9007199254740993\nevent: input\ndata: {"id":"a","lane":"control","kind":"user.interrupt"}\n\n',
         );
       },
       sleep: async () => {},
@@ -134,7 +134,8 @@ test("reconnect retains a lossless cursor but still yields redelivered input", a
   ).read(abort.signal);
   expect((await stream.next()).value).toMatchObject({ id: "a" });
   expect((await stream.next()).value).toMatchObject({ id: "a" });
-  expect(calls[1]!.headers!["Last-Event-ID"]).toBe("9007199254740993");
+  expect(calls[1]!.headers!["Last-Event-ID"]).toBeUndefined();
+  expect(calls[1]!.path).toEndWith("/inputs/stream");
   abort.abort();
   await stream.return(undefined);
 });
@@ -146,7 +147,7 @@ test("a stable stream resets the earlier failure budget", async () => {
   try {
     const abort = new AbortController();
     const frame = (id: string) =>
-      `event: input\ndata: {"id":"${id}","lane":"task","kind":"user.message","content":[]}\n\n`;
+      `event: input\ndata: {"id":"${id}","lane":"control","kind":"user.interrupt"}\n\n`;
     const stream = new DsrInputStream(
       client({
         request: async () => {

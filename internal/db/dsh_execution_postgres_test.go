@@ -30,7 +30,7 @@ func TestDSHExecutionPostgres(t *testing.T) {
 		}
 		old := scope
 		old.Epoch = 0
-		if _, _, err := store.DeliverDSHInputs(ctx, old, []DSHDeliveryUpdate{{ID: "input", Status: "processing"}}); !errors.Is(err, ErrWorkerEpochMismatch) {
+		if _, _, err := store.ClaimDSHInput(ctx, old); !errors.Is(err, ErrWorkerEpochMismatch) {
 			t.Fatalf("stale=%v", err)
 		}
 	})
@@ -39,25 +39,25 @@ func TestDSHExecutionPostgres(t *testing.T) {
 	if err != nil || len(changes.Events) == 0 {
 		t.Fatalf("accept=%+v,%v", changes, err)
 	}
-	t.Run("accepted turn requires processing and finish before ACK", func(t *testing.T) {
-		if _, _, err := store.DeliverDSHInputs(ctx, scope, []DSHDeliveryUpdate{{ID: "input", Status: "processed"}}); !errors.Is(err, ErrDSHFinishRequired) {
+	t.Run("accepted task requires claim before finish and rejects delivery receipts", func(t *testing.T) {
+		if err := store.ValidateDSHControlInputs(ctx, scope, []string{"input"}); !errors.Is(err, ErrDSHInputNotEligible) {
 			t.Fatalf("early ACK=%v", err)
 		}
 		if _, _, err := store.FinishDSHInput(ctx, scope, "input", DSHFinish{Result: "success"}); !errors.Is(err, ErrDSHInputNotEligible) {
 			t.Fatalf("early finish=%v", err)
 		}
-		results, changes, err := store.DeliverDSHInputs(ctx, scope, []DSHDeliveryUpdate{{ID: "input", Status: "processing"}})
-		if err != nil || results[0].ExecutionStatus != "running" || results[0].Outcome != "applied" || len(changes.Events) == 0 {
+		results, changes, err := store.ClaimDSHInput(ctx, scope)
+		if err != nil || results.Event.ExternalID != "input" || len(changes.Events) == 0 {
 			t.Fatalf("processing=%+v,%+v,%v", results, changes, err)
 		}
 	})
-	t.Run("repeated processing retains first start and tenant isolation", func(t *testing.T) {
+	t.Run("repeated claim recovers running task and retains first start", func(t *testing.T) {
 		mapper := NewDSHExecutionMapper(store.mapperDB)
 		before, found, err := mapper.Execution(ctx, scope, "input")
 		if err != nil || !found || before.StartedAt == nil || before.CompletedAt != nil || before.Result != nil {
 			t.Fatalf("running=%+v found=%v err=%v", before, found, err)
 		}
-		if _, _, err := store.DeliverDSHInputs(ctx, scope, []DSHDeliveryUpdate{{ID: "input", Status: "processing"}}); err != nil {
+		if _, _, err := store.ClaimDSHInput(ctx, scope); err != nil {
 			t.Fatal(err)
 		}
 		after, _, err := mapper.Execution(ctx, scope, "input")
@@ -76,7 +76,7 @@ func TestDSHExecutionPostgres(t *testing.T) {
 	})
 
 	header := []byte(`{"version":4,"id":"` + id + `","createdAt":0,"isSeeded":false}`)
-	if _, err := store.PutDSHTranscript(ctx, scope, id, nil, header); err != nil {
+	if _, err := store.AppendDSHTranscript(ctx, scope, id, nil, []DSHTranscriptRecord{{Offset: 0, Payload: header}}); err != nil {
 		t.Fatal(err)
 	}
 	permission := DSHPermission{RequestID: "dsrp_1", InputID: "input", DSHSessionID: id, ThreadID: primary.ExternalID, ToolUseID: "call", Turn: "1", Tool: []byte(`{"kind":"builtin","name":"bash"}`), Input: []byte(`{"command":"true"}`), PublicEventID: "tool_public", State: "pending"}
@@ -170,10 +170,7 @@ func TestDSHExecutionPostgres(t *testing.T) {
 		}
 	})
 
-	t.Run("finish is immutable and terminal input is acknowledged", func(t *testing.T) {
-		if _, err := store.RecordDSHDelivery(ctx, scope, "input", "durable-ack", ""); err != nil {
-			t.Fatal(err)
-		}
+	t.Run("finish is immutable and completed task is never claimed", func(t *testing.T) {
 		result, _, err := store.FinishDSHInput(ctx, scope, "input", DSHFinish{Result: "success"})
 		if err != nil || result.Result != "success" {
 			t.Fatalf("finish=%+v,%v", result, err)
@@ -192,13 +189,9 @@ func TestDSHExecutionPostgres(t *testing.T) {
 		if _, _, err := store.FinishDSHInput(ctx, scope, "input", DSHFinish{Result: "cancelled"}); !errors.Is(err, ErrDSHFinishConflict) {
 			t.Fatalf("changed finish=%v", err)
 		}
-		results, _, err := store.DeliverDSHInputs(ctx, scope, []DSHDeliveryUpdate{{ID: "input", Status: "processed"}})
-		if err != nil || results[0].ExecutionStatus != "completed" {
+		results, _, err := store.ClaimDSHInput(ctx, scope)
+		if err != nil || results.Event.ExternalID != "" {
 			t.Fatalf("ACK=%+v,%v", results, err)
-		}
-		row, found, err := NewDSHDeliveryMapper(store.mapperDB).Find(ctx, scope, "input")
-		if err != nil || !found || row.Status != "pending" {
-			t.Fatalf("pending asynchronous ACK=%+v,%v", row, err)
 		}
 	})
 	t.Run("interrupt survives control delivery before task replay", func(t *testing.T) {
@@ -212,8 +205,8 @@ func TestDSHExecutionPostgres(t *testing.T) {
 		if _, err := store.AppendSessionEvents(ctx, scope.WorkspaceUUID, scope.SessionID, []SessionEvent{interrupt}, nil); err != nil {
 			t.Fatal(err)
 		}
-		results, _, err := store.DeliverDSHInputs(ctx, scope, []DSHDeliveryUpdate{{ID: "cancelled-input", Status: "processing"}})
-		if err != nil || results[0].CancelRequestedAt == nil {
+		results, _, err := store.ClaimDSHInput(ctx, scope)
+		if err != nil || results.CancelRequestedAt == nil {
 			t.Fatalf("durable interrupt=%+v,%v", results, err)
 		}
 		if _, _, err := store.FinishDSHInput(ctx, scope, "cancelled-input", DSHFinish{Result: "cancelled"}); err != nil {
@@ -224,11 +217,13 @@ func TestDSHExecutionPostgres(t *testing.T) {
 	t.Run("failed result pauses queue until a newly accepted input wakes it", func(t *testing.T) {
 		mapper := NewDSHExecutionMapper(store.mapperDB)
 		for _, inputID := range []string{"failure", "queued"} {
-			if _, err := mapper.InsertExecution(ctx, scope, inputID, primary.ExternalID, time.Now().UTC()); err != nil {
+			message := event
+			message.UUID, message.ExternalID, message.CreatedAt = uuid.NewV4().String(), inputID, time.Now().UTC()
+			if _, err := store.AppendSessionEvents(ctx, scope.WorkspaceUUID, scope.SessionID, []SessionEvent{message}, nil); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if _, _, err := store.DeliverDSHInputs(ctx, scope, []DSHDeliveryUpdate{{ID: "failure", Status: "processing"}}); err != nil {
+		if _, _, err := store.ClaimDSHInput(ctx, scope); err != nil {
 			t.Fatal(err)
 		}
 		failureCode := "execution_failed"
@@ -243,8 +238,8 @@ func TestDSHExecutionPostgres(t *testing.T) {
 		if err != nil || summary.HasEligibleAccepted || summary.LastResult == nil || *summary.LastResult != "failed" {
 			t.Fatalf("failed summary=%+v %v", summary, err)
 		}
-		if _, _, err := store.DeliverDSHInputs(ctx, scope, []DSHDeliveryUpdate{{ID: "queued", Status: "processing"}}); !errors.Is(err, ErrDSHInputNotEligible) {
-			t.Fatalf("old queue=%v", err)
+		if claim, _, err := store.ClaimDSHInput(ctx, scope); err != nil || claim.Event.ExternalID != "" {
+			t.Fatalf("old queue=%+v %v", claim, err)
 		}
 		if _, err := mapper.InsertExecution(ctx, scope, "new-input", primary.ExternalID, time.Now().UTC()); err != nil {
 			t.Fatal(err)
@@ -253,7 +248,7 @@ func TestDSHExecutionPostgres(t *testing.T) {
 		if err != nil || !summary.HasEligibleAccepted {
 			t.Fatalf("new summary=%+v %v", summary, err)
 		}
-		if _, _, err := store.DeliverDSHInputs(ctx, scope, []DSHDeliveryUpdate{{ID: "queued", Status: "processing"}}); err != nil {
+		if _, _, err := store.ClaimDSHInput(ctx, scope); err != nil {
 			t.Fatalf("new input did not wake ordered queue: %v", err)
 		}
 

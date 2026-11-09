@@ -22,10 +22,9 @@ const maxEventBytes = 15 << 20
 const maxPageEvents = 200
 
 type Database interface {
-	PutDSHTranscript(context.Context, db.DSHScope, string, *string, []byte) (db.DSHTranscript, error)
-	AppendDSHTranscript(context.Context, db.DSHScope, string, []db.DSHTranscriptEvent) (db.DSHTranscriptAppendResult, error)
+	AppendDSHTranscript(context.Context, db.DSHScope, string, *string, []db.DSHTranscriptRecord) (db.DSHTranscriptAppendResult, error)
 	ListDSHTranscripts(context.Context, db.DSHScope, string, int) ([]db.DSHTranscript, error)
-	ReadDSHTranscript(context.Context, db.DSHScope, string, int64, int) (db.DSHTranscript, []db.DSHTranscriptEvent, error)
+	ReadDSHTranscript(context.Context, db.DSHScope, string, int64, int) (db.DSHTranscript, []db.DSHTranscriptRecord, error)
 }
 
 type Authenticator func(*http.Request, string) (db.DSHScope, error)
@@ -44,9 +43,8 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Route("/sessions/{code_session_id}/transcripts", func(router chi.Router) {
 		router.Use(h.authorize)
 		router.Get("/", h.list)
-		router.Get("/{dsh_session_id}", h.read)
-		router.Put("/{dsh_session_id}/header", h.putHeader)
-		router.Post("/{dsh_session_id}/events", h.appendEvents)
+		router.Get("/{dsh_session_id}/records", h.read)
+		router.Post("/{dsh_session_id}/records", h.appendRecords)
 	})
 }
 

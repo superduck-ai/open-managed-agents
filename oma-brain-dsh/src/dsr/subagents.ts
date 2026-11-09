@@ -101,7 +101,7 @@ export class DsrSubagentBridge implements SubagentBridge {
       this.bindPersistence(transcript.dsh_session_id);
       await this.owner.ctx.sessionReplication.ensure(
         transcript.dsh_session_id,
-        { nextSeq: transcript.next_seq },
+        { nextOffset: transcript.next_offset },
       );
       const handle = await this.owner.ctx.sessionPersistence.open(
         SessionId(transcript.dsh_session_id),

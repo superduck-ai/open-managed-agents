@@ -13,7 +13,6 @@ var (
 )
 
 var ErrDSHInputNotEligible = errors.New("DSR input is not eligible")
-var ErrDSHFinishRequired = errors.New("DSR finish is required before ACK")
 var ErrDSHFinishConflict = errors.New("DSR finish differs from confirmed result")
 var ErrDSHPermissionConflict = errors.New("DSR permission identity mismatch")
 var ErrDSHPublicConflict = errors.New("DSR public event identity mismatch")

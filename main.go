@@ -183,7 +183,6 @@ func run(bootstrap *slog.Logger) (err error) {
 		WithWorkerEventState(workerEventAcks, objectStore).
 		WithSessionAttachments(filestoreService, cfg.Storage.MaxFileBytes)
 	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
-	codesessions.NewDSHDeliveryWorker(database, workerEventBroker, logger.With("component", "dsh_deliveries")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,
 		Provider:        sandboxProvider,

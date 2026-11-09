@@ -33,7 +33,13 @@ export class OmaApi {
         "Content-Type": "application/json",
         ...headers,
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body:
+        body === undefined
+          ? undefined
+          : new Headers(headers).get("Content-Type") ===
+                "application/x-ndjson" && typeof body === "string"
+            ? body
+            : JSON.stringify(body),
       signal:
         timeout === 0
           ? signal

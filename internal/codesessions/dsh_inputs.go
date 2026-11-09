@@ -19,13 +19,7 @@ func (s *Service) queueDSHPublicEvents(ctx context.Context, code db.CodeSession,
 		var fields map[string]json.RawMessage
 		switch event.EventType {
 		case "user.message":
-			raw, err := s.dshMessagePayload(ctx, code, event)
-			if err != nil {
-				return err
-			}
-			if err := json.Unmarshal(raw, &fields); err != nil {
-				return err
-			}
+			continue
 		case "user.interrupt":
 			fields = make(map[string]json.RawMessage)
 			var target struct {
@@ -59,10 +53,6 @@ func (s *Service) queueDSHPublicEvents(ctx context.Context, code db.CodeSession,
 			continue
 		}
 		kind := event.EventType
-		lane := "control"
-		if kind == "user.message" {
-			lane = "task"
-		}
 		if kind == "user.tool_confirmation" || kind == "user.custom_tool_result" || kind == "user.tool_result" {
 			kind = "permission.resolved"
 		}
@@ -70,18 +60,17 @@ func (s *Service) queueDSHPublicEvents(ctx context.Context, code db.CodeSession,
 		setRawJSONField(fields, "uuid", event.ExternalID)
 		setRawJSONField(fields, "type", kind)
 		setRawJSONField(fields, "kind", kind)
-		setRawJSONField(fields, "lane", lane)
+		setRawJSONField(fields, "lane", "control")
 		raw, err := json.Marshal(fields)
 		if err != nil {
 			return err
 		}
 		payloads = append(payloads, raw)
 	}
-	if len(payloads) == 0 {
-		return nil
-	}
-	if err := s.QueueRawPublicSessionEvents(ctx, code, payloads); err != nil {
-		return err
+	if len(payloads) > 0 {
+		if err := s.QueueRawPublicSessionEvents(ctx, code, payloads); err != nil {
+			return err
+		}
 	}
 	s.notifyBrainWork(ctx, code.ExternalID)
 	return s.resumeSandboxForCodeSession(ctx, code)
@@ -110,26 +99,4 @@ func (s *Service) dshMessagePayload(ctx context.Context, code db.CodeSession, ev
 		return nil, err
 	}
 	return workerPayloadWithSystemContext(raw, contexts)
-}
-
-func (s *Service) prepareDSHActivation(ctx context.Context, snapshot activationSnapshot, batch *inboundPublicationBatch) error {
-	for _, event := range snapshot.events {
-		if event.EventType != "user.message" || !event.ProcessedAt.IsZero() {
-			continue
-		}
-		restored, err := s.eventPayloads.RestorePublic(ctx, event)
-		if err != nil {
-			return err
-		}
-		raw, err := s.dshMessagePayload(ctx, snapshot.codeSession, restored)
-		if err != nil {
-			return err
-		}
-		prepared, err := s.prepareInboundEvent(ctx, snapshot.codeSession, raw, "dsr-activation", event.ExternalID)
-		if err != nil {
-			return err
-		}
-		batch.events = append(batch.events, prepared)
-	}
-	return nil
 }

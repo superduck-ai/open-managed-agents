@@ -1,39 +1,3 @@
-// ============================================================================
-// DSR Worker：Brain 进程里“认领并执行会话”的总入口
-// ============================================================================
-//
-// 先建立整体心智模型：
-//
-//   1. 服务器（platform）维护一堆待执行的 code session。
-//   2. Brain 进程启动后调用 startDsrWorkers()，用长轮询向服务器“认领”（claim）
-//      会话。一个 claim 就代表“这段会话接下来归我这个 worker_epoch 执行”。
-//   3. 认领成功后，为这个会话创建一个 DsrOwner。每个 DsrOwner 负责：
-//        - 向服务器 register，换取租约（lease）参数；
-//        - 起一个心跳循环，持续续租；
-//        - 拉取会话上下文（model / cwd / system prompt / tools ...），组装 Assignment；
-//        - 打开本地 DSH 会话；
-//        - 通过 SSE 输入流接收输入（用户消息、中断、模型切换、审批结果）；
-//        - 任务执行完后向服务器 finish，并把自己标记为 processed；
-//        - 会话结束（空闲 / 关闭 / 永久失败）时 release claim，让服务器可以再分配。
-//
-// 一次典型生命周期（括号里是对应的方法）：
-//
-//   poll() --claim--> admit() --new--> DsrOwner --run-->
-//     -> 等待输入 -> session.receive()/control() -> finish()
-//     -> 输入流结束 -> close session/lease -> claims.release()
-//
-// 并发模型：
-//   - 进程级：claimConcurrency 个 poll 循环并行拉 claim；owners 记录当前活跃会话。
-//   - 会话级：DsrOwner 内部把输入分成两条串行队列：
-//       tasks    —— 普通任务输入（user.message），可能执行很久；
-//       controls —— 控制输入（中断 / 切模型 / 审批结果），不能排在长任务后面。
-//     两条队列各自串行，互相不阻塞。
-//   - 投递语义：至少一次。收到输入先回 "received"，处理完才回 "processed"；
-//     未完成的输入会每 10 秒重报一次 received，进程崩溃后服务器可重投。
-//
-// 下面逐段解释。示例中的 ID、时间、数字都是为了直观，实际值由服务器决定。
-// ============================================================================
-
 import type { Context } from "@deepseek-ai/cordis";
 import TranscriptPersistence from "../runtime/transcript-persistence.ts";
 // OmaApi：访问 platform 的 HTTP 客户端 + 进程内共享的内存表（assignment、model 请求 ID 等）。
@@ -333,6 +297,8 @@ export class DsrOwner {
   private failure?: unknown;
   // 当前进行到哪一步，仅用于诊断日志。
   private stage = "register";
+  private tasks?: Promise<void>;
+  private taskActive = false;
 
   constructor(
     readonly ctx: Context,
@@ -345,19 +311,44 @@ export class DsrOwner {
       this.client.delivery(updates, this.stream.signal),
     );
     this.inbox = new DsrInputInbox(receipts, {
-      task: async (input) => {
-        if (this.session!.suspended) return false;
-        await this.session!.receive(input);
-        if (this.session!.suspended) {
-          this.reason = "idle";
-          this.stream.abort();
-          return false;
-        }
-        return true;
-      },
       control: (input, report) => this.session!.control(input, report),
       fail: (error) => this.fail(error),
     });
+  }
+
+  private async readControls(): Promise<void> {
+    try {
+      for await (const input of new DsrInputStream(this.client).read(
+        this.stream.signal,
+      )) {
+        this.inbox.accept(input);
+      }
+    } catch (error) {
+      if (!this.stream.signal.aborted) this.fail(error);
+    }
+  }
+
+  private async runTasks(): Promise<void> {
+    try {
+      while (!this.stream.signal.aborted) {
+        this.taskActive = true;
+        const input = await this.client.claimInput(this.stream.signal);
+        if (!input) {
+          this.taskActive = false;
+          await delay(this.client.transport, 1000, this.stream.signal);
+          continue;
+        }
+        await this.session!.receive(input);
+        this.taskActive = false;
+        if (this.session!.suspended) {
+          this.reason = "idle";
+          this.stream.abort();
+          return;
+        }
+      }
+    } catch (error) {
+      if (!this.stream.signal.aborted) this.fail(error);
+    }
   }
 
   /**
@@ -418,6 +409,7 @@ export class DsrOwner {
         if (
           this.session &&
           !this.session.busy &&
+          !this.taskActive &&
           this.inbox.unsettled.size === 0 &&
           Date.now() - this.session.lastIdle > 60000
         ) {
@@ -432,21 +424,16 @@ export class DsrOwner {
       progress = setInterval(() => {
         if (reporting) return;
         reporting = true;
-        void this.inbox.reportReceived()
+        void this.inbox
+          .reportReceived()
           .catch((error) => this.fail(error))
           .finally(() => {
             reporting = false;
           });
       }, 10000);
 
-      // 持续消费输入流。DsrInputStream 内部处理了 SSE 断线重连、
-      // Last-Event-ID 游标、指数退避和 45 秒无数据看门狗。
-      // stream 被 abort 时，for-await 正常结束，进入 finally。
-      for await (const input of new DsrInputStream(this.client).read(
-        this.stream.signal,
-      )) {
-        this.inbox.accept(input);
-      }
+      this.tasks = this.runTasks();
+      await Promise.all([this.readControls(), this.tasks]);
     } catch (error) {
       // stream 被主动 abort（空闲/关闭）时，for-await 抛出的取消错误不是真失败，
       // 只把真正的错误交给 fail()。
@@ -532,7 +519,7 @@ export class DsrOwner {
     return (this.closing ??= (async () => {
       // 停止接收新输入（已经入队的仍会被排空）。
       this.stream.abort();
-      const waiting = this.inbox.drain();
+      const waiting = Promise.all([this.inbox.drain(), this.tasks]);
       // 用一个 unref 的定时器做超时线：不阻止进程退出，到点自动 resolve。
       let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
       const deadline = new Promise<void>((resolve) => {

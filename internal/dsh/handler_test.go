@@ -2,10 +2,9 @@ package dsh
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -16,38 +15,31 @@ import (
 type transcriptDatabase struct {
 	scope      db.DSHScope
 	transcript db.DSHTranscript
-	events     []db.DSHTranscriptEvent
+	events     []db.DSHTranscriptRecord
 	calls      int
 	err        error
 	readLimit  int
 }
 
-func (d *transcriptDatabase) PutDSHTranscript(_ context.Context, scope db.DSHScope, id string, parent *string, header []byte) (db.DSHTranscript, error) {
+func (d *transcriptDatabase) AppendDSHTranscript(_ context.Context, scope db.DSHScope, id string, parent *string, records []db.DSHTranscriptRecord) (db.DSHTranscriptAppendResult, error) {
 	d.calls++
 	d.scope = scope
-	if d.err != nil {
-		return db.DSHTranscript{}, d.err
-	}
-	d.transcript = db.DSHTranscript{DSHSessionID: id, ParentDSHSessionID: parent, Header: header}
-	return d.transcript, nil
-}
-func (d *transcriptDatabase) AppendDSHTranscript(_ context.Context, scope db.DSHScope, _ string, events []db.DSHTranscriptEvent) (db.DSHTranscriptAppendResult, error) {
-	d.calls++
-	d.scope = scope
-	return db.DSHTranscriptAppendResult{NextSeq: 7}, d.err
+	d.events = records
+	d.transcript = db.DSHTranscript{DSHSessionID: id, ParentDSHSessionID: parent, NextOffset: 7}
+	return db.DSHTranscriptAppendResult{NextOffset: 7}, d.err
 }
 func (d *transcriptDatabase) ListDSHTranscripts(_ context.Context, scope db.DSHScope, _ string, _ int) ([]db.DSHTranscript, error) {
 	d.calls++
 	d.scope = scope
 	return []db.DSHTranscript{d.transcript}, d.err
 }
-func (d *transcriptDatabase) ReadDSHTranscript(_ context.Context, scope db.DSHScope, _ string, from int64, limit int) (db.DSHTranscript, []db.DSHTranscriptEvent, error) {
+func (d *transcriptDatabase) ReadDSHTranscript(_ context.Context, scope db.DSHScope, _ string, from int64, limit int) (db.DSHTranscript, []db.DSHTranscriptRecord, error) {
 	d.calls++
 	d.scope = scope
 	d.readLimit = limit
-	events := make([]db.DSHTranscriptEvent, 0, limit)
+	events := make([]db.DSHTranscriptRecord, 0, limit)
 	for _, event := range d.events {
-		if event.Seq >= from && len(events) < limit {
+		if event.Offset >= from && len(events) < limit {
 			events = append(events, event)
 		}
 	}
@@ -66,6 +58,7 @@ func transcriptRouter(database Database, authorized bool) http.Handler {
 }
 func transcriptRequest(router http.Handler, method, path, body, version string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/x-ndjson")
 	if version != "" {
 		request.Header.Set("DSR-Protocol", version)
 	}
@@ -75,37 +68,36 @@ func transcriptRequest(router http.Handler, method, path, body, version string) 
 }
 
 func TestTranscriptRejectsInvalidRequests(t *testing.T) {
-	cases := []struct {
-		name, method, path, body, version string
-		authorized                        bool
-		status                            int
-		code                              string
-	}{
-		{"missing protocol", "GET", "/sessions/cse_root/transcripts", "", "", true, 400, "unsupported_protocol"},
-		{"unknown protocol", "GET", "/sessions/cse_root/transcripts", "", "2", true, 400, "unsupported_protocol"},
-		{"invalid token", "GET", "/sessions/cse_root/transcripts", "", "1", false, 401, "unauthorized"},
-		{"duplicate envelope key", "POST", "/sessions/cse_root/transcripts/cse_root/events", `{"events":[],"events":[]}`, "1", true, 400, "invalid_request"},
-		{"empty batch", "POST", "/sessions/cse_root/transcripts/cse_root/events", `{"events":[]}`, "1", true, 400, "invalid_request"},
-		{"gap inside batch", "POST", "/sessions/cse_root/transcripts/cse_root/events", `{"events":[{"seq":0,"type":"turn/start","data":{}},{"seq":2,"type":"turn/end","data":{}}]}`, "1", true, 400, "invalid_request"},
-		{"unsafe sequence", "POST", "/sessions/cse_root/transcripts/cse_root/events", `{"events":[{"seq":9007199254740992,"type":"turn/start","data":{}}]}`, "1", true, 400, "invalid_request"},
-		{"header identity", "PUT", "/sessions/cse_root/transcripts/cse_root/header", `{"header":{"version":4,"id":"different","createdAt":0,"isSeeded":false}}`, "1", true, 400, "invalid_request"},
-		{"header version", "PUT", "/sessions/cse_root/transcripts/cse_root/header", `{"header":{"version":3,"id":"cse_root"}}`, "1", true, 400, "unsupported_transcript_version"},
-		{"child missing parent", "PUT", "/sessions/cse_root/transcripts/child/header", `{"header":{"version":4,"id":"child","createdAt":0,"isSeeded":false}}`, "1", true, 400, "invalid_request"},
-		{"negative cursor", "GET", "/sessions/cse_root/transcripts/cse_root?from_seq=-1", "", "1", true, 400, "invalid_request"},
-	}
-	for _, test := range cases {
+	for _, test := range []struct{ name, body, query string }{
+		{"empty", "", "0"},
+		{"missing final LF", `{}`, "0"},
+		{"null seq", "{\"seq\":null}\n", "0"},
+		{"string seq", "{\"seq\":\"0\"}\n", "1"},
+		{"fraction seq", "{\"seq\":0.1}\n", "1"},
+		{"negative seq", "{\"seq\":-1}\n", "0"},
+		{"unsafe seq", "{\"seq\":9007199254740992}\n", "1"},
+		{"duplicate seq", "{\"seq\":0,\"seq\":0}\n", "1"},
+		{"array", "[]\n", "0"},
+		{"scalar", "null\n", "0"},
+		{"blank", "\n", "0"},
+		{"middle header", "{}\n{}\n", "0"},
+		{"late header", "{}\n", "1"},
+		{"wrong offset", "{\"seq\":0}\n", "2"},
+		{"gap", "{}\n{\"seq\":1}\n", "0"},
+		{"negative offset", "{}\n", "-1"},
+	} {
 		t.Run(test.name, func(t *testing.T) {
 			database := &transcriptDatabase{}
-			response := transcriptRequest(transcriptRouter(database, test.authorized), test.method, test.path, test.body, test.version)
-			if response.Code != test.status || response.Header().Get("DSR-Error") != test.code || database.calls != 0 {
-				t.Fatalf("response=%d %s calls=%d", response.Code, response.Body.String(), database.calls)
+			response := transcriptRequest(transcriptRouter(database, true), "POST", "/sessions/cse_root/transcripts/cse_root/records?from_offset="+test.query, test.body, "1")
+			if response.Code != 400 || database.calls != 0 {
+				t.Fatalf("status=%d calls=%d body=%s", response.Code, database.calls, response.Body.String())
 			}
 		})
 	}
 }
 
 func TestTranscriptErrorsHaveDistinctRecoveryCodes(t *testing.T) {
-	cases := []struct {
+	for _, test := range []struct {
 		err    error
 		status int
 		code   string
@@ -115,95 +107,86 @@ func TestTranscriptErrorsHaveDistinctRecoveryCodes(t *testing.T) {
 		{db.ErrDSHHeaderRequired, 409, "transcript_header_required"},
 		{db.ErrDSHTranscriptGap, 409, "transcript_gap"},
 		{db.ErrDSHTranscriptConflict, 409, "transcript_conflict"},
-	}
-	for _, test := range cases {
+	} {
 		t.Run(test.code, func(t *testing.T) {
-			database := &transcriptDatabase{err: test.err}
-			response := transcriptRequest(transcriptRouter(database, true), "POST", "/sessions/cse_root/transcripts/cse_root/events", `{"events":[{"seq":7,"type":"turn/start","data":{"turn":1}}]}`, "1")
+			response := transcriptRequest(transcriptRouter(&transcriptDatabase{err: test.err}, true), "POST", "/sessions/cse_root/transcripts/cse_root/records?from_offset=8", "{\"seq\":7}\n", "1")
 			if response.Code != test.status || response.Header().Get("DSR-Error") != test.code {
 				t.Fatalf("response=%d %s", response.Code, response.Body.String())
 			}
-			if test.code == "transcript_gap" && response.Header().Get("DSR-Next-Seq") != "7" {
-				t.Fatalf("missing gap watermark: %v", response.Header())
+			if test.code == "transcript_gap" && response.Header().Get("DSR-Next-Offset") != "7" {
+				t.Fatal(response.Header())
 			}
 		})
 	}
 }
 
-func TestTranscriptHeaderAndSequenceZero(t *testing.T) {
+func TestTranscriptRecordsPreserveBytes(t *testing.T) {
 	database := &transcriptDatabase{}
+	body := " {\"version\":99, \"future\":9007199254740993} \n{\"seq\":0,\"unknown\":true}\n"
 	router := transcriptRouter(database, true)
-	response := transcriptRequest(router, "PUT", "/sessions/cse_root/transcripts/cse_root/header", `{"header":{"version":4,"id":"cse_root","createdAt":0,"isSeeded":false}}`, "1")
-	if response.Code != 200 {
-		t.Fatal(response.Body.String())
+	response := transcriptRequest(router, "POST", "/sessions/cse_root/transcripts/cse_root/records?from_offset=0", body, "1")
+	if response.Code != 200 || len(database.events) != 2 || database.events[1].Offset != 1 || database.scope.Epoch != 3 {
+		t.Fatalf("response=%d %s records=%v", response.Code, response.Body.String(), database.events)
 	}
-	if database.scope.Epoch != 3 || database.scope.WorkspaceUUID != "workspace" {
-		t.Fatalf("scope=%+v", database.scope)
-	}
-	database.transcript.NextSeq = 2
-	database.events = []db.DSHTranscriptEvent{{Seq: 0, Payload: []byte(`{"seq":0,"type":"turn/start","data":{"turn":1}}`)}, {Seq: 1, Payload: []byte(`{"seq":1,"type":"turn/end","data":{"turn":1}}`)}}
-	response = transcriptRequest(router, "GET", "/sessions/cse_root/transcripts/cse_root?from_seq=0", "", "1")
-	var page transcriptPage
-	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
-		t.Fatal(err)
-	}
-	if len(page.Header) == 0 || len(page.Events) != 2 || page.NextFromSeq != nil {
-		t.Fatalf("page=%+v", page)
-	}
-	if response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatal("missing no-store")
+	database.transcript.NextOffset = 2
+	response = transcriptRequest(router, "GET", "/sessions/cse_root/transcripts/cse_root/records?from_offset=0", "", "1")
+	if response.Body.String() != body || response.Header().Get("Content-Type") != "application/x-ndjson" || response.Header().Get("DSR-Next-Offset") != "2" {
+		t.Fatalf("response=%s %v", response.Body.String(), response.Header())
 	}
 }
 
-func TestTranscriptReadPaginatesByEventCount(t *testing.T) {
-	database := &transcriptDatabase{transcript: db.DSHTranscript{Header: []byte(`{"id":"cse_root"}`), NextSeq: 201}}
-	for seq := int64(0); seq < 201; seq++ {
-		database.events = append(database.events, db.DSHTranscriptEvent{Seq: seq, Payload: []byte(`{"seq":` + strconv.FormatInt(seq, 10) + `}`)})
+func TestTranscriptReadPaginatesByRecordCount(t *testing.T) {
+	database := &transcriptDatabase{transcript: db.DSHTranscript{NextOffset: 201}}
+	for offset := int64(0); offset < 201; offset++ {
+		database.events = append(database.events, db.DSHTranscriptRecord{Offset: offset, Payload: []byte(`{}`)})
 	}
-	router := transcriptRouter(database, true)
-	for _, from := range []string{"0", "200", "201"} {
-		response := transcriptRequest(router, "GET", "/sessions/cse_root/transcripts/cse_root?from_seq="+from, "", "1")
-		var page transcriptPage
-		if response.Code != 200 {
-			t.Fatal(response.Body.String())
+	for _, from := range []int{0, 200, 201} {
+		response := transcriptRequest(transcriptRouter(database, true), "GET", fmt.Sprintf("/sessions/cse_root/transcripts/cse_root/records?from_offset=%d", from), "", "1")
+		want := min(200, 201-from)
+		if response.Code != 200 || strings.Count(response.Body.String(), "\n") != want || database.readLimit != 200 {
+			t.Fatalf("response=%d %s", response.Code, response.Body.String())
 		}
-		if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
-			t.Fatal(err)
-		}
-		if database.readLimit != 200 {
-			t.Fatalf("read limit=%d", database.readLimit)
-		}
-		if from == "0" {
-			if len(page.Header) == 0 || len(page.Events) != 200 || page.NextFromSeq == nil || *page.NextFromSeq != "200" {
-				t.Fatalf("first page=%+v", page)
-			}
-		} else {
-			want := 0
-			if from == "200" {
-				want = 1
-			}
-			if string(page.Header) != "null" || len(page.Events) != want || page.NextFromSeq != nil {
-				t.Fatalf("from=%s page=%+v", from, page)
-			}
+		if (response.Header().Get("DSR-Next-From-Offset") == "200") != (from == 0) {
+			t.Fatal(response.Header())
 		}
 	}
 }
 
-func TestTranscriptReadKeepsLargeEventsInOnePage(t *testing.T) {
-	payload := []byte(`{"text":"` + strings.Repeat("x", 3<<20) + `"}`)
-	database := &transcriptDatabase{
-		transcript: db.DSHTranscript{Header: []byte(`{"id":"cse_root"}`), NextSeq: 2},
-		events:     []db.DSHTranscriptEvent{{Seq: 0, Payload: payload}, {Seq: 1, Payload: payload}},
+func TestTranscriptTransportAndScopeBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name, protocol, contentType, path, body string
+		authorized                              bool
+		status                                  int
+	}{
+		{"missing protocol", "", "application/x-ndjson", "cse_root?from_offset=0", "{}\n", true, 400},
+		{"invalid credential", "1", "application/x-ndjson", "cse_root?from_offset=0", "{}\n", false, 401},
+		{"JSON envelope", "1", "application/json", "cse_root?from_offset=0", "{}\n", true, 400},
+		{"child missing parent", "1", "application/x-ndjson", "child?from_offset=0", "{}\n", true, 400},
+		{"root parent", "1", "application/x-ndjson", "cse_root?from_offset=0&parent_dsh_session_id=other", "{}\n", true, 400},
+		{"self parent", "1", "application/x-ndjson", "child?from_offset=0&parent_dsh_session_id=child", "{}\n", true, 400},
+		{"late parent", "1", "application/x-ndjson", "child?from_offset=1&parent_dsh_session_id=cse_root", "{\"seq\":0}\n", true, 400},
+		{"line limit", "1", "application/x-ndjson", "cse_root?from_offset=0", "{\"v\":\"" + strings.Repeat("x", maxEventBytes) + "\"}\n", true, 413},
+		{"body limit", "1", "application/x-ndjson", "cse_root?from_offset=0", strings.Repeat("x", maxRequestBytes+1), true, 413},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database := &transcriptDatabase{}
+			path := strings.Replace(test.path, "?", "/records?", 1)
+			request := httptest.NewRequest("POST", "/sessions/cse_root/transcripts/"+path, strings.NewReader(test.body))
+			request.Header.Set("DSR-Protocol", test.protocol)
+			request.Header.Set("Content-Type", test.contentType)
+			response := httptest.NewRecorder()
+			transcriptRouter(database, test.authorized).ServeHTTP(response, request)
+			if response.Code != test.status || database.calls != 0 {
+				t.Fatalf("status=%d calls=%d", response.Code, database.calls)
+			}
+		})
 	}
-	response := transcriptRequest(transcriptRouter(database, true), "GET", "/sessions/cse_root/transcripts/cse_root", "", "1")
-	var page transcriptPage
-	if response.Code != 200 {
-		t.Fatal(response.Code)
-	}
-	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
-		t.Fatal(err)
-	}
-	if len(page.Events) != 2 || page.NextFromSeq != nil || response.Body.Len() <= 4<<20 {
-		t.Fatalf("events=%d next=%v bytes=%d", len(page.Events), page.NextFromSeq, response.Body.Len())
+}
+
+func TestTranscriptParentIsIndependentOfNativeFields(t *testing.T) {
+	database := &transcriptDatabase{}
+	response := transcriptRequest(transcriptRouter(database, true), "POST", "/sessions/cse_root/transcripts/child/records?from_offset=0&parent_dsh_session_id=cse_root", "{\"parentSession\":\"different\",\"version\":99}\n", "1")
+	if response.Code != 200 || database.transcript.ParentDSHSessionID == nil || *database.transcript.ParentDSHSessionID != "cse_root" {
+		t.Fatalf("%d %+v", response.Code, database.transcript)
 	}
 }

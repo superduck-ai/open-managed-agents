@@ -1,139 +1,59 @@
 package dsh
 
 import (
-	"encoding/json"
+	"mime"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-type nativeHeader struct {
-	Version       int     `json:"version"`
-	ID            string  `json:"id"`
-	ParentSession *string `json:"parentSession"`
-	CreatedAt     *int64  `json:"createdAt"`
-	IsSeeded      *bool   `json:"isSeeded"`
-}
-
-type headerRequest struct {
-	ParentDSHSessionID *string         `json:"parent_dsh_session_id"`
-	Header             json.RawMessage `json:"header"`
-}
-
 type watermark struct {
-	DSHSessionID string `json:"dsh_session_id,omitempty"`
-	NextSeq      string `json:"next_seq"`
+	NextOffset string `json:"next_offset"`
 }
 
-func (h *Handler) putHeader(w http.ResponseWriter, r *http.Request) {
-	request, err := decodeBody[headerRequest](w, r)
+func (h *Handler) appendRecords(w http.ResponseWriter, r *http.Request) {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/x-ndjson" {
+		h.fail(w, r, invalidRequest(), nil)
+		return
+	}
+	from, err := decimal(r.URL.Query().Get("from_offset"))
+	if err != nil || from > 9007199254740992 {
+		h.fail(w, r, invalidRequest(), nil)
+		return
+	}
+	records, err := readRecords(w, r, from)
 	if err != nil {
 		h.fail(w, r, err, nil)
 		return
 	}
 	id := chi.URLParam(r, "dsh_session_id")
-	if err := validateHeader(id, chi.URLParam(r, "code_session_id"), request); err != nil {
-		h.fail(w, r, err, nil)
-		return
-	}
-	result, err := h.database.PutDSHTranscript(r.Context(), scopeFrom(r), id, request.ParentDSHSessionID, request.Header)
-	if err != nil {
-		h.fail(w, r, err, nil)
-		return
-	}
-	writeJSON(w, watermark{DSHSessionID: id, NextSeq: strconv.FormatInt(result.NextSeq, 10)})
-}
-
-func validateHeader(id, codeSessionID string, request headerRequest) error {
-	var header nativeHeader
-	if err := json.Unmarshal(request.Header, &header); err != nil {
-		return invalidRequest()
-	}
-	if header.Version != 4 {
-		return unsupportedTranscript()
-	}
-	if id == "" || header.ID != id || header.CreatedAt == nil || *header.CreatedAt < 0 || *header.CreatedAt > 9007199254740991 || header.IsSeeded == nil {
-		return invalidRequest()
-	}
-	if !sameParent(header.ParentSession, request.ParentDSHSessionID) {
-		return invalidRequest()
-	}
-	if id == codeSessionID && request.ParentDSHSessionID != nil {
-		return invalidRequest()
-	}
-	if id != codeSessionID && (request.ParentDSHSessionID == nil || *request.ParentDSHSessionID == "" || *request.ParentDSHSessionID == id) {
-		return invalidRequest()
-	}
-	return nil
-}
-
-func sameParent(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
-}
-
-type appendRequest struct {
-	Events []json.RawMessage `json:"events"`
-}
-
-type nativeEvent struct {
-	Seq  *int64          `json:"seq"`
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
-}
-
-func (h *Handler) appendEvents(w http.ResponseWriter, r *http.Request) {
-	request, err := decodeBody[appendRequest](w, r)
-	if err != nil {
-		h.fail(w, r, err, nil)
-		return
-	}
-	events, err := parseEvents(request.Events)
-	if err != nil {
-		h.fail(w, r, err, nil)
-		return
-	}
-	result, err := h.database.AppendDSHTranscript(r.Context(), scopeFrom(r), chi.URLParam(r, "dsh_session_id"), events)
-	if err != nil {
-		h.fail(w, r, err, &result.NextSeq)
-		return
-	}
-	writeJSON(w, watermark{NextSeq: strconv.FormatInt(result.NextSeq, 10)})
-}
-
-func parseEvents(raw []json.RawMessage) ([]db.DSHTranscriptEvent, error) {
-	if len(raw) == 0 || len(raw) > maxPageEvents {
-		return nil, invalidRequest()
-	}
-	result := make([]db.DSHTranscriptEvent, 0, len(raw))
-	var previous int64
-	for index, payload := range raw {
-		if len(payload) > maxEventBytes {
-			return nil, payloadTooLarge()
+	var parent *string
+	if values, exists := r.URL.Query()["parent_dsh_session_id"]; exists {
+		if from != 0 || len(values) != 1 || values[0] == "" || values[0] == id {
+			h.fail(w, r, invalidRequest(), nil)
+			return
 		}
-		var event nativeEvent
-		if err := json.Unmarshal(payload, &event); err != nil {
-			return nil, invalidRequest()
-		}
-		if event.Seq == nil || *event.Seq < 0 || *event.Seq >= 9007199254740991 || event.Type == "" || len(event.Data) == 0 || index > 0 && *event.Seq != previous+1 {
-			return nil, invalidRequest()
-		}
-		previous = *event.Seq
-		result = append(result, db.DSHTranscriptEvent{Seq: *event.Seq, Payload: payload})
+		parent = &values[0]
 	}
-	return result, nil
+	if from == 0 && ((id == chi.URLParam(r, "code_session_id")) != (parent == nil)) {
+		h.fail(w, r, invalidRequest(), nil)
+		return
+	}
+	result, err := h.database.AppendDSHTranscript(r.Context(), scopeFrom(r), id, parent, records)
+	if err != nil {
+		h.fail(w, r, err, &result.NextOffset)
+		return
+	}
+	writeJSON(w, watermark{NextOffset: strconv.FormatInt(result.NextOffset, 10)})
 }
 
 type transcriptInfo struct {
 	DSHSessionID       string  `json:"dsh_session_id"`
 	ParentDSHSessionID *string `json:"parent_dsh_session_id"`
 	SessionThreadID    *string `json:"session_thread_id"`
-	HeaderPresent      bool    `json:"header_present"`
-	NextSeq            string  `json:"next_seq"`
+	NextOffset         string  `json:"next_offset"`
 }
 
 type transcriptList struct {
@@ -163,43 +83,39 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		response.NextAfter = &id
 	}
 	for _, row := range rows {
-		response.Data = append(response.Data, transcriptInfo{DSHSessionID: row.DSHSessionID, ParentDSHSessionID: row.ParentDSHSessionID, SessionThreadID: row.SessionThreadID, HeaderPresent: true, NextSeq: strconv.FormatInt(row.NextSeq, 10)})
+		response.Data = append(response.Data, transcriptInfo{DSHSessionID: row.DSHSessionID, ParentDSHSessionID: row.ParentDSHSessionID, SessionThreadID: row.SessionThreadID, NextOffset: strconv.FormatInt(row.NextOffset, 10)})
 	}
 	writeJSON(w, response)
-}
-
-type transcriptPage struct {
-	Header      json.RawMessage   `json:"header"`
-	Events      []json.RawMessage `json:"events"`
-	NextFromSeq *string           `json:"next_from_seq"`
 }
 
 func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 	from := int64(0)
 	var err error
-	if value := r.URL.Query().Get("from_seq"); value != "" {
+	if value := r.URL.Query().Get("from_offset"); value != "" {
 		from, err = decimal(value)
 	}
-	if err != nil || from > 9007199254740991 {
+	if err != nil || from > 9007199254740993 {
 		h.fail(w, r, invalidRequest(), nil)
 		return
 	}
-	transcript, events, err := h.database.ReadDSHTranscript(r.Context(), scopeFrom(r), chi.URLParam(r, "dsh_session_id"), from, maxPageEvents)
+	transcript, records, err := h.database.ReadDSHTranscript(r.Context(), scopeFrom(r), chi.URLParam(r, "dsh_session_id"), from, maxPageEvents)
 	if err != nil {
 		h.fail(w, r, err, nil)
 		return
 	}
-	response := transcriptPage{Events: make([]json.RawMessage, 0, len(events))}
-	if from == 0 {
-		response.Header = transcript.Header
+	next := from + int64(len(records))
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("DSR-Next-Offset", strconv.FormatInt(transcript.NextOffset, 10))
+	if next < transcript.NextOffset {
+		w.Header().Set("DSR-Next-From-Offset", strconv.FormatInt(next, 10))
 	}
-	for _, event := range events {
-		response.Events = append(response.Events, json.RawMessage(event.Payload))
+	w.WriteHeader(http.StatusOK)
+	for _, record := range records {
+		if _, err := w.Write(record.Payload); err != nil {
+			return
+		}
+		if _, err := w.Write([]byte{'\n'}); err != nil {
+			return
+		}
 	}
-	next := from + int64(len(response.Events))
-	if next < transcript.NextSeq {
-		cursor := strconv.FormatInt(next, 10)
-		response.NextFromSeq = &cursor
-	}
-	writeJSON(w, response)
 }

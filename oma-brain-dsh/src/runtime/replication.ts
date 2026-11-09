@@ -21,7 +21,7 @@ import {
   type ReplicationState as Replication,
 } from "./replication-state.ts";
 export interface RemoteTranscriptSnapshot {
-  readonly nextSeq: string;
+  readonly nextOffset: string;
 }
 
 export interface RemoteTranscriptStore {
@@ -162,7 +162,8 @@ export class SessionReplication extends Service {
         async (remote) => {
           if (
             snapshot &&
-            (!remote || BigInt(remote.count) !== BigInt(snapshot.nextSeq))
+            (!remote ||
+              BigInt(remote.count) + 1n !== BigInt(snapshot.nextOffset))
           )
             throw new TranscriptUploadError(
               "Transcript does not match directory watermark",

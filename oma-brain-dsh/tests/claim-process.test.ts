@@ -67,7 +67,7 @@ test("DSR startup reports rejected claim credentials without exposing them", asy
   }
 });
 
-test("DSR process claims, executes a task, persists it and settles delivery", async () => {
+test("DSR process claims, executes a task, persists it without task delivery receipts", async () => {
   const backend = new DsrBackend();
   backend.modelScript = [toolEvents(), textEvents("completed")];
   await backend.ready;
@@ -116,7 +116,8 @@ test("DSR process claims, executes a task, persists it and settles delivery", as
       kind: "user.message",
       content: [{ type: "text", text: "hello" }],
     });
-    await eventually(() => backend.processed.includes("process-input"));
+    await eventually(() => backend.finishes.has("process-input"));
+    expect(backend.processed).not.toContain("process-input");
     expect(backend.finishes.get("process-input")).toEqual({
       result: "success",
     });

@@ -54,11 +54,9 @@ type DeliveryUpdate struct {
 }
 
 type DeliveryItem struct {
-	CancelRequestedAt *time.Time `json:"cancel_requested_at,omitempty"`
-	ID                string     `json:"id"`
-	Status            string     `json:"status"`
-	Outcome           string     `json:"outcome"`
-	ExecutionStatus   string     `json:"execution_status,omitempty"`
+	ID      string `json:"id"`
+	Status  string `json:"status"`
+	Outcome string `json:"outcome"`
 }
 
 type DeliveryResponse struct {
@@ -73,7 +71,13 @@ type PublishResponse struct {
 	Duplicates int `json:"duplicates"`
 }
 
+type InputClaim struct {
+	Input             json.RawMessage `json:"input"`
+	CancelRequestedAt *time.Time      `json:"cancel_requested_at,omitempty"`
+}
+
 type Execution interface {
+	Claim(context.Context, db.DSHScope) (InputClaim, error)
 	Stream(http.ResponseWriter, *http.Request, db.DSHScope)
 	Delivery(context.Context, db.DSHScope, []DeliveryUpdate) (DeliveryResponse, error)
 	Finish(context.Context, db.DSHScope, string, FinishRequest) (FinishRequest, error)
@@ -95,12 +99,30 @@ func NewExecutionHandler(execution Execution, authenticate Authenticator, logger
 func (h *ExecutionHandler) RegisterRoutes(router chi.Router) {
 	guarded := router.With(NewHandler(nil, h.authenticate, h.logger).authorize)
 	const base = "/sessions/{code_session_id}"
-	guarded.Get(base+"/inputs/stream", func(w http.ResponseWriter, r *http.Request) { h.execution.Stream(w, r, scopeFrom(r)) })
+	guarded.Get(base+"/inputs/stream", h.stream)
 	guarded.Post(base+"/inputs/delivery", h.delivery)
+	guarded.Post(base+"/inputs/claim", h.claim)
 	guarded.Post(base+"/inputs/{input_id}/finish", h.finish)
 	guarded.Post(base+"/permission-requests", h.permission)
 	guarded.Post(base+"/permission-requests/{request_id}/cancel", h.cancelPermission)
 	guarded.Post(base+"/public-events", h.publish)
+}
+
+func (h *ExecutionHandler) stream(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("from_sequence_num") || r.Header.Get("Last-Event-ID") != "" {
+		writeError(w, r, invalidRequest(), nil)
+		return
+	}
+	h.execution.Stream(w, r, scopeFrom(r))
+}
+
+func (h *ExecutionHandler) claim(w http.ResponseWriter, r *http.Request) {
+	value, err := h.execution.Claim(r.Context(), scopeFrom(r))
+	if err != nil {
+		writeError(w, r, err, nil)
+		return
+	}
+	writeJSON(w, value)
 }
 
 func (h *ExecutionHandler) delivery(w http.ResponseWriter, r *http.Request) {

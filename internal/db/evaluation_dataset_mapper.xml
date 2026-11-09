@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EvaluationDatasetMapper">
+    <sql id="datasetView">
+        d.uuid,
+        d.external_id,
+        d.organization_uuid,
+        d.workspace_uuid,
+        d.name,
+        d.description,
+        d.created_at,
+        d.updated_at,
+        v.uuid AS version_uuid,
+        v.external_id AS version_external_id,
+        v.version AS version,
+        CAST((
+            SELECT COUNT(*)
+            FROM evaluation_cases c
+            WHERE c.version_uuid = v.uuid
+            AND c.deleted_at IS NULL
+        ) AS integer) AS case_count
+    </sql>
+
+    <sql id="caseColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        dataset_uuid,
+        version_uuid,
+        position,
+        query,
+        expected_answer,
+        expected_tool_trace,
+        source_session_id,
+        polarity,
+        acceptance,
+        created_at,
+        updated_at
+    </sql>
+
+    <insert id="InsertDataset" result="returning" resultType="evaluationDatasetLockRow">
+        INSERT INTO evaluation_datasets (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            name,
+            description,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.Name},
+            #{params.Description},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING uuid, external_id
+    </insert>
+
+    <insert id="InsertVersion" result="returning" resultType="evaluationDatasetVersionRow">
+        INSERT INTO evaluation_dataset_versions (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            dataset_uuid,
+            version,
+            created_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.DatasetUUID},
+            #{params.Version},
+            #{params.CreatedAt}
+        )
+        RETURNING
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            dataset_uuid,
+            version,
+            created_at
+    </insert>
+
+    <insert id="InsertCase" result="returning" resultType="evaluationCaseRow">
+        INSERT INTO evaluation_cases (
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            dataset_uuid,
+            version_uuid,
+            position,
+            query,
+            expected_answer,
+            expected_tool_trace,
+            source_session_id,
+            polarity,
+            acceptance,
+            created_at,
+            updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.DatasetUUID},
+            #{params.VersionUUID},
+            #{params.Position},
+            #{params.Query},
+            #{params.ExpectedAnswer},
+            CAST(#{params.ExpectedToolTrace} AS jsonb),
+            #{params.SourceSessionID},
+            #{params.Polarity},
+            #{params.Acceptance},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING
+        <include refid="caseColumns"/>
+    </insert>
+
+    <select id="LockDataset" resultType="evaluationDatasetLockRow">
+        SELECT uuid, external_id
+        FROM evaluation_datasets
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="FindLatestVersion" resultType="evaluationDatasetVersionRow">
+        SELECT
+            uuid,
+            external_id,
+            organization_uuid,
+            workspace_uuid,
+            dataset_uuid,
+            version,
+            created_at
+        FROM evaluation_dataset_versions
+        WHERE dataset_uuid = #{datasetUUID}
+        ORDER BY version DESC
+        LIMIT 1
+    </select>
+
+    <select id="MaxCasePosition" result="scalar">
+        SELECT CAST(COALESCE(MAX(position), 0) AS integer)
+        FROM evaluation_cases
+        WHERE version_uuid = #{versionUUID}
+    </select>
+
+    <select id="FindDataset" resultType="evaluationDatasetRow">
+        SELECT
+        <include refid="datasetView"/>
+        FROM evaluation_datasets d
+        JOIN evaluation_dataset_versions v ON v.dataset_uuid = d.uuid
+        WHERE d.organization_uuid = #{organizationUUID}
+        AND d.workspace_uuid = #{workspaceUUID}
+        AND d.external_id = #{externalID}
+        AND d.deleted_at IS NULL
+        AND v.version = (
+            SELECT MAX(version)
+            FROM evaluation_dataset_versions
+            WHERE dataset_uuid = d.uuid
+        )
+    </select>
+
+    <select id="ListDatasets" resultType="evaluationDatasetRow">
+        SELECT
+        <include refid="datasetView"/>
+        FROM evaluation_datasets d
+        JOIN evaluation_dataset_versions v ON v.dataset_uuid = d.uuid
+        WHERE d.organization_uuid = #{params.OrganizationUUID}
+        AND d.workspace_uuid = #{params.WorkspaceUUID}
+        AND d.deleted_at IS NULL
+        AND v.version = (
+            SELECT MAX(version)
+            FROM evaluation_dataset_versions
+            WHERE dataset_uuid = d.uuid
+        )
+        ORDER BY d.created_at DESC, d.uuid DESC
+        LIMIT #{params.Limit} OFFSET #{params.Offset}
+    </select>
+
+    <update id="SoftDeleteDataset" result="rows">
+        UPDATE evaluation_datasets
+        SET deleted_at = #{deletedAt},
+            updated_at = #{deletedAt}
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </update>
+
+    <select id="ListCases" resultType="evaluationCaseRow">
+        SELECT
+        <include refid="caseColumns"/>
+        FROM evaluation_cases
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND version_uuid = #{versionUUID}
+        AND deleted_at IS NULL
+        ORDER BY position ASC
+    </select>
+
+    <update id="UpdateCase" result="returning" resultType="evaluationCaseRow">
+        UPDATE evaluation_cases
+        SET query = #{params.Query},
+            expected_answer = #{params.ExpectedAnswer},
+            expected_tool_trace = CAST(#{params.ExpectedToolTrace} AS jsonb),
+            source_session_id = #{params.SourceSessionID},
+            polarity = #{params.Polarity},
+            acceptance = #{params.Acceptance},
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND dataset_uuid = #{params.DatasetUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING
+        <include refid="caseColumns"/>
+    </update>
+
+    <update id="SoftDeleteCase" result="rows">
+        UPDATE evaluation_cases
+        SET deleted_at = #{deletedAt},
+            updated_at = #{deletedAt}
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND dataset_uuid = #{datasetUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </update>
+</mapper>

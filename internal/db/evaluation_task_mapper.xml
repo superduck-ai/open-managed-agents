@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EvaluationTaskMapper">
+    <sql id="rubricView">
+        r.uuid,
+        r.external_id,
+        r.organization_uuid,
+        r.workspace_uuid,
+        r.name,
+        r.description,
+        r.created_at,
+        r.updated_at,
+        v.uuid AS version_uuid,
+        v.external_id AS version_external_id,
+        v.version AS version,
+        v.body AS body,
+        v.pass_score AS pass_score,
+        v.model AS model
+    </sql>
+
+    <sql id="taskColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        created_by_user_uuid,
+        created_by_api_key_uuid,
+        name,
+        mode,
+        status,
+        agent_external_id,
+        agent_version,
+        environment_external_id,
+        dataset_external_id,
+        dataset_version_external_id,
+        rubric_external_id,
+        rubric_version_external_id,
+        pass_score,
+        rubric_body,
+        rubric_model,
+        strategy,
+        low_score_threshold,
+        optimize_system,
+        baseline_system,
+        candidate_system,
+        candidate_summary,
+        error_message,
+        vault_ids,
+        resources,
+        applied_at,
+        created_at,
+        updated_at
+    </sql>
+
+    <sql id="itemColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        task_uuid,
+        task_external_id,
+        case_external_id,
+        round,
+        position,
+        session_external_id,
+        status,
+        error_message,
+        query,
+        expected_answer,
+        expected_tool_trace,
+        acceptance,
+        created_at,
+        updated_at
+    </sql>
+
+    <sql id="scoreColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        task_uuid,
+        item_uuid,
+        status,
+        score,
+        passed,
+        explanation,
+        dimensions,
+        error_message,
+        created_at
+    </sql>
+
+    <insert id="InsertRubric" result="returning" resultType="evaluationRubricLockRow">
+        INSERT INTO evaluation_rubrics (
+            uuid, external_id, organization_uuid, workspace_uuid, name, description, created_at, updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.Name},
+            #{params.Description},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING uuid, external_id
+    </insert>
+
+    <insert id="InsertRubricVersion" result="returning" resultType="evaluationRubricVersionRow">
+        INSERT INTO evaluation_rubric_versions (
+            uuid, external_id, organization_uuid, workspace_uuid, rubric_uuid, version, body, pass_score, model, created_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.RubricUUID},
+            #{params.Version},
+            #{params.Body},
+            #{params.PassScore},
+            #{params.Model},
+            #{params.CreatedAt}
+        )
+        RETURNING uuid, external_id, organization_uuid, workspace_uuid, rubric_uuid, version, body, pass_score, model, created_at
+    </insert>
+
+    <select id="LockRubric" resultType="evaluationRubricLockRow">
+        SELECT uuid, external_id
+        FROM evaluation_rubrics
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="FindLatestRubricVersion" resultType="evaluationRubricVersionRow">
+        SELECT uuid, external_id, organization_uuid, workspace_uuid, rubric_uuid, version, body, pass_score, model, created_at
+        FROM evaluation_rubric_versions
+        WHERE rubric_uuid = #{rubricUUID}
+        ORDER BY version DESC
+        LIMIT 1
+    </select>
+
+    <select id="FindRubric" resultType="evaluationRubricRow">
+        SELECT <include refid="rubricView"/>
+        FROM evaluation_rubrics r
+        JOIN evaluation_rubric_versions v ON v.rubric_uuid = r.uuid
+        WHERE r.organization_uuid = #{organizationUUID}
+        AND r.workspace_uuid = #{workspaceUUID}
+        AND r.external_id = #{externalID}
+        AND r.deleted_at IS NULL
+        AND v.version = (
+            SELECT MAX(version) FROM evaluation_rubric_versions WHERE rubric_uuid = r.uuid
+        )
+    </select>
+
+    <select id="ListRubrics" resultType="evaluationRubricRow">
+        SELECT <include refid="rubricView"/>
+        FROM evaluation_rubrics r
+        JOIN evaluation_rubric_versions v ON v.rubric_uuid = r.uuid
+        WHERE r.organization_uuid = #{params.OrganizationUUID}
+        AND r.workspace_uuid = #{params.WorkspaceUUID}
+        AND r.deleted_at IS NULL
+        AND v.version = (
+            SELECT MAX(version) FROM evaluation_rubric_versions WHERE rubric_uuid = r.uuid
+        )
+        ORDER BY r.created_at DESC, r.uuid DESC
+        LIMIT #{params.Limit} OFFSET #{params.Offset}
+    </select>
+
+    <update id="TouchRubric" result="rows">
+        UPDATE evaluation_rubrics
+        SET updated_at = #{updatedAt}
+        WHERE uuid = #{rubricUUID}
+        AND deleted_at IS NULL
+    </update>
+
+    <update id="SoftDeleteRubric" result="rows">
+        UPDATE evaluation_rubrics
+        SET deleted_at = #{deletedAt}, updated_at = #{deletedAt}
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </update>
+
+    <insert id="InsertTask" result="returning" resultType="evaluationTaskRow">
+        INSERT INTO evaluation_tasks (
+            uuid, external_id, organization_uuid, workspace_uuid, created_by_user_uuid, created_by_api_key_uuid,
+            name, mode, status, agent_external_id, agent_version, environment_external_id,
+            dataset_external_id, dataset_version_external_id, rubric_external_id, rubric_version_external_id,
+            pass_score, rubric_body, rubric_model, strategy, low_score_threshold, optimize_system,
+            baseline_system, vault_ids, resources, created_at, updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.CreatedByUserUUID},
+            #{params.CreatedByAPIKeyUUID},
+            #{params.Name},
+            #{params.Mode},
+            #{params.Status},
+            #{params.AgentExternalID},
+            #{params.AgentVersion},
+            #{params.EnvironmentExternalID},
+            #{params.DatasetExternalID},
+            #{params.DatasetVersionExternalID},
+            #{params.RubricExternalID},
+            #{params.RubricVersionExternalID},
+            #{params.PassScore},
+            #{params.RubricBody},
+            #{params.RubricModel},
+            #{params.Strategy},
+            #{params.LowScoreThreshold},
+            #{params.OptimizeSystem},
+            #{params.BaselineSystem},
+            CAST(#{params.VaultIDs} AS jsonb),
+            CAST(#{params.Resources} AS jsonb),
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING <include refid="taskColumns"/>
+    </insert>
+
+    <insert id="InsertItem" result="returning" resultType="evaluationTaskItemRow">
+        INSERT INTO evaluation_task_items (
+            uuid, external_id, organization_uuid, workspace_uuid, task_uuid, task_external_id, case_external_id,
+            round, position, query, expected_answer, expected_tool_trace, acceptance, status, created_at, updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.TaskUUID},
+            #{params.TaskExternalID},
+            #{params.CaseExternalID},
+            #{params.Round},
+            #{params.Position},
+            #{params.Query},
+            #{params.ExpectedAnswer},
+            CAST(#{params.ExpectedToolTrace} AS jsonb),
+            #{params.Acceptance},
+            'pending',
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING <include refid="itemColumns"/>
+    </insert>
+
+    <select id="FindTask" resultType="evaluationTaskRow">
+        SELECT <include refid="taskColumns"/>
+        FROM evaluation_tasks
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+    </select>
+
+    <select id="ListTasks" resultType="evaluationTaskRow">
+        SELECT <include refid="taskColumns"/>
+        FROM evaluation_tasks
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        ORDER BY created_at DESC, uuid DESC
+        LIMIT #{params.Limit} OFFSET #{params.Offset}
+    </select>
+
+    <select id="ListItems" resultType="evaluationTaskItemRow">
+        SELECT <include refid="itemColumns"/>
+        FROM evaluation_task_items
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND task_uuid = #{taskUUID}
+        ORDER BY round ASC, position ASC
+    </select>
+
+    <select id="ListItemsByTasks" resultType="evaluationTaskItemRow">
+        SELECT <include refid="itemColumns"/>
+        FROM evaluation_task_items
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND task_uuid IN
+        <foreach collection="params.TaskUUIDs" item="taskUUID" open="(" separator="," close=")">#{taskUUID}</foreach>
+        ORDER BY task_uuid ASC, round ASC, position ASC
+    </select>
+
+    <select id="ListScoresByTasks" resultType="evaluationTaskScoreRow">
+        SELECT <include refid="scoreColumns"/>
+        FROM evaluation_task_scores
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND task_uuid IN
+        <foreach collection="params.TaskUUIDs" item="taskUUID" open="(" separator="," close=")">#{taskUUID}</foreach>
+        ORDER BY task_uuid ASC, created_at ASC
+    </select>
+
+    <select id="ListScores" resultType="evaluationTaskScoreRow">
+        SELECT <include refid="scoreColumns"/>
+        FROM evaluation_task_scores
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND task_uuid = #{taskUUID}
+        ORDER BY created_at ASC
+    </select>
+
+    <select id="ListRunningBySession" resultType="evaluationTaskItemRow">
+        SELECT <include refid="itemColumns"/>
+        FROM evaluation_task_items
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND session_external_id = #{sessionExternalID}
+        AND status = 'running'
+    </select>
+
+    <update id="MarkItemRunning" result="rows">
+        UPDATE evaluation_task_items
+        SET status = 'running',
+            session_external_id = #{params.SessionExternalID},
+            error_message = '',
+            updated_at = #{params.UpdatedAt}
+        WHERE uuid = #{params.UUID}
+        AND organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND status = 'pending'
+    </update>
+
+    <update id="FinishItem" result="rows">
+        UPDATE evaluation_task_items
+        SET status = #{params.Status},
+            error_message = #{params.ErrorMessage},
+            updated_at = #{params.UpdatedAt}
+        WHERE uuid = #{params.UUID}
+        AND organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND status = 'running'
+    </update>
+
+    <update id="ResetFailedItems" result="rows">
+        UPDATE evaluation_task_items
+        SET status = 'pending',
+            session_external_id = '',
+            error_message = '',
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND task_uuid = #{params.TaskUUID}
+        AND round = #{params.Round}
+        AND status = 'failed'
+    </update>
+
+    <update id="CancelPendingItems" result="rows">
+        UPDATE evaluation_task_items
+        SET status = 'cancelled',
+            updated_at = #{updatedAt}
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND task_uuid = #{taskUUID}
+        AND status = 'pending'
+    </update>
+
+    <update id="UpdateTaskStatus" result="rows">
+        UPDATE evaluation_tasks
+        SET status = #{params.Status},
+            error_message = #{params.ErrorMessage},
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND status IN ('pending', 'running', 'completed', 'failed')
+    </update>
+
+    <insert id="InsertScore" result="returning" resultType="evaluationTaskScoreRow">
+        INSERT INTO evaluation_task_scores (
+            uuid, external_id, organization_uuid, workspace_uuid, task_uuid, item_uuid,
+            status, score, passed, explanation, dimensions, error_message, created_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.TaskUUID},
+            #{params.ItemUUID},
+            #{params.Status},
+            #{params.Score},
+            #{params.Passed},
+            #{params.Explanation},
+            CAST(#{params.Dimensions} AS jsonb),
+            #{params.ErrorMessage},
+            #{params.CreatedAt}
+        )
+        RETURNING <include refid="scoreColumns"/>
+    </insert>
+</mapper>

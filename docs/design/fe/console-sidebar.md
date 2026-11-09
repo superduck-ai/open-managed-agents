@@ -15,7 +15,7 @@
 顶层首页、LLM models、API keys 保持原样。Managed Agents 默认展开；Build、Analytics 和工作区设置默认折叠，进入其可见子项时自动展开。用户手动展开的其他分组保持原状态。
 
 - Build：Files、Skills、MCP Servers。真实 Workbench、Batches 仍保留路由，暂时隐藏导航入口。
-- Managed Agents：Quickstart、Agents、Sessions、Observability、Deployments、Environments、Credential vaults、Memory stores。
+- Managed Agents：Quickstart、Agents、Sessions、评测、Observability、Deployments、Environments、Credential vaults、Memory stores。评测页使用资源列表的页头、表格、空态和创建弹窗，不在空态里再放创建按钮。
 - Analytics 与 Claude Code 的导航定义、可见性和页面保持原有行为。
 - 工作区设置：Members、API keys、Webhooks、OpenTelemetry、MCP tunnels（Preview）。密钥、Webhook、OpenTelemetry、隧道使用当前工作区的规范设置路径（`/settings/workspaces/{workspaceId}/telemetry`，`/telemetry` 重定向到当前工作区）。Members 使用当前工作区上下文；默认工作区引导到组织成员管理。
 

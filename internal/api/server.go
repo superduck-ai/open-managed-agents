@@ -21,6 +21,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	evaluationsapi "github.com/superduck-ai/open-managed-agents/internal/evaluations"
 	"github.com/superduck-ai/open-managed-agents/internal/files"
 	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -205,6 +206,10 @@ func NewServer(deps ServerDeps) *Server {
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
 	}
+	evaluationHandler := evaluationsapi.NewHandler(deps.DB, componentLogger("evaluations"))
+	evaluationHandler.WithSessionStarter(evaluationSessionStarter{sessions: s.sessions})
+	evaluationHandler.WithRubricModel(evaluationsapi.NewRubricModel(deps.DB, deps.VaultSecrets))
+	s.sessions.WithSessionEventObserver(evaluationHandler)
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
@@ -223,7 +228,7 @@ func NewServer(deps ServerDeps) *Server {
 	}
 	router.Get("/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/*", s.codeSessions.HandleMCPProtectedResource)
 	s.registerVersionedAPIRoutes(router)
-	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler, mcpServerHandler)
+	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler, mcpServerHandler, evaluationHandler)
 	s.router = router
 	return s
 }
@@ -305,6 +310,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 	workbenchLogger *slog.Logger,
 	mcpCatalogHandler *mcpcatalogs.Handler,
 	mcpServerHandler *mcpservers.Handler,
+	evaluationHandler *evaluationsapi.Handler,
 ) {
 	s.registerPlatformAdminRoutes(router)
 	router.Group(func(r chi.Router) {
@@ -357,6 +363,9 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterConsoleWorkspaceMemberRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
 			mcpServerHandler.RegisterRoutes(r)
+			if evaluationHandler != nil {
+				evaluationHandler.RegisterRoutes(r)
+			}
 			if s.consoleTunnels != nil {
 				r.Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
 			}

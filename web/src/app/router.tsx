@@ -15,6 +15,9 @@ import { WorkspaceSettingsRedirect } from '../features/settings/WorkspaceSetting
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
+import { DatasetDetailPage } from '../features/evaluations/DatasetDetailPage';
+import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
+import { TaskDetailPage } from '../features/evaluations/TaskDetailPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
 import { McpTunnelsPage } from '../features/mcp-tunnels/McpTunnelsPage';
@@ -449,6 +452,30 @@ const agentsRoute = createRoute({
   component: () => <ManagedAgentsPage section="agents" />,
 });
 
+const evaluationsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'evaluations',
+  component: EvaluationsPage,
+});
+
+const workspaceEvaluationsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations',
+  component: EvaluationsPage,
+});
+
+const workspaceEvaluationTaskRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/tasks/$taskId',
+  component: TaskDetailPage,
+});
+
+const workspaceEvaluationDatasetRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/datasets/$datasetId',
+  component: DatasetDetailPage,
+});
+
 const agentCreateRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'agents/new',
@@ -617,6 +644,10 @@ const routeTree = rootRoute.addChildren([
       quickstartRoute,
       workspaceAgentQuickstartRoute,
       agentsRoute,
+      evaluationsRoute,
+      workspaceEvaluationsRoute,
+      workspaceEvaluationTaskRoute,
+      workspaceEvaluationDatasetRoute,
       agentCreateRoute,
       agentDetailRoute,
       workspaceAgentsRoute,

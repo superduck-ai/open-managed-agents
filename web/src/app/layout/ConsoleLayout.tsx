@@ -76,7 +76,6 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuShortcut,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -244,7 +243,11 @@ export function SettingsShell({
   const personal = isPersonalSettingsPath(currentPath);
 
   return (
-    <SidebarProvider defaultOpen>
+    <SidebarProvider
+      defaultOpen
+      className="console-shell"
+      style={{ '--sidebar-width': 'var(--console-sidebar-width)', '--sidebar-width-icon': '64px' } as CSSProperties}
+    >
       <SettingsSidebar account={account} currentPath={currentPath} onLogout={onLogout} onNavigate={onNavigate} />
       <SidebarInset className="min-h-screen text-foreground">
         <ShellMobileBar
@@ -306,7 +309,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
       className="border-r-[0.5px] border-sidebar-border"
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
-      <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} consoleNavigation />
+      <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
       <AppSidebarContent className="console-sidebar-content scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         <SidebarGroup className="p-0">
           <SidebarGroupContent>
@@ -507,8 +510,8 @@ function SettingsSidebar({
   onNavigate,
 }: Omit<ConsoleShellProps, 'children'>) {
   const { msg } = useI18n();
-  const { state } = useSidebar();
-  const collapsed = state === 'collapsed';
+  const { state, isMobile } = useSidebar();
+  const collapsed = state === 'collapsed' && !isMobile;
   const personal = isPersonalSettingsPath(currentPath);
   const navigation = personal ? personalSettingsNavigation : settingsNavigation;
 
@@ -519,52 +522,59 @@ function SettingsSidebar({
       data-sidebar-state={collapsed ? 'collapsed' : 'expanded'}
     >
       <ShellSidebarHeader currentPath={currentPath} onNavigate={onNavigate} />
-      <AppSidebarContent className="scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
-        <SidebarGroup className="p-0">
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  render={<ShellLink href="/dashboard" onNavigate={onNavigate} />}
-                  tooltip={msg('nav.backToApp', 'Back to app')}
-                  className={interactiveMotionClass}
-                  aria-label={collapsed ? msg('nav.backToApp', 'Back to app') : undefined}
-                >
-                  <ArrowLeft className="size-4" aria-hidden />
-                  {collapsed ? null : <span className="truncate">{msg('nav.backToApp', 'Back to app')}</span>}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup className="mt-2 p-0">
-          <SidebarGroupLabel className="gap-2 px-2 text-sidebar-foreground">
-            <Settings className="size-4" aria-hidden />
-            {personal
-              ? msg('account.personalSettings', 'Personal settings')
-              : msg('account.organizationSettings', 'Organization settings')}
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <nav aria-label={msg('nav.settingsNavigation', 'Settings navigation')}>
+      <AppSidebarContent className="console-sidebar-content scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
+        <div data-sidebar-navigation="settings">
+          <SidebarGroup className="p-0">
+            <SidebarGroupContent>
               <SidebarMenu>
-                {navigation.map((item) => (
-                  <SidebarMenuItem key={item.href}>
-                    <SidebarMenuButton
-                      render={<ShellLink href={item.href} onNavigate={onNavigate} />}
-                      isActive={isActivePath(currentPath, item.href)}
-                      tooltip={msg(item.labelId, item.label)}
-                      className={interactiveMotionClass}
-                      aria-label={collapsed ? msg(item.labelId, item.label) : undefined}
-                    >
-                      <SettingsNavigationIcon href={item.href} />
-                      {collapsed ? null : <span className="truncate">{msg(item.labelId, item.label)}</span>}
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    render={<ShellLink href="/dashboard" onNavigate={onNavigate} />}
+                    tooltip={msg('nav.backToApp', 'Back to app')}
+                    className={interactiveMotionClass}
+                    aria-label={collapsed ? msg('nav.backToApp', 'Back to app') : undefined}
+                  >
+                    <ArrowLeft className="size-4" aria-hidden />
+                    {collapsed ? null : <span className="truncate">{msg('nav.backToApp', 'Back to app')}</span>}
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
-            </nav>
-          </SidebarGroupContent>
-        </SidebarGroup>
+            </SidebarGroupContent>
+          </SidebarGroup>
+          <SidebarGroup className="mt-2 p-0">
+            <SidebarGroupLabel className="console-navigation-section-label">
+              {personal
+                ? msg('account.personalSettings', 'Personal settings')
+                : msg('account.organizationSettings', 'Organization settings')}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <nav aria-label={msg('nav.settingsNavigation', 'Settings navigation')}>
+                <SidebarMenu>
+                  {navigation.map((item) => (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        render={
+                          <ShellLink
+                            href={item.href}
+                            onNavigate={onNavigate}
+                            aria-current={isActivePath(currentPath, item.href) ? 'page' : undefined}
+                          />
+                        }
+                        isActive={isActivePath(currentPath, item.href)}
+                        tooltip={msg(item.labelId, item.label)}
+                        className={interactiveMotionClass}
+                        aria-label={collapsed ? msg(item.labelId, item.label) : undefined}
+                      >
+                        <SettingsNavigationIcon href={item.href} />
+                        {collapsed ? null : <span className="truncate">{msg(item.labelId, item.label)}</span>}
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </nav>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </div>
       </AppSidebarContent>
       <SidebarFooter account={account} collapsed={collapsed} onLogout={onLogout} onNavigate={onNavigate} />
       <SidebarRail
@@ -618,25 +628,14 @@ function ShellMobileBar({
   );
 }
 
-function ShellSidebarHeader({
-  currentPath,
-  onNavigate,
-  consoleNavigation = false,
-}: {
-  currentPath: string;
-  onNavigate?: NavigateHandler;
-  consoleNavigation?: boolean;
-}) {
+function ShellSidebarHeader({ currentPath, onNavigate }: { currentPath: string; onNavigate?: NavigateHandler }) {
   const { state, isMobile } = useSidebar();
   const { msg } = useI18n();
   const compact = state === 'collapsed' && !isMobile;
   const toggleLabel = compact ? msg('common.expand', 'Expand') : msg('common.collapse', 'Collapse');
 
   return (
-    <AppSidebarHeader
-      className={consoleNavigation ? 'console-sidebar-header' : undefined}
-      data-console-compact={consoleNavigation && compact ? 'true' : undefined}
-    >
+    <AppSidebarHeader className="console-sidebar-header" data-console-compact={compact ? 'true' : undefined}>
       <div className={clsx('flex h-12 items-center', compact ? 'justify-center' : 'justify-between')}>
         {!compact && (
           <ShellLink
@@ -655,31 +654,23 @@ function ShellSidebarHeader({
             title={toggleLabel}
             className="text-muted-foreground hover:text-foreground"
           >
-            {consoleNavigation ? <navigationIcons.sidebar className="size-4" aria-hidden /> : undefined}
+            <navigationIcons.sidebar className="size-4" aria-hidden />
           </SidebarTrigger>
         )}
       </div>
-      <WorkspaceSwitcher currentPath={currentPath} onNavigate={onNavigate} consoleNavigation={consoleNavigation} />
+      <WorkspaceSwitcher currentPath={currentPath} onNavigate={onNavigate} />
     </AppSidebarHeader>
   );
 }
 
-function WorkspaceSwitcher({
-  currentPath,
-  onNavigate,
-  consoleNavigation = false,
-}: {
-  currentPath: string;
-  onNavigate?: NavigateHandler;
-  consoleNavigation?: boolean;
-}) {
+function WorkspaceSwitcher({ currentPath, onNavigate }: { currentPath: string; onNavigate?: NavigateHandler }) {
   const confirmation = useScopeConfirmation();
   const organizations = useOrganizations();
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const { isMobile, state } = useSidebar();
-  const collapsed = state === 'collapsed' && !(consoleNavigation && isMobile);
+  const collapsed = state === 'collapsed' && !isMobile;
   const {
     canManageWorkspaces,
     workspaces,
@@ -728,15 +719,11 @@ function WorkspaceSwitcher({
             }
           >
             <span className="grid aspect-square size-8 shrink-0 place-items-center rounded-lg border-[0.5px] border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground">
-              {consoleNavigation ? (
-                <navigationIcons.workspace
-                  className="size-4"
-                  style={{ color: workspaceColor(activeWorkspace) }}
-                  aria-hidden
-                />
-              ) : (
-                <Box className="size-4" style={{ color: workspaceColor(activeWorkspace) }} aria-hidden />
-              )}
+              <navigationIcons.workspace
+                className="size-4"
+                style={{ color: workspaceColor(activeWorkspace) }}
+                aria-hidden
+              />
             </span>
             {collapsed ? null : (
               <>
@@ -755,16 +742,16 @@ function WorkspaceSwitcher({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="start"
-            side={consoleNavigation || isMobile ? 'bottom' : 'right'}
+            side="bottom"
             sideOffset={4}
-            className="w-(--anchor-width) min-w-56 max-w-[calc(100vw-2rem)] rounded-lg p-1"
+            className="console-navigation-menu subtle-scrollbar w-(--anchor-width) min-w-56 max-w-[calc(100vw-2rem)] p-1"
           >
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 {msg('nav.workspaces', 'Workspaces')}
               </DropdownMenuLabel>
               <div className="subtle-scrollbar max-h-[240px] overflow-y-auto pr-0.5">
-                {workspaces.map((workspace, index) => (
+                {workspaces.map((workspace) => (
                   <DropdownMenuItem
                     key={workspace.id}
                     aria-current={workspace.id === activeWorkspaceId ? 'true' : undefined}
@@ -772,18 +759,13 @@ function WorkspaceSwitcher({
                     onClick={() => handleSelect(workspace)}
                   >
                     <span className="grid size-6 shrink-0 place-items-center rounded-md border-[0.5px] bg-background text-muted-foreground">
-                      {consoleNavigation ? (
-                        <navigationIcons.workspace
-                          className="size-4"
-                          style={{ color: workspaceColor(workspace) }}
-                          aria-hidden
-                        />
-                      ) : (
-                        <Box className="size-4" style={{ color: workspaceColor(workspace) }} aria-hidden />
-                      )}
+                      <navigationIcons.workspace
+                        className="size-4"
+                        style={{ color: workspaceColor(workspace) }}
+                        aria-hidden
+                      />
                     </span>
                     <span className="min-w-0 flex-1 truncate">{localizedWorkspaceName(workspace.name, msg)}</span>
-                    {consoleNavigation ? null : <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>}
                   </DropdownMenuItem>
                 ))}
               </div>
@@ -1025,7 +1007,7 @@ export function AccountMenu({
             align="end"
             side={isMobile ? 'bottom' : 'right'}
             sideOffset={6}
-            className="w-[288px] overflow-visible p-1"
+            className="console-navigation-menu subtle-scrollbar w-[288px] max-w-[calc(100vw-2rem)] p-1"
           >
             <DropdownMenuGroup>
               <DropdownMenuLabel className="truncate px-3 py-2 text-xs">{identity.email}</DropdownMenuLabel>
@@ -1067,7 +1049,7 @@ export function AccountMenu({
                 <Globe2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 <span className="min-w-0 flex-1 truncate">{msg('language.label', 'Language')}</span>
               </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="min-w-[228px]">
+              <DropdownMenuSubContent className="console-navigation-menu subtle-scrollbar min-w-[228px] max-w-[calc(100vw-2rem)]">
                 <DropdownMenuRadioGroup value={locale}>
                   {locales.map((option) => (
                     <DropdownMenuRadioItem

@@ -178,7 +178,12 @@ export function ChannelWizardFormPage({
             ) : null}
           </div>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" disabled={busy} onClick={() => onNavigate(channelsListPath(workspaceId))}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => onNavigate(channelsListPath(workspaceId))}
+            >
               {msg('managedAgents.channels.cancel', '取消')}
             </Button>
             <Button type="button" disabled={busy} onClick={() => void persist(false, true)}>
@@ -206,7 +211,6 @@ async function listEnvironments(workspaceId: string) {
   } while (cursor);
   return result;
 }
-
 
 function validateWizardBeforeSave({
   targetAgentId,
@@ -268,7 +272,6 @@ async function saveWizardChannel({
   return next;
 }
 
-
 function channelPayload(value: WizardValue, binding: string) {
   return {
     name: value.name,
@@ -276,8 +279,6 @@ function channelPayload(value: WizardValue, binding: string) {
     include_thinking: value.include_thinking,
     include_tool_calls: value.include_tool_calls,
     reply_in_thread: value.reply_in_thread,
-    ...(binding === 'credentials' && value.app_secret
-      ? { app_id: value.app_id, app_secret: value.app_secret }
-      : {}),
+    ...(binding === 'credentials' && value.app_secret ? { app_id: value.app_id, app_secret: value.app_secret } : {}),
   };
 }

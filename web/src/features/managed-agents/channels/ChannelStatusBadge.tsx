@@ -1,10 +1,6 @@
 import { useI18n } from '../../../shared/i18n';
 import type { Channel } from './api';
-import {
-  channelConnectionStatus,
-  channelConnectionStatusClass,
-  channelConnectionStatusLabel,
-} from './status';
+import { channelConnectionStatus, channelConnectionStatusClass, channelConnectionStatusLabel } from './status';
 
 export function ChannelStatusBadge({ channel }: { channel: Channel }) {
   const { msg } = useI18n();

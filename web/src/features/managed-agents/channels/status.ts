@@ -10,10 +10,7 @@ export function channelConnectionStatus(channel: Channel): ChannelConnectionStat
   return 'abnormal';
 }
 
-export function channelConnectionStatusLabel(
-  status: ChannelConnectionStatus,
-  msg: ReturnType<typeof useI18n>['msg'],
-) {
+export function channelConnectionStatusLabel(status: ChannelConnectionStatus, msg: ReturnType<typeof useI18n>['msg']) {
   switch (status) {
     case 'connected':
       return msg('managedAgents.channels.statusConnected', '已连通');

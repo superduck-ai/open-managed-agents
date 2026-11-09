@@ -16,7 +16,12 @@ export async function listAllWorkspaceAgents(workspaceId: string): Promise<Agent
   const agents: AgentApiResponse[] = [];
   let page: PageCursor = null;
   do {
-    const response = await listAgents(workspaceId, page ?? undefined, { status: 'active', created: 'all' }, agentPageLimit);
+    const response = await listAgents(
+      workspaceId,
+      page ?? undefined,
+      { status: 'active', created: 'all' },
+      agentPageLimit,
+    );
     agents.push(...(response.data ?? []));
     page = response.next_page ?? null;
   } while (page && agents.length < maxAgents);

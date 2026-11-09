@@ -23,8 +23,8 @@ export function ChannelWizardPage({ mode }: { mode: 'create' | 'edit' }) {
     if (routeWorkspaceId && routeWorkspaceId !== activeWorkspaceId) selectWorkspace(routeWorkspaceId);
   }, [routeWorkspaceId, activeWorkspaceId, selectWorkspace]);
 
-  const agentId = mode === 'edit' ? params.agentId ?? '' : search.agentId ?? params.agentId ?? '';
-  const channelId = mode === 'edit' ? params.channelId ?? '' : '';
+  const agentId = mode === 'edit' ? (params.agentId ?? '') : (search.agentId ?? params.agentId ?? '');
+  const channelId = mode === 'edit' ? (params.channelId ?? '') : '';
 
   return (
     <ChannelWizardContent
@@ -103,11 +103,7 @@ async function loadChannelForEdit(agentId: string, workspaceId: string, channelI
   return { channel, environmentId: settings.environment_id };
 }
 
-function buildInitialWizardValue(
-  channel: Channel | null,
-  initialAgentId: string,
-  environmentId: string,
-): WizardValue {
+function buildInitialWizardValue(channel: Channel | null, initialAgentId: string, environmentId: string): WizardValue {
   return {
     name: channel?.name ?? '',
     mode: channel?.mode ?? 'open',

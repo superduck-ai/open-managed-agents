@@ -35,12 +35,7 @@ export function ChannelsPage() {
       selectWorkspace(routeWorkspaceId);
     }
   }, [routeWorkspaceId, activeWorkspaceId, selectWorkspace]);
-  return (
-    <ChannelsPageContent
-      workspaceId={workspaceId}
-      onNavigate={(href) => void navigate({ href })}
-    />
-  );
+  return <ChannelsPageContent workspaceId={workspaceId} onNavigate={(href) => void navigate({ href })} />;
 }
 
 export function ChannelsPageContent({
@@ -84,14 +79,19 @@ export function ChannelsPageContent({
       return;
     }
     if (status === 'pending_test') {
-      toast.message(msg('managedAgents.channels.connectionCheckPending', '渠道尚未完成绑定，请先完成飞书授权或凭据配置'));
+      toast.message(
+        msg('managedAgents.channels.connectionCheckPending', '渠道尚未完成绑定，请先完成飞书授权或凭据配置'),
+      );
       return;
     }
     toast.error(msg('managedAgents.channels.connectionCheckFail', '连接检测异常：桥接报告未连通'));
   };
 
   return (
-    <section className="mx-auto w-full max-w-[1200px] px-6 py-6" aria-label={msg('managedAgents.channels.title', '渠道')}>
+    <section
+      className="mx-auto w-full max-w-[1200px] px-6 py-6"
+      aria-label={msg('managedAgents.channels.title', '渠道')}
+    >
       <ResourcePageHeader
         title={msg('managedAgents.channels.title', '渠道')}
         description={msg(
@@ -99,9 +99,7 @@ export function ChannelsPageContent({
           '管理智能体在飞书、钉钉、企业微信和微信等企业沟通中的接入渠道',
         )}
         actions={
-          <Button
-            onClick={() => onNavigate(channelCreatePath(workspaceId, agentFilter))}
-          >
+          <Button onClick={() => onNavigate(channelCreatePath(workspaceId, agentFilter))}>
             <Plus className="size-4" />
             {msg('managedAgents.channels.addChannel', '新增渠道')}
           </Button>

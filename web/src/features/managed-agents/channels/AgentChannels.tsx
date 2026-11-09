@@ -67,7 +67,8 @@ export function AgentChannels({
   };
   const runConnectionCheck = (channel: Channel) => {
     const status = channelConnectionStatus(channel);
-    if (status === 'connected') toast.success(msg('managedAgents.channels.connectionCheckOk', '连接检测通过：渠道已连通'));
+    if (status === 'connected')
+      toast.success(msg('managedAgents.channels.connectionCheckOk', '连接检测通过：渠道已连通'));
     else if (status === 'disabled')
       toast.message(msg('managedAgents.channels.connectionCheckDisabled', '渠道已停用，请先启用后再检测'));
     else if (status === 'pending_test')
@@ -195,7 +196,11 @@ export function AgentChannels({
                         {msg('managedAgents.channels.connectionCheck', '连接检测')}
                       </button>
                       {channel.mode === 'pairing' ? (
-                        <button type="button" className="text-primary hover:underline" onClick={() => setPairing(channel)}>
+                        <button
+                          type="button"
+                          className="text-primary hover:underline"
+                          onClick={() => setPairing(channel)}
+                        >
                           {msg('managedAgents.channels.pairings', '配对管理')}
                           {channel.pending_pairings ? ` (${channel.pending_pairings})` : ''}
                         </button>

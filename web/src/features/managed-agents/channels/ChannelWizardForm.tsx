@@ -20,13 +20,7 @@ export type WizardValue = ChannelInput & {
   environmentId: string;
 };
 
-export function WizardStepper({
-  step,
-  onStepChange,
-}: {
-  step: WizardStep;
-  onStepChange: (step: WizardStep) => void;
-}) {
+export function WizardStepper({ step, onStepChange }: { step: WizardStep; onStepChange: (step: WizardStep) => void }) {
   const { msg } = useI18n();
   const steps = [
     {
@@ -128,9 +122,7 @@ export function StepConnect({
           }}
           items={channelTypes.map((item) => ({
             value: item.value,
-            label: item.disabled
-              ? `${item.label}（${msg('managedAgents.channels.notOpen', '暂未开放')}）`
-              : item.label,
+            label: item.disabled ? `${item.label}（${msg('managedAgents.channels.notOpen', '暂未开放')}）` : item.label,
           }))}
         >
           <SelectTrigger className="h-10 w-full">
@@ -174,7 +166,11 @@ export function StepConnect({
         </div>
       </div>
       {binding === 'credentials' ? (
-        <ChannelCredentials value={value} onChange={(next) => onChange({ ...value, ...next })} bound={saved?.binding_status === 'bound'} />
+        <ChannelCredentials
+          value={value}
+          onChange={(next) => onChange({ ...value, ...next })}
+          bound={saved?.binding_status === 'bound'}
+        />
       ) : (
         <div className="space-y-3 rounded-xl border border-dashed border-border bg-muted/20 p-4">
           <div>
@@ -190,7 +186,12 @@ export function StepConnect({
                 ? msg('managedAgents.channels.regenerateQr', '重新生成二维码')
                 : msg('managedAgents.channels.goFeishuAuth', '前往飞书授权创建')}
             </Button>
-            <button type="button" className="text-sm text-primary hover:underline" disabled={busy} onClick={onGenerateQr}>
+            <button
+              type="button"
+              className="text-sm text-primary hover:underline"
+              disabled={busy}
+              onClick={onGenerateQr}
+            >
               {msg('managedAgents.channels.scanFeishuAuth', '使用飞书扫码授权')}
             </button>
           </div>
@@ -239,8 +240,12 @@ export function StepStrategy({
             <thead className="bg-muted/40 text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">{msg('managedAgents.channels.type', '类型')}</th>
-                <th className="px-3 py-2 text-left font-medium">{msg('managedAgents.channels.identity', '身份设定')}</th>
-                <th className="px-3 py-2 text-left font-medium">{msg('managedAgents.channels.replyMethod', '回复方式')}</th>
+                <th className="px-3 py-2 text-left font-medium">
+                  {msg('managedAgents.channels.identity', '身份设定')}
+                </th>
+                <th className="px-3 py-2 text-left font-medium">
+                  {msg('managedAgents.channels.replyMethod', '回复方式')}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -381,7 +386,10 @@ export function StepMa({
         <Label>
           <span className="text-destructive">*</span> {msg('managedAgents.channels.agentVersion', '智能体版本')}
         </Label>
-        <Select value="latest" items={[{ value: 'latest', label: msg('managedAgents.channels.latestVersionShort', '默认最新') }]}>
+        <Select
+          value="latest"
+          items={[{ value: 'latest', label: msg('managedAgents.channels.latestVersionShort', '默认最新') }]}
+        >
           <SelectTrigger className="h-10 w-full">
             <SelectValue />
           </SelectTrigger>

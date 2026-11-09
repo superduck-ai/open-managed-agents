@@ -22,6 +22,7 @@ type EnvOAuthFlow struct {
 	AuthorizeEndpoint       string
 	TokenEndpoint           string
 	ClientIDEnvelope        *secrets.Envelope
+	CodeVerifierEnvelope    *secrets.Envelope
 	Scope                   string
 	TokenEndpointAuthMethod string
 	TokenEndpointEncoding   string
@@ -46,6 +47,10 @@ func (d *DB) CreateEnvOAuthFlow(ctx context.Context, flow EnvOAuthFlow) (EnvOAut
 	if err != nil {
 		return EnvOAuthFlow{}, err
 	}
+	verifierEnvelope, err := encodeOAuthEnvelope(flow.CodeVerifierEnvelope)
+	if err != nil {
+		return EnvOAuthFlow{}, err
+	}
 	mapper := NewEnvOAuthFlowMapper(d.mapperDB)
 	row, err := mapper.Insert(ctx, insertEnvOAuthFlowParams{
 		UUID:                    flow.UUID,
@@ -61,6 +66,7 @@ func (d *DB) CreateEnvOAuthFlow(ctx context.Context, flow EnvOAuthFlow) (EnvOAut
 		AuthorizeEndpoint:       flow.AuthorizeEndpoint,
 		TokenEndpoint:           flow.TokenEndpoint,
 		ClientIDEnvelope:        clientIDEnvelope,
+		CodeVerifierEnvelope:    verifierEnvelope,
 		Scope:                   flow.Scope,
 		TokenEndpointAuthMethod: flow.TokenEndpointAuthMethod,
 		TokenEndpointEncoding:   flow.TokenEndpointEncoding,
@@ -125,6 +131,10 @@ func (r envOAuthFlowRow) flow() (EnvOAuthFlow, error) {
 	if err != nil {
 		return EnvOAuthFlow{}, err
 	}
+	verifierEnvelope, err := decodeOAuthEnvelope(r.CodeVerifierEnvelope)
+	if err != nil {
+		return EnvOAuthFlow{}, err
+	}
 	return EnvOAuthFlow{
 		UUID:                    r.UUID,
 		ExternalID:              r.ExternalID,
@@ -139,6 +149,7 @@ func (r envOAuthFlowRow) flow() (EnvOAuthFlow, error) {
 		AuthorizeEndpoint:       r.AuthorizeEndpoint,
 		TokenEndpoint:           r.TokenEndpoint,
 		ClientIDEnvelope:        envelope,
+		CodeVerifierEnvelope:    verifierEnvelope,
 		Scope:                   r.Scope,
 		TokenEndpointAuthMethod: r.TokenEndpointAuthMethod,
 		TokenEndpointEncoding:   r.TokenEndpointEncoding,

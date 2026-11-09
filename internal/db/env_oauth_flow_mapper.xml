@@ -3,7 +3,7 @@
     <sql id="columns">
         uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
         provider_key, secret_name, display_name, redirect_url, authorize_endpoint, token_endpoint,
-        client_id_envelope, scope, token_endpoint_auth_method, token_endpoint_encoding, networking_type,
+        client_id_envelope, code_verifier_envelope, scope, token_endpoint_auth_method, token_endpoint_encoding, networking_type,
         allowed_hosts, status, error_code, credential_external_id, created_by_api_key_uuid,
         expires_at, completed_at, created_at, updated_at
     </sql>
@@ -12,13 +12,13 @@
         INSERT INTO env_oauth_flows (
             uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
             provider_key, secret_name, display_name, redirect_url, authorize_endpoint, token_endpoint,
-            client_id_envelope, scope, token_endpoint_auth_method, token_endpoint_encoding, networking_type,
+            client_id_envelope, code_verifier_envelope, scope, token_endpoint_auth_method, token_endpoint_encoding, networking_type,
             allowed_hosts, status, created_by_api_key_uuid, created_at, expires_at
         ) VALUES (
             #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
             #{params.VaultUUID}, #{params.VaultExternalID}, #{params.ProviderKey}, #{params.SecretName},
             #{params.DisplayName}, #{params.RedirectURL}, #{params.AuthorizeEndpoint},
-            #{params.TokenEndpoint}, #{params.ClientIDEnvelope,sensitive=true}, #{params.Scope},
+            #{params.TokenEndpoint}, #{params.ClientIDEnvelope,sensitive=true}, #{params.CodeVerifierEnvelope,sensitive=true}, #{params.Scope},
             #{params.TokenEndpointAuthMethod}, #{params.TokenEndpointEncoding},
             #{params.NetworkingType}, #{params.AllowedHosts}, #{params.Status},
             #{params.CreatedByAPIKeyUUID}, #{params.CreatedAt}, #{params.ExpiresAt}

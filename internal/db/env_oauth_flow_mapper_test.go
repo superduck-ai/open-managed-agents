@@ -29,11 +29,11 @@ func TestEnvOAuthFlowMapperBuilders(t *testing.T) {
 			"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 			"params.VaultUUID", "params.VaultExternalID", "params.ProviderKey", "params.SecretName",
 			"params.DisplayName", "params.RedirectURL", "params.AuthorizeEndpoint", "params.TokenEndpoint",
-			"params.ClientIDEnvelope", "params.Scope", "params.TokenEndpointAuthMethod", "params.TokenEndpointEncoding",
+			"params.ClientIDEnvelope", "params.CodeVerifierEnvelope", "params.Scope", "params.TokenEndpointAuthMethod", "params.TokenEndpointEncoding",
 			"params.NetworkingType", "params.AllowedHosts", "params.Status", "params.CreatedByAPIKeyUUID",
 			"params.CreatedAt", "params.ExpiresAt",
 		},
-		wantSensitiveArgumentNames: []string{"params.ClientIDEnvelope"},
+		wantSensitiveArgumentNames: []string{"params.ClientIDEnvelope", "params.CodeVerifierEnvelope"},
 		wantSQLFragments:           []string{"INSERT INTO env_oauth_flows", "RETURNING"},
 	})
 

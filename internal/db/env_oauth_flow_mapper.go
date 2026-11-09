@@ -22,6 +22,7 @@ type envOAuthFlowRow struct {
 	AuthorizeEndpoint       string         `db:"authorize_endpoint"`
 	TokenEndpoint           string         `db:"token_endpoint"`
 	ClientIDEnvelope        sql.NullString `db:"client_id_envelope"`
+	CodeVerifierEnvelope    sql.NullString `db:"code_verifier_envelope"`
 	Scope                   string         `db:"scope"`
 	TokenEndpointAuthMethod string         `db:"token_endpoint_auth_method"`
 	TokenEndpointEncoding   string         `db:"token_endpoint_encoding"`
@@ -51,6 +52,7 @@ type insertEnvOAuthFlowParams struct {
 	AuthorizeEndpoint       string
 	TokenEndpoint           string
 	ClientIDEnvelope        *string
+	CodeVerifierEnvelope    *string
 	Scope                   string
 	TokenEndpointAuthMethod string
 	TokenEndpointEncoding   string

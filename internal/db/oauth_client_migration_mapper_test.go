@@ -13,6 +13,9 @@ func TestOAuthClientMigrationMapper(t *testing.T) {
 			for _, transitional := range []bool{false, true} {
 				for _, expanded := range []bool{false, true} {
 					bound := buildOAuthClientMigrationMapperListPage(yourbatis.DialectPostgres, kind, after, transitional, expanded)
+					if kind == "env_oauth_flows" && !strings.Contains(bound.SQL, "provider_key NOT IN ('builtin:feishu', 'builtin:friday')") {
+						t.Fatal("维护扫描未排除两个内置 flow")
+					}
 					names := []string{}
 					if after != "" {
 						names = append(names, "after")

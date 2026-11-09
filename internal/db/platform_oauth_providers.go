@@ -217,24 +217,26 @@ func decodeOAuthEnvelope(value sql.NullString) (*secrets.Envelope, error) {
 
 func auditBuiltinOAuthSeed(ctx context.Context, logger *slog.Logger, provider PlatformOAuthProvider) {
 	logger.InfoContext(ctx, "platform oauth provider audit", "actor_type", "system", "provider_uuid", provider.UUID,
-		"provider_key", "builtin:feishu", "action", "seed", "changed_fields", []string{"builtin_key", "protected"}, "result", "success")
+		"provider_key", "builtin:"+provider.BuiltinKey, "action", "seed", "changed_fields", []string{"builtin_key", "protected"}, "result", "success")
 }
 
 func (d *DB) auditOAuthSeedAfterMigrations(ctx context.Context, before int64) error {
-	if before >= 118 {
-		return nil
-	}
 	after, err := d.OAuthMigrationVersion(ctx)
 	if err != nil {
 		return err
 	}
-	if after < 118 {
-		return nil
+	for _, seed := range []struct {
+		key     string
+		version int64
+	}{{"feishu", 118}, {"friday", 120}} {
+		if before >= seed.version || after < seed.version {
+			continue
+		}
+		provider, err := d.GetPlatformOAuthProviderByBuiltinKey(ctx, seed.key)
+		if err != nil {
+			return err
+		}
+		auditBuiltinOAuthSeed(ctx, d.logger, provider)
 	}
-	provider, err := d.GetPlatformOAuthProviderByBuiltinKey(ctx, "feishu")
-	if err != nil {
-		return err
-	}
-	auditBuiltinOAuthSeed(ctx, d.logger, provider)
 	return nil
 }

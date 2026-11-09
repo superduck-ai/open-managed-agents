@@ -18,14 +18,21 @@ func (h oauthSeedHandler) Handle(_ context.Context, record slog.Record) error {
 }
 
 func TestOAuthSeedAudit(t *testing.T) {
+	for _, builtinKey := range []string{"feishu", "friday"} {
+		t.Run(builtinKey, func(t *testing.T) { testOAuthSeedAudit(t, builtinKey) })
+	}
+}
+
+func testOAuthSeedAudit(t *testing.T, builtinKey string) {
+	t.Helper()
 	var record slog.Record
-	auditBuiltinOAuthSeed(t.Context(), slog.New(oauthSeedHandler{record: &record}), PlatformOAuthProvider{UUID: "provider-uuid", ExternalID: "poap_FeishuBuiltinOAuthClient"})
+	auditBuiltinOAuthSeed(t.Context(), slog.New(oauthSeedHandler{record: &record}), PlatformOAuthProvider{UUID: "provider-uuid", ExternalID: "poap_FeishuBuiltinOAuthClient", BuiltinKey: builtinKey})
 	if record.Message != "platform oauth provider audit" || record.Level != slog.LevelInfo || record.Time.IsZero() {
 		t.Fatal("seed 审计事件错误")
 	}
 	attrs := make(map[string]slog.Value)
 	record.Attrs(func(attr slog.Attr) bool { attrs[attr.Key] = attr.Value; return true })
-	for key, want := range map[string]string{"actor_type": "system", "provider_uuid": "provider-uuid", "provider_key": "builtin:feishu", "action": "seed", "result": "success"} {
+	for key, want := range map[string]string{"actor_type": "system", "provider_uuid": "provider-uuid", "provider_key": "builtin:" + builtinKey, "action": "seed", "result": "success"} {
 		if attrs[key].String() != want {
 			t.Fatalf("审计字段错误：%s", key)
 		}

@@ -110,6 +110,14 @@ test('严格模式重挂载后可重试授权故障并显示无组织账号的�
   expect(screen.getByRole('link', { name: '超级管理员' })).toBeTruthy();
   expect(screen.getByText('全局管理')).toBeTruthy();
   expect(screen.getByRole('link', { name: '系统技能' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '收起', exact: true }));
+  expect(document.querySelector('[data-slot="sidebar"]')?.getAttribute('data-state')).toBe('collapsed');
+  expect(screen.getByRole('link', { name: '组织管理' }).getAttribute('aria-current')).toBe('page');
+  expect(screen.getByRole('link', { name: '超级管理员' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: '返回工作台' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '展开', exact: true }));
+  expect(document.querySelector('[data-slot="sidebar"]')?.getAttribute('data-state')).toBe('expanded');
+  expect(screen.getByText('operator@example.com')).toBeTruthy();
 });
 
 test('组织菜单每次只加载对应列表，直达与返回保留当前菜单', async () => {

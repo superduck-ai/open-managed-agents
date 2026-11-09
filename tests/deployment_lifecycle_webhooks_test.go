@@ -174,7 +174,7 @@ func TestWebhookDeploymentGitTokenChanges(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			updateDeployment(t, app, deployment.ID, `{"resources":[{"type":"github_repository","url":"https://github.com/example/repo"`+tc.fields+`}]}`)
+			updateDeployment(t, app, deployment.ID, `{"resources":[{"type":"github_repository","url":"https://github.com/example/repo.git"`+tc.fields+`}]}`)
 			after, err := app.db.GetDeployment(t.Context(), scope, deployment.ID)
 			if err != nil {
 				t.Fatal(err)

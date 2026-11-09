@@ -281,7 +281,7 @@ func TestSessionsMemoryAttachContract(t *testing.T) {
 			"environment_id":`+quoteJSON(env.ID)+`,
 			"resources":[
 				{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/regression.txt"},
-				{"type":"github_repository","url":"https://github.com/example/repo","mount_path":"/workspace/repo"}
+				{"type":"github_repository","url":"https://github.com/example/repo.git","mount_path":"/workspace/repo"}
 			]
 		}`)
 		defer deleteSession(t, app, created.ID)

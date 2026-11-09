@@ -279,7 +279,7 @@ Console 成员写入由资源层根据已验证 Principal 提供校验回调，�
 
 请求 Principal 使用 AccountUUID/AccountExternalID 表示稳定账号；UserUUID/UserExternalID 只表示目标组织真实成员。平台来源成员字段统一为空，来源为 platform_admin，凭据仍为平台会话。共享 ResolvePrincipal 只跳过平台操作者成员查询，仍检查目标工作区归属及归档；不能由空成员字段推断平台权限。
 
-本次进入功能不新增迁移或外键。平台来源的 Key 创建者为 nil，created_by_api_key_uuid 保持空；会话及部署 RuntimeUserUUID 使用稳定 AccountUUID，并沿现有隐藏 metadata 传递。Memory 使用原 user_actor 枚举及 AccountExternalID；计量的组织成员归属为空。MCP flow 成员字段可空，沿用已有 state/会话/组织/工作区约束，不增加进入凭据。特权操作以注入 slog 记录账号、组织、工作区、来源及结果，不记录凭据、正文或原 query，不伪造服务端进入/退出事件。
+平台来源直接创建资源时 created_by_api_key_uuid 保持空；平台来源新建 Key 的真实成员创建者与稳定运行账号分开保存，迁移 `00116_api_key_runtime_identity.sql` 只新增可空运行账号列，不处理历史 Key；会话及部署 RuntimeUserUUID 使用稳定 AccountUUID，并沿现有隐藏 metadata 传递。Memory 使用原 user_actor 枚举及 AccountExternalID；计量的组织成员归属为空。MCP flow 成员字段可空，沿用已有 state/会话/组织/工作区约束，不增加进入凭据。特权操作以注入 slog 记录账号、组织、工作区、来源及结果，不记录凭据、正文或原 query，不伪造服务端进入/退出事件。
 
 ## 10. 实施顺序与验收
 
@@ -311,9 +311,9 @@ Console 成员写入由资源层根据已验证 Principal 提供校验回调，�
 
 请求级 Principal、二次资源检查、bootstrap、标签页进入/退出、请求传播和有效权限门控已接通。运行身份继续使用既有 `_oma_runtime_user_uuid`，不持久化平台角色、授权副本或进入状态。
 
-核对消费者时发现 Filestore 和 Code Session Mapper 仍把已保存运行用户限制为目标组织成员。实现复用隐藏运行身份修正该假设：Runner 签发按 Session 保存的 UUID 查找未删除用户；Filestore 每次回查只允许原目标组织成员，或与 filesystem 所属 Session 保存运行 UUID 一致的账号。后者仍绑定目标组织、工作区、filesystem 和 Session 生命周期；其他跨组织账号不能冒用。没有隐藏运行身份的 API Key 回退仍要求同组织有效用户，失效运行用户仍拒绝签发及回查。Code Session 邮箱映射复用相同的隐藏运行用户关系。运行 UUID 仅在匹配 UUID 格式后转换；空串及非法值不匹配用户且不回退 API Key 创建者，缺失键保留原同组织 API Key 回退。
+核对消费者时发现 Filestore 和 Code Session Mapper 仍把已保存运行用户限制为目标组织成员。实现复用隐藏运行身份修正该假设：Runner 签发按 Session 保存的 UUID 查找未删除用户；Filestore 每次回查只允许原目标组织成员，或与 filesystem 所属 Session 保存运行 UUID 一致的账号。后者仍绑定目标组织、工作区、filesystem 和 Session 生命周期；其他跨组织账号不能冒用。没有隐藏运行身份时，优先读取创建 Key 的独立运行账号；只有旧创建者回退才要求同组织有效用户，失效运行用户仍拒绝签发及回查。Code Session 邮箱映射复用相同的隐藏运行用户关系。运行 UUID 仅在匹配 UUID 格式后转换；空串及非法值不匹配用户且不回退 API Key 创建者，缺失键保留原同组织 API Key 回退。
 
-以上修正不增加迁移、Actor 枚举、状态存储、授权锁或新 token 类型。普通成员和服务凭据原有资源范围保留；运行身份只服务于既有资源协议，不能用于 Console 权限提升。真实 PostgreSQL 回归覆盖账号冒用、第三工作区、运行账号失效、工作区归档、Session 终止及合法跨组织运行身份和原成员凭据对照；完整 Worker/FUSE 和外部服务验收单列，不能以这些数据库测试代替。
+运行身份修正不增加 Actor 枚举、授权锁或新 token 类型；新 Key 的持久化运行账号使用上述 00116 迁移。普通成员和服务凭据原有资源范围保留；运行身份只服务于既有资源协议，不能用于 Console 权限提升。真实 PostgreSQL 回归覆盖账号冒用、第三工作区、运行账号失效、工作区归档、Session 终止及合法跨组织运行身份和原成员凭据对照；完整 Worker/FUSE 和外部服务验收单列，不能以这些数据库测试代替。
 
 - 新增迁移 `00100_platform_administration.sql`，最初包含独立平台授权、创建幂等记录、邀请投递队列及组织管理版本；独立投递表和创建请求表随后分别由 `00102`、`00103` 归并至邀请表和组织表并删除。新迁移不创建审计表，不回写已合并的历史迁移。
 - 组织角色只提供 `user` 与 `admin`；超级管理员身份独立存储，不增加组织角色枚举。邀请需显式选择角色，重发及撤销不改写原角色。

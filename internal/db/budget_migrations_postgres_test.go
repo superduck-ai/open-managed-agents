@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -27,8 +28,12 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, entry := range entries {
-				_, name, _ := strings.Cut(entry.Name(), "_")
-				if name == "remove_model_price_catalog.sql" || name == "provider_cost.sql" {
+				versionText, name, _ := strings.Cut(entry.Name(), "_")
+				version, err := strconv.ParseInt(versionText, 10, 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if version > baselineVersion || name == "remove_model_price_catalog.sql" || name == "provider_cost.sql" {
 					continue
 				}
 				if baselineVersion == 95 {

@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
+
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
 
 const (
+	publishedAtHeader = "Oma-Published-At"
 	natsSessionPrefix = "oma.s."
 	natsFlushTimeout  = 5 * time.Second
 )
@@ -83,7 +86,10 @@ func (b *NATSBus) Publish(ctx context.Context, sessionID string, envelope Envelo
 	if err := b.available(ctx); err != nil {
 		return err
 	}
-	return b.connection.Publish(subject, body)
+	message := nats.NewMsg(subject)
+	message.Data = body
+	message.Header.Set(publishedAtHeader, strconv.FormatInt(time.Now().UnixNano(), 10))
+	return b.connection.PublishMsg(message)
 }
 
 // Subscribe acquires this session's shared broker subscription. Concurrent

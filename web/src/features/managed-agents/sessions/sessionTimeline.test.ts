@@ -8,10 +8,26 @@ import {
   sessionMinimapViewportOverflowClassName,
   sessionMinimapLayout,
 } from './sessionTimeline';
-import { buildSessionTimeline } from './sessionDetailModel';
+import { buildSessionEventsByLane, buildSessionTimeline } from './sessionDetailModel';
 import { buildSessionEventEntries, idleGapEntry } from './sessionTraceModel';
 
 describe('session timeline event order', () => {
+  test('excludes missing timestamps from timeline entries and ticks', () => {
+    const lane = { id: '', label: 'Main', isMain: true };
+    const entries = buildSessionEventEntries([
+      { id: 'untimed', type: 'user.message', content: 'queued', processed_at: null },
+      { id: 'timed', type: 'agent.message', content: 'answer', processed_at: '2026-10-27T00:00:00Z' },
+    ]);
+    const timeline = buildSessionTimeline([lane], new Map([[lane.id, entries]]));
+    expect(timeline[0].items).toHaveLength(1);
+    expect(timeline[0].items[0].processedAtMs).toBe(Date.parse('2026-10-27T00:00:00Z'));
+    expect(
+      buildTimelineTicks([{ ...lane, items: [timelineItem('untimed', 0), timelineItem('timed', 1000)] }]).map(
+        (tick) => tick.id,
+      ),
+    ).toEqual(['timed']);
+  });
+
   test('preserves item order while sharing timestamp geometry across lanes', () => {
     const lanes: SessionTimelineLane[] = [
       {
@@ -208,3 +224,65 @@ function modelRequestTickWidth(events: Array<Record<string, unknown>>, nowMs: nu
   const timeline = buildSessionTimeline([lane], new Map([[lane.id, entries]]));
   return buildTimelineTicks(timeline, nowMs)[0]?.widthPct ?? 0;
 }
+
+test('builds task and report links between owners using the opposite thread as peer', () => {
+  const lanes = [
+    { id: '', label: 'Orchestrator', group: 'Main', isMain: true },
+    { id: 'child', label: 'Worker', group: 'Worker' },
+  ];
+  const laneIds = new Map([
+    ['primary', ''],
+    ['child', 'child'],
+  ]);
+  const events = [
+    {
+      id: 'task-primary',
+      type: 'agent.thread_message_sent',
+      session_thread_id: 'primary',
+      to_session_thread_id: 'child',
+      processed_at: '2026-10-26T03:44:28Z',
+      content: [],
+    },
+    {
+      id: 'task-child',
+      type: 'agent.thread_message_received',
+      session_thread_id: 'child',
+      from_session_thread_id: 'primary',
+      processed_at: '2026-10-26T03:44:28Z',
+      content: [],
+    },
+    {
+      id: 'report-child',
+      type: 'agent.thread_message_sent',
+      session_thread_id: 'child',
+      to_session_thread_id: 'primary',
+      processed_at: '2026-10-26T03:44:34Z',
+      content: [],
+    },
+    {
+      id: 'report-primary',
+      type: 'agent.thread_message_received',
+      session_thread_id: 'primary',
+      from_session_thread_id: 'child',
+      processed_at: '2026-10-26T03:44:34Z',
+      content: [],
+    },
+  ];
+  const byLane = buildSessionEventsByLane(lanes, events, laneIds);
+  const entries = new Map(
+    lanes.map((lane) => [
+      lane.id,
+      buildSessionEventEntries(byLane.get(lane.id) ?? [], 'transcript', Date.parse('2026-10-26T03:44:28Z')),
+    ]),
+  );
+  const timeline = buildSessionTimeline(lanes, entries, laneIds);
+  expect(timeline.map((lane) => lane.items.map((item) => item.threadMessage?.laneId))).toEqual([
+    ['child', 'child'],
+    ['', ''],
+  ]);
+  const links = buildSessionTimelineMessageLinks(buildTimelineTicks(timeline), timeline, 0);
+  expect(links.map((link) => link.id)).toEqual([
+    expect.stringMatching(/task-child.*:.*task-primary/),
+    expect.stringMatching(/report-primary.*:.*report-child/),
+  ]);
+});

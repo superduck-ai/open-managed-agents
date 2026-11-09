@@ -49,31 +49,15 @@ func TestSessionResourcesFromDeploymentSnapshotsMemoryStores(t *testing.T) {
 	if len(resources) != 2 {
 		t.Fatalf("resources = %d, want 2", len(resources))
 	}
-	var github map[string]any
-	if err := json.Unmarshal(resources[0].Resource.Payload, &github); err != nil {
-		t.Fatalf("decode github payload: %v", err)
+	github := resources[0].Resource.GitHubRepository
+	if github == nil || github.URL != "https://github.com/example/repo.git" || github.MountPath != "/workspace/repo" || resources[0].Resource.ExternalID == "" {
+		t.Fatalf("github resource = %#v", resources[0].Resource)
 	}
-	if github["type"] != "github_repository" ||
-		github["url"] != "https://github.com/example/repo.git" ||
-		github["mount_path"] != "/workspace/repo" {
-		t.Fatalf("github payload = %#v", github)
+	memory := resources[1].Resource.MemoryStore
+	if memory == nil || memory.ExternalID != "memstore_one" || memory.Access == nil || *memory.Access != "read_only" || memory.Instructions == nil || *memory.Instructions != "keep notes" || memory.Name == nil || *memory.Name != "Product Docs-Draft!!" || memory.Description == nil || *memory.Description != "personal taste" || memory.MountPath == nil || *memory.MountPath != "/mnt/memory/product-docs-draft" {
+		t.Fatalf("memory resource = %#v", memory)
 	}
-	if _, ok := github["id"].(string); !ok || github["id"] == "" {
-		t.Fatalf("github id = %#v", github["id"])
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(resources[1].Resource.Payload, &payload); err != nil {
-		t.Fatalf("decode memory payload: %v", err)
-	}
-	if payload["type"] != "memory_store" ||
-		payload["memory_store_id"] != "memstore_one" ||
-		payload["access"] != "read_only" ||
-		payload["instructions"] != "keep notes" ||
-		payload["name"] != "Product Docs-Draft!!" ||
-		payload["description"] != "personal taste" ||
-		payload["mount_path"] != "/mnt/memory/product-docs-draft" {
-		t.Fatalf("memory payload = %#v", payload)
-	}
+
 }
 
 func TestSessionResourcesFromDeploymentRejectsMalformedMemoryFields(t *testing.T) {
@@ -142,13 +126,11 @@ func TestSessionResourcesFromDeploymentDefaultsAbsentMemoryAccess(t *testing.T) 
 	if err != nil {
 		t.Fatalf("sessionResourcesFromDeployment() error = %v", err)
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(resources[0].Resource.Payload, &payload); err != nil {
-		t.Fatalf("decode payload: %v", err)
+	memory := resources[0].Resource.MemoryStore
+	if memory == nil || memory.Access == nil || *memory.Access != "read_write" {
+		t.Fatalf("memory = %#v", memory)
 	}
-	if payload["access"] != "read_write" {
-		t.Fatalf("access = %#v, want read_write", payload["access"])
-	}
+
 }
 
 func TestSessionResourcesFromDeploymentRejectsPlaintextToken(t *testing.T) {

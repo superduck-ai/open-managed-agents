@@ -10,9 +10,12 @@ import { buildSessionTranscriptBlocks, filterSessionTranscriptBlocks } from './s
 import {
   applyModelRequestBrackets,
   buildSessionEventEntries,
+  h,
   latestOpenModelRequest,
   mergeSessionEvents,
+  sessionEventElapsedTime,
   sessionTimestampMs,
+  sessionTraceEntryFromEvent,
 } from './sessionTraceModel';
 
 const EMPTY_USAGE: SessionEventUsage = {
@@ -63,6 +66,25 @@ describe('sessionTranscriptModel', () => {
       Date.parse('2026-01-01T08:00:00.123Z') + 0.456789,
       6,
     );
+  });
+
+  test('missing processed_at stays unset instead of falling back to event index', () => {
+    const streaming = {
+      id: 'preview',
+      type: 'agent.message',
+      processed_at: null,
+      is_streaming: true,
+      content: 'partial',
+    };
+    const traceEntry = sessionTraceEntryFromEvent(streaming, 3);
+    const displayEvent = h(streaming, 0, undefined, traceEntry);
+
+    expect(traceEntry.createdAtMs).toBe(0);
+    expect(traceEntry.relativeTime).toBe('now');
+    expect(displayEvent.createdAtMs).toBe(0);
+    expect(displayEvent.processedAtMs).toBe(0);
+    expect(displayEvent.relativeTime).toBe('now');
+    expect(sessionEventElapsedTime(streaming, Date.parse('2026-01-01T08:00:00Z'))).toBe('now');
   });
 
   test('keeps only the latest model request that has not ended or crossed a turn boundary', () => {

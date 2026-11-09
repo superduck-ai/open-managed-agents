@@ -83,6 +83,7 @@ func (h *Handler) handleUpstreamProxyWebSocket(w http.ResponseWriter, r *http.Re
 			// CONNECT Basic 用户名绑定 code-session ID，密码必须与 WebSocket Bearer 是同一个 ingress JWT。
 			h.serveUpstreamProxyTunnel(connection, upstreamProxyIdentity{
 				codeSessionExternalID: claims.SessionID,
+				publicSessionID:       claims.PublicSessionID,
 				organizationUUID:      claims.OrganizationUUID,
 				workspaceUUID:         claims.WorkspaceUUID,
 			}, sessionIngressToken)

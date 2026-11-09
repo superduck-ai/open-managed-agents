@@ -101,7 +101,12 @@ func (svc *Prebuilds) submit(ctx context.Context, task *prebuildTask) error {
 		tag := task.job.Args.EnvironmentUUID + "-" + strconv.FormatInt(task.job.ID, 10)
 		ref, err = svc.images.Start(ctx, imageBuildInput{Dockerfile: task.job.Args.Dockerfile, Repository: svc.cfg.Image.Repository(), Tag: tag})
 	} else {
-		ref, err = svc.templates.Start(ctx, task.output.ImageRef)
+		input := svc.templateInput(templateResources{})
+		if task.job.Args.Template != nil {
+			input = *task.job.Args.Template
+		}
+		input.ImageRef = task.output.ImageRef
+		ref, err = svc.templates.Start(ctx, input)
 	}
 	if err == nil && ref == "" {
 		err = errPrebuildMissingBuildRef

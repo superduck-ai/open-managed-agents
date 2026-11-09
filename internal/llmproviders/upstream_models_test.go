@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -120,5 +121,29 @@ func TestMergeModelIDsKeepsExistingOrderAndCaps(t *testing.T) {
 	merged := MergeModelIDs([]string{"kimi-k2.5", ""}, []string{"glm-4.7", "kimi-k2.5", "qwen-max"}, 2)
 	if len(merged) != 2 || merged[0] != "kimi-k2.5" || merged[1] != "glm-4.7" {
 		t.Fatalf("MergeModelIDs() = %#v", merged)
+	}
+}
+
+type modelListTransport func(*http.Request) (*http.Response, error)
+
+func (transport modelListTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	return transport(request)
+}
+
+func TestDeepSeekAnthropicModelsUseDocumentedListEndpoint(t *testing.T) {
+	client := &http.Client{Transport: modelListTransport(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != "https://api.deepseek.com/models" {
+			t.Fatalf("model discovery URL = %q", request.URL)
+		}
+		if request.Header.Get("Authorization") != "Bearer test-key" {
+			t.Fatal("missing bearer authentication")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"deepseek-v4-pro"}]}`)), Header: make(http.Header)}, nil
+	})}
+	for _, base := range []string{"https://api.deepseek.com/anthropic", "https://api.deepseek.com/anthropic/v1/messages"} {
+		ids, err := ListUpstreamModels(t.Context(), client, Upstream{BaseURL: base, APIKey: "test-key"})
+		if err != nil || len(ids) != 1 || ids[0] != "deepseek-v4-pro" {
+			t.Fatalf("ListUpstreamModels() = %v, %v", ids, err)
+		}
 	}
 }

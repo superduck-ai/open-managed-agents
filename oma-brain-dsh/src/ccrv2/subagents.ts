@@ -1,13 +1,26 @@
+import type { CcrSubagentConfig } from "./contracts.ts";
+import { recordRuntimeDiagnostic, recordRuntimeEvent } from "./runtime-diagnostics.ts";
+import type { SubagentBridge, SubagentEvent, SubagentThread, ToolExecutionBridge, RuntimeDiagnostic, SubagentConfig } from "../runtime/contracts.ts";
+import { dshThreadConfig } from "../runtime/dsh-subagents.ts";
 import { foldSubagentDescriptor } from "@deepseek-ai/dsh-subagent";
 import { SessionId, interruptedTurnClosers } from "@deepseek-ai/dsh-session";
-import type { SubagentBridge, SubagentEvent, SubagentThread, ToolExecutionBridge } from "../runtime/contracts.ts";
 import { CcrHttpError } from "./client.ts";
 import { assertPersistenceFormat } from "./recovery.ts";
 import type { CcrSession } from "./session.ts";
 import type { Payload } from "../json.ts";
-import type { SessionEvent } from "@deepseek-ai/dsh-session";
+import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
+import { traceHooks } from "../observability/trace-context.ts";
 
+export function runtimeSubagentConfig(config?: CcrSubagentConfig): SubagentConfig | undefined {
+  if (!config) return undefined;
+  return {
+    inlineAgents: config.inlineAgents,
+    agents: config.agents?.map(({ name, description, systemPrompt, model, tools }) => ({ name, description, systemPrompt, model, tools })),
+  };
+}
+
+/** Protocol mapping and durable per-thread execution adapters. */
 export class CcrSubagentBridge implements SubagentBridge {
   private readonly retained: SubagentThread[] = [];
   private readonly recoveredCompletions = new Map<string, boolean>();
@@ -27,12 +40,14 @@ export class CcrSubagentBridge implements SubagentBridge {
       await this.session.ctx.ccrReplication.ensure(id);
       const handle = await this.session.ctx.sessionPersistence.open(SessionId(id), "read");
       let descriptor;
+      let dshConfig;
       let interrupted: boolean;
       let hasTurns: boolean;
       try {
         const { events } = await handle.read();
         hasTurns = events.some((event) => event.type === "turn/start");
         descriptor = foldSubagentDescriptor(events);
+        dshConfig = dshThreadConfig(events);
         interrupted = interruptedTurnClosers(events).length > 0;
         const lastEnd = events.findLast(event => event.type === "turn/end");
         this.recoveredCompletions.set(id, !interrupted && lastEnd?.type === "turn/end" && lastEnd.data.reason.kind === "completed");
@@ -46,16 +61,20 @@ export class CcrSubagentBridge implements SubagentBridge {
         throw error;
       }
       if (state.id !== id) throw new Error("Invalid authoritative subagent thread identity");
+      if (!descriptor && !hasTurns && (state.archived || state.status === "terminated")) continue;
       if (!descriptor || descriptor.mode !== "continuable") throw new Error("Subagent is missing its native descriptor");
+      if (!dshConfig && !hasTurns && (state.archived || state.status === "terminated")) continue;
+      if (!dshConfig) throw new Error("Subagent is missing its OMA DSH configuration; legacy OMA threads require a new session");
       this.retained.push({
-        id, name: descriptor.label, inline: descriptor.provider === "oma-inline",
-        systemPrompt: descriptor.persona ?? "", model: descriptor.agentModel ?? this.session.config.model,
-        tools: descriptor.toolFilter?.allow ? [...descriptor.toolFilter.allow] : undefined,
+        id, name: dshConfig.name ?? descriptor.label,
+        inline: dshConfig.inline ?? descriptor.provider === "oma-dsh-inline",
+        systemPrompt: dshConfig.systemPrompt, model: dshConfig.model ?? descriptor.agentModel ?? this.session.config.model,
+        tools: dshConfig.tools,
         status: state.archived || state.status === "terminated" ? "terminated" : state.status === "idle" && !interrupted ? "idle" : "running",
       });
     }
   }
-  async validateThread(threadId: string, signal: AbortSignal): Promise<void> {
+  async validateThread(threadId: string, signal: AbortSignal, allowRunning = false): Promise<void> {
     if (!this.session.backend.getSubagentThread) throw new Error("Authoritative subagent thread state is unavailable");
     const state = await this.session.backend.getSubagentThread(this.session.id, threadId, signal);
     if (state.id !== threadId) throw new Error("Invalid authoritative subagent thread identity");
@@ -64,7 +83,7 @@ export class CcrSubagentBridge implements SubagentBridge {
       if (thread) thread.status = "terminated";
       throw new Error("Subagent thread is archived");
     }
-    if (state.status !== "idle") throw new Error("Subagent thread is running or archived");
+    if (state.status !== "idle" && !(allowRunning && state.status === "running")) throw new Error("Subagent thread is running or archived");
   }
   async archivedThreads(threadIds: string[], signal: AbortSignal): Promise<string[]> {
     if (!this.session.backend.getSubagentThread) throw new Error("Authoritative subagent thread state is unavailable");
@@ -85,9 +104,13 @@ export class CcrSubagentBridge implements SubagentBridge {
     let fields: Payload;
     switch (event.kind) {
       case "created":
+        traceHooks.subagentCreated(thread.id, { name: thread.name, inline: thread.inline === true });
         fields = { type: "session.thread_created", parent_thread_id: this.session.id };
         if (thread.inline) fields.agent = { type: "inline", name: thread.name, system: thread.systemPrompt };
-        else if (thread.agentSnapshot) fields.agent = thread.agentSnapshot;
+        else {
+          const snapshot = this.session.config.subagents?.agents?.find(agent => agent.name === thread.name)?.agentSnapshot;
+          if (snapshot) fields.agent = snapshot;
+        }
         break;
       case "running":
         this.recoveredCompletions.delete(thread.id);
@@ -106,15 +129,22 @@ export class CcrSubagentBridge implements SubagentBridge {
         fields = { type: "agent.thread_message_received", from_session_thread_id: thread.id,
           from_agent_name: thread.name, content: [{ type: "text", text: event.text }] }; break;
     }
-    this.session.pendingEvents.push({ ...fields, uuid: event.kind === "created" ? `${thread.id}_created` : crypto.randomUUID(), session_thread_id: thread.id, agent_name: thread.name });
+    const owner = event.kind === "message-sent" || event.kind === "report-received"
+      ? {} : { session_thread_id: thread.id, agent_name: thread.name };
+    this.session.pendingEvents.push({ ...fields, ...owner, uuid: event.kind === "created" ? `${thread.id}_created` : crypto.randomUUID() });
     if (this.session.restoring) return;
     await this.session.flushEvents();
     await this.session.updateStatus();
   }
-  onContextCompacted(threadId: string, tokens?: number): Promise<void> {
-    return this.session.contextCompacted(tokens, threadId);
+  onDiagnostic(threadId: string, diagnostic: RuntimeDiagnostic): void { recordRuntimeDiagnostic(threadId, diagnostic); }
+  onOpen(session: Session): Promise<void> { return this.session.compaction.restore(session); }
+  afterFlushLog(session: Session): Promise<void> { return this.session.compaction.flush(session); }
+  beforeRequest(threadId: string): Promise<void> { return this.session.beforeModelRequest(threadId); }
+  onEvent(threadId: string, event: SessionEvent, session: Session): void {
+    recordRuntimeEvent(session, event);
+    this.session.compaction.record(session, event);
+    this.session.record(event, threadId);
   }
-  onEvent(threadId: string, event: SessionEvent): void { this.session.record(event, threadId); }
   onStream(threadId: string, frame: AssistantStreamFrame): void { this.session.stream(frame, threadId); }
   toolExecution(threadId: string): ToolExecutionBridge {
     return {

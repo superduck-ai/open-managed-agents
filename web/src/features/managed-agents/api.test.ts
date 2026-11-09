@@ -20,11 +20,13 @@ import {
   sessionThreadListSignature,
   syncSessionEventHistory,
 } from './api';
-import { sessionEventUpdateTimestamp } from './sessions/sessionDetailModel';
+import { sessionEventUpdateTimestamp, sessionEventLaneId } from './sessions/sessionDetailModel';
 import {
   buildSessionEventEntries,
   sessionCanonicalDisplayEvent,
   sessionEventTimestamp,
+  sessionSubagentThreadId,
+  sessionSubagentName,
 } from './sessions/sessionTraceModel';
 
 const originalFetch = globalThis.fetch;
@@ -325,7 +327,10 @@ describe('managed agents API', () => {
       'sevt_other',
       'sevt_end',
     ]);
-    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_other']);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([
+      'sevt_done',
+      'sevt_other',
+    ]);
   });
 
   test.each(['', 'sthr_child'])('late previews cannot revive ended model output in scope %s', (threadId) => {
@@ -436,7 +441,10 @@ describe('managed agents API', () => {
       otherId,
     ]);
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toEqual(final);
-    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([
+      eventId,
+      otherId,
+    ]);
 
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       type: 'event_start',
@@ -447,7 +455,10 @@ describe('managed agents API', () => {
       eventId,
       otherId,
     ]);
-    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([
+      eventId,
+      otherId,
+    ]);
   });
 
   test('history sync replaces a same-ID preview after reconnecting', async () => {
@@ -485,7 +496,10 @@ describe('managed agents API', () => {
       otherId,
     ]);
     expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [''])[0]).toEqual(final);
-    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([otherId]);
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual([
+      eventId,
+      otherId,
+    ]);
   });
 
   test('does not match a final message to a different preview ID', () => {
@@ -664,7 +678,7 @@ describe('managed agents API', () => {
       'sevt_preview',
       'sevt_idle',
     ]);
-    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [''])).toEqual({});
+    expect(Object.keys(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']))).toEqual(['sevt_preview']);
   });
 
   test('keeps incomplete previews when idle history sync fails', async () => {
@@ -833,6 +847,105 @@ describe('managed agents API', () => {
 
     expect(updated.events.map((event) => event.id)).toEqual(['sevt_first', 'sevt_second', 'sevt_third']);
     expect(updated.events[0]?.content).toBe('final');
+  });
+
+  test('replaces changed content with the same ID and processing time in place', () => {
+    const existing = {
+      id: 'sevt_image',
+      type: 'user.message',
+      processed_at: '2026-10-29T02:46:01.100614Z',
+      content: [{ type: 'text', text: 'Describe the image' }],
+    };
+    const before = { id: 'sevt_before', type: 'session.status_idle' };
+    const after = { id: 'sevt_after', type: 'agent.message' };
+    const cache = mergeSessionEventCache(undefined, [before, existing, after]);
+    const incoming = {
+      ...existing,
+      content: [...existing.content, { type: 'image', source: { type: 'file', file_id: 'file_image' } }],
+    };
+    const updated = mergeSessionEventCache(cache, [incoming]);
+    expect(updated.events).toEqual([before, incoming, after]);
+    expect(updated.events[0]).toBe(before);
+    expect(updated.events[2]).toBe(after);
+    expect(cache.events[1]).toBe(existing);
+    expect(mergeSessionEventCache(updated, [structuredClone(incoming)])).toBe(updated);
+
+    const corrected = { ...existing, content: [{ type: 'text', text: 'Corrected content' }] };
+    expect(mergeSessionEventCache(updated, [corrected]).events[1]).toEqual(corrected);
+  });
+
+  test('updates changed metadata and preserves equal events regardless of JSON property order', () => {
+    const existing = {
+      id: 'sevt_tool',
+      type: 'agent.tool_result',
+      processed_at: '2026-10-29T02:46:01Z',
+      usage: { input_tokens: 1, output_tokens: 2 },
+      obsolete: true,
+    };
+    const cache = mergeSessionEventCache(undefined, [existing]);
+    const reordered = {
+      obsolete: true,
+      usage: { output_tokens: 2, input_tokens: 1 },
+      processed_at: existing.processed_at,
+      type: existing.type,
+      id: existing.id,
+    };
+    expect(mergeSessionEventCache(cache, [reordered])).toBe(cache);
+    const corrected = {
+      id: existing.id,
+      type: existing.type,
+      processed_at: existing.processed_at,
+      usage: { input_tokens: 3 },
+    };
+    expect(mergeSessionEventCache(cache, [corrected]).events[0]).toEqual(corrected);
+  });
+
+  test.each([
+    { processed_at: null },
+    { processed_at: undefined },
+    { processed_at: null, is_streaming: true },
+    { processed_at: '2026-10-29T02:46:01Z', is_streaming: true },
+  ])('keeps a processed event when a pending or preview event arrives: %j', (patch) => {
+    const existing = {
+      id: 'sevt_final',
+      type: 'agent.message',
+      processed_at: '2026-10-29T02:46:01Z',
+      content: [{ type: 'text', text: 'Final answer' }],
+    };
+    const cache = mergeSessionEventCache(undefined, [existing]);
+    expect(mergeSessionEventCache(cache, [{ ...existing, ...patch, content: [] }])).toBe(cache);
+  });
+
+  test.each(['', 'sthr_child'])('history refresh restores image content in cached scope %j', async (threadId) => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_images';
+    const sessionId = 'sesn_images';
+    const existing = {
+      id: 'sevt_image',
+      ...(threadId ? { session_thread_id: threadId } : {}),
+      type: 'user.message',
+      processed_at: '2026-10-29T02:46:01.100614Z',
+      content: [{ type: 'text', text: 'Describe the image' }],
+    };
+    const complete = {
+      ...existing,
+      content: [...existing.content, { type: 'image', source: { type: 'file', file_id: 'file_image' } }],
+    };
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, existing);
+    globalThis.fetch = async () => Response.json({ data: [complete], next_page: null });
+    try {
+      await syncSessionEventHistory({ queryClient, workspaceId, sessionId, threadId, mode: 'refresh' });
+      expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [threadId])).toEqual([complete]);
+      mergeSessionStreamFrame(queryClient, workspaceId, sessionId, threadId, {
+        ...complete,
+        content: [{ type: 'text', text: 'Updated' }],
+      });
+      expect(sessionDetailScopeEvents(queryClient, workspaceId, sessionId, [threadId])[0].content).toEqual([
+        { type: 'text', text: 'Updated' },
+      ]);
+    } finally {
+      queryClient.clear();
+    }
   });
 
   test('omits an idle result that duplicates an agent message with the same timestamp', () => {
@@ -1191,3 +1304,113 @@ function memoryStore(index: number) {
     updated_at: '2026-08-24T00:00:00Z',
   };
 }
+
+test('keeps both thread message perspectives and separates owner from peer', () => {
+  const queryClient = new QueryClient();
+  const primary = [
+    {
+      id: 'task-primary',
+      uuid: 'task',
+      type: 'agent.thread_message_sent',
+      session_thread_id: 'primary',
+      to_session_thread_id: 'child',
+      to_agent_name: 'worker',
+      agent_name: 'lead',
+      content: [],
+    },
+    {
+      id: 'report-primary',
+      uuid: 'report',
+      type: 'agent.thread_message_received',
+      session_thread_id: 'primary',
+      from_session_thread_id: 'child',
+      from_agent_name: 'worker',
+      agent_name: 'lead',
+      content: [],
+    },
+  ];
+  const child = [
+    {
+      id: 'task-child',
+      uuid: 'task',
+      original_event_id: 'task-primary',
+      type: 'agent.thread_message_received',
+      session_thread_id: 'child',
+      from_session_thread_id: 'primary',
+      from_agent_name: 'lead',
+      agent_name: 'worker',
+      content: [],
+    },
+    {
+      id: 'report-child',
+      uuid: 'report',
+      original_event_id: 'report-primary',
+      type: 'agent.thread_message_sent',
+      session_thread_id: 'child',
+      to_session_thread_id: 'primary',
+      to_agent_name: 'lead',
+      agent_name: 'worker',
+      content: [],
+    },
+  ];
+  for (const [threadId, events] of [
+    ['', primary],
+    ['child', child],
+  ] as const) {
+    queryClient.setQueryData(
+      sessionDetailEventCacheKey('workspace', 'session', threadId),
+      mergeSessionEventCache(undefined, [...events]),
+    );
+  }
+  const events = sessionDetailScopeEvents(queryClient, 'workspace', 'session', ['', 'child']);
+  expect(events.map((event) => event.id)).toEqual(['task-primary', 'report-primary', 'task-child', 'report-child']);
+  expect(events.map((event) => event.session_thread_id)).toEqual(['primary', 'primary', 'child', 'child']);
+  expect(events.map(sessionSubagentThreadId)).toEqual(['child', 'child', 'primary', 'primary']);
+  expect(events.map(sessionSubagentName)).toEqual(['worker', 'worker', 'lead', 'lead']);
+  const lanes = new Map([
+    ['primary', 'main'],
+    ['child', 'child'],
+  ]);
+  expect(events.map((event) => sessionEventLaneId(event, lanes))).toEqual(['main', 'main', 'child', 'child']);
+  queryClient.clear();
+});
+
+test('retains live thinking start and completion for inspection without accepting late frames', () => {
+  const queryClient = new QueryClient();
+  const start = { type: 'event_start', event: { id: 'sevt_thinking', type: 'agent.thinking' } };
+  const final = { id: 'sevt_thinking', type: 'agent.thinking', processed_at: '2026-10-30T08:00:00Z' };
+  mergeSessionStreamFrame(queryClient, 'workspace', 'session', '', start);
+  mergeSessionStreamFrame(queryClient, 'workspace', 'session', '', final);
+  mergeSessionStreamFrame(queryClient, 'workspace', 'session', '', start);
+  mergeSessionStreamFrame(queryClient, 'workspace', 'session', '', {
+    type: 'event_delta',
+    event_id: final.id,
+    delta: { type: 'content_delta', index: 0, content: { type: 'text', text: 'late' } },
+  });
+  expect(sessionDetailDeltaFrames(queryClient, 'workspace', 'session', [''])[final.id]).toEqual({
+    message: final,
+    frames: [start, final],
+  });
+});
+
+test('retains message deltas and reconciles repeated completion without accepting late text', () => {
+  const queryClient = new QueryClient();
+  const start = { type: 'event_start', event: { id: 'sevt_text', type: 'agent.message' } };
+  const delta = {
+    type: 'event_delta',
+    event_id: 'sevt_text',
+    delta: { type: 'content_delta', index: 0, content: { type: 'text', text: 'Hello' } },
+  };
+  const final = {
+    id: 'sevt_text',
+    type: 'agent.message',
+    processed_at: '2026-10-30T08:00:00Z',
+    content: [{ type: 'text', text: 'Hello world' }],
+  };
+  for (const frame of [start, delta, final, final, start, delta])
+    mergeSessionStreamFrame(queryClient, 'workspace', 'session', '', frame);
+  expect(sessionDetailDeltaFrames(queryClient, 'workspace', 'session', [''])[final.id]).toEqual({
+    message: final,
+    frames: [start, delta, final],
+  });
+});

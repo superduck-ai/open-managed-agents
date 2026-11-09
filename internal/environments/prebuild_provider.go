@@ -44,6 +44,12 @@ type buildJobStatus struct {
 }
 
 type imageBuildInput struct{ Dockerfile, Repository, Tag string }
+type templateBuildInput struct {
+	ImageRef string `json:"image_ref,omitempty"`
+	CPU      uint32 `json:"cpu,omitempty"`
+	Memory   uint32 `json:"memory,omitempty"`
+	DiskSize string `json:"disk_size"`
+}
 type imageBuildStatus struct {
 	buildJobStatus
 	ImageRef string
@@ -71,7 +77,7 @@ type imageBuilder interface {
 
 type templateBuilder interface {
 	Capabilities() buildCapabilities
-	Start(context.Context, string) (buildJobRef, error)
+	Start(context.Context, templateBuildInput) (buildJobRef, error)
 	GetStatus(context.Context, buildJobRef) (templateBuildStatus, error)
 	ReadLogs(context.Context, buildJobRef, string) (buildLogChunk, error)
 	Cancel(context.Context, buildJobRef) error

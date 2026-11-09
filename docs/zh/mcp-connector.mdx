@@ -14,7 +14,7 @@ MCP 配置分为两个步骤：
 这种分离使密钥不会出现在可重用的智能体定义中，同时允许每个会话使用自己的凭据进行身份验证。
 
 <Note>
-  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+  各资源的 Beta 要求不同，请参阅[版本与 Beta 功能](/docs/zh/api/versioning-beta)，并确认 SDK 向 OMA 发送了所需参数。
 </Note>
 
 ## 在智能体上声明 MCP 服务器
@@ -270,7 +270,7 @@ MCP 配置分为两个步骤：
 
 ### MCP 工具输出处理
 
-当 MCP 工具输出超过 100,000 个字符（约 25,000 个令牌）时，它会自动写入沙盒中的一个文件。模型会收到带有文件路径的截断预览，并可以从该文件读取完整内容。
+当 MCP 工具的文本输出超过 100,000 个字符时，系统会尝试将完整内容写入沙盒临时文件，并向模型返回包含路径的截断预览。保存失败时可能返回错误或仅保留预览；沙盒被替换后临时文件不再可用。图片、音频等非文本 MCP 输出不支持此处理方式。
 
 ## 在会话创建时提供身份验证
 
@@ -365,11 +365,11 @@ MCP 配置分为两个步骤：
   ```
 </CodeGroup>
 
-凭据通过 URL 进行匹配，因此密钥库必须包含一个凭据，其 `mcp_server_url` 指向与 `mcp_servers` 中声明的 `url` 相同的服务器。两个 URL 在匹配前都会被规范化（协议和主机名转为小写，去除默认端口和尾部斜杠），因此主机名大小写、默认端口或尾部斜杠的差异不会妨碍匹配；而不同的路径、子域名或非默认端口则会。如果没有匹配项，则会尝试以未经身份验证的方式连接。有关 `static_bearer` 和 `mcp_oauth` 凭据类型，请参阅[添加凭据](/docs/zh/vaults#add-a-credential)。
+凭据通过 URL 进行匹配，因此密钥库中的 `mcp_server_url` 应与 `mcp_servers` 中声明的服务器一致。MCP 精确匹配时会规范化协议、主机名、默认端口和尾部斜杠，但路径和查询参数必须匹配；不同的子域名或非默认端口也不会匹配。普通出站代理使用路径前缀匹配，具体注入路径及前提请参阅[密钥库](/docs/zh/vaults)。如果没有匹配项，则会尝试以未经身份验证的方式连接。
 
 ### 处理连接和身份验证失败
 
-会话创建不会验证 MCP 连接性或凭据。如果 MCP 服务器无法访问或拒绝所提供的凭据，会话仍会启动，并且仍可进行交互。系统会发出一个 [`session.error`](/docs/zh/events-and-streaming) 事件，其中包含受影响服务器的 `mcp_server_name` 和一个 `retry_status`：
+会话创建不会验证 MCP 服务器的连接性或凭据，但会检查环境网络策略：`limited` 网络中，当 `allow_mcp_servers` 为 `false` 且服务器不在 `allowed_hosts` 内时，会话创建失败。如果之后 MCP 服务器无法访问或拒绝凭据，会话仍可启动并进行交互。系统会发出一个 [`session.error`](/docs/zh/events-and-streaming) 事件，其中包含受影响服务器的 `mcp_server_name` 和一个 `retry_status`：
 
 | 错误类型                              | 含义                                                                 |
 | --------------------------------- | ------------------------------------------------------------------ |
@@ -377,6 +377,27 @@ MCP 配置分为两个步骤：
 | `mcp_authentication_failed_error` | 与 MCP 服务器的身份验证失败：服务器拒绝了来自所附加密钥库的凭据、在未配置匹配凭据时要求身份验证，或 OAuth 令牌刷新失败。 |
 
 您可以决定是在出现此错误时阻止进一步交互、触发凭据轮换，还是让会话在没有受影响服务器工具的情况下继续。连接会在下一次从 `session.status_idle` 到 `session.status_running` 的转换时重试。
+
+## 通过 MCP Tunnel 访问私网服务
+
+对于只能从私有网络访问的 MCP 服务器，可以在该网络中运行 Connector。Connector 主动向 OMA 发起长轮询，接收请求并转发给 MCP 服务器，然后将响应提交回 OMA：
+
+```mermaid
+sequenceDiagram
+    participant Agent as 智能体会话
+    participant OMA as OMA MCP Tunnel
+    participant Connector as 私网 Connector
+    participant MCP as 私网 MCP 服务器
+    Connector->>OMA: 发起出站长轮询
+    Agent->>OMA: MCP 请求
+    OMA-->>Connector: 返回待处理请求
+    Connector->>MCP: 转发 MCP 请求
+    MCP-->>Connector: MCP 响应
+    Connector->>OMA: 出站提交响应
+    OMA-->>Agent: 返回响应
+```
+
+该路径转发 MCP 请求和响应，并非通用网络隧道。使用前需要配置 Tunnel 和 Connector 凭据；Connector 必须能访问 OMA 和目标 MCP 服务器，具体网络及部署配置取决于所在环境。
 
 ## 后续步骤
 

@@ -22,7 +22,7 @@ func TestOpenObserveOTLPForwarderUsesServerOwnedContract(t *testing.T) {
 		if !ok || username != "ingest-user" || password != "ingest-password" {
 			t.Errorf("BasicAuth() = %q %q %t", username, password, ok)
 		}
-		if r.Header.Get("stream-name") != "oma_claude_code" || r.Header.Get("Content-Type") != "application/json" {
+		if r.Header.Get("stream-name") != "oma_dsh" || r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("headers = %#v", r.Header)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -35,12 +35,12 @@ func TestOpenObserveOTLPForwarderUsesServerOwnedContract(t *testing.T) {
 		OpenObserve: config.OpenObserveConfig{
 			BaseURL:      server.URL,
 			Organization: "oma",
-			LogsStream:   "oma_claude_code",
+			LogsStream:   "oma_dsh",
 			Ingestion:    config.BackendCredentialsConfig{Username: "ingest-user", Password: "ingest-password"},
 		},
 		OTLP: config.ObservabilityOTLPConfig{ForwardTimeout: time.Second},
 	})
-	response, err := forwarder.forward(context.Background(), "logs", otlpProtocolJSON, []byte(payload))
+	response, err := forwarder.forward(context.Background(), otlpProtocolJSON, []byte(payload))
 	if err != nil {
 		t.Fatalf("forward() error = %v", err)
 	}
@@ -60,7 +60,7 @@ func TestOpenObserveOTLPForwarderRedactsUpstreamErrorBody(t *testing.T) {
 		OTLP:        config.ObservabilityOTLPConfig{ForwardTimeout: time.Second},
 	})
 
-	_, err := forwarder.forward(context.Background(), "metrics", otlpProtocolProtobuf, nil)
+	_, err := forwarder.forward(context.Background(), otlpProtocolProtobuf, nil)
 	var sinkError *otlpSinkError
 	if !errors.As(err, &sinkError) || sinkError.statusCode != http.StatusServiceUnavailable {
 		t.Fatalf("forward() error = %#v", err)
@@ -82,7 +82,7 @@ func TestOpenObserveOTLPForwarderPreservesRetrySemantics(t *testing.T) {
 		OTLP:        config.ObservabilityOTLPConfig{ForwardTimeout: time.Second},
 	})
 
-	_, err := forwarder.forward(context.Background(), "metrics", otlpProtocolProtobuf, nil)
+	_, err := forwarder.forward(context.Background(), otlpProtocolProtobuf, nil)
 	var sinkError *otlpSinkError
 	if !errors.As(err, &sinkError) || sinkError.statusCode != http.StatusTooManyRequests || sinkError.retryAfter != "7" {
 		t.Fatalf("forward() error = %#v", err)

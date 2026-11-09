@@ -8,7 +8,7 @@ import {
 } from '../../shared/api/client';
 import { consumeSseBuffer, postJsonSseStream } from '../../shared/api/streaming';
 import { consoleResourceListLimit } from '../../shared/console-list';
-import { type QueryClient } from '@tanstack/react-query';
+import { type QueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import { agentDetailCreatedRange, agentDetailStatusValues } from './agents/AgentsResourcePage';
 import { credentialAuthBody, credentialDisplayName, normalizeMemoryFolderPath } from './resources/ManagedResources';
 import { sessionFileResourcePayload } from './sessions/file-resource-form';
@@ -42,6 +42,7 @@ import {
   type PageCursor,
   type PageResponse,
   type QuickstartSessionEvent,
+  type SessionMessageContentBlock,
   type QuickstartStreamEvent,
   type SessionApiResponse,
   type SessionDetailDeltaFrames,
@@ -799,11 +800,17 @@ export function sessionThreadListSignature(threads: SessionThreadApiResponse[]) 
     .join('|');
 }
 
-export function postQuickstartSessionMessage(sessionId: string, message: string, workspaceId: string) {
+export function postQuickstartSessionMessage(
+  sessionId: string,
+  message: string | SessionMessageContentBlock[],
+  workspaceId: string,
+) {
   return anthropicBetaApi.sessions.events.send<{ data?: QuickstartSessionEvent[] }>(
     sessionId,
     {
-      events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }],
+      events: [
+        { type: 'user.message', content: typeof message === 'string' ? [{ type: 'text', text: message }] : message },
+      ],
     },
     workspaceId,
   );
@@ -1023,13 +1030,10 @@ export function sessionStableEventId(event: QuickstartSessionEvent) {
 export function sessionIncomingEventShouldReplace(existing: QuickstartSessionEvent, incoming: QuickstartSessionEvent) {
   const existingProcessedAt = sessionNullableProcessedAt(existing);
   const incomingProcessedAt = sessionNullableProcessedAt(incoming);
-  if (existingProcessedAt === null && incomingProcessedAt !== null) {
-    return true;
+  if (existingProcessedAt !== null && (incomingProcessedAt === null || incoming.is_streaming === true)) {
+    return false;
   }
-  if (incomingProcessedAt !== null && existingProcessedAt !== incomingProcessedAt) {
-    return true;
-  }
-  return false;
+  return replaceEqualDeep(existing, incoming) !== existing;
 }
 
 export function sessionNullableProcessedAt(event: QuickstartSessionEvent) {
@@ -1120,7 +1124,7 @@ export async function syncSessionEventHistory({
         });
         response.data.forEach((event) => {
           const finalId = sessionFinalAgentEventId(event);
-          if (finalId) removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+          if (finalId) reconcileSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
         });
         page = nextPage;
       } while (page);
@@ -1160,7 +1164,7 @@ export function mergeSessionStreamFrame(
   queryClient.setQueryData<SessionDetailEventCache>(cacheKey, (cache) => mergeSessionEventCache(cache, [event]));
   const finalId = sessionFinalAgentEventId(event);
   if (finalId) {
-    removeSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
+    reconcileSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
   }
   if (eventType === 'span.model_request_end' && Array.isArray(event.event_ids)) {
     cleanupIncompleteSessionStreamEvents(
@@ -1183,7 +1187,7 @@ function sessionFinalAgentEventId(event: QuickstartSessionEvent) {
     : null;
 }
 
-function removeSessionDeltaFrame(
+function reconcileSessionDeltaFrame(
   queryClient: QueryClient,
   workspaceId: string,
   sessionId: string,
@@ -1194,6 +1198,23 @@ function removeSessionDeltaFrame(
   queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => {
     if (!cache?.[eventId]) {
       return cache;
+    }
+    const completed = queryClient
+      .getQueryData<SessionDetailEventCache>(sessionDetailEventCacheKey(workspaceId, sessionId, threadId))
+      ?.events.find((event) => sessionStableEventId(event) === eventId && sessionFinalAgentEventId(event) !== null);
+    if (completed) {
+      return {
+        ...cache,
+        [eventId]: {
+          message: completed,
+          frames: [
+            ...cache[eventId].frames.filter((frame) =>
+              ['event_start', 'event_delta'].includes(sessionEventType(frame)),
+            ),
+            completed,
+          ],
+        },
+      };
     }
     const next = { ...cache };
     delete next[eventId];
@@ -1244,7 +1265,7 @@ export function mergeSessionDeltaFrame(
   }
   queryClient.setQueryData<SessionDetailDeltaFrames>(deltaKey, (cache) => {
     const current = cache?.[eventId];
-    if (!current) {
+    if (!current || current.frames.some((frame) => sessionFinalAgentEventId(frame) !== null)) {
       return cache ?? {};
     }
     return {
@@ -1569,10 +1590,10 @@ export async function quickstartStreamError(response: Response) {
   return new Error(response.statusText || `Request failed with status ${response.status}`);
 }
 
-export function listVaultCredentials(vaultId: string, workspaceId: string) {
+export function listVaultCredentials(vaultId: string, workspaceId: string, page?: string) {
   return anthropicBetaApi.vaults.credentials.list<VaultCredentialApiResponse>(
     vaultId,
-    { limit: 50, include_archived: false },
+    { limit: 50, include_archived: false, ...(page ? { page } : {}) },
     workspaceId,
   ) as Promise<PageResponse<VaultCredentialApiResponse>>;
 }
@@ -1743,7 +1764,6 @@ export function updateManagedEntityBody(section: ManagedEntitySection, values: M
         title: name || null,
         agent: values.agentId || undefined,
         environment_id: values.environmentId || undefined,
-        vault_ids: values.vaultIds,
         ...(budgetUpdateBody(values) !== undefined ? { budget: budgetUpdateBody(values) } : {}),
       };
     case 'deployments':

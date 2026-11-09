@@ -56,7 +56,7 @@ func newBroker(ctx context.Context, connection *nats.Conn, cfg config.TunnelConf
 		return nil, err
 	}
 	commands, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name: commandStreamName, Subjects: []string{commandSubjectPrefix + ">"},
+		Name: CommandStreamName, Subjects: []string{commandSubjectPrefix + ">"},
 		Storage: jetstream.FileStorage, Replicas: replicas, Retention: jetstream.WorkQueuePolicy,
 		Discard: jetstream.DiscardNew, MaxAge: cfg.RequestTimeout, MaxMsgs: cfg.CommandStream.MaxMsgs,
 		MaxBytes:   cfg.CommandStream.MaxBytes,

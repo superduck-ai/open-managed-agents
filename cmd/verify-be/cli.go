@@ -180,7 +180,7 @@ func validateOptions(options cliOptions) error {
 }
 
 func needsWorker(selected string) bool {
-	if isCloudScenario(selected) || selected == "chat.shutdown" {
+	if isCloudScenario(selected) || selected == "chat.shutdown" || scenarios[selected].DependenciesOnly {
 		return false
 	}
 	return selected == "files.generated" || selected == "memory.mounts" || selected == "chat" || strings.HasPrefix(selected, "chat.")

@@ -7,7 +7,7 @@ description: "Control when agent and MCP tools execute."
 Permission policies control whether server-executed tools (the pre-built agent toolset and MCP toolset) run automatically or wait for your approval. Custom tools are executed by your application and controlled by you, so they are not governed by permission policies.
 
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
 ## Permission policy types
@@ -16,14 +16,21 @@ Permission policies control whether server-executed tools (the pre-built agent t
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `always_allow` | The tool executes automatically with no confirmation.                                                                                                                                                                                |
 | `always_ask`   | The session pauses and waits for your approval before executing. See [Respond to confirmation requests](/docs/en/permission-policies#respond-to-confirmation-requests) for the event flow. |
+| `auto` | Accepted for API compatibility; OMA currently requests user confirmation rather than making an automatic risk decision. |
 
-Each toolset kind has its own default: the agent toolset defaults to `always_allow`, and MCP toolsets default to `always_ask`.
+Each toolset kind has its own default: the agent toolset defaults to `always_allow`, and MCP toolsets default to `always_ask`. `ask_user_question` is disabled by default and must be explicitly enabled.
 
 A permission policy controls when an enabled tool runs. To remove a tool from the agent entirely, disable it instead. See [Disabling specific tools](/docs/en/tools#disabling-specific-tools).
 
 ## Set a policy for a toolset
 
 You set permission policies in the agent's `tools` configuration when you create the agent, and you can change them later by [updating the agent](/docs/en/agent-setup#update-an-agent). Running sessions keep the toolset configuration they were created with. Updates apply to sessions created afterward.
+
+In the console, expand **Tools** and **Tool permissions** when creating an agent to allow, ask, or disable each tool. The Chinese interface below shows `ask_user_question` disabled by default.
+
+<Frame>
+  <img src="/docs/images/console/tool-permissions-zh.jpg" alt="Agent tool permissions showing ask_user_question disabled by default" />
+</Frame>
 
 ### Agent toolset permissions
 

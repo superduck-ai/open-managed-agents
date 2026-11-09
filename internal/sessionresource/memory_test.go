@@ -185,14 +185,11 @@ func TestMemoryAttachSetAssignsUniqueSlugsAndRejectsDuplicates(t *testing.T) {
 	}
 }
 
-func TestObserveStoredMemoryResourceReservesSlug(t *testing.T) {
+func TestMemoryAttachSetObserveReservesSlug(t *testing.T) {
 	t.Parallel()
 
 	set := NewMemoryAttachSet()
-	ObserveStoredMemoryResource(set, FileType, json.RawMessage(`{"memory_store_id":"memstore_ignored"}`))
-	ObserveStoredMemoryResource(set, MemoryStoreType, json.RawMessage(
-		`{"memory_store_id":"memstore_one","mount_path":"/mnt/memory/product-docs-draft"}`,
-	))
+	set.Observe("memstore_one", "product-docs-draft")
 
 	slug, err := set.Add("memstore_two", "Product Docs-Draft!!", "memstore_two")
 	if err != nil || slug != "product-docs-draft-2" {

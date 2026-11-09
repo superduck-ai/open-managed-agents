@@ -28,13 +28,13 @@ func getConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 			internalError(w, "failed to load LLM provider")
 			return
 		}
-		writeJSON(w, http.StatusOK, formatOrganizationLLMProvider(provider))
+		writeJSON(w, http.StatusOK, formatLLMProvider(provider))
 	}
 }
 
 func putConsoleOrganizationLLMProvider(database *db.DB, secretService *secrets.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, ok := llmProviderOrganization(w, r, database)
+		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
 			return
 		}
@@ -46,7 +46,7 @@ func putConsoleOrganizationLLMProvider(database *db.DB, secretService *secrets.S
 			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeSlugImmutable, "organization provider slug must be organization")
 			return
 		}
-		name, baseURL, models, ok := validateLLMProviderInput(w, body)
+		name, baseURL, models, ok := validateLLMProviderInput(w, body, llmproviders.OrganizationSlug)
 		if !ok {
 			return
 		}
@@ -101,7 +101,7 @@ func createConsoleOrganizationLLMProvider(
 		return
 	}
 	created, err := database.CreateLLMProvider(r.Context(), provider)
-	if errors.Is(err, db.ErrOrganizationLLMProviderExists) {
+	if errors.Is(err, db.ErrLLMProviderSlugConflict) {
 		writeLLMProviderError(w, http.StatusConflict, llmProviderCodeOrganizationExists, "organization default provider already exists")
 		return
 	}
@@ -109,7 +109,7 @@ func createConsoleOrganizationLLMProvider(
 		internalError(w, "failed to create LLM provider")
 		return
 	}
-	writeJSON(w, http.StatusCreated, formatOrganizationLLMProvider(created))
+	writeJSON(w, http.StatusCreated, formatLLMProvider(created))
 }
 
 func updateConsoleOrganizationLLMProvider(
@@ -146,12 +146,12 @@ func updateConsoleOrganizationLLMProvider(
 		internalError(w, "failed to update LLM provider")
 		return
 	}
-	writeJSON(w, http.StatusOK, formatOrganizationLLMProvider(updated))
+	writeJSON(w, http.StatusOK, formatLLMProvider(updated))
 }
 
 func deleteConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, ok := llmProviderOrganization(w, r, database)
+		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
 			return
 		}
@@ -179,7 +179,7 @@ func deleteConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 
 func syncConsoleOrganizationLLMProviderModels(database *db.DB, secretService *secrets.Service, client *http.Client, persist bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, ok := llmProviderOrganization(w, r, database)
+		orgUUID, ok := visibleOrgUUID(w, r)
 		if !ok {
 			return
 		}
@@ -194,21 +194,4 @@ func syncConsoleOrganizationLLMProviderModels(database *db.DB, secretService *se
 		}
 		syncProviderFromUpstream(w, r, database, secretService, client, provider, persist)
 	}
-}
-
-func llmProviderOrganization(w http.ResponseWriter, r *http.Request, database *db.DB) (string, bool) {
-	orgUUID, ok := visibleOrgUUID(w, r)
-	if !ok {
-		return "", false
-	}
-	if !requireLLMProviderAdministrator(w, r, database, orgUUID) {
-		return "", false
-	}
-	return orgUUID, true
-}
-
-func formatOrganizationLLMProvider(provider db.LLMProvider) llmProviderResponse {
-	response := formatLLMProvider(provider)
-	response.Scope = "organization"
-	return response
 }

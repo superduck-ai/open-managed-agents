@@ -1,3 +1,5 @@
+import { readContent } from "./read.ts";
+import type { ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { Context } from "@deepseek-ai/cordis";
 import { object } from "../json.ts";
 import { ToolExecution } from "../runtime/execution.ts";
@@ -11,6 +13,7 @@ export interface Config {
   bridge: ToolExecutionBridge;
   tools?: string[];
   permissions?: ToolPermissions;
+  threadId?: string;
 }
 
 const bindings = {
@@ -34,7 +37,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 }
 
 function registerTools(ctx: Context, config: Config): void {
-  const execution = new ToolExecution(ctx.sandboxExecutor, ctx.toolExecutionBridge, config.permissions);
+  const execution = new ToolExecution(ctx.sandboxExecutor, ctx.toolExecutionBridge, config.permissions, config.threadId);
   ctx.tools.restrict({ allow: [] });
   for (const tool of sandboxToolDefinitions()) {
     if (config.tools && !config.tools.includes(tool.name)) continue;
@@ -42,12 +45,17 @@ function registerTools(ctx: Context, config: Config): void {
       name: tool.name,
       description: tool.description,
       parameters: tool.inputSchema,
-      output: {
+      output: tool.name === "Read" ? {
+        schema: { type: "array", items: { type: "object" } },
+        render: (_args, value) => value as unknown as ContentBlock[],
+      } : {
         schema: { type: "string" },
         render: (_args, value) => [{ type: "text", text: String(value) }],
       },
       isConcurrencySafe: () => !!tool.readOnly,
-      execute: (args, exec) => execution.execute(tool, object(args), exec),
+      execute: (args, exec) => tool.name === "Read"
+        ? execution.execute(tool, object(args), exec, result => readContent(ctx, result, exec))
+        : execution.execute(tool, object(args), exec),
     });
   }
 }

@@ -17,14 +17,15 @@ import (
 
 // ModelRequest owns one proxy attempt. Each worker retry gets a new span.
 type ModelRequest struct {
-	ResponseCost  *billing.ResponseCostRule
-	calculator    *billing.Calculator
-	StartID       string
-	CodeSessionID string
-	ThreadID      string
-	Model         string
-	codeSession   db.CodeSession
-	toolThreadID  string
+	ResponseCost         *billing.ResponseCostRule
+	calculator           *billing.Calculator
+	SuppressPublicOutput bool
+	StartID              string
+	CodeSessionID        string
+	ThreadID             string
+	Model                string
+	codeSession          db.CodeSession
+	toolThreadID         string
 }
 
 // ModelRequestUsage is cumulative within one provider response, never a turn total.
@@ -149,10 +150,10 @@ func (s *Service) BeginModelRequest(ctx context.Context, workspaceID, sessionID,
 }
 
 func (s *Service) StartModelThinking(ctx context.Context, request *ModelRequest, messageID string, index int) error {
+	if request.SuppressPublicOutput || usesBrainClaimTransport(request.codeSession) {
+		return nil
+	}
 	message := ModelRequestMessage{ID: maevents.StableAssistantEventID(request.CodeSessionID, messageID, index, "agent.thinking"), Type: "agent.thinking"}
-	// The proxy observes the real block start before forwarding it to Brain.
-	// Publish its nonsecret preview before the buffered progress signal retires
-	// this ID; Brain's queued copy otherwise always arrives too late.
 	preview := map[string]any{"type": "event_start", "event": map[string]string{"type": message.Type, "id": message.ID}}
 	if request.toolThreadID != "" {
 		preview["session_thread_id"] = request.toolThreadID
@@ -165,11 +166,7 @@ func (s *Service) StartModelThinking(ctx context.Context, request *ModelRequest,
 		CodeSessionID: request.CodeSessionID, WorkspaceUUID: request.codeSession.WorkspaceUUID,
 		SessionExternalID: request.codeSession.SessionExternalID,
 	}, request.codeSession.CurrentWorkerEpoch, raw)
-	payload, err := modelMessagePayload(request, message, time.Now().UTC().Truncate(time.Microsecond))
-	if err != nil {
-		return err
-	}
-	return s.sink.PublishCodeSessionEvents(ctx, request.codeSession, []json.RawMessage{payload})
+	return nil
 }
 
 func modelMessagePayload(request *ModelRequest, message ModelRequestMessage, processedAt time.Time) (json.RawMessage, error) {
@@ -185,6 +182,12 @@ func modelMessagePayload(request *ModelRequest, message ModelRequestMessage, pro
 }
 
 func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, result ModelRequestResult) error {
+	if request.SuppressPublicOutput {
+		result.Messages = nil
+		result.EventIDs = nil
+		result.ToolUses = nil
+		result.ToolUseIDs = nil
+	}
 	event := modelRequestEvent{ID: request.StartID + "_end", Type: "span.model_request_end", StartID: request.StartID,
 		CreatedAt: result.EndedAt, ProcessedAt: result.EndedAt, IsError: new(result.ErrorType != "" && result.ErrorType != "observation_limit"), Usage: &result.Usage, EventIDs: result.EventIDs, ToolUseIDs: result.ToolUseIDs, UpstreamRequestID: result.UpstreamRequestID}
 	if result.ErrorType != "" {

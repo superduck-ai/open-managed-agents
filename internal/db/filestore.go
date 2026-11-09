@@ -18,6 +18,13 @@ const (
 	filestoreFilesystemCleanupJobType = "filestore_filesystem_cleanup"
 )
 
+type SessionResourceFileOwnership string
+
+const (
+	SessionResourceFileOwnershipReferenced SessionResourceFileOwnership = "referenced"
+	SessionResourceFileOwnershipOwned      SessionResourceFileOwnership = "owned"
+)
+
 var (
 	ErrFilestorePathExists              = errors.New("filestore path already exists")
 	ErrFilestoreParentMissing           = errors.New("filestore parent directory does not exist")
@@ -85,6 +92,9 @@ type SessionResourceFile struct {
 	Kind                  string
 	Path                  string
 	ParentPath            *string
+	FileUUID              *string
+	SourceFileUUID        *string
+	FileOwnership         SessionResourceFileOwnership
 	SizeBytes             *int64
 	MediaType             *string
 	DetectedMimeType      *string
@@ -99,7 +109,6 @@ type SessionResourceFile struct {
 	S3ETag                *string
 	S3VersionID           *string
 	ExpiresAt             *time.Time
-	SourceFileUUID        *string
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 	DeletedAt             *time.Time
@@ -129,6 +138,7 @@ type SessionSkillArchiveResourceInput struct {
 	Source           string
 	SkillVersionUUID string
 	Directory        string
+	ArchiveDirectory string
 	S3Bucket         string
 	S3Key            string
 	SizeBytes        int64

@@ -22,27 +22,30 @@ import (
 )
 
 type responseObservation struct {
-	chat              *chatObservation
-	publishThinking   func(string, int) bool
-	thinkingPublished map[int]bool
-	onComplete        func()
-	request           *codesessions.ModelRequest
-	result            codesessions.ModelRequestResult
-	streaming         bool
-	buffer            []byte
-	line              []byte
-	malformed         bool
-	complete          bool
-	messageID         string
-	blocks            map[int]*responseContentBlock
-	contentBytes      int
+	chat            *chatObservation
+	firstTokenAt    time.Time
+	publishThinking func(string, int) bool
+	thinkingStarted map[int]bool
+	onComplete      func()
+	request         *codesessions.ModelRequest
+	result          codesessions.ModelRequestResult
+	streaming       bool
+	buffer          []byte
+	line            []byte
+	malformed       bool
+	complete        bool
+	messageID       string
+	blocks          map[int]*responseContentBlock
+	contentBytes    int
+	stopReason      string
 }
 
 type responseMessage struct {
-	ID      string                         `json:"id"`
-	Type    string                         `json:"type"`
-	Usage   codesessions.ModelRequestUsage `json:"usage"`
-	Content []responseContentBlock         `json:"content"`
+	ID         string                         `json:"id"`
+	Type       string                         `json:"type"`
+	Usage      codesessions.ModelRequestUsage `json:"usage"`
+	Content    []responseContentBlock         `json:"content"`
+	StopReason string                         `json:"stop_reason"`
 }
 
 type responseContentBlock struct {
@@ -53,6 +56,7 @@ type responseContentBlock struct {
 	Name        string            `json:"name"`
 	Input       jsonv1.RawMessage `json:"input"`
 	PartialJSON string            `json:"partial_json"`
+	StopReason  string            `json:"stop_reason"`
 	textBuffer  strings.Builder
 	inputBuffer strings.Builder
 }
@@ -74,19 +78,22 @@ func (h *Handler) beginModelRequest(r *http.Request, principal auth.Principal, m
 		principal.CodeSessionExternalID, strings.TrimSpace(r.Header.Get("X-Claude-Code-Agent-Id")), model)
 }
 
-func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest) {
+func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest, call *modelCall) {
 	observation := &responseObservation{request: request}
+	call.observation = observation
 	if r.URL.Path == "/v1/chat/completions" {
 		observation.chat = &chatObservation{}
 	}
 	if request != nil {
+		purpose := strings.TrimSpace(r.Header.Get("X-OMA-Model-Purpose"))
+		request.SuppressPublicOutput = purpose == "compaction" || purpose == "session-title"
 		// Claude Code copies this header to assistant.request_id, including HTTP errors.
 		w.Header().Set("Request-Id", request.StartID)
 		// A forwarded Accept-Encoding disables Transport decompression and hides the frames from the observer.
 		upstream.Header.Del("Accept-Encoding")
 		observation.publishThinking = func(messageID string, index int) bool {
 			if err := h.codeSessions.StartModelThinking(r.Context(), request, messageID, index); err != nil {
-				h.logger.ErrorContext(r.Context(), "persist thinking start", "model_request_start_id", request.StartID, "error", err)
+				h.logger.ErrorContext(r.Context(), "publish thinking preview", "model_request_start_id", request.StartID, "error", err)
 				return false
 			}
 			return true
@@ -101,6 +108,7 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		httpapi.WriteError(w, r, upstreamUnavailableError())
 		return
 	}
+	call.received(response.StatusCode)
 	defer response.Body.Close()
 	if request != nil {
 		observation.result.UpstreamRequestID = response.Header.Get("Request-Id")
@@ -122,10 +130,12 @@ func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Req
 		response.Body = &observedResponseBody{Reader: io.TeeReader(response.Body, observation), Closer: response.Body}
 	}
 	if err := writeProxyResponse(w, response); err != nil {
-		observation.result.ErrorType = "stream_error"
-		if r.Context().Err() == nil {
-			h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
+		if httpapi.ClientGone(r) {
+			observation.result.ErrorType = "cancelled"
+			return
 		}
+		observation.result.ErrorType = "stream_error"
+		h.logger.ErrorContext(r.Context(), "stream Messages upstream response", "error", err)
 	}
 }
 
@@ -217,7 +227,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 		o.messageID = event.Message.ID
 		o.result.Usage = event.Message.Usage
 		o.blocks = make(map[int]*responseContentBlock)
-		o.thinkingPublished = make(map[int]bool)
+		o.thinkingStarted = make(map[int]bool)
 	case "content_block_start":
 		if o.blocks == nil || o.messageID == "" || event.Index < 0 || o.blocks[event.Index] != nil {
 			o.malformed = true
@@ -235,7 +245,7 @@ func (o *responseObservation) observeFrame(data []byte) {
 		o.blocks[event.Index] = &block
 		o.addEventID(event.Index, block.Type)
 		if (block.Type == "thinking" || block.Type == "redacted_thinking") && o.publishThinking != nil {
-			o.thinkingPublished[event.Index] = o.publishThinking(o.messageID, event.Index)
+			o.thinkingStarted[event.Index] = o.publishThinking(o.messageID, event.Index)
 		}
 		if event.ContentBlock.Type == "tool_use" && event.ContentBlock.ID != "" {
 			o.result.ToolUseIDs = append(o.result.ToolUseIDs, event.ContentBlock.ID)
@@ -244,6 +254,9 @@ func (o *responseObservation) observeFrame(data []byte) {
 		o.observeContentDelta(event)
 	case "message_delta":
 		mergeRequestUsage(&o.result.Usage, event.Usage)
+		if event.Delta.StopReason != "" {
+			o.stopReason = event.Delta.StopReason
+		}
 	case "message_stop":
 		if o.request != nil && o.request.ResponseCost != nil && o.request.ResponseCost.StreamEvent == event.Type {
 			o.result.ProviderCost = o.request.ResponseCost.Extract(data)
@@ -269,10 +282,17 @@ func (o *responseObservation) observeFrame(data []byte) {
 	}
 }
 
+func (o *responseObservation) markFirstToken() {
+	if o.firstTokenAt.IsZero() {
+		o.firstTokenAt = time.Now()
+	}
+}
+
 func (o *responseObservation) observeContentDelta(event responseStreamEvent) {
 	if event.Delta.Type != "text_delta" && event.Delta.Type != "input_json_delta" && event.Delta.Type != "thinking_delta" {
 		return
 	}
+	o.markFirstToken()
 	o.contentBytes += len(event.Delta.Text) + len(event.Delta.Thinking) + len(event.Delta.PartialJSON)
 	if o.contentBytes > 4*1024*1024 {
 		o.malformed = true
@@ -320,6 +340,7 @@ func (o *responseObservation) finish() {
 			}
 			o.messageID = message.ID
 			o.result.Usage = message.Usage
+			o.stopReason = message.StopReason
 			for index, block := range message.Content {
 				o.addEventID(index, block.Type)
 				o.addMessage(index, block)
@@ -350,9 +371,6 @@ func (o *responseObservation) addMessage(index int, block responseContentBlock) 
 		o.addToolUse(block)
 		return
 	case "thinking", "redacted_thinking":
-		if o.thinkingPublished[index] {
-			return
-		}
 		message.Type = "agent.thinking"
 	case "text":
 		message.Content = []codesessions.ModelRequestContent{{Type: "text", Text: &block.Text}}
@@ -414,4 +432,11 @@ func mergeRequestUsage(target *codesessions.ModelRequestUsage, delta codesession
 	target.OutputTokens = cmp.Or(delta.OutputTokens, target.OutputTokens)
 	target.CacheCreationInputTokens = cmp.Or(delta.CacheCreationInputTokens, target.CacheCreationInputTokens)
 	target.CacheReadInputTokens = cmp.Or(delta.CacheReadInputTokens, target.CacheReadInputTokens)
+}
+
+func (o *responseObservation) timeToFirstToken(startedAt time.Time) time.Duration {
+	if o.firstTokenAt.IsZero() {
+		return 0
+	}
+	return o.firstTokenAt.Sub(startedAt)
 }

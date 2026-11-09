@@ -1,7 +1,7 @@
+import { runSubagent } from "./subagent-tools.ts";
 import { nativeOutcomes, completedInputs } from "./session-log.ts";
 import { eventually } from "./backend.ts";
 import { expect, spyOn, test } from "bun:test";
-import { ContextRecovery } from "../src/runtime/compaction.ts";
 import { SESSION_FORMAT_VERSION, SessionId, SessionSeq } from "@deepseek-ai/dsh-session";
 import { Context } from "@deepseek-ai/cordis";
 import { freezeMessage, MessageId, createUserMessage, LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from "@deepseek-ai/dsh-llm";
@@ -36,7 +36,9 @@ class MemoryBackend implements CcrBackend {
     this.logs.set(id, log);
   }
   async events(id: string, payloads: Payload[]) {
-    this.output.set(id, [...(this.output.get(id) ?? []), ...structuredClone(payloads)]);
+    const previous = this.output.get(id) ?? [];
+    const seen = new Set(previous.map(event => event.uuid));
+    this.output.set(id, [...previous, ...structuredClone(payloads.filter(event => !seen.has(event.uuid)))]);
   }
   async acknowledge(id: string, inputId: string) { this.acknowledged.push(`${id}:${inputId}`); }
   async reportDelivery() {}
@@ -55,7 +57,7 @@ class MemoryBackend implements CcrBackend {
 class TextModel extends LlmAdapter {
   readonly requests: GenerateOptions[] = [];
   async resolveModel(provider: string, model: string) {
-    return { provider, id: model, name: model };
+    return { provider, id: model, name: model, context: { contextWindow: 200000 } };
   }
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options);
@@ -160,7 +162,7 @@ test("persistence stores a separate header and individual events and restores du
   }
 });
 
-test("session previews enter one stream window and terminal publication still waits for their HTTP confirmation", async () => {
+test("completed blocks flush earlier previews and input acknowledgement waits for HTTP confirmation", async () => {
   const backend = new MemoryBackend();
   const ctx = new Context();
   const timers = new Set<() => void>();
@@ -212,14 +214,12 @@ test("session previews enter one stream window and terminal publication still wa
     session = ctx.ccrv2.createSession({ id: "buffered", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
     await session.open();
     turn = session.receive("input", { content: "hello" });
-    await eventually(() => previewCalls === 2);
+    await eventually(() => previewCalls === 3);
     await completed.promise;
-    expect(previewCalls).toBe(2);
-    expect(timers.size).toBe(1);
-    expect(batches.flat().filter((event) => event.ephemeral)).toEqual([]);
+    expect(previewCalls).toBe(3);
+    expect(timers.size).toBe(0);
     expect(session.pendingEvents.length).toBeGreaterThan(0);
     expect(backend.acknowledged).toEqual([]);
-    [...timers][0]!();
     await sending.promise;
     const previews = batches.flat().filter((event) => event.ephemeral);
     expect(previews.map((event) => event.payload.type)).toEqual(["event_start", "event_delta", "event_delta"]);
@@ -341,13 +341,14 @@ test("worker metadata restores the model across logged history and set_model wai
     try {
       await started.promise;
       expect(backend.acknowledged).not.toContain("model-session:change");
-      expect(first.session.agent.options.model).toBe("restored-model");
+      expect(first.session.agent.model.current()?.model).toBe("restored-model");
       release.resolve();
       await changing;
     } finally { release.resolve(); backend.reportMetadata = patch; }
     await eventually(() => backend.acknowledged.includes("model-session:change"));
     expect(backend.acknowledged).toContain("model-session:change");
     await first.session.receive("second", { content: "continue" });
+    expect(backend.output.get("model-session")!.filter(event => event.type === "result" && event.is_error)).toEqual([]);
     expect(first.model.requests[1]!.model).toBe("changed-model");
   } finally { await first.ctx.fiber.dispose(); }
   // Deliberately differ from the last logged request, which used changed-model.
@@ -567,17 +568,15 @@ test("child history resumes from individually persisted scoped events", async ()
   let threadId: string;
   try {
     await first.session.receive("root", { content: "parent task" });
-    const report = JSON.parse(await first.session.subagents.send({
-      name: "child", system_prompt: "Child instructions", message: "original child task",
-    }, first.session.abort.signal));
-    threadId = report.thread_id;
+    const report = await runSubagent(first.session, "subagent", { description: "child", prompt: ["Child instructions", "original child task"].filter(Boolean).join("\n") });
+    threadId = report.subagentId;
     expect(typeof threadId).toBe("string");
   } finally { await first.ctx.fiber.dispose(); }
   const logs = backend.logs.get("parent")!;
   expect(logs.some((event) => event.agent_id === threadId! && event.type === "dsh_log")).toBe(true);
   const second = await mount();
   try {
-    await second.session.subagents.send({ thread_id: threadId!, message: "child follow-up" }, second.session.abort.signal);
+    await runSubagent(second.session, "send_message", { agent_id: threadId!, message: "child follow-up" });
     const history = JSON.stringify(second.model.requests[0]!.messages);
     expect(history).toContain("original child task");
     expect(history).toContain("child follow-up");
@@ -585,7 +584,7 @@ test("child history resumes from individually persisted scoped events", async ()
   } finally { await second.ctx.fiber.dispose(); }
   const third = await mount();
   try {
-    await third.session.subagents.send({ thread_id: threadId!, message: "third child task" }, third.session.abort.signal);
+    await runSubagent(third.session, "send_message", { agent_id: threadId!, message: "third child task" });
     const history = JSON.stringify(third.model.requests[0]!.messages);
     expect(history).toContain("original child task");
     expect(history).toContain("child follow-up");
@@ -760,6 +759,48 @@ test("only backend-confirmed user approvals pause the worker and late lookups ca
 });
 
 
+test("approval processing receipts wait for preceding status publication without blocking controls", async () => {
+  const backend = new MemoryBackend();
+  const { ctx, session } = await mountMediaKernel(backend);
+  const requested = Promise.withResolvers<string>();
+  const paused = Promise.withResolvers<void>();
+  const statusStarted = Promise.withResolvers<void>();
+  const releaseStatus = Promise.withResolvers<void>();
+  const order: string[] = [];
+  backend.isToolConfirmationPending = async () => true;
+  backend.events = async (_id, events) => {
+    const request = events.find(event => event.type === "control_request");
+    if (request) requested.resolve(request.request_id);
+  };
+  let resolved = false;
+  backend.setStatus = async (_id, status) => {
+    if (status === "requires_action") paused.resolve();
+    if (resolved) { statusStarted.resolve(); await releaseStatus.promise; order.push("status"); }
+  };
+  backend.acknowledge = async (_id, inputId) => { order.push(inputId); };
+  try {
+    const decision = session.approve({ callId: "read", toolName: "Read", input: {} }, new AbortController().signal);
+    const requestId = await requested.promise;
+    await paused.promise;
+    resolved = true;
+    await session.receive("confirmation", { type: "control_response", response: {
+      subtype: "success", request_id: requestId, response: { behavior: "allow" },
+    } });
+    await statusStarted.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(order).toEqual([]);
+    const cancel = spyOn(session.agent, "cancel");
+    await session.receive("interrupt", { type: "interrupt" });
+    expect(cancel).toHaveBeenCalled();
+    expect(order).toEqual([]);
+    releaseStatus.resolve();
+    expect(await decision).toEqual({ allowed: true, input: undefined });
+    await eventually(() => order.includes("confirmation") && order.includes("interrupt"));
+    expect(order.indexOf("status")).toBeLessThan(order.indexOf("confirmation"));
+    expect(order.filter(value => value === "confirmation")).toHaveLength(1);
+  } finally { releaseStatus.resolve(); await ctx.fiber.dispose(); }
+});
+
 test("user interrupts settle the tool locally, finish successfully and survive recovery without replay", async () => {
   for (const control of [{ type: "user.interrupt" }, { type: "control_request", request_id: "interrupt", request: { subtype: "interrupt" } }]) {
     const backend = new MemoryBackend();
@@ -816,7 +857,7 @@ test("user interrupts settle the tool locally, finish successfully and survive r
       expect(session.abort.signal.aborted).toBe(false);
       expect(session.abort.signal.aborted).toBe(false);
       expect(completedInputs(session)).toContain(session.inputId);
-      expect(nativeOutcomes(session)["cancelled-call"]).toMatchObject({ failed: true });
+      expect((await nativeOutcomes(session))["cancelled-call"]).toMatchObject({ failed: true });
       expect(backend.output.get(config.id)!.filter((event) => event.type === "result"))
         .toEqual([{ type: "result", uuid: "first_result", subtype: "success", is_error: false }]);
       expect(JSON.stringify(backend.output.get(config.id))).not.toContain("Remote tool outcome is unknown");
@@ -833,7 +874,7 @@ test("user interrupts settle the tool locally, finish successfully and survive r
       session = ctx.ccrv2.createSession(config);
       await session.open();
       expect(session.abort.signal.aborted).toBe(false);
-      expect(nativeOutcomes(session)["cancelled-call"]?.failed).toBe(true);
+      expect((await nativeOutcomes(session))["cancelled-call"]?.failed).toBe(true);
       await session.receive("first", { content: "Duplicate delivery" });
       expect(resumed.requests).toHaveLength(0);
       await session.receive("next", { content: "Continue" });
@@ -847,94 +888,330 @@ test("user interrupts settle the tool locally, finish successfully and survive r
   }
 }, 15_000);
 
-test.each([false, true])("context overflow compacts and replays without duplicate results (child=%s)", async child => {
+test("repeated clean runtime flushes perform no backend writes after a large journal and dirty flushes send only new events", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], new TextModel());
+    const session = ctx.ccrv2.createSession({ id: "clean-flush", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", tools: [], setup });
+    await session.open();
+    const writes = spyOn(backend, "persist");
+    const native = session.runtime.agent.session;
+    for (let index = 0; index < 256; index++) native.append("user/message", createUserMessage({
+      source: { kind: "user" }, content: [{ type: "text", text: `${index}:` + "x".repeat(16384) }],
+    }), { surfaceOp: "append" });
+    await session.flushEvents();
+    expect(writes).toHaveBeenCalledTimes(256);
+    const firstWrite = writes.mock.calls[0]!;
+    expect(firstWrite[1]).toBe("dsh_log");
+    if (firstWrite[1] !== "dsh_log") throw new Error("Expected journal write");
+    expect(writes.mock.calls.map(call => call[2])).toEqual(native.snapshotEvents().slice(-256));
+    writes.mockClear();
+    for (let index = 0; index < 100; index++) await session.flushEvents();
+    expect(writes).not.toHaveBeenCalled();
+    const event = native.append("user/message", createUserMessage({
+      source: { kind: "user" }, content: [{ type: "text", text: "next delta" }],
+    }), { surfaceOp: "append" });
+    await session.flushEvents();
+    expect(writes).toHaveBeenCalledTimes(1);
+    const delta = writes.mock.calls[0]!;
+    expect(delta[1]).toBe("dsh_log");
+    if (delta[1] !== "dsh_log") throw new Error("Expected journal delta");
+    expect(delta[2]).toEqual(event);
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test("native compaction waits for journal persistence before notification and next request", async () => {
   const backend = new MemoryBackend();
   const ctx = new Context();
   const model = new TextModel();
   let requests = 0;
-  let replayWellFormed = false;
-  const sizes: number[] = [];
-  let parentRequests = 0;
-  model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
-    if (options.model === "parent") {
-      parentRequests++;
-      if (parentRequests === 1) {
-        yield { type: "block-start", index: 0, blockType: "tool-call" };
-        yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate-read"),
-          name: "send_to_agent", arguments: JSON.stringify({ agent_name: "reader", message: "remember FACT-REAL" }) } };
-        yield { type: "finish", reason: { kind: "tool-calls" } };
-      } else {
-        yield { type: "block-start", index: 0, blockType: "text" };
-        yield { type: "block-end", index: 0, block: { type: "text", text: "done" } };
-        yield { type: "finish", reason: { kind: "stop" } };
-      }
-      return;
-    }
-    sizes.push(JSON.stringify(options.messages).length);
-    requests++;
-    if (requests <= 4) {
-      yield { type: "block-start", index: 0, blockType: "tool-call" };
-      yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId(`read-${requests}`),
-        name: "Read", arguments: JSON.stringify({ file_path: `/tmp/part-${requests}` }) } };
-      yield { type: "finish", reason: { kind: "tool-calls" } };
-    } else if (requests === 5) {
-      yield { type: "finish", reason: { kind: "error", failure: { code: "CONTEXT_WINDOW_EXCEEDED", status: 400,
-        message: "Maximum context length exceeded (90000 in the messages, 8192 in the completion)." } } };
-    } else {
-      expect(JSON.stringify(options.messages)).toContain("remember FACT-REAL");
-      expect(sizes.at(-1)!).toBeLessThan(sizes[4]! - 50000);
-      const tools = options.messages.filter(message => message.role === "tool");
-      expect(tools).toHaveLength(4);
-      replayWellFormed = tools.every(message => message.content.every(block => block.type !== "text" || block.text.isWellFormed()));
-      expect(new Set(tools.map(message => message.toolCallId)).size).toBe(4);
-      yield { type: "block-start", index: 0, blockType: "text" };
-      yield { type: "block-end", index: 0, block: { type: "text", text: "FACT-REAL" } };
-      yield { type: "finish", reason: { kind: "stop" } };
-    }
+  let failPersistence = true;
+  const persist = backend.persist.bind(backend);
+  backend.persist = async (id, ...args) => {
+    if (failPersistence && args[0] === "dsh_log" && "type" in args[1] && args[1].type === "compaction/end")
+      throw new Error("compaction persistence unavailable");
+    await persist(id, ...args);
+  };
+  model.resolveModel = async (provider, id) => ({ provider, id, name: id, context: { contextWindow: 128000 }, defaultMaxTokens: 8192 });
+  model.stream = async function* (options): AsyncIterable<StreamChunk> {
+    if (options.purpose !== "compaction") requests++;
+    yield { type: "block-end", index: 0, block: { type: "text", text: options.purpose === "compaction" ? "Previous task details." : "a".repeat(150000) } };
+    yield { type: "finish", reason: { kind: "stop" } };
   };
   try {
     await mountKernel(ctx);
     await ctx.plugin(CcrBridge, { backend });
     ctx.llm.registerAdapter(["test"], model);
-    const session = ctx.ccrv2.createSession({ id: "compaction", provider: "test", model: child ? "parent" : "text",
-      subagents: child ? { inlineAgents: false, agents: [{ name: "reader", description: "Reader", systemPrompt: "Read", model: "text", tools: ["Read"] }] } : undefined,
-      workDir: "/workspace", systemPrompt: "", tools: ["Read"], setup: async scope => {
-        await scope.plugin({ name: "read-sandbox", apply(scope: Context) { scope.provide("sandboxExecutor", {
-          async provision() {}, async call() { return { content: [{ type: "text", text: "original-file-data:" + "\u{100000}".repeat(30000) + ":tail" }] }; },
+    const session = ctx.ccrv2.createSession({ id: "durable-compaction", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", tools: [], setup });
+    await session.open();
+    await session.receive("first", { content: "u".repeat(150000) });
+    await expect(session.receive("second", { content: "continue" })).rejects.toThrow("compaction persistence unavailable");
+    expect(requests).toBe(1);
+    expect(backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(0);
+    failPersistence = false;
+    await session.flushEvents();
+    expect(backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+    await session.close();
+  } finally { failPersistence = false; await ctx.fiber.dispose(); }
+});
+
+async function compactedSessionFixture() {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  model.stream = async function* (options): AsyncIterable<StreamChunk> {
+    yield { type: "block-end", index: 0, block: { type: "text", text: options.purpose === "compaction" ? "Previous task details." : "a".repeat(12000) } };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+  await mountKernel(ctx);
+  await ctx.plugin(CcrBridge, { backend });
+  ctx.llm.registerAdapter(["test"], model);
+  const config = { id: "compaction-notification", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", tools: [], setup };
+  const session = ctx.ccrv2.createSession(config);
+  await session.open();
+  await session.receive("first", { content: "u".repeat(12000) });
+  expect(await ctx.compaction.compactNow(session.runtime.agent, new AbortController().signal)).not.toBeNull();
+  return { backend, ctx, model, config, session };
+}
+
+test.each(["journal", "publication", "callback"] as const)("compaction notification retries after failed %s without duplicate enqueue", async failure => {
+  const { backend, ctx, session } = await compactedSessionFixture();
+  const persist = backend.persist.bind(backend);
+  const events = backend.events.bind(backend);
+  const notify = session.contextCompacted.bind(session);
+  let failing = true;
+  let deliveredId: string | undefined;
+  backend.persist = async (id, ...args) => {
+    if (failing && failure === "journal" && "type" in args[1] && args[1].type === "compaction/end") throw new Error("notification unavailable");
+    await persist(id, ...args);
+  };
+  backend.events = async (id, payloads) => {
+    const notification = payloads.find(event => event.type === "agent.thread_context_compacted");
+    if (notification) deliveredId = notification.uuid;
+    if (failing && failure === "publication") throw new Error("notification unavailable");
+    await events(id, payloads);
+  };
+  session.contextCompacted = async (...args) => {
+    if (failing && failure === "callback") throw new Error("notification unavailable");
+    await notify(...args);
+  };
+  try {
+    await expect(session.flushEvents()).rejects.toThrow("notification unavailable");
+    const queuedId = session.pendingEvents.find(event => event.type === "agent.thread_context_compacted")?.uuid;
+    const attemptedId = deliveredId;
+    failing = false;
+    await session.flushEvents();
+    const notifications = backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications).toHaveLength(1);
+    if (queuedId ?? attemptedId) expect(notifications[0]!.uuid).toBe(queuedId ?? attemptedId);
+    await session.flushEvents();
+    expect(backend.output.get(session.id)!.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+  } finally { failing = false; await ctx.fiber.dispose(); }
+});
+
+test("restart recovers a compaction notification when its journal is durable but publication failed", async () => {
+  const { backend, ctx, session, model, config } = await compactedSessionFixture();
+  const resumedContext = new Context();
+  const publish = backend.events.bind(backend);
+  backend.events = async (id, events) => {
+    if (events.some(event => event.type === "agent.thread_context_compacted")) throw new Error("notification publication unavailable");
+    await publish(id, events);
+  };
+  try {
+    await expect(session.flushEvents()).rejects.toThrow("notification publication unavailable");
+    const queuedId = session.pendingEvents.find(event => event.type === "agent.thread_context_compacted")!.uuid;
+    const recovered = new MemoryBackend();
+    for (const [id, logs] of backend.logs) recovered.logs.set(id, structuredClone(logs));
+    for (const [id, output] of backend.output) recovered.output.set(id, structuredClone(output));
+    await mountKernel(resumedContext);
+    await resumedContext.plugin(CcrBridge, { backend: recovered });
+    resumedContext.llm.registerAdapter(["test"], model);
+    const resumed = resumedContext.ccrv2.createSession(config);
+    await resumed.open();
+    expect(recovered.output.get(config.id)!.filter(event => event.type === "agent.thread_context_compacted")).toEqual([
+      expect.objectContaining({ uuid: queuedId }),
+    ]);
+    expect(resumed.runtime.agent.session.deriveMessages()).toEqual(session.runtime.agent.session.deriveMessages());
+  } finally { backend.events = publish; await resumedContext.fiber.dispose(); await ctx.fiber.dispose(); }
+});
+
+test("native overflow recovery stops after one unsuccessful retry", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  let requests = 0;
+  let summaries = 0;
+  model.stream = async function* (options): AsyncIterable<StreamChunk> {
+    if (options.purpose === "compaction") {
+      summaries++;
+      yield { type: "block-end", index: 0, block: { type: "text", text: "A prior request needs continuation." } };
+      yield { type: "finish", reason: { kind: "stop" } };
+      return;
+    }
+    requests++;
+    if (requests === 1) {
+      yield { type: "block-end", index: 0, block: { type: "text", text: "previous response " + "z".repeat(10000) } };
+      yield { type: "finish", reason: { kind: "stop" } };
+    } else yield { type: "finish", reason: { kind: "error", failure: { code: "CONTEXT_WINDOW_EXCEEDED", message: "too large" } } };
+  };
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession({ id: "bounded-overflow", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", tools: [], setup });
+    await session.open();
+    await session.receive("first", { content: "previous request" });
+    await session.receive("second", { content: "continue" });
+    expect(requests).toBe(3);
+    expect(summaries).toBe(1);
+    expect(backend.output.get(session.id)!.filter(event => event.type === "result").at(-1)?.is_error).toBe(true);
+    await session.close();
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test.each([true, false])("native pressure compaction handles summary failure and text history (failure=%s)", async summaryFailure => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  let requests = 0;
+  let summaries = 0;
+  const model = new TextModel();
+  model.resolveModel = async (provider, id) => ({ provider, id, name: id, context: { contextWindow: 128000 }, defaultMaxTokens: 8192 });
+  model.stream = async function* (options): AsyncIterable<StreamChunk> {
+    if (options.purpose === "compaction") {
+      summaries++;
+      if (summaryFailure) throw new Error("summary unavailable");
+      expect(options.maxTokens).toBe(65536);
+      yield { type: "block-end", index: 0, block: { type: "text", text: "Remember FACT-REAL and continue the task." } };
+      yield { type: "finish", reason: { kind: "stop" } };
+      return;
+    }
+    requests++;
+    expect(options.maxTokens).toBe(8192);
+    if (requests === 2 && !summaryFailure) {
+      expect(JSON.stringify(options.messages)).toContain("<compacted-summary>");
+      expect(backend.output.get("native-pressure")?.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+      const persisted = backend.logs.get("native-pressure") ?? [];
+      expect(persisted.some(log => log.data?.type === "compaction/end")).toBe(true);
+    }
+    yield { type: "block-end", index: 0, block: { type: "text", text: requests === 1 ? "a".repeat(150000) : "done" } };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const config = { id: "native-pressure", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "stable system", tools: [], setup };
+    const session = ctx.ccrv2.createSession(config);
+    await session.open();
+    await session.receive("first", { content: "remember FACT-REAL " + "u".repeat(150000) });
+    await session.receive("second", { content: "continue" });
+    expect(requests).toBe(2);
+    expect(summaries).toBe(1);
+    const events = session.runtime.agent.session.snapshotEvents();
+    const endings = events.filter(event => event.type === "compaction/end");
+    expect(endings).toHaveLength(1);
+    expect(endings[0]!.data.error !== undefined).toBe(summaryFailure);
+    const notifications = backend.output.get(config.id)!.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications).toHaveLength(summaryFailure ? 0 : 1);
+    if (!summaryFailure) {
+      const derived = session.runtime.agent.session.deriveMessages();
+      expect(JSON.stringify(derived).length).toBeLessThan(200000);
+      await session.close();
+      const resumedContext = new Context();
+      try {
+        await mountKernel(resumedContext);
+        await resumedContext.plugin(CcrBridge, { backend });
+        resumedContext.llm.registerAdapter(["test"], model);
+        const resumed = resumedContext.ccrv2.createSession(config);
+        await resumed.open();
+        expect(resumed.runtime.agent.session.deriveMessages()).toEqual(derived);
+        await resumed.receive("third", { content: "continue after restart" });
+        expect(summaries).toBe(1);
+        expect(backend.output.get(config.id)!.filter(event => event.type === "agent.thread_context_compacted")).toHaveLength(1);
+        await resumed.close();
+      } finally { await resumedContext.fiber.dispose(); }
+    } else await session.close();
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test.each([false, true])("native compaction recovers overflow and preserves root/child history (child=%s)", async child => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  let requests = 0;
+  let parentRequests = 0;
+  let summaries = 0;
+  model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
+    if (options.purpose === "compaction") {
+      summaries++;
+      expect(options.maxTokens).toBe(65536);
+      expect(JSON.stringify(options.messages)).toContain("remember FACT-REAL");
+      yield { type: "block-end", index: 0, block: { type: "text", text: "User requested remember FACT-REAL. Four Bash calls completed." } };
+      yield { type: "finish", reason: { kind: "stop" } };
+      return;
+    }
+    if (options.model === "parent" && parentRequests++ === 0) {
+      yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate"),
+        name: "subagent", arguments: JSON.stringify({ agent_preset: "native-compaction/reader", description: "reader", prompt: "remember FACT-REAL" }) } };
+      yield { type: "finish", reason: { kind: "tool-calls" } };
+      return;
+    }
+    if (options.model !== "parent") {
+      requests++;
+      if (requests <= 4) {
+        yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId(`bash-${requests}`),
+          name: "Bash", arguments: JSON.stringify({ command: `cat part-${requests}` }) } };
+        yield { type: "finish", reason: { kind: "tool-calls" } };
+        return;
+      }
+      if (requests === 5) {
+        yield { type: "finish", reason: { kind: "error", failure: { code: "CONTEXT_WINDOW_EXCEEDED", status: 400,
+          message: "Maximum context length exceeded" } } };
+        return;
+      }
+      expect(JSON.stringify(options.messages)).toContain("<compacted-summary>");
+      const logs = backend.logs.get("native-compaction") ?? [];
+      expect(logs.some(log => log.data?.type === "compaction/end")).toBe(true);
+    }
+    yield { type: "block-end", index: 0, block: { type: "text", text: "FACT-REAL" } };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession({ id: "native-compaction", provider: "test", model: child ? "parent" : "text",
+      subagents: child ? { inlineAgents: false, agents: [{ name: "reader", description: "Reader", systemPrompt: "Read", model: "text", tools: ["Bash"] }] } : undefined,
+      workDir: "/workspace", systemPrompt: "", tools: ["Bash"], setup: async scope => {
+        await scope.plugin({ name: "compaction-sandbox", apply(scope: Context) { scope.provide("sandboxExecutor", {
+          async provision() {}, async call() { return { content: [{ type: "text", text: "original:" + "x".repeat(60000) + ":tail" }] }; },
         }); } });
       } });
     await session.open();
     spyOn(session, "approve").mockResolvedValue({ allowed: true });
     await session.receive("pressure", { content: "remember FACT-REAL" });
     expect(requests).toBe(6);
-    expect(replayWellFormed).toBe(true);
+    expect(summaries).toBe(1);
     const output = backend.output.get(session.id)!;
-    expect(output.filter(event => event.type === "agent.thread_context_compacted")).toEqual([
-      expect.objectContaining({ pre_compaction_tokens: 90000, ...(child ? { session_thread_id: session.subagents.threads![0]!.id } : {}) }),
-    ]);
-    const results = output.flatMap(event => event.message?.content ?? []).filter(block => block.type === "tool_result" && block.tool_use_id.startsWith("read-"));
+    const notifications = output.filter(event => event.type === "agent.thread_context_compacted");
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]!.pre_compaction_tokens).toBeGreaterThan(0);
+    if (child) expect(notifications[0]!.session_thread_id).toBe(session.subagents.threads![0]!.id);
+    const results = output.flatMap(event => event.message?.content ?? []).filter(block => block.type === "tool_result" && block.tool_use_id.startsWith("bash-"));
     expect(results).toHaveLength(4);
-    expect(results.every(block => JSON.stringify(block).includes("original-file-data"))).toBe(true);
-    const native = child ? ctx.sessions.get(SessionId(session.subagents.threads![0]!.id))! : session.runtime.agent.session;
-    if (child) expect(session.runtime.agent.session.snapshotEvents().some(event => event.type === "tool/result" && event.surfaceOp !== "append")).toBe(false);
-    const replacements = native.snapshotEvents().filter(event => event.type === "tool/result" && event.surfaceOp !== "append");
-    expect(replacements).toHaveLength(2);
-    const replay = ctx.sessions.create(undefined, { seed: native.snapshotEvents() });
-    expect(replay.deriveMessages()).toEqual(native.deriveMessages());
-    expect(native.snapshotEvents().filter(event => event.type === "tool/result" && event.surfaceOp === "append")).toHaveLength(4);
-    const failure = { code: "CONTEXT_WINDOW_EXCEEDED", message: "context too long" };
-    let published = false;
-    const original = ctx.sessions.create(undefined, { seed: native.snapshotEvents().slice(0, replacements[0]!.seq) });
-    const recovery = new ContextRecovery();
-    expect(await recovery.recover(original, { code: "HTTP_ERROR", message: "network" }, 1, 1,
-      async () => {}, async () => { published = true; })).toBe(false);
-    await expect(recovery.recover(original, failure, 1, 1,
-      async () => { throw new Error("Not durable"); }, async () => { published = true; })).rejects.toThrow("Not durable");
-    expect(published).toBe(false);
-    expect(await recovery.recover(original, failure, 1, 1,
-      async () => {}, async () => { published = true; })).toBe(false);
-    expect(await new ContextRecovery().recover(replay, failure, 1, 1,
-      async () => {}, async () => { published = true; })).toBe(false);
+    expect(results.every(block => JSON.stringify(block).includes("original:"))).toBe(true);
+    const handle = await ctx.sessionPersistence.open(SessionId(child ? session.subagents.threads[0]!.id : session.id), "read");
+    try {
+      const { events } = await handle.read();
+      expect(events.filter(event => event.type === "compaction/prune")).toHaveLength(4);
+      expect(events.filter(event => event.type === "compaction/summary")).toHaveLength(1);
+      const replay = ctx.sessions.create(undefined, { seed: events });
+      expect(JSON.stringify(replay.deriveMessages())).toContain("FACT-REAL");
+      expect(events.filter(event => event.type === "tool/result" && event.surfaceOp === "append")).toHaveLength(4);
+    } finally { await handle.close(); }
     await session.close();
   } finally { await ctx.fiber.dispose(); }
 });
@@ -987,7 +1264,7 @@ test("native tool errors remain resumable without operator reconciliation", asyn
     await first.session.open();
     await first.session.receive("first", { content: "Deploy" });
     expect(executions).toBe(1);
-    expect(nativeOutcomes(first.session)["lost-call"]?.text).toContain("Do not retry blindly");
+    expect((await nativeOutcomes(first.session))["lost-call"]?.text).toContain("Do not retry blindly");
     expect(first.session.abort.signal.aborted).toBe(false);
     expect(first.session).not.toHaveProperty("delivery");
   } finally { first.restore(); await first.ctx.fiber.dispose(); }
@@ -1003,4 +1280,119 @@ test("native tool errors remain resumable without operator reconciliation", asyn
     expect(executions).toBe(1);
     expect(backend.metadata.get(config.id)).not.toHaveProperty("unknown_tool_outcomes");
   } finally { resumed.restore(); await resumed.ctx.fiber.dispose(); }
+});
+
+test.each([false, true])("next native request waits for tool-result publication (child=%s)", async child => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const model = new TextModel();
+  const publishing = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let toolRequests = 0;
+  let parentRequests = 0;
+  let resumed = false;
+  const events = backend.events.bind(backend);
+  backend.events = async (id, payloads) => {
+    if (payloads.some(event => event.message?.content?.some((block: Payload) => block.type === "tool_result" && block.tool_use_id === "ordered-call"))) {
+      publishing.resolve();
+      await release.promise;
+    }
+    await events(id, payloads);
+  };
+  model.stream = async function* (options: GenerateOptions): AsyncIterable<StreamChunk> {
+    if (options.model === "parent" && parentRequests++ === 0) {
+      yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("delegate-order"), name: "subagent",
+        arguments: JSON.stringify({ agent_preset: "request-order/reader", description: "reader", prompt: "Run Bash" }) } };
+      yield { type: "finish", reason: { kind: "tool-calls" } };
+      return;
+    }
+    if (options.model !== "parent") {
+      if (toolRequests++ === 0) {
+        yield { type: "block-end", index: 0, block: { type: "tool-call", id: ToolCallId("ordered-call"), name: "Bash", arguments: '{"command":"printf ordered"}' } };
+        yield { type: "finish", reason: { kind: "tool-calls" } };
+        return;
+      }
+      resumed = true;
+      expect((backend.output.get("request-order") ?? []).flatMap(event => event.message?.content ?? [])
+        .some(block => block.type === "tool_result" && block.tool_use_id === "ordered-call")).toBe(true);
+    }
+    yield { type: "block-end", index: 0, block: { type: "text", text: "done" } };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+  let turn: Promise<void> | undefined;
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession({ id: "request-order", provider: "test", model: child ? "parent" : "text",
+      workDir: "/workspace", systemPrompt: "", tools: ["Bash"],
+      subagents: child ? { inlineAgents: false, agents: [{ name: "reader", description: "Reader", systemPrompt: "Read", model: "text", tools: ["Bash"] }] } : undefined,
+      setup: async scope => { await scope.plugin({ name: "ordered-sandbox", apply(scope: Context) {
+        scope.provide("sandboxExecutor", { async provision() {}, async call() { return { content: [{ type: "text", text: "ordered" }] }; } });
+      } }); } });
+    await session.open();
+    spyOn(session, "approve").mockResolvedValue({ allowed: true });
+    turn = session.receive("ordered-input", { content: "Run Bash" });
+    await publishing.promise;
+    expect(resumed).toBe(false);
+    release.resolve();
+    await turn;
+    expect(resumed).toBe(true);
+    await session.close();
+  } finally { release.resolve(); await turn?.catch(() => {}); await ctx.fiber.dispose(); }
+});
+
+test("ordinary model turns report running while the request is in flight", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const statuses: SessionState[] = [];
+  backend.setStatus = async (_id, status) => { statuses.push(status); };
+  const model = new TextModel();
+  const stream = model.stream.bind(model);
+  model.stream = async function* (options) {
+    entered.resolve();
+    await release.promise;
+    yield* stream(options);
+  };
+  let turn: Promise<void> | undefined;
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], model);
+    const session = ctx.ccrv2.createSession({ id: "status-regression", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
+    await session.open();
+    turn = session.receive("status-input", { content: "Reply" });
+    await entered.promise;
+    await Bun.sleep(10);
+    expect(statuses.at(-1)).toBe("running");
+    release.resolve();
+    await turn;
+    expect(statuses.at(-1)).toBe("idle");
+    await session.close();
+  } finally { release.resolve(); await turn?.catch(() => {}); await ctx.fiber.dispose(); }
+});
+
+test("shutdown while waiting for children overrides a completed root turn", async () => {
+  const backend = new MemoryBackend();
+  const ctx = new Context();
+  try {
+    await mountKernel(ctx);
+    await ctx.plugin(CcrBridge, { backend });
+    ctx.llm.registerAdapter(["test"], new TextModel());
+    const session = ctx.ccrv2.createSession({ id: "shutdown-regression", provider: "test", model: "text", workDir: "/workspace", systemPrompt: "", setup });
+    await session.open();
+    spyOn(session.subagents, "wait").mockImplementation(async () => {
+      await session.interruptForShutdown(0);
+      return false;
+    });
+    await session.receive("shutdown-input", { content: "Delegate" });
+    const output = backend.output.get(session.id)!;
+    expect(output.some(event => event.type === "result" && event.is_error === false)).toBe(false);
+    expect(output.some(event => event.type === "result" && event.is_error === true)).toBe(true);
+    expect(JSON.stringify(output)).toContain("worker shut down");
+    expect(backend.acknowledged).toContain(`${session.id}:shutdown-input`);
+    await session.close();
+  } finally { await ctx.fiber.dispose(); }
 });

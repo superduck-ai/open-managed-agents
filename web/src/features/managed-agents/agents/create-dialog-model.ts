@@ -1,11 +1,7 @@
 import { z } from 'zod';
-import {
-  type AgentApiResponse,
-  type AgentModelInput,
-  type AgentMultiagentInput,
-  type AgentSkillInput,
-  type CreateAgentInput,
-} from '../types';
+import { multiagentSchema } from './subagents-model';
+export { selectedSubagentReferences, toggleSubagent } from './subagents-model';
+import { type AgentModelInput, type AgentSkillInput, type CreateAgentInput } from '../types';
 import { cloneJsonValue, toRecord } from '../utils';
 import {
   isHTTPMCPServerURL,
@@ -58,33 +54,6 @@ const modelSchema = z.union([
     .strict(),
 ]);
 
-const agentReferenceSchema = z.union([
-  z
-    .object({
-      type: z.literal('agent'),
-      id: z.string().trim().min(1),
-      version: z.number().int().min(1),
-    })
-    .strict(),
-  z.object({ type: z.literal('self') }).strict(),
-]);
-
-const multiagentSchema = z
-  .object({
-    type: z.literal('coordinator'),
-    agents: z.array(agentReferenceSchema).min(1).max(20),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    const ids = value.agents.filter((agent) => agent.type === 'agent').map((agent) => agent.id);
-    if (new Set(ids).size !== ids.length) {
-      context.addIssue({ code: 'custom', message: 'Subagents must be unique.', path: ['agents'] });
-    }
-    if (value.agents.filter((agent) => agent.type === 'self').length > 1) {
-      context.addIssue({ code: 'custom', message: 'Self may only be referenced once.', path: ['agents'] });
-    }
-  });
-
 const skillSchema = z
   .object({
     type: z.enum(['anthropic', 'custom']),
@@ -131,6 +100,7 @@ const builtInToolNameSchema = z.enum([
 const builtInToolConfigSchema = permissionConfigSchema
   .extend({
     name: builtInToolNameSchema,
+    type: z.string().optional(),
     allowed_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
     blocked_domains: z.array(z.string()).min(1).max(64).nullable().optional(),
     max_content_tokens: z.number().int().positive().nullable().optional(),
@@ -215,6 +185,20 @@ const customToolSchema = z
 
 const toolSchema = z.discriminatedUnion('type', [builtInToolsetSchema, mcpToolsetSchema, customToolSchema]);
 
+export const environmentPackagesMetadataKey = 'quickstart_environment_packages';
+const metadataSchema = z.record(z.string().min(1), z.string()).superRefine((metadata, context) => {
+  const entries = Object.entries(metadata);
+  if (entries.length > 16) context.addIssue({ code: 'custom', message: 'Metadata must contain at most 16 keys.' });
+  for (const [key, value] of entries) {
+    const size = new TextEncoder().encode(value).length;
+    const limit = key === environmentPackagesMetadataKey ? 1 << 20 : 512;
+    if (new TextEncoder().encode(key).length > 64)
+      context.addIssue({ code: 'custom', message: 'Metadata keys must be at most 64 bytes.', path: [key] });
+    if (size > limit)
+      context.addIssue({ code: 'custom', message: `Metadata value must be at most ${limit} bytes.`, path: [key] });
+  }
+});
+
 export const createAgentDraftSchema = z
   .object({
     name: z.string().trim().min(1, 'Name is required.'),
@@ -224,10 +208,7 @@ export const createAgentDraftSchema = z
     mcp_servers: z.array(mcpServerSchema).max(20),
     tools: z.array(toolSchema),
     skills: z.array(skillSchema).max(20),
-    metadata: z
-      .record(z.string().min(1).max(64), z.string().max(512))
-      .refine((metadata) => Object.keys(metadata).length <= 16, 'Metadata must contain at most 16 keys.')
-      .optional(),
+    metadata: metadataSchema.optional(),
     multiagent: multiagentSchema.nullable().optional(),
   })
   .strict()
@@ -303,22 +284,6 @@ export function normalizeCreateAgentDraft(input: CreateAgentInput): CreateAgentI
 export function updateDraftModelID(model: AgentModelInput, id: string): AgentModelInput {
   const nextID = id.trim();
   return typeof model === 'string' ? nextID : { ...model, id: nextID };
-}
-
-export function selectedSubagentReferences(draft: CreateAgentInput): AgentMultiagentInput['agents'] {
-  return draft.multiagent?.agents ?? [];
-}
-
-export function toggleSubagent(draft: CreateAgentInput, agent: AgentApiResponse): CreateAgentInput {
-  const current = selectedSubagentReferences(draft);
-  const exists = current.some((reference) => reference.type === 'agent' && reference.id === agent.id);
-  if (!exists && current.length >= 20) {
-    return draft;
-  }
-  const agents = exists
-    ? current.filter((reference) => reference.type !== 'agent' || reference.id !== agent.id)
-    : [...current, { type: 'agent' as const, id: agent.id, version: agent.version }];
-  return { ...draft, multiagent: agents.length ? { type: 'coordinator', agents } : null };
 }
 
 export function selectedSkillReferences(draft: CreateAgentInput): AgentSkillInput[] {

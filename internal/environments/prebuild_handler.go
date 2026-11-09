@@ -83,6 +83,9 @@ func (h *Handler) applyEnvironmentMutation(current db.Environment, body environm
 		if err != nil {
 			return db.Environment{}, invalidRequest(err)
 		}
+		if err := validateTemplateSpecPolicy(next.Config, h.cfg.EnvironmentPrebuilds); err != nil {
+			return db.Environment{}, invalidRequest(err)
+		}
 		next.ResolvedTemplate = h.resolvedTemplate(next.Config)
 	}
 	next.UpdatedAt = time.Now().UTC()
@@ -100,6 +103,7 @@ type prebuildResponse struct {
 	CanCancel       bool       `json:"can_cancel"`
 	HasImageLogs    bool       `json:"image_logs"`
 	HasTemplateLogs bool       `json:"template_logs"`
+	ImageSkipped    bool       `json:"image_skipped"`
 }
 
 func (h *Handler) requestPrebuildEnvironment(r *http.Request) (db.Environment, error) {
@@ -138,6 +142,7 @@ func (svc *Prebuilds) currentPrebuildResponse(env db.Environment, task prebuildT
 		result.Message = "Build task details have expired."
 	} else {
 		result.JobID = strconv.FormatInt(task.job.ID, 10)
+		result.ImageSkipped = task.job.Args.Dockerfile == ""
 		result.CreatedAt = &task.job.CreatedAt
 		result.FinishedAt = task.job.FinalizedAt
 		if result.Message == "" && len(task.job.Errors) > 0 {
@@ -163,11 +168,11 @@ func (h *Handler) getPrebuild(w http.ResponseWriter, r *http.Request) error {
 	}
 	var result *prebuildResponse
 	if env.BuildJobID == nil {
-		packages, err := decodeEnvironmentPackages(env.Config)
+		spec, err := decodeEnvironmentBuildSpec(env.Config)
 		if err != nil {
 			return prebuildError(err)
 		}
-		if packages != nil {
+		if spec != nil {
 			result = &prebuildResponse{State: "idle", CanStart: h.prebuilds != nil && h.prebuilds.cfg.Enabled && env.ArchivedAt == nil}
 		}
 	} else {

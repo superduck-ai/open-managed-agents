@@ -1,10 +1,12 @@
+import { runSubagent, subagentScripts } from "./subagent-tools.ts";
 import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
+import { pluginRecordOf } from "@deepseek-ai/dsh-session";
 import { LlmAttemptId } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "../src/api.ts";
 import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
-import { Backend, eventually, textEvents, toolEvents } from "./backend.ts";
+import { Backend, eventually, modelSystemText, textEvents, toolEvents } from "./backend.ts";
 
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -22,13 +24,91 @@ async function fixture() {
   return { backend, ctx, session };
 }
 
-test.each([false, true])("replication lag allows model requests but blocks publication (child=%s)", async child => {
+test("a delayed preview checkpoint cannot let a later delta overtake its start", async () => {
+  const { session } = await fixture();
+  const checkpoint = session.checkpoint.bind(session);
+  const events = session.backend.events.bind(session.backend);
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const sent: { type?: string; delta?: { content?: { text?: string } } }[][] = [];
+  let checkpoints = 0;
+  session.checkpoint = async () => {
+    if (++checkpoints === 1) { started.resolve(); await release.promise; }
+  };
+  session.backend.events = async (_id, payloads) => { sent.push(structuredClone(payloads)); };
+  session.inputId = "ordered-preview";
+  const attemptId = LlmAttemptId("ordered-preview");
+  session.stream({ type: "start", attemptId, revision: 1, turn: 1, step: 1 });
+  session.stream({ type: "chunk", attemptId, revision: 1, index: 0, time: 0,
+    chunk: { type: "text-delta", index: 0, text: "first" } });
+  await started.promise;
+  session.stream({ type: "chunk", attemptId, revision: 1, index: 1, time: 1,
+    chunk: { type: "text-delta", index: 0, text: "second" } });
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(sent).toEqual([]);
+    release.resolve();
+    await eventually(() => sent.length === 2);
+    expect(sent.flat().map(event => event.type)).toEqual(["event_start", "event_delta", "event_delta"]);
+    expect(sent.flat().filter(event => event.type === "event_delta").map(event => event.delta?.content?.text)).toEqual(["first", "second"]);
+  } finally {
+    release.resolve();
+    await eventually(() => sent.length === 2);
+    session.checkpoint = checkpoint;
+    session.backend.events = events;
+  }
+});
+
+test.each([false, true])("Brain reply waits for its owning completed-block journal to replicate (child=%s)", async child => {
+  const { backend, session } = await fixture();
+  const release = Promise.withResolvers<void>();
+  const persist = session.backend.persist.bind(session.backend);
+  const events = session.backend.events.bind(session.backend);
+  let held = false;
+  let confirmed = false;
+  const text = "durable Brain reply";
+  session.backend.persist = async (...args) => {
+    const data = args[2];
+    if ("seq" in data && pluginRecordOf(data)?.type === "plugin:oma/assistant-block") {
+      held = true;
+      await release.promise;
+      await persist(...args);
+      confirmed = true;
+      return;
+    }
+    await persist(...args);
+  };
+  session.backend.events = async (...args) => {
+    if (args[1].some(event => event.type === "agent.message" && JSON.stringify(event.content).includes(text)))
+      expect(confirmed).toBe(true);
+    await events(...args);
+  };
+  backend.modelScript = [textEvents(text)];
+  const turn = child
+    ? runSubagent(session, "subagent", { description: "specialist", prompt: ["Inspect", "Reply"].filter(Boolean).join("\n") })
+    : session.receive("durable-reply", { content: "Reply" });
+  turn.catch(() => {});
+  try {
+    await eventually(() => held);
+    expect([...backend.publicLog.values()].some(event => event.type === "agent.message")).toBe(false);
+    expect(backend.processed).toEqual([]);
+    release.resolve();
+    await turn;
+    const replies = [...backend.publicLog.values()].filter(event => event.type === "agent.message" && JSON.stringify(event.content).includes(text));
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.session_thread_id).toBe(child ? session.subagents.threads[0]!.id : undefined);
+  } finally { release.resolve(); await turn.catch(() => {}); session.backend.persist = persist; session.backend.events = events; }
+});
+
+test.each([false, true])("replication lag gates child continuation publication while root requests can proceed (child=%s)", async child => {
   const { backend, session } = await fixture();
   let childId: string | undefined;
   if (child) {
-    backend.modelScript = [textEvents("warm child")];
-    await session.subagents.send({ name: "specialist", system_prompt: "Inspect", message: "Warm up" }, new AbortController().signal);
+    subagentScripts(backend, [textEvents("received warmup")], [textEvents("warm child")]);
+    await runSubagent(session, "subagent", { description: "specialist", prompt: ["Inspect", "Warm up"].filter(Boolean).join("\n") });
     childId = session.subagents.threads[0]!.id;
+    await session.subagents.wait();
+    await session.agent.whenIdle();
   }
   const requests = backend.requests.length;
   const release = Promise.withResolvers<void>();
@@ -42,22 +122,23 @@ test.each([false, true])("replication lag allows model requests but blocks publi
     }
     await persist(...args);
   };
-  backend.modelScript = [textEvents("answer despite replication lag")];
+  subagentScripts(backend, [textEvents("answer despite replication lag")], [textEvents("answer despite replication lag")]);
   const before = backend.publicLog.size;
   let finished = false;
   const turn = child
-    ? session.subagents.send({ thread_id: childId, message: "Continue" }, new AbortController().signal)
+    ? runSubagent(session, "send_message", { agent_id: childId, message: "Continue" })
     : session.receive("replication-lag", { content: "Continue" });
   turn.then(() => { finished = true; }, () => {});
   try {
     await eventually(() => held);
-    await eventually(() => backend.requests.length === requests + 1);
+    if (child) expect(backend.requests).toHaveLength(requests);
+    else await eventually(() => backend.requests.length === requests + 1);
     expect(finished).toBe(false);
     expect(backend.processed).toEqual([]);
     expect([...backend.publicLog.values()].slice(before).some(event => event.type === "agent.message" || event.type === "result")).toBe(false);
     release.resolve();
     await turn;
-    expect(backend.requests).toHaveLength(requests + 1);
+    expect(backend.requests.filter(request => !child || modelSystemText(request).includes("# Subagent rules"))).toHaveLength(child ? 2 : requests + 1);
     expect([...backend.publicLog.values()].some(event => JSON.stringify(event.content ?? []).includes("answer despite replication lag"))).toBe(true);
     if (!child) expect(backend.processed).toEqual(["replication-lag"]);
   } finally {
@@ -120,7 +201,7 @@ test("input ACK still waits for public event confirmation", async () => {
   } finally { release.resolve(); await turn.catch(() => {}); session.backend.events = events; }
 });
 
-test("completed tools publish confirmed results while the next model request is still running", async () => {
+test("completed tools confirm persistence and publication before the next model request", async () => {
   const { backend, session } = await fixture();
   const releaseModel = Promise.withResolvers<ReturnType<typeof textEvents>>();
   const releaseResult = Promise.withResolvers<void>();
@@ -140,11 +221,12 @@ test("completed tools publish confirmed results while the next model request is 
   const turn = session.receive("live-tool-result", { content: "Run a tool and explain" });
   turn.catch(() => {});
   try {
-    await eventually(() => held && backend.requests.length === 2);
+    await eventually(() => held);
+    expect(backend.requests).toHaveLength(1);
     expect(backend.executions).toHaveLength(1);
     expect(publishedResult()).toBe(false);
     releaseResult.resolve();
-    await eventually(publishedResult);
+    await eventually(() => publishedResult() && backend.requests.length === 2);
     expect(backend.processed).toEqual([]);
     expect([...backend.publicLog.values()].some(event => event.type === "result")).toBe(false);
   } finally {
@@ -194,4 +276,18 @@ test("durable publication cannot overtake an earlier unconfirmed stream preview"
     session.backend.events = events;
     session.checkpoint = checkpoint;
   }
+});
+
+test("a failed replication disposer does not skip other agent scope cleanup", async () => {
+  const { ctx, session } = await fixture();
+  const flush = ctx.sessions.flush.bind(ctx.sessions);
+  let failedFlush = false;
+  let cleaned = false;
+  session.agent.ctx.effect(() => () => { cleaned = true; });
+  ctx.sessions.flush = async () => { failedFlush = true; throw new Error("local write failed"); };
+  try {
+    await session.agent.ctx.fiber.dispose();
+    expect(failedFlush).toBe(true);
+    expect(cleaned).toBe(true);
+  } finally { ctx.sessions.flush = flush; }
 });

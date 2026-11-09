@@ -105,3 +105,24 @@ func TestRuntimeToolPoliciesMatchPermissionEnforcement(t *testing.T) {
 		t.Fatalf("policies = %v", policies)
 	}
 }
+
+func TestRuntimeAutoPolicyDefersToAuthoritativeServerEvaluation(t *testing.T) {
+	snapshot := json.RawMessage(`{"tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"write","enabled":true,"permission_policy":{"type":"auto"}},{"name":"read","enabled":true,"permission_policy":{"type":"always_allow"}}]}]}`)
+	tools, err := runtimeRootToolsets(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := runtimeToolPolicies(tools)
+	if policies["write"] != "ask" || policies["read"] != "allow" || policies["bash"] != "deny" {
+		t.Fatalf("invalid Brain boundary or local auto grant: %v", policies)
+	}
+	policy, identity := resolveToolPermissionFromAgentSnapshot(snapshot, "write")
+	if policy != resolvedToolPermissionAsk || !identity.Automatic {
+		t.Fatal("runtime hint changed authoritative auto policy")
+	}
+	for _, policy := range policies {
+		if policy != "allow" && policy != "ask" && policy != "deny" {
+			t.Fatalf("Brain cannot validate policy %q", policy)
+		}
+	}
+}

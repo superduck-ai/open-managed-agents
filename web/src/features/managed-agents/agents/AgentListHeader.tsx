@@ -5,12 +5,10 @@ import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
 
 export function AgentListHeader({
   title,
-  description,
   createLabel,
   onCreate,
 }: {
   title: string;
-  description: string;
   createLabel?: string;
   onCreate: () => void;
 }) {
@@ -18,7 +16,6 @@ export function AgentListHeader({
   return (
     <ResourcePageHeader
       title={title}
-      description={description}
       actions={
         createLabel ? (
           <>

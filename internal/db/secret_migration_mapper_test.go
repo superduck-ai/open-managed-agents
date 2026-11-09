@@ -37,6 +37,11 @@ func TestSecretMigrationMapper(t *testing.T) {
 			if sensitive < 2 {
 				t.Fatal("missing envelope compare-and-swap bindings")
 			}
+			if kind == "channel_workspace_credentials" {
+				if !strings.Contains(bound.SQL, "envelope = CAST(") || !strings.Contains(bound.SQL, "m.envelope") || strings.Contains(bound.SQL, "updated_at") || strings.Contains(bound.SQL, "wrapped_dek =") {
+					t.Fatal("渠道凭据必须整份 CAS 更新信封且不访问不存在的列")
+				}
+			}
 			if kind == "vault_credentials" && !strings.Contains(bound.SQL, "version = version + 1") {
 				t.Fatal("OAuth CAS version not incremented")
 			}

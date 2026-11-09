@@ -9,7 +9,7 @@ description: "将您的智能体连接到 GitHub 代码仓库，以进行克隆�
 GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话启动速度会更快。
 
 <Note>
-  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+  各资源的 Beta 要求不同，请参阅[版本与 Beta 功能](/docs/zh/api/versioning-beta)，并确认 SDK 向 OMA 发送了所需参数。
 </Note>
 
 ## GitHub MCP 和会话资源
@@ -379,7 +379,6 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
 
 `resources[].authorization_token` 用于对代码仓库克隆操作进行身份验证，不会在 API 响应中回显。
 
-挂载代码仓库时，还会加载存储在其根目录 `.claude/skills` 文件夹中的所有技能。技能在每个会话中仅发现一次，基于会话启动时检出的代码仓库状态。请参阅[从 GitHub 代码仓库加载技能](/docs/zh/skills#load-skills-from-a-github-repository)。
 
 ## 令牌权限
 
@@ -561,7 +560,7 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
 
 ## 管理运行中会话的代码仓库
 
-会话创建后，您可以列出其代码仓库资源并轮换其授权令牌。每个资源都有一个在会话创建时（或通过 `resources.list`）返回的 `id`，您可以使用它进行更新。代码仓库在会话的整个生命周期内保持挂载状态；如需更改挂载的代码仓库，请创建新会话。
+会话创建后，您可以列出其代码仓库资源并轮换其授权令牌。每个资源都有一个在会话创建时（或通过 `resources.list`）返回的 `id`，您可以使用它进行更新。如需更改仓库资源，请创建新会话。沙箱可能被回收并重新创建，工作目录中的临时更改可能丢失。
 
 <CodeGroup>
   ```bash cURL
@@ -570,12 +569,13 @@ GitHub 代码仓库会被缓存，因此使用相同代码仓库的后续会话�
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
-    -H "content-type: application/json" | jq -r '.data[0].id')
+    -H "content-type: application/json" | jq -er '[.data[] | select(.type == "github_repository")][0].id')
   echo "$repo_resource_id"  # "sesrsc_01ABC..."
 
   # 轮换授权令牌
   curl -fsS "http://localhost:38080/v1/sessions/$session_id/resources/$repo_resource_id" \
-  # ...
+    -H "x-api-key: $OMA_API_KEY" \
+    -H "content-type: application/json" \
     -o /dev/null \
     --data @- <<JSON
   {

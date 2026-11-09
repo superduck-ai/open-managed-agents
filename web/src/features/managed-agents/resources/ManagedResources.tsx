@@ -1,5 +1,8 @@
+import { productIcons } from '@/shared/icons/product-icons';
 import { useI18n } from '../../../shared/i18n';
-import { Bot, BriefcaseBusiness, Cloud, Database, LockKeyhole, MessageCircle } from 'lucide-react';
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '../../../shared/ui/empty';
+import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
+import { Bot, Brain } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { AgentDetailPage, AgentsResourcePage } from '../agents/AgentsResourcePage';
 import { CompactChip, StatusPill } from '../components/common';
@@ -98,7 +101,7 @@ export const resourceConfigs: Record<
     columns: ['ID', 'Name', 'Model', 'Status', 'Created', 'Last updated'],
     emptyTitle: 'No agents yet',
     emptyBody: 'Create an agent to start building managed workflows.',
-    emptyIcon: Bot,
+    emptyIcon: productIcons.agents,
     rows: agentRows,
   },
   sessions: {
@@ -112,7 +115,7 @@ export const resourceConfigs: Record<
     columns: ['ID', 'Name', 'Status', 'Agent', 'Cost', 'Tokens in / out', 'Created'],
     emptyTitle: 'No sessions yet',
     emptyBody: 'Create a session to trace and debug it here.',
-    emptyIcon: MessageCircle,
+    emptyIcon: productIcons.sessions,
   },
   deployments: {
     section: 'deployments',
@@ -124,7 +127,7 @@ export const resourceConfigs: Record<
     columns: ['ID', 'Name', 'Status', 'Agent', 'Trigger', 'Created'],
     emptyTitle: 'No deployments yet',
     emptyBody: 'Create a deployment to bind an agent to credentials, an environment, and a schedule.',
-    emptyIcon: BriefcaseBusiness,
+    emptyIcon: productIcons.deployments,
     rows: deploymentRows,
   },
   environments: {
@@ -137,7 +140,7 @@ export const resourceConfigs: Record<
     columns: ['ID', 'Name', 'Status', 'Type', 'Updated at'],
     emptyTitle: 'No environments yet',
     emptyBody: 'Create your first environment to get started.',
-    emptyIcon: Cloud,
+    emptyIcon: productIcons.environments,
   },
   'credential-vaults': {
     section: 'credential-vaults',
@@ -149,7 +152,7 @@ export const resourceConfigs: Record<
     columns: ['ID', 'Name', 'Status', 'Created'],
     emptyTitle: 'No vaults yet',
     emptyBody: 'Create your first vault to get started.',
-    emptyIcon: LockKeyhole,
+    emptyIcon: productIcons.vaults,
   },
   'memory-stores': {
     section: 'memory-stores',
@@ -161,7 +164,7 @@ export const resourceConfigs: Record<
     columns: ['', 'ID', 'Name', 'Status', 'Created'],
     emptyTitle: 'No memory stores yet',
     emptyBody: 'Create a memory store to give agents persistent, cross-session memory.',
-    emptyIcon: Database,
+    emptyIcon: productIcons.memory,
   },
 };
 
@@ -211,15 +214,15 @@ export function DreamingPage() {
   const { msg } = useI18n();
   return (
     <section className="min-h-[calc(100vh-48px)] text-foreground">
-      <h1 className="text-[32px] font-semibold leading-tight text-foreground">
-        {msg('managedAgents.dreams.title', 'Dreaming')}
-      </h1>
-      <p className="mt-3 text-[15px] text-foreground">
-        {msg('managedAgents.dreams.description', 'Review recent sessions to verify memory and surface new learnings.')}
-      </p>
-      <div className="mt-9 rounded-lg border border-border bg-popover px-6 py-6 text-[15px] text-foreground">
-        {msg('managedAgents.dreams.loading', 'Captured Dreaming assets are loading.')}
-      </div>
+      <ResourcePageHeader title={msg('managedAgents.dreams.title', 'Dreaming')} contentGap="content" />
+      <Empty className="min-h-[260px] py-12">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Brain className="size-5" aria-hidden />
+          </EmptyMedia>
+          <EmptyTitle>{msg('managedAgents.dreams.unavailable', 'Dreaming is not connected.')}</EmptyTitle>
+        </EmptyHeader>
+      </Empty>
     </section>
   );
 }

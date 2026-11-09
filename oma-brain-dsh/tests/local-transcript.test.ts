@@ -4,7 +4,7 @@ import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId, SessionSeq, t
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { CcrHttpError } from "../src/ccrv2/client.ts";
 import { CcrReplication } from "../src/ccrv2/persistence.ts";
 import type { CcrBackend } from "../src/ccrv2/contracts.ts";

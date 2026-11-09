@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -34,6 +35,11 @@ func ListUpstreamModels(ctx context.Context, client *http.Client, upstream Upstr
 	endpoint, err := Endpoint(upstream.BaseURL, "/v1/models", "")
 	if err != nil {
 		return nil, err
+	}
+	parsed, _ := url.Parse(endpoint)
+	if parsed.Host == "api.deepseek.com" && parsed.Path == "/anthropic/v1/models" {
+		parsed.Path = "/models"
+		endpoint = parsed.String()
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {

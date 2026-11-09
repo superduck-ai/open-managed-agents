@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
-	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 func TestLLMProviderAPIBackendConfiguration(t *testing.T) {
@@ -202,15 +201,14 @@ func TestBrainChatCompletionsProxyLifecycle(t *testing.T) {
 				t.Fatalf("end=%+v", end)
 			}
 			history := listSessionEvents(t, app, code.SessionExternalID, "order=asc&limit=100", defaultTestKey)
-			expected := maevents.StableAssistantEventID(code.ExternalID, "chat_3", 0, "agent.message")
 			count := 0
 			for _, event := range history.Data {
-				if sessionEventStringField(t, event, "id") == expected {
+				if kind := sessionEventStringField(t, event, "type"); kind == "agent.message" || kind == "agent.thinking" {
 					count++
 				}
 			}
-			if count != 1 {
-				t.Fatalf("stable assistant count=%d", count)
+			if count != 0 {
+				t.Fatalf("proxy published Brain replies=%d", count)
 			}
 		}
 	}

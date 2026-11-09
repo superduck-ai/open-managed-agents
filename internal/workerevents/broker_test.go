@@ -189,6 +189,9 @@ func runNATSCluster(t *testing.T) []*server.Server {
 
 func runNATSServer(t *testing.T, options server.Options) *server.Server {
 	t.Helper()
+	if options.JetStreamMaxStore == 0 {
+		options.JetStreamMaxStore = 32 << 30
+	}
 	srv, err := server.NewServer(&options)
 	if err != nil {
 		t.Fatal(err)

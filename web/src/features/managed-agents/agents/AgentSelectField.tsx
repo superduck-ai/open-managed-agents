@@ -78,6 +78,10 @@ export function AgentSelectField({
     defaultFirst,
   );
   const label = selectedName || msg('managedAgents.deployments.selectAgent', 'Select an agent');
+  const changeOpen = (next: boolean) => {
+    setOpen(next);
+    if (!next) setSearch('');
+  };
   return (
     <div className="min-w-0 space-y-1.5">
       <div className="flex items-center justify-between gap-2">
@@ -96,7 +100,7 @@ export function AgentSelectField({
           </a>
         )}
       </div>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={changeOpen}>
         <PopoverTrigger
           id={id}
           render={
@@ -116,8 +120,10 @@ export function AgentSelectField({
           className="w-(--anchor-width) min-w-48 max-h-(--available-height) gap-0 overflow-hidden p-0"
         >
           <Command
+            label={msg('managedAgents.agentPicker.search', 'Search by name or agent ID...')}
+            defaultValue={value}
             shouldFilter={false}
-            className="min-h-0 [&_[data-slot=command-input-wrapper]:has(input:focus-visible)]:ring-0 [&_[data-slot=command-input-wrapper]:has(input:focus-visible)]:border-muted-foreground/40"
+            className="min-h-0"
           >
             <CommandInput
               placeholder={msg('managedAgents.agentPicker.search', 'Search by name or agent ID...')}
@@ -143,7 +149,7 @@ export function AgentSelectField({
                     aria-label={agent.name || agent.id}
                     onSelect={() => {
                       onChange(agent.id);
-                      setOpen(false);
+                      changeOpen(false);
                     }}
                   >
                     <span className="min-w-0 flex-1">

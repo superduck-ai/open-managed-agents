@@ -1,12 +1,12 @@
+import { mountDshSubagents } from "../runtime/dsh-subagents.ts";
 import { Context, Service } from "@deepseek-ai/cordis";
-import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CcrReplication } from "./persistence.ts";
 import { CcrSession } from "./session.ts";
-import type { CcrBackend } from "./contracts.ts";
-import type { SessionRuntimeConfig } from "../runtime/contracts.ts";
+import type { CcrBackend, CcrSessionConfig } from "./contracts.ts";
 import type { CcrHeartbeatOptions, CcrHeartbeatHealth, CcrLeaseCheck, CcrLeaseFailure } from "./heartbeat.ts";
 import type { CcrActivityOptions } from "./activity.ts";
 
@@ -33,6 +33,7 @@ export class CcrBridge extends Service {
   static inject = [
     "attachments",
     "llm",
+    "tokenMeter",
     "sessions",
     "sessionPersistence",
     "ccrReplication",
@@ -51,7 +52,7 @@ export class CcrBridge extends Service {
     });
   }
 
-  createSession(config: SessionRuntimeConfig): CcrSession {
+  createSession(config: CcrSessionConfig): CcrSession {
     if (this.sessions.has(config.id))
       throw new Error("CCRv2 session already exists in this bridge");
     const heartbeat = this.config.heartbeat;
@@ -75,5 +76,6 @@ export class CcrBridge extends Service {
 export async function apply(ctx: Context, config: Config): Promise<void> {
   await ctx.plugin(JsonlPersistence, { root: config.localRoot ?? await mkdtemp(join(tmpdir(), "oma-brain-jsonl-")), compression: "none" });
   await ctx.plugin(CcrReplication, { backend: config.backend });
+  await mountDshSubagents(ctx);
   await ctx.plugin(CcrBridge, config);
 }

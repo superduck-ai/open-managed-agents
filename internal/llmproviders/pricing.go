@@ -29,10 +29,7 @@ func BillingCalculator(load CatalogLoader, prices *pricing.Store) *billing.Calcu
 func providerPrices(catalog Catalog, prices *pricing.Store, requested []string) map[string]billing.ModelPrice {
 	models := make(map[string]billing.ModelPrice)
 	now := time.Now().UTC()
-	providers := catalog.providers
-	if catalog.organization != nil {
-		providers = append(slices.Clone(providers), *catalog.organization)
-	}
+	providers := append(slices.Clone(catalog.providers), catalog.organization...)
 	for _, provider := range providers {
 		source := priceSource(provider)
 		for _, model := range provider.Models.IDs() {

@@ -60,7 +60,7 @@ test('normalizes upload names and mount paths while preserving bytes, file prope
   expect(mounts).toEqual([`/${attachment.mountPath}`, `/${attachment.mountPath}`]);
   expect(mounts[0]).not.toMatch(/\p{Cc}/u);
   expect(attachment.mountPath.endsWith(`/${uploaded?.name}`)).toBe(true);
-  expect(paths).toEqual([`/mnt/session/uploads${mounts[0]}`]);
+  expect(paths).toEqual({ paths: [`/mnt/session/uploads${mounts[0]}`], images: [] });
   expect(attachment.mounted).toBe(true);
 });
 

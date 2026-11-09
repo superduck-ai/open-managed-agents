@@ -1,8 +1,11 @@
+import { productIcons } from '@/shared/icons/product-icons';
+import { quickstartModelSetupReturn } from '../../shared/workspaces/model-setup-navigation';
+import { listCreateAgentModels } from '../managed-agents/agents/create-dialog-api';
 import type { APIBackend } from './api';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
-import { AlertCircle, Bot, Plus } from 'lucide-react';
+import { AlertCircle, Plus } from 'lucide-react';
 import type { ApiError } from '../../shared/api/client';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
@@ -15,17 +18,19 @@ import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from '../../shared/ui/empty';
 import { Skeleton } from '../../shared/ui/skeleton';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 import { toast } from '../../shared/ui/sonner';
 import {
   deleteOrganizationLLMProvider,
-  getOrganizationLLMProvider,
+  listOrganizationLLMProviders,
   persistLLMProvider,
   previewOrganizationProviderModels,
   previewSavedProviderModels,
   syncOrganizationLLMProvider,
-  upsertOrganizationLLMProvider,
+  persistOrganizationLLMProvider,
   deleteLLMProvider,
   listLLMProviders,
+  listProviderPresets,
   previewProviderModels,
   syncProviderModels,
   updateLLMProvider,
@@ -58,6 +63,14 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
   const [editing, setEditing] = useState<LLMProvider | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formError, setFormError] = useState('');
+  const refreshAfterSaveRef = useRef(false);
+  const quickstartReturnVersion = useRef(0);
+  useEffect(
+    () => () => {
+      quickstartReturnVersion.current++;
+    },
+    [],
+  );
   const [deleting, setDeleting] = useState<LLMProvider | null>(null);
   const [query, setQuery] = useState('');
   const [selectedProviderId, setSelectedProviderId] = useState(ALL_PROVIDERS_ID);
@@ -83,15 +96,19 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
   });
   const organizationQuery = useQuery({
     queryKey: organizationKey,
-    queryFn: () => getOrganizationLLMProvider(orgUuid ?? ''),
+    queryFn: () => listOrganizationLLMProviders(orgUuid ?? ''),
     enabled: Boolean(orgUuid),
     retry: false,
   });
-  const organizationProvider = organizationQuery.data;
-  const providers = [
-    ...(scope === 'workspace' ? (providersQuery.data ?? []) : []),
-    ...(organizationProvider ? [organizationProvider] : []),
-  ];
+  const presetsKey = ['console', 'llm-provider-presets', orgUuid];
+  const presetsQuery = useQuery({
+    queryKey: presetsKey,
+    queryFn: () => listProviderPresets(orgUuid ?? ''),
+    enabled: canManage && formOpen && !editing,
+    retry: false,
+  });
+  const organizationProviders = organizationQuery.data ?? [];
+  const providers = [...(scope === 'workspace' ? (providersQuery.data ?? []) : []), ...organizationProviders];
   const providersError = scope === 'organization' ? organizationQuery.error : providersQuery.error;
   const catalogAccessDenied = isCatalogAccessDenied(providersError);
   const activeProviderId = resolvedProviderSelection(providers, selectedProviderId);
@@ -135,7 +152,7 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
       const results = await Promise.allSettled(
         targets.map((provider) =>
           scope === 'organization'
-            ? syncOrganizationLLMProvider(orgUuid, csrfToken)
+            ? syncOrganizationLLMProvider(orgUuid, provider.id, csrfToken)
             : syncProviderModels(orgUuid, workspaceId, provider.id, csrfToken),
         ),
       );
@@ -154,19 +171,15 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
         throw new Error(msg('llmModels.noOrganization', 'No organization is available.'));
       }
       return scope === 'organization'
-        ? upsertOrganizationLLMProvider(orgUuid, input, csrfToken)
+        ? persistOrganizationLLMProvider(orgUuid, editing, input, csrfToken)
         : persistLLMProvider(orgUuid, workspaceId, editing, input, csrfToken);
-    },
-    onSuccess: async () => {
-      closeForm();
-      await invalidateCatalog();
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (provider: LLMProvider) =>
       scope === 'organization'
-        ? deleteOrganizationLLMProvider(orgUuid ?? '', csrfToken)
+        ? deleteOrganizationLLMProvider(orgUuid ?? '', provider.id, csrfToken)
         : deleteLLMProvider(orgUuid ?? '', workspaceId, provider.id, csrfToken),
     onSuccess: async () => {
       setDeleting(null);
@@ -181,7 +194,7 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
       }
       const input = providerInput(provider, modelIds);
       return scope === 'organization'
-        ? upsertOrganizationLLMProvider(orgUuid, input, csrfToken)
+        ? persistOrganizationLLMProvider(orgUuid, provider, input, csrfToken)
         : updateLLMProvider(orgUuid, workspaceId, provider.id, input, csrfToken);
     },
     onSuccess: async () => {
@@ -198,19 +211,39 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
     setEditing(null);
     setFormError('');
     saveMutation.reset();
+    if (refreshAfterSaveRef.current) {
+      refreshAfterSaveRef.current = false;
+      void invalidateCatalog();
+      const returnTo = scope === 'workspace' ? quickstartModelSetupReturn(window.location.search, workspaceId) : null;
+      if (returnTo) {
+        const setupHref = window.location.href;
+        const version = quickstartReturnVersion.current;
+        void listCreateAgentModels(workspaceId)
+          .then((models) => {
+            if (models.length > 0 && version === quickstartReturnVersion.current && window.location.href === setupHref)
+              window.location.assign(returnTo);
+          })
+          .catch(() => undefined);
+      }
+    }
   };
 
-  const openCreate = () => {
-    setEditing(null);
+  const openForm = (provider: LLMProvider | null) => {
+    quickstartReturnVersion.current++;
+    setEditing(provider);
     setFormError('');
     setFormOpen(true);
   };
+  const openCreate = () => openForm(null);
 
   const submitForm = async (input: LLMProviderInput) => {
     try {
       await saveMutation.mutateAsync(input);
+      refreshAfterSaveRef.current = true;
+      return true;
     } catch (error) {
       setFormError(readableError(error, msg));
+      return false;
     }
   };
 
@@ -255,23 +288,22 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
         organizationError={scope === 'workspace' ? organizationQuery.error : null}
         isRefreshing={providersQuery.isFetching || organizationQuery.isFetching || isSyncing}
         isAddingModel={updateModelsMutation.isPending}
+        onRetry={() => void invalidateCatalog()}
         onOpenCreate={openCreate}
         onQueryChange={setQuery}
         onRefresh={() => void (canManage ? refreshCatalog() : invalidateCatalog())}
         onSelectProvider={setSelectedProviderId}
-        onEditProvider={(provider) => {
-          setEditing(provider);
-          setFormError('');
-          setFormOpen(true);
-        }}
+        onEditProvider={openForm}
         onDeleteProvider={setDeleting}
         onAddModel={addModel}
       />
 
       {formOpen ? (
         <ProviderFormDialog
+          presetCatalog={presetsQuery.data}
+          presetError={presetsQuery.error ? readableError(presetsQuery.error, msg) : undefined}
+          onReloadPresets={() => void presetsQuery.refetch()}
           provider={editing}
-          organization={scope === 'organization'}
           error={formError}
           isPending={saveMutation.isPending}
           onClose={closeForm}
@@ -310,32 +342,28 @@ function CatalogHeader({
 }) {
   const { msg } = useI18n();
   return (
-    <div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row">
-      <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-            {scope === 'organization'
-              ? msg('nav.llmSettings', 'LLM configuration')
-              : msg('llmModels.title', 'LLM models')}
-          </h1>
-          {modelCount > 0 && !accessDenied ? <Badge variant="secondary">{modelCount}</Badge> : null}
-        </div>
-        <p className="mt-2 max-w-[760px] text-sm leading-5 text-muted-foreground">
-          {scope === 'organization'
-            ? msg(
-                'llmModels.organizationDescription',
-                'Configure the default provider shared by all workspaces. Bare model IDs prefer workspace providers.',
-              )
-            : msg('llmModels.description', 'Manage providers and models for this workspace.')}
-        </p>
-      </div>
-      {canManage && providerCount > 0 && scope === 'workspace' && !accessDenied ? (
-        <Button type="button" size="lg" onClick={onCreate}>
-          <Plus className="size-4" aria-hidden />
-          {msg('llmModels.addProvider', 'Add provider')}
-        </Button>
-      ) : null}
-    </div>
+    <ResourcePageHeader
+      title={
+        scope === 'organization' ? msg('nav.llmSettings', 'LLM configuration') : msg('llmModels.title', 'LLM models')
+      }
+      titleAdornment={modelCount > 0 && !accessDenied ? <Badge variant="secondary">{modelCount}</Badge> : undefined}
+      description={
+        scope === 'organization'
+          ? msg(
+              'llmModels.organizationDescription',
+              'Organization providers are shared by all workspaces. Workspace providers are only available in their workspace.',
+            )
+          : undefined
+      }
+      actions={
+        canManage && providerCount > 0 && !accessDenied ? (
+          <Button type="button" size="lg" onClick={onCreate}>
+            <Plus className="size-4" aria-hidden />
+            {msg('llmModels.addProvider', 'Add provider')}
+          </Button>
+        ) : undefined
+      }
+    />
   );
 }
 
@@ -351,6 +379,7 @@ function CatalogBody({
   providersError,
   isRefreshing,
   isAddingModel,
+  onRetry,
   onOpenCreate,
   onQueryChange,
   onRefresh,
@@ -370,6 +399,7 @@ function CatalogBody({
   providersError: unknown;
   isRefreshing: boolean;
   isAddingModel: boolean;
+  onRetry: () => void;
   onOpenCreate: () => void;
   onQueryChange: (query: string) => void;
   onRefresh: () => void;
@@ -385,16 +415,21 @@ function CatalogBody({
         title={msg('llmModels.accessDeniedTitle', 'Access denied')}
         description={msg(
           'llmModels.accessDeniedDescription',
-          'You do not have permission to view models in this workspace. Workspace members can view the catalog read-only, and only organization administrators can manage providers.',
+          'You do not have permission to view models in this workspace.',
         )}
       />
     );
   }
   if (providersError) {
     return (
-      <Alert variant="destructive">
+      <Alert variant="destructive" className="[overflow-wrap:anywhere]">
         <AlertCircle aria-hidden />
-        <AlertDescription>{readableError(providersError, msg)}</AlertDescription>
+        <AlertDescription>
+          <p>{readableError(providersError, msg)}</p>
+          <Button type="button" variant="outline" size="sm" className="mt-2" disabled={isRefreshing} onClick={onRetry}>
+            {msg('common.retry', 'Retry')}
+          </Button>
+        </AlertDescription>
       </Alert>
     );
   }
@@ -409,16 +444,16 @@ function CatalogBody({
           <AlertDescription>
             {msg(
               'llmModels.organizationUnavailable',
-              'The organization default could not be loaded. Workspace providers are still available.',
+              'Organization providers could not be loaded. Workspace providers are still available.',
             )}
           </AlertDescription>
         </Alert>
       ) : null}
       {providers.length === 0 ? (
-        <Empty className="min-h-[320px] border border-dashed border-border bg-card">
+        <Empty className="min-h-[320px] border-0">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <Bot aria-hidden />
+              <productIcons.models aria-hidden />
             </EmptyMedia>
             <EmptyTitle>{msg('llmModels.catalogEmptyTitle', 'No providers yet')}</EmptyTitle>
           </EmptyHeader>
@@ -463,9 +498,9 @@ function CatalogSkeleton() {
         <Skeleton className="h-14 w-full rounded-xl" />
         <Skeleton className="h-14 w-full rounded-xl" />
       </div>
-      <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
-        <div className="border-b border-border p-3">
-          <Skeleton className="h-9 w-full" />
+      <div className="overflow-hidden rounded-xl ring-[0.5px] ring-border">
+        <div className="border-b-[0.5px] border-border p-3">
+          <Skeleton className="h-8 w-full" />
         </div>
         <Skeleton className="h-12 w-full rounded-none" />
         <Skeleton className="h-12 w-full rounded-none" />

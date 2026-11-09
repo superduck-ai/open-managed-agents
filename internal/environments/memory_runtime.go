@@ -1,10 +1,10 @@
 package environments
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
@@ -31,11 +31,30 @@ type memorySnapshotPayload struct {
 	MountPath    string `json:"mount_path"`
 }
 
-func parseMemoryRuntimeMount(payload json.RawMessage) (memoryRuntimeMount, bool) {
-	var snapshot memorySnapshotPayload
-	if json.Unmarshal(payload, &snapshot) != nil {
+func memoryRuntimeMountFromResource(store *db.SessionResourceMemoryStore) (memoryRuntimeMount, bool) {
+	if store == nil {
 		return memoryRuntimeMount{}, false
 	}
+	var snapshot memorySnapshotPayload
+	if store.Name != nil {
+		snapshot.Name = *store.Name
+	}
+	if store.Description != nil {
+		snapshot.Description = *store.Description
+	}
+	if store.Instructions != nil {
+		snapshot.Instructions = *store.Instructions
+	}
+	if store.Access != nil {
+		snapshot.Access = *store.Access
+	}
+	if store.MountPath != nil {
+		snapshot.MountPath = *store.MountPath
+	}
+	return memoryRuntimeMountFromSnapshot(snapshot)
+}
+
+func memoryRuntimeMountFromSnapshot(snapshot memorySnapshotPayload) (memoryRuntimeMount, bool) {
 	slug := sessionresource.MemorySlugFromMountPath(snapshot.MountPath)
 	if slug == "" || strings.Contains(slug, "/") {
 		return memoryRuntimeMount{}, false

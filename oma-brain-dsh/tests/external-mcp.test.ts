@@ -1,3 +1,4 @@
+import { runSubagent, subagentScripts } from "./subagent-tools.ts";
 import { nativeOutcomes } from "./session-log.ts";
 import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
@@ -197,6 +198,7 @@ async function fixture(
             cwd: "/workspace",
             model: "test-model",
             runtime_tools: [],
+            subagents: b.a.launch.subagents,
             mcp_config: { mcpServers: { ...p.config.mcpServers, ...extraServers } },
           },
         })
@@ -298,7 +300,7 @@ test("external non-authentication discovery failure emits connection error, pres
     await f.session.receive("after_connection_recovery", { content: "Fetch documentation", oma_refresh_tools: true });
     expect(f.p.requests.filter(request => request.method === "tools/list").length).toBeGreaterThanOrEqual(2);
     expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
-    expect(nativeOutcomes(f.session)?.recovered_call?.failed).toBe(false);
+    expect((await nativeOutcomes(f.session))?.recovered_call?.failed).toBe(false);
     expect(f.session.abort.signal.aborted).toBe(false);
   } finally { await f.close(); }
 });
@@ -321,14 +323,14 @@ test("denied external tools and invalid approved arguments never dispatch", asyn
       });
     };
     const agent = f.session.agent;
-    const execute = (id: string, args: Payload) =>
-      agent.ctx.tools.execute({
+    const execute = async (id: string, args: Payload) => {
+      const batch = await agent.ctx.tools.execute({
         agent,
-        name: "mcp__peer__microsoft_docs_fetch",
-        arguments: args,
-        callId: ToolCallId(id),
+        calls: [{ type: "tool-call", id: ToolCallId(id), name: "mcp__peer__microsoft_docs_fetch", arguments: JSON.stringify(args) }],
         signal: new AbortController().signal,
       });
+      return batch.results[0]!.result;
+    };
     expect((await execute("bad_schema", {})).isError).toBe(true);
     expect(
       (await execute("denied", { url: "https://example.com" })).isError,
@@ -368,7 +370,7 @@ for (const [name, reject] of [
       expect(f.session.abort.signal.aborted).toBe(false);
       expect(f.p.requests.filter((request) => request.method === "tools/call")).toHaveLength(0);
       expect(JSON.stringify(f.b.requests[1]!.messages)).toContain("MCP tool call was not executed");
-      expect(nativeOutcomes(f.session).mcp_call).toMatchObject({ failed: true });
+      expect((await nativeOutcomes(f.session)).mcp_call).toMatchObject({ failed: true });
 
       rejecting = false;
       f.b.modelScript = [mcpEvents("mcp_retry"), textEvents("fetched")];
@@ -389,7 +391,7 @@ test("external transport failures remain native error results without replay or 
     f.b.modelScript = [mcpEvents(), textEvents("verify external state")];
     await f.session.receive("lost_result", { content: "Fetch documentation" });
     expect(f.session.abort.signal.aborted).toBe(false);
-    expect(nativeOutcomes(f.session).mcp_call?.text).toContain("Do not retry blindly");
+    expect((await nativeOutcomes(f.session)).mcp_call?.text).toContain("Do not retry blindly");
     expect(
       f.p.requests.filter((request) => request.method === "tools/call"),
     ).toHaveLength(1);
@@ -414,7 +416,7 @@ test("interrupting an external call finishes locally and permits a new turn with
     await f.session.control({ type: "interrupt" });
     await turn;
     expect(f.session.abort.signal.aborted).toBe(false);
-    expect(Object.values(nativeOutcomes(f.session))).toContainEqual({
+    expect(Object.values((await nativeOutcomes(f.session)))).toContainEqual({
       text: "Error: Tool call interrupted.",
       failed: true,
     });
@@ -445,7 +447,7 @@ test("external MCP error results are recorded as failed results rather than unkn
     ];
     await f.session.receive("error_result", { content: "Fetch documentation" });
     expect(f.session.abort.signal.aborted).toBe(false);
-    expect(nativeOutcomes(f.session)?.mcp_call?.failed).toBe(true);
+    expect((await nativeOutcomes(f.session))?.mcp_call?.failed).toBe(true);
     const events = [...f.b.publicLog.values()];
     expect(
       events.some((event) =>
@@ -519,12 +521,7 @@ test("children use independent external discovery with their own approval and re
     await f.session.open();
     f.session.inputId = "parent_input";
     f.b.modelScript = [mcpEvents("child_mcp"), textEvents("child fetched")];
-    const report = JSON.parse(
-      await f.session.subagents.send(
-        { name: "reader", system_prompt: "Read docs", message: "Fetch docs" },
-        new AbortController().signal,
-      ),
-    );
+    const report = await runSubagent(f.session, "subagent", { description: "reader", prompt: "Read docs. Fetch docs" });
     expect(report.report).toBe("child fetched");
     expect(
       f.p.requests.filter((request) => request.method === "initialize"),
@@ -536,14 +533,14 @@ test("children use independent external discovery with their own approval and re
     expect(
       events.some(
         (event) =>
-          event.session_thread_id === report.thread_id &&
+          event.session_thread_id === report.subagentId &&
           event.request?.tool_name === "mcp__peer__microsoft_docs_fetch",
       ),
     ).toBe(true);
     expect(
       events.some(
         (event) =>
-          event.session_thread_id === report.thread_id &&
+          event.session_thread_id === report.subagentId &&
           event.message?.content?.some(
             (block: Payload) => block.tool_use_id === "child_mcp",
           ),
@@ -661,13 +658,13 @@ test("external InvalidParams response records known failure and permits next rea
     f.b.modelScript = [mcpEvents(), textEvents("The tool no longer exists")];
     await f.session.receive("missing_tool", { content: "Fetch documentation" });
     expect(f.session.abort.signal.aborted).toBe(false);
-    expect(nativeOutcomes(f.session)?.mcp_call?.failed).toBe(true);
-    expect(nativeOutcomes(f.session)?.mcp_call?.text).toContain('unknown tool "microsoft_docs_fetch"');
+    expect((await nativeOutcomes(f.session))?.mcp_call?.failed).toBe(true);
+    expect((await nativeOutcomes(f.session))?.mcp_call?.text).toContain('unknown tool "microsoft_docs_fetch"');
     f.p.protocolError();
     f.b.modelScript = [mcpEvents("next_call"), textEvents("Fetched successfully")];
     await f.session.receive("next_input", { content: "Fetch documentation again" });
     expect(f.session.abort.signal.aborted).toBe(false);
-    expect(nativeOutcomes(f.session)?.next_call?.failed).toBe(false);
+    expect((await nativeOutcomes(f.session))?.next_call?.failed).toBe(false);
     expect(f.p.requests.filter((r) => r.method === "tools/call")).toHaveLength(2);
   } finally { await f.close(); }
 });
@@ -679,7 +676,7 @@ test("external server InternalError keeps unknown outcome without replay", async
     f.p.protocolError(-32603);
     f.b.modelScript = [mcpEvents(), textEvents("verify state")];
     await f.session.receive("server_error", { content: "Fetch documentation" });
-    expect(nativeOutcomes(f.session).mcp_call?.text).toContain("Do not retry blindly");
+    expect((await nativeOutcomes(f.session)).mcp_call?.text).toContain("Do not retry blindly");
     expect(f.session.abort.signal.aborted).toBe(false);
     expect(f.p.requests.filter((r) => r.method === "tools/call")).toHaveLength(1);
   } finally { await f.close(); }
@@ -861,7 +858,7 @@ for (const status of [401, 403]) {
       f.b.modelScript = [mcpEvents(), textEvents("unavailable")];
       await f.session.receive("archived_credential", { content: "Fetch documentation" });
       expect(f.session.abort.signal.aborted).toBe(false);
-      expect(nativeOutcomes(f.session)?.mcp_call).toMatchObject({ failed: true });
+      expect((await nativeOutcomes(f.session))?.mcp_call).toMatchObject({ failed: true });
       const errors = [...f.b.publicLog.values()].filter(event => event.type === "session.error");
       expect(errors).toHaveLength(1);
       expect(errors[0]!.error).toMatchObject({ type: "mcp_authentication_failed_error", mcp_server_name: "peer", retry_status: { type: "exhausted" } });
@@ -903,7 +900,7 @@ test("large external MCP results persist once in the session sandbox before publ
   expect(JSON.stringify(f.b.requests[1])).toContain(path);
   expect(JSON.stringify(f.b.requests[1])).not.toContain("hidden-middle-result");
   expect(f.p.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
-  expect(Object.keys(nativeOutcomes(f.session) ?? {})).toEqual(["mcp_call"]);
+  expect(Object.keys((await nativeOutcomes(f.session)) ?? {})).toEqual(["mcp_call"]);
  } finally { await f.close(); }
 });
 
@@ -914,8 +911,8 @@ test("completed external image result is a known capability error without blocki
   await f.session.open();f.b.modelScript=[mcpEvents(),textEvents("unsupported picture")];
   await f.session.receive("image_mcp",{content:"Read controlled result"});
   expect(f.session.abort.signal.aborted).toBe(false);
-  expect(nativeOutcomes(f.session).mcp_call).toMatchObject({failed:true});
-  expect(nativeOutcomes(f.session).mcp_call?.text).toContain("unsupported non-text content");
+  expect((await nativeOutcomes(f.session)).mcp_call).toMatchObject({failed:true});
+  expect((await nativeOutcomes(f.session)).mcp_call?.text).toContain("unsupported non-text content");
   expect(f.p.requests.filter(r=>r.method==="tools/call")).toHaveLength(1);
   expect(f.b.requests).toHaveLength(2);
   f.b.modelScript=[textEvents("still interactive")];await f.session.receive("after_image",{content:"Continue text"});
@@ -1024,8 +1021,10 @@ test("predefined MCP child owns its pinned endpoint while self and root retain t
     f.b.modelScript = [mcpEvents("root_before_children"), textEvents("root report")];
     await f.session.receive("root_before_children", { content: "Read documentation" });
     for (const name of ["expert", "self"]) {
-      f.b.modelScript = [mcpEvents(`read_${name}`), textEvents(`${name} report`)];
-      await f.session.subagents.send({ agent_name: name, message: "Read documentation" }, new AbortController().signal);
+      subagentScripts(f.b, [textEvents("received report")], [mcpEvents(`read_${name}`), textEvents(`${name} report`)]);
+      await runSubagent(f.session, "subagent", { agent_preset: `${f.session.id}/${name}`, description: name, prompt: "Read documentation" });
+      await f.session.subagents.wait();
+      await f.session.agent.whenIdle();
     }
     expect(expert.requests.filter(r => r.method === "tools/call")).toHaveLength(1);
     expect(f.p.requests.filter(r => r.method === "tools/call")).toHaveLength(2);
@@ -1048,7 +1047,7 @@ test("completed external NUL result emits safe durability stages without logging
  try {
   await f.session.open();f.b.modelScript=[mcpEvents(),textEvents("finished")];
   await f.session.receive("nul_durable",{content:"Read controlled result"});
-  expect(nativeOutcomes(f.session).mcp_call?.text).toBe(marker);
+  expect((await nativeOutcomes(f.session)).mcp_call?.text).toBe(marker);
   expect(f.session.abort.signal.aborted).toBe(false);expect(f.p.requests.filter(r=>r.method==="tools/call")).toHaveLength(1);
   expect(records.map(r=>r.phase)).toEqual(["start","confirmed"]);
   expect(records.every(r=>r.session_ref===createHash("sha256").update(f.a.session_id).digest("hex") && r.call_ref===createHash("sha256").update("mcp_call").digest("hex") && r.has_nul===true && r.text_utf16_units===marker.length)).toBe(true);

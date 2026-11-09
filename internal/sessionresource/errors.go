@@ -12,7 +12,6 @@ var (
 	errStoredFileResourceType   = fmt.Errorf("stored file resource type must be %q", FileType)
 	errStoredFileIDRequired     = errors.New("stored file resource file_id is required")
 	errStoredFileResourceSource = fmt.Errorf("stored file resource source must be %q", sandboxmount.FileSource)
-	errFileResourcePayload      = errors.New("file resource payload is invalid")
 	errTooManyFileResources     = fmt.Errorf("at most %d managed-agent file resources are allowed", MaxFileResources)
 
 	ErrGitTokenCrypto               = errors.New("git token cryptographic operation failed")

@@ -55,6 +55,7 @@ type environmentSandboxStateParams struct {
 }
 
 type environmentSandboxRecoveryParams struct {
+	TraceParent           *string
 	CodeSessionExternalID string
 	ProviderSandboxID     string
 	LastError             string

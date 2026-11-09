@@ -7,15 +7,15 @@ description: "使用 OMA API 创建和管理部署：按照定期的 cron 计划
 **计划部署**（scheduled deployment）允许[智能体](/docs/zh/agent-setup)自主启动[会话](/docs/zh/sessions)，从而按照可预测的节奏完成任务。您可以使用 OMA 部署 API 创建和管理部署。
 
 <Note>
-  所有托管智能体 API 请求都需要 `managed-agents-2026-04-01` Beta 请求头。SDK 会自动设置该 Beta 请求头。
+  API 密钥调用部署接口需要 `anthropic-version: 2023-06-01` 和 `anthropic-beta: managed-agents-2026-04-01`。其他资源要求请参阅[版本与 Beta 功能](/docs/zh/api/versioning-beta)。
 </Note>
 
 ## 创建计划部署
 
-创建部署时，除了 `schedule` 之外，您还需要传递执行所需的[会话配置](/docs/zh/sessions)。
+创建部署时，需要提供执行所需的[会话配置](/docs/zh/sessions)。可以配置 `schedule` 定时执行，或省略它以手动触发。
 
 * 部署需要[智能体配置](/docs/zh/agent-setup)和[环境配置](/docs/zh/environments)，并可选择性地接受[文件](/docs/zh/files)、[GitHub](/docs/zh/github)、[记忆存储](/docs/zh/memory)和[密钥库](/docs/zh/vaults)。
-* 部署还需要至少一个初始事件（`user.message` 或 `user.define_outcome`），用于启动每个会话的工作。
+* 部署还需要至少一个初始事件（`user.message`），用于启动每个会话的工作。
 * 在 `schedule` 中，您需要定义一个 cron `expression` 和一个 `timezone`。支持的最大粒度为分钟级别。
 
 <CodeGroup defaultLanguage="CLI">
@@ -240,7 +240,7 @@ description: "使用 OMA API 创建和管理部署：按照定期的 cron 计划
 }
 ```
 
-即将运行的时间戳反映的是所配置的确切计划。但是，为了分散负载，实际执行会应用最多为运行间隔 15% 的抖动（jitter），最小为 5 秒，最大为 9 分钟。
+即将运行的时间戳是按计划计算的名义时间；实际启动可能受到队列和运行环境的影响。OMA 不额外添加此处所述的固定抖动。
 
 每个组织最多支持 **1,000 个计划部署**。如果您需要更多，请联系 OMA 支持团队。
 
@@ -282,9 +282,9 @@ EOF
 
 ## 部署运行
 
-部署可能因多种原因而无法触发：例如，`environment` 资源已被归档，或会话创建受到速率限制。每次执行部署的尝试都会生成一条**部署运行**（deployment run）记录，使您能够独立于会话生命周期来跟踪成功和失败情况。
+部署可能因环境归档等原因无法触发。可通过部署运行记录查看已记录的成功和失败；某些归档或失效分支不会创建运行记录。
 
-成功的部署会生成活动会话，成功的部署运行包含关联的 `session_id`。要跟踪会话的生命周期，请通过[事件流](/docs/zh/events-and-streaming)或 [webhook](/docs/zh/webhooks) 跟踪会话事件。部署生命周期变更以及每次定时运行的结果也会作为 webhook 事件传递，列在[支持的事件类型](/docs/zh/webhooks#supported-event-types)的"部署 events"和"部署 run events"选项卡中。
+成功的部署运行包含关联的 `session_id`。可通过[事件流](/docs/zh/events-and-streaming)跟踪会话，并根据 [Webhook](/docs/zh/webhooks) 订阅接收支持的通知；投递可能失败，请以资源状态为准。
 
 按如下方式列出某个部署的所有部署运行：
 
@@ -483,7 +483,7 @@ EOF
 
 ## 管理部署生命周期
 
-每次生命周期变更都会发出一个 [webhook 事件](/docs/zh/webhooks#supported-event-types)，因此您无需轮询即可对已暂停、已恢复或已归档的部署作出响应；请参阅"部署 events"选项卡。
+部署状态变化可产生 [Webhook 事件](/docs/zh/webhooks#supported-event-types)。通知可能投递失败，请根据部署资源状态确认结果。
 
 **暂停**（Pause）会在此后抑制定时触发；来自先前部署运行的正在运行的会话会继续执行。暂停期间仍允许通过 `run` 端点进行手动运行。暂停会将 `paused_reason` 设置为 `{"type": "manual"}`；取消暂停会将其清除。
 
@@ -622,13 +622,13 @@ EOF
 
 ### 失败行为
 
-会话创建的速率限制响应会立即记录为 `session_rate_limited_error` 运行，不会重试；计划会在下一个计划的触发时间点再次尝试。会话内底层 API 调用的速率限制由会话本身处理。
+失败处理取决于失败类型：部分不可恢复的错误会记录失败运行或暂停部署，临时故障可能由任务队列重试。请检查运行记录和部署状态。
 
 如果部署的智能体已被归档，则该部署会在同一操作中自动归档。如果智能体已被删除，则下一次定时触发会检测到缺失的智能体并自动归档该部署。在这两种情况下都不会记录部署运行。如果智能体引用的子智能体已被归档，则下一次触发会记录一次失败的运行，其 `error.type: "agent_archived_error"`，并且部署会自动暂停，以便您更新智能体并恢复。其他不可恢复的会话创建错误（例如已归档的环境或密钥库）的行为相同：触发会记录一次失败的运行，并且部署会自动暂停。部署的 `paused_reason.error.type` 与失败运行的 `error.type` 保持一致。
 
 ## 触发手动运行
 
-要在计划之外运行部署，请调用 [`run` 端点](/docs/zh/api/deployments/run-deployment-now)。这会立即创建一个会话，并写入一条 `trigger_context.type: "manual"` 的部署运行记录。这使您可以在正式启用计划之前测试部署。
+要在计划之外运行部署，请调用 [`run` 端点](/docs/zh/api/deployments/run-deployment-now)。成功时会创建关联会话和 `trigger_context.type: "manual"` 的运行记录，并安排工作；引用校验失败时可产生没有会话的失败记录。
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL

@@ -9,9 +9,9 @@ export function QuickstartFooter({ wizard, children }: { wizard: QuickstartWizar
   const text = quickstartCopy(locale);
   return (
     <div className="mt-auto w-full shrink-0 bg-background pt-[clamp(0.5rem,1.5dvh,1rem)]">
-      <footer className="flex w-full flex-wrap items-center justify-between gap-3 border-t border-border pt-[clamp(0.5rem,1.5dvh,1rem)]">
+      <footer className="flex w-full flex-wrap items-center justify-between gap-3 border-t-[0.5px] border-border pt-[clamp(0.5rem,1.5dvh,1rem)]">
         {wizard.progress.step === 0 ? (
-          <p className="text-sm text-muted-foreground">{text.ready}</p>
+          <p className="text-xs text-muted-foreground">{text.ready}</p>
         ) : (
           <Button
             type="button"

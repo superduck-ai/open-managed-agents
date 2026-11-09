@@ -23,7 +23,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestWorkspaceLLMProviderSlugIsUniqueUnderConcurrentCreates(t *testing.T) {
+func TestLLMProviderSlugIsUniqueAcrossScopesUnderConcurrentCreates(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-concurrent-slug-bucket"))
 	defer app.close()
 	clearTestLLMProviders(t, app)
@@ -48,6 +48,9 @@ func TestWorkspaceLLMProviderSlugIsUniqueUnderConcurrentCreates(t *testing.T) {
 			Models:           db.LLMModels{{ID: "shared-model"}},
 			CreatedAt:        now,
 			UpdatedAt:        now,
+		}
+		if index == 0 {
+			provider.WorkspaceUUID = ""
 		}
 		key := []byte(fmt.Sprintf("concurrent-provider-key-%d", index))
 		envelope, err := app.vaultSecrets.Seal(context.Background(), llmproviders.SecretBinding(provider), key)
@@ -284,7 +287,7 @@ func TestWorkspaceLLMProvidersBYOKLifecycle(t *testing.T) {
 	assertError(t, message, http.StatusServiceUnavailable, "api_error")
 }
 
-func TestWorkspaceLLMProvidersRequireAdministrator(t *testing.T) {
+func TestWorkspaceLLMProvidersAllowMembers(t *testing.T) {
 	app := newTestAppWithStore(t, nil, newFakeStore("llm-providers-permission-bucket"))
 	defer app.close()
 	clearTestLLMProviders(t, app)
@@ -304,15 +307,24 @@ func TestWorkspaceLLMProvidersRequireAdministrator(t *testing.T) {
 	if listed.StatusCode != http.StatusOK {
 		t.Fatalf("用户读取模型状态 = %d", listed.StatusCode)
 	}
-	response := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{}`), cookies)
+	response := app.platformRequest(t, http.MethodPost, path, strings.NewReader(`{"name":"Member provider","slug":"member-provider","base_url":"https://example.com","api_key":"secret","model_ids":["model"]}`), cookies)
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", response.StatusCode, readAll(t, response.Body))
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("member create status = %d, want 201: %s", response.StatusCode, readAll(t, response.Body))
 	}
-	var body map[string]any
-	decodeJSON(t, response.Body, &body)
-	if body["code"] != "llm_provider_permission_denied" {
-		t.Fatalf("permission error = %#v", body)
+	var provider struct {
+		ID string `json:"id"`
+	}
+	decodeJSON(t, response.Body, &provider)
+	updated := app.platformRequest(t, http.MethodPut, path+"/"+provider.ID, strings.NewReader(`{"name":"Updated provider","base_url":"https://example.com","model_ids":["model"]}`), cookies)
+	defer updated.Body.Close()
+	if updated.StatusCode != http.StatusOK {
+		t.Fatalf("member update status = %d: %s", updated.StatusCode, readAll(t, updated.Body))
+	}
+	deleted := app.platformRequest(t, http.MethodDelete, path+"/"+provider.ID, nil, cookies)
+	defer deleted.Body.Close()
+	if deleted.StatusCode != http.StatusNoContent {
+		t.Fatalf("member delete status = %d", deleted.StatusCode)
 	}
 }
 
@@ -641,32 +653,13 @@ func TestOrganizationLLMProviderIsReadableByMembers(t *testing.T) {
 		t.Fatalf("member organization provider status = %d, want 404: %s", missing.StatusCode, readAll(t, missing.Body))
 	}
 
-	denied := app.platformRequest(t, http.MethodPut, "/api/console/organizations/"+orgUUID+"/llm_provider", strings.NewReader(`{
-		"name":"Organization default",
-		"base_url":"https://organization.example.com",
-		"api_key":"organization-provider-secret",
-		"model_ids":["org-only"]
-	}`), cookies)
-	defer denied.Body.Close()
-	if denied.StatusCode != http.StatusForbidden {
-		t.Fatalf("member put status = %d, want 403: %s", denied.StatusCode, readAll(t, denied.Body))
-	}
-	var deniedBody map[string]any
-	decodeJSON(t, denied.Body, &deniedBody)
-	if deniedBody["code"] != "llm_provider_permission_denied" {
-		t.Fatalf("permission error = %#v", deniedBody)
-	}
-
-	adminCookies := app.platformLoginCookies(t, "llm-providers-organization-admin@example.com")
 	created := app.platformRequest(t, http.MethodPut, "/api/console/organizations/"+orgUUID+"/llm_provider", strings.NewReader(`{
-		"name":"Organization default",
-		"base_url":"https://organization.example.com",
-		"api_key":"organization-provider-secret",
-		"model_ids":["org-only"]
-	}`), adminCookies)
+        "name":"Organization default", "base_url":"https://organization.example.com",
+        "api_key":"organization-provider-secret", "model_ids":["org-only"]
+    }`), cookies)
 	created.Body.Close()
 	if created.StatusCode != http.StatusCreated {
-		t.Fatalf("admin create status = %d, want 201", created.StatusCode)
+		t.Fatalf("member create status = %d, want 201", created.StatusCode)
 	}
 	read := app.platformRequest(t, http.MethodGet, "/api/console/organizations/"+orgUUID+"/llm_provider", nil, cookies)
 	defer read.Body.Close()
@@ -686,6 +679,11 @@ func TestOrganizationLLMProviderIsReadableByMembers(t *testing.T) {
 		t.Fatal("member response contains an API key field")
 	}
 	assertJSONDoesNotContain(t, body, "organization-provider-secret")
+	deleted := app.platformRequest(t, http.MethodDelete, "/api/console/organizations/"+orgUUID+"/llm_provider", nil, cookies)
+	defer deleted.Body.Close()
+	if deleted.StatusCode != http.StatusNoContent {
+		t.Fatalf("member delete status = %d", deleted.StatusCode)
+	}
 }
 
 func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
@@ -822,8 +820,8 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 		t.Fatalf("seal duplicate organization provider: %v", err)
 	}
 	duplicate.SecretEnvelope = &envelope
-	if _, err := app.db.CreateLLMProvider(context.Background(), duplicate); !errors.Is(err, db.ErrOrganizationLLMProviderExists) {
-		t.Fatalf("duplicate organization provider error = %v, want ErrOrganizationLLMProviderExists", err)
+	if _, err := app.db.CreateLLMProvider(context.Background(), duplicate); !errors.Is(err, db.ErrLLMProviderSlugConflict) {
+		t.Fatalf("duplicate organization provider error = %v, want ErrLLMProviderSlugConflict", err)
 	}
 
 	updated := app.platformRequest(t, http.MethodPut, path, strings.NewReader(`{

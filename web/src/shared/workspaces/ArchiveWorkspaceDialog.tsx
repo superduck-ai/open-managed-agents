@@ -1,6 +1,8 @@
 import { useI18n } from '../i18n';
+import { useState } from 'react';
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -25,31 +27,41 @@ export function ArchiveWorkspaceDialog({
   onConfirm: () => void;
 }) {
   const { msg } = useI18n();
+  const [content, setContent] = useState({ workspaceName, error });
+  if (open && (workspaceName !== content.workspaceName || error !== content.error)) {
+    setContent({ workspaceName, error });
+  }
   return (
     <AlertDialog
       open={open}
-      onOpenChange={(next) => {
-        if (!next && !pending) onClose();
+      onOpenChange={(next, details) => {
+        if (!next && pending) {
+          details.cancel();
+          return;
+        }
+        if (!next) onClose();
       }}
     >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {msg('workspace.archive.title', 'Archive {name}', { name: workspaceName })}
+            {msg('workspace.archive.title', 'Archive {name}', { name: content.workspaceName })}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {msg(
               'workspace.archive.body',
               'Are you sure you want to archive the “{name}” workspace and all resources associated with it?',
-              { name: workspaceName },
+              { name: content.workspaceName },
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {content.error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {content.error}
+          </p>
+        ) : null}
         <AlertDialogFooter>
-          <Button variant="outline" disabled={pending} onClick={onClose}>
-            {msg('common.cancel', 'Cancel')}
-          </Button>
+          <AlertDialogCancel disabled={pending}>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
           <Button variant="destructive" disabled={pending} onClick={onConfirm}>
             {pending
               ? msg('workspace.archive.archiving', 'Archiving...')

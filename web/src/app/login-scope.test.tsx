@@ -27,11 +27,11 @@ test('未登录跳转及邮箱提交不重复导航或重建验证码页面', as
   await screen.findByLabelText(/Email/);
   fireEvent.change(screen.getByLabelText(/Email/), { target: { value: 'test@example.com' } });
   fireEvent.click(screen.getByRole('button', { name: 'Continue with email' }));
-  await screen.findByText('Enter the 6-digit code sent to your email.');
+  await screen.findByLabelText('Verification code');
   await act(async () => {
     await router.invalidate();
   });
-  await waitFor(() => expect(screen.getByText('Enter the 6-digit code sent to your email.')).toBeTruthy());
+  await waitFor(() => expect(screen.getByLabelText('Verification code')).toBeTruthy());
   expect(navigations).toBeLessThan(5);
   unsubscribe();
 });

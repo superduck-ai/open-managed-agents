@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { accountRoleLabel, membershipRoleForOrganization, roleOptions } from './roles';
+import { accountRoleLabel, roleOptions } from './roles';
 
 const msg = (_id: string, defaultMessage: string) => defaultMessage;
 
@@ -17,18 +17,5 @@ describe('roleOptions', () => {
     expect(accountRoleLabel('workspace_user', msg)).toBe('User');
     expect(accountRoleLabel(undefined, msg)).toBe('User');
     expect(accountRoleLabel('', msg)).toBe('User');
-  });
-
-  test('uses the membership for the active organization', () => {
-    const memberships = [
-      { role: 'user', organization: { uuid: 'org_other' } },
-      { role: 'admin', organization: { uuid: 'org_active' } },
-    ];
-
-    expect(membershipRoleForOrganization(memberships, 'org_active')).toBe('admin');
-    expect(accountRoleLabel(membershipRoleForOrganization(memberships, 'org_active'), msg)).toBe('Admin');
-    expect(membershipRoleForOrganization(memberships, undefined)).toBe('user');
-    expect(membershipRoleForOrganization(memberships, 'org_missing')).toBeUndefined();
-    expect(membershipRoleForOrganization(undefined, 'org_active')).toBeUndefined();
   });
 });

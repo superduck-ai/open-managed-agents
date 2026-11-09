@@ -9,12 +9,12 @@ Open Managed Agents provides a set of built-in tools that agents can use autonom
 Open Managed Agents also supports custom, user-defined tools. Your application executes these tools separately and returns the results to the agent, which uses them to continue the task. To give the agent tools from an MCP server, use the [MCP connector](/docs/en/mcp-connector) instead.
 
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
 ## Available tools
 
-The agent toolset includes the following tools. All are enabled by default when you include the toolset in your agent configuration. Use the values in the Name column to reference tools in the `configs` array.
+The agent toolset includes the following tools. All listed tools except `ask_user_question` are enabled by default when you include the toolset. Use the values in the Name column to reference tools in the `configs` array.
 
 | Tool       | Name         | Description                                    |
 | ---------- | ------------ | ---------------------------------------------- |
@@ -26,12 +26,19 @@ The agent toolset includes the following tools. All are enabled by default when 
 | Grep       | `grep`       | Text search using regex patterns               |
 | Web fetch  | `web_fetch`  | Fetch content from a URL                       |
 | Web search | `web_search` | Search the web for information                 |
+| User question | `ask_user_question` | Ask a user a question and wait for an answer |
 
-When a tool output exceeds 100,000 characters (about 25,000 tokens), it is automatically written to a file in the [sandbox](/docs/en/environments). The model receives a truncated preview with the file path and can read the full content from there.
+`ask_user_question` is disabled by default because waiting for an answer can block the conversation. To use it, explicitly enable it in the agent's tool settings in the console, or add this entry to the toolset's `configs`:
+
+```json
+{"name": "ask_user_question", "enabled": true}
+```
+
+Once enabled, the agent can ask the user for information or a choice and wait for their answer. Web search also requires a search provider configured by the deployment.
 
 ## Configuring the toolset
 
-Enable the full toolset with `agent_toolset_20260401` when creating an agent. Use the `configs` array to disable specific tools or override their settings. Each config entry can also set a `permission_policy` that controls whether the tool's calls are auto-approved or require confirmation. See [Permission policies](/docs/en/permission-policies) for the available policy types.
+Add the toolset with `agent_toolset_20260401` when creating an agent. Use the `configs` array to enable user questions, disable other tools, or override their settings. Each config entry can also set a `permission_policy` that controls whether the tool's calls are auto-approved or require confirmation. See [Permission policies](/docs/en/permission-policies) for the available policy types.
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL

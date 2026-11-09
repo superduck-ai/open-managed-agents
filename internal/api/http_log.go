@@ -7,45 +7,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
-
-	"github.com/go-chi/chi/v5/middleware"
 )
 
 var apiClientUserAgentPattern = regexp.MustCompile(`\b(anthropic-sdk|curl|httpie|postman|insomnia|python-requests|okhttp)\b`)
 
-func requestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			fields := requestLogFields(r)
-			requestID := httpapi.RequestID(r.Context())
-			startedAt := time.Now()
-			logger.InfoContext(r.Context(), "http request", httpLogAttrs("request", requestID, fields)...)
-
-			wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
-			next.ServeHTTP(wrapped, r)
-
-			status := wrapped.Status()
-			if status == 0 {
-				status = http.StatusOK
-			}
-			attrs := httpLogAttrs("response", requestID, fields,
-				"status", status,
-				"durationMs", durationMilliseconds(startedAt),
-			)
-			if status >= http.StatusOK && status < http.StatusMultipleChoices {
-				logger.InfoContext(r.Context(), "http response", attrs...)
-			} else {
-				logger.ErrorContext(r.Context(), "http response", attrs...)
-			}
-		})
-	}
-}
-
 type logRequestFields struct {
 	method                  string
-	url                     string
 	path                    string
 	host                    string
 	userAgent               string
@@ -61,7 +28,6 @@ func requestLogFields(r *http.Request) logRequestFields {
 	}
 	return logRequestFields{
 		method:                  r.Method,
-		url:                     requestLogURL(r),
 		path:                    path,
 		host:                    r.Host,
 		userAgent:               strings.TrimSpace(r.Header.Get("User-Agent")),
@@ -71,40 +37,45 @@ func requestLogFields(r *http.Request) logRequestFields {
 	}
 }
 
-func requestLogURL(r *http.Request) string {
-	if r.URL == nil {
-		return ""
-	}
-	// Query values commonly carry OAuth state/code and other credentials. Access
-	// logs keep the established "url" field but intentionally store path only.
-	return r.URL.Path
-}
-
-func httpLogAttrs(event string, requestID string, fields logRequestFields, afterURL ...any) []any {
+func httpLogAttrs(event string, requestID string, fields logRequestFields, afterPath ...any) []any {
 	attrs := []any{
 		"event", event,
-		"requestId", requestID,
+		"request_id", requestID,
 		"method", fields.method,
-		"url", fields.url,
-	}
-	attrs = append(attrs, afterURL...)
-	attrs = append(attrs,
 		"path", fields.path,
+	}
+	attrs = append(attrs, afterPath...)
+	attrs = append(attrs,
 		"host", fields.host,
-		"userAgent", fields.userAgent,
-		"clientKind", fields.clientKind,
+		"user_agent", fields.userAgent,
+		"client_kind", fields.clientKind,
 	)
 	if fields.anthropicClientPlatform != "" {
-		attrs = append(attrs, "anthropicClientPlatform", fields.anthropicClientPlatform)
+		attrs = append(attrs, "anthropic_client_platform", fields.anthropicClientPlatform)
 	}
 	if fields.anthropicClientApp != "" {
-		attrs = append(attrs, "anthropicClientApp", fields.anthropicClientApp)
+		attrs = append(attrs, "anthropic_client_app", fields.anthropicClientApp)
 	}
 	return attrs
 }
 
-func durationMilliseconds(startedAt time.Time) float64 {
-	ms := float64(time.Since(startedAt).Microseconds()) / 1000
+func responseLogLevel(status int, canceled bool, elapsed time.Duration, longPoll bool) slog.Level {
+	switch {
+	case canceled:
+		return slog.LevelInfo
+	case status >= http.StatusInternalServerError:
+		return slog.LevelError
+	case status >= http.StatusBadRequest:
+		return slog.LevelWarn
+	case !longPoll && elapsed >= slowRequestLogThreshold:
+		return slog.LevelInfo
+	default:
+		return slog.LevelDebug
+	}
+}
+
+func durationMilliseconds(elapsed time.Duration) float64 {
+	ms := float64(elapsed.Microseconds()) / 1000
 	return math.Round(ms*10) / 10
 }
 

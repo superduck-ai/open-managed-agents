@@ -41,6 +41,10 @@ flowchart LR
     Cleanup --> Verdict[Report pass only after cleanup succeeds]
 ```
 
+## Session egress verification
+
+Run `just verify-be chat doctor egress`, then `just verify-be chat egress`. This dependencies-only scenario exercises `TestEgressPublicSessionHeader` against disposable PostgreSQL and production API handlers with a local HTTP receiver. The required proof is `egress_headers_forwarded`: two Sessions send 24 concurrent HTTP/MCP GET, POST and DELETE requests with absent or forged Session Headers. It checks the public Session ID, body, URI, business Authorization, MCP protocol Session and proxy credential stripping. No Worker image is required; a recording sandbox provider activates the fixtures. HTTPS MITM and SSE remain covered by dedicated proxy unit tests. MCP Tunnel is outside this Session Header contract; real CLI execution is not certified by this scenario.
+
 ## Chat reliability contract
 
 `chat.reliability` accepts a second public input during a held active turn with HTTP 200,
@@ -170,3 +174,9 @@ flowchart LR
 ```
 
 验证配置沿用默认开启的 HTTPS MITM。每个隔离运行生成独立的 ECDSA P-256 CA 私钥并通过 `code_session.upstream_proxy_ca_key_file` 提供，权限为 `0600`；清理与 JWT 私钥一并删除，报告不包含私钥。
+
+## 真实视觉模型图片验收
+
+`chat brain-images` 使用显式的 `VERIFY_BE_VISION_PROVIDERS` 私有配置路径与 `VERIFY_BE_VISION_MODEL`，doctor 校验配置和唯一模型归属。其他场景仍清除继承的模型环境，不改变其脚本上游。凭据只在本次隔离 workspace 中保存，报告只记录模型 ID 与 backend，不记录 API key。
+
+该场景验证随机颜色消息图片、真实 Worker/FUSE Read 第二张不同图片，以及原生引用与 MinIO 字节完整性。三个 proof 为 message_image_seen、read_image_seen、native_images_persisted。使用真实模型的次数与耗时不构成质量、价格或性能基准；源代码指纹和清理要求不变。

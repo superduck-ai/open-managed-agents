@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -258,7 +259,7 @@ func (b *skillArchivePathBackend) loadSkillArchive(
 	if err != nil {
 		return nil, internalError("load skill archive", err)
 	}
-	cacheKey := strings.Join([]string{bucket, objectKey, checksum, archiveEntry.Path}, "\x00")
+	cacheKey := strings.Join([]string{bucket, objectKey, checksum, archiveEntry.Path, string(archiveEntry.Metadata)}, "\x00")
 	if archive, ok := b.cache.Get(cacheKey); ok {
 		return archive, nil
 	}
@@ -398,6 +399,18 @@ func indexSkillArchive(archiveEntry db.SessionResourceFile, data []byte) (*loade
 	if directory == "" || strings.Contains(directory, "/") {
 		return nil, errors.New("skill archive virtual path is invalid")
 	}
+	var metadata struct {
+		Directory string `json:"skill_archive_directory"`
+	}
+	if len(archiveEntry.Metadata) > 0 {
+		if err := json.Unmarshal(archiveEntry.Metadata, &metadata); err != nil {
+			return nil, errors.New("invalid Skill archive metadata")
+		}
+	}
+	archiveDirectory := metadata.Directory
+	if archiveDirectory == "" {
+		archiveDirectory = directory
+	}
 	nodes := map[string]skillArchiveNode{
 		archiveEntry.Path: {path: archiveEntry.Path, directory: true},
 	}
@@ -408,13 +421,13 @@ func indexSkillArchive(archiveEntry db.SessionResourceFile, data []byte) (*loade
 		if err != nil {
 			return nil, err
 		}
-		if parts[0] != directory {
-			return nil, fmt.Errorf("skill archive top-level directory %q does not match %q", parts[0], directory)
+		if parts[0] != archiveDirectory {
+			return nil, fmt.Errorf("skill archive top-level directory %q does not match %q", parts[0], archiveDirectory)
 		}
 		if file.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("skill archive contains symlink %q", file.Name)
 		}
-		virtualPath := skillNamespacePath + "/" + strings.TrimSuffix(cleanName, "/")
+		virtualPath := archiveEntry.Path + strings.TrimPrefix(strings.TrimSuffix(cleanName, "/"), archiveDirectory)
 		if file.FileInfo().IsDir() {
 			if err := addSkillDirectoryNode(nodes, virtualPath); err != nil {
 				return nil, err

@@ -190,10 +190,18 @@ describe('create agent draft model', () => {
     } as AgentApiResponse;
     const withAgent = toggleSubagent(baseDraft, agent);
     expect(withAgent.multiagent).toEqual({
-      type: 'coordinator',
-      agents: [{ type: 'agent', id: 'agent_helper', version: 3 }],
+      type: 'multiagent_20261001',
+      workflows: { type: 'disabled' },
+      advisor: { type: 'disabled' },
+      subagents: {
+        type: 'enabled',
+        inline_agents: { type: 'enabled' },
+        predefined_agents: [{ type: 'agent', id: 'agent_helper', version: 3 }],
+      },
     });
-    expect(toggleSubagent(withAgent, agent).multiagent).toBeNull();
+    expect(toggleSubagent(withAgent, agent).multiagent).toMatchObject({
+      subagents: { type: 'enabled', predefined_agents: [] },
+    });
 
     const withSkill = toggleSkill(baseDraft, {
       id: 'skill_report',
@@ -665,4 +673,17 @@ test.each([
     tools: [{ type: 'agent_toolset_20260401', configs: [{ name, max_content_tokens: budget }] }],
   });
   expect(result.success).toBe(valid);
+});
+
+test('only the reserved package metadata value accepts more than 512 UTF-8 bytes with a bounded limit', () => {
+  const key = 'quickstart_environment_packages';
+  const parse = (metadata: Record<string, string>) =>
+    createAgentDraftSchema.safeParse({ ...baseDraft, metadata }).success;
+  expect(parse({ ordinary: 'a'.repeat(513) })).toBe(false);
+  expect(parse({ ordinary: 'é'.repeat(257) })).toBe(false);
+  expect(parse({ [key]: 'x'.repeat((1 << 20) + 1) })).toBe(false);
+  expect(parse({ [key]: 'é'.repeat((1 << 19) + 1) })).toBe(false);
+  expect(parse({ [key]: 'a'.repeat(513) })).toBe(true);
+  expect(parse({ [key]: 'é'.repeat(1 << 19) })).toBe(true);
+  expect(parse({ ordinary: 'a'.repeat(512) })).toBe(true);
 });

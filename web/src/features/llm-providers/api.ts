@@ -1,8 +1,19 @@
-import { consoleApi, type ApiError } from '../../shared/api/client';
+import { consoleApi } from '../../shared/api/client';
 
 export type APIBackend = 'messages' | 'chat_completions';
 
+export type ImageInput = {
+  max_images?: number;
+  max_request_image_bytes?: number;
+  max_image_bytes?: number;
+  max_long_edge?: number;
+  max_pixels?: number;
+  tokens_per_megapixel?: number;
+};
+
 export type LLMModel = {
+  image_input?: ImageInput;
+  name?: string;
   id: string;
   context_window?: number;
   max_output_tokens?: number;
@@ -38,38 +49,42 @@ function providersPath(orgUuid: string, workspaceId: string) {
 }
 
 function organizationLLMProviderPath(orgUuid: string) {
-  return `/api/console/organizations/${encodeURIComponent(orgUuid)}/llm_provider`;
+  return `/api/console/organizations/${encodeURIComponent(orgUuid)}/llm_providers`;
 }
 
-export function getOrganizationLLMProvider(orgUuid: string) {
-  return consoleApi<LLMProvider>(organizationLLMProviderPath(orgUuid)).catch((error: unknown) => {
-    if (isMissingProvider(error)) {
-      return null;
-    }
-    throw error;
-  });
+export function listOrganizationLLMProviders(orgUuid: string) {
+  return consoleApi<LLMProvider[]>(organizationLLMProviderPath(orgUuid));
 }
 
-export function upsertOrganizationLLMProvider(orgUuid: string, input: LLMProviderInput, csrfToken?: string) {
-  return consoleApi<LLMProvider>(organizationLLMProviderPath(orgUuid), {
-    method: 'PUT',
+export function persistOrganizationLLMProvider(
+  orgUuid: string,
+  editing: LLMProvider | null,
+  input: LLMProviderInput,
+  csrfToken?: string,
+) {
+  const path = organizationLLMProviderPath(orgUuid);
+  return consoleApi<LLMProvider>(editing ? `${path}/${encodeURIComponent(editing.id)}` : path, {
+    method: editing ? 'PUT' : 'POST',
     body: JSON.stringify(input),
     csrfToken,
   });
 }
 
-export function deleteOrganizationLLMProvider(orgUuid: string, csrfToken?: string) {
-  return consoleApi<void>(organizationLLMProviderPath(orgUuid), {
+export function deleteOrganizationLLMProvider(orgUuid: string, providerId: string, csrfToken?: string) {
+  return consoleApi<void>(`${organizationLLMProviderPath(orgUuid)}/${encodeURIComponent(providerId)}`, {
     method: 'DELETE',
     csrfToken,
   });
 }
 
-export function syncOrganizationLLMProvider(orgUuid: string, csrfToken?: string) {
-  return consoleApi<LLMProvider>(`${organizationLLMProviderPath(orgUuid)}/models/sync`, {
-    method: 'POST',
-    csrfToken,
-  });
+export function syncOrganizationLLMProvider(orgUuid: string, providerId: string, csrfToken?: string) {
+  return consoleApi<LLMProvider>(
+    `${organizationLLMProviderPath(orgUuid)}/${encodeURIComponent(providerId)}/models/sync`,
+    {
+      method: 'POST',
+      csrfToken,
+    },
+  );
 }
 
 export function persistLLMProvider(
@@ -83,10 +98,6 @@ export function persistLLMProvider(
     return updateLLMProvider(orgUuid, workspaceId, editing.id, input, csrfToken);
   }
   return createLLMProvider(orgUuid, workspaceId, input, csrfToken);
-}
-
-function isMissingProvider(error: unknown): error is ApiError {
-  return Boolean(error && typeof error === 'object' && 'status' in error && (error as ApiError).status === 404);
 }
 
 export function listLLMProviders(orgUuid: string, workspaceId: string) {
@@ -165,7 +176,26 @@ export function previewSavedProviderModels(
 ) {
   const path =
     provider.scope === 'organization'
-      ? organizationLLMProviderPath(orgUuid)
+      ? `${organizationLLMProviderPath(orgUuid)}/${encodeURIComponent(provider.id)}`
       : `${providersPath(orgUuid, workspaceId)}/${encodeURIComponent(provider.id)}`;
   return consoleApi<{ models: LLMModel[] }>(`${path}/models/preview`, { method: 'POST', csrfToken });
 }
+
+export type LLMProviderPreset = {
+  order?: number;
+  id: string;
+  name: string;
+  api_backend: APIBackend;
+  base_url: string;
+  models: LLMModel[];
+};
+
+export function listProviderPresets(orgUuid: string) {
+  return consoleApi<ProviderPresetCatalog>(
+    `/api/console/organizations/${encodeURIComponent(orgUuid)}/llm_provider_presets`,
+  );
+}
+
+export type ProviderPresetCatalog = {
+  providers: LLMProviderPreset[];
+};

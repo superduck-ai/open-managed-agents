@@ -45,6 +45,18 @@ func TestDevIdentityPostgreSQL(t *testing.T) {
 		if err := store.CreateDevIdentity(ctx, input); err != nil {
 			t.Fatalf("retry after commit: %v", err)
 		}
+		recovered := input
+		extra := input.Workspaces[1]
+		extra.UUID, extra.ExternalID, extra.Name = uuid.NewV4().String(), "wrkspc_recovered", "recovered"
+		recovered.Workspaces = append(append([]AdminWorkspace(nil), input.Workspaces...), extra)
+		for range 2 {
+			if err := store.CreateDevIdentity(ctx, recovered); err != nil {
+				t.Fatalf("resume existing organization with missing workspace: %v", err)
+			}
+		}
+		if workspace, err := store.GetAdminWorkspace(ctx, input.OrganizationUUID, extra.ExternalID); err != nil || workspace.UUID != extra.UUID {
+			t.Fatalf("missing recovered workspace: %+v %v", workspace, err)
+		}
 		user, err := store.GetAdminUser(ctx, input.OrganizationUUID, input.User.ExternalID)
 		if err != nil {
 			t.Fatal(err)

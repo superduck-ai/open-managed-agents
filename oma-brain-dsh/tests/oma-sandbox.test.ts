@@ -1,6 +1,6 @@
+import { runSubagent, subagentScripts } from "./subagent-tools.ts";
 import { expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { ToolCallId } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "../src/api.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
@@ -57,6 +57,60 @@ test("sandbox tool calls disable Bun's socket idle timeout and bound the request
     expect(idleTimeouts).toEqual([false, false]);
     expect(deadlines).toHaveLength(2);
     expect(deadlines.every((signal) => !signal.aborted)).toBe(true);
+  } finally { await executor.close(); }
+});
+
+function flakySandbox(options: { failFirstPost?: boolean; holdDiscover?: Promise<void> } = {}) {
+  const requests: string[] = [];
+  let posts = 0;
+  const api = new OmaApi("http://oma.test", (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    const body = await request.json() as Payload;
+    posts++;
+    if (options.failFirstPost && posts === 1) {
+      requests.push(`503:${body.method}`);
+      return Response.json({ type: "error", error: { type: "api_error", message: "Sandbox is unavailable" } }, { status: 503 });
+    }
+    requests.push(body.method);
+    if (body.method === "server/discover") {
+      await options.holdDiscover;
+      return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }, { status: 404 });
+    }
+    if (body.method === "initialize") return Response.json({ jsonrpc: "2.0", id: body.id, result: {
+      protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "sandbox", version: "1" },
+    } });
+    if (body.method !== "tools/call") return new Response(null, { status: 202 });
+    return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } });
+  }) as typeof fetch);
+  const a = assignment(); api.assignments.set(a.session_id, a);
+  return { requests, executor: new SandboxMcp(api, a.session_id) };
+}
+
+test("a failed sandbox MCP initialization is retried by the next call", async () => {
+  const { requests, executor } = flakySandbox({ failFirstPost: true });
+  const bash = sandboxToolDefinitions().find((tool) => tool.name === "Bash")!;
+  try {
+    await expect(executor.call(bash, { command: "true" }, new AbortController().signal)).rejects.toThrow("HTTP 503");
+    expect(await executor.call(bash, { command: "true" }, new AbortController().signal)).toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(await executor.call(bash, { command: "true" }, new AbortController().signal)).toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(requests).toEqual(["503:server/discover", "server/discover", "initialize", "notifications/initialized", "tools/call", "tools/call"]);
+  } finally { await executor.close(); }
+});
+
+test("interrupting the first caller does not fail the shared sandbox MCP initialization", async () => {
+  let release!: () => void;
+  const { requests, executor } = flakySandbox({ holdDiscover: new Promise<void>((resolve) => { release = resolve; }) });
+  const bash = sandboxToolDefinitions().find((tool) => tool.name === "Bash")!;
+  const interrupted = new AbortController();
+  try {
+    const first = executor.call(bash, { command: "true" }, interrupted.signal);
+    const second = executor.call(bash, { command: "true" }, new AbortController().signal);
+    interrupted.abort(new Error("user interrupt"));
+    await expect(first).rejects.toThrow("user interrupt");
+    release();
+    expect(await second).toEqual({ content: [{ type: "text", text: "ok" }] });
+    expect(requests).toEqual(["server/discover", "initialize", "notifications/initialized", "tools/call"]);
   } finally { await executor.close(); }
 });
 
@@ -149,7 +203,7 @@ async function fixture(tools?: string[]) {
   };
 }
 
-test("children share the root provider and archiving a child preserves its executor and MCP connection", async () => {
+test("DSH child disposal preserves the root executor and MCP connection", async () => {
   const f = await fixture();
   try {
     await f.session.open();
@@ -157,22 +211,15 @@ test("children share the root provider and archiving a child preserves its execu
     expect(f.b.mcpMethods).toEqual([]);
     const provider = f.providers()[0]!;
     const executor = provider.ctx.get("sandboxExecutor");
-    f.b.modelScript = [toolEvents("child", "child_call"), textEvents("child report")];
-    const report = JSON.parse(await f.session.subagents.send({
-      name: "child", system_prompt: "Inspect files", message: "Inspect the workspace",
-    }, new AbortController().signal));
+    subagentScripts(f.b, [textEvents("received child report")], [toolEvents("child", "child_call"), textEvents("child report")]);
+    const report = await runSubagent(f.session, "subagent", { description: "child", prompt: ["Inspect files", "Inspect the workspace"].filter(Boolean).join("\n") });
     expect(report.report).toBe("child report");
+    await f.session.subagents.wait();
+    await f.session.agent.whenIdle();
     expect(f.providers()).toEqual([provider]);
-    expect(f.consumers()).toHaveLength(2);
-    for (const consumer of f.consumers()) expect(consumer.ctx.get("sandboxExecutor")).toBe(executor);
-    const agent = f.session.agent;
-    const archived = await agent.ctx.tools.execute({
-      callId: ToolCallId("archive_child"), name: "archive_agent", arguments: { thread_id: report.thread_id },
-      agent, signal: new AbortController().signal,
-    });
-    expect(archived.isError).toBe(false);
     expect(f.consumers()).toHaveLength(1);
     expect(provider.ctx.get("sandboxExecutor")).toBe(executor);
+    f.b.onModel = undefined;
     f.b.modelScript = [toolEvents("parent", "parent_call"), textEvents("done")];
     await f.session.receive("parent_input", { content: "Continue" });
     expect(f.b.executions.map((call) => call.arguments.command)).toEqual(["child", "parent"]);
@@ -219,8 +266,7 @@ test("root close keeps the provider alive until a child's tool result checkpoint
       await persist(id, ...args);
     };
     f.b.modelScript = [toolEvents("child", "draining_call"), textEvents("done")];
-    settled = f.session.subagents.send({ name: "child", system_prompt: "Test", message: "Run" },
-      new AbortController().signal).catch(() => {});
+    settled = runSubagent(f.session, "subagent", { description: "child", prompt: ["Test", "Run"].filter(Boolean).join("\n") }).catch(() => {});
     await writing.promise;
     let closed = false;
     const closing = f.session.close().then(() => { closed = true; });
@@ -293,9 +339,31 @@ test("root model requests expose only the session's enabled sandbox tools", asyn
       await f.session.receive("allowlist_input", { content: "Inspect available tools" });
       expect(f.b.requests).toHaveLength(1);
       expect((f.b.requests[0]!.tools ?? []).map((tool: { name: string }) => tool.name))
-        .toEqual([...tools, "archive_agent", "list_agents", "send_to_agent"].sort());
+        .toEqual([...tools, "interrupt_agent", "list_agents", "send_message", "skill", "subagent"].sort());
       expect(f.b.sandboxCount).toBe(0);
       expect(f.b.mcpMethods).toEqual([]);
     } finally { await f.close(); }
   }
+});
+
+test("sandbox Bash projection preserves model and public tool output", async () => {
+  const f = await fixture(["Bash"]);
+  const stdout = "exact stdout\n";
+  const metadata = { stdout, stderr: "", exit_code: 0, status: "completed", timed_out: false,
+    cancelled: false, stdout_truncated: false, stderr_truncated: false };
+  f.b.onTool = async () => ({ structuredContent: metadata, content: [
+    { type: "text", text: stdout }, { type: "text", text: JSON.stringify(metadata) },
+  ] });
+  try {
+    await f.session.open();
+    f.b.modelScript = [toolEvents("printf exact", "projected-bash"), textEvents("done")];
+    await f.session.receive("projection", { content: "Run Bash" });
+    const request = JSON.stringify(f.b.requests[1]!.messages);
+    expect(request).toContain("exact stdout");
+    expect(request).not.toContain("exit_code");
+    const results = [...f.b.publicLog.values()].flatMap(event => event.message?.content ?? [])
+      .filter(block => block.type === "tool_result" && block.tool_use_id === "projected-bash");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.content).toEqual([{ type: "text", text: stdout }]);
+  } finally { await f.close(); }
 });

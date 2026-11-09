@@ -927,7 +927,7 @@ func TestEnvironmentRunnerInstallsManagedAgentCustomSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load skill session runtime: %v", err)
 	}
-	queued, err := app.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, provider.sandboxID, errors.New("sandbox removed"))
+	queued, err := app.db.ScheduleEnvironmentSandboxRecoveryForCodeSession(ctx, codeSession.ExternalID, provider.sandboxID, errors.New("sandbox removed"), "")
 	if err != nil || !queued {
 		t.Fatalf("queue skill session recovery = (%t, %v)", queued, err)
 	}
@@ -1374,6 +1374,10 @@ func (p *recordingRunnerProvider) Create(_ context.Context, _ db.Environment, wo
 		})
 	}
 	return e2bruntime.Sandbox{ID: p.sandboxID}, nil
+}
+
+func (p *recordingRunnerProvider) SetTimeout(context.Context, string, time.Duration) error {
+	return nil
 }
 
 func (p *recordingRunnerProvider) Kill(_ context.Context, sandboxID string) error {

@@ -129,6 +129,7 @@ JetStream。这样输入若先于回收领取提交，候选会失效；直接�
 - 删除完成后收到输入：正常消息入口找不到 running 沙箱时调用同一恢复方法。空 Provider ID 只允许
   匹配 `stopped + idle_timeout` 且 `idle_since IS NULL` 的沙箱，不能恢复任意缺失目标。
 - 恢复沿用现有路径：旧沙箱记录标为 failed，Work 改为 queued，Runner 复用 Code Session 并创建新沙箱。
+- 启动失败清理必须按该次启动的 `worker_epoch` 原子终止 Code Session。恢复已轮转 epoch 时，旧启动清理不修改状态、凭据或 Worker 事件队列；只有匹配 epoch 的活动实例实际被终止后才清理队列。若清理先完成，恢复不能重新激活已终止的 Code Session。
   `stop_reason=idle_timeout` 保留原回收原因。旧记录被退役后不能再次重排新 Work。
 - 对仍为 running 的沙箱，正常消息入口的 SetTimeout、worker lease 恢复和 Provider not-found 处理保持不变。
 
@@ -205,3 +206,26 @@ sweep 对每页至多 100 个候选过滤策略后，通过 River `InsertMany` �
 解除阻塞后，即使原归档请求已经结束，即时删除仍将沙箱写为 stopped。
 失败路径验证归档成功、stopping 状态保留、重试任务持久化及再次归档通过 Provider 404 完成删除。
 并发测试强制即时删除与后台回收同时到达 Provider，以 204/404 返回检查双方收敛为 stopped。
+
+## Sandbox 准备阶段的租约
+
+Provider 的存活 TTL、Work 的 heartbeat 和 Code Session 的 Worker lease 是独立租约。准备包、文件系统与 Manager 时 Sandbox 仍为 `creating`，不能依赖仅选择 `running` Sandbox 的 Worker heartbeat 来保活；prewarm 也可能早于 Worker 启动。
+
+Runner 成功创建 Provider Sandbox 后，立即保存 Provider ID，并为本次 Sandbox UUID 启动准备期租约。首次续租同步成功后才执行准备 I/O，后续间隔为原 Provider TTL 的三分之一，每次仍续原 TTL，不延长包准备、MCP readiness 或公开按需准备的 timeout。每次续租重新检查同一 Work、未终止/归档/删除的 Session、当前 pending Sandbox UUID 和 Provider ID，以及 `creating`/`running` 状态。网络调用在数据库事务外执行，保留已有多租户与 UUID 查询边界。
+
+租约只归当前创建调用持有，不由扫描器或其他 Worker 为所有 `creating` 记录保活。完成准备后停止并等待 goroutine 退出，运行态续租仍由既有 Worker 策略负责；idle/requires_action 的保活策略不变。同步准备 I/O（包括包准备、文件写入和 readiness）使用有准备 deadline 的上下文。rclone 与 Manager 后台启动使用从调用方父上下文派生的独立运行上下文，在整个准备阶段通过取消回调关联准备上下文；准备失败、续租错误、owner 失效或 deadline 到期会终止尚在启动以及已提交的后台命令，并保留既有 Sandbox 失败清理。只有全部准备与 runtime metadata 发布成功后才解除该关联，随后停止准备续租不取消已启动命令，准备 deadline 也不再作用于它们。父上下文取消始终有效，不使用 `WithoutCancel` 脱离调用方生命周期。交接前已观察到准备取消时拒绝交接；失败退出取消运行上下文，成功退出保留到父上下文结束。 已发布的非恢复 Managed Code Session 在交接失败时先使用独立有界清理上下文终止，再执行一次 Sandbox/Work 失败清理；恢复启动保留原 Code Session 和 durable queue，仅清理本次 Sandbox 并沿用可恢复重排策略。请求取消、续租错误、owner 状态失效或 attempt 被替换会取消准备上下文。单次续租时限不超过一个续租周期，不重试至 Provider TTL 被静默耗尽。
+
+准备 owner 还受 Sandbox 创建起既有三分钟 pending 年龄上限约束；按需入口已有的150秒上限更短时继续优先。进程退出会失去本地租约，Provider TTL 自然停止保活；以后请求发现超龄 pending attempt 时，通过既有失败清理/可恢复 Work 重排路径退役旧 attempt，而不是无限等待。取消后的失败落库使用独立有界清理上下文，不能因请求已经取消而遗留 `creating`；旧 attempt 的清理先对旧记录单独持久化 failed、原因与停止时间，再清理其独立 Provider；不能停止或重排已被新 attempt 接管的 Work，也不能删除 replacement 的 Provider ID。若两条记录共享 Provider ID，只退役旧记录，不删除该 Provider。旧记录落库失败时记录错误并停止本次清理，不先 Kill 制造仍为 creating 的孤儿记录。
+
+```mermaid
+flowchart LR
+    C[Provider 创建成功] --> I[立即登记 Provider ID]
+    I --> L[Runner 首次续租]
+    L --> P[包 / 文件系统 / Manager 准备]
+    P --> R[就绪并停止准备租约]
+    R --> W[既有 Worker 运行态续租]
+    L -->|失败| F[有界失败清理]
+    P -->|取消 / owner 失效 / 超龄| F
+```
+
+replacement 回归明确构造旧行仍为 creating 的场景，不先将其标为 failed，并分别检查不同和共享 Provider ID。回归用隔离 PostgreSQL schema 驱动真实 Runner 准备路径，验证短 TTL 下超过 TTL 的准备过程实际续期；虚拟时间测试原30秒 TTL 下准备75秒、续租错误、取消、截止与 handoff。普通回归使用对 context 敏感的 Provider 覆盖 rclone 真实文件系统启动链和 Manager 后台启动合同：成功交接后停止续租并跨越准备 deadline 不终止后台命令，父取消仍终止；准备过程中父取消、续租失败和 deadline 到期打断阻塞启动；后续准备失败及已取消 owner 拒绝交接并终止已启动命令。CI Docker Provider 保留原 `CommandContext` 行为，不通过修改 fixture 隐藏失败。终止、归档、替换、取消清理和超龄 attempt 退役单独检查。受控准备测试不证明真实包源、pandas 安装或 import 成功，后者仍由新 SHA 的独立黑盒验收。

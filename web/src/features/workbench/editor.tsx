@@ -1,3 +1,5 @@
+import { useI18n } from '../../shared/i18n';
+import { DialogClose } from '@/shared/ui/dialog';
 import {
   FileText,
   Image as ImageIcon,
@@ -41,6 +43,7 @@ import { WorkbenchMessage } from './api';
 import {
   messageAttachments,
   messageText,
+  promptGeneratorWarningLabel,
   splitVariableText,
   WorkbenchAttachmentKind,
   WorkbenchPromptGeneratorWarning,
@@ -163,9 +166,10 @@ export function SystemPromptEditableInput({
   onChange: (text: string) => void;
   isReadOnly?: boolean;
 }) {
+  const { msg } = useI18n();
   return (
     <TiptapTextInput
-      ariaLabel="System prompt"
+      ariaLabel={msg('workbench.systemInput', 'System prompt')}
       text={text}
       onChange={onChange}
       className="workbench-system-editor"
@@ -187,9 +191,10 @@ export function MessageEditableInput({
   onChange: (index: number, text: string) => void;
   isReadOnly?: boolean;
 }) {
+  const { msg } = useI18n();
   return (
     <TiptapTextInput
-      ariaLabel={`${label} prompt ${index + 1}`}
+      ariaLabel={msg('workbench.messageInput', '{label} prompt {index}', { label, index: index + 1 })}
       text={text}
       onChange={(nextText) => onChange(index, nextText)}
       className="workbench-message-textarea"
@@ -233,8 +238,9 @@ export function MessageEditor({
   isUploading?: boolean;
   uploadError?: string | null;
 }) {
-  const label = message.role === 'assistant' ? 'Assistant' : 'User';
-  const removalLabel = messageRemovalLabel(messages, index, label);
+  const { msg } = useI18n();
+  const label = message.role === 'assistant' ? msg('workbench.assistant', 'Assistant') : msg('workbench.user', 'User');
+  const removalLabel = messageRemovalLabel(messages, index, label, msg);
   const imageUploadInputRef = useRef<HTMLInputElement | null>(null);
   const pdfUploadInputRef = useRef<HTMLInputElement | null>(null);
   const replacementBlockIndexRef = useRef<number | null>(null);
@@ -386,8 +392,8 @@ export function MessageEditor({
                           type="button"
                           variant="ghost"
                           size="icon"
-                          aria-label="Upload up to 100 files, 20MB per file."
-                          title="Upload up to 100 files, 20MB per file."
+                          aria-label={msg('workbench.uploadLimit', 'Upload up to 100 files, 20MB per file.')}
+                          title={msg('workbench.uploadLimit', 'Upload up to 100 files, 20MB per file.')}
                           aria-expanded={attachmentMenuOpen}
                           className={clsx('workbench-attachment-trigger', attachmentMenuOpen && 'is-open')}
                           disabled={isUploading || isReadOnly}
@@ -401,7 +407,7 @@ export function MessageEditor({
                       )}
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
-                      aria-label="Attachment type"
+                      aria-label={msg('workbench.attachmentType', 'Attachment type')}
                       align="end"
                       side="bottom"
                       sideOffset={8}
@@ -409,7 +415,7 @@ export function MessageEditor({
                     >
                       <AttachmentTypeSubmenu
                         kind="image"
-                        label="Image"
+                        label={msg('workbench.image', 'Image')}
                         onUpload={openUploadPicker}
                         onAddUrl={openUrlDialog}
                       />
@@ -434,8 +440,8 @@ export function MessageEditor({
         {message.role === 'human' ? (
           <div className="workbench-message-drop-target" aria-hidden={!isDragOver}>
             <Paperclip className="size-4" aria-hidden />
-            <span>Drop here to insert into user message</span>
-            <small>Max 100 files at 20MB each</small>
+            <span>{msg('workbench.dropFiles', 'Drop here to insert into user message')}</span>
+            <small>{msg('workbench.uploadLimit', 'Upload up to 100 files, 20MB per file.')}</small>
           </div>
         ) : null}
         <div
@@ -450,8 +456,8 @@ export function MessageEditor({
             <MessageEditorPlaceholder
               placeholder={
                 isFirstUserMessage
-                  ? 'or enter instructions or prompt for Claude…'
-                  : 'Enter instructions or prompt for Claude…'
+                  ? msg('workbench.firstMessagePlaceholder', 'or enter instructions or prompt for Claude…')
+                  : msg('workbench.messagePlaceholder', 'Enter instructions or prompt for Claude…')
               }
               showGeneratePrompt={isFirstUserMessage}
               warning={promptGeneratorWarning}
@@ -472,7 +478,7 @@ export function MessageEditor({
                       type="button"
                       variant="ghost"
                       size="icon-xs"
-                      aria-label={`Add value for ${part.name}`}
+                      aria-label={msg('workbench.addVariableValue', 'Add value for {name}', { name: part.name })}
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => onVariableClick(part.name)}
                     >
@@ -490,7 +496,10 @@ export function MessageEditor({
           <MessageEditableInput label={label} index={index} text={text} onChange={onChange} isReadOnly={isReadOnly} />
         </div>
         {attachments.length ? (
-          <div className="workbench-message-attachments" aria-label={`${label} prompt attachments`}>
+          <div
+            className="workbench-message-attachments"
+            aria-label={msg('workbench.messageAttachments', '{label} prompt attachments', { label })}
+          >
             {attachments.map((attachment) => (
               <div key={attachment.id} className="workbench-message-attachment">
                 <span className="workbench-message-attachment-thumb" aria-hidden>
@@ -502,7 +511,7 @@ export function MessageEditor({
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    aria-label={`Preview ${attachment.label}`}
+                    aria-label={msg('workbench.previewAttachment', 'Preview {name}', { name: attachment.label })}
                     disabled
                   >
                     <Search className="size-3.5" aria-hidden />
@@ -511,7 +520,7 @@ export function MessageEditor({
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    aria-label={`Replace ${attachment.label}`}
+                    aria-label={msg('workbench.replaceAttachment', 'Replace {name}', { name: attachment.label })}
                     disabled={isUploading || isReadOnly}
                     onClick={() =>
                       openUploadPicker(attachment.kind === 'image' ? 'image' : 'pdf', attachment.blockIndex)
@@ -523,7 +532,7 @@ export function MessageEditor({
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    aria-label={`Remove ${attachment.label}`}
+                    aria-label={msg('workbench.removeAttachment', 'Remove {name}', { name: attachment.label })}
                     disabled={isReadOnly}
                     onClick={() => onRemoveFile(index, attachment.blockIndex)}
                   >
@@ -560,6 +569,7 @@ export function AttachmentTypeSubmenu({
   onUpload: (kind: WorkbenchAttachmentKind) => void;
   onAddUrl: (kind: WorkbenchAttachmentKind) => void;
 }) {
+  const { msg } = useI18n();
   const TypeIcon = kind === 'image' ? ImageIcon : FileText;
   return (
     <DropdownMenuSub>
@@ -567,20 +577,23 @@ export function AttachmentTypeSubmenu({
         <TypeIcon className="size-4" aria-hidden />
         <span>{label}</span>
       </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent aria-label={`${kind} attachment source`} className="min-w-[188px] rounded-xl p-1.5">
+      <DropdownMenuSubContent
+        aria-label={msg('workbench.attachmentSource', '{kind} attachment source', { kind: label })}
+        className="min-w-[188px] rounded-xl p-1.5"
+      >
         <DropdownMenuItem
           className="min-h-9 gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium"
           onClick={() => onUpload(kind)}
         >
           <Upload className="size-4" aria-hidden />
-          <span>Upload from device</span>
+          <span>{msg('workbench.uploadFromDevice', 'Upload from device')}</span>
         </DropdownMenuItem>
         <DropdownMenuItem
           className="min-h-9 gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium"
           onClick={() => onAddUrl(kind)}
         >
           <Link2 className="size-4" aria-hidden />
-          <span>Add from URL</span>
+          <span>{msg('workbench.addFromUrl', 'Add from URL')}</span>
         </DropdownMenuItem>
       </DropdownMenuSubContent>
     </DropdownMenuSub>
@@ -600,11 +613,15 @@ export function AttachmentUrlDialog({
   onSubmit: () => void;
   onClose: () => void;
 }) {
+  const { msg } = useI18n();
+  const urlInputRef = useRef<HTMLInputElement>(null);
   const isImage = kind === 'image';
-  const title = isImage ? 'Add an image via URL' : 'Add a PDF via URL';
+  const title = isImage
+    ? msg('workbench.addImageUrl', 'Add an image via URL')
+    : msg('workbench.addPdfUrl', 'Add a PDF via URL');
   const placeholder = isImage ? 'https://example.com/image.jpg' : 'https://example.com/document.pdf';
   return (
-    <Dialog title={title} onClose={onClose} size="attachmentUrl">
+    <Dialog title={title} initialFocus={urlInputRef} onClose={onClose} size="attachmentUrl">
       <form
         className="grid gap-4"
         onSubmit={(event) => {
@@ -615,20 +632,20 @@ export function AttachmentUrlDialog({
         <Label className="grid gap-2 text-foreground">
           <span>URL</span>
           <Input
+            ref={urlInputRef}
             type="text"
             value={url}
             placeholder={placeholder}
             className="h-9 bg-secondary"
-            autoFocus
             onChange={(event) => setUrl(event.currentTarget.value)}
           />
         </Label>
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
+          <DialogClose render={<Button type="button" variant="outline" />}>
+            {msg('common.cancel', 'Cancel')}
+          </DialogClose>
           <Button type="submit" disabled={!url.trim()}>
-            Add
+            {msg('common.add', 'Add')}
           </Button>
         </div>
       </form>
@@ -651,19 +668,24 @@ export function MessageEditorPlaceholder({
   isGenerating: boolean;
   onShowPromptGenerator?: () => void;
 }) {
+  const { msg } = useI18n();
   const disabled = isReadOnly || isGenerating || Boolean(warning);
   return (
     <div className={clsx('workbench-message-placeholder', showGeneratePrompt && 'has-generator')}>
       {showGeneratePrompt ? (
-        <span className="workbench-generate-prompt-tooltip" title={warning?.title}>
+        <span
+          className="workbench-generate-prompt-tooltip"
+          title={warning ? promptGeneratorWarningLabel(warning, msg) : undefined}
+        >
           <Button
             type="button"
             variant="ghost"
             className="workbench-generate-prompt-button"
             disabled={disabled}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
+            onClick={(event) => {
               if (!disabled) {
+                event.currentTarget.focus();
                 onShowPromptGenerator?.();
               }
             }}
@@ -673,7 +695,7 @@ export function MessageEditorPlaceholder({
             ) : (
               <Sparkles className="size-4" aria-hidden />
             )}
-            <span>Generate Prompt</span>
+            <span>{msg('workbench.generatePrompt', 'Generate Prompt')}</span>
           </Button>
         </span>
       ) : null}
@@ -684,12 +706,23 @@ export function MessageEditorPlaceholder({
   );
 }
 
-export function messageRemovalLabel(messages: WorkbenchMessage[], index: number, label: string) {
+export function messageRemovalLabel(
+  messages: WorkbenchMessage[],
+  index: number,
+  label: string,
+  msg?: ReturnType<typeof useI18n>['msg'],
+) {
   const [startIndex, endIndex] = messageRemovalRange(messages, index);
   if (endIndex > startIndex) {
-    return 'Delete both to maintain user & assistant alternation';
+    return (
+      msg?.('workbench.removeMessagePair', 'Delete both to maintain user & assistant alternation') ??
+      'Delete both to maintain user & assistant alternation'
+    );
   }
-  return `Remove ${label.toLowerCase()} message`;
+  return (
+    msg?.('workbench.removeMessage', 'Remove {label} message', { label: label.toLowerCase() }) ??
+    `Remove ${label.toLowerCase()} message`
+  );
 }
 
 export function messageRemovalRange(messages: WorkbenchMessage[], index: number): [number, number] {

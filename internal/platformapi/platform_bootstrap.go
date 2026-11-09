@@ -14,11 +14,15 @@ type bootstrapAccountStore interface {
 	ListBootstrapOrganizationsByEmail(ctx context.Context, email string) ([]UserOrganizationRecord, error)
 }
 
-func handleBootstrap(store OrganizationStore) http.HandlerFunc {
+type PlatformAccessResolver func(context.Context, platformsession.Session) (PlatformAccess, error)
+
+func handleBootstrap(store OrganizationStore, resolveAccess PlatformAccessResolver) http.HandlerFunc {
 	bootstrapStore, _ := store.(bootstrapAccountStore)
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		orgUUID := ""
 		var account *Account
+		platformAccess := PlatformAccess{Permissions: []string{}}
 		if session, ok := platformsession.SessionFromContext(r.Context()); ok && bootstrapStore != nil {
 			built, selectedOrgUUID, err := buildBootstrapAccount(r.Context(), bootstrapStore, session)
 			if err != nil {
@@ -27,8 +31,32 @@ func handleBootstrap(store OrganizationStore) http.HandlerFunc {
 			}
 			account = &built
 			orgUUID = selectedOrgUUID
+			if resolveAccess != nil {
+				platformAccess, err = resolveAccess(r.Context(), session)
+				if err != nil {
+					platformAccessUnavailable(w)
+					return
+				}
+			}
+		}
+		var organizationAccess *OrganizationAccess
+		if principal, ok := auth.PrincipalFromContext(r.Context()); ok && principal.OrganizationUUID != "" {
+			getter, available := store.(platformOrganizationGetter)
+			if !available {
+				internalError(w, "failed to load current organization")
+				return
+			}
+			organization, err := getter.GetPlatformOrganization(r.Context(), principal.OrganizationUUID)
+			if err != nil || organization == nil {
+				internalError(w, "failed to load current organization")
+				return
+			}
+			orgUUID = organization.UUID
+			organizationAccess = &OrganizationAccess{Source: principal.OrganizationAccessSource, Organization: OrganizationAccessOrganization{UUID: organization.UUID, Name: organization.Name}, OrganizationRole: principal.WorkspaceAccess.OrganizationRole, WorkspaceRole: principal.WorkspaceAccess.Role}
 		}
 		response := buildBootstrapCompatibilityResponse(account, orgUUID != "", bootstrapGrowthbookHashingAlgorithm(r))
+		response.PlatformAccess = platformAccess
+		response.OrganizationAccess = organizationAccess
 		if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
 			response.CurrentUserAccess = buildCurrentUserAccess(principal.WorkspaceAccess)
 			if account != nil {

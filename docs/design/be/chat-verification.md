@@ -13,7 +13,7 @@ CLI 实现在 `cmd/verify-be`，Skill 中的 shell 入口只负责构建和执�
 不修改生产 API、数据库 schema 或状态机。
 
 除 `chat.public` 和 `chat.upstream-errors` 外，Session/CodeSession 通过现有 liveworker 夹具准备并 activation。
-隔离后端关闭后台 Runner，避免竞争 Worker。上述两个公开场景通过公开 API 创建 Session，
+隔离后端关闭后台 Runner，避免竞争 Worker。固定模型夹具首次准备时要求工作区 provider 目录为空；同一测试进程只有在已记录的本次创建 ID 与目录完全匹配时才可复用。发现其他已有 provider 时立即停止，不因名称相同而复用，也不更新或删除预存配置。夹具只清理本次创建的 provider。该边界使用进程内 HTTP fake 测试，不需要真实 Worker 或外部存储。上述两个公开场景通过公开 API 创建 Session，
 由实际 Runner 驱动本地 Docker Provider 分配沙箱、启动真实文件系统挂载和 environment-manager。
 本版不验证云平台分配 API、自动云端故障检测、浏览器渲染或真实模型决策。
 
@@ -249,3 +249,12 @@ CI 进一步要求该提交等于 PR base SHA。编排单测覆盖配置隔离�
 证据流。stderr 仅用于本地诊断，不加入 CI 上传产物，也不替代测试退出码与阶段断言。
 
 基线夹具的 Go overlay 仅替换对应 Mapper 中基线已有的 SQL builder 与行扫描函数，保留当前生成接口实现及新增方法。这样旧数据库沿用原 SQL，当前夹具仍可编译；不能整文件替换生成 Mapper，否则新增接口方法（例如 `SetBudgetReached`）会造成基线在编译阶段失败。overlay 不修改基线源码、迁移或被测二进制，也不放宽负载断言与性能阈值。
+
+
+Session 固定目录的基线写入单独适配：`session_resource_mapper` 仅替换
+`buildSessionResourceMapperInsertDirectory`，保留当前 Resource scanner 和其他资源 SQL。
+当前 `DB.CreateSession` 即使没有附加资源也会创建五个固定目录；旧基线 schema 尚无
+`file_ownership`，因此不能使用候选版本的目录 INSERT。指定 builder 在当前或基线生成文件中
+缺失，或文件路径不可读时，夹具准备直接失败，不静默回退。该适配不向基线数据库应用候选迁移。
+非性能兼容烟测只调用 `DB.CreateSession`，核对固定目录、stopped work 与旧 schema；
+它不启动 Worker、不采样，也不替代 CI 的完整基线测量和候选比较。

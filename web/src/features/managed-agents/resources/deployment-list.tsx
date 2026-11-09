@@ -1,3 +1,4 @@
+import { productIcons } from '@/shared/icons/product-icons';
 import { CalendarDays, Hand, Search } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { ResourceListState } from '../../../shared/ui/resource-list-state';
@@ -34,7 +35,7 @@ export function DeploymentTriggerCell({ deployment }: { deployment: DeploymentAp
     : msg('managedAgents.deployments.trigger.manual', 'Manual');
   const Icon = scheduled ? CalendarDays : Hand;
   return (
-    <div className="flex min-w-0 items-start gap-2" title={scheduled ? `${expression} · ${timezone}` : undefined}>
+    <div className="flex min-w-0 items-start gap-2" title={scheduled ? `${expression} (${timezone})` : undefined}>
       <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
       <div className="min-w-0">
         <div className="truncate">{triggerLabel}</div>
@@ -48,7 +49,7 @@ export function DeploymentEmptyState({ filtered }: { filtered: boolean }) {
   const { msg } = useI18n();
   return (
     <ResourceListState
-      icon={filtered ? Search : CalendarDays}
+      icon={filtered ? Search : productIcons.deployments}
       title={
         filtered
           ? msg('managedAgents.deployments.noMatches', 'No matching deployments')
@@ -57,10 +58,7 @@ export function DeploymentEmptyState({ filtered }: { filtered: boolean }) {
       body={
         filtered
           ? msg('managedAgents.deployments.noMatchesHelp', 'Try another name or adjust your filters.')
-          : msg(
-              'managedAgents.deployments.emptyBody',
-              'Create a deployment to bind an agent to credentials, an environment, and a schedule.',
-            )
+          : undefined
       }
     />
   );

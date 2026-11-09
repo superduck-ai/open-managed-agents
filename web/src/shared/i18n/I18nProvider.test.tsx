@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { createIntl, createIntlCache } from 'react-intl';
 import { resetTestDom } from '../../test/setup';
 import { I18nProvider, normalizeLocale, readLocale, useI18n, useLocale } from './index';
 import enMessages from './messages/en.json';
@@ -6,6 +7,9 @@ import zhCnMessages from './messages/zh-CN.json';
 
 const testingLibrary = await import('@testing-library/react');
 const { cleanup, fireEvent, render, screen } = testingLibrary;
+
+const catalogIntl = createIntl({ locale: 'en', messages: {} }, createIntlCache());
+type IcuMessageAst = ReturnType<ReturnType<typeof catalogIntl.formatters.getMessageFormat>['getAst']>;
 
 const navigatorLanguagesDescriptor = Object.getOwnPropertyDescriptor(window.navigator, 'languages');
 
@@ -74,6 +78,18 @@ describe('i18n catalogs', () => {
     }
   });
 
+  test('distinguishes plural branch text from arguments and includes nested arguments', () => {
+    expect(extractIcuParams('{action} {count, plural, one {environment} other {# environments}}?')).toEqual([
+      'action',
+      'count',
+    ]);
+    expect(extractIcuParams('{count, plural, one {{name}} other {{owner} has # items}}')).toEqual([
+      'count',
+      'name',
+      'owner',
+    ]);
+  });
+
   test('keeps ICU parameter names consistent across translations', () => {
     for (const [key, defaultMessage] of Object.entries(enMessages as Record<string, string>)) {
       expect(extractIcuParams((zhCnMessages as Record<string, string>)[key] ?? '')).toEqual(
@@ -98,5 +114,16 @@ function LocaleProbe() {
 }
 
 function extractIcuParams(message: string) {
-  return Array.from(message.matchAll(/\{([a-zA-Z][\w]*)[,}]/g), (match) => match[1]).sort();
+  const params = new Set<string>();
+  const visit = (elements: IcuMessageAst) => {
+    for (const element of elements) {
+      if (element.type !== 0 && 'value' in element) params.add(element.value);
+      if ('options' in element) {
+        for (const option of Object.values(element.options)) visit(option.value);
+      }
+      if ('children' in element) visit(element.children);
+    }
+  };
+  visit(catalogIntl.formatters.getMessageFormat(message, 'en').getAst());
+  return [...params].sort();
 }

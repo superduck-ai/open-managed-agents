@@ -6,8 +6,15 @@ description: "上传文件并将其挂载到您的沙盒中以进行读取和处
 
 您可以通过文件 API 上传文件并将其挂载到会话的沙盒中，从而向您的智能体提供文件。
 
+文件资源需要受支持的云沙箱；自托管环境当前不支持文件资源。以下 cURL 示例使用 Bash、`jq`，并沿用[认证](/docs/zh/api/authentication)中设置的 `OMA_BASE_URL` 和 `OMA_API_KEY`：
+
+```bash
+base_url="${OMA_BASE_URL%/}/v1"
+auth=(-H "x-api-key: $OMA_API_KEY")
+```
+
 <Note>
-  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+  各资源的 Beta 要求不同，请参阅[版本与 Beta 功能](/docs/zh/api/versioning-beta)，并确认 SDK 向 OMA 发送了所需参数。
 </Note>
 
 ## 上传文件
@@ -331,7 +338,7 @@ description: "上传文件并将其挂载到您的沙盒中以进行读取和处
   ```
 </CodeGroup>
 
-每个会话最多支持 500 个文件。
+每个会话最多可附加 500 个输入文件资源；生成的输出文件不属于这一输入资源限制。
 
 ## 在运行中的会话上管理文件
 
@@ -537,140 +544,23 @@ description: "上传文件并将其挂载到您的沙盒中以进行读取和处
 
 ## 列出和下载会话文件
 
-使用 [文件 API](/docs/zh/api/files/list-files) 列出限定于某个会话的文件并下载它们。
+使用 [文件 API](/docs/zh/api/files/list-files) 按 `scope_id` 列出会话文件。列表可能同时包含输入文件和生成的输出；上传的输入文件不可下载，下载前应检查文件的 `downloadable` 字段。会话生成的文件需写入 `/mnt/session/outputs/` 才能进入可下载文件列表。
 
-<CodeGroup>
-  ```bash cURL
-  # 列出与某个会话关联的文件
-  curl -fsSL "http://localhost:38080/v1/files?scope_id=sesn_abc123" \
-    -H "x-api-key: $OMA_API_KEY" \
-    -H "anthropic-version: 2023-06-01" \
-    -H "anthropic-beta: managed-agents-2026-04-01"
+以下示例下载当前页第一个可下载文件；如果需要其他文件，请按 `id` 或 `filename` 选择。设置 `SESSION_ID`，并按[认证](/docs/zh/api/authentication)配置 `OMA_BASE_URL` 和 `OMA_API_KEY`。
 
-  # 下载文件
-  curl -fsSL "http://localhost:38080/v1/files/$FILE_ID/content" \
-    -H "x-api-key: $OMA_API_KEY" \
-    -H "anthropic-version: 2023-06-01" \
-    -H "anthropic-beta: managed-agents-2026-04-01" \
-    -o output.txt
-  ```
+```bash
+files=$(curl -sS --fail-with-body --get "$OMA_BASE_URL/v1/files" \
+  -H "x-api-key: $OMA_API_KEY" \
+  --data-urlencode "scope_id=$SESSION_ID")
+printf '%s\n' "$files" | jq '.data[] | {id, filename, downloadable}'
+file_id=$(printf '%s\n' "$files" | jq -r '[.data[] | select(.downloadable == true)][0].id // empty')
+if [ -n "$file_id" ]; then
+  curl -sS --fail-with-body "$OMA_BASE_URL/v1/files/$file_id/content" \
+    -H "x-api-key: $OMA_API_KEY" -o output
+fi
+```
 
-  ```bash CLI
-  # 列出与某个会话关联的文件
-  ant beta:files list --scope-id sesn_abc123 \
-    --beta managed-agents-2026-04-01
-
-  # 下载文件
-  ant beta:files download --file-id "$FILE_ID" --output output.txt
-  ```
-
-  ```python Python
-  # 列出与某个会话关联的文件
-  files = client.beta.files.list(
-      scope_id="sesn_abc123",
-      betas=["managed-agents-2026-04-01"],
-  )
-  for file in files:
-      print(file.id, file.filename)
-
-  # 下载文件
-  content = client.beta.files.download(files.data[0].id)
-  content.write_to_file("output.txt")
-  ```
-
-  ```typescript TypeScript
-  // 列出与某个会话关联的文件
-  const files = await client.beta.files.list({
-    scope_id: "sesn_abc123",
-    betas: ["managed-agents-2026-04-01"]
-  });
-  for (const file of files.data) {
-    console.log(file.id, file.filename);
-  }
-
-  // 下载文件
-  const content = await client.beta.files.download(files.data[0].id);
-  await content.writeToFile("output.txt");
-  ```
-
-  ```csharp C#
-  // 列出与某个会话关联的文件
-  var files = await client.Beta.Files.List(new FileListParams
-  {
-      ScopeID = "sesn_abc123",
-      Betas = ["managed-agents-2026-04-01"],
-  });
-
-  // 下载文件
-  byte[] content = await client.Beta.Files.Download(files.Data[0].ID);
-  await File.WriteAllBytesAsync("output.txt", content);
-  ```
-
-  ```go Go
-  // 列出与某个会话关联的文件
-  files, err := client.Beta.Files.List(ctx, anthropic.BetaFileListParams{
-      ScopeID: anthropic.String("sesn_abc123"),
-      Betas:   []anthropic.AnthropicBeta{"managed-agents-2026-04-01"},
-  })
-  if err != nil {
-      panic(err)
-  }
-
-  // 下载文件
-  resp, err := client.Beta.Files.Download(ctx, files.Data[0].ID, anthropic.BetaFileDownloadParams{})
-  if err != nil {
-      panic(err)
-  }
-  defer resp.Body.Close()
-  out, err := os.Create("output.txt")
-  if err != nil {
-      panic(err)
-  }
-  defer out.Close()
-  if _, err := io.Copy(out, resp.Body); err != nil {
-      panic(err)
-  }
-  ```
-
-  ```java Java
-  // 列出与某个会话关联的文件
-  var files = client.beta().files().list(FileListParams.builder()
-      .scopeId("sesn_abc123")
-      .addBeta(AnthropicBeta.of("managed-agents-2026-04-01"))
-      .build());
-
-  // 下载文件
-  try (HttpResponse response = client.beta().files().download(files.data().get(0).id())) {
-      try (InputStream body = response.body()) {
-          Files.copy(body, Path.of("output.txt"), StandardCopyOption.REPLACE_EXISTING);
-      }
-  }
-  ```
-
-  ```php PHP
-  // 列出与某个会话关联的文件
-  $files = $client->beta->files->list(
-      scopeID: 'sesn_abc123',
-      betas: ['managed-agents-2026-04-01'],
-  );
-
-  // 下载文件
-  $content = $client->beta->files->download($files->data[0]->id);
-  file_put_contents('output.txt', $content);
-  ```
-
-  ```ruby Ruby
-  # 列出与会话关联的文件
-  files = client.beta.files.list(
-    scope_id: "sesn_abc123",
-    betas: ["managed-agents-2026-04-01"]
-  )
-
-  # 下载文件
-  content = client.beta.files.download(files.data[0].id)
-  File.binwrite("output.txt", content.read)
-  ```
-</CodeGroup>
+若当前页没有可下载文件，可使用 `next_page` 继续查询，详见[分页](/docs/zh/api/pagination)。
 
 ## 支持的文件类型
 

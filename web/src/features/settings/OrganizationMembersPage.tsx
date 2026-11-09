@@ -1,6 +1,6 @@
-import { createColumnHelper, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import { RoleSelect } from '../../shared/permissions/RoleSelect';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, MoreVertical, Plus, Send, Trash2, Users } from 'lucide-react';
+import { AlertCircle, MoreVertical, Plus, Send, Trash2 } from 'lucide-react';
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   AlertDialog,
@@ -16,7 +16,6 @@ import { Alert, AlertDescription, AlertTitle } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
-import { ResourceListState } from '../../shared/ui/resource-list-state';
 import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 import type { ApiError } from '../../shared/api/client';
 import { useI18n } from '../../shared/i18n';
@@ -27,25 +26,17 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown-menu';
 import { Label } from '../../shared/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { Textarea } from '../../shared/ui/textarea';
-import { Skeleton } from '../../shared/ui/skeleton';
 import { toast } from '../../shared/ui/sonner';
 import { useAuth } from '../../shared/auth/context';
+import { useWorkspace } from '../../shared/workspaces/context';
+import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { notifyInvitationDelivery } from './invitationDelivery';
 import { MembersAccessDenied } from './MembersAccessDenied';
 import { canManageMembers, canViewMembers } from '../../shared/permissions/members';
-import {
-  platformRoleDescription,
-  platformRoleLabel,
-  roleOptions,
-  type PlatformRole,
-} from '../../shared/permissions/roles';
-import { useWorkspace } from '../../shared/workspaces/context';
-import { MemberDirectoryFilters } from './MemberDirectoryFilters';
+import { roleOptions, type PlatformRole } from '../../shared/permissions/roles';
+import { OrganizationMemberList } from './OrganizationMemberList';
 import { OrganizationMemberRemoval } from './OrganizationMemberRemoval';
-import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import {
   createOrganizationInvite,
   deleteOrganizationInvite,
@@ -60,8 +51,6 @@ import {
 type OrganizationMemberRow = OrganizationMember | OrganizationInvite;
 type InviteValidationError = { type: 'invalid-email'; emails: string[] } | { type: 'too-many' };
 
-const memberColumnHelper = createColumnHelper<OrganizationMemberRow>();
-
 export function OrganizationMembersPage() {
   const { msg } = useI18n();
   const { account } = useAuth();
@@ -73,7 +62,7 @@ export function OrganizationMembersPage() {
     return (
       <section>
         <ResourcePageHeader contentGap="content" title={msg('members.title', 'Members')} />
-        <p className="text-[15px] leading-5 text-muted-foreground">
+        <p className="text-sm leading-5 text-muted-foreground">
           {msg('members.noOrganization', 'No organization is available for this session.')}
         </p>
       </section>
@@ -94,14 +83,16 @@ export function OrganizationMembersPage() {
 
 function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string }) {
   const { msg } = useI18n();
-  const { account, csrfToken } = useAuth();
+  const { account, csrfToken, organizationAccess } = useAuth();
   const canManage = canManageMembers(account, activeOrgUuid);
   const { activeWorkspace } = useWorkspace();
   const queryClient = useQueryClient();
   const bootstrapOrganization = account?.memberships?.find((membership) => membership.organization?.uuid)?.organization;
   const activeOrganization =
-    account?.memberships?.find((membership) => membership.organization?.uuid === activeOrgUuid)?.organization ??
-    bootstrapOrganization;
+    organizationAccess?.organization.uuid === activeOrgUuid
+      ? organizationAccess.organization
+      : (account?.memberships?.find((membership) => membership.organization?.uuid === activeOrgUuid)?.organization ??
+        bootstrapOrganization);
   const [memberSearch, setMemberSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -200,125 +191,6 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
     if (canManage) invitesQuery.refetch();
   };
 
-  const columns = useMemo(
-    () => [
-      memberColumnHelper.display({
-        id: 'name',
-        header: msg('common.name', 'Name'),
-        cell: ({ row }) => {
-          if (isInviteRow(row.original)) {
-            return (
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="text-muted-foreground">–</span>
-                <Badge variant="secondary" className="rounded-md px-1.5">
-                  {msg('members.pending', 'Pending')}
-                </Badge>
-              </div>
-            );
-          }
-
-          const name = row.original.name;
-          return (
-            <div className="flex min-w-0 items-center gap-3">
-              <MemberAvatar member={row.original} />
-              <span className="truncate text-foreground">{name || row.original.email}</span>
-            </div>
-          );
-        },
-      }),
-      memberColumnHelper.display({
-        id: 'email',
-        header: msg('members.email', 'Email'),
-        cell: ({ row }) => <span className="truncate text-muted-foreground">{row.original.email}</span>,
-      }),
-      memberColumnHelper.display({
-        id: 'role',
-        header: msg('members.role', 'Role'),
-        cell: ({ row }) => {
-          if (isInviteRow(row.original)) {
-            return (
-              <span className="text-foreground">
-                {platformRoleLabel(normalizePlatformRole(row.original.role), msg)}
-              </span>
-            );
-          }
-
-          const member = row.original;
-          const role = normalizePlatformRole(member.role);
-          const isSelf = isCurrentAccountMember(account, member);
-
-          if (!canManage || isSelf) {
-            return <span className="text-foreground">{platformRoleLabel(role, msg)}</span>;
-          }
-
-          return (
-            <RoleSelect
-              ariaLabel={msg('members.role.for', 'Role for {name}', { name: displayMemberName(member) })}
-              value={role}
-              disabled={pendingRoleMemberId === member.id || updateRoleMutation.isPending}
-              className="min-w-[144px]"
-              contentClassName="min-w-[300px]"
-              onChange={(nextRole) => {
-                if (nextRole !== role) {
-                  updateRoleMutation.mutate({ member, role: nextRole });
-                }
-              }}
-            />
-          );
-        },
-      }),
-      memberColumnHelper.display({
-        id: 'actions',
-        header: '',
-        cell: ({ row }) =>
-          !canManage ? null : isInviteRow(row.original) ? (
-            <InviteActionsMenu
-              invite={row.original}
-              disabled={resendInviteMutation.isPending || deleteInviteMutation.isPending}
-              onResend={(invite) => {
-                setInviteActionError(null);
-                resendInviteMutation.mutate(invite);
-              }}
-              onRevoke={(invite) => {
-                setInviteActionError(null);
-                setInviteToRevoke(invite);
-              }}
-            />
-          ) : isCurrentAccountMember(account, row.original) ? (
-            <span aria-hidden className="block h-8 w-8" />
-          ) : (
-            <OrganizationMemberRemoval
-              orgUuid={activeOrgUuid}
-              organizationName={activeOrganization?.name ?? msg('members.fallbackOrgName', 'this organization')}
-              member={row.original}
-              csrfToken={csrfToken}
-              disabled={updateRoleMutation.isPending}
-            />
-          ),
-      }),
-    ],
-    [
-      account,
-      canManage,
-      activeOrgUuid,
-      activeOrganization,
-      csrfToken,
-      deleteInviteMutation,
-      msg,
-      pendingRoleMemberId,
-      resendInviteMutation,
-      updateRoleMutation,
-    ],
-  );
-
-  // TanStack Table returns callback-heavy instance methods; this table instance stays local to the page.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const table = useReactTable({
-    data: filteredRows,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
-
   if ([membersQuery.error, inviteError].some(isPermissionDenied)) {
     return <OrganizationMembersAccessDenied />;
   }
@@ -328,7 +200,7 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
       <ResourcePageHeader
         contentGap="content"
         title={msg('members.title', 'Members')}
-        description={memberAccessDescription(activeOrganization, activeWorkspace.name, msg)}
+        description={memberScopeLabel(activeOrganization, activeWorkspace.name, msg)}
         titleAdornment={
           !isInitialLoading && !hasTableError ? (
             <Badge variant="secondary" className="min-w-5 rounded-full px-1.5">
@@ -352,71 +224,51 @@ function OrganizationMembersAdminPage({ activeOrgUuid }: { activeOrgUuid: string
         }
       />
 
-      <MemberDirectoryFilters
-        search={memberSearch}
-        onSearch={setMemberSearch}
-        role={roleFilter}
-        onRole={setRoleFilter}
-        roles={roleOptions.map((role) => ({ value: role.value, label: platformRoleLabel(role.value, msg) }))}
-        roleLabelPrefix="members.role"
-      />
-
       {updateRoleMutation.isError ? <InlineNotice>{errorMessage(updateRoleMutation.error)}</InlineNotice> : null}
       {inviteActionError ? <InlineNotice>{inviteActionError}</InlineNotice> : null}
 
-      <div className="overflow-x-auto">
-        <Table className="table-fixed text-left" aria-label={msg('members.tableAria', 'Members')}>
-          <TableHeader className="text-muted-foreground">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} className="border-border hover:bg-transparent">
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id} className={headerClassName(header.column.id)}>
-                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {isInitialLoading ? <MembersSkeletonRows /> : null}
-            {!isInitialLoading && hasTableError ? (
-              <TableRow>
-                <TableCell colSpan={4} className="px-3 py-10">
-                  <Alert variant="destructive" className="mx-auto max-w-xl">
-                    <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                    <AlertTitle>{msg('members.loadError', 'Members could not be loaded.')}</AlertTitle>
-                    <AlertDescription>
-                      <p>{msg('members.tryAgainBody', 'Try again.')}</p>
-                      <Button type="button" variant="outline" size="sm" className="mt-3" onClick={handleRetry}>
-                        {msg('members.tryAgain', 'Try again')}
-                      </Button>
-                    </AlertDescription>
-                  </Alert>
-                </TableCell>
-              </TableRow>
-            ) : null}
-            {!isInitialLoading && !hasTableError
-              ? table.getRowModel().rows.map((row) => (
-                  <TableRow key={row.id} className="border-border last:border-b-0">
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id} className={cellClassName(cell.column.id)}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : null}
-          </TableBody>
-        </Table>
-      </div>
-
-      {!isInitialLoading && !hasTableError && table.getRowModel().rows.length === 0 ? (
-        <ResourceListState
-          icon={Users}
-          title={msg('members.emptyTitle', 'No members yet')}
-          body={msg('members.emptyBody', 'Invite people to join this organization.')}
-        />
-      ) : null}
+      <OrganizationMemberList
+        rows={filteredRows}
+        canManage={canManage}
+        canEdit={(member) => !isCurrentAccountMember(account, member)}
+        onRole={(member, role) => updateRoleMutation.mutate({ member, role })}
+        pendingRoleMemberId={pendingRoleMemberId}
+        rolePending={updateRoleMutation.isPending}
+        renderActions={(row) =>
+          !canManage ? null : isInviteRow(row) ? (
+            <InviteActionsMenu
+              invite={row}
+              disabled={resendInviteMutation.isPending || deleteInviteMutation.isPending}
+              onResend={(invite) => {
+                setInviteActionError(null);
+                resendInviteMutation.mutate(invite);
+              }}
+              onRevoke={(invite) => {
+                setInviteActionError(null);
+                setInviteToRevoke(invite);
+              }}
+            />
+          ) : isCurrentAccountMember(account, row) ? (
+            <span aria-hidden className="block h-8 w-8" />
+          ) : (
+            <OrganizationMemberRemoval
+              orgUuid={activeOrgUuid}
+              organizationName={activeOrganization?.name ?? msg('members.fallbackOrgName', 'this organization')}
+              member={row}
+              csrfToken={csrfToken}
+              disabled={updateRoleMutation.isPending}
+            />
+          )
+        }
+        loading={isInitialLoading}
+        hasError={hasTableError}
+        filtered={Boolean(memberSearch.trim()) || roleFilter !== 'all'}
+        onRetry={handleRetry}
+        search={memberSearch}
+        onSearch={setMemberSearch}
+        role={roleFilter}
+        onFilterRole={setRoleFilter}
+      />
 
       <InviteMembersDialog
         open={inviteOpen}
@@ -498,9 +350,6 @@ function InviteMembersDialog({
       return createdInvites;
     },
     onSuccess: (createdInvites) => {
-      setEmailsValue('');
-      setRole('user');
-      setSubmitValidationError(null);
       onOpenChange(false);
       onInvited(createdInvites);
     },
@@ -508,14 +357,11 @@ function InviteMembersDialog({
 
   const canSubmit = parsedEmails.length > 0 && !inviteMutation.isPending;
 
-  const closeDialog = (nextOpen: boolean) => {
-    onOpenChange(nextOpen);
-    if (!nextOpen) {
-      setEmailsValue('');
-      setRole('user');
-      setSubmitValidationError(null);
-      inviteMutation.reset();
-    }
+  const resetInvite = () => {
+    setEmailsValue('');
+    setRole('user');
+    setSubmitValidationError(null);
+    inviteMutation.reset();
   };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -537,63 +383,77 @@ function InviteMembersDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={closeDialog}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen, details) => {
+        if (!nextOpen && inviteMutation.isPending) {
+          details.cancel();
+          return;
+        }
+        onOpenChange(nextOpen);
+      }}
+      onOpenChangeComplete={(nextOpen) => {
+        if (!nextOpen) resetInvite();
+      }}
+    >
       <DialogContent
-        className="max-h-[min(720px,calc(100vh-48px))] overflow-y-auto sm:max-w-[520px]"
+        closeButtonDisabled={inviteMutation.isPending}
+        className="grid-rows-[auto_minmax(0,1fr)] max-h-[min(720px,calc(100dvh-2rem))] overflow-clip sm:max-w-[520px]"
         initialFocus={textareaRef}
       >
         <DialogHeader>
-          <DialogTitle className="text-[22px] font-semibold leading-[26px] text-foreground">
+          <DialogTitle className="text-xl font-medium leading-7 text-foreground">
             {msg('members.invite', 'Invite')}
           </DialogTitle>
         </DialogHeader>
-        <form className="space-y-5" onSubmit={handleSubmit}>
-          <div>
-            <Label htmlFor="invite-emails" className="mb-2">
-              {msg('members.emails', 'Email addresses')}
-            </Label>
-            <Textarea
-              ref={textareaRef}
-              id="invite-emails"
-              value={emailsValue}
-              onChange={(event) => {
-                setEmailsValue(event.target.value);
-                inviteMutation.reset();
-              }}
-              placeholder={'claude.shannon@example.com\nshannon.claude@example.com'}
-              className="min-h-[132px] resize-y"
-              disabled={inviteMutation.isPending}
-              aria-invalid={submitValidationError ? true : undefined}
-              aria-describedby="invite-emails-help"
-            />
-            <p id="invite-emails-help" className="mt-2 text-xs leading-5 text-muted-foreground">
-              {msg('members.emails.help', 'Separate addresses with commas, spaces, or new lines. Up to 50 at once.')}
-            </p>
+        <form className="flex min-h-0 flex-col gap-5" onSubmit={handleSubmit}>
+          <div className="subtle-scrollbar min-h-0 space-y-5 overflow-y-auto">
+            <div>
+              <Label htmlFor="invite-emails" className="mb-2">
+                {msg('members.emails', 'Email addresses')}
+              </Label>
+              <Textarea
+                ref={textareaRef}
+                id="invite-emails"
+                value={emailsValue}
+                onChange={(event) => {
+                  setEmailsValue(event.target.value);
+                  inviteMutation.reset();
+                }}
+                placeholder={'claude.shannon@example.com\nshannon.claude@example.com'}
+                className="min-h-[132px] resize-y"
+                disabled={inviteMutation.isPending}
+                aria-invalid={submitValidationError ? true : undefined}
+                aria-describedby="invite-emails-help"
+              />
+              <p id="invite-emails-help" className="mt-2 text-xs leading-5 text-muted-foreground">
+                {msg('members.emails.help', 'Separate addresses with commas, spaces, or new lines. Up to 50 at once.')}
+              </p>
+            </div>
+
+            <div>
+              <Label className="mb-2">{msg('members.role', 'Role')}</Label>
+              <RoleSelect
+                ariaLabel={msg('members.role', 'Role')}
+                value={role}
+                disabled={inviteMutation.isPending}
+                className="w-full"
+                contentClassName="min-w-[300px]"
+                onChange={(nextRole) => {
+                  setRole(nextRole);
+                  inviteMutation.reset();
+                }}
+              />
+            </div>
+
+            {submitValidationError ? <InviteValidationNotice error={submitValidationError} /> : null}
+            {inviteMutation.isError ? <InlineNotice>{errorMessage(inviteMutation.error)}</InlineNotice> : null}
           </div>
-
-          <div>
-            <Label className="mb-2">{msg('members.role', 'Role')}</Label>
-            <RoleSelect
-              ariaLabel={msg('members.role', 'Role')}
-              value={role}
-              disabled={inviteMutation.isPending}
-              className="w-full"
-              contentClassName="min-w-[300px]"
-              onChange={(nextRole) => {
-                setRole(nextRole);
-                inviteMutation.reset();
-              }}
-            />
-          </div>
-
-          {submitValidationError ? <InviteValidationNotice error={submitValidationError} /> : null}
-          {inviteMutation.isError ? <InlineNotice>{errorMessage(inviteMutation.error)}</InlineNotice> : null}
-
-          <DialogFooter className="sm:justify-end">
+          <DialogFooter className="shrink-0 sm:justify-end">
             <Button
               type="button"
               variant="outline"
-              onClick={() => closeDialog(false)}
+              onClick={() => onOpenChange(false)}
               disabled={inviteMutation.isPending}
             >
               {msg('common.cancel', 'Cancel')}
@@ -605,83 +465,6 @@ function InviteMembersDialog({
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function RoleSelect({
-  ariaLabel,
-  value,
-  disabled,
-  className,
-  contentClassName,
-  onChange,
-}: {
-  ariaLabel: string;
-  value: PlatformRole;
-  disabled?: boolean;
-  className?: string;
-  contentClassName?: string;
-  onChange: (value: PlatformRole) => void;
-}) {
-  const { msg } = useI18n();
-  const options = roleOptions.map((role) => ({
-    value: role.value,
-    label: platformRoleLabel(role.value, msg),
-    description: platformRoleDescription(role.value, msg),
-  }));
-  return (
-    <Select<PlatformRole>
-      value={value}
-      items={options.map((option) => ({ value: option.value, label: option.label }))}
-      disabled={disabled}
-      onValueChange={(nextValue) => {
-        if (nextValue !== null) {
-          onChange(nextValue);
-        }
-      }}
-    >
-      <SelectTrigger aria-label={ariaLabel} className={className}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false} className={contentClassName}>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value} label={option.label}>
-            <span className="block">
-              <span className="block leading-5">{option.label}</span>
-              {option.description ? (
-                <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{option.description}</span>
-              ) : null}
-            </span>
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-function MembersSkeletonRows() {
-  const { msg } = useI18n();
-  return (
-    <>
-      {[0, 1, 2].map((index) => (
-        <TableRow
-          key={index}
-          className="border-border last:border-b-0"
-          aria-label={msg('members.loadingRow', 'Loading member')}
-        >
-          <TableCell className="px-3 py-3">
-            <Skeleton className="h-5 w-44" />
-          </TableCell>
-          <TableCell className="px-3 py-3">
-            <Skeleton className="h-5 w-56" />
-          </TableCell>
-          <TableCell className="px-3 py-3">
-            <Skeleton className="h-5 w-24" />
-          </TableCell>
-          <TableCell className="px-3 py-3" />
-        </TableRow>
-      ))}
-    </>
   );
 }
 
@@ -740,32 +523,33 @@ function InviteRevokeDialog({
   onConfirm: () => void;
 }) {
   const { msg } = useI18n();
-  if (!invite) {
-    return null;
-  }
+  const [content, setContent] = useState(invite);
+  if (invite && invite !== content) setContent(invite);
 
   return (
     <AlertDialog
       open={Boolean(invite)}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen && !isSubmitting) {
-          onCancel();
+      onOpenChange={(nextOpen, details) => {
+        if (!nextOpen && isSubmitting) {
+          details.cancel();
+          return;
         }
+        if (!nextOpen) onCancel();
       }}
     >
-      <AlertDialogContent>
+      <AlertDialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] overflow-clip">
         <AlertDialogHeader>
           <AlertDialogTitle>{msg('members.revokeTitle', 'Revoke invitation?')}</AlertDialogTitle>
-          <AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="subtle-scrollbar min-h-0 min-w-0 overflow-y-auto">
+          <AlertDialogDescription className="[overflow-wrap:anywhere]">
             {msg('members.revokeBody', 'Are you sure you want to revoke the invitation for {email}?', {
-              email: invite.email,
+              email: content?.email ?? '',
             })}
           </AlertDialogDescription>
-        </AlertDialogHeader>
+        </div>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isSubmitting} onClick={onCancel}>
-            {msg('common.cancel', 'Cancel')}
-          </AlertDialogCancel>
+          <AlertDialogCancel disabled={isSubmitting}>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
           <AlertDialogAction variant="destructive" disabled={isSubmitting} onClick={onConfirm}>
             {isSubmitting ? msg('members.revoking', 'Revoking...') : msg('members.revoke', 'Revoke')}
           </AlertDialogAction>
@@ -813,62 +597,21 @@ function InlineNotice({ children }: { children: string }) {
   );
 }
 
-function MemberAvatar({ member }: { member: OrganizationMember }) {
-  const label = initials(displayMemberName(member));
-  return (
-    <span className="grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-[11px] font-medium uppercase text-muted-foreground">
-      {label}
-    </span>
-  );
-}
-
 function isInviteRow(row: OrganizationMemberRow): row is OrganizationInvite {
   return row.type === 'invite';
 }
 
-function memberAccessDescription(
+function memberScopeLabel(
   organization: { name?: string } | undefined,
   workspaceName: string,
   msg: ReturnType<typeof useI18n>['msg'],
 ) {
-  const organizationName = organization?.name || localizedWorkspaceName(workspaceName, msg);
-  return msg('members.description', 'People who can access the {organizationName} organization.', {
-    organizationName,
-  });
-}
-
-function headerClassName(columnId: string) {
-  switch (columnId) {
-    case 'name':
-      return 'w-[34%] px-3 py-2.5 text-muted-foreground';
-    case 'email':
-      return 'w-[38%] px-3 py-2.5 text-muted-foreground';
-    case 'role':
-      return 'w-[22%] px-3 py-2.5 text-muted-foreground';
-    default:
-      return 'w-10 px-3 py-2.5 text-muted-foreground';
-  }
-}
-
-function cellClassName(columnId: string) {
-  switch (columnId) {
-    case 'name':
-    case 'email':
-      return 'min-w-0 whitespace-normal px-3 py-2.5';
-    case 'role':
-      return 'px-3 py-2.5';
-    default:
-      return 'px-3 py-2.5';
-  }
+  return organization?.name || localizedWorkspaceName(workspaceName, msg);
 }
 
 function normalizePlatformRole(role: unknown): PlatformRole {
   const value = typeof role === 'string' ? role.trim().toLowerCase() : '';
   return roleOptions.some((option) => option.value === value) ? (value as PlatformRole) : 'user';
-}
-
-function displayMemberName(member: OrganizationMember) {
-  return member.name || member.email || 'member';
 }
 
 function isCurrentAccountMember(account: ReturnType<typeof useAuth>['account'], member: OrganizationMember) {
@@ -892,17 +635,6 @@ function parseEmailAddresses(value: string) {
 
 function isEmailLike(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-function initials(value: string) {
-  const parts = value.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) {
-    return '?';
-  }
-  if (parts.length === 1) {
-    return parts[0].slice(0, 2);
-  }
-  return `${parts[0][0]}${parts[1][0]}`;
 }
 
 function errorMessage(error: unknown) {

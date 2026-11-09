@@ -13,6 +13,31 @@ afterEach(() => {
 });
 
 describe('anthropicBetaApi', () => {
+  test('渠道请求保留路径、方法、请求体与鉴权上下文', async () => {
+    setConsoleRequestContext({ organizationUuid: 'org_test', workspaceId: 'other', csrfToken: 'csrf' });
+    const requests: { url: URL; init: RequestInit | undefined }[] = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: new URL(String(input), 'https://oma.duck.ai'), init });
+      return init?.method === 'DELETE' ? new Response(null, { status: 204 }) : Response.json({ data: [] });
+    }) as typeof fetch;
+    for (const method of ['GET', 'POST', 'PATCH', 'DELETE'] as const) {
+      const body = method === 'POST' || method === 'PATCH' ? { enabled: true } : undefined;
+      await anthropicBetaApi.agents.channels('agent/test', 'workspace_test', '/ch1', method, body);
+      const { url, init } = requests.at(-1)!;
+      expect(url.pathname).toBe('/v1/agents/agent%2Ftest/channels/ch1');
+      expect(url.searchParams.get('beta')).toBe('true');
+      expect(init?.method).toBe(method);
+      expect(init?.credentials).toBe('include');
+      const headers = new Headers(init?.headers);
+      expect(headers.get('x-workspace-id')).toBe('workspace_test');
+      expect(headers.get('x-organization-uuid')).toBe('org_test');
+      expect(headers.get('x-csrf-token')).toBe('csrf');
+      expect(headers.get('anthropic-beta')).toBe('managed-agents-2026-04-01');
+      if (body) expect(JSON.parse(String(init?.body))).toEqual(body);
+      else expect(init?.body).toBeUndefined();
+    }
+  });
+
   test('uses prebuild routes while preserving workspace scope and string job IDs', async () => {
     const requests: { url: URL; init: RequestInit | undefined }[] = [];
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {

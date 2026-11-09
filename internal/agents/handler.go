@@ -31,7 +31,9 @@ import (
 )
 
 const (
-	maxAgentBodySize = 4 << 20
+	maxAgentBodySize                         = 4 << 20
+	maxQuickstartPackageMetadataBytes        = 1 << 20
+	quickstartEnvironmentPackagesMetadataKey = "quickstart_environment_packages"
 )
 
 var (
@@ -122,6 +124,11 @@ func NewHandler(database *db.DB, deploymentStore *deployments.Store, logger *slo
 	router.Post("/{agent_id}/archive", wrap(h.archiveRoute))
 	router.Get("/{agent_id}/versions", wrap(h.versionsRoute))
 	h.router = router
+	return h
+}
+
+func (h *Handler) WithChannels(channelHandler http.Handler) *Handler {
+	h.router.Mount("/{agent_id}/channels", channelHandler)
 	return h
 }
 
@@ -898,6 +905,12 @@ func validateMetadata(metadata map[string]string) error {
 		if key == "" || len(key) > 64 {
 			return errors.New("metadata keys must be between 1 and 64 characters")
 		}
+		if key == quickstartEnvironmentPackagesMetadataKey {
+			if len(value) > maxQuickstartPackageMetadataBytes {
+				return errors.New("quickstart_environment_packages metadata must be at most 1048576 bytes")
+			}
+			continue
+		}
 		if len(value) > 512 {
 			return errors.New("metadata values must be at most 512 characters")
 		}
@@ -1066,7 +1079,7 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		if err != nil {
 			return nil, err
 		}
-		entry := map[string]any{"enabled": enabled, "name": name, "permission_policy": policy}
+		entry := map[string]any{"enabled": enabled, "name": name, "type": name, "permission_policy": policy}
 		if name == "web_search" || name == "web_fetch" {
 			raw, err := json.Marshal(config)
 			if err != nil {
@@ -1087,6 +1100,7 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		normalized = append(normalized, map[string]any{
 			"enabled":           false,
 			"name":              "ask_user_question",
+			"type":              "ask_user_question",
 			"permission_policy": map[string]string{"type": "always_allow"},
 		})
 	}

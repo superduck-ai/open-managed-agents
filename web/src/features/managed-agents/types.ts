@@ -62,7 +62,7 @@ export type AgentPageResponse = {
   total_count?: number;
 };
 
-export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability';
+export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability' | 'channels';
 
 export type AgentDetailVersionFilter = number | null;
 
@@ -343,6 +343,9 @@ export type SessionThreadApiResponse = {
   type: string;
   updated_at?: string;
 };
+
+export type SessionMessageContentBlock =
+  { type: 'text'; text: string } | { type: 'image'; source: { type: 'file'; file_id: string } };
 
 export type QuickstartSessionEvent = Record<string, unknown>;
 
@@ -628,10 +631,24 @@ export type SelfAgentReferenceInput = {
   type: 'self';
 };
 
-export type AgentMultiagentInput = {
-  type: 'coordinator';
-  agents: Array<AgentReferenceInput | SelfAgentReferenceInput>;
-};
+export type SubagentReference = AgentReferenceInput | SelfAgentReferenceInput;
+
+export type AgentDelegationInput =
+  | { type: 'disabled' }
+  | {
+      type: 'enabled';
+      inline_agents?: { type: 'enabled' | 'disabled' };
+      predefined_agents?: SubagentReference[];
+    };
+
+export type AgentMultiagentInput =
+  | { type: 'coordinator'; agents: SubagentReference[] }
+  | {
+      type: 'multiagent_20261001';
+      subagents?: AgentDelegationInput;
+      workflows?: AgentDelegationInput;
+      advisor?: { type: 'disabled' } | { type: 'enabled'; model: string };
+    };
 
 export type AgentSkillInput = {
   type: 'anthropic' | 'custom';
@@ -830,4 +847,9 @@ export type EnvironmentEditValues = {
   allowedHostsText: string;
   packages: EnvironmentPackageRow[];
   metadataRows: EnvironmentMetadataRow[];
+  initScript: string;
+  environmentRows: EnvironmentMetadataRow[];
+  resources: EnvironmentResourceValues;
 };
+
+export type EnvironmentResourceValues = { cpu: string; memory: string; disk: string };

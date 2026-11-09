@@ -1,27 +1,26 @@
-import { describe, expect, test } from 'bun:test';
-import type { AuthAccount } from '../auth/api';
+import { expect, test } from 'bun:test';
 import { canManageLLMProviders } from './llm-providers';
+import type { AuthAccount } from '../auth/api';
 
 const account: AuthAccount = {
-  uuid: 'acct_test',
+  uuid: 'account',
   email_address: 'test@example.com',
-  memberships: [
-    { role: 'user', organization: { uuid: 'org_developer' } },
-    { role: 'ADMIN', organization: { uuid: 'org_admin' } },
-  ],
+  effectiveOrganizationUuid: 'target',
+  permissions: ['organization:manage'],
+  memberships: [],
 };
 
-describe('canManageLLMProviders', () => {
-  test('allows an administrator in the current organization', () => {
-    expect(canManageLLMProviders(account, 'org_admin')).toBe(true);
-  });
+test('普通成员可以管理模型', () => {
+  const member = { ...account, permissions: [] };
+  expect(canManageLLMProviders(member, 'target')).toBe(true);
+  expect(canManageLLMProviders(null, 'target')).toBe(false);
+  expect(canManageLLMProviders(account, undefined)).toBe(false);
+});
 
-  test('does not reuse administrator access from another organization', () => {
-    expect(canManageLLMProviders(account, 'org_developer')).toBe(false);
-  });
+test('当前组织有效权限不能用于第三组织', () => {
+  expect(canManageLLMProviders(account, 'other')).toBe(false);
+});
 
-  test('denies access without an authenticated account or organization', () => {
-    expect(canManageLLMProviders(null, 'org_admin')).toBe(false);
-    expect(canManageLLMProviders(account, undefined)).toBe(false);
-  });
+test('非成员超管使用服务器有效权限管理模型', () => {
+  expect(canManageLLMProviders(account, 'target')).toBe(true);
 });

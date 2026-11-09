@@ -29,6 +29,11 @@ type sessionThreadRow struct {
 	DeletedAt              *time.Time                `db:"deleted_at"`
 }
 
+type sessionThreadNameRow struct {
+	ExternalID string `db:"external_id"`
+	Name       string `db:"name"`
+}
+
 type sessionThreadWriteParams struct {
 	UUID                   string
 	ExternalID             string
@@ -57,6 +62,7 @@ type sessionThreadPageMapperParams struct {
 
 // SessionThreadMapper contains queries whose primary table is session_threads.
 type SessionThreadMapper interface {
+	ListSubagentNames(ctx context.Context, workspaceUUID string, externalIDs []string) ([]sessionThreadNameRow, error)
 	Insert(ctx context.Context, params sessionThreadWriteParams) (sessionThreadRow, error)
 	InsertIfAbsent(ctx context.Context, params sessionThreadWriteParams) (sessionThreadRow, bool, error)
 	FindPrimary(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionThreadRow, error)

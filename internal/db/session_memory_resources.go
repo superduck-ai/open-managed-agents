@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/superduck-ai/yourbatis"
 )
@@ -15,10 +14,10 @@ func enforceSessionMemoryResourceInvariantsTx(
 	if resource.ResourceType != SessionResourceTypeMemoryStore {
 		return nil
 	}
-	storeID, err := memoryStoreIDFromPayload(resource.Payload)
-	if err != nil {
-		return err
+	if resource.MemoryStore == nil || resource.MemoryStore.ExternalID == "" {
+		return ErrPreconditionFailed
 	}
+	storeID := resource.MemoryStore.ExternalID
 	mapper := NewSessionResourceMapper(executor)
 	duplicates, err := mapper.CountSessionMemoryStoresByStoreID(
 		ctx,
@@ -45,14 +44,4 @@ func enforceSessionMemoryResourceInvariantsTx(
 		return &SessionMemoryStoreLimitError{Limit: MaxSessionMemoryStores}
 	}
 	return nil
-}
-
-func memoryStoreIDFromPayload(payload json.RawMessage) (string, error) {
-	var body struct {
-		MemoryStoreID string `json:"memory_store_id"`
-	}
-	if err := json.Unmarshal(payload, &body); err != nil || body.MemoryStoreID == "" {
-		return "", ErrPreconditionFailed
-	}
-	return body.MemoryStoreID, nil
 }

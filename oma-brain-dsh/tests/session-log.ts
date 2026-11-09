@@ -1,9 +1,14 @@
 import { SessionId } from "@deepseek-ai/dsh-session";
 import type { CcrSession } from "../src/ccrv2/session.ts";
 
-export function nativeOutcomes(session: CcrSession, threadId = session.id): Record<string, { text: string; failed: boolean }> {
+export async function nativeOutcomes(session: CcrSession, threadId = session.id): Promise<Record<string, { text: string; failed: boolean }>> {
   const outcomes: Record<string, { text: string; failed: boolean }> = {};
-  for (const event of session.ctx.sessions.get(SessionId(threadId))?.snapshotEvents() ?? []) {
+  let events = session.ctx.sessions.get(SessionId(threadId))?.snapshotEvents();
+  if (!events) {
+    const handle = await session.ctx.sessionPersistence.open(SessionId(threadId), "read");
+    try { events = (await handle.read()).events; } finally { await handle.close(); }
+  }
+  for (const event of events) {
     if (event.type !== "tool/result" || event.surfaceOp !== "append") continue;
     outcomes[event.data.message.toolCallId] = {
       text: event.data.message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n"),

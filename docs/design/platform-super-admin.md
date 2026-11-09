@@ -1,0 +1,414 @@
+# 超级管理员与全局组织管理后台
+
+状态：2026-10-28。目标组织进入功能已接通请求级授权、前端路径与已有运行身份链，验收范围见 §11。审计独立保存在 `codex/platform-admin-audit`；当前版本不提供审计与操作原因表单。外部 SMTP 收件验收按用户要求跳过。
+
+设计起点为 [PR #350](https://github.com/superduck-ai/open-managed-agents/pull/350)。该 PR 及其依赖已合并；实现最初基于主线 `e914f566`，后续已合并主线提交 `1c97f77b` 和 `ddd38a4c`，直接复用主线 User/Admin 两种组织角色和现有组织加入流程。
+
+## 1. 目标与范围
+
+增加独立的平台级超级管理员身份。超级管理员通过 `/platform-admin` 管理全部组织，无须先成为目标组织成员；普通组织管理员只能管理自己的组织，不能进入全局后台，也不能调用后台接口。
+
+一期包含：
+
+- 全部组织的分页列表、名称/UUID 搜索、详情及成员/工作区数量。
+- 创建组织，同时指定一名或多名已注册账号作为组织管理员。
+- 编辑组织名称及白名单基础资料；查看组织成员和工作区目录。
+- 添加组织管理员、提升已有成员为管理员、修改成员角色、直接指定已注册账号加入，以及管理历史邀请。
+- 超级管理员的初始授予、后台授权管理、撤销和应急恢复。
+
+全局审计页面、查询接口、审计权限和事务内事件写入均移至 `codex/platform-admin-audit`，不在本版本启用。
+
+可信登录的超级管理员可从后台组织详情进入目标组织工作台，以请求级组织 Admin 读写全部 Console 资源，包括会话、文件、密钥、Vault、模型、Memory 和 Deployment。不冒充现有成员，不创建成员或全局 API Key；不提供组织硬删除、批量导出。
+
+组织停用/恢复放在后续独立阶段：它需要同时定义 Console、API Key、定时部署、运行中任务、长连接和 worker 的阻断语义。仅增加一个状态按钮不能视为完整的组织停用能力。
+
+保留现有首次登录创建个人注册组织的行为；本需求增加超级管理员创建和管理组织的能力，不把组织创建改为全局独占，也不让注册组织的 Admin 自动成为超级管理员。
+
+## 2. 基线事实与关键决策
+
+| PR #350 及依赖中的事实                                                                          | 本方案的处理                                                              |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `admin` 是组织角色；组织 Admin 继承该组织的 Workspace Admin                                     | 保留该语义，不往组织角色枚举中加入 `super_admin`                          |
+| `account.uuid` 来自登录会话的稳定 `UserUUID`，普通成员来源 Principal 的 `UserUUID` 映射为目标组织成员，平台来源为空 | 全局授权绑定账号 UUID，不能绑定请求级组织成员 UUID                        |
+| 尚无独立的全局 accounts 表，注册身份由 `users.registration_identity` 标记并兼容历史来源身份     | 一期复用稳定登录身份，不假定已有全局账号表，不重新生成账号 UUID           |
+| `platformIdentityMiddleware` 只验证登录身份并检查写请求 CSRF                                    | 全局后台复用此入口，另加超级管理员授权；不挂依赖 workspace 的通用业务鉴权 |
+| 组织成员变更通过组织行锁保护最后一名管理员                                                      | 后台操作共用相同锁和不变量，只增加显式的平台操作者授权分支                |
+| 邀请接受不覆盖已有成员角色                                                                      | 已有成员提权必须走显式管理员操作，不能靠邀请覆盖角色                      |
+| SMTP 未配置时允许任意非空验证码登录                                                             | 全局后台要求真实认证会话；配置切换前的开发会话不能获得后台权限            |
+
+代码依据（均指上述 PR 提交）：`internal/api/platform_identity.go`、`internal/platformsession/session.go`、`internal/platformapi/platform_bootstrap.go`、`internal/platformapi/platform_bootstrap_builders.go`、`internal/db/platform_auth_user_mapper.xml`、`internal/db/organization_members.go`、`internal/platformauth/service.go`。
+
+### 官方公开资料核对（2026-10-07）
+
+已核对 Anthropic 官方平台文档、帮助中心和 TypeScript SDK；SDK 固定到提交 `d49bdab458000bcdffe77bd84b03293f31824fb3`。公开资料可以证明组织内管理合同，但本轮未找到跨所有租户的超级管理员后台设计、公开 API 或 SDK。未找到公开资料不代表 Anthropic 内部没有对应系统。
+
+| 官方证据                                                                                                                                                                 | 能确认的合同                                                                                             | 对本方案的影响                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [Admin API 指南](https://platform.claude.com/docs/en/manage-claude/admin-api)                                                                                            | 管理凭证所属组织的成员、邀请、工作区和 Key；`org:admin` 是整个当前组织的权限范围                         | 组织级管理凭证不能被当作跨组织的平台授权                                     |
+| [SDK Organization 资源](https://github.com/anthropics/anthropic-sdk-typescript/blob/d49bdab458000bcdffe77bd84b03293f31824fb3/src/resources/organization/organization.ts) | 根资源提供 `retrieve()` → `GET /v1/organizations/me`；此资源中没有组织创建或全组织列表方法               | “后台创建组织、枚举所有组织”是本项目扩展，应保留独立命名空间                 |
+| [SDK 成员更新参数](https://github.com/anthropics/anthropic-sdk-typescript/blob/d49bdab458000bcdffe77bd84b03293f31824fb3/src/resources/organization/users.ts)             | Console/API 组织的角色更新接受 user、developer、billing、claude_code_user，明确不能通过此 API 授予 admin | 读取角色枚举与可写角色集合不同；后台提权不能冒充官方 Admin API 的既有能力    |
+| [SDK 邀请创建参数](https://github.com/anthropics/anthropic-sdk-typescript/blob/d49bdab458000bcdffe77bd84b03293f31824fb3/src/resources/organization/invites.ts)           | 官方公开邀请创建接口同样不能指定 admin；共享类型中 managed 用于 Enterprise                               | 本方案的成员邀请属于本项目受控后台/Console 能力，不能扩散到兼容 `/v1` 接口   |
+| [Console 组织创建与工作区说明](https://support.claude.com/en/articles/9796807-creating-and-managing-workspaces-in-the-claude-console)                                    | 一个邮箱只能自行创建一个 Console 组织，可以受邀加入其他组织并切换；注册完成自动创建组织和 Default        | 支持保留注册组织与多组织成员关系；不支持据此推导同一客户账号能创建任意多组织 |
+| [Console 角色说明](https://support.claude.com/en/articles/10186004-claude-console-roles-and-permissions)                                                                 | 组织 Admin 继承所有工作区 Admin；工作区可单独授权                                                        | 支持维持 #350 的组织与工作区边界，不证明平台级超级管理员存在                 |
+| [Enterprise 用户管理说明](https://platform.claude.com/docs/en/manage-claude/user-management)                                                                             | Console 与 Enterprise 共用部分端点，但角色及可用能力不同；组和自定义角色属于 Enterprise                  | 不能照抄 SDK 的所有角色枚举到 CMA Console                                    |
+| [CMA 官方架构文章](https://www.anthropic.com/engineering/managed-agents)                                                                                                 | 介绍 session、harness、sandbox 的解耦及凭据隔离                                                          | 有运行时架构设计，但没有披露组织创建或全局后台的实现                         |
+
+需要特别区分 `owner` / `primary_owner` 与平台超级管理员：SDK 的共享 `OrganizationRole` 包含这两种值，Admin API 指南也提到组织所有者可管理管理员，但它们仍然是组织内角色，不意味着可以查看或管理其他客户组织。SDK 的筛选参数还明确区分 Console/API 与 Enterprise 的适用角色。
+
+官方资料之间存在口径差异：Console 角色帮助页列出六种角色并包含 Limited Developer，SDK 的 Console 成员筛选集合仍是五种；组织创建帮助页称创建者为 Primary Owner，而 SDK 将 primary_owner 列在 Enterprise 角色筛选集合中。应记录这些差异，不能仅凭某个返回类型认定 Console 已开放完整 Owner 层级或推导其授权算法。若未来要求严格对齐最新 CMA Console，需要单独验证对应产品、接口和实际 UI；本方案继续使用 #350 已确定的组织角色，不借此追加角色迁移。
+
+据此对方案作如下界定：
+
+1. **官方明确支持的部分**：组织内管理员、工作区权限、成员和邀请管理、注册组织及 Default、受邀加入多组织。
+2. **本项目的合理扩展**：稳定账号上的平台授权、独立全局后台、后台创建组织、设置初始管理员与跨组织管理。这些设计不能标注为“复刻官方超级管理员”。
+3. **公开资料无法验证的部分**：Anthropic 内部后台路由、数据库表、平台人员角色、超级管理员初始化、事务锁、撤权时效，以及“最后管理员”的具体实现。本文对这些问题的选择来自本项目需求与 #350 基线。
+
+实现时继续保持 `/v1/organizations` 的官方兼容边界：后台授予 admin 或发送 admin 邀请走 `/api/platform-admin`，可复用领域和事务机制，但不放宽公开 Admin API 的可写角色集合。复用 #347 邀请流程不等于调用官方 SDK 创建 admin 邀请。
+
+### Enterprise 的开通与父组织补充
+
+进一步核对发现，官方 Enterprise 存在父组织及关联组织治理能力。前述“Organization 根资源没有全组织列表”只描述该 SDK Admin 资源，不能推广为所有官方 API 都没有多组织目录。
+
+- **组织开通**：Enterprise 支持在线自助购买及销售协助开通，也支持将既有 Team 组织升级并保留成员、角色和内容。销售开通场景有“Anthropic 创建 Enterprise 组织并邀请 Primary Owner”的明确说明；初始邀请有效期为 21 天。这能证明产品开通流程，不能推断 Anthropic 内部采用何种后台接口。[Enterprise 开通](https://support.claude.com/en/articles/9797531-what-is-the-enterprise-plan)、[Team 升级](https://support.claude.com/en/articles/13779868-migrate-your-organization-from-team-to-enterprise)、[初始邀请与所有权交接](https://support.claude.com/en/articles/13133750-manage-members-on-team-and-enterprise-plans)
+- **组织内管理**：每个组织只有一个 Primary Owner，可在成员设置中交接；Owner 管理管理员，Admin 管理一般成员。自动化可使用邀请、JIT 或 SCIM；Enterprise 成员 API 只允许写 user/managed，不能授予管理角色或修改/移除持有管理角色的成员。[角色权限](https://support.claude.com/en/articles/9267276-roles-and-permissions)、[Enterprise API 合同](https://platform.claude.com/docs/en/manage-claude/user-management)
+- **父组织关联**：Enterprise 建立时自动创建父组织；它承载域名、SSO 和用户开通策略，可以关联多个 Claude/Console 组织。Merge Organizations 关联的是已有组织，需满足域名与审批条件；不表示新建组织或合并账单。各组织的账单和使用量仍独立。[父组织与关联流程](https://support.claude.com/en/articles/10276682-important-considerations-before-enabling-single-sign-on-sso-and-jit-scim-provisioning)
+- **跨关联组织读取**：`GET /v1/compliance/organizations` 可列出凭证所属父组织下的组织。Primary Owner 可创建覆盖关联组织的合规密钥，Owner 的密钥限于自身组织；它不是全平台目录，也不提供通过该接口创建组织或设置管理员的能力。[组织目录 API](https://platform.claude.com/docs/en/manage-claude/compliance-org-data)、[密钥权限边界](https://support.claude.com/en/articles/15167101-get-started-with-claude-compliance-api-integrations)
+
+对 OMA 的推导：需要区分平台运营的全局管理、企业父组织的身份治理、单组织的日常管理。本次需求是第一层；若未来需要同一企业管理多个组织，再单独引入父组织范围，不能将企业 Primary Owner 自动提升为平台超级管理员。本文仍不把父组织、SSO 或 Enterprise 计费体系加入一期范围。
+
+## 3. 权限模型
+
+超级管理员是独立授权关系 `platform_admins`，一个账号可以同时是超级管理员和真实组织成员。权限来源由服务器逐请求确定，普通成员身份与平台来源不能混用。
+
+| 请求与操作 | 普通账号 | 可信超级管理员 |
+| --- | --- | --- |
+| 全局后台 API | 拒绝 | 实时平台授权后允许，目标取 URL |
+| 无组织头的 Console / 平台会话 v1 | 按真实成员权限 | 按真实成员权限 |
+| 带 `X-Organization-UUID` 的 Console / 平台会话 v1 | 仍要求真实成员并按成员角色授权 | 实时平台授权后为目标组织 Admin，不要求成员关系 |
+| 仅 organization_uuid query | 仅成员范围 | 仅成员范围，不激活平台跨组织权限 |
+| 真实 Default / 非 Default 工作区资源 | 按已有成员规则 | 目标组织内未归档工作区均为 workspace_admin |
+| API Key、OAuth、Worker 带目标头 | 原凭据权限 | 原凭据权限，不能借账号平台授权提权 |
+| 修改最后一名真实组织 Admin | 拒绝 | 拒绝，平台访问不计入真实成员人数 |
+
+平台权限以 `platform:access`、`platform:organizations:read`、`platform:organizations:write`、`platform:organization-admins:manage`、`platform:administrators:manage` 表达。一期统一由超级管理员角色拥有这些权限，不引入可编辑 RBAC 引擎。
+
+`GET /api/bootstrap` 增加独立的 `platform_access` 字段，包含 `role` 和 `permissions`；普通账号为 `role: null`、空权限数组。它用于显示账号菜单里的“平台管理”，不把平台权限字符串混入组织权限。当前组织的 `account.permissions` 与 `current_user_access` 由有效 WorkspaceAccess 产生。
+
+```mermaid
+flowchart TD
+    A[登录请求] --> B{入口}
+    B -->|平台后台| C[可信登录及实时平台授权]
+    C --> D[URL 目标组织管理]
+    B -->|Console 或平台会话 v1| E{显式目标组织头}
+    E -->|无头或仅 query| F[真实成员及工作区权限]
+    E -->|有头| G{可信登录及实时超管授权}
+    G -->|无授权| F
+    G -->|有授权| H[校验组织存在并构造平台来源 Admin]
+    H --> I[校验资源组织及工作区归属和归档]
+    F --> I
+    I --> J[复用资源权限及业务事务不变量]
+```
+
+不能给通用 `platformActionAllowed` 增加“超级管理员全部放行”，不能将超级管理员隐式插入全部组织，也不能用目标组织管理员身份代替真实操作者。
+
+## 4. 登录、授权与撤权
+
+全局 API 路由组使用“有效登录会话 → 实时平台授权 → 写请求 CSRF → 资源处理”。读取请求也检查平台授权。新请求在角色撤销提交后立即被拒绝；不把角色副本长期放入 cookie、Redis session 或浏览器缓存作为授权依据。
+
+- 路由只接受平台会话，不接受组织 Admin Key、workspace API Key、OAuth token 或 worker 凭证替代登录。存在 API Key/Bearer 头的后台请求明确拒绝，避免混合凭证歧义。
+- 全局操作者仅从会话的稳定账号 UUID 解析，拒绝客户端提交的角色、操作者 ID 或目标账号冒充字段。
+- 后台请求不发送 `X-Organization-UUID`、`X-Workspace-ID`；后端不以这些头或同名查询参数确定后台目标。单组织操作必须取 URL 中的 UUID，并显式传给所有查询和写入。
+- 后台鉴权和 bootstrap 不要求当前组织、Default 工作区或工作区 Key 可用。被移出某个组织不能丢失独立的平台授权；全局账号停用/删除则必须撤销平台授权。
+- 授权查询失败返回 503 并拒绝操作；不把故障降级为允许，也不返回误导性的“没有组织”。
+- 仅全局后台原有写事务内复核操作者平台授权并持有授权记录锁直至提交；撤权取得冲突锁。写操作先获得锁则先完成，撤权先提交则该写操作被拒绝，避免只在 HTTP 中间件检查造成竞态。
+
+认证强度必须来自成功认证路径的服务端记录。会话增加认证方式/版本标记；仅真实邮箱验证码验证成功的会话可进入后台。任意验证码开发模式、缺少可信标记的旧会话均需要重新认证，不得因为当前 SMTP 已配置就追认旧会话。生产会话使用 HTTPS 和 Secure cookie：API 组装层在 `env=prod` 或配置 HTTPS 的 `auth.console_url` 时启用 Secure，并显式传给两个邮箱登录入口；不使用请求的代理头决定此属性。会话 Cookie 保持 HttpOnly、SameSite=Lax 和根路径，本地 HTTP 开发环境仍可登录。全局后台的开启条件应包含真实认证配置；不满足时关闭后台能力，普通开发控制台保留现有行为。
+
+`GET /api/platform-admin/bootstrap` 返回后台所需的账号摘要、平台权限和 CSRF，不依赖完整组织 bootstrap。这也避免注册组织关系失效导致后台无法进入。身份资料读取应按稳定账号 UUID 获取，不能因组织成员软删除而误判全局账号删除；当前 `users.deleted_at` 表示成员移除，不能直接当作全局账号停用状态。
+
+Console 目标头分支复用同一实时只读平台授权查询，要求可信邮箱验证码登录及真实认证配置。头与 query 冲突或 UUID 非法返回 400；有效超管目标不存在返回 404；查询故障返回 503；普通非成员拒绝且不枚举目标存在性。带头 bootstrap 的 scope 解析失败必须返回错误，不能吞错后返回 Home。保留原有 Console 路由的 platformCSRFMiddleware 和身份路由的 CSRF 校验，本次不扩大到全部 `/v1` 平台会话写请求；平台会话 `/v1` 写请求维持 origin/main 原有行为，服务凭据保留原规则。
+
+本功能只在请求入口取授权快照，不在业务事务内复核或锁平台授权行。撤权提交后新鉴权请求不能再走平台来源；已经鉴权的写入、下载与 SSE 可能完成。重连是新请求。没有时限、授权轮询、服务端进入状态或发布开关。
+
+## 5. 超级管理员初始化与身份生命周期
+
+首位超级管理员和应急恢复继续通过受控部署端 CLI 管理；已有超级管理员可在独立的“超级管理员”后台菜单中查看有效授权、搜索注册账号并添加授权或确认撤销。不在组织设置或普通角色下拉框提供平台授权入口。命令入口位于 `cmd/platform-admin`：`platform-admin grant --account-uuid ... --operator ...`、`revoke`、`list`；授权变更必须提供运维操作者；不收集操作原因。
+
+1. 首位管理员先完成真实登录，部署运维核对账号 UUID 和邮箱，再显式授予。
+2. CLI 与后台调用同一授权服务和 Yourbatis 事务。CLI 提供运维操作者标识；后台操作者 UUID 仅取自认证会话，不接受客户端指定。后台写入在平台管理锁内再次核验操作者的当前登录身份及授权；不要求直接修改 SQL。
+3. 授权只接受可确定的稳定登录身份；若输入的是某组织成员 UUID，应拒绝并提示先解析账号身份。历史身份有歧义时先人工核对，不自动选择“最早的管理员”。
+4. 不使用“第一个注册用户自动成为超级管理员”、固定默认邮箱、前端白名单或每次启动重放的环境变量授予。
+5. 重复授予/撤销保持幂等；撤销最后一位有效超级管理员返回 409。所有授权变更在同一事务内使用固定的平台管理员管理锁，串行检查计数。列表与计数均复用 `loginIdentity`，不将同邮箱未被登录解析选中的旧身份授权计入有效管理员；不回填、不删除旧授权，不自动转移授权。锁先于目标授权行锁，保证并发撤销不会清空管理员。
+6. 账号无法登录时，由部署运维先授予另一个已验证账号，再撤销旧账号。应急变更继续共用授权行锁与最后超级管理员保护。
+
+后台添加授权复用已有账号选择器，右上角提供“添加超级管理员”；撤销前确认目标邮箱及影响，最后一位有效管理员由后端返回 409 并保留表单错误。撤销自身时额外提示退出后台，提交后刷新目录和后台 bootstrap，撤权后的后台请求立即拒绝。
+
+平台授权绑定 UUID，邮箱只用于展示、查询和已验证身份匹配，不作为角色授权主键。组织切换、邀请接受、角色变更均不得更新平台授权的账号 UUID。未来若引入独立 accounts 表，须迁移同一身份映射并保持对外账号 UUID 稳定。
+
+## 6. 全局组织管理流程
+
+### 创建组织
+
+创建表单包含组织名称和初始管理员（至少一名），当前版本不展示操作原因。名称在 HTTP 边界修剪并限制长度，允许同名组织；UUID 是唯一身份。管理员从已经完成注册的账号中选择，按邮箱或姓名搜索，结果只返回 UUID、姓名和邮箱，服务端分页并限制查询长度及频率。
+
+一期初始管理员必须是现有邮箱登录可解析的账号；新数据使用注册身份，历史数据按下文兼容规则只读解析。未知邮箱提示“请先完成注册，或组织创建后发送成员邀请”，不创建冒充已验证账号的占位用户，也不把尚未接受的邀请计入有效管理员。
+
+```mermaid
+sequenceDiagram
+    participant UI as 全局后台
+    participant S as 平台管理服务
+    participant TX as Yourbatis 事务
+    UI->>S: 创建组织、管理员账号 UUID、幂等键、CSRF
+    S->>S: 校验平台身份及表单
+    S->>TX: 开始事务，锁定并复核平台授权
+    TX->>TX: 校验幂等键与所有管理员账号
+    TX->>TX: 创建组织与真实 Default 工作区
+    TX->>TX: 创建目标组织的 admin 成员关系
+    TX->>TX: 在组织保存创建账号、幂等键与请求摘要，提交
+    TX-->>S: 组织 UUID 与管理员列表
+    S-->>UI: 进入新组织详情
+```
+
+组织、Default、初始管理员、创建幂等信息必须原子提交。失败不留下空组织，也不占用幂等键；重复提交返回该组织当前资料，不重新创建 Default 或授予管理员。后台创建不复用会创建个人身份和默认 Key 的整个邮箱注册流程；复用底层数据访问原语。初始管理员的组织成员 `registration_identity=false`，不覆盖其原注册身份。Default 使用 #346 的真实 `is_default` 标记，无须生成显式 Default 成员关系或自动创建 API Key。
+
+### 设置与更换管理员
+
+- 目标账号已是有效成员：将该成员角色设为 `admin`，保留其 UUID 和其他组织身份。
+- 已注册但未加入目标组织：显式创建该组织的 admin 成员；若存在软删除历史关系，按明确的重新加入规则恢复/新建组织成员，不恢复历史显式工作区关系。组织 Admin 的访问按 #350 继承计算。
+- 尚未注册或希望本人接受后加入：复用 #347 的 `role=admin` 邀请、有效期、接受与邮件投递流程。邀请未接受前不降级旧管理员。已有成员收到邀请时不被自动提权，转为后台显式提权操作。
+- 降级：选择现有的非 Admin 组织角色，并执行最后管理员保护。它不等于移除组织成员；普通成员移除继续由 #350 的组织管理界面处理。
+- 更换：先添加或提升另一位真实管理员，再降级或移除原管理员。独立交接操作与接口已移除，任何一步仍须保留至少一位有效管理员。
+- 管理员降级可能失去继承的工作区权限，确认弹窗展示此影响。不能为了“恢复访问”自动补建工作区成员关系。
+- 超级管理员可以修复历史零管理员组织；添加管理员不要求操作者本身是目标组织成员。超级管理员仍受“最终至少一位管理员”约束，不能无条件绕过它。
+
+全局后台的组织管理员写操作复用 #350 的组织锁；该后台事务锁顺序为操作者平台授权 → 目标组织 → 目标成员（多成员按 UUID 排序）。Console 进入分支不增加平台授权锁。组织 Console/Admin API 保持原权限入口，但在相同组织锁下共同保护管理员计数。领域层判断“平台操作者或目标组织管理员”，DB 只返回授权事实并执行持锁写入；禁止向 DB 传一个来自客户端的 `bypass_auth`。
+
+全局后台成员邀请由平台服务显式授权；Console 平台来源复用请求级 Admin 授权与 NotifyPlatform，不伪造真实成员，不新增邀请者列。邀请的最新投递状态与 River 任务在同一事务提交。邮件发送失败显示投递失败并可重试，不回滚已创建组织，也不把“已发送”当作“已接受”。
+
+### 组织资料与目录
+
+一期编辑只开放组织名称、网站、行业等基础资料，使用明确 DTO 白名单，不开放任意 settings JSON、SSO、账单或安全策略透传。列表和详情可查看全部组织；成员与工作区目录只返回管理所需元数据，不返回 Key 明文、文件或会话内容。
+
+编辑与管理员调整使用 `expected_version` 检测后台并发编辑；冲突返回 409 并要求刷新。#350 原入口的相关资料和成员变更也要递增该管理版本，否则不能声称它覆盖跨入口并发。最后管理员保护仍依赖行锁而非前端版本号。
+
+Console 成员写入由资源层根据已验证 Principal 提供校验回调，普通来源在原事务查询真实成员角色，平台来源无需查询不存在的操作者成员。组织锁、最后真实 Admin 计数、成员与工作区成员软删除仍在原 Yourbatis 事务中。工作区成员事务只锁实际成员和目标工作区，保留 Default、归档和继承 Admin 保护。平台来源邀请邮件使用已有 NotifyPlatform，Console 同步投递合同不变。
+
+## 7. 页面与交互
+
+全局“超级管理员”和“系统技能”导航仅在全局后台页面显示。进入组织详情后隐藏这些入口及“全局管理”标题，保留“返回组织列表”与当前组织的基础资料、成员、工作区和邀请导航；返回全局列表后恢复入口。
+
+后台与现有 Console 共享登录、主题和基础组件，采用独立布局，不挂在组织设置下面。账号菜单根据 `platform_access` 显示“平台管理”；后台固定展示“平台管理”标识和“返回工作台”。采用与 Console 相同的 Sidebar 组件、主题令牌和内容间距；左侧菜单提供全局组织管理；进入组织后增加基础资料、组织成员、工作区和成员邀请菜单，只高亮当前页面。窄屏使用顶部菜单按钮展开侧栏，选择菜单后关闭。
+
+| 页面                                              | 主要内容                                                                     |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `/platform-admin/organizations`                   | 搜索、分页、创建按钮；组织名称、UUID、管理员摘要、成员数、工作区数、创建时间 |
+| `/platform-admin/organizations/new`               | 组织名称、已注册管理员选择、创建结果与可重试错误                             |
+| `/platform-admin/organizations/$organizationUuid` | 基础资料、管理员、成员目录、工作区目录                                       |
+
+从平台管理返回普通 Console（包括浏览器后退）时，重新获取普通 bootstrap 与组织工作区列表，再按有效组织和工作区偏好安装请求上下文。账号 UUID 未变化也必须刷新；失败进入既有可重试状态，不循环请求。后台内切换菜单不触发普通 Console 刷新。通过平台授权进入目标组织工作台时，沿用进入操作已安装的上下文，不重复刷新或再次进入目标组织。
+
+进入后台先完成专用 bootstrap 和路由权限守卫，再请求组织数据。没有权限时不闪现表格；已登录非超级管理员直达 URL 显示 403，未登录跳转登录并保留站内返回地址。
+
+`/platform-admin` 位于身份层级，与 Console 的组织/工作区布局平级；#347 根级 `InvitationEntryGate` 对此后台分支不强制跳转邀请页，账号菜单仍保留邀请入口。唯一“进入组织工作台”按钮位于组织详情公共标题操作区，与编辑资料并列。普通组织切换器只列真实 memberships；后台“返回工作台”保留本标签当前 Console scope。
+
+后台 API client 复用 cookie、CSRF 和错误处理，避免自动附加组织/工作区头。TanStack Query 为每个登录账号创建独立 QueryClient，并使用 `platform-admin` 查询前缀；切换账号、退出或平台权限撤销时取消请求并清除后台缓存，忽略旧请求延迟响应。403 保留登录态，停止后台数据加载并显示无权限；401 清理认证并登录。读响应统一 `Cache-Control: no-store`。
+
+页面使用既有 shadcn/ui 表格、Dialog、Alert Dialog、字段和分页组件，保持明暗主题、键盘操作与移动端基本可用。提交时禁用重复操作，失败保留表单；管理员行操作统一称为“修改角色”，复用组织管理的角色名称与权限说明，默认显示当前角色，选择其他角色后即可提交，最后一位管理员仍禁止改为非管理员。角色和移除操作共用组织成员列表控件；后台直接添加账号，组织内保留邀请弹窗。
+
+左下角账号区保持原有 `SidebarMenuButton size="lg"` 的尺寸和圆角，仅菜单打开时使用 sidebar-accent 背景与前景色，不添加常驻背景或额外圆角类，保留建筑图标、两层文字和 ChevronDown。上层沿用用户名优先级：display_name、full_name、邮箱前缀；下层显示当前组织名，优先当前 organizationAccess 的组织名，再取当前 orgUuid 对应真实 membership 的组织名，最后回退 orgUuid，不再展示角色与工作区名。平台进入时使用目标组织名，不显示平台标识或角色；组织名可截断。
+
+进入状态下，SidebarFooter 在账号区上方显示独立的全宽圆角“返回平台管理”按钮，带 ArrowLeft 图标，与账号区宽度对齐；折叠侧栏保留图标、可访问名称和提示。仅当前标签 platformScope 存在时显示。点击沿用未保存内容确认，退出成功后导航刚访问的目标组织详情页，目标缺失时回退 `/platform-admin`，退出未成功则不导航。
+
+账号菜单顺序为账号信息、真实组织及邀请、分隔线、组织设置、平台管理和其他设置。“平台管理”仅对拥有 `platform:access` 的账号可见，与“组织设置”同级，带 Shield 图标，点击直接导航 `/platform-admin`。账号菜单不再显示平台进入状态说明或返回项；退出逻辑由聚焦的 PlatformReturnButton 组件负责。不显示持续横幅，不收集原因；圆角、明暗主题、键盘焦点和窄屏截断沿用共享组件。
+
+每标签 sessionStorage 仅保存账号 UUID 及目标组织/工作区。进入依次取消旧请求和缓存、带目标头 bootstrap、加载目标真实工作区、选择 Default 并安装；失败保留原 scope。刷新先无头身份 bootstrap，核对账号后验证标签目标，完成前不渲染业务子树。恢复时若 bootstrap 明确返回非平台来源、账号或目标组织不匹配，则清除平台偏好并回落普通组织；临时网络或服务故障保留平台偏好和重试入口。进入期间不写普通组织/工作区偏好；普通切换器先清目标再切真实组织。
+
+退出先使 generation 失效，阻止在途 SSE/读取和下载的结果提交，清头及缓存，删除标签目标，清空当前 Console scope，随后通过 TanStack Router 返回刚访问的目标组织详情页 `/platform-admin/organizations/{targetOrganizationUuid}`；目标缺失时回退 `/platform-admin`。退出无需网络请求，不恢复进入前的组织或工作区，也不跳转原工作区。退出不撤销平台授权；原组织后续带头请求仍按统一规则计算有效 Admin。已创建资源与在途外部副作用继续存在。
+
+## 8. API 草案
+
+全局 API 独立挂载在 `/api/platform-admin`，不复用已有 `/v1/organizations` 的组织内 Admin API。下表路径均相对此前缀，除 bootstrap 同样要求超级管理员外，没有公开的目录接口。
+
+| 方法与路径                                                                   | 语义                                                  |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------- |
+| GET `/bootstrap`                                                             | 全局身份、权限、CSRF                                  |
+| GET `/administrators`                                                        | 有效超级管理员列表（当前登录身份且未撤权）            |
+| POST `/administrators`                                                       | `{account_uuid}`，授予平台权限，操作者取认证会话      |
+| DELETE `/administrators/{accountUuid}`                                       | 撤销平台权限，保留最后一位有效超级管理员              |
+| GET `/accounts?query=&cursor=&limit=`                                        | 选择已注册管理员的最小账号目录                        |
+| GET `/organizations?query=&cursor=&limit=`                                   | 全部组织分页列表                                      |
+| POST `/organizations`                                                        | `{name, admin_account_uuids}`，要求 `Idempotency-Key` |
+| GET `/organizations/{organizationUuid}`                                      | 基础资料、管理员摘要、统计、管理版本                  |
+| PATCH `/organizations/{organizationUuid}`                                    | 白名单资料、`expected_version`                        |
+| GET `/organizations/{organizationUuid}/members`                              | 分页成员目录及角色                                    |
+| GET `/organizations/{organizationUuid}/workspaces`                           | 分页工作区目录，标识 Default/归档                     |
+| POST `/organizations/{organizationUuid}/administrators`                      | 按 `account_uuid` 添加/提升管理员                     |
+| PATCH `/organizations/{organizationUuid}/administrators/{memberUuid}`        | 降为指定非 Admin 角色，含版本                         |
+| POST `/organizations/{organizationUuid}/invitations`                         | 为邮箱创建指定 User 或 Admin 角色的邀请               |
+| GET `/organizations/{organizationUuid}/invitations`                          | 待处理邀请及投递结果                                  |
+| POST `/organizations/{organizationUuid}/invitations/{invitationUuid}/resend` | 复用邀请重发限制与投递机制                            |
+| POST `/organizations/{organizationUuid}/invitations/{invitationUuid}/revoke` | 撤销尚未接受的邀请                                    |
+
+未单列的写入也需要 `expected_version` ；管理员授权请求以目标账号 UUID 定位，修改既有成员以组织 UUID + 成员 UUID 定位，两种身份不能混用。路径中邀请 ID 同样必须校验所属组织。
+
+列表返回 `{data, next_cursor}`，默认每页 20、最大 100，使用稳定排序和游标，不加载全部组织再由前端筛选。创建成功为 201，重放成功为 200 并返回组织当前资料；同一账号使用相同幂等键但不同创建参数返回 409。组织表保存创建账号 UUID、幂等键和原始请求摘要，对创建账号 UUID + 幂等键建立唯一约束。管理员列表排序去重后计算摘要，保留旧客户端 `reason` 的摘要兼容性。幂等键随组织长期保留，不设过期；组织资料更新不改变创建摘要。并发插入使用 `ON CONFLICT DO NOTHING`，未插入的请求读取已有组织并核对摘要，不执行工作区和管理员创建。本期没有物理删除组织功能；未来若允许删除，需要另行决定旧键的保留策略。
+
+错误使用一致的 Console JSON 结构 `{error:{code,message},request_id}`，不扩散到 Anthropic `/v1` 合同：400 参数错误，401 会话无效，403 权限/CSRF/认证强度不足，404 已授权请求的目标不存在，409 最后管理员/版本/状态/幂等冲突，503 依赖不可用。非超级管理员必须先收到 403，不能通过任意目标 ID 的不同响应枚举组织存在性。
+
+进入功能不新增进入/退出 API、cookie、Redis 记录或配置。Console 与平台会话 v1 复用 `X-Organization-UUID` 和 `X-Workspace-ID`，后台 client 继续不附加 scope。`GET /api/bootstrap` 新增可空 `organization_access`：`{source,organization:{uuid,name},organization_role,workspace_role}`，来自已验证 Principal。account UUID、真实 memberships 和 `default_organization_uuid` 保持普通成员语义；当前权限与组织摘要反映目标，工作区目录仍单独从 Console workspaces API 获取。
+
+普通请求、SDK、SSE 和 Blob 下载使用同一请求 scope 快照及 CSRF；切换使旧响应失效。同源受保护文件图片通过带头 fetch 获取 Blob URL 并在切换/卸载时撤销，外部图片及 OAuth 页面不接收组织头。头只选目标，不证明点击过按钮，超管手工发送相同请求具有同等能力。
+
+## 9. 数据与模块边界
+
+| 数据              | 设计                                                                                                     |
+| ----------------- | -------------------------------------------------------------------------------------------------------- |
+| `platform_admins` | `uuid`、`account_uuid` 唯一、授予时间/操作者、撤销时间/操作者；重新授予复用授权行                        |
+| 组织创建幂等信息  | `organizations` 的创建账号 UUID + 幂等键唯一、原始请求摘要；长期保留，与业务创建同事务，不单独存首次响应 |
+| `organizations`   | 增加管理版本用于资料与成员管理并发控制；不为一期增加未落地的停用状态                                     |
+| 邀请创建来源      | 兼容原组织邀请者，补充平台操作者 UUID；使用已有邀请表和邮件投递机制                                      |
+| 会话认证标记      | 记录真实验证来源及版本，旧会话不能默认认定满足后台认证强度                                               |
+
+新增核心表遵守 identity 内部主键、稳定 UUID 和适用的 external ID 约定；跨表引用统一 UUID，不创建外键。新 goose migration 编号在实际实现分支上分配，不预占或重写 #350 已有迁移。迁移不自动提升现有 Admin、seed 用户或任何邮箱。
+
+建议新增 `internal/platformadmin`，集中 Handler、Service、命名 DTO、授权策略和 `errors.go`。`internal/api` 仅负责路由组装及身份中间件；`internal/db/platform_admin_*.go`、Mapper 声明、XML 和生成文件按项目职责分开。Yourbatis 事务串联授权事实、组织、成员和幂等；不新建连接池，不在 DB 层判断 HTTP 权限。
+
+前端新增 `web/src/features/platform-admin/`，按组织列表、详情、创建和管理员拆分模块。路由入口只做布局与守卫，独立后台 client 使用共享 HTTP 基础能力。
+
+组织与管理员变更保持事务原子性；幂等重放读取并返回组织当前资料。拒绝请求记录带 request ID 的结构化安全日志，禁止记录 cookie、CSRF、验证码、Key、邀请 token 或完整请求体。
+
+请求 Principal 使用 AccountUUID/AccountExternalID 表示稳定账号；UserUUID/UserExternalID 只表示目标组织真实成员。平台来源成员字段统一为空，来源为 platform_admin，凭据仍为平台会话。共享 ResolvePrincipal 只跳过平台操作者成员查询，仍检查目标工作区归属及归档；不能由空成员字段推断平台权限。
+
+本次进入功能不新增迁移或外键。平台来源的 Key 创建者为 nil，created_by_api_key_uuid 保持空；会话及部署 RuntimeUserUUID 使用稳定 AccountUUID，并沿现有隐藏 metadata 传递。Memory 使用原 user_actor 枚举及 AccountExternalID；计量的组织成员归属为空。MCP flow 成员字段可空，沿用已有 state/会话/组织/工作区约束，不增加进入凭据。特权操作以注入 slog 记录账号、组织、工作区、来源及结果，不记录凭据、正文或原 query，不伪造服务端进入/退出事件。
+
+## 10. 实施顺序与验收
+
+1. 在已合并 #350 的当前主线上实现平台授权、真实认证会话标记、CLI 和后台 bootstrap；先验证无组织上下文也可鉴权，普通 Admin/Key 均被拒绝。
+2. 实现全组织目录、原子创建和资料更新；实现初始管理员解析、真实 Default、幂等和失败回滚。
+3. 接入成员添加、角色修改、移除及历史邀请管理；与 #350 的 Console/Admin API 共用组织锁和最后管理员不变量。
+4. 实现独立后台页面、账号菜单入口、路由守卫、缓存隔离和权限撤销反馈；完成跨端验收后再启用后台。
+
+测试先覆盖失败场景：
+
+- 未登录、普通成员、组织 Admin、工作区 Admin、Admin/API Key、伪造平台角色、无/错误 CSRF、开发登录及旧会话全部不能读写后台。
+- 篡改 URL、组织头、工作区头、成员 UUID、邀请 ID 不能造成跨组织错误写入；未授权响应不泄露组织是否存在。
+- 原后台平台授权事务与撤权遵守原锁顺序；Console 进入仅保证逐请求授权快照，允许已鉴权在途完成。最后超级管理员并发撤销及跨入口组织 Admin 降级仍保留计数和事务约束。
+- 初始管理员不存在、组织创建中途失败、同幂等键不同请求体、版本冲突、重复点击均无部分写入。
+- 待接受/过期/撤销的邀请不能计入有效 Admin；接受邀请不覆盖已有成员角色；更换管理员时不能先移除唯一管理员。
+- 普通账号目标头、query 单独选择、非可信登录、服务凭据不能提权；可信超管目标头按目标 Admin 授权，即使真实角色为 User。目标/路径/工作区篡改、归档和缺失 Default 均拒绝。
+
+再覆盖成功流程：全局列表包含本人未加入的组织；创建后管理员登录可见并管理新组织，原账号 UUID 不变；新组织恰有一个真实 Default 且不生成 Key；直接添加、提升、降级和移除可回读；当前组织失效、组织成员移除后仍可按独立平台授权进入后台；清空 memberships 不导致路由循环。
+
+进入验收覆盖非成员真实资源读写、真实成员目录无新增、空 Key 创建者、运行身份、Memory 操作者、模型与 Telemetry 有效权限门控。前端覆盖刷新、退出清除平台及 Console scope、返回目标组织详情、目标缺失回退平台管理、无 memberships、离线退出、慢响应、SSE/下载取消、图片隔离和偏好不污染；不得自动回退重放失败写入。
+
+数据库验收使用真实 PostgreSQL 验证事务、锁、唯一性、nullable、JSON、UUID 绑定与生成 SQL。前端验收覆盖直达链接、权限加载空态、403/401 区别、切换账号清缓存、慢请求回写、表单错误保留及明暗主题。真实邮箱投递和浏览器多账号流程单列证据，不能以 mock 通过替代。
+
+实现时按实际变更执行项目对应 Go、前端及质量门禁，并同步 #350 的成员设计文档和 #347 的组织加入文档。
+
+## 11. 当前实现与交付边界
+
+### 目标组织进入与运行身份
+
+请求级 Principal、二次资源检查、bootstrap、标签页进入/退出、请求传播和有效权限门控已接通。运行身份继续使用既有 `_oma_runtime_user_uuid`，不持久化平台角色、授权副本或进入状态。
+
+核对消费者时发现 Filestore 和 Code Session Mapper 仍把已保存运行用户限制为目标组织成员。实现复用隐藏运行身份修正该假设：Runner 签发按 Session 保存的 UUID 查找未删除用户；Filestore 每次回查只允许原目标组织成员，或与 filesystem 所属 Session 保存运行 UUID 一致的账号。后者仍绑定目标组织、工作区、filesystem 和 Session 生命周期；其他跨组织账号不能冒用。没有隐藏运行身份的 API Key 回退仍要求同组织有效用户，失效运行用户仍拒绝签发及回查。Code Session 邮箱映射复用相同的隐藏运行用户关系。运行 UUID 仅在匹配 UUID 格式后转换；空串及非法值不匹配用户且不回退 API Key 创建者，缺失键保留原同组织 API Key 回退。
+
+以上修正不增加迁移、Actor 枚举、状态存储、授权锁或新 token 类型。普通成员和服务凭据原有资源范围保留；运行身份只服务于既有资源协议，不能用于 Console 权限提升。真实 PostgreSQL 回归覆盖账号冒用、第三工作区、运行账号失效、工作区归档、Session 终止及合法跨组织运行身份和原成员凭据对照；完整 Worker/FUSE 和外部服务验收单列，不能以这些数据库测试代替。
+
+- 新增迁移 `00100_platform_administration.sql`，最初包含独立平台授权、创建幂等记录、邀请投递队列及组织管理版本；独立投递表和创建请求表随后分别由 `00102`、`00103` 归并至邀请表和组织表并删除。新迁移不创建审计表，不回写已合并的历史迁移。
+- 组织角色只提供 `user` 与 `admin`；超级管理员身份独立存储，不增加组织角色枚举。邀请需显式选择角色，重发及撤销不改写原角色。
+- `/platform-admin` 使用现有侧边栏组件。组织内按基础资料、成员、工作区、邀请四个菜单分别展示。返回组织列表位于侧栏全局导航；创建组织和编辑资料位于页面标题区右上角。
+- 后台通过现有国际化体系提供英文和简体中文，覆盖菜单、状态、表单、错误、无障碍标签、日期和计数；沿用全局语言偏好；侧栏不提供独立语言切换入口。
+- 原因字段不在表单中展示，后端允许旧客户端传入但不持久化。当前版本没有审计入口、查询路由、审计权限及事件写入。
+- 原始功能证据记录在 [PR 验收评论](https://github.com/superduck-ai/open-managed-agents/pull/450#issuecomment-6207321058)，本轮简化调整的结果与角色控件截图见同一 PR 的补充验收评论；历史分支截图不作为当前版本的通过证据。
+
+### 简化调整
+
+组织详情由处理器读取一次；目录仅检查组织是否存在，写操作仍在事务内锁定组织并校验版本。后台与组织设置共用角色选项、说明、翻译和角色选择器。
+
+邀请创建、重发时，在原 `organization_invites.email_delivery_status` 保存最新平台投递状态，并与 River 任务在同一 Yourbatis 事务内提交。River 负责并发执行、30 秒超时、最多 5 次尝试和崩溃恢复，不再维护独立轮询、租约和重试计数。未启用真实邮箱认证时不注册邀请队列消费，保留待处理任务。不保留逐次投递历史。任务携带邀请 UUID、组织 UUID、收件邮箱、邀请时间及过期时间；发送前和回写结果时都按完整快照匹配，重发、撤销、接受、拒绝或过期后的旧任务不发送、不覆盖最新状态。所有入口修改邀请快照时通过数据库触发器重置最新平台投递状态，原 Console/Admin API 的同步发送及 `email_delivery` 返回合同保持不变。平台邀请与控制台邀请共用发送器，在读取组织和调用 SMTP 前遵守 `auth.allowed_email_domains`；未允许的域名返回投递失败，不发送邮件。SMTP 接受不等于收件或接受邀请。
+
+旧 `reason` 字段仅兼容接收，不校验、不持久化；CLI `--reason` 可省略。撤销邀请使用 POST `.../{invitationUuid}/revoke`。
+
+迁移 `00102_fold_invitation_delivery.sql` 将旧表匹配当前邀请快照的最新结果回填到原邀请表，转换已有 River 任务参数后删除 `platform_admin_invite_deliveries`。旧迁移保留历史，不回写已应用的 `00100`、`00101`。回滚只还原最新结果，不恢复已删除的逐次历史；变更版本时应先停止旧邀请 worker，迁移完成后再启动新版本，不能混跑两种任务参数。
+
+### 创建幂等存储简化
+
+迁移 `00103_fold_organization_creation.sql` 将旧请求表中仍可关联组织的全部幂等记录（包括已过期记录）归并到 `organizations`，随后删除独立请求表。普通注册组织的三个创建字段均为空，不参与后台创建幂等约束。旧表过期复用键时已覆盖的历史绑定无法恢复；迁移仅保留现存记录。发现组织缺失或同一组织对应多个请求时，迁移原子失败，避免静默丢失绑定。
+
+回滚迁移根据组织当前资料重建旧请求表响应，过期时间使用 `infinity`；无法还原首次响应或原过期时间。部署时停止旧实例后执行迁移，再启动新版本，避免旧代码继续读取已删除的表。
+
+验收覆盖旧记录（含过期记录）迁移、异常回滚、Up/Down/Up、独立事务并发唯一性、跨账号键隔离、参数冲突、创建失败不占键，以及修改资料后重放返回当前资料。
+
+### 评审修复后的兼容与恢复约定
+
+后台账号查询复用邮箱登录的身份选择顺序：同一邮箱（忽略大小写）优先 `registration_identity=true`，否则按 `added_at`、UUID 选择现有登录会使用的历史身份。只读解析不推断注册来源、不回填标记、不改变 Home/组织归属，也不自动授权；运维或已有超级管理员仍必须按账号 UUID 显式授予超级管理员。seed 账号和历史账号可按相同规则查询、授权和设置为组织管理员，同邮箱的其他成员行不能冒充登录身份。
+
+搜索长度按 Unicode 码点统计，账号检索至少 2 个字符、最多 200 个字符。管理员及邀请弹窗遇到 `version_conflict` 后刷新组织详情和当前目录，保留输入并提示关闭重开；不以旧表单自动重试写入。401 返回当前后台路径和查询参数；403 仅在 `platform_access_denied` 或 `verified_login_required` 时清空后台状态，CSRF 失败保留页面并提示刷新。
+
+全局登录身份查询由迁移 `00104_global_login_identity_index.sql` 增加 `users_login_identity_idx`，覆盖 `LOWER(email), registration_identity DESC, added_at, uuid`，用于邮箱匹配和稳定身份排序。迁移在事务外并发创建及删除索引；创建前移除同名索引，以支持失败构建留下索引时重新执行，不修改历史迁移或账号数据。
+
+同步主线 `ddd38a4c` 时，主线已占用 `00083_add_code_session_worker_claims.sql`，平台管理迁移曾顺延为 `00084` 至 `00088`。同步主线 `3a8487c4` 时，主线新增 `00084_optional_credential_display_name.sql` 至 `00089_session_input_file_instances.sql`，平台管理迁移再顺延为 `00090` 至 `00094`。再次同步主线 `7b86ea70` 时，主线新增 `00090_llm_provider_slug.sql` 与 `00091_pin_resume_and_batch_models.sql`。本 PR 尚未发布的平台管理迁移继续顺延为 `00092` 至 `00096`，不修改主线历史迁移。迁移边界测试同步更新：升到主线 `00091` 时 `worker_claimed_by` 已存在且 `platform_admins` 尚未创建，随后 `00092`–`00095` 与 `00096` 可以共同升级。此前使用旧编号运行过本 PR 的本地验收库不能直接沿用版本记录，须使用新的隔离库验收。
+
+
+同步主线 `6640023c` 时，主线迁移已至 `00099_model_price_catalog.sql`，其中 `00094`、`00095`、`00096` 与本 PR 旧编号相撞。整条未发布的平台管理迁移链顺延为 `00100_platform_administration.sql`、`00101_platform_invitation_river.sql`、`00102_fold_invitation_delivery.sql`、`00103_fold_organization_creation.sql`、`00104_global_login_identity_index.sql`，同时避免将旧 `00092`、`00093` 插入已升级主线库造成 goose 缺失或乱序版本错误。主线历史迁移及本 PR 五个迁移的 SQL 内容保持不变。迁移边界回归从主线 `00099` 验证平台表尚不存在，再升级完整平台链，并验证索引重复升级无变更、回滚后可再升级。曾运行本 PR 任一旧编号的预览库必须重新创建隔离数据库，不得直接套用新版本记录；若存在已部署此分支的环境，须先盘点版本记录并单独制定数据保留升级方案，本次不改写其迁移表。
+
+整合最新前端设计系统时，账号区保留真实账号姓名和当前组织名，邮箱保留在下拉菜单；平台进入时使用目标组织名且不展示平台标识，真实成员角色与目录不变。管理入口依据服务器当前组织有效权限，不因缺少目标 membership 被隐藏。平台页面继续复用 shared/ui 与语义令牌，弹窗退出、提交保护、焦点恢复及短屏布局按 `fe/design-system.md` 的共享合同验收。
+
+## 12. 超管与组织共用成员列表（2026-11-02）
+
+### 当前决定
+
+按用户最新要求，后台直接使用与组织设置相同的成员列表及操作，在当前组织详情页完成管理，不跳转到组织内，不增加“管理成员”跳转按钮，移除交接操作。超管添加成员直接指定已注册账号与角色，立即生效，无须邀请或接受。此节替换此前的跳转方案；本节为本次成员管理增量的实现合同，验收结果见 PR 评论。
+
+基线为本地 `main` 的 `f749b4ab`，并参考 [PR #512](https://github.com/superduck-ai/open-managed-agents/pull/512) 固定 HEAD `2e68218ca181f6d432e5c0573fc2ac7180d17fa7`。该 PR 的进入组织能力仍用于工作台访问，不作为后台成员管理的前置条件。
+
+### 界面
+
+后台保留现有侧栏和组织标题，下方直接展示原成员列表。组织内 `/settings/members` 使用同一列表模块。
+
+- 顶部保持“成员”和人数；后台主按钮为“添加成员”，组织内主按钮仍为“邀请”。
+- 保留姓名/邮箱搜索、角色筛选、待处理邀请与有效成员。
+- 角色列直接选择 User 或 Admin；行尾菜单提供移除成员。
+- 待处理邀请提供重发、撤销；继续使用原邀请和移除弹窗。
+- 不再展示原后台第二套成员表、“管理员操作”列、“交接”按钮及交接弹窗。
+- 后台“添加成员”弹窗包含账号搜索、单个账号选择、User/Admin 角色选择（默认 User）、取消与添加。确认即成为有效成员，不创建邀请、不发邀请邮件、不需要对方确认；未注册账号提示先注册，不创建占位身份。组织内仍沿用邀请加入。
+- 目标已是有效成员时返回 `member_already_exists`，不能借添加覆盖角色；曾移除的账号创建新成员关系，不恢复历史显式工作区权限。
+
+更换唯一管理员：先提升另一位成员，或直接添加另一位已注册账号为管理员，再降级或移除原管理员。最后真实管理员保护继续生效；不因去掉交接而允许组织失去管理员。零管理员组织可通过直接添加管理员修复；已有设置管理员入口可并入添加成员。
+
+### 复用方式
+
+从 `OrganizationMembersPage` 提取直接相关的成员管理模块，集中持有列表、筛选、角色编辑和移除交互；通过明确的添加方式配置，后台打开直接指定弹窗，组织内打开原邀请弹窗。账号选择复用现有 `AccountPicker`，不复制选择器。组织设置和后台分别提供目标组织资料、有效操作能力及数据操作；不复制表格、弹窗、筛选和变更状态机。
+
+组织设置的页面入口继续从现有 Auth/Workspace 上下文解析组织；后台从 URL 的 `organizationUuid` 与后台组织详情解析。共享模块不自行猜测目标组织，也不要求后台挂载 Console 的 Auth/Workspace Provider。
+
+两个真实入口的数据合同不同，适配只负责现有 DTO 与共享成员模型的转换、查询及写请求。后台成员 UUID 与 Console userId 在各自入口保留原值，不拼接或猜测另一入口标识。后台已有游标分页需要由共享列表承接；后台搜索和角色筛选必须进入服务端条件，不能只筛选当前页。组织内原有加载和筛选方式继续保持，不为本次改动统一所有数据协议。
+
+### 授权与接口
+
+后台成员管理使用 `/api/platform-admin/organizations/{organizationUuid}`，目标仅取 URL，沿用可信登录、实时平台授权、写请求 CSRF、组织版本冲突处理和现有后台事务。不能为复用 UI 隐式调用 `enterOrganization`、更改 sessionStorage 范围、切换用户当前组织或向 Console 请求注入进入组织头。
+
+后台复用现有 GET `/members` 和邀请管理接口，新增 POST `/members`（`account_uuid`、`role`、`expected_version`），补齐 PATCH `/members/{memberUuid}` 的 User/Admin 角色修改及 DELETE `/members/{memberUuid}` 的成员移除。写入携带 `expected_version`，返回更新后的组织摘要，由适配层刷新目录、人数和版本。共享模块不把此版本字段强加给 Console 请求。添加时复用稳定登录账号解析与组织成员插入原语，新关系不改变登录身份、Home 或平台授权，不生成个人 Key。
+
+后台 GET `/members` 补齐现有 `query` 的姓名/邮箱匹配和 `role` 筛选，保持组织范围、UUID 游标及稳定排序；条件变化回到第一页。后台邀请的重发、撤销和投递状态沿用现有合同，与 Console 差异在入口适配处处理。
+
+组织内继续调用 `membersApi.ts` 和现有 Console 接口。后台与 Console 复用成员角色写入、管理员计数和组织/显式工作区关系软删除原语，保持单个 Yourbatis 事务；后台写入复用已有平台授权锁与组织锁，不调用会另开事务的 Console DB 方法。
+
+删除最后管理员或将其降级返回既有冲突错误。平台身份不计入真实管理员，不自动创建成员；移除组织关系不撤销平台授权。普通组织成员来源保持原有自身操作限制，后台超管操作能力按后台授权处理，不按邮箱相同误禁用。其他组织关系、资源、Key 与运行中任务保持原合同。
+
+去掉交接是产品流程调整；实施时检查调用关系并删除不再使用的交接 UI、接口及专属实现，不为已移除的功能新增兼容包装。本次不新增数据库迁移、审计系统或授权引擎。
+
+### 验收
+
+1. 后台直接添加、改角色、移除和处理历史邀请，URL 始终处于平台后台；当前 Console 组织与浏览器进入范围不变。
+2. 后台和组织设置使用同一个成员模块，原页面交互、弹窗退出、错误保留、处理中保护、焦点恢复和窄屏布局保持。
+3. 交接入口消失；先提升或直接添加另一位管理员，再降级原管理员成功，未提升前降级或移除唯一管理员失败。
+4. 非成员超管可操作，普通账号不能调用后台接口；跨组织成员标识、错误 CSRF、旧版本均被拒绝，错误不留下部分写入。
+5. 后台搜索、角色筛选及分页覆盖全部服务端结果；写入后人数与版本刷新，切换目标组织不串目录或表单。
+6. 添加 User/Admin 后立即出现在有效成员目录，新增过程中不创建邀请或发送邀请邮件；未注册账号、重复成员不能被静默添加或覆盖角色。
+7. 移除只清理目标组织及其显式工作区关系；超管自身关系移除不撤销平台授权；组织管理员原有成员管理无回归。
+
+列表由 `settings/OrganizationMemberList.tsx` 共用；后台使用独立查询与变更，角色与移除复用原控件。验收覆盖范围和未覆盖项以本次 PR 验收评论为准。
+
+邮箱登录与退出路由不解析当前组织和工作区；即使目标组织失效，退出仍删除登录会话并清除 cookie。目标 bootstrap 保持组织范围的严格校验。

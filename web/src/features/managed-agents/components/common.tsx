@@ -1,3 +1,5 @@
+import { productIcons } from '@/shared/icons/product-icons';
+import { useDialogDismissal } from '../../../shared/hooks/use-dialog-dismissal';
 import { useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import {
@@ -29,7 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { Textarea } from '../../../shared/ui/textarea';
 import clsx from 'clsx';
-import { AlertCircle, Archive, ArrowUpRight, Bot, Plus, Search, Trash2, TriangleAlert, X } from 'lucide-react';
+import { AlertCircle, Archive, ArrowUpRight, Plus, Search, Trash2, TriangleAlert, X } from 'lucide-react';
 import { type FormEvent, type ReactNode, useId, useState } from 'react';
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { entityKindLabel, resourceEmptyBody, resourceEmptyTitle } from '../labels';
@@ -48,7 +50,7 @@ import {
 export function DetailKV({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="mt-3">
-      <div className="text-xs font-medium uppercase text-muted-foreground/70">{label}</div>
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
       <div className="mt-1 text-sm text-foreground">{value}</div>
     </div>
   );
@@ -69,7 +71,7 @@ export function DetailCard({
     <section className="mb-6">
       <div className="mb-3 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-[20px] font-semibold leading-6 text-foreground">{title}</h2>
+          <h2 className="text-base font-semibold leading-6 text-foreground">{title}</h2>
           {description ? (
             <p className="mt-1 max-w-[760px] text-sm leading-5 text-muted-foreground">{description}</p>
           ) : null}
@@ -116,7 +118,7 @@ export function ManagedErrorAlert({ children, className }: { children: ReactNode
 
 export function ManagedWarningAlert({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <Alert className={clsx('border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400', className)}>
+    <Alert className={clsx('border-[var(--amber-7)] bg-[var(--warning-bg)] text-[var(--warning)]', className)}>
       <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
       <AlertDescription className="text-inherit">{children}</AlertDescription>
     </Alert>
@@ -142,21 +144,21 @@ export function NestedRows({
   }
   if (loading) {
     return (
-      <div className="rounded-lg border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
+      <div className="rounded-lg border-[0.5px] border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
         {msg('common.loading', 'Loading...')}
       </div>
     );
   }
   if (!rows.length) {
     return (
-      <div className="rounded-lg border border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
+      <div className="rounded-lg border-[0.5px] border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
         {emptyTitle}
       </div>
     );
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-border">
-      <Table className="table-fixed text-left">
+    <div className="overflow-hidden rounded-lg border-[0.5px] border-border">
+      <Table className="table-fixed text-left" style={{ minWidth: columns.length * 128 }}>
         <TableHeader className="bg-card-raised text-muted-foreground">
           <TableRow className="hover:bg-transparent">
             {columns.map((column) => (
@@ -223,10 +225,11 @@ export function LockedAgentReferenceField({
   const { msg } = useI18n();
   const label = msg('managedAgents.common.agent', 'Agent');
   const body = (
-    <div className="flex min-h-10 items-center justify-between gap-3 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-foreground">
+    <div className="flex min-h-10 items-center justify-between gap-3 rounded-lg border-[0.5px] border-border bg-secondary px-3 py-2 text-sm text-foreground">
       <span className="min-w-0 truncate font-medium">{agent.name || agent.id}</span>
-      <span className="shrink-0 text-xs text-muted-foreground">
-        v{agent.version} · {compactAgentId(agent.id)}
+      <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+        <span>v{agent.version}</span>
+        <span>{compactAgentId(agent.id)}</span>
       </span>
     </div>
   );
@@ -242,7 +245,7 @@ export function LockedAgentReferenceField({
 
   return (
     <div>
-      <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground/70">{label}</div>
+      <div className="mb-1 text-xs font-semibold text-muted-foreground">{label}</div>
       {body}
     </div>
   );
@@ -254,25 +257,30 @@ export function DeploymentFieldHeader({
   optional = false,
   manageHref,
   manageLabel,
+  accessory,
 }: {
   id: string;
   label: string;
   optional?: boolean;
   manageHref?: string;
   manageLabel?: string;
+  accessory?: ReactNode;
 }) {
   const { msg } = useI18n();
 
   return (
     <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
-      <Label htmlFor={id} className="text-sm font-medium leading-5 text-foreground">
-        {label}{' '}
-        {optional ? (
-          <span className="font-normal text-muted-foreground">
-            {msg('managedAgents.common.optionalParen', '(optional)')}
-          </span>
-        ) : null}
-      </Label>
+      <div className="flex min-w-0 items-center gap-1">
+        <Label htmlFor={id} className="text-sm font-medium leading-5 text-foreground">
+          {label}{' '}
+          {optional ? (
+            <span className="font-normal text-muted-foreground">
+              {msg('managedAgents.common.optionalParen', '(optional)')}
+            </span>
+          ) : null}
+        </Label>
+        {accessory}
+      </div>
       {manageHref && manageLabel ? (
         <a
           href={manageHref}
@@ -391,7 +399,7 @@ export function DeploymentSelectField({
           }
         }}
       >
-        <SelectTrigger id={id} className="h-9 w-full min-w-0 bg-background">
+        <SelectTrigger id={id} className="h-10 w-full min-w-0">
           <SelectValue className={value ? 'text-foreground' : 'text-muted-foreground'}>
             {selected?.label ?? placeholder}
           </SelectValue>
@@ -421,7 +429,6 @@ export function ManagedAddSelectField({
   options,
   manageHref,
   manageLabel,
-  tone = 'managed',
   placeholder,
   showPlus = true,
   onChange,
@@ -433,7 +440,6 @@ export function ManagedAddSelectField({
   options: EntityOption[];
   manageHref: string;
   manageLabel: string;
-  tone?: 'managed' | 'deployment';
   /** When set, replaces the default “Add {label}” trigger copy while options remain. */
   placeholder?: string;
   showPlus?: boolean;
@@ -450,7 +456,6 @@ export function ManagedAddSelectField({
     { value: '', label: triggerPlaceholder },
     ...availableOptions.map((option) => ({ value: option.id, label: option.label })),
   ];
-  const deploymentTone = tone === 'deployment';
 
   return (
     <div>
@@ -471,14 +476,7 @@ export function ManagedAddSelectField({
           }
         }}
       >
-        <SelectTrigger
-          id={id}
-          className={
-            deploymentTone
-              ? 'h-9 w-full min-w-0 bg-background text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:text-muted-foreground'
-              : 'managed-resource-field mt-0 h-10 w-full border-border bg-secondary px-3 text-sm text-muted-foreground focus-visible:border-ring focus-visible:ring-0 disabled:cursor-not-allowed'
-          }
-        >
+        <SelectTrigger id={id} className="h-10 w-full min-w-0 text-muted-foreground disabled:cursor-not-allowed">
           {showPlus ? <Plus className="size-4 shrink-0 text-muted-foreground" aria-hidden /> : null}
           <SelectValue className="text-muted-foreground">{triggerPlaceholder}</SelectValue>
         </SelectTrigger>
@@ -508,11 +506,7 @@ export function ManagedAddSelectField({
               type="button"
               variant="outline"
               size="xs"
-              className={
-                deploymentTone
-                  ? 'h-7 bg-white/10 text-xs text-foreground ring-1 ring-white/10 hover:bg-white/15'
-                  : 'h-7 bg-secondary text-xs text-foreground'
-              }
+              className="h-7 bg-secondary text-xs text-foreground"
               onClick={() => onChange(selectedIds.filter((idValue) => idValue !== option.id))}
             >
               {option.label}
@@ -525,9 +519,7 @@ export function ManagedAddSelectField({
   );
 }
 
-export function DeploymentAddSelectField(props: Omit<Parameters<typeof ManagedAddSelectField>[0], 'tone'>) {
-  return <ManagedAddSelectField {...props} tone="deployment" />;
-}
+export const DeploymentAddSelectField = ManagedAddSelectField;
 
 export function ManagedTextField({
   label,
@@ -645,10 +637,7 @@ export function ManagedSelectField({
           }
         }}
       >
-        <SelectTrigger
-          id={id}
-          className="managed-resource-field mt-2 h-10 w-full border-border bg-secondary px-3 text-sm text-foreground focus-visible:border-ring focus-visible:ring-0"
-        >
+        <SelectTrigger id={id} className="mt-2 h-10 w-full min-w-0">
           <SelectValue className={value ? 'text-foreground' : 'text-muted-foreground'}>
             {selected?.label ?? placeholder}
           </SelectValue>
@@ -686,6 +675,7 @@ export function ConfirmEntityDialog({
   onConfirm: () => void;
 }) {
   const { msg } = useI18n();
+  const dialogProps = useDialogDismissal(onCancel, busy);
   const label = labelOverride ?? entityKindLabel(section, msg);
   const actionLabel = action === 'archive' ? msg('common.archive', 'Archive') : msg('common.delete', 'Delete');
   const destructive = action === 'delete';
@@ -698,7 +688,7 @@ export function ConfirmEntityDialog({
         : entityDisplayName(section, entity as ManagedEntityApiResponse);
 
   return (
-    <AlertDialog open onOpenChange={(open) => !open && onCancel()}>
+    <AlertDialog {...dialogProps}>
       <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogMedia
@@ -750,6 +740,7 @@ export function ConfirmAgentsArchiveDialog({
   onConfirm: () => void;
 }) {
   const { msg } = useI18n();
+  const dialogProps = useDialogDismissal(onCancel, busy);
   const single = count === 1;
   const title = single
     ? msg('managedAgents.agents.confirmArchive.title', 'Archive agent')
@@ -765,7 +756,7 @@ export function ConfirmAgentsArchiveDialog({
         { count },
       );
   return (
-    <AlertDialog open onOpenChange={(open) => !open && onCancel()}>
+    <AlertDialog {...dialogProps}>
       <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogMedia>
@@ -850,7 +841,7 @@ export function AgentsEmptyState({
   const filtered = !trueEmpty;
   return (
     <AgentsListState
-      icon={trueEmpty ? Bot : Search}
+      icon={trueEmpty ? productIcons.agents : Search}
       title={
         trueEmpty
           ? msg('managedAgents.agents.emptyTitle', 'No agents yet')

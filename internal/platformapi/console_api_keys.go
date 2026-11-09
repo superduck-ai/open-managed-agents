@@ -354,7 +354,7 @@ func handleCreateConsoleWorkspaceAPIKey(store OrganizationStore) http.HandlerFun
 		}
 		var createdByUserUUID *string
 		if principal, found := auth.PrincipalFromContext(r.Context()); found {
-			userUUID := strings.TrimSpace(principal.UserUUID)
+			userUUID := principal.UserUUID
 			if userUUID != "" {
 				createdByUserUUID = &userUUID
 			}
@@ -497,7 +497,7 @@ func consoleWorkspaceScopeFromRequest(
 			workspaceAccessDenied(w)
 			return WorkspaceScope{}, false
 		}
-		_, access, accessErr := workspaceaccess.New(accessStore).Resolve(r.Context(), orgUUID, principal.UserExternalID, scope.UUID)
+		_, access, accessErr := workspaceaccess.New(accessStore).ResolvePrincipal(r.Context(), principal, scope.UUID)
 		if accessErr == nil && access.UseResources() {
 			return scope, true
 		}

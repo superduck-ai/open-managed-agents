@@ -366,7 +366,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		OrganizationUUID:      principal.OrganizationUUID,
 		WorkspaceUUID:         principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID:   principal.APIKeyUUID,
-		RuntimeUserUUID:       principal.UserUUID,
+		RuntimeUserUUID:       principal.RuntimeUserUUID(),
 		EnvironmentUUID:       env.UUID,
 		EnvironmentExternalID: env.ExternalID,
 		AgentUUID:             agent.record.UUID,
@@ -638,7 +638,7 @@ func (h *Handler) runRoute(w http.ResponseWriter, r *http.Request) error {
 		return h.writeRunReferenceFailure(w, r, principal, deployment, referenceFailure)
 	}
 	now := time.Now().UTC()
-	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, principal.UserUUID, now, memoryStores)
+	preparedRun, err := prepareDeploymentExecution(deployment, principal.APIKeyUUID, principal.RuntimeUserUUID(), now, memoryStores)
 	if err != nil {
 		if errors.Is(err, errRetryableRunPreparation) {
 			return deploymentLoadError(err, deploymentID)
@@ -1309,7 +1309,8 @@ func parseRequiredRawString(raw json.RawMessage, name string) (string, error) {
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", fmt.Errorf("%s must be a string", name)
 	}
-	if strings.TrimSpace(value) == "" {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return "", fmt.Errorf("%s must be non-empty", name)
 	}
 	return value, nil

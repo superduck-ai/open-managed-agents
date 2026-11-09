@@ -10,6 +10,9 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
+var errMessageImageRejected = errors.New("message image source rejected")
+var errNativeTrajectoryPayload = errors.New("invalid DSH event envelope")
+
 var errRuntimeSubagentConfig = errors.New("invalid runtime subagent configuration")
 var errSandboxUnavailable = errors.New("sandbox is unavailable")
 var errSessionIngressIdentity = errors.New("session ingress identity does not match an active code session")
@@ -196,3 +199,14 @@ func workerIngressAuthorizationFailure(cause error) error {
 }
 
 var ErrModelPriceUnavailable = errors.New("model price unavailable for budgeted session")
+
+var errRuntimeSkillsUnavailable = errors.New("session skill reader is unavailable")
+var errRuntimeSkillFrontmatter = errors.New("unterminated skill frontmatter")
+var errRuntimeSkillDirectory = errors.New("fixed skill directory is unavailable")
+
+func runtimeSkillsFailure(cause error) error {
+	if errors.Is(cause, db.ErrNotFound) {
+		return codeSessionNotFound(cause)
+	}
+	return internalError("Could not load session skills", cause)
+}

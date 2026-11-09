@@ -13,6 +13,7 @@ import (
 // ClientCredentialSource decides whether it is copied into the sealed refresh
 // payload (sealed only) and is stored on public auth so refresh can re-resolve.
 type MCPOAuthStoredCredentialInput struct {
+	OAuthServiceURL         string
 	MCPServerURL            string
 	AccessToken             string
 	RefreshToken            string
@@ -33,6 +34,9 @@ func BuildMCPOAuthStoredCredentialJSON(in MCPOAuthStoredCredentialInput) (json.R
 	publicAuth := mcpOAuthCredentialAuth{
 		Type:         credentialAuthTypeMCPOAuth,
 		MCPServerURL: in.MCPServerURL,
+	}
+	if in.OAuthServiceURL != in.MCPServerURL {
+		publicAuth.OAuthServiceURL = in.OAuthServiceURL
 	}
 	if in.ClientCredentialSource == MCPOAuthClientCredentialPlatform ||
 		in.ClientCredentialSource == MCPOAuthClientCredentialSealed {

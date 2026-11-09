@@ -27,8 +27,12 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, entry := range entries {
-				_, name, _ := strings.Cut(entry.Name(), "_")
-				if name == "remove_model_price_catalog.sql" || name == "provider_cost.sql" {
+				versionText, name, _ := strings.Cut(entry.Name(), "_")
+				var version int64
+				if _, err := fmt.Sscan(versionText, &version); err != nil {
+					t.Fatal(err)
+				}
+				if version > baselineVersion || name == "remove_model_price_catalog.sql" || name == "provider_cost.sql" {
 					continue
 				}
 				if baselineVersion == 95 {
@@ -71,8 +75,8 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 				}
 			}
 			var finalVersion, finalCount int64
-			if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&finalVersion, &finalCount); err != nil || finalVersion != 101 || finalCount != historyCount+101-baselineVersion {
-				t.Fatalf("升级历史=%d/%d，预期 101/%d：%v", finalVersion, finalCount, historyCount+101-baselineVersion, err)
+			if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&finalVersion, &finalCount); err != nil || finalVersion != 117 || finalCount != historyCount+117-baselineVersion {
+				t.Fatalf("升级历史=%d/%d，预期 117/%d：%v", finalVersion, finalCount, historyCount+117-baselineVersion, err)
 			}
 			for _, column := range []string{"budget", "budget_reached_at", "budget_removed_at"} {
 				assertMigrationColumnNullable(t, ctx, database, "sessions", column, "YES")

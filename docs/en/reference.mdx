@@ -7,7 +7,7 @@ description: "Event types, self-hosted worker CLI flags, supported MCP server ty
 This page collects reference material for Open Managed Agents. For task-oriented guides, follow the links in each section. For the operations on the session resource, see [Session operations](/docs/en/session-operations).
 
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
 ## Event types
@@ -22,7 +22,6 @@ Persisted event type strings follow a `{domain}.{action}` naming convention; the
     | `user.interrupt`          | Stop the agent mid-execution.                                                                                                                                                                                                                        |
     | `user.custom_tool_result` | Response to a custom tool call from the agent.                                                                                                                                                                                                       |
     | `user.tool_confirmation`  | Approve or deny an agent or MCP tool call when a permission policy requires confirmation.                                                                                                                                                            |
-    | `user.define_outcome`     | Define an [outcome](/docs/en/define-outcomes) for the agent to work toward.                                                                                                                                |
     | `user.tool_result`        | For sessions with `self_hosted` [environments](/docs/en/self-hosted-sandboxes) only, your integration is responsible for providing `agent_toolset` results. The SDK helpers and CLI do this automatically. |
   </Tab>
 
@@ -68,15 +67,12 @@ Persisted event type strings follow a `{domain}.{action}` naming convention; the
     | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
     | `span.model_request_start`        | A model inference call has started.                                                                                                                                                                                                                      |
     | `span.model_request_end`          | A model inference call has completed. Includes `model_usage` with token counts.                                                                                                                                                                          |
-    | `span.outcome_evaluation_start`   | [Outcome](/docs/en/define-outcomes) evaluation has started.                                                                                                                                                    |
-    | `span.outcome_evaluation_ongoing` | Heartbeat during an ongoing [outcome](/docs/en/define-outcomes) evaluation.                                                                                                                                    |
-    | `span.outcome_evaluation_end`     | An [outcome](/docs/en/define-outcomes) evaluation cycle has completed. A `needs_revision` result means another cycle follows; `satisfied`, `max_iterations_reached`, `failed`, and `interrupted` are terminal. |
   </Tab>
 
   <Tab title="System events">
     | Type             | Description                                                                                                                                                                                                                                                                                           |
     | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-    | `system.message` | Append privileged system-level context that applies to the accompanying turn and all subsequent turns. Supported on `claude-opus-4-8`, `claude-fable-5`, `claude-mythos-5`, and `claude-opus-5`; on an unsupported primary model the event is rejected with `model_does_not_support_mid_conversation_system`. |
+    | `system.message` | Provides system-level context; behavior depends on the runner and model provider. |
   </Tab>
 
   <Tab title="Event deltas">
@@ -91,7 +87,7 @@ Persisted event type strings follow a `{domain}.{action}` naming convention; the
 
 ## Self-hosted worker
 
-These are the `ant beta:worker` CLI flags for the pre-built worker that drives a `self_hosted` environment. See [Self-hosted sandboxes](/docs/en/self-hosted-sandboxes) for setting up the environment, running a worker, and the SDK helper options.
+These flags are a reference for the third-party `ant beta:worker` CLI. Verify compatibility with your OMA deployment. See [Self-hosted sandboxes](/docs/en/self-hosted-sandboxes) for setting up the environment, running a worker, and the SDK helper options.
 
 | Flag                   | Description                                                                                                                                                                           |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -105,17 +101,10 @@ These are the `ant beta:worker` CLI flags for the pre-built worker that drives a
 
 ## Supported MCP server types
 
-Open Managed Agents connects to [remote MCP servers](/docs/en/mcp-connector) that expose an HTTP endpoint, or to private MCP servers through [MCP tunnels](/docs/en/mcp-connector). The server should support the MCP protocol's streamable HTTP transport; servers that only support the deprecated SSE transport still work through an automatic fallback. See [MCP connector](/docs/en/mcp-connector) for declaring servers on an agent.
+Open Managed Agents connects to [remote MCP servers](/docs/en/mcp-connector) that expose an HTTP endpoint, or to private MCP servers through [MCP tunnels](/docs/en/mcp-connector). The server should support the MCP protocol's streamable HTTP transport; some HTTP connection failures trigger a fallback to the deprecated SSE transport; compatibility depends on the server and runner. See [MCP connector](/docs/en/mcp-connector) for declaring servers on an agent.
 
 For more information on MCP and building MCP servers, see the [MCP documentation](https://modelcontextprotocol.io).
 
 ## Rate limits
 
-Managed Agents endpoints are rate-limited per organization:
-
-| Operation                                                     | Limit                     |
-| ------------------------------------------------------------- | ------------------------- |
-| Create endpoints (such as agents, sessions, and environments) | 300 requests per minute   |
-| Read endpoints (such as retrieve, list, and stream)           | 1,200 requests per minute |
-
-Organization-level [spend limits and usage-tier rate limits](/docs/en/reference#rate-limits) also apply.
+Rate limits and quotas depend on deployment configuration, gateways, and model providers. Check with your deployment administrator.

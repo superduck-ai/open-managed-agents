@@ -46,6 +46,8 @@ worktree 时仍需显式执行对应命令。`.codex/` 下的其他本地文件�
 的绝对路径。共享文件缺失时从模板创建，用户首次填写模型和凭证后重跑同一命令。
 已有配置、共享文件与密钥不覆盖；已绑定环境缺少输入时拒绝重新生成密钥。
 
+首次生成的本地 `.run/config.yaml` 设置 `code_session.upstream_proxy_disable_ssrf_protection: true`，允许 Clash/TUN 将公网域名解析为 `198.18.0.0/15` Fake-IP 时使用沙箱代理。该设置仅属于 dev-init 的本地配置准备，放开代理拨号层的私网地址过滤，仍保留租户鉴权和 Environment 网络策略。通用配置模板与生产默认继续启用 SSRF 防护。已有 `.run/config.yaml` 不自动覆盖，使用 Fake-IP 的现有环境需显式设置该项并重启后端。
+
 共享文件采用同目录临时文件与不可覆盖的硬链接发布，多个 worktree 同时准备时
 只保留第一个完整文件。本环境准备与初始化分别使用文件锁防止重复写入。
 配置准备只针对默认初始化文件，自定义初始化文件保留显式准备输入的行为。
@@ -172,8 +174,8 @@ flowchart TD
 
 启用环境隔离后：
 
-- 只停止已记录且属于当前 worktree 的实例，再探测新端口；记录中的端口被其他 worktree 或进程占用时拒绝停止对方。
-- 重启脚本只停止确认属于当前 worktree 的服务；无法确认归属时明确报错。
+- 只停止已记录且属于当前 worktree 的实例，再探测新端口；记录中的端口被其他 worktree 或进程占用时保留对方进程，继续探测空闲端口并更新 runtime 与 alias，不因旧端口记录失效而中断重启。
+- 重启脚本只停止确认属于当前 worktree 的服务；无法确认旧监听进程归属时保留该进程，并继续探测空闲端口。
 - 临时 `PORT`、`API_PORT`、`OMA_API_URL` 等值与绑定配置冲突时，报错，不静默选择其中一个。
 - DSH 显式接收当前环境的 API 地址和 claim token，避免 `.env` 中的默认地址覆盖它们。
 - 如果配置了 diagnostics 固定监听端口，也需要单独检查冲突。
@@ -236,7 +238,9 @@ Compose 的 init-envd 与 e2b-local 使用生成的 `stack.env` 中的 `OMA_E2B_
 - 普通 workspace 建立对应成员关系；默认 workspace 遵循现有权限规则。
 - 新环境只有上述测试账号和四个初始化 API key，不额外创建 `admin@example.local` 或第五个默认 key。
 - 登录继续沿用现有邮箱验证码流程，不增加密码登录或新的鉴权绕过。
-- 已有数据库不自动删除历史账号、workspace 或 key；无法安全复用时报告冲突。
+- 已有数据库不自动删除历史账号、workspace 或 key；无法安全复用时报告冲突。显式 `--update` 检测到已登记组织缺失时，将旧 state 和 credentials 以 0600 权限备份至生成 secrets 目录的 `update-recovery.json`，先按配置用户邮箱与组织名查找恢复候选。唯一候选必须拥有 admin 用户，复用该组织、用户和名称及默认标记一致的 workspace，只补齐缺失 workspace；多个候选或非 admin 候选时报错，不创建更多同名组织。无候选时才分配新组织和用户。API key、environment 和 provider 重新登记并轮换本地 API key；环境绑定、基础设施端口、固定密钥与 Brain token 保留，仅显式 `--update` 允许上述候选复用，不删除数据库残留资源。新的 pending 身份在写库前持久化，失败后重跑沿用该身份。
+
+开发身份事务支持已存在的组织与用户，按组织范围和 external ID/UUID 验证 workspace，拒绝身份冲突及归档记录，并原子补齐缺失 workspace。回归包括缺失 workspace 的补齐与重复执行、恢复候选歧义和非管理员拒绝。
 
 当前基础 seed 会创建并更新默认用户和资源。启用开发初始化模式后，必须调整其调用关系，使其与文件初始化使用一致的数据来源，防止后续重启把测试用户改回原默认账号。未启用此模式时保留原行为。
 
@@ -316,12 +320,16 @@ providers:
 
 - 支持现有 `messages` 和 `chat_completions` backend。
 - 默认开发配置直接使用 `api_key`。解析器仍支持 `api_key_env` 和 `api_key_file`，三者必须三选一。
-- 两个 workspace 分别创建 provider 记录，使用同一组文件定义。
+- 两个 workspace 分别创建 provider 记录，使用同一组文件定义；作用域保持 workspace 专属。
+- 文件中的 `slug` 是新建记录的候选值，省略时使用 `default`。分配时检查整个组织（含组织级及其他 workspace 的连接），冲突时依次尝试 `-2`、`-3` 等后缀，并将结果限制在 32 字符内。例如同一个 `compatible` 定义在两个 workspace 中可以分别得到 `compatible` 和 `compatible-2`；模型引用使用数据库中的实际 slug。
+- 重跑优先按状态登记的 external ID 查找，保留实际 slug，不重分配或改写模型引用。旧状态没有 `input_slug` 时，首次重跑沿用数据库身份和迁移后的 slug，并登记当前文件的候选值；之后修改该值会报错，包括 `--update`。已登记记录删除后报错，不按同名连接替换。
+- 创建已提交但 provider 阶段状态尚未保存时，仅按所属 workspace 内唯一的名称恢复身份；同名多条记录时报错，避免接管错误连接。已有登记不受同名显示名称影响。
+- `--update` 继续更新原记录的地址、协议、模型列表与密钥，保留 UUID、external ID、slug 和 workspace；未指定时拒绝覆盖差异。
 - provider 密钥经现有 secrets 服务加密后写入当前环境数据库。
 - 模型列表以文件为准，初始化时不自动访问上游同步模型。
 - 保留现有 URL 校验和模型数量限制；不同 provider 可使用相同上游模型 ID，通过 `<slug>/<model_id>` 区分。
-- `slug` 可选，显式值遵守现有 slug 格式校验且在文件内唯一；省略时，新建记录按当前 workspace 的空闲值分配 `default`、`default-2` 等，重跑保留现有值。slug 创建后不可修改，`--update` 也会拒绝变更。
-- 同一 workspace 内的同名 provider 用于匹配，修改名称视为新增，旧记录不自动删除。
+- 显式 `slug` 遵守现有格式校验且在文件内唯一。
+- 文件中的 provider 名称作为所属 workspace 内的初始化引用；修改名称视为新增，旧记录不自动删除。
 - 密钥是否一致不能通过 last4 判断，应通过现有 secrets 服务解密后在内存比较。
 
 现有 HTTP handler 中的校验和密钥封装应整理到共享业务层，由页面操作和初始化共同调用，避免维护两套业务规则。
@@ -361,10 +369,10 @@ MITM 默认开启。`just dev-init` 首次生成 `.run/config.yaml` 时显式写
 | 未登记资源发生名称或身份冲突   | 报错，不自动接管                   |
 | 文件移除某项资源               | 保留数据库资源                     |
 | API key 已撤销或过期           | 报告状态，不自动恢复               |
-| 已登记用户或 workspace 被删除  | 报告冲突，不自动复活               |
+| 已登记用户或 workspace 被删除  | 普通初始化报告冲突；`--update` 在组织缺失时检查并复用唯一候选 |
 | 重复或并发初始化               | 加锁，避免创建副本                 |
 
-`--update` 保留资源 UUID 和 external ID，只更新已登记资源的可修改配置。身份冲突继续报错，不自动迁移组织归属、不删除资源，也不隐式轮换客户端 API key。
+`--update` 保留资源 UUID 和 external ID，只更新已登记资源的可修改配置。身份冲突继续报错，不自动迁移组织归属、不删除资源。组织缺失时，显式 `--update` 按上述恢复流程轮换客户端 API key，并在终端提示。
 
 四个客户端 API key 和 Brain claim token 使用安全随机值，不从邮箱或环境名称推导。数据库中的客户端 API key 沿用哈希存储。
 
@@ -566,8 +574,10 @@ flowchart TD
     A[确认 --yes 与目标属于同一 Git 仓库] --> B[校验绑定、注册表路径和 Docker env_id 标签]
     B --> C[核对服务命令、cwd 和已登记监听端口]
     C --> D[SIGTERM 并等待三个服务退出]
-    D --> E[Compose down --volumes --remove-orphans]
-    E --> F[移除 portless alias、环境登记和生成状态]
+    D --> E[启用全部 profile 执行 Compose down --volumes --remove-orphans]
+    E --> R{容器、卷和网络均已移除}
+    R -->|是| F[移除 portless alias、环境登记和生成状态]
+    R -->|否或检查失败| X[报错并保留登记供重试]
     F --> G[返回成功并保留 worktree]
     G --> H[外部流程决定是否删除 worktree]
 ```
@@ -576,7 +586,7 @@ flowchart TD
 
 服务识别结合已登记 API/Web 端口与 `ps` 命令，再用 `lsof` 核对 cwd，只接受目标根目录、`web/` 和 `oma-brain-dsh/`。命令匹配同时发现没有监听端口的 Brain、Go 启动器与 Vite。发送信号前再次核对命令与 cwd，避免停止其他 worktree 的进程。等待上限为 30 秒，不自动升级 SIGKILL；停止失败时不清理 Compose。不得并发运行初始化、重启与回收。
 
-服务退出后复用 `dev-teardown` 的资源清理逻辑。Compose 清理失败时保留绑定和注册表，允许重试；成功时删除绑定与 `.run/generated/`，保留 `.run/config.yaml`、`.run/dev-init.yaml`、`.run/secrets/`、源码和共享 LLM 配置。命令退出码为 0 后，外部流程再执行 worktree 删除。重复执行已经清理的目标会跳过 Compose。
+服务退出后复用 `dev-teardown` 的资源清理逻辑，启用全部 Compose profile。Compose 清理失败、有残留资源或无法检查残留时保留 alias、绑定、注册表和生成状态，允许重试；确认资源全部移除后删除绑定与 `.run/generated/`，保留 `.run/config.yaml`、`.run/dev-init.yaml`、`.run/secrets/`、源码和共享 LLM 配置。命令退出码为 0 后，外部流程再执行 worktree 删除。重复执行已经清理的目标会跳过 Compose。
 
 普通单测使用隔离的临时 Git clone/worktree 与模拟 Docker，覆盖确认参数、跨仓库拒绝、身份不符、Compose 失败保留状态、停止服务后删除数据卷、清理后保留目录与私钥、重复清理，以及主 checkout、脏文件和锁定 worktree 的保留；进程测试校验命令/cwd 归属。测试不清理开发者的实际环境。
 
@@ -585,3 +595,23 @@ flowchart TD
 审查补充的恢复与重启约束：凭证文件丢失时，只要组织或客户端 key 身份已预留，即使 phase 因重跑回退到 infra/migrated，也必须拒绝生成新明文 key。回收前同时验证 registry 和 binding 的 worktree 路径；Stat 权限或 I/O 错误不作为孤儿依据。初始化 YAML 只接受一个文档。Compose up 失败与健康检查失败均进入有上限的重新探测重试。
 
 后端绑定环境在停止旧实例前完成二进制构建；`start-locked` 使用机器本地 flock，从端口探测、配置写入、alias 注册一直保护到 lsof 确认该后端 PID 实际监听。通过继承的 FD 3 通知锁持有者释放锁，随后继续等待前台服务退出。不同 worktree 可以并行编译，但端口分配与开始监听串行执行。Herdr panel 与后台监听进程的归属均以 Git worktree 顶层目录精确匹配，嵌套 linked worktree 不作为当前仓库处理。Brain token 读取失败或为空时在启动前报错。
+
+Provider 回归通过 `TestAPIKeyRecoveryPostgreSQL` 在隔离 PostgreSQL 上验证双 workspace 的组织内唯一 slug、部分创建已提交后的重试、状态重载、旧状态及迁移后 slug 保留、显式更新与模型引用解析，以及同名歧义和已登记记录删除时的拒绝。`TestNextProviderSlug` 覆盖候选分配和长度边界。
+
+## 本地 OpenObserve
+
+`.run/dev-init.yaml` 的 `local_openobserve: true` 为本环境启用独立 OpenObserve，新建本地初始化模板默认 true，已有显式设置保留。首次启用前拉取固定镜像 `public.ecr.aws/zinclabs/openobserve:v1.1.2`。`dev-init` 与三个 restart 入口的 `set-runtime` 会启动同一 Compose 项目的 `observability` profile，检查 `/healthz`，并把 Docker 分配的 loopback 端口写入 `state.json.runtime.openobserve_port`。
+
+该服务使用独立 `openobservedata` volume，限制 2 CPU、1GiB 内存，不发布到非 loopback 地址。`.run/secrets/openobserve.json` 保存自动生成的强密码，重启复用；`.run/generated/openobserve.env` 为 Compose 提供启动凭据。两者权限为 0600。丢失凭据时不要通过生成新密码尝试覆盖已有数据卷，需恢复原文件或显式回收环境。
+
+生成配置开启 `observability.enabled`，后端为 OpenObserve，organization 为 `default`，logs stream 为 `oma_dsh`，使用动态地址。只覆盖当前环境的生成配置，人工 `.run/config.yaml` 不变；本地开发 ingestion/query 使用同一实例的本地管理员凭据，生产部署应分别配置最小权限账号。OpenObserve 凭据不下发 Brain、浏览器或沙箱。
+
+关闭开关停止自动启用，不主动销毁已有数据。`dev-recycle` 与 `dev-teardown` 统一执行 Compose `--profile '*' down --volumes --remove-orphans`，启用全部 profile 后连同 OpenObserve 容器和 volume 一起回收，不依赖当前开关。未启用的 profile 中仍有定义的服务不属于 orphan，不能仅依赖 `--remove-orphans` 清理。
+
+Compose 返回成功后，在同一栈锁内按项目标签重新列出全部容器（含已停止）、卷和网络。仍有资源或无法完成检查时，回收失败并保留 alias、注册表、绑定和生成状态，供修复后重试；只有确认资源全部移除后才删除这些登记。该检查同样适用于孤儿环境回收。私有输入和密钥仍按既有规则保留。
+
+若旧版本漏清理的 profile 资源与新绑定 UUID 冲突，保持归属拒绝，不自动接管或改写 UUID。恢复时应先核对残留资源的旧 UUID、worktree 路径和 Compose 项目，显式清理确认属于旧环境的资源，再使用当前绑定重试回收。
+
+普通单测使用模拟 Docker 覆盖全部 profile 参数、容器/卷/网络单独或同时残留、资源列表失败、Compose 报告项目不存在但仍有资源，以及失败保留状态后重试成功。该测试不删除真实开发环境资源。
+
+同一次初始化流程中，组织缺失恢复完成身份预留及 state/credentials 持久化后，后续身份准备阶段复用该结果，不重复写入这两个文件。失败的准备不会标记完成，允许重试。此状态只存在于本次运行，不跨进程缓存。

@@ -17,10 +17,10 @@ Doctor 检查 Brain binary 的可执行性并记录 SHA-256；沙箱镜像必须
 `brain_fencing` 使用 CCRv2 worker/register 验证跨租户拒绝和领取实例冲突，使用 sandbox/mcp 验证旧 epoch 凭据拒绝。
 `brain_roundtrip` 同时启动两个 dsh 节点，实际消费 JetStream，核对公开 SSE preview、最终消息、
 历史及单次模型请求。固定上游包含 thinking 和文本；SSE 与历史都必须只出现一次
-`span.model_request_start → agent.thinking → agent.message → span.model_request_end`，且对应事件 ID 一致。
+`span.model_request_start → agent.thinking → agent.message → span.model_request_end`，且对应事件 ID 一致；thinking 仅保留状态，不得包含正文。
 `brain_mcp_loop` 让真实原生循环请求 sandbox MCP Write，核对沙箱文件字节及下一次模型请求中的
 工具结果。上游模型请求必须携带 `anthropic-version: 2023-06-01`，并且工具列表严格为
-`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`web_search`、`web_fetch` 以及 dsh 内置的 `archive_agent`、`list_agents`、`send_to_agent`。
+`Bash`、`Read`、`Write`、`Edit`、`Grep`、`Glob`、`web_search`、`web_fetch` 以及 dsh 内置的 `subagent`、`send_message`、`list_agents`、`interrupt_agent`。
 每次模型响应使用独立 message ID，避免不同回合被当作重复事件。任务通过 NATS 分发；输出、审批、状态和心跳复用 CCRv2 worker 接口，输入与回复通过 Worker SSE 接收，
 processed 回执通过 CCRv2 delivery 接口确认。
 `brain_takeover` 杀掉节点，先投递待恢复输入，再等待真实租约过期，重新派发任务并启动新节点，检查 epoch 增长、旧节点
@@ -53,3 +53,23 @@ MCP 请求被拒绝以及 CCRv2 私有 dsh_log 事件保存的原生模型历史
 新会话解析 latest 并读到新版本，形成 `brain_skills_snapshot`；公开删除与 Work 停止、
 run-owned 节点和容器清理形成 `brain_skills_cleanup`。
 上游模型脚本决定工具选择，因此此场景验证目录传递和加载路径，不验证真实模型的 Skill 选择能力。
+
+## 压缩通知与恢复
+
+`chat doctor brain-compaction` / `chat brain-compaction` 使用真实 DSH 可执行文件、公开 API、Runner、PostgreSQL、Redis、JetStream、MinIO 和沙箱 MCP。上游模型仍由 Go HTTP 服务提供固定响应，不验证真实摘要质量。
+
+根会话与预定义子 Agent 分别运行：模型目录固定测试窗口 128000、输出上限 8192，先用长用户输入形成已提交历史，再在下一轮触发原生压力摘要，所有实际模型请求的输出预算必须不超过模型上限。子 Agent 场景的根模型使用大窗口以验证通知隔离；子实例通过真实 Write 写入文件并核对字节。
+
+必需阶段为 `root_compaction_notified`、`root_compaction_recovered`、`child_mcp_verified`、`child_compaction_notified`、`child_compaction_recovered`。通知必须在公开 SSE 和历史中使用相同 ID，携带正的压缩前压力；原生 start/summary/end 必须已进入对应前台或子线程私有日志。随后 SIGKILL Brain，投递待执行消息，等待真实租约失效后启动 replacement，验证 epoch 增长、摘要标记和任务事实仍进入模型、原子线程继续执行，且无额外摘要或重复通知。
+
+此场景不故障注入通知保存/发布失败，不验证崩溃发生在摘要中途、真实模型质量、云端分配或性能。发布失败重试由 Brain 单测覆盖。每次运行保持源码不变并检查进程、容器、volume 和临时配置清理。
+
+## 真实视觉模型与图片
+
+`chat brain-images` 是使用真实上游模型的显式场景。先设置 `OMA_BRAIN_BINARY`、`VERIFY_BE_VISION_PROVIDERS` 为私有 model-providers.yaml 的绝对路径、`VERIFY_BE_VISION_MODEL` 为其中唯一 provider 声明的视觉模型 ID，再运行 `chat doctor brain-images` 和 `chat brain-images`。不隐式读取共享模型配置；其他 chat 场景仍使用脚本模型。
+
+场景将凭据只写入本次隔离 workspace 的加密 provider 记录。测试生成两个颜色不同的 PNG，提示词只列颜色候选，不透露答案。通过公开 user.message 发送第一张图，让真实模型回答颜色，形成 `message_image_seen`；第二张作为 File 挂载进 Session，模型必须通过真实 Worker 的 Read 读取并回答另一个颜色，形成 `read_image_seen`。最后检查私有原生 user/message 与 tool/result 均只保存 attachment 引用，并读取 MinIO 对象核对摘要和长度，形成 `native_images_persisted`。
+
+使用公开 Session、生产 Runner、真实 DSH 进程、Docker Worker、FUSE 与隔离依赖。验证共享 fixture 的 CodeSession Service 也按生产组装注入附件 Filestore。不覆盖视觉准确率基准、计费、所有模型后端、跨实例恢复或云端沙箱。报告不能把此场景描述为脚本模型。临时配置、Brain 与 Worker/Compose 清理沿用现有 verify-be。
+
+Brain doctor 同时检查 Worker 的 `environment-manager task-run --help` 声明 `--claude-agent-version` 与 `--claude-path`。旧测试镜像缺少这两个启动参数时提前拒绝，不能用 FUSE preflight 成功代替 Manager 启动兼容性。

@@ -139,3 +139,19 @@ func TestEvaluateSubtestEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestBrainCompactionVerdictRequiresAllRecoveryProofs(t *testing.T) {
+	selected := scenarios["chat.brain-compaction"]
+	if !usesBrain("chat.brain-compaction") || len(selected.Stages) != 5 {
+		t.Fatal("Brain compaction prerequisites or proof missing")
+	}
+	for _, stage := range selected.Stages {
+		incomplete := selected
+		incomplete.Stages = slices.DeleteFunc(slices.Clone(selected.Stages), func(value string) bool { return value == stage })
+		output := testOutput(t, incomplete, []testEvent{{Test: selected.Test, Action: "pass"}, {Action: "pass"}}, true)
+		result, err := evaluate(strings.NewReader(output), 0, selected)
+		if err != nil || result.Status != "fail" || !slices.Equal(result.MissingStages, []string{stage}) {
+			t.Fatalf("missing compaction evidence accepted: %+v %v", result, err)
+		}
+	}
+}

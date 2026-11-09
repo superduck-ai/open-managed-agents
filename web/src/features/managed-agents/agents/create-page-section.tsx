@@ -13,7 +13,7 @@ export function CreatePageSection({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   learnMore?: string;
   summary?: ReactNode;
   className?: string;
@@ -22,10 +22,16 @@ export function CreatePageSection({
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className={cn('border-b border-border', className)}>
+    <Collapsible open={open} onOpenChange={setOpen} className={cn('border-b-[0.5px] border-border', className)}>
       <div className="grid gap-2 py-5 md:grid-cols-[244px_minmax(0,1fr)] md:gap-6">
-        <CollapsibleTrigger className="flex items-center gap-2 rounded-md py-1 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <ChevronRight className={cn('size-4 shrink-0 transition-transform', open && 'rotate-90')} aria-hidden />
+        <CollapsibleTrigger className="flex items-center gap-2 rounded-md py-1 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground">
+          <ChevronRight
+            className={cn(
+              'size-4 shrink-0 transition-transform duration-220 ease-out motion-reduce:transition-none',
+              open && 'rotate-90',
+            )}
+            aria-hidden
+          />
           {title}
           <span className="font-normal text-muted-foreground">
             {msg('managedAgents.common.optionalParen', '(optional)')}
@@ -36,7 +42,7 @@ export function CreatePageSection({
       <CollapsibleContent keepMounted>
         <div className="grid gap-4 pb-6 md:grid-cols-[244px_minmax(0,1fr)] md:gap-6">
           <div className="space-y-2 text-sm leading-5 text-muted-foreground">
-            <p>{description}</p>
+            {description ? <p>{description}</p> : null}
             {learnMore ? (
               <a
                 href={learnMore}

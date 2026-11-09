@@ -69,8 +69,12 @@ export function CreateDialogPicker({
   closeOnSelect?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const changeOpen = (next: boolean) => {
+    setOpen(next);
+    if (!next) onSearchChange?.('');
+  };
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={changeOpen}>
       <PopoverTrigger
         render={
           <Button
@@ -98,13 +102,13 @@ export function CreateDialogPicker({
           onRetry={onRetry}
           onToggle={(id) => {
             onToggle(id);
-            if (closeOnSelect) setOpen(false);
+            if (closeOnSelect) changeOpen(false);
           }}
           searchValue={searchValue}
           onSearchChange={onSearchChange}
         />
         {createLabel && onCreate ? (
-          <div className="border-t border-border p-1.5">
+          <div className="border-t-[0.5px] border-border p-1.5">
             <Button
               type="button"
               variant="ghost"
@@ -112,7 +116,7 @@ export function CreateDialogPicker({
               className="w-full justify-start"
               onClick={() => {
                 onCreate();
-                setOpen(false);
+                changeOpen(false);
               }}
             >
               <ExternalLink className="size-4" aria-hidden />
@@ -138,8 +142,13 @@ export function CreateDialogPickerList({
   onSearchChange,
 }: CreateDialogPickerListProps) {
   const { msg } = useI18n();
+  const selected = options.find((option) => selectedIds.includes(option.id) && !option.disabled);
   return (
-    <Command shouldFilter={!onSearchChange}>
+    <Command
+      defaultValue={selected ? `${selected.label} ${selected.id}` : undefined}
+      label={searchPlaceholder}
+      shouldFilter={!onSearchChange}
+    >
       <CommandInput placeholder={searchPlaceholder} value={searchValue} onValueChange={onSearchChange} />
       <CommandList className="max-h-72">
         {loading ? (
@@ -173,7 +182,7 @@ export function CreateDialogPickerList({
                       {option.icon ?? (
                         <span
                           className={cn(
-                            'flex size-4 items-center justify-center rounded border border-border',
+                            'flex size-4 items-center justify-center rounded border-[0.5px] border-border',
                             selected && 'border-primary bg-primary text-primary-foreground',
                           )}
                         >

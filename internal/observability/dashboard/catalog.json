@@ -1,0 +1,155 @@
+{
+  "queries": {
+    "sessions_summary": { "window": "compare", "size": 1 },
+    "turns_summary": { "window": "compare", "size": 1, "lookback": true },
+    "requests_summary": { "window": "compare", "size": 1 },
+    "tools_summary": { "window": "compare", "size": 1, "lookback": true },
+    "turns_per_session": { "size": 1, "lookback": true },
+    "tokens_per_session": { "size": 1 },
+    "session_trend": { "size": 2000 },
+    "request_trend": { "size": 4000 },
+    "token_trend": { "size": 8000 },
+    "turn_duration_trend": { "size": 4000, "lookback": true },
+    "model_tokens": { "size": 20 },
+    "tool_top": { "size": 10, "lookback": true },
+    "end_reasons": { "size": 20, "lookback": true },
+    "versions": { "size": 20, "lookback": true },
+    "tokens_per_request_trend": { "size": 2000 },
+    "model_request_trend": { "size": 20000 },
+    "model_latency_trend": { "size": 4000 },
+    "model_error_trend": { "size": 20000 },
+    "model_table": { "size": 20 },
+    "model_error_codes": { "size": 20 },
+    "model_names": { "size": 50 },
+    "tool_call_trend": { "size": 20000, "lookback": true },
+    "tool_latency_trend": { "size": 20000, "lookback": true },
+    "tool_error_trend": { "size": 20000, "lookback": true },
+    "tool_table": { "size": 20, "lookback": true },
+    "tool_error_codes": { "size": 20, "lookback": true },
+    "tool_names": { "size": 100 },
+    "subagent_threads": { "size": 500, "lookback": true },
+    "subagent_turn_trend": { "size": 4000, "lookback": true }
+  },
+  "tabs": [
+    {
+      "id": "overview",
+      "panels": [
+        { "id": "active_sessions", "render": "stat", "query": "sessions_summary", "field": "active_sessions", "compare": true, "trend": "session_trend", "unit": "count", "span": 3 },
+        { "id": "interactions", "render": "stat", "query": "turns_summary", "field": "interactions", "compare": true, "unit": "count", "span": 3 },
+        { "id": "tokens", "render": "stat", "query": "requests_summary", "field": "tokens", "compare": true, "trend": "token_trend", "unit": "tokens", "span": 3 },
+        { "id": "model_requests", "render": "stat", "query": "requests_summary", "field": "requests", "compare": true, "trend": "request_trend", "unit": "count", "span": 3 },
+        { "id": "ttft", "render": "stat", "query": "requests_summary", "field": "ttft_avg", "secondary": "ttft_p95", "compare": true, "unit": "duration_ms", "span": 3 },
+        { "id": "interaction_duration", "render": "stat", "query": "turns_summary", "field": "duration_p50", "secondary": "duration_p95", "compare": true, "trend": "turn_duration_trend", "trend_series": "p50", "unit": "duration_ms", "span": 3 },
+        { "id": "turns_per_session", "render": "percentiles", "query": "turns_per_session", "unit": "count", "span": 3 },
+        { "id": "tokens_per_session", "render": "percentiles", "query": "tokens_per_session", "unit": "tokens", "span": 3 },
+        { "id": "session_activity", "render": "series", "query": "session_trend", "chart": "bar", "unit": "count", "span": 6 },
+        { "id": "model_request_outcomes", "render": "series", "query": "request_trend", "chart": "bar", "stacked": true, "order": ["succeeded", "failed"], "unit": "count", "span": 6 },
+        { "id": "token_trend", "render": "series", "query": "token_trend", "chart": "area", "stacked": true, "order": ["input", "output", "cache_read", "cache_write"], "unit": "tokens", "span": 6 },
+        { "id": "interaction_duration_trend", "render": "series", "query": "turn_duration_trend", "chart": "line", "order": ["p50", "p95"], "unit": "duration_ms", "span": 6 },
+        { "id": "model_token_share", "render": "bars", "query": "model_tokens", "unit": "tokens", "span": 6 },
+        { "id": "tool_top", "render": "bars", "query": "tool_top", "unit": "count", "span": 6 },
+        { "id": "end_reasons", "render": "bars", "query": "end_reasons", "unit": "count", "span": 6 },
+        {
+          "id": "versions", "render": "table", "query": "versions", "requires": "agent", "span": 6,
+          "columns": [
+            { "key": "version", "unit": "version" },
+            { "key": "interactions", "unit": "count" },
+            { "key": "errors", "unit": "count" },
+            { "key": "p50_ms", "unit": "duration_ms" },
+            { "key": "p95_ms", "unit": "duration_ms" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "models",
+      "filter": "model",
+      "options": "model_names",
+      "panels": [
+        { "id": "model_requests", "render": "stat", "query": "requests_summary", "field": "requests", "compare": true, "trend": "request_trend", "unit": "count", "span": 3 },
+        { "id": "model_failure_rate", "render": "stat", "query": "requests_summary", "field": "failure_rate", "compare": true, "unit": "percent", "span": 3 },
+        { "id": "model_retry_rate", "render": "stat", "query": "requests_summary", "field": "retry_rate", "compare": true, "unit": "percent", "span": 3 },
+        { "id": "model_duration", "render": "stat", "query": "requests_summary", "field": "duration_p50", "secondary": "duration_p95", "compare": true, "trend": "model_latency_trend", "trend_series": "p50", "unit": "duration_ms", "span": 3 },
+        { "id": "ttft", "render": "stat", "query": "requests_summary", "field": "ttft_avg", "secondary": "ttft_p95", "compare": true, "unit": "duration_ms", "span": 3 },
+        { "id": "tokens", "render": "stat", "query": "requests_summary", "field": "tokens", "compare": true, "trend": "token_trend", "unit": "tokens", "span": 3 },
+        { "id": "cache_hit_rate", "render": "stat", "query": "requests_summary", "field": "cache_hit_rate", "compare": true, "unit": "percent", "span": 3 },
+        { "id": "model_token_share", "render": "bars", "query": "model_tokens", "unit": "tokens", "span": 6 },
+        { "id": "token_trend", "render": "series", "query": "token_trend", "chart": "area", "stacked": true, "order": ["input", "output", "cache_read", "cache_write"], "unit": "tokens", "span": 6 },
+        { "id": "tokens_per_request_trend", "render": "series", "query": "tokens_per_request_trend", "chart": "line", "unit": "tokens", "span": 6 },
+        { "id": "model_request_trend", "render": "series", "query": "model_request_trend", "chart": "bar", "stacked": true, "top": 5, "other": true, "unit": "count", "span": 6 },
+        { "id": "model_latency_trend", "render": "series", "query": "model_latency_trend", "chart": "line", "order": ["p50", "p95"], "unit": "duration_ms", "span": 6 },
+        { "id": "model_error_trend", "render": "series", "query": "model_error_trend", "chart": "bar", "stacked": true, "top": 5, "other": true, "unit": "count", "span": 6 },
+        {
+          "id": "model_table", "render": "table", "query": "model_table", "span": 12,
+          "columns": [
+            { "key": "model", "unit": "text" },
+            { "key": "requests", "unit": "count" },
+            { "key": "failures", "unit": "count" },
+            { "key": "failure_rate", "unit": "percent" },
+            { "key": "retries", "unit": "count" },
+            { "key": "input_tokens", "unit": "tokens" },
+            { "key": "output_tokens", "unit": "tokens" },
+            { "key": "cache_read_tokens", "unit": "tokens" },
+            { "key": "cache_write_tokens", "unit": "tokens" },
+            { "key": "reasoning_tokens", "unit": "tokens" },
+            { "key": "cache_hit_rate", "unit": "percent" },
+            { "key": "p50_ms", "unit": "duration_ms" },
+            { "key": "p95_ms", "unit": "duration_ms" },
+            { "key": "p99_ms", "unit": "duration_ms" },
+            { "key": "ttft_p50_ms", "unit": "duration_ms" },
+            { "key": "ttft_p95_ms", "unit": "duration_ms" }
+          ]
+        },
+        { "id": "model_error_codes", "render": "bars", "query": "model_error_codes", "unit": "count", "span": 12 }
+      ]
+    },
+    {
+      "id": "tools",
+      "filter": "tool",
+      "options": "tool_names",
+      "panels": [
+        { "id": "tool_calls", "render": "stat", "query": "tools_summary", "field": "calls", "compare": true, "trend": "tool_call_trend", "unit": "count", "span": 3 },
+        { "id": "tool_errors", "render": "stat", "query": "tools_summary", "field": "errors", "compare": true, "trend": "tool_error_trend", "unit": "count", "span": 3 },
+        { "id": "tool_error_rate", "render": "stat", "query": "tools_summary", "field": "error_rate", "compare": true, "unit": "percent", "span": 3 },
+        { "id": "tool_duration", "render": "stat", "query": "tools_summary", "field": "duration_avg", "secondary": "duration_p95", "compare": true, "unit": "duration_ms", "span": 3 },
+        { "id": "tool_call_trend", "render": "series", "query": "tool_call_trend", "chart": "bar", "stacked": true, "top": 5, "other": true, "unit": "count", "span": 6 },
+        { "id": "tool_latency_trend", "render": "series", "query": "tool_latency_trend", "chart": "line", "top": 5, "unit": "duration_ms", "span": 6 },
+        { "id": "tool_error_trend", "render": "series", "query": "tool_error_trend", "chart": "bar", "stacked": true, "top": 5, "other": true, "unit": "count", "span": 6 },
+        { "id": "tool_error_codes", "render": "bars", "query": "tool_error_codes", "unit": "count", "span": 6 },
+        {
+          "id": "tool_table", "render": "table", "query": "tool_table", "span": 12,
+          "columns": [
+            { "key": "tool", "unit": "text" },
+            { "key": "server", "unit": "text" },
+            { "key": "calls", "unit": "count" },
+            { "key": "errors", "unit": "count" },
+            { "key": "error_rate", "unit": "percent" },
+            { "key": "avg_ms", "unit": "duration_ms" },
+            { "key": "p95_ms", "unit": "duration_ms" },
+            { "key": "max_ms", "unit": "duration_ms" },
+            { "key": "total_ms", "unit": "duration_ms" },
+            { "key": "share", "unit": "percent" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "subagents",
+      "panels": [
+        { "id": "subagent_turn_trend", "render": "series", "query": "subagent_turn_trend", "chart": "bar", "stacked": true, "order": ["succeeded", "failed"], "unit": "count", "span": 12 },
+        {
+          "id": "subagents", "render": "subagents", "query": "subagent_threads", "span": 12,
+          "columns": [
+            { "key": "name", "unit": "text" },
+            { "key": "threads", "unit": "count" },
+            { "key": "delegations", "unit": "count" },
+            { "key": "failures", "unit": "count" },
+            { "key": "avg_ms", "unit": "duration_ms" },
+            { "key": "max_ms", "unit": "duration_ms" },
+            { "key": "tokens", "unit": "tokens" }
+          ]
+        }
+      ]
+    }
+  ]
+}

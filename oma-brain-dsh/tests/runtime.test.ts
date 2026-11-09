@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { ToolCallId } from "@deepseek-ai/dsh-llm";
+import { HarnessError, ToolCallId } from "@deepseek-ai/dsh-llm";
 import { ToolExecution } from "../src/runtime/execution.ts";
-import { SHUTDOWN_CANCEL, ToolNotForwardedError } from "../src/runtime/contracts.ts";
+import { RetryableInputError, SHUTDOWN_CANCEL, ToolNotForwardedError } from "../src/runtime/contracts.ts";
 import type { RemoteTool, SandboxExecutor, ToolExecutionBridge, ToolExecutionContext } from "../src/runtime/contracts.ts";
 
 const tool: RemoteTool = {
@@ -85,5 +85,29 @@ test("approved argument changes remain visible without duplicating tool results"
   expect(await f.execution.execute(tool, { command: "original" }, f.exec)).toBe("stdout");
   expect(f.changes).toEqual([["Bash", "call_1", { command: "approved" }]]);
   expect(f.deferred).toHaveLength(1);
+  expect(f.executions).toBe(1);
+});
+
+test("read-only retry preserves its originating child thread identity", async () => {
+  const f = fixture();
+  const threads: (string | undefined)[] = [];
+  f.sandbox.call = async (_tool, _args, _signal, threadId) => {
+    threads.push(threadId);
+    if (threads.length === 1) throw new Error("transient read failure");
+    return { content: [{ type: "text", text: "confirmed" }] };
+  };
+  const execution = new ToolExecution(f.sandbox, f.bridge, undefined, "child-scope");
+  expect(await execution.execute({ ...tool, readOnly: true }, { command: "original" }, f.exec)).toBe("confirmed");
+  expect(threads).toEqual(["child-scope", "child-scope"]);
+});
+
+
+test("content conversion preserves retryable errors and their structured tool code", async () => {
+  const f = fixture();
+  const failure = new RetryableInputError("Storage temporarily unavailable; retry Read");
+  await expect(f.execution.execute({ ...tool, readOnly: true }, { command: "original" }, f.exec,
+    async () => { throw failure; })).rejects.toBe(failure);
+  expect(failure).toBeInstanceOf(HarnessError);
+  expect(failure.code).toBe("RETRYABLE_INPUT");
   expect(f.executions).toBe(1);
 });

@@ -118,7 +118,7 @@ export function UsageResults({ report, cost }: { report: UsageReport; cost: bool
                     if (!active || !payload?.length) return null;
                     const bucket = payload[0].payload;
                     return (
-                      <div className="rounded-lg border bg-background p-3 text-sm shadow-sm">
+                      <div className="rounded-lg border-[0.5px] border-border bg-popover p-3 text-sm shadow-sm">
                         <p>
                           {new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' }).format(
                             new Date(String(label)),

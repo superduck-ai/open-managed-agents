@@ -1,6 +1,8 @@
+import { getScopeSignal } from '../../shared/api/client';
 import type { ComponentType } from 'react';
 import { useLocation } from '@tanstack/react-router';
 import { copyText } from '@/shared/lib/clipboard';
+import { skillSourceLabel } from '@/shared/lib/skill-source';
 import { downloadApiFile } from '../../shared/api/file-download';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { messageBatchesRequestHeaders, skillsRequestHeaders } from '../../shared/api/client';
@@ -314,11 +316,11 @@ export function formatBatchStatus(status: string, msg?: ReturnType<typeof useI18
 export function batchStatusClass(status: string) {
   switch (status) {
     case 'ended':
-      return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+      return 'bg-[var(--success-bg)] text-[var(--success)]';
     case 'in_progress':
       return 'bg-secondary text-secondary-foreground';
     case 'canceling':
-      return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
+      return 'bg-[var(--warning-bg)] text-[var(--warning)]';
     default:
       return 'bg-secondary text-muted-foreground';
   }
@@ -335,9 +337,12 @@ export function formatBatchRequestProgress(batch: ConsoleMessageBatch) {
 export function batchRequestProgressClass(batch: ConsoleMessageBatch) {
   const totalRequests = countBatchRequests(batch.request_counts);
   if (totalRequests > 0 && batch.request_counts.succeeded === totalRequests) {
-    return 'bg-emerald-500';
+    return 'bg-[var(--success)]';
   }
-  return 'bg-destructive';
+  if (batch.request_counts.errored > 0 || batch.request_counts.expired > 0) {
+    return 'bg-destructive';
+  }
+  return 'bg-muted-foreground';
 }
 
 export function canCancelBatch(batch: ConsoleMessageBatch) {
@@ -371,7 +376,7 @@ export function formatRelativeTime(value: string, locale = 'en', lessThanMinuteL
   }).format(timestamp);
 }
 
-export function formatBatchDateTime(value?: string | null) {
+export function formatBatchDateTime(value?: string | null, locale = 'en') {
   if (!value) {
     return '-';
   }
@@ -379,7 +384,7 @@ export function formatBatchDateTime(value?: string | null) {
   if (!Number.isFinite(timestamp)) {
     return value;
   }
-  return new Intl.DateTimeFormat('en', {
+  return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     year: new Date(timestamp).getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
@@ -390,13 +395,7 @@ export function formatBatchDateTime(value?: string | null) {
 
 export function formatSkillSource(source: string, msg?: ReturnType<typeof useI18n>['msg']) {
   const normalized = source.trim().toLowerCase();
-  if (normalized === 'anthropic') {
-    return 'Anthropic';
-  }
-  if (normalized === 'custom') {
-    return msg ? msg('skills.source.custom', 'Custom') : 'Custom';
-  }
-  return titleize(normalized || 'custom');
+  return skillSourceLabel(source, msg) ?? titleize(normalized || 'custom');
 }
 
 export function errorMessage(error: unknown) {
@@ -413,14 +412,17 @@ export function downloadFile(file: ConsoleFile, workspaceId: string) {
 }
 
 export async function downloadMessageBatchResults(batch: ConsoleMessageBatch, workspaceId: string) {
+  const scopeSignal = getScopeSignal();
   const response = await fetch(`/v1/messages/batches/${encodeURIComponent(batch.id)}/results?beta=true`, {
     headers: messageBatchesRequestHeaders(workspaceRequestHeaders(workspaceId)),
     credentials: 'include',
+    signal: scopeSignal,
   });
   if (!response.ok) {
     throw new Error(await responseErrorMessage(response));
   }
   const blob = await response.blob();
+  scopeSignal.throwIfAborted();
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -437,17 +439,20 @@ export async function downloadSkillVersion(
   directory: string | undefined,
   workspaceId: string,
 ) {
+  const scopeSignal = getScopeSignal();
   const response = await fetch(
     `/v1/skills/${encodeURIComponent(skillId)}/versions/${encodeURIComponent(version)}/content?beta=true`,
     {
       headers: skillsRequestHeaders(workspaceRequestHeaders(workspaceId)),
       credentials: 'include',
+      signal: scopeSignal,
     },
   );
   if (!response.ok) {
     throw new Error(await responseErrorMessage(response));
   }
   const blob = await response.blob();
+  scopeSignal.throwIfAborted();
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;

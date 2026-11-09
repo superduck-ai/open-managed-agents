@@ -121,6 +121,19 @@ export async function webhooksApi<T>(path: string, options: RequestInit = {}): P
   });
 }
 
+export const TELEMETRY_DESTINATIONS_BETA = 'telemetry-destinations-2026-08-11';
+
+export async function telemetryDestinationsApi<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers = new Headers(options.headers);
+  headers.set('anthropic-beta', TELEMETRY_DESTINATIONS_BETA);
+  headers.set('Accept', 'application/json');
+  applyConsoleRequestContext(headers);
+  if (options.method && options.method !== 'GET' && consoleRequestContext.csrfToken) {
+    headers.set('X-CSRF-Token', consoleRequestContext.csrfToken);
+  }
+  return requestJson<T>(path, { ...options, headers, credentials: 'include' });
+}
+
 export function filesRequestHeaders(headers?: HeadersInit) {
   const requestHeaders = new Headers(headers);
   requestHeaders.set('anthropic-beta', 'files-api-2025-04-14');
@@ -151,6 +164,7 @@ export function webhooksRequestHeaders(headers?: HeadersInit) {
 }
 
 function applyConsoleRequestContext(headers: Headers, context: ConsoleRequestContext = consoleRequestContext) {
+  if (context.csrfToken && !headers.has('X-CSRF-Token')) headers.set('X-CSRF-Token', context.csrfToken);
   if (context.organizationUuid && !headers.has('X-Organization-UUID')) {
     headers.set('X-Organization-UUID', context.organizationUuid);
   }

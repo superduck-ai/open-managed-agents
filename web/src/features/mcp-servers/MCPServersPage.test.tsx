@@ -14,6 +14,8 @@ import { defaultWorkspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { resetTestDom } from '../../test/setup';
 import { MCPServerDetailPage, MCPServersPage } from './MCPServersPage';
+import { MCPServerPanel } from './MCPServerDialogs';
+import { MCPServersTable } from './MCPServersTable';
 
 const testingLibrary = await import('@testing-library/react');
 const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
@@ -23,6 +25,41 @@ afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
 });
+
+for (const state of [
+  { name: 'loading', isLoading: true, error: null, hasSearch: false, label: 'Loading MCP servers...' },
+  {
+    name: 'error',
+    isLoading: false,
+    error: new Error('Unavailable'),
+    hasSearch: false,
+    label: 'MCP servers could not be loaded.',
+  },
+  { name: 'empty', isLoading: false, error: null, hasSearch: false, label: 'No MCP servers yet.' },
+  { name: 'filtered', isLoading: false, error: null, hasSearch: true, label: 'No MCP servers match this view.' },
+]) {
+  test(`keeps the ${state.name} MCP state free of empty columns`, () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers');
+    renderPage(
+      <MCPServersTable
+        servers={[]}
+        selectedServerId={null}
+        isFetching={false}
+        formatter={new Intl.DateTimeFormat('en')}
+        onRetry={() => undefined}
+        onOpen={() => undefined}
+        onEdit={() => undefined}
+        onDelete={() => undefined}
+        isLoading={state.isLoading}
+        error={state.error}
+        hasSearch={state.hasSearch}
+      />,
+    );
+    expect(screen.getByText(state.label)).toBeTruthy();
+    expect(screen.queryByRole('columnheader')).toBeNull();
+    expect(screen.getByRole('table').classList.contains('min-w-[840px]')).toBe(false);
+  });
+}
 
 test('lists workspace MCP servers and creates a reusable configuration', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/mcp-servers');
@@ -41,10 +78,12 @@ test('lists workspace MCP servers and creates a reusable configuration', async (
 
   expect(await screen.findByRole('heading', { name: 'MCP Servers' })).toBeTruthy();
   expect(await screen.findByText('internal-docs')).toBeTruthy();
+  expect(screen.getAllByRole('columnheader')).toHaveLength(5);
+  expect(screen.getByRole('table').classList.contains('min-w-[840px]')).toBe(true);
   expect(screen.getByRole('region', { name: 'MCP servers list' }).closest('[data-slot="card"]')).toBeNull();
   const createButton = screen.getByRole('button', { name: 'Create MCP server' });
   const filters = screen.getByTestId('mcp-server-filters');
-  const search = screen.getByRole('textbox', { name: 'Search by name or endpoint' });
+  const search = screen.getByRole('searchbox', { name: 'Search by name or endpoint' });
   expect(createButton.closest('header')).toBeTruthy();
   expect(createButton.closest('header')?.contains(search)).toBe(false);
   expect(filters.contains(search)).toBe(true);
@@ -105,10 +144,21 @@ test('localizes the MCP search clear control in Chinese', async () => {
   globalThis.fetch = mock(async () => Response.json({ data: [], next_page: null }));
 
   renderPage(<MCPServersPage />, {}, 'zh-CN');
-  const search = await screen.findByRole('textbox', { name: '按名称或 endpoint 搜索' });
+  expect(await screen.findByText('暂无 MCP 服务器。')).toBeTruthy();
+  const search = await screen.findByRole('searchbox', { name: '按名称或 endpoint 搜索' });
   fireEvent.change(search, { target: { value: 'docs' } });
+  expect(await screen.findByText('当前视图没有匹配的 MCP 服务器。')).toBeTruthy();
+  expect(screen.queryByText('暂无 MCP 服务器。')).toBeNull();
 
-  expect(screen.getByRole('button', { name: '清除按名称或 endpoint 搜索' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '清除按名称或 endpoint 搜索' }));
+  expect((search as HTMLInputElement).value).toBe('');
+  expect(document.activeElement).toBe(search);
+  expect(screen.queryByRole('button', { name: '清除按名称或 endpoint 搜索' })).toBeNull();
+  expect(await screen.findByText('暂无 MCP 服务器。')).toBeTruthy();
+  fireEvent.change(search, { target: { value: 'docs' } });
+  fireEvent.keyDown(search, { key: 'Escape' });
+  expect((search as HTMLInputElement).value).toBe('');
+  expect(document.activeElement).toBe(search);
 });
 
 test('paginates the management list with the backend cursor', async () => {
@@ -216,8 +266,33 @@ test('shows a retryable error when a detail route cannot load its MCP server', a
   renderPage(<MCPServerDetailPage />);
 
   expect(await screen.findByText('MCP server not found')).toBeTruthy();
+  const panel = screen.getByRole('dialog', { name: 'MCP Servers' });
+  expect(within(panel).getByRole('heading', { name: 'MCP Servers' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(detailCalls).toBe(2));
+  fireEvent.click(within(panel).getByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(window.location.pathname).toBe('/workspaces/default/mcp-servers');
+});
+
+test('keeps the MCP detail title and close action available while loading', async () => {
+  let closeCount = 0;
+  renderPage(
+    <MCPServerPanel
+      target={{ serverId: 'mcpsrv_pending' }}
+      detailLoading
+      detailError={null}
+      formatter={new Intl.DateTimeFormat('en')}
+      onClose={() => closeCount++}
+      onRetry={() => undefined}
+      onEdit={() => undefined}
+      onDelete={() => undefined}
+    />,
+  );
+  const panel = screen.getByRole('dialog', { name: 'MCP Servers' });
+  expect(within(panel).getByRole('status').textContent).toContain('Loading MCP server...');
+  fireEvent.click(within(panel).getByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(closeCount).toBe(1));
 });
 
 test('waits for the route workspace before loading MCP servers', async () => {

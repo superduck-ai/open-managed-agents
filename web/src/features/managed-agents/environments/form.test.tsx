@@ -1,6 +1,6 @@
 import { afterEach, expect, mock, test } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { EnvironmentApiResponse } from '../types';
 const { act, render, fireEvent, screen, cleanup, waitFor } = await import('@testing-library/react');
 const { RouterContextProvider, createRootRoute, createRouter, createBrowserHistory } =
@@ -88,6 +88,30 @@ test('shows save only after edits, discards locally, and retains changes on API 
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
   expect(await screen.findByText('An environment with this name already exists.')).toBeTruthy();
   expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Conflict');
+});
+
+test('keeps the saved baseline while the parent still holds a background refresh result', async () => {
+  const saved = mock();
+  globalThis.fetch = mock(async () => Response.json({ ...entity, name: 'Saved draft' })) as typeof fetch;
+  function Fixture() {
+    const [current, setCurrent] = useState(entity);
+    return (
+      <>
+        <button type="button" onClick={() => setCurrent({ ...entity, name: 'Background name' })}>
+          Refresh record
+        </button>
+        <EnvironmentForm entity={current} workspaceId="default" onSaved={saved} onCancel={() => {}} />
+      </>
+    );
+  }
+  mount(<Fixture />);
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Saved draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh record' }));
+  expect(screen.getByLabelText('Name')).toHaveProperty('value', 'Saved draft');
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Save', exact: true })).toBeNull());
+  expect(screen.getByLabelText('Name')).toHaveProperty('value', 'Saved draft');
 });
 
 test('background detail refresh preserves a draft and saving establishes the next editable baseline', async () => {
@@ -193,14 +217,14 @@ test('search and status filters reset pagination and request only matching pages
   expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
   await screen.findByRole('link', { name: 'c1' });
-  fireEvent.click(screen.getByRole('button', { name: /Status All/ }));
-  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Active', exact: true }));
+  fireEvent.click(screen.getByRole('combobox', { name: /Status All/ }));
+  fireEvent.click(await screen.findByRole('option', { name: 'Active', exact: true }));
   await screen.findByRole('link', { name: 'active', exact: true });
   expect(requests.at(-1)?.searchParams.get('page')).toBeNull();
   expect(requests.at(-1)?.searchParams.get('include_archived')).toBe('false');
   expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(screen.getByRole('button', { name: /Status Active/ }));
-  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'All', exact: true }));
+  fireEvent.click(screen.getByRole('combobox', { name: /Status Active/ }));
+  fireEvent.click(await screen.findByRole('option', { name: 'All', exact: true }));
   await screen.findByRole('link', { name: 'all', exact: true });
   expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
 });

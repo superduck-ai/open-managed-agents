@@ -6,7 +6,9 @@ The application entry creates a Cordis Context and loads the OMA host plugin. Th
 
 ## Run
 
-Requires Bun 1.3 or newer and an OMA backend exposing the claim and CCRv2 contracts below. The pinned dsh version is `0.2.1-alpha.2`, with Cordis `4.0.5-alpha.1`.
+Requires Bun 1.3 or newer and an OMA backend exposing the claim and CCRv2 contracts below. The pinned dsh version is `0.2.2-alpha.2`, with Cordis `4.0.6-alpha.1`.
+
+The matching upstream release is [`dsh-v0.2.2-alpha.2`](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-alpha.2). Development references are pinned to commit `f3803c96974ad4a94195fb97e5c637e9c2a3afe3`; see the [runtime compatibility baseline](../docs/design/be/brain-runtime.md#dsh-版本与文档基准). This alpha requires the native tool executor plugin and agent-owned model selection; it is not a drop-in dependency bump. Upgrade Brain and the console trajectory packages together, using exact versions and both Bun lockfiles. Historical reports under `verification/` retain their original runtime versions.
 
 ```sh
 bun install --frozen-lockfile
@@ -94,6 +96,8 @@ The application reads these optional deployment settings at startup. Unset value
 | `OMA_CCR_HEARTBEAT_MAX_FAILURES` | `0` | Nonnegative integer limit on transient heartbeat failures; `0` keeps retrying |
 | `OMA_CCR_HEARTBEAT_MAX_AUTH_FAILURES` | `10` | Positive integer limit on 401/403 responses across heartbeat and other CCRv2 writes |
 
+Brain receives the unified `models` catalog through `session_context` at registration and refreshes it before requests. Entries include the API backend, context window, output limit and input modalities. Each root session registers its own DSH provider route; children read their selected model entry, and model changes or restarts replace the previous ordinary request budget with the current entry. Per-model capacities take precedence over main's shared defaults of 262144 context tokens and 32768 output tokens. No model-limit environment variables or temporary backend capacity map are used.
+
 Intervals including jitter and request deadlines must fit a 32-bit JavaScript timer. The interval with jitter plus the request deadline must stay below the 20-second worker lease. Existing environment overrides still apply. `409` and `410` stop immediately regardless of either failure limit, as does a heartbeat `404` (`worker_not_registered`), which means the server no longer holds a lease for this worker. For `401`/`403`, an expired JWT also stops immediately; otherwise failures accumulate toward the authentication limit. Successful POST/PUT responses reset that counter, including heartbeats, state updates, publication, persistence and delivery confirmation. GETs and other failed requests do not reset it. Other heartbeat failures, including transport errors, 5xx, 408, 429 and other 4xx, keep scheduling unless a positive transient failure limit is configured.
 
 Set `OMA_DEBUG_SYSTEM_PROMPT=1` to print the system prompt and tool names exactly as sent to the Messages API, as an `oma_system_prompt` JSON line on stdout. Each session and subagent thread prints once, and again only when its prompt or tool list changes. The output contains the configured agent instructions and memory catalog, so enable it only for local debugging. Read it with `jq -r 'select(.event == "oma_system_prompt") | .system'`.
@@ -132,9 +136,9 @@ The root session's `setup(scope)` callback mounts host service plugins before to
 
 The `OmaSandboxProvider` entry is `src/oma-sandbox/index.ts`. The OMA host loads it through that setup callback with the root session ID and API transport. It owns one `SandboxMcp` instance, shared by the root and its children. Loading the provider performs no network requests. The first MCP handshake happens only after schema validation, approval and the native tool-call checkpoint. The configured server endpoint waits for sandbox readiness during initialization; the Brain sends no resource-creation request. Closing a protocol session drains child runtimes before disposing the root agent and its provider; failed agent setup rolls back the provider.
 
-Model requests use the Vercel AI SDK provider layer only: `@ai-sdk/anthropic` for Anthropic Messages and `@ai-sdk/openai-compatible` for OpenAI Chat Completions, both pinned and called through `doStream`. The protocol translation lives in `src/llm-ai-sdk/`, a DSH plugin (`name`, `inject: ["llm"]`, `apply`) that depends only on `@ai-sdk/*` and `@deepseek-ai/*`: it converts DSH history into the SDK prompt, maps SDK stream parts to DSH chunks, classifies errors and adds DSH attribution headers. OMA loads it with `providers: ["oma"]` and supplies `omaModelOptions` (`src/model.ts`, `src/model-provider.ts`), which selects the backend, binds the root or child session's model token, restricts HTTP requests to the Go proxy, maintains CCRv2 response identity and converts legacy pi-ai replay signatures. The SDK owns SSE parsing, protocol encoding and streamed tool-argument accumulation in linear time. No SDK retries run, ambient provider credentials are unused, and Provider keys remain in Go. Histories keep the `oma-messages-v1` and `oma-chat-completions-v1` replay formats. Both backends default to 32768 output tokens. Per-model `max_output_tokens` overrides this default, and an explicit per-call `maxTokens` takes precedence. Chat also sends the selected `max_completion_tokens` cap when no explicit limit is configured.
+Model requests use the Vercel AI SDK provider layer only: `@ai-sdk/anthropic` for Anthropic Messages and `@ai-sdk/openai-compatible` for OpenAI Chat Completions, both pinned and called through `doStream`. The protocol translation lives in `src/llm-ai-sdk/`, a DSH plugin (`name`, `inject: ["llm"]`, `apply`) that depends only on `@ai-sdk/*` and `@deepseek-ai/*`: it converts DSH history into the SDK prompt, maps SDK stream parts to DSH chunks, classifies errors and adds DSH attribution headers. OMA loads it with `providers: ["oma"]` and supplies `omaModelOptions` (`src/model.ts`, `src/model-provider.ts`), which selects the backend, binds the root or child session's model token, restricts HTTP requests to the Go proxy, maintains CCRv2 response identity and converts legacy pi-ai replay signatures. The SDK owns SSE parsing, protocol encoding and streamed tool-argument accumulation in linear time. No SDK retries run, ambient provider credentials are unused, and Provider keys remain in Go. Histories keep the `oma-messages-v1` and `oma-chat-completions-v1` replay formats. Both backends default to 32768 output tokens. Per-model `max_output_tokens` overrides this default, and an explicit per-call `maxTokens` takes precedence for ordinary requests. Compaction requests additionally enforce the selected model output limit. Chat also sends the selected `max_completion_tokens` cap when no explicit limit is configured.
 
-The sandbox provider uses the same official `@modelcontextprotocol/client` SDK as `dsh-mcp-client` for initialization, protocol negotiation, request IDs, session headers, JSON/SSE responses, cancellation and stream cleanup. The complete DSH MCP plugin cannot replace this provider directly: it connects and discovers/registers tools on activation, while this host initializes only after tool approval and exposes its fixed sandbox tools through `ToolExecution`. One SDK connection belongs to each root provider, is shared by its children, and closes when that provider is disposed. `src/sse.ts` parses worker SSE streams; the AI SDK providers and MCP SDK own their respective SSE parsing.
+The sandbox provider uses the same official `@modelcontextprotocol/client` SDK as `dsh-mcp-client` for initialization, protocol negotiation, request IDs, session headers, JSON/SSE responses, cancellation and stream cleanup. The complete DSH MCP plugin cannot replace this provider directly: it connects and discovers/registers tools on activation, while this host initializes only after tool approval and exposes its fixed sandbox tools through `ToolExecution`. One SDK connection belongs to each root provider, is shared by its children, and closes when that provider is disposed. Initialization is shared but not bound to the first caller's signal: an interrupted caller stops waiting while the handshake continues for the others. A failed handshake is not cached; the provider discards that client and transport, and the next sandbox call initializes a fresh connection. `src/sse.ts` parses worker SSE streams; the AI SDK providers and MCP SDK own their respective SSE parsing.
 
 The `SandboxTools` entry is `src/sandbox-tools/index.ts`. It injects the existing `sandboxExecutor` and binds a separate execution bridge for each agent. It registers built-in Bash, Read, Write, Edit, Grep and Glob definitions from `definitions.ts`, with a fresh schema copy for every plugin instance. Each definition delegates execution to `ToolExecution`. The plugin preserves the inherited-tool restriction and per-thread concurrency policy, and its registrations are removed when its fiber or agent is disposed. Archiving a child leaves the shared provider available to the root and other children. Updating the sandbox wire contract requires updating the built-in definitions; startup does not call `tools/list`. `tests/sandbox-contract.test.ts` compares these definitions with a real sandbox server's `tools/list` when `OMA_RUST_MCP_URL` is set.
 
@@ -261,18 +265,17 @@ Idle children count toward the limit. Each child has a separate native dsh log
 and conversation history, and shares the parent's sandbox, model credential and
 approval channel. No additional worker lease is claimed.
 
-The primary agent receives three local tools:
+The primary agent receives four local tools:
 
-- `list_agents` lists predefined specialists and retained threads.
-- `send_to_agent` creates a child and waits for its report. Pass `thread_id` on a
-  later call to continue the same child's conversation.
-- `archive_agent` archives an idle child, rejects future messages to it and
-  frees its place under the limit. Its stored history remains available.
+- `subagent` creates a child and returns its DSH UUID before the report arrives.
+- `send_message` steers a running child or continues an idle child using `agent_id` and `message`.
+- `list_agents` lists retained children.
+- `interrupt_agent` stops a child using `agent_id`.
 
-For an inline agent, call `send_to_agent` with `name`, `system_prompt` and
-`message`. Inline agents inherit the parent's model and sandbox tools. For a
-predefined specialist, use `agent_name` and `message`. A follow-up accepts only
-`thread_id` and `message`.
+For an inline agent, call `subagent` with `description` and `prompt`. The initial
+prompt also defines its system instructions. Inline agents inherit the parent's
+model and sandbox tools. For a predefined specialist, also pass the advertised
+`agent_preset` ID. Archiving uses the OMA session API and retains stored history.
 
 The host's optional `launch.subagents` configuration defines specialists:
 
@@ -320,11 +323,11 @@ that child; the primary receives the failed delegation tool result and can
 continue. Closing or losing the parent lease cancels and disposes all children.
 
 Independent delegations run in parallel when the model emits multiple
-`send_to_agent` calls in one response. The dsh tool pool allows up to 25
-concurrent coordination calls. Each call waits for its child's report, so the
-primary continues after the batch settles; this does not detach background
-turns. A retained child accepts only one active turn, reserved before any
-awaited setup. Read, Glob and Grep can overlap within each thread. Bash, Write
+`subagent` calls in one response. Each call returns a child ID immediately.
+Reports arrive separately. When only waiting remains, the primary ends its turn;
+the host joins children and DSH resumes the primary with their reports.
+A retained child accepts follow-up messages through `send_message`.
+Read, Glob and Grep can overlap within each thread. Bash, Write
 and Edit wait for preceding calls and finish before subsequent calls start.
 Shared filesystem writes across threads must be coordinated by the agent.
 
@@ -433,7 +436,7 @@ unknown-outcome recovery policy. Backend regression tests cover forwarding
 failures and concurrent requests; the full inflight crash recovery path still
 requires real-backend verification.
 
-Grok checkpoints are refused rather than silently converted. This version starts new dsh sessions and restores its own logs. Background jobs and legacy history migration are outside this implementation. On a confirmed CONTEXT_WINDOW_EXCEEDED model error, the runtime summarizes older large, successful text Read results into first/last excerpts with an explicit omission notice; the latest two results, user inputs and assistant/tool-call identities remain unchanged. DSH surface replacements retain the original append-only log and replay the reduced model history. After durable persistence the owning root or child thread emits agent.thread_context_compacted and retries the failed step once. Replacement results do not publish duplicate public tool_result events. Other failures or histories without eligible Read output remain terminal; this is targeted recovery, not general semantic conversation summarization.
+Grok checkpoints are refused rather than silently converted. This version starts new dsh sessions and restores its own logs. Background jobs and legacy history migration are outside this implementation. The native DSH token meter, basic compaction engine, tool-result pruner and image-offload plugin manage model context. Before each step, the engine checks the window after reserving the effective output budget and 65536-token headroom. It first prunes large tool outputs, then summarizes balanced old conversation spans when pressure remains. Context overflow uses the native bounded recovery path. Summary calls preserve the OMA model route and use `purpose=compaction`; their native 65536-token requested budget is capped by the selected model's `max_output_tokens`, or 32768 when omitted, while smaller explicit budgets are preserved. They do not replace the business response ID. The private journal retains original messages and native compaction events. The CCRv2 adapter owns pressure snapshots, notification coalescing, replay recovery and retry state; runtime forwards native events plus generic open and post-flush lifecycle hooks. After journal persistence the adapter emits `agent.thread_context_compacted` for the owning root or child thread; public tool results are not duplicated. Restarts replay the compressed surface. Native offloaded images become text placeholders; this does not add a remote image-upload backend or quotas for opaque OMA image/document blocks.
 
 ## Verify
 
@@ -526,3 +529,5 @@ output persistence and Read path, with a bounded preview. Web content remains
 untrusted and responses carry source URLs for citations. There is no extra
 summarization model call. See [the design](../docs/design/be/brain-web-tools.md)
 for supported configuration, limits and acceptance coverage.
+
+Runtime keeps native execution and emits lifecycle/diagnostic facts. CCRv2 owns Worker log fields, backend thread IDs and Agent snapshots, compaction notifications, and gateway rejection decoding. Bash-specific structured stdout projection runs in the OMA sandbox adapter before generic tool execution consumes the result; error diagnostics and public tool text retain their existing behavior.

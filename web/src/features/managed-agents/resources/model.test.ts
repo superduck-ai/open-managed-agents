@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { validateEnvironmentTemplate } from './environment-model';
 
 import {
   type CredentialFormValues,
@@ -47,6 +48,9 @@ function editValues(overrides: Partial<EnvironmentEditValues>): EnvironmentEditV
     allowedHostsText: '',
     packages: [{ manager: 'pip', value: '' }],
     metadataRows: [{ key: '', value: '' }],
+    initScript: '',
+    environmentRows: [],
+    resources: { cpu: '', memory: '', disk: '' },
     ...overrides,
   };
 }
@@ -90,6 +94,69 @@ describe('statusPillTone', () => {
 
   test('uses success for active resources', () => {
     expect(statusPillTone('environments', apiEnvironment({ type: 'cloud' }))).toBe('success');
+  });
+});
+
+describe('environment template config', () => {
+  test('omits empty template fields and drops blank variable rows', () => {
+    const body = environmentConfigBody(editValues({ environmentRows: [{ key: ' ', value: '' }] }));
+    expect(body.init_script).toBe('');
+    expect(body.environment).toEqual({});
+    expect(body.resources).toBeNull();
+  });
+
+  test('round-trips init script, variables and resources', () => {
+    const values = environmentEditValues(
+      apiEnvironment({
+        type: 'cloud',
+        init_script: 'make setup',
+        environment: { MODE: 'test' },
+        resources: { cpu: 2000, disk: 40 },
+      }),
+    );
+    expect(values.initScript).toBe('make setup');
+    expect(values.environmentRows).toEqual([{ key: 'MODE', value: 'test' }]);
+    expect(values.resources).toEqual({ cpu: '2000', memory: '', disk: '40' });
+    const body = environmentConfigBody({ ...values, resources: { ...values.resources, memory: '4096' } });
+    expect(body.init_script).toBe('make setup');
+    expect(body.environment).toEqual({ MODE: 'test' });
+    expect(body.resources).toEqual({ cpu: 2000, memory: 4096, disk: 40 });
+  });
+});
+
+describe('validateEnvironmentTemplate', () => {
+  test('rejects invalid and duplicate variables and non-integer resources', () => {
+    const errors = validateEnvironmentTemplate(
+      editValues({
+        environmentRows: [
+          { key: '1BAD', value: 'x' },
+          { key: 'DUP', value: 'a' },
+          { key: 'DUP', value: 'b' },
+          { key: '', value: 'orphan' },
+        ],
+        resources: { cpu: '1.5', memory: '-1', disk: '0' },
+      }),
+      msgFallback,
+    );
+    expect(Object.keys(errors.environmentRows ?? {})).toEqual(['0', '1', '2', '3']);
+    expect(Object.keys(errors.resources ?? {}).sort()).toEqual(['cpu', 'disk', 'memory']);
+  });
+
+  test('accepts valid template values', () => {
+    const errors = validateEnvironmentTemplate(
+      editValues({
+        initScript: 'make',
+        environmentRows: [
+          { key: 'MODE', value: 'test' },
+          { key: 'ANTHROPIC_FLAG', value: 'on' },
+        ],
+        resources: { cpu: '2000', memory: '', disk: '40' },
+      }),
+      msgFallback,
+    );
+    expect(errors.initScript).toBeUndefined();
+    expect(errors.environmentRows).toEqual({});
+    expect(errors.resources).toEqual({});
   });
 });
 

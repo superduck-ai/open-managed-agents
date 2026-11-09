@@ -141,12 +141,22 @@ type sessionPageMapperParams struct {
 }
 
 // SessionMapper contains queries whose primary table is sessions.
+type sessionTrajectoryRow struct {
+	ExternalID      string  `db:"external_id"`
+	AgentExternalID string  `db:"agent_external_id"`
+	AgentVersion    int     `db:"agent_version"`
+	Title           *string `db:"title"`
+	Status          string  `db:"status"`
+	SubagentCount   int     `db:"subagent_count"`
+}
+
 type SessionMapper interface {
 	IsRetired(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (bool, error)
 	AddUsage(ctx context.Context, workspaceUUID, sessionUUID, threadUUID string, usage SessionUsageIncrement) (sessionRow, error)
 	Insert(ctx context.Context, params sessionWriteParams) (sessionRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionRow, bool, error)
 	FindByUUID(ctx context.Context, workspaceUUID, sessionUUID string) (sessionRow, bool, error)
+	ListTrajectorySummaries(ctx context.Context, workspaceUUID string, externalIDs []string) ([]sessionTrajectoryRow, error)
 	UpdateByExternalID(ctx context.Context, params sessionUpdateParams) (sessionRow, error)
 	PatchMetadata(ctx context.Context, workspaceUUID, sessionExternalID string, metadataPatch []byte) (sessionRow, error)
 	SetOutcomeEvaluations(ctx context.Context, workspaceUUID, sessionExternalID string, evaluations []byte) (sessionRow, error)

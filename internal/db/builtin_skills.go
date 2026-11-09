@@ -25,7 +25,7 @@ type BuiltinSkillVersion struct {
 	ID              int64
 	UUID            string
 	ExternalID      string
-	SkillID         int64
+	SkillUUID       string
 	SkillExternalID string
 	Version         string
 	Name            string
@@ -73,7 +73,7 @@ func (d *DB) UpsertBuiltinSkillWithVersion(
 
 		versionRow, upsertErr := mapper.UpsertVersion(ctx, upsertBuiltinSkillVersionParams{
 			ExternalID:      version.ExternalID,
-			SkillID:         createdSkill.ID,
+			SkillUUID:       createdSkill.UUID,
 			SkillExternalID: createdSkill.ExternalID,
 			Version:         version.Version,
 			Name:            version.Name,
@@ -142,11 +142,11 @@ func (d *DB) ListBuiltinSkillVersionsPage(
 		params.Offset = 0
 	}
 	mapper := NewBuiltinSkillMapper(d.mapperDB)
-	skillID, err := mapper.FindSkillIDByExternalID(ctx, params.SkillExternalID)
+	skillUUID, err := mapper.FindSkillUUIDByExternalID(ctx, params.SkillExternalID)
 	if err != nil {
 		return nil, false, mapNoRows(err)
 	}
-	rows, err := mapper.ListVersionsPage(ctx, skillID, params.Limit+1, params.Offset, params.OldestFirst)
+	rows, err := mapper.ListVersionsPage(ctx, skillUUID, params.Limit+1, params.Offset, params.OldestFirst)
 	if err != nil {
 		return nil, false, err
 	}
@@ -225,7 +225,7 @@ func (r builtinSkillVersionRow) skillVersion() BuiltinSkillVersion {
 		ID:              r.ID,
 		UUID:            r.UUID,
 		ExternalID:      r.ExternalID,
-		SkillID:         r.SkillID,
+		SkillUUID:       r.SkillUUID,
 		SkillExternalID: r.SkillExternalID,
 		Version:         r.Version,
 		Name:            r.Name,

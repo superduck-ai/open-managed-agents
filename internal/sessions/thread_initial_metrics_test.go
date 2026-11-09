@@ -31,3 +31,21 @@ func TestThreadMetricsPreserveSeparateInitializationBoundaries(t *testing.T) {
 		t.Fatal("termination was treated as idle")
 	}
 }
+
+func TestInitialThreadGetDoesNotInventUsageFromEmptyAggregate(t *testing.T) {
+	h := &Handler{}
+	for _, statsInitialized := range []bool{false, true} {
+		thread := db.SessionThread{ExternalID: "fresh", StatsInitialized: statsInitialized, Stats: json.RawMessage(`{}`), Usage: json.RawMessage(`{"input_tokens":0}`)}
+		got, err := h.responseFromThreadWithUsage(t.Context(), "workspace", "session", thread)
+		if err != nil || string(got.Usage) != "null" {
+			t.Fatalf("initial GET fabricated usage: %s %v", got.Usage, err)
+		}
+		wantStats := "null"
+		if statsInitialized {
+			wantStats = "{}"
+		}
+		if string(got.Stats) != wantStats {
+			t.Fatal("stats initialization boundary changed")
+		}
+	}
+}

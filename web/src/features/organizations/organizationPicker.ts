@@ -1,3 +1,4 @@
+import type { I18nContextValue } from '../../shared/i18n/context';
 export const organizationPickerResultLimit = 40;
 export const organizationMenuPreviewLimit = 3;
 
@@ -36,36 +37,43 @@ export function menuOrganizationPreview(items: OrganizationPickerItem[], current
   return [...(current ? [current] : []), ...others].slice(0, organizationMenuPreviewLimit);
 }
 
+function compareOrganizations(left: OrganizationPickerItem, right: OrganizationPickerItem, currentUuid?: string) {
+  if (left.uuid === currentUuid) return -1;
+  if (right.uuid === currentUuid) return 1;
+  return left.name.localeCompare(right.name, 'zh');
+}
+
 export function filterOrganizations(
   items: OrganizationPickerItem[],
   query: string,
   currentUuid?: string,
 ): OrganizationPickerResult {
   const normalized = query.trim().toLowerCase();
-  if (!normalized) {
-    const current = items.find((item) => item.uuid === currentUuid);
-    return {
-      searching: false,
-      matches: current ? [current] : [],
-      hiddenCount: Math.max(0, items.length - (current ? 1 : 0)),
-    };
-  }
   const matches = items
-    .filter((item) => item.name.toLowerCase().includes(normalized))
-    .sort((left, right) => {
-      if (left.uuid === currentUuid) return -1;
-      if (right.uuid === currentUuid) return 1;
-      return left.name.localeCompare(right.name, 'zh');
-    });
+    .filter((item) => !normalized || item.name.toLowerCase().includes(normalized))
+    .sort((left, right) => compareOrganizations(left, right, currentUuid));
   return {
-    searching: true,
+    searching: normalized.length > 0,
     matches: matches.slice(0, organizationPickerResultLimit),
     hiddenCount: Math.max(0, matches.length - organizationPickerResultLimit),
   };
 }
 
-export function organizationPickerRemainder(result: OrganizationPickerResult) {
+export function organizationPickerRemainder(result: OrganizationPickerResult, msg?: I18nContextValue['msg']) {
   if (result.hiddenCount <= 0) return '';
-  if (!result.searching) return `还有 ${result.hiddenCount} 个组织，输入关键词查看。`;
-  return `还有 ${result.hiddenCount} 个匹配，继续输入以缩小范围。`;
+  if (!result.searching)
+    return (
+      msg?.(
+        'organizations.remaining',
+        '{count, plural, one {# more organization.} other {# more organizations.}} Enter a keyword to view them.',
+        { count: result.hiddenCount },
+      ) ?? `还有 ${result.hiddenCount} 个组织，输入关键词查看。`
+    );
+  return (
+    msg?.(
+      'organizations.remainingMatches',
+      '{count, plural, one {# more match.} other {# more matches.}} Keep typing to narrow the results.',
+      { count: result.hiddenCount },
+    ) ?? `还有 ${result.hiddenCount} 个匹配，继续输入以缩小范围。`
+  );
 }

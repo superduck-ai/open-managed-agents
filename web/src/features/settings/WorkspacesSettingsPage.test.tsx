@@ -51,7 +51,7 @@ describe('Workspaces settings page', () => {
       },
     });
 
-    expect(screen.getByRole('heading', { name: 'Workspaces 2' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Create workspace' })).toBeTruthy();
     const table = screen.getByRole('table', { name: 'Workspaces' });
     expect(within(table).getByRole('columnheader', { name: 'Workspace' })).toBeTruthy();
@@ -130,6 +130,10 @@ describe('Workspaces settings page', () => {
     fireEvent.change(searchBox, { target: { value: 'foo' } });
     expect(within(table).getByText('foo')).toBeTruthy();
     expect(within(table).queryByText('Default')).toBeNull();
+
+    fireEvent.change(searchBox, { target: { value: 'no-hit' } });
+    expect(screen.getByText('No workspaces match the current search or filter.')).toBeTruthy();
+    expect(screen.queryByRole('table', { name: 'Workspaces' })).toBeNull();
 
     fireEvent.change(searchBox, { target: { value: '' } });
     fireEvent.click(screen.getByRole('combobox', { name: 'Status' }));
@@ -210,6 +214,8 @@ function renderWorkspacesSettings({
         uuid: 'acct_test',
         email_address: 'ada@example.com',
         display_name: 'Ada Lovelace',
+        effectiveOrganizationUuid: 'org_test',
+        permissions: ['organization:manage', 'members:manage', 'members:view'],
         memberships: [{ organization: { uuid: 'org_test', name: 'default' }, role: 'admin' }],
       }}
       onLogout={() => undefined}

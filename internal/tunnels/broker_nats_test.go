@@ -79,6 +79,9 @@ func testNATSBroker(t *testing.T, cfg config.TunnelConfig) *Broker {
 
 func startTunnelNATS(t *testing.T, opts server.Options) *server.Server {
 	t.Helper()
+	if opts.JetStreamMaxStore == 0 {
+		opts.JetStreamMaxStore = 32 << 30
+	}
 	opts.Host, opts.Port, opts.JetStream, opts.StoreDir, opts.NoLog, opts.NoSigs = "127.0.0.1", -1, true, t.TempDir(), true, true
 	if opts.MaxPayload == 0 {
 		opts.MaxPayload = maxBrokerValueBytes
@@ -145,7 +148,7 @@ func TestNATSBrokerUpdatesExistingCommandStream(t *testing.T) {
 	cfg := brokerTestConfig()
 	cfg.CommandStream = config.TunnelCommandStreamConfig{MaxBytes: 4 << 20, MaxMsgs: 10}
 	_, err = js.CreateStream(t.Context(), jetstream.StreamConfig{
-		Name: commandStreamName, Subjects: []string{commandSubjectPrefix + ">"},
+		Name: CommandStreamName, Subjects: []string{commandSubjectPrefix + ">"},
 		Storage: jetstream.FileStorage, Replicas: 1, Retention: jetstream.WorkQueuePolicy,
 		Discard: jetstream.DiscardNew, MaxAge: cfg.RequestTimeout, MaxMsgs: -1,
 		MaxBytes: 8 << 20, MaxMsgSize: maxBrokerValueBytes, MaxConsumers: maxCommandConsumers,

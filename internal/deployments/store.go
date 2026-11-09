@@ -219,5 +219,6 @@ func (s *Store) CreateManualRun(ctx context.Context, input db.CreateManualDeploy
 		return run, session, thread, nil, err
 	}
 	s.enqueueSessionCreated(ctx, session)
-	return run, session, thread, eventpayload.RestoreCreatedPublic(events, original), nil
+	events, err = eventpayload.RestoreCreatedPublic(events, original)
+	return run, session, thread, events, err
 }

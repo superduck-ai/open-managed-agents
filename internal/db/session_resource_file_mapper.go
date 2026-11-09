@@ -64,7 +64,9 @@ type sessionResourceFileRow struct {
 	S3ETag                *string    `db:"s3_etag"`
 	S3VersionID           *string    `db:"s3_version_id"`
 	ExpiresAt             *time.Time `db:"expires_at"`
+	FileUUID              *string    `db:"file_uuid"`
 	SourceFileUUID        *string    `db:"source_file_uuid"`
+	FileOwnership         *string    `db:"file_ownership"`
 	CreatedAt             time.Time  `db:"created_at"`
 	UpdatedAt             time.Time  `db:"updated_at"`
 	DeletedAt             *time.Time `db:"deleted_at"`
@@ -78,6 +80,10 @@ func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 	if tags == nil {
 		tags = []string{}
 	}
+	fileOwnership, err := sessionResourceFileOwnershipFromRow(row.FileOwnership)
+	if err != nil {
+		return SessionResourceFile{}, err
+	}
 	return SessionResourceFile{
 		ID:                    row.ID,
 		UUID:                  row.UUID,
@@ -88,6 +94,9 @@ func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 		Kind:                  row.Kind,
 		Path:                  row.Path,
 		ParentPath:            row.ParentPath,
+		FileUUID:              row.FileUUID,
+		SourceFileUUID:        row.SourceFileUUID,
+		FileOwnership:         fileOwnership,
 		SizeBytes:             row.SizeBytes,
 		MediaType:             row.MediaType,
 		DetectedMimeType:      row.DetectedMimeType,
@@ -102,12 +111,23 @@ func (row sessionResourceFileRow) entry() (SessionResourceFile, error) {
 		S3ETag:                row.S3ETag,
 		S3VersionID:           row.S3VersionID,
 		ExpiresAt:             row.ExpiresAt,
-		// SourceFileUUID 只标识公开 Input Resource 引用的 Source File。
-		SourceFileUUID: row.SourceFileUUID,
-		CreatedAt:      row.CreatedAt,
-		UpdatedAt:      row.UpdatedAt,
-		DeletedAt:      row.DeletedAt,
+		CreatedAt:             row.CreatedAt,
+		UpdatedAt:             row.UpdatedAt,
+		DeletedAt:             row.DeletedAt,
 	}, nil
+}
+
+func sessionResourceFileOwnershipFromRow(value *string) (SessionResourceFileOwnership, error) {
+	if value == nil {
+		return "", nil
+	}
+	ownership := SessionResourceFileOwnership(*value)
+	switch ownership {
+	case SessionResourceFileOwnershipReferenced, SessionResourceFileOwnershipOwned:
+		return ownership, nil
+	default:
+		return "", fmt.Errorf("decode Session Resource File ownership %q", *value)
+	}
 }
 
 func sessionResourceFilesFromMapperRows(rows []sessionResourceFileRow) ([]SessionResourceFile, error) {

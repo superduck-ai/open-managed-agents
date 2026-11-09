@@ -97,6 +97,7 @@ import {
 } from './sessionTimeline';
 import {
   buildSessionEventEntries,
+  hasWallClockMs,
   sessionCanonicalDisplayEvent,
   sessionEventTimestamp,
   sessionEventType,
@@ -515,7 +516,10 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     ? sessionEventEntrySelectionId(hoveredInspectorEntry)
     : hoveredEventId;
   const hasFilter = query.trim().length > 0 || activeLane !== SESSION_MAIN_LANE_ID;
-  const timeline = useMemo(() => buildSessionTimeline(lanes, entriesByLaneId), [entriesByLaneId, lanes]);
+  const timeline = useMemo(
+    () => buildSessionTimeline(lanes, entriesByLaneId, laneIdByThreadId),
+    [entriesByLaneId, lanes, laneIdByThreadId],
+  );
   const timelineVisibleIds = useMemo(
     () => buildSessionTimelineVisibleIds(filteredEntries, timeline, activeLane, query),
     [activeLane, filteredEntries, query, timeline],
@@ -607,8 +611,9 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     }
   };
   const handleThreadClick = (threadId: string, processedAtMs: number, eventType: string) => {
-    const laneId = laneIdByThreadId.get(threadId) ?? (lanes.some((lane) => lane.id === threadId) ? threadId : '');
-    if (!laneId) {
+    const laneId =
+      laneIdByThreadId.get(threadId) ?? (lanes.some((lane) => lane.id === threadId) ? threadId : undefined);
+    if (laneId === undefined) {
       return;
     }
     suppressScrollSeekUntilRef.current = sessionTimelineNow() + 200;
@@ -616,7 +621,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     const laneEntries = (entriesByLaneId.get(laneId) ?? []).filter(
       (entry): entry is Extract<SessionEventListEntry, { event: QuickstartSessionEvent }> => 'event' in entry,
     );
-    const timedEntries = laneEntries.filter((entry) => Number.isFinite(entry.processedAtMs));
+    const timedEntries = laneEntries.filter((entry) => hasWallClockMs(entry.processedAtMs));
     const matchingEntries = timedEntries.filter(
       (entry) => sessionEventType(entry.event) === eventType && Math.abs(entry.processedAtMs - processedAtMs) <= 2000,
     );
@@ -1181,7 +1186,7 @@ export function EventsTab({
       </div>
 
       <div
-        className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border"
+        className="flex min-h-0 flex-1 flex-col overflow-hidden border-t-[0.5px] border-border"
         data-testid="session-trace-shell"
       >
         <SessionTraceWorkspaceLayout

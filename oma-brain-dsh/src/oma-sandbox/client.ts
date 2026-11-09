@@ -1,21 +1,30 @@
+import { isConnectFailure, notForwardedDetail } from "../ccrv2/tool-transport.ts";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { OmaApi } from "../api.ts";
 import { object, type Payload } from "../json.ts";
+import { normalizeSandboxResult } from "./output.ts";
 import { sandboxEndpoint } from "./config.ts";
-import { ToolNotForwardedError, isConnectFailure, notForwardedDetail, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
+import { ToolNotForwardedError, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
 import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
+import { abortable } from "../ccrv2/retry.ts";
 
 /** Use the same MCP SDK as DSH, with initialization gated by the approval checkpoint. */
 export class SandboxMcp implements SandboxExecutor {
-  private readonly client = new Client({ name: "oma-brain-dsh", version: "0.1.0" }, { versionNegotiation: { mode: "auto" } });
-  private readonly transport: StreamableHTTPClientTransport;
+  private client = createClient();
+  private transport: StreamableHTTPClientTransport;
   private initialization?: Promise<void>;
+  private readonly endpoint: ReturnType<typeof sandboxEndpoint>;
   private readonly calls = new Map<string, { signal: AbortSignal; timeoutMs: number; threadId?: string; cleanup?: () => void; rejection?: string }>();
 
   constructor(readonly api: OmaApi, readonly sessionId: string) {
-    const endpoint = sandboxEndpoint(api.assignment(sessionId).mcp_config, api.base);
-    this.transport = new StreamableHTTPClientTransport(new URL(endpoint.url), {
-      requestInit: { headers: endpoint.headers, redirect: "error" },
+    this.endpoint = sandboxEndpoint(api.assignment(sessionId).mcp_config, api.base);
+    this.transport = this.createTransport();
+  }
+
+  private createTransport(): StreamableHTTPClientTransport {
+    const api = this.api;
+    return new StreamableHTTPClientTransport(new URL(this.endpoint.url), {
+      requestInit: { headers: this.endpoint.headers, redirect: "error" },
       fetch: async (input, init) => {
         const request = new Request(input, init);
         if (request.method === "POST") {
@@ -52,11 +61,25 @@ export class SandboxMcp implements SandboxExecutor {
     });
   }
 
+  private initialize(): Promise<void> {
+    const client = this.client;
+    const initialization: Promise<void> = client.connect(this.transport, { timeout: SANDBOX_CALL_TIMEOUT_MS }).catch(async (error: unknown) => {
+      if (this.initialization === initialization) {
+        this.initialization = undefined;
+        this.client = createClient();
+        this.transport = this.createTransport();
+      }
+      await client.close().catch(() => {});
+      throw error;
+    });
+    return initialization;
+  }
+
   async provision(signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
     const start = Date.now();
     const initializing = !this.initialization;
-    await (this.initialization ??= this.client.connect(this.transport, { signal, timeout: 185_000 }));
+    await abortable(this.initialization ??= this.initialize(), signal);
     signal.throwIfAborted();
     if (initializing && process.env.OMA_DEBUG_TIMING === "1") workerDiagnostic("info", "oma_sandbox_initialized", {
       session_id: this.sessionId, timestamp: new Date().toISOString(), duration_ms: Date.now() - start,
@@ -84,10 +107,14 @@ export class SandboxMcp implements SandboxExecutor {
     if (process.env.OMA_DEBUG_TIMING === "1") workerDiagnostic("info", "oma_sandbox_tool_finished", {
       session_id: this.sessionId, tool_name: tool.name, timestamp: new Date().toISOString(), duration_ms: Date.now() - start,
     });
-    return result;
+    return normalizeSandboxResult(result, tool.name);
   }
 
   async close(): Promise<void> { await this.client.close(); }
+}
+
+function createClient(): Client {
+  return new Client({ name: "oma-brain-dsh", version: "0.1.0" }, { versionNegotiation: { mode: "auto" } });
 }
 
 const SANDBOX_CALL_TIMEOUT_MS = 185_000;

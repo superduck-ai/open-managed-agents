@@ -1,37 +1,57 @@
 ---
 title: "Authentication"
-description: "Call OMA with a bearer token or X-Api-Key."
+description: "Call OMA with a workspace API key."
 ---
 
-Public `/v1` resources accept workspace API keys. Each key belongs to an organization and workspace, and resource access is scoped to that tenant.
+OMA's public `/v1` resources use workspace API keys. Each key belongs to an organization and workspace, and requests are scoped to that tenant.
 
-## Bearer authentication
+## 1. Get a workspace API key
+
+Sign in to the OMA console, switch to the workspace you want to use, and obtain a key from **API keys**. If you cannot access or create a key, contact your workspace administrator. Do not show the key in screenshots or shared examples.
+
+## 2. Set environment variables
+
+Replace the base URL with your OMA deployment address. The address below is for the default local deployment; the key is not echoed as you enter it.
 
 ```bash
-curl http://localhost:38080/v1/models \
-  -H 'Authorization: Bearer sk-ant-local-default'
+export OMA_BASE_URL="http://localhost:38080"
+printf 'Workspace API key: '
+read -rs OMA_API_KEY; echo
+export OMA_API_KEY
 ```
 
-## X-Api-Key authentication
+These commands work in bash and zsh. Use HTTPS for remote deployments.
+
+## 3. Send your first request
+
+Use Bearer authentication to list models:
 
 ```bash
-curl http://localhost:38080/v1/models \
-  -H 'X-Api-Key: sk-ant-local-default'
+curl "$OMA_BASE_URL/v1/models" \
+  -H "Authorization: Bearer $OMA_API_KEY"
 ```
 
-When both headers are present, OMA reads `X-Api-Key` first.
+Alternatively, use `X-Api-Key`; choose either authentication method:
+
+```bash
+curl "$OMA_BASE_URL/v1/models" \
+  -H "X-Api-Key: $OMA_API_KEY"
+```
+
+If both headers are present, OMA reads `X-Api-Key` first. If authentication fails, check the key, workspace, and request address; see [Errors](/docs/en/api/errors).
 
 ## SDK configuration
 
-Point the compatible SDK base URL at OMA and supply the key through its standard API key option.
+Compatible SDKs can use the same environment variables:
 
 <CodeGroup>
 ```python Python
+import os
 from anthropic import Anthropic
 
 client = Anthropic(
-    api_key="sk-ant-local-default",
-    base_url="http://localhost:38080",
+    api_key=os.environ["OMA_API_KEY"],
+    base_url=os.environ["OMA_BASE_URL"],
 )
 ```
 
@@ -39,20 +59,19 @@ client = Anthropic(
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({
-  apiKey: "sk-ant-local-default",
-  baseURL: "http://localhost:38080",
+  apiKey: process.env.OMA_API_KEY,
+  baseURL: process.env.OMA_BASE_URL,
 });
 ```
 </CodeGroup>
 
-## Security guidance
+## Security and credential scope
 
-- The default development key is for local verification only.
-- Never place keys in URLs, logs, screenshots, or frontend bundles.
+- The default development key is for local verification only, not production.
+- Never put keys in URLs, logs, screenshots, or frontend bundles; use environment variables or a secret manager.
 - Use separate keys for different workspaces and purposes so you can revoke and audit them independently.
-- Use TLS for remote OMA deployments.
-- Console cookie sessions and `/v1` API keys are separate authentication boundaries.
+- Console cookie sessions and workspace API keys have separate authentication boundaries.
 
 <Warning>
-  Filestore and the code-session runtime use protocol-specific credentials. Do not use those internal credentials as normal `/v1` API keys.
+  Filestore, environment workers, and the code-session runtime use dedicated, scope-limited credentials. These are not interchangeable with workspace API keys; Filestore uses its own Bearer credential.
 </Warning>

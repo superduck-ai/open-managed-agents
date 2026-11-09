@@ -73,7 +73,10 @@ func Run(ctx context.Context, repoRoot, initFile string, opts Options) (Result, 
 		return Result{}, err
 	}
 
-	if err := prepareResourceIdentities(prepped.layout, prepped.spec, &prepped.state, &prepped.credentials); err != nil {
+	if err := recoverMissingOrganization(ctx, database, &prepped, opts); err != nil {
+		return Result{}, err
+	}
+	if err := prepped.prepareIdentities(); err != nil {
 		return Result{}, err
 	}
 	if err := reconcileIdentity(ctx, database, prepped.spec, &prepped.state, opts); err != nil {
@@ -110,18 +113,30 @@ func Run(ctx context.Context, repoRoot, initFile string, opts Options) (Result, 
 	return finalizeRun(ctx, prepped)
 }
 
+func (p *preparedRun) prepareIdentities() error {
+	if p.identitiesPrepared {
+		return nil
+	}
+	if err := prepareResourceIdentities(p.layout, p.spec, &p.state, &p.credentials); err != nil {
+		return err
+	}
+	p.identitiesPrepared = true
+	return nil
+}
+
 type preparedRun struct {
-	repoRoot         string
-	initFile         string
-	base             config.Config
-	providers        ModelProvidersSpec
-	spec             Spec
-	binding          EnvBinding
-	layout           Layout
-	state            State
-	credentials      Credentials
-	credentialsFound bool
-	unlock           func()
+	repoRoot           string
+	initFile           string
+	base               config.Config
+	providers          ModelProvidersSpec
+	spec               Spec
+	binding            EnvBinding
+	layout             Layout
+	state              State
+	credentials        Credentials
+	credentialsFound   bool
+	identitiesPrepared bool
+	unlock             func()
 }
 
 func prepareRun(repoRoot, initFile string) (preparedRun, error) {

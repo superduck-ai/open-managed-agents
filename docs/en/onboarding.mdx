@@ -7,10 +7,31 @@ description: "Create, test, and iterate on agents visually in Console, then run 
 Console provides a visual interface for creating and configuring agents. It lets you iterate on configuration interactively before writing code.
 
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
+## From Quickstart to your first conversation
+
+In the console sidebar, select **Managed Agents → Quickstart**. Choose **Build with chat** to describe your goal, or **Manual setup** to configure it step by step. The screenshot shows the Chinese interface.
+
+![Quickstart page with chat, manual setup, and task templates](/docs/images/console/quickstart-zh.jpg)
+
+The diagram shows the manual setup path:
+
+```mermaid
+flowchart LR
+  Start["1. Choose a starting point"] --> Agent["2. Configure or reuse an Agent"]
+  Agent --> Environment["3. Choose or create an environment"]
+  Environment --> Test["4. Test online or call the API"]
+```
+
+Choose a starting point and configure the Agent's name, model, and system prompt. Then select an existing environment or create one. In the last step, send a test message using your signed-in account, or prepare a workspace API key and follow the request examples to create a session, connect to the event stream, and send a message. Online testing creates its own session and does not require an API key in the page.
+
 ## How to build an agent
+
+Start with a description or a template, then configure the name, model, and system prompt. The screenshot shows the Chinese interface; the model shown is an example and options depend on your workspace.
+
+![Create agent page showing starting point, name, model, and description](/docs/images/console/create-agent-zh.jpg)
 
 The visual interface walks you through each field of an agent definition:
 
@@ -19,11 +40,11 @@ The visual interface walks you through each field of an agent definition:
 * **Tools:** Extend your agent's capabilities using a pre-built agent toolset and MCP tools.
 * **Skills:** Attach OMA or custom skills from your organization's library.
 
-As you configure, Console shows the equivalent API request so you can copy it into your code once you're satisfied.
+The manual Quickstart flow shows corresponding API request examples, with application integration requests available to copy in the last step.
 
 ## Testing an agent
 
-Console includes an inline session runner. After configuring your agent, you can start a test session directly, send messages, and watch the event stream without leaving the page. This is the fastest way to check that your system prompt and tool selection produce the behavior you expect.
+In the manual Quickstart flow, choose an Agent and environment, then start an online test in the last step to see replies and tool activity. You can also create a session from the Sessions page and continue the conversation there.
 
 ## From Console to your codebase
 

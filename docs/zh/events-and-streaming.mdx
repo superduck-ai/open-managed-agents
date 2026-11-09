@@ -7,7 +7,7 @@ description: "发送事件、流式传输响应，并在执行过程中中断或
 与 Open Managed Agents的通信是基于事件的。您向智能体发送用户事件，并接收返回的智能体事件和会话事件以跟踪状态。
 
 <Note>
-  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+  各资源的 Beta 要求不同，请参阅[版本与 Beta 功能](/docs/zh/api/versioning-beta)，并确认 SDK 向 OMA 发送了所需参数。
 </Note>
 
 ## 事件类型
@@ -19,7 +19,7 @@ description: "发送事件、流式传输响应，并在执行过程中中断或
 
 会话、跨度、智能体、用户和系统事件类型字符串遵循 `{domain}.{action}` 命名约定。仅限流的增量预览事件（`event_start`、`event_delta`）是例外。请参阅参考文档中的[事件类型](/docs/zh/reference#event-types)以获取完整目录。
 
-每个持久化事件都包含一个 `processed_at` 时间戳，该时间戳在事件完成处理时设置。对于您发送的事件，当事件仍在排队等待处理先前事件时，`processed_at` 为 null。例外情况是 `user.define_outcome`、`user.custom_tool_result` 和 `user.tool_result`，它们在接收时即被处理，并在回显时已填充 `processed_at`。
+每个持久化事件都包含一个 `processed_at` 时间戳，该时间戳在事件完成处理时设置。对于您发送的事件，当事件仍在排队等待处理先前事件时，`processed_at` 为 null。`user.custom_tool_result` 和 `user.tool_result` 在接收时即被处理，并在回显时已填充 `processed_at`。
 
 ## 集成事件
 
@@ -656,7 +656,7 @@ description: "发送事件、流式传输响应，并在执行过程中中断或
     2. 列出完整的事件历史记录，以初始化一组已见事件 ID。
     3. 跟踪实时流，跳过历史记录列表中已返回的任何事件。
 
-    会话和线程 SSE 中的持久事件包含与事件 JSON `id` 相同的 SSE `id:` 字段。`event_start` 帧使用 `event.id` 作为 SSE ID，`event_delta` 帧使用 `event_id`。Thinking 预览与最终 `agent.thinking` 共用一组 ID；文本预览、增量和最终 `agent.message` 共用另一组 ID。SSE ID 可用于展示，但 `Last-Event-ID` 不触发服务端回放；重连时仍应先打开流，再按上述步骤读取完整事件历史。
+    会话和线程 SSE 中的持久事件包含与事件 JSON `id` 相同的 SSE `id:` 字段。使用已持久化的公开事件 ID 作为 `Last-Event-ID` 重连时，服务端会回放该事件之后的公开历史事件；无效、不可见或与线程不匹配的游标会被拒绝。`event_start` 和 `event_delta` 是临时预览，无法回放；其 SSE ID 可能对应尚未持久化的事件，因此请保存已确认持久事件的 ID 作为重连游标。也可以按上述步骤读取历史并去重。
 
     <CodeGroup>
       ```bash cURL
@@ -2378,10 +2378,10 @@ agent.message   {"id": "sevt_01abc...", "content": [...]}
 
 ### 恢复空闲会话
 
-会话在交互之间持久存在。除非显式删除会话，否则对话历史记录会被保留。当会话进入空闲状态时，其沙箱会被检查点保存，保留完整的沙箱状态，包括文件系统、已安装的软件包以及智能体创建的任何文件。这使您能够从非活动状态干净地恢复。
+会话在交互之间持久存在。对话历史记录会保留；空闲的云沙箱则可能根据部署配置被回收，后续输入可以触发重新创建。
 
 <Note>
-  虽然会话历史记录会一直保留直到被删除，但沙箱状态仅在沙箱创建后保留 30 天。活动不会延长此窗口期：30 天后，沙箱状态（文件、已安装的工具等）将无法恢复，恢复的会话将从全新的沙箱开始。如果您的工作流程依赖于沙箱内容，请让智能体在窗口期结束前将重要产物写入[输出](/docs/zh/define-outcomes#retrieving-deliverables)。
+  沙箱不会进行完整检查点保存。替换沙箱时，本地工作目录、临时文件、后台进程和临时安装的软件可能丢失。将需要交付的文件写入 `/mnt/session/outputs/`，并通过[文件](/docs/zh/files)查看和下载。已提交的持久文件和挂载资源遵循各自的生命周期。
 </Note>
 
 要恢复会话，像往常一样向其发送 `user.message` 事件：
@@ -2550,22 +2550,14 @@ agent.message   {"id": "sevt_01abc...", "content": [...]}
 
 ### 达到会话预算
 
-使用[预算](/docs/zh/budgets)创建的会话会暂停而不是超支。当会话的跟踪标价成本达到上限时，平台会在每个线程的下一个模型请求之前暂停该线程，会话进入空闲状态，其 `stop_reason` 为 `budget_reached`，而不是终止。使总额超过上限的那个请求会运行至完成，因此 `session.usage` 快照报告的 `list_cost` 可能显示为[等于或略微超过上限](/docs/zh/budgets#when-a-session-reaches-its-budget)。在流上，暂停以三个事件的形式依次到达：
+工作进程事件持久化后，OMA 汇总会话的用量。达到[预算](/docs/zh/budgets)时，会话产生 `session.usage` 和 `stop_reason` 为 `budget_reached` 的 `session.status_idle`。请求完成后的检查可能使累计成本超过预算。达到上限后，新任务消息会被拒绝；工具确认、工具结果和中断等结算事件仍可提交。
 
-1. `session.thread_status_idle`，带有 `stop_reason: budget_reached`，每个线程暂停时各发出一个。
-2. `session.usage`，会话累计使用量和跟踪标价成本的快照。
-3. `session.status_idle`，带有 `stop_reason: budget_reached`。`session.usage` 事件始终紧接在此空闲事件之前。
-
-如果某个线程的最后一个请求既越过了上限又完成了其轮次，则该线程自己的 `session.thread_status_idle` 事件报告 `end_turn`，而会话仍报告 `budget_reached`；请以会话级的 `stop_reason` 为准来检测暂停。
-
-当会话处于上限状态时，它仅接受用于结清已在进行中的工作的事件：`user.tool_confirmation`、`user.tool_result`、`user.custom_tool_result` 和 `user.interrupt`。任何会启动新工作的事件（包括 `user.message`）都会被拒绝，并返回列出上述事件的 400 错误。当会话同时存在一个等待工具确认的线程和一个在上限处暂停的线程时，会话级的 `stop_reason` 是 `requires_action` 而非 `budget_reached`：结清该确认请求不会触发模型请求，因此请照常响应它。
-
-没有任何事件能恢复在上限处暂停的会话。取而代之的是更新会话的预算：将上限更改为任何高于已消耗标价成本的值，或通过使用 `"budget": null` 更新会话来移除预算，都会自动恢复暂停的工作。有关标价成本的跟踪方式和完整的预算更新语义，请参阅[会话预算](/docs/zh/budgets)。
+通过会话更新提高或移除预算，并检查会话状态，再按需发送新消息继续工作。
 
 ### 发送系统消息
 
 <Note>
-  `system.message` 目前受 `claude-opus-4-8`、`claude-fable-5`、`claude-mythos-5` 和 `claude-opus-5` 支持。如果智能体的主模型不支持对话中途的系统注入，该事件将被拒绝并返回 `model_does_not_support_mid_conversation_system` 验证错误；子智能体模型不会被检查，因为 `system.message` 仅落在主线程上。
+  OMA 接受 `system.message` 事件；实际运行效果取决于模型提供商和运行环境。
 </Note>
 
 发送 `system.message` 事件，为智能体提供特权系统级上下文，该上下文适用于随附的轮次及所有后续轮次。与智能体定义上的 `system` 字段（用于设置顶层系统提示）不同，`system.message` 的内容会作为 `role: "system"` 轮次追加到会话的系统上下文中，而不是替换该提示。当智能体在会话中途需要更新的系统级指导时使用它：不同的角色设定、修订的约束条件，或在运行时获取的、应影响模型后续行为的上下文。
@@ -2745,7 +2737,7 @@ agent.message   {"id": "sevt_01abc...", "content": [...]}
 }
 ```
 
-`input_tokens` 报告未缓存的输入令牌数，`output_tokens` 报告会话中所有模型调用的总输出令牌数。`cache_read_input_tokens` 字段报告从提示缓存中读取的令牌数，`cache_creation` 对象按缓存生命周期细分缓存创建令牌（`ephemeral_5m_input_tokens` 和 `ephemeral_1h_input_tokens`）。缓存条目默认使用 5 分钟的 "TTL"（生存时间），因此在该时间窗口内连续进行的轮次可以受益于缓存读取，从而降低每令牌成本。
+`input_tokens` 和 `output_tokens` 报告模型调用的令牌用量；缓存读取和创建字段表示上游返回的缓存用量。缓存能力、生命周期及其计费取决于模型提供商和配置，不保证每次请求都会命中缓存。
 
 `list_cost` 是会话按公开标价计算的累计消费，以字符串形式表示的整数美分值，并附带货币代码。`active_seconds` 是会话中至少有一个线程在运行的累计时间；并发线程的重叠活动只计算一次，这与会话 `stats` 对象中的 `active_seconds` 不同，后者是对每个线程各自活跃时间的求和。这个去重后的数值即为会话运行时成本的计价时长。`server_tool_use` 统计用于计价的服务器端执行的工具请求数：网络搜索请求按每次请求计入标价成本，而网络抓取请求不收取每次请求费用且不计量，因此 `web_fetch_requests` 显示为 `0`。每个[会话线程](/docs/zh/multiagent-orchestration)自身的 `usage` 也包含 `list_cost` 和 `active_seconds`。各线程的数值是独立四舍五入的，且不包含会话的运行时间成本，因此它们的总和不会与会话的 `list_cost` 完全相等；会话级别的数值才是权威数据。
 

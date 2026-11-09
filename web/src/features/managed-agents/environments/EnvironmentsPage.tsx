@@ -1,5 +1,5 @@
 import './styles.css';
-import { Cloud, Monitor } from 'lucide-react';
+import { BookOpen, Cloud, Monitor } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '../../../shared/lib/utils';
 import { useLocation } from '@tanstack/react-router';
@@ -8,7 +8,7 @@ import { useWorkspace } from '../../../shared/workspaces/context';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Badge } from '../../../shared/ui/badge';
 import { Skeleton } from '../../../shared/ui/skeleton';
-import { Button } from '../../../shared/ui/button';
+import { Button, ButtonLink } from '../../../shared/ui/button';
 import { CopyIdCell } from '../../../shared/ui/data-table-interactions';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import { managedEntityListHref, navigateToInternalHref, objectRecord } from '../utils';
@@ -18,6 +18,7 @@ import { EnvironmentActionDialog, EnvironmentActions, type EnvironmentActionRequ
 import { EnvironmentHosting, EnvironmentScope } from './common';
 import { useEnvironment, useEnvironmentRefresh } from './data';
 import { EnvironmentForm } from './form';
+import { environmentDocs } from './fields';
 import { EnvironmentList } from './list';
 import { EnvironmentPreview } from './preview';
 import type { EnvironmentApiResponse } from '../types';
@@ -120,13 +121,14 @@ function EnvironmentDetail({
       />
       <div className={creating ? 'mx-auto flex w-full max-w-3xl flex-1 flex-col' : 'flex flex-1 flex-col lg:px-6'}>
         {creating ? (
-          <header className="mb-6 shrink-0">
-            <h1 className="text-[22px] font-medium tracking-tight">
+          <header className="mb-7 flex shrink-0 items-center justify-between gap-4">
+            <h1 className="text-2xl font-medium tracking-tight">
               {msg('managedAgents.environments.create', 'Create environment')}
             </h1>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              {msg('environmentPage.createDescription', 'A reusable container template for sessions.')}
-            </p>
+            <ButtonLink variant="ghost" size="sm" href={environmentDocs} target="_blank" rel="noreferrer">
+              <BookOpen className="size-4" />
+              {msg('common.documentation', 'Documentation')}
+            </ButtonLink>
           </header>
         ) : entity ? (
           <EnvironmentDetailHeader entity={entity} archived={archived} onAction={onAction} />
@@ -181,7 +183,7 @@ function EnvironmentDetailHeader({
     <header className="mb-4 shrink-0">
       <div className="flex flex-wrap items-center gap-2">
         <Icon className="size-5" strokeWidth={1.5} />
-        <h1 className="min-w-0 break-words text-[22px] font-medium tracking-tight">{entity.name}</h1>
+        <h1 className="min-w-0 break-words text-2xl font-medium tracking-tight">{entity.name}</h1>
         <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
           <EnvironmentHosting entity={entity} />
         </span>

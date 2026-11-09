@@ -114,7 +114,7 @@ go run ./cmd/vault-migrate --help
 
 ### 3.1 涵盖的数据表与信封映射
 
-命令按固定顺序扫描以下 6 张数据存储表：
+命令按固定顺序扫描以下 7 张数据存储表：
 
 | 存储名称 (`kind`) | 数据库表名 | 密文存储位置与结构 | 单行信封数量 | CAS 附加行为 |
 | --- | --- | --- | --- | --- |
@@ -124,6 +124,7 @@ go run ./cmd/vault-migrate --help
 | `llm_providers` | `llm_providers` | 平铺列：`wrapped_dek`, `key_provider`, `key_version` 等 | 单信封 | `updated_at = NOW()` |
 | `session_resources` | `session_resources` | JSONB 列 `secret_payload`，格式形如 `{"envelope": {...}}` | 单信封 | `updated_at = NOW()` |
 | `deployments` | `deployments` | JSONB 列 `resource_secrets`，格式为 `map[string]GitTokenEnvelope` | 复合信封（多资源） | `updated_at = NOW()` |
+| `channel_workspace_credentials` | `channel_workspace_credentials` | JSONB 列 `envelope`，直接保存信封 | 单信封 | 整份信封 CAS，不更新时间 |
 
 > [!NOTE]
 > - **Deployment 多信封原子性**：一个 Deployment 记录可能包含多个环境资源的 Git Token 信封。只有当该记录中**所有**匹配 `--from` 的信封都重新封装并通过自检验证后，才会将整行 JSONB 原子写回；在终端统计中，每个 Deployment 无论包含多少个内部信封，均按**一条数据库记录**计算。
@@ -273,6 +274,7 @@ mcp_tunnel_token_versions              2          0          0
 llm_providers                         4          1          0
 session_resources                     5          2          0
 deployments                           2          1          0
+channel_workspace_credentials         0          0          0
 Total                                58          6          0
 
 Skipped: other providers or empty data.
@@ -295,6 +297,7 @@ mcp_tunnel_token_versions              2          0          0
 llm_providers                         4          1          0
 session_resources                     5          2          0
 deployments                           2          1          0
+channel_workspace_credentials         0          0          0
 Total                                58          6          0
 
 Skipped: other providers or empty data.

@@ -8,6 +8,7 @@ import {
 interface BlockState {
   index: number;
   block: ContentBlock;
+  ended?: boolean;
   signature?: string;
   redactedData?: string;
 }
@@ -15,6 +16,7 @@ interface BlockState {
 export class AiSdkStream {
   messageID?: string;
   private readonly blocks = new Map<string, BlockState>();
+  private readonly states: BlockState[] = [];
   private usage?: TokenUsage;
   private finishReason?: LanguageModelV4FinishReason;
 
@@ -22,16 +24,17 @@ export class AiSdkStream {
 
   accept(part: LanguageModelV4StreamPart): StreamChunk[] {
     switch (part.type) {
-      case "stream-start": case "raw": case "custom": case "text-end": case "tool-input-end": return [];
+      case "stream-start": case "raw": case "custom": case "tool-input-end": return [];
       case "response-metadata": this.messageID ??= part.id; return [];
       case "text-start": return this.start(part.id, { type: "text", text: "" });
       case "reasoning-start": return this.start(part.id, { type: "reasoning", text: "" }, part.providerMetadata);
       case "text-delta": return this.text(part.id, part.delta);
       case "reasoning-delta": return this.reasoning(part.id, part.delta, part.providerMetadata);
-      case "reasoning-end": this.sign(part.id, part.providerMetadata); return [];
+      case "text-end": return this.end(part.id, "text");
+      case "reasoning-end": this.sign(part.id, part.providerMetadata); return this.end(part.id, "reasoning");
       case "tool-input-start": return this.start(part.id, { type: "tool-call", id: ToolCallId(part.id), name: part.toolName, arguments: "" });
       case "tool-input-delta": return this.toolInput(part.id, part.delta);
-      case "tool-call": return this.toolCall(part.toolCallId, part.toolName, part.input);
+      case "tool-call": return [...this.toolCall(part.toolCallId, part.toolName, part.input), ...this.end(part.toolCallId, "tool-call")];
       case "finish": this.usage = tokenUsage(part.usage); this.finishReason = part.finishReason; return [];
       case "error": throw modelError(part.error);
       default: throw new LlmError(`Unsupported model stream part: ${part.type}`, "TRANSPORT");
@@ -39,12 +42,12 @@ export class AiSdkStream {
   }
 
   finish(): StreamChunk[] {
-    const states = [...this.blocks.values()].sort((left, right) => left.index - right.index);
+    const states = this.states;
     const reason = finishReason(this.finishReason, states.some((state) => state.block.type === "tool-call"));
     if (!reason) throw new LlmError("Model stream has incomplete terminal state", "TRANSPORT");
     if (!states.length) throw new LlmError("Model returned no content", "EMPTY_RESPONSE");
+    if (states.some(state => !state.ended)) throw new LlmError("Model stream has unclosed content blocks", "TRANSPORT");
     return [
-      ...states.map((state): StreamChunk => ({ type: "block-end", index: state.index, block: closed(state.block) })),
       ...(this.usage ? [{ type: "usage" as const, usage: this.usage }] : []),
       { type: "finish", reason, replayState: {
         response: { format: this.replayFormat, stopReason: this.finishReason?.raw,
@@ -56,9 +59,10 @@ export class AiSdkStream {
   }
 
   private start(id: string, block: ContentBlock, metadata?: SharedV4ProviderMetadata): StreamChunk[] {
-    if (this.blocks.has(id)) return [];
-    const state: BlockState = { index: this.blocks.size, block };
+    if (this.blocks.has(id) && !this.blocks.get(id)!.ended) return [];
+    const state: BlockState = { index: this.states.length, block };
     this.blocks.set(id, state);
+    this.states.push(state);
     this.sign(id, metadata);
     return [{ type: "block-start", index: state.index, blockType: block.type }];
   }
@@ -95,7 +99,14 @@ export class AiSdkStream {
   private open(id: string, type: ContentBlock["type"]): BlockState {
     const state = this.blocks.get(id);
     if (!state || state.block.type !== type) throw new LlmError(`Model ${type} delta has no open block`, "TRANSPORT");
+    if (state.ended) throw new LlmError(`Model ${type} block already ended`, "TRANSPORT");
     return state;
+  }
+
+  private end(id: string, type: ContentBlock["type"]): StreamChunk[] {
+    const state = this.open(id, type);
+    state.ended = true;
+    return [{ type: "block-end", index: state.index, block: closed(state.block) }];
   }
 
   private sign(id: string, metadata?: SharedV4ProviderMetadata): void {
@@ -109,8 +120,11 @@ export class AiSdkStream {
 
 export function modelError(error: unknown, signal?: AbortSignal): unknown {
   if (signal?.aborted || error instanceof LlmError) return error;
-  if (APICallError.isInstance(error))
-    return billingError(error.responseBody, error.statusCode) ?? providerError(apiErrorMessage(error), error.statusCode, retryAfterMs(error.responseHeaders));
+  if (APICallError.isInstance(error)) {
+    const message = apiErrorMessage(error);
+    return billingError(error.responseBody, error.statusCode)
+      ?? providerError(message, error.statusCode, retryAfterMs(error.responseHeaders), inputRangeOverflow(error, message));
+  }
   if (error instanceof Error) return providerError(error.message);
   const message = typeof error === "object" && error && "message" in error ? String(error.message) : String(error);
   return providerError(message);
@@ -131,9 +145,22 @@ export function retryAfterMs(headers?: Record<string, string>, now = Date.now())
   return Number.isFinite(delay) && delay > 0 ? delay : undefined;
 }
 
-function providerError(detail: string, status?: number, providerRetryAfterMs?: number): LlmError {
+function inputRangeOverflow(error: APICallError, message: string): boolean {
+  if (error.statusCode !== 400 || !/^<400> InternalError\.Algo\.InvalidParameter: Range of input length should be \[1, [1-9]\d*\]$/.test(message)) return false;
+  const body: unknown = error.requestBodyValues;
+  if (!body || typeof body !== "object" || !("messages" in body) || !Array.isArray(body.messages)) return false;
+  return body.messages.some((value: unknown) => {
+    if (!value || typeof value !== "object" || !("content" in value)) return false;
+    if (typeof value.content === "string") return value.content.length > 0;
+    return Array.isArray(value.content) && value.content.some((block: unknown) =>
+      !!block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string" && block.text.length > 0);
+  });
+}
+
+function providerError(detail: string, status?: number, providerRetryAfterMs?: number, contextOverflow = false): LlmError {
   const message = detail || "Model stream error";
-  const code = isContextWindowExceededError(message) ? "CONTEXT_WINDOW_EXCEEDED"
+  const code = contextOverflow || isContextWindowExceededError(message) ? "CONTEXT_WINDOW_EXCEEDED"
+    : status === 429 && /^concurrency allocated quota exceeded(?:[.!]?\s*please try again later[.!]?)?$/i.test(message.trim()) ? "RATE_LIMIT"
     : isQuotaExceededError(message) ? "QUOTA" : status === 429 ? "RATE_LIMIT"
     : status === 401 || status === 403 ? "AUTH" : status === 408 ? "TIMEOUT"
     : status && status >= 500 ? "SERVER" : status && status >= 400 ? "HTTP_ERROR" : "TRANSPORT";
@@ -154,7 +181,8 @@ function closed(block: ContentBlock): ContentBlock {
 function tokenUsage(usage: LanguageModelV4Usage): TokenUsage | undefined {
   const input = usage.inputTokens;
   if (input.total === undefined && usage.outputTokens.total === undefined) return undefined;
-  return { inputTokens: input.noCache ?? input.total ?? 0, outputTokens: usage.outputTokens.total ?? 0,
+  const uncached = input.noCache !== undefined && input.noCache >= 0 ? input.noCache : input.total ?? 0;
+  return { inputTokens: uncached, outputTokens: usage.outputTokens.total ?? 0,
     ...(input.cacheRead !== undefined ? { cacheReadTokens: input.cacheRead } : {}),
     ...(input.cacheWrite !== undefined ? { cacheWriteTokens: input.cacheWrite } : {}) };
 }

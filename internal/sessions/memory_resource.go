@@ -31,7 +31,13 @@ func (h *Handler) memoryStorePayload(
 func observeSessionMemoryResources(resources []db.SessionResource) *sessionresource.MemoryAttachSet {
 	attachSet := sessionresource.NewMemoryAttachSet()
 	for _, resource := range resources {
-		sessionresource.ObserveStoredMemoryResource(attachSet, resource.ResourceType, resource.Payload)
+		if resource.MemoryStore != nil {
+			mountPath := ""
+			if resource.MemoryStore.MountPath != nil {
+				mountPath = *resource.MemoryStore.MountPath
+			}
+			attachSet.Observe(resource.MemoryStore.ExternalID, sessionresource.MemorySlugFromMountPath(mountPath))
+		}
 	}
 	return attachSet
 }

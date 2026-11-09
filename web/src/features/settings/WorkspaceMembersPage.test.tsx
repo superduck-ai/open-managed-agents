@@ -263,3 +263,19 @@ test('移除确认明确显示目标工作区名称', async () => {
     await screen.findByText('Are you sure you want to remove member@example.com from workspace Project Alpha?'),
   ).toBeTruthy();
 });
+
+test('取消添加成员后焦点返回入口且不提交成员变更', async () => {
+  const methods: string[] = [];
+  globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+    methods.push(init?.method ?? 'GET');
+    return Response.json(String(input).includes('member-candidates') ? [] : directoryResponse());
+  }) as typeof fetch;
+  renderMembers({ ...defaultWorkspace, id: 'wrkspc_other', external_id: 'wrkspc_other', is_default: false });
+  const opener = await screen.findByRole('button', { name: 'Add to Workspace' });
+  fireEvent.click(opener);
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(opener));
+  expect(methods.every((method) => method === 'GET')).toBe(true);
+});

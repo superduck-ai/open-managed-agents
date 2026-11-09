@@ -7,13 +7,11 @@ description: "Give your agents persistent memory that survives across sessions u
 Each Managed Agents session starts with a fresh context by default. When a session ends, any state the agent built up is gone. Memory stores let the agent carry information across sessions: user preferences, project conventions, prior mistakes, and domain context.
 
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
 <Note>
-  Don't combine `agent-memory-2026-07-22` with `managed-agents-2026-04-01` on a memory store request: sending both returns a `400` error. If your code sets beta headers explicitly, replace `managed-agents-2026-04-01` with `agent-memory-2026-07-22` on memory store calls rather than adding a second value. Session endpoints, including attaching a memory store to a session, still use `managed-agents-2026-04-01`.
-
-  On July 22, 2026, the `managed-agents-2026-04-01` header adopts the same list behavior on `GET /v1/memory_stores/{memory_store_id}/memories`; sending `agent-memory-2026-07-22` opts you into that behavior now. Page cursors from requests made without the header aren't valid with it, so restart from the first page.
+  OMA's Memory Store API requires the `beta=true` query parameter. Verify that your SDK includes it.
 </Note>
 
 ## Overview
@@ -28,9 +26,15 @@ Every change to a memory creates an immutable **memory version**, giving you an 
 
 Give the store a `name` and a `description`. The description is passed to the agent, telling it what the store contains.
 
+In the console, open **Memory stores** and select **Create memory store**, then enter a name and an optional description. The screenshot shows the Chinese interface.
+
+<Frame>
+  <img src="/docs/images/console/memory-create-zh.jpg" alt="Create memory store form with name and description fields" />
+</Frame>
+
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  store=$(curl -s http://localhost:38080/v1/memory_stores \
+  store=$(curl -s "http://localhost:38080/v1/memory_stores?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -126,7 +130,7 @@ Pre-load a store with reference material before any agent runs:
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories" \
+  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -377,7 +381,7 @@ A maximum of **8 memory stores** are supported per session. Attach multiple stor
 
 ### How the agent accesses memory
 
-Each attached store is mounted inside the session's sandbox as a directory under `/mnt/memory/`. The directory name is the store's display name sanitized to a filesystem-safe slug (lowercased; non-alphanumeric runs become a single hyphen), so a store named "Demo Memory" mounts at `/mnt/memory/demo-memory/`. The exact path is returned in the `mount_path` field on the session's memory-store resource; read it from there rather than constructing it yourself. The agent reads and writes the store with the standard [agent toolset](/docs/en/tools). Writes under the mount path are persisted back to the store and stay in sync across sessions that share it; writes to any other path under `/mnt/memory/` land in container-local scratch and are lost when the session ends. A short description of each mount (display name, mount path, access mode, store `description`, and any `instructions`) is automatically added to the system prompt.
+Each attached store is mounted inside the session's sandbox as a directory under `/mnt/memory/`. The directory name is the store's display name sanitized to a filesystem-safe slug (lowercased; non-alphanumeric runs become a single hyphen), so a store named "Demo Memory" mounts at `/mnt/memory/demo-memory/`. The exact path is returned in the `mount_path` field on the session's memory-store resource; read it from there rather than constructing it yourself. The agent reads and writes the store with the standard [agent toolset](/docs/en/tools). Writes under the mount path are persisted back to the store and stay in sync across sessions that share it; the `/mnt/memory/` parent is read-only, and writes outside attached store directories are rejected. A short description of each mount (display name, mount path, access mode, store `description`, and any `instructions`) is automatically added to the system prompt.
 
 `access` is enforced at the filesystem level: a `read_only` mount rejects writes, while writes to a `read_write` mount produce [memory versions](/docs/en/memory#audit-memory-changes) attributed to the session.
 
@@ -396,7 +400,7 @@ List the memories in a store. Results are returned in a stable, server-defined o
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories?path_prefix=/" \
+  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories?path_prefix=/&beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" | jq -r '.data[] | "\(.type)  \(.path)"'
@@ -492,7 +496,7 @@ Fetching an individual memory returns the full content.
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id" \
+  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" | jq -r '.content'
@@ -567,7 +571,7 @@ See the [Retrieve a memory reference](/docs/en/api/memories/get-a-memory) for fu
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  mem=$(curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories" \
+  mem=$(curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -655,7 +659,7 @@ See the [Create a memory reference](/docs/en/api/memories/create-a-memory) for f
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id" \
+  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -739,7 +743,7 @@ To avoid clobbering a concurrent write, pass a `content_sha256` precondition. Th
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id" \
+  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -844,7 +848,7 @@ To avoid clobbering a concurrent write, pass a `content_sha256` precondition. Th
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s -X DELETE "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id" \
+  curl -s -X DELETE "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" > /dev/null
@@ -911,11 +915,11 @@ See the [Delete a memory reference](/docs/en/api/memories/delete-a-memory) for f
 
 Every mutation to a memory creates an immutable **memory version** (`memver_...`). Use the version endpoints to audit who changed what and when, to inspect or restore a prior snapshot, and to scrub sensitive content out of history with redact.
 
-Versions belong to the store (not the individual memory) and survive even after the memory itself is deleted, so the audit trail stays complete. Versions are retained for 30 days; however, the recent versions are always kept regardless of age, so memories that change infrequently might retain history beyond 30 days. The live `memories.retrieve` call always returns the latest version; the version endpoints give you the retained history.
+Versions belong to the store (not the individual memory) and survive even after the memory itself is deleted, so the audit trail stays complete. Version retention depends on the deployment. The live `memories.retrieve` call always returns the latest version; the version endpoints give you the retained history.
 
 There is no dedicated restore endpoint; to roll back, retrieve the version you want and write its `content` back with `memories.update` (or `memories.create` if the parent memory has been deleted, because versions outlive their parent).
 
-Past memory versions might be deleted after 30 days. To preserve memory history for longer, export versions through the API.
+To preserve memory history, export versions through the API and check the deployment retention policy.
 
 ### List versions
 
@@ -923,7 +927,7 @@ List version history for a store, newest first. The example filters to a single 
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  versions=$(curl -s "http://localhost:38080/v1/memory_stores/$store_id/memory_versions?memory_id=$mem_id" \
+  versions=$(curl -s "http://localhost:38080/v1/memory_stores/$store_id/memory_versions?memory_id=$mem_id&beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22")
@@ -1044,7 +1048,7 @@ Fetching an individual version returns the same fields as the list response plus
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memory_versions/$version_id" \
+  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memory_versions/$version_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22"
@@ -1124,7 +1128,7 @@ A version that is the current head of a live memory cannot be redacted. Write a 
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memory_versions/$version_id/redact" \
+  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memory_versions/$version_id/redact?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -1201,7 +1205,7 @@ List stores in the workspace. Archived stores are excluded by default; pass `inc
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s "http://localhost:38080/v1/memory_stores?include_archived=true" \
+  curl -s "http://localhost:38080/v1/memory_stores?include_archived=true&beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" | jq '.data[] | {id, name, archived_at}'
@@ -1274,7 +1278,7 @@ Archiving makes a store read-only and prevents it from being attached to new ses
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/archive" \
+  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/archive?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" > /dev/null
@@ -1326,7 +1330,7 @@ When a store reaches its 2,000-memory limit, writes to new memories fail: both d
 
 * **Use focused stores.** Rather than one large general-purpose store, use smaller purpose-built stores: one per user, one for shared domain knowledge, and one for project-specific context. Each store has its own 2,000-memory limit, so keeping stores scoped reduces the chance any single one fills up.
 
-* **Condense or prune before the store fills up.** Delete stale or redundant memories with `memories.delete`. You can also run a [dreaming session](/docs/en/dreams), which consolidates fragmented content into a separate new output store rather than modifying the original. Switch your sessions over to that output store, then archive or delete the original.
+* **Condense or prune before the store fills up.** Edit or delete stale or redundant memories with `memories.delete`.
 
 * **Attach a new store when it makes sense.** If a store has grown beyond its useful scope, attach a fresh one for new content and attach the original with `read_only` access. The agent can read from both while only writing to the new one.
 

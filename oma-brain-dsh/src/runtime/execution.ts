@@ -1,10 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
-import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, type ContentBlock } from "@deepseek-ai/dsh-llm";
 import { validateJsonSchemaValue, type JsonSchemaNode } from "@deepseek-ai/dsh-tools";
 import { object, type Payload } from "../json.ts";
 import { approveToolCall } from "./tool-approvals.ts";
 import { toolText } from "./tools.ts";
 import {
+  RetryableInputError,
   ToolNotForwardedError,
   isShutdownCancel,
   type ApprovalDecision,
@@ -20,9 +21,12 @@ export class ToolExecution {
     readonly sandbox: SandboxExecutor,
     readonly bridge: ToolExecutionBridge,
     readonly permissions?: ToolPermissions,
+    readonly threadId?: string,
   ) {}
 
-  async execute(tool: RemoteTool, original: Payload, exec: ToolExecutionContext): Promise<string> {
+  execute(tool: RemoteTool, original: Payload, exec: ToolExecutionContext): Promise<string>;
+  execute(tool: RemoteTool, original: Payload, exec: ToolExecutionContext, content: (result: Payload) => Promise<ContentBlock[]>): Promise<ContentBlock[]>;
+  async execute(tool: RemoteTool, original: Payload, exec: ToolExecutionContext, content?: (result: Payload) => Promise<ContentBlock[]>): Promise<string | ContentBlock[]> {
     const validate = (args: Payload) => {
       const errors = validateJsonSchemaValue(tool.inputSchema as JsonSchemaNode, args);
       if (errors.length)
@@ -45,7 +49,7 @@ export class ToolExecution {
     let result: Payload;
     try {
       result = await this.bridge.runTool(exec.callId, async () => decision.externalResult
-        ?? (readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal)), readOnly);
+        ?? (readOnly ? await this.callWithRetry(tool, effective, exec.signal) : await this.sandbox.call(tool, effective, exec.signal, this.threadId)), readOnly);
     } catch (error) {
       const userInterrupted = exec.signal.aborted && exec.signal.reason?.kind === "user";
       const shutdownInterrupted = exec.signal.aborted && isShutdownCancel(exec.signal.reason);
@@ -62,12 +66,14 @@ export class ToolExecution {
         throw new Error("Remote tool outcome is unknown. Do not retry blindly; verify external state before repeating operations with side effects.");
       }
     }
-    let text: string;
+    let output: string | ContentBlock[];
     let failed = !!result.isError;
     try {
-      text = toolText(result, tool.name);
+      output = content && !result.isError ? await content(result) : toolText(result);
     } catch (error) {
-      text = `Sandbox tool returned an unsupported result: ${(error as Error).message}`;
+      exec.signal.throwIfAborted();
+      if (error instanceof RetryableInputError) throw error;
+      output = `Sandbox tool returned an unsupported result: ${(error as Error).message}`;
       failed = true;
     }
     if (changed) {
@@ -79,16 +85,16 @@ export class ToolExecution {
         }],
       }));
     }
-    if (failed) throw new Error(text || "Remote tool failed");
-    return text;
+    if (failed) throw new Error(typeof output === "string" && output || "Remote tool failed");
+    return output;
   }
 
   private async callWithRetry(tool: RemoteTool, args: Payload, signal: AbortSignal): Promise<Payload> {
     try {
-      return await this.sandbox.call(tool, args, signal);
+      return await this.sandbox.call(tool, args, signal, this.threadId);
     } catch (error) {
       if (signal.aborted) throw error;
-      return await this.sandbox.call(tool, args, signal);
+      return await this.sandbox.call(tool, args, signal, this.threadId);
     }
   }
 }

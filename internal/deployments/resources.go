@@ -315,7 +315,8 @@ func sessionResourcesFromDeployment(
 			return nil, markRunPreparationRetryable(err)
 		}
 
-		var payload any = config
+		var githubRepository *db.SessionResourceGitHubRepository
+		var memoryStore *db.SessionResourceMemoryStore
 		var fileMount *db.SessionFileMount
 		switch resourceType {
 		case sessionresource.FileType:
@@ -323,7 +324,6 @@ func sessionResourcesFromDeployment(
 			if err != nil {
 				return nil, err
 			}
-			payload = fileSpec.PayloadFields(resourceID)
 			binding, err := fileSpec.SessionFileBinding(resourceID)
 			if err != nil {
 				return nil, err
@@ -333,25 +333,27 @@ func sessionResourcesFromDeployment(
 				ResourceExternalID: binding.ResourceID,
 				FileExternalID:     binding.FileID,
 				Path:               binding.Path,
+				MountPath:          binding.MountPath,
 			}
 		case sessionresource.MemoryStoreType:
 			spec, parseErr := sessionresource.ParseStoredMemoryAttach(configRaw)
 			if parseErr != nil {
 				return nil, parseErr
 			}
-			payload, err = snapshotMemoryStorePayload(spec, memoryStores, attachSet, resourceID)
+			snapshot, snapshotErr := snapshotMemoryStorePayload(spec, memoryStores, attachSet, resourceID)
+			err = snapshotErr
+			memoryStore = &db.SessionResourceMemoryStore{ExternalID: snapshot.MemoryStoreID, Access: new(string(snapshot.Access)), Description: new(snapshot.Description), Instructions: new(snapshot.Instructions), MountPath: new(snapshot.MountPath), Name: new(snapshot.Name)}
 			if err != nil {
 				return nil, err
 			}
+		case sessionresource.GitRepositoryType:
+			spec, parseErr := sessionresource.ParseStoredGitRepositorySpec(configRaw)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			githubRepository = &db.SessionResourceGitHubRepository{URL: spec.URL, MountPath: spec.MountPath, Checkout: spec.Checkout}
 		default:
-			config["id"], err = json.Marshal(resourceID)
-			if err != nil {
-				return nil, err
-			}
-		}
-		payloadRaw, err := httpapi.MarshalRaw(payload)
-		if err != nil {
-			return nil, err
+			return nil, errors.New("stored resource type is invalid")
 		}
 
 		var secretRaw json.RawMessage
@@ -374,7 +376,8 @@ func sessionResourcesFromDeployment(
 				WorkspaceUUID:     deployment.WorkspaceUUID,
 				SessionExternalID: sessionID,
 				ResourceType:      resourceType,
-				Payload:           payloadRaw,
+				GitHubRepository:  githubRepository,
+				MemoryStore:       memoryStore,
 				SecretPayload:     secretRaw,
 				CreatedAt:         now,
 				UpdatedAt:         now,

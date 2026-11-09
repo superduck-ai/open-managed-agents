@@ -1,27 +1,37 @@
+import { recordRuntimeDiagnostic, recordRuntimeEvent } from "./runtime-diagnostics.ts";
+import { createHash } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
-import { SessionId, pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
+import { SessionId, appendPluginRecord, pluginRecordOf, type SessionEvent } from "@deepseek-ai/dsh-session";
 import { ACCOUNT_QUOTA_EXCEEDED_CODE, QUOTA_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
 import { ToolNotForwardedError } from "../runtime/contracts.ts";
 import { SessionRuntime } from "../runtime/session.ts";
 import { Subagents } from "../runtime/subagents.ts";
-import { CcrSubagentBridge } from "./subagents.ts";
+import { CcrSubagentBridge, runtimeSubagentConfig } from "./subagents.ts";
 import type {
-  SessionRuntimeConfig,
   ToolApproval,
   ApprovalDecision,
 } from "../runtime/contracts.ts";
-import type { CcrBackend } from "./contracts.ts";
+import type { CcrBackend, CcrSessionConfig } from "./contracts.ts";
 import { CcrHeartbeat, type CcrHeartbeatConfig } from "./heartbeat.ts";
 import { CcrActivity, type CcrActivityOptions } from "./activity.ts";
 import { isControlInput, object, type Payload } from "./protocol.ts";
 import { startDeliveryProgress } from "./delivery-progress.ts";
 import { failureDiagnostic, workerDiagnostic } from "./diagnostics.ts";
-import { nativeOutput, failedOutput } from "./native-output.ts";
+import { CcrCompaction } from "./compaction.ts";
+import { sessionEventOutput, failedOutput, inputCompletionOf, completionOutput, turnOutcome } from "./session-output.ts";
 import { CcrToolResults } from "./tool-results.ts";
-import { CcrAssistantStream } from "./assistant.ts";
+import { CcrAssistantStream, type AssistantBlockOutput } from "./assistant.ts";
+import { withAttachmentSession } from "../attachments/remote.ts";
 import { userInputContent } from "./user-content.ts";
 import { appendedSystemContext } from "./system-context.ts";
+import { TRACE_TURNS_METADATA, traceHooks, traceTurnsOf, type TurnTrace } from "../observability/trace-context.ts";
+
+declare module "@deepseek-ai/dsh-session/types" {
+  interface PluginRecordMap {
+    "plugin:oma/subagent-runtime": { version: 1; runtime: "oma" | "dsh" };
+  }
+}
 
 export class CcrSession {
   inputId = "";
@@ -29,6 +39,7 @@ export class CcrSession {
   pendingEvents: Payload[] = [];
   private opening = true;
   private inputFinished = false;
+  private rootTurnReason?: Extract<SessionEvent, { type: "turn/end" }>["data"]["reason"];
   restoredFromRemote = false;
   private closing?: Promise<void>;
   private readonly outcomeConfirmations = new Set<Promise<void>>();
@@ -36,9 +47,11 @@ export class CcrSession {
   private statuses: Promise<unknown> = Promise.resolve();
   private publications: Promise<unknown> = Promise.resolve();
   private previews: Promise<unknown> = Promise.resolve();
+  private previewCheckpoints: Promise<void> = Promise.resolve();
   private readonly controlReceipts = new Set<Promise<void>>();
   private readonly handledControls = new Set<string>();
   private readonly assistantStream: CcrAssistantStream;
+  private readonly proxyTextCompletions = new Map<string, Payload[]>();
   private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
   private budgetPaused = false;
@@ -47,10 +60,14 @@ export class CcrSession {
   private readonly dispatchWaiters = new Set<() => void>();
   private waitingOnInterruptedChild = false;
   private readonly interruptedApprovals = new Set<string>();
+  private restoredTraceTurns: TurnTrace[] | undefined;
+  private reportedTraceTurns: string | undefined;
   readonly approvals = new Map<
     string,
     { phase: "policy" | "confirmation" | "resolved"; resolve: (decision: Payload) => void; reject: (error: Error) => void; threadId: string; details: import("./wire.ts").RequiresActionDetails }
   >();
+  private readonly compactionSequences = new Map<string, number>();
+  readonly compaction: CcrCompaction;
   readonly runtime: SessionRuntime;
   readonly subagents: Subagents;
   private readonly heartbeat?: CcrHeartbeat;
@@ -60,21 +77,17 @@ export class CcrSession {
   constructor(
     readonly ctx: Context,
     readonly backend: CcrBackend,
-    readonly config: SessionRuntimeConfig,
+    readonly config: CcrSessionConfig,
     heartbeat?: CcrHeartbeatConfig,
     keepAlive?: CcrActivityOptions,
   ) {
+    this.compaction = new CcrCompaction(ctx,
+      id => this.compactionSequences.get(id),
+      (id, tokens, sequence) => this.contextCompacted(tokens, sequence, id === this.id ? undefined : id));
     this.defaultModel = config.model;
-    this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID);
-    this.runtime = new SessionRuntime(ctx, { ...config, setup: async (scope) => {
-      await config.setup?.(scope);
-      // Resumed dsh requests can use a logged model. Apply the CCR override
-      // through the public request hook, without rewriting the durable log.
-      scope.on("agent/request", async (_request, next) => {
-        const call = await next();
-        return this.modelOverride ? { ...call, model: this.modelOverride } : call;
-      });
-    } }, {
+    this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID, config.modelRequestID);
+    this.runtime = new SessionRuntime(ctx, { ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); } }, {
+      onDiagnostic: diagnostic => recordRuntimeDiagnostic(this.id, diagnostic),
       onExternalMcpConnectionFailure: (serverName) => this.reportError({
         type: "session.error", uuid: crypto.randomUUID(), processed_at: new Date().toISOString(),
         error: { type: "mcp_connection_failed_error", mcp_server_name: serverName,
@@ -89,10 +102,18 @@ export class CcrSession {
           retry_status: { type: "exhausted" },
         },
       }),
-      setupTools: (scope) => this.subagents.register(scope),
-      beforeRequest: () => this.beforePrimaryRequest(),
-      onContextCompacted: tokens => this.contextCompacted(tokens),
-      onEvent: (event) => this.record(event),
+      setupTools: async scope => {
+        scope.on("agent/status", ({ agent }) => {
+          if (agent.id === this.id && (agent.status !== "idle" || this.approvals.size > 0) && !this.opening && !this.abort.signal.aborted)
+            void this.updateStatus().catch(() => this.stop());
+        });
+        await this.subagents.register(scope);
+      },
+      beforeRequest: async () => { await this.subagents.settleEvents(); await this.beforePrimaryRequest(); },
+      waitForChildren: () => this.subagents.wait(),
+      onOpen: session => this.compaction.restore(session),
+      afterFlushLog: session => this.compaction.flush(session),
+      onEvent: (event, session) => { recordRuntimeEvent(session, event); this.compaction.record(session, event); this.record(event); },
       onStream: (frame) => this.stream(frame),
       stop: () => this.stop(),
     }, {
@@ -135,6 +156,7 @@ export class CcrSession {
       this.abort.signal.throwIfAborted();
       const model = metadata?.model;
       if (typeof model === "string" && model.trim()) this.applyModel(model);
+      this.restoredTraceTurns = traceTurnsOf(metadata?.[TRACE_TURNS_METADATA]);
       await this.openState((next) => { stage = next; });
       this.abort.signal.throwIfAborted();
       workerDiagnostic("info", "ccrv2_worker_lifecycle_initialized", {
@@ -159,24 +181,44 @@ export class CcrSession {
     this.modelOverride = model;
     this.config.model = model;
     this.runtime.config.model = model;
-    if (this.runtime.handle) this.agent.options.model = model;
+    if (this.runtime.handle) this.agent.model.select({ provider: this.config.provider, model });
   }
 
   private async openState(setStage: (stage: string) => void): Promise<void> {
     setStage("local_history");
     this.restoredFromRemote = await this.ctx.ccrReplication.ensure(this.id);
+    setStage("subagent_runtime");
+    let recorded = false;
+    const record = this.ctx.ccrReplication.acquiredEvents(this.id).find(event => pluginRecordOf(event)?.type === "plugin:oma/subagent-runtime");
+    if (record) {
+      const data = record.data;
+      if (!data || typeof data !== "object" || !("version" in data) || data.version !== 1
+        || !("runtime" in data) || (data.runtime !== "oma" && data.runtime !== "dsh"))
+        throw new Error("Invalid persisted subagent runtime");
+      if (data.runtime !== "dsh") throw new Error("Legacy OMA delegation sessions are unsupported; start a new session using DSH delegation");
+      recorded = true;
+    }
+    setStage("subagents_load");
+    await this.subagents.loadThreads();
     setStage("runtime_open");
     await this.runtime.open();
+    if (this.modelOverride) this.agent.model.select({ provider: this.config.provider, model: this.modelOverride });
+    if (!recorded) {
+      appendPluginRecord(this.agent.session, "plugin:oma/subagent-runtime", { version: 1, runtime: "dsh" });
+      await this.checkpoint();
+    }
     setStage("subagents_restore");
     await this.subagents.restore();
     const recoveryEvents = this.pendingEvents.splice(0);
-    this.replay(this.agent.session.snapshotEvents());
+    const inputResults = this.replay(this.agent.session.snapshotEvents());
     for (const thread of this.subagents.threads) {
       const handle = await this.ctx.sessionPersistence.open(SessionId(thread.id), "read");
       try { this.replay((await handle.read()).events, thread.id); }
       finally { await handle.close(); }
     }
-    this.pendingEvents.push(...recoveryEvents);
+    this.pendingEvents.push(...inputResults, ...recoveryEvents);
+    traceHooks.turnsInterrupted(this.id, this.restoredTraceTurns);
+    this.restoredTraceTurns = undefined;
     this.opening = false;
     await this.checkpoint();
     setStage("report_metadata");
@@ -192,14 +234,28 @@ export class CcrSession {
     else if (frame.type === "end") this.activity.end(threadId ?? this.id, "api_call", frame.attemptId);
     const inputId = threadId ? this.id : this.inputId;
     const payloads = this.assistantStream.record(frame, inputId, threadId);
-    if (payloads.length && inputId) {
+    const ready: Payload[] = [];
+    const attempt = `${threadId ?? this.id}\0${frame.attemptId}`;
+    if (inputId) {
       for (const payload of payloads) {
-        payload.uuid = crypto.randomUUID();
+        payload.uuid ??= crypto.randomUUID();
         if (threadId) payload.session_thread_id = threadId;
+        if (payload.type === "agent.message" || payload.type === "agent.thinking") {
+          const owner = threadId ? this.ctx.sessions.get(SessionId(threadId)) : this.agent.session;
+          if (!owner) throw new Error("Missing assistant block journal owner");
+          appendPluginRecord(owner, "plugin:oma/assistant-block", { output: payload as AssistantBlockOutput });
+        }
+        if (payload.type === "agent.message" && payload.model_request_start_id) {
+          const pending = this.proxyTextCompletions.get(attempt) ?? [];
+          pending.push(payload);
+          this.proxyTextCompletions.set(attempt, pending);
+        } else ready.push(payload);
       }
-      // Enqueue immediately so one 100ms window can hold multiple frames.
-      // The uploader preserves order; this barrier still waits for every HTTP confirmation.
-      this.previews = Promise.all([this.previews, this.publishPreview(payloads)]).then(() => {});
+      if (frame.type === "end") {
+        ready.push(...(this.proxyTextCompletions.get(attempt) ?? []));
+        this.proxyTextCompletions.delete(attempt);
+      }
+      if (ready.length) this.previews = Promise.all([this.previews, this.publishPreview(ready)]).then(() => {});
     }
   }
 
@@ -209,36 +265,73 @@ export class CcrSession {
   }
 
   private async publishPreview(payloads: Payload[]): Promise<void> {
-    try { await this.checkpoint(); await this.backend.events(this.id, payloads); }
+    const checkpoint = this.previewCheckpoints.then(() => this.checkpoint());
+    this.previewCheckpoints = checkpoint.catch(() => {});
+    try { await checkpoint; await this.backend.events(this.id, payloads); }
     catch { this.stop(); }
   }
 
   async checkpoint(): Promise<void> {
     await this.runtime.flushLog();
     await this.ctx.ccrReplication.flush(this.id);
+    this.reportTraceTurns();
   }
 
-  private replay(events: readonly SessionEvent[], threadId?: string): void {
+  private reportTraceTurns(): void {
+    const turns = traceHooks.openTurns(this.id) ?? null;
+    const reported = JSON.stringify(turns);
+    if (reported === this.reportedTraceTurns) return;
+    this.reportedTraceTurns = reported;
+    this.backend.reportMetadata(this.id, { [TRACE_TURNS_METADATA]: turns })
+      .catch(() => { if (this.reportedTraceTurns === reported) this.reportedTraceTurns = undefined; });
+  }
+
+  private replay(events: readonly SessionEvent[], threadId?: string): Payload[] {
+    const completions: Payload[] = [];
     const tools = new CcrToolResults();
     let inputId = "";
     let inputSeen = false;
+    const nativeRoot = !threadId;
+    const unfinished = new Set<string>();
     for (const event of events) {
-      if (event.type === "turn/start") { inputSeen = false; inputId = ""; }
+      if (nativeRoot) {
+        const completion = inputCompletionOf(event);
+        if (completion) {
+          unfinished.delete(completion.inputId);
+          completions.push(...completionOutput(completion.inputId, completion.outcome));
+          continue;
+        }
+      }
+      if (event.type === "turn/start") { inputSeen = false; if (!nativeRoot) inputId = ""; }
       if (!threadId && !inputSeen && event.type === "user/message" && event.data.source.kind === "user") {
         inputSeen = true;
         inputId = event.data.id;
         this.receivedInputIds.add(inputId);
         this.inputId = inputId;
+        if (nativeRoot) unfinished.add(inputId);
       }
-      this.pendingEvents.push(...nativeOutput(this.id, inputId, event, tools.record(event, threadId ?? this.id), threadId));
+      if (nativeRoot && event.type === "turn/end") continue;
+      this.pendingEvents.push(...sessionEventOutput(this.id, inputId, event, tools.record(event, threadId ?? this.id), threadId));
     }
+    for (const inputId of unfinished) {
+      const outcome = turnOutcome({ kind: "interrupted" });
+      appendPluginRecord(this.agent.session, "plugin:oma/input-completion", { version: 1, inputId, outcome });
+      completions.push(...completionOutput(inputId, outcome));
+    }
+    return completions;
   }
 
-  async contextCompacted(tokens?: number, threadId?: string): Promise<void> {
-    this.pendingEvents.push({ type: "agent.thread_context_compacted", uuid: crypto.randomUUID(),
-      ...(threadId ? { session_thread_id: threadId } : {}),
-      ...(tokens !== undefined ? { pre_compaction_tokens: tokens } : {}) });
-    await this.flushEvents();
+  async contextCompacted(tokens: number | undefined, sequence: number, threadId?: string): Promise<void> {
+    const owner = threadId ?? this.id;
+    await this.ctx.ccrReplication.flush(owner);
+    const sequences = this.compactionSequences;
+    if (sequence > (sequences.get(owner) ?? -1)) {
+      const uuid = createHash("sha256").update(JSON.stringify([this.id, owner, "context_compacted", sequence])).digest("hex");
+      this.pendingEvents.push({ type: "agent.thread_context_compacted", uuid,
+        ...(threadId ? { session_thread_id: threadId } : {}),
+        ...(tokens !== undefined ? { pre_compaction_tokens: tokens } : {}) });
+      sequences.set(owner, sequence);
+    }
   }
 
   record(event: SessionEvent, threadId?: string) {
@@ -249,7 +342,9 @@ export class CcrSession {
     const toolName = this.toolResults.record(event, threadId ?? this.id);
     const data = event.data as Payload;
     if (event.type === "turn/end") {
-      if (!threadId) this.inputFinished = true;
+      if (!threadId) {
+        this.rootTurnReason = event.data.reason;
+      }
       this.activity.endThread(threadId ?? this.id);
       const reason = event.data.reason;
       if (reason?.kind === "error" && reason.error.code === "SESSION_BUDGET_REACHED") this.budgetPaused = true;
@@ -276,8 +371,9 @@ export class CcrSession {
       });
       this.outcomeConfirmations.add(confirmation);
     }
-    if (threadId || event.type !== "turn/end" || !this.budgetPaused)
-      this.pendingEvents.push(...nativeOutput(this.id, this.inputId, event, toolName, threadId));
+    if (!threadId && event.type === "turn/end") return;
+    const output = sessionEventOutput(this.id, this.inputId, event, toolName, threadId);
+    this.pendingEvents.push(...(event.type === "assistant/message" ? this.assistantStream.complete(output, threadId) : output));
   }
 
   async approve(request: ToolApproval, signal: AbortSignal, threadId?: string): Promise<ApprovalDecision> {
@@ -329,11 +425,13 @@ export class CcrSession {
         const approval = this.approvals.get(requestId);
         if (pending && approval?.phase === "policy") {
           approval.phase = "confirmation";
+          traceHooks.approvalPending(ownerId, request.callId);
           await this.updateStatus();
         }
       }
       decision = await decisionPromise;
       signal.throwIfAborted();
+      traceHooks.approvalResolved(ownerId, request.callId, decision.externalResult !== undefined ? "external" : decision.behavior === "allow" ? "allowed" : "denied");
     } finally {
       signal.removeEventListener("abort", cancel);
       this.approvals.delete(requestId);
@@ -377,7 +475,7 @@ export class CcrSession {
       const paused = new Set(pending.map((approval) => approval.threadId));
       const children = this.subagents.threads.filter((thread) => thread.status === "running") ?? [];
       const childRunning = children.some((thread) => !paused.has(thread.id));
-      const primaryRunning = !children.length && this.runtime.busy && !this.inputFinished && !paused.has(this.id);
+      const primaryRunning = this.agent.status !== "idle" && this.runtime.busy && !this.inputFinished && !paused.has(this.id);
       const evaluating = approvals.some((approval) => approval.phase === "policy");
       const status = childRunning || primaryRunning || evaluating ? "running" : pending.length ? "requires_action" : "idle";
       const first = pending[0]?.details;
@@ -390,10 +488,17 @@ export class CcrSession {
   }
 
   private async beforePrimaryRequest(): Promise<void> {
+    await this.beforeModelRequest(this.id);
     if (this.waitingOnInterruptedChild) {
       this.interrupted = true;
       this.agent.cancel({ kind: "user" });
     }
+  }
+
+  async beforeModelRequest(owner: string): Promise<void> {
+    if (!this.pendingEvents.length) return;
+    await this.ctx.ccrReplication.flush(owner);
+    await this.publish();
   }
 
   wakeParentFromChildReport(): void {
@@ -471,9 +576,8 @@ export class CcrSession {
     const repeatedControl = isControlInput(payload.type) && this.handledControls.has(inputId);
     if (repeatedControl || await this.control(payload)) {
       this.rememberControl(inputId);
-      // Control effects/publication finish first, but delivery retries must not
-      // hold the control queue and prevent a later approval or interrupt.
-      const receipt = this.checkpoint().then(() => this.backend.acknowledge(this.id, inputId, this.abort.signal))
+      const receipt = this.updateStatus().then(() => this.checkpoint())
+        .then(() => this.backend.acknowledge(this.id, inputId, this.abort.signal))
         .catch(() => { if (!this.abort.signal.aborted) this.stop(); })
         .finally(() => { this.controlReceipts.delete(receipt); });
       this.controlReceipts.add(receipt);
@@ -488,16 +592,19 @@ export class CcrSession {
     }
     if (this.busy || this.abort.signal.aborted)
       throw new Error("Session is busy or stopped");
+    const traceContext = payload.trace_context;
+    traceHooks.inputReceived(this.id, traceContext && typeof traceContext === "object" && !Array.isArray(traceContext) ? traceContext as Payload : undefined);
     let stopProgress = () => {};
     try {
       await this.runtime.run(() => {
         const system = appendedSystemContext(payload);
         if (system !== undefined) this.runtime.appendedSystem = system;
-        return userInputContent(payload, this.ctx.attachments);
+        return withAttachmentSession(this.id, () => userInputContent(payload, this.ctx.attachments));
       }, {
         messageId: inputId,
         beforeRun: async () => {
           this.inputFinished = false;
+          this.rootTurnReason = undefined;
           this.turnErrorMessage = undefined;
           this.budgetPaused = false;
           this.interrupted = false;
@@ -514,9 +621,18 @@ export class CcrSession {
         },
         afterRun: async () => {
           this.inputFinished = true;
-          if (!this.receivedInputIds.has(inputId) && !this.budgetPaused) {
-            if (this.interrupted) this.pendingEvents.push({ type: "result", uuid: `${inputId}_result`, subtype: "success", is_error: false });
-            else this.addError(this.turnErrorMessage ?? "The turn stopped before successful completion.", "failed");
+          if (!this.budgetPaused) {
+            if (!this.receivedInputIds.has(inputId)) {
+              if (this.interrupted) this.pendingEvents.push({ type: "result", uuid: `${inputId}_result`, subtype: "success", is_error: false });
+              else this.addError(this.turnErrorMessage ?? "The turn stopped before successful completion.", "failed");
+            }
+            else {
+              const outcome = this.turnErrorMessage ? { kind: "failed" as const, text: this.turnErrorMessage }
+                : this.interrupted ? turnOutcome({ kind: "aborted", reason: { kind: "user" } })
+                : this.rootTurnReason ? turnOutcome(this.rootTurnReason) : turnOutcome({ kind: "interrupted" });
+              appendPluginRecord(this.agent.session, "plugin:oma/input-completion", { version: 1, inputId, outcome });
+              this.pendingEvents.push(...completionOutput(inputId, outcome));
+            }
           }
           this.receivedInputIds.add(inputId);
           await this.checkpoint();
@@ -596,10 +712,14 @@ export class CcrSession {
   }
 
   stop() {
-    this.subagents.stop();
-    this.runtime.stop();
-    for (const pending of this.approvals.values())
-      pending.reject(new Error("Session stopped"));
+    try { this.subagents.stop(); }
+    finally {
+      try { this.runtime.stop(); }
+      finally {
+        for (const pending of this.approvals.values())
+          pending.reject(new Error("Session stopped"));
+      }
+    }
   }
   close(): Promise<void> { return this.closing ??= this.closeSession(); }
 

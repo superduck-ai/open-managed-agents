@@ -3,7 +3,7 @@ import { afterEach, expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionSeq, type SessionEvent, type SessionHeader } from "@deepseek-ai/dsh-session";
 import { createUserMessage, LlmAttemptId } from "@deepseek-ai/dsh-llm";
-import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

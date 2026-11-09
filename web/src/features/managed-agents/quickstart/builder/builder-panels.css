@@ -1,0 +1,16 @@
+.builder-config-panel[hidden],
+.builder-workspace[data-config-open='true'][data-config-split='false'] > .builder-conversation {
+  display: none;
+}
+
+.builder-workspace[data-config-open='true'][data-config-split='true'] .builder-content-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.builder-workspace[data-config-open='true'][data-config-split='true'] .builder-secondary-panel {
+  display: none;
+}
+
+.builder-workspace[data-config-open='true'][data-config-split='true'] #builder-build-panel {
+  display: flex;
+}

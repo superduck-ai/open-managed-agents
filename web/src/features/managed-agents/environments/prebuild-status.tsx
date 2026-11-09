@@ -4,30 +4,30 @@ import { useI18n } from '../../../shared/i18n';
 import { anthropicBetaApi } from '../../../shared/api/anthropic';
 import { Button } from '../../../shared/ui/button';
 import { Dialog, DialogTrigger } from '../../../shared/ui/dialog';
-import type { EnvironmentApiResponse, EnvironmentPackageRow } from '../types';
-import { environmentPackageRows } from '../resources/model';
-import { objectRecord } from '../utils';
-import { packagesKey, useEnvironmentPrebuild } from './prebuild';
+import type { EnvironmentApiResponse, EnvironmentEditValues } from '../types';
+import { environmentEditValues } from '../resources/model';
+import { buildSpecKey, useEnvironmentPrebuild } from './prebuild';
 import { PrebuildLabel } from './prebuild-display';
 import { EnvironmentPrebuildDialog } from './prebuild-dialog';
 
 export function EnvironmentPrebuildStatus({
   entity,
   workspaceId,
-  packages,
+  values,
   readOnly,
 }: {
   entity?: EnvironmentApiResponse;
   workspaceId: string;
-  packages: EnvironmentPackageRow[];
+  values: EnvironmentEditValues;
   readOnly?: boolean;
 }) {
   const { msg } = useI18n();
-  const savedPackages = environmentPackageRows(objectRecord(entity?.config).packages);
-  const query = useEnvironmentPrebuild(workspaceId, entity?.id, savedPackages);
+  const savedSpecKey = buildSpecKey(entity && environmentEditValues(entity));
+  const draftSpecKey = buildSpecKey(values);
+  const query = useEnvironmentPrebuild(workspaceId, entity?.id, savedSpecKey);
   const [open, setOpen] = useState(false);
   const prebuild = query.data;
-  const changed = packagesKey(packages) !== packagesKey(savedPackages);
+  const changed = draftSpecKey !== savedSpecKey;
   const mutation = useMutation({
     mutationFn: (action: 'start' | 'cancel') =>
       action === 'start'
@@ -39,7 +39,7 @@ export function EnvironmentPrebuildStatus({
       await query.refetch();
     },
   });
-  if (!packages.length && !savedPackages.length) return null;
+  if (!draftSpecKey && !savedSpecKey) return null;
   if (changed || !entity)
     return <span className="text-xs text-muted-foreground">{msg('environmentPrebuild.unsaved', 'Unsaved')}</span>;
   if (query.isPending)

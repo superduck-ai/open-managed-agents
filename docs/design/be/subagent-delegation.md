@@ -5,6 +5,35 @@ OMA 支持父智能体在同一会话中委派任务。
 控制台通过现有接口读取线程列表、历史事件和事件流。
 本次验证使用 Claude Code 2.1.251。
 
+## DSH 控制台配置
+
+Create Agent 的 Multiagent 区域只开放 Subagents，Workflows、Advisor 暂时隐藏。新配置使用 multiagent_20261001，分别通过 subagents.type、subagents.inline_agents.type 和 subagents.predefined_agents 控制整体委派、临时 Agent 和固定版本的专家名单。首次开启时其他两项显式关闭，允许临时 Agent 且名单为空；关闭临时 Agent 时必须至少提供一个预定义 Agent。已有 coordinator 配置继续兼容。编辑器关闭 Subagents 后，若 Workflows 显式关闭且 Advisor 未启用，则保存 `multiagent: null`，恢复为可被其他 Agent 引用的普通 Agent；已有隐藏能力或 Workflows 的默认启用语义必须保留。关闭后重新开启仍恢复本次编辑中保留的委派设置。后端和选择器继续按非空 `multiagent` 判断嵌套配置，不放宽引用校验。
+
+DSH 入口必须保留缺失 subagents 的关闭语义，不能通过空对象回退重新开启。关闭时不注册委派及控制工具，模型提示词明确禁止委派，直接执行官方委派工具同样失败；服务端沿用 delegationToolPermission 对关闭状态的拒绝。开启且禁止临时定义时，只允许固定专家或已有线程的后续消息。本次不扩展 Claude Code 路径，不实现 Workflows 或 Advisor 的执行。
+
+DSH 新建子线程时，必须先发布并确认 session.thread_created，让后端持久化子线程及 Agent 快照，再通过 X-OMA-Session-Thread-ID 获取该线程的工具/MCP 上下文，最后打开子运行时并执行任务。工具上下文读取不能早于线程登记，即使 Agent 未配置 MCP 也要遵守此顺序。回归测试让进程内后端拒绝未登记线程的上下文请求，覆盖临时子 Agent 的完整初始化。
+
+线程登记后的初始化失败必须闭合生命周期。`createRuntime` 或 `attach` 失败时，线程进入 terminated 并发布 `session.thread_status_terminated`，不发布 idle、不允许向该线程继续投递，也不占活跃线程名额；按名称重试创建独立的新线程。失败记录保留为明确终止的历史线程，不删除已发布的创建事件。
+
+初始化失败时，OMA 发布终止状态，DSH 负责释放失败 activation 的 agent scope 和句柄，scope 清理解除模型线程绑定。发布失败的终止事件保留在既有持久 outbox 中，后续发布重试不改写其事件身份。恢复时，只有权威状态已终止或归档、没有执行回合且缺少 OMA 原生子线程配置的初始化残留可以跳过；仍活跃或已有执行回合但缺少配置的日志继续报错，不能静默忽略。
+
+回归覆盖前端开关、受限空名单、配置 Raw 往返和旧引用兼容，以及 DSH 模型请求的工具清单、禁用提示词和直接委派拒绝。普通单测使用进程内后端；真实 Runner/模型执行需另行显式运行 verify-be。
+
+## 线程消息的归属与对端
+
+消息方向相对于承载该事件的线程流。`session_thread_id` 表示消息事件的所属线程，`to_session_thread_id` / `from_session_thread_id` 表示消息对端；不能用对端 ID 给消息事件分组。
+
+| 动作 | 主线程流 | 子线程流 |
+| --- | --- | --- |
+| 下发任务 | sent，owner 为主线程，to 为子线程 | received，owner 为子线程，from 为主线程 |
+| 返回报告 | received，owner 为主线程，from 为子线程 | sent，owner 为子线程，to 为主线程 |
+
+DSH 发出的 sent/received 是主线程视角，不携带子线程 owner。资源边界将主副本的 owner 明确设为 primary，并生成方向相反的子线程副本。两个副本有独立稳定事件 ID，子副本以 original_event_id 关联原事件；共享传输 UUID 或内容不构成去重依据。
+
+读取历史和 SSE 时，线程消息的 owner 以数据库事件所属线程或线程路由为准，校正旧 payload 错把对端写进 session_thread_id 的情况；不修改历史存储、不删除副本、不改写消息内容与对端。该规则仅针对 thread_message_sent/received，生命周期事件的 session_thread_id 继续表示状态变化的目标线程，阻塞工具的跨投递行为保持原合同。
+
+对照资料为 Claude Session threads 的 Primary thread events 与 Session thread events。普通回归检查事件生成、主子副本身份、历史响应以及前端四条消息的分组和连线。
+
 ## 术语
 
 | 术语       | 含义                                                |
@@ -260,7 +289,9 @@ Agent 的 `model.effort` 接受 `low`、`medium`、`high`、`xhigh`、`max`
 
 ### 公共归档后的容量同步
 
-HTTP归档idle child后，持久状态已terminated，运行中的Brain缓存可能仍idle。新建委派遇到25个保留线程时，通过CCRv2已有的worker/subagent-threads只读端点核对idle候选的权威状态。只有明确archived/terminated才关闭对应缓存runtime、解除绑定并释放本地名额，不重复产生公开terminated事件。错误、未知身份或关闭失败不得当作空槽。刷新期间的新建委派共用一次刷新，刷新完成后同步重计数并占位；已转running的线程不被关闭。普通follow-up仍执行既有权威归档校验。
+公共归档写入子线程终止事件时，状态写入路径已经为主线程生成一份稳定身份的镜像。归档补发仅处理子线程所有的原始终止事件，复用同一主线程镜像 ID；不能再次镜像主线程副本，否则会出现 `original_event_id` 指向另一份主线程副本的重复终止事件。
+
+HTTP归档idle child后，持久状态已terminated，运行中的Brain缓存可能仍idle。新建委派遇到25个保留线程时，通过CCRv2已有的worker/subagent-threads只读端点核对idle候选的权威状态。只有明确archived/terminated才把本地idle线程标记为terminated并释放保留名额，不重复产生公开terminated事件；idle activation的运行时已由DSH释放。错误或未知身份不得当作空槽。刷新期间的新建委派共用一次刷新，新建线程登记时同步检查容量并占位；已转running的线程不被回收。普通follow-up仍执行既有权威归档校验。
 
 当前Brain通过HTTP claim和CCRv2处理任务。就绪验证应使用实际claim/模型/工具进展及HTTP连接，旧OMA_BRAIN_TASKS NATS消费者不是当前Brain进程的直接订阅要求。
 
@@ -268,3 +299,92 @@ HTTP归档idle child后，持久状态已terminated，运行中的Brain缓存可
 ### Agent名称的公共边界
 
 创建及显式更新Agent.name时，按公共CreateAgent schema限制为1至256个Unicode字符。保留原有非空校验和有效值原文，不用UTF-8字节数代替字符数。超过256字符返回invalid_request_error；创建时在模型解析之前拒绝，更新时在持久化之前拒绝。未更新name的旧Agent保留原值。该限制不推导roster数量、全局配额或未公开errorcode。
+
+## DSH 原生 subagent 委派
+
+Brain 统一通过 DSH `0.2.2-alpha.2` 的 `ctx.subagents` 执行子任务，不再提供 `OMA_SUBAGENT_RUNTIME` 开关或旧 OMA 同步委派实现。首次打开会话时，先只读校验根 runtime marker 与全部子线程 descriptor/config，再打开根 Agent 并在根 Session 写入并复制 `plugin:oma/subagent-runtime`，值固定为 `dsh`。已标记 `oma` 的试用会话和旧 OMA 子线程 descriptor 会明确拒绝恢复，要求创建新会话；不改写已有日志，也不自动迁移旧委派目录。
+
+没有运行时标记的根日志可按 DSH 路径打开；早期日志缺少下面的输入完成记录，不能仅凭父 agent 的 `turn/end` 认定整个输入完成，恢复按未确认完成处理。这不是历史完成状态迁移，验收新版应使用新会话。
+
+原生路径加载官方 `dsh-tool-subagent`、`dsh-tool-subagent-control`、独立 `list-agents` 插件和 `dsh-subagent-spawn-in-process` provider。预定义 Agent 通过官方 `dsh-agent-preset-registry` 和 `dsh-agent-preset` 注册。每个会话只注册一个 `subagent(description, prompt, agent_preset?)` 工具，`allowedAgentPresets` 限定为当前会话的预定义名单。删除 `subagent_specialist_N`、编号映射及后端编号工具授权。
+
+preset ID 使用 `<root-session-id>/<agent-name>`；根会话的预定义名单来自已有固定版本快照，重启时据此重建同一份定义，不能从最新 Agent 配置替换。Loader 只加载 preset 的内存插件组合，不加载 DSH 应用默认配置。内置 `cordis:omaSubagent` 插件将固定指令、模型和工具配置注册为隔离的 `omaSubagentDefinition` 服务；DSH 官方运行时选择并挂载 preset 后，OMA 从该组合读取配置，再装配已有 sandbox、审批、MCP 和日志边界。未挂载 preset 的临时子 Agent 使用原有继承规则。该插件通过静态 builtin 注册，可打包到独立可执行文件，无需动态导入本机模块。
+
+`send_to_agent` 和 `archive_agent` 的注册、执行实现和后端委派工具授权已删除，不提供兼容别名。`send_message(agent_id, message)` 可在子任务运行时投递消息，也可冷恢复已结束的子会话；`interrupt_agent(agent_id)` 请求取消；`list_agents` 使用官方 catalog 查询并返回 running/inactive。官方列表不承担 OMA 归档状态查询，归档记录仍可能显示 inactive；投递和中断会校验后端归属及归档状态，归档线程不可续聊。归档操作继续通过 OMA 会话 API 完成，25 个未归档线程的容量约束保留。
+
+通用子任务不再接受动态 `system_prompt` 参数，临时角色要求放入 `prompt`。预定义 specialist 仍由 OMA 安装固定系统指令、工具和模型配置，不开放模型任意选择工具或模型，只允许选择官方参数枚举中的 preset。禁用 inline 时仍使用 `subagent`，但缺少 `agent_preset` 会在创建前拒绝；允许 inline 时省略参数创建临时子 Agent。子线程不加载任何委派或控制工具。当前持久化明确拒绝 seeded/fork 日志，因此不加载 `subagent_fork`，仍保持独立上下文和一层委派。
+
+子线程 ID 由 DSH 生成标准 UUID，OMA 公开线程事件及其传输层 agent_id 直接使用同一 ID。后端线程读写以字符串 ID 定位，不要求 `sthr_` 前缀；trace 导出校验同时接受原有 `sthr_` 与标准 UUID，避免子线程 trace 和工具事件错误关联到主线程。后端内部委派权限分类仅识别官方委派和控制工具名，继续依赖会话启用委派且禁止子线程再委派。
+
+官方创建工具的 canonical value 为 `{kind: "activation", subagentId}`，模型收到 `started subagent <id>`；`send_message` 返回消息 ID，模型收到投递确认。报告由 DSH 单独投递并唤醒父 agent。根运行时在确认父 agent idle 后调用 `waitForChildren`，等待后重新检查父 agent，直到子任务和父级汇总都结束才确认输入完成。公共提示词不再硬编码 OMA 工具名，并提醒模型不能把接收确认当成完成。
+
+父 agent 等待子任务时也可能结束一个原生 turn，因此原生模式不把每个根 `turn/end` 直接映射为公开 `result`，也不据此把整个输入置为 finished。宿主等待整个执行结束后写入 `plugin:oma/input-completion`，记录输入 ID 和成功、失败或恢复中断的结果，再经日志复制屏障发布公开终态并 ACK。这个记录属于 OMA 用户输入的完成边界，DSH 仍拥有各 activation 和原生 turn 的生命周期。
+
+恢复时，根日志中的一次用户输入可以跨多个 DSH turn，父级汇总回复沿用同一输入 ID。存在 input-completion 时，按其稳定 UUID 补发终态；没有该记录的已接收输入写入中断完成记录，不调用模型、不重放工具。子线程修复后的工具结果先发布，再发布根输入终态与恢复的 idle 事件。重发同一输入只确认已有结果。旧 OMA 同步委派路径已删除。
+
+```mermaid
+sequenceDiagram
+    participant Parent as 父 agent
+    participant Tools as DSH 官方工具
+    participant OMA as OMA 适配层
+    participant DSH as ctx.subagents
+    participant Child as 子 agent
+    Parent->>Tools: subagent / send_message
+    Tools->>DSH: startActivation / sendMessage
+    DSH->>Child: create / cold resume
+    Child->>OMA: agent/created（等待装配）
+    OMA->>Child: 线程快照、模型身份、工具、审批、MCP、日志钩子
+    Child->>OMA: inbox inserted，记录投递与 running
+    DSH-->>Tools: activation / messageId
+    Tools-->>Parent: child id / 投递确认
+    Child->>Child: 执行任务
+    DSH->>Child: flush 与 dispose
+    DSH->>Parent: 投递结果并唤醒
+    DSH->>OMA: subagent/end
+    OMA->>OMA: 发布 report / idle
+    Parent->>Parent: 汇总结果
+```
+
+职责分配：
+
+- DSH 持有 activation、AgentHandle、消息投递、cold resume、结果通知和执行清理。OMA 的中断与关闭分别调用 `interrupt`、`drainDescendants`。activation 结束只把 OMA 线程设为 idle；显式归档仍是 terminated。
+- OMA 保留 25 个未归档线程的容量规则、线程快照、后端归档校验、模型凭证映射、工具审批、MCP、CCR 事件和 transcript 复制。DSH 同时运行的 activation 上限也设为 25。
+- `SessionRuntime.install` 是父子 agent 共用的装配边界。原生创建在可等待的 `agent/created` 钩子中装配；后续模型请求继续刷新该线程的权限与模型上下文。工具在该 scope 中按真实清单注册，不先注册空占位工具，也不使用原生 descriptor 的早期 `toolFilter`。
+- 原生 descriptor 使用 `oma-spawn:<root-session-id>` 命名的官方 spawn provider。OMA 额外保存带版本的 `plugin:oma/subagent-config`，保留业务名称、inline 属性、固定模型、指令和工具清单，供重启恢复使用；它不进入模型消息历史。不再由 OMA 自行构造子线程 descriptor。
+- 使用官方 session-query-sqlite 的 `openAt: never` 提供精确 Session 读取和 catalog 查询，不打开 SQLite 或建立全文索引。工作目录适配只接受 header 中 OMA 已配置的 sandbox 目录，不做 Brain 本机文件检查、不支持子 agent 自行变更目录；实际目录与文件访问继续由 sandbox 工具负责。
+- 崩溃后未闭合日志仍由现有 OMA 恢复流程打开并修复，不重放工具。原生模式修复后立即释放恢复用 handle；用户后续投递才由 DSH 创建 activation。这一步属于宿主日志恢复，尚未改为 DSH 的控制 API。
+
+复制边界增加一个已复现竞态的修复：冷读 transcript 的等待期间，Session 发布可能用完整 live snapshot 替换缓存。读操作返回后若缓存已换代或 Session 已 live，丢弃旧读取结果，避免重复追加日志前缀导致 `Conflicting live transcript event`。不新增锁或重试层。官方子任务结束会自动释放 AgentHandle，进程级流式输出测试复现了关闭句柄与复制检查点重叠导致 `SessionHandleClosedError`、公开结果已发送而输入未 ACK。复制层在 Agent scope 释放时串入已有线程队列，等待此前操作完成、刷新本地日志并解除 live 引用，再允许 DSH 关闭句柄；后续检查点读取持久日志。
+
+验收入口为 `oma-brain-dsh/tests/dsh-subagents.test.ts`，覆盖初始化失败、委派拒绝、inline 禁用、官方列表、运行中消息投递、并发审批与官方定向中断、专家模型/工具、异步接收与父级汇总、cold continuation、进程上下文重建后的恢复、归档拒绝、旧运行时拒绝及复制竞态。这些测试使用真实 DSH SDK 与进程内模型/后端端点；不代表真实模型、Worker sandbox、PostgreSQL/MinIO 或多实例接管的集成验收。`tests/crash.test.ts` 覆盖 DSH 的并发子任务 SIGKILL：审批等待、工具执行结果未知、已确认的兄弟任务结果，以及恢复后继续同一子线程；此外覆盖原生输入完成记录已经复制、公开 result 尚未确认时的补发。断言工具不重放、修复结果先于线程及 worker idle、未完成输入不误报成功、已完成输入不重复调用模型。以上均为本机子进程和进程内协议端点的普通测试，不代表真实 sandbox 或多实例生产接管。真实模型与 sandbox 集成验收尚未覆盖。
+
+`tests/claim-process.test.ts` 执行 DSH 运行时的真实 Brain 启动、claim、SSE 与审批。DSH 场景由模型调用官方 `subagent`，子任务执行 sandbox 协议调用并回报；设置 `BRAIN_TEST_BINARY` 后将同一场景运行在脱离源码和 node_modules 的独立二进制中。模型、后端与 sandbox 协议端点仍为进程内 fake。
+
+官方工具的异步回执不代表子任务已经结束。测试分别为父子模型提供响应，历史断言按线程身份定位，不依赖父子请求的全局顺序。子任务结束后 DSH 会关闭 SessionHandle，日志检查从持久化读取。OMA 权限预检先于子线程归档和目标校验，以保持失败控制调用的公开事件；根 agent 进入活动状态时以及存在待处理审批时的 `agent/status` 变化同步刷新 Worker 状态，使父 agent 返回 idle 后，剩余子任务审批显示为 requires_action。可选 preset ID 和角色描述由官方工具参数呈现；OMA 自己的提示词补充禁止 inline 等会话策略。
+
+启用委派的父 Agent 通过 DSH `system-prompt/assemble` 仅保留 `oma` 和官方 `tool:subagent` 两个 section，不再对 `oma` 设置完整覆盖；禁用委派及子 Agent 继续使用完整覆盖。等待指导由官方工具插件动态生成，不在 OMA 复制文案，也不恢复其他默认提示词。官方指导要求只剩等待时结束当前轮次，避免通过 Bash sleep 或轮询等待；宿主仍按 `whenIdle()` 与 `waitForChildren()` 等待并继续父 Agent。工具参数、执行、权限、动态 context 和其他 OMA 提示词保持原行为。
+
+`tests/dsh-subagents.test.ts` 的 `model prompt restores only official subagent guidance` 在本地模型端点检查实际请求，断言启用委派时仅追加官方指导，禁用委派时整段提示词不变，新增会话说明和字面量模板符号保持原样。测试额外注册其他插件段落及未启用的 fork 指导，确认两者不进入请求；子 Agent 不获得委派工具或父级等待指导。
+
+Preset 验收覆盖无参数及越名单拒绝、官方组合登记、固定模型与工具、冷续聊和进程上下文重建后的 preset 恢复；独立二进制 claim 场景调用预定义 preset 并执行子线程 sandbox 协议。旧编号工具试用日志的 provider 名称不再注册，验收 preset 版本应使用新会话；不迁移历史日志。
+
+DSH `0.2.2-alpha.2` 下，OMA 在绑定子 Agent 的运行时初始化阶段通过 `agent.model.select` 设置预定义模型，确保模型解析与请求配置使用同一选择。工具调用通过批量执行接口提交，控制插件统一注册 `list_agents`。关闭时先停止并排空子 Agent，再释放根 Agent；根 Agent 已从注册表移除后到达的异步发布失败不再发起祖先身份中断。
+
+
+## Inline 任务定义 system
+
+原生 `subagent` 不带 `agent_preset` 时，初次调用的 `prompt` 同时定义该 unsaved inline child 的专属 system 与初始任务。这个值写入公开 `session.thread_created.agent.system`、线程快照与既有 native 子线程配置日志，实际模型使用同一专属 system；不复制父 Agent 的 system。后续消息只继续原线程，不重新定义 system，恢复时读取已持久化配置。保存的 expert 与 self preset 仍使用各自既有配置。
+
+创建回调在初始 inbox 消息提交前运行，因此用每个父运行时独立的 async context 传递初次 inline 指令，不能按显示名关联或使用共享可变临时值。并发创建同名 inline child 必须保留各自指令，不混入另一个 child 或父 Agent 私有指令。工具权限、模型、MCP 与 skills 的有效配置继承规则保持不变。
+
+初始化失败时，未获得根 Agent handle 的子代理协调器可直接停止和关闭。停止流程始终继续取消根运行时并拒绝待审批请求。子代理事件发布失败会停止父任务并处理队列拒绝，后续事件与关闭屏障不会重复抛出同一个发布错误；不自动重试失败事件。新建子线程初始化失败时标记 terminated，终止状态发布失败不覆盖初始化错误。既有冷恢复线程初始化失败保持 idle，不为未执行的轮次发布 interrupted 状态。
+
+根 runtime marker 预检复用 `ccrReplication.ensure` 已获取的事件快照，首次命中后停止遍历，不再为预检单独打开和读取 JSONL。DSH resume 保留自己的所有权读取与恢复流程。普通回归覆盖十万条事件且 marker 位于末尾时预检读取次数为零；未建立真实长日志启动耗时基线。
+
+输入完成时，worker shutdown 或其他已记录的轮次错误优先于根 Agent 旧的 completed 原因，持久化失败 completion 并发布错误 result 后 ACK。显式用户中断继续沿用成功停止语义。普通模型请求的 running 状态由根 Agent 状态变化上报，不依赖是否存在工具审批。
+
+`drain()` 只等待已派发工具及结果确认，不代表整个输入已经完成。父 Agent 完成自身 turn 但仍等待子 Agent、且没有工具派发时，关闭流程可以交还活跃会话领取，而不在原 Worker 立即发布失败 result。缺少 `plugin:oma/input-completion` 的输入在下次打开时按 recovery 错误结束，不能从根 Agent 的 completed 原因推导为成功；重复投递只确认恢复结果，不重跑模型或工具。
+
+`tests/subagent-shutdown.test.ts` 使用真实 Brain 子进程、SIGTERM 和进程内 fake backend，覆盖上述无工具派发路径及新实例恢复，断言关闭和恢复均不产生成功 completion/result，领取已交还，重复输入不增加模型请求。该普通回归不连接真实 PostgreSQL、对象存储或模型服务，不替代真实服务停机验收。
+
+根 Agent 无待处理审批时进入 idle，不提前发布 Worker idle；终态仍在 completion 持久化和公开 result 发布后由 `afterRun` 上报。`tests/session.test.ts` 的 durability 顺序回归保护这一边界。

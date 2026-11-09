@@ -36,10 +36,6 @@ type sessionUsageTotalsParams struct {
 	ThreadExternalID  string
 }
 
-// SessionUsageMapper aggregates billing and token usage from persisted
-// span.model_request_end events. The billing payload is written by the
-// platform when the event is synthesized, so the sum is the authoritative
-// session list cost the budget is enforced against.
 type SessionUsageMapper interface {
 	SumUsageTotals(ctx context.Context, params sessionUsageTotalsParams) (sessionUsageTotalsRow, bool, error)
 	SumActiveSeconds(ctx context.Context, params sessionUsageTotalsParams) (float64, error)

@@ -1,3 +1,4 @@
+import { executeTool } from "./subagent-tools.ts";
 import { completedInputs } from "./session-log.ts";
 import { modelSystemText } from "./backend.ts";
 import { spawn } from "node:child_process";
@@ -9,6 +10,57 @@ import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import type { CcrSession } from "../src/ccrv2/index.ts";
 import { Backend, eventually, toolEvents, textEvents } from "./backend.ts";
+
+for (const publication of ["reply", "completion"]) test(`SIGKILL after unproxied ${publication} replication recovers output once without another model call`, async () => {
+  const backend = new Backend();
+  backend.onModel = async () => new Response(textEvents("reply saved before publication")
+    .map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+    { headers: { "Content-Type": "text/event-stream" } });
+  backend.failPublicType = publication === "reply" ? "agent.message" : "result";
+  await backend.ready;
+  const child = spawn(process.execPath, ["tests/crash-worker.ts"], {
+    env: { ...process.env, TEST_API_URL: backend.url, TEST_ASSIGNMENT: JSON.stringify(backend.a) },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const exited = once(child, "exit");
+  let ctx: Context | undefined;
+  let resumed: CcrSession | undefined;
+  try {
+    await eventually(() => backend.failedCcrWrites > 0 && [...backend.privateLog.values()]
+      .some(event => event.type === "dsh_log" && event.data.type === (publication === "reply" ? "assistant/message" : "plugin:oma/input-completion")));
+    if (publication === "reply") expect([...backend.publicLog.values()].filter(event => event.type === "agent.message")).toHaveLength(0);
+    expect([...backend.publicLog.values()].filter(event => event.type === "result")).toHaveLength(0);
+    expect(backend.processed).toEqual([]);
+    child.kill("SIGKILL");
+    await exited;
+    backend.failPublicType = undefined;
+    backend.a.worker_epoch++;
+    ctx = new Context();
+    const api = new OmaApi(backend.url);
+    await mountOma(ctx, api);
+    resumed = createOmaSession(ctx, api, backend.a);
+    await resumed.open();
+    const replies = [...backend.publicLog.values()].filter(event => event.type === "agent.message");
+    expect(replies).toHaveLength(1);
+    expect(JSON.stringify(replies[0]!.content)).toContain("reply saved before publication");
+    expect(replies[0]!.model_request_start_id).toBeUndefined();
+    if (publication === "completion") {
+      const results = [...backend.publicLog.values()].filter(event => event.type === "result");
+      expect(results).toHaveLength(1);
+      expect(results[0]!.is_error).toBe(false);
+    }
+    await resumed.receive("crash_input", { message: { content: "execute a command" } });
+    expect(backend.requests).toHaveLength(1);
+    expect([...backend.publicLog.values()].filter(event => event.type === "agent.message").map(event => event.uuid)).toEqual([replies[0]!.uuid]);
+  } finally {
+    child.kill("SIGKILL");
+    await exited;
+    backend.failPublicType = undefined;
+    await resumed?.close();
+    await ctx?.fiber.dispose();
+    backend.stop();
+  }
+});
 
 test("SIGKILL during sandbox execution restores logs, never replays and continues on new input", async () => {
   const backend = new Backend();
@@ -86,14 +138,14 @@ test("SIGKILL during sandbox execution restores logs, never replays and continue
 function delegates(): import("../src/json.ts").Payload[] {
   const blocks = ["alpha", "beta"].flatMap((name, index) => toolEvents("", `delegate_${name}`).slice(1, 4).map((event) => ({
     ...event, index,
-    ...(event.type === "content_block_start" ? { content_block: { ...event.content_block, name: "send_to_agent" } } : {}),
-    ...(event.type === "content_block_delta" ? { delta: { type: "input_json_delta", partial_json: JSON.stringify({ name, system_prompt: name, message: `work ${name}` }) } } : {}),
+    ...(event.type === "content_block_start" ? { content_block: { ...event.content_block, name: "subagent" } } : {}),
+    ...(event.type === "content_block_delta" ? { delta: { type: "input_json_delta", partial_json: JSON.stringify({ description: name, prompt: `work ${name}` }) } } : {}),
   })));
   return [toolEvents()[0]!, ...blocks, ...toolEvents().slice(4)];
 }
 
 for (const duringDispatch of [true, false]) {
-  test(`SIGKILL with parallel children ${duringDispatch ? "repairs an unknown call alongside a confirmed sibling" : "repairs approval waits without replay and allows a fresh input"}`, async () => {
+  test(`SIGKILL with DSH parallel children ${duringDispatch ? "repairs an unknown call alongside a confirmed sibling" : "repairs approval waits without replay and allows a fresh input"}`, async () => {
     const backend = new Backend();
     const counts = new Map<string, number>();
     backend.onModel = async (request) => {
@@ -114,7 +166,7 @@ for (const duringDispatch of [true, false]) {
     const exited = once(child, "exit");
     const approvals: import("../src/json.ts").Payload[] = [];
     backend.onApproval = async (request) => {
-      if (["list_agents", "send_to_agent", "archive_agent"].includes(request.request.tool_name)) {
+      if (["list_agents", "subagent", "send_message", "interrupt_agent"].includes(request.request.tool_name)) {
         child.stdin!.write(JSON.stringify({ type: "control_response", response: {
           subtype: "success", request_id: request.request_id, response: { behavior: "allow" },
         } }) + "\n");
@@ -153,6 +205,14 @@ for (const duringDispatch of [true, false]) {
       expect(recoveredWorkerIdle).toBeGreaterThan(recoveredIdle);
       expect(backend.requests).toHaveLength(requestCount);
       expect(completedInputs(resumed)).toContain("crash_input");
+      {
+        const results = recovery.filter(event => event.type === "result");
+        expect(results).toHaveLength(1);
+        expect(results[0]!.is_error).toBe(true);
+        expect(recovery.findIndex(event => event.type === "result")).toBeGreaterThan(recoveredResult);
+        await resumed.receive("crash_input", { content: "execute a command" });
+        expect(backend.requests).toHaveLength(requestCount);
+      }
       expect(resumed.subagents.threads!.every((thread) => thread.status === "idle")).toBe(true);
       expect(resumed.abort.signal.aborted).toBe(false);
       const native = (threadId: string) => [...backend.privateLog.values()].filter((entry) => entry.type === "dsh_log"
@@ -166,6 +226,20 @@ for (const duringDispatch of [true, false]) {
       expect(backend.requests).toHaveLength(requestCount + 1);
       expect(backend.executions).toHaveLength(duringDispatch ? 2 : 0);
       expect(resumed).not.toHaveProperty("delivery");
+      {
+        backend.onDelegationApproval = async payload => {
+          await resumed!.control({ type: "control_response", response: { subtype: "success", request_id: payload.request_id, response: { behavior: "allow" } } });
+        };
+        const receipt = await executeTool(resumed, "send_message", { agent_id: alphaId, message: "Inspect the existing outcome without repeating the command" });
+        expect(receipt.messageId).toBeString();
+        do { await resumed.agent.whenIdle(); } while (await resumed.subagents.wait());
+        expect(backend.executions).toHaveLength(duringDispatch ? 2 : 0);
+        expect(resumed.subagents.threads.find(thread => thread.id === alphaId)?.status).toBe("idle");
+        const request = backend.requests.findLast(request => modelSystemText(request).includes("You are subagent alpha."))!;
+        expect(JSON.stringify(request.messages)).toContain("Do not retry blindly");
+        expect(JSON.stringify(request.messages)).toContain("Inspect the existing outcome");
+        expect([...backend.publicLog.values()].some(event => event.type === "agent.thread_message_received" && event.from_session_thread_id === alphaId)).toBe(true);
+      }
     } finally {
       child.kill("SIGKILL"); await exited;
       await resumed?.close(); await ctx?.fiber.dispose(); backend.stop();

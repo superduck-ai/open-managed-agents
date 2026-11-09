@@ -74,3 +74,18 @@ func TestProviderHTTPClientDoesNotFollowRedirects(t *testing.T) {
 		t.Fatalf("CheckRedirect() error = %v, want http.ErrUseLastResponse", err)
 	}
 }
+
+func TestEndpointAcceptsCompleteRequestURLs(t *testing.T) {
+	for _, base := range []string{
+		"https://example.com/prefix/v1/messages",
+		"https://example.com/prefix/v1/chat/completions/",
+		"https://example.com/prefix/v1",
+	} {
+		for _, path := range []string{"/v1/messages", "/v1/chat/completions", "/v1/models"} {
+			got, err := Endpoint(base, path, "")
+			if err != nil || got != "https://example.com/prefix"+path {
+				t.Fatalf("Endpoint(%q, %q) = %q, %v", base, path, got, err)
+			}
+		}
+	}
+}

@@ -26,6 +26,7 @@ export function ManagedResourceFields({
   addButtonVariant?: 'outline' | 'secondary';
 }) {
   const { msg } = useI18n();
+  const replacingExistingResources = editing && values.originalResources.length > 0;
   const patch = (value: Partial<ManagedEntityFormValues>) => onChange({ ...values, ...value, resourcesChanged: true });
   return (
     <section className="space-y-3">
@@ -40,7 +41,7 @@ export function ManagedResourceFields({
           </p>
         </div>
       )}
-      {editing && !values.resourcesChanged ? (
+      {replacingExistingResources && !values.resourcesChanged ? (
         <>
           <ul className="space-y-1 text-sm text-muted-foreground">
             {values.originalResources.map((resource, index) => (
@@ -57,7 +58,7 @@ export function ManagedResourceFields({
         </>
       ) : (
         <>
-          {editing ? (
+          {replacingExistingResources ? (
             <div className="space-y-2 text-sm text-muted-foreground">
               <p>
                 {msg(

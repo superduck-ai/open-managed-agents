@@ -2,28 +2,36 @@
 
 ## 目标
 
-托管 Agent 的系统提示词由平台规则、Environment 事实、Skill 目录、用户 Agent 指令和会话数据组成。各部分的变化频率不同，按稳定性从高到低排列，使跨会话可复用的内容位于前缀；同时让主 Agent 与子 Agent 各自拿到不自相矛盾的规则。
+托管 Agent 的系统提示词由平台规则、Environment 事实、用户 Agent 指令和会话数据组成。各部分的变化频率不同，按稳定性从高到低排列，使跨会话可复用的内容位于前缀；同时让主 Agent 与子 Agent 各自拿到不自相矛盾的规则。
 
 ## 分层
 
 ```mermaid
 flowchart TB
   L0["L0 平台规则<br/>DSH 静态文本，随 DSH 版本变化"] --> L1
-  L1["L1 Environment<br/>Go 按 Environment 配置渲染"] --> L2
-  L2["L2 Skills<br/>按 Agent 固定版本"] --> L3
+  L1["L1 Environment<br/>Go 按 Environment 配置渲染"] --> L3
   L3["L3 Agent 指令 / 子 Agent specialist 指令"] --> L4
   L4["L4 会话<br/>工作目录、Memory 目录"]
 ```
 
 | 层 | 来源 | 内容 |
 |---|---|---|
-| L0 | `oma-brain-dsh/src/prompt/platform.ts` | 运行环境说明、提问与直接执行的取舍、工作习惯与完成前验证、审批、子 Agent 委派（仅配置了 `subagents` 时出现）、指令信任与优先级、收尾格式 |
+| L0 | `oma-brain-dsh/src/prompt/platform.ts` | 运行环境说明、提问与直接执行的取舍、工作习惯与完成前验证、审批、子 Agent 委派（开启时描述可用工具，关闭时明确禁止委派）、指令信任与优先级、收尾格式 |
 | L1 | `internal/environments/environment_prompt.tmpl`，经 `append_system_prompt` 下发 | 沙箱系统信息、uploads/outputs 路径规则、沙箱持久化语义、Environment `networking` 和 `packages` |
-| L2 | `runtime_skills` | 每个 Skill 一行：名称、描述、`SKILL.md` 路径；不包含版本号 |
 | L3 | Agent `system`，或子 Agent 的 specialist 指令 | 原样插入，不做变量插值 |
 | L4 | `cwd`、`memory_catalog_prompt` | 工作目录、Memory 目录 |
 
 DSH 只注册一个 `complete: true` 的 section，各层在 `oma-brain-dsh/src/prompt/assemble.ts` 中按上表顺序用空行拼接。`dsh-system-prompt` 会把所有 section 拼成单一字符串，模型请求也以单个 `system` 字符串发送，因此缓存只能依赖前缀匹配：会话级数据必须位于 L3 之后，不能插入平台规则中间。
+
+## Skill 目录与加载
+
+Skill 目录由同版本的 `dsh-skill` registry 与 `dsh-tool-skill` consumer 管理，不进入 system prompt。consumer 在 `agent/pre-step` 发布持久化 user-role `skill-catalog` 消息，只包含排序后的名称和描述，描述默认最多 500 字符。目录仅列出允许模型调用的 Skill；目录完整性、替换、恢复与压缩后重发沿用 DSH consumer。完整且为空的初始目录不生成消息。
+
+`oma-brain-dsh/src/skills/` 在每个 Agent 的隔离服务范围内注册 OMA provider，并提供返回沙箱工作目录的 `workingDirectory.ensure` 适配器。provider 不访问宿主机文件系统。目录和加载通过带 ingress 凭据的内部 Session Skills 接口读取固定 File/Resource 快照；子 Agent 请求携带线程头，服务端检查线程归属、状态和 Agent snapshot。inline 线程继承父 Agent 的 Skill 引用，预定义线程使用自身引用。
+
+模型使用 `skill({name})` 加载正文，consumer 在加载前后检查模型调用策略，再返回 `skill_content`、`skill_resources` 和 `skill_instructions`。附属脚本和引用文件仍通过沙箱工具访问。用户消息中以空白或消息边界分隔的 `/<name>` 按 `user-invocable` 策略直接注入 Skill 正文；工具结果不能触发该入口。`disable-model-invocation` 是调用入口策略，不是通用 Read 的文件访问控制。Skill 元数据使用 YAML 解析，布尔字段类型错误、重复名称和无效路径不会成为可调用目录；旧包缺失 frontmatter 字段时回退到固定 catalog 元数据。
+
+`oma-brain-dsh/tests/skills.test.ts` 与 `skills-runtime.test.ts` 覆盖 YAML、调用策略、显式调用、目录与正文分离、主子 Agent 目录隔离、恢复与压缩后的目录重发，以及无需创建沙箱的加载；Go 普通单测覆盖 Agent 选择、越界目录拒绝和 File 快照读取。
 
 ## 时间上下文
 
@@ -35,8 +43,10 @@ Brain 在 `oma-brain-dsh/src/kernel.ts` 挂载与其他 DSH 包同版本的 `@de
 
 ## 主 Agent 与子 Agent
 
-- 主 Agent：L0 主规则 → L1 → L2 → `# Agent instructions` → L4。
-- 子 Agent：L0 子规则 → L1 → L2 → `# Specialist instructions` → L4。子规则以 `# Subagent rules` 和 `You are subagent <name>.` 开头，`## Execution mode` 列出不能继续委派、不能直接询问用户、只向父 Agent 汇报以及报告必须包含的内容项，并且不包含 `list_agents`/`send_to_agent` 说明。
+- 主 Agent：L0 主规则 → L1 → `# Agent instructions` → L4。
+- 子 Agent：L0 子规则 → L1 → `# Specialist instructions` → L4。子规则以 `# Subagent rules` 和 `You are subagent <name>.` 开头，`## Execution mode` 列出不能继续委派、不能直接询问用户、只向父 Agent 汇报以及报告必须包含的内容项，并且不包含 `list_agents`/`send_message` 说明。
+- DSH 未提供 subagents 配置时，主提示词包含 `Subagents are disabled for this session.`，明确不能创建、委派或管理子线程。`createOmaSession` 原样传递缺失配置，不用空对象开启委派；模型工具列表不注册 `subagent`、`send_message`、`list_agents`、`interrupt_agent`，直接委派入口同样拒绝调用。
+- subagents.inlineAgents 为 false 时，主提示词明确只允许已配置的预定义 Agent，不能临时定义 Agent；执行层继续拒绝 inline 调用。
 - Agent 或 specialist 指令为空时省略对应标题。
 
 ## 身份与托管 Agent 指令
@@ -94,7 +104,7 @@ Agent 指令与平台规则的关系分两类：
 工具的用法写在工具定义中，跨工具的策略写在 L0：
 
 - 沙箱工具说明位于 `oma-brain-dsh/src/sandbox-tools/definitions.ts`，补充了 Bash 每次调用不继承 shell 状态、`on_timeout=background` 的读取方式、Read 的 0-based/exclusive 行号、Edit 的唯一匹配要求，以及 Grep/Glob 默认路径不包含 uploads。
-- `send_to_agent` 的每个参数都有说明，并写明 `thread_id`、`agent_name`、`name` 三者只能选择一个。
+- DSH 的 `subagent` 使用 `description` 和 `prompt` 创建子线程，可通过 `agent_preset` 选择预定义专家；`send_message` 使用必填的 `agent_id` 和 `message` 继续已有线程，只返回投递回执，报告异步到达。`list_agents` 查看子线程，`interrupt_agent` 使用 `agent_id` 请求停止当前任务；归档由 OMA 会话 API 管理，不注册模型归档工具。
 - 线程上限统一使用定义在 `runtime/contracts.ts` 的 `MAX_LIVE_SUBAGENT_THREADS`，工具说明、L0 文本和运行时校验共用该常量；提示词模块依赖运行时契约，运行时不依赖提示词模块。
 - 工具说明不包含会话级数据，避免工具定义变化导致后续缓存失效。
 - 主 Agent 只注册启用的沙箱工具。Go 在创建 Code Session 时用与权限执行相同的 `resolveAgentToolPermission` 计算启用工具，写入 `runtime_tools` 并经 `session_context` 下发；DSH 校验工具名后按该列表注册，inline 子 Agent 继承同一列表；预定义 specialist 只注册自身配置与该列表的交集，与服务端按父 Agent 快照判定权限的结果一致。快照没有 `agent_toolset_20260401` 时与权限执行一致视为全部启用；缺少该字段的存量 Code Session 保持注册全部沙箱工具。
@@ -107,7 +117,6 @@ DSH 设置 `OMA_DEBUG_SYSTEM_PROMPT=1` 时，在发送模型请求前以 `oma_sy
 
 - `<oma-context>`/`<oma-reminder>` 运行时注入：当前没有定时或 webhook 触发的会话，触发来源信号尚不存在。
 - 区分用户拒绝、策略阻断和停止的工具错误前缀：当前拒绝统一返回 `Tool use denied by OMA`。
-- 按子 Agent 自身配置过滤 Skill 目录：DSH 线程目前没有携带子 Agent 的 Skill 列表，子 Agent 使用会话的 Skill 目录。
 - 在 transcript 中记录各层提示词的版本或哈希。
 
 ## 测试

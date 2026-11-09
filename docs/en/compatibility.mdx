@@ -16,10 +16,9 @@ OMA is an open-source, self-hosted agent control plane. It provides stable resou
 | Tools, MCP, skills | Supported | URL MCP, built-in/custom tools, versioned skill packages |
 | Vaults | Supported | MCP OAuth, static bearer, and environment variable credentials |
 | Multi-agent | Supported | Coordinator with up to 20 resolved agent references |
-| Outcomes | Partial | Definitions and evaluation events are available; runtime behavior is evolving |
 | Scheduled deployments | Supported | Five-field POSIX cron, IANA timezone, and manual runs |
-| Webhooks | Supported | A defined subset of session, thread, outcome, and vault events |
-| Session cost budgets | Not implemented | Use upstream limits, runtime timeouts, and queue concurrency |
+| Webhooks | Supported | A defined subset of session, thread, and vault events |
+| Session cost budgets | Supported | Metered using configured model prices and usage; in-flight requests can exceed the limit |
 
 ## SDK compatibility rules
 

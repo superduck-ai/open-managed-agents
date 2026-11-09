@@ -12,7 +12,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
-import { Dispatch, ReactNode, SetStateAction, useEffect, useMemo, useRef } from 'react';
+import { type ComponentProps, Dispatch, ReactNode, SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import {
   AlertDialog,
@@ -26,9 +26,12 @@ import {
 } from '@/shared/ui/alert-dialog';
 import { Button } from '@/shared/ui/button';
 import { Checkbox } from '@/shared/ui/checkbox';
-import { Dialog as DialogRoot, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
+import { Dialog as DialogRoot, DialogClose, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
+import { useDialogDismissal } from '@/shared/hooks/use-dialog-dismissal';
+import { useI18n } from '@/shared/i18n';
 import { Label } from '@/shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import { Sheet, SheetClose, SheetContent, SheetTitle } from '@/shared/ui/sheet';
 import { Textarea } from '@/shared/ui/textarea';
 import { hljs } from './highlight';
 import { AuthAccount } from '../../shared/auth/api';
@@ -44,9 +47,10 @@ import {
   GeneratePromptStep,
   isPromptCreator,
   promptCreatorLabel,
+  promptGeneratorWarningLabel,
+  promptGeneratorWarningTitle,
   WorkbenchPromptGeneratorWarning,
 } from './model';
-import { IconButton } from './components';
 
 export function CodeModal({
   language,
@@ -59,6 +63,7 @@ export function CodeModal({
   revision: WorkbenchRevision;
   onClose: () => void;
 }) {
+  const { msg } = useI18n();
   const code = useMemo(() => codeForRevision(language, revision), [language, revision]);
   const selectedLanguageLabel = codeLanguageOptions.find((option) => option.value === language)?.label ?? 'Python';
   const hlLanguage =
@@ -71,7 +76,7 @@ export function CodeModal({
   const highlightedLines = useMemo(() => highlighted.split('\n'), [highlighted]);
 
   return (
-    <Dialog title="Code for Claude API" onClose={onClose} size="code">
+    <Dialog title={msg('workbench.codeTitle', 'Code for Claude API')} onClose={onClose} size="code">
       <div className="workbench-code-modal">
         <div className="workbench-code-controls">
           <div className="min-w-0 flex-1">
@@ -85,12 +90,12 @@ export function CodeModal({
               }}
             >
               <SelectTrigger
-                aria-label="Code language"
-                className="h-10 w-full px-3 text-[15px] font-normal text-foreground"
+                aria-label={msg('workbench.codeLanguage', 'Code language')}
+                className="h-9 w-full px-3 font-normal"
               >
                 <SelectValue>{selectedLanguageLabel}</SelectValue>
               </SelectTrigger>
-              <SelectContent sideOffset={6} align="start" alignItemWithTrigger={false} className="min-w-[240px]">
+              <SelectContent className="min-w-[240px]">
                 {codeLanguageOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value} label={option.label}>
                     {option.label}
@@ -102,20 +107,22 @@ export function CodeModal({
           <Button
             type="button"
             variant="ghost"
-            className="h-8 min-w-[106px] text-foreground hover:bg-accent"
+            size="lg"
+            className="min-w-[106px]"
             onClick={() => window.open('https://docs.anthropic.com/en/api/messages', '_blank', 'noopener,noreferrer')}
           >
             <BookOpen className="size-4" aria-hidden />
-            View Docs
+            {msg('workbench.viewDocs', 'View Docs')}
           </Button>
         </div>
-        <div className="workbench-code-frame group/code-frame">
+        <div className="workbench-code-frame">
           <Button
             type="button"
             variant="outline"
             size="icon"
-            className="absolute right-3.5 top-2.5 z-[2] size-8 border-border bg-background/70 opacity-0 transition-opacity hover:bg-background/90 focus-visible:opacity-100 group-hover/code-frame:opacity-100"
-            aria-label="Copy code"
+            className="workbench-code-copy-button absolute right-3.5 top-2.5 z-[2] size-8 border-border bg-background/70 hover:bg-background/90"
+            aria-label={msg('workbench.copyCode', 'Copy code')}
+            title={msg('workbench.copyCode', 'Copy code')}
             onClick={() => void navigator.clipboard?.writeText(code)}
           >
             <Copy className="size-4" aria-hidden />
@@ -139,6 +146,8 @@ export function CodeModal({
 }
 
 export function GeneratePromptDialog({
+  open,
+  onExited,
   step,
   task,
   setTask,
@@ -159,6 +168,8 @@ export function GeneratePromptDialog({
   onBuyCredits,
   onClose,
 }: {
+  open: boolean;
+  onExited: () => void;
   step: GeneratePromptStep;
   task: string;
   setTask: Dispatch<SetStateAction<string>>;
@@ -179,12 +190,14 @@ export function GeneratePromptDialog({
   onBuyCredits: () => void;
   onClose: () => void;
 }) {
+  const { msg } = useI18n();
   const hasOutput = Boolean(output.trim());
   const canGenerate = Boolean(task.trim()) && !isGenerating && !warning;
   const visibleExamples = examplesExpanded ? generatePromptExamples : generatePromptExamples.slice(0, 3);
   const isOutputStep = step === 'output';
   const outputVariables = extractVariablesFromText(output);
   const outputTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const taskTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (!isOutputStep || !isGenerating || !outputTextareaRef.current) {
@@ -195,167 +208,181 @@ export function GeneratePromptDialog({
   }, [isGenerating, isOutputStep, output]);
 
   return (
-    <Dialog title="Generate a prompt" onClose={onClose} size="generate">
-      <div className={clsx('workbench-generate-modal', isOutputStep ? 'is-output' : 'is-input')}>
-        <form
-          id="workbench-generate-form"
-          className="workbench-generate-modal-main"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (isOutputStep) {
-              if (hasOutput && !isGenerating) {
-                onOpen();
+    <DialogRoot
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+      onOpenChangeComplete={(nextOpen) => {
+        if (!nextOpen) onExited();
+      }}
+    >
+      <DialogSurface
+        title={msg('workbench.generatorTitle', 'Generate a prompt')}
+        initialFocus={isOutputStep ? outputTextareaRef : taskTextareaRef}
+        size="generate"
+      >
+        <div className={clsx('workbench-generate-modal', isOutputStep ? 'is-output' : 'is-input')}>
+          <form
+            id="workbench-generate-form"
+            className="workbench-generate-modal-main subtle-scrollbar"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (isOutputStep) {
+                if (hasOutput && !isGenerating) {
+                  onOpen();
+                }
+                return;
               }
-              return;
-            }
-            if (canGenerate) {
-              onGenerate();
-            }
-          }}
-        >
-          {warning ? (
-            <div className="workbench-generate-credit-banner">
-              <div>
-                <strong>Buy credits to use the prompt generator</strong>
-                <span>{warning.title}</span>
-              </div>
-              <Button type="button" variant="outline" onClick={onBuyCredits}>
-                Buy credits
-              </Button>
-            </div>
-          ) : null}
-
-          {isOutputStep ? (
-            <div className="workbench-generate-output-view">
-              <div className="workbench-generate-copy">
-                <h3>Your prompt</h3>
-                <p>You'll be able to make further changes and improvements later too.</p>
-              </div>
-              <div className={clsx('workbench-generate-error', !error && 'is-empty')} aria-hidden={!error}>
-                {error}
-              </div>
-              <div className={clsx('workbench-generate-output', isGenerating && 'is-streaming')}>
-                {output ? (
-                  <Textarea
-                    ref={outputTextareaRef}
-                    aria-label="Your prompt"
-                    rows={20}
-                    value={output}
-                    onChange={(event) => setOutput(event.currentTarget.value)}
-                    className="workbench-generate-output-textarea subtle-scrollbar"
-                  />
-                ) : (
-                  <div className="workbench-generate-output-empty">
-                    <Loader2 className="size-4 animate-spin" aria-hidden />
-                    Generating prompt…
-                  </div>
-                )}
-              </div>
-              <GeneratePromptVariables variables={outputVariables} />
-            </div>
-          ) : (
-            <div className="workbench-generate-input-view">
-              <div className="workbench-generate-copy">
-                <h3>Generate a prompt</h3>
-                <p>You can generate a prompt template by sharing basic details about your task.</p>
-              </div>
-              <Textarea
-                id="workbench-generate-task"
-                aria-label="Describe your task..."
-                placeholder="Describe your task..."
-                value={task}
-                disabled={isGenerating}
-                onChange={(event) => setTask(event.currentTarget.value)}
-                className="min-h-[136px] resize-none"
-                autoFocus
-              />
-              <div className="workbench-generate-examples" aria-label="Prompt generator examples">
-                {visibleExamples.map((example) => {
-                  const ExampleIcon = promptExampleIcons[example.id];
-                  return (
-                    <Button
-                      key={example.id}
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="workbench-generate-example"
-                      disabled={isGenerating}
-                      onClick={() => onSelectExample(example)}
-                    >
-                      <ExampleIcon className="size-4" aria-hidden />
-                      <span>{example.title}</span>
-                    </Button>
-                  );
-                })}
-                {!examplesExpanded ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="workbench-generate-example is-more"
-                    aria-label="Show more prompt examples"
-                    disabled={isGenerating}
-                    onClick={() => setExamplesExpanded(true)}
-                  >
-                    <MoreHorizontal className="size-4" aria-hidden />
+              if (canGenerate) {
+                onGenerate();
+              }
+            }}
+          >
+            {warning ? (
+              <div className="workbench-generate-credit-banner">
+                <strong>{promptGeneratorWarningLabel(warning, msg)}</strong>
+                {warning.title === promptGeneratorWarningTitle ? (
+                  <Button type="button" variant="outline" onClick={onBuyCredits}>
+                    {msg('workbench.buyCredits', 'Buy credits')}
                   </Button>
                 ) : null}
               </div>
-              <Label className="items-start gap-2.5 text-muted-foreground">
-                <Checkbox
-                  checked={thinkingEnabled}
-                  disabled={isGenerating}
-                  onCheckedChange={(nextChecked) => setThinkingEnabled(nextChecked === true)}
-                />
-                <span>This prompt will be used with models that have thinking enabled</span>
-              </Label>
-              {error ? <div className="workbench-generate-error">{error}</div> : null}
-            </div>
-          )}
-        </form>
+            ) : null}
 
-        <div className="workbench-generate-footer">
-          {isOutputStep ? (
-            <>
-              <Button type="button" variant="outline" onClick={isGenerating ? onStop : onEdit}>
-                {isGenerating ? 'Cancel' : 'Back'}
-              </Button>
-              <Button type="submit" form="workbench-generate-form" disabled={!hasOutput || isGenerating}>
-                Continue
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button type="button" variant="outline" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button type="submit" form="workbench-generate-form" disabled={!canGenerate}>
-                Generate
-              </Button>
-            </>
-          )}
+            {isOutputStep ? (
+              <div className="workbench-generate-output-view">
+                <div className="workbench-generate-copy">
+                  <h3>{msg('workbench.generatedPrompt', 'Your prompt')}</h3>
+                </div>
+                <div className={clsx('workbench-generate-error', !error && 'is-empty')} aria-hidden={!error}>
+                  {error}
+                </div>
+                <div className={clsx('workbench-generate-output', isGenerating && 'is-streaming')}>
+                  {output ? (
+                    <Textarea
+                      ref={outputTextareaRef}
+                      aria-label={msg('workbench.generatedPrompt', 'Your prompt')}
+                      rows={20}
+                      value={output}
+                      onChange={(event) => setOutput(event.currentTarget.value)}
+                      className="workbench-generate-output-textarea subtle-scrollbar"
+                    />
+                  ) : (
+                    <div className="workbench-generate-output-empty">
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                      {msg('workbench.generatingPrompt', 'Generating prompt…')}
+                    </div>
+                  )}
+                </div>
+                <GeneratePromptVariables variables={outputVariables} />
+              </div>
+            ) : (
+              <div className="workbench-generate-input-view">
+                <div className="workbench-generate-copy">
+                  <h3>{msg('workbench.generatorTitle', 'Generate a prompt')}</h3>
+                </div>
+                <Textarea
+                  ref={taskTextareaRef}
+                  id="workbench-generate-task"
+                  aria-label={msg('workbench.describeTask', 'Describe your task...')}
+                  placeholder={msg('workbench.describeTask', 'Describe your task...')}
+                  value={task}
+                  disabled={isGenerating}
+                  onChange={(event) => setTask(event.currentTarget.value)}
+                  className="min-h-[136px] resize-none"
+                />
+                <div
+                  className="workbench-generate-examples"
+                  aria-label={msg('workbench.generatorExamples', 'Prompt generator examples')}
+                >
+                  {visibleExamples.map((example) => {
+                    const ExampleIcon = promptExampleIcons[example.id];
+                    return (
+                      <Button
+                        key={example.id}
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="workbench-generate-example"
+                        disabled={isGenerating}
+                        onClick={() => onSelectExample(example)}
+                      >
+                        <ExampleIcon className="size-4" aria-hidden />
+                        <span>{msg(`workbench.generatorExample.${example.id}`, example.title)}</span>
+                      </Button>
+                    );
+                  })}
+                  {!examplesExpanded ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="workbench-generate-example is-more"
+                      aria-label={msg('workbench.morePromptExamples', 'Show more prompt examples')}
+                      disabled={isGenerating}
+                      onClick={() => setExamplesExpanded(true)}
+                    >
+                      <MoreHorizontal className="size-4" aria-hidden />
+                    </Button>
+                  ) : null}
+                </div>
+                <Label className="items-start gap-2.5 text-muted-foreground">
+                  <Checkbox
+                    checked={thinkingEnabled}
+                    disabled={isGenerating}
+                    onCheckedChange={(nextChecked) => setThinkingEnabled(nextChecked === true)}
+                  />
+                  <span>
+                    {msg('workbench.targetThinking', 'This prompt will be used with models that have thinking enabled')}
+                  </span>
+                </Label>
+                {error ? <div className="workbench-generate-error">{error}</div> : null}
+              </div>
+            )}
+          </form>
+
+          <div className="workbench-generate-footer">
+            {isOutputStep ? (
+              <>
+                <Button type="button" variant="outline" onClick={isGenerating ? onStop : onEdit}>
+                  {isGenerating ? msg('common.cancel', 'Cancel') : msg('workbench.back', 'Back')}
+                </Button>
+                <Button type="submit" form="workbench-generate-form" disabled={!hasOutput || isGenerating}>
+                  {msg('common.continue', 'Continue')}
+                </Button>
+              </>
+            ) : (
+              <>
+                <DialogClose render={<Button type="button" variant="outline" />}>
+                  {msg('common.cancel', 'Cancel')}
+                </DialogClose>
+                <Button type="submit" form="workbench-generate-form" disabled={!canGenerate}>
+                  {msg('workbench.generate', 'Generate')}
+                </Button>
+              </>
+            )}
+          </div>
         </div>
-      </div>
-    </Dialog>
+      </DialogSurface>
+    </DialogRoot>
   );
 }
 
 export function GeneratePromptVariables({ variables }: { variables: string[] }) {
+  const { msg } = useI18n();
+  if (!variables.length) return null;
   return (
     <div className="workbench-generate-variables">
-      <h4>Variables</h4>
-      <p>
-        Variables are placeholder values that make your prompt flexible and reusable. Variables in Workbench are
-        enclosed in double brackets like so: <code>{'{{VARIABLE_NAME}}'}</code>. The prompt above has the following
-        variables:
-      </p>
-      {variables.length ? (
-        <div className="workbench-generate-variable-list" aria-label="Generated prompt variables">
-          {variables.map((name) => (
-            <span key={name}>{`{{${name}}}`}</span>
-          ))}
-        </div>
-      ) : null}
+      <h4>{msg('workbench.variables', 'Variables')}</h4>
+      <div
+        className="workbench-generate-variable-list"
+        aria-label={msg('workbench.generatedVariables', 'Generated prompt variables')}
+      >
+        {variables.map((name) => (
+          <span key={name}>{`{{${name}}}`}</span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -365,30 +392,37 @@ export function PromptGeneratorConfirmDialog({
   onCancel,
   onConfirm,
 }: {
-  kind: 'close' | 'edit';
+  kind: 'close' | 'edit' | null;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { msg } = useI18n();
+  const [content, setContent] = useState(kind);
+  if (kind && kind !== content) setContent(kind);
   const copy =
-    kind === 'close'
+    content === 'close'
       ? {
-          title: 'Close prompt generator?',
-          description: 'By closing this modal, you will lose any progress made.',
-          actionLabel: 'Close',
+          title: msg('workbench.closeGeneratorTitle', 'Close prompt generator?'),
+          description: msg(
+            'workbench.closeGeneratorDescription',
+            'By closing this modal, you will lose any progress made.',
+          ),
+          actionLabel: msg('common.close', 'Close'),
         }
       : {
-          title: 'Clear generated prompt?',
-          description: 'Editing this page will clear the existing generated/converted prompt.',
-          actionLabel: 'Clear prompt',
+          title: msg('workbench.clearGeneratedTitle', 'Clear generated prompt?'),
+          description: msg(
+            'workbench.clearGeneratedDescription',
+            'Editing this page will clear the existing generated/converted prompt.',
+          ),
+          actionLabel: msg('workbench.clearPrompt', 'Clear prompt'),
         };
 
   return (
     <AlertDialog
-      open
-      onOpenChange={(open) => {
-        if (!open) {
-          onCancel();
-        }
+      open={kind !== null}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onCancel();
       }}
     >
       <AlertDialogContent size="sm">
@@ -397,7 +431,7 @@ export function PromptGeneratorConfirmDialog({
           <AlertDialogDescription>{copy.description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
           <AlertDialogAction variant="destructive" onClick={onConfirm}>
             {copy.actionLabel}
           </AlertDialogAction>
@@ -428,48 +462,80 @@ export function ImprovePromptDialog({
   onImprove: () => void;
   onClose: () => void;
 }) {
+  const { msg } = useI18n();
+  const feedbackInputRef = useRef<HTMLTextAreaElement>(null);
   return (
-    <Dialog title="What would you like to improve?" onClose={onClose} size="improve">
+    <Dialog
+      title={msg('workbench.improveTitle', 'What would you like to improve?')}
+      initialFocus={feedbackInputRef}
+      onClose={onClose}
+      closeDisabled={isImproving}
+      size="improve"
+    >
       <div className="workbench-improve-content">
-        <h2>What would you like to improve?</h2>
-        <p>This takes 1-2 minutes and uses Claude Sonnet 4.5 credits</p>
+        <h2>{msg('workbench.improveTitle', 'What would you like to improve?')}</h2>
+        <p>{msg('workbench.improveCost', 'Uses the selected model and may incur usage charges.')}</p>
         {showImageWarning || showMultiTurnWarning ? (
           <div className="workbench-improve-warnings">
             {showImageWarning ? (
               <div className="workbench-improve-warning">
                 <TriangleAlert className="size-4" aria-hidden />
-                <span>Images will not be processed. Please manually add them back in to improved prompt.</span>
+                <span>
+                  {msg(
+                    'workbench.improveImages',
+                    'Images will not be processed. Please manually add them back in to improved prompt.',
+                  )}
+                </span>
               </div>
             ) : null}
             {showMultiTurnWarning ? (
               <div className="workbench-improve-warning">
                 <TriangleAlert className="size-4" aria-hidden />
-                <span>Multi-turn prompt detected. Only the first user message will be improved.</span>
+                <span>
+                  {msg(
+                    'workbench.improveMultiTurn',
+                    'Multi-turn prompt detected. Only the first user message will be improved.',
+                  )}
+                </span>
               </div>
             ) : null}
           </div>
         ) : null}
         <Textarea
-          aria-label="The more detailed the feedback, the more Claude will be able to help."
-          placeholder="The more detailed the feedback, the more Claude will be able to help."
+          ref={feedbackInputRef}
+          aria-label={msg(
+            'workbench.improveFeedback',
+            'The more detailed the feedback, the more Claude will be able to help.',
+          )}
+          placeholder={msg(
+            'workbench.improveFeedback',
+            'The more detailed the feedback, the more Claude will be able to help.',
+          )}
           value={feedback}
+          disabled={isImproving}
           onChange={(event) => setFeedback(event.currentTarget.value)}
           className="min-h-[146px] resize-y"
         />
         <Label className="items-start gap-2.5 text-muted-foreground">
           <Checkbox
+            disabled={isImproving}
             checked={thinkingEnabled}
             onCheckedChange={(nextChecked) => setThinkingEnabled(nextChecked === true)}
           />
-          <span>This prompt will be used with models that have thinking enabled</span>
+          <span>
+            {msg('workbench.targetThinking', 'This prompt will be used with models that have thinking enabled')}
+          </span>
         </Label>
         <div className="flex justify-center gap-2 pt-2">
-          <Button type="button" variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
+          <DialogClose
+            disabled={isImproving}
+            render={<Button type="button" variant="outline" disabled={isImproving} />}
+          >
+            {msg('common.cancel', 'Cancel')}
+          </DialogClose>
           <Button type="button" disabled={isImproving} onClick={onImprove}>
             {isImproving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-            Improve prompt
+            {msg('workbench.improvePrompt', 'Improve prompt')}
           </Button>
         </div>
       </div>
@@ -494,40 +560,63 @@ export function SharePromptDialog({
   onShare: () => void;
   onClose: () => void;
 }) {
-  const creator = promptCreatorLabel(prompt);
-  const createdAt = formatShareCreatedDate(prompt.created_at);
+  const { locale, msg } = useI18n();
+  const creator = promptCreatorLabel(prompt, msg('workbench.you', 'you'));
+  const createdAt = formatShareCreatedDate(prompt.created_at, locale);
   const shared = Boolean(prompt.is_shared_with_workspace);
   const isCreator = isPromptCreator(prompt, account);
   return (
-    <Dialog title="Share Prompt" onClose={onClose} size="share">
+    <Dialog
+      title={msg('workbench.shareTitle', 'Share Prompt')}
+      onClose={onClose}
+      closeDisabled={isSharing}
+      size="share"
+    >
       <div className={clsx('workbench-share-content', !shared && !isCreator && 'is-readonly')}>
-        <section className="workbench-share-summary" aria-label="Prompt summary">
+        <section className="workbench-share-summary" aria-label={msg('workbench.promptSummary', 'Prompt summary')}>
           <div className="workbench-share-title">{promptTitle}</div>
           <div className="workbench-share-meta">
             <Box className="size-3.5 text-primary" aria-hidden />
-            <span>{createdAt ? `${createdAt} by ${creator}` : `by ${creator}`}</span>
+            <span>
+              {createdAt
+                ? msg('workbench.createdAtBy', '{date} by {creator}', { date: createdAt, creator })
+                : msg('workbench.createdBy', 'by {creator}', { creator })}
+            </span>
           </div>
         </section>
 
         <section className="workbench-share-access">
-          <h3>Access</h3>
+          <h3>{msg('workbench.shareAccess', 'Access')}</h3>
           {shared ? (
             <div className="workbench-share-access-row is-shared">
               <div>
-                <strong>Shared with workspace</strong>
-                <p>Anyone in this workspace can find and use this prompt.</p>
+                <strong>{msg('workbench.sharedWithWorkspace', 'Shared with workspace')}</strong>
+                <p>
+                  {msg('workbench.workspacePromptAccess', 'Anyone in this workspace can find and use this prompt.')}
+                </p>
               </div>
             </div>
           ) : isCreator ? (
             <>
-              <p>Only you can access this prompt until it is shared with the workspace.</p>
+              <p>
+                {msg(
+                  'workbench.privatePromptAccess',
+                  'Only you can access this prompt until it is shared with the workspace.',
+                )}
+              </p>
               <Button type="button" className="w-fit" disabled={isSharing} onClick={onShare}>
                 {isSharing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                Share with workspace
+                {msg('workbench.shareWithWorkspace', 'Share with workspace')}
               </Button>
             </>
           ) : (
-            <p>Please ask the creator of this prompt, {creator}, to modify its sharing settings.</p>
+            <p>
+              {msg(
+                'workbench.askCreatorToShare',
+                'Please ask the creator of this prompt, {creator}, to modify its sharing settings.',
+                { creator },
+              )}
+            </p>
           )}
           {isCreator && error ? <div className="workbench-share-error">{error}</div> : null}
         </section>
@@ -537,42 +626,80 @@ export function SharePromptDialog({
 }
 
 export function WorkbenchDrawer({
+  open,
   title,
   kind,
   children,
   headerAction,
   onClose,
+  onClosed,
 }: {
+  open: boolean;
   title: string;
   kind: DrawerName;
   children: ReactNode;
   headerAction?: ReactNode;
-  onClose: () => void;
+  onClose: (reason?: 'escape') => void;
+  onClosed: () => void;
 }) {
+  const { msg } = useI18n();
+  const drawerLabel = msg(`workbench.drawer.${kind}`, title);
   return (
-    <aside className={clsx('workbench-drawer-panel', `is-${kind}`)} aria-label={title}>
-      <div className="workbench-drawer-header">
-        <h2>{title}</h2>
-        <div className="workbench-drawer-header-actions">
-          {headerAction}
-          <IconButton label="Close" onClick={onClose}>
-            <X className="size-4" aria-hidden />
-          </IconButton>
-        </div>
-      </div>
-      <div
-        className={clsx(
-          'workbench-drawer-body subtle-scrollbar',
-          kind === 'model' && 'is-model',
-          kind === 'variables' && 'is-variables',
-          kind === 'tools' && 'is-tools',
-          kind === 'examples' && 'is-examples',
-          kind === 'history' && 'is-history',
-        )}
+    <Sheet
+      open={open}
+      modal={false}
+      disablePointerDismissal
+      onOpenChange={(nextOpen, details) => {
+        if (details.reason === 'focus-out') {
+          details.cancel();
+          return;
+        }
+        if (!nextOpen) onClose(details.reason === 'escape-key' ? 'escape' : undefined);
+      }}
+      onOpenChangeComplete={(nextOpen) => {
+        if (!nextOpen) onClosed();
+      }}
+    >
+      <SheetContent
+        className={clsx('workbench-drawer-panel h-auto max-w-none gap-0 sm:max-w-none', `is-${kind}`)}
+        aria-label={drawerLabel}
+        showOverlay={false}
+        showCloseButton={false}
+        initialFocus={false}
       >
-        {children}
-      </div>
-    </aside>
+        <div className="workbench-drawer-header">
+          <SheetTitle>{drawerLabel}</SheetTitle>
+          <div className="workbench-drawer-header-actions">
+            {headerAction}
+            <SheetClose
+              aria-label={msg('common.close', 'Close')}
+              title={msg('common.close', 'Close')}
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="size-9 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                />
+              }
+            >
+              <X className="size-4" aria-hidden />
+            </SheetClose>
+          </div>
+        </div>
+        <div
+          className={clsx(
+            'workbench-drawer-body subtle-scrollbar',
+            kind === 'model' && 'is-model',
+            kind === 'variables' && 'is-variables',
+            kind === 'tools' && 'is-tools',
+            kind === 'examples' && 'is-examples',
+            kind === 'history' && 'is-history',
+          )}
+        >
+          {children}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -585,24 +712,21 @@ export function DeletePromptDialog({
   onCancel: () => void;
   onDelete: () => void;
 }) {
+  const { msg } = useI18n();
+  const dialogProps = useDialogDismissal(onCancel, isDeleting);
   return (
-    <AlertDialog
-      open
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen && !isDeleting) {
-          onCancel();
-        }
-      }}
-    >
+    <AlertDialog {...dialogProps}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete prompt</AlertDialogTitle>
-          <AlertDialogDescription>Are you sure you want to permanently delete this prompt?</AlertDialogDescription>
+          <AlertDialogTitle>{msg('workbench.deletePrompt', 'Delete prompt')}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {msg('workbench.deletePromptConfirm', 'Are you sure you want to permanently delete this prompt?')}
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
           <AlertDialogAction variant="destructive" disabled={isDeleting} onClick={onDelete}>
-            {isDeleting ? 'Deleting' : 'Delete'}
+            {isDeleting ? msg('common.deleting', 'Deleting') : msg('workbench.delete', 'Delete')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -610,115 +734,118 @@ export function DeletePromptDialog({
   );
 }
 
-export function Dialog({
-  title,
-  children,
-  onClose,
-  size = 'normal',
-}: {
+type DialogSurfaceProps = {
   title: string;
   children: ReactNode;
-  onClose: () => void;
+  closeDisabled?: boolean;
+  initialFocus?: ComponentProps<typeof DialogContent>['initialFocus'];
   size?: 'normal' | 'wide' | 'code' | 'improve' | 'generate' | 'share' | 'rename' | 'attachmentUrl';
-}) {
+};
+
+export function Dialog({
+  onClose,
+  closeDisabled = false,
+  ...surfaceProps
+}: DialogSurfaceProps & { onClose: () => void }) {
+  const dialogProps = useDialogDismissal(onClose, closeDisabled);
   return (
-    <DialogRoot
-      open
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
+    <DialogRoot {...dialogProps}>
+      <DialogSurface {...surfaceProps} closeDisabled={closeDisabled} />
+    </DialogRoot>
+  );
+}
+
+function DialogSurface({ title, children, closeDisabled = false, initialFocus, size = 'normal' }: DialogSurfaceProps) {
+  const { msg } = useI18n();
+  const styledClose = ['code', 'rename', 'share', 'generate', 'attachmentUrl'].includes(size);
+  const closeLabel = msg('common.close', 'Close');
+  return (
+    <DialogContent
+      initialFocus={initialFocus}
+      aria-label={title}
+      showCloseButton={false}
+      className={clsx(
+        'max-h-[90vh] gap-0 overflow-hidden rounded-lg border-border bg-popover p-0 shadow-[var(--shadow-popover)] sm:max-w-none',
+        size === 'code'
+          ? 'workbench-code-dialog'
+          : size === 'improve'
+            ? 'workbench-improve-dialog'
+            : size === 'generate'
+              ? 'workbench-generate-dialog'
+              : size === 'share'
+                ? 'workbench-share-dialog'
+                : size === 'rename'
+                  ? 'workbench-rename-dialog'
+                  : size === 'attachmentUrl'
+                    ? 'workbench-attachment-url-dialog'
+                    : size === 'wide'
+                      ? 'w-full max-w-[780px]'
+                      : 'w-full max-w-[420px]',
+      )}
     >
-      <DialogContent
-        aria-label={title}
-        showCloseButton={false}
+      <DialogHeader
         className={clsx(
-          'max-h-[90vh] gap-0 overflow-hidden rounded-lg border-border bg-popover p-0 shadow-xl sm:max-w-none',
-          size === 'code'
-            ? 'workbench-code-dialog'
-            : size === 'improve'
-              ? 'workbench-improve-dialog'
-              : size === 'generate'
-                ? 'workbench-generate-dialog'
-                : size === 'share'
-                  ? 'workbench-share-dialog'
-                  : size === 'rename'
-                    ? 'workbench-rename-dialog'
-                    : size === 'attachmentUrl'
-                      ? 'workbench-attachment-url-dialog'
-                      : size === 'wide'
-                        ? 'w-full max-w-[780px]'
-                        : 'w-full max-w-[420px]',
+          'flex h-14 flex-row items-center justify-between border-b-[0.5px] border-border px-4',
+          size === 'code' && 'workbench-code-dialog-header',
+          size === 'improve' && 'workbench-improve-dialog-header',
+          size === 'generate' && 'workbench-generate-dialog-header',
+          size === 'share' && 'workbench-share-dialog-header',
+          size === 'rename' && 'workbench-rename-dialog-header',
+          size === 'attachmentUrl' && 'workbench-attachment-url-dialog-header',
         )}
       >
-        <DialogHeader
+        <DialogTitle
           className={clsx(
-            'flex h-14 flex-row items-center justify-between border-b border-border px-4',
-            size === 'code' && 'workbench-code-dialog-header',
-            size === 'improve' && 'workbench-improve-dialog-header',
-            size === 'generate' && 'workbench-generate-dialog-header',
-            size === 'share' && 'workbench-share-dialog-header',
-            size === 'rename' && 'workbench-rename-dialog-header',
-            size === 'attachmentUrl' && 'workbench-attachment-url-dialog-header',
+            'text-sm font-semibold text-foreground',
+            size === 'code' && 'workbench-code-dialog-title',
+            size === 'generate' && 'sr-only',
+            size === 'share' && 'workbench-share-dialog-title',
+            size === 'rename' && 'workbench-rename-dialog-title',
+            size === 'attachmentUrl' && 'workbench-attachment-url-dialog-title',
+            size === 'improve' && 'sr-only',
           )}
         >
-          <DialogTitle
-            className={clsx(
-              'text-sm font-semibold text-foreground',
-              size === 'code' && 'workbench-code-dialog-title',
-              size === 'generate' && 'sr-only',
-              size === 'share' && 'workbench-share-dialog-title',
-              size === 'rename' && 'workbench-rename-dialog-title',
-              size === 'attachmentUrl' && 'workbench-attachment-url-dialog-title',
-              size === 'improve' && 'sr-only',
-            )}
-          >
-            {title}
-          </DialogTitle>
-          {size === 'code' ||
-          size === 'rename' ||
-          size === 'share' ||
-          size === 'generate' ||
-          size === 'attachmentUrl' ? (
+          {title}
+        </DialogTitle>
+        <DialogClose
+          disabled={closeDisabled}
+          render={
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              aria-label="Close"
-              title="Close"
+              aria-label={closeLabel}
+              title={closeLabel}
+              disabled={closeDisabled}
               className={clsx(
-                'workbench-code-dialog-close',
+                styledClose
+                  ? 'workbench-code-dialog-close'
+                  : 'grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground',
                 size === 'rename' && 'workbench-rename-dialog-close',
                 size === 'share' && 'workbench-share-dialog-close',
                 size === 'generate' && 'workbench-generate-dialog-close',
                 size === 'attachmentUrl' && 'workbench-attachment-url-dialog-close',
               )}
-              onClick={onClose}
-            >
-              <X className="size-4" aria-hidden />
-            </Button>
-          ) : (
-            <IconButton label={size === 'improve' ? 'Close' : 'Close dialog'} onClick={onClose}>
-              <X className="size-4" aria-hidden />
-            </IconButton>
-          )}
-        </DialogHeader>
-        <div
-          className={clsx(
-            'subtle-scrollbar max-h-[calc(90vh-56px)] overflow-y-auto p-4',
-            size === 'code' && 'workbench-code-dialog-body',
-            size === 'improve' && 'workbench-improve-dialog-body',
-            size === 'generate' && 'workbench-generate-dialog-body',
-            size === 'share' && 'workbench-share-dialog-body',
-            size === 'rename' && 'workbench-rename-dialog-body',
-            size === 'attachmentUrl' && 'workbench-attachment-url-dialog-body',
-          )}
+            />
+          }
         >
-          {children}
-        </div>
-      </DialogContent>
-    </DialogRoot>
+          <X className="size-4" aria-hidden />
+        </DialogClose>
+      </DialogHeader>
+      <div
+        className={clsx(
+          'subtle-scrollbar max-h-[calc(90vh-56px)] overflow-y-auto p-4',
+          size === 'code' && 'workbench-code-dialog-body',
+          size === 'improve' && 'workbench-improve-dialog-body',
+          size === 'generate' && 'workbench-generate-dialog-body',
+          size === 'share' && 'workbench-share-dialog-body',
+          size === 'rename' && 'workbench-rename-dialog-body',
+          size === 'attachmentUrl' && 'workbench-attachment-url-dialog-body',
+        )}
+      >
+        {children}
+      </div>
+    </DialogContent>
   );
 }
 

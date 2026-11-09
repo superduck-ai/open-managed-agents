@@ -412,6 +412,10 @@ minimap seek 流程：
 
 ### 6.6 跨线程跳转
 
+消息行首先按 `session_thread_id` 分配所属 lane，方向始终相对于该 lane。`to_session_thread_id` / `from_session_thread_id` 只用于对端标签、连线和跳转，不作为该消息的 owner。主线程和子线程的 sent/received 副本分别保留，不能按内容、传输 UUID 或 original_event_id 合并删除。
+
+父线程下发任务时，主 lane 显示 sent → 子线程，子 lane 显示 received ← Orchestrator；子线程回报时，子 lane 显示 sent → Orchestrator，主 lane 显示 received ← 子线程。时间线将对端线程 ID 通过 laneIdByThreadId 映射为 lane ID，包括主 lane 的空字符串 ID。点击子 lane 中指向主线程的标签时，空字符串是合法 lane，不能因 falsy 判断拒绝跳转。界面中的主线程对端统一显示 Orchestrator，事件 payload 保留 Agent 实际名称。
+
 `agent.thread_message_sent` / `agent.thread_message_received` 行内标签点击时：
 
 1. 从 `to_session_thread_id` 或 `from_session_thread_id` 找目标 thread。
@@ -536,3 +540,11 @@ web/src/features/managed-agents/session-detail/
 - 如果后端事件缺少 `bracketStartMs`、`executionMs` 或 `inferenceMs`，tick 宽度会退化成最小块。
 - thread API 与 event stream 到达顺序不同步时，active lane 可能需要基于 thread id 追踪而不是仅存 lane index。
 - archived lane 展开后要重放 pending cross-thread seek，否则用户点击归档线程消息会丢失目标定位。
+
+### Thinking 原始帧检查
+
+Debug 详情的 thinking Deltas 标签保留当前标签页实时捕获的 `event_start`，并在同 ID 的 `agent.thinking` 完成后追加完成帧。两帧以可折叠 JSON 展示，支持查看和复制原始内容。完成后的迟到预览不能覆盖完成状态；历史查询仅能补全已有预览的完成帧，不生成未捕获的起始帧。该数据仅在当前页面缓存，不写入事件历史。普通消息同样保留实时起始帧、文本增量和最终消息，使用与 thinking 相同的 JSON 折叠列表；最终消息到达及历史同步不会删除这些已捕获帧，重复完成只替换最后的完成帧。
+
+Thinking Deltas 的布局对齐参考截图：虚线分隔后展示事件类型与完整 ID、临时捕获提示；一个圆角边框内按顺序放置起始与完成帧，各帧默认展开，标题显示类型与 ID，灰色 JSON 区右上角提供复制按钮。长 ID 与 JSON 在窄屏换行，使用共享语义令牌适配明暗主题。
+
+Message Deltas 按实际接收顺序展示 `event_start`、各个 `event_delta` 和最终 `agent.message`。帧默认收起，起始与完成标题显示事件 ID，增量标题显示单行文本摘要并截断长文本；展开后显示完整原始 JSON 和独立复制按钮。Deltas 标签括号内只统计 `event_delta` 数量，实时更新。

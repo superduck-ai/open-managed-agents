@@ -1,3 +1,4 @@
+import { runSubagent } from "./subagent-tools.ts";
 import { completedInputs } from "./session-log.ts";
 import { afterEach, expect, test } from "bun:test";
 import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
@@ -5,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import { SessionId, Session, appendPluginRecord } from "@deepseek-ai/dsh-session";
-import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { OmaApi } from "../src/api.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
@@ -104,14 +105,14 @@ test("remote extension on reacquisition discovers a child created by the other B
   await first.close();
   const second = await mount(backend, rootB);
   backend.modelScript = [textEvents("child reply on B")];
-  await second.session.subagents.send({ name: "remote-specialist", system_prompt: "Inspect remote work", message: "Inspect files" }, new AbortController().signal);
+  await runSubagent(second.session, "subagent", { description: "remote-specialist", prompt: ["Inspect remote work", "Inspect files"].filter(Boolean).join("\n") });
   const childId = second.session.subagents.threads[0]!.id;
   await second.session.checkpoint();
   await second.close();
   const requests = backend.requests.length;
   const third = await mount(backend, rootA);
   expect(third.session.restoredFromRemote).toBe(true);
-  expect(third.session.subagents.threads).toEqual([expect.objectContaining({ id: childId, name: "remote-specialist", systemPrompt: "Inspect remote work", status: "idle" })]);
+  expect(third.session.subagents.threads).toEqual([expect.objectContaining({ id: childId, name: "remote-specialist", systemPrompt: "Inspect remote work\nInspect files", status: "idle" })]);
   expect(backend.requests).toHaveLength(requests);
 });
 
@@ -157,4 +158,30 @@ test("invalid remote history fails reacquisition without changing the existing l
   expect(await readFile(transcript)).toEqual(original);
   expect(backend.requests).toHaveLength(requests);
   expect([...backend.publicLog.values()]).toEqual(publicEvents);
+});
+
+test("completed-block journals restore unpublished output in recorded order on another Brain", async () => {
+  const { backend, rootA, rootB } = await fixture();
+  const first = await mount(backend, rootA);
+  backend.modelScript = [textEvents("initial reply")];
+  await first.session.receive("block-input", { content: "Reply" });
+  const outputs = [
+    { type: "agent.message" as const, id: "sevt_first_block", uuid: "sevt_first_block", content: [{ type: "text" as const, text: "before thinking" }] },
+    { type: "agent.thinking" as const, id: "sevt_thinking_block", uuid: "sevt_thinking_block" },
+    { type: "agent.message" as const, id: "sevt_last_block", uuid: "sevt_last_block", content: [{ type: "text" as const, text: "after thinking" }] },
+  ];
+  appendPluginRecord(first.session.agent.session, "plugin:oma/assistant-block", { output: {
+    type: "agent.message", id: "sevt_proxy_owned", uuid: "sevt_proxy_owned", model_request_start_id: "request_proxy",
+    content: [{ type: "text", text: "already finalized by proxy" }],
+  } });
+  for (const output of outputs) appendPluginRecord(first.session.agent.session, "plugin:oma/assistant-block", { output });
+  await first.session.checkpoint();
+  expect(outputs.every(output => !backend.publicLog.has(output.uuid))).toBe(true);
+  await first.close();
+  const requests = backend.requests.length;
+  const second = await mount(backend, rootB);
+  expect(second.session.restoredFromRemote).toBe(true);
+  expect([...backend.publicLog.values()].filter(event => outputs.some(output => output.uuid === event.uuid))).toEqual(outputs);
+  expect(backend.publicLog.has("sevt_proxy_owned")).toBe(true);
+  expect(backend.requests).toHaveLength(requests);
 });

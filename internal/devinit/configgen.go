@@ -29,6 +29,11 @@ func GenerateConfig(baseConfigPath string, layout Layout, base config.Config, sp
 		return fmt.Errorf("base config %s must be a single YAML mapping", baseConfigPath)
 	}
 	root := document.Content[0]
+	if spec.LocalOpenObserve {
+		if err := configureLocalOpenObserve(root, layout.RepoRoot, runtime.OpenObservePort); err != nil {
+			return err
+		}
+	}
 
 	apiAddr := "127.0.0.1:" + strconv.Itoa(runtime.APIPort)
 	setMappingValue(root, "server", "addr", apiAddr)
@@ -111,6 +116,7 @@ func defaultWorkspaceState(state State) (WorkspaceState, error) {
 // absolutizeConfigPaths pins every runtime-resolved relative path field from
 // the base config into the generated document as an absolute path.
 func absolutizeConfigPaths(root *yaml.Node, base config.Config) {
+	setPathIfPresent(root, []string{"llm_provider_presets_file"}, base.LLMProviderPresetsFile)
 	setPathIfPresent(root, []string{"code_session", "jwt_signing_private_key_file"}, base.CodeSession.JWTSigningPrivateKeyFile)
 	setPathIfPresent(root, []string{"code_session", "upstream_proxy_ca_key_file"}, base.CodeSession.UpstreamProxyCAKeyFile)
 	setPathIfPresent(root, []string{"code_session", "brain_claim_token_file"}, base.CodeSession.BrainClaimTokenFile)

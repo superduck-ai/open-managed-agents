@@ -10,6 +10,8 @@ import (
 type observation struct {
 	rule      *billing.ResponseCostRule
 	cost      *billing.ProviderCost
+	chat      *chatObservation
+	eof       bool
 	usage     billing.Usage
 	streaming bool
 	failed    bool
@@ -42,6 +44,10 @@ func (o *observation) write(data []byte) {
 			return
 		}
 		o.buffer = rest
+		if o.chat != nil {
+			o.chat.line(o, line)
+			continue
+		}
 		raw, ok := bytes.CutPrefix(bytes.TrimSpace(line), []byte("data:"))
 		if ok {
 			o.frame(raw)
@@ -50,6 +56,10 @@ func (o *observation) write(data []byte) {
 }
 
 func (o *observation) frame(data []byte) {
+	if o.chat != nil {
+		o.chat.frame(o, data)
+		return
+	}
 	var event responseUsage
 	if json.Unmarshal(data, &event) != nil {
 		o.failed = true
@@ -78,6 +88,9 @@ func (o *observation) frame(data []byte) {
 func (o *observation) end() {
 	if !o.streaming && !o.failed && !o.complete {
 		o.frame(o.buffer)
+	}
+	if o.chat != nil && o.streaming && o.eof && !o.failed && !o.complete {
+		o.complete = len(o.buffer) == 0 && len(o.chat.event) == 0 && o.chat.complete()
 	}
 }
 

@@ -27,3 +27,25 @@ func TestChildThreadMessageCopyReversesDirectionAndKeepsIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestThreadMessageCopiesKeepBothOwnersAndPeers(t *testing.T) {
+	for _, kind := range []string{"agent.thread_message_sent", "agent.thread_message_received"} {
+		input := map[string]any{"id": "source", "uuid": "transport", "type": kind, "session_thread_id": "child", "agent_name": "worker", "content": []any{map[string]any{"type": "text", "text": "literal"}}}
+		peerField := "to_session_thread_id"
+		if kind == "agent.thread_message_received" {
+			peerField = "from_session_thread_id"
+		}
+		input[peerField] = "child"
+		primary := primaryThreadMessageCopy("source", input, "primary")
+		child := childThreadMessageCopy("code", kind, "source", input, "child", "primary", "lead")
+		if primary.Payload["session_thread_id"] != "primary" || primary.Payload[peerField] != "child" || primary.Payload["agent_name"] != nil {
+			t.Fatalf("invalid primary projection: %#v", primary)
+		}
+		if primary.EventID != "source" || primary.EventID == child.EventID || primary.Payload["uuid"] != child.Payload["uuid"] {
+			t.Fatal("message perspectives lost stable independent identities")
+		}
+		if input["session_thread_id"] != "child" || input["agent_name"] != "worker" {
+			t.Fatal("input was mutated")
+		}
+	}
+}

@@ -81,7 +81,7 @@ export function EnvironmentPrebuildLogs({
         </p>
       ) : null}
       {query.isError ? (
-        <div className="flex shrink-0 justify-end border-t border-border px-3 py-2">
+        <div className="flex shrink-0 justify-end border-t-[0.5px] border-border px-3 py-2">
           <Button
             type="button"
             variant="outline"

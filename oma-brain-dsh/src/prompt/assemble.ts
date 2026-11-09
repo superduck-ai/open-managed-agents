@@ -7,8 +7,9 @@ type Launch = Assignment["launch"];
 export function rootSystemPrompt(launch: Launch): string {
   return layers([
     rootPlatformPrompt(launch.subagents !== undefined),
+    launch.subagents?.inlineAgents === false
+      ? "Only the configured predefined agents may be used. You cannot define inline agents. Use subagent with an allowed agent_preset to start work, and send_message with agent_id to continue an existing child." : undefined,
     launch.environment_prompt,
-    skillsPrompt(launch.skills),
     instructionsPrompt("Agent instructions", launch.system),
     sessionPrompt(launch),
   ]);
@@ -18,7 +19,6 @@ export function childSystemPrompt(launch: Launch, thread: SubagentThread): strin
   return layers([
     childPlatformPrompt(thread.name),
     launch.environment_prompt,
-    skillsPrompt(launch.skills),
     instructionsPrompt("Specialist instructions", thread.systemPrompt),
     sessionPrompt(launch),
   ]);
@@ -26,15 +26,6 @@ export function childSystemPrompt(launch: Launch, thread: SubagentThread): strin
 
 function instructionsPrompt(heading: string, text: string): string {
   return text.trim() ? `# ${heading}\n\n${text}` : "";
-}
-
-function skillsPrompt(skills: Launch["skills"]): string {
-  if (!skills?.length) return "";
-  return [
-    "# Skills",
-    "Skills are instruction folders for specific kinds of work. When a task matches one, Read its SKILL.md before starting and follow it. Several skills can apply to one task.",
-    skills.map((skill) => `- ${skill.name}: ${skill.description} (${skill.path})`).join("\n"),
-  ].join("\n\n");
 }
 
 function sessionPrompt(launch: Launch): string {

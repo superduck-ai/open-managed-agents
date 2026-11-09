@@ -1,45 +1,27 @@
 ---
 title: "Pagination"
-description: "Traverse OMA list resources with page cursors."
+description: "Traverse OMA list resources."
 ---
 
-OMA list endpoints generally use opaque cursor pagination.
+Pagination differs by resource; consult the relevant API reference. See [Authentication](/docs/en/api/authentication) to configure `OMA_BASE_URL` and `OMA_API_KEY`.
 
-## Request parameters
+- **Agents and sessions**: pass `limit` and return `next_page` unchanged as `page` on the next request. A `null` `next_page` means there are no more results. Session lists do not return `prev_page`.
+- **Files**: support `page`, `after_id`, and `before_id`. Do not combine `page` with either ID cursor; subsequent requests must use the same `scope_id` as the cursor's originating request. The response includes `has_more`, `first_id`, `last_id`, and `next_page`.
+- **Message batches**: use `after_id` or `before_id` and the response's `has_more`, `first_id`, and `last_id`; they do not return `next_page`.
+- **Models**: currently return the model catalog and `has_more: false`; pagination parameters are not read.
 
-<ParamField query="limit" type="integer">
-  Maximum objects returned on this page. Defaults and limits vary by resource.
-</ParamField>
-
-<ParamField query="page" type="string">
-  The `next_page` value from the previous response. Do not parse or modify it.
-</ParamField>
-
-## Response shape
-
-```json
-{
-  "data": [
-    {"id": "agent_...", "type": "agent"}
-  ],
-  "next_page": "opaque-cursor"
-}
-```
-
-A `null` or absent `next_page` means there is no next page.
-
-## Traversal example
+This example retrieves the first two agent pages:
 
 ```bash
-curl 'http://localhost:38080/v1/agents?beta=true&limit=20' \
-  -H 'Authorization: Bearer sk-ant-local-default'
-
-curl 'http://localhost:38080/v1/agents?beta=true&limit=20&page=<next_page>' \
-  -H 'Authorization: Bearer sk-ant-local-default'
+first_page=$(curl -sS --fail-with-body --get "$OMA_BASE_URL/v1/agents" \
+  -H "x-api-key: $OMA_API_KEY" --data-urlencode 'limit=20')
+printf '%s\n' "$first_page" | jq '.data'
+next_page=$(printf '%s\n' "$first_page" | jq -r '.next_page // empty')
+if [ -n "$next_page" ]; then
+  curl -sS --fail-with-body --get "$OMA_BASE_URL/v1/agents" \
+    -H "x-api-key: $OMA_API_KEY" --data-urlencode 'limit=20' \
+    --data-urlencode "page=$next_page"
+fi
 ```
 
-<Note>
-  A cursor has no stable public relationship to a creation time, resource ID, or database key. Always store and return it as an opaque string.
-</Note>
-
-Filters vary by resource and can include `created_at[gte]`, `status`, `agent_id`, or `include_archived`. Unknown or invalid filter values return an `invalid_request_error`.
+Cursors are opaque; do not parse or modify them. Keep filters and ordering consistent while traversing, and account for data changing between requests. Invalid known parameters may return `invalid_request_error`; do not rely on the server rejecting every unknown parameter.

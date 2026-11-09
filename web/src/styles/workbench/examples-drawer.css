@@ -46,9 +46,7 @@
 .workbench-example-form {
   display: grid;
   gap: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 7px;
-  padding: 14px 12px 12px;
+  padding: 0;
 }
 
 .workbench-example-form-header {
@@ -60,7 +58,7 @@
 
 .workbench-example-form-header h3 {
   color: var(--foreground);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 22px;
 }
@@ -92,9 +90,9 @@
 .workbench-example-card {
   display: grid;
   gap: 11px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 0.5px solid var(--border);
   border-radius: 8px;
-  background: #0e0e0c;
+  background: var(--card);
   padding: 12px;
   color: var(--foreground);
 }
@@ -119,12 +117,12 @@
   display: inline-block;
   max-width: 260px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 0.5px solid var(--border);
   border-radius: 6px;
   background: var(--background);
   padding: 3px 7px;
-  color: rgb(214, 211, 201);
-  font-size: 13px;
+  color: var(--foreground);
+  font-size: 12px;
   font-weight: 500;
   line-height: 18px;
   text-overflow: ellipsis;
@@ -146,11 +144,11 @@
 
 .workbench-example-output {
   min-height: 78px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 7px;
-  background: #141411;
-  padding: 12px;
-  color: rgb(175, 171, 160);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--muted-foreground);
   font-size: 14px;
   font-weight: 400;
   line-height: 20px;
@@ -159,18 +157,17 @@
 .workbench-example-context-preview {
   display: grid;
   gap: 7px;
-  color: rgb(175, 171, 160);
-  font-size: 13px;
+  color: var(--muted-foreground);
+  font-size: 12px;
   line-height: 18px;
 }
 
 .workbench-example-context-preview p {
   margin: 0;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 7px;
-  background: #141411;
-  padding: 10px 12px;
-  color: rgb(175, 171, 160);
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--muted-foreground);
   font-size: 14px;
   font-style: italic;
   line-height: 20px;

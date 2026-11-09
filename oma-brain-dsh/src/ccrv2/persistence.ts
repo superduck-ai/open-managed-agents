@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
+import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { assertPersistenceFormat } from "./recovery.ts";
 import { workerDiagnostic } from "./diagnostics.ts";
 import type { DshLogData } from "./persistence-contracts.ts";
@@ -60,6 +60,22 @@ export class CcrReplication extends Service {
 
   constructor(ctx: Context, readonly config: { backend: CcrBackend }) {
     super(ctx, "ccrReplication");
+    ctx.on("agent/created", ({ agent }) => {
+      agent.ctx.effect(() => async () => {
+        const owner = this.jobs.get(agent.id);
+        if (!owner || owner.live !== agent.session) return;
+        const releasing = owner.chain.then(async () => {
+          await this.flushLocal(owner);
+          if (owner.live === agent.session) {
+            owner.live = undefined;
+            owner.revision = undefined;
+          }
+        });
+        owner.chain = releasing.catch(() => {});
+        await releasing;
+      });
+      return undefined;
+    });
     ctx.on("session/created", session => {
       if (this.stopped || this.forgotten.has(session.id)) return;
       const previous = this.jobs.get(session.id);
@@ -141,6 +157,12 @@ export class CcrReplication extends Service {
       this.records.delete(id);
     });
     return hydrated;
+  }
+
+  acquiredEvents(value: string): readonly SessionEvent[] {
+    const owner = this.jobs.get(SessionId(value));
+    if (!owner?.acquired) throw new Error("Transcript has not been acquired");
+    return owner.local?.events ?? [];
   }
 
   private async readLocal(handle: SessionHandle): Promise<Stored> {
@@ -286,7 +308,9 @@ export class CcrReplication extends Service {
     if (owner.local && owner.revision === snapshot.revision) return owner.local;
     const handle = await this.ctx.sessionPersistence.open(id, "read");
     try {
-      const events = (await handle.read(owner.local?.events.length ?? 0)).events;
+      const local = owner.local;
+      const events = (await handle.read(local?.events.length ?? 0)).events;
+      if (owner.local !== local || owner.live) return owner.local;
       if (owner.local) for (const event of events) owner.local.events.push(event);
       else owner.local = { header: handle.header, inherited: handle.inheritedEventCount, events: [...events] };
       owner.revision = snapshot.revision;

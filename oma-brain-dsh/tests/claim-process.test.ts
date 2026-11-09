@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { Backend, eventually, toolEvents, textEvents } from "./backend.ts";
+import { Backend, eventually, modelSystemText, toolEvents, textEvents } from "./backend.ts";
 
 const transcriptRoot = await mkdtemp(join(tmpdir(), "oma-brain-claim-transcripts-"));
 afterAll(() => rm(transcriptRoot, { recursive: true, force: true }));
@@ -41,10 +41,20 @@ test("startup requires a brain claim token", async () => {
   expect(stderr).toContain("OMA_BRAIN_CLAIM_TOKEN is required");
 });
 
-test("claimed sessions register the Bun host and SSE drives user input and approvals", async () => {
+test("claimed DSH sessions register the Bun host and SSE drives user input and approvals", async () => {
   const backend = new Backend();
   await backend.ready;
-  backend.modelScript = [toolEvents(), textEvents("claim completed")];
+  backend.a.launch.subagents = { inlineAgents: false, agents: [{ name: "worker", description: "Runs sandbox checks", systemPrompt: "Run the assigned check", tools: ["Bash"] }] };
+  backend.onModel = async request => {
+    const history = JSON.stringify(request.messages);
+    if (modelSystemText(request).includes("# Subagent rules")) return history.includes("tool_result") ? textEvents("child report") : toolEvents();
+    if (history.includes("delegate_child")) return textEvents("claim completed");
+    return toolEvents("", "delegate_child").map(event => event.type === "content_block_start"
+      ? { ...event, content_block: { ...event.content_block, name: "subagent" } }
+      : event.type === "content_block_delta"
+        ? { ...event, delta: { type: "input_json_delta", partial_json: JSON.stringify({ agent_preset: `${backend.a.session_id}/worker`, description: "worker", prompt: "Run the command" }) } }
+        : event);
+  };
   const binary = process.env.BRAIN_TEST_BINARY;
   const runtimeDirectory = binary ? await mkdtemp(join(tmpdir(), "oma-brain-dsh-binary-")) : undefined;
   const standalone = runtimeDirectory && binary ? join(runtimeDirectory, "bin", basename(binary)) : undefined;
@@ -74,6 +84,11 @@ test("claimed sessions register the Bun host and SSE drives user input and appro
   let stderr = "";
   child.stdout.on("data", (chunk) => { stdout += String(chunk); });
   child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+  backend.onDelegationApproval = async payload => {
+    backend.deliver(`approval_${crypto.randomUUID()}`, { type: "control_response", response: {
+      subtype: "success", request_id: payload.request_id, response: { behavior: "allow" },
+    } });
+  };
   backend.onApproval = async (p) => {
     backend.deliver(`reply_${crypto.randomUUID()}`, {
       type: "control_response",
@@ -109,6 +124,14 @@ test("claimed sessions register the Bun host and SSE drives user input and appro
     expect(backend.executions).toEqual([{ name: "bash", arguments: { command: "claim-approved" } }]);
     await eventually(() => backend.processed.includes(eventId));
     expect(backend.registrations).toBe(1);
+    {
+      expect([...backend.publicLog.values()].filter(event => event.type === "session.thread_created")).toHaveLength(1);
+      expect([...backend.publicLog.values()].filter(event => event.type === "agent.thread_message_sent")).toHaveLength(1);
+      expect([...backend.publicLog.values()].filter(event => event.type === "agent.thread_message_received")).toHaveLength(1);
+      const tools = backend.requests[0]!.tools.map((tool: { name: string }) => tool.name);
+      expect(tools).toContain("subagent");
+      expect(tools).not.toContain("send_to_agent");
+    }
     expect([...backend.publicLog.values()].filter((p) => p.type === "result")).toHaveLength(1);
     expect(backend.releases).toEqual([]);
     if (standalone) {

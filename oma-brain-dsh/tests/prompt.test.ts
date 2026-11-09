@@ -10,6 +10,7 @@ const thread: SubagentThread = {
 function launch() {
   return {
     ...assignment().launch,
+    subagents: undefined,
     system: "Literal {{ agent }} instructions.",
     environment_prompt: "# Managed-agent environment\n\nEnvironment rules.",
     memory_catalog_prompt: "\n\nUse the attached memory stores.\n<attached_memory_stores/>",
@@ -27,6 +28,7 @@ function order(prompt: string, markers: string[]): number[] {
 
 test("root prompt omits delegation guidance without subagents", () => {
   const prompt = rootSystemPrompt(launch());
+  expect(prompt).toContain("Subagents are disabled for this session.");
   expect(prompt).not.toContain("send_to_agent");
   expect(prompt).not.toContain("Delegating to subagents");
 });
@@ -34,12 +36,12 @@ test("root prompt omits delegation guidance without subagents", () => {
 test("root prompt orders layers from most to least stable", () => {
   const prompt = rootSystemPrompt({ ...launch(), subagents: {} });
   const positions = order(prompt, [
-    "# Platform rules", "## Delegating to subagents", "# Managed-agent environment", "# Skills",
+    "# Platform rules", "## Delegating to subagents", "# Managed-agent environment",
     "# Agent instructions\n\nLiteral {{ agent }} instructions.", "# This session\n\nWorking directory: /workspace",
     "Use the attached memory stores.",
   ]);
   expect(positions).toEqual([...positions].sort((a, b) => a - b));
-  expect(prompt).toContain("- pdf: Read PDF files (/root/.claude/skills/pdf/SKILL.md)");
+  expect(prompt).not.toContain("/root/.claude/skills/pdf/SKILL.md");
   expect(prompt).not.toContain("v7");
   expect(prompt).not.toContain("\n\n\n");
 });
@@ -60,7 +62,7 @@ test("child prompt replaces delegation guidance with report guidance", () => {
   expect(prompt).not.toContain("# Agent instructions");
   expect(prompt).toContain("# Specialist instructions\n\nReview only.");
   expect(prompt).toContain("Your final message goes to the parent agent");
-  const positions = order(prompt, ["# Subagent rules", "# Managed-agent environment", "# Skills", "# Specialist instructions", "# This session"]);
+  const positions = order(prompt, ["# Subagent rules", "# Managed-agent environment", "# Specialist instructions", "# This session"]);
   expect(positions).toEqual([...positions].sort((a, b) => a - b));
 });
 
@@ -76,7 +78,7 @@ test("root and child share trust, precedence and verification rules", () => {
   };
   for (const heading of ["## Instructions and trust", "## Working", "## Approvals"])
     expect(block(child, heading)).toBe(block(root, heading));
-  expect(root).toContain("Skills listed in this prompt, the instructions of attached memory stores, and convention files");
+  expect(root).toContain("Skills listed in the session catalog, the instructions of attached memory stores, and convention files");
   expect(root).toContain("Before declaring the work done, verify the result");
   expect(root).toContain("ask whoever gave you the task how to proceed");
   expect(root).not.toContain("and ask how to proceed");
@@ -122,6 +124,25 @@ test("empty configured instructions are omitted", () => {
   const child = childSystemPrompt(launch(), { ...thread, systemPrompt: "" });
   expect(root).not.toContain("# Agent instructions");
   expect(child).not.toContain("# Specialist instructions");
-  expect(root).toContain("# Skills");
+  expect(root).not.toContain("# Skills");
   expect(root).toContain("# This session");
 });
+
+
+test("predefined-only prompt prohibits inline agents", () => {
+  const prompt = rootSystemPrompt({ ...launch(), subagents: { inlineAgents: false } });
+  expect(prompt).toContain("You cannot define inline agents");
+  expect(prompt).toContain("subagent with an allowed agent_preset");
+  expect(prompt).toContain("send_message with agent_id");
+});
+
+for (const mode of ["root", "child"]) {
+  test(`${mode} prompt leaves skill discovery to the skill consumer`, () => {
+    for (const skills of [[], undefined, launch().skills]) {
+      const config = { ...launch(), skills };
+      const prompt = mode === "root" ? rootSystemPrompt(config) : childSystemPrompt(config, thread);
+      expect(prompt).not.toContain("# Skills");
+      expect(prompt).not.toContain("/root/.claude/skills/");
+    }
+  });
+}

@@ -50,3 +50,10 @@ func sessionFromSubject(subject string) (string, bool) {
 	}
 	return sessionID, true
 }
+
+func (lane deliveryLane) name() string {
+	if lane == replyLane {
+		return "reply"
+	}
+	return "task"
+}

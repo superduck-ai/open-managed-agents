@@ -1,13 +1,27 @@
+import { useI18n } from '../../shared/i18n';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../shared/auth/context';
+import { useOrganizations } from '../../shared/organizations/context';
+import { readPreference } from '../../shared/organizations/scope';
 import { returnToFromSearch } from '../../shared/auth/redirects';
 import { Button } from '../../shared/ui/button';
 import { invitationReturnTo, listInvitations } from './api';
 
 export function InvitationEntryGate() {
   const { status, account } = useAuth();
+  const location = useLocation();
+  const organizations = useOrganizations();
+  const inPlatformAdmin = location.pathname === '/platform-admin' || location.pathname.startsWith('/platform-admin/');
+  const wasInPlatformAdmin = useRef(inPlatformAdmin);
+  useEffect(() => {
+    const returning = wasInPlatformAdmin.current && !inPlatformAdmin;
+    wasInPlatformAdmin.current = inPlatformAdmin;
+    if (returning && status === 'authenticated' && account && !organizations?.platformScope)
+      void organizations?.switchOrganization(readPreference(account.uuid));
+  }, [account, inPlatformAdmin, organizations, status]);
+  if (inPlatformAdmin) return <Outlet />;
   if (status !== 'authenticated' || !account) return <Outlet />;
   return (
     <AuthenticatedInvitationEntry key={account.uuid} accountUuid={account.uuid}>
@@ -17,6 +31,7 @@ export function InvitationEntryGate() {
 }
 
 function AuthenticatedInvitationEntry({ accountUuid, children }: { accountUuid: string; children: ReactNode }) {
+  const { msg } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const [checked, setChecked] = useState(location.pathname === '/invites');
@@ -59,24 +74,24 @@ function AuthenticatedInvitationEntry({ accountUuid, children }: { accountUuid: 
     return (
       <main className="grid min-h-screen place-items-center bg-background p-6 text-foreground">
         <div role="alert" className="space-y-4 text-center">
-          <p>组织邀请检查失败。</p>
+          <p>{msg('invitations.checkFailed', 'Organization invitations could not be checked.')}</p>
           <Button
             onClick={() => {
               setNavigationError(false);
               void invitations.refetch();
             }}
           >
-            重试
+            {msg('common.retry', 'Retry')}
           </Button>
           <Button variant="ghost" onClick={() => setChecked(true)}>
-            继续控制台
+            {msg('invitations.continueToConsole', 'Continue to console')}
           </Button>
         </div>
       </main>
     );
   return (
     <main role="status" className="grid min-h-screen place-items-center bg-background text-foreground">
-      正在检查组织邀请…
+      {msg('invitations.checking', 'Checking organization invitations…')}
     </main>
   );
 }

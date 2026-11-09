@@ -50,6 +50,15 @@ func TestWorkspaceAccessMapperBindings(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertMapperTestExecution(t, executor, "WorkspaceAccessMapper.LockUsers", yourbatis.StatementSelect,
-			[]any{org, "user_actor", "user_target"}, "external_id IN ($2, $3)", "ORDER BY uuid FOR UPDATE")
+			[]any{org, "user_target", "user_actor"}, "external_id = $2 OR external_id = $3", "ORDER BY uuid FOR UPDATE")
 	})
+}
+
+func TestWorkspaceMemberPlatformTargetLock(t *testing.T) {
+	executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"uuid", "external_id", "organization_uuid", "email", "name", "role", "added_at"}})
+	_, err := NewWorkspaceAccessMapper(executor).LockUsers(t.Context(), "org", "", "user_target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMapperTestExecution(t, executor, "WorkspaceAccessMapper.LockUsers", yourbatis.StatementSelect, []any{"org", "user_target"}, "organization_uuid = $1", "external_id = $2", "FOR UPDATE")
 }

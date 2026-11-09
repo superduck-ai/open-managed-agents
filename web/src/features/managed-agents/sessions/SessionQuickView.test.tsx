@@ -23,7 +23,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function showPreview(events: QuickstartSessionEvent[], failed = false) {
+function showPreview(events: QuickstartSessionEvent[], failed = false, locale: 'en' | 'zh-CN' = 'en') {
   resetTestDom('https://oma.duck.ai/workspaces/default/sessions');
   const fetchMock = mock(async (input: RequestInfo | URL) => {
     if (failed) return Response.json({ error: { message: 'Preview unavailable' } }, { status: 500 });
@@ -31,7 +31,7 @@ function showPreview(events: QuickstartSessionEvent[], failed = false) {
   });
   globalThis.fetch = fetchMock as typeof fetch;
   render(
-    <I18nProvider initialLocale="en">
+    <I18nProvider initialLocale={locale}>
       <SessionQuickView session={session} workspaceId="default" onClose={() => {}} />
     </I18nProvider>,
   );
@@ -102,8 +102,35 @@ test('shows failed tool outcomes and model errors without dumping payloads', asy
     },
     { id: 'model-error', type: 'span.model_request_end', is_error: true, error: { message: 'Gateway unavailable' } },
   ]);
-  expect(await screen.findByText('Failed')).toBeTruthy();
+  expect(await screen.findAllByText('Failed')).toHaveLength(2);
   expect(screen.getByText('failed.md')).toBeTruthy();
   expect(screen.getByRole('dialog').textContent).toContain('Gateway unavailable');
   expect(screen.getByRole('dialog').textContent).not.toContain('"is_error"');
+});
+
+test('localizes event labels and uses the same failure outcome as the conversation', async () => {
+  showPreview(
+    [
+      {
+        id: 'user',
+        type: 'user.message',
+        processed_at: '2026-10-15T03:09:00Z',
+        content: [{ type: 'text', text: '你好' }],
+      },
+      { id: 'error', type: 'session.error', error: { message: 'Gateway unavailable' } },
+      { id: 'idle', type: 'session.status_idle', stop_reason: { type: 'retries_exhausted' } },
+    ],
+    false,
+    'zh-CN',
+  );
+  expect(await screen.findByText('Gateway unavailable')).toBeTruthy();
+  const preview = screen.getByRole('dialog');
+  expect(preview.querySelector('dl')?.textContent).toContain('失败');
+  expect(preview.textContent).toContain('用户');
+  expect(preview.textContent).toContain('错误');
+  expect(preview.textContent).toContain('失败');
+  expect(preview.textContent).toContain('执行失败。');
+  expect(preview.textContent).not.toContain('Idle');
+  expect(preview.textContent).not.toContain('Error');
+  expect(preview.textContent).not.toContain('retries_exhausted');
 });

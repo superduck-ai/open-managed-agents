@@ -52,7 +52,7 @@ test('finds workspace-defined MCP servers when picking a credential server', asy
             type: 'mcp_server',
             name: 'toolbox',
             transport_type: 'url',
-            url: 'https://toolbox.seewo.com/mcp/chatdata/chatdata',
+            url: 'https://mcp.example.com/chatdata/chatdata',
             created_at: '2026-11-09T00:00:00Z',
             updated_at: '2026-11-09T00:00:00Z',
           },
@@ -77,8 +77,8 @@ test('finds workspace-defined MCP servers when picking a credential server', asy
   fireEvent.click(within(dialog).getByRole('combobox', { name: 'MCP server' }));
   const search = await screen.findByPlaceholderText('Search MCP directory...');
   fireEvent.change(search, { target: { value: 'toolbox' } });
-  fireEvent.click(await screen.findByText('https://toolbox.seewo.com/mcp/chatdata/chatdata'));
-  expect(within(dialog).getByDisplayValue('toolbox (https://toolbox.seewo.com/mcp/chatdata/chatdata)')).toBeTruthy();
+  fireEvent.click(await screen.findByText('https://mcp.example.com/chatdata/chatdata'));
+  expect(within(dialog).getByDisplayValue('toolbox (https://mcp.example.com/chatdata/chatdata)')).toBeTruthy();
 });
 
 test('blocks dismissal and duplicate saves while preserving the credential draft on failure', async () => {

@@ -31,7 +31,7 @@ export function EnvOAuthCredentialFields({
     id: provider.id,
     label: provider.builtin
       ? msg('managedAgents.credentialVaults.credentialDialog.envOAuthBuiltinProvider', 'Built-in: {name}', {
-          name: msg('platformAdmin.oauthManagement.feishu', 'Feishu'),
+          name: msg(`platformAdmin.oauthManagement.${provider.id.slice(8)}`, provider.name),
         })
       : provider.name,
     secondary: provider.scope || undefined,
@@ -77,10 +77,14 @@ export function EnvOAuthCredentialFields({
       <ManagedTextField
         label={msg('managedAgents.credentialVaults.credentialDialog.variableName', 'Variable name')}
         value={values.secretName}
-        placeholder={msg(
-          'managedAgents.credentialVaults.credentialDialog.envOAuthSecretNamePlaceholder',
-          'LARKSUITE_CLI_USER_ACCESS_TOKEN',
-        )}
+        placeholder={
+          selected?.id === 'builtin:friday'
+            ? 'ACCESS_TOKEN'
+            : msg(
+                'managedAgents.credentialVaults.credentialDialog.envOAuthSecretNamePlaceholder',
+                'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+              )
+        }
         disabled={secretNameLocked}
         onChange={(secretName) => onChange({ secretName })}
       />

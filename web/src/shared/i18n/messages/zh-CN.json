@@ -3434,6 +3434,7 @@
   "platformAdmin.errors.oauthProviderNameConflict": "该名称的 OAuth 客户端已存在。",
   "platformAdmin.oauthManagement.builtin": "内置",
   "platformAdmin.oauthManagement.feishu": "飞书",
+  "platformAdmin.oauthManagement.friday": "Friday",
   "platformAdmin.oauthManagement.configured": "已配置",
   "platformAdmin.oauthManagement.unconfigured": "未配置",
   "platformAdmin.oauthManagement.configure": "前往配置",

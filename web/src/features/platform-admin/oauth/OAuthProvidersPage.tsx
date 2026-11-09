@@ -109,7 +109,9 @@ export function OAuthProvidersPage() {
             {providers.map((provider) => (
               <DataTableRow key={provider.id} clickable onClick={() => setEditing(provider)}>
                 <DataTableCell edge="start" className="font-medium">
-                  {provider.builtin ? msg('platformAdmin.oauthManagement.feishu', 'Feishu') : provider.name}
+                  {provider.builtin
+                    ? msg(`platformAdmin.oauthManagement.${provider?.provider_key.slice(8)}`, provider?.name ?? '')
+                    : provider.name}
                   <Badge variant={provider.builtin ? 'secondary' : 'outline'} className="ml-2">
                     {provider.builtin
                       ? msg('platformAdmin.oauthManagement.builtin', 'Built-in')

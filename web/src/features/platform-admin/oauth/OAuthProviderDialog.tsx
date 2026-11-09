@@ -102,7 +102,11 @@ export function OAuthProviderDialog({
                 <Input
                   id="oauth-provider-name"
                   readOnly={builtin}
-                  value={builtin ? msg('platformAdmin.oauthManagement.feishu', 'Feishu') : values.name}
+                  value={
+                    builtin
+                      ? msg(`platformAdmin.oauthManagement.${provider?.provider_key.slice(8)}`, provider?.name ?? '')
+                      : values.name
+                  }
                   onChange={(event) => patch({ name: event.target.value })}
                 />
               </Field>

@@ -3434,6 +3434,7 @@
   "platformAdmin.errors.oauthProviderNameConflict": "An OAuth client with this name already exists.",
   "platformAdmin.oauthManagement.builtin": "Built-in",
   "platformAdmin.oauthManagement.feishu": "Feishu",
+  "platformAdmin.oauthManagement.friday": "Friday",
   "platformAdmin.oauthManagement.configured": "Configured",
   "platformAdmin.oauthManagement.unconfigured": "Not configured",
   "platformAdmin.oauthManagement.configure": "Configure provider",

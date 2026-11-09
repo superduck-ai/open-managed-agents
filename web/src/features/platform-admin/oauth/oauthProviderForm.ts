@@ -13,7 +13,7 @@ export type OAuthProviderFormValues = {
 
 export function initialOAuthProviderFormValues(provider?: OAuthProviderRecord): OAuthProviderFormValues {
   return {
-    name: provider?.builtin ? 'Feishu' : (provider?.name ?? ''),
+    name: provider?.name ?? '',
     authorizeEndpoint: provider?.authorize_endpoint ?? '',
     tokenEndpoint: provider?.token_endpoint ?? '',
     scope: provider?.scope ?? '',
@@ -29,5 +29,6 @@ export function oauthProviderFormReady(values: OAuthProviderFormValues, provider
     return false;
   const sameClient = provider?.configured && values.clientId.trim() === provider.client_id;
   if (!sameClient && !values.clientSecret.trim()) return false;
-  return !provider?.builtin || values.scope.split(/\s+/).includes('offline_access');
+  if (provider?.provider_key === 'builtin:feishu') return values.scope.split(/\s+/).includes('offline_access');
+  return provider?.provider_key !== 'builtin:friday' || values.scope.trim() === 'read';
 }

@@ -127,7 +127,7 @@ go run ./cmd/vault-migrate --help
 | `deployments` | `deployments` | JSONB 列 `resource_secrets`，格式为 `map[string]GitTokenEnvelope` | 复合信封（多资源） | `updated_at = NOW()` |
 | `channel_workspace_credentials` | `channel_workspace_credentials` | JSONB 列 `envelope`，直接保存信封 | 单信封 | 整份信封 CAS，不更新时间 |
 | `platform_oauth_providers` | `platform_oauth_providers` | client_id_envelope 与 client_secret_envelope | 每行至多两个 | 固定 platform scope，UUID/旧双信封及 version 整行 CAS，version 递增 |
-| `env_oauth_flows` | `env_oauth_flows` | 非空 client_id_envelope | 单信封 | 实际组织/工作区 UUID 与旧文档 CAS，不修改 flow 状态 |
+| `env_oauth_flows` | `env_oauth_flows` | 自定义 client_id_envelope 或 Friday code_verifier_envelope | 每行至多两个 | 实际组织/工作区 UUID 与旧文档 CAS，不修改 flow 状态 |
 
 > [!NOTE]
 > - **Deployment 多信封原子性**：一个 Deployment 记录可能包含多个环境资源的 Git Token 信封。只有当该记录中**所有**匹配 `--from` 的信封都重新封装并通过自检验证后，才会将整行 JSONB 原子写回；在终端统计中，每个 Deployment 无论包含多少个内部信封，均按**一条数据库记录**计算。
@@ -400,7 +400,7 @@ flowchart LR
 
 ## 7. OAuth 信封与 local 同 Provider 版本轮换
 
-平台客户端 ID 和 secret 使用不同 AAD，沿用 `internal/platformoauth` 的绑定函数；平台分支不查询不存在的组织列。flow ID 使用真实租户 UUID。两字段均在事务外重新包装，任一失败不提交整行；保存时 UUID、旧双信封和版本共同 CAS。每行计数一次，即使内部有两个信封。OAuth 分支在重新包装后实际 Open 校验业务密文，成功提交后记录 maintenance/rewrap 安全事件，失败记录白名单错误码。
+平台客户端 ID 和 secret 使用不同 AAD，沿用 `internal/platformoauth` 的绑定函数；平台分支不查询不存在的组织列。flow ID 与 Friday PKCE verifier 使用真实租户 UUID，verifier 的 AAD 另加 `:code_verifier` 后缀。扫描包含仅有 verifier 信封的 Friday flow；保存保持另一字段 SQL NULL，拒绝旧文档 CAS，不改变 flow 状态。两字段均在事务外重新包装，任一失败不提交整行；保存时 UUID、旧双信封和版本共同 CAS。每行计数一次，即使内部有两个信封。OAuth 分支在重新包装后实际 Open 校验业务密文，成功提交后记录 maintenance/rewrap 安全事件，失败记录白名单错误码。
 
 配置新 local writer 版本并保留旧版本为 decrypt_only，先只读预检源 DEK；停写并备份后 apply：
 
@@ -411,4 +411,4 @@ CONFIG_FILE=/etc/oma/config.yaml go run ./cmd/vault-migrate --from local --to lo
 
 目标版本来自 `vault.master_key.local.version`，必须不同于 1。迁移成功后 key_provider 仍为 local，key_version 改为 writer 版本；同样参数重跑仅跳过新版本，不重复包装。跨 Provider 也可用该参数限制源版本。保留旧 reader/密钥直到在线数据与仍需恢复的备份均不依赖它；恢复服务前校验实际 Open 和相应业务路径。
 
-此命令不负责把历史明文 client_id 转成信封；先按 [ENV OAuth 离线升级](./env-oauth-credential.md#离线升级与部署) 完成 00118/00119。OAuth 应用 client_secret 的业务轮换使用平台 PATCH，与主密钥重包装是两类操作，不额外保存旧 secret。
+此命令不负责把历史明文 client_id 转成信封；先按 [ENV OAuth 离线升级](./env-oauth-credential.md#离线升级与部署) 完成 00118/00119/00120。OAuth 应用 client_secret 的业务轮换使用平台 PATCH，与主密钥重包装是两类操作，不额外保存旧 secret。

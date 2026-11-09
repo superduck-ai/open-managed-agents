@@ -679,7 +679,16 @@ export function CredentialDialog({
               </Button>
             )}
             {needsOAuthConnect ? (
-              <Button type="button" disabled={!canSubmit || submitting} onClick={() => void connectOAuth()}>
+              <Button
+                type="button"
+                disabled={
+                  !canSubmit ||
+                  submitting ||
+                  (values.authType === 'env_oauth' &&
+                    !envOAuthProviders?.find((provider) => provider.id === values.envOAuthProviderId)?.configured)
+                }
+                onClick={() => void connectOAuth()}
+              >
                 {submitting
                   ? msg('managedAgents.credentialVaults.credentialDialog.connecting', 'Connecting...')
                   : msg('managedAgents.credentialVaults.credentialDialog.connect', 'Connect')}

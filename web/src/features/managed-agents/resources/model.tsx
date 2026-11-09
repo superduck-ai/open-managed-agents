@@ -1289,7 +1289,7 @@ export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string 
     case 'platform_oauth_provider_unavailable':
       return msg(
         'managedAgents.credentialVaults.credentialDialog.envOAuthError.providerUnavailable',
-        'This OAuth provider is not configured on the platform.',
+        'This OAuth provider is unavailable. Contact a platform administrator or try again later.',
       );
     case 'credential_key_conflict':
       return msg(

@@ -12,35 +12,16 @@ import {
   DialogTitle,
 } from '../../../shared/ui/dialog';
 import { Input } from '../../../shared/ui/input';
-import { Label } from '../../../shared/ui/label';
+import { Field as FormField, FieldLabel, FieldDescription } from '../../../shared/ui/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import { createOAuthProvider, updateOAuthProvider, type OAuthProviderRecord } from '../../../shared/api/platform-admin';
 import { usePlatformAdmin } from '../context';
 import { usePlatformAdminError } from '../usePlatformAdminError';
-
-type OAuthProviderFormValues = {
-  name: string;
-  authorizeEndpoint: string;
-  tokenEndpoint: string;
-  scope: string;
-  clientId: string;
-  clientSecret: string;
-  authMethod: string;
-  encoding: string;
-};
-
-function initialValues(provider?: OAuthProviderRecord): OAuthProviderFormValues {
-  return {
-    name: provider?.name ?? '',
-    authorizeEndpoint: provider?.authorize_endpoint ?? '',
-    tokenEndpoint: provider?.token_endpoint ?? '',
-    scope: provider?.scope ?? '',
-    clientId: provider?.client_id ?? '',
-    clientSecret: '',
-    authMethod: provider?.token_endpoint_auth_method ?? 'client_secret_post',
-    encoding: provider?.token_endpoint_encoding ?? 'form',
-  };
-}
+import {
+  initialOAuthProviderFormValues,
+  oauthProviderFormReady,
+  type OAuthProviderFormValues,
+} from './oauthProviderForm';
 
 export function OAuthProviderDialog({
   provider,
@@ -54,23 +35,29 @@ export function OAuthProviderDialog({
   const { msg } = useI18n();
   const { client } = usePlatformAdmin();
   const errorMessage = usePlatformAdminError();
-  const [values, setValues] = useState<OAuthProviderFormValues>(() => initialValues(provider));
+  const [values, setValues] = useState<OAuthProviderFormValues>(() => initialOAuthProviderFormValues(provider));
   const [error, setError] = useState<string | null>(null);
   const patch = (next: Partial<OAuthProviderFormValues>) => setValues((current) => ({ ...current, ...next }));
   const mutation = useMutation({
     mutationFn: () => {
+      const editable = {
+        scope: values.scope.trim(),
+        client_id: values.clientId.trim(),
+        ...(values.clientSecret.trim() ? { client_secret: values.clientSecret.trim() } : {}),
+      };
       const input = {
+        ...editable,
         name: values.name.trim(),
         authorize_endpoint: values.authorizeEndpoint.trim(),
         token_endpoint: values.tokenEndpoint.trim(),
-        scope: values.scope.trim(),
-        client_id: values.clientId.trim(),
         token_endpoint_auth_method: values.authMethod,
         token_endpoint_encoding: values.encoding,
-        ...(values.clientSecret.trim() ? { client_secret: values.clientSecret.trim() } : {}),
       };
       return provider
-        ? updateOAuthProvider(client, provider.id, input)
+        ? updateOAuthProvider(client, provider.id, {
+            ...(provider.builtin ? editable : input),
+            expected_version: provider.version,
+          })
         : createOAuthProvider(client, { ...input, client_secret: values.clientSecret.trim() });
     },
     onSuccess: () => {
@@ -78,15 +65,14 @@ export function OAuthProviderDialog({
     },
     onError: (submitError) => setError(errorMessage(submitError)),
   });
-  const canSubmit =
-    values.name.trim() &&
-    values.authorizeEndpoint.trim() &&
-    values.tokenEndpoint.trim() &&
-    values.clientId.trim() &&
-    (provider ? true : values.clientSecret.trim());
+  const canSubmit = oauthProviderFormReady(values, provider);
+  const builtin = provider?.builtin ?? false;
   return (
     <Dialog open onOpenChange={(open) => !open && !mutation.isPending && onClose()}>
-      <DialogContent className="sm:max-w-2xl" closeButtonDisabled={mutation.isPending}>
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-2xl"
+        closeButtonDisabled={mutation.isPending}
+      >
         <DialogHeader>
           <DialogTitle>
             {provider
@@ -96,12 +82,12 @@ export function OAuthProviderDialog({
           <DialogDescription>
             {msg(
               'platformAdmin.oauthManagement.dialogDescription',
-              'Credentials are encrypted at rest and never returned by the API.',
+              'Client ID is visible to platform administrators. Client secret is encrypted and never returned by the API.',
             )}
           </DialogDescription>
         </DialogHeader>
         <form
-          className="flex flex-col gap-4"
+          className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-4"
           onSubmit={(event) => {
             event.preventDefault();
             if (canSubmit && !mutation.isPending) {
@@ -110,96 +96,133 @@ export function OAuthProviderDialog({
             }
           }}
         >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field id="oauth-provider-name" label={msg('platformAdmin.oauthManagement.name', 'Name')}>
-              <Input
-                id="oauth-provider-name"
-                value={values.name}
-                onChange={(event) => patch({ name: event.target.value })}
-              />
-            </Field>
-            <Field id="oauth-provider-client-id" label={msg('platformAdmin.oauthManagement.clientId', 'Client ID')}>
-              <Input
-                id="oauth-provider-client-id"
-                value={values.clientId}
-                onChange={(event) => patch({ clientId: event.target.value })}
-              />
-            </Field>
-            <Field
-              id="oauth-provider-authorize"
-              label={msg('platformAdmin.oauthManagement.authorizeEndpoint', 'Authorize endpoint')}
-              className="sm:col-span-2"
-            >
-              <Input
+          <div className="min-h-0 space-y-4 overflow-y-auto [overflow-wrap:anywhere]">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field id="oauth-provider-name" label={msg('platformAdmin.oauthManagement.name', 'Name')}>
+                <Input
+                  id="oauth-provider-name"
+                  readOnly={builtin}
+                  value={builtin ? msg('platformAdmin.oauthManagement.feishu', 'Feishu') : values.name}
+                  onChange={(event) => patch({ name: event.target.value })}
+                />
+              </Field>
+              <Field id="oauth-provider-client-id" label={msg('platformAdmin.oauthManagement.clientId', 'Client ID')}>
+                <Input
+                  id="oauth-provider-client-id"
+                  value={values.clientId}
+                  onChange={(event) => patch({ clientId: event.target.value })}
+                />
+              </Field>
+              <Field
                 id="oauth-provider-authorize"
-                value={values.authorizeEndpoint}
-                placeholder="https://example.com/oauth/authorize"
-                onChange={(event) => patch({ authorizeEndpoint: event.target.value })}
-              />
-            </Field>
-            <Field
-              id="oauth-provider-token"
-              label={msg('platformAdmin.oauthManagement.tokenEndpoint', 'Token endpoint')}
-              className="sm:col-span-2"
-            >
-              <Input
+                label={msg('platformAdmin.oauthManagement.authorizeEndpoint', 'Authorize endpoint')}
+                className="sm:col-span-2"
+              >
+                <Input
+                  id="oauth-provider-authorize"
+                  readOnly={builtin}
+                  value={values.authorizeEndpoint}
+                  placeholder="https://example.com/oauth/authorize"
+                  onChange={(event) => patch({ authorizeEndpoint: event.target.value })}
+                />
+              </Field>
+              <Field
                 id="oauth-provider-token"
-                value={values.tokenEndpoint}
-                placeholder="https://example.com/oauth/token"
-                onChange={(event) => patch({ tokenEndpoint: event.target.value })}
-              />
-            </Field>
-            <Field id="oauth-provider-scope" label={msg('platformAdmin.oauthManagement.scope', 'Scope')}>
-              <Input
-                id="oauth-provider-scope"
-                value={values.scope}
-                onChange={(event) => patch({ scope: event.target.value })}
-              />
-            </Field>
-            <Field
-              id="oauth-provider-secret"
-              label={msg('platformAdmin.oauthManagement.clientSecret', 'Client secret')}
-              hint={
-                provider
-                  ? msg('platformAdmin.oauthManagement.secretKeepHint', 'Leave blank to keep the current secret.')
-                  : undefined
-              }
-            >
-              <Input
+                label={msg('platformAdmin.oauthManagement.tokenEndpoint', 'Token endpoint')}
+                className="sm:col-span-2"
+              >
+                <Input
+                  id="oauth-provider-token"
+                  readOnly={builtin}
+                  value={values.tokenEndpoint}
+                  placeholder="https://example.com/oauth/token"
+                  onChange={(event) => patch({ tokenEndpoint: event.target.value })}
+                />
+              </Field>
+              <Field id="oauth-provider-scope" label={msg('platformAdmin.oauthManagement.scope', 'Scope')}>
+                <Input
+                  id="oauth-provider-scope"
+                  value={values.scope}
+                  onChange={(event) => patch({ scope: event.target.value })}
+                />
+              </Field>
+              <Field
                 id="oauth-provider-secret"
-                type="password"
-                value={values.clientSecret}
-                onChange={(event) => patch({ clientSecret: event.target.value })}
-              />
-            </Field>
-            <Field
-              id="oauth-provider-auth-method"
-              label={msg('platformAdmin.oauthManagement.authMethod', 'Token endpoint auth')}
-            >
-              <Select value={values.authMethod} onValueChange={(value) => value && patch({ authMethod: value })}>
-                <SelectTrigger id="oauth-provider-auth-method">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="client_secret_post">client_secret_post</SelectItem>
-                  <SelectItem value="client_secret_basic">client_secret_basic</SelectItem>
-                  <SelectItem value="none">none</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field id="oauth-provider-encoding" label={msg('platformAdmin.oauthManagement.encoding', 'Token encoding')}>
-              <Select value={values.encoding} onValueChange={(value) => value && patch({ encoding: value })}>
-                <SelectTrigger id="oauth-provider-encoding">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="form">form</SelectItem>
-                  <SelectItem value="json">json</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
+                label={msg('platformAdmin.oauthManagement.clientSecret', 'Client secret')}
+                hint={
+                  provider?.configured
+                    ? msg('platformAdmin.oauthManagement.secretKeepHint', 'Leave blank to keep the current secret.')
+                    : undefined
+                }
+              >
+                <Input
+                  id="oauth-provider-secret"
+                  type="password"
+                  value={values.clientSecret}
+                  onChange={(event) => patch({ clientSecret: event.target.value })}
+                />
+              </Field>
+              <Field
+                id="oauth-provider-auth-method"
+                label={msg('platformAdmin.oauthManagement.authMethod', 'Token endpoint auth')}
+              >
+                <Select
+                  disabled={builtin}
+                  value={values.authMethod}
+                  onValueChange={(value) => value && patch({ authMethod: value })}
+                >
+                  <SelectTrigger id="oauth-provider-auth-method">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="client_secret_post">client_secret_post</SelectItem>
+                    <SelectItem value="client_secret_basic">client_secret_basic</SelectItem>
+                    <SelectItem value="none">none</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field
+                id="oauth-provider-encoding"
+                label={msg('platformAdmin.oauthManagement.encoding', 'Token encoding')}
+              >
+                <Select
+                  disabled={builtin}
+                  value={values.encoding}
+                  onValueChange={(value) => value && patch({ encoding: value })}
+                >
+                  <SelectTrigger id="oauth-provider-encoding">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="form">form</SelectItem>
+                    <SelectItem value="json">json</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
+            {provider && builtin ? (
+              <FieldDescription>
+                {provider.default_secret_name} · {provider.default_allowed_hosts.join(', ')}
+              </FieldDescription>
+            ) : null}
+            {provider && values.clientId.trim() !== provider.client_id ? (
+              <FieldDescription>
+                {msg(
+                  'platformAdmin.oauthManagement.changeAppHint',
+                  'Changing the client ID requires a new secret. Existing tokens may need reauthorization.',
+                )}
+              </FieldDescription>
+            ) : null}
+            {provider && !provider.configured ? (
+              <FieldDescription>
+                {msg(
+                  'platformAdmin.oauthManagement.firstConfiguration',
+                  'Enter both client ID and client secret to configure this provider.',
+                )}
+              </FieldDescription>
+            ) : null}
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
           </div>
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" disabled={mutation.isPending} />}>
               {msg('common.cancel', 'Cancel')}
@@ -228,12 +251,10 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <div className={className}>
-      <Label htmlFor={id} className="text-sm font-medium text-foreground">
-        {label}
-      </Label>
-      <div className="mt-2">{children}</div>
-      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
-    </div>
+    <FormField className={className}>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      {children}
+      {hint ? <FieldDescription>{hint}</FieldDescription> : null}
+    </FormField>
   );
 }

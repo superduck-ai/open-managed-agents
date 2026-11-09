@@ -281,6 +281,7 @@ test('creates an ENV OAuth credential through the authorization popup', async ()
           id: 'builtin:feishu',
           name: 'Feishu',
           builtin: true,
+          configured: true,
           authorize_endpoint: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize',
           token_endpoint: 'https://open.feishu.cn/open-apis/authen/v2/oauth/token',
           scope: 'offline_access',
@@ -342,7 +343,14 @@ test('选择无默认域名的自定义 OAuth 服务方并使用无限制网络'
   globalThis.fetch = mock(async (input, init) => {
     if (String(input).includes('/env-oauth/providers')) {
       return Response.json([
-        { id: 'custom:example', name: 'Example', builtin: false, default_secret_name: '', default_allowed_hosts: null },
+        {
+          id: 'custom:example',
+          name: 'Example',
+          builtin: false,
+          configured: true,
+          default_secret_name: '',
+          default_allowed_hosts: null,
+        },
       ]);
     }
     if (String(input).includes('/env-oauth/vault-auth/start')) {

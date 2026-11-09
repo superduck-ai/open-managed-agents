@@ -800,7 +800,7 @@ describe('env_oauth credentials', () => {
 
   test('credentialAuthTypeLabel and vaultOAuthErrorMessage cover env oauth', () => {
     expect(credentialAuthTypeLabel('env_oauth', msgFallback)).toBe('ENV OAuth');
-    expect(vaultOAuthErrorMessage('platform_oauth_provider_unavailable', msgFallback)).toContain('not configured');
+    expect(vaultOAuthErrorMessage('platform_oauth_provider_unavailable', msgFallback)).toContain('unavailable');
     expect(vaultOAuthErrorMessage('credential_key_conflict', msgFallback)).toContain('already exists');
   });
 });

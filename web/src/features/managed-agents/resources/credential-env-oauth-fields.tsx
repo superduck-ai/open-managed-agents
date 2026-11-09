@@ -1,3 +1,6 @@
+import { useContext } from 'react';
+import { Link } from '@tanstack/react-router';
+import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
 import { FieldDescription } from '../../../shared/ui/field';
 import { ManagedSelectField, ManagedTextField } from '../components/common';
@@ -21,12 +24,14 @@ export function EnvOAuthCredentialFields({
   onChange,
 }: EnvOAuthCredentialFieldsProps) {
   const { msg } = useI18n();
+  const platformAccess = useContext(AuthContext)?.platformAccess;
+  const selected = providers.find((provider) => provider.id === values.envOAuthProviderId);
   const hostsMissing = credentialEnvHostsMissing(values);
   const options = providers.map((provider) => ({
     id: provider.id,
     label: provider.builtin
       ? msg('managedAgents.credentialVaults.credentialDialog.envOAuthBuiltinProvider', 'Built-in: {name}', {
-          name: provider.name,
+          name: msg('platformAdmin.oauthManagement.feishu', 'Feishu'),
         })
       : provider.name,
     secondary: provider.scope || undefined,
@@ -56,6 +61,19 @@ export function EnvOAuthCredentialFields({
           });
         }}
       />
+      {selected && !selected.configured ? (
+        <FieldDescription>
+          {msg(
+            'managedAgents.credentialVaults.credentialDialog.envOAuthUnconfigured',
+            'Not configured. Contact a platform administrator. You can still save a manually supplied token.',
+          )}
+          {platformAccess?.permissions.includes('platform:access') ? (
+            <Link className="ml-2 underline" to="/platform-admin/oauth">
+              {msg('platformAdmin.oauthManagement.configure', 'Configure provider')}
+            </Link>
+          ) : null}
+        </FieldDescription>
+      ) : null}
       <ManagedTextField
         label={msg('managedAgents.credentialVaults.credentialDialog.variableName', 'Variable name')}
         value={values.secretName}

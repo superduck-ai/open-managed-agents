@@ -65,6 +65,14 @@ export class PlatformAdminClient {
 }
 
 export type OAuthProviderRecord = {
+  provider_key: string;
+  default_secret_name: string;
+  default_allowed_hosts: string[];
+  builtin: boolean;
+  protected: boolean;
+  has_client_id: boolean;
+  configured: boolean;
+  version: number;
   id: string;
   name: string;
   authorize_endpoint: string;
@@ -97,15 +105,22 @@ export function createOAuthProvider(client: PlatformAdminClient, input: OAuthPro
   return client.request<OAuthProviderRecord>('/oauth-providers', { method: 'POST', body: input });
 }
 
-export function updateOAuthProvider(client: PlatformAdminClient, id: string, input: Partial<OAuthProviderInput>) {
+export function updateOAuthProvider(
+  client: PlatformAdminClient,
+  id: string,
+  input: Partial<OAuthProviderInput> & { expected_version: number },
+) {
   return client.request<OAuthProviderRecord>(`/oauth-providers/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: input,
   });
 }
 
-export function deleteOAuthProvider(client: PlatformAdminClient, id: string) {
-  return client.request<void>(`/oauth-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export function deleteOAuthProvider(client: PlatformAdminClient, id: string, expectedVersion: number) {
+  return client.request<void>(`/oauth-providers/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    body: { expected_version: expectedVersion },
+  });
 }
 
 function platformError(status: number, body: { error?: { code?: string; message?: string } } | null): ApiError {

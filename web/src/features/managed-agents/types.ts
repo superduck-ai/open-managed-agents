@@ -250,6 +250,7 @@ export type VaultCredentialApiResponse = {
 };
 
 export type EnvOAuthProviderApiResponse = {
+  configured: boolean;
   id: string;
   name: string;
   builtin: boolean;

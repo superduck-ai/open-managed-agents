@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Plus, Trash2 } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
+import { Badge } from '../../../shared/ui/badge';
 import { Button } from '../../../shared/ui/button';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { ResourceListState } from '../../../shared/ui/resource-list-state';
@@ -42,7 +43,7 @@ export function OAuthProvidersPage() {
     queryFn: () => listOAuthProviders(client),
   });
   const remove = useMutation({
-    mutationFn: (provider: OAuthProviderRecord) => deleteOAuthProvider(client, provider.id),
+    mutationFn: (provider: OAuthProviderRecord) => deleteOAuthProvider(client, provider.id, provider.version),
     onSuccess: async () => {
       setDeleting(null);
       await queryClient.invalidateQueries({ queryKey: oauthProvidersKey });
@@ -69,20 +70,6 @@ export function OAuthProvidersPage() {
           </Button>
         }
       />
-      <div className="mb-6 rounded-lg border-[0.5px] border-border p-4">
-        <div className="flex items-center gap-2">
-          <KeyRound aria-hidden className="size-4" />
-          <h2 className="text-sm font-semibold">
-            {msg('platformAdmin.oauthManagement.builtinTitle', 'Built-in provider')}
-          </h2>
-        </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {msg(
-            'platformAdmin.oauthManagement.builtinBody',
-            'Feishu is built in. Its client credentials come from the deployment config (vault.feishu_oauth_client) and are never stored in the database.',
-          )}
-        </p>
-      </div>
       {query.isPending ? (
         <p role="status">{msg('common.loading', 'Loading...')}</p>
       ) : query.isError ? (
@@ -122,7 +109,17 @@ export function OAuthProvidersPage() {
             {providers.map((provider) => (
               <DataTableRow key={provider.id} clickable onClick={() => setEditing(provider)}>
                 <DataTableCell edge="start" className="font-medium">
-                  {provider.name}
+                  {provider.builtin ? msg('platformAdmin.oauthManagement.feishu', 'Feishu') : provider.name}
+                  <Badge variant={provider.builtin ? 'secondary' : 'outline'} className="ml-2">
+                    {provider.builtin
+                      ? msg('platformAdmin.oauthManagement.builtin', 'Built-in')
+                      : msg('platformAdmin.oauthManagement.custom', 'Custom')}
+                  </Badge>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    {provider.configured
+                      ? msg('platformAdmin.oauthManagement.configured', 'Configured')
+                      : msg('platformAdmin.oauthManagement.unconfigured', 'Not configured')}
+                  </span>
                 </DataTableCell>
                 <DataTableCell className="max-w-[280px] truncate font-mono text-xs">
                   {provider.authorize_endpoint}
@@ -133,19 +130,21 @@ export function OAuthProvidersPage() {
                 <DataTableCell className="font-mono text-xs">{provider.client_id}</DataTableCell>
                 <DataTableCell>{new Date(provider.updated_at).toLocaleDateString(locale)}</DataTableCell>
                 <DataTableCell edge="end">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={msg('platformAdmin.oauthManagement.delete', 'Delete')}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setError(null);
-                      setDeleting(provider);
-                    }}
-                  >
-                    <Trash2 aria-hidden className="size-4" />
-                  </Button>
+                  {!provider.protected ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={msg('platformAdmin.oauthManagement.delete', 'Delete')}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setError(null);
+                        setDeleting(provider);
+                      }}
+                    >
+                      <Trash2 aria-hidden className="size-4" />
+                    </Button>
+                  ) : null}
                 </DataTableCell>
               </DataTableRow>
             ))}

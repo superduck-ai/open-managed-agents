@@ -26,6 +26,18 @@ export function usePlatformAdminError() {
       'platformAdmin.errors.oauthProviderNameConflict',
       'An OAuth client with this name already exists.',
     ),
+    oauth_provider_protected: msg(
+      'platformAdmin.errors.oauthProviderProtected',
+      'Built-in OAuth providers cannot be deleted.',
+    ),
+    oauth_provider_version_conflict: msg(
+      'platformAdmin.errors.oauthProviderVersionConflict',
+      'The provider changed. Close and reopen this form.',
+    ),
+    platform_oauth_provider_unavailable: msg(
+      'platformAdmin.errors.oauthProviderUnavailable',
+      'OAuth client decryption is unavailable. Try again later.',
+    ),
     rate_limited: msg('platformAdmin.errors.rateLimited', 'Too many requests. Please try again later.'),
     invalid_request: msg('platformAdmin.errors.invalidRequest', 'Check the form values and try again.'),
     not_found: msg('platformAdmin.errors.notFound', 'The requested resource was not found.'),

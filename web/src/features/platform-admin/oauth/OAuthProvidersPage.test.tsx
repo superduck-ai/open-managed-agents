@@ -43,6 +43,14 @@ function mount() {
 
 const provider = {
   id: 'poap_test',
+  provider_key: 'custom:poap_test',
+  builtin: false,
+  protected: false,
+  configured: true,
+  has_client_id: true,
+  default_secret_name: '',
+  default_allowed_hosts: [],
+  version: 1,
   name: 'Example OAuth',
   authorize_endpoint: 'https://auth.example.test/authorize',
   token_endpoint: 'https://auth.example.test/token',
@@ -61,7 +69,7 @@ test('展示 OAuth 管理页与已注册客户端', async () => {
   expect(screen.getByRole('heading', { name: 'OAuth 管理' })).toBeTruthy();
   expect(await screen.findByText('Example OAuth')).toBeTruthy();
   expect(screen.getByText('https://auth.example.test/token')).toBeTruthy();
-  expect(screen.getByText('内置服务方')).toBeTruthy();
+  expect(screen.queryByText('内置服务方')).toBeNull();
 });
 
 test('注册客户端提交完整字段', async () => {

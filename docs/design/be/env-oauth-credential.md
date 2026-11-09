@@ -6,8 +6,7 @@
 `env_oauth` 复用 `environment_variable` 的 Opaque Placeholder 与 CONNECT MITM Egress Secret Substitution，
 出站时按 provider 的允许域名把占位符替换为当前 access token；沙箱始终只看到占位符。
 
-非目标：组织级 OAuth 客户端隔离（本期全局）、沙箱协议变更、在数据库中保存内置飞书 client secret、
-改造通用 Vault 注入框架。
+非目标：组织级 OAuth 客户端隔离（本期全局）、沙箱协议变更、门户 SSO/飞书渠道/MCP 客户端迁移、改造通用 Vault 注入框架。
 
 ## 数据模型
 
@@ -15,10 +14,10 @@
 
 - `vault_credentials.auth_type` CHECK 扩展 `env_oauth`。
 - `platform_oauth_providers`：全局 OAuth 客户端注册表，`client_secret_envelope` 保存 `secrets.Service`
-  信封；`created_by_platform_admin_uuid` 记录超管；`token_endpoint_auth_method` 与
+  信封；客户端 ID 使用独立 `client_id_envelope`；`created_by_platform_admin_uuid` 记录超管（内置 seed 可空）；`token_endpoint_auth_method` 与
   `token_endpoint_encoding` 决定换票方式。
 - `env_oauth_flows`：授权中间态，保存 provider 快照（端点、client_id、scope、认证方式/编码）、
-  `secret_name`、`networking_type`、`allowed_hosts`、创建者与过期时间；内置飞书的 client_id 不保存快照（固定空字符串），换票时与 client_secret 一同读取部署配置；自定义 provider 仍保存 client_id 快照。状态
+  `secret_name`、`networking_type`、`allowed_hosts`、创建者与过期时间；内置飞书的 `client_id_envelope` 必须为 NULL，换票时与 client_secret 一同读取当前数据库行；自定义 provider 的 ID 快照加密保存，secret 不进入 flow。状态
   `pending → completed | failed`。
 
 ```mermaid
@@ -30,7 +29,13 @@ erDiagram
 
 Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 
-迁移 `00117_env_oauth_builtin_client_id.sql` 清除历史内置飞书 flow 的 client_id，并添加仅允许其为空字符串的约束；自定义 provider 快照保持不变。回滚只移除约束，不恢复已清除的值。
+历史 `00117` 清除了飞书 flow 的客户端 ID。增量 `00118_builtin_oauth_provider.sql` 增加受保护身份、默认值、版本和可空信封字段，seed 唯一的飞书元数据行；`00119_seal_oauth_client_ids.sql` 在断言全部历史自定义 ID 已回填后删除两表明文列。不得修改旧迁移。两个阶段之间只能停机维护，不允许运行普通业务进程。Down 拒绝重建明文；恢复旧二进制必须恢复升级前配套数据库与密钥备份。
+
+飞书永久使用 `external_id=poap_FeishuBuiltinOAuthClient`、`builtin_key=feishu`、`protected=true`，UUID 由数据库生成并保留。自定义行 builtin_key 为空、protected 为 false、创建人非空。CHECK 约束保护身份映射及信封成对状态，Mapper 删除额外要求 `protected=false`。自定义名称部分唯一索引允许历史自定义 `Feishu` 与 seed 并存；保留 external_id 冲突使迁移失败，不收编或覆盖既有记录。`version>0`，管理更新、导入和密钥重新包装均 CAS 递增。
+
+两个客户端字段分别使用现有 `secrets.Service.Seal/Open`，随机 DEK 与 nonce 各自独立。secret 的 AAD 为 `platform/platform/platform_oauth_providers/<external_id>`；ID 的最后一项为 `<external_id>:client_id`。flow ID 绑定实际组织 UUID、工作区 UUID、`env_oauth_flows`、flow external_id。绑定集中在 `internal/platformoauth`；换字段、复制到另一行或凭证均无法解密。KMS 调用在数据库事务之外执行，双信封用同一次 CAS 原子写入。
+
+`vault.master_key` 仍是唯一部署主密钥来源，复用组装层的同一服务；不在业务表保存 KEK 或 KMS 身份。SQL 的 JSON 结构校验不替代应用完整信封和解密校验。删除活动 schema 明文列不代表擦除旧 WAL、备份和介质。
 
 ## 凭证公开结构与秘密
 
@@ -64,9 +69,8 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 - `builtin:feishu`：授权端点 `https://accounts.feishu.cn/open-apis/authen/v1/authorize`，令牌端点
   `https://open.feishu.cn/open-apis/authen/v2/oauth/token`，默认 scope `offline_access`，默认变量名
   `LARKSUITE_CLI_USER_ACCESS_TOKEN`，默认域名 `open.feishu.cn` / `accounts.feishu.cn`，令牌端点编码
-  `json`，认证方式 `client_secret_post`。client_id/client_secret 来自部署配置
-  `vault.feishu_oauth_client`，不落数据库；未配置时列表可见但 `vault-auth/start` 返回 503。
-- `custom:<provider_external_id>`：来自 `platform_oauth_providers`，client secret 信封加密；运行时按
+  `json`，认证方式 `client_secret_post`。端点、scope 和默认值均来自受保护数据库行；两个客户端信封初始为 NULL，未配置时列表仍可见且 `configured=false`，`vault-auth/start` 返回 503。scope 可编辑且必须包含 `offline_access`。
+- `custom:<provider_external_id>`：来自 `platform_oauth_providers`，两个客户端字段信封加密；拒绝 `custom:<内置 external_id>` 别名，运行时按
   provider key 重新解析。provider 被删除后存量凭证 refresh 失败并进入重新授权语义。
 
 自定义 provider 的 `default_allowed_hosts` 可为 `null`；前端将其视为空域名列表，limited 仍须填写域名，unrestricted 可直接继续。
@@ -75,7 +79,7 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/organizations/{orgUuid}/env-oauth/providers` | 列出内置与自定义 provider；不含 secret |
+| GET | `/api/organizations/{orgUuid}/env-oauth/providers` | 仅从数据库逐行列出 provider 与 configured；不解密或返回客户端字段 |
 | POST | `/api/organizations/{orgUuid}/env-oauth/vault-auth/start` | 校验并创建 flow，返回 `{oauth_flow_id, authorize_url}` |
 | GET | `/oauth/vault/env-success?code&state` | 公共回调；换票、落库、完成 flow，返回 postMessage HTML |
 
@@ -95,7 +99,7 @@ sequenceDiagram
     participant P as OAuth Provider
     participant D as PostgreSQL
     U->>A: start(provider, vault, secret_name, networking)
-    A->>D: insert env_oauth_flows(status=pending)
+    A->>D: 读取 DB 客户端并解密；自定义 ID 快照密封后创建 flow
     A-->>U: authorize_url(state=flow_id)
     U->>P: 用户授权
     P-->>A: /oauth/vault/env-success?code&state
@@ -142,20 +146,36 @@ stateDiagram-v2
 | PATCH | `/oauth-providers/{id}` | 部分更新；`client_secret` 缺省表示不改 |
 | DELETE | `/oauth-providers/{id}` | 删除；不影响已存 flow 快照与已建凭证的可读性 |
 
-响应含 `id, name, authorize_endpoint, token_endpoint, scope, client_id, has_client_secret,
-token_endpoint_auth_method, token_endpoint_encoding, created_at, updated_at`。内置飞书不在该列表中，
-前端以只读卡片展示。
+响应保留 `id`（external_id）、名称、端点、scope、client_id、has_client_secret、认证方式、编码与时间，新增 `provider_key`、`builtin`、`protected`、`has_client_id`、`configured`、`version` 和只读默认值。client_id 仅在超管授权后解密，客户端列表不解密 secret；所有平台客户端响应使用 `Cache-Control: no-store`。未配置 ID 返回空串，解密失败返回 503 `platform_oauth_provider_unavailable`，不能冒充未配置。API、日志和审计永不回显 secret 或信封。
 
-## 部署配置
+POST 仅创建自定义，拒绝 builtin_key/protected/uuid 等未知系统字段。PATCH 内置仅允许 scope、client_id、client_secret（另需 expected_version）；禁止字段即使同值或 null 也拒绝。secret 省略保持，空串/null 拒绝；首次配置及修改 ID 必须同时提交新 secret；仅换 secret 不重封 ID。DELETE 内置返回 409 `oauth_provider_protected`；自定义删除仍是 204/404。PATCH/DELETE 必须提交 `expected_version`，过期为 409 `oauth_provider_version_conflict`，名称冲突仍是 `oauth_provider_name_conflict`。
 
-```yaml
-vault:
-  feishu_oauth_client:
-    client_id: "cli_..."
-    client_secret: "..."
+平台页将飞书排在同一表格前部，显示本地化名称、内置 Badge、配置状态；保留共享 shadcn 组件与现有路由。内置名称、端点、认证方式、编码和默认值只读，不显示删除和重置操作。编辑弹窗只发送允许字段，提示更换应用可能需要重新授权。Vault 表单使用组织 API 元数据，未配置禁用授权按钮，保留手工令牌保存；普通用户仅看到联系管理员，具有 platform:access 的用户可进入平台配置页。
+
+结构化安全审计复用注入的 slog logger：create/update/delete、首次 configure、import、rewrap、保护拒绝和内置缺失完整性故障。只记录 actor UUID 或 maintenance/system、provider UUID/key、action、changed_fields、result、request_id/错误码与事件时间；不记录客户端值、scope 内容、信封或上游 body。成功在提交后记录，失败在资源最终处理处记录；日志与数据库不承诺原子持久化。中英文文案按稳定错误码翻译。
+
+## 离线升级与部署
+
+旧部署块 `vault.feishu_oauth_client` 已从普通 Config 删除；出现该键时明确要求导入后移除，运行时没有配置回退、自动导入、双读或双写。门户 SSO、飞书消息渠道和 `vault.platform_oauth_clients` 保持各自原有来源。
+
+1. 备份数据库、旧配置和匹配的主密钥；准备不含旧飞书块的当前 CONFIG_FILE。旧文件通过受控路径单独传入，不接受命令行 secret。
+2. 默认只读预检：`CONFIG_FILE=/etc/oma/config.yaml go run ./cmd/oauth-provider-migrate --legacy-config /secure/legacy.yaml`。旧飞书块均缺失可保持未配置，半配置失败；预检不会执行 schema 或数据写入。
+3. 停止共享该数据库的 API、worker 和其他写入方，再加 `--apply`。命令获取 goose 会话维护锁，仅前进到 00118；分页对全部状态的自定义 provider/flow ID Seal/Open 往返验证并按 UUID/旧值 CAS 回填，校验原 secret 可解密；重入验证已有信封并跳过，不重新生成密文。
+4. 飞书两信封均空才原子导入旧配置；已有 DB 配置仅校验并跳过，绝不覆盖管理员最新值。KMS、坏信封、半配置或 CAS 冲突非零退出，保留可续跑状态。
+5. 全部回填完成再前进到 00119，断言并删除明文列，真实读取解密验证。已到 00119 只校验或补齐未配置内置行，绝不降级。输出仅含版本、行 UUID、计数和白名单错误码。
+6. 从部署源、人工配置、初始化模板及生成来源移除旧块，再按环境正常生成并启动；不能只修改生成配置。旧配置与备份按既有敏感文件策略清理或隔离。
+
+```mermaid
+flowchart LR
+  P[只读预检与备份] --> S[停止写入方并取得维护锁]
+  S --> E[00118 扩展与 seed]
+  E --> B[加密回填历史 ID 并校验旧 secret]
+  B --> I[仅未配置时导入旧飞书客户端]
+  I --> C[00119 断言并删除明文列]
+  C --> R[移除旧配置并启动 DB 单一来源服务]
 ```
 
-两项必须同时配置或同时省略；省略时内置飞书不可用，不影响其他凭证类型。
+保留 `builtin:feishu`、已有 credential auth、占位符、host 范围及 refresh lease/CAS 合同。飞书 callback 使用当前 DB 客户端，自定义 callback 使用历史 ID 快照与当前 secret，refresh 使用当前客户端。更换应用可能使旧 token/refresh token 需要重新授权；不新增旧 secret 历史或在途兼容分支。维护超过 flow 的 15 分钟 TTL 时重新发起授权。
 
 ## 测试与验收
 
@@ -164,4 +184,9 @@ vault:
 - `internal/db`：新 Mapper 的 SQL/参数绑定/敏感标记单测；集成测试覆盖真实 PostgreSQL 读写。
 - `internal/api`（`integration`）：start 参数、callback 换票落库、重新授权原地更新、失败状态、平台
   provider CRUD 与 secret 不回显。
-- `internal/config`：飞书凭据成对配置校验。
+- `internal/config`：普通服务拒绝遗留飞书块并给出离线导入指引。
+- `cmd/oauth-provider-migrate`（`integration`）：真实 00117 升级、空库、四状态回填、名称/保留 ID 冲突、阻断与续跑、无明文列/外键、重入和已有配置保护。
+- `cmd/vault-migrate`：平台双信封/flow 单信封 CAS、跨 provider 和 local 版本选择、失败整行不变，轮换后 Open 与本地 stub OAuth 刷新。
+- 前端：内置表格行、固定字段只读、最小 PATCH、空 secret 保留、首配/换 ID 校验、并发提示、Vault 未配置禁授权与手工保存、中英文键一致。
+
+定向真实 PostgreSQL 使用 `just test-integration`，通过 TEST_MIGRATION_DATABASE_URL 指向隔离数据库。普通单测不连接外部服务。stub 结果不代表真实飞书扫码或上游兼容验收；不自动运行 verify-be，既有 D1/C7 真实验收报告仅作历史基线。

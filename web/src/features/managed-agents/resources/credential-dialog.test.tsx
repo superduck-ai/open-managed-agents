@@ -3,6 +3,7 @@ import { type ReactNode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { resetTestDom } from '../../../test/setup';
 import { AuthContext } from '../../../shared/auth/context';
+import { resetMcpDirectoryCacheForTests } from '../agents/tools/api';
 import { CredentialDialog } from './dialogs';
 import type { VaultCredentialApiResponse } from '../types';
 
@@ -37,6 +38,47 @@ afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
   window.open = originalOpen;
+});
+
+test('finds workspace-defined MCP servers when picking a credential server', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
+  resetMcpDirectoryCacheForTests();
+  globalThis.fetch = mock(async (input) => {
+    if (String(input).includes('/mcp_servers')) {
+      return Response.json({
+        data: [
+          {
+            id: 'mcp_toolbox',
+            type: 'mcp_server',
+            name: 'toolbox',
+            transport_type: 'url',
+            url: 'https://toolbox.seewo.com/mcp/chatdata/chatdata',
+            created_at: '2026-11-09T00:00:00Z',
+            updated_at: '2026-11-09T00:00:00Z',
+          },
+        ],
+        next_page: null,
+      });
+    }
+    return Response.json({ data: [] });
+  });
+  render(
+    <AuthHarness>
+      <CredentialDialog
+        vaultId="vlt_fixture"
+        workspaceId="default"
+        orgUuid="org_fixture"
+        onClose={() => {}}
+        onSubmit={async () => {}}
+      />
+    </AuthHarness>,
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Add credential' });
+  fireEvent.click(within(dialog).getByRole('combobox', { name: 'MCP server' }));
+  const search = await screen.findByPlaceholderText('Search MCP directory...');
+  fireEvent.change(search, { target: { value: 'toolbox' } });
+  fireEvent.click(await screen.findByText('https://toolbox.seewo.com/mcp/chatdata/chatdata'));
+  expect(within(dialog).getByDisplayValue('toolbox (https://toolbox.seewo.com/mcp/chatdata/chatdata)')).toBeTruthy();
 });
 
 test('blocks dismissal and duplicate saves while preserving the credential draft on failure', async () => {

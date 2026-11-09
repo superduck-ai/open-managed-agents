@@ -3,7 +3,7 @@ import { Check, ChevronDown, ExternalLink, X } from 'lucide-react';
 import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
-import { listWorkspaceMCPServers } from '../../../shared/api/workspaceMCPServers';
+import { listAllWorkspaceMCPServers } from '../../../shared/api/workspaceMCPServers';
 import { cn } from '../../../shared/lib/utils';
 import { skillSourceLabel } from '../../../shared/lib/skill-source';
 import { Badge } from '../../../shared/ui/badge';
@@ -440,25 +440,6 @@ function skillCreateHref(workspaceId: string) {
 
 function mcpServerCreateHref(workspaceId: string) {
   return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/mcp-servers/new`;
-}
-
-async function listAllWorkspaceMCPServers(orgUuid: string, workspaceId: string) {
-  const data = [];
-  let page: string | undefined;
-  const seenPages = new Set<string>();
-  while (true) {
-    const response = await listWorkspaceMCPServers(orgUuid, workspaceId, { page });
-    data.push(...response.data);
-    const nextPage = response.next_page || undefined;
-    if (!nextPage) {
-      return { data, next_page: null };
-    }
-    if (seenPages.has(nextPage)) {
-      throw new Error('MCP Servers pagination returned a repeated cursor.');
-    }
-    seenPages.add(nextPage);
-    page = nextPage;
-  }
 }
 
 function openInNewTab(path: string) {

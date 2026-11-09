@@ -154,6 +154,7 @@ func proxyMessagesHeaders(source http.Header, apiKey string) http.Header {
 			headers.Add(name, value)
 		}
 	}
+	llmproviders.ApplyDefaultAnthropicVersion(headers)
 	llmproviders.ApplyAPIKey(headers, apiKey)
 	return headers
 }

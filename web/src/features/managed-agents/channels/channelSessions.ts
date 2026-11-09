@@ -48,8 +48,7 @@ export function sessionBelongsToChannel(session: SessionApiResponse, channel: Pi
   const metadata = channelSessionMetadata(session);
   if (metadata.channel_id) return metadata.channel_id === channel.id;
   const appId = channel.app_id?.trim() ?? '';
-  if (metadata.app_id && appId) return metadata.app_id === appId;
-  return true;
+  return Boolean(metadata.app_id && appId && metadata.app_id === appId);
 }
 
 export function selectChannelSessions(sessions: SessionApiResponse[], channel: Pick<Channel, 'id' | 'app_id'>) {

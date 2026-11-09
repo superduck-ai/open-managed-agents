@@ -26,21 +26,25 @@ function session(patch: Partial<SessionApiResponse> & { id: string }): SessionAp
 
 const channel = { id: 'ch-1', app_id: 'cli_a' };
 
-test('只保留桥接会话，并在元数据带渠道标识时按渠道过滤', () => {
+test('按 channel_id 隔离，没有 channel_id 时才回落到 app_id', () => {
   const rows = selectChannelSessions(
     [
       session({ id: 'console', metadata: { source: 'console' } }),
       session({
-        id: 'bridge',
+        id: 'legacy',
         metadata: { source: 'lark-channel-bridge', bridge_binding_id: 'bind', scope_id: 'oc_chat' },
       }),
       session({
+        id: 'this-channel',
+        updated_at: '2026-11-05T16:00:00Z',
+        metadata: { source: 'lark-channel-bridge', channel_id: 'ch-1', app_id: 'cli_other', open_id: 'ou_this' },
+      }),
+      session({
         id: 'other-channel',
-        metadata: { source: 'lark-channel-bridge', channel_id: 'ch-2', open_id: 'ou_other' },
+        metadata: { source: 'lark-channel-bridge', channel_id: 'ch-2', app_id: 'cli_a', actor_id: 'ou_other' },
       }),
       session({
         id: 'same-app',
-        updated_at: '2026-11-05T16:00:00Z',
         metadata: { source: 'feishu', app_id: 'cli_a', open_id: 'ou_same' },
       }),
       session({
@@ -50,15 +54,17 @@ test('只保留桥接会话，并在元数据带渠道标识时按渠道过滤',
     ],
     channel,
   );
-  expect(rows.map((row) => row.id)).toEqual(['same-app', 'bridge']);
+  expect(rows.map((row) => row.id)).toEqual(['this-channel', 'same-app']);
+  expect(summarizeChannelSessions(rows).sourceUsers).toBe(2);
 });
 
-test('没有渠道标识时保留该智能体的全部桥接会话', () => {
+test('没有 channel_id 和 app_id 的旧桥接会话不进入任何渠道', () => {
   const rows = selectChannelSessions(
     [session({ id: 'bridge', metadata: { source: 'lark-channel-bridge', scope_id: 'oc_chat' } })],
     { id: 'ch-9' },
   );
-  expect(rows.map((row) => row.id)).toEqual(['bridge']);
+  expect(rows).toEqual([]);
+  expect(summarizeChannelSessions(rows)).toEqual({ total: 0, sourceUsers: 0, lastActive: null });
 });
 
 test('来源用户优先使用 open_id，否则回落到会话范围', () => {

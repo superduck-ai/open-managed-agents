@@ -70,7 +70,7 @@ func seedSessionResourceVisibility(t *testing.T) sessionResourceVisibilityFixtur
 		},
 	}
 	input.Resources[1].Resource.GitHubRepository = &db.SessionResourceGitHubRepository{
-		URL:       "https://github.com/example/repo",
+		URL:       "https://github.com/example/repo.git",
 		MountPath: "/workspace/repo",
 	}
 	created, _, createdResources, _, err := app.db.CreateSession(ctx, input)

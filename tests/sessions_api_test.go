@@ -231,7 +231,7 @@ func TestArchivedSessionResourceMutationsReturnInvalidState(t *testing.T) {
 		"environment_id":`+quoteJSON(env.ID)+`,
 		"resources":[{
 			"type":"github_repository",
-			"url":"https://github.com/example/repository",
+			"url":"https://github.com/example/repository.git",
 			"mount_path":"/workspace/repository"
 		}]
 	}`)

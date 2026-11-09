@@ -12,7 +12,7 @@
 
 ## Git Repository 资源
 
-Create Session、Create Deployment 和 Agent 详情中的 Create Deployment 共用 Resource 字段组件。资源菜单可以添加 File、Git repository 或 Memory store；Session 和 Deployment 共用 Memory Store 的 Access / Instructions 卡片。Git 资源支持 GitHub 及自托管 HTTPS Git 仓库。
+Create Session、Create Deployment 和 Agent 详情中的 Create Deployment 共用 Resource 字段组件。资源菜单可以添加 File、Git repository 或 Memory store；Session 和 Deployment 共用 Memory Store 的 Access / Instructions 卡片。Git 资源支持 GitHub 及自托管 HTTPS Git 仓库，URL 必须以 `.git` 结尾，前后端使用相同的后缀校验；placeholder 展示 `https://github.com/owner/repo.git`。
 
 Git repository 的公开请求字段如下；API 类型沿用 `github_repository`，不限制仓库托管平台：
 

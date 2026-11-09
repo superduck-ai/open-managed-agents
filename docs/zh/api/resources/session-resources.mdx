@@ -16,7 +16,7 @@ description: "在会话上管理文件、GitHub 仓库和记忆存储。"
 支持类型：
 
 - `file`：`file_id`、固定 `source: /uploads`、可选 `mount_path`
-- `github_repository`：`url`、可选 `checkout` 和 `mount_path`
+- `github_repository`：`url` 必须为以 `.git` 结尾的 HTTPS 克隆地址（不接受 `.git/`），可选 `checkout` 和 `mount_path`
 - `memory_store`：`memory_store_id`、`access`、`name`、`description`、`instructions`、`mount_path`
 
 资源总数最多 500。文件挂载路径会检查重复、祖先/子孙冲突和保留路径。GitHub 授权令牌通过资源更新接口单独提交，不会出现在公开载荷中。

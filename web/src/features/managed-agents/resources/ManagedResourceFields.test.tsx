@@ -62,8 +62,14 @@ test('adds a repository directly to an empty deployment and includes it only aft
   fireEvent.click(screen.getByRole('menuitem', { name: 'Git repository' }));
   expect(screen.queryByText(/This replaces the entire resource list/)).toBeNull();
   expect(screen.queryByRole('button', { name: 'Keep existing resources' })).toBeNull();
+  expect(screen.getByPlaceholderText('https://github.com/owner/repo.git')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://github.com/example/research' } });
+  expect(screen.getByLabelText('URL').getAttribute('aria-invalid')).toBe('true');
+  expect(screen.getByText(/Enter an HTTPS repository URL ending in .git/)).toBeTruthy();
+  expect(() => updateManagedEntityBody('deployments', values())).toThrow();
+  fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://github.com/example/research.git' } });
+  expect(screen.getByLabelText('URL').getAttribute('aria-invalid')).toBe('false');
   expect(updateManagedEntityBody('deployments', values())).toHaveProperty('resources', [
-    { type: 'github_repository', url: 'https://github.com/example/research' },
+    { type: 'github_repository', url: 'https://github.com/example/research.git' },
   ]);
 });

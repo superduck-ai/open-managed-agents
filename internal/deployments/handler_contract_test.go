@@ -135,7 +135,7 @@ func TestSessionResourcesFromDeploymentDefaultsAbsentMemoryAccess(t *testing.T) 
 
 func TestSessionResourcesFromDeploymentRejectsPlaintextToken(t *testing.T) {
 	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{
-		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo","mount_path":"/workspace/repo"}]`),
+		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo.git","mount_path":"/workspace/repo"}]`),
 		ResourceSecrets: json.RawMessage(`{"0":{"authorization_token":"legacy"}}`),
 	}, time.Time{}, nil)
 	if err == nil {
@@ -156,7 +156,7 @@ func TestSessionResourcesFromDeploymentCopiesEncryptedToken(t *testing.T) {
 	}
 	deployment := db.Deployment{
 		OrganizationUUID: "org", WorkspaceUUID: "ws",
-		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo","mount_path":"/workspace/repo"}]`),
+		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo.git","mount_path":"/workspace/repo"}]`),
 		ResourceSecrets: append(append([]byte(`{"0":`), encrypted...), '}'),
 	}
 	for _, sessionID := range []string{"ses_one", "ses_two"} {

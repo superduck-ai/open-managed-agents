@@ -18,7 +18,7 @@ func TestManagedAgentRuntimeResourcesCollectMemoryMountsWithoutSources(t *testin
 	resources := []db.SessionResource{
 		{
 			ResourceType:     "github_repository",
-			GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/widgets", MountPath: "/workspace/widgets"},
+			GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/widgets.git", MountPath: "/workspace/widgets"},
 		},
 		memoryStoreSessionResource(
 			"user-preferences",
@@ -41,7 +41,7 @@ func TestManagedAgentRuntimeResourcesCollectMemoryMountsWithoutSources(t *testin
 	wantSources := []any{
 		map[string]any{
 			"type":       "git_repository",
-			"git_info":   map[string]any{"type": "git", "repo": "acme/widgets", "url": "https://github.com/acme/widgets"},
+			"git_info":   map[string]any{"type": "git", "repo": "acme/widgets.git", "url": "https://github.com/acme/widgets.git"},
 			"mount_path": "/workspace/widgets",
 		},
 	}

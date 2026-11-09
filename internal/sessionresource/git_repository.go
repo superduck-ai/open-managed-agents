@@ -54,7 +54,7 @@ func NormalizeGitRepositorySpec(urlRaw, mountPathRaw, checkoutRaw json.RawMessag
 func ValidateGitRepositoryURL(rawURL string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil ||
-		parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(rawURL, "#") {
+		parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(rawURL, "#") || !strings.HasSuffix(parsed.Path, ".git") {
 		return errGitRepositoryURL
 	}
 	if port := parsed.Port(); port != "" && port != "443" {

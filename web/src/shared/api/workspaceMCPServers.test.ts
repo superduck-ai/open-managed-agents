@@ -25,9 +25,12 @@ test('binds workspace MCP requests to the route workspace instead of stale globa
 
 test('follows cursors when loading every workspace MCP server', async () => {
   const paths: string[] = [];
-  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+  const signals: AbortSignal[] = [];
+  const controller = new AbortController();
+  globalThis.fetch = mock(async (input: RequestInfo | URL, request?: RequestInit) => {
     const path = String(input);
     paths.push(path);
+    signals.push(request?.signal as AbortSignal);
     if (path.includes('page=next')) {
       return Response.json({
         data: [{ id: 'mcp_second', name: 'second', url: 'https://second.example.com/mcp' }],
@@ -40,10 +43,13 @@ test('follows cursors when loading every workspace MCP server', async () => {
     });
   });
 
-  const page = await listAllWorkspaceMCPServers('org_test', 'wrkspc_route');
+  const page = await listAllWorkspaceMCPServers('org_test', 'wrkspc_route', controller.signal);
+  controller.abort();
 
   expect(paths).toHaveLength(2);
   expect(paths[1]).toContain('page=next');
+  expect(signals).toHaveLength(2);
+  expect(signals.every((signal) => signal.aborted)).toBe(true);
   expect(page.data.map((server) => server.id)).toEqual(['mcp_first', 'mcp_second']);
 });
 

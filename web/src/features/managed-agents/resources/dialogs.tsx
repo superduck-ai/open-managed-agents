@@ -262,6 +262,7 @@ export function CredentialDialog({
       return;
     }
     let active = true;
+    const workspaceController = new AbortController();
     void loadMcpDirectoryServers()
       .then((servers) => {
         if (active) {
@@ -274,7 +275,7 @@ export function CredentialDialog({
         }
       });
     if (orgUuid) {
-      void listAllWorkspaceMCPServers(orgUuid, workspaceId)
+      void listAllWorkspaceMCPServers(orgUuid, workspaceId, workspaceController.signal)
         .then((page) => {
           if (active) {
             setWorkspaceServers(page.data);
@@ -288,6 +289,7 @@ export function CredentialDialog({
     }
     return () => {
       active = false;
+      workspaceController.abort();
     };
   }, [orgUuid, showDirectoryPicker, workspaceId]);
 

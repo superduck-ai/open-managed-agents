@@ -13,6 +13,7 @@ import (
 )
 
 type oauthMigrationDocument struct {
+	CodeVerifierEnvelope *secrets.Envelope `json:"code_verifier_envelope,omitempty"`
 	ClientIDEnvelope     *secrets.Envelope `json:"client_id_envelope"`
 	ClientSecretEnvelope *secrets.Envelope `json:"client_secret_envelope,omitempty"`
 	ExternalID           string            `json:"external_id"`
@@ -24,12 +25,12 @@ func migrateOAuthDocument(ctx context.Context, service *secrets.Service, kind st
 	if err := json.Unmarshal(row.Document, &document); err != nil || document.ExternalID == "" {
 		return nil, 0, errors.New("invalid OAuth migration document")
 	}
-	if kind == "platform_oauth_providers" && ((document.ClientIDEnvelope == nil) != (document.ClientSecretEnvelope == nil) || (document.ClientIDEnvelope == nil && document.ExternalID != "poap_FeishuBuiltinOAuthClient")) {
+	if kind == "platform_oauth_providers" && ((document.ClientIDEnvelope == nil) != (document.ClientSecretEnvelope == nil) || (document.ClientIDEnvelope == nil && document.ExternalID != "poap_FeishuBuiltinOAuthClient" && document.ExternalID != "poap_FridayBuiltinOAuthClient")) {
 		return nil, 0, errors.New("incomplete OAuth client")
 	}
 	binding := platformoauth.ProviderClientIDBinding(document.ExternalID)
 	if kind == "env_oauth_flows" {
-		if document.ClientIDEnvelope == nil {
+		if document.ClientIDEnvelope == nil && document.CodeVerifierEnvelope == nil {
 			return nil, 0, errors.New("missing OAuth flow client")
 		}
 		binding = platformoauth.FlowClientIDBinding(db.EnvOAuthFlow{OrganizationUUID: row.OrganizationUUID, WorkspaceUUID: row.WorkspaceUUID, ExternalID: document.ExternalID})
@@ -39,6 +40,7 @@ func migrateOAuthDocument(ctx context.Context, service *secrets.Service, kind st
 		envelope **secrets.Envelope
 		binding  secrets.Binding
 	}{
+		{&document.CodeVerifierEnvelope, platformoauth.FlowCodeVerifierBinding(db.EnvOAuthFlow{OrganizationUUID: row.OrganizationUUID, WorkspaceUUID: row.WorkspaceUUID, ExternalID: document.ExternalID})},
 		{&document.ClientIDEnvelope, binding}, {&document.ClientSecretEnvelope, platformoauth.ProviderSecretBinding(document.ExternalID)},
 	} {
 		envelope := *field.envelope
@@ -88,6 +90,9 @@ func auditOAuthRewrap(ctx context.Context, logger *slog.Logger, row db.SecretMig
 	key := "custom:" + document.ExternalID
 	if document.ExternalID == "poap_FeishuBuiltinOAuthClient" {
 		key = "builtin:feishu"
+	}
+	if document.ExternalID == "poap_FridayBuiltinOAuthClient" {
+		key = "builtin:friday"
 	}
 	code := ""
 	if result == "failure" {

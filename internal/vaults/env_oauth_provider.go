@@ -8,6 +8,7 @@ import (
 
 const (
 	EnvOAuthProviderBuiltinFeishu     = "builtin:feishu"
+	EnvOAuthProviderBuiltinFriday     = "builtin:friday"
 	EnvOAuthFeishuDefaultSecretName   = "LARKSUITE_CLI_USER_ACCESS_TOKEN"
 	envOAuthProviderCustomPrefix      = "custom:"
 	envOAuthTokenEndpointEncodingForm = "form"
@@ -44,8 +45,8 @@ func ParseEnvOAuthProviderKey(value string) (custom bool, id string, err error) 
 	if key == "" {
 		return false, "", errEnvOAuthProviderKeyInvalid
 	}
-	if key == EnvOAuthProviderBuiltinFeishu {
-		return false, EnvOAuthProviderBuiltinFeishu, nil
+	if IsBuiltinEnvOAuthProviderKey(key) {
+		return false, key, nil
 	}
 	if strings.HasPrefix(key, envOAuthProviderCustomPrefix) {
 		id := strings.TrimSpace(strings.TrimPrefix(key, envOAuthProviderCustomPrefix))
@@ -62,7 +63,7 @@ func EnvOAuthCustomProviderKey(externalID string) string {
 }
 
 func IsBuiltinEnvOAuthProviderKey(value string) bool {
-	return strings.TrimSpace(value) == EnvOAuthProviderBuiltinFeishu
+	return value == EnvOAuthProviderBuiltinFeishu || value == EnvOAuthProviderBuiltinFriday
 }
 
 func ParseEnvOAuthSecretName(value string) (string, error) {

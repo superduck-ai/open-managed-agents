@@ -97,8 +97,8 @@ func (s *OAuthProviderService) List(ctx context.Context) ([]OAuthProviderView, e
 		}
 		views = append(views, view)
 	}
-	if !slices.ContainsFunc(providers, func(p db.PlatformOAuthProvider) bool { return p.BuiltinKey == "feishu" }) {
-		s.audit(ctx, Actor{}, db.PlatformOAuthProvider{}, "integrity", nil, ErrOAuthProviderUnavailable)
+	if missing := platformoauth.MissingBuiltinProviderKey(providers); missing != "" {
+		s.audit(ctx, Actor{}, db.PlatformOAuthProvider{BuiltinKey: strings.TrimPrefix(missing, "builtin:")}, "integrity", nil, ErrOAuthProviderUnavailable)
 		return nil, ErrOAuthProviderUnavailable
 	}
 	return views, nil
@@ -197,8 +197,11 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 	if err := applyOAuthProviderFields(&current, input); err != nil {
 		return OAuthProviderView{}, err
 	}
-	if current.Protected && !slices.Contains(strings.Fields(current.Scope), "offline_access") {
+	if current.BuiltinKey == "feishu" && !slices.Contains(strings.Fields(current.Scope), "offline_access") {
 		return OAuthProviderView{}, invalid("飞书 scope 必须包含 offline_access")
+	}
+	if current.BuiltinKey == "friday" && current.Scope != "read" {
+		return OAuthProviderView{}, invalid("Friday scope 必须为 read")
 	}
 	if err := s.updateClient(ctx, &current, clientID, input); err != nil {
 		return OAuthProviderView{}, err
@@ -323,7 +326,7 @@ func (s *OAuthProviderService) audit(ctx context.Context, actor Actor, provider 
 		actorType = "system"
 	}
 	if action == "integrity" {
-		key = "builtin:feishu"
+		key = platformoauth.ProviderKey(provider)
 	}
 	if failure != nil {
 		result, code = "denied", publicError(failure).Code

@@ -214,6 +214,11 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 		UpdatedAt:               now,
 		ExpiresAt:               now.Add(envOAuthFlowTTL),
 	}
+	authorizeURL, err = s.prepareEnvOAuthPKCE(r.Context(), &flow, authorizeURL)
+	if err != nil {
+		writeEnvOAuthStartError(w, http.StatusServiceUnavailable, envOAuthErrorProviderUnavailable, "")
+		return
+	}
 	if !provider.Builtin {
 		envelope, err := platformoauth.SealClientField(r.Context(), s.vaultSecrets, platformoauth.FlowClientIDBinding(flow), provider.ClientID)
 		if err != nil {
@@ -308,7 +313,7 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	token, err := exchangeEnvOAuthCode(r.Context(), flow, code, clientID, provider.ClientSecret)
+	token, err := s.exchangeEnvOAuthFlowCode(r.Context(), flow, code, clientID, provider.ClientSecret)
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "exchange env oauth code", "flow_external_id", flow.ExternalID, "error_code", envOAuthErrorTokenExchangeFailed)
 		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorTokenExchangeFailed, now)
@@ -514,12 +519,15 @@ func buildEnvOAuthAuthorizeURL(endpoint, clientID, scope, redirectURL, flowID st
 	return authorizeURL.String(), nil
 }
 
-func exchangeEnvOAuthCode(ctx context.Context, flow db.EnvOAuthFlow, code, clientID, clientSecret string) (vaultsapi.OAuthTokenEndpointResult, error) {
+func exchangeEnvOAuthCode(ctx context.Context, flow db.EnvOAuthFlow, code, clientID, clientSecret, verifier string) (vaultsapi.OAuthTokenEndpointResult, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
 	form.Set("redirect_uri", flow.RedirectURL)
 	form.Set("client_id", clientID)
+	if verifier != "" {
+		form.Set("code_verifier", verifier)
+	}
 	return vaultsapi.ExchangeOAuthTokenEndpoint(ctx, envOAuthTokenHTTPClient, vaultsapi.OAuthTokenEndpointExchange{
 		TokenEndpoint:           flow.TokenEndpoint,
 		ClientID:                clientID,

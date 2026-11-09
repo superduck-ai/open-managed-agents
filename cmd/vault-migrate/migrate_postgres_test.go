@@ -38,6 +38,13 @@ func (p *targetProvider) WrapDEK(ctx context.Context, dek []byte) (secrets.Wrapp
 }
 
 func TestMigrationAllStoragePostgres(t *testing.T) {
+	for _, externalID := range []string{"poap_fixture", "poap_FridayBuiltinOAuthClient"} {
+		t.Run(externalID, func(t *testing.T) { testMigrationAllStoragePostgres(t, externalID) })
+	}
+}
+
+func testMigrationAllStoragePostgres(t *testing.T, platformExternalID string) {
+	t.Helper()
 	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
 	if address == "" {
 		t.Skip("需要隔离 PostgreSQL，跳过不代表通过")
@@ -94,7 +101,7 @@ func TestMigrationAllStoragePostgres(t *testing.T) {
 	oauthBindings := make(map[string]secrets.Binding)
 	for _, kind := range db.SecretMigrationKinds() {
 		if kind == "platform_oauth_providers" || kind == "env_oauth_flows" {
-			externalID := "poap_fixture"
+			externalID := platformExternalID
 			binding := platformoauth.ProviderClientIDBinding(externalID)
 			columns, values := "", ""
 			args := []any{uuid.NewV4().String(), externalID}
@@ -115,7 +122,7 @@ func TestMigrationAllStoragePostgres(t *testing.T) {
 			}
 			schemaScope := ""
 			if kind == "env_oauth_flows" {
-				schemaScope = ",organization_uuid uuid,workspace_uuid uuid"
+				schemaScope = ",organization_uuid uuid,workspace_uuid uuid,code_verifier_envelope jsonb"
 				args = append(args, org, workspace)
 			}
 			exec("CREATE TABLE " + kind + " (uuid uuid PRIMARY KEY, external_id text, version bigint DEFAULT 1, updated_at timestamptz, client_id_envelope jsonb" + extra + schemaScope + ")")

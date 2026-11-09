@@ -20,7 +20,11 @@ type oauthProviderStoreStub struct {
 }
 
 func (s *oauthProviderStoreStub) ListPlatformOAuthProviders(context.Context) ([]db.PlatformOAuthProvider, error) {
-	return []db.PlatformOAuthProvider{s.provider}, nil
+	other := "friday"
+	if s.provider.BuiltinKey == other {
+		other = "feishu"
+	}
+	return []db.PlatformOAuthProvider{s.provider, {BuiltinKey: other}}, nil
 }
 func (s *oauthProviderStoreStub) GetPlatformOAuthProviderByExternalID(context.Context, string) (db.PlatformOAuthProvider, error) {
 	return s.provider, nil

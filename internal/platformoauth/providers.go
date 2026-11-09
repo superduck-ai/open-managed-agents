@@ -8,6 +8,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"log/slog"
 	"slices"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -45,8 +46,8 @@ func FlowClientIDBinding(flow db.EnvOAuthFlow) secrets.Binding {
 }
 
 func ProviderKey(provider db.PlatformOAuthProvider) string {
-	if provider.BuiltinKey == "feishu" {
-		return vaults.EnvOAuthProviderBuiltinFeishu
+	if provider.BuiltinKey != "" {
+		return "builtin:" + provider.BuiltinKey
 	}
 	return vaults.EnvOAuthCustomProviderKey(provider.ExternalID)
 }
@@ -60,10 +61,10 @@ func (r *Resolver) ResolveEnvOAuthProvider(ctx context.Context, providerKey stri
 	if custom {
 		provider, err = r.db.GetPlatformOAuthProviderByExternalID(ctx, externalID)
 	} else {
-		provider, err = r.db.GetPlatformOAuthProviderByBuiltinKey(ctx, "feishu")
+		provider, err = r.db.GetPlatformOAuthProviderByBuiltinKey(ctx, strings.TrimPrefix(externalID, "builtin:"))
 	}
 	if !custom && errors.Is(err, db.ErrNotFound) {
-		r.auditMissingBuiltin(ctx)
+		r.auditMissingBuiltin(ctx, providerKey)
 	}
 	if err != nil || (custom && provider.BuiltinKey != "") || provider.ClientIDEnvelope == nil || provider.ClientSecretEnvelope == nil {
 		return vaults.EnvOAuthProviderSnapshot{}, vaults.ErrEnvOAuthProviderUnavailable
@@ -103,16 +104,14 @@ func (r *Resolver) ListProviders(ctx context.Context) ([]vaults.EnvOAuthProvider
 		return nil, vaults.ErrEnvOAuthProviderUnavailable
 	}
 	providers := make([]vaults.EnvOAuthProviderSnapshot, 0, len(rows))
-	builtinFound := false
 	for _, provider := range rows {
 		if err := ValidateProviderDefaults(provider); err != nil {
 			return nil, err
 		}
-		builtinFound = builtinFound || provider.BuiltinKey == "feishu"
 		providers = append(providers, ProviderSnapshot(provider))
 	}
-	if !builtinFound {
-		r.auditMissingBuiltin(ctx)
+	if missing := MissingBuiltinProviderKey(rows); missing != "" {
+		r.auditMissingBuiltin(ctx, missing)
 		return nil, vaults.ErrEnvOAuthProviderUnavailable
 	}
 	return providers, nil
@@ -151,8 +150,8 @@ func SealClientField(ctx context.Context, service *secrets.Service, binding secr
 	return &envelope, nil
 }
 
-func (r *Resolver) auditMissingBuiltin(ctx context.Context) {
-	r.logger.ErrorContext(ctx, "platform oauth provider audit", "actor_type", "system", "provider_key", vaults.EnvOAuthProviderBuiltinFeishu,
+func (r *Resolver) auditMissingBuiltin(ctx context.Context, providerKey string) {
+	r.logger.ErrorContext(ctx, "platform oauth provider audit", "actor_type", "system", "provider_key", providerKey,
 		"action", "integrity", "result", "failure", "error_code", "builtin_provider_missing", "request_id", httpapi.RequestID(ctx))
 }
 
@@ -168,4 +167,19 @@ func ValidateProviderDefaults(provider db.PlatformOAuthProvider) error {
 		}
 	}
 	return nil
+}
+
+func MissingBuiltinProviderKey(providers []db.PlatformOAuthProvider) string {
+	for _, key := range []string{"feishu", "friday"} {
+		if !slices.ContainsFunc(providers, func(provider db.PlatformOAuthProvider) bool { return provider.BuiltinKey == key }) {
+			return "builtin:" + key
+		}
+	}
+	return ""
+}
+
+func FlowCodeVerifierBinding(flow db.EnvOAuthFlow) secrets.Binding {
+	binding := FlowClientIDBinding(flow)
+	binding.CredentialExternalID += ":code_verifier"
+	return binding
 }

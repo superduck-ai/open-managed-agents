@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -357,7 +358,7 @@ func TestPlatformOAuthProviderServicePostgres(t *testing.T) {
 		t.Fatalf("duplicate error = %v", err)
 	}
 	providers, err := service.List(t.Context())
-	if err != nil || len(providers) != 2 {
+	if err != nil || len(providers) != 3 {
 		t.Fatalf("list = %+v: %v", providers, err)
 	}
 	scope := "read write"
@@ -582,7 +583,9 @@ func TestEnvOAuthBuiltinConcurrentConfigurationPostgres(t *testing.T) {
 		t.Fatal("服务未拒绝删除")
 	}
 	rows, err := f.server.envOAuthProviders.ListProviders(t.Context())
-	if err != nil || len(rows) != 1 || !rows[0].Configured || rows[0].ClientID != "" || rows[0].ClientSecret != "" {
+	if err != nil || len(rows) != 2 || !slices.ContainsFunc(rows, func(row vaultsapi.EnvOAuthProviderSnapshot) bool {
+		return row.ProviderKey == "builtin:feishu" && row.Configured
+	}) || rows[0].ClientID != "" || rows[0].ClientSecret != "" {
 		t.Fatal("组织元数据泄漏客户端或重复 seed")
 	}
 }

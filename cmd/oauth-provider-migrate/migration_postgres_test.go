@@ -106,7 +106,7 @@ func migrateFixture(t *testing.T, database *db.DB, service *secrets.Service, leg
 	t.Helper()
 	var output bytes.Buffer
 	execute := func() error {
-		return migrate(t.Context(), database, service, legacy, apply, &output, slog.New(slog.DiscardHandler))
+		return migrate(t.Context(), database, service, legacy, legacyClient{}, apply, &output, slog.New(slog.DiscardHandler))
 	}
 	var err error
 	if apply {
@@ -255,7 +255,7 @@ func TestOAuthProviderMigrationBadEnvelopeResumesPostgres(t *testing.T) {
 	if _, err := database.SQLDB().ExecContext(t.Context(), `UPDATE platform_oauth_providers SET client_secret_envelope='{}' WHERE uuid=$1`, providerUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrate(t.Context(), database, service, legacyClient{}, true, io.Discard, slog.New(slog.DiscardHandler)); err == nil {
+	if err := migrate(t.Context(), database, service, legacyClient{}, legacyClient{}, true, io.Discard, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("坏信封未失败关闭")
 	}
 	if version, _ := database.OAuthMigrationVersion(t.Context()); version != 118 {

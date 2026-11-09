@@ -13,18 +13,22 @@ import (
 )
 
 type providerStoreStub struct {
-	provider db.PlatformOAuthProvider
-	err      error
+	provider      db.PlatformOAuthProvider
+	err           error
+	builtinLookup *string
 }
 
-func (s providerStoreStub) GetPlatformOAuthProviderByBuiltinKey(context.Context, string) (db.PlatformOAuthProvider, error) {
+func (s providerStoreStub) GetPlatformOAuthProviderByBuiltinKey(_ context.Context, key string) (db.PlatformOAuthProvider, error) {
+	if s.builtinLookup != nil {
+		*s.builtinLookup = key
+	}
 	return s.provider, s.err
 }
 func (s providerStoreStub) GetPlatformOAuthProviderByExternalID(context.Context, string) (db.PlatformOAuthProvider, error) {
 	return s.provider, s.err
 }
 func (s providerStoreStub) ListPlatformOAuthProviders(context.Context) ([]db.PlatformOAuthProvider, error) {
-	return []db.PlatformOAuthProvider{s.provider}, s.err
+	return []db.PlatformOAuthProvider{s.provider, {BuiltinKey: "friday"}}, s.err
 }
 
 func providerFixture(t *testing.T) (*secrets.Service, db.PlatformOAuthProvider) {
@@ -76,7 +80,7 @@ func TestResolverUsesDatabaseMetadata(t *testing.T) {
 		t.Fatal("database snapshot mismatch")
 	}
 	rows, err := NewResolver(providerStoreStub{provider: provider}, nil, nil).ListProviders(t.Context())
-	if err != nil || len(rows) != 1 || !rows[0].Configured || rows[0].ClientID != "" || rows[0].ClientSecret != "" {
+	if err != nil || len(rows) != 2 || !rows[0].Configured || rows[0].ClientID != "" || rows[0].ClientSecret != "" {
 		t.Fatal("metadata listing requires keys or exposes client")
 	}
 }

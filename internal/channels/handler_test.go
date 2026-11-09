@@ -35,6 +35,10 @@ func (s scopedStore) GetEnvironment(_ context.Context, workspace, id string) (db
 	return env, nil
 }
 
+func (s scopedStore) ListAgentsPage(context.Context, db.ListAgentsPageParams) ([]db.Agent, bool, error) {
+	return nil, false, nil
+}
+
 func (s scopedStore) GetAgent(_ context.Context, workspace, id string) (db.Agent, error) {
 	if workspace != "workspace-a" || id != "agent-a" {
 		return db.Agent{}, db.ErrNotFound

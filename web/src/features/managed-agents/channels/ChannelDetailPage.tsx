@@ -8,7 +8,6 @@ import { workspaceIdFromPath } from '../../../shared/workspaces/presentation';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { toast } from '../../../shared/ui/sonner';
 import { errorMessage } from '../utils';
 import { channelApi, type Channel } from './api';
@@ -16,6 +15,7 @@ import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { PairingsDialog } from './PairingsDialog';
 import { channelEditPath, channelsListPath } from './paths';
 import { channelConnectionStatus } from './status';
+import { ChannelSessionsPanel } from './ChannelSessionsPanel';
 import feishuLogo from './feishu.ico';
 
 export function ChannelDetailPage() {
@@ -228,51 +228,8 @@ export function ChannelDetailContent({
                 <DetailRow label={msg('managedAgents.channels.mountedVault', '挂载 Vault')}>—</DetailRow>
               </DetailCard>
             </TabsContent>
-            <TabsContent value="sessions" className="mt-4 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <StatCard
-                  title={msg('managedAgents.channels.sessionTotal', 'Session 总数')}
-                  value="—"
-                  hint={msg('managedAgents.channels.sessionTotalHint', '当前渠道的全部会话')}
-                />
-                <StatCard
-                  title={msg('managedAgents.channels.sourceUsers', '来源用户')}
-                  value="—"
-                  hint={msg('managedAgents.channels.sourceUsersHint', '按当前应用内的用户标识去重')}
-                />
-                <StatCard
-                  title={msg('managedAgents.channels.lastActive', '最近活跃')}
-                  value="—"
-                  hint={msg('managedAgents.channels.lastActiveHint', '最近一条会话活动时间')}
-                />
-              </div>
-              <div className="rounded-xl border border-border">
-                <div className="border-b border-border px-4 py-3 text-sm text-muted-foreground">
-                  {msg('managedAgents.channels.sessionSyncing', '会话数据同步中')}
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Session / ID</TableHead>
-                      <TableHead>{msg('managedAgents.channels.sessionStatus', '状态')}</TableHead>
-                      <TableHead>{msg('managedAgents.channels.agentVersion', '智能体版本')}</TableHead>
-                      <TableHead>{msg('managedAgents.channels.sessionSource', '会话来源')}</TableHead>
-                      <TableHead>{msg('managedAgents.channels.sourceUser', '来源用户')}</TableHead>
-                      <TableHead>{msg('managedAgents.channels.columnActions', '操作')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    <TableRow>
-                      <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
-                        {msg(
-                          'managedAgents.channels.sessionEmpty',
-                          '暂无按渠道维度的会话同步接口；桥接会话仍可在「会话」页按智能体查看。',
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
+            <TabsContent value="sessions" className="mt-4">
+              <ChannelSessionsPanel workspaceId={workspaceId} agentId={agentId} channel={channel} />
             </TabsContent>
           </Tabs>
           {pairingOpen ? (
@@ -310,16 +267,6 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
     <div className="grid gap-1 sm:grid-cols-[180px_minmax(0,1fr)] sm:items-start">
       <dt className="text-sm text-muted-foreground">{label}</dt>
       <dd className="text-sm text-foreground">{children}</dd>
-    </div>
-  );
-}
-
-function StatCard({ title, value, hint }: { title: string; value: string; hint: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <p className="text-sm text-muted-foreground">{title}</p>
-      <p className="mt-2 text-3xl font-semibold tabular-nums">{value}</p>
-      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
     </div>
   );
 }

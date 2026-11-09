@@ -1,12 +1,30 @@
+import { anthropicBetaApi } from '../../../shared/api/anthropic';
 import { listAgents } from '../api';
 import type { AgentApiResponse, PageCursor } from '../types';
-import { channelApi, type Channel } from './api';
-import type { EnvironmentSettings } from './useChannelEnvironment';
+import type { Channel } from './api';
 
 export type WorkspaceChannel = Channel & {
   agentId: string;
   agentName: string;
   environmentId: string | null;
+};
+
+export type WorkspaceChannelList = {
+  channels: WorkspaceChannel[];
+  incomplete: boolean;
+  truncated: boolean;
+};
+
+type WorkspaceChannelPayload = Channel & {
+  agent_id?: string;
+  agent_name?: string;
+  environment_id?: string | null;
+};
+
+type WorkspaceChannelResponse = {
+  data?: WorkspaceChannelPayload[];
+  incomplete?: boolean;
+  truncated?: boolean;
 };
 
 const agentPageLimit = 100;
@@ -28,25 +46,21 @@ export async function listAllWorkspaceAgents(workspaceId: string): Promise<Agent
   return agents.slice(0, maxAgents);
 }
 
-export async function listWorkspaceChannels(workspaceId: string): Promise<WorkspaceChannel[]> {
-  const agents = await listAllWorkspaceAgents(workspaceId);
-  const rows = await Promise.all(
-    agents.map(async (agent) => {
-      try {
-        const [channels, settings] = await Promise.all([
-          channelApi<{ data: Channel[] }>(agent.id, workspaceId),
-          channelApi<EnvironmentSettings>(agent.id, workspaceId, '/settings'),
-        ]);
-        return (channels.data ?? []).map((channel) => ({
-          ...channel,
-          agentId: agent.id,
-          agentName: agent.name,
-          environmentId: settings.environment_id,
-        }));
-      } catch {
-        return [] as WorkspaceChannel[];
-      }
-    }),
-  );
-  return rows.flat();
+export async function listWorkspaceChannels(workspaceId: string): Promise<WorkspaceChannelList> {
+  const page = await anthropicBetaApi.channels.list<WorkspaceChannelResponse>(workspaceId);
+  return {
+    channels: (page.data ?? []).map(toWorkspaceChannel),
+    incomplete: Boolean(page.incomplete),
+    truncated: Boolean(page.truncated),
+  };
+}
+
+function toWorkspaceChannel(row: WorkspaceChannelPayload): WorkspaceChannel {
+  const agentId = row.agent_id ?? '';
+  return {
+    ...row,
+    agentId,
+    agentName: row.agent_name || agentId,
+    environmentId: row.environment_id ?? null,
+  };
 }

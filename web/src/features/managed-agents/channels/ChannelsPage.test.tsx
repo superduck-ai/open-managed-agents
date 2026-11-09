@@ -27,19 +27,12 @@ function mount() {
   return navigated;
 }
 
-test('工作区渠道页展示火山风格列表并支持新增跳转', async () => {
+test('工作区渠道页读取工作区渠道接口并支持新增跳转', async () => {
+  const urls: string[] = [];
   globalThis.fetch = (async (input) => {
     const url = String(input);
-    if (url.includes('/v1/agents?') || url.includes('/v1/agents&') || url.includes('/agents?')) {
-      return Response.json({
-        data: [{ id: 'agent-1', name: '客服助手' }],
-        next_page: null,
-      });
-    }
-    if (url.includes('/channels/settings')) {
-      return Response.json({ environment_id: 'env_1' });
-    }
-    if (url.includes('/channels')) {
+    urls.push(url);
+    if (url.includes('/v1/channels')) {
       return Response.json({
         data: [
           {
@@ -55,8 +48,13 @@ test('工作区渠道页展示火山风格列表并支持新增跳转', async ()
             include_tool_calls: true,
             reply_in_thread: true,
             pending_pairings: 0,
+            agent_id: 'agent-1',
+            agent_name: '客服助手',
+            environment_id: 'env_1',
           },
         ],
+        incomplete: true,
+        truncated: false,
       });
     }
     return Response.json({ data: [] });
@@ -67,6 +65,10 @@ test('工作区渠道页展示火山风格列表并支持新增跳转', async ()
   expect(screen.getByText('让智能体进入日常工作')).toBeTruthy();
   expect(await screen.findByText('飞书渠道')).toBeTruthy();
   expect(screen.getByText('已连通')).toBeTruthy();
+  expect(screen.getByText('客服助手')).toBeTruthy();
+  expect(screen.getByText('部分智能体的渠道暂时无法读取，列表可能不完整。')).toBeTruthy();
+  expect(urls.some((url) => url.includes('/v1/channels'))).toBe(true);
+  expect(urls.some((url) => url.includes('/v1/agents/'))).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: /新增渠道/ }));
   expect(navigated.at(-1)).toContain('/workspaces/workspace-test/channels/new');
 });

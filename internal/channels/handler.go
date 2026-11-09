@@ -16,6 +16,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
@@ -24,6 +25,7 @@ type agentStore interface {
 	GetAgent(context.Context, string, string) (db.Agent, error)
 	GetEnvironment(context.Context, string, string) (db.Environment, error)
 	EnsureChannelWorkspaceCredential(context.Context, platform.CreateConsoleAPIKeyInput, *secrets.Service) (string, error)
+	ListAgentsPage(context.Context, db.ListAgentsPageParams) ([]db.Agent, bool, error)
 }
 
 type handler struct {
@@ -31,12 +33,30 @@ type handler struct {
 	cfg    config.ChannelBridgeConfig
 	client *http.Client
 	cipher *secrets.Service
+	logger *slog.Logger
+}
+
+func newChannelHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger, cipher *secrets.Service) *handler {
+	return &handler{
+		store:  store,
+		cfg:    cfg,
+		cipher: cipher,
+		logger: logging.LoggerOrDefault(logger),
+		client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+	}
 }
 
 func NewHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger, cipher *secrets.Service) http.Handler {
-	h := &handler{store: store, cfg: cfg, cipher: cipher, client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return newChannelHandler(cfg, store, logger, cipher).agentRouter()
+}
+
+func NewWorkspaceHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger, cipher *secrets.Service) http.Handler {
+	return newChannelHandler(cfg, store, logger, cipher).workspaceRouter()
+}
+
+func (h *handler) agentRouter() http.Handler {
 	r := chi.NewRouter()
-	wrap := httpapi.NewErrorAdapter(logger).Wrap
+	wrap := httpapi.NewErrorAdapter(h.logger).Wrap
 	r.Get("/", wrap(h.forward))
 	r.Post("/", wrap(h.forward))
 	r.Get("/settings", wrap(h.forward))

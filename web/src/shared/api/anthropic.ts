@@ -315,6 +315,19 @@ export const anthropicBetaApi = {
       },
     },
   },
+  channels: {
+    list<T>(workspaceId: string) {
+      return sdkCall(() =>
+        getAnthropicClient().request<T>({
+          path: '/v1/channels',
+          method: 'get',
+          query: { beta: true },
+          headers: { ...anthropicRequestHeaders({ workspaceId }), 'anthropic-beta': 'managed-agents-2026-04-01' },
+          signal: getScopeSignal(),
+        }),
+      );
+    },
+  },
   agents: {
     channels<T>(
       agentId: string,

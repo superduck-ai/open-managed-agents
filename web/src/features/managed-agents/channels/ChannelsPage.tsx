@@ -57,7 +57,7 @@ export function ChannelsPageContent({
     refetchInterval: 15000,
   });
   const rows = useMemo(() => {
-    const data = query.data ?? [];
+    const data = query.data?.channels ?? [];
     return data.filter((row) => {
       if (agentFilter && row.agentId !== agentFilter) return false;
       if (statusFilter !== 'all' && channelConnectionStatus(row) !== statusFilter) return false;
@@ -172,6 +172,20 @@ export function ChannelsPageContent({
           </AlertDescription>
         </Alert>
       ) : null}
+      {query.data?.incomplete ? (
+        <Alert className="mb-4">
+          <AlertDescription>
+            {msg('managedAgents.channels.listIncomplete', '部分智能体的渠道暂时无法读取，列表可能不完整。')}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {query.data?.truncated ? (
+        <Alert className="mb-4">
+          <AlertDescription>
+            {msg('managedAgents.channels.listTruncated', '活跃智能体超过单次可聚合的上限，列表已截断。')}
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <Table>
           <TableHeader>
@@ -264,12 +278,6 @@ export function ChannelsPageContent({
           </TableBody>
         </Table>
       </div>
-      <p className="mt-3 text-xs text-muted-foreground">
-        {msg(
-          'managedAgents.channels.aggregateHint',
-          '列表按工作区内智能体聚合桥接渠道；单个智能体最多展示其控制台创建的渠道。',
-        )}
-      </p>
     </section>
   );
 }

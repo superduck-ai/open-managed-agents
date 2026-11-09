@@ -16,6 +16,7 @@ import { PairingsDialog } from './PairingsDialog';
 import { channelEditPath, channelsListPath } from './paths';
 import { channelConnectionStatus } from './status';
 import { ChannelSessionsPanel } from './ChannelSessionsPanel';
+import { listChannelEnvironments } from './useChannelEnvironment';
 import feishuLogo from './feishu.ico';
 
 export function ChannelDetailPage() {
@@ -57,14 +58,18 @@ export function ChannelDetailContent({
     queryKey: ['channel-detail', workspaceId, agentId, channelId],
     enabled: Boolean(agentId && channelId),
     queryFn: async () => {
-      const [list, settings, agent] = await Promise.all([
+      const [list, settings, agent, environments] = await Promise.all([
         channelApi<{ data: Channel[] }>(agentId, workspaceId),
         channelApi<{ environment_id: string | null }>(agentId, workspaceId, '/settings'),
         import('../api').then((api) => api.retrieveAgent(agentId, workspaceId).catch(() => null)),
+        listChannelEnvironments(workspaceId).catch(() => []),
       ]);
+      const environmentName =
+        environments.find((environment) => environment.id === settings.environment_id)?.name || settings.environment_id;
       return {
         channel: list.data.find((item) => item.id === channelId) ?? null,
         environmentId: settings.environment_id,
+        environmentName,
         agentName: agent?.name ?? agentId,
       };
     },
@@ -223,7 +228,7 @@ export function ChannelDetailContent({
                 <DetailRow label={msg('managedAgents.channels.agentVersionStrategy', '智能体版本策略')}>
                   {msg('managedAgents.channels.keepLatest', '保持最新（仅对新会话生效）')}
                 </DetailRow>
-                <DetailRow label="Environment">{query.data?.environmentId || '—'}</DetailRow>
+                <DetailRow label="Environment">{query.data?.environmentName || '—'}</DetailRow>
                 <DetailRow label={msg('managedAgents.channels.mountedMemory', '挂载 Memory')}>—</DetailRow>
                 <DetailRow label={msg('managedAgents.channels.mountedVault', '挂载 Vault')}>—</DetailRow>
               </DetailCard>

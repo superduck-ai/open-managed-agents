@@ -3519,6 +3519,7 @@
   "managedAgents.channels.sessionsLoading": "正在加载会话…",
   "managedAgents.channels.sessionPageSize": "20 条/页",
   "managedAgents.channels.sessionCount": "共 {count} 条",
+  "managedAgents.channels.perPage": "{count} 条/页",
   "managedAgents.channels.listIncomplete": "部分智能体的渠道暂时无法读取，列表可能不完整。",
   "managedAgents.channels.listTruncated": "活跃智能体超过单次可聚合的上限，列表已截断。",
   "managedAgents.channels.sessionsTruncated": "仅展示最近读取到的会话，更早的会话未全部加载。",

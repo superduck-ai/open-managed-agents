@@ -7,6 +7,20 @@ export interface EnvironmentSettings {
   environment_id: string | null;
 }
 
+export async function listChannelEnvironments(workspaceId: string) {
+  const result: EnvironmentApiResponse[] = [];
+  let cursor: string | null | undefined;
+  do {
+    const page = await anthropicBetaApi.environments.list<EnvironmentApiResponse>(
+      { limit: 100, include_archived: false, ...(cursor ? { page: cursor } : {}) },
+      workspaceId,
+    );
+    result.push(...page.data);
+    cursor = page.next_page;
+  } while (cursor);
+  return result;
+}
+
 export function useChannelEnvironment(agentId: string, workspaceId: string) {
   const queryKey = ['channel-environment', workspaceId, agentId];
   const settings = useQuery({
@@ -16,19 +30,7 @@ export function useChannelEnvironment(agentId: string, workspaceId: string) {
   });
   const environments = useQuery({
     queryKey: ['channel-environment-options', workspaceId],
-    queryFn: async () => {
-      const result: EnvironmentApiResponse[] = [];
-      let cursor: string | null | undefined;
-      do {
-        const page = await anthropicBetaApi.environments.list<EnvironmentApiResponse>(
-          { limit: 100, include_archived: false, ...(cursor ? { page: cursor } : {}) },
-          workspaceId,
-        );
-        result.push(...page.data);
-        cursor = page.next_page;
-      } while (cursor);
-      return result;
-    },
+    queryFn: () => listChannelEnvironments(workspaceId),
     retry: false,
   });
   return {

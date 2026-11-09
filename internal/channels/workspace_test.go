@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -139,4 +140,64 @@ func TestWorkspaceChannelListTruncatesAgents(t *testing.T) {
 	if !page.Truncated || len(page.Data) != 1 || page.Data[0].AgentID != "agent-a" || store.calls != 1 {
 		t.Fatalf("page = %+v calls = %d", page, store.calls)
 	}
+}
+
+func TestWorkspaceChannelListPages(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/managed-channels/settings" {
+			_, _ = w.Write([]byte(`{"environment_id":"env-a"}`))
+			return
+		}
+		agentID := r.Header.Get("X-OMA-Agent")
+		_, _ = fmt.Fprintf(w, `{"data":[{"id":"ch-%s","name":"%s"}]}`, agentID, agentID)
+	}))
+	defer upstream.Close()
+	store := &workspaceAgentStore{agents: []db.Agent{
+		{ExternalID: "agent-a", Name: "甲", UUID: "agent-uuid-a", CreatedAt: time.Now()},
+		{ExternalID: "agent-b", Name: "乙", UUID: "agent-uuid-b", CreatedAt: time.Now()},
+	}}
+	router := chi.NewRouter()
+	router.Mount("/channels", NewWorkspaceHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+	first := workspaceList(t, router, "/channels?limit=1")
+	if len(first.Data) != 1 || first.Data[0].ID != "ch-agent-a" || first.NextPage == nil || *first.NextPage != "1" {
+		t.Fatalf("first = %+v", first)
+	}
+	second := workspaceList(t, router, "/channels?limit=1&page="+*first.NextPage)
+	if len(second.Data) != 1 || second.Data[0].ID != "ch-agent-b" || second.NextPage != nil {
+		t.Fatalf("second = %+v", second)
+	}
+	invalid := httptest.NewRequest(http.MethodGet, "/channels?page=nope", nil)
+	invalid = invalid.WithContext(auth.WithPrincipal(invalid.Context(), auth.Principal{OrganizationUUID: "organization-a", WorkspaceUUID: "workspace-a"}))
+	invalidResult := httptest.NewRecorder()
+	router.ServeHTTP(invalidResult, invalid)
+	if invalidResult.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d", invalidResult.Code)
+	}
+}
+
+func workspaceList(t *testing.T, router http.Handler, path string) struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+	NextPage *string `json:"next_page"`
+} {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	request = request.WithContext(auth.WithPrincipal(request.Context(), auth.Principal{OrganizationUUID: "organization-a", WorkspaceUUID: "workspace-a"}))
+	result := httptest.NewRecorder()
+	router.ServeHTTP(result, request)
+	if result.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", result.Code, result.Body.String())
+	}
+	var page struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+		NextPage *string `json:"next_page"`
+	}
+	if err := json.Unmarshal(result.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	return page
 }

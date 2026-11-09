@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from '@tanstack/react-router';
-import { Bot, Plus, Search } from 'lucide-react';
+import { Bot, ChevronDown, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { useWorkspace } from '../../../shared/workspaces/context';
@@ -9,6 +9,12 @@ import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
 import { Input } from '../../../shared/ui/input';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../../shared/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { toast } from '../../../shared/ui/sonner';
@@ -17,12 +23,21 @@ import feishuLogo from './feishu.ico';
 import { ChannelHero } from './ChannelHero';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { channelCreatePath, channelDetailPath, channelEditPath } from './paths';
+import { ChannelTablePager } from './ChannelTablePager';
 import { channelConnectionStatus, type ChannelConnectionStatus } from './status';
+import { listChannelEnvironments } from './useChannelEnvironment';
 import { listWorkspaceChannels, type WorkspaceChannel } from './workspaceChannels';
 
 type SearchField = 'name' | 'app_id';
 
-const statusOptions: ChannelConnectionStatus[] = ['connected', 'pending_test', 'abnormal', 'disabled'];
+const statusOptions: Array<ChannelConnectionStatus | 'all'> = [
+  'all',
+  'connected',
+  'pending_test',
+  'abnormal',
+  'disabled',
+];
+const channelListPageSize = 10;
 
 export function ChannelsPage() {
   const location = useLocation();
@@ -51,10 +66,16 @@ export function ChannelsPageContent({
   const [searchField, setSearchField] = useState<SearchField>('name');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<ChannelConnectionStatus | 'all'>('all');
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(channelListPageSize);
   const query = useQuery({
     queryKey: ['workspace-channels', workspaceId],
     queryFn: () => listWorkspaceChannels(workspaceId),
     refetchInterval: 15000,
+  });
+  const environments = useQuery({
+    queryKey: ['channel-environment-options', workspaceId],
+    queryFn: () => listChannelEnvironments(workspaceId),
   });
   const rows = useMemo(() => {
     const data = query.data?.channels ?? [];
@@ -67,6 +88,11 @@ export function ChannelsPageContent({
       return row.name.toLowerCase().includes(needle);
     });
   }, [query.data, agentFilter, statusFilter, search, searchField]);
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(pageIndex, pageCount);
+  const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
+  const environmentLabel = (environmentId: string | null) =>
+    environments.data?.find((environment) => environment.id === environmentId)?.name || environmentId || '—';
 
   const runConnectionCheck = (row: WorkspaceChannel) => {
     const status = channelConnectionStatus(row);
@@ -98,12 +124,6 @@ export function ChannelsPageContent({
           'managedAgents.channels.pageDescription',
           '管理智能体在飞书、钉钉、企业微信和微信等企业沟通中的接入渠道',
         )}
-        actions={
-          <Button onClick={() => onNavigate(channelCreatePath(workspaceId, agentFilter))}>
-            <Plus className="size-4" />
-            {msg('managedAgents.channels.addChannel', '新增渠道')}
-          </Button>
-        }
       />
       <ChannelHero />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -137,30 +157,11 @@ export function ChannelsPageContent({
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
-          <Select
-            value={statusFilter}
-            onValueChange={(value) => setStatusFilter((value as ChannelConnectionStatus | 'all') || 'all')}
-            items={[
-              { value: 'all', label: msg('managedAgents.channels.statusAll', '全部状态') },
-              ...statusOptions.map((status) => ({
-                value: status,
-                label: statusLabel(status, msg),
-              })),
-            ]}
-          >
-            <SelectTrigger className="h-9 w-[140px]">
-              <SelectValue placeholder={msg('managedAgents.channels.statusFilter', '连通状态')} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{msg('managedAgents.channels.statusAll', '全部状态')}</SelectItem>
-              {statusOptions.map((status) => (
-                <SelectItem key={status} value={status}>
-                  {statusLabel(status, msg)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
+        <Button onClick={() => onNavigate(channelCreatePath(workspaceId, agentFilter))}>
+          <Plus className="size-4" />
+          {msg('managedAgents.channels.addChannel', '新增渠道')}
+        </Button>
       </div>
       {query.error ? (
         <Alert variant="destructive" className="mb-4">
@@ -192,7 +193,23 @@ export function ChannelsPageContent({
             <TableRow>
               <TableHead>{msg('managedAgents.channels.columnChannel', '渠道')}</TableHead>
               <TableHead>{msg('managedAgents.channels.columnApp', '应用')}</TableHead>
-              <TableHead>{msg('managedAgents.channels.columnStatus', '连通状态')}</TableHead>
+              <TableHead>
+                <DropdownMenu>
+                  <DropdownMenuTrigger className="inline-flex items-center gap-1">
+                    {msg('managedAgents.channels.columnStatus', '连通状态')}
+                    <ChevronDown className="size-3.5 text-muted-foreground" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    {statusOptions.map((status) => (
+                      <DropdownMenuItem key={status} onClick={() => setStatusFilter(status)}>
+                        {status === 'all'
+                          ? msg('managedAgents.channels.statusAll', '全部状态')
+                          : statusLabel(status, msg)}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </TableHead>
               <TableHead>{msg('managedAgents.channels.columnAgent', '智能体')}</TableHead>
               <TableHead>Environment</TableHead>
               <TableHead>{msg('managedAgents.channels.columnActions', '操作')}</TableHead>
@@ -205,14 +222,14 @@ export function ChannelsPageContent({
                   {msg('managedAgents.channels.loading', '正在加载渠道…')}
                 </TableCell>
               </TableRow>
-            ) : rows.length === 0 ? (
+            ) : visibleRows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
                   {msg('managedAgents.channels.listEmpty', '暂无渠道。点击「新增渠道」开始接入飞书。')}
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((row) => (
+              visibleRows.map((row) => (
                 <TableRow key={`${row.agentId}:${row.id}`}>
                   <TableCell>
                     <button
@@ -243,8 +260,8 @@ export function ChannelsPageContent({
                     </div>
                   </TableCell>
                   <TableCell>
-                    <span className="inline-flex items-center rounded-full border border-border bg-muted/40 px-2.5 py-1 font-mono text-xs">
-                      {row.environmentId || '—'}
+                    <span className="inline-flex items-center rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs">
+                      {environmentLabel(row.environmentId)}
                     </span>
                   </TableCell>
                   <TableCell>
@@ -277,6 +294,19 @@ export function ChannelsPageContent({
             )}
           </TableBody>
         </Table>
+        {query.isPending || query.error ? null : (
+          <ChannelTablePager
+            page={page}
+            pageCount={pageCount}
+            total={rows.length}
+            pageSize={pageSize}
+            onPage={setPageIndex}
+            onPageSize={(size) => {
+              setPageSize(size);
+              setPageIndex(1);
+            }}
+          />
+        )}
       </div>
     </section>
   );

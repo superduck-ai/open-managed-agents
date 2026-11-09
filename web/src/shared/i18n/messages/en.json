@@ -3519,6 +3519,7 @@
   "managedAgents.channels.sessionsLoading": "Loading sessions…",
   "managedAgents.channels.sessionPageSize": "20 / page",
   "managedAgents.channels.sessionCount": "{count} total",
+  "managedAgents.channels.perPage": "{count} / page",
   "managedAgents.channels.listIncomplete": "Some agents' channels could not be read. The list may be incomplete.",
   "managedAgents.channels.listTruncated": "The list was truncated because the workspace has more active agents than this request can aggregate.",
   "managedAgents.channels.sessionsTruncated": "Only the most recently loaded sessions are shown. Older sessions were not all loaded.",

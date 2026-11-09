@@ -86,7 +86,9 @@ test('会话管理展示桥接会话统计、来源和详情链接', async () =>
   expect(screen.queryByText('控制台会话')).toBeNull();
   expect(screen.queryByText('其他渠道')).toBeNull();
   expect(screen.getByText('ou_user')).toBeTruthy();
-  expect(screen.getByText('飞书 · 单聊')).toBeTruthy();
+  expect(screen.getByText('飞书渠道')).toBeTruthy();
+  expect(screen.getByText('· 单聊')).toBeTruthy();
+  expect(screen.getByText('会话数据同步中')).toBeTruthy();
   expect(screen.getByText('V1')).toBeTruthy();
   expect(screen.getByText('空闲')).toBeTruthy();
   expect(screen.getAllByText('2026-11-05 15:09:18').length).toBeGreaterThan(1);

@@ -25,7 +25,11 @@ type WorkspaceChannelResponse = {
   data?: WorkspaceChannelPayload[];
   incomplete?: boolean;
   truncated?: boolean;
+  next_page?: string | null;
 };
+
+const channelPageLimit = 100;
+const maxChannelPages = 5;
 
 const agentPageLimit = 100;
 const maxAgents = 100;
@@ -47,12 +51,21 @@ export async function listAllWorkspaceAgents(workspaceId: string): Promise<Agent
 }
 
 export async function listWorkspaceChannels(workspaceId: string): Promise<WorkspaceChannelList> {
-  const page = await anthropicBetaApi.channels.list<WorkspaceChannelResponse>(workspaceId);
-  return {
-    channels: (page.data ?? []).map(toWorkspaceChannel),
-    incomplete: Boolean(page.incomplete),
-    truncated: Boolean(page.truncated),
-  };
+  const channels: WorkspaceChannel[] = [];
+  let cursor: string | null = null;
+  let incomplete = false;
+  let truncated = false;
+  for (let pageIndex = 0; pageIndex < maxChannelPages; pageIndex += 1) {
+    const params = { limit: channelPageLimit, page: cursor };
+    const response: WorkspaceChannelResponse = await anthropicBetaApi.channels.list(workspaceId, params);
+    channels.push(...(response.data ?? []).map(toWorkspaceChannel));
+    incomplete = incomplete || Boolean(response.incomplete);
+    truncated = truncated || Boolean(response.truncated);
+    cursor = response.next_page ?? null;
+    if (!cursor) break;
+    if (pageIndex + 1 >= maxChannelPages) truncated = true;
+  }
+  return { channels, incomplete, truncated };
 }
 
 function toWorkspaceChannel(row: WorkspaceChannelPayload): WorkspaceChannel {

@@ -316,12 +316,15 @@ export const anthropicBetaApi = {
     },
   },
   channels: {
-    list<T>(workspaceId: string) {
+    list<T>(workspaceId: string, params?: { limit?: number; page?: string | null }) {
+      const query: Record<string, string | number | boolean> = { beta: true };
+      if (params?.limit) query.limit = params.limit;
+      if (params?.page) query.page = params.page;
       return sdkCall(() =>
         getAnthropicClient().request<T>({
           path: '/v1/channels',
           method: 'get',
-          query: { beta: true },
+          query,
           headers: { ...anthropicRequestHeaders({ workspaceId }), 'anthropic-beta': 'managed-agents-2026-04-01' },
           signal: getScopeSignal(),
         }),

@@ -57,3 +57,7 @@ func credentialWorkspaceNotFound(cause error) error {
 func invalidChannelUpdate(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "渠道更新请求正文无效", cause)
 }
+
+func invalidChannelPage(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "渠道列表分页参数无效", cause)
+}

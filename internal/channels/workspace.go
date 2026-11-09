@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
@@ -24,6 +26,7 @@ type workspaceChannelPage struct {
 	Data       []map[string]any `json:"data"`
 	Incomplete bool             `json:"incomplete"`
 	Truncated  bool             `json:"truncated"`
+	NextPage   *string          `json:"next_page"`
 }
 
 type agentChannelResult struct {
@@ -46,13 +49,55 @@ func (h *handler) listWorkspace(w http.ResponseWriter, r *http.Request) error {
 	if _, err := h.baseEndpoint(); err != nil {
 		return err
 	}
+	limit, err := httpapi.ParseLimit(r, 100)
+	if err != nil {
+		return invalidChannelPage(err)
+	}
+	offset, err := channelPageOffset(r.URL.Query().Get("page"))
+	if err != nil {
+		return err
+	}
 	agents, truncated, err := h.listWorkspaceAgents(r.Context(), principal.WorkspaceUUID)
 	if err != nil {
 		return unavailable(err)
 	}
 	rows, incomplete := h.loadWorkspaceChannels(r.Context(), principal, agents)
-	httpapi.WriteJSON(w, http.StatusOK, workspaceChannelPage{Data: rows, Incomplete: incomplete, Truncated: truncated})
+	pageRows, nextPage := paginateChannelRows(rows, offset, limit)
+	httpapi.WriteJSON(w, http.StatusOK, workspaceChannelPage{
+		Data:       pageRows,
+		Incomplete: incomplete,
+		Truncated:  truncated,
+		NextPage:   nextPage,
+	})
 	return nil
+}
+
+func channelPageOffset(raw string) (int, error) {
+	token := strings.TrimSpace(raw)
+	if token == "" {
+		return 0, nil
+	}
+	offset, err := strconv.Atoi(token)
+	if err != nil || offset < 0 {
+		return 0, invalidChannelPage(err)
+	}
+	return offset, nil
+}
+
+func paginateChannelRows(rows []map[string]any, offset, limit int) ([]map[string]any, *string) {
+	if offset > len(rows) {
+		offset = len(rows)
+	}
+	end := offset + limit
+	var next *string
+	if end < len(rows) {
+		token := strconv.Itoa(end)
+		next = &token
+	} else {
+		end = len(rows)
+	}
+	page := append([]map[string]any{}, rows[offset:end]...)
+	return page, next
 }
 
 func (h *handler) listWorkspaceAgents(ctx context.Context, workspace string) ([]db.Agent, bool, error) {

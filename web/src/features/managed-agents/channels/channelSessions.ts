@@ -68,6 +68,10 @@ export function channelSessionActor(session: SessionApiResponse): ChannelSession
   return { kind: 'unknown' };
 }
 
+export function channelSessionSourceKind(session: SessionApiResponse): ChannelSessionChat | 'feishu' {
+  return channelSessionChat(session) ?? 'feishu';
+}
+
 export function channelSessionChat(session: SessionApiResponse): ChannelSessionChat {
   const metadata = channelSessionMetadata(session);
   const raw = (metadata.chat_type || metadata.conversation_type || metadata.scope_type || '').toLowerCase();

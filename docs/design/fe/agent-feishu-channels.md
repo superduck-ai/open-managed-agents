@@ -94,13 +94,31 @@ channel_bridge:
 | `.../channels/{agentId}/{channelId}` | 详情 |
 | `.../channels/{agentId}/{channelId}/edit` | 编辑向导 |
 
-工作区列表调用 `GET /v1/channels`。OMA 按当前工作区的活跃智能体分页读取，再复用既有桥接 `GET /api/managed-channels` 与 `/settings`（仍带 `X-OMA-Agent`）聚合成一条响应。响应里的渠道对象追加 `agent_id`、`agent_name`、`environment_id`，并去掉 `app_secret`。单个智能体的桥接失败不会失败整次请求：该智能体被跳过，响应 `incomplete: true`。活跃智能体超过 200 个时截断并返回 `truncated: true`。桥接没有工作区级列表接口，因此服务端仍按智能体扇出；前端不再自己做 N 次聚合。创建向导选择智能体时仍读取智能体列表，渠道的创建、编辑、详情和配对继续走 `/v1/agents/{agent_id}/channels`。
+工作区列表调用 `GET /v1/channels`。OMA 按当前工作区的活跃智能体分页读取，再复用既有桥接 `GET /api/managed-channels` 与 `/settings`（仍带 `X-OMA-Agent`）聚合。查询参数 `limit`（默认 20，最大 100）和 `page`（从 0 起的行偏移）只切分已经聚合好的渠道行，并返回 `next_page`。响应里的渠道对象追加 `agent_id`、`agent_name`、`environment_id`，并去掉 `app_secret`。单个智能体的桥接失败不会失败整次请求：该智能体被跳过，响应 `incomplete: true`。活跃智能体超过 200 个时截断并返回 `truncated: true`。控制台按 `limit=100` 跟随 `next_page`，最多 5 页，再在表格里按 10 条本地分页；不完整或截断时在表上方提示。列表里的 Environment 显示工作区环境名称，查不到名称时回落 ID。桥接没有工作区级列表接口，因此服务端仍按智能体扇出。创建向导选择智能体时仍读取智能体列表，渠道的创建、编辑、详情和配对继续走 `/v1/agents/{agent_id}/channels`。
 
 连通状态把已返回的 `enabled`、`binding_status`、`connected` 映射为已连通、待测试、异常、已停用。「连接检测」只根据这些字段提示，不发起新的探测。
 
-详情「会话管理」读取该智能体的 `GET /v1/sessions?agent_id=`，只展示桥接会话（`metadata.source` 为 `lark-channel-bridge`、`lark-channel`、`feishu`、`lark`，或带有 `bridge_binding_id`）。若元数据已有 `channel_id` 或同时具备 `app_id`，再按当前渠道过滤；否则同一智能体的桥接会话会出现在它的每个渠道详情里。三张统计卡为会话总数、按 `open_id` / `actor_id` / `sender_id` 去重的来源用户、最近 `updated_at`。没有用户标识时来源用户显示「—」，表格回落展示 `scope_id` 并标注「会话范围」，不编造 Open ID。会话来源显示「飞书」，仅当元数据带 `chat_type`、`conversation_type` 或 `scope_type` 时追加单聊或群聊。智能体版本复用会话上的 agent version。「查看详情」进入现有 OMA 会话详情 `/workspaces/{workspaceId}/sessions/{sessionId}`。没有匹配会话时才显示空表。
+详情「会话管理」读取该智能体的 `GET /v1/sessions?agent_id=`，只展示桥接会话（`metadata.source` 为 `lark-channel-bridge`、`lark-channel`、`feishu`、`lark`，或带有 `bridge_binding_id`）。若元数据已有 `channel_id` 或同时具备 `app_id`，再按当前渠道过滤；否则同一智能体的桥接会话会出现在它的每个渠道详情里。三张统计卡为会话总数、按 `open_id` / `actor_id` / `sender_id` 去重的来源用户、最近 `updated_at`。没有用户标识时来源用户显示「—」，表格回落展示 `scope_id` 并标注「会话范围」，不编造 Open ID。会话来源第一行是渠道名称，第二行是「· 单聊」「· 群聊」或「· 飞书」。聊天类型只读取 `chat_type`、`conversation_type` 或 `scope_type`。智能体版本复用会话上的 agent version。「查看详情」进入现有 OMA 会话详情 `/workspaces/{workspaceId}/sessions/{sessionId}`。没有匹配会话时才显示空表。表头始终保留「会话数据同步中」，与火山详情一致。
 
-Environment 仍是智能体级设置：向导里选中的环境写入该 Agent 的 `/channels/settings`，不提供工作区级渠道环境。挂载 Memory / Vault 在详情中占位为「—」。桥接元数据目前通常没有 `channel_id`、`app_id` 和 `open_id`，因此多渠道共用一个智能体时无法严格隔离会话，来源用户也可能只能看到会话范围。本次未做浏览器端到端，也未做真实飞书手测。
+Environment 仍是智能体级设置：向导里选中的环境写入该 Agent 的 `/channels/settings`。详情和列表优先显示环境名称。渠道设置没有 Memory / Vault 字段，详情继续显示「—」。本次未做浏览器端到端，也未做真实飞书手测。
+
+### 桥接会话元数据补丁
+
+按渠道隔离会话和展示飞书 Open ID 只能在 `pxguan/lark-channel` 创建 OMA 会话时写入。OMA 已按这些键读取，本仓库不能修改私有桥接。在桥接 `adapter.ts` 调用 OMA `sessions.create`（或更新已有会话 metadata）时，把下面的字段并进 metadata，不要删掉现有的 `source`、`bridge_binding_id`、`scope_id`：
+
+```ts
+metadata: {
+  source: 'lark-channel-bridge',
+  bridge_binding_id: binding.id,
+  scope_id: scopeId,
+  channel_id: channel.id,
+  app_id: channel.appId,
+  ...(sender.openId ? { open_id: sender.openId, actor_id: sender.openId } : {}),
+  chat_type: chatType === 'p2p' ? 'p2p' : 'group',
+}
+```
+
+`channel.id` 必须是 OMA 渠道 ID，`app_id` 是飞书应用 ID。没有发送者 open_id 时不要写入空字符串。同一 `scope_id` 复用会话时，若创建时没写过这些键，下一次入站消息应补写，否则历史会话仍无法按渠道拆开。
 
 上述飞书实测基于开发 checkout，不代表本分支适配最新主线后再次完成全链路验证。群聊、配对及话题开关未做真实飞书验收。本 PR 不包含 bridge 仓库变更，部署前必须准备对应版本的桥接控制面。
 

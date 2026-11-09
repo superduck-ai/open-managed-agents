@@ -1,6 +1,7 @@
+import { productIcons } from '@/shared/icons/product-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from '@tanstack/react-router';
-import { AlertCircle, Archive, Cable, Copy, Plus, Search } from 'lucide-react';
+import { AlertCircle, Archive, Copy, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from 'react';
 
 import { useAuth } from '../../shared/auth/context';
@@ -199,7 +200,7 @@ export function McpTunnelsContent({
           />
           {tunnelsQuery.isSuccess && !filteredTunnels.length ? (
             <ResourceListState
-              icon={hasFilters ? Search : Cable}
+              icon={hasFilters ? Search : productIcons.tunnel}
               title={
                 hasFilters
                   ? msg('mcpTunnels.empty.filteredTitle', 'No matching MCP tunnels')

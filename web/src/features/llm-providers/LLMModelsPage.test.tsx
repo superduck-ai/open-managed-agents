@@ -6,7 +6,7 @@ import {
   createRoute,
   createRouter,
 } from '@tanstack/react-router';
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { useEffect, type ReactNode } from 'react';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { I18nProvider } from '../../shared/i18n';
@@ -19,7 +19,7 @@ import { LLMModelsPage } from './LLMModelsPage';
 import type { LLMProvider } from './api';
 
 const testingLibrary = await import('@testing-library/react');
-const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
 
 const originalFetch = globalThis.fetch;
 
@@ -32,6 +32,90 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
+  test.each(['create', 'edit', 'cancel-create', 'remount-create'])(
+    'invalidates a pending quickstart return after reopening the provider form: %s',
+    async (action) => {
+      const returnTo = '/workspaces/default/agent-quickstart?mode=api';
+      resetTestDom(`https://oma.duck.ai/workspaces/default/llm-models?returnTo=${encodeURIComponent(returnTo)}`);
+      mockProvidersApi();
+      const baseFetch = globalThis.fetch;
+      let resolveModels: ((response: Response) => void) | undefined;
+      const modelsResponse = new Promise<Response>((resolve) => {
+        resolveModels = resolve;
+      });
+      let modelReads = 0;
+      globalThis.fetch = (async (input, init) => {
+        if (String(input).includes('/v1/models')) {
+          modelReads++;
+          return modelsResponse;
+        }
+        return baseFetch(input, init);
+      }) as typeof fetch;
+      const assign = spyOn(window.location, 'assign').mockImplementation(() => undefined);
+      try {
+        renderPage();
+        await screen.findByText('No providers yet');
+        await createProvider('Setup', 'https://model.example.test', 'test-key', ['test-model']);
+        await waitFor(() => expect(modelReads).toBe(1));
+        if (action === 'remount-create') {
+          cleanup();
+          renderPage();
+          await screen.findByRole('button', { name: 'Add provider', exact: true });
+        }
+        if (action === 'edit') {
+          fireEvent.click(screen.getByRole('button', { name: 'Setup', exact: true }));
+          fireEvent.click(await screen.findByRole('button', { name: 'Edit', exact: true }));
+        } else {
+          fireEvent.click(screen.getByRole('button', { name: 'Add provider', exact: true }));
+          fireEvent.click(screen.getByRole('tab', { name: 'Custom model API' }));
+        }
+        const dialog = screen.getByRole('dialog', { name: action === 'edit' ? 'Edit provider' : 'Add provider' });
+        const name = within(dialog).getByLabelText('Display name');
+        fireEvent.change(name, { target: { value: 'Unsaved provider draft' } });
+        if (action === 'cancel-create') {
+          fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel', exact: true }));
+          await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+        }
+        await act(async () => {
+          resolveModels!(jsonResponse({ data: [{ id: 'test-model' }], has_more: false }));
+        });
+        expect(assign).not.toHaveBeenCalled();
+        if (action !== 'cancel-create') {
+          expect(screen.getByRole('dialog')).toBe(dialog);
+          expect(name).toHaveProperty('value', 'Unsaved provider draft');
+        }
+      } finally {
+        assign.mockRestore();
+      }
+    },
+  );
+
+  test.each([false, true])('quickstart setup returns only after usable models exist: %s', async (available) => {
+    const returnTo = '/workspaces/default/agent-quickstart?mode=api';
+    resetTestDom(`https://oma.duck.ai/workspaces/default/llm-models?returnTo=${encodeURIComponent(returnTo)}`);
+    mockProvidersApi();
+    const baseFetch = globalThis.fetch;
+    let modelReads = 0;
+    globalThis.fetch = (async (input, init) => {
+      if (String(input).includes('/v1/models')) {
+        modelReads++;
+        return jsonResponse({ data: available ? [{ id: 'test-model' }] : [], has_more: false });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    const assign = spyOn(window.location, 'assign').mockImplementation(() => undefined);
+    try {
+      renderPage();
+      await screen.findByText('No providers yet');
+      await createProvider('Setup', 'https://model.example.test', 'test-key', ['test-model']);
+      await waitFor(() => expect(modelReads).toBe(1));
+      if (available) expect(assign).toHaveBeenCalledWith(returnTo);
+      else expect(assign).not.toHaveBeenCalled();
+    } finally {
+      assign.mockRestore();
+    }
+  });
+
   test.each(['context', 'output', 'image', 'whitespace'])(
     'rejects a model row with %s settings and no Model ID',
     async (setting) => {

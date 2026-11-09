@@ -114,12 +114,8 @@ func TestWorkerRetriesThenDeliversAndDisablesRedirects(t *testing.T) {
 	queue := testQueue(t, cfg)
 	var calls atomic.Int32
 	flaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		wantAuthorization := "Bearer customer"
-		if r.URL.Path == "/matched" {
-			wantAuthorization = ""
-		}
-		if r.Header.Get("Authorization") != wantAuthorization {
-			t.Errorf("目标 %s 的请求凭据错误", r.URL.Path)
+		if r.Header.Get("Authorization") != "Bearer customer" {
+			t.Error("retry destination did not receive its configured authorization")
 		}
 		if calls.Add(1) == 1 {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -128,6 +124,13 @@ func TestWorkerRetriesThenDeliversAndDisablesRedirects(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(flaky.Close)
+	matched := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Error("content destination received unexpected authorization")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(matched.Close)
 	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://elsewhere.example.com", http.StatusFound)
 	}))
@@ -140,7 +143,7 @@ func TestWorkerRetriesThenDeliversAndDisablesRedirects(t *testing.T) {
 		"no_traces":  {UUID: "no_traces", State: "enabled", TracesEnabled: false, TracesEndpointURL: flaky.URL},
 		"downgraded": {UUID: "downgraded", State: "enabled", TracesEnabled: true, TracesContentMode: "metadata_only", TracesEndpointURL: flaky.URL},
 		"shrunk":     {UUID: "shrunk", State: "enabled", TracesEnabled: true, TracesContentMode: "content", TracesMaxContentBytes: 100, TracesEndpointURL: flaky.URL},
-		"matched":    {UUID: "matched", State: "enabled", TracesEnabled: true, TracesContentMode: "content", TracesMaxContentBytes: 100, TracesEndpointURL: flaky.URL + "/matched"},
+		"matched":    {UUID: "matched", State: "enabled", TracesEnabled: true, TracesContentMode: "content", TracesMaxContentBytes: 100, TracesEndpointURL: matched.URL},
 	}}
 	stop, err := NewWorker(store, plainOpener{}, queue, cfg, nil).Start(t.Context())
 	if err != nil {
@@ -172,7 +175,7 @@ func TestWorkerRetriesThenDeliversAndDisablesRedirects(t *testing.T) {
 		info, err := queue.consumer.Info(t.Context())
 		return err == nil && info.NumPending == 0 && info.NumAckPending == 0
 	})
-	if calls.Load() != 3 || store.destinations["redirect"].State != "disabled" || store.disableAfter != time.Hour {
+	if calls.Load() != 2 || store.destinations["redirect"].State != "disabled" || store.disableAfter != time.Hour {
 		t.Fatalf("calls=%d store=%+v", calls.Load(), store.destinations["redirect"])
 	}
 	if err := queue.Publish(t.Context(), Delivery{DestinationUUID: "flaky", Payload: make([]byte, maxMessageBytes)}); err == nil {

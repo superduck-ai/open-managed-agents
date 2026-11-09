@@ -96,3 +96,7 @@ func writeLLMProviderBackendError(w http.ResponseWriter) {
 func trajectoryWorkspaceRequired() error {
 	return apperr.New(apperr.InvalidArgument, "workspace is required", nil)
 }
+
+func invalidOverviewQuery(w http.ResponseWriter) {
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_overview_query", "message": "days must be 7 or 30 and timezone must be a valid IANA timezone"})
+}

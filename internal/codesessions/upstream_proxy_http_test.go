@@ -46,6 +46,15 @@ func TestHTTPProxyRejectsInvalidRequestsBeforeDial(t *testing.T) {
 }
 
 func TestHTTPProxyForwardsBodyAndStripsProxyAuthentication(t *testing.T) {
+	for _, connectionHeader := range []string{"", "X-OMA-Session-ID"} {
+		t.Run("connection="+connectionHeader, func(t *testing.T) {
+			testHTTPProxyForwarding(t, connectionHeader)
+		})
+	}
+}
+
+func testHTTPProxyForwarding(t *testing.T, connectionHeader string) {
+	t.Helper()
 	handler := NewHandler(config.Config{}, newTestService(t, nil), nil, nil)
 	stubUnrestrictedPolicyContext(t, handler)
 	received := make(chan string, 1)
@@ -62,6 +71,9 @@ func TestHTTPProxyForwardsBodyAndStripsProxyAuthentication(t *testing.T) {
 				return
 			}
 			body, _ := io.ReadAll(request.Body)
+			if values := request.Header.Values("X-OMA-Session-ID"); len(values) != 1 || values[0] != "sesn_test" {
+				t.Errorf("upstream session header = %q", values)
+			}
 			received <- request.URL.RequestURI() + "|" + string(body) + "|" + request.Header.Get("Proxy-Authorization")
 			_, _ = io.WriteString(server, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
 		}()
@@ -69,6 +81,11 @@ func TestHTTPProxyForwardsBodyAndStripsProxyAuthentication(t *testing.T) {
 	}
 	request := httptest.NewRequest("POST", "http://1.1.1.1:6788/probe?q=nonce", strings.NewReader("opaque"))
 	request.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("cse_test:sk-ant-si-test")))
+	request.Header.Add("x-oma-session-id", "forged-session")
+	request.Header.Add("X-OMA-Session-ID", "another-session")
+	if connectionHeader != "" {
+		request.Header.Set("Connection", connectionHeader)
+	}
 	response := httptest.NewRecorder()
 	handler.forwardUpstreamProxyHTTP(response, request, testUpstreamProxyIdentity(), "sk-ant-si-test")
 	if response.Code != 200 || response.Body.String() != "ok" {

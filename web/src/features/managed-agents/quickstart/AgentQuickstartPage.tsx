@@ -1,3 +1,4 @@
+import { quickstartModelSetupHref } from '../../../shared/workspaces/model-setup-navigation';
 import { useEffect, useState } from 'react';
 import { useRouter } from '@tanstack/react-router';
 import { Tabs, TabsList, TabsTrigger } from '../../../shared/ui/tabs';
@@ -28,7 +29,9 @@ export function AgentQuickstartPage() {
     return (
       <div className="flex min-h-96 items-center justify-center">
         <LLMProviderRequired
-          onConfigure={() => window.location.assign(`/workspaces/${encodeURIComponent(activeWorkspaceId)}/llm-models`)}
+          onConfigure={() =>
+            window.location.assign(quickstartModelSetupHref(activeWorkspaceId, window.location.search))
+          }
         />
       </div>
     );

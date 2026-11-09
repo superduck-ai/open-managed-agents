@@ -65,8 +65,6 @@ type ModelRequestToolUse struct {
 	InputRejected bool
 }
 
-// ModelRequestMessage is a completed public message observed at the proxy.
-// Publishing it with the end avoids depending on the worker's later echo.
 type ModelRequestMessage struct {
 	ID      string                `json:"id"`
 	Type    string                `json:"type"`
@@ -184,7 +182,7 @@ func (s *Service) EndModelRequest(ctx context.Context, request *ModelRequest, re
 		return err
 	}
 	payloads := make([]json.RawMessage, 0, len(result.Messages)+len(tools)+1)
-	if result.ErrorType == "" {
+	if result.ErrorType == "" && !isDSHCodeSession(request.codeSession) {
 		for _, message := range result.Messages {
 			payload, err := modelMessagePayload(request, message, result.EndedAt)
 			if err != nil {

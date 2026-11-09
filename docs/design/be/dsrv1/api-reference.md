@@ -912,12 +912,9 @@ Brain 将原始 preview.start/preview.delta 缓冲最多 100ms，按原顺序批
 
 ### 与模型代理的分工
 
-| 事件                                                                   | 写者           | 规则                                                                                    |
-| ---------------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------------------- |
-| 模型流产生的 `agent.message`、`agent.tool_use`、`span.model_request_*` | 模型代理       | 主写者，按稳定助手事件 ID 派生                                                          |
-| 预览与完成块的 `agent.message` / `agent.thinking`                      | 本接口         | 与模型代理使用相同的稳定 ID；先到者写入，后到者内容相同视为重复，不同则告警并保留先到者 |
-| 工具结果、线程事件、`system.message`                                   | 本接口         | 唯一写者                                                                                |
-| 状态事件                                                               | 服务端 reducer | 唯一写者                                                                                |
+DSRv1 最终助手消息与 thinking 只由本接口写入，模型代理保留工具调用、span、用量及计费。预览不落历史。工具结果、线程事件和 system.message 由本接口写入，主会话状态由服务端 reducer 生成。
+
+冷接管重放全部可投影公共输出，旧 transcript 中的 `plugin:oma/dsr-publication` 不再用于跳过记录。
 
 ### 响应 200
 
@@ -931,7 +928,8 @@ Brain 将原始 preview.start/preview.delta 缓冲最多 100ms，按原顺序批
 | 状态 | `DSR-Error`                         | 说明                                             |
 | ---- | ----------------------------------- | ------------------------------------------------ |
 | 400  | `invalid_request`                   | 未知类型、字段非法；整批不写                     |
-| 409  | `public_event_idempotency_mismatch` | 同一 `id` 内容不同，或同一原生日志绑定到不同线程 |
+| 409 | `public_event_idempotency_mismatch` | 同一 ID 请求摘要或已有历史内容不同，或原生日志绑定不同线程 |
+| 409 | `public_event_history_inconsistent` | 回执对应的持久历史缺失或不一致；整批回滚 |
 
 ### 对应 CCRv2
 
@@ -997,7 +995,7 @@ MCP/OTLP 的原生错误体、附件二进制与 HEAD 响应不走通用 JSON �
 
 持久 public-events 先对原始单事件使用现有 JCS 规范化器，再计算 SHA-256，保存为 `jcs-sha256-v1:<64位小写hex>`。摘要覆盖所有原始字段，包括未知字段，在公开映射之前计算。字段顺序、JSON 空白和等价数字表示不构成冲突，数组顺序和实际内容变化构成冲突。重复键、无效 Unicode 和不符合规范化器的 JSON 拒绝提交。
 
-数据库仅保存 payload_digest，不保留回执原始 payload。receipt 唯一键和公开历史、线程创建、状态归约仍在同一事务。相同 ID、相同摘要返回 duplicate；不同摘要返回 `409 public_event_idempotency_mismatch`。preview 仍不落 receipt。摘要采用 SHA-256 碰撞风险这一工程假设，不与其他 hash 算法混用。
+数据库仅保存 payload_digest，不保留回执原始 payload。receipt 唯一键和公开历史、线程创建、状态归约仍在同一事务。相同 ID、相同摘要还须核对持久历史的类型、线程和公开内容，才能返回 duplicate。线程状态无变化可能没有对应历史，由状态机单独处理。缺失或不一致的最终历史返回 `409 public_event_history_inconsistent`；不同摘要返回 `409 public_event_idempotency_mismatch`。preview 仍不落 receipt。摘要采用 SHA-256 碰撞风险这一工程假设，不与其他 hash 算法混用。
 
 公开回执与可重放原生日志同寿命，当前未增加独立 TTL。未来清理必须同时限定可重放范围，避免旧日志重放造成重复副作用。版本水位在 Code Session 生命周期内保留。
 

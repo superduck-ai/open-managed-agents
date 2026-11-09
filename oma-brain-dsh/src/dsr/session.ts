@@ -31,10 +31,7 @@ import { dsrToolIdentity } from "./tools.ts";
 import { DsrSubagentBridge } from "./subagents.ts";
 import type { DsrClient } from "./client.ts";
 import type { Decision, Delivery, Finish, Input, PublicEvent } from "./wire.ts";
-import {
-  TranscriptPublication,
-  type PublicationTarget,
-} from "./publication.ts";
+import { TranscriptPublication } from "./publication.ts";
 
 // 扩展 DSH 插件记录类型：允许把“某个输入已经得出最终结论”写进会话事件流。
 // 这是 DSR 幂等恢复的关键：结论一旦落盘，重放同一个输入就不会再执行一遍。
@@ -171,19 +168,17 @@ export class DsrSession {
     if (this.failure) return Promise.reject(this.failure);
     this.previews.flush();
     const pending = this.pending.splice(0);
-    const targets = this.publication.targets();
     const sessions = new Set<Session>();
     if (this.runtime.handle) sessions.add(this.runtime.agent.session);
     if (session) sessions.add(session);
     this.publications = this.publications.then(() =>
-      this.commitPublication(pending, targets, [...sessions]),
+      this.commitPublication(pending, [...sessions]),
     );
     return this.publications;
   }
 
   private async commitPublication(
     pending: PublicEvent[],
-    targets: PublicationTarget[],
     sessions: Session[],
   ): Promise<void> {
     await this.ctx.sessionReplication.waitForCapacity(
@@ -198,10 +193,6 @@ export class DsrSession {
         pending.slice(index, index + 200),
         this.abort.signal,
       );
-    this.publication.acknowledge(targets);
-    if (!targets.length) return;
-    await this.ctx.sessionReplication.flush(this.id, this.abort.signal);
-    for (const target of targets) await this.ctx.sessions.flush(target.session);
   }
 
   /**
@@ -225,7 +216,6 @@ export class DsrSession {
 
   private project(event: SessionEvent, session: Session): void {
     const thread = session.id === this.id ? undefined : session.id;
-    const confirmed = this.publication.confirmed(session, event);
     if (!thread && event.type === "turn/end") this.ending = event;
     if (event.type === "assistant/message" && !event.data.interrupted) {
       const inputID = thread
@@ -239,23 +229,15 @@ export class DsrSession {
         thread,
       );
       for (const payload of this.assistant.complete(outputs, thread)) {
-        if (confirmed) this.assistantIDs.add(payload.id);
-        else if (this.queueAssistant(payload as PublicEvent))
-          this.publication.queued(session, event);
+        this.queueAssistant(payload as PublicEvent);
       }
     }
     const record = pluginRecordOf(event);
     if (record?.type === "plugin:oma/assistant-block") {
       const output = (record.data as { output: PublicEvent }).output;
-      if (confirmed) this.assistantIDs.add(output.id);
-      else if (this.queueAssistant(output))
-        this.publication.queued(session, event);
+      this.queueAssistant(output);
     }
-    if (
-      event.type === "tool/result" &&
-      event.surfaceOp === "append" &&
-      !confirmed
-    ) {
+    if (event.type === "tool/result" && event.surfaceOp === "append") {
       const toolName = this.publication.tool(
         session,
         event.data.message.toolCallId,
@@ -270,7 +252,6 @@ export class DsrSession {
         content: [...event.data.message.content],
         ...(thread ? { session_thread_id: thread } : {}),
       });
-      this.publication.queued(session, event);
     }
   }
 

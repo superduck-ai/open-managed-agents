@@ -2,6 +2,7 @@ import { Context } from "@deepseek-ai/cordis";
 import {
   Session,
   SessionId,
+  appendPluginRecord,
   type SessionHeader,
   type SessionEvent,
 } from "@deepseek-ai/dsh-session";
@@ -349,13 +350,13 @@ async function measureReplay(
   }
 }
 
-test("a cold open skips assistant and tool outputs with durable publication receipts", async () => {
+test("a cold open replays assistant and tool outputs with server deduplication", async () => {
   const result = await measureReplay(125, true);
   expect(result.nativeEvents).toBe(1000);
-  expect(result.projectedEvents).toBe(0);
-  expect(result.publishRequests).toBe(0);
+  expect(result.projectedEvents).toBe(250);
+  expect(result.publishRequests).toBe(2);
   expect(result.accepted).toBe(0);
-  expect(result.duplicates).toBe(0);
+  expect(result.duplicates).toBe(250);
   expect(result.recordCalls).toBeGreaterThanOrEqual(result.nativeEvents);
   console.log("DSR_OPEN_REPLAY", JSON.stringify(result));
 });
@@ -373,7 +374,7 @@ test("text history is indexed once without repeated record scans", async () => {
     expect(current.historyEntriesVisited).toBeLessThanOrEqual(
       current.nativeEvents * 3,
     );
-    expect(current.projectedEvents).toBe(0);
+    expect(current.projectedEvents).toBeGreaterThan(0);
   }
   console.log("DSR_OPEN_TEXT_SCALING", JSON.stringify(samples));
 });
@@ -390,12 +391,12 @@ test("tool result identity lookup uses an index during cold open", async () => {
     expect(current.historyEntriesVisited).toBeLessThanOrEqual(
       current.nativeEvents * 3,
     );
-    expect(current.projectedEvents).toBe(0);
+    expect(current.projectedEvents).toBeGreaterThan(0);
   }
   console.log("DSR_OPEN_TOOL_SCALING", JSON.stringify(samples));
 });
 
-test("5000 native events do not resend confirmed public payloads", async () => {
+test("5000 native events replay in bounded batches without duplicate history", async () => {
   const backend = new ReplayBackend();
   const seed = history(backend, 625, true, 16 * 1024);
   backend.transcripts.set(seed.id, {
@@ -415,11 +416,11 @@ test("5000 native events do not resend confirmed public payloads", async () => {
     await second.session.open();
     const result = totals(backend);
     expect(seed.snapshotEvents()).toHaveLength(5000);
-    expect(result.projectedEvents).toBe(0);
-    expect(result.publishRequests).toBe(0);
+    expect(result.projectedEvents).toBe(1250);
+    expect(result.publishRequests).toBe(7);
     expect(result.accepted).toBe(0);
-    expect(result.duplicates).toBe(0);
-    expect(result.uploadedBytes).toBe(0);
+    expect(result.duplicates).toBe(1250);
+    expect(result.uploadedBytes).toBeGreaterThan(0);
     expect(backend.publicLog.size).toBe(1250);
     expect(backend.requests).toHaveLength(0);
     console.log(
@@ -439,7 +440,7 @@ test("5000 native events do not resend confirmed public payloads", async () => {
   }
 }, 30000);
 
-test("cold takeover publishes only a new unconfirmed tail after a confirmed prefix", async () => {
+test("cold takeover replays the prefix and publishes the missing tail", async () => {
   const backend = new ReplayBackend();
   const seed = history(backend, 2, true);
   backend.transcripts.set(seed.id, {
@@ -465,9 +466,9 @@ test("cold takeover publishes only a new unconfirmed tail after a confirmed pref
   try {
     await second.session.open();
     expect(totals(backend)).toMatchObject({
-      projectedEvents: 4,
+      projectedEvents: 8,
       accepted: 4,
-      duplicates: 0,
+      duplicates: 4,
     });
     expect(backend.publicLog.size).toBe(8);
   } finally {
@@ -559,7 +560,7 @@ test("a failed later publish batch cannot acknowledge an unpublished tail", asyn
   }
 });
 
-test("a receipt replication failure replays confirmed server outputs without losing data", async () => {
+test("publication succeeds without writing transcript receipts", async () => {
   const backend = new ReplayBackend();
   const seed = history(backend, 1, true);
   backend.transcripts.set(seed.id, {
@@ -569,9 +570,8 @@ test("a receipt replication failure replays confirmed server outputs without los
   backend.rejectReceiptWrites = true;
   const first = await openFixture(backend);
   try {
-    await expect(first.session.open()).rejects.toThrow();
+    await first.session.open();
     expect(backend.publicLog.size).toBe(2);
-    first.ctx.sessionReplication.cancel(seed.id);
   } finally {
     await first.close().catch(() => {});
   }
@@ -594,7 +594,7 @@ test("a receipt replication failure replays confirmed server outputs without los
       backend.transcripts
         .get(seed.id)!
         .events.some((event) => event.type === "plugin:oma/dsr-publication"),
-    ).toBe(true);
+    ).toBe(false);
   } finally {
     try {
       await second.close();
@@ -604,7 +604,7 @@ test("a receipt replication failure replays confirmed server outputs without los
   }
 });
 
-test("events arriving during a publish are not covered by its earlier receipt", async () => {
+test("events arriving during a publish are included on the next cold open", async () => {
   const backend = new ReplayBackend();
   const seed = history(backend, 1, true);
   backend.transcripts.set(seed.id, {
@@ -635,9 +635,9 @@ test("events arriving during a publish are not covered by its earlier receipt", 
   try {
     await second.session.open();
     expect(totals(backend)).toMatchObject({
-      projectedEvents: 2,
+      projectedEvents: 4,
       accepted: 2,
-      duplicates: 0,
+      duplicates: 2,
     });
     expect(backend.publicLog.size).toBe(4);
   } finally {
@@ -694,3 +694,61 @@ test("session open shares one paginated directory snapshot and refreshes it for 
     }
   }
 });
+
+test.each(["missing", "changed"] as const)(
+  "legacy transcript receipts cannot hide %s public state after a simulated rollback",
+  async (state) => {
+    const backend = new ReplayBackend();
+    const seed = history(backend, 1, true);
+    appendPluginRecord(seed, "plugin:oma/dsr-publication", {
+      version: 1,
+      through: seed.snapshotEvents().length,
+    });
+    backend.transcripts.set(seed.id, {
+      header: { ...seed.header },
+      events: seed.snapshotEvents().map((event) => ({ ...event })),
+    });
+    try {
+      const first = await openFixture(backend);
+      try {
+        await first.session.open();
+      } finally {
+        await first.close();
+      }
+      expect(backend.publicLog.size).toBe(2);
+      expect(
+        backend.transcripts
+          .get(seed.id)!
+          .events.some((event) => event.type === "plugin:oma/dsr-publication"),
+      ).toBe(true);
+      const message = [...backend.publicLog.values()].find(
+        (event) => event.type === "agent.message",
+      )!;
+      expect(message).toBeDefined();
+      if (state === "missing") backend.publicLog.clear();
+      else
+        backend.publicLog.set(message.id, {
+          ...message,
+          content: [{ type: "text", text: "different persisted history" }],
+        });
+      backend.batches = [];
+      const second = await openFixture(backend);
+      try {
+        if (state === "missing") {
+          await second.session.open();
+          expect(totals(backend).accepted).toBe(2);
+          expect(backend.publicLog.size).toBe(2);
+        } else {
+          await expect(second.session.open()).rejects.toThrow();
+          expect(backend.publicLog.get(message.id)!.content).toEqual([
+            { type: "text", text: "different persisted history" },
+          ]);
+        }
+      } finally {
+        await second.close().catch(() => {});
+      }
+    } finally {
+      backend.stop();
+    }
+  },
+);

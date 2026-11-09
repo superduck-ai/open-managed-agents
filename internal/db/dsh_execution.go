@@ -160,8 +160,14 @@ func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPu
 				if old != digest {
 					return ErrDSHPublicConflict
 				}
+				if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true); err != nil {
+					return err
+				}
 				result.Duplicates++
 				continue
+			}
+			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, false); err != nil {
+				return err
 			}
 			if item.Thread != nil {
 				if err := createDSHThread(ctx, executor, scope, session, primary, item); err != nil {
@@ -180,6 +186,9 @@ func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPu
 			}
 			events, err := insertDSHHistory(ctx, executor, &session, primary, item.Events)
 			if err != nil {
+				return err
+			}
+			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true); err != nil {
 				return err
 			}
 			result.Changes.Events = append(result.Changes.Events, events...)

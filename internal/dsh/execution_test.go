@@ -87,6 +87,7 @@ func TestDSHExecutionReturnsDistinctRecoveryErrors(t *testing.T) {
 	}{
 		{db.ErrDSHInputNotEligible, "input_not_eligible"}, {db.ErrDSHFinishConflict, "finish_idempotency_mismatch"},
 		{db.ErrDSHPermissionConflict, "permission_idempotency_mismatch"}, {db.ErrDSHPublicConflict, "public_event_idempotency_mismatch"},
+		{db.ErrDSHPublicHistoryInconsistent, "public_event_history_inconsistent"},
 	} {
 		stub := &executionStub{err: test.err}
 		response := transcriptRequest(executionRouter(stub), "POST", "/sessions/cse_root/inputs/input/finish", `{"result":"success"}`, "1")

@@ -16,3 +16,5 @@ var ErrDSHInputNotEligible = errors.New("DSR input is not eligible")
 var ErrDSHFinishConflict = errors.New("DSR finish differs from confirmed result")
 var ErrDSHPermissionConflict = errors.New("DSR permission identity mismatch")
 var ErrDSHPublicConflict = errors.New("DSR public event identity mismatch")
+
+var ErrDSHPublicHistoryInconsistent = errors.New("DSR public receipt and history are inconsistent")

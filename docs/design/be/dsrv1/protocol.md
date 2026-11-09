@@ -511,48 +511,45 @@ DSH 收到时若本地等待项不存在（已取消、turn 已结束或属于�
 - `system.message` 也是客户端可提交的输入类型（用于拒答问题的结算）。两者以写入路径区分：本端点的写入不进入输入接纳与 Worker 投递，这与现行 `/worker/events` 一致，DSRv1 不引入新的冲突。
 - 删除 Claude Code 的 `assistant`、`user`、`result`、`task_started`、`task_notification`、`compact_boundary`，以及从 internal subagent transcript 投影公开事件的路径。
 
-### 8.3 双写者合同
+### 8.3 公共输出的唯一写者
 
-模型代理与 DSH 都会写入助手消息相关事件，DSRv1 把现有的隐式规则写成显式合同：
+DSRv1 的最终 `agent.message` 和 `agent.thinking` 只由 Brain 的 `/public-events` 发布。模型代理继续记录 `span.model_request_*`、用量、计费与工具调用，保留 span 中的助手事件 ID 引用，供最终消息关联。工具调用仍用于审批关联。CCRv2 的写入行为不变。
 
-| 事件                                                                   | 写者                       | 规则                                                                                                         |
-| ---------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| 模型流产生的 `agent.message`、`agent.tool_use`、`span.model_request_*` | 模型代理                   | 主写者，按 `StableAssistantEventID` 派生 ID                                                                  |
-| 流式预览、完成块的 `agent.message`/`agent.thinking`                    | DSH `/public-events`       | 使用与模型代理相同的稳定 ID；先到者写入，后到者按 echo hash 比较，相同则视为重复，不同则记录告警并保留先到者 |
-| 工具结果、线程事件、`system.message`                                   | DSH `/public-events`       | 唯一写者                                                                                                     |
-| 状态事件                                                               | 服务端 reducer（第 10 节） | 唯一写者                                                                                                     |
+| 事件 | 写者 | 规则 |
+| --- | --- | --- |
+| 最终 `agent.message` / `agent.thinking` | Brain `/public-events` | 稳定助手事件 ID，公开 thinking 不含思考正文 |
+| `agent.tool_use`、`agent.mcp_tool_use`、`span.model_request_*` | 模型代理 | 保留工具审批、请求关联与计费 |
+| 工具结果、线程事件、`system.message` | Brain `/public-events` | 确定性 ID |
+| 主会话状态 | 服务端 reducer | 由执行事实归约 |
 
-两侧之间没有顺序保证；SSE 消费方按现行规则去重。
+预览不持久化，不能替代最终消息。模型代理早于 Brain 完成请求时，公开历史中的最终消息等待 Brain 发布。
 
-### 8.4 接管时的增量公共发布
+公开回执与历史在同一 Session 锁和事务中处理。首次发布前核对已有历史，写入后再次检查。已有回执须同时满足请求摘要相同、对应历史存在、类型与线程归属相同、公开内容相同，才能返回 duplicate。助手内容比较忽略模型请求关联、处理时间等代理元数据；thinking 不比较私密正文。其他持久输出比较完整规范化 JSON。线程状态可能被状态机判定为无变化而不产生历史，因此不要求每条状态回执都有同 ID 历史。
 
-DSR 使用每条原生 transcript 中的 `plugin:oma/dsr-publication` version 1 记录公共发布确认前缀。数据为 `{version: 1, through: number}`，`through` 表示已发布输出所属的原生事件前缀的下一序号，不能大于确认记录自身的 seq，也不能小于同一 transcript 先前的确认值。未知版本、倒退或越界均拒绝恢复，不能据此静默跳过输出。
+无回执但已有相同历史时，补建回执；历史不同返回 `409 public_event_idempotency_mismatch`。有回执但历史缺失或不同返回 `409 public_event_history_inconsistent`，整批回滚，不静默覆盖。历史若使用外部 payload blob，当前一致性检查拒绝自动认定相同，需单独核对修复。升级前已形成的冲突不会自动选择某一正文覆盖另一正文。
 
-一个 checkpoint 同步捕获待发公共事件和各来源 transcript 的目标前缀，然后在同一发布 Promise 链中执行：
+### 8.4 接管时的公共发布重放
+
+`dsh_public_receipts` 是唯一的持久发布确认来源。Brain 不再追加 `plugin:oma/dsr-publication`；旧日志中的记录保留，但其版本和 through 均不参与恢复判断。每次冷接管从完整原生日志重投影助手输出和工具结果，使用稳定 ID 交给后端去重及一致性检查。主、子日志各自维护仅在进程内有效的投影游标和身份索引，同一进程不重复处理同一原生事件。
 
 ```mermaid
 sequenceDiagram
-    participant L as OMA 进程内 transcript
+    participant L as 原生 transcript
     participant C as DSR checkpoint
     participant T as 远端 transcript
     participant P as 公开事件接口
-    C->>L: 捕获待确认事件
+    C->>L: 捕获待发布输出
     C->>T: 确认来源日志复制
-    C->>P: 每批最多 200 条发布捕获的输出
-    P-->>C: 全部批次 accepted/duplicates 确认
-    C->>L: 在各来源日志追加 dsr-publication
-    C->>T: 确认发布前缀记录复制
+    C->>P: 每批最多 200 条提交稳定 ID 输出
+    P->>P: 同事务核对回执和历史
+    P-->>C: accepted / duplicates 或冲突
 ```
 
-确认记录仅在全部捕获批次成功后生成。发送期间的新事件保留在下一批队列，不扩大当前确认范围。只为实际捕获输出的 transcript 记录前缀，确认记录本身和无输出尾部不会触发额外确认记录，也不会尝试写入已关闭的其它子线程。主、子 transcript 分别维护前缀；子线程创建等由运行时直接提交的公共事件继续使用既有稳定 ID，不借用其它 transcript 的前缀跳过。
+响应丢失或后续批次失败后，冷接管重放全部可投影输出。已提交部分去重，未提交部分补写。回执和历史一起缺失时可补建；只有历史缺失时显式报错。发布期间追加的事件保留在后续队列，不能被较早批次跳过。原生日志复制仍使用 next_offset 增量上传，此处的全量重放仅针对公共输出。
 
-服务端已经提交但响应丢失、后续批次失败、确认记录追加或远端持久化失败时，接管可重发尚无持久确认的范围，由既有服务端幂等兜底，不跳过可能缺失的输出。一个 checkpoint 的较早批次成功、后续批次失败时，较早批次在恢复中仍可能重复，不能将该前缀提前标为全部成功。接管只信任远端 transcript 中的确认记录；仅在旧本地缓存中的确认会被丢弃，缺少远端确认的公共输出安全重放。
+输入 turn→ID、显式 tool/call 和 assistant 工具块回退身份采用单次索引。投影复杂度为 O(原生事件数 + 消息块数)，冷接管网络成本随公共输出总量增长。5000 条原生事件、1250 条公共输出的 fixture 重发 7 批；每条输出含 16 KiB 内容时约上传 20.7 MB。这是去掉第二个持久水位的明确代价，不代表真实服务性能基线。
 
-恢复仍需下载/校验和扫描原生历史，但只对未确认输出生成待发队列。已确认 assistant/assistant-block 的 ID 会恢复到内存去重集合，避免在确认边界之后出现同一消息的另一种原生表示时再次上报。旧日志没有确认记录时，首次由新版本完整重放并建立确认前缀；后续正常接管不再发送已确认公共正文。旧版本忽略此 ignorable plugin record 后仍会按原有方式重放，保持向后兼容。
-
-输入 turn→ID、显式 tool/call 和 assistant 工具块回退身份在每条日志首次打开时单次建索引，之后随原生事件增量更新。保持第一条用户输入、第一条显式调用优先于工具块回退的原有身份规则，不再对每个 assistant/tool result 扫描完整历史。接管投影为 O(原生事件数 + 消息块数)，仍有原生日志读取和验证成本，不承诺常数时间或恒定内存。
-
-普通回归为 `dsr-open-replay.test.ts` 和 `dsr-publication.test.ts`，覆盖 5000 条历史已确认输出零重发、历史规模增长时无重复 record 扫描、新尾部补发、响应丢失、部分批次成功、确认记录复制失败、发布期间追加事件、主子前缀隔离、未知/非法确认及工具身份回退。这些测试使用原生 DSH、OMA 进程内持久化与本地 HTTP fixture，不代替真实服务性能基线。
+回归覆盖 `dsr-open-replay.test.ts`、`dsr-publication.test.ts`、代理单写者单测以及隔离 PostgreSQL 的 `TestDSHPublicationTwoWritersPostgres`、`TestDSHPublicationDetectsHistoryCorruptionPostgres`。覆盖旧 marker 不再屏蔽输出、响应丢失、部分批次失败、历史缺失或篡改、整批回滚及同内容重试。fake 回滚测试不是数据库正常提交会丢失历史的证明。
 
 ## 9. 输入与 input execution
 

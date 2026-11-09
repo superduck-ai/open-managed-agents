@@ -70,3 +70,27 @@ func TestModelThinkingPreviewPrecedesBufferedRetirement(t *testing.T) {
 		})
 	}
 }
+
+func TestDSRModelCompletionLeavesFinalMessagesToBrain(t *testing.T) {
+	service := newTestService(t, nil)
+	sink := &brainModelEventSink{}
+	service.SetPublicEventSink(sink)
+	request := &ModelRequest{StartID: "start", CodeSessionID: "cse_test", ThreadID: "owner", codeSession: db.CodeSession{ExternalID: "cse_test", Metadata: json.RawMessage(`{"config":{"worker_protocol":"dsr1"}}`)}}
+	result := ModelRequestResult{EndedAt: time.Now().UTC(), EventIDs: []string{"message", "thinking"}, Messages: []ModelRequestMessage{{ID: "message", Type: "agent.message", Content: []ModelRequestContent{{Type: "text", Text: new("proxy answer")}}}, {ID: "thinking", Type: "agent.thinking"}}}
+	if err := service.EndModelRequest(t.Context(), request, result); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("expected only span, got %d events", len(sink.events))
+	}
+	var span struct {
+		Type     string   `json:"type"`
+		EventIDs []string `json:"event_ids"`
+	}
+	if err := json.Unmarshal(sink.events[0], &span); err != nil {
+		t.Fatal(err)
+	}
+	if span.Type != "span.model_request_end" || len(span.EventIDs) != 2 {
+		t.Fatalf("span lost output references: %+v", span)
+	}
+}

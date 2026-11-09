@@ -112,9 +112,9 @@ flowchart LR
 
 ## 接管公共输出恢复
 
-`DsrSession` 与子线程打开路径复用 `TranscriptPublication`。每条日志用单次索引维护 turn 输入和工具身份，按本地原生 `plugin:oma/dsr-publication` version 1 确认前缀跳过已发布输出。checkpoint 捕获待发队列及来源前缀，串行执行原生日志复制、公共发布和确认记录本地/远端持久化；在途新增事件不纳入较早确认。只为有输出的来源记录前缀，防止无输出尾部或已关闭子线程产生确认写入。
+`DsrSession` 与子线程打开路径复用 `TranscriptPublication`，单次建立 turn 输入和工具身份索引。冷接管重新投影全部公共输出，由服务端回执及历史校验完成幂等。checkpoint 串行执行原生日志复制与公共发布；不再追加 `plugin:oma/dsr-publication`，旧记录不影响恢复。
 
-此变更不新增 HTTP 接口、数据库表或后台 Worker。旧日志首次回放建立确认前缀；确认缺失时继续使用稳定 ID 重放，允许重复但不丢输出。详细故障窗口与原生记录合同见 [DSRv1 协议 §8.4](protocol.md#84-接管时的增量公共发布)。
+模型代理对 `worker_protocol=dsr1` 只保留工具调用、span、用量和计费，不写助手最终消息。数据库在 Session 锁内核对已有历史与回执，冲突整批回滚；线程无变化状态仍按原有状态机处理。无需新增表或迁移。详细兼容边界与全量公共重放成本见 [DSRv1 协议 §8.3–8.4](protocol.md#83-公共输出的唯一写者)。
 
 ## 数据与事务边界
 

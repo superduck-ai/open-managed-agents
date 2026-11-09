@@ -1,19 +1,14 @@
-import {
-  appendPluginRecord,
-  pluginRecordOf,
-  type Session,
-  type SessionEvent,
-} from "@deepseek-ai/dsh-session";
+import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import { DsrError } from "./http.ts";
 
-interface PublicationReceipt {
+interface LegacyPublicationReceipt {
   version: 1;
   through: number;
 }
 
 declare module "@deepseek-ai/dsh-session/types" {
   interface PluginRecordMap {
-    "plugin:oma/dsr-publication": PublicationReceipt;
+    "plugin:oma/dsr-publication": LegacyPublicationReceipt;
   }
 }
 
@@ -21,17 +16,10 @@ interface ProjectionState {
   session: Session;
   indexed: number;
   processed: number;
-  confirmed: number;
-  pendingThrough: number;
   turn?: number;
   inputs: Map<number, string>;
   calls: Map<string, string>;
   fallbackCalls: Map<string, string>;
-}
-
-export interface PublicationTarget {
-  session: Session;
-  through: number;
 }
 
 export class TranscriptPublication {
@@ -43,8 +31,6 @@ export class TranscriptPublication {
       session,
       indexed: 0,
       processed: 0,
-      confirmed: 0,
-      pendingThrough: 0,
       inputs: new Map(),
       calls: new Map(),
       fallbackCalls: new Map(),
@@ -70,10 +56,6 @@ export class TranscriptPublication {
     return pending;
   }
 
-  confirmed(session: Session, event: SessionEvent): boolean {
-    return event.seq < this.states.get(session.id)!.confirmed;
-  }
-
   input(session: Session, turn: number): string | undefined {
     return this.states.get(session.id)!.inputs.get(turn);
   }
@@ -81,32 +63,6 @@ export class TranscriptPublication {
   tool(session: Session, callId: string): string | undefined {
     const state = this.states.get(session.id)!;
     return state.calls.get(callId) ?? state.fallbackCalls.get(callId);
-  }
-
-  queued(session: Session, event: SessionEvent): void {
-    const state = this.states.get(session.id)!;
-    state.pendingThrough = Math.max(state.pendingThrough, event.seq + 1);
-  }
-
-  targets(): PublicationTarget[] {
-    const targets: PublicationTarget[] = [];
-    for (const state of this.states.values()) {
-      if (state.pendingThrough > state.confirmed)
-        targets.push({ session: state.session, through: state.pendingThrough });
-      state.pendingThrough = 0;
-    }
-    return targets;
-  }
-
-  acknowledge(targets: readonly PublicationTarget[]): void {
-    for (const target of targets) {
-      const state = this.states.get(target.session.id)!;
-      if (target.through <= state.confirmed) continue;
-      appendPluginRecord(target.session, "plugin:oma/dsr-publication", {
-        version: 1,
-        through: target.through,
-      });
-    }
   }
 
   private index(state: ProjectionState, event: SessionEvent): void {
@@ -127,27 +83,5 @@ export class TranscriptPublication {
       for (const block of event.data.message.content)
         if (block.type === "tool-call" && !state.fallbackCalls.has(block.id))
           state.fallbackCalls.set(block.id, block.name);
-    const record = pluginRecordOf(event);
-    if (record?.type === "plugin:oma/dsr-publication")
-      this.receipt(state, record.data, event.seq);
-  }
-
-  private receipt(
-    state: ProjectionState,
-    data: unknown,
-    sequence: number,
-  ): void {
-    if (!data || typeof data !== "object")
-      throw new DsrError(0, "invalid_publication_receipt");
-    const receipt = data as Partial<PublicationReceipt>;
-    if (receipt.version !== 1)
-      throw new DsrError(0, "unsupported_publication_version");
-    if (
-      !Number.isSafeInteger(receipt.through) ||
-      receipt.through! < state.confirmed ||
-      receipt.through! > sequence
-    )
-      throw new DsrError(0, "invalid_publication_receipt");
-    state.confirmed = receipt.through!;
   }
 }

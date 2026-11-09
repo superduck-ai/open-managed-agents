@@ -235,6 +235,17 @@ export class DsrBackend extends Backend {
     }
     if (path === "/public-events") {
       if (this.failDsrPublication) return Response.json({}, { status: 503 });
+      for (const event of body.events) {
+        const existing = this.publicLog.get(event.id);
+        if (existing && JSON.stringify(existing) !== JSON.stringify(event))
+          return Response.json(
+            {},
+            {
+              status: 409,
+              headers: { "DSR-Error": "public_event_history_inconsistent" },
+            },
+          );
+      }
       let accepted = 0,
         duplicates = 0;
       for (const event of body.events) {

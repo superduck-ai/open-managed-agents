@@ -25,58 +25,35 @@ function session(id: string) {
   return value;
 }
 
-test("invalid and future publication receipts cannot skip history", () => {
+test("legacy publication receipts never suppress history", () => {
   for (const data of [
+    { version: 1, through: 2 },
     { version: 2, through: 1 },
     { version: 1, through: 99 },
     { version: 1, through: -1 },
     { version: 1, through: 0.5 },
   ]) {
-    const source = session("invalid");
+    const source = session("legacy");
     appendPluginRecord(source, "plugin:oma/dsr-publication", data as never);
-    expect(() => new TranscriptPublication().prepare(source)).toThrow();
+    const projection = new TranscriptPublication();
+    projection.prepare(source);
+    const events = source.snapshotEvents();
+    expect(projection.read(events.at(-1)!, source)).toEqual(events);
+    expect(projection.read(events.at(-1)!, source)).toEqual([]);
   }
 });
 
-test("regressing publication receipts are rejected", () => {
-  const source = session("regressing");
-  appendPluginRecord(source, "plugin:oma/dsr-publication", {
-    version: 1,
-    through: 2,
-  });
-  appendPluginRecord(source, "plugin:oma/dsr-publication", {
-    version: 1,
-    through: 1,
-  });
-  expect(() => new TranscriptPublication().prepare(source)).toThrow(
-    "invalid_publication_receipt",
-  );
-});
-
-test("publication cursors are independent for root and child transcripts", () => {
+test("in-memory projection cursors are independent for root and child", () => {
   const root = session("root"),
     child = session("child");
-  appendPluginRecord(root, "plugin:oma/dsr-publication", {
-    version: 1,
-    through: 2,
-  });
   const projection = new TranscriptPublication();
-  projection.prepare(root);
-  projection.prepare(child);
-  expect(projection.confirmed(root, root.snapshotEvents()[1]!)).toBe(true);
-  expect(projection.confirmed(child, child.snapshotEvents()[1]!)).toBe(false);
-});
-
-test("receipts and non-output tails do not create new publication targets", () => {
-  const source = session("target");
-  const projection = new TranscriptPublication();
-  const event = source.snapshotEvents()[1]!;
-  projection.read(event, source);
-  projection.queued(source, event);
-  const targets = projection.targets();
-  projection.acknowledge(targets);
-  projection.read(source.snapshotEvents().at(-1)!, source);
-  expect(projection.targets()).toEqual([]);
+  for (const source of [root, child]) {
+    projection.prepare(source);
+    const events = source.snapshotEvents();
+    expect(projection.read(events.at(-1)!, source)).toEqual(events);
+    expect(projection.read(events.at(-1)!, source)).toEqual([]);
+    expect(source.snapshotEvents()).toEqual(events);
+  }
 });
 
 test("tool identity preserves explicit call priority over the assistant fallback", () => {

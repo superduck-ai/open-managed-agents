@@ -78,6 +78,8 @@ func storageError(err error, nextOffset *int64) *protocolError {
 		result.status, result.code, result.message = 409, "finish_idempotency_mismatch", "Finish differs from confirmed result"
 	case errors.Is(err, db.ErrDSHPermissionConflict):
 		result.status, result.code, result.message = 409, "permission_idempotency_mismatch", "Permission differs from confirmed request"
+	case errors.Is(err, db.ErrDSHPublicHistoryInconsistent):
+		result.status, result.code, result.message = 409, "public_event_history_inconsistent", "Public receipt and history are inconsistent"
 	case errors.Is(err, db.ErrDSHPublicConflict):
 		result.status, result.code, result.message = 409, "public_event_idempotency_mismatch", "Public event differs from confirmed request"
 	case errors.Is(err, db.ErrInvalidState):

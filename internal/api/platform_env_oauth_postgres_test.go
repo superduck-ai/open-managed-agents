@@ -5,11 +5,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"uuid"
@@ -532,5 +534,103 @@ func TestEnvOAuthInjectionLocationHTTPPostgres(t *testing.T) {
 	after, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, created.ID)
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatal("非法更新修改了凭证", err)
+	}
+}
+
+func TestEnvOAuthBuiltinConcurrentConfigurationPostgres(t *testing.T) {
+	f := newEnvOAuthFixtureWithFeishu(t, "", "")
+	builtin, err := f.database.GetPlatformOAuthProviderByBuiltinKey(t.Context(), "feishu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := platformadmin.NewOAuthProviderService(f.database, f.secretSvc, nil)
+	results := make(chan error, 2)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Go(func() {
+			<-start
+			_, err := service.Update(t.Context(), platformadmin.Actor{AccountUUID: uuid.NewV4().String()}, builtin.ExternalID,
+				platformadmin.OAuthProviderUpdateInput{ExpectedVersion: builtin.Version, ClientID: new("configured-client"), ClientSecret: new("configured-secret")})
+			results <- err
+		})
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	successes, conflicts := 0, 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else if errors.Is(err, platformadmin.ErrOAuthProviderVersion) {
+			conflicts++
+		} else {
+			t.Fatal(err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes=%d conflicts=%d", successes, conflicts)
+	}
+	stored, err := f.database.GetPlatformOAuthProviderByBuiltinKey(t.Context(), "feishu")
+	if err != nil || stored.Version != builtin.Version+1 || stored.UUID != builtin.UUID {
+		t.Fatal("内置行身份或 CAS 错误")
+	}
+	if err := f.database.DeletePlatformOAuthProvider(t.Context(), stored.UUID, stored.Version); !errors.Is(err, db.ErrVersionConflict) {
+		t.Fatal("Mapper 允许删除受保护行")
+	}
+	if err := service.Delete(t.Context(), platformadmin.Actor{}, stored.ExternalID, stored.Version); !errors.Is(err, platformadmin.ErrOAuthProviderProtected) {
+		t.Fatal("服务未拒绝删除")
+	}
+	rows, err := f.server.envOAuthProviders.ListProviders(t.Context())
+	if err != nil || len(rows) != 1 || !rows[0].Configured || rows[0].ClientID != "" || rows[0].ClientSecret != "" {
+		t.Fatal("组织元数据泄漏客户端或重复 seed")
+	}
+}
+
+func TestEnvOAuthCustomEncryptedSnapshotPostgres(t *testing.T) {
+	f := newEnvOAuthFixture(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		if r.Form.Get("client_id") != "old-client" || r.Form.Get("client_secret") != "new-secret" {
+			t.Error("回调未使用历史 ID 快照和当前 secret")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "custom-access", "refresh_token": "custom-refresh", "expires_in": 3600})
+	}))
+	defer upstream.Close()
+	service := platformadmin.NewOAuthProviderService(f.database, f.secretSvc, nil)
+	actor := platformadmin.Actor{AccountUUID: uuid.NewV4().String()}
+	provider, err := service.Create(t.Context(), actor, platformadmin.OAuthProviderCreateInput{Name: "Snapshot", AuthorizeEndpoint: "https://auth.test/authorize", TokenEndpoint: upstream.URL, ClientID: "old-client", ClientSecret: "old-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"provider_id":"` + provider.ProviderKey + `","vault_id":"` + f.vault.ExternalID + `","workspace_id":"default","secret_name":"CUSTOM_TOKEN","networking":{"type":"unrestricted"},"redirect_url":"https://app.test/callback"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/organizations/"+f.organization+"/env-oauth/vault-auth/start", strings.NewReader(body))
+	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{UserExternalID: f.userID, OrganizationUUID: f.organization, WorkspaceExternalID: f.workspace.ExternalID}))
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("orgUuid", f.organization)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+	recorder := httptest.NewRecorder()
+	f.server.handleEnvOAuthVaultAuthStart(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatal(recorder.Body.String())
+	}
+	var started envOAuthVaultAuthStartResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	flow, err := f.database.GetEnvOAuthFlow(t.Context(), started.OAuthFlowID)
+	if err != nil || flow.ClientIDEnvelope == nil {
+		t.Fatal("start 未密封自定义客户端 ID")
+	}
+	if value, err := platformoauth.OpenClientField(t.Context(), f.secretSvc, platformoauth.FlowClientIDBinding(flow), flow.ClientIDEnvelope); err != nil || value != "old-client" {
+		t.Fatal("客户端快照绑定错误")
+	}
+	if _, err := service.Update(t.Context(), actor, provider.ID, platformadmin.OAuthProviderUpdateInput{ExpectedVersion: provider.Version, ClientID: new("new-client"), ClientSecret: new("new-secret")}); err != nil {
+		t.Fatal(err)
+	}
+	if result := f.callback(t, flow.ExternalID, "fixture-code"); !strings.Contains(result.Body.String(), `"status":"ok"`) {
+		t.Fatal(result.Body.String())
 	}
 }

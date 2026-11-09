@@ -105,3 +105,111 @@ test('注册客户端提交完整字段', async () => {
     client_secret: 'secret',
   });
 });
+
+const builtin = {
+  ...provider,
+  id: 'poap_FeishuBuiltinOAuthClient',
+  provider_key: 'builtin:feishu',
+  builtin: true,
+  protected: true,
+  name: 'Feishu',
+  scope: 'offline_access',
+  default_secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+  default_allowed_hosts: ['open.feishu.cn', 'accounts.feishu.cn'],
+};
+
+test('飞书作为列表行展示内置标识且不提供删除按钮', async () => {
+  globalThis.fetch = mock(async () => Response.json([builtin])) as typeof fetch;
+  mount();
+  expect(await screen.findByText('飞书')).toBeTruthy();
+  expect(screen.getByText('内置')).toBeTruthy();
+  expect(screen.getByText('已配置')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: '删除' })).toBeNull();
+  expect(screen.queryByText('暂无 OAuth 客户端')).toBeNull();
+});
+
+test('飞书首次配置固定字段只读并按最小字段提交', async () => {
+  const writes: RequestInit[] = [];
+  globalThis.fetch = mock(async (input, options) => {
+    if (options?.method === 'PATCH') {
+      writes.push(options);
+      return Response.json(builtin);
+    }
+    return Response.json([
+      { ...builtin, configured: false, client_id: '', has_client_id: false, has_client_secret: false },
+    ]);
+  }) as typeof fetch;
+  mount();
+  fireEvent.click(await screen.findByText('飞书'));
+  const name = (await screen.findByLabelText('名称')) as HTMLInputElement;
+  expect(name.readOnly).toBe(true);
+  expect((screen.getByLabelText('授权端点') as HTMLInputElement).readOnly).toBe(true);
+  expect((screen.getByLabelText('令牌端点') as HTMLInputElement).readOnly).toBe(true);
+  expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.change(screen.getByLabelText('客户端 ID'), { target: { value: 'new-client' } });
+  expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.change(screen.getByLabelText('客户端密钥'), { target: { value: 'new-secret' } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+  });
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(JSON.parse(String(writes[0].body))).toEqual({
+    expected_version: 1,
+    scope: 'offline_access',
+    client_id: 'new-client',
+    client_secret: 'new-secret',
+  });
+});
+
+test('飞书保留旧密钥且更换应用时要求新密钥', async () => {
+  const writes: RequestInit[] = [];
+  globalThis.fetch = mock(async (input, options) => {
+    if (options?.method === 'PATCH') {
+      writes.push(options);
+      return Response.json(builtin);
+    }
+    return Response.json([builtin]);
+  }) as typeof fetch;
+  mount();
+  fireEvent.click(await screen.findByText('飞书'));
+  const client = await screen.findByLabelText('客户端 ID');
+  expect((screen.getByLabelText('客户端密钥') as HTMLInputElement).value).toBe('');
+  fireEvent.change(client, { target: { value: 'different' } });
+  expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByText('修改客户端 ID 必须同时填写新密钥，已有令牌可能需要重新授权。')).toBeTruthy();
+  fireEvent.change(client, { target: { value: builtin.client_id } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+  });
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(JSON.parse(String(writes[0].body))).toEqual({
+    expected_version: 1,
+    scope: 'offline_access',
+    client_id: 'client',
+  });
+});
+
+test('并发版本冲突显示本地化提示', async () => {
+  globalThis.fetch = mock(async (input, options) =>
+    options?.method === 'PATCH'
+      ? Response.json({ error: { code: 'oauth_provider_version_conflict' } }, { status: 409 })
+      : Response.json([builtin]),
+  ) as typeof fetch;
+  mount();
+  fireEvent.click(await screen.findByText('飞书'));
+  await screen.findByLabelText('客户端 ID');
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+  });
+  expect(await screen.findByText('服务方已被修改，请关闭并重新打开表单。')).toBeTruthy();
+});
+
+test('历史同名自定义 Feishu 与内置飞书保留独立类型标识', async () => {
+  globalThis.fetch = mock(async () => Response.json([builtin, { ...provider, name: 'Feishu' }])) as typeof fetch;
+  mount();
+  expect(await screen.findByText('飞书')).toBeTruthy();
+  expect(screen.getByText('Feishu')).toBeTruthy();
+  expect(screen.getByText('内置')).toBeTruthy();
+  expect(screen.getByText('自定义')).toBeTruthy();
+  expect(screen.getAllByRole('button', { name: '删除' })).toHaveLength(1);
+});

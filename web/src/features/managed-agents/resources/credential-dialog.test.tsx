@@ -390,3 +390,47 @@ test('选择无默认域名的自定义 OAuth 服务方并使用无限制网络'
     networking: { type: 'unrestricted' },
   });
 });
+
+test('未配置服务方禁用授权但保留手工令牌保存', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
+  globalThis.fetch = mock(async () =>
+    Response.json([
+      {
+        id: 'builtin:feishu',
+        name: 'Feishu',
+        builtin: true,
+        configured: false,
+        default_secret_name: 'TOKEN',
+        default_allowed_hosts: ['open.feishu.cn'],
+      },
+    ]),
+  ) as typeof fetch;
+  const onSubmit = mock(async () => {});
+  render(
+    <AuthHarness>
+      <CredentialDialog
+        vaultId="vlt_fixture"
+        workspaceId="default"
+        orgUuid="org_fixture"
+        onClose={() => {}}
+        onSubmit={onSubmit}
+      />
+    </AuthHarness>,
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Add credential' });
+  fireEvent.click(within(dialog).getByRole('combobox', { name: 'Type' }));
+  fireEvent.click(await screen.findByText('ENV OAuth'));
+  fireEvent.click(await within(dialog).findByRole('combobox', { name: 'OAuth provider' }));
+  fireEvent.click(await screen.findByText('Built-in: Feishu'));
+  fireEvent.click(within(dialog).getByRole('checkbox'));
+  expect(within(dialog).getByRole('button', { name: 'Connect' }).hasAttribute('disabled')).toBe(true);
+  expect(
+    screen.getByText('Not configured. Contact a platform administrator. You can still save a manually supplied token.'),
+  ).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Configure provider' })).toBeNull();
+  fireEvent.change(within(dialog).getByLabelText('Access token (optional)'), { target: { value: 'manual-token' } });
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add credential' }));
+  });
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+});

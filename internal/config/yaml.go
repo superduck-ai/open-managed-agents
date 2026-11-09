@@ -162,6 +162,9 @@ func validateYAMLNodeWithAliases(node *yaml.Node, target reflect.Type, prefix []
 				fieldType, ok = target.Elem(), true
 			}
 			if !ok {
+				if name == "feishu_oauth_client" && strings.Join(prefix, ".") == "vault" {
+					return errors.New("vault.feishu_oauth_client 已移入数据库，请先运行 oauth-provider-migrate --legacy-config 旧配置路径 --apply，再移除此配置块")
+				}
 				return fmt.Errorf("field %s not found in type %s", name, target)
 			}
 			if err := validateYAMLNodeWithAliases(node.Content[index+1], fieldType, appendYAMLPath(prefix, name), aliases); err != nil {

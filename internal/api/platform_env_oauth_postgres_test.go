@@ -22,6 +22,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
+	"github.com/superduck-ai/open-managed-agents/internal/platformoauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
@@ -81,6 +82,23 @@ func newEnvOAuthFixtureWithFeishu(t *testing.T, clientID, clientSecret string) e
 		t.Fatal(err)
 	}
 	secretSvc := secrets.NewService(provider)
+	if clientID != "" {
+		builtin, err := database.GetPlatformOAuthProviderByBuiltinKey(t.Context(), "feishu")
+		if err != nil {
+			t.Fatal(err)
+		}
+		builtin.ClientIDEnvelope, err = platformoauth.SealClientField(t.Context(), secretSvc, platformoauth.ProviderClientIDBinding(builtin.ExternalID), clientID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		builtin.ClientSecretEnvelope, err = platformoauth.SealClientField(t.Context(), secretSvc, platformoauth.ProviderSecretBinding(builtin.ExternalID), clientSecret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.UpdatePlatformOAuthProvider(t.Context(), builtin); err != nil {
+			t.Fatal(err)
+		}
+	}
 	credentials, err := codesessions.NewSessionCredentials(config.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -97,9 +115,6 @@ func newEnvOAuthFixtureWithFeishu(t *testing.T, clientID, clientSecret string) e
 		PlatformAuth:           platformauth.New(config.AuthConfig{}, database, nil, nil),
 		CodeSessionCredentials: credentials,
 		FilestoreCredentials:   fileCredentials,
-		Config: config.Config{Vault: config.VaultConfig{FeishuOAuthClient: config.FeishuOAuthClientConfig{
-			ClientID: clientID, ClientSecret: clientSecret,
-		}}},
 	})
 	return envOAuthFixture{
 		server: server, database: database, secretSvc: secretSvc,
@@ -174,7 +189,7 @@ func TestEnvOAuthVaultAuthStartPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if flow.ClientID != "" {
+	if flow.ClientIDEnvelope != nil {
 		t.Fatal("飞书 client_id 以明文写入 flow")
 	}
 	if flow.SecretName != vaultsapi.EnvOAuthFeishuDefaultSecretName || flow.NetworkingType != "limited" || len(flow.AllowedHosts) != 2 {
@@ -340,18 +355,18 @@ func TestPlatformOAuthProviderServicePostgres(t *testing.T) {
 		t.Fatalf("duplicate error = %v", err)
 	}
 	providers, err := service.List(t.Context())
-	if err != nil || len(providers) != 1 {
+	if err != nil || len(providers) != 2 {
 		t.Fatalf("list = %+v: %v", providers, err)
 	}
 	scope := "read write"
-	updated, err := service.Update(t.Context(), actor, created.ID, platformadmin.OAuthProviderUpdateInput{Scope: &scope})
+	updated, err := service.Update(t.Context(), actor, created.ID, platformadmin.OAuthProviderUpdateInput{ExpectedVersion: created.Version, Scope: &scope})
 	if err != nil || updated.Scope != "read write" {
 		t.Fatalf("update = %+v: %v", updated, err)
 	}
-	if err := service.Delete(t.Context(), created.ID); err != nil {
+	if err := service.Delete(t.Context(), actor, created.ID, updated.Version); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Delete(t.Context(), created.ID); err != platformadmin.ErrNotFound {
+	if err := service.Delete(t.Context(), actor, created.ID, updated.Version); err != platformadmin.ErrNotFound {
 		t.Fatalf("second delete error = %v", err)
 	}
 }
@@ -443,6 +458,10 @@ func TestEnvOAuthCallbackRejectsDifferentProviderPostgres(t *testing.T) {
 	first := f.createFlow(t, upstream.URL, "TOKEN", time.Now().Add(time.Minute))
 	second := first
 	second.UUID, second.ExternalID, second.ProviderKey = uuid.NewV4().String(), uuid.NewV4().String(), "custom:"+provider.ID
+	second.ClientIDEnvelope, err = platformoauth.SealClientField(t.Context(), f.secretSvc, platformoauth.FlowClientIDBinding(second), "client")
+	if err != nil {
+		t.Fatal(err)
+	}
 	second.NetworkingType, second.AllowedHosts = "unrestricted", nil
 	second, err = f.database.CreateEnvOAuthFlow(t.Context(), second)
 	if err != nil {

@@ -1,11 +1,14 @@
 package platformadmin
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	"fmt"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -29,6 +32,8 @@ type OAuthProviderCreateInput struct {
 }
 
 type OAuthProviderUpdateInput struct {
+	fixedFields             bool
+	ExpectedVersion         int64   `json:"expected_version"`
 	Name                    *string `json:"name"`
 	AuthorizeEndpoint       *string `json:"authorize_endpoint"`
 	TokenEndpoint           *string `json:"token_endpoint"`
@@ -40,6 +45,14 @@ type OAuthProviderUpdateInput struct {
 }
 
 type OAuthProviderView struct {
+	ProviderKey             string    `json:"provider_key"`
+	Builtin                 bool      `json:"builtin"`
+	Protected               bool      `json:"protected"`
+	HasClientID             bool      `json:"has_client_id"`
+	Configured              bool      `json:"configured"`
+	DefaultSecretName       string    `json:"default_secret_name"`
+	DefaultAllowedHosts     []string  `json:"default_allowed_hosts"`
+	Version                 int64     `json:"version"`
 	ID                      string    `json:"id"`
 	Name                    string    `json:"name"`
 	AuthorizeEndpoint       string    `json:"authorize_endpoint"`
@@ -53,29 +66,51 @@ type OAuthProviderView struct {
 	UpdatedAt               time.Time `json:"updated_at"`
 }
 
+type oauthProviderStore interface {
+	ListPlatformOAuthProviders(context.Context) ([]db.PlatformOAuthProvider, error)
+	GetPlatformOAuthProviderByExternalID(context.Context, string) (db.PlatformOAuthProvider, error)
+	CreatePlatformOAuthProvider(context.Context, db.PlatformOAuthProvider) (db.PlatformOAuthProvider, error)
+	UpdatePlatformOAuthProvider(context.Context, db.PlatformOAuthProvider) (db.PlatformOAuthProvider, error)
+	DeletePlatformOAuthProvider(context.Context, string, int64) error
+}
+
 type OAuthProviderService struct {
-	db        *db.DB
+	db        oauthProviderStore
 	secretSvc *secrets.Service
 	logger    *slog.Logger
 }
 
-func NewOAuthProviderService(database *db.DB, secretSvc *secrets.Service, logger *slog.Logger) *OAuthProviderService {
+func NewOAuthProviderService(database oauthProviderStore, secretSvc *secrets.Service, logger *slog.Logger) *OAuthProviderService {
 	return &OAuthProviderService{db: database, secretSvc: secretSvc, logger: logging.LoggerOrDefault(logger)}
 }
 
 func (s *OAuthProviderService) List(ctx context.Context) ([]OAuthProviderView, error) {
 	providers, err := s.db.ListPlatformOAuthProviders(ctx)
 	if err != nil {
-		return nil, err
+		return nil, ErrOAuthProviderUnavailable
 	}
 	views := make([]OAuthProviderView, 0, len(providers))
 	for _, provider := range providers {
-		views = append(views, oauthProviderView(provider))
+		view, err := s.view(ctx, provider)
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, view)
+	}
+	if !slices.ContainsFunc(providers, func(p db.PlatformOAuthProvider) bool { return p.BuiltinKey == "feishu" }) {
+		s.audit(ctx, Actor{}, db.PlatformOAuthProvider{}, "integrity", nil, ErrOAuthProviderUnavailable)
+		return nil, ErrOAuthProviderUnavailable
 	}
 	return views, nil
 }
 
-func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OAuthProviderCreateInput) (OAuthProviderView, error) {
+func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OAuthProviderCreateInput) (view OAuthProviderView, failure error) {
+	auditProvider := db.PlatformOAuthProvider{}
+	defer func() {
+		if failure != nil {
+			s.audit(ctx, actor, auditProvider, "create", nil, failure)
+		}
+	}()
 	name := strings.TrimSpace(input.Name)
 	authorizeEndpoint := strings.TrimSpace(input.AuthorizeEndpoint)
 	tokenEndpoint := strings.TrimSpace(input.TokenEndpoint)
@@ -101,20 +136,21 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 	}
 	now := time.Now().UTC()
 	provider := db.PlatformOAuthProvider{
-		UUID:                       uuid.NewV4().String(),
-		ExternalID:                 externalID,
-		Name:                       name,
-		AuthorizeEndpoint:          authorizeEndpoint,
-		TokenEndpoint:              tokenEndpoint,
-		Scope:                      strings.TrimSpace(input.Scope),
-		ClientID:                   clientID,
+		UUID:              uuid.NewV4().String(),
+		ExternalID:        externalID,
+		Name:              name,
+		AuthorizeEndpoint: authorizeEndpoint,
+		TokenEndpoint:     tokenEndpoint,
+		Scope:             strings.TrimSpace(input.Scope),
+
 		TokenEndpointAuthMethod:    authMethod,
 		TokenEndpointEncoding:      encoding,
 		CreatedByPlatformAdminUUID: actor.AccountUUID,
 		CreatedAt:                  now,
 		UpdatedAt:                  now,
 	}
-	if err := s.sealClientSecret(ctx, &provider, clientSecret); err != nil {
+	auditProvider = provider
+	if err := s.sealClient(ctx, &provider, clientID, clientSecret); err != nil {
 		return OAuthProviderView{}, err
 	}
 	created, err := s.db.CreatePlatformOAuthProvider(ctx, provider)
@@ -124,57 +160,48 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 		}
 		return OAuthProviderView{}, err
 	}
-	return oauthProviderView(created), nil
+	s.audit(ctx, actor, created, "create", []string{"name", "authorize_endpoint", "token_endpoint", "scope", "client_id", "client_secret", "token_endpoint_auth_method", "token_endpoint_encoding"}, nil)
+	return s.view(ctx, created)
 }
 
-func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, externalID string, input OAuthProviderUpdateInput) (OAuthProviderView, error) {
+func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, externalID string, input OAuthProviderUpdateInput) (view OAuthProviderView, failure error) {
 	current, err := s.db.GetPlatformOAuthProviderByExternalID(ctx, externalID)
+	defer func() {
+		if failure != nil {
+			s.audit(ctx, actor, current, "update", input.changedFields(), failure)
+		}
+	}()
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return OAuthProviderView{}, ErrNotFound
 		}
 		return OAuthProviderView{}, err
 	}
-	if input.Name != nil {
-		current.Name = strings.TrimSpace(*input.Name)
+	if input.ExpectedVersion < 1 {
+		return OAuthProviderView{}, invalid("必须提供 expected_version")
 	}
-	if input.AuthorizeEndpoint != nil {
-		current.AuthorizeEndpoint = strings.TrimSpace(*input.AuthorizeEndpoint)
+	if input.ExpectedVersion != current.Version {
+		return OAuthProviderView{}, ErrOAuthProviderVersion
 	}
-	if input.TokenEndpoint != nil {
-		current.TokenEndpoint = strings.TrimSpace(*input.TokenEndpoint)
+	if current.Protected && input.fixedFieldsPresent() {
+		return OAuthProviderView{}, invalid("内置服务方固定字段不可编辑")
 	}
-	if input.Scope != nil {
-		current.Scope = strings.TrimSpace(*input.Scope)
+	initialConfiguration := current.ClientIDEnvelope == nil
+	clientID := ""
+	if current.ClientIDEnvelope != nil {
+		clientID, err = platformoauth.OpenClientField(ctx, s.secretSvc, platformoauth.ProviderClientIDBinding(current.ExternalID), current.ClientIDEnvelope)
+		if err != nil {
+			return OAuthProviderView{}, ErrOAuthProviderUnavailable
+		}
 	}
-	if input.ClientID != nil {
-		current.ClientID = strings.TrimSpace(*input.ClientID)
-	}
-	if err := validateOAuthProviderFields(current.Name, current.AuthorizeEndpoint, current.TokenEndpoint, current.ClientID); err != nil {
+	if err := applyOAuthProviderFields(&current, input); err != nil {
 		return OAuthProviderView{}, err
 	}
-	if input.TokenEndpointAuthMethod != nil {
-		authMethod, err := oauthProviderAuthMethod(input.TokenEndpointAuthMethod, "")
-		if err != nil {
-			return OAuthProviderView{}, err
-		}
-		current.TokenEndpointAuthMethod = authMethod
+	if current.Protected && !slices.Contains(strings.Fields(current.Scope), "offline_access") {
+		return OAuthProviderView{}, invalid("飞书 scope 必须包含 offline_access")
 	}
-	if input.TokenEndpointEncoding != nil {
-		encoding, err := oauthProviderEncoding(input.TokenEndpointEncoding, "")
-		if err != nil {
-			return OAuthProviderView{}, err
-		}
-		current.TokenEndpointEncoding = encoding
-	}
-	if input.ClientSecret != nil {
-		clientSecret := strings.TrimSpace(*input.ClientSecret)
-		if clientSecret == "" {
-			return OAuthProviderView{}, invalid("client_secret 不能为空")
-		}
-		if err := s.sealClientSecret(ctx, &current, clientSecret); err != nil {
-			return OAuthProviderView{}, err
-		}
+	if err := s.updateClient(ctx, &current, clientID, input); err != nil {
+		return OAuthProviderView{}, err
 	}
 	current.UpdatedAt = time.Now().UTC()
 	updated, err := s.db.UpdatePlatformOAuthProvider(ctx, current)
@@ -185,47 +212,186 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 		if isOAuthProviderNameConflict(err) {
 			return OAuthProviderView{}, ErrOAuthProviderNameConflict
 		}
-		return OAuthProviderView{}, err
+		return OAuthProviderView{}, mapOAuthProviderError(err)
 	}
-	return oauthProviderView(updated), nil
+	action := "update"
+	if initialConfiguration {
+		action = "configure"
+	}
+	if input.ClientSecret != nil && action != "configure" {
+		action = "rotate"
+	}
+	s.audit(ctx, actor, updated, action, input.changedFields(), nil)
+	return s.view(ctx, updated)
 }
 
-func (s *OAuthProviderService) Delete(ctx context.Context, externalID string) error {
-	if err := s.db.DeletePlatformOAuthProvider(ctx, externalID); err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return ErrNotFound
+func (s *OAuthProviderService) Delete(ctx context.Context, actor Actor, externalID string, expectedVersion int64) (failure error) {
+	current, err := s.db.GetPlatformOAuthProviderByExternalID(ctx, externalID)
+	defer func() {
+		if failure != nil {
+			s.audit(ctx, actor, current, "delete", nil, failure)
 		}
+	}()
+	if err != nil {
+		return mapOAuthProviderError(err)
+	}
+	if current.Protected {
+		return ErrOAuthProviderProtected
+	}
+	if expectedVersion < 1 {
+		return invalid("必须提供 expected_version")
+	}
+	if err := s.db.DeletePlatformOAuthProvider(ctx, current.UUID, expectedVersion); err != nil {
+		return mapOAuthProviderError(err)
+	}
+	s.audit(ctx, actor, current, "delete", nil, nil)
+	return nil
+}
+
+func (s *OAuthProviderService) sealClient(ctx context.Context, provider *db.PlatformOAuthProvider, clientID, clientSecret string) error {
+	idEnvelope, err := platformoauth.SealClientField(ctx, s.secretSvc, platformoauth.ProviderClientIDBinding(provider.ExternalID), clientID)
+	if err != nil {
+		return ErrOAuthProviderUnavailable
+	}
+	secretEnvelope, err := platformoauth.SealClientField(ctx, s.secretSvc, platformoauth.ProviderSecretBinding(provider.ExternalID), clientSecret)
+	if err != nil {
+		return ErrOAuthProviderUnavailable
+	}
+	provider.ClientIDEnvelope, provider.ClientSecretEnvelope = idEnvelope, secretEnvelope
+	return nil
+}
+
+func (s *OAuthProviderService) updateClient(ctx context.Context, provider *db.PlatformOAuthProvider, oldID string, input OAuthProviderUpdateInput) error {
+	clientID := oldID
+	if input.ClientID != nil {
+		clientID = strings.TrimSpace(*input.ClientID)
+	}
+	if err := validateOAuthProviderFields(provider.Name, provider.AuthorizeEndpoint, provider.TokenEndpoint, clientID); err != nil {
 		return err
 	}
-	return nil
-}
-
-func (s *OAuthProviderService) sealClientSecret(ctx context.Context, provider *db.PlatformOAuthProvider, clientSecret string) error {
-	if s.secretSvc == nil {
-		return errors.New("platform oauth provider secret service is unavailable")
+	if (clientID != oldID || provider.ClientSecretEnvelope == nil) && input.ClientSecret == nil {
+		return invalid("更换或首次配置 client_id 时必须同时填写 client_secret")
 	}
-	envelope, err := s.secretSvc.Seal(ctx, platformoauth.ProviderSecretBinding(provider.ExternalID), []byte(clientSecret))
+	if input.ClientSecret == nil {
+		return nil
+	}
+	secret := strings.TrimSpace(*input.ClientSecret)
+	if secret == "" {
+		return invalid("client_secret 不能为空")
+	}
+	if clientID != oldID || provider.ClientIDEnvelope == nil {
+		return s.sealClient(ctx, provider, clientID, secret)
+	}
+	envelope, err := platformoauth.SealClientField(ctx, s.secretSvc, platformoauth.ProviderSecretBinding(provider.ExternalID), secret)
 	if err != nil {
-		return fmt.Errorf("seal platform oauth provider secret: %w", err)
+		return ErrOAuthProviderUnavailable
 	}
-	provider.ClientSecretEnvelope = &envelope
+	provider.ClientSecretEnvelope = envelope
 	return nil
 }
 
-func oauthProviderView(provider db.PlatformOAuthProvider) OAuthProviderView {
-	return OAuthProviderView{
-		ID:                      provider.ExternalID,
-		Name:                    provider.Name,
-		AuthorizeEndpoint:       provider.AuthorizeEndpoint,
-		TokenEndpoint:           provider.TokenEndpoint,
-		Scope:                   provider.Scope,
-		ClientID:                provider.ClientID,
-		HasClientSecret:         provider.ClientSecretEnvelope != nil,
-		TokenEndpointAuthMethod: provider.TokenEndpointAuthMethod,
-		TokenEndpointEncoding:   provider.TokenEndpointEncoding,
-		CreatedAt:               provider.CreatedAt,
-		UpdatedAt:               provider.UpdatedAt,
+func (s *OAuthProviderService) view(ctx context.Context, provider db.PlatformOAuthProvider) (OAuthProviderView, error) {
+	if err := platformoauth.ValidateProviderDefaults(provider); err != nil {
+		return OAuthProviderView{}, ErrOAuthProviderUnavailable
 	}
+	clientID := ""
+	if provider.ClientIDEnvelope != nil {
+		var err error
+		clientID, err = platformoauth.OpenClientField(ctx, s.secretSvc, platformoauth.ProviderClientIDBinding(provider.ExternalID), provider.ClientIDEnvelope)
+		if err != nil {
+			return OAuthProviderView{}, ErrOAuthProviderUnavailable
+		}
+	}
+	return OAuthProviderView{
+		ID: provider.ExternalID, ProviderKey: platformoauth.ProviderKey(provider), Builtin: provider.BuiltinKey != "", Protected: provider.Protected,
+		HasClientID: provider.ClientIDEnvelope != nil, HasClientSecret: provider.ClientSecretEnvelope != nil,
+		Configured: provider.ClientIDEnvelope != nil && provider.ClientSecretEnvelope != nil, Version: provider.Version,
+		Name: provider.Name, AuthorizeEndpoint: provider.AuthorizeEndpoint, TokenEndpoint: provider.TokenEndpoint,
+		Scope: provider.Scope, ClientID: clientID, DefaultSecretName: provider.DefaultSecretName, DefaultAllowedHosts: provider.DefaultAllowedHosts, TokenEndpointAuthMethod: provider.TokenEndpointAuthMethod,
+		TokenEndpointEncoding: provider.TokenEndpointEncoding, CreatedAt: provider.CreatedAt, UpdatedAt: provider.UpdatedAt,
+	}, nil
+}
+
+func (s *OAuthProviderService) audit(ctx context.Context, actor Actor, provider db.PlatformOAuthProvider, action string, fields []string, failure error) {
+	result, code := "success", ""
+	key := platformoauth.ProviderKey(provider)
+	if provider.ExternalID == "" {
+		key = ""
+	}
+	actorType := "account"
+	if actor.AccountUUID == "" {
+		actorType = "system"
+	}
+	if action == "integrity" {
+		key = "builtin:feishu"
+	}
+	if failure != nil {
+		result, code = "denied", publicError(failure).Code
+	}
+	s.logger.InfoContext(ctx, "platform oauth provider audit", "actor_account_uuid", actor.AccountUUID, "actor_type", actorType,
+		"provider_uuid", provider.UUID, "provider_key", key, "action", action,
+		"changed_fields", fields, "result", result, "error_code", code, "request_id", httpapi.RequestID(ctx))
+}
+
+func (i OAuthProviderUpdateInput) fixedFieldsPresent() bool {
+	return i.fixedFields || i.Name != nil || i.AuthorizeEndpoint != nil || i.TokenEndpoint != nil || i.TokenEndpointAuthMethod != nil || i.TokenEndpointEncoding != nil
+}
+
+func (i OAuthProviderUpdateInput) changedFields() []string {
+	fields := make([]string, 0)
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{
+		{"name", i.Name}, {"authorize_endpoint", i.AuthorizeEndpoint}, {"token_endpoint", i.TokenEndpoint}, {"scope", i.Scope},
+		{"client_id", i.ClientID}, {"client_secret", i.ClientSecret}, {"token_endpoint_auth_method", i.TokenEndpointAuthMethod}, {"token_endpoint_encoding", i.TokenEndpointEncoding},
+	} {
+		if field.value != nil {
+			fields = append(fields, field.name)
+		}
+	}
+	return fields
+}
+
+func (i *OAuthProviderUpdateInput) UnmarshalJSON(data []byte) error {
+	type plain OAuthProviderUpdateInput
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return invalid("请求 JSON 无效")
+	}
+	for _, key := range []string{"client_id", "client_secret"} {
+		if value, exists := fields[key]; exists && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return invalid("客户端字段不能为 null")
+		}
+	}
+	for _, key := range []string{"name", "authorize_endpoint", "token_endpoint", "token_endpoint_auth_method", "token_endpoint_encoding"} {
+		if _, exists := fields[key]; exists {
+			i.fixedFields = true
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode((*plain)(i))
+}
+
+func applyOAuthProviderFields(provider *db.PlatformOAuthProvider, input OAuthProviderUpdateInput) error {
+	for _, field := range []struct {
+		source *string
+		target *string
+	}{
+		{input.Name, &provider.Name}, {input.AuthorizeEndpoint, &provider.AuthorizeEndpoint}, {input.TokenEndpoint, &provider.TokenEndpoint}, {input.Scope, &provider.Scope},
+	} {
+		if field.source != nil {
+			*field.target = strings.TrimSpace(*field.source)
+		}
+	}
+	var err error
+	provider.TokenEndpointAuthMethod, err = oauthProviderAuthMethod(input.TokenEndpointAuthMethod, provider.TokenEndpointAuthMethod)
+	if err != nil {
+		return err
+	}
+	provider.TokenEndpointEncoding, err = oauthProviderEncoding(input.TokenEndpointEncoding, provider.TokenEndpointEncoding)
+	return err
 }
 
 func validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, clientID string) error {

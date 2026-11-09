@@ -198,6 +198,7 @@ func decodeRequest[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 }
 
 func (h *Handler) requireOAuthProviders(w http.ResponseWriter, r *http.Request) bool {
+	w.Header().Set("Cache-Control", "no-store")
 	if h.oauthProviders != nil {
 		return true
 	}
@@ -255,7 +256,14 @@ func (h *Handler) deleteOAuthProvider(w http.ResponseWriter, r *http.Request) {
 	if !h.requireOAuthProviders(w, r) {
 		return
 	}
-	if err := h.oauthProviders.Delete(r.Context(), chi.URLParam(r, "providerId")); err != nil {
+	input, err := decodeRequest[struct {
+		ExpectedVersion int64 `json:"expected_version"`
+	}](w, r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if err := h.oauthProviders.Delete(r.Context(), actorFromRequest(r), chi.URLParam(r, "providerId"), input.ExpectedVersion); err != nil {
 		h.fail(w, r, err)
 		return
 	}

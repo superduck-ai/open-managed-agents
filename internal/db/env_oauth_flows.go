@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"time"
 )
 
@@ -20,7 +21,7 @@ type EnvOAuthFlow struct {
 	RedirectURL             string
 	AuthorizeEndpoint       string
 	TokenEndpoint           string
-	ClientID                string
+	ClientIDEnvelope        *secrets.Envelope
 	Scope                   string
 	TokenEndpointAuthMethod string
 	TokenEndpointEncoding   string
@@ -41,6 +42,10 @@ func (d *DB) CreateEnvOAuthFlow(ctx context.Context, flow EnvOAuthFlow) (EnvOAut
 	if err != nil {
 		return EnvOAuthFlow{}, fmt.Errorf("encode env oauth allowed hosts: %w", err)
 	}
+	clientIDEnvelope, err := encodeOAuthEnvelope(flow.ClientIDEnvelope)
+	if err != nil {
+		return EnvOAuthFlow{}, err
+	}
 	mapper := NewEnvOAuthFlowMapper(d.mapperDB)
 	row, err := mapper.Insert(ctx, insertEnvOAuthFlowParams{
 		UUID:                    flow.UUID,
@@ -55,7 +60,7 @@ func (d *DB) CreateEnvOAuthFlow(ctx context.Context, flow EnvOAuthFlow) (EnvOAut
 		RedirectURL:             flow.RedirectURL,
 		AuthorizeEndpoint:       flow.AuthorizeEndpoint,
 		TokenEndpoint:           flow.TokenEndpoint,
-		ClientID:                flow.ClientID,
+		ClientIDEnvelope:        clientIDEnvelope,
 		Scope:                   flow.Scope,
 		TokenEndpointAuthMethod: flow.TokenEndpointAuthMethod,
 		TokenEndpointEncoding:   flow.TokenEndpointEncoding,
@@ -116,6 +121,10 @@ func (r envOAuthFlowRow) flow() (EnvOAuthFlow, error) {
 	if r.CreatedByAPIKeyUUID.Valid {
 		createdByAPIKeyUUID = r.CreatedByAPIKeyUUID.String
 	}
+	envelope, err := decodeOAuthEnvelope(r.ClientIDEnvelope)
+	if err != nil {
+		return EnvOAuthFlow{}, err
+	}
 	return EnvOAuthFlow{
 		UUID:                    r.UUID,
 		ExternalID:              r.ExternalID,
@@ -129,7 +138,7 @@ func (r envOAuthFlowRow) flow() (EnvOAuthFlow, error) {
 		RedirectURL:             r.RedirectURL,
 		AuthorizeEndpoint:       r.AuthorizeEndpoint,
 		TokenEndpoint:           r.TokenEndpoint,
-		ClientID:                r.ClientID,
+		ClientIDEnvelope:        envelope,
 		Scope:                   r.Scope,
 		TokenEndpointAuthMethod: r.TokenEndpointAuthMethod,
 		TokenEndpointEncoding:   r.TokenEndpointEncoding,

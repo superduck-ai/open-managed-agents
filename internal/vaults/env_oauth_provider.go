@@ -17,19 +17,13 @@ const (
 	envOAuthTokenEndpointAuthNone     = "none"
 )
 
-var (
-	envOAuthFeishuAuthorizeEndpoint = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
-	envOAuthFeishuTokenEndpoint     = "https://open.feishu.cn/open-apis/authen/v2/oauth/token"
-	envOAuthFeishuScope             = "offline_access"
-	envOAuthFeishuAllowedHosts      = []string{"open.feishu.cn", "accounts.feishu.cn"}
-)
-
 var errEnvOAuthProviderKeyInvalid = errors.New("env_oauth provider is invalid")
 
 type EnvOAuthProviderSnapshot struct {
 	ProviderKey             string
 	Name                    string
 	Builtin                 bool
+	Configured              bool
 	AuthorizeEndpoint       string
 	TokenEndpoint           string
 	ClientID                string
@@ -69,23 +63,6 @@ func EnvOAuthCustomProviderKey(externalID string) string {
 
 func IsBuiltinEnvOAuthProviderKey(value string) bool {
 	return strings.TrimSpace(value) == EnvOAuthProviderBuiltinFeishu
-}
-
-func FeishuEnvOAuthProvider(clientID, clientSecret string) EnvOAuthProviderSnapshot {
-	return EnvOAuthProviderSnapshot{
-		ProviderKey:             EnvOAuthProviderBuiltinFeishu,
-		Name:                    "Feishu",
-		Builtin:                 true,
-		AuthorizeEndpoint:       envOAuthFeishuAuthorizeEndpoint,
-		TokenEndpoint:           envOAuthFeishuTokenEndpoint,
-		ClientID:                clientID,
-		ClientSecret:            clientSecret,
-		Scope:                   envOAuthFeishuScope,
-		TokenEndpointAuthMethod: envOAuthTokenEndpointAuthPost,
-		TokenEndpointEncoding:   envOAuthTokenEndpointEncodingJSON,
-		DefaultSecretName:       EnvOAuthFeishuDefaultSecretName,
-		DefaultAllowedHosts:     append([]string(nil), envOAuthFeishuAllowedHosts...),
-	}
 }
 
 func ParseEnvOAuthSecretName(value string) (string, error) {

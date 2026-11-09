@@ -21,7 +21,7 @@ type envOAuthFlowRow struct {
 	RedirectURL             string         `db:"redirect_url"`
 	AuthorizeEndpoint       string         `db:"authorize_endpoint"`
 	TokenEndpoint           string         `db:"token_endpoint"`
-	ClientID                string         `db:"client_id"`
+	ClientIDEnvelope        sql.NullString `db:"client_id_envelope"`
 	Scope                   string         `db:"scope"`
 	TokenEndpointAuthMethod string         `db:"token_endpoint_auth_method"`
 	TokenEndpointEncoding   string         `db:"token_endpoint_encoding"`
@@ -50,7 +50,7 @@ type insertEnvOAuthFlowParams struct {
 	RedirectURL             string
 	AuthorizeEndpoint       string
 	TokenEndpoint           string
-	ClientID                string
+	ClientIDEnvelope        *string
 	Scope                   string
 	TokenEndpointAuthMethod string
 	TokenEndpointEncoding   string

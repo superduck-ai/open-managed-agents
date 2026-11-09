@@ -279,11 +279,6 @@ vault:
     - mcp_server_url: "https://api.githubcopilot.com/mcp/"
       client_id: "Iv23liEXAMPLE"
       client_secret: "replace-me"
-  # Built-in Feishu OAuth client used by env_oauth credentials. Configure both
-  # fields or neither; omitted means the built-in provider is unavailable.
-  feishu_oauth_client:
-    client_id: "cli_EXAMPLE"
-    client_secret: "replace-me"
 
 bootstrap:
   seed_api_keys:

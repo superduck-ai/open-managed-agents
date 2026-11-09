@@ -153,9 +153,6 @@ func validate(cfg Config) error {
 	if err := validatePlatformOAuthClients(cfg.Vault.PlatformOAuthClients); err != nil {
 		return err
 	}
-	if err := validateFeishuOAuthClient(cfg.Vault.FeishuOAuthClient); err != nil {
-		return err
-	}
 	if err := validateGitSSHtoHTTPSHosts(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts); err != nil {
 		return err
 	}
@@ -271,17 +268,6 @@ func validatePlatformOAuthClients(clients []PlatformOAuthClientConfig) error {
 			return fmt.Errorf("%s.mcp_server_url %q is duplicated", prefix, mcpURL)
 		}
 		seen[mcpURL] = struct{}{}
-	}
-	return nil
-}
-
-// validateGitSSHtoHTTPSHosts validates and normalizes hosts in place (trim + lower-case).
-// The slice header is shared with Config after YAML load, so Load observes the rewrite.
-func validateFeishuOAuthClient(client FeishuOAuthClientConfig) error {
-	clientID := strings.TrimSpace(client.ClientID)
-	clientSecret := strings.TrimSpace(client.ClientSecret)
-	if (clientID == "") != (clientSecret == "") {
-		return errors.New("vault.feishu_oauth_client: configure both client_id and client_secret, or neither")
 	}
 	return nil
 }

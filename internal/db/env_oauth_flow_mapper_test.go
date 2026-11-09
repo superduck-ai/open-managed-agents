@@ -16,7 +16,7 @@ func TestEnvOAuthFlowMapperBuilders(t *testing.T) {
 		ProviderKey: "builtin:feishu", SecretName: "LARKSUITE_CLI_USER_ACCESS_TOKEN",
 		DisplayName: "Feishu OAuth", RedirectURL: "https://app.example.test/oauth/vault/env-success",
 		AuthorizeEndpoint: "https://auth.example.test/authorize", TokenEndpoint: "https://auth.example.test/token",
-		ClientID: "client", Scope: "offline_access", TokenEndpointAuthMethod: "client_secret_post",
+		ClientIDEnvelope: new(`{"ciphertext":"id"}`), Scope: "offline_access", TokenEndpointAuthMethod: "client_secret_post",
 		TokenEndpointEncoding: "json", NetworkingType: "limited", AllowedHosts: `["open.feishu.cn"]`,
 		Status: "pending", CreatedByAPIKeyUUID: &createdBy, CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute),
 	}
@@ -29,11 +29,12 @@ func TestEnvOAuthFlowMapperBuilders(t *testing.T) {
 			"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 			"params.VaultUUID", "params.VaultExternalID", "params.ProviderKey", "params.SecretName",
 			"params.DisplayName", "params.RedirectURL", "params.AuthorizeEndpoint", "params.TokenEndpoint",
-			"params.ClientID", "params.Scope", "params.TokenEndpointAuthMethod", "params.TokenEndpointEncoding",
+			"params.ClientIDEnvelope", "params.Scope", "params.TokenEndpointAuthMethod", "params.TokenEndpointEncoding",
 			"params.NetworkingType", "params.AllowedHosts", "params.Status", "params.CreatedByAPIKeyUUID",
 			"params.CreatedAt", "params.ExpiresAt",
 		},
-		wantSQLFragments: []string{"INSERT INTO env_oauth_flows", "RETURNING"},
+		wantSensitiveArgumentNames: []string{"params.ClientIDEnvelope"},
+		wantSQLFragments:           []string{"INSERT INTO env_oauth_flows", "RETURNING"},
 	})
 
 	assertMapperBuilderContract(t, mapperBuilderContract{

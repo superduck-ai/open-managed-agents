@@ -176,7 +176,7 @@ func NewServer(deps ServerDeps) *Server {
 		}
 		oauthRefreshLease = lease
 	}
-	envOAuthProviders := platformoauth.NewResolver(deps.DB, deps.VaultSecrets, deps.Config.Vault.FeishuOAuthClient)
+	envOAuthProviders := platformoauth.NewResolver(deps.DB, deps.VaultSecrets, componentLogger("env_oauth_providers"))
 	s := &Server{
 		platformAccess:       platformadmin.New(deps.DB, componentLogger("platform_access")),
 		envOAuthProviders:    envOAuthProviders,

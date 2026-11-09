@@ -60,16 +60,6 @@ type VaultConfig struct {
 	OAuthServiceBindings []OAuthServiceBindingConfig `yaml:"oauth_service_bindings"`
 	MasterKey            MasterKeyConfig             `yaml:"master_key"`
 	PlatformOAuthClients []PlatformOAuthClientConfig `yaml:"platform_oauth_clients"`
-	FeishuOAuthClient    FeishuOAuthClientConfig     `yaml:"feishu_oauth_client"`
-}
-
-type FeishuOAuthClientConfig struct {
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
-}
-
-func (c FeishuOAuthClientConfig) Configured() bool {
-	return c.ClientID != "" && c.ClientSecret != ""
 }
 
 type OAuthServiceBindingConfig struct {

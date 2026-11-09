@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
+	"github.com/superduck-ai/open-managed-agents/internal/platformoauth"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
 	"github.com/superduck-ai/open-managed-agents/internal/workspaceaccess"
 
@@ -58,6 +59,7 @@ type envOAuthProviderResponse struct {
 	ID                  string   `json:"id"`
 	Name                string   `json:"name"`
 	Builtin             bool     `json:"builtin"`
+	Configured          bool     `json:"configured"`
 	AuthorizeEndpoint   string   `json:"authorize_endpoint"`
 	TokenEndpoint       string   `json:"token_endpoint"`
 	Scope               string   `json:"scope"`
@@ -87,7 +89,7 @@ func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request)
 	providers, err := s.envOAuthProviders.ListProviders(r.Context())
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "list env oauth providers", "error", err)
-		httpapi.WriteJSON(w, http.StatusInternalServerError, envOAuthErrorResponse{ErrorCode: "internal_error"})
+		httpapi.WriteJSON(w, http.StatusServiceUnavailable, envOAuthErrorResponse{ErrorCode: envOAuthErrorProviderUnavailable})
 		return
 	}
 	response := make([]envOAuthProviderResponse, 0, len(providers))
@@ -96,6 +98,7 @@ func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request)
 			ID:                  provider.ProviderKey,
 			Name:                provider.Name,
 			Builtin:             provider.Builtin,
+			Configured:          provider.Configured,
 			AuthorizeEndpoint:   provider.AuthorizeEndpoint,
 			TokenEndpoint:       provider.TokenEndpoint,
 			Scope:               provider.Scope,
@@ -153,11 +156,7 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 
 	provider, err := s.envOAuthProviders.ResolveEnvOAuthProvider(r.Context(), req.ProviderID)
 	if err != nil || provider.AuthorizeEndpoint == "" || provider.TokenEndpoint == "" || provider.ClientID == "" {
-		status := http.StatusBadRequest
-		if vaultsapi.IsBuiltinEnvOAuthProviderKey(req.ProviderID) {
-			status = http.StatusServiceUnavailable
-		}
-		writeEnvOAuthStartError(w, status, envOAuthErrorProviderUnavailable, "")
+		writeEnvOAuthStartError(w, http.StatusServiceUnavailable, envOAuthErrorProviderUnavailable, "")
 		return
 	}
 
@@ -204,7 +203,6 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 		RedirectURL:             redirectURL,
 		AuthorizeEndpoint:       provider.AuthorizeEndpoint,
 		TokenEndpoint:           provider.TokenEndpoint,
-		ClientID:                provider.ClientID,
 		Scope:                   provider.Scope,
 		TokenEndpointAuthMethod: provider.TokenEndpointAuthMethod,
 		TokenEndpointEncoding:   provider.TokenEndpointEncoding,
@@ -216,8 +214,13 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 		UpdatedAt:               now,
 		ExpiresAt:               now.Add(envOAuthFlowTTL),
 	}
-	if provider.Builtin {
-		flow.ClientID = ""
+	if !provider.Builtin {
+		envelope, err := platformoauth.SealClientField(r.Context(), s.vaultSecrets, platformoauth.FlowClientIDBinding(flow), provider.ClientID)
+		if err != nil {
+			writeEnvOAuthStartError(w, http.StatusServiceUnavailable, envOAuthErrorProviderUnavailable, "")
+			return
+		}
+		flow.ClientIDEnvelope = envelope
 	}
 	if _, err := s.db.CreateEnvOAuthFlow(r.Context(), flow); err != nil {
 		s.logger.ErrorContext(r.Context(), "create env oauth flow", "error", err)
@@ -269,7 +272,7 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		return
 	}
 	if providerError := strings.TrimSpace(r.URL.Query().Get("error")); providerError != "" {
-		s.logger.WarnContext(r.Context(), "env oauth callback provider error", "flow_external_id", flow.ExternalID, "error", providerError)
+		s.logger.WarnContext(r.Context(), "env oauth callback provider error", "flow_external_id", flow.ExternalID, "error_code", envOAuthErrorTokenExchangeFailed)
 		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorTokenExchangeFailed, now)
 		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
 			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
@@ -288,7 +291,7 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 	}
 	provider, err := s.envOAuthProviders.ResolveEnvOAuthProvider(r.Context(), flow.ProviderKey)
 	if err != nil || provider.ClientID == "" || provider.ClientSecret == "" {
-		s.logger.ErrorContext(r.Context(), "resolve env oauth provider for callback", "flow_external_id", flow.ExternalID, "error", err)
+		s.logger.ErrorContext(r.Context(), "resolve env oauth provider for callback", "flow_external_id", flow.ExternalID, "error_code", envOAuthErrorProviderUnavailable)
 		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorProviderUnavailable, now)
 		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
 			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
@@ -296,12 +299,18 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		})
 		return
 	}
-	if vaultsapi.IsBuiltinEnvOAuthProviderKey(flow.ProviderKey) {
-		flow.ClientID = provider.ClientID
+	clientID := provider.ClientID
+	if !vaultsapi.IsBuiltinEnvOAuthProviderKey(flow.ProviderKey) {
+		clientID, err = platformoauth.OpenClientField(r.Context(), s.vaultSecrets, platformoauth.FlowClientIDBinding(flow), flow.ClientIDEnvelope)
+		if err != nil {
+			s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorProviderUnavailable, now)
+			writeEnvOAuthCallback(w, envOAuthCallbackPayload{Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID, VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorProviderUnavailable})
+			return
+		}
 	}
-	token, err := exchangeEnvOAuthCode(r.Context(), flow, code, provider.ClientSecret)
+	token, err := exchangeEnvOAuthCode(r.Context(), flow, code, clientID, provider.ClientSecret)
 	if err != nil {
-		s.logger.ErrorContext(r.Context(), "exchange env oauth code", "flow_external_id", flow.ExternalID, "error", err)
+		s.logger.ErrorContext(r.Context(), "exchange env oauth code", "flow_external_id", flow.ExternalID, "error_code", envOAuthErrorTokenExchangeFailed)
 		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorTokenExchangeFailed, now)
 		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
 			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
@@ -505,15 +514,15 @@ func buildEnvOAuthAuthorizeURL(endpoint, clientID, scope, redirectURL, flowID st
 	return authorizeURL.String(), nil
 }
 
-func exchangeEnvOAuthCode(ctx context.Context, flow db.EnvOAuthFlow, code, clientSecret string) (vaultsapi.OAuthTokenEndpointResult, error) {
+func exchangeEnvOAuthCode(ctx context.Context, flow db.EnvOAuthFlow, code, clientID, clientSecret string) (vaultsapi.OAuthTokenEndpointResult, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
 	form.Set("redirect_uri", flow.RedirectURL)
-	form.Set("client_id", flow.ClientID)
+	form.Set("client_id", clientID)
 	return vaultsapi.ExchangeOAuthTokenEndpoint(ctx, envOAuthTokenHTTPClient, vaultsapi.OAuthTokenEndpointExchange{
 		TokenEndpoint:           flow.TokenEndpoint,
-		ClientID:                flow.ClientID,
+		ClientID:                clientID,
 		ClientSecret:            clientSecret,
 		TokenEndpointAuthMethod: flow.TokenEndpointAuthMethod,
 		TokenEndpointEncoding:   flow.TokenEndpointEncoding,

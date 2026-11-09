@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="OAuthClientMigrationMapper">
+    <sql id="table">
+        <choose><when test='kind == "platform_oauth_providers"'>platform_oauth_providers</when><otherwise>env_oauth_flows</otherwise></choose>
+    </sql>
+    <select id="ListPage" resultType="oauthClientMigrationRow">
+        SELECT records.uuid, records.external_id, records.organization_uuid, records.workspace_uuid,
+        records.legacy_client_id, records.client_id_envelope, records.client_secret_envelope
+        FROM (SELECT uuid, external_id,
+        <choose><when test='kind == "platform_oauth_providers"'>'platform' AS organization_uuid, 'platform' AS workspace_uuid, client_secret_envelope,</when>
+        <otherwise>organization_uuid, workspace_uuid, CAST(NULL AS jsonb) AS client_secret_envelope,</otherwise></choose>
+        <choose><when test='transitional'>client_id AS legacy_client_id,</when><otherwise>'' AS legacy_client_id,</otherwise></choose>
+        <choose><when test="expanded">client_id_envelope</when><otherwise>CAST(NULL AS jsonb) AS client_id_envelope</otherwise></choose>
+        FROM <include refid="table"/>
+        WHERE <choose><when test='kind == "platform_oauth_providers"'><choose><when test="expanded">builtin_key IS NULL</when><otherwise>TRUE</otherwise></choose></when><otherwise>provider_key &lt;&gt; 'builtin:feishu'</otherwise></choose>
+        <if test='after != ""'>AND uuid > #{after}</if>
+        ORDER BY uuid LIMIT 100) records
+    </select>
+    <update id="Backfill" result="rows">
+        UPDATE <include refid="table"/> SET client_id_envelope = #{envelope,sensitive=true}
+        <if test='kind == "platform_oauth_providers"'>, version = version + 1</if>
+        WHERE uuid = #{expected.UUID} AND client_id = #{expected.LegacyClientID,sensitive=true} AND client_id_envelope IS NULL
+        <choose><when test='kind == "platform_oauth_providers"'>AND builtin_key IS NULL AND client_secret_envelope = CAST(#{expected.SecretDocument,sensitive=true} AS jsonb)</when>
+        <otherwise>AND organization_uuid = #{expected.OrganizationUUID} AND workspace_uuid = #{expected.WorkspaceUUID} AND provider_key &lt;&gt; 'builtin:feishu'</otherwise></choose>
+    </update>
+</mapper>

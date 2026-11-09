@@ -26,6 +26,9 @@ var (
 	ErrIdempotency               = &Error{http.StatusConflict, "idempotency_conflict", "相同幂等键不能用于不同的创建请求"}
 	ErrMemberExists              = &Error{http.StatusConflict, "member_already_exists", "该账号已是组织成员，请直接修改其角色"}
 	ErrState                     = &Error{http.StatusConflict, "state_conflict", "当前状态不允许此操作"}
+	ErrOAuthProviderProtected    = &Error{http.StatusConflict, "oauth_provider_protected", "内置 OAuth 服务方不可删除"}
+	ErrOAuthProviderVersion      = &Error{http.StatusConflict, "oauth_provider_version_conflict", "OAuth 服务方已变更，请刷新后重试"}
+	ErrOAuthProviderUnavailable  = &Error{http.StatusServiceUnavailable, "platform_oauth_provider_unavailable", "OAuth 客户端解密服务暂不可用"}
 	ErrOAuthProviderNameConflict = &Error{http.StatusConflict, "oauth_provider_name_conflict", "OAuth 客户端名称已存在"}
 	ErrNotFound                  = &Error{http.StatusNotFound, "not_found", "目标不存在"}
 	ErrUnavailable               = &Error{http.StatusServiceUnavailable, "unavailable", "管理服务暂不可用"}
@@ -41,4 +44,17 @@ func publicError(err error) *Error {
 		return ErrNotFound
 	}
 	return ErrUnavailable
+}
+
+func mapOAuthProviderError(err error) error {
+	if errors.Is(err, db.ErrNotFound) {
+		return ErrNotFound
+	}
+	if errors.Is(err, db.ErrVersionConflict) {
+		return ErrOAuthProviderVersion
+	}
+	if errors.Is(err, db.ErrDuplicate) {
+		return ErrOAuthProviderNameConflict
+	}
+	return ErrOAuthProviderUnavailable
 }

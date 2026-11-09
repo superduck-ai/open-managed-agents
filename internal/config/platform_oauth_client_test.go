@@ -98,23 +98,3 @@ func TestValidatePlatformOAuthClients(t *testing.T) {
 		}
 	})
 }
-
-func TestValidateFeishuOAuthClient(t *testing.T) {
-	t.Parallel()
-	for _, client := range []FeishuOAuthClientConfig{
-		{},
-		{ClientID: "client", ClientSecret: "secret"},
-	} {
-		if err := validateFeishuOAuthClient(client); err != nil {
-			t.Fatalf("validateFeishuOAuthClient(%+v) = %v", client, err)
-		}
-	}
-	for _, client := range []FeishuOAuthClientConfig{
-		{ClientID: "client"},
-		{ClientSecret: "secret"},
-	} {
-		if err := validateFeishuOAuthClient(client); err == nil {
-			t.Fatalf("validateFeishuOAuthClient(%+v) succeeded", client)
-		}
-	}
-}

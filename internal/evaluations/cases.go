@@ -14,6 +14,7 @@ const (
 	maxAnswerLength      = 16000
 	maxAcceptanceLength  = 4000
 	maxTraceLength       = 16000
+	maxRubricLength      = 16000
 	maxImportCases       = 1000
 	maxGenerateCases     = 50
 )

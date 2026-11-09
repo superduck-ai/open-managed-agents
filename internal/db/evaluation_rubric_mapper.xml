@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EvaluationRubricMapper">
+    <sql id="rubricView">
+        r.uuid,
+        r.external_id,
+        r.organization_uuid,
+        r.workspace_uuid,
+        r.name,
+        r.description,
+        r.created_at,
+        r.updated_at,
+        v.uuid AS version_uuid,
+        v.external_id AS version_external_id,
+        v.version AS version,
+        v.body AS body,
+        v.pass_score AS pass_score,
+        v.model AS model
+    </sql>
+
+    <insert id="InsertRubric" result="returning" resultType="evaluationRubricLockRow">
+        INSERT INTO evaluation_rubrics (
+            uuid, external_id, organization_uuid, workspace_uuid, name, description, created_at, updated_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.Name},
+            #{params.Description},
+            #{params.CreatedAt},
+            #{params.CreatedAt}
+        )
+        RETURNING uuid, external_id
+    </insert>
+
+    <insert id="InsertRubricVersion" result="returning" resultType="evaluationRubricVersionRow">
+        INSERT INTO evaluation_rubric_versions (
+            uuid, external_id, organization_uuid, workspace_uuid, rubric_uuid, version, body, pass_score, model, created_at
+        ) VALUES (
+            #{params.UUID},
+            #{params.ExternalID},
+            #{params.OrganizationUUID},
+            #{params.WorkspaceUUID},
+            #{params.RubricUUID},
+            #{params.Version},
+            #{params.Body},
+            #{params.PassScore},
+            #{params.Model},
+            #{params.CreatedAt}
+        )
+        RETURNING uuid, external_id, organization_uuid, workspace_uuid, rubric_uuid, version, body, pass_score, model, created_at
+    </insert>
+
+    <select id="LockRubric" resultType="evaluationRubricLockRow">
+        SELECT uuid, external_id
+        FROM evaluation_rubrics
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <select id="FindLatestRubricVersion" resultType="evaluationRubricVersionRow">
+        SELECT uuid, external_id, organization_uuid, workspace_uuid, rubric_uuid, version, body, pass_score, model, created_at
+        FROM evaluation_rubric_versions
+        WHERE rubric_uuid = #{rubricUUID}
+        ORDER BY version DESC
+        LIMIT 1
+    </select>
+
+    <select id="FindRubric" resultType="evaluationRubricRow">
+        SELECT <include refid="rubricView"/>
+        FROM evaluation_rubrics r
+        JOIN evaluation_rubric_versions v ON v.rubric_uuid = r.uuid
+        WHERE r.organization_uuid = #{organizationUUID}
+        AND r.workspace_uuid = #{workspaceUUID}
+        AND r.external_id = #{externalID}
+        AND r.deleted_at IS NULL
+        AND v.version = (
+            SELECT MAX(version) FROM evaluation_rubric_versions WHERE rubric_uuid = r.uuid
+        )
+    </select>
+
+    <select id="ListRubrics" resultType="evaluationRubricRow">
+        SELECT <include refid="rubricView"/>
+        FROM evaluation_rubrics r
+        JOIN evaluation_rubric_versions v ON v.rubric_uuid = r.uuid
+        WHERE r.organization_uuid = #{params.OrganizationUUID}
+        AND r.workspace_uuid = #{params.WorkspaceUUID}
+        AND r.deleted_at IS NULL
+        AND v.version = (
+            SELECT MAX(version) FROM evaluation_rubric_versions WHERE rubric_uuid = r.uuid
+        )
+        ORDER BY r.created_at DESC, r.uuid DESC
+        LIMIT #{params.Limit} OFFSET #{params.Offset}
+    </select>
+
+    <update id="TouchRubric" result="rows">
+        UPDATE evaluation_rubrics
+        SET updated_at = #{updatedAt}
+        WHERE uuid = #{rubricUUID}
+        AND deleted_at IS NULL
+    </update>
+
+    <update id="SoftDeleteRubric" result="rows">
+        UPDATE evaluation_rubrics
+        SET deleted_at = #{deletedAt}, updated_at = #{deletedAt}
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </update>
+</mapper>

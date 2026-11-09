@@ -101,11 +101,7 @@ func run(bootstrap *slog.Logger) (err error) {
 	if err := initializeDatabase(ctx, cfg, database, logger); err != nil {
 		return err
 	}
-	prices := pricing.NewStore(cfg.Pricing, logger.With("component", "pricing"))
-	if err := prices.Reload(); err != nil {
-		logger.WarnContext(ctx, "load model prices failed", "error", err)
-	}
-	stopPrices := prices.Start(ctx)
+	prices, stopPrices := startPricing(ctx, cfg, logger)
 	defer stopPrices()
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {
@@ -374,6 +370,14 @@ func shutdownTelemetry(telemetryRuntime *telemetry.Runtime, bootstrap *slog.Logg
 	if err := telemetryRuntime.Shutdown(ctx); err != nil {
 		bootstrap.WarnContext(ctx, "shutdown telemetry", "error", err)
 	}
+}
+
+func startPricing(ctx context.Context, cfg config.Config, logger *slog.Logger) (*pricing.Store, func()) {
+	prices := pricing.NewStore(cfg.Pricing, logger.With("component", "pricing"))
+	if err := prices.Reload(); err != nil {
+		logger.WarnContext(ctx, "load model prices failed", "error", err)
+	}
+	return prices, prices.Start(ctx)
 }
 
 func startStateMetrics(ctx context.Context, cfg config.Config, database *db.DB, natsConnection *nats.Conn, logger *slog.Logger) (func(), error) {

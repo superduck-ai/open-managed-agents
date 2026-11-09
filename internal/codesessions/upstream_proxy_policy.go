@@ -29,6 +29,7 @@ type mcpProxyPolicyContext struct {
 // Code Session 策略查询的可信租户作用域；不接受 relay 在 CONNECT 中提交作用域。
 type upstreamProxyIdentity struct {
 	codeSessionExternalID string
+	publicSessionID       string
 	sessionThreadID       string
 	organizationUUID      string
 	workspaceUUID         string

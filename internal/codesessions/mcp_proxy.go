@@ -436,6 +436,7 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			request.Out = traceConnection(request.Out, &connected)
 			request.Out.URL = &upstreamURL
 			request.Out.Host = target.Host
+			request.Out.Header.Set(sessionIDHeader, claims.PublicSessionID)
 		},
 		ModifyResponse: func(response *http.Response) error {
 			response.Header.Del(mcpNotForwardedHeader)

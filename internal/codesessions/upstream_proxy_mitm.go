@@ -170,6 +170,7 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 			// Proxy-Authorization 只属于本地 CONNECT 鉴权，绝不能穿透到真实网站。
 			request.Out.Header.Del("Proxy-Authorization")
 			request.Out.Header.Del("Proxy-Connection")
+			request.Out.Header.Set(sessionIDHeader, identity.publicSessionID)
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			status := http.StatusBadGateway

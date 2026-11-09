@@ -148,3 +148,45 @@ func TestProviderDefaultsRejectInvalidDomains(t *testing.T) {
 		t.Fatal("无效域名用于授权")
 	}
 }
+
+func TestResolverFridayUsesIndependentDatabaseRow(t *testing.T) {
+	service, provider := providerFixture(t)
+	provider.ExternalID, provider.BuiltinKey, provider.Name = "poap_FridayBuiltinOAuthClient", "friday", "Friday"
+	provider.AuthorizeEndpoint, provider.TokenEndpoint, provider.Scope = "https://friday.test/open/api/oauth/authorize", "https://friday.test/open/api/oauth/token", "read"
+	provider.TokenEndpointAuthMethod, provider.TokenEndpointEncoding = "client_secret_basic", "form"
+	lookup := ""
+	resolver := NewResolver(providerStoreStub{provider: provider, builtinLookup: &lookup}, service, nil)
+	if _, err := resolver.ResolveEnvOAuthProvider(t.Context(), "builtin:friday"); err == nil {
+		t.Fatal("Friday 接受飞书密文")
+	}
+	var err error
+	provider.ClientIDEnvelope, err = SealClientField(t.Context(), service, ProviderClientIDBinding(provider.ExternalID), "friday-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.ClientSecretEnvelope, err = SealClientField(t.Context(), service, ProviderSecretBinding(provider.ExternalID), "friday-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := NewResolver(providerStoreStub{provider: provider, builtinLookup: &lookup}, service, nil).ResolveEnvOAuthProvider(t.Context(), "builtin:friday")
+	if err != nil || lookup != "friday" || snapshot.ProviderKey != "builtin:friday" || snapshot.Scope != "read" || snapshot.AuthorizeEndpoint != provider.AuthorizeEndpoint || snapshot.TokenEndpoint != provider.TokenEndpoint || snapshot.TokenEndpointAuthMethod != "client_secret_basic" || snapshot.TokenEndpointEncoding != "form" {
+		t.Fatal("Friday 数据库解析错误", err)
+	}
+	if key := MissingBuiltinProviderKey([]db.PlatformOAuthProvider{{BuiltinKey: "feishu"}}); key != "builtin:friday" {
+		t.Fatal("未检测 Friday 缺失")
+	}
+}
+
+func TestFlowCodeVerifierBindingIsolation(t *testing.T) {
+	service, _ := providerFixture(t)
+	flow := db.EnvOAuthFlow{OrganizationUUID: "org", WorkspaceUUID: "workspace", ExternalID: "flow"}
+	envelope, err := SealClientField(t.Context(), service, FlowCodeVerifierBinding(flow), "synthetic-verifier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, binding := range []secrets.Binding{FlowClientIDBinding(flow), FlowCodeVerifierBinding(db.EnvOAuthFlow{OrganizationUUID: "other", WorkspaceUUID: flow.WorkspaceUUID, ExternalID: flow.ExternalID}), FlowCodeVerifierBinding(db.EnvOAuthFlow{OrganizationUUID: flow.OrganizationUUID, WorkspaceUUID: flow.WorkspaceUUID, ExternalID: "other"})} {
+		if _, err := OpenClientField(t.Context(), service, binding, envelope); err == nil {
+			t.Fatal("PKCE verifier AAD 隔离失效")
+		}
+	}
+}

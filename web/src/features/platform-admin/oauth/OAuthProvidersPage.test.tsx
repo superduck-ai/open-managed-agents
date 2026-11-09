@@ -213,3 +213,50 @@ test('历史同名自定义 Feishu 与内置飞书保留独立类型标识', asy
   expect(screen.getByText('自定义')).toBeTruthy();
   expect(screen.getAllByRole('button', { name: '删除' })).toHaveLength(1);
 });
+
+test('Friday 与飞书分别展示，内置 Friday 使用独立端点和 read scope 首配', async () => {
+  const friday = {
+    ...builtin,
+    id: 'poap_FridayBuiltinOAuthClient',
+    provider_key: 'builtin:friday',
+    name: 'Friday',
+    authorize_endpoint: 'https://friday-tx.seewo.com/open/api/oauth/authorize',
+    token_endpoint: 'https://friday-tx.seewo.com/open/api/oauth/token',
+    token_endpoint_auth_method: 'client_secret_basic',
+    token_endpoint_encoding: 'form',
+    scope: 'read',
+    configured: false,
+    client_id: '',
+    has_client_id: false,
+    has_client_secret: false,
+  };
+  const writes: RequestInit[] = [];
+  globalThis.fetch = mock(async (input, options) => {
+    if (options?.method === 'PATCH') {
+      expect(String(input)).toContain(friday.id);
+      writes.push(options);
+      return Response.json({ ...friday, configured: true });
+    }
+    return Response.json([builtin, friday]);
+  }) as typeof fetch;
+  mount();
+  expect(await screen.findByText('飞书')).toBeTruthy();
+  fireEvent.click(await screen.findByText('Friday'));
+  expect(((await screen.findByLabelText('名称')) as HTMLInputElement).value).toBe('Friday');
+  expect((screen.getByLabelText('授权端点') as HTMLInputElement).value).toBe(friday.authorize_endpoint);
+  expect((screen.getByLabelText('令牌端点') as HTMLInputElement).readOnly).toBe(true);
+  expect(screen.queryByRole('button', { name: '删除' })).toBeNull();
+  fireEvent.change(screen.getByLabelText('客户端 ID'), { target: { value: 'synthetic-friday-id' } });
+  fireEvent.change(screen.getByLabelText('客户端密钥'), { target: { value: 'synthetic-friday-secret' } });
+  fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'offline_access' } });
+  expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'read' } });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: '保存' })));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(JSON.parse(String(writes[0].body))).toEqual({
+    expected_version: 1,
+    scope: 'read',
+    client_id: 'synthetic-friday-id',
+    client_secret: 'synthetic-friday-secret',
+  });
+});

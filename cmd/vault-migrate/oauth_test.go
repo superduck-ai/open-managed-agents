@@ -27,6 +27,13 @@ func (k *oauthWrappingKey) WrapDEK(ctx context.Context, dek []byte) (secrets.Wra
 }
 
 func TestOAuthLocalVersionRotationAndAtomicFailure(t *testing.T) {
+	for _, externalID := range []string{"poap_fixture", "poap_FridayBuiltinOAuthClient"} {
+		t.Run(externalID, func(t *testing.T) { testOAuthLocalVersionRotation(t, externalID) })
+	}
+}
+
+func testOAuthLocalVersionRotation(t *testing.T, externalID string) {
+	t.Helper()
 	oldKey := bytes.Repeat([]byte{1}, 32)
 	source, err := localkeys.New(localkeys.KeyMaterial{Version: 1, KEK: oldKey}, nil)
 	if err != nil {
@@ -37,15 +44,15 @@ func TestOAuthLocalVersionRotationAndAtomicFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := secrets.NewService(source)
-	id, err := platformoauth.SealClientField(t.Context(), original, platformoauth.ProviderClientIDBinding("poap_fixture"), "client")
+	id, err := platformoauth.SealClientField(t.Context(), original, platformoauth.ProviderClientIDBinding(externalID), "client")
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret, err := platformoauth.SealClientField(t.Context(), original, platformoauth.ProviderSecretBinding("poap_fixture"), "secret")
+	secret, err := platformoauth.SealClientField(t.Context(), original, platformoauth.ProviderSecretBinding(externalID), "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(oauthMigrationDocument{ExternalID: "poap_fixture", Version: 3, ClientIDEnvelope: id, ClientSecretEnvelope: secret})
+	raw, err := json.Marshal(oauthMigrationDocument{ExternalID: externalID, Version: 3, ClientIDEnvelope: id, ClientSecretEnvelope: secret})
 	if err != nil {
 		t.Fatal(err)
 	}

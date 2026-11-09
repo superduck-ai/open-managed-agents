@@ -156,3 +156,42 @@ func TestOAuthProviderListDoesNotCacheOrExposeSecret(t *testing.T) {
 		t.Fatal("客户端响应缓存或秘密边界错误")
 	}
 }
+
+func TestOAuthProviderFridayProtectedConfiguration(t *testing.T) {
+	service, store, records := oauthServiceFixture(t)
+	store.provider.ExternalID, store.provider.BuiltinKey, store.provider.Name = "poap_FridayBuiltinOAuthClient", "friday", "Friday"
+	store.provider.Scope, store.provider.TokenEndpointAuthMethod, store.provider.TokenEndpointEncoding = "read", "client_secret_basic", "form"
+	for _, input := range []OAuthProviderUpdateInput{
+		{ExpectedVersion: 1, Scope: new("offline_access")},
+		{ExpectedVersion: 1, TokenEndpoint: new("https://changed.test/token")},
+		{ExpectedVersion: 1, ClientID: new("synthetic-client")},
+	} {
+		if _, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, input); err == nil {
+			t.Fatal("Friday 接受不合法配置")
+		}
+	}
+	if err := service.Delete(t.Context(), Actor{}, store.provider.ExternalID, 1); !errors.Is(err, ErrOAuthProviderProtected) {
+		t.Fatal("Friday 允许删除")
+	}
+	view, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1, ClientID: new("synthetic-friday-client"), ClientSecret: new("synthetic-friday-secret")})
+	if err != nil || view.ProviderKey != "builtin:friday" || !view.Configured {
+		t.Fatal("Friday 首配失败", err)
+	}
+	original := bytes.Clone(store.provider.ClientIDEnvelope.Ciphertext)
+	view, err = service.Update(t.Context(), Actor{}, view.ID, OAuthProviderUpdateInput{ExpectedVersion: view.Version, ClientSecret: new("synthetic-rotated-secret")})
+	if err != nil || !bytes.Equal(original, store.provider.ClientIDEnvelope.Ciphertext) {
+		t.Fatal("Friday 轮换破坏客户端 ID", err)
+	}
+	encoded, err := json.Marshal(view)
+	if err != nil || bytes.Contains(encoded, []byte("synthetic-rotated-secret")) {
+		t.Fatal("Friday 响应泄漏秘密")
+	}
+	for _, record := range *records {
+		record.Attrs(func(attr slog.Attr) bool {
+			if attr.Key == "provider_key" && attr.Value.String() != "builtin:friday" {
+				t.Error("Friday 审计身份错误")
+			}
+			return true
+		})
+	}
+}

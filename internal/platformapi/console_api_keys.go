@@ -596,10 +596,17 @@ func formatConsoleAPIKey(key ConsoleAPIKey) map[string]any {
 	}
 	var createdBy any
 	if key.CreatedByUserUUID != nil && strings.TrimSpace(*key.CreatedByUserUUID) != "" {
-		createdBy = map[string]any{
+		creator := map[string]any{
 			"id":   strings.TrimSpace(*key.CreatedByUserUUID),
 			"type": "user",
 		}
+		if key.CreatedByName != "" {
+			creator["name"] = key.CreatedByName
+		}
+		if key.CreatedByEmail != "" {
+			creator["email"] = key.CreatedByEmail
+		}
+		createdBy = creator
 	}
 	var workspaceID any = key.WorkspaceDisplayID
 	if key.WorkspaceDisplayID == defaultConsoleWorkspaceID {

@@ -67,6 +67,8 @@ type ConsoleAPIKey struct {
 	ArchivedAt         *time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	CreatedByName      string
+	CreatedByEmail     string
 }
 
 type CreateConsoleAPIKeyInput struct {

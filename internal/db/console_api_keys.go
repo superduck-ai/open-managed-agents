@@ -343,6 +343,8 @@ func (r consoleAPIKeyRow) key() platform.ConsoleAPIKey {
 		ArchivedAt:         r.ArchivedAt,
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
+		CreatedByName:      r.CreatedByName,
+		CreatedByEmail:     r.CreatedByEmail,
 	}
 }
 

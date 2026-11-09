@@ -407,3 +407,30 @@ func TestPlatformAPIKeyCreatorRejectsMissingResolver(t *testing.T) {
 		t.Fatalf("status=%d creator=%+v", response.Code, store.createInput)
 	}
 }
+
+func TestFormatConsoleAPIKeyIncludesCreatorProfile(t *testing.T) {
+	creatorUUID := "00000000-0000-4000-8000-000000000003"
+	key := ConsoleAPIKey{
+		CreatedByUserUUID: &creatorUUID,
+		CreatedByName:     "Real Creator",
+		CreatedByEmail:    "creator@example.com",
+	}
+	createdBy, ok := formatConsoleAPIKey(key)["created_by"].(map[string]any)
+	if !ok || createdBy["id"] != creatorUUID || createdBy["name"] != "Real Creator" || createdBy["email"] != "creator@example.com" {
+		t.Fatalf("created_by = %#v", createdBy)
+	}
+}
+
+func TestFormatConsoleAPIKeyOmitsMissingCreatorProfile(t *testing.T) {
+	creatorUUID := "00000000-0000-4000-8000-000000000003"
+	createdBy, ok := formatConsoleAPIKey(ConsoleAPIKey{CreatedByUserUUID: &creatorUUID})["created_by"].(map[string]any)
+	if !ok || createdBy["id"] != creatorUUID {
+		t.Fatalf("created_by = %#v", createdBy)
+	}
+	if _, exists := createdBy["name"]; exists {
+		t.Fatalf("created_by unexpectedly contains name: %#v", createdBy)
+	}
+	if _, exists := createdBy["email"]; exists {
+		t.Fatalf("created_by unexpectedly contains email: %#v", createdBy)
+	}
+}

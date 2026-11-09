@@ -52,8 +52,12 @@ func TestNormalizeDeploymentResourcesAcceptsGitURLWithSuffix(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/deployments", nil)
 	resources := json.RawMessage(`[{"type":"github_repository","url":"https://github.com/example/repo.git"}]`)
 	payload, _, err := handler.normalizeResources(request, auth.Principal{}, resources, nil)
-	if err != nil || !strings.Contains(string(payload), "https://github.com/example/repo.git") {
-		t.Fatalf("normalizeResources() = (%s, %v), want stored .git URL", payload, err)
+	if err != nil {
+		t.Fatalf("normalizeResources() error = %v", err)
+	}
+	var stored []deploymentResourcePayload
+	if err := json.Unmarshal(payload, &stored); err != nil || len(stored) != 1 || stored[0].URL != "https://github.com/example/repo.git" {
+		t.Fatalf("stored resources = %s, want exact .git URL", payload)
 	}
 }
 

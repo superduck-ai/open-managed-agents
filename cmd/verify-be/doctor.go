@@ -38,15 +38,13 @@ func doctor(ctx context.Context, root, worker, selected string, apiPort int) (do
 		}
 		result.Versions["vision_model"] = model
 	}
-	if selected == "chat.egress-connector" {
-		digest, err := executableSHA256("TEST_TUNNEL_CLIENT_BINARY")
-		if err != nil {
-			return result, err
-		}
-		result.Versions["tunnel_client_sha256"] = digest
-	}
 	if usesBrain(selected) {
-		digest, err := executableSHA256("OMA_BRAIN_BINARY")
+		path := os.Getenv("OMA_BRAIN_BINARY")
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() || info.Mode()&0111 == 0 {
+			return result, errors.New("chat brain requires OMA_BRAIN_BINARY pointing to the built Rust executable")
+		}
+		digest, err := fileSHA256(path)
 		if err != nil {
 			return result, err
 		}
@@ -176,13 +174,4 @@ func checkBrainWorker(ctx context.Context, root, image string) error {
 		return errors.New("Brain scenario requires environment-manager task-run with --claude-agent-version and --claude-path in the sandbox image")
 	}
 	return nil
-}
-
-func executableSHA256(envName string) (string, error) {
-	path := os.Getenv(envName)
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() || info.Mode()&0111 == 0 {
-		return "", fmt.Errorf("%s must point to a built executable", envName)
-	}
-	return fileSHA256(path)
 }

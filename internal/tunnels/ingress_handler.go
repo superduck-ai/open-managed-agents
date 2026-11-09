@@ -110,10 +110,6 @@ func (h *IngressHandler) forwardDirect(w http.ResponseWriter, r *http.Request, c
 	if err != nil {
 		return err
 	}
-	if commandType == CommandTypeOAuthDiscovery {
-		r = r.Clone(r.Context())
-		r.Header = make(http.Header)
-	}
 	return h.forwardScoped(w, r, principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "tunnel_id"), channel, commandType)
 }
 
@@ -174,9 +170,6 @@ func (h *IngressHandler) dispatchTunnel(
 	}
 	if commandType == CommandTypeOAuthDiscovery {
 		headers = make(http.Header)
-		if sessionID := r.Header.Get("X-OMA-Session-ID"); sessionID != "" {
-			headers.Set("X-OMA-Session-ID", sessionID)
-		}
 	}
 	requestID, err := ids.New("req_")
 	if err != nil {

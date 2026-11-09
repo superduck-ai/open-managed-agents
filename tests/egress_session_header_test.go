@@ -105,7 +105,6 @@ func TestEgressPublicSessionHeader(t *testing.T) {
 	if got := calls.Load(); got != 24 {
 		t.Fatalf("upstream calls=%d want=24", got)
 	}
-	t.Run("tunnel connector headers", testEgressTunnelSessionHeader)
 	if !t.Failed() {
 		t.Logf("BE_PROOF {\"stage\":\"egress_headers_forwarded\",\"elapsed_ms\":%d}", time.Since(started).Milliseconds())
 	}

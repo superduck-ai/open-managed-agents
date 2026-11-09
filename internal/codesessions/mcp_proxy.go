@@ -149,8 +149,9 @@ func (h *Handler) HandleMCPProtectedResource(w http.ResponseWriter, r *http.Requ
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusForbidden, "permission_error", "MCP upstream is not allowed"))
 		return
 	}
+	headers := sanitizedMCPProxyHeaders(r.Header)
 	request := r.Clone(r.Context())
-	request.Header = mcpProxyHeaders(r.Header, claims.PublicSessionID)
+	request.Header = headers
 	if h.tunnelInvoker != nil {
 		captured := newMCPDiscoveryCapture()
 		if h.tunnelInvoker.ServeTunnelOAuthDiscovery(
@@ -209,8 +210,9 @@ func (h *Handler) forwardMCPProxy(
 	}
 	h.logger.InfoContext(r.Context(), "MCP proxy request received", attrs...)
 
+	headers := sanitizedMCPProxyHeaders(r.Header)
 	request := r.Clone(r.Context())
-	request.Header = mcpProxyHeaders(r.Header, claims.PublicSessionID)
+	request.Header = headers
 	if serverName == "" {
 		if h.serveMCPTunnel(w, request, claims, target) {
 			return
@@ -246,17 +248,11 @@ func (h *Handler) namedTargetIsTunnel(target *url.URL) bool {
 	return recognized && err == nil
 }
 
-func mcpProxyHeaders(source http.Header, publicSessionID string) http.Header {
+func sanitizedMCPProxyHeaders(source http.Header) http.Header {
 	headers := source.Clone()
-	for _, value := range source.Values("Connection") {
-		for name := range strings.SplitSeq(value, ",") {
-			headers.Del(strings.TrimSpace(name))
-		}
-	}
-	for _, name := range []string{"Connection", "Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection", runtimeThreadHeader} {
+	for _, name := range []string{"Authorization", "X-Api-Key", "Proxy-Authorization", "Proxy-Connection", runtimeThreadHeader} {
 		headers.Del(name)
 	}
-	headers.Set(sessionIDHeader, publicSessionID)
 	return headers
 }
 
@@ -440,6 +436,7 @@ func (h *Handler) serveMCPProxy(w http.ResponseWriter, r *http.Request, target *
 			request.Out = traceConnection(request.Out, &connected)
 			request.Out.URL = &upstreamURL
 			request.Out.Host = target.Host
+			request.Out.Header.Set(sessionIDHeader, claims.PublicSessionID)
 		},
 		ModifyResponse: func(response *http.Response) error {
 			response.Header.Del(mcpNotForwardedHeader)

@@ -312,15 +312,6 @@ func TestWriteCapturedMCPDiscoveryRewritesUnauthorizedRuntimeURLs(t *testing.T) 
 }
 
 func TestNamedMCPProtectedResourceUsesSessionIngressAndPublicResourceURL(t *testing.T) {
-	for _, mode := range []string{"forged", "connection", "absent"} {
-		t.Run(mode, func(t *testing.T) {
-			testNamedMCPProtectedResource(t, mode)
-		})
-	}
-}
-
-func testNamedMCPProtectedResource(t *testing.T, mode string) {
-	t.Helper()
 	targetURL := "https://oma.example/v1/mcp/tunnel_0123456789abcdef0123456789abcdef"
 	handler, token := newNamedMCPTestHandler(t, "local_tunnel", targetURL)
 	var tunnelRequest *http.Request
@@ -348,13 +339,6 @@ func testNamedMCPProtectedResource(t *testing.T, mode string) {
 		nil,
 	)
 	request.Header.Set("Authorization", "Bearer "+token)
-	if mode != "absent" {
-		request.Header.Add("x-oma-session-id", "forged-session")
-		request.Header.Add("X-OMA-Session-ID", "another-session")
-	}
-	if mode == "connection" {
-		request.Header.Set("Connection", "X-OMA-Session-ID")
-	}
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -373,12 +357,6 @@ func testNamedMCPProtectedResource(t *testing.T, mode string) {
 	}
 	if tunnelRequest == nil || tunnelRequest.Header.Get("Authorization") != "" {
 		t.Fatalf("Session ingress token leaked to Tunnel metadata request: %#v", tunnelRequest)
-	}
-	if values := tunnelRequest.Header.Values("X-OMA-Session-ID"); len(values) != 1 || values[0] != "sesn_test" {
-		t.Fatalf("Tunnel metadata session header = %q", values)
-	}
-	if tunnelRequest.Header.Get("Connection") != "" {
-		t.Fatal("Tunnel metadata retained caller Connection header")
 	}
 }
 

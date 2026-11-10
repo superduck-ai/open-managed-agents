@@ -113,6 +113,22 @@ type rubricResponse struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+type rubricVersionResponse struct {
+	ID        string `json:"id"`
+	Version   int    `json:"version"`
+	Body      string `json:"body"`
+	PassScore int    `json:"pass_score"`
+	Model     string `json:"model"`
+	CreatedAt string `json:"created_at"`
+}
+
+func rubricVersionJSON(rubric db.EvaluationRubric) rubricVersionResponse {
+	return rubricVersionResponse{
+		ID: rubric.VersionExternalID, Version: rubric.Version, Body: rubric.Body, PassScore: rubric.PassScore,
+		Model: rubric.Model, CreatedAt: formatTime(rubric.CreatedAt),
+	}
+}
+
 func rubricJSON(rubric db.EvaluationRubric) rubricResponse {
 	return rubricResponse{
 		ID: rubric.ExternalID, Type: "evaluation_rubric", Name: rubric.Name, Desc: rubric.Description,

@@ -101,6 +101,27 @@ func (h *Handler) listRubrics(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func (h *Handler) listRubricVersions(w http.ResponseWriter, r *http.Request) error {
+	principal, err := scopedPrincipal(r)
+	if err != nil {
+		return err
+	}
+	rubricID := chi.URLParam(r, "rubricId")
+	if _, err := h.store.GetEvaluationRubric(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, rubricID); err != nil {
+		return mapStoreError(err, rubricNotFoundMessage, loadFailedMessage)
+	}
+	rows, err := h.store.ListEvaluationRubricVersions(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, rubricID)
+	if err != nil {
+		return mapStoreError(err, rubricNotFoundMessage, loadFailedMessage)
+	}
+	data := make([]rubricVersionResponse, 0, len(rows))
+	for _, row := range rows {
+		data = append(data, rubricVersionJSON(row))
+	}
+	writePage(w, data, nil)
+	return nil
+}
+
 func (h *Handler) getRubric(w http.ResponseWriter, r *http.Request) error {
 	principal, err := scopedPrincipal(r)
 	if err != nil {

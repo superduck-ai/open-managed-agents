@@ -3530,6 +3530,7 @@
   "evaluations.rubricContentRequired": "Write the rubric.",
   "evaluations.rubricDefaultName": "Rubric",
   "evaluations.rubricDescription": "Define scoring rules so results stay comparable.",
+  "evaluations.rubricDetail": "Rubric details",
   "evaluations.rubricIntro": "Generate a rubric or write one yourself.",
   "evaluations.rubricTitleOptional": "Title, optional",
   "evaluations.rubricTitlePlaceholder": "For example: support answer quality",
@@ -3545,5 +3546,7 @@
   "evaluations.searchRubrics": "Search rubric name, ID, or content",
   "evaluations.summary": "Summary",
   "evaluations.version": "Version",
+  "evaluations.versionHistory": "Version history",
+  "evaluations.latestVersion": "Latest",
   "evaluations.writeRubric": "Write manually"
 }

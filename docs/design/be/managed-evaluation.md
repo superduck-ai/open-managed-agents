@@ -22,7 +22,7 @@
 - `GET/POST /datasets/{id}/cases`，`POST /datasets/{id}/cases/{caseId}`，`DELETE /datasets/{id}/cases/{caseId}`
 - `POST /datasets/{id}/cases:import`，`POST /datasets/{id}/cases:generate`
 - `GET /datasets/{id}/session-turns?session_id=`，`POST /datasets/{id}/cases:from-session`
-- `POST/GET /rubrics`，`GET/DELETE /rubrics/{id}`，`POST /rubrics/{id}/versions`，`POST /rubrics/generate`
+- `POST/GET /rubrics`，`GET/DELETE /rubrics/{id}`，`GET /rubrics/{id}/versions`，`POST /rubrics/{id}/versions`，`POST /rubrics/generate`
 
 前端入口在托管智能体的「评测」。页面有评测集和评分标准。
 
@@ -32,4 +32,4 @@
 
 生成用例接受 1 到 50 条，可以带补充说明、Agent 和该 Agent 的版本。指定版本时使用该版本的系统提示词。模型返回用例 JSON 数组；`{"cases":[...]}` 也会被接受。生成失败时删除刚创建的空评测集。
 
-评分标准可以手写，或按评测目标、Agent、评测集、正例和负例生成。标题可以留空。再次保存会追加版本，已经存在的评测任务不受影响。删除是软删除。
+评分标准可以手写，或按评测目标、Agent、评测集、正例和负例生成。标题可以留空。详情先展示标题、编号、版本、创建时间和评分规则正文。版本历史按版本号倒序列出每一版的正文和通过分，可以选择查看。点编辑后再保存，保存会追加版本，已经存在的评测任务不受影响。删除是软删除。

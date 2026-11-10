@@ -32,6 +32,7 @@ type Store interface {
 	AppendEvaluationRubricVersion(context.Context, string, string, string, db.EvaluationRubric, time.Time) (db.EvaluationRubric, error)
 	ListEvaluationRubrics(context.Context, string, string, int, int) ([]db.EvaluationRubric, error)
 	GetEvaluationRubric(context.Context, string, string, string) (db.EvaluationRubric, error)
+	ListEvaluationRubricVersions(context.Context, string, string, string) ([]db.EvaluationRubric, error)
 	DeleteEvaluationRubric(context.Context, string, string, string, time.Time) error
 	GetAgent(context.Context, string, string) (db.Agent, error)
 	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
@@ -74,6 +75,7 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Post(base+"/rubrics", h.adapter.Wrap(h.createRubric))
 	router.Get(base+"/rubrics", h.adapter.Wrap(h.listRubrics))
 	router.Get(base+"/rubrics/{rubricId}", h.adapter.Wrap(h.getRubric))
+	router.Get(base+"/rubrics/{rubricId}/versions", h.adapter.Wrap(h.listRubricVersions))
 	router.Delete(base+"/rubrics/{rubricId}", h.adapter.Wrap(h.deleteRubric))
 	router.Post(base+"/rubrics/{rubricId}/versions", h.adapter.Wrap(h.appendRubricVersion))
 }

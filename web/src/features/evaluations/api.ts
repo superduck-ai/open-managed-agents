@@ -27,6 +27,15 @@ export type EvaluationCase = {
   acceptance: string;
 };
 
+export type EvaluationRubricVersion = {
+  id: string;
+  version: number;
+  body: string;
+  pass_score: number;
+  model: string;
+  created_at: string;
+};
+
 export type EvaluationRubric = {
   id: string;
   name: string;
@@ -205,6 +214,12 @@ export function generateEvaluationRubric(
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+export function listEvaluationRubricVersions(orgUuid: string, workspaceId: string, rubricId: string) {
+  return consoleApi<EvaluationPage<EvaluationRubricVersion>>(
+    `${evaluationBase(orgUuid, workspaceId)}/rubrics/${encodeURIComponent(rubricId)}/versions`,
+  );
 }
 
 export function saveEvaluationRubricVersion(

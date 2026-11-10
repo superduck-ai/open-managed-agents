@@ -3530,6 +3530,7 @@
   "evaluations.rubricContentRequired": "请填写评分标准内容。",
   "evaluations.rubricDefaultName": "评分标准",
   "evaluations.rubricDescription": "定义统一的评分规则，让评测结果更准确、可比较。",
+  "evaluations.rubricDetail": "评分标准详情",
   "evaluations.rubricIntro": "自动生成或手动编写评分标准。",
   "evaluations.rubricTitleOptional": "标题（选填）",
   "evaluations.rubricTitlePlaceholder": "例如：客服回答质量标准",
@@ -3545,5 +3546,7 @@
   "evaluations.searchRubrics": "搜索评分标准名称、ID 或内容",
   "evaluations.summary": "内容摘要",
   "evaluations.version": "版本",
+  "evaluations.versionHistory": "版本历史",
+  "evaluations.latestVersion": "最新",
   "evaluations.writeRubric": "手动编写"
 }

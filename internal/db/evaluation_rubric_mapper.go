@@ -70,6 +70,7 @@ type EvaluationRubricMapper interface {
 	InsertRubricVersion(ctx context.Context, params insertEvaluationRubricVersionParams) (evaluationRubricVersionRow, error)
 	LockRubric(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (evaluationRubricLockRow, error)
 	FindLatestRubricVersion(ctx context.Context, rubricUUID string) (evaluationRubricVersionRow, error)
+	ListRubricVersions(ctx context.Context, organizationUUID, workspaceUUID, externalID string) ([]evaluationRubricVersionRow, error)
 	FindRubric(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (evaluationRubricRow, error)
 	ListRubrics(ctx context.Context, params evaluationListParams) ([]evaluationRubricRow, error)
 	SoftDeleteRubric(ctx context.Context, organizationUUID, workspaceUUID, externalID string, deletedAt time.Time) (int64, error)

@@ -115,6 +115,22 @@ func (d *DB) ListEvaluationRubrics(ctx context.Context, organizationUUID, worksp
 	return rubrics, nil
 }
 
+func (d *DB) ListEvaluationRubricVersions(ctx context.Context, organizationUUID, workspaceUUID, externalID string) ([]EvaluationRubric, error) {
+	rows, err := NewEvaluationRubricMapper(d.mapperDB).ListRubricVersions(ctx, organizationUUID, workspaceUUID, externalID)
+	if err != nil {
+		return nil, err
+	}
+	versions := make([]EvaluationRubric, 0, len(rows))
+	for _, row := range rows {
+		versions = append(versions, EvaluationRubric{
+			VersionUUID: row.UUID, VersionExternalID: row.ExternalID, OrganizationUUID: row.OrganizationUUID,
+			WorkspaceUUID: row.WorkspaceUUID, Version: row.Version, Body: row.Body, PassScore: row.PassScore,
+			Model: row.Model, CreatedAt: row.CreatedAt,
+		})
+	}
+	return versions, nil
+}
+
 func (d *DB) GetEvaluationRubric(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (EvaluationRubric, error) {
 	row, err := NewEvaluationRubricMapper(d.mapperDB).FindRubric(ctx, organizationUUID, workspaceUUID, externalID)
 	if err != nil {

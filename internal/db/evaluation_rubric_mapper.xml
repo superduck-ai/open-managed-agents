@@ -61,6 +61,17 @@
         FOR UPDATE
     </select>
 
+    <select id="ListRubricVersions" resultType="evaluationRubricVersionRow">
+        SELECT v.uuid, v.external_id, v.organization_uuid, v.workspace_uuid, v.rubric_uuid, v.version, v.body, v.pass_score, v.model, v.created_at
+        FROM evaluation_rubric_versions v
+        JOIN evaluation_rubrics r ON r.uuid = v.rubric_uuid
+        WHERE r.organization_uuid = #{organizationUUID}
+        AND r.workspace_uuid = #{workspaceUUID}
+        AND r.external_id = #{externalID}
+        AND r.deleted_at IS NULL
+        ORDER BY v.version DESC
+    </select>
+
     <select id="FindLatestRubricVersion" resultType="evaluationRubricVersionRow">
         SELECT uuid, external_id, organization_uuid, workspace_uuid, rubric_uuid, version, body, pass_score, model, created_at
         FROM evaluation_rubric_versions

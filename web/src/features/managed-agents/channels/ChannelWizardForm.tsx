@@ -3,8 +3,6 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Bot, Check, Cloud, ExternalLink, LoaderCircle } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Button, ButtonLink } from '../../../shared/ui/button';
-import { RadioGroup, RadioGroupItem } from '../../../shared/ui/radio-group';
-import { cn } from '../../../shared/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../shared/ui/card';
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
@@ -192,34 +190,6 @@ export function StepConnect({
             </SelectItem>
           </SelectContent>
         </Select>
-      </div>
-      <div className="space-y-2">
-        <Label>{msg('managedAgents.channels.mode', '渠道模式')}</Label>
-        <RadioGroup
-          value={value.mode}
-          disabled={Boolean(saved) || busy}
-          aria-label={msg('managedAgents.channels.mode', '渠道模式')}
-          className="grid gap-2"
-          onValueChange={(mode) => {
-            if (mode === 'open' || mode === 'pairing') onChange({ ...value, mode });
-          }}
-        >
-          <ModeOption
-            value="open"
-            title={msg('managedAgents.channels.open', '开放模式')}
-            description={msg('managedAgents.channels.openHint', '无需审批，用户可直接与机器人对话。')}
-            selected={value.mode === 'open'}
-          />
-          <ModeOption
-            value="pairing"
-            title={msg('managedAgents.channels.pairing', '配对模式')}
-            description={msg('managedAgents.channels.pairingHint', '经管理员批准后，对应的单聊或群聊才可使用。')}
-            selected={value.mode === 'pairing'}
-          />
-        </RadioGroup>
-        <p className="text-xs text-muted-foreground">
-          {msg('managedAgents.channels.immutableMode', '渠道创建后不可切换模式。')}
-        </p>
       </div>
       <div className="space-y-3">
         <Label>{msg('managedAgents.channels.accessMethod', '接入方式')}</Label>
@@ -530,35 +500,6 @@ function ChannelTargetFields({
         </Select>
       </div>
     </>
-  );
-}
-
-function ModeOption({
-  value,
-  title,
-  description,
-  selected,
-}: {
-  value: 'open' | 'pairing';
-  title: string;
-  description: string;
-  selected: boolean;
-}) {
-  const id = `channel-mode-${value}`;
-  return (
-    <Label
-      htmlFor={id}
-      className={cn(
-        'flex cursor-pointer items-start gap-3 rounded-lg border-[0.5px] border-border px-4 py-3 text-sm font-normal',
-        selected && 'border-foreground bg-accent',
-      )}
-    >
-      <RadioGroupItem id={id} value={value} className="mt-0.5 shrink-0" aria-label={title} />
-      <span className="min-w-0 space-y-1 leading-5">
-        <span className="block font-medium">{title}</span>
-        <span className="block text-muted-foreground">{description}</span>
-      </span>
-    </Label>
   );
 }
 

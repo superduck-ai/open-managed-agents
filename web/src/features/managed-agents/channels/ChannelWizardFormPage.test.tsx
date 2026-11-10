@@ -15,14 +15,14 @@ afterEach(() => {
   mock.restore();
 });
 
-test('扫码创建前可选择配对模式，创建成功后锁定且重试保留模式', async () => {
+test('扫码创建保持绑定门槛，二维码重试不重复创建渠道', async () => {
   resetTestDom('/');
   const openWindow = spyOn(window, 'open');
   const requests: { url: string; body: unknown }[] = [];
   const channel: Channel = {
     id: 'ch-pairing',
     name: '配对扫码渠道',
-    mode: 'pairing',
+    mode: 'open',
     source: 'console',
     enabled: true,
     connected: false,
@@ -59,21 +59,15 @@ test('扫码创建前可选择配对模式，创建成功后锁定且重试保�
       </I18nProvider>
     </QueryClientProvider>,
   );
-  const pairing = screen.getByRole('radio', { name: /配对模式/ });
-  fireEvent.click(screen.getByRole('radio', { name: /开放模式/ }));
-  fireEvent.click(pairing);
-  expect(pairing.getAttribute('aria-checked')).toBe('true');
+  expect(screen.queryByRole('radiogroup', { name: '渠道模式' })).toBeNull();
   expect(screen.getByRole('button', { name: '下一步' }).hasAttribute('disabled')).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: '使用飞书扫码授权' }));
   await screen.findByText('二维码已失效，请重新生成。');
-  expect(requests[1].body).toEqual(expect.objectContaining({ mode: 'pairing' }));
-  expect(screen.getByRole('radio', { name: /配对模式/ }).getAttribute('aria-disabled')).toBe('true');
-  fireEvent.click(screen.getByRole('radio', { name: /开放模式/ }));
-  expect(pairing.getAttribute('aria-checked')).toBe('true');
+  expect(requests[1].body).toEqual(expect.objectContaining({ mode: 'open' }));
   fireEvent.click(screen.getByRole('button', { name: '使用飞书扫码授权' }));
   await waitFor(() => expect(requests.filter((request) => request.url.endsWith('/qr'))).toHaveLength(2));
   expect(requests[3].url).toEndWith('/channels/ch-pairing');
-  expect(requests[3].body).toEqual(expect.objectContaining({ mode: 'pairing' }));
+  expect(requests[3].body).toEqual(expect.objectContaining({ mode: 'open' }));
   expect(requests.filter((request) => request.url.endsWith('/settings'))).toHaveLength(1);
   expect(openWindow).not.toHaveBeenCalled();
 });

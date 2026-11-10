@@ -13,4 +13,6 @@ Screenshots:
 - `02-channel-detail.png`
 - `03-channel-sessions.png`
 
+`01-channels-list.png` 是改宽之前的列表：页面套在控制台 `max-w-[928px]` 居中壳里，表格和筛选被挤在中间。随后渠道列表、详情和向导改成与部署、环境相同的宽页面（`px-6 py-6 lg:px-8`），不再另加居中窄容器。这三张图没有重拍。
+
 Session metadata evidence: `session-metadata.json`

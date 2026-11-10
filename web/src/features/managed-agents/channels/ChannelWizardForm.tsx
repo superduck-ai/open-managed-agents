@@ -177,6 +177,34 @@ export function StepConnect({
           {msg('managedAgents.channels.feishu', '飞书')}
         </div>
       </div>
+      <div className="space-y-2">
+        <Label>{msg('managedAgents.channels.mode', '渠道模式')}</Label>
+        <RadioGroup
+          value={value.mode}
+          disabled={Boolean(saved) || busy}
+          aria-label={msg('managedAgents.channels.mode', '渠道模式')}
+          className="grid gap-2"
+          onValueChange={(mode) => {
+            if (mode === 'open' || mode === 'pairing') onChange({ ...value, mode });
+          }}
+        >
+          <ModeOption
+            value="open"
+            title={msg('managedAgents.channels.open', '开放模式')}
+            description={msg('managedAgents.channels.openHint', '无需审批，用户可直接与机器人对话。')}
+            selected={value.mode === 'open'}
+          />
+          <ModeOption
+            value="pairing"
+            title={msg('managedAgents.channels.pairing', '配对模式')}
+            description={msg('managedAgents.channels.pairingHint', '经管理员批准后，对应的单聊或群聊才可使用。')}
+            selected={value.mode === 'pairing'}
+          />
+        </RadioGroup>
+        <p className="text-xs text-muted-foreground">
+          {msg('managedAgents.channels.immutableMode', '渠道创建后不可切换模式。')}
+        </p>
+      </div>
       <div className="space-y-3">
         <Label>{msg('managedAgents.channels.accessMethod', '接入方式')}</Label>
         <div className="grid grid-cols-2 gap-3">
@@ -273,15 +301,7 @@ function QrBindPanel({
   );
 }
 
-export function StepStrategy({
-  value,
-  onChange,
-  modeLocked = false,
-}: {
-  value: WizardValue;
-  onChange: (value: WizardValue) => void;
-  modeLocked?: boolean;
-}) {
+export function StepStrategy({ value, onChange }: { value: WizardValue; onChange: (value: WizardValue) => void }) {
   const { msg } = useI18n();
   return (
     <div className="space-y-5">
@@ -347,34 +367,6 @@ export function StepStrategy({
             onCheckedChange={(checked) => onChange({ ...value, include_tool_calls: checked })}
           />
         </ToggleCard>
-      </div>
-      <div className="space-y-2">
-        <Label>{msg('managedAgents.channels.mode', '渠道模式')}</Label>
-        <RadioGroup
-          value={value.mode}
-          disabled={modeLocked}
-          aria-label={msg('managedAgents.channels.mode', '渠道模式')}
-          className="grid gap-2"
-          onValueChange={(mode) => {
-            if (mode === 'open' || mode === 'pairing') onChange({ ...value, mode });
-          }}
-        >
-          <ModeOption
-            value="open"
-            title={msg('managedAgents.channels.open', '开放模式')}
-            description={msg('managedAgents.channels.openHint', '无需审批，用户可直接与机器人对话。')}
-            selected={value.mode === 'open'}
-          />
-          <ModeOption
-            value="pairing"
-            title={msg('managedAgents.channels.pairing', '配对模式')}
-            description={msg('managedAgents.channels.pairingHint', '经管理员批准后，对应的单聊或群聊才可使用。')}
-            selected={value.mode === 'pairing'}
-          />
-        </RadioGroup>
-        <p className="text-xs text-muted-foreground">
-          {msg('managedAgents.channels.immutableMode', '渠道创建后不可切换模式。')}
-        </p>
       </div>
     </div>
   );

@@ -50,7 +50,7 @@ function WizardStepFields({
   agentLocked: boolean;
   onGenerateQr: () => void;
 }) {
-  if (step === 2) return <StepStrategy value={value} onChange={onChange} modeLocked={Boolean(saved)} />;
+  if (step === 2) return <StepStrategy value={value} onChange={onChange} />;
   if (step === 3) {
     return (
       <StepMa value={value} onChange={onChange} agents={agents} environments={environments} agentLocked={agentLocked} />

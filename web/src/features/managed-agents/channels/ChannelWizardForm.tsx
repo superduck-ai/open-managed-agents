@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../../shared/ui/car
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
-import { Switch } from '../../../shared/ui/switch';
 import type { AgentApiResponse, EnvironmentApiResponse } from '../types';
 import type { Channel, ChannelInput, ChannelQr } from './api';
 import { ChannelCredentials } from './ChannelFields';
@@ -292,57 +291,50 @@ export function StepStrategy({
       </div>
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.replyDisplay', '回复展示')}</Label>
-        <div className="space-y-4">
-          <ToggleRow
-            id="wizard-thinking"
+        <div className="grid grid-cols-1 gap-3">
+          <OptionCard
             title={msg('managedAgents.channels.thinking', '展示思考过程')}
-            hint={msg('managedAgents.channels.thinkingHint', '在回复中展示思考过程')}
-            checked={value.include_thinking}
-            onCheckedChange={(checked) => onChange({ ...value, include_thinking: checked })}
+            description={msg('managedAgents.channels.thinkingHint', '在回复中展示思考过程')}
+            selected={value.include_thinking}
+            onClick={() => onChange({ ...value, include_thinking: !value.include_thinking })}
           />
-          <ToggleRow
-            id="wizard-tools"
+          <OptionCard
             title={msg('managedAgents.channels.tools', '展示工具调用')}
-            hint={msg(
+            description={msg(
               'managedAgents.channels.toolsVolcHint',
               '在「处理过程」中展示工具名称、执行状态及耗时。不展示敏感参数和原始结果。',
             )}
-            checked={value.include_tool_calls}
-            onCheckedChange={(checked) => onChange({ ...value, include_tool_calls: checked })}
+            selected={value.include_tool_calls}
+            onClick={() => onChange({ ...value, include_tool_calls: !value.include_tool_calls })}
           />
-          <ToggleRow
-            id="wizard-context"
+          <OptionCard
             title={msg('managedAgents.channels.recentContext', '自动注入近期聊天内容')}
-            hint={msg('managedAgents.channels.recentContextHint', '桥接暂未提供独立开关，界面仅作对齐展示。')}
-            checked={false}
+            description={msg('managedAgents.channels.recentContextHint', '桥接暂未提供独立开关，界面仅作对齐展示。')}
+            selected={false}
             disabled
-            onCheckedChange={() => undefined}
+            onClick={() => undefined}
           />
         </div>
       </div>
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.mode', '渠道模式')}</Label>
-        <Select
-          value={value.mode}
-          disabled={modeLocked}
-          onValueChange={(next) => onChange({ ...value, mode: next as WizardValue['mode'] })}
-          items={[
-            { value: 'open', label: msg('managedAgents.channels.open', '开放模式') },
-            { value: 'pairing', label: msg('managedAgents.channels.pairing', '配对模式') },
-          ]}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="open">{msg('managedAgents.channels.open', '开放模式')}</SelectItem>
-            <SelectItem value="pairing">{msg('managedAgents.channels.pairing', '配对模式')}</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <OptionCard
+            title={msg('managedAgents.channels.open', '开放模式')}
+            description={msg('managedAgents.channels.openHint', '无需审批，用户可直接与机器人对话。')}
+            selected={value.mode === 'open'}
+            disabled={modeLocked}
+            onClick={() => onChange({ ...value, mode: 'open' })}
+          />
+          <OptionCard
+            title={msg('managedAgents.channels.pairing', '配对模式')}
+            description={msg('managedAgents.channels.pairingHint', '经管理员批准后，对应的单聊或群聊才可使用。')}
+            selected={value.mode === 'pairing'}
+            disabled={modeLocked}
+            onClick={() => onChange({ ...value, mode: 'pairing' })}
+          />
+        </div>
         <p className="text-xs text-muted-foreground">
-          {value.mode === 'open'
-            ? msg('managedAgents.channels.openHint', '无需审批，用户可直接与机器人对话。')
-            : msg('managedAgents.channels.pairingHint', '经管理员批准后，对应的单聊或群聊才可使用。')}
           {msg('managedAgents.channels.immutableMode', '渠道创建后不可切换模式。')}
         </p>
       </div>
@@ -441,29 +433,30 @@ export function StepMa({
   );
 }
 
-function ToggleRow({
-  id,
+function OptionCard({
   title,
-  hint,
-  checked,
+  description,
+  selected,
   disabled,
-  onCheckedChange,
+  onClick,
 }: {
-  id: string;
   title: string;
-  hint: string;
-  checked: boolean;
+  description: string;
+  selected: boolean;
   disabled?: boolean;
-  onCheckedChange: (checked: boolean) => void;
+  onClick: () => void;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="space-y-1">
-        <Label htmlFor={id}>{title}</Label>
-        <p className="text-xs leading-5 text-muted-foreground">{hint}</p>
-      </div>
-      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
-    </div>
+    <button
+      type="button"
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex w-full min-w-0 flex-col items-start gap-1 rounded-xl border-[0.5px] p-4 text-left text-sm font-normal disabled:cursor-not-allowed disabled:opacity-50 ${selected ? 'border-foreground bg-muted' : 'border-border hover:bg-muted'}`}
+    >
+      <span className="font-medium">{title}</span>
+      <span className="text-sm leading-5 text-muted-foreground">{description}</span>
+    </button>
   );
 }
 

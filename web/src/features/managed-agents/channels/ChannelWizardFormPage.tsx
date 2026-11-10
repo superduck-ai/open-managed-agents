@@ -85,9 +85,10 @@ export function ChannelWizardFormPage({
   const environments = environmentsQuery.data ?? [];
   const agentLocked = mode === 'edit' || Boolean(initialAgentId);
 
-  const canGoNext = useMemo(() => channelWizardStepReady(step, value), [step, value]);
+  const access = useMemo(() => ({ binding, saved, qrStatus: qr?.status ?? null }), [binding, saved, qr?.status]);
+  const canGoNext = useMemo(() => channelWizardStepReady(step, value, access), [step, value, access]);
   const openStep = (next: WizardStep) => {
-    if (wizardStepAllowed(next, value)) setStep(next);
+    if (wizardStepAllowed(next, value, access)) setStep(next);
   };
 
   const persist = async (generateQr: boolean, closeAfter: boolean) => {
@@ -199,7 +200,11 @@ export function ChannelWizardFormPage({
           className="min-w-0 space-y-5 xl:sticky xl:top-0"
           aria-label={msg('managedAgents.channels.progress', '进度')}
         >
-          <WizardStepper step={step} canOpen={(next) => wizardStepAllowed(next, value)} onStepChange={openStep} />
+          <WizardStepper
+            step={step}
+            canOpen={(next) => wizardStepAllowed(next, value, access)}
+            onStepChange={openStep}
+          />
           <WizardSideCards
             agentName={agents.find((agent) => agent.id === value.agentId)?.name ?? ''}
             environmentName={environments.find((environment) => environment.id === value.environmentId)?.name ?? ''}

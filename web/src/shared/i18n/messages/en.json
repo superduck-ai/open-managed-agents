@@ -3473,8 +3473,6 @@
   "managedAgents.channels.identityHint": "Identity defaults are handled by the Feishu bridge (group Bot / DM User). Reply method maps to thread policy.",
   "managedAgents.channels.replyDisplay": "Reply display",
   "managedAgents.channels.toolsVolcHint": "Show tool names, status, and duration during processing. Sensitive parameters and raw results are hidden.",
-  "managedAgents.channels.recentContext": "Auto-inject recent chat content",
-  "managedAgents.channels.recentContextHint": "The bridge has no dedicated switch yet; this control is shown for UI alignment only.",
   "managedAgents.channels.selectAgent": "Select an agent",
   "managedAgents.channels.agentVersion": "Agent version",
   "managedAgents.channels.defaultEnvironment": "Default Environment",

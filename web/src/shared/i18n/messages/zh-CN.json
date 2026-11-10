@@ -3469,8 +3469,6 @@
   "managedAgents.channels.identityHint": "身份设定由飞书桥接默认处理（群聊 Bot / 单聊 User）；回复方式会写入话题策略。",
   "managedAgents.channels.replyDisplay": "回复展示",
   "managedAgents.channels.toolsVolcHint": "在「处理过程」中展示工具名称、执行状态及耗时。不展示敏感参数和原始结果。",
-  "managedAgents.channels.recentContext": "自动注入近期聊天内容",
-  "managedAgents.channels.recentContextHint": "桥接暂未提供独立开关，界面仅作对齐展示。",
   "managedAgents.channels.selectAgent": "选择智能体",
   "managedAgents.channels.agentVersion": "智能体版本",
   "managedAgents.channels.defaultEnvironment": "默认 Environment",

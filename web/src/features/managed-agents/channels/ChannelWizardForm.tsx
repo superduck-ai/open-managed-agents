@@ -312,13 +312,6 @@ export function StepStrategy({
             checked={value.include_tool_calls}
             onCheckedChange={(checked) => onChange({ ...value, include_tool_calls: checked })}
           />
-          <ToggleCardRow
-            title={msg('managedAgents.channels.recentContext', '自动注入近期聊天内容')}
-            description={msg('managedAgents.channels.recentContextHint', '桥接暂未提供独立开关，界面仅作对齐展示。')}
-            checked={false}
-            disabled
-            onCheckedChange={() => undefined}
-          />
         </ToggleCard>
       </div>
       <div className="space-y-2">

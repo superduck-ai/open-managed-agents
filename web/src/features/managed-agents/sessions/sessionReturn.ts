@@ -13,7 +13,13 @@ export function channelSessionsReturnTo(value: string | null | undefined, worksp
   const parts = target.pathname.split('/').filter(Boolean);
   if (parts.length !== 5 || parts[0] !== 'workspaces' || parts[2] !== 'channels') return null;
   if (!parts[1] || !parts[3] || !parts[4]) return null;
-  if (workspaceId && decodeURIComponent(parts[1]) !== workspaceId) return null;
+  if (workspaceId) {
+    try {
+      if (decodeURIComponent(parts[1]) !== workspaceId) return null;
+    } catch {
+      return null;
+    }
+  }
   if (target.searchParams.get('tab') !== 'sessions') return null;
   for (const key of target.searchParams.keys()) {
     if (key !== 'tab') return null;

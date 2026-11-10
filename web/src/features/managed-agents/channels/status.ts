@@ -23,6 +23,19 @@ export function channelConnectionStatusLabel(status: ChannelConnectionStatus, ms
   }
 }
 
+export function channelConnectionStatusNotice(status: ChannelConnectionStatus, msg: ReturnType<typeof useI18n>['msg']) {
+  switch (status) {
+    case 'connected':
+      return msg('managedAgents.channels.statusNoticeConnected', '当前状态：已连通');
+    case 'pending_test':
+      return msg('managedAgents.channels.statusNoticePending', '当前状态：尚未完成绑定');
+    case 'abnormal':
+      return msg('managedAgents.channels.statusNoticeAbnormal', '当前状态：未连通');
+    case 'disabled':
+      return msg('managedAgents.channels.statusNoticeDisabled', '当前状态：已停用');
+  }
+}
+
 export function channelConnectionStatusClass(status: ChannelConnectionStatus) {
   switch (status) {
     case 'connected':

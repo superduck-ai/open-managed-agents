@@ -1,8 +1,10 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Bot, Check, Cloud, ExternalLink } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
+import { RadioGroup, RadioGroupItem } from '../../../shared/ui/radio-group';
+import { cn } from '../../../shared/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../shared/ui/card';
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
@@ -128,6 +130,9 @@ export function StepConnect({
   qr,
   busy,
   workspaceId,
+  agents,
+  environments,
+  agentLocked,
   onGenerateQr,
 }: {
   value: WizardValue;
@@ -138,6 +143,9 @@ export function StepConnect({
   qr: ChannelQr | null;
   busy: boolean;
   workspaceId: string;
+  agents: AgentApiResponse[];
+  environments: EnvironmentApiResponse[];
+  agentLocked: boolean;
   onGenerateQr: () => void;
 }) {
   const { msg } = useI18n();
@@ -155,6 +163,13 @@ export function StepConnect({
           onChange={(event) => onChange({ ...value, name: event.target.value })}
         />
       </div>
+      <ChannelTargetFields
+        value={value}
+        onChange={onChange}
+        agents={agents}
+        environments={environments}
+        agentLocked={agentLocked}
+      />
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.channelType', '渠道类型')}</Label>
         <div className="flex h-10 items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 text-sm">
@@ -192,49 +207,68 @@ export function StepConnect({
           workspaceId={workspaceId}
         />
       ) : (
-        <div className="space-y-3">
-          <div>
-            <p className="text-sm font-medium">{msg('managedAgents.channels.authorizeCreate', '授权创建飞书应用')}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {msg('managedAgents.channels.authorizeCreateHint', '由现有应用创建权限的企业成员授权')}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" disabled={busy || qr?.status === 'pending'} onClick={onGenerateQr}>
-              <ExternalLink className="size-4" />
-              {qr
-                ? msg('managedAgents.channels.regenerateQr', '重新生成二维码')
-                : msg('managedAgents.channels.goFeishuAuth', '前往飞书授权创建')}
-            </Button>
-            <button
-              type="button"
-              className="text-sm text-primary hover:underline"
-              disabled={busy}
-              onClick={onGenerateQr}
-            >
-              {msg('managedAgents.channels.scanFeishuAuth', '使用飞书扫码授权')}
-            </button>
-          </div>
-          {qr?.status === 'pending' ? (
-            <div className="flex flex-col items-center gap-3 pt-2">
-              <div className="bg-white p-4">
-                <QRCodeSVG value={qr.url} size={180} />
-              </div>
-              <p className="text-sm">{msg('managedAgents.channels.qrWaiting', '等待飞书扫码确认')}</p>
-            </div>
-          ) : null}
-          {qr?.status === 'bound' || saved?.binding_status === 'bound' ? (
-            <p role="status" className="text-sm text-success">
-              {msg('managedAgents.channels.bound', '飞书绑定成功')}
-            </p>
-          ) : null}
-          {qr?.status === 'error' || qr?.status === 'expired' ? (
-            <p role="alert" className="text-sm text-destructive">
-              {msg('managedAgents.channels.qrExpired', '二维码已失效，请重新生成。')}
-            </p>
-          ) : null}
-        </div>
+        <QrBindPanel value={value} qr={qr} saved={saved} busy={busy} onGenerateQr={onGenerateQr} />
       )}
+    </div>
+  );
+}
+
+function QrBindPanel({
+  value,
+  qr,
+  saved,
+  busy,
+  onGenerateQr,
+}: {
+  value: WizardValue;
+  qr: ChannelQr | null;
+  saved: Channel | null;
+  busy: boolean;
+  onGenerateQr: () => void;
+}) {
+  const { msg } = useI18n();
+  const waiting = qr?.status === 'pending';
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-sm font-medium">{msg('managedAgents.channels.authorizeCreate', '授权创建飞书应用')}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {msg('managedAgents.channels.authorizeCreateHint', '由现有应用创建权限的企业成员授权')}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          disabled={busy || waiting || !value.name.trim() || !value.agentId || !value.environmentId}
+          onClick={onGenerateQr}
+        >
+          <ExternalLink className="size-4" />
+          {qr
+            ? msg('managedAgents.channels.regenerateQr', '重新生成二维码')
+            : msg('managedAgents.channels.goFeishuAuth', '前往飞书授权创建')}
+        </Button>
+        <button type="button" className="text-sm text-primary hover:underline" disabled={busy} onClick={onGenerateQr}>
+          {msg('managedAgents.channels.scanFeishuAuth', '使用飞书扫码授权')}
+        </button>
+      </div>
+      {waiting && qr ? (
+        <div className="flex flex-col items-center gap-3 pt-2">
+          <div className="bg-white p-4">
+            <QRCodeSVG value={qr.url} size={180} />
+          </div>
+          <p className="text-sm">{msg('managedAgents.channels.qrWaiting', '等待飞书扫码确认')}</p>
+        </div>
+      ) : null}
+      {qr?.status === 'bound' || saved?.binding_status === 'bound' ? (
+        <p role="status" className="text-sm text-success">
+          {msg('managedAgents.channels.bound', '飞书绑定成功')}
+        </p>
+      ) : null}
+      {qr?.status === 'error' || qr?.status === 'expired' ? (
+        <p role="alert" className="text-sm text-destructive">
+          {msg('managedAgents.channels.qrExpired', '二维码已失效，请重新生成。')}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -316,22 +350,28 @@ export function StepStrategy({
       </div>
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.mode', '渠道模式')}</Label>
-        <ToggleCard>
-          <ToggleCardRow
+        <RadioGroup
+          value={value.mode}
+          disabled={modeLocked}
+          aria-label={msg('managedAgents.channels.mode', '渠道模式')}
+          className="grid gap-2"
+          onValueChange={(mode) => {
+            if (mode === 'open' || mode === 'pairing') onChange({ ...value, mode });
+          }}
+        >
+          <ModeOption
+            value="open"
             title={msg('managedAgents.channels.open', '开放模式')}
             description={msg('managedAgents.channels.openHint', '无需审批，用户可直接与机器人对话。')}
-            checked={value.mode === 'open'}
-            disabled={modeLocked}
-            onCheckedChange={(checked) => onChange({ ...value, mode: checked ? 'open' : 'pairing' })}
+            selected={value.mode === 'open'}
           />
-          <ToggleCardRow
+          <ModeOption
+            value="pairing"
             title={msg('managedAgents.channels.pairing', '配对模式')}
             description={msg('managedAgents.channels.pairingHint', '经管理员批准后，对应的单聊或群聊才可使用。')}
-            checked={value.mode === 'pairing'}
-            disabled={modeLocked}
-            onCheckedChange={(checked) => onChange({ ...value, mode: checked ? 'pairing' : 'open' })}
+            selected={value.mode === 'pairing'}
           />
-        </ToggleCard>
+        </RadioGroup>
         <p className="text-xs text-muted-foreground">
           {msg('managedAgents.channels.immutableMode', '渠道创建后不可切换模式。')}
         </p>
@@ -356,6 +396,57 @@ export function StepMa({
   const { msg } = useI18n();
   return (
     <div className="space-y-5">
+      <ChannelTargetFields
+        value={value}
+        onChange={onChange}
+        agents={agents}
+        environments={environments}
+        agentLocked={agentLocked}
+      />
+      <div className="space-y-2">
+        <Label>
+          <span className="text-destructive">*</span> {msg('managedAgents.channels.agentVersion', '智能体版本')}
+        </Label>
+        <Select
+          value="latest"
+          items={[{ value: 'latest', label: msg('managedAgents.channels.latestVersionShort', '默认最新') }]}
+        >
+          <SelectTrigger className="h-10 w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="latest">{msg('managedAgents.channels.latestVersionShort', '默认最新')}</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <ReadonlyMountSelect
+        label={msg('managedAgents.channels.defaultMemory', '默认 Memory')}
+        value={msg('managedAgents.channels.notMounted', '不挂载')}
+      />
+      <ReadonlyMountSelect
+        label={msg('managedAgents.channels.defaultVault', '默认 Vault')}
+        value={msg('managedAgents.channels.notMounted', '不挂载')}
+      />
+    </div>
+  );
+}
+
+function ChannelTargetFields({
+  value,
+  onChange,
+  agents,
+  environments,
+  agentLocked,
+}: {
+  value: WizardValue;
+  onChange: (value: WizardValue) => void;
+  agents: AgentApiResponse[];
+  environments: EnvironmentApiResponse[];
+  agentLocked: boolean;
+}) {
+  const { msg } = useI18n();
+  return (
+    <>
       <div className="space-y-2">
         <Label>
           <span className="text-destructive">*</span> {msg('managedAgents.channels.columnAgent', '智能体')}
@@ -375,22 +466,6 @@ export function StepMa({
                 {agent.name} ({agent.id})
               </SelectItem>
             ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-2">
-        <Label>
-          <span className="text-destructive">*</span> {msg('managedAgents.channels.agentVersion', '智能体版本')}
-        </Label>
-        <Select
-          value="latest"
-          items={[{ value: 'latest', label: msg('managedAgents.channels.latestVersionShort', '默认最新') }]}
-        >
-          <SelectTrigger className="h-10 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="latest">{msg('managedAgents.channels.latestVersionShort', '默认最新')}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -419,15 +494,34 @@ export function StepMa({
           </SelectContent>
         </Select>
       </div>
-      <ReadonlyMountSelect
-        label={msg('managedAgents.channels.defaultMemory', '默认 Memory')}
-        value={msg('managedAgents.channels.notMounted', '不挂载')}
-      />
-      <ReadonlyMountSelect
-        label={msg('managedAgents.channels.defaultVault', '默认 Vault')}
-        value={msg('managedAgents.channels.notMounted', '不挂载')}
-      />
-    </div>
+    </>
+  );
+}
+
+function ModeOption({
+  value,
+  title,
+  description,
+  selected,
+}: {
+  value: 'open' | 'pairing';
+  title: string;
+  description: string;
+  selected: boolean;
+}) {
+  const id = `channel-mode-${value}`;
+  return (
+    <Label
+      htmlFor={id}
+      className={cn(
+        'flex cursor-pointer flex-col items-start gap-1 rounded-xl border-[0.5px] border-border p-4 text-sm font-normal',
+        selected && 'border-foreground bg-accent',
+      )}
+    >
+      <RadioGroupItem id={id} value={value} className="sr-only" aria-label={title} />
+      <span className="font-medium">{title}</span>
+      <span className="text-sm leading-5 text-muted-foreground">{description}</span>
+    </Label>
   );
 }
 
@@ -448,16 +542,20 @@ function ToggleCardRow({
   disabled?: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
+  const descriptionId = useId();
   return (
     <div className="flex items-center justify-between gap-6 px-4 py-3 not-first:border-t-[0.5px] not-first:border-border">
       <div className="min-w-0 space-y-1">
         <div className="text-sm font-medium">{title}</div>
-        <p className="text-sm leading-5 text-muted-foreground">{description}</p>
+        <p id={descriptionId} className="text-sm leading-5 text-muted-foreground">
+          {description}
+        </p>
       </div>
       <Switch
         checked={checked}
         disabled={disabled}
         aria-label={title}
+        aria-describedby={descriptionId}
         className="shrink-0"
         onCheckedChange={(next) => onCheckedChange(next === true)}
       />

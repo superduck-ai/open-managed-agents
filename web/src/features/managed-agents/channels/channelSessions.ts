@@ -105,13 +105,12 @@ export function summarizeChannelSessions(sessions: SessionApiResponse[]): Channe
   };
 }
 
-export function formatChannelTimestamp(value: string | null) {
-  if (!value) return '—';
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return '—';
-  const date = new Date(timestamp);
-  const pad = (part: number) => String(part).padStart(2, '0');
-  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+export function formatChannelTimestamp(
+  value: string | null,
+  formatDate: (value: string | number | Date, options?: Intl.DateTimeFormatOptions) => string,
+) {
+  if (!value || !Number.isFinite(Date.parse(value))) return '—';
+  return formatDate(value, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 export async function loadChannelSessions(

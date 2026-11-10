@@ -14,7 +14,7 @@ import { channelApi, type Channel } from './api';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { PairingsDialog } from './PairingsDialog';
 import { channelDetailPath, channelEditPath, channelSessionsTabPath, channelsListPath } from './paths';
-import { channelConnectionStatus } from './status';
+import { channelConnectionStatus, channelConnectionStatusNotice } from './status';
 import { ChannelSessionsPanel } from './ChannelSessionsPanel';
 import { listChannelEnvironments } from './channelEnvironments';
 import feishuLogo from './feishu.ico';
@@ -103,21 +103,15 @@ export function ChannelDetailContent({
       await client.invalidateQueries({ queryKey: ['channel-detail', workspaceId, agentId, channelId] });
       await client.invalidateQueries({ queryKey: ['workspace-channels', workspaceId] });
     },
+    onError: (error) => {
+      toast.error(errorMessage(error));
+    },
   });
 
   const channel = query.data?.channel;
   const runConnectionCheck = () => {
     if (!channel) return;
-    const status = channelConnectionStatus(channel);
-    if (status === 'connected')
-      toast.success(msg('managedAgents.channels.connectionCheckOk', '连接检测通过：渠道已连通'));
-    else if (status === 'disabled')
-      toast.message(msg('managedAgents.channels.connectionCheckDisabled', '渠道已停用，请先启用后再检测'));
-    else if (status === 'pending_test')
-      toast.message(
-        msg('managedAgents.channels.connectionCheckPending', '渠道尚未完成绑定，请先完成飞书授权或凭据配置'),
-      );
-    else toast.error(msg('managedAgents.channels.connectionCheckFail', '连接检测异常：桥接报告未连通'));
+    toast.message(channelConnectionStatusNotice(channelConnectionStatus(channel), msg));
   };
 
   return (

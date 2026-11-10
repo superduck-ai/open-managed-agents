@@ -33,7 +33,12 @@ import { errorMessage } from '../utils';
 import feishuLogo from './feishu.ico';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { channelCreatePath, channelDetailPath, channelEditPath } from './paths';
-import { channelConnectionStatus, channelConnectionStatusLabel, type ChannelConnectionStatus } from './status';
+import {
+  channelConnectionStatus,
+  channelConnectionStatusLabel,
+  channelConnectionStatusNotice,
+  type ChannelConnectionStatus,
+} from './status';
 import { listChannelEnvironments } from './channelEnvironments';
 import { listWorkspaceChannels, type WorkspaceChannel } from './workspaceChannels';
 
@@ -107,7 +112,7 @@ export function ChannelsPageContent({
         <ResourceSearchField
           id="channels-search"
           value={search}
-          placeholder={msg('managedAgents.channels.searchNamePlaceholder', '搜索渠道名称')}
+          placeholder={msg('managedAgents.common.searchByNameOrId', '按名称或精确 ID 搜索')}
           onChange={(value) => {
             setSearch(value);
             setPageIndex(1);
@@ -143,8 +148,8 @@ export function ChannelsPageContent({
           </AlertDescription>
         </Alert>
       ) : null}
-      {query.error ? (
-        <Alert variant="destructive">
+      {query.isError ? (
+        <Alert variant="destructive" className="mb-4">
           <AlertDescription>
             {errorMessage(query.error)}{' '}
             <Button variant="ghost" size="sm" onClick={() => void query.refetch()}>
@@ -152,9 +157,10 @@ export function ChannelsPageContent({
             </Button>
           </AlertDescription>
         </Alert>
-      ) : query.isPending ? (
+      ) : null}
+      {query.isPending && !query.data ? (
         <Skeleton className="h-40 w-full" />
-      ) : (
+      ) : query.data ? (
         <>
           <ChannelListTable
             rows={visibleRows}
@@ -172,7 +178,7 @@ export function ChannelsPageContent({
             onNext={() => setPageIndex(page + 1)}
           />
         </>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -356,18 +362,5 @@ function channelCreatedLabel(
 }
 
 function reportConnectionCheck(row: WorkspaceChannel, msg: ReturnType<typeof useI18n>['msg']) {
-  const status = channelConnectionStatus(row);
-  if (status === 'connected') {
-    toast.success(msg('managedAgents.channels.connectionCheckOk', '连接检测通过：渠道已连通'));
-    return;
-  }
-  if (status === 'disabled') {
-    toast.message(msg('managedAgents.channels.connectionCheckDisabled', '渠道已停用，请先启用后再检测'));
-    return;
-  }
-  if (status === 'pending_test') {
-    toast.message(msg('managedAgents.channels.connectionCheckPending', '渠道尚未完成绑定，请先完成飞书授权或凭据配置'));
-    return;
-  }
-  toast.error(msg('managedAgents.channels.connectionCheckFail', '连接检测异常：桥接报告未连通'));
+  toast.message(channelConnectionStatusNotice(channelConnectionStatus(row), msg));
 }

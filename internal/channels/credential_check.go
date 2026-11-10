@@ -14,14 +14,12 @@ import (
 )
 
 var feishuTokenURL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-var larkTokenURL = "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal"
 
 var feishuAppIDPattern = regexp.MustCompile(`^cli_[A-Za-z0-9]+$`)
 
 type appCredentialCheck struct {
-	AppID         string `json:"app_id"`
-	AppSecret     string `json:"app_secret"`
-	International bool   `json:"international"`
+	AppID     string `json:"app_id"`
+	AppSecret string `json:"app_secret"`
 }
 
 func (h *handler) checkAppCredentials(w http.ResponseWriter, r *http.Request) error {
@@ -34,16 +32,16 @@ func (h *handler) checkAppCredentials(w http.ResponseWriter, r *http.Request) er
 	}
 	var input appCredentialCheck
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&input); err != nil {
-		return invalidChannelUpdate(err)
+		return invalidCredentialCheckBody(err)
 	}
 	appID := strings.TrimSpace(input.AppID)
 	if !feishuAppIDPattern.MatchString(appID) || input.AppSecret == "" {
 		return invalidAppCredentials()
 	}
-	passed, err := h.feishuCredentialsMatch(r.Context(), appID, input.AppSecret, input.International)
+	passed, err := h.feishuCredentialsMatch(r.Context(), appID, input.AppSecret)
 	if err != nil {
 		h.logger.WarnContext(r.Context(), "feishu app credential check failed", "workspace_id", principal.WorkspaceUUID, "error", err)
-		return unavailable(err)
+		return credentialCheckUnavailable(err)
 	}
 	if !passed {
 		h.logger.InfoContext(r.Context(), "feishu app credential check rejected", "workspace_id", principal.WorkspaceUUID, "app_id", appID)
@@ -54,11 +52,8 @@ func (h *handler) checkAppCredentials(w http.ResponseWriter, r *http.Request) er
 	return nil
 }
 
-func (h *handler) feishuCredentialsMatch(ctx context.Context, appID, appSecret string, international bool) (bool, error) {
+func (h *handler) feishuCredentialsMatch(ctx context.Context, appID, appSecret string) (bool, error) {
 	endpoint := feishuTokenURL
-	if international {
-		endpoint = larkTokenURL
-	}
 	payload, err := json.Marshal(map[string]string{"app_id": appID, "app_secret": appSecret})
 	if err != nil {
 		return false, err

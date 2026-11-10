@@ -100,6 +100,7 @@ test('版本、时间和聊天类型沿用会话字段', () => {
   expect(channelSessionVersion(row)).toBe('V1');
   expect(channelSessionChat(row)).toBe('direct');
   expect(channelSessionChat(session({ id: 'group', metadata: { scope_type: 'group' } }))).toBe('group');
-  expect(formatChannelTimestamp('2026-11-05T15:09:18Z')).toBe('2026-11-05 15:09:18');
-  expect(formatChannelTimestamp(null)).toBe('—');
+  expect(formatChannelTimestamp('2026-11-05T15:09:18Z', () => 'local-time')).toBe('local-time');
+  expect(formatChannelTimestamp('not-a-date', () => 'local-time')).toBe('—');
+  expect(formatChannelTimestamp(null, () => 'local-time')).toBe('—');
 });

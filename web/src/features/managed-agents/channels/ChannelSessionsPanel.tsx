@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useI18n } from '../../../shared/i18n';
+import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
@@ -30,6 +30,7 @@ export function ChannelSessionsPanel({
   channel: Channel;
 }) {
   const { msg } = useI18n();
+  const format = useFormatters();
   const [pageIndex, setPageIndex] = useState(1);
   const [pageSize, setPageSize] = useState(channelSessionPageSize);
   const query = useQuery({
@@ -60,7 +61,7 @@ export function ChannelSessionsPanel({
         />
         <StatCard
           title={msg('managedAgents.channels.lastActive', '最近活跃')}
-          value={query.isPending || !stats ? '—' : formatChannelTimestamp(stats.lastActive)}
+          value={query.isPending || !stats ? '—' : formatChannelTimestamp(stats.lastActive, format.date)}
           hint={msg('managedAgents.channels.lastActiveHint', '最近一条会话活动时间')}
           compact={Boolean(stats?.lastActive)}
         />
@@ -160,6 +161,7 @@ function ChannelSessionRow({
   channelName: string;
 }) {
   const { msg } = useI18n();
+  const format = useFormatters();
   const actor = channelSessionActor(session);
   const sourceKind = channelSessionSourceKind(session);
   const sourceDetail =
@@ -215,10 +217,10 @@ function ChannelSessionRow({
         )}
       </TableCell>
       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-        {formatChannelTimestamp(session.created_at)}
+        {formatChannelTimestamp(session.created_at, format.date)}
       </TableCell>
       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-        {formatChannelTimestamp(session.updated_at)}
+        {formatChannelTimestamp(session.updated_at, format.date)}
       </TableCell>
       <TableCell>
         <ButtonLink

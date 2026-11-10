@@ -46,6 +46,10 @@ func TestCheckAppCredentials(t *testing.T) {
 	if anonymous.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous = %d", anonymous.Code)
 	}
+	badBody := credentialCheckRequest(t, router, `{`, true)
+	if badBody.Code != http.StatusBadRequest || !strings.Contains(badBody.Body.String(), "应用凭据校验请求正文无效") {
+		t.Fatalf("bad body = %d %s", badBody.Code, badBody.Body.String())
+	}
 }
 
 func credentialCheckRequest(t *testing.T, router http.Handler, body string, authenticated bool) *httptest.ResponseRecorder {

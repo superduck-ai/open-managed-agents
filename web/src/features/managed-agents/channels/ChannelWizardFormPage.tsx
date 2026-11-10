@@ -1,7 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
-import { anthropicBetaApi } from '../../../shared/api/anthropic';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
 import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
@@ -15,14 +14,67 @@ import {
   type WizardStep,
   type WizardValue,
 } from './ChannelWizardForm';
-import { channelWizardStepReady, validateChannelInput, wizardStepAllowed } from './channelInput';
+import { channelTargetsReady, channelWizardStepReady, validateChannelInput, wizardStepAllowed } from './channelInput';
+import { listChannelEnvironments } from './channelEnvironments';
 import { listAllWorkspaceAgents } from './workspaceChannels';
 import { channelDetailPath, channelsListPath } from './paths';
-import type { EnvironmentApiResponse } from '../types';
+import type { AgentApiResponse, EnvironmentApiResponse } from '../types';
 import { errorMessage } from '../utils';
 
+function WizardStepFields({
+  step,
+  value,
+  onChange,
+  binding,
+  onBindingChange,
+  saved,
+  qr,
+  busy,
+  workspaceId,
+  agents,
+  environments,
+  agentLocked,
+  onGenerateQr,
+}: {
+  step: WizardStep;
+  value: WizardValue;
+  onChange: (value: WizardValue) => void;
+  binding: string;
+  onBindingChange: (binding: string) => void;
+  saved: Channel | null;
+  qr: ChannelQr | null;
+  busy: boolean;
+  workspaceId: string;
+  agents: AgentApiResponse[];
+  environments: EnvironmentApiResponse[];
+  agentLocked: boolean;
+  onGenerateQr: () => void;
+}) {
+  if (step === 2) return <StepStrategy value={value} onChange={onChange} modeLocked={Boolean(saved)} />;
+  if (step === 3) {
+    return (
+      <StepMa value={value} onChange={onChange} agents={agents} environments={environments} agentLocked={agentLocked} />
+    );
+  }
+  return (
+    <StepConnect
+      value={value}
+      onChange={onChange}
+      binding={binding}
+      onBindingChange={onBindingChange}
+      saved={saved}
+      qr={qr}
+      busy={busy}
+      workspaceId={workspaceId}
+      agents={agents}
+      environments={environments}
+      agentLocked={agentLocked}
+      onGenerateQr={onGenerateQr}
+    />
+  );
+}
+
 export function ChannelWizardFormPage({
-  mode,
   workspaceId,
   initialAgentId,
   initialChannel,
@@ -39,6 +91,7 @@ export function ChannelWizardFormPage({
   title: string;
 }) {
   const { msg } = useI18n();
+  const queryClient = useQueryClient();
   const [step, setStep] = useState<WizardStep>(1);
   const [binding, setBinding] = useState(initialChannel?.binding_status === 'bound' ? 'credentials' : 'qr');
   const [saved, setSaved] = useState<Channel | null>(initialChannel);
@@ -53,7 +106,7 @@ export function ChannelWizardFormPage({
   });
   const environmentsQuery = useQuery({
     queryKey: ['channel-environment-options', workspaceId],
-    queryFn: () => listEnvironments(workspaceId),
+    queryFn: () => listChannelEnvironments(workspaceId),
   });
 
   const targetAgentId = value.agentId || initialAgentId;
@@ -83,7 +136,7 @@ export function ChannelWizardFormPage({
 
   const agents = agentsQuery.data ?? [];
   const environments = environmentsQuery.data ?? [];
-  const agentLocked = mode === 'edit' || Boolean(initialAgentId);
+  const agentLocked = Boolean(saved);
 
   const access = useMemo(() => ({ binding, saved, qrStatus: qr?.status ?? null }), [binding, saved, qr?.status]);
   const canGoNext = useMemo(() => channelWizardStepReady(step, value, access), [step, value, access]);
@@ -91,17 +144,20 @@ export function ChannelWizardFormPage({
     if (wizardStepAllowed(next, value, access)) setStep(next);
   };
 
+  const canSave = channelWizardStepReady(1, value, access) && Boolean(value.agentId && value.environmentId);
   const persist = async (generateQr: boolean, closeAfter: boolean) => {
-    const blocked = validateWizardBeforeSave({
-      targetAgentId,
-      value,
-      binding,
-      saved,
-      msg,
-      setError,
-      setStep,
-    });
-    if (blocked) return;
+    if (!channelTargetsReady(value)) {
+      setError(connectTargetError(value, msg));
+      return;
+    }
+    if (closeAfter && !channelWizardStepReady(1, value, access)) {
+      setError(
+        binding === 'credentials'
+          ? validateChannelInput(value, binding, saved, msg)
+          : msg('managedAgents.channels.bindRequired', '请先完成飞书授权，再保存渠道'),
+      );
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -114,9 +170,10 @@ export function ChannelWizardFormPage({
       });
       setSaved(next);
       setValue((current) => ({ ...current, app_secret: '', agentId: targetAgentId! }));
+      await queryClient.invalidateQueries({ queryKey: ['workspace-channels', workspaceId] });
+      await queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, next.id] });
       if (generateQr) {
         setQr(await channelApi<ChannelQr>(targetAgentId!, workspaceId, `/${next.id}/qr`, 'POST', {}));
-        setStep(1);
         return;
       }
       if (closeAfter) onNavigate(channelDetailPath(workspaceId, targetAgentId!, next.id));
@@ -141,31 +198,21 @@ export function ChannelWizardFormPage({
           <header className="mb-7 shrink-0">
             <h1 className="text-2xl font-medium tracking-tight">{title}</h1>
           </header>
-          <div className="min-w-0 flex-1 pb-8">
-            {step === 1 ? (
-              <StepConnect
-                value={value}
-                onChange={setValue}
-                binding={binding}
-                onBindingChange={setBinding}
-                saved={saved}
-                qr={qr}
-                busy={busy}
-                workspaceId={workspaceId}
-                onGenerateQr={() => void persist(true, false)}
-              />
-            ) : null}
-            {step === 2 ? <StepStrategy value={value} onChange={setValue} modeLocked={Boolean(saved)} /> : null}
-            {step === 3 ? (
-              <StepMa
-                value={value}
-                onChange={setValue}
-                agents={agents}
-                environments={environments}
-                agentLocked={agentLocked}
-              />
-            ) : null}
-          </div>
+          <WizardStepFields
+            step={step}
+            value={value}
+            onChange={setValue}
+            binding={binding}
+            onBindingChange={setBinding}
+            saved={saved}
+            qr={qr}
+            busy={busy}
+            workspaceId={workspaceId}
+            agents={agents}
+            environments={environments}
+            agentLocked={agentLocked}
+            onGenerateQr={() => void persist(true, false)}
+          />
           {error ? (
             <Alert variant="destructive" className="mb-3">
               <AlertDescription>{error}</AlertDescription>
@@ -188,7 +235,7 @@ export function ChannelWizardFormPage({
               <Button type="button" variant="outline" disabled={busy} onClick={() => onNavigate(listHref)}>
                 {msg('managedAgents.channels.cancel', '取消')}
               </Button>
-              <Button type="button" disabled={busy} onClick={() => void persist(false, true)}>
+              <Button type="button" disabled={busy || !canSave} onClick={() => void persist(false, true)}>
                 {busy
                   ? msg('managedAgents.channels.processing', '处理中…')
                   : msg('managedAgents.channels.saveConfig', '保存配置')}
@@ -215,54 +262,10 @@ export function ChannelWizardFormPage({
   );
 }
 
-async function listEnvironments(workspaceId: string) {
-  const result: EnvironmentApiResponse[] = [];
-  let cursor: string | null | undefined;
-  do {
-    const page = await anthropicBetaApi.environments.list<EnvironmentApiResponse>(
-      { limit: 100, include_archived: false, ...(cursor ? { page: cursor } : {}) },
-      workspaceId,
-    );
-    result.push(...page.data);
-    cursor = page.next_page;
-  } while (cursor);
-  return result;
-}
-
-function validateWizardBeforeSave({
-  targetAgentId,
-  value,
-  binding,
-  saved,
-  msg,
-  setError,
-  setStep,
-}: {
-  targetAgentId: string;
-  value: WizardValue;
-  binding: string;
-  saved: Channel | null;
-  msg: ReturnType<typeof useI18n>['msg'];
-  setError: (error: string) => void;
-  setStep: (step: WizardStep) => void;
-}) {
-  if (!targetAgentId) {
-    setError(msg('managedAgents.channels.agentRequired', '请选择智能体'));
-    setStep(3);
-    return true;
-  }
-  if (!value.environmentId) {
-    setError(msg('managedAgents.channels.environmentRequired', '请先选择执行环境，再保存渠道'));
-    setStep(3);
-    return true;
-  }
-  const validationError = validateChannelInput(value, binding, saved, msg);
-  if (validationError) {
-    setError(validationError);
-    setStep(1);
-    return true;
-  }
-  return false;
+function connectTargetError(value: WizardValue, msg: ReturnType<typeof useI18n>['msg']) {
+  if (!value.name.trim()) return msg('managedAgents.channels.nameRequired', '请输入机器人名称');
+  if (!value.agentId) return msg('managedAgents.channels.agentRequired', '请选择智能体');
+  return msg('managedAgents.channels.environmentRequired', '请先选择执行环境，再保存渠道');
 }
 
 async function saveWizardChannel({
@@ -278,24 +281,25 @@ async function saveWizardChannel({
   value: WizardValue;
   binding: string;
 }) {
-  const next = await channelApi<Channel>(
+  await channelApi(targetAgentId, workspaceId, '/settings', 'POST', { environment_id: value.environmentId });
+  return channelApi<Channel>(
     targetAgentId,
     workspaceId,
     saved ? `/${saved.id}` : '',
     'POST',
     channelPayload(value, binding),
   );
-  await channelApi(targetAgentId, workspaceId, '/settings', 'POST', { environment_id: value.environmentId });
-  return next;
 }
 
 function channelPayload(value: WizardValue, binding: string) {
+  const appId = value.app_id?.trim() ?? '';
+  const appSecret = value.app_secret?.trim() ?? '';
   return {
-    name: value.name,
+    name: value.name.trim(),
     mode: value.mode,
     include_thinking: value.include_thinking,
     include_tool_calls: value.include_tool_calls,
     reply_in_thread: value.reply_in_thread,
-    ...(binding === 'credentials' && value.app_secret ? { app_id: value.app_id, app_secret: value.app_secret } : {}),
+    ...(binding === 'credentials' && appSecret ? { app_id: appId, app_secret: appSecret } : {}),
   };
 }

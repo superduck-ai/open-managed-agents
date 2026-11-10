@@ -316,7 +316,7 @@ export const anthropicBetaApi = {
     },
   },
   channels: {
-    checkCredentials(workspaceId: string, body: { app_id: string; app_secret: string; international: boolean }) {
+    checkCredentials(workspaceId: string, body: { app_id: string; app_secret: string }) {
       return sdkCall(() =>
         getAnthropicClient().request<{ ok: boolean }>({
           path: '/v1/channels/credentials/check',

@@ -20,11 +20,11 @@ export function ChannelCredentials({
   bound: boolean;
   workspaceId: string;
 }) {
-  const { msg, locale } = useI18n();
+  const { msg } = useI18n();
   const [visible, setVisible] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyMessage, setVerifyMessage] = useState<{ ok: boolean; text: string } | null>(null);
-  const consoleUrl = feishuAppConsoleUrl(value.app_id, locale);
+  const consoleUrl = feishuAppConsoleUrl(value.app_id);
   const verifySecret = async () => {
     if (!consoleUrl || !value.app_secret || verifying) return;
     setVerifying(true);
@@ -33,7 +33,6 @@ export function ChannelCredentials({
       await anthropicBetaApi.channels.checkCredentials(workspaceId, {
         app_id: value.app_id?.trim() ?? '',
         app_secret: value.app_secret,
-        international: locale !== 'zh-CN',
       });
       setVerifyMessage({ ok: true, text: msg('managedAgents.channels.verifySecretOk', '应用密钥验证通过') });
     } catch (error) {

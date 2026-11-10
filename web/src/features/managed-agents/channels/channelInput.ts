@@ -26,6 +26,10 @@ export function credentialFieldsReady(
   return Boolean(value.app_secret?.trim() || (saved?.binding_status === 'bound' && !changingApp));
 }
 
+export function channelTargetsReady(value: Pick<WizardFields, 'name' | 'agentId' | 'environmentId'>) {
+  return Boolean(value.name.trim() && value.agentId && value.environmentId);
+}
+
 export function channelWizardStepReady(step: WizardStep, value: WizardFields, access: WizardAccess) {
   if (step === 1) return stepConnectReady(value, access);
   if (step === 2) return true;

@@ -59,7 +59,7 @@ export function ChannelWizardContent({
 }) {
   const { msg } = useI18n();
   const existingQuery = useQuery({
-    queryKey: ['channel-detail', workspaceId, initialAgentId, channelId],
+    queryKey: ['channel-wizard', workspaceId, initialAgentId, channelId],
     enabled: mode === 'edit' && Boolean(initialAgentId && channelId),
     queryFn: () => loadChannelForEdit(initialAgentId, workspaceId, channelId),
   });

@@ -62,6 +62,14 @@ func invalidAppCredentials() error {
 	return apperr.New(apperr.InvalidArgument, "应用密钥校验未通过", nil)
 }
 
+func invalidCredentialCheckBody(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "应用凭据校验请求正文无效", cause)
+}
+
+func credentialCheckUnavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "无法连接飞书校验应用密钥", cause)
+}
+
 func invalidChannelPage(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "渠道列表分页参数无效", cause)
 }

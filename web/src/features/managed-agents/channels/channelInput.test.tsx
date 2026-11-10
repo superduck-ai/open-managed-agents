@@ -93,9 +93,9 @@ test('策略步骤用卡片切换回复展示和渠道模式', () => {
   );
   fireEvent.click(screen.getByRole('switch', { name: '展示思考过程' }));
   expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ include_thinking: true }));
-  fireEvent.click(screen.getByRole('switch', { name: '配对模式' }));
+  fireEvent.click(screen.getByRole('radio', { name: /配对模式/ }));
   expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ mode: 'pairing' }));
-  expect(screen.getByRole('switch', { name: '开放模式' }).getAttribute('aria-checked')).toBe('true');
+  expect(screen.getByRole('radio', { name: /开放模式/ }).getAttribute('aria-checked')).toBe('true');
   expect(screen.queryByRole('switch', { name: '自动注入近期聊天内容' })).toBeNull();
 });
 

@@ -12,7 +12,7 @@
 
 ## 数据库升级与旧分支开发库
 
-从 main 升级可直接执行正常启动迁移，不需要允许乱序迁移或修改 Goose 历史。`TestBudgetMigrationsUpgradeFromMainPostgres` 在隔离 PostgreSQL schema 中分别准备版本 95 与当前 main 版本 99 的基线，再调用生产迁移入口两次，验证各自缺少的迁移仅执行一次并升级至版本 100、预算字段与历史计费表齐全、当前目录表已删除、原会话保留，以及主分支的 Worker Claims、Provider Backend 和 Provider Slug、组织级 Provider 和统一 `models` 字段仍然存在。
+从 main 升级可直接执行正常启动迁移，不需要允许乱序迁移或修改 Goose 历史。`TestBudgetMigrationsUpgradeFromMainPostgres` 在隔离 PostgreSQL schema 中分别准备版本 95 与当前 main 版本 99 的基线，再调用生产迁移入口两次，验证各自缺少的迁移仅执行一次并升级至版本 117、预算字段与历史计费表齐全、当前目录表已删除、原会话保留，以及主分支的 Worker Claims、Provider Backend 和 Provider Slug、组织级 Provider 和统一 `models` 字段仍然存在。
 
 曾运行本 PR 旧版本的开发数据库不属于这条升级路径：旧预算与计费迁移曾使用 77–79，价格目录曾使用 80、83 或 84，随后又占用过与 main 冲突的 87–90。Goose 只记录版本号，不识别文件改名；这类库可能重复建表，也可能因旧编号占用了主分支版本而跳过线程指标、活动投影、文件实例或 Provider Slug 等迁移。仅为建表增加 `IF NOT EXISTS` 不能修复迁移历史。
 
@@ -46,7 +46,7 @@
 
 `span.model_request_end.billing` 继续用于预算兜底；分析账本从事件保存的 `_model_price` 和实际用量独立执行严格计价，缺少任一非零用量对应的单价时保持未定价。旧事件没有价格快照时仅保留已记录的历史费用，不查询当前价格回填。大事件外置摘要保留模型 ID、价格快照、错误标记、用量和预算费用，避免账本丢失模型身份或价格来源。计量 JSON 解析失败会返回错误，使事件与账本事务回滚，不能静默保存为已结算行。
 
-回归覆盖 main 版本 95 到 100 及 99 到 100 的正常升级与重复启动、组织模型与工作区优先级、跨组织价格隔离，以及缓存缺价、免费、已知单价下预算和分析账本的不同语义。
+回归覆盖 main 版本 95 到 117 及 99 到 117 的正常升级与重复启动、组织模型与工作区优先级、跨组织价格隔离，以及缓存缺价、免费、已知单价下预算和分析账本的不同语义。
 
 Brain 从 `session_context.billing` 读取共享会话预算和当前模型价格；`narrows` 与兼容 slug `default` 读取 Narrows 源，工作区其他 slug 使用 OpenRouter 参考价。固定 slug 为 `organization` 的组织 Provider，仅在 BaseURL 主机名精确等于 `narrows-gateway.test.seewo.com` 时兼容使用 Narrows；其余组织 Provider 使用 OpenRouter。Narrows 缺价不跨来源回退。有预算且缺价的请求在上游调用前拒绝，预算触顶仍由开始事件事务做最终门禁。协议和文件部署说明见 [标价文件缓存](model-price-file-cache.md)。
 
@@ -54,10 +54,12 @@ Brain 从 `session_context.billing` 读取共享会话预算和当前模型价�
 
 ### 供应商实际费用
 
+当前 `response_costs` 仅用于 Anthropic Messages；Chat Completions 不提取供应商实际费用，仍使用标价估算。配置该协议的费用扩展不会生效，支持方案待定。
+
 部署可通过 `pricing.response_costs` 按供应商 slug 配置 Anthropic Messages 响应费用，配置包含 `amount_pointer`（JSON 对象字段路径）、`stream_event: message_stop`、`currency`（USD 或 CNY）和 `exchange_rate`（每美元对应的原币金额，USD 为 `"1"`）。路径、内网供应商标识和地址由私有部署配置管理，公共示例不包含供应商私有字段。
 
 非流式从完整响应读取，流式只读取最终 `message_stop`。金额必须为非负十进制字符串，最多 12 位小数；明确的零费用有效。缺失、非法或未收到最终事件时使用请求开始时固定的标价估算，不把缺失视为零。费用从可信上游响应提取，不采纳客户端提交的费用。
 
-普通 API 和会话代理共用解析和精确有理数换算。实际费用优先于标价计算，按现有合同四舍五入至美元美分；`usage_records.provider_cost` 保留原币小数金额、币种、汇率和换算后的美分，避免丢失小额请求原值。无实际费用时该字段为空。会话结束事件的 `billing.list_cost` 使用换算值，`billing.source` 为 `provider`，现有预算累计、触顶暂停和预算调整恢复因此使用同一金额。原值保存在事件 `_provider_cost` 中并写入账本。请求仍只结算一次，实际费用不与标价估算相加。
+普通 API 和会话代理共用解析和精确有理数换算。实际费用优先于标价计算，按现有合同四舍五入至美元美分；`usage_records.provider_cost` 保留原币小数金额、币种、汇率和换算后的美分，避免丢失小额请求原值。无实际费用时该字段为空。会话结束事件的 `billing.list_cost` 使用换算值，`billing.source` 为 `provider`，现有预算累计、触顶暂停和预算调整恢复因此使用同一金额。原值保存在事件 `_provider_cost` 中并写入账本；事件超过内联阈值转存对象存储时，数据库摘要也保留该字段，使账本和预算使用相同金额。请求仍只结算一次，实际费用不与标价估算相加。
 
 模型标价继续用于请求前的预算可用性校验和 Brain 价格上下文；配置响应费用不能绕过缺价门禁。当前按请求取整的预算精度不变，低于半美分的实际费用可能折算为零美分，原币金额可用于后续对账；此变更不引入跨请求小数累加。

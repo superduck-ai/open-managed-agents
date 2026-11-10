@@ -42,6 +42,7 @@ type Summary struct {
 	// working when the full payload is externalized past the inline threshold.
 	Model               *string         `json:"model,omitempty"`
 	PriceSnapshot       json.RawMessage `json:"_model_price,omitempty"`
+	ProviderCost        json.RawMessage `json:"_provider_cost,omitempty"`
 	IsError             json.RawMessage `json:"is_error,omitempty"`
 	Billing             json.RawMessage `json:"billing,omitempty"`
 	Usage               json.RawMessage `json:"usage,omitempty"`
@@ -52,6 +53,7 @@ type Summary struct {
 type payloadMetadata struct {
 	Model               json.RawMessage `json:"model"`
 	PriceSnapshot       json.RawMessage `json:"_model_price"`
+	ProviderCost        json.RawMessage `json:"_provider_cost"`
 	IsError             json.RawMessage `json:"is_error"`
 	Name                json.RawMessage `json:"name"`
 	ToolUseID           json.RawMessage `json:"tool_use_id"`
@@ -109,6 +111,7 @@ func Summarize(payload []byte, eventType string) (Summary, *string, error) {
 		Preview:             Preview(payload),
 		Model:               metadataString(metadata.Model),
 		PriceSnapshot:       metadata.PriceSnapshot,
+		ProviderCost:        metadata.ProviderCost,
 		IsError:             metadata.IsError,
 		Billing:             metadata.Billing,
 		Usage:               metadata.Usage,

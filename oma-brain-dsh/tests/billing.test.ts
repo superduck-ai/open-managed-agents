@@ -11,10 +11,10 @@ const context = () => ({ budget: { type: "limit", max_list_cost: amount("100") }
 
 describe("会话预算与价格", () => {
   test("原生终止输出及恢复重放保留预算暂停与缺价原因", () => {
-    expect(terminalOutput("paused", { kind: "error", error: new LlmError("budget", "SESSION_BUDGET_REACHED") })).toEqual([]);
-    expect(terminalOutput("unpriced", { kind: "error", error: new LlmError("pricing", "MODEL_PRICE_UNAVAILABLE") }))
-      .toContainEqual(expect.objectContaining({ type: "system.message", content: [{ type: "text", text: "Model pricing is unavailable. Retry after pricing recovers." }] }));
-    expect(terminalOutput("completed", { kind: "completed" }))
+    expect(completionOutput("paused", turnOutcome({ kind: "error", error: new LlmError("budget", "SESSION_BUDGET_REACHED") }))).toEqual([]);
+    expect(turnOutcome({ kind: "error", error: new LlmError("pricing", "MODEL_PRICE_UNAVAILABLE") }))
+      .toEqual({ kind: "failed", text: "Model pricing is unavailable. Retry after pricing recovers." });
+    expect(completionOutput("completed", turnOutcome({ kind: "completed" })))
       .toContainEqual(expect.objectContaining({ type: "result", is_error: false }));
   });
   test("拒绝错误金额和损坏价格", () => {

@@ -62,7 +62,8 @@ test('工作区渠道页读取工作区渠道接口并支持新增跳转', async
 
   const navigated = mount();
   expect(await screen.findByRole('heading', { name: '渠道' })).toBeTruthy();
-  expect(screen.getByText('让智能体进入日常工作')).toBeTruthy();
+  expect(screen.queryByText('让智能体进入日常工作')).toBeNull();
+  expect(screen.getByText('管理智能体在飞书中的接入渠道')).toBeTruthy();
   expect(await screen.findByText('飞书渠道')).toBeTruthy();
   expect(screen.getByText('已连通')).toBeTruthy();
   expect(screen.getByText('客服助手')).toBeTruthy();

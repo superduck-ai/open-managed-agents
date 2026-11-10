@@ -3404,8 +3404,6 @@
   "nav.integrations": "Integrations",
   "nav.channels": "Channels",
   "managedAgents.channels.pageDescription": "Manage Feishu access channels for agents",
-  "managedAgents.channels.heroTitle": "Bring agents into daily work",
-  "managedAgents.channels.heroBody": "Let employees use agents in Feishu. Connect Feishu, set access policies, and bind an agent with a runtime environment.",
   "managedAgents.channels.addChannel": "Add channel",
   "managedAgents.channels.searchByName": "Name",
   "managedAgents.channels.searchByAppId": "App ID",

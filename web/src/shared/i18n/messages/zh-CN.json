@@ -3404,8 +3404,6 @@
   "nav.integrations": "集成",
   "nav.channels": "渠道",
   "managedAgents.channels.pageDescription": "管理智能体在飞书中的接入渠道",
-  "managedAgents.channels.heroTitle": "让智能体进入日常工作",
-  "managedAgents.channels.heroBody": "让员工在熟悉的办公应用中直接使用智能体。你需要连接飞书，设置接入策略，并绑定智能体和运行环境。",
   "managedAgents.channels.addChannel": "新增渠道",
   "managedAgents.channels.searchByName": "名称",
   "managedAgents.channels.searchByAppId": "应用 ID",

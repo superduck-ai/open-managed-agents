@@ -20,7 +20,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { toast } from '../../../shared/ui/sonner';
 import { errorMessage } from '../utils';
 import feishuLogo from './feishu.ico';
-import { ChannelHero } from './ChannelHero';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { channelCreatePath, channelDetailPath, channelEditPath } from './paths';
 import { ChannelTablePager } from './ChannelTablePager';
@@ -122,7 +121,6 @@ export function ChannelsPageContent({
         title={msg('managedAgents.channels.title', '渠道')}
         description={msg('managedAgents.channels.pageDescription', '管理智能体在飞书中的接入渠道')}
       />
-      <ChannelHero />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <Select

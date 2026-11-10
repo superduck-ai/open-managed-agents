@@ -3,6 +3,7 @@ import { Scale } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { useI18n } from '../../shared/i18n';
+import { ResourceListPagination } from '../../shared/ui/resource-list-pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { deleteEvaluationRubric, evaluationError, listEvaluationRubrics, type EvaluationRubric } from './api';
 import { CopyButton } from '../../shared/ui/copy-button';
@@ -126,6 +127,16 @@ export function RubricPanel({ onCreate }: { onCreate: () => void }) {
           </Table>
         </div>
       )}
+      {cursor.pageIndex > 0 || rubrics.data?.next_page ? (
+        <ResourceListPagination
+          currentPage={cursor.pageIndex + 1}
+          totalPages={null}
+          canPrevious={cursor.pageIndex > 0 && !rubrics.isFetching}
+          canNext={Boolean(rubrics.data?.next_page) && !rubrics.isFetching}
+          onPrevious={cursor.previous}
+          onNext={() => cursor.next(rubrics.data?.next_page ?? null)}
+        />
+      ) : null}
       <RubricDetailDialog
         rubric={selected}
         onOpenChange={(open) => {

@@ -2,11 +2,13 @@ package evaluations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -186,7 +188,10 @@ func (h *Handler) generateRubric(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	body.Body = strings.TrimSpace(text)
+	body.Body, err = generatedRubricBody(text)
+	if err != nil {
+		return err
+	}
 	rubric, err := rubricFromRequest(principal, *body)
 	if err != nil {
 		return err
@@ -451,12 +456,51 @@ func rubricFromRequest(principal auth.Principal, body rubricWriteRequest) (db.Ev
 	}, nil
 }
 
+func generatedRubricBody(text string) (string, error) {
+	text = stripMarkdownFence(text)
+	if jsonRubricDocument(text) {
+		return "", invalidArgument(rubricFormatMessage, nil)
+	}
+	return text, nil
+}
+
+func stripMarkdownFence(text string) string {
+	text = strings.TrimSpace(text)
+	rest, fenced := strings.CutPrefix(text, "```")
+	if !fenced {
+		return text
+	}
+	_, body, found := strings.Cut(rest, "\n")
+	if !found {
+		return text
+	}
+	body = strings.TrimSpace(body)
+	body, closed := strings.CutSuffix(body, "```")
+	if !closed {
+		return text
+	}
+	return strings.TrimSpace(body)
+}
+
+func jsonRubricDocument(text string) bool {
+	var value any
+	if json.Unmarshal([]byte(text), &value) != nil {
+		return false
+	}
+	switch value.(type) {
+	case map[string]any, []any:
+		return true
+	default:
+		return false
+	}
+}
+
 func rubricVersion(body rubricWriteRequest) (db.EvaluationRubric, error) {
 	text := strings.TrimSpace(body.Body)
 	if text == "" {
 		return db.EvaluationRubric{}, invalidArgument(rubricRequiredMessage, nil)
 	}
-	if len(text) > maxRubricLength {
+	if utf8.RuneCountInString(text) > maxRubricLength {
 		return db.EvaluationRubric{}, invalidArgument(rubricTooLongMessage, nil)
 	}
 	passScore := 60
@@ -467,8 +511,8 @@ func rubricVersion(body rubricWriteRequest) (db.EvaluationRubric, error) {
 		return db.EvaluationRubric{}, invalidArgument(passScoreInvalidMessage, nil)
 	}
 	model := strings.TrimSpace(body.Model)
-	if len(model) > maxNameLength {
-		return db.EvaluationRubric{}, invalidArgument(nameTooLongMessage, nil)
+	if utf8.RuneCountInString(model) > maxModelLength {
+		return db.EvaluationRubric{}, invalidArgument(modelTooLongMessage, nil)
 	}
 	versionID, err := ids.New("erv_")
 	if err != nil {

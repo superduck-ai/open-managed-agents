@@ -10,6 +10,7 @@ import (
 
 const (
 	maxNameLength        = 255
+	maxModelLength       = 255
 	maxDescriptionLength = 1024
 	maxQueryLength       = 16000
 	maxAnswerLength      = 16000

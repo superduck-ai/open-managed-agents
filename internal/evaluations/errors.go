@@ -29,6 +29,8 @@ const (
 	rubricRequiredMessage         = "rubric body is required"
 	rubricGenerateRequiredMessage = "provide a goal or a sample"
 	rubricTooLongMessage          = "rubric body must be at most 16000 characters"
+	rubricFormatMessage           = "generated rubric must be markdown"
+	modelTooLongMessage           = "model must be at most 255 characters"
 	passScoreInvalidMessage       = "pass_score must be between 0 and 100"
 	sessionRequiredMessage        = "session_id is required"
 	turnsRequiredMessage          = "select at least one turn"

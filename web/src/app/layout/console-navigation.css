@@ -55,8 +55,13 @@
 }
 
 [data-slot='sidebar-inner']:has(.console-sidebar-header),
-[data-mobile='true']:has(.console-sidebar-header) {
-  background: var(--slate-2);
+[data-mobile='true']:has(.console-sidebar-header),
+.console-navigation-menu {
+  --sidebar: var(--slate-2);
+  --sidebar-accent: var(--slate-a3);
+  --sidebar-border: var(--slate-a4);
+  --navigation-selected: var(--slate-4);
+  background: var(--sidebar);
 }
 
 [data-sidebar-navigation] [data-sidebar='menu-button'] > svg {
@@ -122,7 +127,7 @@
 }
 
 [data-sidebar-navigation] [data-active] {
-  background: var(--slate-4);
+  background: var(--navigation-selected);
   color: var(--sidebar-foreground);
   font-weight: 500;
 }
@@ -245,4 +250,59 @@
 .console-sidebar-header [data-sidebar='trigger'] svg {
   width: 18px;
   height: 18px;
+}
+
+[data-sidebar-navigation='settings'] svg,
+[data-sidebar-navigation='platform'] svg {
+  stroke-width: 1.5;
+}
+
+.console-navigation-menu {
+  --popover: var(--sidebar);
+  --popover-foreground: var(--sidebar-foreground);
+  --accent: var(--sidebar-accent);
+  --accent-foreground: var(--sidebar-accent-foreground);
+  --border: var(--sidebar-border);
+  --muted: var(--navigation-selected);
+  --background: var(--sidebar);
+  border-radius: 12px;
+}
+
+.console-navigation-menu :is([role='menuitem'], [role='menuitemradio']):not([data-account-appearance] *) {
+  min-height: 36px;
+  height: auto;
+  padding: 7px 12px;
+  gap: 12px;
+  border-radius: 8px;
+  line-height: 21px;
+  transition:
+    background-color 150ms ease-out,
+    color 150ms ease-out;
+}
+
+.console-navigation-menu [role='menuitemradio']:not([data-account-appearance] *) {
+  padding-right: 32px;
+}
+
+.console-navigation-menu [data-account-appearance] {
+  min-height: 36px;
+}
+
+.console-navigation-menu :is([role='menuitem'], [data-account-appearance]) > svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.5;
+}
+
+@media (max-width: 767px) {
+  .console-navigation-menu :is([role='menuitem'], [role='menuitemradio']):not([data-account-appearance] *),
+  .console-navigation-menu [data-account-appearance] {
+    min-height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-navigation-menu :is([role='menuitem'], [role='menuitemradio']) {
+    transition: none;
+  }
 }

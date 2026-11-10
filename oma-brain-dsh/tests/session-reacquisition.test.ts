@@ -5,7 +5,7 @@ import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
-import { SessionId, Session, appendPluginRecord } from "@deepseek-ai/dsh-session";
+import { SessionId, Session, appendPluginRecord, pluginRecordOf } from "@deepseek-ai/dsh-session";
 import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { OmaApi } from "../src/api.ts";
 import { createOmaSession } from "../src/oma-session.ts";
@@ -184,4 +184,29 @@ test("completed-block journals restore unpublished output in recorded order on a
   expect([...backend.publicLog.values()].filter(event => outputs.some(output => output.uuid === event.uuid))).toEqual(outputs);
   expect(backend.publicLog.has("sevt_proxy_owned")).toBe(true);
   expect(backend.requests).toHaveLength(requests);
+});
+
+test("预算暂停在关闭重开及旧日志恢复时均不发布通用结果", async () => {
+  const { backend, rootA, rootB } = await fixture();
+  const route = backend.route.bind(backend);
+  let paused = true;
+  backend.route = async request => {
+    if (new URL(request.url).pathname === "/v1/messages" && paused)
+      return Response.json({ error: { code: "session_budget_reached", message: "budget reached" } }, { status: 400 });
+    return route(request);
+  };
+  const first = await mount(backend, rootA);
+  await first.session.receive("budget-reopen", { content: "hello" });
+  expect(backend.publicLog.has("budget-reopen_failed_result")).toBe(false);
+  await first.close();
+  const second = await mount(backend, rootB);
+  expect([...backend.publicLog.values()].filter(event => event.type === "result")).toEqual([]);
+  const legacy = second.session.agent.session.snapshotEvents().filter(event => pluginRecordOf(event)?.type !== "plugin:oma/input-completion");
+  expect(second.session["replay"](legacy)).toEqual([]);
+  await second.close();
+  paused = false;
+  const third = await mount(backend, rootA);
+  backend.modelScript = [textEvents("恢复成功")];
+  await third.session.receive("budget-recovered", { content: "continue" });
+  expect(backend.publicLog.get("budget-recovered_result")?.is_error).toBe(false);
 });

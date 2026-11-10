@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/billing"
@@ -68,7 +69,7 @@ func priceSource(provider db.LLMProvider) string {
 	}
 	if provider.Slug == OrganizationSlug {
 		endpoint, err := url.Parse(provider.BaseURL)
-		if err == nil && endpoint.Hostname() == "narrows-gateway.test.seewo.com" {
+		if err == nil && strings.EqualFold(endpoint.Hostname(), "narrows-gateway.test.seewo.com") {
 			return "narrows"
 		}
 	}

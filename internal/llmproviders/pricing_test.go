@@ -179,3 +179,14 @@ func TestOrganizationPricesFollowModelRouting(t *testing.T) {
 		})
 	}
 }
+
+func TestOrganizationGatewayHostnameCase(t *testing.T) {
+	for _, endpoint := range []string{"https://NARROWS-GATEWAY.TEST.SEEWO.COM/v1", "https://Narrows-Gateway.test.seewo.com:443/v1"} {
+		if got := priceSource(db.LLMProvider{Slug: OrganizationSlug, BaseURL: endpoint}); got != "narrows" {
+			t.Fatalf("%s: %s", endpoint, got)
+		}
+	}
+	if got := priceSource(db.LLMProvider{Slug: OrganizationSlug, BaseURL: "https://narrows-gateway.test.seewo.com.evil.example/v1"}); got != "openrouter" {
+		t.Fatal("误匹配相似域名")
+	}
+}

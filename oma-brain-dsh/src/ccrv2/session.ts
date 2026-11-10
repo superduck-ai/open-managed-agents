@@ -310,7 +310,10 @@ export class CcrSession {
         this.inputId = inputId;
         if (nativeRoot) unfinished.add(inputId);
       }
-      if (nativeRoot && event.type === "turn/end") continue;
+      if (nativeRoot && event.type === "turn/end") {
+        if (turnOutcome(event.data.reason).kind === "budget_paused") unfinished.delete(inputId);
+        continue;
+      }
       this.pendingEvents.push(...sessionEventOutput(this.id, inputId, event, tools.record(event, threadId ?? this.id), threadId));
     }
     for (const inputId of unfinished) {
@@ -621,7 +624,9 @@ export class CcrSession {
         },
         afterRun: async () => {
           this.inputFinished = true;
-          if (!this.budgetPaused) {
+          if (this.budgetPaused) {
+            appendPluginRecord(this.agent.session, "plugin:oma/input-completion", { version: 1, inputId, outcome: { kind: "budget_paused" } });
+          } else {
             if (!this.receivedInputIds.has(inputId)) {
               if (this.interrupted) this.pendingEvents.push({ type: "result", uuid: `${inputId}_result`, subtype: "success", is_error: false });
               else this.addError(this.turnErrorMessage ?? "The turn stopped before successful completion.", "failed");

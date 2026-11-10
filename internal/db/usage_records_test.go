@@ -115,3 +115,31 @@ func TestProviderCostFinalizationPostgres(t *testing.T) {
 		t.Fatalf("原币费用丢失或重复结算：%s %d", amount, cents)
 	}
 }
+
+func TestProviderCostSummaryMatchesBudgetPostgres(t *testing.T) {
+	store, database := newTranscriptArchiveTestDB(t)
+	scope := transcriptTestScope()
+	sessionUUID := seedTranscriptArchiveSession(t, database, scope)
+	sessionID := "ses_" + sessionUUID
+	now := time.Now().UTC()
+	if _, err := NewSessionThreadMapper(store.mapperDB).Insert(t.Context(), sessionThreadWriteParameters(SessionThread{UUID: uuid.NewV4().String(), ExternalID: "sthr_cost_summary", OrganizationUUID: scope.OrganizationUUID, WorkspaceUUID: scope.WorkspaceUUID, SessionUUID: sessionUUID, SessionExternalID: sessionID, AgentSnapshot: []byte(`{}`), Usage: []byte(`{}`), Stats: []byte(`{}`), Status: "running", CreatedAt: now})); err != nil {
+		t.Fatal(err)
+	}
+	event := SessionEvent{UUID: uuid.NewV4().String(), ExternalID: "sevt_provider_summary", OrganizationUUID: scope.OrganizationUUID, WorkspaceUUID: scope.WorkspaceUUID, SessionUUID: sessionUUID, SessionExternalID: sessionID, EventType: "span.model_request_end", CreatedAt: now, ProcessedAt: now,
+		Payload: []byte(`{"type":"span.model_request_end","blob_ref":{"version":1,"id":"externalized"},"size":40000,"model":"test/model","model_usage":{"input_tokens":1000,"output_tokens":0},"_model_price":{"rates":{"input":"10","output":"0"}},"_provider_cost":{"amount":"7.2","currency":"CNY","exchange_rate":"7.2","usd_cents":100},"billing":{"list_cost":"100","currency":"USD","source":"provider"}}`)}
+	if _, err := store.AppendSessionEventsIfAbsent(t.Context(), scope.WorkspaceUUID, sessionID, []SessionEvent{event}); err != nil {
+		t.Fatal(err)
+	}
+	totals, err := store.SumSessionUsageTotals(t.Context(), scope.WorkspaceUUID, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cents int64
+	var amount string
+	if err := database.QueryRowContext(t.Context(), "SELECT model_cents, provider_cost->>'amount' FROM usage_records WHERE attempt_id=$1", event.ExternalID).Scan(&cents, &amount); err != nil {
+		t.Fatal(err)
+	}
+	if cents != 100 || totals.ListCostCents != cents || amount != "7.2" {
+		t.Fatalf("摘要账本与预算不一致：%d/%d/%s", cents, totals.ListCostCents, amount)
+	}
+}

@@ -187,7 +187,9 @@ test.each([true, false])('打开飞书授权窗口，注册成功=%s', async (su
   if (success) {
     await waitFor(() => expect(replace).toHaveBeenCalledWith(authorizationUrl));
     expect(close).not.toHaveBeenCalled();
-    expect(screen.getByText('等待飞书扫码确认')).toBeTruthy();
+    expect(screen.getByText('等待飞书授权中')).toBeTruthy();
+    expect(screen.getByRole('link', { name: '重新打开授权页' }).getAttribute('href')).toBe(authorizationUrl);
+    expect(screen.queryByText('等待飞书扫码确认')).toBeNull();
   } else {
     await waitFor(() => expect(close).toHaveBeenCalled());
     expect(replace).not.toHaveBeenCalled();

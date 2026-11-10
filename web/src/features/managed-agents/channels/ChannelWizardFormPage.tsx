@@ -35,6 +35,7 @@ function WizardStepFields({
   environments,
   agentLocked,
   onGenerateQr,
+  showQr,
 }: {
   step: WizardStep;
   value: WizardValue;
@@ -49,6 +50,7 @@ function WizardStepFields({
   environments: EnvironmentApiResponse[];
   agentLocked: boolean;
   onGenerateQr: (openAuthorization?: boolean) => void;
+  showQr: boolean;
 }) {
   if (step === 2) return <StepStrategy value={value} onChange={onChange} />;
   if (step === 3) {
@@ -70,6 +72,7 @@ function WizardStepFields({
       environments={environments}
       agentLocked={agentLocked}
       onGenerateQr={onGenerateQr}
+      showQr={showQr}
     />
   );
 }
@@ -96,6 +99,7 @@ export function ChannelWizardFormPage({
   const [binding, setBinding] = useState(initialChannel?.binding_status === 'bound' ? 'credentials' : 'qr');
   const [saved, setSaved] = useState<Channel | null>(initialChannel);
   const [qr, setQr] = useState<ChannelQr | null>(null);
+  const [showQr, setShowQr] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [value, setValue] = useState<WizardValue>(initialValue);
@@ -167,6 +171,7 @@ export function ChannelWizardFormPage({
       );
       return;
     }
+    if (generateQr) setShowQr(!openAuthorization);
     const authorizationWindow = openAuthorization ? window.open('about:blank', '_blank') : null;
     if (authorizationWindow) {
       authorizationWindow.opener = null;
@@ -236,6 +241,7 @@ export function ChannelWizardFormPage({
             environments={environments}
             agentLocked={agentLocked}
             onGenerateQr={(openAuthorization) => void persist(true, false, openAuthorization)}
+            showQr={showQr}
           />
           {error ? (
             <Alert variant="destructive" className="mb-3">

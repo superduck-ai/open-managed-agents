@@ -1,8 +1,8 @@
 import { useId, type ReactNode } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Bot, Check, Cloud, ExternalLink } from 'lucide-react';
+import { Bot, Check, Cloud, ExternalLink, LoaderCircle } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
-import { Button } from '../../../shared/ui/button';
+import { Button, ButtonLink } from '../../../shared/ui/button';
 import { RadioGroup, RadioGroupItem } from '../../../shared/ui/radio-group';
 import { cn } from '../../../shared/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../shared/ui/card';
@@ -134,6 +134,7 @@ export function StepConnect({
   environments,
   agentLocked,
   onGenerateQr,
+  showQr = false,
 }: {
   value: WizardValue;
   onChange: (value: WizardValue) => void;
@@ -147,6 +148,7 @@ export function StepConnect({
   environments: EnvironmentApiResponse[];
   agentLocked: boolean;
   onGenerateQr: (openAuthorization?: boolean) => void;
+  showQr?: boolean;
 }) {
   const { msg } = useI18n();
   return (
@@ -172,10 +174,24 @@ export function StepConnect({
       />
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.channelType', '渠道类型')}</Label>
-        <div className="flex h-10 items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 text-sm">
-          <img src={feishuLogo} alt="" className="size-4" width={16} height={16} />
-          {msg('managedAgents.channels.feishu', '飞书')}
-        </div>
+        <Select value="feishu" items={[{ value: 'feishu', label: msg('managedAgents.channels.feishu', '飞书') }]}>
+          <SelectTrigger className="h-10 w-full" aria-label={msg('managedAgents.channels.channelType', '渠道类型')}>
+            <img src={feishuLogo} alt="" className="size-4" width={16} height={16} />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="feishu">{msg('managedAgents.channels.feishu', '飞书')}</SelectItem>
+            <SelectItem value="dingtalk" disabled>
+              {msg('managedAgents.channels.dingtalkUnavailable', '钉钉（暂未开放）')}
+            </SelectItem>
+            <SelectItem value="wecom" disabled>
+              {msg('managedAgents.channels.wecomUnavailable', '企业微信（暂未开放）')}
+            </SelectItem>
+            <SelectItem value="wechat" disabled>
+              {msg('managedAgents.channels.wechatUnavailable', '微信（暂未开放）')}
+            </SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.mode', '渠道模式')}</Label>
@@ -207,7 +223,7 @@ export function StepConnect({
       </div>
       <div className="space-y-3">
         <Label>{msg('managedAgents.channels.accessMethod', '接入方式')}</Label>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             variant="outline"
@@ -235,7 +251,7 @@ export function StepConnect({
           workspaceId={workspaceId}
         />
       ) : (
-        <QrBindPanel value={value} qr={qr} saved={saved} busy={busy} onGenerateQr={onGenerateQr} />
+        <QrBindPanel value={value} qr={qr} saved={saved} busy={busy} onGenerateQr={onGenerateQr} showQr={showQr} />
       )}
     </div>
   );
@@ -247,12 +263,14 @@ function QrBindPanel({
   saved,
   busy,
   onGenerateQr,
+  showQr = false,
 }: {
   value: WizardValue;
   qr: ChannelQr | null;
   saved: Channel | null;
   busy: boolean;
   onGenerateQr: (openAuthorization?: boolean) => void;
+  showQr?: boolean;
 }) {
   const { msg } = useI18n();
   const waiting = qr?.status === 'pending';
@@ -264,25 +282,47 @@ function QrBindPanel({
           {msg('managedAgents.channels.authorizeCreateHint', '由现有应用创建权限的企业成员授权')}
         </p>
       </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          type="button"
-          disabled={busy || !value.name.trim() || !value.agentId || !value.environmentId}
-          onClick={() => onGenerateQr(true)}
-        >
-          <ExternalLink className="size-4" />
-          {msg('managedAgents.channels.goFeishuAuth', '前往飞书授权创建')}
-        </Button>
-        <button
-          type="button"
-          className="text-sm text-primary hover:underline"
-          disabled={busy}
-          onClick={() => onGenerateQr()}
-        >
-          {msg('managedAgents.channels.scanFeishuAuth', '使用飞书扫码授权')}
-        </button>
-      </div>
-      {waiting && qr ? (
+      {waiting && qr && !showQr ? (
+        <Card className="gap-3 p-4" role="status">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <LoaderCircle className="size-4 animate-spin" aria-hidden />
+            {msg('managedAgents.channels.authorizationPending', '等待飞书授权中')}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {msg('managedAgents.channels.authorizationPendingHint', '在飞书授权页选择企业并确认创建')}
+          </p>
+          <ButtonLink
+            href={qr.url}
+            target="_blank"
+            rel="noreferrer"
+            variant="link"
+            className="h-auto justify-start px-0"
+          >
+            {msg('managedAgents.channels.reopenAuthorization', '重新打开授权页')}
+            <ExternalLink className="size-4" />
+          </ButtonLink>
+        </Card>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            disabled={busy || !value.name.trim() || !value.agentId || !value.environmentId}
+            onClick={() => onGenerateQr(true)}
+          >
+            <ExternalLink className="size-4" />
+            {msg('managedAgents.channels.goFeishuAuth', '前往飞书授权创建')}
+          </Button>
+          <button
+            type="button"
+            className="text-sm text-primary hover:underline"
+            disabled={busy}
+            onClick={() => onGenerateQr()}
+          >
+            {msg('managedAgents.channels.scanFeishuAuth', '使用飞书扫码授权')}
+          </button>
+        </div>
+      )}
+      {waiting && qr && showQr ? (
         <div className="flex flex-col items-center gap-3 pt-2">
           <div className="bg-white p-4">
             <QRCodeSVG value={qr.url} size={180} />

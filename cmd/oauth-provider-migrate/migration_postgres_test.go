@@ -59,7 +59,7 @@ func migrationDatabase(t *testing.T) (*db.DB, *secrets.Service, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(t.Context(), 117); err != nil {
+	if _, err := provider.UpTo(t.Context(), 118); err != nil {
 		t.Fatal(err)
 	}
 	key, err := localkeys.New(localkeys.KeyMaterial{KEK: bytes.Repeat([]byte{9}, 32)}, nil)
@@ -128,13 +128,13 @@ func TestOAuthProviderMigrationBlocksIncompletePostgres(t *testing.T) {
 	seedLegacyProvider(t, database, service, "poap_legacy")
 	seedLegacyFlows(t, database)
 	migrateFixture(t, database, service, legacyClient{}, false)
-	if version, err := database.OAuthMigrationVersion(t.Context()); err != nil || version != 117 {
+	if version, err := database.OAuthMigrationVersion(t.Context()); err != nil || version != 118 {
 		t.Fatal("预检修改了数据库")
 	}
-	if err := database.WithOAuthMaintenanceLock(t.Context(), func() error { return database.MigrateOAuthSchemaTo(t.Context(), 118) }); err != nil {
+	if err := database.WithOAuthMaintenanceLock(t.Context(), func() error { return database.MigrateOAuthSchemaTo(t.Context(), 119) }); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.MigrateOAuthSchemaTo(t.Context(), 119); err == nil {
+	if err := database.MigrateOAuthSchemaTo(t.Context(), 120); err == nil {
 		t.Fatal("未回填数据越过收口迁移")
 	}
 	var value string
@@ -194,10 +194,10 @@ func TestOAuthProviderMigrationBlocksIncompletePostgres(t *testing.T) {
 func TestOAuthProviderMigrationReservedIDPostgres(t *testing.T) {
 	database, service, _ := migrationDatabase(t)
 	seedLegacyProvider(t, database, service, "poap_FeishuBuiltinOAuthClient")
-	if err := database.MigrateOAuthSchemaTo(t.Context(), 118); err == nil {
+	if err := database.MigrateOAuthSchemaTo(t.Context(), 119); err == nil {
 		t.Fatal("保留 external_id 冲突被覆盖")
 	}
-	if version, _ := database.OAuthMigrationVersion(t.Context()); version != 117 {
+	if version, _ := database.OAuthMigrationVersion(t.Context()); version != 118 {
 		t.Fatal("冲突迁移未回滚")
 	}
 }
@@ -237,7 +237,7 @@ func TestOAuthProviderMigrationEmptyAndReentrantPostgres(t *testing.T) {
 	if _, err := database.SQLDB().ExecContext(t.Context(), `UPDATE platform_oauth_providers SET client_secret_envelope=NULL WHERE builtin_key='feishu'`); err == nil {
 		t.Fatal("半配置被接受")
 	}
-	if err := database.MigrateOAuthSchemaTo(t.Context(), 118); err == nil {
+	if err := database.MigrateOAuthSchemaTo(t.Context(), 119); err == nil {
 		t.Fatal("允许降级")
 	}
 }
@@ -245,7 +245,7 @@ func TestOAuthProviderMigrationEmptyAndReentrantPostgres(t *testing.T) {
 func TestOAuthProviderMigrationBadEnvelopeResumesPostgres(t *testing.T) {
 	database, service, _ := migrationDatabase(t)
 	providerUUID := seedLegacyProvider(t, database, service, "poap_legacy")
-	if err := database.MigrateOAuthSchemaTo(t.Context(), 118); err != nil {
+	if err := database.MigrateOAuthSchemaTo(t.Context(), 119); err != nil {
 		t.Fatal(err)
 	}
 	var original string
@@ -258,7 +258,7 @@ func TestOAuthProviderMigrationBadEnvelopeResumesPostgres(t *testing.T) {
 	if err := migrate(t.Context(), database, service, legacyClient{}, legacyClient{}, true, io.Discard, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("坏信封未失败关闭")
 	}
-	if version, _ := database.OAuthMigrationVersion(t.Context()); version != 118 {
+	if version, _ := database.OAuthMigrationVersion(t.Context()); version != 119 {
 		t.Fatal("失败后删除明文列")
 	}
 	if _, err := database.SQLDB().ExecContext(t.Context(), `UPDATE platform_oauth_providers SET client_secret_envelope=$1 WHERE uuid=$2`, original, providerUUID); err != nil {
@@ -277,7 +277,7 @@ func TestOAuthProviderFridayReservedIDPostgres(t *testing.T) {
 	if err := migrate(t.Context(), database, service, legacyClient{}, legacyClient{}, true, io.Discard, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("Friday 保留 ID 冲突被覆盖")
 	}
-	if version, err := database.OAuthMigrationVersion(t.Context()); err != nil || version != 119 {
+	if version, err := database.OAuthMigrationVersion(t.Context()); err != nil || version != 120 {
 		t.Fatal("Friday 失败迁移未保留已加密旧记录")
 	}
 }
@@ -328,8 +328,8 @@ func TestOAuthProviderFridayImportPostgres(t *testing.T) {
 			t.Fatal("Friday 约束被绕过")
 		}
 	}
-	if version, err := database.OAuthMigrationVersion(t.Context()); err != nil || version != 121 {
-		t.Fatal("未升级到 00121")
+	if version, err := database.OAuthMigrationVersion(t.Context()); err != nil || version != 122 {
+		t.Fatal("未升级到 00122")
 	}
 	output.Reset()
 	if err := migrate(t.Context(), database, service, legacyClient{}, client, false, &output, slog.New(slog.DiscardHandler)); err != nil || !strings.Contains(output.String(), "success=0 skipped=2 failed=0") {

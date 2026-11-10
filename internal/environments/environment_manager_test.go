@@ -55,7 +55,7 @@ func TestManagedAgentWorkDirUsesRepositoryRegardlessOfResourceOrder(t *testing.T
 	repository := db.SessionResource{
 		UUID:             "00000000-0000-0000-0000-000000000002",
 		ResourceType:     "github_repository",
-		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/repository", MountPath: "/workspace/repository"},
+		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/repository.git", MountPath: "/workspace/repository"},
 	}
 	file := db.SessionResource{
 		UUID:         "00000000-0000-0000-0000-000000000001",
@@ -85,14 +85,14 @@ func TestManagedAgentWorkDirUsesEarliestAttachedRepository(t *testing.T) {
 		UUID:             "00000000-0000-0000-0000-000000000010",
 		ExternalID:       "sesrsc_first",
 		ResourceType:     "github_repository",
-		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/first", MountPath: "/workspace/first"},
+		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/first.git", MountPath: "/workspace/first"},
 		CreatedAt:        createdAt,
 	}
 	later := db.SessionResource{
 		UUID:             "00000000-0000-0000-0000-000000000011",
 		ExternalID:       "sesrsc_later",
 		ResourceType:     "github_repository",
-		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/later", MountPath: "/workspace/later"},
+		GitHubRepository: &db.SessionResourceGitHubRepository{URL: "https://github.com/acme/later.git", MountPath: "/workspace/later"},
 		CreatedAt:        createdAt.Add(time.Minute),
 	}
 	sameTimeLater := later
@@ -148,11 +148,11 @@ func TestManagedAgentRuntimeResourcesRejectInvalidGit(t *testing.T) {
 	for _, raw := range []string{
 		`{"url":`,
 		`{"url":"","mount_path":"/workspace/repo"}`,
-		`{"url":"https://github.com/acme/repo","mount_path":""}`,
-		`{"url":"https://github.com/acme/repo","mount_path":" /workspace/repo "}`,
-		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":"main"}`,
-		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":{"type":"commit","sha":"abcdef0"}}`,
-		`{"url":"https://github.com/acme/repo","mount_path":"/workspace/../outside"}`,
+		`{"url":"https://github.com/acme/repo.git","mount_path":""}`,
+		`{"url":"https://github.com/acme/repo.git","mount_path":" /workspace/repo "}`,
+		`{"url":"https://github.com/acme/repo.git","mount_path":"/workspace/repo","checkout":"main"}`,
+		`{"url":"https://github.com/acme/repo.git","mount_path":"/workspace/repo","checkout":{"type":"commit","sha":"abcdef0"}}`,
+		`{"url":"https://github.com/acme/repo.git","mount_path":"/workspace/../outside"}`,
 	} {
 		t.Run(raw, func(t *testing.T) {
 			_, err := resolveManagedAgentRuntimeResources([]db.SessionResource{{ResourceType: "github_repository", GitHubRepository: testGitRepository(json.RawMessage(raw))}})
@@ -537,7 +537,7 @@ func TestManagedAgentRuntimeGitRef(t *testing.T) {
 		{"commit sha256", `{"type":"commit","sha":"` + strings.Repeat("B", 64) + `"}`, strings.Repeat("b", 64)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			resources := []db.SessionResource{{ResourceType: "github_repository", GitHubRepository: testGitRepository(json.RawMessage(`{"url":"https://github.com/acme/repo","mount_path":"/workspace/repo","checkout":` + test.checkout + `}`))}}
+			resources := []db.SessionResource{{ResourceType: "github_repository", GitHubRepository: testGitRepository(json.RawMessage(`{"url":"https://github.com/acme/repo.git","mount_path":"/workspace/repo","checkout":` + test.checkout + `}`))}}
 			sources := mustResolveRuntimeResources(t, resources).sources
 			var source struct {
 				GitInfo struct {

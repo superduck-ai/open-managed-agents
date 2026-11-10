@@ -17,7 +17,7 @@ export function AppearanceMenuRow() {
     { value: 'dark', Icon: Moon, label: msg('theme.dark', 'Dark') },
   ] as const;
   return (
-    <DropdownMenuGroup className="flex min-h-9 items-center gap-3 px-3 py-1">
+    <DropdownMenuGroup data-account-appearance className="flex min-h-9 items-center gap-3 px-3 py-1">
       <Palette className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       <DropdownMenuLabel className="min-w-0 flex-1 p-0 text-sm font-normal text-foreground">
         {msg('nav.appearance', 'Appearance')}

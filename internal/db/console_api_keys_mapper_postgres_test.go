@@ -109,6 +109,8 @@ func TestConsoleAPIKeyMapperPostgreSQL(t *testing.T) {
 		if row.ID != fixture.apiKeyExternalID ||
 			!row.CreatedByUserUUID.Valid ||
 			row.CreatedByUserUUID.String != fixture.creatorUUID ||
+			row.CreatedByEmail != fixture.creatorEmail ||
+			row.CreatedByName != fixture.creatorName ||
 			row.ExpiresAt == nil {
 			t.Fatalf("Insert() row = %+v", row)
 		}
@@ -130,7 +132,8 @@ func TestConsoleAPIKeyMapperPostgreSQL(t *testing.T) {
 			fixture.organizationUUID,
 			fixture.workspaceUUID,
 		)
-		if listErr != nil || len(rows) != 1 || rows[0].ID != fixture.apiKeyExternalID {
+		if listErr != nil || len(rows) != 1 || rows[0].ID != fixture.apiKeyExternalID ||
+			rows[0].CreatedByEmail != fixture.creatorEmail || rows[0].CreatedByName != fixture.creatorName {
 			t.Fatalf("List() = (%+v, %v)", rows, listErr)
 		}
 		count, countErr := consoleMapper.CountUnarchived(ctx, fixture.organizationUUID, fixture.workspaceUUID)
@@ -144,7 +147,8 @@ func TestConsoleAPIKeyMapperPostgreSQL(t *testing.T) {
 			ExternalID:       fixture.apiKeyExternalID,
 			Status:           "archived",
 		})
-		if updateErr != nil || updated.Status != "archived" || updated.ArchivedAt == nil {
+		if updateErr != nil || updated.Status != "archived" || updated.ArchivedAt == nil ||
+			updated.CreatedByEmail != fixture.creatorEmail || updated.CreatedByName != fixture.creatorName {
 			t.Fatalf("UpdateStatus() = (%+v, %v)", updated, updateErr)
 		}
 		rowsAffected, updateErr := adminMapper.UpdateStatusByUUID(ctx, apiKeyUUID, "archived")
@@ -179,6 +183,8 @@ type consoleAPIKeyMapperPostgreSQLFixture struct {
 	workspaceDisplayID    string
 	creatorUUID           string
 	creatorExternalID     string
+	creatorEmail          string
+	creatorName           string
 	apiKeyExternalID      string
 }
 
@@ -195,6 +201,8 @@ func seedConsoleAPIKeyMapperPostgreSQLFixture(
 		workspaceDisplayID:    "workspace_console_fixture",
 		creatorUUID:           "44444444-4444-4444-8444-444444444444",
 		creatorExternalID:     "user_console_fixture",
+		creatorEmail:          "creator@example.com",
+		creatorName:           "Console Creator",
 		apiKeyExternalID:      "apikey_console_fixture",
 	}
 	execMapperFixtureSQL(t, ctx, executor, `
@@ -202,6 +210,8 @@ func seedConsoleAPIKeyMapperPostgreSQLFixture(
 			uuid uuid PRIMARY KEY,
 			external_id text NOT NULL,
 			organization_uuid uuid NOT NULL,
+			email text NOT NULL,
+			name text NOT NULL,
 			deleted_at timestamptz
 		) ON COMMIT DROP;
 		CREATE TEMPORARY TABLE console_api_keys (
@@ -236,9 +246,9 @@ func seedConsoleAPIKeyMapperPostgreSQLFixture(
 		) ON COMMIT DROP
 	`)
 	execMapperFixtureSQL(t, ctx, executor, `
-		INSERT INTO users (uuid, external_id, organization_uuid)
-		VALUES ($1, $2, $3)
-	`, fixture.creatorUUID, fixture.creatorExternalID, fixture.organizationUUID)
+		INSERT INTO users (uuid, external_id, organization_uuid, email, name)
+		VALUES ($1, $2, $3, $4, $5)
+	`, fixture.creatorUUID, fixture.creatorExternalID, fixture.organizationUUID, fixture.creatorEmail, fixture.creatorName)
 	return fixture
 }
 

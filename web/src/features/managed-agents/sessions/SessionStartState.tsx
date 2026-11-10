@@ -1,4 +1,4 @@
-import { MessageSquare } from 'lucide-react';
+import { productIcons } from '@/shared/icons/product-icons';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '../../../shared/ui/empty';
@@ -9,7 +9,7 @@ export function SessionStartState({ onStart }: { onStart: () => void }) {
     <Empty className="min-h-56 py-16">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <MessageSquare aria-hidden />
+          <productIcons.sessions aria-hidden />
         </EmptyMedia>
         <EmptyTitle>{msg('managedAgents.sessions.startConversation', 'Start a conversation')}</EmptyTitle>
         <EmptyDescription>

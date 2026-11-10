@@ -278,6 +278,15 @@ func TestUpstreamProxyCACertificateHandlerReturnsGeneratedCertificate(t *testing
 }
 
 func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
+	for _, connectionHeader := range []string{"", "X-OMA-Session-ID"} {
+		t.Run("connection="+connectionHeader, func(t *testing.T) {
+			testUpstreamProxyMITMForwarding(t, connectionHeader)
+		})
+	}
+}
+
+func testUpstreamProxyMITMForwarding(t *testing.T, connectionHeader string) {
+	t.Helper()
 	t.Parallel()
 
 	files := writeTestUpstreamProxyCA(t, "tunnel")
@@ -343,6 +352,11 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 		t.Fatalf("new HTTPS request: %v", err)
 	}
 	request.Close = true
+	request.Header.Add("x-oma-session-id", "forged-session")
+	request.Header.Add("X-OMA-Session-ID", "another-session")
+	if connectionHeader != "" {
+		request.Header.Set("Connection", connectionHeader)
+	}
 	if err := request.Write(clientTLS); err != nil {
 		t.Fatalf("write decrypted HTTP request: %v", err)
 	}
@@ -359,6 +373,9 @@ func TestUpstreamProxyMITMDecryptsAndForwardsHTTPRequest(t *testing.T) {
 		t.Fatalf("MITM response = %d %q", response.StatusCode, body)
 	}
 	captured := <-upstreamRequests
+	if values := captured.Header.Values("X-OMA-Session-ID"); len(values) != 1 || values[0] != "sesn_test" {
+		t.Fatalf("upstream session header = %q", values)
+	}
 	if captured.Host != "1.1.1.1" || captured.URL.RequestURI() != "/robots.txt?source=mitm" {
 		t.Fatalf("unexpected decrypted upstream request: host=%q uri=%q", captured.Host, captured.URL.RequestURI())
 	}

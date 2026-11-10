@@ -41,7 +41,7 @@ func (p Principal) PlatformOrganizationAdmin(organizationUUID string) bool {
 }
 
 func (p Principal) RuntimeUserUUID() string {
-	if p.PlatformOrganizationAdmin(p.OrganizationUUID) {
+	if p.CredentialType == CredentialTypeAPIKey || p.PlatformOrganizationAdmin(p.OrganizationUUID) {
 		return p.AccountUUID
 	}
 	return p.UserUUID

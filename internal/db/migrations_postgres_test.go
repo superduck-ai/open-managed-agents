@@ -1421,7 +1421,7 @@ func TestEnvOAuthBuiltinClientIDMigration(t *testing.T) {
 		t.Skip("需要隔离 PostgreSQL；跳过不能视为通过")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 116); err != nil {
+	if _, err := provider.UpTo(ctx, 117); err != nil {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"builtin:feishu", "custom:example"} {
@@ -1437,7 +1437,7 @@ func TestEnvOAuthBuiltinClientIDMigration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := provider.UpTo(ctx, 117); err != nil {
+	if _, err := provider.UpTo(ctx, 118); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(ctx, `UPDATE env_oauth_flows SET client_id = 'forbidden' WHERE provider_key = 'builtin:feishu'`); err == nil {
@@ -1449,10 +1449,10 @@ func TestEnvOAuthBuiltinClientIDMigration(t *testing.T) {
 			t.Fatalf("服务方=%s client_id=%q 错误=%v", key, got, err)
 		}
 	}
-	if _, err := provider.DownTo(ctx, 116); err != nil {
+	if _, err := provider.DownTo(ctx, 117); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 117); err != nil {
+	if _, err := provider.UpTo(ctx, 118); err != nil {
 		t.Fatal(err)
 	}
 }

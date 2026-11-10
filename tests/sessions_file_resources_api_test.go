@@ -478,7 +478,7 @@ func TestSessionFileResourceContract(t *testing.T) {
 
 	t.Run("success file paths are isolated beneath uploads", func(t *testing.T) {
 		created := createSession(t, app, `{`+base+`,"resources":[
-			{"type":"github_repository","url":"https://github.com/example/repository","mount_path":"/workspace/repository"},
+			{"type":"github_repository","url":"https://github.com/example/repository.git","mount_path":"/workspace/repository"},
 			{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/workspace/repository/data.csv"},
 			{"type":"file","file_id":`+quoteJSON(file.ID)+`,"mount_path":"/tmp/rclone-mount-config.json"}
 		]}`)

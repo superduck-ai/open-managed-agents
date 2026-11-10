@@ -65,7 +65,7 @@ func (d *DB) MigrateOAuthSchemaTo(ctx context.Context, version int64) error {
 	if err != nil {
 		return err
 	}
-	if version < current || (version != 118 && version != 119 && version != 120 && version != 121) {
+	if version < current || (version != 119 && version != 120 && version != 121 && version != 122) {
 		return errors.New("invalid OAuth migration target")
 	}
 	migrationFS, err := fs.Sub(embeddedMigrations, "migrations")

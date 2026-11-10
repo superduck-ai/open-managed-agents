@@ -18,7 +18,7 @@ func TestPlatformOAuthProviderClientConstraintMigrationPostgres(t *testing.T) {
 	ctx := t.Context()
 	database := newIsolatedSessionResourceMigrationTestDatabase(t, ctx, address)
 	provider := newMigrationTestProvider(t, database)
-	if _, err := provider.UpTo(ctx, 120); err != nil {
+	if _, err := provider.UpTo(ctx, 121); err != nil {
 		t.Fatal(err)
 	}
 	const envelope = `{"ciphertext":"Yw==","nonce":"bg==","wrapped_dek":"aw==","format_version":1,"key_provider":"local","key_version":1}`
@@ -38,16 +38,16 @@ func TestPlatformOAuthProviderClientConstraintMigrationPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, err := provider.UpTo(ctx, 121)
+	_, err := provider.UpTo(ctx, 122)
 	assertOAuthClientConstraintViolation(t, err, "platform_oauth_providers_clients_check")
 	version, err := provider.GetDBVersion(ctx)
-	if err != nil || version != 120 {
-		t.Fatalf("失败迁移未保留版本 120：版本=%d，错误=%v", version, err)
+	if err != nil || version != 121 {
+		t.Fatalf("失败迁移未保留版本 121：版本=%d，错误=%v", version, err)
 	}
 	if _, err := database.ExecContext(ctx, `UPDATE platform_oauth_providers SET client_id_envelope=$1, client_secret_envelope=$1 WHERE external_id='poap_legacy_invalid'`, envelope); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 121); err != nil {
+	if _, err := provider.UpTo(ctx, 122); err != nil {
 		t.Fatal(err)
 	}
 	var preserved int

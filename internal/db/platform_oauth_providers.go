@@ -228,7 +228,7 @@ func (d *DB) auditOAuthSeedAfterMigrations(ctx context.Context, before int64) er
 	for _, seed := range []struct {
 		key     string
 		version int64
-	}{{"feishu", 118}, {"friday", 120}} {
+	}{{"feishu", 119}, {"friday", 121}} {
 		if before >= seed.version || after < seed.version {
 			continue
 		}

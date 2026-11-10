@@ -11,6 +11,8 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+const sessionIDHeader = "X-OMA-Session-ID"
+
 func (h *Handler) serveUpstreamProxyHTTP(connection *websocket.Conn, identity upstreamProxyIdentity, token string, first []byte) {
 	stream := newUpstreamProxyChunkConn(connection)
 	stream.readBuffer = first
@@ -74,6 +76,7 @@ func (h *Handler) forwardUpstreamProxyHTTP(w http.ResponseWriter, request *http.
 		Rewrite: func(proxyRequest *httputil.ProxyRequest) {
 			proxyRequest.Out.Header.Del("Proxy-Authorization")
 			proxyRequest.Out.Header.Del("Proxy-Connection")
+			proxyRequest.Out.Header.Set(sessionIDHeader, identity.publicSessionID)
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
 			http.Error(w, "HTTP proxy request failed", http.StatusBadGateway)

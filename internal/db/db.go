@@ -59,6 +59,7 @@ type APIKey struct {
 	OrganizationUUID    uuid.UUID
 	WorkspaceUUID       uuid.UUID
 	WorkspaceExternalID string
+	RuntimeUserUUID     string
 }
 
 type foreignKeyRow struct {
@@ -523,6 +524,7 @@ func (r apiKeyAuthRow) apiKey() (APIKey, error) {
 		OrganizationUUID:    organizationUUID,
 		WorkspaceUUID:       workspaceUUID,
 		WorkspaceExternalID: r.WorkspaceExternalID,
+		RuntimeUserUUID:     r.RuntimeUserUUID,
 	}, nil
 }
 

@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +19,23 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
+
+type lockedBuffer struct {
+	mutex  sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(value []byte) (int, error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.buffer.Write(value)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.buffer.String()
+}
 
 type panicStore struct {
 	runtimeStore
@@ -47,7 +68,7 @@ func TestWebhookConsumePanicRecoveryAndRedelivery(t *testing.T) {
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
 	defer receiver.Close()
 	store.target = db.WebhookDeliveryTarget{Status: "enabled", URL: receiver.URL, SigningSecret: "whsec_MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}
-	var output bytes.Buffer
+	var output lockedBuffer
 	worker := &Worker{database: store, queue: q, cfg: cfg, logger: slog.New(slog.NewJSONHandler(&output, nil))}
 	stop, err := worker.Start(t.Context())
 	if err != nil {
@@ -73,20 +94,40 @@ func TestWebhookConsumePanicRecoveryAndRedelivery(t *testing.T) {
 		return err == nil && info.State.Msgs == 0 && store.successes.Load() == 2
 	})
 	stop()
-	var record struct {
-		Level   string `json:"level"`
-		Message string `json:"msg"`
-		Queue   string `json:"queue"`
-		Slot    int    `json:"consume_slot"`
-		Stack   string `json:"stack"`
+
+	worker.logger.Info("附加运行日志")
+	logs := output.String()
+	decoder := json.NewDecoder(strings.NewReader(logs))
+	found := false
+	for {
+		var record struct {
+			Level   string `json:"level"`
+			Message string `json:"msg"`
+			Queue   string `json:"queue"`
+			Slot    int    `json:"consume_slot"`
+			Stack   string `json:"stack"`
+		}
+		if err := decoder.Decode(&record); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if record.Message != "queued message processing panicked" {
+			continue
+		}
+		if found {
+			t.Fatal("不应重复记录同一次消费异常")
+		}
+		found = true
+		if record.Level != "ERROR" || record.Queue != "webhook" || record.Slot != 0 || record.Stack == "" {
+			t.Fatalf("异常记录字段错误：level=%s queue=%s slot=%d stack_bytes=%d", record.Level, record.Queue, record.Slot, len(record.Stack))
+		}
 	}
-	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
-		t.Fatal(err)
+	if !found {
+		t.Fatal("缺少消费异常的结构化日志")
 	}
-	if record.Level != "ERROR" || record.Message != "queued message processing panicked" || record.Queue != "webhook" || record.Slot != 0 || record.Stack == "" {
-		t.Fatalf("invalid panic record: level=%s message=%s slot=%d stack_bytes=%d", record.Level, record.Message, record.Slot, len(record.Stack))
-	}
-	if bytes.Contains(output.Bytes(), []byte("private-credential-must-not-be-logged")) {
+
+	if strings.Contains(logs, "private-credential-must-not-be-logged") {
 		t.Fatal("panic log exposed its value")
 	}
 }

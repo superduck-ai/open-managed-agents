@@ -1,8 +1,9 @@
 package skills
 
 import (
-	"strconv"
 	"strings"
+
+	"go.yaml.in/yaml/v3"
 )
 
 type skillMetadata struct {
@@ -33,23 +34,16 @@ func parseFrontmatter(text string) map[string]string {
 		return values
 	}
 	block := text[len("---\n") : len("---\n")+end]
-	for _, line := range strings.Split(block, "\n") {
-		key, value, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(strings.ToLower(key))
-		value = strings.TrimSpace(value)
-		if key == "" || value == "" {
-			continue
-		}
-		if unquoted, err := strconv.Unquote(value); err == nil {
-			value = unquoted
-		} else {
-			value = strings.Trim(value, `"'`)
-		}
-		values[key] = value
+	var fields map[string]yaml.Node
+	if err := yaml.Unmarshal([]byte(block), &fields); err != nil {
+		return values
 	}
+	for _, key := range []string{"name", "description", "license"} {
+		if field, ok := fields[key]; ok && field.Tag == "!!str" {
+			values[key] = field.Value
+		}
+	}
+
 	return values
 }
 

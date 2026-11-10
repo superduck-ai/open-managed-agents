@@ -25,6 +25,7 @@ const { useEffect } = await import('react');
 type TestAgentModel = { id: string; displayName?: string };
 
 type ManagedAgentsRenderOptions = {
+  queryClient?: QueryClientType;
   workspaceId?: string;
   models?: TestAgentModel[];
   auth?: AuthContextValue;
@@ -43,6 +44,8 @@ const managedAgentsAuthContextValue: AuthContextValue = {
     uuid: 'acct_managed_agents_test',
     email_address: 'managed-agents-test@example.com',
     display_name: 'Managed Agents Test User',
+    effectiveOrganizationUuid: 'org_test',
+    permissions: ['organization:manage', 'members:manage', 'members:view'],
     memberships: [{ role: 'admin', organization: { uuid: 'org_test' } }],
   },
   status: 'authenticated',
@@ -162,13 +165,15 @@ export function renderManagedAgentsPage(
   options: ManagedAgentsRenderOptions = {},
 ) {
   const workspaceId = options.workspaceId ?? 'default';
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
+  const queryClient =
+    options.queryClient ??
+    new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
       },
-    },
-  });
+    });
   seedCreateAgentModels(queryClient, workspaceId, options.models);
   const history = createBrowserHistory({ window });
   const managedAgentsTestRootRoute = createRootRoute({ component: () => <ManagedAgentsPage section={section} /> });

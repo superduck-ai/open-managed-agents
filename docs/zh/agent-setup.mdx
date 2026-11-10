@@ -9,7 +9,7 @@ description: "创建可复用、带版本控制的智能体配置。"
 只需将智能体创建一次作为可复用资源，之后每次[启动会话](/docs/zh/sessions)时通过 ID 引用它即可。智能体带有版本控制，更易于跨多个会话进行管理。
 
 <Note>
-  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+  各资源的 Beta 要求不同，请参阅[版本与 Beta 功能](/docs/zh/api/versioning-beta)，并确认 SDK 向 OMA 发送了所需参数。
 </Note>
 
 ## 智能体配置字段
@@ -17,7 +17,7 @@ description: "创建可复用、带版本控制的智能体配置。"
 | 字段            | 描述                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`        | 必填。智能体的人类可读名称。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `model`       | 必填。驱动智能体的[模型](/docs/zh/api/models/list-models)。接受模型 ID 字符串或对象，例如 `{"id": "claude-opus-5"}`。可用模型由 OMA 部署配置决定。对象形式还接受 `speed`、`effort` 和 `inference_geo` 字段；请参阅[创建智能体](/docs/zh/agent-setup#create-an-agent)下的提示、推理强度级别以及[固定推理地理位置](/docs/zh/agent-setup#pin-the-inference-geo)。 |
+| `model`       | 必填。驱动智能体的[模型](/docs/zh/api/models/list-models)。接受模型 ID 字符串或对象，例如 `{"id": "claude-opus-5"}`。可用模型由 OMA 部署配置决定。对象形式还接受 `speed`和 `effort` 字段；请参阅[创建智能体](/docs/zh/agent-setup)下的提示。 |
 | `system`      | 定义智能体行为和角色的系统提示。系统提示不同于[用户消息](/docs/zh/reference#event-types)，后者应描述要完成的工作。                                                                                                                                                                                                                                                      |
 | `tools`       | 智能体可用的工具。结合了[预构建的智能体工具](/docs/zh/tools)、[MCP 工具](/docs/zh/mcp-connector)和[自定义工具](/docs/zh/tools#custom-tools)。                                                                                                                                                                                                                                                          |
 | `mcp_servers` | 提供标准化第三方能力的 [MCP 服务器](/docs/zh/mcp-connector)。                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -26,7 +26,7 @@ description: "创建可复用、带版本控制的智能体配置。"
 | `description` | 对智能体功能的描述。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `metadata`    | 用于您自己跟踪的任意键值对。                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
-您还可以为单个会话覆盖 `model`、`system`、`tools`、`mcp_servers` 和 `skills`，而无需更改智能体本身。在单个会话的 `model` 覆盖中设置的 `effort` 不会生效；由于覆盖会完整替换智能体的 `model` 对象，使用 `model` 覆盖创建的会话将以模型的默认推理强度运行。如需使用特定的推理强度，请在智能体上设置 `effort`，并且不要为该会话覆盖 `model`。请参阅[为会话覆盖智能体配置](/docs/zh/sessions#override-agent-configuration-for-a-session)。
+您还可以为单个会话覆盖 `model`、`system`、`tools`、`mcp_servers` 和 `skills`，而无需更改智能体本身。`model` 覆盖会替换完整模型配置；模型和提供商对可选参数的实际支持可能不同。请参阅[为会话覆盖智能体配置](/docs/zh/sessions#override-agent-configuration-for-a-session)。
 
 ## 创建智能体
 
@@ -156,7 +156,7 @@ description: "创建可复用、带版本控制的智能体配置。"
   ```
 </CodeGroup>
 
-响应会回显您的配置，并添加 `id`、`type`、`version`、`created_at`、`updated_at` 和 `archived_at` 字段，同时为您省略的 `model` 字段（例如 `effort`）填充默认值。`version` 从 1 开始，每次更新更改智能体时递增。
+响应会回显您的配置，并添加 `id`、`type`、`version`、`created_at`、`updated_at` 和 `archived_at` 字段。未指定模型速度时，`speed` 默认为 `standard`；未指定的 `effort` 不会自动填入响应。`version` 从 1 开始，每次更新更改智能体时递增。
 
 ```json
 {
@@ -165,7 +165,6 @@ description: "创建可复用、带版本控制的智能体配置。"
   "name": "Coding Assistant",
   "model": {
     "id": "claude-opus-5",
-    "effort": { "type": "high" },
     "speed": "standard"
   },
   "system": "You are a helpful coding agent.",
@@ -191,143 +190,10 @@ description: "创建可复用、带版本控制的智能体配置。"
 工具集上的 `default_config` 显示其默认的[权限策略](/docs/zh/permission-policies) `always_allow`，除非您另行配置，否则将应用该策略。
 
 <Tip>
-  要对支持快速模式的模型启用快速模式，请将 `model` 作为对象传递，例如：`{"id": "claude-opus-5", "speed": "fast"}`。请参阅快速模式页面的支持模型列表。
-</Tip>
-
-<Tip>
   要设置模型的推理强度级别，请将 `model` 作为对象传递，例如：`{"id": "claude-opus-5", "effort": "high"}`。`effort` 字段接受级别字符串（`low`、`medium`、`high`、`xhigh` 或 `max`）或对象，例如 `{"type": "high"}`。
 </Tip>
 
-### 固定推理地理位置
-
-与 `speed` 和 `effort` 一样，`inference_geo` 通过 `model` 的对象形式设置：将 `model` 作为对象传递，并在 `id` 旁边设置 `inference_geo`。该字段接受 `"us"` 或 `"global"`。未设置时，每个模型请求在被处理时遵循工作区的默认推理地理位置。有关工作区级别的地理位置控制和定价，请参阅数据驻留。
-
-以下示例将智能体固定到美国推理，并打印响应的 `model` 对象中回显的 `inference_geo` 值：
-
-<CodeGroup defaultLanguage="CLI">
-  ```bash cURL
-  agent=$(curl -fsSL http://localhost:38080/v1/agents \
-    -H "x-api-key: $OMA_API_KEY" \
-    -H "anthropic-version: 2023-06-01" \
-    -H "anthropic-beta: managed-agents-2026-04-01" \
-    -H "content-type: application/json" \
-    -d '{
-      "name": "Geo-pinned assistant",
-      "model": {"id": "claude-opus-5", "inference_geo": "us"},
-      "system": "You are a helpful assistant."
-    }')
-
-  echo "Inference geo: $(jq -r '.model.inference_geo' <<< "$agent")"
-  ```
-
-  ```bash CLI
-  agent=$(ant beta:agents create \
-    --name "Geo-pinned assistant" \
-    --model '{id: claude-opus-5, inference_geo: us}' \
-    --system "You are a helpful assistant." \
-    --format json)
-
-  echo "Inference geo: $(jq -r '.model.inference_geo' <<< "$agent")"
-  ```
-
-  ```python Python
-  agent = client.beta.agents.create(
-      name="Geo-pinned assistant",
-      model={
-          "id": "claude-opus-5",
-          "inference_geo": "us",
-      },
-      system="You are a helpful assistant.",
-  )
-
-  print(f"Inference geo: {agent.model.inference_geo}")
-  ```
-
-  ```typescript TypeScript
-  const agent = await client.beta.agents.create({
-    name: "Geo-pinned assistant",
-    model: { id: "claude-opus-5", inference_geo: "us" },
-    system: "You are a helpful assistant.",
-  });
-
-  console.log(`Inference geo: ${agent.model.inference_geo}`);
-  ```
-
-  ```csharp C#
-  var agent = await client.Beta.Agents.Create(new()
-  {
-      Name = "Geo-pinned assistant",
-      Model = new BetaManagedAgentsModelConfigParams
-      {
-          ID = BetaManagedAgentsModel.ClaudeOpus5,
-          InferenceGeo = "us",
-      },
-      System = "You are a helpful assistant.",
-  });
-
-  Console.WriteLine($"Inference geo: {agent.Model.InferenceGeo}");
-  ```
-
-  ```go Go
-  agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
-      Name: "Geo-pinned assistant",
-      Model: anthropic.BetaManagedAgentsModelConfigParams{
-          ID:           anthropic.BetaManagedAgentsModelClaudeOpus5,
-          InferenceGeo: anthropic.String("us"),
-      },
-      System: anthropic.String("You are a helpful assistant."),
-  })
-  if err != nil {
-      panic(err)
-  }
-
-  fmt.Printf("Inference geo: %s\n", agent.Model.InferenceGeo)
-  ```
-
-  ```java Java
-  var agent = client.beta().agents().create(
-      AgentCreateParams.builder()
-          .name("Geo-pinned assistant")
-          .model(
-              BetaManagedAgentsModelConfigParams.builder()
-                  .id(BetaManagedAgentsModel.CLAUDE_OPUS_5)
-                  .inferenceGeo("us")
-                  .build()
-          )
-          .system("You are a helpful assistant.")
-          .build()
-  );
-
-  IO.println("Inference geo: " + agent.model().inferenceGeo().orElseThrow());
-  ```
-
-  ```php PHP
-  $agent = $client->beta->agents->create(
-      name: 'Geo-pinned assistant',
-      model: BetaManagedAgentsModelConfigParams::with(
-          id: 'claude-opus-5',
-          inferenceGeo: 'us',
-      ),
-      system: 'You are a helpful assistant.',
-  );
-
-  echo "Inference geo: {$agent->model->inferenceGeo}\n";
-  ```
-
-  ```ruby Ruby
-  agent = client.beta.agents.create(
-    name: "Geo-pinned assistant",
-    model: {id: "claude-opus-5", inference_geo: "us"},
-    system_: "You are a helpful assistant."
-  )
-
-  puts "Inference geo: #{agent.model.inference_geo}"
-  ```
-</CodeGroup>
-
-`inference_geo` 固定值会在保存智能体时、基于该智能体创建会话时以及会话处理的每个回合时，根据工作区的 `allowed_inference_geos` 进行验证。如果工作区允许列表收窄导致某个固定值不再被允许，则无法基于该智能体创建新会话，正在运行的会话也会拒绝后续回合；固定值永远不会被豁免，因为工作区依赖它们来满足合规性和数据驻留要求。
-
-在不支持地理推理固定的模型上设置 `inference_geo` 会返回 400 错误；有关支持的模型，请参阅模型可用性。在 `multiagent` 配置中，协调器的固定值和每个名册成员的固定值必须全部设置为相同的值，或全部不设置；请参阅[多智能体编排](/docs/zh/multiagent-orchestration)。如需稍后更改或清除固定值，请更新智能体的 `model` 对象；提供不含 `inference_geo` 的 `model` 会清除该固定值，如[更新语义](/docs/zh/agent-setup#update-semantics)中所述。
+OMA 为 API 兼容保留 `model.inference_geo` 字段，但该字段不保证控制实际推理地域。模型请求的服务位置取决于所配置的模型提供商及其部署。
 
 ## 更新智能体
 
@@ -455,11 +321,11 @@ description: "创建可复用、带版本控制的智能体配置。"
 
 * **省略的字段会被保留。** 您只需包含要更改的字段。
 
-* **标量字段**（`model`、`system`、`name`、`description`）会被新值替换。`system` 和 `description` 可以通过传递 `null` 来清除。`model` 和 `name` 是必填的，无法清除。在您提供的 `model` 对象中，`effort` 是唯一的例外：如果模型 `id` 未更改，省略 `effort` 会保持已存储的推理强度级别不变。如果您更改了模型 `id`，省略 `effort` 会重置为新模型的默认值。其他 `model` 字段会随对象一起被替换：提供不含 `inference_geo` 的 `model` 会清除智能体的推理地理位置固定值。
+* **标量字段**（`model`、`system`、`name`、`description`）会被新值替换。`system` 和 `description` 可以通过传递 `null` 来清除。`model` 和 `name` 是必填的，无法清除。提供 `model` 时会替换整个模型对象；需要保留的可选字段也应包含在新对象中。
 
 * **数组字段**（`tools`、`mcp_servers`、`skills`）会被新数组完全替换。要完全清除数组字段，请传递 `null` 或空数组。
 
-* **`multiagent`** 会作为整体被替换，包括其 `agents` 名册。传递 `null` 可清除它。
+* **`multiagent`** 的更新语义取决于配置类型；传递 `null` 可清除配置。具体设置请参阅[多智能体编排](/docs/zh/multiagent-orchestration)。
 
 * **元数据**在键级别合并。您提供的键会被添加或更新。您省略的键会被保留。要删除特定键，请将其值设置为 `null`。
 

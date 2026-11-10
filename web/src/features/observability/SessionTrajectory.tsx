@@ -3,7 +3,7 @@ import { useI18n } from '../../shared/i18n';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 import { useWorkspace } from '../../shared/workspaces/context';
 import type { TrajectorySegment } from './api';
-import { NativeTrajectory } from './trajectory/NativeTrajectory';
+import { DshTrajectory } from './trajectory/DshTrajectory';
 import { useSessionTrajectoryLane } from './useSessionTrajectoryLane';
 
 export function SessionTrajectory({
@@ -56,7 +56,7 @@ export function SessionTrajectory({
           </Select>
         )}
       </div>
-      <NativeTrajectory key={viewKey} scope={scope} target={target} onPage={onPage} />
+      <DshTrajectory key={viewKey} scope={scope} target={target} onPage={onPage} />
     </section>
   );
 }

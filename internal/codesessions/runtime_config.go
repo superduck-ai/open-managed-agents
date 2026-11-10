@@ -86,7 +86,11 @@ func runtimeToolPolicies(tools []toolPermissionToolset) map[string]string {
 	policies := make(map[string]string, len(sandboxToolNames))
 	for _, name := range sandboxToolNames {
 		remoteName := managedAgentToolName(name)
-		policies[remoteName] = string(resolveAgentToolPermission(tools, remoteName))
+		permission := resolveAgentToolPermission(tools, remoteName)
+		if permission == resolvedToolPermissionAuto {
+			permission = resolvedToolPermissionAsk
+		}
+		policies[remoteName] = string(permission)
 	}
 	return policies
 }

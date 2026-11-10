@@ -199,25 +199,6 @@ func (h *Handler) startItems(ctx context.Context, principal auth.Principal, task
 	}
 }
 
-func (h *Handler) sessionEvents(ctx context.Context, workspaceUUID, sessionID string) ([]db.SessionEvent, error) {
-	var all []db.SessionEvent
-	var cursor *db.SessionEventPageCursor
-	for page := 0; page < 20; page++ {
-		events, hasMore, err := h.store.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-			WorkspaceUUID: workspaceUUID, SessionExternalID: sessionID, Limit: 100, Cursor: cursor,
-		})
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, events...)
-		if !hasMore || len(events) == 0 {
-			break
-		}
-		cursor = &db.SessionEventPageCursor{ExternalID: events[len(events)-1].ExternalID}
-	}
-	return all, nil
-}
-
 func itemsForRound(items []db.EvaluationTaskItem, round int) []db.EvaluationTaskItem {
 	selected := make([]db.EvaluationTaskItem, 0)
 	for _, item := range items {
@@ -242,6 +223,70 @@ func clipError(message string) string {
 		return message[:1024]
 	}
 	return message
+}
+
+func transcriptFromEvents(events []db.SessionEvent) (string, string) {
+	var answers []string
+	var steps []string
+	for _, event := range events {
+		text := eventText(event.Payload)
+		switch event.EventType {
+		case "agent.message":
+			if text != "" {
+				answers = append(answers, text)
+			}
+		case "agent.tool_use", "agent.tool_result":
+			if text != "" {
+				steps = append(steps, event.EventType+": "+text)
+			}
+		}
+	}
+	return clip(strings.Join(answers, "\n"), 8000), clip(strings.Join(steps, "\n"), 8000)
+}
+
+func clip(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit]
+}
+
+func terminalStatus(events []db.SessionEvent) (string, string, bool) {
+	failed := false
+	completed := false
+	for _, event := range events {
+		switch event.EventType {
+		case "session.status_terminated", "session.deleted":
+			failed = true
+		case "session.status_idle":
+			reason := stopReason(event.Payload)
+			if reason == "retries_exhausted" {
+				failed = true
+			}
+			if reason == "end_turn" {
+				completed = true
+			}
+		}
+	}
+	if failed {
+		return "failed", "Session terminated", true
+	}
+	if completed {
+		return "completed", "", true
+	}
+	return "", "", false
+}
+
+func stopReason(payload json.RawMessage) string {
+	var body struct {
+		StopReason *struct {
+			Type string `json:"type"`
+		} `json:"stop_reason"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil || body.StopReason == nil {
+		return ""
+	}
+	return body.StopReason.Type
 }
 
 func modelErrorMessage(err error) string {

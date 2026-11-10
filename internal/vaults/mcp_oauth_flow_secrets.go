@@ -1,6 +1,7 @@
 package vaults
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -173,7 +174,7 @@ func resolveMCPOAuthRefreshClientSecret(
 	}
 	mcpServerURL := ""
 	if auth != nil {
-		mcpServerURL = auth.MCPServerURL
+		mcpServerURL = cmp.Or(auth.OAuthServiceURL, auth.MCPServerURL)
 	}
 	return ResolveMCPOAuthTokenClientSecret(
 		mcpOAuthRefreshClientCredentialSource(auth, secret),

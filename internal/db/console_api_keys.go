@@ -53,6 +53,19 @@ func (d *DB) CreateConsoleAPIKeyWithRawKey(ctx context.Context, input platform.C
 }
 
 func (d *DB) createConsoleAPIKey(ctx context.Context, input platform.CreateConsoleAPIKeyInput, externalID, workspaceAPIKeyUUID, rawKey string) (platform.CreateConsoleAPIKeyResult, error) {
+	var key platform.ConsoleAPIKey
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		var err error
+		key, err = insertConsoleAPIKey(ctx, executor, input, externalID, workspaceAPIKeyUUID, rawKey)
+		return err
+	})
+	if err != nil {
+		return platform.CreateConsoleAPIKeyResult{}, err
+	}
+	return platform.CreateConsoleAPIKeyResult{APIKey: key, RawKey: rawKey}, nil
+}
+
+func insertConsoleAPIKey(ctx context.Context, executor yourbatis.Executor, input platform.CreateConsoleAPIKeyInput, externalID, workspaceAPIKeyUUID, rawKey string) (platform.ConsoleAPIKey, error) {
 	workspaceDisplayID := input.WorkspaceDisplayID
 	if workspaceDisplayID == "" {
 		workspaceDisplayID = input.WorkspaceUUID
@@ -67,53 +80,51 @@ func (d *DB) createConsoleAPIKey(ctx context.Context, input platform.CreateConso
 	}
 	keyHash := auth.HashAPIKey(rawKey)
 
-	var key platform.ConsoleAPIKey
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		consoleMapper := NewConsoleAPIKeyMapper(executor)
-		userMapper := NewConsoleUserMapper(executor)
-		adminMapper := NewAdminAPIKeyMapper(executor)
-		createdByUserUUID, resolveErr := findConsoleAPIKeyCreatorUUID(ctx, userMapper, input.OrgUUID, input.CreatedByUserUUID)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		row, insertErr := consoleMapper.Insert(ctx, insertConsoleAPIKeyQuery{
-			ExternalID:         externalID,
-			APIKeyUUID:         workspaceAPIKeyUUID,
-			OrganizationUUID:   input.OrgUUID,
-			WorkspaceUUID:      input.WorkspaceUUID,
-			WorkspaceDisplayID: workspaceDisplayID,
-			Name:               input.Name,
-			KeyPrefix:          keyPrefix,
-			KeySuffix:          keySuffix,
-			KeyHash:            keyHash,
-			CreatedByUserUUID:  createdByUserUUID,
-			ExpiresAt:          input.ExpiresAt,
-		})
-		if insertErr != nil {
-			return insertErr
-		}
-		if insertErr = adminMapper.Insert(ctx, insertAdminAPIKeyParams{
-			UUID:              workspaceAPIKeyUUID,
-			ExternalID:        externalID,
-			WorkspaceUUID:     input.WorkspaceUUID,
-			KeyHash:           keyHash,
-			CreatedByUserUUID: createdByUserUUID,
-			Name:              input.Name,
-			PartialKeyHint:    partialAPIKeyHint(rawKey),
-			ExpiresAt:         input.ExpiresAt,
-		}); insertErr != nil {
-			return insertErr
-		}
-		key = row.key()
-		return nil
-	})
-	if err != nil {
-		return platform.CreateConsoleAPIKeyResult{}, err
+	consoleMapper := NewConsoleAPIKeyMapper(executor)
+	userMapper := NewConsoleUserMapper(executor)
+	adminMapper := NewAdminAPIKeyMapper(executor)
+	createdByUserUUID, resolveErr := findConsoleAPIKeyCreatorUUID(ctx, userMapper, input.OrgUUID, input.CreatedByUserUUID)
+	if resolveErr != nil {
+		return platform.ConsoleAPIKey{}, resolveErr
 	}
-	return platform.CreateConsoleAPIKeyResult{
-		APIKey: key,
-		RawKey: rawKey,
-	}, nil
+	row, insertErr := consoleMapper.Insert(ctx, insertConsoleAPIKeyQuery{
+		ExternalID:         externalID,
+		APIKeyUUID:         workspaceAPIKeyUUID,
+		OrganizationUUID:   input.OrgUUID,
+		WorkspaceUUID:      input.WorkspaceUUID,
+		WorkspaceDisplayID: workspaceDisplayID,
+		Name:               input.Name,
+		KeyPrefix:          keyPrefix,
+		KeySuffix:          keySuffix,
+		KeyHash:            keyHash,
+		CreatedByUserUUID:  createdByUserUUID,
+		ExpiresAt:          input.ExpiresAt,
+	})
+	if insertErr != nil {
+		return platform.ConsoleAPIKey{}, insertErr
+	}
+	if insertErr = adminMapper.Insert(ctx, insertAdminAPIKeyParams{
+		UUID:              workspaceAPIKeyUUID,
+		ExternalID:        externalID,
+		WorkspaceUUID:     input.WorkspaceUUID,
+		KeyHash:           keyHash,
+		CreatedByUserUUID: createdByUserUUID,
+		Name:              input.Name,
+		PartialKeyHint:    partialAPIKeyHint(rawKey),
+		ExpiresAt:         input.ExpiresAt,
+	}); insertErr != nil {
+		return platform.ConsoleAPIKey{}, insertErr
+	}
+	if input.RuntimeUserUUID != "" {
+		rows, err := adminMapper.BindEmptyRuntimeUser(ctx, input.OrgUUID, input.WorkspaceUUID, externalID, input.RuntimeUserUUID)
+		if err != nil {
+			return platform.ConsoleAPIKey{}, err
+		}
+		if rows != 1 {
+			return platform.ConsoleAPIKey{}, ErrNotFound
+		}
+	}
+	return row.key(), nil
 }
 
 func (d *DB) UpdateConsoleAPIKeyStatus(ctx context.Context, input platform.UpdateConsoleAPIKeyStatusInput) (platform.ConsoleAPIKey, error) {
@@ -332,6 +343,8 @@ func (r consoleAPIKeyRow) key() platform.ConsoleAPIKey {
 		ArchivedAt:         r.ArchivedAt,
 		CreatedAt:          r.CreatedAt,
 		UpdatedAt:          r.UpdatedAt,
+		CreatedByName:      r.CreatedByName,
+		CreatedByEmail:     r.CreatedByEmail,
 	}
 }
 

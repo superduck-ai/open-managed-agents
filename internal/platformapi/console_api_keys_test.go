@@ -3,6 +3,8 @@ package platformapi
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,12 +17,16 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
 func TestListConsoleWorkspaceAPIKeysRejectsUnknownWorkspaceBeforeStoreQuery(t *testing.T) {
 	store := &consoleAPIKeyScopeStore{}
 	request := consoleWorkspaceAPIKeyTestRequest("workspace_missing")
 	recorder := httptest.NewRecorder()
 
-	handleListConsoleWorkspaceAPIKeys(store).ServeHTTP(recorder, request)
+	handleListConsoleWorkspaceAPIKeys(store, testLogger()).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
@@ -41,7 +47,7 @@ func TestListConsoleWorkspaceAPIKeysResolvesExternalIDOnceAtBoundary(t *testing.
 	request := consoleWorkspaceAPIKeyTestRequest("workspace_test")
 	recorder := httptest.NewRecorder()
 
-	handleListConsoleWorkspaceAPIKeys(store).ServeHTTP(recorder, request)
+	handleListConsoleWorkspaceAPIKeys(store, testLogger()).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -82,7 +88,7 @@ func TestCreateConsoleWorkspaceAPIKeyUsesPrincipalUserUUID(t *testing.T) {
 	})
 	recorder := httptest.NewRecorder()
 
-	handleCreateConsoleWorkspaceAPIKey(store).ServeHTTP(recorder, request.WithContext(requestContext))
+	handleCreateConsoleWorkspaceAPIKey(store, testLogger()).ServeHTTP(recorder, request.WithContext(requestContext))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -210,7 +216,7 @@ func consoleWorkspaceAPIKeyTestRequest(workspaceReference string) *http.Request 
 	routeContext.URLParams.Add("orgUuid", orgUUID)
 	routeContext.URLParams.Add("workspaceId", workspaceReference)
 	contextWithRoute := context.WithValue(request.Context(), chi.RouteCtxKey, routeContext)
-	contextWithPrincipal := auth.WithPrincipal(contextWithRoute, auth.Principal{OrganizationUUID: orgUUID})
+	contextWithPrincipal := auth.WithPrincipal(contextWithRoute, auth.Principal{OrganizationUUID: orgUUID, UserExternalID: "actor"})
 	return request.WithContext(contextWithPrincipal)
 }
 
@@ -386,5 +392,45 @@ func TestArchiveConsoleWorkspaceRejectsDefaultWorkspace(t *testing.T) {
 	}
 	if store.archiveCalls != 1 {
 		t.Fatalf("archive calls = %d, want 1", store.archiveCalls)
+	}
+}
+
+func TestPlatformAPIKeyCreatorRejectsMissingResolver(t *testing.T) {
+	request := consoleWorkspaceAPIKeyTestRequest("workspace_test")
+	request.Method = http.MethodPost
+	request.Body = io.NopCloser(strings.NewReader(`{"name":"platform key"}`))
+	principal := auth.Principal{AccountUUID: "account", OrganizationUUID: "00000000-0000-4000-8000-000000000002", CredentialType: auth.CredentialTypePlatformSession, OrganizationAccessSource: auth.OrganizationAccessPlatformAdmin, WorkspaceAccess: auth.WorkspaceAccess{OrganizationRole: "admin", Role: "workspace_admin", Source: "platform_admin"}}
+	store := &consoleAPIKeyScopeStore{workspaces: []ConsoleWorkspace{{UUID: "00000000-0000-4000-8000-000000000001", ExternalID: "workspace_test"}}}
+	response := httptest.NewRecorder()
+	handleCreateConsoleWorkspaceAPIKey(store, testLogger()).ServeHTTP(response, request.WithContext(auth.WithPrincipal(request.Context(), principal)))
+	if response.Code != http.StatusInternalServerError || store.createInput != nil {
+		t.Fatalf("status=%d creator=%+v", response.Code, store.createInput)
+	}
+}
+
+func TestFormatConsoleAPIKeyIncludesCreatorProfile(t *testing.T) {
+	creatorUUID := "00000000-0000-4000-8000-000000000003"
+	key := ConsoleAPIKey{
+		CreatedByUserUUID: &creatorUUID,
+		CreatedByName:     "Real Creator",
+		CreatedByEmail:    "creator@example.com",
+	}
+	createdBy, ok := formatConsoleAPIKey(key)["created_by"].(map[string]any)
+	if !ok || createdBy["id"] != creatorUUID || createdBy["name"] != "Real Creator" || createdBy["email"] != "creator@example.com" {
+		t.Fatalf("created_by = %#v", createdBy)
+	}
+}
+
+func TestFormatConsoleAPIKeyOmitsMissingCreatorProfile(t *testing.T) {
+	creatorUUID := "00000000-0000-4000-8000-000000000003"
+	createdBy, ok := formatConsoleAPIKey(ConsoleAPIKey{CreatedByUserUUID: &creatorUUID})["created_by"].(map[string]any)
+	if !ok || createdBy["id"] != creatorUUID {
+		t.Fatalf("created_by = %#v", createdBy)
+	}
+	if _, exists := createdBy["name"]; exists {
+		t.Fatalf("created_by unexpectedly contains name: %#v", createdBy)
+	}
+	if _, exists := createdBy["email"]; exists {
+		t.Fatalf("created_by unexpectedly contains email: %#v", createdBy)
 	}
 }

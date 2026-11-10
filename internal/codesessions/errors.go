@@ -193,3 +193,14 @@ func workerIngressAuthorizationFailure(cause error) error {
 	}
 	return internalError("Could not authorize code session worker", cause)
 }
+
+var errRuntimeSkillsUnavailable = errors.New("session skill reader is unavailable")
+var errRuntimeSkillFrontmatter = errors.New("unterminated skill frontmatter")
+var errRuntimeSkillDirectory = errors.New("fixed skill directory is unavailable")
+
+func runtimeSkillsFailure(cause error) error {
+	if errors.Is(cause, db.ErrNotFound) {
+		return codeSessionNotFound(cause)
+	}
+	return internalError("Could not load session skills", cause)
+}

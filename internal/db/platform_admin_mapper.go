@@ -17,6 +17,7 @@ type PlatformAdminGrant struct {
 }
 
 type PlatformAdminPageQuery struct {
+	Role             string
 	Query            string
 	After            string
 	Limit            int

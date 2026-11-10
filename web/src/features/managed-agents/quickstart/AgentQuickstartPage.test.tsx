@@ -20,6 +20,47 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
+test.each(['chat', 'api'])('missing models route %s quickstart to workspace setup with a return path', async (mode) => {
+  resetTestDom(`https://oma.duck.ai/workspaces/default/agent-quickstart?mode=${mode}`);
+  mockAgentsApi([]);
+  const baseFetch = globalThis.fetch;
+  globalThis.fetch = (async (input, init) =>
+    String(input).includes('/v1/models')
+      ? jsonResponse({ data: [], has_more: false })
+      : baseFetch(input, init)) as typeof fetch;
+  const assign = spyOn(window.location, 'assign').mockImplementation(() => undefined);
+  try {
+    renderManagedAgentsPage('quickstart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Configure models' }));
+    expect(assign).toHaveBeenCalledWith(
+      `/workspaces/default/llm-models?returnTo=${encodeURIComponent(`/workspaces/default/agent-quickstart?mode=${mode}`)}`,
+    );
+    expect(screen.queryByRole('heading', { name: 'What would you like to build?' })).toBeNull();
+  } finally {
+    assign.mockRestore();
+  }
+});
+
+test('client navigation restores manual configuration and the existing online test Session', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
+  const api = mockAgentsApi([]);
+  const runtime = installSessionRuntime();
+  const { queryClient } = renderManagedAgentsPage('quickstart');
+  await startAgentConfiguration();
+  fireEvent.click(screen.getByRole('button', { name: 'Create and continue' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use existing and continue' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send', exact: true }));
+  await waitFor(() => expect(runtime.sent).toHaveLength(1));
+  await act(async () => runtime.reply('Reply before navigation'));
+  await screen.findByText('Reply before navigation');
+  const creates = api.requests.filter((request) => request.method === 'POST').length;
+  cleanup();
+  renderManagedAgentsPage('quickstart', 'en', { queryClient });
+  expect(await screen.findByRole('heading', { name: 'Run your first conversation' })).toBeTruthy();
+  expect(await screen.findByText('Reply before navigation')).toBeTruthy();
+  expect(api.requests.filter((request) => request.method === 'POST')).toHaveLength(creates);
+});
+
 test('refresh resets progress and the test conversation while keeping saved resources reusable', async () => {
   resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api');
   const api = mockAgentsApi([]);

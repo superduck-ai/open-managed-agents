@@ -1,3 +1,4 @@
+import { productIcons } from '@/shared/icons/product-icons';
 import { useDialogDismissal } from '../../shared/hooks/use-dialog-dismissal';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -16,7 +17,6 @@ import {
   Power,
   Trash2,
 } from 'lucide-react';
-import { useAuth } from '../../shared/auth/context';
 import { Alert, AlertDescription } from '../../shared/ui/alert';
 import { Badge } from '../../shared/ui/badge';
 import { Button } from '../../shared/ui/button';
@@ -88,7 +88,6 @@ export function WorkspaceApiKeysPage() {
 }
 
 export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysContentProps) {
-  const { account } = useAuth();
   const { msg } = useI18n();
   const queryClient = useQueryClient();
   const { orgUuid, workspaces, activeWorkspace, activeWorkspaceId, selectWorkspace } = useWorkspace();
@@ -159,7 +158,6 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
   });
 
   const keys = useMemo(() => (keysQuery.data ?? []).filter((apiKey) => !isArchivedKey(apiKey)), [keysQuery.data]);
-  const identity = displayIdentity(account);
   const errorMessage = readableError(keysQuery.error);
   const showRows = !keysQuery.isLoading && !errorMessage && keys.length > 0;
   const workspaceName = localizedWorkspaceName(workspace.name, msg);
@@ -258,7 +256,6 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
                 <ApiKeyRow
                   key={apiKey.id}
                   apiKey={apiKey}
-                  identity={identity}
                   onAction={(action) => setPendingAction({ action, apiKey })}
                 />
               ))
@@ -267,7 +264,7 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
         </Table>
 
         {!keysQuery.isLoading && !errorMessage && keys.length === 0 ? (
-          <ResourceListState icon={KeyRound} title={msg('apiKeys.emptyTitle', 'No API keys yet')} />
+          <ResourceListState icon={productIcons.keys} title={msg('apiKeys.emptyTitle', 'No API keys yet')} />
         ) : null}
 
         {createOpen ? (
@@ -295,20 +292,12 @@ export function WorkspaceApiKeysContent({ routeWorkspaceId }: WorkspaceApiKeysCo
   );
 }
 
-function ApiKeyRow({
-  apiKey,
-  identity,
-  onAction,
-}: {
-  apiKey: WorkspaceApiKey;
-  identity: Identity;
-  onAction: (action: KeyAction) => void;
-}) {
+function ApiKeyRow({ apiKey, onAction }: { apiKey: WorkspaceApiKey; onAction: (action: KeyAction) => void }) {
   const { msg } = useI18n();
   const { date } = useFormatters();
   const status = normalizeKeyStatus(apiKey);
   const inactive = status === 'inactive';
-  const creator = displayCreator(apiKey, identity);
+  const creator = displayCreator(apiKey, msg('common.unknown', 'Unknown'));
 
   return (
     <TableRow
@@ -725,20 +714,11 @@ function formatDate(
   });
 }
 
-function displayIdentity(account: { email_address?: string; display_name?: string; full_name?: string } | null) {
-  const email = account?.email_address ?? 'test@openmanagedagent.local';
-  return {
-    email,
-    name: account?.display_name ?? account?.full_name ?? email.split('@')[0] ?? 'test',
-  };
-}
-
-function displayCreator(apiKey: WorkspaceApiKey, fallback: Identity) {
+function displayCreator(apiKey: WorkspaceApiKey, unknown: string): Identity {
   const createdBy = apiKey.created_by;
-  const email = createdBy?.email ?? fallback.email;
   return {
-    email,
-    name: createdBy?.name ?? email.split('@')[0] ?? fallback.name,
+    name: createdBy?.name || createdBy?.email || unknown,
+    email: createdBy?.email ?? '',
   };
 }
 

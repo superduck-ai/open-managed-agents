@@ -1,3 +1,4 @@
+import { subagentScripts } from "./subagent-tools.ts";
 import { nativeOutcomes, completedInputs } from "./session-log.ts";
 import { modelSystemText } from "./backend.ts";
 import { afterEach, expect, test } from "bun:test";
@@ -30,8 +31,8 @@ async function fixture(b = new Backend()) {
 export function parallelDelegations(names = ["alpha", "beta"]): Payload[] {
   const calls = names.flatMap((name, index) => toolEvents("", `delegate_${name}`).slice(1, 4).map((event) => ({
     ...event, index,
-    ...(event.type === "content_block_start" ? { content_block: { ...event.content_block, name: "send_to_agent" } } : {}),
-    ...(event.type === "content_block_delta" ? { delta: { type: "input_json_delta", partial_json: JSON.stringify({ name, system_prompt: `${name} specialist`, message: `Task for ${name}` }) } } : {}),
+    ...(event.type === "content_block_start" ? { content_block: { ...event.content_block, name: "subagent" } } : {}),
+    ...(event.type === "content_block_delta" ? { delta: { type: "input_json_delta", partial_json: JSON.stringify({ description: name, prompt: `Task for ${name}` }) } } : {}),
   })));
   return [toolEvents()[0]!, ...calls, ...toolEvents().slice(4)];
 }
@@ -58,15 +59,16 @@ for (const policy of ["ask", "deny"] as const) {
     const backend = new Backend();
     backend.a.launch.tool_permissions = { bash: "allow" };
     const f = await fixture(backend);
-    f.b.modelScript = [parallelDelegations(["alpha"]), toolEvents("echo first"), textEvents("child done"), textEvents("parent done")];
+    subagentScripts(f.b, [parallelDelegations(["alpha"]), textEvents("parent done")], [toolEvents("echo first"), textEvents("child done")]);
     await f.session.receive("first-turn", { content: "Delegate first" });
     expect(f.b.executions).toHaveLength(1);
     const threadId = f.session.subagents.threads![0]!.id;
     f.b.a.launch.tool_permissions = { bash: policy };
     const followup = parallelDelegations(["alpha"]);
     const delta = followup.find((event) => event.type === "content_block_delta")!;
-    delta.delta.partial_json = JSON.stringify({ thread_id: threadId, message: "Run second" });
-    f.b.modelScript = [followup, toolEvents("echo second"), textEvents("child done"), textEvents("parent done")];
+    followup.find(event => event.type === "content_block_start")!.content_block.name = "send_message";
+    delta.delta.partial_json = JSON.stringify({ agent_id: threadId, message: "Run second" });
+    subagentScripts(f.b, [followup, textEvents("parent done")], [toolEvents("echo second"), textEvents("child done")]);
     const approvals: Payload[] = [];
     f.b.onApproval = async (request) => { approvals.push(request); };
     const turn = f.session.receive("second-turn", { content: "Follow up" });
@@ -172,21 +174,6 @@ test.each(["user.interrupt", "control_request"])("%s targeted interruption cance
   } finally { f.session.stop(); await settled; }
 });
 
-test("a retained thread rejects simultaneous follow-ups before creating a second turn", async () => {
-  const f = await fixture();
-  const response = Promise.withResolvers<void>();
-  f.b.onModel = async () => { await response.promise; return textEvents("report"); };
-  const first = f.session.subagents.send({ name: "alpha", system_prompt: "test", message: "first" }, new AbortController().signal);
-  const settled = first.catch(() => {});
-  try {
-    await eventually(() => f.b.requests.length === 1);
-    const id = f.session.subagents.threads![0]!.id;
-    await expect(f.session.subagents.send({ thread_id: id, message: "second" }, new AbortController().signal)).rejects.toThrow("running");
-    expect(f.b.requests).toHaveLength(1);
-    response.resolve(); await first;
-  } finally { response.resolve(); f.session.stop(); await settled; }
-});
-
 test("an unknown child outcome stays in the native log while a sibling can finish", async () => {
   const f = await fixture();
   scriptedChildren(f.b);
@@ -210,7 +197,7 @@ test("an unknown child outcome stays in the native log while a sibling can finis
     await decide(f.session, requests.find((request) => request.session_thread_id !== alpha.id)!, false);
     await turn;
     expect(f.session.abort.signal.aborted).toBe(false);
-    expect(nativeOutcomes(f.session, alpha.id).same_call_id?.text).toContain("Do not retry blindly");
+    expect((await nativeOutcomes(f.session, alpha.id)).same_call_id?.text).toContain("Do not retry blindly");
     expect(f.session.approvals.size).toBe(0);
     expect(f.session.abort.signal.aborted).toBe(false);
     expect(f.b.requests.length).toBeGreaterThanOrEqual(5);

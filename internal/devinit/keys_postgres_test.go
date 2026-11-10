@@ -141,6 +141,39 @@ func TestAPIKeyRecoveryPostgreSQL(t *testing.T) {
 	if err != nil || len(keys) != 4 {
 		t.Fatalf("expected exactly four keys, got %d: %v", len(keys), err)
 	}
+	t.Run("missing organization registration reuses existing identity", func(t *testing.T) {
+		prepared := preparedRun{spec: spec, state: state, credentials: credentials, layout: layout}
+		prepared.layout.SecretsDir = filepath.Join(dir, "secrets")
+		prepared.state.Organization = &OrganizationState{UUID: uuid.NewV4().String(), Name: spec.OrganizationName}
+		staleUUID := prepared.state.Organization.UUID
+		if err := recoverMissingOrganization(t.Context(), database, &prepared, Options{}); err != nil {
+			t.Fatal(err)
+		}
+		if prepared.state.Organization.UUID != staleUUID {
+			t.Fatal("recovered without --update")
+		}
+		if err := recoverMissingOrganization(t.Context(), database, &prepared, Options{Update: true}); err != nil {
+			t.Fatal(err)
+		}
+		if prepared.state.Organization.UUID != state.Organization.UUID || prepared.state.User.UUID != state.User.UUID {
+			t.Fatal("created duplicate organization or user")
+		}
+		for i, workspace := range prepared.state.Workspaces {
+			if workspace.UUID != state.Workspaces[i].UUID {
+				t.Fatal("created duplicate workspace")
+			}
+		}
+		for range 2 {
+			if err := reconcileIdentity(t.Context(), database, spec, &prepared.state, Options{Update: true}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		organizations, err := database.ListBootstrapOrganizationsByEmail(t.Context(), spec.UserEmail)
+		if err != nil || len(organizations) != 1 {
+			t.Fatalf("duplicate organizations: %d %v", len(organizations), err)
+		}
+	})
+
 }
 
 func testLegacyEnvironmentTemplateUpdate(t *testing.T, database *db.DB, workspace WorkspaceState) {

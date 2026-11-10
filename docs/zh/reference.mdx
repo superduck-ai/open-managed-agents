@@ -7,7 +7,7 @@ description: "Open Managed Agents 的事件类型、自托管 worker CLI 标志�
 本页面汇集了 Open Managed Agents 的参考资料。如需面向任务的指南，请点击各部分中的链接。有关会话资源的操作，请参阅[会话操作](/docs/zh/session-operations)。
 
 <Note>
-  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+  各资源的 Beta 要求不同，请参阅[版本与 Beta 功能](/docs/zh/api/versioning-beta)，并确认 SDK 向 OMA 发送了所需参数。
 </Note>
 
 ## 事件类型
@@ -22,7 +22,6 @@ description: "Open Managed Agents 的事件类型、自托管 worker CLI 标志�
     | `user.interrupt`          | 在执行过程中停止智能体。                                                                                                                                                  |
     | `user.custom_tool_result` | 对智能体发起的自定义工具调用的响应。                                                                                                                                            |
     | `user.tool_confirmation`  | 当权限策略要求确认时，批准或拒绝智能体或 MCP 工具调用。                                                                                                                                |
-    | `user.define_outcome`     | 定义一个[结果](/docs/zh/define-outcomes)，供智能体努力达成。                                                                     |
     | `user.tool_result`        | 仅适用于使用 `self_hosted` [环境](/docs/zh/self-hosted-sandboxes)的会话，您的集成负责提供 `agent_toolset` 结果。SDK 辅助工具和 CLI 会自动执行此操作。 |
   </Tab>
 
@@ -68,15 +67,12 @@ description: "Open Managed Agents 的事件类型、自托管 worker CLI 标志�
     | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
     | `span.model_request_start`        | 模型推理调用已开始。                                                                                                                                                                              |
     | `span.model_request_end`          | 模型推理调用已完成。包含带有令牌计数的 `model_usage`。                                                                                                                                                      |
-    | `span.outcome_evaluation_start`   | [结果](/docs/zh/define-outcomes)评估已开始。                                                                                                       |
-    | `span.outcome_evaluation_ongoing` | 正在进行的[结果](/docs/zh/define-outcomes)评估期间的心跳信号。                                                                                              |
-    | `span.outcome_evaluation_end`     | 一个[结果](/docs/zh/define-outcomes)评估周期已完成。`needs_revision` 结果表示将进行另一个周期；`satisfied`、`max_iterations_reached`、`failed` 和 `interrupted` 为终止状态。 |
   </Tab>
 
   <Tab title="系统事件">
     | 类型               | 描述                                                                                                                                                                      |
     | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-    | `system.message` | 追加特权系统级上下文，该上下文适用于随附的轮次及所有后续轮次。支持 `claude-opus-4-8`、`claude-fable-5`、`claude-mythos-5` 和 `claude-opus-5`；在不支持的主模型上，该事件将被拒绝并返回 `model_does_not_support_mid_conversation_system`。 |
+    | `system.message` | 提供系统级上下文。是否生效取决于运行器及模型提供商。 |
   </Tab>
 
   <Tab title="事件增量">
@@ -91,7 +87,7 @@ description: "Open Managed Agents 的事件类型、自托管 worker CLI 标志�
 
 ## 自托管工作器
 
-以下是用于驱动 `self_hosted` 环境的预构建工作器的 `ant beta:worker` CLI 标志。有关设置环境、运行工作器和 SDK 辅助工具选项的信息，请参阅[自托管沙箱](/docs/zh/self-hosted-sandboxes)。
+以下是第三方 `ant beta:worker` CLI 的参考标志。其与当前 OMA 部署的兼容性需要验证。有关设置环境、运行工作器和 SDK 辅助工具选项的信息，请参阅[自托管沙箱](/docs/zh/self-hosted-sandboxes)。
 
 | 标志                     | 描述                                                                                                                   |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -105,17 +101,10 @@ description: "Open Managed Agents 的事件类型、自托管 worker CLI 标志�
 
 ## 支持的 MCP 服务器类型
 
-Open Managed Agents 可连接到暴露 HTTP 端点的[远程 MCP 服务器](/docs/zh/mcp-connector)，或通过 [MCP 隧道](/docs/zh/mcp-connector)连接到私有 MCP 服务器。服务器应支持 MCP 协议的可流式 HTTP 传输；仅支持已弃用的 SSE 传输的服务器仍可通过自动回退机制正常工作。有关在智能体上声明服务器的信息，请参阅 [MCP 连接器](/docs/zh/mcp-connector)。
+Open Managed Agents 可连接到暴露 HTTP 端点的[远程 MCP 服务器](/docs/zh/mcp-connector)，或通过 [MCP 隧道](/docs/zh/mcp-connector)连接到私有 MCP 服务器。服务器应支持 MCP 协议的可流式 HTTP 传输；部分 HTTP 连接失败会尝试回退到旧版 SSE，具体兼容性取决于服务端与运行器。有关在智能体上声明服务器的信息，请参阅 [MCP 连接器](/docs/zh/mcp-connector)。
 
 有关 MCP 和构建 MCP 服务器的更多信息，请参阅 [MCP 文档](https://modelcontextprotocol.io)。
 
 ## 速率限制
 
-托管智能体端点按组织进行速率限制：
-
-| 操作                 | 限制            |
-| ------------------ | ------------- |
-| 创建端点（例如智能体、会话和环境）  | 每分钟 300 个请求   |
-| 读取端点（例如检索、列出和流式传输） | 每分钟 1,200 个请求 |
-
-组织级别的[支出限制和用量层级速率限制](/docs/zh/reference#rate-limits)同样适用。
+具体速率与配额取决于部署配置、网关和模型提供商，请向部署管理员确认。

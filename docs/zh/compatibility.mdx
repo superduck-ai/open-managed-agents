@@ -16,10 +16,9 @@ OMA 是开源、自托管的智能体控制面。它为兼容 SDK 提供稳定�
 | Tools、MCP、技能 | 支持 | 远程 URL MCP、内置/自定义工具、版本化 Skill 包 |
 | 密钥库 | 支持 | MCP OAuth、静态 Bearer 和环境变量凭证 |
 | Multi-agent | 支持 | coordinator + 最多 20 个固定版本智能体引用 |
-| Outcomes | 部分支持 | 可以定义结果并读取评估事件；实现仍在演进 |
 | Scheduled deployments | 支持 | POSIX 5 字段 cron + IANA 时区 + 手动运行 |
 | Webhooks | 支持 | 支持的会话/线程/密钥库事件子集 |
-| 会话 cost budgets | 未实现 | 当前通过上游限额、运行时超时和队列并发控制成本 |
+| 会话 cost budgets | 支持 | 根据配置的模型价格和用量计量；进行中的请求可能超出上限 |
 
 ## SDK 兼容原则
 

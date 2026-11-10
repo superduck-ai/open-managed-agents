@@ -901,3 +901,7 @@ MCP 工具集默认为 `always_ask`。这可确保添加到 MCP 服务器的新�
     发送事件、流式传输响应，并在执行过程中中断或重定向您的会话。
   </Card>
 </CardGroup>
+
+Agent 内置工具配置规范化后，每个 `configs` 条目均保存与 `name` 一致的 `type` 判别字段，包括自动补入的禁用 `ask_user_question`。该字段用于正式 SDK 响应联合类型，不改变 `enabled` 或权限策略。
+
+公开内置/MCP 调用由固定 `always_ask` 策略暂停时，事件同时给出 `evaluated_permission: "ask"` 与 `evaluation.type: "always_ask"`。`auto` 的不确定 ask 保留其 `auto` 评估，未启用或未知工具的 deny 不伪造策略评估。

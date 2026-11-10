@@ -183,13 +183,21 @@ http.SetCookie(w, &http.Cookie{
 
 ### 4.2 与 API key 解耦的运行身份
 
-Session 创建时从已鉴权 principal 获取 `UserUUID`，保存到 session metadata 的服务端保留键 `_oma_runtime_user_uuid`。这不是资源所有者，不参与 workspace 操作授权。DB 模型单独提供 `RuntimeUserUUID`；所有 session/deployment 查询与 RETURNING 都剔除公开 metadata 中的保留键，更新和清空 metadata 时保留原运行身份，客户端不能指定、替换或删除它。可修改的 environment work metadata 不用于身份判断。
+平台管理员创建工作区 API key 时，资源创建者与运行账号分开保存。服务端按稳定账号邮箱查询目标组织的有效成员；有真实成员才写入 `created_by_user_uuid`，没有成员时保持 NULL，不创建成员或借用其他管理员。迁移 `00116_api_key_runtime_identity.sql` 新增可空的 `api_keys.runtime_user_uuid`；新建控制台及渠道 key 在创建事务中绑定已认证 principal 的稳定运行账号，验证账号未删除、目标组织和工作区有效，失败时整笔创建回滚。客户端不能指定运行账号。历史 key 不回填、不提供补绑入口；原来已有真实创建者的 key 保留既有兼容路径。
 
-Deployment 同样保存创建请求的运行身份，定时触发时传给新 session；手动触发则使用当前调用人的身份。异步工作和服务重启后均从持久化 session 读取，不依赖 cookie 或 key 的存在。Filestore token 签发与 code-session 的 Git email 优先读取这一身份；仅缺少运行身份的旧/API-key session 才兼容通过真实创建 key 查用户。运行身份已存在但用户失效时不得改用其他用户，Filestore 拒绝签发。
+API key 认证将运行账号放入 principal 的 `AccountUUID`，不设置组织成员、平台来源或管理员角色。`RuntimeUserUUID()` 对 API key 使用这个账号；普通成员使用 `UserUUID`，平台会话使用稳定 `AccountUUID`。运行账号只服务 Session、Deployment、Filestore 和 Git 邮箱等运行协议，不能赋予 API key 平台或组织管理能力。
+
+Session 创建时通过已鉴权 principal 的 RuntimeUserUUID 映射获取运行身份：普通成员取 `UserUUID`，平台来源及 API key 取稳定 `AccountUUID`，保存到 session metadata 的服务端保留键 `_oma_runtime_user_uuid`。这不是资源所有者，不参与 workspace 操作授权。DB 模型单独提供 `RuntimeUserUUID`；所有 session/deployment 查询与 RETURNING 都剔除公开 metadata 中的保留键，更新和清空 metadata 时保留原运行身份，客户端不能指定、替换或删除它。可修改的 environment work metadata 不用于身份判断。
+
+Deployment 同样保存创建请求的运行身份，定时触发时传给新 session；手动触发则使用当前调用人的身份。异步工作和服务重启后均从持久化 session 读取，不依赖 cookie 或 key 的存在。Filestore token 签发与 code-session 的 Git email 优先读取这一身份；仅缺少运行身份的 session 才兼容读取创建 key 的运行账号，再回退真实同组织创建者。运行身份已存在但用户失效时不得改用其他用户，Filestore 拒绝签发。
 
 ```mermaid
 flowchart LR
-    P[平台 session 鉴权] --> U[principal.UserUUID]
+    P[平台 session 鉴权] --> A{请求访问来源}
+    A -->|普通成员| U[principal.UserUUID]
+    A -->|平台管理员| V[principal.AccountUUID]
+    V --> S
+    V --> D
     U --> S[Session 服务端运行身份]
     U --> D[Deployment 服务端运行身份]
     D -->|定时触发| S
@@ -224,6 +232,8 @@ flowchart LR
 - `success session cookie works on any host` — session cookie 在 API host 上也返回 200（旧语义下预期 401）
 
 `tests/platform_email_login_api_test.go` — 验证受保护路由不会恢复 session store 中不存在的 cookie，并由 `TestPlatformWorkspaceHeaderScopesV1Resources` 验证普通用户在没有 workspace membership 时被拒绝；获得 membership 后，agent、environment 和 session 请求均落在目标 workspace，创建出的 session 即使该 workspace 已有 key，也只保存登录用户的运行身份，创建 API-key 列为 NULL。
+
+`tests/platform_admin_resource_runtime_test.go` 使用隔离 PostgreSQL，覆盖目标组织没有成员的平台管理员通过平台会话、新 API key、新渠道凭据创建和使用资源、手动及定时 Deployment、Filestore 签发及 HTTP 回查、Git 邮箱与权限隔离。工作台创建者使用稳定账号，前端不以当前查看者补填未知创建者。测试使用内存对象存储和测试凭据，不代替云沙箱 Worker/FUSE 验收。
 
 `tests/platform_workspace_api_keys_test.go` — 使用与前端一致的 workspace header 覆盖无 key 时的权限拒绝、控制台读取和首个 key 创建、最后一个 key 停用／归档后的恢复、过期 key 的替换，以及所有 key 停用后的重新登录。资源读写均不要求 key，且不能借用默认 workspace 的 key。`tests/platform_keyless_runtime_test.go` 覆盖 12 张资源表的 NULL 创建者、客户端篡改/清空 metadata、跨 workspace 拒绝、Filestore JWT 签发、运行用户失效、code-session email 和 deployment 手动运行身份。Mapper 绑定与真实 PostgreSQL 测试共同验证 nullable 扫描和 JSON UUID 转换。`internal/db/keyless_migration_postgres_test.go` 验证升级清除旧保留键、保留真实 key、12 个可空列，以及回滚遇到 NULL 时不丢数据；使用独立测试库运行 `TEST_MIGRATION_DATABASE_URL=... go test ./internal/db -run TestKeylessResourceCreatorsMigration -count=1`。
 
@@ -261,8 +271,16 @@ flowchart LR
 
 ## #339 当前权限边界
 
-平台用户每次请求通过 `workspaceaccess.Service` 读取有效组织成员和工作区事实。Default 依据 `is_default` 解析，完全忽略历史成员；普通空间按组织管理员继承与显式成员计算。结果仅放在本次 Principal，session 不保存权限快照。
+普通成员来源每次请求通过 `workspaceaccess.Service` 读取有效组织成员和工作区事实；可信平台来源使用 ResolvePrincipal 跳过操作者成员查询，仍读取目标工作区事实。Default 依据 `is_default` 解析，完全忽略历史成员；普通空间按组织管理员继承与显式成员计算。结果仅放在本次 Principal，session 不保存权限快照。
 
 Workspace API Key 不依赖创建者的当前组织身份，不能取得组织管理权限。当前没有独立 Admin Key 类型，组织管理接口要求有效 Org Admin 用户权限，工作区成员接口也允许目标空间的 Workspace Admin；旧版 Workspace Key 能调用组织管理接口的行为不再保留。专用 service 凭据保留原用途约束，所有凭据都检查目标空间未归档。 Admin API 更新工作区、列出成员和读取单个成员时，还必须检查路径指定的目标空间；即使组织管理员持有另一个有效空间的会话，已归档目标也统一返回 `403`，不得修改其名称、标签或数据驻留配置。`tests/workspace_authorization_test.go` 通过真实 PostgreSQL 覆盖 UUID 与外部 ID 两种路径及有效空间对照。
 
 范围、基线兼容与测试合同见 [组织与工作区通用权限](./workspace-permissions.md)。
+
+## 平台管理员目标组织访问（2026-10-28）
+
+仅可信平台登录会话的显式 X-Organization-UUID 激活实时 platform_admins 授权分支；API Key、OAuth、Worker 维持原凭据边界。query 单独选择仍限成员范围，头/query 冲突拒绝；依赖故障 503。平台会话写入统一校验 CSRF。授权快照只作用于当前请求，不增加事务平台授权锁。
+
+完整权限及进入/退出合同见 [平台超级管理员设计](../platform-super-admin.md)。
+
+平台运行身份沿用隐藏 RuntimeUserUUID 保存稳定 AccountUUID。Filestore 签发与 Code Session 邮箱映射按已保存 UUID 读取有效用户，不再要求它是目标组织成员；没有隐藏运行身份时读取创建 Key 的独立运行账号，只有旧创建者回退保留同组织条件。Filestore 每次 token 回查允许原目标成员，或与该 filesystem 所属 Session 保存的运行用户（包含新 Key 的兼容运行账号）一致的账号；仍保留用户删除、组织/工作区/filesystem/Session 生命周期和当前安全策略校验，不接受其他跨组织账号。没有新增持久化来源标记或长期 Console 授权。

@@ -10,7 +10,7 @@ import (
 
 func TestLLMProviderPresetsRejectModelWrites(t *testing.T) {
 	router := chi.NewRouter()
-	registerConsoleLLMProviderPresets(router, nil, "")
+	registerConsoleLLMProviderPresets(router, "")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/llm_provider_presets/deepseek/models", nil))
 	if response.Code != http.StatusNotFound {

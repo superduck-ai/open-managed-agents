@@ -13,7 +13,12 @@ const (
 	nameRequiredMessage           = "name is required"
 	nameTooLongMessage            = "name must be at most 255 characters"
 	descriptionTooLongMessage     = "desc must be at most 1024 characters"
-	queryRequiredMessage          = "query is required"
+	inputRequiredMessage          = "query or inputs is required"
+	inputInvalidMessage           = "inputs must be text, image, or document blocks"
+	inputTooLargeMessage          = "inputs must contain at most 32 blocks"
+	fileNotFoundMessage           = "input file was not found"
+	fileMediaMessage              = "input file media type is not supported"
+	caseFilesMessage              = "choose the named image and document files before importing"
 	queryTooLongMessage           = "query must be at most 16000 characters"
 	answerTooLongMessage          = "expected answer must be at most 16000 characters"
 	acceptanceTooLongMessage      = "acceptance must be at most 4000 characters"
@@ -26,11 +31,13 @@ const (
 	caseNotFoundMessage           = "Evaluation case not found"
 	datasetNotFoundMessage        = "Evaluation dataset not found"
 	rubricNotFoundMessage         = "Evaluation rubric not found"
-	taskNotFoundMessage           = "Evaluation task not found"
 	rubricRequiredMessage         = "rubric body is required"
 	rubricGenerateRequiredMessage = "provide a goal or a sample"
 	rubricTooLongMessage          = "rubric body must be at most 16000 characters"
+	rubricFormatMessage           = "generated rubric must be markdown"
+	modelTooLongMessage           = "model must be at most 255 characters"
 	passScoreInvalidMessage       = "pass_score must be between 0 and 100"
+	taskNotFoundMessage           = "Evaluation task not found"
 	casesRequiredMessage          = "dataset has no cases"
 	casesTooManyMessage           = "a task accepts at most 200 cases"
 	modeInvalidMessage            = "mode must be evaluate"
@@ -52,8 +59,11 @@ const (
 	archivedEnvironmentMessage    = "environment must not be archived"
 	resourcesInvalidMessage       = "resources must be a JSON array"
 	createFailedMessage           = "Could not save evaluation"
+	deleteFailedMessage           = "Could not delete evaluation"
 	loadFailedMessage             = "Could not load evaluation"
+	generateFailedMessage         = "Could not generate evaluation cases"
 	scoreFailedMessage            = "Could not score evaluation"
+	sessionEventsTooLargeMessage  = "session has too many events to import"
 )
 
 func invalidArgument(message string, cause error) error {
@@ -80,7 +90,7 @@ func internalFailure(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, fmt.Errorf("%s: %w", message, cause))
 }
 
-func mapStoreError(err error, notFoundMessage string) error {
+func mapStoreError(err error, notFoundMessage, failureMessage string) error {
 	switch {
 	case err == nil:
 		return nil
@@ -93,6 +103,6 @@ func mapStoreError(err error, notFoundMessage string) error {
 	case errors.Is(err, db.ErrInvalidState):
 		return invalidState(archivedAgentMessage, err)
 	default:
-		return internalFailure(createFailedMessage, err)
+		return internalFailure(failureMessage, err)
 	}
 }

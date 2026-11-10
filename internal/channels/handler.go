@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,21 +16,25 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/platform"
+	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 type agentStore interface {
 	GetAgent(context.Context, string, string) (db.Agent, error)
 	GetEnvironment(context.Context, string, string) (db.Environment, error)
+	EnsureChannelWorkspaceCredential(context.Context, platform.CreateConsoleAPIKeyInput, *secrets.Service) (string, error)
 }
 
 type handler struct {
 	store  agentStore
 	cfg    config.ChannelBridgeConfig
 	client *http.Client
+	cipher *secrets.Service
 }
 
-func NewHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger) http.Handler {
-	h := &handler{store: store, cfg: cfg, client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+func NewHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger, cipher *secrets.Service) http.Handler {
+	h := &handler{store: store, cfg: cfg, cipher: cipher, client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	r := chi.NewRouter()
 	wrap := httpapi.NewErrorAdapter(logger).Wrap
 	r.Get("/", wrap(h.forward))
@@ -77,6 +82,10 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
+	runtimeRequired, err := requiresRuntime(w, r, settings)
+	if err != nil {
+		return err
+	}
 	endpoint, err := h.endpoint(r, settings)
 	if err != nil {
 		return err
@@ -93,8 +102,11 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	if p.CredentialType == auth.CredentialTypeAPIKey {
 		upstream.Header.Set("X-OMA-Source", "api")
 	}
-	if r.Method == http.MethodPost && !settings && chi.URLParam(r, "pairing_id") == "" {
+	if runtimeRequired {
 		if err := h.requireEnvironment(upstream, p.WorkspaceUUID); err != nil {
+			return err
+		}
+		if err := h.syncWorkspaceCredentials(upstream, p); err != nil {
 			return err
 		}
 	}
@@ -104,7 +116,7 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 500 || response.StatusCode == 401 || response.StatusCode == 403 {
-		return unavailable(nil)
+		return unavailable(fmt.Errorf("桥接请求返回 HTTP %d", response.StatusCode))
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
@@ -118,11 +130,11 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *handler) endpoint(r *http.Request, settings bool) (*url.URL, error) {
-	endpoint, err := url.Parse(h.cfg.URL)
-	if err != nil || endpoint.Host == "" || endpoint.User != nil || h.cfg.Token == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
-		return nil, unavailable(err)
+	endpoint, err := h.baseEndpoint()
+	if err != nil {
+		return nil, err
 	}
-	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/api/managed-channels"
+
 	if settings {
 		endpoint.Path += "/settings"
 	} else if channelID := chi.URLParam(r, "channel_id"); channelID != "" {
@@ -137,6 +149,15 @@ func (h *handler) endpoint(r *http.Request, settings bool) (*url.URL, error) {
 			endpoint.Path += "/" + url.PathEscape(pairingID)
 		}
 	}
+	return endpoint, nil
+}
+
+func (h *handler) baseEndpoint() (*url.URL, error) {
+	endpoint, err := url.Parse(h.cfg.URL)
+	if err != nil || endpoint.Host == "" || endpoint.User != nil || h.cfg.Token == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+		return nil, unavailable(err)
+	}
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/api/managed-channels"
 	endpoint.RawQuery = ""
 	return endpoint, nil
 }

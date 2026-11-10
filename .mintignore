@@ -8,6 +8,7 @@ config/
 deploy/
 /docs/.DS_Store
 /docs/adr/
+/docs/audits/
 /docs/agents/
 /docs/configuration-reference.yaml
 /docs/design/

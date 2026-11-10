@@ -1,7 +1,7 @@
 import { afterEach, expect, mock, test } from 'bun:test';
 import { resetTestDom } from '../../test/setup';
 import { downloadApiFile } from './file-download';
-import { onApiAuthFailure, setConsoleRequestContext } from './client';
+import { cancelScopeRequests, onApiAuthFailure, setConsoleRequestContext } from './client';
 
 const originalFetch = globalThis.fetch;
 const originalCreateObjectURL = URL.createObjectURL;
@@ -61,4 +61,26 @@ test('downloads through the Files SDK with workspace scope and the original file
   expect(capturedInit?.credentials).toBe('include');
   expect(click).toHaveBeenCalledTimes(1);
   expect(document.querySelector('a')).toBeNull();
+});
+
+test('退出目标后旧 Blob 不触发下载', async () => {
+  resetTestDom('https://oma.duck.ai/');
+  setConsoleRequestContext({ organizationUuid: 'target', csrfToken: 'csrf' });
+  let complete!: (value: Blob) => void;
+  const blob = new Promise<Blob>((resolve) => {
+    complete = resolve;
+  });
+  globalThis.fetch = async () => {
+    const response = new Response('pending');
+    response.blob = () => blob;
+    return response;
+  };
+  const create = mock(() => 'blob:late');
+  URL.createObjectURL = create;
+  const download = downloadApiFile({ id: 'file_output', filename: 'output.csv' }, 'workspace');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  cancelScopeRequests();
+  complete(new Blob(['late']));
+  await expect(download).rejects.toBeTruthy();
+  expect(create).not.toHaveBeenCalled();
 });

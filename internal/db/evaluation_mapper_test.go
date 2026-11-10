@@ -9,6 +9,34 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+func TestEvaluationRubricVersionsListNewestFirst(t *testing.T) {
+	bound := buildEvaluationRubricMapperListRubricVersions(yourbatis.DialectPostgres, "org", "ws", "evalrb_test")
+	if evaluationRubricMapperListRubricVersionsStatement.ID != "EvaluationRubricMapper.ListRubricVersions" {
+		t.Fatalf("statement = %+v", evaluationRubricMapperListRubricVersionsStatement)
+	}
+	if strings.Contains(bound.SQL, "#{") || !strings.Contains(bound.SQL, "ORDER BY v.version DESC") {
+		t.Fatalf("SQL = %s", bound.SQL)
+	}
+	want := []any{"org", "ws", "evalrb_test"}
+	if !reflect.DeepEqual(bound.Values(), want) {
+		t.Fatalf("values = %#v", bound.Values())
+	}
+}
+
+func TestEvaluationCaseTraceBindsOneCase(t *testing.T) {
+	bound := buildEvaluationDatasetMapperFindCaseTrace(yourbatis.DialectPostgres, "org", "ws", "version", "evalcase_test")
+	if evaluationDatasetMapperFindCaseTraceStatement.ID != "EvaluationDatasetMapper.FindCaseTrace" {
+		t.Fatalf("statement = %+v", evaluationDatasetMapperFindCaseTraceStatement)
+	}
+	if strings.Contains(bound.SQL, "#{") || !strings.Contains(bound.SQL, "expected_tool_trace") || strings.Contains(bound.SQL, "query") {
+		t.Fatalf("SQL = %s", bound.SQL)
+	}
+	want := []any{"org", "ws", "version", "evalcase_test"}
+	if !reflect.DeepEqual(bound.Values(), want) {
+		t.Fatalf("values = %#v", bound.Values())
+	}
+}
+
 func TestEvaluationDatasetInsertBindsTenant(t *testing.T) {
 	now := time.Date(2026, 11, 3, 7, 0, 0, 0, time.UTC)
 	params := insertEvaluationDatasetParams{

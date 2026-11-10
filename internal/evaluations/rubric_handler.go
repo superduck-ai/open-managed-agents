@@ -2,10 +2,13 @@ package evaluations
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -15,6 +18,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+const (
+	caseGenerationSystemPrompt = "Reply with one JSON array and no other text. Each item must include query."
+	maxSessionEventPages       = 20
+)
+
+var errSessionTooLarge = errors.New("session events truncated")
 
 type rubricWriteRequest struct {
 	Name      string `json:"name"`
@@ -34,6 +44,7 @@ type generateCasesRequest struct {
 	Count   int    `json:"count"`
 	Note    string `json:"note"`
 	AgentID string `json:"agent_id"`
+	Version int    `json:"agent_version"`
 }
 
 type fromSessionRequest struct {
@@ -45,9 +56,15 @@ type fromSessionRequest struct {
 }
 
 type sessionTurnResponse struct {
-	Index  int    `json:"index"`
-	Query  string `json:"query"`
-	Answer string `json:"answer"`
+	Index  int             `json:"index"`
+	Query  string          `json:"query"`
+	Answer string          `json:"answer"`
+	Inputs json.RawMessage `json:"inputs"`
+}
+
+type sessionImportResponse struct {
+	Data    []caseResponse `json:"data"`
+	Skipped int            `json:"skipped"`
 }
 
 func (h *Handler) createRubric(w http.ResponseWriter, r *http.Request) error {
@@ -65,7 +82,7 @@ func (h *Handler) createRubric(w http.ResponseWriter, r *http.Request) error {
 	}
 	created, err := h.store.CreateEvaluationRubric(r.Context(), rubric)
 	if err != nil {
-		return mapStoreError(err, rubricNotFoundMessage)
+		return mapStoreError(err, rubricNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, rubricJSON(created))
 	return nil
@@ -92,6 +109,27 @@ func (h *Handler) listRubrics(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func (h *Handler) listRubricVersions(w http.ResponseWriter, r *http.Request) error {
+	principal, err := scopedPrincipal(r)
+	if err != nil {
+		return err
+	}
+	rubricID := chi.URLParam(r, "rubricId")
+	if _, err := h.store.GetEvaluationRubric(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, rubricID); err != nil {
+		return mapStoreError(err, rubricNotFoundMessage, loadFailedMessage)
+	}
+	rows, err := h.store.ListEvaluationRubricVersions(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, rubricID)
+	if err != nil {
+		return mapStoreError(err, rubricNotFoundMessage, loadFailedMessage)
+	}
+	data := make([]rubricVersionResponse, 0, len(rows))
+	for _, row := range rows {
+		data = append(data, rubricVersionJSON(row))
+	}
+	writePage(w, data, nil)
+	return nil
+}
+
 func (h *Handler) getRubric(w http.ResponseWriter, r *http.Request) error {
 	principal, err := scopedPrincipal(r)
 	if err != nil {
@@ -99,7 +137,7 @@ func (h *Handler) getRubric(w http.ResponseWriter, r *http.Request) error {
 	}
 	rubric, err := h.store.GetEvaluationRubric(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "rubricId"))
 	if err != nil {
-		return mapStoreError(err, rubricNotFoundMessage)
+		return mapStoreError(err, rubricNotFoundMessage, loadFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, rubricJSON(rubric))
 	return nil
@@ -112,7 +150,7 @@ func (h *Handler) deleteRubric(w http.ResponseWriter, r *http.Request) error {
 	}
 	rubricID := chi.URLParam(r, "rubricId")
 	if err := h.store.DeleteEvaluationRubric(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, rubricID, time.Now().UTC()); err != nil {
-		return mapStoreError(err, rubricNotFoundMessage)
+		return mapStoreError(err, rubricNotFoundMessage, deleteFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"id": rubricID, "type": "evaluation_rubric_deleted", "deleted": true})
 	return nil
@@ -133,7 +171,7 @@ func (h *Handler) appendRubricVersion(w http.ResponseWriter, r *http.Request) er
 	}
 	updated, err := h.store.AppendEvaluationRubricVersion(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "rubricId"), version, time.Now().UTC())
 	if err != nil {
-		return mapStoreError(err, rubricNotFoundMessage)
+		return mapStoreError(err, rubricNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, rubricJSON(updated))
 	return nil
@@ -156,14 +194,17 @@ func (h *Handler) generateRubric(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	body.Body = strings.TrimSpace(text)
+	body.Body, err = generatedRubricBody(text)
+	if err != nil {
+		return err
+	}
 	rubric, err := rubricFromRequest(principal, *body)
 	if err != nil {
 		return err
 	}
 	created, err := h.store.CreateEvaluationRubric(r.Context(), rubric)
 	if err != nil {
-		return mapStoreError(err, rubricNotFoundMessage)
+		return mapStoreError(err, rubricNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, rubricJSON(created))
 	return nil
@@ -183,21 +224,21 @@ func (h *Handler) generateCases(w http.ResponseWriter, r *http.Request) error {
 	}
 	prompt := "生成评测用例 JSON 数组。每条必须有 query，可以有 expectedAnswer。覆盖正常、边界和失败。条数：" + strconv.Itoa(body.Count) + "。补充：" + strings.TrimSpace(body.Note)
 	if strings.TrimSpace(body.AgentID) != "" {
-		agent, err := h.store.GetAgent(r.Context(), principal.WorkspaceUUID, strings.TrimSpace(body.AgentID))
+		agent, err := h.agentForGeneration(r.Context(), principal.WorkspaceUUID, strings.TrimSpace(body.AgentID), body.Version)
 		if err != nil {
-			return mapStoreError(err, "Agent not found")
+			return err
 		}
 		if agent.System != nil {
 			prompt += "\nAgent 系统提示词：" + *agent.System
 		}
 	}
-	text, err := h.complete(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, "", rubricSystemPrompt, prompt)
+	text, err := h.complete(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, "", caseGenerationSystemPrompt, prompt)
 	if err != nil {
 		return err
 	}
-	drafts, err := parseCaseDocument(text)
+	drafts, err := parseCaseDocument(stripCodeFence(text))
 	if err != nil {
-		return invalidArgument(importInvalidMessage, err)
+		return internalFailure(generateFailedMessage, err)
 	}
 	if len(drafts) > body.Count {
 		drafts = drafts[:body.Count]
@@ -220,13 +261,16 @@ func (h *Handler) listSessionTurns(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
-	turns, err := h.loadSessionTurns(r.Context(), principal, chi.URLParam(r, "datasetId"), sessionID)
+	_, turns, err := h.loadSessionTurns(r.Context(), principal, chi.URLParam(r, "datasetId"), sessionID)
 	if err != nil {
 		return err
 	}
 	data := make([]sessionTurnResponse, 0, len(turns))
 	for _, turn := range turns {
-		data = append(data, sessionTurnResponse{Index: turn.Index, Query: turn.Query, Answer: turn.Answer})
+		if !turn.Importable {
+			continue
+		}
+		data = append(data, sessionTurnResponse{Index: turn.Index, Query: turn.Query, Answer: turn.Answer, Inputs: turn.Inputs})
 	}
 	writePage(w, data, nil)
 	return nil
@@ -242,53 +286,102 @@ func (h *Handler) caseFromSession(w http.ResponseWriter, r *http.Request) error 
 		return invalidArgument(invalidJSONMessage, err)
 	}
 	sessionID := strings.TrimSpace(body.SessionID)
-	turns, err := h.loadSessionTurns(r.Context(), principal, chi.URLParam(r, "datasetId"), sessionID)
+	session, turns, err := h.loadSessionTurns(r.Context(), principal, chi.URLParam(r, "datasetId"), sessionID)
 	if err != nil {
 		return err
 	}
-	selected, err := selectedSessionTurns(turns, body.Turns)
+	drafts, skipped, err := sessionCaseDrafts(turns, body.Turns, sessionID, body.ExpectedAnswer, body.Polarity, body.Acceptance)
 	if err != nil {
 		return err
 	}
-	drafts := make([]caseDraft, 0, len(selected))
-	for _, turn := range selected {
-		draft, err := normalizeCase(rawCase{
-			Query: turn.Query, ExpectedAnswer: body.ExpectedAnswer, SourceSessionID: sessionID, Polarity: body.Polarity, Acceptance: body.Acceptance,
-		})
+	var created []db.EvaluationCase
+	if len(drafts) > 0 {
+		created, err = h.appendCasesInSession(r.Context(), principal, chi.URLParam(r, "datasetId"), drafts, session.UUID)
 		if err != nil {
 			return err
 		}
-		drafts = append(drafts, draft)
-	}
-	created, err := h.appendCases(r.Context(), principal, chi.URLParam(r, "datasetId"), drafts)
-	if err != nil {
-		return err
 	}
 	data := make([]caseResponse, 0, len(created))
 	for _, item := range created {
 		data = append(data, caseJSON(item))
 	}
-	writePage(w, data, nil)
+	httpapi.WriteJSON(w, http.StatusOK, sessionImportResponse{Data: data, Skipped: skipped})
 	return nil
 }
 
-func (h *Handler) loadSessionTurns(ctx context.Context, principal auth.Principal, datasetID, sessionID string) ([]sessionTurn, error) {
+func (h *Handler) loadSessionTurns(ctx context.Context, principal auth.Principal, datasetID, sessionID string) (db.Session, []sessionTurn, error) {
 	if sessionID == "" {
-		return nil, invalidArgument(sessionRequiredMessage, nil)
+		return db.Session{}, nil, invalidArgument(sessionRequiredMessage, nil)
 	}
 	if _, err := h.store.GetEvaluationDataset(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID); err != nil {
-		return nil, mapStoreError(err, datasetNotFoundMessage)
+		return db.Session{}, nil, mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 	}
-	if _, ok, err := h.store.GetSession(ctx, principal.WorkspaceUUID, sessionID); err != nil {
-		return nil, internalFailure(loadFailedMessage, err)
-	} else if !ok {
-		return nil, notFound("Session not found", nil)
+	session, ok, err := h.store.GetSession(ctx, principal.WorkspaceUUID, sessionID)
+	if err != nil {
+		return db.Session{}, nil, internalFailure(loadFailedMessage, err)
+	}
+	if !ok {
+		return db.Session{}, nil, notFound("Session not found", nil)
 	}
 	events, err := h.sessionEvents(ctx, principal.WorkspaceUUID, sessionID)
 	if err != nil {
-		return nil, internalFailure(loadFailedMessage, err)
+		if errors.Is(err, errSessionTooLarge) {
+			return db.Session{}, nil, invalidArgument(sessionEventsTooLargeMessage, err)
+		}
+		return db.Session{}, nil, internalFailure(loadFailedMessage, err)
 	}
-	return sessionTurns(events), nil
+	return session, sessionTurns(events), nil
+}
+
+func (h *Handler) agentForGeneration(ctx context.Context, workspaceUUID, agentID string, version int) (db.Agent, error) {
+	if version > 0 {
+		agent, err := h.store.GetAgentVersion(ctx, workspaceUUID, agentID, version)
+		if err != nil {
+			return db.Agent{}, mapStoreError(err, "Agent not found", generateFailedMessage)
+		}
+		return agent, nil
+	}
+	agent, err := h.store.GetAgent(ctx, workspaceUUID, agentID)
+	if err != nil {
+		return db.Agent{}, mapStoreError(err, "Agent not found", generateFailedMessage)
+	}
+	return agent, nil
+}
+
+func (h *Handler) sessionEvents(ctx context.Context, workspaceUUID, sessionID string) ([]db.SessionEvent, error) {
+	var all []db.SessionEvent
+	var cursor *db.SessionEventPageCursor
+	for page := 0; page < maxSessionEventPages; page++ {
+		events, hasMore, err := h.store.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
+			WorkspaceUUID: workspaceUUID, SessionExternalID: sessionID, Limit: 100, Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, events...)
+		lastID := ""
+		if len(events) > 0 {
+			lastID = events[len(events)-1].ExternalID
+		}
+		cursor, err = nextSessionEventCursor(page, hasMore, lastID)
+		if err != nil {
+			return nil, err
+		}
+		if cursor == nil {
+			return all, nil
+		}
+	}
+	return nil, errSessionTooLarge
+}
+
+func nextSessionEventCursor(page int, hasMore bool, lastID string) (*db.SessionEventPageCursor, error) {
+	if !hasMore || lastID == "" {
+		return nil, nil
+	}
+	if page >= maxSessionEventPages-1 {
+		return nil, errSessionTooLarge
+	}
+	return &db.SessionEventPageCursor{ExternalID: lastID}, nil
 }
 
 func rubricGenerateReady(body rubricWriteRequest) bool {
@@ -311,7 +404,7 @@ func (h *Handler) rubricGeneratePrompt(ctx context.Context, principal auth.Princ
 	if agentID := strings.TrimSpace(body.AgentID); agentID != "" {
 		agent, err := h.store.GetAgent(ctx, principal.WorkspaceUUID, agentID)
 		if err != nil {
-			return "", mapStoreError(err, "Agent not found")
+			return "", mapStoreError(err, "Agent not found", generateFailedMessage)
 		}
 		if agent.System != nil && strings.TrimSpace(*agent.System) != "" {
 			prompt.WriteString("\nAgent 系统提示词：" + *agent.System)
@@ -320,7 +413,7 @@ func (h *Handler) rubricGeneratePrompt(ctx context.Context, principal auth.Princ
 	if datasetID := strings.TrimSpace(body.DatasetID); datasetID != "" {
 		cases, err := h.store.ListEvaluationCases(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID)
 		if err != nil {
-			return "", mapStoreError(err, datasetNotFoundMessage)
+			return "", mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 		}
 		limit := len(cases)
 		if limit > 12 {
@@ -367,12 +460,51 @@ func rubricFromRequest(principal auth.Principal, body rubricWriteRequest) (db.Ev
 	}, nil
 }
 
+func generatedRubricBody(text string) (string, error) {
+	text = stripMarkdownFence(text)
+	if jsonRubricDocument(text) {
+		return "", invalidArgument(rubricFormatMessage, nil)
+	}
+	return text, nil
+}
+
+func stripMarkdownFence(text string) string {
+	text = strings.TrimSpace(text)
+	rest, fenced := strings.CutPrefix(text, "```")
+	if !fenced {
+		return text
+	}
+	_, body, found := strings.Cut(rest, "\n")
+	if !found {
+		return text
+	}
+	body = strings.TrimSpace(body)
+	body, closed := strings.CutSuffix(body, "```")
+	if !closed {
+		return text
+	}
+	return strings.TrimSpace(body)
+}
+
+func jsonRubricDocument(text string) bool {
+	var value any
+	if json.Unmarshal([]byte(text), &value) != nil {
+		return false
+	}
+	switch value.(type) {
+	case map[string]any, []any:
+		return true
+	default:
+		return false
+	}
+}
+
 func rubricVersion(body rubricWriteRequest) (db.EvaluationRubric, error) {
 	text := strings.TrimSpace(body.Body)
 	if text == "" {
 		return db.EvaluationRubric{}, invalidArgument(rubricRequiredMessage, nil)
 	}
-	if len(text) > maxRubricLength {
+	if utf8.RuneCountInString(text) > maxRubricLength {
 		return db.EvaluationRubric{}, invalidArgument(rubricTooLongMessage, nil)
 	}
 	passScore := 60
@@ -383,8 +515,8 @@ func rubricVersion(body rubricWriteRequest) (db.EvaluationRubric, error) {
 		return db.EvaluationRubric{}, invalidArgument(passScoreInvalidMessage, nil)
 	}
 	model := strings.TrimSpace(body.Model)
-	if len(model) > maxNameLength {
-		return db.EvaluationRubric{}, invalidArgument(nameTooLongMessage, nil)
+	if utf8.RuneCountInString(model) > maxModelLength {
+		return db.EvaluationRubric{}, invalidArgument(modelTooLongMessage, nil)
 	}
 	versionID, err := ids.New("erv_")
 	if err != nil {
@@ -404,7 +536,7 @@ func (h *Handler) complete(ctx context.Context, organizationUUID, workspaceUUID,
 		if err == errModelMissing {
 			return "", unavailable(modelMissingMessage, err)
 		}
-		return "", internalFailure(scoreFailedMessage, err)
+		return "", internalFailure(generateFailedMessage, err)
 	}
 	return text, nil
 }

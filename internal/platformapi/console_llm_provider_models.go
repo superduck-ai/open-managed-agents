@@ -34,9 +34,9 @@ func previewConsoleLLMProviderModels(database *db.DB, client *http.Client) http.
 	}
 }
 
-func previewConsoleOrganizationLLMProviderModels(database *db.DB, client *http.Client) http.HandlerFunc {
+func previewConsoleOrganizationLLMProviderModels(client *http.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := llmProviderOrganization(w, r, database); !ok {
+		if _, ok := visibleOrgUUID(w, r); !ok {
 			return
 		}
 		previewProviderModels(w, r, client)

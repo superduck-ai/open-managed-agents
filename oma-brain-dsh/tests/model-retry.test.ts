@@ -97,7 +97,7 @@ test("Brain retries transient model failures and completes the turn", async () =
   await backend.ready;
   const responses: (() => Response | ReturnType<typeof textEvents>)[] = [
     () => Response.json({ error: { message: "Request timed out" } }, { status: 408, headers: { "retry-after": "0.01" } }),
-    () => Response.json({ error: { message: "Rate limited" } }, { status: 429, headers: { "retry-after": "0.01" } }),
+    () => Response.json({ error: { message: "concurrency allocated quota exceeded. please try again later." } }, { status: 429, headers: { "retry-after": "0.01" } }),
     () => Response.json({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, { status: 529, headers: { "retry-after": "0.01" } }),
     () => Response.json({ type: "error", error: { type: "api_error", message: "Internal" } }, { status: 500, headers: { "retry-after": "0.01" } }),
     () => textEvents("recovered"),

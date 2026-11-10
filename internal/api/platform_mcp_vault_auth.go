@@ -183,7 +183,8 @@ func (s *Server) handlePlatformMCPVaultAuthStart(w http.ResponseWriter, r *http.
 		writePlatformMCPVaultAuthError(w, http.StatusInternalServerError, platformMCPVaultAuthVerificationRequestFailed, "")
 		return
 	}
-	if platformMCPVaultCredentialExists(credentials, mcpServerURL) {
+	credentialTargetURL := config.OAuthCredentialTargetURL(s.cfg.Vault.OAuthServiceBindings, mcpServerURL)
+	if platformMCPVaultCredentialExists(credentials, credentialTargetURL) {
 		writePlatformMCPVaultAuthError(w, http.StatusConflict, platformMCPVaultAuthAlreadyExists, "")
 		return
 	}
@@ -410,7 +411,8 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 		return
 	}
 
-	publicAuth, secretPayload, err := buildPlatformMCPVaultOAuthCredentialPayloads(flow, token, now, clientSecret)
+	credentialTargetURL := config.OAuthCredentialTargetURL(s.cfg.Vault.OAuthServiceBindings, flow.MCPServerURL)
+	publicAuth, secretPayload, err := buildPlatformMCPVaultOAuthCredentialPayloads(flow, credentialTargetURL, token, now, clientSecret)
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "build mcp oauth credential payload for flow", "flow_external_id", flow.ExternalID, "error", err)
 		s.failPlatformMCPVaultAuthFlow(r.Context(), flow.ExternalID, platformMCPVaultAuthVerificationRequestFailed, now)
@@ -451,7 +453,7 @@ func (s *Server) handlePlatformMCPVaultAuthCallback(w http.ResponseWriter, r *ht
 		DisplayName:         flow.DisplayName,
 		Metadata:            metadata,
 		AuthType:            "mcp_oauth",
-		CredentialKey:       flow.MCPServerURL,
+		CredentialKey:       credentialTargetURL,
 		Auth:                publicAuth,
 		SecretPayload:       secretPayload,
 		CreatedAt:           now,
@@ -964,12 +966,14 @@ func exchangePlatformMCPOAuthCode(
 
 func buildPlatformMCPVaultOAuthCredentialPayloads(
 	flow db.MCPOAuthFlow,
+	credentialTargetURL string,
 	token vaultsapi.OAuthTokenEndpointResult,
 	now time.Time,
 	clientSecret string,
 ) (json.RawMessage, json.RawMessage, error) {
 	return vaultsapi.BuildMCPOAuthStoredCredentialJSON(vaultsapi.MCPOAuthStoredCredentialInput{
-		MCPServerURL:            flow.MCPServerURL,
+		MCPServerURL:            credentialTargetURL,
+		OAuthServiceURL:         flow.MCPServerURL,
 		AccessToken:             token.AccessToken,
 		RefreshToken:            token.RefreshToken,
 		TokenEndpoint:           flow.TokenEndpoint,

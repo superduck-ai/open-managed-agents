@@ -1,5 +1,5 @@
 import { consoleApi } from '../../shared/api/client';
-import type { NativeEvent, NativeHeader } from './trajectory/native-types';
+import type { DshEvent, DshHeader } from './trajectory/dsh-types';
 
 export type ObservabilityScope = { kind: 'workspace' } | { kind: 'agent'; agentId: string };
 export type SessionSort = 'recent' | 'duration' | 'errors';
@@ -20,8 +20,8 @@ export interface TrajectorySegment {
   started_at: string;
 }
 export interface TrajectoryPage {
-  header: NativeHeader | null;
-  events: NativeEvent[];
+  header: DshHeader | null;
+  events: DshEvent[];
   next_seq: number;
   has_more: boolean;
   segment: string;

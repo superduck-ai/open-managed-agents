@@ -1,45 +1,27 @@
 ---
 title: "分页"
-description: "使用分页游标遍历 OMA 列表资源。"
+description: "遍历 OMA 列表资源。"
 ---
 
-OMA 的列表接口通常使用不透明游标分页。
+不同资源使用不同的分页方式，请以对应接口参考为准。设置 `OMA_BASE_URL` 和 `OMA_API_KEY` 的方法见[认证](/docs/zh/api/authentication)。
 
-## 请求参数
+- **智能体和会话**：传入 `limit`，将响应中的 `next_page` 原样作为下一次请求的 `page`；`next_page` 为 `null` 表示没有下一页。会话列表不返回 `prev_page`。
+- **文件**：支持 `page`、`after_id` 和 `before_id`。`page` 不能与任一 ID 游标同时使用，且后续请求的 `scope_id` 必须与生成该游标时一致。响应包含 `has_more`、`first_id`、`last_id` 和 `next_page`。
+- **消息批处理**：使用 `after_id` 或 `before_id` 及响应中的 `has_more`、`first_id`、`last_id`，不返回 `next_page`。
+- **模型列表**：当前返回模型目录和 `has_more: false`，不读取分页参数。
 
-<ParamField query="limit" type="integer">
-  本页最多返回的对象数量。每种资源有自己的默认值和上限。
-</ParamField>
-
-<ParamField query="page" type="string">
-  上一页响应返回的 `next_page`。不要解析或修改该值。
-</ParamField>
-
-## 响应结构
-
-```json
-{
-  "data": [
-    {"id": "agent_...", "type": "agent"}
-  ],
-  "next_page": "opaque-cursor"
-}
-```
-
-当 `next_page` 为 `null` 或缺失时，表示没有下一页。
-
-## 遍历示例
+以下示例获取智能体的前两页：
 
 ```bash
-curl 'http://localhost:38080/v1/agents?beta=true&limit=20' \
-  -H 'Authorization: Bearer sk-ant-local-default'
-
-curl 'http://localhost:38080/v1/agents?beta=true&limit=20&page=<next_page>' \
-  -H 'Authorization: Bearer sk-ant-local-default'
+first_page=$(curl -sS --fail-with-body --get "$OMA_BASE_URL/v1/agents" \
+  -H "x-api-key: $OMA_API_KEY" --data-urlencode 'limit=20')
+printf '%s\n' "$first_page" | jq '.data'
+next_page=$(printf '%s\n' "$first_page" | jq -r '.next_page // empty')
+if [ -n "$next_page" ]; then
+  curl -sS --fail-with-body --get "$OMA_BASE_URL/v1/agents" \
+    -H "x-api-key: $OMA_API_KEY" --data-urlencode 'limit=20' \
+    --data-urlencode "page=$next_page"
+fi
 ```
 
-<Note>
-  游标与创建时间、资源 ID 或数据库主键没有稳定的公开对应关系。请始终把它当作不透明字符串保存和回传。
-</Note>
-
-不同资源支持不同筛选字段，例如 `created_at[gte]`、`status`、`agent_id` 或 `include_archived`。未知或无效筛选值会返回 `invalid_request_error`。
+游标是不透明的，不要解析或修改。遍历时保持筛选和排序条件一致，并注意数据可能在请求之间变化。无效的已知参数可能返回 `invalid_request_error`；不要依赖服务端拒绝所有未知参数。

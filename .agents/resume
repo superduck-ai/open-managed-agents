@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$repo_root"
+
+for tool in go bun just uv; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    printf 'Missing %s; rerun .agents/setup to repair this orb\n' "$tool" >&2
+    exit 1
+  fi
+done
+
+printf 'Orb toolchain ready; no services or authentication to resume\n'

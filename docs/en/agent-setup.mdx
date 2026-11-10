@@ -9,7 +9,7 @@ An agent is a reusable, versioned configuration that defines persona and capabil
 Create the agent once as a reusable resource and reference it by ID each time you [start a session](/docs/en/sessions). Agents are versioned and easier to manage across many sessions.
 
 <Note>
-  Managed Agents API requests require the `managed-agents-2026-04-01` beta header, except memory store endpoints, which use `agent-memory-2026-07-22` instead. The SDK sets the correct beta header automatically. See [Beta headers](/docs/en/api/versioning-beta).
+  Beta requirements differ by resource. See [Versioning and beta features](/docs/en/api/versioning-beta), and verify that your SDK sends the parameters required by OMA.
 </Note>
 
 ## Agent configuration fields
@@ -17,7 +17,7 @@ Create the agent once as a reusable resource and reference it by ID each time yo
 | Field         | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`        | Required. A human-readable name for the agent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `model`       | Required. The [model](/docs/en/api/models/list-models) that powers the agent. Accepts a model ID string or an object, for example `{"id": "claude-opus-5"}`. Available models are determined by the OMA deployment configuration. The object form also accepts `speed`, `effort`, and `inference_geo` fields; see the tips under [Create an agent](/docs/en/agent-setup#create-an-agent), Effort levels, and [Pin the inference geo](/docs/en/agent-setup#pin-the-inference-geo). |
+| `model`       | Required. The [model](/docs/en/api/models/list-models) that powers the agent. Accepts a model ID string or an object, for example `{"id": "claude-opus-5"}`. Available models are determined by the OMA deployment configuration. The object form also accepts `speed` and `effort` fields; see the tips under [Create an agent](/docs/en/agent-setup). |
 | `system`      | A system prompt that defines the agent's behavior and persona. The system prompt is distinct from [user messages](/docs/en/reference#event-types), which should describe the work to be done.                                                                                                                                                                                                                                                                                            |
 | `tools`       | The tools available to the agent. Combines [pre-built agent tools](/docs/en/tools), [MCP tools](/docs/en/mcp-connector), and [custom tools](/docs/en/tools#custom-tools).                                                                                                                                                                                                                                                                                                                                                           |
 | `mcp_servers` | [MCP servers](/docs/en/mcp-connector) that provide standardized third-party capabilities.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -26,7 +26,7 @@ Create the agent once as a reusable resource and reference it by ID each time yo
 | `description` | A description of what the agent does.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `metadata`    | Arbitrary key-value pairs for your own tracking.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
-You can also override `model`, `system`, `tools`, `mcp_servers`, and `skills` for a single session without changing the agent. An `effort` level set inside a per-session `model` override isn't applied, and because the override replaces the agent's `model` object in full, a session created with a `model` override runs at the model's default effort level; to run at a specific effort level, set `effort` on the agent and don't override `model` for that session. See [Override agent configuration for a session](/docs/en/sessions#override-agent-configuration-for-a-session).
+You can also override `model`, `system`, `tools`, `mcp_servers`, and `skills` for a single session without changing the agent. A `model` override replaces the entire model configuration; support for optional parameters depends on the model and provider. See [Override agent configuration for a session](/docs/en/sessions#override-agent-configuration-for-a-session).
 
 ## Create an agent
 
@@ -156,7 +156,7 @@ The examples use curl, the `ant` CLI, or one of the SDKs. If you haven't set one
   ```
 </CodeGroup>
 
-The response echoes your configuration and adds `id`, `type`, `version`, `created_at`, `updated_at`, and `archived_at` fields, and fills in `model` fields you omit, such as `effort`, with their defaults. The `version` starts at 1 and increments each time an update changes the agent.
+The response echoes your configuration and adds `id`, `type`, `version`, `created_at`, `updated_at`, and `archived_at` fields. Omitted `speed` defaults to `standard`; omitted `effort` is not added to the response. The `version` starts at 1 and increments each time an update changes the agent.
 
 ```json
 {
@@ -165,7 +165,6 @@ The response echoes your configuration and adds `id`, `type`, `version`, `create
   "name": "Coding Assistant",
   "model": {
     "id": "claude-opus-5",
-    "effort": { "type": "high" },
     "speed": "standard"
   },
   "system": "You are a helpful coding agent.",
@@ -192,143 +191,10 @@ The response echoes your configuration and adds `id`, `type`, `version`, `create
 The `default_config` on the toolset shows its default [permission policy](/docs/en/permission-policies), `always_allow`, which applies unless you configure one.
 
 <Tip>
-  To enable fast mode on a supported model, pass `model` as an object, for example: `{"id": "claude-opus-5", "speed": "fast"}`. See the fast mode page's supported models.
-</Tip>
-
-<Tip>
   To set the model's effort level, pass `model` as an object, for example: `{"id": "claude-opus-5", "effort": "high"}`. The `effort` field accepts a level string (`low`, `medium`, `high`, `xhigh`, or `max`) or an object such as `{"type": "high"}`. See Effort levels for what each level does.
 </Tip>
 
-### Pin the inference geo
-
-Like `speed` and `effort`, `inference_geo` is set through the object form of `model`: pass `model` as an object and set `inference_geo` alongside `id`. The field accepts `"us"` or `"global"`. When it's unset, each model request follows the workspace's default inference geo at the time it's served. See Data residency for the workspace-level geo controls and pricing.
-
-The following example pins an agent to US inference and prints the `inference_geo` value echoed in the response's `model` object:
-
-<CodeGroup defaultLanguage="CLI">
-  ```bash cURL
-  agent=$(curl -fsSL http://localhost:38080/v1/agents \
-    -H "x-api-key: $OMA_API_KEY" \
-    -H "anthropic-version: 2023-06-01" \
-    -H "anthropic-beta: managed-agents-2026-04-01" \
-    -H "content-type: application/json" \
-    -d '{
-      "name": "Geo-pinned assistant",
-      "model": {"id": "claude-opus-5", "inference_geo": "us"},
-      "system": "You are a helpful assistant."
-    }')
-
-  echo "Inference geo: $(jq -r '.model.inference_geo' <<< "$agent")"
-  ```
-
-  ```bash CLI
-  agent=$(ant beta:agents create \
-    --name "Geo-pinned assistant" \
-    --model '{id: claude-opus-5, inference_geo: us}' \
-    --system "You are a helpful assistant." \
-    --format json)
-
-  echo "Inference geo: $(jq -r '.model.inference_geo' <<< "$agent")"
-  ```
-
-  ```python Python
-  agent = client.beta.agents.create(
-      name="Geo-pinned assistant",
-      model={
-          "id": "claude-opus-5",
-          "inference_geo": "us",
-      },
-      system="You are a helpful assistant.",
-  )
-
-  print(f"Inference geo: {agent.model.inference_geo}")
-  ```
-
-  ```typescript TypeScript
-  const agent = await client.beta.agents.create({
-    name: "Geo-pinned assistant",
-    model: { id: "claude-opus-5", inference_geo: "us" },
-    system: "You are a helpful assistant.",
-  });
-
-  console.log(`Inference geo: ${agent.model.inference_geo}`);
-  ```
-
-  ```csharp C#
-  var agent = await client.Beta.Agents.Create(new()
-  {
-      Name = "Geo-pinned assistant",
-      Model = new BetaManagedAgentsModelConfigParams
-      {
-          ID = BetaManagedAgentsModel.ClaudeOpus5,
-          InferenceGeo = "us",
-      },
-      System = "You are a helpful assistant.",
-  });
-
-  Console.WriteLine($"Inference geo: {agent.Model.InferenceGeo}");
-  ```
-
-  ```go Go
-  agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
-      Name: "Geo-pinned assistant",
-      Model: anthropic.BetaManagedAgentsModelConfigParams{
-          ID:           anthropic.BetaManagedAgentsModelClaudeOpus5,
-          InferenceGeo: anthropic.String("us"),
-      },
-      System: anthropic.String("You are a helpful assistant."),
-  })
-  if err != nil {
-      panic(err)
-  }
-
-  fmt.Printf("Inference geo: %s\n", agent.Model.InferenceGeo)
-  ```
-
-  ```java Java
-  var agent = client.beta().agents().create(
-      AgentCreateParams.builder()
-          .name("Geo-pinned assistant")
-          .model(
-              BetaManagedAgentsModelConfigParams.builder()
-                  .id(BetaManagedAgentsModel.CLAUDE_OPUS_5)
-                  .inferenceGeo("us")
-                  .build()
-          )
-          .system("You are a helpful assistant.")
-          .build()
-  );
-
-  IO.println("Inference geo: " + agent.model().inferenceGeo().orElseThrow());
-  ```
-
-  ```php PHP
-  $agent = $client->beta->agents->create(
-      name: 'Geo-pinned assistant',
-      model: BetaManagedAgentsModelConfigParams::with(
-          id: 'claude-opus-5',
-          inferenceGeo: 'us',
-      ),
-      system: 'You are a helpful assistant.',
-  );
-
-  echo "Inference geo: {$agent->model->inferenceGeo}\n";
-  ```
-
-  ```ruby Ruby
-  agent = client.beta.agents.create(
-    name: "Geo-pinned assistant",
-    model: {id: "claude-opus-5", inference_geo: "us"},
-    system_: "You are a helpful assistant."
-  )
-
-  puts "Inference geo: #{agent.model.inference_geo}"
-  ```
-</CodeGroup>
-
-An `inference_geo` pin is validated against the workspace's `allowed_inference_geos` when the agent is saved, when a session is created from it, and on every turn the session serves. If the workspace allowlist narrows so a pin is no longer allowed, new sessions can't be created from the agent and running sessions refuse further turns; pins are never exempted, because workspaces rely on them for compliance and data residency.
-
-Setting `inference_geo` on a model that doesn't support geographic inference pinning returns a 400 error; see Model availability for the models that do. In a `multiagent` configuration, the coordinator's pin and every roster member's must all be set to the same value or all be unset; see [Multiagent orchestration](/docs/en/multiagent-orchestration). To change or clear the pin later, update the agent's `model` object; supplying `model` without `inference_geo` clears it, as described under [Update semantics](/docs/en/agent-setup#update-semantics).
+OMA retains `model.inference_geo` for API compatibility, but it does not guarantee routing to a geographic location. The serving location depends on the configured model provider and its deployment.
 
 ## Update an agent
 
@@ -456,11 +322,11 @@ The preceding example supplies `version` from the create response, so the update
 
 * **Omitted fields are preserved.** You only need to include the fields you want to change.
 
-* **Scalar fields** (`model`, `system`, `name`, `description`) are replaced with the new value. `system` and `description` can be cleared by passing `null`. `model` and `name` are mandatory and cannot be cleared. Within a `model` object you supply, `effort` is the sole exception: if the model `id` is unchanged, omitting `effort` leaves the stored effort level unchanged. If you change the model `id`, an omitted `effort` resets to the new model's default. Other `model` fields are replaced along with the object: supplying `model` without `inference_geo` clears the agent's inference geo pin.
+* **Scalar fields** (`model`, `system`, `name`, `description`) are replaced with the new value. `system` and `description` can be cleared by passing `null`. `model` and `name` are mandatory and cannot be cleared. Supplying `model` replaces the whole model object; include any optional fields you want to retain.
 
 * **Array fields** (`tools`, `mcp_servers`, `skills`) are fully replaced by the new array. To clear an array field entirely, pass `null` or an empty array.
 
-* **`multiagent`** is replaced as a whole, including its `agents` roster. Pass `null` to clear it.
+* **`multiagent`** update semantics depend on the configuration type. Pass `null` to clear it; see [Multiagent orchestration](/docs/en/multiagent-orchestration).
 
 * **Metadata** is merged at the key level. Keys you provide are added or updated. Keys you omit are preserved. To delete a specific key, set its value to `null`.
 

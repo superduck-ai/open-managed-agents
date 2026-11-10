@@ -1,4 +1,4 @@
-import { Bot } from 'lucide-react';
+import { productIcons } from '@/shared/icons/product-icons';
 
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
@@ -25,7 +25,7 @@ export function LLMProviderRequired({ compact = false, onConfigure }: LLMProvide
     >
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <Bot aria-hidden />
+          <productIcons.models aria-hidden />
         </EmptyMedia>
         <EmptyTitle className="text-base">{msg('llmModels.requiredTitle', 'No models configured')}</EmptyTitle>
         <EmptyDescription>

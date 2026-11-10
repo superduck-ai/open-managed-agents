@@ -71,7 +71,7 @@ func verifyLazyBrain(t *testing.T, started time.Time) {
 	requireOK(t, err)
 	denied := createPublicChat(t, e)
 	sessions = append(sessions, denied.session.UUID)
-	deniedModel := brainToolCallModel(t, "Write", `{"file_path":"/tmp/oma-brain-proof.txt","content":"native grok loop"}`, nil, []string{"archive_agent", "list_agents", "send_to_agent"})
+	deniedModel := brainToolCallModel(t, "Write", `{"file_path":"/tmp/oma-brain-proof.txt","content":"native grok loop"}`, nil, []string{"interrupt_agent", "list_agents", "send_message", "subagent"})
 	configureChatModel(t, e, deniedModel.URL)
 	submitChat(t, denied, "Try Write, then reply done even if denied.")
 	waitRealWorker(t, "denied tool finished without allocating a sandbox", func() bool {

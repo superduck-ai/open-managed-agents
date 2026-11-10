@@ -64,10 +64,21 @@ func (h *Handler) handleCodeSessionWorkerTraces(w http.ResponseWriter, r *http.R
 		h.writeOTLPDatabaseError(w, r, protocol, admitted.codeSessionID, err)
 		return
 	}
+	threads, err := h.db.ListSessionThreads(r.Context(), credentialContext.WorkspaceUUID, credentialContext.PublicSessionExternalID)
+	if err != nil {
+		h.writeOTLPDatabaseError(w, r, protocol, admitted.codeSessionID, err)
+		return
+	}
+	childIDs := make([]string, 0, len(threads))
+	for _, thread := range threads {
+		if thread.ExternalID != primary {
+			childIDs = append(childIDs, thread.ExternalID)
+		}
+	}
 	rejected, err := h.traceExporter.Export(r.Context(), telemetryexport.Source{
 		OrganizationUUID: credentialContext.OrganizationUUID, WorkspaceUUID: credentialContext.WorkspaceUUID,
 		WorkspaceID: credentialContext.WorkspaceExternalID, SessionID: credentialContext.PublicSessionExternalID,
-		CodeSessionID: credentialContext.CodeSessionExternalID, PrimaryThreadID: primary, AgentID: credentialContext.AgentExternalID,
+		CodeSessionID: credentialContext.CodeSessionExternalID, PrimaryThreadID: primary, SubagentThreadIDs: childIDs, AgentID: credentialContext.AgentExternalID,
 	}, request)
 	if err != nil {
 		h.logger.WarnContext(r.Context(), "export code session spans", "code_session_id", admitted.codeSessionID, "error", err)

@@ -17,6 +17,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const maxTaskCases = 200
+
 type taskWriteRequest struct {
 	Name          string          `json:"name"`
 	Mode          string          `json:"mode"`
@@ -45,7 +47,7 @@ func (h *Handler) createTask(w http.ResponseWriter, r *http.Request) error {
 	}
 	created, err := h.store.CreateEvaluationTask(r.Context(), task, items)
 	if err != nil {
-		return mapStoreError(err, taskNotFoundMessage)
+		return mapStoreError(err, taskNotFoundMessage, createFailedMessage)
 	}
 	h.startItems(r.Context(), principal, created.Task, created.Items)
 	detail, err := h.finishStartup(r.Context(), principal, created.Task.ExternalID)
@@ -110,7 +112,7 @@ func (h *Handler) getTask(w http.ResponseWriter, r *http.Request) error {
 	}
 	detail, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "taskId"))
 	if err != nil {
-		return mapStoreError(err, taskNotFoundMessage)
+		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, taskJSON(detail, true))
 	return nil
@@ -124,7 +126,7 @@ func (h *Handler) cancelTask(w http.ResponseWriter, r *http.Request) error {
 	taskID := chi.URLParam(r, "taskId")
 	detail, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
 	if err != nil {
-		return mapStoreError(err, taskNotFoundMessage)
+		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
 	if detail.Task.Status == "completed" || detail.Task.Status == "failed" || detail.Task.Status == "cancelled" {
 		return invalidState("This task can no longer be cancelled", nil)
@@ -147,7 +149,7 @@ func (h *Handler) retryTask(w http.ResponseWriter, r *http.Request) error {
 	taskID := chi.URLParam(r, "taskId")
 	detail, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
 	if err != nil {
-		return mapStoreError(err, taskNotFoundMessage)
+		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
 	if detail.Task.Status != "completed" && detail.Task.Status != "failed" {
 		return invalidState(retryUnavailableMessage, nil)
@@ -165,7 +167,7 @@ func (h *Handler) retryTask(w http.ResponseWriter, r *http.Request) error {
 	}
 	reloaded, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
 	if err != nil {
-		return mapStoreError(err, taskNotFoundMessage)
+		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
 	pending := make([]db.EvaluationTaskItem, 0)
 	for _, item := range reloaded.Items {
@@ -208,14 +210,14 @@ func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, bod
 	}
 	environment, err := h.store.GetEnvironment(ctx, principal.WorkspaceUUID, environmentID)
 	if err != nil {
-		return db.EvaluationTask{}, nil, mapStoreError(err, "Environment not found")
+		return db.EvaluationTask{}, nil, mapStoreError(err, "Environment not found", loadFailedMessage)
 	}
 	if environment.ArchivedAt != nil {
 		return db.EvaluationTask{}, nil, invalidState(archivedEnvironmentMessage, nil)
 	}
 	cases, err := h.store.ListEvaluationCases(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID)
 	if err != nil {
-		return db.EvaluationTask{}, nil, mapStoreError(err, datasetNotFoundMessage)
+		return db.EvaluationTask{}, nil, mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 	}
 	if len(cases) == 0 {
 		return db.EvaluationTask{}, nil, invalidArgument(casesRequiredMessage, nil)
@@ -225,11 +227,11 @@ func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, bod
 	}
 	dataset, err := h.store.GetEvaluationDataset(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID)
 	if err != nil {
-		return db.EvaluationTask{}, nil, mapStoreError(err, datasetNotFoundMessage)
+		return db.EvaluationTask{}, nil, mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 	}
 	rubric, err := h.store.GetEvaluationRubric(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, rubricID)
 	if err != nil {
-		return db.EvaluationTask{}, nil, mapStoreError(err, rubricNotFoundMessage)
+		return db.EvaluationTask{}, nil, mapStoreError(err, rubricNotFoundMessage, loadFailedMessage)
 	}
 	resources, err := normalizeResources(body.Resources)
 	if err != nil {
@@ -302,7 +304,7 @@ func (h *Handler) loadAgent(ctx context.Context, workspaceUUID, agentID string, 
 		agent, err = h.store.GetAgent(ctx, workspaceUUID, agentID)
 	}
 	if err != nil {
-		return db.Agent{}, mapStoreError(err, "Agent not found")
+		return db.Agent{}, mapStoreError(err, "Agent not found", loadFailedMessage)
 	}
 	if agent.ArchivedAt != nil {
 		return db.Agent{}, invalidState(archivedAgentMessage, nil)
@@ -347,7 +349,7 @@ func normalizeVaults(values []string) ([]string, json.RawMessage, error) {
 func (h *Handler) finishStartup(ctx context.Context, principal auth.Principal, taskID string) (db.EvaluationTaskDetail, error) {
 	detail, err := h.store.GetEvaluationTask(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
 	if err != nil {
-		return db.EvaluationTaskDetail{}, mapStoreError(err, taskNotFoundMessage)
+		return db.EvaluationTaskDetail{}, mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
 	status := "running"
 	if allTerminalFailed(detail.Items) {
@@ -374,7 +376,7 @@ func allTerminalFailed(items []db.EvaluationTaskItem) bool {
 func (h *Handler) writeTask(w http.ResponseWriter, r *http.Request, principal auth.Principal, taskID string) error {
 	detail, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
 	if err != nil {
-		return mapStoreError(err, taskNotFoundMessage)
+		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, taskJSON(detail, true))
 	return nil

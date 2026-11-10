@@ -12,11 +12,14 @@ import (
 
 func TestNormalizeGitRepositorySpecRejectsUnsafeInputs(t *testing.T) {
 	cases := []struct{ name, url, mount, checkout string }{
-		{"url credentials", `"https://token@github.com/owner/repo"`, "", ""},
-		{"http", `"http://github.com/owner/repo"`, "", ""},
-		{"query", `"https://github.com/owner/repo?x=1"`, "", ""},
-		{"fragment", `"https://github.com/owner/repo#"`, "", ""},
-		{"escaped path", `"https://github.com/owner/%72epo"`, "", ""},
+		{"missing git suffix", `"https://github.com/owner/repo"`, "", ""},
+		{"trailing slash", `"https://github.com/owner/repo.git/"`, "", ""},
+		{"uppercase suffix", `"https://github.com/owner/repo.GIT"`, "", ""},
+		{"url credentials", `"https://token@github.com/owner/repo.git"`, "", ""},
+		{"http", `"http://github.com/owner/repo.git"`, "", ""},
+		{"query", `"https://github.com/owner/repo.git?x=1"`, "", ""},
+		{"fragment", `"https://github.com/owner/repo.git#"`, "", ""},
+		{"escaped path", `"https://github.com/owner/%72epo.git"`, "", ""},
 		{"workspace root", "", `"/workspace"`, ""},
 		{"outside workspace", "", `"/tmp/repo"`, ""},
 		{"traversal", "", `"/workspace/../repo"`, ""},
@@ -33,7 +36,7 @@ func TestNormalizeGitRepositorySpecRejectsUnsafeInputs(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			if test.url == "" {
-				test.url = `"https://github.com/owner/repo"`
+				test.url = `"https://github.com/owner/repo.git"`
 			}
 			if _, err := NormalizeGitRepositorySpec(json.RawMessage(test.url), json.RawMessage(test.mount), json.RawMessage(test.checkout)); err == nil {
 				t.Fatal("invalid resource accepted")
@@ -42,11 +45,23 @@ func TestNormalizeGitRepositorySpecRejectsUnsafeInputs(t *testing.T) {
 	}
 }
 
+func TestStoredGitRepositoryRequiresGitSuffix(t *testing.T) {
+	for _, repositoryURL := range []string{"https://github.com/owner/repo", "https://github.com/owner/repo.git/"} {
+		raw, err := json.Marshal(GitRepositorySpec{URL: repositoryURL, MountPath: "/workspace/repo"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ParseStoredGitRepositorySpec(raw); err == nil {
+			t.Fatalf("未拒绝缺少 .git 后缀的已有资源：%s", repositoryURL)
+		}
+	}
+}
+
 func TestGitRepositorySpecsRejectAmbiguousRepositoriesAndPaths(t *testing.T) {
 	for _, specs := range [][]GitRepositorySpec{
-		{{URL: "https://GITHUB.COM:443/owner/repo", MountPath: "/workspace/first"}, {URL: "https://github.com/owner/repo", MountPath: "/workspace/second"}},
-		{{URL: "https://github.com/a/one", MountPath: "/workspace/repo"}, {URL: "https://github.com/a/two", MountPath: "/workspace/repo/child"}},
-		{{URL: "https://github.com/a/one", MountPath: "/workspace/repo"}, {URL: "https://github.com/a/two", MountPath: "/workspace/repo"}},
+		{{URL: "https://GITHUB.COM:443/owner/repo.git", MountPath: "/workspace/first"}, {URL: "https://github.com/owner/repo.git", MountPath: "/workspace/second"}},
+		{{URL: "https://github.com/a/one.git", MountPath: "/workspace/repo"}, {URL: "https://github.com/a/two.git", MountPath: "/workspace/repo/child"}},
+		{{URL: "https://github.com/a/one.git", MountPath: "/workspace/repo"}, {URL: "https://github.com/a/two.git", MountPath: "/workspace/repo"}},
 	} {
 		if err := ValidateGitRepositoryConflicts(specs); err == nil {
 			t.Fatal("ambiguous resource set accepted")
@@ -69,10 +84,10 @@ func TestGitRepositoryCommitRequiresFullSHA(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			checkout := json.RawMessage(`{"type":"commit","sha":"` + test.sha + `"}`)
-			if _, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/repo"`), nil, checkout); err == nil {
+			if _, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/repo.git"`), nil, checkout); err == nil {
 				t.Fatal("invalid commit SHA accepted at resource input")
 			}
-			stored := json.RawMessage(`{"url":"https://github.com/owner/repo","mount_path":"/workspace/repo","checkout":` + string(checkout) + `}`)
+			stored := json.RawMessage(`{"url":"https://github.com/owner/repo.git","mount_path":"/workspace/repo","checkout":` + string(checkout) + `}`)
 			if _, err := ParseStoredGitRepositorySpec(stored); err == nil {
 				t.Fatal("invalid persisted commit SHA accepted")
 			}
@@ -81,11 +96,11 @@ func TestGitRepositoryCommitRequiresFullSHA(t *testing.T) {
 	for _, length := range []int{40, 64} {
 		sha := strings.Repeat("A", length)
 		checkout := json.RawMessage(`{"type":"commit","sha":"` + sha + `"}`)
-		spec, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/repo"`), nil, checkout)
+		spec, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/repo.git"`), nil, checkout)
 		if err != nil || spec.Checkout == nil || spec.Checkout.SHA != strings.ToLower(sha) {
 			t.Fatalf("full %d-character SHA normalization: spec=%+v err=%v", length, spec, err)
 		}
-		stored := json.RawMessage(`{"url":"https://github.com/owner/repo","mount_path":"/workspace/repo","checkout":` + string(checkout) + `}`)
+		stored := json.RawMessage(`{"url":"https://github.com/owner/repo.git","mount_path":"/workspace/repo","checkout":` + string(checkout) + `}`)
 		spec, err = ParseStoredGitRepositorySpec(stored)
 		if err != nil || spec.Checkout == nil || spec.Checkout.SHA != strings.ToLower(sha) {
 			t.Fatalf("full %d-character persisted SHA normalization: spec=%+v err=%v", length, spec, err)
@@ -95,7 +110,7 @@ func TestGitRepositoryCommitRequiresFullSHA(t *testing.T) {
 
 func TestNormalizeGitRepositorySpecDefaultsAndCheckout(t *testing.T) {
 	for _, checkout := range []string{"", "null", `{"type":"branch","name":"feature/git-resources"}`, `{"type":"commit","sha":"` + strings.Repeat("A", 40) + `"}`} {
-		spec, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/repo"`), nil, json.RawMessage(checkout))
+		spec, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/repo.git"`), nil, json.RawMessage(checkout))
 		if err != nil || spec.MountPath != "/workspace/repo" {
 			t.Fatalf("spec = %+v, err = %v", spec, err)
 		}
@@ -107,14 +122,14 @@ func TestNormalizeGitRepositorySpecDefaultsAndCheckout(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	spec, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/.github"`), nil, nil)
+	spec, err := NormalizeGitRepositorySpec(json.RawMessage(`"https://github.com/owner/.github.git"`), nil, nil)
 	if err != nil || spec.MountPath != "/workspace/.github" {
 		t.Fatalf("dot-prefixed repository default = %+v, %v", spec, err)
 	}
 	if !validGitBranch(strings.Repeat("汉", 255)) || validGitBranch(strings.Repeat("汉", 256)) {
 		t.Fatal("branch length must count characters")
 	}
-	if _, err := ParseStoredGitRepositorySpec(json.RawMessage(`{"url":"https://github.com/owner/repo"}`)); err == nil {
+	if _, err := ParseStoredGitRepositorySpec(json.RawMessage(`{"url":"https://github.com/owner/repo.git"}`)); err == nil {
 		t.Fatal("stored missing path received a default")
 	}
 }
@@ -180,8 +195,8 @@ func TestAnonymousGitRepositoryTokenFromSQLNull(t *testing.T) {
 func TestNormalizeSelfHostedGitRepository(t *testing.T) {
 	for _, repositoryURL := range []string{
 		"https://git.internal/group/subgroup/repo.git",
-		"https://git.internal:443/group/subgroup/repo.git/",
-		"https://192.168.1.20/team/repo",
+		"https://git.internal:443/group/subgroup/repo.git",
+		"https://192.168.1.20/team/repo.git",
 		"https://github.com/owner/repo.git",
 	} {
 		raw, _ := json.Marshal(repositoryURL)
@@ -190,21 +205,21 @@ func TestNormalizeSelfHostedGitRepository(t *testing.T) {
 			t.Fatalf("repository %s: spec=%+v err=%v", repositoryURL, spec, err)
 		}
 	}
-	for _, repositoryURL := range []string{"https://git.internal:8443/group/repo", "https://git.internal", "https://git.internal/", "https://git.internal/team/../repo", "https://git.internal/team//repo"} {
+	for _, repositoryURL := range []string{"https://git.internal:8443/group/repo.git", "https://git.internal", "https://git.internal/", "https://git.internal/team/../repo.git", "https://git.internal/team//repo.git"} {
 		if err := ValidateGitRepositoryURL(repositoryURL); err == nil {
 			t.Fatalf("ambiguous URL accepted: %s", repositoryURL)
 		}
 	}
 	if err := ValidateGitRepositoryConflicts([]GitRepositorySpec{
-		{URL: "https://GIT.internal:443/group/repo/", MountPath: "/workspace/one"},
-		{URL: "https://git.internal/group/repo", MountPath: "/workspace/two"},
+		{URL: "https://GIT.internal:443/group/repo.git", MountPath: "/workspace/one"},
+		{URL: "https://git.internal/group/repo.git", MountPath: "/workspace/two"},
 	}); err == nil {
 		t.Fatal("equivalent repository URLs accepted twice")
 	}
 	if err := ValidateGitRepositoryConflicts([]GitRepositorySpec{
-		{URL: "https://git.internal/group/Repo", MountPath: "/workspace/one"},
-		{URL: "https://git.internal/group/repo", MountPath: "/workspace/two"},
-		{URL: "https://git.internal/group/repo.git", MountPath: "/workspace/four"},
+		{URL: "https://git.internal/group/Repo.git", MountPath: "/workspace/one"},
+		{URL: "https://git.internal/group/repo.git", MountPath: "/workspace/two"},
+		{URL: "https://git.internal/group/other.git", MountPath: "/workspace/four"},
 	}); err != nil {
 		t.Fatalf("distinct case-sensitive paths rejected: %v", err)
 	}
@@ -213,7 +228,7 @@ func TestNormalizeSelfHostedGitRepository(t *testing.T) {
 func TestDefaultGitRepositoryMountPath(t *testing.T) {
 	t.Parallel()
 
-	if got := defaultGitRepositoryMountPath("https://git.internal/group/subgroup/widgets.git/"); got != "/workspace/widgets" {
+	if got := defaultGitRepositoryMountPath("https://git.internal/group/subgroup/widgets.git"); got != "/workspace/widgets" {
 		t.Fatalf("default repository mount path = %q", got)
 	}
 }

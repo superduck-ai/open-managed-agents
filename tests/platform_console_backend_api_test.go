@@ -25,6 +25,17 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 	// 该测试断言 observability 关闭时相关路由不注册（404）；显式固定开关，
 	// 不依赖本地 config.yaml 的取值。
 	cfg.Observability.Enabled = false
+	var boundDiscoveryRequests atomic.Int32
+	boundService := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		boundDiscoveryRequests.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer boundService.Close()
+	boundServiceURL := boundService.URL + "/mcp"
+	boundTargetURL := "https://api.console-duplicate.example/open-apis"
+	cfg.Vault.OAuthServiceBindings = append(cfg.Vault.OAuthServiceBindings, config.OAuthServiceBindingConfig{
+		ServiceURL: boundServiceURL, CredentialTargetURL: boundTargetURL,
+	})
 	app := newTestAppWithStore(t, &cfg, newFakeStore("platform-console-backend-bucket"))
 	defer app.close()
 
@@ -624,27 +635,38 @@ func TestPlatformConsoleBackendMigratedRoutes(t *testing.T) {
 		}
 	})
 
-	t.Run("failure mcp vault auth start duplicate server", func(t *testing.T) {
-		vault := createVault(t, app, `{"display_name":"console oauth duplicate vault"}`)
-		defer cleanupVaultRows(t, app, vault.ID)
-		serverURL := "https://mcp.console-duplicate.example/mcp"
-		createVaultCredential(t, app, vault.ID, staticBearerBody("duplicate mcp", serverURL, "bearer-secret"))
-		resp := app.platformRequest(t, http.MethodPost, orgPath+"/mcp/vault-auth/start", strings.NewReader(fmt.Sprintf(`{
+	for _, tc := range []struct {
+		name       string
+		serviceURL string
+		targetURL  string
+	}{
+		{"failure mcp vault auth start duplicate server", "https://mcp.console-duplicate.example/mcp", "https://mcp.console-duplicate.example/mcp"},
+		{"failure mcp vault auth start duplicate bound service", boundServiceURL, boundTargetURL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vault := createVault(t, app, `{"display_name":"console oauth duplicate vault"}`)
+			defer cleanupVaultRows(t, app, vault.ID)
+			createVaultCredential(t, app, vault.ID, staticBearerBody("duplicate mcp", tc.targetURL, "bearer-secret"))
+			resp := app.platformRequest(t, http.MethodPost, orgPath+"/mcp/vault-auth/start", strings.NewReader(fmt.Sprintf(`{
 			"mcp_server_url":"%s",
 			"vault_id":"%s",
 			"workspace_id":"workspace_default",
 			"redirect_url":"https://platform.claude.com/oauth/vault/success?organization_id=%s"
-		}`, serverURL, vault.ID, orgUUID)), cookies)
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusConflict {
-			t.Fatalf("duplicate mcp vault auth status = %d, want 409: %s", resp.StatusCode, readAll(t, resp.Body))
-		}
-		var body map[string]any
-		decodeJSON(t, resp.Body, &body)
-		if body["error_code"] != "already_exists" || body["oauth_flow_id"] != nil {
-			t.Fatalf("duplicate mcp vault auth body = %#v, want already_exists without flow id", body)
-		}
-	})
+		}`, tc.serviceURL, vault.ID, orgUUID)), cookies)
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusConflict {
+				t.Fatalf("duplicate mcp vault auth status = %d, want 409: %s", resp.StatusCode, readAll(t, resp.Body))
+			}
+			var body map[string]any
+			decodeJSON(t, resp.Body, &body)
+			if body["error_code"] != "already_exists" || body["oauth_flow_id"] != nil {
+				t.Fatalf("duplicate mcp vault auth body = %#v, want already_exists without flow id", body)
+			}
+			if got := boundDiscoveryRequests.Load(); got != 0 {
+				t.Fatalf("duplicate mcp vault auth discovery requests = %d, want 0", got)
+			}
+		})
+	}
 
 	t.Run("failure organization oauth environment tokens route requires session", func(t *testing.T) {
 		path := "/api/oauth/organizations/" + orgUUID + "/environments/env_test_tokens/tokens"

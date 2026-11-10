@@ -272,6 +272,9 @@ vault:
   # Deployment-owned OAuth clients for vault MCP OAuth enrollment. Exact
   # mcp_server_url match only. BYO client_id on vault-auth/start overrides.
   # Inline client_secret is accepted for local/dev; do not commit secrets.
+  oauth_service_bindings:
+    - service_url: "https://bridge.example.com"
+      credential_target_url: "https://open.feishu.cn/open-apis"
   platform_oauth_clients:
     - mcp_server_url: "https://api.githubcopilot.com/mcp/"
       client_id: "Iv23liEXAMPLE"

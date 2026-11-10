@@ -7,13 +7,11 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 默认情况下，每个托管智能体会话都以全新的上下文开始。当会话结束时，智能体积累的任何状态都会消失。记忆存储让智能体能够跨会话携带信息：用户偏好、项目约定、先前的错误以及领域上下文。
 
 <Note>
-  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
+  各资源的 Beta 要求不同，请参阅[版本与 Beta 功能](/docs/zh/api/versioning-beta)，并确认 SDK 向 OMA 发送了所需参数。
 </Note>
 
 <Note>
-  不要在记忆存储请求中同时使用 `agent-memory-2026-07-22` 和 `managed-agents-2026-04-01`：同时发送两者会返回 `400` 错误。如果您的代码显式设置了 Beta 请求头，请在记忆存储调用中将 `managed-agents-2026-04-01` 替换为 `agent-memory-2026-07-22`，而不是添加第二个值。会话端点（包括将记忆存储附加到会话）仍然使用 `managed-agents-2026-04-01`。
-
-  2026 年 7 月 22 日，`managed-agents-2026-04-01` 标头将在 `GET /v1/memory_stores/{memory_store_id}/memories` 上采用相同的列表行为；现在发送 `agent-memory-2026-07-22` 即可选择启用该行为。在没有该标头的情况下发出的请求所产生的分页游标与该标头不兼容，因此请从第一页重新开始。
+  OMA 的记忆存储 API 请求需要查询参数 `beta=true`。使用 SDK 时请确认它包含此参数。
 </Note>
 
 ## 概述
@@ -28,9 +26,15 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 为存储指定 `name` 和 `description`。description 会传递给智能体，告诉它存储包含什么内容。
 
+在控制台的「记忆存储」页面选择「创建记忆存储」，填写名称和可选描述：
+
+<Frame>
+  <img src="/docs/images/console/memory-create-zh.jpg" alt="创建记忆存储的名称和描述表单" />
+</Frame>
+
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  store=$(curl -s http://localhost:38080/v1/memory_stores \
+  store=$(curl -s "http://localhost:38080/v1/memory_stores?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -126,7 +130,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories" \
+  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -377,7 +381,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 ### 智能体如何访问记忆
 
-每个附加的存储都作为 `/mnt/memory/` 下的目录挂载到会话的沙箱中。目录名是存储的显示名称经过清理后得到的文件系统安全 slug（小写；非字母数字的连续字符变为单个连字符），因此名为 "Demo Memory" 的存储会挂载在 `/mnt/memory/demo-memory/`。确切路径会在会话的记忆存储资源的 `mount_path` 字段中返回；请从那里读取，而不是自行构造。智能体使用标准的[智能体工具集](/docs/zh/tools)读取和写入存储。挂载路径下的写入会持久化回存储，并在共享该存储的会话之间保持同步；对 `/mnt/memory/` 下任何其他路径的写入会落在容器本地的临时空间中，并在会话结束时丢失。每个挂载的简短描述（显示名称、挂载路径、访问模式、存储的 `description` 以及任何 `instructions`）会自动添加到系统提示中。
+每个附加的存储都作为 `/mnt/memory/` 下的目录挂载到会话的沙箱中。目录名是存储的显示名称经过清理后得到的文件系统安全 slug（小写；非字母数字的连续字符变为单个连字符），因此名为 "Demo Memory" 的存储会挂载在 `/mnt/memory/demo-memory/`。确切路径会在会话的记忆存储资源的 `mount_path` 字段中返回；请从那里读取，而不是自行构造。智能体使用标准的[智能体工具集](/docs/zh/tools)读取和写入存储。挂载路径下的写入会持久化回存储，并在共享该存储的会话之间保持同步；`/mnt/memory/` 父目录为只读，向附加存储目录之外的路径写入会被拒绝。每个挂载的简短描述（显示名称、挂载路径、访问模式、存储的 `description` 以及任何 `instructions`）会自动添加到系统提示中。
 
 `access` 在文件系统级别强制执行：`read_only` 挂载会拒绝写入，而对 `read_write` 挂载的写入会产生归属于该会话的[记忆版本](/docs/zh/memory#audit-memory-changes)。
 
@@ -396,7 +400,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories?path_prefix=/" \
+  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories?path_prefix=/&beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" | jq -r '.data[] | "\(.type)  \(.path)"'
@@ -492,7 +496,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id" \
+  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" | jq -r '.content'
@@ -567,7 +571,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  mem=$(curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories" \
+  mem=$(curl -s "http://localhost:38080/v1/memory_stores/$store_id/memories?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -655,7 +659,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id" \
+  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -739,7 +743,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id" \
+  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -844,7 +848,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s -X DELETE "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id" \
+  curl -s -X DELETE "http://localhost:38080/v1/memory_stores/$store_id/memories/$mem_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" > /dev/null
@@ -911,11 +915,11 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 对记忆的每次变更都会创建一个不可变的**记忆版本**（`memver_...`）。使用版本端点可审计谁在何时更改了什么、检查或恢复先前的快照，以及通过脱敏操作从历史记录中清除敏感内容。
 
-版本属于存储（而非单个记忆），即使记忆本身被删除后版本仍然存在，因此审计跟踪保持完整。版本保留 30 天；不过，最近的版本无论多久都会始终保留，因此不经常更改的记忆可能会保留超过 30 天的历史记录。实时的 `memories.retrieve` 调用始终返回最新版本；版本端点为您提供保留的历史记录。
+版本属于存储（而非单个记忆），即使记忆本身被删除后版本仍然存在，因此审计跟踪保持完整。版本保留策略以实际部署为准。实时的 `memories.retrieve` 调用始终返回最新版本；版本端点为您提供保留的历史记录。
 
 没有专门的恢复端点；要回滚，请检索您想要的版本，并使用 `memories.update` 将其 `content` 写回（如果父记忆已被删除，则使用 `memories.create`，因为版本的存活时间比其父记忆更长）。
 
-过去的记忆版本可能会在 30 天后被删除。要更长时间地保留记忆历史，请通过 API 导出版本。
+如需长期保留记忆历史，请通过 API 导出版本，并确认部署的保留策略。
 
 ### 列出版本
 
@@ -923,7 +927,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  versions=$(curl -s "http://localhost:38080/v1/memory_stores/$store_id/memory_versions?memory_id=$mem_id" \
+  versions=$(curl -s "http://localhost:38080/v1/memory_stores/$store_id/memory_versions?memory_id=$mem_id&beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22")
@@ -1044,7 +1048,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memory_versions/$version_id" \
+  curl -s "http://localhost:38080/v1/memory_stores/$store_id/memory_versions/$version_id?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22"
@@ -1124,7 +1128,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memory_versions/$version_id/redact" \
+  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/memory_versions/$version_id/redact?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" \
@@ -1201,7 +1205,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s "http://localhost:38080/v1/memory_stores?include_archived=true" \
+  curl -s "http://localhost:38080/v1/memory_stores?include_archived=true&beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" | jq '.data[] | {id, name, archived_at}'
@@ -1274,7 +1278,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 <CodeGroup defaultLanguage="CLI">
   ```bash cURL
-  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/archive" \
+  curl -s -X POST "http://localhost:38080/v1/memory_stores/$store_id/archive?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -H "anthropic-beta: agent-memory-2026-07-22" > /dev/null
@@ -1326,7 +1330,7 @@ description: "使用记忆存储为您的智能体提供可跨会话持久保存
 
 * **使用专注的存储。** 与其使用一个大型通用存储，不如使用更小的专用存储：每个用户一个、共享领域知识一个、项目特定上下文一个。每个存储都有自己的 2,000 条记忆上限，因此保持存储范围明确可以降低任何单个存储被填满的可能性。
 
-* **在存储填满之前进行压缩或修剪。** 使用 `memories.delete` 删除过时或冗余的记忆。您也可以运行[梦境会话](/docs/zh/dreams)，它会将碎片化的内容整合到一个单独的新输出存储中，而不是修改原始存储。将您的会话切换到该输出存储，然后归档或删除原始存储。
+* **在存储填满之前进行压缩或修剪。** 编辑或使用 `memories.delete` 删除过时或冗余的记忆。
 
 * **在合适的时候附加新存储。** 如果存储已超出其有用范围，请为新内容附加一个全新的存储，并以 `read_only` 访问权限附加原始存储。智能体可以从两者读取，但只写入新存储。
 

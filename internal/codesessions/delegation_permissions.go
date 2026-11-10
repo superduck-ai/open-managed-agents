@@ -1,9 +1,15 @@
 package codesessions
 
-import "encoding/json"
+import (
+	"encoding/json"
+)
 
 func isDelegationTool(name string) bool {
-	return name == "list_agents" || name == "send_to_agent" || name == "archive_agent"
+	switch name {
+	case "list_agents", "subagent", "send_message", "interrupt_agent":
+		return true
+	}
+	return false
 }
 
 func delegationToolPermission(raw json.RawMessage) resolvedToolPermission {

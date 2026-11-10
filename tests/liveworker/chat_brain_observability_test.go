@@ -204,7 +204,7 @@ func verifyDashboards(t *testing.T, tabs map[string]map[string]observability.Pan
 	}
 	delegation := false
 	for _, row := range tools["tool_table"].Data.(observability.TableData).Rows {
-		if row["tool"] == "send_to_agent" {
+		if row["tool"] == "subagent" {
 			delegation = *row["calls"].(*float64) == 1 && *row["errors"].(*float64) == 0 && *row["total_ms"].(*float64) > 0
 		}
 	}
@@ -384,8 +384,8 @@ func brainSubagentModel(t *testing.T, rootWrite bool) *httptest.Server {
 			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": `{"file_path":"/tmp/oma-trace-proof.txt","content":"traced write"}`}})
 			stop = "tool_use"
 		} else if !child && !bytes.Contains(body, []byte("call_obs_delegate")) {
-			arguments, _ := json.Marshal(map[string]string{"name": "observer", "system_prompt": brainObservabilityChild, "message": "请返回子 agent 观测验证结果。"})
-			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": "call_obs_delegate", "name": "send_to_agent", "input": map[string]any{}}})
+			arguments, _ := json.Marshal(map[string]string{"description": "observer", "prompt": brainObservabilityChild + "\n请返回子 agent 观测验证结果。"})
+			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": "call_obs_delegate", "name": "subagent", "input": map[string]any{}}})
 			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(arguments)}})
 			stop = "tool_use"
 		} else {

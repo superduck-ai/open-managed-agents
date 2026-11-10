@@ -4,7 +4,7 @@ sidebarTitle: "集成指南"
 description: "在自托管沙箱中运行 Open Managed Agents 会话，将工具执行、文件和网络出口保留在您自己的基础设施中。"
 ---
 
-默认情况下，托管智能体在 [OMA 托管的云沙箱](/docs/zh/cloud-sandboxes-reference)中执行工具和代码。自托管沙箱将编排保留在 OMA 一侧，但将工具执行移至您控制的基础设施中，因此智能体的代码、文件系统和网络出口永远不会离开您的环境。
+自托管沙箱将编排保留在 OMA 控制平面，将工具执行移至您控制的基础设施中。云沙箱则由部署配置的环境运行器提供，详见[云沙箱参考](/docs/zh/cloud-sandboxes-reference)。
 
 工具执行保留在您的主机上：智能体读写的文件系统、它派生的进程以及它可以访问的网络都在您的控制之下。工具输入和输出仍会流向 OMA 的控制平面，以便模型能够查看结果并决定下一步操作。有关完整的数据流边界，请参阅[安全模型](/docs/zh/self-hosted-sandboxes-security)。
 
@@ -21,9 +21,7 @@ description: "在自托管沙箱中运行 Open Managed Agents 会话，将工具
 | 文件和 GitHub 仓库挂载 | 由 OMA 管理  | 由您管理   |
 | 生命周期            | 由 OMA 管理  | 由您管理   |
 
-当智能体需要操作不能离开您网络边界的数据、访问无法公开路由的内部服务，或在您组织自己的合规和审计控制下运行时，自托管是一个很好的选择。
-
-有关零数据保留（Zero Data Retention）和 HIPAA BAA 资格，请参阅 API 和数据保留。
+当智能体需要在您控制的基础设施上执行工具或访问内部服务时，可以考虑自托管。工具输入、输出以及模型请求可能流经控制平面和模型提供商，数据边界取决于部署配置。
 
 ## 何时与 MCP 隧道结合使用
 
@@ -31,15 +29,15 @@ description: "在自托管沙箱中运行 Open Managed Agents 会话，将工具
 
 ## 环境 worker
 
-<Tip>
-  本指南介绍如何使用任何通用沙箱平台构建 worker。此外还提供了针对特定平台的指南：AWS Lambda MicroVMs、Blaxel、Cloudflare、Daytona、E2B、Fly.io、GKE Agent Sandbox、Modal、Namespace、Superserve 和 Vercel。
-</Tip>
+<Note>
+  本页的第三方 CLI、SDK worker 与平台示例需要先验证其版本、地址和凭据是否与您的 OMA 部署兼容。
+</Note>
 
 环境 worker 是您在自己的基础设施上运行的进程。它从 OMA 接收工具执行请求并在本地运行。`self_hosted` 环境充当工作队列：当[会话](/docs/zh/sessions)被分配到该环境时，OMA 会将该会话作为 worker 加入队列。您的 worker 从该队列中认领 worker，为每个 worker 派生一个执行上下文，下载智能体的[技能](/docs/zh/skills)（可复用的、基于文件系统的资源，为智能体提供特定领域的专业知识），运行工具调用，并将结果回传。
 
 worker 通过轮询环境的队列来认领：可以使用持续轮询的**常驻 worker**，也可以使用在 `session.status_run_started` 时唤醒并开始轮询的 **webhook 触发式处理程序**。
 
-CLI 和 SDK 都附带了预构建的 worker。`ant` CLI 仅支持常驻模式；SDK 同时支持常驻和 webhook 触发两种模式。两者均可配置：有关 CLI 标志，请参阅参考文档中的[自托管 worker](/docs/zh/reference#self-hosted-worker)；有关 SDK 选项，请参阅本页的 [SDK 辅助工具](/docs/zh/self-hosted-sandboxes#sdk-helpers)。如需更多控制，可直接调用[环境 worker 端点](/docs/zh/api/environment-work/list-work-items)并实现您自己的 worker。
+本页展示第三方 `ant` CLI 和 SDK worker 的参考用法；它们与 OMA 的兼容性取决于具体版本，请先在测试环境验证。也可通过[环境 worker 端点](/docs/zh/api/environment-work/list-work-items)实现自己的 worker。
 
 ### 沙箱文件系统
 
@@ -53,7 +51,7 @@ CLI 和 SDK 都附带了预构建的 worker。`ant` CLI 仅支持常驻模式；
 * **一个现有的智能体。** 如果您还没有，请先完成[快速入门](/docs/zh/quickstart)并记下其智能体 ID。
 * **一台 Linux 主机**，且 `/bin/bash` 位于该确切路径。worker 的 bash 工具会直接调用它，而不查询 `PATH`。TypeScript SDK 还需要 `PATH` 中有 `unzip` 和 `tar`，以及 Node.js 22 或更高版本；Python 和 Go SDK 使用其标准库进行归档提取，没有额外的二进制文件要求。
 * worker 主机上安装有 **`ant` CLI 或 OMA SDK**（Python、TypeScript 或 Go）。
-* **两个凭据：** 环境密钥（在后续步骤中通过 OMA 控制台 生成）用于向队列验证 worker 身份；您的 OMA API 密钥用于从 worker 主机外部创建会话和读取队列统计信息。密钥生成仅限 OMA 控制台。
+* **两个凭据：** 环境密钥（在后续步骤中向部署管理员获取）用于向队列验证 worker 身份；您的 OMA API 密钥用于从 worker 主机外部创建会话和读取队列统计信息。凭据签发方式取决于部署。
 
 <Note>
   环境 worker 使用 OMA 生成的环境密钥向队列认证。如果在 AWS 等云平台上运行 worker，请继续使用部署自身的 IAM、AWS Secrets Manager 和网络策略保护主机；OMA 不依赖第三方托管策略。
@@ -67,7 +65,7 @@ CLI 和 SDK 都附带了预构建的 worker。`ant` CLI 仅支持常驻模式；
 
     <CodeGroup>
       ```bash cURL
-      curl -sS --fail-with-body http://localhost:38080/v1/environments \
+      curl -sS --fail-with-body "http://localhost:38080/v1/environments?beta=true" \
         -H "x-api-key: $OMA_API_KEY" \
         -H "anthropic-version: 2023-06-01" \
         -H "anthropic-beta: managed-agents-2026-04-01" \
@@ -172,8 +170,8 @@ CLI 和 SDK 都附带了预构建的 worker。`ant` CLI 仅支持常驻模式；
     </CodeGroup>
   </Step>
 
-  <Step title="生成环境密钥">
-    在 OMA 控制台 中，打开该环境并点击 **Generate environment key**。无论您是通过 OMA 控制台 还是 API 创建的环境，密钥生成都仅限 OMA 控制台。然后在 worker 主机上导出环境 ID 和密钥：
+  <Step title="获取环境密钥">
+    向部署管理员确认当前环境的 worker 凭据获取方式，再在 worker 主机上配置环境 ID 和密钥。具体签发方式取决于部署；不要将凭据写入镜像：
 
     ```bash
     export ANTHROPIC_ENVIRONMENT_KEY="sk-ant-oat01-..."
@@ -276,7 +274,7 @@ CLI 和 SDK 都附带了预构建的 worker。`ant` CLI 仅支持常驻模式；
   <Tab title="常驻（SDK）">
     <Steps>
       <Step title="运行 worker">
-        `EnvironmentWorker` 认领分配给该环境的 worker，下载技能，在工作目录中执行工具调用，并将结果回传。使用您在[开始之前](/docs/zh/self-hosted-sandboxes#before-you-begin)中生成的环境密钥进行身份验证。
+        `EnvironmentWorker` 认领分配给该环境的 worker，下载技能，在工作目录中执行工具调用，并将结果回传。使用您在[开始之前](/docs/zh/self-hosted-sandboxes#before-you-begin)中获取的环境密钥进行身份验证。
 
         <CodeGroup exclude="shell">
           ```python Python
@@ -1548,13 +1546,13 @@ SDK 的[客户端 MCP 辅助工具](/docs/zh/mcp-connector)将服务器的工具
 `work.stats` 返回环境的队列状态：
 
 * `depth` 是等待被认领的项目数量。根据此值扩展您的 worker 集群或对积压发出警报。
-* `pending` 是已被 worker 认领但尚未确认的项目数量。worker 辅助工具在处理每个项目之前会先确认它，因此在正常运行中此值保持接近零；持续的非零值意味着某个 worker 在认领和确认之间停滞了。
-* `oldest_queued_at` 是队列中最早项目的时间戳（等待被认领或已认领但尚未确认），如果没有则为 `null`。
+* `pending` 是尚未进入 `stopped` 状态的工作项数量，包括排队中和执行中的项目。
+* `oldest_queued_at` 是状态为 `queued` 的最早项目的创建时间；没有时为 `null`。
 * `workers_polling` 是过去 30 秒内进行过轮询的 worker 数量。使用此值进行存活性警报。
 
 <CodeGroup>
   ```bash cURL
-  curl -sS "http://localhost:38080/v1/environments/$ANTHROPIC_ENVIRONMENT_ID/work/stats" \
+  curl -sS "http://localhost:38080/v1/environments/$ANTHROPIC_ENVIRONMENT_ID/work/stats?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
     -H "anthropic-version: 2023-06-01"
@@ -1683,7 +1681,7 @@ SDK 的[客户端 MCP 辅助工具](/docs/zh/mcp-connector)将服务器的工具
 
 <CodeGroup>
   ```bash cURL
-  curl -sS "http://localhost:38080/v1/environments/$ANTHROPIC_ENVIRONMENT_ID/work/$ANTHROPIC_WORK_ID/stop" \
+  curl -sS "http://localhost:38080/v1/environments/$ANTHROPIC_ENVIRONMENT_ID/work/$ANTHROPIC_WORK_ID/stop?beta=true" \
     -H "x-api-key: $OMA_API_KEY" \
     -H "anthropic-beta: managed-agents-2026-04-01" \
     -H "anthropic-version: 2023-06-01" \

@@ -1,6 +1,6 @@
 import '../src/styles.css';
 import { createRoot } from 'react-dom/client';
-import { NativeTrajectory } from '../src/features/observability/trajectory/NativeTrajectory';
+import { DshTrajectory } from '../src/features/observability/trajectory/DshTrajectory';
 
 const time = Date.now() - 5000;
 const events = [
@@ -84,6 +84,4 @@ window.fetch = (input, init) => {
   return request(input, init);
 };
 const scope = { orgUuid: 'fixture', workspaceId: 'fixture' };
-createRoot(document.getElementById('root')!).render(
-  <NativeTrajectory scope={scope} target={{ sessionId: 'fixture' }} />,
-);
+createRoot(document.getElementById('root')!).render(<DshTrajectory scope={scope} target={{ sessionId: 'fixture' }} />);

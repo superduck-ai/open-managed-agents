@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 	"uuid"
 
-	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
@@ -48,13 +47,13 @@ type llmProviderResponse struct {
 }
 
 func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretService *secrets.Service, presetsFile string) {
-	registerConsoleLLMProviderPresets(r, database, presetsFile)
+	registerConsoleLLMProviderPresets(r, presetsFile)
 	client := llmproviders.NewHTTPClient(15 * time.Second)
 	r.Route("/llm_provider", func(r chi.Router) {
 		r.Get("/", getConsoleOrganizationLLMProvider(database))
 		r.Put("/", putConsoleOrganizationLLMProvider(database, secretService))
 		r.Delete("/", deleteConsoleOrganizationLLMProvider(database))
-		r.Post("/preview_models", previewConsoleOrganizationLLMProviderModels(database, client))
+		r.Post("/preview_models", previewConsoleOrganizationLLMProviderModels(client))
 		r.Post("/models/sync", syncConsoleOrganizationLLMProviderModels(database, secretService, client, true))
 		r.Post("/models/preview", syncConsoleOrganizationLLMProviderModels(database, secretService, client, false))
 	})
@@ -246,34 +245,10 @@ func llmProviderScope(w http.ResponseWriter, r *http.Request, database *db.DB) (
 		return "", WorkspaceScope{}, false
 	}
 	if chi.URLParam(r, "workspaceId") == "" {
-		if r.Method != http.MethodGet && !requireLLMProviderAdministrator(w, r, database, orgUUID) {
-			return "", WorkspaceScope{}, false
-		}
 		return orgUUID, WorkspaceScope{}, true
 	}
 	scope, ok := consoleWorkspaceScopeFromRequest(w, r, database, orgUUID)
-	if !ok || (r.Method != http.MethodGet && !requireLLMProviderAdministrator(w, r, database, orgUUID)) {
-		return "", WorkspaceScope{}, false
-	}
-	return orgUUID, scope, true
-}
-
-func requireLLMProviderAdministrator(w http.ResponseWriter, r *http.Request, database *db.DB, orgUUID string) bool {
-	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || principal.UserExternalID == "" {
-		writeLLMProviderPermissionDenied(w)
-		return false
-	}
-	user, err := database.GetAdminUser(r.Context(), orgUUID, principal.UserExternalID)
-	if errors.Is(err, db.ErrNotFound) || (err == nil && !strings.EqualFold(user.Role, "admin")) {
-		writeLLMProviderPermissionDenied(w)
-		return false
-	}
-	if err != nil {
-		internalError(w, "failed to authorize LLM provider management")
-		return false
-	}
-	return true
+	return orgUUID, scope, ok
 }
 
 func decodeLLMProviderRequest(w http.ResponseWriter, r *http.Request) (llmProviderRequest, bool) {

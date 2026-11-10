@@ -1543,6 +1543,9 @@ test('draft editor blocks invalid writes and applies edits without creating an a
   renderManagedAgentsPage('quickstart');
   await screen.findByRole('textbox', { name: 'Builder message' });
   send('Create a simple assistant.');
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /^(Create agent|Save as v\d+)$/ }).hasAttribute('disabled')).toBe(false),
+  );
   fireEvent.click(await screen.findByRole('button', { name: 'Review configuration' }));
   await screen.findByRole('textbox', { name: 'Agent configuration content' });
   fireEvent.click(screen.getByRole('button', { name: 'JSON', exact: true }));
@@ -1591,6 +1594,9 @@ test('version review shows actual removed and added config without putting the p
   fireEvent.click(await screen.findByRole('button', { name: 'Structured extractor', exact: true }));
   await screen.findByRole('button', { name: 'Continue', exact: true });
   send('Rename the agent.');
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /^(Create agent|Save as v\d+)$/ }).hasAttribute('disabled')).toBe(false),
+  );
   fireEvent.click(await screen.findByRole('button', { name: 'Review configuration' }));
   const changes = await screen.findByRole('region', { name: 'Changes' });
   expect(changes.textContent).toContain('− name: Structured extractor');
@@ -1658,6 +1664,9 @@ test('hidden unapplied edits can be resumed or discarded without creating a reso
   renderManagedAgentsPage('quickstart');
   await screen.findByRole('textbox', { name: 'Builder message' });
   send('Create a simple assistant.');
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /^(Create agent|Save as v\d+)$/ }).hasAttribute('disabled')).toBe(false),
+  );
   fireEvent.click(await screen.findByRole('button', { name: 'Review configuration' }));
   await screen.findByRole('textbox', { name: 'Agent configuration content' });
   setAgentConfigEditorValue(document.body, '{', 'Agent configuration content');

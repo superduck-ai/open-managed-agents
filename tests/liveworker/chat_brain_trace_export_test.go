@@ -285,7 +285,7 @@ func verifyTraceShape(t *testing.T, spans []*tracepb.Span, primary, childThread,
 				succeeded++
 			}
 		}
-		if strings.HasPrefix(span.Name, "oma.tool_use send_to_agent") {
+		if strings.HasPrefix(span.Name, "oma.tool_use subagent") {
 			t.Fatal("multi-agent delegation produced a tool span")
 		}
 	}

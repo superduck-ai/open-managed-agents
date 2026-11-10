@@ -14,6 +14,7 @@ Thumbs.db
 # Local environment and secrets
 .env
 .env.*
+/.amp/portals/*
 /.verify-be.local.json
 .verify-chat.local.json
 /config/config.yaml
@@ -95,3 +96,5 @@ AGENTS.override.md
 /oma-brain-dsh/.env
 /oma-brain-dsh/.env.*
 !/oma-brain-dsh/.env.example
+
+/.archify/

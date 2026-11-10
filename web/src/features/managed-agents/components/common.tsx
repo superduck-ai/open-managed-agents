@@ -1,3 +1,4 @@
+import { productIcons } from '@/shared/icons/product-icons';
 import { useDialogDismissal } from '../../../shared/hooks/use-dialog-dismissal';
 import { useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
@@ -30,7 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { Textarea } from '../../../shared/ui/textarea';
 import clsx from 'clsx';
-import { AlertCircle, Archive, ArrowUpRight, Bot, Plus, Search, Trash2, TriangleAlert, X } from 'lucide-react';
+import { AlertCircle, Archive, ArrowUpRight, Plus, Search, Trash2, TriangleAlert, X } from 'lucide-react';
 import { type FormEvent, type ReactNode, useId, useState } from 'react';
 import { compactAgentId } from '../agents/AgentsResourcePage';
 import { entityKindLabel, resourceEmptyBody, resourceEmptyTitle } from '../labels';
@@ -840,7 +841,7 @@ export function AgentsEmptyState({
   const filtered = !trueEmpty;
   return (
     <AgentsListState
-      icon={trueEmpty ? Bot : Search}
+      icon={trueEmpty ? productIcons.agents : Search}
       title={
         trueEmpty
           ? msg('managedAgents.agents.emptyTitle', 'No agents yet')

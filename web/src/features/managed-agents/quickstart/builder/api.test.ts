@@ -92,6 +92,31 @@ test('restored metadata overflow fails before a save operation can be prepared',
   value.config.metadata = Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`key${index}`, 'value']));
   expect(() => prepareBuilderAgent(value, 'operation', 'workspace')).toThrow();
 });
+test('saved agent tool types survive creation and recovery', async () => {
+  const value = state();
+  value.operation = { id: 'agent_operation', kind: 'agent', toolId: 'build_agent_config' };
+  const saved = {
+    ...value.config,
+    id: 'agent_saved',
+    version: 1,
+    metadata: { quickstart_operation_id: value.operation.id },
+    tools: [
+      {
+        type: 'agent_toolset_20260401',
+        configs: [{ name: 'read', type: 'read_config' }, { name: 'ask_user_question' }],
+      },
+    ],
+  };
+  setConsoleRequestContext({ csrfToken: 'csrf_test' });
+  globalThis.fetch = (async (_input, init) =>
+    json(init?.method === 'POST' ? saved : { data: [saved], next_page: null })) as typeof fetch;
+  const created = await prepareBuilderAgent(value, value.operation.id, 'workspace')();
+  const recovered = await recoverBuilderOperation(value, 'workspace');
+  expect(created.savedConfig?.tools).toEqual(saved.tools);
+  expect(recovered.savedConfig?.tools).toEqual(saved.tools);
+  expect(recovered.operation).toBeNull();
+});
+
 test('credential coverage reads every page and returns only safe resource summaries', async () => {
   const urls: string[] = [];
   globalThis.fetch = (async (input) => {

@@ -1079,7 +1079,7 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		if err != nil {
 			return nil, err
 		}
-		entry := map[string]any{"enabled": enabled, "name": name, "permission_policy": policy}
+		entry := map[string]any{"enabled": enabled, "name": name, "type": name, "permission_policy": policy}
 		if name == "web_search" || name == "web_fetch" {
 			raw, err := json.Marshal(config)
 			if err != nil {
@@ -1100,6 +1100,7 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		normalized = append(normalized, map[string]any{
 			"enabled":           false,
 			"name":              "ask_user_question",
+			"type":              "ask_user_question",
 			"permission_policy": map[string]string{"type": "always_allow"},
 		})
 	}

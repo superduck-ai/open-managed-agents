@@ -79,7 +79,7 @@ test('添加授权要求选择账号，失败保留选择并允许重试，成�
     fireEvent.click(screen.getByRole('button', { name: '确认变更' }));
   });
   expect((await screen.findByRole('alert')).textContent).toContain('管理服务暂不可用');
-  expect(screen.getByLabelText('已选管理员').textContent).toContain(target.email);
+  expect(screen.getByLabelText('已选账号').textContent).toContain(target.email);
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: '确认变更' }));
   });

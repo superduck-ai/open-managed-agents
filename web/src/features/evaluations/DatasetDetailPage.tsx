@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from '@tanstack/react-router';
 import { MoreHorizontal } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
@@ -38,6 +38,8 @@ import { AcceptanceChecklist } from './AcceptanceChecklist';
 import { SessionTurnTransfer } from './SessionTurnTransfer';
 import { CaseEditorDialog } from './CaseEditorDialog';
 import { acceptanceItems, joinAcceptance } from './caseChecklist';
+import { CaseInputMedia } from './caseMedia';
+import { fileBlocks } from './caseInputs';
 import { shortenId } from './evaluationChrome';
 import { useEvaluationScope } from './useEvaluationScope';
 
@@ -65,6 +67,7 @@ export function DatasetDetailPage() {
       await queryClient.invalidateQueries({
         queryKey: ['evaluation-dataset', scope.orgUuid, scope.workspaceId, datasetId],
       });
+      await queryClient.invalidateQueries({ queryKey: ['evaluation-datasets', scope.orgUuid, scope.workspaceId] });
     },
   });
   const cases = useQuery({
@@ -105,7 +108,7 @@ export function DatasetDetailPage() {
         </div>
       </div>
       <p className="mb-3 text-sm text-muted-foreground">
-        {msg('evaluations.caseCount', '{count} cases').replace('{count}', String(rows.length))}
+        {msg('evaluations.caseCount', '{count} cases', { count: rows.length })}
       </p>
       {cases.isError ? <p className="mb-4 text-sm text-destructive">{evaluationError(cases.error)}</p> : null}
       <div className="overflow-x-auto rounded-xl border border-border">
@@ -136,6 +139,9 @@ export function DatasetDetailPage() {
                 moreLabel={msg('evaluations.moreActions', 'More actions')}
                 positiveLabel={msg('evaluations.positive', 'Positive')}
                 negativeLabel={msg('evaluations.negative', 'Negative')}
+                imageOnlyLabel={msg('evaluations.imageOnly', 'Image')}
+                orgUuid={scope.orgUuid}
+                workspaceId={scope.workspaceId}
                 onEdit={() => setEditor(item)}
                 onDelete={() => {
                   if (
@@ -185,6 +191,9 @@ function CaseRow({
   moreLabel,
   positiveLabel,
   negativeLabel,
+  imageOnlyLabel,
+  orgUuid,
+  workspaceId,
   onEdit,
   onDelete,
 }: {
@@ -199,14 +208,27 @@ function CaseRow({
   moreLabel: string;
   positiveLabel: string;
   negativeLabel: string;
+  imageOnlyLabel: string;
+  orgUuid: string;
+  workspaceId: string;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const checkpoints = acceptanceItems(item.acceptance).filter(Boolean);
+  const media = fileBlocks(item.inputs);
+  const title = item.query || (media.length === 0 ? imageOnlyLabel : '');
   return (
     <TableRow>
       <TableCell className="px-3 align-top tabular-nums">{index}</TableCell>
-      <TableCell className="max-w-[280px] px-3 align-top whitespace-pre-wrap">{item.query}</TableCell>
+      <TableCell className="max-w-[280px] px-3 align-top whitespace-pre-wrap">
+        {title}
+        <CaseInputMedia
+          inputs={item.inputs}
+          orgUuid={orgUuid}
+          workspaceId={workspaceId}
+          sessionId={item.source_session_id}
+        />
+      </TableCell>
       <TableCell className="max-w-[240px] px-3 align-top whitespace-pre-wrap text-muted-foreground">
         {item.expected_answer || unset}
       </TableCell>
@@ -265,12 +287,15 @@ function ImportSessionDialog({
   const queryClient = useQueryClient();
   const [sessionId, setSessionId] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [importedTurns, setImportedTurns] = useState<Record<string, number[]>>({});
   const [polarity, setPolarity] = useState('');
   const [checkpoints, setCheckpoints] = useState<string[]>(['']);
   const [error, setError] = useState('');
-  const sessions = useQuery({
+  const sessions = useInfiniteQuery({
     queryKey: ['evaluation-import-sessions', workspaceId],
-    queryFn: () => listManagedEntities('sessions', workspaceId),
+    queryFn: ({ pageParam }) => listManagedEntities('sessions', workspaceId, pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_page,
     enabled: open && Boolean(workspaceId),
   });
   const turns = useQuery({
@@ -279,29 +304,60 @@ function ImportSessionDialog({
     enabled: open && sessionId.trim() !== '',
   });
   const turnRows = turns.data?.data ?? [];
+  const hiddenTurns = new Set(importedTurns[sessionId] ?? []);
+  const visibleTurns = turnRows.filter((turn) => !hiddenTurns.has(turn.index));
   const importSession = useMutation({
-    mutationFn: () =>
+    mutationFn: (input: {
+      sessionId: string;
+      turns: number[];
+      visibleTurns: number[];
+      polarity: string;
+      acceptance: string;
+    }) =>
       importEvaluationSession(orgUuid, workspaceId, datasetId, {
-        session_id: sessionId,
-        turns: [...selected].sort((left, right) => left - right),
-        polarity: polarity || undefined,
-        acceptance: polarity === 'negative' ? joinAcceptance(checkpoints) : '',
+        session_id: input.sessionId,
+        turns: input.turns,
+        polarity: input.polarity || undefined,
+        acceptance: input.acceptance,
       }),
-    onSuccess: async () => {
+    onSuccess: async (result, input) => {
+      const imported = input.turns.filter((index) => input.visibleTurns.includes(index));
+      setImportedTurns((current) => ({
+        ...current,
+        [input.sessionId]: [...(current[input.sessionId] ?? []), ...imported],
+      }));
+      setSelected((current) =>
+        sessionId === input.sessionId ? remainingTurnSelection(new Set(input.turns), input.visibleTurns) : current,
+      );
+      await queryClient.invalidateQueries({ queryKey: ['evaluation-cases', orgUuid, workspaceId, datasetId] });
+      await queryClient.invalidateQueries({ queryKey: ['evaluation-datasets', orgUuid, workspaceId] });
+      await queryClient.invalidateQueries({
+        queryKey: ['evaluation-session-turns', orgUuid, workspaceId, datasetId, input.sessionId],
+      });
+      if (sessionId !== input.sessionId) return;
+      if (result.skipped > 0) {
+        setError(
+          msg('evaluations.importSkipped', '{count} turns had no text or workspace file and were skipped.', {
+            count: result.skipped,
+          }),
+        );
+        return;
+      }
       setSessionId('');
       setSelected(new Set());
       setPolarity('');
       setCheckpoints(['']);
       setError('');
       onOpenChange(false);
-      await queryClient.invalidateQueries({ queryKey: ['evaluation-cases', orgUuid, workspaceId, datasetId] });
     },
     onError: (cause) => setError(evaluationError(cause)),
   });
-  const sessionOptions = (sessions.data?.data ?? []).map((item) => ({
-    id: item.id,
-    label: sessionOptionLabel(item),
-  }));
+  const sessionOptions = (sessions.data?.pages ?? [])
+    .flatMap((page) => page.data)
+    .map((item) => ({
+      id: item.id,
+      label: sessionOptionLabel(item),
+    }));
 
   function chooseSession(next: string) {
     setSessionId(next);
@@ -316,8 +372,14 @@ function ImportSessionDialog({
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (selected.size === 0) return;
-    importSession.mutate();
+    if (selected.size === 0 || importSession.isPending) return;
+    importSession.mutate({
+      sessionId,
+      turns: [...selected].sort((left, right) => left - right),
+      visibleTurns: turnRows.map((turn) => turn.index),
+      polarity,
+      acceptance: polarity === 'negative' ? joinAcceptance(checkpoints) : '',
+    });
   }
 
   return (
@@ -336,6 +398,7 @@ function ImportSessionDialog({
               <Select
                 value={sessionId || null}
                 items={sessionOptions.map((option) => ({ value: option.id, label: option.label }))}
+                disabled={importSession.isPending}
                 onValueChange={(value) => chooseSession(value ?? '')}
                 emptyLabel={msg('evaluations.emptySessions', 'No sessions yet')}
               >
@@ -350,13 +413,23 @@ function ImportSessionDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {sessions.hasNextPage ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={sessions.isFetchingNextPage || importSession.isPending}
+                  onClick={() => void sessions.fetchNextPage()}
+                >
+                  {msg('evaluations.loadMoreSessions', 'Load more sessions')}
+                </Button>
+              ) : null}
             </Field>
             <SessionTurnTransfer
               key={sessionId || 'none'}
-              turns={turnRows}
+              turns={visibleTurns}
               chosen={selected}
-              onChosenChange={setSelected}
-              status={transferStatus(sessionId, turns.isLoading, turns.isError, turnRows.length)}
+              onChosenChange={importSession.isPending ? () => undefined : setSelected}
+              status={transferStatus(sessionId, turns.isLoading, turns.isError, visibleTurns.length)}
               error={turns.isError ? evaluationError(turns.error) : ''}
             />
             {selected.size > 0 ? (
@@ -374,6 +447,7 @@ function ImportSessionDialog({
                     { value: 'positive', label: msg('evaluations.positive', 'Positive') },
                     { value: 'negative', label: msg('evaluations.negative', 'Negative') },
                   ]}
+                  disabled={importSession.isPending}
                   onValueChange={(value) => choosePolarity(value ?? '')}
                 >
                   <SelectTrigger aria-label={msg('evaluations.polarity', 'Label')} className="w-full">
@@ -401,6 +475,15 @@ function ImportSessionDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+export function remainingTurnSelection(selected: ReadonlySet<number>, visibleIndexes: readonly number[]) {
+  const visible = new Set(visibleIndexes);
+  const remaining = new Set<number>();
+  for (const index of selected) {
+    if (!visible.has(index)) remaining.add(index);
+  }
+  return remaining;
 }
 
 function transferStatus(sessionId: string, loading: boolean, failed: boolean, count: number) {

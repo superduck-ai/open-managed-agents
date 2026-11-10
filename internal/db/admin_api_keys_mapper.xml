@@ -139,11 +139,27 @@
 
     <select id="FindActiveByKeyHash" resultType="apiKeyAuthRow">
         SELECT ak.uuid, ak.external_id, w.organization_uuid,
-            w.uuid AS workspace_uuid, w.external_id AS workspace_external_id
+            w.uuid AS workspace_uuid, w.external_id AS workspace_external_id,
+            COALESCE(CAST(COALESCE(ak.runtime_user_uuid, ak.created_by_user_uuid) AS text), '') AS runtime_user_uuid
         FROM api_keys ak
         JOIN workspaces w ON w.uuid = ak.workspace_uuid
         WHERE ak.key_hash = #{keyHash,sensitive=true}
         AND ak.status = 'active'
         AND (ak.expires_at IS NULL OR ak.expires_at &gt; NOW())
     </select>
+
+    <update id="BindEmptyRuntimeUser" result="rows">
+        UPDATE api_keys ak
+        SET runtime_user_uuid = u.uuid, updated_at = NOW()
+        FROM workspaces w, users u
+        WHERE ak.workspace_uuid = w.uuid
+        AND w.organization_uuid = #{organizationUUID}
+        AND w.uuid = #{workspaceUUID}
+        AND ak.external_id = #{externalID}
+        AND ak.runtime_user_uuid IS NULL
+        AND ak.status = 'active'
+        AND w.archived_at IS NULL
+        AND u.uuid = #{runtimeUserUUID}
+        AND u.deleted_at IS NULL
+    </update>
 </mapper>

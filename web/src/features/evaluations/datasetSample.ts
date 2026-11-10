@@ -75,11 +75,14 @@ export function datasetSampleText(kind: DatasetSampleKind, chinese: boolean) {
 export function downloadDatasetSample(kind: DatasetSampleKind, chinese: boolean) {
   const text = kind === 'csv' ? `\uFEFF${datasetSampleText(kind, chinese)}` : datasetSampleText(kind, chinese);
   const type = kind === 'csv' ? 'text/csv;charset=utf-8' : 'application/json';
-  const blob = new Blob([text], { type });
+  downloadBlob(new Blob([text], { type }), datasetSampleFileName(kind));
+}
+
+export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = datasetSampleFileName(kind);
+  anchor.download = filename;
   document.body.append(anchor);
   anchor.click();
   anchor.remove();

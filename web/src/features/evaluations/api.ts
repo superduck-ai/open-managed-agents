@@ -17,6 +17,9 @@ export type EvaluationDataset = {
   updated_at: string;
 };
 
+export type EvaluationContentBlock =
+  { type: 'text'; text: string } | { type: 'image' | 'document'; source: { type: 'file'; file_id: string } };
+
 export type EvaluationCase = {
   id: string;
   query: string;
@@ -25,6 +28,16 @@ export type EvaluationCase = {
   source_session_id: string;
   polarity: string;
   acceptance: string;
+  inputs?: EvaluationContentBlock[];
+};
+
+export type EvaluationRubricVersion = {
+  id: string;
+  version: number;
+  body: string;
+  pass_score: number;
+  model: string;
+  created_at: string;
 };
 
 export type EvaluationRubric = {
@@ -104,7 +117,9 @@ export type EvaluationTaskInput = {
 };
 
 export function evaluationBase(orgUuid: string, workspaceId: string) {
-  return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/evaluations`;
+  return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(
+    workspaceId,
+  )}/evaluations`;
 }
 
 export function evaluationListPath(path: string, page?: string) {
@@ -126,17 +141,11 @@ export function createEvaluationDataset(
 ) {
   return consoleApi<EvaluationDataset>(`${evaluationBase(orgUuid, workspaceId)}/datasets`, {
     method: 'POST',
-    body: JSON.stringify({ name: input.name, desc: input.desc }),
-  }).then(async (dataset) => {
-    if (!input.content?.trim()) return dataset;
-    await consoleApi(
-      `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(dataset.id)}/cases:import`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ content: input.content }),
-      },
-    );
-    return dataset;
+    body: JSON.stringify({
+      name: input.name,
+      desc: input.desc,
+      content: input.content?.trim() ? input.content : undefined,
+    }),
   });
 }
 
@@ -144,12 +153,17 @@ export type SessionTurn = {
   index: number;
   query: string;
   answer: string;
+  inputs?: EvaluationContentBlock[];
 };
+
+export type SessionImportResult = EvaluationPage<EvaluationCase> & { skipped: number };
 
 export function listSessionTurns(orgUuid: string, workspaceId: string, datasetId: string, sessionId: string) {
   const params = new URLSearchParams({ session_id: sessionId });
   return consoleApi<EvaluationPage<SessionTurn>>(
-    `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/session-turns?${params.toString()}`,
+    `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(
+      datasetId,
+    )}/session-turns?${params.toString()}`,
   );
 }
 
@@ -159,7 +173,7 @@ export function importEvaluationSession(
   datasetId: string,
   input: { session_id: string; turns: number[]; polarity?: string; acceptance?: string },
 ) {
-  return consoleApi<EvaluationPage<EvaluationCase>>(
+  return consoleApi<SessionImportResult>(
     `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases:from-session`,
     { method: 'POST', body: JSON.stringify(input) },
   );
@@ -175,7 +189,7 @@ export function createEvaluationCases(
   orgUuid: string,
   workspaceId: string,
   datasetId: string,
-  cases: Array<Pick<EvaluationCase, 'query' | 'expected_answer' | 'polarity' | 'acceptance'>>,
+  cases: Array<Pick<EvaluationCase, 'query' | 'expected_answer' | 'polarity' | 'acceptance' | 'inputs'>>,
 ) {
   return consoleApi<EvaluationPage<EvaluationCase>>(
     `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases`,
@@ -188,17 +202,24 @@ export function updateEvaluationCase(
   workspaceId: string,
   datasetId: string,
   caseId: string,
-  input: Pick<EvaluationCase, 'query' | 'expected_answer' | 'polarity' | 'acceptance' | 'source_session_id'>,
+  input: Pick<
+    EvaluationCase,
+    'query' | 'expected_answer' | 'expected_tool_trace' | 'polarity' | 'acceptance' | 'source_session_id' | 'inputs'
+  >,
 ) {
   return consoleApi<EvaluationCase>(
-    `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases/${encodeURIComponent(caseId)}`,
+    `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases/${encodeURIComponent(
+      caseId,
+    )}`,
     { method: 'POST', body: JSON.stringify(input) },
   );
 }
 
 export function deleteEvaluationCase(orgUuid: string, workspaceId: string, datasetId: string, caseId: string) {
   return consoleApi<{ id: string }>(
-    `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases/${encodeURIComponent(caseId)}`,
+    `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases/${encodeURIComponent(
+      caseId,
+    )}`,
     { method: 'DELETE' },
   );
 }
@@ -207,7 +228,7 @@ export function generateEvaluationCases(
   orgUuid: string,
   workspaceId: string,
   datasetId: string,
-  input: { count: number; note: string; agent_id?: string },
+  input: { count: number; note: string; agent_id?: string; agent_version?: number },
 ) {
   return consoleApi<EvaluationPage<EvaluationCase>>(
     `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases:generate`,
@@ -264,6 +285,12 @@ export function generateEvaluationRubric(
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+export function listEvaluationRubricVersions(orgUuid: string, workspaceId: string, rubricId: string) {
+  return consoleApi<EvaluationPage<EvaluationRubricVersion>>(
+    `${evaluationBase(orgUuid, workspaceId)}/rubrics/${encodeURIComponent(rubricId)}/versions`,
+  );
 }
 
 export function saveEvaluationRubricVersion(

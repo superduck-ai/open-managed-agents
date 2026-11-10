@@ -1,6 +1,6 @@
+import { runSubagent, subagentScripts } from "./subagent-tools.ts";
 import { expect, test } from "bun:test";
 import { Context } from "@deepseek-ai/cordis";
-import { ToolCallId } from "@deepseek-ai/dsh-llm";
 import { OmaApi } from "../src/api.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { mountOma } from "../src/plugin.ts";
@@ -203,7 +203,7 @@ async function fixture(tools?: string[]) {
   };
 }
 
-test("children share the root provider and archiving a child preserves its executor and MCP connection", async () => {
+test("DSH child disposal preserves the root executor and MCP connection", async () => {
   const f = await fixture();
   try {
     await f.session.open();
@@ -211,22 +211,15 @@ test("children share the root provider and archiving a child preserves its execu
     expect(f.b.mcpMethods).toEqual([]);
     const provider = f.providers()[0]!;
     const executor = provider.ctx.get("sandboxExecutor");
-    f.b.modelScript = [toolEvents("child", "child_call"), textEvents("child report")];
-    const report = JSON.parse(await f.session.subagents.send({
-      name: "child", system_prompt: "Inspect files", message: "Inspect the workspace",
-    }, new AbortController().signal));
+    subagentScripts(f.b, [textEvents("received child report")], [toolEvents("child", "child_call"), textEvents("child report")]);
+    const report = await runSubagent(f.session, "subagent", { description: "child", prompt: ["Inspect files", "Inspect the workspace"].filter(Boolean).join("\n") });
     expect(report.report).toBe("child report");
+    await f.session.subagents.wait();
+    await f.session.agent.whenIdle();
     expect(f.providers()).toEqual([provider]);
-    expect(f.consumers()).toHaveLength(2);
-    for (const consumer of f.consumers()) expect(consumer.ctx.get("sandboxExecutor")).toBe(executor);
-    const agent = f.session.agent;
-    const archived = await agent.ctx.tools.execute({
-      calls: [{ type: "tool-call", id: ToolCallId("archive_child"), name: "archive_agent", arguments: JSON.stringify({ thread_id: report.thread_id }) }],
-      agent, signal: new AbortController().signal,
-    });
-    expect(archived.results[0]!.result.isError).toBe(false);
     expect(f.consumers()).toHaveLength(1);
     expect(provider.ctx.get("sandboxExecutor")).toBe(executor);
+    f.b.onModel = undefined;
     f.b.modelScript = [toolEvents("parent", "parent_call"), textEvents("done")];
     await f.session.receive("parent_input", { content: "Continue" });
     expect(f.b.executions.map((call) => call.arguments.command)).toEqual(["child", "parent"]);
@@ -273,8 +266,7 @@ test("root close keeps the provider alive until a child's tool result checkpoint
       await persist(id, ...args);
     };
     f.b.modelScript = [toolEvents("child", "draining_call"), textEvents("done")];
-    settled = f.session.subagents.send({ name: "child", system_prompt: "Test", message: "Run" },
-      new AbortController().signal).catch(() => {});
+    settled = runSubagent(f.session, "subagent", { description: "child", prompt: ["Test", "Run"].filter(Boolean).join("\n") }).catch(() => {});
     await writing.promise;
     let closed = false;
     const closing = f.session.close().then(() => { closed = true; });
@@ -347,7 +339,7 @@ test("root model requests expose only the session's enabled sandbox tools", asyn
       await f.session.receive("allowlist_input", { content: "Inspect available tools" });
       expect(f.b.requests).toHaveLength(1);
       expect((f.b.requests[0]!.tools ?? []).map((tool: { name: string }) => tool.name))
-        .toEqual([...tools, "archive_agent", "list_agents", "send_to_agent"].sort());
+        .toEqual([...tools, "interrupt_agent", "list_agents", "send_message", "skill", "subagent"].sort());
       expect(f.b.sandboxCount).toBe(0);
       expect(f.b.mcpMethods).toEqual([]);
     } finally { await f.close(); }

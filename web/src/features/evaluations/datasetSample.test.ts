@@ -15,6 +15,7 @@ test('dataset samples keep a query and the optional scoring columns', () => {
 
   const csv = datasetSampleText('csv', true);
   expect(csv.startsWith('query,expected_answer,expected_tool_trace,polarity,acceptance\n')).toBe(true);
+  expect(csv).not.toContain('DISPIMG');
   expect(csv).toContain('"[""lookup_sales""]"');
   expect(datasetSampleFileName('csv')).toBe('evaluation-dataset.sample.csv');
 });

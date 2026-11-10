@@ -1,3 +1,4 @@
+import { mountDshSubagents } from "../runtime/dsh-subagents.ts";
 import { Context, Service } from "@deepseek-ai/cordis";
 import * as JsonlPersistence from "@deepseek-ai/dsh-session-persistence-jsonl";
 import { mkdtemp } from "node:fs/promises";
@@ -75,5 +76,6 @@ export class CcrBridge extends Service {
 export async function apply(ctx: Context, config: Config): Promise<void> {
   await ctx.plugin(JsonlPersistence, { root: config.localRoot ?? await mkdtemp(join(tmpdir(), "oma-brain-jsonl-")), compression: "none" });
   await ctx.plugin(CcrReplication, { backend: config.backend });
+  await mountDshSubagents(ctx);
   await ctx.plugin(CcrBridge, config);
 }

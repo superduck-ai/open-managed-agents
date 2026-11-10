@@ -70,6 +70,7 @@ func connectViaTunnel(t *testing.T, handler *Handler, target string) (string, bo
 func testUpstreamProxyIdentity() upstreamProxyIdentity {
 	return upstreamProxyIdentity{
 		codeSessionExternalID: "cse_test",
+		publicSessionID:       "sesn_test",
 		organizationUUID:      "00000000-0000-0000-0000-000000000001",
 		workspaceUUID:         "00000000-0000-0000-0000-000000000002",
 	}

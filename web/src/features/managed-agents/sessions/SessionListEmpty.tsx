@@ -1,4 +1,5 @@
-import { MessageSquare, Search } from 'lucide-react';
+import { productIcons } from '@/shared/icons/product-icons';
+import { Search } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '../../../shared/ui/empty';
@@ -20,7 +21,9 @@ export function SessionListEmpty({
   return (
     <Empty className="min-h-64 rounded-none">
       <EmptyHeader>
-        <EmptyMedia variant="icon">{filtered ? <Search aria-hidden /> : <MessageSquare aria-hidden />}</EmptyMedia>
+        <EmptyMedia variant="icon">
+          {filtered ? <Search aria-hidden /> : <productIcons.sessions aria-hidden />}
+        </EmptyMedia>
         <EmptyTitle>
           {error
             ? msg('managedAgents.sessions.loadFailed', 'Failed to load sessions')

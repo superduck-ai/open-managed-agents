@@ -28,14 +28,14 @@ export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore, curr
     route: (options) => omaRoute(api, options),
     history: legacyReplay,
     onCallStart: (options) => {
-      if (options.purpose !== "compaction") {
+      if (!options.purpose) {
         api.modelResponses.delete(modelSessionID(options));
         api.modelRequestIDs.delete(modelSessionID(options));
       }
     },
     onRequestBody: (options, body) => { logSystemPrompt(modelSessionID(options), body); },
-    onMessageID: (options, messageID) => { if (options.purpose !== "compaction") api.modelResponses.set(modelSessionID(options), messageID); },
-    onRequestID: (options, requestID) => { if (options.purpose !== "compaction") api.modelRequestIDs.set(modelSessionID(options), requestID); },
+    onMessageID: (options, messageID) => { if (!options.purpose) api.modelResponses.set(modelSessionID(options), messageID); },
+    onRequestID: (options, requestID) => { if (!options.purpose) api.modelRequestIDs.set(modelSessionID(options), requestID); },
   };
 }
 

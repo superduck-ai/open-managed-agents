@@ -22,7 +22,17 @@ const (
 	CredentialTypePlatformSession  = "platform_session"
 )
 
+type OrganizationAccessSource string
+
+const (
+	OrganizationAccessMember        OrganizationAccessSource = "organization_member"
+	OrganizationAccessPlatformAdmin OrganizationAccessSource = "platform_admin"
+)
+
 type Principal struct {
+	AccountUUID               string
+	AccountExternalID         string
+	OrganizationAccessSource  OrganizationAccessSource
 	WorkspaceAccess           WorkspaceAccess
 	CredentialType            string
 	APIKeyUUID                string

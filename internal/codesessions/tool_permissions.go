@@ -660,6 +660,9 @@ func toolCallPublicPayload(codeSessionID string, request toolPermissionRequest, 
 		if permission == resolvedToolPermissionAllow {
 			toolPayload["evaluation"] = map[string]string{"type": "always_allow"}
 		}
+		if !identity.Automatic && permission == resolvedToolPermissionAsk {
+			toolPayload["evaluation"] = map[string]string{"type": "always_ask"}
+		}
 		if identity.Automatic && permission == resolvedToolPermissionAsk {
 			toolPayload["evaluation"] = map[string]any{"type": "auto", "evaluated_permission": map[string]string{"type": "ask", "reason_code": "indeterminate"}}
 		}

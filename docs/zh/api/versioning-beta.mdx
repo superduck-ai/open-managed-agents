@@ -13,14 +13,17 @@ OMA 的 `/v1` 同时包含稳定兼容接口和多个来源不同的 Beta 合同
 | Beta 消息 | `beta=true` | `anthropic-version: 2023-06-01`；把所选字段要求的 Beta 功能标识加入 `anthropic-beta` |
 | 消息批处理稳定形状 | 无 | `anthropic-version` |
 | 消息批处理 Beta 形状 | `beta=true` | `anthropic-beta: message-batches-2024-09-24` |
-| 智能体、环境、会话、记忆存储、密钥库 | `beta=true` | 无额外 Beta 请求头 |
-| 文件 | 无 | `anthropic-beta: files-api-2025-04-14` |
-| 技能 | `beta=true` | `anthropic-beta: skills-2025-10-02` |
+| 智能体、普通会话接口 | 无 | 无统一 Beta 要求 |
+| 会话线程（API 密钥） | 无 | `anthropic-beta: managed-agents-2026-04-01` |
+| 环境、记忆存储、密钥库 | `beta=true` | 无额外 Beta 请求头 |
+| 文件 | 无 | 旧版 Files Beta 头可用于兼容，但不是必需 |
+| 技能 | 无统一要求 | `skills-2025-10-02` 选择旧版兼容行为 |
 | 部署、部署运行 | 无 | `anthropic-version: 2023-06-01` 和 `anthropic-beta: managed-agents-2026-04-01` |
 | Webhooks | 无 | `anthropic-beta: webhooks-2026-03-01` |
+| MCP Tunnel 管理 | 无 | `anthropic-beta: mcp-tunnels-2026-06-22`（也接受 `mcp-tunnels-2026-05-19`） |
 
 <Warning>
-  控制台 Cookie 会话在部分托管智能体路由上使用 `?beta=true` 快捷方式。API 密钥客户端必须使用上表要求的正式请求头，不要复制浏览器请求。
+  控制台 Cookie 会话在部分路由上可使用 `?beta=true`；API 密钥客户端请按具体资源要求配置。
 </Warning>
 
 ## 多个 Beta 值

@@ -178,7 +178,8 @@ func testOAuthCallbackSealFailure(t *testing.T, server *Server, credential db.Va
 	defer upstream.Close()
 	createFlow := func() db.MCPOAuthFlow {
 		now := time.Now().UTC()
-		flow := db.MCPOAuthFlow{UUID: uuid.NewV4().String(), ExternalID: uuid.NewV4().String(), OrganizationUUID: credential.OrganizationUUID, WorkspaceUUID: credential.WorkspaceUUID, VaultUUID: credential.VaultUUID, VaultExternalID: credential.VaultExternalID, UserUUID: uuid.NewV4().String(), MCPServerURL: credential.CredentialKey, RedirectURL: "http://localhost/oauth/callback", DisplayName: "reauthorize", AuthorizationEndpoint: upstream.URL, TokenEndpoint: upstream.URL, ClientID: "test-client", ClientCredentialSource: "sealed", TokenEndpointAuthMethod: "none", CodeChallengeMethod: "S256", Status: "pending", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Minute)}
+		server.cfg.Vault.OAuthServiceBindings = []config.OAuthServiceBindingConfig{{ServiceURL: "https://bridge.example", CredentialTargetURL: credential.CredentialKey}}
+		flow := db.MCPOAuthFlow{UUID: uuid.NewV4().String(), ExternalID: uuid.NewV4().String(), OrganizationUUID: credential.OrganizationUUID, WorkspaceUUID: credential.WorkspaceUUID, VaultUUID: credential.VaultUUID, VaultExternalID: credential.VaultExternalID, UserUUID: uuid.NewV4().String(), MCPServerURL: "https://bridge.example", RedirectURL: "http://localhost/oauth/callback", DisplayName: "reauthorize", AuthorizationEndpoint: upstream.URL, TokenEndpoint: upstream.URL, ClientID: "test-client", ClientCredentialSource: "sealed", TokenEndpointAuthMethod: "none", CodeChallengeMethod: "S256", Status: "pending", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Minute)}
 		envelope, err := vaultsapi.SealMCPOAuthFlowSecrets(t.Context(), server.vaultSecrets, flow, "", "test-pkce-verifier")
 		if err != nil {
 			t.Fatal(err)
@@ -188,7 +189,11 @@ func testOAuthCallbackSealFailure(t *testing.T, server *Server, credential db.Va
 		if err != nil {
 			t.Fatal(err)
 		}
-		return flow
+		persisted, err := server.db.GetMCPOAuthFlow(t.Context(), flow.ExternalID)
+		if err != nil || persisted.MCPServerURL != "https://bridge.example" {
+			t.Fatalf("flow URL roundtrip failed: %v", err)
+		}
+		return persisted
 	}
 	callback := func(flow db.MCPOAuthFlow) string {
 		recorder := httptest.NewRecorder()
@@ -215,5 +220,19 @@ func testOAuthCallbackSealFailure(t *testing.T, server *Server, credential db.Va
 	completed, err := server.db.GetMCPOAuthFlow(t.Context(), next.ExternalID)
 	if err != nil || completed.Status != "completed" || completed.CredentialExternalID != credential.ExternalID || exchanges.Load() != 2 {
 		t.Fatalf("new authorization did not recover original credential: %v", err)
+	}
+	recovered, err := server.db.GetVaultCredential(t.Context(), credential.WorkspaceUUID, credential.VaultExternalID, credential.ExternalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var auth struct {
+		MCPServerURL    string `json:"mcp_server_url"`
+		OAuthServiceURL string `json:"oauth_service_url"`
+	}
+	if err := json.Unmarshal(recovered.Auth, &auth); err != nil {
+		t.Fatal(err)
+	}
+	if recovered.CredentialKey != credential.CredentialKey || auth.MCPServerURL != credential.CredentialKey || auth.OAuthServiceURL != "https://bridge.example" {
+		t.Fatal("reauthorization lost URL separation")
 	}
 }

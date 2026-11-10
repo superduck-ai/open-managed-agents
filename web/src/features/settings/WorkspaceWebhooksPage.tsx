@@ -1,3 +1,4 @@
+import { productIcons } from '@/shared/icons/product-icons';
 import { useDialogDismissal } from '../../shared/hooks/use-dialog-dismissal';
 import { CreateWebhookDialog, WebhookDetailEditForm } from './webhooks/WebhookForms';
 import { summarizeWebhookEvents } from './webhooks/events';
@@ -25,10 +26,8 @@ import {
   Pencil,
   Plus,
   Power,
-  RadioTower,
   RotateCcw,
   Trash2,
-  Webhook,
   X,
 } from 'lucide-react';
 import { Button } from '../../shared/ui/button';
@@ -443,7 +442,7 @@ function WebhookList({
         <Empty className="min-h-[320px]" data-testid="webhooks-empty-state">
           <EmptyHeader className="max-w-[360px]">
             <EmptyMedia>
-              <RadioTower className="size-14 stroke-[1.2] text-foreground" aria-hidden />
+              <productIcons.webhooks className="size-14 stroke-[1.5] text-foreground" aria-hidden />
             </EmptyMedia>
             <EmptyTitle>{msg('webhooks.emptyTitle', 'No webhook endpoints yet')}</EmptyTitle>
           </EmptyHeader>
@@ -990,7 +989,7 @@ function WebhooksState({ text, tone = 'muted' }: { text: string; tone?: 'muted' 
           </Alert>
         ) : (
           <div>
-            <Webhook className="mx-auto mb-3 size-6 text-muted-foreground/70" aria-hidden />
+            <productIcons.webhooks className="mx-auto mb-3 size-6 text-muted-foreground/70" aria-hidden />
             <p>{text}</p>
           </div>
         )}

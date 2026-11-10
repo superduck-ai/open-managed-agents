@@ -17,6 +17,7 @@ type normalizedSessionSkillArchiveResource struct {
 	SkillVersionUUID string
 	Path             string
 	Filename         string
+	ArchiveDirectory string
 	S3Bucket         string
 	S3Key            string
 	SizeBytes        int64
@@ -115,6 +116,7 @@ func replaceSessionSkillArchiveResourcesTx(
 			EntryPath:          entry.Path,
 			Filename:           entry.Filename,
 			Source:             entry.Source,
+			ArchiveDirectory:   entry.ArchiveDirectory,
 			SizeBytes:          entry.SizeBytes,
 			SHA256:             entry.SHA256,
 			S3Bucket:           entry.S3Bucket,
@@ -142,7 +144,7 @@ func validateFilestoreSkillArchiveVersionTx(
 		Source:        entry.Source,
 		WorkspaceUUID: workspaceUUID,
 		VersionUUID:   entry.SkillVersionUUID,
-		Directory:     strings.TrimPrefix(entry.Path, "/skills/"),
+		Directory:     entry.ArchiveDirectory,
 		S3Bucket:      entry.S3Bucket,
 		S3Key:         entry.S3Key,
 		SizeBytes:     entry.SizeBytes,
@@ -215,6 +217,16 @@ func normalizeSessionSkillArchiveResource(
 	if directory == "" || strings.ContainsAny(directory, "/\\\x00") || directory == "." || directory == ".." {
 		return normalizedSessionSkillArchiveResource{}, fmt.Errorf("invalid skill directory %q", input.Directory)
 	}
+	archiveDirectory := strings.TrimSpace(input.ArchiveDirectory)
+	if archiveDirectory == "" {
+		archiveDirectory = directory
+	}
+	if archiveDirectory == "." || archiveDirectory == ".." || strings.ContainsAny(archiveDirectory, "/\\\x00") {
+		return normalizedSessionSkillArchiveResource{}, ErrInvalidState
+	}
+	if directory != archiveDirectory && directory != archiveDirectory+"--"+strings.TrimSpace(input.SkillVersionUUID) {
+		return normalizedSessionSkillArchiveResource{}, ErrInvalidState
+	}
 	entryPath := "/skills/" + directory
 	if err := validateFilestorePath(entryPath); err != nil {
 		return normalizedSessionSkillArchiveResource{}, fmt.Errorf("invalid skill directory %q: %w", input.Directory, err)
@@ -234,6 +246,7 @@ func normalizeSessionSkillArchiveResource(
 	}
 	return normalizedSessionSkillArchiveResource{
 		Source:           source,
+		ArchiveDirectory: archiveDirectory,
 		SkillVersionUUID: versionUUID,
 		Path:             entryPath,
 		Filename:         directory + ".zip",

@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$repo_root"
+
+step() {
+  local label="$1" started=$SECONDS
+  shift
+  printf '\n==> %s\n' "$label"
+  "$@"
+  printf '==> %s finished in %ss\n' "$label" "$((SECONDS - started))"
+}
+
+install_toolchain() (
+  local packages=() package go_version architecture download_dir
+  for package in ca-certificates curl git build-essential unzip xz-utils pkg-config; do
+    if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+      packages+=("$package")
+    fi
+  done
+  if ((${#packages[@]})); then
+    sudo apt-get update
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
+  fi
+
+  go_version="$(awk '$1 == "go" { print $2 }' go.mod tools/golangci-lint/go.mod | sort -V | tail -1)"
+  architecture="$(uname -m)"
+  case "$architecture" in
+    x86_64) architecture=amd64 ;;
+    aarch64) architecture=arm64 ;;
+    *) printf 'Unsupported architecture: %s\n' "$architecture" >&2; return 1 ;;
+  esac
+  download_dir="$(mktemp -d)"
+  trap 'rm -rf "$download_dir"' EXIT
+
+  if [[ "$(GOTOOLCHAIN=local go version 2>/dev/null || true)" != "go version go${go_version} linux/${architecture}" ]]; then
+    curl --fail --silent --show-error --location --retry 3 \
+      "https://go.dev/dl/go${go_version}.linux-${architecture}.tar.gz" -o "$download_dir/go.tar.gz"
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf "$download_dir/go.tar.gz"
+    sudo ln -sf /usr/local/go/bin/go /usr/local/bin/go
+    sudo ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+  fi
+
+  if [[ "$(bun --version 2>/dev/null || true)" != '1.4.4' ]]; then
+    local bun_arch=x64
+    [[ "$architecture" != arm64 ]] || bun_arch=aarch64
+    curl --fail --silent --show-error --location --retry 3 \
+      "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-${bun_arch}.zip" -o "$download_dir/bun.zip"
+    unzip -q "$download_dir/bun.zip" -d "$download_dir"
+    sudo install "$download_dir/bun-linux-${bun_arch}/bun" /usr/local/bin/bun
+  fi
+
+  if [[ "$(just --version 2>/dev/null || true)" != 'just 1.59.0' ]]; then
+    local just_arch=x86_64
+    [[ "$architecture" != arm64 ]] || just_arch=aarch64
+    curl --fail --silent --show-error --location --retry 3 \
+      "https://github.com/casey/just/releases/download/1.59.0/just-1.59.0-${just_arch}-unknown-linux-musl.tar.gz" -o "$download_dir/just.tar.gz"
+    tar -xzf "$download_dir/just.tar.gz" -C "$download_dir" just
+    sudo install "$download_dir/just" /usr/local/bin/just
+  fi
+
+  if ! command -v uv >/dev/null 2>&1; then
+    curl --fail --silent --show-error --location --retry 3 \
+      https://astral.sh/uv/0.11.19/install.sh -o "$download_dir/uv-install.sh"
+    sudo env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh "$download_dir/uv-install.sh"
+  fi
+)
+
+step 'Install toolchain' install_toolchain
+step 'Download Go dependencies' go mod download
+step 'Download Go quality-tool dependencies' go mod download -modfile=tools/golangci-lint/go.mod
+step 'Install Web dependencies' bun install --cwd web --frozen-lockfile
+step 'Install Brain dependencies' bun install --cwd oma-brain-dsh --frozen-lockfile
+if [[ -n "$(git config --get core.hooksPath || true)" ]]; then
+  printf '\nPreserving custom core.hooksPath; run scripts/pre-commit.sh run before committing\n'
+  step 'Prepare managed Git hook environments' ./scripts/pre-commit.sh install-hooks
+else
+  step 'Install managed Git hooks' just hooks-install
+fi
+step 'Generate Go sources' ./scripts/generate-go.sh --cached
+step 'Warm Go build cache' go build ./...
+step 'Warm Go quality-tool cache' ./scripts/golangci-lint.sh version

@@ -611,6 +611,9 @@ func TestMCPProxyForwardsProtocolHeadersAndUsesCredentialInjector(t *testing.T) 
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json, text/event-stream")
 	request.Header.Set("Mcp-Session-Id", "client-session")
+	request.Header.Add("x-oma-session-id", "forged-session")
+	request.Header.Add("X-OMA-Session-ID", "another-session")
+	request.Header.Set("Connection", "X-OMA-Session-ID")
 	request.Header.Set("Proxy-Authorization", "must-not-leak")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -629,6 +632,9 @@ func TestMCPProxyForwardsProtocolHeadersAndUsesCredentialInjector(t *testing.T) 
 	}
 
 	got := <-captured
+	if values := got.headers.Values("X-OMA-Session-ID"); len(values) != 1 || values[0] != "sesn_test" {
+		t.Fatalf("upstream session header = %q", values)
+	}
 	if got.method != http.MethodPost || got.uri != "/api/mcp?tenant=one" || got.host != strings.TrimPrefix(upstream.URL, "http://") || !strings.Contains(got.body, `"initialize"`) {
 		t.Fatalf("upstream request = %#v", got)
 	}

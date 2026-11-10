@@ -106,18 +106,29 @@ func TestMultipleOrganizationAndWorkspaceProviders(t *testing.T) {
 		t.Fatalf("member read=%d", memberRead.StatusCode)
 	}
 	memberRead.Body.Close()
-	for _, action := range []struct{ method, path string }{
-		{http.MethodPost, orgPath},
-		{http.MethodPut, orgPath + "/" + stringValue(first["id"])},
-		{http.MethodDelete, orgPath + "/" + stringValue(first["id"])},
-		{http.MethodPost, orgPath + "/preview_models"},
-		{http.MethodPost, orgPath + "/" + stringValue(first["id"]) + "/models/sync"},
-	} {
-		response := app.platformRequest(t, action.method, action.path, strings.NewReader(payload("forbidden")), memberCookies)
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete} {
+		path := otherPath
+		if method == http.MethodPut || method == http.MethodDelete {
+			path += "/" + stringValue(local["id"])
+		}
+		response := app.platformRequest(t, method, path, strings.NewReader(payload("inaccessible")), memberCookies)
 		if response.StatusCode != http.StatusForbidden {
-			t.Fatalf("member %s %s=%d", action.method, action.path, response.StatusCode)
+			t.Fatalf("non-member %s status=%d", method, response.StatusCode)
 		}
 		response.Body.Close()
 	}
-
+	memberProvider := createConsoleLLMProvider(t, app, orgPath, memberCookies, payload("member"))
+	for _, action := range []struct {
+		method, path string
+		status       int
+	}{
+		{http.MethodPut, orgPath + "/" + stringValue(memberProvider["id"]), http.StatusOK},
+		{http.MethodDelete, orgPath + "/" + stringValue(memberProvider["id"]), http.StatusNoContent},
+	} {
+		response := app.platformRequest(t, action.method, action.path, strings.NewReader(payload("member")), memberCookies)
+		if response.StatusCode != action.status {
+			t.Fatalf("member %s status=%d", action.method, response.StatusCode)
+		}
+		response.Body.Close()
+	}
 }

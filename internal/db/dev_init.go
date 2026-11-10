@@ -20,15 +20,22 @@ type DevIdentity struct {
 func (d *DB) CreateDevIdentity(ctx context.Context, input DevIdentity) error {
 	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		organizations := NewAdminOrganizationMapper(executor)
-		if _, err := organizations.FindByUUID(ctx, input.OrganizationUUID); err == nil {
-			return nil
-		} else if !errors.Is(err, sql.ErrNoRows) {
+		if _, err := organizations.FindByUUID(ctx, input.OrganizationUUID); errors.Is(err, sql.ErrNoRows) {
+			if err := organizations.Insert(ctx, input.OrganizationUUID, input.OrganizationName); err != nil {
+				return err
+			}
+		} else if err != nil {
 			return err
 		}
-		if err := organizations.Insert(ctx, input.OrganizationUUID, input.OrganizationName); err != nil {
+		users := NewAdminUserMapper(executor)
+		user, err := users.FindByExternalID(ctx, input.OrganizationUUID, input.User.ExternalID)
+		if err == nil {
+			return createDevWorkspaces(ctx, executor, input, user.UUID)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		userUUID, err := NewAdminUserMapper(executor).Insert(ctx, insertAdminUserParams{
+		userUUID, err := users.Insert(ctx, insertAdminUserParams{
 			ExternalID: input.User.ExternalID, OrganizationUUID: input.OrganizationUUID,
 			Email: input.User.Email, Name: input.User.Name, Role: input.User.Role,
 		})
@@ -43,6 +50,16 @@ func createDevWorkspaces(ctx context.Context, executor yourbatis.Executor, input
 	workspaces := NewAdminWorkspaceMapper(executor)
 	members := NewAdminWorkspaceMemberMapper(executor)
 	for _, workspace := range input.Workspaces {
+		existing, err := workspaces.FindByIdentifier(ctx, input.OrganizationUUID, workspace.ExternalID, workspace.UUID)
+		if err == nil {
+			if existing.UUID != workspace.UUID || existing.ArchivedAt != nil {
+				return ErrDuplicate
+			}
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		if _, err := workspaces.Insert(ctx, workspaceInsertParams(workspace)); err != nil {
 			return err
 		}

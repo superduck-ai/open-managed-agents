@@ -64,7 +64,9 @@ func (h *Handler) Routes(systemSkills ...http.Handler) http.Handler {
 		r.With(h.requireOrganization).Get("/workspaces", h.workspaces)
 		r.Post("/administrators", h.grantAdministrator)
 		r.Patch("/administrators/{memberUuid}", h.demoteAdministrator)
-		r.Post("/administrator-transfers", h.transferAdministrator)
+		r.Post("/members", h.addMember)
+		r.Patch("/members/{memberUuid}", h.updateMember)
+		r.Delete("/members/{memberUuid}", h.removeMember)
 		r.With(h.requireOrganization).Get("/invitations", h.invites)
 		r.Post("/invitations", h.createInvite)
 		r.Post("/invitations/{invitationUuid}/resend", h.changeInvite(true))
@@ -245,15 +247,5 @@ func (h *Handler) demoteAdministrator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.service.DemoteAdministrator(r.Context(), actorFromRequest(r), chi.URLParam(r, "organizationUuid"), chi.URLParam(r, "memberUuid"), input)
-	h.writeChange(w, r, result, err)
-}
-
-func (h *Handler) transferAdministrator(w http.ResponseWriter, r *http.Request) {
-	input, err := decodeRequest[AdministratorChange](w, r)
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	result, err := h.service.TransferAdministrator(r.Context(), actorFromRequest(r), chi.URLParam(r, "organizationUuid"), input)
 	h.writeChange(w, r, result, err)
 }

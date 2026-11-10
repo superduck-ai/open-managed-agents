@@ -1,77 +1,58 @@
 ---
-title: "云沙盒参考"
+title: "云沙箱参考"
 sidebarTitle: "云沙箱参考"
-description: "云沙盒中预装的软件包、数据库和实用工具。"
+description: "了解 OMA 沙箱镜像中的运行时和工具，以及如何确认当前环境的配置。"
 ---
 
-<Note>
-  OMA 不绑定单一托管镜像。本页列出的运行时能力取决于部署者配置的 E2B 或兼容环境运行器；上线前请在目标镜像中验证软件包和容量。
-</Note>
+云环境使用部署者配置的 E2B 或兼容运行器。实际镜像、工具版本和资源规格由部署决定；自托管环境则使用自有 Worker 提供的环境。
 
-云沙盒作为隔离的 Linux 容器运行在 OMA 管理的基础设施上。它们预装了一套全面的编程语言、数据库和实用工具。智能体可以立即使用这些工具，无需任何安装步骤。
+下面的清单参考 [managed-agent-sandbox 的 main 分支](https://github.com/superduck-ai/managed-agent-sandbox/tree/811f3db0a66282ec69b90983a8af429b970bd961)，对应提交 `811f3db0`。它描述该版本的镜像构建配方，不表示每个 OMA 部署都已使用该镜像。请向部署者确认当前模板和镜像版本。
 
-这些规格适用于 `cloud` 环境。自托管沙盒运行在您的基础设施上，使用您的 worker 所提供的任何内容。
+## 基础运行时
 
-<Note>
-  托管智能体 API 请求需要 `managed-agents-2026-04-01` Beta 请求头，但记忆存储端点除外，它们使用 `agent-memory-2026-07-22`。SDK 会自动设置正确的 Beta 请求头。请参阅[Beta 请求头](/docs/zh/api/versioning-beta)。
-</Note>
+此版本基于 Ubuntu 24.04，构建架构包括 `linux/amd64` 和 `linux/arm64`。基础运行时包含以下软件：
 
-## 编程语言
+| 类别 | 工具和版本 |
+| --- | --- |
+| 编程语言 | Python 3.13.14、Node.js 24.18.0、Go 1.26.5、Java 25.0.3、PHP 8.5.8、Ruby 3.4.10、Bun 1.3.14、Rust 1.97.0、GCC/G++ 14.2.0 |
+| 包管理和构建 | pip、uv、npm、Yarn、pnpm、Cargo、RubyGems、Bundler、Composer、Maven、Gradle、make、CMake |
+| 数据库 | SQLite、PostgreSQL 客户端 `psql`、Redis 客户端 `redis-cli` |
+| 命令行 | Git、curl、wget、jq、ripgrep、SSH 客户端、tar、zip、unzip、tmux、screen、vim、nano、tree、htop |
+| 其他 | Docker CLI、Claude Code；使用 Docker 还需要可访问的 Docker 服务。 |
 
-| 语言      | 版本      | 包管理器            |
-| ------- | ------- | --------------- |
-| Python  | 3.12+   | pip, uv         |
-| Node.js | 20+     | npm, yarn, pnpm |
-| Go      | 1.22+   | go modules      |
-| Rust    | 1.77+   | cargo           |
-| Java    | 21+     | maven, gradle   |
-| Ruby    | 3.3+    | bundler, gem    |
-| PHP     | 8.3+    | composer        |
-| C/C++   | GCC 13+ | make, cmake     |
+`psql` 和 `redis-cli` 是连接外部服务的客户端，并不意味着沙箱内启动了 PostgreSQL 或 Redis 服务。连接外部服务还受环境网络策略和目标服务配置限制。
 
-## 数据库
+## 文档、数据和多媒体工具
 
-| 数据库            | 描述                    |
-| -------------- | --------------------- |
-| SQLite         | 预装，可立即使用              |
-| PostgreSQL 客户端 | 用于连接外部数据库的 `psql` 客户端 |
-| Redis 客户端      | 用于连接外部实例的 `redis-cli` |
+该仓库的默认构建最终阶段 `toolkit` 在基础运行时之上安装：
 
-<Note>
-  数据库服务器（如 PostgreSQL 和 Redis）默认不在沙盒中运行。沙盒包含用于连接外部数据库实例的客户端工具。SQLite 完全可用于本地使用。
-</Note>
+| 用途 | 工具 |
+| --- | --- |
+| 文档 | LibreOffice、Poppler、qpdf、Pandoc、Typst；Python 的 `python-docx`、`python-pptx`、`openpyxl`、`pypdf`、`pdfplumber`、`reportlab` |
+| 数据和图表 | `pandas`、`numpy`、`matplotlib`、`xlsxwriter` |
+| 图形和浏览器 | Graphviz、PlantUML、D2、Mermaid CLI、Playwright 和 Chromium Headless Shell |
+| 图像、音视频与文字识别 | ImageMagick、FFmpeg、SoX、Tesseract（中文简体和英文）、eSpeak NG、faster-whisper 和 Whisper Small 模型 |
+| 其他 | GitHub CLI (`gh`) |
 
-## 实用工具
+如果部署使用基础 `runtime` 阶段、旧版本或自定义镜像，以上 toolkit 工具可能不存在。软件版本以镜像仓库中的 [`versions.env`](https://github.com/superduck-ai/managed-agent-sandbox/blob/811f3db0a66282ec69b90983a8af429b970bd961/versions.env) 和锁文件为准。
 
-### 系统工具
+## 查看当前环境
 
-* `git` - 版本控制
-* `curl`、`wget` - HTTP 客户端
-* `jq` - JSON 处理
-* `tar`、`zip`、`unzip` - 归档工具
-* `ssh`、`scp` - 远程访问（需要允许目标主机的网络模式）
-* `tmux`、`screen` - 终端多路复用器
+在会话沙箱中运行以下命令，检查当前操作系统、架构和常用工具：
 
-### 开发工具
+```bash
+cat /etc/os-release
+uname -m
+python3 --version
+node --version
+go version
+for tool in libreoffice pdftotext tesseract ffmpeg dot mmdc; do
+  command -v "$tool" || echo "$tool: 未安装"
+done
+```
 
-* `make`、`cmake` - 构建系统
-* `docker` - 容器管理（可用性有限）
-* `ripgrep`（`rg`）- 快速文件搜索
-* `tree` - 目录可视化
-* `htop` - 进程监控
+CPU、内存、磁盘、网络模式及软件包准备由[环境配置](/docs/zh/environments)和部署者设置决定。可在沙箱中使用 `nproc`、`free -h` 和 `df -h` 查看当前可见资源；这不代表其他环境具有相同规格。
 
-### 文本处理
+## 空闲与恢复
 
-* `sed`、`awk`、`grep` - 流编辑器
-* `vim`、`nano` - 文本编辑器
-* `diff`、`patch` - 文件比较
-
-## 沙盒规格
-
-| 属性   | 值                                                                                                                                                        |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 操作系统 | Ubuntu 22.04 LTS                                                                                                                                         |
-| 架构   | x86\_64 (amd64)                                                                                                                                          |
-| 内存   | 最高 8 GB                                                                                                                                                  |
-| 磁盘空间 | 最高 10 GB                                                                                                                                                 |
-| 网络   | 通过 API 创建的环境默认使用 [`unrestricted` 网络](/docs/zh/environments#networking)；通过 OMA 控制台配置的沙盒默认使用 `limited` |
+会话空闲时，云沙箱可能根据部署配置被回收。后续输入可以触发重新创建沙箱，但系统不对整个沙箱做检查点：本地工作目录、临时文件、后台进程和临时安装的软件可能丢失。会话历史、已提交的持久文件以及重新挂载的资源有各自的生命周期。将需要交付的文件写入 `/mnt/session/outputs/`，并通过[文件页面](/docs/zh/files)查看和下载。

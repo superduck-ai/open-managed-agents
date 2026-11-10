@@ -66,7 +66,7 @@ PUT    /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_provide
 DELETE /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers/{providerId}
 ```
 
-工作区 Provider 读取接口允许工作区成员只读访问；写入、预览和同步只允许组织管理员访问。读取接口只返回 `has_api_key` 与 `api_key_last4`，不返回明文 Key。更新时省略或留空 `api_key` 表示保留原 Key。
+工作区成员可读取、新增、更新、删除、预览和同步工作区 Provider。读取接口只返回 `has_api_key` 与 `api_key_last4`，不返回明文 Key。更新时省略或留空 `api_key` 表示保留原 Key。
 
 控制台在「获取模型列表」时可通过下列接口向该网关请求模型列表，而不会把 Key 回写到响应里：
 
@@ -91,11 +91,11 @@ Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 
 }
 ```
 
-`base_url` 必须是绝对 HTTP 或 HTTPS URL，且不得包含 userinfo、query 或 fragment。允许 localhost、私网地址和自定义端口，因为这是 workspace 管理员配置的网关，不是沙箱选择的任意目标。Code-session CONNECT 代理仍使用独立的公网 SSRF 边界。代理客户端不跟随重定向，避免把 Provider Key 发到另一个主机。
+`base_url` 必须是绝对 HTTP 或 HTTPS URL，且不得包含 userinfo、query 或 fragment。允许 localhost、私网地址和自定义端口，因为这是 workspace 成员配置的网关，不是沙箱选择的任意目标。Code-session CONNECT 代理仍使用独立的公网 SSRF 边界。代理客户端不跟随重定向，避免把 Provider Key 发到另一个主机。
 
 ## 组织与工作区的 Provider 范围
 
-组织 Provider 的 `workspace_uuid` 为 NULL，当前工作区 Provider 则保存对应 workspace UUID。新组织集合 API 为 `/api/console/organizations/{orgUuid}/llm_providers`，支持 GET/POST，`/{providerId}` 支持 PUT/DELETE，模型预览及同步路径与工作区集合保持一致。集合写入、凭据预览和同步仍要求组织管理员；读取校验组织可见性。每个查询和写入都绑定组织及对应 workspace（含 NULL），工作区 API 无法操作组织连接或其他工作区连接。
+组织 Provider 的 `workspace_uuid` 为 NULL，当前工作区 Provider 则保存对应 workspace UUID。新组织集合 API 为 `/api/console/organizations/{orgUuid}/llm_providers`，支持 GET/POST，`/{providerId}` 支持 PUT/DELETE，模型预览及同步路径与工作区集合保持一致。组织成员可新增、更新、删除、预览和同步；操作均校验组织可见性。每个查询和写入都绑定组织及对应 workspace（含 NULL），工作区 API 无法操作组织连接或其他工作区连接。
 
 运行时只加载当前组织共享连接和当前 workspace 的连接，不加载其他 workspace。完整模型引用使用 `<slug>/<upstream-model-id>`，上游 ID 允许包含 `/`。裸 ID 先在当前工作区匹配：一个匹配则使用，多个匹配则拒绝；无匹配时在组织连接中执行同样的唯一匹配规则。歧义返回可选完整引用；Brain 派生索引不导出有歧义的裸 ID。计费目录使用相同优先级，组织连接的请求仍归属实际工作区。
 
@@ -134,7 +134,7 @@ handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发
 - SSE 响应逐块 flush，并关闭代理缓冲；
 - 请求 body 上限为 32 MiB。
 
-管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。它与公共 Messages 入口走同一条 Provider 解析、唯一顶层 `model` 校验、顶层 `model` 替换和 32 MiB 请求上限。Batches 在逐条发送时、Workbench 在构造上游请求时执行相同替换。
+管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。它与公共 Messages 入口走同一条 Provider 解析、唯一顶层 `model` 校验、顶层 `model` 替换和 32 MiB 请求上限。Batches 在逐条发送时、Workbench 在构造上游请求时执行相同替换。该路由转发 `messages` backend 请求时透传调用方的 `anthropic-version`，调用方未提供时补默认值 `2023-06-01`，避免 Anthropic 官方 API 拒绝缺少该 header 的请求。
 
 `GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容是当前工作区和组织默认配置的完整模型 ID `{slug}/{upstream_model_id}`；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标；未配置 Provider 时返回 `503` 与英文消息 `This workspace has no LLM provider configured`；配置读取失败时返回 `500` 与英文消息 `Workspace model configuration is unavailable`。不额外返回机器可读 `error.code`。
 
@@ -296,7 +296,7 @@ Brain 凭据限制、协议拒绝、错误与断流收尾、稳定消息 ID、�
 
 ## 组织默认 Provider
 
-组织管理员可在组织设置的「LLM 配置」中管理一个跨工作区共享的默认 Provider。它与工作区 Provider 使用同一张 `llm_providers` 表，`workspace_uuid` 为 NULL，slug 固定为 `organization`；组织级部分唯一索引保证每个组织最多一条。支持 `messages` 与 `chat_completions`，复用现有密钥加密、URL 校验和模型同步。
+组织成员可在组织设置的「LLM 配置」中管理一个跨工作区共享的默认 Provider。它与工作区 Provider 使用同一张 `llm_providers` 表，`workspace_uuid` 为 NULL，slug 固定为 `organization`；组织级部分唯一索引保证每个组织最多一条。支持 `messages` 与 `chat_completions`，复用现有密钥加密、URL 校验和模型同步。
 
 ```mermaid
 flowchart TD
@@ -317,9 +317,10 @@ Console API（相对 `/api/console/organizations/{orgUuid}`）：
 | 方法 | 路径 | 权限 |
 | --- | --- | --- |
 | GET | `/llm_provider` | 当前组织成员只读 |
-| PUT / DELETE | `/llm_provider` | 组织管理员 |
-| POST | `/llm_provider/preview_models` | 组织管理员 |
-| POST | `/llm_provider/models/sync` | 组织管理员 |
+| PUT | `/llm_provider` | 组织成员 |
+| DELETE | `/llm_provider` | 组织成员 |
+| POST | `/llm_provider/preview_models` | 组织成员 |
+| POST | `/llm_provider/models/sync` | 组织成员 |
 
 组织模型预览不依赖工作区。读取只返回 Key 是否存在及末四位，PUT 省略或留空 Key 保留旧密钥；首次创建返回 201，更新返回 200，不存在返回 404。组织 Provider 不混入工作区 Provider 管理 API 的列表。
 
@@ -329,9 +330,9 @@ Console API（相对 `/api/console/organizations/{orgUuid}`）：
 
 ## DSH 公开回复来源
 
-DSH 的公开回复由 Brain 独占发布。后端按已保存的 `metadata.config.worker_transport=claim` 识别该执行路径，Messages 和 Chat Completions 继续执行模型路由、权限/epoch 校验、请求 span、usage 和工具关联，但代理不发布 `agent.message`、`agent.thinking` 或 thinking 起始预览，也不在 span 的 `event_ids` 中宣称这些回复已发布。判断不依赖客户端用途 header；压缩请求与普通请求均遵守同一来源规则。Brain 在原生日志复制确认后发布回复，恢复可用稳定 ID 补发；压缩摘要保留在私有日志，并用 CCRv2 的 `agent.thread_context_compacted` 表达结果。Claude Code 路径与原有工具权限、审批、工具调用事件处理保持不变。
+DSH 普通请求由 Go 模型代理发布完整 `agent.message`、无正文 `agent.thinking` 和请求 end。Brain 同时保留经过日志复制确认的完成块回传，并在恢复时补发，携带 `model_request_start_id`；现有稳定 ID 和 Session 事务内的 Worker/proxy echo 去重避免重复回复。代理超过 4 MiB 观察上限时继续转发，记录 `observation_limit`，由 Brain 回传完整回复。DSH 的 thinking 起始预览仍由 Brain 发布。内部压缩与标题请求通过 `X-OMA-Model-Purpose` 保留 span、usage 和计费，不公开摘要或回复关联 ID；摘要保留在私有日志，并用 CCRv2 的 `agent.thread_context_compacted` 表达结果。原有工具权限、审批、工具调用事件处理保持不变。
 
-`TestModelReplyPublicationOwnership` 覆盖 Brain 与非 Brain 的发布职责、请求关联、usage 和工具 ID 保留，`TestBrainModelThinkingIsPublishedOnlyByWorker` 覆盖无代理 thinking 预览。Brain 单测覆盖无用途 header 的摘要预算、流式顺序、日志复制屏障和 SIGKILL 后回复补发。真实代理链路通过显式运行 `chat brain-compaction` 与 `chat brain` 验收，本次普通测试不代表真实服务集成已通过。
+`TestModelReplyPublicationOwnership` 覆盖 Brain 与非 Brain 的发布职责、请求关联、usage 和工具 ID 保留，`TestBrainModelThinkingIsPublishedOnlyByWorker` 覆盖无代理 thinking 预览。`TestObservationLimitPreservesUpstreamReply` 和 `proxy-reply-fallback.test.ts` 覆盖观察上限与完整块回传，`model-output-order.test.ts` 覆盖主、子线程超过 4 MiB 的回复。Brain 单测还覆盖摘要预算、流式顺序、日志复制屏障和 SIGKILL 后回复补发。真实代理链路通过显式运行 `chat brain-compaction` 与 `chat brain` 验收，本次普通测试不代表真实服务集成已通过。
 
 ### Thinking 预览与完成事件
 

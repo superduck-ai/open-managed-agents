@@ -7,11 +7,7 @@ import (
 	"strings"
 )
 
-var (
-	errScoreParse   = errors.New("score parse")
-	errModelMissing = errors.New("model missing")
-	errModelFailed  = errors.New("model failed")
-)
+var errScoreParse = errors.New("score parse")
 
 type parsedScore struct {
 	Score       float64

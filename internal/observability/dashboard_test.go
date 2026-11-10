@@ -354,3 +354,22 @@ func TestDashboardSeriesWithoutRowsIsEmptyButReturnedZerosArePlotted(t *testing.
 		t.Fatalf("zero series = %+v", zeros)
 	}
 }
+
+func TestDashboardChildQueriesAcceptUUIDThreads(t *testing.T) {
+	catalog, err := dashboards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"turns_summary", "turn_duration_trend", "subagent_turn_trend", "subagent_threads"} {
+		sql, err := catalog.render(name, sqlParams{Source: "FROM logs WHERE true", Interval: 1000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(sql, "sid LIKE '________-____-____-____-____________'") {
+			t.Fatalf("%s omits UUID child threads: %s", name, sql)
+		}
+		if name == "subagent_threads" && strings.Count(sql, "sid LIKE '________-____-____-____-____________'") != 2 {
+			t.Fatal("child turn and token classification differ")
+		}
+	}
+}

@@ -24,6 +24,12 @@ func ApplyAPIKey(headers http.Header, apiKey string) {
 	headers.Set("Authorization", "Bearer "+apiKey)
 }
 
+func ApplyDefaultAnthropicVersion(headers http.Header) {
+	if headers.Get("Anthropic-Version") == "" {
+		headers.Set("Anthropic-Version", anthropicVersion)
+	}
+}
+
 // MessageRequestModel returns the single top-level model without rewriting the request body.
 func MessageRequestModel(body []byte) (string, error) {
 	model, err := locateRequestModel(body)

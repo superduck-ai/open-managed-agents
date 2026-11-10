@@ -6,7 +6,7 @@ import {
   createRoute,
   createRouter,
 } from '@tanstack/react-router';
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { useEffect, type ReactNode } from 'react';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { I18nProvider } from '../../shared/i18n';
@@ -19,7 +19,7 @@ import { LLMModelsPage } from './LLMModelsPage';
 import type { LLMProvider } from './api';
 
 const testingLibrary = await import('@testing-library/react');
-const { cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
 
 const originalFetch = globalThis.fetch;
 
@@ -32,6 +32,90 @@ afterEach(() => {
 });
 
 describe('LLM models page', () => {
+  test.each(['create', 'edit', 'cancel-create', 'remount-create'])(
+    'invalidates a pending quickstart return after reopening the provider form: %s',
+    async (action) => {
+      const returnTo = '/workspaces/default/agent-quickstart?mode=api';
+      resetTestDom(`https://oma.duck.ai/workspaces/default/llm-models?returnTo=${encodeURIComponent(returnTo)}`);
+      mockProvidersApi();
+      const baseFetch = globalThis.fetch;
+      let resolveModels: ((response: Response) => void) | undefined;
+      const modelsResponse = new Promise<Response>((resolve) => {
+        resolveModels = resolve;
+      });
+      let modelReads = 0;
+      globalThis.fetch = (async (input, init) => {
+        if (String(input).includes('/v1/models')) {
+          modelReads++;
+          return modelsResponse;
+        }
+        return baseFetch(input, init);
+      }) as typeof fetch;
+      const assign = spyOn(window.location, 'assign').mockImplementation(() => undefined);
+      try {
+        renderPage();
+        await screen.findByText('No providers yet');
+        await createProvider('Setup', 'https://model.example.test', 'test-key', ['test-model']);
+        await waitFor(() => expect(modelReads).toBe(1));
+        if (action === 'remount-create') {
+          cleanup();
+          renderPage();
+          await screen.findByRole('button', { name: 'Add provider', exact: true });
+        }
+        if (action === 'edit') {
+          fireEvent.click(screen.getByRole('button', { name: 'Setup', exact: true }));
+          fireEvent.click(await screen.findByRole('button', { name: 'Edit', exact: true }));
+        } else {
+          fireEvent.click(screen.getByRole('button', { name: 'Add provider', exact: true }));
+          fireEvent.click(screen.getByRole('tab', { name: 'Custom model API' }));
+        }
+        const dialog = screen.getByRole('dialog', { name: action === 'edit' ? 'Edit provider' : 'Add provider' });
+        const name = within(dialog).getByLabelText('Display name');
+        fireEvent.change(name, { target: { value: 'Unsaved provider draft' } });
+        if (action === 'cancel-create') {
+          fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel', exact: true }));
+          await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+        }
+        await act(async () => {
+          resolveModels!(jsonResponse({ data: [{ id: 'test-model' }], has_more: false }));
+        });
+        expect(assign).not.toHaveBeenCalled();
+        if (action !== 'cancel-create') {
+          expect(screen.getByRole('dialog')).toBe(dialog);
+          expect(name).toHaveProperty('value', 'Unsaved provider draft');
+        }
+      } finally {
+        assign.mockRestore();
+      }
+    },
+  );
+
+  test.each([false, true])('quickstart setup returns only after usable models exist: %s', async (available) => {
+    const returnTo = '/workspaces/default/agent-quickstart?mode=api';
+    resetTestDom(`https://oma.duck.ai/workspaces/default/llm-models?returnTo=${encodeURIComponent(returnTo)}`);
+    mockProvidersApi();
+    const baseFetch = globalThis.fetch;
+    let modelReads = 0;
+    globalThis.fetch = (async (input, init) => {
+      if (String(input).includes('/v1/models')) {
+        modelReads++;
+        return jsonResponse({ data: available ? [{ id: 'test-model' }] : [], has_more: false });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    const assign = spyOn(window.location, 'assign').mockImplementation(() => undefined);
+    try {
+      renderPage();
+      await screen.findByText('No providers yet');
+      await createProvider('Setup', 'https://model.example.test', 'test-key', ['test-model']);
+      await waitFor(() => expect(modelReads).toBe(1));
+      if (available) expect(assign).toHaveBeenCalledWith(returnTo);
+      else expect(assign).not.toHaveBeenCalled();
+    } finally {
+      assign.mockRestore();
+    }
+  });
+
   test.each(['context', 'output', 'image', 'whitespace'])(
     'rejects a model row with %s settings and no Model ID',
     async (setting) => {
@@ -409,18 +493,16 @@ describe('LLM models page', () => {
     expect(within(dialog).getByText(description)).toBeTruthy();
   });
 
-  test('organization members can read defaults without management controls', async () => {
+  test('organization members can edit and delete defaults', async () => {
     resetTestDom('https://oma.duck.ai/settings/llm');
     const api = mockProvidersApi([], { organizationProvider: organizationProvider() });
     renderPage('en', 'user', 'organization');
     fireEvent.click(await screen.findByRole('button', { name: 'Organization default models' }));
     expect(await screen.findByText('organization/shared-model')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Organization default' }));
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh model list' }));
-    await waitFor(() => expect(api.requests.length).toBeGreaterThan(1));
-    expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add provider' })).toBeTruthy();
     expect(api.requests.every((request) => !request.url.includes('/workspaces/'))).toBe(true);
   });
 
@@ -487,9 +569,7 @@ describe('LLM models page', () => {
     renderPage('zh-CN', 'user');
 
     expect(await screen.findByText('无权限访问')).toBeTruthy();
-    expect(
-      screen.getByText('你没有权限查看此工作区的模型。工作区成员可以只读查看目录，只有组织管理员可以管理供应商。'),
-    ).toBeTruthy();
+    expect(screen.getByText('你没有权限查看此工作区的模型。')).toBeTruthy();
     expect(screen.queryByText('请求失败，请重试。')).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('button', { name: '添加 Provider' })).toBeNull();
@@ -508,11 +588,7 @@ describe('LLM models page', () => {
     renderPage();
 
     expect(await screen.findByText('Access denied')).toBeTruthy();
-    expect(
-      screen.getByText(
-        'You do not have permission to view models in this workspace. Workspace members can view the catalog read-only, and only organization administrators can manage providers.',
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText('You do not have permission to view models in this workspace.')).toBeTruthy();
     expect(screen.queryByText('Request failed. Please try again.')).toBeNull();
   });
 
@@ -532,17 +608,17 @@ describe('LLM models page', () => {
     expect(screen.queryByText('Access denied')).toBeNull();
   });
 
-  test('用户可以读取模型目录但不能新增供应商', async () => {
+  test('用户可以新增供应商', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     const api = mockProvidersApi();
     renderPage('en', 'user');
     await screen.findByText('No providers yet');
-    expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add provider' })).toBeTruthy();
     expect(api.requests.length).toBeGreaterThan(0);
     expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
   });
 
-  test('用户可筛选全部模型且刷新不会触发同步', async () => {
+  test('用户可筛选、同步和删除供应商', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/llm-models');
     const api = mockProvidersApi([], {
       initialProviders: [
@@ -566,15 +642,19 @@ describe('LLM models page', () => {
     await screen.findByText('readonly/model-one');
     expect(screen.getByText('readonly/model-two')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Read gateway' }));
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add provider' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Search models'), { target: { value: 'new-model' } });
-    expect(screen.queryByRole('button', { name: /Add new-model/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Add new-model/ })).toBeTruthy();
     const reads = api.requests.length;
     fireEvent.click(screen.getByRole('button', { name: 'Refresh model list' }));
     await waitFor(() => expect(api.requests.length).toBeGreaterThan(reads));
-    expect(api.requests.every((request) => request.method === 'GET')).toBe(true);
+    await waitFor(() =>
+      expect(api.requests.some((request) => request.method === 'POST' && request.url.includes('/models/sync'))).toBe(
+        true,
+      ),
+    );
   });
 
   test('creates and edits a Chat Completions provider and discovers using its backend', async () => {
@@ -1103,7 +1183,7 @@ for (const role of ['admin', 'user'] as const) {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(catalogAttempts).toBe(2);
     expect(methods.every((method) => method === 'GET')).toBe(true);
-    if (role === 'user') expect(screen.queryByRole('button', { name: 'Add provider', exact: true })).toBeNull();
+    if (role === 'user') expect(screen.getByRole('button', { name: 'Add provider', exact: true })).toBeTruthy();
   });
 }
 
@@ -1179,6 +1259,8 @@ function renderPage(locale: Locale = 'en', role = 'admin', scope: 'workspace' | 
     account: {
       uuid: 'acct_test',
       email_address: 'test@example.com',
+      effectiveOrganizationUuid: 'org_test',
+      permissions: role === 'admin' ? ['organization:manage', 'members:manage'] : [],
       memberships: [{ role, organization: { uuid: 'org_test' } }],
     },
     status: 'authenticated',

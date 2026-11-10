@@ -12,17 +12,55 @@ import (
 
 type brainModelEventSink struct {
 	recordingWorkerStreamSink
-	events []json.RawMessage
+	events  []json.RawMessage
+	batches int
 }
 
 func (s *brainModelEventSink) PublishCodeSessionEvents(_ context.Context, _ db.CodeSession, events []json.RawMessage) error {
+	s.batches++
 	s.events = append(s.events, events...)
 	return nil
 }
 
+func TestAuxiliaryModelCompletionOmitsPublicOutput(t *testing.T) {
+	for _, errorType := range []string{"invalid_response", ""} {
+		t.Run(errorType, func(t *testing.T) {
+			service := newTestService(t, nil)
+			sink := &brainModelEventSink{}
+			service.SetPublicEventSink(sink)
+			request := &ModelRequest{StartID: "auxiliary", SuppressPublicOutput: true}
+			if err := service.StartModelThinking(t.Context(), request, "summary", 0); err != nil {
+				t.Fatal(err)
+			}
+			if err := service.EndModelRequest(t.Context(), request, ModelRequestResult{
+				EndedAt: time.Now(), ErrorType: errorType,
+				Messages: []ModelRequestMessage{{ID: "summary", Type: "agent.message"}},
+				EventIDs: []string{"summary"}, ToolUseIDs: []string{"tool"},
+				ToolUses: []ModelRequestToolUse{{ID: "tool", Name: "Bash", Input: json.RawMessage(`{}`), InputRejected: errorType != ""}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.events) != 1 || len(sink.publications) != 0 {
+				t.Fatalf("auxiliary output published: %+v", sink)
+			}
+			var end struct {
+				Type       string   `json:"type"`
+				EventIDs   []string `json:"event_ids"`
+				ToolUseIDs []string `json:"tool_use_ids"`
+			}
+			if err := json.Unmarshal(sink.events[0], &end); err != nil {
+				t.Fatal(err)
+			}
+			if end.Type != "span.model_request_end" || len(end.EventIDs) != 0 || len(end.ToolUseIDs) != 0 {
+				t.Fatalf("auxiliary output correlation leaked: %+v", end)
+			}
+		})
+	}
+}
+
 func TestModelReplyPublicationOwnership(t *testing.T) {
 	for _, transport := range []string{"claim", "nats"} {
-		for _, errorType := range []string{"incomplete_response", ""} {
+		for _, errorType := range []string{"incomplete_response", "cancelled", ""} {
 			t.Run(transport+"/"+errorType, func(t *testing.T) {
 				service := newTestService(t, nil)
 				sink := &brainModelEventSink{}
@@ -60,15 +98,18 @@ func TestModelReplyPublicationOwnership(t *testing.T) {
 						if !slices.Equal(event.ToolUseIDs, []string{"tool"}) {
 							t.Fatalf("lost tool correlation: %+v", event)
 						}
-						if transport == "claim" && len(event.EventIDs) != 0 {
-							t.Fatalf("proxy claimed Brain reply identities: %+v", event)
+						if !slices.Equal(event.EventIDs, result.EventIDs) {
+							t.Fatalf("lost preview identities: %+v", event)
 						}
 					}
 					types = append(types, event.Type)
 				}
 				want := []string{"span.model_request_end"}
-				if transport != "claim" && errorType == "" {
+				if errorType == "" {
 					want = []string{"agent.thinking", "agent.message", "span.model_request_end"}
+				}
+				if sink.batches != 1 {
+					t.Fatalf("completion split across %d batches", sink.batches)
 				}
 				if !slices.Equal(types, want) {
 					t.Fatalf("events = %v, want %v", types, want)

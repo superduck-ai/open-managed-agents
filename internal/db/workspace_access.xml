@@ -4,7 +4,7 @@
         SELECT uuid, external_id, organization_uuid, email, name, role, added_at
         FROM users
         WHERE organization_uuid = #{organizationUUID}
-        AND external_id IN (#{actorID}, #{targetID}) AND deleted_at IS NULL
+        AND (external_id = #{targetID}<if test="actorID != ''"> OR external_id = #{actorID}</if>) AND deleted_at IS NULL
         ORDER BY uuid FOR UPDATE
     </select>
     <select id="LockWorkspace" resultType="string">

@@ -146,6 +146,11 @@ test("OMA Messages adapter rejects HTTP, in-stream and empty response errors", a
   for (const [response, code] of [
     [Response.json({ error: { message: "Service unavailable" } }, { status: 503 }), "SERVER"],
     [Response.json({ error: { message: "Rate limited" } }, { status: 429 }), "RATE_LIMIT"],
+    [Response.json({ error: { message: "concurrency allocated quota exceeded. please try again later." } }, { status: 429 }), "RATE_LIMIT"],
+    [Response.json({ error: { message: "insufficient_quota" } }, { status: 429 }), "QUOTA"],
+    [Response.json({ error: { message: "balance exhausted" } }, { status: 429 }), "QUOTA"],
+    [Response.json({ error: { message: "credits depleted" } }, { status: 429 }), "QUOTA"],
+    [Response.json({ error: { message: "Invalid tool schema" } }, { status: 400 }), "HTTP_ERROR"],
     [Response.json({ error: { code: "InvalidParameter", message: "<400> InternalError.Algo.InvalidParameter: Range of input length should be [1, 260096]", param: null, type: null } }, { status: 400 }), "CONTEXT_WINDOW_EXCEEDED"],
     [Response.json({ error: { message: "Range of max_tokens should be [1, 32768]" } }, { status: 400 }), "HTTP_ERROR"],
     [eventsResponse([{ type: "error", error: { type: "invalid_request_error", message: "context window exceeded" } }]), "CONTEXT_WINDOW_EXCEEDED"],

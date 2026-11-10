@@ -1,7 +1,15 @@
+import { consoleRequestHeaders, getConsoleRequestContext, getScopeSignal } from '../../../shared/api/client';
 import { useSessionFiles } from './SessionFileContext';
 import { sessionOutputFileForPath } from './sessionOutputModel';
 import { useSessionFileDownload } from './useSessionFileDownload';
-import { createElement, isValidElement, type ComponentPropsWithoutRef, type ReactNode } from 'react';
+import {
+  useEffect,
+  useState,
+  createElement,
+  isValidElement,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from 'react';
 import ReactMarkdown, { type Components, type UrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useFormatters, useI18n } from '../../../shared/i18n';
@@ -42,6 +50,62 @@ function TranscriptFileLink({ node: _node, href, ...props }: ComponentPropsWitho
   );
 }
 
+export function protectedTranscriptImage(src: string) {
+  let url: URL;
+  try {
+    url = new URL(src, window.location.origin);
+  } catch {
+    return false;
+  }
+  return url.origin === window.location.origin && /^\/(?:v1\/files\/|api\/(?:[^/]+\/)?files\/)/.test(url.pathname);
+}
+
+function TranscriptImage({ node: _node, src, ...props }: ComponentPropsWithoutRef<'img'> & { node?: unknown }) {
+  const source = typeof src === 'string' ? src : '';
+  const protectedResource = Boolean(source && protectedTranscriptImage(source));
+  const [loaded, setLoaded] = useState<{ source: string; url: string }>();
+  const context = getConsoleRequestContext();
+  useEffect(() => {
+    if (!protectedResource) return;
+    const scopeSignal = getScopeSignal();
+    const controller = new AbortController();
+    let objectUrl: string | undefined;
+    const revoke = () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      setLoaded(undefined);
+    };
+    scopeSignal.addEventListener('abort', revoke, { once: true });
+    void (async () => {
+      const response = await fetch(source, {
+        credentials: 'include',
+        headers: consoleRequestHeaders(),
+        signal: AbortSignal.any([scopeSignal, controller.signal]),
+        redirect: 'error',
+      });
+      if (!response.ok) throw new Error('Image unavailable');
+      const blob = await response.blob();
+      scopeSignal.throwIfAborted();
+      controller.signal.throwIfAborted();
+      objectUrl = URL.createObjectURL(blob);
+      setLoaded({ source, url: objectUrl });
+    })().catch(() => undefined);
+    return () => {
+      controller.abort();
+      scopeSignal.removeEventListener('abort', revoke);
+      revoke();
+    };
+  }, [source, protectedResource, context.organizationUuid, context.workspaceId]);
+  return (
+    <img
+      {...props}
+      src={protectedResource ? (loaded?.source === source ? loaded.url : undefined) : source || undefined}
+      loading="lazy"
+      decoding="async"
+      className="max-h-[32rem] max-w-full rounded-lg border-[0.5px] border-border object-contain"
+    />
+  );
+}
+
 const transcriptMarkdownComponents: Components = {
   a: TranscriptFileLink,
   blockquote: ({ node: _node, ...props }) => (
@@ -61,15 +125,7 @@ const transcriptMarkdownComponents: Components = {
   h5: transcriptHeading('h5'),
   h6: transcriptHeading('h6'),
   hr: ({ node: _node, ...props }) => <hr {...props} className="border-t-[0.5px] border-border/70" />,
-  img: ({ node: _node, src, ...props }) => (
-    <img
-      {...props}
-      src={src || undefined}
-      loading="lazy"
-      decoding="async"
-      className="max-h-[32rem] max-w-full rounded-lg border-[0.5px] border-border object-contain"
-    />
-  ),
+  img: TranscriptImage,
   input: ({ node: _node, ...props }) => <input {...props} className="mt-0.5 size-4 accent-primary" />,
   li: ({ node: _node, ...props }) => <li {...props} className="pl-1 marker:text-muted-foreground" />,
   ol: ({ node: _node, ...props }) => <ol {...props} className="list-decimal pl-5" />,

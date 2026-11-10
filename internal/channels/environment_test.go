@@ -43,7 +43,7 @@ func TestChannelEnvironmentSettings(t *testing.T) {
 			}))
 			defer upstream.Close()
 			router := chi.NewRouter()
-			router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, scopedStore{}, slog.New(slog.NewTextHandler(io.Discard, nil))))
+			router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, scopedStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 			req := httptest.NewRequest(http.MethodPost, "/agents/agent-a/channels/settings", strings.NewReader(test.body))
 			req = req.WithContext(auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: "organization-a", WorkspaceUUID: "workspace-a"}))
 			response := httptest.NewRecorder()
@@ -73,6 +73,10 @@ func TestChannelSaveRequiresSelectedEnvironment(t *testing.T) {
 				saves := 0
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
+					if r.URL.Path == "/api/managed-channels/internal/workspace-runtime" {
+						w.WriteHeader(http.StatusNoContent)
+						return
+					}
 					if r.URL.Path == "/api/managed-channels/settings" {
 						if r.Method != http.MethodGet || r.Header.Get("X-OMA-Workspace") != "workspace-a" || r.Header.Get("Cookie") != "" {
 							t.Error("环境检查未使用可信范围")
@@ -85,7 +89,7 @@ func TestChannelSaveRequiresSelectedEnvironment(t *testing.T) {
 				}))
 				defer upstream.Close()
 				router := chi.NewRouter()
-				router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, scopedStore{}, slog.New(slog.NewTextHandler(io.Discard, nil))))
+				router.Mount("/agents/{agent_id}/channels", NewHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, scopedStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 				req := httptest.NewRequest(http.MethodPost, "/agents/agent-a/channels"+suffix, strings.NewReader(`{"name":"机器人"}`))
 				req = req.WithContext(auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: "organization-a", WorkspaceUUID: "workspace-a"}))
 				result := httptest.NewRecorder()

@@ -49,3 +49,7 @@ export function resetTestDom(url: string) {
   testWindow.document.documentElement.className = '';
   testWindow.document.body.removeAttribute('style');
 }
+
+export function setTestViewport(width: number, height: number) {
+  testWindow.happyDOM.setViewport({ width, height });
+}

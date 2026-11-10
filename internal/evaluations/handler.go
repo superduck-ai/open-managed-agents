@@ -3,6 +3,7 @@ package evaluations
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -24,6 +25,7 @@ type Store interface {
 	GetEvaluationDataset(context.Context, string, string, string) (db.EvaluationDataset, error)
 	DeleteEvaluationDataset(context.Context, string, string, string, time.Time) error
 	ListEvaluationCases(context.Context, string, string, string) ([]db.EvaluationCase, error)
+	GetEvaluationCaseTrace(context.Context, string, string, string, string) (json.RawMessage, error)
 	CreateEvaluationCases(context.Context, string, string, string, []db.EvaluationCaseWrite, time.Time) ([]db.EvaluationCase, error)
 	UpdateEvaluationCase(context.Context, string, string, string, db.EvaluationCaseWrite, time.Time) (db.EvaluationCase, error)
 	DeleteEvaluationCase(context.Context, string, string, string, string, time.Time) error
@@ -31,6 +33,7 @@ type Store interface {
 	AppendEvaluationRubricVersion(context.Context, string, string, string, db.EvaluationRubric, time.Time) (db.EvaluationRubric, error)
 	ListEvaluationRubrics(context.Context, string, string, int, int) ([]db.EvaluationRubric, error)
 	GetEvaluationRubric(context.Context, string, string, string) (db.EvaluationRubric, error)
+	ListEvaluationRubricVersions(context.Context, string, string, string) ([]db.EvaluationRubric, error)
 	DeleteEvaluationRubric(context.Context, string, string, string, time.Time) error
 	CreateEvaluationTask(context.Context, db.EvaluationTask, []db.EvaluationTaskItem) (db.EvaluationTaskDetail, error)
 	ListEvaluationTasks(context.Context, string, string, int, int) ([]db.EvaluationTask, error)
@@ -44,10 +47,12 @@ type Store interface {
 	UpdateEvaluationTaskStatus(context.Context, string, string, string, string, string, time.Time) error
 	CreateEvaluationTaskScore(context.Context, db.EvaluationTaskScore) (db.EvaluationTaskScore, error)
 	GetAgent(context.Context, string, string) (db.Agent, error)
-	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
 	GetEnvironment(context.Context, string, string) (db.Environment, error)
+	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
 	GetSession(context.Context, string, string) (db.Session, bool, error)
 	ListSessionEventsPage(context.Context, db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error)
+	GetFile(context.Context, string, string) (db.FileRecord, error)
+	GetSessionAttachmentFile(context.Context, string, string, string) (db.FileRecord, error)
 }
 
 type SessionInput struct {
@@ -108,6 +113,7 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Post(base+"/rubrics", h.adapter.Wrap(h.createRubric))
 	router.Get(base+"/rubrics", h.adapter.Wrap(h.listRubrics))
 	router.Get(base+"/rubrics/{rubricId}", h.adapter.Wrap(h.getRubric))
+	router.Get(base+"/rubrics/{rubricId}/versions", h.adapter.Wrap(h.listRubricVersions))
 	router.Delete(base+"/rubrics/{rubricId}", h.adapter.Wrap(h.deleteRubric))
 	router.Post(base+"/rubrics/{rubricId}/versions", h.adapter.Wrap(h.appendRubricVersion))
 	router.Post(base+"/tasks", h.adapter.Wrap(h.createTask))
@@ -130,8 +136,11 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	drafts, err := optionalCases(body.Cases)
+	drafts, err := datasetDrafts(*body)
 	if err != nil {
+		return err
+	}
+	if err := h.resolveDraftFiles(r.Context(), principal.WorkspaceUUID, &attachmentSession{}, drafts); err != nil {
 		return err
 	}
 	dataset, writes, err := h.newDataset(principal, name, description, drafts)
@@ -140,7 +149,7 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
 	}
 	created, err := h.store.CreateEvaluationDataset(r.Context(), dataset, writes)
 	if err != nil {
-		return mapStoreError(err, datasetNotFoundMessage)
+		return mapStoreError(err, datasetNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, datasetJSON(created))
 	return nil
@@ -174,7 +183,7 @@ func (h *Handler) getDataset(w http.ResponseWriter, r *http.Request) error {
 	}
 	dataset, err := h.store.GetEvaluationDataset(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "datasetId"))
 	if err != nil {
-		return mapStoreError(err, datasetNotFoundMessage)
+		return mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, datasetJSON(dataset))
 	return nil
@@ -187,7 +196,7 @@ func (h *Handler) deleteDataset(w http.ResponseWriter, r *http.Request) error {
 	}
 	datasetID := chi.URLParam(r, "datasetId")
 	if err := h.store.DeleteEvaluationDataset(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, datasetID, time.Now().UTC()); err != nil {
-		return mapStoreError(err, datasetNotFoundMessage)
+		return mapStoreError(err, datasetNotFoundMessage, deleteFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"id": datasetID, "type": "evaluation_dataset_deleted", "deleted": true})
 	return nil
@@ -200,7 +209,7 @@ func (h *Handler) listCases(w http.ResponseWriter, r *http.Request) error {
 	}
 	cases, err := h.store.ListEvaluationCases(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "datasetId"))
 	if err != nil {
-		return mapStoreError(err, datasetNotFoundMessage)
+		return mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 	}
 	data := make([]caseResponse, 0, len(cases))
 	for _, item := range cases {
@@ -265,17 +274,29 @@ func (h *Handler) updateCase(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	body, err := httpapi.DecodeObjectBodyAs[rawCase](w, r, 1<<20)
+	body, err := httpapi.DecodeObjectBodyAs[caseUpdateRequest](w, r, 1<<20)
 	if err != nil {
 		return invalidArgument(invalidJSONMessage, err)
 	}
-	draft, err := normalizeCase(*body)
+	draft, err := body.draft()
 	if err != nil {
 		return err
 	}
-	updated, err := h.store.UpdateEvaluationCase(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "datasetId"), caseWrite(chi.URLParam(r, "caseId"), draft), time.Now().UTC())
+	if err := h.resolveDraftFiles(r.Context(), principal.WorkspaceUUID, &attachmentSession{id: draft.SourceSessionID}, []caseDraft{draft}); err != nil {
+		return err
+	}
+	datasetID := chi.URLParam(r, "datasetId")
+	caseID := chi.URLParam(r, "caseId")
+	if body.keepsTrace() {
+		trace, err := h.caseTrace(r.Context(), principal, datasetID, caseID)
+		if err != nil {
+			return err
+		}
+		draft.ExpectedToolTrace = trace
+	}
+	updated, err := h.store.UpdateEvaluationCase(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, datasetID, caseWrite(caseID, draft), time.Now().UTC())
 	if err != nil {
-		return mapStoreError(err, caseNotFoundMessage)
+		return mapStoreError(err, caseNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, caseJSON(updated))
 	return nil
@@ -288,16 +309,17 @@ func (h *Handler) deleteCase(w http.ResponseWriter, r *http.Request) error {
 	}
 	caseID := chi.URLParam(r, "caseId")
 	if err := h.store.DeleteEvaluationCase(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "datasetId"), caseID, time.Now().UTC()); err != nil {
-		return mapStoreError(err, caseNotFoundMessage)
+		return mapStoreError(err, caseNotFoundMessage, deleteFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"id": caseID, "type": "evaluation_case_deleted", "deleted": true})
 	return nil
 }
 
 type datasetWriteRequest struct {
-	Name  string    `json:"name"`
-	Desc  string    `json:"desc"`
-	Cases []rawCase `json:"cases"`
+	Name    string    `json:"name"`
+	Desc    string    `json:"desc"`
+	Content string    `json:"content"`
+	Cases   []rawCase `json:"cases"`
 }
 
 type casesWriteRequest struct {
@@ -306,6 +328,37 @@ type casesWriteRequest struct {
 
 type importRequest struct {
 	Content string `json:"content"`
+}
+
+func datasetDrafts(body datasetWriteRequest) ([]caseDraft, error) {
+	drafts, err := optionalCases(body.Cases)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(body.Content) == "" {
+		return drafts, nil
+	}
+	imported, err := parseCaseDocument(body.Content)
+	if err != nil {
+		return nil, err
+	}
+	combined := append(drafts, imported...)
+	if len(combined) > maxImportCases {
+		return nil, invalidArgument(importTooLargeMessage, nil)
+	}
+	return combined, nil
+}
+
+func (h *Handler) caseTrace(ctx context.Context, principal auth.Principal, datasetID, caseID string) (json.RawMessage, error) {
+	dataset, err := h.store.GetEvaluationDataset(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID)
+	if err != nil {
+		return nil, mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
+	}
+	trace, err := h.store.GetEvaluationCaseTrace(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, dataset.VersionUUID, caseID)
+	if err != nil {
+		return nil, mapStoreError(err, caseNotFoundMessage, loadFailedMessage)
+	}
+	return trace, nil
 }
 
 func normalizeDataset(body datasetWriteRequest) (string, string, error) {
@@ -337,13 +390,20 @@ func (h *Handler) newDataset(principal auth.Principal, name, description string,
 }
 
 func (h *Handler) appendCases(ctx context.Context, principal auth.Principal, datasetID string, drafts []caseDraft) ([]db.EvaluationCase, error) {
+	return h.appendCasesInSession(ctx, principal, datasetID, drafts, "")
+}
+
+func (h *Handler) appendCasesInSession(ctx context.Context, principal auth.Principal, datasetID string, drafts []caseDraft, sessionUUID string) ([]db.EvaluationCase, error) {
+	if err := h.resolveDraftFiles(ctx, principal.WorkspaceUUID, &attachmentSession{uuid: sessionUUID}, drafts); err != nil {
+		return nil, err
+	}
 	writes, err := caseWrites(drafts)
 	if err != nil {
 		return nil, err
 	}
 	created, err := h.store.CreateEvaluationCases(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID, writes, time.Now().UTC())
 	if err != nil {
-		return nil, mapStoreError(err, datasetNotFoundMessage)
+		return nil, mapStoreError(err, datasetNotFoundMessage, createFailedMessage)
 	}
 	return created, nil
 }
@@ -364,7 +424,76 @@ func caseWrite(externalID string, draft caseDraft) db.EvaluationCaseWrite {
 	return db.EvaluationCaseWrite{
 		UUID: uuid.NewString(), ExternalID: externalID, Query: draft.Query, ExpectedAnswer: draft.ExpectedAnswer,
 		ExpectedToolTrace: draft.ExpectedToolTrace, SourceSessionID: draft.SourceSessionID, Polarity: draft.Polarity, Acceptance: draft.Acceptance,
+		Inputs: draft.Inputs,
 	}
+}
+
+type attachmentSession struct {
+	id   string
+	uuid string
+}
+
+func (h *Handler) resolveDraftFiles(ctx context.Context, workspaceUUID string, session *attachmentSession, drafts []caseDraft) error {
+	seen := map[string]string{}
+	for _, draft := range drafts {
+		if err := resolveInputs(draft.Inputs, func(fileID string) (string, error) {
+			if mime, ok := seen[fileID]; ok {
+				return mime, nil
+			}
+			file, err := h.inputFile(ctx, workspaceUUID, session, fileID)
+			if err != nil {
+				return "", err
+			}
+			seen[fileID] = file.MimeType
+			return file.MimeType, nil
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *Handler) inputFile(ctx context.Context, workspaceUUID string, session *attachmentSession, fileID string) (db.FileRecord, error) {
+	file, err := h.store.GetFile(ctx, workspaceUUID, fileID)
+	if err == nil {
+		return file, nil
+	}
+	if !errors.Is(err, db.ErrNotFound) {
+		return db.FileRecord{}, mapStoreError(err, fileNotFoundMessage, loadFailedMessage)
+	}
+	sessionUUID, err := h.attachmentSessionUUID(ctx, workspaceUUID, session)
+	if err != nil {
+		return db.FileRecord{}, err
+	}
+	if sessionUUID == "" {
+		return db.FileRecord{}, invalidArgument(fileNotFoundMessage, err)
+	}
+	file, err = h.store.GetSessionAttachmentFile(ctx, workspaceUUID, sessionUUID, fileID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return db.FileRecord{}, invalidArgument(fileNotFoundMessage, err)
+		}
+		return db.FileRecord{}, mapStoreError(err, fileNotFoundMessage, loadFailedMessage)
+	}
+	return file, nil
+}
+
+func (h *Handler) attachmentSessionUUID(ctx context.Context, workspaceUUID string, session *attachmentSession) (string, error) {
+	if session == nil || (session.id == "" && session.uuid == "") {
+		return "", nil
+	}
+	if session.uuid != "" {
+		return session.uuid, nil
+	}
+	loaded, ok, err := h.store.GetSession(ctx, workspaceUUID, session.id)
+	if err != nil {
+		return "", internalFailure(loadFailedMessage, err)
+	}
+	if !ok {
+		return "", notFound("Session not found", nil)
+	}
+	session.uuid = loaded.UUID
+	return session.uuid, nil
 }
 
 func newPair(leftPrefix, rightPrefix string) (string, string, error) {
@@ -397,13 +526,13 @@ func (h *Handler) page(r *http.Request) (auth.Principal, int, int, error) {
 
 func scopedPrincipal(r *http.Request) (auth.Principal, error) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || strings.TrimSpace(principal.OrganizationUUID) == "" || strings.TrimSpace(principal.WorkspaceUUID) == "" {
+	if !ok || principal.OrganizationUUID == "" || principal.WorkspaceUUID == "" {
 		return auth.Principal{}, notFound(datasetNotFoundMessage, nil)
 	}
-	if strings.TrimSpace(chi.URLParam(r, "orgUuid")) != principal.OrganizationUUID {
+	if chi.URLParam(r, "orgUuid") != principal.OrganizationUUID {
 		return auth.Principal{}, notFound(datasetNotFoundMessage, nil)
 	}
-	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspaceId"))
+	workspaceID := chi.URLParam(r, "workspaceId")
 	if workspaceID == "" || (workspaceID != "default" && workspaceID != principal.WorkspaceUUID && workspaceID != principal.WorkspaceExternalID) {
 		return auth.Principal{}, notFound(datasetNotFoundMessage, nil)
 	}

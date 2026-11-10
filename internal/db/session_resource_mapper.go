@@ -201,6 +201,7 @@ type sessionSkillArchiveInsertParams struct {
 	EntryPath          string
 	Filename           string
 	Source             string
+	ArchiveDirectory   string
 	SizeBytes          int64
 	SHA256             string
 	S3Bucket           string

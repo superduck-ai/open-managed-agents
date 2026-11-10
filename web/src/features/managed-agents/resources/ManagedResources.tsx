@@ -1,7 +1,8 @@
+import { productIcons } from '@/shared/icons/product-icons';
 import { useI18n } from '../../../shared/i18n';
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '../../../shared/ui/empty';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
-import { Bot, Brain, BriefcaseBusiness, Cloud, Database, LockKeyhole, MessageCircle } from 'lucide-react';
+import { Bot, Brain } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { AgentDetailPage, AgentsResourcePage } from '../agents/AgentsResourcePage';
 import { CompactChip, StatusPill } from '../components/common';
@@ -100,7 +101,7 @@ export const resourceConfigs: Record<
     columns: ['ID', 'Name', 'Model', 'Status', 'Created', 'Last updated'],
     emptyTitle: 'No agents yet',
     emptyBody: 'Create an agent to start building managed workflows.',
-    emptyIcon: Bot,
+    emptyIcon: productIcons.agents,
     rows: agentRows,
   },
   sessions: {
@@ -114,7 +115,7 @@ export const resourceConfigs: Record<
     columns: ['ID', 'Name', 'Status', 'Agent', 'Cost', 'Tokens in / out', 'Created'],
     emptyTitle: 'No sessions yet',
     emptyBody: 'Create a session to trace and debug it here.',
-    emptyIcon: MessageCircle,
+    emptyIcon: productIcons.sessions,
   },
   deployments: {
     section: 'deployments',
@@ -126,7 +127,7 @@ export const resourceConfigs: Record<
     columns: ['ID', 'Name', 'Status', 'Agent', 'Trigger', 'Created'],
     emptyTitle: 'No deployments yet',
     emptyBody: 'Create a deployment to bind an agent to credentials, an environment, and a schedule.',
-    emptyIcon: BriefcaseBusiness,
+    emptyIcon: productIcons.deployments,
     rows: deploymentRows,
   },
   environments: {
@@ -139,7 +140,7 @@ export const resourceConfigs: Record<
     columns: ['ID', 'Name', 'Status', 'Type', 'Updated at'],
     emptyTitle: 'No environments yet',
     emptyBody: 'Create your first environment to get started.',
-    emptyIcon: Cloud,
+    emptyIcon: productIcons.environments,
   },
   'credential-vaults': {
     section: 'credential-vaults',
@@ -151,7 +152,7 @@ export const resourceConfigs: Record<
     columns: ['ID', 'Name', 'Status', 'Created'],
     emptyTitle: 'No vaults yet',
     emptyBody: 'Create your first vault to get started.',
-    emptyIcon: LockKeyhole,
+    emptyIcon: productIcons.vaults,
   },
   'memory-stores': {
     section: 'memory-stores',
@@ -163,7 +164,7 @@ export const resourceConfigs: Record<
     columns: ['', 'ID', 'Name', 'Status', 'Created'],
     emptyTitle: 'No memory stores yet',
     emptyBody: 'Create a memory store to give agents persistent, cross-session memory.',
-    emptyIcon: Database,
+    emptyIcon: productIcons.memory,
   },
 };
 

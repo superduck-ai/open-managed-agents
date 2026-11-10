@@ -74,7 +74,7 @@ test('工作区渠道页读取工作区渠道接口并支持新增跳转', async
       new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric' }).format(new Date('2026-11-05T15:09:01Z')),
     ),
   ).toBeTruthy();
-  expect(screen.getByText('部分智能体的渠道暂时无法读取，列表可能不完整。')).toBeTruthy();
+  expect(screen.queryByText('部分智能体的渠道暂时无法读取，列表可能不完整。')).toBeNull();
   expect(screen.getByText('1 / 1')).toBeTruthy();
   expect(urls.some((url) => url.includes('limit=100'))).toBe(true);
   expect(urls.some((url) => url.includes('/v1/channels'))).toBe(true);

@@ -134,13 +134,6 @@ export function ChannelsPageContent({
           }}
         />
       </div>
-      {query.data?.incomplete ? (
-        <Alert className="mb-4">
-          <AlertDescription>
-            {msg('managedAgents.channels.listIncomplete', '部分智能体的渠道暂时无法读取，列表可能不完整。')}
-          </AlertDescription>
-        </Alert>
-      ) : null}
       {query.data?.truncated ? (
         <Alert className="mb-4">
           <AlertDescription>

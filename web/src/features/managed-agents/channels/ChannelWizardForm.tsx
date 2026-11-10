@@ -12,7 +12,7 @@ import { ChannelCredentials } from './ChannelFields';
 import feishuLogo from './feishu.ico';
 
 export type WizardStep = 1 | 2 | 3;
-export type ChannelTypeOption = 'feishu' | 'dingtalk' | 'wecom' | 'wechat';
+export type ChannelTypeOption = 'feishu';
 
 export type WizardValue = ChannelInput & {
   channelType: ChannelTypeOption;
@@ -93,12 +93,6 @@ export function StepConnect({
   onGenerateQr: () => void;
 }) {
   const { msg } = useI18n();
-  const channelTypes: Array<{ value: ChannelTypeOption; label: string; disabled?: boolean }> = [
-    { value: 'feishu', label: msg('managedAgents.channels.feishu', '飞书') },
-    { value: 'dingtalk', label: msg('managedAgents.channels.dingtalk', '钉钉'), disabled: true },
-    { value: 'wecom', label: msg('managedAgents.channels.wecom', '企业微信'), disabled: true },
-    { value: 'wechat', label: msg('managedAgents.channels.wechat', '微信'), disabled: true },
-  ];
   return (
     <div className="space-y-5">
       <div className="space-y-2">
@@ -115,36 +109,10 @@ export function StepConnect({
       </div>
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.channelType', '渠道类型')}</Label>
-        <Select
-          value={value.channelType}
-          onValueChange={(next) => {
-            if (next === 'feishu') onChange({ ...value, channelType: 'feishu' });
-          }}
-          items={channelTypes.map((item) => ({
-            value: item.value,
-            label: item.disabled ? `${item.label}（${msg('managedAgents.channels.notOpen', '暂未开放')}）` : item.label,
-          }))}
-        >
-          <SelectTrigger className="h-10 w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {channelTypes.map((item) => (
-              <SelectItem key={item.value} value={item.value} disabled={item.disabled}>
-                <span className="inline-flex items-center gap-2">
-                  {item.value === 'feishu' ? (
-                    <img src={feishuLogo} alt="" className="size-4" width={16} height={16} />
-                  ) : null}
-                  {item.label}
-                  {item.disabled ? `（${msg('managedAgents.channels.notOpen', '暂未开放')}）` : ''}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">
-          {msg('managedAgents.channels.typesUnavailable', '当前只接通飞书。钉钉、企业微信和微信暂未开放，不能选择。')}
-        </p>
+        <div className="flex h-10 items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 text-sm">
+          <img src={feishuLogo} alt="" className="size-4" width={16} height={16} />
+          {msg('managedAgents.channels.feishu', '飞书')}
+        </div>
       </div>
       <div className="space-y-3">
         <Label>{msg('managedAgents.channels.accessMethod', '接入方式')}</Label>

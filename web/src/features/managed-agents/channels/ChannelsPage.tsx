@@ -120,10 +120,7 @@ export function ChannelsPageContent({
     >
       <ResourcePageHeader
         title={msg('managedAgents.channels.title', '渠道')}
-        description={msg(
-          'managedAgents.channels.pageDescription',
-          '管理智能体在飞书、钉钉、企业微信和微信等企业沟通中的接入渠道',
-        )}
+        description={msg('managedAgents.channels.pageDescription', '管理智能体在飞书中的接入渠道')}
       />
       <ChannelHero />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

@@ -31,8 +31,8 @@ function workbookParts() {
   const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <sheetData>
-    <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>
-    <row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2" t="s"><v>3</v></c><c r="C2"><f>DISPIMG("ID_SAMPLE",1)</f></c></row>
+    <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"/><c r="C1" t="s"><v>1</v></c></row>
+    <row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"/><c r="C2" t="s"><v>3</v></c><c r="D2"><f>DISPIMG("ID_SAMPLE",1)</f></c></row>
   </sheetData>
 </worksheet>`;
   const cellImages = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -68,7 +68,7 @@ export async function readUploadedDataset(file: File): Promise<{
   error?: 'xls' | 'csv-image' | 'read';
 }> {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith('.xls') && !lower.endsWith('.xlsx')) return { content: '', images: [], error: 'xls' };
+  if (lower.endsWith('.xls')) return { content: '', images: [], error: 'xls' };
   try {
     if (lower.endsWith('.xlsx')) return await readXlsxDataset(await file.arrayBuffer());
     const content = await file.text();
@@ -206,7 +206,7 @@ function mimeType(path: string) {
 
 function sheetRows(sheet: string, strings: string[]) {
   const rows: SheetRow[] = [];
-  for (const match of sheet.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+  for (const match of sheet.matchAll(/<c\b([^>]*?)\s*(?:\/>|>([\s\S]*?)<\/c>)/g)) {
     const ref = match[1]?.match(/\br="([A-Z]+)(\d+)"/) ?? [];
     const row = Number(ref[2]);
     const column = columnIndex(ref[1] ?? '');

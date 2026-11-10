@@ -3474,7 +3474,7 @@
   "evaluations.noMatchBody": "Try another keyword or clear the filter.",
   "evaluations.noTurns": "This session has no user messages",
   "evaluations.pasteData": "Evaluation data (JSON)",
-  "evaluations.pasteHint": "Each item needs a question. You can also add the expected answer and the tools to call. Pasted text cannot contain pictures. Put pictures in an xlsx cell and upload that file.",
+  "evaluations.pasteHint": "Each item needs a question. You can also add the expected answer and the tools to call. Pasted text cannot contain new pictures. Use inputs to reference pictures or documents already in the file library. Put new pictures in an xlsx cell and upload that file.",
   "evaluations.pasteJson": "Paste JSON",
   "evaluations.polarity": "Label",
   "evaluations.polarityHint": "Acceptance checks are only kept for a negative example. They say what a fix must do.",

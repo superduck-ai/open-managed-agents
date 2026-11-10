@@ -10,3 +10,8 @@ test('uploaded spreadsheet pictures replace file names', () => {
   expect(cases[0]?.inputs?.[1]?.source?.file_id).toBe('file_chart');
   expect(json).not.toContain('"files"');
 });
+
+test('jsonl lines name their own files', () => {
+  const content = '{"query":"描述这张图","files":["chart.png"]}\n{"query":"下一题"}\n';
+  expect(fileNamesInDataset(content)).toEqual(['chart.png']);
+});

@@ -3474,7 +3474,7 @@
   "evaluations.noMatchBody": "试试其他关键词或清空筛选条件。",
   "evaluations.noTurns": "这场会话里没有用户消息",
   "evaluations.pasteData": "评测数据（JSON）",
-  "evaluations.pasteHint": "每条都要填写用户问题。也可以补充期望回答、希望调用的工具。粘贴内容只能写文字，图片请放到 xlsx 单元格里再上传。",
+  "evaluations.pasteHint": "每条都要填写用户问题。也可以补充期望回答、希望调用的工具。粘贴不能直接放新图片。图片或文档如果已经在文件库里，可以在 inputs 里引用。新图片请放到 xlsx 单元格里再上传。",
   "evaluations.pasteJson": "粘贴 JSON",
   "evaluations.polarity": "标注",
   "evaluations.polarityHint": "只有负例需要填写验收要点，用来说明怎样才算修好。",

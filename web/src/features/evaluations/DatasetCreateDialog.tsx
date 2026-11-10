@@ -124,7 +124,6 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
       setPendingImages(result.images);
       const base = file.name.replace(/\.[^.]+$/, '');
       setNameFromFile(base);
-      setName((current) => current || base);
     });
   }
 
@@ -318,7 +317,7 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
                 <p className="text-sm text-muted-foreground">
                   {msg(
                     'evaluations.pasteHint',
-                    'Each item needs a question. You can also add the expected answer, the tools to call, and images or documents.',
+                    'Each item needs a question. You can also add the expected answer and the tools to call. Pasted text cannot contain new pictures. Use inputs to reference pictures or documents already in the file library.',
                   )}
                 </p>
               </TabsContent>

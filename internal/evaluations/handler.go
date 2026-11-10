@@ -429,7 +429,7 @@ func (h *Handler) attachmentSessionUUID(ctx context.Context, workspaceUUID, sess
 		return "", internalFailure(loadFailedMessage, err)
 	}
 	if !ok {
-		return "", nil
+		return "", notFound("Session not found", nil)
 	}
 	return session.UUID, nil
 }

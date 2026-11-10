@@ -51,7 +51,7 @@ test('upload tab offers dataset sample files', () => {
   fireEvent.click(screen.getByRole('tab', { name: '粘贴 JSON' }));
   expect(
     screen.getByText(
-      '每条都要填写用户问题。也可以补充期望回答、希望调用的工具。粘贴内容只能写文字，图片请放到 xlsx 单元格里再上传。',
+      '每条都要填写用户问题。也可以补充期望回答、希望调用的工具。粘贴不能直接放新图片。图片或文档如果已经在文件库里，可以在 inputs 里引用。新图片请放到 xlsx 单元格里再上传。',
     ),
   ).toBeTruthy();
 });

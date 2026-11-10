@@ -36,6 +36,23 @@ func TestUpdateCaseReadsSessionAttachmentFiles(t *testing.T) {
 	}
 }
 
+func TestUpdateCaseReportsMissingSession(t *testing.T) {
+	store := &evaluationFixture{}
+	handler := NewHandler(store, nil)
+	body := `{"query":"看这张图","source_session_id":"sesn_missing","inputs":[{"type":"image","source":{"type":"file","file_id":"file_pic"}}]}`
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	request = withEvaluationRoute(request, "evalds_1", "evalcase_1")
+
+	err := handler.updateCase(httptest.NewRecorder(), request)
+	var appErr *apperr.Error
+	if !errors.As(err, &appErr) || appErr.Kind != apperr.NotFound || appErr.PublicMessage != "Session not found" {
+		t.Fatalf("error = %#v", err)
+	}
+	if store.attachmentSession != "" {
+		t.Fatalf("attachment session = %q", store.attachmentSession)
+	}
+}
+
 func TestGenerateCasesStripsMarkdownFence(t *testing.T) {
 	store := &evaluationFixture{}
 	handler := NewHandler(store, nil).WithRubricModel(fixedModel{text: "```json\n[{\"query\":\"汇总销售额\"}]\n```"})

@@ -46,6 +46,7 @@ function parseJsonCases(content: string): Array<Record<string, unknown>> {
     const value = JSON.parse(content) as unknown;
     if (Array.isArray(value)) return value.filter(isRecord);
     if (isRecord(value) && Array.isArray(value.cases)) return value.cases.filter(isRecord);
+    if (isRecord(value)) return [value];
   } catch {
     return [];
   }

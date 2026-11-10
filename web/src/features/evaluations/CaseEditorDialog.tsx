@@ -156,6 +156,7 @@ export function CaseEditorDialog({
                 files={files}
                 orgUuid={orgUuid}
                 workspaceId={workspaceId}
+                sessionId={item?.source_session_id ?? ''}
                 onRemove={(id) => setFiles((current) => current.filter((item) => item.id !== id))}
               />
             </div>

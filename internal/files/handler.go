@@ -305,6 +305,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, fileID string
 }
 
 func (h *Handler) RegisterConsoleRoutes(router chi.Router) {
+	router.Get("/workspaces/{workspaceId}/files/{fileId}", h.consoleFileMetadata)
 	router.Get("/workspaces/{workspaceId}/files/{fileId}/content", h.consoleFileContent)
 }
 
@@ -314,15 +315,58 @@ func (h *Handler) consoleFileContent(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found"))
 		return
 	}
-	record, ok := h.visibleFile(w, r, principal.WorkspaceUUID, chi.URLParam(r, "fileId"), "File not found", "Could not preview file", "get file before preview")
-	if !ok {
+	record, err := h.previewFile(r, principal.WorkspaceUUID, chi.URLParam(r, "fileId"))
+	if err != nil {
+		h.writePreviewLookupError(w, r, err)
 		return
 	}
 	if !previewableImage(record.MimeType) {
-		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "File is not downloadable"))
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusBadRequest, "invalid_request_error", "File is not previewable"))
 		return
 	}
 	h.writeStoredFile(w, r, record)
+}
+
+func (h *Handler) consoleFileMetadata(w http.ResponseWriter, r *http.Request) {
+	principal, ok := consoleFilePrincipal(r)
+	if !ok {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found"))
+		return
+	}
+	record, err := h.previewFile(r, principal.WorkspaceUUID, chi.URLParam(r, "fileId"))
+	if err != nil {
+		h.writePreviewLookupError(w, r, err)
+		return
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"filename": record.Filename})
+}
+
+func (h *Handler) previewFile(r *http.Request, workspaceUUID, fileID string) (db.FileRecord, error) {
+	record, err := h.db.GetFile(r.Context(), workspaceUUID, fileID)
+	if err == nil || !errors.Is(err, db.ErrNotFound) {
+		return record, err
+	}
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if sessionID == "" {
+		return db.FileRecord{}, db.ErrNotFound
+	}
+	session, ok, err := h.db.GetSession(r.Context(), workspaceUUID, sessionID)
+	if err != nil {
+		return db.FileRecord{}, err
+	}
+	if !ok {
+		return db.FileRecord{}, db.ErrNotFound
+	}
+	return h.db.GetSessionAttachmentFile(r.Context(), workspaceUUID, session.UUID, fileID)
+}
+
+func (h *Handler) writePreviewLookupError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, db.ErrNotFound) {
+		httpapi.WriteError(w, r, httpapi.NewError(http.StatusNotFound, "not_found_error", "File not found"))
+		return
+	}
+	h.logger.ErrorContext(r.Context(), "get file before preview", "error", err)
+	httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not preview file"))
 }
 
 func consoleFilePrincipal(r *http.Request) (auth.Principal, bool) {

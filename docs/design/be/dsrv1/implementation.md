@@ -1,5 +1,7 @@
 # DSRv1 实验实现状态
 
+执行事务已区分 `session_terminated`、`session_archived` 与 `invalid_request`，前两者返回 410。授权层对已验签但上下文不可用的写请求，在原租户范围内补查会话状态。未知路由改为独立的 `404 route_not_found`，资源缺失仍为 `session_not_found`。Brain 只对 `lease_expired` 重新注册，新增错误不重试。回归覆盖 HTTP 错误映射、路由、授权范围、Brain 不重新注册，以及 PostgreSQL 中的终止/归档拒绝和历史读取。
+
 当前 14 个主接口已有后端实现，Brain 使用 DSR 原生执行路径。后端新建 Brain 会话和 Brain 进程默认使用 DSRv1；协议仍未冻结。验证结论与剩余限制见文末。
 
 ## 逐接口实现与调用位置
@@ -229,7 +231,7 @@ owner 只在明确收到 `epoch_superseded` 时跳过 release；其余错误均�
 
 ## 数据库 task 队列，2026-11-09
 
-task 接纳与公开输入仍同事务提交，新增 inputs/claim 负责有序领取、开始执行与 running 恢复；Brain 串行领取和执行，无任务时每秒重查。NATS 不再保存新 task，control 仍使用原投递与回执机制。会话级 Brain claim 继续数据库轮询，因此唤醒通知丢失不影响最终发现任务。
+task 接纳与公开输入仍同事务提交，新增 inputs/claim 负责有序领取、开始执行与 running 恢复；Brain 串行领取和执行，无任务时每 10 秒重查。NATS 不再保存新 task，control 仍使用原投递与回执机制。会话级 Brain claim 继续数据库轮询，因此唤醒通知丢失不影响最终发现任务。
 
 task 的持久事实由 dsh_input_executions 承载。旧 broker task 消息直接确认和清理，不再发给 Brain。后端与 Brain 必须停旧后协调升级，不能混跑。
 
@@ -253,21 +255,21 @@ task 的持久事实由 dsh_input_executions 承载。旧 broker task 消息直�
 
 ## JSON 无损解码与精确摘要
 
-`decodeBody` 使用 jsontext 校验原始请求，再解码 DTO；不再将 JCS 输出交给业务层。permission input、public-events payload 保留原始 JSON；工具调用公开映射使用 UseNumber，避免重新引入浮点舍入。
+`decodeBody` 使用 jsontext 校验原始请求后直接解码 DTO。permission input、public-events payload 保留原始 JSON；工具调用公开映射使用 UseNumber，避免重新引入浮点舍入。
 
-`internal/jsoncanonical` 对数字按十进制系数和任意精度指数归一化，用于比较和 `exact-json-sha256-v1` 摘要。新算法不改写存储内容。旧 JCS 摘要只通过独立兼容入口校验，同时要求请求无损且已有历史匹配；无法核对时返回冲突，不反推或猜测旧原值。建表约束直接接受新旧两种摘要版本，不批量改写旧回执，也不将新摘要冒充旧摘要。
+`internal/jsoncanonical` 对数字按十进制系数和任意精度指数归一化，用于比较和 `exact-json-sha256-v1` 摘要。规范化不改写存储内容，回执建表约束只接受 `exact-json-sha256-v1:<64位小写hex>`，幂等重试直接比较这一摘要。
 
-测试入口为普通 Go 单测及 `TestDSHPublicPrecisionPostgres`、`TestDSHLegacyReceiptPrecisionPostgres`、`TestDSHPermissionPrecisionPostgres` 的定向集成测试。后者使用隔离 PostgreSQL schema，覆盖 JSONB 精度、等价重试、相邻大整数冲突与旧摘要不能掩盖历史变化；不代表真实 Worker E2E。
+测试入口为普通 Go 单测及 `TestDSHPublicPrecisionPostgres`、`TestDSHReceiptHistoryPrecisionPostgres`、`TestDSHPermissionPrecisionPostgres` 的定向集成测试。后者使用隔离 PostgreSQL schema，覆盖 JSONB 精度、等价重试、相邻大整数冲突与摘要相等时仍验证持久历史内容一致；不代表真实 Worker E2E。
 
 ## task 空领取与及时唤醒
 
 ClaimDSHInput 在事务外用 NextExecution 读候选，空队列再用 ReadWorker 验证当前 epoch 和租约，两个查询都不加行锁，不访问主线程，不锁 Session。只有存在候选才进入原事务，并在 Session 锁内重新查询输入，处理候选在此期间已被完成、取消或替换的竞争。
 
-TaskWorkSignal 为每个 Code Session 提供临时通知，NATS 适配器使用独立于 JetStream 输入主题的 Core NATS subject；内存适配器合并重复提示并在取消后回收订阅。新 user.message 已持久化后发送提示。DSR 控制流建连、重连后先发送 task.available，并转发本会话提示；不产生稳定输入、ACK 定位或业务完成状态。缺少信号能力或订阅失败不会阻止 SSE，仍靠一秒轮询恢复。
+TaskWorkSignal 为每个 Code Session 提供临时通知，NATS 适配器使用独立于 JetStream 输入主题的 Core NATS subject；内存适配器合并重复提示并在取消后回收订阅。新 user.message 已持久化后发送提示。DSR 控制流建连、重连后先发送 task.available，并转发本会话提示；不产生稳定输入、ACK 定位或业务完成状态。缺少信号能力或订阅失败不会阻止 SSE，仍靠 10 秒轮询恢复。
 
-Brain 的 DsrTaskWake 在 claim 前捕获版本；提示在 HTTP 在途、空响应到达与 wait 注册之间、以及等待期间到达均可唤醒。正常任务串行执行，提示不会启动并发任务；任务内容和执行资格仍由 claim 响应决定。无提示时仍每秒查询，但不再制造空领取的 Session 锁。
+Brain 的 DsrTaskWake 在 claim 前捕获版本；提示在 HTTP 在途、空响应到达与 wait 注册之间、以及等待期间到达均可唤醒。正常任务串行执行，提示不会启动并发任务；任务内容和执行资格仍由 claim 响应决定。无提示时每 10 秒查询，但不再制造空领取的 Session 锁。
 
-普通回归覆盖空领取无锁 SQL、旧 epoch/过期租约拒绝、候选在锁内消失的二次查询、Mapper 参数绑定、Core NATS 跨连接通知、会话隔离、取消清理、不持久化提示、版本防丢唤醒、一秒兜底及 SSE 提示不进入控制回执。未执行真实 PostgreSQL 锁竞争或生产吞吐基线。
+普通回归覆盖空领取无锁 SQL、旧 epoch/过期租约拒绝、候选在锁内消失的二次查询、Mapper 参数绑定、Core NATS 跨连接通知、会话隔离、取消清理、不持久化提示、版本防丢唤醒、10 秒兜底及 SSE 提示不进入控制回执。未执行真实 PostgreSQL 锁竞争或生产吞吐基线。
 
 ## 当前接口合同核对
 

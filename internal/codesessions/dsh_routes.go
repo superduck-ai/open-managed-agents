@@ -1,6 +1,8 @@
 package codesessions
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -28,6 +30,9 @@ func (h *Handler) authenticateDSH(r *http.Request, id string) (db.DSHScope, erro
 		return db.DSHScope{}, dsh.ErrUnauthenticated
 	}
 	record, err := h.db.GetCodeSessionCredentialContextForIssue(r.Context(), claims.OrganizationUUID, claims.WorkspaceUUID, id)
+	if errors.Is(err, db.ErrNotFound) && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return db.DSHScope{}, dshUnavailableSessionError(r.Context(), h.db.GetSession, claims)
+	}
 	if err != nil {
 		return db.DSHScope{}, err
 	}
@@ -35,4 +40,18 @@ func (h *Handler) authenticateDSH(r *http.Request, id string) (db.DSHScope, erro
 		return db.DSHScope{}, dsh.ErrUnauthenticated
 	}
 	return db.DSHScope{CodeSessionID: record.CodeSessionExternalID, SessionID: record.PublicSessionExternalID, OrganizationUUID: record.OrganizationUUID, WorkspaceUUID: record.WorkspaceUUID, CodeSessionUUID: record.CodeSessionUUID, Epoch: claims.WorkerEpoch}, nil
+}
+
+func dshUnavailableSessionError(ctx context.Context, find func(context.Context, string, string) (db.Session, bool, error), claims SessionCredentialClaims) error {
+	session, found, err := find(ctx, claims.WorkspaceUUID, claims.PublicSessionID)
+	if err != nil {
+		return err
+	}
+	if !found || session.OrganizationUUID != claims.OrganizationUUID {
+		return db.ErrNotFound
+	}
+	if err := db.DSHSessionWriteError(session); err != nil {
+		return err
+	}
+	return db.ErrNotFound
 }

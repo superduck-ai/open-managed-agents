@@ -3,14 +3,11 @@
 package db
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
 )
 
@@ -53,33 +50,27 @@ func TestDSHPublicPrecisionPostgres(t *testing.T) {
 	}
 }
 
-func TestDSHLegacyReceiptPrecisionPostgres(t *testing.T) {
+func TestDSHReceiptHistoryPrecisionPostgres(t *testing.T) {
 	f := newDSHPrecisionFixture(t)
 	now := time.Now().UTC()
-	raw := []byte(`{"id":"legacy","type":"agent.message","content":[{"number":9007199254740992}]}`)
-	event := SessionEvent{UUID: uuid.NewV4().String(), ExternalID: "legacy", EventType: "agent.message", Payload: raw, CreatedAt: now, ProcessedAt: now}
+	raw := []byte(`{"id":"receipt","type":"agent.message","content":[{"number":9007199254740992}]}`)
+	event := SessionEvent{UUID: uuid.NewV4().String(), ExternalID: "receipt", EventType: "agent.message", Payload: raw, CreatedAt: now, ProcessedAt: now}
 	item := DSHPublicEvent{ID: event.ExternalID, Payload: raw, Events: []SessionEvent{event}}
 	if _, err := f.store.PublishDSHEvents(f.ctx, f.scope, []DSHPublicEvent{item}); err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := jsoncanonicalizer.Transform(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hash := sha256.Sum256(canonical)
-	execClaimTest(t, f.ctx, f.database, `UPDATE dsh_public_receipts SET payload_digest=$1 WHERE code_session_uuid=$2 AND event_id=$3`, "jcs-sha256-v1:"+hex.EncodeToString(hash[:]), f.scope.CodeSessionUUID, item.ID)
 	changed := item
-	changed.Payload = []byte(`{"id":"legacy","type":"agent.message","content":[{"number":9007199254740993}]}`)
+	changed.Payload = []byte(`{"id":"receipt","type":"agent.message","content":[{"number":9007199254740993}]}`)
 	if _, err := f.store.PublishDSHEvents(f.ctx, f.scope, []DSHPublicEvent{changed}); !errors.Is(err, ErrDSHPublicConflict) {
-		t.Fatalf("legacy collision accepted: %v", err)
+		t.Fatalf("digest collision accepted: %v", err)
 	}
 	result, err := f.store.PublishDSHEvents(f.ctx, f.scope, []DSHPublicEvent{item})
 	if err != nil || result.Duplicates != 1 {
-		t.Fatalf("legacy replay=%+v err=%v", result, err)
+		t.Fatalf("receipt replay=%+v err=%v", result, err)
 	}
 	execClaimTest(t, f.ctx, f.database, `UPDATE session_events SET payload='{"content":[{"number":9007199254740993}]}' WHERE uuid=$1`, event.UUID)
 	if _, err := f.store.PublishDSHEvents(f.ctx, f.scope, []DSHPublicEvent{item}); !errors.Is(err, ErrDSHPublicHistoryInconsistent) {
-		t.Fatalf("legacy ignored changed history: %v", err)
+		t.Fatalf("receipt ignored changed history: %v", err)
 	}
 }
 
@@ -118,7 +109,7 @@ func TestDSHPermissionPrecisionPostgres(t *testing.T) {
 	}
 }
 
-func TestDSHLegacyStatusReceiptPostgres(t *testing.T) {
+func TestDSHStatusReceiptPostgres(t *testing.T) {
 	f := newDSHPrecisionFixture(t)
 	now := time.Now().UTC()
 	raw := []byte(`{"id":"status","type":"session.thread_status_running","session_thread_id":"sthr_precision"}`)
@@ -133,14 +124,5 @@ func TestDSHLegacyStatusReceiptPostgres(t *testing.T) {
 	result, err := f.store.PublishDSHEvents(f.ctx, f.scope, []DSHPublicEvent{item})
 	if err != nil || result.Duplicates != 1 {
 		t.Fatalf("new receipt replay=%+v err=%v", result, err)
-	}
-	canonical, err := jsoncanonicalizer.Transform(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hash := sha256.Sum256(canonical)
-	execClaimTest(t, f.ctx, f.database, `UPDATE dsh_public_receipts SET payload_digest=$1 WHERE code_session_uuid=$2 AND event_id=$3`, "jcs-sha256-v1:"+hex.EncodeToString(hash[:]), f.scope.CodeSessionUUID, item.ID)
-	if _, err := f.store.PublishDSHEvents(f.ctx, f.scope, []DSHPublicEvent{item}); !errors.Is(err, ErrDSHPublicHistoryInconsistent) {
-		t.Fatalf("unverifiable old receipt=%v", err)
 	}
 }

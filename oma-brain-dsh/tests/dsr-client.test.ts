@@ -460,3 +460,21 @@ test("pending permission accepts HTTP 202", async () => {
     state: "pending",
   });
 });
+
+test.each([
+  [410, "session_terminated"],
+  [410, "session_archived"],
+  [404, "route_not_found"],
+] as const)(
+  "%s %s stops requests without lease recovery",
+  async (status, code) => {
+    const { client, calls } = fixture(() =>
+      Response.json({}, { status, headers: { "DSR-Error": code } }),
+    );
+    await expect(
+      client.finish("input", { result: "success" }),
+    ).rejects.toMatchObject({ status, code });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.path).toEndWith("/inputs/input/finish");
+  },
+);

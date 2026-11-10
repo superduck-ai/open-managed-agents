@@ -22,7 +22,7 @@ export class DsrTaskWake {
     try {
       await Promise.race([
         wake.promise,
-        delay(transport, 1000, AbortSignal.any([signal, timer.signal])),
+        delay(transport, 10000, AbortSignal.any([signal, timer.signal])),
       ]);
     } finally {
       this.waiting = undefined;

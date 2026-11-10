@@ -18,3 +18,6 @@ var ErrDSHPermissionConflict = errors.New("DSR permission identity mismatch")
 var ErrDSHPublicConflict = errors.New("DSR public event identity mismatch")
 
 var ErrDSHPublicHistoryInconsistent = errors.New("DSR public receipt and history are inconsistent")
+
+var ErrDSHSessionTerminated = errors.New("DSR session is terminated")
+var ErrDSHSessionArchived = errors.New("DSR session is archived")

@@ -12,12 +12,16 @@ func TestDSRUnknownRoutesUseStructuredErrors(t *testing.T) {
 	router := chi.NewRouter()
 	ConfigureRouter(router)
 	router.Post("/known", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
-	for _, path := range []string{"/unknown", "/known"} {
-		response := transcriptRequest(router, "GET", path, "", "1")
-		if response.Code != 404 && response.Code != 405 {
+	for _, test := range []struct {
+		path   string
+		status int
+		code   string
+	}{{"/unknown", 404, "route_not_found"}, {"/known", 405, "invalid_request"}} {
+		response := transcriptRequest(router, "GET", test.path, "", "1")
+		if response.Code != test.status {
 			t.Fatal(response.Code)
 		}
-		if response.Header().Get("Content-Type") != "application/json" || response.Header().Get("DSR-Error") == "" {
+		if response.Header().Get("Content-Type") != "application/json" || response.Header().Get("DSR-Error") != test.code {
 			t.Fatalf("headers=%v", response.Header())
 		}
 	}

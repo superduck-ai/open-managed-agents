@@ -35,8 +35,13 @@ export class DsrBackend extends Backend {
     });
   }
   override deliver(id: string, payload: Payload) {
-    if (payload.lane === "task") this.delivered.set(id, payload);
-    else super.deliver(id, payload);
+    if (payload.lane === "task") {
+      this.delivered.set(id, payload);
+      for (const stream of this.streams)
+        stream.enqueue(
+          new TextEncoder().encode("event: task.available\ndata: {}\n\n"),
+        );
+    } else super.deliver(id, payload);
   }
   override frame(id: string, payload: Payload): Uint8Array {
     return new TextEncoder().encode(
@@ -160,7 +165,9 @@ export class DsrBackend extends Backend {
         start: (value) => {
           controller = value;
           this.streams.add(value);
-          value.enqueue(new TextEncoder().encode(": connected\n\n"));
+          value.enqueue(
+            new TextEncoder().encode("event: task.available\ndata: {}\n\n"),
+          );
           for (const [id, input] of this.delivered)
             if (input.lane !== "task") value.enqueue(this.frame(id, input));
           request.signal.addEventListener("abort", close, { once: true });

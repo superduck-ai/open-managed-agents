@@ -49,8 +49,11 @@ func lockDSHSession(ctx context.Context, executor yourbatis.Executor, scope DSHS
 	if err != nil {
 		return Session{}, SessionThread{}, err
 	}
-	if session.OrganizationUUID != scope.OrganizationUUID || session.ArchivedAt != nil || session.Status == "terminated" {
-		return Session{}, SessionThread{}, ErrInvalidState
+	if session.OrganizationUUID != scope.OrganizationUUID {
+		return Session{}, SessionThread{}, ErrNotFound
+	}
+	if err := DSHSessionWriteError(session); err != nil {
+		return Session{}, SessionThread{}, err
 	}
 	code, found, err := NewDSHExecutionMapper(executor).FindCode(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
 	if err != nil {
@@ -64,6 +67,16 @@ func lockDSHSession(ctx context.Context, executor yourbatis.Executor, scope DSHS
 	}
 	primary, err := NewSessionThreadMapper(executor).FindPrimary(ctx, session.WorkspaceUUID, session.ExternalID)
 	return session, primary.thread(), err
+}
+
+func DSHSessionWriteError(session Session) error {
+	if session.Status == "terminated" {
+		return ErrDSHSessionTerminated
+	}
+	if session.ArchivedAt != nil {
+		return ErrDSHSessionArchived
+	}
+	return nil
 }
 
 func (d *DB) ValidateDSHControlInputs(ctx context.Context, scope DSHScope, inputIDs []string) error {
@@ -158,21 +171,15 @@ func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPu
 			}
 			if found {
 				if old != digest {
-					matches, err := jsoncanonical.MatchesLegacyDigest(item.Payload, old)
-					if err != nil {
-						return err
-					}
-					if !matches {
-						return ErrDSHPublicConflict
-					}
+					return ErrDSHPublicConflict
 				}
-				if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true, old != digest); err != nil {
+				if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true); err != nil {
 					return err
 				}
 				result.Duplicates++
 				continue
 			}
-			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, false, false); err != nil {
+			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, false); err != nil {
 				return err
 			}
 			if item.Thread != nil {
@@ -194,7 +201,7 @@ func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPu
 			if err != nil {
 				return err
 			}
-			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true, false); err != nil {
+			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true); err != nil {
 				return err
 			}
 			result.Changes.Events = append(result.Changes.Events, events...)

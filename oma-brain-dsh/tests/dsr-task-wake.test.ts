@@ -18,7 +18,7 @@ test("task wait aborts and cancels its fallback timer", async () => {
     );
     abort.abort(new Error("closed"));
     await expect(waiting).rejects.toThrow("closed");
-    jest.advanceTimersByTime(1000);
+    jest.advanceTimersByTime(10000);
   } finally {
     jest.useRealTimers();
   }
@@ -42,7 +42,7 @@ test("a task hint during claim is retained before wait registration", async () =
   expect(sleeps).toBe(0);
 });
 
-test("task hint wakes an active wait without advancing the 1000ms timer", async () => {
+test("task hint wakes an active wait without advancing the ten-second timer", async () => {
   jest.useFakeTimers();
   try {
     const wake = new DsrTaskWake();
@@ -61,13 +61,13 @@ test("task hint wakes an active wait without advancing the 1000ms timer", async 
     wake.notify();
     await waiting;
     expect(done).toBe(true);
-    jest.advanceTimersByTime(1000);
+    jest.advanceTimersByTime(10000);
   } finally {
     jest.useRealTimers();
   }
 });
 
-test("missing or coalesced hints retain the one-second polling fallback", async () => {
+test("missing or coalesced hints retain the ten-second polling fallback", async () => {
   jest.useFakeTimers();
   try {
     const wake = new DsrTaskWake();
@@ -81,7 +81,7 @@ test("missing or coalesced hints retain the one-second polling fallback", async 
       .then(() => {
         done = true;
       });
-    jest.advanceTimersByTime(999);
+    jest.advanceTimersByTime(9999);
     await tick();
     expect(done).toBe(false);
     jest.advanceTimersByTime(1);

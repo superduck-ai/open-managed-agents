@@ -91,7 +91,7 @@ CREATE TABLE dsh_public_receipts (
     workspace_uuid uuid NOT NULL,
     code_session_uuid uuid NOT NULL,
     event_id text NOT NULL,
-    payload_digest text NOT NULL CHECK (payload_digest ~ '^(jcs-sha256-v1|exact-json-sha256-v1):[0-9a-f]{64}$'),
+    payload_digest text NOT NULL CHECK (payload_digest ~ '^exact-json-sha256-v1:[0-9a-f]{64}$'),
     created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (organization_uuid, workspace_uuid, code_session_uuid, event_id)
 );

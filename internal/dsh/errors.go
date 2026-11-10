@@ -64,6 +64,10 @@ func storageError(err error, nextOffset *int64) *protocolError {
 		result.status, result.code, result.message = 409, "epoch_superseded", "Worker epoch has been superseded"
 	case errors.Is(err, db.ErrWorkerLeaseExpired):
 		result.status, result.code, result.message = 410, "lease_expired", "Worker lease has expired"
+	case errors.Is(err, db.ErrDSHSessionTerminated):
+		result.status, result.code, result.message = 410, "session_terminated", "Session has been terminated"
+	case errors.Is(err, db.ErrDSHSessionArchived):
+		result.status, result.code, result.message = 410, "session_archived", "Session has been archived"
 	case errors.Is(err, db.ErrNotFound):
 		result.status, result.code, result.message = 404, "session_not_found", "Session or transcript not found"
 	case errors.Is(err, db.ErrDSHHeaderRequired):
@@ -89,7 +93,7 @@ func storageError(err error, nextOffset *int64) *protocolError {
 }
 
 func configureNotFound(w http.ResponseWriter, r *http.Request) {
-	writeError(w, r, &protocolError{status: http.StatusNotFound, code: "session_not_found", message: "DSR route not found"}, nil)
+	writeError(w, r, &protocolError{status: http.StatusNotFound, code: "route_not_found", message: "DSR route not found"}, nil)
 }
 
 func configureMethodNotAllowed(w http.ResponseWriter, r *http.Request) {

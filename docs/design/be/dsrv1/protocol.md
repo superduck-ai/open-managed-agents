@@ -162,6 +162,10 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 
 ### 4.6 错误
 
+执行事务先核对租户，再判断会话状态。已终止返回 `410 session_terminated`，已归档返回 `410 session_archived`；两者并存时终止优先。凭据验签成功但写请求的上下文不可用时，也在原租户范围内核对状态，避免终止被误报为不存在。上述 410 不属于 lease_expired，不触发重新 register，当前 owner 停止写入。
+
+请求字段或业务参数非法仍返回 `400 invalid_request`。未知 DSR 路由返回 `404 route_not_found`，表示路径或协议接线错误；资源查询缺失仍返回 `404 session_not_found`。日志读取规则不变。
+
 接口 1–14 的错误体保持 `internal/httpapi.WriteError` 的 Anthropic 兼容形状。第 11 节的 MCP、OTLP 与二进制附件保留各自原生协议响应，不统一改写错误体。机器可读的分支由响应头承载：`DSR-Error` 给出 code，`DSR-Next-Offset` 在 transcript 错误时给出服务端水位。
 
 | HTTP    | `DSR-Error`                         | DSH 处理                                                                                                      |
@@ -170,6 +174,9 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 | 400     | `unsupported_protocol`              | 停止进程                                                                                                      |
 | 401/403 | `unauthorized`                      | 准入阶段（claim 之后、输入流连上之前）以 `admission_failed` release，由服务端 attempts 裁决；运行中停止该会话 |
 | 404     | `session_not_found`                 | 退役会话                                                                                                      |
+| 404 | `route_not_found` | 路径或协议接线错误，不重试，不解释为资源删除 |
+| 410 | `session_terminated` | 停止当前 owner，不重新 register |
+| 410 | `session_archived` | 停止当前 owner，不重新 register |
 | 409     | `epoch_superseded`                  | fence 主线程与全部子线程，停止写入                                                                            |
 | 409     | `transcript_header_required`        | 先写 Header 再追加                                                                                            |
 | 409     | `transcript_gap`                    | 从 `DSR-Next-Offset` 补发                                                                                     |
@@ -514,9 +521,7 @@ DSH 收到时若本地等待项不存在（已取消、turn 已结束或属于�
 
 JSON 接口先按 RFC 7493 校验原始请求，拒绝重复键、无效 UTF-8/Unicode、非对象根值与尾随 JSON，再从原始字节解码协议 DTO。校验不产生替换请求体。permission 的 input 与 public-events 的事件保留为 RawMessage；工具调用公开映射使用 json.Number，不经过 float64。finish 等固定协议字段继续使用命名类型。
 
-幂等比较与新摘要使用 `exact-json-sha256-v1`，不是 JCS。对象键按 Go JSON 编码器的字符串排序规则排序，字符串按 JSON 编码规则转义；数组保持顺序。数字按十进制系数与指数无损归一化，去掉系数首尾零，零统一为 0，指数为零时省略指数。例如 1、1.0、1e0 相等，9007199254740992 与 9007199254740993 不等。指数运算使用任意精度整数，不展开巨大指数。规范化仅用于比较和摘要，不用于改写存储 payload。
-
-建表约束同时接受新旧摘要前缀。旧 `jcs-sha256-v1` 回执不批量改写，也不直接与新摘要比较。重试须同时满足：请求经旧 JCS 处理后仍与原请求精确相等、旧摘要匹配、对应持久历史的类型/线程/公开内容匹配。旧摘要路径还要求线程状态存在对应历史；无变化状态若没有同 ID 历史则不能证明一致，返回 `public_event_history_inconsistent`。JCS 会改值的重试、未知摘要版本或摘要不同返回 `public_event_idempotency_mismatch`。历史已经被旧入口舍入的数据不能恢复原值，需要单独核对修复。
+幂等比较与摘要使用 `exact-json-sha256-v1`。对象键按 Go JSON 编码器的字符串排序规则排序，字符串按 JSON 编码规则转义；数组保持顺序。数字按十进制系数与指数无损归一化，去掉系数首尾零，零统一为 0，指数为零时省略指数。例如 1、1.0、1e0 相等，9007199254740992 与 9007199254740993 不等。指数运算使用任意精度整数，不展开巨大指数。规范化仅用于比较和摘要，不用于改写存储 payload。回执建表约束仅接受 `exact-json-sha256-v1:<64位小写hex>`；重试直接比较摘要，摘要不同返回 `public_event_idempotency_mismatch`，对应持久历史不一致返回 `public_event_history_inconsistent`。
 
 JSONB 保存准确数值，不保证空白、键序和数字写法；数值仍受 PostgreSQL JSONB/numeric 的范围限制。字节级原样保存仅属于 transcript records 的 bytea 合同。回归覆盖 HTTP 原始解码、工具公开映射、精确数字等价、不同大整数冲突，以及隔离 PostgreSQL 的 permission/public-events 读回与旧回执检查。
 
@@ -576,11 +581,11 @@ sequenceDiagram
 
 ### 9.2 数据库领取与控制流
 
-空队列领取先走租户范围内的无锁候选查询及 worker epoch/租约校验，跳过 Session 锁和事务。有候选才进入领取事务，取得锁后重新查询和校验。控制 SSE 的 `event: task.available`、`data: {}` 是临时领取提示，建连后发送一次，新任务提交后尽力唤醒；不携带 input ID，不参与 ACK，不替代持久任务。提示按 Code Session 隔离，通过 Core NATS 发布，不写 JetStream；丢失或暂不可用时一秒轮询兜底。Brain 捕获 claim 前的通知版本，收到提示即解除空等待，避免查询和等待之间的丢唤醒。
+空队列领取先走租户范围内的无锁候选查询及 worker epoch/租约校验，跳过 Session 锁和事务。有候选才进入领取事务，取得锁后重新查询和校验。控制 SSE 的 `event: task.available`、`data: {}` 是临时领取提示，建连后发送一次，新任务提交后尽力唤醒；不携带 input ID，不参与 ACK，不替代持久任务。提示按 Code Session 隔离，通过 Core NATS 发布，不写 JetStream；丢失或暂不可用时 10 秒轮询兜底。Brain 捕获 claim 前的通知版本，收到提示即解除空等待，避免查询和等待之间的丢唤醒。
 
 - `POST /v1/dsr/sessions/{code_session_id}/inputs/claim` 每次返回一条 task，响应为 `{"input": {...}, "cancel_requested_at"?: "..."}`；无可执行输入时为 `{"input": null}`。input 沿用 9.1 的 task schema，包含附件、系统上下文及 trace 上下文。
 - 领取事务锁定 Session 与 Code Session，验证租户、epoch、注册与租约。优先返回当前 running execution；否则按 `accepted_at, input_id` 领取最早 accepted execution，并执行预算、审批和失败暂停资格检查，原子写入 running、started_at 与公开输入 processed_at。
-- Brain 每次只领取并执行一条 task，完成后提交 finish，再领取下一条；无任务时等待一秒重查。启动、接管及网络重试走同一路径，running 输入不会因响应丢失而丢失。会话发现保留既有 Brain claim 的数据库轮询，唤醒通知只用于降低延迟。
+- Brain 每次只领取并执行一条 task，完成后提交 finish，再领取下一条；无任务时最多等待 10 秒重查。启动、接管及网络重试走同一路径，running 输入不会因响应丢失而丢失。会话发现保留既有 Brain claim 的数据库轮询，唤醒通知只用于降低延迟。
 - `GET /v1/dsr/sessions/{code_session_id}/inputs/stream` 仅推送 control，保留 Redis ACK 定位及 broker 重投。帧不再带 SSE id；`from_sequence_num` 或非空 `Last-Event-ID` 返回 400 invalid_request，不提供伪游标。
 - `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery` 仅接收 control 的 received/processing/processed；已知 task ID 返回 409 input_not_eligible，整批不执行 broker 操作。未知 control kind 使用 processed + unsupported_input。
 - control 的响应仅包含 applied、ignored 与逐项 results，outcome 仅允许 applied 或 ignored。task 不再发送 received、processing、processed，完成只需 finish。
@@ -812,7 +817,7 @@ P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来�
 - **Transcript**（Mapper SQL 与参数绑定单测；真实 PostgreSQL 验证 bytea、jsonb、nullable 与部分唯一索引）
   - 失败：Header 缺失、seq 缺口、同位置字节不同、非法或重复 seq、错误 offset、parent 或线程不存在、单条超过 15 MiB、旧 epoch 追加。
   - 成功：Header 与 seq 0 首次追加返回 next_offset `"2"`；原始字节重复追加幂等；`from_offset=0` 返回 Header 与事件；按每页最多 200 条记录分页；外置 payload 还原；归档后合并读回无缺口；主线程与子线程分队列并行追加。
-  - 比较：键序、空白、数字写法或转义变化均冲突；未知字段和大整数文本原样保存。公开回执的精确十进制规范化与旧 JCS 兼容样本单独验证。
+  - 比较：键序、空白、数字写法或转义变化均冲突；未知字段和大整数文本原样保存。公开回执的精确十进制规范化与摘要约束拒绝旧版本的样本单独验证。
 - **Permission**
   - 失败：`input_id` 不属于该会话或未 claim、线程不属于该输入、同 `request_id` 不同内容、取消先到后创建不重开、resolved 与 cancel 竞争只有一个生效、结束上报后迟到的确认不执行工具、旧 epoch 迟到审批、事务失败时不出现公开 requires_action。
   - 成功：allow/deny/pending、custom 与外部执行先经策略、delegation 按 multiagent 配置、子线程终止拒绝；resolved 早于 202 仍完成等待；POST 响应丢失后重试取得终态；接管后新 owner 用同一 `request_id` 继承 pending 或取回结果；中断与 allow 竞态的两种结果。
@@ -929,5 +934,3 @@ P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来�
 第 14 版接口扩展：delivery task 结果返回 `cancel_requested_at`，保证中断控制先于 task 重投到达时仍有效。具体字段与调用点见接口参考及实验实现状态。
 
 第 17 版：以输入执行为粒度改名 dsh_input_executions；status 为 accepted/running/completed，result 为 success/cancelled/failed，failure_code 替代 reason，cancel_requested_at 记录取消意图。delivery 状态保持 received/processing/processed，响应使用 execution_status。完成 checkpoint 升为 version 2。原始 goose 定义直接调整，旧库不自动升级。
-
-第 18 版：公开回执使用 JCS + SHA-256 版本化摘要。DSR-Protocol 为 1，未冻结实验合同要求 Brain 和后端同步升级。

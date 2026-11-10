@@ -113,6 +113,10 @@ Anthropic 错误体只有 `type` 和 `message`，放不下机器可读的细节�
 
 ### 幂等
 
+错误处理区分资源状态与请求缺陷：执行事务对已终止、已归档会话分别返回 `410 session_terminated`、`410 session_archived`，停止当前 owner，不重新 register；两者并存时终止优先。写请求的凭据上下文不可用时，仅在已验签凭据的租户范围内核对该状态。请求内容非法仍为 `400 invalid_request`。
+
+未知路由返回 `404 route_not_found`，已匹配路由中的资源缺失返回 `404 session_not_found`。只有 `410 lease_expired` 会触发同 epoch 重新注册；不能仅按 HTTP 410 判断是否恢复租约。
+
 日志、审批、输出和结束上报可能因网络中断产生模糊结果，按下表身份重试。会话领取（接口 1）不具备幂等键，丢响应会消耗 attempt；task 领取（接口 9）通过 running execution 恢复丢失响应；register 与 heartbeat 是状态操作；MCP tools/call 不属于可自动重放的写入。
 
 | 接口                   | 幂等键                             | 内容不同时                              |
@@ -353,7 +357,7 @@ CCRv2 的 brain 模式本来就是"claim 分配 → register 接管"两步（`in
 | ------------------------------------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | claim 响应丢失                       | 没有租约，只有 30 秒领取期限，过期后可再领取；状态干净                | 租约已开始计时，但领取者不知道自己拥有会话，不会心跳；连接状态显示一个从未连上的 worker |
 | 拿到凭据后准入永久失败               | 会话从未注册，`FailPermanently` 直接停车并公开失败                    | 要额外清理租约和连接状态，准入失败与运行中失败的边界变模糊                              |
-| 网络抖动约 30 秒后收到 410           | **同 epoch 重新 register 即可恢复**，内存状态、本地日志、模型流都保留 | 只能重新 claim，epoch + 1，退役并全量恢复，恢复原生执行后按实际结果结束                 |
+| 网络抖动约 30 秒后收到 410 lease_expired           | **同 epoch 重新 register 即可恢复**，内存状态、本地日志、模型流都保留 | 只能重新 claim，epoch + 1，退役并全量恢复，恢复原生执行后按实际结果结束                 |
 | `worker_claim_expires_at` 的其他职责 | 继续承担耗尽 hold、退避与永久失败停车                                 | 失去这些职责，耗尽的行会被立即重新领取，`session.error` 重复发布                        |
 
 合并只能省一次 HTTP 往返，相比准入还要解析注册配置、恢复日志、连接输入流，这一次往返的占比很小。
@@ -403,7 +407,7 @@ DSH 启动该会话前校验 `heartbeat_interval × (1 + jitter) + timeout < ttl
 
 - register 成功不代表准入完成。attempts 仍以**输入流连接成功**为归零信号；注册之后、连上流之前崩溃，仍算一次失败。
 - 从 register 返回起就要按 `heartbeat_interval_ms` 心跳，解析 register.context 和恢复日志期间也不能停。租约控制器应在构造 Agent 之前建立。
-- 多个请求同时收到 410 时共享一个重新注册任务；恢复期间暂停新工具派发，成功后保留同 epoch 的输入队列、复制水位与审批等待项，不能调用旧 resetClaim 清空。
+- 多个请求同时收到 410 lease_expired 时共享一个重新注册任务；恢复期间暂停新工具派发，成功后保留同 epoch 的输入队列、复制水位与审批等待项，不能调用旧 resetClaim 清空。
 
 ### 示例
 
@@ -508,7 +512,7 @@ register 成功后按 `heartbeat_interval_ms`（6 秒）固定节奏发送，抖
 
 ## 5. `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`
 
-与 task 循环并行。流建立或重连完成后先发送 `event: task.available`、`data: {}`，新任务提交后也尽力发送该提示。提示只唤醒本会话的 task 领取，不包含任务 payload、input ID 或 ACK 身份，不进入 control delivery。通知走按 Code Session 隔离的临时 Core NATS 信号，不写 JetStream；新增 SSE 事件类型需要后端与 Brain 同步升级，旧 Brain 会拒绝未知事件。通知丢失、订阅失败时继续使用一秒无锁轮询兜底。Brain 在每次 claim 前捕获通知版本，空响应后只有版本未变化才等待，避免提示先于等待注册时丢失。
+与 task 循环并行。流建立或重连完成后先发送 `event: task.available`、`data: {}`，新任务提交后也尽力发送该提示。提示只唤醒本会话的 task 领取，不包含任务 payload、input ID 或 ACK 身份，不进入 control delivery。通知走按 Code Session 隔离的临时 Core NATS 信号，不写 JetStream；新增 SSE 事件类型需要后端与 Brain 同步升级，旧 Brain 会拒绝未知事件。通知丢失、订阅失败时继续使用 10 秒无锁轮询兜底。Brain 在每次 claim 前捕获通知版本，空响应后只有版本未变化才等待，避免提示先于等待注册时丢失。
 
 业务输入帧仍为 `event: input`，只接收 control，如 user.interrupt、permission.resolved 和模型更新。未知 control kind 回 processed + unsupported_input。task 出现在此流中视为协议错误。
 
@@ -606,7 +610,7 @@ Content-Type: application/x-ndjson
 }
 ```
 
-cancel_requested_at 可省略；存在时必须在恢复执行前处理取消意图。input 保留 session_thread_id、oma_system_context 和 trace_context。无可执行任务时返回 `{"input":null}`。Brain 等待一秒再查询，完成当前任务后立即领取下一条，不预取队列。
+cancel_requested_at 可省略；存在时必须在恢复执行前处理取消意图。input 保留 session_thread_id、oma_system_context 和 trace_context。无可执行任务时返回 `{"input":null}`。Brain 无通知时等待 10 秒再查询，完成当前任务后立即领取下一条，不预取队列。
 
 领取响应丢失可安全重试，后端返回同一 running 输入并保留首次 started_at。新 owner 也通过此接口恢复 running 输入。仅允许每个 owner 一个串行 task 循环。
 
@@ -999,8 +1003,6 @@ MCP/OTLP 的原生错误体、附件二进制与 HEAD 响应不走通用 JSON �
 持久 public-events 对原始单事件进行无损十进制规范化后计算 SHA-256，保存为 `exact-json-sha256-v1:<64位小写hex>`。规范化只用于摘要，HTTP 解码直接读取原始字节，不能用规范化结果替换请求体。摘要覆盖所有原始字段，包括未知字段，在公开映射之前计算。字段顺序、JSON 空白和等价数字表示不构成冲突，数组顺序和实际内容变化构成冲突。重复键、无效 Unicode 和非法 JSON 拒绝提交。数字不经过 float64，大整数和长小数保持精度。
 
 数据库仅保存 payload_digest，不保留回执原始 payload。receipt 唯一键和公开历史、线程创建、状态归约仍在同一事务。相同 ID、相同摘要还须核对持久历史的类型、线程和公开内容，才能返回 duplicate。线程状态无变化可能没有对应历史，由状态机单独处理。缺失或不一致的最终历史返回 `409 public_event_history_inconsistent`；不同摘要返回 `409 public_event_idempotency_mismatch`。preview 仍不落 receipt。摘要采用 SHA-256 碰撞风险这一工程假设，不与其他 hash 算法混用。
-
-旧 `jcs-sha256-v1` 回执仅在请求通过 JCS 无损检查、旧摘要匹配且持久历史一致时接受重试。旧路径不豁免无历史的线程状态事件。舍入风险或未知摘要版本返回 `public_event_idempotency_mismatch`，历史缺失或不一致返回 `public_event_history_inconsistent`。既有损坏数据不自动改写。
 
 公开回执与可重放原生日志同寿命，当前未增加独立 TTL。未来清理必须同时限定可重放范围，避免旧日志重放造成重复副作用。版本水位在 Code Session 生命周期内保留。
 

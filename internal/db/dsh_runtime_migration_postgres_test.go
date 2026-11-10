@@ -40,14 +40,12 @@ func TestDSHRuntimeMigrationPostgres(t *testing.T) {
 		t.Fatal("accepted non-object context snapshot")
 	}
 	digestInsert := `INSERT INTO dsh_public_receipts(organization_uuid,workspace_uuid,code_session_uuid,event_id,payload_digest) VALUES($1,$2,$3,$4,$5)`
-	for _, invalid := range []string{"unknown:" + strings.Repeat("a", 64), "exact-json-sha256-v1:short", "exact-json-sha256-v1:" + strings.Repeat("A", 64)} {
+	for _, invalid := range []string{"jcs-sha256-v1:" + strings.Repeat("a", 64), "unknown:" + strings.Repeat("a", 64), "exact-json-sha256-v1:short", "exact-json-sha256-v1:" + strings.Repeat("A", 64)} {
 		if _, err := database.ExecContext(ctx, digestInsert, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionUUID, "invalid", invalid); err == nil {
 			t.Fatalf("accepted invalid digest %s", invalid)
 		}
 	}
-	for _, prefix := range []string{"jcs-sha256-v1", "exact-json-sha256-v1"} {
-		execClaimTest(t, ctx, database, digestInsert, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionUUID, prefix, prefix+":"+strings.Repeat("a", 64))
-	}
+	execClaimTest(t, ctx, database, digestInsert, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionUUID, "exact", "exact-json-sha256-v1:"+strings.Repeat("a", 64))
 	execClaimTest(t, ctx, database, workerInsert, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionUUID, `{"model":"frozen"}`)
 	var transcriptUUID string
 	var offset int64

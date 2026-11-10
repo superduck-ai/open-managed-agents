@@ -33,23 +33,6 @@ func TestExactDigestDistinguishesLargeIntegers(t *testing.T) {
 	}
 }
 
-func TestLegacyDigestRequiresLosslessInput(t *testing.T) {
-	legacy := "jcs-sha256-v1:24bb430971eb50f964e63784a7ad4f3411bc7cdb1659188e371150793e872da1"
-	for _, test := range []struct {
-		raw, digest string
-		match       bool
-	}{
-		{`{"id":9007199254740993}`, legacy, false},
-		{`{"id":9007199254740992}`, "unknown:hash", false},
-		{`{"id":9007199254740992}`, legacy, true},
-	} {
-		match, err := MatchesLegacyDigest([]byte(test.raw), test.digest)
-		if err != nil || match != test.match {
-			t.Fatalf("match=%v err=%v", match, err)
-		}
-	}
-}
-
 func TestExactCanonicalizationIsStable(t *testing.T) {
 	for _, raw := range []string{`{"b":"\u4e2d","a":1.230000e+002}`, `{"n":-0.000}`, `{"n":1e10000000000000000000000}`} {
 		first, err := Canonicalize([]byte(raw))

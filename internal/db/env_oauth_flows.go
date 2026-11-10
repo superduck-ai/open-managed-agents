@@ -92,6 +92,15 @@ func (d *DB) GetEnvOAuthFlow(ctx context.Context, externalID string) (EnvOAuthFl
 	return row.flow()
 }
 
+func (d *DB) ClaimEnvOAuthFlow(ctx context.Context, externalID string, claimedAt time.Time) (bool, error) {
+	mapper := NewEnvOAuthFlowMapper(d.mapperDB)
+	rowsAffected, err := mapper.Claim(ctx, externalID, claimedAt)
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
+}
+
 func (d *DB) CompleteEnvOAuthFlow(ctx context.Context, externalID, credentialExternalID string, completedAt time.Time) error {
 	mapper := NewEnvOAuthFlowMapper(d.mapperDB)
 	rowsAffected, err := mapper.Complete(ctx, externalID, credentialExternalID, completedAt)

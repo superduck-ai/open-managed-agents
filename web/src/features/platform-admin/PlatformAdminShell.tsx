@@ -144,6 +144,8 @@ function AdminSidebar({ email }: { email: string }) {
                     </SidebarMenuItem>
                     <SidebarMenuItem>
                       <SidebarMenuButton
+                        tooltip={msg('platformAdmin.oauthManagement.title', 'OAuth management')}
+                        aria-label={msg('platformAdmin.oauthManagement.title', 'OAuth management')}
                         isActive={oauthActive}
                         render={
                           <Link
@@ -154,7 +156,9 @@ function AdminSidebar({ email }: { email: string }) {
                         }
                       >
                         <KeyRound aria-hidden />
-                        <span>{msg('platformAdmin.oauthManagement.title', 'OAuth management')}</span>
+                        <span className="truncate group-data-[collapsible=icon]:hidden">
+                          {msg('platformAdmin.oauthManagement.title', 'OAuth management')}
+                        </span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   </>

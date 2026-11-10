@@ -87,8 +87,10 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 
 `start` 校验：org 与 principal 一致，按 body 目标工作区重新解析成员权限并要求资源使用权限（保留组织管理员和平台管理员授权语义），workspace/vault 存在且未归档、provider 可用、secret_name 合法、
 limited 必须有 allowed_hosts；同 vault 同名活动凭证若为同一 provider 的 `env_oauth` 允许重新授权，否则 409。
+`redirect_url` 只接受固定回调路径 `/oauth/vault/env-success`：不允许 userinfo、query、fragment 或其他路径；
+非 `dev` 环境必须 HTTPS；配置了 `auth.console_url` 时 scheme 与 host 必须与之一致，避免授权码被送往其他站点。
 
-已完成 state 的顺序重放返回 `status=error`、`error_code=invalid_request`，不再次换票、不返回 credential_id、不修改 flow 或凭证；这不改变并发回调认领与事务边界。
+已完成 state 的顺序重放返回 `status=error`、`error_code=invalid_request`，不再次换票、不返回 credential_id、不修改 flow 或凭证；并发回调由 `processing` 认领互斥，未认领到的一方返回 `flow_in_progress`。换票 HTTP 客户端拒绝跟随 3xx，避免携带 `client_secret`、`code`、`refresh_token` 的请求体被重发到其他 origin。
 
 回调保存前再次检查同名凭证的 provider；不同 provider 返回 `credential_key_conflict`，保留既有凭证及秘密。同 provider 允许原地重新授权。
 
@@ -106,9 +108,10 @@ sequenceDiagram
     U->>P: 用户授权
     P-->>A: /oauth/vault/env-success?code&state
     A->>D: load flow
+    A->>D: claim flow (pending -> processing)
     A->>P: token exchange(snapshot + client secret)
     A->>D: seal credential / update same-name credential
-    A->>D: complete flow
+    A->>D: complete flow (processing -> completed)
     A-->>U: HTML postMessage(vault_oauth_complete, channel env-oauth)
 ```
 
@@ -150,6 +153,8 @@ stateDiagram-v2
 
 响应保留 `id`（external_id）、名称、端点、scope、client_id、has_client_secret、认证方式、编码与时间，新增 `provider_key`、`builtin`、`protected`、`has_client_id`、`configured`、`version` 和只读默认值。client_id 仅在超管授权后解密，客户端列表不解密 secret；所有平台客户端响应使用 `Cache-Control: no-store`。未配置 ID 返回空串，解密失败返回 503 `platform_oauth_provider_unavailable`，不能冒充未配置。API、日志和审计永不回显 secret 或信封。
 
+名称上限按 Unicode 字符计数（200 字符），不是字节数。`prod` 环境拒绝 `http` 端点，其他环境仍允许本地联调使用 `http`。
+
 POST 仅创建自定义，拒绝 builtin_key/protected/uuid 等未知系统字段。PATCH 内置仅允许 scope、client_id、client_secret（另需 expected_version）；禁止字段即使同值或 null 也拒绝。secret 省略保持，空串/null 拒绝；首次配置及修改 ID 必须同时提交新 secret；仅换 secret 不重封 ID。DELETE 内置返回 409 `oauth_provider_protected`；自定义删除仍是 204/404。PATCH/DELETE 必须提交 `expected_version`，过期为 409 `oauth_provider_version_conflict`，名称冲突仍是 `oauth_provider_name_conflict`。
 
 平台页将飞书与 Friday 内置行排在同一表格前部，显示本地化名称、内置 Badge、配置状态；保留共享 shadcn 组件与现有路由。内置名称、端点、认证方式、编码和默认值只读，不显示删除和重置操作。编辑弹窗只发送允许字段，提示更换应用可能需要重新授权。Vault 表单使用组织 API 元数据，未配置禁用授权按钮，保留手工令牌保存；普通用户仅看到联系管理员，具有 platform:access 的用户可进入平台配置页。
@@ -184,8 +189,12 @@ flowchart LR
 - `internal/vaults`：schema 往返、create/update 校验、占位符合并优先级、replacement planner、token
   refresh 与 CAS、JSON/form token 端点编码。
 - `internal/db`：新 Mapper 的 SQL/参数绑定/敏感标记单测；集成测试覆盖真实 PostgreSQL 读写。
-- `internal/api`（`integration`）：start 参数、callback 换票落库、重新授权原地更新、失败状态、平台
+- `internal/api`（`integration`）：start 参数、callback 换票落库、重新授权原地更新、失败状态、并发回调只认领一次、平台
   provider CRUD 与 secret 不回显。
+- `internal/api`（单测）：`redirect_url` 回调路径与 console origin 校验、换票客户端拒绝跟随重定向、
+  `processing` 认领与完成失败的响应。
+- `internal/db`：`Claim` 的 SQL 与敏感绑定标记；`Complete` 只接受 `processing`，`Fail` 接受 `pending`/`processing`。
+- `internal/platformadmin`：名称按字符计数、`prod` 拒绝 `http` 端点。
 - `internal/config`：普通服务拒绝遗留飞书块并给出离线导入指引。
 - `cmd/oauth-provider-migrate`（`integration`）：真实 00118 升级、空库、四状态回填、名称/保留 ID 冲突、阻断与续跑、无明文列/外键、重入和已有配置保护。
 - `cmd/vault-migrate`：平台双信封/flow 单信封 CAS、跨 provider 和 local 版本选择、失败整行不变，轮换后 Open 与本地 stub OAuth 刷新。

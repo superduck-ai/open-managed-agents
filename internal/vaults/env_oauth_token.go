@@ -100,6 +100,7 @@ func (r *envOAuthTokenResolver) resolve(ctx context.Context, credential *db.Vaul
 	if err := reloadCredential(ctx, r.store, &current); err != nil {
 		return "", err
 	}
+	now = r.clock()
 	token, usable, err = r.usableToken(ctx, current, now)
 	if err != nil {
 		return "", err

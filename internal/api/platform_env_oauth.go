@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -27,13 +28,21 @@ const (
 
 	envOAuthHTTPTimeout = 15 * time.Second
 
+	envOAuthRedirectPath = "/oauth/vault/env-success"
+
 	envOAuthErrorInvalidRequest        = "invalid_request"
 	envOAuthErrorProviderUnavailable   = "platform_oauth_provider_unavailable"
 	envOAuthErrorCredentialKeyConflict = "credential_key_conflict"
 	envOAuthErrorTokenExchangeFailed   = "token_exchange_failed"
+	envOAuthErrorFlowInProgress        = "flow_in_progress"
 )
 
-var envOAuthTokenHTTPClient = &http.Client{Timeout: envOAuthHTTPTimeout}
+var envOAuthTokenHTTPClient = &http.Client{
+	Timeout: envOAuthHTTPTimeout,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 type envOAuthNetworkingInput struct {
 	Type         string   `json:"type"`
@@ -114,7 +123,7 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	req, redirectURL, secretName, ok := decodeEnvOAuthStartRequest(w, r)
+	req, redirectURL, secretName, ok := s.decodeEnvOAuthStartRequest(w, r)
 	if !ok {
 		return
 	}
@@ -256,6 +265,12 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 			VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorInvalidRequest,
 		})
 		return
+	case "processing":
+		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
+			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
+			VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorFlowInProgress,
+		})
+		return
 	case "failed":
 		code := flow.ErrorCode
 		if code == "" {
@@ -277,7 +292,7 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		return
 	}
 	if providerError := strings.TrimSpace(r.URL.Query().Get("error")); providerError != "" {
-		s.logger.WarnContext(r.Context(), "env oauth callback provider error", "flow_external_id", flow.ExternalID, "error_code", envOAuthErrorTokenExchangeFailed)
+		s.logger.WarnContext(r.Context(), "env oauth callback provider error", "flow_uuid", flow.UUID, "error_code", envOAuthErrorTokenExchangeFailed)
 		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorTokenExchangeFailed, now)
 		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
 			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
@@ -296,7 +311,7 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 	}
 	provider, err := s.envOAuthProviders.ResolveEnvOAuthProvider(r.Context(), flow.ProviderKey)
 	if err != nil || provider.ClientID == "" || provider.ClientSecret == "" {
-		s.logger.ErrorContext(r.Context(), "resolve env oauth provider for callback", "flow_external_id", flow.ExternalID, "error_code", envOAuthErrorProviderUnavailable)
+		s.logger.ErrorContext(r.Context(), "resolve env oauth provider for callback", "flow_uuid", flow.UUID, "error_code", envOAuthErrorProviderUnavailable)
 		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorProviderUnavailable, now)
 		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
 			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
@@ -313,9 +328,25 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 			return
 		}
 	}
+	claimed, err := s.db.ClaimEnvOAuthFlow(r.Context(), flow.ExternalID, now)
+	if err != nil {
+		s.logger.ErrorContext(r.Context(), "claim env oauth flow", "flow_uuid", flow.UUID, "error", err)
+		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
+			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
+			VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorInvalidRequest,
+		})
+		return
+	}
+	if !claimed {
+		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
+			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
+			VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorFlowInProgress,
+		})
+		return
+	}
 	token, err := s.exchangeEnvOAuthFlowCode(r.Context(), flow, code, clientID, provider.ClientSecret)
 	if err != nil {
-		s.logger.ErrorContext(r.Context(), "exchange env oauth code", "flow_external_id", flow.ExternalID, "error_code", envOAuthErrorTokenExchangeFailed)
+		s.logger.ErrorContext(r.Context(), "exchange env oauth code", "flow_uuid", flow.UUID, "error_code", envOAuthErrorTokenExchangeFailed)
 		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorTokenExchangeFailed, now)
 		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
 			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
@@ -329,7 +360,7 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		if errors.Is(err, db.ErrDuplicate) {
 			errorCode = envOAuthErrorCredentialKeyConflict
 		}
-		s.logger.ErrorContext(r.Context(), "save env oauth credential", "flow_external_id", flow.ExternalID, "error", err)
+		s.logger.ErrorContext(r.Context(), "save env oauth credential", "flow_uuid", flow.UUID, "error", err)
 		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, errorCode, now)
 		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
 			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
@@ -338,7 +369,13 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := s.db.CompleteEnvOAuthFlow(r.Context(), flow.ExternalID, credentialID, now); err != nil {
-		s.logger.ErrorContext(r.Context(), "complete env oauth flow", "flow_external_id", flow.ExternalID, "error", err)
+		s.logger.ErrorContext(r.Context(), "complete env oauth flow", "flow_uuid", flow.UUID, "error", err)
+		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorInvalidRequest, now)
+		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
+			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
+			VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorInvalidRequest,
+		})
+		return
 	}
 	writeEnvOAuthCallback(w, envOAuthCallbackPayload{
 		Type: "vault_oauth_complete", Status: "ok", FlowID: flow.ExternalID,
@@ -450,7 +487,7 @@ func (s *Server) authorizeEnvOAuthOrganization(w http.ResponseWriter, r *http.Re
 	return principal, true
 }
 
-func decodeEnvOAuthStartRequest(
+func (s *Server) decodeEnvOAuthStartRequest(
 	w http.ResponseWriter,
 	r *http.Request,
 ) (*envOAuthVaultAuthStartRequest, string, string, bool) {
@@ -469,7 +506,7 @@ func decodeEnvOAuthStartRequest(
 		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
 		return req, "", "", false
 	}
-	redirectURL, err := normalizeEnvOAuthURL(req.RedirectURL)
+	redirectURL, err := s.normalizeEnvOAuthRedirectURL(req.RedirectURL)
 	if err != nil {
 		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
 		return req, "", "", false
@@ -538,13 +575,30 @@ func exchangeEnvOAuthCode(ctx context.Context, flow db.EnvOAuthFlow, code, clien
 	})
 }
 
-func normalizeEnvOAuthURL(value string) (string, error) {
+func (s *Server) normalizeEnvOAuthRedirectURL(value string) (string, error) {
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	if err != nil {
 		return "", errors.New("invalid url")
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+	if parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(value, "#") {
+		return "", errors.New("invalid url")
+	}
+	if parsed.Path != envOAuthRedirectPath {
+		return "", errors.New("invalid redirect path")
+	}
+	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && s.cfg.Env != config.EnvironmentProd) {
 		return "", errors.New("url must use http or https")
+	}
+	consoleURL := strings.TrimSpace(s.cfg.Auth.ConsoleURL)
+	if consoleURL == "" {
+		return value, nil
+	}
+	origin, err := url.Parse(consoleURL)
+	if err != nil {
+		return "", errors.New("invalid url")
+	}
+	if !strings.EqualFold(parsed.Scheme, origin.Scheme) || !strings.EqualFold(parsed.Host, origin.Host) {
+		return "", errors.New("url must match the console origin")
 	}
 	return value, nil
 }
@@ -553,7 +607,7 @@ func (s *Server) failEnvOAuthFlow(ctx context.Context, flowID, errorCode string,
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if err := s.db.FailEnvOAuthFlow(cleanupCtx, flowID, errorCode, failedAt); err != nil && !errors.Is(err, db.ErrNotFound) {
-		s.logger.ErrorContext(cleanupCtx, "fail env oauth flow", "flow_id", flowID, "error", err)
+		s.logger.ErrorContext(cleanupCtx, "fail env oauth flow", "error", err)
 	}
 }
 

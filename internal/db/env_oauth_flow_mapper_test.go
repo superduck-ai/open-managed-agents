@@ -38,29 +38,42 @@ func TestEnvOAuthFlowMapperBuilders(t *testing.T) {
 	})
 
 	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement:         envOAuthFlowMapperFindByExternalIDStatement,
-		bound:             buildEnvOAuthFlowMapperFindByExternalID(yourbatis.DialectPostgres, "eof_test"),
-		wantID:            "EnvOAuthFlowMapper.FindByExternalID",
-		wantKind:          yourbatis.StatementSelect,
-		wantArgumentNames: []string{"externalID"},
-		wantSQLFragments:  []string{"WHERE external_id = $1"},
+		statement:                  envOAuthFlowMapperFindByExternalIDStatement,
+		bound:                      buildEnvOAuthFlowMapperFindByExternalID(yourbatis.DialectPostgres, "eof_test"),
+		wantID:                     "EnvOAuthFlowMapper.FindByExternalID",
+		wantKind:                   yourbatis.StatementSelect,
+		wantArgumentNames:          []string{"externalID"},
+		wantSensitiveArgumentNames: []string{"externalID"},
+		wantSQLFragments:           []string{"WHERE external_id = $1"},
 	})
 
 	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement:         envOAuthFlowMapperCompleteStatement,
-		bound:             buildEnvOAuthFlowMapperComplete(yourbatis.DialectPostgres, "eof_test", "vcrd_test", now),
-		wantID:            "EnvOAuthFlowMapper.Complete",
-		wantKind:          yourbatis.StatementUpdate,
-		wantArgumentNames: []string{"credentialExternalID", "completedAt", "completedAt", "externalID"},
-		wantSQLFragments:  []string{"status = 'completed'", "WHERE external_id = $4", "status = 'pending'"},
+		statement:                  envOAuthFlowMapperClaimStatement,
+		bound:                      buildEnvOAuthFlowMapperClaim(yourbatis.DialectPostgres, "eof_test", now),
+		wantID:                     "EnvOAuthFlowMapper.Claim",
+		wantKind:                   yourbatis.StatementUpdate,
+		wantArgumentNames:          []string{"claimedAt", "externalID"},
+		wantSensitiveArgumentNames: []string{"externalID"},
+		wantSQLFragments:           []string{"status = 'processing'", "WHERE external_id = $2", "status = 'pending'"},
 	})
 
 	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement:         envOAuthFlowMapperFailStatement,
-		bound:             buildEnvOAuthFlowMapperFail(yourbatis.DialectPostgres, "eof_test", "token_exchange_failed", now),
-		wantID:            "EnvOAuthFlowMapper.Fail",
-		wantKind:          yourbatis.StatementUpdate,
-		wantArgumentNames: []string{"errorCode", "failedAt", "externalID"},
-		wantSQLFragments:  []string{"status = 'failed'", "WHERE external_id = $3", "status = 'pending'"},
+		statement:                  envOAuthFlowMapperCompleteStatement,
+		bound:                      buildEnvOAuthFlowMapperComplete(yourbatis.DialectPostgres, "eof_test", "vcrd_test", now),
+		wantID:                     "EnvOAuthFlowMapper.Complete",
+		wantKind:                   yourbatis.StatementUpdate,
+		wantArgumentNames:          []string{"credentialExternalID", "completedAt", "completedAt", "externalID"},
+		wantSensitiveArgumentNames: []string{"externalID"},
+		wantSQLFragments:           []string{"status = 'completed'", "WHERE external_id = $4", "status = 'processing'"},
+	})
+
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement:                  envOAuthFlowMapperFailStatement,
+		bound:                      buildEnvOAuthFlowMapperFail(yourbatis.DialectPostgres, "eof_test", "token_exchange_failed", now),
+		wantID:                     "EnvOAuthFlowMapper.Fail",
+		wantKind:                   yourbatis.StatementUpdate,
+		wantArgumentNames:          []string{"errorCode", "failedAt", "externalID"},
+		wantSensitiveArgumentNames: []string{"externalID"},
+		wantSQLFragments:           []string{"status = 'failed'", "WHERE external_id = $3", "status IN ('pending', 'processing')"},
 	})
 }

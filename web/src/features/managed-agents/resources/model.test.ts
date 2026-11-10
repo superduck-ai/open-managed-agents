@@ -26,6 +26,7 @@ import {
   patchCredentialFormValues,
   statusPillTone,
   vaultOAuthErrorMessage,
+  vaultOAuthStartErrorMessage,
   vaultCredentialNames,
   vaultCreatedAbsoluteLabel,
   vaultCreatedLabel,
@@ -520,6 +521,20 @@ describe('vaultOAuthErrorMessage', () => {
     expect(vaultOAuthErrorMessage('verification_request_failed', msgFallback)).toContain('verification failed');
     expect(vaultOAuthErrorMessage('mystery_code', msgFallback)).toBe('Could not complete OAuth. Try again.');
     expect(vaultOAuthErrorMessage(' mystery_code ', msgFallback)).toBe('Could not complete OAuth. Try again.');
+    expect(vaultOAuthErrorMessage('flow_in_progress', msgFallback)).toContain('another window');
+    expect(vaultOAuthErrorMessage('invalid_request', msgFallback)).toContain('rejected');
+  });
+});
+
+describe('vaultOAuthStartErrorMessage', () => {
+  test('localizes known wire codes and falls back to the server message', () => {
+    expect(
+      vaultOAuthStartErrorMessage({ status: 409, code: 'credential_key_conflict', message: 'Conflict' }, msgFallback),
+    ).toContain('already exists');
+    expect(
+      vaultOAuthStartErrorMessage({ status: 400, code: 'request_failed', message: 'Bad Request' }, msgFallback),
+    ).toBe('Bad Request');
+    expect(vaultOAuthStartErrorMessage(new Error('network down'), msgFallback)).toBe('network down');
   });
 });
 

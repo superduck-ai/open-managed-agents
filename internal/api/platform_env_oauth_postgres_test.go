@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -337,6 +338,51 @@ func TestEnvOAuthVaultAuthCallbackFailuresPostgres(t *testing.T) {
 	}
 }
 
+func TestEnvOAuthVaultAuthCallbackClaimsFlowOncePostgres(t *testing.T) {
+	f := newEnvOAuthFixture(t)
+	var exchanges int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&exchanges, 1)
+		time.Sleep(50 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "u-access", "refresh_token": "ur-refresh", "expires_in": 3600, "scope": "offline_access",
+		})
+	}))
+	defer upstream.Close()
+	flow := f.createFlow(t, upstream.URL, "CONCURRENT_TOKEN", time.Now().UTC().Add(time.Minute))
+
+	bodies := make([]string, 2)
+	var wg sync.WaitGroup
+	for index := range bodies {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			bodies[index] = f.callback(t, flow.ExternalID, "auth-code").Body.String()
+		}(index)
+	}
+	wg.Wait()
+
+	succeeded, inProgress := 0, 0
+	for _, body := range bodies {
+		if strings.Contains(body, `"status":"ok"`) {
+			succeeded++
+		}
+		if strings.Contains(body, envOAuthErrorFlowInProgress) {
+			inProgress++
+		}
+	}
+	if succeeded != 1 || inProgress != 1 {
+		t.Fatalf("callbacks = %v", bodies)
+	}
+	if exchanges != 1 {
+		t.Fatalf("token exchanges = %d, want 1", exchanges)
+	}
+	completed, err := f.database.GetEnvOAuthFlow(t.Context(), flow.ExternalID)
+	if err != nil || completed.Status != "completed" || completed.CredentialExternalID == "" {
+		t.Fatalf("flow = %+v: %v", completed, err)
+	}
+}
+
 func TestPlatformOAuthProviderServicePostgres(t *testing.T) {
 	f := newEnvOAuthFixture(t)
 	service := platformadmin.NewOAuthProviderService(f.database, f.secretSvc, nil)
@@ -608,7 +654,7 @@ func TestEnvOAuthCustomEncryptedSnapshotPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := `{"provider_id":"` + provider.ProviderKey + `","vault_id":"` + f.vault.ExternalID + `","workspace_id":"default","secret_name":"CUSTOM_TOKEN","networking":{"type":"unrestricted"},"redirect_url":"https://app.test/callback"}`
+	body := `{"provider_id":"` + provider.ProviderKey + `","vault_id":"` + f.vault.ExternalID + `","workspace_id":"default","secret_name":"CUSTOM_TOKEN","networking":{"type":"unrestricted"},"redirect_url":"https://app.test/oauth/vault/env-success"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/organizations/"+f.organization+"/env-oauth/vault-auth/start", strings.NewReader(body))
 	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{UserExternalID: f.userID, OrganizationUUID: f.organization, WorkspaceExternalID: f.workspace.ExternalID}))
 	routeCtx := chi.NewRouteContext()

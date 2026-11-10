@@ -11,8 +11,10 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
@@ -75,13 +77,23 @@ type oauthProviderStore interface {
 }
 
 type OAuthProviderService struct {
-	db        oauthProviderStore
-	secretSvc *secrets.Service
-	logger    *slog.Logger
+	db          oauthProviderStore
+	secretSvc   *secrets.Service
+	logger      *slog.Logger
+	environment string
 }
 
 func NewOAuthProviderService(database oauthProviderStore, secretSvc *secrets.Service, logger *slog.Logger) *OAuthProviderService {
 	return &OAuthProviderService{db: database, secretSvc: secretSvc, logger: logging.LoggerOrDefault(logger)}
+}
+
+func (s *OAuthProviderService) WithEnvironment(environment string) *OAuthProviderService {
+	if s == nil {
+		return nil
+	}
+	scoped := *s
+	scoped.environment = environment
+	return &scoped
 }
 
 func (s *OAuthProviderService) List(ctx context.Context) ([]OAuthProviderView, error) {
@@ -116,7 +128,7 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 	tokenEndpoint := strings.TrimSpace(input.TokenEndpoint)
 	clientID := strings.TrimSpace(input.ClientID)
 	clientSecret := strings.TrimSpace(input.ClientSecret)
-	if err := validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, clientID); err != nil {
+	if err := validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, clientID, s.environment); err != nil {
 		return OAuthProviderView{}, err
 	}
 	if clientSecret == "" {
@@ -269,7 +281,7 @@ func (s *OAuthProviderService) updateClient(ctx context.Context, provider *db.Pl
 	if input.ClientID != nil {
 		clientID = strings.TrimSpace(*input.ClientID)
 	}
-	if err := validateOAuthProviderFields(provider.Name, provider.AuthorizeEndpoint, provider.TokenEndpoint, clientID); err != nil {
+	if err := validateOAuthProviderFields(provider.Name, provider.AuthorizeEndpoint, provider.TokenEndpoint, clientID, s.environment); err != nil {
 		return err
 	}
 	if (clientID != oldID || provider.ClientSecretEnvelope == nil) && input.ClientSecret == nil {
@@ -397,17 +409,17 @@ func applyOAuthProviderFields(provider *db.PlatformOAuthProvider, input OAuthPro
 	return err
 }
 
-func validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, clientID string) error {
+func validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, clientID, environment string) error {
 	if name == "" {
 		return invalid("必须填写名称")
 	}
-	if len(name) > 200 {
+	if utf8.RuneCountInString(name) > 200 {
 		return invalid("名称不能超过 200 个字符")
 	}
-	if err := validateOAuthProviderURL(authorizeEndpoint); err != nil {
+	if err := validateOAuthProviderURL(authorizeEndpoint, environment); err != nil {
 		return invalid("Authorize Endpoint 必须是有效的 HTTP(S) 地址")
 	}
-	if err := validateOAuthProviderURL(tokenEndpoint); err != nil {
+	if err := validateOAuthProviderURL(tokenEndpoint, environment); err != nil {
 		return invalid("Token Endpoint 必须是有效的 HTTP(S) 地址")
 	}
 	if clientID == "" {
@@ -416,7 +428,7 @@ func validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, clientI
 	return nil
 }
 
-func validateOAuthProviderURL(value string) error {
+func validateOAuthProviderURL(value, environment string) error {
 	parsed, err := url.Parse(value)
 	if err != nil {
 		return err
@@ -424,7 +436,13 @@ func validateOAuthProviderURL(value string) error {
 	if parsed.Host == "" {
 		return errors.New("missing host")
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+	switch parsed.Scheme {
+	case "https":
+	case "http":
+		if environment == config.EnvironmentProd {
+			return errors.New("http is not allowed in production")
+		}
+	default:
 		return errors.New("unsupported scheme")
 	}
 	return nil

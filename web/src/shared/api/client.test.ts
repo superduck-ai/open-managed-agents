@@ -48,6 +48,21 @@ describe('consoleApi', () => {
     });
   });
 
+  test('reads env oauth error codes from the error_code field', async () => {
+    globalThis.fetch = mock(
+      async () =>
+        new Response(JSON.stringify({ error_code: 'credential_key_conflict', oauth_flow_id: '' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    ) as unknown as typeof fetch;
+
+    await expect(consoleApi('/api/test')).rejects.toMatchObject({
+      status: 409,
+      code: 'credential_key_conflict',
+    });
+  });
+
   test('adds active console organization and workspace headers', async () => {
     let capturedHeaders = new Headers();
     globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {

@@ -67,6 +67,7 @@ type insertEnvOAuthFlowParams struct {
 type EnvOAuthFlowMapper interface {
 	Insert(ctx context.Context, params insertEnvOAuthFlowParams) (envOAuthFlowRow, error)
 	FindByExternalID(ctx context.Context, externalID string) (envOAuthFlowRow, error)
+	Claim(ctx context.Context, externalID string, claimedAt time.Time) (int64, error)
 	Complete(ctx context.Context, externalID, credentialExternalID string, completedAt time.Time) (int64, error)
 	Fail(ctx context.Context, externalID, errorCode string, failedAt time.Time) (int64, error)
 }

@@ -322,3 +322,55 @@ func TestEnvOAuthRefreshCASPreservesLatestMaterial(t *testing.T) {
 		})
 	}
 }
+
+func TestEnvOAuthTokenResolverResamplesClockAfterRefreshLease(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	base := time.Now().UTC().Truncate(time.Second)
+	expired := base.Add(-time.Minute).Format(time.RFC3339)
+	expiresDuringWait := base.Add(5 * time.Minute).Format(time.RFC3339)
+	initial := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "open.feishu.cn", "stale-access", "refresh-1", &expired)
+	reloaded := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "open.feishu.cn", "stale-access", "refresh-1", &expiresDuringWait)
+
+	var exchanges int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		exchanges++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "fresh-access",
+			"refresh_token": "refresh-2",
+			"expires_in":    3600,
+		})
+	}))
+	defer server.Close()
+
+	store := &fakeCredentialStore{get: reloaded}
+	resolver := newEnvOAuthTokenResolver(store, svc, nil, nil).
+		withHTTPClient(server.Client()).
+		withProviders(fakeEnvOAuthProviderResolver{snapshot: EnvOAuthProviderSnapshot{
+			ProviderKey:             EnvOAuthProviderBuiltinFeishu,
+			TokenEndpoint:           server.URL,
+			ClientID:                "client",
+			ClientSecret:            "secret",
+			TokenEndpointAuthMethod: "client_secret_post",
+			TokenEndpointEncoding:   "json",
+		}})
+	clockCalls := 0
+	resolver.now = func() time.Time {
+		clockCalls++
+		if clockCalls == 1 {
+			return base
+		}
+		return base.Add(10 * time.Minute)
+	}
+
+	token, err := resolver.resolve(t.Context(), &initial)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if token != "fresh-access" {
+		t.Fatalf("token = %q, want refreshed access token", token)
+	}
+	if exchanges != 1 || store.updateCalls != 1 {
+		t.Fatalf("exchanges = %d, writes = %d", exchanges, store.updateCalls)
+	}
+}

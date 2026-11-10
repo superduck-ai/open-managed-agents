@@ -52,6 +52,7 @@ import {
   parseCredentialAuthType,
   patchCredentialFormValues,
   vaultOAuthErrorMessage,
+  vaultOAuthStartErrorMessage,
 } from './model';
 import { CredentialMcpServerField } from './credential-mcp-server-field';
 import { ManagedDialogCloseControl, ManagedDialogHeader, ManagedEntityDialogActions } from './dialog-components';
@@ -215,6 +216,8 @@ export function CredentialDialog({
   const [acknowledged, setAcknowledged] = useState(false);
   const [directoryServers, setDirectoryServers] = useState<McpDirectoryServer[]>([]);
   const [envOAuthProviders, setEnvOAuthProviders] = useState<EnvOAuthProviderApiResponse[] | null>(null);
+  const [envOAuthProvidersError, setEnvOAuthProvidersError] = useState<string | null>(null);
+  const [envOAuthProvidersAttempt, setEnvOAuthProvidersAttempt] = useState(0);
   const [workspaceServers, setWorkspaceServers] = useState<WorkspaceMCPServer[]>([]);
   const pendingOAuthFlowIdRef = useRef<string | null>(null);
   const oauthPopupRef = useRef<Window | null>(null);
@@ -278,17 +281,24 @@ export function CredentialDialog({
       .then((providers) => {
         if (active) {
           setEnvOAuthProviders(providers);
+          setEnvOAuthProvidersError(null);
         }
       })
       .catch(() => {
         if (active) {
           setEnvOAuthProviders([]);
+          setEnvOAuthProvidersError(
+            msg(
+              'managedAgents.credentialVaults.credentialDialog.envOAuthProvidersLoadFailed',
+              'Could not load OAuth providers.',
+            ),
+          );
         }
       });
     return () => {
       active = false;
     };
-  }, [values.authType, orgUuid]);
+  }, [values.authType, orgUuid, envOAuthProvidersAttempt, msg]);
 
   useEffect(() => {
     if (!showDirectoryPicker) {
@@ -492,7 +502,7 @@ export function CredentialDialog({
       pendingOAuthFlowIdRef.current = started.oauth_flow_id;
       popup.location.href = started.redirect_url;
     } catch (connectError) {
-      abandonOAuthWait(errorMessage(connectError));
+      abandonOAuthWait(vaultOAuthStartErrorMessage(connectError, msg));
     }
   };
 
@@ -581,6 +591,12 @@ export function CredentialDialog({
                       values={values}
                       providers={envOAuthProviders ?? []}
                       providersLoading={envOAuthProviders === null}
+                      providersError={envOAuthProvidersError}
+                      onRetryProviders={() => {
+                        setEnvOAuthProviders(null);
+                        setEnvOAuthProvidersError(null);
+                        setEnvOAuthProvidersAttempt((attempt) => attempt + 1);
+                      }}
                       secretNameLocked={Boolean(credential)}
                       onChange={patchValues}
                     />

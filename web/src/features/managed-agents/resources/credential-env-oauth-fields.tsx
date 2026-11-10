@@ -2,6 +2,7 @@ import { useContext } from 'react';
 import { Link } from '@tanstack/react-router';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
+import { Button } from '../../../shared/ui/button';
 import { FieldDescription } from '../../../shared/ui/field';
 import { ManagedSelectField, ManagedTextField } from '../components/common';
 import { type CredentialFormValues, type EnvOAuthProviderApiResponse } from '../types';
@@ -12,6 +13,8 @@ type EnvOAuthCredentialFieldsProps = {
   values: CredentialFormValues;
   providers: EnvOAuthProviderApiResponse[];
   providersLoading: boolean;
+  providersError: string | null;
+  onRetryProviders: () => void;
   secretNameLocked: boolean;
   onChange: (patch: Partial<CredentialFormValues>) => void;
 };
@@ -20,6 +23,8 @@ export function EnvOAuthCredentialFields({
   values,
   providers,
   providersLoading,
+  providersError,
+  onRetryProviders,
   secretNameLocked,
   onChange,
 }: EnvOAuthCredentialFieldsProps) {
@@ -36,6 +41,8 @@ export function EnvOAuthCredentialFields({
       : provider.name,
     secondary: provider.scope || undefined,
   }));
+  const selectableOptions =
+    secretNameLocked && selected ? options.filter((option) => option.id === selected.id) : options;
   return (
     <div className="space-y-4">
       <ManagedSelectField
@@ -46,8 +53,11 @@ export function EnvOAuthCredentialFields({
             ? msg('managedAgents.credentialVaults.credentialDialog.envOAuthProvidersLoading', 'Loading providers...')
             : msg('managedAgents.credentialVaults.credentialDialog.envOAuthSelectProvider', 'Select a provider')
         }
-        options={options}
+        options={selectableOptions}
         onChange={(providerId) => {
+          if (secretNameLocked || providerId === values.envOAuthProviderId) {
+            return;
+          }
           const provider = providers.find((item) => item.id === providerId);
           const defaults = provider ? envOAuthProviderDefaults(provider) : null;
           onChange({
@@ -55,12 +65,20 @@ export function EnvOAuthCredentialFields({
             ...(defaults
               ? {
                   allowedHostsText: defaults.allowedHostsText,
-                  ...(secretNameLocked || values.secretName.trim() ? {} : { secretName: defaults.secretName }),
+                  ...(values.secretName.trim() ? {} : { secretName: defaults.secretName }),
                 }
               : {}),
           });
         }}
       />
+      {providersError ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <FieldDescription className="text-destructive">{providersError}</FieldDescription>
+          <Button type="button" variant="outline" size="sm" onClick={onRetryProviders}>
+            {msg('managedAgents.credentialVaults.credentialDialog.envOAuthProvidersRetry', 'Retry')}
+          </Button>
+        </div>
+      ) : null}
       {selected && !selected.configured ? (
         <FieldDescription>
           {msg(

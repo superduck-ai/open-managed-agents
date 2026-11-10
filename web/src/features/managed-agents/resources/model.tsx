@@ -22,7 +22,7 @@ import {
   type VaultApiResponse,
   type VaultCredentialApiResponse,
 } from '../types';
-import { formatBytes, objectRecord, sectionPathSegment, titleCase } from '../utils';
+import { errorMessage, formatBytes, objectRecord, sectionPathSegment, titleCase } from '../utils';
 import { resourceFormValues } from './git-resource';
 import { entityBudgetDisplay, entityBudgetUsdInput } from './budget';
 
@@ -1264,6 +1264,15 @@ export function vaultCreatedAbsoluteLabel(
 }
 
 /** Map platform vault OAuth error_code wire values to localized user copy. */
+export function vaultOAuthStartErrorMessage(error: unknown, msg: I18nMsg): string {
+  const code =
+    error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
+  if (code && code !== 'request_failed') {
+    return vaultOAuthErrorMessage(code, msg);
+  }
+  return errorMessage(error);
+}
+
 export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string {
   switch (errorCode.trim()) {
     case 'already_exists':
@@ -1290,6 +1299,16 @@ export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string 
       return msg(
         'managedAgents.credentialVaults.credentialDialog.envOAuthError.providerUnavailable',
         'This OAuth provider is unavailable. Contact a platform administrator or try again later.',
+      );
+    case 'flow_in_progress':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.envOAuthError.flowInProgress',
+        'This authorization is already being completed in another window.',
+      );
+    case 'invalid_request':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.envOAuthError.invalidRequest',
+        'The authorization request was rejected. Check the credential details and try again.',
       );
     case 'credential_key_conflict':
       return msg(

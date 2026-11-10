@@ -17,6 +17,7 @@ export interface AiSdkRoute {
 
 export interface AiSdkAdapterOptions {
   attachments?: AttachmentStore;
+  toolCallID?(requestID: string, providerID: string): string;
   route(options: GenerateOptions): AiSdkRoute;
   imageInput?(provider: string, model: string): ImageInput | undefined;
   callScope?<T>(request: GenerateOptions, action: () => Promise<T>): Promise<T>;

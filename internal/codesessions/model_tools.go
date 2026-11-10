@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
 func (s *Service) modelToolUsePayloads(ctx context.Context, request *ModelRequest, tools []ModelRequestToolUse, at time.Time) ([]json.RawMessage, error) {
@@ -52,7 +53,7 @@ func modelToolUsePayload(request *ModelRequest, tool ModelRequestToolUse, identi
 	if err := json.Unmarshal(tool.Input, &input); err != nil {
 		return nil, err
 	}
-	call := toolPermissionRequest{ToolName: tool.Name, ToolUseID: tool.ID, Input: input, SessionThreadID: request.toolThreadID}
+	call := toolPermissionRequest{ToolName: tool.Name, ToolUseID: modelToolCallID(request, tool.ID), Input: input, SessionThreadID: request.toolThreadID}
 	_, event, err := toolCallPublicPayload(request.CodeSessionID, call, identity, permission, at)
 	return event, err
 }
@@ -71,4 +72,22 @@ func (s *Service) modelToolTurnPending(ctx context.Context, record db.CodeSessio
 		return false, err
 	}
 	return end.Error == nil && len(end.ToolUseIDs) > 0, nil
+}
+
+func modelToolCallID(request *ModelRequest, providerID string) string {
+	if isDSHCodeSession(request.codeSession) {
+		return maevents.ModelToolCallID(request.StartID, providerID)
+	}
+	return providerID
+}
+
+func modelToolCallIDs(request *ModelRequest, providerIDs []string) []string {
+	if providerIDs == nil {
+		return nil
+	}
+	ids := make([]string, len(providerIDs))
+	for i, id := range providerIDs {
+		ids[i] = modelToolCallID(request, id)
+	}
+	return ids
 }

@@ -187,7 +187,6 @@ func (c *streamConnection) accepts(event sessionStreamEvent) bool {
 	return active
 }
 
-// A request end retires only its own previews, including ones whose start arrives after the end.
 func previewsFinishedBy(event sessionStreamEvent) []string {
 	switch event.EventType {
 	case "agent.message", "agent.thinking":
@@ -195,8 +194,12 @@ func previewsFinishedBy(event sessionStreamEvent) []string {
 	case "span.model_request_end", "system.message":
 		var end struct {
 			EventIDs []string `json:"event_ids"`
+			IsError  bool     `json:"is_error"`
 		}
 		if json.Unmarshal(event.Payload, &end) != nil {
+			return nil
+		}
+		if event.EventType == "span.model_request_end" && !end.IsError {
 			return nil
 		}
 		return end.EventIDs

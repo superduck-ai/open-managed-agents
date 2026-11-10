@@ -30,3 +30,13 @@ func TestToolUseEventIDScopesChildInstances(t *testing.T) {
 		t.Fatal("primary tool identity changed")
 	}
 }
+
+func TestModelToolCallIDScopesProviderReuse(t *testing.T) {
+	first := ModelToolCallID("request-a", "functions.Read:2")
+	if first != "toolu_ce3031e9a6dade42a6fe4a85f105445a" || first != ModelToolCallID("request-a", "functions.Read:2") {
+		t.Fatalf("unstable identity: %s", first)
+	}
+	if first == ModelToolCallID("request-b", "functions.Read:2") || first == ModelToolCallID("request-a", "functions.Read:3") {
+		t.Fatal("different calls collided")
+	}
+}

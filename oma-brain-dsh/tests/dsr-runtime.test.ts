@@ -552,3 +552,161 @@ test("native tool calls outside the DSR executor retain one durability barrier",
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("DSR executes reused provider tool IDs independently across model requests", async () => {
+  const backend = new (class extends DsrBackend {
+    override async route(request: Request): Promise<Response> {
+      const response = await super.route(request);
+      if (new URL(request.url).pathname === "/v1/messages")
+        response.headers.set("request-id", `model-${this.requests.length}`);
+      return response;
+    }
+  })();
+  backend.modelScript = [
+    toolEvents("first", "reused"),
+    toolEvents("second", "reused"),
+    textEvents("finished"),
+  ];
+  const root = await mkdtemp(join(tmpdir(), "dsr-scoped-tools-"));
+  const { ctx, session } = await fixture(backend, root);
+  try {
+    await session.receive({
+      id: "input_reused",
+      kind: "user.message",
+      lane: "task",
+      content: [{ type: "text", text: "run both" }],
+    });
+    expect(backend.executions.map((call) => call.arguments.command)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(backend.permissions.size).toBe(2);
+    const results = [...backend.publicLog.values()].filter(
+      (event) => event.type === "tool.result",
+    );
+    expect(results).toHaveLength(2);
+    expect(results[0]!.tool_use_id).not.toBe(results[1]!.tool_use_id);
+    expect(JSON.stringify(backend.requests)).not.toContain(
+      "TOOL_OUTCOME_UNKNOWN",
+    );
+    expect(backend.finishes.get("input_reused")).toEqual({ result: "success" });
+  } finally {
+    await session.close();
+    await ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("DSR publication failure prevents finish and cold takeover repairs without another model request", async () => {
+  const backend = new DsrBackend();
+  const root = await mkdtemp(join(tmpdir(), "dsr-publish-recovery-"));
+  const input = {
+    id: "recover_publish",
+    kind: "user.message" as const,
+    lane: "task" as const,
+    content: [{ type: "text", text: "hello" }],
+  };
+  const first = await fixture(backend, root);
+  const publish = first.client.publish.bind(first.client);
+  const rejected = spyOn(first.client, "publish").mockImplementation(
+    async (events, signal) => {
+      if (events.some((event) => event.type === "agent.message")) {
+        expect(
+          backend.transcripts
+            .get(first.session.id)!
+            .events.some(
+              (event) =>
+                event.type === "assistant/message" ||
+                event.type === "plugin:oma/assistant-block",
+            ),
+        ).toBe(true);
+        throw new Error("publication unavailable");
+      }
+      await publish(events, signal);
+    },
+  );
+  try {
+    await expect(first.session.receive(input)).rejects.toThrow(
+      "publication unavailable",
+    );
+    expect(backend.finishes.size).toBe(0);
+    expect(backend.requests).toHaveLength(1);
+  } finally {
+    rejected.mockRestore();
+    await first.session.close().catch(() => {});
+    await first.ctx.fiber.dispose();
+  }
+  const second = await fixture(backend, root);
+  try {
+    await second.session.receive(input);
+    expect(backend.requests).toHaveLength(1);
+    expect(
+      [...backend.publicLog.values()].filter(
+        (event) => event.type === "agent.message",
+      ),
+    ).toHaveLength(1);
+    expect(backend.finishes.get(input.id)).toEqual({ result: "success" });
+  } finally {
+    await second.session.close();
+    await second.ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.each(["replication", "publication"] as const)(
+  "saved finish still waits for %s checkpoint",
+  async (phase) => {
+    const backend = new DsrBackend();
+    const root = await mkdtemp(join(tmpdir(), "dsr-finish-barrier-"));
+    const { ctx, session, client } = await fixture(backend, root);
+    const { appendPluginRecord } = await import("@deepseek-ai/dsh-session");
+    appendPluginRecord(session.runtime.agent.session, "plugin:oma/dsr-finish", {
+      version: 2,
+      inputId: "saved",
+      completion: { result: "success" },
+    });
+    const { SessionReplication } =
+      await import("../src/runtime/replication.ts");
+    const barrier =
+      phase === "replication"
+        ? spyOn(SessionReplication.prototype, "flush").mockRejectedValue(
+            new Error("checkpoint failed"),
+          )
+        : spyOn(client, "publish").mockRejectedValue(
+            new Error("checkpoint failed"),
+          );
+    if (phase === "publication") {
+      appendPluginRecord(
+        session.runtime.agent.session,
+        "plugin:oma/assistant-block",
+        {
+          output: {
+            id: "saved_message",
+            type: "agent.message",
+            content: [{ type: "text", text: "saved" }],
+          },
+        } as never,
+      );
+      session.replay(session.runtime.agent.session);
+    }
+    try {
+      await expect(
+        session.receive({
+          id: "saved",
+          kind: "user.message",
+          lane: "task",
+          content: [],
+        }),
+      ).rejects.toThrow("checkpoint failed");
+      expect(backend.finishes.size).toBe(0);
+    } finally {
+      barrier.mockRestore();
+      await session.close().catch(() => {});
+      await ctx.fiber.dispose();
+      backend.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

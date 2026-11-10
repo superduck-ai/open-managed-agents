@@ -282,3 +282,10 @@ Brain 的 DsrTaskWake 在 claim 前捕获版本；提示在 HTTP 在途、空响
 已有 permission request 经无锁 worker 校验和审批查询返回，保留请求身份、工具、原始参数与 available 的幂等比对，取消墓碑直接返回。首次创建仍在事务中加锁并重查，避免并发创建重复执行策略或发布事件。
 
 Brain 的 DsrPermissionWaiter 由 permission.resolved 通知唤醒，输入 SSE 连接及重连成功时重查；10 秒查询作为通知丢失兜底，默认 60 秒后挂起原生 turn。首次请求必须完成 HTTP 校验，期间到达的决定缓存待用；后续在途查询可以被通知或重连唤醒并取消。普通回归覆盖无事务查询、租约与 epoch 拒绝、幂等冲突、通知竞态、取消、重连及查询间隔。
+
+
+## Chat 发布与完成回归
+
+最终助手消息与 thinking 继续由 Brain 从 transcript 投影并发布；模型代理仅记录工具调用、span、用量和计费。`model_request_end` 可以先于助手最终消息，SSE 和前端在成功请求结束时保留尚未完成的 preview。finish 集中等待 checkpoint，覆盖正常结束、取消与已有 finish 记录恢复。冷接管也投影已经完成的子线程，避免它们因不再执行而漏掉尚未发布的结果。
+
+回归覆盖复制或发布失败阻止 finish、冷接管补发且不重跑模型、已完成子线程补发、丢响应与分批失败的幂等重放。工具 ID 按请求隔离；preview 内部字段清理与旧回合 idle、新回合 running 顺序保持修复。

@@ -29,7 +29,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { dsrExecutor } from "./executor.ts";
 import { traceHooks } from "../observability/trace-context.ts";
-import { SessionId, type Session } from "@deepseek-ai/dsh-session";
+import { SessionId, Session } from "@deepseek-ai/dsh-session";
 import { foldSubagentDescriptor } from "@deepseek-ai/dsh-subagent";
 import { dshThreadConfig } from "../runtime/dsh-subagents.ts";
 import type {
@@ -120,6 +120,13 @@ export class DsrSubagentBridge implements SubagentBridge {
             throw new Error("Subagent has incomplete configuration");
           continue;
         }
+        this.owner.replay(
+          Session.create(
+            SessionId(transcript.dsh_session_id),
+            events,
+            handle.header,
+          ),
+        );
         thread = {
           id: transcript.dsh_session_id,
           name: config.name ?? descriptor.label ?? transcript.dsh_session_id,

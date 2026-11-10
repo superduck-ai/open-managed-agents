@@ -10,10 +10,17 @@ import (
 )
 
 func reduceDSHState(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, scope DSHScope, seed string) ([]SessionEvent, error) {
+	return reduceDSHStateWithBoundary(ctx, executor, session, primary, scope, seed, false)
+}
+
+func reduceDSHStateWithBoundary(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, scope DSHScope, seed string, completed bool) ([]SessionEvent, error) {
 	mapper := NewDSHExecutionMapper(executor)
 	summary, err := mapper.Summary(ctx, scope)
 	if err != nil {
 		return nil, err
+	}
+	if completed {
+		summary.HasEligibleAccepted = false
 	}
 	permissions, err := mapper.Permissions(ctx, scope)
 	if err != nil {
@@ -24,6 +31,7 @@ func reduceDSHState(ctx context.Context, executor yourbatis.Executor, session *S
 		return nil, err
 	}
 	var events []SessionEvent
+	at := time.Now().UTC().Truncate(time.Microsecond)
 	running, pending := false, make([]string, 0)
 	for _, thread := range threads {
 		if thread.Status == "terminated" {
@@ -41,15 +49,11 @@ func reduceDSHState(ctx context.Context, executor yourbatis.Executor, session *S
 		}
 		running = running || status == "running" || status == "rescheduling"
 		pending = append(pending, ids...)
-		event, err := dshStatusEvent(seed, thread.thread(), status, reason, time.Now().UTC())
+		event, err := dshStatusEvent(seed, thread.thread(), status, reason, at)
 		if err != nil {
 			return nil, err
 		}
-		written, err := insertDSHHistory(ctx, executor, session, primary, []SessionEvent{event})
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, written...)
+		events = append(events, event)
 	}
 	status, reason := "idle", &sessionStopReason{Type: "end_turn"}
 	if running {
@@ -60,20 +64,18 @@ func reduceDSHState(ctx context.Context, executor yourbatis.Executor, session *S
 	} else {
 		_, reason = dshPrimaryState(summary, permissions, session.BudgetReachedAt != nil)
 	}
-	event, err := dshStatusEvent(seed, SessionThread{}, status, reason, time.Now().UTC())
+	event, err := dshStatusEvent(seed, SessionThread{}, status, reason, at)
 	if err != nil {
 		return nil, err
 	}
+	if status == "running" {
+		return insertDSHHistory(ctx, executor, session, primary, append([]SessionEvent{event}, events...))
+	}
 	if status == "idle" && session.Status != "idle" {
 		usage := SessionEvent{ExternalID: derivedStatusEventID(event.ExternalID, "session.usage"), EventType: "session.usage", CreatedAt: event.CreatedAt, ProcessedAt: event.ProcessedAt}
-		written, err := insertDSHHistory(ctx, executor, session, primary, []SessionEvent{usage})
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, written...)
+		events = append(events, usage)
 	}
-	written, err := insertDSHHistory(ctx, executor, session, primary, []SessionEvent{event})
-	return append(events, written...), err
+	return insertDSHHistory(ctx, executor, session, primary, append(events, event))
 }
 
 func dshPendingIDs(permissions []dshPermissionRow, threadID string) []string {

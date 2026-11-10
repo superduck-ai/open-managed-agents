@@ -5,6 +5,7 @@ import type { OmaApi } from "./api.ts";
 import type { AiSdkAdapterOptions } from "./llm-ai-sdk/index.ts";
 import { omaModelInfo } from "./model-configs.ts";
 import { modelSessionID, omaRoute } from "./model-provider.ts";
+import { modelToolCallID } from "./model-tool-id.ts";
 import { logSystemPrompt } from "./prompt/debug.ts";
 
 interface PiAiReplay {
@@ -15,6 +16,7 @@ interface PiAiReplay {
 export function omaModelOptions(api: OmaApi, attachments?: AttachmentStore, currentSession?: () => string | undefined): AiSdkAdapterOptions {
   return {
     attachments,
+    toolCallID: modelToolCallID,
     callScope: (request, action) => withAttachmentSession(modelSessionID(request), action),
     imageInput: (_provider, model) => {
       const id = currentSession?.();

@@ -3,6 +3,7 @@ package db
 import (
 	"encoding/json"
 	"errors"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"testing"
 )
 
@@ -23,6 +24,9 @@ func TestResolveDSHConfirmationRejectsInvalidReferences(t *testing.T) {
 		{name: "wrong thread", id: &publicID, thread: &otherThread, state: "pending", payload: `{"content":[]}`, want: ErrSessionToolUseNotPending},
 		{name: "resolved permission", id: &publicID, state: "resolved", payload: `{"content":[]}`, want: ErrSessionToolUseNotPending},
 		{name: "invalid confirmation", id: &publicID, state: "pending", eventType: "user.tool_confirmation", payload: `{"result":"unknown"}`, want: ErrSessionToolConfirmationInvalid},
+		{name: "non-ask implicit confirmation", id: &wrongID, state: "pending", eventType: "user.tool_confirmation", payload: `{"result":"allow"}`, want: ErrSessionToolConfirmationInvalid},
+		{name: "resolved implicit confirmation", id: &publicID, state: "resolved", eventType: "user.tool_confirmation", payload: `{"result":"allow"}`, want: ErrSessionToolConfirmationInvalid},
+		{name: "resolved explicit confirmation", id: &publicID, thread: &threadID, state: "resolved", eventType: "user.tool_confirmation", payload: `{"result":"allow"}`, want: ErrSessionToolUseNotPending},
 		{name: "malformed decision", id: &publicID, state: "pending", payload: `{`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,5 +79,32 @@ func TestResolveDSHConfirmationUsesNormalizedReference(t *testing.T) {
 	}
 	if decision.Behavior != "external_result" || decision.ExternalResult == nil || !decision.ExternalResult.IsError {
 		t.Fatalf("decision=%s", raw)
+	}
+}
+
+func TestDSHChildConfirmationAliases(t *testing.T) {
+	scope := DSHScope{CodeSessionID: "code"}
+	permission := dshPermissionRow{RequestID: "permission", DSHSessionID: "child", ThreadID: "child-thread", ToolUseID: "native", PublicEventID: "projection", State: "pending"}
+	alias := maevents.ToolUseEventID(scope.CodeSessionID, permission.ToolUseID, permission.ThreadID)
+	for _, id := range []string{permission.PublicEventID, alias} {
+		event := SessionEvent{EventType: "user.tool_confirmation", ToolUseID: &id, Payload: []byte(`{"result":"allow"}`)}
+		executor := newMapperTestExecutor(t, mapperTestResponse{rowsAffected: 1})
+		if err := resolveDSHConfirmation(t.Context(), executor, scope, []dshPermissionRow{permission}, event); err != nil {
+			t.Fatal(err)
+		}
+		wrongThread := "wrong-thread"
+		event.ThreadExternalID = &wrongThread
+		if err := resolveDSHConfirmation(t.Context(), executor, scope, []dshPermissionRow{permission}, event); !errors.Is(err, ErrSessionToolUseNotPending) {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"unknown", maevents.ToolUseEventID("foreign-code", permission.ToolUseID, permission.ThreadID), maevents.ToolUseEventID(scope.CodeSessionID, permission.ToolUseID, "foreign-thread")} {
+		if dshPermissionEventMatches(scope, permission, id) {
+			t.Fatal("foreign alias matched")
+		}
+	}
+	permission.DSHSessionID = scope.CodeSessionID
+	if dshPermissionEventMatches(scope, permission, alias) {
+		t.Fatal("invented root alias matched")
 	}
 }

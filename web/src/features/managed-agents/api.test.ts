@@ -299,7 +299,7 @@ describe('managed agents API', () => {
     ]);
   });
 
-  test('model request end removes only its unfinished previews', () => {
+  test('failed model request end removes only its unfinished previews', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
@@ -318,6 +318,7 @@ describe('managed agents API', () => {
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
       id: 'sevt_end',
       type: 'span.model_request_end',
+      is_error: true,
       event_ids: ['sevt_done', 'sevt_unfinished'],
       processed_at: '2026-08-26T13:13:01Z',
     });
@@ -373,7 +374,7 @@ describe('managed agents API', () => {
     expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, [threadId]).sevt_next).toBeDefined();
   });
 
-  test('model request end in a child thread does not remove a primary preview', () => {
+  test('failed model request end in a child thread does not remove a primary preview', () => {
     const queryClient = new QueryClient();
     const workspaceId = 'workspace_123';
     const sessionId = 'sesn_123';
@@ -389,6 +390,7 @@ describe('managed agents API', () => {
     mergeSessionStreamFrame(queryClient, workspaceId, sessionId, 'sthr_child', {
       id: 'sevt_end',
       type: 'span.model_request_end',
+      is_error: true,
       event_ids: [eventId],
       processed_at: '2026-08-26T13:13:00Z',
     });
@@ -399,6 +401,39 @@ describe('managed agents API', () => {
     expect(
       sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['sthr_child']).map((event) => event.id),
     ).toEqual(['sevt_end']);
+  });
+
+  test('successful model end keeps previews until Brain publishes the final', () => {
+    const queryClient = new QueryClient();
+    const workspaceId = 'workspace_123';
+    const sessionId = 'sesn_123';
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'end',
+      type: 'span.model_request_end',
+      event_ids: ['answer'],
+      is_error: false,
+    });
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'answer', type: 'agent.message' },
+    });
+    expect(sessionDetailDeltaFrames(queryClient, workspaceId, sessionId, ['']).answer).toBeDefined();
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      id: 'answer',
+      type: 'agent.message',
+      processed_at: '2026-11-10T10:00:00Z',
+      content: [{ type: 'text', text: 'done' }],
+    });
+    expect(
+      sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).filter((event) => event.id === 'answer'),
+    ).toMatchObject([{ content: [{ type: 'text', text: 'done' }] }]);
+    mergeSessionStreamFrame(queryClient, workspaceId, sessionId, '', {
+      type: 'event_start',
+      event: { id: 'answer', type: 'agent.message' },
+    });
+    expect(
+      sessionDetailScopeEvents(queryClient, workspaceId, sessionId, ['']).filter((event) => event.id === 'answer'),
+    ).toHaveLength(1);
   });
 
   test('replaces a same-ID streaming preview with the complete final message', () => {

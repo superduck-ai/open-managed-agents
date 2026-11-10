@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
+	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -183,9 +184,16 @@ func (d *DB) ResolvedDSHPermissionForInput(ctx context.Context, scope DSHScope, 
 		return DSHPermission{}, false, err
 	}
 	for _, row := range rows {
-		if row.PublicEventID == *event.ToolUseID && row.State == "resolved" {
+		if dshPermissionEventMatches(scope, row, *event.ToolUseID) && row.State == "resolved" {
 			return dshPermissionFromRow(row), true, nil
 		}
 	}
 	return DSHPermission{}, false, nil
+}
+
+func dshPermissionEventMatches(scope DSHScope, permission dshPermissionRow, eventID string) bool {
+	if eventID == permission.PublicEventID {
+		return true
+	}
+	return permission.DSHSessionID != scope.CodeSessionID && permission.ThreadID != "" && permission.ToolUseID != "" && eventID == maevents.ToolUseEventID(scope.CodeSessionID, permission.ToolUseID, permission.ThreadID)
 }

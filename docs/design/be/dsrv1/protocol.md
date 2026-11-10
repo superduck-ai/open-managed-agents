@@ -164,6 +164,8 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 
 执行事务先核对租户，再判断会话状态。已终止返回 `410 session_terminated`，已归档返回 `410 session_archived`；两者并存时终止优先。凭据验签成功但写请求的上下文不可用时，也在原租户范围内核对状态，避免终止被误报为不存在。上述 410 不属于 lease_expired，不触发重新 register，当前 owner 停止写入。
 
+公开 Session 删除/归档沿用运行中保护：持有 Session 事务锁后，以 `dsh_input_executions.status=running` 判断 DSR 是否已经开始执行，拒绝移除运行中的会话；不依赖旧 `worker_turn_started`。仅已接受但尚未领取的输入仍可移除。公开 `user.tool_confirmation` 未指定线程且不存在待审批工具时继续返回 400；指定线程的非待审批输入保留 409 冲突语义。 子线程审批接受原始 child 工具事件 ID 和主线程投影 ID；审批落库与后续 `permission.resolved` 投递使用相同的身份匹配规则。公开确认保留调用方提交的原始引用，不改写历史 payload。
+
 请求字段或业务参数非法仍返回 `400 invalid_request`。未知 DSR 路由返回 `404 route_not_found`，表示路径或协议接线错误；资源查询缺失仍返回 `404 session_not_found`。日志读取规则不变。
 
 接口 1–14 的错误体保持 `internal/httpapi.WriteError` 的 Anthropic 兼容形状。第 11 节的 MCP、OTLP 与二进制附件保留各自原生协议响应，不统一改写错误体。机器可读的分支由响应头承载：`DSR-Error` 给出 code，`DSR-Next-Offset` 在 transcript 错误时给出服务端水位。
@@ -536,7 +538,7 @@ DSRv1 的最终 `agent.message` 和 `agent.thinking` 只由 Brain 的 `/public-e
 | 工具结果、线程事件、`system.message` | Brain `/public-events` | 确定性 ID |
 | 主会话状态 | 服务端 reducer | 由执行事实归约 |
 
-预览不持久化，不能替代最终消息。模型代理早于 Brain 完成请求时，公开历史中的最终消息等待 Brain 发布。
+预览不持久化，不能替代最终消息。`model_request_end` 仅表示模型请求结束，可以早于最终助手消息。`event_ids` 只关联消息身份，不是发布回执。回合完成以 Brain 等待 transcript 复制、公共发布成功后调用 finish 为准；恢复已有 finish 记录也必须经过该检查。成功 model end 不关闭尚未完成的预览。
 
 公开回执与历史在同一 Session 锁和事务中处理。首次发布前核对已有历史，写入后再次检查。已有回执须同时满足请求摘要相同、对应历史存在、类型与线程归属相同、公开内容相同，才能返回 duplicate。助手内容比较忽略模型请求关联、处理时间等代理元数据；thinking 不比较私密正文。其他持久输出比较完整规范化 JSON。线程状态可能被状态机判定为无变化而不产生历史，因此不要求每条状态回执都有同 ID 历史。
 
@@ -544,7 +546,7 @@ DSRv1 的最终 `agent.message` 和 `agent.thinking` 只由 Brain 的 `/public-e
 
 ### 8.4 接管时的公共发布重放
 
-`dsh_public_receipts` 是唯一的持久发布确认来源。Brain 不再追加 `plugin:oma/dsr-publication`；旧日志中的记录保留，但其版本和 through 均不参与恢复判断。每次冷接管从完整原生日志重投影助手输出和工具结果，使用稳定 ID 交给后端去重及一致性检查。主、子日志各自维护仅在进程内有效的投影游标和身份索引，同一进程不重复处理同一原生事件。
+`dsh_public_receipts` 是唯一的持久发布确认来源。Brain 不再追加 `plugin:oma/dsr-publication`；旧日志中的记录保留，但其版本和 through 均不参与恢复判断。每次冷接管从根会话及所有已配置子线程的完整原生日志重投影助手输出和工具结果，已 idle 或 terminated 的子线程也重放但不启动执行，使用稳定 ID 交给后端去重及一致性检查。主、子日志各自维护仅在进程内有效的投影游标和身份索引，同一进程不重复处理同一原生事件。
 
 ```mermaid
 sequenceDiagram
@@ -934,3 +936,6 @@ P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来�
 第 14 版接口扩展：delivery task 结果返回 `cancel_requested_at`，保证中断控制先于 task 重投到达时仍有效。具体字段与调用点见接口参考及实验实现状态。
 
 第 17 版：以输入执行为粒度改名 dsh_input_executions；status 为 accepted/running/completed，result 为 success/cancelled/failed，failure_code 替代 reason，cancel_requested_at 记录取消意图。delivery 状态保持 received/processing/processed，响应使用 execution_status。完成 checkpoint 升为 version 2。原始 goose 定义直接调整，旧库不自动升级。
+
+
+工具调用身份按模型请求隔离。Go 代理与 Brain 使用同一规则：`toolu_ + hex(SHA256("model-tool-call-v1\0" + requestID + "\0" + providerToolID))[0:32]`。同一请求内身份稳定，跨请求复用供应商 ID 不会复用审批或 dispatched 记录；已有 transcript 中的旧 ID 不改写。

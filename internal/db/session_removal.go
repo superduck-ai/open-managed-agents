@@ -42,6 +42,15 @@ func prepareSessionRemovalTx(ctx context.Context, executor yourbatis.Executor, w
 		return SessionRemoval{}, err
 	}
 	var removal SessionRemoval
+	if session.Status != "idle" {
+		running, err := sessionHasRunningDSHInput(ctx, executor, session)
+		if err != nil {
+			return SessionRemoval{}, err
+		}
+		if running {
+			return SessionRemoval{}, ErrInvalidState
+		}
+	}
 	if found && session.Status != "idle" && worker.Status != "terminated" && worker.WorkerTurnStarted {
 		return SessionRemoval{}, ErrInvalidState
 	}
@@ -72,4 +81,15 @@ func (d *DB) retireSessionWorkersTx(ctx context.Context, executor yourbatis.Exec
 
 func (d *DB) IsSessionRetired(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (bool, error) {
 	return NewSessionMapper(d.mapperDB).IsRetired(ctx, organizationUUID, workspaceUUID, sessionUUID)
+}
+
+func sessionHasRunningDSHInput(ctx context.Context, executor yourbatis.Executor, session Session) (bool, error) {
+	mapper := NewDSHExecutionMapper(executor)
+	code, found, err := mapper.FindCode(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
+	if err != nil || !found {
+		return false, err
+	}
+	scope := DSHScope{OrganizationUUID: session.OrganizationUUID, WorkspaceUUID: session.WorkspaceUUID, CodeSessionUUID: code.UUID}
+	summary, err := mapper.Summary(ctx, scope)
+	return summary.ActiveInputID != nil, err
 }

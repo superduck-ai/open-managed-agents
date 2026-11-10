@@ -393,7 +393,6 @@ export class DsrSession {
       inputId: id,
       completion,
     });
-    await this.checkpoint();
     await this.finish(id, completion);
   }
 
@@ -428,11 +427,11 @@ export class DsrSession {
       inputId: id,
       completion,
     });
-    await this.checkpoint();
     await this.finish(id, completion);
   }
 
   private async finish(id: string, completion: Finish): Promise<void> {
+    await this.checkpoint();
     await this.client.finish(id, completion, this.abort.signal);
   }
 

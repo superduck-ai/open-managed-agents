@@ -752,3 +752,59 @@ test.each(["missing", "changed"] as const)(
     }
   },
 );
+
+test("cold open repairs completed child output without starting child execution", async () => {
+  const backend = new (class extends ReplayBackend {
+    override async route(request: Request): Promise<Response> {
+      if (new URL(request.url).pathname.endsWith("/threads/completed_child"))
+        return Response.json({
+          id: "completed_child",
+          status: "idle",
+          archived: false,
+        });
+      return super.route(request);
+    }
+  })();
+  const root = history(backend, 0);
+  backend.transcripts.set(root.id, { header: root.header, events: [] });
+  const id = SessionId("completed_child");
+  const child = Session.create(id, [], {
+    id,
+    version: 4,
+    createdAt: 0,
+    isSeeded: false,
+    parentSession: root.id,
+    origin: "subagent",
+    delegationDepth: 1,
+  });
+  child.append("subagent/descriptor", {
+    version: 3,
+    mode: "continuable",
+    provider: `oma-spawn:${root.id}`,
+    label: "child",
+  } as never);
+  appendPluginRecord(child, "plugin:oma/subagent-config", {
+    version: 1,
+    systemPrompt: "",
+    name: "child",
+  });
+  appendHistory(child, 1, 1);
+  backend.transcripts.set(id, {
+    header: child.header,
+    events: child.snapshotEvents().map((event) => ({ ...event })),
+  });
+  const opened = await openFixture(backend);
+  try {
+    await opened.session.open();
+    const finals = [...backend.publicLog.values()].filter(
+      (event) => event.type === "agent.message",
+    );
+    expect(finals).toHaveLength(1);
+    expect(finals[0]!.session_thread_id).toBe(id);
+    expect(backend.requests).toHaveLength(0);
+    expect(backend.executions).toHaveLength(0);
+  } finally {
+    await opened.close();
+    backend.stop();
+  }
+});

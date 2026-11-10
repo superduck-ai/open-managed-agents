@@ -871,7 +871,7 @@ Brain 将原始 preview.start/preview.delta 缓冲最多 100ms，按原顺序批
 
 ### 作用
 
-发布 DSH 自己产生的公开事件：流式预览、完成的助手块、工具结果、线程事件、`system.message` 与 MCP 连接错误。模型流产生的消息与工具调用由模型代理发布，不经过本接口；状态事件由服务端 reducer 发布，也不经过本接口。
+发布 DSH 自己产生的公开事件：流式预览、完成的助手块、工具结果、线程事件、`system.message` 与 MCP 连接错误。工具调用与模型请求 span 由模型代理发布，不经过本接口；状态事件由服务端 reducer 发布，也不经过本接口。
 
 ### 什么时候调用
 
@@ -1009,3 +1009,12 @@ MCP/OTLP 的原生错误体、附件二进制与 HEAD 响应不走通用 JSON �
 公开回执与可重放原生日志同寿命，当前未增加独立 TTL。未来清理必须同时限定可重放范围，避免旧日志重放造成重复副作用。版本水位在 Code Session 生命周期内保留。
 
 task 使用数据库队列，终态通过 finish 确认，不产生 broker delivery ACK。control 的 received/processing 延长投递时限，processed 同步确认 broker 消息；响应只有 applied、ignored 与逐项 results。
+
+
+### 模型结束与回合完成
+
+`span.model_request_end` 只确认上游模型请求结束，用于关联工具调用、用量与计费；`event_ids` 是最终助手事件的关联 ID，不表示这些消息已经提交。成功请求的结束事件可以早于 Brain 发布最终消息，SSE 和前端必须继续接收预览，直到同 ID 最终消息到达。失败请求仍可结束其未完成预览。
+
+Brain 是最终助手消息、thinking 和工具结果的唯一发布者。每条 finish 路径，包括恢复已有 finish 记录，都先等待 transcript 复制和公共事件发布确认。复制或发布失败时不 finish；冷接管重放根会话和所有已配置子线程的原生日志，包括已经 idle 或 terminated 的子线程，由后端回执和历史一致性检查去重。原子事务保证回执与公开历史共同提交，无需等待模型 span 与公共消息同步。
+
+公开预览移除 Brain 内部的顶层 `id` 与 `processed_at`，保留 `event.id` 或 `event_id`。finish 先发布旧回合 idle；下一次 claim 确认新输入后按 session running、thread running 顺序发布状态。

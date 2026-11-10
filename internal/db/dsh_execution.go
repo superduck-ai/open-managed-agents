@@ -145,7 +145,7 @@ func (d *DB) FinishDSHInput(ctx context.Context, scope DSHScope, inputID string,
 		if _, err := mapper.ClosePermissions(ctx, scope, inputID, ""); err != nil {
 			return err
 		}
-		events, err := reduceDSHState(ctx, executor, &session, primary, scope, "finish:"+inputID)
+		events, err := reduceDSHStateWithBoundary(ctx, executor, &session, primary, scope, "finish:"+inputID, true)
 		changes.Events = events
 		return err
 	})

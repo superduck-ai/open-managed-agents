@@ -1166,7 +1166,7 @@ export function mergeSessionStreamFrame(
   if (finalId) {
     reconcileSessionDeltaFrame(queryClient, workspaceId, sessionId, threadId, finalId);
   }
-  if (eventType === 'span.model_request_end' && Array.isArray(event.event_ids)) {
+  if (eventType === 'span.model_request_end' && event.is_error === true && Array.isArray(event.event_ids)) {
     cleanupIncompleteSessionStreamEvents(
       queryClient,
       workspaceId,
@@ -1243,6 +1243,7 @@ export function mergeSessionDeltaFrame(
         (cached) =>
           (sessionStableEventId(cached) === id && sessionFinalAgentEventId(cached) !== null) ||
           (sessionEventType(cached) === 'span.model_request_end' &&
+            cached.is_error === true &&
             Array.isArray(cached.event_ids) &&
             cached.event_ids.includes(id)),
       );

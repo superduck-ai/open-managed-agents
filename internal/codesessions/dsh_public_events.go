@@ -49,6 +49,8 @@ func prepareDSHPublicEvents(scope db.DSHScope, raws []json.RawMessage) ([]db.DSH
 		}
 		setRawJSONField(fields, "type", kind)
 		if kind == "event_start" || kind == "event_delta" {
+			delete(fields, "id")
+			delete(fields, "processed_at")
 			converted, err := json.Marshal(fields)
 			if err != nil {
 				return nil, nil, err

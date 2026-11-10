@@ -112,7 +112,7 @@ func resolveDSHConfirmation(ctx context.Context, executor yourbatis.Executor, sc
 		return err
 	}
 	for _, permission := range permissions {
-		if permission.State != "pending" || permission.PublicEventID != *event.ToolUseID {
+		if permission.State != "pending" || !dshPermissionEventMatches(scope, permission, *event.ToolUseID) {
 			continue
 		}
 		if event.ThreadExternalID != nil && *event.ThreadExternalID != permission.ThreadID {
@@ -137,6 +137,9 @@ func resolveDSHConfirmation(ctx context.Context, executor yourbatis.Executor, sc
 			return ErrSessionToolUseNotPending
 		}
 		return nil
+	}
+	if event.EventType == "user.tool_confirmation" && event.ThreadExternalID == nil {
+		return ErrSessionToolConfirmationInvalid
 	}
 	return ErrSessionToolUseNotPending
 }

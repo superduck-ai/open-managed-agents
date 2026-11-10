@@ -4,6 +4,7 @@ import { expect,test } from "bun:test";
 import { OmaApi } from "../src/api.ts";
 import type { Payload } from "../src/json.ts";
 import { AiSdkAdapter } from "../src/llm-ai-sdk/index.ts";
+import { modelToolCallID } from "../src/model-tool-id.ts";
 import { omaModelOptions } from "../src/model.ts";
 import { assistantMessages } from "../src/runtime/assistant.ts";
 import { assignment,textEvents } from "./backend.ts";
@@ -112,8 +113,8 @@ test("Chat adapter assembles reasoning, fragmented parallel tools and usage", as
   const assembler = new BlockAssembler(); for (const chunk of result) assembler.push(chunk);
   expect(assembler.message({ provider: "oma", model: "chat-model" }).content).toEqual([
     { type: "reasoning", text: "thinking" }, { type: "text", text: "running" },
-    { type: "tool-call", id: ToolCallId("call_b"), name: "Read", arguments: "{}" },
-    { type: "tool-call", id: ToolCallId("call_a"), name: "Bash", arguments: '{"command":"pwd"}' },
+    { type: "tool-call", id: ToolCallId(modelToolCallID("span_chat", "call_b")), name: "Read", arguments: "{}" },
+    { type: "tool-call", id: ToolCallId(modelToolCallID("span_chat", "call_a")), name: "Bash", arguments: '{"command":"pwd"}' },
   ]);
   expect(result).toContainEqual({ type: "usage", usage: { inputTokens: 8, outputTokens: 5, cacheReadTokens: 12 } });
   expect(result.at(-1)).toMatchObject({ type: "finish", reason: { kind: "tool-calls" }, replayState: {
@@ -222,7 +223,7 @@ test("Chat adapter numbers a tool when its name arrives, matching the Go observe
   expect(chunks.filter((chunk) => chunk.type === "block-start")).toEqual([
     { type: "block-start", index: 0, blockType: "text" }, { type: "block-start", index: 1, blockType: "tool-call" },
   ]);
-  expect(chunks).toContainEqual({ type: "block-end", index: 1, block: { type: "tool-call", id: ToolCallId("call_1"), name: "Bash", arguments: '{"a":1}' } });
+  expect(chunks).toContainEqual({ type: "block-end", index: 1, block: { type: "tool-call", id: ToolCallId(modelToolCallID("span_chat", "call_1")), name: "Bash", arguments: '{"a":1}' } });
 });
 
 test("Chat adapter preserves text then thinking then text even when the SDK reuses block IDs", async () => {

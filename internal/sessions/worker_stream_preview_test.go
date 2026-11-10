@@ -547,7 +547,7 @@ func TestStreamConnectionResetDropsOrphanDelta(t *testing.T) {
 	}
 }
 
-func TestStreamConnectionRequestEndRetiresOnlyItsPreviews(t *testing.T) {
+func TestStreamConnectionFailedRequestEndRetiresOnlyItsPreviews(t *testing.T) {
 	connection := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
 	preview := func(eventType, id string) bool {
 		block := previewBlock{eventID: id, eventType: "agent.message"}
@@ -561,7 +561,7 @@ func TestStreamConnectionRequestEndRetiresOnlyItsPreviews(t *testing.T) {
 	if !preview(previewEventStart, "running") {
 		t.Fatal("overlapping preview start was not accepted")
 	}
-	end := sessionStreamEvent{ExternalID: "end", PrimaryThread: true, EventType: "span.model_request_end", Payload: json.RawMessage(`{"event_ids":["late"]}`)}
+	end := sessionStreamEvent{ExternalID: "end", PrimaryThread: true, EventType: "span.model_request_end", Payload: json.RawMessage(`{"event_ids":["late"],"is_error":true}`)}
 	if _, accepted := connection.event(sessionEventDelivery{event: end}); !accepted {
 		t.Fatal("request end was not accepted")
 	}
@@ -697,5 +697,31 @@ func assertPreviewDelta(t *testing.T, raw json.RawMessage, eventID, text string)
 	}
 	if payload.Type != "event_delta" || payload.EventID != eventID || payload.Delta.Type != "content_delta" || payload.Delta.Index != 0 || payload.Delta.Content.Type != "text" || payload.Delta.Content.Text != text {
 		t.Fatalf("event_delta = %#v, want id=%q text=%q", payload, eventID, text)
+	}
+}
+
+func TestStreamConnectionSuccessfulEndWaitsForFinal(t *testing.T) {
+	c := newStreamConnection("thread-test", true, map[string]struct{}{"agent.message": {}})
+	deliver := func(event sessionStreamEvent) bool {
+		event.PrimaryThread = true
+		_, accepted := c.event(sessionEventDelivery{event: event})
+		return accepted
+	}
+	if !deliver(sessionStreamEvent{ExternalID: "end", EventType: "span.model_request_end", Payload: json.RawMessage(`{"event_ids":["answer"],"is_error":false}`)}) {
+		t.Fatal("end rejected")
+	}
+	block := previewBlock{eventID: "answer", eventType: "agent.message"}
+	if !deliver(sessionStreamEvent{ExternalID: "answer", EventType: previewEventStart, Payload: eventStartPayload(block)}) {
+		t.Fatal("start after request end rejected")
+	}
+	delta := sessionStreamEvent{ExternalID: "answer", EventType: previewEventDelta, Payload: eventDeltaPayload("answer", previewDeltaContent{Type: "text", Text: "hello"})}
+	if !deliver(delta) {
+		t.Fatal("delta after request end rejected")
+	}
+	if !deliver(sessionStreamEvent{ExternalID: "answer", EventType: "agent.message", Payload: json.RawMessage(`{"id":"answer","type":"agent.message"}`)}) {
+		t.Fatal("final rejected")
+	}
+	if deliver(delta) {
+		t.Fatal("delta after final accepted")
 	}
 }

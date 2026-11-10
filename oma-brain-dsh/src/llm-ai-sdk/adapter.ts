@@ -31,7 +31,7 @@ export class AiSdkAdapter extends LlmAdapter {
     const headers = result.response?.headers;
     const requestID = headers?.["request-id"] ?? headers?.["x-request-id"];
     if (requestID) this.options.onRequestID?.(request, requestID);
-    yield* this.read(request, new AiSdkStream(route.replayFormat, requestID), result);
+    yield* this.read(request, new AiSdkStream(route.replayFormat, requestID, (id) => requestID ? this.options.toolCallID?.(requestID, id) ?? id : id), result);
   }
 
   private async *read(request: GenerateOptions, stream: AiSdkStream, result: LanguageModelV4StreamResult): AsyncIterable<StreamChunk> {

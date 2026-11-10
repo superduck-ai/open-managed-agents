@@ -20,7 +20,7 @@ export class AiSdkStream {
   private usage?: TokenUsage;
   private finishReason?: LanguageModelV4FinishReason;
 
-  constructor(private readonly replayFormat: string, private readonly requestID?: string) {}
+  constructor(private readonly replayFormat: string, private readonly requestID?: string, private readonly toolCallID: (id: string) => string = (id) => id) {}
 
   accept(part: LanguageModelV4StreamPart): StreamChunk[] {
     switch (part.type) {
@@ -32,7 +32,7 @@ export class AiSdkStream {
       case "reasoning-delta": return this.reasoning(part.id, part.delta, part.providerMetadata);
       case "text-end": return this.end(part.id, "text");
       case "reasoning-end": this.sign(part.id, part.providerMetadata); return this.end(part.id, "reasoning");
-      case "tool-input-start": return this.start(part.id, { type: "tool-call", id: ToolCallId(part.id), name: part.toolName, arguments: "" });
+      case "tool-input-start": return this.start(part.id, { type: "tool-call", id: ToolCallId(this.toolCallID(part.id)), name: part.toolName, arguments: "" });
       case "tool-input-delta": return this.toolInput(part.id, part.delta);
       case "tool-call": return [...this.toolCall(part.toolCallId, part.toolName, part.input), ...this.end(part.toolCallId, "tool-call")];
       case "finish": this.usage = tokenUsage(part.usage); this.finishReason = part.finishReason; return [];
@@ -90,7 +90,7 @@ export class AiSdkStream {
   }
 
   private toolCall(id: string, name: string, input: string): StreamChunk[] {
-    const started = this.start(id, { type: "tool-call", id: ToolCallId(id), name, arguments: "" });
+    const started = this.start(id, { type: "tool-call", id: ToolCallId(this.toolCallID(id)), name, arguments: "" });
     const state = this.open(id, "tool-call");
     if (state.block.type !== "tool-call" || state.block.arguments) return started;
     return [...started, ...this.toolInput(id, input)];

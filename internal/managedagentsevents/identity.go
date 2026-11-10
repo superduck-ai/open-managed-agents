@@ -30,3 +30,8 @@ func ClaudeTaskThreadID(codeSessionID, key string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(codeSessionID) + "\x00claude-task\x00" + key))
 	return "sthr_" + hex.EncodeToString(sum[:16])
 }
+
+func ModelToolCallID(requestID, providerID string) string {
+	sum := sha256.Sum256([]byte("model-tool-call-v1\x00" + requestID + "\x00" + providerID))
+	return "toolu_" + hex.EncodeToString(sum[:16])
+}

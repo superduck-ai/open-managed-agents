@@ -36,6 +36,25 @@ func TestUpdateCaseReadsSessionAttachmentFiles(t *testing.T) {
 	}
 }
 
+func TestUpdateCaseKeepsLibraryFilesWhenSessionIsGone(t *testing.T) {
+	store := &evaluationFixture{libraryMime: "image/png"}
+	handler := NewHandler(store, nil)
+	body := `{"query":"看这张图","source_session_id":"sesn_missing","inputs":[{"type":"image","source":{"type":"file","file_id":"file_pic"}}]}`
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	request = withEvaluationRoute(request, "evalds_1", "evalcase_1")
+	response := httptest.NewRecorder()
+
+	if err := handler.updateCase(response, request); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if store.sessionLookups != 0 {
+		t.Fatalf("session lookups = %d", store.sessionLookups)
+	}
+}
+
 func TestUpdateCaseReportsMissingSession(t *testing.T) {
 	store := &evaluationFixture{}
 	handler := NewHandler(store, nil)
@@ -102,6 +121,8 @@ func (m fixedModel) Complete(context.Context, CompletionRequest) (string, error)
 type evaluationFixture struct {
 	sessionUUID       string
 	attachmentSession string
+	sessionLookups    int
+	libraryMime       string
 }
 
 func (evaluationFixture) CreateEvaluationDataset(context.Context, db.EvaluationDataset, []db.EvaluationCaseWrite) (db.EvaluationDataset, error) {
@@ -149,6 +170,7 @@ func (evaluationFixture) GetAgentVersion(context.Context, string, string, int) (
 }
 
 func (f *evaluationFixture) GetSession(context.Context, string, string) (db.Session, bool, error) {
+	f.sessionLookups++
 	return db.Session{UUID: f.sessionUUID}, f.sessionUUID != "", nil
 }
 
@@ -156,8 +178,11 @@ func (evaluationFixture) ListSessionEventsPage(context.Context, db.ListSessionEv
 	return nil, false, nil
 }
 
-func (evaluationFixture) GetFile(context.Context, string, string) (db.FileRecord, error) {
-	return db.FileRecord{}, db.ErrNotFound
+func (f *evaluationFixture) GetFile(context.Context, string, string) (db.FileRecord, error) {
+	if f.libraryMime == "" {
+		return db.FileRecord{}, db.ErrNotFound
+	}
+	return db.FileRecord{MimeType: f.libraryMime}, nil
 }
 
 func (f *evaluationFixture) GetSessionAttachmentFile(_ context.Context, _, sessionUUID, _ string) (db.FileRecord, error) {

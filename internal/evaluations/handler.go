@@ -87,7 +87,7 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := h.resolveDraftFiles(r.Context(), principal.WorkspaceUUID, "", drafts); err != nil {
+	if err := h.resolveDraftFiles(r.Context(), principal.WorkspaceUUID, &attachmentSession{}, drafts); err != nil {
 		return err
 	}
 	dataset, writes, err := h.newDataset(principal, name, description, drafts)
@@ -229,11 +229,7 @@ func (h *Handler) updateCase(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	sessionUUID, err := h.attachmentSessionUUID(r.Context(), principal.WorkspaceUUID, draft.SourceSessionID)
-	if err != nil {
-		return err
-	}
-	if err := h.resolveDraftFiles(r.Context(), principal.WorkspaceUUID, sessionUUID, []caseDraft{draft}); err != nil {
+	if err := h.resolveDraftFiles(r.Context(), principal.WorkspaceUUID, &attachmentSession{id: draft.SourceSessionID}, []caseDraft{draft}); err != nil {
 		return err
 	}
 	datasetID := chi.URLParam(r, "datasetId")
@@ -345,7 +341,7 @@ func (h *Handler) appendCases(ctx context.Context, principal auth.Principal, dat
 }
 
 func (h *Handler) appendCasesInSession(ctx context.Context, principal auth.Principal, datasetID string, drafts []caseDraft, sessionUUID string) ([]db.EvaluationCase, error) {
-	if err := h.resolveDraftFiles(ctx, principal.WorkspaceUUID, sessionUUID, drafts); err != nil {
+	if err := h.resolveDraftFiles(ctx, principal.WorkspaceUUID, &attachmentSession{uuid: sessionUUID}, drafts); err != nil {
 		return nil, err
 	}
 	writes, err := caseWrites(drafts)
@@ -379,14 +375,19 @@ func caseWrite(externalID string, draft caseDraft) db.EvaluationCaseWrite {
 	}
 }
 
-func (h *Handler) resolveDraftFiles(ctx context.Context, workspaceUUID, sessionUUID string, drafts []caseDraft) error {
+type attachmentSession struct {
+	id   string
+	uuid string
+}
+
+func (h *Handler) resolveDraftFiles(ctx context.Context, workspaceUUID string, session *attachmentSession, drafts []caseDraft) error {
 	seen := map[string]string{}
 	for _, draft := range drafts {
 		if err := resolveInputs(draft.Inputs, func(fileID string) (string, error) {
 			if mime, ok := seen[fileID]; ok {
 				return mime, nil
 			}
-			file, err := h.inputFile(ctx, workspaceUUID, sessionUUID, fileID)
+			file, err := h.inputFile(ctx, workspaceUUID, session, fileID)
 			if err != nil {
 				return "", err
 			}
@@ -399,13 +400,17 @@ func (h *Handler) resolveDraftFiles(ctx context.Context, workspaceUUID, sessionU
 	return nil
 }
 
-func (h *Handler) inputFile(ctx context.Context, workspaceUUID, sessionUUID, fileID string) (db.FileRecord, error) {
+func (h *Handler) inputFile(ctx context.Context, workspaceUUID string, session *attachmentSession, fileID string) (db.FileRecord, error) {
 	file, err := h.store.GetFile(ctx, workspaceUUID, fileID)
 	if err == nil {
 		return file, nil
 	}
 	if !errors.Is(err, db.ErrNotFound) {
 		return db.FileRecord{}, mapStoreError(err, fileNotFoundMessage, loadFailedMessage)
+	}
+	sessionUUID, err := h.attachmentSessionUUID(ctx, workspaceUUID, session)
+	if err != nil {
+		return db.FileRecord{}, err
 	}
 	if sessionUUID == "" {
 		return db.FileRecord{}, invalidArgument(fileNotFoundMessage, err)
@@ -420,18 +425,22 @@ func (h *Handler) inputFile(ctx context.Context, workspaceUUID, sessionUUID, fil
 	return file, nil
 }
 
-func (h *Handler) attachmentSessionUUID(ctx context.Context, workspaceUUID, sessionID string) (string, error) {
-	if sessionID == "" {
+func (h *Handler) attachmentSessionUUID(ctx context.Context, workspaceUUID string, session *attachmentSession) (string, error) {
+	if session == nil || (session.id == "" && session.uuid == "") {
 		return "", nil
 	}
-	session, ok, err := h.store.GetSession(ctx, workspaceUUID, sessionID)
+	if session.uuid != "" {
+		return session.uuid, nil
+	}
+	loaded, ok, err := h.store.GetSession(ctx, workspaceUUID, session.id)
 	if err != nil {
 		return "", internalFailure(loadFailedMessage, err)
 	}
 	if !ok {
 		return "", notFound("Session not found", nil)
 	}
-	return session.UUID, nil
+	session.uuid = loaded.UUID
+	return session.uuid, nil
 }
 
 func newPair(leftPrefix, rightPrefix string) (string, string, error) {

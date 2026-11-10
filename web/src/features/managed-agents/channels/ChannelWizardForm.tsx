@@ -506,13 +506,15 @@ function ModeOption({
     <Label
       htmlFor={id}
       className={cn(
-        'flex cursor-pointer flex-col items-start gap-1 rounded-xl border-[0.5px] border-border p-4 text-sm font-normal',
+        'flex cursor-pointer items-start gap-3 rounded-lg border-[0.5px] border-border px-4 py-3 text-sm font-normal',
         selected && 'border-foreground bg-accent',
       )}
     >
-      <RadioGroupItem id={id} value={value} className="sr-only" aria-label={title} />
-      <span className="font-medium">{title}</span>
-      <span className="text-sm leading-5 text-muted-foreground">{description}</span>
+      <RadioGroupItem id={id} value={value} className="mt-0.5 shrink-0" aria-label={title} />
+      <span className="min-w-0 space-y-1 leading-5">
+        <span className="block font-medium">{title}</span>
+        <span className="block text-muted-foreground">{description}</span>
+      </span>
     </Label>
   );
 }

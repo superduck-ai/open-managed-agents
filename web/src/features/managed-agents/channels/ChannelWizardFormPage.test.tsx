@@ -34,7 +34,10 @@ test('扫码创建前可选择配对模式，创建成功后锁定且重试保�
   };
   globalThis.fetch = (async (input, init) => {
     const url = String(input).split('?')[0];
-    if (init?.method?.toUpperCase() !== 'POST') return Response.json({ data: [] });
+    if (init?.method?.toUpperCase() !== 'POST') {
+      if (url.endsWith('/qr')) return Response.json({ status: 'expired', url: 'https://example.com/qr' });
+      return Response.json({ data: [channel] });
+    }
     requests.push({ url, body: JSON.parse(String(init.body)) });
     if (url.endsWith('/qr')) return Response.json({ status: 'expired', url: 'https://example.com/qr' });
     if (url.endsWith('/settings')) return Response.json({ environment_id: 'env-test' });
@@ -74,6 +77,64 @@ test('扫码创建前可选择配对模式，创建成功后锁定且重试保�
   expect(openWindow).not.toHaveBeenCalled();
 });
 
+test('重新打开未绑定渠道时自动同步绑定结果，短暂断网后继续轮询', async () => {
+  resetTestDom('/');
+  let poll: (() => void) | undefined;
+  spyOn(window, 'setInterval').mockImplementation((callback) => {
+    poll = callback as () => void;
+    return 1;
+  });
+  spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+  const channel: Channel = {
+    id: 'ch-resume',
+    name: '恢复授权渠道',
+    mode: 'open',
+    source: 'console',
+    enabled: true,
+    connected: false,
+    binding_status: 'unbound',
+    include_thinking: true,
+    include_tool_calls: true,
+    reply_in_thread: true,
+    pending_pairings: 0,
+  };
+  let attempts = 0;
+  globalThis.fetch = (async (input) => {
+    const url = String(input).split('?')[0];
+    if (url.endsWith('/channels')) {
+      attempts += 1;
+      if (attempts === 1) throw new TypeError('暂时断网');
+      return Response.json({ data: [{ ...channel, binding_status: 'bound', app_id: 'cli_resumed' }] });
+    }
+    return Response.json({ data: [] });
+  }) as typeof fetch;
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <I18nProvider initialLocale="zh-CN">
+        <ChannelWizardFormPage
+          mode="edit"
+          workspaceId="workspace-test"
+          initialAgentId="agent-test"
+          initialChannel={channel}
+          initialValue={{ ...channel, agentId: 'agent-test', environmentId: 'env-test', channelType: 'feishu' }}
+          onNavigate={() => undefined}
+          title="编辑渠道"
+        />
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+  await screen.findByRole('alert');
+  expect(screen.getByRole('button', { name: '下一步' }).hasAttribute('disabled')).toBe(true);
+  poll!();
+  await screen.findByText('飞书绑定成功');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByRole('button', { name: '下一步' }).hasAttribute('disabled')).toBe(false);
+  expect(screen.getByRole('button', { name: '保存配置' }).hasAttribute('disabled')).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  expect(screen.getByDisplayValue('cli_resumed')).toBeTruthy();
+  expect(screen.getByRole('button', { name: '下一步' }).hasAttribute('disabled')).toBe(false);
+});
+
 test.each([true, false])('打开飞书授权窗口，注册成功=%s', async (success) => {
   resetTestDom('/');
   const replace = mock(() => undefined);
@@ -82,7 +143,10 @@ test.each([true, false])('打开飞书授权窗口，注册成功=%s', async (su
   const openWindow = spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
   const authorizationUrl = 'https://open.feishu.cn/page/launcher?ticket=test';
   globalThis.fetch = (async (input, init) => {
-    if (init?.method?.toUpperCase() !== 'POST') return Response.json({ data: [] });
+    if (init?.method?.toUpperCase() !== 'POST') {
+      if (String(input).includes('/qr')) return Response.json({ status: 'pending', url: authorizationUrl });
+      return Response.json({ data: [] });
+    }
     expect(openWindow).toHaveBeenCalledWith('about:blank', '_blank');
     if (!success) return Response.json({ error: { message: '注册失败' } }, { status: 500 });
     if (String(input).includes('/qr')) return Response.json({ status: 'pending', url: authorizationUrl });

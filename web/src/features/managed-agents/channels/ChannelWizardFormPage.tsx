@@ -112,27 +112,35 @@ export function ChannelWizardFormPage({
   const targetAgentId = value.agentId || initialAgentId;
 
   useEffect(() => {
-    if (!saved || qr?.status !== 'pending' || !targetAgentId) return;
+    if (!saved || saved.binding_status === 'bound' || !targetAgentId) return;
     const controller = new AbortController();
-    const timer = window.setInterval(() => {
-      void channelApi<ChannelQr>(targetAgentId, workspaceId, `/${saved.id}/qr`)
-        .then((next) => {
-          if (controller.signal.aborted) return;
-          setQr(next);
-          if (next.status === 'bound') setSaved({ ...saved, binding_status: 'bound' });
-        })
-        .catch((err) => {
-          if (!controller.signal.aborted) {
-            setError(errorMessage(err));
-            setQr(null);
-          }
-        });
-    }, 2500);
+    const poll = async () => {
+      try {
+        const page = await channelApi<{ data: Channel[] }>(targetAgentId, workspaceId);
+        if (controller.signal.aborted) return;
+        const channel = page.data.find((item) => item.id === saved.id);
+        if (channel?.binding_status === 'bound') {
+          setSaved(channel);
+          setValue((current) => ({ ...current, app_id: channel.app_id ?? '' }));
+          setQr((current) => (current ? { ...current, status: 'bound' } : null));
+          setError('');
+          void queryClient.invalidateQueries({ queryKey: ['workspace-channels', workspaceId] });
+          void queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, saved.id] });
+          return;
+        }
+        const next = await channelApi<ChannelQr>(targetAgentId, workspaceId, `/${saved.id}/qr`);
+        if (!controller.signal.aborted) setQr(next);
+      } catch (err) {
+        if (!controller.signal.aborted) setError(errorMessage(err));
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2500);
     return () => {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [saved, qr?.status, targetAgentId, workspaceId]);
+  }, [saved, targetAgentId, workspaceId, queryClient]);
 
   const agents = agentsQuery.data ?? [];
   const environments = environmentsQuery.data ?? [];

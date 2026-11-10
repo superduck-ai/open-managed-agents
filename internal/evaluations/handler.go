@@ -3,6 +3,7 @@ package evaluations
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -32,6 +33,8 @@ type Store interface {
 	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
 	GetSession(context.Context, string, string) (db.Session, bool, error)
 	ListSessionEventsPage(context.Context, db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error)
+	GetFile(context.Context, string, string) (db.FileRecord, error)
+	GetSessionAttachmentFile(context.Context, string, string, string) (db.FileRecord, error)
 }
 
 type Handler struct {
@@ -82,6 +85,9 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
 	}
 	drafts, err := datasetDrafts(*body)
 	if err != nil {
+		return err
+	}
+	if err := h.resolveDraftFiles(r.Context(), principal.WorkspaceUUID, "", drafts); err != nil {
 		return err
 	}
 	dataset, writes, err := h.newDataset(principal, name, description, drafts)
@@ -223,6 +229,9 @@ func (h *Handler) updateCase(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if err := h.resolveDraftFiles(r.Context(), principal.WorkspaceUUID, "", []caseDraft{draft}); err != nil {
+		return err
+	}
 	datasetID := chi.URLParam(r, "datasetId")
 	caseID := chi.URLParam(r, "caseId")
 	if body.keepsTrace() {
@@ -328,6 +337,13 @@ func (h *Handler) newDataset(principal auth.Principal, name, description string,
 }
 
 func (h *Handler) appendCases(ctx context.Context, principal auth.Principal, datasetID string, drafts []caseDraft) ([]db.EvaluationCase, error) {
+	return h.appendCasesInSession(ctx, principal, datasetID, drafts, "")
+}
+
+func (h *Handler) appendCasesInSession(ctx context.Context, principal auth.Principal, datasetID string, drafts []caseDraft, sessionUUID string) ([]db.EvaluationCase, error) {
+	if err := h.resolveDraftFiles(ctx, principal.WorkspaceUUID, sessionUUID, drafts); err != nil {
+		return nil, err
+	}
 	writes, err := caseWrites(drafts)
 	if err != nil {
 		return nil, err
@@ -355,7 +371,49 @@ func caseWrite(externalID string, draft caseDraft) db.EvaluationCaseWrite {
 	return db.EvaluationCaseWrite{
 		UUID: uuid.NewString(), ExternalID: externalID, Query: draft.Query, ExpectedAnswer: draft.ExpectedAnswer,
 		ExpectedToolTrace: draft.ExpectedToolTrace, SourceSessionID: draft.SourceSessionID, Polarity: draft.Polarity, Acceptance: draft.Acceptance,
+		Inputs: draft.Inputs,
 	}
+}
+
+func (h *Handler) resolveDraftFiles(ctx context.Context, workspaceUUID, sessionUUID string, drafts []caseDraft) error {
+	seen := map[string]string{}
+	for _, draft := range drafts {
+		if err := resolveInputs(draft.Inputs, func(fileID string) (string, error) {
+			if mime, ok := seen[fileID]; ok {
+				return mime, nil
+			}
+			file, err := h.inputFile(ctx, workspaceUUID, sessionUUID, fileID)
+			if err != nil {
+				return "", err
+			}
+			seen[fileID] = file.MimeType
+			return file.MimeType, nil
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *Handler) inputFile(ctx context.Context, workspaceUUID, sessionUUID, fileID string) (db.FileRecord, error) {
+	file, err := h.store.GetFile(ctx, workspaceUUID, fileID)
+	if err == nil {
+		return file, nil
+	}
+	if !errors.Is(err, db.ErrNotFound) {
+		return db.FileRecord{}, mapStoreError(err, fileNotFoundMessage, loadFailedMessage)
+	}
+	if sessionUUID == "" {
+		return db.FileRecord{}, invalidArgument(fileNotFoundMessage, err)
+	}
+	file, err = h.store.GetSessionAttachmentFile(ctx, workspaceUUID, sessionUUID, fileID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return db.FileRecord{}, invalidArgument(fileNotFoundMessage, err)
+		}
+		return db.FileRecord{}, mapStoreError(err, fileNotFoundMessage, loadFailedMessage)
+	}
+	return file, nil
 }
 
 func newPair(leftPrefix, rightPrefix string) (string, string, error) {
@@ -388,13 +446,13 @@ func (h *Handler) page(r *http.Request) (auth.Principal, int, int, error) {
 
 func scopedPrincipal(r *http.Request) (auth.Principal, error) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || strings.TrimSpace(principal.OrganizationUUID) == "" || strings.TrimSpace(principal.WorkspaceUUID) == "" {
+	if !ok || principal.OrganizationUUID == "" || principal.WorkspaceUUID == "" {
 		return auth.Principal{}, notFound(datasetNotFoundMessage, nil)
 	}
-	if strings.TrimSpace(chi.URLParam(r, "orgUuid")) != principal.OrganizationUUID {
+	if chi.URLParam(r, "orgUuid") != principal.OrganizationUUID {
 		return auth.Principal{}, notFound(datasetNotFoundMessage, nil)
 	}
-	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspaceId"))
+	workspaceID := chi.URLParam(r, "workspaceId")
 	if workspaceID == "" || (workspaceID != "default" && workspaceID != principal.WorkspaceUUID && workspaceID != principal.WorkspaceExternalID) {
 		return auth.Principal{}, notFound(datasetNotFoundMessage, nil)
 	}

@@ -17,6 +17,7 @@ const (
 	maxTraceLength       = 16000
 	maxImportCases       = 1000
 	maxGenerateCases     = 50
+	maxInputBlocks       = 32
 )
 
 type caseDraft struct {
@@ -26,6 +27,7 @@ type caseDraft struct {
 	SourceSessionID   string
 	Polarity          string
 	Acceptance        string
+	Inputs            json.RawMessage
 }
 
 type rawCase struct {
@@ -37,6 +39,7 @@ type rawCase struct {
 	SourceSessionID        string          `json:"source_session_id"`
 	Polarity               string          `json:"polarity"`
 	Acceptance             string          `json:"acceptance"`
+	Inputs                 json.RawMessage `json:"inputs"`
 }
 
 func normalizeName(value string) (string, error) {
@@ -59,18 +62,17 @@ func normalizeDescription(value string) (string, error) {
 }
 
 func normalizeCase(raw rawCase) (caseDraft, error) {
+	query, inputs, err := canonicalInputs(raw.Query, raw.Inputs)
+	if err != nil {
+		return caseDraft{}, err
+	}
 	draft := caseDraft{
-		Query:           strings.TrimSpace(raw.Query),
+		Query:           query,
+		Inputs:          inputs,
 		ExpectedAnswer:  strings.TrimSpace(firstText(raw.ExpectedAnswer, raw.ExpectedAnswerCamel)),
 		SourceSessionID: strings.TrimSpace(raw.SourceSessionID),
 		Polarity:        strings.TrimSpace(raw.Polarity),
 		Acceptance:      strings.TrimSpace(raw.Acceptance),
-	}
-	if draft.Query == "" {
-		return caseDraft{}, invalidArgument(queryRequiredMessage, nil)
-	}
-	if utf8.RuneCountInString(draft.Query) > maxQueryLength {
-		return caseDraft{}, invalidArgument(queryTooLongMessage, nil)
 	}
 	if utf8.RuneCountInString(draft.ExpectedAnswer) > maxAnswerLength {
 		return caseDraft{}, invalidArgument(answerTooLongMessage, nil)
@@ -101,16 +103,13 @@ func normalizeTrace(raw json.RawMessage) (json.RawMessage, error) {
 	if len(trimmed) > maxTraceLength {
 		return nil, invalidArgument(traceTooLongMessage, nil)
 	}
-	if !json.Valid(trimmed) {
-		return nil, invalidArgument(traceInvalidMessage, nil)
-	}
 	var value any
 	if err := json.Unmarshal(trimmed, &value); err != nil {
 		return nil, invalidArgument(traceInvalidMessage, err)
 	}
 	switch value.(type) {
 	case []any, map[string]any, string:
-		return append(json.RawMessage(nil), trimmed...), nil
+		return json.RawMessage(trimmed), nil
 	default:
 		return nil, invalidArgument(traceInvalidMessage, nil)
 	}
@@ -215,6 +214,7 @@ type caseUpdateRequest struct {
 	SourceSessionID        string           `json:"source_session_id"`
 	Polarity               string           `json:"polarity"`
 	Acceptance             string           `json:"acceptance"`
+	Inputs                 json.RawMessage  `json:"inputs"`
 }
 
 func (body caseUpdateRequest) keepsTrace() bool {
@@ -225,6 +225,7 @@ func (body caseUpdateRequest) draft() (caseDraft, error) {
 	raw := rawCase{
 		Query: body.Query, ExpectedAnswer: body.ExpectedAnswer, ExpectedAnswerCamel: body.ExpectedAnswerCamel,
 		SourceSessionID: body.SourceSessionID, Polarity: body.Polarity, Acceptance: body.Acceptance,
+		Inputs: body.Inputs,
 	}
 	if body.ExpectedToolTrace != nil {
 		raw.ExpectedToolTrace = *body.ExpectedToolTrace

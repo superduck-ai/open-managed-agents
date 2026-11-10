@@ -37,6 +37,7 @@ type EvaluationCase struct {
 	SourceSessionID   string
 	Polarity          string
 	Acceptance        string
+	Inputs            json.RawMessage
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
@@ -50,6 +51,7 @@ type EvaluationCaseWrite struct {
 	SourceSessionID   string
 	Polarity          string
 	Acceptance        string
+	Inputs            json.RawMessage
 }
 
 func (d *DB) CreateEvaluationDataset(ctx context.Context, dataset EvaluationDataset, cases []EvaluationCaseWrite) (EvaluationDataset, error) {
@@ -204,6 +206,7 @@ func (d *DB) UpdateEvaluationCase(ctx context.Context, organizationUUID, workspa
 		SourceSessionID:   write.SourceSessionID,
 		Polarity:          write.Polarity,
 		Acceptance:        write.Acceptance,
+		Inputs:            write.Inputs,
 		UpdatedAt:         now,
 	})
 	if err != nil {
@@ -242,6 +245,7 @@ func insertCaseParams(dataset EvaluationDataset, datasetUUID, versionUUID string
 		SourceSessionID:   item.SourceSessionID,
 		Polarity:          item.Polarity,
 		Acceptance:        item.Acceptance,
+		Inputs:            item.Inputs,
 		CreatedAt:         now,
 	}
 }
@@ -278,6 +282,7 @@ func caseFromRow(row evaluationCaseRow) EvaluationCase {
 		SourceSessionID:   row.SourceSessionID,
 		Polarity:          row.Polarity,
 		Acceptance:        row.Acceptance,
+		Inputs:            rawJSON(row.Inputs),
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
 	}

@@ -127,6 +127,56 @@ func TestSessionEventCursorStopsAtPageLimit(t *testing.T) {
 	}
 }
 
+func TestCanonicalInputsStoresFileReferences(t *testing.T) {
+	query, inputs, err := canonicalInputs("", json.RawMessage(`[{"type":"text","text":"描述这张图"},{"type":"image","source":{"type":"file","file_id":"file_1"}}]`))
+	if err != nil || query != "描述这张图" || !strings.Contains(string(inputs), `"file_id":"file_1"`) {
+		t.Fatalf("query=%q inputs=%s err=%v", query, inputs, err)
+	}
+	if _, _, err := canonicalInputs("", json.RawMessage(`[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]`)); err == nil {
+		t.Fatal("expected inline image to be rejected")
+	}
+	query, inputs, err = canonicalInputs("只有文字", nil)
+	if err != nil || query != "只有文字" || !strings.Contains(string(inputs), "只有文字") {
+		t.Fatalf("query=%q inputs=%s err=%v", query, inputs, err)
+	}
+	stored, _, err := canonicalInputs("请求里的问题", json.RawMessage(`[{"type":"text","text":"以内容块为准"}]`))
+	if err != nil || stored != "以内容块为准" {
+		t.Fatalf("stored=%q err=%v", stored, err)
+	}
+}
+
+func TestResolveInputsChecksFileMediaType(t *testing.T) {
+	inputs := json.RawMessage(`[{"type":"image","source":{"type":"file","file_id":"file_1"}},{"type":"document","source":{"type":"file","file_id":"file_2"}}]`)
+	err := resolveInputs(inputs, func(fileID string) (string, error) {
+		if fileID == "file_2" {
+			return "application/pdf", nil
+		}
+		return "image/png", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resolveInputs(inputs, func(string) (string, error) { return "image/bmp", nil }); err == nil {
+		t.Fatal("expected unsupported media type to be rejected")
+	}
+}
+
+func TestSessionTurnsKeepFileImagesAndSkipInlineImages(t *testing.T) {
+	events := []db.SessionEvent{
+		{EventType: "user.message", Payload: json.RawMessage(`{"content":[{"type":"image","source":{"type":"file","file_id":"file_1"}}]}`)},
+		{EventType: "user.message", Payload: json.RawMessage(`{"content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]}`)},
+		{EventType: "user.message", Payload: json.RawMessage(`{"text":"文字"}`)},
+	}
+	turns := sessionTurns(events)
+	if len(turns) != 3 || !turns[0].Importable || turns[0].Query != "" || turns[1].Importable || !turns[2].Importable || turns[2].Query != "文字" {
+		t.Fatalf("turns = %+v", turns)
+	}
+	drafts, skipped, err := sessionCaseDrafts(turns, []int{1, 2}, "sess", "", "", "")
+	if err != nil || skipped != 1 || len(drafts) != 1 || drafts[0].Query != "" || !strings.Contains(string(drafts[0].Inputs), "file_1") {
+		t.Fatalf("drafts=%+v skipped=%d err=%v", drafts, skipped, err)
+	}
+}
+
 func TestParseCaseDocumentReadsOptionalCSVColumns(t *testing.T) {
 	parsed, err := parseCaseDocument("query,expected_answer,expected_tool_trace,polarity,acceptance\n汇总销售额,按渠道列出,\"[\"\"lookup_sales\"\"]\",positive,包含合计\n")
 	if err != nil {

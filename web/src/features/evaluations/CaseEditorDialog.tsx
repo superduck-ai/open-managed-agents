@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 
+import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
 import {
@@ -18,6 +19,7 @@ import { Textarea } from '../../shared/ui/textarea';
 import { AcceptanceChecklist } from './AcceptanceChecklist';
 import { createEvaluationCases, evaluationError, updateEvaluationCase, type EvaluationCase } from './api';
 import { acceptanceItems, joinAcceptance } from './caseChecklist';
+import { blockTypeForMime, buildInputs, fileBlocks, textFromInputs, type CaseFile } from './caseInputs';
 
 export function CaseEditorDialog({
   open,
@@ -40,10 +42,15 @@ export function CaseEditorDialog({
   const [expected, setExpected] = useState('');
   const [checkpoints, setCheckpoints] = useState<string[]>(['']);
   const [polarity, setPolarity] = useState('');
+  const [files, setFiles] = useState<CaseFile[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const fileInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!open) return;
-    setQuery(item?.query ?? '');
+    const inputs = item?.inputs ?? [];
+    setQuery(textFromInputs(inputs) || item?.query || '');
+    setFiles(fileBlocks(inputs));
     setExpected(item?.expected_answer ?? '');
     setCheckpoints(acceptanceItems(item?.acceptance ?? ''));
     setPolarity(item?.polarity ?? '');
@@ -53,6 +60,7 @@ export function CaseEditorDialog({
     mutationFn: async () => {
       const body = {
         query,
+        inputs: buildInputs(query, files),
         expected_answer: expected,
         acceptance: polarity === 'negative' ? joinAcceptance(checkpoints) : '',
         polarity,
@@ -78,11 +86,32 @@ export function CaseEditorDialog({
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!query.trim()) {
-      setError(msg('evaluations.queryRequired', 'Enter a query.'));
+    if (buildInputs(query, files).length === 0) {
+      setError(msg('evaluations.inputRequired', 'Enter a query or attach a file.'));
       return;
     }
     save.mutate();
+  }
+
+  async function onFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    const kind = blockTypeForMime(file.type);
+    if (!kind) {
+      setError(msg('evaluations.fileMedia', 'Use a PNG, JPEG, GIF, WebP, PDF, or text file.'));
+      return;
+    }
+    setUploading(true);
+    try {
+      const uploaded = await anthropicBetaApi.files.upload<{ id: string }>(file, workspaceId);
+      setFiles((current) => [...current, { id: uploaded.id, kind }]);
+      setError('');
+    } catch (cause) {
+      setError(evaluationError(cause));
+    } finally {
+      setUploading(false);
+    }
   }
 
   return (
@@ -103,10 +132,7 @@ export function CaseEditorDialog({
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
-            <Label htmlFor="evaluation-case-query">
-              {msg('evaluations.query', 'Query')}
-              <span className="text-destructive">*</span>
-            </Label>
+            <Label htmlFor="evaluation-case-query">{msg('evaluations.query', 'Query')}</Label>
             <Textarea
               id="evaluation-case-query"
               value={query}
@@ -114,6 +140,30 @@ export function CaseEditorDialog({
               rows={4}
               placeholder={msg('evaluations.queryPlaceholder', 'The question or task to score.')}
             />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" disabled={uploading} onClick={() => fileInput.current?.click()}>
+                {msg('evaluations.attachFile', 'Add image or document')}
+              </Button>
+              <input
+                ref={fileInput}
+                type="file"
+                className="hidden"
+                accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain"
+                onChange={(event) => void onFile(event)}
+              />
+              {files.map((file) => (
+                <span key={file.id} className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs">
+                  {file.id}
+                  <button
+                    type="button"
+                    className="text-muted-foreground"
+                    onClick={() => setFiles((current) => current.filter((item) => item.id !== file.id))}
+                  >
+                    {msg('evaluations.removeFile', 'Remove')}
+                  </button>
+                </span>
+              ))}
+            </div>
           </div>
           <div className="grid gap-2">
             <Label htmlFor="evaluation-case-expected">
@@ -161,7 +211,7 @@ export function CaseEditorDialog({
             <DialogClose render={<Button type="button" variant="outline" disabled={save.isPending} />}>
               {msg('common.cancel', 'Cancel')}
             </DialogClose>
-            <Button type="submit" disabled={save.isPending}>
+            <Button type="submit" disabled={save.isPending || uploading}>
               {item ? msg('common.save', 'Save') : msg('evaluations.create', 'Create')}
             </Button>
           </DialogFooter>

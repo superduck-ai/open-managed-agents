@@ -38,6 +38,7 @@ import { AcceptanceChecklist } from './AcceptanceChecklist';
 import { SessionTurnTransfer } from './SessionTurnTransfer';
 import { CaseEditorDialog } from './CaseEditorDialog';
 import { acceptanceItems, joinAcceptance } from './caseChecklist';
+import { mediaDetail } from './caseInputs';
 import { shortenId } from './evaluationChrome';
 import { useEvaluationScope } from './useEvaluationScope';
 
@@ -137,6 +138,9 @@ export function DatasetDetailPage() {
                 moreLabel={msg('evaluations.moreActions', 'More actions')}
                 positiveLabel={msg('evaluations.positive', 'Positive')}
                 negativeLabel={msg('evaluations.negative', 'Negative')}
+                imageOnlyLabel={msg('evaluations.imageOnly', 'Image')}
+                imageCountLabel={(count) => msg('evaluations.imageCount', '{count} images', { count })}
+                documentCountLabel={(count) => msg('evaluations.documentCount', '{count} documents', { count })}
                 onEdit={() => setEditor(item)}
                 onDelete={() => {
                   if (
@@ -186,6 +190,9 @@ function CaseRow({
   moreLabel,
   positiveLabel,
   negativeLabel,
+  imageOnlyLabel,
+  imageCountLabel,
+  documentCountLabel,
   onEdit,
   onDelete,
 }: {
@@ -200,14 +207,21 @@ function CaseRow({
   moreLabel: string;
   positiveLabel: string;
   negativeLabel: string;
+  imageOnlyLabel: string;
+  imageCountLabel: (count: number) => string;
+  documentCountLabel: (count: number) => string;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const checkpoints = acceptanceItems(item.acceptance).filter(Boolean);
+  const detail = mediaDetail(item.inputs, { images: imageCountLabel, documents: documentCountLabel });
   return (
     <TableRow>
       <TableCell className="px-3 align-top tabular-nums">{index}</TableCell>
-      <TableCell className="max-w-[280px] px-3 align-top whitespace-pre-wrap">{item.query}</TableCell>
+      <TableCell className="max-w-[280px] px-3 align-top whitespace-pre-wrap">
+        {item.query || detail || imageOnlyLabel}
+        {item.query && detail ? <span className="mt-1 block text-xs text-muted-foreground">{detail}</span> : null}
+      </TableCell>
       <TableCell className="max-w-[240px] px-3 align-top whitespace-pre-wrap text-muted-foreground">
         {item.expected_answer || unset}
       </TableCell>
@@ -290,15 +304,24 @@ function ImportSessionDialog({
         polarity: polarity || undefined,
         acceptance: polarity === 'negative' ? joinAcceptance(checkpoints) : '',
       }),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ['evaluation-cases', orgUuid, workspaceId, datasetId] });
+      await queryClient.invalidateQueries({ queryKey: ['evaluation-datasets', orgUuid, workspaceId] });
+      if (result.skipped > 0) {
+        setSelected(new Set());
+        setError(
+          msg('evaluations.importSkipped', '{count} turns had no text or workspace file and were skipped.', {
+            count: result.skipped,
+          }),
+        );
+        return;
+      }
       setSessionId('');
       setSelected(new Set());
       setPolarity('');
       setCheckpoints(['']);
       setError('');
       onOpenChange(false);
-      await queryClient.invalidateQueries({ queryKey: ['evaluation-cases', orgUuid, workspaceId, datasetId] });
-      await queryClient.invalidateQueries({ queryKey: ['evaluation-datasets', orgUuid, workspaceId] });
     },
     onError: (cause) => setError(evaluationError(cause)),
   });

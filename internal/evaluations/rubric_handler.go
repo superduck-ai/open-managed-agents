@@ -2,6 +2,7 @@ package evaluations
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -37,9 +38,15 @@ type fromSessionRequest struct {
 }
 
 type sessionTurnResponse struct {
-	Index  int    `json:"index"`
-	Query  string `json:"query"`
-	Answer string `json:"answer"`
+	Index  int             `json:"index"`
+	Query  string          `json:"query"`
+	Answer string          `json:"answer"`
+	Inputs json.RawMessage `json:"inputs"`
+}
+
+type sessionImportResponse struct {
+	Data    []caseResponse `json:"data"`
+	Skipped int            `json:"skipped"`
 }
 
 func (h *Handler) generateCases(w http.ResponseWriter, r *http.Request) error {
@@ -93,13 +100,16 @@ func (h *Handler) listSessionTurns(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
-	turns, err := h.loadSessionTurns(r.Context(), principal, chi.URLParam(r, "datasetId"), sessionID)
+	_, turns, err := h.loadSessionTurns(r.Context(), principal, chi.URLParam(r, "datasetId"), sessionID)
 	if err != nil {
 		return err
 	}
 	data := make([]sessionTurnResponse, 0, len(turns))
 	for _, turn := range turns {
-		data = append(data, sessionTurnResponse{Index: turn.Index, Query: turn.Query, Answer: turn.Answer})
+		if !turn.Importable {
+			continue
+		}
+		data = append(data, sessionTurnResponse{Index: turn.Index, Query: turn.Query, Answer: turn.Answer, Inputs: turn.Inputs})
 	}
 	writePage(w, data, nil)
 	return nil
@@ -115,56 +125,51 @@ func (h *Handler) caseFromSession(w http.ResponseWriter, r *http.Request) error 
 		return invalidArgument(invalidJSONMessage, err)
 	}
 	sessionID := strings.TrimSpace(body.SessionID)
-	turns, err := h.loadSessionTurns(r.Context(), principal, chi.URLParam(r, "datasetId"), sessionID)
+	session, turns, err := h.loadSessionTurns(r.Context(), principal, chi.URLParam(r, "datasetId"), sessionID)
 	if err != nil {
 		return err
 	}
-	selected, err := selectedSessionTurns(turns, body.Turns)
+	drafts, skipped, err := sessionCaseDrafts(turns, body.Turns, sessionID, body.ExpectedAnswer, body.Polarity, body.Acceptance)
 	if err != nil {
 		return err
 	}
-	drafts := make([]caseDraft, 0, len(selected))
-	for _, turn := range selected {
-		draft, err := normalizeCase(rawCase{
-			Query: turn.Query, ExpectedAnswer: body.ExpectedAnswer, SourceSessionID: sessionID, Polarity: body.Polarity, Acceptance: body.Acceptance,
-		})
+	var created []db.EvaluationCase
+	if len(drafts) > 0 {
+		created, err = h.appendCasesInSession(r.Context(), principal, chi.URLParam(r, "datasetId"), drafts, session.UUID)
 		if err != nil {
 			return err
 		}
-		drafts = append(drafts, draft)
-	}
-	created, err := h.appendCases(r.Context(), principal, chi.URLParam(r, "datasetId"), drafts)
-	if err != nil {
-		return err
 	}
 	data := make([]caseResponse, 0, len(created))
 	for _, item := range created {
 		data = append(data, caseJSON(item))
 	}
-	writePage(w, data, nil)
+	httpapi.WriteJSON(w, http.StatusOK, sessionImportResponse{Data: data, Skipped: skipped})
 	return nil
 }
 
-func (h *Handler) loadSessionTurns(ctx context.Context, principal auth.Principal, datasetID, sessionID string) ([]sessionTurn, error) {
+func (h *Handler) loadSessionTurns(ctx context.Context, principal auth.Principal, datasetID, sessionID string) (db.Session, []sessionTurn, error) {
 	if sessionID == "" {
-		return nil, invalidArgument(sessionRequiredMessage, nil)
+		return db.Session{}, nil, invalidArgument(sessionRequiredMessage, nil)
 	}
 	if _, err := h.store.GetEvaluationDataset(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID); err != nil {
-		return nil, mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
+		return db.Session{}, nil, mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 	}
-	if _, ok, err := h.store.GetSession(ctx, principal.WorkspaceUUID, sessionID); err != nil {
-		return nil, internalFailure(loadFailedMessage, err)
-	} else if !ok {
-		return nil, notFound("Session not found", nil)
+	session, ok, err := h.store.GetSession(ctx, principal.WorkspaceUUID, sessionID)
+	if err != nil {
+		return db.Session{}, nil, internalFailure(loadFailedMessage, err)
+	}
+	if !ok {
+		return db.Session{}, nil, notFound("Session not found", nil)
 	}
 	events, err := h.sessionEvents(ctx, principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		if errors.Is(err, errSessionTooLarge) {
-			return nil, invalidArgument(sessionEventsTooLargeMessage, err)
+			return db.Session{}, nil, invalidArgument(sessionEventsTooLargeMessage, err)
 		}
-		return nil, internalFailure(loadFailedMessage, err)
+		return db.Session{}, nil, internalFailure(loadFailedMessage, err)
 	}
-	return sessionTurns(events), nil
+	return session, sessionTurns(events), nil
 }
 
 func (h *Handler) agentForGeneration(ctx context.Context, workspaceUUID, agentID string, version int) (db.Agent, error) {

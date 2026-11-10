@@ -137,9 +137,8 @@ describe('Dashboard i18n', () => {
     const skills = renderSkillsPage(undefined, 'zh-CN');
 
     expect(await screen.findByRole('heading', { name: '技能' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '创建技能' })).toBeTruthy();
-    expect(screen.getByRole('region', { name: '技能列表' })).toBeTruthy();
-    expect(await screen.findByText('还没有技能')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '导入技能' })).toBeTruthy();
+    expect(await screen.findByText('没有匹配的技能')).toBeTruthy();
     expect(screen.queryByRole('columnheader', { name: 'ID' })).toBeNull();
 
     skills.unmount();
@@ -699,700 +698,130 @@ describe('Files page', () => {
 });
 
 describe('Skills page', () => {
-  for (const kind of ['skill', 'version'] as const) {
-    test(`protects pending ${kind} deletion and preserves the failed confirmation through cancellation`, async () => {
-      resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-      const skill = {
-        id: 'skill_confirm',
-        type: 'skill',
-        display_title: 'Research delete target',
-        latest_version: '1',
-        source: 'custom',
-        created_at: '2026-10-25T00:00:00Z',
-        updated_at: '2026-10-25T00:00:00Z',
-      };
-      mockSkillsApi((url) =>
-        url.includes('/versions?')
-          ? {
-              data: [
-                {
-                  id: 'version_confirm',
-                  type: 'skill_version',
-                  skill_id: skill.id,
-                  version: '1',
-                  name: skill.display_title,
-                  directory: 'research',
-                  description: 'Research notes',
-                  created_at: skill.created_at,
-                },
-              ],
-              has_more: false,
-            }
-          : url.includes('/skill_confirm?')
-            ? skill
-            : { data: [skill], has_more: false },
-      );
-      const fetchApi = globalThis.fetch;
-      let deleteCalls = 0;
-      let finishDelete: (response: Response) => void = () => {};
-      globalThis.fetch = ((input, init) => {
-        if (init?.method === 'DELETE') {
-          deleteCalls++;
-          return new Promise<Response>((resolve) => {
-            finishDelete = resolve;
-          });
-        }
-        return fetchApi(input, init);
-      }) as typeof fetch;
-      if (kind === 'version') {
-        renderSkillDetailPage(skill.id);
-        fireEvent.click(await screen.findByRole('button', { name: 'Delete version 1', exact: true }));
-      } else {
-        renderSkillsPage();
-        fireEvent.click(await screen.findByRole('button', { name: 'Actions', exact: true }));
-        fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete', exact: true }));
-      }
-      const dialog = await screen.findByRole('alertdialog', {
-        name: kind === 'skill' ? 'Delete skill?' : 'Delete version?',
-      });
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete', exact: true }));
-      await waitFor(() => expect(deleteCalls).toBe(1));
-      expect(within(dialog).getByRole('button', { name: 'Cancel', exact: true })).toHaveProperty('disabled', true);
-      fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
-      expect(screen.getByRole('alertdialog')).toBe(dialog);
-      await act(async () =>
-        finishDelete(Response.json({ error: { message: 'Delete could not complete' } }, { status: 503 })),
-      );
-      await within(dialog).findByText('Delete could not complete');
-      expect(document.activeElement).toBe(within(dialog).getByRole('alert'));
-      expect(within(dialog).getByText(kind === 'skill' ? skill.display_title : '1', { exact: true })).toBeTruthy();
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel', exact: true }));
-      expect(dialog.hasAttribute('data-closed')).toBe(true);
-      expect(dialog.textContent).toContain('Delete could not complete');
-      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-      expect(deleteCalls).toBe(1);
+  const custom = {
+    id: 'skill_demo',
+    type: 'skill',
+    display_title: 'Research notes',
+    latest_version: '1',
+    source: 'custom',
+    icon_key: 'blocks',
+    description: 'Research reports and notes',
+    created_at: '2026-11-01T00:00:00Z',
+    updated_at: '2026-11-01T00:00:00Z',
+  };
+  const builtin = { ...custom, id: 'docx', display_title: 'Word documents', source: 'anthropic' };
+  const catalog = { data: [builtin, custom], total_count: 2, counts: { all: 2, builtin: 1, custom: 1 } };
+  function fixture() {
+    return mockSkillsApi((url) => {
+      if (url.startsWith('/api/console/') && url.includes('/skills?')) return catalog;
+      if (url.includes('/versions?'))
+        return {
+          data: [
+            {
+              id: 'version1',
+              skill_id: custom.id,
+              name: 'research',
+              version: '1',
+              description: custom.description,
+              created_at: custom.created_at,
+            },
+          ],
+          has_more: false,
+        };
+      if (url.includes('/skill_demo?')) return custom;
+      throw new Error(`Unexpected request: ${url}`);
     });
   }
-
-  test('renders skills in the platform list shape and opens the query-param drawer', async () => {
+  test('failed deletion keeps the confirmation and prevents duplicate submissions', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    const clipboardWrite = mock(async (_value: string) => undefined);
-    Object.defineProperty(globalThis.navigator, 'clipboard', {
-      value: { writeText: clipboardWrite },
-      configurable: true,
-    });
-    const requests = mockSkillsApi((url) => {
-      if (url === '/v1/skills/skill_emoji?beta=true') {
-        return {
-          id: 'skill_emoji',
-          type: 'skill',
-          display_title: 'emoji-translator',
-          latest_version: '20260708',
-          source: 'custom',
-          created_at: new Date(Date.now() - 120_000).toISOString(),
-          updated_at: new Date(Date.now() - 60_000).toISOString(),
-        };
-      }
-      if (url === '/v1/skills/skill_emoji/versions?beta=true&limit=50') {
-        return {
-          data: [
-            {
-              id: 'skillver_emoji',
-              type: 'skill_version',
-              description: 'This skill should be used when the user asks to turn this into emojis.',
-              directory: 'emoji-translator',
-              name: 'emoji-translator',
-              skill_id: 'skill_emoji',
-              version: '20260708',
-              created_at: new Date(Date.now() - 60_000).toISOString(),
-            },
-          ],
-          has_more: false,
-          next_page: null,
-        };
-      }
-      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
-        return {
-          data: [
-            {
-              id: 'skill_emoji',
-              type: 'skill',
-              display_title: 'emoji-translator',
-              latest_version: '20260708',
-              source: 'custom',
-              created_at: new Date(Date.now() - 120_000).toISOString(),
-              updated_at: new Date(Date.now() - 60_000).toISOString(),
-            },
-            {
-              id: 'xlsx',
-              type: 'skill',
-              display_title: 'xlsx',
-              latest_version: '20260203',
-              source: 'anthropic',
-              publisher: 'OMA',
-              created_at: new Date(Date.now() - 240_000).toISOString(),
-              updated_at: new Date(Date.now() - 240_000).toISOString(),
-            },
-          ],
-          has_more: false,
-          next_page: null,
-        };
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
-
+    fixture();
+    const fetchApi = globalThis.fetch;
+    let finish: (response: Response) => void = () => {};
+    let calls = 0;
+    globalThis.fetch = ((input, init) =>
+      init?.method === 'DELETE'
+        ? (calls++,
+          new Promise<Response>((resolve) => {
+            finish = resolve;
+          }))
+        : fetchApi(input, init)) as typeof fetch;
     renderSkillsPage();
-
-    expect(await screen.findByRole('heading', { name: 'Skills' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Create skill/i })).toBeTruthy();
-    expect(await screen.findByRole('columnheader', { name: 'ID' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'Name' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'Source' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'Latest version' })).toBeTruthy();
-    expect(await screen.findByText('emoji-translator')).toBeTruthy();
-    expect(screen.getAllByText('xlsx').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Custom')).toBeTruthy();
-    expect(screen.getByText('System built-in')).toBeTruthy();
-    expect(screen.queryByText('System built-in / OMA')).toBeNull();
-    expect(screen.getByText('Jul 8, 2026')).toBeTruthy();
-    expect(screen.getByText('Feb 3, 2026')).toBeTruthy();
-    expect(screen.getAllByRole('button', { name: 'Actions' })).toHaveLength(1);
-    expect(requests[0]?.url).toBe(`/v1/skills?beta=true&limit=${consoleResourceListLimit}`);
-    expect(requests[0]?.headers.get('anthropic-beta')).toBe('skills-2025-10-02');
-    expect(requests[0]?.headers.get('x-workspace-id')).toBe('default');
-
-    const copyButton = screen.getByRole('button', { name: 'Copy skill_emoji' });
-    fireEvent.mouseEnter(copyButton);
-    expect(screen.queryByText('Copy')).toBeNull();
-    fireEvent.click(copyButton);
-
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith('skill_emoji'));
-    expect(new URL(window.location.href).searchParams.get('skill')).toBeNull();
-
-    fireEvent.click(screen.getByText('emoji-translator'));
-
-    expect(
-      await screen.findByText('This skill should be used when the user asks to turn this into emojis.'),
-    ).toBeTruthy();
-    expect(new URL(window.location.href).searchParams.get('skill')).toBe('skill_emoji');
-    expect(
-      requests.find((request) => request.url === '/v1/skills/skill_emoji?beta=true')?.headers.get('x-workspace-id'),
-    ).toBe('default');
-    expect(
-      requests
-        .find((request) => request.url === '/v1/skills/skill_emoji/versions?beta=true&limit=50')
-        ?.headers.get('x-workspace-id'),
-    ).toBe('default');
-  });
-
-  test('refetches skills when the active workspace changes', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    const requests = mockSkillsApi((_url, headers) => {
-      const workspaceId = headers.get('x-workspace-id');
-      const skillId = workspaceId === 'wrkspc_alt' ? 'alt-skill' : 'default-skill';
-      return {
-        data: [
-          {
-            id: skillId,
-            type: 'skill',
-            display_title: skillId,
-            latest_version: '20260708',
-            source: 'custom',
-            created_at: new Date(Date.now() - 120_000).toISOString(),
-            updated_at: new Date(Date.now() - 120_000).toISOString(),
-          },
-        ],
-        has_more: false,
-        next_page: null,
-      };
-    });
-
-    const rendered = renderSkillsPage({ id: 'default', name: 'Default' });
-
-    expect((await screen.findAllByText('default-skill')).length).toBeGreaterThanOrEqual(1);
-
-    window.history.pushState(null, '', 'https://oma.duck.ai/workspaces/wrkspc_alt/skills');
-    rendered.rerenderWorkspace({ id: 'wrkspc_alt', name: 'Alt' });
-
-    expect((await screen.findAllByText('alt-skill')).length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText('default-skill')).toBeNull();
-    expect(requests.map((request) => request.headers.get('x-workspace-id'))).toContain('default');
-    expect(requests.map((request) => request.headers.get('x-workspace-id'))).toContain('wrkspc_alt');
-  });
-
-  test('uses the next_page cursor when moving to the next skills page', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    const requests = mockSkillsApi((url) => {
-      if (url.includes('page=cursor_two')) {
-        return {
-          data: [
-            {
-              id: 'product-self-knowledge',
-              type: 'skill',
-              display_title: 'product-self-knowledge',
-              latest_version: '20260622',
-              source: 'anthropic',
-              created_at: new Date(Date.now() - 240_000).toISOString(),
-              updated_at: new Date(Date.now() - 240_000).toISOString(),
-            },
-          ],
-          has_more: false,
-          next_page: null,
-        };
-      }
-      return {
-        data: [
-          {
-            id: 'frontend-design',
-            type: 'skill',
-            display_title: 'frontend-design',
-            latest_version: '20260203',
-            source: 'anthropic',
-            created_at: new Date(Date.now() - 120_000).toISOString(),
-            updated_at: new Date(Date.now() - 120_000).toISOString(),
-          },
-        ],
-        has_more: true,
-        next_page: 'cursor_two',
-      };
-    });
-
-    renderSkillsPage();
-
-    expect((await screen.findAllByText('frontend-design')).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByLabelText('Page 1')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-
-    expect((await screen.findAllByText('product-self-knowledge')).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByLabelText('Page 2')).toBeTruthy();
-    expect(
-      requests.some(
-        (request) => request.url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}&page=cursor_two`,
-      ),
-    ).toBe(true);
-    expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(false);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
-
-    expect((await screen.findAllByText('frontend-design')).length).toBeGreaterThanOrEqual(1);
-    await waitFor(() => expect(screen.queryAllByText('product-self-knowledge')).toHaveLength(0));
-    expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  test('disables skills next pagination without a next_page cursor', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    const requests = mockSkillsApi(() => ({
-      data: [
-        {
-          id: 'frontend-design',
-          type: 'skill',
-          display_title: 'frontend-design',
-          latest_version: '20260203',
-          source: 'anthropic',
-          created_at: new Date(Date.now() - 120_000).toISOString(),
-          updated_at: new Date(Date.now() - 120_000).toISOString(),
-        },
-      ],
-      has_more: true,
-      next_page: null,
-    }));
-
-    renderSkillsPage();
-
-    expect((await screen.findAllByText('frontend-design')).length).toBeGreaterThanOrEqual(1);
-    const next = screen.getByRole('button', { name: 'Next page' }) as HTMLButtonElement;
-    expect(next.disabled).toBe(true);
-    expect((screen.getByRole('button', { name: 'Previous page' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(next);
-    expect(requests).toHaveLength(1);
-  });
-
-  test('blocks dismissal during a skill upload and keeps the selection after failure', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    mockSkillsApi(() => ({ data: [], has_more: false, next_page: null }));
-    const mockedFetch = globalThis.fetch;
-    let uploadCalls = 0;
-    let finishRequest: (response: Response) => void = () => {};
-    globalThis.fetch = (input, init) =>
-      init?.method === 'POST'
-        ? new Promise<Response>((resolve) => {
-            uploadCalls++;
-            finishRequest = resolve;
-          })
-        : mockedFetch(input, init);
-    renderSkillsPage();
-    fireEvent.click(await screen.findByRole('button', { name: 'Create skill' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Create skill' });
-    const file = new File(['example archive bytes'], 'research.zip', { type: 'application/zip' });
-    fireEvent.change(dialog.querySelector('input[type="file"]')!, { target: { files: [file] } });
-    await within(dialog).findByText('research.zip');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create skill', exact: true }));
-    await waitFor(() =>
-      expect(within(dialog).getByRole('button', { name: 'Close' }).hasAttribute('disabled')).toBe(true),
-    );
-    expect(within(dialog).getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(true);
-    expect(within(dialog).getByRole('button', { name: 'Remove upload' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(await screen.findByRole('button', { name: 'More actions for Research notes' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete skill', exact: true }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete skill?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete', exact: true }));
+    await waitFor(() => expect(calls).toBe(1));
     fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
-    expect(screen.getByRole('dialog')).toBe(dialog);
-    finishRequest(Response.json({ error: { type: 'api_error', message: 'Example upload failed' } }, { status: 500 }));
-    await within(dialog).findByText('Example upload failed');
-    expect(within(dialog).getByText('research.zip')).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: 'Create skill', exact: true })).toHaveProperty('disabled', false);
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create skill', exact: true }));
-    await waitFor(() => expect(uploadCalls).toBe(2));
-    finishRequest(Response.json({ error: { type: 'api_error', message: 'Second upload failed' } }, { status: 500 }));
-    await within(dialog).findByText('Second upload failed');
+    expect(screen.getByRole('alertdialog')).toBe(dialog);
+    await act(async () => finish(Response.json({ error: { message: 'Delete failed' } }, { status: 503 })));
+    expect(await within(dialog).findByText('Delete failed')).toBeTruthy();
     expect(document.activeElement).toBe(within(dialog).getByRole('alert'));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    fireEvent.click(screen.getByRole('button', { name: 'Create skill' }));
-    expect(within(await screen.findByRole('dialog')).queryByText('research.zip')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(calls).toBe(1);
   });
-
-  test('keeps a selected update package through cancellation and clears it before reopening', async () => {
+  test('cards keep built-ins read-only and expose only update, icon and delete for custom skills', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    mockSkillsApi(() => ({
-      data: [
-        {
-          id: 'skill_cancel',
-          type: 'skill',
-          display_title: 'Research',
-          latest_version: '1',
-          source: 'custom',
-          created_at: '2026-10-25T00:00:00Z',
-          updated_at: '2026-10-25T00:00:00Z',
-        },
-      ],
-      has_more: false,
-    }));
+    fixture();
     renderSkillsPage();
-    fireEvent.click(await screen.findByRole('button', { name: 'Actions', exact: true }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Update', exact: true }));
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.change(dialog.querySelector('input[type="file"]')!, {
-      target: { files: [new File(['zip bytes'], 'research.zip', { type: 'application/zip' })] },
-    });
-    await within(dialog).findByText('research.zip');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel', exact: true }));
-    expect(dialog.hasAttribute('data-closed')).toBe(true);
-    expect(dialog.textContent).toContain('research.zip');
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    fireEvent.click(screen.getByRole('button', { name: 'Actions', exact: true }));
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Update', exact: true }));
-    expect(within(await screen.findByRole('dialog')).queryByText('research.zip')).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Word documents', exact: true })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'More actions for Word documents' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Research notes' }));
+    expect(await screen.findByRole('menuitem', { name: 'Update skill', exact: true })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Change icon' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Delete skill', exact: true })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: /Copy|Version/ })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
-
-  test('retries a failed version directory without showing a false empty description', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/skills/skill_versions');
-    let attempts = 0;
-    const skill = {
-      id: 'skill_versions',
-      type: 'skill',
-      display_title: 'Research',
-      latest_version: '1',
-      source: 'custom',
-      created_at: '2026-10-25T00:00:00Z',
-      updated_at: '2026-10-25T00:00:00Z',
-    };
-    const requests = mockSkillsApi((url) => {
-      if (url.includes('/versions?')) {
-        attempts++;
-        return attempts === 1
-          ? Response.json({ error: { message: 'Version directory unavailable' } }, { status: 503 })
-          : {
-              data: [
-                {
-                  id: 'version_1',
-                  type: 'skill_version',
-                  skill_id: skill.id,
-                  version: '1',
-                  name: 'Research',
-                  directory: 'research',
-                  description: 'Recovered version description',
-                  created_at: skill.created_at,
-                },
-              ],
-              has_more: false,
-            };
-      }
-      return url.includes('/skill_versions?') ? skill : { data: [skill], has_more: false };
-    });
-    renderSkillDetailPage(skill.id);
-    await screen.findByText('Version directory unavailable');
-    expect(screen.queryByText('No description provided.')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Close', exact: true })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry', exact: true }));
-    await screen.findByText('Recovered version description');
-    expect(attempts).toBe(2);
-    expect(requests.every((request) => request.method === 'GET')).toBe(true);
-  });
-
-  test('creates a skill from a single archive upload', async () => {
+  test('search and source filters reach the scoped catalog API and reset pagination', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    const requests = mockSkillsApi((url) => {
-      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
-        return { data: [], has_more: false, next_page: null };
-      }
-      if (url === '/v1/skills?beta=true') {
-        return {
-          id: 'skill_created',
-          display_title: 'emoji-translator',
-          latest_version: '20260708',
-          source: 'custom',
-          created_at: new Date(Date.now() - 10_000).toISOString(),
-          updated_at: new Date(Date.now() - 10_000).toISOString(),
-        };
-      }
-      if (url === '/v1/skills/skill_created?beta=true') {
-        return {
-          id: 'skill_created',
-          type: 'skill',
-          display_title: 'emoji-translator',
-          latest_version: '20260708',
-          source: 'custom',
-          created_at: new Date(Date.now() - 120_000).toISOString(),
-        };
-      }
-      if (url === '/v1/skills/skill_created/versions?beta=true&limit=50') {
-        return {
-          data: [
-            {
-              id: 'skillver_created',
-              type: 'skill_version',
-              description: 'created description',
-              directory: 'emoji-translator',
-              name: 'emoji-translator',
-              skill_id: 'skill_created',
-              version: '20260708',
-              created_at: new Date(Date.now() - 10_000).toISOString(),
-            },
-          ],
-          has_more: false,
-          next_page: null,
-        };
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
-
+    const requests = fixture();
     renderSkillsPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Create skill' }));
-    expect(await screen.findByText('Drag and drop a .zip, .skill file, or directory to upload')).toBeTruthy();
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(['zip bytes'], 'emoji-translator.zip', { type: 'application/zip' });
-
-    fireEvent.change(input, { target: { files: [file] } });
-    expect(await screen.findByText('emoji-translator.zip')).toBeTruthy();
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create skill' }));
-
-    await waitFor(() =>
-      expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(
-        true,
-      ),
-    );
-    const post = requests.find((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true');
-    expect(post?.headers.get('x-workspace-id')).toBe('default');
-    const body = post?.body as FormData;
-    expect(body.get('display_title')).toBe('emoji-translator');
-    expect((body.get('files[]') as File).name).toBe('emoji-translator.zip');
-    await waitFor(() => expect(screen.queryByText('emoji-translator.zip')).toBeNull());
-    expect(new URL(window.location.href).searchParams.get('skill')).toBe('skill_created');
-  });
-
-  test('surfaces duplicate create errors without posting a new version', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    const requests = mockSkillsApi((url) => {
-      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
-        return {
-          data: [
-            {
-              id: 'skill_emoji',
-              type: 'skill',
-              display_title: 'emoji-translator',
-              latest_version: '20260708',
-              source: 'custom',
-              created_at: new Date(Date.now() - 120_000).toISOString(),
-              updated_at: new Date(Date.now() - 120_000).toISOString(),
-            },
-          ],
-          has_more: false,
-          next_page: null,
-        };
-      }
-      if (url === '/v1/skills?beta=true') {
-        return new Response(
-          JSON.stringify({
-            error: {
-              message:
-                'A custom skill named "emoji-translator" already exists. Use Update from that skill\'s actions menu to upload a new version.',
-              type: 'invalid_request_error',
-            },
-            type: 'error',
-          }),
-          {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' },
-          },
-        );
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
-
-    renderSkillsPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Create skill' }));
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(['zip bytes'], 'emoji-translator.zip', { type: 'application/zip' });
-
-    fireEvent.change(input, { target: { files: [file] } });
-    expect(await screen.findByText('emoji-translator.zip')).toBeTruthy();
-    expect(screen.queryByText(/already exists/)).toBeNull();
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create skill' }));
-
-    await waitFor(() =>
-      expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(
-        true,
-      ),
-    );
-    expect(
-      requests.some(
-        (request) => request.method === 'POST' && request.url === '/v1/skills/skill_emoji/versions?beta=true',
-      ),
-    ).toBe(false);
-    const post = requests.find((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true');
-    const body = post?.body as FormData;
-    expect(body.get('display_title')).toBe('emoji-translator');
-    expect((body.get('files[]') as File).name).toBe('emoji-translator.zip');
-    expect(await screen.findByText(/A custom skill named "emoji-translator" already exists/)).toBeTruthy();
-    expect(screen.getByText('emoji-translator.zip')).toBeTruthy();
-    expect(new URL(window.location.href).searchParams.get('skill')).toBeNull();
-  });
-
-  test('blocks empty skill archive uploads before posting', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    const requests = mockSkillsApi((url) => {
-      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
-        return {
-          data: [],
-          has_more: false,
-          next_page: null,
-        };
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
-
-    renderSkillsPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Create skill' }));
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File([], 'emoji-translator.zip', { type: 'application/zip' });
-
-    fireEvent.change(input, { target: { files: [file] } });
-
-    expect(await screen.findByText('Skill package files cannot be empty.')).toBeTruthy();
-    expect(
-      (within(screen.getByRole('dialog')).getByRole('button', { name: 'Create skill' }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-    expect(requests.some((request) => request.method === 'POST' && request.url === '/v1/skills?beta=true')).toBe(false);
-  });
-
-  test('updates a custom skill from the action menu', async () => {
-    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    const requests = mockSkillsApi((url) => {
-      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
-        return {
-          data: [
-            {
-              id: 'skill_emoji',
-              type: 'skill',
-              display_title: 'emoji-translator',
-              latest_version: '20260708',
-              source: 'custom',
-              created_at: new Date(Date.now() - 120_000).toISOString(),
-              updated_at: new Date(Date.now() - 120_000).toISOString(),
-            },
-          ],
-          has_more: false,
-          next_page: null,
-        };
-      }
-      if (url === '/v1/skills/skill_emoji/versions?beta=true') {
-        return {
-          id: 'skillver_emoji_2',
-          type: 'skill_version',
-          description: 'updated',
-          directory: 'emoji-translator',
-          name: 'emoji-translator',
-          skill_id: 'skill_emoji',
-          version: '20260709',
-          created_at: new Date(Date.now() - 10_000).toISOString(),
-        };
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
-
-    renderSkillsPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Actions' }));
-    fireEvent.click(await screen.findByText('Update'));
-    expect(await screen.findByText('Update Skill')).toBeTruthy();
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(['zip bytes'], 'emoji-translator.zip', { type: 'application/zip' });
-    fireEvent.change(input, { target: { files: [file] } });
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Update' }));
-
+    fireEvent.click(await screen.findByRole('tab', { name: 'Custom 1' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search skills' }), { target: { value: 'report' } });
     await waitFor(() =>
       expect(
         requests.some(
-          (request) => request.method === 'POST' && request.url === '/v1/skills/skill_emoji/versions?beta=true',
+          (request) =>
+            request.url.includes('source=custom') &&
+            request.url.includes('query=report') &&
+            request.url.includes('offset=0'),
         ),
       ).toBe(true),
     );
-    await waitFor(() => expect(screen.queryByText('Update Skill')).toBeNull());
-    expect(screen.queryByText('emoji-translator.zip')).toBeNull();
   });
-
-  test('deletes a custom skill atomically from the skill endpoint', async () => {
+  test('clicking a card opens details and preserves read-only version information', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
-    const requests = mockSkillsApi((url) => {
-      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
-        return {
-          data: [
-            {
-              id: 'skill_emoji',
-              type: 'skill',
-              display_title: 'emoji-translator',
-              latest_version: '20260708',
-              source: 'custom',
-              created_at: new Date(Date.now() - 120_000).toISOString(),
-              updated_at: new Date(Date.now() - 120_000).toISOString(),
-            },
-          ],
-          has_more: false,
-          next_page: null,
-        };
-      }
-      if (url === '/v1/skills/skill_emoji?beta=true') {
-        return { id: 'skill_emoji', type: 'skill_deleted' };
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
-
+    fixture();
     renderSkillsPage();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Actions' }));
-    fireEvent.click(await screen.findByText('Delete'));
-    expect(await screen.findByRole('alertdialog', { name: 'Delete skill?' })).toBeTruthy();
-    const deleteButtons = screen.getAllByRole('button', { name: 'Delete' });
-    fireEvent.click(deleteButtons[deleteButtons.length - 1]);
-
-    await waitFor(() =>
-      expect(
-        requests.some((request) => request.method === 'DELETE' && request.url === '/v1/skills/skill_emoji?beta=true'),
-      ).toBe(true),
-    );
-    const deleteOrder = requests.map((request) => (request.method === 'DELETE' ? request.url : '')).filter(Boolean);
-    expect(deleteOrder).toEqual(['/v1/skills/skill_emoji?beta=true']);
+    fireEvent.click(await screen.findByRole('button', { name: 'Research notes', exact: true }));
+    expect(await screen.findByRole('heading', { name: 'Research notes' })).toBeTruthy();
+    expect(new URL(window.location.href).searchParams.get('skill')).toBe(custom.id);
+    expect(await screen.findByText('Latest')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Delete version/ })).toBeNull();
+  });
+  test('updating uses the same two-step import and writes to the existing skill', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    const requests = fixture();
+    const fetchApi = globalThis.fetch;
+    globalThis.fetch = ((input, init) =>
+      String(input).endsWith('/inspect')
+        ? Promise.resolve(Response.json({ name: 'research' }))
+        : init?.method === 'POST'
+          ? Promise.resolve(Response.json({ id: 'version2', skill_id: custom.id }))
+          : fetchApi(input, init)) as typeof fetch;
+    renderSkillsPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'More actions for Research notes' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Update skill', exact: true }));
+    fireEvent.change(screen.getByLabelText('Choose skill package'), {
+      target: { files: [new File(['zip'], 'research.zip')] },
+    });
+    expect(await screen.findByText('Checked')).toBeTruthy();
+    expect(screen.queryByLabelText(/Version/)).toBeNull();
+    expect(screen.getByLabelText('Skill name for research.zip')).toHaveProperty('disabled', true);
+    fireEvent.click(screen.getByRole('button', { name: 'Update', exact: true }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Update skill' })).toBeNull());
+    expect(requests.some((request) => request.url.includes('/skills?'))).toBe(true);
   });
 });
 
@@ -1400,7 +829,7 @@ describe('Skill detail page', () => {
   test('renders the selected skill in the query-param drawer', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills/frontend-design');
     const requests = mockSkillsApi((url) => {
-      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
+      if (url.startsWith('/api/console/') && url.includes('/skills?')) {
         return {
           data: [
             {
@@ -1413,8 +842,8 @@ describe('Skill detail page', () => {
               updated_at: new Date(Date.now() - 120_000).toISOString(),
             },
           ],
-          has_more: false,
-          next_page: null,
+          total_count: 1,
+          counts: { all: 1, builtin: 1, custom: 0 },
         };
       }
       if (url === '/v1/skills/frontend-design?beta=true') {
@@ -1452,8 +881,8 @@ describe('Skill detail page', () => {
               created_at: new Date(Date.now() - 120_000).toISOString(),
             },
           ],
-          has_more: false,
-          next_page: null,
+          total_count: 1,
+          counts: { all: 1, builtin: 1, custom: 0 },
         };
       }
       throw new Error(`Unexpected request: ${url}`);
@@ -1462,6 +891,8 @@ describe('Skill detail page', () => {
     renderSkillDetailPage('frontend-design');
 
     expect(await screen.findByText('v2 description')).toBeTruthy();
+    expect(await screen.findByText(/^# Skill instructions/)).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Files' }).textContent).toContain('guide.md');
     expect(screen.getByText('Latest')).toBeTruthy();
     expect(new URL(window.location.href).searchParams.get('skill')).toBe('frontend-design');
     expect(
@@ -1477,65 +908,74 @@ describe('Skill detail page', () => {
   test('renders the standardized skill detail error alert and retries successfully', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills/frontend-design');
     let attempt = 0;
-    const requests = mockSkillsApi((url) => {
-      if (url === `/v1/skills?beta=true&limit=${consoleResourceListLimit}`) {
-        return {
-          data: [
-            {
-              id: 'frontend-design',
-              type: 'skill',
-              display_title: 'frontend-design',
-              latest_version: '2',
-              source: 'anthropic',
-              created_at: new Date(Date.now() - 360_000).toISOString(),
-              updated_at: new Date(Date.now() - 120_000).toISOString(),
-            },
-          ],
-          has_more: false,
-          next_page: null,
-        };
-      }
-      if (url === '/v1/skills/frontend-design?beta=true') {
-        attempt += 1;
-        if (attempt === 1) {
-          return new Response(
-            JSON.stringify({ error: { type: 'api_error', message: 'Skill metadata is unavailable.' } }),
-            {
-              status: 503,
-              headers: { 'Content-Type': 'application/json' },
-            },
-          );
+    let contentAttempt = 0;
+    const requests = mockSkillsApi(
+      (url) => {
+        if (url.startsWith('/api/console/') && url.includes('/skills?')) {
+          return {
+            data: [
+              {
+                id: 'frontend-design',
+                type: 'skill',
+                display_title: 'frontend-design',
+                latest_version: '2',
+                source: 'anthropic',
+                created_at: new Date(Date.now() - 360_000).toISOString(),
+                updated_at: new Date(Date.now() - 120_000).toISOString(),
+              },
+            ],
+            total_count: 1,
+            counts: { all: 1, builtin: 1, custom: 0 },
+          };
         }
-        return {
-          id: 'frontend-design',
-          type: 'skill',
-          display_title: 'frontend-design',
-          latest_version: '2',
-          source: 'anthropic',
-          created_at: new Date(Date.now() - 360_000).toISOString(),
-          updated_at: new Date(Date.now() - 120_000).toISOString(),
-        };
-      }
-      if (url === '/v1/skills/frontend-design/versions?beta=true&limit=50') {
-        return {
-          data: [
-            {
-              id: 'skillver_frontend-design-2',
-              type: 'skill_version',
-              description: 'Recovered description',
-              directory: 'frontend-design',
-              name: 'frontend-design v2',
-              skill_id: 'frontend-design',
-              version: '2',
-              created_at: new Date(Date.now() - 120_000).toISOString(),
-            },
-          ],
-          has_more: false,
-          next_page: null,
-        };
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
+        if (url === '/v1/skills/frontend-design?beta=true') {
+          attempt += 1;
+          if (attempt === 1) {
+            return new Response(
+              JSON.stringify({ error: { type: 'api_error', message: 'Skill metadata is unavailable.' } }),
+              {
+                status: 503,
+                headers: { 'Content-Type': 'application/json' },
+              },
+            );
+          }
+          return {
+            id: 'frontend-design',
+            type: 'skill',
+            display_title: 'frontend-design',
+            latest_version: '2',
+            source: 'anthropic',
+            created_at: new Date(Date.now() - 360_000).toISOString(),
+            updated_at: new Date(Date.now() - 120_000).toISOString(),
+          };
+        }
+        if (url === '/v1/skills/frontend-design/versions?beta=true&limit=50') {
+          return {
+            data: [
+              {
+                id: 'skillver_frontend-design-2',
+                type: 'skill_version',
+                description: 'Recovered description',
+                directory: 'frontend-design',
+                name: 'frontend-design v2',
+                skill_id: 'frontend-design',
+                version: '2',
+                created_at: new Date(Date.now() - 120_000).toISOString(),
+              },
+            ],
+            total_count: 1,
+            counts: { all: 1, builtin: 1, custom: 0 },
+          };
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      },
+      () => {
+        contentAttempt += 1;
+        return contentAttempt === 1
+          ? Response.json({ error: { message: 'Content is unavailable.' } }, { status: 503 })
+          : Response.json({ files: ['demo/SKILL.md'], skill_md: '# Recovered instructions' });
+      },
+    );
 
     renderSkillDetailPage('frontend-design');
 
@@ -1547,6 +987,11 @@ describe('Skill detail page', () => {
 
     expect(await screen.findByText('Recovered description')).toBeTruthy();
     expect(screen.queryByText('Skill metadata is unavailable.')).toBeNull();
+    expect(await screen.findByText('Skill contents could not be loaded.')).toBeTruthy();
+    expect(screen.getByText('Content is unavailable.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('# Recovered instructions')).toBeTruthy();
+    expect(contentAttempt).toBe(2);
     expect(requests.filter((request) => request.url === '/v1/skills/frontend-design?beta=true')).toHaveLength(2);
   });
 });
@@ -1857,10 +1302,20 @@ function renderBatchesPage(workspace?: Partial<Workspace>, locale?: Locale) {
 }
 
 function renderSkillsPage(workspace?: Partial<Workspace>, locale?: Locale) {
+  setConsoleRequestContext({
+    organizationUuid: 'org_test_uuid',
+    workspaceId: workspace?.id || 'default',
+    csrfToken: 'csrf_test',
+  });
   return renderDashboardPage(<SkillsPage />, workspace, locale);
 }
 
 function renderSkillDetailPage(skillId: string, workspace?: Partial<Workspace>, locale?: Locale) {
+  setConsoleRequestContext({
+    organizationUuid: 'org_test_uuid',
+    workspaceId: workspace?.id || 'default',
+    csrfToken: 'csrf_test',
+  });
   return renderDashboardPage(<SkillDetailPage skillId={skillId} />, workspace, locale);
 }
 
@@ -2028,13 +1483,20 @@ function mockFilesList(handler: (url: string, headers: Headers, method: string, 
   return requests;
 }
 
-function mockSkillsApi(handler: (url: string, headers: Headers) => unknown) {
+function mockSkillsApi(handler: (url: string, headers: Headers) => unknown, preview?: () => Response) {
   const requests: Array<{ url: string; method: string; headers: Headers; body?: BodyInit | null }> = [];
   globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
     const headers = new Headers(init?.headers);
     requests.push({ url, method, headers, body: init?.body });
+    if (url.startsWith('/api/console/') && url.endsWith('/preview')) {
+      if (preview) return preview();
+      return Response.json({
+        files: ['demo/SKILL.md', 'demo/references/guide.md'],
+        skill_md: '# Skill instructions\n\nUse the skill.',
+      });
+    }
     const result = handler(url, headers);
     if (result instanceof Response) {
       return result;

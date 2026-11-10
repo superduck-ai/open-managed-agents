@@ -8,6 +8,7 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper SystemSkillMapper -sql ./system_skill_mapper.xml -out ./system_skill_mapper.sqlmap.gen.go -dialect postgres
 
 type SystemSkill struct {
+	IconKey       string    `db:"icon_key"`
 	UUID          string    `db:"uuid"`
 	ExternalID    string    `db:"external_id"`
 	DisplayTitle  string    `db:"display_title"`

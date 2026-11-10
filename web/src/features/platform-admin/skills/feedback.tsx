@@ -11,11 +11,7 @@ export function systemSkillErrorMessage(error: unknown) {
 
 export function SystemSkillStatus({ skill }: { skill: SystemSkill }) {
   const { msg } = useI18n();
-  const label = !skill.default_version
-    ? msg('systemSkills.draft', 'Draft')
-    : skill.listed
-      ? msg('systemSkills.listed', 'Listed')
-      : msg('systemSkills.unlisted', 'Unlisted');
+  const label = skill.listed ? msg('systemSkills.listed', 'Listed') : msg('systemSkills.unlisted', 'Unlisted');
   return (
     <Badge variant="secondary" className="rounded-md text-muted-foreground">
       {label}

@@ -8,6 +8,7 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper BuiltinSkillMapper -sql ./builtin_skill_mapper.xml -out ./builtin_skill_mapper.sqlmap.gen.go -dialect postgres
 
 type builtinSkillRow struct {
+	IconKey       string     `db:"icon_key"`
 	ID            int64      `db:"id"`
 	UUID          string     `db:"uuid"`
 	ExternalID    string     `db:"external_id"`

@@ -1,4 +1,5 @@
 export type SystemSkill = {
+  icon_key?: string;
   id: string;
   display_title: string;
   default_version: string | null;

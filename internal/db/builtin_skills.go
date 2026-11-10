@@ -11,6 +11,7 @@ import (
 )
 
 type BuiltinSkill struct {
+	IconKey       string
 	ID            int64
 	UUID          string
 	ExternalID    string
@@ -214,6 +215,7 @@ func (r builtinSkillRow) skill() BuiltinSkill {
 		ExternalID:    r.ExternalID,
 		DisplayTitle:  r.DisplayTitle,
 		LatestVersion: r.LatestVersion,
+		IconKey:       r.IconKey,
 		CreatedAt:     r.CreatedAt,
 		UpdatedAt:     r.UpdatedAt,
 		DeletedAt:     r.DeletedAt,

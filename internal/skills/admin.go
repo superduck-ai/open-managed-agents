@@ -25,6 +25,7 @@ import (
 type systemSkillResponse struct {
 	ID             string    `json:"id"`
 	DisplayTitle   string    `json:"display_title"`
+	IconKey        string    `json:"icon_key"`
 	DefaultVersion *string   `json:"default_version"`
 	Listed         bool      `json:"listed"`
 	Revision       int64     `json:"revision"`
@@ -79,6 +80,7 @@ func (h *Handler) AdminRoutes() http.Handler {
 	r.Post("/inspect", h.systemWrap(h.inspectSystemPackage))
 	r.Post("/", h.systemWrap(h.importSystemPackage))
 	r.Get("/{skill_id}", h.systemWrap(h.getSystemSkill))
+	r.Patch("/{skill_id}/icon", h.systemWrap(h.changeSystemIcon))
 	r.Post("/{skill_id}/actions", h.systemWrap(h.changeSystemSkill))
 	r.Get("/{skill_id}/versions", h.systemWrap(h.systemVersions))
 	r.Get("/{skill_id}/events", h.systemWrap(h.systemEvents))
@@ -113,7 +115,7 @@ func (h *Handler) systemWrap(next httpapi.Endpoint) http.HandlerFunc {
 }
 
 func systemSkillDTO(s db.SystemSkill) systemSkillResponse {
-	return systemSkillResponse{ID: s.ExternalID, DisplayTitle: s.DisplayTitle, DefaultVersion: s.LatestVersion, Listed: s.Listed, Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
+	return systemSkillResponse{ID: s.ExternalID, DisplayTitle: s.DisplayTitle, IconKey: s.IconKey, DefaultVersion: s.LatestVersion, Listed: s.Listed, Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
 }
 
 func systemPaging(r *http.Request) (int, int, error) {
@@ -292,28 +294,33 @@ func (h *Handler) systemContent(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if version.S3Bucket != h.store.Name() {
-		return systemInvalid("技能存储配置不匹配")
-	}
-	object, err := h.store.Open(r.Context(), version.S3Key, nil)
-	if err != nil {
-		return err
-	}
-	defer object.Body.Close()
-	archive, err := readWithinBudget(object.Body, MaxSkillPackageBytes)
-	if err != nil {
-		return err
-	}
-	sum := sha256.Sum256(archive)
-	if hex.EncodeToString(sum[:]) != version.SHA256 {
-		return systemInvalid("技能包完整性检查失败")
-	}
-	result, err := systemPackageDTO(skillPackage{Zip: archive, Name: version.Name, Description: version.Description, Directory: version.Directory, Size: version.SizeBytes, SHA256: version.SHA256})
+	result, err := h.packagePreview(r.Context(), version.S3Bucket, version.S3Key, skillPackage{Name: version.Name, Description: version.Description, Directory: version.Directory, Size: version.SizeBytes, SHA256: version.SHA256}, MaxSkillPackageBytes)
 	if err != nil {
 		return err
 	}
 	httpapi.WriteJSON(w, 200, result)
 	return nil
+}
+
+func (h *Handler) packagePreview(ctx context.Context, bucket, key string, pkg skillPackage, limit int64) (systemPackageResponse, error) {
+	if bucket != h.store.Name() {
+		return systemPackageResponse{}, systemInvalid("技能存储配置不匹配")
+	}
+	object, err := h.store.Open(ctx, key, nil)
+	if err != nil {
+		return systemPackageResponse{}, err
+	}
+	defer object.Body.Close()
+	archive, err := readWithinBudget(object.Body, limit)
+	if err != nil {
+		return systemPackageResponse{}, err
+	}
+	sum := sha256.Sum256(archive)
+	if hex.EncodeToString(sum[:]) != pkg.SHA256 {
+		return systemPackageResponse{}, systemInvalid("技能包完整性检查失败")
+	}
+	pkg.Zip = archive
+	return systemPackageDTO(pkg)
 }
 
 func (h *Handler) importSystemPackage(w http.ResponseWriter, r *http.Request) error {
@@ -376,6 +383,10 @@ func (h *Handler) cleanupSystemUpload(ctx context.Context, key string) {
 
 func systemImportInput(r *http.Request, pkg skillPackage) (db.SystemSkillImport, error) {
 	version := strings.TrimSpace(r.FormValue("version"))
+	automatic := version == ""
+	if automatic {
+		version = "auto-" + uuid.New().String()
+	}
 	if !validSystemVersion(version, false) {
 		return db.SystemSkillImport{}, systemInvalid("请填写有效版本标识（最多 64 个字母、数字、点、下划线或横线）")
 	}
@@ -403,11 +414,15 @@ func systemImportInput(r *http.Request, pkg skillPackage) (db.SystemSkillImport,
 		return db.SystemSkillImport{}, systemInvalid("技能说明字段过长")
 	}
 	publish := r.FormValue("publish")
-	if publish != "true" && publish != "false" {
+	if !automatic && publish != "true" && publish != "false" {
 		return db.SystemSkillImport{}, systemInvalid("请选择发布或保存草稿")
 	}
+	iconKey, err := skillIconKey(r.FormValue("icon_key"))
+	if err != nil {
+		return db.SystemSkillImport{}, err
+	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return db.SystemSkillImport{ActorUUID: principal.UserUUID, ExpectedRevision: revision, Publish: publish == "true", Skill: db.SystemSkill{UUID: uuid.NewV4().String(), ExternalID: skillID, DisplayTitle: title}, Version: db.SystemSkillVersion{UUID: uuid.NewV4().String(), Version: version, Name: pkg.Name, Description: pkg.Description, Directory: pkg.Directory, SizeBytes: pkg.Size, SHA256: pkg.SHA256, CreatedAt: time.Now().UTC()}}, nil
+	return db.SystemSkillImport{ActorUUID: principal.UserUUID, ExpectedRevision: revision, Publish: publish == "true", Ready: automatic, Skill: db.SystemSkill{UUID: uuid.NewV4().String(), ExternalID: skillID, DisplayTitle: title, IconKey: iconKey}, Version: db.SystemSkillVersion{UUID: uuid.NewV4().String(), Version: version, Name: pkg.Name, Description: pkg.Description, Directory: pkg.Directory, SizeBytes: pkg.Size, SHA256: pkg.SHA256, CreatedAt: time.Now().UTC()}}, nil
 }
 
 func validSystemVersion(value string, allowEmpty bool) bool {
@@ -439,4 +454,30 @@ func (h *Handler) withSystemSkillWrite(ctx context.Context, actor string, write 
 		}
 		return write(tx)
 	})
+}
+
+func (h *Handler) changeSystemIcon(w http.ResponseWriter, r *http.Request) error {
+	var input struct {
+		IconKey  string `json:"icon_key"`
+		Revision int64  `json:"revision"`
+	}
+	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, 1024), &input); err != nil {
+		return systemInvalid("图标参数无效")
+	}
+	key, err := skillIconKey(input.IconKey)
+	if err != nil {
+		return err
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	var skill db.SystemSkill
+	err = h.withSystemSkillWrite(r.Context(), principal.UserUUID, func(tx *db.PlatformAdminTx) error {
+		var err error
+		skill, err = tx.ChangeSystemSkill(r.Context(), db.SystemSkillChange{ActorUUID: principal.UserUUID, SkillID: chi.URLParam(r, "skill_id"), Revision: input.Revision, Action: "set_icon", IconKey: key})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, 200, systemSkillDTO(skill))
+	return nil
 }

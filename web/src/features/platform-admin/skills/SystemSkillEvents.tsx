@@ -20,7 +20,9 @@ export function SystemSkillEvents({ skillID }: { skillID: string }) {
   if (query.isPending) return <p role="status">{msg('common.loading', 'Loading...')}</p>;
   if (query.isError) return <SystemSkillError error={query.error} retry={() => void query.refetch()} />;
   const actions: Record<string, string> = {
-    import_draft: msg('systemSkills.importDraft', 'Import draft'),
+    import: msg('systemSkills.import', 'Import skills'),
+    set_icon: msg('skills.icons.change', 'Change icon'),
+    import_draft: msg('systemSkills.import', 'Import skills'),
     publish: msg('systemSkills.publish', 'Publish version'),
     set_default: msg('systemSkills.setDefault', 'Set as default'),
     list: msg('systemSkills.relist', 'Relist skill'),

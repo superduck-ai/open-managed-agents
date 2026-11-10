@@ -109,6 +109,12 @@ func systemInvalid(message string) error {
 }
 
 func systemSkillError(err error) *systemSkillPublicError {
+	if app, ok := errors.AsType[*apperr.Error](err); ok {
+		statuses := map[apperr.Kind]int{apperr.InvalidArgument: 400, apperr.Unauthenticated: 401, apperr.PermissionDenied: 403, apperr.NotFound: 404, apperr.Conflict: 409, apperr.RequestTooLarge: 413}
+		if status, found := statuses[app.Kind]; found {
+			return &systemSkillPublicError{Status: status, Code: "skill_request_failed", Message: app.PublicMessage}
+		}
+	}
 	if public, ok := errors.AsType[*systemSkillPublicError](err); ok {
 		return public
 	}
@@ -135,4 +141,12 @@ func systemSkillError(err error) *systemSkillPublicError {
 
 func systemSkillPreviewTooLarge() error {
 	return &systemSkillPublicError{Status: 413, Code: "preview_too_large", Message: "SKILL.md 超过 256 KiB 预览限制"}
+}
+
+func invalidSkillIcon() error {
+	return apperr.New(apperr.InvalidArgument, "请选择有效的技能图标", nil)
+}
+
+func consoleSkillDenied() error {
+	return apperr.New(apperr.PermissionDenied, "Workspace access required", nil)
 }

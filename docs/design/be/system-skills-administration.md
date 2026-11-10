@@ -2,7 +2,7 @@
 
 ## 范围
 
-在已有平台超管后台增加 `/platform-admin/skills`，采用列表与详情侧栏的 A 方案。工作区自定义技能的管理入口保持原状。页面复用现有 Skill 页面的 ResourcePageHeader、表格交互、复制 ID、Sheet、Dialog、Tabs 和分页组件，不引入独立主题。
+`/platform-admin/skills` 采用与工作区一致的卡片和两步导入组件。系统技能列表只区分已上架与已下架；不提供草稿筛选、复制 ID 或版本管理快捷入口。详情保留既有版本、内容、默认版本切换与操作记录。图标存储在 builtin_skills.icon_key，复用同一字段向工作区展示；修改要求超管身份和 revision，并记录 set_icon 事件。
 
 HAR 仅作为列表、版本和详情的信息组织参考，不复制第三方页面、脚本或品牌。HAR 和交互原型保留在本地，不进入生产代码。
 
@@ -24,20 +24,23 @@ HAR 仅作为列表、版本和详情的信息组织参考，不复制第三方�
 | --- | --- |
 | GET /skills | 名称或 ID、状态筛选，limit 与 offset 分页 |
 | POST /skills/inspect | 校验单个 ZIP 或文件夹并返回元数据、内容预览和已存在技能，不写目录与对象 |
-| POST /skills | 导入单个版本，可保存草稿或立即发布 |
+| POST /skills | 导入单个版本；新界面省略 version 时自动生成并完成发布，新技能默认下架 |
 | GET /skills/{id} | 超管详情，包含默认版本、状态与 revision |
-| GET /skills/{id}/versions | 包含草稿的版本分页 |
+| GET /skills/{id}/versions | 版本分页 |
 | GET /skills/{id}/events | 操作记录分页 |
-| GET /skills/{id}/versions/{version}/content | 文件清单与 SKILL.md 文本，包含草稿 |
+| GET /skills/{id}/versions/{version}/content | 文件清单与 SKILL.md 文本 |
+| PATCH /skills/{id}/icon | 修改图标，要求当前 revision |
 | POST /skills/{id}/actions | publish、set_default、list、unlist |
 
 JSON 接口使用 Console 的 `error.code/message/request_id`，不依赖兼容 SDK 的错误结构。分页上限 100，偏移上限 100000；输入长度在服务端限制。
 
-导入与 inspect 使用 multipart `files[]`。每次请求一个独立 ZIP 或一个技能文件夹，ZIP 批量选择最多 20 包，按包请求并呈现结果。文件夹通过浏览器目录选择器获取文件，保留 webkitRelativePath 作为 multipart filename，复用已有原始文件解析和服务端规范化打包；文件夹根目录必须有 SKILL.md，总文件大小不超过 8 MiB。文件夹与 ZIP 均复用 inspect、不可变版本、发布与权限流程。服务端同时限制压缩包、解压内容、条目数量、安全路径和文件类型；拒绝路径穿越、符号链接与特殊文件。支持根目录或单层目录内的 SKILL.md，复用现有规范化与校验逻辑，重新压缩计算 SHA-256。SKILL.md 预览上限 256 KiB，超限不能导入此管理流程。
+导入与 inspect 使用 multipart `files[]`。每次请求一个独立 ZIP 或一个技能文件夹，ZIP/SKILL 批量选择最多 20 包，按包请求并呈现结果。文件夹通过浏览器目录选择器获取文件，保留 webkitRelativePath 作为 multipart filename，复用已有原始文件解析和服务端规范化打包；文件夹根目录必须有 SKILL.md，总文件大小不超过 8 MiB。文件夹与 ZIP 均复用 inspect、不可变版本、发布与权限流程。服务端同时限制压缩包、解压内容、条目数量、安全路径和文件类型；拒绝路径穿越、符号链接与特殊文件。支持根目录或单层目录内的 SKILL.md，复用现有规范化与校验逻辑，重新压缩计算 SHA-256。SKILL.md 预览上限 256 KiB，超限不能导入此管理流程。
 
-导入字段为 version、revision、publish、display_title，以及可选目标 skill_id。首次导入取包内名称为稳定标识；既有技能可用明确目标 ID 追加版本，包内名称必须匹配原名称，由导入事务统一校验；不匹配返回 400 `skill_name_mismatch`，inspect 只做包校验、预览与已有技能查找。新增版本不覆盖现有展示名。
+新界面提交 files[]、display_title、icon_key、revision，以及可选目标 skill_id。version 缺失时由后端生成 auto-UUID，事务内导入并发布版本；新技能设该版本为默认但保持下架，更新已有技能保留当前默认和上架状态。图标与本次导入在同一事务中写入，不在前端保存。首次导入使用包内名称作为稳定标识；更新包内名称必须与原名称一致，既有技能不重命名。检查与提交都复用技能包安全校验。
 
-新建技能检查通过后实际预填版本 1.0.0，追加版本不猜测版本号。版本缺失或格式错误时，点击下一步在版本字段就地显示错误并聚焦，不把占位提示当作有效值，不以无解释的禁用按钮阻塞。包错误仍需修复或移除后再继续。导入弹窗只保留字段、选择阶段的大小限制和确认阶段的可见范围，详细运行与版本规则留在设计文档及服务端错误中。
+两端共同的导入界面只含选择、检查与配置两步，无版本输入、发布勾选或第三次确认。底层继续保留不可变版本供引用与历史会话使用。已有显式 version、publish 的管理 API 请求继续使用旧合同，用于历史工具兼容；它们不再是新界面的导入流程。
+
+00117 新增技能 icon_key，默认 blocks，回填部分内置图标。迁移不改变历史版本的发布状态、默认指针或上架状态。历史未发布版本继续仅由旧 API 管理，不在新界面的版本列表中展示，也不向工作区开放。Down 仅删除图标列。
 
 版本标识允许 1–64 位 ASCII 字母、数字、点、下划线、横线，首位为字母或数字；保留 latest。兼容历史数字与 seed 版本，不强制 SemVer。相同 skill/version 且内容摘要一致为幂等无变化；不同内容返回 409，不能覆盖。管理员重复导入不会将历史草稿自动发布；独立 seed CLI 与草稿内容一致时明确发布版本后才提交默认指针，内容冲突回滚。被 seed --prune 软删除的名称导入返回 409 状态冲突，需通过 seed 恢复，不自动复活历史版本；界面明确提示该版本已存在、内容未改变。
 
@@ -49,17 +52,16 @@ JSON 接口使用 Console 的 `error.code/message/request_id`，不依赖兼容 
 
 ```mermaid
 flowchart LR
-  ZIP[校验 ZIP] --> Draft[保存不可变草稿]
-  Draft --> Published[发布版本]
-  Published --> Default[设为默认版本]
-  Published --> Listed[上架技能]
+  ZIP[校验技能包] --> Published[导入可用版本]
+  Published --> Default[新技能设默认并保持下架]
+  Default --> Listed[手动上架技能]
   Listed --> Unlisted[下架，保留历史引用]
   Unlisted --> Listed
 ```
 
-版本状态只有 draft 与 published。技能的 listed 与 default version 独立，列表中的草稿表示尚无默认已发布版本。
+新界面只有技能的 listed 状态，不引入草稿。历史 API 的 draft/published 兼容语义保留在底层；自动导入路径在同一事务内完成版本可用性，不暴露中间状态。
 
-所有变更串行锁定技能行，并比较用户确认时的 revision，发生变更后增加 revision。重复发布已发布版本在 revision 匹配时为幂等成功，不增加 revision、操作记录，也不改变默认版本或上架状态；过期 revision 仍返回 409。409 后前端刷新详情，但保留错误且禁用原确认；用户必须关闭弹窗重新确认。不能使用后台刷新的修订号静默重试原确认。导入时立即发布与后续发布共用同一规则，只有草稿实际转为已发布才记录发布；导入记录先于发布记录。首次发布自动设默认并上架；后续发布保留原默认。默认版本只能指向该技能的已发布版本。上架必须已有有效的已发布默认版本。
+所有变更串行锁定技能行，并比较用户确认时的 revision，发生变更后增加 revision。重复发布已发布版本在 revision 匹配时为幂等成功，不增加 revision、操作记录，也不改变默认版本或上架状态；过期 revision 仍返回 409。409 后前端刷新详情，但保留错误且禁用原确认；用户必须关闭弹窗重新确认。不能使用后台刷新的修订号静默重试原确认。导入时立即发布与后续发布共用同一规则，只有草稿实际转为已发布才记录发布；导入记录先于发布记录。新界面自动导入首次设默认但保持下架，后续导入保留原默认和上架状态。历史显式发布动作保留首次默认并上架的旧合同。默认版本只能指向该技能的已发布版本。上架必须已有有效的已发布默认版本。
 
 上传的版本内容不可修改。MVP 不提供物理删除、覆盖或强制撤销执行的入口。
 

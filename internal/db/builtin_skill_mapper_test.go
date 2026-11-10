@@ -216,7 +216,7 @@ func TestBuiltinSkillMapperResultSemantics(t *testing.T) {
 
 	t.Run("scan error", func(t *testing.T) {
 		values := builtinSkillMapperTestRow("builtin_test")
-		values[5] = "not-a-timestamp"
+		values[6] = "not-a-timestamp"
 		executor := newMapperTestExecutor(t, mapperTestResponse{
 			columns: builtinSkillMapperTestColumns(),
 			rows:    [][]driver.Value{values},
@@ -276,14 +276,14 @@ func TestBuiltinSkillMapperResultSemantics(t *testing.T) {
 
 func builtinSkillMapperTestColumns() []string {
 	return []string{
-		"id", "uuid", "external_id", "display_title", "latest_version", "created_at", "updated_at", "deleted_at",
+		"id", "uuid", "external_id", "display_title", "icon_key", "latest_version", "created_at", "updated_at", "deleted_at",
 	}
 }
 
 func builtinSkillMapperTestRow(externalID string) []driver.Value {
 	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	return []driver.Value{
-		int64(7), "00000000-0000-4000-8000-000000000001", externalID, "Test", "1.0.0", now, now, nil, "OMA", "", "",
+		int64(7), "00000000-0000-4000-8000-000000000001", externalID, "Test", "blocks", "1.0.0", now, now, nil, "OMA", "", "",
 	}
 }
 

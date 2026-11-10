@@ -420,6 +420,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 			CreatedByAPIKeyUUID: ids.APIKeyUUID,
 			CreatedAt:           now.Add(time.Second),
 		},
+		nil,
 	)
 	if err != nil || updatedSkill.LatestVersion == nil || *updatedSkill.LatestVersion != secondSkillVersion.Version {
 		t.Fatalf("create second Skill version = (%+v, %+v, %v)", updatedSkill, secondSkillVersion, err)

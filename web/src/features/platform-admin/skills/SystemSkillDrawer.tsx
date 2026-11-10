@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { SkillContent } from '@/features/skills/SkillContent';
 import { Upload } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
@@ -7,7 +8,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
-import { CopyIdCell } from '@/shared/ui/data-table-interactions';
+import { SkillIconPicker } from '@/features/skills/icons';
 import { usePlatformAdmin } from '../context';
 import { SystemSkillError, SystemSkillStatus, systemSkillErrorMessage } from './feedback';
 import { SystemSkillVersions } from './SystemSkillVersions';
@@ -69,7 +70,25 @@ export function SystemSkillDrawer({
       >
         <SheetContent showCloseButton={!pending} showOverlay={false} className="gap-0">
           <SheetHeader className="shrink-0 border-b-[0.5px] border-border px-4 py-4 pr-12">
-            <SheetTitle>{skill?.display_title || msg('skills.detail.title', 'Skill details')}</SheetTitle>
+            <div className="flex items-center gap-3">
+              {skill && (
+                <SkillIconPicker
+                  value={skill.icon_key || 'blocks'}
+                  name={skill.display_title}
+                  onChange={async (key) => {
+                    try {
+                      await client.request(`/skills/${encodeURIComponent(skill.id)}/icon`, {
+                        method: 'PATCH',
+                        body: { icon_key: key, revision: skill.revision },
+                      });
+                    } finally {
+                      await onChanged();
+                    }
+                  }}
+                />
+              )}
+              <SheetTitle>{skill?.display_title || msg('skills.detail.title', 'Skill details')}</SheetTitle>
+            </div>
             <SheetDescription className="text-xs">
               {msg('systemSkills.scope', 'System-wide, available to all workspaces')}
             </SheetDescription>
@@ -77,10 +96,7 @@ export function SystemSkillDrawer({
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Badge variant="secondary">{msg('systemSkills.builtin', 'System built-in')}</Badge>
                 <SystemSkillStatus skill={skill} />
-                <CopyIdCell
-                  value={skill.id}
-                  ariaLabel={msg('skills.copyAria', 'Copy {skillId}', { skillId: skill.id })}
-                />
+                <code className="break-all text-xs">{skill.id}</code>
               </div>
             )}
           </SheetHeader>
@@ -233,13 +249,7 @@ function SystemSkillContent({ skillID, version }: { skillID: string; version: st
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">{version}</p>
       <p className="text-sm">{query.data.description}</p>
-      <pre className="max-h-48 overflow-auto rounded-lg border-[0.5px] border-border p-3 text-xs">
-        {query.data.files.join('\n')}
-      </pre>
-      <h3 className="text-sm font-medium">SKILL.md</h3>
-      <pre className="overflow-auto rounded-lg bg-muted p-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words">
-        {query.data.skill_md}
-      </pre>
+      <SkillContent content={query.data} />
     </div>
   );
 }

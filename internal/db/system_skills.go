@@ -17,9 +17,11 @@ type SystemSkillImport struct {
 	Version          SystemSkillVersion
 	ExpectedRevision int64
 	Publish          bool
+	Ready            bool
 }
 
 type SystemSkillChange struct {
+	IconKey   string
 	ActorUUID string
 	SkillID   string
 	Revision  int64
@@ -94,13 +96,31 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 		return SystemSkill{}, false, err
 	}
 	published := false
+	if input.Ready {
+		changed, err := mapper.Publish(ctx, skill.UUID, version.Version)
+		if err != nil {
+			return SystemSkill{}, false, err
+		}
+		if changed != 1 {
+			return SystemSkill{}, false, ErrInvalidState
+		}
+		if skill.LatestVersion == nil {
+			skill.LatestVersion = new(version.Version)
+		}
+		published = true
+		skill.IconKey = input.Skill.IconKey
+	}
 	if input.Publish {
 		published, err = publishSystemSkill(ctx, mapper, &skill, version.Version)
 		if err != nil {
 			return SystemSkill{}, false, err
 		}
 	}
-	if err := saveSystemSkill(ctx, mapper, skill, input.ActorUUID, "import_draft", version.Version); err != nil {
+	action := "import_draft"
+	if input.Ready {
+		action = "import"
+	}
+	if err := saveSystemSkill(ctx, mapper, skill, input.ActorUUID, action, version.Version); err != nil {
 		return SystemSkill{}, false, err
 	}
 	if published {
@@ -168,6 +188,8 @@ func publishSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill *Sy
 
 func changeSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill *SystemSkill, input SystemSkillChange) (bool, error) {
 	switch input.Action {
+	case "set_icon":
+		skill.IconKey = input.IconKey
 	case "publish":
 		return publishSystemSkill(ctx, mapper, skill, input.Version)
 	case "set_default":

@@ -12,6 +12,7 @@ var ErrSkillHasVersions = errors.New("skill has versions")
 var ErrSkillLastVersion = errors.New("cannot delete the only skill version")
 
 type Skill struct {
+	IconKey             string
 	UUID                string
 	ExternalID          string
 	WorkspaceUUID       string
@@ -94,6 +95,7 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 			WorkspaceUUID:       skill.WorkspaceUUID,
 			CreatedByAPIKeyUUID: nullableString(skill.CreatedByAPIKeyUUID),
 			DisplayTitle:        skill.DisplayTitle,
+			IconKey:             skill.IconKey,
 			LatestVersion:       version.Version,
 			CreatedAt:           skill.CreatedAt,
 		})
@@ -109,7 +111,7 @@ func (d *DB) CreateSkillWithVersion(ctx context.Context, skill Skill, version Sk
 	return createdSkill, createdVersion, err
 }
 
-func (d *DB) CreateSkillVersion(ctx context.Context, workspaceUUID string, skillExternalID string, version SkillVersion) (Skill, SkillVersion, error) {
+func (d *DB) CreateSkillVersion(ctx context.Context, workspaceUUID string, skillExternalID string, version SkillVersion, iconKey *string) (Skill, SkillVersion, error) {
 	var updatedSkill Skill
 	var createdVersion SkillVersion
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
@@ -135,6 +137,7 @@ func (d *DB) CreateSkillVersion(ctx context.Context, workspaceUUID string, skill
 			WorkspaceUUID: workspaceUUID,
 			ExternalID:    skillExternalID,
 			LatestVersion: createdVersion.Version,
+			IconKey:       iconKey,
 			UpdatedAt:     createdVersion.CreatedAt,
 		})
 		updatedSkill, txErr = skillFromMapperRow(row, txErr)
@@ -335,6 +338,7 @@ func (r skillRow) skill() Skill {
 		DisplayTitle:        r.DisplayTitle,
 		LatestVersion:       r.LatestVersion,
 		Source:              r.Source,
+		IconKey:             r.IconKey,
 		CreatedAt:           r.CreatedAt,
 		UpdatedAt:           r.UpdatedAt,
 		DeletedAt:           r.DeletedAt,

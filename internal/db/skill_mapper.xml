@@ -10,6 +10,7 @@
         workspace_uuid,
         created_by_api_key_uuid,
         display_title,
+        icon_key,
         latest_version,
         source,
         created_at,
@@ -33,6 +34,7 @@
             workspace_uuid,
             created_by_api_key_uuid,
             display_title,
+        icon_key,
             latest_version,
             source,
             created_at,
@@ -43,6 +45,7 @@
             #{params.WorkspaceUUID},
             #{params.CreatedByAPIKeyUUID},
             #{params.DisplayTitle},
+            COALESCE(NULLIF(#{params.IconKey}, ''), 'blocks'),
             #{params.LatestVersion},
             'custom',
             #{params.CreatedAt},
@@ -93,6 +96,7 @@
     <update id="UpdateLatestVersionByExternalID" result="returning" resultType="skillRow">
         UPDATE skills
         SET latest_version = #{params.LatestVersion},
+            icon_key = COALESCE(#{params.IconKey}, icon_key),
             updated_at = #{params.UpdatedAt}
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
@@ -118,5 +122,11 @@
             updated_at = NOW()
         WHERE workspace_uuid = #{workspaceUUID}
         AND uuid = #{skillUUID}
+    </update>
+    <update id="UpdateIcon" result="returning" resultType="skillRow">
+        UPDATE skills SET icon_key = #{iconKey}, updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{externalID}
+        AND source = 'custom' AND deleted_at IS NULL
+        RETURNING <include refid="columns"/>
     </update>
 </mapper>

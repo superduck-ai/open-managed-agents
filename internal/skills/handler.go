@@ -47,6 +47,7 @@ type skillResponse struct {
 	ID            string `json:"id"`
 	CreatedAt     string `json:"created_at"`
 	DisplayTitle  string `json:"display_title"`
+	IconKey       string `json:"icon_key,omitempty"`
 	LatestVersion string `json:"latest_version"`
 	Source        string `json:"source"`
 	Type          string `json:"type"`
@@ -135,6 +136,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	versionValue := newVersionString()
 	objectKey := fmt.Sprintf("workspaces/%s/skills/%s/versions/%s/%s.zip", principal.WorkspaceUUID, skillUUID, versionValue, sanitizeForKey(pkg.Directory))
 
+	iconKey, err := skillIconKey(r.FormValue("icon_key"))
+	if err != nil {
+		return err
+	}
 	displayTitle, err := skillDisplayLabel(r, pkg)
 	if err != nil {
 		return err
@@ -150,6 +155,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		WorkspaceUUID:       principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		DisplayTitle:        &displayTitle,
+		IconKey:             iconKey,
 		CreatedAt:           now,
 	}, db.SkillVersion{
 		UUID:                versionUUID,
@@ -165,7 +171,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		SHA256:              pkg.SHA256,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		CreatedAt:           now,
-	}, !hasSkillsBeta(r))
+	}, !hasSkillsBeta(r) && !isConsoleSkillRequest(r))
 	if err != nil {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceUUID, h.store.Name(), objectKey, versionID)
 		var displayTitleConflict *db.SkillDisplayTitleConflictError
@@ -400,7 +406,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		return internalError("Could not create skill version", fmt.Errorf("retrieve skill %q before version create: %w", skillID, err))
 	}
 
-	if !hasSkillsBeta(r) && skill.LatestVersion != nil {
+	if (!hasSkillsBeta(r) || isConsoleSkillRequest(r)) && skill.LatestVersion != nil {
 		previous, lookupErr := h.db.GetLatestSkillVersion(r.Context(), principal.WorkspaceUUID, skillID)
 		if lookupErr != nil {
 			return internalError("Could not load skill name", lookupErr)
@@ -408,6 +414,14 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		if previous.Name != pkg.Name {
 			return skillNameImmutable()
 		}
+	}
+	var iconKey *string
+	if r.FormValue("icon_key") != "" {
+		key, iconErr := skillIconKey(r.FormValue("icon_key"))
+		if iconErr != nil {
+			return iconErr
+		}
+		iconKey = new(key)
 	}
 	versionID, err := ids.New("skver_")
 	if err != nil {
@@ -434,7 +448,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		SHA256:              pkg.SHA256,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		CreatedAt:           now,
-	})
+	}, iconKey)
 	if err != nil {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceUUID, h.store.Name(), objectKey, versionID)
 		if errors.Is(err, db.ErrNotFound) {
@@ -711,6 +725,7 @@ func responseFromSkill(skill db.Skill) skillResponse {
 		ID:            skill.ExternalID,
 		CreatedAt:     formatTime(skill.CreatedAt),
 		DisplayTitle:  valueOrEmpty(skill.DisplayTitle),
+		IconKey:       skill.IconKey,
 		LatestVersion: valueOrEmpty(skill.LatestVersion),
 		Source:        skill.Source,
 		Type:          "skill",
@@ -731,6 +746,7 @@ func responseFromBuiltinSkill(skill db.BuiltinSkill) skillResponse {
 		ID:            skill.ExternalID,
 		CreatedAt:     formatTime(skill.CreatedAt),
 		DisplayTitle:  firstNonEmpty(skill.DisplayTitle, skill.ExternalID),
+		IconKey:       skill.IconKey,
 		LatestVersion: valueOrEmpty(skill.LatestVersion),
 		Source:        "anthropic",
 		Type:          "skill",
@@ -833,6 +849,9 @@ func encodePageOffset(offset int, legacy bool) string {
 }
 
 func hasSkillsBeta(r *http.Request) bool {
+	if isConsoleSkillRequest(r) {
+		return false
+	}
 	for _, value := range r.Header.Values("anthropic-beta") {
 		for _, part := range strings.Split(value, ",") {
 			if strings.TrimSpace(part) == skillsBeta {

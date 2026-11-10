@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="SkillCatalogMapper">
+ <sql id="catalog">
+  WITH catalog AS (
+   SELECT s.external_id, COALESCE(s.display_title, '') AS display_title, s.icon_key,
+    v.description, v.version AS latest_version, s.source, s.created_at, s.updated_at
+   FROM skills s JOIN skill_versions v ON v.skill_uuid = s.uuid AND v.workspace_uuid = #{query.WorkspaceUUID} AND v.version = s.latest_version AND v.deleted_at IS NULL
+   WHERE s.workspace_uuid = #{query.WorkspaceUUID} AND s.deleted_at IS NULL
+   UNION ALL
+   SELECT s.external_id, s.display_title, s.icon_key, v.description, v.version AS latest_version,
+    'anthropic' AS source, s.created_at, s.updated_at
+   FROM builtin_skills s JOIN builtin_skill_versions v ON v.skill_uuid = s.uuid AND v.version = s.latest_version AND v.state = 'published' AND v.deleted_at IS NULL
+   WHERE s.listed AND s.deleted_at IS NULL
+  ), filtered AS (
+   SELECT external_id, display_title, icon_key, description, latest_version, source, created_at, updated_at FROM catalog
+   <if test="query.Query != &quot;&quot;">WHERE strpos(lower(display_title || ' ' || external_id || ' ' || description), lower(#{query.Query})) &gt; 0</if>
+  )
+ </sql>
+ <select id="List" resultType="CatalogSkill">
+  <include refid="catalog"/>
+  SELECT external_id, display_title, icon_key, description, latest_version, source, created_at, updated_at FROM filtered
+  <if test="query.Source != &quot;&quot;">WHERE source = #{query.Source}</if>
+  ORDER BY
+  <choose>
+   <when test="query.Sort == &quot;name&quot;">display_title ASC, external_id ASC</when>
+   <when test="query.Sort == &quot;updated&quot;">updated_at DESC, external_id ASC</when>
+   <otherwise>CASE WHEN source = 'anthropic' THEN 0 ELSE 1 END, created_at DESC, external_id ASC</otherwise>
+  </choose>
+  LIMIT #{query.Limit} OFFSET #{query.Offset}
+ </select>
+ <select id="Counts" resultType="SkillCatalogCounts">
+  <include refid="catalog"/>
+  SELECT COUNT(*) AS all_count, COUNT(*) FILTER (WHERE source = 'anthropic') AS builtin_count,
+   COUNT(*) FILTER (WHERE source = 'custom') AS custom_count FROM filtered
+ </select>
+</mapper>

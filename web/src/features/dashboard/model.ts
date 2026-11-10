@@ -71,6 +71,7 @@ export type MessageBatchesPageCursor = {
 };
 
 export type ConsoleSkill = {
+  icon_key?: string;
   id: string;
   type: 'skill';
   display_title: string;

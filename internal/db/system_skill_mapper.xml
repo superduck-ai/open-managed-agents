@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="SystemSkillMapper">
-    <sql id="skillColumns">uuid, external_id, display_title, latest_version, listed, revision, created_at, updated_at</sql>
+    <sql id="skillColumns">uuid, external_id, display_title, icon_key, latest_version, listed, revision, created_at, updated_at</sql>
     <sql id="versionColumns">uuid, external_id, skill_uuid, skill_external_id, version, name, description, directory, state, s3_bucket, s3_key, size_bytes, sha256, created_at</sql>
     <select id="List" resultType="SystemSkill">
         SELECT <include refid="skillColumns"/> FROM builtin_skills s
@@ -8,7 +8,7 @@
         <if test="query.Query != &quot;&quot;">AND (strpos(lower(display_title), lower(#{query.Query})) &gt; 0 OR strpos(lower(external_id), lower(#{query.Query})) &gt; 0)</if>
         <choose>
             <when test="query.Status == &quot;listed&quot;">AND listed</when>
-            <when test="query.Status == &quot;unlisted&quot;">AND NOT listed AND latest_version IS NOT NULL</when>
+            <when test="query.Status == &quot;unlisted&quot;">AND NOT listed</when>
             <when test="query.Status == &quot;draft&quot;">AND latest_version IS NULL</when>
         </choose>
         ORDER BY created_at DESC, uuid DESC LIMIT #{query.Limit} OFFSET #{query.Offset}
@@ -18,12 +18,12 @@
         <if test="lock">FOR UPDATE</if>
     </select>
     <insert id="InsertSkill" result="rows">
-        INSERT INTO builtin_skills (uuid, external_id, display_title, listed)
-        VALUES (#{skill.UUID}, #{skill.ExternalID}, #{skill.DisplayTitle}, false)
+        INSERT INTO builtin_skills (uuid, external_id, display_title, icon_key, listed)
+        VALUES (#{skill.UUID}, #{skill.ExternalID}, #{skill.DisplayTitle}, COALESCE(NULLIF(#{skill.IconKey}, ''), 'blocks'), false)
         ON CONFLICT (external_id) DO NOTHING
     </insert>
     <update id="UpdateSkill" result="rows">
-        UPDATE builtin_skills SET latest_version = #{skill.LatestVersion}, listed = #{skill.Listed}, revision = revision + 1, updated_at = now()
+        UPDATE builtin_skills SET icon_key = #{skill.IconKey}, latest_version = #{skill.LatestVersion}, listed = #{skill.Listed}, revision = revision + 1, updated_at = now()
         WHERE uuid = #{skill.UUID} AND revision = #{skill.Revision} AND deleted_at IS NULL
     </update>
     <select id="Versions" resultType="SystemSkillVersion">

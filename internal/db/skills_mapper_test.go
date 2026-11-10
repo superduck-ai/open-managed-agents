@@ -59,7 +59,7 @@ func TestSkillMapperBuilderContracts(t *testing.T) {
 				wantKind:  yourbatis.StatementInsert,
 				wantArgumentNames: []string{
 					"params.UUID", "params.ExternalID", "params.WorkspaceUUID",
-					"params.CreatedByAPIKeyUUID", "params.DisplayTitle", "params.LatestVersion",
+					"params.CreatedByAPIKeyUUID", "params.DisplayTitle", "params.IconKey", "params.LatestVersion",
 					"params.CreatedAt", "params.CreatedAt",
 				},
 				wantSQLFragments: []string{"INSERT INTO skills", "'custom'", "RETURNING"},
@@ -112,9 +112,9 @@ func TestSkillMapperBuilderContracts(t *testing.T) {
 				bound:     buildSkillMapperUpdateLatestVersionByExternalID(yourbatis.DialectPostgres, updateParams),
 				wantID:    "SkillMapper.UpdateLatestVersionByExternalID", wantKind: yourbatis.StatementUpdate,
 				wantArgumentNames: []string{
-					"params.LatestVersion", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID",
+					"params.LatestVersion", "params.IconKey", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID",
 				},
-				wantSQLFragments: []string{"UPDATE skills", "latest_version = $1", "workspace_uuid = $3", "RETURNING"},
+				wantSQLFragments: []string{"UPDATE skills", "latest_version = $1", "workspace_uuid = $4", "RETURNING"},
 			},
 		},
 		{

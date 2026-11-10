@@ -9,11 +9,14 @@ Local real-device check for PR #624 / lark-channel session metadata.
 - Channel: `handtest-feishu` / `channel_c87a04e6-97a7-4431-9c6e-aa660abc7936`
 - OMA console login (SMTP 未配置，任意非空 OTP): `test@oma.ai`
 
-Screenshots:
-- `01-channels-list.png`
-- `02-channel-detail.png`
-- `03-channel-sessions.png`
+Screenshots（2026-11-10 10:00 CST / Asia/Shanghai 按最新 UI 重拍列表与向导）:
 
-布局说明：以上三张是宽页面重拍（`px-6 py-6 lg:px-8`，不再套居中窄壳）。`01-channels-list.png` 仍是列表样式对齐之前：表格包在圆角卡片里，名称下拉和「新增渠道」在同一行，连通状态从列头筛选。随后列表改成与部署、环境相同的页头按钮、筛选条、无边框表格、空态和分页。创建和编辑向导去掉步骤外的卡片，改成环境创建页的面包屑、标题和底栏。这三张图还没按新列表样式重拍，也没有向导截图。
+- `01-channels-list.png` — 与部署、环境相同的页头按钮、筛选条、无边框表格和分页；无页头说明，含创建时间列
+- `02-channel-detail.png` — 宽布局详情（此前重拍，本次未改）
+- `03-channel-sessions.png` — 宽布局会话管理（此前重拍，本次未改）
+- `04-channel-create-step1.png` / `05-channel-create-step2.png` / `06-channel-create-step3.png` — 创建向导三步
+- `07-channel-edit-step1.png` / `08-channel-edit-step2.png` / `09-channel-edit-step3.png` — 编辑向导三步
+
+布局说明：列表不再包圆角卡片。创建/编辑向导的表单区无外层卡片，使用面包屑、标题和底栏；进度与关联资源在右侧，与快速开始对齐。向导截图中应用密钥为「留空保留现有密钥」，未露出密钥值。
 
 Session metadata evidence: `session-metadata.json`

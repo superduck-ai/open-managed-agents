@@ -33,6 +33,8 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 
 飞书永久使用 `external_id=poap_FeishuBuiltinOAuthClient`、`builtin_key=feishu`、`protected=true`，UUID 由数据库生成并保留。自定义行 builtin_key 为空、protected 为 false、创建人非空。CHECK 约束保护身份映射及信封成对状态，Mapper 删除额外要求 `protected=false`。自定义名称部分唯一索引允许历史自定义 `Feishu` 与 seed 并存；保留 external_id 冲突使迁移失败，不收编或覆盖既有记录。`version>0`，管理更新、导入和密钥重新包装均 CAS 递增。
 
+`00121_require_custom_oauth_client_envelopes.sql` 恢复双信封 CHECK 内置分支的 `builtin_key IS NOT NULL` 守卫，避免 PostgreSQL 的 NULL 语义放行自定义双空信封。自定义行必须同时具有两个通过结构校验的信封；飞书与 Friday 仍允许双空未配置状态，均不允许单空。合法存量行无须改写即可升级；若 00120 已写入双空自定义行，00121 原子失败并保留版本及记录，须在停机维护期间补齐有效加密凭据后重试，不自动删除或伪造凭据。真实 PostgreSQL 回归覆盖插入、更新、存量升级失败与修复后重试，以及既有身份、保护、信封结构和版本约束。
+
 两个客户端字段分别使用现有 `secrets.Service.Seal/Open`，随机 DEK 与 nonce 各自独立。secret 的 AAD 为 `platform/platform/platform_oauth_providers/<external_id>`；ID 的最后一项为 `<external_id>:client_id`。flow ID 绑定实际组织 UUID、工作区 UUID、`env_oauth_flows`、flow external_id。绑定集中在 `internal/platformoauth`；换字段、复制到另一行或凭证均无法解密。KMS 调用在数据库事务之外执行，双信封用同一次 CAS 原子写入。
 
 `vault.master_key` 仍是唯一部署主密钥来源，复用组装层的同一服务；不在业务表保存 KEK 或 KMS 身份。SQL 的 JSON 结构校验不替代应用完整信封和解密校验。删除活动 schema 明文列不代表擦除旧 WAL、备份和介质。
@@ -162,7 +164,7 @@ POST 仅创建自定义，拒绝 builtin_key/protected/uuid 等未知系统字�
 2. 默认只读预检：`CONFIG_FILE=/etc/oma/config.yaml go run ./cmd/oauth-provider-migrate --legacy-config /secure/legacy.yaml`。旧飞书块均缺失可保持未配置，半配置失败；预检不会执行 schema 或数据写入。
 3. 停止共享该数据库的 API、worker 和其他写入方，再加 `--apply`。命令获取 goose 会话维护锁，仅前进到 00118；分页对全部状态的自定义 provider/flow ID Seal/Open 往返验证并按 UUID/旧值 CAS 回填，校验原 secret 可解密；重入验证已有信封并跳过，不重新生成密文。
 4. 飞书两信封均空才原子导入旧配置；已有 DB 配置仅校验并跳过，绝不覆盖管理员最新值。KMS、坏信封、半配置或 CAS 冲突非零退出，保留可续跑状态。
-5. 全部回填完成再前进到 00119，断言并删除明文列，真实读取解密验证。随后前进到 00120 seed Friday；已到 00120 只校验或补齐未配置内置行，绝不降级。输出仅含版本、行 UUID、计数和白名单错误码。
+5. 全部回填完成再前进到 00119，断言并删除明文列，真实读取解密验证。随后前进到 00120 seed Friday，再应用 00121 收紧自定义凭据约束；已到 00121 只校验或补齐未配置内置行，绝不降级。输出仅含版本、行 UUID、计数和白名单错误码。
 6. 从部署源、人工配置、初始化模板及生成来源移除旧块，再按环境正常生成并启动；不能只修改生成配置。旧配置与备份按既有敏感文件策略清理或隔离。
 
 ```mermaid
@@ -200,7 +202,7 @@ Friday 授权端点为 `https://friday-tx.seewo.com/open/api/oauth/authorize`，
 
 上游依据是 Friday 仓库 `OAuthDiscoveryController.kt`、`OAuthController.kt`、`OAuthService.kt` 和 `docs/oauth-configuration.md`：公网 origin 可由 `friday.oauth.public-url` 覆盖，客户端在上游通过配置中心或环境注入的 `friday.oauth.clients` JSON 数组注册，字段为 `id`、`secret`、`name`、`redirectUris`。仓库文档的 `friday-bridge` 是示例 ID，不是已确认生产应用，不能直接 seed。`friday.oauth.signing-secret` 是上游签名密钥，不是 OAuth 客户端 secret，禁止作为客户端导入。
 
-离线命令新增 `--friday-config /secure/friday.yaml`。文件只包含顶层 `client_id` 与 `client_secret`，均须填写，拒绝未知字段；应由受控配置源注入并限制为 0600，不将真实值提交仓库。默认只读预检，停机后 `--apply` 持维护锁前进至 00120，双信封同时为空才 Seal/Open 校验并 CAS 写入，已配置仅验证不覆盖。与 `--legacy-config` 可以同时使用，旧飞书导入语义保持。重新包装自动覆盖 Friday 两个字段，仍使用独立 AAD、整行 CAS、版本递增和安全审计。
+离线命令新增 `--friday-config /secure/friday.yaml`。文件只包含顶层 `client_id` 与 `client_secret`，均须填写，拒绝未知字段；应由受控配置源注入并限制为 0600，不将真实值提交仓库。默认只读预检，停机后 `--apply` 持维护锁前进至 00121，双信封同时为空才 Seal/Open 校验并 CAS 写入，已配置仅验证不覆盖。与 `--legacy-config` 可以同时使用，旧飞书导入语义保持。重新包装自动覆盖 Friday 两个字段，仍使用独立 AAD、整行 CAS、版本递增和安全审计。
 
 回调继续使用 OMA 的 `/oauth/vault/env-success`。在上游 `friday.oauth.clients.redirectUris` 精确登记实际 OMA HTTPS 回调地址，禁止用户信息及片段；文档中的桥接示例回调不作为 OMA 回调。Friday flow 与飞书一致不保存客户端 ID 信封，回调读取当前 Friday 客户端；Friday 独有的随机 PKCE verifier 存在 `code_verifier_envelope` 中，AAD 为 flow 的租户/UUID 身份加 `:code_verifier` 后缀，回调解密提交 verifier，绝不把 verifier 放入 URL 或响应。00120 约束仅 Friday flow 必须携带该信封，其余 flow 为空；重新包装扫描同时覆盖自定义 ID 快照与 Friday verifier，并保持 NULL 与整行 CAS。已有自定义 flow 仍保留 ID 快照。管理页和 Vault 表单分别显示两个内置名称、标识和配置状态；未配置可保存手工 token，授权仍拒绝。Friday 的名称、端点、认证和编码不可编辑，scope 仅接受 `read`，客户端编辑、轮换、删除保护及权限沿用内置合同。
 

@@ -328,8 +328,8 @@ func TestOAuthProviderFridayImportPostgres(t *testing.T) {
 			t.Fatal("Friday 约束被绕过")
 		}
 	}
-	if version, err := database.OAuthMigrationVersion(t.Context()); err != nil || version != 120 {
-		t.Fatal("未升级到 00120")
+	if version, err := database.OAuthMigrationVersion(t.Context()); err != nil || version != 121 {
+		t.Fatal("未升级到 00121")
 	}
 	output.Reset()
 	if err := migrate(t.Context(), database, service, legacyClient{}, client, false, &output, slog.New(slog.DiscardHandler)); err != nil || !strings.Contains(output.String(), "success=0 skipped=2 failed=0") {

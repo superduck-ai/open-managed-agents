@@ -96,7 +96,6 @@ export function ChannelsPageContent({
     <section className="min-w-0 text-foreground" aria-label={msg('managedAgents.channels.title', '渠道')}>
       <ResourcePageHeader
         title={msg('managedAgents.channels.title', '渠道')}
-        description={msg('managedAgents.channels.pageDescription', '管理智能体在飞书中的接入渠道')}
         actions={
           <Button size="lg" onClick={() => onNavigate(channelCreatePath(workspaceId, agentFilter))}>
             <Plus className="size-4" />

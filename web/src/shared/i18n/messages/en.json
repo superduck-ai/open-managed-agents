@@ -3403,7 +3403,6 @@
   "nav.usageAndOperations": "Usage and operations",
   "nav.integrations": "Integrations",
   "nav.channels": "Channels",
-  "managedAgents.channels.pageDescription": "Manage Feishu access channels for agents",
   "managedAgents.channels.addChannel": "Add channel",
   "managedAgents.channels.searchByName": "Name",
   "managedAgents.channels.searchByAppId": "App ID",

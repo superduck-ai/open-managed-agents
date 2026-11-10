@@ -3403,7 +3403,6 @@
   "nav.usageAndOperations": "用量与运行",
   "nav.integrations": "集成",
   "nav.channels": "渠道",
-  "managedAgents.channels.pageDescription": "管理智能体在飞书中的接入渠道",
   "managedAgents.channels.addChannel": "新增渠道",
   "managedAgents.channels.searchByName": "名称",
   "managedAgents.channels.searchByAppId": "应用 ID",

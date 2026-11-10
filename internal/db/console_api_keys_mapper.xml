@@ -16,6 +16,8 @@
         <result column="archived_at" property="ArchivedAt"/>
         <result column="created_at" property="CreatedAt"/>
         <result column="updated_at" property="UpdatedAt"/>
+        <result column="created_by_email" property="CreatedByEmail"/>
+        <result column="created_by_name" property="CreatedByName"/>
     </resultMap>
 
     <sql id="consoleAPIKeyColumns">
@@ -33,7 +35,9 @@
         expires_at,
         archived_at,
         created_at,
-        updated_at
+        updated_at,
+        COALESCE((SELECT u.email FROM users u WHERE u.uuid = console_api_keys.created_by_user_ref_uuid AND u.organization_uuid = console_api_keys.organization_uuid), '') AS created_by_email,
+        COALESCE((SELECT u.name FROM users u WHERE u.uuid = console_api_keys.created_by_user_ref_uuid AND u.organization_uuid = console_api_keys.organization_uuid), '') AS created_by_name
     </sql>
 
     <select id="List" resultMap="consoleAPIKeyResult">

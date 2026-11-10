@@ -109,7 +109,7 @@ func TestFilesIgnoresWorkerConfiguration(t *testing.T) {
 	root := t.TempDir()
 	requireFile(t, filepath.Join(root, localSettingsFile), []byte("invalid JSON"))
 	t.Setenv("OMA_WORKER_CONTROL_IMAGE", "")
-	for _, selected := range []string{"", "files", "files.lifecycle", "files.invalid"} {
+	for _, selected := range []string{"", "files", "files.lifecycle", "files.invalid", "chat.egress"} {
 		value, err := workerImage(root, cliOptions{Scenario: selected})
 		if err != nil || value != "" {
 			t.Fatalf("%s read Worker configuration: %q %v", selected, value, err)

@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
@@ -25,6 +28,36 @@ func TestSessionResourcesFromDeploymentRejectsNullResource(t *testing.T) {
 	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{Resources: json.RawMessage(`[null]`)}, time.Time{}, nil)
 	if err == nil {
 		t.Fatal("sessionResourcesFromDeployment() error = nil")
+	}
+}
+
+func TestNormalizeDeploymentResourcesRejectsGitURLWithoutSuffix(t *testing.T) {
+	handler := &Handler{}
+	request := httptest.NewRequest(http.MethodPost, "/v1/deployments", nil)
+	for _, test := range []struct{ name, url string }{
+		{name: "missing .git suffix", url: "https://github.com/example/repo"},
+		{name: "trailing slash after .git", url: "https://github.com/example/repo.git/"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resources := json.RawMessage(`[{"type":"github_repository","url":"` + test.url + `"}]`)
+			if _, _, err := handler.normalizeResources(request, auth.Principal{}, resources, nil); err == nil || !strings.Contains(err.Error(), "ending in .git") {
+				t.Fatalf("normalizeResources() error = %v, want .git suffix validation", err)
+			}
+		})
+	}
+}
+
+func TestNormalizeDeploymentResourcesAcceptsGitURLWithSuffix(t *testing.T) {
+	handler := &Handler{}
+	request := httptest.NewRequest(http.MethodPost, "/v1/deployments", nil)
+	resources := json.RawMessage(`[{"type":"github_repository","url":"https://github.com/example/repo.git"}]`)
+	payload, _, err := handler.normalizeResources(request, auth.Principal{}, resources, nil)
+	if err != nil {
+		t.Fatalf("normalizeResources() error = %v", err)
+	}
+	var stored []deploymentResourcePayload
+	if err := json.Unmarshal(payload, &stored); err != nil || len(stored) != 1 || stored[0].URL != "https://github.com/example/repo.git" {
+		t.Fatalf("stored resources = %s, want exact .git URL", payload)
 	}
 }
 
@@ -135,7 +168,7 @@ func TestSessionResourcesFromDeploymentDefaultsAbsentMemoryAccess(t *testing.T) 
 
 func TestSessionResourcesFromDeploymentRejectsPlaintextToken(t *testing.T) {
 	_, err := sessionResourcesFromDeployment("ses_test", db.Deployment{
-		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo","mount_path":"/workspace/repo"}]`),
+		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo.git","mount_path":"/workspace/repo"}]`),
 		ResourceSecrets: json.RawMessage(`{"0":{"authorization_token":"legacy"}}`),
 	}, time.Time{}, nil)
 	if err == nil {
@@ -156,7 +189,7 @@ func TestSessionResourcesFromDeploymentCopiesEncryptedToken(t *testing.T) {
 	}
 	deployment := db.Deployment{
 		OrganizationUUID: "org", WorkspaceUUID: "ws",
-		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo","mount_path":"/workspace/repo"}]`),
+		Resources:       json.RawMessage(`[{"type":"github_repository","url":"https://git.example.com/team/repo.git","mount_path":"/workspace/repo"}]`),
 		ResourceSecrets: append(append([]byte(`{"0":`), encrypted...), '}'),
 	}
 	for _, sessionID := range []string{"ses_one", "ses_two"} {

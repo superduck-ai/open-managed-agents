@@ -1560,6 +1560,7 @@ export async function postQuickstartProxyStream({
   const headers = new Headers({
     Accept: 'text/event-stream',
     'Content-Type': 'application/json',
+    'anthropic-version': '2023-06-01',
     'X-Organization-UUID': orgUuid,
   });
   if (workspaceId) {

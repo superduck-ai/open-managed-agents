@@ -15,7 +15,7 @@ var (
 	errTooManyFileResources     = fmt.Errorf("at most %d managed-agent file resources are allowed", MaxFileResources)
 
 	ErrGitTokenCrypto               = errors.New("git token cryptographic operation failed")
-	errGitRepositoryURL             = errors.New("url must be an HTTPS repository URL without credentials, query, or fragment")
+	errGitRepositoryURL             = errors.New("url must be an HTTPS repository URL ending in .git without credentials, query, or fragment")
 	errGitRepositoryPort            = errors.New("git repository URL must use HTTPS port 443")
 	errGitRepositoryPath            = errors.New("url must contain an unambiguous repository path")
 	errGitCheckoutObject            = errors.New("checkout must be an object")

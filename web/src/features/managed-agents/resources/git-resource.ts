@@ -14,7 +14,7 @@ export function gitResourceURLValid(value: string) {
       url.protocol === 'https:' &&
       url.port === '' &&
       Boolean(url.hostname) &&
-      url.pathname !== '/' &&
+      url.pathname.endsWith('.git') &&
       !url.username &&
       !url.password &&
       !value.includes('?') &&

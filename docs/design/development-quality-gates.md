@@ -4,6 +4,15 @@
 
 仓库使用统一、可复现的本地提交门禁和 CI 门禁，使本地开发与 Pull Request CI 对格式、文件卫生和 Go 静态分析保持相同判断。
 
+## Amp Orb 环境
+
+- `.agents/setup` 准备可复用的 Orb 快照：按根模块与 lint 工具模块中较高的 Go 版本安装工具链，固定 Bun `1.4.4`（支持 Brain 的 v2 lockfile）和 just `1.59.0`，缺少 uv 时安装 `0.11.19`。工具安装到 `/usr/local/bin` 可访问的位置，非交互 login shell 与受管服务无需额外激活开发 shell。
+- setup 使用两个 Bun frozen lockfile，下载两个 Go module 的依赖，准备仓库固定的 pre-commit 环境，调用已有 `scripts/generate-go.sh --cached`，并预热应用与 golangci-lint 的 Go 编译缓存。每一步输出耗时；重复执行复用包管理器和生成器已有缓存，不另建依赖指纹。
+- 未配置 `core.hooksPath` 时安装仓库 hook；已有自定义 hook 路径时保留它，只准备 pre-commit 环境，并提示提交前显式执行 `./scripts/pre-commit.sh run`。不要为安装 pre-commit 清除 Orb 的身份或其他自定义 hooks。
+- `.agents/resume` 仅检查工具可用性，不安装依赖、不执行测试、不启动服务。缺少工具时明确提示重新运行 setup。
+- setup 不运行 `just dev-init`，不创建或复制用户凭证，不初始化数据库或开发租户。默认 Go 单测使用进程内依赖，无需 PostgreSQL、Redis、NATS 或 MinIO daemon。完整运行环境仍按开发指南显式初始化；真实集成与 verify-be 的授权和隔离要求不变。
+- 精确匹配的项目快照可跳过 setup；过期快照重跑 setup 并复用已安装依赖。生命周期脚本需要进入项目默认分支后，才对后续新 Orb 生效。`.amp/portals/*` 为本地生成文件，不纳入版本控制。
+
 ## Pre-commit 门禁
 
 - `.pre-commit-config.yaml` 固定通用 hook 版本，并排除由上游流程生成的 quickstart 请求文件。

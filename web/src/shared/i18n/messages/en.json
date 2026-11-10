@@ -2214,7 +2214,7 @@
   "managedAgents.git.tokenUpdated": "Authorization token updated.",
   "managedAgents.git.updateToken": "Update authorization token",
   "managedAgents.git.url": "URL",
-  "managedAgents.git.urlError": "Enter an HTTPS repository URL without credentials, query parameters, or a fragment.",
+  "managedAgents.git.urlError": "Enter an HTTPS repository URL ending in .git without credentials, query parameters, or a fragment.",
   "managedAgents.git.shaError": "Enter a full commit SHA with 40 or 64 hexadecimal characters.",
   "managedAgents.git.optionalToken": "Authorization token (optional for public repositories)",
   "common.moreActions": "More actions",
@@ -3433,5 +3433,12 @@
   "platformAdmin.oauthManagement.deleteBody": "Existing credentials keep working until their token expires; refresh will require reauthorization.",
   "platformAdmin.oauthManagement.builtinTitle": "Built-in provider",
   "platformAdmin.oauthManagement.builtinBody": "Feishu is built in. Its client credentials come from the deployment config (vault.feishu_oauth_client) and are never stored in the database.",
-  "platformAdmin.errors.oauthProviderNameConflict": "An OAuth client with this name already exists."
+  "platformAdmin.errors.oauthProviderNameConflict": "An OAuth client with this name already exists.",
+  "nav.overview": "Overview",
+  "nav.resources": "Resources",
+  "nav.workspaceManagement": "Workspace management",
+  "nav.backToNavigation": "Back to navigation",
+  "nav.modelsAndAccess": "Models and access",
+  "nav.usageAndOperations": "Usage and operations",
+  "nav.integrations": "Integrations"
 }

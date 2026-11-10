@@ -12,7 +12,7 @@
 
 ## Git Repository 资源
 
-Create Session、Create Deployment 和 Agent 详情中的 Create Deployment 共用 Resource 字段组件。资源菜单可以添加 File、Git repository 或 Memory store；Session 和 Deployment 共用 Memory Store 的 Access / Instructions 卡片。Git 资源支持 GitHub 及自托管 HTTPS Git 仓库。
+Create Session、Create Deployment 和 Agent 详情中的 Create Deployment 共用 Resource 字段组件。资源菜单可以添加 File、Git repository 或 Memory store；Session 和 Deployment 共用 Memory Store 的 Access / Instructions 卡片。Git 资源支持 GitHub 及自托管 HTTPS Git 仓库，URL 必须以 `.git` 结尾，前后端使用相同的后缀校验；placeholder 展示 `https://github.com/owner/repo.git`。
 
 Git repository 的公开请求字段如下；API 类型沿用 `github_repository`，不限制仓库托管平台：
 
@@ -26,7 +26,7 @@ Git repository 的公开请求字段如下；API 类型沿用 `github_repository
 }
 ```
 
-- URL 必须使用 HTTPS 和默认端口 443，包含有效仓库路径；支持自托管域名、嵌套路径、`.git` 后缀和尾斜杠。不得包含内嵌用户名或密码、查询参数或片段。
+- URL 必须使用 HTTPS 和默认端口 443，包含有效仓库路径并以 `.git` 结尾（不接受 `.git/` 或尾斜杠）；支持自托管域名和嵌套路径。不得包含内嵌用户名或密码、查询参数或片段。
 - Authorization token 可选；公开仓库留空，提交时省略该字段。使用密码输入，不从读取响应回填，不保存到浏览器存储。
 - Checkout 为 None、Branch 或 Commit；None 不发送 `checkout`，Branch 发送 `name`，Commit 发送完整的 40 或 64 位十六进制 `sha`，不接受短 SHA。
 - Mount path 可省略，默认由服务端按仓库名生成 `/workspace/<repo>`。它与 File 的 `/mnt/session/uploads` 路径规则分开；Git 表单接受 `/workspace` 下的绝对路径。

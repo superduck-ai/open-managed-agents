@@ -38,6 +38,7 @@ type apiKeyAuthRow struct {
 	OrganizationUUID    string `db:"organization_uuid"`
 	WorkspaceUUID       string `db:"workspace_uuid"`
 	WorkspaceExternalID string `db:"workspace_external_id"`
+	RuntimeUserUUID     string `db:"runtime_user_uuid"`
 }
 
 type AdminAPIKeyMapper interface {
@@ -52,4 +53,5 @@ type AdminAPIKeyMapper interface {
 	UpdateStatusByUUID(ctx context.Context, apiKeyUUID string, status string) (int64, error)
 	SeedDefault(ctx context.Context, params seedAdminAPIKeyParams) error
 	FindActiveByKeyHash(ctx context.Context, keyHash string) (apiKeyAuthRow, error)
+	BindEmptyRuntimeUser(ctx context.Context, organizationUUID, workspaceUUID, externalID, runtimeUserUUID string) (int64, error)
 }

@@ -2,6 +2,7 @@ import { budgetErrorMessage } from './budget-errors';
 import { useI18n } from '../../../shared/i18n';
 import { useDialogDismissal } from '../../../shared/hooks/use-dialog-dismissal';
 import { useAuth } from '../../../shared/auth/context';
+import { listAllWorkspaceMCPServers, type WorkspaceMCPServer } from '../../../shared/api/workspaceMCPServers';
 import { Button } from '../../../shared/ui/button';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
@@ -120,6 +121,32 @@ function credentialDialogTypeSteps(values: CredentialFormValues, mode: 'create' 
   };
 }
 
+function credentialMcpServerOptions(
+  workspaceServers: WorkspaceMCPServer[],
+  directoryServers: McpDirectoryServer[],
+): EntityOption[] {
+  const options: EntityOption[] = [];
+  const seenURLs = new Set<string>();
+  const addOption = (option: EntityOption) => {
+    if (!option.id || seenURLs.has(option.id)) {
+      return;
+    }
+    seenURLs.add(option.id);
+    options.push(option);
+  };
+  for (const server of workspaceServers) {
+    if (server.url) {
+      addOption({ id: server.url, label: server.name || server.url, secondary: server.url });
+    }
+  }
+  for (const server of directoryServers) {
+    if (server.url) {
+      addOption({ id: server.url, label: server.displayName, secondary: server.url });
+    }
+  }
+  return options;
+}
+
 function CredentialSharedAck({
   acknowledged,
   onAcknowledgedChange,
@@ -188,6 +215,7 @@ export function CredentialDialog({
   const [acknowledged, setAcknowledged] = useState(false);
   const [directoryServers, setDirectoryServers] = useState<McpDirectoryServer[]>([]);
   const [envOAuthProviders, setEnvOAuthProviders] = useState<EnvOAuthProviderApiResponse[] | null>(null);
+  const [workspaceServers, setWorkspaceServers] = useState<WorkspaceMCPServer[]>([]);
   const pendingOAuthFlowIdRef = useRef<string | null>(null);
   const oauthPopupRef = useRef<Window | null>(null);
   const mode = credential ? 'edit' : 'create';
@@ -237,15 +265,8 @@ export function CredentialDialog({
   }, [credential, values.authType, msg]);
 
   const directoryOptions = useMemo<EntityOption[]>(
-    () =>
-      directoryServers
-        .filter((server) => server.url)
-        .map((server) => ({
-          id: server.url as string,
-          label: server.displayName,
-          secondary: server.url as string,
-        })),
-    [directoryServers],
+    () => credentialMcpServerOptions(workspaceServers, directoryServers),
+    [directoryServers, workspaceServers],
   );
 
   useEffect(() => {
@@ -274,6 +295,7 @@ export function CredentialDialog({
       return;
     }
     let active = true;
+    const workspaceController = new AbortController();
     void loadMcpDirectoryServers()
       .then((servers) => {
         if (active) {
@@ -285,10 +307,24 @@ export function CredentialDialog({
           setDirectoryServers([]);
         }
       });
+    if (orgUuid) {
+      void listAllWorkspaceMCPServers(orgUuid, workspaceId, workspaceController.signal)
+        .then((page) => {
+          if (active) {
+            setWorkspaceServers(page.data);
+          }
+        })
+        .catch(() => {
+          if (active) {
+            setWorkspaceServers([]);
+          }
+        });
+    }
     return () => {
       active = false;
+      workspaceController.abort();
     };
-  }, [showDirectoryPicker]);
+  }, [orgUuid, showDirectoryPicker, workspaceId]);
 
   useEffect(() => {
     if (!waitingForOAuth) {

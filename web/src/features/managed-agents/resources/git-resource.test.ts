@@ -7,6 +7,21 @@ import { emptyGitResource, gitResourceBody, gitResourceValid } from './git-resou
 
 const repositoryURL = 'https://git.internal/group/subgroup/repo.git';
 
+test.each([
+  'https://github.com/owner/repo',
+  `${repositoryURL}/`,
+  `${repositoryURL}?token=secret`,
+  `${repositoryURL}#main`,
+])('拒绝不以 .git 结尾或带查询参数、片段的仓库地址 %s', (url) => {
+  const resource = { ...emptyGitResource(), url };
+  expect(gitResourceValid(resource)).toBe(false);
+  expect(() => gitResourceBody(resource)).toThrow();
+});
+
+test.each(['https://github.com/owner/repo.git', repositoryURL])('接受以 .git 结尾的仓库地址 %s', (url) => {
+  expect(gitResourceValid({ ...emptyGitResource(), url })).toBe(true);
+});
+
 test.each(['', 'abcdef0', 'a'.repeat(39), 'a'.repeat(41), 'a'.repeat(63), 'a'.repeat(65), 'g'.repeat(40)])(
   'rejects incomplete or non-hexadecimal commit SHA %j',
   (sha) => {

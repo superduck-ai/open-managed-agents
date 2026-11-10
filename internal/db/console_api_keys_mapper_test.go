@@ -233,6 +233,8 @@ func consoleAPIKeyMapperTestColumns() []string {
 		"archived_at",
 		"created_at",
 		"updated_at",
+		"created_by_email",
+		"created_by_name",
 	}
 }
 
@@ -253,6 +255,8 @@ func consoleAPIKeyMapperTestRow(externalID string, createdAt time.Time) []driver
 		nil,
 		createdAt,
 		createdAt.Add(time.Minute),
+		"",
+		"",
 	}
 }
 
@@ -295,6 +299,9 @@ func TestConsoleAPIKeyMapperListBuildsOptionalWorkspaceScope(t *testing.T) {
 			"organization_uuid = $1",
 			"workspace_uuid = $2",
 			"ORDER BY created_at DESC, external_id DESC",
+			"AS created_by_email",
+			"AS created_by_name",
+			"u.uuid = console_api_keys.created_by_user_ref_uuid",
 		} {
 			if !strings.Contains(bound.SQL, fragment) {
 				t.Fatalf("generated SQL = %q, want fragment %q", bound.SQL, fragment)

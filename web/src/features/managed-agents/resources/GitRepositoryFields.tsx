@@ -74,13 +74,13 @@ export function GitRepositoryFields({
           type="url"
           required
           value={resource.url}
-          placeholder="https://github.com/owner/repo"
+          placeholder="https://github.com/owner/repo.git"
           onChange={(event) => patch({ url: event.target.value })}
           error={
             resource.url && !gitResourceURLValid(resource.url)
               ? msg(
                   'managedAgents.git.urlError',
-                  'Enter an HTTPS repository URL without credentials, query parameters, or a fragment.',
+                  'Enter an HTTPS repository URL ending in .git without credentials, query parameters, or a fragment.',
                 )
               : undefined
           }

@@ -11,7 +11,7 @@
 
 ## 数据模型
 
-迁移 `internal/db/migrations/00116_env_oauth.sql`：
+迁移 `internal/db/migrations/00117_env_oauth.sql`：
 
 - `vault_credentials.auth_type` CHECK 扩展 `env_oauth`。
 - `platform_oauth_providers`：全局 OAuth 客户端注册表，`client_secret_envelope` 保存 `secrets.Service`
@@ -30,7 +30,7 @@ erDiagram
 
 Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 
-迁移 `00117_env_oauth_builtin_client_id.sql` 清除历史内置飞书 flow 的 client_id，并添加仅允许其为空字符串的约束；自定义 provider 快照保持不变。回滚只移除约束，不恢复已清除的值。
+迁移 `00118_env_oauth_builtin_client_id.sql` 清除历史内置飞书 flow 的 client_id，并添加仅允许其为空字符串的约束；自定义 provider 快照保持不变。回滚只移除约束，不恢复已清除的值。
 
 ## 凭证公开结构与秘密
 

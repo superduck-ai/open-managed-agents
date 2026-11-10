@@ -28,6 +28,7 @@ type scenario struct {
 }
 
 var scenarios = map[string]scenario{
+	"chat.egress":              {DependenciesOnly: true, Package: "github.com/superduck-ai/open-managed-agents/tests", Timeout: 3 * time.Minute, Test: "TestEgressPublicSessionHeader", Stages: []string{"egress_headers_forwarded"}, Description: "HTTP/WebSocket 与 MCP 出口公共 Session Header 和请求透传"},
 	"chat.brain-images":        {Package: testPackage, Timeout: 8 * time.Minute, Test: "TestChatBrainImages", Stages: []string{"message_image_seen", "read_image_seen", "native_images_persisted"}, Description: "真实视觉模型、Brain 与 Worker：消息图片识别、Read 读图及远端原生附件持久化"},
 	"chat.brain-observability": {Package: testPackage, Timeout: 8 * time.Minute, Test: "TestChatBrainObservability", Stages: []string{"brain_observability_roundtrip", "brain_observability_native_history", "brain_observability_isolation", "brain_observability_session_lanes", "brain_observability_overview", "brain_observability_deleted_session", "brain_observability_trace_export"}, Description: "真实 Brain 通过 OMA OTLP 写入 OpenObserve，核对原生事件、重放、租户隔离、会话泳道、看板聚合与已删除会话过滤，并经 JetStream 把 span 投递到客户 OTLP 目标"},
 	"chat.skills-loading":      {Package: testPackage, Timeout: 6 * time.Minute, Test: "TestChatSkillsLoading", Stages: []string{"skill_loading_brain", "skill_loading_sandbox"}, Description: "Brain 与 Claude 的 Skill 目录、审批、正文与引用读取、只读挂载及沙箱复用"},
@@ -322,6 +323,8 @@ func writeReportCoverage(out *strings.Builder, r report) {
 		out.WriteString("Coverage: Memory/Filestore HTTP contracts with real PostgreSQL and MinIO; mounts additionally uses production Runner, local Docker sandbox and actual FUSE. Test-side faults and cleanup RunOnce do not certify cloud allocation, automatic background retry timing, process crash recovery, token renewal or concurrent editing throughput.\n\n")
 	} else if strings.HasPrefix(r.Scenario, "files.") {
 		out.WriteString("Coverage: real backend HTTP, PostgreSQL and MinIO. See scenario proof stages. generated runs a real Worker with FUSE and a scripted model; other Files scenarios use DB/storage fixtures where documented. recovery injects S3 errors through a local proxy and waits for the actual cleanup loop and backoff. Cloud S3 IAM and network infrastructure are not verified.\n\n")
+	} else if r.Scenario == "chat.egress" {
+		out.WriteString("Coverage: production Session API and HTTP/WebSocket/MCP proxy handlers with real PostgreSQL and a local HTTP receiver. Two sessions send 24 concurrent requests and the receiver verifies the Session Header and request passthrough. Sandbox allocation uses a recording provider. MCP Tunnel is outside this contract. HTTPS MITM, actual CLI execution and cloud networking are covered separately or remain unverified.\n\n")
 	} else if r.Scenario == "chat.shutdown" {
 		out.WriteString("Coverage: actual backend peer processes with disposable PostgreSQL, Redis, NATS and MinIO; ten-second HTTP drain expiry on a partial request, second SIGINT termination, and graceful closure of public/Worker SSE without retiring the Code Session. No model Worker, cloud shutdown, or total background cleanup deadline is verified.\n\n")
 	} else if r.Scenario == "chat.brain-images" {

@@ -68,7 +68,7 @@ Handler 内部依次做三层校验：
    通过 ResolvePrincipal 检查当前请求的 `UseResources()` 能力；无权或空间已归档返回 403。此检查覆盖工作区 Key 的
    列表、创建、更新和计数，在 `CreateConsoleAPIKey` 等 DB 操作前完成。
 
-通过校验后，普通成员来源读取 `auth.Principal.UserUUID` 作为 `createdByUserUUID`，平台来源传 nil。连同 org UUID、
+通过校验后，普通成员来源读取 `auth.Principal.UserUUID` 作为 `createdByUserUUID`；平台来源通过稳定账号邮箱解析目标组织的有效成员，有成员才保存其 UUID，没有成员保持 nil，解析能力缺失或查询失败拒绝创建。连同 org UUID、
 workspace UUID、name 和 expires_at 一起传入 DB 层。这里不接受前端提交的创建者，也不使用
 `UserExternalID` 或 `user_...` 派生值。HTTP/resource 边界负责清理和校验这些 UUID 字符串，DB 层
 按调用契约直接绑定到 PostgreSQL 的 `uuid` 列，不再重复调用 `TrimSpace`、`parseDBUUID`，也不添加
@@ -179,6 +179,8 @@ Default 通过数据库 `is_default` 标记解析，不从名称猜测，不读�
 
 ## 平台管理员目标组织访问（2026-10-28）
 
-可信平台来源在路径真实工作区经 ResolvePrincipal 验证后可管理 Key。created_by_user_uuid 为 nil，不把稳定平台账号或任意目标 Admin 写入成员创建者字段；普通来源继续使用真实成员 UUID。无需迁移，实际平台操作者由安全请求日志关联。
+可信平台来源在路径真实工作区经 ResolvePrincipal 验证后可管理 Key。普通来源使用真实成员 UUID；平台来源按稳定账号邮箱查找目标组织有效成员，有成员才保存真实创建者，没有成员保持 NULL，不借用任意 Admin。新增迁移 `00116_api_key_runtime_identity.sql` 单独保存新 key 的 `runtime_user_uuid`，以已认证稳定账号支持目标组织无成员时的资源运行。运行账号不参与组织或平台授权，创建与绑定在同一事务内完成。
+
+新渠道运行凭据复用相同创建事务、运行身份与创建者解析：平台管理员同样按稳定账号邮箱匹配目标组织有效成员，有成员才保存创建者，没有成员保持 NULL。控制台 key 在创建者解析失败时拒绝创建并记录一次带 `organization_id`、`workspace_id` 与 `error` 的结构化日志；渠道凭据同样拒绝创建，失败由请求级错误日志记录 `request_id`、路径与 `error`，不额外包含组织或工作区。响应体不泄露底层细节。历史 key 不迁移、不补绑。控制台列表按组织返回创建者姓名与邮箱，资料缺失时显示 Unknown，不使用当前查看者的姓名或邮箱替代。工作台创建者使用稳定账号 UUID 与外部 ID，不使用临时登录会话 ID，也不把账号 ID 伪装为邮箱。
 
 完整权限及进入/退出合同见 [平台超级管理员设计](../platform-super-admin.md)。

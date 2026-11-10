@@ -48,7 +48,7 @@ function WizardStepFields({
   agents: AgentApiResponse[];
   environments: EnvironmentApiResponse[];
   agentLocked: boolean;
-  onGenerateQr: () => void;
+  onGenerateQr: (openAuthorization?: boolean) => void;
 }) {
   if (step === 2) return <StepStrategy value={value} onChange={onChange} />;
   if (step === 3) {
@@ -145,7 +145,7 @@ export function ChannelWizardFormPage({
   };
 
   const canSave = channelWizardStepReady(1, value, access) && Boolean(value.agentId && value.environmentId);
-  const persist = async (generateQr: boolean, closeAfter: boolean) => {
+  const persist = async (generateQr: boolean, closeAfter: boolean, openAuthorization = false) => {
     if (!channelTargetsReady(value)) {
       setError(connectTargetError(value, msg));
       return;
@@ -158,6 +158,8 @@ export function ChannelWizardFormPage({
       );
       return;
     }
+    const authorizationWindow = openAuthorization ? window.open('about:blank', '_blank') : null;
+    if (authorizationWindow) authorizationWindow.opener = null;
     setBusy(true);
     setError('');
     try {
@@ -173,11 +175,14 @@ export function ChannelWizardFormPage({
       await queryClient.invalidateQueries({ queryKey: ['workspace-channels', workspaceId] });
       await queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, next.id] });
       if (generateQr) {
-        setQr(await channelApi<ChannelQr>(targetAgentId!, workspaceId, `/${next.id}/qr`, 'POST', {}));
+        const nextQr = await channelApi<ChannelQr>(targetAgentId!, workspaceId, `/${next.id}/qr`, 'POST', {});
+        setQr(nextQr);
+        authorizationWindow?.location.replace(nextQr.url);
         return;
       }
       if (closeAfter) onNavigate(channelDetailPath(workspaceId, targetAgentId!, next.id));
     } catch (err) {
+      authorizationWindow?.close();
       setError(errorMessage(err));
     } finally {
       setBusy(false);
@@ -211,7 +216,7 @@ export function ChannelWizardFormPage({
             agents={agents}
             environments={environments}
             agentLocked={agentLocked}
-            onGenerateQr={() => void persist(true, false)}
+            onGenerateQr={(openAuthorization) => void persist(true, false, openAuthorization)}
           />
           {error ? (
             <Alert variant="destructive" className="mb-3">

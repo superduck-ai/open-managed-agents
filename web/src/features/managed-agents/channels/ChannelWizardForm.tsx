@@ -146,7 +146,7 @@ export function StepConnect({
   agents: AgentApiResponse[];
   environments: EnvironmentApiResponse[];
   agentLocked: boolean;
-  onGenerateQr: () => void;
+  onGenerateQr: (openAuthorization?: boolean) => void;
 }) {
   const { msg } = useI18n();
   return (
@@ -252,7 +252,7 @@ function QrBindPanel({
   qr: ChannelQr | null;
   saved: Channel | null;
   busy: boolean;
-  onGenerateQr: () => void;
+  onGenerateQr: (openAuthorization?: boolean) => void;
 }) {
   const { msg } = useI18n();
   const waiting = qr?.status === 'pending';
@@ -267,15 +267,18 @@ function QrBindPanel({
       <div className="flex flex-wrap items-center gap-3">
         <Button
           type="button"
-          disabled={busy || waiting || !value.name.trim() || !value.agentId || !value.environmentId}
-          onClick={onGenerateQr}
+          disabled={busy || !value.name.trim() || !value.agentId || !value.environmentId}
+          onClick={() => onGenerateQr(true)}
         >
           <ExternalLink className="size-4" />
-          {qr
-            ? msg('managedAgents.channels.regenerateQr', '重新生成二维码')
-            : msg('managedAgents.channels.goFeishuAuth', '前往飞书授权创建')}
+          {msg('managedAgents.channels.goFeishuAuth', '前往飞书授权创建')}
         </Button>
-        <button type="button" className="text-sm text-primary hover:underline" disabled={busy} onClick={onGenerateQr}>
+        <button
+          type="button"
+          className="text-sm text-primary hover:underline"
+          disabled={busy}
+          onClick={() => onGenerateQr()}
+        >
           {msg('managedAgents.channels.scanFeishuAuth', '使用飞书扫码授权')}
         </button>
       </div>

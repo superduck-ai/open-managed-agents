@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, test, mock, spyOn } from 'bun:test';
 import { resetTestDom } from '../../../test/setup';
 import type { Channel } from './api';
 
@@ -12,10 +12,12 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
+  mock.restore();
 });
 
 test('扫码创建前可选择配对模式，创建成功后锁定且重试保留模式', async () => {
   resetTestDom('/');
+  const openWindow = spyOn(window, 'open');
   const requests: { url: string; body: unknown }[] = [];
   const channel: Channel = {
     id: 'ch-pairing',
@@ -59,14 +61,66 @@ test('扫码创建前可选择配对模式，创建成功后锁定且重试保�
   fireEvent.click(pairing);
   expect(pairing.getAttribute('aria-checked')).toBe('true');
   expect(screen.getByRole('button', { name: '下一步' }).hasAttribute('disabled')).toBe(true);
-  fireEvent.click(screen.getByRole('button', { name: '前往飞书授权创建' }));
+  fireEvent.click(screen.getByRole('button', { name: '使用飞书扫码授权' }));
   await screen.findByText('二维码已失效，请重新生成。');
   expect(requests[1].body).toEqual(expect.objectContaining({ mode: 'pairing' }));
   expect(screen.getByRole('radio', { name: /配对模式/ }).getAttribute('aria-disabled')).toBe('true');
   fireEvent.click(screen.getByRole('radio', { name: /开放模式/ }));
   expect(pairing.getAttribute('aria-checked')).toBe('true');
-  fireEvent.click(screen.getByRole('button', { name: '重新生成二维码' }));
+  fireEvent.click(screen.getByRole('button', { name: '使用飞书扫码授权' }));
   await waitFor(() => expect(requests.filter((request) => request.url.endsWith('/qr'))).toHaveLength(2));
   expect(requests[4].url).toEndWith('/channels/ch-pairing');
   expect(requests[4].body).toEqual(expect.objectContaining({ mode: 'pairing' }));
+  expect(openWindow).not.toHaveBeenCalled();
+});
+
+test.each([true, false])('打开飞书授权窗口，注册成功=%s', async (success) => {
+  resetTestDom('/');
+  const replace = mock(() => undefined);
+  const close = mock(() => undefined);
+  const popup = { location: { replace }, close, opener: window };
+  const openWindow = spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+  const authorizationUrl = 'https://open.feishu.cn/page/launcher?ticket=test';
+  globalThis.fetch = (async (input, init) => {
+    if (init?.method?.toUpperCase() !== 'POST') return Response.json({ data: [] });
+    expect(openWindow).toHaveBeenCalledWith('about:blank', '_blank');
+    if (!success) return Response.json({ error: { message: '注册失败' } }, { status: 500 });
+    if (String(input).includes('/qr')) return Response.json({ status: 'pending', url: authorizationUrl });
+    return Response.json({ id: 'ch-window', binding_status: 'unbound' });
+  }) as typeof fetch;
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <I18nProvider initialLocale="zh-CN">
+        <ChannelWizardFormPage
+          mode="create"
+          workspaceId="workspace-test"
+          initialAgentId="agent-test"
+          initialChannel={null}
+          initialValue={{
+            name: '窗口授权渠道',
+            mode: 'open',
+            include_thinking: true,
+            include_tool_calls: true,
+            reply_in_thread: true,
+            agentId: 'agent-test',
+            environmentId: 'env-test',
+            channelType: 'feishu',
+          }}
+          onNavigate={() => undefined}
+          title="创建渠道"
+        />
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+  fireEvent.click(screen.getByRole('button', { name: '前往飞书授权创建' }));
+  if (success) {
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(authorizationUrl));
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.getByText('等待飞书扫码确认')).toBeTruthy();
+  } else {
+    await waitFor(() => expect(close).toHaveBeenCalled());
+    expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toBeTruthy();
+  }
+  expect(popup.opener).toBeNull();
 });

@@ -222,7 +222,7 @@ export function StepStrategy({
             <tbody>
               <tr className="border-t border-border">
                 <td className="px-3 py-3">{msg('managedAgents.channels.groupChat', '群聊')}</td>
-                <td className="px-3 py-3">Bot</td>
+                <td className="px-3 py-3">{msg('managedAgents.channels.identityBot', 'Bot')}</td>
                 <td className="px-3 py-3">
                   <Select
                     value={value.reply_in_thread ? 'thread' : 'main'}
@@ -244,7 +244,7 @@ export function StepStrategy({
               </tr>
               <tr className="border-t border-border">
                 <td className="px-3 py-3">{msg('managedAgents.channels.directChat', '单聊')}</td>
-                <td className="px-3 py-3">User</td>
+                <td className="px-3 py-3">{msg('managedAgents.channels.identityUser', 'User')}</td>
                 <td className="px-3 py-3 text-muted-foreground">—</td>
               </tr>
             </tbody>

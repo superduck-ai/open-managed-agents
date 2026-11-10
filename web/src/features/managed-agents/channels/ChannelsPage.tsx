@@ -206,7 +206,7 @@ export function ChannelsPageContent({
                 </DropdownMenu>
               </TableHead>
               <TableHead>{msg('managedAgents.channels.columnAgent', '智能体')}</TableHead>
-              <TableHead>Environment</TableHead>
+              <TableHead>{msg('managedAgents.channels.columnEnvironment', '环境')}</TableHead>
               <TableHead>{msg('managedAgents.channels.columnActions', '操作')}</TableHead>
             </TableRow>
           </TableHeader>

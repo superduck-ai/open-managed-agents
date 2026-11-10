@@ -228,7 +228,9 @@ export function ChannelDetailContent({
                 <DetailRow label={msg('managedAgents.channels.agentVersionStrategy', '智能体版本策略')}>
                   {msg('managedAgents.channels.keepLatest', '保持最新（仅对新会话生效）')}
                 </DetailRow>
-                <DetailRow label="Environment">{query.data?.environmentName || '—'}</DetailRow>
+                <DetailRow label={msg('managedAgents.channels.columnEnvironment', '环境')}>
+                  {query.data?.environmentName || '—'}
+                </DetailRow>
                 <DetailRow label={msg('managedAgents.channels.mountedMemory', '挂载 Memory')}>—</DetailRow>
                 <DetailRow label={msg('managedAgents.channels.mountedVault', '挂载 Vault')}>—</DetailRow>
               </DetailCard>

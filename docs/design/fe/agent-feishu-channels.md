@@ -124,7 +124,7 @@ OMA 没有单独的 metadata PATCH。桥接通过 `POST /v1/sessions/{id}` 合�
 
 飞书分组使用飞书官网的品牌图标（来源：https://www.feishu.cn/favicon.ico），作为本地静态资源随前端打包。
 
-渠道界面文案（含状态、表单校验和无障碍标签）复用现有 i18n catalogs，支持中英文切换。
+渠道界面文案（含状态、表单校验、环境列、身份 Bot/User、应用 ID 与应用密钥）都走 i18n catalogs，支持中英文切换。
 
 ## 智能体渠道环境
 

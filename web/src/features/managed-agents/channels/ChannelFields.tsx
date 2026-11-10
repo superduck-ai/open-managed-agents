@@ -28,17 +28,17 @@ export function ChannelCredentials({
         {msg('managedAgents.channels.consoleLink', '前往渠道管理后台 →')}
       </a>
       <div className="space-y-2">
-        <Label htmlFor="channel-app-id">App ID</Label>
+        <Label htmlFor="channel-app-id">{msg('managedAgents.channels.appIdLabel', '应用 ID')}</Label>
         <Input
           id="channel-app-id"
           autoComplete="off"
           value={value.app_id ?? ''}
           onChange={(event) => onChange({ ...value, app_id: event.target.value })}
-          placeholder="App ID"
+          placeholder={msg('managedAgents.channels.appIdLabel', '应用 ID')}
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="channel-app-secret">App Secret</Label>
+        <Label htmlFor="channel-app-secret">{msg('managedAgents.channels.appSecret', '应用密钥')}</Label>
         <div className="relative">
           <Input
             id="channel-app-secret"
@@ -46,7 +46,11 @@ export function ChannelCredentials({
             autoComplete="new-password"
             value={value.app_secret ?? ''}
             onChange={(event) => onChange({ ...value, app_secret: event.target.value })}
-            placeholder={bound ? msg('managedAgents.channels.keepSecret', '留空保留现有密钥') : 'App Secret'}
+            placeholder={
+              bound
+                ? msg('managedAgents.channels.keepSecret', '留空保留现有密钥')
+                : msg('managedAgents.channels.appSecretPlaceholder', '应用密钥')
+            }
             className="pr-10"
           />
           <Button

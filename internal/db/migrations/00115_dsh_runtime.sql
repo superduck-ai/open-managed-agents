@@ -1,4 +1,40 @@
 -- +goose Up
+CREATE TABLE dsh_transcripts (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    organization_uuid uuid NOT NULL,
+    workspace_uuid uuid NOT NULL,
+    code_session_uuid uuid NOT NULL,
+    dsh_session_id text NOT NULL,
+    parent_dsh_session_id text,
+    session_thread_id text,
+    next_offset bigint NOT NULL DEFAULT 0 CHECK (next_offset >= 0 AND next_offset <= 9007199254740993),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (organization_uuid, workspace_uuid, code_session_uuid, dsh_session_id)
+);
+CREATE TABLE dsh_transcript_records (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    organization_uuid uuid NOT NULL,
+    workspace_uuid uuid NOT NULL,
+    code_session_uuid uuid NOT NULL,
+    transcript_uuid uuid NOT NULL,
+    record_offset bigint NOT NULL CHECK (record_offset >= 0 AND record_offset <= 9007199254740992),
+    payload bytea NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (transcript_uuid, record_offset)
+);
+CREATE TABLE dsh_worker_states (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    organization_uuid uuid NOT NULL,
+    workspace_uuid uuid NOT NULL,
+    code_session_uuid uuid NOT NULL,
+    context_snapshot jsonb CHECK (jsonb_typeof(context_snapshot) = 'object'),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (organization_uuid, workspace_uuid, code_session_uuid)
+);
 CREATE TABLE dsh_input_executions (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
@@ -23,28 +59,6 @@ CREATE TABLE dsh_input_executions (
 CREATE UNIQUE INDEX dsh_input_executions_running ON dsh_input_executions (code_session_uuid) WHERE status = 'running';
 CREATE INDEX dsh_input_executions_active ON dsh_input_executions (organization_uuid, workspace_uuid, code_session_uuid, status, accepted_at, input_id) WHERE status IN ('accepted', 'running');
 CREATE INDEX dsh_input_executions_completed ON dsh_input_executions (organization_uuid, workspace_uuid, code_session_uuid, accepted_at DESC, input_id DESC) WHERE status = 'completed';
-CREATE TABLE dsh_input_deliveries (
-    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-    organization_uuid uuid NOT NULL,
-    workspace_uuid uuid NOT NULL,
-    code_session_uuid uuid NOT NULL,
-    input_execution_uuid uuid NOT NULL,
-    input_id text NOT NULL,
-    ack_subject text NOT NULL CHECK (ack_subject != ''),
-    cleanup_job_uuid uuid,
-    status text NOT NULL CHECK (status IN ('waiting', 'pending', 'discarded')),
-    delivered_at timestamptz NOT NULL DEFAULT now(),
-    attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    next_attempt_at timestamptz NOT NULL DEFAULT now(),
-    lease_token uuid,
-    lease_until timestamptz,
-    CHECK ((lease_token IS NULL) = (lease_until IS NULL)),
-    CHECK (lease_token IS NULL OR status = 'pending'),
-    UNIQUE (organization_uuid, workspace_uuid, code_session_uuid, input_id)
-);
-CREATE INDEX dsh_input_deliveries_pending ON dsh_input_deliveries (next_attempt_at, uuid) WHERE status = 'pending';
-CREATE INDEX dsh_input_deliveries_discarded ON dsh_input_deliveries (delivered_at, uuid) WHERE status = 'discarded';
 CREATE TABLE dsh_permission_requests (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
@@ -77,12 +91,15 @@ CREATE TABLE dsh_public_receipts (
     workspace_uuid uuid NOT NULL,
     code_session_uuid uuid NOT NULL,
     event_id text NOT NULL,
-    payload_digest text NOT NULL CHECK (payload_digest ~ '^jcs-sha256-v1:[0-9a-f]{64}$'),
+    payload_digest text NOT NULL CHECK (payload_digest ~ '^(jcs-sha256-v1|exact-json-sha256-v1):[0-9a-f]{64}$'),
     created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (organization_uuid, workspace_uuid, code_session_uuid, event_id)
 );
+
 -- +goose Down
 DROP TABLE dsh_public_receipts;
 DROP TABLE dsh_permission_requests;
-DROP TABLE dsh_input_deliveries;
 DROP TABLE dsh_input_executions;
+DROP TABLE dsh_worker_states;
+DROP TABLE dsh_transcript_records;
+DROP TABLE dsh_transcripts;

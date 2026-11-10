@@ -99,29 +99,3 @@ func TestDSHWorkersPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-func TestDSHRegistrationMigrationPostgres(t *testing.T) {
-	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
-	if address == "" {
-		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
-	}
-	ctx, database, migrations := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := migrations.UpTo(ctx, 119); err != nil {
-		t.Fatal(err)
-	}
-	_, err := database.ExecContext(ctx, `INSERT INTO dsh_worker_states (organization_uuid, workspace_uuid, code_session_uuid, model, trace_turns, model_control_sequence, model_control_input_id, context_snapshot) VALUES ('53000000-0000-0000-0000-000000000001', '53000000-0000-0000-0000-000000000002', '53000000-0000-0000-0000-000000000003', 'selected', '[]', 20, 'control', '{"model":"frozen"}')`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := migrations.Up(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var snapshot string
-	if err := database.QueryRowContext(ctx, `SELECT context_snapshot->>'model' FROM dsh_worker_states`).Scan(&snapshot); err != nil || snapshot != "frozen" {
-		t.Fatalf("snapshot=%s %v", snapshot, err)
-	}
-	var remaining int
-	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='dsh_worker_states' AND column_name IN ('model','trace_turns','model_control_sequence','model_control_input_id')`).Scan(&remaining); err != nil || remaining != 0 {
-		t.Fatalf("remaining=%d %v", remaining, err)
-	}
-}

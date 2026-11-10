@@ -289,7 +289,7 @@ stateDiagram-v2
 
 `dsh_transcripts` 保留租户、Code Session、DSH ID、父级与公开线程绑定，以及 `next_offset`。`dsh_transcript_records` 保存租户、`transcript_uuid`、`record_offset` 和 `payload bytea`，不创建外键。
 
-Migration 00122 将旧 Header JSONB 复制为 offset 0，将旧事件 seq 加一复制到记录表，水位加一，然后删除旧 header 列和事件表。旧 JSONB 已丢失的空白及键顺序无法恢复；迁移保留其数据库文本表示，迁移后的重试必须使用该表示。Brain 恢复后只上传新增尾部，不重新上传确认前缀。旧日志与新版 Brain/后端需要同步切换，不允许旧协议客户端继续写入。降级会丢失字节身份，migration 明确拒绝 Down。
+`00115_dsh_runtime.sql` 直接创建最终的 transcript 元数据和 bytea 记录表，Header 为 offset 0。Brain 恢复后只上传新增尾部，不重新上传确认前缀。DSR 的六张表在同一个 migration 中创建，Down 删除这些表。已应用旧实验 schema 的开发库需要显式重建或备份后转换，不会自动重跑修改后的 migration。
 
 ### 6.7 读取
 
@@ -516,7 +516,7 @@ JSON 接口先按 RFC 7493 校验原始请求，拒绝重复键、无效 UTF-8/U
 
 幂等比较与新摘要使用 `exact-json-sha256-v1`，不是 JCS。对象键按 Go JSON 编码器的字符串排序规则排序，字符串按 JSON 编码规则转义；数组保持顺序。数字按十进制系数与指数无损归一化，去掉系数首尾零，零统一为 0，指数为零时省略指数。例如 1、1.0、1e0 相等，9007199254740992 与 9007199254740993 不等。指数运算使用任意精度整数，不展开巨大指数。规范化仅用于比较和摘要，不用于改写存储 payload。
 
-migration 00123 允许回执约束同时接受新旧摘要前缀。旧 `jcs-sha256-v1` 回执不批量改写，也不直接与新摘要比较。存在新版本回执时，Down 无法恢复旧约束，不自动转换摘要。重试须同时满足：请求经旧 JCS 处理后仍与原请求精确相等、旧摘要匹配、对应持久历史的类型/线程/公开内容匹配。旧摘要路径还要求线程状态存在对应历史；无变化状态若没有同 ID 历史则不能证明一致，返回 `public_event_history_inconsistent`。JCS 会改值的重试、未知摘要版本或摘要不同返回 `public_event_idempotency_mismatch`。历史已经被旧入口舍入的数据不能恢复原值，需要单独核对修复。
+建表约束同时接受新旧摘要前缀。旧 `jcs-sha256-v1` 回执不批量改写，也不直接与新摘要比较。重试须同时满足：请求经旧 JCS 处理后仍与原请求精确相等、旧摘要匹配、对应持久历史的类型/线程/公开内容匹配。旧摘要路径还要求线程状态存在对应历史；无变化状态若没有同 ID 历史则不能证明一致，返回 `public_event_history_inconsistent`。JCS 会改值的重试、未知摘要版本或摘要不同返回 `public_event_idempotency_mismatch`。历史已经被旧入口舍入的数据不能恢复原值，需要单独核对修复。
 
 JSONB 保存准确数值，不保证空白、键序和数字写法；数值仍受 PostgreSQL JSONB/numeric 的范围限制。字节级原样保存仅属于 transcript records 的 bytea 合同。回归覆盖 HTTP 原始解码、工具公开映射、精确数字等价、不同大整数冲突，以及隔离 PostgreSQL 的 permission/public-events 读回与旧回执检查。
 
@@ -578,7 +578,6 @@ sequenceDiagram
 
 空队列领取先走租户范围内的无锁候选查询及 worker epoch/租约校验，跳过 Session 锁和事务。有候选才进入领取事务，取得锁后重新查询和校验。控制 SSE 的 `event: task.available`、`data: {}` 是临时领取提示，建连后发送一次，新任务提交后尽力唤醒；不携带 input ID，不参与 ACK，不替代持久任务。提示按 Code Session 隔离，通过 Core NATS 发布，不写 JetStream；丢失或暂不可用时一秒轮询兜底。Brain 捕获 claim 前的通知版本，收到提示即解除空等待，避免查询和等待之间的丢唤醒。
 
-
 - `POST /v1/dsr/sessions/{code_session_id}/inputs/claim` 每次返回一条 task，响应为 `{"input": {...}, "cancel_requested_at"?: "..."}`；无可执行输入时为 `{"input": null}`。input 沿用 9.1 的 task schema，包含附件、系统上下文及 trace 上下文。
 - 领取事务锁定 Session 与 Code Session，验证租户、epoch、注册与租约。优先返回当前 running execution；否则按 `accepted_at, input_id` 领取最早 accepted execution，并执行预算、审批和失败暂停资格检查，原子写入 running、started_at 与公开输入 processed_at。
 - Brain 每次只领取并执行一条 task，完成后提交 finish，再领取下一条；无任务时等待一秒重查。启动、接管及网络重试走同一路径，running 输入不会因响应丢失而丢失。会话发现保留既有 Brain claim 的数据库轮询，唤醒通知只用于降低延迟。
@@ -624,7 +623,7 @@ stateDiagram-v2
 
 ### 9.3.1 升级与恢复边界
 
-00121 migration 将旧投递关联的对象清理 job 提前调度，再删除 dsh_input_deliveries；执行记录、公开输入及原生 transcript 保留。新 task 与首次激活 task 不再发布到 NATS。旧 task 消息被后端直接确认，不交给 Brain；引用的投递对象走既有清理 job。ACK 失败可由旧消息重投重试，不再需要数据库投递补偿处理器。
+task 的持久事实由 dsh_input_executions 承载；公开输入及原生 transcript 分别保存其数据。新 task 与首次激活 task 不再发布到 NATS。旧 task 消息被后端直接确认，不交给 Brain；引用的投递对象走既有清理 job。ACK 失败可由旧消息重投重试，不再需要数据库投递补偿处理器。
 
 后端与 Brain 必须协调升级，先停止旧 Brain，再升级数据库和后端，最后启动新 Brain。新后端拒绝旧 task 回执，新 Brain 要求 claim 接口，不支持新旧版本混跑。回滚 migration 只恢复空投递表，不能重建旧投递事实，不支持带未完成任务的直接降级。
 
@@ -644,7 +643,7 @@ stateDiagram-v2
 
 Brain 先持久化原生日志中的 `plugin:oma/dsr-finish` version 2，包含 inputId 与精确 completion，再确认日志复制和公开输出，然后调用 finish；不发送 task delivery 回执。重复请求从该记录重建。version 1 的 checkpoint 在重放时明确拒绝为 unsupported_finish_version，不自动重写或重放工具。所有子线程结束或被中断后才允许整体完成。
 
-数据库 task 队列通过 migration 00121 升级，删除旧 task 投递结算表并保留 execution、公开输入和 transcript。后端与 Brain 需协调升级；不得把旧 task delivery 当作新协议的完成确认。
+数据库 task 队列由 dsh_input_executions 实现，与公开输入和 transcript 一起初始化。后端与 Brain 需协调升级；不得把旧 task delivery 当作新协议的完成确认。
 
 ### 9.5 接管、重试与并发
 
@@ -931,12 +930,4 @@ P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来�
 
 第 17 版：以输入执行为粒度改名 dsh_input_executions；status 为 accepted/running/completed，result 为 success/cancelled/failed，failure_code 替代 reason，cancel_requested_at 记录取消意图。delivery 状态保持 received/processing/processed，响应使用 execution_status。完成 checkpoint 升为 version 2。原始 goose 定义直接调整，旧库不自动升级。
 
-第 17 版（历史设计，task ACK 与 scheduled 已由数据库队列替代）：单独建立 dsh_input_deliveries，ACK 全部移出业务事务；后端独立补偿，注册和 Brain claim 不再处理已完成但未 ACK 的输入。delivery 新增 scheduled 计数及同名逐项 outcome。原始 00117 定义直接调整，无新 migration；当前开发库须独立进行数据保留转换。
-
 第 18 版：公开回执使用 JCS + SHA-256 版本化摘要。DSR-Protocol 为 1，未冻结实验合同要求 Brain 和后端同步升级。
-
-第 19 版：ACK 成功后以 delivery UUID、完整租户范围和 lease_token 做 CAS 删除，并与对象 cleanup job 推进同事务提交。删除 acked 状态、acked_at 列及索引，不再保留成功 ACK 历史。数据库事务失败仍可在租约过期后重复 ACK；重投通过 completed execution 创建新 pending 投递，不重跑 Brain。discarded 仍保留 7 天后清理。直接修改原始 00117 定义。
-
-第 20 版：采用会话配置不可变快照。register 返回完整的初始 context。新增 00119 context_snapshot 列保存原始声明与模型目录，后续 register/接管只重绑 owner 凭证。子 Agent 使用注册响应中的模板快照，inline 继承根配置；模型使用注册配置中的初始值。当前主接口数为 16。
-
-第 18 版：task 改为数据库 claim/finish，control 独立 SSE；新增 00121 migration 删除 task 投递结算表，移除后台 ACK 补偿与伪游标。后端和 Brain 协调升级。

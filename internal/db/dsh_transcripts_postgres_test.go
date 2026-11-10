@@ -114,29 +114,3 @@ func TestDSHTranscriptsPostgres(t *testing.T) {
 		}
 	})
 }
-
-func TestDSHTranscriptRecordsMigrationPostgres(t *testing.T) {
-	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
-	if address == "" {
-		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
-	}
-	ctx, database, migrations := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := migrations.UpTo(ctx, 121); err != nil {
-		t.Fatal(err)
-	}
-	scope := DSHScope{OrganizationUUID: "53000000-0000-0000-0000-000000000001", WorkspaceUUID: "53000000-0000-0000-0000-000000000002", CodeSessionUUID: "53000000-0000-0000-0000-000000000003"}
-	transcriptUUID := "53000000-0000-0000-0000-000000000004"
-	execClaimTest(t, ctx, database, `INSERT INTO dsh_transcripts(uuid,organization_uuid,workspace_uuid,code_session_uuid,dsh_session_id,header,next_seq) VALUES($1,$2,$3,$4,'root','{"version":4}',1)`, transcriptUUID, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionUUID)
-	execClaimTest(t, ctx, database, `INSERT INTO dsh_transcript_events(organization_uuid,workspace_uuid,code_session_uuid,transcript_uuid,seq,payload) VALUES($1,$2,$3,$4,0,'{"seq":0}')`, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionUUID, transcriptUUID)
-	if _, err := migrations.UpTo(ctx, 122); err != nil {
-		t.Fatal(err)
-	}
-	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
-	transcript, records, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200)
-	if err != nil || transcript.NextOffset != 2 || len(records) != 2 || records[0].Offset != 0 || records[1].Offset != 1 || string(records[0].Payload) != `{"version": 4}` || string(records[1].Payload) != `{"seq": 0}` {
-		t.Fatalf("%+v %+v %v", transcript, records, err)
-	}
-	if _, err := migrations.Down(ctx); err == nil {
-		t.Fatal("lossy downgrade accepted")
-	}
-}

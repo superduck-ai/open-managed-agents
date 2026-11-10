@@ -85,7 +85,7 @@ Brain doctor 同时检查 Worker 的 `environment-manager task-run --help` 声�
 
 此场景不验证新 transcript 归档、全部子线程/附件/压缩能力、真实模型质量、云端网络分区或性能。普通原生运行时测试另覆盖审批挂起与双工具批次在 SIGKILL 后的防重放，不能代替这个真实后端场景。
 
-DSR 输入执行模型验收检查 task 使用 claim/finish，拒绝 task delivery 回执；完成后 claim 返回空，不重复执行。finish 拒绝 recovered 与旧 reason，且不可改写已提交结果。00121 migration 移除投递结算表。
+DSR 输入执行模型验收检查 task 使用 claim/finish，拒绝 task delivery 回执；完成后 claim 返回空，不重复执行。finish 拒绝 recovered 与旧 reason，且不可改写已提交结果。DSR migration 直接创建最终执行表结构。
 
 `dsr_completed_input_not_claimed` 阶段停止真实 Brain 并显式推进 owner 租约过期，确认已完成输入不会触发新的 Brain claim。该阶段不测量完整 TTL 等待时序。数据库回归另覆盖稳定排序、并发领取重试、旧 epoch、跨租户拒绝以及 running 输入接管。
 

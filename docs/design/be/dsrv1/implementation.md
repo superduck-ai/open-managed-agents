@@ -119,7 +119,7 @@ flowchart LR
 
 ## 数据与事务边界
 
-迁移 `00115` 至 `00120` 创建或演进 `dsh_transcripts`、`dsh_transcript_events`、`dsh_worker_states`、`dsh_input_executions`、`dsh_input_deliveries`、`dsh_permission_requests`、`dsh_public_receipts` 七张表。仅调整新增 DSH 表，不修改既有业务表 schema，不创建外键。应用 SQL 全部通过 Yourbatis。
+迁移 `00115_dsh_runtime.sql` 一次创建最终结构的六张表：`dsh_transcripts`、`dsh_transcript_records`、`dsh_worker_states`、`dsh_input_executions`、`dsh_permission_requests`、`dsh_public_receipts`。仅调整新增 DSH 表，不修改既有业务表 schema，不创建外键。应用 SQL 全部通过 Yourbatis。
 
 写入按所属 Session/Code Session 加锁，并显式检查组织、工作空间、协议、epoch 和租约。公开输入接纳与 input execution 创建、确认与审批解决、公开输出与收据、finish 与 pending 关闭、公开 reducer 更新分别在同一事务中完成。提交后的 SSE/webhook fanout 复用现有服务。
 
@@ -175,63 +175,13 @@ Go 全部普通测试与要求的质量门禁、3 项独立 PostgreSQL 测试均
 
 DSRv1 host 与 CCRv2 共用 `oma-brain-dsh ready` 启动标记，供 `just restart` 等待后继续启动 Web。专用 `dsr_brain_ready` JSON 诊断日志同时保留；真实 Bun 子进程回归见 `tests/dsr-startup.test.ts`。
 
-## 输入执行模型调整，2026-11-04
+## 数据库初始化
 
-`dsh_input_executions` 表示输入级逻辑执行。status 为 accepted/running/completed；delivery 的 received/processing/processed 保持不变。result 仅 success/cancelled/failed，failure_code 仅 failed 必填。开始和完成时间分别为 started_at、completed_at，首次取消意图为 cancel_requested_at。ACK 字段已迁到独立投递表，仅用于投递结算。epoch/租约继续归 Code Session，不增加 attempt、delivery 或 outbox 表。
+DSR schema 通过单个 goose migration `00115_dsh_runtime.sql` 初始化。Transcript 的元数据水位为 next_offset，记录从 offset 0 开始保存原始 bytea；worker-state 只保存不可变 context_snapshot 和更新时间；输入执行记录、审批与公开回执直接创建最终字段和约束。Down 删除本次创建的六张表，不更改既有业务表。
 
-Mapper、claim 资格、公开 reducer、Brain wire/client、原生完成 checkpoint 与测试同步修改。reducer 用当前执行和最近完成结果的摘要查询替代全历史加载；独立后台补偿只领取投递表中的 pending 行。
+普通测试不连接真实数据库。`TestDSHRuntimeMigrationPostgres` 使用隔离 schema，验证从 114 升级只应用一个 migration、最终表与约束、原始字节往返、Down 到 114 及重新 Up。其他 DSR PostgreSQL 测试继续覆盖运行时事务与并发。
 
-按本轮要求直接修改未冻结的原始 goose 定义，无新增迁移。00117 定义最终表，00118 不再追加旧表字段，取消仅追加字段的 00119。已有库不会重跑旧 migration；本轮只在全新隔离数据库验证，不重置现有开发数据。新旧实验版本不支持混跑，完成 checkpoint 改为 version 2，旧 version 1 重放明确失败。自动数据转换与清理不在本轮实现内。
-
-前文既有结果是调整前的历史证据，本轮结果单独记录，不能用历史通过代替重验。
-
-### 输入执行模型验收结果
-
-最终版本的 Go 普通单测、lint、死代码、重复代码、复杂度和大文件门禁全部通过；Brain typecheck、构建及可执行文件构建通过，完整测试为 831 pass、5 skip、0 fail。独立 PostgreSQL 的 Execution、Transcripts、Workers 三组测试无 skip 并全部通过。
-
-真实 `chat brain-dsr`、`brain`、`roundtrip`、`tools`、`reliability`、`public` 六个场景全部通过，资源清理成功。随后修正仅限 DSR 的队列准入，保留“新消息唤醒后按顺序恢复旧队列”的既有行为；Go 全部门禁与 PostgreSQL 三组测试再次通过，最终 `chat brain-dsr` 也重跑通过。CCRv2 实现未变化，未重复启动其五个场景。
-
-当时接口的实际调用位置、请求/响应检查、最终 Markdown/JSON 报告与未覆盖范围见 [输入执行模型验收](../../../../tmp/dsh-input-executions/validation.md)。现有开发数据库和服务未重置或升级；历史 goose 定义的修改不会自动应用到已有库。
-
-### 907e 开发库原地转换
-
-2026-11-04 后续按用户要求处理已有开发库。先停本 worktree 的 Brain 和后端，备份原执行表及 goose 记录，再在单个 PostgreSQL 事务中按 00117 的最终定义转换为 dsh_input_executions。3 条记录均已成功完成并 ACK，保留原 id、uuid、租户范围、输入身份、开始/完成时间与 ACK 信息，状态改为 completed。事务逐列比较映射后的全部数据，确认一致后删除旧表，并删除已并入当前定义的 goose 119 记录，当前版本为 118。没有新增 migration，也未重置整个开发环境。
-
-随后通过 just restart-server 与 just restart-brain 启动新代码，healthz 返回 ok，readyz 的 database、tunnel_nats、tunnel_redis 均为 ok，Brain 输出 oma-brain-dsh ready 和 dsr_brain_ready。此次只核对开发库转换与服务启动，未再次执行聊天集成场景。备份及事务脚本仅保存在当前 worktree 的 tmp/dsh-input-executions/dev-db-upgrade/，备份文件权限为 0600，不纳入 Git。
-
-## ACK 与执行解耦，2026-11-04
-
-本节取代前文暂留 ACK 字段、注册补 ACK 与仅为结算领取 Brain 的实现说明。dsh_input_executions 只保存逻辑执行；dsh_input_deliveries 保存最新 Reply Subject、待确认状态、重试/短租约和 payload cleanup job UUID。finish 与投递 pending 同事务提交。NATS/Redis I/O 全部位于业务事务外，ACK 网络失败不回滚完成结果。
-
-main 组装独立 DSHDeliveryWorker，每秒领取最多 16 条、30 秒租约、每次 1 秒 ACK 超时；错误指数退避至 60 秒，崩溃后租约过期恢复。多实例 SKIP LOCKED 领取，完成与失败均按完整范围及 lease_token CAS。成功时同事务推进对象 cleanup job。退役投递置 discarded；ACK 成功行立即删除；discarded 诊断记录保留 7 天后分批清理，等待或重试中的记录不按时间删除。
-
-task SSE 先持久化投递定位，不再依赖 Redis ACK 索引。已 completed 的重投不交给 Brain。delivery processed 的 outcome 与计数为 scheduled，表示后台结算已接受。control 维持 Redis 定位与同步确认，但确认发生在业务事务外。完成 checkpoint 仍为 version 2，finish 结果合同不变。
-
-ack_subject 取自 NATS message.Reply()。当前 SDK 的 ACK subject 携带多项投递元数据，新格式还可能带随机 token，不由 input_id 拼接。Redis 可以作为缓存，但本实现使用 PostgreSQL 持久待办保护 finish 与确认责任的一致性。
-
-直接修改原始 00117，新增投递表并从执行表移除 ACK 列；不增加版本号。当前开发库另行事务转换，保留原执行数据与确认事实。验证结果将在本轮交付记录，早期报告不代表本次后台补偿已通过。
-
-### ACK 解耦验收与开发库转换结果
-
-Go 普通单测、lint、死代码、重复代码、复杂度与大文件门禁全部通过；Brain typecheck、构建通过，完整测试为 832 pass、5 项既有 skip、0 fail。真实 PostgreSQL 的 Execution、Deliveries、Transcripts、Workers 四组测试通过。嵌入式 NATS 另验证重复 DoubleAck。
-
-真实 brain-dsr 的 7 个必需阶段全部通过，其中 dsr_ack_recovery 在没有 Brain 的情况下验证失败退避、恢复确认和不领取 Brain。brain、roundtrip、tools、reliability、public 五个相关回归同样通过。之后仅把 DSR 业务事件发布移到控制 ACK 前，避免控制确认失败跳过已提交事件；Go 全部门禁与最终 DSR 再次通过。报告索引见 [ACK 解耦验收](../../../../tmp/dsh-deliveries/validation.md)。ACK 场景显式推进 owner 租约过期，验证资格与恢复，不把它当成 TTL 壁钟时序验收。
-
-当前 907e 库已停止旧 Brain/后端、保存权限 0600 的本地备份，并在一个事务内创建投递表、复制 ACK 事实、逐列验证业务数据后，原地删除执行表 ACK 列。3 条执行记录的 id/uuid、范围、结果与时间原样保留，3 条 ACK 地址和确认时间迁入新表。历史 delivery.delivered_at 是本次导入观察时间，旧表没有保存真实投递时间。goose 仍为 118，没有新增 migration，也没有重置整个开发环境。后端与 Brain 使用新协议一起重启；就绪检查与数据库检查见验收报告。
-
-## 第 18 版：状态与回执收敛
-
-公开回执改为 payload_digest，值为 jcs-sha256-v1 加规范化原始事件的 SHA-256 hex。与公开历史的事务关系、相同 ID 冲突规则、preview 边界不变。公开回执不独立过期，待日志重放窗口和 GC 一并设计。
-
-测试覆盖规范化等价与内容冲突、批次回滚、租户和 owner fencing。
-
-## 第 19 版：ACK 成功即删除
-
-dsh_input_deliveries 仅保存 waiting/pending/discarded，移除 acked_at 和成功历史索引。后端 DoubleAck 成功后，Yourbatis 事务先以完整租户、UUID、lease_token 删除当前 pending 行，匹配成功才推进关联 cleanup job；任一步失败整个事务回滚。新投递与旧租约 CAS 互斥，重复完成为幂等无操作。
-
-已完成 execution 保留，故 ACK 后重投重新创建 pending 行也不会重跑 Brain。discarded 的 7 天保留不变；成功 ACK 不再等待定时清理。原始 goose 00117 直接修改，已应用开发库备份后删除历史 acked 行并原地删列/调整约束。
-
-数据库回归覆盖 cleanup 推进失败回滚删除、旧租约与跨租户不能删除、新投递抵御旧完成、成功立即消失、删除后重投补 ACK、业务 execution 保留。真实 DSR 场景夹具同步为已确认行消失后，生成 run-owned JetStream 测试投递并读取原始 Reply Subject，再故障注入 pending 定位，最终以行消失断言后台补偿完成。此修改本身不代表该真实场景已重跑，实际运行以本轮验收记录为准。
+已应用旧实验 migration 的开发库不会自动升级到压缩后的定义。需要保留数据时，先备份，再制定结构与 goose 记录一致的数据转换；可以丢弃的隔离环境应显式重建。此次仅整理源码，未修改当前开发库、goose 记录或运行服务。
 
 ## Brain 单协议收敛
 
@@ -279,9 +229,9 @@ owner 只在明确收到 `epoch_superseded` 时跳过 release；其余错误均�
 
 ## 数据库 task 队列，2026-11-09
 
-本节取代上文 task 投递结算与后台补偿方案。task 接纳与公开输入仍同事务提交，新增 inputs/claim 负责有序领取、开始执行与 running 恢复；Brain 串行领取和执行，无任务时每秒重查。NATS 不再保存新 task，control 仍使用原投递与回执机制。会话级 Brain claim 继续数据库轮询，因此唤醒通知丢失不影响最终发现任务。
+task 接纳与公开输入仍同事务提交，新增 inputs/claim 负责有序领取、开始执行与 running 恢复；Brain 串行领取和执行，无任务时每秒重查。NATS 不再保存新 task，control 仍使用原投递与回执机制。会话级 Brain claim 继续数据库轮询，因此唤醒通知丢失不影响最终发现任务。
 
-删除 DSHDeliveryWorker 与投递 Mapper，通过新增 00121 migration 提前调度旧对象清理 job 并删除投递表。旧 broker task 消息直接确认和清理，不再发给 Brain。后端与 Brain 必须停旧后协调升级，不能混跑。
+task 的持久事实由 dsh_input_executions 承载。旧 broker task 消息直接确认和清理，不再发给 Brain。后端与 Brain 必须停旧后协调升级，不能混跑。
 
 普通回归覆盖领取响应校验、控制流无游标、无 task 回执、Brain 进程领取执行；隔离 PostgreSQL 回归覆盖旧 epoch/跨租户拒绝、领取重试、运行任务优先、稳定排序、失败暂停及 finish 幂等。真实 Worker、外部模型与 verify-be 场景需单独授权，不由上述测试代表。
 
@@ -297,7 +247,7 @@ owner 只在明确收到 `epoch_superseded` 时跳过 release；其余错误均�
 
 日志读写统一为 `/transcripts/{dsh_session_id}/records`，传输使用 JSONL，游标为 `from_offset/next_offset`。后端仅校验 JSON 对象与顶层 seq：缺少 seq 的首条记录为 offset 0，有 seq 的记录映射为 seq+1。Harness 版本、字段与身份校验保留在 Brain。
 
-Migration 00122 用 bytea 记录表替换分离的 JSONB header/events，保留 `UNIQUE(transcript_uuid,record_offset)`。幂等改为原始字节比较，父级单独传递；旧 JSONB 只能迁移其数据库文本表示。新旧协议不兼容，需要同步部署，Down 明确拒绝有损降级。
+`dsh_transcript_records.payload` 直接使用 bytea，保留 `UNIQUE(transcript_uuid,record_offset)`。幂等使用原始字节比较，父级单独传递。
 
 普通回归覆盖 JSONL 边界、序号映射、字节冲突、批量写入、恢复水位、租约重注册与 JSONL HTTP 传输。定向 PostgreSQL 回归覆盖 bytea 绑定、唯一约束、并发与事务回滚。实际执行情况以本次交付结果为准；本次不自动运行 verify-be。
 
@@ -305,7 +255,7 @@ Migration 00122 用 bytea 记录表替换分离的 JSONB header/events，保留 
 
 `decodeBody` 使用 jsontext 校验原始请求，再解码 DTO；不再将 JCS 输出交给业务层。permission input、public-events payload 保留原始 JSON；工具调用公开映射使用 UseNumber，避免重新引入浮点舍入。
 
-`internal/jsoncanonical` 对数字按十进制系数和任意精度指数归一化，用于比较和 `exact-json-sha256-v1` 摘要。新算法不改写存储内容。旧 JCS 摘要只通过独立兼容入口校验，同时要求请求无损且已有历史匹配；无法核对时返回冲突，不反推或猜测旧原值。migration 00123 将回执摘要约束扩展为接受新旧两种版本，不批量改写旧回执。存在新版本回执时，Down 会因旧约束不满足而失败，不能将新摘要冒充旧摘要。
+`internal/jsoncanonical` 对数字按十进制系数和任意精度指数归一化，用于比较和 `exact-json-sha256-v1` 摘要。新算法不改写存储内容。旧 JCS 摘要只通过独立兼容入口校验，同时要求请求无损且已有历史匹配；无法核对时返回冲突，不反推或猜测旧原值。建表约束直接接受新旧两种摘要版本，不批量改写旧回执，也不将新摘要冒充旧摘要。
 
 测试入口为普通 Go 单测及 `TestDSHPublicPrecisionPostgres`、`TestDSHLegacyReceiptPrecisionPostgres`、`TestDSHPermissionPrecisionPostgres` 的定向集成测试。后者使用隔离 PostgreSQL schema，覆盖 JSONB 精度、等价重试、相邻大整数冲突与旧摘要不能掩盖历史变化；不代表真实 Worker E2E。
 

@@ -73,3 +73,7 @@ func credentialCheckUnavailable(cause error) error {
 func invalidChannelPage(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "渠道列表分页参数无效", cause)
 }
+
+func invalidAuthorizationID() error {
+	return apperr.New(apperr.InvalidArgument, "渠道授权编号无效", nil)
+}

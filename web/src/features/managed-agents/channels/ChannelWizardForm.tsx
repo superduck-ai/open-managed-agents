@@ -128,9 +128,6 @@ export function StepConnect({
   qr,
   busy,
   workspaceId,
-  agents,
-  environments,
-  agentLocked,
   onGenerateQr,
   showQr = false,
 }: {
@@ -142,9 +139,6 @@ export function StepConnect({
   qr: ChannelQr | null;
   busy: boolean;
   workspaceId: string;
-  agents: AgentApiResponse[];
-  environments: EnvironmentApiResponse[];
-  agentLocked: boolean;
   onGenerateQr: (openAuthorization?: boolean) => void;
   showQr?: boolean;
 }) {
@@ -163,13 +157,7 @@ export function StepConnect({
           onChange={(event) => onChange({ ...value, name: event.target.value })}
         />
       </div>
-      <ChannelTargetFields
-        value={value}
-        onChange={onChange}
-        agents={agents}
-        environments={environments}
-        agentLocked={agentLocked}
-      />
+
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.channelType', '渠道类型')}</Label>
         <Select value="feishu" items={[{ value: 'feishu', label: msg('managedAgents.channels.feishu', '飞书') }]}>
@@ -274,11 +262,7 @@ function QrBindPanel({
         </Card>
       ) : (
         <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            disabled={busy || !value.name.trim() || !value.agentId || !value.environmentId}
-            onClick={() => onGenerateQr(true)}
-          >
+          <Button type="button" disabled={busy || !value.name.trim()} onClick={() => onGenerateQr(true)}>
             <ExternalLink className="size-4" />
             {msg('managedAgents.channels.goFeishuAuth', '前往飞书授权创建')}
           </Button>

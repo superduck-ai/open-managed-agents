@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
@@ -14,7 +14,8 @@ import {
   type WizardStep,
   type WizardValue,
 } from './ChannelWizardForm';
-import { channelTargetsReady, channelWizardStepReady, validateChannelInput, wizardStepAllowed } from './channelInput';
+import { channelTargetsReady, channelWizardStepReady, wizardStepAllowed } from './channelInput';
+import { useChannelAuthorization } from './useChannelAuthorization';
 import { listChannelEnvironments } from './channelEnvironments';
 import { listAllWorkspaceAgents } from './workspaceChannels';
 import { channelDetailPath, channelsListPath } from './paths';
@@ -68,9 +69,6 @@ function WizardStepFields({
       qr={qr}
       busy={busy}
       workspaceId={workspaceId}
-      agents={agents}
-      environments={environments}
-      agentLocked={agentLocked}
       onGenerateQr={onGenerateQr}
       showQr={showQr}
     />
@@ -98,12 +96,22 @@ export function ChannelWizardFormPage({
   const [step, setStep] = useState<WizardStep>(1);
   const [binding, setBinding] = useState(initialChannel?.binding_status === 'bound' ? 'credentials' : 'qr');
   const [saved, setSaved] = useState<Channel | null>(initialChannel);
-  const [qr, setQr] = useState<ChannelQr | null>(null);
-  const [showQr, setShowQr] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [value, setValue] = useState<WizardValue>(initialValue);
-  const savedEnvironmentId = useRef(initialChannel ? initialValue.environmentId : null);
+  const savedEnvironment = useRef(
+    initialChannel ? { agentId: initialValue.agentId, environmentId: initialValue.environmentId } : null,
+  );
+  const onAuthorized = useCallback((appId: string) => {
+    setValue((current) => ({ ...current, app_id: appId }));
+    setError('');
+  }, []);
+  const { authorization, qr, setQr, showQr, authorizing, authorize } = useChannelAuthorization(
+    workspaceId,
+    onAuthorized,
+    setError,
+  );
+  const busy = saving || authorizing;
 
   const agentsQuery = useQuery({
     queryKey: ['workspace-channel-agents', workspaceId],
@@ -117,7 +125,7 @@ export function ChannelWizardFormPage({
   const targetAgentId = value.agentId || initialAgentId;
 
   useEffect(() => {
-    if (!saved || saved.binding_status === 'bound' || !targetAgentId) return;
+    if (authorization || !saved || saved.binding_status === 'bound' || !targetAgentId) return;
     const controller = new AbortController();
     const poll = async () => {
       try {
@@ -145,7 +153,7 @@ export function ChannelWizardFormPage({
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [saved, targetAgentId, workspaceId, queryClient]);
+  }, [saved, targetAgentId, workspaceId, queryClient, authorization?.id]);
 
   const agents = agentsQuery.data ?? [];
   const environments = environmentsQuery.data ?? [];
@@ -157,62 +165,47 @@ export function ChannelWizardFormPage({
     if (wizardStepAllowed(next, value, access)) setStep(next);
   };
 
-  const canSave = channelWizardStepReady(1, value, access) && Boolean(value.agentId && value.environmentId);
-  const persist = async (generateQr: boolean, closeAfter: boolean, openAuthorization = false) => {
+  const canSave =
+    step === 3 && channelWizardStepReady(1, value, access) && Boolean(value.agentId && value.environmentId);
+  const persist = async () => {
     if (!channelTargetsReady(value)) {
       setError(connectTargetError(value, msg));
       return;
     }
-    if (closeAfter && !channelWizardStepReady(1, value, access)) {
-      setError(
-        binding === 'credentials'
-          ? validateChannelInput(value, binding, saved, msg)
-          : msg('managedAgents.channels.bindRequired', '请先完成飞书授权，再保存渠道'),
-      );
-      return;
-    }
-    if (generateQr) setShowQr(!openAuthorization);
-    const authorizationWindow = openAuthorization ? window.open('about:blank', '_blank') : null;
-    if (authorizationWindow) {
-      authorizationWindow.opener = null;
-      authorizationWindow.document.title = msg('managedAgents.channels.openingAuthorization', '正在打开飞书授权…');
-      authorizationWindow.document.body.textContent = authorizationWindow.document.title;
-      authorizationWindow.document.body.style.cssText =
-        'margin:0;display:grid;min-height:100vh;place-items:center;font:14px system-ui;color:#666';
-    }
-    setBusy(true);
+    if (!canSave) return;
+    setSaving(true);
     setError('');
     try {
-      if (savedEnvironmentId.current !== value.environmentId) {
+      if (
+        savedEnvironment.current?.agentId !== targetAgentId ||
+        savedEnvironment.current?.environmentId !== value.environmentId
+      ) {
         await channelApi(targetAgentId!, workspaceId, '/settings', 'POST', { environment_id: value.environmentId });
-        savedEnvironmentId.current = value.environmentId;
+        savedEnvironment.current = { agentId: targetAgentId, environmentId: value.environmentId };
       }
-      const next = await channelApi<Channel>(
-        targetAgentId!,
-        workspaceId,
-        saved ? `/${saved.id}` : '',
-        'POST',
-        channelPayload(value, binding),
-      );
+      const next = await channelApi<Channel>(targetAgentId!, workspaceId, saved ? `/${saved.id}` : '', 'POST', {
+        ...channelPayload(value, binding),
+        ...(binding === 'qr' && authorization ? { authorization_id: authorization.id } : {}),
+      });
       setSaved(next);
       setValue((current) => ({ ...current, app_secret: '', agentId: targetAgentId! }));
       void queryClient.invalidateQueries({ queryKey: ['workspace-channels', workspaceId] });
       void queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, next.id] });
-      if (generateQr) {
-        const nextQr = await channelApi<ChannelQr>(targetAgentId!, workspaceId, `/${next.id}/qr`, 'POST', {});
-        setQr(nextQr);
-        authorizationWindow?.location.replace(nextQr.url);
-        return;
-      }
-      if (closeAfter) onNavigate(channelDetailPath(workspaceId, targetAgentId!, next.id));
+      onNavigate(channelDetailPath(workspaceId, targetAgentId!, next.id));
     } catch (err) {
-      authorizationWindow?.close();
       setError(errorMessage(err));
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   };
 
+  const targetNames = useMemo(
+    () => ({
+      agentName: agents.find((agent) => agent.id === value.agentId)?.name ?? '',
+      environmentName: environments.find((environment) => environment.id === value.environmentId)?.name ?? '',
+    }),
+    [agents, environments, value.agentId, value.environmentId],
+  );
   const listHref = channelsListPath(workspaceId);
   return (
     <section className="flex min-h-[calc(100dvh-112px)] min-w-0 flex-col text-foreground md:min-h-[calc(100dvh-48px)]">
@@ -240,7 +233,7 @@ export function ChannelWizardFormPage({
             agents={agents}
             environments={environments}
             agentLocked={agentLocked}
-            onGenerateQr={(openAuthorization) => void persist(true, false, openAuthorization)}
+            onGenerateQr={(openAuthorization) => void authorize(value.name, Boolean(openAuthorization))}
             showQr={showQr}
           />
           {error ? (
@@ -265,7 +258,7 @@ export function ChannelWizardFormPage({
               <Button type="button" variant="outline" disabled={busy} onClick={() => onNavigate(listHref)}>
                 {msg('managedAgents.channels.cancel', '取消')}
               </Button>
-              <Button type="button" disabled={busy || !canSave} onClick={() => void persist(false, true)}>
+              <Button type="button" disabled={busy || !canSave} onClick={() => void persist()}>
                 {busy
                   ? msg('managedAgents.channels.processing', '处理中…')
                   : msg('managedAgents.channels.saveConfig', '保存配置')}
@@ -282,10 +275,7 @@ export function ChannelWizardFormPage({
             canOpen={(next) => wizardStepAllowed(next, value, access)}
             onStepChange={openStep}
           />
-          <WizardSideCards
-            agentName={agents.find((agent) => agent.id === value.agentId)?.name ?? ''}
-            environmentName={environments.find((environment) => environment.id === value.environmentId)?.name ?? ''}
-          />
+          <WizardSideCards {...targetNames} />
         </aside>
       </div>
     </section>

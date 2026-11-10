@@ -39,6 +39,8 @@ func (h *handler) workspaceRouter() http.Handler {
 	wrap := httpapi.NewErrorAdapter(h.logger).Wrap
 	router.Get("/", wrap(h.listWorkspace))
 	router.Post("/credentials/check", wrap(h.checkAppCredentials))
+	router.Post("/authorizations", wrap(h.forwardAuthorization))
+	router.Get("/authorizations/{authorization_id}", wrap(h.forwardAuthorization))
 	return router
 }
 

@@ -3129,6 +3129,7 @@
   "managedAgents.channels.authorizationPending": "Waiting for Feishu authorization",
   "managedAgents.channels.authorizationPendingHint": "Select an organization and confirm creation on the Feishu authorization page",
   "managedAgents.channels.reopenAuthorization": "Reopen authorization page",
+  "managedAgents.channels.authorizationUnknown": "Authorization needs reconciliation. Confirm the app in Feishu and enter its credentials manually.",
   "managedAgents.channels.qrWaiting": "Waiting for Feishu authorization",
   "managedAgents.channels.bound": "Feishu connected successfully",
   "managedAgents.channels.regenerateQr": "Regenerate QR code",

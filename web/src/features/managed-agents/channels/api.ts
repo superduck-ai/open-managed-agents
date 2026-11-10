@@ -32,8 +32,9 @@ export interface Pairing {
   status: 'pending' | 'approved' | 'rejected';
 }
 export interface ChannelQr {
-  status: 'pending' | 'bound' | 'expired' | 'error';
+  status: 'pending' | 'bound' | 'expired' | 'error' | 'unknown';
   url: string;
   expires_at: string;
 }
+export type ChannelAuthorization = ChannelQr & { id: string; app_id?: string };
 export const channelApi = anthropicBetaApi.agents.channels;

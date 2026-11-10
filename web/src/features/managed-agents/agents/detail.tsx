@@ -1,4 +1,4 @@
-import { AgentChannels } from '../channels/AgentChannels';
+import { AgentChannelPointer } from '../channels/AgentChannelPointer';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, AlertDescription, AlertTitle } from '../../../shared/ui/alert';
@@ -405,12 +405,7 @@ export function AgentDetailPage({ agentId, routeWorkspaceId }: { agentId: string
         </TabsList>
 
         <TabsContent value="channels" className="mt-0">
-          <AgentChannels
-            key={`${workspaceId}:${agent.id}`}
-            agentId={agent.id}
-            workspaceId={workspaceId}
-            canEdit={canEdit}
-          />
+          <AgentChannelPointer workspaceId={workspaceId} agentId={agent.id} canEdit={canEdit} />
         </TabsContent>
         <TabsContent value="config" className="mt-0">
           {detailTab === 'config' ? (

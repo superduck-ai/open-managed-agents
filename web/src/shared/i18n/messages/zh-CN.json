@@ -3434,6 +3434,7 @@
   "managedAgents.channels.listEmpty": "暂无渠道。点击「新增渠道」开始接入飞书。",
   "managedAgents.channels.aggregateHint": "列表按工作区内智能体聚合桥接渠道；单个智能体最多展示其控制台创建的渠道。",
   "managedAgents.channels.openWorkspaceChannels": "打开工作区渠道页",
+  "managedAgents.channels.agentDetailPointer": "飞书等渠道在工作区「渠道」里统一管理。这里不再创建、编辑或审批配对。",
   "managedAgents.channels.createPage": "渠道创建页",
   "managedAgents.channels.editPage": "编辑渠道",
   "managedAgents.channels.detailPage": "渠道详情页",

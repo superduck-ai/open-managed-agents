@@ -16,7 +16,7 @@ import { PairingsDialog } from './PairingsDialog';
 import { channelEditPath, channelsListPath } from './paths';
 import { channelConnectionStatus } from './status';
 import { ChannelSessionsPanel } from './ChannelSessionsPanel';
-import { listChannelEnvironments } from './useChannelEnvironment';
+import { listChannelEnvironments } from './channelEnvironments';
 import feishuLogo from './feishu.ico';
 
 export function ChannelDetailPage() {

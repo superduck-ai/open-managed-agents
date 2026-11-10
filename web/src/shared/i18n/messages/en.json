@@ -3434,6 +3434,7 @@
   "managedAgents.channels.listEmpty": "No channels yet. Click Add channel to connect Feishu.",
   "managedAgents.channels.aggregateHint": "The list aggregates bridge channels across agents in this workspace.",
   "managedAgents.channels.openWorkspaceChannels": "Open workspace channels",
+  "managedAgents.channels.agentDetailPointer": "Feishu and other channels are managed on the workspace Channels page. This page no longer creates, edits, or approves pairings.",
   "managedAgents.channels.createPage": "Create channel",
   "managedAgents.channels.editPage": "Edit channel",
   "managedAgents.channels.detailPage": "Channel details",

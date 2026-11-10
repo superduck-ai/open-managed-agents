@@ -25,7 +25,7 @@ import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { channelCreatePath, channelDetailPath, channelEditPath } from './paths';
 import { ChannelTablePager } from './ChannelTablePager';
 import { channelConnectionStatus, type ChannelConnectionStatus } from './status';
-import { listChannelEnvironments } from './useChannelEnvironment';
+import { listChannelEnvironments } from './channelEnvironments';
 import { listWorkspaceChannels, type WorkspaceChannel } from './workspaceChannels';
 
 type SearchField = 'name' | 'app_id';

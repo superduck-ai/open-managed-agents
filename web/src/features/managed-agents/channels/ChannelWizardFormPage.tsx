@@ -13,7 +13,7 @@ import {
   type WizardStep,
   type WizardValue,
 } from './ChannelWizardForm';
-import { validateChannelInput } from './useChannelEditor';
+import { validateChannelInput } from './channelInput';
 import { listAllWorkspaceAgents } from './workspaceChannels';
 import { channelDetailPath, channelsListPath } from './paths';
 import type { EnvironmentApiResponse } from '../types';

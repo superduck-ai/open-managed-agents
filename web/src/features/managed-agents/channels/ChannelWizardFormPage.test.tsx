@@ -48,6 +48,8 @@ function mount(saved: Channel | null = null, value = initialValue) {
   return navigated;
 }
 function targets(url: string) {
+  if (url.includes('/memory_stores')) return { data: [{ id: 'mem-test', name: '测试记忆' }] };
+  if (url.includes('/vaults')) return { data: [{ id: 'vault-test', display_name: '测试凭证库' }] };
   if (url.includes('/environments')) return { data: [{ id: 'env-test', name: '测试环境' }] };
   return { data: [{ id: 'agent-test', name: '测试助手' }] };
 }
@@ -135,12 +137,23 @@ test('第一步独立完成授权，第三步选择目标后才能保存正式�
   fireEvent.click(screen.getByRole('button', { name: '下一步' }));
   expect(screen.getByRole('button', { name: '保存配置' }).hasAttribute('disabled')).toBe(true);
   await selectTargets();
+  fireEvent.click(await screen.findByRole('combobox', { name: '默认 Memory' }));
+  fireEvent.click(await screen.findByRole('option', { name: '测试记忆' }));
+  fireEvent.click(screen.getByRole('combobox', { name: '默认 Vault' }));
+  fireEvent.click(await screen.findByRole('option', { name: '测试凭证库' }));
   expect(screen.getByRole('button', { name: '保存配置' }).hasAttribute('disabled')).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
   await waitFor(() => expect(navigated).toHaveBeenCalled());
   expect(posts[1].url).toContain('/agents/agent-test/channels/settings');
   expect(posts[1].body).toEqual({ environment_id: 'env-test' });
-  expect(posts[2].body).toEqual(expect.objectContaining({ authorization_id: 'authorization-test', mode: 'open' }));
+  expect(posts[2].body).toEqual(
+    expect.objectContaining({
+      authorization_id: 'authorization-test',
+      mode: 'open',
+      memory_store_id: 'mem-test',
+      vault_id: 'vault-test',
+    }),
+  );
   expect(posts[2].body.app_secret).toBeUndefined();
 });
 
@@ -188,4 +201,35 @@ test('已有未绑定渠道在短暂断网后继续同步完整绑定状态', as
   expect(screen.queryByRole('alert')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
   expect(screen.getByDisplayValue('cli_resumed')).toBeTruthy();
+});
+
+test('编辑回显默认资源，并可分别切回不挂载后保存', async () => {
+  resetTestDom('/');
+  let body: Record<string, unknown> = {};
+  globalThis.fetch = (async (input, init) => {
+    if (init?.method === 'POST') {
+      body = JSON.parse(String(init.body));
+      return Response.json({ ...channel, ...body, binding_status: 'bound' });
+    }
+    return Response.json(targets(String(input)));
+  }) as typeof fetch;
+  const saved = {
+    ...channel,
+    binding_status: 'bound' as const,
+    app_id: 'cli_test',
+    memory_store_id: 'mem-test',
+    vault_id: 'vault-test',
+  };
+  const navigated = mount(saved, { ...initialValue, ...saved, agentId: 'agent-test', environmentId: 'env-test' });
+  fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+  fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+  await screen.findByText('测试记忆');
+  await screen.findByText('测试凭证库');
+  for (const name of ['默认 Memory', '默认 Vault']) {
+    fireEvent.click(screen.getByRole('combobox', { name }));
+    fireEvent.click(await screen.findByRole('option', { name: '不挂载' }));
+  }
+  fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+  await waitFor(() => expect(navigated).toHaveBeenCalled());
+  expect(body).toEqual(expect.objectContaining({ memory_store_id: null, vault_id: null }));
 });

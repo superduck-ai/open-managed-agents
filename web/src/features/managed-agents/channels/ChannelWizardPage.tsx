@@ -112,6 +112,8 @@ function buildInitialWizardValue(channel: Channel | null, initialAgentId: string
     reply_in_thread: channel?.reply_in_thread ?? true,
     app_id: channel?.app_id ?? '',
     app_secret: '',
+    memory_store_id: channel?.memory_store_id ?? null,
+    vault_id: channel?.vault_id ?? null,
     channelType: 'feishu',
     agentId: initialAgentId,
     environmentId,

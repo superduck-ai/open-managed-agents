@@ -17,6 +17,7 @@ import { channelDetailPath, channelEditPath, channelSessionsTabPath, channelsLis
 import { channelConnectionStatus, channelConnectionStatusNotice } from './status';
 import { ChannelSessionsPanel } from './ChannelSessionsPanel';
 import { listChannelEnvironments } from './channelEnvironments';
+import { useChannelResources } from './channelResources';
 import feishuLogo from './feishu.ico';
 
 export function ChannelDetailPage() {
@@ -244,8 +245,7 @@ export function ChannelDetailContent({
                 <DetailRow label={msg('managedAgents.channels.columnEnvironment', '环境')}>
                   {query.data?.environmentName || '—'}
                 </DetailRow>
-                <DetailRow label={msg('managedAgents.channels.mountedMemory', '挂载 Memory')}>—</DetailRow>
-                <DetailRow label={msg('managedAgents.channels.mountedVault', '挂载 Vault')}>—</DetailRow>
+                <ChannelMountedResources workspaceId={workspaceId} channel={channel} />
               </DetailCard>
             </TabsContent>
             <TabsContent value="sessions" className="mt-4">
@@ -288,5 +288,23 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
       <dt className="text-sm text-muted-foreground">{label}</dt>
       <dd className="text-sm text-foreground">{children}</dd>
     </div>
+  );
+}
+
+function ChannelMountedResources({ workspaceId, channel }: { workspaceId: string; channel: Channel }) {
+  const { msg } = useI18n();
+  const resources = useChannelResources(workspaceId);
+  const none = msg('managedAgents.channels.notMounted', '不挂载');
+  return (
+    <>
+      <DetailRow label={msg('managedAgents.channels.mountedMemory', '挂载 Memory')}>
+        {resources.data?.memoryStores.find((item) => item.id === channel.memory_store_id)?.label ||
+          channel.memory_store_id ||
+          none}
+      </DetailRow>
+      <DetailRow label={msg('managedAgents.channels.mountedVault', '挂载 Vault')}>
+        {resources.data?.vaults.find((item) => item.id === channel.vault_id)?.label || channel.vault_id || none}
+      </DetailRow>
+    </>
   );
 }

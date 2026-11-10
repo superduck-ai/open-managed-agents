@@ -22,6 +22,8 @@ import (
 )
 
 type agentStore interface {
+	GetMemoryStore(context.Context, string, string) (db.MemoryStore, error)
+	GetVault(context.Context, string, string) (db.Vault, error)
 	GetAgent(context.Context, string, string) (db.Agent, error)
 	GetEnvironment(context.Context, string, string) (db.Environment, error)
 	EnsureChannelWorkspaceCredential(context.Context, platform.CreateConsoleAPIKeyInput, *secrets.Service) (string, error)
@@ -98,6 +100,11 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	runtimeRequired, err := requiresRuntime(w, r, settings)
 	if err != nil {
 		return err
+	}
+	if runtimeRequired {
+		if err := h.validateMounts(w, r, p.WorkspaceUUID); err != nil {
+			return err
+		}
 	}
 	endpoint, err := h.endpoint(r, settings)
 	if err != nil {

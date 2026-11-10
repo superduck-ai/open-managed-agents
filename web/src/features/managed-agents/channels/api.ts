@@ -8,6 +8,8 @@ export interface Channel {
   enabled: boolean;
   connected: boolean;
   binding_status: 'bound' | 'unbound';
+  memory_store_id?: string | null;
+  vault_id?: string | null;
   app_id?: string;
   include_thinking: boolean;
   include_tool_calls: boolean;
@@ -21,6 +23,8 @@ export interface ChannelInput {
   include_thinking: boolean;
   include_tool_calls: boolean;
   reply_in_thread: boolean;
+  memory_store_id?: string | null;
+  vault_id?: string | null;
   app_id?: string;
   app_secret?: string;
 }

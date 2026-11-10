@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from '../../../shared/ui/switch';
 import type { AgentApiResponse, EnvironmentApiResponse } from '../types';
 import type { Channel, ChannelInput, ChannelQr } from './api';
+import { ChannelResourceFields } from './ChannelResourceFields';
 import { ChannelCredentials } from './ChannelFields';
 import feishuLogo from './feishu.ico';
 
@@ -375,7 +376,9 @@ export function StepMa({
   agents,
   environments,
   agentLocked,
+  workspaceId,
 }: {
+  workspaceId: string;
   value: WizardValue;
   onChange: (value: WizardValue) => void;
   agents: AgentApiResponse[];
@@ -408,14 +411,7 @@ export function StepMa({
           </SelectContent>
         </Select>
       </div>
-      <ReadonlyMountSelect
-        label={msg('managedAgents.channels.defaultMemory', '默认 Memory')}
-        value={msg('managedAgents.channels.notMounted', '不挂载')}
-      />
-      <ReadonlyMountSelect
-        label={msg('managedAgents.channels.defaultVault', '默认 Vault')}
-        value={msg('managedAgents.channels.notMounted', '不挂载')}
-      />
+      <ChannelResourceFields workspaceId={workspaceId} value={value} onChange={onChange} />
     </div>
   );
 }
@@ -521,15 +517,6 @@ function ToggleCardRow({
         className="shrink-0"
         onCheckedChange={(next) => onCheckedChange(next === true)}
       />
-    </div>
-  );
-}
-
-function ReadonlyMountSelect({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="space-y-2">
-      <Label>{label}</Label>
-      <Input value={value} disabled readOnly />
     </div>
   );
 }

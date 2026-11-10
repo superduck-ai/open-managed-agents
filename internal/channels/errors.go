@@ -77,3 +77,10 @@ func invalidChannelPage(cause error) error {
 func invalidAuthorizationID() error {
 	return apperr.New(apperr.InvalidArgument, "渠道授权编号无效", nil)
 }
+
+func invalidMemoryMount(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "请选择当前工作区中未归档的 Memory", cause)
+}
+func invalidVaultMount(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "请选择当前工作区中未归档的 Vault", cause)
+}

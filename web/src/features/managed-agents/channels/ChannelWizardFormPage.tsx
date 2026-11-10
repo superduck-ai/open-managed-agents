@@ -56,7 +56,14 @@ function WizardStepFields({
   if (step === 2) return <StepStrategy value={value} onChange={onChange} />;
   if (step === 3) {
     return (
-      <StepMa value={value} onChange={onChange} agents={agents} environments={environments} agentLocked={agentLocked} />
+      <StepMa
+        workspaceId={workspaceId}
+        value={value}
+        onChange={onChange}
+        agents={agents}
+        environments={environments}
+        agentLocked={agentLocked}
+      />
     );
   }
   return (
@@ -294,6 +301,8 @@ function channelPayload(value: WizardValue, binding: string) {
   return {
     name: value.name.trim(),
     mode: value.mode,
+    memory_store_id: value.memory_store_id ?? null,
+    vault_id: value.vault_id ?? null,
     include_thinking: value.include_thinking,
     include_tool_calls: value.include_tool_calls,
     reply_in_thread: value.reply_in_thread,

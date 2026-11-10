@@ -1,0 +1,42 @@
+[
+  {
+    "method": "PUT",
+    "path": "/v1/dsr/sessions/cse_route/image-attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": 404
+  },
+  {
+    "method": "HEAD",
+    "path": "/v1/dsr/sessions/cse_route/image-attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/v1/dsr/sessions/cse_route/image-attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": 404
+  },
+  {
+    "method": "GET",
+    "path": "/v1/dsr/sessions/cse_route/message-attachments/file_image/content",
+    "status": 404
+  },
+  {
+    "method": "PUT",
+    "path": "/v1/dsr/sessions/cse_route/attachments/image-attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": 401
+  },
+  {
+    "method": "HEAD",
+    "path": "/v1/dsr/sessions/cse_route/attachments/image-attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": 401
+  },
+  {
+    "method": "GET",
+    "path": "/v1/dsr/sessions/cse_route/attachments/image-attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": 401
+  },
+  {
+    "method": "GET",
+    "path": "/v1/dsr/sessions/cse_route/attachments/message-attachments/file_image/content",
+    "status": 401
+  }
+]

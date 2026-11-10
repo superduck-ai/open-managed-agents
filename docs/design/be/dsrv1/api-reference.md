@@ -994,6 +994,8 @@ DSH 创建子 Agent sub_9f2c
 
 本节完整的方法、调用方与响应字段见 [逐接口评审第 5 节](interface-review.md)。MCP 需 GET/POST/DELETE 与 OAuth metadata 配套迁移；图片附件需 PUT/HEAD/GET，消息附件需 GET，不能只实现读取。diagnostics 目前无生产 Brain 调用，是否保留及 typed 白名单 schema 需在冻结前决定。
 
+2026-11-10 路由复现测试确认：Brain 的图片与消息附件请求缺少 `/attachments` 前缀，后端返回 404；上传被映射为 `INVALID_IMAGE`，读取在 HEAD 探测时被映射为 `ATTACHMENT_NOT_FOUND`，消息附件 source 返回 undefined。`internal/codesessions/dsh_attachment_routes_test.go` 在 capability 路由层校验共享样例 `testdata/dsr_attachment_routes.json`，Brain 的 `tests/image-attachments.test.ts` 使用同一份样例复现错误。测试不连接数据库或对象存储，也不覆盖完整凭据鉴权；无凭据请求在外层会先返回 401。本次仅增加问题刻画测试，尚未修正生产路径；这些测试通过表示复现成立，不表示附件功能已修复。
+
 MCP/OTLP 的原生错误体、附件二进制与 HEAD 响应不走通用 JSON 解码。网关 lifecycle 错误用 DSR-Error，普通资源和上游错误不 fence。sandbox/MCP/web 保留 X-OMA-Session-Thread-ID，模型 API 保留 X-Claude-Code-Agent-Id，不能全局机械替换。
 
 不变的接口：`/v1/messages` 与 `/v1/chat/completions` 使用 model_token；沙箱 relay 与 sign-commit 保持既有凭据路径。`/v1/code/upstreamproxy/ca-cert` 当前不鉴权，是 sandbox JWT 描述的例外。Brain 没有新增沙箱侧调用职责，详见逐接口评审。

@@ -74,9 +74,16 @@ type EvaluationTaskScore struct {
 	Score            float64
 	Passed           bool
 	Explanation      string
+	Answer           string
 	Dimensions       json.RawMessage
 	ErrorMessage     string
 	CreatedAt        time.Time
+}
+
+type EvaluationTaskUsage struct {
+	InputTokens          int64
+	OutputTokens         int64
+	CacheReadInputTokens int64
 }
 
 type EvaluationTaskDetail struct {
@@ -230,12 +237,22 @@ func (d *DB) CreateEvaluationTaskScore(ctx context.Context, score EvaluationTask
 	row, err := NewEvaluationTaskMapper(d.mapperDB).InsertScore(ctx, insertEvaluationTaskScoreParams{
 		UUID: score.UUID, ExternalID: score.ExternalID, OrganizationUUID: score.OrganizationUUID, WorkspaceUUID: score.WorkspaceUUID,
 		TaskUUID: score.TaskUUID, ItemUUID: score.ItemUUID, Status: score.Status, Score: score.Score, Passed: score.Passed,
-		Explanation: score.Explanation, Dimensions: score.Dimensions, ErrorMessage: score.ErrorMessage, CreatedAt: score.CreatedAt,
+		Explanation: score.Explanation, Answer: score.Answer, Dimensions: score.Dimensions, ErrorMessage: score.ErrorMessage, CreatedAt: score.CreatedAt,
 	})
 	if err != nil {
 		return EvaluationTaskScore{}, mapEvaluationWrite(err)
 	}
 	return scoreFromRow(row), nil
+}
+
+func (d *DB) SumEvaluationTaskUsage(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string) (EvaluationTaskUsage, error) {
+	row, err := NewEvaluationTaskMapper(d.mapperDB).SumTaskUsage(ctx, organizationUUID, workspaceUUID, taskUUID)
+	if err != nil {
+		return EvaluationTaskUsage{}, err
+	}
+	return EvaluationTaskUsage{
+		InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadInputTokens: row.CacheReadInputTokens,
+	}, nil
 }
 
 func uuidPointer(value string) *string {
@@ -278,6 +295,6 @@ func scoreFromRow(row evaluationTaskScoreRow) EvaluationTaskScore {
 	return EvaluationTaskScore{
 		UUID: row.UUID, ExternalID: row.ExternalID, OrganizationUUID: row.OrganizationUUID, WorkspaceUUID: row.WorkspaceUUID,
 		TaskUUID: row.TaskUUID, ItemUUID: row.ItemUUID, Status: row.Status, Score: row.Score, Passed: row.Passed, Explanation: row.Explanation,
-		Dimensions: row.Dimensions, ErrorMessage: row.ErrorMessage, CreatedAt: row.CreatedAt,
+		Answer: row.Answer, Dimensions: row.Dimensions, ErrorMessage: row.ErrorMessage, CreatedAt: row.CreatedAt,
 	}
 }

@@ -2,6 +2,7 @@
 ALTER TABLE evaluation_cases
     ADD COLUMN IF NOT EXISTS inputs jsonb NOT NULL DEFAULT '[]'::jsonb;
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -13,7 +14,9 @@ BEGIN
                 AND (char_length(query) > 0 OR jsonb_array_length(inputs) > 0)
             );
     END IF;
-END $$;
+END;
+$$;
+-- +goose StatementEnd
 
 -- +goose Down
 ALTER TABLE evaluation_cases DROP CONSTRAINT IF EXISTS evaluation_cases_has_input;

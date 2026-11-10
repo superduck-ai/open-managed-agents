@@ -98,7 +98,6 @@ import {
 import {
   buildSessionEventEntries,
   hasWallClockMs,
-  sessionCanonicalDisplayEvent,
   sessionEventTimestamp,
   sessionEventType,
   latestRequiresActionEventIDs,
@@ -114,7 +113,8 @@ import {
   writeSessionInspectorUrlState,
 } from './sessionInspectorModel';
 import { SessionHeaderSummary } from './SessionHeaderSummary';
-import { interruptedSessionModelRequestIds, latestSessionIdlePresentationState } from './sessionExecutionState';
+import { latestSessionIdlePresentationState } from './sessionExecutionState';
+import { buildSessionEntriesByLane } from './sessionLaneEntries';
 import { SessionMessageComposer } from './SessionMessageComposer';
 import { SessionStartState } from './SessionStartState';
 import { SessionOutputFiles } from './SessionOutputFiles';
@@ -461,23 +461,10 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
     () => buildSessionEventsByLane(lanes, events, laneIdByThreadId),
     [events, laneIdByThreadId, lanes],
   );
-  const entriesByLaneId = useMemo(() => {
-    const interruptionEvents = events
-      .map(sessionCanonicalDisplayEvent)
-      .sort((left, right) => sessionEventTimestamp(left) - sessionEventTimestamp(right));
-    const interruptedModelRequestIds = interruptedSessionModelRequestIds(interruptionEvents);
-    const nextEntriesByLaneId = new Map<string, SessionEventListEntry[]>();
-    lanes.forEach((lane) => {
-      nextEntriesByLaneId.set(
-        lane.id,
-        buildSessionEventEntries(eventsByLaneId.get(lane.id) ?? [], 'transcript', traceStartMs, msg, {
-          platformTranscriptFiltering: true,
-          interruptedModelRequestIds,
-        }),
-      );
-    });
-    return nextEntriesByLaneId;
-  }, [events, eventsByLaneId, lanes, msg, traceStartMs]);
+  const entriesByLaneId = useMemo(
+    () => buildSessionEntriesByLane(lanes, events, eventsByLaneId, traceStartMs, msg),
+    [events, eventsByLaneId, lanes, msg, traceStartMs],
+  );
   const entries = useMemo(() => entriesByLaneId.get(activeLane) ?? [], [activeLane, entriesByLaneId]);
   const openModelRequest = useMemo(
     () => latestOpenModelRequest(eventsByLaneId.get(activeLane) ?? []),

@@ -37,7 +37,7 @@ flowchart LR
 | `evaluation_rubrics` / `evaluation_rubric_versions` | `evalrb_` / `erv_` | 评分标准。版本只增不改。`00118_evaluation_rubrics.sql` |
 | `evaluation_tasks` | `evaltask_` | 只写入 `evaluate`。状态 `pending`、`running`、`completed`、`failed`、`cancelled` |
 | `evaluation_task_items` | `evalitem_` | 一个 case，`round = 1` |
-| `evaluation_task_scores` | `evalscore_` | 一条 item 一行。`completed` 才有有效分数 |
+| `evaluation_task_scores` | `evalscore_` | 一条 item 一行。`completed` 才有有效分数。`answer` 保存打分时读到的 Agent 最终回答，`00127_evaluation_score_answer.sql` 增加 |
 
 删除评测集、用例或评分标准是软删除。已经跑过的任务保留自己的快照，不能再被新任务选中。`evaluation_cases.inputs` 由 `00119_evaluation_case_inputs.sql` 增加。任务表在 `00125_replace_evaluation_schema.sql`，它会按当前结构重建评测表；`00126_evaluation_case_inputs_after_task_schema.sql` 在这次重建后再补上 `inputs`。旧的 `00115_managed_evaluation.sql` 与渠道凭证迁移共用版本号，不再保留。
 
@@ -51,6 +51,11 @@ flowchart LR
 - `GET /datasets/{id}/session-turns?session_id=`，`POST /datasets/{id}/cases:from-session`
 - `POST/GET /rubrics`，`GET/DELETE /rubrics/{id}`，`GET /rubrics/{id}/versions`，`POST /rubrics/{id}/versions`，`POST /rubrics/generate`
 - `POST/GET /tasks`，`GET /tasks/{id}`，`POST /tasks/{id}/cancel`，`POST /tasks/{id}/retry`
+- `GET /tasks/{id}/items/{itemId}/trace`
+
+任务列表和详情都返回 `resource_count`、`vault_count`。详情、创建、取消和重试的返回还带 `agent_name`、`dataset_name`、`rubric_name` 和 `usage`。名称按任务记录的 Agent 版本、评测集和评分标准读取；评测集或评分标准已删除时名称为空，前端改显示编号。`usage` 汇总这次任务各 item 会话里 `span.model_request_end` 的输入、输出和缓存读取 token，不含评分模型的调用。item 返回 `acceptance`，`score.answer` 是 Agent 最终回答。
+
+轨迹接口读取 item 对应会话的事件，按时间顺序返回 `user`、`answer`、`tool_use`、`tool_result` 和 `error` 步骤，其余事件不返回。工具调用的 `name` 是工具名，`text` 是输入 JSON。每步文字最多 4000 字节，截断时不留半个字符。item 还没有会话时返回空步骤；超过 2000 个事件的会话按参数错误拒绝。
 
 前端入口在托管智能体的「评测」。页面有任务、评测集和评分标准。
 
@@ -63,6 +68,14 @@ flowchart LR
 评分标准可以手写，或按评测目标、Agent、评测集、正例和负例生成。生成要求模型直接返回 Markdown；若整段回复是 JSON 对象或数组，则拒绝落库。模型若用 Markdown 代码块包住正文，保存时去掉围栏。标题可以留空。列表按 15 条分页。正文和模型名按字符计数。详情先展示标题、编号、版本、创建时间和评分规则正文。版本历史按版本号倒序列出每一版的正文和通过分，可以选择查看。点编辑后再保存，保存会追加版本，已经存在的评测任务不受影响。删除是软删除。
 
 任务列表的列是 ID、任务、Agent、状态、创建时间、操作。开始评测的表单是智能体、运行环境、凭据库、资源、评测集、评分标准和评测关注项。评测关注项会写进这次任务冻结的评分标准。一次任务只跑一轮，不改 Agent。一个任务最多 200 条用例。取消只作用于尚未结束的任务。重试只重置已结束任务里失败的用例。
+
+任务详情页顶部是「评测 / 任务编号」面包屑、任务名、「评测任务」和状态标签、可复制的编号、创建时间，右侧「操作」菜单放重试失败项和终止。下面分「任务信息」和「任务报告」两个标签页，不做内容变化页，因为这一版不改 Agent。任务信息分基本信息、评测配置、执行与资源三组；失败时先显示失败原因。任务报告依次是：
+
+1. 整体结论：结论文字、平均得分环、样例数、通过数、通过率和通过分。有系统异常时下方提示这些样例不计入通过率。
+2. 质量分析：通过、未通过、系统异常、进行中四类的分布条和占比，有维度分时列出各维度均分。
+3. 数据明细：按四类筛选，可下载 CSV。列是用户问题、Agent 最终回答、自动打分、结果、评分依据、验收要点（没有时显示期望回答）和查看轨迹。
+
+item 的会话失败或被取消、评分失败都算系统异常。会话已完成但还没有分数算进行中。查看轨迹打开右侧抽屉，显示问题、分数、结果、会话链接、评分依据和执行过程；没有 Agent 回答时提示本轮暂无最终回答。任务或 item 未结束时，详情和轨迹每 3 秒刷新。
 
 `evaluation_tasks.created_by_user_uuid` 和 `created_by_api_key_uuid` 是可空 `uuid`。控制台会话没有 API key 时这两列为空。
 

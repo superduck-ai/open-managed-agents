@@ -89,7 +89,7 @@ export function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-function csvCell(value: string) {
+export function csvCell(value: string) {
   if (/[",\n]/.test(value)) return `"${value.replaceAll('"', '""')}"`;
   return value;
 }

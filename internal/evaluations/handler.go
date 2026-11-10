@@ -46,6 +46,7 @@ type Store interface {
 	CancelPendingEvaluationItems(context.Context, string, string, string, time.Time) error
 	UpdateEvaluationTaskStatus(context.Context, string, string, string, string, string, time.Time) error
 	CreateEvaluationTaskScore(context.Context, db.EvaluationTaskScore) (db.EvaluationTaskScore, error)
+	SumEvaluationTaskUsage(context.Context, string, string, string) (db.EvaluationTaskUsage, error)
 	GetAgent(context.Context, string, string) (db.Agent, error)
 	GetEnvironment(context.Context, string, string) (db.Environment, error)
 	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
@@ -119,6 +120,7 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Post(base+"/tasks", h.adapter.Wrap(h.createTask))
 	router.Get(base+"/tasks", h.adapter.Wrap(h.listTasks))
 	router.Get(base+"/tasks/{taskId}", h.adapter.Wrap(h.getTask))
+	router.Get(base+"/tasks/{taskId}/items/{itemId}/trace", h.adapter.Wrap(h.getTaskItemTrace))
 	router.Post(base+"/tasks/{taskId}/cancel", h.adapter.Wrap(h.cancelTask))
 	router.Post(base+"/tasks/{taskId}/retry", h.adapter.Wrap(h.retryTask))
 }

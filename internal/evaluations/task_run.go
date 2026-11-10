@@ -136,7 +136,7 @@ func (h *Handler) scoreItem(ctx context.Context, task db.EvaluationTask, item db
 	text, err := h.complete(ctx, task.OrganizationUUID, task.WorkspaceUUID, task.RubricModel, rubricSystemPrompt, prompt)
 	score := db.EvaluationTaskScore{
 		UUID: uuid.NewString(), OrganizationUUID: task.OrganizationUUID, WorkspaceUUID: task.WorkspaceUUID,
-		TaskUUID: task.UUID, ItemUUID: item.UUID, CreatedAt: time.Now().UTC(), Dimensions: json.RawMessage(`[]`),
+		TaskUUID: task.UUID, ItemUUID: item.UUID, Answer: output, CreatedAt: time.Now().UTC(), Dimensions: json.RawMessage(`[]`),
 	}
 	externalID, idErr := ids.New("evalscore_")
 	if idErr != nil {
@@ -248,7 +248,7 @@ func clip(value string, limit int) string {
 	if len(value) <= limit {
 		return value
 	}
-	return value[:limit]
+	return strings.ToValidUTF8(value[:limit], "")
 }
 
 func terminalStatus(events []db.SessionEvent) (string, string, bool) {

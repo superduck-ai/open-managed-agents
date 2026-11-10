@@ -160,6 +160,7 @@ type scoreResponse struct {
 	Score        float64         `json:"score"`
 	Passed       bool            `json:"passed"`
 	Explanation  string          `json:"explanation"`
+	Answer       string          `json:"answer"`
 	Dimensions   json.RawMessage `json:"dimensions"`
 	ErrorMessage string          `json:"error_message"`
 }
@@ -171,6 +172,7 @@ type itemResponse struct {
 	CaseID         string         `json:"case_id"`
 	Query          string         `json:"query"`
 	ExpectedAnswer string         `json:"expected_answer"`
+	Acceptance     string         `json:"acceptance"`
 	SessionID      string         `json:"session_id"`
 	Status         string         `json:"status"`
 	ErrorMessage   string         `json:"error_message"`
@@ -194,9 +196,23 @@ type taskResponse struct {
 	ErrorMessage     string            `json:"error_message"`
 	CreatedAt        string            `json:"created_at"`
 	UpdatedAt        string            `json:"updated_at"`
+	ResourceCount    int               `json:"resource_count"`
+	VaultCount       int               `json:"vault_count"`
+	AgentName        string            `json:"agent_name,omitempty"`
+	DatasetName      string            `json:"dataset_name,omitempty"`
+	RubricName       string            `json:"rubric_name,omitempty"`
+	Usage            *usageResponse    `json:"usage,omitempty"`
 	Summary          summaryResponse   `json:"summary"`
 	Rounds           []summaryResponse `json:"rounds,omitempty"`
 	Items            []itemResponse    `json:"items,omitempty"`
+}
+
+func arrayLength(raw json.RawMessage) int {
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return 0
+	}
+	return len(values)
 }
 
 func taskJSON(detail db.EvaluationTaskDetail, includeItems bool) taskResponse {
@@ -207,6 +223,7 @@ func taskJSON(detail db.EvaluationTaskDetail, includeItems bool) taskResponse {
 		DatasetID: task.DatasetExternalID, DatasetVersionID: task.DatasetVersionExternalID, RubricID: task.RubricExternalID,
 		RubricVersionID: task.RubricVersionExternalID, PassScore: task.PassScore, ErrorMessage: task.ErrorMessage,
 		CreatedAt: formatTime(task.CreatedAt), UpdatedAt: formatTime(task.UpdatedAt),
+		ResourceCount: arrayLength(task.Resources), VaultCount: arrayLength(task.VaultIDs),
 		Summary: summaryJSON(SummarizeRound(detail.Items, detail.Scores, latestRound(detail.Items))),
 	}
 	seen := map[int]struct{}{}
@@ -227,7 +244,7 @@ func taskJSON(detail db.EvaluationTaskDetail, includeItems bool) taskResponse {
 	for _, item := range detail.Items {
 		row := itemResponse{
 			ID: item.ExternalID, Type: "evaluation_task_item", Round: item.Round, CaseID: item.CaseExternalID,
-			Query: item.Query, ExpectedAnswer: item.ExpectedAnswer, SessionID: item.SessionExternalID,
+			Query: item.Query, ExpectedAnswer: item.ExpectedAnswer, Acceptance: item.Acceptance, SessionID: item.SessionExternalID,
 			Status: item.Status, ErrorMessage: item.ErrorMessage,
 		}
 		if score, ok := scores[item.UUID]; ok {
@@ -237,7 +254,7 @@ func taskJSON(detail db.EvaluationTaskDetail, includeItems bool) taskResponse {
 			}
 			row.Score = &scoreResponse{
 				Status: score.Status, Score: score.Score, Passed: score.Passed, Explanation: score.Explanation,
-				Dimensions: dimensions, ErrorMessage: score.ErrorMessage,
+				Answer: score.Answer, Dimensions: dimensions, ErrorMessage: score.ErrorMessage,
 			}
 		}
 		response.Items = append(response.Items, row)

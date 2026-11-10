@@ -67,6 +67,7 @@ export type EvaluationScore = {
   score: number;
   passed: boolean;
   explanation: string;
+  answer: string;
   dimensions: Array<{ name?: string; score?: number }>;
   error_message: string;
 };
@@ -77,6 +78,7 @@ export type EvaluationItem = {
   case_id: string;
   query: string;
   expected_answer: string;
+  acceptance: string;
   session_id: string;
   status: string;
   error_message: string;
@@ -98,9 +100,34 @@ export type EvaluationTask = {
   pass_score: number;
   error_message: string;
   created_at: string;
+  resource_count: number;
+  vault_count: number;
+  agent_name?: string;
+  dataset_name?: string;
+  rubric_name?: string;
+  usage?: EvaluationUsage;
   summary: EvaluationSummary;
   rounds?: EvaluationSummary[];
   items?: EvaluationItem[];
+};
+
+export type EvaluationUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+};
+
+export type EvaluationTraceStep = {
+  type: 'user' | 'answer' | 'tool_use' | 'tool_result' | 'error';
+  name: string;
+  text: string;
+  created_at: string;
+};
+
+export type EvaluationTrace = {
+  item_id: string;
+  session_id: string;
+  steps: EvaluationTraceStep[];
 };
 
 export type EvaluationTaskInput = {
@@ -326,6 +353,12 @@ export function createEvaluationTask(orgUuid: string, workspaceId: string, input
 
 export function getEvaluationTask(orgUuid: string, workspaceId: string, taskId: string) {
   return consoleApi<EvaluationTask>(`${evaluationBase(orgUuid, workspaceId)}/tasks/${encodeURIComponent(taskId)}`);
+}
+
+export function getEvaluationItemTrace(orgUuid: string, workspaceId: string, taskId: string, itemId: string) {
+  return consoleApi<EvaluationTrace>(
+    `${evaluationBase(orgUuid, workspaceId)}/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/trace`,
+  );
 }
 
 export function postEvaluationTaskAction(

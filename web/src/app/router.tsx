@@ -16,10 +16,8 @@ import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../f
 import { LoginPage } from '../features/auth/LoginPage';
 import { DatasetDetailPage } from '../features/evaluations/DatasetDetailPage';
 import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
-import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
-import { DatasetDetailPage } from '../features/evaluations/DatasetDetailPage';
-import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
 import { TaskDetailPage } from '../features/evaluations/TaskDetailPage';
+import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
 import { McpTunnelsPage } from '../features/mcp-tunnels/McpTunnelsPage';
@@ -279,6 +277,12 @@ const workspaceEvaluationDatasetRoute = createRoute({
   component: DatasetDetailPage,
 });
 
+const workspaceEvaluationTaskRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/tasks/$taskId',
+  component: TaskDetailPage,
+});
+
 const workspaceSessionDetailRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/sessions/$sessionId',
@@ -472,30 +476,6 @@ const agentsRoute = createRoute({
   component: () => <ManagedAgentsPage section="agents" />,
 });
 
-const evaluationsRoute = createRoute({
-  getParentRoute: () => consoleRoute,
-  path: 'evaluations',
-  component: EvaluationsPage,
-});
-
-const workspaceEvaluationsRoute = createRoute({
-  getParentRoute: () => consoleRoute,
-  path: 'workspaces/$workspaceId/evaluations',
-  component: EvaluationsPage,
-});
-
-const workspaceEvaluationTaskRoute = createRoute({
-  getParentRoute: () => consoleRoute,
-  path: 'workspaces/$workspaceId/evaluations/tasks/$taskId',
-  component: TaskDetailPage,
-});
-
-const workspaceEvaluationDatasetRoute = createRoute({
-  getParentRoute: () => consoleRoute,
-  path: 'workspaces/$workspaceId/evaluations/datasets/$datasetId',
-  component: DatasetDetailPage,
-});
-
 const agentCreateRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'agents/new',
@@ -675,9 +655,6 @@ const routeTree = rootRoute.addChildren([
       workspaceAgentDetailRoute,
       sessionsRoute,
       workspaceSessionsRoute,
-      evaluationsRoute,
-      workspaceEvaluationsRoute,
-      workspaceEvaluationDatasetRoute,
       workspaceSessionDetailRoute,
       observabilityRoute,
       workspaceObservabilityRoute,

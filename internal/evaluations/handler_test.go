@@ -229,6 +229,10 @@ func (evaluationFixture) CreateEvaluationTaskScore(context.Context, db.Evaluatio
 	return db.EvaluationTaskScore{}, nil
 }
 
+func (evaluationFixture) SumEvaluationTaskUsage(context.Context, string, string, string) (db.EvaluationTaskUsage, error) {
+	return db.EvaluationTaskUsage{}, nil
+}
+
 func (evaluationFixture) GetEnvironment(context.Context, string, string) (db.Environment, error) {
 	return db.Environment{}, nil
 }

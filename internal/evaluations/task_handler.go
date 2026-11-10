@@ -54,8 +54,7 @@ func (h *Handler) createTask(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	httpapi.WriteJSON(w, http.StatusOK, taskJSON(detail, true))
-	return nil
+	return h.writeTaskDetail(w, r, principal, detail)
 }
 
 func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) error {
@@ -114,7 +113,15 @@ func (h *Handler) getTask(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, taskJSON(detail, true))
+	return h.writeTaskDetail(w, r, principal, detail)
+}
+
+func (h *Handler) writeTaskDetail(w http.ResponseWriter, r *http.Request, principal auth.Principal, detail db.EvaluationTaskDetail) error {
+	response, err := h.taskDetailJSON(r.Context(), principal, detail)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, response)
 	return nil
 }
 
@@ -378,6 +385,5 @@ func (h *Handler) writeTask(w http.ResponseWriter, r *http.Request, principal au
 	if err != nil {
 		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
-	httpapi.WriteJSON(w, http.StatusOK, taskJSON(detail, true))
-	return nil
+	return h.writeTaskDetail(w, r, principal, detail)
 }

@@ -38,6 +38,7 @@ const (
 	modelTooLongMessage           = "model must be at most 255 characters"
 	passScoreInvalidMessage       = "pass_score must be between 0 and 100"
 	taskNotFoundMessage           = "Evaluation task not found"
+	itemNotFoundMessage           = "Evaluation task item not found"
 	casesRequiredMessage          = "dataset has no cases"
 	casesTooManyMessage           = "a task accepts at most 200 cases"
 	modeInvalidMessage            = "mode must be evaluate"

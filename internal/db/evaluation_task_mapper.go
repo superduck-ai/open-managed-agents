@@ -74,9 +74,16 @@ type evaluationTaskScoreRow struct {
 	Score            float64         `db:"score"`
 	Passed           bool            `db:"passed"`
 	Explanation      string          `db:"explanation"`
+	Answer           string          `db:"answer"`
 	Dimensions       json.RawMessage `db:"dimensions"`
 	ErrorMessage     string          `db:"error_message"`
 	CreatedAt        time.Time       `db:"created_at"`
+}
+
+type evaluationTaskUsageRow struct {
+	InputTokens          int64 `db:"input_tokens"`
+	OutputTokens         int64 `db:"output_tokens"`
+	CacheReadInputTokens int64 `db:"cache_read_input_tokens"`
 }
 
 type insertEvaluationTaskParams struct {
@@ -136,6 +143,7 @@ type insertEvaluationTaskScoreParams struct {
 	Score            float64
 	Passed           bool
 	Explanation      string
+	Answer           string
 	Dimensions       json.RawMessage
 	ErrorMessage     string
 	CreatedAt        time.Time
@@ -190,4 +198,5 @@ type EvaluationTaskMapper interface {
 	CancelPendingItems(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string, updatedAt time.Time) (int64, error)
 	UpdateTaskStatus(ctx context.Context, params evaluationTaskStatusParams) (int64, error)
 	InsertScore(ctx context.Context, params insertEvaluationTaskScoreParams) (evaluationTaskScoreRow, error)
+	SumTaskUsage(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string) (evaluationTaskUsageRow, error)
 }

@@ -66,6 +66,7 @@
         score,
         passed,
         explanation,
+        answer,
         dimensions,
         error_message,
         created_at
@@ -259,7 +260,7 @@
     <insert id="InsertScore" result="returning" resultType="evaluationTaskScoreRow">
         INSERT INTO evaluation_task_scores (
             uuid, external_id, organization_uuid, workspace_uuid, task_uuid, item_uuid,
-            status, score, passed, explanation, dimensions, error_message, created_at
+            status, score, passed, explanation, answer, dimensions, error_message, created_at
         ) VALUES (
             #{params.UUID},
             #{params.ExternalID},
@@ -271,10 +272,33 @@
             #{params.Score},
             #{params.Passed},
             #{params.Explanation},
+            #{params.Answer},
             CAST(#{params.Dimensions} AS jsonb),
             #{params.ErrorMessage},
             #{params.CreatedAt}
         )
         RETURNING <include refid="scoreColumns"/>
     </insert>
+
+    <select id="SumTaskUsage" resultType="evaluationTaskUsageRow">
+        SELECT
+            COALESCE(SUM(CASE WHEN COALESCE(e.payload->'model_usage', e.payload->'usage')->>'input_tokens' ~ '^[0-9]+$'
+                THEN CAST(COALESCE(e.payload->'model_usage', e.payload->'usage')->>'input_tokens' AS bigint) END), 0) AS input_tokens,
+            COALESCE(SUM(CASE WHEN COALESCE(e.payload->'model_usage', e.payload->'usage')->>'output_tokens' ~ '^[0-9]+$'
+                THEN CAST(COALESCE(e.payload->'model_usage', e.payload->'usage')->>'output_tokens' AS bigint) END), 0) AS output_tokens,
+            COALESCE(SUM(CASE WHEN COALESCE(e.payload->'model_usage', e.payload->'usage')->>'cache_read_input_tokens' ~ '^[0-9]+$'
+                THEN CAST(COALESCE(e.payload->'model_usage', e.payload->'usage')->>'cache_read_input_tokens' AS bigint) END), 0) AS cache_read_input_tokens
+        FROM session_events e
+        WHERE e.workspace_uuid = #{workspaceUUID}
+        AND e.event_type = 'span.model_request_end'
+        AND e.deleted_at IS NULL
+        AND e.session_external_id IN (
+            SELECT i.session_external_id
+            FROM evaluation_task_items i
+            WHERE i.organization_uuid = #{organizationUUID}
+            AND i.workspace_uuid = #{workspaceUUID}
+            AND i.task_uuid = #{taskUUID}
+            AND i.session_external_id &lt;&gt; ''
+        )
+    </select>
 </mapper>

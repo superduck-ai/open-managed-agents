@@ -316,6 +316,18 @@ export const anthropicBetaApi = {
     },
   },
   channels: {
+    checkCredentials(workspaceId: string, body: { app_id: string; app_secret: string; international: boolean }) {
+      return sdkCall(() =>
+        getAnthropicClient().request<{ ok: boolean }>({
+          path: '/v1/channels/credentials/check',
+          method: 'post',
+          query: { beta: true },
+          headers: { ...anthropicRequestHeaders({ workspaceId }), 'anthropic-beta': 'managed-agents-2026-04-01' },
+          signal: getScopeSignal(),
+          body,
+        }),
+      );
+    },
     list<T>(workspaceId: string, params?: { limit?: number; page?: string | null }) {
       const query: Record<string, string | number | boolean> = { beta: true };
       if (params?.limit) query.limit = params.limit;

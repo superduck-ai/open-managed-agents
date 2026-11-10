@@ -38,6 +38,7 @@ func (h *handler) workspaceRouter() http.Handler {
 	router := chi.NewRouter()
 	wrap := httpapi.NewErrorAdapter(h.logger).Wrap
 	router.Get("/", wrap(h.listWorkspace))
+	router.Post("/credentials/check", wrap(h.checkAppCredentials))
 	return router
 }
 

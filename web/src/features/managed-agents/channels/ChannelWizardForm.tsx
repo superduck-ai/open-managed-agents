@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Bot, Check, Cloud, ExternalLink } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
@@ -6,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../../shared/ui/car
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
+import { Switch } from '../../../shared/ui/switch';
 import type { AgentApiResponse, EnvironmentApiResponse } from '../types';
 import type { Channel, ChannelInput, ChannelQr } from './api';
 import { ChannelCredentials } from './ChannelFields';
@@ -125,6 +127,7 @@ export function StepConnect({
   saved,
   qr,
   busy,
+  workspaceId,
   onGenerateQr,
 }: {
   value: WizardValue;
@@ -134,6 +137,7 @@ export function StepConnect({
   saved: Channel | null;
   qr: ChannelQr | null;
   busy: boolean;
+  workspaceId: string;
   onGenerateQr: () => void;
 }) {
   const { msg } = useI18n();
@@ -160,11 +164,11 @@ export function StepConnect({
       </div>
       <div className="space-y-3">
         <Label>{msg('managedAgents.channels.accessMethod', '接入方式')}</Label>
-        <div className="inline-flex rounded-lg border border-border p-1">
+        <div className="grid grid-cols-2 gap-3">
           <Button
             type="button"
-            size="sm"
-            variant={binding === 'qr' ? 'secondary' : 'ghost'}
+            variant="outline"
+            className={binding === 'qr' ? 'border-primary text-primary' : undefined}
             disabled={Boolean(saved && saved.binding_status === 'bound')}
             onClick={() => onBindingChange('qr')}
           >
@@ -172,8 +176,8 @@ export function StepConnect({
           </Button>
           <Button
             type="button"
-            size="sm"
-            variant={binding === 'credentials' ? 'secondary' : 'ghost'}
+            variant="outline"
+            className={binding === 'credentials' ? 'border-primary text-primary' : undefined}
             onClick={() => onBindingChange('credentials')}
           >
             {msg('managedAgents.channels.manualInput', '手动输入')}
@@ -185,6 +189,7 @@ export function StepConnect({
           value={value}
           onChange={(next) => onChange({ ...value, ...next })}
           bound={saved?.binding_status === 'bound'}
+          workspaceId={workspaceId}
         />
       ) : (
         <div className="space-y-3">
@@ -291,49 +296,49 @@ export function StepStrategy({
       </div>
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.replyDisplay', '回复展示')}</Label>
-        <div className="grid grid-cols-1 gap-3">
-          <OptionCard
+        <ToggleCard>
+          <ToggleCardRow
             title={msg('managedAgents.channels.thinking', '展示思考过程')}
             description={msg('managedAgents.channels.thinkingHint', '在回复中展示思考过程')}
-            selected={value.include_thinking}
-            onClick={() => onChange({ ...value, include_thinking: !value.include_thinking })}
+            checked={value.include_thinking}
+            onCheckedChange={(checked) => onChange({ ...value, include_thinking: checked })}
           />
-          <OptionCard
+          <ToggleCardRow
             title={msg('managedAgents.channels.tools', '展示工具调用')}
             description={msg(
               'managedAgents.channels.toolsVolcHint',
               '在「处理过程」中展示工具名称、执行状态及耗时。不展示敏感参数和原始结果。',
             )}
-            selected={value.include_tool_calls}
-            onClick={() => onChange({ ...value, include_tool_calls: !value.include_tool_calls })}
+            checked={value.include_tool_calls}
+            onCheckedChange={(checked) => onChange({ ...value, include_tool_calls: checked })}
           />
-          <OptionCard
+          <ToggleCardRow
             title={msg('managedAgents.channels.recentContext', '自动注入近期聊天内容')}
             description={msg('managedAgents.channels.recentContextHint', '桥接暂未提供独立开关，界面仅作对齐展示。')}
-            selected={false}
+            checked={false}
             disabled
-            onClick={() => undefined}
+            onCheckedChange={() => undefined}
           />
-        </div>
+        </ToggleCard>
       </div>
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.mode', '渠道模式')}</Label>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <OptionCard
+        <ToggleCard>
+          <ToggleCardRow
             title={msg('managedAgents.channels.open', '开放模式')}
             description={msg('managedAgents.channels.openHint', '无需审批，用户可直接与机器人对话。')}
-            selected={value.mode === 'open'}
+            checked={value.mode === 'open'}
             disabled={modeLocked}
-            onClick={() => onChange({ ...value, mode: 'open' })}
+            onCheckedChange={(checked) => onChange({ ...value, mode: checked ? 'open' : 'pairing' })}
           />
-          <OptionCard
+          <ToggleCardRow
             title={msg('managedAgents.channels.pairing', '配对模式')}
             description={msg('managedAgents.channels.pairingHint', '经管理员批准后，对应的单聊或群聊才可使用。')}
-            selected={value.mode === 'pairing'}
+            checked={value.mode === 'pairing'}
             disabled={modeLocked}
-            onClick={() => onChange({ ...value, mode: 'pairing' })}
+            onCheckedChange={(checked) => onChange({ ...value, mode: checked ? 'pairing' : 'open' })}
           />
-        </div>
+        </ToggleCard>
         <p className="text-xs text-muted-foreground">
           {msg('managedAgents.channels.immutableMode', '渠道创建后不可切换模式。')}
         </p>
@@ -433,30 +438,37 @@ export function StepMa({
   );
 }
 
-function OptionCard({
+function ToggleCard({ children }: { children: ReactNode }) {
+  return <div className="overflow-hidden rounded-xl border-[0.5px] border-border">{children}</div>;
+}
+
+function ToggleCardRow({
   title,
   description,
-  selected,
+  checked,
   disabled,
-  onClick,
+  onCheckedChange,
 }: {
   title: string;
   description: string;
-  selected: boolean;
+  checked: boolean;
   disabled?: boolean;
-  onClick: () => void;
+  onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      disabled={disabled}
-      onClick={onClick}
-      className={`flex w-full min-w-0 flex-col items-start gap-1 rounded-xl border-[0.5px] p-4 text-left text-sm font-normal disabled:cursor-not-allowed disabled:opacity-50 ${selected ? 'border-foreground bg-muted' : 'border-border hover:bg-muted'}`}
-    >
-      <span className="font-medium">{title}</span>
-      <span className="text-sm leading-5 text-muted-foreground">{description}</span>
-    </button>
+    <div className="flex items-center justify-between gap-6 px-4 py-3 not-first:border-t-[0.5px] not-first:border-border">
+      <div className="min-w-0 space-y-1">
+        <div className="text-sm font-medium">{title}</div>
+        <p className="text-sm leading-5 text-muted-foreground">{description}</p>
+      </div>
+      <Switch
+        checked={checked}
+        disabled={disabled}
+        aria-label={title}
+        className="shrink-0"
+        onCheckedChange={(next) => onCheckedChange(next === true)}
+      />
+    </div>
   );
 }
 

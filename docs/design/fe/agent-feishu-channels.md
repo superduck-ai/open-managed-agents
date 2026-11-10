@@ -83,7 +83,7 @@ channel_bridge:
 
 已在开发 checkout 完成真实飞书扫码、4 条私聊消息收发、中文连续对话和 bridge 重启恢复；多条消息复用同一 OMA 会话。旧沙箱流式预览与最终正文 ID 不同导致的卡片重复，已在 bridge 中修复并实测确认。
 
-工作区渠道页使用与部署、环境相同的宽页面壳（`px-6 py-6 lg:px-8`）。渠道列表沿用同一套资源列表：页头右侧是「新增渠道」，下面是搜索和连通状态筛选，表格使用共享 data table（无卡片边框），空列表用资源空态，底部分页与部署、环境相同，本地仍按 10 条一页。创建和编辑向导对齐快速开始：主区域是当前步骤的表单，右侧是「进度」卡片，并按已选智能体和环境显示侧栏卡片。底栏仍是下一步、取消和保存。渠道名称为空时不能进入后面的步骤，点击未解锁步骤不会切换。策略步骤的字段与第 1 步同一列宽和间距，身份表外框与输入框对齐。回复展示和渠道模式是可点的选项卡片。
+工作区渠道页使用与部署、环境相同的宽页面壳（`px-6 py-6 lg:px-8`）。渠道列表沿用同一套资源列表：页头右侧是「新增渠道」，下面是搜索和连通状态筛选，表格使用共享 data table（无卡片边框），空列表用资源空态，底部分页与部署、环境相同，本地仍按 10 条一页。创建和编辑向导对齐快速开始：主区域是当前步骤的表单，右侧是「进度」卡片，并按已选智能体和环境显示侧栏卡片。底栏仍是下一步、取消和保存。渠道名称为空时不能进入后面的步骤，点击未解锁步骤不会切换。策略步骤的字段与第 1 步同一列宽和间距，身份表外框与输入框对齐。回复展示和渠道模式是圆角卡片里的开关行，左边是标题和说明，中间用细分隔线隔开。
 
 ## 工作区渠道控制台
 
@@ -96,7 +96,7 @@ channel_bridge:
 
 工作区列表调用 `GET /v1/channels`。OMA 按当前工作区的活跃智能体分页读取，再复用既有桥接 `GET /api/managed-channels` 与 `/settings`（仍带 `X-OMA-Agent`）聚合。查询参数 `limit`（默认 20，最大 100）和 `page`（从 0 起的行偏移）只切分已经聚合好的渠道行，并返回 `next_page`。响应里的渠道对象追加 `agent_id`、`agent_name`、`environment_id`，并去掉 `app_secret`。单个智能体的桥接失败不会失败整次请求：该智能体被跳过，响应 `incomplete: true`。活跃智能体超过 200 个时截断并返回 `truncated: true`。控制台按 `limit=100` 跟随 `next_page`，最多 5 页，再在表格里按 10 条本地分页；不完整或截断时在表上方提示。列表里的应用 ID 写在「飞书」下一行，并显示创建时间。创建向导在宽屏把进度放在右侧。Environment 显示工作区环境名称，查不到名称时回落 ID。`/channels/settings` 只接受 `environment_id`，未知字段会被拒绝，因此详情里的 Memory / Vault 继续显示「—」，向导里显示「不挂载」。桥接没有工作区级列表接口，因此服务端仍按智能体扇出。创建向导选择智能体时仍读取智能体列表，渠道的创建、编辑、详情和配对继续走 `/v1/agents/{agent_id}/channels`。
 
-连通状态把已返回的 `enabled`、`binding_status`、`connected` 映射为已连通、待测试、异常、已停用。「连接检测」只根据这些字段提示，不发起新的探测。凭据表单里的「前往渠道管理后台」只在应用 ID 为 `cli_` 加字母数字时出现，打开该应用的凭证与基本信息页：中文 `https://open.feishu.cn/app/{app_id}/baseinfo`，英文 `https://open.larksuite.com/app/{app_id}/baseinfo`。
+连通状态把已返回的 `enabled`、`binding_status`、`connected` 映射为已连通、待测试、异常、已停用。「连接检测」只根据这些字段提示，不发起新的探测。手动输入凭据时，「配置应用」在应用 ID 为 `cli_` 加字母数字时打开该应用的凭证与基本信息页：中文 `https://open.feishu.cn/app/{app_id}/baseinfo`，英文 `https://open.larksuite.com/app/{app_id}/baseinfo`；没有合法应用 ID 时按钮禁用。「验证 App Secret」调用 `POST /v1/channels/credentials/check`，由 OMA 向飞书或 Lark 的 `tenant_access_token/internal` 校验，成功或失败只返回结果，不回传访问令牌或密钥。
 
 详情「会话管理」读取该智能体的 `GET /v1/sessions?agent_id=`。会话列表没有 metadata 查询参数，所以先按智能体分页取回，再在浏览器里过滤。只保留桥接会话（`metadata.source` 为 `lark-channel-bridge`、`lark-channel`、`feishu`、`lark`，或带有 `bridge_binding_id`），并且 `metadata.channel_id` 等于当前渠道 ID。没有 `channel_id` 时，才用 `metadata.app_id` 对照当前渠道的飞书应用 ID。两者都不匹配、或旧会话还没写上这些键时，不显示；同一智能体的其他渠道会话不会混进来。单次最多读取 20 页、每页 100 条，更早的会话可能被截断。三张统计卡只按过滤后的会话计算：会话总数、按 `open_id` / `actor_id` / `sender_id` 去重的来源用户、最近 `updated_at`。有用户标识时统计是去重人数，单元格显示该标识；没有时统计显示「—」，表格回落展示 `scope_id` 并标注「会话范围」，不编造 Open ID。会话来源第一行是渠道名称，第二行是「· 单聊」「· 群聊」或「· 飞书」。`chat_type` 为 `p2p` 或 `group` 时分别显示单聊、群聊，也兼容 `conversation_type` 与 `scope_type`。智能体版本复用会话上的 agent version。会话名称和「查看详情」都进入现有 OMA 会话详情 `/workspaces/{workspaceId}/sessions/{sessionId}`。从会话名称进入时带 `returnTo`，会话详情的返回回到该渠道 `?tab=sessions`。列表增加「创建时间」，格式与环境列表相同（短月日）。没有匹配会话时才显示空表。表头始终保留「会话数据同步中」。
 

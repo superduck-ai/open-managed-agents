@@ -58,6 +58,10 @@ func invalidChannelUpdate(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "渠道更新请求正文无效", cause)
 }
 
+func invalidAppCredentials() error {
+	return apperr.New(apperr.InvalidArgument, "应用密钥校验未通过", nil)
+}
+
 func invalidChannelPage(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "渠道列表分页参数无效", cause)
 }

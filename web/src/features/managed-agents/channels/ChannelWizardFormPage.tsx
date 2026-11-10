@@ -150,6 +150,7 @@ export function ChannelWizardFormPage({
                 saved={saved}
                 qr={qr}
                 busy={busy}
+                workspaceId={workspaceId}
                 onGenerateQr={() => void persist(true, false)}
               />
             ) : null}

@@ -75,15 +75,8 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	if !ok || p.WorkspaceUUID == "" || p.OrganizationUUID == "" {
 		return unauthenticated()
 	}
-	if p.CredentialType == auth.CredentialTypePlatformSession {
-		switch r.Method {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-		default:
-			sessionKey := auth.ExtractPlatformSessionKey(r)
-			if sessionKey == "" || !auth.ValidatePlatformCSRFToken(sessionKey, r.Header.Get("X-CSRF-Token")) {
-				return csrfRejected()
-			}
-		}
+	if err := rejectBrowserCSRF(r, p); err != nil {
+		return err
 	}
 	agentID := chi.URLParam(r, "agent_id")
 	agent, err := h.store.GetAgent(r.Context(), p.WorkspaceUUID, agentID)
@@ -147,6 +140,22 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	w.WriteHeader(response.StatusCode)
 	_, err = w.Write(body)
 	return err
+}
+
+func rejectBrowserCSRF(r *http.Request, principal auth.Principal) error {
+	if principal.CredentialType != auth.CredentialTypePlatformSession {
+		return nil
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return nil
+	default:
+		sessionKey := auth.ExtractPlatformSessionKey(r)
+		if sessionKey == "" || !auth.ValidatePlatformCSRFToken(sessionKey, r.Header.Get("X-CSRF-Token")) {
+			return csrfRejected()
+		}
+		return nil
+	}
 }
 
 func (h *handler) endpoint(r *http.Request, settings bool) (*url.URL, error) {

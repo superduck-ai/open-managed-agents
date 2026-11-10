@@ -5,6 +5,7 @@ import { wizardStepAllowed } from './channelInput';
 const { render, screen, fireEvent, cleanup } = await import('@testing-library/react');
 const { I18nProvider } = await import('../../../shared/i18n');
 const { StepStrategy, WizardStepper } = await import('./ChannelWizardForm');
+const { ChannelCredentials } = await import('./ChannelFields');
 
 afterEach(cleanup);
 
@@ -57,10 +58,49 @@ test('策略步骤用卡片切换回复展示和渠道模式', () => {
       />
     </I18nProvider>,
   );
-  fireEvent.click(screen.getByRole('button', { name: /展示思考过程/ }));
+  fireEvent.click(screen.getByRole('switch', { name: '展示思考过程' }));
   expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ include_thinking: true }));
-  fireEvent.click(screen.getByRole('button', { name: /配对模式/ }));
+  fireEvent.click(screen.getByRole('switch', { name: '配对模式' }));
   expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ mode: 'pairing' }));
-  expect(screen.getByRole('button', { name: /开放模式/ }).getAttribute('aria-pressed')).toBe('true');
-  expect(screen.getByRole('button', { name: /自动注入近期聊天内容/ }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByRole('switch', { name: '开放模式' }).getAttribute('aria-checked')).toBe('true');
+  const lockedSwitch = screen.getByRole('switch', { name: '自动注入近期聊天内容' });
+  expect(
+    lockedSwitch.hasAttribute('disabled') ||
+      lockedSwitch.getAttribute('aria-disabled') === 'true' ||
+      lockedSwitch.hasAttribute('data-disabled'),
+  ).toBe(true);
+});
+
+test('有效应用 ID 的配置应用打开飞书应用详情', () => {
+  resetTestDom('/');
+  const value = {
+    name: '飞书渠道',
+    mode: 'open' as const,
+    include_thinking: true,
+    include_tool_calls: true,
+    reply_in_thread: true,
+    app_id: 'cli_aa6c7433e1b8dbf1',
+    app_secret: '',
+  };
+  const { rerender } = render(
+    <I18nProvider initialLocale="zh-CN">
+      <ChannelCredentials value={value} onChange={() => undefined} bound={false} workspaceId="workspace-test" />
+    </I18nProvider>,
+  );
+  expect(screen.getByRole('link', { name: /配置应用/ }).getAttribute('href')).toBe(
+    'https://open.feishu.cn/app/cli_aa6c7433e1b8dbf1/baseinfo',
+  );
+  expect(screen.getByRole('button', { name: '验证 App Secret' }).hasAttribute('disabled')).toBe(true);
+  rerender(
+    <I18nProvider initialLocale="zh-CN">
+      <ChannelCredentials
+        value={{ ...value, app_id: 'not-valid' }}
+        onChange={() => undefined}
+        bound={false}
+        workspaceId="workspace-test"
+      />
+    </I18nProvider>,
+  );
+  expect(screen.queryByRole('link', { name: /配置应用/ })).toBeNull();
+  expect(screen.getByRole('button', { name: /配置应用/ }).hasAttribute('disabled')).toBe(true);
 });

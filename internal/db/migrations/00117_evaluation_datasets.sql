@@ -49,9 +49,6 @@ CREATE TABLE evaluation_cases (
 CREATE UNIQUE INDEX evaluation_cases_version_position_idx
     ON evaluation_cases (version_uuid, position)
     WHERE deleted_at IS NULL;
-CREATE INDEX evaluation_cases_version_position_list_idx
-    ON evaluation_cases (version_uuid, position)
-    WHERE deleted_at IS NULL;
 
 -- +goose Down
 DROP TABLE IF EXISTS evaluation_cases;

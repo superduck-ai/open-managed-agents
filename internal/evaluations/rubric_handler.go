@@ -2,6 +2,7 @@ package evaluations
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+const (
+	caseGenerationSystemPrompt = "Reply with one JSON array and no other text. Each item must include query."
+	maxSessionEventPages       = 20
+)
+
+var errSessionTooLarge = errors.New("session events truncated")
 
 type rubricWriteRequest struct {
 	Name      string `json:"name"`
@@ -34,6 +42,7 @@ type generateCasesRequest struct {
 	Count   int    `json:"count"`
 	Note    string `json:"note"`
 	AgentID string `json:"agent_id"`
+	Version int    `json:"agent_version"`
 }
 
 type fromSessionRequest struct {
@@ -65,7 +74,7 @@ func (h *Handler) createRubric(w http.ResponseWriter, r *http.Request) error {
 	}
 	created, err := h.store.CreateEvaluationRubric(r.Context(), rubric)
 	if err != nil {
-		return mapStoreError(err, rubricNotFoundMessage)
+		return mapStoreError(err, rubricNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, rubricJSON(created))
 	return nil
@@ -99,7 +108,7 @@ func (h *Handler) getRubric(w http.ResponseWriter, r *http.Request) error {
 	}
 	rubric, err := h.store.GetEvaluationRubric(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "rubricId"))
 	if err != nil {
-		return mapStoreError(err, rubricNotFoundMessage)
+		return mapStoreError(err, rubricNotFoundMessage, loadFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, rubricJSON(rubric))
 	return nil
@@ -112,7 +121,7 @@ func (h *Handler) deleteRubric(w http.ResponseWriter, r *http.Request) error {
 	}
 	rubricID := chi.URLParam(r, "rubricId")
 	if err := h.store.DeleteEvaluationRubric(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, rubricID, time.Now().UTC()); err != nil {
-		return mapStoreError(err, rubricNotFoundMessage)
+		return mapStoreError(err, rubricNotFoundMessage, deleteFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"id": rubricID, "type": "evaluation_rubric_deleted", "deleted": true})
 	return nil
@@ -133,7 +142,7 @@ func (h *Handler) appendRubricVersion(w http.ResponseWriter, r *http.Request) er
 	}
 	updated, err := h.store.AppendEvaluationRubricVersion(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "rubricId"), version, time.Now().UTC())
 	if err != nil {
-		return mapStoreError(err, rubricNotFoundMessage)
+		return mapStoreError(err, rubricNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, rubricJSON(updated))
 	return nil
@@ -163,7 +172,7 @@ func (h *Handler) generateRubric(w http.ResponseWriter, r *http.Request) error {
 	}
 	created, err := h.store.CreateEvaluationRubric(r.Context(), rubric)
 	if err != nil {
-		return mapStoreError(err, rubricNotFoundMessage)
+		return mapStoreError(err, rubricNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, rubricJSON(created))
 	return nil
@@ -183,15 +192,15 @@ func (h *Handler) generateCases(w http.ResponseWriter, r *http.Request) error {
 	}
 	prompt := "生成评测用例 JSON 数组。每条必须有 query，可以有 expectedAnswer。覆盖正常、边界和失败。条数：" + strconv.Itoa(body.Count) + "。补充：" + strings.TrimSpace(body.Note)
 	if strings.TrimSpace(body.AgentID) != "" {
-		agent, err := h.store.GetAgent(r.Context(), principal.WorkspaceUUID, strings.TrimSpace(body.AgentID))
+		agent, err := h.agentForGeneration(r.Context(), principal.WorkspaceUUID, strings.TrimSpace(body.AgentID), body.Version)
 		if err != nil {
-			return mapStoreError(err, "Agent not found")
+			return err
 		}
 		if agent.System != nil {
 			prompt += "\nAgent 系统提示词：" + *agent.System
 		}
 	}
-	text, err := h.complete(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, "", rubricSystemPrompt, prompt)
+	text, err := h.complete(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, "", caseGenerationSystemPrompt, prompt)
 	if err != nil {
 		return err
 	}
@@ -277,7 +286,7 @@ func (h *Handler) loadSessionTurns(ctx context.Context, principal auth.Principal
 		return nil, invalidArgument(sessionRequiredMessage, nil)
 	}
 	if _, err := h.store.GetEvaluationDataset(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID); err != nil {
-		return nil, mapStoreError(err, datasetNotFoundMessage)
+		return nil, mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 	}
 	if _, ok, err := h.store.GetSession(ctx, principal.WorkspaceUUID, sessionID); err != nil {
 		return nil, internalFailure(loadFailedMessage, err)
@@ -286,15 +295,33 @@ func (h *Handler) loadSessionTurns(ctx context.Context, principal auth.Principal
 	}
 	events, err := h.sessionEvents(ctx, principal.WorkspaceUUID, sessionID)
 	if err != nil {
+		if errors.Is(err, errSessionTooLarge) {
+			return nil, invalidArgument(sessionEventsTooLargeMessage, err)
+		}
 		return nil, internalFailure(loadFailedMessage, err)
 	}
 	return sessionTurns(events), nil
 }
 
+func (h *Handler) agentForGeneration(ctx context.Context, workspaceUUID, agentID string, version int) (db.Agent, error) {
+	if version > 0 {
+		agent, err := h.store.GetAgentVersion(ctx, workspaceUUID, agentID, version)
+		if err != nil {
+			return db.Agent{}, mapStoreError(err, "Agent not found", generateFailedMessage)
+		}
+		return agent, nil
+	}
+	agent, err := h.store.GetAgent(ctx, workspaceUUID, agentID)
+	if err != nil {
+		return db.Agent{}, mapStoreError(err, "Agent not found", generateFailedMessage)
+	}
+	return agent, nil
+}
+
 func (h *Handler) sessionEvents(ctx context.Context, workspaceUUID, sessionID string) ([]db.SessionEvent, error) {
 	var all []db.SessionEvent
 	var cursor *db.SessionEventPageCursor
-	for page := 0; page < 20; page++ {
+	for page := 0; page < maxSessionEventPages; page++ {
 		events, hasMore, err := h.store.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
 			WorkspaceUUID: workspaceUUID, SessionExternalID: sessionID, Limit: 100, Cursor: cursor,
 		})
@@ -302,12 +329,29 @@ func (h *Handler) sessionEvents(ctx context.Context, workspaceUUID, sessionID st
 			return nil, err
 		}
 		all = append(all, events...)
-		if !hasMore || len(events) == 0 {
-			break
+		lastID := ""
+		if len(events) > 0 {
+			lastID = events[len(events)-1].ExternalID
 		}
-		cursor = &db.SessionEventPageCursor{ExternalID: events[len(events)-1].ExternalID}
+		cursor, err = nextSessionEventCursor(page, hasMore, lastID)
+		if err != nil {
+			return nil, err
+		}
+		if cursor == nil {
+			return all, nil
+		}
 	}
-	return all, nil
+	return nil, errSessionTooLarge
+}
+
+func nextSessionEventCursor(page int, hasMore bool, lastID string) (*db.SessionEventPageCursor, error) {
+	if !hasMore || lastID == "" {
+		return nil, nil
+	}
+	if page >= maxSessionEventPages-1 {
+		return nil, errSessionTooLarge
+	}
+	return &db.SessionEventPageCursor{ExternalID: lastID}, nil
 }
 
 func rubricGenerateReady(body rubricWriteRequest) bool {
@@ -330,7 +374,7 @@ func (h *Handler) rubricGeneratePrompt(ctx context.Context, principal auth.Princ
 	if agentID := strings.TrimSpace(body.AgentID); agentID != "" {
 		agent, err := h.store.GetAgent(ctx, principal.WorkspaceUUID, agentID)
 		if err != nil {
-			return "", mapStoreError(err, "Agent not found")
+			return "", mapStoreError(err, "Agent not found", generateFailedMessage)
 		}
 		if agent.System != nil && strings.TrimSpace(*agent.System) != "" {
 			prompt.WriteString("\nAgent 系统提示词：" + *agent.System)
@@ -339,7 +383,7 @@ func (h *Handler) rubricGeneratePrompt(ctx context.Context, principal auth.Princ
 	if datasetID := strings.TrimSpace(body.DatasetID); datasetID != "" {
 		cases, err := h.store.ListEvaluationCases(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID)
 		if err != nil {
-			return "", mapStoreError(err, datasetNotFoundMessage)
+			return "", mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 		}
 		limit := len(cases)
 		if limit > 12 {

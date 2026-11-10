@@ -66,6 +66,26 @@ func TestApplyAPIKeySetsAnthropicAndBearerHeaders(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultAnthropicVersionSetsMissingHeader(t *testing.T) {
+	headers := http.Header{}
+
+	ApplyDefaultAnthropicVersion(headers)
+
+	if headers.Get("Anthropic-Version") != anthropicVersion {
+		t.Fatalf("Anthropic-Version = %q, want %q", headers.Get("Anthropic-Version"), anthropicVersion)
+	}
+}
+
+func TestApplyDefaultAnthropicVersionKeepsCallerHeader(t *testing.T) {
+	headers := http.Header{"Anthropic-Version": {"2024-01-01"}}
+
+	ApplyDefaultAnthropicVersion(headers)
+
+	if values := headers.Values("Anthropic-Version"); len(values) != 1 || values[0] != "2024-01-01" {
+		t.Fatalf("Anthropic-Version = %#v, want caller value", values)
+	}
+}
+
 func TestMessageRequestModelRejectsDuplicateTopLevelModel(t *testing.T) {
 	_, err := MessageRequestModel([]byte(`{"model":"configured","model":"not-configured"}`))
 	if !errors.Is(err, ErrDuplicateRequestModel) {

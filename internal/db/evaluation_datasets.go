@@ -131,6 +131,14 @@ func (d *DB) DeleteEvaluationDataset(ctx context.Context, organizationUUID, work
 	return nil
 }
 
+func (d *DB) GetEvaluationCaseTrace(ctx context.Context, organizationUUID, workspaceUUID, versionUUID, caseExternalID string) (json.RawMessage, error) {
+	row, err := NewEvaluationDatasetMapper(d.mapperDB).FindCaseTrace(ctx, organizationUUID, workspaceUUID, versionUUID, caseExternalID)
+	if err != nil {
+		return nil, mapNoRows(err)
+	}
+	return rawJSON(row.ExpectedToolTrace), nil
+}
+
 func (d *DB) ListEvaluationCases(ctx context.Context, organizationUUID, workspaceUUID, datasetExternalID string) ([]EvaluationCase, error) {
 	dataset, err := d.GetEvaluationDataset(ctx, organizationUUID, workspaceUUID, datasetExternalID)
 	if err != nil {

@@ -38,6 +38,10 @@ type evaluationDatasetVersionRow struct {
 	CreatedAt        time.Time `db:"created_at"`
 }
 
+type evaluationCaseTraceRow struct {
+	ExpectedToolTrace []byte `db:"expected_tool_trace"`
+}
+
 type evaluationCaseRow struct {
 	UUID              string    `db:"uuid"`
 	ExternalID        string    `db:"external_id"`
@@ -125,6 +129,7 @@ type EvaluationDatasetMapper interface {
 	ListDatasets(ctx context.Context, params evaluationListParams) ([]evaluationDatasetRow, error)
 	SoftDeleteDataset(ctx context.Context, organizationUUID, workspaceUUID, externalID string, deletedAt time.Time) (int64, error)
 	ListCases(ctx context.Context, organizationUUID, workspaceUUID, versionUUID string) ([]evaluationCaseRow, error)
+	FindCaseTrace(ctx context.Context, organizationUUID, workspaceUUID, versionUUID, externalID string) (evaluationCaseTraceRow, error)
 	UpdateCase(ctx context.Context, params updateEvaluationCaseParams) (evaluationCaseRow, error)
 	SoftDeleteCase(ctx context.Context, organizationUUID, workspaceUUID, datasetUUID, externalID string, deletedAt time.Time) (int64, error)
 }

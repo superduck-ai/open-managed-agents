@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 
 import { useI18n } from '../../shared/i18n';
 import { CopyButton } from '../../shared/ui/copy-button';
+import { ResourceListPagination } from '../../shared/ui/resource-list-pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../shared/ui/table';
 import { deleteEvaluationDataset, evaluationError, listEvaluationDatasets } from './api';
 import { datasetPath } from './datasetPath';
@@ -123,6 +124,16 @@ export function DatasetPanel({ onCreate }: { onCreate: () => void }) {
           </Table>
         </div>
       )}
+      {cursor.pageIndex > 0 || datasets.data?.next_page ? (
+        <ResourceListPagination
+          currentPage={cursor.pageIndex + 1}
+          totalPages={null}
+          canPrevious={cursor.pageIndex > 0 && !datasets.isFetching}
+          canNext={Boolean(datasets.data?.next_page) && !datasets.isFetching}
+          onPrevious={cursor.previous}
+          onNext={() => cursor.next(datasets.data?.next_page ?? null)}
+        />
+      ) : null}
     </div>
   );
 }

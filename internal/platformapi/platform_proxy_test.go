@@ -45,6 +45,13 @@ func TestProxyMessagesHeadersAllowOnlyProtocolHeaders(t *testing.T) {
 	}
 }
 
+func TestProxyMessagesHeadersDefaultMissingAnthropicVersion(t *testing.T) {
+	headers := proxyMessagesHeaders(http.Header{"Content-Type": {"application/json"}}, "server-provider-key")
+	if headers.Get("Anthropic-Version") != "2023-06-01" {
+		t.Fatalf("Anthropic-Version = %q, want default", headers.Get("Anthropic-Version"))
+	}
+}
+
 func TestProxyMessagesModelUsesRealIDUnchanged(t *testing.T) {
 	modelID, err := proxyMessagesModel([]byte(`{"model":"kimi-k2.5","max_tokens":16}`))
 	if err != nil {

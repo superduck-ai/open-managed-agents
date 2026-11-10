@@ -64,17 +64,11 @@ export function createEvaluationDataset(
 ) {
   return consoleApi<EvaluationDataset>(`${evaluationBase(orgUuid, workspaceId)}/datasets`, {
     method: 'POST',
-    body: JSON.stringify({ name: input.name, desc: input.desc }),
-  }).then(async (dataset) => {
-    if (!input.content?.trim()) return dataset;
-    await consoleApi(
-      `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(dataset.id)}/cases:import`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ content: input.content }),
-      },
-    );
-    return dataset;
+    body: JSON.stringify({
+      name: input.name,
+      desc: input.desc,
+      content: input.content?.trim() ? input.content : undefined,
+    }),
   });
 }
 
@@ -128,7 +122,10 @@ export function updateEvaluationCase(
   workspaceId: string,
   datasetId: string,
   caseId: string,
-  input: Pick<EvaluationCase, 'query' | 'expected_answer' | 'polarity' | 'acceptance' | 'source_session_id'>,
+  input: Pick<
+    EvaluationCase,
+    'query' | 'expected_answer' | 'expected_tool_trace' | 'polarity' | 'acceptance' | 'source_session_id'
+  >,
 ) {
   return consoleApi<EvaluationCase>(
     `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases/${encodeURIComponent(
@@ -151,7 +148,7 @@ export function generateEvaluationCases(
   orgUuid: string,
   workspaceId: string,
   datasetId: string,
-  input: { count: number; note: string; agent_id?: string },
+  input: { count: number; note: string; agent_id?: string; agent_version?: number },
 ) {
   return consoleApi<EvaluationPage<EvaluationCase>>(
     `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases:generate`,

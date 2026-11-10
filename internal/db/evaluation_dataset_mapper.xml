@@ -201,6 +201,16 @@
         AND deleted_at IS NULL
     </update>
 
+    <select id="FindCaseTrace" resultType="evaluationCaseTraceRow">
+        SELECT expected_tool_trace
+        FROM evaluation_cases
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND version_uuid = #{versionUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
     <select id="ListCases" resultType="evaluationCaseRow">
         SELECT
         <include refid="caseColumns"/>

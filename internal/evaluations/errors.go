@@ -38,10 +38,11 @@ const (
 	pageInvalidMessage            = "page is invalid"
 	limitInvalidMessage           = "limit must be between 1 and 100"
 	duplicateMessage              = "Evaluation resource already exists"
-	archivedAgentMessage          = "agent must not be archived"
 	createFailedMessage           = "Could not save evaluation"
+	deleteFailedMessage           = "Could not delete evaluation"
 	loadFailedMessage             = "Could not load evaluation"
 	generateFailedMessage         = "Could not generate evaluation cases"
+	sessionEventsTooLargeMessage  = "session has too many events to import"
 )
 
 func invalidArgument(message string, cause error) error {
@@ -56,10 +57,6 @@ func conflict(message string, cause error) error {
 	return apperr.New(apperr.Conflict, message, cause)
 }
 
-func invalidState(message string, cause error) error {
-	return apperr.New(apperr.InvalidState, message, cause)
-}
-
 func unavailable(message string, cause error) error {
 	return apperr.New(apperr.Unavailable, message, cause)
 }
@@ -68,7 +65,7 @@ func internalFailure(message string, cause error) error {
 	return apperr.New(apperr.Internal, message, fmt.Errorf("%s: %w", message, cause))
 }
 
-func mapStoreError(err error, notFoundMessage string) error {
+func mapStoreError(err error, notFoundMessage, failureMessage string) error {
 	switch {
 	case err == nil:
 		return nil
@@ -76,11 +73,7 @@ func mapStoreError(err error, notFoundMessage string) error {
 		return notFound(notFoundMessage, err)
 	case errors.Is(err, db.ErrDuplicate):
 		return conflict(duplicateMessage, err)
-	case errors.Is(err, db.ErrVersionConflict):
-		return conflict("Agent version conflict", err)
-	case errors.Is(err, db.ErrInvalidState):
-		return invalidState(archivedAgentMessage, err)
 	default:
-		return internalFailure(createFailedMessage, err)
+		return internalFailure(failureMessage, err)
 	}
 }

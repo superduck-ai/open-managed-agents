@@ -2,11 +2,17 @@ import { afterEach, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../../test/setup';
 import { I18nProvider } from '../../shared/i18n';
-import { DatasetCreateDialog } from './DatasetCreateDialog';
+import { DatasetCreateDialog, datasetCreateName } from './DatasetCreateDialog';
 
 const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 
 afterEach(cleanup);
+
+test('a blank generated dataset uses the localized name instead of a fixed Chinese title', () => {
+  expect(datasetCreateName('generate', '  ', '', 'My dataset')).toBe('My dataset');
+  expect(datasetCreateName('generate', '销售回归', '', 'My dataset')).toBe('销售回归');
+  expect(datasetCreateName('upload', '', 'cases.csv', 'My dataset')).toBe('cases.csv');
+});
 
 test('upload tab offers dataset sample files', () => {
   URL.createObjectURL = () => 'blob:evaluation-sample';
@@ -22,6 +28,10 @@ test('upload tab offers dataset sample files', () => {
   fireEvent.click(screen.getByRole('tab', { name: '上传文件' }));
 
   expect(screen.getByText(/点击\/拖拽/)).toBeTruthy();
+  expect(screen.getByText('支持 JSON、JSONL 和 CSV，必须包含 query 列。')).toBeTruthy();
+  expect(document.querySelector('input[type="file"]')?.getAttribute('accept')).toBe(
+    '.json,.jsonl,.csv,application/json,text/csv',
+  );
   expect(screen.getByText('样例文件')).toBeTruthy();
   const downloads: string[] = [];
   const append = document.body.append.bind(document.body);

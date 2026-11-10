@@ -2,6 +2,8 @@ package evaluations
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -58,6 +60,70 @@ func TestParseCaseDocumentRejectsMissingQuery(t *testing.T) {
 func TestParseCaseDocumentRejectsInvalidCSVPolarity(t *testing.T) {
 	if _, err := parseCaseDocument("query,polarity\n汇总销售额,maybe\n"); err == nil {
 		t.Fatal("expected polarity to be rejected")
+	}
+}
+
+func TestNormalizeNameCountsCharacters(t *testing.T) {
+	name := strings.Repeat("测", 255)
+	if _, err := normalizeName(name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := normalizeName(name + "测"); err == nil {
+		t.Fatal("expected a 256-character name to be rejected")
+	}
+}
+
+func TestParseCaseDocumentReadsMultilineJSONL(t *testing.T) {
+	parsed, err := parseCaseDocument("{\"query\":\"第一问\"}\n{\"query\":\"第二问\",\"expectedAnswer\":\"答案\"}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 2 || parsed[0].Query != "第一问" || parsed[1].Query != "第二问" || parsed[1].ExpectedAnswer != "答案" {
+		t.Fatalf("parsed = %+v", parsed)
+	}
+}
+
+func TestParseCaseDocumentAcceptsCaseEnvelope(t *testing.T) {
+	parsed, err := parseCaseDocument("{\n  \"cases\": [{\"query\": \"汇总销售额\", \"expectedAnswer\": \"按月列出\"}]\n}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 1 || parsed[0].Query != "汇总销售额" || parsed[0].ExpectedAnswer != "按月列出" {
+		t.Fatalf("parsed = %+v", parsed)
+	}
+	single, err := parseCaseDocument(`{"query":"一条 JSONL"}`)
+	if err != nil || len(single) != 1 || single[0].Query != "一条 JSONL" {
+		t.Fatalf("jsonl = %+v err=%v", single, err)
+	}
+}
+
+func TestCaseUpdateKeepsTraceWhenOmitted(t *testing.T) {
+	var body caseUpdateRequest
+	if err := json.Unmarshal([]byte(`{"query":"改过的问题"}`), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.keepsTrace() {
+		t.Fatal("expected omitted trace to be preserved")
+	}
+	kept := json.RawMessage(`["lookup_sales"]`)
+	body.ExpectedToolTrace = &kept
+	draft, err := body.draft()
+	if err != nil || string(draft.ExpectedToolTrace) != `["lookup_sales"]` || draft.Query != "改过的问题" {
+		t.Fatalf("draft = %+v err=%v", draft, err)
+	}
+}
+
+func TestSessionEventCursorStopsAtPageLimit(t *testing.T) {
+	cursor, err := nextSessionEventCursor(0, true, "evt_1")
+	if err != nil || cursor == nil || cursor.ExternalID != "evt_1" {
+		t.Fatalf("cursor = %+v err=%v", cursor, err)
+	}
+	if _, err := nextSessionEventCursor(maxSessionEventPages-1, true, "evt_last"); !errors.Is(err, errSessionTooLarge) {
+		t.Fatalf("err = %v", err)
+	}
+	done, err := nextSessionEventCursor(3, false, "evt_3")
+	if err != nil || done != nil {
+		t.Fatalf("done = %+v err=%v", done, err)
 	}
 }
 

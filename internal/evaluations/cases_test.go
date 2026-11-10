@@ -57,6 +57,16 @@ func TestParseCaseDocumentRejectsMissingQuery(t *testing.T) {
 	}
 }
 
+func TestParseCaseDocumentReadsMarkdownFence(t *testing.T) {
+	parsed, err := parseCaseDocument(stripCodeFence("```json\n[{\"query\":\"汇总销售额\"}]\n```"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 1 || parsed[0].Query != "汇总销售额" {
+		t.Fatalf("parsed = %+v", parsed)
+	}
+}
+
 func TestParseCaseDocumentRejectsInvalidCSVPolarity(t *testing.T) {
 	if _, err := parseCaseDocument("query,polarity\n汇总销售额,maybe\n"); err == nil {
 		t.Fatal("expected polarity to be rejected")
@@ -174,6 +184,24 @@ func TestSessionTurnsKeepFileImagesAndSkipInlineImages(t *testing.T) {
 	drafts, skipped, err := sessionCaseDrafts(turns, []int{1, 2}, "sess", "", "", "")
 	if err != nil || skipped != 1 || len(drafts) != 1 || drafts[0].Query != "" || !strings.Contains(string(drafts[0].Inputs), "file_1") {
 		t.Fatalf("drafts=%+v skipped=%d err=%v", drafts, skipped, err)
+	}
+}
+
+func TestParseCaseDocumentAsksForNamedFiles(t *testing.T) {
+	_, err := parseCaseDocument("query,files\n描述这张图,chart.png\n")
+	if err == nil {
+		t.Fatal("expected named files to be uploaded before import")
+	}
+}
+
+func TestParseCaseDocumentReadsCSVInputs(t *testing.T) {
+	content := "query,inputs\n描述这张图,\"[{\"\"type\"\":\"\"text\"\",\"\"text\"\":\"\"描述这张图\"\"},{\"\"type\"\":\"\"image\"\",\"\"source\"\":{\"\"type\"\":\"\"file\"\",\"\"file_id\"\":\"\"file_chart\"\"}}]\"\n"
+	parsed, err := parseCaseDocument(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 1 || parsed[0].Query != "描述这张图" || !strings.Contains(string(parsed[0].Inputs), `"file_chart"`) {
+		t.Fatalf("parsed = %+v", parsed)
 	}
 }
 

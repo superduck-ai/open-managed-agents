@@ -38,7 +38,8 @@ import { AcceptanceChecklist } from './AcceptanceChecklist';
 import { SessionTurnTransfer } from './SessionTurnTransfer';
 import { CaseEditorDialog } from './CaseEditorDialog';
 import { acceptanceItems, joinAcceptance } from './caseChecklist';
-import { mediaDetail } from './caseInputs';
+import { CaseInputMedia } from './caseMedia';
+import { fileBlocks } from './caseInputs';
 import { shortenId } from './evaluationChrome';
 import { useEvaluationScope } from './useEvaluationScope';
 
@@ -139,8 +140,8 @@ export function DatasetDetailPage() {
                 positiveLabel={msg('evaluations.positive', 'Positive')}
                 negativeLabel={msg('evaluations.negative', 'Negative')}
                 imageOnlyLabel={msg('evaluations.imageOnly', 'Image')}
-                imageCountLabel={(count) => msg('evaluations.imageCount', '{count} images', { count })}
-                documentCountLabel={(count) => msg('evaluations.documentCount', '{count} documents', { count })}
+                orgUuid={scope.orgUuid}
+                workspaceId={scope.workspaceId}
                 onEdit={() => setEditor(item)}
                 onDelete={() => {
                   if (
@@ -191,8 +192,8 @@ function CaseRow({
   positiveLabel,
   negativeLabel,
   imageOnlyLabel,
-  imageCountLabel,
-  documentCountLabel,
+  orgUuid,
+  workspaceId,
   onEdit,
   onDelete,
 }: {
@@ -208,19 +209,20 @@ function CaseRow({
   positiveLabel: string;
   negativeLabel: string;
   imageOnlyLabel: string;
-  imageCountLabel: (count: number) => string;
-  documentCountLabel: (count: number) => string;
+  orgUuid: string;
+  workspaceId: string;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const checkpoints = acceptanceItems(item.acceptance).filter(Boolean);
-  const detail = mediaDetail(item.inputs, { images: imageCountLabel, documents: documentCountLabel });
+  const media = fileBlocks(item.inputs);
+  const title = item.query || (media.length === 0 ? imageOnlyLabel : '');
   return (
     <TableRow>
       <TableCell className="px-3 align-top tabular-nums">{index}</TableCell>
       <TableCell className="max-w-[280px] px-3 align-top whitespace-pre-wrap">
-        {item.query || detail || imageOnlyLabel}
-        {item.query && detail ? <span className="mt-1 block text-xs text-muted-foreground">{detail}</span> : null}
+        {title}
+        <CaseInputMedia inputs={item.inputs} orgUuid={orgUuid} workspaceId={workspaceId} />
       </TableCell>
       <TableCell className="max-w-[240px] px-3 align-top whitespace-pre-wrap text-muted-foreground">
         {item.expected_answer || unset}
@@ -280,6 +282,7 @@ function ImportSessionDialog({
   const queryClient = useQueryClient();
   const [sessionId, setSessionId] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [importedTurns, setImportedTurns] = useState<Record<string, number[]>>({});
   const [polarity, setPolarity] = useState('');
   const [checkpoints, setCheckpoints] = useState<string[]>(['']);
   const [error, setError] = useState('');
@@ -296,6 +299,8 @@ function ImportSessionDialog({
     enabled: open && sessionId.trim() !== '',
   });
   const turnRows = turns.data?.data ?? [];
+  const hiddenTurns = new Set(importedTurns[sessionId] ?? []);
+  const visibleTurns = turnRows.filter((turn) => !hiddenTurns.has(turn.index));
   const importSession = useMutation({
     mutationFn: () =>
       importEvaluationSession(orgUuid, workspaceId, datasetId, {
@@ -305,10 +310,16 @@ function ImportSessionDialog({
         acceptance: polarity === 'negative' ? joinAcceptance(checkpoints) : '',
       }),
     onSuccess: async (result) => {
+      const visible = turnRows.map((turn) => turn.index);
+      const imported = [...selected].filter((index) => visible.includes(index));
+      setImportedTurns((current) => ({ ...current, [sessionId]: [...(current[sessionId] ?? []), ...imported] }));
+      setSelected(remainingTurnSelection(selected, visible));
       await queryClient.invalidateQueries({ queryKey: ['evaluation-cases', orgUuid, workspaceId, datasetId] });
       await queryClient.invalidateQueries({ queryKey: ['evaluation-datasets', orgUuid, workspaceId] });
+      await queryClient.invalidateQueries({
+        queryKey: ['evaluation-session-turns', orgUuid, workspaceId, datasetId, sessionId],
+      });
       if (result.skipped > 0) {
-        setSelected(new Set());
         setError(
           msg('evaluations.importSkipped', '{count} turns had no text or workspace file and were skipped.', {
             count: result.skipped,
@@ -392,10 +403,10 @@ function ImportSessionDialog({
             </Field>
             <SessionTurnTransfer
               key={sessionId || 'none'}
-              turns={turnRows}
+              turns={visibleTurns}
               chosen={selected}
               onChosenChange={setSelected}
-              status={transferStatus(sessionId, turns.isLoading, turns.isError, turnRows.length)}
+              status={transferStatus(sessionId, turns.isLoading, turns.isError, visibleTurns.length)}
               error={turns.isError ? evaluationError(turns.error) : ''}
             />
             {selected.size > 0 ? (
@@ -440,6 +451,15 @@ function ImportSessionDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+export function remainingTurnSelection(selected: ReadonlySet<number>, visibleIndexes: readonly number[]) {
+  const visible = new Set(visibleIndexes);
+  const remaining = new Set<number>();
+  for (const index of selected) {
+    if (!visible.has(index)) remaining.add(index);
+  }
+  return remaining;
 }
 
 function transferStatus(sessionId: string, loading: boolean, failed: boolean, count: number) {

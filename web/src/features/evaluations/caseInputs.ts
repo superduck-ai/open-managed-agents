@@ -1,7 +1,7 @@
 export type EvaluationContentBlock =
   { type: 'text'; text: string } | { type: 'image' | 'document'; source: { type: 'file'; file_id: string } };
 
-export type CaseFile = { id: string; kind: 'image' | 'document' };
+export type CaseFile = { id: string; kind: 'image' | 'document'; name?: string };
 
 const imageTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 const documentTypes = new Set(['application/pdf', 'text/plain']);

@@ -365,6 +365,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterConsoleWorkspaceMemberRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
 			mcpServerHandler.RegisterRoutes(r)
+			s.files.RegisterConsoleRoutes(r)
 			evaluationHandler.RegisterRoutes(r)
 			if s.consoleTunnels != nil {
 				r.Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)

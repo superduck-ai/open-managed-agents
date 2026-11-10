@@ -18,6 +18,7 @@ const (
 	inputTooLargeMessage         = "inputs must contain at most 32 blocks"
 	fileNotFoundMessage          = "input file was not found"
 	fileMediaMessage             = "input file media type is not supported"
+	caseFilesMessage             = "choose the named image and document files before importing"
 	queryTooLongMessage          = "query must be at most 16000 characters"
 	answerTooLongMessage         = "expected answer must be at most 16000 characters"
 	acceptanceTooLongMessage     = "acceptance must be at most 4000 characters"

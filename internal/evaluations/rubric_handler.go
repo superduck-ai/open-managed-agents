@@ -75,9 +75,9 @@ func (h *Handler) generateCases(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	drafts, err := parseCaseDocument(text)
+	drafts, err := parseCaseDocument(stripCodeFence(text))
 	if err != nil {
-		return invalidArgument(importInvalidMessage, err)
+		return internalFailure(generateFailedMessage, err)
 	}
 	if len(drafts) > body.Count {
 		drafts = drafts[:body.Count]

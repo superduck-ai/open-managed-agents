@@ -19,6 +19,7 @@ import { Textarea } from '../../shared/ui/textarea';
 import { AcceptanceChecklist } from './AcceptanceChecklist';
 import { createEvaluationCases, evaluationError, updateEvaluationCase, type EvaluationCase } from './api';
 import { acceptanceItems, joinAcceptance } from './caseChecklist';
+import { CaseAttachments } from './caseMedia';
 import { blockTypeForMime, buildInputs, fileBlocks, textFromInputs, type CaseFile } from './caseInputs';
 
 export function CaseEditorDialog({
@@ -105,7 +106,7 @@ export function CaseEditorDialog({
     setUploading(true);
     try {
       const uploaded = await anthropicBetaApi.files.upload<{ id: string }>(file, workspaceId);
-      setFiles((current) => [...current, { id: uploaded.id, kind }]);
+      setFiles((current) => [...current, { id: uploaded.id, kind, name: file.name }]);
       setError('');
     } catch (cause) {
       setError(evaluationError(cause));
@@ -151,18 +152,12 @@ export function CaseEditorDialog({
                 accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain"
                 onChange={(event) => void onFile(event)}
               />
-              {files.map((file) => (
-                <span key={file.id} className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs">
-                  {file.id}
-                  <button
-                    type="button"
-                    className="text-muted-foreground"
-                    onClick={() => setFiles((current) => current.filter((item) => item.id !== file.id))}
-                  >
-                    {msg('evaluations.removeFile', 'Remove')}
-                  </button>
-                </span>
-              ))}
+              <CaseAttachments
+                files={files}
+                orgUuid={orgUuid}
+                workspaceId={workspaceId}
+                onRemove={(id) => setFiles((current) => current.filter((item) => item.id !== id))}
+              />
             </div>
           </div>
           <div className="grid gap-2">

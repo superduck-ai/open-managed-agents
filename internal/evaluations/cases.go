@@ -40,6 +40,7 @@ type rawCase struct {
 	Polarity               string          `json:"polarity"`
 	Acceptance             string          `json:"acceptance"`
 	Inputs                 json.RawMessage `json:"inputs"`
+	Files                  json.RawMessage `json:"files"`
 }
 
 func normalizeName(value string) (string, error) {
@@ -61,7 +62,19 @@ func normalizeDescription(value string) (string, error) {
 	return description, nil
 }
 
+func pendingFileNames(raw json.RawMessage) bool {
+	switch string(bytes.TrimSpace(raw)) {
+	case "", "null", "[]", `""`:
+		return false
+	default:
+		return true
+	}
+}
+
 func normalizeCase(raw rawCase) (caseDraft, error) {
+	if pendingFileNames(raw.Files) {
+		return caseDraft{}, invalidArgument(caseFilesMessage, nil)
+	}
 	query, inputs, err := canonicalInputs(raw.Query, raw.Inputs)
 	if err != nil {
 		return caseDraft{}, err
@@ -113,6 +126,22 @@ func normalizeTrace(raw json.RawMessage) (json.RawMessage, error) {
 	default:
 		return nil, invalidArgument(traceInvalidMessage, nil)
 	}
+}
+
+func stripCodeFence(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "```") {
+		return text
+	}
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	rest, ok := strings.CutPrefix(trimmed, "json")
+	if !ok {
+		rest, _ = strings.CutPrefix(trimmed, "JSON")
+	}
+	if fence := strings.LastIndex(rest, "```"); fence >= 0 {
+		rest = rest[:fence]
+	}
+	return strings.TrimSpace(rest)
 }
 
 func parseCaseDocument(content string) ([]caseDraft, error) {
@@ -182,9 +211,21 @@ func parseCSVCases(content string) ([]caseDraft, error) {
 		if strings.TrimSpace(trace) != "" {
 			row.ExpectedToolTrace = json.RawMessage(trace)
 		}
+		inputs := firstText(csvField(record, headerIndex(header, "inputs")), csvField(record, headerIndex(header, "Inputs")))
+		if strings.TrimSpace(inputs) != "" {
+			row.Inputs = json.RawMessage(inputs)
+		}
 		row.SourceSessionID = firstText(csvField(record, headerIndex(header, "source_session_id")), csvField(record, headerIndex(header, "sourceSessionId")))
 		row.Polarity = csvField(record, headerIndex(header, "polarity"))
 		row.Acceptance = csvField(record, headerIndex(header, "acceptance"))
+		files := csvField(record, headerIndex(header, "files"))
+		if strings.TrimSpace(files) != "" {
+			encoded, err := json.Marshal(files)
+			if err != nil {
+				return nil, invalidArgument(importInvalidMessage, err)
+			}
+			row.Files = encoded
+		}
 		rows = append(rows, row)
 	}
 	return normalizeCaseList(rows)

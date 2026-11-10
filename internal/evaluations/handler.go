@@ -229,7 +229,11 @@ func (h *Handler) updateCase(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := h.resolveDraftFiles(r.Context(), principal.WorkspaceUUID, "", []caseDraft{draft}); err != nil {
+	sessionUUID, err := h.attachmentSessionUUID(r.Context(), principal.WorkspaceUUID, draft.SourceSessionID)
+	if err != nil {
+		return err
+	}
+	if err := h.resolveDraftFiles(r.Context(), principal.WorkspaceUUID, sessionUUID, []caseDraft{draft}); err != nil {
 		return err
 	}
 	datasetID := chi.URLParam(r, "datasetId")
@@ -414,6 +418,20 @@ func (h *Handler) inputFile(ctx context.Context, workspaceUUID, sessionUUID, fil
 		return db.FileRecord{}, mapStoreError(err, fileNotFoundMessage, loadFailedMessage)
 	}
 	return file, nil
+}
+
+func (h *Handler) attachmentSessionUUID(ctx context.Context, workspaceUUID, sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", nil
+	}
+	session, ok, err := h.store.GetSession(ctx, workspaceUUID, sessionID)
+	if err != nil {
+		return "", internalFailure(loadFailedMessage, err)
+	}
+	if !ok {
+		return "", nil
+	}
+	return session.UUID, nil
 }
 
 func newPair(leftPrefix, rightPrefix string) (string, string, error) {

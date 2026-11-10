@@ -59,6 +59,55 @@ test('keeps the provider fixed when editing an existing env_oauth credential', (
   expect((screen.getByLabelText('Variable name') as HTMLInputElement).value).toBe('EXAMPLE_TOKEN');
 });
 
+test('replaces an auto-filled variable name and keeps a typed one when switching providers', () => {
+  const onChange = mock(() => {});
+  const { unmount } = render(
+    <EnvOAuthCredentialFields
+      values={{
+        ...values,
+        envOAuthProviderId: 'builtin:feishu',
+        secretName: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
+        allowedHostsText: 'open.feishu.cn',
+      }}
+      providers={providers}
+      providersLoading={false}
+      providersError={null}
+      onRetryProviders={() => {}}
+      secretNameLocked={false}
+      onChange={onChange}
+    />,
+  );
+  fireEvent.click(screen.getByRole('combobox', { name: 'OAuth provider' }));
+  fireEvent.click(screen.getAllByRole('option').find((option) => option.textContent?.includes('Example'))!);
+  expect(onChange).toHaveBeenCalledWith({
+    envOAuthProviderId: 'custom:example',
+    allowedHostsText: 'example.test',
+    secretName: '',
+  });
+  unmount();
+
+  const typed = mock(() => {});
+  render(
+    <EnvOAuthCredentialFields
+      values={{
+        ...values,
+        envOAuthProviderId: 'builtin:feishu',
+        secretName: 'TEAM_FEISHU_TOKEN',
+        allowedHostsText: 'open.feishu.cn',
+      }}
+      providers={providers}
+      providersLoading={false}
+      providersError={null}
+      onRetryProviders={() => {}}
+      secretNameLocked={false}
+      onChange={typed}
+    />,
+  );
+  fireEvent.click(screen.getByRole('combobox', { name: 'OAuth provider' }));
+  fireEvent.click(screen.getAllByRole('option').find((option) => option.textContent?.includes('Example'))!);
+  expect(typed).toHaveBeenCalledWith({ envOAuthProviderId: 'custom:example', allowedHostsText: 'example.test' });
+});
+
 test('shows the provider loading error and retries', () => {
   const onRetryProviders = mock(() => {});
   render(

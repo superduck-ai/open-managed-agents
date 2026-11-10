@@ -60,12 +60,14 @@ export function EnvOAuthCredentialFields({
           }
           const provider = providers.find((item) => item.id === providerId);
           const defaults = provider ? envOAuthProviderDefaults(provider) : null;
+          const previousDefault = selected ? envOAuthProviderDefaults(selected).secretName : '';
+          const secretNameEdited = values.secretName.trim() !== '' && values.secretName !== previousDefault;
           onChange({
             envOAuthProviderId: providerId,
             ...(defaults
               ? {
                   allowedHostsText: defaults.allowedHostsText,
-                  ...(values.secretName.trim() ? {} : { secretName: defaults.secretName }),
+                  ...(secretNameEdited ? {} : { secretName: defaults.secretName }),
                 }
               : {}),
           });

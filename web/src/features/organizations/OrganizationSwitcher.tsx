@@ -1,5 +1,5 @@
 import { useI18n } from '../../shared/i18n';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Building2, Check } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../shared/ui/dialog';
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '../../shared/ui/command';
@@ -10,6 +10,10 @@ import {
   organizationPickerRemainder,
   type OrganizationPickerItem,
 } from './organizationPicker';
+
+function containDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+  if (event.key !== 'Escape') event.stopPropagation();
+}
 
 export function OrganizationSwitcher({
   open,
@@ -36,7 +40,11 @@ export function OrganizationSwitcher({
   const remainder = organizationPickerRemainder(result, msg);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent initialFocus={searchRef} className="gap-0 overflow-hidden p-0 sm:max-w-md">
+      <DialogContent
+        initialFocus={searchRef}
+        className="gap-0 overflow-hidden p-0 sm:max-w-md"
+        onKeyDown={containDialogKeyDown}
+      >
         <DialogHeader className="px-4 pt-4 pb-2">
           <DialogTitle>{msg('organizations.switch', 'Switch organization')}</DialogTitle>
           <DialogDescription>

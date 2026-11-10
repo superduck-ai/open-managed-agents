@@ -57,6 +57,16 @@ func TestParseCaseDocumentRejectsMissingQuery(t *testing.T) {
 	}
 }
 
+func TestParseCaseDocumentReadsMarkdownFence(t *testing.T) {
+	parsed, err := parseCaseDocument(stripCodeFence("```json\n[{\"query\":\"汇总销售额\"}]\n```"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 1 || parsed[0].Query != "汇总销售额" {
+		t.Fatalf("parsed = %+v", parsed)
+	}
+}
+
 func TestParseCaseDocumentRejectsInvalidCSVPolarity(t *testing.T) {
 	if _, err := parseCaseDocument("query,polarity\n汇总销售额,maybe\n"); err == nil {
 		t.Fatal("expected polarity to be rejected")
@@ -124,6 +134,74 @@ func TestSessionEventCursorStopsAtPageLimit(t *testing.T) {
 	done, err := nextSessionEventCursor(3, false, "evt_3")
 	if err != nil || done != nil {
 		t.Fatalf("done = %+v err=%v", done, err)
+	}
+}
+
+func TestCanonicalInputsStoresFileReferences(t *testing.T) {
+	query, inputs, err := canonicalInputs("", json.RawMessage(`[{"type":"text","text":"描述这张图"},{"type":"image","source":{"type":"file","file_id":"file_1"}}]`))
+	if err != nil || query != "描述这张图" || !strings.Contains(string(inputs), `"file_id":"file_1"`) {
+		t.Fatalf("query=%q inputs=%s err=%v", query, inputs, err)
+	}
+	if _, _, err := canonicalInputs("", json.RawMessage(`[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]`)); err == nil {
+		t.Fatal("expected inline image to be rejected")
+	}
+	query, inputs, err = canonicalInputs("只有文字", nil)
+	if err != nil || query != "只有文字" || !strings.Contains(string(inputs), "只有文字") {
+		t.Fatalf("query=%q inputs=%s err=%v", query, inputs, err)
+	}
+	stored, _, err := canonicalInputs("请求里的问题", json.RawMessage(`[{"type":"text","text":"以内容块为准"}]`))
+	if err != nil || stored != "以内容块为准" {
+		t.Fatalf("stored=%q err=%v", stored, err)
+	}
+}
+
+func TestResolveInputsChecksFileMediaType(t *testing.T) {
+	inputs := json.RawMessage(`[{"type":"image","source":{"type":"file","file_id":"file_1"}},{"type":"document","source":{"type":"file","file_id":"file_2"}}]`)
+	err := resolveInputs(inputs, func(fileID string) (string, error) {
+		if fileID == "file_2" {
+			return "application/pdf", nil
+		}
+		return "image/png", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resolveInputs(inputs, func(string) (string, error) { return "image/bmp", nil }); err == nil {
+		t.Fatal("expected unsupported media type to be rejected")
+	}
+}
+
+func TestSessionTurnsKeepFileImagesAndSkipInlineImages(t *testing.T) {
+	events := []db.SessionEvent{
+		{EventType: "user.message", Payload: json.RawMessage(`{"content":[{"type":"image","source":{"type":"file","file_id":"file_1"}}]}`)},
+		{EventType: "user.message", Payload: json.RawMessage(`{"content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}]}`)},
+		{EventType: "user.message", Payload: json.RawMessage(`{"text":"文字"}`)},
+	}
+	turns := sessionTurns(events)
+	if len(turns) != 3 || !turns[0].Importable || turns[0].Query != "" || turns[1].Importable || !turns[2].Importable || turns[2].Query != "文字" {
+		t.Fatalf("turns = %+v", turns)
+	}
+	drafts, skipped, err := sessionCaseDrafts(turns, []int{1, 2}, "sess", "", "", "")
+	if err != nil || skipped != 1 || len(drafts) != 1 || drafts[0].Query != "" || !strings.Contains(string(drafts[0].Inputs), "file_1") {
+		t.Fatalf("drafts=%+v skipped=%d err=%v", drafts, skipped, err)
+	}
+}
+
+func TestParseCaseDocumentAsksForNamedFiles(t *testing.T) {
+	_, err := parseCaseDocument("query,files\n描述这张图,chart.png\n")
+	if err == nil {
+		t.Fatal("expected named files to be uploaded before import")
+	}
+}
+
+func TestParseCaseDocumentReadsCSVInputs(t *testing.T) {
+	content := "query,inputs\n描述这张图,\"[{\"\"type\"\":\"\"text\"\",\"\"text\"\":\"\"描述这张图\"\"},{\"\"type\"\":\"\"image\"\",\"\"source\"\":{\"\"type\"\":\"\"file\"\",\"\"file_id\"\":\"\"file_chart\"\"}}]\"\n"
+	parsed, err := parseCaseDocument(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 1 || parsed[0].Query != "描述这张图" || !strings.Contains(string(parsed[0].Inputs), `"file_chart"`) {
+		t.Fatalf("parsed = %+v", parsed)
 	}
 }
 

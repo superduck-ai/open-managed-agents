@@ -7,6 +7,7 @@ import { Button } from '../../shared/ui/button';
 import { Empty, EmptyHeader, EmptyTitle } from '../../shared/ui/empty';
 import { ScrollArea } from '../../shared/ui/scroll-area';
 import type { SessionTurn } from './api';
+import { mediaDetail } from './caseInputs';
 
 export function splitSessionTurns(turns: SessionTurn[], chosen: ReadonlySet<number>) {
   return {
@@ -196,7 +197,7 @@ function TurnPane({
                       </span>
                       <span>
                         <span className="text-xs font-medium">{msg('evaluations.userMessage', 'User')}</span>
-                        <span className="mt-0.5 block line-clamp-3 text-sm [overflow-wrap:anywhere]">{turn.query}</span>
+                        <TurnQuery turn={turn} />
                       </span>
                       <span className="rounded-md bg-muted px-2 py-1.5">
                         <span className="text-xs font-medium text-muted-foreground">
@@ -215,6 +216,22 @@ function TurnPane({
         )}
       </div>
     </section>
+  );
+}
+
+function TurnQuery({ turn }: { turn: SessionTurn }) {
+  const { msg } = useI18n();
+  const detail = mediaDetail(turn.inputs, {
+    images: (count) => msg('evaluations.imageCount', '{count} images', { count }),
+    documents: (count) => msg('evaluations.documentCount', '{count} documents', { count }),
+  });
+  return (
+    <>
+      <span className="mt-0.5 block line-clamp-3 text-sm [overflow-wrap:anywhere]">
+        {turn.query || detail || msg('evaluations.imageOnly', 'Image')}
+      </span>
+      {turn.query && detail ? <span className="mt-1 block text-xs text-muted-foreground">{detail}</span> : null}
+    </>
   );
 }
 

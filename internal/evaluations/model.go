@@ -45,9 +45,6 @@ func NewRubricModel(database *db.DB, secretService *secrets.Service) *LLMRubricM
 }
 
 func (m *LLMRubricModel) Complete(ctx context.Context, request CompletionRequest) (string, error) {
-	if m == nil || m.database == nil || m.secrets == nil {
-		return "", errModelMissing
-	}
 	modelID := strings.TrimSpace(request.Model)
 	if modelID == "" {
 		resolved, ok, err := firstWorkspaceModel(ctx, m.database, request.OrganizationUUID, request.WorkspaceUUID)
@@ -93,11 +90,7 @@ func (m *LLMRubricModel) complete(ctx context.Context, upstream llmproviders.Ups
 	if backend == llmproviders.ChatCompletions {
 		path = "/v1/chat/completions"
 	}
-	system := request.System
-	if system == "" {
-		system = rubricSystemPrompt
-	}
-	body, err := completionBody(backend, upstream.ModelID, system, request.User)
+	body, err := completionBody(backend, upstream.ModelID, request.System, request.User)
 	if err != nil {
 		return "", err
 	}
@@ -111,11 +104,7 @@ func (m *LLMRubricModel) complete(ctx context.Context, upstream llmproviders.Ups
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
 	upstream.ApplyHeaders(httpRequest.Header)
-	client := m.client
-	if client == nil {
-		client = llmproviders.NewHTTPClient(60 * time.Second)
-	}
-	response, err := client.Do(httpRequest)
+	response, err := m.client.Do(httpRequest)
 	if err != nil {
 		return "", errModelFailed
 	}

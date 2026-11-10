@@ -56,6 +56,7 @@ type evaluationCaseRow struct {
 	SourceSessionID   string    `db:"source_session_id"`
 	Polarity          string    `db:"polarity"`
 	Acceptance        string    `db:"acceptance"`
+	Inputs            []byte    `db:"inputs"`
 	CreatedAt         time.Time `db:"created_at"`
 	UpdatedAt         time.Time `db:"updated_at"`
 }
@@ -94,6 +95,7 @@ type insertEvaluationCaseParams struct {
 	SourceSessionID   string
 	Polarity          string
 	Acceptance        string
+	Inputs            json.RawMessage
 	CreatedAt         time.Time
 }
 
@@ -108,6 +110,7 @@ type updateEvaluationCaseParams struct {
 	SourceSessionID   string
 	Polarity          string
 	Acceptance        string
+	Inputs            json.RawMessage
 	UpdatedAt         time.Time
 }
 

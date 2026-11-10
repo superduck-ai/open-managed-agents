@@ -83,6 +83,7 @@ type caseResponse struct {
 	SourceSessionID   string          `json:"source_session_id"`
 	Polarity          string          `json:"polarity"`
 	Acceptance        string          `json:"acceptance"`
+	Inputs            json.RawMessage `json:"inputs"`
 	CreatedAt         string          `json:"created_at"`
 	UpdatedAt         string          `json:"updated_at"`
 }
@@ -95,7 +96,7 @@ func caseJSON(item db.EvaluationCase) caseResponse {
 	return caseResponse{
 		ID: item.ExternalID, Type: "evaluation_case", Query: item.Query, ExpectedAnswer: item.ExpectedAnswer,
 		ExpectedToolTrace: trace, SourceSessionID: item.SourceSessionID, Polarity: item.Polarity, Acceptance: item.Acceptance,
-		CreatedAt: formatTime(item.CreatedAt), UpdatedAt: formatTime(item.UpdatedAt),
+		Inputs: item.Inputs, CreatedAt: formatTime(item.CreatedAt), UpdatedAt: formatTime(item.UpdatedAt),
 	}
 }
 

@@ -17,6 +17,9 @@ export type EvaluationDataset = {
   updated_at: string;
 };
 
+export type EvaluationContentBlock =
+  { type: 'text'; text: string } | { type: 'image' | 'document'; source: { type: 'file'; file_id: string } };
+
 export type EvaluationCase = {
   id: string;
   query: string;
@@ -25,6 +28,7 @@ export type EvaluationCase = {
   source_session_id: string;
   polarity: string;
   acceptance: string;
+  inputs?: EvaluationContentBlock[];
 };
 
 export type EvaluationRubricVersion = {
@@ -85,7 +89,10 @@ export type SessionTurn = {
   index: number;
   query: string;
   answer: string;
+  inputs?: EvaluationContentBlock[];
 };
+
+export type SessionImportResult = EvaluationPage<EvaluationCase> & { skipped: number };
 
 export function listSessionTurns(orgUuid: string, workspaceId: string, datasetId: string, sessionId: string) {
   const params = new URLSearchParams({ session_id: sessionId });
@@ -102,7 +109,7 @@ export function importEvaluationSession(
   datasetId: string,
   input: { session_id: string; turns: number[]; polarity?: string; acceptance?: string },
 ) {
-  return consoleApi<EvaluationPage<EvaluationCase>>(
+  return consoleApi<SessionImportResult>(
     `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases:from-session`,
     { method: 'POST', body: JSON.stringify(input) },
   );
@@ -118,7 +125,7 @@ export function createEvaluationCases(
   orgUuid: string,
   workspaceId: string,
   datasetId: string,
-  cases: Array<Pick<EvaluationCase, 'query' | 'expected_answer' | 'polarity' | 'acceptance'>>,
+  cases: Array<Pick<EvaluationCase, 'query' | 'expected_answer' | 'polarity' | 'acceptance' | 'inputs'>>,
 ) {
   return consoleApi<EvaluationPage<EvaluationCase>>(
     `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases`,
@@ -133,7 +140,7 @@ export function updateEvaluationCase(
   caseId: string,
   input: Pick<
     EvaluationCase,
-    'query' | 'expected_answer' | 'expected_tool_trace' | 'polarity' | 'acceptance' | 'source_session_id'
+    'query' | 'expected_answer' | 'expected_tool_trace' | 'polarity' | 'acceptance' | 'source_session_id' | 'inputs'
   >,
 ) {
   return consoleApi<EvaluationCase>(

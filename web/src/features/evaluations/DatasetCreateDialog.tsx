@@ -3,6 +3,7 @@ import { FileUp } from 'lucide-react';
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from 'react';
 
 import { listAgentVersions, listAgents } from '../managed-agents/api';
+import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
 import {
@@ -20,13 +21,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../shared/ui/tabs';
 import { Textarea } from '../../shared/ui/textarea';
 import { createEvaluationDataset, deleteEvaluationDataset, evaluationError, generateEvaluationCases } from './api';
-import { downloadDatasetSample, type DatasetSampleKind } from './datasetSample';
+import { datasetWithUploadedFiles, missingCaseFileNames } from './caseFileRefs';
+import { downloadBlob, downloadDatasetSample, type DatasetSampleKind } from './datasetSample';
+import { readUploadedDataset, sampleWorkbook, type PendingImage } from './spreadsheetDataset';
 import { useEvaluationScope } from './useEvaluationScope';
 
 type DatasetSource = 'upload' | 'paste' | 'generate';
 
 export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const { msg } = useI18n();
+  const { locale, msg } = useI18n();
   const scope = useEvaluationScope();
   const queryClient = useQueryClient();
   const [source, setSource] = useState<DatasetSource>('generate');
@@ -38,6 +41,7 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
   const [agentId, setAgentId] = useState('');
   const [version, setVersion] = useState('');
   const [readingFile, setReadingFile] = useState(false);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [error, setError] = useState('');
   const versions = useQuery({
     queryKey: ['evaluation-dataset-agent-versions', scope.workspaceId, agentId],
@@ -57,17 +61,21 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
     queryFn: () => listAgents(scope.workspaceId),
     enabled: open && scope.ready && source === 'generate',
   });
+  const content = source === 'paste' ? pasteContent : uploadContent;
   const create = useMutation({
-    mutationFn: () =>
-      submitDataset(scope.orgUuid, scope.workspaceId, {
+    mutationFn: async () => {
+      const readyContent =
+        source === 'upload' ? await uploadPendingImages(content, pendingImages, scope.workspaceId) : content;
+      return submitDataset(scope.orgUuid, scope.workspaceId, {
         name: datasetCreateName(source, name, nameFromFile, msg('evaluations.datasetNamePlaceholder', 'My dataset')),
         source,
-        content: source === 'paste' ? pasteContent : uploadContent,
+        content: readyContent,
         count,
         note,
         agentId,
         version,
-      }),
+      });
+    },
     onSuccess: async () => {
       reset();
       onOpenChange(false);
@@ -88,57 +96,55 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
     setNameFromFile('');
     setFileLabel('');
     setReadingFile(false);
+    setPendingImages([]);
     setError('');
     setSource('generate');
   }
 
   function takeFile(file: File | undefined) {
     if (!file) return;
-    const lower = file.name.toLowerCase();
-    if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
-      setError(msg('evaluations.excelUnsupported', 'Excel is not supported yet. Use JSON, JSONL, or CSV.'));
-      return;
-    }
     const ticket = fileRead.current + 1;
     fileRead.current = ticket;
     setError('');
     setReadingFile(true);
     setFileLabel(file.name);
     setUploadContent('');
-    void file.text().then(
-      (text) => {
-        if (fileRead.current !== ticket) return;
-        setUploadContent(text);
-        setReadingFile(false);
-        const base = file.name.replace(/\.[^.]+$/, '');
-        setNameFromFile(base);
-        setName((current) => current || base);
-      },
-      () => {
-        if (fileRead.current !== ticket) return;
-        setReadingFile(false);
-        setUploadContent('');
+    setPendingImages([]);
+    void readUploadedDataset(file).then((result) => {
+      if (fileRead.current !== ticket) return;
+      setReadingFile(false);
+      if (result.error) {
         setFileLabel('');
         setNameFromFile('');
-        setError(msg('evaluations.fileReadFailed', 'Could not read this file. Choose it again.'));
-      },
-    );
+        const readError = uploadReadError(result.error);
+        setError(msg(readError.id, readError.fallback));
+        return;
+      }
+      setUploadContent(result.content);
+      setPendingImages(result.images);
+      const base = file.name.replace(/\.[^.]+$/, '');
+      setNameFromFile(base);
+    });
   }
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
-    const message = datasetSubmitMessage({
-      source,
-      count,
-      agentId,
-      version,
-      versionCount: versions.data?.data?.length ?? 0,
-      readingFile,
-      content: source === 'paste' ? pasteContent : uploadContent,
-      name,
-    });
+    const message = datasetFormError(
+      {
+        source,
+        count,
+        agentId,
+        version,
+        versionCount: versions.data?.data?.length ?? 0,
+        readingFile,
+        content,
+        name,
+        pendingImages,
+      },
+      msg,
+    );
     if (message) {
-      setError(msg(message.id, message.fallback));
+      setError(message);
       return;
     }
     create.mutate();
@@ -301,13 +307,17 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
                     value={pasteContent}
                     onChange={(event) => setPasteContent(event.target.value)}
                     rows={8}
-                    placeholder={'[{"query":"示例问题","expectedAnswer":"标准答案","expectedToolTrace":[]}]'}
+                    placeholder={
+                      locale === 'zh-CN'
+                        ? '[{"query":"示例问题","expected_answer":"期望回答"}]'
+                        : '[{"query":"Example question","expected_answer":"Expected answer"}]'
+                    }
                   />
                 </div>
                 <p className="text-sm text-muted-foreground">
                   {msg(
                     'evaluations.pasteHint',
-                    'Each item needs query. expectedAnswer and expectedToolTrace are optional.',
+                    'Each item needs a question. You can also add the expected answer and the tools to call. Pasted text cannot contain new pictures. Use inputs to reference pictures or documents already in the file library.',
                   )}
                 </p>
               </TabsContent>
@@ -342,7 +352,7 @@ function DatasetFileDrop({ onFile, fileLabel }: { onFile: (file: File | undefine
   return (
     <div
       className={`grid min-h-44 place-items-center rounded-xl border border-dashed px-6 py-8 text-center ${
-        dragging ? 'border-blue-500 bg-blue-50' : 'border-blue-200 bg-slate-50'
+        dragging ? 'border-primary bg-accent' : 'border-border bg-muted/40'
       }`}
       onClick={() => inputRef.current?.click()}
       onDragEnter={(event) => {
@@ -360,12 +370,12 @@ function DatasetFileDrop({ onFile, fileLabel }: { onFile: (file: File | undefine
         ref={inputRef}
         type="file"
         className="sr-only"
-        accept=".json,.jsonl,.csv,application/json,text/csv"
+        accept=".json,.jsonl,.csv,.xlsx,application/json,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         aria-label={msg('evaluations.uploadFile', 'Upload')}
         onChange={(event: ChangeEvent<HTMLInputElement>) => onFile(event.target.files?.[0])}
       />
       <div className="grid justify-items-center gap-3">
-        <FileUp className="size-8 text-blue-500" aria-hidden />
+        <FileUp className="size-8 text-primary" aria-hidden />
         {fileLabel ? (
           <p className="text-sm font-medium text-foreground">{fileLabel}</p>
         ) : (
@@ -373,7 +383,7 @@ function DatasetFileDrop({ onFile, fileLabel }: { onFile: (file: File | undefine
             {msg('evaluations.dropLead', 'Click or drag')}{' '}
             <button
               type="button"
-              className="text-blue-500 hover:underline"
+              className="text-primary hover:underline"
               onClick={(event) => {
                 event.stopPropagation();
                 inputRef.current?.click();
@@ -394,21 +404,30 @@ function DatasetFileDrop({ onFile, fileLabel }: { onFile: (file: File | undefine
 function DatasetSampleDownloads() {
   const { locale, msg } = useI18n();
   const chinese = locale.toLowerCase().startsWith('zh');
-  const samples: Array<{ kind: DatasetSampleKind; label: string }> = [
+  const samples: Array<{ kind: DatasetSampleKind | 'xlsx'; label: string }> = [
     { kind: 'json', label: msg('evaluations.sampleJson', 'JSON sample') },
     { kind: 'jsonl', label: msg('evaluations.sampleJsonl', 'JSONL sample') },
     { kind: 'csv', label: msg('evaluations.sampleCsv', 'CSV sample') },
+    { kind: 'xlsx', label: msg('evaluations.sampleXlsx', 'Excel sample') },
   ];
   return (
     <div className="grid gap-2">
       <p className="text-sm text-muted-foreground">{msg('evaluations.sampleFiles', 'Sample files')}</p>
+      <p className="text-sm text-muted-foreground">
+        {msg(
+          'evaluations.samplePictureHint',
+          'Only Excel (xlsx) can contain pictures in cells. CSV, JSON, and JSONL are text only.',
+        )}
+      </p>
       <div className="flex flex-wrap gap-6">
         {samples.map((sample) => (
           <button
             key={sample.kind}
             type="button"
-            className="text-sm text-blue-500 hover:underline"
-            onClick={() => downloadDatasetSample(sample.kind, chinese)}
+            className="text-sm text-primary hover:underline"
+            onClick={() =>
+              sample.kind === 'xlsx' ? downloadSampleWorkbook() : downloadDatasetSample(sample.kind, chinese)
+            }
           >
             {sample.label}
           </button>
@@ -418,12 +437,44 @@ function DatasetSampleDownloads() {
   );
 }
 
+function downloadSampleWorkbook() {
+  downloadBlob(
+    new Blob([sampleWorkbook().buffer as ArrayBuffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    }),
+    'evaluation-dataset.sample.xlsx',
+  );
+}
+
 export function datasetCreateName(source: DatasetSource, name: string, fileName: string, generateName: string) {
   const trimmed = name.trim();
   if (trimmed) return trimmed;
   if (source === 'upload') return fileName;
   if (source === 'generate') return generateName;
   return '';
+}
+
+function datasetFormError(
+  input: {
+    source: DatasetSource;
+    count: string;
+    agentId: string;
+    version: string;
+    versionCount: number;
+    readingFile: boolean;
+    content: string;
+    name: string;
+    pendingImages: PendingImage[];
+  },
+  msg: (id: string, fallback: string) => string,
+) {
+  const message = datasetSubmitMessage(input);
+  if (message) return msg(message.id, message.fallback);
+  if (input.source === 'generate' || missingCaseFileNames(input.content, input.pendingImages).length === 0) return '';
+  return msg(
+    'evaluations.imageNotInFile',
+    'This file does not contain the picture. Put the picture in an Excel cell and upload the xlsx file.',
+  );
 }
 
 function datasetSubmitMessage(input: {
@@ -471,6 +522,34 @@ function datasetSubmitLabel(source: DatasetSource, msg: (id: string, fallback: s
   if (source === 'generate') return msg('evaluations.startGenerate', 'Start generating');
   if (source === 'upload') return msg('evaluations.uploadAndCreate', 'Upload and create');
   return msg('evaluations.create', 'Create');
+}
+
+function uploadReadError(error: 'xls' | 'csv-image' | 'read') {
+  if (error === 'xls') {
+    return {
+      id: 'evaluations.xlsUnsupported',
+      fallback: 'The older xls format has no readable cell pictures. Save the workbook as xlsx.',
+    };
+  }
+  if (error === 'csv-image') {
+    return {
+      id: 'evaluations.imageNotInFile',
+      fallback: 'This file does not contain the picture. Put the picture in an Excel cell and upload the xlsx file.',
+    };
+  }
+  return { id: 'evaluations.fileReadFailed', fallback: 'Could not read this file. Choose it again.' };
+}
+
+async function uploadPendingImages(content: string, images: PendingImage[], workspaceId: string) {
+  if (images.length === 0) return content;
+  const uploaded: Record<string, { id: string; kind: 'image' | 'document' }> = {};
+  for (const image of images) {
+    const bytes = image.bytes.slice();
+    const file = new File([bytes.buffer], image.name, { type: image.mime });
+    const result = await anthropicBetaApi.files.upload<{ id: string }>(file, workspaceId);
+    uploaded[image.name] = { id: result.id, kind: image.kind };
+  }
+  return datasetWithUploadedFiles(content, uploaded);
 }
 
 async function submitDataset(

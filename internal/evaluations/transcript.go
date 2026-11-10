@@ -8,9 +8,11 @@ import (
 )
 
 type sessionTurn struct {
-	Index  int
-	Query  string
-	Answer string
+	Index      int
+	Query      string
+	Answer     string
+	Inputs     json.RawMessage
+	Importable bool
 }
 
 func sessionTurns(events []db.SessionEvent) []sessionTurn {
@@ -20,13 +22,20 @@ func sessionTurns(events []db.SessionEvent) []sessionTurn {
 		text := eventText(event.Payload)
 		switch event.EventType {
 		case "user.message":
-			if text == "" {
+			query, inputs, kind := userTurnInputs(event.Payload)
+			if kind == userTurnEmpty {
 				continue
 			}
 			if current != nil {
 				turns = append(turns, *current)
+				current = nil
 			}
-			current = &sessionTurn{Index: len(turns) + 1, Query: text}
+			turn := sessionTurn{Index: len(turns) + 1, Query: query, Inputs: inputs, Importable: kind == userTurnReady}
+			if !turn.Importable {
+				turns = append(turns, turn)
+				continue
+			}
+			current = &turn
 		case "agent.message":
 			if current == nil || text == "" {
 				continue
@@ -70,6 +79,29 @@ func selectedSessionTurns(turns []sessionTurn, indexes []int) ([]sessionTurn, er
 	return selected, nil
 }
 
+func sessionCaseDrafts(turns []sessionTurn, indexes []int, sessionID, expectedAnswer, polarity, acceptance string) ([]caseDraft, int, error) {
+	selected, err := selectedSessionTurns(turns, indexes)
+	if err != nil {
+		return nil, 0, err
+	}
+	drafts := make([]caseDraft, 0, len(selected))
+	skipped := 0
+	for _, turn := range selected {
+		if !turn.Importable {
+			skipped++
+			continue
+		}
+		draft, err := normalizeCase(rawCase{
+			Query: turn.Query, Inputs: turn.Inputs, ExpectedAnswer: expectedAnswer, SourceSessionID: sessionID, Polarity: polarity, Acceptance: acceptance,
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+		drafts = append(drafts, draft)
+	}
+	return drafts, skipped, nil
+}
+
 func eventText(payload json.RawMessage) string {
 	var body struct {
 		Content json.RawMessage `json:"content"`
@@ -99,26 +131,16 @@ func eventText(payload json.RawMessage) string {
 		Text string `json:"text"`
 		Name string `json:"name"`
 	}
-	if err := json.Unmarshal(body.Content, &blocks); err == nil {
-		var parts []string
-		for _, block := range blocks {
-			if strings.TrimSpace(block.Text) != "" {
-				parts = append(parts, strings.TrimSpace(block.Text))
-			} else if block.Name != "" {
-				parts = append(parts, block.Name)
-			}
+	if err := json.Unmarshal(body.Content, &blocks); err != nil {
+		return ""
+	}
+	var parts []string
+	for _, block := range blocks {
+		if strings.TrimSpace(block.Text) != "" {
+			parts = append(parts, strings.TrimSpace(block.Text))
+		} else if block.Name != "" {
+			parts = append(parts, block.Name)
 		}
-		return strings.Join(parts, "\n")
 	}
-	if body.Name != "" {
-		return body.Name
-	}
-	return clip(trimmed, 500)
-}
-
-func clip(value string, limit int) string {
-	if len(value) <= limit {
-		return value
-	}
-	return value[:limit]
+	return strings.Join(parts, "\n")
 }

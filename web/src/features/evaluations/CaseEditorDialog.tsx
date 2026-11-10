@@ -12,7 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../shared/ui/dialog';
-import { Input } from '../../shared/ui/input';
 import { Label } from '../../shared/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '../../shared/ui/tabs';
 import { Textarea } from '../../shared/ui/textarea';
@@ -51,7 +50,7 @@ export function CaseEditorDialog({
     setError('');
   }, [open, item]);
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const body = {
         query,
         expected_answer: expected,
@@ -59,17 +58,20 @@ export function CaseEditorDialog({
         polarity,
       };
       if (item) {
-        return updateEvaluationCase(orgUuid, workspaceId, datasetId, item.id, {
+        await updateEvaluationCase(orgUuid, workspaceId, datasetId, item.id, {
           ...body,
+          expected_tool_trace: item.expected_tool_trace,
           source_session_id: item.source_session_id,
         });
+        return;
       }
-      return createEvaluationCases(orgUuid, workspaceId, datasetId, [body]);
+      await createEvaluationCases(orgUuid, workspaceId, datasetId, [body]);
     },
     onSuccess: async () => {
       onOpenChange(false);
       await queryClient.invalidateQueries({ queryKey: ['evaluation-cases', orgUuid, workspaceId, datasetId] });
       await queryClient.invalidateQueries({ queryKey: ['evaluation-dataset', orgUuid, workspaceId, datasetId] });
+      await queryClient.invalidateQueries({ queryKey: ['evaluation-datasets', orgUuid, workspaceId] });
     },
     onError: (cause) => setError(evaluationError(cause)),
   });

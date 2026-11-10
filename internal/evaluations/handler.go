@@ -2,6 +2,7 @@ package evaluations
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -27,6 +28,7 @@ type Store interface {
 	UpdateEvaluationCase(context.Context, string, string, string, db.EvaluationCaseWrite, time.Time) (db.EvaluationCase, error)
 	DeleteEvaluationCase(context.Context, string, string, string, string, time.Time) error
 	GetAgent(context.Context, string, string) (db.Agent, error)
+	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
 	GetSession(context.Context, string, string) (db.Session, bool, error)
 	ListSessionEventsPage(context.Context, db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error)
 }
@@ -77,7 +79,7 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	drafts, err := optionalCases(body.Cases)
+	drafts, err := datasetDrafts(*body)
 	if err != nil {
 		return err
 	}
@@ -87,7 +89,7 @@ func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request) error {
 	}
 	created, err := h.store.CreateEvaluationDataset(r.Context(), dataset, writes)
 	if err != nil {
-		return mapStoreError(err, datasetNotFoundMessage)
+		return mapStoreError(err, datasetNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, datasetJSON(created))
 	return nil
@@ -121,7 +123,7 @@ func (h *Handler) getDataset(w http.ResponseWriter, r *http.Request) error {
 	}
 	dataset, err := h.store.GetEvaluationDataset(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "datasetId"))
 	if err != nil {
-		return mapStoreError(err, datasetNotFoundMessage)
+		return mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, datasetJSON(dataset))
 	return nil
@@ -134,7 +136,7 @@ func (h *Handler) deleteDataset(w http.ResponseWriter, r *http.Request) error {
 	}
 	datasetID := chi.URLParam(r, "datasetId")
 	if err := h.store.DeleteEvaluationDataset(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, datasetID, time.Now().UTC()); err != nil {
-		return mapStoreError(err, datasetNotFoundMessage)
+		return mapStoreError(err, datasetNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"id": datasetID, "type": "evaluation_dataset_deleted", "deleted": true})
 	return nil
@@ -147,7 +149,7 @@ func (h *Handler) listCases(w http.ResponseWriter, r *http.Request) error {
 	}
 	cases, err := h.store.ListEvaluationCases(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "datasetId"))
 	if err != nil {
-		return mapStoreError(err, datasetNotFoundMessage)
+		return mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
 	}
 	data := make([]caseResponse, 0, len(cases))
 	for _, item := range cases {
@@ -212,17 +214,26 @@ func (h *Handler) updateCase(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	body, err := httpapi.DecodeObjectBodyAs[rawCase](w, r, 1<<20)
+	body, err := httpapi.DecodeObjectBodyAs[caseUpdateRequest](w, r, 1<<20)
 	if err != nil {
 		return invalidArgument(invalidJSONMessage, err)
 	}
-	draft, err := normalizeCase(*body)
+	draft, err := body.draft()
 	if err != nil {
 		return err
 	}
-	updated, err := h.store.UpdateEvaluationCase(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "datasetId"), caseWrite(chi.URLParam(r, "caseId"), draft), time.Now().UTC())
+	datasetID := chi.URLParam(r, "datasetId")
+	caseID := chi.URLParam(r, "caseId")
+	if body.keepsTrace() {
+		trace, err := h.caseTrace(r.Context(), principal, datasetID, caseID)
+		if err != nil {
+			return err
+		}
+		draft.ExpectedToolTrace = trace
+	}
+	updated, err := h.store.UpdateEvaluationCase(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, datasetID, caseWrite(caseID, draft), time.Now().UTC())
 	if err != nil {
-		return mapStoreError(err, caseNotFoundMessage)
+		return mapStoreError(err, caseNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, caseJSON(updated))
 	return nil
@@ -235,16 +246,17 @@ func (h *Handler) deleteCase(w http.ResponseWriter, r *http.Request) error {
 	}
 	caseID := chi.URLParam(r, "caseId")
 	if err := h.store.DeleteEvaluationCase(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, chi.URLParam(r, "datasetId"), caseID, time.Now().UTC()); err != nil {
-		return mapStoreError(err, caseNotFoundMessage)
+		return mapStoreError(err, caseNotFoundMessage, createFailedMessage)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"id": caseID, "type": "evaluation_case_deleted", "deleted": true})
 	return nil
 }
 
 type datasetWriteRequest struct {
-	Name  string    `json:"name"`
-	Desc  string    `json:"desc"`
-	Cases []rawCase `json:"cases"`
+	Name    string    `json:"name"`
+	Desc    string    `json:"desc"`
+	Content string    `json:"content"`
+	Cases   []rawCase `json:"cases"`
 }
 
 type casesWriteRequest struct {
@@ -253,6 +265,38 @@ type casesWriteRequest struct {
 
 type importRequest struct {
 	Content string `json:"content"`
+}
+
+func datasetDrafts(body datasetWriteRequest) ([]caseDraft, error) {
+	drafts, err := optionalCases(body.Cases)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(body.Content) == "" {
+		return drafts, nil
+	}
+	imported, err := parseCaseDocument(body.Content)
+	if err != nil {
+		return nil, err
+	}
+	combined := append(drafts, imported...)
+	if len(combined) > maxImportCases {
+		return nil, invalidArgument(importTooLargeMessage, nil)
+	}
+	return combined, nil
+}
+
+func (h *Handler) caseTrace(ctx context.Context, principal auth.Principal, datasetID, caseID string) (json.RawMessage, error) {
+	cases, err := h.store.ListEvaluationCases(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID)
+	if err != nil {
+		return nil, mapStoreError(err, datasetNotFoundMessage, loadFailedMessage)
+	}
+	for _, item := range cases {
+		if item.ExternalID == caseID {
+			return item.ExpectedToolTrace, nil
+		}
+	}
+	return nil, notFound(caseNotFoundMessage, nil)
 }
 
 func normalizeDataset(body datasetWriteRequest) (string, string, error) {
@@ -290,7 +334,7 @@ func (h *Handler) appendCases(ctx context.Context, principal auth.Principal, dat
 	}
 	created, err := h.store.CreateEvaluationCases(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, datasetID, writes, time.Now().UTC())
 	if err != nil {
-		return nil, mapStoreError(err, datasetNotFoundMessage)
+		return nil, mapStoreError(err, datasetNotFoundMessage, createFailedMessage)
 	}
 	return created, nil
 }

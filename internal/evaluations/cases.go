@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -43,7 +44,7 @@ func normalizeName(value string) (string, error) {
 	if name == "" {
 		return "", invalidArgument(nameRequiredMessage, nil)
 	}
-	if len(name) > maxNameLength {
+	if utf8.RuneCountInString(name) > maxNameLength {
 		return "", invalidArgument(nameTooLongMessage, nil)
 	}
 	return name, nil
@@ -51,7 +52,7 @@ func normalizeName(value string) (string, error) {
 
 func normalizeDescription(value string) (string, error) {
 	description := strings.TrimSpace(value)
-	if len(description) > maxDescriptionLength {
+	if utf8.RuneCountInString(description) > maxDescriptionLength {
 		return "", invalidArgument(descriptionTooLongMessage, nil)
 	}
 	return description, nil
@@ -68,13 +69,13 @@ func normalizeCase(raw rawCase) (caseDraft, error) {
 	if draft.Query == "" {
 		return caseDraft{}, invalidArgument(queryRequiredMessage, nil)
 	}
-	if len(draft.Query) > maxQueryLength {
+	if utf8.RuneCountInString(draft.Query) > maxQueryLength {
 		return caseDraft{}, invalidArgument(queryTooLongMessage, nil)
 	}
-	if len(draft.ExpectedAnswer) > maxAnswerLength {
+	if utf8.RuneCountInString(draft.ExpectedAnswer) > maxAnswerLength {
 		return caseDraft{}, invalidArgument(answerTooLongMessage, nil)
 	}
-	if len(draft.Acceptance) > maxAcceptanceLength {
+	if utf8.RuneCountInString(draft.Acceptance) > maxAcceptanceLength {
 		return caseDraft{}, invalidArgument(acceptanceTooLongMessage, nil)
 	}
 	if draft.Polarity != "" && draft.Polarity != "positive" && draft.Polarity != "negative" {
@@ -128,6 +129,13 @@ func parseCaseDocument(content string) ([]caseDraft, error) {
 		return normalizeCaseList(rows)
 	}
 	if strings.HasPrefix(trimmed, "{") {
+		rows, wrapped, err := caseEnvelope(trimmed)
+		if err != nil {
+			return nil, invalidArgument(importInvalidMessage, err)
+		}
+		if wrapped {
+			return normalizeCaseList(rows)
+		}
 		return parseJSONL(trimmed)
 	}
 	return parseCSVCases(trimmed)
@@ -196,6 +204,52 @@ func csvField(record []string, index int) string {
 		return ""
 	}
 	return record[index]
+}
+
+type caseUpdateRequest struct {
+	Query                  string           `json:"query"`
+	ExpectedAnswer         string           `json:"expected_answer"`
+	ExpectedAnswerCamel    string           `json:"expectedAnswer"`
+	ExpectedToolTrace      *json.RawMessage `json:"expected_tool_trace"`
+	ExpectedToolTraceCamel *json.RawMessage `json:"expectedToolTrace"`
+	SourceSessionID        string           `json:"source_session_id"`
+	Polarity               string           `json:"polarity"`
+	Acceptance             string           `json:"acceptance"`
+}
+
+func (body caseUpdateRequest) keepsTrace() bool {
+	return body.ExpectedToolTrace == nil && body.ExpectedToolTraceCamel == nil
+}
+
+func (body caseUpdateRequest) draft() (caseDraft, error) {
+	raw := rawCase{
+		Query: body.Query, ExpectedAnswer: body.ExpectedAnswer, ExpectedAnswerCamel: body.ExpectedAnswerCamel,
+		SourceSessionID: body.SourceSessionID, Polarity: body.Polarity, Acceptance: body.Acceptance,
+	}
+	if body.ExpectedToolTrace != nil {
+		raw.ExpectedToolTrace = *body.ExpectedToolTrace
+	}
+	if body.ExpectedToolTraceCamel != nil {
+		raw.ExpectedToolTraceCamel = *body.ExpectedToolTraceCamel
+	}
+	return normalizeCase(raw)
+}
+
+func caseEnvelope(content string) ([]rawCase, bool, error) {
+	var envelope struct {
+		Cases json.RawMessage `json:"cases"`
+	}
+	if err := json.Unmarshal([]byte(content), &envelope); err != nil {
+		return nil, false, err
+	}
+	if len(bytes.TrimSpace(envelope.Cases)) == 0 {
+		return nil, false, nil
+	}
+	var rows []rawCase
+	if err := json.Unmarshal(envelope.Cases, &rows); err != nil {
+		return nil, false, err
+	}
+	return rows, true, nil
 }
 
 func optionalCases(rows []rawCase) ([]caseDraft, error) {

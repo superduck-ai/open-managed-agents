@@ -5,6 +5,7 @@ import { Button } from '../../../shared/ui/button';
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
 import type { ChannelInput } from './api';
+import { feishuAppConsoleUrl } from './feishuConsole';
 
 export function ChannelCredentials({
   value,
@@ -15,18 +16,21 @@ export function ChannelCredentials({
   onChange: (value: ChannelInput) => void;
   bound: boolean;
 }) {
-  const { msg } = useI18n();
+  const { msg, locale } = useI18n();
   const [visible, setVisible] = useState(false);
+  const consoleUrl = feishuAppConsoleUrl(value.app_id, locale);
   return (
     <div className="space-y-4">
-      <a
-        href="https://open.feishu.cn/"
-        target="_blank"
-        rel="noreferrer"
-        className="block text-right text-xs text-primary underline"
-      >
-        {msg('managedAgents.channels.consoleLink', '前往渠道管理后台 →')}
-      </a>
+      {consoleUrl ? (
+        <a
+          href={consoleUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="block text-right text-xs text-primary underline"
+        >
+          {msg('managedAgents.channels.consoleLink', '前往渠道管理后台 →')}
+        </a>
+      ) : null}
       <div className="space-y-2">
         <Label htmlFor="channel-app-id">{msg('managedAgents.channels.appIdLabel', '应用 ID')}</Label>
         <Input

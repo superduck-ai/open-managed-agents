@@ -13,7 +13,7 @@ import { errorMessage } from '../utils';
 import { channelApi, type Channel } from './api';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { PairingsDialog } from './PairingsDialog';
-import { channelEditPath, channelsListPath } from './paths';
+import { channelDetailPath, channelEditPath, channelSessionsTabPath, channelsListPath } from './paths';
 import { channelConnectionStatus } from './status';
 import { ChannelSessionsPanel } from './ChannelSessionsPanel';
 import { listChannelEnvironments } from './channelEnvironments';
@@ -26,33 +26,52 @@ export function ChannelDetailPage() {
   const { activeWorkspaceId, selectWorkspace } = useWorkspace();
   const routeWorkspaceId = workspaceIdFromPath(location.pathname);
   const workspaceId = routeWorkspaceId || activeWorkspaceId;
+  const agentId = params.agentId ?? '';
+  const channelId = params.channelId ?? '';
+  const tab = channelDetailTab(location.searchStr);
   useEffect(() => {
     if (routeWorkspaceId && routeWorkspaceId !== activeWorkspaceId) selectWorkspace(routeWorkspaceId);
   }, [routeWorkspaceId, activeWorkspaceId, selectWorkspace]);
   return (
     <ChannelDetailContent
       workspaceId={workspaceId}
-      agentId={params.agentId ?? ''}
-      channelId={params.channelId ?? ''}
+      agentId={agentId}
+      channelId={channelId}
+      tab={tab}
+      onTabChange={(next) => {
+        const href =
+          next === 'sessions'
+            ? channelSessionsTabPath(workspaceId, agentId, channelId)
+            : channelDetailPath(workspaceId, agentId, channelId);
+        void navigate({ href, replace: true });
+      }}
       onNavigate={(href) => void navigate({ href })}
     />
   );
+}
+
+function channelDetailTab(search: string): 'basic' | 'sessions' {
+  const raw = search.startsWith('?') ? search.slice(1) : search;
+  return new URLSearchParams(raw).get('tab') === 'sessions' ? 'sessions' : 'basic';
 }
 
 export function ChannelDetailContent({
   workspaceId,
   agentId,
   channelId,
+  tab,
+  onTabChange,
   onNavigate,
 }: {
   workspaceId: string;
   agentId: string;
   channelId: string;
+  tab: 'basic' | 'sessions';
+  onTabChange: (tab: 'basic' | 'sessions') => void;
   onNavigate: (href: string) => void;
 }) {
   const { msg } = useI18n();
   const client = useQueryClient();
-  const [tab, setTab] = useState('basic');
   const [pairingOpen, setPairingOpen] = useState(false);
   const query = useQuery({
     queryKey: ['channel-detail', workspaceId, agentId, channelId],
@@ -160,7 +179,7 @@ export function ChannelDetailContent({
               </Button>
             </div>
           </div>
-          <Tabs value={tab} onValueChange={setTab}>
+          <Tabs value={tab} onValueChange={(value) => onTabChange(value === 'sessions' ? 'sessions' : 'basic')}>
             <TabsList>
               <TabsTrigger value="basic">{msg('managedAgents.channels.basicConfig', '基础配置')}</TabsTrigger>
               <TabsTrigger value="sessions">{msg('managedAgents.channels.sessionMgmt', '会话管理')}</TabsTrigger>

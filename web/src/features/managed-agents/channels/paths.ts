@@ -14,3 +14,7 @@ export function channelDetailPath(workspaceId: string, agentId: string, channelI
 export function channelEditPath(workspaceId: string, agentId: string, channelId: string) {
   return `${channelDetailPath(workspaceId, agentId, channelId)}/edit`;
 }
+
+export function channelSessionsTabPath(workspaceId: string, agentId: string, channelId: string) {
+  return `${channelDetailPath(workspaceId, agentId, channelId)}?tab=sessions`;
+}

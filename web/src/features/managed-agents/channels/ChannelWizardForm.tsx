@@ -1,7 +1,8 @@
 import { QRCodeSVG } from 'qrcode.react';
-import { ExternalLink } from 'lucide-react';
+import { Bot, Check, Cloud, ExternalLink } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../../shared/ui/card';
 import { Input } from '../../../shared/ui/input';
 import { Label } from '../../../shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
@@ -23,53 +24,85 @@ export type WizardValue = ChannelInput & {
 export function WizardStepper({ step, onStepChange }: { step: WizardStep; onStepChange: (step: WizardStep) => void }) {
   const { msg } = useI18n();
   const steps = [
-    {
-      id: 1 as const,
-      title: msg('managedAgents.channels.stepConnect', '连接渠道应用'),
-      subtitle: msg('managedAgents.channels.stepConnectHint', '应用接入与凭证'),
-    },
-    {
-      id: 2 as const,
-      title: msg('managedAgents.channels.stepStrategy', '配置渠道策略'),
-      subtitle: msg('managedAgents.channels.stepStrategyHint', '回复、身份与上下文'),
-    },
-    {
-      id: 3 as const,
-      title: msg('managedAgents.channels.stepMa', '配置 MA 策略'),
-      subtitle: msg('managedAgents.channels.stepMaHint', '智能体及默认资源'),
-    },
+    { id: 1 as const, title: msg('managedAgents.channels.stepConnect', '连接渠道应用') },
+    { id: 2 as const, title: msg('managedAgents.channels.stepStrategy', '配置渠道策略') },
+    { id: 3 as const, title: msg('managedAgents.channels.stepMa', '配置 MA 策略') },
   ];
   return (
-    <ol className="mb-6 space-y-3">
-      {steps.map((item) => {
-        const active = step === item.id;
-        return (
-          <li key={item.id}>
-            <button
-              type="button"
-              className="flex w-full items-start gap-3 text-left"
-              onClick={() => onStepChange(item.id)}
-            >
-              <span
-                className={
-                  active
-                    ? 'flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground'
-                    : 'flex size-7 shrink-0 items-center justify-center rounded-full border border-border text-xs text-muted-foreground'
-                }
-              >
-                {item.id}
-              </span>
-              <span>
-                <span className={active ? 'block text-sm font-semibold' : 'block text-sm text-muted-foreground'}>
+    <Card className="gap-4 ring-0">
+      <CardHeader>
+        <CardTitle className="text-sm">{msg('managedAgents.channels.progress', '进度')}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ol className="space-y-4 text-sm">
+          {steps.map((item) => {
+            const active = step === item.id;
+            const done = step > item.id;
+            return (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  aria-current={active ? 'step' : undefined}
+                  className={`flex w-full items-center gap-3 text-left ${active ? 'font-medium text-foreground' : 'text-muted-foreground'}`}
+                  onClick={() => onStepChange(item.id)}
+                >
+                  <span
+                    className={`grid size-6 shrink-0 place-items-center rounded-full border-[0.5px] border-border text-xs ${done ? 'bg-[var(--success-bg)] text-success' : active ? 'border-primary bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
+                  >
+                    {done ? <Check aria-hidden className="size-3.5" /> : item.id}
+                  </span>
                   {item.title}
-                </span>
-                <span className="block text-xs text-muted-foreground">{item.subtitle}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function WizardSideCards({ agentName, environmentName }: { agentName: string; environmentName: string }) {
+  const { msg } = useI18n();
+  return (
+    <>
+      {agentName ? (
+        <Card className="gap-3 ring-0">
+          <CardHeader>
+            <CardTitle className="text-sm">{msg('managedAgents.channels.columnAgent', '智能体')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex min-w-0 items-center gap-3 py-2">
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
+                <Bot className="size-4" aria-hidden />
               </span>
-            </button>
-          </li>
-        );
-      })}
-    </ol>
+              <span className="min-w-0 flex-1 truncate" title={agentName}>
+                {agentName}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+      <Card className="gap-4 ring-0">
+        <CardHeader>
+          <CardTitle className="text-sm">{msg('managedAgents.channels.resources', '资源')}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {environmentName ? (
+            <div className="flex min-w-0 items-center gap-3 py-2">
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
+                <Cloud className="size-4" aria-hidden />
+              </span>
+              <span className="min-w-0 flex-1 truncate" title={environmentName}>
+                {environmentName}
+              </span>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">{msg('managedAgents.channels.noResources', '暂无关联资源')}</p>
+          )}
+        </CardContent>
+      </Card>
+    </>
   );
 }
 

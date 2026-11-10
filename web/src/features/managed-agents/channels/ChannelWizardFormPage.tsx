@@ -10,6 +10,7 @@ import {
   StepConnect,
   StepMa,
   StepStrategy,
+  WizardSideCards,
   WizardStepper,
   type WizardStep,
   type WizardValue,
@@ -135,13 +136,12 @@ export function ChannelWizardFormPage({
         currentLabel={title}
         className="-mt-1 mb-6 shrink-0"
       />
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
-        <header className="mb-7 shrink-0">
-          <h1 className="text-2xl font-medium tracking-tight">{title}</h1>
-        </header>
-        <div className="grid flex-1 items-start gap-6 pb-8 md:grid-cols-[220px_minmax(0,1fr)]">
-          <WizardStepper step={step} onStepChange={setStep} />
-          <div>
+      <div className="grid min-w-0 flex-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="mx-auto flex w-full max-w-[880px] min-w-0 flex-col">
+          <header className="mb-7 shrink-0">
+            <h1 className="text-2xl font-medium tracking-tight">{title}</h1>
+          </header>
+          <div className="min-w-0 flex-1 pb-8">
             {step === 1 ? (
               <StepConnect
                 value={value}
@@ -165,36 +165,46 @@ export function ChannelWizardFormPage({
               />
             ) : null}
           </div>
-        </div>
-        {error ? (
-          <Alert variant="destructive" className="mb-3">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-        <div className="sticky bottom-0 z-10 flex shrink-0 items-center justify-between gap-3 border-t-[0.5px] border-border bg-background py-3">
-          <div>
-            {step < 3 ? (
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={!canGoNext || busy}
-                onClick={() => setStep((step + 1) as WizardStep)}
-              >
-                {msg('managedAgents.channels.nextStep', '下一步')}
+          {error ? (
+            <Alert variant="destructive" className="mb-3">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+          <div className="sticky bottom-0 z-10 flex shrink-0 items-center justify-between gap-3 border-t-[0.5px] border-border bg-background py-3">
+            <div>
+              {step < 3 ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!canGoNext || busy}
+                  onClick={() => setStep((step + 1) as WizardStep)}
+                >
+                  {msg('managedAgents.channels.nextStep', '下一步')}
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" disabled={busy} onClick={() => onNavigate(listHref)}>
+                {msg('managedAgents.channels.cancel', '取消')}
               </Button>
-            ) : null}
-          </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" disabled={busy} onClick={() => onNavigate(listHref)}>
-              {msg('managedAgents.channels.cancel', '取消')}
-            </Button>
-            <Button type="button" disabled={busy} onClick={() => void persist(false, true)}>
-              {busy
-                ? msg('managedAgents.channels.processing', '处理中…')
-                : msg('managedAgents.channels.saveConfig', '保存配置')}
-            </Button>
+              <Button type="button" disabled={busy} onClick={() => void persist(false, true)}>
+                {busy
+                  ? msg('managedAgents.channels.processing', '处理中…')
+                  : msg('managedAgents.channels.saveConfig', '保存配置')}
+              </Button>
+            </div>
           </div>
         </div>
+        <aside
+          className="min-w-0 space-y-5 xl:sticky xl:top-0"
+          aria-label={msg('managedAgents.channels.progress', '进度')}
+        >
+          <WizardStepper step={step} onStepChange={setStep} />
+          <WizardSideCards
+            agentName={agents.find((agent) => agent.id === value.agentId)?.name ?? ''}
+            environmentName={environments.find((environment) => environment.id === value.environmentId)?.name ?? ''}
+          />
+        </aside>
       </div>
     </section>
   );

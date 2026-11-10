@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from '@tanstack/react-router';
 import { ArrowUpRight, Plug, Plus, Search, Settings } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { productIcons } from '../../../shared/icons/product-icons';
-import { useI18n } from '../../../shared/i18n';
+import { useFormatters, useI18n } from '../../../shared/i18n';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../../shared/workspaces/presentation';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
@@ -227,6 +227,7 @@ function ChannelListTable({
     msg('managedAgents.channels.columnStatus', '连通状态'),
     msg('managedAgents.channels.columnAgent', '智能体'),
     msg('managedAgents.channels.columnEnvironment', '环境'),
+    msg('managedAgents.channels.createdAt', '创建时间'),
   ];
   return (
     <Table className={`${dataTableClassName} min-w-[960px]`}>
@@ -236,6 +237,7 @@ function ChannelListTable({
         <col className="w-28" />
         <col />
         <col className="w-40" />
+        <col className="w-28" />
         <col className="w-16" />
       </colgroup>
       <TableHeader>
@@ -277,6 +279,7 @@ function ChannelListRow({
   onNavigate: (href: string) => void;
 }) {
   const { msg } = useI18n();
+  const format = useFormatters();
   const detailHref = channelDetailPath(workspaceId, row.agentId, row.id);
   const editHref = channelEditPath(workspaceId, row.agentId, row.id);
   const openDetail = () => onNavigate(detailHref);
@@ -316,6 +319,9 @@ function ChannelListRow({
         </div>
       </DataTableCell>
       <DataTableCell className="max-w-40 truncate">{environmentLabel}</DataTableCell>
+      <DataTableCell className="whitespace-nowrap text-muted-foreground">
+        {channelCreatedLabel(row.created_at, format.date)}
+      </DataTableCell>
       <DataTableCell edge="end" className="px-2" onClick={(event) => event.stopPropagation()}>
         <div className="flex justify-end">
           <DropdownMenu>
@@ -339,6 +345,14 @@ function ChannelListRow({
       </DataTableCell>
     </DataTableRow>
   );
+}
+
+function channelCreatedLabel(
+  value: string | undefined,
+  formatDate: (value: string, options?: Intl.DateTimeFormatOptions) => string,
+) {
+  if (!value || !Number.isFinite(Date.parse(value))) return '—';
+  return formatDate(value, { month: 'short', day: 'numeric' });
 }
 
 function reportConnectionCheck(row: WorkspaceChannel, msg: ReturnType<typeof useI18n>['msg']) {

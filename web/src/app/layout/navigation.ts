@@ -1,6 +1,7 @@
 import { productIcons as navigationIcons } from '@/shared/icons/product-icons';
 import {
   Activity,
+  ArrowRightLeft,
   BarChart3,
   Bot,
   Box,
@@ -16,7 +17,6 @@ import {
   KeyRound,
   LockKeyhole,
   Logs,
-  MessageCircle,
   Moon,
   Network,
   Palette,
@@ -218,7 +218,7 @@ export const placeholderIcons = {
   '/sessions': Activity,
   '/deployments': Network,
   '/environments': Box,
-  '/channels': MessageCircle,
+  '/channels': ArrowRightLeft,
   '/credential-vaults': Vault,
   '/memory-stores': Database,
   '/dreams': Moon,

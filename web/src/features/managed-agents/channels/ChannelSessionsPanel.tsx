@@ -6,7 +6,8 @@ import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { localizedEntityStatusLabel } from '../resources/model';
 import type { SessionApiResponse } from '../types';
-import { errorMessage } from '../utils';
+import { errorMessage, handleInternalLinkClick, managedEntityDetailHref } from '../utils';
+import { channelSessionsTabPath } from './paths';
 import type { Channel } from './api';
 import { ChannelTablePager } from './ChannelTablePager';
 import {
@@ -119,6 +120,8 @@ export function ChannelSessionsPanel({
                   key={session.id}
                   session={session}
                   workspaceId={workspaceId}
+                  agentId={agentId}
+                  channelId={channel.id}
                   channelName={channel.name}
                 />
               ))
@@ -146,10 +149,14 @@ export function ChannelSessionsPanel({
 function ChannelSessionRow({
   session,
   workspaceId,
+  agentId,
+  channelId,
   channelName,
 }: {
   session: SessionApiResponse;
   workspaceId: string;
+  agentId: string;
+  channelId: string;
   channelName: string;
 }) {
   const { msg } = useI18n();
@@ -161,11 +168,18 @@ function ChannelSessionRow({
       : sourceKind === 'group'
         ? msg('managedAgents.channels.sessionChatGroup', '群聊')
         : msg('managedAgents.channels.sessionSourceFeishu', '飞书');
+  const sessionHref = `${managedEntityDetailHref(workspaceId, 'sessions', session.id)}?returnTo=${encodeURIComponent(channelSessionsTabPath(workspaceId, agentId, channelId))}`;
   return (
     <TableRow>
       <TableCell>
         <div className="max-w-[240px]">
-          <div className="truncate text-sm text-foreground">{session.title || '—'}</div>
+          <a
+            href={sessionHref}
+            className="block truncate text-sm text-foreground underline-offset-4 hover:underline"
+            onClick={(event) => handleInternalLinkClick(event, sessionHref)}
+          >
+            {session.title || '—'}
+          </a>
           <div className="truncate font-mono text-xs text-muted-foreground" title={session.id}>
             {session.id}
           </div>

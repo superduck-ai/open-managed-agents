@@ -18,6 +18,7 @@ import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage'
 import { ChannelsPage } from '../features/managed-agents/channels/ChannelsPage';
 import { ChannelWizardPage } from '../features/managed-agents/channels/ChannelWizardPage';
 import { ChannelDetailPage } from '../features/managed-agents/channels/ChannelDetailPage';
+import { channelSessionsReturnTo } from '../features/managed-agents/sessions/sessionReturn';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
 import { McpTunnelsPage } from '../features/mcp-tunnels/McpTunnelsPage';
@@ -257,6 +258,7 @@ const sessionDetailSearch = (search: Record<string, unknown>) => ({
     typeof search.trace_id === 'string' && search.trace_id.trim() && search.trace_id.trim().length <= 128
       ? search.trace_id.trim()
       : undefined,
+  returnTo: channelSessionsReturnTo(typeof search.returnTo === 'string' ? search.returnTo : undefined) ?? undefined,
 });
 
 const workspaceSessionDetailRoute = createRoute({
@@ -329,9 +331,14 @@ const channelCreateRoute = createRoute({
   component: () => <ChannelWizardPage mode="create" />,
 });
 
+const channelDetailSearch = (search: Record<string, unknown>) => ({
+  tab: search.tab === 'sessions' ? ('sessions' as const) : undefined,
+});
+
 const channelDetailRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'channels/$agentId/$channelId',
+  validateSearch: channelDetailSearch,
   component: ChannelDetailPage,
 });
 
@@ -359,6 +366,7 @@ const workspaceChannelCreateRoute = createRoute({
 const workspaceChannelDetailRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/channels/$agentId/$channelId',
+  validateSearch: channelDetailSearch,
   component: ChannelDetailPage,
 });
 

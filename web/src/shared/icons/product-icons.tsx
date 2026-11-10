@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowRightLeft,
   BookOpen,
   BookOpenCheck,
   Bot,
@@ -13,7 +14,6 @@ import {
   KeyRound,
   LayoutDashboard,
   MessagesSquare,
-  MessageCircle,
   Network,
   Package,
   PanelLeft,
@@ -46,7 +46,7 @@ export const productIcons = {
   quickstart: productIcon(Rocket),
   agents: productIcon(Bot),
   sessions: productIcon(MessagesSquare),
-  channels: productIcon(MessageCircle),
+  channels: productIcon(ArrowRightLeft),
   deployments: productIcon(Package),
   environments: productIcon(Server),
   resources: productIcon(Boxes),

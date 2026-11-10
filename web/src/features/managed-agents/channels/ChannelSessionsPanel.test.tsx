@@ -97,6 +97,10 @@ test('会话管理展示桥接会话统计、来源和详情链接', async () =>
   expect(screen.queryByText('暂无按渠道维度的会话同步接口；桥接会话仍可在「会话」页按智能体查看。')).toBeNull();
   const link = screen.getByRole('link', { name: '查看详情' });
   expect(link.getAttribute('href')).toBe('/workspaces/workspace-test/sessions/sesn-bridge');
+  const title = screen.getByRole('link', { name: '飞书私聊' });
+  expect(title.getAttribute('href')).toBe(
+    `/workspaces/workspace-test/sessions/sesn-bridge?returnTo=${encodeURIComponent('/workspaces/workspace-test/channels/agent-1/ch-1?tab=sessions')}`,
+  );
 });
 
 test('没有桥接会话时展示空态而不是接口缺失说明', async () => {

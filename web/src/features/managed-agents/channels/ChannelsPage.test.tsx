@@ -51,6 +51,7 @@ test('工作区渠道页读取工作区渠道接口并支持新增跳转', async
             agent_id: 'agent-1',
             agent_name: '客服助手',
             environment_id: 'env_1',
+            created_at: '2026-11-05T15:09:01Z',
           },
         ],
         incomplete: true,
@@ -67,6 +68,12 @@ test('工作区渠道页读取工作区渠道接口并支持新增跳转', async
   expect(await screen.findByText('飞书渠道')).toBeTruthy();
   expect(screen.getByText('已连通')).toBeTruthy();
   expect(screen.getByText('客服助手')).toBeTruthy();
+  expect(screen.getByRole('columnheader', { name: '创建时间' })).toBeTruthy();
+  expect(
+    screen.getByText(
+      new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric' }).format(new Date('2026-11-05T15:09:01Z')),
+    ),
+  ).toBeTruthy();
   expect(screen.getByText('部分智能体的渠道暂时无法读取，列表可能不完整。')).toBeTruthy();
   expect(screen.getByText('1 / 1')).toBeTruthy();
   expect(urls.some((url) => url.includes('limit=100'))).toBe(true);

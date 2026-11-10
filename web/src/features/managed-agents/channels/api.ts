@@ -13,6 +13,7 @@ export interface Channel {
   include_tool_calls: boolean;
   reply_in_thread: boolean;
   pending_pairings: number;
+  created_at?: string;
 }
 export interface ChannelInput {
   name: string;

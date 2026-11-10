@@ -73,6 +73,16 @@ func TestNormalizeNameCountsCharacters(t *testing.T) {
 	}
 }
 
+func TestParseCaseDocumentReadsMultilineJSONL(t *testing.T) {
+	parsed, err := parseCaseDocument("{\"query\":\"第一问\"}\n{\"query\":\"第二问\",\"expectedAnswer\":\"答案\"}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 2 || parsed[0].Query != "第一问" || parsed[1].Query != "第二问" || parsed[1].ExpectedAnswer != "答案" {
+		t.Fatalf("parsed = %+v", parsed)
+	}
+}
+
 func TestParseCaseDocumentAcceptsCaseEnvelope(t *testing.T) {
 	parsed, err := parseCaseDocument("{\n  \"cases\": [{\"query\": \"汇总销售额\", \"expectedAnswer\": \"按月列出\"}]\n}")
 	if err != nil {

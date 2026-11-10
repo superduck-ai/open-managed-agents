@@ -31,7 +31,8 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
   const queryClient = useQueryClient();
   const [source, setSource] = useState<DatasetSource>('generate');
   const [name, setName] = useState('');
-  const [content, setContent] = useState('');
+  const [pasteContent, setPasteContent] = useState('');
+  const [uploadContent, setUploadContent] = useState('');
   const [count, setCount] = useState('20');
   const [note, setNote] = useState('');
   const [agentId, setAgentId] = useState('');
@@ -50,6 +51,7 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
   }, [open, source, version, versions.data]);
   const [nameFromFile, setNameFromFile] = useState('');
   const [fileLabel, setFileLabel] = useState('');
+  const fileRead = useRef(0);
   const agents = useQuery({
     queryKey: ['evaluation-agents', scope.workspaceId],
     queryFn: () => listAgents(scope.workspaceId),
@@ -60,7 +62,7 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
       submitDataset(scope.orgUuid, scope.workspaceId, {
         name: name.trim() || (source === 'upload' ? nameFromFile : source === 'generate' ? '我的评测集' : ''),
         source,
-        content,
+        content: source === 'paste' ? pasteContent : uploadContent,
         count,
         note,
         agentId,
@@ -75,8 +77,10 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
   });
 
   function reset() {
+    fileRead.current += 1;
     setName('');
-    setContent('');
+    setPasteContent('');
+    setUploadContent('');
     setCount('20');
     setNote('');
     setAgentId('');
@@ -95,20 +99,28 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
       setError(msg('evaluations.excelUnsupported', 'Excel is not supported yet. Use JSON, JSONL, or CSV.'));
       return;
     }
+    const ticket = fileRead.current + 1;
+    fileRead.current = ticket;
     setError('');
     setReadingFile(true);
     setFileLabel(file.name);
+    setUploadContent('');
     void file.text().then(
       (text) => {
-        setContent(text);
+        if (fileRead.current !== ticket) return;
+        setUploadContent(text);
         setReadingFile(false);
         const base = file.name.replace(/\.[^.]+$/, '');
         setNameFromFile(base);
         setName((current) => current || base);
       },
       () => {
+        if (fileRead.current !== ticket) return;
         setReadingFile(false);
-        setError(msg('evaluations.fileReading', 'The file is still loading.'));
+        setUploadContent('');
+        setFileLabel('');
+        setNameFromFile('');
+        setError(msg('evaluations.fileReadFailed', 'Could not read this file. Choose it again.'));
       },
     );
   }
@@ -122,7 +134,7 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
       version,
       versionCount: versions.data?.data?.length ?? 0,
       readingFile,
-      content,
+      content: source === 'paste' ? pasteContent : uploadContent,
       name,
     });
     if (message) {
@@ -286,8 +298,8 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
                   <Textarea
                     id="evaluation-paste-json"
                     className="min-h-40"
-                    value={content}
-                    onChange={(event) => setContent(event.target.value)}
+                    value={pasteContent}
+                    onChange={(event) => setPasteContent(event.target.value)}
                     rows={8}
                     placeholder={'[{"query":"示例问题","expectedAnswer":"标准答案","expectedToolTrace":[]}]'}
                   />
@@ -437,7 +449,8 @@ function importSubmitMessage(input: { source: DatasetSource; readingFile: boolea
   if (!input.content.trim()) {
     return { id: 'evaluations.importRequired', fallback: 'Add evaluation data before creating the dataset.' };
   }
-  if (input.source === 'paste' && !input.name.trim()) return { id: 'evaluations.name', fallback: 'Name' };
+  if (input.source === 'paste' && !input.name.trim())
+    return { id: 'evaluations.nameRequired', fallback: 'Enter a name.' };
   return null;
 }
 

@@ -34,6 +34,7 @@ const (
 	limitInvalidMessage          = "limit must be between 1 and 100"
 	duplicateMessage             = "Evaluation resource already exists"
 	createFailedMessage          = "Could not save evaluation"
+	deleteFailedMessage          = "Could not delete evaluation"
 	loadFailedMessage            = "Could not load evaluation"
 	generateFailedMessage        = "Could not generate evaluation cases"
 	sessionEventsTooLargeMessage = "session has too many events to import"

@@ -131,7 +131,7 @@ func parseCaseDocument(content string) ([]caseDraft, error) {
 	if strings.HasPrefix(trimmed, "{") {
 		rows, wrapped, err := caseEnvelope(trimmed)
 		if err != nil {
-			return nil, invalidArgument(importInvalidMessage, err)
+			return parseJSONL(trimmed)
 		}
 		if wrapped {
 			return normalizeCaseList(rows)

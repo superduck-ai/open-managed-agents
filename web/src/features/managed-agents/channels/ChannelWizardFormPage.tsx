@@ -15,7 +15,7 @@ import {
   type WizardStep,
   type WizardValue,
 } from './ChannelWizardForm';
-import { validateChannelInput } from './channelInput';
+import { channelWizardStepReady, validateChannelInput, wizardStepAllowed } from './channelInput';
 import { listAllWorkspaceAgents } from './workspaceChannels';
 import { channelDetailPath, channelsListPath } from './paths';
 import type { EnvironmentApiResponse } from '../types';
@@ -85,11 +85,10 @@ export function ChannelWizardFormPage({
   const environments = environmentsQuery.data ?? [];
   const agentLocked = mode === 'edit' || Boolean(initialAgentId);
 
-  const canGoNext = useMemo(() => {
-    if (step === 1) return Boolean(value.name.trim());
-    if (step === 2) return true;
-    return Boolean(value.agentId && value.environmentId);
-  }, [step, value]);
+  const canGoNext = useMemo(() => channelWizardStepReady(step, value), [step, value]);
+  const openStep = (next: WizardStep) => {
+    if (wizardStepAllowed(next, value)) setStep(next);
+  };
 
   const persist = async (generateQr: boolean, closeAfter: boolean) => {
     const blocked = validateWizardBeforeSave({
@@ -177,7 +176,7 @@ export function ChannelWizardFormPage({
                   type="button"
                   variant="secondary"
                   disabled={!canGoNext || busy}
-                  onClick={() => setStep((step + 1) as WizardStep)}
+                  onClick={() => openStep((step + 1) as WizardStep)}
                 >
                   {msg('managedAgents.channels.nextStep', '下一步')}
                 </Button>
@@ -199,7 +198,7 @@ export function ChannelWizardFormPage({
           className="min-w-0 space-y-5 xl:sticky xl:top-0"
           aria-label={msg('managedAgents.channels.progress', '进度')}
         >
-          <WizardStepper step={step} onStepChange={setStep} />
+          <WizardStepper step={step} canOpen={(next) => wizardStepAllowed(next, value)} onStepChange={openStep} />
           <WizardSideCards
             agentName={agents.find((agent) => agent.id === value.agentId)?.name ?? ''}
             environmentName={environments.find((environment) => environment.id === value.environmentId)?.name ?? ''}

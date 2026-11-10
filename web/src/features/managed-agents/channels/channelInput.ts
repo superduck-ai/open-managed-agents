@@ -1,6 +1,25 @@
 import type { useI18n } from '../../../shared/i18n';
 import type { Channel, ChannelInput } from './api';
 
+type WizardStep = 1 | 2 | 3;
+
+export function channelWizardStepReady(
+  step: WizardStep,
+  value: { name: string; agentId: string; environmentId: string },
+) {
+  if (step === 1) return Boolean(value.name.trim());
+  if (step === 2) return true;
+  return Boolean(value.agentId && value.environmentId);
+}
+
+export function wizardStepAllowed(target: WizardStep, value: { name: string; agentId: string; environmentId: string }) {
+  if (target <= 1) return true;
+  for (let step = 1; step < target; step += 1) {
+    if (!channelWizardStepReady(step as WizardStep, value)) return false;
+  }
+  return true;
+}
+
 export function validateChannelInput(
   value: ChannelInput,
   binding: string,

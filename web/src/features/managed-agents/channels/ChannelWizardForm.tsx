@@ -21,7 +21,15 @@ export type WizardValue = ChannelInput & {
   environmentId: string;
 };
 
-export function WizardStepper({ step, onStepChange }: { step: WizardStep; onStepChange: (step: WizardStep) => void }) {
+export function WizardStepper({
+  step,
+  canOpen,
+  onStepChange,
+}: {
+  step: WizardStep;
+  canOpen: (step: WizardStep) => boolean;
+  onStepChange: (step: WizardStep) => void;
+}) {
   const { msg } = useI18n();
   const steps = [
     { id: 1 as const, title: msg('managedAgents.channels.stepConnect', '连接渠道应用') },
@@ -38,13 +46,17 @@ export function WizardStepper({ step, onStepChange }: { step: WizardStep; onStep
           {steps.map((item) => {
             const active = step === item.id;
             const done = step > item.id;
+            const open = canOpen(item.id);
             return (
               <li key={item.id}>
                 <button
                   type="button"
                   aria-current={active ? 'step' : undefined}
-                  className={`flex w-full items-center gap-3 text-left ${active ? 'font-medium text-foreground' : 'text-muted-foreground'}`}
-                  onClick={() => onStepChange(item.id)}
+                  disabled={!open}
+                  className={`flex w-full items-center gap-3 text-left disabled:cursor-not-allowed ${active ? 'font-medium text-foreground' : 'text-muted-foreground'}`}
+                  onClick={() => {
+                    if (open) onStepChange(item.id);
+                  }}
                 >
                   <span
                     className={`grid size-6 shrink-0 place-items-center rounded-full border-[0.5px] border-border text-xs ${done ? 'bg-[var(--success-bg)] text-success' : active ? 'border-primary bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}
@@ -234,54 +246,42 @@ export function StepStrategy({
 }) {
   const { msg } = useI18n();
   return (
-    <div className="space-y-6">
-      <div className="space-y-3">
+    <div className="space-y-5">
+      <div className="space-y-2">
         <Label>
           <span className="text-destructive">*</span> {msg('managedAgents.channels.identityReply', '身份与回复')}
         </Label>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium">{msg('managedAgents.channels.type', '类型')}</th>
-                <th className="px-3 py-2 text-left font-medium">
-                  {msg('managedAgents.channels.identity', '身份设定')}
-                </th>
-                <th className="px-3 py-2 text-left font-medium">
-                  {msg('managedAgents.channels.replyMethod', '回复方式')}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-t border-border">
-                <td className="px-3 py-3">{msg('managedAgents.channels.groupChat', '群聊')}</td>
-                <td className="px-3 py-3">{msg('managedAgents.channels.identityBot', 'Bot')}</td>
-                <td className="px-3 py-3">
-                  <Select
-                    value={value.reply_in_thread ? 'thread' : 'main'}
-                    onValueChange={(next) => onChange({ ...value, reply_in_thread: next === 'thread' })}
-                    items={[
-                      { value: 'thread', label: msg('managedAgents.channels.threadReply', '话题回复') },
-                      { value: 'main', label: msg('managedAgents.channels.mainReply', '主会话回复') },
-                    ]}
-                  >
-                    <SelectTrigger className="h-9 w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="thread">{msg('managedAgents.channels.threadReply', '话题回复')}</SelectItem>
-                      <SelectItem value="main">{msg('managedAgents.channels.mainReply', '主会话回复')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </td>
-              </tr>
-              <tr className="border-t border-border">
-                <td className="px-3 py-3">{msg('managedAgents.channels.directChat', '单聊')}</td>
-                <td className="px-3 py-3">{msg('managedAgents.channels.identityUser', 'User')}</td>
-                <td className="px-3 py-3 text-muted-foreground">—</td>
-              </tr>
-            </tbody>
-          </table>
+        <div className="overflow-hidden rounded-lg border-[0.5px] border-input text-sm">
+          <div className="grid grid-cols-[7rem_7rem_minmax(0,1fr)] gap-3 border-b-[0.5px] border-border px-2.5 py-2 text-xs text-muted-foreground">
+            <span>{msg('managedAgents.channels.type', '类型')}</span>
+            <span>{msg('managedAgents.channels.identity', '身份设定')}</span>
+            <span>{msg('managedAgents.channels.replyMethod', '回复方式')}</span>
+          </div>
+          <div className="grid grid-cols-[7rem_7rem_minmax(0,1fr)] items-center gap-3 px-2.5 py-2">
+            <span>{msg('managedAgents.channels.groupChat', '群聊')}</span>
+            <span>{msg('managedAgents.channels.identityBot', 'Bot')}</span>
+            <Select
+              value={value.reply_in_thread ? 'thread' : 'main'}
+              onValueChange={(next) => onChange({ ...value, reply_in_thread: next === 'thread' })}
+              items={[
+                { value: 'thread', label: msg('managedAgents.channels.threadReply', '话题回复') },
+                { value: 'main', label: msg('managedAgents.channels.mainReply', '主会话回复') },
+              ]}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="thread">{msg('managedAgents.channels.threadReply', '话题回复')}</SelectItem>
+                <SelectItem value="main">{msg('managedAgents.channels.mainReply', '主会话回复')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-[7rem_7rem_minmax(0,1fr)] items-center gap-3 border-t-[0.5px] border-border px-2.5 py-2">
+            <span>{msg('managedAgents.channels.directChat', '单聊')}</span>
+            <span>{msg('managedAgents.channels.identityUser', 'User')}</span>
+            <span className="text-muted-foreground">—</span>
+          </div>
         </div>
         <p className="text-xs text-muted-foreground">
           {msg(
@@ -290,33 +290,35 @@ export function StepStrategy({
           )}
         </p>
       </div>
-      <div className="space-y-4">
+      <div className="space-y-2">
         <Label>{msg('managedAgents.channels.replyDisplay', '回复展示')}</Label>
-        <ToggleRow
-          id="wizard-thinking"
-          title={msg('managedAgents.channels.thinking', '展示思考过程')}
-          hint={msg('managedAgents.channels.thinkingHint', '在回复中展示思考过程')}
-          checked={value.include_thinking}
-          onCheckedChange={(checked) => onChange({ ...value, include_thinking: checked })}
-        />
-        <ToggleRow
-          id="wizard-tools"
-          title={msg('managedAgents.channels.tools', '展示工具调用')}
-          hint={msg(
-            'managedAgents.channels.toolsVolcHint',
-            '在「处理过程」中展示工具名称、执行状态及耗时。不展示敏感参数和原始结果。',
-          )}
-          checked={value.include_tool_calls}
-          onCheckedChange={(checked) => onChange({ ...value, include_tool_calls: checked })}
-        />
-        <ToggleRow
-          id="wizard-context"
-          title={msg('managedAgents.channels.recentContext', '自动注入近期聊天内容')}
-          hint={msg('managedAgents.channels.recentContextHint', '桥接暂未提供独立开关，界面仅作对齐展示。')}
-          checked={false}
-          disabled
-          onCheckedChange={() => undefined}
-        />
+        <div className="space-y-4">
+          <ToggleRow
+            id="wizard-thinking"
+            title={msg('managedAgents.channels.thinking', '展示思考过程')}
+            hint={msg('managedAgents.channels.thinkingHint', '在回复中展示思考过程')}
+            checked={value.include_thinking}
+            onCheckedChange={(checked) => onChange({ ...value, include_thinking: checked })}
+          />
+          <ToggleRow
+            id="wizard-tools"
+            title={msg('managedAgents.channels.tools', '展示工具调用')}
+            hint={msg(
+              'managedAgents.channels.toolsVolcHint',
+              '在「处理过程」中展示工具名称、执行状态及耗时。不展示敏感参数和原始结果。',
+            )}
+            checked={value.include_tool_calls}
+            onCheckedChange={(checked) => onChange({ ...value, include_tool_calls: checked })}
+          />
+          <ToggleRow
+            id="wizard-context"
+            title={msg('managedAgents.channels.recentContext', '自动注入近期聊天内容')}
+            hint={msg('managedAgents.channels.recentContextHint', '桥接暂未提供独立开关，界面仅作对齐展示。')}
+            checked={false}
+            disabled
+            onCheckedChange={() => undefined}
+          />
+        </div>
       </div>
       <div className="space-y-2">
         <Label>{msg('managedAgents.channels.mode', '渠道模式')}</Label>
@@ -329,7 +331,7 @@ export function StepStrategy({
             { value: 'pairing', label: msg('managedAgents.channels.pairing', '配对模式') },
           ]}
         >
-          <SelectTrigger className="h-10 w-full">
+          <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

@@ -45,6 +45,8 @@ type consoleAPIKeyRow struct {
 	ArchivedAt          *time.Time     `db:"archived_at"`
 	CreatedAt           time.Time      `db:"created_at"`
 	UpdatedAt           time.Time      `db:"updated_at"`
+	CreatedByEmail      string         `db:"created_by_email"`
+	CreatedByName       string         `db:"created_by_name"`
 }
 
 type consoleAPIKeyWorkspaceCountRow struct {

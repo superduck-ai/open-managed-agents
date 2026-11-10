@@ -10,6 +10,7 @@ import (
 )
 
 var errConsoleOrganizationAdminRequired = errors.New("organization administrator required")
+var errConsoleAPIKeyCreatorUnavailable = errors.New("API key creator resolver unavailable")
 
 func validateConsoleOrganizationAdminRole(role string) error {
 	if role != "admin" {

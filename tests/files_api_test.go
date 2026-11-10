@@ -1284,7 +1284,7 @@ func seedTestLLMProviderForWorkspace(
 	if err != nil {
 		t.Fatalf("generate test LLM provider ID: %v", err)
 	}
-	existing, err := app.db.ListLLMProviders(context.Background(), organizationUUID, workspaceUUID)
+	existing, err := app.db.ListOrganizationLLMProviders(context.Background(), organizationUUID)
 	if err != nil {
 		t.Fatalf("list test LLM providers: %v", err)
 	}

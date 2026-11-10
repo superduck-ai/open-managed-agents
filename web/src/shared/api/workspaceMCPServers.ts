@@ -23,6 +23,7 @@ export type MCPServerMutation = {
 type ListWorkspaceMCPServersOptions = {
   search?: string;
   page?: string;
+  signal?: AbortSignal;
 };
 
 function collectionPath(orgUuid: string, workspaceId: string) {
@@ -52,7 +53,27 @@ export function listWorkspaceMCPServers(
   const suffix = query.size > 0 ? `?${query.toString()}` : '';
   return consoleApi<WorkspaceMCPServerPage>(`${collectionPath(orgUuid, workspaceId)}${suffix}`, {
     headers: workspaceHeaders(workspaceId),
+    signal: options.signal,
   });
+}
+
+export async function listAllWorkspaceMCPServers(orgUuid: string, workspaceId: string, signal?: AbortSignal) {
+  const data: WorkspaceMCPServer[] = [];
+  let page: string | undefined;
+  const seenPages = new Set<string>();
+  while (true) {
+    const response = await listWorkspaceMCPServers(orgUuid, workspaceId, { page, signal });
+    data.push(...response.data);
+    const nextPage = response.next_page || undefined;
+    if (!nextPage) {
+      return { data, next_page: null };
+    }
+    if (seenPages.has(nextPage)) {
+      throw new Error('MCP Servers pagination returned a repeated cursor.');
+    }
+    seenPages.add(nextPage);
+    page = nextPage;
+  }
 }
 
 export function getWorkspaceMCPServer(orgUuid: string, workspaceId: string, serverId: string) {

@@ -75,6 +75,8 @@ Agent API 的 `mcp_servers[].name` 和 `mcp_toolset.mcp_server_name` 按 [CMA Cr
 
 Agent Create/Edit 的“自定义 MCP”页签加载当前未删除的目录项并提供选择、重试与新标签页创建入口，不提供内联名称或 URL 输入。选择时明确提示名称和 endpoint 会复制到 Agent 配置，窗口重新获得焦点时刷新列表。已有 Agent 的历史 MCP 直接来自 Agent snapshot，不要求能在工作区目录中反查；工作区候选与现有 Agent MCP 同名但 URL 不同时，候选不允许添加并明确展示冲突提示。
 
+Vault 凭据的 MCP 服务器选择器同样加载当前工作区目录项，与 MCP Directory 合并后按名称或 endpoint 搜索。工作区目录项优先展示并使用其名称作为标签，重复 endpoint 只保留一项；两者相互独立加载，工作区目录加载失败时仍可选择 Directory 或手动输入自定义 URL。
+
 前端 Workspace MCP Server DTO 与 Console client 位于共享 API 边界，管理页与 Agent 编辑器分别依赖该边界。请求显式发送当前路由 workspace 的 `X-Workspace-ID`；管理路由在 WorkspaceProvider 与 URL workspace 对齐后才开始查询，避免直接打开其他工作区路由时读取旧上下文。
 
 详情侧栏的标题和关闭入口在成功、加载及失败状态共用。资源数据尚不可用时使用 MCP Servers 分类标题，加载通过 status 播报；失败正文保留重试并允许局部滚动。关闭始终返回当前工作区列表 URL，只有已成功加载的资源才提供编辑和删除菜单。标题栏边界沿用共享 0.5px 配方，明暗主题、侧栏进出和减少动态效果规则继续复用共享组件。

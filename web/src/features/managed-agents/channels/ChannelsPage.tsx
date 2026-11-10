@@ -113,10 +113,7 @@ export function ChannelsPageContent({
   };
 
   return (
-    <section
-      className="mx-auto w-full max-w-[1200px] px-6 py-6"
-      aria-label={msg('managedAgents.channels.title', '渠道')}
-    >
+    <section className="min-w-0 text-foreground" aria-label={msg('managedAgents.channels.title', '渠道')}>
       <ResourcePageHeader
         title={msg('managedAgents.channels.title', '渠道')}
         description={msg('managedAgents.channels.pageDescription', '管理智能体在飞书中的接入渠道')}

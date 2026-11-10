@@ -1290,11 +1290,12 @@ function isManagedAgentsPath(currentPath: string) {
       '/observability',
       '/deployments',
       '/environments',
+      '/channels',
       '/credential-vaults',
       '/memory-stores',
       '/dreams',
     ].includes(currentPath) ||
-    /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|observability|deployments|environments|vaults|memory-stores|dreams)(\/|$)/.test(
+    /^\/workspaces\/[^/]+\/(agent-quickstart|agents|sessions|observability|deployments|environments|channels|vaults|memory-stores|dreams)(\/|$)/.test(
       currentPath,
     )
   );

@@ -66,14 +66,14 @@ export function ChannelWizardContent({
 
   if (mode === 'edit' && existingQuery.isPending) {
     return (
-      <section className="mx-auto w-full max-w-[880px] px-6 py-6 text-sm text-muted-foreground">
+      <section className="min-w-0 py-6 text-sm text-muted-foreground">
         {msg('managedAgents.channels.loading', '正在加载渠道…')}
       </section>
     );
   }
   if (mode === 'edit' && !existingQuery.data?.channel) {
     return (
-      <section className="mx-auto w-full max-w-[880px] px-6 py-6 text-sm text-muted-foreground">
+      <section className="min-w-0 py-6 text-sm text-muted-foreground">
         {msg('managedAgents.channels.notFound', '未找到该渠道')}
       </section>
     );

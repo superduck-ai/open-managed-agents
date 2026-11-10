@@ -126,7 +126,7 @@ export function ChannelWizardFormPage({
   };
 
   return (
-    <section className="mx-auto w-full max-w-[880px] px-6 py-6">
+    <section className="min-w-0 text-foreground">
       <button
         type="button"
         className="mb-4 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"

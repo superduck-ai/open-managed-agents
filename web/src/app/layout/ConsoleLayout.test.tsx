@@ -71,6 +71,23 @@ describe('ConsoleShell', () => {
     },
   );
 
+  test('uses the full-width console layout for workspace channels', () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/channels');
+    renderWithWorkspaces(
+      <ConsoleShell
+        currentPath="/workspaces/default/channels"
+        account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+        onLogout={() => undefined}
+      >
+        <div>Channels content</div>
+      </ConsoleShell>,
+    );
+
+    const contentContainer = screen.getByText('Channels content').parentElement;
+    expect(contentContainer?.classList.contains('lg:px-8')).toBe(true);
+    expect(contentContainer?.classList.contains('max-w-[928px]')).toBe(false);
+  });
+
   test('keeps the resource location selected when the sidebar is collapsed', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     renderWithWorkspaces(

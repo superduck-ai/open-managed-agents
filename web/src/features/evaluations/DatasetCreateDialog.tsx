@@ -60,7 +60,7 @@ export function DatasetCreateDialog({ open, onOpenChange }: { open: boolean; onO
   const create = useMutation({
     mutationFn: () =>
       submitDataset(scope.orgUuid, scope.workspaceId, {
-        name: name.trim() || (source === 'upload' ? nameFromFile : source === 'generate' ? '我的评测集' : ''),
+        name: datasetCreateName(source, name, nameFromFile, msg('evaluations.datasetNamePlaceholder', 'My dataset')),
         source,
         content: source === 'paste' ? pasteContent : uploadContent,
         count,
@@ -416,6 +416,14 @@ function DatasetSampleDownloads() {
       </div>
     </div>
   );
+}
+
+export function datasetCreateName(source: DatasetSource, name: string, fileName: string, generateName: string) {
+  const trimmed = name.trim();
+  if (trimmed) return trimmed;
+  if (source === 'upload') return fileName;
+  if (source === 'generate') return generateName;
+  return '';
 }
 
 function datasetSubmitMessage(input: {

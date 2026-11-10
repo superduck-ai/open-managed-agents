@@ -6,6 +6,12 @@ type CursorState = {
   tokens: string[];
 };
 
+export function advanceEvaluationCursor(page: Pick<CursorState, 'index' | 'tokens'>, token: string) {
+  const tokens = page.tokens.slice(0, page.index + 1);
+  tokens[page.index + 1] = token;
+  return { index: page.index + 1, tokens };
+}
+
 export function useEvaluationCursor(key: string) {
   const [state, setState] = useState<CursorState>({ key, index: 0, tokens: [] });
   const active = state.key === key ? state : { key, index: 0, tokens: [] };
@@ -21,11 +27,7 @@ export function useEvaluationCursor(key: string) {
     if (!token) return;
     setState((current) => {
       const page = current.key === key ? current : { key, index: 0, tokens: [] };
-      return {
-        key,
-        index: page.index + 1,
-        tokens: [...page.tokens.slice(0, page.index + 1), token],
-      };
+      return { key, ...advanceEvaluationCursor(page, token) };
     });
   }
 

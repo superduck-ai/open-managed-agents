@@ -2,11 +2,17 @@ import { afterEach, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../../test/setup';
 import { I18nProvider } from '../../shared/i18n';
-import { DatasetCreateDialog } from './DatasetCreateDialog';
+import { DatasetCreateDialog, datasetCreateName } from './DatasetCreateDialog';
 
 const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 
 afterEach(cleanup);
+
+test('a blank generated dataset uses the localized name instead of a fixed Chinese title', () => {
+  expect(datasetCreateName('generate', '  ', '', 'My dataset')).toBe('My dataset');
+  expect(datasetCreateName('generate', '销售回归', '', 'My dataset')).toBe('销售回归');
+  expect(datasetCreateName('upload', '', 'cases.csv', 'My dataset')).toBe('cases.csv');
+});
 
 test('upload tab offers dataset sample files', () => {
   URL.createObjectURL = () => 'blob:evaluation-sample';

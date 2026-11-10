@@ -193,25 +193,11 @@ export class DsrBackend extends Backend {
           this.delivered.delete(update.id);
         }
       return Response.json({
-        scheduled: body.updates.filter(
-          (u: Payload) => u.status === "processed" && this.finishes.has(u.id),
-        ).length,
-        applied: body.updates.filter(
-          (u: Payload) => u.status !== "processed" || !this.finishes.has(u.id),
-        ).length,
+        applied: body.updates.length,
         ignored: 0,
         results: body.updates.map((update: Payload) => ({
           ...update,
-          outcome:
-            update.status === "processed" && this.finishes.has(update.id)
-              ? "scheduled"
-              : "applied",
-          cancel_requested_at: this.cancelRequested
-            ? "2026-11-04T00:00:00Z"
-            : undefined,
-          execution_status: this.finishes.has(update.id)
-            ? "completed"
-            : "running",
+          outcome: "applied",
         })),
       });
     }
@@ -231,6 +217,7 @@ export class DsrBackend extends Backend {
               state: "resolved",
               decision: { behavior: "allow" },
             },
+        { status: this.permissionPending ? 202 : 200 },
       );
     }
     if (path === "/public-events") {

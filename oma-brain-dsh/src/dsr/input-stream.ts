@@ -29,7 +29,11 @@ export function parseInput(data: string): Input {
 }
 
 export class DsrInputStream {
-  constructor(readonly client: DsrClient) {}
+  constructor(
+    readonly client: DsrClient,
+    private readonly taskAvailable: () => void = () => {},
+    private readonly connected: () => void = () => {},
+  ) {}
 
   async *read(signal: AbortSignal): AsyncGenerator<Input> {
     let failures = 0;
@@ -69,8 +73,18 @@ export class DsrInputStream {
         if (!response.ok) throw await errorOf(response);
         if (!response.body) throw new DsrError(0, "invalid_response");
         arm(45000);
+        this.connected();
         for await (const frame of sse(response.body, lifetime, touch)) {
           if (!frame.data) continue;
+          if (frame.event === "task.available") {
+            try {
+              object(JSON.parse(frame.data));
+            } catch {
+              throw new DsrError(0, "invalid_input");
+            }
+            this.taskAvailable();
+            continue;
+          }
           if (frame.event !== "input") throw new DsrError(0, "invalid_input");
           const input = parseInput(frame.data);
           if (input.lane !== "control") throw new DsrError(0, "invalid_input");

@@ -233,19 +233,13 @@ export interface Delivery {
   error?: "unsupported_input";
 }
 
-/**
- * 回执接口的响应。results 必须与请求里的 updates 一一对应。
- *
- * outcome：applied（本次生效）/ ignored（重复或已处理）/ scheduled（排队）。
- */
 export interface DeliveryResult {
   applied: number;
-  scheduled: number;
   ignored: number;
   results: {
     id: string;
     status: Delivery["status"];
-    outcome: "applied" | "ignored" | "scheduled";
+    outcome: "applied" | "ignored";
   }[];
 }
 

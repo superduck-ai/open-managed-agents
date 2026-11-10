@@ -36,6 +36,7 @@ type dshTranscriptRecordsInsert struct {
 }
 
 type DSHTranscriptMapper interface {
+	ReadWorker(ctx context.Context, scope DSHScope) (dshWorkerScopeRow, bool, error)
 	ShareWorker(ctx context.Context, scope DSHScope) (dshWorkerScopeRow, bool, error)
 	LockHeartbeat(ctx context.Context, scope DSHScope) (dshWorkerScopeRow, bool, error)
 	LockTranscript(ctx context.Context, scope DSHScope, dshSessionID string) (dshTranscriptRow, bool, error)

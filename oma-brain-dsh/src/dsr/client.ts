@@ -182,19 +182,6 @@ export class DsrClient {
     return response.lease_expires_at;
   }
 
-  /**
-   * 批量回执输入状态。
-   *
-   * 响应必须与请求一一对应：results.length 相同、每个 id/status 回显一致、
-   * outcome 只能是 applied/ignored/scheduled。
-   *
-   * @example
-   *   const result = await client.delivery([
-   *     {id: "in_1", status: "received"},
-   *     {id: "in_2", status: "processed"},
-   *   ]);
-   *   // {applied: 2, ignored: 0, scheduled: 0, results: [...]}
-   */
   async delivery(
     updates: Delivery[],
     signal?: AbortSignal,
@@ -208,7 +195,6 @@ export class DsrClient {
     if (
       !Number.isSafeInteger(response.applied) ||
       !Number.isSafeInteger(response.ignored) ||
-      !Number.isSafeInteger(response.scheduled) ||
       !Array.isArray(response.results) ||
       response.results.length !== updates.length
     )
@@ -218,7 +204,7 @@ export class DsrClient {
       if (
         item.id !== updates[index]!.id ||
         item.status !== updates[index]!.status ||
-        !["applied", "ignored", "scheduled"].includes(String(item.outcome))
+        !["applied", "ignored"].includes(String(item.outcome))
       )
         throw new DsrError(0, "invalid_response");
     }

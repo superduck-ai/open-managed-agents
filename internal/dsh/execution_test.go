@@ -11,8 +11,11 @@ import (
 )
 
 type executionStub struct {
-	calls int
-	err   error
+	calls              int
+	err                error
+	permission         PermissionRequest
+	permissionResponse PermissionResponse
+	events             []json.RawMessage
 }
 
 func (e *executionStub) Claim(context.Context, db.DSHScope) (InputClaim, error) {
@@ -32,16 +35,18 @@ func (e *executionStub) Finish(_ context.Context, _ db.DSHScope, _ string, value
 	e.calls++
 	return value, e.err
 }
-func (e *executionStub) Permission(context.Context, db.DSHScope, PermissionRequest) (PermissionResponse, error) {
+func (e *executionStub) Permission(_ context.Context, _ db.DSHScope, input PermissionRequest) (PermissionResponse, error) {
 	e.calls++
-	return PermissionResponse{}, e.err
+	e.permission = input
+	return e.permissionResponse, e.err
 }
 func (e *executionStub) CancelPermission(context.Context, db.DSHScope, string, PermissionCancel) (PermissionResponse, error) {
 	e.calls++
 	return PermissionResponse{}, e.err
 }
-func (e *executionStub) Publish(context.Context, db.DSHScope, []json.RawMessage) (PublishResponse, error) {
+func (e *executionStub) Publish(_ context.Context, _ db.DSHScope, events []json.RawMessage) (PublishResponse, error) {
 	e.calls++
+	e.events = events
 	return PublishResponse{}, e.err
 }
 
@@ -124,5 +129,45 @@ func TestDSHInputClaimAndUnsupportedCursor(t *testing.T) {
 	response = transcriptRequest(router, "POST", "/sessions/cse_root/inputs/claim", "{}", "1")
 	if response.Code != 200 || stub.calls != 1 || response.Body.String() != "{\"input\":null}\n" {
 		t.Fatalf("claim response=%d %s calls=%d", response.Code, response.Body.String(), stub.calls)
+	}
+}
+
+func TestDSHPermissionStatusMatchesState(t *testing.T) {
+	for _, test := range []struct {
+		state  string
+		status int
+	}{{"pending", 202}, {"resolved", 200}, {"cancelled", 200}} {
+		t.Run(test.state, func(t *testing.T) {
+			stub := &executionStub{permissionResponse: PermissionResponse{RequestID: "approval", State: test.state}}
+			body := `{"input_id":"input","turn":"1","dsh_session_id":"cse_root","tool_use_id":"call","tool":{"kind":"builtin","name":"bash"},"input":{}}`
+			response := transcriptRequest(executionRouter(stub), "POST", "/sessions/cse_root/permission-requests", body, "1")
+			if response.Code != test.status {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, test.status, response.Body.String())
+			}
+			var result PermissionResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.State != test.state {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestDSHDeliveryResponseOmitsScheduled(t *testing.T) {
+	stub := &executionStub{}
+	response := transcriptRequest(executionRouter(stub), "POST", "/sessions/cse_root/inputs/delivery", `{"updates":[{"id":"control","status":"processed"}]}`, "1")
+	if response.Code != 200 {
+		t.Fatalf("status=%d", response.Code)
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := result["scheduled"]; exists {
+		t.Fatalf("obsolete field: %s", response.Body.String())
+	}
+	for _, field := range []string{"applied", "ignored", "results"} {
+		if _, exists := result[field]; !exists {
+			t.Fatalf("missing %s", field)
+		}
 	}
 }

@@ -120,6 +120,7 @@ test("waiting for response headers has a deadline", async () => {
 
 test("control reconnect does not advertise an unsupported cursor", async () => {
   const calls: HttpRequest[] = [];
+  let connections = 0;
   const abort = new AbortController();
   const stream = new DsrInputStream(
     client({
@@ -131,9 +132,14 @@ test("control reconnect does not advertise an unsupported cursor", async () => {
       },
       sleep: async () => {},
     }),
+    () => {},
+    () => {
+      connections++;
+    },
   ).read(abort.signal);
   expect((await stream.next()).value).toMatchObject({ id: "a" });
   expect((await stream.next()).value).toMatchObject({ id: "a" });
+  expect(connections).toBe(2);
   expect(calls[1]!.headers!["Last-Event-ID"]).toBeUndefined();
   expect(calls[1]!.path).toEndWith("/inputs/stream");
   abort.abort();
@@ -166,4 +172,27 @@ test("a stable stream resets the earlier failure budget", async () => {
   } finally {
     clock.mockRestore();
   }
+});
+
+test("task.available wakes task claiming without entering the control receipt stream", async () => {
+  let wakes = 0;
+  const abort = new AbortController();
+  const reader = new DsrInputStream(
+    client({
+      request: async () =>
+        new Response(
+          'event: task.available\ndata: {}\n\nevent: input\ndata: {"id":"stop","lane":"control","kind":"user.interrupt"}\n\n',
+        ),
+    }),
+    () => {
+      wakes++;
+    },
+  ).read(abort.signal);
+  expect((await reader.next()).value).toMatchObject({
+    id: "stop",
+    kind: "user.interrupt",
+  });
+  expect(wakes).toBe(1);
+  abort.abort();
+  await reader.return(undefined);
 });

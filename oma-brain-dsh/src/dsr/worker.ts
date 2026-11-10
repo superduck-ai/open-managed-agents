@@ -22,6 +22,7 @@ import { brainMetrics } from "../telemetry.ts";
 import { DsrClient } from "./client.ts";
 import { DsrClaims } from "./claims.ts";
 import { DsrInputInbox, DsrReceipts } from "./input-inbox.ts";
+import { DsrTaskWake } from "./task-wake.ts";
 import { DsrInputStream } from "./input-stream.ts";
 import { DsrSession } from "./session.ts";
 import { DsrLease } from "./lease.ts";
@@ -299,6 +300,7 @@ export class DsrOwner {
   private stage = "register";
   private tasks?: Promise<void>;
   private taskActive = false;
+  private readonly taskWake = new DsrTaskWake();
 
   constructor(
     readonly ctx: Context,
@@ -318,9 +320,11 @@ export class DsrOwner {
 
   private async readControls(): Promise<void> {
     try {
-      for await (const input of new DsrInputStream(this.client).read(
-        this.stream.signal,
-      )) {
+      for await (const input of new DsrInputStream(
+        this.client,
+        () => this.taskWake.notify(),
+        () => this.session?.permissionStreamConnected(),
+      ).read(this.stream.signal)) {
         this.inbox.accept(input);
       }
     } catch (error) {
@@ -331,11 +335,16 @@ export class DsrOwner {
   private async runTasks(): Promise<void> {
     try {
       while (!this.stream.signal.aborted) {
+        const version = this.taskWake.version;
         this.taskActive = true;
         const input = await this.client.claimInput(this.stream.signal);
         if (!input) {
           this.taskActive = false;
-          await delay(this.client.transport, 1000, this.stream.signal);
+          await this.taskWake.wait(
+            version,
+            this.client.transport,
+            this.stream.signal,
+          );
           continue;
         }
         await this.session!.receive(input);

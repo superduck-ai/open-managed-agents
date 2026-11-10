@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 type ToolIdentity struct {
@@ -60,10 +61,9 @@ type DeliveryItem struct {
 }
 
 type DeliveryResponse struct {
-	Scheduled int            `json:"scheduled"`
-	Applied   int            `json:"applied"`
-	Ignored   int            `json:"ignored"`
-	Results   []DeliveryItem `json:"results"`
+	Applied int            `json:"applied"`
+	Ignored int            `json:"ignored"`
+	Results []DeliveryItem `json:"results"`
 }
 
 type PublishResponse struct {
@@ -203,7 +203,11 @@ func (h *ExecutionHandler) permission(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err, nil)
 		return
 	}
-	writeJSON(w, value)
+	status := http.StatusOK
+	if value.State == "pending" {
+		status = http.StatusAccepted
+	}
+	httpapi.WriteJSON(w, status, value)
 }
 
 func validPermission(value PermissionRequest) bool {

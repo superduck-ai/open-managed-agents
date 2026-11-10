@@ -25,8 +25,9 @@ import { appendedSystemContext } from "../runtime/system-context.ts";
 import { traceHooks } from "../observability/trace-context.ts";
 import { withAttachmentSession } from "../attachments/remote.ts";
 import { dsrExecutor, DsrSuspend } from "./executor.ts";
+import { DsrPermissionWaiter } from "./permission-waiter.ts";
 import { DsrPreviewBuffer } from "./preview-buffer.ts";
-import { DsrError, delay, object } from "./http.ts";
+import { DsrError, object } from "./http.ts";
 import { dsrToolIdentity } from "./tools.ts";
 import { DsrSubagentBridge } from "./subagents.ts";
 import type { DsrClient } from "./client.ts";
@@ -66,9 +67,7 @@ export class DsrSession {
   // 审批去重：key = "threadId:callId"。同一个工具调用只发一次审批请求，
   // 并发调用方共享同一个 Promise。
   private readonly approvals = new Map<string, Promise<ApprovalDecision>>();
-  // 通过 control 输入提前收到的审批结论。key = request_id。
-  // 审批长轮询期间，用户的决定也可能作为 control 输入到达，这里负责接住。
-  private readonly decisions = new Map<string, Decision>();
+  private readonly permissionWaiter = new DsrPermissionWaiter();
   // assistant 消息/块的事件生成器（负责把流式帧转成协议事件）。
   private readonly assistant: AssistantStream;
   // 第一个致命错误。一旦设置，所有 checkpoint 都会抛出它，阻止继续写坏状态。
@@ -444,9 +443,8 @@ export class DsrSession {
   ): Promise<void> {
     let error: "unsupported_input" | undefined;
     switch (input.kind) {
-      // 审批结论可能比审批请求先到（长轮询期间用户已点击），先缓存。
       case "permission.resolved":
-        this.decisions.set(input.request_id, input.resolution);
+        this.permissionWaiter.resolve(input.request_id, input.resolution);
         break;
       case "user.interrupt":
         // 没有 thread id 或就是根会话：取消根 turn。
@@ -519,28 +517,10 @@ export class DsrSession {
     return task;
   }
 
-  /**
-   * 实际发起审批并轮询结果。
-   *
-   * 为什么是轮询而不是一个长请求：服务器接口只返回当前状态，
-   * 而且用户决定可能通过 control 输入先行到达（decisions）。
-   * 每 1 秒查一次，直到：
-   *   - resolved（或 decisions 里已有）-> 返回决定；
-   *   - cancelled / closed            -> 拒绝执行；
-   *   - 超过 deadline（默认 60s）     -> 抛 DsrSuspend，挂起会话。
-   *
-   * 挂起而不是失败：审批可能需要很久，DSR 的设计是把会话交还调度器，
-   * 等用户处理后再重新认领继续，而不是让 worker 一直占着。
-   *
-   * @example
-   *   // 用户 3 秒后点了 allow
-   *   // 第 1 次 permission -> pending，sleep 1s
-   *   // 第 2 次 permission -> pending，sleep 1s
-   *   // 第 3 次 permission -> resolved(allow) -> {allowed: true}
-   *
-   *   // 用户一直不处理，60 秒后
-   *   // -> 抛 DsrSuspend("Approval is pending; preserve the native turn")
-   */
+  permissionStreamConnected(): void {
+    this.permissionWaiter.reconnect();
+  }
+
   private async requestApproval(
     request: ToolApproval,
     signal: AbortSignal,
@@ -567,35 +547,26 @@ export class DsrSession {
         : { available: request.available }),
     };
     traceHooks.approvalPending(thread ?? this.id, request.callId);
-    const deadline = Date.now() + (this.options.approvalWaitMs ?? 60_000);
-    for (;;) {
-      const response = await this.client.permission(body, signal);
-      // 决定来源有两个：本次响应直接 resolved，或 control 输入提前塞进 decisions。
-      const decision =
-        response.state === "resolved"
-          ? response.decision
-          : this.decisions.get(response.request_id);
-      if (decision) {
-        traceHooks.approvalResolved(
-          thread ?? this.id,
-          request.callId,
-          decision.behavior === "external_result"
-            ? "external"
-            : decision.behavior === "allow"
-              ? "allowed"
-              : "denied",
-        );
-        return approvalDecision(decision);
-      }
-      // 请求被取消/关闭：视为拒绝，但保留明确原因（不是超时挂起）。
-      if (response.state === "cancelled" || response.state === "closed")
-        return { allowed: false, reason: "Tool approval is closed" };
-      // 超时：挂起会话，保留 native turn，等后续继续。
-      if (Date.now() >= deadline)
-        throw new DsrSuspend("Approval is pending; preserve the native turn");
-      // 1 秒后重新查询；signal 取消会立即唤醒。
-      await delay(this.client.transport, 1000, signal);
-    }
+    const response = await this.permissionWaiter.wait(
+      (requestSignal) => this.client.permission(body, requestSignal),
+      signal,
+      this.options.approvalWaitMs ?? 60000,
+    );
+    if (!response)
+      throw new DsrSuspend("Approval is pending; preserve the native turn");
+    if (response.state !== "resolved")
+      return { allowed: false, reason: "Tool approval is closed" };
+    const decision = response.decision;
+    traceHooks.approvalResolved(
+      thread ?? this.id,
+      request.callId,
+      decision.behavior === "external_result"
+        ? "external"
+        : decision.behavior === "allow"
+          ? "allowed"
+          : "denied",
+    );
+    return approvalDecision(decision);
   }
 
   /**

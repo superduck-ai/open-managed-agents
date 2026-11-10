@@ -1,5 +1,7 @@
 # DSRv1 逐接口调用与请求响应评审
 
+本文保留 2026-11-03 的历史评审，旧接口编号与目标方案不代表当前实现。当前接口以 [接口参考](api-reference.md) 为准：9 已用于 inputs/claim，原 header/events 已合并为 8 records；task 使用 claim/finish，delivery 仅用于 control；归档与 purged 生命周期尚未实现。
+
 评审日期：2026-11-03。结论：14 个主接口都有明确的 Brain 调用职责，但需要修订部分请求、响应和错误处理。第 15 节的运行时能力还依赖 MCP、附件和 OTLP 原生协议，不能统一套用 JSON 请求、Anthropic 错误体或自动重试。
 
 本报告覆盖接口参考中的全部接口，包括展开后的附件、MCP metadata、模型和沙箱侧路由。本文保留实现前评审。已新增并接通 `src/dsr/` 原生 host，默认使用 DSRv1，支持显式 CCRv2 回退，当前逐接口实现状态见 [实验实现状态](implementation.md)。当前代码路径相对于 `oma-brain-dsh/src/`，服务端路径相对于仓库根目录。版本依据与第一轮恢复探针见 [兼容性验证](compatibility-review.md)。
@@ -117,7 +119,7 @@ result/reason 有现成业务来源，但旧 `InputOutcome` 不能表达 cancell
 
 当前复制器从本地 Session snapshot/handle 取增量，runtime 工具执行、公开输出和输入结算调用 checkpoint。未来每条原生日志独立有序队列，显式 `flushThrough(seq)` 与后台上传共用。
 
-请求必须是落盘完成的连续 SessionEvent，不能照搬旧根会话混合 Header/Event 的队列。确认 seq X 的条件是 next_seq 大于 X。gap 补缺口，header_required 先补 Header，conflict 保留本地，purged 不重建。
+请求必须是落盘完成的连续 SessionEvent，不能照搬旧根会话混合 Header/Event 的队列。确认 seq X 的条件是 next_seq 大于 X。gap 补缺口，header_required 先补 Header，conflict 保留本地。purged 生命周期尚未实现，不属于当前错误合同。
 
 当前客户端发送前按最多 200 条和常规请求体目标 4 MiB 主动组批，收到 413 不再拆批或重试，而是复制失败并以 permanent 释放。单事件 15 MiB 硬限制保持不变。Header 重复返回的水位、错误头水位都不能用于跳过内容核对。本次已澄清大小错误规则和执行开始屏障。
 

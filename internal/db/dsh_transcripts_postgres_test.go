@@ -128,7 +128,7 @@ func TestDSHTranscriptRecordsMigrationPostgres(t *testing.T) {
 	transcriptUUID := "53000000-0000-0000-0000-000000000004"
 	execClaimTest(t, ctx, database, `INSERT INTO dsh_transcripts(uuid,organization_uuid,workspace_uuid,code_session_uuid,dsh_session_id,header,next_seq) VALUES($1,$2,$3,$4,'root','{"version":4}',1)`, transcriptUUID, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionUUID)
 	execClaimTest(t, ctx, database, `INSERT INTO dsh_transcript_events(organization_uuid,workspace_uuid,code_session_uuid,transcript_uuid,seq,payload) VALUES($1,$2,$3,$4,0,'{"seq":0}')`, scope.OrganizationUUID, scope.WorkspaceUUID, scope.CodeSessionUUID, transcriptUUID)
-	if _, err := migrations.Up(ctx); err != nil {
+	if _, err := migrations.UpTo(ctx, 122); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}

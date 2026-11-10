@@ -65,7 +65,6 @@ export function createRemoteTranscriptStore(
           "unauthorized",
           "transcript_conflict",
           "transcript_gap",
-          "transcript_purged",
           "invalid_response",
         ].includes(error.code) ||
           [400, 401, 403, 404, 410, 413, 422].includes(error.status))),

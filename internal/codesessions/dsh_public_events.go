@@ -1,6 +1,7 @@
 package codesessions
 
 import (
+	"bytes"
 	"encoding/json"
 	"time"
 	"uuid"
@@ -149,4 +150,13 @@ func dshPermissionEvents(scope db.DSHScope, request toolPermissionRequest, raw j
 	setRawJSONField(fields, "original_event_id", id)
 	primary, err := dshPublicEvent(scope, fields, request.PublicEventID, request.EventType, "")
 	return []db.SessionEvent{child, primary}, err
+}
+
+func dshToolCallPublicPayload(codeSessionID string, request toolPermissionRequest, input json.RawMessage, identity toolIdentity, permission resolvedToolPermission, at time.Time) (toolPermissionRequest, json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(input))
+	decoder.UseNumber()
+	if err := decoder.Decode(&request.Input); err != nil {
+		return toolPermissionRequest{}, nil, db.ErrInvalidState
+	}
+	return toolCallPublicPayload(codeSessionID, request, identity, permission, at)
 }

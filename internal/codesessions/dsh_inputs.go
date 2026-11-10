@@ -14,11 +14,13 @@ func isDSHCodeSession(code db.CodeSession) bool {
 
 func (s *Service) queueDSHPublicEvents(ctx context.Context, code db.CodeSession, events []db.SessionEvent) error {
 	payloads := make([]json.RawMessage, 0)
+	taskAvailable := false
 	scope := db.DSHScope{OrganizationUUID: code.OrganizationUUID, WorkspaceUUID: code.WorkspaceUUID, CodeSessionUUID: code.UUID, CodeSessionID: code.ExternalID, SessionID: code.SessionExternalID}
 	for _, event := range events {
 		var fields map[string]json.RawMessage
 		switch event.EventType {
 		case "user.message":
+			taskAvailable = true
 			continue
 		case "user.interrupt":
 			fields = make(map[string]json.RawMessage)
@@ -71,6 +73,9 @@ func (s *Service) queueDSHPublicEvents(ctx context.Context, code db.CodeSession,
 		if err := s.QueueRawPublicSessionEvents(ctx, code, payloads); err != nil {
 			return err
 		}
+	}
+	if taskAvailable {
+		s.notifyDSHTask(ctx, code.ExternalID)
 	}
 	s.notifyBrainWork(ctx, code.ExternalID)
 	return s.resumeSandboxForCodeSession(ctx, code)

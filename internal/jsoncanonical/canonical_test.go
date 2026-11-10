@@ -11,7 +11,7 @@ func TestDigestUsesCanonicalJSONAndVersionedSHA256(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, err := Digest([]byte(`{ "b":"中", "a":1 }`))
-	if err != nil || a != b || len(a) != len("jcs-sha256-v1:")+64 {
+	if err != nil || a != b || len(a) != len("exact-json-sha256-v1:")+64 {
 		t.Fatalf("digests=%q,%q,%v", a, b, err)
 	}
 	changed, err := Digest([]byte(`{"a":2,"b":"中"}`))

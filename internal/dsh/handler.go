@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
 	"log/slog"
@@ -13,7 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
-	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 )
 
@@ -88,11 +88,11 @@ func decodeBody[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 		}
 		return result, invalidRequest()
 	}
-	canonical, err := jsoncanonical.Canonicalize(raw)
-	if err != nil || len(canonical) == 0 || canonical[0] != '{' {
+	value := jsontext.Value(raw)
+	if !value.IsValid() || value.Kind() != '{' {
 		return result, invalidRequest()
 	}
-	decoder := json.NewDecoder(bytes.NewReader(canonical))
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
 		return result, invalidRequest()

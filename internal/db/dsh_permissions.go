@@ -18,6 +18,30 @@ func dshPermissionFromRow(row dshPermissionRow) DSHPermission {
 	return result
 }
 
+func (d *DB) ReadDSHPermission(ctx context.Context, scope DSHScope, request DSHPermission) (DSHPermission, bool, error) {
+	worker, exists, err := NewDSHTranscriptMapper(d.mapperDB).ReadWorker(ctx, scope)
+	if err != nil {
+		return DSHPermission{}, false, err
+	}
+	if err := validateDSHWorker(scope, worker, exists); err != nil {
+		return DSHPermission{}, false, err
+	}
+	row, found, err := NewDSHExecutionMapper(d.mapperDB).Permission(ctx, scope, request.RequestID)
+	if err != nil || !found {
+		return DSHPermission{}, false, err
+	}
+	if row.InputID != nil {
+		equal, err := sameDSHPermission(row, request)
+		if err != nil {
+			return DSHPermission{}, false, err
+		}
+		if !equal {
+			return DSHPermission{}, false, ErrDSHPermissionConflict
+		}
+	}
+	return dshPermissionFromRow(row), true, nil
+}
+
 func (d *DB) RequestDSHPermission(ctx context.Context, scope DSHScope, request DSHPermission, publicEvents []SessionEvent) (DSHPermission, SessionEventChanges, error) {
 	var result DSHPermission
 	var changes SessionEventChanges

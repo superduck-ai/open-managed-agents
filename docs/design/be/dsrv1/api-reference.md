@@ -14,10 +14,11 @@
 | 2   | `POST /v1/dsr/claims/{code_session_id}/release`                                   | fleet   | 释放领取                        | `POST /v1/code/brain/claims/{id}/release`                         | 4.3      |
 | 3   | `POST /v1/dsr/sessions/{code_session_id}/register`                                | session | 在当前 epoch 接管会话、开始租约 | `worker/register`                                                 | 4.4      |
 | 4   | `POST /v1/dsr/sessions/{code_session_id}/heartbeat`                               | session | 续租                            | `worker/heartbeat`                                                | 4.5      |
-| 5   | `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`                            | session | SSE 接收输入                    | `worker/events/stream`                                            | 9.2      |
-| 6   | `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery`                         | session | 输入进度回执                    | `worker/events/delivery`                                          | 9.2      |
+| 5   | `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`                            | session | SSE 接收 control 与任务提示                    | `worker/events/stream`                                            | 9.2      |
+| 6   | `POST /v1/dsr/sessions/{code_session_id}/inputs/delivery`                         | session | control 进度回执                    | `worker/events/delivery`                                          | 9.2      |
 | 7   | `POST /v1/dsr/sessions/{code_session_id}/inputs/{input_id}/finish`                | session | 结束 task 输入                  | `worker/events` 中的 `result` 事件                                | 9.4      |
 | 8   | `POST /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/records`    | session | 统一追加原生日志记录            | `worker/internal-events`（POST）                                  | 6.4      |
+| 9 | `POST /v1/dsr/sessions/{code_session_id}/inputs/claim` | session | 领取或恢复一条 task | task 投递与 processing 确认 | 9.2 |
 | 10  | `GET /v1/dsr/sessions/{code_session_id}/transcripts`                              | session | 列出会话下的原生日志            | `worker/internal-events?subagents`                                | 6.7      |
 | 11  | `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/records`     | session | 分页读取一条原生日志            | `worker/internal-events`（GET）                                   | 6.7      |
 | 12  | `POST /v1/dsr/sessions/{code_session_id}/permission-requests`                     | session | 创建或查询工具审批              | `worker/events` 中的 `can_use_tool` 控制请求，加轮询 `GET worker` | 7.1–7.3  |
@@ -40,14 +41,19 @@ sequenceDiagram
     loop 每 6 秒
         D->>A: 4 heartbeat
     end
-    A-->>D: input user.message
-    D->>A: 6 delivery received → processing
+    A-->>D: task.available 提示（无任务正文）
+    D->>A: 9 inputs/claim
+    A-->>D: task user.message 或 input=null
     D->>D: 使用本地固定配置
     D->>A: 8 写 JSONL 原生日志
     D->>A: 12 permission-requests（需要审批时）
+    opt 审批 pending
+        A-->>D: 202 pending
+        A-->>D: 5 control permission.resolved
+        D->>A: 6 control delivery received / processed
+    end
     D->>A: 14 public-events
     D->>A: 7 finish
-    D->>A: 6 `processed` 回执
     D->>A: 2 release（空闲或退出时）
 ```
 
@@ -56,7 +62,7 @@ sequenceDiagram
 | 凭据          | 来源                                           | 用于                                   | 失效方式                               |
 | ------------- | ---------------------------------------------- | -------------------------------------- | -------------------------------------- |
 | fleet token   | 部署配置 `code_session.brain_claim_token_file` | 接口 1、2                              | 运维轮换                               |
-| session token | claim 响应的 `session_token`                   | 接口 3–14 与第 15 节                   | epoch 被推进后写接口拒绝；读接口仍可用 |
+| session token | claim 响应的 `session_token`                   | 接口 3–14 与第 15 节                   | 旧 owner 的写入与输入流拒绝；日志 GET 仍可读 |
 | model token   | claim 响应的 `model_token`                     | `/v1/messages`、`/v1/chat/completions` | 下次 claim 时轮换；租约过期后暂时失效  |
 
 ## 通用约定
@@ -74,7 +80,7 @@ sequenceDiagram
 
 - session token 是 JWT，claims 含 `code_session_id`、`epoch`、`protocol: "dsr1"` 与租户身份。路径中的 `{code_session_id}` 必须等于 token 的 `code_session_id`。
 - **session 路由请求体不带 epoch**。fleet token 认证的接口 2 release 例外，携带 `{epoch,reason}`。写接口在执行授权阶段与写事务内用 token 的 epoch 与 `current_worker_epoch` 比较，不一致返回 `409 epoch_superseded`。CCRv2 在请求体里另带 `worker_epoch`，两处来源可能不一致；DSRv1 只保留 token 一处。
-- 读接口（5、6、13、14）只校验鉴权与归属，旧 epoch 的 token 也能读。
+- GET 接口为 5、10、11。日志读取（10、11）只校验鉴权与归属，旧 epoch 的 token 也能读；输入流（5）在建流与持续消费时校验当前 worker epoch，旧 owner 不能继续接收控制输入。
 
 ### 数据类型
 
@@ -107,15 +113,15 @@ Anthropic 错误体只有 `type` 和 `message`，放不下机器可读的细节�
 
 ### 幂等
 
-日志、审批、输出和结束上报可能因网络中断产生模糊结果，按下表身份重试。claim 不具备幂等键，丢响应会消耗 attempt；register 与 heartbeat 是状态操作；MCP tools/call 不属于可自动重放的写入。
+日志、审批、输出和结束上报可能因网络中断产生模糊结果，按下表身份重试。会话领取（接口 1）不具备幂等键，丢响应会消耗 attempt；task 领取（接口 9）通过 running execution 恢复丢失响应；register 与 heartbeat 是状态操作；MCP tools/call 不属于可自动重放的写入。
 
 | 接口                   | 幂等键                             | 内容不同时                              |
 | ---------------------- | ---------------------------------- | --------------------------------------- |
-| 10 finish              | `(code_session, input_id)`         | `409 finish_idempotency_mismatch`       |
+| 7 finish              | `(code_session, input_id)`         | `409 finish_idempotency_mismatch`       |
 | 8 records              | `(transcript_uuid, record_offset)` | `409 transcript_conflict`               |
-| 15 permission-requests | 派生的 `request_id`                | `409 permission_idempotency_mismatch`   |
-| 16 cancel              | `request_id`                       | 返回当前终态                            |
-| 17 public-events       | `(code_session, id)`               | `409 public_event_idempotency_mismatch` |
+| 12 permission-requests | 派生的 `request_id`                | `409 permission_idempotency_mismatch`   |
+| 13 cancel              | `request_id`                       | 返回当前终态                            |
+| 14 public-events       | `(code_session, id)`               | `409 public_event_idempotency_mismatch` |
 
 原生日志按原始字节比较；审批、公开输出与结束上报沿用各自的 JSON 语义比较。
 
@@ -154,7 +160,7 @@ AND (
 AND 不在 budget_reached 暂停中
 ```
 
-执行中的 input execution 没有 pending 审批时可以重新领取。已完成输入的 ACK 由后端独立投递处理器补偿，不再触发 Brain 领取。
+执行中的 input execution 没有 pending 审批时可以重新领取。已完成 task 不再被领取，也不维护 broker ACK。
 
 **只在等待审批的 turn 不会被领取**：它在等用户，没有可执行的工作。审批被解决、取消、关闭或收到中断时，那次事务置位 `worker_claim_requested_at` 并发出领取唤醒，会话随即满足第一个条件。这也让等待审批可以挂起：执行端释放会话，用户响应后再由任意进程接手。
 
@@ -318,7 +324,7 @@ DSR-Protocol: 1
 ### 场景
 
 ```text
-10:00:00  A claim cse_1（epoch 7）→ register → 执行用户输入 → 结束上报 → processed 回执
+10:00:00  A claim cse_1（epoch 7）→ register → 执行用户输入 → 结束上报
 10:01:00  cse_1 空闲 60 秒 → A 关闭输入流 → release(idle)
 10:05:00  用户发来新消息 → 会话变为 running → B 立即 claim（epoch 8）
           （如果 A 不 release，要等 A 最后一次心跳之后的 20 + 10 秒）
@@ -439,7 +445,7 @@ A. 正常接管（上一任 owner 在等待审批时崩溃，用户随后批准�
    用户批准 dsrp_x → 审批变为 resolved，并唤醒领取
    claim → epoch 7 → register → 租约开始（公开状态由批准事务改为 running）
    读取原生日志：该工具有调用块、没有 tool/call → 用同一 request_id 调用 permission-requests → 取回 allow
-   执行工具 → 继续回合 → public-events → finish(success) → processed 回执
+   执行工具 → 继续回合 → public-events → finish(success)
 
 B. 网络抖动后恢复
    心跳连续失败约 30 秒 → 410 lease_expired → 用同一 token 再 register
@@ -500,31 +506,11 @@ register 成功后按 `heartbeat_interval_ms`（6 秒）固定节奏发送，抖
 
 `POST /v1/code/sessions/{id}/worker/heartbeat`，语义不变；请求体不再带 epoch。
 
-## 5. task 领取与 control 输入流
+## 5. `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`
 
-### `POST /v1/dsr/sessions/{code_session_id}/inputs/claim`
+与 task 循环并行。流建立或重连完成后先发送 `event: task.available`、`data: {}`，新任务提交后也尽力发送该提示。提示只唤醒本会话的 task 领取，不包含任务 payload、input ID 或 ACK 身份，不进入 control delivery。通知走按 Code Session 隔离的临时 Core NATS 信号，不写 JetStream；新增 SSE 事件类型需要后端与 Brain 同步升级，旧 Brain 会拒绝未知事件。通知丢失、订阅失败时继续使用一秒无锁轮询兜底。Brain 在每次 claim 前捕获通知版本，空响应后只有版本未变化才等待，避免提示先于等待注册时丢失。
 
-注册并恢复原生日志后调用，每次只领取一条 task。后端在事务中校验当前 owner、租户与执行资格，优先恢复 running 输入，否则按 accepted_at、input_id 稳定顺序开始下一条 accepted 输入。
-
-```json
-{
-  "input": {
-    "id": "evt_01J...",
-    "lane": "task",
-    "kind": "user.message",
-    "content": [{ "type": "text", "text": "跑一下测试" }]
-  },
-  "cancel_requested_at": "2026-11-09T00:00:00Z"
-}
-```
-
-cancel_requested_at 可省略；存在时必须在恢复执行前处理取消意图。input 保留 session_thread_id、oma_system_context 和 trace_context。无可执行任务时返回 `{"input":null}`。Brain 等待一秒再查询，完成当前任务后立即领取下一条，不预取队列。
-
-领取响应丢失可安全重试，后端返回同一 running 输入并保留首次 started_at。新 owner 也通过此接口恢复 running 输入。仅允许每个 owner 一个串行 task 循环。
-
-### `GET /v1/dsr/sessions/{code_session_id}/inputs/stream`
-
-与 task 循环并行，只接收 control，如 user.interrupt、permission.resolved 和模型更新。未知 control kind 回 processed + unsupported_input。task 出现在此流中视为协议错误。
+业务输入帧仍为 `event: input`，只接收 control，如 user.interrupt、permission.resolved 和模型更新。未知 control kind 回 processed + unsupported_input。task 出现在此流中视为协议错误。
 
 ```text
 event: input
@@ -549,14 +535,13 @@ received/processing 延长 control 投递时限，processed 通过 Redis 索引�
 {
   "applied": 1,
   "ignored": 0,
-  "scheduled": 0,
   "results": [
     { "id": "evt_02...", "status": "processed", "outcome": "applied" }
   ]
 }
 ```
 
-scheduled 保留响应外观但固定为 0。task 只调用 claim 和 finish，不调用 delivery。
+响应仅包含 applied、ignored 和逐项 results；outcome 仅允许 applied 或 ignored。task 只调用接口 9 claim 和接口 7 finish，不调用 delivery。
 
 ## 7. `POST /v1/dsr/sessions/{code_session_id}/inputs/{input_id}/finish`
 
@@ -605,9 +590,25 @@ Content-Type: application/x-ndjson
 
 整批校验、创建日志、追加记录和更新水位在同一 Yourbatis 事务完成；`UNIQUE(transcript_uuid, record_offset)` 保证位置唯一。请求失败不留下部分写入。原始字节不规范化；包括键顺序和空白变化在内的差异都会冲突。
 
-## 9. 原独立事件接口已合并
+## 9. `POST /v1/dsr/sessions/{code_session_id}/inputs/claim`
 
-不再提供单独的 Header 或 Event 写入接口。所有记录通过第 8 节的 `/records` 写入。工具、公开输出和结束屏障等待响应覆盖目标存储位置；原生事件 seq=N 对应 offset=N+1，确认水位至少为 N+2。
+注册并恢复原生日志后调用，每次只领取一条 task。先按租户范围无锁查询候选输入；空队列只额外读取当前 worker epoch 和租约，不开启事务、不锁 Session 行。存在候选时进入原领取事务，锁定 Session 并重新查询候选、校验当前 owner 与执行资格，不能使用事务外查询结果直接执行。后端在事务中校验当前 owner、租户与执行资格，优先恢复 running 输入，否则按 accepted_at、input_id 稳定顺序开始下一条 accepted 输入。
+
+```json
+{
+  "input": {
+    "id": "evt_01J...",
+    "lane": "task",
+    "kind": "user.message",
+    "content": [{ "type": "text", "text": "跑一下测试" }]
+  },
+  "cancel_requested_at": "2026-11-09T00:00:00Z"
+}
+```
+
+cancel_requested_at 可省略；存在时必须在恢复执行前处理取消意图。input 保留 session_thread_id、oma_system_context 和 trace_context。无可执行任务时返回 `{"input":null}`。Brain 等待一秒再查询，完成当前任务后立即领取下一条，不预取队列。
+
+领取响应丢失可安全重试，后端返回同一 running 输入并保留首次 started_at。新 owner 也通过此接口恢复 running 输入。仅允许每个 owner 一个串行 task 循环。
 
 ## 10. `GET /v1/dsr/sessions/{code_session_id}/transcripts`
 
@@ -716,9 +717,11 @@ CCRv2 的流程是：DSH 往公开输出里发一条 `can_use_tool` 控制请求
 
 ### 处理顺序
 
-校验 epoch → **按 `request_id` 查找已有记录，命中直接返回**（墓碑、终态或 pending 都不再做后续校验）→ 校验 `input_id` 处于 running、线程属于本会话 → 计算权限 → 写记录与公开事件 → 重算公开状态。
+无锁校验当前 epoch 与有效租约 → 按 `request_id` 只读查找已有记录，命中时比对原始请求身份、工具、参数与 available 后直接返回；取消墓碑直接返回 cancelled。未命中时进入事务，加锁并重查，然后校验 `input_id` 处于 running、线程属于本会话 → 计算权限 → 写记录与公开事件 → 重算公开状态。已有记录不进入写事务，不锁 Session，也不重新执行权限策略。
 
 先查已有记录，是为了让终态重试和墓碑不会因为"execution 已不在 running"被拒绝。
+
+Brain 首次 POST 完成后等待 `permission.resolved` 通知，通知直接唤醒工具审批等待者。输入 SSE 每次连接或重连成功时立即重查 pending 审批；无通知时每 10 秒使用原始请求重查一次。等待预算默认 60 秒，到期挂起原生 turn。首次 POST 返回前到达的通知会被缓存，但仍需等待 HTTP 成功以确认请求身份和幂等校验。
 
 ### 响应
 
@@ -993,10 +996,12 @@ MCP/OTLP 的原生错误体、附件二进制与 HEAD 响应不走通用 JSON �
 
 ## 公开回执摘要与重放保留
 
-持久 public-events 先对原始单事件使用现有 JCS 规范化器，再计算 SHA-256，保存为 `jcs-sha256-v1:<64位小写hex>`。摘要覆盖所有原始字段，包括未知字段，在公开映射之前计算。字段顺序、JSON 空白和等价数字表示不构成冲突，数组顺序和实际内容变化构成冲突。重复键、无效 Unicode 和不符合规范化器的 JSON 拒绝提交。
+持久 public-events 对原始单事件进行无损十进制规范化后计算 SHA-256，保存为 `exact-json-sha256-v1:<64位小写hex>`。规范化只用于摘要，HTTP 解码直接读取原始字节，不能用规范化结果替换请求体。摘要覆盖所有原始字段，包括未知字段，在公开映射之前计算。字段顺序、JSON 空白和等价数字表示不构成冲突，数组顺序和实际内容变化构成冲突。重复键、无效 Unicode 和非法 JSON 拒绝提交。数字不经过 float64，大整数和长小数保持精度。
 
 数据库仅保存 payload_digest，不保留回执原始 payload。receipt 唯一键和公开历史、线程创建、状态归约仍在同一事务。相同 ID、相同摘要还须核对持久历史的类型、线程和公开内容，才能返回 duplicate。线程状态无变化可能没有对应历史，由状态机单独处理。缺失或不一致的最终历史返回 `409 public_event_history_inconsistent`；不同摘要返回 `409 public_event_idempotency_mismatch`。preview 仍不落 receipt。摘要采用 SHA-256 碰撞风险这一工程假设，不与其他 hash 算法混用。
 
+旧 `jcs-sha256-v1` 回执仅在请求通过 JCS 无损检查、旧摘要匹配且持久历史一致时接受重试。旧路径不豁免无历史的线程状态事件。舍入风险或未知摘要版本返回 `public_event_idempotency_mismatch`，历史缺失或不一致返回 `public_event_history_inconsistent`。既有损坏数据不自动改写。
+
 公开回执与可重放原生日志同寿命，当前未增加独立 TTL。未来清理必须同时限定可重放范围，避免旧日志重放造成重复副作用。版本水位在 Code Session 生命周期内保留。
 
-ACK 成功后 dsh_input_deliveries 不再保存 acked 状态或 acked_at。删除与对象 cleanup 推进在同一事务，按 UUID、租户和 lease_token 校验；失败回滚，旧租约不得删除新投递。消息后续重投可为已完成 execution 创建新 pending 记录，仅补 ACK。scheduled 响应仍只表示接受后台结算，不承诺立即完成删除。
+task 使用数据库队列，终态通过 finish 确认，不产生 broker delivery ACK。control 的 received/processing 延长投递时限，processed 同步确认 broker 消息；响应只有 applied、ignored 与逐项 results。

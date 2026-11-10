@@ -311,6 +311,14 @@ func (h *Handler) handleCodeSessionWorkerRegister(w http.ResponseWriter, r *http
 func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer, flusher http.Flusher,
 	subscription workerevents.Subscription, deliveries *workerStreamDeliveries, codeSession db.CodeSession, epoch int64) {
 
+	var taskWork <-chan struct{}
+	if isDSHCodeSession(codeSession) {
+		taskWork = h.service.subscribeDSHTask(ctx, codeSession.ExternalID)
+		if err := writeDSHTaskAvailable(w, flusher); err != nil {
+			return
+		}
+	}
+
 	keepAlive := time.NewTicker(15 * time.Second)
 	defer keepAlive.Stop()
 	epochValidation := time.NewTicker(workerEpochValidationInterval)
@@ -322,6 +330,11 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 		select {
 		case <-ctx.Done():
 			return
+		case <-taskWork:
+			if err := writeDSHTaskAvailable(w, flusher); err != nil {
+				return
+			}
+
 		case err, open := <-subscription.Errors():
 			if open && err != nil && !errors.Is(err, context.Canceled) {
 				h.logger.WarnContext(ctx, "consume code session worker event", "code_session_id", codeSession.ExternalID, "error", err)
@@ -339,23 +352,10 @@ func (h *Handler) streamCodeSessionWorkerEvents(ctx context.Context, w io.Writer
 				lastEpochValidation = time.Now()
 			}
 			envelope := delivery.Envelope
-			if envelope.Version != 2 || envelope.CodeSessionID != codeSession.ExternalID {
-				h.logger.WarnContext(ctx, "reject code session worker event envelope", "code_session_id", codeSession.ExternalID, "event_id", envelope.EventID)
-				return
-			}
-			if isDSHCodeSession(codeSession) && envelope.EventType == "user.message" {
-				if err := h.service.workerEvents.DoubleAck(ctx, delivery.AckSubject); err != nil {
-					return
-				}
-				if envelope.PayloadRef != nil {
-					h.service.triggerPayloadCleanupNow(ctx, envelope.PayloadRef.CleanupJobID)
-				}
+			switch h.prepareWorkerStreamDelivery(ctx, codeSession, delivery) {
+			case workerStreamSkip:
 				continue
-			}
-			if envelope.IsExpired(time.Now().UTC()) {
-				if err := h.service.expireWorkerEvent(ctx, codeSession, envelope); err != nil {
-					h.logger.ErrorContext(ctx, "expire code session worker event", "code_session_id", codeSession.ExternalID, "error", err)
-				}
+			case workerStreamStop:
 				return
 			}
 			loaded, loadErr := h.service.loadOffloadedPayload(ctx, envelope)

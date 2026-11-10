@@ -7,6 +7,7 @@ import { DsrError, type HttpRequest } from "../src/dsr/http.ts";
 import { DsrInputStream } from "../src/dsr/input-stream.ts";
 import type {
   Claim,
+  DeliveryResult,
   PermissionRequest,
   Registration,
 } from "../src/dsr/wire.ts";
@@ -420,4 +421,42 @@ test("claim returns durable task and cancellation without delivery receipts", as
   expect(calls[0]!.path).toEndWith("/inputs/claim");
   const empty = fixture(() => Response.json({ input: null }));
   expect(await empty.client.claimInput()).toBeNull();
+});
+
+test("control delivery rejects the removed scheduled outcome", async () => {
+  const { client } = fixture(() =>
+    Response.json({
+      applied: 0,
+      ignored: 0,
+      results: [{ id: "control", status: "processed", outcome: "scheduled" }],
+    }),
+  );
+  await expect(
+    client.delivery([{ id: "control", status: "processed" }]),
+  ).rejects.toMatchObject({ code: "invalid_response" });
+});
+
+test("control delivery accepts responses without scheduled", async () => {
+  const result: DeliveryResult = {
+    applied: 1,
+    ignored: 0,
+    results: [{ id: "control", status: "processed", outcome: "applied" }],
+  };
+  const { client } = fixture(() => Response.json(result));
+  expect(
+    await client.delivery([{ id: "control", status: "processed" }]),
+  ).toEqual(result);
+});
+
+test("pending permission accepts HTTP 202", async () => {
+  const { client } = fixture(() =>
+    Response.json(
+      { request_id: "approval", state: "pending" },
+      { status: 202 },
+    ),
+  );
+  expect(await client.permission(permission)).toEqual({
+    request_id: "approval",
+    state: "pending",
+  });
 });

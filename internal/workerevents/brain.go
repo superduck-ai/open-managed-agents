@@ -3,6 +3,7 @@ package workerevents
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go"
 )
@@ -19,45 +20,69 @@ func (b *JetStreamBroker) NotifyBrainWork(context.Context) error {
 }
 
 func (b *JetStreamBroker) SubscribeBrainWork(ctx context.Context) (<-chan struct{}, error) {
+	return b.subscribeWorkSubject(ctx, brainWorkSubject)
+}
+
+func (b *JetStreamBroker) subscribeWorkSubject(ctx context.Context, subject string) (<-chan struct{}, error) {
 	signals := make(chan struct{}, 1)
-	subscription, err := b.connection.Subscribe(brainWorkSubject, func(*nats.Msg) { signalBrainWork(signals) })
+	subscription, err := b.connection.Subscribe(subject, func(*nats.Msg) { signalBrainWork(signals) })
 	if err != nil {
 		return nil, err
 	}
-	go func() {
-		<-ctx.Done()
+	flush, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := b.connection.FlushWithContext(flush); err != nil {
 		_ = subscription.Unsubscribe()
-	}()
+		return nil, err
+	}
+	go func() { <-ctx.Done(); _ = subscription.Unsubscribe() }()
 	return signals, nil
 }
 
 type brainWorkHub struct {
 	mu      sync.Mutex
-	waiters map[chan struct{}]struct{}
+	waiters map[string]map[chan struct{}]struct{}
 }
 
 func (b *MemoryBroker) NotifyBrainWork(context.Context) error {
-	b.brainWork.mu.Lock()
-	defer b.brainWork.mu.Unlock()
-	for signals := range b.brainWork.waiters {
-		signalBrainWork(signals)
-	}
+	b.brainWork.notify("")
 	return nil
 }
 
 func (b *MemoryBroker) SubscribeBrainWork(ctx context.Context) (<-chan struct{}, error) {
-	signals := make(chan struct{}, 1)
-	b.brainWork.mu.Lock()
-	if b.brainWork.waiters == nil {
-		b.brainWork.waiters = make(map[chan struct{}]struct{})
+	return b.brainWork.subscribe(ctx, "")
+}
+
+func (h *brainWorkHub) notify(key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for signals := range h.waiters[key] {
+		signalBrainWork(signals)
 	}
-	b.brainWork.waiters[signals] = struct{}{}
-	b.brainWork.mu.Unlock()
+}
+
+func (h *brainWorkHub) subscribe(ctx context.Context, key string) (<-chan struct{}, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	signals := make(chan struct{}, 1)
+	h.mu.Lock()
+	if h.waiters == nil {
+		h.waiters = make(map[string]map[chan struct{}]struct{})
+	}
+	if h.waiters[key] == nil {
+		h.waiters[key] = make(map[chan struct{}]struct{})
+	}
+	h.waiters[key][signals] = struct{}{}
+	h.mu.Unlock()
 	go func() {
 		<-ctx.Done()
-		b.brainWork.mu.Lock()
-		delete(b.brainWork.waiters, signals)
-		b.brainWork.mu.Unlock()
+		h.mu.Lock()
+		delete(h.waiters[key], signals)
+		if len(h.waiters[key]) == 0 {
+			delete(h.waiters, key)
+		}
+		h.mu.Unlock()
 	}()
 	return signals, nil
 }

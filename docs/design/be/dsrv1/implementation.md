@@ -12,10 +12,11 @@
 | 2    | release                  | `dsr/worker.ts`                                | 排空输入与复制后释放，拒绝旧 owner                                                                                      |
 | 3    | register                 | `dsr/worker.ts`                                | 同 epoch 恢复保留状态；补 ACK 由独立后台处理器负责                                                                      |
 | 4    | heartbeat                | `dsr/lease.ts`                                 | 注册后独立运行，不被模型或审批阻塞                                                                                      |
-| 5    | inputs/stream            | `dsr/worker.ts`、`dsr/input-stream.ts`         | task 有界串行消费；interrupt 立即应用；control 按 ID 去重，回执独立合批                                                 |
-| 6    | inputs/delivery          | `dsr/worker.ts`、`dsr/session.ts`              | received 续报；执行前 processing；completed 后 processed 返回 scheduled；响应含 execution_status 与 cancel_requested_at |
-| 7    | inputs/{id}/finish       | `dsr/session.ts`                               | 日志与输出确认后写 finish，再 ACK；重复完成结果不可改变                                                                 |
+| 5    | inputs/stream            | `dsr/worker.ts`、`dsr/input-stream.ts`         | 仅传 control 与 task.available 提示；interrupt 立即应用，control 按 ID 去重                                                 |
+| 6    | inputs/delivery          | `dsr/worker.ts`、`dsr/session.ts`              | 仅 control 回执；响应含 applied、ignored 和 results，无 scheduled |
+| 7    | inputs/{id}/finish       | `dsr/session.ts`                               | 日志与输出确认后写 finish；task 无 delivery ACK，重复完成结果不可改变                                                                 |
 | 8    | records POST             | `runtime/replication.ts`、`dsr/replication.ts` | Header 与事件共用 JSONL，offset 连续，原始字节幂等                                                                      |
+| 9 | inputs/claim POST | `dsr/worker.ts`、`dsr/client.ts` | 串行领取或恢复 running task；空队列 input=null |
 | 10   | directory GET            | `dsr/subagents.ts`、`dsr/replication.ts`       | 接管时完整枚举根/子日志                                                                                                 |
 | 11   | transcript GET           | `dsr/replication.ts`、`runtime/replication.ts` | 完整分页读取并验证远端原生日志，原子替换进程内历史                                                                      |
 | 12   | permission-requests POST | `dsr/session.ts`、`dsr/executor.ts`            | 批次预审批，确定性 request_id，重查不可重新执行策略                                                                     |
@@ -33,24 +34,24 @@ sequenceDiagram
     participant T as Tool
     B->>O: register / heartbeat
     B->>O: 日志目录与读取
+    O-->>B: task.available 提示
+    B->>O: inputs/claim
     O-->>B: task input
-    B->>O: delivery processing
     B->>O: Header / native events
     B->>O: permission request
-    O-->>B: resolved 或 pending
+    O-->>B: 200 resolved 或 202 pending
     B->>O: dispatched 标记复制确认
     B->>T: 执行一次工具
     B->>O: tool/result 复制确认
     B->>O: public-events
     B->>O: finish
-    B->>O: delivery processed
 ```
 
 原生复制器是 CCRv2/DSR 共享的日志机制，网络适配器分离。DSR 不调用 CCRv2 worker 接口。固定 Harness `0.2.2-alpha.2` 通过 Bun patch 增加同 turn continuation 与无错误挂起。补丁仅作用于当前仓库依赖，未修改独立 deepseek-harness 仓库。
 
 审批超时只挂起原生 turn，不生成虚假失败结果。冷接管从远程日志恢复同一 turn 的整个工具批次。`plugin:oma/dsr-dispatched` 必须在真实工具调用前复制确认；有标记而无持久结果时返回 `TOOL_OUTCOME_UNKNOWN`，不重放副作用，尚未派发的后续调用继续执行。该策略不提供外部系统 exactly-once 或自动对账。
 
-`dsh_input_deliveries.ack_subject` 保存 broker ACK 位置，避免 Redis 投递索引丢失后无法结算 completed 输入。用户中断与 `cancel_requested_at` 同事务提交，控制输入先于重投 task 到达也能阻止恢复执行。
+task 通过数据库队列 claim 与 finish 推进，不再依赖 broker ACK。control 继续使用 Redis 投递定位。用户中断与 `cancel_requested_at` 同事务提交，控制输入先于重投 task 到达也能阻止恢复执行。
 
 ### Transcript 分批下载与导入
 
@@ -153,7 +154,7 @@ OMA_BRAIN_BINARY='<absolute-binary>' just verify-be chat brain-dsr --worker-imag
 
 ## 仍未覆盖或未实现
 
-- 新 DSH transcript 仍存 PostgreSQL，尚无大事件对象外置、archive、保留/清理与 purged 生命周期。既有 Transcript GC 不会自动处理新表。
+- 新 DSH transcript 仍存 PostgreSQL，尚无大事件对象外置、archive、保留/清理与 purged 生命周期。既有 Transcript GC 不会自动处理新表；当前错误合同不包含 transcript_purged。
 - 未实现存量 CCRv2 会话原地迁移或生产灰度控制。
 - 尚无真实模型质量、生产性能基线、网络分区、云端沙箱、长工具故障对账或全部运行时能力的 DSR 集成验收。
 - 子线程、压缩、附件和遥测复用现有原生机制；本轮 DSR 专项验证范围须以实际场景报告为准，不把 CCRv2 场景当成 DSR 验收。
@@ -262,7 +263,7 @@ Go 普通单测及 5 组隔离 PostgreSQL 回归通过，包含数据库升级�
 
 `dsr/input-inbox.ts` 按 input ID 合并 queued/running task，最多接纳 64 个 task 和 16 MiB 序列化 UTF-8 输入。容量不足时不回 received，继续读流以保持 interrupt 可达，由 JetStream 后续重投任务。该上限约束已接纳输入，不包含 SSE 解析缓冲及运行时模型上下文。任务保持接纳顺序，不保证跨拒收与重投的全局 FIFO。
 
-interrupt 的本地取消不等待回执网络请求；审批结果等待 received 后应用。控制记录在 owner 存活期间保留，重投只补回执，最多 4096 条，达到上限停止并释放 owner。received 与 control processed 共用串行上传器，每批最多 64 条且 input ID 不重复；同一输入的后续状态留到后续批次，重复待发状态共享确认 Promise；失败使所有待发回执失败并退出 owner。task 仍等待 processing 明确确认，完成仍先持久化 finish，再报告 processed。空闲释放还要求没有未完成输入。
+interrupt 的本地取消不等待回执网络请求；审批结果等待 received 后应用。控制记录在 owner 存活期间保留，重投只补回执，最多 4096 条，达到上限停止并释放 owner。received 与 control processed 共用串行上传器，每批最多 64 条且 input ID 不重复；同一输入的后续状态留到后续批次，重复待发状态共享确认 Promise；失败使所有待发回执失败并退出 owner。task 通过 inputs/claim 开始或恢复执行，完成后持久化 finish，不报告 delivery processed。空闲释放还要求没有未完成输入。
 
 SSE 等待响应头最多 15 秒，建立后完整帧静默最多 45 秒。短连接 EOF 和网络错误均消耗连续 10 次失败预算；HTTP 200 不清零，完整帧活性持续 60 秒后清零。重连指数退避至 30 秒基数并加 ±25% 抖动，等待不少于 Retry-After。坏 JSON、非法输入和超限帧终止当前 owner，不重试坏帧。读取游标使用字符串和 BigInt，校验输入后推进，仅表示已读取位置；后端只校验游标，执行去重依赖稳定 input ID 和持久完成记录。
 
@@ -299,3 +300,33 @@ owner 只在明确收到 `epoch_superseded` 时跳过 release；其余错误均�
 Migration 00122 用 bytea 记录表替换分离的 JSONB header/events，保留 `UNIQUE(transcript_uuid,record_offset)`。幂等改为原始字节比较，父级单独传递；旧 JSONB 只能迁移其数据库文本表示。新旧协议不兼容，需要同步部署，Down 明确拒绝有损降级。
 
 普通回归覆盖 JSONL 边界、序号映射、字节冲突、批量写入、恢复水位、租约重注册与 JSONL HTTP 传输。定向 PostgreSQL 回归覆盖 bytea 绑定、唯一约束、并发与事务回滚。实际执行情况以本次交付结果为准；本次不自动运行 verify-be。
+
+## JSON 无损解码与精确摘要
+
+`decodeBody` 使用 jsontext 校验原始请求，再解码 DTO；不再将 JCS 输出交给业务层。permission input、public-events payload 保留原始 JSON；工具调用公开映射使用 UseNumber，避免重新引入浮点舍入。
+
+`internal/jsoncanonical` 对数字按十进制系数和任意精度指数归一化，用于比较和 `exact-json-sha256-v1` 摘要。新算法不改写存储内容。旧 JCS 摘要只通过独立兼容入口校验，同时要求请求无损且已有历史匹配；无法核对时返回冲突，不反推或猜测旧原值。migration 00123 将回执摘要约束扩展为接受新旧两种版本，不批量改写旧回执。存在新版本回执时，Down 会因旧约束不满足而失败，不能将新摘要冒充旧摘要。
+
+测试入口为普通 Go 单测及 `TestDSHPublicPrecisionPostgres`、`TestDSHLegacyReceiptPrecisionPostgres`、`TestDSHPermissionPrecisionPostgres` 的定向集成测试。后者使用隔离 PostgreSQL schema，覆盖 JSONB 精度、等价重试、相邻大整数冲突与旧摘要不能掩盖历史变化；不代表真实 Worker E2E。
+
+## task 空领取与及时唤醒
+
+ClaimDSHInput 在事务外用 NextExecution 读候选，空队列再用 ReadWorker 验证当前 epoch 和租约，两个查询都不加行锁，不访问主线程，不锁 Session。只有存在候选才进入原事务，并在 Session 锁内重新查询输入，处理候选在此期间已被完成、取消或替换的竞争。
+
+TaskWorkSignal 为每个 Code Session 提供临时通知，NATS 适配器使用独立于 JetStream 输入主题的 Core NATS subject；内存适配器合并重复提示并在取消后回收订阅。新 user.message 已持久化后发送提示。DSR 控制流建连、重连后先发送 task.available，并转发本会话提示；不产生稳定输入、ACK 定位或业务完成状态。缺少信号能力或订阅失败不会阻止 SSE，仍靠一秒轮询恢复。
+
+Brain 的 DsrTaskWake 在 claim 前捕获版本；提示在 HTTP 在途、空响应到达与 wait 注册之间、以及等待期间到达均可唤醒。正常任务串行执行，提示不会启动并发任务；任务内容和执行资格仍由 claim 响应决定。无提示时仍每秒查询，但不再制造空领取的 Session 锁。
+
+普通回归覆盖空领取无锁 SQL、旧 epoch/过期租约拒绝、候选在锁内消失的二次查询、Mapper 参数绑定、Core NATS 跨连接通知、会话隔离、取消清理、不持久化提示、版本防丢唤醒、一秒兜底及 SSE 提示不进入控制回执。未执行真实 PostgreSQL 锁竞争或生产吞吐基线。
+
+## 当前接口合同核对
+
+接口 9 为 inputs/claim，接口 5 仅承载 control 与任务提示，task 完成只调用接口 7 finish。审批 pending 返回 202，resolved/cancelled 返回 200。delivery 删除 scheduled 计数和 outcome，后端、Brain 校验及测试 fixture 同步更新；协议未冻结，不保留兼容字段。日志 GET 可供旧 epoch 读取，输入流仍校验当前 owner。transcript 归档与 purged 生命周期尚未实现，已从当前错误枚举和 Brain 专用分支中移除。
+
+回归覆盖审批 HTTP 状态、delivery 响应字段、Brain 拒绝 scheduled outcome、接受无 scheduled 响应及 202 pending。第 17 至 19 版的 task ACK 设计记录属于历史，不作为当前接口合同。
+
+### 审批等待与只读重查
+
+已有 permission request 经无锁 worker 校验和审批查询返回，保留请求身份、工具、原始参数与 available 的幂等比对，取消墓碑直接返回。首次创建仍在事务中加锁并重查，避免并发创建重复执行策略或发布事件。
+
+Brain 的 DsrPermissionWaiter 由 permission.resolved 通知唤醒，输入 SSE 连接及重连成功时重查；10 秒查询作为通知丢失兜底，默认 60 秒后挂起原生 turn。首次请求必须完成 HTTP 校验，期间到达的决定缓存待用；后续在途查询可以被通知或重连唤醒并取消。普通回归覆盖无事务查询、租约与 epoch 拒绝、幂等冲突、通知竞态、取消、重连及查询间隔。

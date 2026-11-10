@@ -8,9 +8,9 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
-func validateDSHPublicHistory(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, events []SessionEvent, required bool) error {
+func validateDSHPublicHistory(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, events []SessionEvent, required, verifyStatus bool) error {
 	for _, event := range events {
-		if _, status := maevents.ThreadStatus(event.EventType); status {
+		if _, status := maevents.ThreadStatus(event.EventType); status && !verifyStatus {
 			continue
 		}
 		stored, err := NewSessionEventMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID)

@@ -112,17 +112,13 @@ func (e dshExecution) Finish(ctx context.Context, scope db.DSHScope, id string, 
 
 func (e dshExecution) Permission(ctx context.Context, scope db.DSHScope, input dsh.PermissionRequest) (dsh.PermissionResponse, error) {
 	id := dsh.PermissionID(scope.CodeSessionID, input.DSHSessionID, input.ToolUseID)
-	stored, found, err := e.handler.db.GetDSHPermission(ctx, scope, id)
+	tool, _ := json.Marshal(input.Tool)
+	stored, found, err := e.handler.db.ReadDSHPermission(ctx, scope, db.DSHPermission{RequestID: id, InputID: input.InputID, DSHSessionID: input.DSHSessionID, ToolUseID: input.ToolUseID, Turn: input.Turn, Tool: tool, Input: input.Input, Available: input.Available})
 	if err != nil {
 		return dsh.PermissionResponse{}, err
 	}
 	if found {
-		tool, _ := json.Marshal(input.Tool)
-		value, changes, err := e.handler.db.RequestDSHPermission(ctx, scope, db.DSHPermission{RequestID: id, InputID: input.InputID, DSHSessionID: input.DSHSessionID, ToolUseID: input.ToolUseID, Turn: input.Turn, Tool: tool, Input: input.Input, Available: input.Available, ThreadID: stored.ThreadID}, nil)
-		if err != nil {
-			return dsh.PermissionResponse{}, err
-		}
-		return permissionResponse(value), e.committed(ctx, scope, changes)
+		return permissionResponse(stored), nil
 	}
 
 	threadID, err := e.permissionThread(ctx, scope, input.DSHSessionID)
@@ -145,15 +141,11 @@ func (e dshExecution) Permission(ctx context.Context, scope db.DSHScope, input d
 	}
 	rawTool, _ := json.Marshal(input.Tool)
 	request := db.DSHPermission{RequestID: id, InputID: input.InputID, DSHSessionID: input.DSHSessionID, ThreadID: threadID, ToolUseID: input.ToolUseID, Turn: input.Turn, Tool: rawTool, Input: input.Input, Available: input.Available, State: "pending"}
-	var arguments map[string]any
-	if err := json.Unmarshal(input.Input, &arguments); err != nil {
-		return dsh.PermissionResponse{}, db.ErrInvalidState
-	}
 	outputThread := threadID
 	if input.DSHSessionID == scope.CodeSessionID {
 		outputThread = ""
 	}
-	public, raw, err := toolCallPublicPayload(scope.CodeSessionID, toolPermissionRequest{RequestID: id, ToolUseID: input.ToolUseID, ToolName: name, SessionThreadID: outputThread, Input: arguments}, identity, permission, time.Now().UTC())
+	public, raw, err := dshToolCallPublicPayload(scope.CodeSessionID, toolPermissionRequest{RequestID: id, ToolUseID: input.ToolUseID, ToolName: name, SessionThreadID: outputThread}, input.Input, identity, permission, time.Now().UTC())
 	if err != nil {
 		return dsh.PermissionResponse{}, err
 	}

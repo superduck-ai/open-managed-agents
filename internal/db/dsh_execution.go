@@ -158,15 +158,21 @@ func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPu
 			}
 			if found {
 				if old != digest {
-					return ErrDSHPublicConflict
+					matches, err := jsoncanonical.MatchesLegacyDigest(item.Payload, old)
+					if err != nil {
+						return err
+					}
+					if !matches {
+						return ErrDSHPublicConflict
+					}
 				}
-				if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true); err != nil {
+				if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true, old != digest); err != nil {
 					return err
 				}
 				result.Duplicates++
 				continue
 			}
-			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, false); err != nil {
+			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, false, false); err != nil {
 				return err
 			}
 			if item.Thread != nil {
@@ -188,7 +194,7 @@ func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPu
 			if err != nil {
 				return err
 			}
-			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true); err != nil {
+			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true, false); err != nil {
 				return err
 			}
 			result.Changes.Events = append(result.Changes.Events, events...)

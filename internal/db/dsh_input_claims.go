@@ -15,7 +15,18 @@ type DSHInputClaim struct {
 func (d *DB) ClaimDSHInput(ctx context.Context, scope DSHScope) (DSHInputClaim, SessionEventChanges, error) {
 	var claim DSHInputClaim
 	var changes SessionEventChanges
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+	_, found, err := NewDSHExecutionMapper(d.mapperDB).NextExecution(ctx, scope)
+	if err != nil {
+		return claim, changes, err
+	}
+	if !found {
+		worker, exists, err := NewDSHTranscriptMapper(d.mapperDB).ReadWorker(ctx, scope)
+		if err != nil {
+			return claim, changes, err
+		}
+		return claim, changes, validateDSHWorker(scope, worker, exists)
+	}
+	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		session, primary, err := lockDSHSession(ctx, executor, scope)
 		if err != nil {
 			return err

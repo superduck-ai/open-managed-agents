@@ -12,6 +12,13 @@
         WHERE organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}
           AND uuid = #{scope.CodeSessionUUID} AND status = 'active' AND deleted_at IS NULL
     </sql>
+    <select id="ReadWorker" result="optional" resultType="dshWorkerScopeRow">
+        SELECT uuid, current_worker_epoch,
+               COALESCE(worker_lease_expires_at + INTERVAL '10 seconds' &gt; clock_timestamp(), false) AS lease_valid
+        FROM code_sessions
+        WHERE organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}
+          AND uuid = #{scope.CodeSessionUUID} AND status = 'active' AND deleted_at IS NULL
+    </select>
     <select id="ShareWorker" result="optional" resultType="dshWorkerScopeRow">
         WITH worker AS MATERIALIZED (<include refid="workerScope"/> FOR KEY SHARE)
         SELECT uuid, current_worker_epoch,

@@ -7,12 +7,13 @@ Local real-device check for PR #624 / lark-channel session metadata.
 - Feishu app: `cli_aa6c7433e1b8dbf1` (验收 Bot C2 20261101)
 - Agent: `channels-handtest` / `agent_oKzV3sWkIy5LT3hkLwcTG9t4`
 - Channel: `handtest-feishu` / `channel_c87a04e6-97a7-4431-9c6e-aa660abc7936`
+- OMA console login (SMTP 未配置，任意非空 OTP): `test@oma.ai`
 
 Screenshots:
 - `01-channels-list.png`
 - `02-channel-detail.png`
 - `03-channel-sessions.png`
 
-`01-channels-list.png` 是改宽之前的列表：页面套在控制台 `max-w-[928px]` 居中壳里，表格和筛选被挤在中间。随后渠道列表、详情和向导改成与部署、环境相同的宽页面（`px-6 py-6 lg:px-8`），不再另加居中窄容器。这三张图没有重拍。
+布局说明：渠道列表 / 详情 / 会话管理已与部署、环境页一致，走控制台宽页面（约 `max-w-[1440px]` + `px-6 py-6 lg:px-8`），不再套居中窄卡片。以上三张为改宽后重拍。
 
 Session metadata evidence: `session-metadata.json`

@@ -9,7 +9,7 @@ Local real-device check for PR #624 / lark-channel session metadata.
 - Channel: `handtest-feishu` / `channel_c87a04e6-97a7-4431-9c6e-aa660abc7936`
 - OMA console login (SMTP 未配置，任意非空 OTP): `test@oma.ai`
 
-Screenshots（2026-11-10 10:00 CST / Asia/Shanghai 按最新 UI 重拍列表与向导）:
+历史截图（2026-11-10 10:00，Asia/Shanghai）：以下图片记录当时界面，不代表当前向导。`05` / `08` 对应策略选项卡片版本（`97d63b1`），随后已改为开关行；当前第一步独立授权、第三步关联资源的交互以设计文档和本地服务为准。
 
 - `01-channels-list.png` — 与部署、环境相同的页头按钮、筛选条、无边框表格和分页；无页头说明，含创建时间列
 - `02-channel-detail.png` — 宽布局详情（此前重拍，本次未改）

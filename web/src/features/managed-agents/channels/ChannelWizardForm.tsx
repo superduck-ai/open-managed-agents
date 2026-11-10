@@ -232,6 +232,7 @@ function QrBindPanel({
   showQr?: boolean;
 }) {
   const { msg } = useI18n();
+  const disabled = busy || !value.name.trim();
   const waiting = qr?.status === 'pending';
   return (
     <div className="space-y-3">
@@ -263,14 +264,14 @@ function QrBindPanel({
         </Card>
       ) : (
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" disabled={busy || !value.name.trim()} onClick={() => onGenerateQr(true)}>
+          <Button type="button" disabled={disabled} onClick={() => onGenerateQr(true)}>
             <ExternalLink className="size-4" />
             {msg('managedAgents.channels.goFeishuAuth', '前往飞书授权创建')}
           </Button>
           <button
             type="button"
             className="text-sm text-primary hover:underline"
-            disabled={busy}
+            disabled={disabled}
             onClick={() => onGenerateQr()}
           >
             {msg('managedAgents.channels.scanFeishuAuth', '使用飞书扫码授权')}

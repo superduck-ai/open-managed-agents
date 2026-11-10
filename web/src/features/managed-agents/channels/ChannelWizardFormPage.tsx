@@ -105,19 +105,23 @@ export function ChannelWizardFormPage({
   const [saved, setSaved] = useState<Channel | null>(initialChannel);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [pollError, setPollError] = useState('');
   const [value, setValue] = useState<WizardValue>(initialValue);
   const savedEnvironment = useRef(
     initialChannel ? { agentId: initialValue.agentId, environmentId: initialValue.environmentId } : null,
   );
   const onAuthorized = useCallback((appId: string) => {
-    setValue((current) => ({ ...current, app_id: appId }));
-    setError('');
+    setValue((current) => ({ ...current, app_id: appId, app_secret: '' }));
   }, []);
-  const { authorization, qr, setQr, showQr, authorizing, authorize } = useChannelAuthorization(
-    workspaceId,
-    onAuthorized,
-    setError,
-  );
+  const {
+    authorization,
+    qr,
+    setQr,
+    showQr,
+    authorizing,
+    authorize,
+    pollError: authorizationPollError,
+  } = useChannelAuthorization(workspaceId, binding === 'qr', onAuthorized, setError);
   const busy = saving || authorizing;
 
   const agentsQuery = useQuery({
@@ -132,26 +136,43 @@ export function ChannelWizardFormPage({
   const targetAgentId = value.agentId || initialAgentId;
 
   useEffect(() => {
-    if (authorization || !saved || saved.binding_status === 'bound' || !targetAgentId) return;
+    setPollError('');
+    if (
+      binding !== 'qr' ||
+      authorization ||
+      !saved ||
+      saved.binding_status === 'bound' ||
+      !targetAgentId ||
+      (qr && qr.status !== 'pending')
+    )
+      return;
     const controller = new AbortController();
+    let inFlight = false;
     const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const page = await channelApi<{ data: Channel[] }>(targetAgentId, workspaceId);
         if (controller.signal.aborted) return;
         const channel = page.data.find((item) => item.id === saved.id);
         if (channel?.binding_status === 'bound') {
           setSaved(channel);
-          setValue((current) => ({ ...current, app_id: channel.app_id ?? '' }));
+          setValue((current) => ({ ...current, app_id: channel.app_id ?? '', app_secret: '' }));
           setQr((current) => (current ? { ...current, status: 'bound' } : null));
-          setError('');
+          setPollError('');
           void queryClient.invalidateQueries({ queryKey: ['workspace-channels', workspaceId] });
           void queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, saved.id] });
           return;
         }
         const next = await channelApi<ChannelQr>(targetAgentId, workspaceId, `/${saved.id}/qr`);
-        if (!controller.signal.aborted) setQr(next);
+        if (!controller.signal.aborted) {
+          setQr(next);
+          setPollError('');
+        }
       } catch (err) {
-        if (!controller.signal.aborted) setError(errorMessage(err));
+        if (!controller.signal.aborted) setPollError(errorMessage(err));
+      } finally {
+        inFlight = false;
       }
     };
     void poll();
@@ -160,7 +181,7 @@ export function ChannelWizardFormPage({
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [saved, targetAgentId, workspaceId, queryClient, authorization?.id]);
+  }, [saved, targetAgentId, workspaceId, queryClient, authorization?.id, binding, qr?.status]);
 
   const agents = agentsQuery.data ?? [];
   const environments = environmentsQuery.data ?? [];
@@ -213,6 +234,7 @@ export function ChannelWizardFormPage({
     }),
     [agents, environments, value.agentId, value.environmentId],
   );
+  const visibleError = [error, pollError, authorizationPollError].find(Boolean);
   const listHref = channelsListPath(workspaceId);
   return (
     <section className="flex min-h-[calc(100dvh-112px)] min-w-0 flex-col text-foreground md:min-h-[calc(100dvh-48px)]">
@@ -243,9 +265,9 @@ export function ChannelWizardFormPage({
             onGenerateQr={(openAuthorization) => void authorize(value.name, Boolean(openAuthorization))}
             showQr={showQr}
           />
-          {error ? (
+          {visibleError ? (
             <Alert variant="destructive" className="mb-3">
-              <AlertDescription>{error}</AlertDescription>
+              <AlertDescription>{visibleError}</AlertDescription>
             </Alert>
           ) : null}
           <div className="sticky bottom-0 z-10 flex shrink-0 items-center justify-between gap-3 border-t-[0.5px] border-border bg-background py-3">

@@ -233,3 +233,93 @@ test('编辑回显默认资源，并可分别切回不挂载后保存', async ()
   await waitFor(() => expect(navigated).toHaveBeenCalled());
   expect(body).toEqual(expect.objectContaining({ memory_store_id: null, vault_id: null }));
 });
+
+test('授权替换应用 ID 时清除旧密钥，手动路径需要重新填写', async () => {
+  resetTestDom('/');
+  let poll!: () => void;
+  spyOn(window, 'setInterval').mockImplementation((callback) => {
+    poll = callback as () => void;
+    return 1;
+  });
+  spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+  globalThis.fetch = (async (input, init) =>
+    String(input).includes('/authorizations')
+      ? Response.json({
+          id: 'auth-new',
+          status: init?.method === 'POST' ? 'pending' : 'bound',
+          app_id: 'cli_new',
+          url: authorizationUrl,
+        })
+      : Response.json(targets(String(input)))) as typeof fetch;
+  mount(null, { ...initialValue, app_id: 'cli_old', app_secret: 'old-secret' });
+  fireEvent.click(screen.getByRole('button', { name: '使用飞书扫码授权' }));
+  await screen.findByText('等待飞书扫码确认');
+  poll();
+  await screen.findByText('飞书绑定成功');
+  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  expect(screen.getByDisplayValue('cli_new')).toBeTruthy();
+  expect((screen.getByPlaceholderText('应用密钥') as HTMLInputElement).value).toBe('');
+  expect(screen.getByRole('button', { name: '下一步' }).hasAttribute('disabled')).toBe(true);
+});
+
+test('手动验证密钥与保存使用相同的首尾空白处理', async () => {
+  resetTestDom('/');
+  let body: Record<string, unknown> = {};
+  globalThis.fetch = (async (input, init) => {
+    if (init?.method === 'POST') {
+      body = JSON.parse(String(init.body));
+      return Response.json({ ok: true });
+    }
+    return Response.json(targets(String(input)));
+  }) as typeof fetch;
+  mount();
+  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  fireEvent.change(screen.getByPlaceholderText('应用 ID'), { target: { value: ' cli_manual ' } });
+  fireEvent.change(screen.getByPlaceholderText('应用密钥'), { target: { value: ' secret-value ' } });
+  fireEvent.click(screen.getByRole('button', { name: '验证 App Secret' }));
+  await screen.findByText('应用密钥验证通过');
+  expect(body).toEqual({ app_id: 'cli_manual', app_secret: 'secret-value' });
+});
+
+test('未填写名称时两个授权入口均不可点击', () => {
+  resetTestDom('/');
+  globalThis.fetch = (async (input) => Response.json(targets(String(input)))) as typeof fetch;
+  mount(null, { ...initialValue, name: '' });
+  for (const name of ['前往飞书授权创建', '使用飞书扫码授权']) {
+    expect(screen.getByRole('button', { name }).hasAttribute('disabled')).toBe(true);
+  }
+});
+
+test('旧渠道轮询在仍等待绑定时清除网络错误，手动输入和过期状态下停止', async () => {
+  resetTestDom('/');
+  const timers = new Map<number, () => void>();
+  let nextId = 0;
+  spyOn(window, 'setInterval').mockImplementation((callback) => {
+    timers.set(++nextId, callback as () => void);
+    return nextId;
+  });
+  spyOn(window, 'clearInterval').mockImplementation((id) => {
+    timers.delete(Number(id));
+  });
+  let reads = 0;
+  let status = 'pending';
+  globalThis.fetch = (async (input) => {
+    const url = String(input).split('?')[0];
+    if (url.endsWith('/channels')) {
+      if (++reads === 1) throw new TypeError('短暂断网');
+      return Response.json({ data: [channel] });
+    }
+    if (url.endsWith('/qr')) return Response.json({ status, url: authorizationUrl });
+    return Response.json(targets(url));
+  }) as typeof fetch;
+  mount(channel, { ...initialValue, agentId: 'agent-test', environmentId: 'env-test' });
+  await screen.findByRole('alert');
+  for (const tick of [...timers.values()]) tick();
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  expect(timers.size).toBe(0);
+  status = 'expired';
+  fireEvent.click(screen.getByRole('button', { name: '飞书授权' }));
+  await screen.findByText('二维码已失效，请重新生成。');
+  expect(timers.size).toBe(0);
+});

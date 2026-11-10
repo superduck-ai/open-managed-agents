@@ -32,7 +32,7 @@ export function ChannelCredentials({
     try {
       await anthropicBetaApi.channels.checkCredentials(workspaceId, {
         app_id: value.app_id?.trim() ?? '',
-        app_secret: value.app_secret,
+        app_secret: value.app_secret.trim(),
       });
       setVerifyMessage({ ok: true, text: msg('managedAgents.channels.verifySecretOk', '应用密钥验证通过') });
     } catch (error) {

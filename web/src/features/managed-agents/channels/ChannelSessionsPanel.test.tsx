@@ -91,7 +91,14 @@ test('会话管理展示桥接会话统计、来源和详情链接', async () =>
   expect(screen.getByText('会话数据同步中')).toBeTruthy();
   expect(screen.getByText('V1')).toBeTruthy();
   expect(screen.getByText('空闲')).toBeTruthy();
-  expect(screen.getAllByText(/2026年11月5日/).length).toBeGreaterThan(1);
+  const expectedDate = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date('2026-11-05T15:09:18Z'));
+  expect(screen.getAllByText(expectedDate).length).toBeGreaterThan(1);
   expect(screen.getByText('共 1 条')).toBeTruthy();
   expect(screen.queryByText('暂无按渠道维度的会话同步接口；桥接会话仍可在「会话」页按智能体查看。')).toBeNull();
   const link = screen.getByRole('link', { name: '查看详情' });

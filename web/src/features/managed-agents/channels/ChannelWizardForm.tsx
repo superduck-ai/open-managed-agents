@@ -143,7 +143,7 @@ export function StepConnect({
           bound={saved?.binding_status === 'bound'}
         />
       ) : (
-        <div className="space-y-3 rounded-xl border border-dashed border-border bg-muted/20 p-4">
+        <div className="space-y-3">
           <div>
             <p className="text-sm font-medium">{msg('managedAgents.channels.authorizeCreate', '授权创建飞书应用')}</p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -206,9 +206,9 @@ export function StepStrategy({
         <Label>
           <span className="text-destructive">*</span> {msg('managedAgents.channels.identityReply', '身份与回复')}
         </Label>
-        <div className="overflow-hidden rounded-xl border border-border">
+        <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-muted/40 text-muted-foreground">
+            <thead className="text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">{msg('managedAgents.channels.type', '类型')}</th>
                 <th className="px-3 py-2 text-left font-medium">

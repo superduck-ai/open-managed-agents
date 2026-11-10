@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { anthropicBetaApi } from '../../../shared/api/anthropic';
+import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
+import { ManagedDetailBreadcrumb } from '../components/breadcrumbs';
 import { channelApi, type Channel, type ChannelQr } from './api';
 import {
   StepConnect,
@@ -125,18 +126,20 @@ export function ChannelWizardFormPage({
     }
   };
 
+  const listHref = channelsListPath(workspaceId);
   return (
-    <section className="min-w-0 text-foreground">
-      <button
-        type="button"
-        className="mb-4 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-        onClick={() => onNavigate(channelsListPath(workspaceId))}
-      >
-        <ArrowLeft className="size-4" />
-        {title}
-      </button>
-      <div className="rounded-xl border border-border bg-card p-6">
-        <div className="grid items-start gap-6 md:grid-cols-[220px_minmax(0,1fr)]">
+    <section className="flex min-h-[calc(100dvh-112px)] min-w-0 flex-col text-foreground md:min-h-[calc(100dvh-48px)]">
+      <ManagedDetailBreadcrumb
+        listHref={listHref}
+        listLabel={msg('managedAgents.channels.title', '渠道')}
+        currentLabel={title}
+        className="-mt-1 mb-6 shrink-0"
+      />
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
+        <header className="mb-7 shrink-0">
+          <h1 className="text-2xl font-medium tracking-tight">{title}</h1>
+        </header>
+        <div className="grid flex-1 items-start gap-6 pb-8 md:grid-cols-[220px_minmax(0,1fr)]">
           <WizardStepper step={step} onStepChange={setStep} />
           <div>
             {step === 1 ? (
@@ -161,40 +164,35 @@ export function ChannelWizardFormPage({
                 agentLocked={agentLocked}
               />
             ) : null}
-            {error ? (
-              <p role="alert" className="mt-4 text-sm text-destructive">
-                {error}
-              </p>
+          </div>
+        </div>
+        {error ? (
+          <Alert variant="destructive" className="mb-3">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+        <div className="sticky bottom-0 z-10 flex shrink-0 items-center justify-between gap-3 border-t-[0.5px] border-border bg-background py-3">
+          <div>
+            {step < 3 ? (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={!canGoNext || busy}
+                onClick={() => setStep((step + 1) as WizardStep)}
+              >
+                {msg('managedAgents.channels.nextStep', '下一步')}
+              </Button>
             ) : null}
-            <div className="mt-6 flex items-center justify-between gap-3">
-              <div>
-                {step < 3 ? (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={!canGoNext || busy}
-                    onClick={() => setStep((step + 1) as WizardStep)}
-                  >
-                    {msg('managedAgents.channels.nextStep', '下一步')}
-                  </Button>
-                ) : null}
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => onNavigate(channelsListPath(workspaceId))}
-                >
-                  {msg('managedAgents.channels.cancel', '取消')}
-                </Button>
-                <Button type="button" disabled={busy} onClick={() => void persist(false, true)}>
-                  {busy
-                    ? msg('managedAgents.channels.processing', '处理中…')
-                    : msg('managedAgents.channels.saveConfig', '保存配置')}
-                </Button>
-              </div>
-            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" disabled={busy} onClick={() => onNavigate(listHref)}>
+              {msg('managedAgents.channels.cancel', '取消')}
+            </Button>
+            <Button type="button" disabled={busy} onClick={() => void persist(false, true)}>
+              {busy
+                ? msg('managedAgents.channels.processing', '处理中…')
+                : msg('managedAgents.channels.saveConfig', '保存配置')}
+            </Button>
           </div>
         </div>
       </div>

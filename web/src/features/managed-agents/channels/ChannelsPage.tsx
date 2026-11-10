@@ -1,42 +1,44 @@
 import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from '@tanstack/react-router';
-import { Bot, Box, ChevronDown, Plus, Search } from 'lucide-react';
+import { ArrowUpRight, Plug, Plus, Search, Settings } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { productIcons } from '../../../shared/icons/product-icons';
 import { useI18n } from '../../../shared/i18n';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../../shared/workspaces/presentation';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
-import { Input } from '../../../shared/ui/input';
-import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
+import {
+  DataTableCell,
+  DataTableRow,
+  MoreActionsButton,
+  dataTableClassName,
+  dataTableHeaderCellClassName,
+  dataTableHeaderRowClassName,
+} from '../../../shared/ui/data-table-interactions';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../../../shared/ui/dropdown-menu';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../shared/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
+import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
+import { ResourceFilterDropdown, ResourceSearchField } from '../../../shared/ui/resource-list-controls';
+import { ResourceListPagination } from '../../../shared/ui/resource-list-pagination';
+import { ResourceListState } from '../../../shared/ui/resource-list-state';
+import { Skeleton } from '../../../shared/ui/skeleton';
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '../../../shared/ui/table';
 import { toast } from '../../../shared/ui/sonner';
 import { errorMessage } from '../utils';
 import feishuLogo from './feishu.ico';
 import { ChannelStatusBadge } from './ChannelStatusBadge';
 import { channelCreatePath, channelDetailPath, channelEditPath } from './paths';
-import { ChannelTablePager } from './ChannelTablePager';
-import { channelConnectionStatus, type ChannelConnectionStatus } from './status';
+import { channelConnectionStatus, channelConnectionStatusLabel, type ChannelConnectionStatus } from './status';
 import { listChannelEnvironments } from './channelEnvironments';
 import { listWorkspaceChannels, type WorkspaceChannel } from './workspaceChannels';
 
-type SearchField = 'name' | 'app_id';
-
-const statusOptions: Array<ChannelConnectionStatus | 'all'> = [
-  'all',
-  'connected',
-  'pending_test',
-  'abnormal',
-  'disabled',
-];
 const channelListPageSize = 10;
+const statusFilters = ['connected', 'pending_test', 'abnormal', 'disabled'] as const;
 
 export function ChannelsPage() {
   const location = useLocation();
@@ -62,11 +64,10 @@ export function ChannelsPageContent({
   agentFilter?: string;
 }) {
   const { msg } = useI18n();
-  const [searchField, setSearchField] = useState<SearchField>('name');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<ChannelConnectionStatus | 'all'>('all');
+  const [filterOpen, setFilterOpen] = useState(false);
   const [pageIndex, setPageIndex] = useState(1);
-  const [pageSize, setPageSize] = useState(channelListPageSize);
   const query = useQuery({
     queryKey: ['workspace-channels', workspaceId],
     queryFn: () => listWorkspaceChannels(workspaceId),
@@ -76,95 +77,59 @@ export function ChannelsPageContent({
     queryKey: ['channel-environment-options', workspaceId],
     queryFn: () => listChannelEnvironments(workspaceId),
   });
-  const rows = useMemo(() => {
-    const data = query.data?.channels ?? [];
-    return data.filter((row) => {
-      if (agentFilter && row.agentId !== agentFilter) return false;
-      if (statusFilter !== 'all' && channelConnectionStatus(row) !== statusFilter) return false;
-      const needle = search.trim().toLowerCase();
-      if (!needle) return true;
-      if (searchField === 'app_id') return (row.app_id ?? '').toLowerCase().includes(needle);
-      return row.name.toLowerCase().includes(needle);
-    });
-  }, [query.data, agentFilter, statusFilter, search, searchField]);
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const rows = useMemo(
+    () => filterChannelRows(query.data?.channels ?? [], { agentFilter, statusFilter, search }),
+    [query.data, agentFilter, statusFilter, search],
+  );
+  const pageCount = Math.max(1, Math.ceil(rows.length / channelListPageSize));
   const page = Math.min(pageIndex, pageCount);
-  const visibleRows = rows.slice((page - 1) * pageSize, page * pageSize);
+  const visibleRows = rows.slice((page - 1) * channelListPageSize, page * channelListPageSize);
   const environmentLabel = (environmentId: string | null) =>
     environments.data?.find((environment) => environment.id === environmentId)?.name || environmentId || '—';
-
-  const runConnectionCheck = (row: WorkspaceChannel) => {
-    const status = channelConnectionStatus(row);
-    if (status === 'connected') {
-      toast.success(msg('managedAgents.channels.connectionCheckOk', '连接检测通过：渠道已连通'));
-      return;
-    }
-    if (status === 'disabled') {
-      toast.message(msg('managedAgents.channels.connectionCheckDisabled', '渠道已停用，请先启用后再检测'));
-      return;
-    }
-    if (status === 'pending_test') {
-      toast.message(
-        msg('managedAgents.channels.connectionCheckPending', '渠道尚未完成绑定，请先完成飞书授权或凭据配置'),
-      );
-      return;
-    }
-    toast.error(msg('managedAgents.channels.connectionCheckFail', '连接检测异常：桥接报告未连通'));
-  };
+  const statusOptions = [
+    { value: 'all' as const, label: msg('managedAgents.channels.statusAll', '全部状态') },
+    ...statusFilters.map((status) => ({ value: status, label: channelConnectionStatusLabel(status, msg) })),
+  ];
+  const filtered = Boolean(search.trim()) || statusFilter !== 'all';
 
   return (
     <section className="min-w-0 text-foreground" aria-label={msg('managedAgents.channels.title', '渠道')}>
       <ResourcePageHeader
         title={msg('managedAgents.channels.title', '渠道')}
         description={msg('managedAgents.channels.pageDescription', '管理智能体在飞书中的接入渠道')}
+        actions={
+          <Button size="lg" onClick={() => onNavigate(channelCreatePath(workspaceId, agentFilter))}>
+            <Plus className="size-4" />
+            {msg('managedAgents.channels.addChannel', '新增渠道')}
+          </Button>
+        }
       />
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Select
-            value={searchField}
-            onValueChange={(value) => setSearchField((value as SearchField) || 'name')}
-            items={[
-              { value: 'name', label: msg('managedAgents.channels.searchByName', '名称') },
-              { value: 'app_id', label: msg('managedAgents.channels.searchByAppId', '应用 ID') },
-            ]}
-          >
-            <SelectTrigger className="h-9 w-[110px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="name">{msg('managedAgents.channels.searchByName', '名称')}</SelectItem>
-              <SelectItem value="app_id">{msg('managedAgents.channels.searchByAppId', '应用 ID')}</SelectItem>
-            </SelectContent>
-          </Select>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="h-9 w-[240px] pl-9"
-              value={search}
-              placeholder={
-                searchField === 'app_id'
-                  ? msg('managedAgents.channels.searchAppIdPlaceholder', '搜索应用 ID')
-                  : msg('managedAgents.channels.searchNamePlaceholder', '搜索渠道名称')
-              }
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-        </div>
-        <Button onClick={() => onNavigate(channelCreatePath(workspaceId, agentFilter))}>
-          <Plus className="size-4" />
-          {msg('managedAgents.channels.addChannel', '新增渠道')}
-        </Button>
+      <div className="mb-7 flex flex-wrap items-center gap-2">
+        <ResourceSearchField
+          id="channels-search"
+          value={search}
+          placeholder={msg('managedAgents.channels.searchNamePlaceholder', '搜索渠道名称')}
+          onChange={(value) => {
+            setSearch(value);
+            setPageIndex(1);
+          }}
+        />
+        <ResourceFilterDropdown
+          label={msg('managedAgents.channels.statusFilter', '连通状态')}
+          valueLabel={statusOptions.find((option) => option.value === statusFilter)!.label}
+          options={statusOptions}
+          value={statusFilter}
+          menu="status"
+          open={filterOpen}
+          menuWidthClass="w-40"
+          onOpenChange={(open) => setFilterOpen(Boolean(open))}
+          onSelect={(value) => {
+            setStatusFilter(value);
+            setPageIndex(1);
+            setFilterOpen(false);
+          }}
+        />
       </div>
-      {query.error ? (
-        <Alert variant="destructive" className="mb-4">
-          <AlertDescription>
-            {errorMessage(query.error)}
-            <Button variant="outline" size="sm" className="ml-3" onClick={() => void query.refetch()}>
-              {msg('managedAgents.channels.retry', '重试')}
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
       {query.data?.incomplete ? (
         <Alert className="mb-4">
           <AlertDescription>
@@ -179,143 +144,217 @@ export function ChannelsPageContent({
           </AlertDescription>
         </Alert>
       ) : null}
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
-        <Table>
-          <TableHeader className="bg-muted/40">
-            <TableRow>
-              <TableHead>{msg('managedAgents.channels.columnChannel', '渠道')}</TableHead>
-              <TableHead>{msg('managedAgents.channels.columnApp', '应用')}</TableHead>
-              <TableHead>
-                <DropdownMenu>
-                  <DropdownMenuTrigger className="inline-flex items-center gap-1">
-                    {msg('managedAgents.channels.columnStatus', '连通状态')}
-                    <ChevronDown className="size-3.5 text-muted-foreground" />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent>
-                    {statusOptions.map((status) => (
-                      <DropdownMenuItem key={status} onClick={() => setStatusFilter(status)}>
-                        {status === 'all'
-                          ? msg('managedAgents.channels.statusAll', '全部状态')
-                          : statusLabel(status, msg)}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </TableHead>
-              <TableHead>{msg('managedAgents.channels.columnAgent', '智能体')}</TableHead>
-              <TableHead>{msg('managedAgents.channels.columnEnvironment', '环境')}</TableHead>
-              <TableHead>{msg('managedAgents.channels.columnActions', '操作')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {query.isPending ? (
-              <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
-                  {msg('managedAgents.channels.loading', '正在加载渠道…')}
-                </TableCell>
-              </TableRow>
-            ) : visibleRows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
-                  {msg('managedAgents.channels.listEmpty', '暂无渠道。点击「新增渠道」开始接入飞书。')}
-                </TableCell>
-              </TableRow>
-            ) : (
-              visibleRows.map((row) => (
-                <TableRow key={`${row.agentId}:${row.id}`}>
-                  <TableCell>
-                    <button
-                      type="button"
-                      className="text-sm font-medium text-primary hover:underline"
-                      onClick={() => onNavigate(channelDetailPath(workspaceId, row.agentId, row.id))}
-                    >
-                      {row.name}
-                    </button>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-start gap-2 text-sm">
-                      <img src={feishuLogo} alt="" className="mt-0.5 size-4" width={16} height={16} />
-                      <div className="min-w-0">
-                        <div>{msg('managedAgents.channels.feishu', '飞书')}</div>
-                        <div className="truncate font-mono text-xs text-muted-foreground">{row.app_id || '—'}</div>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <ChannelStatusBadge channel={row} />
-                  </TableCell>
-                  <TableCell>
-                    <div className="inline-flex max-w-[240px] items-center gap-2 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs">
-                      <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{row.agentName}</span>
-                      <span className="shrink-0 text-muted-foreground">
-                        {msg('managedAgents.channels.latestVersion', '默认最新版本')}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <span className="inline-flex max-w-[220px] items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs">
-                      <Box className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{environmentLabel(row.environmentId)}</span>
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-3 text-sm">
-                      <button
-                        type="button"
-                        className="text-primary hover:underline"
-                        onClick={() => onNavigate(channelDetailPath(workspaceId, row.agentId, row.id))}
-                      >
-                        {msg('managedAgents.channels.details', '详情')}
-                      </button>
-                      <button
-                        type="button"
-                        className="text-primary hover:underline"
-                        onClick={() => onNavigate(channelEditPath(workspaceId, row.agentId, row.id))}
-                      >
-                        {msg('managedAgents.channels.configure', '配置')}
-                      </button>
-                      <button
-                        type="button"
-                        className="text-primary hover:underline"
-                        onClick={() => runConnectionCheck(row)}
-                      >
-                        {msg('managedAgents.channels.connectionCheck', '连接检测')}
-                      </button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-        {query.isPending || query.error ? null : (
-          <ChannelTablePager
-            page={page}
-            pageCount={pageCount}
-            total={rows.length}
-            pageSize={pageSize}
-            onPage={setPageIndex}
-            onPageSize={(size) => {
-              setPageSize(size);
-              setPageIndex(1);
-            }}
+      {query.error ? (
+        <Alert variant="destructive">
+          <AlertDescription>
+            {errorMessage(query.error)}{' '}
+            <Button variant="ghost" size="sm" onClick={() => void query.refetch()}>
+              {msg('managedAgents.channels.retry', '重试')}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : query.isPending ? (
+        <Skeleton className="h-40 w-full" />
+      ) : (
+        <>
+          <ChannelListTable
+            rows={visibleRows}
+            workspaceId={workspaceId}
+            environmentLabel={environmentLabel}
+            onNavigate={onNavigate}
           />
-        )}
-      </div>
+          {rows.length === 0 ? <ChannelListEmpty filtered={filtered} /> : null}
+          <ResourceListPagination
+            currentPage={page}
+            totalPages={pageCount}
+            canPrevious={page > 1}
+            canNext={page < pageCount}
+            onPrevious={() => setPageIndex(page - 1)}
+            onNext={() => setPageIndex(page + 1)}
+          />
+        </>
+      )}
     </section>
   );
 }
 
-function statusLabel(status: ChannelConnectionStatus, msg: ReturnType<typeof useI18n>['msg']) {
-  switch (status) {
-    case 'connected':
-      return msg('managedAgents.channels.statusConnected', '已连通');
-    case 'pending_test':
-      return msg('managedAgents.channels.statusPendingTest', '待测试');
-    case 'abnormal':
-      return msg('managedAgents.channels.statusAbnormal', '异常');
-    case 'disabled':
-      return msg('managedAgents.channels.statusDisabled', '已停用');
+function filterChannelRows(
+  channels: WorkspaceChannel[],
+  filters: { agentFilter?: string; statusFilter: ChannelConnectionStatus | 'all'; search: string },
+) {
+  const needle = filters.search.trim().toLowerCase();
+  return channels.filter((row) => {
+    if (filters.agentFilter && row.agentId !== filters.agentFilter) return false;
+    if (filters.statusFilter !== 'all' && channelConnectionStatus(row) !== filters.statusFilter) return false;
+    if (!needle) return true;
+    return row.name.toLowerCase().includes(needle) || (row.app_id ?? '').toLowerCase().includes(needle);
+  });
+}
+
+function ChannelListEmpty({ filtered }: { filtered: boolean }) {
+  const { msg } = useI18n();
+  return (
+    <ResourceListState
+      icon={filtered ? Search : productIcons.channels}
+      title={
+        filtered
+          ? msg('managedAgents.channels.noMatches', '没有匹配的渠道')
+          : msg('managedAgents.channels.emptyTitle', '暂无渠道')
+      }
+      body={
+        filtered
+          ? msg('managedAgents.channels.noMatchesHelp', '试试其他名称，或调整筛选。')
+          : msg('managedAgents.channels.listEmpty', '暂无渠道。点击「新增渠道」开始接入飞书。')
+      }
+    />
+  );
+}
+
+function ChannelListTable({
+  rows,
+  workspaceId,
+  environmentLabel,
+  onNavigate,
+}: {
+  rows: WorkspaceChannel[];
+  workspaceId: string;
+  environmentLabel: (environmentId: string | null) => string;
+  onNavigate: (href: string) => void;
+}) {
+  const { msg } = useI18n();
+  const columns = [
+    msg('managedAgents.channels.columnChannel', '渠道'),
+    msg('managedAgents.channels.columnApp', '应用'),
+    msg('managedAgents.channels.columnStatus', '连通状态'),
+    msg('managedAgents.channels.columnAgent', '智能体'),
+    msg('managedAgents.channels.columnEnvironment', '环境'),
+  ];
+  return (
+    <Table className={`${dataTableClassName} min-w-[960px]`}>
+      <colgroup>
+        <col className="w-44" />
+        <col className="w-44" />
+        <col className="w-28" />
+        <col />
+        <col className="w-40" />
+        <col className="w-16" />
+      </colgroup>
+      <TableHeader>
+        <TableRow className={dataTableHeaderRowClassName}>
+          {columns.map((label) => (
+            <TableHead key={label} className={dataTableHeaderCellClassName}>
+              {label}
+            </TableHead>
+          ))}
+          <TableHead className="w-16">
+            <span className="sr-only">{msg('managedAgents.channels.columnActions', '操作')}</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row) => (
+          <ChannelListRow
+            key={`${row.agentId}:${row.id}`}
+            row={row}
+            workspaceId={workspaceId}
+            environmentLabel={environmentLabel(row.environmentId)}
+            onNavigate={onNavigate}
+          />
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function ChannelListRow({
+  row,
+  workspaceId,
+  environmentLabel,
+  onNavigate,
+}: {
+  row: WorkspaceChannel;
+  workspaceId: string;
+  environmentLabel: string;
+  onNavigate: (href: string) => void;
+}) {
+  const { msg } = useI18n();
+  const detailHref = channelDetailPath(workspaceId, row.agentId, row.id);
+  const editHref = channelEditPath(workspaceId, row.agentId, row.id);
+  const openDetail = () => onNavigate(detailHref);
+  return (
+    <DataTableRow clickable className="group [&>td]:h-11" onClick={openDetail}>
+      <DataTableCell edge="start" className="max-w-44 truncate">
+        <a
+          href={detailHref}
+          className="rounded-sm font-medium underline-offset-4 hover:underline focus-visible:underline"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openDetail();
+          }}
+        >
+          {row.name}
+        </a>
+      </DataTableCell>
+      <DataTableCell>
+        <div className="flex min-w-0 items-start gap-2">
+          <img src={feishuLogo} alt="" className="mt-0.5 size-4" width={16} height={16} />
+          <div className="min-w-0">
+            <div className="truncate">{msg('managedAgents.channels.feishu', '飞书')}</div>
+            <div className="truncate font-mono text-xs text-muted-foreground">{row.app_id || '—'}</div>
+          </div>
+        </div>
+      </DataTableCell>
+      <DataTableCell>
+        <ChannelStatusBadge channel={row} />
+      </DataTableCell>
+      <DataTableCell>
+        <div className="min-w-0">
+          <div className="truncate">{row.agentName}</div>
+          <div className="mt-1 truncate text-xs text-muted-foreground">
+            {msg('managedAgents.channels.latestVersion', '默认最新版本')}
+          </div>
+        </div>
+      </DataTableCell>
+      <DataTableCell className="max-w-40 truncate">{environmentLabel}</DataTableCell>
+      <DataTableCell edge="end" className="px-2" onClick={(event) => event.stopPropagation()}>
+        <div className="flex justify-end">
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<MoreActionsButton label={msg('common.moreActions', '更多操作')} />} />
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem onClick={openDetail}>
+                <ArrowUpRight className="size-4" />
+                {msg('managedAgents.channels.details', '详情')}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onNavigate(editHref)}>
+                <Settings className="size-4" />
+                {msg('managedAgents.channels.configure', '配置')}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => reportConnectionCheck(row, msg)}>
+                <Plug className="size-4" />
+                {msg('managedAgents.channels.connectionCheck', '连接检测')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </DataTableCell>
+    </DataTableRow>
+  );
+}
+
+function reportConnectionCheck(row: WorkspaceChannel, msg: ReturnType<typeof useI18n>['msg']) {
+  const status = channelConnectionStatus(row);
+  if (status === 'connected') {
+    toast.success(msg('managedAgents.channels.connectionCheckOk', '连接检测通过：渠道已连通'));
+    return;
   }
+  if (status === 'disabled') {
+    toast.message(msg('managedAgents.channels.connectionCheckDisabled', '渠道已停用，请先启用后再检测'));
+    return;
+  }
+  if (status === 'pending_test') {
+    toast.message(msg('managedAgents.channels.connectionCheckPending', '渠道尚未完成绑定，请先完成飞书授权或凭据配置'));
+    return;
+  }
+  toast.error(msg('managedAgents.channels.connectionCheckFail', '连接检测异常：桥接报告未连通'));
 }

@@ -68,7 +68,7 @@ test('工作区渠道页读取工作区渠道接口并支持新增跳转', async
   expect(screen.getByText('已连通')).toBeTruthy();
   expect(screen.getByText('客服助手')).toBeTruthy();
   expect(screen.getByText('部分智能体的渠道暂时无法读取，列表可能不完整。')).toBeTruthy();
-  expect(screen.getByText('共 1 条')).toBeTruthy();
+  expect(screen.getByText('1 / 1')).toBeTruthy();
   expect(urls.some((url) => url.includes('limit=100'))).toBe(true);
   expect(urls.some((url) => url.includes('/v1/channels'))).toBe(true);
   expect(urls.some((url) => url.includes('/v1/agents/'))).toBe(false);

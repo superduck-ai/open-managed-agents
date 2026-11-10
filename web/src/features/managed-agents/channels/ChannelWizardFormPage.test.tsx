@@ -72,8 +72,9 @@ test('扫码创建前可选择配对模式，创建成功后锁定且重试保�
   expect(pairing.getAttribute('aria-checked')).toBe('true');
   fireEvent.click(screen.getByRole('button', { name: '使用飞书扫码授权' }));
   await waitFor(() => expect(requests.filter((request) => request.url.endsWith('/qr'))).toHaveLength(2));
-  expect(requests[4].url).toEndWith('/channels/ch-pairing');
-  expect(requests[4].body).toEqual(expect.objectContaining({ mode: 'pairing' }));
+  expect(requests[3].url).toEndWith('/channels/ch-pairing');
+  expect(requests[3].body).toEqual(expect.objectContaining({ mode: 'pairing' }));
+  expect(requests.filter((request) => request.url.endsWith('/settings'))).toHaveLength(1);
   expect(openWindow).not.toHaveBeenCalled();
 });
 
@@ -139,7 +140,12 @@ test.each([true, false])('打开飞书授权窗口，注册成功=%s', async (su
   resetTestDom('/');
   const replace = mock(() => undefined);
   const close = mock(() => undefined);
-  const popup = { location: { replace }, close, opener: window };
+  const popup = {
+    location: { replace },
+    close,
+    opener: window,
+    document: { title: '', body: { textContent: '', style: { cssText: '' } } },
+  };
   const openWindow = spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
   const authorizationUrl = 'https://open.feishu.cn/page/launcher?ticket=test';
   globalThis.fetch = (async (input, init) => {
@@ -148,6 +154,7 @@ test.each([true, false])('打开飞书授权窗口，注册成功=%s', async (su
       return Response.json({ data: [] });
     }
     expect(openWindow).toHaveBeenCalledWith('about:blank', '_blank');
+    expect(popup.document.body.textContent).toBe('正在打开飞书授权…');
     if (!success) return Response.json({ error: { message: '注册失败' } }, { status: 500 });
     if (String(input).includes('/qr')) return Response.json({ status: 'pending', url: authorizationUrl });
     return Response.json({ id: 'ch-window', binding_status: 'unbound' });

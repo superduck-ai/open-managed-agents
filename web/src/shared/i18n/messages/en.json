@@ -3122,6 +3122,7 @@
   "managedAgents.channels.scan": "Scan QR code",
   "managedAgents.channels.credentials": "Configure credentials",
   "managedAgents.channels.qrHint": "Basic settings are saved before generating a QR code. Scan it with Feishu to authorize.",
+  "managedAgents.channels.openingAuthorization": "Opening Feishu authorization…",
   "managedAgents.channels.qrWaiting": "Waiting for Feishu authorization",
   "managedAgents.channels.bound": "Feishu connected successfully",
   "managedAgents.channels.regenerateQr": "Regenerate QR code",

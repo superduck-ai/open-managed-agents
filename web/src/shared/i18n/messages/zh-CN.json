@@ -3122,6 +3122,7 @@
   "managedAgents.channels.scan": "扫码绑定",
   "managedAgents.channels.credentials": "配置凭据",
   "managedAgents.channels.qrHint": "生成二维码前会先保存基础配置，请使用飞书 App 扫码授权。",
+  "managedAgents.channels.openingAuthorization": "正在打开飞书授权…",
   "managedAgents.channels.qrWaiting": "等待飞书扫码确认",
   "managedAgents.channels.bound": "飞书绑定成功",
   "managedAgents.channels.regenerateQr": "重新生成二维码",

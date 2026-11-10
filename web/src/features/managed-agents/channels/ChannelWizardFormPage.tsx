@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
@@ -99,6 +99,7 @@ export function ChannelWizardFormPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [value, setValue] = useState<WizardValue>(initialValue);
+  const savedEnvironmentId = useRef(initialChannel ? initialValue.environmentId : null);
 
   const agentsQuery = useQuery({
     queryKey: ['workspace-channel-agents', workspaceId],
@@ -167,21 +168,31 @@ export function ChannelWizardFormPage({
       return;
     }
     const authorizationWindow = openAuthorization ? window.open('about:blank', '_blank') : null;
-    if (authorizationWindow) authorizationWindow.opener = null;
+    if (authorizationWindow) {
+      authorizationWindow.opener = null;
+      authorizationWindow.document.title = msg('managedAgents.channels.openingAuthorization', '正在打开飞书授权…');
+      authorizationWindow.document.body.textContent = authorizationWindow.document.title;
+      authorizationWindow.document.body.style.cssText =
+        'margin:0;display:grid;min-height:100vh;place-items:center;font:14px system-ui;color:#666';
+    }
     setBusy(true);
     setError('');
     try {
-      const next = await saveWizardChannel({
-        targetAgentId: targetAgentId!,
+      if (savedEnvironmentId.current !== value.environmentId) {
+        await channelApi(targetAgentId!, workspaceId, '/settings', 'POST', { environment_id: value.environmentId });
+        savedEnvironmentId.current = value.environmentId;
+      }
+      const next = await channelApi<Channel>(
+        targetAgentId!,
         workspaceId,
-        saved,
-        value,
-        binding,
-      });
+        saved ? `/${saved.id}` : '',
+        'POST',
+        channelPayload(value, binding),
+      );
       setSaved(next);
       setValue((current) => ({ ...current, app_secret: '', agentId: targetAgentId! }));
-      await queryClient.invalidateQueries({ queryKey: ['workspace-channels', workspaceId] });
-      await queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, next.id] });
+      void queryClient.invalidateQueries({ queryKey: ['workspace-channels', workspaceId] });
+      void queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, next.id] });
       if (generateQr) {
         const nextQr = await channelApi<ChannelQr>(targetAgentId!, workspaceId, `/${next.id}/qr`, 'POST', {});
         setQr(nextQr);
@@ -279,29 +290,6 @@ function connectTargetError(value: WizardValue, msg: ReturnType<typeof useI18n>[
   if (!value.name.trim()) return msg('managedAgents.channels.nameRequired', '请输入机器人名称');
   if (!value.agentId) return msg('managedAgents.channels.agentRequired', '请选择智能体');
   return msg('managedAgents.channels.environmentRequired', '请先选择执行环境，再保存渠道');
-}
-
-async function saveWizardChannel({
-  targetAgentId,
-  workspaceId,
-  saved,
-  value,
-  binding,
-}: {
-  targetAgentId: string;
-  workspaceId: string;
-  saved: Channel | null;
-  value: WizardValue;
-  binding: string;
-}) {
-  await channelApi(targetAgentId, workspaceId, '/settings', 'POST', { environment_id: value.environmentId });
-  return channelApi<Channel>(
-    targetAgentId,
-    workspaceId,
-    saved ? `/${saved.id}` : '',
-    'POST',
-    channelPayload(value, binding),
-  );
 }
 
 function channelPayload(value: WizardValue, binding: string) {

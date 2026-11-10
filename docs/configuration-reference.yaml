@@ -21,8 +21,13 @@ database:
   auto_migrate: true
 
 pricing:
+  # Provider-slug keyed rules that read the actual Anthropic Messages response cost.
   response_costs: {}
+  # Relative paths resolve from the config file directory. The process user must be able
+  # to create and atomically replace this file; otherwise prices are never published and
+  # budgeted model requests fail with 503 model_price_unavailable.
   snapshot_file: ./data/model-prices.json
+  # Read-only instances reload snapshot_file instead of fetching the upstream catalogs.
   read_only: false
   refresh_interval: 6h
   reload_interval: 30s

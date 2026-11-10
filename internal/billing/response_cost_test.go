@@ -28,6 +28,23 @@ func TestResponseCostExtraction(t *testing.T) {
 	if rule.Extract([]byte(`{}`)) != nil {
 		t.Fatal("缺失金额不能视为零")
 	}
+	arrayRule := &ResponseCostRule{AmountPointer: "/gateway/costs/0/amount", StreamEvent: "message_stop", Currency: "USD", ExchangeRate: "1"}
+	if err := arrayRule.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cost := arrayRule.Extract([]byte(`{"gateway":{"costs":[{"amount":"1.25"}]}}`)); cost == nil || cost.USDCents != 125 {
+		t.Fatalf("数组路径取值错误：%+v", cost)
+	}
+	for _, pointer := range []string{"/gateway/costs/01/amount", "/gateway/costs/2/amount", "/gateway/costs/x/amount"} {
+		invalid := *arrayRule
+		invalid.AmountPointer = pointer
+		if invalid.Validate() != nil {
+			t.Fatalf("合法指针被拒绝：%s", pointer)
+		}
+		if cost := invalid.Extract([]byte(`{"gateway":{"costs":[{"amount":"1.25"}]}}`)); cost != nil {
+			t.Fatalf("非法数组下标应回退：%s", pointer)
+		}
+	}
 	for _, rate := range []string{"0", "-1", "NaN", "1/2"} {
 		rule.ExchangeRate = rate
 		if rule.Validate() == nil {

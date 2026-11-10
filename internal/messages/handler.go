@@ -176,10 +176,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	}
 	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
-		if errors.Is(err, db.ErrSessionBudgetReached) || errors.Is(err, codesessions.ErrModelPriceUnavailable) {
+		switch {
+		case errors.Is(err, db.ErrSessionBudgetReached):
 			call.failBeforeProxy("budget_reached")
 			w.Header().Set("X-Should-Retry", "false")
-		} else {
+		case errors.Is(err, codesessions.ErrModelPriceUnavailable):
+			call.failBeforeProxy("model_price_unavailable")
+			w.Header().Set("X-Should-Retry", "false")
+		default:
 			call.failBeforeProxy("begin_model_request")
 			h.logger.ErrorContext(r.Context(), "start model request", "error", err)
 		}

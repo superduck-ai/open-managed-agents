@@ -76,8 +76,8 @@ func TestBudgetMigrationsUpgradeFromMainPostgres(t *testing.T) {
 				}
 			}
 			var finalVersion, finalCount int64
-			if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&finalVersion, &finalCount); err != nil || finalVersion != 117 || finalCount != historyCount+117-baselineVersion {
-				t.Fatalf("升级历史=%d/%d，预期 117/%d：%v", finalVersion, finalCount, historyCount+117-baselineVersion, err)
+			if err := database.QueryRowContext(ctx, `SELECT max(version_id), count(*) FROM goose_db_version WHERE is_applied`).Scan(&finalVersion, &finalCount); err != nil || finalVersion != 118 || finalCount != historyCount+118-baselineVersion {
+				t.Fatalf("升级历史=%d/%d，预期 118/%d：%v", finalVersion, finalCount, historyCount+118-baselineVersion, err)
 			}
 			for _, column := range []string{"budget", "budget_reached_at", "budget_removed_at"} {
 				assertMigrationColumnNullable(t, ctx, database, "sessions", column, "YES")

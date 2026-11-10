@@ -375,7 +375,7 @@ func shutdownTelemetry(telemetryRuntime *telemetry.Runtime, bootstrap *slog.Logg
 func startPricing(ctx context.Context, cfg config.Config, logger *slog.Logger) (*pricing.Store, func()) {
 	prices := pricing.NewStore(cfg.Pricing, logger.With("component", "pricing"))
 	if err := prices.Reload(); err != nil {
-		logger.WarnContext(ctx, "load model prices failed", "error", err)
+		logger.WarnContext(ctx, "load model prices failed", "snapshot_file", cfg.Pricing.SnapshotFile, "error", err)
 	}
 	return prices, prices.Start(ctx)
 }

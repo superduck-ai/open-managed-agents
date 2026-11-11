@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"io"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -294,5 +295,11 @@ func newHTTPClient(ca string) (*httpClient, error) {
 }
 
 func (c *httpClient) Call(request *http.Request, _ *http.Transport) (*http.Response, error) {
-	return c.client.Do(request)
+	response, err := c.client.Do(request)
+	if err != nil || response.StatusCode < 500 || strings.Contains(response.Header.Get("Content-Type"), "json") {
+		return response, err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
+	_ = response.Body.Close()
+	return nil, &responseStatusError{statusCode: response.StatusCode}
 }

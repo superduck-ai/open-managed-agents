@@ -285,10 +285,16 @@ func TestInvokeStopsWithoutRetry(t *testing.T) {
 		})
 	}
 	t.Run("attempt timeout", func(t *testing.T) {
-		fake := &fakeClient{decrypt: func(context.Context, *kms.DecryptRequest) (*kms.DecryptResponse, error) {
+		fake := &fakeClient{}
+		fake.decrypt = func(context.Context, *kms.DecryptRequest) (*kms.DecryptResponse, error) {
+			if fake.calls == 1 {
+				return nil, transient
+			}
 			return nil, &url.Error{Op: "Post", URL: "https://kms.example", Err: timeoutError{}}
-		}}
-		if _, err := retryingProvider(fake, 0).UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")}); !errors.Is(err, context.DeadlineExceeded) || fake.calls != 1 {
+		}
+		_, err := retryingProvider(fake, 0).UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+		var failure *KMSError
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &failure) || failure.Code != "NetworkError.Timeout" || failure.Attempts != 2 || fake.calls != 2 {
 			t.Fatalf("calls = %d, err = %v", fake.calls, err)
 		}
 	})
@@ -359,6 +365,40 @@ func TestInvokeRetriesTransientFailure(t *testing.T) {
 	wrapped, err := retryingProvider(encrypts, 0).WrapDEK(t.Context(), dek)
 	if err != nil || string(wrapped.Ciphertext) != "second" || encrypts.calls != 2 {
 		t.Fatalf("calls = %d, err = %v", encrypts.calls, err)
+	}
+}
+
+func TestProviderRetriesNonJSONServerError(t *testing.T) {
+	dek := bytes.Repeat([]byte{6}, 32)
+	var requests, failures atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) <= failures.Load() {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("<html>Bad Gateway</html>"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"KeyId": "test-key", "Plaintext": base64.StdEncoding.EncodeToString(dek), "RequestId": "request-1"})
+	}))
+	defer server.Close()
+	t.Setenv("DEBUG", "")
+	provider, err := New(Config{Endpoint: server.Listener.Addr().String(), KeyID: "test-key", AccessKeyID: "offline", AccessKeySecret: "offline", CA: serverCA(server)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.retryDelays = []time.Duration{0, 0}
+	failures.Store(3)
+	_, err = provider.UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+	var failure *KMSError
+	if !errors.As(err, &failure) || failure.Code != "UnexpectedResponse" || failure.StatusCode != http.StatusBadGateway || failure.Attempts != 3 {
+		t.Fatalf("persistent 502 reported as %v", err)
+	}
+	requests.Store(0)
+	failures.Store(1)
+	got, err := provider.UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+	if err != nil || !bytes.Equal(got, dek) || requests.Load() != 2 {
+		t.Fatalf("requests = %d, err = %v", requests.Load(), err)
 	}
 }
 

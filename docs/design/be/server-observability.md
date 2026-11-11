@@ -292,7 +292,7 @@ E2B 单次调用等更细的子 span 不要求带会话属性，在时间线里�
 - 字段名一律 snake_case。访问日志字段在 P1 改为 snake_case（第 P1 节）。
 - `session status event` 为 Debug，状态时间线默认使用 `oma.session.status` span；
   `session error event` 为 Warn。Runner 失败日志补充 `session_id`、`work_id`。
-- 阿里云 KMS 失败以 `KMSError` 直接作为 `error` 字段输出结构化分组：`provider`、`operation`、`code`、`status`、`request_id`、`attempts`。`code` 对未收到服务端响应的失败使用固定细分码 `NetworkError.DNS`、`NetworkError.ConnectionRefused`、`NetworkError.ConnectionReset`、`NetworkError.TLS`、`NetworkError.TLSCertificate`、`NetworkError.Timeout`，其余为 `NetworkError` 或 `RequestFailed`；`attempts` 为本次操作实际尝试次数。规则见 [vault-runtime.md](vault-runtime.md) 阿里云 KMS 模式。
+- 阿里云 KMS 失败以 `KMSError` 直接作为 `error` 字段输出结构化分组：`provider`、`operation`、`code`、`status`、`request_id`、`attempts`。`code` 对未收到服务端响应的失败使用固定细分码 `NetworkError.DNS`、`NetworkError.ConnectionRefused`、`NetworkError.ConnectionReset`、`NetworkError.TLS`、`NetworkError.TLSCertificate`、`NetworkError.Timeout`，非 JSON 响应体的 5xx 为 `UnexpectedResponse`（带 `status`），其余为 `NetworkError` 或 `RequestFailed`；`attempts` 为本次操作实际尝试次数。规则见 [vault-runtime.md](vault-runtime.md) 阿里云 KMS 模式。
 - OTel 导出错误交给 bootstrap console logger 打印，不能写回 OTLP，避免导出故障产生自我放大的日志。
 
 ## 6. 指标目录

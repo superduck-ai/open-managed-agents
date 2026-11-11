@@ -25,6 +25,19 @@ type KMSError struct {
 	RequestID  string
 	StatusCode int
 	Attempts   int
+	cause      error
+}
+
+func (e *KMSError) Unwrap() error {
+	return e.cause
+}
+
+type responseStatusError struct {
+	statusCode int
+}
+
+func (e *responseStatusError) Error() string {
+	return fmt.Sprintf("unexpected response status %d", e.statusCode)
 }
 
 func (e *KMSError) Error() string {
@@ -58,17 +71,20 @@ func operationError(ctx context.Context, operation string, err error, attempts i
 			return fmt.Errorf("aliyun_kms: %s: %w", operation, sentinel)
 		}
 	}
-	var networkError net.Error
-	if errors.As(err, &networkError) && networkError.Timeout() {
-		return fmt.Errorf("aliyun_kms: %s: %w", operation, context.DeadlineExceeded)
-	}
 	failure, _ := classifyFailure(err)
 	failure.Operation = operation
 	failure.Attempts = attempts
+	if failure.Code == "NetworkError.Timeout" {
+		failure.cause = context.DeadlineExceeded
+	}
 	return failure
 }
 
 func classifyFailure(err error) (*KMSError, bool) {
+	var status *responseStatusError
+	if errors.As(err, &status) {
+		return &KMSError{Code: "UnexpectedResponse", StatusCode: status.statusCode}, true
+	}
 	failure := &KMSError{}
 	readSDKMetadata(err, failure)
 	failure.Code = safeIdentifier(failure.Code)

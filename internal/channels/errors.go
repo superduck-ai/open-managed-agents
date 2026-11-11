@@ -70,10 +70,6 @@ func credentialCheckUnavailable(cause error) error {
 	return apperr.New(apperr.Unavailable, "无法连接飞书校验应用密钥", cause)
 }
 
-func invalidChannelPage(cause error) error {
-	return apperr.New(apperr.InvalidArgument, "渠道列表分页参数无效", cause)
-}
-
 func invalidAuthorizationID() error {
 	return apperr.New(apperr.InvalidArgument, "渠道授权编号无效", nil)
 }

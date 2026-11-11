@@ -38,11 +38,17 @@ func (s *workspaceAgentStore) ListAgentsPage(_ context.Context, params db.ListAg
 
 func TestWorkspaceChannelList(t *testing.T) {
 	var mu sync.Mutex
+	listCalls, settingsCalls := 0, 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		if r.Header.Get("Authorization") != "Bearer bridge-token" || r.Header.Get("Cookie") != "" || r.URL.RawQuery != "" {
 			t.Error("桥接身份或查询参数错误")
+		}
+		if r.URL.Path == "/api/managed-channels" {
+			listCalls++
+		} else {
+			settingsCalls++
 		}
 		agentID := r.Header.Get("X-OMA-Agent")
 		if agentID == "agent-b" {
@@ -54,7 +60,15 @@ func TestWorkspaceChannelList(t *testing.T) {
 		case "/api/managed-channels/settings":
 			_, _ = w.Write([]byte(`{"environment_id":"env-a"}`))
 		case "/api/managed-channels":
-			_, _ = w.Write([]byte(`{"data":[{"id":"ch-1","name":"飞书渠道","app_secret":"secret","enabled":true}]}`))
+			rows := make([]map[string]any, 0)
+			if agentID == "agent-a" {
+				for i := range 250 {
+					rows = append(rows, map[string]any{"id": fmt.Sprintf("ch-%d", i+1), "name": "飞书渠道", "app_secret": "secret", "enabled": true})
+				}
+			}
+			if err := json.NewEncoder(w).Encode(map[string]any{"data": rows}); err != nil {
+				t.Error(err)
+			}
 		default:
 			t.Errorf("path = %s", r.URL.Path)
 		}
@@ -63,6 +77,7 @@ func TestWorkspaceChannelList(t *testing.T) {
 	store := &workspaceAgentStore{agents: []db.Agent{
 		{ExternalID: "agent-a", Name: "客服助手", CreatedAt: time.Now(), UUID: "agent-uuid-a"},
 		{ExternalID: "agent-b", Name: "失败助手", CreatedAt: time.Now(), UUID: "agent-uuid-b"},
+		{ExternalID: "agent-empty", Name: "空助手", CreatedAt: time.Now(), UUID: "agent-uuid-empty"},
 	}}
 	router := chi.NewRouter()
 	router.Mount("/channels", NewWorkspaceHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
@@ -96,8 +111,14 @@ func TestWorkspaceChannelList(t *testing.T) {
 	if err := json.Unmarshal(result.Body.Bytes(), &page); err != nil {
 		t.Fatal(err)
 	}
-	if !page.Incomplete || page.Truncated || len(page.Data) != 1 {
+	if !page.Incomplete || page.Truncated || len(page.Data) != 250 {
 		t.Fatalf("page = %+v", page)
+	}
+	if listCalls != 3 || settingsCalls != 1 {
+		t.Fatalf("渠道读取次数 = %d，环境读取次数 = %d", listCalls, settingsCalls)
+	}
+	if page.Data[249].ID != "ch-250" {
+		t.Fatal("渠道列表被截断")
 	}
 	row := page.Data[0]
 	if row.ID != "ch-1" || row.Name != "飞书渠道" || row.AppSecret != "" || row.AgentID != "agent-a" || row.AgentName != "客服助手" || row.EnvironmentID == nil || *row.EnvironmentID != "env-a" {
@@ -140,64 +161,4 @@ func TestWorkspaceChannelListTruncatesAgents(t *testing.T) {
 	if !page.Truncated || len(page.Data) != 1 || page.Data[0].AgentID != "agent-a" || store.calls != 1 {
 		t.Fatalf("page = %+v calls = %d", page, store.calls)
 	}
-}
-
-func TestWorkspaceChannelListPages(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/managed-channels/settings" {
-			_, _ = w.Write([]byte(`{"environment_id":"env-a"}`))
-			return
-		}
-		agentID := r.Header.Get("X-OMA-Agent")
-		_, _ = fmt.Fprintf(w, `{"data":[{"id":"ch-%s","name":"%s"}]}`, agentID, agentID)
-	}))
-	defer upstream.Close()
-	store := &workspaceAgentStore{agents: []db.Agent{
-		{ExternalID: "agent-a", Name: "甲", UUID: "agent-uuid-a", CreatedAt: time.Now()},
-		{ExternalID: "agent-b", Name: "乙", UUID: "agent-uuid-b", CreatedAt: time.Now()},
-	}}
-	router := chi.NewRouter()
-	router.Mount("/channels", NewWorkspaceHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
-	first := workspaceList(t, router, "/channels?limit=1")
-	if len(first.Data) != 1 || first.Data[0].ID != "ch-agent-a" || first.NextPage == nil || *first.NextPage != "1" {
-		t.Fatalf("first = %+v", first)
-	}
-	second := workspaceList(t, router, "/channels?limit=1&page="+*first.NextPage)
-	if len(second.Data) != 1 || second.Data[0].ID != "ch-agent-b" || second.NextPage != nil {
-		t.Fatalf("second = %+v", second)
-	}
-	invalid := httptest.NewRequest(http.MethodGet, "/channels?page=nope", nil)
-	invalid = invalid.WithContext(auth.WithPrincipal(invalid.Context(), auth.Principal{OrganizationUUID: "organization-a", WorkspaceUUID: "workspace-a"}))
-	invalidResult := httptest.NewRecorder()
-	router.ServeHTTP(invalidResult, invalid)
-	if invalidResult.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d", invalidResult.Code)
-	}
-}
-
-func workspaceList(t *testing.T, router http.Handler, path string) struct {
-	Data []struct {
-		ID string `json:"id"`
-	} `json:"data"`
-	NextPage *string `json:"next_page"`
-} {
-	t.Helper()
-	request := httptest.NewRequest(http.MethodGet, path, nil)
-	request = request.WithContext(auth.WithPrincipal(request.Context(), auth.Principal{OrganizationUUID: "organization-a", WorkspaceUUID: "workspace-a"}))
-	result := httptest.NewRecorder()
-	router.ServeHTTP(result, request)
-	if result.Code != http.StatusOK {
-		t.Fatalf("status = %d: %s", result.Code, result.Body.String())
-	}
-	var page struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-		NextPage *string `json:"next_page"`
-	}
-	if err := json.Unmarshal(result.Body.Bytes(), &page); err != nil {
-		t.Fatal(err)
-	}
-	return page
 }

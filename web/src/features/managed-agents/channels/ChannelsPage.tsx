@@ -62,11 +62,9 @@ export function ChannelsPage() {
 export function ChannelsPageContent({
   workspaceId,
   onNavigate,
-  agentFilter,
 }: {
   workspaceId: string;
   onNavigate: (href: string) => void;
-  agentFilter?: string;
 }) {
   const { msg } = useI18n();
   const [search, setSearch] = useState('');
@@ -83,8 +81,8 @@ export function ChannelsPageContent({
     queryFn: () => listChannelEnvironments(workspaceId),
   });
   const rows = useMemo(
-    () => filterChannelRows(query.data?.channels ?? [], { agentFilter, statusFilter, search }),
-    [query.data, agentFilter, statusFilter, search],
+    () => filterChannelRows(query.data?.channels ?? [], { statusFilter, search }),
+    [query.data, statusFilter, search],
   );
   const pageCount = Math.max(1, Math.ceil(rows.length / channelListPageSize));
   const page = Math.min(pageIndex, pageCount);
@@ -102,7 +100,7 @@ export function ChannelsPageContent({
       <ResourcePageHeader
         title={msg('managedAgents.channels.title', '渠道')}
         actions={
-          <Button size="lg" onClick={() => onNavigate(channelCreatePath(workspaceId, agentFilter))}>
+          <Button size="lg" onClick={() => onNavigate(channelCreatePath(workspaceId))}>
             <Plus className="size-4" />
             {msg('managedAgents.channels.addChannel', '新增渠道')}
           </Button>
@@ -178,11 +176,10 @@ export function ChannelsPageContent({
 
 function filterChannelRows(
   channels: WorkspaceChannel[],
-  filters: { agentFilter?: string; statusFilter: ChannelConnectionStatus | 'all'; search: string },
+  filters: { statusFilter: ChannelConnectionStatus | 'all'; search: string },
 ) {
   const needle = filters.search.trim().toLowerCase();
   return channels.filter((row) => {
-    if (filters.agentFilter && row.agentId !== filters.agentFilter) return false;
     if (filters.statusFilter !== 'all' && channelConnectionStatus(row) !== filters.statusFilter) return false;
     if (!needle) return true;
     return row.name.toLowerCase().includes(needle) || (row.app_id ?? '').toLowerCase().includes(needle);

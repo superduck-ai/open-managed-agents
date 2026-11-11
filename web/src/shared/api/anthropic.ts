@@ -340,15 +340,12 @@ export const anthropicBetaApi = {
         }),
       );
     },
-    list<T>(workspaceId: string, params?: { limit?: number; page?: string | null }) {
-      const query: Record<string, string | number | boolean> = { beta: true };
-      if (params?.limit) query.limit = params.limit;
-      if (params?.page) query.page = params.page;
+    list<T>(workspaceId: string) {
       return sdkCall(() =>
         getAnthropicClient().request<T>({
           path: '/v1/channels',
           method: 'get',
-          query,
+          query: { beta: true },
           headers: { ...anthropicRequestHeaders({ workspaceId }), 'anthropic-beta': 'managed-agents-2026-04-01' },
           signal: getScopeSignal(),
         }),

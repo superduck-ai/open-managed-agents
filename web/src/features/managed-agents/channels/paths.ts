@@ -2,9 +2,8 @@ export function channelsListPath(workspaceId: string) {
   return `/workspaces/${encodeURIComponent(workspaceId || 'default')}/channels`;
 }
 
-export function channelCreatePath(workspaceId: string, agentId?: string) {
-  const base = `${channelsListPath(workspaceId)}/new`;
-  return agentId ? `${base}?agentId=${encodeURIComponent(agentId)}` : base;
+export function channelCreatePath(workspaceId: string) {
+  return `${channelsListPath(workspaceId)}/new`;
 }
 
 export function channelDetailPath(workspaceId: string, agentId: string, channelId: string) {

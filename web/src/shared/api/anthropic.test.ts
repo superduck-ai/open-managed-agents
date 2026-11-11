@@ -13,6 +13,23 @@ afterEach(() => {
 });
 
 describe('anthropicBetaApi', () => {
+  test('工作区渠道列表走 /v1/channels', async () => {
+    setConsoleRequestContext({ organizationUuid: 'org_test', workspaceId: 'other', csrfToken: 'csrf' });
+    let captured: { url: URL; init: RequestInit | undefined } | undefined;
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      captured = { url: new URL(String(input), 'https://oma.duck.ai'), init };
+      return Response.json({ data: [], incomplete: false, truncated: false });
+    }) as typeof fetch;
+    await anthropicBetaApi.channels.list('workspace_channels');
+    expect(captured?.url.pathname).toBe('/v1/channels');
+    expect(captured?.url.searchParams.get('beta')).toBe('true');
+    expect(captured?.init?.method).toBe('GET');
+    const headers = new Headers(captured?.init?.headers);
+    expect(headers.get('x-workspace-id')).toBe('workspace_channels');
+    expect(headers.get('x-organization-uuid')).toBe('org_test');
+    expect(headers.get('anthropic-beta')).toBe('managed-agents-2026-04-01');
+  });
+
   test('渠道请求保留路径、方法、请求体与鉴权上下文', async () => {
     setConsoleRequestContext({ organizationUuid: 'org_test', workspaceId: 'other', csrfToken: 'csrf' });
     const requests: { url: URL; init: RequestInit | undefined }[] = [];

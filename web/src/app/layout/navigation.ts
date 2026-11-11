@@ -1,6 +1,7 @@
 import { productIcons as navigationIcons } from '@/shared/icons/product-icons';
 import {
   Activity,
+  ArrowRightLeft,
   BarChart3,
   Bot,
   Box,
@@ -172,6 +173,13 @@ export const consoleNavigation: NavItem[] = [
     icon: navigationIcons.environments,
   },
   {
+    type: 'link',
+    href: '/channels',
+    label: 'Channels',
+    labelId: 'nav.channels',
+    icon: navigationIcons.channels,
+  },
+  {
     type: 'group',
     label: 'Resources',
     labelId: 'nav.resources',
@@ -219,6 +227,7 @@ export const placeholderIcons = {
   '/evaluations': ListChecks,
   '/deployments': Network,
   '/environments': Box,
+  '/channels': ArrowRightLeft,
   '/credential-vaults': Vault,
   '/memory-stores': Database,
   '/dreams': Moon,

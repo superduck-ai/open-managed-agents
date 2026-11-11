@@ -23,6 +23,7 @@ test('retains implemented destinations without exposing placeholder pages or dup
       '/observability',
       '/deployments',
       '/environments',
+      '/channels',
       '/credential-vaults',
       '/memory-stores',
       '/usage',

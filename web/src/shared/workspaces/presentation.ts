@@ -90,6 +90,7 @@ export function workspaceSwitchPath(currentPath: string, workspaceId: string) {
     'observability',
     'deployments',
     'environments',
+    'channels',
     'memory-stores',
     'dreams',
     'cost',

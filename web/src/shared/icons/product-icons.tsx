@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowRightLeft,
   BookOpen,
   BookOpenCheck,
   Bot,
@@ -47,6 +48,7 @@ export const productIcons = {
   agents: productIcon(Bot),
   sessions: productIcon(MessagesSquare),
   evaluations: productIcon(ListChecks),
+  channels: productIcon(ArrowRightLeft),
   deployments: productIcon(Package),
   environments: productIcon(Server),
   resources: productIcon(Boxes),

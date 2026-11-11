@@ -24,6 +24,27 @@ func (s scopedStore) EnsureChannelWorkspaceCredential(context.Context, platform.
 	return "test-workspace-key", nil
 }
 
+func (s scopedStore) GetMemoryStore(_ context.Context, workspace, id string) (db.MemoryStore, error) {
+	if workspace != "workspace-a" || (id != "mem-a" && id != "mem-archived") {
+		return db.MemoryStore{}, db.ErrNotFound
+	}
+	store := db.MemoryStore{}
+	if id == "mem-archived" {
+		store.ArchivedAt = new(time.Now())
+	}
+	return store, nil
+}
+func (s scopedStore) GetVault(_ context.Context, workspace, id string) (db.Vault, error) {
+	if workspace != "workspace-a" || (id != "vault-a" && id != "vault-archived") {
+		return db.Vault{}, db.ErrNotFound
+	}
+	vault := db.Vault{}
+	if id == "vault-archived" {
+		vault.ArchivedAt = new(time.Now())
+	}
+	return vault, nil
+}
+
 func (s scopedStore) GetEnvironment(_ context.Context, workspace, id string) (db.Environment, error) {
 	if workspace != "workspace-a" || (id != "env-a" && id != "env-archived") {
 		return db.Environment{}, db.ErrNotFound
@@ -33,6 +54,10 @@ func (s scopedStore) GetEnvironment(_ context.Context, workspace, id string) (db
 		env.ArchivedAt = new(time.Now())
 	}
 	return env, nil
+}
+
+func (s scopedStore) ListAgentsPage(context.Context, db.ListAgentsPageParams) ([]db.Agent, bool, error) {
+	return nil, false, nil
 }
 
 func (s scopedStore) GetAgent(_ context.Context, workspace, id string) (db.Agent, error) {

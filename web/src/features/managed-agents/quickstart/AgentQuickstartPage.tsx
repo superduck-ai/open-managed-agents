@@ -101,7 +101,7 @@ function QuickstartModes({
     </Tabs>
   );
   const startHeader = (
-    <header className="mx-auto flex w-full max-w-[880px] shrink-0 flex-col items-center gap-6 pt-[clamp(2rem,7vh,5rem)]">
+    <header className="mx-auto flex w-full max-w-[880px] shrink-0 flex-col items-center gap-[clamp(1rem,2.5dvh,1.5rem)] pt-[clamp(1.5rem,4.5dvh,4rem)]">
       <h1 id="quickstart-start-title" className="text-center text-2xl font-semibold">
         {locale === 'zh-CN' ? '你想构建什么？' : 'What would you like to build?'}
       </h1>
@@ -109,7 +109,7 @@ function QuickstartModes({
     </header>
   );
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full min-w-0 flex-1 flex-col gap-6">
+    <div className="mx-auto flex h-full min-h-0 w-full min-w-0 flex-1 flex-col gap-[clamp(1rem,3dvh,1.5rem)]">
       {mode === 'chat' ? (
         <BuilderPage
           key={`${accountId}:${workspaceId}:${navigationKey}`}

@@ -2,6 +2,7 @@ import { budgetErrorMessage } from '../resources/budget-errors';
 import { useSessionBudgetSync } from './useSessionBudgetSync';
 import { FollowSentSessionMessage } from './FollowSentSessionMessage';
 import { useQueryClient } from '@tanstack/react-query';
+import { useLocation } from '@tanstack/react-router';
 import { useFormatters, useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
 import {
@@ -50,6 +51,7 @@ import {
   type SessionToolConfirmationInput,
   type ToolCallEntry,
 } from '../types';
+import { channelSessionsBackHref } from './sessionReturn';
 import { copyText, errorMessage, managedEntityListHref } from '../utils';
 import { Archive, ArrowDown, ChevronDown, Copy, PanelRightOpen, RotateCcw, X } from 'lucide-react';
 import {
@@ -200,25 +202,41 @@ function SessionBudgetBannerSection({
   return <SessionBudgetBanner state={budget} busy={busy} onChangeBudget={onChangeBudget} />;
 }
 
+function sessionDetailChrome({
+  workspaceId,
+  search,
+  sessionsHref,
+  sessionsLabel,
+  channelLabel,
+  sessionsBackLabel,
+}: {
+  workspaceId: string;
+  search: string;
+  sessionsHref: string;
+  sessionsLabel: string;
+  channelLabel: string;
+  sessionsBackLabel: string;
+}) {
+  const channelBackHref = channelSessionsBackHref(search, workspaceId);
+  if (!channelBackHref) {
+    return { listHref: sessionsHref, listLabel: sessionsLabel, backLabel: sessionsBackLabel };
+  }
+  return { listHref: channelBackHref, listLabel: channelLabel, backLabel: channelLabel };
+}
+
 function SessionNotFound({
   sessionId,
   listHref,
+  backLabel,
   loadError,
 }: {
   sessionId: string;
   listHref: string;
+  backLabel: string;
   loadError: string | null;
 }) {
-  const { msg } = useI18n();
   const copy = useResourceMissingCopy(loadError, 'session', sessionId);
-  return (
-    <ResourceNotFound
-      title={copy.title}
-      sentence={copy.sentence}
-      backHref={listHref}
-      backLabel={msg('managedAgents.sessions.detail.backToList', 'Back to sessions')}
-    />
-  );
+  return <ResourceNotFound title={copy.title} sentence={copy.sentence} backHref={listHref} backLabel={backLabel} />;
 }
 
 export function SessionDetailPage({ config, sessionId }: { config: ResourceConfig; sessionId: string }) {
@@ -226,8 +244,15 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   const { activeWorkspaceId } = useWorkspace();
   const { msg } = useI18n();
   const formatters = useFormatters();
-  const listHref = managedEntityListHref(activeWorkspaceId, 'sessions');
-  const listLabel = resourceTitle(config, msg);
+  const location = useLocation();
+  const { listHref, listLabel, backLabel } = sessionDetailChrome({
+    workspaceId: activeWorkspaceId,
+    search: location.searchStr,
+    sessionsHref: managedEntityListHref(activeWorkspaceId, 'sessions'),
+    sessionsLabel: resourceTitle(config, msg),
+    channelLabel: msg('managedAgents.channels.sessionMgmt', '会话管理'),
+    sessionsBackLabel: msg('managedAgents.sessions.detail.backToList', 'Back to sessions'),
+  });
   const [session, setSession] = useState<SessionApiResponse | null>(null);
   const [threads, setThreads] = useState<SessionThreadApiResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -697,7 +722,7 @@ export function SessionDetailPage({ config, sessionId }: { config: ResourceConfi
   }
 
   if (!session || loadError || !summary) {
-    return <SessionNotFound sessionId={sessionId} listHref={listHref} loadError={loadError} />;
+    return <SessionNotFound sessionId={sessionId} listHref={listHref} backLabel={backLabel} loadError={loadError} />;
   }
 
   const archived = Boolean(session.archived_at);

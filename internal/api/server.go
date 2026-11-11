@@ -86,6 +86,7 @@ type Server struct {
 	models               *modelsapi.Handler
 	sessions             *sessionsapi.Handler
 	skills               *skillsapi.Handler
+	workspaceChannels    http.Handler
 	tunnels              *tunnelsapi.Handler
 	tunnelIngress        *tunnelsapi.IngressHandler
 	tunnelBroker         *tunnelsapi.Broker
@@ -168,6 +169,9 @@ func NewServer(deps ServerDeps) *Server {
 	codeSessionService.WithSessionAttachments(filestoreService, deps.Config.Storage.MaxFileBytes)
 	codeSessionService.WithSessionSkills(filestoreService)
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
+	channelLogger := componentLogger("channels")
+	agentChannels := channels.NewHandler(deps.Config.ChannelBridge, deps.DB, channelLogger, deps.VaultSecrets)
+	workspaceChannels := channels.NewWorkspaceHandler(deps.Config.ChannelBridge, deps.DB, channelLogger, deps.VaultSecrets)
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease
 	if deps.Redis != nil {
 		lease, err := vaultsapi.NewRedisOAuthRefreshLease(deps.Redis)
@@ -191,22 +195,23 @@ func NewServer(deps ServerDeps) *Server {
 			telemetrydestinations.NewService(deps.DB, deps.VaultSecrets, telemetryexport.NewTester(deps.VaultSecrets, telemetryexport.Config{AllowInsecure: deps.Config.TelemetryExport.AllowInsecure, Timeout: deps.Config.TelemetryExport.Timeout}), deps.Config.TelemetryExport.AllowInsecure),
 			componentLogger("telemetry_destinations"),
 		)),
-		agents:         agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(channels.NewHandler(deps.Config.ChannelBridge, deps.DB, componentLogger("channels"), deps.VaultSecrets)),
-		batch:          batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:   codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore),
-		deployments:    deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
-		deploymentRuns: deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
-		envs:           environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
-		files:          files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
-		filestore:      filestoreHandler,
-		memory:         memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
-		messages:       messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
-		models:         modelsapi.NewHandler(deps.DB),
-		sessions:       sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
-		skills:         skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
-		vaults:         vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
-		webhooks:       webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
-		tunnelBroker:   deps.TunnelBroker,
+		agents:            agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(agentChannels),
+		workspaceChannels: workspaceChannels,
+		batch:             batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
+		codeSessions:      codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore),
+		deployments:       deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
+		deploymentRuns:    deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
+		envs:              environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
+		files:             files.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("files")),
+		filestore:         filestoreHandler,
+		memory:            memoryapi.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("memory")).WithWebhooks(webhookEnqueuer),
+		messages:          messagesapi.NewHandler(deps.DB, deps.VaultSecrets, codeSessionService, componentLogger("messages")).WithMetering(billingCalculator).WithFileStore(deps.ObjectStore),
+		models:            modelsapi.NewHandler(deps.DB),
+		sessions:          sessionsapi.NewHandler(deps.Config, deps.DB, codeSessionService, webhookEnqueuer, deps.SessionEventBus, deps.VaultSecrets, componentLogger("sessions")),
+		skills:            skillsapi.NewHandler(deps.DB, deps.ObjectStore, componentLogger("skills")),
+		vaults:            vaultsapi.NewHandler(deps.Config, deps.DB, deps.VaultSecrets, webhookEnqueuer, componentLogger("vaults")).WithRefreshLease(oauthRefreshLease),
+		webhooks:          webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
+		tunnelBroker:      deps.TunnelBroker,
 	}
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
@@ -398,6 +403,9 @@ func platformCSRFMiddleware(next http.Handler) http.Handler {
 func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	r.Post("/agents:search", s.agents.Search)
 	r.Mount("/agents", s.agents)
+	if s.workspaceChannels != nil {
+		r.Mount("/channels", s.workspaceChannels)
+	}
 	r.Mount("/deployment_runs", s.deploymentRuns)
 	r.Mount("/deployments", s.deployments)
 	r.Mount("/environments", s.envs)

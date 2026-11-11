@@ -57,3 +57,26 @@ func credentialWorkspaceNotFound(cause error) error {
 func invalidChannelUpdate(cause error) error {
 	return apperr.New(apperr.InvalidArgument, "渠道更新请求正文无效", cause)
 }
+
+func invalidAppCredentials() error {
+	return apperr.New(apperr.InvalidArgument, "应用密钥校验未通过", nil)
+}
+
+func invalidCredentialCheckBody(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "应用凭据校验请求正文无效", cause)
+}
+
+func credentialCheckUnavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "无法连接飞书校验应用密钥", cause)
+}
+
+func invalidAuthorizationID() error {
+	return apperr.New(apperr.InvalidArgument, "渠道授权编号无效", nil)
+}
+
+func invalidMemoryMount(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "请选择当前工作区中未归档的 Memory", cause)
+}
+func invalidVaultMount(cause error) error {
+	return apperr.New(apperr.InvalidArgument, "请选择当前工作区中未归档的 Vault", cause)
+}

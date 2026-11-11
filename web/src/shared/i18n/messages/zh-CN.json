@@ -3394,7 +3394,6 @@
   "systemSkills.confirmAction": "确认修改系统技能",
   "systemSkills.unlistImpact": "从工作区可选目录隐藏。已有 Agent 引用和会话继续可用；下架不会撤销执行能力。",
   "systemSkills.listImpact": "恢复所有工作区对该技能的选择。不会自动绑定到 Agent。",
-  "systemSkills.publishImpact": "已发布内容不可覆盖。保留当前默认版本；首次发布时自动设为默认并上架。",
   "systemSkills.defaultImpact": "后续新会话首次解析 latest 时使用此版本。固定版本的 Agent 和已有会话不会改变。",
   "systemSkills.chooseVersion": "请在“版本”页签选择版本，检查其包内容。",
   "systemSkills.loadError": "系统技能加载失败。",

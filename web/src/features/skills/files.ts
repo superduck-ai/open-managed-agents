@@ -2,23 +2,10 @@ type SkillFile = File & {
   __skillPath?: string;
 };
 
-type SkillFileSystemEntry = {
-  isFile: boolean;
-  isDirectory: boolean;
-  name: string;
-  file?: (success: (file: File) => void, error?: (err: DOMException) => void) => void;
-  createReader?: () => {
-    readEntries: (success: (entries: SkillFileSystemEntry[]) => void, error?: (err: DOMException) => void) => void;
-  };
-};
-
 export async function filesFromDataTransfer(dataTransfer: DataTransfer) {
   const entries = Array.from(dataTransfer.items ?? [])
-    .map((item) => {
-      const entry = (item as DataTransferItem & { webkitGetAsEntry?: () => unknown }).webkitGetAsEntry?.();
-      return entry as SkillFileSystemEntry | null | undefined;
-    })
-    .filter((entry): entry is SkillFileSystemEntry => Boolean(entry));
+    .map((item) => item.webkitGetAsEntry?.())
+    .filter((entry): entry is FileSystemEntry => Boolean(entry));
   if (entries.length) {
     const nested = await Promise.all(entries.map((entry) => filesFromEntry(entry, '')));
     return nested.flat();
@@ -26,22 +13,22 @@ export async function filesFromDataTransfer(dataTransfer: DataTransfer) {
   return Array.from(dataTransfer.files ?? []);
 }
 
-async function filesFromEntry(entry: SkillFileSystemEntry, parentPath: string): Promise<File[]> {
+async function filesFromEntry(entry: FileSystemEntry, parentPath: string): Promise<File[]> {
   const entryPath = `${parentPath}${entry.name}`;
-  if (entry.isFile && entry.file) {
+  if (entry.isFile) {
     const file = await new Promise<File>((resolve, reject) => {
-      entry.file?.(resolve, reject);
+      (entry as FileSystemFileEntry).file(resolve, reject);
     });
     (file as SkillFile).__skillPath = entryPath;
     return [file];
   }
-  if (!entry.isDirectory || !entry.createReader) {
+  if (!entry.isDirectory) {
     return [];
   }
-  const reader = entry.createReader();
-  const children: SkillFileSystemEntry[] = [];
+  const reader = (entry as FileSystemDirectoryEntry).createReader();
+  const children: FileSystemEntry[] = [];
   for (;;) {
-    const batch = await new Promise<SkillFileSystemEntry[]>((resolve, reject) => {
+    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
       reader.readEntries(resolve, reject);
     });
     if (!batch.length) {

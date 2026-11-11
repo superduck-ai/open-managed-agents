@@ -801,6 +801,30 @@ describe('Skills page', () => {
     expect(await screen.findByText('Latest')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Delete version/ })).toBeNull();
   });
+  test('router history restores skill selection and preserves other search parameters', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills?view=compact');
+    fixture();
+    const view = renderSkillsPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Research notes', exact: true }));
+    expect(await screen.findByRole('dialog', { name: 'Research notes' })).toBeTruthy();
+    expect(new URL(window.location.href).searchParams.get('view')).toBe('compact');
+    await act(async () => view.router.history.back());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Research notes' })).toBeNull());
+    expect(new URL(window.location.href).searchParams.get('skill')).toBeNull();
+    await act(async () => view.router.history.forward());
+    expect(await screen.findByRole('dialog', { name: 'Research notes' })).toBeTruthy();
+    expect(new URL(window.location.href).searchParams.get('view')).toBe('compact');
+  });
+  test('closing a directly linked skill removes only its search parameter', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills?skill=skill_demo&view=compact');
+    fixture();
+    renderSkillsPage();
+    expect(await screen.findByRole('dialog', { name: 'Research notes' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('skill')).toBeNull());
+    expect(new URL(window.location.href).searchParams.get('view')).toBe('compact');
+    expect(window.location.pathname).toBe('/workspaces/default/skills');
+  });
   test('updating uses the same two-step import and writes to the existing skill', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     const requests = fixture();
@@ -1413,6 +1437,7 @@ function renderDashboardPage(
   const rendered = render(renderWithWorkspace(workspace));
   return {
     ...rendered,
+    router,
     rerenderWorkspace: (nextWorkspace?: Partial<Workspace>) => rendered.rerender(renderWithWorkspace(nextWorkspace)),
   };
 }

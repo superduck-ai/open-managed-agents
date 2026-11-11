@@ -5,7 +5,7 @@ import { copyText } from '@/shared/lib/clipboard';
 import { skillSourceLabel } from '@/shared/lib/skill-source';
 import { downloadApiFile } from '../../shared/api/file-download';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
-import { messageBatchesRequestHeaders, skillsRequestHeaders } from '../../shared/api/client';
+import { messageBatchesRequestHeaders } from '../../shared/api/client';
 import { consoleResourceListLimit } from '../../shared/console-list';
 import type { useI18n } from '../../shared/i18n';
 import { useWorkspace } from '../../shared/workspaces/context';
@@ -92,27 +92,10 @@ export type ConsoleSkillVersion = {
   created_at: string;
 };
 
-export type SkillsListResponse = {
-  data: ConsoleSkill[];
-  has_more: boolean;
-  next_page?: string | null;
-  total_count?: number;
-};
-
 export type SkillVersionsListResponse = {
   data: ConsoleSkillVersion[];
   has_more: boolean;
   next_page?: string | null;
-};
-
-export type EnrichedConsoleSkill = ConsoleSkill & {
-  description?: string;
-  directory?: string;
-  versionName?: string;
-};
-
-export type EnrichedSkillsListResponse = Omit<SkillsListResponse, 'data'> & {
-  data: EnrichedConsoleSkill[];
 };
 
 function workspaceRequestHeaders(workspaceId: string) {
@@ -177,16 +160,6 @@ export function cancelMessageBatch(batchId: string, workspaceId: string) {
   return anthropicBetaApi.messageBatches.cancel<ConsoleMessageBatch>(batchId, workspaceId);
 }
 
-export async function listSkills(pageToken: string | undefined, workspaceId: string): Promise<SkillsListResponse> {
-  const params: Record<string, string | number> = {
-    limit: consoleResourceListLimit,
-  };
-  if (pageToken) {
-    params.page = pageToken;
-  }
-  return (await anthropicBetaApi.skills.list<ConsoleSkill>(params, workspaceId)) as SkillsListResponse;
-}
-
 export function retrieveSkill(skillId: string, workspaceId: string) {
   return anthropicBetaApi.skills.retrieve<ConsoleSkill>(skillId, workspaceId);
 }
@@ -203,49 +176,6 @@ export function listSkillVersions(skillId: string, workspaceId: string, pageToke
     params,
     workspaceId,
   ) as Promise<SkillVersionsListResponse>;
-}
-
-export async function createSkillPackage(
-  skillId: string | undefined,
-  files: FileList | File[],
-  workspaceId: string,
-  displayTitle?: string,
-) {
-  const uploadFiles = Array.from(files).map(skillUploadFile);
-  if (skillId) {
-    return anthropicBetaApi.skills.versions.create<ConsoleSkillVersion>(skillId, { files: uploadFiles }, workspaceId);
-  }
-  return anthropicBetaApi.skills.create<ConsoleSkill>(
-    {
-      display_title: displayTitle?.trim() || null,
-      files: uploadFiles,
-    },
-    workspaceId,
-  );
-}
-
-function skillUploadFile(file: File) {
-  const filename = skillUploadPath(file);
-  if (filename === file.name) {
-    return file;
-  }
-  return new File([file], filename, {
-    type: file.type,
-    lastModified: file.lastModified,
-  });
-}
-
-function skillUploadPath(file: File) {
-  const skillPath = (file as File & { __skillPath?: string }).__skillPath;
-  return skillPath || file.webkitRelativePath || file.name;
-}
-
-export async function deleteSkill(skillId: string, workspaceId: string) {
-  return anthropicBetaApi.skills.delete<{ id: string; type: string }>(skillId, workspaceId);
-}
-
-export async function deleteSkillVersion(skillId: string, version: string, workspaceId: string) {
-  return anthropicBetaApi.skills.versions.delete<{ id: string; type: string }>(skillId, version, workspaceId);
 }
 
 async function responseErrorMessage(response: Response) {
@@ -432,54 +362,6 @@ export async function downloadMessageBatchResults(batch: ConsoleMessageBatch, wo
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
-}
-
-export async function downloadSkillVersion(
-  skillId: string,
-  version: string,
-  directory: string | undefined,
-  workspaceId: string,
-) {
-  const scopeSignal = getScopeSignal();
-  const response = await fetch(
-    `/v1/skills/${encodeURIComponent(skillId)}/versions/${encodeURIComponent(version)}/content?beta=true`,
-    {
-      headers: skillsRequestHeaders(workspaceRequestHeaders(workspaceId)),
-      credentials: 'include',
-      signal: scopeSignal,
-    },
-  );
-  if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
-  }
-  const blob = await response.blob();
-  scopeSignal.throwIfAborted();
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `${directory || skillId}.skill`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-export function skillsIndexHref() {
-  const workspaceMatch = window.location.pathname.match(/^\/workspaces\/([^/]+)/);
-  if (workspaceMatch) {
-    return `/workspaces/${workspaceMatch[1]}/skills`;
-  }
-  return '/skills';
-}
-
-export function skillDetailHref(skillId: string) {
-  const params = new URLSearchParams(window.location.search);
-  params.set('skill', skillId);
-  return `${skillsIndexHref()}?${params.toString()}`;
-}
-
-export function createSkillHref() {
-  return `${skillsIndexHref()}/new`;
 }
 
 export function currentSkillId() {

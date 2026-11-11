@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation, useNavigate } from '@tanstack/react-router';
 import { Plus, Search } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
@@ -14,7 +15,7 @@ import { useDashboardWorkspaceScope, type ConsoleSkill } from '../dashboard/mode
 import { SkillCard } from './SkillCard';
 import { SkillActions } from './SkillActions';
 import { SkillImportDialog } from './SkillImportDialog';
-import { SkillDrawer, DeleteSkillDialog, SkillSourceBadge, useSkillSearchParam } from './SkillDetail';
+import { SkillDrawer, DeleteSkillDialog, SkillSourceBadge } from './SkillDetail';
 import {
   skillConsoleRequest,
   downloadSkillPackage,
@@ -34,7 +35,19 @@ export function SkillsPage({
   const { msg } = useI18n();
   const { workspaceId } = useDashboardWorkspaceScope();
   const queries = useQueryClient();
-  const [selected, setSelected] = useSkillSearchParam(initialSkillId);
+  const { selected, basePath } = useLocation({
+    select: (location) => ({
+      selected: typeof location.search.skill === 'string' ? location.search.skill : null,
+      basePath: location.pathname.replace(/\/skills(?:\/.*)?$/, '/skills'),
+    }),
+  });
+  const navigate = useNavigate();
+  const setSelected = useCallback(
+    (skillId: string | null, replace = false) => {
+      void navigate({ to: basePath, search: (previous) => ({ ...previous, skill: skillId || undefined }), replace });
+    },
+    [navigate, basePath],
+  );
   const [upload, setUpload] = useState<{ target?: ConsoleSkill } | null>(initialCreateOpen ? {} : null);
   const [deleteTarget, setDeleteTarget] = useState<ConsoleSkill | null>(null);
   const [deleting, setDeleting] = useState(false);

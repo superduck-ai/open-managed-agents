@@ -29,6 +29,6 @@ export type SystemPackage = {
   skill_md: string;
   existing: SystemSkill | null;
 };
-export type SystemAction = 'publish' | 'set_default' | 'list' | 'unlist';
+export type SystemAction = 'set_default' | 'list' | 'unlist';
 export const systemSkillsKey = ['platform-admin', 'system-skills'] as const;
 export const systemSkillPageSize = 20;

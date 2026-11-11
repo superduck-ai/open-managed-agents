@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { SkillDownloadButton } from '@/features/skills/SkillDownloadButton';
 import type { SkillFilePreview } from '@/features/skills/api';
@@ -33,7 +33,6 @@ export function SystemSkillDrawer({
   const { client } = usePlatformAdmin();
   const { msg } = useI18n();
   const [open, setOpen] = useState(true);
-  useEffect(() => setOpen(true), [skillID]);
   const [tab, setTab] = useState('overview');
   const [contentVersion, setContentVersion] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
@@ -222,10 +221,6 @@ function SystemSkillImpact({ action }: { action: SystemAction }) {
     list: msg(
       'systemSkills.listImpact',
       'Make this skill selectable in all workspaces. It will not be added to Agents automatically.',
-    ),
-    publish: msg(
-      'systemSkills.publishImpact',
-      'Published content cannot be overwritten. Keep the current default; the first published version becomes the default and is listed.',
     ),
     set_default: msg(
       'systemSkills.defaultImpact',

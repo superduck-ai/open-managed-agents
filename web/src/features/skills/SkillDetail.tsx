@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, RefreshCw, Trash2, X } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
@@ -22,9 +22,7 @@ import {
   formatSkillSource,
   listSkillVersions,
   retrieveSkill,
-  skillsIndexHref,
   type ConsoleSkill,
-  type ConsoleSkillVersion,
 } from '../dashboard/model';
 import { SkillIcon, SkillIconPicker } from './icons';
 import {
@@ -39,21 +37,17 @@ import { SkillContent } from './SkillContent';
 type I18nMsg = ReturnType<typeof useI18n>['msg'];
 function SkillDrawerHeader({
   skill,
-  latestVersion,
   onClose,
   onIcon,
   workspaceId,
 }: {
   workspaceId: string;
   skill?: ConsoleSkill;
-  latestVersion?: ConsoleSkillVersion;
   onClose: () => void;
   onIcon: (key: string) => Promise<void>;
 }) {
   const { locale, msg } = useI18n();
-  const title = skill
-    ? skill.display_title || latestVersion?.name || skill.id
-    : msg('skills.detail.title', 'Skill details');
+  const title = skill ? skill.display_title || skill.id : msg('skills.detail.title', 'Skill details');
   return (
     <SheetHeader className="shrink-0 border-b-[0.5px] border-border px-4 py-4 pr-24">
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -388,44 +382,6 @@ export function SkillSourceBadge({ source }: { source: string }) {
       <span className="truncate">{label}</span>
     </Badge>
   );
-}
-
-export function useSkillSearchParam(
-  initialSkillId?: string,
-): [string | null, (skillId: string | null, replace?: boolean) => void] {
-  const readCurrent = useCallback(() => {
-    if (typeof window === 'undefined') {
-      return initialSkillId || null;
-    }
-    return new URLSearchParams(window.location.search).get('skill') || initialSkillId || null;
-  }, [initialSkillId]);
-  const [skillId, setSkillId] = useState<string | null>(() => readCurrent());
-
-  useEffect(() => {
-    const handlePopState = () => setSkillId(readCurrent());
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [readCurrent]);
-
-  const updateSkillId = useCallback((nextSkillId: string | null, replace = false) => {
-    const params = new URLSearchParams(window.location.search);
-    if (nextSkillId) {
-      params.set('skill', nextSkillId);
-    } else {
-      params.delete('skill');
-    }
-    const search = params.toString();
-    const basePath = skillsIndexHref();
-    const nextURL = search ? `${basePath}?${search}` : basePath;
-    if (replace) {
-      window.history.replaceState(null, '', nextURL);
-    } else {
-      window.history.pushState(null, '', nextURL);
-    }
-    setSkillId(nextSkillId);
-  }, []);
-
-  return [skillId, updateSkillId];
 }
 
 function formatSkillId(skillId: string) {

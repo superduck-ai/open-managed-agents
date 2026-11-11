@@ -3394,7 +3394,6 @@
   "systemSkills.confirmAction": "Confirm system skill change",
   "systemSkills.unlistImpact": "Hide this skill from the workspace catalog. Existing Agent references and sessions remain usable. This does not revoke execution.",
   "systemSkills.listImpact": "Make this skill selectable in all workspaces. It will not be added to Agents automatically.",
-  "systemSkills.publishImpact": "Published content cannot be overwritten. Keep the current default; the first published version becomes the default and is listed.",
   "systemSkills.defaultImpact": "Use this version when a future new session first resolves latest. Pinned Agent versions and existing sessions will not change.",
   "systemSkills.chooseVersion": "Choose a version in the Versions tab to inspect its contents.",
   "systemSkills.loadError": "Could not load system skills.",

@@ -39,3 +39,7 @@ func (l dshLifecycle) Telemetry(ctx context.Context, scope db.DSHScope) (bool, *
 	}
 	return l.handler.cfg.Observability.Enabled, &dsh.TraceExport{Content: settings["content"]}
 }
+
+func (l dshLifecycle) RenewSandbox(ctx context.Context, scope db.DSHScope) error {
+	return l.handler.extendCodeSessionSandboxTimeout(ctx, scope.CodeSessionID)
+}

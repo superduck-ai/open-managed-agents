@@ -57,6 +57,7 @@
     },
   },
   "patchedDependencies": {
+    "@deepseek-ai/dsh-subagent@0.2.2-alpha.2": "patches/@deepseek-ai%2Fdsh-subagent@0.2.2-alpha.2.patch",
     "@deepseek-ai/dsh-agent-loop@0.2.2-alpha.2": "patches/@deepseek-ai%2Fdsh-agent-loop@0.2.2-alpha.2.patch",
   },
   "packages": {

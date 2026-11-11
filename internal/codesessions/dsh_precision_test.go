@@ -10,7 +10,7 @@ import (
 
 func TestDSHPublicMappingsPreserveNumbers(t *testing.T) {
 	input := json.RawMessage(`{"id":9007199254740993,"nested":[0.123456789012345678901,18446744073709551615]}`)
-	_, payload, err := dshToolCallPublicPayload("code", toolPermissionRequest{ToolUseID: "call", ToolName: "bash"}, input, toolIdentity{Kind: "builtin"}, resolvedToolPermissionAsk, time.Now().UTC())
+	_, payload, err := dshToolCallPublicPayload("code", toolPermissionRequest{ToolUseID: "call", ToolName: "bash"}, input, toolIdentity{Kind: "builtin"}, resolvedToolPermissionAsk, time.Now().UTC(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

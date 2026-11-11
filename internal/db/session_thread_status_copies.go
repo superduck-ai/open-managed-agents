@@ -2,6 +2,7 @@ package db
 
 import (
 	"encoding/json"
+	"time"
 	"uuid"
 )
 
@@ -36,6 +37,9 @@ func sessionThreadStatusCopy(event SessionEvent, destination SessionThread, labe
 	copy.ThreadUUID = &destination.UUID
 	payload.ID = copy.ExternalID
 	payload.OriginalEventID = event.ExternalID
+	if payload.ProcessedAt.IsZero() {
+		payload.ProcessedAt = event.ProcessedAt.UTC().Truncate(time.Microsecond)
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return SessionEvent{}, err

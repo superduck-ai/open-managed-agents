@@ -20,6 +20,9 @@ type protocolError struct {
 
 func (e *protocolError) Error() string { return e.message }
 
+func sandboxRenewalUnavailable() error {
+	return &protocolError{status: http.StatusServiceUnavailable, code: "sandbox_unavailable", message: "Could not extend code session sandbox timeout"}
+}
 func invalidRequest() error {
 	return &protocolError{status: http.StatusBadRequest, code: "invalid_request", message: "Invalid DSR request"}
 }

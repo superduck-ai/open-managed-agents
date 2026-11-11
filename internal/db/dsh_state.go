@@ -58,6 +58,9 @@ func reduceDSHStateWithBoundary(ctx context.Context, executor yourbatis.Executor
 		}
 		running = running || status == "running" || status == "rescheduling"
 		pending = append(pending, ids...)
+		if thread.ExternalID != primary.ExternalID && status == thread.Status && len(ids) == 0 {
+			continue
+		}
 		event, err := dshStatusEvent(seed, thread.thread(), status, reason, at)
 		if err != nil {
 			return nil, err

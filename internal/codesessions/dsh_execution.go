@@ -162,16 +162,17 @@ func (e dshExecution) Permission(ctx context.Context, scope db.DSHScope, input d
 	if input.DSHSessionID == scope.CodeSessionID {
 		outputThread = ""
 	}
-	public, raw, err := dshToolCallPublicPayload(scope.CodeSessionID, toolPermissionRequest{RequestID: id, ToolUseID: input.ToolUseID, ToolName: name, SessionThreadID: outputThread}, input.Input, identity, permission, time.Now().UTC())
-	if err != nil {
-		return dsh.PermissionResponse{}, err
-	}
-	request.PublicEventID = public.PublicEventID
 	external, err := e.handler.service.selfHostedCodeSession(ctx, scope.CodeSessionID)
 	if err != nil {
 		return dsh.PermissionResponse{}, err
 	}
-	waiting := input.Tool.Kind == "custom" || public.EventType == "agent.custom_tool_use" || external && identity.Kind == "agent_toolset"
+	eventType, _ := toolPermissionPublicIdentity(name, identity)
+	waiting := input.Tool.Kind == "custom" || eventType == "agent.custom_tool_use" || external && identity.Kind == "agent_toolset"
+	public, raw, err := dshToolCallPublicPayload(scope.CodeSessionID, toolPermissionRequest{RequestID: id, ToolUseID: input.ToolUseID, ToolName: name, SessionThreadID: outputThread}, input.Input, identity, permission, time.Now().UTC(), waiting && permission != resolvedToolPermissionDeny)
+	if err != nil {
+		return dsh.PermissionResponse{}, err
+	}
+	request.PublicEventID = public.PublicEventID
 	if permission == resolvedToolPermissionDeny || permission == resolvedToolPermissionAllow && !waiting {
 		request.State = "resolved"
 		request.Decision, _ = json.Marshal(struct {

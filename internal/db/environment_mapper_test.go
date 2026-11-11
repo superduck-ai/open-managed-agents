@@ -370,7 +370,7 @@ func TestEnvironmentSandboxMapperBuilderContracts(t *testing.T) {
 			wantArgumentNames: []string{"codeSessionExternalID", "workerStatus", "workerStatus", "workerStatus"},
 			wantSQLFragments: []string{
 				"JOIN environment_work", "work.session_uuid = code_session.session_uuid",
-				"JOIN environment_sandboxes", "worker_status IN ( $2 , $3 , $4 )",
+				"JOIN environment_sandboxes", "worker_protocol", "SELECT session.status FROM sessions session", "session.uuid = code_session.session_uuid", "session.workspace_uuid = code_session.workspace_uuid", "ELSE code_session.worker_status END IN ( $2 , $3 , $4 )",
 			},
 		}},
 		{"schedule recovery for code session", mapperBuilderContract{

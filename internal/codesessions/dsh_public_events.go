@@ -141,6 +141,9 @@ func dshPermissionEvents(scope db.DSHScope, request toolPermissionRequest, raw j
 	if err := json.Unmarshal(fields["id"], &id); err != nil {
 		return nil, err
 	}
+	if request.PublicEventID != id {
+		setRawJSONField(fields, "primary_event_id", request.PublicEventID)
+	}
 	child, err := dshPublicEvent(scope, fields, id, request.EventType, request.SessionThreadID)
 	if err != nil {
 		return nil, err
@@ -148,17 +151,22 @@ func dshPermissionEvents(scope db.DSHScope, request toolPermissionRequest, raw j
 	if request.PublicEventID == id {
 		return []db.SessionEvent{child}, nil
 	}
+	delete(fields, "primary_event_id")
 	setRawJSONField(fields, "id", request.PublicEventID)
 	setRawJSONField(fields, "original_event_id", id)
 	primary, err := dshPublicEvent(scope, fields, request.PublicEventID, request.EventType, "")
 	return []db.SessionEvent{child, primary}, err
 }
 
-func dshToolCallPublicPayload(codeSessionID string, request toolPermissionRequest, input json.RawMessage, identity toolIdentity, permission resolvedToolPermission, at time.Time) (toolPermissionRequest, json.RawMessage, error) {
+func dshToolCallPublicPayload(codeSessionID string, request toolPermissionRequest, input json.RawMessage, identity toolIdentity, permission resolvedToolPermission, at time.Time, waiting bool) (toolPermissionRequest, json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(input))
 	decoder.UseNumber()
 	if err := decoder.Decode(&request.Input); err != nil {
 		return toolPermissionRequest{}, nil, db.ErrInvalidState
 	}
-	return toolCallPublicPayload(codeSessionID, request, identity, permission, at)
+	request, raw, err := toolCallPublicPayload(codeSessionID, request, identity, permission, at)
+	if permission != resolvedToolPermissionAsk && request.EventType != "agent.custom_tool_use" && !waiting {
+		request.PublicEventID = maevents.ToolUseEventID(codeSessionID, request.ToolUseID, request.SessionThreadID)
+	}
+	return request, raw, err
 }

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
 	"github.com/superduck-ai/yourbatis"
 )
 
@@ -58,9 +60,23 @@ func TestDSHWorkersPostgres(t *testing.T) {
 				t.Fatalf("invalid snapshot=%s", invalid)
 			}
 		}
-		first, err := store.FreezeDSHContext(ctx, scope, []byte(`{"model":"frozen","config":{}}`))
+		first, err := store.FreezeDSHContext(ctx, scope, []byte(`{"model":"frozen","config":{"subagents":{"agents":[{"name":"self","agentSnapshot":{"type":"agent","id":"parent","version":1,"name":"self","tools":[{"name":"Bash"}]}}]}}}`))
 		if err != nil {
 			t.Fatal(err)
+		}
+		live, found, err := store.GetSession(ctx, scope.WorkspaceUUID, record.SessionExternalID)
+		if err != nil || !found {
+			t.Fatal("missing live Session", err)
+		}
+		if _, err := store.SetSessionStatus(ctx, scope.WorkspaceUUID, record.SessionExternalID, "idle"); err != nil {
+			t.Fatal(err)
+		}
+		live.UpdatedAt = time.Now().UTC()
+		live.AgentSnapshot = []byte(`{"type":"agent","id":"parent","version":1,"name":"self","tools":[{"name":"Read"}]}`)
+		updated, changed, err := store.UpdateSession(ctx, scope.WorkspaceUUID, record.SessionExternalID, live)
+		equal, compareErr := jsoncanonical.Equal(updated.AgentSnapshot, live.AgentSnapshot)
+		if err != nil || !changed || compareErr != nil || !equal {
+			t.Fatal("live Session hot update failed", err)
 		}
 		second, err := store.FreezeDSHContext(ctx, scope, []byte(`{"model":"changed"}`))
 		if err != nil || string(first) != string(second) {
@@ -85,6 +101,18 @@ func TestDSHWorkersPostgres(t *testing.T) {
 		}
 		if _, err := store.HeartbeatDSHWorker(ctx, scope); err != nil {
 			t.Fatal(err)
+		}
+		for _, field := range []string{"organization", "code-session"} {
+			foreign := scope
+			if field == "organization" {
+				foreign.OrganizationUUID = "53000000-0000-0000-0000-000000000099"
+			} else {
+				foreign.CodeSessionUUID = "53000000-0000-0000-0000-000000000099"
+			}
+			leaked, err := store.GetDSHContextSnapshot(ctx, foreign)
+			if err != nil || len(leaked) != 0 {
+				t.Fatal("foreign registered context leaked", field, err)
+			}
 		}
 		actual, err = store.GetDSHContextSnapshot(ctx, other)
 		if err != nil || len(actual) != 0 {

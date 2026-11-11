@@ -1,3 +1,4 @@
+import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import { Context } from "@deepseek-ai/cordis";
 import { expect, test, spyOn } from "bun:test";
 import { spawn } from "node:child_process";
@@ -48,7 +49,7 @@ async function fixture(
       await session.open();
     },
   });
-  return { ctx, session, client };
+  return { ctx, session, client, api };
 }
 
 test("DSR refuses a v1 completion checkpoint before replay or acknowledgement", async () => {
@@ -737,4 +738,601 @@ test("DSR retries failed discovery against the current session on a later input"
   expect(discoveries).toBeGreaterThan(failed);
   expect(backend.requests.at(-1)!.tools.some((tool:any)=>tool.name==="mcp__peer__recovered_read")).toBe(true);
  } finally {await session.close();await ctx.fiber.dispose();backend.stop();peer.stop(true);await rm(root,{recursive:true,force:true});}
+});
+
+test("DSR model schema retains native send_message alongside delegation", async () => {
+  const backend = new DsrBackend();
+  backend.a.launch.subagents = { inlineAgents: false, agents: [{name:"worker", description:"worker", systemPrompt:"Return ready", tools:[], agentSnapshot:{type:"agent",id:"worker",version:1,name:"worker",tools:[]}}] };
+  backend.a.launch.tools = [];
+  backend.modelScript = [textEvents("ready")];
+  const root = await mkdtemp(join(tmpdir(), "dsr-message-schema-"));
+  const { ctx, session } = await fixture(backend, root);
+  try {
+    await session.receive({ id: "schema-input", kind: "user.message", lane: "task", content: [{ type: "text", text: "reply ready" }] });
+    const names = backend.requests[0]!.tools.map((tool: any) => tool.name);
+    expect(names).toContain("list_agents");
+    expect(names).toContain("subagent");
+    expect(names).toContain("send_message");
+    expect(names).toContain("interrupt_agent");
+  } finally {
+    await session.close();
+    await ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.each([false, true])(
+  "DSR interrupted prefix cold replay after publication failure=%s",
+  async (failPublication) => {
+    const backend = new DsrBackend();
+    const root = await mkdtemp(join(tmpdir(), "dsr-interrupted-prefix-"));
+    const first = await fixture(backend, root);
+    const { createAssistantMessage } = await import("@deepseek-ai/dsh-llm");
+    const { pluginRecordOf } = await import("@deepseek-ai/dsh-session");
+    first.api.modelResponses.set(first.session.id, "declared-response");
+    first.api.modelRequestIDs.set(first.session.id, "declared-request");
+    const source = first.session.runtime.agent.session;
+    source.append("turn/start", { turn: 1 });
+    source.append("step/start", { turn: 1, step: 1 });
+    first.session.inputId = "interrupted-input";
+    for (const frame of [
+      { type: "start", attemptId: "attempt", revision: 1, turn: 1, step: 1 },
+      {
+        type: "chunk",
+        attemptId: "attempt",
+        revision: 2,
+        index: 0,
+        time: 0,
+        chunk: { type: "block-start", index: 2, blockType: "text" },
+      },
+      {
+        type: "chunk",
+        attemptId: "attempt",
+        revision: 3,
+        index: 1,
+        time: 1,
+        chunk: { type: "text-delta", index: 2, text: "actual prefix" },
+      },
+    ] as AssistantStreamFrame[])
+      first.session.stream(frame);
+    const message = createAssistantMessage({
+      source: { provider: "test", model: "test-model" },
+      content: [{ type: "text", text: "actual prefix" }],
+    });
+    source.append(
+      "assistant/message",
+      {
+        turn: 1,
+        step: 1,
+        message,
+        stream: [
+          {
+            type: "chunk",
+            time: 0,
+            chunk: { type: "block-start", index: 2, blockType: "text" },
+          },
+          {
+            type: "chunk",
+            time: 1,
+            chunk: { type: "text-delta", index: 2, text: "actual prefix" },
+          },
+        ],
+        interrupted: true,
+      },
+      { surfaceOp: "append" },
+    );
+    const event = source.snapshotEvents().at(-1)!;
+    first.session.record(event, source);
+    first.session.stream({
+      type: "end",
+      attemptId: "attempt",
+      revision: 4,
+      index: 2,
+      outcome: {
+        kind: "committed",
+        eventType: "assistant/message",
+        seq: event.seq,
+      },
+    } as AssistantStreamFrame);
+    expect(
+      source
+        .snapshotEvents()
+        .map(pluginRecordOf)
+        .filter((record) => record?.type === "plugin:oma/assistant-block"),
+    ).toHaveLength(0);
+    const output = (
+      first.session as unknown as {
+        pending: { id: string; type: string; content: unknown }[];
+      }
+    ).pending.find((output) => output.type === "agent.message")!;
+    expect(output.content).toEqual([{ type: "text", text: "actual prefix" }]);
+    const gate = Promise.withResolvers<void>();
+    let publishing = false;
+    const publish = spyOn(first.client, "publish").mockImplementation(
+      async (events) => {
+        if (
+          events.some(
+            (event) =>
+              event.type === "preview.start" || event.type === "preview.delta",
+          )
+        )
+          expect(
+            backend.transcripts
+              .get(first.session.id)!
+              .events.some(
+                (event) => event.type === "plugin:oma/assistant-identity",
+              ),
+          ).toBe(true);
+        if (events.some((event) => event.id === output.id)) {
+          publishing = true;
+          expect(
+            backend.transcripts
+              .get(first.session.id)!
+              .events.some(
+                (event) => event.type === "plugin:oma/assistant-identity",
+              ),
+          ).toBe(true);
+          await gate.promise;
+          if (failPublication)
+            throw new Error("interrupted publication unavailable");
+        }
+      },
+    );
+    try {
+      const ending = (
+        first.session as unknown as {
+          completeCancelled(id: string): Promise<void>;
+        }
+      ).completeCancelled("interrupted-input");
+      await eventually(() => publishing);
+      expect(backend.finishes.has("interrupted-input")).toBe(false);
+      gate.resolve();
+      if (failPublication) {
+        await expect(ending).rejects.toThrow(
+          "interrupted publication unavailable",
+        );
+        expect(backend.finishes.has("interrupted-input")).toBe(false);
+      } else {
+        await ending;
+        expect(backend.finishes.get("interrupted-input")!.result).toBe(
+          "cancelled",
+        );
+      }
+    } finally {
+      gate.resolve();
+      publish.mockRestore();
+      await first.session.close().catch(() => {});
+      await first.ctx.fiber.dispose();
+    }
+    const second = await fixture(backend, root);
+    try {
+      await second.session.receive({
+        id: "interrupted-input",
+        kind: "user.message",
+        lane: "task",
+        content: [{ type: "text", text: "must not execute again" }],
+      });
+      expect(backend.requests).toHaveLength(0);
+      expect(backend.finishes.get("interrupted-input")!.result).toBe(
+        "cancelled",
+      );
+      expect(backend.publicLog.get(output.id)!.content).toEqual([
+        { type: "text", text: "actual prefix" },
+      ]);
+    } finally {
+      await second.session.close();
+      await second.ctx.fiber.dispose();
+      backend.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("DSR aborted child settlement does not wake parent while normal and non-DSR settlements do", async () => {
+  const backend = new DsrBackend();
+  const root = await mkdtemp(join(tmpdir(), "dsr-aborted-settlement-"));
+  const { ctx, session } = await fixture(backend, root);
+  const service = session.runtime.agent.ctx.get("subagents") as unknown as {
+    manager: {
+      notifySettlement(activation: unknown, terminal: unknown): void;
+      sendWaking(...args: unknown[]): unknown;
+    };
+  };
+  const manager = service.manager;
+  const waking = spyOn(manager, "sendWaking").mockImplementation(
+    () => undefined,
+  );
+  const activation = {
+    announced: true,
+    delivery: "parent",
+    parent: session.runtime.agent,
+    childId: "child",
+    kind: "local",
+    omitClosingText: false,
+  };
+  try {
+    manager.notifySettlement(activation, { stopReason: "aborted", output: [] });
+    manager.notifySettlement(activation, { stopReason: "aborted", output: [] });
+    expect(waking).not.toHaveBeenCalled();
+    manager.notifySettlement(activation, {
+      stopReason: "completed",
+      output: [{ type: "text", text: "actual report" }],
+    });
+    expect(waking).toHaveBeenCalledTimes(1);
+    const calls: unknown[][] = [];
+    manager.notifySettlement.call(
+      {
+        ctx: {
+          get: () => false,
+          agents: { get: () => activation.parent },
+          logger: { warn: () => {} },
+        },
+        closingTeardownFor: () => undefined,
+        sendWaking: (...args: unknown[]) => calls.push(args),
+      },
+      activation,
+      { stopReason: "aborted", output: [] },
+    );
+    expect(calls).toHaveLength(1);
+  } finally {
+    waking.mockRestore();
+    await session.close();
+    await ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy interrupted record without durable identity fails instead of inventing its public ID", async () => {
+  const backend = new DsrBackend();
+  const root = await mkdtemp(join(tmpdir(), "dsr-interrupted-legacy-"));
+  const { ctx, session } = await fixture(backend, root);
+  const { createAssistantMessage } = await import("@deepseek-ai/dsh-llm");
+  const source = session.runtime.agent.session;
+  source.append("turn/start", { turn: 1 });
+  source.append("step/start", { turn: 1, step: 1 });
+  source.append(
+    "assistant/message",
+    {
+      turn: 1,
+      step: 1,
+      message: createAssistantMessage({
+        source: { provider: "test", model: "test" },
+        content: [{ type: "text", text: "legacy prefix" }],
+      }),
+      stream: [],
+      interrupted: true,
+    },
+    { surfaceOp: "append" },
+  );
+  try {
+    await expect(session.checkpoint()).rejects.toThrow("no durable public identity");
+    expect(backend.publicLog.size).toBe(0);
+    expect(backend.finishes.size).toBe(0);
+  } finally {
+    await session.close().catch(() => {});
+    await ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("DSR publishes actual SDK successful compaction and prune after durable native records", async () => {
+  const backend = new DsrBackend();
+  const root = await mkdtemp(join(tmpdir(), "dsr-native-compaction-"));
+  const { ctx, session } = await fixture(backend, root);
+  backend.onModel = async () =>
+    textEvents("owned public conversation ".repeat(3000));
+  try {
+    await session.receive({
+      id: "compaction-input",
+      kind: "user.message",
+      lane: "task",
+      content: [{ type: "text", text: "owned input ".repeat(3000) }],
+    });
+    backend.onModel = async () => textEvents("short summary");
+    const result = await ctx.compaction.compactNow(
+      session.runtime.agent,
+      session.abort.signal,
+    );
+    expect(result).not.toBeNull();
+    const native = session.runtime.agent.session.snapshotEvents();
+    expect(native.some((event) => event.type === "compaction/start")).toBe(
+      true,
+    );
+    expect(
+      native.some(
+        (event) =>
+          event.type === "compaction/end" && event.data.error === undefined,
+      ),
+    ).toBe(true);
+    await session.checkpoint();
+    expect(
+      [...backend.publicLog.values()].filter(
+        (event) => event.type === "agent.thread_context_compacted",
+      ),
+    ).toHaveLength(1);
+    expect(
+      backend.transcripts
+        .get(session.id)!
+        .events.some((event) => event.type === "compaction/end"),
+    ).toBe(true);
+    const { projectCompaction } = await import("../src/dsr/compaction.ts");
+    const source = session.runtime.agent.session;
+    const end = native.findLast((event) => event.type === "compaction/end")!;
+    for (const fault of [
+      "missing-start",
+      "wrong-start",
+      "missing-summary",
+      "failed-end",
+    ]) {
+      const events = structuredClone(native);
+      const negative = {
+        id: source.id,
+        snapshotEvents: () =>
+          events
+            .filter(
+              (event) =>
+                fault !== "missing-start" || event.type !== "compaction/start",
+            )
+            .filter(
+              (event) =>
+                fault !== "missing-summary" ||
+                event.type !== "compaction/summary",
+            ),
+      } as unknown as typeof source;
+      for (const event of events)
+        if (fault === "wrong-start" && event.type === "compaction/start")
+          event.data.compactionId = "foreign" as typeof event.data.compactionId;
+      const altered = structuredClone(end);
+      if (fault === "failed-end" && altered.type === "compaction/end")
+        altered.data.error = "controlled failure";
+      expect(projectCompaction(altered, negative, session.id)).toBeUndefined();
+    }
+
+    backend.onTool = async () => ({
+      content: [{ type: "text", text: "owned tool output ".repeat(1000) }],
+    });
+    backend.modelScript.splice(
+      0,
+      backend.modelScript.length,
+      toolEvents("echo owned", "large-result"),
+      textEvents("tool done"),
+    );
+    backend.onModel = undefined;
+    await session.receive({
+      id: "prune-input",
+      kind: "user.message",
+      lane: "task",
+      content: [{ type: "text", text: "run owned tool" }],
+    });
+    ctx.toolResultPruner.pruneSession(session.runtime.agent.session);
+    expect(
+      session.runtime.agent.session
+        .snapshotEvents()
+        .some((event) => event.type === "compaction/prune"),
+    ).toBe(true);
+    await session.checkpoint();
+    expect(
+      [...backend.publicLog.values()].filter(
+        (event) => event.type === "agent.thread_context_compacted",
+      ).length,
+    ).toBeGreaterThan(1);
+  } finally {
+    await session.close();
+    await ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("DSR failed SDK compaction and unmatched starts never publish a success notification", async () => {
+  const backend = new DsrBackend();
+  const root = await mkdtemp(join(tmpdir(), "dsr-compaction-failure-"));
+  const { ctx, session } = await fixture(backend, root);
+  backend.onModel = async () => textEvents("owned source ".repeat(3000));
+  try {
+    await session.receive({
+      id: "failure-source",
+      kind: "user.message",
+      lane: "task",
+      content: [{ type: "text", text: "owned prompt ".repeat(3000) }],
+    });
+    backend.onModel = async () =>
+      Response.json(
+        {
+          error: {
+            type: "invalid_request_error",
+            message: "controlled local compaction rejection",
+          },
+        },
+        { status: 400 },
+      );
+    await expect(
+      ctx.compaction.compactNow(session.runtime.agent, session.abort.signal),
+    ).rejects.toThrow();
+    expect(
+      session.runtime.agent.session
+        .snapshotEvents()
+        .some(
+          (event) =>
+            event.type === "compaction/end" && event.data.error !== undefined,
+        ),
+    ).toBe(true);
+    await session.checkpoint();
+    expect(
+      [...backend.publicLog.values()].filter(
+        (event) => event.type === "agent.thread_context_compacted",
+      ),
+    ).toHaveLength(0);
+    const { CompactionId } = await import("@deepseek-ai/dsh-compaction");
+    session.runtime.agent.session.append("compaction/start", {
+      compactionId: CompactionId("unmatched"),
+      turn: null,
+    });
+    await session.checkpoint();
+    expect(
+      [...backend.publicLog.values()].filter(
+        (event) => event.type === "agent.thread_context_compacted",
+      ),
+    ).toHaveLength(0);
+  } finally {
+    await session.close();
+    await ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.each([false, true])(
+  "DSR compaction waits for replication and cold replays stable receipts after publication failure=%s",
+  async (failPublish) => {
+    const backend = new DsrBackend();
+    const root = await mkdtemp(join(tmpdir(), "dsr-compaction-replay-"));
+    const first = await fixture(backend, root);
+    backend.onModel = async () =>
+      textEvents("durable owned conversation ".repeat(3000));
+    try {
+      await first.session.receive({
+        id: "replay-source",
+        kind: "user.message",
+        lane: "task",
+        content: [{ type: "text", text: "owned history ".repeat(3000) }],
+      });
+      backend.onModel = async () => textEvents("short durable summary");
+      await first.ctx.compaction.compactNow(
+        first.session.runtime.agent,
+        first.session.abort.signal,
+      );
+      const { SessionReplication } =
+        await import("../src/runtime/replication.ts");
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered = false;
+      const original = SessionReplication.prototype.flush;
+      const flush = spyOn(
+        SessionReplication.prototype,
+        "flush",
+      ).mockImplementation(async function (
+        this: InstanceType<typeof SessionReplication>,
+        ...args: Parameters<typeof original>
+      ) {
+        entered = true;
+        await gate;
+        return original.apply(this, args);
+      });
+      backend.failDsrPublication = failPublish;
+      const checkpoint = first.session.checkpoint();
+      void checkpoint.catch(() => {});
+      try {
+        await eventually(() => entered);
+        expect(
+          [...backend.publicLog.values()].filter(
+            (event) => event.type === "agent.thread_context_compacted",
+          ),
+        ).toHaveLength(0);
+        release();
+        if (failPublish) await expect(checkpoint).rejects.toThrow();
+        else await checkpoint;
+      } finally {
+        release();
+        flush.mockRestore();
+      }
+      const native = backend.transcripts.get(first.session.id)!.events;
+      expect(
+        native.some(
+          (event) =>
+            event.type === "compaction/end" && event.data.error === undefined,
+        ),
+      ).toBe(true);
+      const { projectCompaction } = await import("../src/dsr/compaction.ts");
+      const source = first.session.runtime.agent.session;
+      const end = source
+        .snapshotEvents()
+        .findLast((event) => event.type === "compaction/end")!;
+      const expected = projectCompaction(end, source, first.session.id)!;
+      await first.session.close().catch(() => {});
+      await first.ctx.fiber.dispose();
+      backend.failDsrPublication = false;
+      const second = await fixture(backend, root + "-cold");
+      try {
+        expect(backend.publicLog.get(expected.id)).toEqual(expected);
+        second.session.replay(second.session.runtime.agent.session);
+        await second.session.checkpoint();
+        expect(
+          [...backend.publicLog.values()].filter(
+            (event) => event.type === "agent.thread_context_compacted",
+          ),
+        ).toEqual([expected]);
+        expect(backend.requests).toHaveLength(2);
+      } finally {
+        await second.session.close();
+        await second.ctx.fiber.dispose();
+      }
+    } finally {
+      await first.session.close().catch(() => {});
+      await first.ctx.fiber.dispose();
+      backend.stop();
+      await rm(root, { recursive: true, force: true });
+      await rm(root + "-cold", { recursive: true, force: true });
+    }
+  },
+);
+
+test("DSR actual SDK child compaction publishes only its owning thread", async () => {
+  const backend = new DsrBackend();
+  const root = await mkdtemp(join(tmpdir(), "dsr-child-compaction-"));
+  const { ctx, session } = await fixture(backend, root);
+  const thread = {
+    id: "owned-compaction-child",
+    name: "child",
+    inline: true,
+    systemPrompt: "",
+    model: session.config.model,
+    status: "idle" as const,
+  };
+  const factory = session.subagents as unknown as {
+    createRuntime(
+      thread: import("../src/runtime/contracts.ts").SubagentThread,
+    ): Promise<import("../src/runtime/session.ts").SessionRuntime>;
+  };
+  ctx.sessionReplication.bindThread(thread.id, session.id);
+  const unbind = session.config.bindThread?.(thread.id);
+  const child = await factory.createRuntime(thread);
+  await child.open();
+  backend.onModel = async () => textEvents("child conversation ".repeat(3000));
+  try {
+    await child.run("child input ".repeat(3000), {
+      beforeRun: async () => {},
+      afterRun: async () => {},
+    });
+    backend.onModel = async () => textEvents("short child summary");
+    await ctx.compaction.compactNow(child.agent, session.abort.signal);
+    await session.checkpoint(child.agent.session);
+    const notifications = [...backend.publicLog.values()].filter(
+      (event) => event.type === "agent.thread_context_compacted",
+    );
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]!.session_thread_id).toBe(thread.id);
+    expect(
+      backend.transcripts
+        .get(thread.id)!
+        .events.some((event) => event.type === "compaction/end"),
+    ).toBe(true);
+    expect(
+      backend.transcripts
+        .get(session.id)!
+        .events.some((event) => event.type === "compaction/end"),
+    ).toBe(false);
+  } finally {
+    await child.close();
+    unbind?.();
+    await session.close();
+    await ctx.fiber.dispose();
+    backend.stop();
+    await rm(root, { recursive: true, force: true });
+  }
 });

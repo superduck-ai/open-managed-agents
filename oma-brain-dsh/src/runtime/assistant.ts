@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
+import {
+  expandAssistantStream,
+  LlmAttemptId,
+  type AssistantStreamRecord,
+} from "@deepseek-ai/dsh-llm";
 import type { AssistantMessage, ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { Payload } from "../json.ts";
 export interface AssistantBlockOutput {
@@ -94,13 +99,80 @@ export function assistantMessages(
     return output ? [output] : [];
   });
 }
+export interface AssistantAttemptIdentity {
+  turn: number;
+  step: number;
+  messageID?: string;
+  requestID?: string;
+}
+declare module "@deepseek-ai/dsh-session" {
+  interface PluginRecordMap {
+    "plugin:oma/assistant-identity": AssistantAttemptIdentity;
+  }
+}
+export function interruptedAssistantMessages(
+  codeSessionID: string,
+  inputId: string,
+  message: AssistantMessage,
+  records: readonly AssistantStreamRecord[],
+  identity: AssistantAttemptIdentity,
+  threadId?: string,
+): Payload[] {
+  const stream = new AssistantStream(
+    codeSessionID,
+    () => identity.messageID,
+    () => identity.requestID,
+  );
+  stream.record(
+    {
+      type: "start",
+      attemptId: LlmAttemptId("replay"),
+      revision: 1,
+      turn: identity.turn,
+      step: identity.step,
+    },
+    inputId,
+    threadId,
+  );
+  const completed: Payload[] = [];
+  for (const [index, timed] of expandAssistantStream(records).entries()) {
+    for (const output of stream.record(
+      {
+        type: "chunk",
+        attemptId: LlmAttemptId("replay"),
+        revision: index + 2,
+        index,
+        ...timed,
+      },
+      inputId,
+      threadId,
+    ))
+      if (
+        (output.type === "agent.message" || output.type === "agent.thinking") &&
+        !(
+          timed.chunk.type === "block-end" &&
+          (timed.chunk.block.type === "text" ||
+            timed.chunk.block.type === "reasoning") &&
+          timed.chunk.block.text.trim() === ""
+        )
+      )
+        completed.push(output);
+  }
+  return [...completed, ...stream.interrupted(message, threadId)];
+}
 export class AssistantStream {
   private readonly streams = new Map<
     string,
     {
+      turn: number;
+      step: number;
       fallback: string;
       blocks: Map<number, string>;
       seen: Set<number>;
+      prefixes: Map<
+        number,
+        { id: string; type: "text" | "reasoning"; text: string }
+      >;
     }
   >();
   private readonly completed = new Map<string, Set<string>>();
@@ -115,6 +187,51 @@ export class AssistantStream {
     this.completed.delete(key);
     return payloads.filter((payload) => !completed?.has(payload.id));
   }
+  identity(threadId?: string): AssistantAttemptIdentity {
+    const key = threadId ?? this.codeSessionID;
+    const stream = this.streams.get(key);
+    if (!stream) throw new Error("Assistant attempt identity is unavailable");
+    return {
+      turn: stream.turn,
+      step: stream.step,
+      messageID: this.messageID?.(key),
+      requestID: this.requestID?.(key),
+    };
+  }
+  interrupted(message: AssistantMessage, threadId?: string): Payload[] {
+    const key = threadId ?? this.codeSessionID;
+    const stream = this.streams.get(key);
+    if (!stream) throw new Error("Interrupted assistant stream is unavailable");
+    const prefixes = [...stream.prefixes.values()].filter(
+      (prefix) => prefix.text.trim() !== "",
+    );
+    const blocks = message.content.filter(
+      (block) => block.type === "text" || block.type === "reasoning",
+    );
+    if (prefixes.length !== blocks.length)
+      throw new Error(
+        "Interrupted assistant transcript differs from streamed prefix",
+      );
+    return blocks.flatMap((block, index) => {
+      const prefix = prefixes[index]!;
+      if (
+        (block.type !== "text" && block.type !== "reasoning") ||
+        block.type !== prefix.type ||
+        block.text !== prefix.text
+      )
+        throw new Error(
+          "Interrupted assistant transcript differs from streamed prefix",
+        );
+      if (this.completed.get(key)?.has(prefix.id)) return [];
+      const output = assistantBlockOutput(
+        prefix.id,
+        block,
+        this.requestID?.(key),
+        threadId,
+      );
+      return output ? [output] : [];
+    });
+  }
   record(
     frame: AssistantStreamFrame,
     inputId: string,
@@ -124,9 +241,12 @@ export class AssistantStream {
     if (frame.type === "start") {
       this.completed.set(key, new Set());
       this.streams.set(key, {
+        turn: frame.turn,
+        step: frame.step,
         fallback: `${inputId}_${threadId ? `${threadId}_` : ""}message_${frame.turn}_${frame.step}`,
         blocks: new Map(),
         seen: new Set(),
+        prefixes: new Map(),
       });
       return [];
     }
@@ -154,7 +274,16 @@ export class AssistantStream {
       );
       stream.seen.add(chunk.index);
       stream.blocks.set(chunk.index, id);
+      stream.prefixes.set(chunk.index, {
+        id,
+        type: chunk.blockType as "text" | "reasoning",
+        text: "",
+      });
       return [{ type: "event_start", event: { type, id } }];
+    }
+    if (chunk.type === "text-delta" || chunk.type === "reasoning-delta") {
+      const prefix = stream.prefixes.get(chunk.index);
+      if (prefix) prefix.text += chunk.text;
     }
     if (chunk.type === "block-end") {
       const type =
@@ -169,6 +298,12 @@ export class AssistantStream {
           stream.fallback,
         );
       stream.blocks.delete(chunk.index);
+      if (chunk.block.type === "text" || chunk.block.type === "reasoning")
+        stream.prefixes.set(chunk.index, {
+          id,
+          type: chunk.block.type,
+          text: chunk.block.text,
+        });
       const output = assistantBlockOutput(
         id,
         chunk.block,
@@ -194,6 +329,7 @@ export class AssistantStream {
       if (stream.seen.has(chunk.index)) return [];
       stream.seen.add(chunk.index);
       stream.blocks.set(chunk.index, id);
+      stream.prefixes.set(chunk.index, { id, type: "text", text: chunk.text });
       payloads.push({ type: "event_start", event: { type, id } });
     }
     payloads.push({

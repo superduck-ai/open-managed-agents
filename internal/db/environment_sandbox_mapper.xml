@@ -130,7 +130,13 @@
             AND sandbox.state = 'running'
             WHERE code_session.external_id = #{codeSessionExternalID}
             AND code_session.status = 'active'
-            AND code_session.worker_status IN
+            AND CASE WHEN code_session.metadata #>> '{config,worker_protocol}' = 'dsr1'
+                THEN (SELECT session.status FROM sessions session
+                    WHERE session.uuid = code_session.session_uuid
+                      AND session.organization_uuid = code_session.organization_uuid
+                      AND session.workspace_uuid = code_session.workspace_uuid
+                      AND session.deleted_at IS NULL AND session.archived_at IS NULL)
+                ELSE code_session.worker_status END IN
             <foreach collection="workerStatuses" item="workerStatus" open="(" separator="," close=")">
                 #{workerStatus}
             </foreach>

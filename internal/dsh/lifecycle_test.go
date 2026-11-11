@@ -29,6 +29,7 @@ func (d *lifecycleDatabase) HeartbeatDSHWorker(context.Context, db.DSHScope) (ti
 type testLifecycle struct {
 	claim           Claim
 	registrationErr error
+	renew           func(context.Context, db.DSHScope) error
 }
 
 func (l testLifecycle) Claim(context.Context, string, time.Duration) (Claim, bool, error) {
@@ -97,4 +98,11 @@ func TestWorkerStateRoutesAreUnavailable(t *testing.T) {
 			t.Fatalf("method=%s status=%d calls=%d", method, response.Code, database.calls)
 		}
 	}
+}
+
+func (l testLifecycle) RenewSandbox(ctx context.Context, scope db.DSHScope) error {
+	if l.renew != nil {
+		return l.renew(ctx, scope)
+	}
+	return nil
 }

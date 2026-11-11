@@ -1,0 +1,13 @@
+diff --git a/lib/index.js b/lib/index.js
+index cfe1272d80b2b07a8afe04cef617454e68035369..d7071484d7ad6acd23d5edc506a9a63275e06bf4 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -2059,7 +2059,7 @@ var SubagentManager = class {
+ 	}
+ 	/** Deliver the captured execution result to the durable direct parent after cleanup. */
+ 	notifySettlement(activation, terminal) {
+-		if (!activation.announced || activation.delivery === "caller") return;
++		if (!activation.announced || activation.delivery === "caller" || terminal.stopReason === "aborted" && this.ctx.get("dsrContinuation")) return;
+ 		try {
+ 			const parent = this.ctx.agents.get(activation.parent.id);
+ 			if (parent !== activation.parent) return;

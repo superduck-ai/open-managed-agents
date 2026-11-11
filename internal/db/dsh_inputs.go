@@ -46,6 +46,9 @@ func insertDSHInputs(ctx context.Context, executor yourbatis.Executor, session S
 				return result, err
 			}
 		case "user.interrupt":
+			if err := validateDSHInterruptTarget(ctx, executor, session, event); err != nil {
+				return result, err
+			}
 			thread := ""
 			if event.ThreadExternalID != nil {
 				thread = *event.ThreadExternalID
@@ -157,6 +160,21 @@ func (tx ManagedAgentActivationTx) AcceptDSHActivationInputs(ctx context.Context
 		if _, err := tx.dshMapper.InsertExecution(ctx, scope, event.ExternalID, primary.ExternalID, event.CreatedAt); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateDSHInterruptTarget(ctx context.Context, executor yourbatis.Executor, session Session, event SessionEvent) error {
+	if event.ThreadExternalID == nil {
+		return nil
+	}
+	row, err := NewSessionThreadMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, *event.ThreadExternalID)
+	if err != nil {
+		return mapNoRows(err)
+	}
+	target := row.thread()
+	if target.Status == "terminated" || target.ArchivedAt != nil {
+		return ErrSessionInterruptTargetInvalid
 	}
 	return nil
 }

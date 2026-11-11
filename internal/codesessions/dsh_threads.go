@@ -20,7 +20,11 @@ func (e dshExecution) validatePublicThreads(ctx context.Context, scope db.DSHSco
 		if !found || session.OrganizationUUID != scope.OrganizationUUID {
 			return db.ErrNotFound
 		}
-		config, err := resolveRuntimeSubagents(ctx, e.handler.db, session)
+		snapshot, err := e.handler.db.GetDSHContextSnapshot(ctx, scope)
+		if err != nil {
+			return err
+		}
+		config, err := registeredDSHSubagents(snapshot)
 		if err != nil {
 			return err
 		}
@@ -57,6 +61,9 @@ func trustedDSHChildSnapshot(raw, parent json.RawMessage, config *RuntimeSubagen
 		setRawJSONField(fields, "name", child.Name)
 		setRawJSONField(fields, "system", child.System)
 		delete(fields, "description")
+		delete(fields, "id")
+		delete(fields, "version")
+		delete(fields, "multiagent")
 		return json.Marshal(fields)
 	}
 	for _, definition := range config.Agents {
@@ -72,4 +79,22 @@ func trustedDSHChildSnapshot(raw, parent json.RawMessage, config *RuntimeSubagen
 		}
 	}
 	return nil, db.ErrInvalidState
+}
+
+func registeredDSHSubagents(raw []byte) (*RuntimeSubagentConfig, error) {
+	if len(raw) == 0 {
+		return nil, db.ErrInvalidState
+	}
+	var snapshot dshContextSnapshot
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return nil, err
+	}
+	config, err := parseManagedAgentRuntimeConfig(snapshot.Config)
+	if err != nil {
+		return nil, err
+	}
+	if config.Subagents == nil {
+		return nil, db.ErrInvalidState
+	}
+	return config.Subagents, nil
 }

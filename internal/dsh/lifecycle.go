@@ -27,6 +27,7 @@ type Lifecycle interface {
 	Claim(context.Context, string, time.Duration) (Claim, bool, error)
 	Release(context.Context, string, string, int64, string) error
 	RegistrationContext(context.Context, db.DSHScope, string) (json.RawMessage, error)
+	RenewSandbox(context.Context, db.DSHScope) error
 	Telemetry(context.Context, db.DSHScope) (bool, *TraceExport)
 }
 
@@ -187,6 +188,11 @@ func (h *ControlHandler) heartbeat(w http.ResponseWriter, r *http.Request) {
 	expiry, err := h.database.HeartbeatDSHWorker(r.Context(), scopeFrom(r))
 	if err != nil {
 		writeError(w, r, err, nil)
+		return
+	}
+	if err := h.lifecycle.RenewSandbox(r.Context(), scopeFrom(r)); err != nil {
+		h.logger.ErrorContext(r.Context(), "renew DSR sandbox timeout", "code_session_id", scopeFrom(r).CodeSessionID, "error", err)
+		writeError(w, r, sandboxRenewalUnavailable(), nil)
 		return
 	}
 	writeJSON(w, struct {

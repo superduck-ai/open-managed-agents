@@ -18,6 +18,8 @@ import type {
 import {
   AssistantStream,
   assistantMessages,
+  interruptedAssistantMessages,
+  type AssistantAttemptIdentity,
   type AssistantBlockOutput,
 } from "../runtime/assistant.ts";
 import { userInputContent } from "../runtime/user-content.ts";
@@ -33,6 +35,7 @@ import { DsrSubagentBridge } from "./subagents.ts";
 import type { DsrClient } from "./client.ts";
 import type { Decision, Delivery, Finish, Input, PublicEvent } from "./wire.ts";
 import { recordMcpError, projectMcpError } from "./mcp-errors.ts";
+import { projectCompaction } from "./compaction.ts";
 import { TranscriptPublication } from "./publication.ts";
 
 // 扩展 DSH 插件记录类型：允许把“某个输入已经得出最终结论”写进会话事件流。
@@ -84,7 +87,7 @@ export class DsrSession {
   ) {
     this.previews = new DsrPreviewBuffer((events) => {
       this.publications = this.publications.then(() =>
-        this.client.publish(events, this.abort.signal),
+        this.commitPublication(events, []),
       );
       void this.publications.catch((error) => {
         this.failure = error;
@@ -115,9 +118,19 @@ export class DsrSession {
         },
         // 所有会话事件先进入 record()，转成公共事件或更新内部状态。
         onExternalMcpAuthenticationFailure: (serverName, phase, session) =>
-          this.mcpFailure(session, "mcp_authentication_failed_error", serverName, phase ?? "discovery"),
+          this.mcpFailure(
+            session,
+            "mcp_authentication_failed_error",
+            serverName,
+            phase ?? "discovery",
+          ),
         onExternalMcpConnectionFailure: (serverName, session) =>
-          this.mcpFailure(session, "mcp_connection_failed_error", serverName, "discovery"),
+          this.mcpFailure(
+            session,
+            "mcp_connection_failed_error",
+            serverName,
+            "discovery",
+          ),
         onEvent: (event, session) => this.record(event, session),
         // 流式帧进入 stream()，生成 preview 事件。
         onStream: (frame) => this.stream(frame),
@@ -214,8 +227,13 @@ export class DsrSession {
    *   // -> this.ending = event（供 runtime.run 结束后生成 Finish）
    */
   record(event: SessionEvent, session: Session): void {
-    for (const entry of this.publication.read(event, session))
-      this.project(entry, session);
+    try {
+      for (const entry of this.publication.read(event, session))
+        this.project(entry, session);
+    } catch (error) {
+      this.failure = error;
+      throw error;
+    }
   }
 
   private project(event: SessionEvent, session: Session): void {
@@ -236,6 +254,35 @@ export class DsrSession {
         this.queueAssistant(payload as PublicEvent);
       }
     }
+    if (event.type === "assistant/message" && event.data.interrupted) {
+      const identity = session
+        .snapshotEvents()
+        .slice(0, event.seq)
+        .map(pluginRecordOf)
+        .findLast(
+          (record) =>
+            record?.type === "plugin:oma/assistant-identity" &&
+            (record.data as AssistantAttemptIdentity).turn ===
+              event.data.turn &&
+            (record.data as AssistantAttemptIdentity).step === event.data.step,
+        )?.data as AssistantAttemptIdentity | undefined;
+      if (!identity)
+        throw new Error("Interrupted assistant has no durable public identity");
+      const inputID = thread
+        ? this.id
+        : (this.publication.input(session, event.data.turn) ?? this.inputId);
+      for (const output of interruptedAssistantMessages(
+        this.id,
+        inputID,
+        event.data.message,
+        event.data.stream,
+        identity,
+        thread,
+      ))
+        this.queueAssistant(output as PublicEvent);
+    }
+    const compacted = projectCompaction(event, session, this.id);
+    if (compacted) this.pending.push(compacted);
     const diagnostic = projectMcpError(event, session.id, this.id);
     if (diagnostic) this.pending.push(diagnostic);
     const record = pluginRecordOf(event);
@@ -270,6 +317,22 @@ export class DsrSession {
   }
 
   stream(frame: AssistantStreamFrame, thread?: string): void {
+    if (
+      frame.type === "chunk" &&
+      frame.chunk.type === "block-start" &&
+      (frame.chunk.blockType === "text" ||
+        frame.chunk.blockType === "reasoning")
+    ) {
+      const source = thread
+        ? this.ctx.sessions.get(SessionId(thread))
+        : this.runtime.agent.session;
+      if (!source) throw new Error("Assistant identity owner is unavailable");
+      appendPluginRecord(
+        source,
+        "plugin:oma/assistant-identity",
+        this.assistant.identity(thread),
+      );
+    }
     for (const payload of this.assistant.record(
       frame,
       thread ? this.id : this.inputId,
@@ -598,7 +661,12 @@ export class DsrSession {
   }
 
   // 入队一个公共事件并立即 checkpoint。子 agent 桥接层用它发布事件。
-  private async mcpFailure(session: Session, type: "mcp_authentication_failed_error" | "mcp_connection_failed_error", serverName: string, phase: "discovery" | "tool_call"): Promise<void> {
+  private async mcpFailure(
+    session: Session,
+    type: "mcp_authentication_failed_error" | "mcp_connection_failed_error",
+    serverName: string,
+    phase: "discovery" | "tool_call",
+  ): Promise<void> {
     this.record(recordMcpError(session, type, serverName, phase), session);
     await this.checkpoint(session);
   }

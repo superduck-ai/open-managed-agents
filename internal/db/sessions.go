@@ -643,10 +643,10 @@ func (d *DB) ArchiveSessionThread(ctx context.Context, workspaceUUID string, ses
 				return err
 			}
 			now := time.Now().UTC().Truncate(time.Microsecond)
-			result, err := insertSessionEventsTx(ctx, executor, session, []SessionEvent{{
+			result, err := archiveThreadEventsTx(ctx, executor, session, thread, SessionEvent{
 				UUID: uuid.NewV4().String(), ExternalID: eventID, EventType: "session.thread_status_terminated",
 				ThreadExternalID: &threadExternalID, StatusThreadID: threadExternalID, CreatedAt: now, ProcessedAt: now,
-			}})
+			})
 			if err != nil {
 				return err
 			}

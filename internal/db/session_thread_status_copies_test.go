@@ -35,6 +35,10 @@ func TestSessionChildStatusHasOwnAndPrimaryCopies(t *testing.T) {
 			if got[1].ExternalID == source.ExternalID || got[1].UUID == source.UUID || got[1].StatusThreadID != child.ExternalID || !got[1].ProcessedAt.Equal(source.ProcessedAt) {
 				t.Fatal("mirror identity or timing")
 			}
+			processedAt, err := time.Parse(time.RFC3339Nano, p["processed_at"].(string))
+			if err != nil || processedAt.IsZero() || !processedAt.Equal(source.ProcessedAt.Truncate(time.Microsecond)) {
+				t.Fatal("mirror payload lost persisted processing time")
+			}
 			again, err := sessionThreadStatusCopies(source, primary, child)
 			if err != nil || again[1].ExternalID != got[1].ExternalID {
 				t.Fatal("unstable replay identity")

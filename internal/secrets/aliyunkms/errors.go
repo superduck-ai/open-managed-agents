@@ -2,12 +2,16 @@ package aliyunkms
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strings"
+	"syscall"
 
 	"github.com/alibabacloud-go/tea/dara"
 	"github.com/alibabacloud-go/tea/tea"
@@ -20,6 +24,7 @@ type KMSError struct {
 	Code       string
 	RequestID  string
 	StatusCode int
+	Attempts   int
 }
 
 func (e *KMSError) Error() string {
@@ -30,6 +35,9 @@ func (e *KMSError) Error() string {
 	if e.RequestID != "" {
 		message += " (request_id: " + e.RequestID + ")"
 	}
+	if e.Attempts > 1 {
+		message += fmt.Sprintf(" (attempts: %d)", e.Attempts)
+	}
 	return message
 }
 
@@ -37,14 +45,14 @@ func (e *KMSError) Error() string {
 func (e *KMSError) LogValue() slog.Value {
 	return slog.GroupValue(slog.String("provider", providerName),
 		slog.String("operation", e.Operation), slog.String("code", e.Code),
-		slog.Int("status", e.StatusCode), slog.String("request_id", e.RequestID))
+		slog.Int("status", e.StatusCode), slog.String("request_id", e.RequestID),
+		slog.Int("attempts", e.Attempts))
 }
 
-func operationError(ctx context.Context, operation string, err error) error {
+func operationError(ctx context.Context, operation string, err error, attempts int) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("aliyun_kms: %s: %w", operation, ctx.Err())
 	}
-	// Preserve safe sentinels without retaining an SDK/url.Error in the chain.
 	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded} {
 		if errors.Is(err, sentinel) {
 			return fmt.Errorf("aliyun_kms: %s: %w", operation, sentinel)
@@ -54,20 +62,67 @@ func operationError(ctx context.Context, operation string, err error) error {
 	if errors.As(err, &networkError) && networkError.Timeout() {
 		return fmt.Errorf("aliyun_kms: %s: %w", operation, context.DeadlineExceeded)
 	}
-	failure := &KMSError{Operation: operation}
+	failure, _ := classifyFailure(err)
+	failure.Operation = operation
+	failure.Attempts = attempts
+	return failure
+}
+
+func classifyFailure(err error) (*KMSError, bool) {
+	failure := &KMSError{}
 	readSDKMetadata(err, failure)
 	failure.Code = safeIdentifier(failure.Code)
 	failure.RequestID = safeIdentifier(failure.RequestID)
 	if failure.StatusCode < 100 || failure.StatusCode > 599 {
 		failure.StatusCode = 0
 	}
+	if failure.Code == "" && failure.StatusCode == 0 {
+		code, retryable := transportFailure(err)
+		failure.Code = code
+		return failure, retryable
+	}
+	retryable := failure.StatusCode >= 500 || strings.Contains(failure.Code, "Throttling")
 	if failure.Code == "" {
 		failure.Code = "RequestFailed"
-		if networkError != nil {
-			failure.Code = "NetworkError"
-		}
 	}
-	return failure
+	return failure, retryable
+}
+
+func transportFailure(err error) (string, bool) {
+	var dnsError *net.DNSError
+	var networkError net.Error
+	switch {
+	case certificateFailure(err):
+		return "NetworkError.TLSCertificate", false
+	case errors.As(err, &networkError) && networkError.Timeout():
+		return "NetworkError.Timeout", false
+	case errors.As(err, &dnsError):
+		return "NetworkError.DNS", true
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "NetworkError.ConnectionRefused", true
+	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "NetworkError.ConnectionReset", true
+	case tlsFailure(err):
+		return "NetworkError.TLS", true
+	case errors.As(err, &networkError):
+		return "NetworkError", true
+	default:
+		return "RequestFailed", false
+	}
+}
+
+func certificateFailure(err error) bool {
+	var verification *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	return errors.As(err, &verification) || errors.As(err, &unknownAuthority) || errors.As(err, &hostname) || errors.As(err, &invalid)
+}
+
+func tlsFailure(err error) bool {
+	var recordHeader tls.RecordHeaderError
+	var alert tls.AlertError
+	return errors.As(err, &recordHeader) || errors.As(err, &alert)
 }
 
 func readSDKMetadata(err error, failure *KMSError) {

@@ -104,13 +104,14 @@ vault:
       key_id: acs:kms:cn-hangzhou:1234567890123456:key/key-example
 ```
 
-- `endpoint` 必填，接受域名或 `https://域名`，可带端口或末尾 `/`，末尾 `/` 会归一化为主机地址；不接受 HTTP、用户名、非根路径、查询或 fragment。填写 VPC 可达的 KMS 私网域名；客户端不推导公共端点、不跟随重定向，沿用 SDK 提供的 HTTP Transport，TLS 始终验证证书。DNS、路由和安全组由部署方保证。
+- `endpoint` 必填，接受域名或 `https://域名`，可带端口或末尾 `/`，末尾 `/` 会归一化为主机地址；不接受 HTTP、用户名、非根路径、查询或 fragment。填写 VPC 可达的 KMS 私网域名；客户端不推导公共端点、不跟随重定向。Provider 在创建时自建并复用一个 HTTP 连接池：建连、TLS 握手和等待响应头各 3 秒，每个主机最多保留 4 条空闲连接，空闲 30 秒回收；不读取 `HTTPS_PROXY`/`NO_PROXY`，始终直连配置的 endpoint；配置 `ca` 时只信任该 CA，PEM 无法解析时创建失败。不使用 SDK 每次调用新建的 Transport。TLS 始终验证证书。DNS、路由和安全组由部署方保证。
+- 单次 Encrypt / Decrypt 的整体预算为 10 秒，包含全部尝试与等待：最多 3 次尝试，两次之间分别等待约 100ms、400ms（±20% 抖动），持续的即时失败约 0.5 秒内返回；剩余预算不足“等待 + 1 秒”时停止。只重试立即返回的传输层失败（DNS、拒绝连接、连接重置或响应中途 EOF、TLS 握手）以及 5xx 与 Code 含 `Throttling` 的限流；单次尝试超时（建连、TLS 握手或等待响应头超过 3 秒）视为链路故障，不重试并返回 `context.DeadlineExceeded`。KMS 业务拒绝、证书校验失败、响应校验失败（CMK 不匹配、DEK 非法）不重试。持续数秒的链路故障由部署侧（私网 endpoint、节点网络）解决，不靠应用层长时间重试掩盖。父请求取消时立即停止并返回 `context.Canceled`；预算耗尽返回 `context.DeadlineExceeded`。Encrypt / Decrypt 在服务端无状态，重复 POST 不产生副作用；Encrypt 只采用最后一次成功的密文。SDK 内置重试保持关闭。
 - `key_id` 必填，接受 CMK ID 或 `acs:kms:<region>:<account>:key/<key-id>` ARN，不接受别名。Encrypt 使用指定值；Encrypt / Decrypt 返回的 CMK ID 必须匹配配置。更换 CMK 不会允许旧 CMK 的密文自动解封。
 - 不配置 AK 时优先使用 ACK RRSA：检测 `ALIBABA_CLOUD_OIDC_TOKEN_FILE`、`ALIBABA_CLOUD_OIDC_PROVIDER_ARN`、`ALIBABA_CLOUD_ROLE_ARN`，由官方 Credentials SDK 获取并自动刷新 STS 凭证。部分配置或 OIDC 获取失败直接失败，不改用节点角色。
 - 没有 OIDC 配置时使用 ECS 实例 RAM 角色，由 SDK 从 IMDSv2 自动发现角色并刷新；禁止 IMDSv1 回退。可用 `ALIBABA_CLOUD_ECS_METADATA` 指定角色名。不会读取开发机上的 CLI/profile 凭证，也不会以环境 AK 覆盖工作负载身份。
 - 显式 `access_key_id` 与 `access_key_secret` 必须同时配置；可附加 `security_token` 使用显式 STS 凭证。显式字段优先，静态配置不会自动替换过期的 STS token；生产优先绑定 RAM 角色。长期 AK 仍是敏感访问凭证，不应随配置入库或提交。
 - RAM / CMK policy 最小授权为目标 CMK 的 `kms:Encrypt` 与 `kms:Decrypt`。不需要 DescribeKey 或导出 CMK 权限；实际 Encrypt / Decrypt 失败时请求返回错误。
-- ACK 的 STS 换票是独立网络链路。完全私网部署同时设置 `ALIBABA_CLOUD_STS_REGION=cn-hangzhou` 与 `ALIBABA_CLOUD_VPC_ENDPOINT_ENABLED=true`，并保证对应区域 STS VPC 端点可达；只设置 KMS endpoint 不会改变 STS 的路由。
+- ACK 的 STS 换票是独立网络链路。完全私网部署同时设置 `ALIBABA_CLOUD_STS_REGION=cn-hangzhou` 与 `ALIBABA_CLOUD_VPC_ENDPOINT_ENABLED=true`，并保证对应区域 STS VPC 端点可达；只设置 KMS endpoint 不会改变 STS 的路由。工作负载身份的 STS 刷新由 Credentials SDK 在临近过期（180 秒内）时独立发起，使用其自身的连接与超时，不复用 KMS 连接池，也不受请求 context 取消控制；刷新阶段的传输层失败随整次 KMS 调用重试。显式 AccessKey 或静态 STS 取凭据不访问网络。
 - 可保留 `local` 或 `hashicorp_vault` 配置块，用于解密对应的历史信封；新写入仍只使用 `provider` 指定的实现。旧平铺本地密钥字段仍归一到 `local`，可用于历史读取；旧远端配置中的空本地字段及 `version: 0/1` 不启用 Local。
 
 ### HashiCorp Vault Transit 模式
@@ -250,13 +251,13 @@ vault:
 
 ### 故障、内存与日志
 
-阿里云 KMS 每次操作继承调用方 context，并设置 10 秒 KMS 请求上限。应用层和 KMS SDK 自动重试均关闭，不缓存明文 DEK。网络超时、限流、服务端错误、身份权限错误、CMK 禁用/不存在、篡改、返回错误 CMK、非 32 字节 DEK 均直接返回错误；不落明文、不使用本地 KEK 兜底。SDK 的身份刷新遵循其自身有界网络超时。共享的 SDK Credential 在 `GetCredential` 边界使用互斥锁串行获取和刷新，避免 ECS/ACK 角色凭据缓存的数据竞争；取得凭据后，KMS HTTP 请求仍可并发执行。
+阿里云 KMS 每次操作继承调用方 context，并设置包含全部重试在内的 10 秒整体兜底预算。应用层只按上文规则重试即时传输层失败、5xx 与限流，KMS SDK 自动重试关闭，不缓存明文 DEK。重试用尽或不可重试的网络失败、限流、服务端错误，以及身份权限错误、CMK 禁用/不存在、篡改、返回错误 CMK、非 32 字节 DEK 均返回错误；不落明文、不使用本地 KEK 兜底。SDK 的身份刷新遵循其自身有界网络超时。共享的 SDK Credential 在 `GetCredential` 边界使用互斥锁串行获取和刷新，避免 ECS/ACK 角色凭据缓存的数据竞争；取得凭据后，KMS HTTP 请求仍可并发执行。
 
 业务写入发生在 Seal 成功之后；部分 auth 更新先 Open 再 merge/Seal。无秘密变更的元数据读取/更新和归档不要求 KMS 可用；归档仍可清除密文。匹配凭证需要解密而失败时，沿用 MITM 的 fail-closed 错误出口，不转发没有凭据的请求。
 
 `secrets.Service` 在 Seal / Open 成功和失败路径都清零临时可写 DEK，包括 Provider 返回 DEK 同时返回 error 的情况；插件清零无效解码结果。官方 SDK 的 Base64 string 由 Go 管理，插件不缓存它们；Go 的不可变 string、SDK 编解码内部副本及 AES key schedule 无法提供全进程内存擦除保证，此机制不替代进程隔离与内存转储防护。
 
-错误保留标准 context 取消/超时语义；`KMSError` 提供 Code、RequestID、HTTP Status，支持 `errors.As` 和直接传给 `slog` 时的结构化输出。只从 SDK 结构化字段提取元数据，标识符限 ASCII 字母、数字、`_.-` 且不超过 128 字节，异常字段省略；不包装原始 SDK error，不输出 Message、URL 或完整响应。未知网络失败保留 NetworkError 分类。
+错误保留标准 context 取消/超时语义；`KMSError` 提供 Code、RequestID、HTTP Status 与尝试次数 Attempts，支持 `errors.As` 和直接传给 `slog` 时的结构化输出。只从 SDK 结构化字段提取元数据，标识符限 ASCII 字母、数字、`_.-` 且不超过 128 字节，异常字段省略；不包装原始 SDK error，不输出 Message、URL 或完整响应。未收到服务端响应的失败按固定分类码记录：`NetworkError.DNS`、`NetworkError.ConnectionRefused`、`NetworkError.ConnectionReset`（含响应中途 EOF）、`NetworkError.TLS`、`NetworkError.TLSCertificate`、`NetworkError.Timeout`，其余网络失败为 `NetworkError`，非网络失败为 `RequestFailed`；分类只保留常量码，不保留主机名、地址或原始错误文本。
 
 SDK wire logger 会输出含 DEK 的 URL，凭证 SDK 也可能打印 metadata token 请求头，因此仅当 `DEBUG` 的逗号分隔项精确等于 `dara`、`tea` 或 `credential` 时拒绝 KMS 初始化，匹配区分大小写且不去空格；`DEBUG=1`、`DEBUG=*`、`DEBUG=app` 均允许。不配置 SDK wire logger / tracker。SDK 在包初始化时捕获 DEBUG，应用随后修改环境变量不能关闭已启用的输出，保护检查也保留初始化时的状态。
 

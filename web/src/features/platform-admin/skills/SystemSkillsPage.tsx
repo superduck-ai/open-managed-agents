@@ -164,16 +164,6 @@ export function SystemSkillsPage() {
                   <time dateTime={record.updated_at}>{new Date(record.updated_at).toLocaleDateString(locale)}</time>
                 </>
               }
-              body={
-                <div className="mt-3 flex items-center gap-3 text-xs">
-                  <span className="shrink-0 text-muted-foreground">
-                    {msg('systemSkills.defaultVersion', 'Default version')}
-                  </span>
-                  <code className="min-w-0 truncate" title={record.default_version || ''}>
-                    {record.default_version || '—'}
-                  </code>
-                </div>
-              }
               actions={
                 <SystemSkillActions
                   skill={record}

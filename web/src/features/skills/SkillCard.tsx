@@ -6,7 +6,6 @@ export function SkillCard({
   iconKey,
   description,
   metadata,
-  body,
   footer,
   onOpen,
   actions,
@@ -15,7 +14,6 @@ export function SkillCard({
   iconKey?: string;
   description?: string;
   metadata?: ReactNode;
-  body?: ReactNode;
   footer?: ReactNode;
   onOpen: () => void;
   actions?: ReactNode;
@@ -30,7 +28,6 @@ export function SkillCard({
             {metadata}
           </div>
         </div>
-        {body}
         {description !== undefined && <p className="skill-card-description">{description}</p>}
         {footer && <div className="skill-card-footer">{footer}</div>}
       </button>

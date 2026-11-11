@@ -206,7 +206,6 @@ function SystemSkillContent({ skillID, version }: { skillID: string; version: st
   if (query.isError) return <SystemSkillError error={query.error} retry={() => void query.refetch()} />;
   return (
     <div className="space-y-4">
-      <p className="text-xs text-muted-foreground">{version}</p>
       <p className="text-sm">{query.data.description}</p>
       <SkillContent
         key={`${skillID}/${version}`}

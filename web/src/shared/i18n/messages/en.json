@@ -3341,7 +3341,6 @@
   "managedAgents.channels.manageEnvironments": "Manage environments",
   "managedAgents.channels.environmentRequired": "Select an execution environment before saving the channel",
   "systemSkills.status": "Status",
-  "systemSkills.defaultVersion": "Default version",
   "systemSkills.title": "System skills",
   "systemSkills.description": "Manage skills and versions available to all workspaces.",
   "systemSkills.import": "Import skills",

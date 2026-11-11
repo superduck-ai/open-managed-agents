@@ -15,7 +15,7 @@ import {
 } from './api';
 import { formatEvaluationTime, shortenId } from './evaluationChrome';
 import { itemOutcomeLabel } from './evaluationLabels';
-import { itemOutcome } from './taskReport';
+import { itemOutcome, type ItemOutcome } from './taskReport';
 import { useEvaluationScope } from './useEvaluationScope';
 
 const stepLabels: Record<EvaluationTraceStep['type'], readonly [string, string]> = {
@@ -57,14 +57,14 @@ function TraceStep({ step, index }: { step: EvaluationTraceStep; index: number }
   );
 }
 
-function TraceSteps({ taskId, item }: { taskId: string; item: EvaluationItem }) {
+function TraceSteps({ taskId, item, live }: { taskId: string; item: EvaluationItem; live: boolean }) {
   const { msg } = useI18n();
   const scope = useEvaluationScope();
   const trace = useQuery({
     queryKey: ['evaluation-trace', scope.orgUuid, scope.workspaceId, taskId, item.id],
     queryFn: () => getEvaluationItemTrace(scope.orgUuid, scope.workspaceId, taskId, item.id),
     enabled: scope.ready,
-    refetchInterval: itemOutcome(item) === 'running' ? 3000 : false,
+    refetchInterval: live ? 3000 : false,
   });
   if (trace.isLoading) return <p className="text-sm text-muted-foreground">{msg('evaluations.loading', 'Loading')}</p>;
   if (trace.isError) return <p className="text-sm text-destructive">{evaluationError(trace.error)}</p>;
@@ -131,7 +131,15 @@ function TraceFact({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-function TraceFacts({ item, onOpenSession }: { item: EvaluationItem; onOpenSession: (id: string) => void }) {
+function TraceFacts({
+  item,
+  outcome,
+  onOpenSession,
+}: {
+  item: EvaluationItem;
+  outcome: ItemOutcome;
+  onOpenSession: (id: string) => void;
+}) {
   const { msg } = useI18n();
   const scored = item.score?.status === 'completed';
   return (
@@ -139,7 +147,7 @@ function TraceFacts({ item, onOpenSession }: { item: EvaluationItem; onOpenSessi
       <TraceFact label={msg('evaluations.score', 'Score')}>
         <span className="tabular-nums">{scored ? formatScore(item.score?.score) : '—'}</span>
       </TraceFact>
-      <TraceFact label={msg('evaluations.result', 'Result')}>{itemOutcomeLabel(itemOutcome(item), msg)}</TraceFact>
+      <TraceFact label={msg('evaluations.result', 'Result')}>{itemOutcomeLabel(outcome, msg)}</TraceFact>
       <TraceFact label={msg('evaluations.sessionId', 'Session ID')}>
         {item.session_id ? (
           <Button
@@ -171,16 +179,19 @@ function TraceFacts({ item, onOpenSession }: { item: EvaluationItem; onOpenSessi
 
 export function TaskTraceSheet({
   taskId,
+  taskStatus,
   item,
   onOpenChange,
   onOpenSession,
 }: {
   taskId: string;
+  taskStatus: string;
   item: EvaluationItem | null;
   onOpenChange: (open: boolean) => void;
   onOpenSession: (id: string) => void;
 }) {
   const { msg } = useI18n();
+  const outcome = item ? itemOutcome(item, taskStatus) : null;
   return (
     <Sheet open={item !== null} onOpenChange={onOpenChange}>
       <SheetContent className="gap-0 overflow-hidden p-0">
@@ -188,10 +199,10 @@ export function TaskTraceSheet({
           <SheetTitle className="text-base leading-6">{msg('evaluations.trace', 'Trace')}</SheetTitle>
           <SheetDescription className="font-mono text-xs">{item ? shortenId(item.id) : ''}</SheetDescription>
         </SheetHeader>
-        {item ? (
+        {item && outcome ? (
           <div className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto px-6 py-5">
             <p className="text-base leading-6 font-medium break-words whitespace-pre-wrap">{item.query}</p>
-            <TraceFacts item={item} onOpenSession={onOpenSession} />
+            <TraceFacts item={item} outcome={outcome} onOpenSession={onOpenSession} />
             <ScoringExchange item={item} />
             {item.score?.explanation ? (
               <div className="grid gap-1">
@@ -208,7 +219,7 @@ export function TaskTraceSheet({
                   {msg('evaluations.traceHint', 'In chronological order')}
                 </p>
               </div>
-              <TraceSteps taskId={taskId} item={item} />
+              <TraceSteps taskId={taskId} item={item} live={outcome === 'running'} />
             </div>
           </div>
         ) : null}

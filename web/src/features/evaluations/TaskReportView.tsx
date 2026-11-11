@@ -75,7 +75,7 @@ function OverallCard({ task, counts }: { task: EvaluationTask; counts: Record<It
         <p className="text-sm text-muted-foreground">
           {msg(
             'evaluations.conclusionDetail',
-            '{total} cases: {passed} passed, {failed} failed, {error} system errors, {running} in progress.',
+            '{total} cases: {passed} passed, {failed} failed, {error} system errors, {running} in progress, {unscored} not scored.',
             { total, ...counts },
           )}
         </p>
@@ -125,7 +125,7 @@ function DistributionCard({ counts, total }: { counts: Record<ItemOutcome, numbe
           ) : null,
         )}
       </div>
-      <ul className="mt-4 grid gap-3 sm:grid-cols-4">
+      <ul className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {ITEM_OUTCOMES.map((outcome) => (
           <li key={outcome} className="grid gap-0.5 rounded-lg bg-muted/40 px-3 py-2">
             <span className="flex items-center justify-between gap-2 text-sm">
@@ -170,7 +170,7 @@ function DimensionCard({ dimensions }: { dimensions: Array<{ name: string; score
 
 export function TaskReportView({ task, onOpenSession }: { task: EvaluationTask; onOpenSession: (id: string) => void }) {
   const { msg } = useI18n();
-  const counts = outcomeCounts(task.items);
+  const counts = outcomeCounts(task.items, task.status);
   const dimensions = averageDimensions(task.items);
   const total = task.summary?.total ?? 0;
   return (

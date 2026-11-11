@@ -132,8 +132,7 @@ func (r *TaskRunner) settleTask(ctx context.Context, organizationUUID, workspace
 	if len(pending) > settleBatchSize {
 		return false, nil
 	}
-	_, err = r.store.FinishEvaluationTask(ctx, organizationUUID, workspaceUUID, taskID, roundStatus(itemsForRound(detail.Items, round)), time.Now().UTC())
-	return true, err
+	return r.store.FinishEvaluationTask(ctx, organizationUUID, workspaceUUID, taskID, roundStatus(itemsForRound(detail.Items, round)), time.Now().UTC())
 }
 
 func unscoredItems(detail db.EvaluationTaskDetail, round int) []db.EvaluationTaskItem {

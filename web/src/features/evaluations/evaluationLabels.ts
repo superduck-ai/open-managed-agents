@@ -15,6 +15,7 @@ const itemOutcomes: Record<ItemOutcome, readonly [string, string]> = {
   failed: ['evaluations.failed', 'Failed'],
   error: ['evaluations.systemError', 'System error'],
   running: ['evaluations.inProgress', 'In progress'],
+  unscored: ['evaluations.notScored', 'Not scored'],
 };
 
 const statusTones: Record<string, string> = {
@@ -30,6 +31,7 @@ export const OUTCOME_TONES: Record<ItemOutcome, { text: string; fill: string }> 
   failed: { text: 'bg-[var(--warning-bg)] text-[var(--amber-11)]', fill: 'bg-[var(--amber-9)]' },
   error: { text: 'bg-destructive/10 text-destructive', fill: 'bg-destructive' },
   running: { text: 'bg-muted text-muted-foreground', fill: 'bg-muted-foreground/40' },
+  unscored: { text: 'bg-muted text-muted-foreground', fill: 'bg-muted-foreground/70' },
 };
 
 function labeled(table: Record<string, readonly [string, string]>, value: string, msg: Message) {

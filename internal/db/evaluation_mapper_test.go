@@ -112,8 +112,11 @@ func TestEvaluationTaskStatusStatementsGuardTransitions(t *testing.T) {
 	finished := buildEvaluationTaskMapperFinishTask(yourbatis.DialectPostgres, evaluationTaskStatusParams{
 		OrganizationUUID: "org", WorkspaceUUID: "ws", ExternalID: "evaltask_1", Status: "completed", UpdatedAt: now,
 	})
-	if !strings.Contains(finished.SQL, "AND status = 'running'") {
-		t.Fatalf("finish SQL = %s", finished.SQL)
+	if !strings.Contains(finished.SQL, "AND status = 'running'") ||
+		!strings.Contains(finished.SQL, "i.status IN ('pending', 'running')") ||
+		!strings.Contains(finished.SQL, "FROM evaluation_task_scores s") ||
+		!reflect.DeepEqual(finished.Values(), []any{"completed", "", now, "org", "ws", "evaltask_1"}) {
+		t.Fatalf("finish SQL = %s values = %#v", finished.SQL, finished.Values())
 	}
 	cancelled := buildEvaluationTaskMapperCancelTask(yourbatis.DialectPostgres, "org", "ws", "task", now)
 	if !strings.Contains(cancelled.SQL, "status IN ('pending', 'running')") || !reflect.DeepEqual(cancelled.Values(), []any{now, "org", "ws", "task"}) {

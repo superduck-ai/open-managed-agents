@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	scoringPromptVersion   = "score-v4"
+	scoringPromptVersion   = "score-v5"
 	maxScoreDimensions     = 12
 	maxDimensionNameLength = 80
 	maxExplanationLength   = 4000

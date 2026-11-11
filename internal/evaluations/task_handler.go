@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -198,6 +199,10 @@ func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, bod
 	if rubricID == "" {
 		return db.EvaluationTask{}, nil, invalidArgument(rubricIDRequiredMessage, nil)
 	}
+	focus := strings.TrimSpace(body.Focus)
+	if utf8.RuneCountInString(focus) > maxFocusLength {
+		return db.EvaluationTask{}, nil, invalidArgument(focusTooLongMessage, nil)
+	}
 	agent, err := h.loadAgent(ctx, principal.WorkspaceUUID, agentID, body.AgentVersion)
 	if err != nil {
 		return db.EvaluationTask{}, nil, err
@@ -244,10 +249,10 @@ func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, bod
 		return db.EvaluationTask{}, nil, internalFailure(createFailedMessage, err)
 	}
 	now := time.Now().UTC()
-	noted := rubricWithNotes(rubric.Body, body.Focus)
-	if len(noted) > maxRubricLength {
+	if utf8.RuneCountInString(rubric.Body) > maxRubricLength {
 		return db.EvaluationTask{}, nil, invalidArgument(rubricTooLongMessage, nil)
 	}
+	noted := rubricWithNotes(rubric.Body, focus)
 	task := db.EvaluationTask{
 		UUID: uuid.NewString(), ExternalID: taskID, OrganizationUUID: principal.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID,
 		CreatedByUserUUID: principal.UserUUID, CreatedByAPIKeyUUID: principal.APIKeyUUID, Name: name, Mode: mode, Status: taskRunning,
@@ -290,14 +295,13 @@ func (h *Handler) judgeModel(ctx context.Context, principal auth.Principal, conf
 }
 
 func rubricWithNotes(body, focus string) string {
-	text := strings.TrimSpace(focus)
-	if text == "" {
+	if focus == "" {
 		return body
 	}
 	var builder strings.Builder
 	builder.WriteString(body)
 	builder.WriteString("\n\n")
-	writeTagged(&builder, focusTag, text)
+	writeTagged(&builder, focusTag, focus)
 	return strings.TrimRight(builder.String(), "\n")
 }
 

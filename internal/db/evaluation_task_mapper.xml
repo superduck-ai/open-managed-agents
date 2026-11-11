@@ -295,6 +295,36 @@
         AND workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
         AND status = 'running'
+        AND NOT EXISTS (
+            SELECT 1
+            FROM evaluation_task_items i
+            WHERE i.organization_uuid = evaluation_tasks.organization_uuid
+            AND i.workspace_uuid = evaluation_tasks.workspace_uuid
+            AND i.task_uuid = evaluation_tasks.uuid
+            AND i.status IN ('pending', 'running')
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM evaluation_task_items i
+            WHERE i.organization_uuid = evaluation_tasks.organization_uuid
+            AND i.workspace_uuid = evaluation_tasks.workspace_uuid
+            AND i.task_uuid = evaluation_tasks.uuid
+            AND i.status = 'completed'
+            AND i.round = (
+                SELECT MAX(r.round)
+                FROM evaluation_task_items r
+                WHERE r.organization_uuid = evaluation_tasks.organization_uuid
+                AND r.workspace_uuid = evaluation_tasks.workspace_uuid
+                AND r.task_uuid = evaluation_tasks.uuid
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM evaluation_task_scores s
+                WHERE s.organization_uuid = i.organization_uuid
+                AND s.workspace_uuid = i.workspace_uuid
+                AND s.item_uuid = i.uuid
+            )
+        )
     </update>
 
     <insert id="InsertScore" result="returning" resultType="evaluationTaskScoreRow">

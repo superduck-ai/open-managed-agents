@@ -60,9 +60,8 @@ function AnswerCell({ item, outcome }: { item: EvaluationItem; outcome: ItemOutc
   );
 }
 
-function ItemRow({ item, onTrace }: { item: EvaluationItem; onTrace: () => void }) {
+function ItemRow({ item, outcome, onTrace }: { item: EvaluationItem; outcome: ItemOutcome; onTrace: () => void }) {
   const { msg } = useI18n();
-  const outcome = itemOutcome(item);
   const dash = '—';
   return (
     <TableRow className="align-top">
@@ -106,7 +105,7 @@ export function TaskItemsTable({
   const [filter, setFilter] = useState<ItemFilter>('all');
   const [tracedId, setTracedId] = useState('');
   const traced = task.items?.find((item) => item.id === tracedId) ?? null;
-  const rows = filterItems(task.items, filter);
+  const rows = filterItems(task.items, filter, task.status);
   const total = task.items?.length ?? 0;
   const headers = [
     msg('evaluations.query', 'Query'),
@@ -118,7 +117,7 @@ export function TaskItemsTable({
   ];
   function download() {
     const text = itemsCsv(
-      task.items ?? [],
+      task,
       [
         headers[0],
         headers[1],
@@ -172,7 +171,12 @@ export function TaskItemsTable({
           </TableHeader>
           <TableBody>
             {rows.map((item) => (
-              <ItemRow key={item.id} item={item} onTrace={() => setTracedId(item.id)} />
+              <ItemRow
+                key={item.id}
+                item={item}
+                outcome={itemOutcome(item, task.status)}
+                onTrace={() => setTracedId(item.id)}
+              />
             ))}
             {rows.length === 0 ? (
               <TableRow>
@@ -186,6 +190,7 @@ export function TaskItemsTable({
       </div>
       <TaskTraceSheet
         taskId={task.id}
+        taskStatus={task.status}
         item={traced}
         onOpenChange={(open) => !open && setTracedId('')}
         onOpenSession={onOpenSession}

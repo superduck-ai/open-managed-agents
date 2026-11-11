@@ -1,11 +1,15 @@
 import type { EvaluationItem, EvaluationTask } from './api';
 import { csvCell } from './datasetSample';
 
-export type ItemOutcome = 'passed' | 'failed' | 'error' | 'running';
+export type ItemOutcome = 'passed' | 'failed' | 'error' | 'running' | 'unscored';
 export type ItemFilter = 'all' | ItemOutcome;
 export type TaskConclusion = 'running' | 'cancelled' | 'empty' | 'incomplete' | 'complete';
 
-export const ITEM_OUTCOMES: ItemOutcome[] = ['passed', 'failed', 'error', 'running'];
+export const ITEM_OUTCOMES: ItemOutcome[] = ['passed', 'failed', 'error', 'running', 'unscored'];
+
+function taskOpen(status: string) {
+  return status === 'pending' || status === 'running';
+}
 
 export function averageDimensions(items: EvaluationItem[] | undefined) {
   const totals = new Map<string, { sum: number; count: number }>();
@@ -36,32 +40,33 @@ export function filterEvaluationTasks<T extends { name: string; agent_id: string
   });
 }
 
-export function itemOutcome(item: Pick<EvaluationItem, 'status' | 'score'>): ItemOutcome {
-  if (item.status === 'pending' || item.status === 'running') return 'running';
-  if (item.status !== 'completed') return 'error';
-  if (!item.score) return 'running';
-  if (item.score.status !== 'completed') return 'error';
+export function itemOutcome(item: Pick<EvaluationItem, 'status' | 'score'>, taskStatus: string): ItemOutcome {
+  if (item.status === 'cancelled') return 'unscored';
+  if (item.status === 'pending' || item.status === 'running' || (item.status === 'completed' && !item.score)) {
+    return taskOpen(taskStatus) ? 'running' : 'unscored';
+  }
+  if (item.status !== 'completed' || item.score?.status !== 'completed') return 'error';
   return item.score.passed ? 'passed' : 'failed';
 }
 
-export function outcomeCounts(items: EvaluationItem[] | undefined) {
-  const counts: Record<ItemOutcome, number> = { passed: 0, failed: 0, error: 0, running: 0 };
-  for (const item of items ?? []) counts[itemOutcome(item)] += 1;
+export function outcomeCounts(items: EvaluationItem[] | undefined, taskStatus: string) {
+  const counts: Record<ItemOutcome, number> = { passed: 0, failed: 0, error: 0, running: 0, unscored: 0 };
+  for (const item of items ?? []) counts[itemOutcome(item, taskStatus)] += 1;
   return counts;
 }
 
-export function filterItems(items: EvaluationItem[] | undefined, filter: ItemFilter) {
+export function filterItems(items: EvaluationItem[] | undefined, filter: ItemFilter, taskStatus: string) {
   const rows = items ?? [];
   if (filter === 'all') return rows;
-  return rows.filter((item) => itemOutcome(item) === filter);
+  return rows.filter((item) => itemOutcome(item, taskStatus) === filter);
 }
 
 export function taskConclusion(
   task: Pick<EvaluationTask, 'status'>,
   counts: Record<ItemOutcome, number>,
 ): TaskConclusion {
-  if (task.status === 'pending' || task.status === 'running' || counts.running > 0) return 'running';
   if (task.status === 'cancelled') return 'cancelled';
+  if (taskOpen(task.status) || counts.running > 0) return 'running';
   if (counts.passed + counts.failed === 0) return 'empty';
   if (counts.error > 0) return 'incomplete';
   return 'complete';
@@ -76,12 +81,16 @@ export function itemReason(item: EvaluationItem) {
   return item.score?.explanation || item.score?.error_message || item.error_message;
 }
 
-export function itemsCsv(items: EvaluationItem[], headers: string[], outcomeLabel: (outcome: ItemOutcome) => string) {
-  const rows = items.map((item) => [
+export function itemsCsv(
+  task: Pick<EvaluationTask, 'status'> & { items?: EvaluationItem[] },
+  headers: string[],
+  outcomeLabel: (outcome: ItemOutcome) => string,
+) {
+  const rows = (task.items ?? []).map((item) => [
     item.query,
     item.score?.answer ?? '',
     item.score?.status === 'completed' ? String(item.score.score) : '',
-    outcomeLabel(itemOutcome(item)),
+    outcomeLabel(itemOutcome(item, task.status)),
     itemReason(item),
     item.expected_answer,
     item.acceptance,

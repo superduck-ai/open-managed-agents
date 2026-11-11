@@ -36,8 +36,8 @@ flowchart LR
 - `explanation` 最多 4000 个字符。
 - `<agent_trajectory>` 按时间顺序放入这次会话的全部事件，每行是事件时间、事件类型和脱敏后的紧凑 JSON 载荷。用户消息、Agent 消息、工具调用与结果、会话错误、`session.status_idle` 和 `session.status_terminated` 是主要事件，单条载荷最多 1500 字节；状态切换、模型请求 span 等其余事件是次要事件，单条载荷最多 400 字节。全部拼接后超过 16000 字节时，先去掉次要事件的载荷、只保留它们的时间和类型，再超出才保留首尾并标出省略的字节数。这样耗时信息仍在，长会话中段的工具调用不会被状态噪声挤掉。
 - `<agent_answer>` 只提取 `agent.message` 的正文，最多 16000 字节，超出时保留首尾。
-- 发给评分模型之前先脱敏：JSON 里键名像 `authorization`、`api_key`、`access_token`、`refresh_token`、`secret`、`password`、`cookie`、`credential`、`private_key` 或恰好是 `token` 的字符串值替换为 `[redacted]`，非字符串值（例如 token 计数）保留；任意字符串里的 `Bearer <token>` 和 `sk-`、`pk-`、`rk-` 开头的长密钥也会被替换。回答正文同样经过这一步。脱敏只作用于评审上下文，轨迹接口仍返回会话原文给有权限的控制台用户。
-- 每条分数记录 `judge_model`（任务冻结的打分模型）和 `judge_prompt_version`（当前为 `score-v4`）。修改打分提示词、评审上下文或解析规则时递增版本，历史分数据此区分口径。`judge_system`、`judge_prompt`、`judge_response` 保存这次实际发给评分模型的系统提示词、用户提示词和模型原文，由 `00130_evaluation_score_prompt.sql` 增加，落库时各自最多 64000 字节，超出时保留首尾。模型调用失败时原文为空，提示词仍然留下。这三列不写入运行日志。
+- 发给评分模型之前先脱敏：JSON 里键名像 `authorization`、`api_key`、`access_token`、`refresh_token`、`secret`、`password`、`cookie`、`credential`、`private_key` 或恰好是 `token` 的字符串值替换为 `[redacted]`，非字符串值（例如 token 计数）保留；任意字符串里的 `Bearer <token>` 和 `sk-`、`pk-`、`rk-` 开头的长密钥也会被替换。回答正文，以及用例的问题、期望回答、期望工具轨迹和验收要点同样经过这一步，评分提示词落库前已经是脱敏后的内容。脱敏只作用于评审上下文，轨迹接口仍返回会话原文给有权限的控制台用户。
+- 每条分数记录 `judge_model`（任务冻结的打分模型）和 `judge_prompt_version`（当前为 `score-v5`）。修改打分提示词、评审上下文或解析规则时递增版本，历史分数据此区分口径。`judge_system`、`judge_prompt`、`judge_response` 保存这次实际发给评分模型的系统提示词、用户提示词和模型原文，由 `00130_evaluation_score_prompt.sql` 增加，落库时各自最多 64000 字节，超出时保留首尾。模型调用失败时原文为空，提示词仍然留下。这三列不写入运行日志。
 - `judge_input_tokens`、`judge_output_tokens` 记录这次评分调用的 token：Messages 后端读 `usage.input_tokens` / `usage.output_tokens`，Chat Completions 后端读 `usage.prompt_tokens` / `usage.completion_tokens`，上游没有返回时为 0。由 `00131_evaluation_task_runtime.sql` 增加。
 
 ### 启动、取消与状态
@@ -83,6 +83,8 @@ stateDiagram-v2
 
 取消在一个事务里先把任务从 `pending`/`running` 改为 `cancelled`，再把本任务所有 `pending`/`running` 的 item 改为 `cancelled` 并返回这些行；任务已结束则整体回滚并返回 “This task can no longer be cancelled”。提交后，后台把这些 item 已绑定的会话逐个归档，归档失败只记 warn。之后结算和巡检看到任务已关闭就直接跳过，`FinishTask` 也只推进仍是 `running` 的任务，不会把已取消的任务改回完成。
 
+`FinishTask` 收口时还在同一条 `UPDATE` 里检查：本任务没有 `pending`/`running` 的 item，最新一轮也没有已完成却没有分数的 item，否则 0 行。两条结算任务并发时，较慢的那条按旧快照算出的结果写不进去；用户在这期间点了重试（失败的用例重置为 `pending`，或删掉失败分数），任务保持 `running`。结算收口 0 行时返回未完成，River snooze 后重读任务：仍有未打分的 item 就继续打分，item 还在运行或任务已关闭就结束。
+
 ### 结算与持久化
 
 ```mermaid
@@ -107,7 +109,7 @@ sequenceDiagram
 `evaluation_task_sweep` 是每分钟一次的持久周期任务，用来补上进程崩溃或事件漏投的情况：
 
 1. 取超过 10 分钟仍未启动的 item（见上文），最多 100 条，记为 `failed`。
-2. 取 `updated_at` 超过 2 分钟、带会话的 `running` item，最多 100 条。结果先看会话行：会话不存在、已 `terminated`、已归档或已删除记为系统异常；不是 `idle` 说明仍在运行，刷新 `updated_at`，让下一轮先检查别的 item；是 `idle` 时只读最近一条 `session.status_idle` 事件，按观察者同样的停止原因规则推进。巡检不再回放整场会话的事件。
+2. 取 `updated_at` 超过 2 分钟、带会话的 `running` item，最多 100 条。结果先看会话行：会话不存在、已 `terminated`、已归档或已删除记为系统异常；是 `idle` 时只读最近一条 `session.status_idle` 事件，按观察者同样的停止原因规则推进。其余情况下，会话创建已超过 2 小时就记为 `failed`，错误为 “Evaluation session ran longer than 2 hours”，避免没有 worker 或沙箱丢失的会话让任务一直停在进行中；没超过则刷新 `updated_at`，让下一轮先检查别的 item。超时只推进 item，不归档会话，会话之后再进入终态也不会改动已结束的 item。巡检不再回放整场会话的事件。
 3. 取 `running` 且所有 item 都已结束、状态停留超过 1 分钟的任务，最多 100 个。
 
 一轮巡检里推进过 item 的任务和第 3 步的任务合并去重后，每个任务只插入一次结算任务。
@@ -129,7 +131,7 @@ sequenceDiagram
 | `evaluation_task_items` | `evalitem_` | 一个 case，`round = 1`。`inputs` 是用例内容块的快照，由 `00129_evaluation_task_item_inputs.sql` 增加，迁移前的 item 为空数组。`00131_evaluation_task_runtime.sql` 给 `pending` 或「`running` 且没有会话」的 item 建按 `updated_at` 的部分索引，供巡检找出未启动的 item |
 | `evaluation_task_scores` | `evalscore_` | 一条 item 一行。`completed` 才有有效分数。`answer` 保存打分时读到的 Agent 最终回答，`00127_evaluation_score_answer.sql` 增加。`judge_model`、`judge_prompt_version` 由 `00128_evaluation_score_judge.sql` 增加，同一迁移给 `running` 的任务和 item 建按 `updated_at` 的部分索引，供巡检使用。`judge_input_tokens`、`judge_output_tokens` 由 `00131_evaluation_task_runtime.sql` 增加 |
 
-删除评测集、用例或评分标准是软删除。已经跑过的任务保留自己的快照，不能再被新任务选中。`evaluation_cases.inputs` 由 `00119_evaluation_case_inputs.sql` 增加。任务表在 `00125_replace_evaluation_schema.sql`，它会按当前结构重建评测表；`00126_evaluation_case_inputs_after_task_schema.sql` 在这次重建后再补上 `inputs`。旧的 `00115_managed_evaluation.sql` 与渠道凭证迁移共用版本号，不再保留。
+删除评测集、用例或评分标准是软删除。已经跑过的任务保留自己的快照，不能再被新任务选中。`evaluation_cases.inputs` 由 `00119_evaluation_case_inputs.sql` 增加。任务表在 `00125_replace_evaluation_schema.sql`，它只删掉早期实验版遗留的 `evaluation_experiment*`、`evaluation_evaluator*` 表并新建任务、item 和分数三张表，不再删除重建 `00117`、`00120` 建的评测集、用例和评分标准表，已有数据保留；Down 只删这三张任务表。`00126_evaluation_case_inputs_after_task_schema.sql` 是兼容旧本地库的补丁：`inputs` 列或按 `conrelid` 确认的 `evaluation_cases_has_input` 约束缺失时补上，Down 不做任何事，`inputs` 和约束由 `00119` 的 Down 回滚，整条链可以回滚到 `00116`。旧的 `00115_managed_evaluation.sql` 与渠道凭证迁移共用版本号，不再保留。
 
 ## 控制台
 
@@ -157,15 +159,15 @@ sequenceDiagram
 
 评分标准可以手写，或按评测目标、Agent、评测集、正例和负例生成。生成要求模型直接返回 Markdown；若整段回复是 JSON 对象或数组，则拒绝落库。模型若用 Markdown 代码块包住正文，保存时去掉围栏。标题可以留空。列表按 15 条分页。正文和模型名按字符计数。详情先展示标题、编号、版本、创建时间和评分规则正文。版本历史按版本号倒序列出每一版的正文和通过分，可以选择查看。点编辑后再保存，保存会追加版本，已经存在的评测任务不受影响。删除是软删除。
 
-任务列表的列是 ID、任务、Agent、状态、创建时间、操作。开始评测的表单是智能体、运行环境、凭据库、资源、评测集、评分标准和评测关注项。评测关注项会写进这次任务冻结的评分标准。一次任务只跑一轮，不改 Agent。一个任务最多 200 条用例。创建、取消和重试都立即返回，会话在后台启动，详情页轮询看到进度。取消只作用于尚未结束的任务，并归档已经启动的会话。重试只作用于已结束的任务，在一个事务里把任务改回 `running`、把本轮会话失败的用例重置为 `pending`，并删除本轮已完成用例上的失败分数；两类都没有时回滚并返回 “Only a finished evaluation task can retry failed cases”。重置的用例在后台重新创建会话；只删了失败分数时，立即插入结算任务重新打分，已成功的分数保持不变。
+任务列表的列是 ID、任务、Agent、状态、创建时间、操作。开始评测的表单是智能体、运行环境、凭据库、资源、评测集、评分标准和评测关注项。评测关注项会写进这次任务冻结的评分标准，去掉首尾空白后最多 300 个字符，超出返回 “focus must be at most 300 characters”。评分标准正文和评测集一样按字符计数，上限 16000，关注项不占这个额度。下拉里的智能体、运行环境、凭据库、记忆库、评测集和评分标准都加载全部分页，不只取第一页。任务列表按 15 条分页，状态筛选只有运行中、已完成、失败和已中止。一次任务只跑一轮，不改 Agent。一个任务最多 200 条用例。创建、取消和重试都立即返回，会话在后台启动，详情页轮询看到进度。取消只作用于尚未结束的任务，并归档已经启动的会话。重试只作用于已结束的任务，在一个事务里把任务改回 `running`、把本轮会话失败的用例重置为 `pending`，并删除本轮已完成用例上的失败分数；两类都没有时回滚并返回 “Only a finished evaluation task can retry failed cases”。重置的用例在后台重新创建会话；只删了失败分数时，立即插入结算任务重新打分，已成功的分数保持不变。
 
 任务详情页顶部是「评测 / 任务编号」面包屑、任务名、「评测任务」和状态标签、可复制的编号、创建时间，右侧「操作」菜单放重试失败项和终止。下面分「任务信息」和「任务报告」两个标签页，不做内容变化页，因为这一版不改 Agent。任务信息分基本信息、评测配置、执行与资源三组；失败时先显示失败原因。任务报告依次是：
 
 1. 整体结论：结论文字、平均得分环、样例数、通过数、通过率和通过分。有系统异常时下方提示这些样例不计入通过率。
-2. 质量分析：通过、未通过、系统异常、进行中四类的分布条和占比，有维度分时列出各维度均分。
-3. 数据明细：按四类筛选，可下载 CSV。列是用户问题、Agent 最终回答、自动打分、结果、评分依据、验收要点（没有时显示期望回答）和查看轨迹。
+2. 质量分析：通过、未通过、系统异常、进行中、未评分五类的分布条和占比，有维度分时列出各维度均分。
+3. 数据明细：按五类筛选，可下载 CSV。列是用户问题、Agent 最终回答、自动打分、结果、评分依据、验收要点（没有时显示期望回答）和查看轨迹。
 
-item 的会话失败或被取消、评分失败都算系统异常。会话已完成但还没有分数算进行中。查看轨迹打开右侧抽屉，显示问题、分数、结果、会话链接、评分模型、评分提示词版本、评分依据和执行过程。打过分的样例再展示评分调用：系统提示词、评分提示词和模型原文，默认展开，可以收起。旧分数没有这些字段时不显示评分调用。执行过程里的用户问题是发给 Agent 的内容，Agent 回答是它的模型返回；会话事件不保存被测模型的上游请求原文。没有 Agent 回答时提示本轮暂无最终回答。任务或 item 未结束时，详情和轨迹每 3 秒刷新。
+item 的会话失败、评分失败算系统异常。被取消的 item，以及任务已结束时仍没有分数的 item（例如取消时尚未打分）算未评分，不进系统异常。任务未结束时，会话已完成但还没有分数算进行中。任务已中止时，整体结论显示「任务已中止」，不再显示「评测进行中」；CSV 的结果列使用同样的分类。查看轨迹打开右侧抽屉，显示问题、分数、结果、会话链接、评分模型、评分提示词版本、评分依据和执行过程。打过分的样例再展示评分调用：系统提示词、评分提示词和模型原文，默认展开，可以收起。旧分数没有这些字段时不显示评分调用。执行过程里的用户问题是发给 Agent 的内容，Agent 回答是它的模型返回；会话事件不保存被测模型的上游请求原文。没有 Agent 回答时提示本轮暂无最终回答。任务或 item 未结束时，详情和轨迹每 3 秒刷新。
 
 `evaluation_tasks.created_by_user_uuid` 和 `created_by_api_key_uuid` 是可空 `uuid`。控制台会话没有 API key 时这两列为空。
 

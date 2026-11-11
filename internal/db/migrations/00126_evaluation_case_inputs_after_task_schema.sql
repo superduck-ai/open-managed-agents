@@ -6,7 +6,9 @@ ALTER TABLE evaluation_cases
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'evaluation_cases_has_input'
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'evaluation_cases'::regclass
+        AND conname = 'evaluation_cases_has_input'
     ) THEN
         ALTER TABLE evaluation_cases
             ADD CONSTRAINT evaluation_cases_has_input CHECK (
@@ -19,5 +21,4 @@ $$;
 -- +goose StatementEnd
 
 -- +goose Down
-ALTER TABLE evaluation_cases DROP CONSTRAINT IF EXISTS evaluation_cases_has_input;
-ALTER TABLE evaluation_cases DROP COLUMN IF EXISTS inputs;
+SELECT 1;

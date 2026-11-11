@@ -61,9 +61,7 @@ func (r *TaskRunner) scoreItem(ctx context.Context, task db.EvaluationTask, item
 	evidence := evidenceFromEvents(events)
 	score.Answer = evidence.answer
 	score.JudgeSystem = scoringSystem(task.RubricBody)
-	score.JudgePrompt = scoringPrompt(caseDraft{
-		Query: item.Query, ExpectedAnswer: item.ExpectedAnswer, ExpectedToolTrace: item.ExpectedToolTrace, Acceptance: item.Acceptance,
-	}, evidence.answer, evidence.trajectory)
+	score.JudgePrompt = scoringPrompt(redactedCase(item), evidence.answer, evidence.trajectory)
 	completion, err := r.complete(ctx, task, score.JudgeSystem, score.JudgePrompt)
 	score.JudgeResponse = completion.Text
 	score.JudgeInputTokens, score.JudgeOutputTokens = completion.InputTokens, completion.OutputTokens
@@ -199,6 +197,13 @@ func lineFromEvent(event db.SessionEvent) trajectoryLine {
 		payload = ""
 	}
 	return trajectoryLine{header: formatTime(event.CreatedAt) + " " + event.EventType, payload: payload, minor: minor}
+}
+
+func redactedCase(item db.EvaluationTaskItem) caseDraft {
+	return caseDraft{
+		Query: redactText(item.Query), ExpectedAnswer: redactText(item.ExpectedAnswer),
+		ExpectedToolTrace: json.RawMessage(redactedPayload(item.ExpectedToolTrace)), Acceptance: redactText(item.Acceptance),
+	}
 }
 
 func redactedPayload(raw json.RawMessage) string {

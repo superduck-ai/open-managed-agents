@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 
-import { listAgents, listManagedEntities } from '../managed-agents/api';
 import { areMemoryAttachesValid } from '../managed-agents/resources/memory-attach';
 import { areSessionFileResourcesValid } from '../managed-agents/sessions/file-resource-form';
 import type { MemoryAttachFormValue, SessionFileResourceFormValue } from '../managed-agents/types';
@@ -19,16 +18,11 @@ import {
 import { Label } from '../../shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 import { Textarea } from '../../shared/ui/textarea';
-import {
-  createEvaluationTask,
-  evaluationError,
-  listEvaluationDatasets,
-  listEvaluationRubrics,
-  type EvaluationTaskInput,
-} from './api';
+import { createEvaluationTask, evaluationError, type EvaluationTaskInput } from './api';
 import { DatasetCreateDialog } from './DatasetCreateDialog';
 import { RubricCreateDialog } from './RubricCreateDialog';
 import { taskMountResources, TaskMountFields } from './TaskMountFields';
+import { listTaskAgents, listTaskDatasets, listTaskEntities, listTaskRubrics } from './taskOptions';
 import { useEvaluationScope } from './useEvaluationScope';
 
 export type EvaluationCreateKind = 'evaluate' | 'dataset' | 'rubric';
@@ -59,29 +53,29 @@ function TaskDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open
   const ready = open && scope.ready;
   const agents = useQuery({
     queryKey: ['evaluation-agents', scope.workspaceId],
-    queryFn: () => listAgents(scope.workspaceId),
+    queryFn: () => listTaskAgents(scope.workspaceId),
     enabled: ready,
   });
   const environments = useQuery({
     queryKey: ['evaluation-environments', scope.workspaceId],
-    queryFn: () => listManagedEntities('environments', scope.workspaceId),
+    queryFn: () => listTaskEntities('environments', scope.workspaceId),
     enabled: ready,
   });
   const datasets = useQuery({
     queryKey: ['evaluation-datasets', scope.orgUuid, scope.workspaceId],
-    queryFn: () => listEvaluationDatasets(scope.orgUuid, scope.workspaceId),
+    queryFn: () => listTaskDatasets(scope.orgUuid, scope.workspaceId),
     enabled: ready,
   });
   const rubrics = useQuery({
     queryKey: ['evaluation-rubrics', scope.orgUuid, scope.workspaceId],
-    queryFn: () => listEvaluationRubrics(scope.orgUuid, scope.workspaceId),
+    queryFn: () => listTaskRubrics(scope.orgUuid, scope.workspaceId),
     enabled: ready,
   });
   const create = useMutation({
     mutationFn: () =>
       createEvaluationTask(scope.orgUuid, scope.workspaceId, {
         ...draft,
-        name: draft.name.trim() || fallbackTaskName(agentLabel(agents.data?.data ?? [], draft.agent_id)),
+        name: draft.name.trim() || fallbackTaskName(agentLabel(agents.data ?? [], draft.agent_id)),
         vault_ids: vaultIds,
         resources: taskMountResources(files, memories),
         focus: draft.focus,
@@ -131,7 +125,7 @@ function TaskDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open
                 placeholder={msg('evaluations.chooseAgent', 'Choose an agent')}
                 value={draft.agent_id}
                 onChange={(agentId) => setDraft({ ...draft, agent_id: agentId })}
-                options={(agents.data?.data ?? []).map((agent) => ({ id: agent.id, label: agent.name }))}
+                options={(agents.data ?? []).map((agent) => ({ id: agent.id, label: agent.name }))}
                 empty={msg('evaluations.emptyAgents', 'No agents yet')}
               />
               <OptionSelect
@@ -139,7 +133,7 @@ function TaskDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open
                 placeholder={msg('evaluations.chooseEnvironment', 'Choose a runtime environment')}
                 value={draft.environment_id}
                 onChange={(environmentId) => setDraft({ ...draft, environment_id: environmentId })}
-                options={(environments.data?.data ?? []).map((item) => ({
+                options={(environments.data ?? []).map((item) => ({
                   id: item.id,
                   label: entityName(item),
                 }))}
@@ -163,7 +157,7 @@ function TaskDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open
                 placeholder={msg('evaluations.chooseDataset', 'Choose a dataset')}
                 value={draft.dataset_id}
                 onChange={(datasetId) => setDraft({ ...draft, dataset_id: datasetId })}
-                options={(datasets.data?.data ?? []).map((item) => ({ id: item.id, label: item.name }))}
+                options={(datasets.data ?? []).map((item) => ({ id: item.id, label: item.name }))}
                 empty={msg('evaluations.emptyDatasets', 'No datasets yet')}
               />
               <OptionSelect
@@ -171,7 +165,7 @@ function TaskDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open
                 placeholder={msg('evaluations.chooseRubric', 'Choose a rubric')}
                 value={draft.rubric_id}
                 onChange={(rubricId) => setDraft({ ...draft, rubric_id: rubricId })}
-                options={(rubrics.data?.data ?? []).map((item) => ({ id: item.id, label: item.name }))}
+                options={(rubrics.data ?? []).map((item) => ({ id: item.id, label: item.name }))}
                 empty={msg('evaluations.emptyRubrics', 'No rubrics yet')}
               />
               <CountedNote

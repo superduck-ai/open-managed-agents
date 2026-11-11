@@ -1,103 +1,10 @@
 -- +goose Up
-DROP TABLE IF EXISTS evaluation_task_scores;
-DROP TABLE IF EXISTS evaluation_task_items;
-DROP TABLE IF EXISTS evaluation_tasks;
-DROP TABLE IF EXISTS evaluation_rubric_versions;
-DROP TABLE IF EXISTS evaluation_rubrics;
 DROP TABLE IF EXISTS evaluation_experiment_scores;
 DROP TABLE IF EXISTS evaluation_experiment_items;
 DROP TABLE IF EXISTS evaluation_experiment_evaluators;
 DROP TABLE IF EXISTS evaluation_experiments;
 DROP TABLE IF EXISTS evaluation_evaluator_versions;
 DROP TABLE IF EXISTS evaluation_evaluators;
-DROP TABLE IF EXISTS evaluation_cases;
-DROP TABLE IF EXISTS evaluation_dataset_versions;
-DROP TABLE IF EXISTS evaluation_datasets;
-
-CREATE TABLE evaluation_datasets (
-    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-    external_id text NOT NULL UNIQUE,
-    organization_uuid uuid NOT NULL,
-    workspace_uuid uuid NOT NULL,
-    name text NOT NULL,
-    description text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    deleted_at timestamptz
-);
-CREATE INDEX evaluation_datasets_workspace_created_idx
-    ON evaluation_datasets (organization_uuid, workspace_uuid, created_at DESC, uuid DESC)
-    WHERE deleted_at IS NULL;
-
-CREATE TABLE evaluation_dataset_versions (
-    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-    external_id text NOT NULL UNIQUE,
-    organization_uuid uuid NOT NULL,
-    workspace_uuid uuid NOT NULL,
-    dataset_uuid uuid NOT NULL,
-    version integer NOT NULL CHECK (version >= 1),
-    created_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (dataset_uuid, version)
-);
-
-CREATE TABLE evaluation_cases (
-    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-    external_id text NOT NULL UNIQUE,
-    organization_uuid uuid NOT NULL,
-    workspace_uuid uuid NOT NULL,
-    dataset_uuid uuid NOT NULL,
-    version_uuid uuid NOT NULL,
-    position integer NOT NULL CHECK (position >= 1),
-    query text NOT NULL,
-    expected_answer text NOT NULL DEFAULT '',
-    expected_tool_trace jsonb,
-    source_session_id text NOT NULL DEFAULT '',
-    polarity text NOT NULL DEFAULT '' CHECK (polarity IN ('', 'positive', 'negative')),
-    acceptance text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    deleted_at timestamptz
-);
-CREATE UNIQUE INDEX evaluation_cases_version_position_idx
-    ON evaluation_cases (version_uuid, position)
-    WHERE deleted_at IS NULL;
-CREATE INDEX evaluation_cases_version_position_list_idx
-    ON evaluation_cases (version_uuid, position)
-    WHERE deleted_at IS NULL;
-
-CREATE TABLE evaluation_rubrics (
-    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-    external_id text NOT NULL UNIQUE,
-    organization_uuid uuid NOT NULL,
-    workspace_uuid uuid NOT NULL,
-    name text NOT NULL,
-    description text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    deleted_at timestamptz
-);
-CREATE INDEX evaluation_rubrics_workspace_created_idx
-    ON evaluation_rubrics (organization_uuid, workspace_uuid, created_at DESC, uuid DESC)
-    WHERE deleted_at IS NULL;
-
-CREATE TABLE evaluation_rubric_versions (
-    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-    external_id text NOT NULL UNIQUE,
-    organization_uuid uuid NOT NULL,
-    workspace_uuid uuid NOT NULL,
-    rubric_uuid uuid NOT NULL,
-    version integer NOT NULL CHECK (version >= 1),
-    body text NOT NULL,
-    pass_score integer NOT NULL CHECK (pass_score >= 0 AND pass_score <= 100),
-    model text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (rubric_uuid, version)
-);
 
 CREATE TABLE evaluation_tasks (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -184,8 +91,3 @@ CREATE TABLE evaluation_task_scores (
 DROP TABLE IF EXISTS evaluation_task_scores;
 DROP TABLE IF EXISTS evaluation_task_items;
 DROP TABLE IF EXISTS evaluation_tasks;
-DROP TABLE IF EXISTS evaluation_rubric_versions;
-DROP TABLE IF EXISTS evaluation_rubrics;
-DROP TABLE IF EXISTS evaluation_cases;
-DROP TABLE IF EXISTS evaluation_dataset_versions;
-DROP TABLE IF EXISTS evaluation_datasets;

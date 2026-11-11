@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { evaluationError, listEvaluationTasks } from './api';
 import { evaluationStatusLabel } from './evaluationLabels';
 import { EvaluationEmpty, EvaluationSearch, formatEvaluationTime, shortenId } from './evaluationChrome';
+import { EvaluationPagination } from './EvaluationPagination';
 import { filterEvaluationTasks } from './taskReport';
 import { taskPath } from './taskPath';
 import { useEvaluationCursor } from './useEvaluationCursor';
@@ -45,7 +46,6 @@ export function TaskPanel({ onCreate }: { onCreate: () => void }) {
               onChange={setStatus}
               options={[
                 ['all', msg('evaluations.allStatuses', 'All statuses')],
-                ['pending', msg('evaluations.statusPending', 'Queued')],
                 ['running', msg('evaluations.statusRunning', 'Running')],
                 ['completed', msg('evaluations.statusCompleted', 'Completed')],
                 ['failed', msg('evaluations.statusFailed', 'Failed')],
@@ -115,6 +115,7 @@ export function TaskPanel({ onCreate }: { onCreate: () => void }) {
           </Table>
         </div>
       )}
+      <EvaluationPagination cursor={cursor} nextPage={tasks.data?.next_page} fetching={tasks.isFetching} />
     </div>
   );
 }

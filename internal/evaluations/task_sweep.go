@@ -13,6 +13,7 @@ const (
 	staleItemAge  = 2 * time.Minute
 	settleTaskAge = time.Minute
 	startGrace    = 10 * time.Minute
+	maxItemRun    = 2 * time.Hour
 )
 
 type sessionOutcome struct {
@@ -65,7 +66,7 @@ func (r *TaskRunner) abandonUnstarted(ctx context.Context, now time.Time, tasks 
 }
 
 func (r *TaskRunner) reconcileItem(ctx context.Context, item db.EvaluationTaskItem, now time.Time) bool {
-	outcome, err := r.sessionOutcome(ctx, item)
+	outcome, err := r.sessionOutcome(ctx, item, now)
 	if err != nil {
 		r.logger.WarnContext(ctx, "reconcile evaluation item", "item_id", item.ExternalID, "session_id", item.SessionExternalID, "error", err)
 		return false
@@ -79,7 +80,7 @@ func (r *TaskRunner) reconcileItem(ctx context.Context, item db.EvaluationTaskIt
 	return false
 }
 
-func (r *TaskRunner) sessionOutcome(ctx context.Context, item db.EvaluationTaskItem) (sessionOutcome, error) {
+func (r *TaskRunner) sessionOutcome(ctx context.Context, item db.EvaluationTaskItem, now time.Time) (sessionOutcome, error) {
 	session, ok, err := r.store.GetSession(ctx, item.WorkspaceUUID, item.SessionExternalID)
 	if err != nil {
 		return sessionOutcome{}, err
@@ -87,16 +88,21 @@ func (r *TaskRunner) sessionOutcome(ctx context.Context, item db.EvaluationTaskI
 	if !ok || session.Status == "terminated" || session.ArchivedAt != nil || session.DeletedAt != nil {
 		return terminatedOutcome(), nil
 	}
-	if session.Status != "idle" {
-		return sessionOutcome{}, nil
+	if session.Status == "idle" {
+		events, _, err := r.store.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
+			WorkspaceUUID: item.WorkspaceUUID, SessionExternalID: item.SessionExternalID, Types: []string{"session.status_idle"}, Order: "desc", Limit: 1,
+		})
+		if err != nil {
+			return sessionOutcome{}, err
+		}
+		if outcome := terminalStatus(events); outcome.terminal {
+			return outcome, nil
+		}
 	}
-	events, _, err := r.store.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
-		WorkspaceUUID: item.WorkspaceUUID, SessionExternalID: item.SessionExternalID, Types: []string{"session.status_idle"}, Order: "desc", Limit: 1,
-	})
-	if err != nil {
-		return sessionOutcome{}, err
+	if now.Sub(session.CreatedAt) > maxItemRun {
+		return sessionOutcome{status: itemFailed, message: itemTimedOutMessage, terminal: true}, nil
 	}
-	return terminalStatus(events), nil
+	return sessionOutcome{}, nil
 }
 
 func terminalStatus(events []db.SessionEvent) sessionOutcome {

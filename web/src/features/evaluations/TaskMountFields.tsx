@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { listManagedEntities } from '../managed-agents/api';
 import { memoryAttachResources } from '../managed-agents/resources/memory-attach';
 import { sessionFileResourcePayload } from '../managed-agents/sessions/file-resource-form';
 import { SessionFileResourcesField } from '../managed-agents/sessions/SessionFileResourcesField';
@@ -9,6 +8,7 @@ import { useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
 import { Label } from '../../shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
+import { listTaskEntities } from './taskOptions';
 
 export function TaskMountFields({
   workspaceId,
@@ -32,15 +32,15 @@ export function TaskMountFields({
   const { msg } = useI18n();
   const vaults = useQuery({
     queryKey: ['evaluation-vaults', workspaceId],
-    queryFn: () => listManagedEntities('credential-vaults', workspaceId),
+    queryFn: () => listTaskEntities('credential-vaults', workspaceId),
     enabled,
   });
   const stores = useQuery({
     queryKey: ['evaluation-memory-stores', workspaceId],
-    queryFn: () => listManagedEntities('memory-stores', workspaceId),
+    queryFn: () => listTaskEntities('memory-stores', workspaceId),
     enabled,
   });
-  const vaultOptions = (vaults.data?.data ?? []).map((item) => ({ id: item.id, label: entityLabel(item) }));
+  const vaultOptions = (vaults.data ?? []).map((item) => ({ id: item.id, label: entityLabel(item) }));
   return (
     <div className="grid gap-5">
       <div className="grid gap-2">
@@ -98,7 +98,7 @@ export function TaskMountFields({
           workspaceId={workspaceId}
           onChange={onFiles}
           memoryAttaches={memories}
-          memoryStoreOptions={(stores.data?.data ?? []).map((item) => ({ id: item.id, label: entityLabel(item) }))}
+          memoryStoreOptions={(stores.data ?? []).map((item) => ({ id: item.id, label: entityLabel(item) }))}
           onMemoryAttachesChange={onMemories}
         />
       </section>

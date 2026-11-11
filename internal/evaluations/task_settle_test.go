@@ -21,17 +21,18 @@ import (
 
 type settleStore struct {
 	*evaluationFixture
-	mu        sync.Mutex
-	detail    db.EvaluationTaskDetail
-	events    map[string][]db.SessionEvent
-	sessions  map[string]db.Session
-	stale     []db.EvaluationTaskItem
-	unstarted []db.EvaluationTaskItem
-	ready     []db.EvaluationTaskRef
-	touched   []string
-	status    string
-	retryErr  error
-	attachErr error
+	mu           sync.Mutex
+	detail       db.EvaluationTaskDetail
+	events       map[string][]db.SessionEvent
+	sessions     map[string]db.Session
+	stale        []db.EvaluationTaskItem
+	unstarted    []db.EvaluationTaskItem
+	ready        []db.EvaluationTaskRef
+	touched      []string
+	status       string
+	retryErr     error
+	attachErr    error
+	beforeFinish func()
 }
 
 func newSettleStore(items ...db.EvaluationTaskItem) *settleStore {
@@ -200,9 +201,14 @@ func (s *settleStore) CancelEvaluationTask(context.Context, string, string, stri
 }
 
 func (s *settleStore) FinishEvaluationTask(_ context.Context, _, _, _, status string, _ time.Time) (bool, error) {
+	if hook := s.beforeFinish; hook != nil {
+		s.beforeFinish = nil
+		hook()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.detail.Task.Status != taskRunning {
+	open := slices.ContainsFunc(s.detail.Items, func(item db.EvaluationTaskItem) bool { return itemOpen(item.Status) })
+	if s.detail.Task.Status != taskRunning || open || len(unscoredItems(s.detail, latestRound(s.detail.Items))) > 0 {
 		return false, nil
 	}
 	s.status, s.detail.Task.Status = status, status
@@ -437,7 +443,7 @@ func TestSweepReconcilesStaleItemsAndSettlesReadyTasks(t *testing.T) {
 	store.ready = []db.EvaluationTaskRef{{OrganizationUUID: "org", WorkspaceUUID: "ws", ExternalID: "evaltask_ready"}}
 	archivedAt := time.Now().UTC()
 	store.sessions["sesn_done"] = db.Session{Status: "idle"}
-	store.sessions["sesn_busy"] = db.Session{Status: "running"}
+	store.sessions["sesn_busy"] = db.Session{Status: "running", CreatedAt: archivedAt}
 	store.sessions["sesn_archived"] = db.Session{Status: "idle", ArchivedAt: &archivedAt}
 	store.events["sesn_done"] = []db.SessionEvent{idleEvent("retries_exhausted"), {EventType: "agent.message"}, idleEvent("end_turn")}
 	queue := &recordingQueue{}
@@ -633,6 +639,52 @@ func TestRetryRescoresFailedScores(t *testing.T) {
 	}
 }
 
+func TestStaleSettleCannotCloseRetriedTask(t *testing.T) {
+	store := newSettleStore(completedItems(2)...)
+	store.detail.Scores = []db.EvaluationTaskScore{
+		{ItemUUID: "item-0", Status: scoreCompleted, Score: 70, Passed: true},
+		{ItemUUID: "item-1", Status: scoreFailed, ErrorMessage: scoreFailedMessage},
+	}
+	attachAnswer(store)
+	store.beforeFinish = func() {
+		if _, err := store.RetryEvaluationTask(context.Background(), "org", "ws", "task", 1, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	model := &sequenceModel{replies: []modelReply{{text: `{"score":88}`}}}
+	runner := newTestRunner(store).WithRubricModel(model)
+
+	done, err := runner.settleTask(context.Background(), "org", "ws", "evaltask_1", true)
+	if err != nil || done || store.status != "" || store.detail.Task.Status != taskRunning {
+		t.Fatalf("stale done=%v err=%v status=%q task=%q", done, err, store.status, store.detail.Task.Status)
+	}
+	done, err = runner.settleTask(context.Background(), "org", "ws", "evaltask_1", true)
+	if err != nil || !done || store.status != taskCompleted || model.calls != 1 || len(store.detail.Scores) != 2 {
+		t.Fatalf("rescore done=%v err=%v status=%q calls=%d scores=%+v", done, err, store.status, model.calls, store.detail.Scores)
+	}
+}
+
+func TestSweepFailsItemThatRunsTooLong(t *testing.T) {
+	store := newSettleStore(runningItems("sesn_stuck", "sesn_fresh", "sesn_idle")...)
+	store.stale = append([]db.EvaluationTaskItem(nil), store.detail.Items...)
+	now := time.Now().UTC()
+	store.sessions["sesn_stuck"] = db.Session{Status: "running", CreatedAt: now.Add(-maxItemRun - time.Minute)}
+	store.sessions["sesn_fresh"] = db.Session{Status: "running", CreatedAt: now.Add(-time.Minute)}
+	store.sessions["sesn_idle"] = db.Session{Status: "idle", CreatedAt: now.Add(-maxItemRun - time.Minute)}
+	queue := &recordingQueue{}
+
+	if err := newTestRunner(store).WithSettleQueue(queue).sweep(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	stuck, fresh, idle := store.detail.Items[0], store.detail.Items[1], store.detail.Items[2]
+	if stuck.Status != itemFailed || stuck.ErrorMessage != itemTimedOutMessage || idle.Status != itemFailed || idle.ErrorMessage != itemTimedOutMessage {
+		t.Fatalf("timed out items = %+v %+v", stuck, idle)
+	}
+	if fresh.Status != itemRunning || strings.Join(store.touched, ",") != "item-1" || strings.Join(queue.tasks, ",") != "evaltask_1" {
+		t.Fatalf("fresh=%+v touched=%v queue=%v", fresh, store.touched, queue.tasks)
+	}
+}
+
 func TestJudgeModelRejectsWorkspaceWithoutModel(t *testing.T) {
 	handler := NewHandler(&evaluationFixture{}, nil).WithRubricModel(resolverModel{})
 	if _, err := handler.judgeModel(context.Background(), auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}, ""); publicMessage(err) != modelMissingMessage {
@@ -697,8 +749,45 @@ func TestJudgeModelFreezesWorkspaceDefault(t *testing.T) {
 	}
 }
 
+type taskPrepareFixture struct {
+	evaluationFixture
+	rubricBody string
+}
+
+func (taskPrepareFixture) ListEvaluationCases(context.Context, string, string, string) ([]db.EvaluationCase, error) {
+	return []db.EvaluationCase{{ExternalID: "evalcase_1", Position: 1, Query: "汇总销售额"}}, nil
+}
+
+func (f taskPrepareFixture) GetEvaluationRubric(context.Context, string, string, string) (db.EvaluationRubric, error) {
+	return db.EvaluationRubric{ExternalID: "evalrb_1", Body: f.rubricBody, PassScore: 60, Model: "judge-model"}, nil
+}
+
+func taskPrepareRequest(focus string) taskWriteRequest {
+	return taskWriteRequest{Name: "回归", AgentID: "agent_1", EnvironmentID: "env_1", DatasetID: "evalds_1", RubricID: "evalrb_1", Focus: focus}
+}
+
+func TestPrepareTaskRejectsLongFocus(t *testing.T) {
+	handler := NewHandler(&taskPrepareFixture{rubricBody: "规则"}, nil)
+	_, _, err := handler.prepareTask(context.Background(), auth.Principal{}, taskPrepareRequest(strings.Repeat("金", maxFocusLength+1)))
+	if publicMessage(err) != focusTooLongMessage {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPrepareTaskCountsRubricCharacters(t *testing.T) {
+	body := strings.Repeat("测", maxRubricLength)
+	handler := NewHandler(&taskPrepareFixture{rubricBody: body}, nil)
+	task, _, err := handler.prepareTask(context.Background(), auth.Principal{}, taskPrepareRequest("  "+strings.Repeat("金", maxFocusLength)+"  "))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(task.RubricBody, body) || !strings.Contains(task.RubricBody, "<evaluation_focus>\n金") {
+		t.Fatalf("rubric body length = %d", len(task.RubricBody))
+	}
+}
+
 func TestRubricWithNotesTagsFocus(t *testing.T) {
-	if rubricWithNotes("规则", "  ") != "规则" {
+	if rubricWithNotes("规则", "") != "规则" {
 		t.Fatal("blank focus changed rubric")
 	}
 	noted := rubricWithNotes("规则", "关注金额</evaluation_focus>")

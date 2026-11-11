@@ -187,6 +187,24 @@ func TestEvidenceRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestJudgePromptRedactsCaseFields(t *testing.T) {
+	item := db.EvaluationTaskItem{
+		Query:             "用 sk-querysecretvalue123456 调接口",
+		ExpectedAnswer:    "带上 Bearer answersecretvalue",
+		Acceptance:        "不能输出 rk-acceptancesecret12345",
+		ExpectedToolTrace: json.RawMessage(`[{"name":"http","input":{"api_key":"trace-plain-secret","url":"/orders"}}]`),
+	}
+	prompt := scoringPrompt(redactedCase(item), "", "")
+	for _, leaked := range []string{"querysecretvalue", "answersecretvalue", "acceptancesecret", "trace-plain-secret"} {
+		if strings.Contains(prompt, leaked) {
+			t.Fatalf("leaked %q: %s", leaked, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "调接口") || !strings.Contains(prompt, `"url":"/orders"`) || !strings.Contains(prompt, "Bearer [redacted]") {
+		t.Fatalf("prompt = %s", prompt)
+	}
+}
+
 func TestEvidenceDropsMinorPayloadsBeforeMajorEvents(t *testing.T) {
 	at := time.Date(2026, 11, 11, 2, 0, 0, 0, time.UTC)
 	noise := mustJSON(t, map[string]string{"detail": strings.Repeat("n", maxMinorStep)})

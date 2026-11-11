@@ -102,6 +102,9 @@ func TestEvaluationTaskStartAndCancelPostgres(t *testing.T) {
 	if abandoned, err := d.AbandonEvaluationItem(ctx, org, ws, running.UUID, "中断", now); err != nil || abandoned {
 		t.Fatalf("abandon started item = %v err=%v", abandoned, err)
 	}
+	if finished, err := d.FinishEvaluationTask(ctx, org, ws, created.Task.ExternalID, "completed", now); err != nil || finished {
+		t.Fatalf("finish with open items = %v err=%v", finished, err)
+	}
 
 	cancelled, err := d.CancelEvaluationTask(ctx, org, ws, created.Task.UUID, now)
 	if err != nil || len(cancelled) != 3 {
@@ -213,6 +216,9 @@ func TestEvaluationTaskRetryAndSweepPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if finished, err := d.FinishEvaluationTask(ctx, org, ws, created.Task.ExternalID, "completed", now); err != nil || finished {
+		t.Fatalf("finish before scoring = %v err=%v", finished, err)
+	}
 	refs, err := d.ListSettleableEvaluationTasks(ctx, now.Add(time.Minute), 1000)
 	if err != nil || !containsRef(refs, created.Task.ExternalID) {
 		t.Fatalf("settleable err=%v refs=%d", err, len(refs))
@@ -242,6 +248,15 @@ func TestEvaluationTaskRetryAndSweepPostgres(t *testing.T) {
 	}
 	if detail.Task.Status != "running" || len(detail.Scores) != 1 || detail.Scores[0].Status != "completed" || detail.Scores[0].JudgeModel != "judge-model" {
 		t.Fatalf("detail status=%s scores=%+v", detail.Task.Status, detail.Scores)
+	}
+	if finished, err := d.FinishEvaluationTask(ctx, org, ws, created.Task.ExternalID, "completed", now); err != nil || finished {
+		t.Fatalf("finish with unscored item = %v err=%v", finished, err)
+	}
+	if _, err := d.CreateEvaluationTaskScore(ctx, EvaluationTaskScore{
+		UUID: uuid.NewV4().String(), ExternalID: "evalscore_rescore_" + uuid.NewV4().String(), OrganizationUUID: org, WorkspaceUUID: ws,
+		TaskUUID: created.Task.UUID, ItemUUID: created.Items[1].UUID, Status: "completed", Dimensions: json.RawMessage(`[]`), CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if finished, err := d.FinishEvaluationTask(ctx, org, ws, created.Task.ExternalID, "completed", now); err != nil || !finished {
 		t.Fatalf("finish = %v err=%v", finished, err)

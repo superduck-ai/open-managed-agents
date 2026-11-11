@@ -49,8 +49,7 @@ function scored(passed: boolean, patch: Partial<EvaluationItem> = {}) {
 }
 
 test('item outcome treats session and scorer failures as system errors', () => {
-  expect(itemOutcome(item({ status: 'failed' }))).toBe('error');
-  expect(itemOutcome(item({ status: 'cancelled' }))).toBe('error');
+  expect(itemOutcome(item({ status: 'failed' }), 'completed')).toBe('error');
   expect(
     itemOutcome(
       item({
@@ -69,30 +68,48 @@ test('item outcome treats session and scorer failures as system errors', () => {
           judge_response: '',
         },
       }),
+      'completed',
     ),
   ).toBe('error');
-  expect(itemOutcome(item({ status: 'running' }))).toBe('running');
-  expect(itemOutcome(item({ score: null }))).toBe('running');
-  expect(itemOutcome(scored(true))).toBe('passed');
-  expect(itemOutcome(scored(false))).toBe('failed');
+  expect(itemOutcome(item({ status: 'running' }), 'running')).toBe('running');
+  expect(itemOutcome(item({ score: null }), 'running')).toBe('running');
+  expect(itemOutcome(scored(true), 'completed')).toBe('passed');
+  expect(itemOutcome(scored(false), 'completed')).toBe('failed');
+});
+
+test('item outcome keeps cancelled and unscored cases out of errors once the task stops', () => {
+  expect(itemOutcome(item({ status: 'cancelled' }), 'cancelled')).toBe('unscored');
+  expect(itemOutcome(item({ score: null }), 'cancelled')).toBe('unscored');
+  expect(itemOutcome(item({ status: 'pending' }), 'cancelled')).toBe('unscored');
+});
+
+test('conclusion reports a cancelled task as stopped even with unscored cases', () => {
+  const items = [scored(true), item({ status: 'cancelled' }), item({ score: null })];
+  const counts = outcomeCounts(items, 'cancelled');
+  expect(counts).toEqual({ passed: 1, failed: 0, error: 0, running: 0, unscored: 2 });
+  expect(taskConclusion({ status: 'cancelled' }, counts)).toBe('cancelled');
+  expect(itemsCsv({ status: 'cancelled', items }, ['问题'], (outcome) => outcome)).toContain(',unscored,');
 });
 
 test('conclusion reports incomplete results when any case errored', () => {
   const items = [scored(true), scored(false), item({ status: 'failed' })];
-  const counts = outcomeCounts(items);
-  expect(counts).toEqual({ passed: 1, failed: 1, error: 1, running: 0 });
+  const counts = outcomeCounts(items, 'completed');
+  expect(counts).toEqual({ passed: 1, failed: 1, error: 1, running: 0, unscored: 0 });
   expect(taskConclusion({ status: 'completed' }, counts)).toBe('incomplete');
-  expect(taskConclusion({ status: 'failed' }, { passed: 0, failed: 0, error: 2, running: 0 })).toBe('empty');
+  expect(taskConclusion({ status: 'failed' }, { passed: 0, failed: 0, error: 2, running: 0, unscored: 0 })).toBe(
+    'empty',
+  );
   expect(taskConclusion({ status: 'running' }, counts)).toBe('running');
-  expect(taskConclusion({ status: 'cancelled' }, counts)).toBe('cancelled');
-  expect(taskConclusion({ status: 'completed' }, { passed: 2, failed: 1, error: 0, running: 0 })).toBe('complete');
+  expect(taskConclusion({ status: 'completed' }, { passed: 2, failed: 1, error: 0, running: 0, unscored: 0 })).toBe(
+    'complete',
+  );
 });
 
 test('item filter keeps only the chosen outcome', () => {
   const items = [scored(true, { id: 'a' }), scored(false, { id: 'b' }), item({ id: 'c', status: 'failed' })];
-  expect(filterItems(items, 'all').map((row) => row.id)).toEqual(['a', 'b', 'c']);
-  expect(filterItems(items, 'error').map((row) => row.id)).toEqual(['c']);
-  expect(filterItems(undefined, 'passed')).toEqual([]);
+  expect(filterItems(items, 'all', 'completed').map((row) => row.id)).toEqual(['a', 'b', 'c']);
+  expect(filterItems(items, 'error', 'completed').map((row) => row.id)).toEqual(['c']);
+  expect(filterItems(undefined, 'passed', 'completed')).toEqual([]);
 });
 
 test('percent is zero for empty totals', () => {
@@ -101,7 +118,11 @@ test('percent is zero for empty totals', () => {
 });
 
 test('csv export quotes commas, quotes, and new lines', () => {
-  const text = itemsCsv([scored(true, { query: 'a,"b"\nc', session_id: 'sesn_1' })], ['问题'], (outcome) => outcome);
+  const text = itemsCsv(
+    { status: 'completed', items: [scored(true, { query: 'a,"b"\nc', session_id: 'sesn_1' })] },
+    ['问题'],
+    (outcome) => outcome,
+  );
   expect(text.split('\n')[0]).toBe('问题');
   expect(text).toContain('"a,""b""\nc",,90,passed,');
   expect(text.trimEnd().endsWith('sesn_1')).toBe(true);

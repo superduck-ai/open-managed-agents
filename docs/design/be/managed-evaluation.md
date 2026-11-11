@@ -124,7 +124,7 @@ sequenceDiagram
 | --- | --- | --- |
 | `evaluation_datasets` / `evaluation_dataset_versions` | `evalds_` / `edv_` | 评测集和版本。当前写入版本 1 |
 | `evaluation_cases` | `evalcase_` | `inputs` 是有序内容块。`query` 由其中的文字块拼出，可以是空字符串。期望回答、工具轨迹、来源会话、标注和验收要点可选 |
-| `evaluation_rubrics` / `evaluation_rubric_versions` | `evalrb_` / `erv_` | 评分标准。版本只增不改。`00118_evaluation_rubrics.sql` |
+| `evaluation_rubrics` / `evaluation_rubric_versions` | `evalrb_` / `erv_` | 评分标准。版本只增不改。`00120_evaluation_rubrics.sql`，编号在用例 `inputs` 的 `00119` 之后，后发时不会变成乱序迁移 |
 | `evaluation_tasks` | `evaltask_` | 只写入 `evaluate`。状态 `running`、`completed`、`failed`、`cancelled`。自迭代遗留列 `strategy`、`low_score_threshold`、`optimize_system`、`baseline_system`、`candidate_system`、`candidate_summary`、`applied_at` 由 `00131_evaluation_task_runtime.sql` 删除 |
 | `evaluation_task_items` | `evalitem_` | 一个 case，`round = 1`。`inputs` 是用例内容块的快照，由 `00129_evaluation_task_item_inputs.sql` 增加，迁移前的 item 为空数组。`00131_evaluation_task_runtime.sql` 给 `pending` 或「`running` 且没有会话」的 item 建按 `updated_at` 的部分索引，供巡检找出未启动的 item |
 | `evaluation_task_scores` | `evalscore_` | 一条 item 一行。`completed` 才有有效分数。`answer` 保存打分时读到的 Agent 最终回答，`00127_evaluation_score_answer.sql` 增加。`judge_model`、`judge_prompt_version` 由 `00128_evaluation_score_judge.sql` 增加，同一迁移给 `running` 的任务和 item 建按 `updated_at` 的部分索引，供巡检使用。`judge_input_tokens`、`judge_output_tokens` 由 `00131_evaluation_task_runtime.sql` 增加 |

@@ -338,8 +338,14 @@ function findEocd(bytes: Uint8Array) {
   throw new Error('xlsx is not a zip archive');
 }
 
+function blobFromBytes(data: Uint8Array) {
+  const buffer = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buffer).set(data);
+  return new Blob([buffer]);
+}
+
 async function inflateRaw(data: Uint8Array) {
-  const stream = new Blob([new Uint8Array(data)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const stream = blobFromBytes(data).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
@@ -415,7 +421,7 @@ function writeSizes(view: DataView, crcOffset: number, name: Uint8Array, entry: 
 }
 
 async function deflateRaw(data: Uint8Array) {
-  const stream = new Blob([new Uint8Array(data)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  const stream = blobFromBytes(data).stream().pipeThrough(new CompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 

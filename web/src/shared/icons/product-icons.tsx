@@ -1,6 +1,6 @@
 import {
   Activity,
-  MessageCircleMore,
+  Infinity,
   BookOpen,
   BookOpenCheck,
   Bot,
@@ -62,7 +62,7 @@ export const productIcons = {
   quickstart: productIcon(Rocket),
   agents: productIcon(Bot),
   sessions: productIcon(MessagesSquare),
-  channels: productIcon(MessageCircleMore),
+  channels: productIcon(Infinity),
   deployments: productIcon(Package),
   environments: productIcon(Server),
   resources: productIcon(Boxes),

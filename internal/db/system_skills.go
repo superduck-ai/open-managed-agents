@@ -39,7 +39,7 @@ func (d *DB) GetSystemSkill(ctx context.Context, id string) (SystemSkill, error)
 }
 
 func (d *DB) SystemSkillVersions(ctx context.Context, skillUUID string, limit, offset int) ([]SystemSkillVersion, error) {
-	return NewSystemSkillMapper(d.mapperDB).Versions(ctx, skillUUID, limit, offset)
+	return NewSystemSkillMapper(d.mapperDB).Versions(ctx, skillUUID, true, limit, offset)
 }
 
 func (d *DB) SystemSkillVersion(ctx context.Context, skillUUID, version string) (SystemSkillVersion, error) {
@@ -82,7 +82,7 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 		return SystemSkill{}, false, ErrSystemSkillRevision
 	}
 	if inserted == 0 {
-		versions, err := mapper.Versions(ctx, skill.UUID, 1, 0)
+		versions, err := mapper.Versions(ctx, skill.UUID, false, 1, 0)
 		if err != nil {
 			return SystemSkill{}, false, err
 		}
@@ -108,7 +108,9 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 			skill.LatestVersion = new(version.Version)
 		}
 		published = true
-		skill.IconKey = input.Skill.IconKey
+		if input.Skill.IconKey != "" {
+			skill.IconKey = input.Skill.IconKey
+		}
 	}
 	if input.Publish {
 		published, err = publishSystemSkill(ctx, mapper, &skill, version.Version)

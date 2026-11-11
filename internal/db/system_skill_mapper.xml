@@ -28,7 +28,9 @@
     </update>
     <select id="Versions" resultType="SystemSkillVersion">
         SELECT <include refid="versionColumns"/> FROM builtin_skill_versions
-        WHERE skill_uuid = #{skillUUID} AND deleted_at IS NULL ORDER BY created_at DESC, uuid DESC LIMIT #{limit} OFFSET #{offset}
+        WHERE skill_uuid = #{skillUUID} AND deleted_at IS NULL
+        <if test="publishedOnly">AND state = 'published'</if>
+        ORDER BY created_at DESC, uuid DESC LIMIT #{limit} OFFSET #{offset}
     </select>
     <select id="Version" resultType="SystemSkillVersion">
         SELECT <include refid="versionColumns"/> FROM builtin_skill_versions

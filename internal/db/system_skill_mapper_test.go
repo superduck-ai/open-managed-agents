@@ -60,7 +60,7 @@ func TestSystemSkillMapperWritesAndPages(t *testing.T) {
 	}{
 		{buildSystemSkillMapperInsertSkill(yourbatis.DialectPostgres, skill), []any{skill.UUID, skill.ExternalID, skill.DisplayTitle, skill.IconKey}, "ON CONFLICT (external_id) DO NOTHING"},
 		{buildSystemSkillMapperInsertVersion(yourbatis.DialectPostgres, version), []any{version.UUID, version.ExternalID, version.SkillUUID, version.SkillExternalID, version.Version, version.Name, version.Description, version.Directory, version.S3Bucket, version.S3Key, version.SizeBytes, version.SHA256, version.CreatedAt}, "'draft'"},
-		{buildSystemSkillMapperVersions(yourbatis.DialectPostgres, skill.UUID, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, uuid DESC"},
+		{buildSystemSkillMapperVersions(yourbatis.DialectPostgres, skill.UUID, false, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, uuid DESC"},
 		{buildSystemSkillMapperVersion(yourbatis.DialectPostgres, skill.UUID, "1"), []any{skill.UUID, "1"}, "deleted_at IS NULL"},
 		{buildSystemSkillMapperEvents(yourbatis.DialectPostgres, skill.UUID, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, id DESC"},
 		{buildSystemSkillMapperRecord(yourbatis.DialectPostgres, event), []any{event.SkillUUID, event.ActorUUID, event.Action, event.Version}, "INSERT INTO system_skill_events"},
@@ -71,6 +71,21 @@ func TestSystemSkillMapperWritesAndPages(t *testing.T) {
 		}
 		if !reflect.DeepEqual(values, tc.values) || !strings.Contains(tc.bound.SQL, tc.fragment) {
 			t.Errorf("SQL or bindings mismatch: %s %v", tc.bound.SQL, values)
+		}
+	}
+}
+
+func TestSystemSkillVersionFilterBeforePagination(t *testing.T) {
+	for _, publishedOnly := range []bool{true, false} {
+		bound := buildSystemSkillMapperVersions(yourbatis.DialectPostgres, "skill-uuid", publishedOnly, 21, 20)
+		if strings.Contains(bound.SQL, "state = 'published'") != publishedOnly {
+			t.Fatalf("publishedOnly=%v: %s", publishedOnly, bound.SQL)
+		}
+		if publishedOnly && strings.Index(bound.SQL, "state = 'published'") > strings.Index(bound.SQL, "LIMIT") {
+			t.Fatalf("filter must precede pagination: %s", bound.SQL)
+		}
+		if !reflect.DeepEqual(bound.Values(), []any{"skill-uuid", 21, 20}) {
+			t.Fatalf("unexpected page bindings: %v", bound.Values())
 		}
 	}
 }

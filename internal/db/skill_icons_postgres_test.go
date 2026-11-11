@@ -40,8 +40,12 @@ func TestSkillIconsMigrationAndCatalog(t *testing.T) {
 		t.Fatalf("migration changed legacy visibility: %+v %v", legacy, err)
 	}
 	legacyVersions, err := store.SystemSkillVersions(ctx, legacy.UUID, 10, 0)
-	if err != nil || len(legacyVersions) != 1 || legacyVersions[0].State != "draft" {
-		t.Fatalf("migration published historical data: %+v %v", legacyVersions, err)
+	if err != nil || len(legacyVersions) != 0 {
+		t.Fatalf("draft entered available versions: %+v %v", legacyVersions, err)
+	}
+	legacyVersion, err := store.SystemSkillVersion(ctx, legacy.UUID, "1")
+	if err != nil || legacyVersion.State != "draft" {
+		t.Fatalf("migration published historical data: %+v %v", legacyVersion, err)
 	}
 	skill, err := store.GetSystemSkill(ctx, "docx")
 	if err != nil || skill.IconKey != "file-text" || skill.Listed || skill.LatestVersion == nil || *skill.LatestVersion != "1" {

@@ -389,9 +389,13 @@ func systemImportInput(r *http.Request, pkg skillPackage) (db.SystemSkillImport,
 	if !automatic && publish != "true" && publish != "false" {
 		return db.SystemSkillImport{}, systemInvalid("请选择发布或保存草稿")
 	}
-	iconKey, err := skillIconKey(r.FormValue("icon_key"))
-	if err != nil {
-		return db.SystemSkillImport{}, err
+	iconKey := r.FormValue("icon_key")
+	if iconKey != "" {
+		var err error
+		iconKey, err = skillIconKey(iconKey)
+		if err != nil {
+			return db.SystemSkillImport{}, err
+		}
 	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	return db.SystemSkillImport{ActorUUID: principal.UserUUID, ExpectedRevision: revision, Publish: publish == "true", Ready: automatic, Skill: db.SystemSkill{UUID: uuid.NewV4().String(), ExternalID: skillID, DisplayTitle: title, IconKey: iconKey}, Version: db.SystemSkillVersion{UUID: uuid.NewV4().String(), Version: version, Name: pkg.Name, Description: pkg.Description, Directory: pkg.Directory, SizeBytes: pkg.Size, SHA256: pkg.SHA256, CreatedAt: time.Now().UTC()}}, nil

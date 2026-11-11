@@ -36,6 +36,35 @@ func TestAutomaticSystemImportConfiguration(t *testing.T) {
 	}
 }
 
+func TestSystemImportOptionalIcon(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		icon *string
+		want string
+	}{
+		{name: "omitted"},
+		{name: "empty", icon: new("")},
+		{name: "explicit default", icon: new("blocks"), want: "blocks"},
+		{name: "explicit icon", icon: new("file-text"), want: "file-text"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := url.Values{"skill_id": {"demo"}, "revision": {"3"}}
+			if tc.icon != nil {
+				values.Set("icon_key", *tc.icon)
+			}
+			request := httptest.NewRequest("POST", "/", strings.NewReader(values.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			input, err := systemImportInput(request, skillPackage{Name: "demo"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.Skill.IconKey != tc.want || !input.Ready || input.ExpectedRevision != 3 {
+				t.Fatalf("optional icon = %q, want %q; input=%+v", input.Skill.IconKey, tc.want, input)
+			}
+		})
+	}
+}
+
 func TestConsoleSkillRoutesRejectUnscopedIdentity(t *testing.T) {
 	routes := NewHandler(nil, nil, nil).ConsoleRoutes()
 	for _, path := range []string{"/", "/inspect", "/skill_custom/icon"} {

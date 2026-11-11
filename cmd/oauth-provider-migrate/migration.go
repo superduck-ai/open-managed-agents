@@ -62,7 +62,7 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 		return errors.New("schema_unavailable")
 	}
 	fmt.Fprintf(out, "schema_version=%d\n", version)
-	if version > 122 {
+	if version > 123 {
 		return errors.New("schema_unsupported")
 	}
 	if !apply && version < 118 {
@@ -118,6 +118,8 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 			return err
 		}
 		counts[result]++
+	} else if legacy.ClientID != "" {
+		counts[migrationPending]++
 	}
 	if apply {
 		if err := finalizeSchema(ctx, database, version, logger); err != nil {
@@ -138,6 +140,8 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 			return err
 		}
 		counts[result]++
+	} else if friday.ClientID != "" {
+		counts[migrationPending]++
 	}
 	if err := ctx.Err(); err != nil {
 		return errors.New("canceled")

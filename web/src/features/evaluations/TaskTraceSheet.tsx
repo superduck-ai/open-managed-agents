@@ -11,6 +11,7 @@ import {
   formatScore,
   getEvaluationItemTrace,
   type EvaluationItem,
+  type EvaluationTrace,
   type EvaluationTraceStep,
 } from './api';
 import { formatEvaluationTime, shortenId } from './evaluationChrome';
@@ -57,15 +58,8 @@ function TraceStep({ step, index }: { step: EvaluationTraceStep; index: number }
   );
 }
 
-function TraceSteps({ taskId, item, live }: { taskId: string; item: EvaluationItem; live: boolean }) {
+function TraceSteps({ trace }: { trace: ReturnType<typeof useQuery<EvaluationTrace>> }) {
   const { msg } = useI18n();
-  const scope = useEvaluationScope();
-  const trace = useQuery({
-    queryKey: ['evaluation-trace', scope.orgUuid, scope.workspaceId, taskId, item.id],
-    queryFn: () => getEvaluationItemTrace(scope.orgUuid, scope.workspaceId, taskId, item.id),
-    enabled: scope.ready,
-    refetchInterval: live ? 3000 : false,
-  });
   if (trace.isLoading) return <p className="text-sm text-muted-foreground">{msg('evaluations.loading', 'Loading')}</p>;
   if (trace.isError) return <p className="text-sm text-destructive">{evaluationError(trace.error)}</p>;
   const steps = trace.data?.steps ?? [];
@@ -108,16 +102,15 @@ function PromptBlock({ title, text }: { title: string; text: string }) {
   );
 }
 
-function ScoringExchange({ item }: { item: EvaluationItem }) {
+function ScoringExchange({ system, prompt, response }: { system: string; prompt: string; response: string }) {
   const { msg } = useI18n();
-  const score = item.score;
-  if (!score?.judge_system && !score?.judge_prompt && !score?.judge_response) return null;
+  if (!system && !prompt && !response) return null;
   return (
     <div className="grid gap-3">
       <h3 className="text-sm font-medium">{msg('evaluations.judgeExchange', 'Scoring call')}</h3>
-      <PromptBlock title={msg('evaluations.judgeSystem', 'System prompt')} text={score.judge_system} />
-      <PromptBlock title={msg('evaluations.judgePrompt', 'Scoring prompt')} text={score.judge_prompt} />
-      <PromptBlock title={msg('evaluations.judgeResponse', 'Model response')} text={score.judge_response} />
+      <PromptBlock title={msg('evaluations.judgeSystem', 'System prompt')} text={system} />
+      <PromptBlock title={msg('evaluations.judgePrompt', 'Scoring prompt')} text={prompt} />
+      <PromptBlock title={msg('evaluations.judgeResponse', 'Model response')} text={response} />
     </div>
   );
 }
@@ -191,7 +184,15 @@ export function TaskTraceSheet({
   onOpenSession: (id: string) => void;
 }) {
   const { msg } = useI18n();
+  const scope = useEvaluationScope();
   const outcome = item ? itemOutcome(item, taskStatus) : null;
+  const trace = useQuery({
+    queryKey: ['evaluation-trace', scope.orgUuid, scope.workspaceId, taskId, item?.id ?? ''],
+    queryFn: () => getEvaluationItemTrace(scope.orgUuid, scope.workspaceId, taskId, item?.id ?? ''),
+    enabled: scope.ready && item !== null,
+    refetchInterval: outcome === 'running' ? 3000 : false,
+  });
+  const exchange = trace.data;
   return (
     <Sheet open={item !== null} onOpenChange={onOpenChange}>
       <SheetContent className="gap-0 overflow-hidden p-0">
@@ -203,7 +204,11 @@ export function TaskTraceSheet({
           <div className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto px-6 py-5">
             <p className="text-base leading-6 font-medium break-words whitespace-pre-wrap">{item.query}</p>
             <TraceFacts item={item} outcome={outcome} onOpenSession={onOpenSession} />
-            <ScoringExchange item={item} />
+            <ScoringExchange
+              system={exchange?.judge_system ?? ''}
+              prompt={exchange?.judge_prompt ?? ''}
+              response={exchange?.judge_response ?? ''}
+            />
             {item.score?.explanation ? (
               <div className="grid gap-1">
                 <h3 className="text-sm font-medium">{msg('evaluations.reason', 'Scoring rationale')}</h3>
@@ -219,7 +224,7 @@ export function TaskTraceSheet({
                   {msg('evaluations.traceHint', 'In chronological order')}
                 </p>
               </div>
-              <TraceSteps taskId={taskId} item={item} live={outcome === 'running'} />
+              <TraceSteps trace={trace} />
             </div>
           </div>
         ) : null}

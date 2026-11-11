@@ -40,9 +40,6 @@ function scored(passed: boolean, patch: Partial<EvaluationItem> = {}) {
       error_message: '',
       judge_model: '',
       judge_prompt_version: '',
-      judge_system: '',
-      judge_prompt: '',
-      judge_response: '',
     },
     ...patch,
   });
@@ -63,9 +60,6 @@ test('item outcome treats session and scorer failures as system errors', () => {
           error_message: 'x',
           judge_model: '',
           judge_prompt_version: '',
-          judge_system: '',
-          judge_prompt: '',
-          judge_response: '',
         },
       }),
       'completed',
@@ -125,6 +119,9 @@ test('csv export quotes commas, quotes, and new lines', () => {
   );
   expect(text.split('\n')[0]).toBe('问题');
   expect(text).toContain('"a,""b""\nc",,90,passed,');
+  expect(
+    itemsCsv({ status: 'completed', items: [scored(false, { query: '=1+1' })] }, ['问题'], (outcome) => outcome),
+  ).toContain("'=1+1");
   expect(text.trimEnd().endsWith('sesn_1')).toBe(true);
 });
 

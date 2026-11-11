@@ -90,6 +90,7 @@ export function downloadBlob(blob: Blob, filename: string) {
 }
 
 export function csvCell(value: string) {
-  if (/[",\n]/.test(value)) return `"${value.replaceAll('"', '""')}"`;
-  return value;
+  const text = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  if (/[",\n\r]/.test(text)) return `"${text.replaceAll('"', '""')}"`;
+  return text;
 }

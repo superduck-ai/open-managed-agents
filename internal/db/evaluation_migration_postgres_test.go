@@ -46,6 +46,9 @@ VALUES ('evalrb_keep', gen_random_uuid(), gen_random_uuid(), '保留的评分标
 	if constraints := count(`SELECT count(*) FROM pg_constraint WHERE conrelid = 'evaluation_cases'::regclass AND conname = 'evaluation_cases_has_input'`); constraints != 1 {
 		t.Fatalf("case input constraint count = %d", constraints)
 	}
+	if indexes := count(`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'evaluation_task_scores_task_idx'`); indexes != 1 {
+		t.Fatalf("score task index count = %d", indexes)
+	}
 	if _, err := provider.DownTo(ctx, 116); err != nil {
 		t.Fatal(err)
 	}

@@ -31,9 +31,12 @@ type traceStepResponse struct {
 }
 
 type traceResponse struct {
-	ItemID    string              `json:"item_id"`
-	SessionID string              `json:"session_id"`
-	Steps     []traceStepResponse `json:"steps"`
+	ItemID        string              `json:"item_id"`
+	SessionID     string              `json:"session_id"`
+	JudgeSystem   string              `json:"judge_system"`
+	JudgePrompt   string              `json:"judge_prompt"`
+	JudgeResponse string              `json:"judge_response"`
+	Steps         []traceStepResponse `json:"steps"`
 }
 
 func (h *Handler) taskDetailJSON(ctx context.Context, principal auth.Principal, detail db.EvaluationTaskDetail) (taskResponse, error) {
@@ -82,7 +85,14 @@ func (h *Handler) getTaskItemTrace(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	httpapi.WriteJSON(w, http.StatusOK, traceResponse{ItemID: item.ExternalID, SessionID: item.SessionExternalID, Steps: steps})
+	system, prompt, response, err := h.store.GetEvaluationScorePrompt(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, item.UUID)
+	if err != nil {
+		return internalFailure(loadFailedMessage, err)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, traceResponse{
+		ItemID: item.ExternalID, SessionID: item.SessionExternalID, Steps: steps,
+		JudgeSystem: system, JudgePrompt: prompt, JudgeResponse: response,
+	})
 	return nil
 }
 

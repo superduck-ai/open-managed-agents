@@ -73,6 +73,27 @@
         created_at
     </sql>
 
+    <sql id="scoreSummaryColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        task_uuid,
+        item_uuid,
+        status,
+        score,
+        passed,
+        explanation,
+        answer,
+        dimensions,
+        error_message,
+        judge_model,
+        judge_prompt_version,
+        judge_input_tokens,
+        judge_output_tokens,
+        created_at
+    </sql>
+
     <insert id="InsertTask" result="returning" resultType="evaluationTaskRow">
         INSERT INTO evaluation_tasks (
             uuid, external_id, organization_uuid, workspace_uuid, created_by_user_uuid, created_by_api_key_uuid,
@@ -170,7 +191,7 @@
     </select>
 
     <select id="ListScoresByTasks" resultType="evaluationTaskScoreRow">
-        SELECT <include refid="scoreColumns"/>
+        SELECT <include refid="scoreSummaryColumns"/>
         FROM evaluation_task_scores
         WHERE organization_uuid = #{params.OrganizationUUID}
         AND workspace_uuid = #{params.WorkspaceUUID}
@@ -180,12 +201,20 @@
     </select>
 
     <select id="ListScores" resultType="evaluationTaskScoreRow">
-        SELECT <include refid="scoreColumns"/>
+        SELECT <include refid="scoreSummaryColumns"/>
         FROM evaluation_task_scores
         WHERE organization_uuid = #{organizationUUID}
         AND workspace_uuid = #{workspaceUUID}
         AND task_uuid = #{taskUUID}
         ORDER BY created_at ASC
+    </select>
+
+    <select id="FindScorePrompt" resultType="evaluationScorePromptRow">
+        SELECT judge_system, judge_prompt, judge_response
+        FROM evaluation_task_scores
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND item_uuid = #{itemUUID}
     </select>
 
     <select id="ListRunningBySession" resultType="evaluationTaskItemRow">

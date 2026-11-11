@@ -201,6 +201,10 @@ func (evaluationFixture) GetEvaluationTask(context.Context, string, string, stri
 	return db.EvaluationTaskDetail{}, nil
 }
 
+func (evaluationFixture) GetEvaluationScorePrompt(context.Context, string, string, string) (string, string, string, error) {
+	return "", "", "", nil
+}
+
 func (evaluationFixture) RetryEvaluationTask(context.Context, string, string, string, int, time.Time) (db.EvaluationTaskRetry, error) {
 	return db.EvaluationTaskRetry{}, nil
 }

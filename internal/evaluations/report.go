@@ -25,8 +25,11 @@ func SummarizeRound(items []db.EvaluationTaskItem, scores []db.EvaluationTaskSco
 		}
 		summary.Total++
 		score, ok := scoreByItem[item.UUID]
-		if item.Status != itemCompleted || !ok || score.Status != scoreCompleted {
+		if item.Status == itemFailed || (ok && score.Status != scoreCompleted) {
 			summary.Exceptions++
+			continue
+		}
+		if item.Status != itemCompleted || !ok {
 			continue
 		}
 		summary.Scored++

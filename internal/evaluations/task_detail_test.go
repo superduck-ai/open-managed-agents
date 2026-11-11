@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,15 @@ type taskDetailFixture struct {
 
 func (f *taskDetailFixture) GetEvaluationTask(context.Context, string, string, string) (db.EvaluationTaskDetail, error) {
 	return f.detail, nil
+}
+
+func (f *taskDetailFixture) GetEvaluationScorePrompt(_ context.Context, _, _, itemUUID string) (string, string, string, error) {
+	for _, score := range f.detail.Scores {
+		if score.ItemUUID == itemUUID {
+			return score.JudgeSystem, score.JudgePrompt, score.JudgeResponse, nil
+		}
+	}
+	return "", "", "", nil
 }
 
 func (f *taskDetailFixture) ListSessionEventsPage(context.Context, db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error) {
@@ -63,7 +73,10 @@ func newTaskDetailFixture() *taskDetailFixture {
 				UUID: "item-uuid", ExternalID: "evalitem_1", Round: 1, SessionExternalID: "sesn_1", Status: "completed",
 				Query: "退款多久到账", Acceptance: "说明到账时效",
 			}},
-			Scores: []db.EvaluationTaskScore{{ItemUUID: "item-uuid", Status: "completed", Score: 80, Passed: true, Answer: "3 个工作日"}},
+			Scores: []db.EvaluationTaskScore{{
+				ItemUUID: "item-uuid", Status: "completed", Score: 80, Passed: true, Answer: "3 个工作日",
+				JudgeSystem: "系统提示", JudgePrompt: "评分提示", JudgeResponse: "模型原文",
+			}},
 		},
 	}
 }
@@ -132,6 +145,9 @@ func TestTaskItemTraceListsConversationSteps(t *testing.T) {
 	if body.Steps[0].Type != "user" || body.Steps[2].Text != "T+3" || body.Steps[3].Type != "answer" {
 		t.Fatalf("steps = %+v", body.Steps)
 	}
+	if body.JudgeSystem != "系统提示" || body.JudgePrompt != "评分提示" || body.JudgeResponse != "模型原文" {
+		t.Fatalf("exchange = %+v", body)
+	}
 }
 
 func TestTaskDetailIncludesNamesUsageAndAnswer(t *testing.T) {
@@ -152,6 +168,13 @@ func TestTaskDetailIncludesNamesUsageAndAnswer(t *testing.T) {
 	item := response.Items[0]
 	if item.Acceptance != "说明到账时效" || item.Score == nil || item.Score.Answer != "3 个工作日" {
 		t.Fatalf("item = %+v", item)
+	}
+	encoded, err := json.Marshal(item.Score)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "judge_system") {
+		t.Fatalf("detail score includes the scoring prompt: %s", encoded)
 	}
 }
 

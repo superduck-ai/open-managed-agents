@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
@@ -185,6 +187,17 @@ func (d *DB) GetEvaluationTask(ctx context.Context, organizationUUID, workspaceU
 		return EvaluationTaskDetail{}, err
 	}
 	return EvaluationTaskDetail{Task: taskFromRow(row), Items: itemsFromRows(items), Scores: scoresFromRows(scores)}, nil
+}
+
+func (d *DB) GetEvaluationScorePrompt(ctx context.Context, organizationUUID, workspaceUUID, itemUUID string) (string, string, string, error) {
+	row, err := NewEvaluationTaskMapper(d.mapperDB).FindScorePrompt(ctx, organizationUUID, workspaceUUID, itemUUID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", "", nil
+	}
+	if err != nil {
+		return "", "", "", err
+	}
+	return row.JudgeSystem, row.JudgePrompt, row.JudgeResponse, nil
 }
 
 func (d *DB) ListRunningEvaluationItemsBySession(ctx context.Context, organizationUUID, workspaceUUID, sessionExternalID string) ([]EvaluationTaskItem, error) {

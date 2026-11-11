@@ -56,6 +56,20 @@ func TestEvaluationTaskUsageScopesItemSessions(t *testing.T) {
 	}
 }
 
+func TestEvaluationScoreListOmitsPromptText(t *testing.T) {
+	listed := buildEvaluationTaskMapperListScores(yourbatis.DialectPostgres, "org", "ws", "task")
+	if strings.Contains(listed.SQL, "judge_system") || strings.Contains(listed.SQL, "judge_response") || strings.Contains(listed.SQL, "judge_prompt,") {
+		t.Fatalf("list SQL reads the scoring prompt: %s", listed.SQL)
+	}
+	prompt := buildEvaluationTaskMapperFindScorePrompt(yourbatis.DialectPostgres, "org", "ws", "item")
+	if !strings.Contains(prompt.SQL, "judge_system, judge_prompt, judge_response") || !strings.Contains(prompt.SQL, "item_uuid = ") {
+		t.Fatalf("prompt SQL = %s", prompt.SQL)
+	}
+	if want := []any{"org", "ws", "item"}; !reflect.DeepEqual(prompt.Values(), want) {
+		t.Fatalf("prompt values = %#v", prompt.Values())
+	}
+}
+
 func TestEvaluationScoreInsertBindsAnswerAndJudge(t *testing.T) {
 	now := time.Date(2026, 11, 10, 7, 0, 0, 0, time.UTC)
 	params := insertEvaluationTaskScoreParams{

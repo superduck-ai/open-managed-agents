@@ -93,6 +93,12 @@ type evaluationTaskUsageRow struct {
 	CacheReadInputTokens int64 `db:"cache_read_input_tokens"`
 }
 
+type evaluationScorePromptRow struct {
+	JudgeSystem   string `db:"judge_system"`
+	JudgePrompt   string `db:"judge_prompt"`
+	JudgeResponse string `db:"judge_response"`
+}
+
 type evaluationJudgeUsageRow struct {
 	JudgeInputTokens  int64 `db:"judge_input_tokens"`
 	JudgeOutputTokens int64 `db:"judge_output_tokens"`
@@ -205,6 +211,7 @@ type EvaluationTaskMapper interface {
 	ListTasks(ctx context.Context, params evaluationListParams) ([]evaluationTaskRow, error)
 	ListItems(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string) ([]evaluationTaskItemRow, error)
 	ListScores(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string) ([]evaluationTaskScoreRow, error)
+	FindScorePrompt(ctx context.Context, organizationUUID, workspaceUUID, itemUUID string) (evaluationScorePromptRow, error)
 	ListItemsByTasks(ctx context.Context, params evaluationTaskIDParams) ([]evaluationTaskItemRow, error)
 	ListScoresByTasks(ctx context.Context, params evaluationTaskIDParams) ([]evaluationTaskScoreRow, error)
 	ListRunningBySession(ctx context.Context, organizationUUID, workspaceUUID, sessionExternalID string) ([]evaluationTaskItemRow, error)

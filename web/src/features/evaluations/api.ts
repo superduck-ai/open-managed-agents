@@ -72,9 +72,6 @@ export type EvaluationScore = {
   error_message: string;
   judge_model: string;
   judge_prompt_version: string;
-  judge_system: string;
-  judge_prompt: string;
-  judge_response: string;
 };
 
 export type EvaluationItem = {
@@ -134,6 +131,9 @@ export type EvaluationTraceStep = {
 export type EvaluationTrace = {
   item_id: string;
   session_id: string;
+  judge_system: string;
+  judge_prompt: string;
+  judge_response: string;
   steps: EvaluationTraceStep[];
 };
 

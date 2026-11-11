@@ -39,6 +39,7 @@ type Store interface {
 	ListEvaluationTasks(context.Context, string, string, int, int) ([]db.EvaluationTask, error)
 	ListEvaluationTaskChildren(context.Context, string, string, []string) ([]db.EvaluationTaskItem, []db.EvaluationTaskScore, error)
 	GetEvaluationTask(context.Context, string, string, string) (db.EvaluationTaskDetail, error)
+	GetEvaluationScorePrompt(context.Context, string, string, string) (string, string, string, error)
 	RetryEvaluationTask(context.Context, string, string, string, int, time.Time) (db.EvaluationTaskRetry, error)
 	SumEvaluationTaskUsage(context.Context, string, string, string) (db.EvaluationTaskUsage, error)
 	GetAgent(context.Context, string, string) (db.Agent, error)

@@ -165,9 +165,6 @@ type scoreResponse struct {
 	ErrorMessage       string          `json:"error_message"`
 	JudgeModel         string          `json:"judge_model"`
 	JudgePromptVersion string          `json:"judge_prompt_version"`
-	JudgeSystem        string          `json:"judge_system"`
-	JudgePrompt        string          `json:"judge_prompt"`
-	JudgeResponse      string          `json:"judge_response"`
 }
 
 type itemResponse struct {
@@ -261,7 +258,6 @@ func taskJSON(detail db.EvaluationTaskDetail, includeItems bool) taskResponse {
 				Status: score.Status, Score: score.Score, Passed: score.Passed, Explanation: score.Explanation,
 				Answer: score.Answer, Dimensions: dimensions, ErrorMessage: score.ErrorMessage,
 				JudgeModel: score.JudgeModel, JudgePromptVersion: score.JudgePromptVersion,
-				JudgeSystem: score.JudgeSystem, JudgePrompt: score.JudgePrompt, JudgeResponse: score.JudgeResponse,
 			}
 		}
 		response.Items = append(response.Items, row)

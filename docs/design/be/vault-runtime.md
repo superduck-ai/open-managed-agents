@@ -284,8 +284,9 @@ SDK wire logger 会输出含 DEK 的 URL，凭证 SDK 也可能打印 metadata t
 | `secret_payload` | **已删除**。明文秘密不再落库；仅进程内 transient 用于 seal/open/merge |
 
 `auth` 在 Yourbatis Mapper 中仍以 JSONB 原始字节扫描，但不会作为 `json.RawMessage` 扩散到运行时策略或
-API 响应。`internal/vaults` 在数据库边界按 `auth.type` 判别并解析为 `mcp_oauth`、`static_bearer` 或
-`environment_variable` 的命名 schema；未知类型或具体字段类型不匹配时 fail-closed。HTTP create/update
+API 响应。`internal/vaults` 在数据库边界按 `auth.type` 判别并解析为 `mcp_oauth`、`static_bearer`、
+`environment_variable` 或 `env_oauth` 的命名 schema；未知类型或具体字段类型不匹配时 fail-closed。
+`env_oauth` 的完整数据模型、授权流程与刷新合同见 [ENV OAuth 凭证](./env-oauth-credential.md)。HTTP create/update
 请求同样先解码为命名 DTO；create 使用普通 Go 字段，PATCH 使用指针表示可选字段。只有 `auth` 类型判别，
 以及 `refresh`、`scope`、metadata 等需要区分省略和显式 `null` 的边界保留原始 JSON。PATCH 在命名 schema
 上完成合并和校验，再写回规范化的公开 auth JSON；metadata 因键集合由客户端定义而保留为类型化 map。
@@ -382,10 +383,10 @@ KEK 不做强制退役的原因：config.yaml 模式下旧 key 很难干净销�
 
 | 项 | 决定 |
 |---|---|
-| 凭证类型 | **static_bearer** + **mcp_oauth**（MITM MCP 注入）；**environment_variable**（Opaque Placeholder + Egress Secret Substitution） |
+| 凭证类型 | **static_bearer** + **mcp_oauth**（MITM MCP 注入）；**environment_variable**（Opaque Placeholder + Egress Secret Substitution）；**env_oauth**（Opaque Placeholder + 按 provider 域名替换，token 过期自动 refresh） |
 | 注入落点 | Managed Agent 普通 MCP：CONNECT MITM（`MITMEgress` → `Injector` + `EgressSubstitutor`）。显式：Session MCP HTTP proxy（`WithVaultSecrets` → `wrapMCPVaultTransport` → 同一 `Injector`）。Runner **不**自动改写普通 MCP；Tunnel-only named Gateway 不经过 Vault transport。组装契约：启用 vault wrap 时 `Injector.store` / Secret Service 必须就绪；注入与 refresh 直接使用 `store`，不对 nil store 静默空 plan。`WithPlatformOAuthClients` 接入 `vault.platform_oauth_clients`。Env：Session 挂载时经 `startup_context.environment_variables` 灌入 Opaque Placeholder |
-| MITM 硬门闩 | Session 挂载时若有活跃 `environment_variable` 且 `upstream_proxy_mitm_enabled=false` → 失败。`static_bearer` / `mcp_oauth` **不**挡启动：MITM 关时 Session 仍可起来，MCP 注入只走显式 `/mcp`；Managed Agent 自动注入仍需 MITM |
-| Credential `networking` | MCP 注入仍不按 credential networking 门控。`environment_variable` **要求**显式 `networking`；limited 的 `allowed_hosts` 复用 Environment host 语义，仅约束是否可替换，不授予可达性 |
+| MITM 硬门闩 | Session 挂载时若有活跃 `environment_variable` 或 `env_oauth` 且 `upstream_proxy_mitm_enabled=false` → 失败。`static_bearer` / `mcp_oauth` **不**挡启动：MITM 关时 Session 仍可起来，MCP 注入只走显式 `/mcp`；Managed Agent 自动注入仍需 MITM |
+| Credential `networking` | MCP 注入仍不按 credential networking 门控。`environment_variable` / `env_oauth` **要求**显式 `networking`；limited 的 `allowed_hosts` 复用 Environment host 语义，仅约束是否可替换，不授予可达性。同一 `secret_name` 同时存在 env 与 env_oauth 时，显式 `environment_variable` 优先 |
 | host 未覆盖 | MCP：passthrough。Env：未覆盖 host / 关闭的 Injection Location → 占位符原文透传 |
 | Snapshot URL | MITM 注入不额外卡 Agent Snapshot 精确 URL（对齐 CMA）；可达性仍由 Environment host allowlist 约束 |
 | 客户端 Authorization | 命中可注入凭证时先 Del 再写 Vault Bearer；未命中不改 |

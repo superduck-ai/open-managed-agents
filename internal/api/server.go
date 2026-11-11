@@ -37,6 +37,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
+	"github.com/superduck-ai/open-managed-agents/internal/platformoauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
@@ -69,6 +70,7 @@ type Server struct {
 	platformAuth         *platformauth.EmailProvider
 	filestoreCredentials *filestoreapi.TokenCredentials
 	vaultSecrets         *secrets.Service
+	envOAuthProviders    *platformoauth.Resolver
 	admin                *adminapi.Handler
 	agents               *agents.Handler
 	batch                *batches.Handler
@@ -174,8 +176,10 @@ func NewServer(deps ServerDeps) *Server {
 		}
 		oauthRefreshLease = lease
 	}
+	envOAuthProviders := platformoauth.NewResolver(deps.DB, deps.VaultSecrets, componentLogger("env_oauth_providers"))
 	s := &Server{
 		platformAccess:       platformadmin.New(deps.DB, componentLogger("platform_access")),
+		envOAuthProviders:    envOAuthProviders,
 		invitationJobs:       deps.InvitationJobs,
 		workspaceAccess:      workspaceaccess.New(deps.DB),
 		cfg:                  deps.Config,
@@ -191,7 +195,7 @@ func NewServer(deps ServerDeps) *Server {
 		)),
 		agents:         agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(channels.NewHandler(deps.Config.ChannelBridge, deps.DB, componentLogger("channels"), deps.VaultSecrets)),
 		batch:          batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
-		codeSessions:   codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore),
+		codeSessions:   codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithEnvOAuthProviders(envOAuthProviders).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore),
 		deployments:    deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
 		deploymentRuns: deploymentsapi.NewRunsHandler(deps.DB, componentLogger("deployment_runs")),
 		envs:           environments.NewHandler(deps.Config, deps.DB, componentLogger("environments")).WithWebhooks(webhookEnqueuer).WithPrebuilds(deps.Prebuilds),
@@ -326,6 +330,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 		platformapi.RegisterPlatformBillingRoutes(r)
 	})
 	router.Get("/oauth/vault/success", s.handlePlatformMCPVaultAuthCallback)
+	router.Get("/oauth/vault/env-success", s.handleEnvOAuthVaultAuthCallback)
 	router.Group(func(r chi.Router) {
 		r.Use(s.platformAuthMiddleware)
 		r.Route("/api/organizations/{orgUuid}", func(r chi.Router) {
@@ -340,6 +345,8 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets, s.db.BillingCalculator(), s.logger.With("component", "console_metering"))
 			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.db.BillingCalculator())
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
+			r.Get("/env-oauth/providers", s.handleEnvOAuthProviders)
+			r.Post("/env-oauth/vault-auth/start", s.handleEnvOAuthVaultAuthStart)
 			if s.cfg.Observability.Enabled {
 				obsLogger := s.logger.With("component", "observability")
 				// 配置校验保证 enabled 时 backend 只会是受支持的值。

@@ -81,6 +81,22 @@ func TestCredentialAuthUnmarshalDispatchesByType(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "env oauth",
+			raw:  `{"type":"env_oauth","provider":"builtin:feishu","secret_name":"LARKSUITE_CLI_USER_ACCESS_TOKEN","placeholder":"oma_ph_abc","networking":{"type":"limited","allowed_hosts":["open.feishu.cn"]},"injection_location":{"header":true,"body":false},"expires_at":"2099-12-31T23:59:59Z","has_refresh_token":true}`,
+			assertAuth: func(t *testing.T, auth credentialAuth) {
+				value, ok := auth.value.(*envOAuthCredentialAuth)
+				if !ok {
+					t.Fatalf("value type = %T", auth.value)
+				}
+				if value.Provider != "builtin:feishu" || value.SecretName != EnvOAuthFeishuDefaultSecretName || !value.HasRefreshToken {
+					t.Fatalf("unexpected env oauth auth: %+v", value)
+				}
+				if value.InjectionLocation.Body {
+					t.Fatalf("env oauth injection_location = %+v, want header only", value.InjectionLocation)
+				}
+			},
+		},
 	}
 
 	for _, test := range tests {

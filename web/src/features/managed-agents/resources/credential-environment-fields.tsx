@@ -4,11 +4,9 @@ import { useI18n } from '../../../shared/i18n';
 import { Checkbox } from '../../../shared/ui/checkbox';
 import { Field, FieldDescription, FieldLabel } from '../../../shared/ui/field';
 import { Label } from '../../../shared/ui/label';
-import { RadioGroup, RadioGroupItem } from '../../../shared/ui/radio-group';
-import { Textarea } from '../../../shared/ui/textarea';
-import { cn } from '../../../shared/lib/utils';
 import { ManagedTextField } from '../components/common';
 import { type CredentialFormValues } from '../types';
+import { CredentialNetworkingFields } from './credential-networking-fields';
 import { credentialEnvHostsMissing, credentialEnvInjectionMissing } from './model';
 
 type EnvironmentVariableCredentialFieldsProps = {
@@ -29,8 +27,6 @@ export function EnvironmentVariableCredentialFields({
   const { msg } = useI18n();
   const hostsMissing = credentialEnvHostsMissing(values);
   const injectionMissing = credentialEnvInjectionMissing(values);
-  const limited = msg('managedAgents.credentialVaults.credentialDialog.networkingLimited', 'Limited');
-  const unrestricted = msg('managedAgents.credentialVaults.credentialDialog.networkingUnrestricted', 'Unrestricted');
 
   return (
     <div className="space-y-4">
@@ -51,60 +47,12 @@ export function EnvironmentVariableCredentialFields({
         />
       </div>
 
-      <Field className="gap-2">
-        <FieldLabel>{msg('managedAgents.credentialVaults.credentialDialog.networking', 'Networking')}</FieldLabel>
-        <RadioGroup
-          value={values.networkType}
-          aria-label={msg('managedAgents.credentialVaults.credentialDialog.networking', 'Networking')}
-          className="grid grid-cols-2 gap-2"
-          onValueChange={(networkType) => {
-            if (networkType === 'limited' || networkType === 'unrestricted') {
-              onChange({ networkType });
-            }
-          }}
-        >
-          <NetworkingOption value="limited" label={limited} selected={values.networkType === 'limited'} />
-          <NetworkingOption
-            value="unrestricted"
-            label={unrestricted}
-            selected={values.networkType === 'unrestricted'}
-          />
-        </RadioGroup>
-      </Field>
-
-      {values.networkType === 'limited' ? (
-        <Field className="gap-2" data-invalid={hostsMissing || undefined}>
-          <FieldLabel>
-            {msg('managedAgents.credentialVaults.credentialDialog.allowedHosts', 'Allowed hosts')}
-          </FieldLabel>
-          <Textarea
-            value={values.allowedHostsText}
-            aria-invalid={hostsMissing || undefined}
-            aria-label={msg('managedAgents.credentialVaults.credentialDialog.allowedHosts', 'Allowed hosts')}
-            placeholder={msg(
-              'managedAgents.credentialVaults.credentialDialog.allowedHostsPlaceholder',
-              'api.example.com, *.example.com',
-            )}
-            rows={3}
-            className={cn('font-mono text-sm', hostsMissing && 'border-destructive')}
-            onChange={(event) => onChange({ allowedHostsText: event.target.value })}
-          />
-          {hostsMissing ? (
-            <FieldAlert>
-              {msg(
-                'managedAgents.credentialVaults.credentialDialog.allowedHostsRequired',
-                'At least one host is required for limited networking.',
-              )}
-            </FieldAlert>
-          ) : null}
-          <FieldDescription>
-            {msg(
-              'managedAgents.credentialVaults.credentialDialog.allowedHostsHint',
-              'Separate hosts with commas or newlines.',
-            )}
-          </FieldDescription>
-        </Field>
-      ) : null}
+      <CredentialNetworkingFields
+        networkType={values.networkType}
+        allowedHostsText={values.allowedHostsText}
+        hostsMissing={hostsMissing}
+        onChange={onChange}
+      />
 
       <Field className="gap-2" data-invalid={injectionMissing || undefined}>
         <FieldLabel>
@@ -145,39 +93,6 @@ export function EnvironmentVariableCredentialFields({
   );
 }
 
-function NetworkingOption({
-  value,
-  label,
-  selected,
-}: {
-  value: 'limited' | 'unrestricted';
-  label: string;
-  selected: boolean;
-}) {
-  const id = `credential-networking-${value}`;
-  return (
-    <Label
-      htmlFor={id}
-      className={cn(
-        'flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border-[0.5px] border-input bg-background px-3 text-sm font-normal text-foreground transition-colors duration-150 ease-out motion-reduce:transition-none has-[:focus-visible]:ring-[0.5px] has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-foreground',
-        selected && 'border-foreground bg-accent text-foreground',
-      )}
-    >
-      <RadioGroupItem id={id} value={value} className="sr-only" />
-      {label}
-    </Label>
-  );
-}
-
-function FieldAlert({ children }: { children: string }) {
-  return (
-    <p className="flex items-center gap-1.5 text-sm text-destructive" role="alert">
-      <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
-      {children}
-    </p>
-  );
-}
-
 function InjectionLocationRow({
   id,
   checked,
@@ -203,5 +118,14 @@ function InjectionLocationRow({
         {label}
       </Label>
     </div>
+  );
+}
+
+function FieldAlert({ children }: { children: string }) {
+  return (
+    <p className="flex items-center gap-1.5 text-sm text-destructive" role="alert">
+      <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+      {children}
+    </p>
   );
 }

@@ -1,3 +1,4 @@
+import { OAuthProvidersPage } from '../features/platform-admin/oauth/OAuthProvidersPage';
 import { SystemSkillsPage } from '../features/platform-admin/skills/SystemSkillsPage';
 import { createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router';
 import { PlatformAdminLayout } from '../features/platform-admin/PlatformAdminLayout';
@@ -61,6 +62,11 @@ const platformSkillsRoute = createRoute({
     skill: typeof search.skill === 'string' ? search.skill : undefined,
   }),
   component: SystemSkillsPage,
+});
+const platformOAuthRoute = createRoute({
+  getParentRoute: () => platformAdminRoute,
+  path: 'oauth',
+  component: OAuthProvidersPage,
 });
 const platformOrganizationDetailRoute = createRoute({
   getParentRoute: () => platformAdminRoute,
@@ -587,6 +593,7 @@ const routeTree = rootRoute.addChildren([
     platformOrganizationDetailRoute,
     platformAdministratorsRoute,
     platformSkillsRoute,
+    platformOAuthRoute,
   ]),
   loginRoute,
   invitationsRoute,

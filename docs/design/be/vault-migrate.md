@@ -77,7 +77,8 @@ go run ./cmd/vault-migrate --help
 | 参数 | 类型 | 默认值 | 必填 | 说明与约束 |
 | --- | --- | --- | --- | --- |
 | `--from <provider>` | string | 无 | 是 | 源 Provider 名称。仅迁移信封中 `key_provider` 与此相符的记录 |
-| `--to <provider>` | string | 无 | 是 | 目标 Provider 名称。必须与 `--from` 不同 |
+| `--to <provider>` | string | 无 | 是 | 目标 Provider 名称。跨 Provider 时与源不同；local 同 Provider 版本轮换需指定 --from-key-version |
+| `--from-key-version` | int64 | `0` | 否 | 仅处理指定旧 key_version；local 同 Provider 轮换必填，必须与当前 writer 版本不同 |
 | `--apply` | bool | `false` | 否 | 实际写入开关。指定后执行封装、验证并写回数据库；省略时仅执行只读预览 |
 | `--help` | - | - | 否 | 输出详细使用帮助并以状态码 `0` 退出 |
 
@@ -114,7 +115,7 @@ go run ./cmd/vault-migrate --help
 
 ### 3.1 涵盖的数据表与信封映射
 
-命令按固定顺序扫描以下 7 张数据存储表：
+命令按固定顺序扫描以下 9 张数据存储表：
 
 | 存储名称 (`kind`) | 数据库表名 | 密文存储位置与结构 | 单行信封数量 | CAS 附加行为 |
 | --- | --- | --- | --- | --- |
@@ -125,6 +126,8 @@ go run ./cmd/vault-migrate --help
 | `session_resources` | `session_resources` | JSONB 列 `secret_payload`，格式形如 `{"envelope": {...}}` | 单信封 | `updated_at = NOW()` |
 | `deployments` | `deployments` | JSONB 列 `resource_secrets`，格式为 `map[string]GitTokenEnvelope` | 复合信封（多资源） | `updated_at = NOW()` |
 | `channel_workspace_credentials` | `channel_workspace_credentials` | JSONB 列 `envelope`，直接保存信封 | 单信封 | 整份信封 CAS，不更新时间 |
+| `platform_oauth_providers` | `platform_oauth_providers` | client_id_envelope 与 client_secret_envelope | 每行至多两个 | 固定 platform scope，UUID/旧双信封及 version 整行 CAS，version 递增 |
+| `env_oauth_flows` | `env_oauth_flows` | 自定义 client_id_envelope 或 Friday code_verifier_envelope | 每行至多两个 | 实际组织/工作区 UUID 与旧文档 CAS，不修改 flow 状态 |
 
 > [!NOTE]
 > - **Deployment 多信封原子性**：一个 Deployment 记录可能包含多个环境资源的 Git Token 信封。只有当该记录中**所有**匹配 `--from` 的信封都重新封装并通过自检验证后，才会将整行 JSONB 原子写回；在终端统计中，每个 Deployment 无论包含多少个内部信封，均按**一条数据库记录**计算。
@@ -265,7 +268,7 @@ CONFIG_FILE=/etc/oma/config.yaml go run ./cmd/vault-migrate \
 ```text
 Preview: local -> hashicorp_vault
 Read-only: verifies source DEKs; no target calls or database changes.
-Counts are database records; each Deployment is processed as one record.
+Counts are database rows; each platform OAuth row may contain two envelopes.
 
 Storage                        Verified    Skipped     Failed
 vault_credentials                    42          2          0
@@ -288,7 +291,7 @@ Next: back up the database and stop OMA/workers, then use the same CONFIG_FILE:
 
 ```text
 Apply: local -> hashicorp_vault
-Counts are database records; each Deployment is processed as one record.
+Counts are database rows; each platform OAuth row may contain two envelopes.
 
 Storage                         Migrated    Skipped     Failed
 vault_credentials                    42          2          0
@@ -391,5 +394,21 @@ flowchart LR
 
 以下场景**不**属于 `vault-migrate` 工具的处理范畴：
 
-- **同 Provider 内部轮换**：例如同一个阿里云 KMS 内部轮换 CMK、HashiCorp Vault 轮换 Transit Key 版本、或 Local 轮换内部 KEK 版本。此类操作由 Provider 原生多版本支持和业务写入自然轮换完成，详见 [主密钥与 Provider 装配](./vault-runtime.md#主密钥与-provider-装配)。
+- **托管 Provider 内部轮换**：阿里云 KMS 内部 CMK 与 HashiCorp Vault Transit 版本仍由 Provider 原生管理。local 同 Provider 版本轮换已纳入本工具，见下节。
 - **脏数据清理**：缺少父记录的孤儿凭证、历史明文凭证修复不属于本工具职责。
+
+
+## 7. OAuth 信封与 local 同 Provider 版本轮换
+
+平台客户端 ID 和 secret 使用不同 AAD，沿用 `internal/platformoauth` 的绑定函数；平台分支不查询不存在的组织列。flow ID 与 Friday PKCE verifier 使用真实租户 UUID，verifier 的 AAD 另加 `:code_verifier` 后缀。扫描包含仅有 verifier 信封的 Friday flow；保存保持另一字段 SQL NULL，拒绝旧文档 CAS，不改变 flow 状态。两字段均在事务外重新包装，任一失败不提交整行；保存时 UUID、旧双信封和版本共同 CAS。每行计数一次，即使内部有两个信封。OAuth 分支在重新包装后实际 Open 校验业务密文，成功提交后记录 maintenance/rewrap 安全事件，失败记录白名单错误码。
+
+配置新 local writer 版本并保留旧版本为 decrypt_only，先只读预检源 DEK；停写并备份后 apply：
+
+```bash
+CONFIG_FILE=/etc/oma/config.yaml go run ./cmd/vault-migrate --from local --to local --from-key-version 1
+CONFIG_FILE=/etc/oma/config.yaml go run ./cmd/vault-migrate --from local --to local --from-key-version 1 --apply
+```
+
+目标版本来自 `vault.master_key.local.version`，必须不同于 1。迁移成功后 key_provider 仍为 local，key_version 改为 writer 版本；同样参数重跑仅跳过新版本，不重复包装。跨 Provider 也可用该参数限制源版本。保留旧 reader/密钥直到在线数据与仍需恢复的备份均不依赖它；恢复服务前校验实际 Open 和相应业务路径。
+
+此命令不负责把历史明文 client_id 转成信封；先按 [ENV OAuth 离线升级](./env-oauth-credential.md#离线升级与部署) 完成 00118/00119/00120。OAuth 应用 client_secret 的业务轮换使用平台 PATCH，与主密钥重包装是两类操作，不额外保存旧 secret。

@@ -12,6 +12,7 @@ const (
 	credentialAuthTypeMCPOAuth            credentialAuthType = "mcp_oauth"
 	credentialAuthTypeStaticBearer        credentialAuthType = "static_bearer"
 	credentialAuthTypeEnvironmentVariable credentialAuthType = "environment_variable"
+	credentialAuthTypeEnvOAuth            credentialAuthType = "env_oauth"
 )
 
 // credentialAuth is the public, non-secret auth configuration stored in the
@@ -65,6 +66,20 @@ type environmentVariableCredentialAuth struct {
 
 func (*environmentVariableCredentialAuth) credentialAuthVariant() {}
 
+type envOAuthCredentialAuth struct {
+	Type              credentialAuthType          `json:"type"`
+	Provider          string                      `json:"provider"`
+	SecretName        string                      `json:"secret_name"`
+	Placeholder       string                      `json:"placeholder"`
+	Networking        credentialAuthNetworking    `json:"networking"`
+	InjectionLocation credentialInjectionLocation `json:"injection_location"`
+	ExpiresAt         *string                     `json:"expires_at,omitempty"`
+	Scope             *string                     `json:"scope,omitempty"`
+	HasRefreshToken   bool                        `json:"has_refresh_token"`
+}
+
+func (*envOAuthCredentialAuth) credentialAuthVariant() {}
+
 type credentialAuthNetworking struct {
 	Type         string    `json:"type"`
 	AllowedHosts *[]string `json:"allowed_hosts,omitempty"`
@@ -86,6 +101,8 @@ func (a *credentialAuth) UnmarshalJSON(data []byte) error {
 		value = &staticBearerCredentialAuth{}
 	case credentialAuthTypeEnvironmentVariable:
 		value = &environmentVariableCredentialAuth{}
+	case credentialAuthTypeEnvOAuth:
+		value = &envOAuthCredentialAuth{}
 	case "":
 		return errors.New("auth.type is required")
 	default:

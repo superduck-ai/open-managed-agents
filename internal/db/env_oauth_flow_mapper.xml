@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="EnvOAuthFlowMapper">
+    <sql id="columns">
+        uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
+        provider_key, secret_name, display_name, redirect_url, authorize_endpoint, token_endpoint,
+        client_id_envelope, code_verifier_envelope, scope, token_endpoint_auth_method, token_endpoint_encoding, networking_type,
+        allowed_hosts, status, error_code, credential_external_id, created_by_api_key_uuid,
+        expires_at, completed_at, created_at, updated_at
+    </sql>
+
+    <insert id="Insert" result="returning" resultType="envOAuthFlowRow">
+        INSERT INTO env_oauth_flows (
+            uuid, external_id, organization_uuid, workspace_uuid, vault_uuid, vault_external_id,
+            provider_key, secret_name, display_name, redirect_url, authorize_endpoint, token_endpoint,
+            client_id_envelope, code_verifier_envelope, scope, token_endpoint_auth_method, token_endpoint_encoding, networking_type,
+            allowed_hosts, status, created_by_api_key_uuid, created_at, expires_at
+        ) VALUES (
+            #{params.UUID}, #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.VaultUUID}, #{params.VaultExternalID}, #{params.ProviderKey}, #{params.SecretName},
+            #{params.DisplayName}, #{params.RedirectURL}, #{params.AuthorizeEndpoint},
+            #{params.TokenEndpoint}, #{params.ClientIDEnvelope,sensitive=true}, #{params.CodeVerifierEnvelope,sensitive=true}, #{params.Scope},
+            #{params.TokenEndpointAuthMethod}, #{params.TokenEndpointEncoding},
+            #{params.NetworkingType}, #{params.AllowedHosts}, #{params.Status},
+            #{params.CreatedByAPIKeyUUID}, #{params.CreatedAt}, #{params.ExpiresAt}
+        )
+        RETURNING <include refid="columns"/>
+    </insert>
+
+    <select id="FindByExternalID" resultType="envOAuthFlowRow">
+        SELECT <include refid="columns"/>
+        FROM env_oauth_flows
+        WHERE external_id = #{externalID,sensitive=true}
+    </select>
+
+    <update id="Claim" result="rows">
+        UPDATE env_oauth_flows
+        SET status = 'processing', updated_at = #{claimedAt}
+        WHERE external_id = #{externalID,sensitive=true}
+        AND status = 'pending'
+    </update>
+
+    <update id="Complete" result="rows">
+        UPDATE env_oauth_flows
+        SET status = 'completed', credential_external_id = #{credentialExternalID},
+            error_code = '', completed_at = #{completedAt}, updated_at = #{completedAt}
+        WHERE external_id = #{externalID,sensitive=true}
+        AND status = 'processing'
+    </update>
+
+    <update id="Fail" result="rows">
+        UPDATE env_oauth_flows
+        SET status = 'failed', error_code = #{errorCode}, updated_at = #{failedAt}
+        WHERE external_id = #{externalID,sensitive=true}
+        AND status IN ('pending', 'processing')
+    </update>
+</mapper>

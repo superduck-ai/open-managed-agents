@@ -272,8 +272,6 @@ func validatePlatformOAuthClients(clients []PlatformOAuthClientConfig) error {
 	return nil
 }
 
-// validateGitSSHtoHTTPSHosts validates and normalizes hosts in place (trim + lower-case).
-// The slice header is shared with Config after YAML load, so Load observes the rewrite.
 func validateGitSSHtoHTTPSHosts(hosts []string) error {
 	seen := make(map[string]struct{}, len(hosts))
 	for i, raw := range hosts {

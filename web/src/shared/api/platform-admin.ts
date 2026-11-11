@@ -51,6 +51,9 @@ export class PlatformAdminClient {
       }
       throw error;
     }
+    if (response.status === 204) {
+      return undefined as T;
+    }
     if (body === null)
       throw {
         status: 502,
@@ -59,6 +62,65 @@ export class PlatformAdminClient {
       } satisfies ApiError;
     return body as T;
   }
+}
+
+export type OAuthProviderRecord = {
+  provider_key: string;
+  default_secret_name: string;
+  default_allowed_hosts: string[];
+  builtin: boolean;
+  protected: boolean;
+  has_client_id: boolean;
+  configured: boolean;
+  version: number;
+  id: string;
+  name: string;
+  authorize_endpoint: string;
+  token_endpoint: string;
+  scope: string;
+  client_id: string;
+  has_client_secret: boolean;
+  token_endpoint_auth_method: string;
+  token_endpoint_encoding: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OAuthProviderInput = {
+  name: string;
+  authorize_endpoint: string;
+  token_endpoint: string;
+  scope: string;
+  client_id: string;
+  client_secret?: string;
+  token_endpoint_auth_method?: string;
+  token_endpoint_encoding?: string;
+};
+
+export function listOAuthProviders(client: PlatformAdminClient) {
+  return client.request<OAuthProviderRecord[]>('/oauth-providers');
+}
+
+export function createOAuthProvider(client: PlatformAdminClient, input: OAuthProviderInput) {
+  return client.request<OAuthProviderRecord>('/oauth-providers', { method: 'POST', body: input });
+}
+
+export function updateOAuthProvider(
+  client: PlatformAdminClient,
+  id: string,
+  input: Partial<OAuthProviderInput> & { expected_version: number },
+) {
+  return client.request<OAuthProviderRecord>(`/oauth-providers/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: input,
+  });
+}
+
+export function deleteOAuthProvider(client: PlatformAdminClient, id: string, expectedVersion: number) {
+  return client.request<void>(`/oauth-providers/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    body: { expected_version: expectedVersion },
+  });
 }
 
 function platformError(status: number, body: { error?: { code?: string; message?: string } } | null): ApiError {

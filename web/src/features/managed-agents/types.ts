@@ -62,7 +62,7 @@ export type AgentPageResponse = {
   total_count?: number;
 };
 
-export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability' | 'channels';
+export type AgentDetailTab = 'config' | 'sessions' | 'deployments' | 'observability';
 
 export type AgentDetailVersionFilter = number | null;
 

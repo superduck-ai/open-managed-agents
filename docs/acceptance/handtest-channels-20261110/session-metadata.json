@@ -1,0 +1,17 @@
+{
+  "checked_at": "2026-11-10T00:53:00+08:00",
+  "channel_id": "channel_c87a04e6-97a7-4431-9c6e-aa660abc7936",
+  "feishu_app_id": "cli_aa6c7433e1b8dbf1",
+  "sessions": [
+    {
+      "session_id": "sesn_eIB3YJaCyjnuCMuOF7PZH6gA",
+      "title": "【OMA渠道真机验收】会话隔离测试 1 — 请简短回复 ok",
+      "channel_id": "channel_c87a04e6-97a7-4431-9c6e-aa660abc7936",
+      "app_id": "cli_aa6c7433e1b8dbf1",
+      "open_id": "ou_4fdda01fb7c9fef5dd3b456d1f2e77b3",
+      "chat_type": "p2p",
+      "source": "lark-channel-bridge",
+      "updated_at": "2026-11-10T00:48:54Z"
+    }
+  ]
+}

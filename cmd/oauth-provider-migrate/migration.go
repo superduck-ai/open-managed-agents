@@ -86,30 +86,8 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 	}
 	counts := map[migrationResult]int{}
 	for _, kind := range []string{"platform_oauth_providers", "env_oauth_flows"} {
-		after := ""
-		for {
-			if err := ctx.Err(); err != nil {
-				return errors.New("canceled")
-			}
-			rows, err := database.ListOAuthClientMigrationPage(ctx, kind, after, version < 120, version >= 119)
-			if err != nil {
-				return errors.New("client_scan_failed")
-			}
-			if len(rows) == 0 {
-				break
-			}
-			for _, row := range rows {
-				if err := ctx.Err(); err != nil {
-					return errors.New("canceled")
-				}
-				result, err := migrateClient(ctx, database, service, kind, row, apply)
-				if err != nil {
-					fmt.Fprintf(out, "uuid=%s failed=1 error_code=client_migration_failed\n", row.UUID)
-					return errors.New("client_migration_failed")
-				}
-				counts[result]++
-				after = row.UUID
-			}
+		if err := scanClientRows(ctx, database, service, kind, version, apply, out, counts); err != nil {
+			return err
 		}
 	}
 	if version >= 119 {
@@ -152,6 +130,34 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 	}
 	fmt.Fprintf(out, "success=%d pending=%d skipped=%d failed=0\n", counts[migrationApplied], counts[migrationPending], counts[migrationUnchanged])
 	return nil
+}
+
+func scanClientRows(ctx context.Context, database *db.DB, service *secrets.Service, kind string, version int64, apply bool, out io.Writer, counts map[migrationResult]int) error {
+	after := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return errors.New("canceled")
+		}
+		rows, err := database.ListOAuthClientMigrationPage(ctx, kind, after, version < 120, version >= 119)
+		if err != nil {
+			return errors.New("client_scan_failed")
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		for _, row := range rows {
+			if err := ctx.Err(); err != nil {
+				return errors.New("canceled")
+			}
+			result, err := migrateClient(ctx, database, service, kind, row, apply)
+			if err != nil {
+				fmt.Fprintf(out, "uuid=%s failed=1 error_code=client_migration_failed\n", row.UUID)
+				return errors.New("client_migration_failed")
+			}
+			counts[result]++
+			after = row.UUID
+		}
+	}
 }
 
 func migrateClient(ctx context.Context, database *db.DB, service *secrets.Service, kind string, row db.OAuthClientMigrationRecord, apply bool) (migrationResult, error) {

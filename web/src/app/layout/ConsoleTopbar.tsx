@@ -17,7 +17,7 @@ export function ConsoleTopbar({
   const { msg, locale } = useI18n();
   const auth = useContext(AuthContext);
   const platformAdmin = currentPath.startsWith('/platform-admin');
-  const homeHref = platformAdmin ? '/platform-admin' : '/dashboard';
+  const homeHref = '/dashboard';
   const { isMobile, toggleSidebar } = useSidebar();
   return (
     <header className="console-topbar">

@@ -43,8 +43,9 @@ function mount(entry = '/platform-admin', locale: 'en' | 'zh-CN' = 'zh-CN') {
     component: SuperAdministratorsPage,
   });
   const login = createRoute({ getParentRoute: () => root, path: '/login', component: () => <h1>登录页面</h1> });
+  const dashboard = createRoute({ getParentRoute: () => root, path: '/dashboard', component: () => <h1>应用首页</h1> });
   const router = createRouter({
-    routeTree: root.addChildren([admin.addChildren([index, detail, administrators]), login]),
+    routeTree: root.addChildren([admin.addChildren([index, detail, administrators]), login, dashboard]),
     history: createMemoryHistory({ initialEntries: [entry] }),
   });
   render(
@@ -206,6 +207,10 @@ for (const [locale, label] of [
     expect(await screen.findByRole('link', { name: label })).toBeTruthy();
     expect(screen.queryByRole('combobox', { name: /Language|语言/ })).toBeNull();
     expect(document.documentElement.lang).toBe(locale);
+    const brand = screen.getByRole('link', { name: 'Open Managed Agents' });
+    expect(brand.getAttribute('href')).toBe('/dashboard');
+    fireEvent.click(brand);
+    expect(await screen.findByRole('heading', { name: '应用首页' })).toBeTruthy();
   });
 }
 

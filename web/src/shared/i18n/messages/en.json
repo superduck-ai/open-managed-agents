@@ -3438,7 +3438,6 @@
   "skills.sortName": "Name",
   "skills.sortUpdated": "Recently updated",
   "skills.sortDefault": "Default order",
-  "skills.count": "{count} skills",
   "skills.noMatches": "No matching skills",
   "skills.unlistConfirm": "Unlist skill?",
   "skills.listConfirm": "List skill?",

@@ -11,11 +11,11 @@ import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
 import { ResourceListState } from '@/shared/ui/resource-list-state';
 import { ResourceListPagination } from '@/shared/ui/resource-list-pagination';
 import { productIcons } from '@/shared/icons/product-icons';
-import { useDashboardWorkspaceScope, type ConsoleSkill } from '../dashboard/model';
+import { formatSkillSource, useDashboardWorkspaceScope, type ConsoleSkill } from '../dashboard/model';
 import { SkillCard } from './SkillCard';
 import { SkillActions } from './SkillActions';
 import { SkillImportDialog } from './SkillImportDialog';
-import { SkillDrawer, DeleteSkillDialog, SkillSourceBadge } from './SkillDetail';
+import { SkillDrawer, DeleteSkillDialog } from './SkillDetail';
 import {
   skillConsoleRequest,
   downloadSkillPackage,
@@ -195,11 +195,8 @@ export function SkillsPage({
         </div>
       ) : (
         <>
-          <p className="mb-4 text-xs text-muted-foreground">
-            {msg('skills.count', '{count} skills', { count: query.data.total_count })}
-          </p>
           {query.data.data.length ? (
-            <div className="skill-grid max-w-[1080px]">
+            <div className="skill-grid">
               {query.data.data.map((skill) => (
                 <SkillCard
                   key={skill.id}
@@ -207,12 +204,7 @@ export function SkillsPage({
                   iconKey={skill.icon_key}
                   description={skill.description}
                   onOpen={() => setSelected(skill.id)}
-                  footer={
-                    <>
-                      <span />
-                      <SkillSourceBadge source={skill.source} />
-                    </>
-                  }
+                  metadata={<span className="skill-card-source">{formatSkillSource(skill.source, msg)}</span>}
                   actions={
                     skill.source === 'custom' ? (
                       <SkillActions

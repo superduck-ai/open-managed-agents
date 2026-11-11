@@ -3438,7 +3438,6 @@
   "skills.sortName": "名称排序",
   "skills.sortUpdated": "最近更新",
   "skills.sortDefault": "默认排序",
-  "skills.count": "{count} 项技能",
   "skills.noMatches": "没有匹配的技能",
   "skills.unlistConfirm": "下架技能？",
   "skills.listConfirm": "上架技能？",

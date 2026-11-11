@@ -16,7 +16,7 @@ export function SkillCard({
   description?: string;
   metadata?: ReactNode;
   body?: ReactNode;
-  footer: ReactNode;
+  footer?: ReactNode;
   onOpen: () => void;
   actions?: ReactNode;
 }) {
@@ -25,14 +25,14 @@ export function SkillCard({
       <button type="button" className="skill-card" aria-label={name} aria-haspopup="dialog" onClick={onOpen}>
         <div className="skill-card-heading">
           <SkillIcon iconKey={iconKey} />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h2 title={name}>{name}</h2>
             {metadata}
           </div>
         </div>
         {body}
         {description !== undefined && <p className="skill-card-description">{description}</p>}
-        <div className="skill-card-footer">{footer}</div>
+        {footer && <div className="skill-card-footer">{footer}</div>}
       </button>
       {actions && <div className="skill-card-actions">{actions}</div>}
     </article>

@@ -156,8 +156,10 @@ export function SystemSkillsPage() {
                 </>
               }
               body={
-                <div className="mt-5 flex items-center gap-3 text-xs">
-                  <span className="text-muted-foreground">{msg('systemSkills.defaultVersion', 'Default version')}</span>
+                <div className="mt-3 flex items-center gap-3 text-xs">
+                  <span className="shrink-0 text-muted-foreground">
+                    {msg('systemSkills.defaultVersion', 'Default version')}
+                  </span>
                   <code className="min-w-0 truncate" title={record.default_version || ''}>
                     {record.default_version || '—'}
                   </code>

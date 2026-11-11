@@ -1,6 +1,6 @@
 # 资源列表页头、空态与未找到
 
-Environments、Vaults、Memory、Deployments、Sessions、Agents、Skills、Files、Members、Organization、API keys 和 Webhooks 使用同一套列表外观。页头、空态和未找到只对齐外观，不改这些控件的路由和接口。列表分页见下文。
+Environments、Vaults、Memory、Deployments、Sessions、Agents、评测、Skills、Files、Members、Organization、API keys 和 Webhooks 使用同一套列表外观。评测的任务、评测集和评分标准各用一页表格，每页 15 条，创建从页头按钮进入弹窗。页头、空态和未找到只对齐外观，不改这些控件的路由和接口。列表分页见下文。
 
 ## 模块图标一致性（2026-11-06）
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/diagnostics"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	"github.com/superduck-ai/open-managed-agents/internal/evaluations"
 	"github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/invitations"
@@ -227,16 +229,19 @@ func run(bootstrap *slog.Logger) (err error) {
 		return fmt.Errorf("create transcript archive service: %w", err)
 	}
 	transcripts.Register(workers)
+	evaluationRunner := evaluations.NewTaskRunner(database, logger.With("component", "evaluation_runner")).
+		WithRubricModel(evaluations.NewRubricModel(database, vaultSecrets))
+	evaluationJobs := evaluations.NewJobs(evaluationRunner)
+	evaluationJobs.Register(workers)
 
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers, queues)
 	if err != nil {
 		return fmt.Errorf("create River client: %w", err)
 	}
-	if err := lifecycle.Configure(ctx, jobClient); err != nil {
-		return fmt.Errorf("configure sandbox lifecycle: %w", err)
-	}
-	if err := transcripts.Configure(ctx, jobClient); err != nil {
-		return fmt.Errorf("configure transcript archive: %w", err)
+	if err := configurePeriodicJobs(ctx, jobClient, []periodicJob{
+		{"sandbox lifecycle", lifecycle}, {"transcript archive", transcripts}, {"evaluation jobs", evaluationJobs},
+	}); err != nil {
+		return err
 	}
 	deploymentStore.Configure(jobClient)
 	prebuilds.Configure(jobClient)
@@ -261,6 +266,7 @@ func run(bootstrap *slog.Logger) (err error) {
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
 			InvitationJobs:         jobClient,
+			EvaluationRunner:       evaluationRunner,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,
 			Config:                 cfg,
@@ -296,12 +302,31 @@ func run(bootstrap *slog.Logger) (err error) {
 	return serveHTTP(ctx, server, logger)
 }
 
+type periodicJobConfigurer interface {
+	Configure(context.Context, *river.Client[*sql.Tx]) error
+}
+
+type periodicJob struct {
+	name       string
+	configurer periodicJobConfigurer
+}
+
+func configurePeriodicJobs(ctx context.Context, client *river.Client[*sql.Tx], jobs []periodicJob) error {
+	for _, job := range jobs {
+		if err := job.configurer.Configure(ctx, client); err != nil {
+			return fmt.Errorf("configure %s: %w", job.name, err)
+		}
+	}
+	return nil
+}
+
 func jobQueues(workers *river.Workers, database *db.DB, cfg config.Config, logger *slog.Logger, invitationsEnabled bool) map[string]river.QueueConfig {
 	queues := map[string]river.QueueConfig{
 		environments.PrebuildQueue:         {MaxWorkers: 4},
 		deploymentjobs.Queue:               {MaxWorkers: 10},
 		environments.SandboxLifecycleQueue: {MaxWorkers: 4},
 		transcriptretention.Queue:          {MaxWorkers: 2},
+		evaluations.JobQueue:               {MaxWorkers: 4},
 	}
 	if invitationsEnabled {
 		queues[platformadmin.DeliveryQueue] = river.QueueConfig{MaxWorkers: 4}

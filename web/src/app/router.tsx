@@ -14,6 +14,9 @@ import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { WorkspaceSettingsRedirect } from '../features/settings/WorkspaceSettingsRedirect';
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
+import { DatasetDetailPage } from '../features/evaluations/DatasetDetailPage';
+import { EvaluationsPage } from '../features/evaluations/EvaluationsPage';
+import { TaskDetailPage } from '../features/evaluations/TaskDetailPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
 import { ChannelsPage } from '../features/managed-agents/channels/ChannelsPage';
 import { ChannelWizardPage } from '../features/managed-agents/channels/ChannelWizardPage';
@@ -259,6 +262,30 @@ const sessionDetailSearch = (search: Record<string, unknown>) => ({
       ? search.trace_id.trim()
       : undefined,
   returnTo: channelSessionsReturnTo(typeof search.returnTo === 'string' ? search.returnTo : undefined) ?? undefined,
+});
+
+const evaluationsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'evaluations',
+  component: EvaluationsPage,
+});
+
+const workspaceEvaluationsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations',
+  component: EvaluationsPage,
+});
+
+const workspaceEvaluationDatasetRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/datasets/$datasetId',
+  component: DatasetDetailPage,
+});
+
+const workspaceEvaluationTaskRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/evaluations/tasks/$taskId',
+  component: TaskDetailPage,
 });
 
 const workspaceSessionDetailRoute = createRoute({
@@ -682,6 +709,10 @@ const routeTree = rootRoute.addChildren([
       quickstartRoute,
       workspaceAgentQuickstartRoute,
       agentsRoute,
+      evaluationsRoute,
+      workspaceEvaluationsRoute,
+      workspaceEvaluationTaskRoute,
+      workspaceEvaluationDatasetRoute,
       agentCreateRoute,
       agentDetailRoute,
       workspaceAgentsRoute,

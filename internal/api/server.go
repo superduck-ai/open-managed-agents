@@ -21,6 +21,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	deploymentsapi "github.com/superduck-ai/open-managed-agents/internal/deployments"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
+	evaluationsapi "github.com/superduck-ai/open-managed-agents/internal/evaluations"
 	"github.com/superduck-ai/open-managed-agents/internal/files"
 	filestoreapi "github.com/superduck-ai/open-managed-agents/internal/filestore"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
@@ -99,6 +100,7 @@ type Server struct {
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
 	InvitationJobs         *river.Client[*sql.Tx]
+	EvaluationRunner       *evaluationsapi.TaskRunner
 	SandboxProvisioner     codesessions.SandboxProvisioner
 	Prebuilds              *environments.Prebuilds
 	SandboxLifecycle       *environments.SandboxLifecycle
@@ -214,6 +216,7 @@ func NewServer(deps ServerDeps) *Server {
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
 	}
+	evaluationHandler := newEvaluationHandler(deps, s.sessions, componentLogger("evaluations"))
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()
 	router.Use(s.requestIDMiddleware)
@@ -232,7 +235,7 @@ func NewServer(deps ServerDeps) *Server {
 	}
 	router.Get("/.well-known/oauth-protected-resource/v2/ccr-sessions/{code_session_id}/mcp/*", s.codeSessions.HandleMCPProtectedResource)
 	s.registerVersionedAPIRoutes(router)
-	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler, mcpServerHandler)
+	s.registerPlatformConsoleRoutes(router, workbenchLogger, mcpCatalogHandler, mcpServerHandler, evaluationHandler)
 	s.router = router
 	return s
 }
@@ -314,6 +317,7 @@ func (s *Server) registerPlatformConsoleRoutes(
 	workbenchLogger *slog.Logger,
 	mcpCatalogHandler *mcpcatalogs.Handler,
 	mcpServerHandler *mcpservers.Handler,
+	evaluationHandler *evaluationsapi.Handler,
 ) {
 	s.registerPlatformAdminRoutes(router)
 	secureCookies := s.cfg.Env == config.EnvironmentProd || strings.HasPrefix(s.cfg.Auth.ConsoleURL, "https://")
@@ -367,6 +371,8 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterConsoleWorkspaceMemberRoutes(r, s.db)
 			mcpCatalogHandler.RegisterRoutes(r)
 			mcpServerHandler.RegisterRoutes(r)
+			s.files.RegisterConsoleRoutes(r)
+			evaluationHandler.RegisterRoutes(r)
 			if s.consoleTunnels != nil {
 				r.Mount("/workspaces/{workspaceId}/mcp_tunnels", s.consoleTunnels)
 			}

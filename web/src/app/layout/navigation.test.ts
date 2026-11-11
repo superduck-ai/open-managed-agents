@@ -19,6 +19,7 @@ test('retains implemented destinations without exposing placeholder pages or dup
       '/quickstart',
       '/agents',
       '/sessions',
+      '/evaluations',
       '/observability',
       '/deployments',
       '/environments',

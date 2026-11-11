@@ -1,7 +1,6 @@
 import { productIcons as navigationIcons } from '@/shared/icons/product-icons';
 import {
   Activity,
-  ArrowRightLeft,
   BarChart3,
   Bot,
   Box,
@@ -85,13 +84,6 @@ export const consoleNavigation: NavItem[] = [
     icon: navigationIcons.environments,
   },
   {
-    type: 'link',
-    href: '/channels',
-    label: 'Channels',
-    labelId: 'nav.channels',
-    icon: navigationIcons.channels,
-  },
-  {
     type: 'group',
     label: 'Resources',
     labelId: 'nav.resources',
@@ -99,6 +91,7 @@ export const consoleNavigation: NavItem[] = [
     children: [
       { href: '/files', label: 'Files', labelId: 'nav.files', icon: navigationIcons.files },
       { href: '/skills', label: 'Skills', labelId: 'nav.skills', icon: navigationIcons.skills },
+      { href: '/channels', label: 'Channels', labelId: 'nav.channels', icon: navigationIcons.channels },
       { href: '/memory-stores', label: 'Memory stores', labelId: 'nav.memoryStores', icon: navigationIcons.memory },
       {
         href: '/credential-vaults',
@@ -116,8 +109,26 @@ export const consoleNavigation: NavItem[] = [
 export function sortedResourceNavigation(items: NavGroupItem['children'], locale: string) {
   const order =
     locale === 'zh-CN'
-      ? ['/files', '/skills', '/memory-stores', '/mcp-tunnels', '/webhooks', '/credential-vaults', '/mcp-servers']
-      : ['/files', '/skills', '/webhooks', '/mcp-tunnels', '/mcp-servers', '/memory-stores', '/credential-vaults'];
+      ? [
+          '/files',
+          '/skills',
+          '/channels',
+          '/memory-stores',
+          '/mcp-tunnels',
+          '/webhooks',
+          '/credential-vaults',
+          '/mcp-servers',
+        ]
+      : [
+          '/files',
+          '/skills',
+          '/channels',
+          '/webhooks',
+          '/mcp-tunnels',
+          '/mcp-servers',
+          '/memory-stores',
+          '/credential-vaults',
+        ];
   return [...items].sort((left, right) => order.indexOf(left.href) - order.indexOf(right.href));
 }
 
@@ -135,7 +146,7 @@ export const placeholderIcons = {
   '/sessions': Activity,
   '/deployments': Network,
   '/environments': Box,
-  '/channels': ArrowRightLeft,
+  '/channels': navigationIcons.channels,
   '/credential-vaults': Vault,
   '/memory-stores': Database,
   '/dreams': Moon,

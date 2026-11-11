@@ -77,6 +77,41 @@ describe('ConsoleShell', () => {
     },
   );
 
+  test.each([
+    { locale: 'en', resources: 'Resources', skills: 'Skills', channels: 'Channels' },
+    { locale: 'zh-CN', resources: '资源', skills: '技能', channels: '渠道' },
+  ] as const)(
+    'keeps channels after skills in expanded and compact $locale resources',
+    async ({ locale, resources, skills, channels }) => {
+      const path = '/workspaces/default/channels';
+      resetTestDom(`https://oma.duck.ai${path}`);
+      renderWithWorkspaces(
+        <ConsoleShell currentPath={path} account={testAccount()} onLogout={() => undefined}>
+          <div>Channels content</div>
+        </ConsoleShell>,
+        { locale },
+      );
+      expect(screen.queryByRole('link', { name: channels, exact: true })).toBeNull();
+      const group = screen.getByRole('button', { name: resources, exact: true });
+      expect(group.getAttribute('aria-expanded')).toBe('false');
+      expect(group.hasAttribute('data-active')).toBe(true);
+      fireEvent.click(group);
+      const link = screen.getByRole('link', { name: channels, exact: true });
+      expect(link.getAttribute('href')).toBe(path);
+      expect(link.getAttribute('aria-current')).toBe('page');
+      expect(link.closest('li')?.previousElementSibling?.textContent).toBe(skills);
+      await act(async () => setTestViewport(950, 850));
+      await waitFor(() =>
+        expect(document.querySelector('[data-sidebar-state]')?.getAttribute('data-sidebar-state')).toBe('collapsed'),
+      );
+      fireEvent.click(screen.getByRole('button', { name: resources, exact: true }));
+      const compactLink = await screen.findByRole('menuitem', { name: channels, exact: true });
+      expect(compactLink.getAttribute('href')).toBe(path);
+      const names = screen.getAllByRole('menuitem').map((item) => item.textContent);
+      expect(names[names.indexOf(skills) + 1]).toBe(channels);
+    },
+  );
+
   test('uses the full-width console layout for workspace channels', () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/channels');
     renderWithWorkspaces(

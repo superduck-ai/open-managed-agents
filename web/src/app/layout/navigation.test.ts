@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { productIcons } from '../../shared/icons/product-icons';
-import { consoleNavigation } from './navigation';
+import { consoleNavigation, sortedResourceNavigation } from './navigation';
 import { navigationHref, isActivePath } from './navigation-paths';
 import {
   isSettingsPath,
@@ -54,6 +54,7 @@ test('settings use the confirmed four groups and organization-level model and te
   expect(resources?.type === 'group' && resources.children.map((item) => item.href)).toEqual([
     '/files',
     '/skills',
+    '/channels',
     '/memory-stores',
     '/credential-vaults',
     '/mcp-servers',
@@ -94,7 +95,7 @@ test('search results use the same module icons as the sidebar', () => {
 });
 
 test('retains channel navigation after consolidating workspace paths', () => {
-  expect(consoleNavigation.some((item) => item.type === 'link' && item.href === '/channels')).toBe(true);
+  expect(consoleNavigation.some((item) => item.type === 'link' && item.href === '/channels')).toBe(false);
   expect(navigationHref('/channels', 'team')).toBe('/workspaces/team/channels');
   expect(isActivePath('/workspaces/team/channels/agent/channel', '/channels')).toBe(true);
   expect(isActivePath('/workspaces/default/channels', '/channels')).toBe(true);
@@ -116,3 +117,18 @@ test.each(['/settings/billing', '/billing', '/settings/limits', '/settings/servi
     expect(settingScope(path)).toBe('organization');
   },
 );
+
+test.each(['en', 'zh-CN'])('channels follows skills in the %s resource navigation and search', (locale) => {
+  const resources = consoleNavigation.find((item) => item.type === 'group');
+  expect(resources?.type).toBe('group');
+  if (!resources || resources.type !== 'group') throw new Error('Missing resource navigation');
+  const items = sortedResourceNavigation(resources.children, locale);
+  const skills = items.findIndex((item) => item.href === '/skills');
+  expect(items[skills + 1].href).toBe('/channels');
+  expect(items[skills + 1].icon).toBe(productIcons.channels);
+  const channel = navigationSearchRecords(account, 'org', 'workspace', (_id, text) => text).find(
+    (item) => item.id === '/channels',
+  );
+  expect(channel?.context).toBe('Resources');
+  expect(channel?.icon).toBe(productIcons.channels);
+});

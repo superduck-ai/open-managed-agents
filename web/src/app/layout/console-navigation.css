@@ -294,7 +294,7 @@
   inset: 0 0 auto;
   z-index: 30;
   display: grid;
-  grid-template-columns: calc(var(--sidebar-width) - 24px) minmax(0, 1fr) minmax(240px, 460px) minmax(0, 1fr);
+  grid-template-columns: calc(var(--sidebar-width) / 2 - 20px) minmax(0, 1fr) minmax(240px, 460px) minmax(0, 1fr);
   align-items: center;
   height: var(--console-topbar-height);
   padding: 0 8px 0 24px;

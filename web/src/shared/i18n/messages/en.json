@@ -3462,5 +3462,10 @@
   "systemSkills.noAvailableVersions": "No available versions",
   "skills.content.files": "Files",
   "skills.content.error": "Skill contents could not be loaded.",
-  "skills.import.duplicateName": "A skill with this name already exists. Change the name or use Update skill."
+  "skills.import.duplicateName": "A skill with this name already exists. Change the name or use Update skill.",
+  "skills.download": "Download ZIP",
+  "skills.file.error": "File preview could not be loaded.",
+  "skills.file.tooLarge": "Cannot preview files larger than 256 KiB.",
+  "skills.file.unsupported": "Cannot preview this file.",
+  "skills.download.action": "Download skill"
 }

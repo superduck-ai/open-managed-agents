@@ -20,6 +20,7 @@ import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
 import { ResourceListState } from '@/shared/ui/resource-list-state';
 import { SkillCard } from '@/features/skills/SkillCard';
 import { SkillActions } from '@/features/skills/SkillActions';
+import { downloadSkillPackage } from '@/features/skills/api';
 import { usePlatformAdmin } from '../context';
 import { SystemSkillError, SystemSkillPager, SystemSkillStatus, systemSkillErrorMessage } from './feedback';
 import { SystemSkillDrawer } from './SystemSkillDrawer';
@@ -167,6 +168,14 @@ export function SystemSkillsPage() {
                   name={record.display_title}
                   iconKey={record.icon_key}
                   onUpdate={() => setUpload({ target: record })}
+                  onDownload={
+                    record.default_version
+                      ? () =>
+                          downloadSkillPackage(
+                            `/api/platform-admin/skills/${encodeURIComponent(record.id)}/versions/${encodeURIComponent(record.default_version!)}/content`,
+                          )
+                      : undefined
+                  }
                   onIcon={async (key) => {
                     try {
                       await client.request(`/skills/${encodeURIComponent(record.id)}/icon`, {

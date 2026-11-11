@@ -165,14 +165,21 @@
   }
 }
 
+.skill-preview {
+  min-width: 0;
+  overflow: hidden;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--background);
+}
+.skill-preview > header {
+  background: var(--muted);
+}
 .skill-source {
   min-width: 0;
   max-width: 100%;
   margin: 0;
   padding: 16px;
-  border: 0.5px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--muted);
   font-family: var(--font-mono);
   font-variant-ligatures: none;
   font-size: 12px;

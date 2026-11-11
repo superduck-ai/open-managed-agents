@@ -67,12 +67,7 @@ func (h *Handler) consoleContent(w http.ResponseWriter, r *http.Request) error {
 		pkg = skillPackage{Name: record.Name, Description: record.Description, Directory: record.Directory, Size: record.SizeBytes, SHA256: record.SHA256}
 		bucket, key = record.S3Bucket, record.S3Key
 	}
-	result, err := h.packagePreview(r.Context(), bucket, key, pkg, 30*1024*1024)
-	if err != nil {
-		return err
-	}
-	httpapi.WriteJSON(w, http.StatusOK, result)
-	return nil
+	return h.servePackage(w, r, bucket, key, pkg, 30*1024*1024)
 }
 
 func (h *Handler) consoleCatalog(w http.ResponseWriter, r *http.Request) error {

@@ -760,7 +760,7 @@ describe('Skills page', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(calls).toBe(1);
   });
-  test('cards keep built-ins read-only and expose only update, icon and delete for custom skills', async () => {
+  test('cards keep built-ins read-only and expose update, download, icon and delete for custom skills', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     fixture();
     renderSkillsPage();
@@ -769,6 +769,7 @@ describe('Skills page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More actions for Research notes' }));
     expect(await screen.findByRole('menuitem', { name: 'Update skill', exact: true })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Change icon' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Download skill', exact: true })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'Delete skill', exact: true })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: /Copy|Version/ })).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -892,7 +893,12 @@ describe('Skill detail page', () => {
 
     expect(await screen.findByText('v2 description')).toBeTruthy();
     expect(await screen.findByText(/^# Skill instructions/)).toBeTruthy();
-    expect(screen.getByRole('navigation', { name: 'Files' }).textContent).toContain('guide.md');
+    const directory = screen.getByRole('navigation', { name: 'Files' });
+    expect(within(directory).getByRole('button', { name: 'demo' }).getAttribute('aria-expanded')).toBe('true');
+    expect(within(directory).getByRole('button', { name: 'SKILL.md' })).toBeTruthy();
+    expect(directory.textContent).not.toContain('guide.md');
+    fireEvent.click(within(directory).getByRole('button', { name: 'references' }));
+    expect(directory.textContent).toContain('guide.md');
     expect(screen.getByText('Latest')).toBeTruthy();
     expect(new URL(window.location.href).searchParams.get('skill')).toBe('frontend-design');
     expect(

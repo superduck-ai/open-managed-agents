@@ -1,4 +1,10 @@
-import { consoleApi, getConsoleRequestContext } from '@/shared/api/client';
+import {
+  consoleApi,
+  consoleRequestHeaders,
+  getConsoleRequestContext,
+  getScopeSignal,
+  reportApiAuthFailure,
+} from '@/shared/api/client';
 import type { ConsoleSkill } from '@/features/dashboard/model';
 import type { SkillImportEntry } from './SkillImportDialog';
 import { skillPackageBody } from './files';
@@ -10,6 +16,47 @@ export type SkillCatalog = {
   counts: { all: number; builtin: number; custom: number };
 };
 export type SkillContent = { files: string[]; skill_md: string };
+export type SkillFilePreview = { path: string; content: string; previewable: boolean; reason: string };
+export function workspaceSkillContentUrl(workspaceId: string, skillId: string, version: string) {
+  return workspaceSkillUrl(
+    workspaceId,
+    `/${encodeURIComponent(skillId)}/versions/${encodeURIComponent(version)}/preview`,
+  );
+}
+function workspaceSkillUrl(workspaceId: string, path: string) {
+  const context = getConsoleRequestContext();
+  return `/api/console/organizations/${encodeURIComponent(context.organizationUuid || '')}/workspaces/${encodeURIComponent(workspaceId)}/skills${path}`;
+}
+export async function downloadSkillPackage(url: string, workspaceId?: string) {
+  const context = workspaceId ? { ...getConsoleRequestContext(), workspaceId } : {};
+  const signal = getScopeSignal();
+  const response = await fetch(`${url}?download=1`, {
+    credentials: 'include',
+    headers: consoleRequestHeaders(undefined, context),
+    signal,
+  });
+  signal.throwIfAborted();
+  if (!response.ok) {
+    reportApiAuthFailure(response.status, context);
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error?.message || `Download failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  signal.throwIfAborted();
+  const filename = response.headers.get('Content-Disposition')?.match(/filename="?([^";]+)"?/)?.[1] || 'skill.zip';
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  try {
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+  } finally {
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export function retrieveSkillContent(workspaceId: string, skillId: string, version: string, signal: AbortSignal) {
   return skillConsoleRequest<SkillContent>(
     workspaceId,
@@ -19,10 +66,7 @@ export function retrieveSkillContent(workspaceId: string, skillId: string, versi
 }
 export function skillConsoleRequest<T>(workspaceId: string, path: string, options: RequestInit = {}) {
   const context = getConsoleRequestContext();
-  return consoleApi<T>(
-    `/api/console/organizations/${encodeURIComponent(context.organizationUuid || '')}/workspaces/${encodeURIComponent(workspaceId)}/skills${path}`,
-    { ...options, context: { ...context, workspaceId } },
-  );
+  return consoleApi<T>(workspaceSkillUrl(workspaceId, path), { ...options, context: { ...context, workspaceId } });
 }
 export function inspectWorkspaceSkill(workspaceId: string, entry: SkillImportEntry, target?: ConsoleSkill) {
   const body = skillPackageBody(entry.files);

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { MoreHorizontal, Upload, Shapes, Trash2 } from 'lucide-react';
+import { MoreHorizontal, Upload, Download, Shapes, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
@@ -20,6 +20,7 @@ export function SkillActions({
   name,
   iconKey = 'blocks',
   onUpdate,
+  onDownload,
   onIcon,
   onDelete,
   children,
@@ -27,6 +28,7 @@ export function SkillActions({
   name: string;
   iconKey?: string;
   onUpdate: () => void;
+  onDownload?: () => Promise<void>;
   onIcon: (key: string) => Promise<void>;
   onDelete?: () => void;
   children?: ReactNode;
@@ -34,6 +36,17 @@ export function SkillActions({
   const { msg } = useI18n();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  async function runAction(action: () => Promise<void>) {
+    setBusy(true);
+    try {
+      await action();
+      setOpen(false);
+    } catch (cause) {
+      toast.error(skillErrorMessage(cause, msg));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <DropdownMenu
       open={open}
@@ -57,6 +70,12 @@ export function SkillActions({
           <Upload size={15} aria-hidden />
           {msg('skills.update', 'Update skill')}
         </DropdownMenuItem>
+        {onDownload && (
+          <DropdownMenuItem disabled={busy} onClick={() => void runAction(onDownload)}>
+            <Download size={15} aria-hidden />
+            {msg('skills.download.action', 'Download skill')}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>
             <Shapes size={15} aria-hidden />
@@ -70,17 +89,7 @@ export function SkillActions({
                   className={iconKey === key ? 'justify-center bg-accent' : 'justify-center'}
                   aria-label={msg(`skills.icons.${key}`, label)}
                   disabled={busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await onIcon(key);
-                      setOpen(false);
-                    } catch (cause) {
-                      toast.error(skillErrorMessage(cause, msg));
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
+                  onClick={() => void runAction(() => onIcon(key))}
                 >
                   <Icon size={16} aria-hidden />
                 </DropdownMenuItem>

@@ -4,8 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"net/http"
@@ -294,33 +292,7 @@ func (h *Handler) systemContent(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	result, err := h.packagePreview(r.Context(), version.S3Bucket, version.S3Key, skillPackage{Name: version.Name, Description: version.Description, Directory: version.Directory, Size: version.SizeBytes, SHA256: version.SHA256}, MaxSkillPackageBytes)
-	if err != nil {
-		return err
-	}
-	httpapi.WriteJSON(w, 200, result)
-	return nil
-}
-
-func (h *Handler) packagePreview(ctx context.Context, bucket, key string, pkg skillPackage, limit int64) (systemPackageResponse, error) {
-	if bucket != h.store.Name() {
-		return systemPackageResponse{}, systemInvalid("技能存储配置不匹配")
-	}
-	object, err := h.store.Open(ctx, key, nil)
-	if err != nil {
-		return systemPackageResponse{}, err
-	}
-	defer object.Body.Close()
-	archive, err := readWithinBudget(object.Body, limit)
-	if err != nil {
-		return systemPackageResponse{}, err
-	}
-	sum := sha256.Sum256(archive)
-	if hex.EncodeToString(sum[:]) != pkg.SHA256 {
-		return systemPackageResponse{}, systemInvalid("技能包完整性检查失败")
-	}
-	pkg.Zip = archive
-	return systemPackageDTO(pkg)
+	return h.servePackage(w, r, version.S3Bucket, version.S3Key, skillPackage{Name: version.Name, Description: version.Description, Directory: version.Directory, Size: version.SizeBytes, SHA256: version.SHA256}, MaxSkillPackageBytes)
 }
 
 func (h *Handler) importSystemPackage(w http.ResponseWriter, r *http.Request) error {

@@ -27,7 +27,14 @@ import {
   type ConsoleSkillVersion,
 } from '../dashboard/model';
 import { SkillIcon, SkillIconPicker } from './icons';
-import { retrieveSkillContent, updateWorkspaceSkillIcon } from './api';
+import {
+  retrieveSkillContent,
+  updateWorkspaceSkillIcon,
+  skillConsoleRequest,
+  workspaceSkillContentUrl,
+  type SkillFilePreview,
+} from './api';
+import { SkillDownloadButton } from './SkillDownloadButton';
 import { SkillContent } from './SkillContent';
 type I18nMsg = ReturnType<typeof useI18n>['msg'];
 function SkillDrawerHeader({
@@ -35,7 +42,9 @@ function SkillDrawerHeader({
   latestVersion,
   onClose,
   onIcon,
+  workspaceId,
 }: {
+  workspaceId: string;
   skill?: ConsoleSkill;
   latestVersion?: ConsoleSkillVersion;
   onClose: () => void;
@@ -69,6 +78,12 @@ function SkillDrawerHeader({
           ) : null}
         </div>
         <div className="absolute right-4 top-4 flex items-center gap-1">
+          {skill?.latest_version && (
+            <SkillDownloadButton
+              url={workspaceSkillContentUrl(workspaceId, skill.id, skill.latest_version)}
+              workspaceId={workspaceId}
+            />
+          )}
           <Button
             type="button"
             variant="ghost"
@@ -130,16 +145,21 @@ export function SkillDrawer({
 
   return (
     <>
-      <Sheet open={open} onOpenChange={setOpen} onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}>
+      <Sheet
+        open={open}
+        modal={false}
+        onOpenChange={setOpen}
+        onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}
+      >
         <SheetContent
           showCloseButton={false}
           showOverlay={false}
           side="right"
-          className="min-h-0 gap-0 overflow-hidden p-0 sm:!max-w-md"
+          className="inset-y-2 right-2 h-auto w-[calc(100%-1rem)] max-w-[480px] min-h-0 gap-0 overflow-hidden rounded-xl border-[0.5px] p-0 sm:max-w-[480px]"
         >
           <SkillDrawerHeader
             skill={skill}
-            latestVersion={latestVersion}
+            workspaceId={workspaceId}
             onClose={() => setOpen(false)}
             onIcon={async (key) => {
               if (!skill || skill.source !== 'custom') return;
@@ -205,7 +225,18 @@ export function SkillDrawer({
                       </AlertDescription>
                     </Alert>
                   ) : (
-                    <SkillContent content={contentQuery.data} />
+                    <SkillContent
+                      key={`${skill.id}/${contentVersion}`}
+                      content={contentQuery.data}
+                      contentKey={workspaceSkillContentUrl(workspaceId, skill.id, contentVersion)}
+                      loadFile={(path, signal) =>
+                        skillConsoleRequest<SkillFilePreview>(
+                          workspaceId,
+                          `/${encodeURIComponent(skill.id)}/versions/${encodeURIComponent(contentVersion)}/preview?path=${encodeURIComponent(path)}`,
+                          { signal },
+                        )
+                      }
+                    />
                   ))}
 
                 <section className="space-y-3 border-t-[0.5px] border-border pt-4">

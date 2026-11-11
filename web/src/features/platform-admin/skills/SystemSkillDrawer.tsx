@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { SkillDownloadButton } from '@/features/skills/SkillDownloadButton';
+import type { SkillFilePreview } from '@/features/skills/api';
 import { SkillContent } from '@/features/skills/SkillContent';
-import { Upload } from 'lucide-react';
+import { Upload, X } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
 import { Badge } from '@/shared/ui/badge';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { SkillIconPicker } from '@/features/skills/icons';
@@ -30,6 +32,8 @@ export function SystemSkillDrawer({
 }) {
   const { client } = usePlatformAdmin();
   const { msg } = useI18n();
+  const [open, setOpen] = useState(true);
+  useEffect(() => setOpen(true), [skillID]);
   const [tab, setTab] = useState('overview');
   const [contentVersion, setContentVersion] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
@@ -63,14 +67,30 @@ export function SystemSkillDrawer({
   return (
     <>
       <Sheet
-        open
-        onOpenChange={(open) => {
-          if (!open && !pending) onClose();
+        open={open}
+        modal={false}
+        onOpenChange={(nextOpen) => {
+          if (!pending) setOpen(nextOpen);
         }}
+        onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}
       >
-        <SheetContent showCloseButton={!pending} showOverlay={false} className="gap-0">
-          <SheetHeader className="shrink-0 border-b-[0.5px] border-border px-4 py-4 pr-12">
-            <div className="flex items-center gap-3">
+        <SheetContent
+          showCloseButton={false}
+          showOverlay={false}
+          className="inset-y-2 right-2 h-auto w-[calc(100%-1rem)] max-w-[480px] min-h-0 gap-0 overflow-hidden rounded-xl border-[0.5px] p-0 sm:max-w-[480px]"
+        >
+          <SheetHeader className="shrink-0 border-b-[0.5px] border-border px-4 py-4 pr-24">
+            <div className="absolute right-4 top-4 flex items-center gap-1">
+              <SystemSkillDownload skill={skill} />
+              <SheetClose
+                render={
+                  <Button variant="ghost" size="icon-sm" disabled={pending} aria-label={msg('common.close', 'Close')} />
+                }
+              >
+                <X className="size-4" aria-hidden />
+              </SheetClose>
+            </div>
+            <div className="flex min-w-0 items-center gap-3">
               {skill && (
                 <SkillIconPicker
                   value={skill.icon_key || 'blocks'}
@@ -249,7 +269,26 @@ function SystemSkillContent({ skillID, version }: { skillID: string; version: st
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">{version}</p>
       <p className="text-sm">{query.data.description}</p>
-      <SkillContent content={query.data} />
+      <SkillContent
+        key={`${skillID}/${version}`}
+        content={query.data}
+        contentKey={`platform-admin/${skillID}/${version}`}
+        loadFile={(path, signal) =>
+          client.request<SkillFilePreview>(
+            `/skills/${encodeURIComponent(skillID)}/versions/${encodeURIComponent(version)}/content?path=${encodeURIComponent(path)}`,
+            { signal },
+          )
+        }
+      />
     </div>
+  );
+}
+
+function SystemSkillDownload({ skill }: { skill?: SystemSkill }) {
+  if (!skill?.default_version) return null;
+  return (
+    <SkillDownloadButton
+      url={`/api/platform-admin/skills/${encodeURIComponent(skill.id)}/versions/${encodeURIComponent(skill.default_version)}/content`}
+    />
   );
 }

@@ -150,3 +150,7 @@ func invalidSkillIcon() error {
 func consoleSkillDenied() error {
 	return apperr.New(apperr.PermissionDenied, "Workspace access required", nil)
 }
+
+func skillPreviewFileNotFound() error {
+	return apperr.New(apperr.NotFound, "文件不存在", nil)
+}

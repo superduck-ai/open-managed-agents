@@ -3462,5 +3462,10 @@
   "systemSkills.noAvailableVersions": "暂无可用版本",
   "skills.content.files": "文件目录",
   "skills.content.error": "技能内容加载失败。",
-  "skills.import.duplicateName": "已存在同名技能，请修改名称或使用“更新技能”。"
+  "skills.import.duplicateName": "已存在同名技能，请修改名称或使用“更新技能”。",
+  "skills.download": "下载 ZIP",
+  "skills.file.error": "文件预览加载失败。",
+  "skills.file.tooLarge": "文件超过 256 KiB，无法预览。",
+  "skills.file.unsupported": "无法预览此文件。",
+  "skills.download.action": "下载技能"
 }

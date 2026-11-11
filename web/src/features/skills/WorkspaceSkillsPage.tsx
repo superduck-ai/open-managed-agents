@@ -17,6 +17,8 @@ import { SkillImportDialog } from './SkillImportDialog';
 import { SkillDrawer, DeleteSkillDialog, SkillSourceBadge, useSkillSearchParam } from './SkillDetail';
 import {
   skillConsoleRequest,
+  downloadSkillPackage,
+  workspaceSkillContentUrl,
   inspectWorkspaceSkill,
   importWorkspaceSkill,
   updateWorkspaceSkillIcon,
@@ -204,6 +206,12 @@ export function SkillsPage({
                         name={skill.display_title || skill.id}
                         iconKey={skill.icon_key}
                         onUpdate={() => setUpload({ target: skill })}
+                        onDownload={() =>
+                          downloadSkillPackage(
+                            workspaceSkillContentUrl(workspaceId, skill.id, skill.latest_version),
+                            workspaceId,
+                          )
+                        }
                         onIcon={async (key) => {
                           await updateWorkspaceSkillIcon(workspaceId, skill.id, key);
                           await changed(skill.id);

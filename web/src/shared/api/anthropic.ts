@@ -315,6 +315,43 @@ export const anthropicBetaApi = {
       },
     },
   },
+  channels: {
+    authorization<T>(workspaceId: string, id?: string, body?: { name: string }) {
+      return sdkCall(() =>
+        getAnthropicClient().request<T>({
+          path: `/v1/channels/authorizations${id ? `/${encodeURIComponent(id)}` : ''}`,
+          method: body ? 'post' : 'get',
+          query: { beta: true },
+          headers: { ...anthropicRequestHeaders({ workspaceId }), 'anthropic-beta': 'managed-agents-2026-04-01' },
+          signal: getScopeSignal(),
+          ...(body ? { body } : {}),
+        }),
+      );
+    },
+    checkCredentials(workspaceId: string, body: { app_id: string; app_secret: string }) {
+      return sdkCall(() =>
+        getAnthropicClient().request<{ ok: boolean }>({
+          path: '/v1/channels/credentials/check',
+          method: 'post',
+          query: { beta: true },
+          headers: { ...anthropicRequestHeaders({ workspaceId }), 'anthropic-beta': 'managed-agents-2026-04-01' },
+          signal: getScopeSignal(),
+          body,
+        }),
+      );
+    },
+    list<T>(workspaceId: string) {
+      return sdkCall(() =>
+        getAnthropicClient().request<T>({
+          path: '/v1/channels',
+          method: 'get',
+          query: { beta: true },
+          headers: { ...anthropicRequestHeaders({ workspaceId }), 'anthropic-beta': 'managed-agents-2026-04-01' },
+          signal: getScopeSignal(),
+        }),
+      );
+    },
+  },
   agents: {
     channels<T>(
       agentId: string,

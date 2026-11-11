@@ -16,14 +16,18 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 type agentStore interface {
+	GetMemoryStore(context.Context, string, string) (db.MemoryStore, error)
+	GetVault(context.Context, string, string) (db.Vault, error)
 	GetAgent(context.Context, string, string) (db.Agent, error)
 	GetEnvironment(context.Context, string, string) (db.Environment, error)
 	EnsureChannelWorkspaceCredential(context.Context, platform.CreateConsoleAPIKeyInput, *secrets.Service) (string, error)
+	ListAgentsPage(context.Context, db.ListAgentsPageParams) ([]db.Agent, bool, error)
 }
 
 type handler struct {
@@ -31,12 +35,30 @@ type handler struct {
 	cfg    config.ChannelBridgeConfig
 	client *http.Client
 	cipher *secrets.Service
+	logger *slog.Logger
+}
+
+func newChannelHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger, cipher *secrets.Service) *handler {
+	return &handler{
+		store:  store,
+		cfg:    cfg,
+		cipher: cipher,
+		logger: logging.LoggerOrDefault(logger),
+		client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+	}
 }
 
 func NewHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger, cipher *secrets.Service) http.Handler {
-	h := &handler{store: store, cfg: cfg, cipher: cipher, client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return newChannelHandler(cfg, store, logger, cipher).agentRouter()
+}
+
+func NewWorkspaceHandler(cfg config.ChannelBridgeConfig, store agentStore, logger *slog.Logger, cipher *secrets.Service) http.Handler {
+	return newChannelHandler(cfg, store, logger, cipher).workspaceRouter()
+}
+
+func (h *handler) agentRouter() http.Handler {
 	r := chi.NewRouter()
-	wrap := httpapi.NewErrorAdapter(logger).Wrap
+	wrap := httpapi.NewErrorAdapter(h.logger).Wrap
 	r.Get("/", wrap(h.forward))
 	r.Post("/", wrap(h.forward))
 	r.Get("/settings", wrap(h.forward))
@@ -55,15 +77,8 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	if !ok || p.WorkspaceUUID == "" || p.OrganizationUUID == "" {
 		return unauthenticated()
 	}
-	if p.CredentialType == auth.CredentialTypePlatformSession {
-		switch r.Method {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-		default:
-			sessionKey := auth.ExtractPlatformSessionKey(r)
-			if sessionKey == "" || !auth.ValidatePlatformCSRFToken(sessionKey, r.Header.Get("X-CSRF-Token")) {
-				return csrfRejected()
-			}
-		}
+	if err := rejectBrowserCSRF(r, p); err != nil {
+		return err
 	}
 	agentID := chi.URLParam(r, "agent_id")
 	agent, err := h.store.GetAgent(r.Context(), p.WorkspaceUUID, agentID)
@@ -85,6 +100,11 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	runtimeRequired, err := requiresRuntime(w, r, settings)
 	if err != nil {
 		return err
+	}
+	if runtimeRequired {
+		if err := h.validateMounts(w, r, p.WorkspaceUUID); err != nil {
+			return err
+		}
 	}
 	endpoint, err := h.endpoint(r, settings)
 	if err != nil {
@@ -127,6 +147,22 @@ func (h *handler) forward(w http.ResponseWriter, r *http.Request) error {
 	w.WriteHeader(response.StatusCode)
 	_, err = w.Write(body)
 	return err
+}
+
+func rejectBrowserCSRF(r *http.Request, principal auth.Principal) error {
+	if principal.CredentialType != auth.CredentialTypePlatformSession {
+		return nil
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return nil
+	default:
+		sessionKey := auth.ExtractPlatformSessionKey(r)
+		if sessionKey == "" || !auth.ValidatePlatformCSRFToken(sessionKey, r.Header.Get("X-CSRF-Token")) {
+			return csrfRejected()
+		}
+		return nil
+	}
 }
 
 func (h *handler) endpoint(r *http.Request, settings bool) (*url.URL, error) {

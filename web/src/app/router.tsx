@@ -15,6 +15,10 @@ import { WorkspaceSettingsRedirect } from '../features/settings/WorkspaceSetting
 import { CachingPage, CostPage, LogsPage, RateLimitsPage, UsagePage } from '../features/analytics/AnalyticsPages';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ManagedAgentsPage } from '../features/managed-agents/ManagedAgentsPage';
+import { ChannelsPage } from '../features/managed-agents/channels/ChannelsPage';
+import { ChannelWizardPage } from '../features/managed-agents/channels/ChannelWizardPage';
+import { ChannelDetailPage } from '../features/managed-agents/channels/ChannelDetailPage';
+import { channelSessionsReturnTo } from '../features/managed-agents/sessions/sessionReturn';
 import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
 import { McpTunnelsPage } from '../features/mcp-tunnels/McpTunnelsPage';
@@ -254,6 +258,7 @@ const sessionDetailSearch = (search: Record<string, unknown>) => ({
     typeof search.trace_id === 'string' && search.trace_id.trim() && search.trace_id.trim().length <= 128
       ? search.trace_id.trim()
       : undefined,
+  returnTo: channelSessionsReturnTo(typeof search.returnTo === 'string' ? search.returnTo : undefined) ?? undefined,
 });
 
 const workspaceSessionDetailRoute = createRoute({
@@ -309,6 +314,66 @@ const workspaceEnvironmentDetailRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/environments/$environmentId',
   component: () => <ManagedAgentsPage section="environments" />,
+});
+
+const channelsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels',
+  component: ChannelsPage,
+});
+
+const channelCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels/new',
+  validateSearch: (search: Record<string, unknown>) => ({
+    agentId: typeof search.agentId === 'string' ? search.agentId : undefined,
+  }),
+  component: () => <ChannelWizardPage mode="create" />,
+});
+
+const channelDetailSearch = (search: Record<string, unknown>) => ({
+  tab: search.tab === 'sessions' ? ('sessions' as const) : undefined,
+});
+
+const channelDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels/$agentId/$channelId',
+  validateSearch: channelDetailSearch,
+  component: ChannelDetailPage,
+});
+
+const channelEditRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'channels/$agentId/$channelId/edit',
+  component: () => <ChannelWizardPage mode="edit" />,
+});
+
+const workspaceChannelsRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels',
+  component: ChannelsPage,
+});
+
+const workspaceChannelCreateRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels/new',
+  validateSearch: (search: Record<string, unknown>) => ({
+    agentId: typeof search.agentId === 'string' ? search.agentId : undefined,
+  }),
+  component: () => <ChannelWizardPage mode="create" />,
+});
+
+const workspaceChannelDetailRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels/$agentId/$channelId',
+  validateSearch: channelDetailSearch,
+  component: ChannelDetailPage,
+});
+
+const workspaceChannelEditRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'workspaces/$workspaceId/channels/$agentId/$channelId/edit',
+  component: () => <ChannelWizardPage mode="edit" />,
 });
 
 const credentialVaultsRoute = createRoute({
@@ -633,6 +698,14 @@ const routeTree = rootRoute.addChildren([
       environmentsRoute,
       workspaceEnvironmentsRoute,
       workspaceEnvironmentDetailRoute,
+      channelsRoute,
+      channelCreateRoute,
+      channelDetailRoute,
+      channelEditRoute,
+      workspaceChannelsRoute,
+      workspaceChannelCreateRoute,
+      workspaceChannelDetailRoute,
+      workspaceChannelEditRoute,
       credentialVaultsRoute,
       workspaceCredentialVaultsRoute,
       workspaceCredentialVaultDetailRoute,

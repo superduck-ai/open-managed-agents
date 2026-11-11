@@ -5,7 +5,7 @@ import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } from '@/shared/ui/dialog';
 import { SkillIconPicker } from './icons';
-import { filesFromDataTransfer, skillFilePath } from './files';
+import { filesFromDataTransfer, pickSkillFolder, skillFilePath } from './files';
 import { skillErrorMessage } from './errors';
 
 export type SkillImportMetadata = { id: string; name: string; existing: boolean; iconKey?: string; revision?: number };
@@ -151,6 +151,16 @@ export function SkillImportDialog({
       setBusy(false);
     }
   };
+  const chooseFolder = async () => {
+    setError('');
+    try {
+      const selection = pickSkillFolder();
+      if (selection) await select(await selection, true);
+      else folderInput.current?.click();
+    } catch (cause) {
+      if (!(cause instanceof DOMException && cause.name === 'AbortError')) setError(skillErrorMessage(cause, msg));
+    }
+  };
   const pending = entries.filter((entry) => !entry.done);
   const ready = pending.length > 0 && pending.every((entry) => entry.metadata && !entry.error && entry.name.trim());
   return (
@@ -205,13 +215,13 @@ export function SkillImportDialog({
                   <Upload size={14} aria-hidden />
                   {msg('skills.import.choosePackage', 'Choose skill package')}
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => folderInput.current?.click()}>
+                <Button variant="outline" size="sm" onClick={() => void chooseFolder()}>
                   <FolderOpen size={14} aria-hidden />
                   {msg('systemSkills.chooseFolder', 'Choose skill folder')}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                {msg('skills.import.formats', 'ZIP, SKILL or skill folder, up to 8 MiB')}
+                {msg('skills.import.formats', 'Drop a ZIP, SKILL or skill folder, up to 8 MiB')}
               </p>
             </div>
           ) : (

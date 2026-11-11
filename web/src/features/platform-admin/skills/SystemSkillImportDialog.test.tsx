@@ -9,10 +9,13 @@ import { SystemSkillImportDialog } from './SystemSkillImportDialog';
 
 const { cleanup, fireEvent, screen, waitFor } = await import('@testing-library/react');
 const originalFetch = globalThis.fetch;
+const originalPicker = Object.getOwnPropertyDescriptor(window, 'showDirectoryPicker');
 afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
   mock.restore();
+  if (originalPicker) Object.defineProperty(window, 'showDirectoryPicker', originalPicker);
+  else Reflect.deleteProperty(window, 'showDirectoryPicker');
 });
 
 function renderImport() {
@@ -54,6 +57,58 @@ test('检查失败保留文件且禁止导入', async () => {
   expect(screen.queryByRole('button', { name: '下一步' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '移除 broken.zip' }));
   expect(screen.queryByText('broken.zip')).toBeNull();
+});
+test('不支持目录接口时在点击事件内同步打开兼容选择框', () => {
+  const inputClick = spyOn(window.HTMLInputElement.prototype, 'click');
+  Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: undefined });
+  renderImport();
+  fireEvent.click(screen.getByRole('button', { name: '选择技能文件夹' }));
+  expect(inputClick).toHaveBeenCalledTimes(1);
+});
+
+test('取消原生目录选择后保持选择页，不出现错误或第二个选择框', async () => {
+  const inputClick = spyOn(window.HTMLInputElement.prototype, 'click');
+  Object.defineProperty(window, 'showDirectoryPicker', {
+    configurable: true,
+    value: mock(async () => {
+      throw new DOMException('Cancelled', 'AbortError');
+    }),
+  });
+  renderImport();
+  fireEvent.click(screen.getByRole('button', { name: '选择技能文件夹' }));
+  await waitFor(() => expect(window.showDirectoryPicker).toHaveBeenCalled());
+  expect(inputClick).not.toHaveBeenCalled();
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByRole('button', { name: '导入', exact: true })).toBeNull();
+});
+
+test('原生目录选择后复用检查和配置步骤，点击导入前不提交', async () => {
+  const bodies: FormData[] = [];
+  Object.defineProperty(window, 'showDirectoryPicker', {
+    configurable: true,
+    value: mock(async () => ({
+      name: 'demo',
+      async *values() {
+        yield { kind: 'file', name: 'SKILL.md', getFile: async () => new File(['# Demo'], 'SKILL.md') };
+      },
+    })),
+  });
+  globalThis.fetch = mock(async (url: RequestInfo | URL, options?: RequestInit) => {
+    bodies.push(options?.body as FormData);
+    return Response.json(
+      String(url).endsWith('/inspect')
+        ? { name: 'demo', existing: null }
+        : { skill: { id: 'demo', revision: 1 }, duplicate: false },
+    );
+  }) as typeof fetch;
+  const { onImported } = renderImport();
+  fireEvent.click(screen.getByRole('button', { name: '选择技能文件夹' }));
+  await screen.findByText('检查通过');
+  expect(bodies).toHaveLength(1);
+  expect(await (bodies[0].get('files[]') as File).text()).toBe('# Demo');
+  fireEvent.click(screen.getByRole('button', { name: '导入', exact: true }));
+  await waitFor(() => expect(onImported).toHaveBeenCalledWith('demo'));
+  expect(bodies).toHaveLength(2);
 });
 test('重复导入使用中文提示，正常完成导入流程', async () => {
   const info = spyOn(toast, 'info');

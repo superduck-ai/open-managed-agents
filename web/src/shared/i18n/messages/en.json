@@ -3427,7 +3427,7 @@
   "skills.import.choosePackage": "Choose skill package",
   "skills.import.nameFor": "Skill name for {file}",
   "skills.import.name": "Skill name",
-  "skills.import.formats": "ZIP, SKILL or skill folder, up to 8 MiB",
+  "skills.import.formats": "Drop a ZIP, SKILL or skill folder, up to 8 MiB",
   "skills.import.accessibleDescription": "Choose a skill package, check its contents, then configure its icon and name.",
   "skills.import.invalidType": "Choose a ZIP or SKILL package.",
   "skills.import.missingSkill": "The skill folder must contain SKILL.md at its root.",

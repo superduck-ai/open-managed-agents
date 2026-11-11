@@ -3427,7 +3427,7 @@
   "skills.import.choosePackage": "选择技能包",
   "skills.import.nameFor": "{file}的技能名称",
   "skills.import.name": "技能名称",
-  "skills.import.formats": "支持 ZIP、SKILL 或技能文件夹，最大 8 MiB",
+  "skills.import.formats": "拖入 ZIP、SKILL 或技能文件夹，最大 8 MiB",
   "skills.import.accessibleDescription": "选择技能包后，检查内容并配置图标和名称。",
   "skills.import.invalidType": "请选择 ZIP 或 SKILL 格式的技能包。",
   "skills.import.missingSkill": "技能文件夹根目录缺少 SKILL.md。",

@@ -20,7 +20,12 @@
     <insert id="InsertSkill" result="rows">
         INSERT INTO builtin_skills (uuid, external_id, display_title, icon_key, listed)
         VALUES (#{skill.UUID}, #{skill.ExternalID}, #{skill.DisplayTitle}, COALESCE(NULLIF(#{skill.IconKey}, ''), 'blocks'), false)
-        ON CONFLICT (external_id) DO NOTHING
+        ON CONFLICT (external_id) DO UPDATE SET
+            deleted_at = NULL, latest_version = NULL, listed = false,
+            display_title = EXCLUDED.display_title,
+            icon_key = CASE WHEN #{skill.IconKey} = '' THEN builtin_skills.icon_key ELSE EXCLUDED.icon_key END,
+            revision = builtin_skills.revision + 1, updated_at = now()
+        WHERE builtin_skills.deleted_at IS NOT NULL AND NOT builtin_skills.bundled
     </insert>
     <insert id="RegisterBundled" result="returning" resultType="SystemSkill">
         INSERT INTO builtin_skills (uuid, external_id, display_title, icon_key, latest_version, bundled_version, bundled, listed)

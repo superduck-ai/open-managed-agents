@@ -3,6 +3,7 @@
 package db
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -11,6 +12,77 @@ import (
 
 	"github.com/superduck-ai/yourbatis"
 )
+
+func TestSystemSkillReimportAfterDeletion(t *testing.T) {
+	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if address == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	for _, tc := range []struct {
+		name, version string
+		publish       bool
+	}{
+		{name: "new automatic version", version: "new-version"},
+		{name: "existing automatic version", version: "original-version"},
+		{name: "existing explicit published version", version: "original-version", publish: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
+			if _, err := provider.UpTo(ctx, 119); err != nil {
+				t.Fatal(err)
+			}
+			store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
+			actor := uuid.New().String()
+			input := SystemSkillImport{ActorUUID: actor, Ready: true,
+				Skill:   SystemSkill{UUID: uuid.New().String(), ExternalID: "deep-research", DisplayTitle: "Research", IconKey: "mic"},
+				Version: systemSkillRegressionVersion("deep-research", "original-version", time.Now()),
+			}
+			var previous SystemSkill
+			err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
+				var err error
+				previous, _, err = tx.ImportSystemSkill(ctx, input)
+				if err != nil {
+					return err
+				}
+				_, err = tx.ChangeSystemSkill(ctx, SystemSkillChange{ActorUUID: actor, SkillID: previous.ExternalID, Revision: previous.Revision, Action: "delete"})
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			input.Skill.UUID = uuid.New().String()
+			input.Skill.IconKey = ""
+			input.Version = systemSkillRegressionVersion("deep-research", tc.version, time.Now())
+			input.Ready, input.Publish = !tc.publish, tc.publish
+			input.ExpectedRevision = previous.Revision
+			err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
+				_, _, err := tx.ImportSystemSkill(ctx, input)
+				return err
+			})
+			if !errors.Is(err, ErrSystemSkillRevision) {
+				t.Fatalf("stale update must not revive deleted skill: %v", err)
+			}
+			if _, err := store.GetSystemSkill(ctx, previous.ExternalID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("rejected reimport revived deleted record: %v", err)
+			}
+			input.ExpectedRevision = 0
+			err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
+				_, _, err := tx.ImportSystemSkill(ctx, input)
+				return err
+			})
+			if err != nil {
+				t.Fatalf("reimport after deletion failed: %v", err)
+			}
+			restored, err := store.GetSystemSkill(ctx, previous.ExternalID)
+			if err != nil || restored.UUID != previous.UUID || restored.Listed != tc.publish || restored.LatestVersion == nil || *restored.LatestVersion != tc.version || restored.IconKey != "mic" || restored.Revision <= previous.Revision {
+				t.Fatalf("unexpected reimport state: %+v %v", restored, err)
+			}
+			if _, err := store.SystemSkillVersion(ctx, previous.UUID, "original-version"); err != nil {
+				t.Fatalf("reimport lost historical version: %v", err)
+			}
+		})
+	}
+}
 
 func TestSystemSkillPublishedPagination(t *testing.T) {
 	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")

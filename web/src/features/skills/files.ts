@@ -2,6 +2,31 @@ type SkillFile = File & {
   __skillPath?: string;
 };
 
+export function pickSkillFolder(): Promise<File[]> | null {
+  const pickerWindow = window as Window & {
+    showDirectoryPicker?: (options: { mode: 'read' }) => Promise<FileSystemDirectoryHandle>;
+  };
+  if (!pickerWindow.showDirectoryPicker) return null;
+  return pickerWindow
+    .showDirectoryPicker({ mode: 'read' })
+    .then((directory) => filesFromDirectoryHandle(directory, directory.name));
+}
+
+async function filesFromDirectoryHandle(directory: FileSystemDirectoryHandle, path: string): Promise<File[]> {
+  const files: File[] = [];
+  for await (const handle of directory.values()) {
+    const filePath = `${path}/${handle.name}`;
+    if (handle.kind === 'directory') {
+      files.push(...(await filesFromDirectoryHandle(handle, filePath)));
+    } else {
+      const file = await handle.getFile();
+      (file as SkillFile).__skillPath = filePath;
+      files.push(file);
+    }
+  }
+  return files;
+}
+
 export async function filesFromDataTransfer(dataTransfer: DataTransfer) {
   const entries = Array.from(dataTransfer.items ?? [])
     .map((item) => item.webkitGetAsEntry?.())

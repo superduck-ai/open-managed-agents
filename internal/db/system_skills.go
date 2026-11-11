@@ -69,13 +69,16 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 		return SystemSkill{}, false, err
 	}
 	previous, err := mapper.Version(ctx, skill.UUID, input.Version.Version)
+	duplicate := err == nil
 	if err == nil {
 		if previous.SHA256 != input.Version.SHA256 {
 			return SystemSkill{}, false, ErrVersionConflict
 		}
-		return skill, true, nil
+		if inserted == 0 {
+			return skill, true, nil
+		}
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SystemSkill{}, false, err
 	}
 	if (inserted == 0 && skill.Revision != input.ExpectedRevision) || (inserted == 1 && input.ExpectedRevision != 0) {
@@ -91,23 +94,23 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 		}
 	}
 	version := input.Version
-	version.SkillUUID, version.SkillExternalID = skill.UUID, skill.ExternalID
-	if err := mapper.InsertVersion(ctx, version); err != nil {
-		return SystemSkill{}, false, err
+	if duplicate {
+		version = previous
+		if input.Publish && version.State == "published" {
+			skill.LatestVersion, skill.Listed = new(version.Version), true
+		}
+	} else {
+		version.SkillUUID, version.SkillExternalID = skill.UUID, skill.ExternalID
+		if err := mapper.InsertVersion(ctx, version); err != nil {
+			return SystemSkill{}, false, err
+		}
 	}
 	published := false
 	if input.Ready {
-		changed, err := mapper.Publish(ctx, skill.UUID, version.Version)
+		published, err = activateSystemSkillVersion(ctx, mapper, &skill, version)
 		if err != nil {
 			return SystemSkill{}, false, err
 		}
-		if changed != 1 {
-			return SystemSkill{}, false, ErrInvalidState
-		}
-		if skill.LatestVersion == nil || skill.Bundled {
-			skill.LatestVersion = new(version.Version)
-		}
-		published = true
 		if input.Skill.IconKey != "" {
 			skill.IconKey = input.Skill.IconKey
 		}
@@ -131,7 +134,24 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 		}
 	}
 	result, err := mapper.Find(ctx, skill.ExternalID, false)
-	return result, false, err
+	return result, duplicate, err
+}
+
+func activateSystemSkillVersion(ctx context.Context, mapper SystemSkillMapper, skill *SystemSkill, version SystemSkillVersion) (bool, error) {
+	published := version.State != "published"
+	if published {
+		changed, err := mapper.Publish(ctx, skill.UUID, version.Version)
+		if err != nil {
+			return false, err
+		}
+		if changed != 1 {
+			return false, ErrInvalidState
+		}
+	}
+	if skill.LatestVersion == nil || skill.Bundled {
+		skill.LatestVersion = new(version.Version)
+	}
+	return published, nil
 }
 
 func saveSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill SystemSkill, actor, action, version string) error {

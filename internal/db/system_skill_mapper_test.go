@@ -58,7 +58,7 @@ func TestSystemSkillMapperWritesAndPages(t *testing.T) {
 		values   []any
 		fragment string
 	}{
-		{buildSystemSkillMapperInsertSkill(yourbatis.DialectPostgres, skill), []any{skill.UUID, skill.ExternalID, skill.DisplayTitle, skill.IconKey}, "ON CONFLICT (external_id) DO NOTHING"},
+		{buildSystemSkillMapperInsertSkill(yourbatis.DialectPostgres, skill), []any{skill.UUID, skill.ExternalID, skill.DisplayTitle, skill.IconKey, skill.IconKey}, "WHERE builtin_skills.deleted_at IS NOT NULL AND NOT builtin_skills.bundled"},
 		{buildSystemSkillMapperInsertVersion(yourbatis.DialectPostgres, version), []any{version.UUID, version.ExternalID, version.SkillUUID, version.SkillExternalID, version.Version, version.Name, version.Description, version.Directory, version.S3Bucket, version.S3Key, version.SizeBytes, version.SHA256, version.CreatedAt}, "'draft'"},
 		{buildSystemSkillMapperVersions(yourbatis.DialectPostgres, skill.UUID, false, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, uuid DESC"},
 		{buildSystemSkillMapperVersion(yourbatis.DialectPostgres, skill.UUID, "1"), []any{skill.UUID, "1"}, "deleted_at IS NULL"},

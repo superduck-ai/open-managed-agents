@@ -28,6 +28,7 @@
         ON CONFLICT (external_id) DO UPDATE SET
             bundled = true, display_title = EXCLUDED.display_title,
             bundled_version = EXCLUDED.bundled_version, deleted_at = NULL,
+            listed = CASE WHEN builtin_skills.deleted_at IS NOT NULL THEN true ELSE builtin_skills.listed END,
             latest_version = CASE WHEN builtin_skills.latest_version IS NULL
                 OR builtin_skills.latest_version = builtin_skills.bundled_version
                 OR builtin_skills.deleted_at IS NOT NULL

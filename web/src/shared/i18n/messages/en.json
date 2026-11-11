@@ -3388,6 +3388,8 @@
   "systemSkills.relist": "Relist skill",
   "systemSkills.versions": "Versions",
   "systemSkills.content": "Package contents",
+  "systemSkills.previewVersion": "Viewing {version}",
+  "systemSkills.duplicate": "This version already exists. Its content was not changed.",
   "systemSkills.events": "Activity",
   "systemSkills.confirmAction": "Confirm system skill change",
   "systemSkills.unlistImpact": "Hide this skill from the workspace catalog. Existing Agent references and sessions remain usable. This does not revoke execution.",

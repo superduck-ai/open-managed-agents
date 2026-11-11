@@ -10,10 +10,12 @@ import type { SystemSkill } from './types';
 
 export function SystemSkillDrawerHeader({
   skill,
+  version,
   pending,
   onChanged,
 }: {
   skill?: SystemSkill;
+  version: string | null;
   pending: boolean;
   onChanged: () => Promise<void>;
 }) {
@@ -22,7 +24,11 @@ export function SystemSkillDrawerHeader({
   return (
     <SheetHeader className="shrink-0 border-b-[0.5px] border-border px-4 py-4 pr-24">
       <div className="absolute right-4 top-4 flex items-center gap-1">
-        <SystemSkillDownload skill={skill} />
+        {skill && version && (
+          <SkillDownloadButton
+            url={`/api/platform-admin/skills/${encodeURIComponent(skill.id)}/versions/${encodeURIComponent(version)}/content`}
+          />
+        )}
         <SheetClose
           render={
             <Button variant="ghost" size="icon-sm" disabled={pending} aria-label={msg('common.close', 'Close')} />
@@ -60,14 +66,5 @@ export function SystemSkillDrawerHeader({
         </div>
       )}
     </SheetHeader>
-  );
-}
-
-function SystemSkillDownload({ skill }: { skill?: SystemSkill }) {
-  if (!skill?.default_version) return null;
-  return (
-    <SkillDownloadButton
-      url={`/api/platform-admin/skills/${encodeURIComponent(skill.id)}/versions/${encodeURIComponent(skill.default_version)}/content`}
-    />
   );
 }

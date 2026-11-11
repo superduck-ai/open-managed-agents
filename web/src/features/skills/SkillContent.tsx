@@ -49,7 +49,7 @@ function FileTree({
                   render={
                     <Button
                       variant="ghost"
-                      className="group h-auto w-full justify-start gap-2 px-2 py-1 text-left text-xs font-normal focus-visible:ring-0 focus-visible:border-transparent focus-visible:bg-accent"
+                      className="group h-auto w-full justify-start gap-2 px-2 py-1 text-left text-xs font-normal focus-visible:bg-accent"
                     />
                   }
                   title={node.path}
@@ -70,7 +70,7 @@ function FileTree({
             ) : (
               <Button
                 variant="ghost"
-                className="h-auto w-full justify-start gap-2 px-2 py-1 text-left text-xs font-normal data-[selected=true]:bg-accent focus-visible:ring-0 focus-visible:border-transparent focus-visible:bg-accent"
+                className="h-auto w-full justify-start gap-2 px-2 py-1 text-left text-xs font-normal data-[selected=true]:bg-accent focus-visible:bg-accent"
                 title={node.path}
                 aria-current={selected === node.path ? 'true' : undefined}
                 data-selected={selected === node.path}

@@ -12,6 +12,56 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+func TestBundledSkillRegistrationRestoresDeletedUploads(t *testing.T) {
+	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
+	if address == "" {
+		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
+	}
+	for _, action := range []string{"delete", "", "list"} {
+		t.Run("previous_action_"+action, func(t *testing.T) {
+			ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
+			if _, err := provider.UpTo(ctx, 119); err != nil {
+				t.Fatal(err)
+			}
+			store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
+			actor := uuid.New().String()
+			input := SystemSkill{UUID: uuid.New().String(), ExternalID: "xlsx", DisplayTitle: "Uploaded", IconKey: "mic"}
+			var previous SystemSkill
+			err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
+				var err error
+				previous, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{ActorUUID: actor, Ready: true, Skill: input, Version: systemSkillRegressionVersion("xlsx", "uploaded-1", time.Now())})
+				if err != nil || action == "" {
+					return err
+				}
+				previous, err = tx.ChangeSystemSkill(ctx, SystemSkillChange{ActorUUID: actor, SkillID: previous.ExternalID, Revision: previous.Revision, Action: action})
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := systemSkillRegressionVersion("xlsx", "bundled-1", time.Now())
+			if err := store.SyncBundledSkill(ctx, input, base); err != nil {
+				t.Fatal(err)
+			}
+			current, err := store.GetSystemSkill(ctx, input.ExternalID)
+			wantVersion := "uploaded-1"
+			if action == "delete" {
+				wantVersion = base.Version
+			}
+			if err != nil || current.UUID != input.UUID || !current.Bundled || current.Listed != (action != "") || current.LatestVersion == nil || *current.LatestVersion != wantVersion || current.IconKey != "mic" {
+				t.Fatalf("registration lost lifecycle state: %+v %v", current, err)
+			}
+			if err := store.SyncBundledSkill(ctx, input, base); err != nil {
+				t.Fatal(err)
+			}
+			restarted, err := store.GetSystemSkill(ctx, input.ExternalID)
+			if err != nil || restarted.Revision != current.Revision || restarted.Listed != current.Listed {
+				t.Fatalf("restart changed lifecycle state: %+v %v", restarted, err)
+			}
+		})
+	}
+}
+
 func TestBundledSkillLifecycle(t *testing.T) {
 	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
 	if address == "" {

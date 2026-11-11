@@ -791,6 +791,56 @@ describe('Skills page', () => {
       ).toBe(true),
     );
   });
+  test('keeps cards while paging and searching, and cancels superseded searches', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    const pending: Array<{ signal?: AbortSignal | null; finish: (response: Response) => void }> = [];
+    globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const params = new URL(String(input), window.location.origin).searchParams;
+      if (params.get('offset') === '0' && !params.get('query')) return Response.json({ ...catalog, total_count: 24 });
+      return new Promise<Response>((finish) => pending.push({ signal: init?.signal, finish }));
+    }) as typeof fetch;
+    renderSkillsPage();
+    await screen.findByRole('button', { name: custom.display_title, exact: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(pending).toHaveLength(1));
+    expect(screen.getByRole('button', { name: custom.display_title, exact: true })).toBeTruthy();
+    expect(screen.queryByText('Loading skills...')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Next page' })).toHaveProperty('disabled', true);
+    await act(async () => pending[0].finish(Response.json({ ...catalog, total_count: 24 })));
+    const search = screen.getByRole('textbox', { name: 'Search skills' });
+    fireEvent.change(search, { target: { value: 'first' } });
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(screen.getByRole('button', { name: custom.display_title, exact: true })).toBeTruthy();
+    fireEvent.change(search, { target: { value: 'second' } });
+    await waitFor(() => expect(pending).toHaveLength(3));
+    expect(pending[1].signal?.aborted).toBe(true);
+    await act(async () => pending[2].finish(Response.json({ ...catalog, data: [], total_count: 0 })));
+    expect(await screen.findByText('No matching skills')).toBeTruthy();
+    await act(async () => pending[1].finish(Response.json(catalog)));
+    expect(screen.queryByRole('button', { name: custom.display_title, exact: true })).toBeNull();
+  });
+
+  test('does not retain cards from the previous workspace while the new catalog loads', async () => {
+    resetTestDom('https://oma.duck.ai/workspaces/default/skills');
+    let finish!: (response: Response) => void;
+    globalThis.fetch = mock(async (input: RequestInfo | URL) =>
+      String(input).includes('/workspaces/default/')
+        ? Response.json(catalog)
+        : new Promise<Response>((resolve) => {
+            finish = resolve;
+          }),
+    ) as typeof fetch;
+    const view = renderSkillsPage();
+    await screen.findByRole('button', { name: custom.display_title, exact: true });
+    window.history.pushState(null, '', 'https://oma.duck.ai/workspaces/wrkspc_other/skills');
+    view.rerenderWorkspace({ id: 'wrkspc_other', name: 'Other' });
+    await waitFor(() => expect(finish).toBeDefined());
+    expect(screen.queryByRole('button', { name: custom.display_title, exact: true })).toBeNull();
+    expect(screen.getByText('Loading skills...')).toBeTruthy();
+    await act(async () => finish(Response.json({ ...catalog, data: [], total_count: 0 })));
+    expect(await screen.findByText('No matching skills')).toBeTruthy();
+  });
+
   test('clicking a card opens details and preserves read-only version information', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     fixture();

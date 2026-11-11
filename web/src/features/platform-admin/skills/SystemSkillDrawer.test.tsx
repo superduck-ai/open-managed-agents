@@ -8,9 +8,15 @@ import type { SystemSkill } from './types';
 
 const { cleanup, fireEvent, screen, waitFor } = await import('@testing-library/react');
 const originalFetch = globalThis.fetch;
+const originalCreate = URL.createObjectURL;
+const originalRevoke = URL.revokeObjectURL;
+const originalClick = window.HTMLAnchorElement.prototype.click;
 afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
+  URL.createObjectURL = originalCreate;
+  URL.revokeObjectURL = originalRevoke;
+  window.HTMLAnchorElement.prototype.click = originalClick;
 });
 const skill: SystemSkill = {
   id: 'demo',
@@ -97,6 +103,45 @@ test('详情默认展示技能包原文，不再显示概览和预置来源', as
   expect(screen.getByRole('tab', { name: '包内容' }).getAttribute('aria-selected')).toBe('true');
   expect(screen.queryByRole('tab', { name: '概览' })).toBeNull();
   expect(screen.queryByText('项目预置')).toBeNull();
+  expect(screen.queryByText(/正在查看/)).toBeNull();
+});
+
+test('历史版本提示与 ZIP 下载跟随当前预览，返回默认版本后隐藏提示', async () => {
+  const downloads: string[] = [];
+  URL.createObjectURL = mock(() => 'blob:skill');
+  URL.revokeObjectURL = mock(() => {});
+  window.HTMLAnchorElement.prototype.click = () => {};
+  globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+    const path = String(url);
+    if (path.endsWith('?download=1')) {
+      downloads.push(path);
+      return new Response('zip');
+    }
+    if (path.includes('/versions?'))
+      return Response.json({
+        data: ['1.0.0', '0.9.0'].map((version) => ({
+          id: version,
+          version,
+          description: '',
+          created_at: skill.created_at,
+        })),
+        has_more: false,
+      });
+    return Response.json(path.endsWith('/content') ? content : skill);
+  }) as typeof fetch;
+  renderDrawer();
+  await screen.findByRole('region', { name: 'demo/SKILL.md' });
+  for (const version of ['0.9.0', '1.0.0']) {
+    fireEvent.click(screen.getByRole('tab', { name: '版本' }));
+    fireEvent.click(await screen.findByRole('button', { name: version, exact: true }));
+    await screen.findByRole('region', { name: 'demo/SKILL.md' });
+    expect(screen.queryByText('正在查看 0.9.0') !== null).toBe(version === '0.9.0');
+    fireEvent.click(screen.getByRole('button', { name: '下载 ZIP' }));
+    await waitFor(() =>
+      expect(downloads).toContain(`/api/platform-admin/skills/demo/versions/${version}/content?download=1`),
+    );
+    await waitFor(() => expect(screen.getByRole('button', { name: '下载 ZIP' })).toHaveProperty('disabled', false));
+  }
 });
 
 test.each([

@@ -41,6 +41,7 @@ export function SystemSkillDrawer({
     queryFn: ({ signal }) => client.request<SystemSkill>(`/skills/${encodeURIComponent(skillID)}`, { signal }),
   });
   const skill = query.data;
+  const previewVersion = contentVersion ?? skill?.default_version ?? null;
   const confirm = (action: SystemAction, version = '') => {
     if (!skill) return;
     setError('');
@@ -76,7 +77,7 @@ export function SystemSkillDrawer({
           showOverlay={false}
           className="inset-y-2 right-2 h-auto w-[calc(100%-1rem)] max-w-[480px] min-h-0 gap-0 overflow-hidden rounded-xl border-[0.5px] p-0 sm:max-w-[480px]"
         >
-          <SystemSkillDrawerHeader skill={skill} pending={pending} onChanged={onChanged} />
+          <SystemSkillDrawerHeader skill={skill} version={previewVersion} pending={pending} onChanged={onChanged} />
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {query.isPending ? (
               <p role="status">{msg('common.loading', 'Loading...')}</p>
@@ -115,7 +116,12 @@ export function SystemSkillDrawer({
                       />
                     </TabsContent>
                     <TabsContent value="content">
-                      <SystemSkillContent skillID={skillID} version={contentVersion ?? skill.default_version} />
+                      {previewVersion && previewVersion !== skill.default_version && (
+                        <p className="mb-3 break-all text-xs text-muted-foreground">
+                          {msg('systemSkills.previewVersion', 'Viewing {version}', { version: previewVersion })}
+                        </p>
+                      )}
+                      <SystemSkillContent skillID={skillID} version={previewVersion} />
                     </TabsContent>
                     <TabsContent value="events">
                       <SystemSkillEvents skillID={skillID} />

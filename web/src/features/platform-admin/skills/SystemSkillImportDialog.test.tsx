@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
-import { afterEach, expect, mock, test } from 'bun:test';
+import { afterEach, expect, mock, spyOn, test } from 'bun:test';
+import { toast } from 'sonner';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderPlatformAdmin } from '../../../test/platform-admin';
 import { PlatformAdminClient } from '../../../shared/api/platform-admin';
@@ -11,6 +12,7 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   cleanup();
   globalThis.fetch = originalFetch;
+  mock.restore();
 });
 
 function renderImport() {
@@ -52,6 +54,22 @@ test('检查失败保留文件且禁止导入', async () => {
   expect(screen.queryByRole('button', { name: '下一步' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '移除 broken.zip' }));
   expect(screen.queryByText('broken.zip')).toBeNull();
+});
+test('重复导入使用中文提示，正常完成导入流程', async () => {
+  const info = spyOn(toast, 'info');
+  globalThis.fetch = mock(async (url: RequestInfo | URL) =>
+    Response.json(
+      String(url).endsWith('/inspect')
+        ? { name: 'demo', existing: null }
+        : { skill: { id: 'demo', revision: 1 }, duplicate: true },
+    ),
+  ) as typeof fetch;
+  const { onImported } = renderImport();
+  fireEvent.change(screen.getByLabelText('选择技能包'), { target: { files: [new File(['zip'], 'demo.zip')] } });
+  await screen.findByText('检查通过');
+  fireEvent.click(screen.getByRole('button', { name: '导入', exact: true }));
+  await waitFor(() => expect(info).toHaveBeenCalledWith('该版本已存在，内容未更改。'));
+  await waitFor(() => expect(onImported).toHaveBeenCalledWith('demo'));
 });
 test('统一两步导入传递图标，省略版本和草稿配置', async () => {
   const bodies: FormData[] = [];

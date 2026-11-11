@@ -71,11 +71,13 @@ export function SkillsPage({
   }, [workspaceId, setSelected]);
   const query = useQuery({
     queryKey: ['skills', workspaceId, 'catalog', source, search, sort, page],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       skillConsoleRequest<SkillCatalog>(
         workspaceId,
         `?${new URLSearchParams({ source, query: search, sort, offset: String(page * pageSize), limit: String(pageSize) })}`,
+        { signal },
       ),
+    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[1] === workspaceId ? previous : undefined),
     retry: false,
   });
   const changed = useCallback(
@@ -203,7 +205,7 @@ export function SkillsPage({
       ) : (
         <>
           {query.data.data.length ? (
-            <div className="skill-grid">
+            <div className="skill-grid" aria-busy={query.isFetching}>
               {query.data.data.map((skill) => (
                 <SkillCard
                   key={skill.id}

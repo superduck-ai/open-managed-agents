@@ -3388,6 +3388,8 @@
   "systemSkills.relist": "重新上架",
   "systemSkills.versions": "版本",
   "systemSkills.content": "包内容",
+  "systemSkills.previewVersion": "正在查看 {version}",
+  "systemSkills.duplicate": "该版本已存在，内容未更改。",
   "systemSkills.events": "操作记录",
   "systemSkills.confirmAction": "确认修改系统技能",
   "systemSkills.unlistImpact": "从工作区可选目录隐藏。已有 Agent 引用和会话继续可用；下架不会撤销执行能力。",

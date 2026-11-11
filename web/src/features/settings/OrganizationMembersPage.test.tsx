@@ -2,7 +2,7 @@ import '../../test/setup';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
-import { SettingsShell } from '../../app/layout/ConsoleLayout';
+import { ConsoleShell } from '../../app/layout/ConsoleLayout';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { I18nProvider } from '../../shared/i18n';
 import { defaultWorkspace } from '../../shared/workspaces/api';
@@ -282,7 +282,7 @@ describe('Organization members settings', () => {
 
     render(
       <OrganizationMembersHarness>
-        <SettingsShell
+        <ConsoleShell
           currentPath="/settings/members"
           account={{
             uuid: 'acct_test',
@@ -295,7 +295,7 @@ describe('Organization members settings', () => {
           onLogout={() => undefined}
         >
           <OrganizationMembersPage />
-        </SettingsShell>
+        </ConsoleShell>
       </OrganizationMembersHarness>,
     );
 

@@ -10,24 +10,27 @@ import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 import { downloadFile, formatBytes, errorMessage, type ConsoleFile } from './model';
 
 export function FileDetailsPage() {
-  const { fileId = '' } = useParams({ strict: false });
-  const { activeWorkspaceId, orgUuid } = useWorkspace();
+  const { fileId = '', workspaceId = '' } = useParams({ strict: false });
+  const { activeWorkspaceId, orgUuid, workspaces } = useWorkspace();
   const { msg } = useI18n();
   const navigate = useNavigate();
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
+  const workspaceExists = workspaces.some((workspace) => workspace.id === workspaceId);
+  const scopeReady = workspaceExists && activeWorkspaceId === workspaceId;
   const query = useQuery({
-    queryKey: ['file', orgUuid, activeWorkspaceId, fileId],
-    queryFn: () => anthropicBetaApi.files.retrieveMetadata<ConsoleFile>(fileId, activeWorkspaceId),
+    queryKey: ['file', orgUuid, workspaceId, fileId],
+    queryFn: () => anthropicBetaApi.files.retrieveMetadata<ConsoleFile>(fileId, workspaceId),
     retry: false,
+    enabled: scopeReady,
   });
-  const file = query.data;
+  const file = scopeReady ? query.data : undefined;
   const download = async () => {
     if (!file || downloading) return;
     setDownloading(true);
     setError('');
     try {
-      await downloadFile(file, activeWorkspaceId);
+      await downloadFile(file, workspaceId);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -39,7 +42,7 @@ export function FileDetailsPage() {
       <Button
         variant="ghost"
         size="sm"
-        onClick={() => void navigate({ href: `/workspaces/${encodeURIComponent(activeWorkspaceId)}/files` })}
+        onClick={() => void navigate({ href: `/workspaces/${encodeURIComponent(workspaceId)}/files` })}
       >
         <ArrowLeft className="size-4" />
         {msg('files.title', 'Files')}
@@ -55,7 +58,8 @@ export function FileDetailsPage() {
           )
         }
       />
-      {query.isLoading && <p role="status">{msg('files.loading', 'Loading files...')}</p>}
+      {workspaceExists && query.isPending && <p role="status">{msg('files.loading', 'Loading files...')}</p>}
+      {!workspaceExists && <p role="alert">{msg('common.accessDenied', 'Access denied')}</p>}
       {query.isError && (
         <div role="alert">
           <p>{errorMessage(query.error)}</p>

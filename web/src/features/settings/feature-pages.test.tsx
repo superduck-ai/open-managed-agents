@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { SettingsShell } from '../../app/layout/ConsoleLayout';
+import { ConsoleShell } from '../../app/layout/ConsoleLayout';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { I18nProvider } from '../../shared/i18n';
 import { ThemeProvider } from '../../shared/theme/ThemeProvider';
@@ -84,7 +84,7 @@ function renderSettingsFeature(
   setTestViewport(1280, 900);
   const tree = (
     <SettingsFeatureHarness>
-      <SettingsShell
+      <ConsoleShell
         currentPath={currentPath}
         account={{
           uuid: 'acct_test',
@@ -97,7 +97,7 @@ function renderSettingsFeature(
         onLogout={() => undefined}
       >
         {children}
-      </SettingsShell>
+      </ConsoleShell>
     </SettingsFeatureHarness>
   );
 

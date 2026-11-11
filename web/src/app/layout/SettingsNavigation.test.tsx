@@ -138,3 +138,20 @@ test('mobile drawer stays open for categories and closes after choosing a page',
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Sidebar' })).toBeNull());
   expect(screen.getByTestId('page').textContent).toBe('/settings/workspaces/default/keys');
 });
+
+test('documentation is a native external link with the localized URL', () => {
+  render(<Harness />);
+  const link = screen.getByRole('link', { name: 'Documentation' });
+  expect(link.getAttribute('href')).toBe('https://oma.mintlifysite.com/docs/en/overview');
+  expect(link.getAttribute('target')).toBe('_blank');
+  expect(link.hasAttribute('type')).toBe(false);
+  expect(link.hasAttribute('role')).toBe(false);
+});
+
+test('returning from settings preserves the application query and hash', () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/agent-quickstart?mode=api#online-test');
+  render(<Harness initial="/workspaces/default/agent-quickstart" />);
+  fireEvent.click(screen.getByRole('link', { name: 'Settings', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Back to app' }));
+  expect(screen.getByTestId('page').textContent).toBe('/workspaces/default/agent-quickstart?mode=api#online-test');
+});

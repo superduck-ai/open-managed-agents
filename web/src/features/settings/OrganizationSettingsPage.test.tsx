@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
-import { SettingsShell } from '../../app/layout/ConsoleLayout';
+import { ConsoleShell } from '../../app/layout/ConsoleLayout';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { type Organization, type OrganizationProfile } from '../../shared/organization/api';
 import { defaultWorkspace } from '../../shared/workspaces/api';
@@ -41,7 +41,7 @@ describe('Organization settings', () => {
 
     render(
       <OrganizationSettingsHarness>
-        <SettingsShell
+        <ConsoleShell
           currentPath="/settings/organization"
           account={{
             uuid: 'acct_test',
@@ -53,7 +53,7 @@ describe('Organization settings', () => {
           onLogout={() => undefined}
         >
           <OrganizationSettingsContent />
-        </SettingsShell>
+        </ConsoleShell>
       </OrganizationSettingsHarness>,
     );
 

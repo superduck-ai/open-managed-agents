@@ -21,6 +21,18 @@ afterEach(() => {
 });
 
 test.each([
+  { path: '/llm-models?from=notice#model-config', destination: '/settings/llm', heading: 'LLM models' },
+  {
+    path: '/workspaces/default/llm-models?from=notice#model-config',
+    destination: '/settings/llm',
+    heading: 'LLM models',
+  },
+  {
+    path: '/settings/workspaces/default/telemetry?from=notice#destinations',
+    destination: '/settings/telemetry',
+    heading: 'OpenTelemetry',
+  },
+  { path: '/members?from=notice#member-list', destination: '/settings/members', heading: 'Members' },
   { path: '/settings/billing', destination: '/billing', heading: 'Billing' },
   { path: '/settings/llm', destination: '/settings/llm', heading: 'LLM models' },
 ])('settings route $path reaches $destination', async ({ path, destination, heading }) => {
@@ -72,4 +84,7 @@ test.each([
   await waitFor(() => expect(router.state.location.pathname).toBe(destination));
   expect(screen.queryByText('This page has been retired')).toBeNull();
   expect(history.length).toBe(1);
+  const original = new URL(path, 'https://oma.duck.ai');
+  expect(router.state.location.hash).toBe(original.hash.slice(1));
+  expect(router.state.location.searchStr).toBe(original.search);
 });

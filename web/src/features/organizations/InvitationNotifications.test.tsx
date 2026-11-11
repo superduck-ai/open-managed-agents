@@ -57,7 +57,7 @@ function mount(fail = false) {
       </QueryClientProvider>
     </I18nProvider>,
   );
-  return writes;
+  return { writes, client };
 }
 
 test('invitation load failure offers retry without claiming zero pending invitations', async () => {
@@ -69,7 +69,7 @@ test('invitation load failure offers retry without claiming zero pending invitat
 });
 
 test('viewing keeps the count; processing updates the badge through the real API contract', async () => {
-  const writes = mount();
+  const { writes } = mount();
   fireEvent.click(await screen.findByRole('button', { name: 'Invitations, 2 pending' }));
   fireEvent.click(screen.getByRole('button', { name: /Research/ }));
   expect(await screen.findByRole('dialog')).toBeTruthy();
@@ -79,4 +79,50 @@ test('viewing keeps the count; processing updates the badge through the real API
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(writes).toEqual(['/api/invitations/0/decline']);
   expect(await screen.findByRole('button', { name: 'Invitations, 1 pending' })).toBeTruthy();
+});
+
+test('invitation details focus the container and return focus to the notification button', async () => {
+  const { writes } = mount();
+  const trigger = await screen.findByRole('button', { name: 'Invitations, 2 pending' });
+  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole('button', { name: /Research/ }));
+  const dialog = await screen.findByRole('dialog');
+  await waitFor(() => expect(document.activeElement).toBe(dialog));
+  for (const key of ['Enter', ' ']) {
+    fireEvent.keyDown(dialog, { key });
+    fireEvent.keyUp(dialog, { key });
+  }
+  expect(writes).toHaveLength(0);
+  expect(screen.getByRole('button', { name: 'Accept' })).not.toBe(document.activeElement);
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+});
+
+test('a late invitation list response cannot restore a declined invitation', async () => {
+  const { client } = mount();
+  const trigger = await screen.findByRole('button', { name: 'Invitations, 2 pending' });
+  const originalData = client.getQueryData(['invitations', 'account']);
+  let resolveOld!: (response: Response) => void;
+  let processed = false;
+  globalThis.fetch = mock(async (_input, init) => {
+    if (init?.method === 'POST') {
+      processed = true;
+      return Response.json({ id: '0', status: 'declined', organization_uuid: 'Research' });
+    }
+    if (!processed)
+      return new Promise<Response>((resolve) => {
+        resolveOld = resolve;
+      });
+    return Response.json({ data: [] });
+  }) as typeof fetch;
+  fireEvent.click(trigger);
+  await waitFor(() => expect(resolveOld).toBeDefined());
+  fireEvent.click(screen.getByRole('button', { name: /Research/ }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Decline' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(client.getQueryData(['invitations', 'account'])).toEqual({ data: [] });
+  resolveOld(Response.json(originalData));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(client.getQueryData(['invitations', 'account'])).toEqual({ data: [] });
+  expect(screen.getByRole('button', { name: 'Invitations, 0 pending' })).toBeTruthy();
 });

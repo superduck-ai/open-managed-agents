@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState, type ReactNode } from 'react';
+import { useContext, useState, type ReactNode } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import type { AuthAccount } from '../../shared/auth/api';
 import { AuthContext } from '../../shared/auth/context';
@@ -93,11 +93,6 @@ export function SettingsNavigation({
   const groups = visibleSettingsGroups(account, orgUuid);
   const selected = settingsItem(currentPath);
   const [expanded, setExpanded] = useState<string[]>([selected?.group.id || 'access']);
-  useEffect(() => {
-    if (selected) {
-      setExpanded([selected.group.id]);
-    }
-  }, [selected?.href, orgUuid]);
   const navigate = (href: string) => {
     if (onNavigate) void onNavigate(href);
     else window.location.assign(href);

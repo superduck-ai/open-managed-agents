@@ -30,7 +30,9 @@ export function readNavigationPosition(key: string, fallback: string) {
 export function saveNavigationPosition(key: string, value: string) {
   try {
     window.sessionStorage.setItem(key, value);
-  } catch {}
+  } catch {
+    return;
+  }
 }
 
 export function useSettingsHistory(
@@ -44,15 +46,15 @@ export function useSettingsHistory(
   const key = `oma.settings.page:${account?.uuid}:${orgUuid}`;
   const pages = visibleSettingsGroups(account, orgUuid).flatMap((group) => group.children);
   const remembered = readNavigationPosition(key, '/settings/llm');
-  const item = settingsItem(path);
+  const itemHref = settingsItem(path)?.href;
   useEffect(() => {
-    if (item) saveNavigationPosition(key, item.href);
+    if (itemHref) saveNavigationPosition(key, itemHref);
     if (!settings)
       saveWorkspaceManagementOrigin(account?.uuid, orgUuid, {
         href: path + window.location.search + window.location.hash,
         workspaceId,
       });
-  }, [account?.uuid, orgUuid, workspaceId, path, settings, key, item?.href]);
+  }, [account?.uuid, orgUuid, workspaceId, path, settings, key, itemHref]);
   return {
     settingsHref: navigationHref(
       pages.some((page) => page.href === remembered) ? remembered : '/settings/llm',

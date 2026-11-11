@@ -1,6 +1,6 @@
 import { useContext } from 'react';
 import { BookOpen, Menu } from 'lucide-react';
-import { Button } from '../../shared/ui/button';
+import { Button, ButtonLink } from '../../shared/ui/button';
 import { useSidebar } from '../../shared/ui/sidebar';
 import { useI18n } from '../../shared/i18n';
 import { AuthContext } from '../../shared/auth/context';
@@ -48,21 +48,17 @@ export function ConsoleTopbar({
       </div>
       <ConsoleSearch currentPath={currentPath} onNavigate={onNavigate} />
       <div className="flex items-center justify-end gap-2">
-        <Button
+        <ButtonLink
           variant="ghost"
           size="sm"
-          render={
-            <a
-              href={`https://oma.mintlifysite.com/docs/${locale === 'zh-CN' ? 'zh' : 'en'}/overview`}
-              target="_blank"
-              rel="noreferrer"
-            />
-          }
+          href={`https://oma.mintlifysite.com/docs/${locale === 'zh-CN' ? 'zh' : 'en'}/overview`}
+          target="_blank"
+          rel="noreferrer"
           aria-label={msg('nav.documentation', 'Documentation')}
         >
           <BookOpen className="size-4" />
           <span className="hidden lg:inline">{msg('nav.documentation', 'Documentation')}</span>
-        </Button>
+        </ButtonLink>
         {auth && !platformAdmin && <InvitationNotifications />}
       </div>
     </header>

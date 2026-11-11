@@ -1,5 +1,5 @@
 import { navigationHref, isActivePath, isWideConsolePath, isSessionDetailPath } from './navigation-paths';
-import { isSettingsPath, settingScope } from './settings-navigation';
+import { isSettingsPath, settingsItem, settingScope } from './settings-navigation';
 import { SettingsNavigation, SettingsLocation, SettingsAccess, CompactNavigationGroup } from './SettingsNavigation';
 import { useSettingsHistory, useResponsiveSidebar } from './use-settings-navigation';
 import { ConsoleTopbar } from './ConsoleTopbar';
@@ -176,8 +176,6 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
   );
 }
 
-export const SettingsShell = ConsoleShell;
-
 function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Omit<ConsoleShellProps, 'children'>) {
   const { msg } = useI18n();
   const { activeWorkspaceId, orgUuid, selectWorkspace, workspaces } = useWorkspace();
@@ -205,6 +203,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
       <AppSidebarContent className="console-sidebar-content scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         {settings ? (
           <SettingsNavigation
+            key={`${orgUuid}:${settingsItem(currentPath)?.href}`}
             account={account}
             currentPath={currentPath}
             onNavigate={navigate}

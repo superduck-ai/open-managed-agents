@@ -4,7 +4,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { productIcons } from '../../shared/icons/product-icons';
 import { consoleNavigation } from './navigation';
 import { navigationHref, isActivePath } from './navigation-paths';
-import { isSettingsPath, settingScope, settingsGroups, visibleSettingsGroups } from './settings-navigation';
+import {
+  isSettingsPath,
+  settingsItem,
+  settingScope,
+  settingsGroups,
+  visibleSettingsGroups,
+} from './settings-navigation';
 import { navigationSearchRecords } from '../../features/console-search/search-data';
 
 const account = {
@@ -93,4 +99,12 @@ test('retains channel navigation after consolidating workspace paths', () => {
   expect(isActivePath('/workspaces/team/channels/agent/channel', '/channels')).toBe(true);
   expect(isActivePath('/workspaces/default/channels', '/channels')).toBe(true);
   expect(isActivePath('/workspaces/team/channels-other', '/channels')).toBe(false);
+});
+
+test('legacy workspace telemetry uses organization settings before redirecting', () => {
+  const path = '/settings/workspaces/workspace-b/telemetry';
+  expect(isSettingsPath(path)).toBe(true);
+  expect(settingsItem(path)?.href).toBe('/settings/telemetry');
+  expect(settingsItem(path)?.group.id).toBe('activity');
+  expect(settingScope(path)).toBe('organization');
 });

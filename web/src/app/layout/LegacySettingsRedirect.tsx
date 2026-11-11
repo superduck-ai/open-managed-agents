@@ -17,7 +17,10 @@ export function LegacySettingsRedirect({ to }: { to: '/settings/llm' | '/setting
       selectWorkspace(workspaceId);
   }, [workspaceId, activeWorkspaceId, workspaces, selectWorkspace]);
   useEffect(() => {
-    void navigate({ href: to + location.searchStr, replace: true });
-  }, [navigate, to, location.searchStr]);
+    void navigate({
+      href: to + location.searchStr + (location.hash ? `#${encodeURI(location.hash)}` : ''),
+      replace: true,
+    });
+  }, [navigate, to, location.searchStr, location.hash]);
   return null;
 }

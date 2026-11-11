@@ -17,6 +17,7 @@ export function InvitationNotifications() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [processing, setProcessing] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const details = useRef<HTMLDivElement>(null);
   const query = useQuery({
     queryKey: ['invitations', account?.uuid],
     queryFn: listInvitations,
@@ -102,7 +103,13 @@ export function InvitationNotifications() {
           if (!next) setSelected(null);
         }}
       >
-        <DialogContent closeButtonDisabled={processing} finalFocus={trigger} className="sm:max-w-md">
+        <DialogContent
+          ref={details}
+          initialFocus={details}
+          closeButtonDisabled={processing}
+          finalFocus={trigger}
+          className="sm:max-w-md"
+        >
           <DialogHeader>
             <DialogTitle>{msg('invitations.title', 'Organization invitations')}</DialogTitle>
             <DialogDescription>

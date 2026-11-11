@@ -27,12 +27,11 @@ export function ConsoleSearch({
     : msg('search.console', 'Search console…');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [recent, setRecent] = useState<SearchRecord[]>([]);
   const auth = useContext(AuthContext);
   const { orgUuid, activeWorkspaceId } = useWorkspace();
-  useEffect(() => {
-    setRecent([]);
-  }, [auth?.account?.uuid, orgUuid, activeWorkspaceId]);
+  const scope = JSON.stringify([auth?.account?.uuid, platform?.bootstrap.account.uuid, orgUuid, activeWorkspaceId]);
+  const [history, setHistory] = useState<{ scope: string; records: SearchRecord[] }>({ scope, records: [] });
+  if (history.scope !== scope) setHistory({ scope, records: [] });
   const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -72,8 +71,8 @@ export function ConsoleSearch({
           </DialogDescription>
           <SearchContents
             searchTitle={searchTitle}
-            recent={recent}
-            onRecent={setRecent}
+            recent={history.records}
+            onRecent={(records) => setHistory({ scope, records })}
             currentPath={currentPath}
             query={query}
             onQuery={setQuery}

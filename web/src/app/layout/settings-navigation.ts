@@ -96,9 +96,12 @@ export function visibleSettingsGroups(account: AuthAccount | null | undefined, o
 }
 
 export function settingsItem(path: string) {
+  const canonicalPath = isActivePath(path, '/telemetry') ? '/settings/telemetry' : path;
   return settingsGroups
     .flatMap((group) => group.children.map((item) => ({ ...item, group })))
-    .find((item) => (item.href.startsWith('/settings/') ? path === item.href : isActivePath(path, item.href)));
+    .find((item) =>
+      item.href.startsWith('/settings/') ? canonicalPath === item.href : isActivePath(canonicalPath, item.href),
+    );
 }
 
 export function isSettingsPath(path: string) {
@@ -110,6 +113,7 @@ export function isSettingsPath(path: string) {
 }
 
 export function settingScope(path: string) {
+  if (isActivePath(path, '/telemetry')) return 'organization';
   if (path === '/usage' || path === '/cost' || /^\/workspaces\/[^/]+\/cost/.test(path)) return 'organization';
   if (path === '/settings/profile' || path === '/settings/appearance') return 'personal';
   if (path.startsWith('/settings/') && !/^\/settings\/workspaces\/[^/]+\//.test(path)) return 'organization';

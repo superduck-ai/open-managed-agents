@@ -55,7 +55,7 @@ export function SkillCodeBlock({ source, path }: { source: string; path: string 
     }
   }, [source, language]);
   return (
-    <pre className="skill-source">
+    <pre className="skill-source subtle-scrollbar focus-visible:bg-accent focus-visible:outline-none" tabIndex={0}>
       {html === null ? (
         <code className={`hljs language-${language}`}>{source}</code>
       ) : (

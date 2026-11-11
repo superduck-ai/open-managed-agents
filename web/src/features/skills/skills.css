@@ -212,6 +212,8 @@
 .skill-source {
   min-width: 0;
   max-width: 100%;
+  max-height: min(480px, 55dvh);
+  overflow-y: auto;
   margin: 0;
   padding: 16px;
   font-family: var(--font-mono);

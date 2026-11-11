@@ -25,9 +25,7 @@ func TestEvaluationTaskUsageAndAnswerPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.MarkEvaluationItemRunning(t.Context(), org, ws, created.Items[0].UUID, "sesn_eval_usage", now); err != nil {
-		t.Fatal(err)
-	}
+	startItem(t, d, org, ws, created.Items[0].UUID, "sesn_eval_usage", now)
 	for _, event := range []struct {
 		session string
 		kind    string
@@ -48,27 +46,102 @@ func TestEvaluationTaskUsageAndAnswerPostgres(t *testing.T) {
 		}
 	}
 
+	score, err := d.CreateEvaluationTaskScore(t.Context(), EvaluationTaskScore{
+		UUID: uuid.NewV4().String(), ExternalID: "evalscore_usage", OrganizationUUID: org, WorkspaceUUID: ws, TaskUUID: created.Task.UUID,
+		ItemUUID: created.Items[0].UUID, Status: "completed", Score: 90, Passed: true, Answer: "最终回答", Dimensions: json.RawMessage(`[]`),
+		JudgeInputTokens: 300, JudgeOutputTokens: 40, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if score.Answer != "最终回答" || score.JudgeInputTokens != 300 {
+		t.Fatalf("score = %+v", score)
+	}
 	usage, err := d.SumEvaluationTaskUsage(t.Context(), org, ws, created.Task.UUID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usage != (EvaluationTaskUsage{InputTokens: 15, OutputTokens: 4, CacheReadInputTokens: 2}) {
+	want := EvaluationTaskUsage{InputTokens: 15, OutputTokens: 4, CacheReadInputTokens: 2, JudgeInputTokens: 300, JudgeOutputTokens: 40}
+	if usage != want {
 		t.Fatalf("usage = %+v", usage)
 	}
 	empty, err := d.SumEvaluationTaskUsage(t.Context(), org, uuid.NewV4().String(), created.Task.UUID)
 	if err != nil || empty != (EvaluationTaskUsage{}) {
 		t.Fatalf("other workspace usage = %+v err=%v", empty, err)
 	}
+}
 
-	score, err := d.CreateEvaluationTaskScore(t.Context(), EvaluationTaskScore{
-		UUID: uuid.NewV4().String(), ExternalID: "evalscore_usage", OrganizationUUID: org, WorkspaceUUID: ws, TaskUUID: created.Task.UUID,
-		ItemUUID: created.Items[0].UUID, Status: "completed", Score: 90, Passed: true, Answer: "最终回答", Dimensions: json.RawMessage(`[]`), CreatedAt: now,
+func TestEvaluationTaskStartAndCancelPostgres(t *testing.T) {
+	d, _ := newTranscriptArchiveTestDB(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	org, ws := uuid.NewV4().String(), uuid.NewV4().String()
+	created, err := d.CreateEvaluationTask(ctx, evaluationTaskFixture(org, ws, "cancel"), []EvaluationTaskItem{
+		{UUID: uuid.NewV4().String(), ExternalID: "evalitem_c1_" + uuid.NewV4().String(), CaseExternalID: "c1", Round: 1, Position: 1, Query: "q1"},
+		{UUID: uuid.NewV4().String(), ExternalID: "evalitem_c2_" + uuid.NewV4().String(), CaseExternalID: "c2", Round: 1, Position: 2, Query: "q2"},
+		{UUID: uuid.NewV4().String(), ExternalID: "evalitem_c3_" + uuid.NewV4().String(), CaseExternalID: "c3", Round: 1, Position: 3, Query: "q3"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if score.Answer != "最终回答" {
-		t.Fatalf("answer = %q", score.Answer)
+	running, unstarted, waiting := created.Items[0], created.Items[1], created.Items[2]
+	startItem(t, d, org, ws, running.UUID, "sesn_cancel", now)
+	if claimed, err := d.ClaimEvaluationItem(ctx, org, ws, running.UUID, now); err != nil || claimed {
+		t.Fatalf("second claim = %v err=%v", claimed, err)
+	}
+	if attached, err := d.AttachEvaluationItemSession(ctx, org, ws, running.UUID, "sesn_other", now); err != nil || attached {
+		t.Fatalf("second attach = %v err=%v", attached, err)
+	}
+	if claimed, err := d.ClaimEvaluationItem(ctx, org, ws, unstarted.UUID, now.Add(-time.Hour)); err != nil || !claimed {
+		t.Fatalf("claim = %v err=%v", claimed, err)
+	}
+	listed, err := d.ListUnstartedEvaluationItems(ctx, now.Add(-time.Minute), 1000)
+	if err != nil || !containsItem(listed, unstarted.UUID) || containsItem(listed, running.UUID) {
+		t.Fatalf("unstarted = %d err=%v", len(listed), err)
+	}
+	if abandoned, err := d.AbandonEvaluationItem(ctx, org, ws, running.UUID, "中断", now); err != nil || abandoned {
+		t.Fatalf("abandon started item = %v err=%v", abandoned, err)
+	}
+
+	cancelled, err := d.CancelEvaluationTask(ctx, org, ws, created.Task.UUID, now)
+	if err != nil || len(cancelled) != 3 {
+		t.Fatalf("cancelled = %+v err=%v", cancelled, err)
+	}
+	sessions := map[string]string{}
+	for _, item := range cancelled {
+		sessions[item.UUID] = item.SessionExternalID
+	}
+	if sessions[running.UUID] != "sesn_cancel" || sessions[waiting.UUID] != "" {
+		t.Fatalf("cancelled sessions = %v", sessions)
+	}
+	if _, err := d.CancelEvaluationTask(ctx, org, ws, created.Task.UUID, now); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("second cancel err = %v", err)
+	}
+	if finished, err := d.FinishEvaluationTask(ctx, org, ws, created.Task.ExternalID, "completed", now); err != nil || finished {
+		t.Fatalf("finish cancelled = %v err=%v", finished, err)
+	}
+	detail, err := d.GetEvaluationTask(ctx, org, ws, created.Task.ExternalID)
+	if err != nil || detail.Task.Status != "cancelled" {
+		t.Fatalf("status = %s err=%v", detail.Task.Status, err)
+	}
+}
+
+func evaluationTaskFixture(org, ws, name string) EvaluationTask {
+	return EvaluationTask{
+		UUID: uuid.NewV4().String(), ExternalID: "evaltask_" + name + "_" + uuid.NewV4().String(), OrganizationUUID: org, WorkspaceUUID: ws, Name: name,
+		Mode: "evaluate", Status: "running", AgentExternalID: "agent_" + name, AgentVersion: 1, EnvironmentExternalID: "env_" + name,
+		DatasetExternalID: "evalds_" + name, DatasetVersionExternalID: "edv_" + name, RubricExternalID: "evalrb_" + name, RubricVersionExternalID: "erv_" + name,
+		PassScore: 60, VaultIDs: json.RawMessage(`[]`), Resources: json.RawMessage(`[]`), CreatedAt: time.Now().UTC(),
+	}
+}
+
+func startItem(t *testing.T, d *DB, org, ws, itemUUID, sessionID string, now time.Time) {
+	t.Helper()
+	if claimed, err := d.ClaimEvaluationItem(t.Context(), org, ws, itemUUID, now); err != nil || !claimed {
+		t.Fatalf("claim = %v err=%v", claimed, err)
+	}
+	if attached, err := d.AttachEvaluationItemSession(t.Context(), org, ws, itemUUID, sessionID, now); err != nil || !attached {
+		t.Fatalf("attach = %v err=%v", attached, err)
 	}
 }
 
@@ -122,9 +195,7 @@ func TestEvaluationTaskRetryAndSweepPostgres(t *testing.T) {
 		t.Fatalf("running retry err = %v", err)
 	}
 	for _, item := range created.Items {
-		if _, err := d.MarkEvaluationItemRunning(ctx, org, ws, item.UUID, "sesn_"+item.ExternalID, now.Add(-time.Hour)); err != nil {
-			t.Fatal(err)
-		}
+		startItem(t, d, org, ws, item.UUID, "sesn_"+item.ExternalID, now.Add(-time.Hour))
 	}
 	stale, err := d.ListStaleRunningEvaluationItems(ctx, now.Add(-time.Minute), 1000)
 	if err != nil || !containsItem(stale, created.Items[0].UUID) {
@@ -155,8 +226,8 @@ func TestEvaluationTaskRetryAndSweepPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := d.UpdateEvaluationTaskStatus(ctx, org, ws, created.Task.ExternalID, "completed", "", now); err != nil {
-		t.Fatal(err)
+	if finished, err := d.FinishEvaluationTask(ctx, org, ws, created.Task.ExternalID, "completed", now); err != nil || !finished {
+		t.Fatalf("finish = %v err=%v", finished, err)
 	}
 	if _, err := d.RetryEvaluationTask(ctx, org, uuid.NewV4().String(), created.Task.UUID, 1, now); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("other workspace retry err = %v", err)
@@ -172,8 +243,8 @@ func TestEvaluationTaskRetryAndSweepPostgres(t *testing.T) {
 	if detail.Task.Status != "running" || len(detail.Scores) != 1 || detail.Scores[0].Status != "completed" || detail.Scores[0].JudgeModel != "judge-model" {
 		t.Fatalf("detail status=%s scores=%+v", detail.Task.Status, detail.Scores)
 	}
-	if err := d.UpdateEvaluationTaskStatus(ctx, org, ws, created.Task.ExternalID, "completed", "", now); err != nil {
-		t.Fatal(err)
+	if finished, err := d.FinishEvaluationTask(ctx, org, ws, created.Task.ExternalID, "completed", now); err != nil || !finished {
+		t.Fatalf("finish = %v err=%v", finished, err)
 	}
 	if _, err := d.RetryEvaluationTask(ctx, org, ws, created.Task.UUID, 1, now); !errors.Is(err, ErrPreconditionFailed) {
 		t.Fatalf("empty retry err = %v", err)

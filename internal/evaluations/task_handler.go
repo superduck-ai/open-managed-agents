@@ -37,6 +37,9 @@ func (h *Handler) createTask(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if h.runner == nil {
+		return runnerMissing()
+	}
 	body, err := httpapi.DecodeObjectBodyAs[taskWriteRequest](w, r, 1<<20)
 	if err != nil {
 		return invalidArgument(invalidJSONMessage, err)
@@ -49,12 +52,8 @@ func (h *Handler) createTask(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapStoreError(err, taskNotFoundMessage, createFailedMessage)
 	}
-	h.startItems(r.Context(), principal, created.Task, created.Items)
-	detail, err := h.finishStartup(r.Context(), principal, created.Task.ExternalID)
-	if err != nil {
-		return err
-	}
-	return h.writeTaskDetail(w, r, principal, detail)
+	h.runner.Launch(r.Context(), principal, created.Task, created.Items)
+	return h.writeTaskDetail(w, r, principal, created)
 }
 
 func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) error {
@@ -130,20 +129,19 @@ func (h *Handler) cancelTask(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if h.runner == nil {
+		return runnerMissing()
+	}
 	taskID := chi.URLParam(r, "taskId")
 	detail, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
 	if err != nil {
 		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
-	if detail.Task.Status == "completed" || detail.Task.Status == "failed" || detail.Task.Status == "cancelled" {
-		return invalidState("This task can no longer be cancelled", nil)
+	if taskClosed(detail.Task.Status) {
+		return cancelUnavailable(nil)
 	}
-	now := time.Now().UTC()
-	if err := h.store.CancelPendingEvaluationItems(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, detail.Task.UUID, now); err != nil {
-		return internalFailure(createFailedMessage, err)
-	}
-	if err := h.store.UpdateEvaluationTaskStatus(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID, "cancelled", "", now); err != nil {
-		return internalFailure(createFailedMessage, err)
+	if err := h.runner.Cancel(r.Context(), principal, detail.Task); err != nil {
+		return err
 	}
 	return h.writeTask(w, r, principal, taskID)
 }
@@ -153,27 +151,26 @@ func (h *Handler) retryTask(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	if h.runner == nil {
+		return runnerMissing()
+	}
 	taskID := chi.URLParam(r, "taskId")
 	detail, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
 	if err != nil {
 		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
-	if detail.Task.Status != "completed" && detail.Task.Status != "failed" {
+	if !taskRetryable(detail.Task.Status) {
 		return invalidState(retryUnavailableMessage, nil)
 	}
-	retried, err := h.store.RetryEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, detail.Task.UUID, latestRound(detail.Items), time.Now().UTC())
-	if err != nil {
+	if _, err := h.store.RetryEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, detail.Task.UUID, latestRound(detail.Items), time.Now().UTC()); err != nil {
 		return retryStoreError(err)
 	}
-	if retried.ResetItems > 0 {
-		reloaded, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
-		if err != nil {
-			return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
-		}
-		h.startItems(r.Context(), principal, reloaded.Task, reloaded.Items)
+	reloaded, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
+	if err != nil {
+		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 	}
-	h.requestSettle(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
-	return h.writeTask(w, r, principal, taskID)
+	h.runner.Launch(r.Context(), principal, reloaded.Task, reloaded.Items)
+	return h.writeTaskDetail(w, r, principal, reloaded)
 }
 
 func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, body taskWriteRequest) (db.EvaluationTask, []db.EvaluationTaskItem, error) {
@@ -207,7 +204,7 @@ func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, bod
 	}
 	environment, err := h.store.GetEnvironment(ctx, principal.WorkspaceUUID, environmentID)
 	if err != nil {
-		return db.EvaluationTask{}, nil, mapStoreError(err, "Environment not found", loadFailedMessage)
+		return db.EvaluationTask{}, nil, mapStoreError(err, environmentNotFoundMessage, loadFailedMessage)
 	}
 	if environment.ArchivedAt != nil {
 		return db.EvaluationTask{}, nil, invalidState(archivedEnvironmentMessage, nil)
@@ -247,21 +244,17 @@ func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, bod
 		return db.EvaluationTask{}, nil, internalFailure(createFailedMessage, err)
 	}
 	now := time.Now().UTC()
-	baseline := ""
-	if agent.System != nil {
-		baseline = *agent.System
-	}
 	noted := rubricWithNotes(rubric.Body, body.Focus)
 	if len(noted) > maxRubricLength {
 		return db.EvaluationTask{}, nil, invalidArgument(rubricTooLongMessage, nil)
 	}
 	task := db.EvaluationTask{
 		UUID: uuid.NewString(), ExternalID: taskID, OrganizationUUID: principal.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID,
-		CreatedByUserUUID: principal.UserUUID, CreatedByAPIKeyUUID: principal.APIKeyUUID, Name: name, Mode: mode, Status: "pending",
+		CreatedByUserUUID: principal.UserUUID, CreatedByAPIKeyUUID: principal.APIKeyUUID, Name: name, Mode: mode, Status: taskRunning,
 		AgentExternalID: agent.ExternalID, AgentVersion: agent.CurrentVersion, EnvironmentExternalID: environment.ExternalID,
 		DatasetExternalID: dataset.ExternalID, DatasetVersionExternalID: dataset.VersionExternalID, RubricExternalID: rubric.ExternalID,
 		RubricVersionExternalID: rubric.VersionExternalID, PassScore: rubric.PassScore, RubricBody: noted, RubricModel: judgeModel,
-		Strategy: "", LowScoreThreshold: 60, OptimizeSystem: false, BaselineSystem: baseline, VaultIDs: vaultJSON, Resources: resources, CreatedAt: now,
+		VaultIDs: vaultJSON, Resources: resources, CreatedAt: now,
 	}
 	items := make([]db.EvaluationTaskItem, 0, len(cases))
 	for _, item := range cases {
@@ -272,7 +265,7 @@ func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, bod
 		items = append(items, db.EvaluationTaskItem{
 			UUID: uuid.NewString(), ExternalID: externalID, CaseExternalID: item.ExternalID, Round: 1, Position: item.Position,
 			Query: item.Query, ExpectedAnswer: item.ExpectedAnswer, ExpectedToolTrace: item.ExpectedToolTrace, Acceptance: item.Acceptance,
-			Inputs: item.Inputs, Status: "pending",
+			Inputs: item.Inputs, Status: itemPending,
 		})
 	}
 	return task, items, nil
@@ -301,7 +294,11 @@ func rubricWithNotes(body, focus string) string {
 	if text == "" {
 		return body
 	}
-	return body + "\n\n评测关注项：" + text
+	var builder strings.Builder
+	builder.WriteString(body)
+	builder.WriteString("\n\n")
+	writeTagged(&builder, focusTag, text)
+	return strings.TrimRight(builder.String(), "\n")
 }
 
 func normalizeTaskMode(body taskWriteRequest) (string, error) {
@@ -324,7 +321,7 @@ func (h *Handler) loadAgent(ctx context.Context, workspaceUUID, agentID string, 
 		agent, err = h.store.GetAgent(ctx, workspaceUUID, agentID)
 	}
 	if err != nil {
-		return db.Agent{}, mapStoreError(err, "Agent not found", loadFailedMessage)
+		return db.Agent{}, mapStoreError(err, agentNotFoundMessage, loadFailedMessage)
 	}
 	if agent.ArchivedAt != nil {
 		return db.Agent{}, invalidState(archivedAgentMessage, nil)
@@ -355,7 +352,7 @@ func normalizeVaults(values []string) ([]string, json.RawMessage, error) {
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
-			return nil, nil, invalidArgument("vault_ids cannot include an empty id", nil)
+			return nil, nil, invalidArgument(vaultEmptyMessage, nil)
 		}
 		cleaned = append(cleaned, value)
 	}
@@ -364,33 +361,6 @@ func normalizeVaults(values []string) ([]string, json.RawMessage, error) {
 		return nil, nil, internalFailure(createFailedMessage, err)
 	}
 	return cleaned, raw, nil
-}
-
-func (h *Handler) finishStartup(ctx context.Context, principal auth.Principal, taskID string) (db.EvaluationTaskDetail, error) {
-	detail, err := h.store.GetEvaluationTask(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
-	if err != nil {
-		return db.EvaluationTaskDetail{}, mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
-	}
-	status := "running"
-	if allTerminalFailed(detail.Items) {
-		status = "failed"
-	}
-	if err := h.store.UpdateEvaluationTaskStatus(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, taskID, status, "", time.Now().UTC()); err != nil {
-		return db.EvaluationTaskDetail{}, internalFailure(createFailedMessage, err)
-	}
-	return h.store.GetEvaluationTask(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
-}
-
-func allTerminalFailed(items []db.EvaluationTaskItem) bool {
-	if len(items) == 0 {
-		return true
-	}
-	for _, item := range items {
-		if item.Status != "failed" && item.Status != "cancelled" {
-			return false
-		}
-	}
-	return true
 }
 
 func (h *Handler) writeTask(w http.ResponseWriter, r *http.Request, principal auth.Principal, taskID string) error {

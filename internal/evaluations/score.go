@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	scoringPromptVersion   = "score-v3"
+	scoringPromptVersion   = "score-v4"
 	maxScoreDimensions     = 12
 	maxDimensionNameLength = 80
 	maxExplanationLength   = 4000
+	focusTag               = "evaluation_focus"
 )
 
 var errScoreParse = errors.New("score parse")

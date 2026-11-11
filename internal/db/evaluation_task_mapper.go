@@ -28,16 +28,9 @@ type evaluationTaskRow struct {
 	PassScore                int             `db:"pass_score"`
 	RubricBody               string          `db:"rubric_body"`
 	RubricModel              string          `db:"rubric_model"`
-	Strategy                 string          `db:"strategy"`
-	LowScoreThreshold        int             `db:"low_score_threshold"`
-	OptimizeSystem           bool            `db:"optimize_system"`
-	BaselineSystem           string          `db:"baseline_system"`
-	CandidateSystem          string          `db:"candidate_system"`
-	CandidateSummary         string          `db:"candidate_summary"`
 	ErrorMessage             string          `db:"error_message"`
 	VaultIDs                 json.RawMessage `db:"vault_ids"`
 	Resources                json.RawMessage `db:"resources"`
-	AppliedAt                *time.Time      `db:"applied_at"`
 	CreatedAt                time.Time       `db:"created_at"`
 	UpdatedAt                time.Time       `db:"updated_at"`
 }
@@ -83,6 +76,8 @@ type evaluationTaskScoreRow struct {
 	JudgeSystem        string          `db:"judge_system"`
 	JudgePrompt        string          `db:"judge_prompt"`
 	JudgeResponse      string          `db:"judge_response"`
+	JudgeInputTokens   int64           `db:"judge_input_tokens"`
+	JudgeOutputTokens  int64           `db:"judge_output_tokens"`
 	CreatedAt          time.Time       `db:"created_at"`
 }
 
@@ -96,6 +91,11 @@ type evaluationTaskUsageRow struct {
 	InputTokens          int64 `db:"input_tokens"`
 	OutputTokens         int64 `db:"output_tokens"`
 	CacheReadInputTokens int64 `db:"cache_read_input_tokens"`
+}
+
+type evaluationJudgeUsageRow struct {
+	JudgeInputTokens  int64 `db:"judge_input_tokens"`
+	JudgeOutputTokens int64 `db:"judge_output_tokens"`
 }
 
 type insertEvaluationTaskParams struct {
@@ -118,10 +118,6 @@ type insertEvaluationTaskParams struct {
 	PassScore                int
 	RubricBody               string
 	RubricModel              string
-	Strategy                 string
-	LowScoreThreshold        int
-	OptimizeSystem           bool
-	BaselineSystem           string
 	VaultIDs                 json.RawMessage
 	Resources                json.RawMessage
 	CreatedAt                time.Time
@@ -164,6 +160,8 @@ type insertEvaluationTaskScoreParams struct {
 	JudgeSystem        string
 	JudgePrompt        string
 	JudgeResponse      string
+	JudgeInputTokens   int64
+	JudgeOutputTokens  int64
 	CreatedAt          time.Time
 }
 
@@ -210,16 +208,21 @@ type EvaluationTaskMapper interface {
 	ListItemsByTasks(ctx context.Context, params evaluationTaskIDParams) ([]evaluationTaskItemRow, error)
 	ListScoresByTasks(ctx context.Context, params evaluationTaskIDParams) ([]evaluationTaskScoreRow, error)
 	ListRunningBySession(ctx context.Context, organizationUUID, workspaceUUID, sessionExternalID string) ([]evaluationTaskItemRow, error)
-	MarkItemRunning(ctx context.Context, params evaluationItemStatusParams) (int64, error)
+	ClaimItem(ctx context.Context, params evaluationItemStatusParams) (int64, error)
+	AttachItemSession(ctx context.Context, params evaluationItemStatusParams) (int64, error)
+	AbandonItem(ctx context.Context, params evaluationItemStatusParams) (int64, error)
 	FinishItem(ctx context.Context, params evaluationItemStatusParams) (int64, error)
 	TouchRunningItem(ctx context.Context, params evaluationItemStatusParams) (int64, error)
 	ResetFailedItems(ctx context.Context, params evaluationRoundParams) (int64, error)
-	CancelPendingItems(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string, updatedAt time.Time) (int64, error)
-	UpdateTaskStatus(ctx context.Context, params evaluationTaskStatusParams) (int64, error)
+	CancelOpenItems(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string, updatedAt time.Time) ([]evaluationTaskItemRow, error)
+	CancelTask(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string, updatedAt time.Time) (int64, error)
+	FinishTask(ctx context.Context, params evaluationTaskStatusParams) (int64, error)
 	InsertScore(ctx context.Context, params insertEvaluationTaskScoreParams) (evaluationTaskScoreRow, error)
 	DeleteFailedScores(ctx context.Context, params evaluationRoundParams) (int64, error)
 	RestartTask(ctx context.Context, params evaluationRoundParams) (int64, error)
 	ListSettleableTasks(ctx context.Context, updatedBefore time.Time, limit int) ([]evaluationTaskRefRow, error)
 	ListStaleRunningItems(ctx context.Context, updatedBefore time.Time, limit int) ([]evaluationTaskItemRow, error)
+	ListUnstartedItems(ctx context.Context, updatedBefore time.Time, limit int) ([]evaluationTaskItemRow, error)
+	SumJudgeUsage(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string) (evaluationJudgeUsageRow, error)
 	SumTaskUsage(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string) (evaluationTaskUsageRow, error)
 }

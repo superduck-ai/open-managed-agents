@@ -3641,6 +3641,8 @@
   "evaluations.inputTokens": "输入 Tokens",
   "evaluations.outputTokens": "输出 Tokens",
   "evaluations.cacheReadTokens": "缓存读取 Tokens",
+  "evaluations.judgeInputTokens": "评审输入 Tokens",
+  "evaluations.judgeOutputTokens": "评审输出 Tokens",
   "evaluations.mountedResources": "挂载资源",
   "evaluations.vaults": "凭据库",
   "evaluations.itemCount": "{count} 项",

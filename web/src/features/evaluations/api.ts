@@ -120,6 +120,8 @@ export type EvaluationUsage = {
   input_tokens: number;
   output_tokens: number;
   cache_read_input_tokens: number;
+  judge_input_tokens: number;
+  judge_output_tokens: number;
 };
 
 export type EvaluationTraceStep = {

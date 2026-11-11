@@ -3641,6 +3641,8 @@
   "evaluations.inputTokens": "Input tokens",
   "evaluations.outputTokens": "Output tokens",
   "evaluations.cacheReadTokens": "Cache read tokens",
+  "evaluations.judgeInputTokens": "Judge input tokens",
+  "evaluations.judgeOutputTokens": "Judge output tokens",
   "evaluations.mountedResources": "Mounted resources",
   "evaluations.vaults": "Vaults",
   "evaluations.itemCount": "{count} items",

@@ -53,6 +53,13 @@ const (
 	modelMissingMessage           = "No workspace model is configured"
 	starterMissingMessage         = "Evaluation sessions are not configured"
 	retryUnavailableMessage       = "Only a finished evaluation task can retry failed cases"
+	cancelUnavailableMessage      = "This task can no longer be cancelled"
+	startInterruptedMessage       = "Evaluation session did not start"
+	agentNotFoundMessage          = "Agent not found"
+	environmentNotFoundMessage    = "Environment not found"
+	sessionNotFoundMessage        = "Session not found"
+	versionConflictMessage        = "Agent version conflict"
+	vaultEmptyMessage             = "vault_ids cannot include an empty id"
 	scoreParseFailedMessage       = "Could not parse evaluator score"
 	scoreSessionTooLargeMessage   = "Session has too many events to score"
 	sessionTerminatedMessage      = "Session terminated"
@@ -75,6 +82,21 @@ func retryStoreError(err error) error {
 		return invalidState(retryUnavailableMessage, err)
 	}
 	return internalFailure(createFailedMessage, err)
+}
+
+func cancelUnavailable(cause error) error {
+	return invalidState(cancelUnavailableMessage, cause)
+}
+
+func cancelStoreError(err error) error {
+	if errors.Is(err, db.ErrInvalidState) {
+		return cancelUnavailable(err)
+	}
+	return internalFailure(createFailedMessage, err)
+}
+
+func runnerMissing() error {
+	return unavailable(starterMissingMessage, nil)
 }
 
 func invalidArgument(message string, cause error) error {
@@ -110,7 +132,7 @@ func mapStoreError(err error, notFoundMessage, failureMessage string) error {
 	case errors.Is(err, db.ErrDuplicate):
 		return conflict(duplicateMessage, err)
 	case errors.Is(err, db.ErrVersionConflict):
-		return conflict("Agent version conflict", err)
+		return conflict(versionConflictMessage, err)
 	case errors.Is(err, db.ErrInvalidState):
 		return invalidState(archivedAgentMessage, err)
 	default:

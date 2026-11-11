@@ -25,7 +25,7 @@ func SummarizeRound(items []db.EvaluationTaskItem, scores []db.EvaluationTaskSco
 		}
 		summary.Total++
 		score, ok := scoreByItem[item.UUID]
-		if item.Status != "completed" || !ok || score.Status != "completed" {
+		if item.Status != itemCompleted || !ok || score.Status != scoreCompleted {
 			summary.Exceptions++
 			continue
 		}
@@ -61,7 +61,7 @@ func roundSettled(items []db.EvaluationTaskItem, round int) bool {
 			continue
 		}
 		seen = true
-		if item.Status == "pending" || item.Status == "running" {
+		if itemOpen(item.Status) {
 			return false
 		}
 	}

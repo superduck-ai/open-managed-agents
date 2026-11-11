@@ -20,16 +20,9 @@
         pass_score,
         rubric_body,
         rubric_model,
-        strategy,
-        low_score_threshold,
-        optimize_system,
-        baseline_system,
-        candidate_system,
-        candidate_summary,
         error_message,
         vault_ids,
         resources,
-        applied_at,
         created_at,
         updated_at
     </sql>
@@ -75,6 +68,8 @@
         judge_system,
         judge_prompt,
         judge_response,
+        judge_input_tokens,
+        judge_output_tokens,
         created_at
     </sql>
 
@@ -83,8 +78,7 @@
             uuid, external_id, organization_uuid, workspace_uuid, created_by_user_uuid, created_by_api_key_uuid,
             name, mode, status, agent_external_id, agent_version, environment_external_id,
             dataset_external_id, dataset_version_external_id, rubric_external_id, rubric_version_external_id,
-            pass_score, rubric_body, rubric_model, strategy, low_score_threshold, optimize_system,
-            baseline_system, vault_ids, resources, created_at, updated_at
+            pass_score, rubric_body, rubric_model, vault_ids, resources, created_at, updated_at
         ) VALUES (
             #{params.UUID},
             #{params.ExternalID},
@@ -105,10 +99,6 @@
             #{params.PassScore},
             #{params.RubricBody},
             #{params.RubricModel},
-            #{params.Strategy},
-            #{params.LowScoreThreshold},
-            #{params.OptimizeSystem},
-            #{params.BaselineSystem},
             CAST(#{params.VaultIDs} AS jsonb),
             CAST(#{params.Resources} AS jsonb),
             #{params.CreatedAt},
@@ -207,16 +197,39 @@
         AND status = 'running'
     </select>
 
-    <update id="MarkItemRunning" result="rows">
+    <update id="ClaimItem" result="rows">
         UPDATE evaluation_task_items
         SET status = 'running',
-            session_external_id = #{params.SessionExternalID},
+            session_external_id = '',
             error_message = '',
             updated_at = #{params.UpdatedAt}
         WHERE uuid = #{params.UUID}
         AND organization_uuid = #{params.OrganizationUUID}
         AND workspace_uuid = #{params.WorkspaceUUID}
         AND status = 'pending'
+    </update>
+
+    <update id="AttachItemSession" result="rows">
+        UPDATE evaluation_task_items
+        SET session_external_id = #{params.SessionExternalID},
+            updated_at = #{params.UpdatedAt}
+        WHERE uuid = #{params.UUID}
+        AND organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND status = 'running'
+        AND session_external_id = ''
+    </update>
+
+    <update id="AbandonItem" result="rows">
+        UPDATE evaluation_task_items
+        SET status = 'failed',
+            error_message = #{params.ErrorMessage},
+            updated_at = #{params.UpdatedAt}
+        WHERE uuid = #{params.UUID}
+        AND organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND status IN ('pending', 'running')
+        AND session_external_id = ''
     </update>
 
     <update id="FinishItem" result="rows">
@@ -252,17 +265,28 @@
         AND status = 'failed'
     </update>
 
-    <update id="CancelPendingItems" result="rows">
+    <update id="CancelOpenItems" result="returning" resultType="evaluationTaskItemRow">
         UPDATE evaluation_task_items
         SET status = 'cancelled',
             updated_at = #{updatedAt}
         WHERE organization_uuid = #{organizationUUID}
         AND workspace_uuid = #{workspaceUUID}
         AND task_uuid = #{taskUUID}
-        AND status = 'pending'
+        AND status IN ('pending', 'running')
+        RETURNING <include refid="itemColumns"/>
     </update>
 
-    <update id="UpdateTaskStatus" result="rows">
+    <update id="CancelTask" result="rows">
+        UPDATE evaluation_tasks
+        SET status = 'cancelled',
+            updated_at = #{updatedAt}
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND uuid = #{taskUUID}
+        AND status IN ('pending', 'running')
+    </update>
+
+    <update id="FinishTask" result="rows">
         UPDATE evaluation_tasks
         SET status = #{params.Status},
             error_message = #{params.ErrorMessage},
@@ -270,14 +294,15 @@
         WHERE organization_uuid = #{params.OrganizationUUID}
         AND workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
-        AND status IN ('pending', 'running', 'completed', 'failed')
+        AND status = 'running'
     </update>
 
     <insert id="InsertScore" result="returning" resultType="evaluationTaskScoreRow">
         INSERT INTO evaluation_task_scores (
             uuid, external_id, organization_uuid, workspace_uuid, task_uuid, item_uuid,
             status, score, passed, explanation, answer, dimensions, error_message,
-            judge_model, judge_prompt_version, judge_system, judge_prompt, judge_response, created_at
+            judge_model, judge_prompt_version, judge_system, judge_prompt, judge_response,
+            judge_input_tokens, judge_output_tokens, created_at
         ) VALUES (
             #{params.UUID},
             #{params.ExternalID},
@@ -297,6 +322,8 @@
             #{params.JudgeSystem},
             #{params.JudgePrompt},
             #{params.JudgeResponse},
+            #{params.JudgeInputTokens},
+            #{params.JudgeOutputTokens},
             #{params.CreatedAt}
         )
         RETURNING <include refid="scoreColumns"/>
@@ -355,6 +382,25 @@
         AND updated_at &lt; #{updatedBefore}
         ORDER BY updated_at ASC, uuid ASC
         LIMIT #{limit}
+    </select>
+
+    <select id="ListUnstartedItems" resultType="evaluationTaskItemRow">
+        SELECT <include refid="itemColumns"/>
+        FROM evaluation_task_items
+        WHERE (status = 'pending' OR (status = 'running' AND session_external_id = ''))
+        AND updated_at &lt; #{updatedBefore}
+        ORDER BY updated_at ASC, uuid ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="SumJudgeUsage" resultType="evaluationJudgeUsageRow">
+        SELECT
+            COALESCE(SUM(judge_input_tokens), 0) AS judge_input_tokens,
+            COALESCE(SUM(judge_output_tokens), 0) AS judge_output_tokens
+        FROM evaluation_task_scores
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND task_uuid = #{taskUUID}
     </select>
 
     <select id="SumTaskUsage" resultType="evaluationTaskUsageRow">

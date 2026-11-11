@@ -61,15 +61,71 @@ func TestEvaluationScoreInsertBindsAnswerAndJudge(t *testing.T) {
 	params := insertEvaluationTaskScoreParams{
 		UUID: "score", ExternalID: "evalscore_test", OrganizationUUID: "org", WorkspaceUUID: "ws", TaskUUID: "task", ItemUUID: "item",
 		Status: "completed", Score: 80, Passed: true, Explanation: "ok", Answer: "最终回答", Dimensions: []byte(`[]`),
-		JudgeModel: "judge-model", JudgePromptVersion: "score-v2", JudgeSystem: "系统", JudgePrompt: "提示词", JudgeResponse: "模型返回", CreatedAt: now,
+		JudgeModel: "judge-model", JudgePromptVersion: "score-v2", JudgeSystem: "系统", JudgePrompt: "提示词", JudgeResponse: "模型返回",
+		JudgeInputTokens: 120, JudgeOutputTokens: 30, CreatedAt: now,
 	}
 	bound := buildEvaluationTaskMapperInsertScore(yourbatis.DialectPostgres, params)
-	if !strings.Contains(bound.SQL, "judge_system, judge_prompt, judge_response") || !strings.Contains(bound.SQL, "RETURNING") {
+	if !strings.Contains(bound.SQL, "judge_system, judge_prompt, judge_response") || !strings.Contains(bound.SQL, "judge_input_tokens, judge_output_tokens") {
 		t.Fatalf("SQL = %s", bound.SQL)
 	}
 	values := bound.Values()
-	if len(values) != 19 || values[10] != "最终回答" || values[13] != "judge-model" || values[15] != "系统" || values[17] != "模型返回" {
+	if len(values) != 21 || values[10] != "最终回答" || values[13] != "judge-model" || values[15] != "系统" || values[17] != "模型返回" {
 		t.Fatalf("values = %#v", values)
+	}
+	if values[18] != int64(120) || values[19] != int64(30) {
+		t.Fatalf("judge token values = %#v", values[18:20])
+	}
+}
+
+func TestEvaluationItemStartStatementsGuardTransitions(t *testing.T) {
+	now := time.Date(2026, 11, 11, 7, 0, 0, 0, time.UTC)
+	params := evaluationItemStatusParams{UUID: "item", OrganizationUUID: "org", WorkspaceUUID: "ws", SessionExternalID: "sesn_1", ErrorMessage: "中断", UpdatedAt: now}
+	claimed := buildEvaluationTaskMapperClaimItem(yourbatis.DialectPostgres, params)
+	if !strings.Contains(claimed.SQL, "session_external_id = ''") || !strings.Contains(claimed.SQL, "status = 'pending'") {
+		t.Fatalf("claim SQL = %s", claimed.SQL)
+	}
+	if want := []any{now, "item", "org", "ws"}; !reflect.DeepEqual(claimed.Values(), want) {
+		t.Fatalf("claim values = %#v", claimed.Values())
+	}
+	attached := buildEvaluationTaskMapperAttachItemSession(yourbatis.DialectPostgres, params)
+	if !strings.Contains(attached.SQL, "status = 'running'") || !strings.Contains(attached.SQL, "AND session_external_id = ''") {
+		t.Fatalf("attach SQL = %s", attached.SQL)
+	}
+	if want := []any{"sesn_1", now, "item", "org", "ws"}; !reflect.DeepEqual(attached.Values(), want) {
+		t.Fatalf("attach values = %#v", attached.Values())
+	}
+	abandoned := buildEvaluationTaskMapperAbandonItem(yourbatis.DialectPostgres, params)
+	if !strings.Contains(abandoned.SQL, "status IN ('pending', 'running')") || !strings.Contains(abandoned.SQL, "AND session_external_id = ''") {
+		t.Fatalf("abandon SQL = %s", abandoned.SQL)
+	}
+	unstarted := buildEvaluationTaskMapperListUnstartedItems(yourbatis.DialectPostgres, now, 20)
+	if !strings.Contains(unstarted.SQL, "status = 'pending' OR (status = 'running' AND session_external_id = '')") {
+		t.Fatalf("unstarted SQL = %s", unstarted.SQL)
+	}
+	if want := []any{now, 20}; !reflect.DeepEqual(unstarted.Values(), want) {
+		t.Fatalf("unstarted values = %#v", unstarted.Values())
+	}
+}
+
+func TestEvaluationTaskStatusStatementsGuardTransitions(t *testing.T) {
+	now := time.Date(2026, 11, 11, 7, 0, 0, 0, time.UTC)
+	finished := buildEvaluationTaskMapperFinishTask(yourbatis.DialectPostgres, evaluationTaskStatusParams{
+		OrganizationUUID: "org", WorkspaceUUID: "ws", ExternalID: "evaltask_1", Status: "completed", UpdatedAt: now,
+	})
+	if !strings.Contains(finished.SQL, "AND status = 'running'") {
+		t.Fatalf("finish SQL = %s", finished.SQL)
+	}
+	cancelled := buildEvaluationTaskMapperCancelTask(yourbatis.DialectPostgres, "org", "ws", "task", now)
+	if !strings.Contains(cancelled.SQL, "status IN ('pending', 'running')") || !reflect.DeepEqual(cancelled.Values(), []any{now, "org", "ws", "task"}) {
+		t.Fatalf("cancel SQL = %s values = %#v", cancelled.SQL, cancelled.Values())
+	}
+	items := buildEvaluationTaskMapperCancelOpenItems(yourbatis.DialectPostgres, "org", "ws", "task", now)
+	if !strings.Contains(items.SQL, "status IN ('pending', 'running')") || !strings.Contains(items.SQL, "RETURNING") {
+		t.Fatalf("cancel items SQL = %s", items.SQL)
+	}
+	usage := buildEvaluationTaskMapperSumJudgeUsage(yourbatis.DialectPostgres, "org", "ws", "task")
+	if !strings.Contains(usage.SQL, "SUM(judge_input_tokens)") || !reflect.DeepEqual(usage.Values(), []any{"org", "ws", "task"}) {
+		t.Fatalf("judge usage SQL = %s values = %#v", usage.SQL, usage.Values())
 	}
 }
 

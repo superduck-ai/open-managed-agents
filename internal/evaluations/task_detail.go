@@ -19,6 +19,8 @@ type usageResponse struct {
 	InputTokens          int64 `json:"input_tokens"`
 	OutputTokens         int64 `json:"output_tokens"`
 	CacheReadInputTokens int64 `json:"cache_read_input_tokens"`
+	JudgeInputTokens     int64 `json:"judge_input_tokens"`
+	JudgeOutputTokens    int64 `json:"judge_output_tokens"`
 }
 
 type traceStepResponse struct {
@@ -58,6 +60,7 @@ func (h *Handler) taskDetailJSON(ctx context.Context, principal auth.Principal, 
 	}
 	response.Usage = &usageResponse{
 		InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheReadInputTokens: usage.CacheReadInputTokens,
+		JudgeInputTokens: usage.JudgeInputTokens, JudgeOutputTokens: usage.JudgeOutputTokens,
 	}
 	return response, nil
 }
@@ -107,7 +110,7 @@ func (h *Handler) traceSteps(ctx context.Context, workspaceUUID, sessionID strin
 	if sessionID == "" {
 		return steps, nil
 	}
-	events, err := h.sessionEvents(ctx, workspaceUUID, sessionID)
+	events, err := loadSessionEvents(ctx, h.store, workspaceUUID, sessionID)
 	if err != nil {
 		if errors.Is(err, errSessionTooLarge) {
 			return nil, invalidArgument(sessionEventsTooLargeMessage, err)

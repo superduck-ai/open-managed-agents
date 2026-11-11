@@ -34,6 +34,11 @@ func (h *Handler) CreateEvaluationSession(ctx context.Context, principal auth.Pr
 	return h.createFromBody(request, principal, body)
 }
 
+func (h *Handler) ArchiveEvaluationSession(ctx context.Context, principal auth.Principal, sessionID string) error {
+	_, err := h.archiveSession(ctx, principal, sessionID)
+	return err
+}
+
 func evaluationSessionRequest(spec EvaluationSessionSpec) (sessionCreateRequest, error) {
 	agent := map[string]any{
 		"type":    "agent",

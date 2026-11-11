@@ -454,22 +454,30 @@ func (h *Handler) archiveRoute(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	sessionID := chi.URLParam(r, "session_id")
-	removal, changed, err := h.db.ArchiveSession(r.Context(), principal.WorkspaceUUID, sessionID)
+	archived, err := h.archiveSession(r.Context(), principal, sessionID)
 	if err != nil {
 		return mapSessionLoadError(err, sessionID)
 	}
-	h.finishSessionRemoval(r.Context(), removal)
-	archived := removal.Session
-	if changed && len(removal.StatusEvents) == 0 {
-		h.enqueuePrincipalWebhook(r.Context(), principal, "session.status_terminated", archived.ExternalID, nil, *archived.ArchivedAt)
-	}
-	h.enqueueSessionSandboxReclaims(r.Context(), archived)
 	response, err := h.responseFromSession(r, archived, true)
 	if err != nil {
 		return internalError("Could not archive session", fmt.Errorf("load archived session %q response: %w", sessionID, err))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, response)
 	return nil
+}
+
+func (h *Handler) archiveSession(ctx context.Context, principal auth.Principal, sessionID string) (db.Session, error) {
+	removal, changed, err := h.db.ArchiveSession(ctx, principal.WorkspaceUUID, sessionID)
+	if err != nil {
+		return db.Session{}, err
+	}
+	h.finishSessionRemoval(ctx, removal)
+	archived := removal.Session
+	if changed && len(removal.StatusEvents) == 0 {
+		h.enqueuePrincipalWebhook(ctx, principal, "session.status_terminated", archived.ExternalID, nil, *archived.ArchivedAt)
+	}
+	h.enqueueSessionSandboxReclaims(ctx, archived)
+	return archived, nil
 }
 
 func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request) error {

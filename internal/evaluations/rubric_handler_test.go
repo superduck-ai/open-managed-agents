@@ -109,9 +109,9 @@ type scriptModel struct {
 	text   string
 }
 
-func (m *scriptModel) Complete(_ context.Context, request CompletionRequest) (string, error) {
+func (m *scriptModel) Complete(_ context.Context, request CompletionRequest) (Completion, error) {
 	m.system = request.System
-	return m.text, nil
+	return Completion{Text: m.text}, nil
 }
 
 type rubricMemoryStore struct {

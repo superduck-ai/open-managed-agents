@@ -28,16 +28,9 @@ type EvaluationTask struct {
 	PassScore                int
 	RubricBody               string
 	RubricModel              string
-	Strategy                 string
-	LowScoreThreshold        int
-	OptimizeSystem           bool
-	BaselineSystem           string
-	CandidateSystem          string
-	CandidateSummary         string
 	ErrorMessage             string
 	VaultIDs                 json.RawMessage
 	Resources                json.RawMessage
-	AppliedAt                *time.Time
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
 }
@@ -83,6 +76,8 @@ type EvaluationTaskScore struct {
 	JudgeSystem        string
 	JudgePrompt        string
 	JudgeResponse      string
+	JudgeInputTokens   int64
+	JudgeOutputTokens  int64
 	CreatedAt          time.Time
 }
 
@@ -101,6 +96,8 @@ type EvaluationTaskUsage struct {
 	InputTokens          int64
 	OutputTokens         int64
 	CacheReadInputTokens int64
+	JudgeInputTokens     int64
+	JudgeOutputTokens    int64
 }
 
 type EvaluationTaskDetail struct {
@@ -119,7 +116,6 @@ func (d *DB) CreateEvaluationTask(ctx context.Context, task EvaluationTask, item
 			Status: task.Status, AgentExternalID: task.AgentExternalID, AgentVersion: task.AgentVersion, EnvironmentExternalID: task.EnvironmentExternalID,
 			DatasetExternalID: task.DatasetExternalID, DatasetVersionExternalID: task.DatasetVersionExternalID, RubricExternalID: task.RubricExternalID,
 			RubricVersionExternalID: task.RubricVersionExternalID, PassScore: task.PassScore, RubricBody: task.RubricBody, RubricModel: task.RubricModel,
-			Strategy: task.Strategy, LowScoreThreshold: task.LowScoreThreshold, OptimizeSystem: task.OptimizeSystem, BaselineSystem: task.BaselineSystem,
 			VaultIDs: task.VaultIDs, Resources: task.Resources, CreatedAt: task.CreatedAt,
 		})
 		if err != nil {
@@ -157,15 +153,7 @@ func (d *DB) ListEvaluationTaskChildren(ctx context.Context, organizationUUID, w
 	if err != nil {
 		return nil, nil, err
 	}
-	items := make([]EvaluationTaskItem, 0, len(itemRows))
-	for _, row := range itemRows {
-		items = append(items, itemFromRow(row))
-	}
-	scores := make([]EvaluationTaskScore, 0, len(scoreRows))
-	for _, row := range scoreRows {
-		scores = append(scores, scoreFromRow(row))
-	}
-	return items, scores, nil
+	return itemsFromRows(itemRows), scoresFromRows(scoreRows), nil
 }
 
 func (d *DB) ListEvaluationTasks(ctx context.Context, organizationUUID, workspaceUUID string, offset, limit int) ([]EvaluationTask, error) {
@@ -196,31 +184,31 @@ func (d *DB) GetEvaluationTask(ctx context.Context, organizationUUID, workspaceU
 	if err != nil {
 		return EvaluationTaskDetail{}, err
 	}
-	detail := EvaluationTaskDetail{Task: taskFromRow(row), Items: make([]EvaluationTaskItem, 0, len(items)), Scores: make([]EvaluationTaskScore, 0, len(scores))}
-	for _, item := range items {
-		detail.Items = append(detail.Items, itemFromRow(item))
-	}
-	for _, score := range scores {
-		detail.Scores = append(detail.Scores, scoreFromRow(score))
-	}
-	return detail, nil
+	return EvaluationTaskDetail{Task: taskFromRow(row), Items: itemsFromRows(items), Scores: scoresFromRows(scores)}, nil
 }
 
 func (d *DB) ListRunningEvaluationItemsBySession(ctx context.Context, organizationUUID, workspaceUUID, sessionExternalID string) ([]EvaluationTaskItem, error) {
 	rows, err := NewEvaluationTaskMapper(d.mapperDB).ListRunningBySession(ctx, organizationUUID, workspaceUUID, sessionExternalID)
-	if err != nil {
-		return nil, err
-	}
-	items := make([]EvaluationTaskItem, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, itemFromRow(row))
-	}
-	return items, nil
+	return itemsFromRows(rows), err
 }
 
-func (d *DB) MarkEvaluationItemRunning(ctx context.Context, organizationUUID, workspaceUUID, itemUUID, sessionExternalID string, updatedAt time.Time) (bool, error) {
-	rows, err := NewEvaluationTaskMapper(d.mapperDB).MarkItemRunning(ctx, evaluationItemStatusParams{
+func (d *DB) ClaimEvaluationItem(ctx context.Context, organizationUUID, workspaceUUID, itemUUID string, updatedAt time.Time) (bool, error) {
+	rows, err := NewEvaluationTaskMapper(d.mapperDB).ClaimItem(ctx, evaluationItemStatusParams{
+		UUID: itemUUID, OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, UpdatedAt: updatedAt,
+	})
+	return rows > 0, err
+}
+
+func (d *DB) AttachEvaluationItemSession(ctx context.Context, organizationUUID, workspaceUUID, itemUUID, sessionExternalID string, updatedAt time.Time) (bool, error) {
+	rows, err := NewEvaluationTaskMapper(d.mapperDB).AttachItemSession(ctx, evaluationItemStatusParams{
 		UUID: itemUUID, OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, SessionExternalID: sessionExternalID, UpdatedAt: updatedAt,
+	})
+	return rows > 0, err
+}
+
+func (d *DB) AbandonEvaluationItem(ctx context.Context, organizationUUID, workspaceUUID, itemUUID, errorMessage string, updatedAt time.Time) (bool, error) {
+	rows, err := NewEvaluationTaskMapper(d.mapperDB).AbandonItem(ctx, evaluationItemStatusParams{
+		UUID: itemUUID, OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, ErrorMessage: errorMessage, UpdatedAt: updatedAt,
 	})
 	return rows > 0, err
 }
@@ -279,26 +267,53 @@ func (d *DB) ListSettleableEvaluationTasks(ctx context.Context, updatedBefore ti
 
 func (d *DB) ListStaleRunningEvaluationItems(ctx context.Context, updatedBefore time.Time, limit int) ([]EvaluationTaskItem, error) {
 	rows, err := NewEvaluationTaskMapper(d.mapperDB).ListStaleRunningItems(ctx, updatedBefore, limit)
-	if err != nil {
-		return nil, err
-	}
+	return itemsFromRows(rows), err
+}
+
+func (d *DB) ListUnstartedEvaluationItems(ctx context.Context, updatedBefore time.Time, limit int) ([]EvaluationTaskItem, error) {
+	rows, err := NewEvaluationTaskMapper(d.mapperDB).ListUnstartedItems(ctx, updatedBefore, limit)
+	return itemsFromRows(rows), err
+}
+
+func (d *DB) CancelEvaluationTask(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string, updatedAt time.Time) ([]EvaluationTaskItem, error) {
+	var cancelled []EvaluationTaskItem
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewEvaluationTaskMapper(executor)
+		rows, err := mapper.CancelTask(ctx, organizationUUID, workspaceUUID, taskUUID, updatedAt)
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return ErrInvalidState
+		}
+		items, err := mapper.CancelOpenItems(ctx, organizationUUID, workspaceUUID, taskUUID, updatedAt)
+		cancelled = itemsFromRows(items)
+		return err
+	})
+	return cancelled, err
+}
+
+func (d *DB) FinishEvaluationTask(ctx context.Context, organizationUUID, workspaceUUID, externalID, status string, updatedAt time.Time) (bool, error) {
+	rows, err := NewEvaluationTaskMapper(d.mapperDB).FinishTask(ctx, evaluationTaskStatusParams{
+		OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, ExternalID: externalID, Status: status, UpdatedAt: updatedAt,
+	})
+	return rows > 0, err
+}
+
+func itemsFromRows(rows []evaluationTaskItemRow) []EvaluationTaskItem {
 	items := make([]EvaluationTaskItem, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, itemFromRow(row))
 	}
-	return items, nil
+	return items
 }
 
-func (d *DB) CancelPendingEvaluationItems(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string, updatedAt time.Time) error {
-	_, err := NewEvaluationTaskMapper(d.mapperDB).CancelPendingItems(ctx, organizationUUID, workspaceUUID, taskUUID, updatedAt)
-	return err
-}
-
-func (d *DB) UpdateEvaluationTaskStatus(ctx context.Context, organizationUUID, workspaceUUID, externalID, status, errorMessage string, updatedAt time.Time) error {
-	_, err := NewEvaluationTaskMapper(d.mapperDB).UpdateTaskStatus(ctx, evaluationTaskStatusParams{
-		OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, ExternalID: externalID, Status: status, ErrorMessage: errorMessage, UpdatedAt: updatedAt,
-	})
-	return err
+func scoresFromRows(rows []evaluationTaskScoreRow) []EvaluationTaskScore {
+	scores := make([]EvaluationTaskScore, 0, len(rows))
+	for _, row := range rows {
+		scores = append(scores, scoreFromRow(row))
+	}
+	return scores
 }
 
 func (d *DB) CreateEvaluationTaskScore(ctx context.Context, score EvaluationTaskScore) (EvaluationTaskScore, error) {
@@ -307,7 +322,8 @@ func (d *DB) CreateEvaluationTaskScore(ctx context.Context, score EvaluationTask
 		TaskUUID: score.TaskUUID, ItemUUID: score.ItemUUID, Status: score.Status, Score: score.Score, Passed: score.Passed,
 		Explanation: score.Explanation, Answer: score.Answer, Dimensions: score.Dimensions, ErrorMessage: score.ErrorMessage,
 		JudgeModel: score.JudgeModel, JudgePromptVersion: score.JudgePromptVersion,
-		JudgeSystem: score.JudgeSystem, JudgePrompt: score.JudgePrompt, JudgeResponse: score.JudgeResponse, CreatedAt: score.CreatedAt,
+		JudgeSystem: score.JudgeSystem, JudgePrompt: score.JudgePrompt, JudgeResponse: score.JudgeResponse,
+		JudgeInputTokens: score.JudgeInputTokens, JudgeOutputTokens: score.JudgeOutputTokens, CreatedAt: score.CreatedAt,
 	})
 	if err != nil {
 		return EvaluationTaskScore{}, mapEvaluationWrite(err)
@@ -316,12 +332,18 @@ func (d *DB) CreateEvaluationTaskScore(ctx context.Context, score EvaluationTask
 }
 
 func (d *DB) SumEvaluationTaskUsage(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string) (EvaluationTaskUsage, error) {
-	row, err := NewEvaluationTaskMapper(d.mapperDB).SumTaskUsage(ctx, organizationUUID, workspaceUUID, taskUUID)
+	mapper := NewEvaluationTaskMapper(d.mapperDB)
+	row, err := mapper.SumTaskUsage(ctx, organizationUUID, workspaceUUID, taskUUID)
+	if err != nil {
+		return EvaluationTaskUsage{}, err
+	}
+	judge, err := mapper.SumJudgeUsage(ctx, organizationUUID, workspaceUUID, taskUUID)
 	if err != nil {
 		return EvaluationTaskUsage{}, err
 	}
 	return EvaluationTaskUsage{
 		InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadInputTokens: row.CacheReadInputTokens,
+		JudgeInputTokens: judge.JudgeInputTokens, JudgeOutputTokens: judge.JudgeOutputTokens,
 	}, nil
 }
 
@@ -346,9 +368,7 @@ func taskFromRow(row evaluationTaskRow) EvaluationTask {
 		AgentExternalID: row.AgentExternalID, AgentVersion: row.AgentVersion, EnvironmentExternalID: row.EnvironmentExternalID,
 		DatasetExternalID: row.DatasetExternalID, DatasetVersionExternalID: row.DatasetVersionExternalID, RubricExternalID: row.RubricExternalID,
 		RubricVersionExternalID: row.RubricVersionExternalID, PassScore: row.PassScore, RubricBody: row.RubricBody, RubricModel: row.RubricModel,
-		Strategy: row.Strategy, LowScoreThreshold: row.LowScoreThreshold, OptimizeSystem: row.OptimizeSystem, BaselineSystem: row.BaselineSystem,
-		CandidateSystem: row.CandidateSystem, CandidateSummary: row.CandidateSummary, ErrorMessage: row.ErrorMessage, VaultIDs: row.VaultIDs,
-		Resources: row.Resources, AppliedAt: row.AppliedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		ErrorMessage: row.ErrorMessage, VaultIDs: row.VaultIDs, Resources: row.Resources, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 }
 
@@ -367,6 +387,6 @@ func scoreFromRow(row evaluationTaskScoreRow) EvaluationTaskScore {
 		TaskUUID: row.TaskUUID, ItemUUID: row.ItemUUID, Status: row.Status, Score: row.Score, Passed: row.Passed, Explanation: row.Explanation,
 		Answer: row.Answer, Dimensions: row.Dimensions, ErrorMessage: row.ErrorMessage, JudgeModel: row.JudgeModel,
 		JudgePromptVersion: row.JudgePromptVersion, JudgeSystem: row.JudgeSystem, JudgePrompt: row.JudgePrompt,
-		JudgeResponse: row.JudgeResponse, CreatedAt: row.CreatedAt,
+		JudgeResponse: row.JudgeResponse, JudgeInputTokens: row.JudgeInputTokens, JudgeOutputTokens: row.JudgeOutputTokens, CreatedAt: row.CreatedAt,
 	}
 }

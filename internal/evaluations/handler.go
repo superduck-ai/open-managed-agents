@@ -39,16 +39,7 @@ type Store interface {
 	ListEvaluationTasks(context.Context, string, string, int, int) ([]db.EvaluationTask, error)
 	ListEvaluationTaskChildren(context.Context, string, string, []string) ([]db.EvaluationTaskItem, []db.EvaluationTaskScore, error)
 	GetEvaluationTask(context.Context, string, string, string) (db.EvaluationTaskDetail, error)
-	ListRunningEvaluationItemsBySession(context.Context, string, string, string) ([]db.EvaluationTaskItem, error)
-	MarkEvaluationItemRunning(context.Context, string, string, string, string, time.Time) (bool, error)
-	FinishRunningEvaluationItem(context.Context, string, string, string, string, string, time.Time) (bool, error)
-	TouchRunningEvaluationItem(context.Context, string, string, string, time.Time) error
 	RetryEvaluationTask(context.Context, string, string, string, int, time.Time) (db.EvaluationTaskRetry, error)
-	ListSettleableEvaluationTasks(context.Context, time.Time, int) ([]db.EvaluationTaskRef, error)
-	ListStaleRunningEvaluationItems(context.Context, time.Time, int) ([]db.EvaluationTaskItem, error)
-	CancelPendingEvaluationItems(context.Context, string, string, string, time.Time) error
-	UpdateEvaluationTaskStatus(context.Context, string, string, string, string, string, time.Time) error
-	CreateEvaluationTaskScore(context.Context, db.EvaluationTaskScore) (db.EvaluationTaskScore, error)
 	SumEvaluationTaskUsage(context.Context, string, string, string) (db.EvaluationTaskUsage, error)
 	GetAgent(context.Context, string, string) (db.Agent, error)
 	GetEnvironment(context.Context, string, string) (db.Environment, error)
@@ -72,18 +63,12 @@ type SessionInput struct {
 	Metadata              map[string]string
 }
 
-type SessionStarter interface {
-	Start(context.Context, SessionInput) (string, error)
-}
-
 type Handler struct {
-	store       Store
-	logger      *slog.Logger
-	starter     SessionStarter
-	model       RubricModel
-	adapter     *httpapi.ErrorAdapter
-	settleQueue SettleQueue
-	observeSync bool
+	store   Store
+	logger  *slog.Logger
+	runner  *TaskRunner
+	model   RubricModel
+	adapter *httpapi.ErrorAdapter
 }
 
 func NewHandler(store Store, logger *slog.Logger) *Handler {
@@ -91,8 +76,8 @@ func NewHandler(store Store, logger *slog.Logger) *Handler {
 	return &Handler{store: store, logger: logger, adapter: httpapi.NewErrorAdapter(logger)}
 }
 
-func (h *Handler) WithSessionStarter(starter SessionStarter) *Handler {
-	h.starter = starter
+func (h *Handler) WithTaskRunner(runner *TaskRunner) *Handler {
+	h.runner = runner
 	return h
 }
 
@@ -497,7 +482,7 @@ func (h *Handler) attachmentSessionUUID(ctx context.Context, workspaceUUID strin
 		return "", internalFailure(loadFailedMessage, err)
 	}
 	if !ok {
-		return "", notFound("Session not found", nil)
+		return "", notFound(sessionNotFoundMessage, nil)
 	}
 	session.uuid = loaded.UUID
 	return session.uuid, nil

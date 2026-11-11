@@ -60,7 +60,7 @@ func TestEvaluationSessionRequestUsesAgentVersionAndQuery(t *testing.T) {
 		AgentVersion:          3,
 		EnvironmentExternalID: "env_demo",
 		Query:                 "汇总销售额",
-		Title:                 "评测 · 销售额",
+		Title:                 "回归 #1",
 		VaultIDs:              []string{"vault_demo"},
 		Metadata:              map[string]string{"evaluation_task_id": "evaltask_demo"},
 	})

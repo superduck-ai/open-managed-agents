@@ -114,8 +114,8 @@ func withEvaluationRoute(request *http.Request, datasetID, caseID string) *http.
 
 type fixedModel struct{ text string }
 
-func (m fixedModel) Complete(context.Context, CompletionRequest) (string, error) {
-	return m.text, nil
+func (m fixedModel) Complete(context.Context, CompletionRequest) (Completion, error) {
+	return Completion{Text: m.text}, nil
 }
 
 type evaluationFixture struct {
@@ -201,44 +201,8 @@ func (evaluationFixture) GetEvaluationTask(context.Context, string, string, stri
 	return db.EvaluationTaskDetail{}, nil
 }
 
-func (evaluationFixture) ListRunningEvaluationItemsBySession(context.Context, string, string, string) ([]db.EvaluationTaskItem, error) {
-	return nil, nil
-}
-
-func (evaluationFixture) MarkEvaluationItemRunning(context.Context, string, string, string, string, time.Time) (bool, error) {
-	return false, nil
-}
-
-func (evaluationFixture) FinishRunningEvaluationItem(context.Context, string, string, string, string, string, time.Time) (bool, error) {
-	return false, nil
-}
-
-func (evaluationFixture) TouchRunningEvaluationItem(context.Context, string, string, string, time.Time) error {
-	return nil
-}
-
 func (evaluationFixture) RetryEvaluationTask(context.Context, string, string, string, int, time.Time) (db.EvaluationTaskRetry, error) {
 	return db.EvaluationTaskRetry{}, nil
-}
-
-func (evaluationFixture) ListSettleableEvaluationTasks(context.Context, time.Time, int) ([]db.EvaluationTaskRef, error) {
-	return nil, nil
-}
-
-func (evaluationFixture) ListStaleRunningEvaluationItems(context.Context, time.Time, int) ([]db.EvaluationTaskItem, error) {
-	return nil, nil
-}
-
-func (evaluationFixture) CancelPendingEvaluationItems(context.Context, string, string, string, time.Time) error {
-	return nil
-}
-
-func (evaluationFixture) UpdateEvaluationTaskStatus(context.Context, string, string, string, string, string, time.Time) error {
-	return nil
-}
-
-func (evaluationFixture) CreateEvaluationTaskScore(context.Context, db.EvaluationTaskScore) (db.EvaluationTaskScore, error) {
-	return db.EvaluationTaskScore{}, nil
 }
 
 func (evaluationFixture) SumEvaluationTaskUsage(context.Context, string, string, string) (db.EvaluationTaskUsage, error) {

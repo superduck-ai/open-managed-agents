@@ -8,7 +8,6 @@ import (
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 )
 
@@ -18,19 +17,23 @@ const (
 	sweepJobID        = "evaluation_task_sweep"
 	sweepCron         = "* * * * *"
 	sweepTimezone     = "UTC"
-	sweepLimit        = 100
-	staleItemAge      = 2 * time.Minute
-	settleTaskAge     = time.Minute
 	settleJobTimeout  = 10 * time.Minute
 	settleMaxAttempts = 3
+	settleListLimit   = 20
 )
 
-var errJobsUnconfigured = errors.New("evaluation jobs are not configured")
+var (
+	errJobsUnconfigured = errors.New("evaluation jobs are not configured")
+	settleUniqueStates  = []rivertype.JobState{
+		rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled,
+	}
+)
 
 type settleArgs struct {
 	OrganizationUUID string `json:"organization_uuid"`
 	WorkspaceUUID    string `json:"workspace_uuid"`
 	TaskID           string `json:"task_id"`
+	Supersedes       int64  `json:"supersedes,omitempty"`
 }
 
 func (settleArgs) Kind() string { return settleJobKind }
@@ -38,9 +41,7 @@ func (settleArgs) Kind() string { return settleJobKind }
 func (settleArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{
 		Queue: JobQueue, MaxAttempts: settleMaxAttempts,
-		UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{
-			rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled,
-		}},
+		UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: settleUniqueStates},
 	}
 }
 
@@ -49,19 +50,19 @@ type sweepArgs struct{}
 func (sweepArgs) Kind() string { return sweepJobID }
 
 type Jobs struct {
-	handler *Handler
-	client  *river.Client[*sql.Tx]
+	runner *TaskRunner
+	client *river.Client[*sql.Tx]
 }
 
-func NewJobs(handler *Handler) *Jobs {
-	jobs := &Jobs{handler: handler}
-	handler.WithSettleQueue(jobs)
+func NewJobs(runner *TaskRunner) *Jobs {
+	jobs := &Jobs{runner: runner}
+	runner.WithSettleQueue(jobs)
 	return jobs
 }
 
 func (j *Jobs) Register(workers *river.Workers) {
-	river.AddWorker(workers, &settleWorker{handler: j.handler})
-	river.AddWorker(workers, &sweepWorker{handler: j.handler})
+	river.AddWorker(workers, &settleWorker{runner: j.runner})
+	river.AddWorker(workers, &sweepWorker{runner: j.runner})
 }
 
 func (j *Jobs) Configure(ctx context.Context, client *river.Client[*sql.Tx]) error {
@@ -84,18 +85,56 @@ func (j *Jobs) EnqueueSettle(ctx context.Context, organizationUUID, workspaceUUI
 	if j.client == nil {
 		return errJobsUnconfigured
 	}
-	_, err := j.client.Insert(ctx, settleArgs{OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, TaskID: taskID}, nil)
+	listed, err := j.client.JobList(ctx, river.NewJobListParams().Kinds(settleJobKind).States(settleUniqueStates...).
+		Where("args->>'workspace_uuid' = @workspace_uuid AND args->>'task_id' = @task_id", river.NamedArgs{"workspace_uuid": workspaceUUID, "task_id": taskID}).
+		First(settleListLimit))
+	if err != nil {
+		return err
+	}
+	insert, stale := settleNeedsInsert(listed.Jobs, time.Now().UTC())
+	if !insert {
+		return nil
+	}
+	args := settleArgs{OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, TaskID: taskID}
+	if stale {
+		args.Supersedes = latestJobID(listed.Jobs)
+	}
+	_, err = j.client.Insert(ctx, args, nil)
 	return err
+}
+
+func settleNeedsInsert(jobs []*rivertype.JobRow, now time.Time) (bool, bool) {
+	stale := false
+	for _, job := range jobs {
+		switch job.State {
+		case rivertype.JobStateRunning:
+			if job.AttemptedAt == nil || now.Sub(*job.AttemptedAt) < settleJobTimeout {
+				return false, false
+			}
+			stale = true
+		case rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRetryable, rivertype.JobStateScheduled:
+			return false, false
+		}
+	}
+	return true, stale
+}
+
+func latestJobID(jobs []*rivertype.JobRow) int64 {
+	var latest int64
+	for _, job := range jobs {
+		latest = max(latest, job.ID)
+	}
+	return latest
 }
 
 type settleWorker struct {
 	river.WorkerDefaults[settleArgs]
-	handler *Handler
+	runner *TaskRunner
 }
 
 func (w *settleWorker) Work(ctx context.Context, job *river.Job[settleArgs]) error {
 	args := job.Args
-	done, err := w.handler.settleTask(ctx, args.OrganizationUUID, args.WorkspaceUUID, args.TaskID, job.Attempt >= job.MaxAttempts)
+	done, err := w.runner.settleTask(ctx, args.OrganizationUUID, args.WorkspaceUUID, args.TaskID, job.Attempt >= job.MaxAttempts)
 	if err != nil {
 		return err
 	}
@@ -109,63 +148,9 @@ func (*settleWorker) Timeout(*river.Job[settleArgs]) time.Duration { return sett
 
 type sweepWorker struct {
 	river.WorkerDefaults[sweepArgs]
-	handler *Handler
+	runner *TaskRunner
 }
 
 func (w *sweepWorker) Work(ctx context.Context, _ *river.Job[sweepArgs]) error {
-	return w.handler.sweep(ctx, time.Now().UTC())
-}
-
-func (h *Handler) sweep(ctx context.Context, now time.Time) error {
-	items, err := h.store.ListStaleRunningEvaluationItems(ctx, now.Add(-staleItemAge), sweepLimit)
-	if err != nil {
-		return err
-	}
-	for _, item := range items {
-		if h.reconcileItem(ctx, item, now) {
-			h.requestSettle(ctx, item.OrganizationUUID, item.WorkspaceUUID, item.TaskExternalID)
-		}
-	}
-	refs, err := h.store.ListSettleableEvaluationTasks(ctx, now.Add(-settleTaskAge), sweepLimit)
-	if err != nil {
-		return err
-	}
-	for _, ref := range refs {
-		h.requestSettle(ctx, ref.OrganizationUUID, ref.WorkspaceUUID, ref.ExternalID)
-	}
-	return nil
-}
-
-func (h *Handler) reconcileItem(ctx context.Context, item db.EvaluationTaskItem, now time.Time) bool {
-	status, message, terminal, err := h.sessionOutcome(ctx, item)
-	if err != nil {
-		h.logger.WarnContext(ctx, "reconcile evaluation item", "item_id", item.ExternalID, "session_id", item.SessionExternalID, "error", err)
-		return false
-	}
-	if terminal {
-		return h.finishItem(ctx, item, status, message)
-	}
-	if err := h.store.TouchRunningEvaluationItem(ctx, item.OrganizationUUID, item.WorkspaceUUID, item.UUID, now); err != nil {
-		h.logger.WarnContext(ctx, "touch evaluation item", "item_id", item.ExternalID, "error", err)
-	}
-	return false
-}
-
-func (h *Handler) sessionOutcome(ctx context.Context, item db.EvaluationTaskItem) (string, string, bool, error) {
-	_, ok, err := h.store.GetSession(ctx, item.WorkspaceUUID, item.SessionExternalID)
-	if err != nil {
-		return "", "", false, err
-	}
-	if !ok {
-		return "failed", sessionTerminatedMessage, true, nil
-	}
-	events, err := h.sessionEvents(ctx, item.WorkspaceUUID, item.SessionExternalID)
-	if errors.Is(err, errSessionTooLarge) {
-		return "failed", scoreSessionTooLargeMessage, true, nil
-	}
-	if err != nil {
-		return "", "", false, err
-	}
-	status, message, terminal := terminalStatus(events)
-	return status, message, terminal, nil
+	return w.runner.sweep(ctx, time.Now().UTC())
 }

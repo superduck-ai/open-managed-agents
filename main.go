@@ -229,8 +229,9 @@ func run(bootstrap *slog.Logger) (err error) {
 		return fmt.Errorf("create transcript archive service: %w", err)
 	}
 	transcripts.Register(workers)
-	evaluationJobs := evaluations.NewJobs(evaluations.NewHandler(database, logger.With("component", "evaluation_jobs")).
-		WithRubricModel(evaluations.NewRubricModel(database, vaultSecrets)))
+	evaluationRunner := evaluations.NewTaskRunner(database, logger.With("component", "evaluation_runner")).
+		WithRubricModel(evaluations.NewRubricModel(database, vaultSecrets))
+	evaluationJobs := evaluations.NewJobs(evaluationRunner)
 	evaluationJobs.Register(workers)
 
 	jobClient, err := riverjobs.NewClient(database, logger.With("component", "river_jobs"), workers, queues)
@@ -265,7 +266,7 @@ func run(bootstrap *slog.Logger) (err error) {
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
 			InvitationJobs:         jobClient,
-			EvaluationSettle:       evaluationJobs,
+			EvaluationRunner:       evaluationRunner,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,
 			Config:                 cfg,

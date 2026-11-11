@@ -85,6 +85,14 @@ export function TaskInfoPanel({ task }: { task: EvaluationTask }) {
       label: msg('evaluations.cacheReadTokens', 'Cache read tokens'),
       value: formatTokens(task.usage?.cache_read_input_tokens),
     },
+    {
+      label: msg('evaluations.judgeInputTokens', 'Judge input tokens'),
+      value: formatTokens(task.usage?.judge_input_tokens),
+    },
+    {
+      label: msg('evaluations.judgeOutputTokens', 'Judge output tokens'),
+      value: formatTokens(task.usage?.judge_output_tokens),
+    },
     { label: msg('evaluations.mountedResources', 'Mounted resources'), value: countLabel(task.resource_count) },
     { label: msg('evaluations.vaults', 'Vaults'), value: countLabel(task.vault_count) },
   ];

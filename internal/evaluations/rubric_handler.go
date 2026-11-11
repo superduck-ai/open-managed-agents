@@ -321,9 +321,9 @@ func (h *Handler) loadSessionTurns(ctx context.Context, principal auth.Principal
 		return db.Session{}, nil, internalFailure(loadFailedMessage, err)
 	}
 	if !ok {
-		return db.Session{}, nil, notFound("Session not found", nil)
+		return db.Session{}, nil, notFound(sessionNotFoundMessage, nil)
 	}
-	events, err := h.sessionEvents(ctx, principal.WorkspaceUUID, sessionID)
+	events, err := loadSessionEvents(ctx, h.store, principal.WorkspaceUUID, sessionID)
 	if err != nil {
 		if errors.Is(err, errSessionTooLarge) {
 			return db.Session{}, nil, invalidArgument(sessionEventsTooLargeMessage, err)
@@ -337,22 +337,26 @@ func (h *Handler) agentForGeneration(ctx context.Context, workspaceUUID, agentID
 	if version > 0 {
 		agent, err := h.store.GetAgentVersion(ctx, workspaceUUID, agentID, version)
 		if err != nil {
-			return db.Agent{}, mapStoreError(err, "Agent not found", generateFailedMessage)
+			return db.Agent{}, mapStoreError(err, agentNotFoundMessage, generateFailedMessage)
 		}
 		return agent, nil
 	}
 	agent, err := h.store.GetAgent(ctx, workspaceUUID, agentID)
 	if err != nil {
-		return db.Agent{}, mapStoreError(err, "Agent not found", generateFailedMessage)
+		return db.Agent{}, mapStoreError(err, agentNotFoundMessage, generateFailedMessage)
 	}
 	return agent, nil
 }
 
-func (h *Handler) sessionEvents(ctx context.Context, workspaceUUID, sessionID string) ([]db.SessionEvent, error) {
+type sessionEventReader interface {
+	ListSessionEventsPage(context.Context, db.ListSessionEventsPageParams) ([]db.SessionEvent, bool, error)
+}
+
+func loadSessionEvents(ctx context.Context, reader sessionEventReader, workspaceUUID, sessionID string) ([]db.SessionEvent, error) {
 	var all []db.SessionEvent
 	var cursor *db.SessionEventPageCursor
 	for page := 0; page < maxSessionEventPages; page++ {
-		events, hasMore, err := h.store.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
+		events, hasMore, err := reader.ListSessionEventsPage(ctx, db.ListSessionEventsPageParams{
 			WorkspaceUUID: workspaceUUID, SessionExternalID: sessionID, Limit: 100, Cursor: cursor,
 		})
 		if err != nil {
@@ -404,7 +408,7 @@ func (h *Handler) rubricGeneratePrompt(ctx context.Context, principal auth.Princ
 	if agentID := strings.TrimSpace(body.AgentID); agentID != "" {
 		agent, err := h.store.GetAgent(ctx, principal.WorkspaceUUID, agentID)
 		if err != nil {
-			return "", mapStoreError(err, "Agent not found", generateFailedMessage)
+			return "", mapStoreError(err, agentNotFoundMessage, generateFailedMessage)
 		}
 		if agent.System != nil && strings.TrimSpace(*agent.System) != "" {
 			prompt.WriteString("\nAgent 系统提示词：" + *agent.System)
@@ -529,14 +533,14 @@ func (h *Handler) complete(ctx context.Context, organizationUUID, workspaceUUID,
 	if h.model == nil {
 		return "", unavailable(modelMissingMessage, errModelMissing)
 	}
-	text, err := h.model.Complete(ctx, CompletionRequest{
+	completion, err := h.model.Complete(ctx, CompletionRequest{
 		OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, Model: modelID, System: system, User: user,
 	})
 	if err != nil {
-		if err == errModelMissing {
+		if errors.Is(err, errModelMissing) {
 			return "", unavailable(modelMissingMessage, err)
 		}
 		return "", internalFailure(generateFailedMessage, err)
 	}
-	return text, nil
+	return completion.Text, nil
 }

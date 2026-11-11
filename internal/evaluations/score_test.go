@@ -137,7 +137,8 @@ func TestTranscriptIncludesToolInputAndKeepsAnswerTail(t *testing.T) {
 		{EventType: "agent.tool_result", Payload: json.RawMessage(`{"content":"已发货"}`)},
 		{EventType: "agent.message", Payload: mustJSON(t, map[string]string{"content": long})},
 	}
-	answer, trajectory := transcriptFromEvents(events)
+	evidence := evidenceFromEvents(events)
+	answer, trajectory := evidence.answer, evidence.trajectory
 	if !strings.HasSuffix(answer, "最终结论") || !strings.Contains(answer, "bytes omitted") || len(answer) > maxScoredAnswer+64 {
 		t.Fatalf("answer tail = %q len=%d", answer[len(answer)-40:], len(answer))
 	}
@@ -155,7 +156,7 @@ func TestTranscriptKeepsTimingEvents(t *testing.T) {
 		{EventType: "span.model_request_end", CreatedAt: at.Add(3 * time.Second), Payload: json.RawMessage(`{"model":"demo","model_usage":{"output_tokens":4}}`)},
 		{EventType: "session.status_idle", CreatedAt: at.Add(4 * time.Second), Payload: json.RawMessage(`{"stop_reason":{"type":"end_turn"}}`)},
 	}
-	_, trajectory := transcriptFromEvents(events)
+	trajectory := evidenceFromEvents(events).trajectory
 	for _, fragment := range []string{
 		"2026-11-11T02:51:54Z session.status_running",
 		"2026-11-11T02:51:57Z span.model_request_end",
@@ -165,6 +166,42 @@ func TestTranscriptKeepsTimingEvents(t *testing.T) {
 	} {
 		if !strings.Contains(trajectory, fragment) {
 			t.Fatalf("trajectory missing %q: %s", fragment, trajectory)
+		}
+	}
+}
+
+func TestEvidenceRedactsSecrets(t *testing.T) {
+	events := []db.SessionEvent{
+		{EventType: "agent.tool_use", Payload: json.RawMessage(`{"name":"http","input":{"headers":{"Authorization":"Bearer abcdefghijklmnop"},"api_key":"plain-secret","token":{"count":3}}}`)},
+		{EventType: "agent.tool_result", Payload: json.RawMessage(`{"content":"key sk-abcdefghijklmnopqrstuv ok"}`)},
+		{EventType: "agent.message", Payload: json.RawMessage(`{"content":"use Bearer zyxwvutsrqponmlk now"}`)},
+	}
+	evidence := evidenceFromEvents(events)
+	for _, leaked := range []string{"abcdefghijklmnop", "plain-secret", "sk-abcdefghijklmnopqrstuv", "zyxwvutsrqponmlk"} {
+		if strings.Contains(evidence.trajectory, leaked) || strings.Contains(evidence.answer, leaked) {
+			t.Fatalf("leaked %q: answer=%s trajectory=%s", leaked, evidence.answer, evidence.trajectory)
+		}
+	}
+	if !strings.Contains(evidence.trajectory, `"count":3`) || !strings.Contains(evidence.answer, "Bearer [redacted] now") {
+		t.Fatalf("answer=%s trajectory=%s", evidence.answer, evidence.trajectory)
+	}
+}
+
+func TestEvidenceDropsMinorPayloadsBeforeMajorEvents(t *testing.T) {
+	at := time.Date(2026, 11, 11, 2, 0, 0, 0, time.UTC)
+	noise := mustJSON(t, map[string]string{"detail": strings.Repeat("n", maxMinorStep)})
+	events := make([]db.SessionEvent, 0, 80)
+	for index := range 79 {
+		events = append(events, db.SessionEvent{EventType: "span.model_request_end", CreatedAt: at.Add(time.Duration(index) * time.Second), Payload: noise})
+	}
+	events = append(events, db.SessionEvent{EventType: "agent.tool_use", CreatedAt: at.Add(time.Hour), Payload: json.RawMessage(`{"name":"lookup_order","input":{"order_id":"A1"}}`)})
+	trajectory := evidenceFromEvents(events).trajectory
+	if len(trajectory) > maxScoredTrajectory || strings.Contains(trajectory, "nnnn") {
+		t.Fatalf("minor payloads kept len=%d", len(trajectory))
+	}
+	for _, fragment := range []string{"2026-11-11T02:00:00Z span.model_request_end", "lookup_order", `"order_id":"A1"`} {
+		if !strings.Contains(trajectory, fragment) {
+			t.Fatalf("trajectory missing %q", fragment)
 		}
 	}
 }

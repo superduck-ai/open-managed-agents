@@ -22,16 +22,24 @@ interface McpRegistration {
   sandbox: SandboxExecutor;
   threadId?: string;
   disposers: (() => void)[];
+  installed: Set<string>;
 }
 
 export class ExternalMcp {
   private readonly clients: ExternalMcpClient[];
   private closing?: Promise<void>;
+  private readonly successful = new Map<ExternalMcpClient, RemoteTool[]>();
+  private readonly registrations = new Set<McpRegistration>();
+  private lastInput?: string;
+  private refreshing?: Promise<void>;
   private discovery?: Promise<
     { client: ExternalMcpClient; tool: RemoteTool }[]
   >;
 
-  constructor(config: unknown, fetcher?: typeof fetch) {
+  constructor(
+    config: unknown,
+    private readonly fetcher?: typeof fetch,
+  ) {
     this.clients = externalServers(config).map(
       (server) => new ExternalMcpClient(server, fetcher),
     );
@@ -48,7 +56,11 @@ export class ExternalMcp {
       const outcomes = await Promise.allSettled(
         this.clients.map(async (client) => {
           try {
-            return await client.discover(signal);
+            const cached = this.successful.get(client);
+            if (cached) return cached;
+            const tools = await client.discover(signal);
+            this.successful.set(client, tools);
+            return tools;
           } catch (error) {
             await client.close();
             throw error;
@@ -106,8 +118,11 @@ export class ExternalMcp {
       sandbox,
       threadId,
       disposers: [],
+      installed: new Set(),
     };
+    this.registrations.add(registration);
     ctx.effect(() => () => {
+      this.registrations.delete(registration);
       for (const dispose of registration.disposers.splice(0)) dispose();
     });
     await this.install(registration);
@@ -130,6 +145,9 @@ export class ExternalMcp {
     ));
     signal.throwIfAborted();
     for (const { client, tool } of bindings) {
+      if (!this.registrations.has(registration) || this.closing) return;
+      if (registration.installed.has(tool.name)) continue;
+      registration.installed.add(tool.name);
       const execution = new ToolExecution(
         {
           provision: (signal) => client.provision(signal),
@@ -157,6 +175,35 @@ export class ExternalMcp {
         }),
       );
     }
+  }
+
+  async refreshForInput(input: string): Promise<void> {
+    if (this.lastInput === input || this.closing) return this.refreshing;
+    const first = this.lastInput === undefined;
+    this.lastInput = input;
+    if (first) return;
+    if (this.refreshing) await this.refreshing;
+    this.refreshing = this.retryDiscovery();
+    try {
+      await this.refreshing;
+    } finally {
+      this.refreshing = undefined;
+    }
+  }
+
+  private async retryDiscovery(): Promise<void> {
+    let retry = false;
+    for (let i = 0; i < this.clients.length; i++) {
+      const client = this.clients[i]!;
+      if (!this.successful.has(client)) {
+        this.clients[i] = new ExternalMcpClient(client.server, this.fetcher);
+        retry = true;
+      }
+    }
+    if (!retry) return;
+    this.discovery = undefined;
+    for (const registration of this.registrations)
+      await this.install(registration);
   }
 
   close(): Promise<void> {

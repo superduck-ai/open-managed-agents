@@ -21,7 +21,7 @@ func TestDSHCapabilityRoutesRequireProtocolAndRejectLegacyCredentials(t *testing
 	}
 	router := chi.NewRouter()
 	router.Route("/v1", handler.RegisterV1Routes)
-	for _, path := range []string{"/sandbox/mcp", "/mcp", "/web/search", "/web/fetch", "/otlp/v1/logs", "/otlp/v1/traces"} {
+	for _, path := range []string{"/sandbox/mcp", "/sandbox/tool-outputs", "/mcp", "/web/search", "/web/fetch", "/otlp/v1/logs", "/otlp/v1/traces"} {
 		request := httptest.NewRequest("POST", "/v1/dsr/sessions/"+identity.SessionID+path, strings.NewReader(`{}`))
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)

@@ -941,3 +941,17 @@ P1 先于 P2：同步审批与结束上报依赖新的状态来源，反过来�
 
 
 工具调用身份按模型请求隔离。Go 代理与 Brain 使用同一规则：`toolu_ + hex(SHA256("model-tool-call-v1\0" + requestID + "\0" + providerToolID))[0:32]`。同一请求内身份稳定，跨请求复用供应商 ID 不会复用审批或 dispatched 记录；已有 transcript 中的旧 ID 不改写。
+
+### MCP 错误与内部输出保存
+
+Brain 将 MCP 发现和调用的认证失败、连接失败写入所属 transcript 的 `plugin:oma/mcp-error`，再复制并发布 `session.error`。重放使用记录序号派生相同事件 ID；同一输入/工具调用的相同错误不重复追加。错误保留 server 和线程归属，使用固定文案及 `retry_status.type=exhausted`，不阻止其他服务器或普通文本交互。
+
+`permission.resolved` 的 processed 回执先更新公开确认事件的 `processed_at` 并发布，再确认传输消费。Brain 等回执成功后才释放审批等待者，避免工具结果和回合完成先于确认处理回执。
+
+`POST /v1/dsr/sessions/{code_session_id}/sandbox/tool-outputs` 是内部输出保存入口，复用 Session ingress 的租户和 worker epoch 验证。请求只接受 content；服务生成 `/tmp/tool-outputs/mcp_UUID.txt`，不接受客户端路径或命令。文件独占创建、拒绝符号链接，并按同一 inode 分块写入以避免命令参数长度限制。模型 Write/Bash 的授权检查保持独立。MCP 和 WebFetch 大输出通过此入口保存，Read 可按返回路径读取完整内容。
+
+确认事件保留 queued 与 processed 两阶段。Brain 先回报控制输入处理成功，再释放工具等待；权限查询在关联确认事件 processed_at 仍为空时继续返回 pending，避免轮询先读取决策而绕过控制处理回执。已处理的确认可通过查询恢复。
+
+外部 MCP 发现按服务器保存成功结果。首次任务沿用初始化发现结果，后续新用户消息只重试先前发现失败的服务器，成功后注册其工具；同一用户回合的模型步骤不重复发现，且不会重放工具调用。内部输出保存使用 sandbox 已声明的 2026-07-28 无状态 tools/call，核对 RPC ID、complete 结果和写入回执，同时支持 JSON 与 SSE。
+
+权限请求的首次公共工具调用事件在取得 Session/worker 锁、完成资格检查后生成统一的微秒处理时间，并同步写入事件列与 payload。子线程原件及主线程镜像共享该时间；重放已存在请求不改时间、不重发事件。这样并发权限请求不会凭锁前时间戳回排到先提交的 idle 事件之前。失败发现的重试发生在外部用户任务 followup 入队前，避免 DSH 已冻结本步工具列表后才注册恢复工具。

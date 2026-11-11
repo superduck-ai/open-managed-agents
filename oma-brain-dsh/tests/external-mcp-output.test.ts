@@ -7,11 +7,12 @@ function storage(fail = false) {
  const files = new Map<string, string>();
  const executor: SandboxExecutor = {
   async provision() {},
-  async call(tool, args) {
-   expect(tool.remoteName).toBe("write");
-   if (fail) return {isError:true,content:[{type:"text",text:"write refused"}]};
-   files.set(args.file_path,args.content);
-   return {content:[{type:"text",text:"written"}]};
+  async call() { throw new Error("Model Write must not be used for internal output storage"); },
+  async saveOutput(content) {
+   if (fail) throw new Error("storage refused");
+   const path = `/tmp/tool-outputs/mcp_${crypto.randomUUID()}.txt`;
+   files.set(path,content);
+   return path;
   },
  };
  return {files,executor};
@@ -55,13 +56,12 @@ test("malformed text is not mislabeled as a completed unsupported-content outcom
  await expect(persistToolOutput({content:[{type:"text",text:7}]},executor,new AbortController().signal)).rejects.toThrow("Only text");
 });
 
-test("output persistence forwards the calling thread to Write", async () => {
- const threads: (string | undefined)[] = [];
- const sandbox: SandboxExecutor = { call: async (_tool, _args, _signal, threadId) => {
-  threads.push(threadId);
-  return { content: [{ type: "text", text: "saved" }] };
+test("output persistence uses internal storage for root and child without model Write", async () => {
+ const values: string[] = [];
+ const sandbox: SandboxExecutor = { call: async () => { throw new Error("model tool called"); }, saveOutput: async content => {
+  values.push(content); return "/tmp/tool-outputs/mcp_test.txt";
  } };
  await saveToolOutput("fetch", sandbox, new AbortController().signal, "fetch-child");
  await persistToolOutput({ content: [{ type: "text", text: "x".repeat(100001) }] }, sandbox, new AbortController().signal, { threadId: "mcp-child" });
- expect(threads).toEqual(["fetch-child", "mcp-child"]);
+ expect(values).toEqual(["fetch", "x".repeat(100001)]);
 });

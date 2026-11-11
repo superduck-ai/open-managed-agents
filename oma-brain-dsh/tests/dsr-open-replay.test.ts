@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { OmaApi } from "../src/api.ts";
 import { dsrAssignment } from "../src/dsr/assignment.ts";
 import { DsrClient } from "../src/dsr/client.ts";
+import { recordMcpError } from "../src/dsr/mcp-errors.ts";
 import { DsrSession } from "../src/dsr/session.ts";
 import { createDsrTransport } from "../src/dsr/transport.ts";
 import { dsrRuntimeServices, mountDsr } from "../src/dsr/worker.ts";
@@ -807,4 +808,24 @@ test("cold open repairs completed child output without starting child execution"
     await opened.close();
     backend.stop();
   }
+});
+
+test("durable MCP diagnostics survive failed publication and replay once", async () => {
+ const backend = new ReplayBackend();
+ const seed = history(backend, 0);
+ const error = recordMcpError(seed, "mcp_authentication_failed_error", "protected", "discovery");
+ expect(recordMcpError(seed, "mcp_authentication_failed_error", "protected", "discovery").seq).toBe(error.seq);
+ backend.transcripts.set(seed.id, { header: { ...seed.header }, events: seed.snapshotEvents().map(event => ({...event})) });
+ backend.rejectPublicAfter = 0;
+ const first = await openFixture(backend);
+ try { await expect(first.session.open()).rejects.toThrow(); } finally { await first.close(); }
+ backend.rejectPublicAfter = undefined;
+ try {
+  for (let i=0;i<2;i++) {
+   const next = await openFixture(backend);
+   try { await next.session.open(); } finally { await next.close(); }
+  }
+  expect(backend.publicLog.size).toBe(1);
+  expect([...backend.publicLog.values()][0]).toMatchObject({ type: "session.error", error: { type: "mcp_authentication_failed_error", mcp_server_name: "protected", retry_status: {type:"exhausted"} } });
+ } finally { backend.stop(); }
 });

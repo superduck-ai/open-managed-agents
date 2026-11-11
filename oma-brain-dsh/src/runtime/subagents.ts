@@ -148,11 +148,14 @@ export class Subagents {
           `${config.systemPrompt}\n\nYou are subagent ${thread.name}. Your conversation is isolated. Delegation tools are unavailable. Report your findings to the parent.\nSpecialist instructions:\n${thread.systemPrompt}`,
       },
       {
-        onExternalMcpAuthenticationFailure: (serverName, phase) =>
+        onExternalMcpAuthenticationFailure: (serverName, phase, session) =>
           this.parent.hooks.onExternalMcpAuthenticationFailure?.(
             serverName,
             phase,
+            session,
           ) ?? Promise.resolve(),
+        onExternalMcpConnectionFailure: (serverName, session) =>
+ this.parent.hooks.onExternalMcpConnectionFailure?.(serverName, session) ?? Promise.resolve(),
         beforeRequest: () => this.settleEvents(),
         onDiagnostic: (diagnostic) =>
           this.bridge.onDiagnostic?.(thread.id, diagnostic),

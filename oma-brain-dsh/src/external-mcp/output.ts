@@ -1,7 +1,6 @@
 import type { Payload } from "../json.ts";
 import type { SandboxExecutor } from "../runtime/contracts.ts";
 import { toolText } from "../runtime/tools.ts";
-import { sandboxToolDefinitions } from "../sandbox-tools/definitions.ts";
 
 export async function persistToolOutput(
   result: Payload,
@@ -36,13 +35,10 @@ export async function persistToolOutput(
   return { ...result, structuredContent: undefined, content: [{ type: "text", text: persisted }] };
 }
 
-export async function saveToolOutput(text: string, sandbox: SandboxExecutor, signal: AbortSignal, threadId?: string): Promise<string> {
+export async function saveToolOutput(text: string, sandbox: SandboxExecutor, signal: AbortSignal, _threadId?: string): Promise<string> {
   signal.throwIfAborted();
-  const path = `/tmp/tool-outputs/mcp_${crypto.randomUUID()}.txt`;
-  const write = sandboxToolDefinitions().find(tool => tool.name === "Write")!;
-  await sandbox.provision?.(signal);
-  const saved = await sandbox.call(write, { file_path: path, content: text }, signal, threadId);
-  if (saved.isError) throw new Error("Sandbox output persistence failed");
+  if (!sandbox.saveOutput) throw new Error("Internal output storage unavailable");
+  const path = await sandbox.saveOutput(text, signal);
   signal.throwIfAborted();
   return path;
 }

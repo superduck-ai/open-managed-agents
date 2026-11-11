@@ -254,3 +254,37 @@ for (const status of [401, 403]) {
     } finally { await client.close(); p.close(); }
   });
 }
+
+
+test("a new input retries failed MCP discovery while retaining healthy registrations",async()=>{
+ const {ExternalMcp}=await import("../src/external-mcp/index.ts");
+ const healthy=peer("http","healthy"), recovered=peer("http","recovering");
+ recovered.failDiscovery();
+ const mcp=new ExternalMcp({mcpServers:{...healthy.config.mcpServers,...recovered.config.mcpServers}});
+ const tools=new Map<string,any>(); const effects:(()=>void)[]=[];
+ const scope={tools:{register(tool:any){expect(tools.has(tool.name)).toBe(false);tools.set(tool.name,tool);return ()=>tools.delete(tool.name);}},effect(factory:()=>()=>void){effects.push(factory());}} as any;
+ const bridge={approve:async()=>({allowed:true}),runTool:async(_id:string,execute:()=>Promise<any>)=>execute(),approvalChanged:()=>{}};
+ const signal=new AbortController().signal;const failures:string[]=[];
+ try {
+  await mcp.register(scope,bridge,signal,async()=>{}, {call:async()=>({})},async name=>{failures.push(name);});
+  const initialHealthy=healthy.requests.length, initialFailed=recovered.requests.length;
+  await mcp.refreshForInput("first");await mcp.refreshForInput("first");
+  expect(recovered.requests.length).toBe(initialFailed);
+  expect(failures).toEqual(["recovering"]);
+  await mcp.refreshForInput("still-failing");
+  expect(failures).toEqual(["recovering", "recovering"]);
+  const failedAgain = recovered.requests.length;
+  expect(failedAgain).toBeGreaterThan(initialFailed);
+  await mcp.refreshForInput("still-failing");
+  expect(recovered.requests.length).toBe(failedAgain);
+  recovered.recoverDiscovery();
+  await mcp.refreshForInput("second");
+  expect(healthy.requests.length).toBe(initialHealthy);
+  const tool=tools.get("mcp__recovering__microsoft_docs_fetch");expect(tool).toBeDefined();
+  await tool.execute({url:"https://learn.microsoft.com/example"},{signal,callId:"recovered-call",deferContext:()=>{}});
+  expect(recovered.requests.filter(r=>r.method==="tools/call")).toHaveLength(1);
+  const completed=recovered.requests.length;
+  await mcp.refreshForInput("second");await mcp.refreshForInput("third");
+  expect(recovered.requests.length).toBe(completed);
+ } finally {for(const effect of effects) effect();await mcp.close();healthy.close();recovered.close();}
+});

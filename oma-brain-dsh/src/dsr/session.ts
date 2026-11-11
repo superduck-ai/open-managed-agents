@@ -32,6 +32,7 @@ import { dsrToolIdentity } from "./tools.ts";
 import { DsrSubagentBridge } from "./subagents.ts";
 import type { DsrClient } from "./client.ts";
 import type { Decision, Delivery, Finish, Input, PublicEvent } from "./wire.ts";
+import { recordMcpError, projectMcpError } from "./mcp-errors.ts";
 import { TranscriptPublication } from "./publication.ts";
 
 // 扩展 DSH 插件记录类型：允许把“某个输入已经得出最终结论”写进会话事件流。
@@ -113,6 +114,10 @@ export class DsrSession {
           await this.subagents.register(scope);
         },
         // 所有会话事件先进入 record()，转成公共事件或更新内部状态。
+        onExternalMcpAuthenticationFailure: (serverName, phase, session) =>
+          this.mcpFailure(session, "mcp_authentication_failed_error", serverName, phase ?? "discovery"),
+        onExternalMcpConnectionFailure: (serverName, session) =>
+          this.mcpFailure(session, "mcp_connection_failed_error", serverName, "discovery"),
         onEvent: (event, session) => this.record(event, session),
         // 流式帧进入 stream()，生成 preview 事件。
         onStream: (frame) => this.stream(frame),
@@ -231,6 +236,8 @@ export class DsrSession {
         this.queueAssistant(payload as PublicEvent);
       }
     }
+    const diagnostic = projectMcpError(event, session.id, this.id);
+    if (diagnostic) this.pending.push(diagnostic);
     const record = pluginRecordOf(event);
     if (record?.type === "plugin:oma/assistant-block") {
       const output = (record.data as { output: PublicEvent }).output;
@@ -443,8 +450,9 @@ export class DsrSession {
     let error: "unsupported_input" | undefined;
     switch (input.kind) {
       case "permission.resolved":
+        await report({ id: input.id, status: "processed" });
         this.permissionWaiter.resolve(input.request_id, input.resolution);
-        break;
+        return;
       case "user.interrupt":
         // 没有 thread id 或就是根会话：取消根 turn。
         if (!input.session_thread_id || input.session_thread_id === this.id)
@@ -590,6 +598,11 @@ export class DsrSession {
   }
 
   // 入队一个公共事件并立即 checkpoint。子 agent 桥接层用它发布事件。
+  private async mcpFailure(session: Session, type: "mcp_authentication_failed_error" | "mcp_connection_failed_error", serverName: string, phase: "discovery" | "tool_call"): Promise<void> {
+    this.record(recordMcpError(session, type, serverName, phase), session);
+    await this.checkpoint(session);
+  }
+
   async publish(event: PublicEvent): Promise<void> {
     this.pending.push(event);
     await this.checkpoint();

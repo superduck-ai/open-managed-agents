@@ -8,7 +8,7 @@ import {
   type ContentBlock,
   type ToolCallBlock,
 } from "@deepseek-ai/dsh-llm";
-import { interruptedTurnClosers, SessionId } from "@deepseek-ai/dsh-session";
+import { interruptedTurnClosers, SessionId, type Session } from "@deepseek-ai/dsh-session";
 import { ModelRetry } from "./model-retry.ts";
 import { ExternalMcp } from "../external-mcp/index.ts";
 import * as SandboxTools from "../sandbox-tools/index.ts";
@@ -65,7 +65,7 @@ export class SessionRuntime {
     return agent;
   }
 
-  private async install(agentScope: Context): Promise<void> {
+  private async install(agentScope: Context, session: Session): Promise<void> {
     const scope = agentScope.isolate("sandboxExecutor", this.sandboxScope);
     scope.effect(() => () => this.externalMcp.close());
     if (!this.parent) {
@@ -121,11 +121,12 @@ export class SessionRuntime {
         await this.hooks.onExternalMcpAuthenticationFailure?.(
           serverName,
           phase,
+          session,
         );
       },
       scope.get("sandboxExecutor")!,
       async (serverName) => {
-        await this.hooks.onExternalMcpConnectionFailure?.(serverName);
+        await this.hooks.onExternalMcpConnectionFailure?.(serverName, session);
       },
       this.parent ? this.config.id : undefined,
     );
@@ -243,7 +244,7 @@ export class SessionRuntime {
       provider: this.config.provider,
       model: this.config.model,
     });
-    await this.install(agent.ctx);
+    await this.install(agent.ctx, agent.session);
     await this.hooks.onOpen?.(agent.session);
   }
 
@@ -254,7 +255,7 @@ export class SessionRuntime {
         provider: this.config.provider,
         model: this.config.model,
       },
-      setup: (scope: Context) => this.install(scope),
+      setup: (scope: Context, agent: Agent) => this.install(scope, agent.session),
       parentAgent: this.parent?.agent,
       signal: this.abort.signal,
     };
@@ -320,6 +321,7 @@ export class SessionRuntime {
               source: { kind: "user" },
               content,
             });
+      if (!hooks.continuation) await this.externalMcp.refreshForInput(message.id);
       if (hooks.continuation && this.config.cancelRestoredTurn?.())
         this.cancelOpenTurn();
       else if (hooks.continuation) {

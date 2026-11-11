@@ -94,6 +94,7 @@ export function isShutdownCancel(reason: unknown): boolean {
 
 /** Host-provided sandbox readiness and execution. Resource creation belongs to the provider service. */
 export interface SandboxExecutor {
+  saveOutput?(content: string, signal: AbortSignal): Promise<string>;
   provision?(signal: AbortSignal): Promise<void>;
   call(
     tool: RemoteTool,
@@ -197,10 +198,11 @@ export interface SessionRuntimeHooks {
   onDiagnostic?(diagnostic: RuntimeDiagnostic): void;
   onOpen?(session: Session): Promise<void>;
   flushLog?(session: Session): Promise<void>;
-  onExternalMcpConnectionFailure?(serverName: string): Promise<void>;
+  onExternalMcpConnectionFailure?(serverName: string, session: Session): Promise<void>;
   onExternalMcpAuthenticationFailure?(
     serverName: string,
-    phase?: "discovery" | "tool_call",
+    phase: "discovery" | "tool_call" | undefined,
+    session: Session,
   ): Promise<void>;
   setupTools?(scope: Context): void | Promise<void>;
   beforeRequest?(): Promise<void>;

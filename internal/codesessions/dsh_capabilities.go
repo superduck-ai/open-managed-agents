@@ -9,6 +9,7 @@ func (h *Handler) registerDSHCapabilities(router chi.Router) {
 	const base = "/sessions/{code_session_id}"
 	guarded := router.With(dsh.RequireVersion)
 	guarded.Post(base+"/sandbox/mcp", h.handleSandboxMCP)
+	guarded.Post(base+"/sandbox/tool-outputs", h.handleSandboxToolOutput)
 	guarded.HandleFunc(base+"/mcp", h.handleMCPProxy)
 	guarded.HandleFunc(base+"/mcp/*", h.handleNamedMCPProxy)
 	guarded.Post(base+"/web/search", h.handleWebSearch)

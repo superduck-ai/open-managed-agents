@@ -218,4 +218,11 @@
         RETURNING <include refid="columns"/>)
         SELECT <include refid="columns"/> FROM updated
     </select>
+    <select id="HasUnprocessedToolConfirmation" result="scalar" resultType="bool">
+      SELECT COUNT(*) > 0 FROM session_events
+       WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID}
+       AND session_external_id = #{sessionExternalID} AND event_type = 'user.tool_confirmation'
+       AND processed_at IS NULL AND deleted_at IS NULL AND tool_use_id IN
+       <foreach collection="toolUseIDs" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </select>
 </mapper>

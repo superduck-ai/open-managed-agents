@@ -110,6 +110,17 @@ export class SandboxMcp implements SandboxExecutor {
     return normalizeSandboxResult(result, tool.name);
   }
 
+  async saveOutput(content: string, signal: AbortSignal): Promise<string> {
+    const url = new URL(this.endpoint.url);
+    if (!url.pathname.endsWith("/sandbox/mcp")) throw new Error("Output storage endpoint unavailable");
+    url.pathname = url.pathname.slice(0, -3) + "tool-outputs";
+    const response = await this.api.fetcher(new Request(url, { method: "POST", headers: { ...this.endpoint.headers, "Content-Type": "application/json" }, body: JSON.stringify({ content }), signal }));
+    if (!response.ok) throw new Error("Output storage failed");
+    const result = object(await response.json());
+    if (typeof result.path !== "string" || !/^\/tmp\/tool-outputs\/mcp_[a-f0-9-]+\.txt$/.test(result.path)) throw new Error("Invalid output storage receipt");
+    return result.path;
+  }
+
   async close(): Promise<void> { await this.client.close(); }
 }
 

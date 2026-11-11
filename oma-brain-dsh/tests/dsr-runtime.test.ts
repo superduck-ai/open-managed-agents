@@ -19,6 +19,7 @@ async function fixture(
   backend: DsrBackend,
   root: string,
   approvalWaitMs?: number,
+  externalMcpFetch?: typeof fetch,
 ) {
   await backend.ready;
   const ctx = new Context();
@@ -41,7 +42,7 @@ async function fixture(
       session = new DsrSession(
         scope,
         client,
-        omaRuntimeConfig(api, assignment),
+        {...omaRuntimeConfig(api, assignment), ...(externalMcpFetch ? {externalMcpFetch} : {})},
         { approvalWaitMs },
       );
       await session.open();
@@ -710,3 +711,30 @@ test.each(["replication", "publication"] as const)(
     }
   },
 );
+
+
+test("DSR retries failed discovery against the current session on a later input",async()=>{
+ const backend=new DsrBackend();let healthy=false;let discoveries=0;
+ const peer=Bun.serve({port:0,hostname:"127.0.0.1",async fetch(request){
+  if(request.method!=="POST") return new Response(null,{status:405});
+  const body=await request.json() as any;
+  if(body.method==="server/discover") {discoveries++;if(!healthy)return new Response(null,{status:503});return Response.json({jsonrpc:"2.0",id:body.id,error:{code:-32601,message:"legacy"}},{status:404});}
+  if(body.method==="initialize")return Response.json({jsonrpc:"2.0",id:body.id,result:{protocolVersion:"2025-03-26",capabilities:{tools:{}},serverInfo:{name:"recovery",version:"1"}}});
+  if(body.method==="notifications/initialized")return new Response(null,{status:202});
+  if(body.method==="tools/list")return Response.json({jsonrpc:"2.0",id:body.id,result:{tools:[{name:"recovered_read",inputSchema:{type:"object"}}]}});
+  return new Response(null,{status:405});
+ }});
+ backend.a.external_mcp_config={mcpServers:{peer:{type:"http",url:peer.url.href}}};
+ backend.onModel=async()=>textEvents("done");
+ const root=await mkdtemp(join(tmpdir(),"dsr-mcp-rediscovery-"));
+ const {ctx,session}=await fixture(backend,root,undefined,fetch);
+
+ try {
+  await session.receive({id:"discovery_first",kind:"user.message",lane:"task",content:[{type:"text",text:"first"}]});
+  const failed=discoveries;expect(failed).toBe(1);
+  healthy=true;
+  await session.receive({id:"discovery_second",kind:"user.message",lane:"task",content:[{type:"text",text:"second"}]});
+  expect(discoveries).toBeGreaterThan(failed);
+  expect(backend.requests.at(-1)!.tools.some((tool:any)=>tool.name==="mcp__peer__recovered_read")).toBe(true);
+ } finally {await session.close();await ctx.fiber.dispose();backend.stop();peer.stop(true);await rm(root,{recursive:true,force:true});}
+});

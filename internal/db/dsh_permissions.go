@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"encoding/json"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
@@ -96,6 +98,10 @@ func (d *DB) RequestDSHPermission(ctx context.Context, scope DSHScope, request D
 		}
 		insert := dshPermissionInsert{Scope: scope, RequestID: request.RequestID, InputID: &request.InputID, DSHSessionID: request.DSHSessionID, ThreadID: threadID, ToolUseID: request.ToolUseID, Turn: &request.Turn, Tool: request.Tool, Input: request.Input, Available: request.Available, PublicEventID: request.PublicEventID, State: request.State, Decision: request.Decision}
 		if _, err := mapper.InsertPermission(ctx, insert); err != nil {
+			return err
+		}
+		publicEvents, err = stampDSHPermissionEvents(publicEvents)
+		if err != nil {
 			return err
 		}
 		events, err := insertDSHHistory(ctx, executor, &session, primary, publicEvents)
@@ -196,4 +202,33 @@ func dshPermissionEventMatches(scope DSHScope, permission dshPermissionRow, even
 		return true
 	}
 	return permission.DSHSessionID != scope.CodeSessionID && permission.ThreadID != "" && permission.ToolUseID != "" && eventID == maevents.ToolUseEventID(scope.CodeSessionID, permission.ToolUseID, permission.ThreadID)
+}
+
+func (d *DB) DSHPermissionConfirmationPending(ctx context.Context, scope DSHScope, permission DSHPermission) (bool, error) {
+	ids := []string{permission.PublicEventID}
+	if permission.DSHSessionID != scope.CodeSessionID && permission.ThreadID != "" && permission.ToolUseID != "" {
+		ids = append(ids, maevents.ToolUseEventID(scope.CodeSessionID, permission.ToolUseID, permission.ThreadID))
+	}
+	return NewSessionEventMapper(d.mapperDB).HasUnprocessedToolConfirmation(ctx, scope.OrganizationUUID, scope.WorkspaceUUID, scope.SessionID, ids)
+}
+
+func stampDSHPermissionEvents(events []SessionEvent) ([]SessionEvent, error) {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	result := append([]SessionEvent(nil), events...)
+	for i := range result {
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(result[i].Payload, &payload); err != nil {
+			return nil, err
+		}
+		if payload == nil {
+			return nil, ErrInvalidState
+		}
+		payload["processed_at"], _ = json.Marshal(now.Format(time.RFC3339Nano))
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		result[i].Payload, result[i].ProcessedAt, result[i].CreatedAt = raw, now, now
+	}
+	return result, nil
 }

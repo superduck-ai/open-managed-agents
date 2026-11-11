@@ -54,10 +54,11 @@ test("web fetch retains full long content in readable storage and forwards the t
   api.assignments.set(backend.a.session_id, backend.a);
   const sandbox = {
     async provision() {},
-    async call(tool: Payload, args: Payload) {
-      expect(tool.remoteName).toBe("write");
-      files.set(args.file_path, args.content);
-      return { content: [{ type: "text", text: "saved" }] };
+    async call() { throw new Error("model Write must not store internal output"); },
+    async saveOutput(content: string) {
+      const path = `/tmp/tool-outputs/mcp_${crypto.randomUUID()}.txt`;
+      files.set(path, content);
+      return path;
     },
   };
   try {
@@ -110,32 +111,28 @@ test("oversized search returns a bounded preview when Write is denied or storage
  }
 });
 
-test("parallel root and child Fetch persistence uses each caller's Write policy", async () => {
+test("parallel root and child Fetch keeps request scope and stores outputs independently of Write", async () => {
  const a = assignment();
- const writes: (string | null)[] = [];
+ a.mcp_config = {mcpServers:{sandbox:{type:"http",url:`http://oma.test/api/internal/code-sessions/${a.session_id}/sandbox/mcp`,headers:{Authorization:"Bearer test-mcp"}}}};
+ const scopes: (string|null)[] = [], contents: string[] = [];
  const api = new OmaApi("http://oma.test", Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
   const request = new Request(input, init);
-  if (request.url.includes("/web/fetch")) return Response.json({ url: "https://example.com", content: "preview", full_content: "full", truncated: true });
-  if (request.method === "DELETE") return new Response(null, { status: 200 });
-  const rpc = await request.json();
-  if (rpc.method.startsWith("notifications/")) return new Response(null, { status: 202 });
-  if (rpc.method === "tools/call") {
-   const thread = request.headers.get("X-OMA-Session-Thread-ID");
-   writes.push(thread);
-   if (thread === "child-denied") return Response.json({ error: { message: "Write denied" } }, { status: 403, headers: { "X-Oma-Sandbox-Not-Forwarded": "true" } });
+  if (request.url.includes("/web/fetch")) {
+   scopes.push(request.headers.get("X-OMA-Session-Thread-ID"));
+   return Response.json({url:"https://example.com",content:"preview",full_content:"full",truncated:true});
   }
-  return Response.json({ jsonrpc: "2.0", id: rpc.id, result: rpc.method === "initialize" ? { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "test", version: "1" } } : { content: [{ type: "text", text: "saved" }] } });
- }, { preconnect: fetch.preconnect }));
- api.assignments.set(a.session_id, a);
- const sandbox = new SandboxMcp(api, a.session_id);
+  expect(request.url.endsWith("/sandbox/tool-outputs")).toBe(true);
+  const body=await request.json();
+  expect(Object.keys(body)).toEqual(["content"]);
+  contents.push(body.content);
+  return Response.json({path:`/tmp/tool-outputs/mcp_${crypto.randomUUID()}.txt`});
+ }, {preconnect:fetch.preconnect}));
+ api.assignments.set(a.session_id,a);
+ const sandbox = new SandboxMcp(api,a.session_id);
  try {
-  const [child, root] = await Promise.all(["child-denied", undefined].map(thread => new WebClient(api, a.session_id, sandbox, thread).call(webToolDefinitions()[1]!, { url: "https://example.com" }, new AbortController().signal)));
-  const childPage = JSON.parse(child!.content[0].text);
-  expect(child!.isError).not.toBe(true);
-  expect(childPage.storage_error).toContain("only the preview");
-  expect(childPage.output_file).toBeUndefined();
-  expect(JSON.parse(root!.content[0].text).output_file).toStartWith("/tmp/tool-outputs/");
-  expect(writes).toContain("child-denied");
-  expect(writes).toContain(null);
- } finally { await sandbox.close(); }
+  const outputs=await Promise.all(["child",undefined].map(thread=>new WebClient(api,a.session_id,sandbox,thread).call(webToolDefinitions()[1]!,{url:"https://example.com"},new AbortController().signal)));
+  for (const output of outputs) expect(JSON.parse(output!.content[0].text).output_file).toStartWith("/tmp/tool-outputs/");
+  expect(scopes).toEqual(["child",null]);
+  expect(contents).toHaveLength(2);
+ } finally {await sandbox.close();}
 });

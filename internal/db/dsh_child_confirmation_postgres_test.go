@@ -70,6 +70,22 @@ func TestDSHChildConfirmationAliasesPostgres(t *testing.T) {
 			if accepted.ToolUseID == nil || *accepted.ToolUseID != id {
 				t.Fatal("accepted confirmation lost original reference")
 			}
+			pending, err := store.DSHPermissionConfirmationPending(ctx, scope, permission)
+			if err != nil || !pending || !accepted.ProcessedAt.IsZero() {
+				t.Fatalf("confirmation must remain queued: %v %v", pending, err)
+			}
+			processed, err := store.ProcessSessionInputsForWorker(ctx, code, scope.Epoch, []string{accepted.ExternalID})
+			if err != nil || len(processed) != 1 || processed[0].ProcessedAt.IsZero() {
+				t.Fatalf("processing receipt: %+v %v", processed, err)
+			}
+			pending, err = store.DSHPermissionConfirmationPending(ctx, scope, permission)
+			if err != nil || pending {
+				t.Fatalf("processed decision unavailable: %v %v", pending, err)
+			}
+			duplicate, err := store.ProcessSessionInputsForWorker(ctx, code, scope.Epoch, []string{accepted.ExternalID})
+			if err != nil || len(duplicate) != 0 {
+				t.Fatalf("duplicate processing: %+v %v", duplicate, err)
+			}
 			resolved, found, err := store.ResolvedDSHPermissionForInput(ctx, scope, accepted)
 			if err != nil || !found || resolved.RequestID != permission.RequestID || resolved.State != "resolved" {
 				t.Fatalf("resolved=%+v found=%v error=%v", resolved, found, err)

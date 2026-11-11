@@ -92,6 +92,14 @@ func (e dshExecution) controlDelivery(ctx context.Context, scope db.DSHScope, re
 		}
 		return "applied", service.workerEventAcks.Refresh(ctx, scope.CodeSessionID, scope.Epoch, result.ID)
 	}
+	code := db.CodeSession{ExternalID: scope.CodeSessionID, OrganizationUUID: scope.OrganizationUUID, WorkspaceUUID: scope.WorkspaceUUID, SessionExternalID: scope.SessionID}
+	events, err := e.handler.db.ProcessSessionInputsForWorker(ctx, code, scope.Epoch, []string{result.ID})
+	if err != nil {
+		return "", err
+	}
+	if err := e.committed(ctx, scope, db.SessionEventChanges{Events: events}); err != nil {
+		return "", err
+	}
 	if err := service.workerEvents.DoubleAck(ctx, ref.AckSubject); err != nil {
 		return "", err
 	}
@@ -118,6 +126,15 @@ func (e dshExecution) Permission(ctx context.Context, scope db.DSHScope, input d
 		return dsh.PermissionResponse{}, err
 	}
 	if found {
+		if stored.State == "resolved" {
+			pending, err := e.handler.db.DSHPermissionConfirmationPending(ctx, scope, stored)
+			if err != nil {
+				return dsh.PermissionResponse{}, err
+			}
+			if pending {
+				stored.State, stored.Decision = "pending", nil
+			}
+		}
 		return permissionResponse(stored), nil
 	}
 

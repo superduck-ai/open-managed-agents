@@ -108,3 +108,11 @@ test('legacy workspace telemetry uses organization settings before redirecting',
   expect(settingsItem(path)?.group.id).toBe('activity');
   expect(settingScope(path)).toBe('organization');
 });
+
+test.each(['/settings/billing', '/billing', '/settings/limits', '/settings/service-accounts'])(
+  'legacy settings path %s keeps the settings shell',
+  (path) => {
+    expect(isSettingsPath(path)).toBe(true);
+    expect(settingScope(path)).toBe('organization');
+  },
+);

@@ -6,14 +6,19 @@ import { defaultWorkspace } from '../shared/workspaces/api';
 import { WorkspaceContext } from '../shared/workspaces/context';
 import { resetTestDom } from '../test/setup';
 import { router as appRouter } from './router';
+import {
+  readWorkspaceManagementOrigin,
+  saveWorkspaceManagementOrigin,
+} from './layout/use-workspace-management-history';
 
-const { cleanup, render, screen, waitFor } = await import('@testing-library/react');
+const { cleanup, fireEvent, render, screen, waitFor } = await import('@testing-library/react');
 const originalFetch = globalThis.fetch;
 const originalScrollTo = Object.getOwnPropertyDescriptor(globalThis, 'scrollTo');
 let queryClient: QueryClient | undefined;
 
 afterEach(() => {
   cleanup();
+  window.sessionStorage.clear();
   queryClient?.clear();
   globalThis.fetch = originalFetch;
   if (originalScrollTo) Object.defineProperty(globalThis, 'scrollTo', originalScrollTo);
@@ -37,9 +42,14 @@ test.each([
   { path: '/settings/llm', destination: '/settings/llm', heading: 'LLM models' },
 ])('settings route $path reaches $destination', async ({ path, destination, heading }) => {
   resetTestDom(`https://oma.duck.ai${path}`);
+  window.sessionStorage.clear();
+  const applicationOrigin = '/workspaces/default/agents?status=ready#list';
+  saveWorkspaceManagementOrigin('acct_test', 'org_test', { href: applicationOrigin, workspaceId: defaultWorkspace.id });
   Object.assign(globalThis, { scrollTo: () => undefined });
   globalThis.fetch = (async (input: RequestInfo | URL) =>
-    String(input).endsWith('/llm_providers') ? Response.json([]) : Response.json({ data: [] })) as typeof fetch;
+    /\/(llm_providers|members|invites)(\?|$)/.test(String(input))
+      ? Response.json([])
+      : Response.json({ data: [] })) as typeof fetch;
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const history = createMemoryHistory({ initialEntries: [path] });
   const router = createRouter({ routeTree: appRouter.options.routeTree, history });
@@ -87,4 +97,7 @@ test.each([
   const original = new URL(path, 'https://oma.duck.ai');
   expect(router.state.location.hash).toBe(original.hash.slice(1));
   expect(router.state.location.searchStr).toBe(original.search);
+  expect(readWorkspaceManagementOrigin('acct_test', 'org_test')?.href).toBe(applicationOrigin);
+  fireEvent.click(screen.getByRole('button', { name: 'Back to app' }));
+  await waitFor(() => expect(router.state.location.href).toBe(applicationOrigin));
 });

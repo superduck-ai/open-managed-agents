@@ -1,6 +1,11 @@
 import { afterEach, expect, test } from 'bun:test';
 import '../../test/setup';
-import { readWorkspaceManagementOrigin, saveWorkspaceManagementOrigin } from './use-workspace-management-history';
+import {
+  readWorkspaceManagementOrigin,
+  saveWorkspaceManagementOrigin,
+  initialWorkspaceManagementOrigin,
+  workspaceManagementReturnHref,
+} from './use-workspace-management-history';
 
 const { cleanup } = await import('@testing-library/react');
 
@@ -38,4 +43,25 @@ test('unavailable session storage does not break management navigation', () => {
   } finally {
     Object.defineProperty(window, 'sessionStorage', { configurable: true, value: storage });
   }
+});
+
+test.each([
+  '/settings/workspaces/a/telemetry?from=notification#target',
+  '/settings/telemetry',
+  '/settings/billing',
+  '/billing',
+  '/settings/service-accounts',
+  '/workspaces/a/llm-models',
+])('polluted return origin %s falls back to the dashboard', (href) => {
+  saveWorkspaceManagementOrigin('account', 'org', { href, workspaceId: 'a' });
+  expect(readWorkspaceManagementOrigin('account', 'org')).toBeNull();
+  const origin = initialWorkspaceManagementOrigin('account', 'org', 'a', '/settings/telemetry', true);
+  expect(workspaceManagementReturnHref(origin, 'a')).toBe('/dashboard');
+});
+
+test.each(['webhooks', 'mcp-tunnels'])('workspace %s resources remain valid return origins', (resource) => {
+  const origin = { href: `/settings/workspaces/a/${resource}/resource?mode=edit#details`, workspaceId: 'a' };
+  saveWorkspaceManagementOrigin('account', 'org', origin);
+  expect(readWorkspaceManagementOrigin('account', 'org')).toEqual(origin);
+  expect(workspaceManagementReturnHref(origin, 'a')).toBe(origin.href);
 });

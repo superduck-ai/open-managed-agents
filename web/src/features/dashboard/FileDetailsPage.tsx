@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ArrowLeft, Download } from 'lucide-react';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import { useWorkspace } from '../../shared/workspaces/context';
-import { useI18n } from '../../shared/i18n';
+import { useFormatters, useI18n } from '../../shared/i18n';
 import { Button } from '../../shared/ui/button';
 import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
 import { downloadFile, formatBytes, errorMessage, type ConsoleFile } from './model';
@@ -13,6 +13,7 @@ export function FileDetailsPage() {
   const { fileId = '', workspaceId = '' } = useParams({ strict: false });
   const { activeWorkspaceId, orgUuid, workspaces } = useWorkspace();
   const { msg } = useI18n();
+  const formatters = useFormatters();
   const navigate = useNavigate();
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
@@ -75,7 +76,7 @@ export function FileDetailsPage() {
           <dt className="text-muted-foreground">{msg('common.size', 'Size')}</dt>
           <dd>{formatBytes(file.size_bytes)}</dd>
           <dt className="text-muted-foreground">{msg('common.created', 'Created')}</dt>
-          <dd>{file.created_at}</dd>
+          <dd>{formatters.date(file.created_at, { dateStyle: 'medium', timeStyle: 'short' })}</dd>
         </dl>
       )}
       {error && (

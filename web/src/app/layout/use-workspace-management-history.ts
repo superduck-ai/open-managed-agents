@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isSettingsPath } from './settings-navigation';
 import { normalizeReturnTo } from '../../shared/auth/redirects';
 import { quickstartModelSetupReturn } from '../../shared/workspaces/model-setup-navigation';
 import { workspaceIdFromPath, workspaceSwitchPath } from '../../shared/workspaces/presentation';
@@ -17,8 +18,15 @@ export function readWorkspaceManagementOrigin(accountId: string | undefined, org
     const stored = managementOriginSchema.safeParse(
       JSON.parse(key ? (window.sessionStorage.getItem(key) ?? 'null') : 'null'),
     );
-    if (stored.success && normalizeReturnTo(stored.data.href) === stored.data.href) return stored.data;
-  } catch {}
+    if (
+      stored.success &&
+      normalizeReturnTo(stored.data.href) === stored.data.href &&
+      !isSettingsPath(new URL(stored.data.href, window.location.origin).pathname)
+    )
+      return stored.data;
+  } catch {
+    return null;
+  }
   return null;
 }
 
@@ -31,7 +39,9 @@ export function saveWorkspaceManagementOrigin(
   if (!key) return;
   try {
     window.sessionStorage.setItem(key, JSON.stringify(origin));
-  } catch {}
+  } catch {
+    return;
+  }
 }
 
 export function initialWorkspaceManagementOrigin(

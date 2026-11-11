@@ -2,6 +2,7 @@ import { productIcons } from '../../shared/icons/product-icons';
 import type { AuthAccount } from '../../shared/auth/api';
 import { canManageOrganization } from '../../shared/permissions/organization';
 import { canManageMembers } from '../../shared/permissions/members';
+import { canViewAnalytics } from '../../shared/permissions/analytics';
 import { isActivePath } from './navigation-paths';
 import type { NavGroupItem } from './navigation';
 
@@ -77,10 +78,7 @@ export const settingsGroups: (NavGroupItem & { id: string })[] = [
 
 export function canAccessSettings(href: string, account: AuthAccount | null | undefined, orgUuid?: string) {
   if (href === '/usage' || href === '/cost')
-    return Boolean(
-      account?.effectiveOrganizationUuid === orgUuid &&
-      account?.permissions?.includes(href === '/usage' ? 'usage:view' : 'cost:view'),
-    );
+    return canViewAnalytics(account, orgUuid, href === '/usage' ? 'usage:view' : 'cost:view');
   if (href === '/settings/members') return canManageMembers(account, orgUuid);
   if (['/settings/organization', '/settings/workspaces'].includes(href)) return canManageOrganization(account, orgUuid);
   return true;
@@ -105,15 +103,17 @@ export function settingsItem(path: string) {
 }
 
 export function isSettingsPath(path: string) {
+  if (/^\/settings\/workspaces\/[^/]+\/(webhooks|mcp-tunnels)(\/|$)/.test(path)) return false;
   return (
+    path.startsWith('/settings/') ||
     Boolean(settingsItem(path)) ||
-    ['/llm-models', '/members', '/telemetry'].includes(path) ||
+    ['/llm-models', '/members', '/telemetry', '/billing'].includes(path) ||
     /^\/workspaces\/[^/]+\/llm-models/.test(path)
   );
 }
 
 export function settingScope(path: string) {
-  if (isActivePath(path, '/telemetry')) return 'organization';
+  if (path === '/billing' || isActivePath(path, '/telemetry')) return 'organization';
   if (path === '/usage' || path === '/cost' || /^\/workspaces\/[^/]+\/cost/.test(path)) return 'organization';
   if (path === '/settings/profile' || path === '/settings/appearance') return 'personal';
   if (path.startsWith('/settings/') && !/^\/settings\/workspaces\/[^/]+\//.test(path)) return 'organization';

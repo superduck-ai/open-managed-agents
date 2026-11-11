@@ -8,7 +8,7 @@ import {
   RouterProvider,
 } from '@tanstack/react-router';
 import { resetTestDom } from '../../test/setup';
-import { I18nProvider } from '../../shared/i18n';
+import { I18nProvider, type Locale } from '../../shared/i18n';
 import { WorkspaceContext } from '../../shared/workspaces/context';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { setConsoleRequestContext } from '../../shared/api/client';
@@ -27,7 +27,7 @@ afterEach(() => {
   else Reflect.deleteProperty(globalThis, 'scrollTo');
 });
 
-async function mount(workspaceId = 'workspace-b') {
+async function mount(workspaceId = 'workspace-b', locale: Locale = 'zh-CN') {
   resetTestDom(`https://oma.duck.ai/workspaces/${workspaceId}/files/file_test`);
   Object.assign(globalThis, { scrollTo: () => undefined });
   const requests: { url: string; workspace: string | null }[] = [];
@@ -65,7 +65,7 @@ async function mount(workspaceId = 'workspace-b') {
   function tree(activeWorkspaceId: string) {
     setConsoleRequestContext({ organizationUuid: 'org', workspaceId: activeWorkspaceId });
     return (
-      <I18nProvider initialLocale="zh-CN">
+      <I18nProvider initialLocale={locale}>
         <QueryClientProvider client={client}>
           <WorkspaceContext.Provider
             value={{
@@ -109,4 +109,15 @@ test('metadata waits for the route workspace and the return link retains its sco
   expect(requests[0].url).toContain('/v1/files/file_test');
   fireEvent.click(screen.getByRole('button', { name: '文件' }));
   await waitFor(() => expect(router.state.location.pathname).toBe('/workspaces/workspace-b/files'));
+});
+
+test.each(['en', 'zh-CN'] as const)('file creation time uses the %s date and time format', async (locale) => {
+  const { selectWorkspace } = await mount('workspace-b', locale);
+  selectWorkspace('workspace-b');
+  await screen.findByRole('heading', { name: 'report.txt' });
+  const date = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(
+    new Date('2026-11-01T00:00:00Z'),
+  );
+  expect(screen.getByText(date)).toBeTruthy();
+  expect(screen.queryByText('2026-11-01T00:00:00Z')).toBeNull();
 });

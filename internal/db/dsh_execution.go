@@ -169,13 +169,19 @@ func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPu
 			if err != nil {
 				return err
 			}
+			if found && old != digest {
+				return ErrDSHPublicConflict
+			}
+			original := item.Events
+			if err := prepareDSHCoordinationEvents(ctx, executor, scope, session, primary, &item); err != nil {
+				return err
+			}
 			if found {
-				if old != digest {
-					return ErrDSHPublicConflict
-				}
-				if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true); err != nil {
+				repaired, err := replayDSHPublicHistory(ctx, executor, session, primary, original, item.Events)
+				if err != nil {
 					return err
 				}
+				result.Changes.Events = append(result.Changes.Events, repaired...)
 				result.Duplicates++
 				continue
 			}
@@ -236,39 +242,28 @@ func insertDSHHistory(ctx context.Context, executor yourbatis.Executor, session 
 		if err != nil {
 			return nil, err
 		}
+
 		if write.Inserted {
 			result = append(result, write.Event)
+			mirror, err := insertDSHStatusMirror(ctx, executor, session, primary, event)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, mirror...)
 		}
 	}
 	return result, nil
 }
 
 func createDSHThread(ctx context.Context, executor yourbatis.Executor, scope DSHScope, session Session, primary SessionThread, item DSHPublicEvent) error {
-	transcript, found, err := NewDSHTranscriptMapper(executor).Find(ctx, scope, item.DSHSessionID)
+	parentThread, err := dshParentThread(ctx, executor, scope, session, primary, item.DSHSessionID)
 	if err != nil {
 		return err
 	}
-	if !found || transcript.ParentDSHSessionID == nil {
-		return ErrDSHInputNotEligible
-	}
-	parent, found, err := NewDSHTranscriptMapper(executor).Find(ctx, scope, *transcript.ParentDSHSessionID)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return ErrDSHInputNotEligible
-	}
-	parentID := primary.ExternalID
-	if parent.SessionThreadID != nil {
-		parentID = *parent.SessionThreadID
-	}
+	parentID := parentThread.ExternalID
 	thread := *item.Thread
 	thread.OrganizationUUID, thread.WorkspaceUUID = session.OrganizationUUID, session.WorkspaceUUID
 	thread.SessionUUID, thread.SessionExternalID = session.UUID, session.ExternalID
-	parentThread, err := NewSessionThreadMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, parentID)
-	if err != nil {
-		return err
-	}
 	thread.ParentThreadUUID, thread.ParentThreadExternalID = &parentThread.UUID, &parentID
 	if thread.UUID == "" {
 		thread.UUID = uuid.NewV4().String()
@@ -291,4 +286,27 @@ func createDSHThread(ctx context.Context, executor yourbatis.Executor, scope DSH
 		return ErrDSHPublicConflict
 	}
 	return nil
+}
+
+func dshParentThread(ctx context.Context, executor yourbatis.Executor, scope DSHScope, session Session, primary SessionThread, dshSessionID string) (SessionThread, error) {
+	transcript, found, err := NewDSHTranscriptMapper(executor).Find(ctx, scope, dshSessionID)
+	if err != nil {
+		return SessionThread{}, err
+	}
+	if !found || transcript.ParentDSHSessionID == nil {
+		return SessionThread{}, ErrDSHInputNotEligible
+	}
+	parent, found, err := NewDSHTranscriptMapper(executor).Find(ctx, scope, *transcript.ParentDSHSessionID)
+	if err != nil {
+		return SessionThread{}, err
+	}
+	if !found {
+		return SessionThread{}, ErrDSHInputNotEligible
+	}
+	parentID := primary.ExternalID
+	if parent.SessionThreadID != nil {
+		parentID = *parent.SessionThreadID
+	}
+	parentThread, err := NewSessionThreadMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, parentID)
+	return parentThread.thread(), err
 }

@@ -40,3 +40,22 @@ func validateDSHPublicHistory(ctx context.Context, executor yourbatis.Executor, 
 	}
 	return nil
 }
+
+func replayDSHPublicHistory(ctx context.Context, executor yourbatis.Executor, session Session, primary SessionThread, original, projected []SessionEvent) ([]SessionEvent, error) {
+	err := validateDSHPublicHistory(ctx, executor, session, primary, projected, true)
+	if !errors.Is(err, ErrDSHPublicHistoryInconsistent) || len(original) != 1 || !isDSHCoordinationEvent(original[0]) {
+		return nil, err
+	}
+	if err := validateDSHPublicHistory(ctx, executor, session, primary, original, true); err != nil {
+		return nil, err
+	}
+	mirrors := projected[len(original):]
+	inserted, err := insertDSHHistory(ctx, executor, &session, primary, mirrors)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateDSHPublicHistory(ctx, executor, session, primary, mirrors, true); err != nil {
+		return nil, err
+	}
+	return inserted, nil
+}

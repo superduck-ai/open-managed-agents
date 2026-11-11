@@ -164,9 +164,11 @@ session 路由的 epoch 只来自 session token，请求体不携带 `worker_epo
 
 执行事务先核对租户，再判断会话状态。已终止返回 `410 session_terminated`，已归档返回 `410 session_archived`；两者并存时终止优先。凭据验签成功但写请求的上下文不可用时，也在原租户范围内核对状态，避免终止被误报为不存在。上述 410 不属于 lease_expired，不触发重新 register，当前 owner 停止写入。
 
-公开 Session 删除/归档沿用运行中保护：持有 Session 事务锁后，以 `dsh_input_executions.status=running` 判断 DSR 是否已经开始执行，拒绝移除运行中的会话；不依赖旧 `worker_turn_started`。仅已接受但尚未领取的输入仍可移除。公开 `user.tool_confirmation` 未指定线程且不存在待审批工具时继续返回 400；指定线程的非待审批输入保留 409 冲突语义。 子线程审批接受原始 child 工具事件 ID 和主线程投影 ID；审批落库与后续 `permission.resolved` 投递使用相同的身份匹配规则。公开确认保留调用方提交的原始引用，不改写历史 payload。
+公开 Session 删除/归档沿用运行中保护：持有 Session 事务锁后，以 `dsh_input_executions.status=running` 判断 DSR 是否已经开始执行，拒绝移除运行中的会话；不依赖旧 `worker_turn_started`。仅已接受但尚未领取的输入仍可移除。公开 `user.tool_confirmation` 未指定线程且不存在待审批工具时继续返回 400；指定线程的非待审批输入保留 409 冲突语义。 子线程审批接受原始 child 工具事件 ID 和主线程投影 ID；审批落库与后续 `permission.resolved` 投递使用相同的身份匹配规则。公开确认保留调用方提交的原始引用，不改写历史 payload。 子线程公开创建事件的 `parent_thread_id` 由 transcript 父子关联解析为公开线程 ID，Agent 快照和名称与已持久化线程一致；线程消息的来源/目标 Agent 名称也由对应线程快照填充。原始 DSR 请求仍用于发布回执幂等校验。协调消息和子线程状态在主/子线程历史中都有确定性镜像；只有实际发生状态转换才写入状态镜像。审批解除只将先前停在 `requires_action` 且输入仍活动的子线程恢复为 running，最终 end_turn 由真实完成事件发布。
 
 请求字段或业务参数非法仍返回 `400 invalid_request`。未知 DSR 路由返回 `404 route_not_found`，表示路径或协议接线错误；资源查询缺失仍返回 `404 session_not_found`。日志读取规则不变。
+
+协调消息允许同一会话内的直接父子线程双向收发，任意嵌套层级均按事件所属线程和对方线程的持久化关系校验。省略所属线程时使用主线程。重放先核对原始请求摘要。旧协调历史可按旧版完整公开事件校验，类型、线程归属及正文必须一致；缺少的消息镜像在同一事务中按确定性 ID 补写，已有镜像必须与预期一致。原历史和回执保留，整批遇到冲突时回滚。
 
 接口 1–14 的错误体保持 `internal/httpapi.WriteError` 的 Anthropic 兼容形状。第 11 节的 MCP、OTLP 与二进制附件保留各自原生协议响应，不统一改写错误体。机器可读的分支由响应头承载：`DSR-Error` 给出 code，`DSR-Next-Offset` 在 transcript 错误时给出服务端水位。
 

@@ -39,6 +39,15 @@ func reduceDSHStateWithBoundary(ctx context.Context, executor yourbatis.Executor
 		}
 		ids := dshPendingIDs(permissions, thread.ExternalID)
 		status := thread.Status
+		if thread.ExternalID != primary.ExternalID && status == "idle" && len(ids) == 0 && summary.ActiveInputID != nil {
+			paused, err := dshThreadWasAwaitingPermission(ctx, executor, *session, thread.ExternalID)
+			if err != nil {
+				return nil, err
+			}
+			if paused {
+				status = "running"
+			}
+		}
 		reason := &sessionStopReason{Type: "end_turn"}
 		if len(ids) > 0 {
 			status = "idle"
@@ -114,4 +123,40 @@ func dshStatusEvent(seed string, thread SessionThread, status string, reason *se
 	raw, _ := json.Marshal(reason)
 	source := SessionEvent{ExternalID: derivedStatusEventID(seed, thread.ExternalID+kind+string(raw)), CreatedAt: at, ProcessedAt: at}
 	return newSessionStatusEvent(source, kind, thread, reason)
+}
+
+func dshThreadWasAwaitingPermission(ctx context.Context, executor yourbatis.Executor, session Session, threadID string) (bool, error) {
+	latest, found, err := NewSessionEventMapper(executor).FindLatestStatus(ctx, session.WorkspaceUUID, session.ExternalID, threadID)
+	if err != nil || !found {
+		return false, err
+	}
+	var payload sessionStatusPayload
+	if err := json.Unmarshal(latest.Payload, &payload); err != nil {
+		return false, err
+	}
+	return payload.StopReason != nil && payload.StopReason.Type == "requires_action", nil
+}
+
+func insertDSHStatusMirror(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) ([]SessionEvent, error) {
+	if event.StatusThreadID == "" || event.StatusThreadID == primary.ExternalID {
+		return nil, nil
+	}
+	switch event.EventType {
+	case "session.thread_status_running", "session.thread_status_idle", "session.thread_status_rescheduled", "session.thread_status_terminated":
+	default:
+		return nil, nil
+	}
+	target, err := NewSessionThreadMapper(executor).FindByExternalID(ctx, session.WorkspaceUUID, session.ExternalID, event.StatusThreadID)
+	if err != nil {
+		return nil, err
+	}
+	copies, err := sessionThreadStatusCopies(event, primary, target.thread())
+	if err != nil {
+		return nil, err
+	}
+	write, err := insertSessionEventIfAbsentTx(ctx, executor, session, primary, copies[1])
+	if err != nil || !write.Inserted {
+		return nil, err
+	}
+	return []SessionEvent{write.Event}, nil
 }

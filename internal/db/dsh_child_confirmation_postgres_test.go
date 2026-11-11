@@ -45,9 +45,11 @@ func TestDSHChildConfirmationAliasesPostgres(t *testing.T) {
 			permission.PublicEventID = "child-projection"
 			permission.State = "pending"
 			permission.Decision = nil
-			if _, _, err = store.RequestDSHPermission(ctx, scope, permission, nil); err != nil {
+			_, pendingChanges, err := store.RequestDSHPermission(ctx, scope, permission, nil)
+			if err != nil {
 				t.Fatal(err)
 			}
+			assertDSHChildStatusCopies(t, pendingChanges.Events, child.ExternalID, "session.thread_status_idle", "requires_action")
 			id := maevents.ToolUseEventID(scope.CodeSessionID, permission.ToolUseID, child.ExternalID)
 			if projected {
 				id = permission.PublicEventID
@@ -58,6 +60,7 @@ func TestDSHChildConfirmationAliasesPostgres(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			assertDSHChildStatusCopies(t, changes.Events, child.ExternalID, "session.thread_status_running", "")
 			var accepted SessionEvent
 			for _, item := range changes.Events {
 				if item.ExternalID == event.ExternalID {
@@ -71,6 +74,49 @@ func TestDSHChildConfirmationAliasesPostgres(t *testing.T) {
 			if err != nil || !found || resolved.RequestID != permission.RequestID || resolved.State != "resolved" {
 				t.Fatalf("resolved=%+v found=%v error=%v", resolved, found, err)
 			}
+
+			raw := []byte(`{"id":"child-idle","type":"session.thread_status_idle","session_thread_id":"child-thread","stop_reason":{"type":"end_turn"}}`)
+			item := DSHPublicEvent{ID: "child-idle", Payload: raw, Events: []SessionEvent{{UUID: uuid.NewV4().String(), ExternalID: "child-idle", EventType: "session.thread_status_idle", ThreadExternalID: &child.ExternalID, StatusThreadID: child.ExternalID, Payload: raw, CreatedAt: time.Now().UTC(), ProcessedAt: time.Now().UTC()}}}
+			done, err := store.PublishDSHEvents(ctx, scope, []DSHPublicEvent{item})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertDSHChildStatusCopies(t, done.Changes.Events, child.ExternalID, "session.thread_status_idle", "end_turn")
+			replay, err := store.PublishDSHEvents(ctx, scope, []DSHPublicEvent{item})
+			if err != nil || replay.Duplicates != 1 || len(replay.Changes.Events) != 0 {
+				t.Fatalf("completed child revived or repeated: %+v %v", replay, err)
+			}
 		})
+	}
+}
+
+func assertDSHChildStatusCopies(t *testing.T, events []SessionEvent, child, kind, reason string) {
+	t.Helper()
+	owners := map[string]bool{}
+	for _, event := range events {
+		var payload sessionStatusPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.SessionThreadID != child {
+			continue
+		}
+		if event.EventType != kind {
+			t.Fatalf("unexpected child transition: %s", event.EventType)
+		}
+		actual := ""
+		if payload.StopReason != nil {
+			actual = payload.StopReason.Type
+		}
+		if reason != "" && actual != reason {
+			t.Fatalf("reason %s, want %s", actual, reason)
+		}
+		if event.ThreadExternalID == nil {
+			t.Fatal("missing history owner")
+		}
+		owners[*event.ThreadExternalID] = true
+	}
+	if len(owners) != 2 || !owners[child] {
+		t.Fatalf("missing child/root status copies: %v", owners)
 	}
 }

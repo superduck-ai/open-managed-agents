@@ -68,6 +68,9 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 	if err != nil {
 		return SystemSkill{}, false, err
 	}
+	if skill.Bundled {
+		return SystemSkill{}, false, ErrBundledSkillReadOnly
+	}
 	previous, err := mapper.Version(ctx, skill.UUID, input.Version.Version)
 	if err == nil {
 		if previous.SHA256 != input.Version.SHA256 {
@@ -135,7 +138,13 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 }
 
 func saveSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill SystemSkill, actor, action, version string) error {
-	changed, err := mapper.UpdateSkill(ctx, skill)
+	var changed int64
+	var err error
+	if action == "delete" {
+		changed, err = mapper.DeleteSkill(ctx, skill)
+	} else {
+		changed, err = mapper.UpdateSkill(ctx, skill)
+	}
 	if err != nil {
 		return err
 	}
@@ -154,6 +163,9 @@ func (tx *PlatformAdminTx) ChangeSystemSkill(ctx context.Context, input SystemSk
 	if skill.Revision != input.Revision {
 		return SystemSkill{}, ErrSystemSkillRevision
 	}
+	if skill.Bundled && input.Action != "list" && input.Action != "unlist" {
+		return SystemSkill{}, ErrBundledSkillReadOnly
+	}
 	changed, err := changeSystemSkill(ctx, mapper, &skill, input)
 	if err != nil {
 		return SystemSkill{}, err
@@ -163,6 +175,9 @@ func (tx *PlatformAdminTx) ChangeSystemSkill(ctx context.Context, input SystemSk
 	}
 	if err := saveSystemSkill(ctx, mapper, skill, input.ActorUUID, input.Action, input.Version); err != nil {
 		return SystemSkill{}, err
+	}
+	if input.Action == "delete" {
+		return skill, nil
 	}
 	return mapper.Find(ctx, skill.ExternalID, false)
 }
@@ -190,6 +205,8 @@ func publishSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill *Sy
 
 func changeSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill *SystemSkill, input SystemSkillChange) (bool, error) {
 	switch input.Action {
+	case "delete":
+		return true, nil
 	case "set_icon":
 		skill.IconKey = input.IconKey
 	case "publish":

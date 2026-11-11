@@ -103,9 +103,7 @@ func SeedBuiltinSkills(ctx context.Context, database *db.DB, store storage.Objec
 			CreatedAt:   now,
 		})
 		if err != nil {
-			if deleteErr := store.Delete(ctx, objectKey, storage.DeleteOptions{}); deleteErr != nil {
-				logger.ErrorContext(ctx, "seed builtin skills: cleanup failed", "object_key", objectKey, "error", deleteErr)
-			}
+			cleanupSystemUpload(ctx, database, store, objectKey, logger)
 			if errors.Is(err, db.ErrVersionConflict) {
 				return BuiltinSeedResult{}, fmt.Errorf("%s version %s already exists with different content; choose a new version", skillID, version)
 			}

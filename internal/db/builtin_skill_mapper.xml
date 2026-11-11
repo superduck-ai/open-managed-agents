@@ -51,6 +51,7 @@
             latest_version = EXCLUDED.latest_version,
             updated_at = EXCLUDED.updated_at,
             deleted_at = NULL
+        WHERE NOT builtin_skills.bundled
         RETURNING
         <include refid="skillColumns"/>
     </insert>
@@ -163,6 +164,7 @@
         <include refid="versionColumns"/>
         FROM builtin_skill_versions
         WHERE deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM builtin_skills s WHERE s.uuid = builtin_skill_versions.skill_uuid AND NOT s.bundled)
         AND NOT EXISTS (
             SELECT 1
             FROM jsonb_array_elements_text(CAST(#{keepExternalIDsJSON} AS jsonb)) AS kept(external_id)
@@ -175,6 +177,7 @@
         UPDATE builtin_skill_versions
         SET deleted_at = #{params.DeletedAt}
         WHERE deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM builtin_skills s WHERE s.uuid = builtin_skill_versions.skill_uuid AND NOT s.bundled)
         AND NOT EXISTS (
             SELECT 1
             FROM jsonb_array_elements_text(CAST(#{params.KeepExternalIDsJSON} AS jsonb)) AS kept(external_id)
@@ -187,6 +190,7 @@
         SET deleted_at = #{params.DeletedAt},
             updated_at = #{params.DeletedAt}
         WHERE deleted_at IS NULL
+        AND NOT bundled
         AND NOT EXISTS (
             SELECT 1
             FROM jsonb_array_elements_text(CAST(#{params.KeepExternalIDsJSON} AS jsonb)) AS kept(external_id)

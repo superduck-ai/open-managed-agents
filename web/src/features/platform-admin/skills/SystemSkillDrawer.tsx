@@ -1,20 +1,18 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { SkillDownloadButton } from '@/features/skills/SkillDownloadButton';
 import type { SkillFilePreview } from '@/features/skills/api';
 import { SkillContent } from '@/features/skills/SkillContent';
-import { Upload, X } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
-import { Badge } from '@/shared/ui/badge';
-import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
+import { Sheet, SheetContent } from '@/shared/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
-import { SkillIconPicker } from '@/features/skills/icons';
 import { usePlatformAdmin } from '../context';
-import { SystemSkillError, SystemSkillStatus, systemSkillErrorMessage } from './feedback';
+import { SystemSkillError, systemSkillErrorMessage } from './feedback';
 import { SystemSkillVersions } from './SystemSkillVersions';
 import { SystemSkillEvents } from './SystemSkillEvents';
+import { SystemSkillDrawerHeader } from './SystemSkillDrawerHeader';
 import { systemSkillsKey, type SystemSkill, type SystemAction, type SystemPackage } from './types';
 
 type Confirmation = { action: SystemAction; version: string; revision: number };
@@ -78,47 +76,7 @@ export function SystemSkillDrawer({
           showOverlay={false}
           className="inset-y-2 right-2 h-auto w-[calc(100%-1rem)] max-w-[480px] min-h-0 gap-0 overflow-hidden rounded-xl border-[0.5px] p-0 sm:max-w-[480px]"
         >
-          <SheetHeader className="shrink-0 border-b-[0.5px] border-border px-4 py-4 pr-24">
-            <div className="absolute right-4 top-4 flex items-center gap-1">
-              <SystemSkillDownload skill={skill} />
-              <SheetClose
-                render={
-                  <Button variant="ghost" size="icon-sm" disabled={pending} aria-label={msg('common.close', 'Close')} />
-                }
-              >
-                <X className="size-4" aria-hidden />
-              </SheetClose>
-            </div>
-            <div className="flex min-w-0 items-center gap-3">
-              {skill && (
-                <SkillIconPicker
-                  value={skill.icon_key || 'blocks'}
-                  name={skill.display_title}
-                  onChange={async (key) => {
-                    try {
-                      await client.request(`/skills/${encodeURIComponent(skill.id)}/icon`, {
-                        method: 'PATCH',
-                        body: { icon_key: key, revision: skill.revision },
-                      });
-                    } finally {
-                      await onChanged();
-                    }
-                  }}
-                />
-              )}
-              <SheetTitle>{skill?.display_title || msg('skills.detail.title', 'Skill details')}</SheetTitle>
-            </div>
-            <SheetDescription className="text-xs">
-              {msg('systemSkills.scope', 'System-wide, available to all workspaces')}
-            </SheetDescription>
-            {skill && (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Badge variant="secondary">{msg('systemSkills.builtin', 'System built-in')}</Badge>
-                <SystemSkillStatus skill={skill} />
-                <code className="break-all text-xs">{skill.id}</code>
-              </div>
-            )}
-          </SheetHeader>
+          <SystemSkillDrawerHeader skill={skill} pending={pending} onChanged={onChanged} />
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {query.isPending ? (
               <p role="status">{msg('common.loading', 'Loading...')}</p>
@@ -128,10 +86,12 @@ export function SystemSkillDrawer({
               skill && (
                 <>
                   <div className="mb-5 flex flex-wrap gap-2">
-                    <Button size="sm" onClick={() => onUpload(skill)}>
-                      <Upload className="size-4" aria-hidden />
-                      {msg('systemSkills.uploadVersion', 'Upload new version')}
-                    </Button>
+                    {!skill.bundled && (
+                      <Button size="sm" onClick={() => onUpload(skill)}>
+                        <Upload className="size-4" aria-hidden />
+                        {msg('systemSkills.uploadVersion', 'Upload new version')}
+                      </Button>
+                    )}
                     {skill.default_version && (
                       <Button size="sm" variant="outline" onClick={() => confirm(skill.listed ? 'unlist' : 'list')}>
                         {skill.listed
@@ -276,14 +236,5 @@ function SystemSkillContent({ skillID, version }: { skillID: string; version: st
         }
       />
     </div>
-  );
-}
-
-function SystemSkillDownload({ skill }: { skill?: SystemSkill }) {
-  if (!skill?.default_version) return null;
-  return (
-    <SkillDownloadButton
-      url={`/api/platform-admin/skills/${encodeURIComponent(skill.id)}/versions/${encodeURIComponent(skill.default_version)}/content`}
-    />
   );
 }

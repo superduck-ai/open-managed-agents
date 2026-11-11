@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { FileArchive, Plus, Search, Eye, EyeOff } from 'lucide-react';
+import { FileArchive, Plus, Search } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/shared/ui/tabs';
-import { DropdownMenuItem, DropdownMenuSeparator } from '@/shared/ui/dropdown-menu';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -19,12 +18,12 @@ import {
 import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
 import { ResourceListState } from '@/shared/ui/resource-list-state';
 import { SkillCard } from '@/features/skills/SkillCard';
-import { SkillActions } from '@/features/skills/SkillActions';
-import { downloadSkillPackage } from '@/features/skills/api';
 import { usePlatformAdmin } from '../context';
 import { SystemSkillError, SystemSkillPager, SystemSkillStatus, systemSkillErrorMessage } from './feedback';
 import { SystemSkillDrawer } from './SystemSkillDrawer';
 import { SystemSkillImportDialog } from './SystemSkillImportDialog';
+import { SystemSkillActions } from './SystemSkillActions';
+import { SystemSkillDeleteDialog } from './SystemSkillDeleteDialog';
 import { systemSkillsKey, systemSkillPageSize, type SystemSkill, type SystemPage } from './types';
 
 export function SystemSkillsPage() {
@@ -38,6 +37,7 @@ export function SystemSkillsPage() {
   const [filter, setFilter] = useState('');
   const [status, setStatus] = useState('all');
   const [offset, setOffset] = useState(0);
+  const [deleteTarget, setDeleteTarget] = useState<SystemSkill | null>(null);
   const [toggleTarget, setToggleTarget] = useState<SystemSkill | null>(null);
   const [toggleBusy, setToggleBusy] = useState(false);
   const [toggleError, setToggleError] = useState('');
@@ -152,9 +152,16 @@ export function SystemSkillsPage() {
               iconKey={record.icon_key}
               onOpen={() => openSkill(record.id)}
               metadata={
-                <code className="mt-1 block truncate text-xs text-muted-foreground" title={record.id}>
-                  {record.id}
-                </code>
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <code className="min-w-0 truncate" title={record.id}>
+                    {record.id}
+                  </code>
+                  <span className="shrink-0">
+                    {record.bundled
+                      ? msg('systemSkills.bundled', 'Project bundled')
+                      : msg('systemSkills.uploaded', 'Uploaded')}
+                  </span>
+                </div>
               }
               footer={
                 <>
@@ -173,46 +180,16 @@ export function SystemSkillsPage() {
                 </div>
               }
               actions={
-                <SkillActions
-                  name={record.display_title}
-                  iconKey={record.icon_key}
+                <SystemSkillActions
+                  skill={record}
                   onUpdate={() => setUpload({ target: record })}
-                  onDownload={
-                    record.default_version
-                      ? () =>
-                          downloadSkillPackage(
-                            `/api/platform-admin/skills/${encodeURIComponent(record.id)}/versions/${encodeURIComponent(record.default_version!)}/content`,
-                          )
-                      : undefined
-                  }
-                  onIcon={async (key) => {
-                    try {
-                      await client.request(`/skills/${encodeURIComponent(record.id)}/icon`, {
-                        method: 'PATCH',
-                        body: { icon_key: key, revision: record.revision },
-                      });
-                    } finally {
-                      await changed();
-                    }
+                  onDelete={() => setDeleteTarget(record)}
+                  onToggle={() => {
+                    setToggleError('');
+                    setToggleTarget(record);
                   }}
-                >
-                  {record.default_version && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => {
-                          setToggleError('');
-                          setToggleTarget(record);
-                        }}
-                      >
-                        {record.listed ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
-                        {record.listed
-                          ? msg('systemSkills.unlist', 'Unlist skill')
-                          : msg('systemSkills.list', 'List skill')}
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </SkillActions>
+                  onChanged={changed}
+                />
               }
             />
           ))}
@@ -242,6 +219,16 @@ export function SystemSkillsPage() {
           onImported={async (id) => {
             await changed();
             if (id) openSkill(id);
+          }}
+        />
+      )}
+      {deleteTarget && (
+        <SystemSkillDeleteDialog
+          skill={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={async () => {
+            if (selected === deleteTarget.id) openSkill();
+            await changed();
           }}
         />
       )}

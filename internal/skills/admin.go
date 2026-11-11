@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 )
 
 type systemSkillResponse struct {
+	Bundled        bool      `json:"bundled"`
 	ID             string    `json:"id"`
 	DisplayTitle   string    `json:"display_title"`
 	IconKey        string    `json:"icon_key"`
@@ -78,6 +80,7 @@ func (h *Handler) AdminRoutes() http.Handler {
 	r.Post("/inspect", h.systemWrap(h.inspectSystemPackage))
 	r.Post("/", h.systemWrap(h.importSystemPackage))
 	r.Get("/{skill_id}", h.systemWrap(h.getSystemSkill))
+	r.Delete("/{skill_id}", h.systemWrap(h.deleteSystemSkill))
 	r.Patch("/{skill_id}/icon", h.systemWrap(h.changeSystemIcon))
 	r.Post("/{skill_id}/actions", h.systemWrap(h.changeSystemSkill))
 	r.Get("/{skill_id}/versions", h.systemWrap(h.systemVersions))
@@ -113,7 +116,25 @@ func (h *Handler) systemWrap(next httpapi.Endpoint) http.HandlerFunc {
 }
 
 func systemSkillDTO(s db.SystemSkill) systemSkillResponse {
-	return systemSkillResponse{ID: s.ExternalID, DisplayTitle: s.DisplayTitle, IconKey: s.IconKey, DefaultVersion: s.LatestVersion, Listed: s.Listed, Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
+	return systemSkillResponse{Bundled: s.Bundled, ID: s.ExternalID, DisplayTitle: s.DisplayTitle, IconKey: s.IconKey, DefaultVersion: s.LatestVersion, Listed: s.Listed, Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
+}
+
+func (h *Handler) deleteSystemSkill(w http.ResponseWriter, r *http.Request) error {
+	var input struct {
+		Revision int64 `json:"revision"`
+	}
+	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, 1024), &input, json.RejectUnknownMembers(true)); err != nil || input.Revision < 1 {
+		return systemInvalid("修订号无效")
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	if err := h.withSystemSkillWrite(r.Context(), principal.UserUUID, func(tx *db.PlatformAdminTx) error {
+		_, err := tx.ChangeSystemSkill(r.Context(), db.SystemSkillChange{ActorUUID: principal.UserUUID, SkillID: chi.URLParam(r, "skill_id"), Revision: input.Revision, Action: "delete"})
+		return err
+	}); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 func systemPaging(r *http.Request) (int, int, error) {
@@ -253,6 +274,9 @@ func (h *Handler) inspectSystemPackage(w http.ResponseWriter, r *http.Request) e
 	}
 	skill, err := h.db.GetSystemSkill(r.Context(), id)
 	if err == nil {
+		if skill.Bundled {
+			return db.ErrBundledSkillReadOnly
+		}
 		result.Existing = new(systemSkillDTO(skill))
 	} else if !errors.Is(err, db.ErrNotFound) {
 		return err
@@ -325,7 +349,7 @@ func (h *Handler) importSystemPackage(w http.ResponseWriter, r *http.Request) er
 		return err
 	})
 	if err != nil || duplicate {
-		h.cleanupSystemUpload(r.Context(), input.Version.S3Key)
+		cleanupSystemUpload(r.Context(), h.db, h.store, input.Version.S3Key, h.logger)
 	}
 	if err != nil {
 		return err
@@ -337,19 +361,19 @@ func (h *Handler) importSystemPackage(w http.ResponseWriter, r *http.Request) er
 	return nil
 }
 
-func (h *Handler) cleanupSystemUpload(ctx context.Context, key string) {
+func cleanupSystemUpload(ctx context.Context, database *db.DB, store storage.ObjectStore, key string, logger *slog.Logger) {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	referenced, err := h.db.HasSystemSkillArchive(cleanup, key)
+	referenced, err := database.HasSystemSkillArchive(cleanup, key)
 	if err != nil {
-		h.logger.ErrorContext(ctx, "retain system skill upload after uncertain commit", "object_key", key, "error", err)
+		logger.ErrorContext(ctx, "retain system skill upload after uncertain commit", "object_key", key, "error", err)
 		return
 	}
 	if referenced {
 		return
 	}
-	if err := h.store.Delete(cleanup, key, storage.DeleteOptions{}); err != nil {
-		h.logger.ErrorContext(ctx, "system skill upload cleanup failed", "object_key", key, "error", err)
+	if err := store.Delete(cleanup, key, storage.DeleteOptions{}); err != nil {
+		logger.ErrorContext(ctx, "system skill upload cleanup failed", "object_key", key, "error", err)
 	}
 }
 

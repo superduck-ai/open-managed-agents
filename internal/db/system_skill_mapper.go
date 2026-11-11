@@ -8,6 +8,7 @@ import (
 //go:generate go tool sqlmapgen -dir $PWD -mapper SystemSkillMapper -sql ./system_skill_mapper.xml -out ./system_skill_mapper.sqlmap.gen.go -dialect postgres
 
 type SystemSkill struct {
+	Bundled       bool      `db:"bundled"`
 	IconKey       string    `db:"icon_key"`
 	UUID          string    `db:"uuid"`
 	ExternalID    string    `db:"external_id"`
@@ -56,7 +57,9 @@ type SystemSkillMapper interface {
 	List(ctx context.Context, query SystemSkillQuery) ([]SystemSkill, error)
 	Find(ctx context.Context, externalID string, lock bool) (SystemSkill, error)
 	InsertSkill(ctx context.Context, skill SystemSkill) (int64, error)
+	RegisterBundled(ctx context.Context, skill SystemSkill) (SystemSkill, error)
 	UpdateSkill(ctx context.Context, skill SystemSkill) (int64, error)
+	DeleteSkill(ctx context.Context, skill SystemSkill) (int64, error)
 	Versions(ctx context.Context, skillUUID string, publishedOnly bool, limit, offset int) ([]SystemSkillVersion, error)
 	Version(ctx context.Context, skillUUID, version string) (SystemSkillVersion, error)
 	InsertVersion(ctx context.Context, version SystemSkillVersion) error

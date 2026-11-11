@@ -27,9 +27,9 @@ export function SkillActions({
 }: {
   name: string;
   iconKey?: string;
-  onUpdate: () => void;
+  onUpdate?: () => void;
   onDownload?: () => Promise<void>;
-  onIcon: (key: string) => Promise<void>;
+  onIcon?: (key: string) => Promise<void>;
   onDelete?: () => void;
   children?: ReactNode;
 }) {
@@ -66,37 +66,41 @@ export function SkillActions({
         <MoreHorizontal size={17} aria-hidden />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" sideOffset={5} className="w-44">
-        <DropdownMenuItem onClick={onUpdate}>
-          <Upload size={15} aria-hidden />
-          {msg('skills.update', 'Update skill')}
-        </DropdownMenuItem>
+        {onUpdate && (
+          <DropdownMenuItem onClick={onUpdate}>
+            <Upload size={15} aria-hidden />
+            {msg('skills.update', 'Update skill')}
+          </DropdownMenuItem>
+        )}
         {onDownload && (
           <DropdownMenuItem disabled={busy} onClick={() => void runAction(onDownload)}>
             <Download size={15} aria-hidden />
             {msg('skills.download.action', 'Download skill')}
           </DropdownMenuItem>
         )}
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Shapes size={15} aria-hidden />
-            {msg('skills.icons.change', 'Change icon')}
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="skill-icon-popover">
-            <div className="skill-icon-grid">
-              {skillIconOptions.map(({ key, label, Icon }) => (
-                <DropdownMenuItem
-                  key={key}
-                  className={iconKey === key ? 'justify-center bg-accent' : 'justify-center'}
-                  aria-label={msg(`skills.icons.${key}`, label)}
-                  disabled={busy}
-                  onClick={() => void runAction(() => onIcon(key))}
-                >
-                  <Icon size={16} aria-hidden />
-                </DropdownMenuItem>
-              ))}
-            </div>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+        {onIcon && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Shapes size={15} aria-hidden />
+              {msg('skills.icons.change', 'Change icon')}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="skill-icon-popover">
+              <div className="skill-icon-grid">
+                {skillIconOptions.map(({ key, label, Icon }) => (
+                  <DropdownMenuItem
+                    key={key}
+                    className={iconKey === key ? 'justify-center bg-accent' : 'justify-center'}
+                    aria-label={msg(`skills.icons.${key}`, label)}
+                    disabled={busy}
+                    onClick={() => void runAction(() => onIcon(key))}
+                  >
+                    <Icon size={16} aria-hidden />
+                  </DropdownMenuItem>
+                ))}
+              </div>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
         {children}
         {onDelete && (
           <>

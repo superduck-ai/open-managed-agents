@@ -7,7 +7,9 @@ Skills 资源现在分成两类：
 - `source: "anthropic"`：全局只读 builtin skill，由管理员导入到数据库 catalog，并把 `.skill` archive 存在对象存储。
 - `source: "custom"`：workspace 自定义 skill，继续使用现有 `skills` / `skill_versions` 表和对象存储。
 
-临时 `assets/skills/public` 只作为管理员 seed 工具的输入目录，不是服务运行时依赖，也不进入 git。
+项目公共技能维护在仓库根目录 `skills/`，包括源码、catalog.json、嵌入入口和上游来源说明。服务启动时在数据库迁移与对象存储就绪后自动加载，默认提供 xlsx、pptx、pdf、docx 和 guizang-ppt-skill。源码随程序嵌入，运行时不依赖本地源码目录或 GitHub 下载。手动 seed 的输入目录仍由管理员指定，不是服务运行时依赖。
+
+项目预置记录使用 builtin_skills.bundled=true；管理端只允许上下架，目录和图标由项目维护。初次注册上架，重启保留已有上下架选择，相同包不增加版本；内容更新产生摘要版本并成为项目默认版本，历史版本和对象保留。seed CLI 不能覆盖或 prune 项目预置记录。手动上传的系统技能可由超管软删除，删除不回收历史包；权限与修订边界见 [系统 Skill 管理](system-skills-administration.md)。
 
 ## 数据模型
 
@@ -158,4 +160,4 @@ Builtin 写操作保持只读：
 
 ## 超管管理入口
 
-系统技能的在线导入、版本发布、默认切换与上下架见 [系统 Skill 管理](system-skills-administration.md)。工作区目录仅展示已上架且有已发布默认版本的技能；历史已发布引用保留。seed CLI 继续用于运维导入，不由页面自动触发。
+系统技能的在线导入、版本发布、默认切换与上下架见 [系统 Skill 管理](system-skills-administration.md)。工作区目录仅展示已上架且有已发布默认版本的技能；历史已发布引用保留。seed CLI 继续用于额外的运维导入，不由页面自动触发；项目预置技能由服务启动流程加载。

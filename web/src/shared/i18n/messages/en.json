@@ -3603,5 +3603,8 @@
   "managedAgents.channels.listIncomplete": "Some agents' channels could not be read. The list may be incomplete.",
   "managedAgents.channels.listTruncated": "The list was truncated because the workspace has more active agents than this request can aggregate.",
   "managedAgents.channels.sessionsTruncated": "Only the most recently loaded sessions are shown. Older sessions were not all loaded.",
-  "managedAgents.channels.sessionEmpty": "No sessions yet"
+  "managedAgents.channels.sessionEmpty": "No sessions yet",
+  "systemSkills.bundled": "Project bundled",
+  "systemSkills.uploaded": "Uploaded",
+  "systemSkills.deleteImpact": "Remove this skill from the system catalog. Existing session snapshots are retained."
 }

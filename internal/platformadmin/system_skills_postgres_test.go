@@ -23,6 +23,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/skills"
 )
 
 type systemSkillTestStore struct {
@@ -376,6 +377,47 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 	}
 
 	requireStatus(send("GET", "/skills/fixture-system-skill/events", nil, "", false), 200)
+	preloadedCount, err := skills.SyncBundledSkills(t.Context(), database, store, catalog.Files)
+	if err != nil || preloadedCount != 5 {
+		t.Fatalf("startup preload: count=%d error=%v", preloadedCount, err)
+	}
+	preloaded, err := database.GetSystemSkill(t.Context(), "xlsx")
+	if err != nil || !preloaded.Bundled || !preloaded.Listed {
+		t.Fatalf("preloaded skill: %+v %v", preloaded, err)
+	}
+	revisionBody := func(revision int64) io.Reader {
+		data, err := json.Marshal(struct {
+			Revision int64 `json:"revision"`
+		}{revision})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bytes.NewReader(data)
+	}
+	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(preloaded.Revision), "application/json", true), 403)
+	requireStatus(send("PATCH", "/skills/xlsx/icon", bytes.NewBufferString(`{"icon_key":"mic","revision":1}`), "application/json", true), 403)
+	requireStatus(inspect("xlsx", archive("xlsx", "replace bundled")), 403)
+	requireStatus(uploadTo("xlsx", "replace", preloaded.Revision, false, archive("xlsx", "replace bundled")), 403)
+	for _, id := range []string{"xlsx", "pptx", "pdf", "docx", "guizang-ppt-skill"} {
+		loaded, err := database.GetSystemSkill(t.Context(), id)
+		if err != nil || loaded.LatestVersion == nil || !loaded.Bundled {
+			t.Fatalf("missing bundled skill %s: %v", id, err)
+		}
+		requireStatus(send("GET", "/skills/"+id+"/versions/"+*loaded.LatestVersion+"/content?download=1", nil, "", false), 200)
+	}
+	requireStatus(uploadTo("", "1", 0, true, archive("delete-me", "uploaded skill")), 200)
+	deletable, err := database.GetSystemSkill(t.Context(), "delete-me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireStatus(send("DELETE", "/skills/delete-me", revisionBody(deletable.Revision), "application/json", false), 403)
+	requireStatus(send("DELETE", "/skills/delete-me", revisionBody(deletable.Revision+1), "application/json", true), 409)
+	beforeDelete := store.count()
+	requireStatus(send("DELETE", "/skills/delete-me", revisionBody(deletable.Revision), "application/json", true), 204)
+	requireStatus(send("GET", "/skills/delete-me", nil, "", false), 404)
+	if store.count() != beforeDelete {
+		t.Fatal("catalog deletion removed historical archive")
+	}
 	if err := service.SetAdministrator(t.Context(), actor, "fixture operator", "", false); err != nil {
 		t.Fatal(err)
 	}

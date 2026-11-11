@@ -99,7 +99,9 @@ func TestSystemSkillMapperStatementContracts(t *testing.T) {
 		{systemSkillMapperListStatement, "List", yourbatis.StatementSelect},
 		{systemSkillMapperFindStatement, "Find", yourbatis.StatementSelect},
 		{systemSkillMapperInsertSkillStatement, "InsertSkill", yourbatis.StatementInsert},
+		{systemSkillMapperRegisterBundledStatement, "RegisterBundled", yourbatis.StatementInsert},
 		{systemSkillMapperUpdateSkillStatement, "UpdateSkill", yourbatis.StatementUpdate},
+		{systemSkillMapperDeleteSkillStatement, "DeleteSkill", yourbatis.StatementUpdate},
 		{systemSkillMapperVersionsStatement, "Versions", yourbatis.StatementSelect},
 		{systemSkillMapperVersionStatement, "Version", yourbatis.StatementSelect},
 		{systemSkillMapperInsertVersionStatement, "InsertVersion", yourbatis.StatementInsert},
@@ -111,5 +113,21 @@ func TestSystemSkillMapperStatementContracts(t *testing.T) {
 		if tc.statement.ID != "SystemSkillMapper."+tc.name || tc.statement.Kind != tc.kind {
 			t.Errorf("statement contract mismatch: %+v", tc.statement)
 		}
+	}
+}
+
+func TestBundledSkillMapperGuards(t *testing.T) {
+	skill := SystemSkill{UUID: "11111111-1111-4111-8111-111111111111", ExternalID: "xlsx", DisplayTitle: "Excel", IconKey: "file-text", LatestVersion: new("bundled-v1"), Revision: 4}
+	register := buildSystemSkillMapperRegisterBundled(yourbatis.DialectPostgres, skill)
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: systemSkillMapperRegisterBundledStatement, bound: register,
+		wantID: "SystemSkillMapper.RegisterBundled", wantKind: yourbatis.StatementInsert,
+		wantArgumentNames: []string{"skill.UUID", "skill.ExternalID", "skill.DisplayTitle", "skill.IconKey", "skill.LatestVersion"},
+		wantSQLFragments:  []string{"ON CONFLICT (external_id)", "bundled = true", "IS DISTINCT FROM", "RETURNING"},
+		wantSQLAbsent:     []string{"listed = EXCLUDED.listed"},
+	})
+	remove := buildSystemSkillMapperDeleteSkill(yourbatis.DialectPostgres, skill)
+	if !strings.Contains(remove.SQL, "NOT bundled") || !strings.Contains(remove.SQL, "revision = $2") || !reflect.DeepEqual(remove.Values(), []any{skill.UUID, int64(4)}) {
+		t.Fatalf("delete lost ownership/revision guard: %s %v", remove.SQL, remove.Values())
 	}
 }

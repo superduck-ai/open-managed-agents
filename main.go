@@ -38,6 +38,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
+	"github.com/superduck-ai/open-managed-agents/internal/skills"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/statemetrics"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -48,6 +49,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/webtools"
 	"github.com/superduck-ai/open-managed-agents/internal/workerevents"
+	"github.com/superduck-ai/open-managed-agents/skills"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -130,16 +132,9 @@ func run(bootstrap *slog.Logger) (err error) {
 	}
 	logger.Info("nats messaging ready", "jetstream", true)
 
-	storageClient, err := storage.New(cfg.Storage)
+	storageClient, objectStore, err := initializeStorage(ctx, cfg, database, logger)
 	if err != nil {
-		return fmt.Errorf("create object storage client: %w", err)
-	}
-	objectStore, err := storageClient.ForBucket(cfg.Storage.S3.Bucket)
-	if err != nil {
-		return fmt.Errorf("bind object storage bucket: %w", err)
-	}
-	if err := objectStore.Ensure(ctx); err != nil {
-		return fmt.Errorf("ensure object store bucket: %w", err)
+		return err
 	}
 	tunnelBroker, err := tunnels.NewBroker(ctx, natsConnection, cfg.Tunnel, tunnels.NewPayloadStore(database, objectStore), tunnels.NewRequestBindings(redisClient, cfg.Tunnel.RequestTimeout+cfg.Tunnel.TombstoneTTL))
 	if err != nil {
@@ -388,6 +383,26 @@ func startStateMetrics(ctx context.Context, cfg config.Config, database *db.DB, 
 		return nil, fmt.Errorf("start state metrics reporter: %w", err)
 	}
 	return stop, nil
+}
+
+func initializeStorage(ctx context.Context, cfg config.Config, database *db.DB, logger *slog.Logger) (storage.Client, storage.ObjectStore, error) {
+	storageClient, err := storage.New(cfg.Storage)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create object storage client: %w", err)
+	}
+	objectStore, err := storageClient.ForBucket(cfg.Storage.S3.Bucket)
+	if err != nil {
+		return nil, nil, fmt.Errorf("bind object storage bucket: %w", err)
+	}
+	if err := objectStore.Ensure(ctx); err != nil {
+		return nil, nil, fmt.Errorf("ensure object store bucket: %w", err)
+	}
+	count, err := skills.SyncBundledSkills(ctx, database, objectStore, catalog.Files)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load bundled skills: %w", err)
+	}
+	logger.InfoContext(ctx, "bundled skills ready", "count", count)
+	return storageClient, objectStore, nil
 }
 
 func initializeDatabase(ctx context.Context, cfg config.Config, database *db.DB, logger *slog.Logger) error {

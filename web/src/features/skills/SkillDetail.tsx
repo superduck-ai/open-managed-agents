@@ -303,12 +303,14 @@ export function DeleteSkillDialog({
   error,
   onOpenChange,
   onConfirm,
+  description,
 }: {
-  skill: ConsoleSkill | null;
+  skill: Pick<ConsoleSkill, 'id' | 'display_title'> | null;
   isDeleting: boolean;
   error: string | null;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
+  description?: string;
 }) {
   const { msg } = useI18n();
   const errorRef = useRef<HTMLDivElement>(null);
@@ -340,10 +342,11 @@ export function DeleteSkillDialog({
           <AlertDialogDescription className="space-y-3 [overflow-wrap:anywhere]">
             <span className="block font-medium text-foreground">{name}</span>
             <span className="block">
-              {msg(
-                'skills.delete.warning',
-                'Existing code references will stop working immediately. This action is permanent and cannot be undone.',
-              )}
+              {description ||
+                msg(
+                  'skills.delete.warning',
+                  'Existing code references will stop working immediately. This action is permanent and cannot be undone.',
+                )}
             </span>
           </AlertDialogDescription>
           {content.error ? (

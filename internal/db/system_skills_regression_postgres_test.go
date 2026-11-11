@@ -18,7 +18,7 @@ func TestSystemSkillPublishedPagination(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 117); err != nil {
+	if _, err := provider.UpTo(ctx, 118); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
@@ -65,7 +65,7 @@ func TestSystemSkillImportPreservesOmittedIcon(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 117); err != nil {
+	if _, err := provider.UpTo(ctx, 118); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}

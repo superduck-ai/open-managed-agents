@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="SystemSkillMapper">
-    <sql id="skillColumns">uuid, external_id, display_title, icon_key, latest_version, listed, revision, created_at, updated_at</sql>
+    <sql id="skillColumns">uuid, external_id, display_title, icon_key, latest_version, listed, revision, created_at, updated_at, bundled</sql>
     <sql id="versionColumns">uuid, external_id, skill_uuid, skill_external_id, version, name, description, directory, state, s3_bucket, s3_key, size_bytes, sha256, created_at</sql>
     <select id="List" resultType="SystemSkill">
         SELECT <include refid="skillColumns"/> FROM builtin_skills s
@@ -22,9 +22,29 @@
         VALUES (#{skill.UUID}, #{skill.ExternalID}, #{skill.DisplayTitle}, COALESCE(NULLIF(#{skill.IconKey}, ''), 'blocks'), false)
         ON CONFLICT (external_id) DO NOTHING
     </insert>
+    <insert id="RegisterBundled" result="returning" resultType="SystemSkill">
+        INSERT INTO builtin_skills (uuid, external_id, display_title, icon_key, latest_version, bundled, listed)
+        VALUES (#{skill.UUID}, #{skill.ExternalID}, #{skill.DisplayTitle}, #{skill.IconKey}, #{skill.LatestVersion}, true, true)
+        ON CONFLICT (external_id) DO UPDATE SET
+            bundled = true, display_title = EXCLUDED.display_title, icon_key = EXCLUDED.icon_key,
+            latest_version = EXCLUDED.latest_version, deleted_at = NULL,
+            revision = builtin_skills.revision + CASE WHEN
+                (builtin_skills.bundled, builtin_skills.display_title, builtin_skills.icon_key, builtin_skills.latest_version, builtin_skills.deleted_at)
+                IS DISTINCT FROM (true, EXCLUDED.display_title, EXCLUDED.icon_key, EXCLUDED.latest_version, NULL)
+                THEN 1 ELSE 0 END,
+            updated_at = CASE WHEN
+                (builtin_skills.bundled, builtin_skills.display_title, builtin_skills.icon_key, builtin_skills.latest_version, builtin_skills.deleted_at)
+                IS DISTINCT FROM (true, EXCLUDED.display_title, EXCLUDED.icon_key, EXCLUDED.latest_version, NULL)
+                THEN now() ELSE builtin_skills.updated_at END
+        RETURNING <include refid="skillColumns"/>
+    </insert>
     <update id="UpdateSkill" result="rows">
         UPDATE builtin_skills SET icon_key = #{skill.IconKey}, latest_version = #{skill.LatestVersion}, listed = #{skill.Listed}, revision = revision + 1, updated_at = now()
         WHERE uuid = #{skill.UUID} AND revision = #{skill.Revision} AND deleted_at IS NULL
+    </update>
+    <update id="DeleteSkill" result="rows">
+        UPDATE builtin_skills SET deleted_at = now(), listed = false, revision = revision + 1, updated_at = now()
+        WHERE uuid = #{skill.UUID} AND revision = #{skill.Revision} AND NOT bundled AND deleted_at IS NULL
     </update>
     <select id="Versions" resultType="SystemSkillVersion">
         SELECT <include refid="versionColumns"/> FROM builtin_skill_versions

@@ -68,6 +68,9 @@ func (d *DB) UpsertBuiltinSkillWithVersion(
 			CreatedAt:     skill.CreatedAt,
 		})
 		if upsertErr != nil {
+			if errors.Is(mapNoRows(upsertErr), ErrNotFound) {
+				return ErrBundledSkillReadOnly
+			}
 			return upsertErr
 		}
 		createdSkill = skillRow.skill()

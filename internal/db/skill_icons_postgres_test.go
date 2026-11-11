@@ -34,6 +34,9 @@ func TestSkillIconsMigrationAndCatalog(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 117); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := provider.UpTo(ctx, 118); err != nil {
+		t.Fatal(err)
+	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
 	legacy, err := store.GetSystemSkill(ctx, "legacy-draft")
 	if err != nil || legacy.LatestVersion != nil || legacy.Listed {

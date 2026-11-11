@@ -54,10 +54,7 @@ export function ChannelSessionsPanel({
         <StatCard
           title={msg('managedAgents.channels.sourceUsers', '来源用户')}
           value={sourceUserStat(stats, query.isPending)}
-          hint={msg(
-            'managedAgents.channels.sourceUsersHint',
-            '按 open_id、actor_id 或 sender_id 去重；没有用户标识时显示 —',
-          )}
+          hint={msg('managedAgents.channels.sourceUsersHint', '按当前应用内的用户标识去重')}
         />
         <StatCard
           title={msg('managedAgents.channels.lastActive', '最近活跃')}

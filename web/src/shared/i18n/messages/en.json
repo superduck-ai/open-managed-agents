@@ -3518,7 +3518,7 @@
   "managedAgents.channels.sessionTotal": "Total sessions",
   "managedAgents.channels.sessionTotalHint": "All sessions for this channel",
   "managedAgents.channels.sourceUsers": "Source users",
-  "managedAgents.channels.sourceUsersHint": "Deduplicated by open_id, actor_id, or sender_id. Shows — when no user id is stored",
+  "managedAgents.channels.sourceUsersHint": "Deduplicated by user identifier within the current app",
   "managedAgents.channels.lastActive": "Last active",
   "managedAgents.channels.lastActiveHint": "Time of the most recent session activity",
   "managedAgents.channels.sessionSyncing": "Syncing session data",

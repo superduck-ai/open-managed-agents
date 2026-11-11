@@ -3518,7 +3518,7 @@
   "managedAgents.channels.sessionTotal": "Session 总数",
   "managedAgents.channels.sessionTotalHint": "当前渠道的全部会话",
   "managedAgents.channels.sourceUsers": "来源用户",
-  "managedAgents.channels.sourceUsersHint": "按 open_id、actor_id 或 sender_id 去重；没有用户标识时显示 —",
+  "managedAgents.channels.sourceUsersHint": "按当前应用内的用户标识去重",
   "managedAgents.channels.lastActive": "最近活跃",
   "managedAgents.channels.lastActiveHint": "最近一条会话活动时间",
   "managedAgents.channels.sessionSyncing": "会话数据同步中",

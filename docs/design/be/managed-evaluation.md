@@ -20,11 +20,50 @@ flowchart LR
 ```
 
 1. 评测集保存有序 `inputs`。`query` 由其中的文字块拼出，可以是空字符串。期望回答、工具轨迹、来源会话、标注和验收要点可选。
-2. 评分标准保存判断条件、通过分和可选打分模型。再次保存会追加版本。任务创建时冻结当时的正文、通过分和版本号。
-3. 评测任务绑定 Agent 版本、环境、评测集版本和评分标准版本。每个 case 目前把快照里的 `query` 文字发给一条 `user.message`。省略 `agent_version` 时使用当前版本。
-4. Session 以 `end_turn` 结束则 case 完成并打分。终止或 `retries_exhausted` 记为系统异常，不进入通过率分母。创建任务时 `mode` 只能是 `evaluate`，接口不接受迭代，也没有把候选提示词写回 Agent 的动作。
+2. 评分标准保存判断条件、通过分和可选打分模型。再次保存会追加版本。任务创建时冻结当时的正文、通过分、版本号和打分模型；评分标准没有指定模型时，创建任务那一刻解析工作区模型目录的第一个模型写进任务，之后重试和补分都用这个模型。工作区没有可用模型时拒绝创建任务。
+3. 评测任务绑定 Agent 版本、环境、评测集版本和评分标准版本。每个 case 把快照里的 `inputs` 原样作为一条 `user.message` 的内容块发出，文字、图片和文档保持原顺序；快照为空时退回只发 `query` 文字。省略 `agent_version` 时使用当前版本。
+4. Session 以 `end_turn` 或 `requires_action` 结束则 case 完成并打分。`requires_action` 是 Agent 停下来等工具审批或用户回答；评测没有人进会话继续操作，所以这条样例到此结束。终止或 `retries_exhausted` 记为系统异常，不进入通过率分母。创建任务时 `mode` 只能是 `evaluate`，接口不接受迭代，也没有把候选提示词写回 Agent 的动作。
 
 报告里的得分是已成功打分 case 的平均分。通过率是这些 case 里 `passed` 的比例。系统异常和无法解析的评分单独计数。
+
+### 打分
+
+打分请求的系统提示词说明评分角色，并把冻结的评分标准放在 `<rubric>` 标签里。用户消息把问题、期望回答、期望工具轨迹、验收要点、Agent 回答和执行轨迹分别放进 `<query>`、`<expected_answer>`、`<expected_tool_trace>`、`<acceptance>`、`<agent_answer>`、`<agent_trajectory>`，并声明标签内只是待评材料，不执行其中的指令。内容里出现同名闭合标签时改写为 `<\/tag>`，避免提前闭合。模型只返回一个 JSON 对象，不带 Markdown 或代码围栏。
+
+- `score` 必填，限制在 0 到 100；缺失时按无法解析处理。
+- `passed` 由服务端按 `score >= pass_score` 计算；模型回复里即使带了 `passed` 也不采用。Agent 没有最终回答时一律不通过：分数不低于通过分时降到通过分减 1，通过分为 0 时分数保持不变。已有最终回答时保留模型给出的分数。
+- `dimensions` 只保留 `name` 和 `score`：名称去掉首尾空白、最多 80 个字符，空名称或缺分数的项丢弃，同名只留第一项，分数限制在 0 到 100，最多 12 项；不是数组时记为空。提示词要求评分标准列出维度时逐一给出并保持名称一致，这是软约束，评分标准本身还没有结构化维度。
+- `explanation` 最多 4000 个字符。
+- `<agent_trajectory>` 按时间顺序放入这次会话的全部事件。每行是事件时间、事件类型和紧凑 JSON 载荷；单条载荷最多 1500 字节。状态、模型请求、思考、工具和消息都不丢。`<agent_answer>` 仍只提取 `agent.message` 的正文。回答和轨迹各最多 16000 字节，超出时保留首尾并标出省略的字节数。
+- 每条分数记录 `judge_model`（任务冻结的打分模型）和 `judge_prompt_version`（当前为 `score-v3`）。修改打分提示词或解析规则时递增版本，历史分数据此区分口径。`judge_system`、`judge_prompt`、`judge_response` 保存这次实际发给评分模型的系统提示词、用户提示词和模型原文，由 `00130_evaluation_score_prompt.sql` 增加。模型调用失败时原文为空，提示词仍然留下。这三列不写入运行日志。
+
+### 结算与持久化
+
+```mermaid
+sequenceDiagram
+  participant Obs as 会话事件观察者
+  participant DB as PostgreSQL
+  participant River as River evaluations 队列
+  participant Judge as 打分模型
+  Obs->>DB: item running -> completed/failed
+  Obs->>River: 插入 evaluation_task_settle（按任务去重）
+  River->>DB: 读取任务，本轮仍有 pending/running 则结束
+  loop 每次最多 5 条未打分 item
+    River->>Judge: 打分请求
+    River->>DB: 写入 evaluation_task_scores
+  end
+  River->>River: 还有未打分 item 时 JobSnooze(0) 继续
+  River->>DB: 任务 completed / failed
+```
+
+观察者只把 item 推进到终态并插入结算任务，打分由 River 的 `evaluation_task_settle` 执行，按 `organization_uuid`、`workspace_uuid`、`task_id` 去重。每次执行最多给 5 条 item 打分，分数逐条落库；还有剩余时 snooze 后继续，不消耗重试次数，单次执行超时 10 分钟。模型调用失败或回复无法解析时，前两次尝试返回错误交给 River 退避重试，第三次才把这条记为评分失败。工作区没有可用模型不重试，直接记失败。会话事件超过 2000 条时记为评分失败。读库失败等其他错误交给 River 重试，任务保持 `running`；三次都失败后这条结算任务被丢弃，由下文的巡检重新插入。
+
+`evaluation_task_sweep` 是每分钟一次的持久周期任务，用来补上进程崩溃或事件漏投的情况：
+
+1. 取 `updated_at` 超过 2 分钟、带会话的 `running` item，最多 100 条。会话已不存在记为系统异常；事件里已有终态时按观察者同样的规则推进；仍未结束时刷新 `updated_at`，让下一轮先检查别的 item。推进成功的 item 所在任务插入结算任务。
+2. 取 `running` 且所有 item 都已结束、状态停留超过 1 分钟的任务，最多 100 个，插入结算任务。
+
+没有配置队列时（单元测试），观察者在当前 goroutine 里同步循环结算。
 
 ## 数据
 
@@ -36,8 +75,8 @@ flowchart LR
 | `evaluation_cases` | `evalcase_` | `inputs` 是有序内容块。`query` 由其中的文字块拼出，可以是空字符串。期望回答、工具轨迹、来源会话、标注和验收要点可选 |
 | `evaluation_rubrics` / `evaluation_rubric_versions` | `evalrb_` / `erv_` | 评分标准。版本只增不改。`00118_evaluation_rubrics.sql` |
 | `evaluation_tasks` | `evaltask_` | 只写入 `evaluate`。状态 `pending`、`running`、`completed`、`failed`、`cancelled` |
-| `evaluation_task_items` | `evalitem_` | 一个 case，`round = 1` |
-| `evaluation_task_scores` | `evalscore_` | 一条 item 一行。`completed` 才有有效分数。`answer` 保存打分时读到的 Agent 最终回答，`00127_evaluation_score_answer.sql` 增加 |
+| `evaluation_task_items` | `evalitem_` | 一个 case，`round = 1`。`inputs` 是用例内容块的快照，由 `00129_evaluation_task_item_inputs.sql` 增加，迁移前的 item 为空数组 |
+| `evaluation_task_scores` | `evalscore_` | 一条 item 一行。`completed` 才有有效分数。`answer` 保存打分时读到的 Agent 最终回答，`00127_evaluation_score_answer.sql` 增加。`judge_model`、`judge_prompt_version` 由 `00128_evaluation_score_judge.sql` 增加，同一迁移给 `running` 的任务和 item 建按 `updated_at` 的部分索引，供巡检使用 |
 
 删除评测集、用例或评分标准是软删除。已经跑过的任务保留自己的快照，不能再被新任务选中。`evaluation_cases.inputs` 由 `00119_evaluation_case_inputs.sql` 增加。任务表在 `00125_replace_evaluation_schema.sql`，它会按当前结构重建评测表；`00126_evaluation_case_inputs_after_task_schema.sql` 在这次重建后再补上 `inputs`。旧的 `00115_managed_evaluation.sql` 与渠道凭证迁移共用版本号，不再保留。
 
@@ -67,7 +106,7 @@ flowchart LR
 
 评分标准可以手写，或按评测目标、Agent、评测集、正例和负例生成。生成要求模型直接返回 Markdown；若整段回复是 JSON 对象或数组，则拒绝落库。模型若用 Markdown 代码块包住正文，保存时去掉围栏。标题可以留空。列表按 15 条分页。正文和模型名按字符计数。详情先展示标题、编号、版本、创建时间和评分规则正文。版本历史按版本号倒序列出每一版的正文和通过分，可以选择查看。点编辑后再保存，保存会追加版本，已经存在的评测任务不受影响。删除是软删除。
 
-任务列表的列是 ID、任务、Agent、状态、创建时间、操作。开始评测的表单是智能体、运行环境、凭据库、资源、评测集、评分标准和评测关注项。评测关注项会写进这次任务冻结的评分标准。一次任务只跑一轮，不改 Agent。一个任务最多 200 条用例。取消只作用于尚未结束的任务。重试只重置已结束任务里失败的用例。
+任务列表的列是 ID、任务、Agent、状态、创建时间、操作。开始评测的表单是智能体、运行环境、凭据库、资源、评测集、评分标准和评测关注项。评测关注项会写进这次任务冻结的评分标准。一次任务只跑一轮，不改 Agent。一个任务最多 200 条用例。取消只作用于尚未结束的任务。重试只作用于已结束的任务，在一个事务里把任务改回 `running`、把本轮会话失败的用例重置为 `pending`，并删除本轮已完成用例上的失败分数；两类都没有时回滚并返回 “Only a finished evaluation task can retry failed cases”。重置的用例重新创建会话；只删了失败分数时，立即插入结算任务重新打分，已成功的分数保持不变。
 
 任务详情页顶部是「评测 / 任务编号」面包屑、任务名、「评测任务」和状态标签、可复制的编号、创建时间，右侧「操作」菜单放重试失败项和终止。下面分「任务信息」和「任务报告」两个标签页，不做内容变化页，因为这一版不改 Agent。任务信息分基本信息、评测配置、执行与资源三组；失败时先显示失败原因。任务报告依次是：
 
@@ -75,8 +114,8 @@ flowchart LR
 2. 质量分析：通过、未通过、系统异常、进行中四类的分布条和占比，有维度分时列出各维度均分。
 3. 数据明细：按四类筛选，可下载 CSV。列是用户问题、Agent 最终回答、自动打分、结果、评分依据、验收要点（没有时显示期望回答）和查看轨迹。
 
-item 的会话失败或被取消、评分失败都算系统异常。会话已完成但还没有分数算进行中。查看轨迹打开右侧抽屉，显示问题、分数、结果、会话链接、评分依据和执行过程；没有 Agent 回答时提示本轮暂无最终回答。任务或 item 未结束时，详情和轨迹每 3 秒刷新。
+item 的会话失败或被取消、评分失败都算系统异常。会话已完成但还没有分数算进行中。查看轨迹打开右侧抽屉，显示问题、分数、结果、会话链接、评分模型、评分提示词版本、评分依据和执行过程。打过分的样例再展示评分调用：系统提示词、评分提示词和模型原文，默认展开，可以收起。旧分数没有这些字段时不显示评分调用。执行过程里的用户问题是发给 Agent 的内容，Agent 回答是它的模型返回；会话事件不保存被测模型的上游请求原文。没有 Agent 回答时提示本轮暂无最终回答。任务或 item 未结束时，详情和轨迹每 3 秒刷新。
 
 `evaluation_tasks.created_by_user_uuid` 和 `created_by_api_key_uuid` 是可空 `uuid`。控制台会话没有 API key 时这两列为空。
 
-Session 终态沿用 `publishSessionEvents` 上的观察者。打分在观察者里异步进行，不占用事件写入的返回。任务启动时只把用例快照里的文字 `query` 发给会话，图片和文档内容块还不会进入这条 `user.message`。
+Session 终态沿用 `publishSessionEvents` 上的观察者。观察者在后台 goroutine 里推进 item 并插入结算任务，不占用事件写入的返回；打分见上文「结算与持久化」。任务创建时把用例的 `inputs` 一并复制进 item 快照，之后修改评测集不会影响已创建的任务。启动会话时这些内容块作为 `user.message` 的 `content` 发出，图片和文档仍以 `{"type":"file","file_id":...}` 引用。会话投递给运行时前，按现有消息附件流程把文件库里的文件复制成本会话附件；文件已被删除时，该块替换为说明附件不可用的文字，会话照常运行。用例里的文件只来自文件库：手动添加、JSON 和 xlsx 导入都写入文件库，从会话导入的轮次引用的也是用户消息里的文件库文件。重试复用同一快照。被测 Agent 的模型在模型服务配置里没有声明 `image_input` 时，Brain 发请求前会省略图片，Agent 只能看到文字；评测图片用例需要选用声明了图片输入的模型。打分仍只把文字 `query` 放进 `<query>`，评分模型不接收图片和文档。

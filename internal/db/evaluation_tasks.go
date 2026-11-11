@@ -59,25 +59,42 @@ type EvaluationTaskItem struct {
 	ExpectedAnswer    string
 	ExpectedToolTrace json.RawMessage
 	Acceptance        string
+	Inputs            json.RawMessage
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
 
 type EvaluationTaskScore struct {
-	UUID             string
-	ExternalID       string
+	UUID               string
+	ExternalID         string
+	OrganizationUUID   string
+	WorkspaceUUID      string
+	TaskUUID           string
+	ItemUUID           string
+	Status             string
+	Score              float64
+	Passed             bool
+	Explanation        string
+	Answer             string
+	Dimensions         json.RawMessage
+	ErrorMessage       string
+	JudgeModel         string
+	JudgePromptVersion string
+	JudgeSystem        string
+	JudgePrompt        string
+	JudgeResponse      string
+	CreatedAt          time.Time
+}
+
+type EvaluationTaskRef struct {
 	OrganizationUUID string
 	WorkspaceUUID    string
-	TaskUUID         string
-	ItemUUID         string
-	Status           string
-	Score            float64
-	Passed           bool
-	Explanation      string
-	Answer           string
-	Dimensions       json.RawMessage
-	ErrorMessage     string
-	CreatedAt        time.Time
+	ExternalID       string
+}
+
+type EvaluationTaskRetry struct {
+	ResetItems    int64
+	ClearedScores int64
 }
 
 type EvaluationTaskUsage struct {
@@ -114,7 +131,7 @@ func (d *DB) CreateEvaluationTask(ctx context.Context, task EvaluationTask, item
 			inserted, err := mapper.InsertItem(ctx, insertEvaluationTaskItemParams{
 				UUID: item.UUID, ExternalID: item.ExternalID, OrganizationUUID: task.OrganizationUUID, WorkspaceUUID: task.WorkspaceUUID,
 				TaskUUID: row.UUID, TaskExternalID: row.ExternalID, CaseExternalID: item.CaseExternalID, Round: item.Round, Position: item.Position,
-				Query: item.Query, ExpectedAnswer: item.ExpectedAnswer, ExpectedToolTrace: item.ExpectedToolTrace, Acceptance: item.Acceptance, CreatedAt: task.CreatedAt,
+				Query: item.Query, ExpectedAnswer: item.ExpectedAnswer, ExpectedToolTrace: item.ExpectedToolTrace, Acceptance: item.Acceptance, Inputs: item.Inputs, CreatedAt: task.CreatedAt,
 			})
 			if err != nil {
 				return mapEvaluationWrite(err)
@@ -215,10 +232,61 @@ func (d *DB) FinishRunningEvaluationItem(ctx context.Context, organizationUUID, 
 	return rows > 0, err
 }
 
-func (d *DB) ResetFailedEvaluationItems(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string, round int, updatedAt time.Time) (int64, error) {
-	return NewEvaluationTaskMapper(d.mapperDB).ResetFailedItems(ctx, evaluationResetItemsParams{
-		OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, TaskUUID: taskUUID, Round: round, UpdatedAt: updatedAt,
+func (d *DB) TouchRunningEvaluationItem(ctx context.Context, organizationUUID, workspaceUUID, itemUUID string, updatedAt time.Time) error {
+	_, err := NewEvaluationTaskMapper(d.mapperDB).TouchRunningItem(ctx, evaluationItemStatusParams{
+		UUID: itemUUID, OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, UpdatedAt: updatedAt,
 	})
+	return err
+}
+
+func (d *DB) RetryEvaluationTask(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string, round int, updatedAt time.Time) (EvaluationTaskRetry, error) {
+	var result EvaluationTaskRetry
+	params := evaluationRoundParams{OrganizationUUID: organizationUUID, WorkspaceUUID: workspaceUUID, TaskUUID: taskUUID, Round: round, UpdatedAt: updatedAt}
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewEvaluationTaskMapper(executor)
+		restarted, err := mapper.RestartTask(ctx, params)
+		if err != nil {
+			return err
+		}
+		if restarted == 0 {
+			return ErrInvalidState
+		}
+		if result.ResetItems, err = mapper.ResetFailedItems(ctx, params); err != nil {
+			return err
+		}
+		if result.ClearedScores, err = mapper.DeleteFailedScores(ctx, params); err != nil {
+			return err
+		}
+		if result.ResetItems == 0 && result.ClearedScores == 0 {
+			return ErrPreconditionFailed
+		}
+		return nil
+	})
+	return result, err
+}
+
+func (d *DB) ListSettleableEvaluationTasks(ctx context.Context, updatedBefore time.Time, limit int) ([]EvaluationTaskRef, error) {
+	rows, err := NewEvaluationTaskMapper(d.mapperDB).ListSettleableTasks(ctx, updatedBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]EvaluationTaskRef, 0, len(rows))
+	for _, row := range rows {
+		refs = append(refs, EvaluationTaskRef(row))
+	}
+	return refs, nil
+}
+
+func (d *DB) ListStaleRunningEvaluationItems(ctx context.Context, updatedBefore time.Time, limit int) ([]EvaluationTaskItem, error) {
+	rows, err := NewEvaluationTaskMapper(d.mapperDB).ListStaleRunningItems(ctx, updatedBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]EvaluationTaskItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, itemFromRow(row))
+	}
+	return items, nil
 }
 
 func (d *DB) CancelPendingEvaluationItems(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string, updatedAt time.Time) error {
@@ -237,7 +305,9 @@ func (d *DB) CreateEvaluationTaskScore(ctx context.Context, score EvaluationTask
 	row, err := NewEvaluationTaskMapper(d.mapperDB).InsertScore(ctx, insertEvaluationTaskScoreParams{
 		UUID: score.UUID, ExternalID: score.ExternalID, OrganizationUUID: score.OrganizationUUID, WorkspaceUUID: score.WorkspaceUUID,
 		TaskUUID: score.TaskUUID, ItemUUID: score.ItemUUID, Status: score.Status, Score: score.Score, Passed: score.Passed,
-		Explanation: score.Explanation, Answer: score.Answer, Dimensions: score.Dimensions, ErrorMessage: score.ErrorMessage, CreatedAt: score.CreatedAt,
+		Explanation: score.Explanation, Answer: score.Answer, Dimensions: score.Dimensions, ErrorMessage: score.ErrorMessage,
+		JudgeModel: score.JudgeModel, JudgePromptVersion: score.JudgePromptVersion,
+		JudgeSystem: score.JudgeSystem, JudgePrompt: score.JudgePrompt, JudgeResponse: score.JudgeResponse, CreatedAt: score.CreatedAt,
 	})
 	if err != nil {
 		return EvaluationTaskScore{}, mapEvaluationWrite(err)
@@ -287,7 +357,7 @@ func itemFromRow(row evaluationTaskItemRow) EvaluationTaskItem {
 		UUID: row.UUID, ExternalID: row.ExternalID, OrganizationUUID: row.OrganizationUUID, WorkspaceUUID: row.WorkspaceUUID,
 		TaskUUID: row.TaskUUID, TaskExternalID: row.TaskExternalID, CaseExternalID: row.CaseExternalID, Round: row.Round, Position: row.Position,
 		SessionExternalID: row.SessionExternalID, Status: row.Status, ErrorMessage: row.ErrorMessage, Query: row.Query, ExpectedAnswer: row.ExpectedAnswer,
-		ExpectedToolTrace: rawJSON(row.ExpectedToolTrace), Acceptance: row.Acceptance, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		ExpectedToolTrace: rawJSON(row.ExpectedToolTrace), Acceptance: row.Acceptance, Inputs: rawJSON(row.Inputs), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 }
 
@@ -295,6 +365,8 @@ func scoreFromRow(row evaluationTaskScoreRow) EvaluationTaskScore {
 	return EvaluationTaskScore{
 		UUID: row.UUID, ExternalID: row.ExternalID, OrganizationUUID: row.OrganizationUUID, WorkspaceUUID: row.WorkspaceUUID,
 		TaskUUID: row.TaskUUID, ItemUUID: row.ItemUUID, Status: row.Status, Score: row.Score, Passed: row.Passed, Explanation: row.Explanation,
-		Answer: row.Answer, Dimensions: row.Dimensions, ErrorMessage: row.ErrorMessage, CreatedAt: row.CreatedAt,
+		Answer: row.Answer, Dimensions: row.Dimensions, ErrorMessage: row.ErrorMessage, JudgeModel: row.JudgeModel,
+		JudgePromptVersion: row.JudgePromptVersion, JudgeSystem: row.JudgeSystem, JudgePrompt: row.JudgePrompt,
+		JudgeResponse: row.JudgeResponse, CreatedAt: row.CreatedAt,
 	}
 }

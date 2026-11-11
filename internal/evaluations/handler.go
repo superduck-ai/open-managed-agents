@@ -42,7 +42,10 @@ type Store interface {
 	ListRunningEvaluationItemsBySession(context.Context, string, string, string) ([]db.EvaluationTaskItem, error)
 	MarkEvaluationItemRunning(context.Context, string, string, string, string, time.Time) (bool, error)
 	FinishRunningEvaluationItem(context.Context, string, string, string, string, string, time.Time) (bool, error)
-	ResetFailedEvaluationItems(context.Context, string, string, string, int, time.Time) (int64, error)
+	TouchRunningEvaluationItem(context.Context, string, string, string, time.Time) error
+	RetryEvaluationTask(context.Context, string, string, string, int, time.Time) (db.EvaluationTaskRetry, error)
+	ListSettleableEvaluationTasks(context.Context, time.Time, int) ([]db.EvaluationTaskRef, error)
+	ListStaleRunningEvaluationItems(context.Context, time.Time, int) ([]db.EvaluationTaskItem, error)
 	CancelPendingEvaluationItems(context.Context, string, string, string, time.Time) error
 	UpdateEvaluationTaskStatus(context.Context, string, string, string, string, string, time.Time) error
 	CreateEvaluationTaskScore(context.Context, db.EvaluationTaskScore) (db.EvaluationTaskScore, error)
@@ -64,6 +67,7 @@ type SessionInput struct {
 	Resources             json.RawMessage
 	VaultIDs              []string
 	Query                 string
+	Content               json.RawMessage
 	Title                 string
 	Metadata              map[string]string
 }
@@ -78,6 +82,7 @@ type Handler struct {
 	starter     SessionStarter
 	model       RubricModel
 	adapter     *httpapi.ErrorAdapter
+	settleQueue SettleQueue
 	observeSync bool
 }
 

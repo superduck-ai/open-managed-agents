@@ -213,8 +213,20 @@ func (evaluationFixture) FinishRunningEvaluationItem(context.Context, string, st
 	return false, nil
 }
 
-func (evaluationFixture) ResetFailedEvaluationItems(context.Context, string, string, string, int, time.Time) (int64, error) {
-	return 0, nil
+func (evaluationFixture) TouchRunningEvaluationItem(context.Context, string, string, string, time.Time) error {
+	return nil
+}
+
+func (evaluationFixture) RetryEvaluationTask(context.Context, string, string, string, int, time.Time) (db.EvaluationTaskRetry, error) {
+	return db.EvaluationTaskRetry{}, nil
+}
+
+func (evaluationFixture) ListSettleableEvaluationTasks(context.Context, time.Time, int) ([]db.EvaluationTaskRef, error) {
+	return nil, nil
+}
+
+func (evaluationFixture) ListStaleRunningEvaluationItems(context.Context, time.Time, int) ([]db.EvaluationTaskItem, error) {
+	return nil, nil
 }
 
 func (evaluationFixture) CancelPendingEvaluationItems(context.Context, string, string, string, time.Time) error {

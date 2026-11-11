@@ -53,6 +53,9 @@ const (
 	modelMissingMessage           = "No workspace model is configured"
 	starterMissingMessage         = "Evaluation sessions are not configured"
 	retryUnavailableMessage       = "Only a finished evaluation task can retry failed cases"
+	scoreParseFailedMessage       = "Could not parse evaluator score"
+	scoreSessionTooLargeMessage   = "Session has too many events to score"
+	sessionTerminatedMessage      = "Session terminated"
 	pageInvalidMessage            = "page is invalid"
 	limitInvalidMessage           = "limit must be between 1 and 100"
 	duplicateMessage              = "Evaluation resource already exists"
@@ -66,6 +69,13 @@ const (
 	scoreFailedMessage            = "Could not score evaluation"
 	sessionEventsTooLargeMessage  = "session has too many events to import"
 )
+
+func retryStoreError(err error) error {
+	if errors.Is(err, db.ErrInvalidState) || errors.Is(err, db.ErrPreconditionFailed) {
+		return invalidState(retryUnavailableMessage, err)
+	}
+	return internalFailure(createFailedMessage, err)
+}
 
 func invalidArgument(message string, cause error) error {
 	return apperr.New(apperr.InvalidArgument, message, cause)

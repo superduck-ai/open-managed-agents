@@ -5,6 +5,55 @@ import (
 	"testing"
 )
 
+func TestEvaluationSessionRequestFallsBackToQueryForEmptyContent(t *testing.T) {
+	for _, content := range []json.RawMessage{nil, json.RawMessage(`[]`), json.RawMessage(`null`)} {
+		request, err := evaluationSessionRequest(EvaluationSessionSpec{Query: "汇总销售额", Content: content})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var events []struct {
+			Content []map[string]any `json:"content"`
+		}
+		if err := json.Unmarshal(request.InitialEvents, &events); err != nil {
+			t.Fatal(err)
+		}
+		if len(events) != 1 || len(events[0].Content) != 1 || events[0].Content[0]["text"] != "汇总销售额" {
+			t.Fatalf("content %s events = %+v", content, events)
+		}
+	}
+}
+
+func TestEvaluationSessionRequestSendsMultimodalContent(t *testing.T) {
+	request, err := evaluationSessionRequest(EvaluationSessionSpec{
+		Query:   "描述这张图里的金额",
+		Content: json.RawMessage(`[{"type":"text","text":"描述这张图里的金额"},{"type":"image","source":{"type":"file","file_id":"file_demo"}}]`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []struct {
+		Type    string `json:"type"`
+		Content []struct {
+			Type   string `json:"type"`
+			Text   string `json:"text"`
+			Source struct {
+				Type   string `json:"type"`
+				FileID string `json:"file_id"`
+			} `json:"source"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(request.InitialEvents, &events); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != "user.message" || len(events[0].Content) != 2 {
+		t.Fatalf("events = %+v", events)
+	}
+	image := events[0].Content[1]
+	if events[0].Content[0].Text != "描述这张图里的金额" || image.Type != "image" || image.Source.Type != "file" || image.Source.FileID != "file_demo" {
+		t.Fatalf("content = %+v", events[0].Content)
+	}
+}
+
 func TestEvaluationSessionRequestUsesAgentVersionAndQuery(t *testing.T) {
 	request, err := evaluationSessionRequest(EvaluationSessionSpec{
 		AgentExternalID:       "agent_demo",

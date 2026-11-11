@@ -70,6 +70,11 @@ export type EvaluationScore = {
   answer: string;
   dimensions: Array<{ name?: string; score?: number }>;
   error_message: string;
+  judge_model: string;
+  judge_prompt_version: string;
+  judge_system: string;
+  judge_prompt: string;
+  judge_response: string;
 };
 
 export type EvaluationItem = {

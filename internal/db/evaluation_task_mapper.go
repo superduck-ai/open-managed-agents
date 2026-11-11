@@ -59,25 +59,37 @@ type evaluationTaskItemRow struct {
 	ExpectedAnswer    string    `db:"expected_answer"`
 	ExpectedToolTrace []byte    `db:"expected_tool_trace"`
 	Acceptance        string    `db:"acceptance"`
+	Inputs            []byte    `db:"inputs"`
 	CreatedAt         time.Time `db:"created_at"`
 	UpdatedAt         time.Time `db:"updated_at"`
 }
 
 type evaluationTaskScoreRow struct {
-	UUID             string          `db:"uuid"`
-	ExternalID       string          `db:"external_id"`
-	OrganizationUUID string          `db:"organization_uuid"`
-	WorkspaceUUID    string          `db:"workspace_uuid"`
-	TaskUUID         string          `db:"task_uuid"`
-	ItemUUID         string          `db:"item_uuid"`
-	Status           string          `db:"status"`
-	Score            float64         `db:"score"`
-	Passed           bool            `db:"passed"`
-	Explanation      string          `db:"explanation"`
-	Answer           string          `db:"answer"`
-	Dimensions       json.RawMessage `db:"dimensions"`
-	ErrorMessage     string          `db:"error_message"`
-	CreatedAt        time.Time       `db:"created_at"`
+	UUID               string          `db:"uuid"`
+	ExternalID         string          `db:"external_id"`
+	OrganizationUUID   string          `db:"organization_uuid"`
+	WorkspaceUUID      string          `db:"workspace_uuid"`
+	TaskUUID           string          `db:"task_uuid"`
+	ItemUUID           string          `db:"item_uuid"`
+	Status             string          `db:"status"`
+	Score              float64         `db:"score"`
+	Passed             bool            `db:"passed"`
+	Explanation        string          `db:"explanation"`
+	Answer             string          `db:"answer"`
+	Dimensions         json.RawMessage `db:"dimensions"`
+	ErrorMessage       string          `db:"error_message"`
+	JudgeModel         string          `db:"judge_model"`
+	JudgePromptVersion string          `db:"judge_prompt_version"`
+	JudgeSystem        string          `db:"judge_system"`
+	JudgePrompt        string          `db:"judge_prompt"`
+	JudgeResponse      string          `db:"judge_response"`
+	CreatedAt          time.Time       `db:"created_at"`
+}
+
+type evaluationTaskRefRow struct {
+	OrganizationUUID string `db:"organization_uuid"`
+	WorkspaceUUID    string `db:"workspace_uuid"`
+	ExternalID       string `db:"external_id"`
 }
 
 type evaluationTaskUsageRow struct {
@@ -129,24 +141,30 @@ type insertEvaluationTaskItemParams struct {
 	ExpectedAnswer    string
 	ExpectedToolTrace json.RawMessage
 	Acceptance        string
+	Inputs            json.RawMessage
 	CreatedAt         time.Time
 }
 
 type insertEvaluationTaskScoreParams struct {
-	UUID             string
-	ExternalID       string
-	OrganizationUUID string
-	WorkspaceUUID    string
-	TaskUUID         string
-	ItemUUID         string
-	Status           string
-	Score            float64
-	Passed           bool
-	Explanation      string
-	Answer           string
-	Dimensions       json.RawMessage
-	ErrorMessage     string
-	CreatedAt        time.Time
+	UUID               string
+	ExternalID         string
+	OrganizationUUID   string
+	WorkspaceUUID      string
+	TaskUUID           string
+	ItemUUID           string
+	Status             string
+	Score              float64
+	Passed             bool
+	Explanation        string
+	Answer             string
+	Dimensions         json.RawMessage
+	ErrorMessage       string
+	JudgeModel         string
+	JudgePromptVersion string
+	JudgeSystem        string
+	JudgePrompt        string
+	JudgeResponse      string
+	CreatedAt          time.Time
 }
 
 type evaluationItemStatusParams struct {
@@ -174,7 +192,7 @@ type evaluationTaskIDParams struct {
 	TaskUUIDs        []string
 }
 
-type evaluationResetItemsParams struct {
+type evaluationRoundParams struct {
 	OrganizationUUID string
 	WorkspaceUUID    string
 	TaskUUID         string
@@ -194,9 +212,14 @@ type EvaluationTaskMapper interface {
 	ListRunningBySession(ctx context.Context, organizationUUID, workspaceUUID, sessionExternalID string) ([]evaluationTaskItemRow, error)
 	MarkItemRunning(ctx context.Context, params evaluationItemStatusParams) (int64, error)
 	FinishItem(ctx context.Context, params evaluationItemStatusParams) (int64, error)
-	ResetFailedItems(ctx context.Context, params evaluationResetItemsParams) (int64, error)
+	TouchRunningItem(ctx context.Context, params evaluationItemStatusParams) (int64, error)
+	ResetFailedItems(ctx context.Context, params evaluationRoundParams) (int64, error)
 	CancelPendingItems(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string, updatedAt time.Time) (int64, error)
 	UpdateTaskStatus(ctx context.Context, params evaluationTaskStatusParams) (int64, error)
 	InsertScore(ctx context.Context, params insertEvaluationTaskScoreParams) (evaluationTaskScoreRow, error)
+	DeleteFailedScores(ctx context.Context, params evaluationRoundParams) (int64, error)
+	RestartTask(ctx context.Context, params evaluationRoundParams) (int64, error)
+	ListSettleableTasks(ctx context.Context, updatedBefore time.Time, limit int) ([]evaluationTaskRefRow, error)
+	ListStaleRunningItems(ctx context.Context, updatedBefore time.Time, limit int) ([]evaluationTaskItemRow, error)
 	SumTaskUsage(ctx context.Context, organizationUUID, workspaceUUID, taskUUID string) (evaluationTaskUsageRow, error)
 }

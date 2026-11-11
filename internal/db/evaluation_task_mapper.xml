@@ -51,6 +51,7 @@
         expected_answer,
         expected_tool_trace,
         acceptance,
+        inputs,
         created_at,
         updated_at
     </sql>
@@ -69,6 +70,11 @@
         answer,
         dimensions,
         error_message,
+        judge_model,
+        judge_prompt_version,
+        judge_system,
+        judge_prompt,
+        judge_response,
         created_at
     </sql>
 
@@ -114,7 +120,7 @@
     <insert id="InsertItem" result="returning" resultType="evaluationTaskItemRow">
         INSERT INTO evaluation_task_items (
             uuid, external_id, organization_uuid, workspace_uuid, task_uuid, task_external_id, case_external_id,
-            round, position, query, expected_answer, expected_tool_trace, acceptance, status, created_at, updated_at
+            round, position, query, expected_answer, expected_tool_trace, acceptance, inputs, status, created_at, updated_at
         ) VALUES (
             #{params.UUID},
             #{params.ExternalID},
@@ -129,6 +135,7 @@
             #{params.ExpectedAnswer},
             CAST(#{params.ExpectedToolTrace} AS jsonb),
             #{params.Acceptance},
+            COALESCE(CAST(#{params.Inputs} AS jsonb), CAST('[]' AS jsonb)),
             'pending',
             #{params.CreatedAt},
             #{params.CreatedAt}
@@ -223,6 +230,15 @@
         AND status = 'running'
     </update>
 
+    <update id="TouchRunningItem" result="rows">
+        UPDATE evaluation_task_items
+        SET updated_at = #{params.UpdatedAt}
+        WHERE uuid = #{params.UUID}
+        AND organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND status = 'running'
+    </update>
+
     <update id="ResetFailedItems" result="rows">
         UPDATE evaluation_task_items
         SET status = 'pending',
@@ -260,7 +276,8 @@
     <insert id="InsertScore" result="returning" resultType="evaluationTaskScoreRow">
         INSERT INTO evaluation_task_scores (
             uuid, external_id, organization_uuid, workspace_uuid, task_uuid, item_uuid,
-            status, score, passed, explanation, answer, dimensions, error_message, created_at
+            status, score, passed, explanation, answer, dimensions, error_message,
+            judge_model, judge_prompt_version, judge_system, judge_prompt, judge_response, created_at
         ) VALUES (
             #{params.UUID},
             #{params.ExternalID},
@@ -275,10 +292,70 @@
             #{params.Answer},
             CAST(#{params.Dimensions} AS jsonb),
             #{params.ErrorMessage},
+            #{params.JudgeModel},
+            #{params.JudgePromptVersion},
+            #{params.JudgeSystem},
+            #{params.JudgePrompt},
+            #{params.JudgeResponse},
             #{params.CreatedAt}
         )
         RETURNING <include refid="scoreColumns"/>
     </insert>
+
+    <delete id="DeleteFailedScores" result="rows">
+        DELETE FROM evaluation_task_scores s
+        WHERE s.organization_uuid = #{params.OrganizationUUID}
+        AND s.workspace_uuid = #{params.WorkspaceUUID}
+        AND s.task_uuid = #{params.TaskUUID}
+        AND s.status = 'failed'
+        AND s.item_uuid IN (
+            SELECT i.uuid
+            FROM evaluation_task_items i
+            WHERE i.organization_uuid = #{params.OrganizationUUID}
+            AND i.workspace_uuid = #{params.WorkspaceUUID}
+            AND i.task_uuid = #{params.TaskUUID}
+            AND i.round = #{params.Round}
+            AND i.status = 'completed'
+        )
+    </delete>
+
+    <update id="RestartTask" result="rows">
+        UPDATE evaluation_tasks
+        SET status = 'running',
+            error_message = '',
+            updated_at = #{params.UpdatedAt}
+        WHERE organization_uuid = #{params.OrganizationUUID}
+        AND workspace_uuid = #{params.WorkspaceUUID}
+        AND uuid = #{params.TaskUUID}
+        AND status IN ('completed', 'failed')
+    </update>
+
+    <select id="ListSettleableTasks" resultType="evaluationTaskRefRow">
+        SELECT t.organization_uuid, t.workspace_uuid, t.external_id
+        FROM evaluation_tasks t
+        WHERE t.status = 'running'
+        AND t.updated_at &lt; #{updatedBefore}
+        AND NOT EXISTS (
+            SELECT 1
+            FROM evaluation_task_items i
+            WHERE i.organization_uuid = t.organization_uuid
+            AND i.workspace_uuid = t.workspace_uuid
+            AND i.task_uuid = t.uuid
+            AND i.status IN ('pending', 'running')
+        )
+        ORDER BY t.updated_at ASC, t.uuid ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="ListStaleRunningItems" resultType="evaluationTaskItemRow">
+        SELECT <include refid="itemColumns"/>
+        FROM evaluation_task_items
+        WHERE status = 'running'
+        AND session_external_id &lt;&gt; ''
+        AND updated_at &lt; #{updatedBefore}
+        ORDER BY updated_at ASC, uuid ASC
+        LIMIT #{limit}
+    </select>
 
     <select id="SumTaskUsage" resultType="evaluationTaskUsageRow">
         SELECT

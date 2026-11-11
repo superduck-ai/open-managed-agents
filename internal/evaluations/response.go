@@ -156,13 +156,18 @@ func summaryJSON(summary RoundSummary) summaryResponse {
 }
 
 type scoreResponse struct {
-	Status       string          `json:"status"`
-	Score        float64         `json:"score"`
-	Passed       bool            `json:"passed"`
-	Explanation  string          `json:"explanation"`
-	Answer       string          `json:"answer"`
-	Dimensions   json.RawMessage `json:"dimensions"`
-	ErrorMessage string          `json:"error_message"`
+	Status             string          `json:"status"`
+	Score              float64         `json:"score"`
+	Passed             bool            `json:"passed"`
+	Explanation        string          `json:"explanation"`
+	Answer             string          `json:"answer"`
+	Dimensions         json.RawMessage `json:"dimensions"`
+	ErrorMessage       string          `json:"error_message"`
+	JudgeModel         string          `json:"judge_model"`
+	JudgePromptVersion string          `json:"judge_prompt_version"`
+	JudgeSystem        string          `json:"judge_system"`
+	JudgePrompt        string          `json:"judge_prompt"`
+	JudgeResponse      string          `json:"judge_response"`
 }
 
 type itemResponse struct {
@@ -255,6 +260,8 @@ func taskJSON(detail db.EvaluationTaskDetail, includeItems bool) taskResponse {
 			row.Score = &scoreResponse{
 				Status: score.Status, Score: score.Score, Passed: score.Passed, Explanation: score.Explanation,
 				Answer: score.Answer, Dimensions: dimensions, ErrorMessage: score.ErrorMessage,
+				JudgeModel: score.JudgeModel, JudgePromptVersion: score.JudgePromptVersion,
+				JudgeSystem: score.JudgeSystem, JudgePrompt: score.JudgePrompt, JudgeResponse: score.JudgeResponse,
 			}
 		}
 		response.Items = append(response.Items, row)

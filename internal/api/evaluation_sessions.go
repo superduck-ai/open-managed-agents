@@ -19,6 +19,7 @@ func (s evaluationSessionStarter) Start(ctx context.Context, input evaluations.S
 		Resources:             input.Resources,
 		VaultIDs:              input.VaultIDs,
 		Query:                 input.Query,
+		Content:               input.Content,
 		Title:                 input.Title,
 		Metadata:              input.Metadata,
 	})

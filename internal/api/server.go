@@ -99,6 +99,7 @@ type Server struct {
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
 	InvitationJobs         *river.Client[*sql.Tx]
+	EvaluationSettle       evaluationsapi.SettleQueue
 	SandboxProvisioner     codesessions.SandboxProvisioner
 	Prebuilds              *environments.Prebuilds
 	SandboxLifecycle       *environments.SandboxLifecycle
@@ -213,6 +214,9 @@ func NewServer(deps ServerDeps) *Server {
 	evaluationHandler := evaluationsapi.NewHandler(deps.DB, componentLogger("evaluations"))
 	evaluationHandler.WithSessionStarter(evaluationSessionStarter{sessions: s.sessions})
 	evaluationHandler.WithRubricModel(evaluationsapi.NewRubricModel(deps.DB, deps.VaultSecrets))
+	if deps.EvaluationSettle != nil {
+		evaluationHandler.WithSettleQueue(deps.EvaluationSettle)
+	}
 	s.sessions.WithSessionEventObserver(evaluationHandler)
 	s.configureTunnels(mcpCatalogHandler, rootLogger, deps.TunnelPresence)
 	router := chi.NewRouter()

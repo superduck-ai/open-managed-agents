@@ -17,6 +17,7 @@ type EvaluationSessionSpec struct {
 	Resources             json.RawMessage
 	VaultIDs              []string
 	Query                 string
+	Content               json.RawMessage
 	Title                 string
 	Metadata              map[string]string
 }
@@ -57,7 +58,7 @@ func evaluationSessionRequest(spec EvaluationSessionSpec) (sessionCreateRequest,
 	}
 	events, err := json.Marshal([]map[string]any{{
 		"type":    "user.message",
-		"content": []any{map[string]string{"type": "text", "text": spec.Query}},
+		"content": evaluationMessageContent(spec),
 	}})
 	if err != nil {
 		return sessionCreateRequest{}, err
@@ -85,4 +86,12 @@ func evaluationSessionRequest(spec EvaluationSessionSpec) (sessionCreateRequest,
 		request.Resources = spec.Resources
 	}
 	return request, nil
+}
+
+func evaluationMessageContent(spec EvaluationSessionSpec) any {
+	var blocks []json.RawMessage
+	if json.Unmarshal(spec.Content, &blocks) == nil && len(blocks) > 0 {
+		return blocks
+	}
+	return []any{map[string]string{"type": "text", "text": spec.Query}}
 }

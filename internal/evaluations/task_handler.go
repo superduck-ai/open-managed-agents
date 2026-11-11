@@ -161,28 +161,18 @@ func (h *Handler) retryTask(w http.ResponseWriter, r *http.Request) error {
 	if detail.Task.Status != "completed" && detail.Task.Status != "failed" {
 		return invalidState(retryUnavailableMessage, nil)
 	}
-	now := time.Now().UTC()
-	reset, err := h.store.ResetFailedEvaluationItems(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, detail.Task.UUID, 1, now)
+	retried, err := h.store.RetryEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, detail.Task.UUID, latestRound(detail.Items), time.Now().UTC())
 	if err != nil {
-		return internalFailure(createFailedMessage, err)
+		return retryStoreError(err)
 	}
-	if reset == 0 {
-		return invalidState(retryUnavailableMessage, nil)
-	}
-	if err := h.store.UpdateEvaluationTaskStatus(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID, "running", "", now); err != nil {
-		return internalFailure(createFailedMessage, err)
-	}
-	reloaded, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
-	if err != nil {
-		return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
-	}
-	pending := make([]db.EvaluationTaskItem, 0)
-	for _, item := range reloaded.Items {
-		if item.Status == "pending" {
-			pending = append(pending, item)
+	if retried.ResetItems > 0 {
+		reloaded, err := h.store.GetEvaluationTask(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
+		if err != nil {
+			return mapStoreError(err, taskNotFoundMessage, loadFailedMessage)
 		}
+		h.startItems(r.Context(), principal, reloaded.Task, reloaded.Items)
 	}
-	h.startItems(r.Context(), principal, reloaded.Task, pending)
+	h.requestSettle(r.Context(), principal.OrganizationUUID, principal.WorkspaceUUID, taskID)
 	return h.writeTask(w, r, principal, taskID)
 }
 
@@ -240,6 +230,10 @@ func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, bod
 	if err != nil {
 		return db.EvaluationTask{}, nil, mapStoreError(err, rubricNotFoundMessage, loadFailedMessage)
 	}
+	judgeModel, err := h.judgeModel(ctx, principal, rubric.Model)
+	if err != nil {
+		return db.EvaluationTask{}, nil, err
+	}
 	resources, err := normalizeResources(body.Resources)
 	if err != nil {
 		return db.EvaluationTask{}, nil, err
@@ -266,7 +260,7 @@ func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, bod
 		CreatedByUserUUID: principal.UserUUID, CreatedByAPIKeyUUID: principal.APIKeyUUID, Name: name, Mode: mode, Status: "pending",
 		AgentExternalID: agent.ExternalID, AgentVersion: agent.CurrentVersion, EnvironmentExternalID: environment.ExternalID,
 		DatasetExternalID: dataset.ExternalID, DatasetVersionExternalID: dataset.VersionExternalID, RubricExternalID: rubric.ExternalID,
-		RubricVersionExternalID: rubric.VersionExternalID, PassScore: rubric.PassScore, RubricBody: noted, RubricModel: rubric.Model,
+		RubricVersionExternalID: rubric.VersionExternalID, PassScore: rubric.PassScore, RubricBody: noted, RubricModel: judgeModel,
 		Strategy: "", LowScoreThreshold: 60, OptimizeSystem: false, BaselineSystem: baseline, VaultIDs: vaultJSON, Resources: resources, CreatedAt: now,
 	}
 	items := make([]db.EvaluationTaskItem, 0, len(cases))
@@ -277,10 +271,29 @@ func (h *Handler) prepareTask(ctx context.Context, principal auth.Principal, bod
 		}
 		items = append(items, db.EvaluationTaskItem{
 			UUID: uuid.NewString(), ExternalID: externalID, CaseExternalID: item.ExternalID, Round: 1, Position: item.Position,
-			Query: item.Query, ExpectedAnswer: item.ExpectedAnswer, ExpectedToolTrace: item.ExpectedToolTrace, Acceptance: item.Acceptance, Status: "pending",
+			Query: item.Query, ExpectedAnswer: item.ExpectedAnswer, ExpectedToolTrace: item.ExpectedToolTrace, Acceptance: item.Acceptance,
+			Inputs: item.Inputs, Status: "pending",
 		})
 	}
 	return task, items, nil
+}
+
+func (h *Handler) judgeModel(ctx context.Context, principal auth.Principal, configured string) (string, error) {
+	if configured != "" {
+		return configured, nil
+	}
+	resolver, ok := h.model.(defaultModelResolver)
+	if !ok {
+		return "", nil
+	}
+	model, found, err := resolver.DefaultModel(ctx, principal.OrganizationUUID, principal.WorkspaceUUID)
+	if err != nil {
+		return "", internalFailure(loadFailedMessage, err)
+	}
+	if !found {
+		return "", unavailable(modelMissingMessage, errModelMissing)
+	}
+	return model, nil
 }
 
 func rubricWithNotes(body, focus string) string {

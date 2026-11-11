@@ -15,6 +15,22 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	settleBatchSize     = 5
+	maxScoredAnswer     = 16000
+	maxScoredTrajectory = 16000
+	maxScoredStep       = 1500
+)
+
+type SettleQueue interface {
+	EnqueueSettle(ctx context.Context, organizationUUID, workspaceUUID, taskID string) error
+}
+
+func (h *Handler) WithSettleQueue(queue SettleQueue) *Handler {
+	h.settleQueue = queue
+	return h
+}
+
 func (h *Handler) ObserveSessionEvents(ctx context.Context, events []db.SessionEvent) {
 	if h == nil || len(events) == 0 {
 		return
@@ -62,108 +78,184 @@ func (h *Handler) consumeSessionEvents(ctx context.Context, events []db.SessionE
 			continue
 		}
 		for _, item := range items {
-			finished, err := h.store.FinishRunningEvaluationItem(ctx, item.OrganizationUUID, item.WorkspaceUUID, item.UUID, status, clipError(message), time.Now().UTC())
-			if err != nil {
-				h.logger.ErrorContext(ctx, "finish evaluation item", "item_id", item.ExternalID, "error", err)
-				continue
-			}
-			if finished {
+			if h.finishItem(ctx, item, status, message) {
 				tasks[item.TaskExternalID] = item
 			}
 		}
 	}
 	for _, item := range tasks {
-		h.settleTask(ctx, item.OrganizationUUID, item.WorkspaceUUID, item.TaskExternalID)
+		h.requestSettle(ctx, item.OrganizationUUID, item.WorkspaceUUID, item.TaskExternalID)
 	}
 }
 
-func (h *Handler) settleTask(ctx context.Context, organizationUUID, workspaceUUID, taskID string) {
-	detail, err := h.store.GetEvaluationTask(ctx, organizationUUID, workspaceUUID, taskID)
-	if err != nil || detail.Task.Status == "cancelled" || detail.Task.Status == "completed" || detail.Task.Status == "failed" {
+func (h *Handler) finishItem(ctx context.Context, item db.EvaluationTaskItem, status, message string) bool {
+	finished, err := h.store.FinishRunningEvaluationItem(ctx, item.OrganizationUUID, item.WorkspaceUUID, item.UUID, status, clipError(message), time.Now().UTC())
+	if err != nil {
+		h.logger.ErrorContext(ctx, "finish evaluation item", "item_id", item.ExternalID, "error", err)
+		return false
+	}
+	return finished
+}
+
+func (h *Handler) requestSettle(ctx context.Context, organizationUUID, workspaceUUID, taskID string) {
+	if h.settleQueue != nil {
+		if err := h.settleQueue.EnqueueSettle(ctx, organizationUUID, workspaceUUID, taskID); err != nil {
+			h.logger.ErrorContext(ctx, "enqueue evaluation settle", "task_id", taskID, "error", err)
+		}
 		return
+	}
+	for {
+		done, err := h.settleTask(ctx, organizationUUID, workspaceUUID, taskID, true)
+		if err != nil {
+			h.logger.ErrorContext(ctx, "settle evaluation task", "task_id", taskID, "error", err)
+			return
+		}
+		if done {
+			return
+		}
+	}
+}
+
+func (h *Handler) settleTask(ctx context.Context, organizationUUID, workspaceUUID, taskID string, finalAttempt bool) (bool, error) {
+	detail, err := h.store.GetEvaluationTask(ctx, organizationUUID, workspaceUUID, taskID)
+	if errors.Is(err, db.ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if taskClosed(detail.Task.Status) {
+		return true, nil
 	}
 	round := latestRound(detail.Items)
 	if !roundSettled(detail.Items, round) {
-		return
+		return true, nil
 	}
-	if err := h.scoreRound(ctx, detail, round); err != nil {
-		h.logger.ErrorContext(ctx, "score evaluation round", "task_id", taskID, "error", err)
+	pending := unscoredItems(detail, round)
+	for _, item := range pending[:min(len(pending), settleBatchSize)] {
+		if err := h.scoreItem(ctx, detail.Task, item, finalAttempt); err != nil {
+			return false, err
+		}
 	}
-	detail, err = h.store.GetEvaluationTask(ctx, organizationUUID, workspaceUUID, taskID)
-	if err != nil {
-		return
+	if len(pending) > settleBatchSize {
+		return false, nil
 	}
 	status := "completed"
 	if allTerminalFailed(itemsForRound(detail.Items, round)) {
 		status = "failed"
 	}
-	if err := h.store.UpdateEvaluationTaskStatus(ctx, organizationUUID, workspaceUUID, taskID, status, "", time.Now().UTC()); err != nil {
-		h.logger.ErrorContext(ctx, "update evaluation task status", "task_id", taskID, "error", err)
-	}
+	return true, h.store.UpdateEvaluationTaskStatus(ctx, organizationUUID, workspaceUUID, taskID, status, "", time.Now().UTC())
 }
 
-func (h *Handler) scoreRound(ctx context.Context, detail db.EvaluationTaskDetail, round int) error {
+func taskClosed(status string) bool {
+	return status == "cancelled" || status == "completed" || status == "failed"
+}
+
+func unscoredItems(detail db.EvaluationTaskDetail, round int) []db.EvaluationTaskItem {
 	scored := map[string]struct{}{}
 	for _, score := range detail.Scores {
 		scored[score.ItemUUID] = struct{}{}
 	}
+	pending := make([]db.EvaluationTaskItem, 0)
 	for _, item := range detail.Items {
 		if item.Round != round || item.Status != "completed" {
 			continue
 		}
-		if _, ok := scored[item.UUID]; ok {
-			continue
-		}
-		if err := h.scoreItem(ctx, detail.Task, item); err != nil {
-			return err
+		if _, ok := scored[item.UUID]; !ok {
+			pending = append(pending, item)
 		}
 	}
+	return pending
+}
+
+func (h *Handler) scoreItem(ctx context.Context, task db.EvaluationTask, item db.EvaluationTaskItem, finalAttempt bool) error {
+	score, err := newScore(task, item)
+	if err != nil {
+		return err
+	}
+	output, trajectory, err := h.scoredTranscript(ctx, task.WorkspaceUUID, item.SessionExternalID)
+	if errors.Is(err, errSessionTooLarge) {
+		score.Status, score.ErrorMessage = "failed", scoreSessionTooLargeMessage
+		return h.saveScore(ctx, score)
+	}
+	if err != nil {
+		return err
+	}
+	score.Answer = output
+	score.JudgeSystem = scoringSystem(task.RubricBody)
+	score.JudgePrompt = scoringPrompt(caseDraft{
+		Query: item.Query, ExpectedAnswer: item.ExpectedAnswer, ExpectedToolTrace: item.ExpectedToolTrace, Acceptance: item.Acceptance,
+	}, output, trajectory)
+	text, err := h.complete(ctx, task.OrganizationUUID, task.WorkspaceUUID, task.RubricModel, score.JudgeSystem, score.JudgePrompt)
+	score.JudgeResponse = text
+	if err := judgeScore(&score, text, err, task.PassScore, finalAttempt); err != nil {
+		return err
+	}
+	limitUnansweredScore(&score, task.PassScore)
+	return h.saveScore(ctx, score)
+}
+
+func newScore(task db.EvaluationTask, item db.EvaluationTaskItem) (db.EvaluationTaskScore, error) {
+	externalID, err := ids.New("evalscore_")
+	if err != nil {
+		return db.EvaluationTaskScore{}, err
+	}
+	return db.EvaluationTaskScore{
+		UUID: uuid.NewString(), ExternalID: externalID, OrganizationUUID: task.OrganizationUUID, WorkspaceUUID: task.WorkspaceUUID,
+		TaskUUID: task.UUID, ItemUUID: item.UUID, Dimensions: json.RawMessage(`[]`), JudgeModel: task.RubricModel,
+		JudgePromptVersion: scoringPromptVersion, CreatedAt: time.Now().UTC(),
+	}, nil
+}
+
+func limitUnansweredScore(score *db.EvaluationTaskScore, passScore int) {
+	if score.Status != "completed" || score.Answer != "" {
+		return
+	}
+	score.Passed = false
+	if passScore > 0 && score.Score >= float64(passScore) {
+		score.Score = float64(passScore - 1)
+	}
+}
+
+func judgeScore(score *db.EvaluationTaskScore, text string, modelErr error, passScore int, finalAttempt bool) error {
+	if modelErr != nil {
+		if !finalAttempt && !errors.Is(modelErr, errModelMissing) {
+			return modelErr
+		}
+		score.Status, score.ErrorMessage = "failed", clipError(modelErrorMessage(modelErr))
+		return nil
+	}
+	parsed, err := parseScoreText(text, passScore)
+	if err != nil {
+		if !finalAttempt {
+			return err
+		}
+		score.Status, score.ErrorMessage = "failed", scoreParseFailedMessage
+		return nil
+	}
+	score.Status, score.Score, score.Passed = "completed", parsed.Score, parsed.Passed
+	score.Explanation, score.Dimensions = parsed.Explanation, parsed.Dimensions
 	return nil
 }
 
-func (h *Handler) scoreItem(ctx context.Context, task db.EvaluationTask, item db.EvaluationTaskItem) error {
-	output, trajectory := "", ""
-	if item.SessionExternalID != "" {
-		events, err := h.sessionEvents(ctx, task.WorkspaceUUID, item.SessionExternalID)
-		if err != nil {
-			return err
-		}
-		output, trajectory = transcriptFromEvents(events)
-	}
-	prompt := scoringPrompt(task.RubricBody, caseDraft{
-		Query: item.Query, ExpectedAnswer: item.ExpectedAnswer, ExpectedToolTrace: item.ExpectedToolTrace, Acceptance: item.Acceptance,
-	}, output, trajectory)
-	text, err := h.complete(ctx, task.OrganizationUUID, task.WorkspaceUUID, task.RubricModel, rubricSystemPrompt, prompt)
-	score := db.EvaluationTaskScore{
-		UUID: uuid.NewString(), OrganizationUUID: task.OrganizationUUID, WorkspaceUUID: task.WorkspaceUUID,
-		TaskUUID: task.UUID, ItemUUID: item.UUID, Answer: output, CreatedAt: time.Now().UTC(), Dimensions: json.RawMessage(`[]`),
-	}
-	externalID, idErr := ids.New("evalscore_")
-	if idErr != nil {
-		return idErr
-	}
-	score.ExternalID = externalID
-	if err != nil {
-		score.Status = "failed"
-		score.ErrorMessage = clipError(modelErrorMessage(err))
-	} else {
-		parsed, parseErr := parseScoreText(text, task.PassScore)
-		if parseErr != nil {
-			score.Status = "failed"
-			score.ErrorMessage = "Could not parse evaluator score"
-		} else {
-			score.Status = "completed"
-			score.Score = parsed.Score
-			score.Passed = parsed.Passed
-			score.Explanation = parsed.Explanation
-			score.Dimensions = parsed.Dimensions
-		}
-	}
-	_, err = h.store.CreateEvaluationTaskScore(ctx, score)
+func (h *Handler) saveScore(ctx context.Context, score db.EvaluationTaskScore) error {
+	_, err := h.store.CreateEvaluationTaskScore(ctx, score)
 	if errors.Is(err, db.ErrDuplicate) {
 		return nil
 	}
 	return err
+}
+
+func (h *Handler) scoredTranscript(ctx context.Context, workspaceUUID, sessionID string) (string, string, error) {
+	if sessionID == "" {
+		return "", "", nil
+	}
+	events, err := h.sessionEvents(ctx, workspaceUUID, sessionID)
+	if err != nil {
+		return "", "", err
+	}
+	output, trajectory := transcriptFromEvents(events)
+	return output, trajectory, nil
 }
 
 func (h *Handler) startItems(ctx context.Context, principal auth.Principal, task db.EvaluationTask, items []db.EvaluationTaskItem) {
@@ -181,7 +273,7 @@ func (h *Handler) startItems(ctx context.Context, principal auth.Principal, task
 		sessionID, err := h.starter.Start(ctx, SessionInput{
 			Principal: principal, AgentExternalID: task.AgentExternalID, AgentVersion: task.AgentVersion,
 			EnvironmentExternalID: task.EnvironmentExternalID, Resources: task.Resources, VaultIDs: vaultList(task.VaultIDs),
-			Query: item.Query, Title: clip(prefix+item.Query, 120),
+			Query: item.Query, Content: item.Inputs, Title: clip(prefix+item.Query, 120),
 			Metadata: map[string]string{"evaluation_task_id": task.ExternalID, "evaluation_item_id": item.ExternalID},
 		})
 		if err != nil {
@@ -229,19 +321,38 @@ func transcriptFromEvents(events []db.SessionEvent) (string, string) {
 	var answers []string
 	var steps []string
 	for _, event := range events {
-		text := eventText(event.Payload)
-		switch event.EventType {
-		case "agent.message":
-			if text != "" {
+		if event.EventType == "agent.message" {
+			if text := eventText(event.Payload); text != "" {
 				answers = append(answers, text)
 			}
-		case "agent.tool_use", "agent.tool_result":
-			if text != "" {
-				steps = append(steps, event.EventType+": "+text)
-			}
 		}
+		steps = append(steps, eventLine(event))
 	}
-	return clip(strings.Join(answers, "\n"), 8000), clip(strings.Join(steps, "\n"), 8000)
+	return clipMiddle(strings.Join(answers, "\n"), maxScoredAnswer), clipMiddle(strings.Join(steps, "\n"), maxScoredTrajectory)
+}
+
+func eventLine(event db.SessionEvent) string {
+	line := formatTime(event.CreatedAt) + " " + event.EventType
+	payload := clipMiddle(compactPayload(event.Payload), maxScoredStep)
+	if payload == "" || payload == "null" || payload == "{}" {
+		return line
+	}
+	return line + " " + payload
+}
+
+func compactPayload(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return string(raw)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return string(raw)
+	}
+	return string(encoded)
 }
 
 func clip(value string, limit int) string {
@@ -249,6 +360,15 @@ func clip(value string, limit int) string {
 		return value
 	}
 	return strings.ToValidUTF8(value[:limit], "")
+}
+
+func clipMiddle(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	half := limit / 2
+	marker := fmt.Sprintf("\n…[%d bytes omitted]…\n", len(value)-2*half)
+	return strings.ToValidUTF8(value[:half], "") + marker + strings.ToValidUTF8(value[len(value)-half:], "")
 }
 
 func terminalStatus(events []db.SessionEvent) (string, string, bool) {
@@ -263,13 +383,13 @@ func terminalStatus(events []db.SessionEvent) (string, string, bool) {
 			if reason == "retries_exhausted" {
 				failed = true
 			}
-			if reason == "end_turn" {
+			if reason == "end_turn" || reason == "requires_action" {
 				completed = true
 			}
 		}
 	}
 	if failed {
-		return "failed", "Session terminated", true
+		return "failed", sessionTerminatedMessage, true
 	}
 	if completed {
 		return "completed", "", true

@@ -304,6 +304,8 @@ export function DeleteSkillDialog({
   onOpenChange,
   onConfirm,
   description,
+  title,
+  confirmLabel,
 }: {
   skill: Pick<ConsoleSkill, 'id' | 'display_title'> | null;
   isDeleting: boolean;
@@ -311,6 +313,8 @@ export function DeleteSkillDialog({
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
   description?: string;
+  title?: string;
+  confirmLabel?: string;
 }) {
   const { msg } = useI18n();
   const errorRef = useRef<HTMLDivElement>(null);
@@ -336,7 +340,7 @@ export function DeleteSkillDialog({
         className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden"
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>{msg('skills.delete.heading', 'Delete skill?')}</AlertDialogTitle>
+          <AlertDialogTitle>{title || msg('skills.delete.heading', 'Delete skill?')}</AlertDialogTitle>
         </AlertDialogHeader>
         <div className="subtle-scrollbar min-h-0 space-y-4 overflow-y-auto">
           <AlertDialogDescription className="space-y-3 [overflow-wrap:anywhere]">
@@ -352,7 +356,11 @@ export function DeleteSkillDialog({
           {content.error ? (
             <Alert ref={errorRef} tabIndex={-1} variant="destructive" className="outline-none [overflow-wrap:anywhere]">
               <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <AlertTitle>{msg('skills.delete.error', 'Skill could not be deleted.')}</AlertTitle>
+              <AlertTitle>
+                {title
+                  ? msg('common.error', 'Something went wrong')
+                  : msg('skills.delete.error', 'Skill could not be deleted.')}
+              </AlertTitle>
               <AlertDescription>{content.error}</AlertDescription>
             </Alert>
           ) : null}
@@ -369,7 +377,7 @@ export function DeleteSkillDialog({
               onConfirm();
             }}
           >
-            {isDeleting ? msg('common.deleting', 'Deleting...') : msg('common.delete', 'Delete')}
+            {isDeleting ? msg('common.saving', 'Saving...') : confirmLabel || msg('common.delete', 'Delete')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

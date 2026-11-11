@@ -64,7 +64,7 @@ export function SystemSkillVersions({
           <p className="mt-2 text-sm whitespace-pre-wrap break-words">{version.description}</p>
           <p className="mt-2 text-xs text-muted-foreground">{new Date(version.created_at).toLocaleString(locale)}</p>
           <div className="mt-3 flex gap-2">
-            {!skill.bundled && skill.default_version !== version.version && (
+            {skill.default_version !== version.version && (
               <Button size="sm" variant="outline" onClick={() => onAction('set_default', version.version)}>
                 {msg('systemSkills.setDefault', 'Set as default')}
               </Button>

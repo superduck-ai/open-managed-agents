@@ -1,5 +1,6 @@
 export type SystemSkill = {
   bundled?: boolean;
+  bundled_version?: string | null;
   icon_key?: string;
   id: string;
   display_title: string;

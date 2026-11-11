@@ -1,4 +1,4 @@
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, RotateCcw } from 'lucide-react';
 import { SkillActions } from '@/features/skills/SkillActions';
 import { downloadSkillPackage } from '@/features/skills/api';
 import { useI18n } from '@/shared/i18n';
@@ -35,8 +35,8 @@ export function SystemSkillActions({
     <SkillActions
       name={skill.display_title}
       iconKey={skill.icon_key}
-      onUpdate={skill.bundled ? undefined : onUpdate}
-      onIcon={skill.bundled ? undefined : onIcon}
+      onUpdate={onUpdate}
+      onIcon={onIcon}
       onDelete={skill.bundled ? undefined : onDelete}
       onDownload={
         skill.default_version
@@ -47,6 +47,12 @@ export function SystemSkillActions({
           : undefined
       }
     >
+      {skill.bundled_version && skill.default_version !== skill.bundled_version && (
+        <DropdownMenuItem onClick={onDelete}>
+          <RotateCcw size={15} aria-hidden />
+          {msg('systemSkills.restoreBundled', 'Restore bundled version')}
+        </DropdownMenuItem>
+      )}
       {skill.default_version && (
         <>
           <DropdownMenuSeparator />

@@ -19,7 +19,7 @@ export function SystemSkillDeleteDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const remove = async () => {
-    if (busy || skill.bundled) return;
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -40,10 +40,20 @@ export function SystemSkillDeleteDialog({
       skill={skill}
       isDeleting={busy}
       error={error}
-      description={msg(
-        'systemSkills.deleteImpact',
-        'Remove this skill from the system catalog. Existing session snapshots are retained.',
-      )}
+      title={skill.bundled ? msg('systemSkills.restoreBundledTitle', 'Restore bundled version?') : undefined}
+      confirmLabel={skill.bundled ? msg('systemSkills.restoreBundled', 'Restore bundled version') : undefined}
+      description={
+        skill.bundled
+          ? msg(
+              'systemSkills.restoreBundledImpact',
+              'Use the version included with the project. Listing status and existing sessions are retained.',
+            )
+          : msg(
+              'systemSkills.deleteImpact',
+              'Remove this skill from the system catalog. Existing session snapshots are retained.',
+            )
+      }
+
       onOpenChange={(open) => {
         if (!open) onClose();
       }}

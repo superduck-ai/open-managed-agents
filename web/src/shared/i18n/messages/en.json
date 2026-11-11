@@ -3606,5 +3606,8 @@
   "managedAgents.channels.sessionEmpty": "No sessions yet",
   "systemSkills.bundled": "Project bundled",
   "systemSkills.uploaded": "Uploaded",
-  "systemSkills.deleteImpact": "Remove this skill from the system catalog. Existing session snapshots are retained."
+  "systemSkills.deleteImpact": "Remove this skill from the system catalog. Existing session snapshots are retained.",
+  "systemSkills.restoreBundled": "Restore bundled version",
+  "systemSkills.restoreBundledTitle": "Restore bundled version?",
+  "systemSkills.restoreBundledImpact": "Use the version included with the project. Listing status and existing sessions are retained."
 }

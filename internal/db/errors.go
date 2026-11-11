@@ -2,7 +2,7 @@ package db
 
 import "errors"
 
-var ErrBundledSkillReadOnly = errors.New("bundled skill only permits listing changes")
+var ErrBundledSkillReadOnly = errors.New("bundled skill cannot be removed")
 
 var ErrLastOrganizationAdmin = errors.New("last organization administrator")
 

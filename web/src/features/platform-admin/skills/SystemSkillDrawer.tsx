@@ -86,12 +86,10 @@ export function SystemSkillDrawer({
               skill && (
                 <>
                   <div className="mb-5 flex flex-wrap gap-2">
-                    {!skill.bundled && (
-                      <Button size="sm" onClick={() => onUpload(skill)}>
-                        <Upload className="size-4" aria-hidden />
-                        {msg('systemSkills.uploadVersion', 'Upload new version')}
-                      </Button>
-                    )}
+                    <Button size="sm" onClick={() => onUpload(skill)}>
+                      <Upload className="size-4" aria-hidden />
+                      {msg('systemSkills.uploadVersion', 'Upload new version')}
+                    </Button>
                     {skill.default_version && (
                       <Button size="sm" variant="outline" onClick={() => confirm(skill.listed ? 'unlist' : 'list')}>
                         {skill.listed

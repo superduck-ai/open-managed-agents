@@ -34,7 +34,7 @@ func TestSkillIconsMigrationAndCatalog(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 117); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 118); err != nil {
+	if _, err := provider.UpTo(ctx, 119); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}

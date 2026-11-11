@@ -395,9 +395,28 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		return bytes.NewReader(data)
 	}
 	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(preloaded.Revision), "application/json", true), 403)
-	requireStatus(send("PATCH", "/skills/xlsx/icon", bytes.NewBufferString(`{"icon_key":"mic","revision":1}`), "application/json", true), 403)
-	requireStatus(inspect("xlsx", archive("xlsx", "replace bundled")), 403)
-	requireStatus(uploadTo("xlsx", "replace", preloaded.Revision, false, archive("xlsx", "replace bundled")), 403)
+	requireStatus(inspect("xlsx", archive("xlsx", "replace bundled")), 200)
+	requireStatus(uploadTo("xlsx", "", preloaded.Revision+1, false, archive("xlsx", "replace bundled")), 409)
+	requireStatus(uploadTo("xlsx", "", preloaded.Revision, false, archive("xlsx", "replace bundled")), 200)
+	overridden, err := database.GetSystemSkill(t.Context(), "xlsx")
+	if err != nil || *overridden.LatestVersion == *preloaded.LatestVersion {
+		t.Fatalf("bundled override inactive: %+v %v", overridden, err)
+	}
+	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(preloaded.Revision), "application/json", true), 409)
+	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(overridden.Revision), "application/json", false), 403)
+	if _, err := skills.SyncBundledSkills(t.Context(), database, store, catalog.Files); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := database.GetSystemSkill(t.Context(), "xlsx")
+	if err != nil || *restarted.LatestVersion != *overridden.LatestVersion || restarted.Revision != overridden.Revision {
+		t.Fatalf("startup clobbered uploaded override: %+v %v", restarted, err)
+	}
+	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(overridden.Revision), "application/json", true), 204)
+	restored, err := database.GetSystemSkill(t.Context(), "xlsx")
+	if err != nil || *restored.LatestVersion != *preloaded.LatestVersion || !restored.Bundled {
+		t.Fatalf("DELETE removed bundled skill instead of restoring: %+v %v", restored, err)
+	}
+	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(restored.Revision), "application/json", true), 403)
 	for _, id := range []string{"xlsx", "pptx", "pdf", "docx", "guizang-ppt-skill"} {
 		loaded, err := database.GetSystemSkill(t.Context(), id)
 		if err != nil || loaded.LatestVersion == nil || !loaded.Bundled {

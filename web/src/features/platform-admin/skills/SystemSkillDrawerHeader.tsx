@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { SkillDownloadButton } from '@/features/skills/SkillDownloadButton';
-import { SkillIcon, SkillIconPicker } from '@/features/skills/icons';
+import { SkillIconPicker } from '@/features/skills/icons';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
 import { Badge } from '@/shared/ui/badge';
@@ -33,25 +33,22 @@ export function SystemSkillDrawerHeader({
         </SheetClose>
       </div>
       <div className="flex min-w-0 items-center gap-3">
-        {skill &&
-          (skill.bundled ? (
-            <SkillIcon iconKey={skill.icon_key} />
-          ) : (
-            <SkillIconPicker
-              value={skill.icon_key || 'blocks'}
-              name={skill.display_title}
-              onChange={async (key) => {
-                try {
-                  await client.request(`/skills/${encodeURIComponent(skill.id)}/icon`, {
-                    method: 'PATCH',
-                    body: { icon_key: key, revision: skill.revision },
-                  });
-                } finally {
-                  await onChanged();
-                }
-              }}
-            />
-          ))}
+        {skill && (
+          <SkillIconPicker
+            value={skill.icon_key || 'blocks'}
+            name={skill.display_title}
+            onChange={async (key) => {
+              try {
+                await client.request(`/skills/${encodeURIComponent(skill.id)}/icon`, {
+                  method: 'PATCH',
+                  body: { icon_key: key, revision: skill.revision },
+                });
+              } finally {
+                await onChanged();
+              }
+            }}
+          />
+        )}
         <SheetTitle>{skill?.display_title || msg('skills.detail.title', 'Skill details')}</SheetTitle>
       </div>
       <SheetDescription className="text-xs">

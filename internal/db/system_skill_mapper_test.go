@@ -122,8 +122,8 @@ func TestBundledSkillMapperGuards(t *testing.T) {
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: systemSkillMapperRegisterBundledStatement, bound: register,
 		wantID: "SystemSkillMapper.RegisterBundled", wantKind: yourbatis.StatementInsert,
-		wantArgumentNames: []string{"skill.UUID", "skill.ExternalID", "skill.DisplayTitle", "skill.IconKey", "skill.LatestVersion"},
-		wantSQLFragments:  []string{"ON CONFLICT (external_id)", "bundled = true", "IS DISTINCT FROM", "RETURNING"},
+		wantArgumentNames: []string{"skill.UUID", "skill.ExternalID", "skill.DisplayTitle", "skill.IconKey", "skill.LatestVersion", "skill.LatestVersion"},
+		wantSQLFragments:  []string{"ON CONFLICT (external_id)", "bundled = true", "bundled_version = EXCLUDED.bundled_version", "ELSE builtin_skills.latest_version END", "IS DISTINCT FROM", "RETURNING"},
 		wantSQLAbsent:     []string{"listed = EXCLUDED.listed"},
 	})
 	remove := buildSystemSkillMapperDeleteSkill(yourbatis.DialectPostgres, skill)

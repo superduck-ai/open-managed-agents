@@ -22,6 +22,7 @@ import (
 )
 
 type systemSkillResponse struct {
+	BundledVersion *string   `json:"bundled_version"`
 	Bundled        bool      `json:"bundled"`
 	ID             string    `json:"id"`
 	DisplayTitle   string    `json:"display_title"`
@@ -116,7 +117,7 @@ func (h *Handler) systemWrap(next httpapi.Endpoint) http.HandlerFunc {
 }
 
 func systemSkillDTO(s db.SystemSkill) systemSkillResponse {
-	return systemSkillResponse{Bundled: s.Bundled, ID: s.ExternalID, DisplayTitle: s.DisplayTitle, IconKey: s.IconKey, DefaultVersion: s.LatestVersion, Listed: s.Listed, Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
+	return systemSkillResponse{BundledVersion: s.BundledVersion, Bundled: s.Bundled, ID: s.ExternalID, DisplayTitle: s.DisplayTitle, IconKey: s.IconKey, DefaultVersion: s.LatestVersion, Listed: s.Listed, Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
 }
 
 func (h *Handler) deleteSystemSkill(w http.ResponseWriter, r *http.Request) error {
@@ -274,9 +275,6 @@ func (h *Handler) inspectSystemPackage(w http.ResponseWriter, r *http.Request) e
 	}
 	skill, err := h.db.GetSystemSkill(r.Context(), id)
 	if err == nil {
-		if skill.Bundled {
-			return db.ErrBundledSkillReadOnly
-		}
 		result.Existing = new(systemSkillDTO(skill))
 	} else if !errors.Is(err, db.ErrNotFound) {
 		return err

@@ -3606,5 +3606,8 @@
   "managedAgents.channels.sessionEmpty": "暂无会话",
   "systemSkills.bundled": "项目预置",
   "systemSkills.uploaded": "手动上传",
-  "systemSkills.deleteImpact": "从系统技能目录移除，已有会话快照保留。"
+  "systemSkills.deleteImpact": "从系统技能目录移除，已有会话快照保留。",
+  "systemSkills.restoreBundled": "恢复预置版本",
+  "systemSkills.restoreBundledTitle": "恢复预置版本？",
+  "systemSkills.restoreBundledImpact": "使用项目自带版本，保留上下架状态和已有会话。"
 }

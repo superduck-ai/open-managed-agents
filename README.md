@@ -23,7 +23,7 @@ _Create your first agent from a template in the console._
 - Execute commands and file operations in isolated sandboxes through an E2B-compatible interface, including e2b-local for local development.
 - Run the Brain separately from the sandbox. Persist conversation and execution state so replacement workers can resume sessions.
 - Mount uploads, Skills, memory, and outputs through Filestore and FUSE, with session-specific paths and permissions.
-- Load the [bundled office and presentation Skills](./skills/README.md) at startup; administrators can list or unlist them, while uploaded system Skills can also be updated or deleted.
+- Load the [bundled office and presentation Skills](./skills/README.md) at startup; administrators can upload overrides or change listing status, and restore the bundled version without removing the Skill. Other uploaded system Skills can be deleted.
 - Keep upstream credentials behind platform proxies, handle tool approvals, and connect private MCP services through outbound tunnels.
 - Inspect sessions, tool calls, latency, and usage in the React console.
 

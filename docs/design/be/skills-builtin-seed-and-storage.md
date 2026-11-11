@@ -9,7 +9,7 @@ Skills 资源现在分成两类：
 
 项目公共技能维护在仓库根目录 `skills/`，包括源码、catalog.json、嵌入入口和上游来源说明。服务启动时在数据库迁移与对象存储就绪后自动加载，默认提供 xlsx、pptx、pdf、docx 和 guizang-ppt-skill。源码随程序嵌入，运行时不依赖本地源码目录或 GitHub 下载。手动 seed 的输入目录仍由管理员指定，不是服务运行时依赖。
 
-项目预置记录使用 builtin_skills.bundled=true；管理端只允许上下架，目录和图标由项目维护。初次注册上架，重启保留已有上下架选择，相同包不增加版本；内容更新产生摘要版本并成为项目默认版本，历史版本和对象保留。seed CLI 不能覆盖或 prune 项目预置记录。手动上传的系统技能可由超管软删除，删除不回收历史包；权限与修订边界见 [系统 Skill 管理](system-skills-administration.md)。
+项目预置记录使用 builtin_skills.bundled=true，bundled_version 保存项目当前底本版本；可上传覆盖、换图标和上下架，技能本身不可删除。初次注册上架，重启保留图标、上下架与上传覆盖，相同包不增加版本。项目更新时推进底本；当前使用底本的技能同步切换，上传覆盖继续生效。恢复预置时切回最新底本，保留历史版本和对象。seed CLI 不能覆盖或 prune 项目预置记录。手动上传的系统技能可由超管软删除，删除不回收历史包；权限与修订边界见 [系统 Skill 管理](system-skills-administration.md)。
 
 ## 数据模型
 

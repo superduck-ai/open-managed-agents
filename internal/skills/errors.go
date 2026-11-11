@@ -123,7 +123,7 @@ func systemSkillError(err error) *systemSkillPublicError {
 	}
 	switch {
 	case errors.Is(err, db.ErrBundledSkillReadOnly):
-		return &systemSkillPublicError{Status: 403, Code: "bundled_skill_read_only", Message: "项目预置技能只允许上架或下架"}
+		return &systemSkillPublicError{Status: 403, Code: "bundled_skill_read_only", Message: "项目预置技能不能删除，可上传更新或下架"}
 	case errors.Is(err, errSystemSkillDenied):
 		return &systemSkillPublicError{Status: 403, Code: "platform_access_denied", Message: "仅超级管理员可管理系统技能"}
 	case errors.Is(err, db.ErrNotFound):

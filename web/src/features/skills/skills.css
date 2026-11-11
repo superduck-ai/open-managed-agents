@@ -1,7 +1,28 @@
+.skills-page {
+  container: skills-page / inline-size;
+  width: 100%;
+  max-width: 1600px;
+  margin-inline: auto;
+}
 .skill-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, min(100%, 360px));
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+@container skills-page (min-width: 600px) {
+  .skill-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container skills-page (min-width: 960px) {
+  .skill-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@container skills-page (min-width: 1320px) {
+  .skill-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 .skill-card-wrapper {
   position: relative;

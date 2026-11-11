@@ -81,7 +81,7 @@ export function SystemSkillsPage() {
     }
   };
   return (
-    <section>
+    <section className="skills-page">
       <ResourcePageHeader
         contentGap="content"
         title={msg('systemSkills.title', 'System skills')}
@@ -99,9 +99,16 @@ export function SystemSkillsPage() {
           setOffset(0);
         }}
       >
-        <TabsList variant="line" className="mb-5">
+        <TabsList
+          variant="line"
+          className="mb-5 max-w-full items-stretch group-data-[orientation=horizontal]/tabs:h-auto"
+        >
           {Object.entries(statuses).map(([value, label]) => (
-            <TabsTrigger key={value} value={value}>
+            <TabsTrigger
+              key={value}
+              value={value}
+              className="h-auto min-h-8 min-w-0 whitespace-normal sm:min-w-fit sm:whitespace-nowrap"
+            >
               {label}
             </TabsTrigger>
           ))}

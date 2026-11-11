@@ -115,7 +115,7 @@ export function SkillsPage({
     { value: 'custom', label: msg('skills.custom', 'Custom'), count: counts?.custom },
   ];
   return (
-    <section>
+    <section className="skills-page">
       <ResourcePageHeader
         contentGap="content"
         title={msg('skills.title', 'Skills')}
@@ -133,19 +133,26 @@ export function SkillsPage({
           setPage(0);
         }}
       >
-        <TabsList variant="line" className="mb-5">
+        <TabsList
+          variant="line"
+          className="mb-5 max-w-full items-stretch group-data-[orientation=horizontal]/tabs:h-auto"
+        >
           {tabs.map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value}>
+            <TabsTrigger
+              key={tab.value}
+              value={tab.value}
+              className="h-auto min-h-8 min-w-0 whitespace-normal sm:min-w-fit sm:whitespace-nowrap"
+            >
               {tab.label}
               {tab.count !== undefined && (
-                <span className="ml-2 text-xs tabular-nums text-muted-foreground">{tab.count}</span>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{tab.count}</span>
               )}
             </TabsTrigger>
           ))}
         </TabsList>
       </Tabs>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="relative w-full sm:w-80">
+        <div className="relative min-w-0 flex-1 sm:max-w-80">
           <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" aria-hidden />
           <Input
             className="pl-9"

@@ -135,16 +135,17 @@ export function ChannelWizardFormPage({
   });
 
   const targetAgentId = value.agentId || initialAgentId;
+  const authorizationId = authorization?.id;
+  const qrStatus = qr?.status;
 
   useEffect(() => {
-    setPollError('');
     if (
       binding !== 'qr' ||
-      authorization ||
+      authorizationId ||
       !saved ||
       saved.binding_status === 'bound' ||
       !targetAgentId ||
-      (qr && qr.status !== 'pending')
+      (qrStatus && qrStatus !== 'pending')
     )
       return;
     const controller = new AbortController();
@@ -182,10 +183,10 @@ export function ChannelWizardFormPage({
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [saved, targetAgentId, workspaceId, queryClient, authorization?.id, binding, qr?.status]);
+  }, [saved, targetAgentId, workspaceId, queryClient, authorizationId, binding, qrStatus, setQr]);
 
-  const agents = agentsQuery.data ?? [];
-  const environments = environmentsQuery.data ?? [];
+  const agents = useMemo(() => agentsQuery.data ?? [], [agentsQuery.data]);
+  const environments = useMemo(() => environmentsQuery.data ?? [], [environmentsQuery.data]);
   const agentLocked = Boolean(saved);
 
   const access = useMemo(() => ({ binding, saved, qrStatus: qr?.status ?? null }), [binding, saved, qr?.status]);
@@ -244,7 +245,12 @@ export function ChannelWizardFormPage({
     }),
     [agents, environments, value.agentId, value.environmentId],
   );
-  const visibleError = [error, pollError, authorizationPollError].find(Boolean);
+  const visibleError = [
+    error,
+    pollError,
+    authorizationPollError,
+    ...[agentsQuery.error, environmentsQuery.error].filter(Boolean).map(errorMessage),
+  ].find(Boolean);
   const listHref = channelsListPath(workspaceId);
   return (
     <section className="flex min-h-[calc(100dvh-112px)] min-w-0 flex-col text-foreground md:min-h-[calc(100dvh-48px)]">
@@ -264,7 +270,10 @@ export function ChannelWizardFormPage({
             value={value}
             onChange={setValue}
             binding={binding}
-            onBindingChange={setBinding}
+            onBindingChange={(next) => {
+              setBinding(next);
+              setPollError('');
+            }}
             saved={saved}
             qr={qr}
             busy={busy}
@@ -272,7 +281,10 @@ export function ChannelWizardFormPage({
             agents={agents}
             environments={environments}
             agentLocked={agentLocked}
-            onGenerateQr={(openAuthorization) => void authorize(value.name, Boolean(openAuthorization))}
+            onGenerateQr={(openAuthorization) => {
+              setPollError('');
+              void authorize(value.name, Boolean(openAuthorization));
+            }}
             showQr={showQr}
           />
           {visibleError ? (

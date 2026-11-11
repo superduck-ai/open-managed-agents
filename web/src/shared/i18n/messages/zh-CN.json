@@ -3512,6 +3512,7 @@
   "managedAgents.channels.maStrategy": "MA 策略",
   "managedAgents.channels.agentVersionStrategy": "智能体版本策略",
   "managedAgents.channels.keepLatest": "保持最新（仅对新会话生效）",
+  "managedAgents.channels.mountedGit": "挂载 Git 仓库",
   "managedAgents.channels.mountedMemory": "挂载 Memory",
   "managedAgents.channels.mountedVault": "挂载 Vault",
   "managedAgents.channels.sessionTotal": "Session 总数",

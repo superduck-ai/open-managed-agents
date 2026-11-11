@@ -18,8 +18,6 @@ const workspaceAgentPageSize = 100
 
 const workspaceChannelWorkers = 8
 
-var maxWorkspaceAgents = 200
-
 type workspaceChannelPage struct {
 	Data       []map[string]any `json:"data"`
 	Incomplete bool             `json:"incomplete"`
@@ -49,7 +47,7 @@ func (h *handler) listWorkspace(w http.ResponseWriter, r *http.Request) error {
 	if _, err := h.baseEndpoint(); err != nil {
 		return err
 	}
-	agents, truncated, err := h.listWorkspaceAgents(r.Context(), principal.WorkspaceUUID)
+	agents, err := h.listWorkspaceAgents(r.Context(), principal.WorkspaceUUID)
 	if err != nil {
 		return unavailable(err)
 	}
@@ -57,12 +55,11 @@ func (h *handler) listWorkspace(w http.ResponseWriter, r *http.Request) error {
 	httpapi.WriteJSON(w, http.StatusOK, workspaceChannelPage{
 		Data:       rows,
 		Incomplete: incomplete,
-		Truncated:  truncated,
 	})
 	return nil
 }
 
-func (h *handler) listWorkspaceAgents(ctx context.Context, workspace string) ([]db.Agent, bool, error) {
+func (h *handler) listWorkspaceAgents(ctx context.Context, workspace string) ([]db.Agent, error) {
 	var agents []db.Agent
 	var cursor *db.AgentPageCursor
 	for {
@@ -72,17 +69,11 @@ func (h *handler) listWorkspaceAgents(ctx context.Context, workspace string) ([]
 			Cursor:        cursor,
 		})
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		agents = append(agents, page...)
-		if len(agents) > maxWorkspaceAgents {
-			return agents[:maxWorkspaceAgents], true, nil
-		}
-		if len(agents) == maxWorkspaceAgents && hasMore {
-			return agents, true, nil
-		}
 		if !hasMore || len(page) == 0 {
-			return agents, false, nil
+			return agents, nil
 		}
 		last := page[len(page)-1]
 		cursor = &db.AgentPageCursor{CreatedAt: last.CreatedAt, UUID: last.UUID}

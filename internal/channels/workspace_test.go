@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -20,9 +21,8 @@ import (
 
 type workspaceAgentStore struct {
 	scopedStore
-	agents  []db.Agent
-	hasMore bool
-	calls   int
+	agents []db.Agent
+	calls  int
 }
 
 func (s *workspaceAgentStore) ListAgentsPage(_ context.Context, params db.ListAgentsPageParams) ([]db.Agent, bool, error) {
@@ -30,10 +30,12 @@ func (s *workspaceAgentStore) ListAgentsPage(_ context.Context, params db.ListAg
 	if params.WorkspaceUUID != "workspace-a" {
 		return nil, false, nil
 	}
+	start := 0
 	if params.Cursor != nil {
-		return nil, false, nil
+		start = slices.IndexFunc(s.agents, func(agent db.Agent) bool { return agent.UUID == params.Cursor.UUID }) + 1
 	}
-	return s.agents, s.hasMore, nil
+	end := min(start+params.Limit, len(s.agents))
+	return s.agents[start:end], end < len(s.agents), nil
 }
 
 func TestWorkspaceChannelList(t *testing.T) {
@@ -126,20 +128,22 @@ func TestWorkspaceChannelList(t *testing.T) {
 	}
 }
 
-func TestWorkspaceChannelListTruncatesAgents(t *testing.T) {
-	previous := maxWorkspaceAgents
-	maxWorkspaceAgents = 1
-	t.Cleanup(func() { maxWorkspaceAgents = previous })
+func TestWorkspaceChannelListIncludesAgentsBeyond200(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/managed-channels/settings" {
 			_, _ = w.Write([]byte(`{"environment_id":null}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"data":[{"id":"ch-1","name":"飞书渠道"}]}`))
+		if err := json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{{"id": "channel-" + r.Header.Get("X-OMA-Agent")}}}); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer upstream.Close()
-	store := &workspaceAgentStore{hasMore: true, agents: []db.Agent{{ExternalID: "agent-a", Name: "客服助手", UUID: "agent-uuid-a", CreatedAt: time.Now()}}}
+	store := &workspaceAgentStore{}
+	for i := range 205 {
+		store.agents = append(store.agents, db.Agent{ExternalID: fmt.Sprintf("agent-%03d", i), UUID: fmt.Sprintf("agent-uuid-%03d", i), CreatedAt: time.Now()})
+	}
 	router := chi.NewRouter()
 	router.Mount("/channels", NewWorkspaceHandler(config.ChannelBridgeConfig{URL: upstream.URL, Token: "bridge-token"}, store, slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	request := httptest.NewRequest(http.MethodGet, "/channels", nil)
@@ -158,7 +162,7 @@ func TestWorkspaceChannelListTruncatesAgents(t *testing.T) {
 	if err := json.Unmarshal(result.Body.Bytes(), &page); err != nil {
 		t.Fatal(err)
 	}
-	if !page.Truncated || len(page.Data) != 1 || page.Data[0].AgentID != "agent-a" || store.calls != 1 {
+	if page.Truncated || len(page.Data) != 205 || page.Data[204].AgentID != "agent-204" || store.calls != 3 {
 		t.Fatalf("page = %+v calls = %d", page, store.calls)
 	}
 }

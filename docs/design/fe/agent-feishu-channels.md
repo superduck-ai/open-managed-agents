@@ -41,6 +41,9 @@ Go 是控制台的唯一后端入口。新增 `internal/channels` 资源，通�
 | 路径                                           | 方法          | 行为                                |
 | ---------------------------------------------- | ------------- | ----------------------------------- |
 | `/v1/channels`                                 | GET           | 工作区渠道列表                      |
+| `/v1/channels/authorizations`                  | POST          | 发起工作区飞书授权                  |
+| `/v1/channels/authorizations/{id}`             | GET           | 查询工作区飞书授权状态              |
+| `/v1/channels/credentials/check`               | POST          | 校验飞书应用凭据                    |
 | `/channels`                                    | GET / POST    | 智能体渠道列表 / 创建               |
 | `/channels/settings`                           | GET / POST    | 读取 / 保存智能体渠道环境           |
 | `/channels/{channel_id}`                       | POST / DELETE | 修改 / 停止并软删除                 |
@@ -90,11 +93,11 @@ channel_bridge:
 | 路径 | 行为 |
 | --- | --- |
 | `/channels`、`/workspaces/{workspaceId}/channels` | 工作区渠道列表 |
-| `.../channels/new` | 三步创建：渠道类型、基本信息、应用凭据 |
+| `.../channels/new` | 三步创建：名称、类型与接入凭据；回复策略；智能体、环境与可选资源 |
 | `.../channels/{agentId}/{channelId}` | 详情 |
 | `.../channels/{agentId}/{channelId}/edit` | 编辑向导 |
 
-工作区列表调用 `GET /v1/channels`。OMA 按当前工作区的活跃智能体分页读取，再复用既有桥接 `GET /api/managed-channels` 与 `/settings`（仍带 `X-OMA-Agent`）聚合。每次请求只聚合一次并返回全部已读取的渠道，不再提供聚合结果的 `limit` / `page` 分页；无渠道的智能体不再读取 `/settings`。响应里的渠道对象追加 `agent_id`、`agent_name`、`environment_id`，并去掉 `app_secret`。单个智能体的桥接失败不会失败整次请求：该智能体被跳过，响应 `incomplete: true`。活跃智能体超过 200 个时截断并返回 `truncated: true`。控制台一次请求取回聚合结果，在表格里按 10 条本地分页；仅截断时在表上方提示；部分智能体读取失败时保留已读渠道，不显示额外横幅。列表里的应用 ID 写在「飞书」下一行，并显示创建时间。创建向导在宽屏把进度放在右侧。Environment 显示工作区环境名称，查不到名称时回落 ID。`/channels/settings` 只接受 `environment_id`，未知字段会被拒绝，渠道的 Memory / Vault 通过渠道对象上的 `memory_store_id`、`vault_id` 保存，第三步可选当前工作区未归档资源，默认 `null` 表示不挂载。桥接没有工作区级列表接口，因此服务端仍按智能体扇出。创建向导选择智能体时跟随智能体列表的 `next_page` 读取全部活跃智能体，不再限制为 100 个，渠道的创建、编辑、详情和配对继续走 `/v1/agents/{agent_id}/channels`。
+工作区列表调用 `GET /v1/channels`。OMA 按当前工作区的活跃智能体分页读取，再复用既有桥接 `GET /api/managed-channels` 与 `/settings`（仍带 `X-OMA-Agent`）聚合。每次请求只聚合一次并返回全部已读取的渠道，不再提供聚合结果的 `limit` / `page` 分页；无渠道的智能体不再读取 `/settings`。响应里的渠道对象追加 `agent_id`、`agent_name`、`environment_id`，并去掉 `app_secret`。单个智能体的桥接失败不会失败整次请求：该智能体被跳过，响应 `incomplete: true`。跟随智能体分页读完全部活跃智能体，不再按 200 个截断；`truncated` 字段保留为 `false` 以兼容现有客户端。控制台一次请求取回聚合结果，在表格里按 10 条本地分页；部分智能体读取失败时保留已读渠道，不显示额外横幅。列表里的应用 ID 写在「飞书」下一行，并显示创建时间。创建向导在宽屏把进度放在右侧。Environment 显示工作区环境名称，查不到名称时回落 ID。`/channels/settings` 只接受 `environment_id`，未知字段会被拒绝，渠道的 Memory / Vault 通过渠道对象上的 `memory_store_id`、`vault_id` 保存，第三步可选当前工作区未归档资源，默认 `null` 表示不挂载。桥接没有工作区级列表接口，因此服务端仍按智能体扇出。创建向导选择智能体时跟随智能体列表的 `next_page` 读取全部活跃智能体，不再限制为 100 个，渠道的创建、编辑、详情和配对继续走 `/v1/agents/{agent_id}/channels`。
 
 连通状态把已返回的 `enabled`、`binding_status`、`connected` 映射为已连通、待测试、异常、已停用。「连接检测」只根据这些字段提示，不发起新的探测。创建向导第 1 步只填写渠道名称、类型和应用接入凭据，第 3 步才选择智能体和执行环境。向导不提供渠道模式选择，新建默认开放模式，编辑保留渠道原模式；第 2 步配置回复策略。第一步通过工作区级 `POST /v1/channels/authorizations` 申请授权链接，使用 `GET /v1/channels/authorizations/{id}` 轮询，不创建渠道，不选择运行目标，也不签发运行凭据。第三步保存时先写入选中的环境设置，再提交正式渠道；扫码或网页授权提交 `authorization_id`，手动输入提交应用凭据。桥接按当前组织和工作区核对授权归属，凭据只在桥接内部取用，不返回浏览器。编辑已有渠道且环境未变时不重复提交环境设置。「前往飞书授权创建」在点击时预先打开显示“正在打开飞书授权…”的新窗口，取得桥接返回的注册确认链接后跳转到飞书 launcher 页面；原页展示等待授权卡片和“重新打开授权页”链接，不展示二维码；继续复用同一注册流程轮询绑定结果，不硬编码其他产品的 addons 或来源。「使用飞书扫码授权」只在当前页面展示二维码。注册请求失败时关闭预开的窗口并显示错误。未绑定渠道的编辑页在授权接入方式下立即读取渠道状态，并每 2.5 秒继续轮询，不依赖当前页面是否生成过二维码。前次请求尚未结束时不叠加轮询；切换到手动输入或进入过期、失败等终态时停止。临时请求失败不终止后续轮询，下一次成功即清除轮询错误，且不覆盖用户操作产生的错误。授权替换应用 ID 时清空旧密钥；用户提前关闭预开的窗口不影响原页等待和重新打开授权页。检测到绑定成功后同步完整渠道对象和应用 ID，解锁后续步骤，并刷新渠道列表与详情缓存。扫码未绑定前不能进入后面的步骤；“保存配置”仅在第三步且必填配置有效时可用，前两步始终禁用。手动输入凭据时，「配置应用」在应用 ID 为 `cli_` 加字母数字时打开 `https://open.feishu.cn/app/{app_id}/baseinfo`，不随界面语言改成 Lark；没有合法应用 ID 时按钮禁用。「验证 App Secret」调用 `POST /v1/channels/credentials/check`，由 OMA 向飞书 `tenant_access_token/internal` 校验，成功或失败只返回结果，不回传访问令牌或密钥。连接检测只复述当前已返回的连通状态，不宣称重新检测通过。
 
@@ -187,3 +190,5 @@ sequenceDiagram
 第三步可选挂载一个 Git 仓库，默认不挂载。复用会话的 Git 表单，支持 HTTPS 仓库地址、可选访问令牌、分支或完整提交 SHA、`/workspace/` 下的挂载路径。字段未完成时禁止保存。
 
 渠道合同增加 `git_repository`（会话 `github_repository` 资源结构）或 `null`。省略时保持原配置，`null` 清除挂载。令牌加密保存，读取只返回 `tokenConfigured`；同一仓库编辑时令牌留空保留，更换仓库后留空使用匿名访问。配置变化用于后续新会话，不修改既有会话的资源。验证覆盖保存、编辑回显、移除、凭据不回显及飞书新会话读取仓库文件。
+
+向导的智能体或环境查询失败时展示接口错误；切换接入方式或重新发起授权时清除旧渠道轮询错误。已配置 Git 的渠道原样保存仍保留 URL、检出版本、挂载路径和服务端凭据。

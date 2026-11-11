@@ -3512,6 +3512,7 @@
   "managedAgents.channels.maStrategy": "MA policy",
   "managedAgents.channels.agentVersionStrategy": "Agent version strategy",
   "managedAgents.channels.keepLatest": "Keep latest (applies to new sessions only)",
+  "managedAgents.channels.mountedGit": "Mounted Git repository",
   "managedAgents.channels.mountedMemory": "Mounted Memory",
   "managedAgents.channels.mountedVault": "Mounted Vault",
   "managedAgents.channels.sessionTotal": "Total sessions",

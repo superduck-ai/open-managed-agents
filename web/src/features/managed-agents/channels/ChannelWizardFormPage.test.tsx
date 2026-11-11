@@ -370,3 +370,78 @@ test('第三步可选挂载 Git，未填完整不能保存，移除后恢复可�
     authorization_token: 'test-token',
   });
 });
+
+test.each(['agents', 'environments'])('向导展示 %s 选项查询失败', async (resource) => {
+  resetTestDom('/');
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    if (url.includes(`/v1/${resource}?`))
+      return Response.json({ error: { type: 'api_error', message: `${resource} 查询失败` } }, { status: 503 });
+    return Response.json(targets(url));
+  }) as typeof fetch;
+  mount();
+  expect((await screen.findByRole('alert')).textContent).toContain(`${resource} 查询失败`);
+});
+
+test('切到手动接入立即清除旧渠道轮询错误', async () => {
+  resetTestDom('/');
+  globalThis.fetch = (async (input) => {
+    const url = String(input).split('?')[0];
+    if (url.endsWith('/channels'))
+      return Response.json({ error: { type: 'api_error', message: '旧渠道暂时不可达' } }, { status: 503 });
+    return Response.json(targets(url));
+  }) as typeof fetch;
+  mount(channel, { ...initialValue, agentId: 'agent-test', environmentId: 'env-test' });
+  expect((await screen.findByRole('alert')).textContent).toContain('旧渠道暂时不可达');
+  fireEvent.click(screen.getByRole('button', { name: '手动输入' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('已有 Git 渠道打开编辑后原样保存，保留检出与路径且不回传存量令牌', async () => {
+  resetTestDom('/');
+  const { ChannelWizardContent } = await import('./ChannelWizardPage');
+  const gitRepository = {
+    type: 'github_repository',
+    url: 'https://github.com/octocat/Hello-World.git',
+    checkout: { type: 'branch', name: 'master' },
+    mount_path: '/workspace/demo',
+    tokenConfigured: true,
+  };
+  const saved = { ...channel, binding_status: 'bound' as const, app_id: 'cli_test', git_repository: gitRepository };
+  const navigated = mock(() => undefined);
+  let body: Record<string, unknown> = {};
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input).split('?')[0];
+    if (init?.method === 'POST') {
+      body = JSON.parse(String(init.body));
+      return Response.json(saved);
+    }
+    if (url.endsWith('/channels')) return Response.json({ data: [saved] });
+    if (url.endsWith('/settings')) return Response.json({ environment_id: 'env-test' });
+    return Response.json(targets(url));
+  }) as typeof fetch;
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <I18nProvider initialLocale="zh-CN">
+        <ChannelWizardContent
+          mode="edit"
+          workspaceId="workspace-test"
+          initialAgentId="agent-test"
+          channelId={saved.id}
+          onNavigate={navigated}
+          title="编辑渠道"
+        />
+      </I18nProvider>
+    </QueryClientProvider>,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: '下一步' }));
+  fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+  expect((screen.getByLabelText('URL') as HTMLInputElement).value).toBe(gitRepository.url);
+  expect((screen.getByLabelText('分支名称') as HTMLInputElement).value).toBe('master');
+  expect((screen.getByLabelText('挂载路径（可选）') as HTMLInputElement).value).toBe('/workspace/demo');
+  expect((screen.getByPlaceholderText('已配置，留空保持不变') as HTMLInputElement).value).toBe('');
+  fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+  await waitFor(() => expect(navigated).toHaveBeenCalled());
+  const { tokenConfigured: _configured, ...expected } = gitRepository;
+  expect(body.git_repository).toEqual(expected);
+});

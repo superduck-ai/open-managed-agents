@@ -62,7 +62,7 @@ func TestSystemSkillMapperWritesAndPages(t *testing.T) {
 		{buildSystemSkillMapperInsertVersion(yourbatis.DialectPostgres, version), []any{version.UUID, version.ExternalID, version.SkillUUID, version.SkillExternalID, version.Version, version.Name, version.Description, version.Directory, version.S3Bucket, version.S3Key, version.SizeBytes, version.SHA256, version.CreatedAt}, "'draft'"},
 		{buildSystemSkillMapperVersions(yourbatis.DialectPostgres, skill.UUID, false, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, uuid DESC"},
 		{buildSystemSkillMapperVersion(yourbatis.DialectPostgres, skill.UUID, "1"), []any{skill.UUID, "1"}, "deleted_at IS NULL"},
-		{buildSystemSkillMapperEvents(yourbatis.DialectPostgres, skill.UUID, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, id DESC"},
+		{buildSystemSkillMapperEvents(yourbatis.DialectPostgres, skill.UUID, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY e.created_at DESC, e.id DESC"},
 		{buildSystemSkillMapperRecord(yourbatis.DialectPostgres, event), []any{event.SkillUUID, event.ActorUUID, event.Action, event.Version}, "INSERT INTO system_skill_events"},
 	} {
 		values := make([]any, len(tc.bound.Args))
@@ -129,5 +129,17 @@ func TestBundledSkillMapperGuards(t *testing.T) {
 	remove := buildSystemSkillMapperDeleteSkill(yourbatis.DialectPostgres, skill)
 	if !strings.Contains(remove.SQL, "NOT bundled") || !strings.Contains(remove.SQL, "revision = $2") || !reflect.DeepEqual(remove.Values(), []any{skill.UUID, int64(4)}) {
 		t.Fatalf("delete lost ownership/revision guard: %s %v", remove.SQL, remove.Values())
+	}
+}
+
+func TestSystemSkillEventActorLookup(t *testing.T) {
+	bound := buildSystemSkillMapperEvents(yourbatis.DialectPostgres, "skill-uuid", 21, 20)
+	for _, fragment := range []string{"LEFT JOIN users u ON u.uuid = e.actor_uuid", "COALESCE(u.external_id, '') AS actor_id", "COALESCE(u.name, '') AS actor_name", "WHERE e.skill_uuid = $1", "LIMIT $2 OFFSET $3"} {
+		if !strings.Contains(bound.SQL, fragment) {
+			t.Errorf("missing actor lookup contract %s: %s", fragment, bound.SQL)
+		}
+	}
+	if !reflect.DeepEqual(bound.Values(), []any{"skill-uuid", 21, 20}) {
+		t.Fatalf("unexpected event bindings: %v", bound.Values())
 	}
 }

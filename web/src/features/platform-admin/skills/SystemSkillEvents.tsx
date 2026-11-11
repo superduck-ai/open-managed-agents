@@ -39,8 +39,8 @@ export function SystemSkillEvents({ skillID }: { skillID: string }) {
           <p>
             {actions[event.action] || event.action} {event.version}
           </p>
-          <p className="break-all text-xs text-muted-foreground">
-            {msg('systemSkills.operator', 'Operator')}: {event.actor_uuid}
+          <p className="break-all text-xs text-muted-foreground" title={event.actor_id || event.actor_uuid}>
+            {msg('systemSkills.operator', 'Operator')}: {event.actor_name || event.actor_id || event.actor_uuid}
           </p>
           <p className="text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString(locale)}</p>
         </div>

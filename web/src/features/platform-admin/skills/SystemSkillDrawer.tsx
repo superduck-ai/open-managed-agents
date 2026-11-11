@@ -31,7 +31,7 @@ export function SystemSkillDrawer({
   const { client } = usePlatformAdmin();
   const { msg } = useI18n();
   const [open, setOpen] = useState(true);
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState('content');
   const [contentVersion, setContentVersion] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [pending, setPending] = useState(false);
@@ -100,14 +100,10 @@ export function SystemSkillDrawer({
                   </div>
                   <Tabs value={tab} onValueChange={setTab}>
                     <TabsList variant="line" className="mb-4">
-                      <TabsTrigger value="overview">{msg('systemSkills.overview', 'Overview')}</TabsTrigger>
-                      <TabsTrigger value="versions">{msg('systemSkills.versions', 'Versions')}</TabsTrigger>
                       <TabsTrigger value="content">{msg('systemSkills.content', 'Package contents')}</TabsTrigger>
+                      <TabsTrigger value="versions">{msg('systemSkills.versions', 'Versions')}</TabsTrigger>
                       <TabsTrigger value="events">{msg('systemSkills.events', 'Activity')}</TabsTrigger>
                     </TabsList>
-                    <TabsContent value="overview">
-                      <SystemSkillOverview skill={skill} />
-                    </TabsContent>
                     <TabsContent value="versions">
                       <SystemSkillVersions
                         skill={skill}
@@ -186,16 +182,6 @@ function SystemSkillImpact({ action }: { action: SystemAction }) {
     ),
   };
   return <p className="text-sm leading-6 text-muted-foreground">{messages[action]}</p>;
-}
-
-function SystemSkillOverview({ skill }: { skill: SystemSkill }) {
-  const { msg } = useI18n();
-  return (
-    <dl>
-      <dt className="mb-1 text-xs text-muted-foreground">{msg('systemSkills.defaultVersion', 'Default version')}</dt>
-      <dd className="text-sm">{skill.default_version || '—'}</dd>
-    </dl>
-  );
 }
 
 function SystemSkillContent({ skillID, version }: { skillID: string; version: string | null }) {

@@ -68,8 +68,10 @@
         UPDATE builtin_skill_versions SET state = 'published' WHERE skill_uuid = #{skillUUID} AND version = #{version} AND state = 'draft' AND deleted_at IS NULL
     </update>
     <select id="Events" resultType="SystemSkillEvent">
-        SELECT uuid, skill_uuid, actor_uuid, action, version, created_at FROM system_skill_events
-        WHERE skill_uuid = #{skillUUID} ORDER BY created_at DESC, id DESC LIMIT #{limit} OFFSET #{offset}
+        SELECT e.uuid, e.skill_uuid, e.actor_uuid, COALESCE(u.external_id, '') AS actor_id,
+            COALESCE(u.name, '') AS actor_name, e.action, e.version, e.created_at
+        FROM system_skill_events e LEFT JOIN users u ON u.uuid = e.actor_uuid
+        WHERE e.skill_uuid = #{skillUUID} ORDER BY e.created_at DESC, e.id DESC LIMIT #{limit} OFFSET #{offset}
     </select>
     <insert id="Record" result="exec">
         INSERT INTO system_skill_events (skill_uuid, actor_uuid, action, version) VALUES (#{event.SkillUUID}, #{event.ActorUUID}, #{event.Action}, #{event.Version})

@@ -39,6 +39,8 @@ type SystemSkillVersion struct {
 }
 
 type SystemSkillEvent struct {
+	ActorID   string    `db:"actor_id"`
+	ActorName string    `db:"actor_name"`
 	UUID      string    `db:"uuid"`
 	SkillUUID string    `db:"skill_uuid"`
 	ActorUUID string    `db:"actor_uuid"`

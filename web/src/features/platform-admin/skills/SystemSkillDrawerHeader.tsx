@@ -3,7 +3,6 @@ import { SkillDownloadButton } from '@/features/skills/SkillDownloadButton';
 import { SkillIconPicker } from '@/features/skills/icons';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
-import { Badge } from '@/shared/ui/badge';
 import { SheetClose, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
 import { usePlatformAdmin } from '../context';
 import { SystemSkillStatus } from './feedback';
@@ -56,9 +55,6 @@ export function SystemSkillDrawerHeader({
       </SheetDescription>
       {skill && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Badge variant="secondary">
-            {skill.bundled ? msg('systemSkills.bundled', 'Project bundled') : msg('systemSkills.uploaded', 'Uploaded')}
-          </Badge>
           <SystemSkillStatus skill={skill} />
           <code className="break-all text-xs">{skill.id}</code>
         </div>

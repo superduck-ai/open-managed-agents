@@ -46,6 +46,8 @@ type systemVersionResponse struct {
 }
 
 type systemEventResponse struct {
+	ActorID   string    `json:"actor_id"`
+	ActorName string    `json:"actor_name"`
 	ID        string    `json:"id"`
 	ActorUUID string    `json:"actor_uuid"`
 	Action    string    `json:"action"`
@@ -232,7 +234,7 @@ func (h *Handler) systemEvents(w http.ResponseWriter, r *http.Request) error {
 	records = records[:min(len(records), limit)]
 	data := make([]systemEventResponse, 0, len(records))
 	for _, v := range records {
-		data = append(data, systemEventResponse{ID: v.UUID, ActorUUID: v.ActorUUID, Action: v.Action, Version: v.Version, CreatedAt: v.CreatedAt})
+		data = append(data, systemEventResponse{ActorID: v.ActorID, ActorName: v.ActorName, ID: v.UUID, ActorUUID: v.ActorUUID, Action: v.Action, Version: v.Version, CreatedAt: v.CreatedAt})
 	}
 	httpapi.WriteJSON(w, 200, systemPage[systemEventResponse]{Data: data, HasMore: more})
 	return nil

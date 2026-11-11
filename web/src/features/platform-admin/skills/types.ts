@@ -20,7 +20,15 @@ export type SystemVersion = {
   sha256: string;
   created_at: string;
 };
-export type SystemEvent = { id: string; actor_uuid: string; action: string; version: string; created_at: string };
+export type SystemEvent = {
+  id: string;
+  actor_uuid: string;
+  actor_id?: string;
+  actor_name?: string;
+  action: string;
+  version: string;
+  created_at: string;
+};
 export type SystemPage<T> = { data: T[]; has_more: boolean };
 export type SystemPackage = {
   name: string;

@@ -196,7 +196,7 @@ func TestBundledSkillOverrideSurvivesUpdatesAndRestores(t *testing.T) {
 		t.Fatalf("restore did not preserve bundled catalog entry: %+v %v", current, err)
 	}
 	events, err := store.SystemSkillEvents(ctx, current.UUID, 1, 0)
-	if err != nil || len(events) != 1 || events[0].Action != "restore_bundled" || events[0].Version != newBase.Version {
+	if err != nil || len(events) != 1 || events[0].Action != "restore_bundled" || events[0].Version != newBase.Version || events[0].ActorID != "" || events[0].ActorName != "" {
 		t.Fatalf("restore was not audited: %+v %v", events, err)
 	}
 	versions, err := store.SystemSkillVersions(ctx, current.UUID, 10, 0)

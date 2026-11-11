@@ -156,11 +156,6 @@ export function SystemSkillsPage() {
                   <code className="min-w-0 truncate" title={record.id}>
                     {record.id}
                   </code>
-                  <span className="shrink-0">
-                    {record.bundled
-                      ? msg('systemSkills.bundled', 'Project bundled')
-                      : msg('systemSkills.uploaded', 'Uploaded')}
-                  </span>
                 </div>
               }
               footer={

@@ -77,7 +77,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 			return err
 		}
 		for _, id := range []string{actor, backup} {
-			if _, err := tx.InsertUser(t.Context(), db.PlatformAuthUserInput{UUID: id, ExternalID: "user_" + id, OrganizationUUID: org.UUID, Email: id + "@example.com", Role: "admin"}); err != nil {
+			if _, err := tx.InsertUser(t.Context(), db.PlatformAuthUserInput{UUID: id, ExternalID: "user_" + id, OrganizationUUID: org.UUID, Email: id + "@example.com", Name: "Skill Administrator", Role: "admin"}); err != nil {
 				return err
 			}
 		}
@@ -344,7 +344,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		t.Fatalf("first published import: %+v %v", imported, err)
 	}
 	events, err := database.SystemSkillEvents(t.Context(), imported.UUID, 10, 0)
-	if err != nil || len(events) != 2 || events[0].Action != "publish" || events[1].Action != "import_draft" {
+	if err != nil || len(events) != 2 || events[0].Action != "publish" || events[1].Action != "import_draft" || events[0].ActorID != "user_"+actor || events[0].ActorName != "Skill Administrator" {
 		t.Fatalf("published import audit order: %+v %v", events, err)
 	}
 
@@ -376,7 +376,17 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		t.Fatal("pruned name rejection leaked archive")
 	}
 
-	requireStatus(send("GET", "/skills/fixture-system-skill/events", nil, "", false), 200)
+	eventResponse := send("GET", "/skills/fixture-system-skill/events", nil, "", false)
+	requireStatus(eventResponse, 200)
+	var audit struct {
+		Data []struct {
+			ActorID   string `json:"actor_id"`
+			ActorName string `json:"actor_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(eventResponse.Body.Bytes(), &audit); err != nil || len(audit.Data) == 0 || audit.Data[0].ActorID != "user_"+actor || audit.Data[0].ActorName != "Skill Administrator" {
+		t.Fatalf("audit response lost actor identity: %+v %v", audit, err)
+	}
 	preloadedCount, err := skills.SyncBundledSkills(t.Context(), database, store, catalog.Files)
 	if err != nil || preloadedCount != 5 {
 		t.Fatalf("startup preload: count=%d error=%v", preloadedCount, err)

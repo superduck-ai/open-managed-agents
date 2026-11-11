@@ -282,6 +282,29 @@ func TestOAuthProviderFridayReservedIDPostgres(t *testing.T) {
 	}
 }
 
+func TestOAuthProviderMigrationAppliesOnHeadSchemaPostgres(t *testing.T) {
+	database, service, _ := migrationDatabase(t)
+	migrateFixture(t, database, service, legacyClient{}, true)
+	if _, err := database.SQLDB().ExecContext(t.Context(), `ALTER TABLE env_oauth_flows
+        DROP CONSTRAINT env_oauth_flows_status_check,
+        ADD CONSTRAINT env_oauth_flows_status_check CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'expired'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SQLDB().ExecContext(t.Context(), `INSERT INTO goose_db_version (version_id, is_applied, tstamp) VALUES (123, true, now())`); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	execute := func() error {
+		return migrate(t.Context(), database, service, legacyClient{}, legacyClient{}, true, &output, slog.New(slog.DiscardHandler))
+	}
+	if err := database.WithOAuthMaintenanceLock(t.Context(), execute); err != nil {
+		t.Fatalf("已到 00123 的库重跑失败：%v，输出：%s", err, output.String())
+	}
+	if !strings.Contains(output.String(), "schema_version=123") {
+		t.Fatalf("未报告当前 schema 版本：%s", output.String())
+	}
+}
+
 func TestOAuthProviderFridayImportPostgres(t *testing.T) {
 	database, service, _ := migrationDatabase(t)
 	migrateFixture(t, database, service, legacyClient{}, true)

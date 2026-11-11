@@ -133,7 +133,11 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 		if err := verifyFinalClients(ctx, database, service, logger); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "schema_version=122")
+		finalVersion, err := database.OAuthMigrationVersion(ctx)
+		if err != nil {
+			return errors.New("schema_unavailable")
+		}
+		fmt.Fprintf(out, "schema_version=%d\n", finalVersion)
 	} else if version >= 121 {
 		result, err := importBuiltin(ctx, database, service, "friday", friday, false, logger)
 		if err != nil {
@@ -296,8 +300,10 @@ func finalizeSchema(ctx context.Context, database *db.DB, version int64, logger 
 		}
 		logger.InfoContext(ctx, "platform oauth provider audit", "actor_type", "system", "provider_uuid", seed.UUID, "provider_key", "builtin:friday", "action", "seed", "changed_fields", []string{"builtin_key", "protected"}, "result", "success")
 	}
-	if err := database.MigrateOAuthSchemaTo(ctx, 122); err != nil {
-		return errors.New("schema_finalization_failed")
+	if version < 122 {
+		if err := database.MigrateOAuthSchemaTo(ctx, 122); err != nil {
+			return errors.New("schema_finalization_failed")
+		}
 	}
 
 	return nil

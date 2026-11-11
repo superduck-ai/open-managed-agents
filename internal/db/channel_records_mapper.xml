@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ChannelRecordMapper">
+    <sql id="channelColumns">
+        uuid,
+        external_id,
+        organization_uuid,
+        workspace_uuid,
+        agent_external_id,
+        name,
+        channel_type,
+        mode,
+        enabled,
+        binding_status,
+        app_id,
+        app_secret_envelope::text AS app_secret_envelope,
+        include_thinking,
+        include_tool_calls,
+        reply_in_thread,
+        created_at,
+        updated_at,
+        deleted_at
+    </sql>
+
+    <select id="LockAgent" result="scalar">
+        SELECT a.external_id FROM agents a
+        JOIN workspaces w ON w.id = a.workspace_id
+        WHERE w.uuid = #{workspaceUUID}
+        AND a.external_id = #{agentExternalID}
+        AND a.archived_at IS NULL
+        AND a.deleted_at IS NULL
+        FOR UPDATE
+    </select>
+
+    <insert id="InsertChannel" result="returning" resultType="ChannelRecord">
+        INSERT INTO channels (
+            external_id, organization_uuid, workspace_uuid, agent_external_id, name, channel_type,
+            mode, enabled, binding_status, app_id, app_secret_envelope, include_thinking,
+            include_tool_calls, reply_in_thread
+        ) VALUES (
+            #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID}, #{params.AgentExternalID},
+            #{params.Name}, #{params.ChannelType}, #{params.Mode}, #{params.Enabled}, #{params.BindingStatus},
+            #{params.AppID}, CAST(#{params.AppSecretEnvelope} AS jsonb), #{params.IncludeThinking},
+            #{params.IncludeToolCalls}, #{params.ReplyInThread}
+        )
+        RETURNING <include refid="channelColumns"/>
+    </insert>
+
+    <select id="FindChannel" resultType="ChannelRecord">
+        SELECT <include refid="channelColumns"/>
+        FROM channels
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND agent_external_id = #{agentExternalID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
+    <select id="ListChannels" resultType="ChannelRecord">
+        SELECT <include refid="channelColumns"/>
+        FROM channels
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND agent_external_id = #{agentExternalID}
+        AND deleted_at IS NULL
+        ORDER BY created_at, id
+    </select>
+
+    <select id="ListWorkspaceChannels" resultType="ChannelRecord">
+        SELECT <include refid="channelColumns"/>
+        FROM channels
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        ORDER BY created_at, id
+    </select>
+
+    <select id="ListRunnableChannels" resultType="ChannelRecord">
+        SELECT <include refid="channelColumns"/>
+        FROM channels
+        WHERE deleted_at IS NULL
+        AND enabled = true
+        AND binding_status = 'bound'
+        ORDER BY created_at, id
+    </select>
+
+    <update id="UpdateChannel" result="returning" resultType="ChannelRecord">
+        UPDATE channels SET
+            name = #{params.Name},
+            enabled = #{params.Enabled},
+            binding_status = #{params.BindingStatus},
+            app_id = #{params.AppID},
+            app_secret_envelope = CAST(#{params.AppSecretEnvelope} AS jsonb),
+            include_thinking = #{params.IncludeThinking},
+            include_tool_calls = #{params.IncludeToolCalls},
+            reply_in_thread = #{params.ReplyInThread},
+            updated_at = now()
+        WHERE workspace_uuid = #{params.WorkspaceUUID}
+        AND external_id = #{params.ExternalID}
+        AND deleted_at IS NULL
+        RETURNING <include refid="channelColumns"/>
+    </update>
+
+    <update id="SoftDeleteChannel" result="exec">
+        UPDATE channels SET deleted_at = now(), enabled = false, updated_at = now()
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </update>
+
+    <select id="ListPairings" resultType="ChannelPairingRecord">
+        SELECT external_id, channel_external_id, kind, target, display_name, status, created_at
+        FROM channel_pairings
+        WHERE channel_external_id = #{channelExternalID}
+        ORDER BY created_at, id
+    </select>
+
+    <select id="CountPairings" result="scalar">
+        SELECT count(*) FROM channel_pairings
+        WHERE channel_external_id = #{channelExternalID}
+    </select>
+
+    <insert id="InsertPairing" result="exec">
+        INSERT INTO channel_pairings (external_id, channel_external_id, kind, target, display_name)
+        VALUES (#{params.ExternalID}, #{params.ChannelExternalID}, #{params.Kind}, #{params.Target}, #{params.DisplayName})
+        ON CONFLICT (channel_external_id, kind, target) DO NOTHING
+    </insert>
+
+    <update id="UpdatePairingStatus" result="exec">
+        UPDATE channel_pairings SET status = #{status}, updated_at = now()
+        WHERE channel_external_id = #{channelExternalID}
+        AND external_id = #{pairingExternalID}
+    </update>
+
+    <select id="FindChannelSession" result="scalar">
+        SELECT session_external_id FROM channel_sessions
+        WHERE channel_external_id = #{channelExternalID}
+        AND scope_key = #{scopeKey}
+    </select>
+
+    <insert id="UpsertChannelSession" result="exec">
+        INSERT INTO channel_sessions (channel_external_id, scope_key, session_external_id)
+        VALUES (#{channelExternalID}, #{scopeKey}, #{sessionExternalID})
+        ON CONFLICT (channel_external_id, scope_key)
+        DO UPDATE SET session_external_id = EXCLUDED.session_external_id, updated_at = now()
+    </insert>
+
+    <delete id="ArchiveChannelSessions" result="exec">
+        DELETE FROM channel_sessions WHERE channel_external_id = #{channelExternalID}
+    </delete>
+
+    <select id="FindChannelAgentEnvironment" result="scalar">
+        SELECT environment_external_id FROM channel_agent_settings
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND agent_external_id = #{agentExternalID}
+    </select>
+
+    <insert id="UpsertChannelAgentEnvironment" result="exec">
+        INSERT INTO channel_agent_settings (organization_uuid, workspace_uuid, agent_external_id, environment_external_id)
+        VALUES (#{organizationUUID}, #{workspaceUUID}, #{agentExternalID}, #{environmentExternalID})
+        ON CONFLICT (organization_uuid, workspace_uuid, agent_external_id)
+        DO UPDATE SET environment_external_id = EXCLUDED.environment_external_id, updated_at = now()
+    </insert>
+</mapper>

@@ -446,6 +446,9 @@ telemetry:
 channel_bridge:
   url: ""
   token: ""
+channels:
+  runtime: auto
+  oma_url: ""
 web_tools:
   search_provider: ""
   providers: {}

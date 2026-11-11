@@ -53,7 +53,10 @@ func (h *handler) checkAppCredentials(w http.ResponseWriter, r *http.Request) er
 }
 
 func (h *handler) feishuCredentialsMatch(ctx context.Context, appID, appSecret string) (bool, error) {
-	endpoint := feishuTokenURL
+	return matchFeishuCredentials(ctx, h.client, feishuTokenURL, appID, appSecret)
+}
+
+func matchFeishuCredentials(ctx context.Context, client *http.Client, endpoint, appID, appSecret string) (bool, error) {
 	payload, err := json.Marshal(map[string]string{"app_id": appID, "app_secret": appSecret})
 	if err != nil {
 		return false, err
@@ -63,7 +66,7 @@ func (h *handler) feishuCredentialsMatch(ctx context.Context, appID, appSecret s
 		return false, err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := h.client.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return false, err
 	}

@@ -8,6 +8,7 @@ func defaultConfig() Config {
 	cfg := Config{
 		BrainImageAttachments: BrainImageAttachmentConfig{MaxObjectBytes: 4 << 20},
 		CodeSession:           CodeSessionConfig{UpstreamProxyMITMEnabled: true},
+		Channels:              ChannelsConfig{Runtime: "auto"},
 		EnvironmentPrebuilds: EnvironmentPrebuildConfig{
 			Timeout: time.Hour,
 			Template: TemplateBuildConfig{

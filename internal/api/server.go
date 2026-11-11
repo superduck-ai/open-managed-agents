@@ -92,6 +92,7 @@ type Server struct {
 	sessions             *sessionsapi.Handler
 	skills               *skillsapi.Handler
 	workspaceChannels    http.Handler
+	channelService       *channels.Service
 	tunnels              *tunnelsapi.Handler
 	tunnelIngress        *tunnelsapi.IngressHandler
 	tunnelBroker         *tunnelsapi.Broker
@@ -181,8 +182,9 @@ func NewServer(deps ServerDeps) *Server {
 	codeSessionService.WithSessionSkills(filestoreService)
 	filestoreHandler := filestoreapi.NewHandler(deps.Config, filestoreService, componentLogger("filestore"))
 	channelLogger := componentLogger("channels")
-	agentChannels := channels.NewHandler(deps.Config.ChannelBridge, deps.DB, channelLogger, deps.VaultSecrets)
-	workspaceChannels := channels.NewWorkspaceHandler(deps.Config.ChannelBridge, deps.DB, channelLogger, deps.VaultSecrets)
+	channelService := channels.NewService(deps.Config, deps.DB, channelLogger, deps.VaultSecrets)
+	agentChannels := channelService.AgentHandler()
+	workspaceChannels := channelService.WorkspaceHandler()
 	var oauthRefreshLease vaultsapi.OAuthRefreshLease
 	if deps.Redis != nil {
 		lease, err := vaultsapi.NewRedisOAuthRefreshLease(deps.Redis)
@@ -210,6 +212,7 @@ func NewServer(deps ServerDeps) *Server {
 		)),
 		agents:            agents.NewHandler(deps.DB, deps.Deployments, componentLogger("agents")).WithWebhooks(webhookEnqueuer).WithChannels(agentChannels),
 		workspaceChannels: workspaceChannels,
+		channelService:    channelService,
 		batch:             batches.NewHandler(deps.Config, deps.DB, deps.ObjectStore, componentLogger("batches")),
 		codeSessions:      codesessions.NewHandler(deps.Config, codeSessionService, deps.SandboxTimeoutExtender, codeSessionLogger).WithEnvOAuthProviders(envOAuthProviders).WithVaultSecrets(deps.VaultSecrets, oauthRefreshLease, webhookEnqueuer).WithBrainClaims(deps.BrainClaims).WithWebTools(deps.WebTools).WithTraceExporter(deps.TelemetryExporter).WithImageAttachments(deps.ObjectStore).WithToolCallNotifications(deps.ToolCallNotifications),
 		deployments:       deploymentsapi.NewHandler(deps.DB, deps.Deployments, deps.VaultSecrets, billingCalculator, componentLogger("deployments")),
@@ -700,4 +703,18 @@ func isEnvironmentWorkPath(path string) bool {
 
 func isEnvironmentCredentialPath(path string) bool {
 	return isEnvironmentWorkPath(path) || strings.HasPrefix(path, "/v1/sessions/") || path == "/v1/skills" || strings.HasPrefix(path, "/v1/skills/")
+}
+
+func (s *Server) StartChannels(ctx context.Context) {
+	if s == nil || s.channelService == nil {
+		return
+	}
+	s.channelService.Start(ctx)
+}
+
+func (s *Server) StopChannels() {
+	if s == nil || s.channelService == nil {
+		return
+	}
+	s.channelService.Stop()
 }

@@ -339,7 +339,7 @@ function findEocd(bytes: Uint8Array) {
 }
 
 async function inflateRaw(data: Uint8Array) {
-  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const stream = new Blob([new Uint8Array(data)]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
@@ -415,7 +415,7 @@ function writeSizes(view: DataView, crcOffset: number, name: Uint8Array, entry: 
 }
 
 async function deflateRaw(data: Uint8Array) {
-  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  const stream = new Blob([new Uint8Array(data)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 

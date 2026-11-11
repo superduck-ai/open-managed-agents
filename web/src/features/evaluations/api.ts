@@ -31,6 +31,27 @@ export type EvaluationCase = {
   inputs?: EvaluationContentBlock[];
 };
 
+export type EvaluationRubricVersion = {
+  id: string;
+  version: number;
+  body: string;
+  pass_score: number;
+  model: string;
+  created_at: string;
+};
+
+export type EvaluationRubric = {
+  id: string;
+  name: string;
+  desc: string;
+  version_id: string;
+  version: number;
+  body: string;
+  pass_score: number;
+  model: string;
+  created_at: string;
+};
+
 export function evaluationBase(orgUuid: string, workspaceId: string) {
   return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(
     workspaceId,
@@ -162,6 +183,68 @@ export function listEvaluationCases(orgUuid: string, workspaceId: string, datase
   return consoleApi<EvaluationPage<EvaluationCase>>(
     `${evaluationBase(orgUuid, workspaceId)}/datasets/${encodeURIComponent(datasetId)}/cases`,
   );
+}
+
+export function listEvaluationRubrics(orgUuid: string, workspaceId: string, page?: string) {
+  return consoleApi<EvaluationPage<EvaluationRubric>>(
+    evaluationListPath(`${evaluationBase(orgUuid, workspaceId)}/rubrics`, page),
+  );
+}
+
+export function createEvaluationRubric(
+  orgUuid: string,
+  workspaceId: string,
+  input: { name: string; desc: string; body: string; pass_score: number },
+) {
+  return consoleApi<EvaluationRubric>(`${evaluationBase(orgUuid, workspaceId)}/rubrics`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function generateEvaluationRubric(
+  orgUuid: string,
+  workspaceId: string,
+  input: {
+    name: string;
+    desc: string;
+    pass_score: number;
+    goal?: string;
+    example?: string;
+    agent_id?: string;
+    dataset_id?: string;
+    positive?: string;
+    negative?: string;
+  },
+) {
+  return consoleApi<EvaluationRubric>(`${evaluationBase(orgUuid, workspaceId)}/rubrics/generate`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function listEvaluationRubricVersions(orgUuid: string, workspaceId: string, rubricId: string) {
+  return consoleApi<EvaluationPage<EvaluationRubricVersion>>(
+    `${evaluationBase(orgUuid, workspaceId)}/rubrics/${encodeURIComponent(rubricId)}/versions`,
+  );
+}
+
+export function saveEvaluationRubricVersion(
+  orgUuid: string,
+  workspaceId: string,
+  rubricId: string,
+  input: { body: string; pass_score: number },
+) {
+  return consoleApi<EvaluationRubric>(
+    `${evaluationBase(orgUuid, workspaceId)}/rubrics/${encodeURIComponent(rubricId)}/versions`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+export function deleteEvaluationRubric(orgUuid: string, workspaceId: string, rubricId: string) {
+  return consoleApi<{ id: string }>(`${evaluationBase(orgUuid, workspaceId)}/rubrics/${encodeURIComponent(rubricId)}`, {
+    method: 'DELETE',
+  });
 }
 
 export function evaluationError(error: unknown) {

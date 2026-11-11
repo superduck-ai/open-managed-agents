@@ -161,6 +161,30 @@ func (evaluationFixture) DeleteEvaluationCase(context.Context, string, string, s
 	return nil
 }
 
+func (evaluationFixture) CreateEvaluationRubric(context.Context, db.EvaluationRubric) (db.EvaluationRubric, error) {
+	return db.EvaluationRubric{}, nil
+}
+
+func (evaluationFixture) AppendEvaluationRubricVersion(context.Context, string, string, string, db.EvaluationRubric, time.Time) (db.EvaluationRubric, error) {
+	return db.EvaluationRubric{}, nil
+}
+
+func (evaluationFixture) ListEvaluationRubrics(context.Context, string, string, int, int) ([]db.EvaluationRubric, error) {
+	return nil, nil
+}
+
+func (evaluationFixture) GetEvaluationRubric(context.Context, string, string, string) (db.EvaluationRubric, error) {
+	return db.EvaluationRubric{}, nil
+}
+
+func (evaluationFixture) ListEvaluationRubricVersions(context.Context, string, string, string) ([]db.EvaluationRubric, error) {
+	return nil, nil
+}
+
+func (evaluationFixture) DeleteEvaluationRubric(context.Context, string, string, string, time.Time) error {
+	return nil
+}
+
 func (evaluationFixture) GetAgent(context.Context, string, string) (db.Agent, error) {
 	return db.Agent{}, nil
 }

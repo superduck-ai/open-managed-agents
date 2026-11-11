@@ -6,7 +6,7 @@ import { useWorkspace } from '../../shared/workspaces/context';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { PlatformAdminContext } from '../platform-admin/context';
 import { navigationSearchRecords, workspaceSearchRecords, searchMatches } from './search-data';
-import { searchResourcePage, type ResourceCursor } from './resource-search';
+import { searchResourcePage, resourceContextLabel, type ResourceCursor } from './resource-search';
 import { platformNavigationSearchRecords, searchOrganizationPage } from './platform-search';
 
 export function useSearchData(query: string) {
@@ -47,7 +47,7 @@ export function useSearchData(query: string) {
   const rawResources = debounced === query.trim() ? resources.data?.pages.flatMap((page) => page.records) || [] : [];
   const resourceRecords = [...new Map(rawResources.map((record) => [record.id, record])).values()]
     .filter((record) => searchMatches(record, query))
-    .map((record) => (platform ? record : { ...record, context: scopeName }));
+    .map((record) => (platform ? record : { ...record, context: resourceContextLabel(record.context, msg) }));
   return {
     resources,
     debounced,

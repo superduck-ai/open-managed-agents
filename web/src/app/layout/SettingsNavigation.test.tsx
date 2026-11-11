@@ -67,7 +67,7 @@ test('direct organization routes are denied to ordinary users', () => {
 
 test('entering settings and returning to the app use matching navigation animations', async () => {
   const style = document.createElement('style');
-  style.textContent = await Bun.file(new URL('./console-navigation.css', import.meta.url)).text();
+  style.textContent = await Bun.file(new URL('../../shared/ui/console-navigation.css', import.meta.url)).text();
   document.head.append(style);
   try {
     render(<Harness />);
@@ -102,6 +102,20 @@ test('accordion expands without navigating and preserves the selected page and r
   expect(screen.getByTestId('page').textContent).toBe('/dashboard');
   fireEvent.click(screen.getByRole('link', { name: 'Settings', exact: true }));
   expect(screen.getByTestId('page').textContent).toBe('/settings/workspaces');
+});
+
+test('switching settings subpages keeps the settings navigation mounted and follows the selected group', () => {
+  render(<Harness initial="/settings/llm" />);
+  const navigation = screen.getByRole('navigation', { name: 'Settings navigation' });
+  fireEvent.click(screen.getByRole('link', { name: 'API keys' }));
+  expect(screen.getByTestId('page').textContent).toBe('/settings/workspaces/default/keys');
+  expect(screen.getByRole('navigation', { name: 'Settings navigation' })).toBe(navigation);
+  fireEvent.click(screen.getByRole('button', { name: 'Organization management' }));
+  fireEvent.click(screen.getByRole('link', { name: 'Members', exact: true }));
+  expect(screen.getByTestId('page').textContent).toBe('/settings/members');
+  expect(screen.getByRole('navigation', { name: 'Settings navigation' })).toBe(navigation);
+  expect(screen.getByRole('button', { name: 'Organization management' }).getAttribute('aria-expanded')).toBe('true');
+  expect(screen.getByRole('link', { name: 'Members', exact: true }).getAttribute('aria-current')).toBe('page');
 });
 
 test('workspace switch preserves organization page and updates workspace-scoped keys', async () => {

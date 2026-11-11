@@ -4,7 +4,7 @@ import {
   workspaceWebhooksPath,
   workspaceTelemetryPath,
   workspaceMcpTunnelsPath,
-} from '../../shared/workspaces/presentation';
+} from '../workspaces/presentation';
 const workspacePathByHref: Record<string, string> = {
   '/quickstart': 'agent-quickstart',
   '/agents': 'agents',

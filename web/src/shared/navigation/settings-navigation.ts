@@ -1,8 +1,8 @@
-import { productIcons } from '../../shared/icons/product-icons';
-import type { AuthAccount } from '../../shared/auth/api';
-import { canManageOrganization } from '../../shared/permissions/organization';
-import { canManageMembers } from '../../shared/permissions/members';
-import { canViewAnalytics } from '../../shared/permissions/analytics';
+import { productIcons } from '../icons/product-icons';
+import type { AuthAccount } from '../auth/api';
+import { canManageOrganization } from '../permissions/organization';
+import { canManageMembers } from '../permissions/members';
+import { canViewAnalytics } from '../permissions/analytics';
 import { isActivePath } from './navigation-paths';
 import type { NavGroupItem } from './navigation';
 

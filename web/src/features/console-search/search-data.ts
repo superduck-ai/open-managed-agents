@@ -1,13 +1,12 @@
 import type { AuthAccount } from '../../shared/auth/api';
 import type { I18nContextValue } from '../../shared/i18n/context';
 import type { Workspace } from '../../shared/workspaces/api';
-import { consoleNavigation } from '../../app/layout/navigation';
-import type { IconComponent } from '../../app/layout/navigation';
-import { placeholderIcons } from '../../app/layout/navigation';
+import { consoleNavigation, placeholderIcons, type IconComponent } from '../../shared/navigation/navigation';
 import { productIcons } from '../../shared/icons/product-icons';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
-import { visibleSettingsGroups } from '../../app/layout/settings-navigation';
-import { navigationHref } from '../../app/layout/navigation-paths';
+import { visibleSettingsGroups } from '../../shared/navigation/settings-navigation';
+import { navigationHref } from '../../shared/navigation/navigation-paths';
+import { documentationHref } from '../../shared/documentation';
 import documentation from './documentation.json';
 
 export type SearchRecord = {
@@ -72,7 +71,7 @@ export function documentationSearchRecords(locale: string): SearchRecord[] {
     id: `doc:${entry.id}`,
     name: entry[language].title,
     context: entry[language].description,
-    href: `https://oma.mintlifysite.com/docs/${language}/${entry.slug}`,
+    href: documentationHref(entry.slug, locale),
     kind: 'document',
   }));
 }

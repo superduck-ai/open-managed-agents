@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { productIcons } from '../../shared/icons/product-icons';
+import { productIcons } from '../icons/product-icons';
 import { consoleNavigation, sortedResourceNavigation } from './navigation';
 import { navigationHref, isActivePath } from './navigation-paths';
 import {
@@ -11,7 +11,6 @@ import {
   settingsGroups,
   visibleSettingsGroups,
 } from './settings-navigation';
-import { navigationSearchRecords } from '../../features/console-search/search-data';
 
 const account = {
   uuid: 'a',
@@ -20,15 +19,10 @@ const account = {
   permissions: ['organization:manage', 'members:manage'],
 };
 
-test('ordinary users cannot see organization management or its search results', () => {
+test('ordinary users cannot see organization management', () => {
   const member = { ...account, permissions: [] };
   expect(visibleSettingsGroups(member, 'org').map((group) => group.id)).toEqual(['access', 'activity', 'personal']);
   expect(visibleSettingsGroups(account, 'other').map((group) => group.id)).not.toContain('organization');
-  expect(
-    navigationSearchRecords(member, 'org', 'w', (_id, text) => text).some(
-      (record) => record.id === '/settings/members',
-    ),
-  ).toBe(false);
 });
 
 test('workspace resources do not match the organization workspace directory', () => {
@@ -83,17 +77,6 @@ test('each navigation group and module has a distinct icon shape', () => {
   expect(new Set(shapes).size).toBe(shapes.length);
 });
 
-test('search results use the same module icons as the sidebar', () => {
-  const administrator = { ...account, permissions: [...account.permissions, 'usage:view', 'cost:view'] };
-  const records = navigationSearchRecords(administrator, 'org', 'w', (_id, text) => text);
-  const pages = [...consoleNavigation, ...settingsGroups].flatMap((item) =>
-    item.type === 'group' ? item.children : [item],
-  );
-  for (const page of pages) {
-    expect(records.find((record) => record.id === page.href)?.icon).toBe(page.icon);
-  }
-});
-
 test('retains channel navigation after consolidating workspace paths', () => {
   expect(consoleNavigation.some((item) => item.type === 'link' && item.href === '/channels')).toBe(false);
   expect(navigationHref('/channels', 'team')).toBe('/workspaces/team/channels');
@@ -118,7 +101,7 @@ test.each(['/settings/billing', '/billing', '/settings/limits', '/settings/servi
   },
 );
 
-test.each(['en', 'zh-CN'])('channels follows skills in the %s resource navigation and search', (locale) => {
+test.each(['en', 'zh-CN'])('channels follows skills in the %s resource navigation', (locale) => {
   const resources = consoleNavigation.find((item) => item.type === 'group');
   expect(resources?.type).toBe('group');
   if (!resources || resources.type !== 'group') throw new Error('Missing resource navigation');
@@ -126,9 +109,4 @@ test.each(['en', 'zh-CN'])('channels follows skills in the %s resource navigatio
   const skills = items.findIndex((item) => item.href === '/skills');
   expect(items[skills + 1].href).toBe('/channels');
   expect(items[skills + 1].icon).toBe(productIcons.channels);
-  const channel = navigationSearchRecords(account, 'org', 'workspace', (_id, text) => text).find(
-    (item) => item.id === '/channels',
-  );
-  expect(channel?.context).toBe('Resources');
-  expect(channel?.icon).toBe(productIcons.channels);
 });

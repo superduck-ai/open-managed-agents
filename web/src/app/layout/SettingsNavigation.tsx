@@ -22,9 +22,14 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown-menu';
 import { AccessDenied } from '../../shared/ui/access-denied';
-import { isActivePath, navigationHref } from './navigation-paths';
-import { canAccessSettings, settingsItem, settingScope, visibleSettingsGroups } from './settings-navigation';
-import type { IconComponent, NavGroupItem } from './navigation';
+import { isActivePath, navigationHref } from '../../shared/navigation/navigation-paths';
+import {
+  canAccessSettings,
+  settingsItem,
+  settingScope,
+  visibleSettingsGroups,
+} from '../../shared/navigation/settings-navigation';
+import type { IconComponent, NavGroupItem } from '../../shared/navigation/navigation';
 
 type NavigationProps = { currentPath: string; onNavigate?: (href: string) => void | Promise<void> };
 
@@ -92,7 +97,13 @@ export function SettingsNavigation({
   const compact = state === 'collapsed' && !isMobile;
   const groups = visibleSettingsGroups(account, orgUuid);
   const selected = settingsItem(currentPath);
-  const [expanded, setExpanded] = useState<string[]>([selected?.group.id || 'access']);
+  const selectedGroupId = selected?.group.id;
+  const [expanded, setExpanded] = useState<string[]>([selectedGroupId || 'access']);
+  const [followedGroupId, setFollowedGroupId] = useState(selectedGroupId);
+  if (selectedGroupId !== followedGroupId) {
+    setFollowedGroupId(selectedGroupId);
+    if (selectedGroupId) setExpanded([selectedGroupId]);
+  }
   const navigate = (href: string) => {
     if (onNavigate) void onNavigate(href);
     else window.location.assign(href);

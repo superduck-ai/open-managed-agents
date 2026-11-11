@@ -1,8 +1,8 @@
 import { useI18n } from '../../shared/i18n';
 import type { CSSProperties } from 'react';
-import { ConsoleTopbar } from '../../app/layout/ConsoleTopbar';
-import { useResponsiveSidebar } from '../../app/layout/use-settings-navigation';
-import '../../app/layout/console-navigation.css';
+import { ConsoleTopbar } from '../console-topbar/ConsoleTopbar';
+import { useResponsiveSidebar } from '../../shared/hooks/use-responsive-sidebar';
+import '../../shared/ui/console-navigation.css';
 import { ArrowLeft, Blocks, Building2, Shield, ShieldCheck } from 'lucide-react';
 import { Link, Outlet, useLocation, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { organizationSection, organizationSections } from './organizationNavigation';

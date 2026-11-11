@@ -1,9 +1,15 @@
-import { navigationHref, isActivePath, isWideConsolePath, isSessionDetailPath } from './navigation-paths';
-import { isSettingsPath, settingsItem, settingScope } from './settings-navigation';
+import {
+  navigationHref,
+  isActivePath,
+  isWideConsolePath,
+  isSessionDetailPath,
+} from '../../shared/navigation/navigation-paths';
+import { isSettingsPath, settingScope } from '../../shared/navigation/settings-navigation';
 import { SettingsNavigation, SettingsLocation, SettingsAccess, CompactNavigationGroup } from './SettingsNavigation';
-import { useSettingsHistory, useResponsiveSidebar } from './use-settings-navigation';
-import { ConsoleTopbar } from './ConsoleTopbar';
-import './console-navigation.css';
+import { useSettingsHistory } from './use-settings-navigation';
+import { useResponsiveSidebar } from '../../shared/hooks/use-responsive-sidebar';
+import { ConsoleTopbar } from '../../features/console-topbar/ConsoleTopbar';
+import '../../shared/ui/console-navigation.css';
 import { productIcons as navigationIcons } from '@/shared/icons/product-icons';
 import { AppearanceMenuRow } from './AppearanceMenuRow';
 import { workspaceSwitchPath } from '../../shared/workspaces/presentation';
@@ -64,7 +70,12 @@ import { CreateWorkspaceDialog } from '../../shared/workspaces/CreateWorkspaceDi
 import { buildCreateWorkspaceInput, workspaceColor, workspaceIdFromPath } from '../../shared/workspaces/presentation';
 import { localeLabels, useI18n, useLocale } from '../../shared/i18n';
 import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
-import { consoleNavigation, sortedResourceNavigation, type NavGroupItem, type NavLinkItem } from './navigation';
+import {
+  consoleNavigation,
+  sortedResourceNavigation,
+  type NavGroupItem,
+  type NavLinkItem,
+} from '../../shared/navigation/navigation';
 
 type ConsoleShellProps = {
   account?: AuthAccount | null;
@@ -205,7 +216,7 @@ function ConsoleSidebar({ account, currentPath = '/', onLogout, onNavigate }: Om
       <AppSidebarContent className="console-sidebar-content scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         {settings ? (
           <SettingsNavigation
-            key={`${orgUuid}:${settingsItem(currentPath)?.href}`}
+            key={orgUuid}
             account={account}
             currentPath={currentPath}
             onNavigate={navigate}

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isSettingsPath } from './settings-navigation';
+import { isSettingsPath } from '../../shared/navigation/settings-navigation';
 import { normalizeReturnTo } from '../../shared/auth/redirects';
 import { quickstartModelSetupReturn } from '../../shared/workspaces/model-setup-navigation';
 import { workspaceIdFromPath, workspaceSwitchPath } from '../../shared/workspaces/presentation';

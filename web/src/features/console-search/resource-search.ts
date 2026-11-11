@@ -3,8 +3,9 @@ import { listManagedEntities } from '../managed-agents/api';
 import { listWorkspaceMCPServers } from '../../shared/api/workspaceMCPServers';
 import { anthropicBetaApi } from '../../shared/api/anthropic';
 import type { ManagedEntitySection } from '../managed-agents/types';
-import { consoleNavigation } from '../../app/layout/navigation';
-import { navigationHref } from '../../app/layout/navigation-paths';
+import type { I18nContextValue } from '../../shared/i18n/context';
+import { consoleNavigation } from '../../shared/navigation/navigation';
+import { navigationHref } from '../../shared/navigation/navigation-paths';
 import type { SearchRecord } from './search-data';
 
 const managedSources: ManagedEntitySection[] = [
@@ -14,8 +15,14 @@ const managedSources: ManagedEntitySection[] = [
   'memory-stores',
   'credential-vaults',
 ];
-const sources = ['agents', ...managedSources, 'mcp-servers', 'files', 'skills'];
+type ResourceSource = 'agents' | ManagedEntitySection | 'mcp-servers' | 'files' | 'skills';
+const sources: ResourceSource[] = ['agents', ...managedSources, 'mcp-servers', 'files', 'skills'];
 const resourceNavigation = consoleNavigation.flatMap((item) => (item.type === 'group' ? item.children : [item]));
+
+export function resourceContextLabel(source: string, msg: I18nContextValue['msg']) {
+  const item = resourceNavigation.find((entry) => entry.href === `/${source}`);
+  return item ? msg(item.labelId, item.label) : source;
+}
 type ResourceSummary = {
   id: string;
   name?: string;
@@ -25,10 +32,10 @@ type ResourceSummary = {
   display_title?: string;
 };
 type ResourcePage = { data: ResourceSummary[]; next_page?: string | null; has_more?: boolean; last_id?: string | null };
-export type ResourceCursor = Record<string, string | null>;
+export type ResourceCursor = Partial<Record<ResourceSource | 'organizations', string | null>>;
 
 async function readPage(
-  source: string,
+  source: ResourceSource,
   organizationId: string,
   workspaceId: string,
   query: string,
@@ -43,7 +50,7 @@ async function readPage(
     );
   if (source === 'skills')
     return anthropicBetaApi.skills.list<ResourceSummary>({ limit: 50, ...(page ? { page } : {}) }, workspaceId);
-  return listManagedEntities(source as ManagedEntitySection, workspaceId, page);
+  return listManagedEntities(source, workspaceId, page);
 }
 
 export async function searchResourcePage(

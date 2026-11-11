@@ -145,6 +145,8 @@ function SearchContents({
     msg,
   );
   const loading = Boolean(query.trim()) && (query.trim() !== debounced || resources.isFetching);
+  const resourceError =
+    Boolean(query.trim()) && (resources.isError || Boolean(resources.data?.pages.some((page) => page.errors.length)));
   return (
     <>
       <Command
@@ -204,7 +206,7 @@ function SearchContents({
               {msg('search.loading', 'Searching…')}
             </p>
           )}
-          {query.trim() && (resources.isError || resources.data?.pages.some((page) => page.errors.length)) && (
+          {resourceError && (
             <div role="alert" className="px-3 py-2 text-xs text-muted-foreground">
               {msg('search.resourceError', 'Some results could not be loaded.')}
               <Button variant="link" size="sm" onClick={() => void resources.refetch()}>
@@ -212,7 +214,7 @@ function SearchContents({
               </Button>
             </div>
           )}
-          {!loading && !groups.some((group) => group.records.length) && (
+          {!loading && !resourceError && !groups.some((group) => group.records.length) && (
             <p className="py-8 text-center text-sm text-muted-foreground">
               {msg('search.empty', 'No matching results.')}
             </p>

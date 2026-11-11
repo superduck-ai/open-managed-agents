@@ -1,25 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import type { AuthAccount } from '../../shared/auth/api';
-import { navigationHref } from './navigation-paths';
-import { isSettingsPath, settingsItem, visibleSettingsGroups } from './settings-navigation';
+import { navigationHref } from '../../shared/navigation/navigation-paths';
+import { isSettingsPath, settingsItem, visibleSettingsGroups } from '../../shared/navigation/settings-navigation';
 import {
   initialWorkspaceManagementOrigin,
   saveWorkspaceManagementOrigin,
   workspaceManagementReturnHref,
 } from './use-workspace-management-history';
 
-export function useResponsiveSidebar() {
-  const [expanded, setExpanded] = useState(() => !window.matchMedia('(max-width: 1040px)').matches);
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 1040px)');
-    const update = () => setExpanded(!media.matches);
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
-  return expanded;
-}
-
-export function readNavigationPosition(key: string, fallback: string) {
+function readStoredPage(key: string, fallback: string) {
   try {
     return window.sessionStorage.getItem(key) || fallback;
   } catch {
@@ -27,7 +16,7 @@ export function readNavigationPosition(key: string, fallback: string) {
   }
 }
 
-export function saveNavigationPosition(key: string, value: string) {
+function saveStoredPage(key: string, value: string) {
   try {
     window.sessionStorage.setItem(key, value);
   } catch {
@@ -45,10 +34,10 @@ export function useSettingsHistory(
   const origin = initialWorkspaceManagementOrigin(account?.uuid, orgUuid, workspaceId, path, settings);
   const key = `oma.settings.page:${account?.uuid}:${orgUuid}`;
   const pages = visibleSettingsGroups(account, orgUuid).flatMap((group) => group.children);
-  const remembered = readNavigationPosition(key, '/settings/llm');
+  const remembered = readStoredPage(key, '/settings/llm');
   const itemHref = settingsItem(path)?.href;
   useEffect(() => {
-    if (itemHref) saveNavigationPosition(key, itemHref);
+    if (itemHref) saveStoredPage(key, itemHref);
     if (!settings)
       saveWorkspaceManagementOrigin(account?.uuid, orgUuid, {
         href: path + window.location.search + window.location.hash,

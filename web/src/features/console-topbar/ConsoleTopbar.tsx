@@ -3,9 +3,10 @@ import { BookOpen, Menu } from 'lucide-react';
 import { Button, ButtonLink } from '../../shared/ui/button';
 import { useSidebar } from '../../shared/ui/sidebar';
 import { useI18n } from '../../shared/i18n';
+import { documentationHref } from '../../shared/documentation';
 import { AuthContext } from '../../shared/auth/context';
-import { ConsoleSearch } from '../../features/console-search/ConsoleSearch';
-import { InvitationNotifications } from '../../features/organizations/InvitationNotifications';
+import { ConsoleSearch } from '../console-search/ConsoleSearch';
+import { InvitationNotifications } from '../organizations/InvitationNotifications';
 
 export function ConsoleTopbar({
   currentPath,
@@ -51,7 +52,7 @@ export function ConsoleTopbar({
         <ButtonLink
           variant="ghost"
           size="sm"
-          href={`https://oma.mintlifysite.com/docs/${locale === 'zh-CN' ? 'zh' : 'en'}/overview`}
+          href={documentationHref('overview', locale)}
           target="_blank"
           rel="noreferrer"
           aria-label={msg('nav.documentation', 'Documentation')}

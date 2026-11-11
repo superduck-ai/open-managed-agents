@@ -26,21 +26,45 @@ afterEach(() => {
 });
 
 test.each([
-  { path: '/llm-models?from=notice#model-config', destination: '/settings/llm', heading: 'LLM models' },
+  {
+    path: '/llm-models?from=notice#model-config',
+    destination: '/settings/llm',
+    heading: 'LLM models',
+    hash: 'model-config',
+  },
+  {
+    path: '/llm-models?from=notice#model%20config',
+    destination: '/settings/llm',
+    heading: 'LLM models',
+    hash: 'model config',
+  },
+  {
+    path: '/llm-models?from=notice#model%25config',
+    destination: '/settings/llm',
+    heading: 'LLM models',
+    hash: 'model%25config',
+  },
   {
     path: '/workspaces/default/llm-models?from=notice#model-config',
     destination: '/settings/llm',
     heading: 'LLM models',
+    hash: 'model-config',
   },
   {
     path: '/settings/workspaces/default/telemetry?from=notice#destinations',
     destination: '/settings/telemetry',
     heading: 'OpenTelemetry',
+    hash: 'destinations',
   },
-  { path: '/members?from=notice#member-list', destination: '/settings/members', heading: 'Members' },
-  { path: '/settings/billing', destination: '/billing', heading: 'Billing' },
-  { path: '/settings/llm', destination: '/settings/llm', heading: 'LLM models' },
-])('settings route $path reaches $destination', async ({ path, destination, heading }) => {
+  {
+    path: '/members?from=notice#member-list',
+    destination: '/settings/members',
+    heading: 'Members',
+    hash: 'member-list',
+  },
+  { path: '/settings/billing', destination: '/billing', heading: 'Billing', hash: '' },
+  { path: '/settings/llm', destination: '/settings/llm', heading: 'LLM models', hash: '' },
+])('settings route $path reaches $destination', async ({ path, destination, heading, hash }) => {
   resetTestDom(`https://oma.duck.ai${path}`);
   window.sessionStorage.clear();
   const applicationOrigin = '/workspaces/default/agents?status=ready#list';
@@ -95,7 +119,7 @@ test.each([
   expect(screen.queryByText('This page has been retired')).toBeNull();
   expect(history.length).toBe(1);
   const original = new URL(path, 'https://oma.duck.ai');
-  expect(router.state.location.hash).toBe(original.hash.slice(1));
+  expect(router.state.location.hash).toBe(hash);
   expect(router.state.location.searchStr).toBe(original.search);
   expect(readWorkspaceManagementOrigin('acct_test', 'org_test')?.href).toBe(applicationOrigin);
   fireEvent.click(screen.getByRole('button', { name: 'Back to app' }));

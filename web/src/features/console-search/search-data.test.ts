@@ -1,5 +1,15 @@
 import { expect, test } from 'bun:test';
+import { consoleNavigation } from '../../shared/navigation/navigation';
+import { settingsGroups } from '../../shared/navigation/settings-navigation';
+import { productIcons } from '../../shared/icons/product-icons';
 import { documentationSearchRecords, navigationSearchRecords, searchMatches } from './search-data';
+
+const account = {
+  uuid: 'a',
+  email_address: 'a@example.com',
+  effectiveOrganizationUuid: 'org',
+  permissions: ['organization:manage', 'members:manage'],
+};
 
 test('API references are excluded while API key navigation remains searchable', () => {
   const docs = documentationSearchRecords('zh-CN');
@@ -43,4 +53,32 @@ test('every indexed document resolves to an existing localized guide', async () 
       expect(await Bun.file(new URL(`../../../..${url.pathname}.mdx`, import.meta.url)).exists()).toBe(true);
     }
   }
+});
+
+test('organization management stays out of search results for ordinary users', () => {
+  const member = { ...account, permissions: [] };
+  expect(
+    navigationSearchRecords(member, 'org', 'w', (_id, text) => text).some(
+      (record) => record.id === '/settings/members',
+    ),
+  ).toBe(false);
+});
+
+test('search results use the same module icons as the sidebar', () => {
+  const administrator = { ...account, permissions: [...account.permissions, 'usage:view', 'cost:view'] };
+  const records = navigationSearchRecords(administrator, 'org', 'w', (_id, text) => text);
+  const pages = [...consoleNavigation, ...settingsGroups].flatMap((item) =>
+    item.type === 'group' ? item.children : [item],
+  );
+  for (const page of pages) {
+    expect(records.find((record) => record.id === page.href)?.icon).toBe(page.icon);
+  }
+});
+
+test('channels follow skills in search results with the shared context and icon', () => {
+  const channel = navigationSearchRecords(account, 'org', 'workspace', (_id, text) => text).find(
+    (item) => item.id === '/channels',
+  );
+  expect(channel?.context).toBe('Resources');
+  expect(channel?.icon).toBe(productIcons.channels);
 });

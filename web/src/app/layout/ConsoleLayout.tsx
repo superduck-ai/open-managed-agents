@@ -140,6 +140,7 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
   const expanded = useResponsiveSidebar();
   const settings = isSettingsPath(currentPath);
   const quickstart = /^(?:\/quickstart|\/workspaces\/[^/]+\/agent-quickstart)\/?$/.test(currentPath);
+  const sessionDetail = isSessionDetailPath(currentPath);
   return (
     <SidebarProvider
       open={expanded}
@@ -152,7 +153,7 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
       <SidebarInset
         className={clsx(
           'subtle-scrollbar min-w-0 text-foreground',
-          isSessionDetailPath(currentPath) && 'session-route-theme console-session-inset',
+          sessionDetail && 'session-route-theme console-session-inset',
           quickstart && 'console-quickstart-inset',
         )}
       >
@@ -160,10 +161,11 @@ export function ConsoleShell({ account, currentPath = '/', children, onLogout, o
         <div
           className={clsx(
             'console-page',
-            isWideConsolePath(currentPath) || settings
-              ? 'px-6 py-6 lg:px-8'
-              : 'mx-auto w-full max-w-[1440px] px-6 py-10',
-            isSessionDetailPath(currentPath) && 'console-session-content',
+            sessionDetail
+              ? 'console-session-content'
+              : isWideConsolePath(currentPath) || settings
+                ? 'px-6 py-6 lg:px-8'
+                : 'mx-auto w-full max-w-[1440px] px-6 py-10',
             quickstart && 'console-quickstart-content',
           )}
         >

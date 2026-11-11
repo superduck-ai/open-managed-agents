@@ -294,12 +294,15 @@
   inset: 0 0 auto;
   z-index: 30;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 460px) minmax(0, 1fr);
+  grid-template-columns: calc(var(--sidebar-width) - 24px) minmax(0, 1fr) minmax(240px, 460px) minmax(0, 1fr);
   align-items: center;
-  gap: 24px;
   height: var(--console-topbar-height);
-  padding: 0 24px;
+  padding: 0 8px 0 24px;
   background: var(--sidebar);
+}
+.console-topbar > :last-child {
+  justify-self: end;
+  margin-right: 16px;
 }
 .console-brand-link {
   display: flex;
@@ -314,6 +317,7 @@
   mask: url('/brand/oma-logo.svg') center / contain no-repeat;
 }
 .console-search-trigger {
+  grid-column: 3;
   width: 100%;
   justify-content: flex-start;
   height: 34px;
@@ -409,8 +413,7 @@
 @media (max-width: 1040px) {
   .console-topbar {
     --console-logo-left: 25px;
-    gap: 18px;
-    grid-template-columns: minmax(0, 1fr) minmax(180px, 400px) minmax(0, 1fr);
+    grid-template-columns: calc(var(--sidebar-width-icon) - 24px) minmax(0, 1fr) minmax(180px, 400px) minmax(0, 1fr);
   }
 }
 @media (max-width: 767px) {
@@ -429,7 +432,11 @@
   .console-topbar [aria-label='Open Managed Agents'] {
     display: none;
   }
+  .console-topbar > :last-child {
+    margin-right: 0;
+  }
   .console-search-trigger {
+    grid-column: auto;
     min-width: 0;
     height: 40px;
   }

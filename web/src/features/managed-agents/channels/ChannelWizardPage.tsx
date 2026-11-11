@@ -1,3 +1,4 @@
+import { resourceFormValues } from '../resources/git-resource';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect } from 'react';
@@ -104,6 +105,7 @@ async function loadChannelForEdit(agentId: string, workspaceId: string, channelI
 }
 
 function buildInitialWizardValue(channel: Channel | null, initialAgentId: string, environmentId: string): WizardValue {
+  const gitRepository = channel?.git_repository ?? null;
   return {
     name: channel?.name ?? '',
     mode: channel?.mode ?? 'open',
@@ -114,6 +116,8 @@ function buildInitialWizardValue(channel: Channel | null, initialAgentId: string
     app_secret: '',
     memory_store_id: channel?.memory_store_id ?? null,
     vault_id: channel?.vault_id ?? null,
+    git_repository: gitRepository,
+    gitResource: resourceFormValues([gitRepository]).gitResources[0] ?? null,
     channelType: 'feishu',
     agentId: initialAgentId,
     environmentId,

@@ -2194,6 +2194,8 @@
   "members.organizationSettings": "Go to organization settings",
   "members.userId": "User ID",
   "workspace.create.reservedName": "Default is reserved for the default workspace. Choose another name.",
+  "managedAgents.git.add": "Add Git repository",
+  "managedAgents.git.keepToken": "Configured; leave blank to keep",
   "managedAgents.git.branch": "Branch name",
   "managedAgents.git.checkout": "Checkout (optional)",
   "managedAgents.git.checkout.branch": "Branch",

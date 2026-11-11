@@ -1,3 +1,5 @@
+import { gitResourceValid } from '../resources/git-resource';
+import type { GitRepositoryResourceFormValue } from '../types';
 import type { useI18n } from '../../../shared/i18n';
 import type { Channel, ChannelInput } from './api';
 
@@ -13,6 +15,7 @@ type WizardFields = {
   name: string;
   agentId: string;
   environmentId: string;
+  gitResource?: GitRepositoryResourceFormValue | null;
   app_id?: string;
   app_secret?: string;
 };
@@ -33,7 +36,7 @@ export function channelTargetsReady(value: Pick<WizardFields, 'name' | 'agentId'
 export function channelWizardStepReady(step: WizardStep, value: WizardFields, access: WizardAccess) {
   if (step === 1) return stepConnectReady(value, access);
   if (step === 2) return true;
-  return Boolean(value.agentId && value.environmentId);
+  return Boolean(value.agentId && value.environmentId) && (!value.gitResource || gitResourceValid(value.gitResource));
 }
 
 function stepConnectReady(value: WizardFields, access: WizardAccess) {

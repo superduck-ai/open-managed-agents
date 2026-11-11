@@ -2194,6 +2194,8 @@
   "members.organizationSettings": "前往组织设置",
   "members.userId": "用户 ID",
   "workspace.create.reservedName": "Default 是默认工作区的保留名称，请使用其他名称。",
+  "managedAgents.git.add": "添加 Git 仓库",
+  "managedAgents.git.keepToken": "已配置，留空保持不变",
   "managedAgents.git.branch": "分支名称",
   "managedAgents.git.checkout": "检出（可选）",
   "managedAgents.git.checkout.branch": "分支",

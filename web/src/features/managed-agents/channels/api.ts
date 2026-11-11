@@ -1,3 +1,6 @@
+import type { gitResourceBody } from '../resources/git-resource';
+
+export type ChannelGitRepository = ReturnType<typeof gitResourceBody> & { tokenConfigured?: boolean };
 import { anthropicBetaApi } from '../../../shared/api/anthropic';
 
 export interface Channel {
@@ -10,6 +13,7 @@ export interface Channel {
   binding_status: 'bound' | 'unbound';
   memory_store_id?: string | null;
   vault_id?: string | null;
+  git_repository?: ChannelGitRepository | null;
   app_id?: string;
   include_thinking: boolean;
   include_tool_calls: boolean;
@@ -25,6 +29,7 @@ export interface ChannelInput {
   reply_in_thread: boolean;
   memory_store_id?: string | null;
   vault_id?: string | null;
+  git_repository?: ChannelGitRepository | null;
   app_id?: string;
   app_secret?: string;
 }

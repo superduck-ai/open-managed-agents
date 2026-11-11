@@ -1,3 +1,4 @@
+import { gitResourceBody } from '../resources/git-resource';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../../shared/i18n';
@@ -193,8 +194,7 @@ export function ChannelWizardFormPage({
     if (wizardStepAllowed(next, value, access)) setStep(next);
   };
 
-  const canSave =
-    step === 3 && channelWizardStepReady(1, value, access) && Boolean(value.agentId && value.environmentId);
+  const canSave = step === 3 && channelWizardStepReady(1, value, access) && channelWizardStepReady(3, value, access);
   const persist = async () => {
     if (!channelTargetsReady(value)) {
       setError(connectTargetError(value, msg));
@@ -216,7 +216,17 @@ export function ChannelWizardFormPage({
         ...(binding === 'qr' && authorization ? { authorization_id: authorization.id } : {}),
       });
       setSaved(next);
-      setValue((current) => ({ ...current, app_secret: '', agentId: targetAgentId! }));
+      queryClient.setQueryData(['channel-wizard', workspaceId, targetAgentId, next.id], {
+        channel: next,
+        environmentId: value.environmentId,
+      });
+      setValue((current) => ({
+        ...current,
+        app_secret: '',
+        agentId: targetAgentId!,
+        git_repository: next.git_repository,
+        gitResource: current.gitResource ? { ...current.gitResource, authorizationToken: '' } : null,
+      }));
       void queryClient.invalidateQueries({ queryKey: ['workspace-channels', workspaceId] });
       void queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, next.id] });
       onNavigate(channelDetailPath(workspaceId, targetAgentId!, next.id));
@@ -325,6 +335,7 @@ function channelPayload(value: WizardValue, binding: string) {
     mode: value.mode,
     memory_store_id: value.memory_store_id ?? null,
     vault_id: value.vault_id ?? null,
+    git_repository: value.gitResource ? gitResourceBody(value.gitResource) : null,
     include_thinking: value.include_thinking,
     include_tool_calls: value.include_tool_calls,
     reply_in_thread: value.reply_in_thread,

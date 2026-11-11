@@ -28,10 +28,14 @@ const channel: Channel = {
 };
 const initialValue: WizardValue = { ...channel, channelType: 'feishu', agentId: '', environmentId: '' };
 const authorizationUrl = 'https://open.feishu.cn/page/launcher?ticket=test';
-function mount(saved: Channel | null = null, value = initialValue) {
+function mount(
+  saved: Channel | null = null,
+  value = initialValue,
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   const navigated = mock(() => undefined);
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={client}>
       <I18nProvider initialLocale="zh-CN">
         <ChannelWizardFormPage
           mode={saved ? 'edit' : 'create'}
@@ -322,4 +326,47 @@ test('旧渠道轮询在仍等待绑定时清除网络错误，手动输入和�
   fireEvent.click(screen.getByRole('button', { name: '飞书授权' }));
   await screen.findByText('二维码已失效，请重新生成。');
   expect(timers.size).toBe(0);
+});
+
+test('第三步可选挂载 Git，未填完整不能保存，移除后恢复可保存', async () => {
+  resetTestDom('/');
+  let body: Record<string, unknown> = {};
+  globalThis.fetch = (async (input, init) => {
+    if (init?.method === 'POST') {
+      body = JSON.parse(String(init.body));
+      return Response.json({ ...channel, ...body, binding_status: 'bound' });
+    }
+    return Response.json(targets(String(input)));
+  }) as typeof fetch;
+  const saved = { ...channel, binding_status: 'bound' as const, app_id: 'cli_test' };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const navigated = mount(
+    saved,
+    { ...initialValue, ...saved, agentId: 'agent-test', environmentId: 'env-test' },
+    client,
+  );
+  expect(screen.queryByRole('button', { name: '添加 Git 仓库' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+  fireEvent.click(screen.getByRole('button', { name: '下一步' }));
+  fireEvent.click(screen.getByRole('button', { name: '添加 Git 仓库' }));
+  expect(screen.getByRole('button', { name: '保存配置' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://github.com/octocat/Hello-World.git' } });
+  fireEvent.change(screen.getByLabelText('挂载路径（可选）'), { target: { value: '/workspace/demo' } });
+  expect(screen.getByRole('button', { name: '保存配置' }).hasAttribute('disabled')).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: '移除 Git 仓库 1' }));
+  expect(screen.queryByLabelText('URL')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '添加 Git 仓库' }));
+  fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://github.com/octocat/Hello-World.git' } });
+  fireEvent.change(screen.getByLabelText('授权令牌（公开仓库可不填）'), { target: { value: 'test-token' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+  await waitFor(() => expect(navigated).toHaveBeenCalled());
+  expect(client.getQueryData(['channel-wizard', 'workspace-test', 'agent-test', channel.id])).toMatchObject({
+    channel: { git_repository: { url: 'https://github.com/octocat/Hello-World.git' } },
+    environmentId: 'env-test',
+  });
+  expect(body.git_repository).toEqual({
+    type: 'github_repository',
+    url: 'https://github.com/octocat/Hello-World.git',
+    authorization_token: 'test-token',
+  });
 });

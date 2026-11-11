@@ -1,3 +1,5 @@
+import { GitRepositoryFields } from '../resources/GitRepositoryFields';
+import { emptyGitResource } from '../resources/git-resource';
 import { useId, type ReactNode } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Bot, Check, Cloud, ExternalLink, LoaderCircle } from 'lucide-react';
@@ -21,6 +23,7 @@ export type WizardValue = ChannelInput & {
   channelType: ChannelTypeOption;
   agentId: string;
   environmentId: string;
+  gitResource?: import('../types').GitRepositoryResourceFormValue | null;
 };
 
 export function WizardStepper({
@@ -413,6 +416,19 @@ export function StepMa({
         </Select>
       </div>
       <ChannelResourceFields workspaceId={workspaceId} value={value} onChange={onChange} />
+      {value.gitResource ? (
+        <GitRepositoryFields
+          resource={value.gitResource}
+          index={0}
+          tokenConfigured={value.git_repository?.tokenConfigured && value.git_repository.url === value.gitResource.url}
+          onChange={(gitResource) => onChange({ ...value, gitResource })}
+          onRemove={() => onChange({ ...value, gitResource: null })}
+        />
+      ) : (
+        <Button type="button" variant="outline" onClick={() => onChange({ ...value, gitResource: emptyGitResource() })}>
+          {msg('managedAgents.git.add', '添加 Git 仓库')}
+        </Button>
+      )}
     </div>
   );
 }

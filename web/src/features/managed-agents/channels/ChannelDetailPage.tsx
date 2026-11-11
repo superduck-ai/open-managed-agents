@@ -305,6 +305,7 @@ function ChannelMountedResources({ workspaceId, channel }: { workspaceId: string
       <DetailRow label={msg('managedAgents.channels.mountedVault', '挂载 Vault')}>
         {resources.data?.vaults.find((item) => item.id === channel.vault_id)?.label || channel.vault_id || none}
       </DetailRow>
+      <DetailRow label="Git">{channel.git_repository?.url || none}</DetailRow>
     </>
   );
 }

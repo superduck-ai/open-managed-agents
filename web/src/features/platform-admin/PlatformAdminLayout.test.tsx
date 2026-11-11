@@ -1,7 +1,7 @@
 import { afterEach, expect, mock, test } from 'bun:test';
 import { StrictMode } from 'react';
 import { renderPlatformAdmin as render } from '../../test/platform-admin';
-import { resetTestDom } from '../../test/setup';
+import { resetTestDom, setTestViewport } from '../../test/setup';
 import {
   createMemoryHistory,
   createRootRoute,
@@ -24,6 +24,7 @@ afterEach(() => {
 
 function mount(entry = '/platform-admin', locale: 'en' | 'zh-CN' = 'zh-CN') {
   resetTestDom('https://oma.duck.ai/platform-admin');
+  setTestViewport(1280, 900);
   Object.assign(globalThis, { scrollTo: () => {} });
   const root = createRootRoute();
   const admin = createRoute({ getParentRoute: () => root, path: '/platform-admin', component: PlatformAdminLayout });
@@ -108,14 +109,16 @@ test('严格模式重挂载后可重试授权故障并显示无组织账号的�
   expect(screen.getByRole('link', { name: '组织管理' }).getAttribute('aria-current')).toBe('page');
   expect(screen.queryByRole('link', { name: '审计记录' })).toBeNull();
   expect(screen.getByRole('link', { name: '超级管理员' })).toBeTruthy();
-  expect(screen.getByText('全局管理')).toBeTruthy();
+  expect(screen.getByText('超管后台')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: '超管后台' })).toBeNull();
+  expect(screen.queryByRole('button', { name: '收起', exact: true })).toBeNull();
   expect(screen.getByRole('link', { name: '系统技能' })).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: '收起', exact: true }));
+  await act(async () => setTestViewport(950, 850));
   expect(document.querySelector('[data-slot="sidebar"]')?.getAttribute('data-state')).toBe('collapsed');
   expect(screen.getByRole('link', { name: '组织管理' }).getAttribute('aria-current')).toBe('page');
   expect(screen.getByRole('link', { name: '超级管理员' })).toBeTruthy();
   expect(screen.getByRole('link', { name: '返回工作台' })).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: '展开', exact: true }));
+  await act(async () => setTestViewport(1280, 900));
   expect(document.querySelector('[data-slot="sidebar"]')?.getAttribute('data-state')).toBe('expanded');
   expect(screen.getByText('operator@example.com')).toBeTruthy();
 });
@@ -181,7 +184,9 @@ test('组织菜单每次只加载对应列表，直达与返回保留当前菜�
   fireEvent.click(screen.getByRole('link', { name: '返回组织列表' }));
   expect(await screen.findByRole('heading', { name: '受保护组织目录' })).toBeTruthy();
   expect(screen.getByRole('link', { name: '超级管理员' })).toBeTruthy();
-  expect(screen.getByText('全局管理')).toBeTruthy();
+  expect(screen.getByText('超管后台')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: '超管后台' })).toBeNull();
+  expect(screen.queryByRole('button', { name: '收起', exact: true })).toBeNull();
   expect(screen.getByRole('link', { name: '系统技能' })).toBeTruthy();
 });
 
@@ -339,4 +344,42 @@ test('侧栏进入超级管理员目录，撤销自己后重新鉴权并退出�
   });
   expect((await screen.findByRole('alert')).textContent).toContain('当前账号无后台权限');
   expect(screen.queryByRole('heading', { name: '超级管理员' })).toBeNull();
+});
+
+test('super admin topbar searches organization names and IDs through the platform client', async () => {
+  const requests: string[] = [];
+  globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+    const path = String(url);
+    requests.push(path);
+    if (path.endsWith('/bootstrap'))
+      return Response.json({
+        account: { uuid: 'operator', email: 'operator@example.com', name: '' },
+        platform_access: {
+          role: 'super_admin',
+          permissions: [
+            'platform:access',
+            'platform:organizations:read',
+            'platform:administrators:manage',
+            'platform:skills:manage',
+          ],
+        },
+        csrf_token: 'verified-csrf',
+      });
+    if (path.startsWith('/api/platform-admin/organizations?'))
+      return Response.json({ data: [{ uuid: 'organization-target', name: 'Research team' }], next_cursor: '' });
+    return Response.json({});
+  }) as typeof fetch;
+  mount('/platform-admin', 'en');
+  fireEvent.click(await screen.findByRole('button', { name: /Search super admin/ }));
+  expect(screen.getByRole('option', { name: /Super administrators/ })).toBeTruthy();
+  expect(screen.queryByRole('option', { name: /API keys/ })).toBeNull();
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Research' } });
+  expect(await screen.findByRole('option', { name: /Research team/ })).toBeTruthy();
+  expect(requests.some((path) => path.includes('/organizations?query=Research'))).toBe(true);
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'organization-target' } });
+  await waitFor(() => expect(requests.some((path) => path.includes('query=organization-target'))).toBe(true));
+  expect(await screen.findByRole('option', { name: /Research team/ })).toBeTruthy();
+  expect(requests.every((path) => path.startsWith('/api/platform-admin/'))).toBe(true);
+  fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 });

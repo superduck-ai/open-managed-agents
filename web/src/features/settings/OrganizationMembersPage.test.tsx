@@ -304,7 +304,7 @@ describe('Organization members settings', () => {
         .getAllByRole('button', { name: /Default/i })
         .some((button) => button.getAttribute('aria-label') === 'Default'),
     ).toBe(true);
-    expect(screen.getByText('Organization settings')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Organization management' })).toBeTruthy();
     expect(await screen.findByRole('heading', { name: 'Members' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Invite' })).toBeTruthy();
 
@@ -448,9 +448,9 @@ describe('Organization members settings', () => {
       <QueryClientProvider client={queryClient}>
         <AuthContext.Provider value={authValue}>
           <WorkspaceContext.Provider value={workspaceValue}>
-            <SettingsShell currentPath="/settings/members" account={authValue.account} onLogout={() => undefined}>
+            <>
               <OrganizationMembersPage />
-            </SettingsShell>
+            </>
           </WorkspaceContext.Provider>
         </AuthContext.Provider>
       </QueryClientProvider>,

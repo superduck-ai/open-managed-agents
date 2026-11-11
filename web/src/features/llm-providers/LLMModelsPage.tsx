@@ -214,7 +214,7 @@ export function LLMModelsPage({ scope = 'workspace' }: { scope?: ProviderScope }
     if (refreshAfterSaveRef.current) {
       refreshAfterSaveRef.current = false;
       void invalidateCatalog();
-      const returnTo = scope === 'workspace' ? quickstartModelSetupReturn(window.location.search, workspaceId) : null;
+      const returnTo = quickstartModelSetupReturn(window.location.search, workspaceId);
       if (returnTo) {
         const setupHref = window.location.href;
         const version = quickstartReturnVersion.current;
@@ -343,15 +343,13 @@ function CatalogHeader({
   const { msg } = useI18n();
   return (
     <ResourcePageHeader
-      title={
-        scope === 'organization' ? msg('nav.llmSettings', 'LLM configuration') : msg('llmModels.title', 'LLM models')
-      }
+      title={msg('llmModels.title', 'LLM models')}
       titleAdornment={modelCount > 0 && !accessDenied ? <Badge variant="secondary">{modelCount}</Badge> : undefined}
       description={
         scope === 'organization'
           ? msg(
               'llmModels.organizationDescription',
-              'Organization providers are shared by all workspaces. Workspace providers are only available in their workspace.',
+              'Models configured here are shared across this organization’s workspaces.',
             )
           : undefined
       }

@@ -1,0 +1,84 @@
+import { useQuery } from '@tanstack/react-query';
+import { useNavigate, useParams } from '@tanstack/react-router';
+import { useState } from 'react';
+import { ArrowLeft, Download } from 'lucide-react';
+import { anthropicBetaApi } from '../../shared/api/anthropic';
+import { useWorkspace } from '../../shared/workspaces/context';
+import { useI18n } from '../../shared/i18n';
+import { Button } from '../../shared/ui/button';
+import { ResourcePageHeader } from '../../shared/ui/resource-page-header';
+import { downloadFile, formatBytes, errorMessage, type ConsoleFile } from './model';
+
+export function FileDetailsPage() {
+  const { fileId = '' } = useParams({ strict: false });
+  const { activeWorkspaceId, orgUuid } = useWorkspace();
+  const { msg } = useI18n();
+  const navigate = useNavigate();
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState('');
+  const query = useQuery({
+    queryKey: ['file', orgUuid, activeWorkspaceId, fileId],
+    queryFn: () => anthropicBetaApi.files.retrieveMetadata<ConsoleFile>(fileId, activeWorkspaceId),
+    retry: false,
+  });
+  const file = query.data;
+  const download = async () => {
+    if (!file || downloading) return;
+    setDownloading(true);
+    setError('');
+    try {
+      await downloadFile(file, activeWorkspaceId);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setDownloading(false);
+    }
+  };
+  return (
+    <section className="space-y-6">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => void navigate({ href: `/workspaces/${encodeURIComponent(activeWorkspaceId)}/files` })}
+      >
+        <ArrowLeft className="size-4" />
+        {msg('files.title', 'Files')}
+      </Button>
+      <ResourcePageHeader
+        title={file?.filename || fileId}
+        actions={
+          file && (
+            <Button disabled={!file.downloadable || downloading} onClick={() => void download()}>
+              <Download className="size-4" />
+              {msg('common.download', 'Download')}
+            </Button>
+          )
+        }
+      />
+      {query.isLoading && <p role="status">{msg('files.loading', 'Loading files...')}</p>}
+      {query.isError && (
+        <div role="alert">
+          <p>{errorMessage(query.error)}</p>
+          <Button variant="outline" onClick={() => void query.refetch()}>
+            {msg('common.retry', 'Retry')}
+          </Button>
+        </div>
+      )}
+      {file && (
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-4 text-sm">
+          <dt className="text-muted-foreground">ID</dt>
+          <dd className="break-all font-mono text-xs">{file.id}</dd>
+          <dt className="text-muted-foreground">{msg('common.size', 'Size')}</dt>
+          <dd>{formatBytes(file.size_bytes)}</dd>
+          <dt className="text-muted-foreground">{msg('common.created', 'Created')}</dt>
+          <dd>{file.created_at}</dd>
+        </dl>
+      )}
+      {error && (
+        <p role="alert" className="text-destructive">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}

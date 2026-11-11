@@ -22,7 +22,7 @@ afterEach(() => {
 
 test.each([
   { path: '/settings/billing', destination: '/billing', heading: 'Billing' },
-  { path: '/settings/llm', destination: '/settings/llm', heading: 'LLM configuration' },
+  { path: '/settings/llm', destination: '/settings/llm', heading: 'LLM models' },
 ])('settings route $path reaches $destination', async ({ path, destination, heading }) => {
   resetTestDom(`https://oma.duck.ai${path}`);
   Object.assign(globalThis, { scrollTo: () => undefined });

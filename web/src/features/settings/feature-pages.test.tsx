@@ -7,7 +7,7 @@ import { I18nProvider } from '../../shared/i18n';
 import { ThemeProvider } from '../../shared/theme/ThemeProvider';
 import { defaultWorkspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
-import { resetTestDom } from '../../test/setup';
+import { resetTestDom, setTestViewport } from '../../test/setup';
 import { AppearanceSettingsPage, ProfileSettingsPage, settingsSectionFromPath } from './feature-pages';
 
 const testingLibrary = await import('@testing-library/react');
@@ -64,16 +64,14 @@ describe('Settings feature pages', () => {
     expect(container.querySelector('.surface-card')).toBeNull();
   });
 
-  test('organization navigation includes a separate LLM configuration section', () => {
+  test('organization navigation only expands its selected category', () => {
     resetTestDom('https://oma.duck.ai/settings/organization');
     renderSettingsFeature('/settings/organization', <div>Organization form</div>);
     const nav = screen.getByRole('navigation', { name: 'Settings navigation' });
     expect(Array.from(nav.querySelectorAll('a')).map((link) => link.getAttribute('href'))).toEqual([
-      '/settings/organization',
-      '/settings/llm',
       '/settings/members',
       '/settings/workspaces',
-      '/settings/telemetry',
+      '/settings/organization',
     ]);
   });
 });
@@ -83,6 +81,7 @@ function renderSettingsFeature(
   children: ReactNode,
   options: { withThemeProvider?: boolean } = {},
 ) {
+  setTestViewport(1280, 900);
   const tree = (
     <SettingsFeatureHarness>
       <SettingsShell

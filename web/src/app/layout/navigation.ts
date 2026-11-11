@@ -53,91 +53,11 @@ export type NavGroupItem = {
     href: string;
     label: string;
     labelId: string;
-    hidden?: boolean;
-    section?: string;
     icon?: IconComponent;
   }>;
 };
 
 export type NavItem = NavLinkItem | NavGroupItem;
-
-export const workspaceManagementSections = [
-  { id: 'access', label: 'Models and access', labelId: 'nav.modelsAndAccess' },
-  { id: 'activity', label: 'Usage and operations', labelId: 'nav.usageAndOperations' },
-  { id: 'integrations', label: 'Integrations', labelId: 'nav.integrations' },
-] as const;
-
-export const workspaceManagementNavigation: NavGroupItem = {
-  type: 'group',
-  label: 'Workspace management',
-  labelId: 'nav.workspaceManagement',
-  icon: navigationIcons.settings,
-  children: [
-    { href: '/members', section: 'access', label: 'Members', labelId: 'nav.members', icon: navigationIcons.members },
-    {
-      href: '/llm-models',
-      section: 'access',
-      label: 'LLM models',
-      labelId: 'nav.llmModels',
-      icon: navigationIcons.models,
-    },
-    { href: '/api-keys', section: 'access', label: 'API keys', labelId: 'nav.apiKeys', icon: navigationIcons.keys },
-    { href: '/usage', section: 'activity', label: 'Usage', labelId: 'nav.usage', icon: navigationIcons.usage },
-    { href: '/cost', section: 'activity', label: 'Cost', labelId: 'nav.cost', icon: navigationIcons.cost },
-    {
-      href: '/observability',
-      section: 'activity',
-      label: 'Observability',
-      labelId: 'nav.observability',
-      icon: navigationIcons.observability,
-    },
-    {
-      href: '/usage/cache',
-      hidden: true,
-      section: 'activity',
-      label: 'Caching',
-      labelId: 'nav.caching',
-      icon: navigationIcons.memory,
-    },
-    {
-      href: '/usage/limits',
-      hidden: true,
-      section: 'activity',
-      label: 'Rate limits',
-      labelId: 'nav.rateLimits',
-      icon: navigationIcons.settings,
-    },
-    {
-      href: '/logs',
-      hidden: true,
-      section: 'activity',
-      label: 'Logs',
-      labelId: 'nav.logs',
-      icon: navigationIcons.files,
-    },
-    {
-      href: '/mcp-tunnels',
-      section: 'integrations',
-      label: 'MCP tunnels',
-      labelId: 'nav.mcpTunnels',
-      icon: navigationIcons.tunnel,
-    },
-    {
-      href: '/webhooks',
-      section: 'integrations',
-      label: 'Webhooks',
-      labelId: 'nav.webhooks',
-      icon: navigationIcons.webhooks,
-    },
-    {
-      href: '/telemetry',
-      section: 'integrations',
-      label: 'OpenTelemetry',
-      labelId: 'nav.telemetry',
-      icon: navigationIcons.observability,
-    },
-  ],
-};
 
 export const consoleNavigation: NavItem[] = [
   { type: 'link', href: '/dashboard', label: 'Overview', labelId: 'nav.overview', icon: navigationIcons.overview },
@@ -177,8 +97,8 @@ export const consoleNavigation: NavItem[] = [
     labelId: 'nav.resources',
     icon: navigationIcons.resources,
     children: [
-      { href: '/skills', label: 'Skills', labelId: 'nav.skills', icon: navigationIcons.skills },
       { href: '/files', label: 'Files', labelId: 'nav.files', icon: navigationIcons.files },
+      { href: '/skills', label: 'Skills', labelId: 'nav.skills', icon: navigationIcons.skills },
       { href: '/memory-stores', label: 'Memory stores', labelId: 'nav.memoryStores', icon: navigationIcons.memory },
       {
         href: '/credential-vaults',
@@ -187,22 +107,19 @@ export const consoleNavigation: NavItem[] = [
         icon: navigationIcons.vaults,
       },
       { href: '/mcp-servers', label: 'MCP Servers', labelId: 'nav.mcpServers', icon: navigationIcons.mcp },
+      { href: '/mcp-tunnels', label: 'MCP tunnels', labelId: 'nav.mcpTunnels', icon: navigationIcons.tunnel },
+      { href: '/webhooks', label: 'Webhooks', labelId: 'nav.webhooks', icon: navigationIcons.webhooks },
     ],
   },
 ];
 
-export const settingsNavigation = [
-  { href: '/settings/organization', label: 'Organization', labelId: 'nav.organization' },
-  { href: '/settings/llm', label: 'LLM configuration', labelId: 'nav.llmSettings' },
-  { href: '/settings/members', label: 'Members', labelId: 'nav.members' },
-  { href: '/settings/workspaces', label: 'Workspaces', labelId: 'nav.workspaces' },
-  { href: '/settings/telemetry', label: 'OpenTelemetry', labelId: 'nav.telemetry' },
-] as const;
-
-export const personalSettingsNavigation = [
-  { href: '/settings/profile', label: 'Profile', labelId: 'nav.profile' },
-  { href: '/settings/appearance', label: 'Appearance', labelId: 'nav.appearance' },
-] as const;
+export function sortedResourceNavigation(items: NavGroupItem['children'], locale: string) {
+  const order =
+    locale === 'zh-CN'
+      ? ['/files', '/skills', '/memory-stores', '/mcp-tunnels', '/webhooks', '/credential-vaults', '/mcp-servers']
+      : ['/files', '/skills', '/webhooks', '/mcp-tunnels', '/mcp-servers', '/memory-stores', '/credential-vaults'];
+  return [...items].sort((left, right) => order.indexOf(left.href) - order.indexOf(right.href));
+}
 
 export const placeholderIcons = {
   '/llm-models': Cpu,

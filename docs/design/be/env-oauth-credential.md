@@ -166,7 +166,7 @@ POST 仅创建自定义，拒绝 builtin_key/protected/uuid 等未知系统字�
 旧部署块 `vault.feishu_oauth_client` 已从普通 Config 删除；出现该键时明确要求导入后移除，运行时没有配置回退、自动导入、双读或双写。门户 SSO、飞书消息渠道和 `vault.platform_oauth_clients` 保持各自原有来源。
 
 1. 备份数据库、旧配置和匹配的主密钥；准备不含旧飞书块的当前 CONFIG_FILE。旧文件通过受控路径单独传入，不接受命令行 secret。
-2. 默认只读预检：`CONFIG_FILE=/etc/oma/config.yaml go run ./cmd/oauth-provider-migrate --legacy-config /secure/legacy.yaml`。旧飞书块均缺失可保持未配置，半配置失败；预检不会执行 schema 或数据写入。
+2. 默认只读预检：`CONFIG_FILE=/etc/oma/config.yaml go run ./cmd/oauth-provider-migrate --legacy-config /secure/legacy.yaml`。旧飞书块均缺失可保持未配置，半配置失败；预检不会执行 schema 或数据写入，输出 `success=<已回填> pending=<待回填> skipped=<无需处理> failed=0`，`pending` 是 `--apply` 前判断是否真有数据要迁移的依据。预检被信号取消时以 `canceled` 非零退出，不计入数据失败。
 3. 停止共享该数据库的 API、worker 和其他写入方，再加 `--apply`。命令获取 goose 会话维护锁，仅前进到 00119；分页对全部状态的自定义 provider/flow ID Seal/Open 往返验证并按 UUID/旧值 CAS 回填，校验原 secret 可解密；重入验证已有信封并跳过，不重新生成密文。
 4. 飞书两信封均空才原子导入旧配置；已有 DB 配置仅校验并跳过，绝不覆盖管理员最新值。KMS、坏信封、半配置或 CAS 冲突非零退出，保留可续跑状态。
 5. 全部回填完成再前进到 00120，断言并删除明文列，真实读取解密验证。随后前进到 00121 seed Friday，再应用 00122 收紧自定义凭据约束；已到 00122 只校验或补齐未配置内置行，绝不降级。输出仅含版本、行 UUID、计数和白名单错误码。

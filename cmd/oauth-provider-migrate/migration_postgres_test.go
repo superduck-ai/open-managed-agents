@@ -332,7 +332,7 @@ func TestOAuthProviderFridayImportPostgres(t *testing.T) {
 		t.Fatal("未升级到 00122")
 	}
 	output.Reset()
-	if err := migrate(t.Context(), database, service, legacyClient{}, client, false, &output, slog.New(slog.DiscardHandler)); err != nil || !strings.Contains(output.String(), "success=0 skipped=2 failed=0") {
+	if err := migrate(t.Context(), database, service, legacyClient{}, client, false, &output, slog.New(slog.DiscardHandler)); err != nil || !strings.Contains(output.String(), "success=0 pending=0 skipped=2 failed=0") {
 		t.Fatal("Friday 只读预检未统计两个内置行", err)
 	}
 

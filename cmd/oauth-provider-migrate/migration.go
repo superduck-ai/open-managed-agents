@@ -16,6 +16,14 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+type migrationResult int
+
+const (
+	migrationUnchanged migrationResult = iota
+	migrationPending
+	migrationApplied
+)
+
 type legacyClient struct {
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"`
@@ -76,10 +84,13 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 		logger.InfoContext(ctx, "platform oauth provider audit", "actor_type", "system", "provider_uuid", seed.UUID, "provider_key", "builtin:feishu", "action", "seed", "changed_fields", []string{"builtin_key", "protected"}, "result", "success")
 		version = 119
 	}
-	var success, skipped int
+	counts := map[migrationResult]int{}
 	for _, kind := range []string{"platform_oauth_providers", "env_oauth_flows"} {
 		after := ""
 		for {
+			if err := ctx.Err(); err != nil {
+				return errors.New("canceled")
+			}
 			rows, err := database.ListOAuthClientMigrationPage(ctx, kind, after, version < 120, version >= 119)
 			if err != nil {
 				return errors.New("client_scan_failed")
@@ -88,127 +99,125 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 				break
 			}
 			for _, row := range rows {
-				changed, err := migrateClient(ctx, database, service, kind, row, apply)
+				if err := ctx.Err(); err != nil {
+					return errors.New("canceled")
+				}
+				result, err := migrateClient(ctx, database, service, kind, row, apply)
 				if err != nil {
 					fmt.Fprintf(out, "uuid=%s failed=1 error_code=client_migration_failed\n", row.UUID)
 					return errors.New("client_migration_failed")
 				}
-				if changed {
-					success++
-				} else {
-					skipped++
-				}
+				counts[result]++
 				after = row.UUID
 			}
 		}
 	}
 	if version >= 119 {
-		changed, err := importBuiltin(ctx, database, service, "feishu", legacy, apply, logger)
+		result, err := importBuiltin(ctx, database, service, "feishu", legacy, apply, logger)
 		if err != nil {
 			return err
 		}
-		if changed {
-			success++
-		} else {
-			skipped++
-		}
+		counts[result]++
 	}
 	if apply {
 		if err := finalizeSchema(ctx, database, version, logger); err != nil {
 			return err
 		}
-		changed, err := importBuiltin(ctx, database, service, "friday", friday, true, logger)
+		result, err := importBuiltin(ctx, database, service, "friday", friday, true, logger)
 		if err != nil {
 			return err
 		}
-		if changed {
-			success++
-		} else {
-			skipped++
-		}
+		counts[result]++
 		if err := verifyFinalClients(ctx, database, service, logger); err != nil {
 			return err
 		}
 		fmt.Fprintln(out, "schema_version=122")
 	} else if version >= 121 {
-		if _, err := importBuiltin(ctx, database, service, "friday", friday, false, logger); err != nil {
+		result, err := importBuiltin(ctx, database, service, "friday", friday, false, logger)
+		if err != nil {
 			return err
 		}
-		skipped++
+		counts[result]++
 	}
-	fmt.Fprintf(out, "success=%d skipped=%d failed=0\n", success, skipped)
+	if err := ctx.Err(); err != nil {
+		return errors.New("canceled")
+	}
+	fmt.Fprintf(out, "success=%d pending=%d skipped=%d failed=0\n", counts[migrationApplied], counts[migrationPending], counts[migrationUnchanged])
 	return nil
 }
 
-func migrateClient(ctx context.Context, database *db.DB, service *secrets.Service, kind string, row db.OAuthClientMigrationRecord, apply bool) (bool, error) {
+func migrateClient(ctx context.Context, database *db.DB, service *secrets.Service, kind string, row db.OAuthClientMigrationRecord, apply bool) (migrationResult, error) {
 	binding := platformoauth.ProviderClientIDBinding(row.ExternalID)
 	if kind == "env_oauth_flows" {
 		binding = platformoauth.FlowClientIDBinding(db.EnvOAuthFlow{OrganizationUUID: row.OrganizationUUID, WorkspaceUUID: row.WorkspaceUUID, ExternalID: row.ExternalID})
 	}
 	if kind == "platform_oauth_providers" {
 		if _, err := platformoauth.OpenClientField(ctx, service, platformoauth.ProviderSecretBinding(row.ExternalID), row.ClientSecretEnvelope); err != nil {
-			return false, err
+			return migrationUnchanged, err
 		}
 	}
 	if row.ClientIDEnvelope != nil {
 		value, err := platformoauth.OpenClientField(ctx, service, binding, row.ClientIDEnvelope)
 		if err != nil {
-			return false, err
+			return migrationUnchanged, err
 		}
 		if row.LegacyClientID != "" && row.LegacyClientID != value {
-			return false, errors.New("client_snapshot_mismatch")
+			return migrationUnchanged, errors.New("client_snapshot_mismatch")
 		}
-		return false, nil
+		return migrationUnchanged, nil
 	}
 	if row.LegacyClientID == "" {
-		return false, errors.New("client_id_missing")
+		return migrationUnchanged, errors.New("client_id_missing")
 	}
 	if !apply {
-		return false, ctx.Err()
+		return migrationPending, nil
 	}
 	envelope, err := platformoauth.SealClientField(ctx, service, binding, row.LegacyClientID)
 	if err != nil {
-		return false, err
+		return migrationUnchanged, err
 	}
 	if err := database.BackfillOAuthClientID(ctx, kind, row, *envelope); err != nil {
-		return false, err
+		return migrationUnchanged, err
 	}
-	return true, nil
+	return migrationApplied, nil
 }
 
-func importBuiltin(ctx context.Context, database *db.DB, service *secrets.Service, builtinKey string, legacy legacyClient, apply bool, logger *slog.Logger) (bool, error) {
+func importBuiltin(ctx context.Context, database *db.DB, service *secrets.Service, builtinKey string, legacy legacyClient, apply bool, logger *slog.Logger) (migrationResult, error) {
 	provider, err := database.GetPlatformOAuthProviderByBuiltinKey(ctx, builtinKey)
 	if err != nil {
-		return false, errors.New("builtin_missing")
+		return migrationUnchanged, errors.New("builtin_missing")
 	}
 	if (provider.ClientIDEnvelope == nil) != (provider.ClientSecretEnvelope == nil) {
-		return false, errors.New("builtin_client_incomplete")
+		return migrationUnchanged, errors.New("builtin_client_incomplete")
 	}
 	if provider.ClientIDEnvelope != nil {
 		if _, err := platformoauth.NewResolver(database, service, logger).ResolveEnvOAuthProvider(ctx, "builtin:"+builtinKey); err != nil {
-			return false, errors.New("builtin_decryption_failed")
+			return migrationUnchanged, errors.New("builtin_decryption_failed")
 		}
-		return false, nil
+		return migrationUnchanged, nil
 	}
-	if legacy.ClientID == "" || !apply {
-		return false, nil
+	if legacy.ClientID == "" {
+		return migrationUnchanged, nil
+	}
+	if !apply {
+		return migrationPending, nil
 	}
 	id, err := platformoauth.SealClientField(ctx, service, platformoauth.ProviderClientIDBinding(provider.ExternalID), legacy.ClientID)
 	if err != nil {
-		return false, errors.New("builtin_seal_failed")
+		return migrationUnchanged, errors.New("builtin_seal_failed")
 	}
 	secret, err := platformoauth.SealClientField(ctx, service, platformoauth.ProviderSecretBinding(provider.ExternalID), legacy.ClientSecret)
 	if err != nil {
-		return false, errors.New("builtin_seal_failed")
+		return migrationUnchanged, errors.New("builtin_seal_failed")
 	}
 	provider.ClientIDEnvelope, provider.ClientSecretEnvelope = id, secret
 	provider.UpdatedAt = time.Now().UTC()
 	if _, err := database.UpdatePlatformOAuthProvider(ctx, provider); err != nil {
-		return false, errors.New("builtin_save_failed")
+		return migrationUnchanged, errors.New("builtin_save_failed")
 	}
 	logger.InfoContext(ctx, "platform oauth provider audit", "actor_type", "maintenance", "provider_uuid", provider.UUID,
 		"provider_key", "builtin:"+builtinKey, "action", "import", "changed_fields", []string{"client_id", "client_secret"}, "result", "success")
-	return true, nil
+	return migrationApplied, nil
 }
 
 func verifyFinalClients(ctx context.Context, database *db.DB, service *secrets.Service, logger *slog.Logger) error {

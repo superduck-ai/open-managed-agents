@@ -170,14 +170,6 @@ func NewHandler(cfg config.Config, database *db.DB, secretSvc *secrets.Service, 
 	return h
 }
 
-func (h *Handler) WithEnvOAuthProviders(providers EnvOAuthProviderResolver) *Handler {
-	if h == nil {
-		return nil
-	}
-	h.validator.WithEnvOAuthProviders(providers)
-	return h
-}
-
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("beta") != "true" {
 		h.errorAdapter.Write(w, r, vaultBetaRequired())

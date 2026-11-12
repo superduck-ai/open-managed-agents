@@ -84,8 +84,21 @@ func TestInboundAttachmentUploadsToFilesAndMountsResource(t *testing.T) {
 	if strings.Contains(text, "base64") {
 		t.Fatalf("入站附件不应再以 base64 内容块发送: %s", text)
 	}
-	if !strings.Contains(text, "/mnt/user-data/files/file_up_1/photo.png") {
-		t.Fatalf("缺少挂载路径提示: %s", text)
+	if strings.Contains(text, "/mnt/user-data") {
+		t.Fatalf("附件正文不应再拼接挂载路径: %s", text)
+	}
+	var blocks []map[string]any
+	if err := json.Unmarshal([]byte(text), &blocks); err != nil || len(blocks) != 1 {
+		t.Fatalf("正文已带文本时不应追加附件提示: %s", text)
+	}
+	onlyAttachment := &channeltypes.NormalizedMessage{ChatID: "oc_1", UserID: "ou_1", Resources: msg.Resources}
+	content, _, _, err = worker.messageContent(context.Background(), "key", "sesn_1", onlyAttachment, "")
+	if err != nil {
+		t.Fatalf("messageContent: %v", err)
+	}
+	encoded, _ = json.Marshal(content)
+	if !strings.Contains(string(encoded), "已发送附件") || !strings.Contains(string(encoded), "photo.png") {
+		t.Fatalf("纯附件消息应带文件名提示: %s", encoded)
 	}
 }
 

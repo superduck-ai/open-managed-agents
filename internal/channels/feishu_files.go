@@ -26,7 +26,7 @@ func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID st
 	}
 	skipped := make([]string, 0)
 	mounted := make(map[string]struct{})
-	hints := make([]string, 0)
+	names := make([]string, 0)
 	existing := w.existingFileMounts(ctx, apiKey, sessionID)
 	for index, resource := range msg.Resources {
 		if index >= channelAttachmentLimit {
@@ -45,22 +45,16 @@ func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID st
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("上传附件 %s 失败: %w", name, err)
 		}
-		mountPath := existing[file.ID]
-		if mountPath == "" {
-			attached, err := w.supervisor.oma.attachFileResource(ctx, apiKey, sessionID, file.ID)
-			if err != nil {
+		if _, ok := existing[file.ID]; !ok {
+			if _, err := w.supervisor.oma.attachFileResource(ctx, apiKey, sessionID, file.ID); err != nil {
 				return nil, nil, nil, fmt.Errorf("挂载附件 %s 失败: %w", name, err)
 			}
-			mountPath = attached.MountPath
 		}
 		mounted[file.ID] = struct{}{}
-		if mountPath == "" {
-			mountPath = file.ID
-		}
-		hints = append(hints, "📎 "+name+" → `"+mountPath+"`")
+		names = append(names, name)
 	}
-	if len(hints) > 0 {
-		content = append(content, map[string]any{"type": "text", "text": strings.Join(hints, "\n")})
+	if text == "" && len(names) > 0 {
+		content = append(content, map[string]any{"type": "text", "text": "已发送附件：" + strings.Join(names, "、")})
 	}
 	return content, skipped, mounted, nil
 }
@@ -102,15 +96,15 @@ func (w *channelWorker) downloadAttachment(ctx context.Context, resource channel
 	}
 }
 
-func (w *channelWorker) existingFileMounts(ctx context.Context, apiKey, sessionID string) map[string]string {
-	mounts := make(map[string]string)
+func (w *channelWorker) existingFileMounts(ctx context.Context, apiKey, sessionID string) map[string]struct{} {
+	mounts := make(map[string]struct{})
 	resources, err := w.supervisor.oma.listResources(ctx, apiKey, sessionID)
 	if err != nil {
 		return mounts
 	}
 	for _, resource := range resources {
 		if resource.Type == "file" && resource.FileID != "" {
-			mounts[resource.FileID] = resource.MountPath
+			mounts[resource.FileID] = struct{}{}
 		}
 	}
 	return mounts

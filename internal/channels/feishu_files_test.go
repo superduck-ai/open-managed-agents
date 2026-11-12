@@ -97,8 +97,8 @@ func TestInboundAttachmentUploadsToFilesAndMountsResource(t *testing.T) {
 		t.Fatalf("messageContent: %v", err)
 	}
 	encoded, _ = json.Marshal(content)
-	if !strings.Contains(string(encoded), "已发送附件") || !strings.Contains(string(encoded), "photo.png") {
-		t.Fatalf("纯附件消息应带文件名提示: %s", encoded)
+	if !strings.Contains(string(encoded), "photo.png") || strings.Contains(string(encoded), "已发送附件") {
+		t.Fatalf("纯附件消息只应带文件名: %s", encoded)
 	}
 }
 

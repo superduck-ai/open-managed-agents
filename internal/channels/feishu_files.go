@@ -54,7 +54,7 @@ func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID st
 		names = append(names, name)
 	}
 	if text == "" && len(names) > 0 {
-		content = append(content, map[string]any{"type": "text", "text": "已发送附件：" + strings.Join(names, "、")})
+		content = append(content, map[string]any{"type": "text", "text": strings.Join(names, "、")})
 	}
 	return content, skipped, mounted, nil
 }

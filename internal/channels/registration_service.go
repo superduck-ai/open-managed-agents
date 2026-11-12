@@ -52,8 +52,8 @@ func (s *localService) authorizationStatus(ctx context.Context, principal auth.P
 	return authorizationView(record), nil
 }
 
-func (s *localService) qrStatus(ctx context.Context, principal auth.Principal, agentID, channelID string) (map[string]any, error) {
-	channel, err := s.store.GetChannelRecord(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, agentID, channelID)
+func (s *localService) qrStatus(ctx context.Context, principal auth.Principal, channelID string) (map[string]any, error) {
+	channel, err := s.store.GetChannelRecordByID(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, channelID)
 	if errors.Is(err, db.ErrNotFound) {
 		return nil, channelNotFound()
 	}

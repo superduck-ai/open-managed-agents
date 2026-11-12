@@ -25,8 +25,6 @@ func (h *localHandler) agentRouter() http.Handler {
 	router.Post("/settings", wrap(h.saveSettings))
 	router.Post("/{channel_id}", wrap(h.update))
 	router.Delete("/{channel_id}", wrap(h.remove))
-	router.Get("/{channel_id}/qr", wrap(h.qr))
-	router.Post("/{channel_id}/qr", wrap(h.qr))
 	router.Get("/{channel_id}/pairings", wrap(h.pairings))
 	router.Post("/{channel_id}/pairings/{pairing_id}", wrap(h.decidePairing))
 	return router
@@ -36,6 +34,8 @@ func (h *localHandler) workspaceRouter() http.Handler {
 	router := chi.NewRouter()
 	wrap := httpapi.NewErrorAdapter(h.logger).Wrap
 	router.Get("/", wrap(h.listWorkspace))
+	router.Get("/{channel_id}/qr", wrap(h.qr))
+	router.Post("/{channel_id}/qr", wrap(h.qr))
 	router.Post("/credentials/check", wrap(h.checkAppCredentials))
 	router.Post("/authorizations", wrap(h.beginAuthorization))
 	router.Get("/authorizations/{authorization_id}", wrap(h.authorizationStatus))
@@ -224,7 +224,7 @@ func (h *localHandler) qr(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	view, err := h.service.qrStatus(r.Context(), principal, chi.URLParam(r, "agent_id"), chi.URLParam(r, "channel_id"))
+	view, err := h.service.qrStatus(r.Context(), principal, chi.URLParam(r, "channel_id"))
 	if err != nil {
 		return err
 	}

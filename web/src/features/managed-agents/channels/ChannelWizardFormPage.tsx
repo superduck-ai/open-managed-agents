@@ -1,6 +1,7 @@
 import { gitResourceBody } from '../resources/git-resource';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { anthropicBetaApi } from '../../../shared/api/anthropic';
 import { useI18n } from '../../../shared/i18n';
 import { Alert, AlertDescription } from '../../../shared/ui/alert';
 import { Button } from '../../../shared/ui/button';
@@ -166,7 +167,7 @@ export function ChannelWizardFormPage({
           void queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, saved.id] });
           return;
         }
-        const next = await channelApi<ChannelQr>(targetAgentId, workspaceId, `/${saved.id}/qr`);
+        const next = await anthropicBetaApi.channels.qr<ChannelQr>(workspaceId, saved.id);
         if (!controller.signal.aborted) {
           setQr(next);
           setPollError('');

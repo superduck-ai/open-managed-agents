@@ -169,6 +169,22 @@ test('组织很多时菜单只保留当前组织，搜索后再切换', async ()
   expect(screen.queryByRole('option', { name: /星河/ })).toBeNull();
 });
 
+test('切换组织搜索框接收键盘输入，不被账号菜单截获', async () => {
+  globalThis.fetch = mock(async () => Response.json({ data: [] })) as typeof fetch;
+  const memberships = [
+    { organization: { uuid: 'current', name: '集团-总部-财务中心-财务部' }, role: 'admin' },
+    { organization: { uuid: 'other', name: '伙伴公司-星河-财务部' }, role: 'user' },
+    ...Array.from({ length: 8 }, (_, index) => ({
+      organization: { uuid: `org-${index}`, name: `集团-分部${index}` },
+      role: 'admin',
+    })),
+  ];
+  mount(memberships);
+  fireEvent.click(screen.getByRole('menuitem', { name: '切换组织' }));
+  const search = await screen.findByRole('combobox', { name: '搜索组织' });
+  expect(fireEvent.keyDown(search, { key: 'a' })).toBe(true);
+});
+
 test.each([
   [401, 'Unauthorized', '登录已失效，请重新登录。'],
   [403, 'Forbidden', '你无权处理此邀请。'],

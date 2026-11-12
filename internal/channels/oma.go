@@ -18,6 +18,7 @@ const omaManagedAgentsBeta = "managed-agents-2026-04-01"
 type omaEvent struct {
 	ID         string          `json:"id"`
 	Type       string          `json:"type"`
+	Name       string          `json:"name"`
 	Content    json.RawMessage `json:"content"`
 	StopReason json.RawMessage `json:"stop_reason"`
 	CreatedAt  string          `json:"created_at"`
@@ -190,6 +191,9 @@ func eventThinking(event omaEvent) string {
 }
 
 func eventToolName(event omaEvent) string {
+	if event.Name != "" {
+		return event.Name
+	}
 	var blocks []omaContentBlock
 	if err := json.Unmarshal(event.Content, &blocks); err != nil {
 		return ""

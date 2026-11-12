@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
+	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/scene/registration"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -496,37 +496,66 @@ func stringPointer(value string) *string {
 	return &value
 }
 
-func TestChannelEventTextHonorsDisplayOptions(t *testing.T) {
+func TestChannelReplyHonorsDisplayOptions(t *testing.T) {
 	message := omaEvent{Type: "agent.message", Content: []byte(`[{"type":"text","text":"你好"}]`)}
-	thinking := omaEvent{Type: "agent.thinking", Content: []byte(`[{"type":"thinking","thinking":"先想一想"}]`)}
-	tool := omaEvent{Type: "agent.tool_use", Content: []byte(`[{"type":"tool_use","name":"Bash"}]`)}
-	quiet := db.ChannelRecord{}
-	if got := channelEventText(quiet, message); got != "你好\n" {
-		t.Fatalf("普通回复 = %q", got)
+	thinking := omaEvent{Type: "agent.thinking"}
+	tool := omaEvent{Type: "agent.tool_use", Name: "Bash", Content: []byte(`{"command":"ls"}`)}
+	quiet := &channelReply{}
+	if text, changed := quiet.consume(db.ChannelRecord{}, message); text != "你好\n" || !changed {
+		t.Fatalf("普通回复 = %q, %v", text, changed)
 	}
-	if got := channelEventText(quiet, thinking); got != "" {
-		t.Fatalf("未开启思考时不应输出 = %q", got)
+	if _, changed := (&channelReply{}).consume(db.ChannelRecord{}, thinking); changed {
+		t.Fatal("未开启思考时不应产生更新")
 	}
-	if got := channelEventText(quiet, tool); got != "" {
-		t.Fatalf("未开启工具调用时不应输出 = %q", got)
+	if _, changed := (&channelReply{}).consume(db.ChannelRecord{}, tool); changed {
+		t.Fatal("未开启工具调用时不应产生更新")
 	}
-	loud := db.ChannelRecord{IncludeThinking: true, IncludeToolCalls: true}
-	if got := channelEventText(loud, thinking); got != "> 💭 先想一想\n" {
-		t.Fatalf("思考输出 = %q", got)
+	loud := &channelReply{card: true}
+	if _, changed := loud.consume(db.ChannelRecord{IncludeThinking: true}, thinking); !changed || !loud.thinking {
+		t.Fatal("开启思考后应进入思考状态")
 	}
-	if got := channelEventText(loud, tool); got != "🔧 Bash\n" {
-		t.Fatalf("工具输出 = %q", got)
+	if card := loud.render(); !strings.Contains(card, "正在思考") {
+		t.Fatalf("思考状态卡片 = %s", card)
+	}
+	if text, changed := loud.consume(db.ChannelRecord{IncludeToolCalls: true}, tool); text != "🔧 Bash\n" || !changed || loud.thinking {
+		t.Fatalf("工具输出 = %q, %v，思考中 = %v", text, changed, loud.thinking)
+	}
+	if card := loud.render(); strings.Contains(card, "正在思考") || !strings.Contains(card, "Bash") {
+		t.Fatalf("工具调用后的卡片 = %s", card)
 	}
 }
 
-func TestReplyTargetUsesThreadOnlyWhenEnabled(t *testing.T) {
-	msg := &channeltypes.NormalizedMessage{MessageID: "om_1", ChatID: "oc_1"}
-	worker := &channelWorker{record: db.ChannelRecord{}}
-	if got := worker.replyTarget(msg); got != "" {
-		t.Fatalf("未开启话题回复时应直接发消息，实际 %q", got)
+func TestReplyMessageRequestsThreadReply(t *testing.T) {
+	var replyBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/tenant_access_token/internal"):
+			_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"token","expire":7200}`))
+		case strings.Contains(r.URL.Path, "/im/v1/messages/") && strings.HasSuffix(r.URL.Path, "/reply"):
+			body, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(body, &replyBody); err != nil {
+				t.Errorf("解析回复请求: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"code":0,"data":{"message_id":"om_2"}}`))
+		default:
+			t.Errorf("未预期的请求 %s", r.URL.Path)
+			_, _ = w.Write([]byte(`{"code":0}`))
+		}
+	}))
+	defer server.Close()
+	worker := &channelWorker{
+		client: lark.NewClient("cli_test", "secret", lark.WithOpenBaseUrl(server.URL)),
+		record: db.ChannelRecord{ReplyInThread: true},
 	}
-	worker.record.ReplyInThread = true
-	if got := worker.replyTarget(msg); got != "om_1" {
-		t.Fatalf("话题回复目标 = %q", got)
+	messageID, err := worker.replyMessage(context.Background(), "om_1", "text", `{"text":"好的"}`)
+	if err != nil {
+		t.Fatalf("replyMessage: %v", err)
+	}
+	if messageID != "om_2" {
+		t.Fatalf("回复消息 ID = %q", messageID)
+	}
+	if replyBody["reply_in_thread"] != true {
+		t.Fatalf("回复请求必须带 reply_in_thread=true，实际 %v", replyBody)
 	}
 }

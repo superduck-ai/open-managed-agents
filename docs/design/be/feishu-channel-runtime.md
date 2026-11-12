@@ -62,7 +62,10 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 - 单聊固定复用 `chat:<chat_id>` 会话；同一聊天连续对话继续落在同一个会话，会话归档后自动新建。
 - 会话 metadata 写入 `source=feishu`、`channel_id`、`app_id`、`scope_id`、`chat_type`、`open_id`、`actor_id`，控制台按既有渠道来源识别会话。
 - 回复使用飞书流式卡片，结束条件为 `session.status_idle` 且 `stop_reason` 为 `end_turn`/`interrupted`/`retries_exhausted`，或会话错误、30 分钟超时。
-- 展示开关在原生运行时生效：`include_thinking` 把 `agent.thinking` 以引用块追加到卡片，`include_tool_calls` 追加 `🔧 工具名`，`reply_in_thread` 让首条消息与提示都带 `reply_message_id` 回复到原消息，形成话题。
+- 展示开关在原生运行时生效：
+  - `include_tool_calls`：读取事件顶层的 `name`（`agent.tool_use` / `agent.mcp_tool_use` / `agent.custom_tool_use`），在回复里追加 `🔧 工具名`。
+  - `include_thinking`：会话事件接口会剥离 `agent.thinking` 的正文，因此只按现有合同展示状态——回复改用卡片流，正文下方显示 `_🧠 正在思考…_`，收到正式回复或工具调用后自动消失。
+  - `reply_in_thread`：通过飞书回复接口并显式设置 `reply_in_thread=true` 新建话题；Channel SDK 的回复封装不带该参数，所以话题模式由运行时自己发首条消息再接管流式更新。
 - 多实例部署：每个实例启动时加载全部可运行渠道并每 30 秒对账一次，配置或启停变化会重建/停止本地 worker；飞书长连接按应用维度分发事件，会话映射与配对状态都在 Postgres 共享。禁用或删除后在下次对账前旧 worker 仍可能收到消息，因此每条消息都会重新校验渠道记录，非 `enabled` 或已删除的渠道直接丢弃，不再回复。
 - 删除渠道停止运行、清除会话映射并软删除记录，历史 OMA 会话保留。
 

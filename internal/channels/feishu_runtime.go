@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,7 +13,9 @@ import (
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/channel"
+	"github.com/larksuite/oapi-sdk-go/v3/channel/normalize"
 	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -213,6 +216,7 @@ type channelWorker struct {
 	supervisor *runtimeSupervisor
 	record     db.ChannelRecord
 	secret     string
+	client     *lark.Client
 	channel    channeltypes.Channel
 	cancel     context.CancelFunc
 	online     atomic.Bool
@@ -235,6 +239,7 @@ func newChannelWorker(supervisor *runtimeSupervisor, record db.ChannelRecord, se
 		supervisor: supervisor,
 		record:     record,
 		secret:     secret,
+		client:     client,
 		channel:    bot,
 	}
 	bot.OnReady(func() { worker.online.Store(true) })
@@ -398,11 +403,17 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channeltypes.Normal
 }
 
 func (w *channelWorker) streamReply(ctx context.Context, msg *channeltypes.NormalizedMessage, apiKey, sessionID string, baseline int) error {
-	stream, err := w.channel.Stream(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Markdown: "正在处理…", ReplyMessageID: w.replyTarget(msg)})
+	stream, err := w.openStream(ctx, msg)
 	if err != nil {
 		return err
 	}
 	defer stream.Close(context.WithoutCancel(ctx))
+	reply := channelReply{card: w.record.IncludeThinking, thinking: w.record.IncludeThinking}
+	if reply.card {
+		if err := stream.UpdateCard(ctx, reply.render()); err != nil {
+			return err
+		}
+	}
 	seen := make(map[string]struct{})
 	deadline := time.Now().Add(channelReplyTimeout)
 	ticker := time.NewTicker(channelReplyPollInterval)
@@ -419,9 +430,16 @@ func (w *channelWorker) streamReply(ctx context.Context, msg *channeltypes.Norma
 					continue
 				}
 				seen[event.ID] = struct{}{}
-				if text := channelEventText(w.record, event); text != "" {
-					if err := stream.Append(ctx, text); err != nil {
-						return err
+				text, changed := reply.consume(w.record, event)
+				if changed {
+					if reply.card {
+						if err := stream.UpdateCard(ctx, reply.render()); err != nil {
+							return err
+						}
+					} else if text != "" {
+						if err := stream.Append(ctx, text); err != nil {
+							return err
+						}
 					}
 				}
 				if terminalEvent(event) {
@@ -445,38 +463,128 @@ func (w *channelWorker) streamReply(ctx context.Context, msg *channeltypes.Norma
 	}
 }
 
+func (w *channelWorker) openStream(ctx context.Context, msg *channeltypes.NormalizedMessage) (channeltypes.StreamController, error) {
+	if !w.record.ReplyInThread || msg.MessageID == "" {
+		if w.record.IncludeThinking {
+			return w.channel.Stream(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Card: channelCardStart()})
+		}
+		return w.channel.Stream(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Markdown: "正在处理…"})
+	}
+	if w.record.IncludeThinking {
+		messageID, err := w.replyMessage(ctx, msg.MessageID, "interactive", channelCardStart())
+		if err != nil {
+			return nil, err
+		}
+		return channel.NewCardStreamController(w.client, channeltypes.DefaultChannelConfig(), messageID), nil
+	}
+	content, err := normalize.SimpleMarkdownToPost("", "正在处理…", nil)
+	if err != nil {
+		return nil, err
+	}
+	messageID, err := w.replyMessage(ctx, msg.MessageID, "post", content)
+	if err != nil {
+		return nil, err
+	}
+	return channel.NewMarkdownStreamController(w.client, channeltypes.DefaultChannelConfig(), messageID, "正在处理…", ""), nil
+}
+
+func (w *channelWorker) replyMessage(ctx context.Context, messageID, msgType, content string) (string, error) {
+	request := larkim.NewReplyMessageReqBuilder().
+		MessageId(messageID).
+		Body(larkim.NewReplyMessageReqBodyBuilder().MsgType(msgType).Content(content).ReplyInThread(true).Build()).
+		Build()
+	response, err := w.client.Im.V1.Message.Reply(ctx, request)
+	if err != nil {
+		return "", err
+	}
+	if !response.Success() {
+		return "", fmt.Errorf("飞书回复消息失败: %d %s", response.Code, response.Msg)
+	}
+	if response.Data == nil || response.Data.MessageId == nil {
+		return "", errors.New("飞书回复消息缺少 message_id")
+	}
+	return *response.Data.MessageId, nil
+}
+
 func (w *channelWorker) replyText(ctx context.Context, msg *channeltypes.NormalizedMessage, text string) error {
-	_, err := w.channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Text: text, ReplyMessageID: w.replyTarget(msg)})
+	if w.record.ReplyInThread && msg.MessageID != "" {
+		content, err := json.Marshal(map[string]string{"text": text})
+		if err != nil {
+			return err
+		}
+		_, err = w.replyMessage(ctx, msg.MessageID, "text", string(content))
+		return err
+	}
+	_, err := w.channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Text: text})
 	return err
 }
 
-func (w *channelWorker) replyTarget(msg *channeltypes.NormalizedMessage) string {
-	if !w.record.ReplyInThread {
-		return ""
-	}
-	return msg.MessageID
+type channelReply struct {
+	card     bool
+	thinking bool
+	text     strings.Builder
 }
 
-func channelEventText(record db.ChannelRecord, event omaEvent) string {
+func (r *channelReply) consume(record db.ChannelRecord, event omaEvent) (string, bool) {
 	switch event.Type {
 	case "agent.message":
-		if text := eventText(event); text != "" {
-			return text + "\n"
+		text := eventText(event)
+		if text == "" {
+			return "", false
 		}
+		r.text.WriteString(text + "\n")
+		r.thinking = false
+		return text + "\n", true
 	case "agent.thinking":
-		if record.IncludeThinking {
-			if text := eventThinking(event); text != "" {
-				return "> 💭 " + strings.ReplaceAll(text, "\n", "\n> ") + "\n"
-			}
+		if record.IncludeThinking && !r.thinking {
+			r.thinking = true
+			return "", true
 		}
 	case "agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use":
-		if record.IncludeToolCalls {
-			if name := eventToolName(event); name != "" {
-				return "🔧 " + name + "\n"
-			}
+		if !record.IncludeToolCalls {
+			return "", false
 		}
+		name := eventToolName(event)
+		if name == "" {
+			return "", false
+		}
+		line := "🔧 " + name + "\n"
+		r.text.WriteString(line)
+		r.thinking = false
+		return line, true
 	}
-	return ""
+	return "", false
+}
+
+func (r *channelReply) render() string {
+	return channelCard(r.text.String(), r.thinking)
+}
+
+func channelCardStart() string {
+	return channelCard("", true)
+}
+
+func channelCard(text string, thinking bool) string {
+	elements := make([]map[string]any, 0, 2)
+	if text != "" {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": text})
+	}
+	if thinking {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": "_🧠 正在思考…_", "text_size": "notation"})
+	}
+	if len(elements) == 0 {
+		elements = append(elements, map[string]any{"tag": "markdown", "content": "_正在处理…_"})
+	}
+	card := map[string]any{
+		"schema": "2.0",
+		"config": map[string]any{"update_multi": true},
+		"body":   map[string]any{"elements": elements},
+	}
+	encoded, err := json.Marshal(card)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
 }
 
 func terminalEvent(event omaEvent) bool {

@@ -22,14 +22,14 @@ func (w *channelWorker) handleMessage(ctx context.Context, msg *channeltypes.Nor
 		return w.replyText(ctx, msg, "请发送文本、图片或 PDF 附件。")
 	}
 	scopeKey := channelScopeKey(msg)
+	allowed, err := w.authorize(ctx, msg)
+	if err != nil || !allowed {
+		return err
+	}
 	switch text {
 	case "/new", "/stop":
 		go w.runCommand(w.baseContext(), scopeKey, msg, text)
 		return nil
-	}
-	allowed, err := w.authorize(ctx, msg)
-	if err != nil || !allowed {
-		return err
 	}
 	sessionID, err := w.sessionFor(ctx, msg, scopeKey)
 	if err != nil {
@@ -123,7 +123,7 @@ func (w *channelWorker) cancelReplies(scopeKey string) {
 
 func (w *channelWorker) deliver(task *channelReplyTask, msg *channeltypes.NormalizedMessage, apiKey string) {
 	defer w.finishReply(task)
-	if task.ctx.Err() != nil {
+	if !w.sessionBound(task.ctx, task) {
 		return
 	}
 	baseline := w.resourceBaseline(task.ctx, apiKey, task.sessionID)
@@ -135,6 +135,9 @@ func (w *channelWorker) deliver(task *channelReplyTask, msg *channeltypes.Normal
 	task.inbound = mounted
 	if len(content) == 0 {
 		_ = w.replyText(task.ctx, msg, "附件格式暂不支持，目前仅支持图片、PDF 与纯文本文件。")
+		return
+	}
+	if !w.sessionBound(task.ctx, task) {
 		return
 	}
 	if len(skipped) > 0 {
@@ -157,7 +160,7 @@ func (w *channelWorker) deliver(task *channelReplyTask, msg *channeltypes.Normal
 		w.supervisor.logger.WarnContext(task.ctx, "stream channel reply", "channel_id", w.record.ExternalID, "error", err)
 		return
 	}
-	if task.ctx.Err() == nil {
+	if w.sessionBound(task.ctx, task) {
 		w.sendArtifacts(task.ctx, task, msg, apiKey, baseline)
 	}
 }

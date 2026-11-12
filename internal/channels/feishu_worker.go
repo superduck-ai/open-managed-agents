@@ -165,6 +165,13 @@ func (w *channelWorker) currentSession(ctx context.Context, scopeKey string) str
 	return sessionID
 }
 
+func (w *channelWorker) sessionBound(ctx context.Context, task *channelReplyTask) bool {
+	if task.ctx.Err() != nil {
+		return false
+	}
+	return w.currentSession(ctx, task.scopeKey) == task.sessionID
+}
+
 func (w *channelWorker) authorize(ctx context.Context, msg *channeltypes.NormalizedMessage) (bool, error) {
 	if w.record.Mode != "pairing" {
 		return true, nil
@@ -216,22 +223,37 @@ func channelScopeKey(msg *channeltypes.NormalizedMessage) string {
 }
 
 func channelThreadID(msg *channeltypes.NormalizedMessage) string {
-	raw, ok := msg.RawEvent.(map[string]any)
-	if !ok {
-		return channelThreadIDFromJSON(msg.RawEvent)
+	if raw, ok := msg.RawEvent.(map[string]any); ok {
+		return threadIDFromPayload(raw)
 	}
-	for _, key := range []string{"thread_id", "root_id"} {
-		if value, ok := raw[key].(string); ok && value != "" {
-			return value
-		}
-	}
-	event, ok := raw["event"].(map[string]any)
-	if !ok {
+	if msg.RawEvent == nil {
 		return ""
 	}
-	if message, ok := event["message"].(map[string]any); ok {
-		for _, key := range []string{"thread_id", "root_id"} {
-			if value, ok := message[key].(string); ok && value != "" {
+	encoded, err := json.Marshal(msg.RawEvent)
+	if err != nil {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		return ""
+	}
+	return threadIDFromPayload(payload)
+}
+
+func threadIDFromPayload(payload map[string]any) string {
+	if value := threadIDFromMessage(payload); value != "" {
+		return value
+	}
+	for _, key := range []string{"message", "event"} {
+		nested, ok := payload[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		if value := threadIDFromMessage(nested); value != "" {
+			return value
+		}
+		if message, ok := nested["message"].(map[string]any); ok {
+			if value := threadIDFromMessage(message); value != "" {
 				return value
 			}
 		}
@@ -239,29 +261,9 @@ func channelThreadID(msg *channeltypes.NormalizedMessage) string {
 	return ""
 }
 
-func channelThreadIDFromJSON(raw any) string {
-	if raw == nil {
-		return ""
-	}
-	encoded, err := json.Marshal(raw)
-	if err != nil {
-		return ""
-	}
-	var event map[string]any
-	if err := json.Unmarshal(encoded, &event); err != nil {
-		return ""
-	}
-	if value, ok := event["thread_id"].(string); ok && value != "" {
-		return value
-	}
-	if value, ok := event["root_id"].(string); ok && value != "" {
-		return value
-	}
-	if message, ok := event["message"].(map[string]any); ok {
-		if value, ok := message["thread_id"].(string); ok && value != "" {
-			return value
-		}
-		if value, ok := message["root_id"].(string); ok && value != "" {
+func threadIDFromMessage(payload map[string]any) string {
+	for _, key := range []string{"thread_id", "root_id"} {
+		if value, ok := payload[key].(string); ok && value != "" {
 			return value
 		}
 	}

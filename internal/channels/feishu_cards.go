@@ -18,6 +18,7 @@ type channelActionValue struct {
 	Result    string   `json:"result,omitempty"`
 	Question  string   `json:"question_id,omitempty"`
 	Selected  []string `json:"selected,omitempty"`
+	Multi     []string `json:"multi,omitempty"`
 	OpenID    string   `json:"open_id"`
 	ThreadID  string   `json:"session_thread_id,omitempty"`
 }
@@ -29,12 +30,17 @@ func (w *channelWorker) askIfNeeded(ctx context.Context, msg *channeltypes.Norma
 	if _, done := answered[event.ID]; done {
 		return nil
 	}
+	if id := eventToolUseID(event); id != "" {
+		if _, done := answered[id]; done {
+			return nil
+		}
+	}
 	switch event.Type {
-	case "agent.tool_use":
+	case "agent.tool_use", "agent.mcp_tool_use":
 		if event.Permission != "ask" || !w.markAsked("confirm:"+task.sessionID+":"+event.ID) {
 			return nil
 		}
-		card := approvalCard(w.cardValue(task, event.ID, "confirm", msg.UserID, event.SessionThreadID), event.Name, strings.TrimSpace(string(event.Input)))
+		card := approvalCard(w.cardValue(task, event.ID, "confirm", msg.UserID, event.SessionThreadID), eventToolName(event), strings.TrimSpace(string(event.Input)))
 		_, err := w.channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Card: card})
 		return err
 	case "agent.custom_tool_use":
@@ -93,10 +99,12 @@ func answeredToolIDs(events []omaEvent) map[string]struct{} {
 }
 
 func eventToolUseID(event omaEvent) string {
-	if event.ToolUseID != "" {
-		return event.ToolUseID
+	for _, id := range []string{event.ToolUseID, event.MCPToolUseID, event.CustomToolUseID} {
+		if id != "" {
+			return id
+		}
 	}
-	return event.CustomToolUseID
+	return ""
 }
 
 func (w *channelWorker) handleCardAction(ctx context.Context, event *channeltypes.CardActionEvent) error {
@@ -205,7 +213,7 @@ func parseQuestions(raw json.RawMessage) []channelQuestion {
 		Questions []struct {
 			ID          string `json:"id"`
 			Title       string `json:"question"`
-			MultiSelect bool   `json:"multiSelect"`
+			MultiSelect bool   `json:"multi_select"`
 			Options     []struct {
 				Label string `json:"label"`
 			} `json:"options"`
@@ -245,16 +253,42 @@ func buildAnswers(value channelActionValue, form map[string]any) []map[string]an
 		}
 		return []map[string]any{{"id": value.Question, "selected": value.Selected}}
 	}
+	multi := make(map[string]struct{}, len(value.Multi))
+	for _, id := range value.Multi {
+		multi[id] = struct{}{}
+	}
 	answers := make([]map[string]any, 0, len(form))
 	for key, raw := range form {
 		if strings.HasSuffix(key, "_custom") {
 			continue
 		}
-		answer := map[string]any{"id": key, "selected": formStrings(raw)}
-		if custom := strings.TrimSpace(formString(form[key+"_custom"])); custom != "" {
+		selected := formStrings(raw)
+		custom := strings.TrimSpace(formString(form[key+"_custom"]))
+		if _, ok := multi[key]; !ok {
+			if custom != "" {
+				selected = []string{}
+			} else if len(selected) > 1 {
+				selected = selected[:1]
+			}
+		}
+		answer := map[string]any{"id": key, "selected": selected}
+		if custom != "" {
 			answer["custom"] = custom
 		}
 		answers = append(answers, answer)
+	}
+	for key, raw := range form {
+		if !strings.HasSuffix(key, "_custom") {
+			continue
+		}
+		if _, ok := form[strings.TrimSuffix(key, "_custom")]; ok {
+			continue
+		}
+		custom := strings.TrimSpace(formString(raw))
+		if custom == "" {
+			continue
+		}
+		answers = append(answers, map[string]any{"id": strings.TrimSuffix(key, "_custom"), "selected": []string{}, "custom": custom})
 	}
 	return answers
 }
@@ -321,10 +355,16 @@ func questionCard(value channelActionValue, questions []channelQuestion) string 
 					"value": option,
 				})
 			}
+			tag := "select_static"
+			placeholder := "请选择"
+			if question.MultiSelect {
+				tag = "multi_select_static"
+				placeholder = "可多选"
+			}
 			formElements = append(formElements, map[string]any{
-				"tag":         "multi_select_static",
+				"tag":         tag,
 				"name":        question.ID,
-				"placeholder": map[string]any{"tag": "plain_text", "content": "可多选"},
+				"placeholder": map[string]any{"tag": "plain_text", "content": placeholder},
 				"options":     options,
 			})
 		}
@@ -336,6 +376,12 @@ func questionCard(value channelActionValue, questions []channelQuestion) string 
 	}
 	submit := value
 	submit.Kind = "answer"
+	submit.Multi = make([]string, 0, len(questions))
+	for _, question := range questions {
+		if question.MultiSelect {
+			submit.Multi = append(submit.Multi, question.ID)
+		}
+	}
 	formElements = append(formElements, button("提交", "primary", submit, true))
 	elements = append(elements, map[string]any{"tag": "form", "name": "answers", "elements": formElements})
 	card := map[string]any{

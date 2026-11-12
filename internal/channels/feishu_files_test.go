@@ -61,9 +61,11 @@ func TestInboundAttachmentUploadsToFilesAndMountsResource(t *testing.T) {
 	server := httptest.NewServer(files.handler(t))
 	t.Cleanup(server.Close)
 	store := &fakeRuntimeStore{}
-	worker, channel := testWorker(t, store, server.URL)
-	channel.downloads = map[string][]byte{"img_key": []byte("\x89PNG\r\n\x1a\n")}
+	worker, _ := testWorker(t, store, server.URL)
+	stub := attachFeishuStub(t, worker)
+	stub.attachment = []byte("\x89PNG\r\n\x1a\n")
 	msg := &channeltypes.NormalizedMessage{
+		MessageID: "om_1",
 		ChatID:    "oc_1",
 		UserID:    "ou_1",
 		Content:   "看下这张图",
@@ -91,7 +93,13 @@ func TestInboundAttachmentUploadsToFilesAndMountsResource(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &blocks); err != nil || len(blocks) != 1 {
 		t.Fatalf("正文已带文本时不应追加附件提示: %s", text)
 	}
-	onlyAttachment := &channeltypes.NormalizedMessage{ChatID: "oc_1", UserID: "ou_1", Resources: msg.Resources}
+	stub.mu.Lock()
+	downloads := append([]string{}, stub.downloads...)
+	stub.mu.Unlock()
+	if len(downloads) != 1 || !strings.Contains(downloads[0], "/messages/om_1/resources/img_key") || !strings.Contains(downloads[0], "type=image") {
+		t.Fatalf("附件应通过消息资源接口下载: %v", downloads)
+	}
+	onlyAttachment := &channeltypes.NormalizedMessage{MessageID: "om_1", ChatID: "oc_1", UserID: "ou_1", Resources: msg.Resources}
 	content, _, _, err = worker.messageContent(context.Background(), "key", "sesn_1", onlyAttachment, "")
 	if err != nil {
 		t.Fatalf("messageContent: %v", err)
@@ -106,17 +114,38 @@ func TestInboundAttachmentFailsLoudly(t *testing.T) {
 	files := &filesServer{}
 	server := httptest.NewServer(files.handler(t))
 	t.Cleanup(server.Close)
-	worker, channel := testWorker(t, &fakeRuntimeStore{}, server.URL)
-	channel.downloads = map[string][]byte{"big": make([]byte, channelAttachmentBytes+1)}
-	msg := &channeltypes.NormalizedMessage{ChatID: "oc_1", UserID: "ou_1", Resources: []channeltypes.Resource{{Type: "file", FileKey: "big", FileName: "big.zip"}}}
+	worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
+	stub := attachFeishuStub(t, worker)
+	stub.attachment = make([]byte, channelAttachmentBytes+1)
+	msg := &channeltypes.NormalizedMessage{MessageID: "om_1", ChatID: "oc_1", UserID: "ou_1", Resources: []channeltypes.Resource{{Type: "file", FileKey: "big", FileName: "big.zip"}}}
 	if _, _, _, err := worker.messageContent(context.Background(), "key", "sesn_1", msg, ""); err == nil {
 		t.Fatal("超大附件应返回错误")
 	}
 }
 
-func attachFeishuUploader(t *testing.T, worker *channelWorker) *httptest.Server {
+type feishuStub struct {
+	attachment []byte
+	mu         sync.Mutex
+	downloads  []string
+}
+
+func attachFeishuStub(t *testing.T, worker *channelWorker) *feishuStub {
 	t.Helper()
+	stub := &feishuStub{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/open-apis/im/v1/messages/") {
+			stub.mu.Lock()
+			stub.downloads = append(stub.downloads, r.URL.Path+"?"+r.URL.RawQuery)
+			payload := stub.attachment
+			stub.mu.Unlock()
+			if payload == nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(payload)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/open-apis/im/v1/files":
@@ -129,7 +158,7 @@ func attachFeishuUploader(t *testing.T, worker *channelWorker) *httptest.Server 
 	}))
 	t.Cleanup(server.Close)
 	worker.client = lark.NewClient("app_id", "app_secret", lark.WithOpenBaseUrl(server.URL))
-	return server
+	return stub
 }
 
 func TestOutboundArtifactsSendNewResourcesOnly(t *testing.T) {
@@ -140,7 +169,7 @@ func TestOutboundArtifactsSendNewResourcesOnly(t *testing.T) {
 	server := httptest.NewServer(files.handler(t))
 	t.Cleanup(server.Close)
 	worker, channel := testWorker(t, &fakeRuntimeStore{}, server.URL)
-	attachFeishuUploader(t, worker)
+	attachFeishuStub(t, worker)
 	task := &channelReplyTask{ctx: context.Background(), sessionID: "sesn_1", scopeKey: "chat:oc_1", inbound: map[string]struct{}{}}
 	msg := &channeltypes.NormalizedMessage{ChatID: "oc_1", UserID: "ou_1"}
 	worker.sendArtifacts(context.Background(), task, msg, "key", artifactBaseline{"sres_old": {}, "sres_new": {}})

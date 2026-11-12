@@ -79,6 +79,7 @@ type fakeChannel struct {
 	mu        sync.Mutex
 	sends     []string
 	inputs    []*channeltypes.SendInput
+	appends   []string
 	downloads map[string][]byte
 	startErr  error
 }
@@ -117,7 +118,7 @@ func (f *fakeChannel) GetBotIdentity(context.Context) *channeltypes.BotIdentity 
 func (f *fakeChannel) Stop(context.Context) error { return nil }
 
 func (f *fakeChannel) Stream(context.Context, *channeltypes.SendInput) (channeltypes.StreamController, error) {
-	return fakeStream{}, nil
+	return fakeStream{channel: f}, nil
 }
 
 func (f *fakeChannel) text() []string {
@@ -132,9 +133,17 @@ func (f *fakeChannel) sentInputs() []*channeltypes.SendInput {
 	return append([]*channeltypes.SendInput{}, f.inputs...)
 }
 
-type fakeStream struct{}
+type fakeStream struct {
+	channel *fakeChannel
+}
 
-func (fakeStream) Append(context.Context, string) error     { return nil }
+func (s fakeStream) Append(_ context.Context, text string) error {
+	s.channel.mu.Lock()
+	defer s.channel.mu.Unlock()
+	s.channel.appends = append(s.channel.appends, text)
+	return nil
+}
+
 func (fakeStream) UpdateCard(context.Context, string) error { return nil }
 func (fakeStream) Flush(context.Context) error              { return nil }
 func (fakeStream) Close(context.Context) error              { return nil }
@@ -168,11 +177,27 @@ func testWorker(t *testing.T, store *fakeRuntimeStore, baseURL string) (*channel
 	return worker, fake
 }
 
-func omaTestServer(t *testing.T, sendDelay time.Duration) (*httptest.Server, *atomic.Int64, *[]string) {
+type omaRecorder struct {
+	mu     sync.Mutex
+	bodies []string
+}
+
+func (r *omaRecorder) record(body string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bodies = append(r.bodies, body)
+}
+
+func (r *omaRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string{}, r.bodies...)
+}
+
+func omaTestServer(t *testing.T, sendDelay time.Duration) (*httptest.Server, *atomic.Int64, *omaRecorder) {
 	t.Helper()
 	var creates atomic.Int64
-	var mu sync.Mutex
-	bodies := make([]string, 0)
+	recorder := &omaRecorder{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -184,9 +209,7 @@ func omaTestServer(t *testing.T, sendDelay time.Duration) (*httptest.Server, *at
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/events"):
 			body := make([]byte, r.ContentLength)
 			_, _ = r.Body.Read(body)
-			mu.Lock()
-			bodies = append(bodies, string(body))
-			mu.Unlock()
+			recorder.record(string(body))
 			time.Sleep(sendDelay)
 			_, _ = w.Write([]byte(`{"data":[{"id":"evt_user_1","type":"user.message"}]}`))
 		case r.Method == http.MethodGet:
@@ -196,7 +219,7 @@ func omaTestServer(t *testing.T, sendDelay time.Duration) (*httptest.Server, *at
 		}
 	}))
 	t.Cleanup(server.Close)
-	return server, &creates, &bodies
+	return server, &creates, recorder
 }
 
 func TestHandleMessageReturnsBeforeReplyFinishes(t *testing.T) {
@@ -213,7 +236,7 @@ func TestHandleMessageReturnsBeforeReplyFinishes(t *testing.T) {
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if len(*bodies) > 0 {
+		if len(bodies.snapshot()) > 0 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -261,8 +284,8 @@ func TestNewCancelsReplyAndResetsBinding(t *testing.T) {
 	if len(fake.text()) == 0 {
 		t.Fatal("/new 应有提示回复")
 	}
-	if !strings.Contains(strings.Join(*bodies, ""), "user.interrupt") {
-		t.Fatalf("/new 应中断旧会话，实际 %v", *bodies)
+	if !strings.Contains(strings.Join(bodies.snapshot(), ""), "user.interrupt") {
+		t.Fatalf("/new 应中断旧会话，实际 %v", bodies.snapshot())
 	}
 }
 
@@ -271,8 +294,8 @@ func TestStopInterruptsMappedSession(t *testing.T) {
 	store := &fakeRuntimeStore{bindings: map[string]string{"chat:oc_1": "sesn_1"}}
 	worker, _ := testWorker(t, store, server.URL)
 	worker.runCommand(context.Background(), "chat:oc_1", &channeltypes.NormalizedMessage{MessageID: "om_1", ChatID: "oc_1", UserID: "ou_1"}, "/stop")
-	if !strings.Contains(strings.Join(*bodies, ""), "user.interrupt") {
-		t.Fatalf("/stop 应发送 user.interrupt，实际 %v", *bodies)
+	if !strings.Contains(strings.Join(bodies.snapshot(), ""), "user.interrupt") {
+		t.Fatalf("/stop 应发送 user.interrupt，实际 %v", bodies.snapshot())
 	}
 	if len(store.deleted) != 0 {
 		t.Fatal("/stop 不应删除会话绑定")

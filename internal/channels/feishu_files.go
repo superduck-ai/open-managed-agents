@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -33,7 +34,7 @@ func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID st
 			return nil, nil, nil, fmt.Errorf("一次最多发送 %d 个附件", channelAttachmentLimit)
 		}
 		name := attachmentName(resource)
-		data, mediaType, err := w.downloadAttachment(ctx, resource)
+		data, mediaType, err := w.downloadAttachment(ctx, msg.MessageID, resource)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -69,17 +70,29 @@ func attachmentName(resource channeltypes.Resource) string {
 	return "file-" + resource.FileKey
 }
 
-func (w *channelWorker) downloadAttachment(ctx context.Context, resource channeltypes.Resource) ([]byte, string, error) {
-	if resource.FileKey == "" {
+func (w *channelWorker) downloadAttachment(ctx context.Context, messageID string, resource channeltypes.Resource) ([]byte, string, error) {
+	if resource.FileKey == "" || messageID == "" {
 		return nil, "", nil
 	}
-	mediaType := resource.Type
-	if mediaType != "image" {
-		mediaType = "file"
+	kind := "file"
+	if resource.Type == "image" {
+		kind = "image"
 	}
-	data, err := w.channel.DownloadFile(ctx, resource.FileKey, mediaType)
+	request := larkim.NewGetMessageResourceReqBuilder().
+		MessageId(messageID).
+		FileKey(resource.FileKey).
+		Type(kind).
+		Build()
+	response, err := w.client.Im.V1.MessageResource.Get(ctx, request)
 	if err != nil {
 		return nil, "", fmt.Errorf("下载附件失败: %w", err)
+	}
+	if !response.Success() || response.File == nil {
+		return nil, "", fmt.Errorf("下载附件失败: %d %s", response.Code, response.Msg)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.File, channelAttachmentBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("读取附件失败: %w", err)
 	}
 	if len(data) == 0 {
 		return nil, "", nil

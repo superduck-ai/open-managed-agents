@@ -1,15 +1,17 @@
 package channels
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"net/url"
+	"fmt"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 type channelGitMount struct {
@@ -140,34 +142,20 @@ func channelMountView(record db.ChannelRecord) map[string]any {
 }
 
 func validateGitMount(mount channelGitMount) error {
-	parsed, err := url.Parse(mount.URL)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return errors.New("git_repository.url 必须是 http(s) 地址")
+	urlRaw, err := json.Marshal(mount.URL)
+	if err != nil {
+		return err
 	}
-	if mount.MountPath != "" && !strings.HasPrefix(mount.MountPath, "/") {
-		return errors.New("git_repository.mount_path 必须是绝对路径")
+	mountRaw, err := json.Marshal(mount.MountPath)
+	if err != nil {
+		return err
 	}
-	if len(mount.Checkout) > 0 && strings.TrimSpace(string(mount.Checkout)) != "null" {
-		var checkout struct {
-			Type string `json:"type"`
-			Name string `json:"name"`
-			SHA  string `json:"sha"`
-		}
-		if err := json.Unmarshal(mount.Checkout, &checkout); err != nil {
-			return errors.New("git_repository.checkout 格式无效")
-		}
-		switch checkout.Type {
-		case "branch":
-			if strings.TrimSpace(checkout.Name) == "" {
-				return errors.New("checkout.type=branch 需要 name")
-			}
-		case "commit":
-			if strings.TrimSpace(checkout.SHA) == "" {
-				return errors.New("checkout.type=commit 需要 sha")
-			}
-		default:
-			return errors.New("checkout.type 只能是 branch 或 commit")
-		}
+	checkout := mount.Checkout
+	if len(bytes.TrimSpace(checkout)) == 0 {
+		checkout = json.RawMessage("null")
+	}
+	if _, err := sessionresource.NormalizeGitRepositorySpec(urlRaw, mountRaw, checkout); err != nil {
+		return fmt.Errorf("git_repository 配置无效: %w", err)
 	}
 	return nil
 }

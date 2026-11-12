@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -152,6 +153,7 @@ func TestServiceWithoutChannelConfig(t *testing.T) {
 
 type fakeRegistrationStore struct {
 	localStore
+	mu      sync.Mutex
 	records map[string]db.ChannelRegistrationRecord
 }
 
@@ -163,11 +165,15 @@ func (f *fakeRegistrationStore) CreateChannelRegistration(_ context.Context, inp
 		IntervalSeconds: input.IntervalSeconds, Domain: input.Domain, DeviceCodeEnvelope: input.DeviceCodeEnvelope,
 		Owner: input.Owner, HeartbeatAt: time.Now(),
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.records[record.ExternalID] = record
 	return record, nil
 }
 
 func (f *fakeRegistrationStore) GetChannelRegistration(_ context.Context, organizationUUID, workspaceUUID, externalID string) (db.ChannelRegistrationRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	record, ok := f.records[externalID]
 	if !ok || record.OrganizationUUID != organizationUUID || record.WorkspaceUUID != workspaceUUID {
 		return db.ChannelRegistrationRecord{}, db.ErrNotFound
@@ -180,6 +186,8 @@ func (f *fakeRegistrationStore) GetChannelQrRegistration(context.Context, string
 }
 
 func (f *fakeRegistrationStore) UpdateChannelRegistration(_ context.Context, update db.ChannelRegistrationUpdate) (db.ChannelRegistrationRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	record, ok := f.records[update.ExternalID]
 	if !ok || record.Phase != registrationPhaseWaiting {
 		return db.ChannelRegistrationRecord{}, db.ErrNotFound
@@ -194,6 +202,8 @@ func (f *fakeRegistrationStore) UpdateChannelRegistration(_ context.Context, upd
 }
 
 func (f *fakeRegistrationStore) TransitionChannelRegistration(_ context.Context, update db.ChannelRegistrationUpdate) (db.ChannelRegistrationRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	record, ok := f.records[update.ExternalID]
 	if !ok || record.Phase != registrationPhaseWaiting {
 		return db.ChannelRegistrationRecord{}, db.ErrNotFound
@@ -213,6 +223,8 @@ func (f *fakeRegistrationStore) TransitionChannelRegistration(_ context.Context,
 }
 
 func (f *fakeRegistrationStore) DeleteChannelRegistration(_ context.Context, externalID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	delete(f.records, externalID)
 	return nil
 }
@@ -563,7 +575,7 @@ func TestApplyChannelMountsPersistsAndHidesToken(t *testing.T) {
 	store := &fakeLocalStore{}
 	service := newLocalService(store, testCipher(t), nil, nil)
 	record := db.ChannelRecord{ExternalID: "chnl_1", OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"}
-	git := json.RawMessage(`{"url":"https://example.com/repo.git","mount_path":"/repo","checkout":{"type":"branch","name":"main"},"authorization_token":"ghp_secret"}`)
+	git := json.RawMessage(`{"url":"https://example.com/repo.git","mount_path":"/workspace/repo","checkout":{"type":"branch","name":"main"},"authorization_token":"ghp_secret"}`)
 	input := channelMutation{MemoryStoreID: json.RawMessage(`"mem_1"`), VaultID: json.RawMessage(`"vlt_1"`), GitRepository: git}
 	if err := service.applyChannelMounts(context.Background(), auth.Principal{WorkspaceUUID: "ws_1"}, &record, input); err != nil {
 		t.Fatalf("applyChannelMounts: %v", err)
@@ -624,6 +636,10 @@ func TestApplyChannelMountsRejectsInvalidGit(t *testing.T) {
 	record := db.ChannelRecord{ExternalID: "chnl_1", OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"}
 	input := channelMutation{GitRepository: json.RawMessage(`{"url":"file:///tmp/repo"}`)}
 	if err := service.applyChannelMounts(context.Background(), auth.Principal{WorkspaceUUID: "ws_1"}, &record, input); err == nil {
-		t.Fatal("非 http(s) 仓库地址应被拒绝")
+		t.Fatal("非 https 仓库地址应被拒绝")
+	}
+	input = channelMutation{GitRepository: json.RawMessage(`{"url":"https://example.com/repo","mount_path":"/tmp/repo"}`)}
+	if err := service.applyChannelMounts(context.Background(), auth.Principal{WorkspaceUUID: "ws_1"}, &record, input); err == nil {
+		t.Fatal("挂载路径必须在 /workspace 下")
 	}
 }

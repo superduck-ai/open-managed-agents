@@ -42,7 +42,7 @@
             #{params.Name}, #{params.ChannelType}, #{params.Mode}, #{params.Enabled}, #{params.BindingStatus},
             #{params.AppID}, CAST(#{params.AppSecretEnvelope} AS jsonb), #{params.IncludeThinking},
             #{params.IncludeToolCalls}, #{params.ReplyInThread},
-            CAST(#{params.Mounts} AS jsonb), CAST(#{params.GitTokenEnvelope} AS jsonb)
+            CAST(COALESCE(NULLIF(#{params.Mounts}, ''), '{}') AS jsonb), CAST(#{params.GitTokenEnvelope} AS jsonb)
         )
         RETURNING <include refid="channelColumns"/>
     </insert>
@@ -104,7 +104,7 @@
             include_thinking = #{params.IncludeThinking},
             include_tool_calls = #{params.IncludeToolCalls},
             reply_in_thread = #{params.ReplyInThread},
-            mounts = CAST(#{params.Mounts} AS jsonb),
+            mounts = COALESCE(CAST(NULLIF(#{params.Mounts}, '') AS jsonb), '{}'::jsonb),
             git_token_envelope = CAST(#{params.GitTokenEnvelope} AS jsonb),
             updated_at = now()
         WHERE workspace_uuid = #{params.WorkspaceUUID}

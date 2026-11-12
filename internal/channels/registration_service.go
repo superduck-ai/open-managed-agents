@@ -221,6 +221,8 @@ func (s *localService) applyChannelCredentials(ctx context.Context, channel db.C
 		IncludeThinking:   channel.IncludeThinking,
 		IncludeToolCalls:  channel.IncludeToolCalls,
 		ReplyInThread:     channel.ReplyInThread,
+		Mounts:            channel.Mounts,
+		GitTokenEnvelope:  channel.GitTokenEnvelope,
 	})
 	if err != nil {
 		return unavailable(err)

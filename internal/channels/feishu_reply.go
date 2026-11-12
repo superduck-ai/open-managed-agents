@@ -29,42 +29,55 @@ func (w *channelWorker) streamReply(ctx context.Context, task *channelReplyTask,
 	}
 	seen := make(map[string]struct{})
 	started := false
+	cursor := 0
 	deadline := time.Now().Add(channelReplyTimeout)
 	ticker := time.NewTicker(channelReplyPollInterval)
 	defer ticker.Stop()
 	for {
+		if !w.sessionBound(ctx, task) {
+			return nil
+		}
 		events, err := w.supervisor.oma.listEvents(ctx, apiKey, task.sessionID)
 		if err == nil {
-			done := false
-			answered := answeredToolIDs(events)
-			for _, event := range events {
-				if !started {
+			if !started {
+				for index, event := range events {
 					if event.ID == task.inputEventID {
 						started = true
-					}
-					continue
-				}
-				if _, ok := seen[event.ID]; ok {
-					continue
-				}
-				seen[event.ID] = struct{}{}
-				text, changed := reply.consume(w.record, event)
-				if changed {
-					if reply.card {
-						if err := stream.UpdateCard(ctx, reply.render()); err != nil {
-							return err
-						}
-					} else if text != "" {
-						if err := stream.Append(ctx, text); err != nil {
-							return err
-						}
+						cursor = index + 1
+						break
 					}
 				}
-				if err := w.askIfNeeded(ctx, msg, task, event, answered); err != nil {
-					w.supervisor.logger.WarnContext(ctx, "send channel action card", "channel_id", w.record.ExternalID, "error", err)
+			}
+			done := false
+			answered := answeredToolIDs(events)
+			if started {
+				if cursor > len(events) {
+					cursor = 0
 				}
-				if terminalEvent(event) {
-					done = true
+				for ; cursor < len(events); cursor++ {
+					event := events[cursor]
+					if _, ok := seen[event.ID]; ok {
+						continue
+					}
+					seen[event.ID] = struct{}{}
+					text, changed := reply.consume(w.record, event)
+					if changed {
+						if reply.card {
+							if err := stream.UpdateCard(ctx, reply.render()); err != nil {
+								return err
+							}
+						} else if text != "" {
+							if err := stream.Append(ctx, text); err != nil {
+								return err
+							}
+						}
+					}
+					if err := w.askIfNeeded(ctx, msg, task, event, answered); err != nil {
+						w.supervisor.logger.WarnContext(ctx, "send channel action card", "channel_id", w.record.ExternalID, "error", err)
+					}
+					if terminalEvent(event) {
+						done = true
+					}
 				}
 			}
 			if done && started {

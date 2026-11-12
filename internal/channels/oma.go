@@ -24,6 +24,7 @@ type omaEvent struct {
 	Permission      string          `json:"evaluated_permission"`
 	ToolUseID       string          `json:"tool_use_id"`
 	CustomToolUseID string          `json:"custom_tool_use_id"`
+	MCPToolUseID    string          `json:"mcp_tool_use_id"`
 	SessionThreadID string          `json:"session_thread_id"`
 	Content         json.RawMessage `json:"content"`
 	StopReason      json.RawMessage `json:"stop_reason"`

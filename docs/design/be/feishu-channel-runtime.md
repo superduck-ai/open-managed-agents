@@ -53,7 +53,7 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 
 ## 行为
 
-- 开放模式直接放行；配对模式要求单聊用户或群聊分别获批，未获批时只登记一条待审批申请并回复提示。
+- 开放模式直接放行；配对模式要求单聊用户或群聊分别获批，未获批时只登记一条待审批申请并回复提示；`/stop`、`/new` 同样先过配对鉴权。
 - 群聊必须 @ 机器人，由飞书 Channel SDK 的策略网关拦截未 @ 消息。
 - 每条渠道的长连接都显式配置官方 SDK 的事件分发器（`event/dispatcher`）：`OnMessage`、`OnCardAction` 依赖它注册 `im.message.receive_v1` 与卡片回调；缺少分发器时连接会建立成功（页面显示已连通），但所有入站事件被 SDK 静默丢弃。
 - 长连接退出（握手失败、鉴权失败或不再重连）会释放该渠道的 worker，下一次 30 秒对账重新拉起；`connected` 只反映当前 worker 的连接状态，因此启动失败不会永久卡在“已连通但无回复”。
@@ -70,15 +70,16 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 ## 消息执行
 
 - 入站处理只做校验、鉴权、会话解析，随后登记回复任务并立即返回；回复监听在独立 goroutine 中轮询事件，因此 `/stop`、`/new` 不会被上一轮的流式回复阻塞。
+- 轮询用输入事件定位边界并维护游标，只消费游标之后的新事件，不会重放上一轮回复；每轮开始先核对会话映射，映射被 `/new` 替换后其他实例的旧任务立即停止写入。
 - 回复按本次输入事件 ID 对齐：发送 `user.message` 后取响应里的事件 ID 作为基线，只消费其后的事件；取不到时退回发送前最后一条事件 ID。
 - `/stop` 向当前作用域映射的会话发送 `user.interrupt`，保留映射；`/new` 先取消该作用域所有回复任务、中断当前轮次，再删除映射，旧回复任务不会再写入消息。
 - 附件：图片、PDF、纯文本以 base64/text 内容块进入 `user.message`；单个附件上限 20 MB、单条消息上限 10 个，下载或体积失败时明确回复原因，不静默丢弃。
-- 挂载：渠道保存 `memory_store_id`、`vault_id`、`git_repository`（token 单独信封加密，响应只返回 `tokenConfigured`）。创建会话时 Memory/Git 写入 `resources`，Vault 写入 `vault_ids`；修改挂载后重建 worker，后续新建会话采用新配置，已有会话保持原资源，需要同步时走既有会话资源接口。
+- 挂载：渠道保存 `memory_store_id`、`vault_id`、`git_repository`（token 单独信封加密，响应只返回 `tokenConfigured`）。Git 仓库地址、`mount_path`、`checkout` 直接复用会话资源的校验规则（https、`.git`、端口 443、`/workspace` 下的目录），不会保存随后会被会话接口拒绝的配置。创建会话时 Memory/Git 写入 `resources`，Vault 写入 `vault_ids`；修改挂载后重建 worker，后续新建会话采用新配置，已有会话保持原资源，需要同步时走既有会话资源接口。
 
 ## 会话内交互
 
-- 审批：`agent.tool_use` 的 `evaluated_permission` 为 `ask` 时发送允许/拒绝卡片，回调写入 `user.tool_confirmation`（`tool_use_id` + `allow|deny`）。
-- 问卷：`agent.custom_tool_use` 且工具名为 `AskUserQuestion` 时生成表单卡片，支持多题、多选与自定义文本，回调以 `user.custom_tool_result` 回传 `{answers:[{id,selected,custom}]}`。
+- 审批：`agent.tool_use`、`agent.mcp_tool_use` 的 `evaluated_permission` 为 `ask` 时发送允许/拒绝卡片，回调写入 `user.tool_confirmation`（`tool_use_id` + `allow|deny`），MCP 工具使用 `mcp_tool_use_id` 作为确认引用。
+- 问卷：`agent.custom_tool_use` 且工具名为 `AskUserQuestion` 时生成表单卡片，按 `multi_select` 渲染单选/多选控件，支持多题与自定义文本，回传 `{answers:[{id,selected,custom}]}`；单选带自定义时 `selected` 为空。
 - 卡片值携带 `channel_id`、`scopeKey`、`session_id`、`tool_use_id` 和发起人 `open_id`；点击时校验渠道、会话、聊天和操作人，并按 OMA 事件里已有的 `user.tool_confirmation` / `user.custom_tool_result` 去重，重复点击、控制台已处理和进程重启后都不会重复提交。
 
 ## 附件与产物

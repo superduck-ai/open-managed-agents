@@ -19,7 +19,9 @@ func isConsoleSkillRequest(r *http.Request) bool {
 }
 
 func (h *Handler) consoleWrap(next httpapi.Endpoint) http.HandlerFunc {
-	return wrapSkillJSONEndpoint(h.logger, "console skill request failed", consoleSkillError, next)
+	return h.errorAdapter.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+		return mapConsoleSkillError(next(w, r))
+	})
 }
 
 func (h *Handler) ConsoleRoutes() http.Handler {
@@ -28,7 +30,7 @@ func (h *Handler) ConsoleRoutes() http.Handler {
 		return h.consoleWrap(func(w http.ResponseWriter, r *http.Request) error {
 			principal, ok := auth.PrincipalFromContext(r.Context())
 			if !ok || principal.CredentialType != auth.CredentialTypePlatformSession || principal.WorkspaceUUID == "" {
-				return consoleSkillDenied()
+				return errConsoleSkillDenied
 			}
 			r = r.WithContext(context.WithValue(r.Context(), consoleSkillContextKey{}, true))
 			next.ServeHTTP(w, r)
@@ -45,23 +47,33 @@ func (h *Handler) ConsoleRoutes() http.Handler {
 	return router
 }
 
+type consoleSkillPreviewResponse struct {
+	systemPackageResponse
+	ID            string `json:"id"`
+	DisplayTitle  string `json:"display_title"`
+	IconKey       string `json:"icon_key"`
+	Source        string `json:"source"`
+	LatestVersion string `json:"latest_version"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
 func (h *Handler) consoleContent(w http.ResponseWriter, r *http.Request) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	skillID, version := chi.URLParam(r, "skill_id"), chi.URLParam(r, "version")
 	var pkg skillPackage
 	var bucket, key string
-	if builtinSkill, builtin, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+	var meta *skillResponse
+	if systemSkill, isSystem, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		return err
-	} else if builtin {
-		if !builtinSkill.Listed {
-			return skillNotFound(skillID, nil)
-		}
-		record, err := h.db.GetBuiltinSkillVersion(r.Context(), skillID, version)
+	} else if isSystem {
+		record, err := h.db.GetSystemSkillVersion(r.Context(), skillID, version)
 		if err != nil {
 			return err
 		}
 		pkg = skillPackage{Name: record.Name, Description: record.Description, Directory: record.Directory, Size: record.SizeBytes, SHA256: record.SHA256}
 		bucket, key = record.S3Bucket, record.S3Key
+		item := responseFromSystemSkill(systemSkill)
+		meta = &item
 	} else {
 		resolved, err := h.resolveVersion(r.Context(), principal.WorkspaceUUID, skillID, version)
 		if err != nil {
@@ -74,7 +86,37 @@ func (h *Handler) consoleContent(w http.ResponseWriter, r *http.Request) error {
 		pkg = skillPackage{Name: record.Name, Description: record.Description, Directory: record.Directory, Size: record.SizeBytes, SHA256: record.SHA256}
 		bucket, key = record.S3Bucket, record.S3Key
 	}
-	return h.servePackage(w, r, bucket, key, pkg, 30*1024*1024)
+	if r.URL.Query().Get("download") == "1" || r.URL.Query().Get("path") != "" {
+		return h.servePackage(w, r, bucket, key, pkg, 30*1024*1024)
+	}
+	if meta == nil {
+		skill, err := h.db.GetSkill(r.Context(), principal.WorkspaceUUID, skillID)
+		if err != nil {
+			return err
+		}
+		item := responseFromSkill(skill)
+		meta = &item
+	}
+	loaded, err := h.loadPackage(r.Context(), bucket, key, pkg, 30*1024*1024)
+	if err != nil {
+		return err
+	}
+	preview, err := systemPackageDTO(loaded)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	httpapi.WriteJSON(w, http.StatusOK, consoleSkillPreviewResponse{
+		systemPackageResponse: preview,
+		ID:                    meta.ID,
+		DisplayTitle:          meta.DisplayTitle,
+		IconKey:               meta.IconKey,
+		Source:                meta.Source,
+		LatestVersion:         meta.LatestVersion,
+		UpdatedAt:             meta.UpdatedAt,
+	})
+	return nil
 }
 
 func (h *Handler) consoleCatalog(w http.ResponseWriter, r *http.Request) error {

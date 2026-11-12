@@ -921,11 +921,11 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("sync builtin Skill: %v", err)
 	}
-	builtin, err := app.db.GetBuiltinSkill(ctx, "builtin_typed_uuid_"+suffix)
+	builtin, err := app.db.GetAvailableSystemSkill(ctx, "builtin_typed_uuid_"+suffix)
 	if err != nil || !isValidUUID(builtin.UUID) {
 		t.Fatalf("get builtin Skill through typed UUID rows = (%+v, %v)", builtin, err)
 	}
-	builtinVersion, err := app.db.GetBuiltinSkillVersion(ctx, builtin.ExternalID, "1.0.0")
+	builtinVersion, err := app.db.GetSystemSkillVersion(ctx, builtin.ExternalID, "1.0.0")
 	if err != nil || !isValidUUID(builtinVersion.UUID) {
 		t.Fatalf("get builtin Skill version through typed UUID rows = (%+v, %v)", builtinVersion, err)
 	}

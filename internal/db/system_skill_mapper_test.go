@@ -32,9 +32,9 @@ func TestSystemSkillMapperBindings(t *testing.T) {
 			t.Errorf("lock=%v query=%s", lock, bound.SQL)
 		}
 	}
-	skill := SystemSkill{UUID: "11111111-1111-4111-8111-111111111111", Revision: 4, LatestVersion: new("2.0.0"), Listed: true}
+	skill := SystemSkill{UUID: "11111111-1111-4111-8111-111111111111", LatestVersion: new("2.0.0"), Listed: true}
 	bound := buildSystemSkillMapperUpdateSkill(yourbatis.DialectPostgres, skill)
-	for _, fragment := range []string{"revision = revision + 1", "WHERE uuid = $4 AND revision = $5", "deleted_at IS NULL"} {
+	for _, fragment := range []string{"WHERE uuid = $4", "deleted_at IS NULL"} {
 		if !strings.Contains(bound.SQL, fragment) {
 			t.Errorf("missing update invariant %s: %s", fragment, bound.SQL)
 		}
@@ -48,7 +48,6 @@ func TestSystemSkillMapperBindings(t *testing.T) {
 func TestSystemSkillMapperWritesAndPages(t *testing.T) {
 	skill := SystemSkill{UUID: "11111111-1111-4111-8111-111111111111", ExternalID: "demo", DisplayTitle: "Demo"}
 	version := SystemSkillVersion{UUID: "22222222-2222-4222-8222-222222222222", ExternalID: "skver_demo", SkillUUID: skill.UUID, SkillExternalID: skill.ExternalID, Version: "1", Name: "demo", Description: "Description", Directory: "demo", S3Bucket: "bucket", S3Key: "key", SizeBytes: 100, SHA256: "hash"}
-	event := SystemSkillEvent{SkillUUID: skill.UUID, ActorUUID: "33333333-3333-4333-8333-333333333333", Action: "import", Version: "1"}
 	for _, tc := range []struct {
 		bound    yourbatis.BoundSQL
 		values   []any
@@ -56,10 +55,12 @@ func TestSystemSkillMapperWritesAndPages(t *testing.T) {
 	}{
 		{buildSystemSkillMapperInsertSkill(yourbatis.DialectPostgres, skill), []any{skill.UUID, skill.ExternalID, skill.DisplayTitle, skill.IconKey, skill.IconKey}, "WHERE builtin_skills.deleted_at IS NOT NULL AND NOT builtin_skills.bundled"},
 		{buildSystemSkillMapperInsertVersion(yourbatis.DialectPostgres, version), []any{version.UUID, version.ExternalID, version.SkillUUID, version.SkillExternalID, version.Version, version.Name, version.Description, version.Directory, version.S3Bucket, version.S3Key, version.SizeBytes, version.SHA256, version.CreatedAt}, "'published'"},
-		{buildSystemSkillMapperVersions(yourbatis.DialectPostgres, skill.UUID, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, uuid DESC"},
+		{buildSystemSkillMapperVersions(yourbatis.DialectPostgres, skill.UUID, 21, 20, false), []any{skill.UUID, 21, 20}, "created_at DESC, id DESC"},
 		{buildSystemSkillMapperVersion(yourbatis.DialectPostgres, skill.UUID, "1"), []any{skill.UUID, "1"}, "deleted_at IS NULL"},
-		{buildSystemSkillMapperEvents(yourbatis.DialectPostgres, skill.UUID, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY e.created_at DESC, e.id DESC"},
-		{buildSystemSkillMapperRecord(yourbatis.DialectPostgres, event), []any{event.SkillUUID, event.ActorUUID, event.Action, event.Version}, "INSERT INTO system_skill_events"},
+		{buildSystemSkillMapperListListed(yourbatis.DialectPostgres, 21, 2), []any{21, 2}, "listed AND latest_version IS NOT NULL"},
+		{buildSystemSkillMapperCountListed(yourbatis.DialectPostgres), []any{}, "SELECT COUNT(*)"},
+		{buildSystemSkillMapperFindAvailable(yourbatis.DialectPostgres, "demo"), []any{"demo"}, "latest_version IS NOT NULL"},
+		{buildSystemSkillMapperFindVersionByExternalID(yourbatis.DialectPostgres, "demo", "1"), []any{"demo", "1", "1", "1"}, "skill_external_id = $1"},
 	} {
 		values := make([]any, len(tc.bound.Args))
 		for i, arg := range tc.bound.Args {
@@ -71,19 +72,6 @@ func TestSystemSkillMapperWritesAndPages(t *testing.T) {
 	}
 }
 
-func TestSystemSkillVersionFilterBeforePagination(t *testing.T) {
-	bound := buildSystemSkillMapperVersions(yourbatis.DialectPostgres, "skill-uuid", 21, 20)
-	if !strings.Contains(bound.SQL, "state = 'published'") {
-		t.Fatalf("missing published filter: %s", bound.SQL)
-	}
-	if strings.Index(bound.SQL, "state = 'published'") > strings.Index(bound.SQL, "LIMIT") {
-		t.Fatalf("filter must precede pagination: %s", bound.SQL)
-	}
-	if !reflect.DeepEqual(bound.Values(), []any{"skill-uuid", 21, 20}) {
-		t.Fatalf("unexpected page bindings: %v", bound.Values())
-	}
-}
-
 func TestSystemSkillMapperStatementContracts(t *testing.T) {
 	for _, tc := range []struct {
 		statement yourbatis.Statement
@@ -91,16 +79,19 @@ func TestSystemSkillMapperStatementContracts(t *testing.T) {
 		kind      yourbatis.StatementKind
 	}{
 		{systemSkillMapperListStatement, "List", yourbatis.StatementSelect},
+		{systemSkillMapperListListedStatement, "ListListed", yourbatis.StatementSelect},
+		{systemSkillMapperCountListedStatement, "CountListed", yourbatis.StatementSelect},
 		{systemSkillMapperFindStatement, "Find", yourbatis.StatementSelect},
+		{systemSkillMapperFindAvailableStatement, "FindAvailable", yourbatis.StatementSelect},
+		{systemSkillMapperFindUUIDByExternalIDStatement, "FindUUIDByExternalID", yourbatis.StatementSelect},
 		{systemSkillMapperInsertSkillStatement, "InsertSkill", yourbatis.StatementInsert},
 		{systemSkillMapperRegisterBundledStatement, "RegisterBundled", yourbatis.StatementInsert},
 		{systemSkillMapperUpdateSkillStatement, "UpdateSkill", yourbatis.StatementUpdate},
 		{systemSkillMapperDeleteSkillStatement, "DeleteSkill", yourbatis.StatementUpdate},
 		{systemSkillMapperVersionsStatement, "Versions", yourbatis.StatementSelect},
 		{systemSkillMapperVersionStatement, "Version", yourbatis.StatementSelect},
+		{systemSkillMapperFindVersionByExternalIDStatement, "FindVersionByExternalID", yourbatis.StatementSelect},
 		{systemSkillMapperInsertVersionStatement, "InsertVersion", yourbatis.StatementInsert},
-		{systemSkillMapperEventsStatement, "Events", yourbatis.StatementSelect},
-		{systemSkillMapperRecordStatement, "Record", yourbatis.StatementInsert},
 		{systemSkillMapperHasArchiveStatement, "HasArchive", yourbatis.StatementSelect},
 	} {
 		if tc.statement.ID != "SystemSkillMapper."+tc.name || tc.statement.Kind != tc.kind {
@@ -110,7 +101,7 @@ func TestSystemSkillMapperStatementContracts(t *testing.T) {
 }
 
 func TestBundledSkillMapperGuards(t *testing.T) {
-	skill := SystemSkill{UUID: "11111111-1111-4111-8111-111111111111", ExternalID: "xlsx", DisplayTitle: "Excel", IconKey: "file-text", LatestVersion: new("bundled-v1"), Revision: 4}
+	skill := SystemSkill{UUID: "11111111-1111-4111-8111-111111111111", ExternalID: "xlsx", DisplayTitle: "Excel", IconKey: "file-text", LatestVersion: new("bundled-v1")}
 	register := buildSystemSkillMapperRegisterBundled(yourbatis.DialectPostgres, skill)
 	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: systemSkillMapperRegisterBundledStatement, bound: register,
@@ -120,19 +111,7 @@ func TestBundledSkillMapperGuards(t *testing.T) {
 		wantSQLAbsent:     []string{"listed = EXCLUDED.listed"},
 	})
 	remove := buildSystemSkillMapperDeleteSkill(yourbatis.DialectPostgres, skill)
-	if !strings.Contains(remove.SQL, "NOT bundled") || !strings.Contains(remove.SQL, "revision = $2") || !reflect.DeepEqual(remove.Values(), []any{skill.UUID, int64(4)}) {
-		t.Fatalf("delete lost ownership/revision guard: %s %v", remove.SQL, remove.Values())
-	}
-}
-
-func TestSystemSkillEventActorLookup(t *testing.T) {
-	bound := buildSystemSkillMapperEvents(yourbatis.DialectPostgres, "skill-uuid", 21, 20)
-	for _, fragment := range []string{"LEFT JOIN users u ON u.uuid = e.actor_uuid", "COALESCE(u.external_id, '') AS actor_id", "COALESCE(u.name, '') AS actor_name", "WHERE e.skill_uuid = $1", "LIMIT $2 OFFSET $3"} {
-		if !strings.Contains(bound.SQL, fragment) {
-			t.Errorf("missing actor lookup contract %s: %s", fragment, bound.SQL)
-		}
-	}
-	if !reflect.DeepEqual(bound.Values(), []any{"skill-uuid", 21, 20}) {
-		t.Fatalf("unexpected event bindings: %v", bound.Values())
+	if !strings.Contains(remove.SQL, "NOT bundled") || !reflect.DeepEqual(remove.Values(), []any{skill.UUID}) {
+		t.Fatalf("delete lost ownership guard: %s %v", remove.SQL, remove.Values())
 	}
 }

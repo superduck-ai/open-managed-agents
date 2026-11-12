@@ -81,23 +81,6 @@ export type ConsoleSkill = {
   updated_at: string;
 };
 
-export type ConsoleSkillVersion = {
-  id: string;
-  type: 'skill_version';
-  description: string;
-  directory: string;
-  name: string;
-  skill_id: string;
-  version: string;
-  created_at: string;
-};
-
-export type SkillVersionsListResponse = {
-  data: ConsoleSkillVersion[];
-  has_more: boolean;
-  next_page?: string | null;
-};
-
 function workspaceRequestHeaders(workspaceId: string) {
   const headers = new Headers();
   if (workspaceId) {
@@ -158,24 +141,6 @@ export function retrieveMessageBatch(batchId: string, workspaceId: string) {
 
 export function cancelMessageBatch(batchId: string, workspaceId: string) {
   return anthropicBetaApi.messageBatches.cancel<ConsoleMessageBatch>(batchId, workspaceId);
-}
-
-export function retrieveSkill(skillId: string, workspaceId: string) {
-  return anthropicBetaApi.skills.retrieve<ConsoleSkill>(skillId, workspaceId);
-}
-
-export function listSkillVersions(skillId: string, workspaceId: string, pageToken?: string) {
-  const params: Record<string, string | number> = {
-    limit: 50,
-  };
-  if (pageToken) {
-    params.page = pageToken;
-  }
-  return anthropicBetaApi.skills.versions.list<ConsoleSkillVersion>(
-    skillId,
-    params,
-    workspaceId,
-  ) as Promise<SkillVersionsListResponse>;
 }
 
 async function responseErrorMessage(response: Response) {

@@ -46,7 +46,6 @@ func TestSystemSkillErrorsPreservePublicBoundary(t *testing.T) {
 	}{
 		{errSystemSkillDenied, 403, "platform_access_denied"},
 		{db.ErrNotFound, 404, "not_found"},
-		{db.ErrSystemSkillRevision, 409, "revision_conflict"},
 		{db.ErrVersionConflict, 409, "version_conflict"},
 		{db.ErrInvalidState, 409, "state_conflict"},
 		{db.ErrSystemSkillNameMismatch, 400, "skill_name_mismatch"},

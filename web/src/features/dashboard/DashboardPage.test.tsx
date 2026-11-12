@@ -714,21 +714,6 @@ describe('Skills page', () => {
   function fixture() {
     return mockSkillsApi((url) => {
       if (url.startsWith('/api/console/') && url.includes('/skills?')) return catalog;
-      if (url.includes('/versions?'))
-        return {
-          data: [
-            {
-              id: 'version1',
-              skill_id: custom.id,
-              name: 'research',
-              version: '1',
-              description: custom.description,
-              created_at: custom.created_at,
-            },
-          ],
-          has_more: false,
-        };
-      if (url.includes('/skill_demo?')) return custom;
       throw new Error(`Unexpected request: ${url}`);
     });
   }
@@ -841,14 +826,15 @@ describe('Skills page', () => {
     expect(await screen.findByText('No matching skills')).toBeTruthy();
   });
 
-  test('clicking a card opens details and preserves read-only version information', async () => {
+  test('clicking a card opens details through console preview without version mutations', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills');
     fixture();
     renderSkillsPage();
     fireEvent.click(await screen.findByRole('button', { name: 'Research notes', exact: true }));
-    expect(await screen.findByRole('heading', { name: 'Research notes' })).toBeTruthy();
+    const drawer = await screen.findByRole('dialog', { name: 'Research notes' });
+    expect(within(drawer).getByRole('heading', { name: 'Research notes' })).toBeTruthy();
+    expect(await within(drawer).findByText('Research reports and notes')).toBeTruthy();
     expect(new URL(window.location.href).searchParams.get('skill')).toBe(custom.id);
-    expect(await screen.findByText('Latest')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Delete version/ })).toBeNull();
   });
   test('router history restores skill selection and preserves other search parameters', async () => {
@@ -903,65 +889,39 @@ describe('Skills page', () => {
 describe('Skill detail page', () => {
   test('renders the selected skill in the query-param drawer', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills/frontend-design');
-    const requests = mockSkillsApi((url) => {
-      if (url.startsWith('/api/console/') && url.includes('/skills?')) {
-        return {
-          data: [
-            {
-              id: 'frontend-design',
-              type: 'skill',
-              display_title: 'frontend-design',
-              latest_version: '20260708',
-              source: 'anthropic',
-              created_at: new Date(Date.now() - 360_000).toISOString(),
-              updated_at: new Date(Date.now() - 120_000).toISOString(),
-            },
-          ],
-          total_count: 1,
-          counts: { all: 1, builtin: 1, custom: 0 },
-        };
-      }
-      if (url === '/v1/skills/frontend-design?beta=true') {
-        return {
+    const requests = mockSkillsApi(
+      (url) => {
+        if (url.startsWith('/api/console/') && url.includes('/skills?')) {
+          return {
+            data: [
+              {
+                id: 'frontend-design',
+                type: 'skill',
+                display_title: 'frontend-design',
+                latest_version: '20260708',
+                source: 'anthropic',
+                created_at: new Date(Date.now() - 360_000).toISOString(),
+                updated_at: new Date(Date.now() - 120_000).toISOString(),
+              },
+            ],
+            total_count: 1,
+            counts: { all: 1, builtin: 1, custom: 0 },
+          };
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      },
+      () =>
+        Response.json({
           id: 'frontend-design',
-          type: 'skill',
           display_title: 'frontend-design',
-          latest_version: '20260708',
           source: 'anthropic',
-          created_at: new Date(Date.now() - 360_000).toISOString(),
+          description: 'v2 description',
+          latest_version: '20260708',
           updated_at: new Date(Date.now() - 120_000).toISOString(),
-        };
-      }
-      if (url === '/v1/skills/frontend-design/versions?beta=true&limit=50') {
-        return {
-          data: [
-            {
-              id: 'skillver_frontend-design-1',
-              type: 'skill_version',
-              description: 'v1 description',
-              directory: 'frontend-design',
-              name: 'frontend-design',
-              skill_id: 'frontend-design',
-              version: '20260707',
-              created_at: new Date(Date.now() - 360_000).toISOString(),
-            },
-            {
-              id: 'skillver_frontend-design-2',
-              type: 'skill_version',
-              description: 'v2 description',
-              directory: 'frontend-design',
-              name: 'frontend-design v2',
-              skill_id: 'frontend-design',
-              version: '20260708',
-              created_at: new Date(Date.now() - 120_000).toISOString(),
-            },
-          ],
-          total_count: 1,
-          counts: { all: 1, builtin: 1, custom: 0 },
-        };
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    });
+          files: ['demo/SKILL.md', 'demo/references/guide.md'],
+          skill_md: '# Skill instructions\n\nUse the skill.',
+        }),
+    );
 
     renderSkillDetailPage('frontend-design');
 
@@ -973,21 +933,15 @@ describe('Skill detail page', () => {
     expect(directory.textContent).not.toContain('guide.md');
     fireEvent.click(within(directory).getByRole('button', { name: 'references' }));
     expect(directory.textContent).toContain('guide.md');
-    expect(screen.getByText('Latest')).toBeTruthy();
     expect(new URL(window.location.href).searchParams.get('skill')).toBe('frontend-design');
-    expect(
-      requests.find((request) => request.url === '/v1/skills/frontend-design?beta=true')?.headers.get('x-workspace-id'),
-    ).toBe('default');
-    expect(
-      requests
-        .find((request) => request.url === '/v1/skills/frontend-design/versions?beta=true&limit=50')
-        ?.headers.get('x-workspace-id'),
-    ).toBe('default');
+    expect(requests.some((request) => request.url.includes('/skills/frontend-design/versions/latest/preview'))).toBe(
+      true,
+    );
+    expect(requests.some((request) => request.url.startsWith('/v1/skills/'))).toBe(false);
   });
 
   test('renders the standardized skill detail error alert and retries successfully', async () => {
     resetTestDom('https://oma.duck.ai/workspaces/default/skills/frontend-design');
-    let attempt = 0;
     let contentAttempt = 0;
     const requests = mockSkillsApi(
       (url) => {
@@ -1008,52 +962,22 @@ describe('Skill detail page', () => {
             counts: { all: 1, builtin: 1, custom: 0 },
           };
         }
-        if (url === '/v1/skills/frontend-design?beta=true') {
-          attempt += 1;
-          if (attempt === 1) {
-            return new Response(
-              JSON.stringify({ error: { type: 'api_error', message: 'Skill metadata is unavailable.' } }),
-              {
-                status: 503,
-                headers: { 'Content-Type': 'application/json' },
-              },
-            );
-          }
-          return {
-            id: 'frontend-design',
-            type: 'skill',
-            display_title: 'frontend-design',
-            latest_version: '2',
-            source: 'anthropic',
-            created_at: new Date(Date.now() - 360_000).toISOString(),
-            updated_at: new Date(Date.now() - 120_000).toISOString(),
-          };
-        }
-        if (url === '/v1/skills/frontend-design/versions?beta=true&limit=50') {
-          return {
-            data: [
-              {
-                id: 'skillver_frontend-design-2',
-                type: 'skill_version',
-                description: 'Recovered description',
-                directory: 'frontend-design',
-                name: 'frontend-design v2',
-                skill_id: 'frontend-design',
-                version: '2',
-                created_at: new Date(Date.now() - 120_000).toISOString(),
-              },
-            ],
-            total_count: 1,
-            counts: { all: 1, builtin: 1, custom: 0 },
-          };
-        }
         throw new Error(`Unexpected request: ${url}`);
       },
       () => {
         contentAttempt += 1;
         return contentAttempt === 1
-          ? Response.json({ error: { message: 'Content is unavailable.' } }, { status: 503 })
-          : Response.json({ files: ['demo/SKILL.md'], skill_md: '# Recovered instructions' });
+          ? Response.json({ error: { message: 'Skill detail is unavailable.' } }, { status: 503 })
+          : Response.json({
+              id: 'frontend-design',
+              display_title: 'frontend-design',
+              source: 'anthropic',
+              description: 'Recovered description',
+              latest_version: '2',
+              updated_at: new Date(Date.now() - 120_000).toISOString(),
+              files: ['demo/SKILL.md'],
+              skill_md: '# Recovered instructions',
+            });
       },
     );
 
@@ -1061,18 +985,17 @@ describe('Skill detail page', () => {
 
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.getByText('Skill could not be loaded.')).toBeTruthy();
-    expect(screen.getByText('Skill metadata is unavailable.')).toBeTruthy();
+    expect(screen.getByText('Skill detail is unavailable.')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByText('Recovered description')).toBeTruthy();
-    expect(screen.queryByText('Skill metadata is unavailable.')).toBeNull();
-    expect(await screen.findByText('Skill contents could not be loaded.')).toBeTruthy();
-    expect(screen.getByText('Content is unavailable.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(screen.queryByText('Skill detail is unavailable.')).toBeNull();
     expect(await screen.findByText('# Recovered instructions')).toBeTruthy();
     expect(contentAttempt).toBe(2);
-    expect(requests.filter((request) => request.url === '/v1/skills/frontend-design?beta=true')).toHaveLength(2);
+    expect(
+      requests.filter((request) => request.url.includes('/skills/frontend-design/versions/latest/preview')),
+    ).toHaveLength(2);
   });
 });
 
@@ -1574,6 +1497,12 @@ function mockSkillsApi(handler: (url: string, headers: Headers) => unknown, prev
     if (url.startsWith('/api/console/') && url.endsWith('/preview')) {
       if (preview) return preview();
       return Response.json({
+        id: 'skill_demo',
+        display_title: 'Research notes',
+        source: 'custom',
+        description: 'Research reports and notes',
+        latest_version: '1',
+        updated_at: '2026-11-01T00:00:00Z',
         files: ['demo/SKILL.md', 'demo/references/guide.md'],
         skill_md: '# Skill instructions\n\nUse the skill.',
       });

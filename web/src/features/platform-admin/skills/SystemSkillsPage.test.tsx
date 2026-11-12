@@ -30,7 +30,6 @@ test('系统技能列表点击详情、关闭后打开导入仍可响应', async
     display_title: 'Demo',
     listed: true,
     default_version: '1.0.0',
-    revision: 1,
     created_at: '2026-11-01T00:00:00Z',
     updated_at: '2026-11-01T00:00:00Z',
   };

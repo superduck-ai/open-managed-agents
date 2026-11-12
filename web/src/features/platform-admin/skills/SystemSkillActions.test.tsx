@@ -19,7 +19,6 @@ const skill: SystemSkill = {
   display_title: 'Demo',
   listed: true,
   default_version: '1',
-  revision: 4,
   created_at: '2026-11-01',
   updated_at: '2026-11-01',
 };
@@ -78,23 +77,19 @@ test('上传技能的外层菜单保留更新、图标和删除', async () => {
   expect(remove).toHaveBeenCalledTimes(1);
 });
 
-test('确认删除提交当时的修订号，失败保留弹窗与错误', async () => {
+test('删除失败保留弹窗与错误', async () => {
   const closed = mock(() => {});
   const deleted = mock(async () => {});
-  const conflict = mock(async () => {});
-  let submitted: unknown;
   globalThis.fetch = mock(async (_url: RequestInfo | URL, options?: RequestInit) => {
     expect(options?.method).toBe('DELETE');
-    submitted = JSON.parse(String(options?.body));
-    return Response.json({ error: { code: 'revision_conflict', message: '技能已被更新' } }, { status: 409 });
+    expect(options?.body).toBeUndefined();
+    return Response.json({ error: { code: 'unavailable', message: '删除失败' } }, { status: 503 });
   }) as typeof fetch;
-  renderActions(<SystemSkillDeleteDialog skill={skill} onClose={closed} onDeleted={deleted} onConflict={conflict} />);
+  renderActions(<SystemSkillDeleteDialog skill={skill} onClose={closed} onDeleted={deleted} />);
   const confirm = screen.getByRole('button', { name: '删除', exact: true }) as HTMLButtonElement;
   fireEvent.click(confirm);
-  expect(await screen.findByText('技能已被更新')).toBeTruthy();
-  expect(submitted).toEqual({ revision: 4 });
-  expect(confirm.disabled).toBe(true);
-  expect(conflict).toHaveBeenCalledTimes(1);
+  expect(await screen.findByText('删除失败')).toBeTruthy();
+  expect(confirm.disabled).toBe(false);
   expect(closed).not.toHaveBeenCalled();
   expect(deleted).not.toHaveBeenCalled();
 });
@@ -130,7 +125,7 @@ test('覆盖版本提供恢复预置入口，确认后保留技能', async () =>
   const changed = mock(async () => {});
   globalThis.fetch = mock(async (_url: RequestInfo | URL, options?: RequestInit) => {
     expect(options?.method).toBe('DELETE');
-    expect(JSON.parse(String(options?.body))).toEqual({ revision: overridden.revision });
+    expect(options?.body).toBeUndefined();
     return new Response(null, { status: 204 });
   }) as typeof fetch;
   renderActions(<SystemSkillDeleteDialog skill={overridden} onClose={closed} onDeleted={changed} />);

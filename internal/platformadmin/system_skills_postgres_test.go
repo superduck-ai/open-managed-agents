@@ -12,7 +12,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"sync"
 	"testing"
 	"uuid"
@@ -126,7 +125,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		}
 		return buffer.Bytes()
 	}
-	uploadTo := func(target string, revision int64, data []byte) *httptest.ResponseRecorder {
+	uploadTo := func(target string, data []byte) *httptest.ResponseRecorder {
 		t.Helper()
 		var body bytes.Buffer
 		form := multipart.NewWriter(&body)
@@ -137,10 +136,8 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		if _, err := file.Write(data); err != nil {
 			t.Fatal(err)
 		}
-		for key, value := range map[string]string{"skill_id": target, "revision": strconv.FormatInt(revision, 10)} {
-			if err := form.WriteField(key, value); err != nil {
-				t.Fatal(err)
-			}
+		if err := form.WriteField("skill_id", target); err != nil {
+			t.Fatal(err)
 		}
 		if err := form.Close(); err != nil {
 			t.Fatal(err)
@@ -148,7 +145,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		return send("POST", "/skills/", &body, form.FormDataContentType(), true)
 	}
 	upload := func(data []byte) *httptest.ResponseRecorder {
-		return uploadTo("", 0, data)
+		return uploadTo("", data)
 	}
 
 	requireStatus := func(response *httptest.ResponseRecorder, status int) {
@@ -167,13 +164,11 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		}
 		return result
 	}
-	action := func(kind, version string, revision int64) *httptest.ResponseRecorder {
+	action := func(kind string) *httptest.ResponseRecorder {
 		t.Helper()
 		data, err := json.Marshal(struct {
-			Action   string `json:"action"`
-			Version  string `json:"version"`
-			Revision int64  `json:"revision"`
-		}{kind, version, revision})
+			Action string `json:"action"`
+		}{kind})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -238,19 +233,17 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 	requireStatus(consolePreview(firstVersion, ""), 404)
 	requireStatus(consolePreview(firstVersion, "?download=1"), 404)
 	requireStatus(send("GET", "/skills/fixture-system-skill/versions/"+firstVersion+"/content", nil, "", false), 200)
-	requireStatus(action("list", "", skill.Revision-1), 409)
-	requireStatus(action("list", "", skill.Revision), 200)
+	requireStatus(action("list"), 200)
 	skill = get()
 	if !skill.Listed || skill.DefaultVersion == nil || *skill.DefaultVersion != firstVersion {
 		t.Fatal("list did not expose default version")
 	}
 	requireStatus(consolePreview(firstVersion, ""), 200)
 	{
-		before := send("GET", "/skills/fixture-system-skill/events", nil, "", false).Body.String()
 		objects := store.count()
 		wrongName := archive("different-skill", "wrong target")
 		requireStatus(inspect(skill.ID, wrongName), 200)
-		response := uploadTo(skill.ID, skill.Revision, wrongName)
+		response := uploadTo(skill.ID, wrongName)
 		requireStatus(response, 400)
 		var result struct {
 			Error struct {
@@ -260,80 +253,40 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.Error.Code != "skill_name_mismatch" {
 			t.Fatalf("name mismatch response: %s error=%v", response.Body.String(), err)
 		}
-		if get().Revision != skill.Revision || store.count() != objects || send("GET", "/skills/fixture-system-skill/events", nil, "", false).Body.String() != before {
+		if store.count() != objects {
 			t.Fatal("rejected name mismatch left side effects")
 		}
 	}
 
-	versions, _, err := database.ListBuiltinSkillVersionsPage(t.Context(), db.ListBuiltinSkillVersionsPageParams{SkillExternalID: skill.ID, Limit: 20})
+	versions, _, err := database.ListSystemSkillVersionsPage(t.Context(), db.ListSystemSkillVersionsPageParams{SkillExternalID: skill.ID, Limit: 20})
 	if err != nil || len(versions) != 1 {
 		t.Fatalf("legacy version feed: %v %+v", err, versions)
 	}
-	requireStatus(uploadTo(skill.ID, skill.Revision, archive("fixture-system-skill", "second version")), 200)
+	requireStatus(uploadTo(skill.ID, archive("fixture-system-skill", "second version")), 200)
 	skill = get()
 	if !skill.Listed || skill.DefaultVersion == nil || *skill.DefaultVersion == firstVersion {
 		t.Fatalf("update did not switch active default while keeping listed: %+v", skill)
 	}
 	secondVersion := *skill.DefaultVersion
-	requireStatus(action("set_default", "missing", skill.Revision), 404)
-	requireStatus(action("set_default", firstVersion, skill.Revision), 200)
-	requireStatus(action("set_default", secondVersion, get().Revision), 200)
-	skill = get()
-	resolved, err := database.GetBuiltinSkillVersion(t.Context(), skill.ID, "latest")
+	resolved, err := database.GetSystemSkillVersion(t.Context(), skill.ID, "latest")
 	if err != nil || resolved.Version != secondVersion {
 		t.Fatalf("latest resolve: %+v %v", resolved, err)
 	}
-	requireStatus(action("unlist", "", skill.Revision), 200)
+	requireStatus(action("unlist"), 200)
 	requireStatus(consolePreview(secondVersion, ""), 404)
 	requireStatus(consolePreview(secondVersion, "?download=1"), 404)
-	count, err := database.CountBuiltinSkills(t.Context())
+	count, err := database.CountListedSystemSkills(t.Context())
 	if err != nil || count != 0 {
 		t.Fatalf("unlisted catalog count=%d error=%v", count, err)
 	}
-	resolved, err = database.GetBuiltinSkillVersion(t.Context(), skill.ID, "latest")
+	resolved, err = database.GetSystemSkillVersion(t.Context(), skill.ID, "latest")
 	if err != nil || resolved.Version != secondVersion {
 		t.Fatal("unlisting broke existing reference")
 	}
 
-	requireStatus(action("list", "", get().Revision), 200)
+	requireStatus(action("list"), 200)
 	requireStatus(consolePreview(secondVersion, ""), 200)
 	requireStatus(consolePreview(secondVersion, "?download=1"), 200)
-	skill = get()
-	var wg sync.WaitGroup
-	statuses := make(chan int, 2)
-	for range 2 {
-		wg.Go(func() { statuses <- uploadTo(skill.ID, skill.Revision, initial).Code })
-	}
-	wg.Wait()
-	close(statuses)
-	successes, conflicts := 0, 0
-	for status := range statuses {
-		if status == 200 {
-			successes++
-		}
-		if status == 409 {
-			conflicts++
-		}
-	}
-	if successes != 1 || conflicts != 1 {
-		t.Fatalf("concurrent writes: success=%d conflict=%d", successes, conflicts)
-	}
-	if store.count() != 3 {
-		t.Fatalf("concurrent rejection leaked object: %d", store.count())
-	}
-
-	eventResponse := send("GET", "/skills/fixture-system-skill/events", nil, "", false)
-	requireStatus(eventResponse, 200)
-	var audit struct {
-		Data []struct {
-			ActorID   string `json:"actor_id"`
-			ActorName string `json:"actor_name"`
-			Action    string `json:"action"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(eventResponse.Body.Bytes(), &audit); err != nil || len(audit.Data) == 0 || audit.Data[0].ActorID != "user_"+actor || audit.Data[0].ActorName != "Skill Administrator" || audit.Data[0].Action != "import" {
-		t.Fatalf("audit response lost actor identity: %+v %v", audit, err)
-	}
 	preloadedCount, err := skills.SyncBundledSkills(t.Context(), database, store, catalog.Files)
 	if err != nil || preloadedCount != 5 {
 		t.Fatalf("startup preload: count=%d error=%v", preloadedCount, err)
@@ -342,38 +295,27 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 	if err != nil || !preloaded.Bundled || !preloaded.Listed {
 		t.Fatalf("preloaded skill: %+v %v", preloaded, err)
 	}
-	revisionBody := func(revision int64) io.Reader {
-		data, err := json.Marshal(struct {
-			Revision int64 `json:"revision"`
-		}{revision})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return bytes.NewReader(data)
-	}
-	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(preloaded.Revision), "application/json", true), 403)
+	requireStatus(send("DELETE", "/skills/xlsx", nil, "", true), 403)
 	requireStatus(inspect("xlsx", archive("xlsx", "replace bundled")), 200)
-	requireStatus(uploadTo("xlsx", preloaded.Revision+1, archive("xlsx", "replace bundled")), 409)
-	requireStatus(uploadTo("xlsx", preloaded.Revision, archive("xlsx", "replace bundled")), 200)
+	requireStatus(uploadTo("xlsx", archive("xlsx", "replace bundled")), 200)
 	overridden, err := database.GetSystemSkill(t.Context(), "xlsx")
 	if err != nil || *overridden.LatestVersion == *preloaded.LatestVersion {
 		t.Fatalf("bundled override inactive: %+v %v", overridden, err)
 	}
-	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(preloaded.Revision), "application/json", true), 409)
-	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(overridden.Revision), "application/json", false), 403)
+	requireStatus(send("DELETE", "/skills/xlsx", nil, "", false), 403)
 	if _, err := skills.SyncBundledSkills(t.Context(), database, store, catalog.Files); err != nil {
 		t.Fatal(err)
 	}
 	restarted, err := database.GetSystemSkill(t.Context(), "xlsx")
-	if err != nil || *restarted.LatestVersion != *overridden.LatestVersion || restarted.Revision != overridden.Revision {
+	if err != nil || *restarted.LatestVersion != *overridden.LatestVersion {
 		t.Fatalf("startup clobbered uploaded override: %+v %v", restarted, err)
 	}
-	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(overridden.Revision), "application/json", true), 204)
+	requireStatus(send("DELETE", "/skills/xlsx", nil, "", true), 204)
 	restored, err := database.GetSystemSkill(t.Context(), "xlsx")
 	if err != nil || *restored.LatestVersion != *preloaded.LatestVersion || !restored.Bundled {
 		t.Fatalf("DELETE removed bundled skill instead of restoring: %+v %v", restored, err)
 	}
-	requireStatus(send("DELETE", "/skills/xlsx", revisionBody(restored.Revision), "application/json", true), 403)
+	requireStatus(send("DELETE", "/skills/xlsx", nil, "", true), 403)
 	for _, id := range []string{"xlsx", "pptx", "pdf", "docx", "guizang-ppt-skill"} {
 		loaded, err := database.GetSystemSkill(t.Context(), id)
 		if err != nil || loaded.LatestVersion == nil || !loaded.Bundled {
@@ -382,14 +324,9 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		requireStatus(send("GET", "/skills/"+id+"/versions/"+*loaded.LatestVersion+"/content?download=1", nil, "", false), 200)
 	}
 	requireStatus(upload(archive("delete-me", "uploaded skill")), 200)
-	deletable, err := database.GetSystemSkill(t.Context(), "delete-me")
-	if err != nil {
-		t.Fatal(err)
-	}
-	requireStatus(send("DELETE", "/skills/delete-me", revisionBody(deletable.Revision), "application/json", false), 403)
-	requireStatus(send("DELETE", "/skills/delete-me", revisionBody(deletable.Revision+1), "application/json", true), 409)
 	beforeDelete := store.count()
-	requireStatus(send("DELETE", "/skills/delete-me", revisionBody(deletable.Revision), "application/json", true), 204)
+	requireStatus(send("DELETE", "/skills/delete-me", nil, "", false), 403)
+	requireStatus(send("DELETE", "/skills/delete-me", nil, "", true), 204)
 	requireStatus(send("GET", "/skills/delete-me", nil, "", false), 404)
 	if store.count() != beforeDelete {
 		t.Fatal("catalog deletion removed historical archive")
@@ -404,7 +341,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 	staleAuthorization.verify = func(context.Context, string) (db.PlatformAdminAccount, error) {
 		return db.PlatformAdminAccount{UUID: actor, Granted: true}, nil
 	}
-	request := httptest.NewRequest("POST", "/skills/fixture-system-skill/actions", bytes.NewBufferString(`{"action":"unlist","revision":1}`))
+	request := httptest.NewRequest("POST", "/skills/fixture-system-skill/actions", bytes.NewBufferString(`{"action":"unlist"}`))
 	request.AddCookie(&http.Cookie{Name: "sessionKey", Value: actor})
 	request.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken(actor))
 	response := httptest.NewRecorder()

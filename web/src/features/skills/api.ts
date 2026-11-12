@@ -17,6 +17,15 @@ export type SkillCatalog = {
   counts: { all: number; builtin: number; custom: number };
 };
 export type SkillContent = { files: string[]; skill_md: string };
+export type SkillPreview = SkillContent & {
+  id: string;
+  display_title: string;
+  icon_key?: string;
+  source: string;
+  description: string;
+  latest_version: string;
+  updated_at: string;
+};
 export type SkillFilePreview = { path: string; content: string; previewable: boolean; reason: string };
 export function workspaceSkillContentUrl(workspaceId: string, skillId: string, version: string) {
   return workspaceSkillUrl(
@@ -59,7 +68,7 @@ export async function downloadSkillPackage(url: string, workspaceId?: string) {
 }
 
 export function retrieveSkillContent(workspaceId: string, skillId: string, version: string, signal: AbortSignal) {
-  return skillConsoleRequest<SkillContent>(
+  return skillConsoleRequest<SkillPreview>(
     workspaceId,
     `/${encodeURIComponent(skillId)}/versions/${encodeURIComponent(version)}/preview`,
     { signal },

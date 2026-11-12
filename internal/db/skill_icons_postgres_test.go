@@ -53,11 +53,10 @@ func TestSkillIconsMigrationAndCatalog(t *testing.T) {
 		t.Fatalf("custom catalog %+v %+v %v", rows, counts, err)
 	}
 
-	actor := uuid.New().String()
 	var imported SystemSkill
 	err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 		var err error
-		imported, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{ActorUUID: actor, Skill: SystemSkill{UUID: uuid.New().String(), ExternalID: "imported", DisplayTitle: "Imported", IconKey: "image"}, Version: systemSkillRegressionVersion("imported", "auto-one", time.Now())})
+		imported, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{Skill: SystemSkill{UUID: uuid.New().String(), ExternalID: "imported", DisplayTitle: "Imported", IconKey: "image"}, Version: systemSkillRegressionVersion("imported", "auto-one", time.Now())})
 		return err
 	})
 	if err != nil || imported.Listed || imported.LatestVersion == nil || imported.IconKey != "image" {

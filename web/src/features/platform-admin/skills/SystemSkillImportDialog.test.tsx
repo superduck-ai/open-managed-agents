@@ -161,25 +161,21 @@ test('统一两步导入传递图标，省略版本和草稿配置', async () =>
   expect(bodies[0].get('icon_key')).toBe('file-text');
   expect(bodies[0].get('version')).toBeNull();
   expect(bodies[0].get('publish')).toBeNull();
-  expect(bodies[0].get('revision')).toBe('0');
+  expect(bodies[0].get('revision')).toBeNull();
 });
-test('批量部分失败后只重试失败包并保留最新修订号', async () => {
+test('批量部分失败后只重试失败包', async () => {
   let writes = 0;
-  let inspections = 0;
-  const revisions: string[] = [];
-  globalThis.fetch = mock(async (url: RequestInfo | URL, options?: RequestInit) => {
+  globalThis.fetch = mock(async (url: RequestInfo | URL) => {
     if (String(url).endsWith('/inspect')) {
-      inspections++;
       return Response.json({
         name: 'demo',
-        existing: { id: 'demo', display_title: 'Demo', revision: inspections > 2 ? 4 : 3 },
+        existing: { id: 'demo', display_title: 'Demo' },
       });
     }
-    revisions.push(String((options?.body as FormData).get('revision')));
     writes++;
     if (writes === 2)
       return Response.json({ error: { code: 'unavailable', message: 'Temporary failure' } }, { status: 503 });
-    return Response.json({ skill: { id: 'demo', revision: writes === 1 ? 4 : 5 }, duplicate: false });
+    return Response.json({ skill: { id: 'demo' }, duplicate: false });
   }) as typeof fetch;
   const { onClose } = renderImport();
   fireEvent.change(screen.getByLabelText('选择技能包'), {
@@ -192,5 +188,5 @@ test('批量部分失败后只重试失败包并保留最新修订号', async ()
   await waitFor(() => expect(screen.queryByText('Temporary failure')).toBeNull());
   fireEvent.click(screen.getByRole('button', { name: '导入', exact: true }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
-  expect(revisions).toEqual(['3', '4', '4']);
+  expect(writes).toBe(3);
 });

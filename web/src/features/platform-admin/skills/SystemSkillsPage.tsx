@@ -69,7 +69,7 @@ export function SystemSkillsPage() {
     try {
       await client.request(`/skills/${encodeURIComponent(toggleTarget.id)}/actions`, {
         method: 'POST',
-        body: { action: toggleTarget.listed ? 'unlist' : 'list', version: '', revision: toggleTarget.revision },
+        body: { action: toggleTarget.listed ? 'unlist' : 'list' },
       });
       setToggleTarget(null);
       await changed();
@@ -215,7 +215,6 @@ export function SystemSkillsPage() {
             if (selected === deleteTarget.id) openSkill();
             await changed();
           }}
-          onConflict={changed}
         />
       )}
       <AlertDialog
@@ -254,7 +253,7 @@ export function SystemSkillsPage() {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={toggleBusy}>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
             <AlertDialogAction
-              disabled={toggleBusy || !!toggleError}
+              disabled={toggleBusy}
               onClick={(event) => {
                 event.preventDefault();
                 void toggleListing();

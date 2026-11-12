@@ -25,7 +25,6 @@ export function SystemSkillImportDialog({
       id: existing?.id || preview.name,
       name: existing?.display_title || preview.name,
       existing: !!existing,
-      revision: existing?.revision || 0,
       iconKey: existing?.icon_key,
     };
   };
@@ -34,7 +33,6 @@ export function SystemSkillImportDialog({
     const body = skillPackageBody(entry.files);
     body.append('display_title', entry.name.trim());
     body.append('icon_key', entry.iconKey);
-    body.append('revision', String(metadata.revision ?? 0));
     if (metadata.existing) body.append('skill_id', metadata.id);
     const result = await client.request<{ skill: SystemSkill; duplicate: boolean }>('/skills', {
       method: 'POST',
@@ -42,7 +40,7 @@ export function SystemSkillImportDialog({
     });
     if (result.duplicate)
       toast.info(msg('systemSkills.duplicate', 'This version already exists. Its content was not changed.'));
-    return { id: result.skill.id, revision: result.skill.revision };
+    return { id: result.skill.id };
   };
   return (
     <SkillImportDialog

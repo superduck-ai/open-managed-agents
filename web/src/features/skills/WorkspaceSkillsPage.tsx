@@ -49,7 +49,7 @@ export function SkillsPage({
     [navigate, basePath],
   );
   const [upload, setUpload] = useState<{ target?: ConsoleSkill } | null>(initialCreateOpen ? {} : null);
-  const [deleteTarget, setDeleteTarget] = useState<ConsoleSkill | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Pick<ConsoleSkill, 'id' | 'display_title' | 'source'> | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [source, setSource] = useState('');

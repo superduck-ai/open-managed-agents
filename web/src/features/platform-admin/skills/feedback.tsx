@@ -15,7 +15,7 @@ export async function updateSystemSkillIcon(
   try {
     await client.request(`/skills/${encodeURIComponent(skill.id)}/icon`, {
       method: 'PATCH',
-      body: { icon_key: iconKey, revision: skill.revision },
+      body: { icon_key: iconKey },
     });
   } finally {
     await onChanged();

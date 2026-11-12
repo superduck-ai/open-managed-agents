@@ -8,7 +8,7 @@ import { SkillIconPicker } from './icons';
 import { filesFromDataTransfer, pickSkillFolder, skillFilePath } from './files';
 import { skillErrorMessage } from './api';
 
-export type SkillImportMetadata = { id: string; name: string; existing: boolean; iconKey?: string; revision?: number };
+export type SkillImportMetadata = { id: string; name: string; existing: boolean; iconKey?: string };
 export type SkillImportEntry = {
   key: string;
   label: string;
@@ -20,7 +20,7 @@ export type SkillImportEntry = {
   error?: string;
   done: boolean;
 };
-type ImportResult = { id: string; revision?: number };
+type ImportResult = { id: string };
 
 export function SkillImportDialog({
   onClose,
@@ -58,7 +58,6 @@ export function SkillImportDialog({
   const [error, setError] = useState('');
   const [open, setOpen] = useState(true);
   const completedID = useRef('');
-  const revisions = useRef(new Map<string, number>());
   const update = (key: string, patch: Partial<SkillImportEntry>) =>
     setEntries((current) => current.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)));
   const inspect = async (entry: SkillImportEntry) => {
@@ -72,7 +71,6 @@ export function SkillImportDialog({
         name: entry.name || metadata.name,
         iconKey: entry.iconKey === initialIconKey ? metadata.iconKey || initialIconKey : entry.iconKey,
       });
-      if (metadata.revision !== undefined) revisions.current.set(metadata.id, metadata.revision);
     } catch (cause) {
       update(entry.key, { error: skillErrorMessage(cause, msg) });
     }
@@ -108,7 +106,6 @@ export function SkillImportDialog({
       iconKey: initialIconKey,
       done: false,
     }));
-    revisions.current.clear();
     setEntries(selected);
     setPhase('configure');
     setChecking(true);
@@ -131,12 +128,7 @@ export function SkillImportDialog({
       for (const entry of entries.filter((item) => !item.done)) {
         if (!active.current) return;
         try {
-          const metadata = entry.metadata!;
-          const result = await onImport({
-            ...entry,
-            metadata: { ...metadata, revision: revisions.current.get(metadata.id) ?? metadata.revision },
-          });
-          if (result.revision !== undefined) revisions.current.set(result.id, result.revision);
+          const result = await onImport(entry);
           update(entry.key, { done: true });
           lastID = result.id;
         } catch (cause) {

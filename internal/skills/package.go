@@ -49,8 +49,7 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 	}
 	if _, err := systemPackageDTO(pkg); err != nil {
 		if errors.Is(err, errSkillPreviewTooLarge) {
-			public := consoleSkillError(err)
-			return skillPackage{}, packageError{Status: public.Status, Message: public.Message}
+			return skillPackage{}, packageError{Status: http.StatusRequestEntityTooLarge, Message: "SKILL.md exceeds 256 KiB preview limit"}
 		}
 		return skillPackage{}, err
 	}

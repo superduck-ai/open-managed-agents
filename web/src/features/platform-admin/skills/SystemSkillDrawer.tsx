@@ -7,15 +7,12 @@ import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
 import { Sheet, SheetContent } from '@/shared/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { usePlatformAdmin } from '../context';
 import { SystemSkillError, systemSkillErrorMessage } from './feedback';
-import { SystemSkillVersions } from './SystemSkillVersions';
-import { SystemSkillEvents } from './SystemSkillEvents';
 import { SystemSkillDrawerHeader } from './SystemSkillDrawerHeader';
 import { systemSkillsKey, type SystemSkill, type SystemAction, type SystemPackage } from './types';
 
-type Confirmation = { action: SystemAction; version: string; revision: number };
+type Confirmation = { action: SystemAction };
 
 export function SystemSkillDrawer({
   skillID,
@@ -31,8 +28,6 @@ export function SystemSkillDrawer({
   const { client } = usePlatformAdmin();
   const { msg } = useI18n();
   const [open, setOpen] = useState(true);
-  const [tab, setTab] = useState('content');
-  const [contentVersion, setContentVersion] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -41,11 +36,11 @@ export function SystemSkillDrawer({
     queryFn: ({ signal }) => client.request<SystemSkill>(`/skills/${encodeURIComponent(skillID)}`, { signal }),
   });
   const skill = query.data;
-  const previewVersion = contentVersion ?? skill?.default_version ?? null;
-  const confirm = (action: SystemAction, version = '') => {
+  const previewVersion = skill?.default_version ?? null;
+  const confirm = (action: SystemAction) => {
     if (!skill) return;
     setError('');
-    setConfirmation({ action, version, revision: skill.revision });
+    setConfirmation({ action });
   };
   const change = async () => {
     if (!confirmation || pending) return;
@@ -99,34 +94,7 @@ export function SystemSkillDrawer({
                       </Button>
                     )}
                   </div>
-                  <Tabs value={tab} onValueChange={setTab}>
-                    <TabsList variant="line" className="mb-4">
-                      <TabsTrigger value="content">{msg('systemSkills.content', 'Package contents')}</TabsTrigger>
-                      <TabsTrigger value="versions">{msg('systemSkills.versions', 'Versions')}</TabsTrigger>
-                      <TabsTrigger value="events">{msg('systemSkills.events', 'Activity')}</TabsTrigger>
-                    </TabsList>
-                    <TabsContent value="versions">
-                      <SystemSkillVersions
-                        skill={skill}
-                        onAction={confirm}
-                        onContent={(version) => {
-                          setContentVersion(version);
-                          setTab('content');
-                        }}
-                      />
-                    </TabsContent>
-                    <TabsContent value="content">
-                      {previewVersion && previewVersion !== skill.default_version && (
-                        <p className="mb-3 break-all text-xs text-muted-foreground">
-                          {msg('systemSkills.previewVersion', 'Viewing {version}', { version: previewVersion })}
-                        </p>
-                      )}
-                      <SystemSkillContent skillID={skillID} version={previewVersion} />
-                    </TabsContent>
-                    <TabsContent value="events">
-                      <SystemSkillEvents skillID={skillID} />
-                    </TabsContent>
-                  </Tabs>
+                  <SystemSkillContent skillID={skillID} version={previewVersion} />
                 </>
               )
             )}
@@ -142,10 +110,7 @@ export function SystemSkillDrawer({
         <DialogContent closeButtonDisabled={pending}>
           <DialogHeader>
             <DialogTitle>{msg('systemSkills.confirmAction', 'Confirm system skill change')}</DialogTitle>
-            <DialogDescription>
-              {skillID}
-              {confirmation?.version ? ` / ${confirmation.version}` : ''}
-            </DialogDescription>
+            <DialogDescription>{skillID}</DialogDescription>
           </DialogHeader>
           {confirmation && <SystemSkillImpact action={confirmation.action} />}{' '}
           {error && (
@@ -159,7 +124,7 @@ export function SystemSkillDrawer({
             </Button>
             <Button
               variant={confirmation?.action === 'unlist' ? 'destructive' : 'default'}
-              disabled={pending || !!error}
+              disabled={pending}
               onClick={() => void change()}
             >
               {pending ? msg('common.saving', 'Saving...') : msg('common.confirm', 'Confirm')}
@@ -181,10 +146,6 @@ function SystemSkillImpact({ action }: { action: SystemAction }) {
     list: msg(
       'systemSkills.listImpact',
       'Make this skill selectable in all workspaces. It will not be added to Agents automatically.',
-    ),
-    set_default: msg(
-      'systemSkills.defaultImpact',
-      'Use this version when a future new session first resolves latest. Pinned Agent versions and existing sessions will not change.',
     ),
   };
   return <p className="text-sm leading-6 text-muted-foreground">{messages[action]}</p>;

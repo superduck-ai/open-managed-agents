@@ -12,7 +12,7 @@ import (
 )
 
 type runtimeSkillCatalog interface {
-	GetBuiltinSkillVersion(context.Context, string, string) (db.BuiltinSkillVersion, error)
+	GetSystemSkillVersion(context.Context, string, string) (db.SystemSkillVersion, error)
 	GetLatestSkillVersion(context.Context, string, string) (db.SkillVersion, error)
 	GetSkillVersion(context.Context, string, string, string) (db.SkillVersion, error)
 }
@@ -185,7 +185,7 @@ func (r *RuntimeResolver) resolveBuiltin(ctx context.Context, ref runtimeSkillRe
 	if r.db == nil {
 		return RuntimeSkill{}, errors.New("built-in skill resolver is unavailable")
 	}
-	record, err := r.db.GetBuiltinSkillVersion(ctx, ref.SkillID, ref.Version)
+	record, err := r.db.GetSystemSkillVersion(ctx, ref.SkillID, ref.Version)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			if ref.Version == "latest" {

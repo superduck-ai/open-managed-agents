@@ -53,7 +53,7 @@ func TestSystemImportOptionalIcon(t *testing.T) {
 		{name: "explicit icon", icon: new("file-text"), want: "file-text"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			values := url.Values{"skill_id": {"demo"}, "revision": {"3"}}
+			values := url.Values{"skill_id": {"demo"}}
 			if tc.icon != nil {
 				values.Set("icon_key", *tc.icon)
 			}
@@ -63,7 +63,7 @@ func TestSystemImportOptionalIcon(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if input.Skill.IconKey != tc.want || input.ExpectedRevision != 3 {
+			if input.Skill.IconKey != tc.want {
 				t.Fatalf("optional icon = %q, want %q; input=%+v", input.Skill.IconKey, tc.want, input)
 			}
 		})
@@ -88,11 +88,9 @@ func TestChangeSystemIconValidation(t *testing.T) {
 		body    string
 		message string
 	}{
-		{name: "unknown json field", body: `{"icon_key":"blocks","revision":1,"extra":true}`, message: "图标参数无效"},
-		{name: "zero revision", body: `{"icon_key":"blocks","revision":0}`, message: "修订号无效"},
-		{name: "negative revision", body: `{"icon_key":"blocks","revision":-2}`, message: "修订号无效"},
-		{name: "empty icon key", body: `{"icon_key":"","revision":1}`, message: "请选择有效的技能图标"},
-		{name: "blank icon key", body: `{"icon_key":"   ","revision":1}`, message: "请选择有效的技能图标"},
+		{name: "unknown json field", body: `{"icon_key":"blocks","extra":true}`, message: "图标参数无效"},
+		{name: "empty icon key", body: `{"icon_key":""}`, message: "请选择有效的技能图标"},
+		{name: "blank icon key", body: `{"icon_key":"   "}`, message: "请选择有效的技能图标"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPatch, "/demo/icon", bytes.NewBufferString(tc.body))
@@ -152,15 +150,15 @@ func TestConsoleSkillValidationAndErrorContract(t *testing.T) {
 			}
 			var payload struct {
 				Error struct {
-					Code    string `json:"code"`
+					Type    string `json:"type"`
 					Message string `json:"message"`
 				} `json:"error"`
 			}
 			if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 				t.Fatalf("invalid json error response: %v (%s)", err, rec.Body.String())
 			}
-			if payload.Error.Code != "invalid_request" || payload.Error.Message != tc.message {
-				t.Fatalf("error = %+v, want invalid_request / %q", payload.Error, tc.message)
+			if payload.Error.Type != "invalid_request_error" || payload.Error.Message != tc.message {
+				t.Fatalf("error = %+v, want invalid_request_error / %q", payload.Error, tc.message)
 			}
 		})
 	}

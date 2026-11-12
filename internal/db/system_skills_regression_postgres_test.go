@@ -3,7 +3,6 @@
 package db
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -30,11 +29,9 @@ func TestSystemSkillReimportAfterDeletion(t *testing.T) {
 				t.Fatal(err)
 			}
 			store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
-			actor := uuid.New().String()
 			input := SystemSkillImport{
-				ActorUUID: actor,
-				Skill:     SystemSkill{UUID: uuid.New().String(), ExternalID: "deep-research", DisplayTitle: "Research", IconKey: "mic"},
-				Version:   systemSkillRegressionVersion("deep-research", "original-version", time.Now()),
+				Skill:   SystemSkill{UUID: uuid.New().String(), ExternalID: "deep-research", DisplayTitle: "Research", IconKey: "mic"},
+				Version: systemSkillRegressionVersion("deep-research", "original-version", time.Now()),
 			}
 			var previous SystemSkill
 			err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
@@ -43,7 +40,7 @@ func TestSystemSkillReimportAfterDeletion(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				_, err = tx.ChangeSystemSkill(ctx, SystemSkillChange{ActorUUID: actor, SkillID: previous.ExternalID, Revision: previous.Revision, Action: "delete"})
+				_, err = tx.ChangeSystemSkill(ctx, SystemSkillChange{SkillID: previous.ExternalID, Action: "delete"})
 				return err
 			})
 			if err != nil {
@@ -52,18 +49,6 @@ func TestSystemSkillReimportAfterDeletion(t *testing.T) {
 			input.Skill.UUID = uuid.New().String()
 			input.Skill.IconKey = ""
 			input.Version = systemSkillRegressionVersion("deep-research", tc.version, time.Now())
-			input.ExpectedRevision = previous.Revision
-			err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
-				_, _, err := tx.ImportSystemSkill(ctx, input)
-				return err
-			})
-			if !errors.Is(err, ErrSystemSkillRevision) {
-				t.Fatalf("stale update must not revive deleted skill: %v", err)
-			}
-			if _, err := store.GetSystemSkill(ctx, previous.ExternalID); !errors.Is(err, ErrNotFound) {
-				t.Fatalf("rejected reimport revived deleted record: %v", err)
-			}
-			input.ExpectedRevision = 0
 			err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 				_, _, err := tx.ImportSystemSkill(ctx, input)
 				return err
@@ -72,10 +57,10 @@ func TestSystemSkillReimportAfterDeletion(t *testing.T) {
 				t.Fatalf("reimport after deletion failed: %v", err)
 			}
 			restored, err := store.GetSystemSkill(ctx, previous.ExternalID)
-			if err != nil || restored.UUID != previous.UUID || restored.Listed || restored.LatestVersion == nil || *restored.LatestVersion != tc.version || restored.IconKey != "mic" || restored.Revision <= previous.Revision {
+			if err != nil || restored.UUID != previous.UUID || restored.Listed || restored.LatestVersion == nil || *restored.LatestVersion != tc.version || restored.IconKey != "mic" {
 				t.Fatalf("unexpected reimport state: %+v %v", restored, err)
 			}
-			if _, err := store.SystemSkillVersion(ctx, previous.UUID, "original-version"); err != nil {
+			if _, err := store.GetSystemSkillVersion(ctx, previous.ExternalID, "original-version"); err != nil {
 				t.Fatalf("reimport lost historical version: %v", err)
 			}
 		})
@@ -134,7 +119,6 @@ func TestSystemSkillImportPreservesOmittedIcon(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
-	actor := uuid.New().String()
 	current := SystemSkill{ExternalID: "icons"}
 	for _, tc := range []struct {
 		name string
@@ -150,7 +134,6 @@ func TestSystemSkillImportPreservesOmittedIcon(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			input := SystemSkillImport{
-				ActorUUID: actor, ExpectedRevision: current.Revision,
 				Skill:   SystemSkill{UUID: uuid.New().String(), ExternalID: current.ExternalID, DisplayTitle: "Icons", IconKey: tc.icon},
 				Version: systemSkillRegressionVersion(current.ExternalID, uuid.New().String(), time.Now()),
 			}

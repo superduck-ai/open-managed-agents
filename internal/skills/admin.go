@@ -29,30 +29,8 @@ type systemSkillResponse struct {
 	IconKey        string    `json:"icon_key"`
 	DefaultVersion *string   `json:"default_version"`
 	Listed         bool      `json:"listed"`
-	Revision       int64     `json:"revision"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-type systemVersionResponse struct {
-	ID          string    `json:"id"`
-	Version     string    `json:"version"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	State       string    `json:"state"`
-	SizeBytes   int64     `json:"size_bytes"`
-	SHA256      string    `json:"sha256"`
-	CreatedAt   time.Time `json:"created_at"`
-}
-
-type systemEventResponse struct {
-	ActorID   string    `json:"actor_id"`
-	ActorName string    `json:"actor_name"`
-	ID        string    `json:"id"`
-	ActorUUID string    `json:"actor_uuid"`
-	Action    string    `json:"action"`
-	Version   string    `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
 }
 
 type systemPackageResponse struct {
@@ -71,9 +49,7 @@ type systemPage[T any] struct {
 }
 
 type systemSkillAction struct {
-	Revision int64  `json:"revision"`
-	Action   string `json:"action"`
-	Version  string `json:"version"`
+	Action string `json:"action"`
 }
 
 func (h *Handler) AdminRoutes() http.Handler {
@@ -86,8 +62,6 @@ func (h *Handler) AdminRoutes() http.Handler {
 	r.Delete("/{skill_id}", h.systemWrap(h.deleteSystemSkill))
 	r.Patch("/{skill_id}/icon", h.systemWrap(h.changeSystemIcon))
 	r.Post("/{skill_id}/actions", h.systemWrap(h.changeSystemSkill))
-	r.Get("/{skill_id}/versions", h.systemWrap(h.systemVersions))
-	r.Get("/{skill_id}/events", h.systemWrap(h.systemEvents))
 	r.Get("/{skill_id}/versions/{version}/content", h.systemWrap(h.systemContent))
 	return r
 }
@@ -103,12 +77,12 @@ func (h *Handler) requireSystemAdministrator(next http.Handler) http.Handler {
 	})
 }
 
-func wrapSkillJSONEndpoint(logger *slog.Logger, logMessage string, mapper func(error) *systemSkillPublicError, next httpapi.Endpoint) http.HandlerFunc {
+func (h *Handler) systemWrap(next httpapi.Endpoint) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := next(w, r); err != nil {
-			mapped := mapper(err)
+			mapped := systemSkillError(err)
 			if mapped.Status >= 500 {
-				logger.ErrorContext(r.Context(), logMessage, "request_id", httpapi.RequestID(r.Context()), "error", err)
+				h.logger.ErrorContext(r.Context(), "system skill administration failed", "request_id", httpapi.RequestID(r.Context()), "error", err)
 			}
 			httpapi.WriteJSON(w, mapped.Status, struct {
 				Error     *systemSkillPublicError `json:"error"`
@@ -118,24 +92,14 @@ func wrapSkillJSONEndpoint(logger *slog.Logger, logMessage string, mapper func(e
 	}
 }
 
-func (h *Handler) systemWrap(next httpapi.Endpoint) http.HandlerFunc {
-	return wrapSkillJSONEndpoint(h.logger, "system skill administration failed", systemSkillError, next)
-}
-
 func systemSkillDTO(s db.SystemSkill) systemSkillResponse {
-	return systemSkillResponse{BundledVersion: s.BundledVersion, Bundled: s.Bundled, ID: s.ExternalID, DisplayTitle: s.DisplayTitle, IconKey: s.IconKey, DefaultVersion: s.LatestVersion, Listed: s.Listed, Revision: s.Revision, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
+	return systemSkillResponse{BundledVersion: s.BundledVersion, Bundled: s.Bundled, ID: s.ExternalID, DisplayTitle: s.DisplayTitle, IconKey: s.IconKey, DefaultVersion: s.LatestVersion, Listed: s.Listed, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
 }
 
 func (h *Handler) deleteSystemSkill(w http.ResponseWriter, r *http.Request) error {
-	var input struct {
-		Revision int64 `json:"revision"`
-	}
-	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, 1024), &input, json.RejectUnknownMembers(true)); err != nil || input.Revision < 1 {
-		return systemInvalid("修订号无效")
-	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	if err := h.withSystemSkillWrite(r.Context(), principal.UserUUID, func(tx *db.PlatformAdminTx) error {
-		_, err := tx.ChangeSystemSkill(r.Context(), db.SystemSkillChange{ActorUUID: principal.UserUUID, SkillID: chi.URLParam(r, "skill_id"), Revision: input.Revision, Action: "delete"})
+		_, err := tx.ChangeSystemSkill(r.Context(), db.SystemSkillChange{SkillID: chi.URLParam(r, "skill_id"), Action: "delete"})
 		return err
 	}); err != nil {
 		return err
@@ -198,65 +162,19 @@ func (h *Handler) getSystemSkill(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (h *Handler) systemVersions(w http.ResponseWriter, r *http.Request) error {
-	limit, offset, err := systemPaging(r)
-	if err != nil {
-		return err
-	}
-	skill, err := h.db.GetSystemSkill(r.Context(), chi.URLParam(r, "skill_id"))
-	if err != nil {
-		return err
-	}
-	records, err := h.db.SystemSkillVersions(r.Context(), skill.UUID, limit+1, offset)
-	if err != nil {
-		return err
-	}
-	more := len(records) > limit
-	records = records[:min(len(records), limit)]
-	data := make([]systemVersionResponse, 0, len(records))
-	for _, v := range records {
-		data = append(data, systemVersionResponse{ID: v.ExternalID, Version: v.Version, Name: v.Name, Description: v.Description, State: v.State, SizeBytes: v.SizeBytes, SHA256: v.SHA256, CreatedAt: v.CreatedAt})
-	}
-	httpapi.WriteJSON(w, 200, systemPage[systemVersionResponse]{Data: data, HasMore: more})
-	return nil
-}
-
-func (h *Handler) systemEvents(w http.ResponseWriter, r *http.Request) error {
-	limit, offset, err := systemPaging(r)
-	if err != nil {
-		return err
-	}
-	skill, err := h.db.GetSystemSkill(r.Context(), chi.URLParam(r, "skill_id"))
-	if err != nil {
-		return err
-	}
-	records, err := h.db.SystemSkillEvents(r.Context(), skill.UUID, limit+1, offset)
-	if err != nil {
-		return err
-	}
-	more := len(records) > limit
-	records = records[:min(len(records), limit)]
-	data := make([]systemEventResponse, 0, len(records))
-	for _, v := range records {
-		data = append(data, systemEventResponse{ActorID: v.ActorID, ActorName: v.ActorName, ID: v.UUID, ActorUUID: v.ActorUUID, Action: v.Action, Version: v.Version, CreatedAt: v.CreatedAt})
-	}
-	httpapi.WriteJSON(w, 200, systemPage[systemEventResponse]{Data: data, HasMore: more})
-	return nil
-}
-
 func (h *Handler) changeSystemSkill(w http.ResponseWriter, r *http.Request) error {
 	var input systemSkillAction
 	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, 8192), &input, json.RejectUnknownMembers(true)); err != nil {
 		return systemInvalid("请求字段或 JSON 格式无效")
 	}
-	if input.Revision < 1 || input.Version == "latest" || len(input.Version) > 128 {
-		return systemInvalid("版本或修订号无效")
+	if input.Action != "list" && input.Action != "unlist" {
+		return systemInvalid("操作类型无效")
 	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	var result db.SystemSkill
 	err := h.withSystemSkillWrite(r.Context(), principal.UserUUID, func(tx *db.PlatformAdminTx) error {
 		var err error
-		result, err = tx.ChangeSystemSkill(r.Context(), db.SystemSkillChange{ActorUUID: principal.UserUUID, SkillID: chi.URLParam(r, "skill_id"), Revision: input.Revision, Action: input.Action, Version: input.Version})
+		result, err = tx.ChangeSystemSkill(r.Context(), db.SystemSkillChange{SkillID: chi.URLParam(r, "skill_id"), Action: input.Action})
 		return err
 	})
 	if err != nil {
@@ -316,7 +234,7 @@ func (h *Handler) systemContent(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	version, err := h.db.SystemSkillVersion(r.Context(), skill.UUID, chi.URLParam(r, "version"))
+	version, err := h.db.GetSystemSkillVersion(r.Context(), skill.ExternalID, chi.URLParam(r, "version"))
 	if err != nil {
 		return err
 	}
@@ -347,7 +265,8 @@ func (h *Handler) importSystemPackage(w http.ResponseWriter, r *http.Request) er
 	}
 	var skill db.SystemSkill
 	duplicate := false
-	err = h.withSystemSkillWrite(r.Context(), input.ActorUUID, func(tx *db.PlatformAdminTx) error {
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	err = h.withSystemSkillWrite(r.Context(), principal.UserUUID, func(tx *db.PlatformAdminTx) error {
 		var err error
 		skill, duplicate, err = tx.ImportSystemSkill(r.Context(), input)
 		return err
@@ -382,19 +301,11 @@ func cleanupSystemUpload(ctx context.Context, database *db.DB, store storage.Obj
 }
 
 func systemImportInput(r *http.Request, pkg skillPackage) (db.SystemSkillImport, error) {
-	revision := int64(0)
-	if value := r.FormValue("revision"); value != "" {
-		var err error
-		revision, err = strconv.ParseInt(value, 10, 64)
-		if err != nil || revision < 0 {
-			return db.SystemSkillImport{}, systemInvalid("修订号无效")
-		}
-	}
 	target := strings.TrimSpace(r.FormValue("skill_id"))
 	skillID := pkg.Name
 	if target != "" {
-		if revision < 1 || len(target) > 256 {
-			return db.SystemSkillImport{}, systemInvalid("目标技能或修订号无效")
+		if len(target) > 256 {
+			return db.SystemSkillImport{}, systemInvalid("目标技能无效")
 		}
 		skillID = target
 	}
@@ -413,8 +324,7 @@ func systemImportInput(r *http.Request, pkg skillPackage) (db.SystemSkillImport,
 			return db.SystemSkillImport{}, err
 		}
 	}
-	principal, _ := auth.PrincipalFromContext(r.Context())
-	return db.SystemSkillImport{ActorUUID: principal.UserUUID, ExpectedRevision: revision, Skill: db.SystemSkill{UUID: uuid.NewV4().String(), ExternalID: skillID, DisplayTitle: title, IconKey: iconKey}, Version: db.SystemSkillVersion{UUID: uuid.NewV4().String(), Version: "auto-" + uuid.New().String(), Name: pkg.Name, Description: pkg.Description, Directory: pkg.Directory, SizeBytes: pkg.Size, SHA256: pkg.SHA256, CreatedAt: time.Now().UTC()}}, nil
+	return db.SystemSkillImport{Skill: db.SystemSkill{UUID: uuid.NewV4().String(), ExternalID: skillID, DisplayTitle: title, IconKey: iconKey}, Version: db.SystemSkillVersion{UUID: uuid.NewV4().String(), Version: "auto-" + uuid.New().String(), Name: pkg.Name, Description: pkg.Description, Directory: pkg.Directory, SizeBytes: pkg.Size, SHA256: pkg.SHA256, CreatedAt: time.Now().UTC()}}, nil
 }
 
 func (h *Handler) withSystemSkillWrite(ctx context.Context, actor string, write func(*db.PlatformAdminTx) error) error {
@@ -432,14 +342,10 @@ func (h *Handler) withSystemSkillWrite(ctx context.Context, actor string, write 
 
 func (h *Handler) changeSystemIcon(w http.ResponseWriter, r *http.Request) error {
 	var input struct {
-		IconKey  string `json:"icon_key"`
-		Revision int64  `json:"revision"`
+		IconKey string `json:"icon_key"`
 	}
 	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, 1024), &input, json.RejectUnknownMembers(true)); err != nil {
 		return errInvalidSkillIconInput
-	}
-	if input.Revision < 1 {
-		return systemInvalid("修订号无效")
 	}
 	key, err := requireSkillIconKey(input.IconKey)
 	if err != nil {
@@ -449,7 +355,7 @@ func (h *Handler) changeSystemIcon(w http.ResponseWriter, r *http.Request) error
 	var skill db.SystemSkill
 	err = h.withSystemSkillWrite(r.Context(), principal.UserUUID, func(tx *db.PlatformAdminTx) error {
 		var err error
-		skill, err = tx.ChangeSystemSkill(r.Context(), db.SystemSkillChange{ActorUUID: principal.UserUUID, SkillID: chi.URLParam(r, "skill_id"), Revision: input.Revision, Action: "set_icon", IconKey: key})
+		skill, err = tx.ChangeSystemSkill(r.Context(), db.SystemSkillChange{SkillID: chi.URLParam(r, "skill_id"), Action: "set_icon", IconKey: key})
 		return err
 	})
 	if err != nil {

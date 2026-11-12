@@ -327,7 +327,7 @@ func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, ses
 			return SessionEvent{}, false, err
 		}
 	}
-	event, err = stampDSHSessionEvent(ctx, executor, *session, event)
+	event, err = stampSessionPublicationTime(ctx, executor, *session, event)
 	return event, err == nil, err
 }
 

@@ -321,7 +321,7 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 			h.logger.WarnContext(r.Context(), "drain committed session stream", "session_id", session.ExternalID, "error", err)
 			return false
 		}
-		ordered, deleted := connection.orderedDelivery(order, events, delivery)
+		ordered, deleted := connection.orderedDelivery(events, delivery)
 		for _, event := range ordered {
 			writeSSE(w, event, subscribeThreadID)
 		}

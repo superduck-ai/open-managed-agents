@@ -83,7 +83,6 @@ func TestCommittedSessionStreamCannotOvertakeEarlierFanout(t *testing.T) {
 	thread := "primary"
 	parent.ThreadExternalID, child.ThreadExternalID = &thread, &thread
 	connection := newStreamConnection(thread, true, nil)
-	order := &committedStreamOrder{enabled: true}
 	committed := []sessionStreamEvent{sessionStreamEventFrom(parent), sessionStreamEventFrom(child)}
 	ids := []string{}
 	for _, publication := range bus.publications {
@@ -92,7 +91,7 @@ func TestCommittedSessionStreamCannotOvertakeEarlierFanout(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, event := range payload.Events {
-			emitted, _ := connection.orderedDelivery(order, committed, sessionEventDelivery{event: event})
+			emitted, _ := connection.orderedDelivery(committed, sessionEventDelivery{event: event})
 			committed = nil
 			for _, actual := range emitted {
 				ids = append(ids, actual.ExternalID)
@@ -116,41 +115,40 @@ func TestCommittedSessionStreamCannotOvertakeEarlierFanout(t *testing.T) {
 func TestCommittedStreamPreservesQueuedACKAndRejectsForeignOrRepeatedFinal(t *testing.T) {
 	thread, foreign := "primary", "other"
 	c := newStreamConnection(thread, true, map[string]struct{}{"agent.message": {}})
-	o := &committedStreamOrder{enabled: true}
 	at := time.Now().UTC()
 	queued := sessionStreamEvent{ExternalID: "input", EventType: "user.message", ThreadExternalID: &thread, Payload: []byte(`{"id":"input","type":"user.message","processed_at":null}`)}
-	events, _ := c.orderedDelivery(o, nil, sessionEventDelivery{event: queued})
+	events, _ := c.orderedDelivery(nil, sessionEventDelivery{event: queued})
 	if len(events) != 1 || string(events[0].Payload) != string(queued.Payload) {
 		t.Fatal("queued ACK changed or dropped")
 	}
 	processed := queued
 	processed.ProcessedAt = at
 	processed.Payload = []byte(`{"id":"input","type":"user.message","processed_at":"2026-11-12T00:00:00Z"}`)
-	events, _ = c.orderedDelivery(o, []sessionStreamEvent{processed}, sessionEventDelivery{event: queued})
+	events, _ = c.orderedDelivery([]sessionStreamEvent{processed}, sessionEventDelivery{event: queued})
 	if len(events) != 1 || string(events[0].Payload) != string(processed.Payload) {
 		t.Fatal("processed ACK was replaced by stale queued ACK")
 	}
-	events, _ = c.orderedDelivery(o, nil, sessionEventDelivery{event: processed})
+	events, _ = c.orderedDelivery(nil, sessionEventDelivery{event: processed})
 	if len(events) != 0 {
 		t.Fatal("duplicate processed notification published")
 	}
 	other := processed
 	other.ExternalID = "foreign"
 	other.ThreadExternalID = &foreign
-	events, _ = c.orderedDelivery(o, []sessionStreamEvent{other}, sessionEventDelivery{event: other})
+	events, _ = c.orderedDelivery([]sessionStreamEvent{other}, sessionEventDelivery{event: other})
 	if len(events) != 0 {
 		t.Fatal("foreign committed event published")
 	}
 	start := sessionStreamEvent{ExternalID: "answer", EventType: "event_start", ThreadExternalID: &thread, Payload: []byte(`{"event":{"id":"answer","type":"agent.message"}}`)}
-	if events, _ = c.orderedDelivery(o, nil, sessionEventDelivery{event: start}); len(events) != 1 {
+	if events, _ = c.orderedDelivery(nil, sessionEventDelivery{event: start}); len(events) != 1 {
 		t.Fatal("valid preview start lost")
 	}
 	final := sessionStreamEvent{ExternalID: "answer", EventType: "agent.message", ThreadExternalID: &thread, ProcessedAt: at, Payload: []byte(`{"id":"answer","type":"agent.message","content":[{"type":"text","text":"exact"}]}`)}
-	if events, _ = c.orderedDelivery(o, []sessionStreamEvent{final}, sessionEventDelivery{event: final}); len(events) != 1 {
+	if events, _ = c.orderedDelivery([]sessionStreamEvent{final}, sessionEventDelivery{event: final}); len(events) != 1 {
 		t.Fatal("final must publish exactly once")
 	}
 	delta := sessionStreamEvent{EventType: "event_delta", ThreadExternalID: &thread, Payload: []byte(`{"event_id":"answer","delta":{"text":"late"}}`)}
-	if events, _ = c.orderedDelivery(o, nil, sessionEventDelivery{event: delta}); len(events) != 0 {
+	if events, _ = c.orderedDelivery(nil, sessionEventDelivery{event: delta}); len(events) != 0 {
 		t.Fatal("delta after public final published")
 	}
 }

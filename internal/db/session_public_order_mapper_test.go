@@ -25,10 +25,6 @@ func TestSessionPublicationOrderMapperScopesAndFrozenCursor(t *testing.T) {
 		wantSQLAbsent:     []string{"processed_at IS NOT NULL", "ORDER BY session_events.processed_at"},
 	})
 	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement: dSHExecutionMapperHasSessionStatement, bound: buildDSHExecutionMapperHasSession(yourbatis.DialectPostgres, "organization", "workspace", "session"), wantID: "DSHExecutionMapper.HasSession", wantKind: yourbatis.StatementSelect,
-		wantArgumentNames: []string{"organizationUUID", "workspaceUUID", "sessionUUID"}, wantSQLFragments: []string{"organization_uuid = $1", "workspace_uuid = $2", "session_uuid = $3", "'dsr1'"},
-	})
-	assertMapperBuilderContract(t, mapperBuilderContract{
 		statement: sessionEventMapperLatestProcessedStatement, bound: buildSessionEventMapperLatestProcessed(yourbatis.DialectPostgres, "workspace", "session"), wantID: "SessionEventMapper.LatestProcessed", wantKind: yourbatis.StatementSelect,
 		wantArgumentNames: []string{"workspaceUUID", "sessionExternalID"}, wantSQLFragments: []string{"workspace_uuid = $1", "session_external_id = $2", "processed_at IS NOT NULL", "ORDER BY processed_at DESC, id DESC LIMIT 1"},
 	})

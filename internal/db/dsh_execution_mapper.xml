@@ -4,12 +4,7 @@
     <sql id="scope">organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID} AND code_session_uuid = #{scope.CodeSessionUUID}</sql>
     <sql id="executionColumns">input_id, session_thread_id, status, result, failure_code, accepted_at, started_at, completed_at, cancel_requested_at</sql>
     <sql id="permissionColumns">request_id, input_id, dsh_session_id, session_thread_id, tool_use_id, turn, tool, input, available, public_event_id, state, decision</sql>
-    <select id="HasSession" result="scalar" resultType="bool">
- SELECT EXISTS (SELECT 1 FROM code_sessions
- WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}
- AND metadata #>> '{config,worker_protocol}' = 'dsr1')
- </select>
- <select id="FindCode" result="optional" resultType="dshCodeRow">
+    <select id="FindCode" result="optional" resultType="dshCodeRow">
         SELECT uuid, external_id, session_external_id FROM code_sessions
         WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID} AND session_uuid = #{sessionUUID}
           AND metadata #>> '{config,worker_protocol}' = 'dsr1' AND status = 'active' AND deleted_at IS NULL

@@ -31,7 +31,7 @@ func processExistingSessionInputTx(ctx context.Context, executor yourbatis.Execu
 	if existing.EventType != "user.message" || event.EventType != "user.message" || existing.ProcessedAt != nil || event.ProcessedAt.IsZero() {
 		return SessionEvent{}, false, nil
 	}
-	event, err := stampDSHSessionEvent(ctx, executor, session, event)
+	event, err := stampSessionPublicationTime(ctx, executor, session, event)
 	if err != nil {
 		return SessionEvent{}, false, err
 	}
@@ -68,7 +68,7 @@ func (d *DB) ProcessSessionInputsForWorker(ctx context.Context, codeSession Code
 		now := time.Now().UTC()
 		mapper := NewSessionEventMapper(executor)
 		for _, id := range inputIDs {
-			stamped, err := stampDSHSessionEvent(ctx, executor, session, SessionEvent{ProcessedAt: now})
+			stamped, err := stampSessionPublicationTime(ctx, executor, session, SessionEvent{ProcessedAt: now})
 			if err != nil {
 				return err
 			}

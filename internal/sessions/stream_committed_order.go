@@ -9,14 +9,10 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-const streamProtocolRecheckInterval = 5 * time.Second
-
 type committedStreamOrder struct {
 	session       db.Session
 	cursorID      string
 	cursorAt      *time.Time
-	nextCheck     time.Time
-	enabled       bool
 	mutableCursor bool
 }
 
@@ -53,16 +49,6 @@ func (h *Handler) committedStreamEvents(ctx context.Context, order *committedStr
 	if notification, ok := delivery.(sessionEventDelivery); ok && maevents.IsStreamDelta(notification.event.EventType) {
 		return nil, nil
 	}
-	if order.needsProtocolCheck(time.Now()) {
-		dsr, err := h.db.HasDSHSession(ctx, order.session)
-		if err != nil {
-			return nil, err
-		}
-		order.enabled, order.nextCheck = dsr, time.Now().Add(streamProtocolRecheckInterval)
-	}
-	if !order.enabled {
-		return nil, nil
-	}
 	events, next, err := h.readStreamHistory(ctx, order.session.WorkspaceUUID, order.session.ExternalID, connection, order.cursorID, order.cursorAt, true)
 	if err != nil {
 		return nil, err
@@ -72,10 +58,6 @@ func (h *Handler) committedStreamEvents(ctx context.Context, order *committedStr
 	}
 	order.cursorID = next
 	return events, nil
-}
-
-func (o *committedStreamOrder) needsProtocolCheck(now time.Time) bool {
-	return !o.enabled && !now.Before(o.nextCheck)
 }
 
 func (c *streamConnection) acceptCommitted(events []sessionStreamEvent) []sessionStreamEvent {
@@ -93,21 +75,18 @@ func (c *streamConnection) acceptCommitted(events []sessionStreamEvent) []sessio
 	return accepted
 }
 
-func (o *committedStreamOrder) notificationOnly(event sessionStreamEvent) bool {
-	return o.enabled && !event.ProcessedAt.IsZero() && maevents.IsPublicSessionHistoryEvent(event.EventType) && event.EventType != "session.deleted"
+func committedHistoryNotification(event sessionStreamEvent) bool {
+	return !event.ProcessedAt.IsZero() && maevents.IsPublicSessionHistoryEvent(event.EventType) && event.EventType != "session.deleted"
 }
 
-func (c *streamConnection) orderedDelivery(order *committedStreamOrder, committed []sessionStreamEvent, delivery streamDelivery) ([]sessionStreamEvent, bool) {
+func (c *streamConnection) orderedDelivery(committed []sessionStreamEvent, delivery streamDelivery) ([]sessionStreamEvent, bool) {
 	events := c.acceptCommitted(committed)
-	if notification, ok := delivery.(sessionEventDelivery); ok && order.notificationOnly(notification.event) {
+	if notification, ok := delivery.(sessionEventDelivery); ok && committedHistoryNotification(notification.event) {
 		return events, false
 	}
 	event, accepted := c.event(delivery)
 	if accepted {
 		events = append(events, event)
-		if !order.enabled && !event.ProcessedAt.IsZero() && maevents.IsPublicSessionHistoryEvent(event.EventType) && event.EventType != "session.deleted" {
-			order.cursorID = event.ExternalID
-		}
 	}
 	return events, event.EventType == "session.deleted"
 }

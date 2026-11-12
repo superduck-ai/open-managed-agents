@@ -292,9 +292,9 @@ Brain 的 DsrPermissionWaiter 由 permission.resolved 通知唤醒，输入 SSE 
 
 ## 并发公开事件顺序
 
-DSR 的公开处理时间由持有 Session 行锁的写事务分配。新处理事件的 `processed_at` 至少晚于该 Session 已提交处理时间一个 PostgreSQL 微秒；同一事务生成的审批原件与镜像可以共享处理时间，并沿用行插入次序。排队输入仍先保存空处理时间，实际处理 ACK 再在相同行锁内分配时间。首次写入的原始 publication body、回执摘要和事件 ID 保持不变，HTTP history 与 SSE 统一使用持久化处理时间，并保留未知 JSON 数值的原始精度。
+所有会话的公开处理时间都由持有 Session 行锁的写事务分配，不区分 DSR 与 CCRv2，写入路径不再查询会话所属协议；CCRv2 worker 上报的 `processed_at` 不再作为排序依据。新处理事件的 `processed_at` 至少晚于该 Session 已提交处理时间一个 PostgreSQL 微秒；同一事务生成的审批原件与镜像可以共享处理时间，并沿用行插入次序。排队输入仍先保存空处理时间，实际处理 ACK 再在相同行锁内分配时间。首次写入的原始 publication body、回执摘要和事件 ID 保持不变，HTTP history 与 SSE 统一使用持久化处理时间，并保留未知 JSON 数值的原始精度。
 
-DSR SSE 将持久化事件 fanout 作为读取提示，按已提交的同线程 history 游标读取并投影。不同 API 生产者的 fanout 延迟或乱序不再改变公开顺序。订阅前记录处理历史边界，订阅后再次读取；重放与 live 提示重叠时不重复发布 processed 事件。保活也补读已提交历史。预览 delta 仍走原有实时传输，不为每个 delta 查询数据库，不改变 Brain 的发布、复制确认或 finish 屏障。
+所有会话的 SSE 都将持久化事件 fanout 作为读取提示，按已提交的同线程 history 游标读取并投影。不同 API 生产者的 fanout 延迟或乱序不再改变公开顺序。订阅前记录处理历史边界，订阅后再次读取；重放与 live 提示重叠时不重复发布 processed 事件。保活也补读已提交历史。预览 delta 仍走原有实时传输，不为每个 delta 查询数据库，不改变 Brain 的发布、复制确认或 finish 屏障。补读查询只读已处理事件，按 `(processed_at, id)` 排序并比较游标，使用 `session_events_processed_order_idx` 从游标位置做索引范围扫描，不再对整段会话历史排序。
 
 `user.message` 与 `user.tool_confirmation` 的 queued/processed 两个阶段共享事件 ID。输入型 `Last-Event-ID` 因而从该输入原始创建位置恢复，不能把可能只表示 queued ACK 的 ID 标记为 processed 完成。即使处理发生在重连读取游标之前，也保留中间事件和 processed ACK。跨连接的这段恢复可能重放相同稳定 ID；客户端继续按事件身份与处理阶段合并。同一连接仅发布一次 processed 版本。其他持久化事件游标保持后继事件重放语义。
 

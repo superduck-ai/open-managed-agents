@@ -19,6 +19,10 @@ export type SearchRecord = {
   icon?: IconComponent;
 };
 
+export function searchRecordKey(record: SearchRecord) {
+  return `${record.kind}:${record.context}:${record.id}`;
+}
+
 export function searchMatches(record: SearchRecord, query: string) {
   const value = `${record.name} ${record.context} ${record.id}`.toLocaleLowerCase();
   return query

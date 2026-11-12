@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import type { AuthAccount } from '../../shared/auth/api';
 import { navigationHref } from '../../shared/navigation/navigation-paths';
 import { isSettingsPath, settingsItem, visibleSettingsGroups } from '../../shared/navigation/settings-navigation';
@@ -31,24 +31,28 @@ export function useSettingsHistory(
   path: string,
 ) {
   const settings = isSettingsPath(path);
-  const origin = initialWorkspaceManagementOrigin(account?.uuid, orgUuid, workspaceId, path, settings);
+  const suffix = window.location.search + window.location.hash;
+  const origin = useMemo(
+    () => initialWorkspaceManagementOrigin(account?.uuid, orgUuid, workspaceId, path, settings),
+    [account?.uuid, orgUuid, workspaceId, path, suffix, settings],
+  );
   const key = `oma.settings.page:${account?.uuid}:${orgUuid}`;
-  const pages = visibleSettingsGroups(account, orgUuid).flatMap((group) => group.children);
-  const remembered = readStoredPage(key, '/settings/llm');
   const itemHref = settingsItem(path)?.href;
+  const settingsHref = useMemo(() => {
+    const pages = visibleSettingsGroups(account, orgUuid).flatMap((group) => group.children);
+    const remembered = itemHref || readStoredPage(key, '/settings/llm');
+    return navigationHref(pages.some((page) => page.href === remembered) ? remembered : '/settings/llm', workspaceId);
+  }, [account, orgUuid, key, itemHref, workspaceId]);
   useEffect(() => {
     if (itemHref) saveStoredPage(key, itemHref);
     if (!settings)
       saveWorkspaceManagementOrigin(account?.uuid, orgUuid, {
-        href: path + window.location.search + window.location.hash,
+        href: path + suffix,
         workspaceId,
       });
-  }, [account?.uuid, orgUuid, workspaceId, path, settings, key, itemHref]);
+  }, [account?.uuid, orgUuid, workspaceId, path, suffix, settings, key, itemHref]);
   return {
-    settingsHref: navigationHref(
-      pages.some((page) => page.href === remembered) ? remembered : '/settings/llm',
-      workspaceId,
-    ),
+    settingsHref,
     returnHref: workspaceManagementReturnHref(origin, workspaceId),
   };
 }

@@ -5,7 +5,7 @@ import {
   isPlainNavigationClick,
   isSessionDetailPath,
 } from '../../shared/navigation/navigation-paths';
-import { isSettingsPath, settingScope } from '../../shared/navigation/settings-navigation';
+import { currentOrganizationName, isSettingsPath, settingScope } from '../../shared/navigation/settings-navigation';
 import { SettingsNavigation, SettingsLocation, SettingsAccess, CompactNavigationGroup } from './SettingsNavigation';
 import { useSettingsHistory } from './use-settings-navigation';
 import { useResponsiveSidebar } from '../../shared/hooks/use-responsive-sidebar';
@@ -582,10 +582,7 @@ export function AccountMenu({
   const identity = getIdentity(account);
   const { orgUuid } = useWorkspace();
   const organizationAccess = useContext(AuthContext)?.organizationAccess;
-  const organizationName =
-    organizationAccess?.organization.name ||
-    account?.memberships?.find((membership) => membership.organization?.uuid === orgUuid)?.organization?.name ||
-    orgUuid;
+  const organizationName = currentOrganizationName(account, organizationAccess, orgUuid);
   const { locale, setLocale, supportedLocales: locales } = useLocale();
   const { msg } = useI18n();
 

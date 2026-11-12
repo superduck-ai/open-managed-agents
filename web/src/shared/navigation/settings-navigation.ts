@@ -1,5 +1,5 @@
 import { productIcons } from '../icons/product-icons';
-import type { AuthAccount } from '../auth/api';
+import type { AuthAccount, OrganizationAccess } from '../auth/api';
 import { canManageOrganization } from '../permissions/organization';
 import { canManageMembers } from '../permissions/members';
 import { canViewAnalytics } from '../permissions/analytics';
@@ -118,4 +118,17 @@ export function settingScope(path: string) {
   if (path === '/settings/profile' || path === '/settings/appearance') return 'personal';
   if (path.startsWith('/settings/') && !/^\/settings\/workspaces\/[^/]+\//.test(path)) return 'organization';
   return 'workspace';
+}
+
+export function currentOrganizationName(
+  account: AuthAccount | null | undefined,
+  access: OrganizationAccess | null | undefined,
+  orgUuid?: string,
+) {
+  const organizationId = access?.organization.uuid || orgUuid;
+  return (
+    access?.organization.name ||
+    account?.memberships?.find((membership) => membership.organization?.uuid === organizationId)?.organization?.name ||
+    organizationId
+  );
 }

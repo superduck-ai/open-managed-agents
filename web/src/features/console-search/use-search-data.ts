@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState } from 'react';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { AuthContext } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
 import { useWorkspace } from '../../shared/workspaces/context';
@@ -10,6 +10,7 @@ import { platformNavigationSearchRecords, searchOrganizationPage } from './platf
 
 export function useSearchData(query: string) {
   const { msg } = useI18n();
+  const queryClient = useQueryClient();
   const auth = useContext(AuthContext);
   const platform = useContext(PlatformAdminContext);
   const { orgUuid, activeWorkspaceId, workspaces } = useWorkspace();
@@ -25,7 +26,7 @@ export function useSearchData(query: string) {
     queryFn: ({ pageParam, signal }) =>
       platform
         ? searchOrganizationPage(platform.client, debounced, pageParam, signal)
-        : searchResourcePage(orgUuid || '', activeWorkspaceId, debounced, pageParam),
+        : searchResourcePage(queryClient, orgUuid || '', activeWorkspaceId, debounced, pageParam),
     initialPageParam: {} as ResourceCursor,
     getNextPageParam: (last) => last.next,
     enabled: Boolean(

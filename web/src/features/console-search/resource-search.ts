@@ -1,3 +1,4 @@
+import type { QueryClient } from '@tanstack/react-query';
 import { listAgentPickerPage } from '../managed-agents/agents/agent-picker-api';
 import { listManagedEntities } from '../managed-agents/api';
 import { listWorkspaceMCPServers } from '../../shared/api/workspaceMCPServers';
@@ -54,6 +55,7 @@ async function readPage(
 }
 
 export async function searchResourcePage(
+  queryClient: QueryClient,
   organizationId: string,
   workspaceId: string,
   query: string,
@@ -61,10 +63,18 @@ export async function searchResourcePage(
 ) {
   const active = sources.filter((source) => cursor[source] !== null);
   const settled = await Promise.allSettled(
-    active.map(async (source) => ({
-      source,
-      page: await readPage(source, organizationId, workspaceId, query, cursor[source] || undefined),
-    })),
+    active.map(async (source) => {
+      const pageCursor = cursor[source] || undefined;
+      const serverFiltered = source === 'agents' || source === 'mcp-servers';
+      const page = serverFiltered
+        ? await readPage(source, organizationId, workspaceId, query, pageCursor)
+        : await queryClient.fetchQuery({
+            queryKey: ['console-search-resource', organizationId, workspaceId, source, pageCursor || ''],
+            queryFn: () => readPage(source, organizationId, workspaceId, '', pageCursor),
+            staleTime: 30000,
+          });
+      return { source, page };
+    }),
   );
   const next: ResourceCursor = { ...cursor };
   const records: SearchRecord[] = [];

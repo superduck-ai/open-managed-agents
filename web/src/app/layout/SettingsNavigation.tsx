@@ -25,6 +25,7 @@ import { AccessDenied } from '../../shared/ui/access-denied';
 import { isActivePath, isPlainNavigationClick, navigationHref } from '../../shared/navigation/navigation-paths';
 import {
   canAccessSettings,
+  currentOrganizationName,
   settingsItem,
   settingScope,
   visibleSettingsGroups,
@@ -219,9 +220,7 @@ export function SettingsLocation({ currentPath, account }: { currentPath: string
     scope === 'personal'
       ? account?.email_address
       : scope === 'organization'
-        ? (organizationAccess?.organization.uuid === orgUuid ? organizationAccess?.organization.name : undefined) ||
-          account?.memberships?.find((membership) => membership.organization?.uuid === orgUuid)?.organization?.name ||
-          orgUuid
+        ? currentOrganizationName(account, organizationAccess, orgUuid)
         : localizedWorkspaceName(activeWorkspace.name, msg);
   return (
     <div className="settings-location">

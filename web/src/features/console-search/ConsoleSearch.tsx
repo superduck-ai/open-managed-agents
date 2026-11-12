@@ -8,7 +8,7 @@ import { useScopeConfirmation } from '../organizations/useScopeConfirmation';
 import { Button } from '../../shared/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogTitle, DialogDescription } from '../../shared/ui/dialog';
 import { Command, CommandInput, CommandList, CommandItem, CommandGroup } from '../../shared/ui/command';
-import { documentationSearchRecords, searchMatches, type SearchRecord } from './search-data';
+import { documentationSearchRecords, searchMatches, searchRecordKey, type SearchRecord } from './search-data';
 import { useSearchData } from './use-search-data';
 import { PlatformAdminContext } from '../platform-admin/context';
 import './console-search.css';
@@ -133,7 +133,7 @@ function SearchContents({
       });
       return;
     }
-    onRecent([record, ...recent.filter((item) => item.id !== record.id)].slice(0, 5));
+    onRecent([record, ...recent.filter((item) => searchRecordKey(item) !== searchRecordKey(record))].slice(0, 5));
     onClose();
     if (record.kind === 'document') window.open(record.href, '_blank', 'noopener,noreferrer');
     else navigate(record.href);
@@ -182,7 +182,7 @@ function SearchContents({
             .map((group) => (
               <CommandGroup key={group.label} heading={group.label}>
                 {group.records.map((record) => (
-                  <SearchResult key={record.id} record={record} onSelect={() => choose(record)} />
+                  <SearchResult key={searchRecordKey(record)} record={record} onSelect={() => choose(record)} />
                 ))}
               </CommandGroup>
             ))}
@@ -246,7 +246,7 @@ function SearchResult({ record, onSelect }: { record: SearchRecord; onSelect: ()
   const ActionIcon = record.kind === 'document' ? ArrowUpRight : CornerDownLeft;
   return (
     <CommandItem
-      value={`${record.kind}:${record.id}`}
+      value={searchRecordKey(record)}
       onSelect={onSelect}
       className="console-search-result h-11 min-h-11 gap-3"
       title={`${record.name} ${record.context}`}
@@ -289,7 +289,7 @@ function searchGroups(
     (record) => record.kind !== 'page' || pages.some((page) => page.id === record.id),
   );
   const withoutRecent = (items: SearchRecord[]) =>
-    items.filter((record) => !currentRecent.some((entry) => entry.id === record.id));
+    items.filter((record) => !currentRecent.some((entry) => searchRecordKey(entry) === searchRecordKey(record)));
   return [
     { label: msg('search.recent', 'Recent'), records: currentRecent },
     { label: msg('search.pages', 'Pages'), records: withoutRecent(pages) },

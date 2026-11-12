@@ -112,10 +112,14 @@ test('resource rows show their kind instead of the workspace name', async () => 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   clients.push(client);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL) =>
-    String(input).includes('/environments')
-      ? Response.json({ data: [{ id: 'env_1', name: '测试' }] })
-      : Response.json({ data: [] })) as typeof fetch;
+  let environmentCalls = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    if (String(input).includes('/environments')) {
+      environmentCalls += 1;
+      return Response.json({ data: [{ id: 'env_1', name: '测试' }] });
+    }
+    return Response.json({ data: [] });
+  }) as typeof fetch;
   try {
     render(
       <I18nProvider initialLocale="en">
@@ -154,6 +158,7 @@ test('resource rows show their kind instead of the workspace name', async () => 
     expect(option.textContent).not.toContain('Default');
     fireEvent.change(screen.getByPlaceholderText(/Search console/), { target: { value: 'Environments' } });
     expect(await screen.findByRole('option', { name: /测试/ })).toBeTruthy();
+    expect(environmentCalls).toBe(1);
   } finally {
     globalThis.fetch = originalFetch;
   }

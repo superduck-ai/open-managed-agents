@@ -18,58 +18,18 @@ func TestSkillIconsMigrationAndCatalog(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 116); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.ExecContext(ctx, `
- INSERT INTO builtin_skills (external_id,display_title,latest_version,listed) VALUES ('docx','Word','1',false);
- INSERT INTO builtin_skill_versions (external_id,skill_uuid,skill_external_id,version,name,description,directory,state,s3_bucket,s3_key,size_bytes,sha256)
- SELECT 'skver_icon',uuid,external_id,'1','docx','Reports','docx','published','bucket','archive',10,'hash' FROM builtin_skills WHERE external_id='docx';
- INSERT INTO builtin_skills (external_id,display_title,listed) VALUES ('legacy-draft','Legacy',false);
- INSERT INTO builtin_skill_versions (external_id,skill_uuid,skill_external_id,version,name,description,directory,state,s3_bucket,s3_key,size_bytes,sha256)
- SELECT 'skver_legacy',uuid,external_id,'1','legacy-draft','Unpublished','legacy','draft','bucket','legacy',10,'legacy-hash' FROM builtin_skills WHERE external_id='legacy-draft';
- `); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := provider.UpTo(ctx, 117); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 119); err != nil {
-		t.Fatal(err)
-	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
-	legacy, err := store.GetSystemSkill(ctx, "legacy-draft")
-	if err != nil || legacy.LatestVersion != nil || legacy.Listed {
-		t.Fatalf("migration changed legacy visibility: %+v %v", legacy, err)
-	}
-	legacyVersions, err := store.SystemSkillVersions(ctx, legacy.UUID, 10, 0)
-	if err != nil || len(legacyVersions) != 0 {
-		t.Fatalf("draft entered available versions: %+v %v", legacyVersions, err)
-	}
-	legacyVersion, err := store.SystemSkillVersion(ctx, legacy.UUID, "1")
-	if err != nil || legacyVersion.State != "draft" {
-		t.Fatalf("migration published historical data: %+v %v", legacyVersion, err)
-	}
-	skill, err := store.GetSystemSkill(ctx, "docx")
-	if err != nil || skill.IconKey != "file-text" || skill.Listed || skill.LatestVersion == nil || *skill.LatestVersion != "1" {
-		t.Fatalf("migrated skill: %+v %v", skill, err)
-	}
-	versions, err := store.SystemSkillVersions(ctx, skill.UUID, 10, 0)
-	if err != nil || len(versions) != 1 || versions[0].State != "published" {
-		t.Fatalf("migrated versions: %+v %v", versions, err)
-	}
-	for _, workspace := range []string{"20000000-0000-4000-8000-000000000001", "20000000-0000-4000-8000-000000000002"} {
-		rows, counts, err := store.SkillCatalog(ctx, SkillCatalogQuery{WorkspaceUUID: workspace, Limit: 12})
-		if err != nil || len(rows) != 0 || counts.All != 0 {
-			t.Fatalf("unlisted leaked: %+v %+v %v", rows, counts, err)
-		}
-	}
-	if _, err := database.ExecContext(ctx, `UPDATE builtin_skills SET listed=true WHERE external_id='docx'`); err != nil {
+
+	bundled := SystemSkill{UUID: uuid.New().String(), ExternalID: "xlsx", DisplayTitle: "Excel 表格", IconKey: "chart-no-axes-combined"}
+	if err := store.SyncBundledSkill(ctx, bundled, systemSkillRegressionVersion("xlsx", "bundled-v1", time.Now())); err != nil {
 		t.Fatal(err)
 	}
-	rows, counts, err := store.SkillCatalog(ctx, SkillCatalogQuery{WorkspaceUUID: "20000000-0000-4000-8000-000000000001", Query: "Reports", Limit: 12})
-	if err != nil || len(rows) != 1 || counts.Builtin != 1 || rows[0].Description != "Reports" || rows[0].IconKey != "file-text" {
-		t.Fatalf("listed catalog: %+v %+v %v", rows, counts, err)
+	rows, counts, err := store.SkillCatalog(ctx, SkillCatalogQuery{WorkspaceUUID: "20000000-0000-4000-8000-000000000001", Query: "Regression", Limit: 12})
+	if err != nil || len(rows) != 1 || counts.Builtin != 1 || rows[0].IconKey != "chart-no-axes-combined" {
+		t.Fatalf("listed bundled catalog: %+v %+v %v", rows, counts, err)
 	}
 
 	workspace := "20000000-0000-4000-8000-000000000001"
@@ -92,20 +52,25 @@ func TestSkillIconsMigrationAndCatalog(t *testing.T) {
 	if err != nil || len(rows) != 1 || counts.Custom != 1 || rows[0].IconKey != "file-text" {
 		t.Fatalf("custom catalog %+v %+v %v", rows, counts, err)
 	}
+
 	actor := uuid.New().String()
 	var imported SystemSkill
 	err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 		var err error
-		imported, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{ActorUUID: actor, Ready: true, Skill: SystemSkill{UUID: uuid.New().String(), ExternalID: "imported", DisplayTitle: "Imported", IconKey: "image"}, Version: SystemSkillVersion{UUID: uuid.New().String(), ExternalID: "skver_imported", Version: "auto-one", Name: "imported", Description: "Imported report", Directory: "imported", S3Bucket: "bucket", S3Key: "imported", SizeBytes: 10, SHA256: "imported-hash", CreatedAt: time.Now()}})
+		imported, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{ActorUUID: actor, Skill: SystemSkill{UUID: uuid.New().String(), ExternalID: "imported", DisplayTitle: "Imported", IconKey: "image"}, Version: systemSkillRegressionVersion("imported", "auto-one", time.Now())})
 		return err
 	})
 	if err != nil || imported.Listed || imported.LatestVersion == nil || imported.IconKey != "image" {
 		t.Fatalf("automatic import %+v %v", imported, err)
 	}
-	versions, err = store.SystemSkillVersions(ctx, imported.UUID, 10, 0)
+	versions, err := store.SystemSkillVersions(ctx, imported.UUID, 10, 0)
 	if err != nil || len(versions) != 1 || versions[0].State != "published" {
 		t.Fatalf("automatic version %+v %v", versions, err)
 	}
+	if rows, _, err := store.SkillCatalog(ctx, SkillCatalogQuery{WorkspaceUUID: "20000000-0000-4000-8000-000000000002", Query: "Imported", Limit: 12}); err != nil || len(rows) != 0 {
+		t.Fatalf("unlisted system skill leaked to workspace catalog: %+v %v", rows, err)
+	}
+
 	if _, err := provider.DownTo(ctx, 116); err != nil {
 		t.Fatal(err)
 	}

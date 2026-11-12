@@ -38,7 +38,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 	"github.com/superduck-ai/open-managed-agents/internal/secretservice"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
-	"github.com/superduck-ai/open-managed-agents/internal/skills"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/statemetrics"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -397,7 +396,7 @@ func initializeStorage(ctx context.Context, cfg config.Config, database *db.DB, 
 	if err := objectStore.Ensure(ctx); err != nil {
 		return nil, nil, fmt.Errorf("ensure object store bucket: %w", err)
 	}
-	count, err := skills.SyncBundledSkills(ctx, database, objectStore, catalog.Files)
+	count, err := skillsapi.SyncBundledSkills(ctx, database, objectStore, catalog.Files)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load bundled skills: %w", err)
 	}

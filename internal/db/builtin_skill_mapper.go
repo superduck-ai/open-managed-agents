@@ -9,6 +9,7 @@ import (
 
 type builtinSkillRow struct {
 	IconKey       string     `db:"icon_key"`
+	Listed        bool       `db:"listed"`
 	ID            int64      `db:"id"`
 	UUID          string     `db:"uuid"`
 	ExternalID    string     `db:"external_id"`
@@ -37,43 +38,11 @@ type builtinSkillVersionRow struct {
 	DeletedAt       *time.Time `db:"deleted_at"`
 }
 
-type upsertBuiltinSkillParams struct {
-	ExternalID    string
-	DisplayTitle  string
-	LatestVersion string
-	CreatedAt     time.Time
-}
-
-type upsertBuiltinSkillVersionParams struct {
-	ExternalID      string
-	SkillUUID       string
-	SkillExternalID string
-	Version         string
-	Name            string
-	Description     string
-	Directory       string
-	S3Bucket        string
-	S3Key           string
-	SizeBytes       int64
-	SHA256          string
-	CreatedAt       time.Time
-}
-
-type pruneBuiltinSkillsParams struct {
-	KeepExternalIDsJSON []byte
-	DeletedAt           time.Time
-}
-
 type BuiltinSkillMapper interface {
-	UpsertSkill(ctx context.Context, params upsertBuiltinSkillParams) (builtinSkillRow, error)
-	UpsertVersion(ctx context.Context, params upsertBuiltinSkillVersionParams) (builtinSkillVersionRow, error)
 	ListSkillsPage(ctx context.Context, limit, offset int) ([]builtinSkillRow, error)
 	CountSkills(ctx context.Context) (int, error)
 	FindSkillByExternalID(ctx context.Context, externalID string) (builtinSkillRow, error)
 	FindSkillUUIDByExternalID(ctx context.Context, externalID string) (string, error)
 	ListVersionsPage(ctx context.Context, skillUUID string, limit, offset int, oldestFirst bool) ([]builtinSkillVersionRow, error)
 	FindVersion(ctx context.Context, skillExternalID, version string) (builtinSkillVersionRow, error)
-	ListMissingVersions(ctx context.Context, keepExternalIDsJSON []byte) ([]builtinSkillVersionRow, error)
-	SoftDeleteMissingVersions(ctx context.Context, params pruneBuiltinSkillsParams) error
-	SoftDeleteMissingSkills(ctx context.Context, params pruneBuiltinSkillsParams) error
 }

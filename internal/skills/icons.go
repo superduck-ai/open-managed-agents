@@ -17,3 +17,10 @@ func skillIconKey(value string) (string, error) {
 	}
 	return key, nil
 }
+
+func requireSkillIconKey(value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", invalidSkillIcon()
+	}
+	return skillIconKey(value)
+}

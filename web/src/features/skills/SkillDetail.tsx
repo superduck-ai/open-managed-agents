@@ -300,6 +300,7 @@ export function SkillDrawer({
 export function DeleteSkillDialog({
   skill,
   isDeleting,
+  confirmDisabled = false,
   error,
   onOpenChange,
   onConfirm,
@@ -309,6 +310,7 @@ export function DeleteSkillDialog({
 }: {
   skill: Pick<ConsoleSkill, 'id' | 'display_title'> | null;
   isDeleting: boolean;
+  confirmDisabled?: boolean;
   error: string | null;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
@@ -371,7 +373,7 @@ export function DeleteSkillDialog({
           </AlertDialogCancel>
           <AlertDialogAction
             variant="destructive"
-            disabled={isDeleting}
+            disabled={isDeleting || confirmDisabled}
             onClick={(event) => {
               event.preventDefault();
               onConfirm();

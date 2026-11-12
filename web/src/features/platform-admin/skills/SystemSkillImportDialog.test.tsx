@@ -82,6 +82,20 @@ test('取消原生目录选择后保持选择页，不出现错误或第二个�
   expect(screen.queryByRole('button', { name: '导入', exact: true })).toBeNull();
 });
 
+test('选择空文件夹时提示缺少 SKILL.md 并停留在选择步骤', async () => {
+  Object.defineProperty(window, 'showDirectoryPicker', {
+    configurable: true,
+    value: mock(async () => ({
+      name: 'empty-demo',
+      async *values() {},
+    })),
+  });
+  renderImport();
+  fireEvent.click(screen.getByRole('button', { name: '选择技能文件夹' }));
+  expect(await screen.findByText('技能文件夹根目录缺少 SKILL.md。')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: '导入', exact: true })).toBeNull();
+});
+
 test('原生目录选择后复用检查和配置步骤，点击导入前不提交', async () => {
   const bodies: FormData[] = [];
   Object.defineProperty(window, 'showDirectoryPicker', {

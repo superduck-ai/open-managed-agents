@@ -103,12 +103,12 @@ func (h *Handler) requireSystemAdministrator(next http.Handler) http.Handler {
 	})
 }
 
-func (h *Handler) systemWrap(next httpapi.Endpoint) http.HandlerFunc {
+func wrapSkillJSONEndpoint(logger *slog.Logger, logMessage string, mapper func(error) *systemSkillPublicError, next httpapi.Endpoint) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := next(w, r); err != nil {
-			mapped := systemSkillError(err)
+			mapped := mapper(err)
 			if mapped.Status >= 500 {
-				h.logger.ErrorContext(r.Context(), "system skill administration failed", "request_id", httpapi.RequestID(r.Context()), "error", err)
+				logger.ErrorContext(r.Context(), logMessage, "request_id", httpapi.RequestID(r.Context()), "error", err)
 			}
 			httpapi.WriteJSON(w, mapped.Status, struct {
 				Error     *systemSkillPublicError `json:"error"`
@@ -116,6 +116,10 @@ func (h *Handler) systemWrap(next httpapi.Endpoint) http.HandlerFunc {
 			}{mapped, httpapi.RequestID(r.Context())})
 		}
 	}
+}
+
+func (h *Handler) systemWrap(next httpapi.Endpoint) http.HandlerFunc {
+	return wrapSkillJSONEndpoint(h.logger, "system skill administration failed", systemSkillError, next)
 }
 
 func systemSkillDTO(s db.SystemSkill) systemSkillResponse {
@@ -146,13 +150,13 @@ func systemPaging(r *http.Request) (int, int, error) {
 	if v := r.URL.Query().Get("limit"); v != "" {
 		limit, err = strconv.Atoi(v)
 		if err != nil || limit < 1 || limit > 100 {
-			return 0, 0, systemInvalid("分页数量必须为 1–100")
+			return 0, 0, errInvalidSkillLimit
 		}
 	}
 	if v := r.URL.Query().Get("offset"); v != "" {
 		offset, err = strconv.Atoi(v)
 		if err != nil || offset < 0 || offset > 100000 {
-			return 0, 0, systemInvalid("分页位置无效")
+			return 0, 0, errInvalidSkillOffset
 		}
 	}
 	return limit, offset, nil
@@ -164,7 +168,7 @@ func (h *Handler) listSystemSkills(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
-	if status != "" && status != "listed" && status != "unlisted" && status != "draft" {
+	if status != "" && status != "listed" && status != "unlisted" {
 		return systemInvalid("技能状态无效")
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("query"))
@@ -245,7 +249,7 @@ func (h *Handler) changeSystemSkill(w http.ResponseWriter, r *http.Request) erro
 	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, 8192), &input, json.RejectUnknownMembers(true)); err != nil {
 		return systemInvalid("请求字段或 JSON 格式无效")
 	}
-	if input.Revision < 1 || !validSystemVersion(input.Version, true) {
+	if input.Revision < 1 || input.Version == "latest" || len(input.Version) > 128 {
 		return systemInvalid("版本或修订号无效")
 	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
@@ -378,14 +382,6 @@ func cleanupSystemUpload(ctx context.Context, database *db.DB, store storage.Obj
 }
 
 func systemImportInput(r *http.Request, pkg skillPackage) (db.SystemSkillImport, error) {
-	version := strings.TrimSpace(r.FormValue("version"))
-	automatic := version == ""
-	if automatic {
-		version = "auto-" + uuid.New().String()
-	}
-	if !validSystemVersion(version, false) {
-		return db.SystemSkillImport{}, systemInvalid("请填写有效版本标识（最多 64 个字母、数字、点、下划线或横线）")
-	}
 	revision := int64(0)
 	if value := r.FormValue("revision"); value != "" {
 		var err error
@@ -409,10 +405,6 @@ func systemImportInput(r *http.Request, pkg skillPackage) (db.SystemSkillImport,
 	if len(title) > 256 {
 		return db.SystemSkillImport{}, systemInvalid("技能说明字段过长")
 	}
-	publish := r.FormValue("publish")
-	if !automatic && publish != "true" && publish != "false" {
-		return db.SystemSkillImport{}, systemInvalid("请选择发布或保存草稿")
-	}
 	iconKey := r.FormValue("icon_key")
 	if iconKey != "" {
 		var err error
@@ -422,25 +414,7 @@ func systemImportInput(r *http.Request, pkg skillPackage) (db.SystemSkillImport,
 		}
 	}
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	return db.SystemSkillImport{ActorUUID: principal.UserUUID, ExpectedRevision: revision, Publish: publish == "true", Ready: automatic, Skill: db.SystemSkill{UUID: uuid.NewV4().String(), ExternalID: skillID, DisplayTitle: title, IconKey: iconKey}, Version: db.SystemSkillVersion{UUID: uuid.NewV4().String(), Version: version, Name: pkg.Name, Description: pkg.Description, Directory: pkg.Directory, SizeBytes: pkg.Size, SHA256: pkg.SHA256, CreatedAt: time.Now().UTC()}}, nil
-}
-
-func validSystemVersion(value string, allowEmpty bool) bool {
-	if value == "" {
-		return allowEmpty
-	}
-	if len(value) > 64 || value == "latest" {
-		return false
-	}
-	for i, r := range value {
-		if i == 0 && !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
-			return false
-		}
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
-			return false
-		}
-	}
-	return true
+	return db.SystemSkillImport{ActorUUID: principal.UserUUID, ExpectedRevision: revision, Skill: db.SystemSkill{UUID: uuid.NewV4().String(), ExternalID: skillID, DisplayTitle: title, IconKey: iconKey}, Version: db.SystemSkillVersion{UUID: uuid.NewV4().String(), Version: "auto-" + uuid.New().String(), Name: pkg.Name, Description: pkg.Description, Directory: pkg.Directory, SizeBytes: pkg.Size, SHA256: pkg.SHA256, CreatedAt: time.Now().UTC()}}, nil
 }
 
 func (h *Handler) withSystemSkillWrite(ctx context.Context, actor string, write func(*db.PlatformAdminTx) error) error {
@@ -461,10 +435,13 @@ func (h *Handler) changeSystemIcon(w http.ResponseWriter, r *http.Request) error
 		IconKey  string `json:"icon_key"`
 		Revision int64  `json:"revision"`
 	}
-	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, 1024), &input); err != nil {
-		return systemInvalid("图标参数无效")
+	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, 1024), &input, json.RejectUnknownMembers(true)); err != nil {
+		return errInvalidSkillIconInput
 	}
-	key, err := skillIconKey(input.IconKey)
+	if input.Revision < 1 {
+		return systemInvalid("修订号无效")
+	}
+	key, err := requireSkillIconKey(input.IconKey)
 	if err != nil {
 		return err
 	}

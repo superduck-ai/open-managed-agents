@@ -1,7 +1,7 @@
 import { afterEach, expect, mock, test } from 'bun:test';
 import '../../test/setup';
 import { cancelScopeRequests, setConsoleRequestContext } from '@/shared/api/client';
-import { downloadSkillPackage, workspaceSkillContentUrl } from './api';
+import { downloadSkillPackage, skillErrorMessage, workspaceSkillContentUrl } from './api';
 
 const originalFetch = globalThis.fetch;
 const originalCreate = URL.createObjectURL;
@@ -69,3 +69,15 @@ for (const workspaceId of ['workspace', undefined]) {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:zip');
   });
 }
+
+test('重复名称的接口错误转换为操作提示，不展示内部字段名', () => {
+  const msg = (key: string, fallback: string) =>
+    key === 'skills.import.duplicateName' ? '已存在同名技能，请修改名称或使用“更新技能”。' : fallback;
+  for (const error of [
+    new Error('Skill cannot reuse an existing display_title: browser'),
+    { message: 'Skill cannot reuse an existing display_title: browser' },
+  ]) {
+    expect(skillErrorMessage(error, msg)).toBe('已存在同名技能，请修改名称或使用“更新技能”。');
+  }
+  expect(skillErrorMessage(new Error('Storage unavailable'), msg)).toBe('Storage unavailable');
+});

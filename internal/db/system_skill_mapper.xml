@@ -9,7 +9,6 @@
         <choose>
             <when test="query.Status == &quot;listed&quot;">AND listed</when>
             <when test="query.Status == &quot;unlisted&quot;">AND NOT listed</when>
-            <when test="query.Status == &quot;draft&quot;">AND latest_version IS NULL</when>
         </choose>
         ORDER BY created_at DESC, uuid DESC LIMIT #{query.Limit} OFFSET #{query.Offset}
     </select>
@@ -58,8 +57,7 @@
     </update>
     <select id="Versions" resultType="SystemSkillVersion">
         SELECT <include refid="versionColumns"/> FROM builtin_skill_versions
-        WHERE skill_uuid = #{skillUUID} AND deleted_at IS NULL
-        <if test="publishedOnly">AND state = 'published'</if>
+        WHERE skill_uuid = #{skillUUID} AND state = 'published' AND deleted_at IS NULL
         ORDER BY created_at DESC, uuid DESC LIMIT #{limit} OFFSET #{offset}
     </select>
     <select id="Version" resultType="SystemSkillVersion">
@@ -68,11 +66,8 @@
     </select>
     <insert id="InsertVersion" result="exec">
         INSERT INTO builtin_skill_versions (uuid, external_id, skill_uuid, skill_external_id, version, name, description, directory, state, s3_bucket, s3_key, size_bytes, sha256, created_at)
-        VALUES (#{version.UUID}, #{version.ExternalID}, #{version.SkillUUID}, #{version.SkillExternalID}, #{version.Version}, #{version.Name}, #{version.Description}, #{version.Directory}, 'draft', #{version.S3Bucket}, #{version.S3Key}, #{version.SizeBytes}, #{version.SHA256}, #{version.CreatedAt})
+        VALUES (#{version.UUID}, #{version.ExternalID}, #{version.SkillUUID}, #{version.SkillExternalID}, #{version.Version}, #{version.Name}, #{version.Description}, #{version.Directory}, 'published', #{version.S3Bucket}, #{version.S3Key}, #{version.SizeBytes}, #{version.SHA256}, #{version.CreatedAt})
     </insert>
-    <update id="Publish" result="rows">
-        UPDATE builtin_skill_versions SET state = 'published' WHERE skill_uuid = #{skillUUID} AND version = #{version} AND state = 'draft' AND deleted_at IS NULL
-    </update>
     <select id="Events" resultType="SystemSkillEvent">
         SELECT e.uuid, e.skill_uuid, e.actor_uuid, COALESCE(u.external_id, '') AS actor_id,
             COALESCE(u.name, '') AS actor_name, e.action, e.version, e.created_at

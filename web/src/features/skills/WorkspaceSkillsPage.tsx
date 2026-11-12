@@ -23,9 +23,9 @@ import {
   inspectWorkspaceSkill,
   importWorkspaceSkill,
   updateWorkspaceSkillIcon,
+  skillErrorMessage,
   type SkillCatalog,
 } from './api';
-import { skillErrorMessage } from './errors';
 
 const pageSize = 12;
 export function SkillsPage({
@@ -291,10 +291,4 @@ export function SkillsPage({
       />
     </section>
   );
-}
-export function CreateSkillPage() {
-  return <SkillsPage initialCreateOpen />;
-}
-export function SkillDetailPage({ skillId }: { skillId: string }) {
-  return <SkillsPage initialSkillId={skillId} />;
 }

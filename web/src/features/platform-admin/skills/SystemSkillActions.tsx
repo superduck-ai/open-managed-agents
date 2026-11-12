@@ -4,6 +4,7 @@ import { downloadSkillPackage } from '@/features/skills/api';
 import { useI18n } from '@/shared/i18n';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/shared/ui/dropdown-menu';
 import { usePlatformAdmin } from '../context';
+import { updateSystemSkillIcon } from './feedback';
 import type { SystemSkill } from './types';
 
 export function SystemSkillActions({
@@ -21,22 +22,12 @@ export function SystemSkillActions({
 }) {
   const { client } = usePlatformAdmin();
   const { msg } = useI18n();
-  const onIcon = async (key: string) => {
-    try {
-      await client.request(`/skills/${encodeURIComponent(skill.id)}/icon`, {
-        method: 'PATCH',
-        body: { icon_key: key, revision: skill.revision },
-      });
-    } finally {
-      await onChanged();
-    }
-  };
   return (
     <SkillActions
       name={skill.display_title}
       iconKey={skill.icon_key}
       onUpdate={onUpdate}
-      onIcon={onIcon}
+      onIcon={(key) => updateSystemSkillIcon(client, skill, key, onChanged)}
       onDelete={skill.bundled ? undefined : onDelete}
       onDownload={
         skill.default_version

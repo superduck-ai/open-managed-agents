@@ -63,10 +63,9 @@ type SystemSkillMapper interface {
 	RegisterBundled(ctx context.Context, skill SystemSkill) (SystemSkill, error)
 	UpdateSkill(ctx context.Context, skill SystemSkill) (int64, error)
 	DeleteSkill(ctx context.Context, skill SystemSkill) (int64, error)
-	Versions(ctx context.Context, skillUUID string, publishedOnly bool, limit, offset int) ([]SystemSkillVersion, error)
+	Versions(ctx context.Context, skillUUID string, limit, offset int) ([]SystemSkillVersion, error)
 	Version(ctx context.Context, skillUUID, version string) (SystemSkillVersion, error)
 	InsertVersion(ctx context.Context, version SystemSkillVersion) error
-	Publish(ctx context.Context, skillUUID, version string) (int64, error)
 	Events(ctx context.Context, skillUUID string, limit, offset int) ([]SystemSkillEvent, error)
 	Record(ctx context.Context, event SystemSkillEvent) error
 	HasArchive(ctx context.Context, key string) (bool, error)

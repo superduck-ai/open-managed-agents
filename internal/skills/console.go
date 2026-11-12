@@ -18,10 +18,14 @@ func isConsoleSkillRequest(r *http.Request) bool {
 	return r.Context().Value(consoleSkillContextKey{}) == true
 }
 
+func (h *Handler) consoleWrap(next httpapi.Endpoint) http.HandlerFunc {
+	return wrapSkillJSONEndpoint(h.logger, "console skill request failed", consoleSkillError, next)
+}
+
 func (h *Handler) ConsoleRoutes() http.Handler {
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
-		return h.systemWrap(func(w http.ResponseWriter, r *http.Request) error {
+		return h.consoleWrap(func(w http.ResponseWriter, r *http.Request) error {
 			principal, ok := auth.PrincipalFromContext(r.Context())
 			if !ok || principal.CredentialType != auth.CredentialTypePlatformSession || principal.WorkspaceUUID == "" {
 				return consoleSkillDenied()
@@ -31,13 +35,13 @@ func (h *Handler) ConsoleRoutes() http.Handler {
 			return nil
 		})
 	})
-	router.Get("/", h.systemWrap(h.consoleCatalog))
-	router.Get("/{skill_id}/versions/{version}/preview", h.systemWrap(h.consoleContent))
-	router.Post("/inspect", h.systemWrap(h.inspectConsolePackage))
-	router.Post("/", h.systemWrap(h.create))
-	router.Post("/{skill_id}/versions", h.systemWrap(h.createVersionRoute))
-	router.Delete("/{skill_id}", h.systemWrap(h.deleteRoute))
-	router.Patch("/{skill_id}/icon", h.systemWrap(h.changeConsoleIcon))
+	router.Get("/", h.consoleWrap(h.consoleCatalog))
+	router.Get("/{skill_id}/versions/{version}/preview", h.consoleWrap(h.consoleContent))
+	router.Post("/inspect", h.consoleWrap(h.inspectConsolePackage))
+	router.Post("/", h.consoleWrap(h.create))
+	router.Post("/{skill_id}/versions", h.consoleWrap(h.createVersionRoute))
+	router.Delete("/{skill_id}", h.consoleWrap(h.deleteRoute))
+	router.Patch("/{skill_id}/icon", h.consoleWrap(h.changeConsoleIcon))
 	return router
 }
 
@@ -46,9 +50,12 @@ func (h *Handler) consoleContent(w http.ResponseWriter, r *http.Request) error {
 	skillID, version := chi.URLParam(r, "skill_id"), chi.URLParam(r, "version")
 	var pkg skillPackage
 	var bucket, key string
-	if _, builtin, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+	if builtinSkill, builtin, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
 		return err
 	} else if builtin {
+		if !builtinSkill.Listed {
+			return skillNotFound(skillID, nil)
+		}
 		record, err := h.db.GetBuiltinSkillVersion(r.Context(), skillID, version)
 		if err != nil {
 			return err
@@ -78,7 +85,7 @@ func (h *Handler) consoleCatalog(w http.ResponseWriter, r *http.Request) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
 	query := db.SkillCatalogQuery{WorkspaceUUID: principal.WorkspaceUUID, Query: strings.TrimSpace(r.URL.Query().Get("query")), Source: r.URL.Query().Get("source"), Sort: r.URL.Query().Get("sort"), Limit: limit, Offset: offset}
 	if len(query.Query) > 256 || (query.Source != "" && query.Source != "custom" && query.Source != "anthropic") || (query.Sort != "" && query.Sort != "name" && query.Sort != "updated") {
-		return systemInvalid("技能筛选条件无效")
+		return errInvalidSkillFilter
 	}
 	rows, counts, err := h.db.SkillCatalog(r.Context(), query)
 	if err != nil {
@@ -147,10 +154,10 @@ func (h *Handler) changeConsoleIcon(w http.ResponseWriter, r *http.Request) erro
 	var input struct {
 		IconKey string `json:"icon_key"`
 	}
-	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, 1024), &input); err != nil {
-		return systemInvalid("图标参数无效")
+	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, 1024), &input, json.RejectUnknownMembers(true)); err != nil {
+		return errInvalidSkillIconInput
 	}
-	key, err := skillIconKey(input.IconKey)
+	key, err := requireSkillIconKey(input.IconKey)
 	if err != nil {
 		return err
 	}

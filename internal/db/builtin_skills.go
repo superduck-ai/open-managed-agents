@@ -2,16 +2,13 @@ package db
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"strings"
 	"time"
-
-	"github.com/superduck-ai/yourbatis"
 )
 
 type BuiltinSkill struct {
 	IconKey       string
+	Listed        bool
 	ID            int64
 	UUID          string
 	ExternalID    string
@@ -50,55 +47,6 @@ type ListBuiltinSkillVersionsPageParams struct {
 	SkillExternalID string
 	Limit           int
 	Offset          int
-}
-
-func (d *DB) UpsertBuiltinSkillWithVersion(
-	ctx context.Context,
-	skill BuiltinSkill,
-	version BuiltinSkillVersion,
-) (BuiltinSkill, BuiltinSkillVersion, error) {
-	var createdSkill BuiltinSkill
-	var createdVersion BuiltinSkillVersion
-	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		mapper := NewBuiltinSkillMapper(executor)
-		skillRow, upsertErr := mapper.UpsertSkill(ctx, upsertBuiltinSkillParams{
-			ExternalID:    skill.ExternalID,
-			DisplayTitle:  skill.DisplayTitle,
-			LatestVersion: version.Version,
-			CreatedAt:     skill.CreatedAt,
-		})
-		if upsertErr != nil {
-			if errors.Is(mapNoRows(upsertErr), ErrNotFound) {
-				return ErrBundledSkillReadOnly
-			}
-			return upsertErr
-		}
-		createdSkill = skillRow.skill()
-
-		versionRow, upsertErr := mapper.UpsertVersion(ctx, upsertBuiltinSkillVersionParams{
-			ExternalID:      version.ExternalID,
-			SkillUUID:       createdSkill.UUID,
-			SkillExternalID: createdSkill.ExternalID,
-			Version:         version.Version,
-			Name:            version.Name,
-			Description:     version.Description,
-			Directory:       version.Directory,
-			S3Bucket:        version.S3Bucket,
-			S3Key:           version.S3Key,
-			SizeBytes:       version.SizeBytes,
-			SHA256:          version.SHA256,
-			CreatedAt:       version.CreatedAt,
-		})
-		if errors.Is(mapNoRows(upsertErr), ErrNotFound) {
-			return ErrVersionConflict
-		}
-		if upsertErr != nil {
-			return upsertErr
-		}
-		createdVersion = versionRow.skillVersion()
-		return nil
-	})
-	return createdSkill, createdVersion, err
 }
 
 func (d *DB) ListBuiltinSkillsPage(
@@ -182,35 +130,6 @@ func (d *DB) GetBuiltinSkillVersion(
 	return builtinSkillVersionFromRow(row, err)
 }
 
-func (d *DB) SoftDeleteMissingBuiltinSkills(
-	ctx context.Context,
-	keepExternalIDs []string,
-	deletedAt time.Time,
-) ([]BuiltinSkillVersion, error) {
-	keepExternalIDsJSON, err := json.Marshal(append([]string{}, keepExternalIDs...))
-	if err != nil {
-		return nil, err
-	}
-	params := pruneBuiltinSkillsParams{
-		KeepExternalIDsJSON: keepExternalIDsJSON,
-		DeletedAt:           deletedAt,
-	}
-	var versions []BuiltinSkillVersion
-	err = d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		mapper := NewBuiltinSkillMapper(executor)
-		rows, listErr := mapper.ListMissingVersions(ctx, keepExternalIDsJSON)
-		if listErr != nil {
-			return listErr
-		}
-		versions = builtinSkillVersionsFromRows(rows)
-		if deleteErr := mapper.SoftDeleteMissingVersions(ctx, params); deleteErr != nil {
-			return deleteErr
-		}
-		return mapper.SoftDeleteMissingSkills(ctx, params)
-	})
-	return versions, err
-}
-
 func (r builtinSkillRow) skill() BuiltinSkill {
 	return BuiltinSkill{
 		ID:            r.ID,
@@ -219,6 +138,7 @@ func (r builtinSkillRow) skill() BuiltinSkill {
 		DisplayTitle:  r.DisplayTitle,
 		LatestVersion: r.LatestVersion,
 		IconKey:       r.IconKey,
+		Listed:        r.Listed,
 		CreatedAt:     r.CreatedAt,
 		UpdatedAt:     r.UpdatedAt,
 		DeletedAt:     r.DeletedAt,

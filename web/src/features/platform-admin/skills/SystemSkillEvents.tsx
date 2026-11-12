@@ -23,8 +23,6 @@ export function SystemSkillEvents({ skillID }: { skillID: string }) {
     restore_bundled: msg('systemSkills.restoreBundled', 'Restore bundled version'),
     import: msg('systemSkills.import', 'Import skills'),
     set_icon: msg('skills.icons.change', 'Change icon'),
-    import_draft: msg('systemSkills.import', 'Import skills'),
-    publish: msg('systemSkills.publish', 'Publish version'),
     set_default: msg('systemSkills.setDefault', 'Set as default'),
     list: msg('systemSkills.relist', 'Relist skill'),
     unlist: msg('systemSkills.unlist', 'Unlist skill'),

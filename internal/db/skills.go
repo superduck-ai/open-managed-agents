@@ -365,3 +365,8 @@ func (r skillVersionRow) version() SkillVersion {
 		DeletedAt:           r.DeletedAt,
 	}
 }
+
+func (d *DB) UpdateSkillIcon(ctx context.Context, workspaceUUID, externalID, iconKey string) (Skill, error) {
+	row, err := NewSkillMapper(d.mapperDB).UpdateIcon(ctx, workspaceUUID, externalID, iconKey)
+	return skillFromMapperRow(row, err)
+}

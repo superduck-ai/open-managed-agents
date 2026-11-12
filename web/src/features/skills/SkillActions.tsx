@@ -14,7 +14,7 @@ import {
   DropdownMenuSubContent,
 } from '@/shared/ui/dropdown-menu';
 import { skillIconOptions } from './icons';
-import { skillErrorMessage } from './errors';
+import { skillErrorMessage } from './api';
 
 export function SkillActions({
   name,

@@ -6,7 +6,7 @@ import { Input } from '@/shared/ui/input';
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } from '@/shared/ui/dialog';
 import { SkillIconPicker } from './icons';
 import { filesFromDataTransfer, pickSkillFolder, skillFilePath } from './files';
-import { skillErrorMessage } from './errors';
+import { skillErrorMessage } from './api';
 
 export type SkillImportMetadata = { id: string; name: string; existing: boolean; iconKey?: string; revision?: number };
 export type SkillImportEntry = {
@@ -87,8 +87,13 @@ export function SkillImportDialog({
     if (entry.directory && !entry.files.some((file) => skillFilePath(file) === `${entry.label}/SKILL.md`))
       throw new Error(msg('skills.import.missingSkill', 'The skill folder must contain SKILL.md at its root.'));
   }
-  const select = async (files: File[], directory = false) => {
-    if (!files.length || busy || checking) return;
+  const select = async (files: File[], directory = false, reportEmpty = false) => {
+    if (!files.length) {
+      if (reportEmpty)
+        setError(msg('skills.import.missingSkill', 'The skill folder must contain SKILL.md at its root.'));
+      return;
+    }
+    if (busy || checking) return;
     setError('');
     if (!directory && files.length > (multiple ? 20 : 1)) {
       setError(msg('skills.import.limit', 'Choose at most {count} skill packages.', { count: multiple ? 20 : 1 }));
@@ -155,7 +160,7 @@ export function SkillImportDialog({
     setError('');
     try {
       const selection = pickSkillFolder();
-      if (selection) await select(await selection, true);
+      if (selection) await select(await selection, true, true);
       else folderInput.current?.click();
     } catch (cause) {
       if (!(cause instanceof DOMException && cause.name === 'AbortError')) setError(skillErrorMessage(cause, msg));
@@ -199,10 +204,14 @@ export function SkillImportDialog({
               onDrop={async (event) => {
                 event.preventDefault();
                 try {
+                  const hasDirectory = Array.from(event.dataTransfer.items ?? []).some(
+                    (item) => item.webkitGetAsEntry?.()?.isDirectory,
+                  );
                   const files = await filesFromDataTransfer(event.dataTransfer);
                   await select(
                     files,
-                    files.some((file) => skillFilePath(file).includes('/')),
+                    hasDirectory || files.some((file) => skillFilePath(file).includes('/')),
+                    hasDirectory,
                   );
                 } catch (cause) {
                   setError(skillErrorMessage(cause, msg));

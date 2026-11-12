@@ -20,22 +20,21 @@ func TestSystemSkillReimportAfterDeletion(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name, version string
-		publish       bool
 	}{
-		{name: "new automatic version", version: "new-version"},
-		{name: "existing automatic version", version: "original-version"},
-		{name: "existing explicit published version", version: "original-version", publish: true},
+		{name: "new version", version: "new-version"},
+		{name: "existing version", version: "original-version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-			if _, err := provider.UpTo(ctx, 119); err != nil {
+			if _, err := provider.UpTo(ctx, 117); err != nil {
 				t.Fatal(err)
 			}
 			store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
 			actor := uuid.New().String()
-			input := SystemSkillImport{ActorUUID: actor, Ready: true,
-				Skill:   SystemSkill{UUID: uuid.New().String(), ExternalID: "deep-research", DisplayTitle: "Research", IconKey: "mic"},
-				Version: systemSkillRegressionVersion("deep-research", "original-version", time.Now()),
+			input := SystemSkillImport{
+				ActorUUID: actor,
+				Skill:     SystemSkill{UUID: uuid.New().String(), ExternalID: "deep-research", DisplayTitle: "Research", IconKey: "mic"},
+				Version:   systemSkillRegressionVersion("deep-research", "original-version", time.Now()),
 			}
 			var previous SystemSkill
 			err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
@@ -53,7 +52,6 @@ func TestSystemSkillReimportAfterDeletion(t *testing.T) {
 			input.Skill.UUID = uuid.New().String()
 			input.Skill.IconKey = ""
 			input.Version = systemSkillRegressionVersion("deep-research", tc.version, time.Now())
-			input.Ready, input.Publish = !tc.publish, tc.publish
 			input.ExpectedRevision = previous.Revision
 			err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 				_, _, err := tx.ImportSystemSkill(ctx, input)
@@ -74,7 +72,7 @@ func TestSystemSkillReimportAfterDeletion(t *testing.T) {
 				t.Fatalf("reimport after deletion failed: %v", err)
 			}
 			restored, err := store.GetSystemSkill(ctx, previous.ExternalID)
-			if err != nil || restored.UUID != previous.UUID || restored.Listed != tc.publish || restored.LatestVersion == nil || *restored.LatestVersion != tc.version || restored.IconKey != "mic" || restored.Revision <= previous.Revision {
+			if err != nil || restored.UUID != previous.UUID || restored.Listed || restored.LatestVersion == nil || *restored.LatestVersion != tc.version || restored.IconKey != "mic" || restored.Revision <= previous.Revision {
 				t.Fatalf("unexpected reimport state: %+v %v", restored, err)
 			}
 			if _, err := store.SystemSkillVersion(ctx, previous.UUID, "original-version"); err != nil {
@@ -90,7 +88,7 @@ func TestSystemSkillPublishedPagination(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 119); err != nil {
+	if _, err := provider.UpTo(ctx, 117); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
@@ -100,32 +98,27 @@ func TestSystemSkillPublishedPagination(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	for i := range 24 {
+	for i := range 5 {
 		version := systemSkillRegressionVersion(skill.ExternalID, fmt.Sprint(i), base.Add(time.Duration(i)*time.Minute))
 		version.SkillUUID, version.SkillExternalID = skill.UUID, skill.ExternalID
 		if err := mapper.InsertVersion(ctx, version); err != nil {
 			t.Fatal(err)
 		}
-		if i < 3 {
-			if _, err := mapper.Publish(ctx, skill.UUID, version.Version); err != nil {
-				t.Fatal(err)
-			}
-		}
 	}
 	first, err := store.SystemSkillVersions(ctx, skill.UUID, 3, 0)
 	if err != nil || len(first) != 3 {
-		t.Fatalf("first page with lookahead: %+v %v", first, err)
+		t.Fatalf("first page: %+v %v", first, err)
 	}
 	for i, version := range first {
-		if version.State != "published" || version.Version != fmt.Sprint(2-i) {
-			t.Fatalf("draft consumed published page: %+v", first)
+		if version.State != "published" || version.Version != fmt.Sprint(4-i) {
+			t.Fatalf("unexpected page order: %+v", first)
 		}
 	}
-	last, err := store.SystemSkillVersions(ctx, skill.UUID, 3, 2)
-	if err != nil || len(last) != 1 || last[0].Version != "0" {
-		t.Fatalf("last published page: %+v %v", last, err)
+	last, err := store.SystemSkillVersions(ctx, skill.UUID, 3, 3)
+	if err != nil || len(last) != 2 || last[0].Version != "1" || last[1].Version != "0" {
+		t.Fatalf("last page: %+v %v", last, err)
 	}
-	empty, err := store.SystemSkillVersions(ctx, skill.UUID, 3, 3)
+	empty, err := store.SystemSkillVersions(ctx, skill.UUID, 3, 5)
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("past final page: %+v %v", empty, err)
 	}
@@ -137,13 +130,12 @@ func TestSystemSkillImportPreservesOmittedIcon(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 119); err != nil {
+	if _, err := provider.UpTo(ctx, 117); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
 	actor := uuid.New().String()
 	current := SystemSkill{ExternalID: "icons"}
-	defaultVersion := ""
 	for _, tc := range []struct {
 		name string
 		icon string
@@ -158,7 +150,7 @@ func TestSystemSkillImportPreservesOmittedIcon(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			input := SystemSkillImport{
-				ActorUUID: actor, ExpectedRevision: current.Revision, Ready: true,
+				ActorUUID: actor, ExpectedRevision: current.Revision,
 				Skill:   SystemSkill{UUID: uuid.New().String(), ExternalID: current.ExternalID, DisplayTitle: "Icons", IconKey: tc.icon},
 				Version: systemSkillRegressionVersion(current.ExternalID, uuid.New().String(), time.Now()),
 			}
@@ -173,11 +165,8 @@ func TestSystemSkillImportPreservesOmittedIcon(t *testing.T) {
 			if current.IconKey != tc.want {
 				t.Fatalf("saved icon=%q, want %q", current.IconKey, tc.want)
 			}
-			if defaultVersion == "" {
-				defaultVersion = input.Version.Version
-			}
-			if current.Listed || current.LatestVersion == nil || *current.LatestVersion != defaultVersion {
-				t.Fatalf("import changed visibility or default: %+v", current)
+			if current.Listed || current.LatestVersion == nil || *current.LatestVersion != input.Version.Version {
+				t.Fatalf("import changed visibility or missed active version: %+v", current)
 			}
 			stored, err := store.GetSystemSkill(ctx, current.ExternalID)
 			if err != nil || stored.IconKey != tc.want {

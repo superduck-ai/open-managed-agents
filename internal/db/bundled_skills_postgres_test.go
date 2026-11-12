@@ -20,7 +20,7 @@ func TestBundledSkillRegistrationRestoresDeletedUploads(t *testing.T) {
 	for _, action := range []string{"delete", "", "list"} {
 		t.Run("previous_action_"+action, func(t *testing.T) {
 			ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-			if _, err := provider.UpTo(ctx, 119); err != nil {
+			if _, err := provider.UpTo(ctx, 117); err != nil {
 				t.Fatal(err)
 			}
 			store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
@@ -29,7 +29,7 @@ func TestBundledSkillRegistrationRestoresDeletedUploads(t *testing.T) {
 			var previous SystemSkill
 			err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 				var err error
-				previous, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{ActorUUID: actor, Ready: true, Skill: input, Version: systemSkillRegressionVersion("xlsx", "uploaded-1", time.Now())})
+				previous, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{ActorUUID: actor, Skill: input, Version: systemSkillRegressionVersion("xlsx", "uploaded-1", time.Now())})
 				if err != nil || action == "" {
 					return err
 				}
@@ -68,7 +68,7 @@ func TestBundledSkillLifecycle(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 119); err != nil {
+	if _, err := provider.UpTo(ctx, 117); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
@@ -88,10 +88,6 @@ func TestBundledSkillLifecycle(t *testing.T) {
 	})
 	if !errors.Is(err, ErrBundledSkillReadOnly) {
 		t.Fatalf("bundled base deletion was not rejected: %v", err)
-	}
-	_, _, err = store.UpsertBuiltinSkillWithVersion(ctx, BuiltinSkill{ExternalID: skill.ExternalID, DisplayTitle: "Override"}, BuiltinSkillVersion{Version: "seed-override"})
-	if !errors.Is(err, ErrBundledSkillReadOnly) {
-		t.Fatalf("seed overwrote bundled skill: %v", err)
 	}
 	err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 		var err error
@@ -113,15 +109,6 @@ func TestBundledSkillLifecycle(t *testing.T) {
 	if err != nil || len(versions) != 1 || versions[0].State != "published" {
 		t.Fatalf("restart duplicated versions: %+v %v", versions, err)
 	}
-	if _, err := store.SoftDeleteMissingBuiltinSkills(ctx, []string{"other"}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.GetSystemSkill(ctx, current.ExternalID); err != nil {
-		t.Fatalf("seed prune deleted bundled skill: %v", err)
-	}
-	if _, err := store.SystemSkillVersion(ctx, current.UUID, version.Version); err != nil {
-		t.Fatalf("seed prune deleted bundled version: %v", err)
-	}
 	err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 		_, err := tx.ChangeSystemSkill(ctx, SystemSkillChange{ActorUUID: actor, SkillID: current.ExternalID, Revision: current.Revision, Action: "list"})
 		return err
@@ -137,7 +124,7 @@ func TestUploadedSystemSkillDeletion(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 119); err != nil {
+	if _, err := provider.UpTo(ctx, 117); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
@@ -146,7 +133,7 @@ func TestUploadedSystemSkillDeletion(t *testing.T) {
 	version := systemSkillRegressionVersion("uploaded", "1", time.Now())
 	err := store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 		var err error
-		skill, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{ActorUUID: actor, Ready: true, Skill: SystemSkill{UUID: uuid.New().String(), ExternalID: "uploaded", DisplayTitle: "Uploaded"}, Version: version})
+		skill, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{ActorUUID: actor, Skill: SystemSkill{UUID: uuid.New().String(), ExternalID: "uploaded", DisplayTitle: "Uploaded"}, Version: version})
 		return err
 	})
 	if err != nil {
@@ -179,7 +166,7 @@ func TestBundledSkillOverrideSurvivesUpdatesAndRestores(t *testing.T) {
 		t.Skip("TEST_MIGRATION_DATABASE_URL is not set")
 	}
 	ctx, database, provider := newIsolatedMigrationTestDatabase(t, address)
-	if _, err := provider.UpTo(ctx, 119); err != nil {
+	if _, err := provider.UpTo(ctx, 117); err != nil {
 		t.Fatal(err)
 	}
 	store := &DB{mapperDB: yourbatis.NewDB(database, yourbatis.DialectPostgres)}
@@ -203,7 +190,7 @@ func TestBundledSkillOverrideSurvivesUpdatesAndRestores(t *testing.T) {
 	override := systemSkillRegressionVersion("preloaded", "uploaded-1", time.Now())
 	err = store.WithPlatformAdminTx(ctx, func(tx *PlatformAdminTx) error {
 		var err error
-		current, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{ActorUUID: actor, Skill: skill, Version: override, ExpectedRevision: current.Revision, Ready: true})
+		current, _, err = tx.ImportSystemSkill(ctx, SystemSkillImport{ActorUUID: actor, Skill: skill, Version: override, ExpectedRevision: current.Revision})
 		return err
 	})
 	if err != nil || *current.LatestVersion != override.Version || *current.BundledVersion != base.Version {

@@ -16,7 +16,7 @@ import { defaultWorkspace, type Workspace } from '../../shared/workspaces/api';
 import { WorkspaceContext, type WorkspaceContextValue } from '../../shared/workspaces/context';
 import { consoleResourceListLimit } from '../../shared/console-list';
 import { resetTestDom } from '../../test/setup';
-import { BatchesPage, DashboardPage, FilesPage, SkillDetailPage, SkillsPage } from './DashboardPage';
+import { BatchesPage, DashboardPage, FilesPage, SkillsPage } from './DashboardPage';
 
 const testingLibrary = await import('@testing-library/react');
 const { act, cleanup, fireEvent, render, screen, waitFor, within } = testingLibrary;
@@ -1396,7 +1396,7 @@ function renderSkillDetailPage(skillId: string, workspace?: Partial<Workspace>, 
     workspaceId: workspace?.id || 'default',
     csrfToken: 'csrf_test',
   });
-  return renderDashboardPage(<SkillDetailPage skillId={skillId} />, workspace, locale);
+  return renderDashboardPage(<SkillsPage initialSkillId={skillId} />, workspace, locale);
 }
 
 function mockWebhooksList() {

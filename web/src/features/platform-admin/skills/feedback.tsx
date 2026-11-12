@@ -1,9 +1,26 @@
+import type { PlatformAdminClient } from '@/shared/api/platform-admin';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
 import { Badge } from '@/shared/ui/badge';
 import { ResourceListPagination } from '@/shared/ui/resource-list-pagination';
 import type { SystemSkill } from './types';
 import { systemSkillPageSize } from './types';
+
+export async function updateSystemSkillIcon(
+  client: PlatformAdminClient,
+  skill: SystemSkill,
+  iconKey: string,
+  onChanged: () => Promise<void>,
+) {
+  try {
+    await client.request(`/skills/${encodeURIComponent(skill.id)}/icon`, {
+      method: 'PATCH',
+      body: { icon_key: iconKey, revision: skill.revision },
+    });
+  } finally {
+    await onChanged();
+  }
+}
 
 export function systemSkillErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String((error as { message?: string } | null)?.message ?? '');

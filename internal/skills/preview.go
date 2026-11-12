@@ -27,7 +27,7 @@ type skillFilePreview struct {
 
 func (h *Handler) loadPackage(ctx context.Context, bucket, key string, pkg skillPackage, limit int64) (skillPackage, error) {
 	if bucket != h.store.Name() {
-		return pkg, systemInvalid("技能存储配置不匹配")
+		return pkg, errSkillStorageMismatch
 	}
 	object, err := h.store.Open(ctx, key, nil)
 	if err != nil {
@@ -40,7 +40,7 @@ func (h *Handler) loadPackage(ctx context.Context, bucket, key string, pkg skill
 	}
 	sum := sha256.Sum256(archive)
 	if hex.EncodeToString(sum[:]) != pkg.SHA256 {
-		return pkg, systemInvalid("技能包完整性检查失败")
+		return pkg, errSkillIntegrityFailed
 	}
 	pkg.Zip = archive
 	return pkg, nil

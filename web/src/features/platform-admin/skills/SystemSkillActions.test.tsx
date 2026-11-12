@@ -81,16 +81,20 @@ test('上传技能的外层菜单保留更新、图标和删除', async () => {
 test('确认删除提交当时的修订号，失败保留弹窗与错误', async () => {
   const closed = mock(() => {});
   const deleted = mock(async () => {});
+  const conflict = mock(async () => {});
   let submitted: unknown;
   globalThis.fetch = mock(async (_url: RequestInfo | URL, options?: RequestInit) => {
     expect(options?.method).toBe('DELETE');
     submitted = JSON.parse(String(options?.body));
     return Response.json({ error: { code: 'revision_conflict', message: '技能已被更新' } }, { status: 409 });
   }) as typeof fetch;
-  renderActions(<SystemSkillDeleteDialog skill={skill} onClose={closed} onDeleted={deleted} />);
-  fireEvent.click(screen.getByRole('button', { name: '删除', exact: true }));
+  renderActions(<SystemSkillDeleteDialog skill={skill} onClose={closed} onDeleted={deleted} onConflict={conflict} />);
+  const confirm = screen.getByRole('button', { name: '删除', exact: true }) as HTMLButtonElement;
+  fireEvent.click(confirm);
   expect(await screen.findByText('技能已被更新')).toBeTruthy();
   expect(submitted).toEqual({ revision: 4 });
+  expect(confirm.disabled).toBe(true);
+  expect(conflict).toHaveBeenCalledTimes(1);
   expect(closed).not.toHaveBeenCalled();
   expect(deleted).not.toHaveBeenCalled();
 });

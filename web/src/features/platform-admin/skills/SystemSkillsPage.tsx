@@ -215,6 +215,7 @@ export function SystemSkillsPage() {
             if (selected === deleteTarget.id) openSkill();
             await changed();
           }}
+          onConflict={changed}
         />
       )}
       <AlertDialog

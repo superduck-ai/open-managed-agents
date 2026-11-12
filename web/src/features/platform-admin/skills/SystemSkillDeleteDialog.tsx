@@ -9,17 +9,20 @@ export function SystemSkillDeleteDialog({
   skill,
   onClose,
   onDeleted,
+  onConflict,
 }: {
   skill: SystemSkill;
   onClose: () => void;
   onDeleted: () => Promise<void>;
+  onConflict?: () => Promise<void>;
 }) {
   const { client } = usePlatformAdmin();
   const { msg } = useI18n();
   const [busy, setBusy] = useState(false);
+  const [conflict, setConflict] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const remove = async () => {
-    if (busy) return;
+    if (busy || conflict) return;
     setBusy(true);
     setError(null);
     try {
@@ -31,6 +34,10 @@ export function SystemSkillDeleteDialog({
       onClose();
     } catch (cause) {
       setError(systemSkillErrorMessage(cause));
+      if ((cause as { status?: number } | null)?.status === 409) {
+        setConflict(true);
+        void onConflict?.();
+      }
     } finally {
       setBusy(false);
     }
@@ -39,6 +46,7 @@ export function SystemSkillDeleteDialog({
     <DeleteSkillDialog
       skill={skill}
       isDeleting={busy}
+      confirmDisabled={conflict}
       error={error}
       title={skill.bundled ? msg('systemSkills.restoreBundledTitle', 'Restore bundled version?') : undefined}
       confirmLabel={skill.bundled ? msg('systemSkills.restoreBundled', 'Restore bundled version') : undefined}

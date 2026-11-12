@@ -11,7 +11,3 @@ func (d *DB) SkillCatalog(ctx context.Context, query SkillCatalogQuery) ([]Catal
 	rows, err := mapper.List(ctx, query)
 	return rows, counts, err
 }
-func (d *DB) UpdateSkillIcon(ctx context.Context, workspaceUUID, externalID, iconKey string) (Skill, error) {
-	row, err := NewSkillMapper(d.mapperDB).UpdateIcon(ctx, workspaceUUID, externalID, iconKey)
-	return skillFromMapperRow(row, err)
-}

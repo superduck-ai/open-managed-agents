@@ -48,7 +48,8 @@ func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (s
 		return pkg, err
 	}
 	if _, err := systemPackageDTO(pkg); err != nil {
-		if public, ok := errors.AsType[*systemSkillPublicError](err); ok {
+		if errors.Is(err, errSkillPreviewTooLarge) {
+			public := consoleSkillError(err)
 			return skillPackage{}, packageError{Status: public.Status, Message: public.Message}
 		}
 		return skillPackage{}, err

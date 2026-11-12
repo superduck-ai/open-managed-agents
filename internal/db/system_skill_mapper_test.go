@@ -9,7 +9,7 @@ import (
 )
 
 func TestSystemSkillMapperBindings(t *testing.T) {
-	for _, status := range []string{"", "listed", "unlisted", "draft"} {
+	for _, status := range []string{"", "listed", "unlisted"} {
 		query := SystemSkillQuery{Query: "%_ search", Status: status, Limit: 21, Offset: 20}
 		bound := buildSystemSkillMapperList(yourbatis.DialectPostgres, query)
 		want := []any{query.Query, query.Query, 21, 20}
@@ -39,10 +39,6 @@ func TestSystemSkillMapperBindings(t *testing.T) {
 			t.Errorf("missing update invariant %s: %s", fragment, bound.SQL)
 		}
 	}
-	version := buildSystemSkillMapperPublish(yourbatis.DialectPostgres, skill.UUID, "2.0.0")
-	if !strings.Contains(version.SQL, "state = 'draft'") {
-		t.Errorf("publish must only change drafts: %s", version.SQL)
-	}
 	archive := buildSystemSkillMapperHasArchive(yourbatis.DialectPostgres, "unique-object")
 	if len(archive.Args) != 1 || archive.Args[0].Value != "unique-object" {
 		t.Fatal("archive reference check does not bind key")
@@ -52,15 +48,15 @@ func TestSystemSkillMapperBindings(t *testing.T) {
 func TestSystemSkillMapperWritesAndPages(t *testing.T) {
 	skill := SystemSkill{UUID: "11111111-1111-4111-8111-111111111111", ExternalID: "demo", DisplayTitle: "Demo"}
 	version := SystemSkillVersion{UUID: "22222222-2222-4222-8222-222222222222", ExternalID: "skver_demo", SkillUUID: skill.UUID, SkillExternalID: skill.ExternalID, Version: "1", Name: "demo", Description: "Description", Directory: "demo", S3Bucket: "bucket", S3Key: "key", SizeBytes: 100, SHA256: "hash"}
-	event := SystemSkillEvent{SkillUUID: skill.UUID, ActorUUID: "33333333-3333-4333-8333-333333333333", Action: "publish", Version: "1"}
+	event := SystemSkillEvent{SkillUUID: skill.UUID, ActorUUID: "33333333-3333-4333-8333-333333333333", Action: "import", Version: "1"}
 	for _, tc := range []struct {
 		bound    yourbatis.BoundSQL
 		values   []any
 		fragment string
 	}{
 		{buildSystemSkillMapperInsertSkill(yourbatis.DialectPostgres, skill), []any{skill.UUID, skill.ExternalID, skill.DisplayTitle, skill.IconKey, skill.IconKey}, "WHERE builtin_skills.deleted_at IS NOT NULL AND NOT builtin_skills.bundled"},
-		{buildSystemSkillMapperInsertVersion(yourbatis.DialectPostgres, version), []any{version.UUID, version.ExternalID, version.SkillUUID, version.SkillExternalID, version.Version, version.Name, version.Description, version.Directory, version.S3Bucket, version.S3Key, version.SizeBytes, version.SHA256, version.CreatedAt}, "'draft'"},
-		{buildSystemSkillMapperVersions(yourbatis.DialectPostgres, skill.UUID, false, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, uuid DESC"},
+		{buildSystemSkillMapperInsertVersion(yourbatis.DialectPostgres, version), []any{version.UUID, version.ExternalID, version.SkillUUID, version.SkillExternalID, version.Version, version.Name, version.Description, version.Directory, version.S3Bucket, version.S3Key, version.SizeBytes, version.SHA256, version.CreatedAt}, "'published'"},
+		{buildSystemSkillMapperVersions(yourbatis.DialectPostgres, skill.UUID, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY created_at DESC, uuid DESC"},
 		{buildSystemSkillMapperVersion(yourbatis.DialectPostgres, skill.UUID, "1"), []any{skill.UUID, "1"}, "deleted_at IS NULL"},
 		{buildSystemSkillMapperEvents(yourbatis.DialectPostgres, skill.UUID, 21, 20), []any{skill.UUID, 21, 20}, "ORDER BY e.created_at DESC, e.id DESC"},
 		{buildSystemSkillMapperRecord(yourbatis.DialectPostgres, event), []any{event.SkillUUID, event.ActorUUID, event.Action, event.Version}, "INSERT INTO system_skill_events"},
@@ -76,17 +72,15 @@ func TestSystemSkillMapperWritesAndPages(t *testing.T) {
 }
 
 func TestSystemSkillVersionFilterBeforePagination(t *testing.T) {
-	for _, publishedOnly := range []bool{true, false} {
-		bound := buildSystemSkillMapperVersions(yourbatis.DialectPostgres, "skill-uuid", publishedOnly, 21, 20)
-		if strings.Contains(bound.SQL, "state = 'published'") != publishedOnly {
-			t.Fatalf("publishedOnly=%v: %s", publishedOnly, bound.SQL)
-		}
-		if publishedOnly && strings.Index(bound.SQL, "state = 'published'") > strings.Index(bound.SQL, "LIMIT") {
-			t.Fatalf("filter must precede pagination: %s", bound.SQL)
-		}
-		if !reflect.DeepEqual(bound.Values(), []any{"skill-uuid", 21, 20}) {
-			t.Fatalf("unexpected page bindings: %v", bound.Values())
-		}
+	bound := buildSystemSkillMapperVersions(yourbatis.DialectPostgres, "skill-uuid", 21, 20)
+	if !strings.Contains(bound.SQL, "state = 'published'") {
+		t.Fatalf("missing published filter: %s", bound.SQL)
+	}
+	if strings.Index(bound.SQL, "state = 'published'") > strings.Index(bound.SQL, "LIMIT") {
+		t.Fatalf("filter must precede pagination: %s", bound.SQL)
+	}
+	if !reflect.DeepEqual(bound.Values(), []any{"skill-uuid", 21, 20}) {
+		t.Fatalf("unexpected page bindings: %v", bound.Values())
 	}
 }
 
@@ -105,7 +99,6 @@ func TestSystemSkillMapperStatementContracts(t *testing.T) {
 		{systemSkillMapperVersionsStatement, "Versions", yourbatis.StatementSelect},
 		{systemSkillMapperVersionStatement, "Version", yourbatis.StatementSelect},
 		{systemSkillMapperInsertVersionStatement, "InsertVersion", yourbatis.StatementInsert},
-		{systemSkillMapperPublishStatement, "Publish", yourbatis.StatementUpdate},
 		{systemSkillMapperEventsStatement, "Events", yourbatis.StatementSelect},
 		{systemSkillMapperRecordStatement, "Record", yourbatis.StatementInsert},
 		{systemSkillMapperHasArchiveStatement, "HasArchive", yourbatis.StatementSelect},

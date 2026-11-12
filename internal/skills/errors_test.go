@@ -54,6 +54,33 @@ func TestMapResolveVersionError(t *testing.T) {
 	}
 }
 
+func TestConsoleSkillErrorsPreserveEnglishContract(t *testing.T) {
+	for _, tc := range []struct {
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		{errConsoleSkillDenied, 403, "permission_denied", "Workspace access required"},
+		{db.ErrNotFound, 404, "not_found", "Skill or version not found"},
+		{errInvalidSkillIcon, 400, "invalid_request", "Please choose a valid skill icon"},
+		{errInvalidSkillIconInput, 400, "invalid_request", "Invalid icon request payload"},
+		{errSkillPreviewNotFound, 404, "not_found", "File not found"},
+		{errSkillPreviewTooLarge, 413, "preview_too_large", "SKILL.md exceeds 256 KiB preview limit"},
+		{errSkillStorageMismatch, 400, "invalid_request", "Skill storage configuration mismatch"},
+		{errSkillIntegrityFailed, 400, "invalid_request", "Skill package integrity check failed"},
+		{errInvalidSkillFilter, 400, "invalid_request", "Invalid skill filter parameters"},
+		{errInvalidSkillLimit, 400, "invalid_request", "Limit must be between 1 and 100"},
+		{errInvalidSkillOffset, 400, "invalid_request", "Offset is invalid"},
+		{errors.New("database password leaked"), 503, "unavailable", "Skills service is temporarily unavailable. Please try again later."},
+	} {
+		got := consoleSkillError(tc.err)
+		if got.Status != tc.status || got.Code != tc.code || got.Message != tc.message {
+			t.Errorf("consoleSkillError(%v) = %+v, want (%d, %s, %q)", tc.err, got, tc.status, tc.code, tc.message)
+		}
+	}
+}
+
 func assertSkillAppError(t *testing.T, err error, kind apperr.Kind, message string) {
 	t.Helper()
 	appErr, ok := errors.AsType[*apperr.Error](err)

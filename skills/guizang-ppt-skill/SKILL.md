@@ -47,23 +47,6 @@ description: 生成横向翻页网页 PPT（单 HTML 文件），含 WebGL 背�
 
 ## 工作流
 
-### Step 0 · 启动前检查更新（必做）
-
-每次启动本 Skill 前,先在 Skill 根目录检查 GitHub 上游是否有更新;有更新时先问用户是否要更新,用户确认后再执行更新,然后继续后续流程。
-
-```bash
-git -C "<SKILL_ROOT>" fetch --quiet
-git -C "<SKILL_ROOT>" rev-list --count HEAD..@{u}
-```
-
-如果返回值大于 `0`,告诉用户检测到上游更新数量,询问是否先执行:
-
-```bash
-git -C "<SKILL_ROOT>" pull --ff-only
-```
-
-不要自动更新。用户拒绝时继续使用当前版本;如果网络不可用、没有 upstream 或不是 git 仓库,说明无法检查更新并继续流程。
-
 ### Step 1 · 需求澄清(**动手前必做**)
 
 **如果用户已经给了完整的大纲 + 图片/截图处理要求**,可以跳过直接进 Step 2。

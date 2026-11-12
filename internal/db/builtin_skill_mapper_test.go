@@ -14,29 +14,9 @@ import (
 )
 
 func TestBuiltinSkillMapperStatements(t *testing.T) {
-	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
-	keep := []byte(`["builtin_keep"]`)
-	skillParams := upsertBuiltinSkillParams{
-		ExternalID:    "builtin_test",
-		DisplayTitle:  "Test",
-		LatestVersion: "20260805",
-		CreatedAt:     now,
-	}
-	versionParams := upsertBuiltinSkillVersionParams{
-		ExternalID:      "builtinver_test",
-		SkillUUID:       "11111111-1111-4111-8111-111111111111",
-		SkillExternalID: skillParams.ExternalID,
-		Version:         skillParams.LatestVersion,
-		Name:            "test",
-		Description:     "Test skill",
-		Directory:       "test",
-		S3Bucket:        "bucket",
-		S3Key:           "key",
-		SizeBytes:       10,
-		SHA256:          "sha",
-		CreatedAt:       now,
-	}
-	pruneParams := pruneBuiltinSkillsParams{KeepExternalIDsJSON: keep, DeletedAt: now}
+	skillExternalID := "builtin_test"
+	skillUUID := "11111111-1111-4111-8111-111111111111"
+	version := "20260805"
 
 	tests := []struct {
 		name      string
@@ -47,35 +27,6 @@ func TestBuiltinSkillMapperStatements(t *testing.T) {
 		values    []any
 		fragments []string
 	}{
-		{
-			name:      "upsert skill",
-			statement: builtinSkillMapperUpsertSkillStatement,
-			bound:     buildBuiltinSkillMapperUpsertSkill(yourbatis.DialectPostgres, skillParams),
-			id:        "BuiltinSkillMapper.UpsertSkill",
-			kind:      yourbatis.StatementInsert,
-			values: []any{
-				skillParams.ExternalID, skillParams.DisplayTitle, skillParams.LatestVersion,
-				skillParams.CreatedAt, skillParams.CreatedAt,
-			},
-			fragments: []string{"INSERT INTO builtin_skills", "ON CONFLICT (external_id)", "RETURNING"},
-		},
-		{
-			name:      "upsert version",
-			statement: builtinSkillMapperUpsertVersionStatement,
-			bound:     buildBuiltinSkillMapperUpsertVersion(yourbatis.DialectPostgres, versionParams),
-			id:        "BuiltinSkillMapper.UpsertVersion",
-			kind:      yourbatis.StatementInsert,
-			values: []any{
-				versionParams.ExternalID, versionParams.SkillUUID, versionParams.SkillExternalID,
-				versionParams.Version, versionParams.Name, versionParams.Description,
-				versionParams.Directory, versionParams.S3Bucket, versionParams.S3Key,
-				versionParams.SizeBytes, versionParams.SHA256, versionParams.CreatedAt,
-			},
-			fragments: []string{
-				"INSERT INTO builtin_skill_versions", "ON CONFLICT (skill_uuid, version)",
-				"builtin_skill_versions.sha256 = EXCLUDED.sha256", "state = 'published'", "RETURNING",
-			},
-		},
 		{
 			name:      "list skills",
 			statement: builtinSkillMapperListSkillsPageStatement,
@@ -97,69 +48,38 @@ func TestBuiltinSkillMapperStatements(t *testing.T) {
 		{
 			name:      "find skill",
 			statement: builtinSkillMapperFindSkillByExternalIDStatement,
-			bound:     buildBuiltinSkillMapperFindSkillByExternalID(yourbatis.DialectPostgres, skillParams.ExternalID),
+			bound:     buildBuiltinSkillMapperFindSkillByExternalID(yourbatis.DialectPostgres, skillExternalID),
 			id:        "BuiltinSkillMapper.FindSkillByExternalID",
 			kind:      yourbatis.StatementSelect,
-			values:    []any{skillParams.ExternalID},
+			values:    []any{skillExternalID},
 			fragments: []string{"external_id = $1", "deleted_at IS NULL"},
 		},
 		{
 			name:      "find skill ID",
 			statement: builtinSkillMapperFindSkillUUIDByExternalIDStatement,
-			bound:     buildBuiltinSkillMapperFindSkillUUIDByExternalID(yourbatis.DialectPostgres, skillParams.ExternalID),
+			bound:     buildBuiltinSkillMapperFindSkillUUIDByExternalID(yourbatis.DialectPostgres, skillExternalID),
 			id:        "BuiltinSkillMapper.FindSkillUUIDByExternalID",
 			kind:      yourbatis.StatementSelect,
-			values:    []any{skillParams.ExternalID},
+			values:    []any{skillExternalID},
 			fragments: []string{"SELECT uuid", "external_id = $1"},
 		},
 		{
 			name:      "list versions",
 			statement: builtinSkillMapperListVersionsPageStatement,
-			bound:     buildBuiltinSkillMapperListVersionsPage(yourbatis.DialectPostgres, versionParams.SkillUUID, 21, 2, false),
+			bound:     buildBuiltinSkillMapperListVersionsPage(yourbatis.DialectPostgres, skillUUID, 21, 2, false),
 			id:        "BuiltinSkillMapper.ListVersionsPage",
 			kind:      yourbatis.StatementSelect,
-			values:    []any{versionParams.SkillUUID, 21, 2},
+			values:    []any{skillUUID, 21, 2},
 			fragments: []string{"skill_uuid = $1", "created_at DESC, id DESC", "LIMIT $2", "OFFSET $3"},
 		},
 		{
 			name:      "find version",
 			statement: builtinSkillMapperFindVersionStatement,
-			bound: buildBuiltinSkillMapperFindVersion(
-				yourbatis.DialectPostgres,
-				versionParams.SkillExternalID,
-				versionParams.Version,
-			),
+			bound:     buildBuiltinSkillMapperFindVersion(yourbatis.DialectPostgres, skillExternalID, version),
 			id:        "BuiltinSkillMapper.FindVersion",
 			kind:      yourbatis.StatementSelect,
-			values:    []any{versionParams.SkillExternalID, versionParams.Version, versionParams.Version, versionParams.Version},
+			values:    []any{skillExternalID, version, version, version},
 			fragments: []string{"skill_external_id = $1", "version = $2", "deleted_at IS NULL"},
-		},
-		{
-			name:      "list missing versions",
-			statement: builtinSkillMapperListMissingVersionsStatement,
-			bound:     buildBuiltinSkillMapperListMissingVersions(yourbatis.DialectPostgres, keep),
-			id:        "BuiltinSkillMapper.ListMissingVersions",
-			kind:      yourbatis.StatementSelect,
-			values:    []any{keep},
-			fragments: []string{"NOT EXISTS", "CAST($1 AS jsonb)", "ORDER BY skill_external_id, version"},
-		},
-		{
-			name:      "delete missing versions",
-			statement: builtinSkillMapperSoftDeleteMissingVersionsStatement,
-			bound:     buildBuiltinSkillMapperSoftDeleteMissingVersions(yourbatis.DialectPostgres, pruneParams),
-			id:        "BuiltinSkillMapper.SoftDeleteMissingVersions",
-			kind:      yourbatis.StatementUpdate,
-			values:    []any{now, keep},
-			fragments: []string{"UPDATE builtin_skill_versions", "deleted_at = $1", "CAST($2 AS jsonb)"},
-		},
-		{
-			name:      "delete missing skills",
-			statement: builtinSkillMapperSoftDeleteMissingSkillsStatement,
-			bound:     buildBuiltinSkillMapperSoftDeleteMissingSkills(yourbatis.DialectPostgres, pruneParams),
-			id:        "BuiltinSkillMapper.SoftDeleteMissingSkills",
-			kind:      yourbatis.StatementUpdate,
-			values:    []any{now, now, keep},
-			fragments: []string{"UPDATE builtin_skills", "deleted_at = $1", "updated_at = $2", "CAST($3 AS jsonb)"},
 		},
 	}
 
@@ -197,26 +117,37 @@ func TestBuiltinSkillMapperResultSemantics(t *testing.T) {
 
 	t.Run("single row zero result", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{columns: builtinSkillMapperTestColumns()})
-		_, err := NewBuiltinSkillMapper(executor).UpsertSkill(context.Background(), upsertBuiltinSkillParams{})
+		_, err := NewBuiltinSkillMapper(executor).FindSkillByExternalID(context.Background(), "builtin_test")
 		if !errors.Is(err, sql.ErrNoRows) {
-			t.Fatalf("UpsertSkill() error = %v, want sql.ErrNoRows", err)
+			t.Fatalf("FindSkillByExternalID() error = %v, want sql.ErrNoRows", err)
 		}
 	})
 
-	t.Run("single row scan and string UUID", func(t *testing.T) {
+	t.Run("single row scan and listed state", func(t *testing.T) {
 		executor := newMapperTestExecutor(t, mapperTestResponse{
 			columns: builtinSkillMapperTestColumns(),
 			rows:    [][]driver.Value{builtinSkillMapperTestRow("builtin_test")},
 		})
-		row, err := NewBuiltinSkillMapper(executor).UpsertSkill(context.Background(), upsertBuiltinSkillParams{})
-		if err != nil || row.UUID != "00000000-0000-4000-8000-000000000001" || row.ExternalID != "builtin_test" {
-			t.Fatalf("UpsertSkill() = (%+v, %v)", row, err)
+		row, err := NewBuiltinSkillMapper(executor).FindSkillByExternalID(context.Background(), "builtin_test")
+		if err != nil || row.UUID != "00000000-0000-4000-8000-000000000001" || row.ExternalID != "builtin_test" || !row.Listed || !row.skill().Listed {
+			t.Fatalf("FindSkillByExternalID() = (%+v, %v)", row, err)
+		}
+
+		unlistedRow := builtinSkillMapperTestRow("builtin_unlisted")
+		unlistedRow[5] = false
+		unlistedExecutor := newMapperTestExecutor(t, mapperTestResponse{
+			columns: builtinSkillMapperTestColumns(),
+			rows:    [][]driver.Value{unlistedRow},
+		})
+		found, err := NewBuiltinSkillMapper(unlistedExecutor).FindSkillByExternalID(context.Background(), "builtin_unlisted")
+		if err != nil || found.Listed || found.skill().Listed {
+			t.Fatalf("FindSkillByExternalID() = (%+v, %v), want Listed=false", found, err)
 		}
 	})
 
 	t.Run("scan error", func(t *testing.T) {
 		values := builtinSkillMapperTestRow("builtin_test")
-		values[6] = "not-a-timestamp"
+		values[7] = "not-a-timestamp"
 		executor := newMapperTestExecutor(t, mapperTestResponse{
 			columns: builtinSkillMapperTestColumns(),
 			rows:    [][]driver.Value{values},
@@ -241,9 +172,9 @@ func TestBuiltinSkillMapperResultSemantics(t *testing.T) {
 				builtinSkillVersionMapperTestRow("2.0.0"),
 			},
 		})
-		rows, err = NewBuiltinSkillMapper(executor).ListMissingVersions(context.Background(), []byte(`[]`))
+		rows, err = NewBuiltinSkillMapper(executor).ListVersionsPage(context.Background(), "11111111-1111-4111-8111-111111111111", 20, 0, false)
 		if err != nil || len(rows) != 2 || rows[1].Version != "2.0.0" {
-			t.Fatalf("ListMissingVersions() = (%+v, %v)", rows, err)
+			t.Fatalf("ListVersionsPage() = (%+v, %v)", rows, err)
 		}
 	})
 
@@ -263,27 +194,18 @@ func TestBuiltinSkillMapperResultSemantics(t *testing.T) {
 			t.Fatalf("CountSkills() = (%d, %v)", count, err)
 		}
 	})
-
-	t.Run("execution error", func(t *testing.T) {
-		wantErr := errors.New("delete failed")
-		executor := newMapperTestExecutor(t, mapperTestResponse{execErr: wantErr})
-		err := NewBuiltinSkillMapper(executor).SoftDeleteMissingSkills(context.Background(), pruneBuiltinSkillsParams{})
-		if !errors.Is(err, wantErr) {
-			t.Fatalf("SoftDeleteMissingSkills() error = %v, want %v", err, wantErr)
-		}
-	})
 }
 
 func builtinSkillMapperTestColumns() []string {
 	return []string{
-		"id", "uuid", "external_id", "display_title", "icon_key", "latest_version", "created_at", "updated_at", "deleted_at",
+		"id", "uuid", "external_id", "display_title", "icon_key", "listed", "latest_version", "created_at", "updated_at", "deleted_at",
 	}
 }
 
 func builtinSkillMapperTestRow(externalID string) []driver.Value {
 	now := time.Date(2026, time.August, 5, 1, 2, 3, 0, time.UTC)
 	return []driver.Value{
-		int64(7), "00000000-0000-4000-8000-000000000001", externalID, "Test", "blocks", "1.0.0", now, now, nil, "OMA", "", "",
+		int64(7), "00000000-0000-4000-8000-000000000001", externalID, "Test", "blocks", true, "1.0.0", now, now, nil,
 	}
 }
 

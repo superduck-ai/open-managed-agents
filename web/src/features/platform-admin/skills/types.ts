@@ -15,7 +15,7 @@ export type SystemVersion = {
   version: string;
   name: string;
   description: string;
-  state: 'draft' | 'published';
+  state: 'published';
   size_bytes: number;
   sha256: string;
   created_at: string;

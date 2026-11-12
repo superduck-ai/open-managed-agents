@@ -123,9 +123,9 @@ func TestDecodeChannelMutationMounts(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "空挂载", body: `{"name":"渠道","mode":"open","memory_store_id":null,"vault_id":null,"git_repository":null}`},
-		{name: "挂载 Memory", body: `{"name":"渠道","mode":"open","memory_store_id":"mem_1"}`, wantErr: true},
-		{name: "挂载 Vault", body: `{"name":"渠道","mode":"open","vault_id":"vlt_1"}`, wantErr: true},
-		{name: "挂载 Git", body: `{"name":"渠道","mode":"open","git_repository":{"url":"https://example.com/repo.git"}}`, wantErr: true},
+		{name: "挂载 Memory", body: `{"name":"渠道","mode":"open","memory_store_id":"mem_1"}`},
+		{name: "挂载 Vault", body: `{"name":"渠道","mode":"open","vault_id":"vlt_1"}`},
+		{name: "挂载 Git", body: `{"name":"渠道","mode":"open","git_repository":{"url":"https://example.com/repo.git"}}`},
 		{name: "扫码授权", body: `{"name":"渠道","mode":"open","authorization_id":"chra_1"}`},
 	}
 	for _, tc := range cases {
@@ -446,7 +446,7 @@ func TestOMAClientSendsWorkspaceScopedRequests(t *testing.T) {
 	}))
 	defer server.Close()
 	client := newOMAClient(server.URL)
-	sessionID, err := client.createSession(context.Background(), "key", "agent_a", "env_a", "标题", map[string]string{"source": "feishu"})
+	sessionID, err := client.createSession(context.Background(), "key", "agent_a", "env_a", "标题", map[string]string{"source": "feishu"}, nil, nil)
 	if err != nil || sessionID != "sesn_1" {
 		t.Fatalf("createSession = %q, %v", sessionID, err)
 	}

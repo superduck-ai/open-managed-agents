@@ -23,6 +23,9 @@ const channelNameLimit = 40
 
 type localStore interface {
 	GetAgent(context.Context, string, string) (db.Agent, error)
+	GetMemoryStore(context.Context, string, string) (db.MemoryStore, error)
+	GetVault(context.Context, string, string) (db.Vault, error)
+	DeleteChannelSessionBinding(context.Context, string, string) error
 	GetEnvironment(context.Context, string, string) (db.Environment, error)
 	CreateChannelRecord(context.Context, db.ChannelRecordInput) (db.ChannelRecord, error)
 	GetChannelRecord(context.Context, string, string, string, string) (db.ChannelRecord, error)
@@ -134,7 +137,7 @@ func (s *localService) view(ctx context.Context, record db.ChannelRecord) (map[s
 			pending++
 		}
 	}
-	return map[string]any{
+	view := map[string]any{
 		"id":                 record.ExternalID,
 		"name":               record.Name,
 		"channel_type":       record.ChannelType,
@@ -148,11 +151,12 @@ func (s *localService) view(ctx context.Context, record db.ChannelRecord) (map[s
 		"include_tool_calls": record.IncludeToolCalls,
 		"reply_in_thread":    record.ReplyInThread,
 		"pending_pairings":   pending,
-		"memory_store_id":    nil,
-		"vault_id":           nil,
-		"git_repository":     nil,
 		"created_at":         record.CreatedAt.UTC().Format(time.RFC3339Nano),
-	}, nil
+	}
+	for key, value := range channelMountView(record) {
+		view[key] = value
+	}
+	return view, nil
 }
 
 func (s *localService) create(ctx context.Context, principal auth.Principal, agentID string, input channelMutation) (map[string]any, error) {
@@ -197,6 +201,9 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 		BindingStatus:    "unbound",
 	}
 	applyChannelFlags(&record, input)
+	if err := s.applyChannelMounts(ctx, principal, &record, input); err != nil {
+		return nil, err
+	}
 	if input.AuthorizationID != nil {
 		if err := s.applyAuthorization(ctx, principal, &record, *input.AuthorizationID); err != nil {
 			return nil, err
@@ -222,6 +229,8 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 		IncludeThinking:   record.IncludeThinking,
 		IncludeToolCalls:  record.IncludeToolCalls,
 		ReplyInThread:     record.ReplyInThread,
+		Mounts:            record.Mounts,
+		GitTokenEnvelope:  record.GitTokenEnvelope,
 	})
 	if errors.Is(err, db.ErrNotFound) {
 		return nil, agentNotFound()
@@ -252,6 +261,9 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 		record.Name = name
 	}
 	applyChannelFlags(&record, input)
+	if err := s.applyChannelMounts(ctx, principal, &record, input); err != nil {
+		return nil, err
+	}
 	if input.AuthorizationID != nil {
 		if err := s.applyAuthorization(ctx, principal, &record, *input.AuthorizationID); err != nil {
 			return nil, err
@@ -273,6 +285,8 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 		IncludeThinking:   record.IncludeThinking,
 		IncludeToolCalls:  record.IncludeToolCalls,
 		ReplyInThread:     record.ReplyInThread,
+		Mounts:            record.Mounts,
+		GitTokenEnvelope:  record.GitTokenEnvelope,
 	})
 	if errors.Is(err, db.ErrNotFound) {
 		return nil, channelNotFound()

@@ -23,6 +23,8 @@ type ChannelRecord struct {
 	IncludeThinking   bool       `db:"include_thinking"`
 	IncludeToolCalls  bool       `db:"include_tool_calls"`
 	ReplyInThread     bool       `db:"reply_in_thread"`
+	Mounts            string     `db:"mounts"`
+	GitTokenEnvelope  *string    `db:"git_token_envelope"`
 	CreatedAt         time.Time  `db:"created_at"`
 	UpdatedAt         time.Time  `db:"updated_at"`
 	DeletedAt         *time.Time `db:"deleted_at"`
@@ -53,6 +55,8 @@ type insertChannelRecordParams struct {
 	IncludeThinking   bool
 	IncludeToolCalls  bool
 	ReplyInThread     bool
+	Mounts            string
+	GitTokenEnvelope  *string
 }
 
 type updateChannelRecordParams struct {
@@ -66,6 +70,8 @@ type updateChannelRecordParams struct {
 	IncludeThinking   bool
 	IncludeToolCalls  bool
 	ReplyInThread     bool
+	Mounts            string
+	GitTokenEnvelope  *string
 }
 
 type insertChannelPairingParams struct {
@@ -95,4 +101,5 @@ type ChannelRecordMapper interface {
 	FindChannelAgentEnvironment(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID string) (string, error)
 	UpsertChannelAgentEnvironment(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID, environmentExternalID string) error
 	ArchiveChannelSessions(ctx context.Context, channelExternalID string) error
+	DeleteChannelSession(ctx context.Context, channelExternalID, scopeKey string) error
 }

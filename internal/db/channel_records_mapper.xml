@@ -16,6 +16,8 @@
         include_thinking,
         include_tool_calls,
         reply_in_thread,
+        mounts::text AS mounts,
+        git_token_envelope::text AS git_token_envelope,
         created_at,
         updated_at,
         deleted_at
@@ -34,12 +36,13 @@
         INSERT INTO channels (
             external_id, organization_uuid, workspace_uuid, agent_external_id, name, channel_type,
             mode, enabled, binding_status, app_id, app_secret_envelope, include_thinking,
-            include_tool_calls, reply_in_thread
+            include_tool_calls, reply_in_thread, mounts, git_token_envelope
         ) VALUES (
             #{params.ExternalID}, #{params.OrganizationUUID}, #{params.WorkspaceUUID}, #{params.AgentExternalID},
             #{params.Name}, #{params.ChannelType}, #{params.Mode}, #{params.Enabled}, #{params.BindingStatus},
             #{params.AppID}, CAST(#{params.AppSecretEnvelope} AS jsonb), #{params.IncludeThinking},
-            #{params.IncludeToolCalls}, #{params.ReplyInThread}
+            #{params.IncludeToolCalls}, #{params.ReplyInThread},
+            CAST(#{params.Mounts} AS jsonb), CAST(#{params.GitTokenEnvelope} AS jsonb)
         )
         RETURNING <include refid="channelColumns"/>
     </insert>
@@ -101,6 +104,8 @@
             include_thinking = #{params.IncludeThinking},
             include_tool_calls = #{params.IncludeToolCalls},
             reply_in_thread = #{params.ReplyInThread},
+            mounts = CAST(#{params.Mounts} AS jsonb),
+            git_token_envelope = CAST(#{params.GitTokenEnvelope} AS jsonb),
             updated_at = now()
         WHERE workspace_uuid = #{params.WorkspaceUUID}
         AND external_id = #{params.ExternalID}
@@ -154,6 +159,12 @@
 
     <delete id="ArchiveChannelSessions" result="exec">
         DELETE FROM channel_sessions WHERE channel_external_id = #{channelExternalID}
+    </delete>
+
+    <delete id="DeleteChannelSession" result="exec">
+        DELETE FROM channel_sessions
+        WHERE channel_external_id = #{channelExternalID}
+        AND scope_key = #{scopeKey}
     </delete>
 
     <select id="FindChannelAgentEnvironment" result="scalar">

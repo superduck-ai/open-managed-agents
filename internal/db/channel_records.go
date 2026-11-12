@@ -28,6 +28,8 @@ func (d *DB) CreateChannelRecord(ctx context.Context, params ChannelRecordInput)
 			IncludeThinking:   params.IncludeThinking,
 			IncludeToolCalls:  params.IncludeToolCalls,
 			ReplyInThread:     params.ReplyInThread,
+			Mounts:            params.Mounts,
+			GitTokenEnvelope:  params.GitTokenEnvelope,
 		})
 		record = inserted
 		return err
@@ -69,6 +71,8 @@ func (d *DB) UpdateChannelRecord(ctx context.Context, params ChannelRecordUpdate
 		IncludeThinking:   params.IncludeThinking,
 		IncludeToolCalls:  params.IncludeToolCalls,
 		ReplyInThread:     params.ReplyInThread,
+		Mounts:            params.Mounts,
+		GitTokenEnvelope:  params.GitTokenEnvelope,
 	})
 	return record, mapNoRows(err)
 }
@@ -108,6 +112,10 @@ func (d *DB) SetChannelSessionBinding(ctx context.Context, channelExternalID, sc
 	return NewChannelRecordMapper(d.mapperDB).UpsertChannelSession(ctx, channelExternalID, scopeKey, sessionExternalID)
 }
 
+func (d *DB) DeleteChannelSessionBinding(ctx context.Context, channelExternalID, scopeKey string) error {
+	return NewChannelRecordMapper(d.mapperDB).DeleteChannelSession(ctx, channelExternalID, scopeKey)
+}
+
 func (d *DB) ClearChannelSessionBindings(ctx context.Context, channelExternalID string) error {
 	return NewChannelRecordMapper(d.mapperDB).ArchiveChannelSessions(ctx, channelExternalID)
 }
@@ -136,6 +144,8 @@ type ChannelRecordInput struct {
 	IncludeThinking   bool
 	IncludeToolCalls  bool
 	ReplyInThread     bool
+	Mounts            string
+	GitTokenEnvelope  *string
 }
 
 type ChannelRecordUpdate struct {
@@ -149,6 +159,8 @@ type ChannelRecordUpdate struct {
 	IncludeThinking   bool
 	IncludeToolCalls  bool
 	ReplyInThread     bool
+	Mounts            string
+	GitTokenEnvelope  *string
 }
 
 type ChannelPairingInput struct {

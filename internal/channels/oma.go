@@ -19,6 +19,8 @@ type omaEvent struct {
 	ID         string          `json:"id"`
 	Type       string          `json:"type"`
 	Name       string          `json:"name"`
+	Input      json.RawMessage `json:"input"`
+	Permission string          `json:"evaluated_permission"`
 	Content    json.RawMessage `json:"content"`
 	StopReason json.RawMessage `json:"stop_reason"`
 	CreatedAt  string          `json:"created_at"`
@@ -50,12 +52,18 @@ func newOMAClient(baseURL string) *omaClient {
 	}
 }
 
-func (c *omaClient) createSession(ctx context.Context, apiKey, agentID, environmentID, title string, metadata map[string]string) (string, error) {
+func (c *omaClient) createSession(ctx context.Context, apiKey, agentID, environmentID, title string, metadata map[string]string, resources []map[string]any, vaultIDs []string) (string, error) {
 	body := map[string]any{
 		"agent":          agentID,
 		"environment_id": environmentID,
 		"title":          title,
 		"metadata":       metadata,
+	}
+	if len(resources) > 0 {
+		body["resources"] = resources
+	}
+	if len(vaultIDs) > 0 {
+		body["vault_ids"] = vaultIDs
 	}
 	var session omaSession
 	if err := c.request(ctx, apiKey, http.MethodPost, "/v1/sessions", body, &session); err != nil {
@@ -74,12 +82,26 @@ func (c *omaClient) getSession(ctx context.Context, apiKey, sessionID string) (o
 }
 
 func (c *omaClient) sendUserMessage(ctx context.Context, apiKey, sessionID, text string) error {
+	return c.sendContent(ctx, apiKey, sessionID, []map[string]any{{"type": "text", "text": text}})
+}
+
+func (c *omaClient) sendContent(ctx context.Context, apiKey, sessionID string, content []map[string]any) error {
 	body := map[string]any{
 		"events": []map[string]any{{
 			"type":    "user.message",
-			"content": []map[string]string{{"type": "text", "text": text}},
+			"content": content,
 		}},
 	}
+	return c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", body, nil)
+}
+
+func (c *omaClient) interrupt(ctx context.Context, apiKey, sessionID string) error {
+	body := map[string]any{"events": []map[string]any{{"type": "user.interrupt"}}}
+	return c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", body, nil)
+}
+
+func (c *omaClient) sendEvent(ctx context.Context, apiKey, sessionID string, event map[string]any) error {
+	body := map[string]any{"events": []map[string]any{event}}
 	return c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", body, nil)
 }
 

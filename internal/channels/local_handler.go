@@ -275,9 +275,6 @@ func decodeChannelMutation(w http.ResponseWriter, r *http.Request) (channelMutat
 	if err := decodeStrictJSON(w, r, 32<<10, &input); err != nil {
 		return channelMutation{}, invalidChannelUpdate(err)
 	}
-	if mountRequested(input.MemoryStoreID) || mountRequested(input.VaultID) || mountRequested(input.GitRepository) {
-		return channelMutation{}, channelMountsUnsupported()
-	}
 	return input, nil
 }
 

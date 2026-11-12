@@ -69,6 +69,15 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 - 多实例部署：每个实例启动时加载全部可运行渠道并每 30 秒对账一次，配置或启停变化会重建/停止本地 worker；飞书长连接按应用维度分发事件，会话映射与配对状态都在 Postgres 共享。禁用或删除后在下次对账前旧 worker 仍可能收到消息，因此每条消息都会重新校验渠道记录，非 `enabled` 或已删除的渠道直接丢弃，不再回复。
 - 删除渠道停止运行、清除会话映射并软删除记录，历史 OMA 会话保留。
 
+## 会话内交互
+
+- 审批：`agent.tool_use` 的 `evaluated_permission` 为 `ask` 时发送允许/拒绝卡片，卡片回调写入 `user.tool_confirmation`（`tool_use_id` + `allow|deny`）。
+- 问卷：`agent.custom_tool_use` 且工具名为 `AskUserQuestion` 时按选项生成卡片，回调以 `user.custom_tool_result` 回传 `{answers:[{id,selected}]}`。
+- 附件：图片、PDF、纯文本以 base64/text 内容块进入 `user.message`，其它格式回复提示后跳过；单个会话按消息逐条推送。
+- 话题隔离：飞书话题消息（`thread_id`）使用 `thread:<id>` 作用域，独立 OMA 会话；普通群聊使用 `chat:<id>`。
+- 指令：`/new` 删除当前作用域的会话绑定，`/stop` 向当前会话发送 `user.interrupt`。
+- 挂载：渠道保存 `memory_store_id`、`vault_id`、`git_repository`（token 单独信封加密），创建会话时转成 `resources` 与 `vault_ids`。
+
 ## 本阶段未覆盖
 
 以下能力原生运行时暂不实现：

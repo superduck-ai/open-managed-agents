@@ -2,10 +2,12 @@ package channels
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +38,7 @@ type runtimeStore interface {
 	GetChannelRecord(context.Context, string, string, string, string) (db.ChannelRecord, error)
 	GetChannelSessionBinding(context.Context, string, string) (string, error)
 	SetChannelSessionBinding(context.Context, string, string, string) error
+	DeleteChannelSessionBinding(context.Context, string, string) error
 	GetChannelAgentEnvironment(context.Context, string, string, string) (string, error)
 	ListChannelPairingRecords(context.Context, string) ([]db.ChannelPairingRecord, error)
 	CountChannelPairingRecords(context.Context, string) (int, error)
@@ -192,6 +195,18 @@ func (s *runtimeSupervisor) online(channelID string) bool {
 	return ok && worker.online.Load()
 }
 
+func (s *runtimeSupervisor) openGitToken(ctx context.Context, record db.ChannelRecord) string {
+	if record.GitTokenEnvelope == nil || s.cipher == nil {
+		return ""
+	}
+	token, err := openSealedSecret(ctx, s.cipher, record, *record.GitTokenEnvelope)
+	if err != nil {
+		s.logger.WarnContext(ctx, "open channel git token", "channel_id", record.ExternalID, "error", err)
+		return ""
+	}
+	return token
+}
+
 func (s *runtimeSupervisor) apiKey(ctx context.Context, record db.ChannelRecord) (string, error) {
 	s.mu.Lock()
 	key, ok := s.apiKeys[record.WorkspaceUUID]
@@ -220,6 +235,8 @@ type channelWorker struct {
 	channel    channeltypes.Channel
 	cancel     context.CancelFunc
 	online     atomic.Bool
+	askedMu    sync.Mutex
+	asked      map[string]struct{}
 }
 
 func newChannelWorker(supervisor *runtimeSupervisor, record db.ChannelRecord, secret string) (*channelWorker, error) {
@@ -241,12 +258,14 @@ func newChannelWorker(supervisor *runtimeSupervisor, record db.ChannelRecord, se
 		secret:     secret,
 		client:     client,
 		channel:    bot,
+		asked:      make(map[string]struct{}),
 	}
 	bot.OnReady(func() { worker.online.Store(true) })
 	bot.OnReconnecting(func() { worker.online.Store(false) })
 	bot.OnReconnected(func() { worker.online.Store(true) })
 	bot.OnDisconnected(func() { worker.online.Store(false) })
 	bot.OnMessage(worker.handleMessage)
+	bot.OnCardAction(worker.handleCardAction)
 	return worker, nil
 }
 
@@ -285,8 +304,12 @@ func (w *channelWorker) handleMessage(ctx context.Context, msg *channeltypes.Nor
 		return nil
 	}
 	text := msg.Content
-	if text == "" {
-		return w.replyText(ctx, msg, "当前渠道只支持文本消息，请直接发送文字。")
+	if text == "" && len(msg.Resources) == 0 {
+		return w.replyText(ctx, msg, "当前渠道只支持文本、图片和 PDF 附件，请重新发送。")
+	}
+	switch strings.TrimSpace(text) {
+	case "/new", "/stop":
+		return w.handleCommand(ctx, msg, strings.TrimSpace(text))
 	}
 	allowed, err := w.authorize(ctx, msg)
 	if err != nil || !allowed {
@@ -308,10 +331,79 @@ func (w *channelWorker) handleMessage(ctx context.Context, msg *channeltypes.Nor
 	if err != nil {
 		return err
 	}
-	if err := w.supervisor.oma.sendUserMessage(ctx, apiKey, sessionID, text); err != nil {
+	content, skipped := w.messageContent(ctx, msg, text)
+	if len(content) == 0 {
+		return w.replyText(ctx, msg, "附件格式暂不支持，目前仅支持图片、PDF 与纯文本文件。")
+	}
+	if len(skipped) > 0 {
+		_, _ = w.channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Markdown: "以下附件格式暂不支持，已跳过：" + strings.Join(skipped, "、")})
+	}
+	if err := w.supervisor.oma.sendContent(ctx, apiKey, sessionID, content); err != nil {
 		return err
 	}
 	return w.streamReply(ctx, msg, apiKey, sessionID, len(events))
+}
+
+func (w *channelWorker) messageContent(ctx context.Context, msg *channeltypes.NormalizedMessage, text string) ([]map[string]any, []string) {
+	content := make([]map[string]any, 0, 3)
+	if text != "" {
+		content = append(content, map[string]any{"type": "text", "text": text})
+	}
+	skipped := make([]string, 0)
+	for _, resource := range msg.Resources {
+		block, ok := w.attachmentBlock(ctx, resource)
+		if !ok {
+			name := resource.FileName
+			if name == "" {
+				name = resource.Type
+			}
+			skipped = append(skipped, name)
+			continue
+		}
+		content = append(content, block)
+	}
+	return content, skipped
+}
+
+func (w *channelWorker) attachmentBlock(ctx context.Context, resource channeltypes.Resource) (map[string]any, bool) {
+	if resource.FileKey == "" {
+		return nil, false
+	}
+	mediaType := resource.Type
+	if mediaType != "image" {
+		mediaType = "file"
+	}
+	data, err := w.channel.DownloadFile(ctx, resource.FileKey, mediaType)
+	if err != nil || len(data) == 0 {
+		w.supervisor.logger.WarnContext(ctx, "download channel attachment", "channel_id", w.record.ExternalID, "error", err)
+		return nil, false
+	}
+	detected := http.DetectContentType(data)
+	if resource.Type == "image" {
+		switch detected {
+		case "image/jpeg", "image/png", "image/gif", "image/webp":
+			return map[string]any{
+				"type":   "image",
+				"source": map[string]string{"type": "base64", "media_type": detected, "data": base64.StdEncoding.EncodeToString(data)},
+			}, true
+		default:
+			return nil, false
+		}
+	}
+	switch {
+	case detected == "application/pdf":
+		return map[string]any{
+			"type":   "document",
+			"source": map[string]string{"type": "base64", "media_type": "application/pdf", "data": base64.StdEncoding.EncodeToString(data)},
+		}, true
+	case strings.HasPrefix(detected, "text/"):
+		return map[string]any{
+			"type":   "document",
+			"source": map[string]string{"type": "text", "media_type": "text/plain", "data": string(data)},
+		}, true
+	default:
+		return nil, false
+	}
 }
 
 func (w *channelWorker) active(ctx context.Context) bool {
@@ -320,6 +412,86 @@ func (w *channelWorker) active(ctx context.Context) bool {
 		return false
 	}
 	return record.Enabled && record.DeletedAt == nil && record.BindingStatus == "bound"
+}
+
+func (w *channelWorker) handleCommand(ctx context.Context, msg *channeltypes.NormalizedMessage, command string) error {
+	scopeKey := channelScopeKey(msg)
+	if command == "/new" {
+		if err := w.supervisor.store.DeleteChannelSessionBinding(ctx, w.record.ExternalID, scopeKey); err != nil {
+			return err
+		}
+		return w.replyText(ctx, msg, "已开启新会话，下一条消息会创建新的会话。")
+	}
+	sessionID, err := w.supervisor.store.GetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey)
+	if err != nil || sessionID == "" {
+		return w.replyText(ctx, msg, "当前没有进行中的会话。")
+	}
+	apiKey, err := w.supervisor.apiKey(ctx, w.record)
+	if err != nil {
+		return err
+	}
+	if err := w.supervisor.oma.interrupt(ctx, apiKey, sessionID); err != nil {
+		return err
+	}
+	return w.replyText(ctx, msg, "已请求停止当前任务。")
+}
+
+func channelScopeKey(msg *channeltypes.NormalizedMessage) string {
+	if threadID := channelThreadID(msg); threadID != "" {
+		return "thread:" + threadID
+	}
+	return "chat:" + msg.ChatID
+}
+
+func channelThreadID(msg *channeltypes.NormalizedMessage) string {
+	raw, ok := msg.RawEvent.(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, key := range []string{"thread_id", "thread_key"} {
+		if value, ok := raw[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	event, ok := raw["event"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	if message, ok := event["message"].(map[string]any); ok {
+		if value, ok := message["thread_id"].(string); ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func channelSessionResources(record db.ChannelRecord, gitToken string) ([]map[string]any, []string) {
+	mounts := parseChannelMounts(record.Mounts)
+	resources := make([]map[string]any, 0, 2)
+	vaultIDs := make([]string, 0, 1)
+	if mounts.MemoryStoreID != "" {
+		resources = append(resources, map[string]any{"type": "memory_store", "memory_store_id": mounts.MemoryStoreID})
+	}
+	if mounts.GitRepository != nil && mounts.GitRepository.URL != "" {
+		git := map[string]any{"type": "github_repository", "url": mounts.GitRepository.URL}
+		if mounts.GitRepository.MountPath != "" {
+			git["mount_path"] = mounts.GitRepository.MountPath
+		}
+		if len(mounts.GitRepository.Checkout) > 0 {
+			var checkout any
+			if err := json.Unmarshal(mounts.GitRepository.Checkout, &checkout); err == nil {
+				git["checkout"] = checkout
+			}
+		}
+		if gitToken != "" {
+			git["authorization_token"] = gitToken
+		}
+		resources = append(resources, git)
+	}
+	if mounts.VaultID != "" {
+		vaultIDs = append(vaultIDs, mounts.VaultID)
+	}
+	return resources, vaultIDs
 }
 
 func (w *channelWorker) authorize(ctx context.Context, msg *channeltypes.NormalizedMessage) (bool, error) {
@@ -366,7 +538,7 @@ func (w *channelWorker) recordPairing(ctx context.Context, kind, target, display
 }
 
 func (w *channelWorker) sessionFor(ctx context.Context, msg *channeltypes.NormalizedMessage) (string, error) {
-	scopeKey := "chat:" + msg.ChatID
+	scopeKey := channelScopeKey(msg)
 	sessionID, err := w.supervisor.store.GetChannelSessionBinding(ctx, w.record.ExternalID, scopeKey)
 	if err == nil && sessionID != "" {
 		apiKey, keyErr := w.supervisor.apiKey(ctx, w.record)
@@ -384,6 +556,7 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channeltypes.Normal
 	if err != nil {
 		return "", err
 	}
+	resources, vaultIDs := channelSessionResources(w.record, w.supervisor.openGitToken(ctx, w.record))
 	created, err := w.supervisor.oma.createSession(ctx, apiKey, w.record.AgentExternalID, environmentID, channelSessionTitle(msg.Content), map[string]string{
 		"source":     "feishu",
 		"channel_id": w.record.ExternalID,
@@ -392,7 +565,7 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channeltypes.Normal
 		"chat_type":  channelChatType(msg.ChatType),
 		"open_id":    msg.UserID,
 		"actor_id":   msg.UserID,
-	})
+	}, resources, vaultIDs)
 	if err != nil {
 		return "", err
 	}
@@ -441,6 +614,9 @@ func (w *channelWorker) streamReply(ctx context.Context, msg *channeltypes.Norma
 							return err
 						}
 					}
+				}
+				if err := w.askIfNeeded(ctx, msg, sessionID, event); err != nil {
+					w.supervisor.logger.WarnContext(ctx, "send channel action card", "channel_id", w.record.ExternalID, "error", err)
 				}
 				if terminalEvent(event) {
 					done = true

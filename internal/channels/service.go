@@ -16,6 +16,8 @@ type Service struct {
 	agent      http.Handler
 	workspace  http.Handler
 	supervisor *runtimeSupervisor
+	store      *db.DB
+	logger     *slog.Logger
 }
 
 func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *secrets.Service) *Service {
@@ -24,6 +26,8 @@ func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *se
 		return &Service{
 			agent:     NewHandler(cfg.ChannelBridge, store, logger, cipher),
 			workspace: NewWorkspaceHandler(cfg.ChannelBridge, store, logger, cipher),
+			store:     store,
+			logger:    logger,
 		}
 	}
 	oma := newOMAClient(omaBaseURL(cfg))
@@ -34,6 +38,8 @@ func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *se
 		agent:      handler.agentRouter(),
 		workspace:  handler.workspaceRouter(),
 		supervisor: supervisor,
+		store:      store,
+		logger:     logger,
 	}
 }
 
@@ -46,10 +52,17 @@ func (s *Service) WorkspaceHandler() http.Handler {
 }
 
 func (s *Service) Start(ctx context.Context) {
-	if s == nil || s.supervisor == nil {
+	if s == nil || s.supervisor == nil || s.store == nil {
 		return
 	}
-	s.supervisor.restore(ctx)
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				s.logger.Error("restore channel runtimes", "panic", recovered)
+			}
+		}()
+		s.supervisor.restore(ctx)
+	}()
 }
 
 func (s *Service) Stop() {

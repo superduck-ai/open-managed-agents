@@ -89,6 +89,10 @@ func (s *runtimeSupervisor) apply(ctx context.Context, record db.ChannelRecord) 
 		s.stop(record.ExternalID)
 		return nil
 	}
+	if s.oma == nil || s.oma.baseURL == "" {
+		s.stop(record.ExternalID)
+		return errors.New("未配置 channels.oma_url，无法启动飞书渠道")
+	}
 	secret, err := openChannelSecret(ctx, s.cipher, record)
 	if err != nil {
 		s.stop(record.ExternalID)
@@ -232,6 +236,9 @@ func (w *channelWorker) handleMessage(ctx context.Context, msg *channeltypes.Nor
 	sessionID, err := w.sessionFor(ctx, msg)
 	if err != nil {
 		w.supervisor.logger.WarnContext(ctx, "open channel session", "channel_id", w.record.ExternalID, "error", err)
+		if errors.Is(err, db.ErrNotFound) {
+			return w.replyText(ctx, msg, "当前渠道尚未配置执行环境，请在 OMA 渠道设置中完成配置。")
+		}
 		return w.replyText(ctx, msg, "OMA 会话创建失败，请稍后重试。")
 	}
 	apiKey, err := w.supervisor.apiKey(ctx, w.record)
@@ -414,6 +421,9 @@ func channelSessionTitle(text string) string {
 }
 
 func openChannelSecret(ctx context.Context, cipher *secrets.Service, record db.ChannelRecord) (string, error) {
+	if cipher == nil {
+		return "", errors.New("secrets service is not configured")
+	}
 	if record.AppSecretEnvelope == nil || *record.AppSecretEnvelope == "" {
 		return "", fmt.Errorf("渠道 %s 缺少飞书应用凭据", record.ExternalID)
 	}

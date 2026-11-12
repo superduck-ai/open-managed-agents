@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,6 +112,41 @@ func TestOMABaseURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDecodeChannelMutationMounts(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{name: "空挂载", body: `{"name":"渠道","mode":"open","memory_store_id":null,"vault_id":null,"git_repository":null}`},
+		{name: "挂载 Memory", body: `{"name":"渠道","mode":"open","memory_store_id":"mem_1"}`, wantErr: true},
+		{name: "挂载 Vault", body: `{"name":"渠道","mode":"open","vault_id":"vlt_1"}`, wantErr: true},
+		{name: "挂载 Git", body: `{"name":"渠道","mode":"open","git_repository":{"url":"https://example.com/repo.git"}}`, wantErr: true},
+		{name: "扫码授权", body: `{"name":"渠道","mode":"open","authorization_id":"auth_1"}`, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body))
+			_, err := decodeChannelMutation(httptest.NewRecorder(), request)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("decodeChannelMutation err = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestServiceWithoutChannelConfig(t *testing.T) {
+	service := NewService(config.Config{}, nil, nil, nil)
+	if service.AgentHandler() == nil || service.WorkspaceHandler() == nil {
+		t.Fatal("未配置渠道时也必须返回可用的处理器")
+	}
+	service.Start(context.Background())
+	service.Stop()
+	var nilService *Service
+	nilService.Start(context.Background())
+	nilService.Stop()
 }
 
 func TestChannelSecretRoundTrip(t *testing.T) {

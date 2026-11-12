@@ -240,5 +240,13 @@ func decodeChannelMutation(w http.ResponseWriter, r *http.Request) (channelMutat
 	if input.AuthorizationID != nil {
 		return channelMutation{}, channelCapabilityUnsupported()
 	}
+	if mountRequested(input.MemoryStoreID) || mountRequested(input.VaultID) || mountRequested(input.GitRepository) {
+		return channelMutation{}, channelMountsUnsupported()
+	}
 	return input, nil
+}
+
+func mountRequested(value json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(value))
+	return trimmed != "" && trimmed != "null"
 }

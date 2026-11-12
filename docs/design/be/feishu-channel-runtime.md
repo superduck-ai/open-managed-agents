@@ -12,6 +12,8 @@ Agent 渠道不再依赖独立的 `lark-channel` 服务。OMA 自己保存渠道
 
 `channels.oma_url` 是原生运行时调用自身公开 API 的地址，留空时按 `server.addr` 回退到 `http://127.0.0.1:<port>`。
 
+`channels` 整段配置都可以缺省：没有飞书应用、没有渠道记录时服务照常启动，运行时不建立任何连接，渠道页返回空列表；只有真正绑定并启用渠道后才会建立长连接。配置了 `channel_bridge` 的部署继续走桥接，行为不变。
+
 ## 服务边界
 
 ```mermaid

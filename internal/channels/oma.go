@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -259,4 +260,122 @@ func stopReason(event omaEvent) string {
 		return ""
 	}
 	return object.Type
+}
+
+type omaFile struct {
+	ID       string `json:"id"`
+	Filename string `json:"filename"`
+	MimeType string `json:"mime_type"`
+	Size     int64  `json:"size_bytes"`
+}
+
+type omaResource struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	FileID    string `json:"file_id"`
+	Filename  string `json:"filename"`
+	MimeType  string `json:"mime_type"`
+	MountPath string `json:"mount_path"`
+}
+
+func (c *omaClient) uploadFile(ctx context.Context, apiKey, filename, mediaType string, data []byte) (omaFile, error) {
+	if c.baseURL == "" {
+		return omaFile{}, errors.New("未配置 OMA 渠道内部地址")
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return omaFile{}, err
+	}
+	if _, err := part.Write(data); err != nil {
+		return omaFile{}, err
+	}
+	if err := writer.Close(); err != nil {
+		return omaFile{}, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/files?beta=true", &body)
+	if err != nil {
+		return omaFile{}, err
+	}
+	request.Header.Set("X-Api-Key", apiKey)
+	request.Header.Set("anthropic-version", "2023-06-01")
+	request.Header.Set("anthropic-beta", omaManagedAgentsBeta)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err := c.http.Do(request)
+	if err != nil {
+		return omaFile{}, fmt.Errorf("OMA 上传文件失败: %w", err)
+	}
+	defer response.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return omaFile{}, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return omaFile{}, fmt.Errorf("OMA 上传文件返回 HTTP %d", response.StatusCode)
+	}
+	var file omaFile
+	if err := json.Unmarshal(payload, &file); err != nil {
+		return omaFile{}, fmt.Errorf("OMA 文件响应解析失败: %w", err)
+	}
+	if file.ID == "" {
+		return omaFile{}, errors.New("OMA 文件响应缺少 id")
+	}
+	if file.MimeType == "" {
+		file.MimeType = mediaType
+	}
+	return file, nil
+}
+
+func (c *omaClient) downloadFile(ctx context.Context, apiKey, fileID string) ([]byte, string, error) {
+	if c.baseURL == "" {
+		return nil, "", errors.New("未配置 OMA 渠道内部地址")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/files/"+url.PathEscape(fileID)+"/content?beta=true", nil)
+	if err != nil {
+		return nil, "", err
+	}
+	request.Header.Set("X-Api-Key", apiKey)
+	request.Header.Set("anthropic-version", "2023-06-01")
+	request.Header.Set("anthropic-beta", omaManagedAgentsBeta)
+	response, err := c.http.Do(request)
+	if err != nil {
+		return nil, "", fmt.Errorf("OMA 下载文件失败: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("OMA 下载文件返回 HTTP %d", response.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 64<<20))
+	if err != nil {
+		return nil, "", err
+	}
+	return data, response.Header.Get("Content-Type"), nil
+}
+
+func (c *omaClient) fileMetadata(ctx context.Context, apiKey, fileID string) (omaFile, error) {
+	var file omaFile
+	if err := c.request(ctx, apiKey, http.MethodGet, "/v1/files/"+url.PathEscape(fileID), nil, &file); err != nil {
+		return omaFile{}, err
+	}
+	return file, nil
+}
+
+func (c *omaClient) listResources(ctx context.Context, apiKey, sessionID string) ([]omaResource, error) {
+	var response struct {
+		Data []omaResource `json:"data"`
+	}
+	if err := c.request(ctx, apiKey, http.MethodGet, "/v1/sessions/"+url.PathEscape(sessionID)+"/resources", nil, &response); err != nil {
+		return nil, err
+	}
+	return response.Data, nil
+}
+
+func (c *omaClient) attachFileResource(ctx context.Context, apiKey, sessionID, fileID string) (omaResource, error) {
+	body := map[string]any{"type": "file", "file_id": fileID}
+	var resource omaResource
+	if err := c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/resources", body, &resource); err != nil {
+		return omaResource{}, err
+	}
+	return resource, nil
 }

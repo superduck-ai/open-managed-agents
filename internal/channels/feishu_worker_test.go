@@ -75,14 +75,17 @@ func (f *fakeRuntimeStore) EnsureChannelWorkspaceCredential(context.Context, pla
 }
 
 type fakeChannel struct {
-	mu    sync.Mutex
-	sends []string
+	mu        sync.Mutex
+	sends     []string
+	inputs    []*channeltypes.SendInput
+	downloads map[string][]byte
 }
 
 func (f *fakeChannel) Send(_ context.Context, input *channeltypes.SendInput) (*channeltypes.SendResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sends = append(f.sends, input.Text+input.Markdown)
+	f.inputs = append(f.inputs, input)
 	return &channeltypes.SendResult{MessageID: "om_1"}, nil
 }
 
@@ -93,8 +96,8 @@ func (f *fakeChannel) OnBotAdded(func(context.Context, *channeltypes.BotAddedEve
 func (f *fakeChannel) OnCardAction(func(context.Context, *channeltypes.CardActionEvent) error) {
 }
 func (f *fakeChannel) OnReject(func(context.Context, *channeltypes.RejectEvent) error) {}
-func (f *fakeChannel) DownloadFile(context.Context, string, string) ([]byte, error) {
-	return nil, nil
+func (f *fakeChannel) DownloadFile(_ context.Context, fileKey, _ string) ([]byte, error) {
+	return f.downloads[fileKey], nil
 }
 func (f *fakeChannel) OnReady(func())                         {}
 func (f *fakeChannel) OnError(func(error))                    {}
@@ -119,6 +122,12 @@ func (f *fakeChannel) text() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string{}, f.sends...)
+}
+
+func (f *fakeChannel) sentInputs() []*channeltypes.SendInput {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*channeltypes.SendInput{}, f.inputs...)
 }
 
 type fakeStream struct{}
@@ -151,6 +160,7 @@ func testWorker(t *testing.T, store *fakeRuntimeStore, baseURL string) (*channel
 		channel:    fake,
 		replies:    make(map[string][]*channelReplyTask),
 		asked:      make(map[string]struct{}),
+		artifacts:  make(map[string]struct{}),
 		ctx:        context.Background(),
 	}
 	return worker, fake

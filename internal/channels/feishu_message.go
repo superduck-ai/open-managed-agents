@@ -126,11 +126,13 @@ func (w *channelWorker) deliver(task *channelReplyTask, msg *channeltypes.Normal
 	if task.ctx.Err() != nil {
 		return
 	}
-	content, skipped, err := w.messageContent(task.ctx, msg, strings.TrimSpace(msg.Content))
+	baseline := w.resourceBaseline(task.ctx, apiKey, task.sessionID)
+	content, skipped, mounted, err := w.messageContent(task.ctx, apiKey, task.sessionID, msg, strings.TrimSpace(msg.Content))
 	if err != nil {
-		_ = w.replyText(task.ctx, msg, "附件读取失败，请重新发送："+err.Error())
+		_ = w.replyText(task.ctx, msg, "附件准备失败，请重新发送："+err.Error())
 		return
 	}
+	task.inbound = mounted
 	if len(content) == 0 {
 		_ = w.replyText(task.ctx, msg, "附件格式暂不支持，目前仅支持图片、PDF 与纯文本文件。")
 		return
@@ -153,6 +155,10 @@ func (w *channelWorker) deliver(task *channelReplyTask, msg *channeltypes.Normal
 	}
 	if err := w.streamReply(task.ctx, task, msg, apiKey); err != nil && task.ctx.Err() == nil {
 		w.supervisor.logger.WarnContext(task.ctx, "stream channel reply", "channel_id", w.record.ExternalID, "error", err)
+		return
+	}
+	if task.ctx.Err() == nil {
+		w.sendArtifacts(task.ctx, task, msg, apiKey, baseline)
 	}
 }
 

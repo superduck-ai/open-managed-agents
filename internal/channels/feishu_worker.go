@@ -26,10 +26,11 @@ type channelWorker struct {
 	cancel     context.CancelFunc
 	online     atomic.Bool
 
-	mu      sync.Mutex
-	replies map[string][]*channelReplyTask
-	asked   map[string]struct{}
-	ctx     context.Context
+	mu        sync.Mutex
+	replies   map[string][]*channelReplyTask
+	asked     map[string]struct{}
+	artifacts map[string]struct{}
+	ctx       context.Context
 }
 
 type channelReplyTask struct {
@@ -37,6 +38,7 @@ type channelReplyTask struct {
 	scopeKey     string
 	sessionID    string
 	inputEventID string
+	inbound      map[string]struct{}
 	cancel       context.CancelFunc
 	done         chan struct{}
 }
@@ -62,6 +64,7 @@ func newChannelWorker(supervisor *runtimeSupervisor, record db.ChannelRecord, se
 		channel:    bot,
 		replies:    make(map[string][]*channelReplyTask),
 		asked:      make(map[string]struct{}),
+		artifacts:  make(map[string]struct{}),
 	}
 	bot.OnReady(func() { worker.online.Store(true) })
 	bot.OnReconnecting(func() { worker.online.Store(false) })

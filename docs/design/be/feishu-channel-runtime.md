@@ -79,13 +79,13 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 - 问卷：`agent.custom_tool_use` 且工具名为 `AskUserQuestion` 时生成表单卡片，支持多题、多选与自定义文本，回调以 `user.custom_tool_result` 回传 `{answers:[{id,selected,custom}]}`。
 - 卡片值携带 `channel_id`、`scopeKey`、`session_id`、`tool_use_id` 和发起人 `open_id`；点击时校验渠道、会话、聊天和操作人，并按 OMA 事件里已有的 `user.tool_confirmation` / `user.custom_tool_result` 去重，重复点击、控制台已处理和进程重启后都不会重复提交。
 
+## 附件与产物
+
+- 入站：从飞书下载后上传 OMA Files（`POST /v1/files`），再挂载为会话 file 资源（`POST /v1/sessions/{id}/resources`），正文里给出 `📎 文件名 → /mnt/user-data/files/...` 路径提示；同一文件已挂载时复用路径，不重复挂载。
+- 出站：每轮开始前记录会话资源 ID 基线，轮次结束后只把新增的 file 资源下载并上传飞书（图片走 image 消息、其余走 file 消息）；不重发历史产物，也不回传本轮用户上传的附件。产物超过 10 个或 30 MB 时回复提示到 OMA 会话查看。
+- 失败处理：附件下载、上传或挂载失败时回复具体原因并终止本轮提交，不会出现正文已发出、附件静默丢失。
+
 ## 本阶段未覆盖
 
-以下能力原生运行时暂不实现：
-
-- 卡片按钮交互、工具审批、问卷作答。
-- 图片、文件、音频等附件与产物回传。
-- Memory、Vault、Git 仓库挂载（提交时返回 `InvalidArgument`）与话题（thread）隔离。
-- 多人并发的队列与打断命令（`/stop`、`/new`）。
-
-迁移这些能力时按同一服务边界补齐，不需要改动前端。
+- 语音、视频等需要转码的附件类型；当前按不支持跳过并提示。
+- 卡片表单的字段级校验（如必填、多选上限）。

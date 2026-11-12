@@ -131,9 +131,9 @@ func TestSessionActivityNewWorkerFactAndReplayPostgres(t *testing.T) {
 		databaseURL = cfg.Database.URL
 	}
 	ctx, database, _ := newIsolatedMigrationTestDatabase(t, databaseURL)
-	ddl := `CREATE TABLE sessions(uuid uuid PRIMARY KEY,workspace_uuid uuid,status text,updated_at timestamptz,deleted_at timestamptz);
+	ddl := `CREATE TABLE sessions(uuid uuid PRIMARY KEY,workspace_uuid uuid,status text,updated_at timestamptz,deleted_at timestamptz,last_event_seq bigint NOT NULL DEFAULT 0);
  CREATE TABLE session_threads(uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),external_id text,organization_uuid uuid,workspace_uuid uuid,session_uuid uuid,session_external_id text,parent_thread_uuid uuid,parent_thread_external_id text,agent_snapshot jsonb,status text,stats_initialized boolean,usage_initialized boolean,usage jsonb,stats jsonb,created_at timestamptz,updated_at timestamptz,archived_at timestamptz,deleted_at timestamptz);
- CREATE TABLE session_events(id bigint GENERATED ALWAYS AS IDENTITY,uuid uuid,external_id text,organization_uuid uuid,workspace_uuid uuid,session_uuid uuid,session_external_id text,thread_uuid uuid,thread_external_id text,event_type text,payload jsonb,payload_blob_uuid uuid,tool_use_id text,processed_at timestamptz,created_at timestamptz,deleted_at timestamptz,UNIQUE(workspace_uuid,external_id));
+ CREATE TABLE session_events(id bigint GENERATED ALWAYS AS IDENTITY,uuid uuid,external_id text,organization_uuid uuid,workspace_uuid uuid,session_uuid uuid,session_external_id text,thread_uuid uuid,thread_external_id text,event_type text,payload jsonb,payload_blob_uuid uuid,tool_use_id text,processed_at timestamptz,created_at timestamptz,deleted_at timestamptz,seq bigint,queued_after_seq bigint,UNIQUE(workspace_uuid,external_id));
  CREATE TABLE code_sessions(uuid uuid DEFAULT gen_random_uuid(),external_id text,workspace_uuid uuid,session_uuid uuid,status text,worker_turn_started boolean,worker_status text,worker_external_metadata jsonb,created_at timestamptz,deleted_at timestamptz);`
 	if _, err := database.ExecContext(ctx, ddl); err != nil {
 		t.Fatal(err)

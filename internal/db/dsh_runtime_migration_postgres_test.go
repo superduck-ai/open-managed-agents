@@ -18,7 +18,7 @@ func TestDSHRuntimeMigrationPostgres(t *testing.T) {
 	if _, err := migrations.UpTo(ctx, 114); err != nil {
 		t.Fatal(err)
 	}
-	applied, err := migrations.Up(ctx)
+	applied, err := migrations.UpTo(ctx, 117)
 	if err != nil || len(applied) != 1 {
 		t.Fatalf("apply DSR migration: results=%v err=%v", applied, err)
 	}

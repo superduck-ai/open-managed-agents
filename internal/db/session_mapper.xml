@@ -278,6 +278,11 @@ RETURNING <include refid="columns"/>
         FOR UPDATE
     </select>
 
+    <select id="LastEventSeq" result="optional" resultType="int64">
+        SELECT last_event_seq FROM sessions
+        WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{sessionExternalID} AND deleted_at IS NULL
+    </select>
+
     <update id="MergeMetadata" result="rows">
         UPDATE sessions
         SET metadata = COALESCE(metadata, CAST('{}' AS jsonb))

@@ -275,7 +275,7 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 	}
 	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
 	cursorID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
-	order, err := h.newCommittedStreamOrder(r.Context(), session, connection, cursorID)
+	cursor, err := h.resolveStreamCursor(r.Context(), session, connection, cursorID)
 	if err != nil {
 		h.errorAdapter.Write(w, r, err)
 		return
@@ -293,11 +293,17 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 			h.logger.WarnContext(r.Context(), "unsubscribe session event stream", "session_id", session.ExternalID, "error", err)
 		}
 	}()
-	replay, err := h.loadStreamReplay(r.Context(), session.WorkspaceUUID, sessionID, connection, cursorID, order.cursorAt)
+	boundary, err := h.committedBoundary(r.Context(), session)
 	if err != nil {
 		h.errorAdapter.Write(w, r, err)
 		return
 	}
+	replay, err := h.loadStreamReplay(r.Context(), session, connection, cursor, boundary)
+	if err != nil {
+		h.errorAdapter.Write(w, r, err)
+		return
+	}
+	order := h.newCommittedStreamOrder(session, connection, boundary)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -308,20 +314,13 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 			writeSSE(w, event, subscribeThreadID)
 		}
 	}
-	connection.rememberReplay(cursorID, replay, !order.mutableCursor)
-	for _, event := range replay {
-		if !event.ProcessedAt.IsZero() {
-			order.cursorID = event.ExternalID
-			order.cursorAt = nil
-		}
-	}
+	connection.rememberReplay(cursor.eventID, replay, !cursor.input)
 	drain := func(delivery streamDelivery) bool {
-		events, err := h.committedStreamEvents(r.Context(), order, connection, delivery)
+		ordered, deleted, err := order.events(r.Context(), connection, delivery)
 		if err != nil {
 			h.logger.WarnContext(r.Context(), "drain committed session stream", "session_id", session.ExternalID, "error", err)
 			return false
 		}
-		ordered, deleted := connection.orderedDelivery(events, delivery)
 		for _, event := range ordered {
 			writeSSE(w, event, subscribeThreadID)
 		}

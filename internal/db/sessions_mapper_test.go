@@ -137,13 +137,14 @@ func TestSessionTableMapperWriteBuilderContracts(t *testing.T) {
 			bound:     buildSessionEventMapperInsertIfAbsent(yourbatis.DialectPostgres, eventParams),
 			wantID:    "SessionEventMapper.InsertIfAbsent", wantKind: yourbatis.StatementSelect,
 			wantArgumentNames: []string{
+				"params.WorkspaceUUID", "params.SessionUUID", "params.WorkspaceUUID", "params.ExternalID",
 				"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
 				"params.SessionUUID", "params.SessionExternalID", "params.ThreadUUID",
 				"params.ThreadExternalID", "params.EventType", "params.Payload", "params.PayloadBlobUUID", "params.ToolUseID",
 				"params.ProcessedAt", "params.CreatedAt",
 			},
 			wantSensitiveArgumentNames: []string{"params.Payload"},
-			wantSQLFragments:           []string{"WITH inserted AS", "INSERT INTO session_events", "ON CONFLICT"},
+			wantSQLFragments:           []string{"position AS (", "inserted AS (", "INSERT INTO session_events", "ON CONFLICT"},
 		},
 	}
 
@@ -219,7 +220,7 @@ func TestSessionTableMappersBuildDynamicPages(t *testing.T) {
 	})
 	assertMapperSQLContains(t, eventBound, "parent_thread_uuid IS NULL")
 	assertMapperSQLContains(t, eventBound, "event_type IN ( $5 , $6 )")
-	assertMapperSQLContains(t, eventBound, `ORDER BY COALESCE(session_events.processed_at, session_events.created_at) ASC, id ASC`)
+	assertMapperSQLContains(t, eventBound, `ORDER BY COALESCE(seq, queued_after_seq) ASC , (seq IS NULL) ASC , id ASC`)
 
 	toolUseBound := buildSessionEventMapperChildSessionToolUseIDs(
 		yourbatis.DialectPostgres,
@@ -344,8 +345,8 @@ func TestSessionEventQueueMapperContracts(t *testing.T) {
 			statement: sessionEventMapperMarkInputProcessedStatement,
 			bound:     buildSessionEventMapperMarkInputProcessed(yourbatis.DialectPostgres, "workspace", "session", "event", now),
 			wantID:    "SessionEventMapper.MarkInputProcessed", wantKind: yourbatis.StatementSelect,
-			wantArgumentNames: []string{"processedAt", "workspaceUUID", "sessionExternalID", "eventExternalID"},
-			wantSQLFragments:  []string{"UPDATE session_events SET processed_at = $1", "workspace_uuid = $2", "session_external_id = $3", "external_id = $4", "event_type IN ('user.message', 'user.tool_confirmation')", "processed_at IS NULL", "RETURNING"},
+			wantArgumentNames: []string{"workspaceUUID", "sessionExternalID", "eventExternalID", "workspaceUUID", "sessionExternalID", "processedAt"},
+			wantSQLFragments:  []string{"workspace_uuid = $1", "session_external_id = $2", "external_id = $3", "event_type IN ('user.message', 'user.tool_confirmation')", "processed_at IS NULL", "UPDATE sessions SET last_event_seq = last_event_seq + 1", "SET processed_at = $6, seq = position.last_event_seq", "RETURNING"},
 		},
 	} {
 		assertMapperBuilderContract(t, contract)

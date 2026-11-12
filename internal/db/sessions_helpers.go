@@ -211,7 +211,7 @@ func sessionEventPageParameters(params ListSessionEventsPageParams) sessionEvent
 	return sessionEventPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, SessionExternalID: params.SessionExternalID,
 		ThreadExternalID: params.ThreadExternalID, PrimaryOnly: params.PrimaryOnly, ProcessedOnly: params.ProcessedOnly,
-		FetchLimit: params.Limit + 1, Cursor: params.Cursor, Descending: params.Order == "desc",
+		FetchLimit: params.Limit + 1, Cursor: params.Cursor, AfterSeq: params.AfterSeq, ThroughSeq: params.ThroughSeq, Descending: params.Order == "desc",
 		Types: params.Types, CreatedAtGT: params.CreatedAtGT, CreatedAtGTE: params.CreatedAtGTE,
 		CreatedAtLT: params.CreatedAtLT, CreatedAtLTE: params.CreatedAtLTE,
 	}
@@ -318,12 +318,16 @@ func (r sessionEventRow) event() SessionEvent {
 	if r.ProcessedAt != nil {
 		processedAt = *r.ProcessedAt
 	}
+	var seq int64
+	if r.Seq != nil {
+		seq = *r.Seq
+	}
 	return SessionEvent{
 		UUID: r.UUID, ExternalID: r.ExternalID, OrganizationUUID: r.OrganizationUUID,
 		WorkspaceUUID: r.WorkspaceUUID, SessionUUID: r.SessionUUID, SessionExternalID: r.SessionExternalID,
 		ThreadUUID: r.ThreadUUID, ThreadExternalID: r.ThreadExternalID, EventType: r.EventType,
 		PayloadBlobUUID: r.PayloadBlobUUID, ToolUseID: r.ToolUseID,
-		Payload: bytes.Clone(r.Payload), ProcessedAt: processedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt,
+		Payload: bytes.Clone(r.Payload), ProcessedAt: processedAt, CreatedAt: r.CreatedAt, DeletedAt: r.DeletedAt, Seq: seq,
 	}
 }
 

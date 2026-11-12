@@ -44,6 +44,7 @@ func TestEventPayloadBlobsPostgres(t *testing.T) {
 	if _, err := store.GetEventPayloadBlob(ctx, blob.WorkspaceUUID, blob.UUID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("rolled back attach visible: %v", err)
 	}
+	seedSessionEventOwner(t, ctx, database, blob.OrganizationUUID, blob.WorkspaceUUID, "52000000-0000-0000-0000-000000000010", "session_test")
 	now := time.Now()
 	err = store.mapperDB.Transaction(ctx, func(tx yourbatis.Executor) error {
 		if err := attachEventPayloadBlob(ctx, tx, blob.WorkspaceUUID, &blob.UUID); err != nil {

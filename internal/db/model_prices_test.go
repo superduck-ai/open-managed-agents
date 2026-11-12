@@ -92,7 +92,7 @@ func TestModelPricesPostgres(t *testing.T) {
 
 // 非零双 TTL 夹具只写入隔离测试库，验证预算事件和看板账本使用同一金额。
 func TestModelPriceTTLReconciliationPostgres(t *testing.T) {
-	d, _ := newTranscriptArchiveTestDB(t)
+	d, database := newTranscriptArchiveTestDB(t)
 	now := time.Now().UTC()
 	org, ws, session := uuid.NewV4().String(), uuid.NewV4().String(), uuid.NewV4().String()
 	rates := billing.Rates{Input: new("3"), Output: new("15"), CacheRead: new("0.3"), CacheWrite5m: new("3.75"), CacheWrite1h: new("6")}
@@ -103,6 +103,7 @@ func TestModelPriceTTLReconciliationPostgres(t *testing.T) {
 	}
 	payload := []byte(`{"model":"priced","model_usage":{"input_tokens":1000000,"output_tokens":1000000,"cache_read_input_tokens":1000000,"cache_creation_input_tokens":2000000,"cache_creation":{"ephemeral_5m_input_tokens":1000000,"ephemeral_1h_input_tokens":1000000}},"billing":{"list_cost":"2805","currency":"USD"}}`)
 	event := SessionEvent{UUID: uuid.NewV4().String(), ExternalID: "event_ttl", OrganizationUUID: org, WorkspaceUUID: ws, SessionUUID: session, SessionExternalID: "sesn_ttl", EventType: "span.model_request_end", Payload: payload, CreatedAt: now}
+	seedSessionEventOwner(t, t.Context(), database, org, ws, session, event.SessionExternalID)
 	_, err := NewSessionEventMapper(d.mapperDB).Insert(t.Context(), sessionEventWriteParams{UUID: event.UUID, ExternalID: event.ExternalID, OrganizationUUID: org, WorkspaceUUID: ws, SessionUUID: session, SessionExternalID: event.SessionExternalID, EventType: event.EventType, Payload: payload, CreatedAt: now, ProcessedAt: new(now)})
 	if err != nil {
 		t.Fatal(err)

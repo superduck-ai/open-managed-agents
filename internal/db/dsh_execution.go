@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
@@ -114,11 +115,7 @@ func startDSHInput(ctx context.Context, executor yourbatis.Executor, scope DSHSc
 	if _, err := mapper.StartExecution(ctx, scope, execution.InputID); err != nil {
 		return SessionEvent{}, false, err
 	}
-	at, err := nextSessionPublicationTime(ctx, executor, scope.WorkspaceUUID, scope.SessionID)
-	if err != nil {
-		return SessionEvent{}, false, err
-	}
-	event, changed, err := NewSessionEventMapper(executor).MarkInputProcessed(ctx, scope.WorkspaceUUID, scope.SessionID, execution.InputID, at)
+	event, changed, err := NewSessionEventMapper(executor).MarkInputProcessed(ctx, scope.WorkspaceUUID, scope.SessionID, execution.InputID, time.Now().UTC().Truncate(time.Microsecond))
 	return event.event(), changed, err
 }
 

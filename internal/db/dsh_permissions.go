@@ -100,11 +100,7 @@ func (d *DB) RequestDSHPermission(ctx context.Context, scope DSHScope, request D
 		if _, err := mapper.InsertPermission(ctx, insert); err != nil {
 			return err
 		}
-		at, err := nextSessionPublicationTime(ctx, executor, session.WorkspaceUUID, session.ExternalID)
-		if err != nil {
-			return err
-		}
-		publicEvents, err = stampDSHPermissionEvents(publicEvents, at)
+		publicEvents, err = stampDSHPermissionEvents(publicEvents, time.Now().UTC().Truncate(time.Microsecond))
 		if err != nil {
 			return err
 		}
@@ -232,7 +228,6 @@ func stampDSHPermissionEvents(events []SessionEvent, now time.Time) ([]SessionEv
 			return nil, err
 		}
 		result[i].Payload, result[i].ProcessedAt, result[i].CreatedAt = raw, now, now
-		result[i].publicationTimeAssigned = true
 	}
 	return result, nil
 }

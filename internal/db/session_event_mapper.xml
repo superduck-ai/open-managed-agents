@@ -17,13 +17,14 @@
         payload, payload_blob_uuid, tool_use_id,
         processed_at,
         created_at,
-        deleted_at
+        deleted_at,
+        seq
     </sql>
 
     <sql id="insertColumns">
         uuid, external_id, organization_uuid, workspace_uuid, session_uuid,
         session_external_id, thread_uuid, thread_external_id, event_type,
-        payload, payload_blob_uuid, tool_use_id, processed_at, created_at
+        payload, payload_blob_uuid, tool_use_id, processed_at, created_at, seq, queued_after_seq
     </sql>
 
     <sql id="insertValues">
@@ -33,16 +34,37 @@
         #{params.ProcessedAt}, #{params.CreatedAt}
     </sql>
 
+    <sql id="sessionRow">sessions.workspace_uuid = #{params.WorkspaceUUID} AND sessions.uuid = #{params.SessionUUID}</sql>
+
+    <sql id="insertPosition">
+        <choose>
+            <when test="params.ProcessedAt != nil">COALESCE((SELECT last_event_seq FROM position), (SELECT last_event_seq + 1 FROM sessions WHERE <include refid="sessionRow"/>)), NULL</when>
+            <otherwise>NULL, (SELECT last_event_seq FROM sessions WHERE <include refid="sessionRow"/>)</otherwise>
+        </choose>
+    </sql>
+
     <insert id="Insert" result="returning" resultType="sessionEventRow">
+        <if test="params.ProcessedAt != nil">
+            WITH position AS (
+                UPDATE sessions SET last_event_seq = last_event_seq + 1 WHERE <include refid="sessionRow"/>
+                RETURNING last_event_seq
+            )
+        </if>
         INSERT INTO session_events (<include refid="insertColumns"/>)
-        VALUES (<include refid="insertValues"/>)
+        VALUES (<include refid="insertValues"/>, <include refid="insertPosition"/>)
         RETURNING <include refid="columns"/>
     </insert>
 
     <select id="InsertIfAbsent" result="optional" resultType="sessionEventRow">
-        WITH inserted AS (
+        WITH <if test="params.ProcessedAt != nil">position AS (
+            UPDATE sessions SET last_event_seq = last_event_seq + 1
+            WHERE <include refid="sessionRow"/> AND NOT EXISTS (
+                SELECT 1 FROM session_events WHERE workspace_uuid = #{params.WorkspaceUUID} AND external_id = #{params.ExternalID}
+            )
+            RETURNING last_event_seq
+        ), </if>inserted AS (
             INSERT INTO session_events (<include refid="insertColumns"/>)
-            VALUES (<include refid="insertValues"/>)
+            VALUES (<include refid="insertValues"/>, <include refid="insertPosition"/>)
             ON CONFLICT (workspace_uuid, external_id) DO NOTHING
             RETURNING <include refid="columns"/>
         )
@@ -104,20 +126,15 @@
         ORDER BY id DESC LIMIT 1
     </select>
 
-    <select id="LatestProcessed" result="optional" resultType="sessionEventRow">
- SELECT <include refid="columns"/> FROM session_events
- WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
- AND processed_at IS NOT NULL AND deleted_at IS NULL
- ORDER BY processed_at DESC, id DESC LIMIT 1
- </select>
- <select id="ListPage" resultType="sessionEventRow">
+    <sql id="pageDirection"><choose><when test="params.Descending">DESC</when><otherwise>ASC</otherwise></choose></sql>
+    <select id="ListPage" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events
         <where>
             workspace_uuid = #{params.WorkspaceUUID}
             AND session_external_id = #{params.SessionExternalID}
             AND deleted_at IS NULL
- <if test="params.ProcessedOnly">AND processed_at IS NOT NULL</if>
+            <if test="params.ProcessedOnly">AND seq IS NOT NULL</if>
             <if test="params.ThreadExternalID != ''">
                 AND thread_external_id = #{params.ThreadExternalID}
             </if>
@@ -140,19 +157,21 @@
             <if test="params.CreatedAtGTE != nil">AND processed_at &gt;= #{params.CreatedAtGTE}</if>
             <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
             <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
+            <if test="params.AfterSeq != nil">AND COALESCE(seq, queued_after_seq) &gt; #{params.AfterSeq}</if>
+            <if test="params.ThroughSeq != nil">AND COALESCE(seq, queued_after_seq) &lt;= #{params.ThroughSeq}</if>
             <if test="params.Cursor != nil">
-                AND <choose><when test="params.ProcessedOnly">(processed_at, id)</when><otherwise>(COALESCE(processed_at, created_at), id)</otherwise></choose>
+                AND (COALESCE(seq, queued_after_seq), seq IS NULL, id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
                 (
-                    SELECT <choose><when test="params.Cursor.OrderingAt != nil">CAST(#{params.Cursor.OrderingAt} AS timestamptz)</when><otherwise>COALESCE(processed_at, created_at)</otherwise></choose>, id FROM session_events
+                    SELECT <choose><when test="params.Cursor.AtQueuedPosition">COALESCE(queued_after_seq, seq - 1), true</when><otherwise>COALESCE(seq, queued_after_seq), seq IS NULL</otherwise></choose>, id
+                    FROM session_events
                     WHERE workspace_uuid = #{params.WorkspaceUUID}
                     AND session_external_id = #{params.SessionExternalID}
                     AND external_id = #{params.Cursor.ExternalID}
                 )
             </if>
         </where>
-        ORDER BY <choose><when test="params.ProcessedOnly">session_events.processed_at</when><otherwise>COALESCE(session_events.processed_at, session_events.created_at)</otherwise></choose>
-        <choose><when test="params.Descending">DESC, id DESC</when><otherwise>ASC, id ASC</otherwise></choose>
+        ORDER BY COALESCE(seq, queued_after_seq) <include refid="pageDirection"/>, (seq IS NULL) <include refid="pageDirection"/>, id <include refid="pageDirection"/>
         LIMIT #{params.FetchLimit}
     </select>
 
@@ -218,11 +237,20 @@
         ) AS blocks_idle
     </select>
     <select id="MarkInputProcessed" result="optional" resultType="sessionEventRow">
-        WITH updated AS (UPDATE session_events SET processed_at = #{processedAt}
-        WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
-        AND external_id = #{eventExternalID} AND event_type IN ('user.message', 'user.tool_confirmation')
-        AND processed_at IS NULL AND deleted_at IS NULL
-        RETURNING <include refid="columns"/>)
+        WITH target AS (
+            SELECT uuid FROM session_events
+            WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+            AND external_id = #{eventExternalID} AND event_type IN ('user.message', 'user.tool_confirmation')
+            AND processed_at IS NULL AND deleted_at IS NULL
+        ), position AS (
+            UPDATE sessions SET last_event_seq = last_event_seq + 1
+            WHERE workspace_uuid = #{workspaceUUID} AND external_id = #{sessionExternalID} AND EXISTS (SELECT 1 FROM target)
+            RETURNING last_event_seq
+        ), updated AS (
+            UPDATE session_events SET processed_at = #{processedAt}, seq = position.last_event_seq
+            FROM position WHERE session_events.uuid IN (SELECT uuid FROM target)
+            RETURNING <include refid="columns"/>
+        )
         SELECT <include refid="columns"/> FROM updated
     </select>
     <select id="HasUnprocessedToolConfirmation" result="scalar" resultType="bool">

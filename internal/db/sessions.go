@@ -131,27 +131,27 @@ type SessionResourceMemoryStore struct {
 }
 
 type SessionEvent struct {
-	threadStatusMirror      bool
-	publicationTimeAssigned bool
-	StatusThreadID          string
-	UsageIncrement          *SessionUsageIncrement
-	PayloadBlobUUID         *string
-	ToolUseID               *string
-	TraceParent             *string
-	TraceState              *string
-	UUID                    string
-	ExternalID              string
-	OrganizationUUID        string
-	WorkspaceUUID           string
-	SessionUUID             string
-	SessionExternalID       string
-	ThreadUUID              *string
-	ThreadExternalID        *string
-	EventType               string
-	Payload                 json.RawMessage
-	ProcessedAt             time.Time
-	CreatedAt               time.Time
-	DeletedAt               *time.Time
+	threadStatusMirror bool
+	Seq                int64
+	StatusThreadID     string
+	UsageIncrement     *SessionUsageIncrement
+	PayloadBlobUUID    *string
+	ToolUseID          *string
+	TraceParent        *string
+	TraceState         *string
+	UUID               string
+	ExternalID         string
+	OrganizationUUID   string
+	WorkspaceUUID      string
+	SessionUUID        string
+	SessionExternalID  string
+	ThreadUUID         *string
+	ThreadExternalID   *string
+	EventType          string
+	Payload            json.RawMessage
+	ProcessedAt        time.Time
+	CreatedAt          time.Time
+	DeletedAt          *time.Time
 }
 
 // SessionUsageIncrement contains measured counters; nil means unavailable.
@@ -169,8 +169,8 @@ type SessionPageCursor struct {
 }
 
 type SessionEventPageCursor struct {
-	ExternalID string
-	OrderingAt *time.Time
+	ExternalID       string
+	AtQueuedPosition bool
 }
 
 type SessionThreadPageCursor struct {
@@ -203,6 +203,8 @@ type ListSessionEventsPageParams struct {
 	ProcessedOnly     bool
 	Limit             int
 	Cursor            *SessionEventPageCursor
+	AfterSeq          *int64
+	ThroughSeq        *int64
 	Order             string
 	Types             []string
 	CreatedAtGT       *time.Time
@@ -862,6 +864,17 @@ func (d *DB) GetSessionEvent(ctx context.Context, workspaceUUID string, sessionE
 	mapper := NewSessionEventMapper(d.mapperDB)
 	row, err := mapper.FindByExternalID(ctx, workspaceUUID, sessionExternalID, eventExternalID)
 	return row.event(), mapNoRows(err)
+}
+
+func (d *DB) SessionLastEventSeq(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, error) {
+	seq, found, err := NewSessionMapper(d.mapperDB).LastEventSeq(ctx, workspaceUUID, sessionExternalID)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, ErrNotFound
+	}
+	return seq, nil
 }
 
 func (d *DB) ListSessionEventsPage(ctx context.Context, params ListSessionEventsPageParams) ([]SessionEvent, bool, error) {

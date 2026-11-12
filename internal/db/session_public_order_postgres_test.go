@@ -115,7 +115,7 @@ func TestDSRQueuedCursorPreservesProcessedACKPostgres(t *testing.T) {
 	if err != nil || len(processed) != 1 || processed[0].ProcessedAt.IsZero() {
 		t.Fatal("processing ACK not established", err)
 	}
-	rows, _, err := store.ListSessionEventsPage(ctx, ListSessionEventsPageParams{WorkspaceUUID: scope.WorkspaceUUID, SessionExternalID: scope.SessionID, ProcessedOnly: true, Limit: 100, Order: "asc", Cursor: &SessionEventPageCursor{ExternalID: cursor.ExternalID, OrderingAt: &cursor.CreatedAt}})
+	rows, _, err := store.ListSessionEventsPage(ctx, ListSessionEventsPageParams{WorkspaceUUID: scope.WorkspaceUUID, SessionExternalID: scope.SessionID, ProcessedOnly: true, Limit: 100, Order: "asc", Cursor: &SessionEventPageCursor{ExternalID: cursor.ExternalID, AtQueuedPosition: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

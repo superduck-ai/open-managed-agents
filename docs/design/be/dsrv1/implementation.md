@@ -292,13 +292,37 @@ Brain 的 DsrPermissionWaiter 由 permission.resolved 通知唤醒，输入 SSE 
 
 ## 并发公开事件顺序
 
-所有会话的公开处理时间都由持有 Session 行锁的写事务分配，不区分 DSR 与 CCRv2，写入路径不再查询会话所属协议；CCRv2 worker 上报的 `processed_at` 不再作为排序依据。新处理事件的 `processed_at` 至少晚于该 Session 已提交处理时间一个 PostgreSQL 微秒；同一事务生成的审批原件与镜像可以共享处理时间，并沿用行插入次序。排队输入仍先保存空处理时间，实际处理 ACK 再在相同行锁内分配时间。首次写入的原始 publication body、回执摘要和事件 ID 保持不变，HTTP history 与 SSE 统一使用持久化处理时间，并保留未知 JSON 数值的原始精度。
+公开事件的顺序与时间分离：每个会话维护一个严格递增的事件序号，`processed_at` 只表示真实处理时间，不再为排序被推后或改写 payload。该模型对所有会话生效，不区分 DSR 与 CCRv2。
 
-所有会话的 SSE 都将持久化事件 fanout 作为读取提示，按已提交的同线程 history 游标读取并投影。不同 API 生产者的 fanout 延迟或乱序不再改变公开顺序。订阅前记录处理历史边界，订阅后再次读取；重放与 live 提示重叠时不重复发布 processed 事件。保活也补读已提交历史。预览 delta 仍走原有实时传输，不为每个 delta 查询数据库，不改变 Brain 的发布、复制确认或 finish 屏障。补读查询只读已处理事件，按 `(processed_at, id)` 排序并比较游标，使用 `session_events_processed_order_idx` 从游标位置做索引范围扫描，不再对整段会话历史排序。
+数据模型由 goose `00118_session_event_order.sql` 引入：`sessions.last_event_seq` 记录会话已分配的最大序号；`session_events.seq` 是已处理事件的序号；`session_events.queued_after_seq` 记录排队输入入队时会话已有的最大序号，处理后保留。约束保证已处理事件必有 `seq`、未处理事件必无 `seq` 且有 `queued_after_seq`，`(workspace_uuid, session_external_id, seq)` 唯一。迁移在同一步中按旧排序 `(COALESCE(processed_at, created_at), id)` 逐会话回填：已处理事件编号，排队事件记录其前面的已处理条数，并把会话计数器设为最大序号。回填会更新全表，需要在可接受的维护窗口执行。
 
-`user.message` 与 `user.tool_confirmation` 的 queued/processed 两个阶段共享事件 ID。输入型 `Last-Event-ID` 因而从该输入原始创建位置恢复，不能把可能只表示 queued ACK 的 ID 标记为 processed 完成。即使处理发生在重连读取游标之前，也保留中间事件和 processed ACK。跨连接的这段恢复可能重放相同稳定 ID；客户端继续按事件身份与处理阶段合并。同一连接仅发布一次 processed 版本。其他持久化事件游标保持后继事件重放语义。
+序号分配：
 
-定向回归覆盖早生成但晚提交的生产者、提交后 fanout 超越、same-ID queued ACK 更新、真实 handler 重连前后处理、错线程、重复通知、final 后晚到 delta、JSON 大整数，以及审批别名、归档发布屏障、首次写入与回执重放。真实 PostgreSQL 测试只使用隔离 schema；普通测试使用本地受控 fanout。该回归不代表生产吞吐或跨集群负载基线。
+- 写入已处理事件时，`Insert` / `InsertIfAbsent` 用同一条语句中的数据修改 CTE `UPDATE sessions SET last_event_seq = last_event_seq + 1 ... RETURNING` 取得序号。写事件的事务已持有该会话行锁，计数器不引入新的锁顺序。`InsertIfAbsent` 在事件已存在时不推进计数器，幂等重试不留空洞。
+- 写入排队输入时不推进计数器，只记录当前 `last_event_seq` 为 `queued_after_seq`。
+- `MarkInputProcessed` 在设置真实 `processed_at` 的同一语句中分配下一个序号。重复处理不推进计数器。
+
+公开排序键为 `(COALESCE(seq, queued_after_seq), seq IS NULL, id)`：已处理事件按序号排列，排队输入排在入队时最后一个已处理事件之后，由表达式索引 `session_events_order_idx` 支持。历史分页、`Last-Event-ID` 与 SSE 补读都使用这一键；输入型游标（`user.message`、`user.tool_confirmation`）从其入队位置 `(COALESCE(queued_after_seq, seq - 1), true, id)` 继续，从而不丢失入队后、处理前提交的事件，并重新发送该输入的 processed 版本。
+
+```mermaid
+sequenceDiagram
+    participant W as 写事务（持有会话锁）
+    participant S as SSE 连接
+    W->>W: UPDATE sessions 取得 seq=n，INSERT 事件
+    W-->>S: fanout（携带 seq）
+    alt seq == last + 1
+        S->>S: 直接写出，last = n
+    else seq <= last
+        S->>S: 丢弃重复
+    else 出现缺口
+        S->>W: 补读 last < seq <= n（按线程过滤）
+        S->>S: 按序写出，last = n
+    end
+```
+
+SSE 订阅后读取一次 `last_event_seq` 作为边界，回放游标到边界之间的历史，此后只按 fanout 中的 `seq` 判断：正常顺序不读数据库；缺口或乱序只补读一次。保活和 fanout 重置时读取一次会话计数器，计数器超过已发送位置时补读，用于恢复丢失的尾部通知。`session.deleted` 无论出现在通知、补读还是保活补读中都会结束流。没有 `seq` 的事件（预览 delta、排队 ACK）保持原有实时转发；已经通过补读发送 processed 版本的输入，晚到的排队 ACK 被丢弃。
+
+定向回归覆盖迁移回填与约束、回滚后重新应用、并发写入的唯一连续序号、重复写入与重复处理不消耗序号、早时间戳晚提交生产者的历史顺序、输入型游标恢复，以及 SSE 的按序直出、缺口补读、过期与跨线程事件丢弃、保活恢复丢失通知和删除结束流。真实 PostgreSQL 测试只使用隔离 schema；SSE 判定逻辑由可注入读取函数的单测覆盖，不代表生产吞吐或跨集群负载基线。
 
 ## 包含 NUL 的公开结果
 

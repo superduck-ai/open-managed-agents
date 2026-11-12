@@ -2,49 +2,30 @@ package sessions
 
 import (
 	"context"
-	"errors"
-	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
-func (h *Handler) loadStreamReplay(ctx context.Context, workspaceUUID, sessionID string, connection *streamConnection, cursorID string, cursorAt *time.Time) ([]sessionStreamEvent, error) {
-	if cursorID == "" {
+func (h *Handler) loadStreamReplay(ctx context.Context, session db.Session, connection *streamConnection, cursor streamCursor, through int64) ([]sessionStreamEvent, error) {
+	if cursor.page == nil {
 		return nil, nil
 	}
-	cursor, err := h.db.GetSessionEvent(ctx, workspaceUUID, sessionID, cursorID)
-	if errors.Is(err, db.ErrNotFound) {
-		return nil, invalidRequest(db.ErrInvalidCursor)
-	}
-	if err != nil {
-		return nil, internalError("Could not load stream cursor", err)
-	}
-	if !maevents.IsPublicSessionHistoryEvent(cursor.EventType) || !connection.matches(sessionStreamEventFrom(cursor)) {
-		return nil, invalidRequest(db.ErrInvalidCursor)
-	}
-	events, _, err := h.readStreamHistory(ctx, workspaceUUID, sessionID, connection, cursorID, cursorAt, false)
-	return events, err
+	return h.readStreamHistory(ctx, session.WorkspaceUUID, session.ExternalID, connection, db.ListSessionEventsPageParams{Cursor: cursor.page, ThroughSeq: &through})
 }
 
-func (h *Handler) readStreamHistory(ctx context.Context, workspaceUUID, sessionID string, connection *streamConnection, cursorID string, cursorAt *time.Time, processedOnly bool) ([]sessionStreamEvent, string, error) {
-	params := db.ListSessionEventsPageParams{
-		WorkspaceUUID: workspaceUUID, SessionExternalID: sessionID,
-		ThreadExternalID: connection.threadID, Limit: 1000, Order: "asc",
-		ProcessedOnly: processedOnly,
-	}
-	if cursorID != "" {
-		params.Cursor = &db.SessionEventPageCursor{ExternalID: cursorID, OrderingAt: cursorAt}
-	}
+func (h *Handler) readStreamHistory(ctx context.Context, workspaceUUID, sessionID string, connection *streamConnection, params db.ListSessionEventsPageParams) ([]sessionStreamEvent, error) {
+	params.WorkspaceUUID, params.SessionExternalID, params.ThreadExternalID = workspaceUUID, sessionID, connection.threadID
+	params.Limit, params.Order = 1000, "asc"
 	var replay []sessionStreamEvent
 	for {
 		records, more, err := h.eventPayloads.ListSessionEventsPage(ctx, params)
 		if err != nil {
-			return nil, cursorID, internalError("Could not replay session events", err)
+			return nil, internalError("Could not replay session events", err)
 		}
 		hidden, err := h.primaryOrphanToolUseIDsWithChildCopies(ctx, sessionID, connection.threadID, records)
 		if err != nil {
-			return nil, cursorID, internalError("Could not replay session events", err)
+			return nil, internalError("Could not replay session events", err)
 		}
 		for _, record := range records {
 			if record.EventType == "user.message" && record.ProcessedAt.IsZero() {
@@ -54,11 +35,8 @@ func (h *Handler) readStreamHistory(ctx context.Context, workspaceUUID, sessionI
 				replay = append(replay, sessionStreamEventFrom(record))
 			}
 		}
-		if len(records) > 0 {
-			cursorID = records[len(records)-1].ExternalID
-		}
 		if !more || len(records) == 0 {
-			return replay, cursorID, nil
+			return replay, nil
 		}
 		params.Cursor = &db.SessionEventPageCursor{ExternalID: records[len(records)-1].ExternalID}
 	}

@@ -10,7 +10,7 @@ import (
 )
 
 func TestSessionUsageCacheTokensPostgres(t *testing.T) {
-	d, _ := newTranscriptArchiveTestDB(t)
+	d, database := newTranscriptArchiveTestDB(t)
 	for _, tc := range []struct {
 		name           string
 		cache          string
@@ -28,6 +28,7 @@ func TestSessionUsageCacheTokensPostgres(t *testing.T) {
 		for _, field := range []string{"model_usage", "usage"} {
 			t.Run(tc.name+"/"+field, func(t *testing.T) {
 				org, ws, session := uuid.NewV4().String(), uuid.NewV4().String(), uuid.NewV4().String()
+				seedSessionEventOwner(t, t.Context(), database, org, ws, session, session)
 				for _, cache := range []string{`{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3}`, tc.cache} {
 					now := time.Now().UTC()
 					payload := []byte(fmt.Sprintf(`{"%s":{"input_tokens":5,"cache_creation":%s},"billing":{"list_cost":"1"}}`, field, cache))

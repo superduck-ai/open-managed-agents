@@ -151,6 +151,7 @@ type sessionTrajectoryRow struct {
 }
 
 type SessionMapper interface {
+	LastEventSeq(ctx context.Context, workspaceUUID, sessionExternalID string) (int64, bool, error)
 	IsRetired(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (bool, error)
 	AddUsage(ctx context.Context, workspaceUUID, sessionUUID, threadUUID string, usage SessionUsageIncrement) (sessionRow, error)
 	Insert(ctx context.Context, params sessionWriteParams) (sessionRow, error)

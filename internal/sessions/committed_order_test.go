@@ -47,8 +47,8 @@ func TestCommittedSessionStreamCannotOvertakeEarlierFanout(t *testing.T) {
 	handler := &Handler{eventBus: bus, eventPayloads: eventpayload.New(nil, nil), logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	code := db.CodeSession{WorkspaceUUID: "workspace", SessionExternalID: "session"}
 	at := time.Now().UTC()
-	parent := db.SessionEvent{ExternalID: "parent-start", WorkspaceUUID: code.WorkspaceUUID, SessionExternalID: code.SessionExternalID, EventType: "span.model_request_start", ProcessedAt: at, Payload: []byte(`{"id":"parent-start","type":"span.model_request_start"}`)}
-	child := db.SessionEvent{ExternalID: "child-idle", WorkspaceUUID: code.WorkspaceUUID, SessionExternalID: code.SessionExternalID, EventType: "session.thread_status_idle", ProcessedAt: at.Add(time.Millisecond), Payload: []byte(`{"id":"child-idle","type":"session.thread_status_idle"}`)}
+	parent := db.SessionEvent{ExternalID: "parent-start", WorkspaceUUID: code.WorkspaceUUID, SessionExternalID: code.SessionExternalID, EventType: "span.model_request_start", ProcessedAt: at, Seq: 1, Payload: []byte(`{"id":"parent-start","type":"span.model_request_start"}`)}
+	child := db.SessionEvent{ExternalID: "child-idle", WorkspaceUUID: code.WorkspaceUUID, SessionExternalID: code.SessionExternalID, EventType: "session.thread_status_idle", ProcessedAt: at.Add(time.Millisecond), Seq: 2, Payload: []byte(`{"id":"child-idle","type":"session.thread_status_idle"}`)}
 	parentDone := make(chan error, 1)
 	childDone := make(chan error, 1)
 	go func() {
@@ -83,7 +83,7 @@ func TestCommittedSessionStreamCannotOvertakeEarlierFanout(t *testing.T) {
 	thread := "primary"
 	parent.ThreadExternalID, child.ThreadExternalID = &thread, &thread
 	connection := newStreamConnection(thread, true, nil)
-	committed := []sessionStreamEvent{sessionStreamEventFrom(parent), sessionStreamEventFrom(child)}
+	order := fakeCommittedOrder(0, sessionStreamEventFrom(parent), sessionStreamEventFrom(child))
 	ids := []string{}
 	for _, publication := range bus.publications {
 		var payload sessionEventsFanout
@@ -91,8 +91,10 @@ func TestCommittedSessionStreamCannotOvertakeEarlierFanout(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, event := range payload.Events {
-			emitted, _ := connection.orderedDelivery(committed, sessionEventDelivery{event: event})
-			committed = nil
+			emitted, _, err := order.events(t.Context(), connection, sessionEventDelivery{event: event})
+			if err != nil {
+				t.Fatal(err)
+			}
 			for _, actual := range emitted {
 				ids = append(ids, actual.ExternalID)
 				var expected db.SessionEvent
@@ -112,43 +114,96 @@ func TestCommittedSessionStreamCannotOvertakeEarlierFanout(t *testing.T) {
 	}
 }
 
-func TestCommittedStreamPreservesQueuedACKAndRejectsForeignOrRepeatedFinal(t *testing.T) {
+func fakeCommittedOrder(last int64, committed ...sessionStreamEvent) *committedStreamOrder {
+	return &committedStreamOrder{
+		last: last,
+		boundary: func(context.Context) (int64, error) {
+			if len(committed) == 0 {
+				return 0, nil
+			}
+			return committed[len(committed)-1].Seq, nil
+		},
+		history: func(_ context.Context, after, through int64) ([]sessionStreamEvent, error) {
+			var result []sessionStreamEvent
+			for _, event := range committed {
+				if event.Seq > after && event.Seq <= through {
+					result = append(result, event)
+				}
+			}
+			return result, nil
+		},
+	}
+}
+
+func deliver(t *testing.T, order *committedStreamOrder, c *streamConnection, delivery streamDelivery) []sessionStreamEvent {
+	t.Helper()
+	events, _, err := order.events(t.Context(), c, delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
+
+func TestCommittedStreamRejectsStaleOrForeignEvents(t *testing.T) {
 	thread, foreign := "primary", "other"
-	c := newStreamConnection(thread, true, map[string]struct{}{"agent.message": {}})
 	at := time.Now().UTC()
 	queued := sessionStreamEvent{ExternalID: "input", EventType: "user.message", ThreadExternalID: &thread, Payload: []byte(`{"id":"input","type":"user.message","processed_at":null}`)}
-	events, _ := c.orderedDelivery(nil, sessionEventDelivery{event: queued})
-	if len(events) != 1 || string(events[0].Payload) != string(queued.Payload) {
-		t.Fatal("queued ACK changed or dropped")
-	}
 	processed := queued
-	processed.ProcessedAt = at
+	processed.ProcessedAt, processed.Seq = at, 1
 	processed.Payload = []byte(`{"id":"input","type":"user.message","processed_at":"2026-11-12T00:00:00Z"}`)
-	events, _ = c.orderedDelivery([]sessionStreamEvent{processed}, sessionEventDelivery{event: queued})
-	if len(events) != 1 || string(events[0].Payload) != string(processed.Payload) {
-		t.Fatal("processed ACK was replaced by stale queued ACK")
+	other := sessionStreamEvent{ExternalID: "foreign", EventType: "agent.message", ThreadExternalID: &foreign, ProcessedAt: at, Seq: 2, Payload: []byte(`{"id":"foreign","type":"agent.message"}`)}
+	c := newStreamConnection(thread, true, map[string]struct{}{"agent.message": {}})
+	order := fakeCommittedOrder(0, processed, other)
+
+	if events := deliver(t, order, c, sessionEventDelivery{event: other}); len(events) != 1 || events[0].ExternalID != "input" {
+		t.Fatalf("gap fill must deliver the earlier committed event only once and drop the foreign one: %+v", events)
 	}
-	events, _ = c.orderedDelivery(nil, sessionEventDelivery{event: processed})
-	if len(events) != 0 {
+	if events := deliver(t, order, c, sessionEventDelivery{event: queued}); len(events) != 0 {
+		t.Fatal("stale queued ACK replaced the processed input")
+	}
+	if events := deliver(t, order, c, sessionEventDelivery{event: processed}); len(events) != 0 {
 		t.Fatal("duplicate processed notification published")
 	}
-	other := processed
-	other.ExternalID = "foreign"
-	other.ThreadExternalID = &foreign
-	events, _ = c.orderedDelivery([]sessionStreamEvent{other}, sessionEventDelivery{event: other})
-	if len(events) != 0 {
-		t.Fatal("foreign committed event published")
+	if order.last != 2 {
+		t.Fatalf("order position=%d", order.last)
+	}
+}
+
+func TestCommittedStreamCatchesUpLostNotificationsAndDeletion(t *testing.T) {
+	thread, foreign := "primary", "other"
+	at := time.Now().UTC()
+	lost := sessionStreamEvent{ExternalID: "lost", EventType: "agent.message", ThreadExternalID: &thread, ProcessedAt: at, Seq: 1, Payload: []byte(`{"id":"lost","type":"agent.message"}`)}
+	deleted := sessionStreamEvent{ExternalID: "deleted", EventType: "session.deleted", ThreadExternalID: &foreign, ProcessedAt: at, Seq: 2, Payload: []byte(`{"id":"deleted","type":"session.deleted"}`)}
+	c := newStreamConnection(thread, true, nil)
+	order := fakeCommittedOrder(0, lost, deleted)
+	events, closed, err := order.events(t.Context(), c, nil)
+	if err != nil || !closed || len(events) != 1 || events[0].ExternalID != "lost" {
+		t.Fatalf("keepalive catch-up events=%+v closed=%v err=%v", events, closed, err)
+	}
+	if _, closed, _ := order.events(t.Context(), c, sessionEventDelivery{event: deleted}); !closed {
+		t.Fatal("late deletion notification did not close the stream")
+	}
+}
+
+func TestCommittedStreamDeliversInOrderAndPreviewsWithoutReads(t *testing.T) {
+	thread := "primary"
+	at := time.Now().UTC()
+	c := newStreamConnection(thread, true, map[string]struct{}{"agent.message": {}})
+	order := fakeCommittedOrder(4)
+	order.history = func(context.Context, int64, int64) ([]sessionStreamEvent, error) {
+		t.Fatal("in-order delivery read history")
+		return nil, nil
 	}
 	start := sessionStreamEvent{ExternalID: "answer", EventType: "event_start", ThreadExternalID: &thread, Payload: []byte(`{"event":{"id":"answer","type":"agent.message"}}`)}
-	if events, _ = c.orderedDelivery(nil, sessionEventDelivery{event: start}); len(events) != 1 {
+	if events := deliver(t, order, c, sessionEventDelivery{event: start}); len(events) != 1 {
 		t.Fatal("valid preview start lost")
 	}
-	final := sessionStreamEvent{ExternalID: "answer", EventType: "agent.message", ThreadExternalID: &thread, ProcessedAt: at, Payload: []byte(`{"id":"answer","type":"agent.message","content":[{"type":"text","text":"exact"}]}`)}
-	if events, _ = c.orderedDelivery([]sessionStreamEvent{final}, sessionEventDelivery{event: final}); len(events) != 1 {
-		t.Fatal("final must publish exactly once")
+	final := sessionStreamEvent{ExternalID: "answer", EventType: "agent.message", ThreadExternalID: &thread, ProcessedAt: at, Seq: 5, Payload: []byte(`{"id":"answer","type":"agent.message","content":[{"type":"text","text":"exact"}]}`)}
+	if events := deliver(t, order, c, sessionEventDelivery{event: final}); len(events) != 1 || order.last != 5 {
+		t.Fatal("next committed event must publish exactly once")
 	}
 	delta := sessionStreamEvent{EventType: "event_delta", ThreadExternalID: &thread, Payload: []byte(`{"event_id":"answer","delta":{"text":"late"}}`)}
-	if events, _ = c.orderedDelivery(nil, sessionEventDelivery{event: delta}); len(events) != 0 {
+	if events := deliver(t, order, c, sessionEventDelivery{event: delta}); len(events) != 0 {
 		t.Fatal("delta after public final published")
 	}
 }

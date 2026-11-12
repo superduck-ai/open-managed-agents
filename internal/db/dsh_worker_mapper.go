@@ -9,8 +9,12 @@ import (
 
 type DSHWorkerMapper interface {
 	ContextSnapshot(ctx context.Context, scope DSHScope) ([]byte, bool, error)
-	FreezeContext(ctx context.Context, scope DSHScope, snapshot []byte) (int64, error)
+	FreezeContext(ctx context.Context, scope DSHScope, snapshot []byte) (dshContextFreezeRow, error)
 	Register(ctx context.Context, scope DSHScope, expiresAt time.Time) (int64, error)
 	Heartbeat(ctx context.Context, scope DSHScope, expiresAt time.Time) (int64, error)
 	EnsureState(ctx context.Context, scope DSHScope) (int64, error)
+}
+
+type dshContextFreezeRow struct {
+	StatementAt time.Time `db:"statement_at"`
 }

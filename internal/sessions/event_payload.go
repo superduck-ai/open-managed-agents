@@ -171,34 +171,41 @@ func sessionEventPayloadForResponse(event db.SessionEvent, threadID string) json
 }
 
 func eventPayloadForResponse(payloadRaw json.RawMessage, processedAt time.Time, threadID string) json.RawMessage {
-	var payload map[string]any
-	if err := json.Unmarshal(payloadRaw, &payload); err != nil {
+	var payload map[string]json.RawMessage
+	var schema struct {
+		Type            string `json:"type"`
+		ThreadID        string `json:"thread_id"`
+		SessionThreadID string `json:"session_thread_id"`
+	}
+	if json.Unmarshal(payloadRaw, &payload) != nil || payload == nil || json.Unmarshal(payloadRaw, &schema) != nil {
 		return payloadRaw
 	}
 	_, changed := payload["created_at"]
 	delete(payload, "created_at")
-	if payload["type"] == "agent.thinking" {
-		_, hasContent := payload["content"]
-		_, hasMessage := payload["message"]
-		if hasContent || hasMessage {
-			delete(payload, "content")
-			delete(payload, "message")
+	if schema.Type == "agent.thinking" {
+		for _, key := range []string{"content", "message"} {
+			if _, ok := payload[key]; ok {
+				delete(payload, key)
+				changed = true
+			}
+		}
+	}
+	if !processedAt.IsZero() {
+		value, _ := json.Marshal(formatEventTime(processedAt))
+		if string(payload["processed_at"]) != string(value) {
+			payload["processed_at"] = value
+			changed = true
+		}
+	} else if schema.Type == "user.message" || schema.Type == "user.tool_confirmation" {
+		if string(payload["processed_at"]) != "null" {
+			payload["processed_at"] = json.RawMessage("null")
 			changed = true
 		}
 	}
-	if payload["type"] == "user.message" || payload["type"] == "user.tool_confirmation" {
-		if processedAt.IsZero() {
-			payload["processed_at"] = nil
-		} else {
-			payload["processed_at"] = formatEventTime(processedAt)
-		}
-		changed = true
-	} else {
-		changed = ensureSessionEventTimeField(payload, "processed_at", processedAt) || changed
-	}
-	threadMessage := payload["type"] == "agent.thread_message_sent" || payload["type"] == "agent.thread_message_received"
-	if threadID != "" && (threadMessage || !hasSessionThreadOwnerField(payload)) && payload["session_thread_id"] != threadID {
-		payload["session_thread_id"] = threadID
+	threadMessage := schema.Type == "agent.thread_message_sent" || schema.Type == "agent.thread_message_received"
+	hasOwner := strings.TrimSpace(schema.ThreadID) != "" || strings.TrimSpace(schema.SessionThreadID) != ""
+	if threadID != "" && (threadMessage || !hasOwner) && schema.SessionThreadID != threadID {
+		payload["session_thread_id"], _ = json.Marshal(threadID)
 		changed = true
 	}
 	if !changed {
@@ -218,19 +225,6 @@ func hasSessionThreadOwnerField(payload map[string]any) bool {
 		}
 	}
 	return false
-}
-
-func ensureSessionEventTimeField(payload map[string]any, field string, value time.Time) bool {
-	if value.IsZero() {
-		return false
-	}
-	if raw, ok := payload[field].(string); ok && strings.TrimSpace(raw) != "" {
-		if _, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw)); err == nil {
-			return false
-		}
-	}
-	payload[field] = formatEventTime(value)
-	return true
 }
 
 // Event times keep PostgreSQL's microsecond precision so live payloads match history.

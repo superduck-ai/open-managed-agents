@@ -327,7 +327,8 @@ func prepareSessionEventTx(ctx context.Context, executor yourbatis.Executor, ses
 			return SessionEvent{}, false, err
 		}
 	}
-	return event, true, nil
+	event, err = stampDSHSessionEvent(ctx, executor, *session, event)
+	return event, err == nil, err
 }
 
 func applySessionEventWriteTx(ctx context.Context, executor yourbatis.Executor, session *Session, primary SessionThread, event SessionEvent) (bool, error) {

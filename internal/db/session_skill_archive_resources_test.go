@@ -47,7 +47,7 @@ func TestSessionSkillArchiveResourceMapperBuildsPostgresArguments(t *testing.T) 
 		},
 		{"retire", buildSessionResourceMapperRetireSkillArchiveResources(yourbatis.DialectPostgres, retireParams), 4},
 		{"retire files", buildFileMapperRetireSkillArchiveFiles(yourbatis.DialectPostgres, retireParams), 4},
-		{"insert file", buildFileMapperInsertSkillArchiveFile(yourbatis.DialectPostgres, insertParams), 11},
+		{"insert file", buildFileMapperInsertSkillArchiveFile(yourbatis.DialectPostgres, insertParams), 12},
 		{"insert", buildSessionResourceMapperInsertSkillArchiveResource(yourbatis.DialectPostgres, insertParams), 8},
 		{"list", buildSessionResourceFileMapperListSkillArchiveResources(yourbatis.DialectPostgres, workspaceUUID, filesystemUUID), 3},
 	}

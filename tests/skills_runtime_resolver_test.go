@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -78,8 +77,8 @@ func TestRuntimeResolverResolvesCustomLatestVersion(t *testing.T) {
 		}
 	}
 	conflict := json.RawMessage(`{"skills":[{"type":"custom","skill_id":` + quoteJSON(created.ID) + `,"version":` + quoteJSON(firstVersion.Version) + `}],"multiagent":{"agents":[{"skills":[{"type":"custom","skill_id":` + quoteJSON(created.ID) + `,"version":` + quoteJSON(secondVersion.Version) + `}]}]}}`)
-	if _, err := resolver.ResolveAgentSnapshot(t.Context(), ids.WorkspaceUUID, conflict); err == nil || !strings.Contains(err.Error(), "used by multiple skills") {
-		t.Fatalf("parent and child skill directory conflict was not rejected: %v", err)
+	if versions, err := resolver.ResolveAgentSnapshot(t.Context(), ids.WorkspaceUUID, conflict); err != nil || len(versions) != 2 || versions[0].MountDirectory() == versions[1].MountDirectory() {
+		t.Fatalf("parent and child versions must have distinct immutable installations: %+v %v", versions, err)
 	}
 
 	resp = doSkillRequest(t, app, http.MethodDelete, "/v1/skills/"+created.ID+"/versions/"+secondVersion.Version+"?beta=true", nil, defaultTestKey, true, "")

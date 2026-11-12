@@ -164,6 +164,10 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 	proxy := &httputil.ReverseProxy{
 		Transport:     baseTransport,
 		FlushInterval: -1,
+		ModifyResponse: func(response *http.Response) error {
+			h.observeOwnedRepositoryGitResponse(identity, response)
+			return nil
+		},
 		Rewrite: func(request *httputil.ProxyRequest) {
 			request.SetURL(targetURL)
 			request.Out.Host = targetHost
@@ -227,6 +231,7 @@ func (h *Handler) serveUpstreamProxyMITMHTTP(connection net.Conn, transport http
 			"port", targetURL.Port(),
 			"url", logURL.String(),
 		)
+		request = request.WithContext(ownedRepoNativeRequestContext(request.Context()))
 		proxy.ServeHTTP(w, request)
 	})
 	listener := newUpstreamProxySingleConnectionListener(connection)

@@ -273,6 +273,13 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		h.errorAdapter.Write(w, r, streamingUnsupported())
 		return
 	}
+	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
+	cursorID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	order, err := h.newCommittedStreamOrder(r.Context(), session, connection, cursorID)
+	if err != nil {
+		h.errorAdapter.Write(w, r, err)
+		return
+	}
 	subID, ch := h.streams.subscribe(session.WorkspaceUUID, sessionID)
 	if err := h.eventBus.Subscribe(r.Context(), session.ExternalID); err != nil {
 		h.streams.unsubscribe(subID)
@@ -286,9 +293,7 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 			h.logger.WarnContext(r.Context(), "unsubscribe session event stream", "session_id", session.ExternalID, "error", err)
 		}
 	}()
-	connection := newStreamConnection(subscribeThreadID, primaryThread, streamDeltaTypes)
-	cursorID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
-	replay, err := h.loadStreamReplay(r.Context(), session.WorkspaceUUID, sessionID, connection, cursorID)
+	replay, err := h.loadStreamReplay(r.Context(), session.WorkspaceUUID, sessionID, connection, cursorID, order.cursorAt)
 	if err != nil {
 		h.errorAdapter.Write(w, r, err)
 		return
@@ -303,7 +308,28 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 			writeSSE(w, event, subscribeThreadID)
 		}
 	}
-	connection.rememberReplay(cursorID, replay)
+	connection.rememberReplay(cursorID, replay, !order.mutableCursor)
+	for _, event := range replay {
+		if !event.ProcessedAt.IsZero() {
+			order.cursorID = event.ExternalID
+			order.cursorAt = nil
+		}
+	}
+	drain := func(delivery streamDelivery) bool {
+		events, err := h.committedStreamEvents(r.Context(), order, connection, delivery)
+		if err != nil {
+			h.logger.WarnContext(r.Context(), "drain committed session stream", "session_id", session.ExternalID, "error", err)
+			return false
+		}
+		ordered, deleted := connection.orderedDelivery(order, events, delivery)
+		for _, event := range ordered {
+			writeSSE(w, event, subscribeThreadID)
+		}
+		return !deleted
+	}
+	if !drain(nil) {
+		return
+	}
 	flusher.Flush()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -312,20 +338,19 @@ func (h *Handler) streamEvents(w http.ResponseWriter, r *http.Request, sessionID
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
+			if !drain(nil) {
+				return
+			}
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
 		case delivery, ok := <-ch:
 			if !ok {
 				return
 			}
-			event, accepted := connection.event(delivery)
-			if accepted {
-				writeSSE(w, event, subscribeThreadID)
-				flusher.Flush()
-			}
-			if event.EventType == "session.deleted" {
+			if !drain(delivery) {
 				return
 			}
+			flusher.Flush()
 		}
 	}
 }

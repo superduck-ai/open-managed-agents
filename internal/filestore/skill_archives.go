@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -258,7 +259,11 @@ func (b *skillArchivePathBackend) loadSkillArchive(
 	if err != nil {
 		return nil, internalError("load skill archive", err)
 	}
-	cacheKey := strings.Join([]string{bucket, objectKey, checksum, archiveEntry.Path}, "\x00")
+	packageDirectory, err := skillPackageDirectory(archiveEntry)
+	if err != nil {
+		return nil, internalError("load skill archive", err)
+	}
+	cacheKey := strings.Join([]string{bucket, objectKey, checksum, archiveEntry.Path, packageDirectory}, "\x00")
 	if archive, ok := b.cache.Get(cacheKey); ok {
 		return archive, nil
 	}
@@ -394,9 +399,9 @@ func indexSkillArchive(archiveEntry db.SessionResourceFile, data []byte) (*loade
 	if err != nil {
 		return nil, errors.New("skill archive is not a valid zip")
 	}
-	directory := strings.TrimPrefix(archiveEntry.Path, skillNamespacePath+"/")
-	if directory == "" || strings.Contains(directory, "/") {
-		return nil, errors.New("skill archive virtual path is invalid")
+	directory, err := skillPackageDirectory(archiveEntry)
+	if err != nil {
+		return nil, err
 	}
 	nodes := map[string]skillArchiveNode{
 		archiveEntry.Path: {path: archiveEntry.Path, directory: true},
@@ -414,7 +419,7 @@ func indexSkillArchive(archiveEntry db.SessionResourceFile, data []byte) (*loade
 		if file.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("skill archive contains symlink %q", file.Name)
 		}
-		virtualPath := skillNamespacePath + "/" + strings.TrimSuffix(cleanName, "/")
+		virtualPath := archiveEntry.Path + strings.TrimPrefix(strings.TrimSuffix(cleanName, "/"), directory)
 		if file.FileInfo().IsDir() {
 			if err := addSkillDirectoryNode(nodes, virtualPath); err != nil {
 				return nil, err
@@ -533,4 +538,29 @@ func skillNodePayload(
 type limitedReadCloser struct {
 	io.Reader
 	io.Closer
+}
+
+func skillPackageDirectory(entry db.SessionResourceFile) (string, error) {
+	virtual := strings.TrimPrefix(entry.Path, skillNamespacePath+"/")
+	if virtual == "" || virtual == "." || virtual == ".." || strings.ContainsAny(virtual, "/\\\x00") {
+		return "", errors.New("skill archive virtual path is invalid")
+	}
+	var metadata map[string]json.RawMessage
+	if len(entry.Metadata) > 0 {
+		if err := json.Unmarshal(entry.Metadata, &metadata); err != nil {
+			return "", err
+		}
+	}
+	raw, ok := metadata["skill_package_directory"]
+	if !ok {
+		return virtual, nil
+	}
+	var directory string
+	if err := json.Unmarshal(raw, &directory); err != nil {
+		return "", err
+	}
+	if directory == "" || directory == "." || directory == ".." || strings.ContainsAny(directory, "/\\\x00") {
+		return "", errors.New("skill archive package directory is invalid")
+	}
+	return directory, nil
 }

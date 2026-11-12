@@ -6,7 +6,7 @@ func TestStreamReplaySuppressesOverlappingLiveEvents(t *testing.T) {
 	thread := "thread"
 	connection := newStreamConnection(thread, true, nil)
 	event := sessionStreamEvent{ExternalID: "replayed", EventType: "span.model_request_start", ThreadExternalID: &thread}
-	connection.rememberReplay("cursor", []sessionStreamEvent{event})
+	connection.rememberReplay("cursor", []sessionStreamEvent{event}, true)
 	for _, id := range []string{"cursor", "replayed", "replayed"} {
 		event.ExternalID = id
 		if _, accepted := connection.event(sessionEventDelivery{event: event}); accepted {
@@ -18,7 +18,7 @@ func TestStreamReplaySuppressesOverlappingLiveEvents(t *testing.T) {
 		t.Fatal("new live event rejected")
 	}
 	connection = newStreamConnection(thread, true, nil)
-	connection.rememberReplay("", nil)
+	connection.rememberReplay("", nil, true)
 	if !connection.accepts(event) {
 		t.Fatal("connection without cursor changed")
 	}

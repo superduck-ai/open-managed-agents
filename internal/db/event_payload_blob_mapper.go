@@ -16,6 +16,7 @@ type eventPayloadBlobRow struct {
 }
 
 type EventPayloadBlobMapper interface {
+	FindForPublication(ctx context.Context, organizationUUID, workspaceUUID, blobUUID string) (eventPayloadBlobRow, error)
 	Insert(ctx context.Context, blob EventPayloadBlob) error
 	Find(ctx context.Context, workspaceUUID, blobUUID string) (eventPayloadBlobRow, error)
 	Attach(ctx context.Context, workspaceUUID, blobUUID string) (int64, error)

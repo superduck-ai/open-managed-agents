@@ -41,6 +41,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalidRequest(err)
 	}
+	if err := h.skillBindings.ValidateAgentSnapshotBindings(r.Context(), principal.WorkspaceUUID, snapshot); err != nil {
+		return mapSkillBindingValidationError(err)
+	}
 	environmentID, err := parseRequiredRawString(body.EnvironmentID, "environment_id")
 	if err != nil {
 		return invalidRequest(err)

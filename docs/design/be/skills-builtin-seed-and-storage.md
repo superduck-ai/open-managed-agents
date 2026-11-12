@@ -159,3 +159,39 @@ Builtin 写操作保持只读：
 ## 超管管理入口
 
 系统技能的在线导入、版本发布、默认切换与上下架见 [系统 Skill 管理](system-skills-administration.md)。工作区目录仅展示已上架且有已发布默认版本的技能；历史已发布引用保留。seed CLI 继续用于运维导入，不由页面自动触发。
+
+## Session 创建时的 Skill 引用校验
+
+Session 创建先完成 Agent 版本读取、overrides 合并和预定义子 Agent 展开，再对最终快照中的 Skill 引用执行只读查询。自定义引用必须属于当前 workspace，具体版本必须属于所引用的 Skill；`latest`、具体版本和已有版本 ID 别名沿用解析器的查询规则。校验成功后才持久化 Session、输入、Work 和资源。
+
+确定缺失、不可访问或归属错误的引用返回 `400 invalid_request_error`，公开文案不包含另一 Skill 的目录或对象存储元数据。查询失败、取消和解析器不可用不转成用户引用错误，按内部错误返回。Agent 的保存接口不因此增加执行期安装校验；Session 的有效 override 可以修复保存快照中的无效绑定。
+
+此处不下载归档、不解析安装目录冲突、不创建沙箱、不冻结运行时安装计划。它也不保证创建成功后的目录删除或并发变更不会产生启动失败；接受输入后的失败发布与结算另行处理，不能用本次前置校验替代。跨 Agent 同 Skill 不同版本的安装与目录可见性仍属于运行时隔离边界。
+
+`TestSessionCreateSkillBindingBoundaryPostgres` 在隔离 PostgreSQL schema 内经过实际 create handler 验证错归属版本、错误显示标签、无效 override 和展开子 Agent 的拒绝，检查六类持久化行数不变，并验证有效 override、版本别名、latest、跨 workspace、取消和查询故障。该回归不启动平台服务或真实模型，也不替代新的公开准备回执。
+
+## 每个 Agent 的 Skill 版本与目录快照
+
+运行时按最终 Session Agent 快照分别解析 root 和每个预定义 Agent 的绑定。安装记录以来源、Skill ID 和具体 Version UUID 去重，并保留每个作用域的请求版本别名。同一作用域内的不同版本或同名/同目录 Skill 仍拒绝；不同作用域中的无关 Skill 也不能占用同一包目录。只有同一个 Skill 的不同具体版本可以跨 Agent 并存。
+
+不发生冲突的安装保留原路径。跨作用域的同 Skill 多版本共用原包目录时，每个版本使用确定性的 `version-<无连字符的 Version UUID>` 挂载目录。安装目录与包目录分别传递：DB 仍按原目录、来源、Version UUID、对象位置、大小和 SHA 校验 catalog。File 元数据保存可信 `skill_package_directory`；ZIP 索引只将该原顶层目录映射到安装目录，不重新打包或修改内容。缺少新元数据的旧投影使用原路径目录，存在但无效的新元数据拒绝。ZIP 路径、symlink、重复、解压大小及 SKILL.md 守卫保持。
+
+```mermaid
+flowchart LR
+    A[最终 root 与 child 快照] --> B[按作用域解析不可变版本和别名]
+    B --> C[去重后的物理安装集合]
+    B --> D[root 目录清单]
+    B --> E[每个预定义 child 的目录清单]
+    C --> F[原包字节与独立挂载路径]
+    D --> G[DSR 已有 context_snapshot 冻结]
+    E --> G
+    G --> H[注册与新 owner 重放]
+```
+
+新配置用 `skill_catalog_version: 1` 标识上述目录语义。root 只公开自己的绑定目录；具名 child 必须拥有与冻结 Agent ID/version 匹配的独立清单。显式空清单保留为空数组，不能继承 root 的绑定。清单包含来源、Skill ID、具体 Version UUID、SHA 与原请求别名，并在已有 DSR context_snapshot 中冻结；注册、接管和恢复不重新查询 latest 或可变 Agent。已有未标版本的历史上下文继续原冻结语义，不推断或伪造历史作用域。
+
+当前 DSR 仅支持一层 child。运行时 Delegation 使用 `maxDepth: 1`，child 运行时不注册委派能力，恢复目录也拒绝更深父链。新目录协议中的 inline 必须从真实 native Session header 证明 parent 是当前 root，随后继承该 root 清单；缺失或非 root 父身份拒绝。该实现不支持或宣称 specialist 内再创建 inline。恢复的父身份来自持久化 native header，不新增 sent flag 或协调日志。
+
+这是目录广告与版本选择隔离，不是共享沙箱文件系统的安全隔离。已知路径的跨 Agent Read 是否允许仍由现有权限合同决定。仓库发现的 root 目录广告沿用既有冻结流程，本次不扩展仓库跨 Agent 发现合同。
+
+回归包括真实 PG 的两版本投影和错误元数据回滚、owner 更替后原清单保留；原始 ZIP 字节及成员重映射；同作用域/无关 Skill/路径冲突负例；Go 生成配置与注册输出；Brain 缺失目录、空目录、父身份和 root/child 提示隔离。真实 MULTI013 仍需主控在加载配套 Go 与 Brain 产物后以新报告验证。本地回归不替代真实平台通过。

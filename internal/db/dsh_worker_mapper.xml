@@ -5,9 +5,10 @@
     <select id="ContextSnapshot" result="optional" resultType="[]byte">
         SELECT context_snapshot FROM dsh_worker_states WHERE <include refid="scope"/> AND context_snapshot IS NOT NULL
     </select>
-    <update id="FreezeContext" result="rows">
+    <update id="FreezeContext" result="returning" resultType="dshContextFreezeRow">
         UPDATE dsh_worker_states SET context_snapshot = #{snapshot,sensitive=true}
         WHERE <include refid="scope"/> AND context_snapshot IS NULL
+        RETURNING clock_timestamp() AS statement_at
     </update>
     <update id="Register" result="rows">
         UPDATE code_sessions SET worker_lease_expires_at = #{expiresAt}, worker_registered_at = NOW(),

@@ -1,0 +1,258 @@
+[
+  {
+    "case_id": "SKILL-AGENT-001",
+    "source_report": "/Users/arthur/GolandProjects/herdr-projects/skill-compare-loop/runs/907e-oma-dsr-20261111-223006/verify-source/reports/herdr-skill-loop-skill-agent-001-20261111-224517-194743.json",
+    "source_sha256": "c352628327a9d43620132c35f29744e4e5caa16b6f25c7335ecf535ee0b94498",
+    "tools": [
+      {
+        "configs": [
+          {
+            "enabled": true,
+            "name": "read",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          },
+          {
+            "enabled": false,
+            "name": "ask_user_question",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          }
+        ],
+        "default_config": {
+          "enabled": false,
+          "permission_policy": {
+            "type": "always_allow"
+          }
+        },
+        "type": "agent_toolset_20260401"
+      }
+    ]
+  },
+  {
+    "case_id": "SKILL-AGENT-002",
+    "source_report": "/Users/arthur/GolandProjects/herdr-projects/skill-compare-loop/runs/907e-oma-dsr-20261111-223006/verify-source/reports/herdr-skill-loop-skill-agent-002-20261111-224517-249935.json",
+    "source_sha256": "61cb0e3ccfa2a1898380128f094cdb943d2a30618b54deddfedc55799f4fac35",
+    "tools": [
+      {
+        "configs": [
+          {
+            "enabled": true,
+            "name": "read",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          },
+          {
+            "enabled": false,
+            "name": "ask_user_question",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          }
+        ],
+        "default_config": {
+          "enabled": false,
+          "permission_policy": {
+            "type": "always_allow"
+          }
+        },
+        "type": "agent_toolset_20260401"
+      }
+    ]
+  },
+  {
+    "case_id": "SKILL-AGENT-003",
+    "source_report": "/Users/arthur/GolandProjects/herdr-projects/skill-compare-loop/runs/907e-oma-dsr-20261111-223006/verify-source/reports/herdr-skill-loop-skill-agent-003-20261111-224517-289866.json",
+    "source_sha256": "d11d067eb5142660728244dd8584d03f1857422959d90b9e7725542557746087",
+    "tools": [
+      {
+        "configs": [
+          {
+            "enabled": true,
+            "name": "read",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          },
+          {
+            "enabled": false,
+            "name": "ask_user_question",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          }
+        ],
+        "default_config": {
+          "enabled": false,
+          "permission_policy": {
+            "type": "always_allow"
+          }
+        },
+        "type": "agent_toolset_20260401"
+      }
+    ]
+  },
+  {
+    "case_id": "SKILL-AGENT-004",
+    "source_report": "/Users/arthur/GolandProjects/herdr-projects/skill-compare-loop/runs/907e-oma-dsr-20261111-223006/verify-source/reports/herdr-skill-loop-skill-agent-004-20261111-224517-340140.json",
+    "source_sha256": "d2fa235df402e66f5135283e120e22e2de3f7c79ff9f8af17a342bfc4efd55a1",
+    "tools": [
+      {
+        "configs": [
+          {
+            "enabled": true,
+            "name": "read",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          },
+          {
+            "enabled": false,
+            "name": "ask_user_question",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          }
+        ],
+        "default_config": {
+          "enabled": false,
+          "permission_policy": {
+            "type": "always_allow"
+          }
+        },
+        "type": "agent_toolset_20260401"
+      }
+    ]
+  },
+  {
+    "case_id": "SKILL-AGENT-006",
+    "source_report": "/Users/arthur/GolandProjects/herdr-projects/skill-compare-loop/runs/907e-oma-dsr-20261111-223006/verify-source/reports/herdr-skill-loop-skill-agent-006-20261111-224517-394209.json",
+    "source_sha256": "c185eaca816cb02fb99143c7499b482c70a71afbd217853b7a89eed0dcd27930",
+    "tools": [
+      {
+        "configs": [
+          {
+            "enabled": true,
+            "name": "read",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          },
+          {
+            "enabled": false,
+            "name": "ask_user_question",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          }
+        ],
+        "default_config": {
+          "enabled": false,
+          "permission_policy": {
+            "type": "always_allow"
+          }
+        },
+        "type": "agent_toolset_20260401"
+      }
+    ]
+  },
+  {
+    "case_id": "SKILL-AGENT-008",
+    "source_report": "/Users/arthur/GolandProjects/herdr-projects/skill-compare-loop/runs/907e-oma-dsr-20261111-223006/verify-source/reports/herdr-skill-loop-skill-agent-008-20261111-224517-457371.json",
+    "source_sha256": "51f86d55b5e5dfe5720b6d9646bed466658de73ebfd306f1a1cb4adc290b1f12",
+    "tools": [
+      {
+        "configs": [
+          {
+            "enabled": true,
+            "name": "read",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          },
+          {
+            "enabled": false,
+            "name": "ask_user_question",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          }
+        ],
+        "default_config": {
+          "enabled": false,
+          "permission_policy": {
+            "type": "always_allow"
+          }
+        },
+        "type": "agent_toolset_20260401"
+      }
+    ]
+  },
+  {
+    "case_id": "SKILL-AGENT-009",
+    "source_report": "/Users/arthur/GolandProjects/herdr-projects/skill-compare-loop/runs/907e-oma-dsr-20261111-223006/verify-source/reports/herdr-skill-loop-skill-agent-009-20261111-224519-142053.json",
+    "source_sha256": "5e248bb2d511918a6cba60673a05e5119b907a5a399a13aa3e028ba967b2ed67",
+    "tools": [
+      {
+        "configs": [
+          {
+            "enabled": true,
+            "name": "read",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          },
+          {
+            "enabled": false,
+            "name": "ask_user_question",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          }
+        ],
+        "default_config": {
+          "enabled": false,
+          "permission_policy": {
+            "type": "always_allow"
+          }
+        },
+        "type": "agent_toolset_20260401"
+      }
+    ]
+  },
+  {
+    "case_id": "SKILL-AGENT-012",
+    "source_report": "/Users/arthur/GolandProjects/herdr-projects/skill-compare-loop/runs/907e-oma-dsr-20261111-223006/verify-source/reports/herdr-skill-loop-skill-agent-012-20261111-224519-237241.json",
+    "source_sha256": "2b124619e430cd624fc7179d3f8f0940dc8b9a3d46c1e810cfa35717ec38fafe",
+    "tools": [
+      {
+        "configs": [
+          {
+            "enabled": true,
+            "name": "read",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          },
+          {
+            "enabled": false,
+            "name": "ask_user_question",
+            "permission_policy": {
+              "type": "always_allow"
+            }
+          }
+        ],
+        "default_config": {
+          "enabled": false,
+          "permission_policy": {
+            "type": "always_allow"
+          }
+        },
+        "type": "agent_toolset_20260401"
+      }
+    ]
+  }
+]

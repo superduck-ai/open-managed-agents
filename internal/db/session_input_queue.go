@@ -31,6 +31,10 @@ func processExistingSessionInputTx(ctx context.Context, executor yourbatis.Execu
 	if existing.EventType != "user.message" || event.EventType != "user.message" || existing.ProcessedAt != nil || event.ProcessedAt.IsZero() {
 		return SessionEvent{}, false, nil
 	}
+	event, err := stampDSHSessionEvent(ctx, executor, session, event)
+	if err != nil {
+		return SessionEvent{}, false, err
+	}
 	updated, applied, err := NewSessionEventMapper(executor).MarkInputProcessed(ctx, session.WorkspaceUUID, session.ExternalID, event.ExternalID, event.ProcessedAt)
 	return updated.event(), applied, err
 }
@@ -64,7 +68,11 @@ func (d *DB) ProcessSessionInputsForWorker(ctx context.Context, codeSession Code
 		now := time.Now().UTC()
 		mapper := NewSessionEventMapper(executor)
 		for _, id := range inputIDs {
-			row, applied, err := mapper.MarkInputProcessed(ctx, session.WorkspaceUUID, session.ExternalID, id, now)
+			stamped, err := stampDSHSessionEvent(ctx, executor, session, SessionEvent{ProcessedAt: now})
+			if err != nil {
+				return err
+			}
+			row, applied, err := mapper.MarkInputProcessed(ctx, session.WorkspaceUUID, session.ExternalID, id, stamped.ProcessedAt)
 			if err != nil {
 				return err
 			}

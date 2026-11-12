@@ -110,11 +110,21 @@ export class DsrClient {
     object(context.mcp_config);
     validateModels(context.models);
     validateToolPermissions(context.runtime_tool_permissions);
+    if (context.skill_catalog_version != null) {
+      if (context.skill_catalog_version !== 1)
+        throw new DsrError(0, "invalid_response");
+      validateSkillCatalog(context.runtime_skills, false);
+    }
     const children = object(context.subagent_contexts);
     for (const raw of Object.values(children)) {
       const child = object(raw);
       object(child.mcp_config);
       validateToolPermissions(child.runtime_tool_permissions);
+      if (context.skill_catalog_version === 1) {
+        if (child.skill_catalog_version !== 1)
+          throw new DsrError(0, "invalid_response");
+        validateSkillCatalog(child.runtime_skills, true);
+      }
     }
     return value as unknown as Registration;
   }
@@ -445,5 +455,52 @@ export class DsrClient {
       (response.accepted as number) + (response.duplicates as number) !== count
     )
       throw new DsrError(0, "invalid_response");
+  }
+}
+
+function validateSkillCatalog(value: unknown, attached: boolean): void {
+  if (!Array.isArray(value)) throw new DsrError(0, "invalid_response");
+  const paths = new Set<string>();
+  for (const raw of value) {
+    const skill = object(raw);
+    if (
+      typeof skill.name !== "string" ||
+      !skill.name ||
+      typeof skill.description !== "string" ||
+      (skill.version !== undefined && typeof skill.version !== "string") ||
+      typeof skill.path !== "string" ||
+      !skill.path.startsWith("/") ||
+      paths.has(skill.path)
+    )
+      throw new DsrError(0, "invalid_response");
+    paths.add(skill.path);
+    if (
+      attached ||
+      [
+        "source",
+        "skill_id",
+        "version_uuid",
+        "sha256",
+        "requested_versions",
+      ].some((key) => Object.hasOwn(skill, key))
+    ) {
+      if (typeof skill.version !== "string" || !skill.version)
+        throw new DsrError(0, "invalid_response");
+      if (
+        !["custom", "anthropic"].includes(skill.source as string) ||
+        typeof skill.skill_id !== "string" ||
+        !skill.skill_id ||
+        typeof skill.version_uuid !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          skill.version_uuid,
+        ) ||
+        typeof skill.sha256 !== "string" ||
+        !/^[0-9a-f]{64}$/.test(skill.sha256) ||
+        !Array.isArray(skill.requested_versions) ||
+        skill.requested_versions.length === 0 ||
+        skill.requested_versions.some((v) => typeof v !== "string" || !v)
+      )
+        throw new DsrError(0, "invalid_response");
+    }
   }
 }

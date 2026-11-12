@@ -9,6 +9,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 var errSessionAgentUpdateObjectRequired = errors.New("agent update must be an object")
@@ -210,4 +211,12 @@ func mapVaultBindingError(err error) error {
 		return err
 	}
 	return invalidRequest(err)
+}
+
+func mapSkillBindingValidationError(err error) error {
+	var binding *skillsapi.BindingReferenceError
+	if errors.As(err, &binding) {
+		return invalidRequest(errors.New("Skill binding references a missing, inaccessible or invalid Skill or version"))
+	}
+	return internalError("Could not validate Skill bindings", err)
 }

@@ -42,6 +42,17 @@
           AND cs.status = 'active'
           AND cs.metadata #>> '{config,worker_transport}' = 'claim'
           AND cs.metadata #>> '{config,worker_protocol}' = 'dsr1'
+          AND (
+              NOT (
+                  COALESCE(cs.metadata #> '{config,runtime_tools}', '[]') @> '["Read"]'
+                  AND COALESCE(cs.metadata #> '{config,sources}', '[]') @> '[{"type":"git_repository"}]'
+              )
+              OR EXISTS (
+                  SELECT 1 FROM dsh_worker_states context
+                  WHERE context.organization_uuid = cs.organization_uuid AND context.workspace_uuid = cs.workspace_uuid
+                    AND context.code_session_uuid = cs.uuid AND context.context_snapshot IS NOT NULL
+              )
+          )
           AND s.uuid IS NOT NULL
           AND (cs.worker_claim_expires_at IS NULL OR cs.worker_claim_expires_at &lt;= NOW())
           AND (cs.worker_lease_expires_at IS NULL

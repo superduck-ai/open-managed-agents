@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/common/jsonx"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -1350,7 +1351,7 @@ func responseFromAgent(agent db.Agent) agentResponse {
 		Name:        agent.Name,
 		Skills:      httpapi.RawOr(agent.Skills, `[]`),
 		System:      agent.System,
-		Tools:       httpapi.RawOr(agent.Tools, `[]`),
+		Tools:       agentsnapshot.ToolsForResponse(httpapi.RawOr(agent.Tools, `[]`)),
 		Type:        "agent",
 		UpdatedAt:   httpapi.FormatTime(agent.UpdatedAt),
 		Version:     agent.CurrentVersion,

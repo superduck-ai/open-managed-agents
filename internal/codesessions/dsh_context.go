@@ -7,6 +7,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
 type dshContextSnapshot struct {
@@ -18,8 +19,10 @@ type dshContextSnapshot struct {
 }
 
 type dshChildContext struct {
-	MCPConfig       json.RawMessage   `json:"mcp_config"`
-	ToolPermissions map[string]string `json:"runtime_tool_permissions,omitempty"`
+	RuntimeSkills       []runtimeSkillConfig `json:"runtime_skills"`
+	SkillCatalogVersion int                  `json:"skill_catalog_version,omitempty"`
+	MCPConfig           json.RawMessage      `json:"mcp_config"`
+	ToolPermissions     map[string]string    `json:"runtime_tool_permissions,omitempty"`
 }
 
 func (l dshLifecycle) RegistrationContext(ctx context.Context, scope db.DSHScope, token string) (json.RawMessage, error) {
@@ -33,7 +36,7 @@ func (l dshLifecycle) RegistrationContext(ctx context.Context, scope db.DSHScope
 		return nil, err
 	}
 	if len(raw) == 0 {
-		candidate, err := l.contextCandidate(ctx, record)
+		candidate, err := h.service.dshContextCandidate(ctx, record)
 		if err != nil {
 			return nil, err
 		}
@@ -76,18 +79,18 @@ func renderDSHContext(record db.CodeSession, raw []byte, token string, cfg confi
 	return json.Marshal(value)
 }
 
-func (l dshLifecycle) contextCandidate(ctx context.Context, record db.CodeSession) ([]byte, error) {
+func (s *Service) dshContextCandidate(ctx context.Context, record db.CodeSession) ([]byte, error) {
 	var metadata struct {
 		Config json.RawMessage `json:"config"`
 	}
 	if err := json.Unmarshal(record.Metadata, &metadata); err != nil {
 		return nil, err
 	}
-	models, err := l.handler.service.modelCatalog(ctx, record)
+	models, err := s.modelCatalog(ctx, record)
 	if err != nil {
 		return nil, err
 	}
-	external, err := l.handler.service.selfHostedCodeSession(ctx, record.ExternalID)
+	external, err := s.selfHostedCodeSession(ctx, record.ExternalID)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +99,9 @@ func (l dshLifecycle) contextCandidate(ctx context.Context, record db.CodeSessio
 
 func dshChildContexts(record db.CodeSession, snapshot dshContextSnapshot, identity MCPRuntimeIdentity, tunnel config.TunnelConfig) (map[string]dshChildContext, error) {
 	var input struct {
-		Subagents *RuntimeSubagentConfig `json:"subagents"`
+		Subagents           *RuntimeSubagentConfig                  `json:"subagents"`
+		SkillCatalogVersion int                                     `json:"skill_catalog_version"`
+		AgentSkills         map[string]skillsapi.RuntimeAgentSkills `json:"agent_skills"`
 	}
 	if err := json.Unmarshal(snapshot.Config, &input); err != nil {
 		return nil, err
@@ -128,6 +133,21 @@ func dshChildContexts(record db.CodeSession, snapshot dshContextSnapshot, identi
 			return nil, err
 		}
 		item := dshChildContext{MCPConfig: mcp}
+		if input.SkillCatalogVersion != 0 {
+			catalog, ok := input.AgentSkills[agent.Name]
+			var authority struct {
+				ID      string `json:"id"`
+				Version int    `json:"version"`
+			}
+			if err := json.Unmarshal(agent.AgentSnapshot, &authority); err != nil {
+				return nil, err
+			}
+			if input.SkillCatalogVersion != 1 || !ok || catalog.AgentID != authority.ID || catalog.AgentVersion != authority.Version || catalog.Skills == nil {
+				return nil, errRuntimeSkillCatalog
+			}
+			item.RuntimeSkills = catalog.Skills
+			item.SkillCatalogVersion = 1
+		}
 		if !snapshot.External {
 			item.ToolPermissions = runtimeToolPolicies(permissions.Tools)
 		}

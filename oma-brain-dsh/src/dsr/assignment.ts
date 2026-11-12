@@ -50,9 +50,9 @@
 // 所以下面的类型断言只负责把外部 DTO 映射到内部 Assignment 结构。
 // ============================================================================
 
-import type {OmaApi} from "../api.ts";
-import {validateAssignment, type Assignment} from "../assignment.ts";
-import type {Claim, Registration} from "./wire.ts";
+import type { OmaApi } from "../api.ts";
+import { validateAssignment, type Assignment } from "../assignment.ts";
+import type { Claim, Registration } from "./wire.ts";
 
 /**
  * 组装 Assignment 并做一次结构校验。
@@ -68,62 +68,74 @@ import type {Claim, Registration} from "./wire.ts";
  *
  *   // 之后工具执行时可以通过 api.assignment(sessionId) 取回这份配置。
  */
-export function dsrAssignment(api: OmaApi, claim: Claim, registration: Registration): Assignment {
-    // register 响应里的 context 是本次执行周期的冻结快照。
-    const context = registration.context;
-    const assignment: Assignment = {
-        // 身份与凭证：session_token 以 ingress_token 的名字进入运行时，
-        // 供模型代理、沙箱、MCP 等下游使用。
-        session_id: claim.code_session_id,
-        worker_epoch: claim.worker_epoch,
-        ingress_token: claim.session_token,
-        model_token: claim.model_token,
-        // 可观测性配置来自 register；registered_at 是本地时间，
-        // 用于判断这份 assignment 的新鲜度（不是服务器时间）。
-        observability_enabled: registration.observability_enabled,
-        registered_at: Date.now(),
-        trace_parent: claim.trace_parent,
-        trace_export: registration.trace_export,
-        // 根会话（非 inline 子 agent）使用的外部 MCP server 列表。
-        external_mcp_config: context.mcp_config,
-        // 每个具名子 agent 的冻结上下文，key 是子 agent 名字。
-        // omaRuntimeConfig 创建子线程时按 thread.name 查这里：
-        //   - 查不到且不是 inline -> 抛 "Missing frozen subagent context"；
-        //   - inline 子 agent 没有预置配置，回退到根会话的配置。
-        // 例：{researcher: {mcp_config: {...}, runtime_tool_permissions: {...}}}
-        subagent_contexts: context.subagent_contexts,
-        launch: {
-            // version: 2 是当前 Assignment 的 schema 版本，运行时据此选择解析逻辑。
-            version: 2,
-            model: context.model as string,
-            models: context.models as Assignment["launch"]["models"],
-            work_dir: context.cwd as string,
-            // 系统提示词有三层来源，优先级从高到低：
-            //   system_prompt > custom_system_prompt > 空字符串。
-            system: (context.system_prompt ?? context.custom_system_prompt ?? "") as string,
-            // append_system_prompt 是追加到末尾的环境提示词（例如时间、平台说明）。
-            environment_prompt: (context.append_system_prompt ?? "") as string,
-            memory_catalog_prompt: (context.memory_catalog_prompt ?? "") as string,
-            // 其余可选配置缺省时用安全默认值：数组用 []，对象用 undefined。
-            skills: (context.runtime_skills ?? []) as Assignment["launch"]["skills"],
-            subagents: (context.subagents ?? undefined) as Assignment["launch"]["subagents"],
-            tools: (context.runtime_tools ?? []) as string[],
-            tool_permissions: (context.runtime_tool_permissions ?? undefined) as Assignment["launch"]["tool_permissions"],
+export function dsrAssignment(
+  api: OmaApi,
+  claim: Claim,
+  registration: Registration,
+): Assignment {
+  // register 响应里的 context 是本次执行周期的冻结快照。
+  const context = registration.context;
+  const assignment: Assignment = {
+    // 身份与凭证：session_token 以 ingress_token 的名字进入运行时，
+    // 供模型代理、沙箱、MCP 等下游使用。
+    session_id: claim.code_session_id,
+    worker_epoch: claim.worker_epoch,
+    ingress_token: claim.session_token,
+    model_token: claim.model_token,
+    // 可观测性配置来自 register；registered_at 是本地时间，
+    // 用于判断这份 assignment 的新鲜度（不是服务器时间）。
+    observability_enabled: registration.observability_enabled,
+    registered_at: Date.now(),
+    trace_parent: claim.trace_parent,
+    trace_export: registration.trace_export,
+    // 根会话（非 inline 子 agent）使用的外部 MCP server 列表。
+    external_mcp_config: context.mcp_config,
+    // 每个具名子 agent 的冻结上下文，key 是子 agent 名字。
+    // omaRuntimeConfig 创建子线程时按 thread.name 查这里：
+    //   - 查不到且不是 inline -> 抛 "Missing frozen subagent context"；
+    //   - inline 子 agent 没有预置配置，回退到根会话的配置。
+    // 例：{researcher: {mcp_config: {...}, runtime_tool_permissions: {...}}}
+    subagent_contexts: context.subagent_contexts,
+    launch: {
+      // version: 2 是当前 Assignment 的 schema 版本，运行时据此选择解析逻辑。
+      version: 2,
+      model: context.model as string,
+      models: context.models as Assignment["launch"]["models"],
+      work_dir: context.cwd as string,
+      // 系统提示词有三层来源，优先级从高到低：
+      //   system_prompt > custom_system_prompt > 空字符串。
+      system: (context.system_prompt ??
+        context.custom_system_prompt ??
+        "") as string,
+      // append_system_prompt 是追加到末尾的环境提示词（例如时间、平台说明）。
+      environment_prompt: (context.append_system_prompt ?? "") as string,
+      memory_catalog_prompt: (context.memory_catalog_prompt ?? "") as string,
+      // 其余可选配置缺省时用安全默认值：数组用 []，对象用 undefined。
+      skills: (context.runtime_skills ?? []) as Assignment["launch"]["skills"],
+      skillCatalogVersion: context.skill_catalog_version ?? undefined,
+      subagents: (context.subagents ??
+        undefined) as Assignment["launch"]["subagents"],
+      tools: (context.runtime_tools ?? []) as string[],
+      tool_permissions: (context.runtime_tool_permissions ??
+        undefined) as Assignment["launch"]["tool_permissions"],
+    },
+    // 内置 sandbox MCP：地址指向本会话专属端点，并携带 session_token。
+    // 运行时里的沙箱工具通过它执行文件系统/命令操作。
+    mcp_config: {
+      mcpServers: {
+        sandbox: {
+          type: "http",
+          url: `${api.base}/v1/dsr/sessions/${encodeURIComponent(claim.code_session_id)}/sandbox/mcp`,
+          headers: {
+            Authorization: `Bearer ${claim.session_token}`,
+            "DSR-Protocol": "1",
+          },
         },
-        // 内置 sandbox MCP：地址指向本会话专属端点，并携带 session_token。
-        // 运行时里的沙箱工具通过它执行文件系统/命令操作。
-        mcp_config: {
-            mcpServers: {
-                sandbox: {
-                    type: "http",
-                    url: `${api.base}/v1/dsr/sessions/${encodeURIComponent(claim.code_session_id)}/sandbox/mcp`,
-                    headers: {Authorization: `Bearer ${claim.session_token}`, "DSR-Protocol": "1"}
-                }
-            }
-        },
-    };
-    // 校验 session_id / worker_epoch / sandbox 端点 / launch.model / work_dir 等
-    // 关键不变量；不合法会立即抛错，避免把坏配置带进长时间运行的会话。
-    validateAssignment(assignment);
-    return assignment;
+      },
+    },
+  };
+  // 校验 session_id / worker_epoch / sandbox 端点 / launch.model / work_dir 等
+  // 关键不变量；不合法会立即抛错，避免把坏配置带进长时间运行的会话。
+  validateAssignment(assignment);
+  return assignment;
 }

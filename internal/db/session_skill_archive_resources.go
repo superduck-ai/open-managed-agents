@@ -16,6 +16,7 @@ type normalizedSessionSkillArchiveResource struct {
 	Source           string
 	SkillVersionUUID string
 	Path             string
+	PackageDirectory string
 	Filename         string
 	S3Bucket         string
 	S3Key            string
@@ -115,6 +116,7 @@ func replaceSessionSkillArchiveResourcesTx(
 			EntryPath:          entry.Path,
 			Filename:           entry.Filename,
 			Source:             entry.Source,
+			PackageDirectory:   entry.PackageDirectory,
 			SizeBytes:          entry.SizeBytes,
 			SHA256:             entry.SHA256,
 			S3Bucket:           entry.S3Bucket,
@@ -142,7 +144,7 @@ func validateFilestoreSkillArchiveVersionTx(
 		Source:        entry.Source,
 		WorkspaceUUID: workspaceUUID,
 		VersionUUID:   entry.SkillVersionUUID,
-		Directory:     strings.TrimPrefix(entry.Path, "/skills/"),
+		Directory:     entry.PackageDirectory,
 		S3Bucket:      entry.S3Bucket,
 		S3Key:         entry.S3Key,
 		SizeBytes:     entry.SizeBytes,
@@ -215,7 +217,14 @@ func normalizeSessionSkillArchiveResource(
 	if directory == "" || strings.ContainsAny(directory, "/\\\x00") || directory == "." || directory == ".." {
 		return normalizedSessionSkillArchiveResource{}, fmt.Errorf("invalid skill directory %q", input.Directory)
 	}
-	entryPath := "/skills/" + directory
+	installDirectory := input.InstallDirectory
+	if installDirectory == "" {
+		installDirectory = directory
+	}
+	if installDirectory == "." || installDirectory == ".." || strings.ContainsAny(installDirectory, "/\\\x00") {
+		return normalizedSessionSkillArchiveResource{}, ErrInvalidState
+	}
+	entryPath := "/skills/" + installDirectory
 	if err := validateFilestorePath(entryPath); err != nil {
 		return normalizedSessionSkillArchiveResource{}, fmt.Errorf("invalid skill directory %q: %w", input.Directory, err)
 	}
@@ -236,6 +245,7 @@ func normalizeSessionSkillArchiveResource(
 		Source:           source,
 		SkillVersionUUID: versionUUID,
 		Path:             entryPath,
+		PackageDirectory: directory,
 		Filename:         directory + ".zip",
 		S3Bucket:         strings.TrimSpace(input.S3Bucket),
 		S3Key:            strings.TrimSpace(input.S3Key),

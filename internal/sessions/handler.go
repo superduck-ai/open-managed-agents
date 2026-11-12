@@ -12,6 +12,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 
 	"github.com/go-chi/chi/v5"
@@ -22,6 +23,7 @@ const maxSessionCreateBodySize = 32 << 20
 
 type Handler struct {
 	secretService   *secrets.Service
+	skillBindings   *skillsapi.RuntimeResolver
 	eventPayloads   *eventpayload.Store
 	cfg             config.Config
 	db              *db.DB

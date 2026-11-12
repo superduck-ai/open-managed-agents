@@ -5,6 +5,11 @@
  INSERT INTO event_payload_blobs (uuid, external_id, organization_uuid, workspace_uuid, bucket, object_key, size_bytes, sha256)
  VALUES (#{blob.UUID}, #{blob.ExternalID}, #{blob.OrganizationUUID}, #{blob.WorkspaceUUID}, #{blob.Bucket}, #{blob.Key}, #{blob.Size}, #{blob.SHA256,sensitive=true})
  </insert>
+ <select id="FindForPublication" resultType="eventPayloadBlobRow">
+ SELECT <include refid="columns"/> FROM event_payload_blobs
+ WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID} AND uuid = #{blobUUID}
+ AND state IN ('pending','attached')
+ </select>
  <select id="Find" resultType="eventPayloadBlobRow">
  SELECT <include refid="columns"/> FROM event_payload_blobs
  WHERE workspace_uuid = #{workspaceUUID} AND uuid = #{blobUUID} AND state = 'attached'

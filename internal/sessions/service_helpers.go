@@ -556,7 +556,7 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session, refre
 	}
 	return sessionResponse{
 		ID:                 session.ExternalID,
-		Agent:              httpapi.RawOr(session.AgentSnapshot, `{}`),
+		Agent:              agentsnapshot.ForResponse(httpapi.RawOr(session.AgentSnapshot, `{}`)),
 		ArchivedAt:         httpapi.OptionalTime(session.ArchivedAt),
 		Budget:             jsonx.Default(session.Budget, "null"),
 		CreatedAt:          httpapi.FormatTime(session.CreatedAt),
@@ -578,7 +578,7 @@ func (h *Handler) responseFromSession(r *http.Request, session db.Session, refre
 func responseFromThread(thread db.SessionThread) threadResponse {
 	return threadResponse{
 		ID:             thread.ExternalID,
-		Agent:          httpapi.RawOr(thread.AgentSnapshot, `{}`),
+		Agent:          agentsnapshot.ForResponse(httpapi.RawOr(thread.AgentSnapshot, `{}`)),
 		ArchivedAt:     httpapi.OptionalTime(thread.ArchivedAt),
 		CreatedAt:      httpapi.FormatTime(thread.CreatedAt),
 		ParentThreadID: thread.ParentThreadExternalID,

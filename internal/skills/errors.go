@@ -134,3 +134,35 @@ func systemSkillError(err error) *systemSkillPublicError {
 func systemSkillPreviewTooLarge() error {
 	return &systemSkillPublicError{Status: 413, Code: "preview_too_large", Message: "SKILL.md 超过 256 KiB 预览限制"}
 }
+
+type BindingReferenceError struct {
+	Source  string
+	SkillID string
+	Version string
+	cause   error
+}
+
+func (e *BindingReferenceError) Error() string {
+	if e.SkillID == "" {
+		return "invalid Skill binding reference"
+	}
+	source := "custom"
+	if e.Source == "anthropic" {
+		source = "built-in"
+	}
+	if e.Version == "latest" {
+		if e.Source == "anthropic" {
+			return "built-in skill not found: " + e.SkillID
+		}
+		return source + " skill latest version not found: " + e.SkillID
+	}
+	return source + " skill version not found: " + e.SkillID + "@" + e.Version
+}
+
+func (e *BindingReferenceError) Unwrap() error { return e.cause }
+
+func bindingReferenceError(ref runtimeSkillRef, cause error) error {
+	return &BindingReferenceError{Source: ref.Type, SkillID: ref.SkillID, Version: ref.Version, cause: cause}
+}
+
+var errRuntimeSkillResolverUnavailable = errors.New("Skill binding resolver is unavailable")

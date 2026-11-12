@@ -289,3 +289,40 @@ Brain 的 DsrPermissionWaiter 由 permission.resolved 通知唤醒，输入 SSE 
 最终助手消息与 thinking 继续由 Brain 从 transcript 投影并发布；模型代理仅记录工具调用、span、用量和计费。`model_request_end` 可以先于助手最终消息，SSE 和前端在成功请求结束时保留尚未完成的 preview。finish 集中等待 checkpoint，覆盖正常结束、取消与已有 finish 记录恢复。冷接管也投影已经完成的子线程，避免它们因不再执行而漏掉尚未发布的结果。
 
 回归覆盖复制或发布失败阻止 finish、冷接管补发且不重跑模型、已完成子线程补发、丢响应与分批失败的幂等重放。工具 ID 按请求隔离；preview 内部字段清理与旧回合 idle、新回合 running 顺序保持修复。
+
+## 并发公开事件顺序
+
+DSR 的公开处理时间由持有 Session 行锁的写事务分配。新处理事件的 `processed_at` 至少晚于该 Session 已提交处理时间一个 PostgreSQL 微秒；同一事务生成的审批原件与镜像可以共享处理时间，并沿用行插入次序。排队输入仍先保存空处理时间，实际处理 ACK 再在相同行锁内分配时间。首次写入的原始 publication body、回执摘要和事件 ID 保持不变，HTTP history 与 SSE 统一使用持久化处理时间，并保留未知 JSON 数值的原始精度。
+
+DSR SSE 将持久化事件 fanout 作为读取提示，按已提交的同线程 history 游标读取并投影。不同 API 生产者的 fanout 延迟或乱序不再改变公开顺序。订阅前记录处理历史边界，订阅后再次读取；重放与 live 提示重叠时不重复发布 processed 事件。保活也补读已提交历史。预览 delta 仍走原有实时传输，不为每个 delta 查询数据库，不改变 Brain 的发布、复制确认或 finish 屏障。
+
+`user.message` 与 `user.tool_confirmation` 的 queued/processed 两个阶段共享事件 ID。输入型 `Last-Event-ID` 因而从该输入原始创建位置恢复，不能把可能只表示 queued ACK 的 ID 标记为 processed 完成。即使处理发生在重连读取游标之前，也保留中间事件和 processed ACK。跨连接的这段恢复可能重放相同稳定 ID；客户端继续按事件身份与处理阶段合并。同一连接仅发布一次 processed 版本。其他持久化事件游标保持后继事件重放语义。
+
+定向回归覆盖早生成但晚提交的生产者、提交后 fanout 超越、same-ID queued ACK 更新、真实 handler 重连前后处理、错线程、重复通知、final 后晚到 delta、JSON 大整数，以及审批别名、归档发布屏障、首次写入与回执重放。真实 PostgreSQL 测试只使用隔离 schema；普通测试使用本地受控 fanout。该回归不代表生产吞吐或跨集群负载基线。
+
+## 包含 NUL 的公开结果
+
+DSR `public-events` 使用 `eventpayload.Store` 的既有完整 payload 路径。小于常规阈值但含实际 NUL 的 JSON 同样外置为 blob；字面反斜杠 `\u0000` 不被误认成 NUL。完整 JSON 字节、NUL、Unicode、未知数值与 `is_error` 均保留，不通过删字符或改为超时来适配 PostgreSQL JSONB。
+
+需要外置时先在原 Session/worker fence 下读取投影，再在事务外完成对象上传。提交时重新投影并核验完整 JSON 摘要、blob 的组织/工作区、大小、字节 SHA、摘要结构、工具关联、事件类型与线程。事务只保存安全摘要及受信 blob 引用，原始 native publication 的回执摘要不变。协调事件的派生身份仍由现有 DB 投影产生，不采用调用方提供的镜像身份。上传失败不提交公开回执；事务拒绝后未引用的候选 blob 继续由既有延迟 GC 回收，不做可能删除已提交对象的急切清理。
+
+重放先恢复原有 blob 并校验对象完整性，再从完整 payload 独立重建摘要。不能把数据库内已损坏的摘要作为新比较基准。并发候选 blob UUID 不同但内容证明相同的请求可幂等匹配；内容、类型、线程、租户、摘要或哈希不同仍拒绝。公开历史与 SSE 使用完整恢复后的 payload，Brain 继续负责结果的原生持久化与公开发布，并保持既有 finish 屏障。
+
+定向隔离 PostgreSQL 回归包含短 NUL 结果直接 JSONB 写入的 `22P05` 控制、实际 SSE/history 全 payload、一致重放、并发重复、结果错误状态、错 workspace/旧 epoch、对象与摘要损坏，以及上传失败不留公开回执。对象存储采用受控内存实现；该检查不替代主控的新运行时真实 NUL 诊断与原用例复测，也不宣称覆盖生产 GC 时序或强制并发双上传时序。
+
+
+## 受限 owned repository 诊断
+
+仅显式设置 `OMA_OWNED_REPO_CAPTURE_SCOPE` 才启用本地诊断。默认关闭，不增加公开事件或接口，不改变响应、工具执行或 Brain 发布权。scope 文件必须是本进程用户拥有的私有普通文件，位于私有目录；拒绝 symlink、过期、超过 15 分钟和非单一 admission。admission 在新 Session POST 前绑定本轮 nonce、新 Agent ID/version/run_id、单一仓库 URL 摘要、mount 摘要和不可变 commit。服务从实际 Session/CodeSession/resource 关系重新核对这些字段，不从请求 header 学习身份。
+
+输出固定为同目录 `native.jsonl`，最多 64 行、1 MiB，每行最多 96 KiB。只保留身份、阶段、状态、时间和白名单元数据的规范 JSON 摘要；不记录原 context、正文、HTTP header、token 或 reasoning。失败、缺失、截断、超限和未知 schema 都不能作为空目录证据。调用方保留完整原始诊断源并独立校验，不只依赖测试器布尔值。
+
+仓库扫描必须实际成功，且冻结事务成功并首次写入，才生成 scan/freeze receipt。现有 Yourbatis freeze UPDATE 通过 RETURNING `clock_timestamp()` 提供实际 statement 时间。receipt 只在事务成功返回后使用，`freeze_statement_at` 不是 commit 时间；重复读取已有快照的 `freeze_written=false`，不产生新的扫描完成记录。不新增表、持久化标记或协调状态。
+
+freeze 行的 `worker_epoch == owner_epoch` 是成功事务实际接受的 fence，`owner_epoch_source` 为 `successful_fenced_freeze_transaction`；提交后读到的当前 owner 单独记录为 `observed_owner_epoch >= worker_epoch`。`observed_at` 是 callback 观察时间，允许晚于注册或模型工作；startup 时序检查使用 `freeze_statement_at`，不猜测回调提前完成。
+
+register 观察器位于真实成功注册及 JSON 响应 write 之后。只记录实际 status、完整/短写结果、response epoch 和 write 起止时间，证明名称为 `server_issued_dsr_snapshot_not_client_wire`，不声称客户端收到或解码。晚到的真实重注册仍保留，但不能代替 startup 前的注册。Git 记录来自 MITM ModifyResponse 的实际 response status；每个 native request 的本地 context ID 不来自上游 header。Git bootstrap 可以早于 register，epoch 来源明确为响应时实际观察到的 code owner，不制造注册记录。
+
+目录元数据按实际字段、顺序和可选字段存在性完整规范化并摘要，包括 `requested_versions` 数组。仓库条目维持实际 `RepositorySkill` 的 name/description/path 三字段；绑定 Skill 才要求具体版本和完整不可变身份。Brain 的版本化目录校验区分这两种实际 renderer 输出，不给仓库条目伪造 version，也不放宽绑定身份。
+
+本诊断只为已审核的 owned 用例提供材料，不自行授予平台通过。尤其 credential control 仍要求真实单个 Bash call/result 与根模型/native 工具身份，Git outcome 必须处于该实际 call/result 时间区间；bootstrap 或区间外的行保留但不替代结果，负向控制中的任何 Git 200 均不能证明失败。若失败发生在模型启动前且无法触发原 Bash 义务，应保留阶段缺口，不以通用 bootstrap error 替代。

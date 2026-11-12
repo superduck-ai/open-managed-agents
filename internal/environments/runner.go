@@ -124,7 +124,7 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 		return nil, errors.New("environment runner filestore token issuer is required")
 	}
 
-	return &Runner{
+	runner := &Runner{
 		db:              deps.DB,
 		provider:        deps.Provider,
 		cfg:             deps.Config,
@@ -132,7 +132,13 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 		skills:          deps.Skills,
 		filestoreTokens: deps.FilestoreTokens,
 		logger:          logging.LoggerOrDefault(deps.Logger),
-	}, nil
+	}
+	if service, ok := deps.CodeSessions.(interface {
+		WithSandboxProvisioner(codesessions.SandboxProvisioner) *codesessions.Service
+	}); ok {
+		service.WithSandboxProvisioner(runner)
+	}
+	return runner, nil
 }
 
 func (r *Runner) Start(ctx context.Context) func() {
@@ -1095,6 +1101,7 @@ func (r *Runner) replaceRuntimeSkillArchives(
 			Source:           skill.Source,
 			SkillVersionUUID: skill.VersionUUID,
 			Directory:        skill.Directory,
+			InstallDirectory: skill.MountDirectory(),
 			S3Bucket:         skill.S3Bucket,
 			S3Key:            skill.S3Key,
 			SizeBytes:        skill.SizeBytes,

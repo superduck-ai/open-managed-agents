@@ -794,6 +794,7 @@ func sessionContextFromCodeSession(record db.CodeSession, identity MCPRuntimeIde
 		"cwd":                      record.WorkDir,
 		"system_prompt":            stringField(config, "system_prompt"),
 		"runtime_skills":           config["runtime_skills"],
+		"skill_catalog_version":    config["skill_catalog_version"],
 		"runtime_tools":            runtimeBuiltinTools(permissions.Tools),
 		"runtime_tool_permissions": runtimeToolPolicies(permissions.Tools),
 		"subagents":                config["subagents"],

@@ -385,7 +385,8 @@
         )
         SELECT #{params.FileUUID}, #{params.FileExternalID}, session.workspace_uuid,
         #{params.Filename}, 'application/zip', 'application/zip', #{params.SizeBytes},
-        jsonb_build_object('skill_source', CAST(#{params.Source} AS text)),
+        jsonb_build_object('skill_source', CAST(#{params.Source} AS text),
+        'skill_package_directory', CAST(#{params.PackageDirectory} AS text)),
         CAST('{}' AS jsonb), CAST(ARRAY[] AS text[]), false,
         #{params.SHA256}, #{params.S3Bucket}, #{params.S3Key},
         session.created_by_api_key_uuid, #{params.Now}

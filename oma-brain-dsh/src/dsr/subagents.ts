@@ -109,6 +109,8 @@ export class DsrSubagentBridge implements SubagentBridge {
       );
       let thread: SubagentThread | undefined;
       try {
+        if (handle.header.parentSession !== this.owner.id)
+          throw new Error("Subagent header parent does not match owner");
         const { events } = await handle.read();
         // 从事件流里还原“这个子 agent 是谁/用什么配置”。
         const descriptor = foldSubagentDescriptor(events);
@@ -129,6 +131,7 @@ export class DsrSubagentBridge implements SubagentBridge {
         );
         thread = {
           id: transcript.dsh_session_id,
+          parentSessionId: handle.header.parentSession,
           name: config.name ?? descriptor.label ?? transcript.dsh_session_id,
           inline: config.inline,
           systemPrompt: config.systemPrompt,

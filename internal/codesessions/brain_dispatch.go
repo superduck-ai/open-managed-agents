@@ -86,6 +86,9 @@ func (s *Service) brainWorkSignal() workerevents.BrainWorkSignal {
 }
 
 func (s *Service) DispatchWorker(ctx context.Context, session db.Session, codeSessionID string) error {
+	if err := s.prepareRepositoryContext(ctx, session, codeSessionID); err != nil {
+		return err
+	}
 	if err := s.db.RequestCodeSessionWorker(ctx, session.OrganizationUUID, session.WorkspaceUUID, codeSessionID, telemetry.TraceParent(ctx)); err != nil {
 		return err
 	}

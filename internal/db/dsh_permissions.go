@@ -100,7 +100,11 @@ func (d *DB) RequestDSHPermission(ctx context.Context, scope DSHScope, request D
 		if _, err := mapper.InsertPermission(ctx, insert); err != nil {
 			return err
 		}
-		publicEvents, err = stampDSHPermissionEvents(publicEvents)
+		at, err := nextSessionPublicationTime(ctx, executor, session.WorkspaceUUID, session.ExternalID)
+		if err != nil {
+			return err
+		}
+		publicEvents, err = stampDSHPermissionEvents(publicEvents, at)
 		if err != nil {
 			return err
 		}
@@ -212,8 +216,7 @@ func (d *DB) DSHPermissionConfirmationPending(ctx context.Context, scope DSHScop
 	return NewSessionEventMapper(d.mapperDB).HasUnprocessedToolConfirmation(ctx, scope.OrganizationUUID, scope.WorkspaceUUID, scope.SessionID, ids)
 }
 
-func stampDSHPermissionEvents(events []SessionEvent) ([]SessionEvent, error) {
-	now := time.Now().UTC().Truncate(time.Microsecond)
+func stampDSHPermissionEvents(events []SessionEvent, now time.Time) ([]SessionEvent, error) {
 	result := append([]SessionEvent(nil), events...)
 	for i := range result {
 		var payload map[string]json.RawMessage
@@ -229,6 +232,7 @@ func stampDSHPermissionEvents(events []SessionEvent) ([]SessionEvent, error) {
 			return nil, err
 		}
 		result[i].Payload, result[i].ProcessedAt, result[i].CreatedAt = raw, now, now
+		result[i].publicationTimeAssigned = true
 	}
 	return result, nil
 }

@@ -39,11 +39,17 @@ export interface Assignment {
     tool_permissions?: ToolPermissions;
     environment_prompt?: string;
     memory_catalog_prompt?: string;
+    skillCatalogVersion?: 1;
     skills?: {
       name: string;
       description: string;
       path: string;
-      version: string;
+      version?: string;
+      source?: string;
+      skill_id?: string;
+      version_uuid?: string;
+      sha256?: string;
+      requested_versions?: string[];
     }[];
   };
 }

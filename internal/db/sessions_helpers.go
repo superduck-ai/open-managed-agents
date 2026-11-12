@@ -210,7 +210,7 @@ func sessionPageParameters(params ListSessionsPageParams) sessionPageMapperParam
 func sessionEventPageParameters(params ListSessionEventsPageParams) sessionEventPageMapperParams {
 	return sessionEventPageMapperParams{
 		WorkspaceUUID: params.WorkspaceUUID, SessionExternalID: params.SessionExternalID,
-		ThreadExternalID: params.ThreadExternalID, PrimaryOnly: params.PrimaryOnly,
+		ThreadExternalID: params.ThreadExternalID, PrimaryOnly: params.PrimaryOnly, ProcessedOnly: params.ProcessedOnly,
 		FetchLimit: params.Limit + 1, Cursor: params.Cursor, Descending: params.Order == "desc",
 		Types: params.Types, CreatedAtGT: params.CreatedAtGT, CreatedAtGTE: params.CreatedAtGTE,
 		CreatedAtLT: params.CreatedAtLT, CreatedAtLTE: params.CreatedAtLTE,

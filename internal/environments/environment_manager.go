@@ -44,16 +44,15 @@ func managedAgentSessionConfig(
 	if err != nil {
 		return nil, err
 	}
-	type runtimeSkill struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Version     string `json:"version"`
-		Path        string `json:"path"`
+	catalogs, err := skillsapi.RuntimeCatalogs(session.AgentSnapshot, runtimeResources.runtimeSkills)
+	if err != nil {
+		return nil, err
 	}
-	skills := make([]runtimeSkill, 0, len(runtimeResources.runtimeSkills))
-	for _, skill := range runtimeResources.runtimeSkills {
-		skills = append(skills, runtimeSkill{skill.Name, skill.Description, skill.Version, path.Join(rcloneSkillsDestination, skill.Directory, "SKILL.md")})
+	rootSkills := catalogs[""].Skills
+	if rootSkills == nil {
+		rootSkills = []skillsapi.RuntimeCatalogEntry{}
 	}
+	delete(catalogs, "")
 	body := map[string]any{
 		"origin":                "managed_agents_api",
 		"model":                 modelIDFromAgentSnapshot(session.AgentSnapshot),
@@ -61,7 +60,9 @@ func managedAgentSessionConfig(
 		"outcomes":              []any{},
 		"append_system_prompt":  environmentPrompt,
 		"memory_catalog_prompt": memoryPrompt,
-		"runtime_skills":        skills,
+		"runtime_skills":        rootSkills,
+		"skill_catalog_version": 1,
+		"agent_skills":          catalogs,
 		"worker_transport":      runtimeResources.workerTransport,
 
 		"sandbox_memory_stores": memoryStoreDefinitions(runtimeResources.memoryMounts),
@@ -83,8 +84,8 @@ func managedAgentSessionConfig(
 		directories := make(map[string]string, len(runtimeSkills))
 		for _, skill := range runtimeSkills {
 			prefix := skill.Source + ":" + skill.SkillID + ":"
-			directories[prefix+skill.Version] = skill.Directory
-			directories[prefix+skill.RequestedVersion] = skill.Directory
+			directories[prefix+skill.Version] = skill.MountDirectory()
+			directories[prefix+skill.RequestedVersion] = skill.MountDirectory()
 		}
 		body["skill_directories"] = directories
 	}

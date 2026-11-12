@@ -170,3 +170,47 @@ PostgreSQL 外键。
 - Runner 不写 legacy mount metadata，E2B runtime 不创建 skill volume；
 - catalog soft delete/prune 不破坏活动 Session Skill File，读取路径不 JOIN version 表；
 - Session filesystem cleanup 会软删除 Skill Archive Resource 与 File 快照，但不删除 catalog object。
+
+## Built-in tool config response types
+
+The public toolset schema identifies each builtin config by name. Request type is optional, but response type must be present and equal that name. Public Agent create/Get/list/version responses and Session/Thread Agent snapshots project a missing builtin config type from its validated name. The projection preserves explicit values, all enabled/default/permission fields and unknown extension fields. MCP and custom tool schemas are left unchanged.
+
+This response-only projection also covers existing stored versions without updating their version numbers, database JSON, runtime permission settings or durable transcript/event payloads. Brain remains the sole public runtime event writer. It does not grant a tool, change ask/deny policy or stand in for public permission evidence. Pure tests replay the eight real907e cold Read policy payloads and cover Agent/Thread serializers, immutable snapshot identity, explicit values and malformed/nonbuiltin inputs. The Skills verifier keeps its mandatory response-type checks. Contract source: https://platform.claude.com/docs/en/managed-agents/tools#config-entry-types-in-the-sdks.
+
+Fresh builtin/MCP permission calls resolved to always_ask now include evaluation.type=always_ask alongside evaluated_permission=ask. The existing auto indeterminate evaluation takes precedence, denied unavailable tools keep no evaluation, and custom calls keep neither policy field. The actual ask decision, requires_action/confirmation flow, durable event IDs, original/mirror mapping and receipt replay remain unchanged; old persisted events are not rewritten. The common payload builder is used by DSR and the legacy permission path, so both emit the same current public metadata contract.
+
+### DSR repository discovery
+
+DSR cloud Sessions with Read enabled discover the checked-out root
+`.claude/skills/<directory>/SKILL.md` manifests before initial worker dispatch.
+The Runner uses its existing sandbox provisioning path and reads only frontmatter
+for the catalogue. This lifecycle operation does not invoke a model tool or execute
+repository code. Invalid frontmatter and layouts outside that exact one-level path
+are not announced. Attached skills and repository skills retain their separate paths,
+including when names match. Read-disabled Sessions retain their existing path.
+
+The combined names, descriptions and manifest paths enter the existing durable
+DSR registration context snapshot. Candidate claims for Read-enabled Git repository
+Sessions require that snapshot, so an accepted input cannot race discovery and
+freeze an empty catalogue. Initial dispatch freezes using the actual persisted
+Code Session epoch and tenant scope before requesting work. Registration and owner
+replacement reuse that same snapshot, including an empty discovery result. They do
+not rescan commits pushed during the same Session. A fresh Session scans its own
+actual checkout. Other claim paths, Brain public publication, transcript replay and
+resource cleanup retain their existing contracts.
+
+Local regression covers the exact directory level, malformed and foreign paths,
+multiline metadata, same-name skills, Read-disabled gating, attached entries and
+unknown JSON fields. Isolated PostgreSQL regression covers claim readiness before
+and after freezing, registration and replacement-owner catalogue stability. Real
+model activation remains a separate fresh platform regression.
+
+The Runner constructor binds its completed instance back to the Code Session
+service used by Runner dispatch, before any workers start. HTTP handler service
+wiring is independent and cannot supply that dependency for the Runner service.
+Invalid construction does not install a partial provisioner. Constructor regression
+checks the actual resolver identity and one-time binding; it does not start workers
+or provision external resources. This closes the production composition omission
+that left repository context preparation returning `sandbox is unavailable` while
+recovery repeatedly rotated epochs. The durable context-ready claim barrier remains
+in place; no claim eligibility bypass or capacity/timeout change is introduced.

@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"encoding/json"
-	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/jsoncanonical"
@@ -21,6 +20,7 @@ type DSHPublicEvent struct {
 	Events       []SessionEvent
 	Thread       *SessionThread
 	DSHSessionID string
+	StoredEvents []DSHStoredEvent
 }
 
 type DSHPublishResult struct {
@@ -114,7 +114,11 @@ func startDSHInput(ctx context.Context, executor yourbatis.Executor, scope DSHSc
 	if _, err := mapper.StartExecution(ctx, scope, execution.InputID); err != nil {
 		return SessionEvent{}, false, err
 	}
-	event, changed, err := NewSessionEventMapper(executor).MarkInputProcessed(ctx, scope.WorkspaceUUID, scope.SessionID, execution.InputID, time.Now().UTC())
+	at, err := nextSessionPublicationTime(ctx, executor, scope.WorkspaceUUID, scope.SessionID)
+	if err != nil {
+		return SessionEvent{}, false, err
+	}
+	event, changed, err := NewSessionEventMapper(executor).MarkInputProcessed(ctx, scope.WorkspaceUUID, scope.SessionID, execution.InputID, at)
 	return event.event(), changed, err
 }
 
@@ -177,7 +181,7 @@ func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPu
 				return err
 			}
 			if found {
-				repaired, err := replayDSHPublicHistory(ctx, executor, session, primary, original, item.Events)
+				repaired, err := replayDSHPublicHistory(ctx, executor, session, primary, original, item.Events, item.StoredEvents)
 				if err != nil {
 					return err
 				}
@@ -185,7 +189,7 @@ func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPu
 				result.Duplicates++
 				continue
 			}
-			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, false); err != nil {
+			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, false, item.StoredEvents); err != nil {
 				return err
 			}
 			if item.Thread != nil {
@@ -203,11 +207,15 @@ func (d *DB) PublishDSHEvents(ctx context.Context, scope DSHScope, batch []DSHPu
 					}
 				}
 			}
-			events, err := insertDSHHistory(ctx, executor, &session, primary, item.Events)
+			persisted, err := dshEventsForStorage(ctx, executor, scope, item.Events, item.StoredEvents)
 			if err != nil {
 				return err
 			}
-			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true); err != nil {
+			events, err := insertDSHHistory(ctx, executor, &session, primary, persisted)
+			if err != nil {
+				return err
+			}
+			if err := validateDSHPublicHistory(ctx, executor, session, primary, item.Events, true, item.StoredEvents); err != nil {
 				return err
 			}
 			result.Changes.Events = append(result.Changes.Events, events...)

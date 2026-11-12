@@ -5,14 +5,10 @@ import (
 	"encoding/json"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
-type runtimeSkillConfig struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Version     string `json:"version"`
-	Path        string `json:"path"`
-}
+type runtimeSkillConfig = skillsapi.RuntimeCatalogEntry
 
 type managedAgentRuntimeConfigSchema struct {
 	Model               string                 `json:"model"`

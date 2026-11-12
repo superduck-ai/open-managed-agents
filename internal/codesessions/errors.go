@@ -14,6 +14,8 @@ var errMessageImageRejected = errors.New("message image source rejected")
 var errNativeTrajectoryPayload = errors.New("invalid DSH event envelope")
 
 var errRuntimeSubagentConfig = errors.New("invalid runtime subagent configuration")
+var errRuntimeSkillCatalog = errors.New("invalid frozen subagent Skill catalog")
+var errRepositorySkillRoot = errors.New("invalid repository Skill root")
 var errSandboxUnavailable = errors.New("sandbox is unavailable")
 var errSessionIngressIdentity = errors.New("session ingress identity does not match an active code session")
 

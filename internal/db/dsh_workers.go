@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/superduck-ai/yourbatis"
@@ -56,11 +58,22 @@ func (d *DB) GetDSHContextSnapshot(ctx context.Context, scope DSHScope) ([]byte,
 	return snapshot, err
 }
 
+type DSHContextFreezeReceipt struct {
+	Snapshot    []byte
+	Written     bool
+	StatementAt time.Time
+}
+
 func (d *DB) FreezeDSHContext(ctx context.Context, scope DSHScope, candidate []byte) ([]byte, error) {
+	receipt, err := d.FreezeDSHContextWithReceipt(ctx, scope, candidate)
+	return receipt.Snapshot, err
+}
+
+func (d *DB) FreezeDSHContextWithReceipt(ctx context.Context, scope DSHScope, candidate []byte) (DSHContextFreezeReceipt, error) {
+	var receipt DSHContextFreezeReceipt
 	if len(candidate) == 0 {
-		return nil, ErrInvalidState
+		return receipt, ErrInvalidState
 	}
-	var snapshot []byte
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		if err := lockDSHRegistration(ctx, executor, scope); err != nil {
 			return err
@@ -69,14 +82,16 @@ func (d *DB) FreezeDSHContext(ctx context.Context, scope DSHScope, candidate []b
 		if _, err := mapper.EnsureState(ctx, scope); err != nil {
 			return err
 		}
-		if _, err := mapper.FreezeContext(ctx, scope, candidate); err != nil {
+		row, err := mapper.FreezeContext(ctx, scope, candidate)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		var err error
-		snapshot, _, err = mapper.ContextSnapshot(ctx, scope)
+		receipt.Written = err == nil
+		receipt.StatementAt = row.StatementAt
+		receipt.Snapshot, _, err = mapper.ContextSnapshot(ctx, scope)
 		return err
 	})
-	return snapshot, err
+	return receipt, err
 }
 
 func lockDSHRegistration(ctx context.Context, executor yourbatis.Executor, scope DSHScope) error {

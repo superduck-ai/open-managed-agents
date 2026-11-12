@@ -177,7 +177,19 @@ func (h *ControlHandler) register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	enabled, export := h.lifecycle.Telemetry(r.Context(), scope)
-	writeJSON(w, registrationResponse{Context: snapshot, Epoch: strconv.FormatInt(scope.Epoch, 10), Protocol: "1", Lease: leaseConfig{20000, 10000, 6000}, ObservabilityEnabled: enabled, TraceExport: export})
+	response := registrationResponse{Context: snapshot, Epoch: strconv.FormatInt(scope.Epoch, 10), Protocol: "1", Lease: leaseConfig{20000, 10000, 6000}, ObservabilityEnabled: enabled, TraceExport: export}
+	if observer, ok := h.lifecycle.(interface {
+		ObserveOwnedRepositoryRegistration(context.Context, db.DSHScope, json.RawMessage, RegistrationIssue)
+	}); ok {
+		issued := &registrationIssueWriter{ResponseWriter: w, issue: RegistrationIssue{Complete: true}}
+		writeJSON(issued, response)
+		issue := issued.issue
+		issue.Complete = issue.Complete && issued.wrote
+		issue.ResponseEpoch, _ = strconv.ParseInt(response.Epoch, 10, 64)
+		observer.ObserveOwnedRepositoryRegistration(r.Context(), scope, response.Context, issue)
+		return
+	}
+	writeJSON(w, response)
 }
 
 func (h *ControlHandler) heartbeat(w http.ResponseWriter, r *http.Request) {

@@ -47,6 +47,7 @@ type sessionEventPageMapperParams struct {
 	SessionExternalID string
 	ThreadExternalID  string
 	PrimaryOnly       bool
+	ProcessedOnly     bool
 	FetchLimit        int
 	Cursor            *SessionEventPageCursor
 	Descending        bool
@@ -59,6 +60,7 @@ type sessionEventPageMapperParams struct {
 
 // SessionEventMapper contains queries whose primary table is session_events.
 type SessionEventMapper interface {
+	LatestProcessed(ctx context.Context, workspaceUUID, sessionExternalID string) (sessionEventRow, bool, error)
 	HasUnprocessedToolConfirmation(ctx context.Context, organizationUUID, workspaceUUID, sessionExternalID string, toolUseIDs []string) (bool, error)
 	MarkInputProcessed(ctx context.Context, workspaceUUID, sessionExternalID, eventExternalID string, processedAt time.Time) (sessionEventRow, bool, error)
 	HasInputBlockingIdle(ctx context.Context, workspaceUUID, sessionExternalID, threadID string, at time.Time) (bool, error)

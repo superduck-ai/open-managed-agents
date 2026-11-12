@@ -36,24 +36,7 @@ func (s *Store) PreparePublic(ctx context.Context, organizationUUID, workspaceUU
 		if err != nil {
 			return nil, err
 		}
-		requestID, source, key, err := assistantEchoKey(events[i].Payload, event.EventType)
-		if err != nil {
-			return nil, err
-		}
-		if key != "" {
-			var stored map[string]any
-			if err := jsonv2.Unmarshal(event.Payload, &stored); err != nil {
-				return nil, err
-			}
-			stored["model_request_start_id"] = requestID
-			stored["_echo_source"] = source
-			stored["_echo_key"] = key
-			event.Payload, err = jsonv2.Marshal(stored)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if err := storeTraceContext(event); err != nil {
+		if err := preparePublicEventMetadata(events[i].Payload, event); err != nil {
 			return nil, err
 		}
 	}
@@ -328,4 +311,28 @@ func (s *Store) skipPersistedInternalEvents(ctx context.Context, workspaceUUID s
 		missing = append(missing, event)
 	}
 	return missing, nil
+}
+
+func preparePublicEventMetadata(original json.RawMessage, event *db.SessionEvent) error {
+	requestID, source, key, err := assistantEchoKey(original, event.EventType)
+	if err != nil {
+		return err
+	}
+	if key != "" {
+		var stored map[string]any
+		if err := jsonv2.Unmarshal(event.Payload, &stored); err != nil {
+			return err
+		}
+		stored["model_request_start_id"] = requestID
+		stored["_echo_source"] = source
+		stored["_echo_key"] = key
+		event.Payload, err = jsonv2.Marshal(stored)
+		if err != nil {
+			return err
+		}
+	}
+	if err := storeTraceContext(event); err != nil {
+		return err
+	}
+	return nil
 }

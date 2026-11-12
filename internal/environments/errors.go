@@ -9,6 +9,7 @@ import (
 )
 
 var (
+	errRepositorySkillScan         = errors.New("repository Skill catalog scan failed")
 	errSandboxEndpointUnsupported  = errors.New("sandbox provider does not support MCP endpoints")
 	errOutputsAliasCreate          = errors.New("session outputs alias creation failed")
 	errWorkerDispatchUnavailable   = errors.New("code session service does not support worker dispatch")

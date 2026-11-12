@@ -231,7 +231,7 @@ func (e dshExecution) Publish(ctx context.Context, scope db.DSHScope, raws []jso
 	if err := e.validatePublicThreads(ctx, scope, batch); err != nil {
 		return dsh.PublishResponse{}, err
 	}
-	result, err := publishDSHBatch(ctx, e.handler.db, scope, batch)
+	result, err := publishDSHBatch(ctx, e.handler.service.eventPayloads, scope, batch)
 	if err != nil {
 		return dsh.PublishResponse{}, err
 	}

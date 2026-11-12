@@ -138,6 +138,7 @@ type SessionSkillArchiveResourceInput struct {
 	Source           string
 	SkillVersionUUID string
 	Directory        string
+	InstallDirectory string
 	S3Bucket         string
 	S3Key            string
 	SizeBytes        int64

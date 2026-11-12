@@ -24,6 +24,7 @@ export interface SubagentConfig {
 
 export interface SubagentThread {
   id: string;
+  parentSessionId?: string;
   inline?: boolean;
   name: string;
   systemPrompt: string;
@@ -198,7 +199,10 @@ export interface SessionRuntimeHooks {
   onDiagnostic?(diagnostic: RuntimeDiagnostic): void;
   onOpen?(session: Session): Promise<void>;
   flushLog?(session: Session): Promise<void>;
-  onExternalMcpConnectionFailure?(serverName: string, session: Session): Promise<void>;
+  onExternalMcpConnectionFailure?(
+    serverName: string,
+    session: Session,
+  ): Promise<void>;
   onExternalMcpAuthenticationFailure?(
     serverName: string,
     phase: "discovery" | "tool_call" | undefined,

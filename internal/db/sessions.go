@@ -131,26 +131,27 @@ type SessionResourceMemoryStore struct {
 }
 
 type SessionEvent struct {
-	threadStatusMirror bool
-	StatusThreadID     string
-	UsageIncrement     *SessionUsageIncrement
-	PayloadBlobUUID    *string
-	ToolUseID          *string
-	TraceParent        *string
-	TraceState         *string
-	UUID               string
-	ExternalID         string
-	OrganizationUUID   string
-	WorkspaceUUID      string
-	SessionUUID        string
-	SessionExternalID  string
-	ThreadUUID         *string
-	ThreadExternalID   *string
-	EventType          string
-	Payload            json.RawMessage
-	ProcessedAt        time.Time
-	CreatedAt          time.Time
-	DeletedAt          *time.Time
+	threadStatusMirror      bool
+	publicationTimeAssigned bool
+	StatusThreadID          string
+	UsageIncrement          *SessionUsageIncrement
+	PayloadBlobUUID         *string
+	ToolUseID               *string
+	TraceParent             *string
+	TraceState              *string
+	UUID                    string
+	ExternalID              string
+	OrganizationUUID        string
+	WorkspaceUUID           string
+	SessionUUID             string
+	SessionExternalID       string
+	ThreadUUID              *string
+	ThreadExternalID        *string
+	EventType               string
+	Payload                 json.RawMessage
+	ProcessedAt             time.Time
+	CreatedAt               time.Time
+	DeletedAt               *time.Time
 }
 
 // SessionUsageIncrement contains measured counters; nil means unavailable.
@@ -169,6 +170,7 @@ type SessionPageCursor struct {
 
 type SessionEventPageCursor struct {
 	ExternalID string
+	OrderingAt *time.Time
 }
 
 type SessionThreadPageCursor struct {
@@ -198,6 +200,7 @@ type ListSessionEventsPageParams struct {
 	SessionExternalID string
 	ThreadExternalID  string
 	PrimaryOnly       bool
+	ProcessedOnly     bool
 	Limit             int
 	Cursor            *SessionEventPageCursor
 	Order             string

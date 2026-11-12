@@ -63,6 +63,7 @@ type dshPermissionInsert struct {
 }
 
 type DSHExecutionMapper interface {
+	HasSession(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (bool, error)
 	NextExecution(ctx context.Context, scope DSHScope) (dshInputExecutionRow, bool, error)
 	InterruptExecution(ctx context.Context, scope DSHScope, threadID string) (int64, error)
 	FindCode(ctx context.Context, organizationUUID, workspaceUUID, sessionUUID string) (dshCodeRow, bool, error)

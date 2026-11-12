@@ -57,6 +57,7 @@ export interface RegistrationContext {
   custom_system_prompt?: string;
   append_system_prompt?: string;
   memory_catalog_prompt?: string;
+  skill_catalog_version?: 1;
   runtime_skills?: import("../assignment.ts").Assignment["launch"]["skills"];
   runtime_tools: string[];
   runtime_tool_permissions?: import("../runtime/contracts.ts").ToolPermissions;
@@ -66,6 +67,8 @@ export interface RegistrationContext {
     string,
     {
       mcp_config: unknown;
+      skill_catalog_version?: 1;
+      runtime_skills?: import("../assignment.ts").Assignment["launch"]["skills"];
       runtime_tool_permissions?: import("../runtime/contracts.ts").ToolPermissions;
     }
   >;

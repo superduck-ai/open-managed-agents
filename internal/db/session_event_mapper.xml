@@ -104,13 +104,20 @@
         ORDER BY id DESC LIMIT 1
     </select>
 
-    <select id="ListPage" resultType="sessionEventRow">
+    <select id="LatestProcessed" result="optional" resultType="sessionEventRow">
+ SELECT <include refid="columns"/> FROM session_events
+ WHERE workspace_uuid = #{workspaceUUID} AND session_external_id = #{sessionExternalID}
+ AND processed_at IS NOT NULL AND deleted_at IS NULL
+ ORDER BY processed_at DESC, id DESC LIMIT 1
+ </select>
+ <select id="ListPage" resultType="sessionEventRow">
         SELECT <include refid="columns"/>
         FROM session_events
         <where>
             workspace_uuid = #{params.WorkspaceUUID}
             AND session_external_id = #{params.SessionExternalID}
             AND deleted_at IS NULL
+ <if test="params.ProcessedOnly">AND processed_at IS NOT NULL</if>
             <if test="params.ThreadExternalID != ''">
                 AND thread_external_id = #{params.ThreadExternalID}
             </if>
@@ -137,7 +144,7 @@
                 AND (COALESCE(processed_at, created_at), id)
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
                 (
-                    SELECT COALESCE(processed_at, created_at), id FROM session_events
+                    SELECT <choose><when test="params.Cursor.OrderingAt != nil">CAST(#{params.Cursor.OrderingAt} AS timestamptz)</when><otherwise>COALESCE(processed_at, created_at)</otherwise></choose>, id FROM session_events
                     WHERE workspace_uuid = #{params.WorkspaceUUID}
                     AND session_external_id = #{params.SessionExternalID}
                     AND external_id = #{params.Cursor.ExternalID}

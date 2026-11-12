@@ -387,7 +387,7 @@ func TestFileMapperFileAndSkillBuilderContracts(t *testing.T) {
 			bound:             buildFileMapperInsertSkillArchiveFile(yourbatis.DialectPostgres, skillInsertParams),
 			wantID:            "FileMapper.InsertSkillArchiveFile",
 			wantKind:          yourbatis.StatementInsert,
-			wantArgumentNames: []string{"params.FileUUID", "params.FileExternalID", "params.Filename", "params.SizeBytes", "params.Source", "params.SHA256", "params.S3Bucket", "params.S3Key", "params.Now", "params.SessionUUID", "params.WorkspaceUUID"},
+			wantArgumentNames: []string{"params.FileUUID", "params.FileExternalID", "params.Filename", "params.SizeBytes", "params.Source", "params.PackageDirectory", "params.SHA256", "params.S3Bucket", "params.S3Key", "params.Now", "params.SessionUUID", "params.WorkspaceUUID"},
 			wantSQLFragments:  []string{"INSERT INTO files", "skill_source", "FROM sessions session"},
 		}},
 	}

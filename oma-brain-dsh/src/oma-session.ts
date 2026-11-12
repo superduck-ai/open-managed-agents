@@ -6,7 +6,10 @@ import { configureOmaModel } from "./model-configs.ts";
 import { omaModelOptions } from "./model.ts";
 import * as OmaSandboxProvider from "./oma-sandbox/index.ts";
 import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
-import type { SessionRuntimeConfig } from "./runtime/contracts.ts";
+import type {
+  SubagentThread,
+  SessionRuntimeConfig,
+} from "./runtime/contracts.ts";
 import { WebClient } from "./web-tools/client.ts";
 import * as WebTools from "./web-tools/index.ts";
 
@@ -25,6 +28,24 @@ export function omaRuntimeConfig(
       thread,
     );
   const provider = `oma:${assignment.session_id}`;
+  const childSkills = (thread: SubagentThread) => {
+    if (
+      assignment.launch.skillCatalogVersion === 1 &&
+      thread.parentSessionId !== assignment.session_id
+    )
+      throw new Error("Skill catalog requires authoritative root parent");
+    if (thread.inline) return assignment.launch.skills;
+    const snapshot = assignment.subagent_contexts[thread.name];
+    if (!snapshot) throw new Error("Missing frozen subagent context");
+    if (assignment.launch.skillCatalogVersion !== 1)
+      return assignment.launch.skills;
+    if (
+      snapshot.skill_catalog_version !== 1 ||
+      !Array.isArray(snapshot.runtime_skills)
+    )
+      throw new Error("Missing frozen subagent Skill catalog");
+    return snapshot.runtime_skills;
+  };
   return {
     id: assignment.session_id,
     provider,
@@ -35,6 +56,7 @@ export function omaRuntimeConfig(
     externalMcpConfig: assignment.external_mcp_config,
     externalMcpFetch: fetcher(),
     threadMcpContext: async (thread) => {
+      if (assignment.launch.skillCatalogVersion === 1) childSkills(thread);
       const snapshot = thread.inline
         ? undefined
         : assignment.subagent_contexts[thread.name];
@@ -51,7 +73,10 @@ export function omaRuntimeConfig(
     toolPermissions: { ...assignment.launch.tool_permissions },
     systemPrompt: rootSystemPrompt(assignment.launch),
     subagentSystemPrompt: (thread) =>
-      childSystemPrompt(assignment.launch, thread),
+      childSystemPrompt(
+        { ...assignment.launch, skills: childSkills(thread) },
+        thread,
+      ),
     setup: async (scope) => {
       await scope.plugin(LlmAiSdk, {
         providers: [provider],

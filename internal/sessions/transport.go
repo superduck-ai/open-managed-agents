@@ -11,6 +11,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
+	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -32,6 +33,7 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 	}
 	h := &Handler{
 		secretService: secretService,
+		skillBindings: skillsapi.NewRuntimeResolver(database),
 		eventPayloads: codeSessionService.EventPayloadStore(),
 		cfg:           cfg,
 		db:            database,

@@ -478,3 +478,100 @@ test.each([
     expect(calls[0]!.path).toEndWith("/inputs/input/finish");
   },
 );
+
+test("versioned Skill context requires complete immutable child catalogue", async () => {
+  const skill = {
+    name: "demo",
+    description: "fixed",
+    version: "A",
+    path: "/skills/version-A/SKILL.md",
+    source: "custom",
+    skill_id: "skill_a",
+    version_uuid: "00000000-0000-4000-8000-000000000001",
+    sha256: "a".repeat(64),
+    requested_versions: ["A"],
+  };
+  const context = {
+    ...registration.context,
+    skill_catalog_version: 1 as const,
+    runtime_skills: [],
+    subagent_contexts: {
+      worker: {
+        mcp_config: {},
+        skill_catalog_version: 1 as const,
+        runtime_skills: [skill],
+      },
+    },
+  };
+  for (const mutate of [
+    (v: any) => {
+      delete v.subagent_contexts.worker.runtime_skills;
+    },
+    (v: any) => {
+      v.subagent_contexts.worker.runtime_skills = null;
+    },
+    (v: any) => {
+      v.subagent_contexts.worker.skill_catalog_version = 2;
+    },
+    (v: any) => {
+      v.subagent_contexts.worker.runtime_skills[0].sha256 = "wrong";
+    },
+    (v: any) => {
+      v.subagent_contexts.worker.runtime_skills[0].version_uuid = "wrong";
+    },
+    (v: any) => {
+      v.subagent_contexts.worker.runtime_skills[0].requested_versions = [];
+    },
+  ]) {
+    const broken = structuredClone(context);
+    mutate(broken);
+    const { client } = fixture(() =>
+      Response.json({ ...registration, context: broken }),
+    );
+    await expect(client.register()).rejects.toThrow();
+  }
+  const { client } = fixture(() => Response.json({ ...registration, context }));
+  expect((await client.register()).context).toEqual(context);
+});
+
+test("versioned root repository catalogue retains actual three-field schema", async () => {
+  const context = {
+    ...registration.context,
+    skill_catalog_version: 1,
+    runtime_skills: [
+      {
+        name: "owned",
+        description: "actual repository manifest",
+        path: "/repo/.claude/skills/owned/SKILL.md",
+      },
+    ],
+  };
+  const { client } = fixture(() => Response.json({ ...registration, context }));
+  expect((await client.register()).context).toMatchObject(context);
+});
+
+test("repository three-field allowance never accepts partial attached identity", async () => {
+  for (const partial of [
+    { skill_id: "skill_a" },
+    { source: null },
+    { requested_versions: ["latest"] },
+    { version_uuid: "00000000-0000-4000-8000-000000000001" },
+  ]) {
+    const context = {
+      ...registration.context,
+      skill_catalog_version: 1,
+      runtime_skills: [
+        {
+          name: "owned",
+          description: "repository",
+          path: "/repo/.claude/skills/owned/SKILL.md",
+          ...partial,
+        },
+      ],
+    };
+    const { client } = fixture(() =>
+      Response.json({ ...registration, context }),
+    );
+    await expect(client.register()).rejects.toThrow();
+  }
+});

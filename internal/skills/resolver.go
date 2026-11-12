@@ -3,10 +3,8 @@ package skills
 import (
 	"context"
 	"encoding/json"
-	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -22,6 +20,8 @@ type RuntimeSkill struct {
 	RequestedVersion string
 	Version          string
 	Directory        string
+	InstallDirectory string
+	Bindings         []RuntimeSkillBinding
 	Name             string
 	Description      string
 	S3Bucket         string
@@ -54,80 +54,21 @@ func (r *RuntimeResolver) ResolveAgentSnapshot(ctx context.Context, workspaceUUI
 	if r == nil {
 		return nil, nil
 	}
-	refs, err := runtimeSkillRefs(snapshot)
+	scopes, err := runtimeSkillScopes(snapshot)
 	if err != nil {
 		return nil, err
 	}
-	if len(refs) == 0 {
-		return nil, nil
-	}
-
-	resolved := make([]RuntimeSkill, 0, len(refs))
-	seenRefs := map[string]struct{}{}
-	seenResolved := map[string]int{}
-	dirs := map[string]string{}
-	for _, ref := range refs {
-		ref.Type = strings.TrimSpace(ref.Type)
-		ref.SkillID = strings.TrimSpace(ref.SkillID)
-		ref.Version = firstNonEmpty(ref.Version, "latest")
-		refKey := ref.Type + "\x00" + ref.SkillID + "\x00" + ref.Version
-		if _, ok := seenRefs[refKey]; ok {
-			continue
-		}
-		seenRefs[refKey] = struct{}{}
-
-		skill, err := r.resolveRef(ctx, workspaceUUID, ref)
-		if err != nil {
-			return nil, err
-		}
-		resolvedKey := skill.Source + "\x00" + skill.SkillID + "\x00" + skill.Version
-		if index, ok := seenResolved[resolvedKey]; ok {
-			if ref.Version == "latest" {
-				resolved[index].RequestedVersion = "latest"
-			}
-			continue
-		}
-		dirKey := strings.TrimSpace(skill.Directory)
-		if previous, ok := dirs[dirKey]; ok && previous != resolvedKey {
-			return nil, fmt.Errorf("skill install directory %q is used by multiple skills", dirKey)
-		}
-		dirs[dirKey] = resolvedKey
-		seenResolved[resolvedKey] = len(resolved)
-		resolved = append(resolved, skill)
-	}
-	return resolved, nil
+	return r.resolveScopedSkills(ctx, workspaceUUID, scopes)
 }
 
 func runtimeSkillRefs(snapshot json.RawMessage) ([]runtimeSkillRef, error) {
-	if len(snapshot) == 0 || strings.TrimSpace(string(snapshot)) == "null" {
-		return nil, nil
+	scopes, err := runtimeSkillScopes(snapshot)
+	if err != nil {
+		return nil, err
 	}
-	var roster runtimeSkillSnapshot
-	if err := jsonv2.Unmarshal(snapshot, &roster, jsonv2.MatchCaseInsensitiveNames(true), json.MatchCaseSensitiveDelimiter(true)); err != nil {
-		return nil, fmt.Errorf("decode agent snapshot: %w", err)
-	}
-	refs := roster.Skills
-	if roster.Multiagent != nil {
-		children := roster.Multiagent.Agents
-		if roster.Multiagent.Type == "multiagent_20261001" {
-			children = nil
-			for _, setting := range []*runtimeSkillDelegation{roster.Multiagent.Subagents, roster.Multiagent.Workflows} {
-				if setting != nil && setting.Type == "enabled" {
-					children = append(children, setting.PredefinedAgents...)
-				}
-			}
-		}
-		for _, child := range children {
-			refs = append(refs, child.Skills...)
-		}
-	}
-	for i, ref := range refs {
-		if strings.TrimSpace(ref.Type) != "anthropic" && strings.TrimSpace(ref.Type) != "custom" {
-			return nil, fmt.Errorf("skill %d type must be anthropic or custom", i)
-		}
-		if strings.TrimSpace(ref.SkillID) == "" {
-			return nil, fmt.Errorf("skill %d id must be non-empty", i)
-		}
+	var refs []runtimeSkillRef
+	for _, scope := range scopes {
+		refs = append(refs, scope.refs...)
 	}
 	return refs, nil
 }
@@ -150,10 +91,7 @@ func (r *RuntimeResolver) resolveBuiltin(ctx context.Context, ref runtimeSkillRe
 	record, err := r.db.GetBuiltinSkillVersion(ctx, ref.SkillID, ref.Version)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			if ref.Version == "latest" {
-				return RuntimeSkill{}, fmt.Errorf("built-in skill not found: %s", ref.SkillID)
-			}
-			return RuntimeSkill{}, fmt.Errorf("built-in skill version not found: %s@%s", ref.SkillID, ref.Version)
+			return RuntimeSkill{}, bindingReferenceError(ref, err)
 		}
 		return RuntimeSkill{}, err
 	}
@@ -186,10 +124,7 @@ func (r *RuntimeResolver) resolveCustom(ctx context.Context, workspaceUUID strin
 	}
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			if ref.Version == "latest" {
-				return RuntimeSkill{}, fmt.Errorf("custom skill latest version not found: %s", ref.SkillID)
-			}
-			return RuntimeSkill{}, fmt.Errorf("custom skill version not found: %s@%s", ref.SkillID, ref.Version)
+			return RuntimeSkill{}, bindingReferenceError(ref, err)
 		}
 		return RuntimeSkill{}, err
 	}
@@ -210,7 +145,10 @@ func (r *RuntimeResolver) resolveCustom(ctx context.Context, workspaceUUID strin
 }
 
 type runtimeSkillAgent struct {
-	Skills []runtimeSkillRef `json:"skills"`
+	ID      string            `json:"id"`
+	Version int               `json:"version"`
+	Name    string            `json:"name"`
+	Skills  []runtimeSkillRef `json:"skills"`
 }
 
 type runtimeSkillDelegation struct {

@@ -3,7 +3,7 @@ import { resetTestDom } from '../../../test/setup';
 import type { Channel } from './api';
 import type { WizardValue } from './ChannelWizardForm';
 
-const { render, screen, fireEvent, cleanup, waitFor } = await import('@testing-library/react');
+const { render, screen, fireEvent, cleanup, waitFor, within } = await import('@testing-library/react');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { I18nProvider } = await import('../../../shared/i18n');
 const { ChannelWizardFormPage } = await import('./ChannelWizardFormPage');
@@ -227,8 +227,9 @@ test('编辑回显默认资源，并可分别切回不挂载后保存', async ()
   const navigated = mount(saved, { ...initialValue, ...saved, agentId: 'agent-test', environmentId: 'env-test' });
   fireEvent.click(screen.getByRole('button', { name: '下一步' }));
   fireEvent.click(screen.getByRole('button', { name: '下一步' }));
-  await screen.findByText('测试记忆');
-  await screen.findByText('测试凭证库');
+  const side = within(screen.getByRole('complementary', { name: '进度' }));
+  await side.findByText('测试记忆');
+  await side.findByText('测试凭证库');
   for (const name of ['默认 Memory', '默认 Vault']) {
     fireEvent.click(screen.getByRole('combobox', { name }));
     fireEvent.click(await screen.findByRole('option', { name: '不挂载' }));
@@ -236,6 +237,41 @@ test('编辑回显默认资源，并可分别切回不挂载后保存', async ()
   fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
   await waitFor(() => expect(navigated).toHaveBeenCalled());
   expect(body).toEqual(expect.objectContaining({ memory_store_id: null, vault_id: null }));
+});
+
+test('资源卡片按资源类型使用与菜单一致的图标', async () => {
+  resetTestDom('/');
+  globalThis.fetch = (async (input) => Response.json(targets(String(input)))) as typeof fetch;
+  mount(null, {
+    ...initialValue,
+    agentId: 'agent-test',
+    environmentId: 'env-test',
+    memory_store_id: 'mem-test',
+    vault_id: 'vault-test',
+    gitResource: {
+      url: 'https://git.example.com/team/knowledge.git',
+      authorizationToken: '',
+      checkoutType: '',
+      checkoutValue: '',
+      mountPath: '/workspace/knowledge',
+    },
+  });
+  const side = within(await screen.findByRole('complementary', { name: '进度' }));
+  const expected = [
+    { kind: 'environment', label: '测试环境', icon: 'lucide-server' },
+    { kind: 'memory', label: '测试记忆', icon: 'lucide-brain' },
+    { kind: 'vault', label: '测试凭证库', icon: 'lucide-vault' },
+    { kind: 'git', label: 'https://git.example.com/team/knowledge.git', icon: 'lucide-git-branch' },
+  ];
+  for (const item of expected) {
+    const row = (await side.findByText(item.label)).closest('[data-resource-kind]');
+    if (!row || row.getAttribute('data-resource-kind') !== item.kind) {
+      throw new Error(`资源卡片缺少 ${item.kind} 行`);
+    }
+    if (!row.querySelector(`svg.${item.icon}`)) {
+      throw new Error(`${item.kind} 行的图标应与菜单一致（${item.icon}）`);
+    }
+  }
 });
 
 test('授权替换应用 ID 时清除旧密钥，手动路径需要重新填写', async () => {

@@ -13,10 +13,12 @@ import {
   StepStrategy,
   WizardSideCards,
   WizardStepper,
+  type WizardSideResource,
   type WizardStep,
   type WizardValue,
 } from './ChannelWizardForm';
 import { channelTargetsReady, channelWizardStepReady, wizardStepAllowed } from './channelInput';
+import { useChannelResources } from './channelResources';
 import { useChannelAuthorization } from './useChannelAuthorization';
 import { listChannelEnvironments } from './channelEnvironments';
 import { listAllWorkspaceAgents } from './workspaceChannels';
@@ -188,6 +190,7 @@ export function ChannelWizardFormPage({
 
   const agents = useMemo(() => agentsQuery.data ?? [], [agentsQuery.data]);
   const environments = useMemo(() => environmentsQuery.data ?? [], [environmentsQuery.data]);
+  const channelResources = useChannelResources(workspaceId);
   const agentLocked = Boolean(saved);
 
   const access = useMemo(() => ({ binding, saved, qrStatus: qr?.status ?? null }), [binding, saved, qr?.status]);
@@ -239,13 +242,29 @@ export function ChannelWizardFormPage({
     }
   };
 
-  const targetNames = useMemo(
-    () => ({
+  const targetNames = useMemo(() => {
+    const resources: WizardSideResource[] = [];
+    const environment = environments.find((item) => item.id === value.environmentId);
+    if (environment) resources.push({ kind: 'environment', label: environment.name });
+    const memoryName = channelResources.data?.memoryStores.find((item) => item.id === value.memory_store_id)?.label;
+    if (value.memory_store_id) resources.push({ kind: 'memory', label: memoryName ?? value.memory_store_id });
+    const vaultName = channelResources.data?.vaults.find((item) => item.id === value.vault_id)?.label;
+    if (value.vault_id) resources.push({ kind: 'vault', label: vaultName ?? value.vault_id });
+    if (value.gitResource?.url) resources.push({ kind: 'git', label: value.gitResource.url });
+    return {
       agentName: agents.find((agent) => agent.id === value.agentId)?.name ?? '',
-      environmentName: environments.find((environment) => environment.id === value.environmentId)?.name ?? '',
-    }),
-    [agents, environments, value.agentId, value.environmentId],
-  );
+      resources,
+    };
+  }, [
+    agents,
+    environments,
+    channelResources.data,
+    value.agentId,
+    value.environmentId,
+    value.memory_store_id,
+    value.vault_id,
+    value.gitResource,
+  ]);
   const visibleError = [
     error,
     pollError,

@@ -2,8 +2,9 @@ import { GitRepositoryFields } from '../resources/GitRepositoryFields';
 import { emptyGitResource } from '../resources/git-resource';
 import { useId, type ReactNode } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Bot, Check, Cloud, ExternalLink, LoaderCircle } from 'lucide-react';
+import { Check, ExternalLink, GitBranch, LoaderCircle } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
+import { productIcons } from '../../../shared/icons/product-icons';
 import { Button, ButtonLink } from '../../../shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../shared/ui/card';
 import { Input } from '../../../shared/ui/input';
@@ -79,7 +80,21 @@ export function WizardStepper({
   );
 }
 
-export function WizardSideCards({ agentName, environmentName }: { agentName: string; environmentName: string }) {
+export type WizardSideResourceKind = 'environment' | 'memory' | 'vault' | 'git';
+
+export type WizardSideResource = {
+  kind: WizardSideResourceKind;
+  label: string;
+};
+
+const sideResourceIcons = {
+  environment: productIcons.environments,
+  memory: productIcons.memory,
+  vault: productIcons.vaults,
+  git: GitBranch,
+} as const;
+
+export function WizardSideCards({ agentName, resources }: { agentName: string; resources: WizardSideResource[] }) {
   const { msg } = useI18n();
   return (
     <>
@@ -91,7 +106,7 @@ export function WizardSideCards({ agentName, environmentName }: { agentName: str
           <CardContent>
             <div className="flex min-w-0 items-center gap-3 py-2">
               <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
-                <Bot className="size-4" aria-hidden />
+                <productIcons.agents className="size-4" aria-hidden />
               </span>
               <span className="min-w-0 flex-1 truncate" title={agentName}>
                 {agentName}
@@ -105,14 +120,25 @@ export function WizardSideCards({ agentName, environmentName }: { agentName: str
           <CardTitle className="text-sm">{msg('managedAgents.channels.resources', '资源')}</CardTitle>
         </CardHeader>
         <CardContent>
-          {environmentName ? (
-            <div className="flex min-w-0 items-center gap-3 py-2">
-              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
-                <Cloud className="size-4" aria-hidden />
-              </span>
-              <span className="min-w-0 flex-1 truncate" title={environmentName}>
-                {environmentName}
-              </span>
+          {resources.length > 0 ? (
+            <div className="space-y-1">
+              {resources.map((resource) => {
+                const Icon = sideResourceIcons[resource.kind];
+                return (
+                  <div
+                    key={`${resource.kind}:${resource.label}`}
+                    data-resource-kind={resource.kind}
+                    className="flex min-w-0 items-center gap-3 py-2"
+                  >
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-muted-foreground">
+                      <Icon className="size-4" aria-hidden />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate" title={resource.label}>
+                      {resource.label}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">{msg('managedAgents.channels.noResources', '暂无关联资源')}</p>

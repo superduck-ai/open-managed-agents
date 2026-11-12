@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Search, FileText, Folder, ArrowRight, Building2, CornerDownLeft, Layers, X } from 'lucide-react';
+import { ArrowUpRight, Search, FileText, Folder, ArrowRight, Building2, CornerDownLeft, X } from 'lucide-react';
 import { AuthContext } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
 import { useWorkspace } from '../../shared/workspaces/context';
@@ -117,8 +117,7 @@ function SearchContents({
     });
     return () => cancelAnimationFrame(frame);
   }, [query]);
-  const { resources, debounced, scopeName, pages, workspaceRecords, resourceRecords, resourceLabel } =
-    useSearchData(query);
+  const { resources, debounced, pages, workspaceRecords, resourceRecords, resourceLabel } = useSearchData(query);
   const docs = documentationSearchRecords(locale).filter((record) => searchMatches(record, query));
   const navigate = (href: string) => {
     if (onNavigate) void onNavigate(href);
@@ -233,10 +232,6 @@ function SearchContents({
           <span>
             <kbd>Esc</kbd>
             {msg('common.close', 'Close')}
-          </span>
-          <span className="console-search-scope" title={scopeName}>
-            <Layers className="size-3.5 shrink-0" />
-            <span className="truncate">{scopeName}</span>
           </span>
         </div>
       </Command>

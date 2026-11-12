@@ -169,3 +169,11 @@ test('returning from settings preserves the application query and hash', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Back to app' }));
   expect(screen.getByTestId('page').textContent).toBe('/workspaces/default/agent-quickstart?mode=api#online-test');
 });
+
+test('modifier clicks on settings links and brand link preserve native browser tab behavior', () => {
+  render(<Harness initial="/settings/llm" />);
+  fireEvent.click(screen.getByRole('link', { name: 'API keys' }), { metaKey: true });
+  expect(screen.getByTestId('page').textContent).toBe('/settings/llm');
+  fireEvent.click(screen.getByRole('link', { name: 'Open Managed Agents' }), { ctrlKey: true });
+  expect(screen.getByTestId('page').textContent).toBe('/settings/llm');
+});

@@ -2,6 +2,7 @@ import {
   navigationHref,
   isActivePath,
   isWideConsolePath,
+  isPlainNavigationClick,
   isSessionDetailPath,
 } from '../../shared/navigation/navigation-paths';
 import { isSettingsPath, settingScope } from '../../shared/navigation/settings-navigation';
@@ -98,16 +99,7 @@ const ShellLink = forwardRef<HTMLAnchorElement, ShellLinkProps>(function ShellLi
 ) {
   const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
     onClick?.(event);
-    if (
-      event.defaultPrevented ||
-      !onNavigate ||
-      target ||
-      event.button !== 0 ||
-      event.metaKey ||
-      event.altKey ||
-      event.ctrlKey ||
-      event.shiftKey
-    ) {
+    if (!onNavigate || target || !isPlainNavigationClick(event)) {
       return;
     }
 

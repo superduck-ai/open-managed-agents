@@ -62,7 +62,7 @@ async function mount(workspaceId = 'workspace-b', locale: Locale = 'zh-CN') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   clients.push(client);
   const workspaces = ['workspace-a', 'workspace-b'].map((id) => ({ ...defaultWorkspace, id, name: id }));
-  function tree(activeWorkspaceId: string) {
+  function tree(activeWorkspaceId: string, isLoading = false) {
     setConsoleRequestContext({ organizationUuid: 'org', workspaceId: activeWorkspaceId });
     return (
       <I18nProvider initialLocale={locale}>
@@ -70,10 +70,10 @@ async function mount(workspaceId = 'workspace-b', locale: Locale = 'zh-CN') {
           <WorkspaceContext.Provider
             value={{
               orgUuid: 'org',
-              workspaces,
+              workspaces: isLoading ? [] : workspaces,
               activeWorkspaceId,
-              activeWorkspace: workspaces.find((item) => item.id === activeWorkspaceId)!,
-              isLoading: false,
+              activeWorkspace: workspaces.find((item) => item.id === activeWorkspaceId) ?? defaultWorkspace,
+              isLoading,
               error: null,
               selectWorkspace: () => {},
               createWorkspace: async () => defaultWorkspace,
@@ -87,11 +87,19 @@ async function mount(workspaceId = 'workspace-b', locale: Locale = 'zh-CN') {
     );
   }
   const result = render(tree('workspace-a'));
-  return { requests, router, selectWorkspace: (id: string) => result.rerender(tree(id)) };
+  return {
+    requests,
+    router,
+    selectWorkspace: (id: string, isLoading = false) => result.rerender(tree(id, isLoading)),
+  };
 }
 
 test('an inaccessible route workspace produces no metadata request', async () => {
-  const { requests } = await mount('unknown-workspace');
+  const { requests, selectWorkspace } = await mount('unknown-workspace');
+  selectWorkspace('workspace-a', true);
+  expect(await screen.findByRole('status')).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
+  selectWorkspace('workspace-a', false);
   expect((await screen.findByRole('alert')).textContent).toBe('无访问权限');
   expect(requests).toHaveLength(0);
 });

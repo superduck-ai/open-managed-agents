@@ -152,6 +152,8 @@ test('resource rows show their kind instead of the workspace name', async () => 
     const option = await screen.findByRole('option', { name: /测试/ });
     expect(option.textContent).toContain('Environments');
     expect(option.textContent).not.toContain('Default');
+    fireEvent.change(screen.getByPlaceholderText(/Search console/), { target: { value: 'Environments' } });
+    expect(await screen.findByRole('option', { name: /测试/ })).toBeTruthy();
   } finally {
     globalThis.fetch = originalFetch;
   }

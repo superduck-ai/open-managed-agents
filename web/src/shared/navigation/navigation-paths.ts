@@ -99,6 +99,24 @@ export function isWideConsolePath(currentPath: string) {
   );
 }
 
+export function isPlainNavigationClick(event: {
+  defaultPrevented: boolean;
+  button: number;
+  metaKey: boolean;
+  altKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+}) {
+  return (
+    !event.defaultPrevented &&
+    event.button === 0 &&
+    !event.metaKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.shiftKey
+  );
+}
+
 export function isSessionDetailPath(currentPath: string) {
   return /^\/workspaces\/[^/]+\/sessions\/[^/]+\/?$/.test(currentPath);
 }

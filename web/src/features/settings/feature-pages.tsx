@@ -37,7 +37,7 @@ export function ProfileSettingsPage() {
   const { name: organizationName, role } = profileOrganization(account, organizationAccess, msg);
 
   return (
-    <section className="mx-auto w-full max-w-3xl" data-testid="settings-profile-page">
+    <section className="w-full max-w-3xl" data-testid="settings-profile-page">
       <ResourcePageHeader title={msg('nav.profile', 'Profile')} contentGap="content" />
       <div className="grid gap-6 sm:grid-cols-2">
         <ReadonlyField label={msg('settings.profile.displayName', 'Display name')} value={displayName} />
@@ -91,7 +91,7 @@ export function AppearanceSettingsPage() {
   );
 
   return (
-    <section className="mx-auto w-full max-w-3xl" data-testid="settings-appearance-page">
+    <section className="w-full max-w-3xl" data-testid="settings-appearance-page">
       <ResourcePageHeader title={msg('nav.appearance', 'Appearance')} contentGap="content" />
       <div className="max-w-md space-y-6">
         <Field className="gap-2">

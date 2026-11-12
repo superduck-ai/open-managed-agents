@@ -233,7 +233,7 @@ export function OrganizationSettingsContent() {
     (organizationQuery.isLoading || profileQuery.isLoading) && (!organizationQuery.data || !profileQuery.data);
 
   return (
-    <section className="mx-auto w-full max-w-3xl" data-testid="organization-settings-page">
+    <section className="w-full max-w-3xl" data-testid="organization-settings-page">
       <ResourcePageHeader contentGap="content" title={organizationTitle} />
       <div className="space-y-7">
         <div className="space-y-7">

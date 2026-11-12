@@ -59,11 +59,15 @@ export function InvitationNotifications() {
         </PopoverTrigger>
         <PopoverContent align="end" className="w-80 max-w-[calc(100vw-2rem)] p-3">
           <PopoverTitle className="mb-2">{msg('invitations.title', 'Organization invitations')}</PopoverTitle>
-          {query.isLoading && <p role="status">{msg('invitations.loading', 'Loading invitations…')}</p>}
+          {query.isLoading && (
+            <p role="status" className="py-4 text-center text-xs text-muted-foreground">
+              {msg('invitations.loading', 'Loading invitations…')}
+            </p>
+          )}
           {query.isError ? (
-            <div role="alert">
+            <div role="alert" className="space-y-2 py-2 text-xs text-muted-foreground">
               <p>{msg('invitations.loadFailed', 'Invitations could not be loaded.')}</p>
-              <Button variant="ghost" onClick={() => void query.refetch()}>
+              <Button variant="ghost" size="sm" onClick={() => void query.refetch()}>
                 {msg('common.retry', 'Retry')}
               </Button>
             </div>
@@ -90,7 +94,9 @@ export function InvitationNotifications() {
             ))
           )}
           {!query.isLoading && !query.isError && count === 0 && (
-            <p className="py-4 text-muted-foreground">{msg('invitations.empty', 'No pending invitations.')}</p>
+            <p className="py-4 text-center text-xs text-muted-foreground">
+              {msg('invitations.empty', 'No pending invitations.')}
+            </p>
           )}
         </PopoverContent>
       </Popover>

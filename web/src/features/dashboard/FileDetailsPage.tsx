@@ -11,7 +11,7 @@ import { downloadFile, formatBytes, errorMessage, type ConsoleFile } from './mod
 
 export function FileDetailsPage() {
   const { fileId = '', workspaceId = '' } = useParams({ strict: false });
-  const { activeWorkspaceId, orgUuid, workspaces } = useWorkspace();
+  const { activeWorkspaceId, isLoading, orgUuid, workspaces } = useWorkspace();
   const { msg } = useI18n();
   const formatters = useFormatters();
   const navigate = useNavigate();
@@ -26,6 +26,7 @@ export function FileDetailsPage() {
     enabled: scopeReady,
   });
   const file = scopeReady ? query.data : undefined;
+  const loading = isLoading || (workspaceExists && query.isPending);
   const download = async () => {
     if (!file || downloading) return;
     setDownloading(true);
@@ -59,18 +60,26 @@ export function FileDetailsPage() {
           )
         }
       />
-      {workspaceExists && query.isPending && <p role="status">{msg('files.loading', 'Loading files...')}</p>}
-      {!workspaceExists && <p role="alert">{msg('common.accessDenied', 'Access denied')}</p>}
+      {loading && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {msg('files.loading', 'Loading files...')}
+        </p>
+      )}
+      {!isLoading && !workspaceExists && (
+        <p role="alert" className="text-sm text-muted-foreground">
+          {msg('common.accessDenied', 'Access denied')}
+        </p>
+      )}
       {query.isError && (
-        <div role="alert">
+        <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-destructive">
           <p>{errorMessage(query.error)}</p>
-          <Button variant="outline" onClick={() => void query.refetch()}>
+          <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
             {msg('common.retry', 'Retry')}
           </Button>
         </div>
       )}
       {file && (
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-4 text-sm">
+        <dl className="grid max-w-2xl grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-4 rounded-xl border-[0.5px] border-border bg-card p-5 text-sm">
           <dt className="text-muted-foreground">ID</dt>
           <dd className="break-all font-mono text-xs">{file.id}</dd>
           <dt className="text-muted-foreground">{msg('common.size', 'Size')}</dt>
@@ -80,7 +89,7 @@ export function FileDetailsPage() {
         </dl>
       )}
       {error && (
-        <p role="alert" className="text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}

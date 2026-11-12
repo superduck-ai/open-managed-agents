@@ -22,7 +22,7 @@ import {
   DropdownMenuTrigger,
 } from '../../shared/ui/dropdown-menu';
 import { AccessDenied } from '../../shared/ui/access-denied';
-import { isActivePath, navigationHref } from '../../shared/navigation/navigation-paths';
+import { isActivePath, isPlainNavigationClick, navigationHref } from '../../shared/navigation/navigation-paths';
 import {
   canAccessSettings,
   settingsItem,
@@ -64,7 +64,7 @@ export function CompactNavigationGroup({
                 key={item.href}
                 render={<a href={navigationHref(item.href, activeWorkspaceId)} />}
                 onClick={(event) => {
-                  if (onNavigate) {
+                  if (onNavigate && isPlainNavigationClick(event)) {
                     event.preventDefault();
                     void onNavigate(navigationHref(item.href, activeWorkspaceId));
                   }
@@ -162,6 +162,7 @@ export function SettingsNavigation({
                           <SidebarMenuSubButton
                             render={<a href={navigationHref(item.href, activeWorkspaceId)} />}
                             onClick={(event) => {
+                              if (!isPlainNavigationClick(event)) return;
                               event.preventDefault();
                               navigate(navigationHref(item.href, activeWorkspaceId));
                             }}

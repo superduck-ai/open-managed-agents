@@ -3,7 +3,6 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { AuthContext } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
 import { useWorkspace } from '../../shared/workspaces/context';
-import { localizedWorkspaceName } from '../../shared/workspaces/display-name';
 import { PlatformAdminContext } from '../platform-admin/context';
 import { navigationSearchRecords, workspaceSearchRecords, searchMatches } from './search-data';
 import { searchResourcePage, resourceContextLabel, type ResourceCursor } from './resource-search';
@@ -13,7 +12,7 @@ export function useSearchData(query: string) {
   const { msg } = useI18n();
   const auth = useContext(AuthContext);
   const platform = useContext(PlatformAdminContext);
-  const { orgUuid, activeWorkspaceId, activeWorkspace, workspaces } = useWorkspace();
+  const { orgUuid, activeWorkspaceId, workspaces } = useWorkspace();
   const [debounced, setDebounced] = useState('');
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(query.trim()), 200);
@@ -38,20 +37,18 @@ export function useSearchData(query: string) {
     retry: false,
     staleTime: 30000,
   });
-  const scopeName = platform
-    ? msg('platformAdmin.platformAdministration', 'Super admin console')
-    : localizedWorkspaceName(activeWorkspace.name, msg);
   const pages = platform
     ? platformNavigationSearchRecords(platform.bootstrap.platform_access.permissions, msg)
     : navigationSearchRecords(auth?.account, orgUuid, activeWorkspaceId, msg);
   const rawResources = debounced === query.trim() ? resources.data?.pages.flatMap((page) => page.records) || [] : [];
-  const resourceRecords = [...new Map(rawResources.map((record) => [record.id, record])).values()]
-    .filter((record) => searchMatches(record, query))
-    .map((record) => (platform ? record : { ...record, context: resourceContextLabel(record.context, msg) }));
+  const resourceRecords = [
+    ...new Map(rawResources.map((record) => [`${record.context}:${record.id}`, record])).values(),
+  ]
+    .map((record) => (platform ? record : { ...record, context: resourceContextLabel(record.context, msg) }))
+    .filter((record) => searchMatches(record, query));
   return {
     resources,
     debounced,
-    scopeName,
     pages,
     resourceRecords,
     workspaceRecords: platform ? [] : workspaceSearchRecords(workspaces, msg),

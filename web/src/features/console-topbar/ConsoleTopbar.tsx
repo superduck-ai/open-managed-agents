@@ -4,6 +4,7 @@ import { Button, ButtonLink } from '../../shared/ui/button';
 import { useSidebar } from '../../shared/ui/sidebar';
 import { useI18n } from '../../shared/i18n';
 import { documentationHref } from '../../shared/documentation';
+import { isPlainNavigationClick } from '../../shared/navigation/navigation-paths';
 import { AuthContext } from '../../shared/auth/context';
 import { ConsoleSearch } from '../console-search/ConsoleSearch';
 import { InvitationNotifications } from '../organizations/InvitationNotifications';
@@ -38,7 +39,7 @@ export function ConsoleTopbar({
           href={homeHref}
           aria-label="Open Managed Agents"
           onClick={(event) => {
-            if (onNavigate) {
+            if (onNavigate && isPlainNavigationClick(event)) {
               event.preventDefault();
               void onNavigate(homeHref);
             }

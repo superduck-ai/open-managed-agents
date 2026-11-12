@@ -9,8 +9,27 @@ import (
 	"github.com/superduck-ai/yourbatis"
 )
 
+type sessionProtocol struct {
+	known bool
+	dsr   bool
+}
+
 func (d *DB) HasDSHSession(ctx context.Context, session Session) (bool, error) {
 	return NewDSHExecutionMapper(d.mapperDB).HasSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
+}
+
+func sessionUsesDSH(ctx context.Context, executor yourbatis.Executor, session Session) (bool, error) {
+	if session.protocol != nil && session.protocol.known {
+		return session.protocol.dsr, nil
+	}
+	dsr, err := NewDSHExecutionMapper(executor).HasSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
+	if err != nil {
+		return false, err
+	}
+	if session.protocol != nil {
+		session.protocol.known, session.protocol.dsr = true, dsr
+	}
+	return dsr, nil
 }
 
 func nextSessionPublicationTime(ctx context.Context, executor yourbatis.Executor, workspaceUUID, sessionID string) (time.Time, error) {
@@ -29,7 +48,7 @@ func stampDSHSessionEvent(ctx context.Context, executor yourbatis.Executor, sess
 	if event.ProcessedAt.IsZero() || event.publicationTimeAssigned {
 		return event, nil
 	}
-	dsr, err := NewDSHExecutionMapper(executor).HasSession(ctx, session.OrganizationUUID, session.WorkspaceUUID, session.UUID)
+	dsr, err := sessionUsesDSH(ctx, executor, session)
 	if err != nil || !dsr {
 		return event, err
 	}

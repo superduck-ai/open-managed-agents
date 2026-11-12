@@ -178,7 +178,7 @@ func (d *DB) ListDSHTranscripts(ctx context.Context, scope DSHScope, after strin
 	return result, nil
 }
 
-func (d *DB) ReadDSHTranscript(ctx context.Context, scope DSHScope, id string, fromOffset int64, limit int) (DSHTranscript, []DSHTranscriptRecord, error) {
+func (d *DB) ReadDSHTranscript(ctx context.Context, scope DSHScope, id string, fromOffset int64, limit int, budget int64) (DSHTranscript, []DSHTranscriptRecord, error) {
 	mapper := NewDSHTranscriptMapper(d.mapperDB)
 	row, found, err := mapper.Find(ctx, scope, id)
 	if err != nil {
@@ -187,7 +187,7 @@ func (d *DB) ReadDSHTranscript(ctx context.Context, scope DSHScope, id string, f
 	if !found {
 		return DSHTranscript{}, nil, ErrNotFound
 	}
-	rows, err := mapper.ReadRecords(ctx, scope, row.UUID, fromOffset, limit)
+	rows, err := mapper.ReadRecordPage(ctx, scope, row.UUID, fromOffset, limit, budget)
 	if err != nil {
 		return DSHTranscript{}, nil, err
 	}

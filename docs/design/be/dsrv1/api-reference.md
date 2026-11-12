@@ -673,7 +673,7 @@ cancel_requested_at 可省略；存在时必须在恢复执行前处理取消意
 
 ## 11. `GET /v1/dsr/sessions/{code_session_id}/transcripts/{dsh_session_id}/records`
 
-query `from_offset` 为包含式存储位置，缺省 `"0"`。响应为 `application/x-ndjson`，每页最多 200 条，Header 计入条数，每条记录原样返回并追加 LF。
+query `from_offset` 为包含式存储位置，缺省 `"0"`；`limit_bytes` 为本页记录字节预算，缺省 4 MiB，取值 1–8 MiB，越界或非十进制返回 `400 invalid_request`。响应为 `application/x-ndjson`，每页最多 200 条，Header 计入条数与字节，每条记录原样返回并追加 LF。预算由数据库执行：先按 offset 取至多 200 条记录的 `octet_length`，只读取累计前缀小于预算的记录正文；首条记录即使超过预算也会返回，保证分页前进。
 
 响应头 `DSR-Next-Offset` 表示当前确认水位；还有下一页时提供 `DSR-Next-From-Offset`，否则省略。Brain 校验每条原生 seq 与存储位置的映射，以及页面水位与目录快照一致。提前结束、重复 Header、缺口、停滞游标或增长均拒绝恢复。
 
@@ -994,7 +994,7 @@ DSH 创建子 Agent sub_9f2c
 
 本节完整的方法、调用方与响应字段见 [逐接口评审第 5 节](interface-review.md)。MCP 需 GET/POST/DELETE 与 OAuth metadata 配套迁移；图片附件需 PUT/HEAD/GET，消息附件需 GET，不能只实现读取。diagnostics 目前无生产 Brain 调用，是否保留及 typed 白名单 schema 需在冻结前决定。
 
-2026-11-10 路由复现测试确认：Brain 的图片与消息附件请求缺少 `/attachments` 前缀，后端返回 404；上传被映射为 `INVALID_IMAGE`，读取在 HEAD 探测时被映射为 `ATTACHMENT_NOT_FOUND`，消息附件 source 返回 undefined。`internal/codesessions/dsh_attachment_routes_test.go` 在 capability 路由层校验共享样例 `testdata/dsr_attachment_routes.json`，Brain 的 `tests/image-attachments.test.ts` 使用同一份样例复现错误。测试不连接数据库或对象存储，也不覆盖完整凭据鉴权；无凭据请求在外层会先返回 401。本次仅增加问题刻画测试，尚未修正生产路径；这些测试通过表示复现成立，不表示附件功能已修复。
+Brain 的图片与消息附件请求统一使用 `.../sessions/{code_session_id}/attachments/` 前缀（`attachments/remote.ts` 的 `remote()` 统一拼接），与后端 `registerDSHCapabilities` 的挂载一致。共享样例 `internal/codesessions/testdata/dsr_attachment_routes.json` 同时列出缺少前缀的路径（404）和正确路径（未带凭据时由附件处理器返回 401）；Go 的 `dsh_attachment_routes_test.go` 校验路由，Brain 的 `tests/image-attachments.test.ts` 断言实际请求只命中非 404 的样例。测试不连接数据库或对象存储，也不覆盖完整凭据鉴权。
 
 MCP/OTLP 的原生错误体、附件二进制与 HEAD 响应不走通用 JSON 解码。网关 lifecycle 错误用 DSR-Error，普通资源和上游错误不 fence。sandbox/MCP/web 保留 X-OMA-Session-Thread-ID，模型 API 保留 X-Claude-Code-Agent-Id，不能全局机械替换。
 

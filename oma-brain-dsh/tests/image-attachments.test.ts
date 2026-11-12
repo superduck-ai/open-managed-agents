@@ -52,7 +52,7 @@ async function storeFixture() {
   return { backend, api, store, cacheRoot, run: <T>(action: () => Promise<T>) => withAttachmentSession(backend.a.session_id, action) };
 }
 
-test("Go route contract reproduces missing attachment prefix failures", async () => {
+test("Brain attachment requests match the Go DSR routes", async () => {
   const f = await storeFixture();
   const ref = await f.run(() => f.store.saveImage({ data: Buffer.from(png, "base64"), mediaType: "image/png" }));
   f.api.assignments.set(f.backend.a.session_id, { ...f.backend.a });
@@ -66,18 +66,17 @@ test("Go route contract reproduces missing attachment prefix failures", async ()
       .replace(/image-attachments\/[0-9a-f]{64}$/, `image-attachments/${"a".repeat(64)}`);
     const route = routes.find(route => route.method === request.method && route.path === path);
     expect(route).toBeDefined();
-    expect(route!.status).toBe(404);
+    expect(route!.status).not.toBe(404);
     requests.push(`${request.method} ${path}`);
     return new Response(null, { status: route!.status });
   };
-  await expect(f.run(() => f.store.saveImage({ data: Buffer.from(png, "base64"), mediaType: "image/png" })))
-    .rejects.toMatchObject({ code: "INVALID_IMAGE" });
-  await expect(f.run(() => f.store.readImage(ref))).rejects.toMatchObject({ code: "ATTACHMENT_NOT_FOUND" });
-  expect(await f.run(() => f.store.source("file_image"))).toBeUndefined();
+  await expect(f.run(() => f.store.saveImage({ data: Buffer.from(png, "base64"), mediaType: "image/png" }))).rejects.toThrow();
+  await expect(f.run(() => f.store.readImage(ref))).rejects.toThrow();
+  await expect(f.run(() => f.store.source("file_image"))).rejects.toThrow();
   expect(requests).toEqual([
-    `PUT /v1/dsr/sessions/cse_route/image-attachments/${"a".repeat(64)}`,
-    `HEAD /v1/dsr/sessions/cse_route/image-attachments/${"a".repeat(64)}`,
-    "GET /v1/dsr/sessions/cse_route/message-attachments/file_image/content",
+    `PUT /v1/dsr/sessions/cse_route/attachments/image-attachments/${"a".repeat(64)}`,
+    `HEAD /v1/dsr/sessions/cse_route/attachments/image-attachments/${"a".repeat(64)}`,
+    "GET /v1/dsr/sessions/cse_route/attachments/message-attachments/file_image/content",
   ]);
 });
 

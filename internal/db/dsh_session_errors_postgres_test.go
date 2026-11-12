@@ -36,7 +36,7 @@ func TestDSHSessionStateErrorsPostgres(t *testing.T) {
 			if _, _, err := f.store.FinishDSHInput(f.ctx, other, "input", DSHFinish{Result: "success"}); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("cross-tenant state leaked: %v", err)
 			}
-			_, records, err := f.store.ReadDSHTranscript(f.ctx, f.scope, "root", 0, 200)
+			_, records, err := f.store.ReadDSHTranscript(f.ctx, f.scope, "root", 0, 200, 4<<20)
 			if err != nil || len(records) != 1 {
 				t.Fatalf("history unavailable: records=%d err=%v", len(records), err)
 			}

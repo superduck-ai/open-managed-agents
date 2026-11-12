@@ -45,6 +45,7 @@ type DSHTranscriptMapper interface {
 	Insert(ctx context.Context, input dshTranscriptInsert) (int64, error)
 	List(ctx context.Context, scope DSHScope, after string, limit int) ([]dshTranscriptRow, error)
 	ReadRecords(ctx context.Context, scope DSHScope, transcriptUUID string, fromOffset int64, limit int) ([]dshTranscriptRecordRow, error)
+	ReadRecordPage(ctx context.Context, scope DSHScope, transcriptUUID string, fromOffset int64, limit int, budget int64) ([]dshTranscriptRecordRow, error)
 	InsertRecords(ctx context.Context, input dshTranscriptRecordsInsert) (int64, error)
 	SetNextOffset(ctx context.Context, scope DSHScope, transcriptUUID string, nextOffset int64) (int64, error)
 }

@@ -19,6 +19,7 @@ type transcriptDatabase struct {
 	calls      int
 	err        error
 	readLimit  int
+	readBudget int64
 }
 
 func (d *transcriptDatabase) AppendDSHTranscript(_ context.Context, scope db.DSHScope, id string, parent *string, records []db.DSHTranscriptRecord) (db.DSHTranscriptAppendResult, error) {
@@ -33,14 +34,17 @@ func (d *transcriptDatabase) ListDSHTranscripts(_ context.Context, scope db.DSHS
 	d.scope = scope
 	return []db.DSHTranscript{d.transcript}, d.err
 }
-func (d *transcriptDatabase) ReadDSHTranscript(_ context.Context, scope db.DSHScope, _ string, from int64, limit int) (db.DSHTranscript, []db.DSHTranscriptRecord, error) {
+func (d *transcriptDatabase) ReadDSHTranscript(_ context.Context, scope db.DSHScope, _ string, from int64, limit int, budget int64) (db.DSHTranscript, []db.DSHTranscriptRecord, error) {
 	d.calls++
 	d.scope = scope
 	d.readLimit = limit
+	d.readBudget = budget
 	events := make([]db.DSHTranscriptRecord, 0, limit)
+	used := int64(0)
 	for _, event := range d.events {
-		if event.Offset >= from && len(events) < limit {
+		if event.Offset >= from && len(events) < limit && used < budget {
 			events = append(events, event)
+			used += int64(len(event.Payload))
 		}
 	}
 	return d.transcript, events, d.err
@@ -149,6 +153,34 @@ func TestTranscriptReadPaginatesByRecordCount(t *testing.T) {
 		if (response.Header().Get("DSR-Next-From-Offset") == "200") != (from == 0) {
 			t.Fatal(response.Header())
 		}
+	}
+}
+
+func TestTranscriptReadRejectsInvalidByteBudget(t *testing.T) {
+	for _, value := range []string{"0", "abc", "-1", "01", fmt.Sprint(maxPageBytes + 1)} {
+		database := &transcriptDatabase{}
+		response := transcriptRequest(transcriptRouter(database, true), "GET", "/sessions/cse_root/transcripts/cse_root/records?from_offset=0&limit_bytes="+value, "", "1")
+		if response.Code != 400 || database.calls != 0 {
+			t.Fatalf("limit_bytes=%s status=%d calls=%d", value, response.Code, database.calls)
+		}
+	}
+}
+
+func TestTranscriptReadPaginatesByByteBudget(t *testing.T) {
+	database := &transcriptDatabase{transcript: db.DSHTranscript{NextOffset: 10}}
+	for offset := int64(0); offset < 10; offset++ {
+		database.events = append(database.events, db.DSHTranscriptRecord{Offset: offset, Payload: []byte(`{"v":"xxxx"}`)})
+	}
+	response := transcriptRequest(transcriptRouter(database, true), "GET", "/sessions/cse_root/transcripts/cse_root/records?from_offset=0", "", "1")
+	if response.Code != 200 || database.readBudget != defaultPageBytes {
+		t.Fatalf("status=%d budget=%d", response.Code, database.readBudget)
+	}
+	response = transcriptRequest(transcriptRouter(database, true), "GET", "/sessions/cse_root/transcripts/cse_root/records?from_offset=0&limit_bytes=25", "", "1")
+	if response.Code != 200 || database.readBudget != 25 || strings.Count(response.Body.String(), "\n") != 3 {
+		t.Fatalf("status=%d budget=%d body=%q", response.Code, database.readBudget, response.Body.String())
+	}
+	if response.Header().Get("DSR-Next-From-Offset") != "3" || response.Header().Get("DSR-Next-Offset") != "10" {
+		t.Fatal(response.Header())
 	}
 }
 

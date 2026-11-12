@@ -121,7 +121,7 @@ flowchart LR
 
 ## 数据与事务边界
 
-迁移 `00115_dsh_runtime.sql` 一次创建最终结构的六张表：`dsh_transcripts`、`dsh_transcript_records`、`dsh_worker_states`、`dsh_input_executions`、`dsh_permission_requests`、`dsh_public_receipts`。仅调整新增 DSH 表，不修改既有业务表 schema，不创建外键。应用 SQL 全部通过 Yourbatis。
+迁移 `00117_dsh_runtime.sql` 一次创建最终结构的六张表：`dsh_transcripts`、`dsh_transcript_records`、`dsh_worker_states`、`dsh_input_executions`、`dsh_permission_requests`、`dsh_public_receipts`。仅调整新增 DSH 表，不修改既有业务表 schema，不创建外键。应用 SQL 全部通过 Yourbatis。
 
 写入按所属 Session/Code Session 加锁，并显式检查组织、工作空间、协议、epoch 和租约。公开输入接纳与 input execution 创建、确认与审批解决、公开输出与收据、finish 与 pending 关闭、公开 reducer 更新分别在同一事务中完成。提交后的 SSE/webhook fanout 复用现有服务。
 
@@ -179,7 +179,7 @@ DSRv1 host 与 CCRv2 共用 `oma-brain-dsh ready` 启动标记，供 `just resta
 
 ## 数据库初始化
 
-DSR schema 通过单个 goose migration `00115_dsh_runtime.sql` 初始化。Transcript 的元数据水位为 next_offset，记录从 offset 0 开始保存原始 bytea；worker-state 只保存不可变 context_snapshot 和更新时间；输入执行记录、审批与公开回执直接创建最终字段和约束。Down 删除本次创建的六张表，不更改既有业务表。
+DSR schema 通过单个 goose migration `00117_dsh_runtime.sql` 初始化。Transcript 的元数据水位为 next_offset，记录从 offset 0 开始保存原始 bytea；worker-state 只保存不可变 context_snapshot 和更新时间；输入执行记录、审批与公开回执直接创建最终字段和约束。Down 删除本次创建的六张表，不更改既有业务表。
 
 普通测试不连接真实数据库。`TestDSHRuntimeMigrationPostgres` 使用隔离 schema，验证从 114 升级只应用一个 migration、最终表与约束、原始字节往返、Down 到 114 及重新 Up。其他 DSR PostgreSQL 测试继续覆盖运行时事务与并发。
 

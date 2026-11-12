@@ -343,5 +343,7 @@ func lockSessionForEvents(ctx context.Context, mapper SessionMapper, workspaceUU
 	if !found {
 		return Session{}, ErrNotFound
 	}
-	return row.session(), nil
+	session := row.session()
+	session.protocol = &sessionProtocol{}
+	return session, nil
 }

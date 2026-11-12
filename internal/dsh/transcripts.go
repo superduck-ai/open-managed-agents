@@ -89,16 +89,19 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
-	from := int64(0)
+	from, budget := int64(0), int64(defaultPageBytes)
 	var err error
 	if value := r.URL.Query().Get("from_offset"); value != "" {
 		from, err = decimal(value)
 	}
-	if err != nil || from > 9007199254740993 {
+	if value := r.URL.Query().Get("limit_bytes"); err == nil && value != "" {
+		budget, err = decimal(value)
+	}
+	if err != nil || from > 9007199254740993 || budget < 1 || budget > maxPageBytes {
 		h.fail(w, r, invalidRequest(), nil)
 		return
 	}
-	transcript, records, err := h.database.ReadDSHTranscript(r.Context(), scopeFrom(r), chi.URLParam(r, "dsh_session_id"), from, maxPageEvents)
+	transcript, records, err := h.database.ReadDSHTranscript(r.Context(), scopeFrom(r), chi.URLParam(r, "dsh_session_id"), from, maxPageEvents, budget)
 	if err != nil {
 		h.fail(w, r, err, nil)
 		return

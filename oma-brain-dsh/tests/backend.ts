@@ -233,7 +233,7 @@ export class Backend {
   async route(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
-    if (/^\/v1\/dsr\/sessions\/[^/]+\/image-attachments\//.test(path)) {
+    if (/^\/v1\/dsr\/sessions\/[^/]+\/attachments\/image-attachments\//.test(path)) {
       if (
         request.headers.get("Authorization") !==
         `Bearer ${this.a.ingress_token}`
@@ -274,7 +274,7 @@ export class Backend {
     }
     if (
       path.startsWith(
-        `/v1/dsr/sessions/${this.a.session_id}/message-attachments/`,
+        `/v1/dsr/sessions/${this.a.session_id}/attachments/message-attachments/`,
       )
     ) {
       if (this.imageStatus)

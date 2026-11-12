@@ -17,6 +17,7 @@ import (
 )
 
 type Session struct {
+	protocol            *sessionProtocol
 	UUID                string
 	ExternalID          string
 	OrganizationUUID    string

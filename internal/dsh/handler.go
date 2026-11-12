@@ -20,11 +20,13 @@ import (
 const maxRequestBytes = 16 << 20
 const maxEventBytes = 15 << 20
 const maxPageEvents = 200
+const defaultPageBytes = 4 << 20
+const maxPageBytes = 8 << 20
 
 type Database interface {
 	AppendDSHTranscript(context.Context, db.DSHScope, string, *string, []db.DSHTranscriptRecord) (db.DSHTranscriptAppendResult, error)
 	ListDSHTranscripts(context.Context, db.DSHScope, string, int) ([]db.DSHTranscript, error)
-	ReadDSHTranscript(context.Context, db.DSHScope, string, int64, int) (db.DSHTranscript, []db.DSHTranscriptRecord, error)
+	ReadDSHTranscript(context.Context, db.DSHScope, string, int64, int, int64) (db.DSHTranscript, []db.DSHTranscriptRecord, error)
 }
 
 type Authenticator func(*http.Request, string) (db.DSHScope, error)

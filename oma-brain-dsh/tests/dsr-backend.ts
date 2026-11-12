@@ -82,8 +82,7 @@ export class DsrBackend extends Backend {
     );
     if (
       path === "/sandbox/mcp" ||
-      path.startsWith("/image-attachments/") ||
-      path.startsWith("/message-attachments/") ||
+      path.startsWith("/attachments/") ||
       path.startsWith("/otlp/")
     )
       return super.route(request);

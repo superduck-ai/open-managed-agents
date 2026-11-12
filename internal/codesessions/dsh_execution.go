@@ -192,7 +192,7 @@ func (e dshExecution) Permission(ctx context.Context, scope db.DSHScope, input d
 
 func (e dshExecution) permissionThread(ctx context.Context, scope db.DSHScope, id string) (string, error) {
 	if id != scope.CodeSessionID {
-		row, _, err := e.handler.db.ReadDSHTranscript(ctx, scope, id, 0, 1)
+		row, _, err := e.handler.db.ReadDSHTranscript(ctx, scope, id, 0, 1, 1)
 		if err != nil {
 			return "", err
 		}

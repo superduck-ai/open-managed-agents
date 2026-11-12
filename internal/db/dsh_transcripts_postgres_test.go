@@ -48,7 +48,7 @@ func TestDSHTranscriptsPostgres(t *testing.T) {
 		if _, err := store.AppendDSHTranscript(ctx, scope, "root", nil, []DSHTranscriptRecord{header, {Offset: 2, Payload: []byte(`{}`)}}); !errors.Is(err, ErrInvalidState) {
 			t.Fatal(err)
 		}
-		if _, _, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200); !errors.Is(err, ErrNotFound) {
+		if _, _, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200, 4<<20); !errors.Is(err, ErrNotFound) {
 			t.Fatal(err)
 		}
 	})
@@ -71,7 +71,7 @@ func TestDSHTranscriptsPostgres(t *testing.T) {
 	t.Run("tenant isolation", func(t *testing.T) {
 		other := scope
 		other.WorkspaceUUID = "53000000-0000-0000-0000-000000000099"
-		if _, _, err := store.ReadDSHTranscript(ctx, other, "root", 0, 200); !errors.Is(err, ErrNotFound) {
+		if _, _, err := store.ReadDSHTranscript(ctx, other, "root", 0, 200, 4<<20); !errors.Is(err, ErrNotFound) {
 			t.Fatal(err)
 		}
 	})
@@ -89,7 +89,7 @@ func TestDSHTranscriptsPostgres(t *testing.T) {
 		if result, err := store.AppendDSHTranscript(ctx, scope, "root", nil, []DSHTranscriptRecord{header, first}); err != nil || result.NextOffset != 2 {
 			t.Fatalf("%+v %v", result, err)
 		}
-		transcript, records, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200)
+		transcript, records, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200, 4<<20)
 		if err != nil || transcript.NextOffset != 2 || len(records) != 2 || !bytes.Equal(records[0].Payload, header.Payload) || !bytes.Equal(records[1].Payload, first.Payload) {
 			t.Fatalf("%+v %+v %v", transcript, records, err)
 		}
@@ -105,12 +105,31 @@ func TestDSHTranscriptsPostgres(t *testing.T) {
 			})
 		}
 		wait.Wait()
-		transcript, records, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200)
+		transcript, records, err := store.ReadDSHTranscript(ctx, scope, "root", 0, 200, 4<<20)
 		if err != nil || transcript.NextOffset != 200 || len(records) != 200 {
 			t.Fatalf("%+v %d %v", transcript, len(records), err)
 		}
 		if result, err := store.AppendDSHTranscript(ctx, scope, "root", nil, dshBatchRecords(198, 4)); err != nil || result.NextOffset != 202 {
 			t.Fatalf("%+v %v", result, err)
+		}
+	})
+	t.Run("byte budget stops before exceeding but returns an oversized first record", func(t *testing.T) {
+		_, all, err := store.ReadDSHTranscript(ctx, scope, "root", 2, 200, 4<<20)
+		if err != nil || len(all) < 3 {
+			t.Fatalf("%d %v", len(all), err)
+		}
+		budget := int64(len(all[0].Payload) + len(all[1].Payload) + 1)
+		_, page, err := store.ReadDSHTranscript(ctx, scope, "root", 2, 200, budget)
+		if err != nil || len(page) != 3 || page[0].Offset != 2 || page[2].Offset != 4 {
+			t.Fatalf("budget=%d records=%+v err=%v", budget, page, err)
+		}
+		_, page, err = store.ReadDSHTranscript(ctx, scope, "root", 2, 200, 1)
+		if err != nil || len(page) != 1 || !bytes.Equal(page[0].Payload, all[0].Payload) {
+			t.Fatalf("records=%+v err=%v", page, err)
+		}
+		_, page, err = store.ReadDSHTranscript(ctx, scope, "root", 202, 200, 1)
+		if err != nil || len(page) != 0 {
+			t.Fatalf("records=%+v err=%v", page, err)
 		}
 	})
 }

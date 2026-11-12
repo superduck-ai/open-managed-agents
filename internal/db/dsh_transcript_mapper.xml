@@ -64,6 +64,22 @@
         WHERE <include refid="scope"/> AND transcript_uuid = #{transcriptUUID} AND record_offset &gt;= #{fromOffset}
         ORDER BY record_offset LIMIT #{limit}
     </select>
+    <select id="ReadRecordPage" result="many" resultType="dshTranscriptRecordRow">
+        WITH page AS (
+            SELECT record_offset, octet_length(payload) AS size FROM dsh_transcript_records
+            WHERE <include refid="scope"/> AND transcript_uuid = #{transcriptUUID} AND record_offset &gt;= #{fromOffset}
+            ORDER BY record_offset LIMIT #{limit}
+        ), chosen AS (
+            SELECT record_offset FROM (
+                SELECT record_offset, SUM(size) OVER (ORDER BY record_offset) - size AS preceding FROM page
+            ) sized WHERE preceding &lt; #{budget}
+        )
+        SELECT records.record_offset, records.payload FROM dsh_transcript_records AS records
+        JOIN chosen ON chosen.record_offset = records.record_offset
+        WHERE records.organization_uuid = #{scope.OrganizationUUID} AND records.workspace_uuid = #{scope.WorkspaceUUID}
+          AND records.code_session_uuid = #{scope.CodeSessionUUID} AND records.transcript_uuid = #{transcriptUUID}
+        ORDER BY records.record_offset
+    </select>
     <insert id="InsertRecords" result="rows">
         INSERT INTO dsh_transcript_records (organization_uuid, workspace_uuid, code_session_uuid, transcript_uuid, record_offset, payload)
         VALUES

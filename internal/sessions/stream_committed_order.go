@@ -9,10 +9,13 @@ import (
 	maevents "github.com/superduck-ai/open-managed-agents/internal/managedagentsevents"
 )
 
+const streamProtocolRecheckInterval = 5 * time.Second
+
 type committedStreamOrder struct {
 	session       db.Session
 	cursorID      string
 	cursorAt      *time.Time
+	nextCheck     time.Time
 	enabled       bool
 	mutableCursor bool
 }
@@ -50,12 +53,12 @@ func (h *Handler) committedStreamEvents(ctx context.Context, order *committedStr
 	if notification, ok := delivery.(sessionEventDelivery); ok && maevents.IsStreamDelta(notification.event.EventType) {
 		return nil, nil
 	}
-	if !order.enabled {
+	if order.needsProtocolCheck(time.Now()) {
 		dsr, err := h.db.HasDSHSession(ctx, order.session)
 		if err != nil {
 			return nil, err
 		}
-		order.enabled = dsr
+		order.enabled, order.nextCheck = dsr, time.Now().Add(streamProtocolRecheckInterval)
 	}
 	if !order.enabled {
 		return nil, nil
@@ -69,6 +72,10 @@ func (h *Handler) committedStreamEvents(ctx context.Context, order *committedStr
 	}
 	order.cursorID = next
 	return events, nil
+}
+
+func (o *committedStreamOrder) needsProtocolCheck(now time.Time) bool {
+	return !o.enabled && !now.Before(o.nextCheck)
 }
 
 func (c *streamConnection) acceptCommitted(events []sessionStreamEvent) []sessionStreamEvent {

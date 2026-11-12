@@ -121,7 +121,7 @@ export default class RemoteAttachmentStore extends AttachmentStore {
     const assignment = this.assignment();
     let response: Response;
     try {
-      response = await api.fetcher(`${api.base.replace(/\/$/, "")}/v1/dsr/sessions/${encodeURIComponent(assignment.session_id)}/${path}`, {
+      response = await api.fetcher(`${api.base.replace(/\/$/, "")}/v1/dsr/sessions/${encodeURIComponent(assignment.session_id)}/attachments/${path}`, {
         method, headers: { Authorization: `Bearer ${assignment.ingress_token}`, "DSR-Protocol": "1", ...(mediaType ? { "Content-Type": mediaType } : {}) },
         body: data ? new Uint8Array(data).buffer : undefined, redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
       });

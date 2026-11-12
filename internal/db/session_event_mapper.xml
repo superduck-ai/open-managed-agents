@@ -141,7 +141,7 @@
             <if test="params.CreatedAtLT != nil">AND processed_at &lt; #{params.CreatedAtLT}</if>
             <if test="params.CreatedAtLTE != nil">AND processed_at &lt;= #{params.CreatedAtLTE}</if>
             <if test="params.Cursor != nil">
-                AND (COALESCE(processed_at, created_at), id)
+                AND <choose><when test="params.ProcessedOnly">(processed_at, id)</when><otherwise>(COALESCE(processed_at, created_at), id)</otherwise></choose>
                 <choose><when test="params.Descending">&lt;</when><otherwise>&gt;</otherwise></choose>
                 (
                     SELECT <choose><when test="params.Cursor.OrderingAt != nil">CAST(#{params.Cursor.OrderingAt} AS timestamptz)</when><otherwise>COALESCE(processed_at, created_at)</otherwise></choose>, id FROM session_events
@@ -151,7 +151,7 @@
                 )
             </if>
         </where>
-        ORDER BY COALESCE(session_events.processed_at, session_events.created_at)
+        ORDER BY <choose><when test="params.ProcessedOnly">session_events.processed_at</when><otherwise>COALESCE(session_events.processed_at, session_events.created_at)</otherwise></choose>
         <choose><when test="params.Descending">DESC, id DESC</when><otherwise>ASC, id ASC</otherwise></choose>
         LIMIT #{params.FetchLimit}
     </select>

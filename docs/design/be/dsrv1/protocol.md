@@ -300,7 +300,7 @@ stateDiagram-v2
 
 `dsh_transcripts` 保留租户、Code Session、DSH ID、父级与公开线程绑定，以及 `next_offset`。`dsh_transcript_records` 保存租户、`transcript_uuid`、`record_offset` 和 `payload bytea`，不创建外键。
 
-`00115_dsh_runtime.sql` 直接创建最终的 transcript 元数据和 bytea 记录表，Header 为 offset 0。Brain 恢复后只上传新增尾部，不重新上传确认前缀。DSR 的六张表在同一个 migration 中创建，Down 删除这些表。已应用旧实验 schema 的开发库需要显式重建或备份后转换，不会自动重跑修改后的 migration。
+`00117_dsh_runtime.sql` 直接创建最终的 transcript 元数据和 bytea 记录表，Header 为 offset 0。Brain 恢复后只上传新增尾部，不重新上传确认前缀。DSR 的六张表在同一个 migration 中创建，Down 删除这些表。已应用旧实验 schema 的开发库需要显式重建或备份后转换，不会自动重跑修改后的 migration。
 
 ### 6.7 读取
 

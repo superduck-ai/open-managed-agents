@@ -16,6 +16,7 @@ func (d *DB) CreateChannelRegistration(ctx context.Context, params ChannelRegist
 		NextPollAt:         params.NextPollAt,
 		IntervalSeconds:    params.IntervalSeconds,
 		Domain:             params.Domain,
+		Owner:              params.Owner,
 		DeviceCodeEnvelope: params.DeviceCodeEnvelope,
 		AppID:              params.AppID,
 		AppSecretEnvelope:  params.AppSecretEnvelope,
@@ -42,6 +43,23 @@ func (d *DB) UpdateChannelRegistration(ctx context.Context, params ChannelRegist
 		NextPollAt:         params.NextPollAt,
 		IntervalSeconds:    params.IntervalSeconds,
 		Domain:             params.Domain,
+		Owner:              params.Owner,
+		DeviceCodeEnvelope: params.DeviceCodeEnvelope,
+		AppID:              params.AppID,
+		AppSecretEnvelope:  params.AppSecretEnvelope,
+	})
+	return record, mapNoRows(err)
+}
+
+func (d *DB) TransitionChannelRegistration(ctx context.Context, params ChannelRegistrationUpdate) (ChannelRegistrationRecord, error) {
+	record, err := NewChannelRegistrationMapper(d.mapperDB).TransitionRegistration(ctx, updateChannelRegistrationParams{
+		ExternalID:         params.ExternalID,
+		Phase:              params.Phase,
+		URL:                params.URL,
+		ExpiresAt:          params.ExpiresAt,
+		IntervalSeconds:    params.IntervalSeconds,
+		Domain:             params.Domain,
+		Owner:              params.Owner,
 		DeviceCodeEnvelope: params.DeviceCodeEnvelope,
 		AppID:              params.AppID,
 		AppSecretEnvelope:  params.AppSecretEnvelope,

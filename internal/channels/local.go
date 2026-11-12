@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -39,19 +40,21 @@ type localStore interface {
 	GetChannelRegistration(context.Context, string, string, string) (db.ChannelRegistrationRecord, error)
 	GetChannelQrRegistration(context.Context, string) (db.ChannelRegistrationRecord, error)
 	UpdateChannelRegistration(context.Context, db.ChannelRegistrationUpdate) (db.ChannelRegistrationRecord, error)
+	TransitionChannelRegistration(context.Context, db.ChannelRegistrationUpdate) (db.ChannelRegistrationRecord, error)
 	DeleteChannelRegistration(context.Context, string) error
 }
 
 type localService struct {
-	store     localStore
-	cipher    *secrets.Service
-	runtime   *runtimeSupervisor
-	logger    *slog.Logger
-	client    *http.Client
-	tokenURL  string
-	registrar appRegistrar
-	runMu     sync.Mutex
-	runs      map[string]*registrationRun
+	store      localStore
+	cipher     *secrets.Service
+	runtime    *runtimeSupervisor
+	logger     *slog.Logger
+	client     *http.Client
+	tokenURL   string
+	instanceID string
+	registrar  appRegistrar
+	runMu      sync.Mutex
+	runs       map[string]*registrationRun
 }
 
 type channelMutation struct {
@@ -77,14 +80,15 @@ type localHandler struct {
 
 func newLocalService(store localStore, cipher *secrets.Service, runtime *runtimeSupervisor, logger *slog.Logger) *localService {
 	return &localService{
-		store:     store,
-		cipher:    cipher,
-		runtime:   runtime,
-		logger:    logging.LoggerOrDefault(logger),
-		client:    &http.Client{Timeout: 10 * time.Second},
-		tokenURL:  feishuTokenURL,
-		registrar: sdkRegistrar{},
-		runs:      make(map[string]*registrationRun),
+		store:      store,
+		cipher:     cipher,
+		runtime:    runtime,
+		logger:     logging.LoggerOrDefault(logger),
+		client:     &http.Client{Timeout: 10 * time.Second},
+		tokenURL:   feishuTokenURL,
+		registrar:  sdkRegistrar{},
+		runs:       make(map[string]*registrationRun),
+		instanceID: uuid.NewString(),
 	}
 }
 

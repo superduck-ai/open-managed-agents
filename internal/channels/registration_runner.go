@@ -53,6 +53,7 @@ func (s *localService) startRun(record db.ChannelRegistrationRecord) *registrati
 
 func (s *localService) executeRegistration(ctx context.Context, record db.ChannelRegistrationRecord, run *registrationRun) {
 	defer s.finishRun(record.ExternalID, run)
+	record.Owner = s.instanceID
 	options := &registration.Options{
 		Source:    "open-managed-agents",
 		AppPreset: &registration.AppPreset{Name: record.Name},
@@ -130,8 +131,7 @@ func (s *localService) stopRegistrations() {
 }
 
 func (s *localService) persistRegistration(ctx context.Context, record db.ChannelRegistrationRecord) {
-	update := registrationUpdate(record, record.DeviceCodeEnvelope)
-	if _, err := s.store.UpdateChannelRegistration(ctx, update); err != nil {
+	if _, err := s.store.UpdateChannelRegistration(ctx, registrationUpdate(record, record.DeviceCodeEnvelope)); err != nil && !errors.Is(err, db.ErrNotFound) {
 		s.logger.WarnContext(ctx, "update channel registration", "registration_id", record.ExternalID, "error", err)
 	}
 }

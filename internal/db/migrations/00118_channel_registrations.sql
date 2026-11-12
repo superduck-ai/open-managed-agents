@@ -14,6 +14,8 @@ create table if not exists channel_registrations (
 	next_poll_at timestamptz not null default now(),
 	interval_seconds integer not null default 5,
 	domain text not null default 'feishu',
+	owner text not null default '',
+	heartbeat_at timestamptz not null default now(),
 	device_code_envelope jsonb,
 	app_id text not null default '',
 	app_secret_envelope jsonb,
@@ -30,6 +32,9 @@ create table if not exists channel_registrations (
 create unique index if not exists channel_registrations_qr_channel_v1_idx
 	on channel_registrations (channel_external_id)
 	where kind = 'qr';
+
+create index if not exists channel_registrations_heartbeat_v1_idx
+	on channel_registrations (phase, heartbeat_at);
 
 create index if not exists channel_registrations_workspace_v1_idx
 	on channel_registrations (organization_uuid, workspace_uuid, created_at desc);

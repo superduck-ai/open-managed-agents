@@ -10,6 +10,10 @@ func unauthenticated() error {
 	return apperr.New(apperr.Unauthenticated, "请先登录", nil)
 }
 
+func agentScopeRequired() error {
+	return apperr.New(apperr.InvalidArgument, "桥接模式下扫码需要 agent_id 参数", nil)
+}
+
 func agentNotFound() error {
 	return apperr.New(apperr.NotFound, "Agent 不存在", nil)
 }

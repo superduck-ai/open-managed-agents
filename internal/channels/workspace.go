@@ -36,7 +36,18 @@ func (h *handler) workspaceRouter() http.Handler {
 	router.Post("/credentials/check", wrap(h.checkAppCredentials))
 	router.Post("/authorizations", wrap(h.forwardAuthorization))
 	router.Get("/authorizations/{authorization_id}", wrap(h.forwardAuthorization))
+	router.Get("/{channel_id}/qr", wrap(h.forwardChannelQr))
+	router.Post("/{channel_id}/qr", wrap(h.forwardChannelQr))
 	return router
+}
+
+func (h *handler) forwardChannelQr(w http.ResponseWriter, r *http.Request) error {
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID == "" {
+		return agentScopeRequired()
+	}
+	chi.RouteContext(r.Context()).URLParams.Add("agent_id", agentID)
+	return h.forward(w, r)
 }
 
 func (h *handler) listWorkspace(w http.ResponseWriter, r *http.Request) error {

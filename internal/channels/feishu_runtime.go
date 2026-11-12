@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,7 @@ import (
 
 const (
 	channelReplyPollInterval = time.Second
+	channelReconcileInterval = 30 * time.Second
 	channelReplyTimeout      = 30 * time.Minute
 	channelPairingLimit      = 1000
 	channelTitleLimit        = 30
@@ -62,12 +64,50 @@ func newRuntimeSupervisor(store runtimeStore, cipher *secrets.Service, oma *omaC
 }
 
 func (s *runtimeSupervisor) restore(ctx context.Context) {
+	s.reconcile(ctx)
+	go s.watch(ctx)
+}
+
+func (s *runtimeSupervisor) watch(ctx context.Context) {
+	ticker := time.NewTicker(channelReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.shutdown:
+			return
+		case <-ticker.C:
+			s.reconcile(ctx)
+		}
+	}
+}
+
+func (s *runtimeSupervisor) reconcile(ctx context.Context) {
 	records, err := s.listRunnable(ctx)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "restore channel runtimes", "error", err)
+		s.logger.ErrorContext(ctx, "reconcile channel runtimes", "error", err)
 		return
 	}
+	wanted := make(map[string]db.ChannelRecord, len(records))
 	for _, record := range records {
+		wanted[record.ExternalID] = record
+	}
+	s.mu.Lock()
+	stale := make([]string, 0)
+	for channelID, worker := range s.workers {
+		if record, ok := wanted[channelID]; !ok || worker.outdated(record) {
+			stale = append(stale, channelID)
+		}
+	}
+	s.mu.Unlock()
+	for _, channelID := range stale {
+		s.stop(channelID)
+	}
+	for _, record := range records {
+		if s.running(record.ExternalID) {
+			continue
+		}
 		if err := s.apply(ctx, record); err != nil {
 			s.logger.WarnContext(ctx, "start channel runtime", "channel_id", record.ExternalID, "error", err)
 		}
@@ -135,6 +175,13 @@ func (s *runtimeSupervisor) stopAll() {
 	}
 }
 
+func (s *runtimeSupervisor) running(channelID string) bool {
+	s.mu.Lock()
+	_, ok := s.workers[channelID]
+	s.mu.Unlock()
+	return ok
+}
+
 func (s *runtimeSupervisor) online(channelID string) bool {
 	s.mu.Lock()
 	worker, ok := s.workers[channelID]
@@ -198,6 +245,10 @@ func newChannelWorker(supervisor *runtimeSupervisor, record db.ChannelRecord, se
 	return worker, nil
 }
 
+func (w *channelWorker) outdated(record db.ChannelRecord) bool {
+	return w.record.AppID != record.AppID || w.record.UpdatedAt.Before(record.UpdatedAt)
+}
+
 func (w *channelWorker) start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
@@ -223,6 +274,9 @@ func (w *channelWorker) close() {
 
 func (w *channelWorker) handleMessage(ctx context.Context, msg *channeltypes.NormalizedMessage) error {
 	if msg == nil || msg.UserID == "" || msg.ChatID == "" {
+		return nil
+	}
+	if !w.active(ctx) {
 		return nil
 	}
 	text := msg.Content
@@ -253,6 +307,14 @@ func (w *channelWorker) handleMessage(ctx context.Context, msg *channeltypes.Nor
 		return err
 	}
 	return w.streamReply(ctx, msg, apiKey, sessionID, len(events))
+}
+
+func (w *channelWorker) active(ctx context.Context) bool {
+	record, err := w.supervisor.store.GetChannelRecord(ctx, w.record.OrganizationUUID, w.record.WorkspaceUUID, w.record.AgentExternalID, w.record.ExternalID)
+	if err != nil {
+		return false
+	}
+	return record.Enabled && record.DeletedAt == nil && record.BindingStatus == "bound"
 }
 
 func (w *channelWorker) authorize(ctx context.Context, msg *channeltypes.NormalizedMessage) (bool, error) {
@@ -336,7 +398,7 @@ func (w *channelWorker) sessionFor(ctx context.Context, msg *channeltypes.Normal
 }
 
 func (w *channelWorker) streamReply(ctx context.Context, msg *channeltypes.NormalizedMessage, apiKey, sessionID string, baseline int) error {
-	stream, err := w.channel.Stream(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Markdown: "正在处理…"})
+	stream, err := w.channel.Stream(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Markdown: "正在处理…", ReplyMessageID: w.replyTarget(msg)})
 	if err != nil {
 		return err
 	}
@@ -357,11 +419,9 @@ func (w *channelWorker) streamReply(ctx context.Context, msg *channeltypes.Norma
 					continue
 				}
 				seen[event.ID] = struct{}{}
-				if event.Type == "agent.message" {
-					if text := eventText(event); text != "" {
-						if err := stream.Append(ctx, text+"\n"); err != nil {
-							return err
-						}
+				if text := channelEventText(w.record, event); text != "" {
+					if err := stream.Append(ctx, text); err != nil {
+						return err
 					}
 				}
 				if terminalEvent(event) {
@@ -386,8 +446,37 @@ func (w *channelWorker) streamReply(ctx context.Context, msg *channeltypes.Norma
 }
 
 func (w *channelWorker) replyText(ctx context.Context, msg *channeltypes.NormalizedMessage, text string) error {
-	_, err := w.channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Text: text})
+	_, err := w.channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Text: text, ReplyMessageID: w.replyTarget(msg)})
 	return err
+}
+
+func (w *channelWorker) replyTarget(msg *channeltypes.NormalizedMessage) string {
+	if !w.record.ReplyInThread {
+		return ""
+	}
+	return msg.MessageID
+}
+
+func channelEventText(record db.ChannelRecord, event omaEvent) string {
+	switch event.Type {
+	case "agent.message":
+		if text := eventText(event); text != "" {
+			return text + "\n"
+		}
+	case "agent.thinking":
+		if record.IncludeThinking {
+			if text := eventThinking(event); text != "" {
+				return "> 💭 " + strings.ReplaceAll(text, "\n", "\n> ") + "\n"
+			}
+		}
+	case "agent.tool_use", "agent.mcp_tool_use", "agent.custom_tool_use":
+		if record.IncludeToolCalls {
+			if name := eventToolName(event); name != "" {
+				return "🔧 " + name + "\n"
+			}
+		}
+	}
+	return ""
 }
 
 func terminalEvent(event omaEvent) bool {

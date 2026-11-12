@@ -20,6 +20,8 @@ type ChannelRegistrationRecord struct {
 	NextPollAt         time.Time `db:"next_poll_at"`
 	IntervalSeconds    int       `db:"interval_seconds"`
 	Domain             string    `db:"domain"`
+	Owner              string    `db:"owner"`
+	HeartbeatAt        time.Time `db:"heartbeat_at"`
 	DeviceCodeEnvelope *string   `db:"device_code_envelope"`
 	AppID              string    `db:"app_id"`
 	AppSecretEnvelope  *string   `db:"app_secret_envelope"`
@@ -40,6 +42,7 @@ type ChannelRegistrationInput struct {
 	NextPollAt         time.Time
 	IntervalSeconds    int
 	Domain             string
+	Owner              string
 	DeviceCodeEnvelope *string
 	AppID              string
 	AppSecretEnvelope  *string
@@ -53,6 +56,7 @@ type ChannelRegistrationUpdate struct {
 	NextPollAt         time.Time
 	IntervalSeconds    int
 	Domain             string
+	Owner              string
 	DeviceCodeEnvelope *string
 	AppID              string
 	AppSecretEnvelope  *string
@@ -63,10 +67,12 @@ type ChannelRegistrationMapper interface {
 	FindRegistration(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (ChannelRegistrationRecord, error)
 	FindChannelQrRegistration(ctx context.Context, channelExternalID string) (ChannelRegistrationRecord, error)
 	UpdateRegistration(ctx context.Context, params updateChannelRegistrationParams) (ChannelRegistrationRecord, error)
+	TransitionRegistration(ctx context.Context, params updateChannelRegistrationParams) (ChannelRegistrationRecord, error)
 	DeleteRegistration(ctx context.Context, externalID string) error
 }
 
 type insertChannelRegistrationParams struct {
+	Owner              string
 	ExternalID         string
 	Kind               string
 	OrganizationUUID   string
@@ -85,6 +91,7 @@ type insertChannelRegistrationParams struct {
 }
 
 type updateChannelRegistrationParams struct {
+	Owner              string
 	ExternalID         string
 	Phase              string
 	URL                string

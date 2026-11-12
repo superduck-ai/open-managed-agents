@@ -23,8 +23,7 @@
 
     <select id="LockAgent" result="scalar">
         SELECT a.external_id FROM agents a
-        JOIN workspaces w ON w.id = a.workspace_id
-        WHERE w.uuid = #{workspaceUUID}
+        WHERE a.workspace_uuid = #{workspaceUUID}
         AND a.external_id = #{agentExternalID}
         AND a.archived_at IS NULL
         AND a.deleted_at IS NULL

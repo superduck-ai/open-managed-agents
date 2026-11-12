@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 	"github.com/larksuite/oapi-sdk-go/v3/scene/registration"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -161,6 +162,7 @@ func (f *fakeRegistrationStore) CreateChannelRegistration(_ context.Context, inp
 		WorkspaceUUID: input.WorkspaceUUID, ChannelExternalID: input.ChannelExternalID, Name: input.Name,
 		Phase: input.Phase, URL: input.URL, ExpiresAt: input.ExpiresAt, NextPollAt: input.NextPollAt,
 		IntervalSeconds: input.IntervalSeconds, Domain: input.Domain, DeviceCodeEnvelope: input.DeviceCodeEnvelope,
+		Owner: input.Owner, HeartbeatAt: time.Now(),
 	}
 	f.records[record.ExternalID] = record
 	return record, nil
@@ -180,7 +182,21 @@ func (f *fakeRegistrationStore) GetChannelQrRegistration(context.Context, string
 
 func (f *fakeRegistrationStore) UpdateChannelRegistration(_ context.Context, update db.ChannelRegistrationUpdate) (db.ChannelRegistrationRecord, error) {
 	record, ok := f.records[update.ExternalID]
-	if !ok {
+	if !ok || record.Phase != registrationPhaseWaiting {
+		return db.ChannelRegistrationRecord{}, db.ErrNotFound
+	}
+	record.Owner = update.Owner
+	record.URL = update.URL
+	record.ExpiresAt = update.ExpiresAt
+	record.IntervalSeconds = update.IntervalSeconds
+	record.HeartbeatAt = time.Now()
+	f.records[record.ExternalID] = record
+	return record, nil
+}
+
+func (f *fakeRegistrationStore) TransitionChannelRegistration(_ context.Context, update db.ChannelRegistrationUpdate) (db.ChannelRegistrationRecord, error) {
+	record, ok := f.records[update.ExternalID]
+	if !ok || record.Phase != registrationPhaseWaiting {
 		return db.ChannelRegistrationRecord{}, db.ErrNotFound
 	}
 	record.Phase = update.Phase
@@ -192,6 +208,7 @@ func (f *fakeRegistrationStore) UpdateChannelRegistration(_ context.Context, upd
 	record.DeviceCodeEnvelope = update.DeviceCodeEnvelope
 	record.AppID = update.AppID
 	record.AppSecretEnvelope = update.AppSecretEnvelope
+	record.DeviceCodeEnvelope = update.DeviceCodeEnvelope
 	f.records[record.ExternalID] = record
 	return record, nil
 }
@@ -312,6 +329,25 @@ func TestAuthorizationDeniedByUser(t *testing.T) {
 	}
 }
 
+func TestAuthorizationWithForeignHeartbeatStaysPending(t *testing.T) {
+	service, store := newAuthorizationService(t, &fakeRegistrar{})
+	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
+	record, err := store.CreateChannelRegistration(context.Background(), db.ChannelRegistrationInput{
+		ExternalID: "chra_y", Kind: registrationKindAuth, OrganizationUUID: "org", WorkspaceUUID: "ws",
+		Phase: registrationPhaseWaiting, ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	view, err := service.authorizationStatus(context.Background(), principal, record.ExternalID)
+	if err != nil {
+		t.Fatalf("authorizationStatus: %v", err)
+	}
+	if view["status"] != "pending" {
+		t.Fatalf("其他实例仍在轮询时应保持 pending，实际 %v", view)
+	}
+}
+
 func TestAuthorizationWithoutRunnerBecomesUnknown(t *testing.T) {
 	service, store := newAuthorizationService(t, &fakeRegistrar{})
 	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
@@ -322,6 +358,8 @@ func TestAuthorizationWithoutRunnerBecomesUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	record.HeartbeatAt = time.Now().Add(-time.Hour)
+	store.records[record.ExternalID] = record
 	view, err := service.authorizationStatus(context.Background(), principal, record.ExternalID)
 	if err != nil {
 		t.Fatalf("authorizationStatus: %v", err)
@@ -456,4 +494,39 @@ func TestChannelSessionTitle(t *testing.T) {
 
 func stringPointer(value string) *string {
 	return &value
+}
+
+func TestChannelEventTextHonorsDisplayOptions(t *testing.T) {
+	message := omaEvent{Type: "agent.message", Content: []byte(`[{"type":"text","text":"你好"}]`)}
+	thinking := omaEvent{Type: "agent.thinking", Content: []byte(`[{"type":"thinking","thinking":"先想一想"}]`)}
+	tool := omaEvent{Type: "agent.tool_use", Content: []byte(`[{"type":"tool_use","name":"Bash"}]`)}
+	quiet := db.ChannelRecord{}
+	if got := channelEventText(quiet, message); got != "你好\n" {
+		t.Fatalf("普通回复 = %q", got)
+	}
+	if got := channelEventText(quiet, thinking); got != "" {
+		t.Fatalf("未开启思考时不应输出 = %q", got)
+	}
+	if got := channelEventText(quiet, tool); got != "" {
+		t.Fatalf("未开启工具调用时不应输出 = %q", got)
+	}
+	loud := db.ChannelRecord{IncludeThinking: true, IncludeToolCalls: true}
+	if got := channelEventText(loud, thinking); got != "> 💭 先想一想\n" {
+		t.Fatalf("思考输出 = %q", got)
+	}
+	if got := channelEventText(loud, tool); got != "🔧 Bash\n" {
+		t.Fatalf("工具输出 = %q", got)
+	}
+}
+
+func TestReplyTargetUsesThreadOnlyWhenEnabled(t *testing.T) {
+	msg := &channeltypes.NormalizedMessage{MessageID: "om_1", ChatID: "oc_1"}
+	worker := &channelWorker{record: db.ChannelRecord{}}
+	if got := worker.replyTarget(msg); got != "" {
+		t.Fatalf("未开启话题回复时应直接发消息，实际 %q", got)
+	}
+	worker.record.ReplyInThread = true
+	if got := worker.replyTarget(msg); got != "om_1" {
+		t.Fatalf("话题回复目标 = %q", got)
+	}
 }

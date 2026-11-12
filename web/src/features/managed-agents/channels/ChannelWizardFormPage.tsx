@@ -167,7 +167,7 @@ export function ChannelWizardFormPage({
           void queryClient.invalidateQueries({ queryKey: ['channel-detail', workspaceId, targetAgentId, saved.id] });
           return;
         }
-        const next = await anthropicBetaApi.channels.qr<ChannelQr>(workspaceId, saved.id);
+        const next = await anthropicBetaApi.channels.qr<ChannelQr>(workspaceId, saved.id, targetAgentId);
         if (!controller.signal.aborted) {
           setQr(next);
           setPollError('');

@@ -14,11 +14,12 @@ import (
 const registrationVault = "channel-registration"
 
 const (
-	registrationKindAuth     = "authorization"
-	registrationKindQR       = "qr"
-	registrationPhaseWaiting = "waiting"
-	registrationPhaseBound   = "bound"
-	registrationNameLimit    = 40
+	registrationHeartbeatGrace = 45 * time.Second
+	registrationKindAuth       = "authorization"
+	registrationKindQR         = "qr"
+	registrationPhaseWaiting   = "waiting"
+	registrationPhaseBound     = "bound"
+	registrationNameLimit      = 40
 )
 
 func (s *localService) beginAuthorization(ctx context.Context, principal auth.Principal, name string) (map[string]any, error) {
@@ -67,7 +68,13 @@ func (s *localService) qrStatus(ctx context.Context, principal auth.Principal, c
 	if err != nil && !errors.Is(err, db.ErrNotFound) {
 		return nil, unavailable(err)
 	}
-	if errors.Is(err, db.ErrNotFound) || record.Phase == "expired" || record.Phase == "denied" {
+	if errors.Is(err, db.ErrNotFound) || record.Phase == "expired" || record.Phase == "denied" || record.Phase == "unknown" {
+		if err == nil {
+			s.cancelRun(record.ExternalID)
+			if err := s.store.DeleteChannelRegistration(ctx, record.ExternalID); err != nil && !errors.Is(err, db.ErrNotFound) {
+				return nil, unavailable(err)
+			}
+		}
 		started, url, launchErr := s.launchRegistration(ctx, principal, registrationKindQR, channel.ExternalID, channel.Name)
 		if launchErr != nil {
 			return nil, launchErr
@@ -97,6 +104,7 @@ func (s *localService) launchRegistration(ctx context.Context, principal auth.Pr
 	}
 	now := time.Now()
 	record, err := s.store.CreateChannelRegistration(ctx, db.ChannelRegistrationInput{
+		Owner:             s.instanceID,
 		ExternalID:        externalID,
 		Kind:              kind,
 		OrganizationUUID:  principal.OrganizationUUID,
@@ -131,11 +139,14 @@ func (s *localService) settleRegistration(ctx context.Context, record db.Channel
 	if s.activeRun(record.ExternalID) != nil {
 		return record, nil
 	}
-	phase := "unknown"
-	if !time.Now().Before(record.ExpiresAt) {
-		phase = "expired"
+	now := time.Now()
+	if !now.Before(record.ExpiresAt) {
+		return s.saveRegistrationPhase(ctx, record, "expired")
 	}
-	return s.saveRegistrationPhase(ctx, record, phase)
+	if now.Sub(record.HeartbeatAt) < registrationHeartbeatGrace {
+		return record, nil
+	}
+	return s.saveRegistrationPhase(ctx, record, "unknown")
 }
 
 func (s *localService) completeRegistration(ctx context.Context, record db.ChannelRegistrationRecord, appID, appSecret string) {
@@ -172,7 +183,7 @@ func (s *localService) completeRegistration(ctx context.Context, record db.Chann
 	record.AppID = appID
 	record.AppSecretEnvelope = envelope
 	record.DeviceCodeEnvelope = nil
-	if _, err := s.store.UpdateChannelRegistration(ctx, registrationUpdate(record, nil)); err != nil {
+	if _, err := s.store.TransitionChannelRegistration(ctx, registrationUpdate(record, nil)); err != nil {
 		s.logger.WarnContext(ctx, "complete channel authorization", "registration_id", record.ExternalID, "error", err)
 	}
 }
@@ -269,7 +280,14 @@ func (s *localService) authorizationCredentials(ctx context.Context, principal a
 
 func (s *localService) saveRegistrationPhase(ctx context.Context, record db.ChannelRegistrationRecord, phase string) (db.ChannelRegistrationRecord, error) {
 	record.Phase = phase
-	updated, err := s.store.UpdateChannelRegistration(ctx, registrationUpdate(record, record.DeviceCodeEnvelope))
+	updated, err := s.store.TransitionChannelRegistration(ctx, registrationUpdate(record, record.DeviceCodeEnvelope))
+	if errors.Is(err, db.ErrNotFound) {
+		current, loadErr := s.store.GetChannelRegistration(ctx, record.OrganizationUUID, record.WorkspaceUUID, record.ExternalID)
+		if loadErr != nil {
+			return record, unavailable(loadErr)
+		}
+		return current, nil
+	}
 	if err != nil {
 		return record, unavailable(err)
 	}
@@ -285,6 +303,7 @@ func registrationUpdate(record db.ChannelRegistrationRecord, deviceCode *string)
 		NextPollAt:         record.NextPollAt,
 		IntervalSeconds:    record.IntervalSeconds,
 		Domain:             record.Domain,
+		Owner:              record.Owner,
 		DeviceCodeEnvelope: deviceCode,
 		AppID:              record.AppID,
 		AppSecretEnvelope:  record.AppSecretEnvelope,

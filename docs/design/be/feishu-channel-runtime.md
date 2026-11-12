@@ -53,7 +53,7 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 4. 渠道向导里的扫码入口用 `GET /v1/channels/{channel_id}/qr`（工作区级，只需渠道 ID），授权成功后直接把应用凭据绑定到该渠道并启动运行时；过期或拒绝后再次请求会重新发起。
 5. 创建/更新渠道时携带 `authorization_id` 表示复用已完成的工作区授权，OMA 直接从授权记录里取应用凭据绑定渠道。
 
-轮询状态保存在 SDK 所在的进程内，所以进程重启时未完成的授权会停在 `unknown`（不会重复领取一次性凭据），需要重新发起。渠道删除会取消对应的扫码任务。
+进度落在 `channel_registrations`（`owner` 记录发起实例、`heartbeat_at` 随 SDK 轮询刷新），所有状态写入都是 `WHERE phase = 'waiting'` 的条件更新：多实例轮询同一记录时，别的实例不会把刚完成的终态覆盖回 `waiting`；没有本地任务的实例看到心跳仍然新鲜就继续返回 `pending`，只有心跳超过 45 秒才算任务丢失并落 `unknown`。进程重启或实例下线导致的 `unknown` 需要重新发起；同一渠道已有的过期/拒绝/未知记录会先删除再重建，不会撞唯一索引。渠道删除会取消对应的扫码任务。
 
 ## 行为
 
@@ -62,6 +62,8 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 - 单聊固定复用 `chat:<chat_id>` 会话；同一聊天连续对话继续落在同一个会话，会话归档后自动新建。
 - 会话 metadata 写入 `source=feishu`、`channel_id`、`app_id`、`scope_id`、`chat_type`、`open_id`、`actor_id`，控制台按既有渠道来源识别会话。
 - 回复使用飞书流式卡片，结束条件为 `session.status_idle` 且 `stop_reason` 为 `end_turn`/`interrupted`/`retries_exhausted`，或会话错误、30 分钟超时。
+- 展示开关在原生运行时生效：`include_thinking` 把 `agent.thinking` 以引用块追加到卡片，`include_tool_calls` 追加 `🔧 工具名`，`reply_in_thread` 让首条消息与提示都带 `reply_message_id` 回复到原消息，形成话题。
+- 多实例部署：每个实例启动时加载全部可运行渠道并每 30 秒对账一次，配置或启停变化会重建/停止本地 worker；飞书长连接按应用维度分发事件，会话映射与配对状态都在 Postgres 共享。禁用或删除后在下次对账前旧 worker 仍可能收到消息，因此每条消息都会重新校验渠道记录，非 `enabled` 或已删除的渠道直接丢弃，不再回复。
 - 删除渠道停止运行、清除会话映射并软删除记录，历史 OMA 会话保留。
 
 ## 本阶段未覆盖

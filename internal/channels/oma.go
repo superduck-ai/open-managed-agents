@@ -24,8 +24,10 @@ type omaEvent struct {
 }
 
 type omaContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	Thinking string `json:"thinking"`
+	Name     string `json:"name"`
 }
 
 type omaSession struct {
@@ -167,6 +169,37 @@ func eventText(event omaEvent) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func eventThinking(event omaEvent) string {
+	var blocks []omaContentBlock
+	if err := json.Unmarshal(event.Content, &blocks); err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if block.Thinking != "" {
+			parts = append(parts, block.Thinking)
+			continue
+		}
+		if block.Type == "text" && block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func eventToolName(event omaEvent) string {
+	var blocks []omaContentBlock
+	if err := json.Unmarshal(event.Content, &blocks); err != nil {
+		return ""
+	}
+	for _, block := range blocks {
+		if block.Name != "" {
+			return block.Name
+		}
+	}
+	return ""
 }
 
 func stopReason(event omaEvent) string {

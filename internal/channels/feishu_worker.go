@@ -11,6 +11,7 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"github.com/larksuite/oapi-sdk-go/v3/channel"
 	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
+	larkevent "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
@@ -43,12 +44,16 @@ type channelReplyTask struct {
 	done         chan struct{}
 }
 
+func newFeishuWSClient(appID, secret string) *larkws.Client {
+	return larkws.NewClient(appID, secret, larkws.WithEventHandler(larkevent.NewEventDispatcher("", "")))
+}
+
 func newChannelWorker(supervisor *runtimeSupervisor, record db.ChannelRecord, secret string) (*channelWorker, error) {
 	if record.AppID == "" || secret == "" {
 		return nil, errors.New("飞书应用凭据不完整")
 	}
 	client := lark.NewClient(record.AppID, secret)
-	wsClient := larkws.NewClient(record.AppID, secret)
+	wsClient := newFeishuWSClient(record.AppID, secret)
 	requireMention := true
 	respondToMentionAll := false
 	bot := channel.NewChannel(client, wsClient, channeltypes.WithPolicyConfig(channeltypes.PolicyConfig{
@@ -90,6 +95,7 @@ func (w *channelWorker) start() {
 		if err := w.channel.Start(ctx); err != nil && ctx.Err() == nil {
 			w.supervisor.logger.WarnContext(ctx, "feishu channel disconnected", "channel_id", w.record.ExternalID, "error", err)
 		}
+		w.supervisor.forget(w.record.ExternalID, w)
 	}()
 }
 

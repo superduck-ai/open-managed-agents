@@ -143,6 +143,15 @@ func (s *runtimeSupervisor) apply(ctx context.Context, record db.ChannelRecord) 
 	return nil
 }
 
+func (s *runtimeSupervisor) forget(channelID string, worker *channelWorker) {
+	s.mu.Lock()
+	current, ok := s.workers[channelID]
+	if ok && current == worker {
+		delete(s.workers, channelID)
+	}
+	s.mu.Unlock()
+}
+
 func (s *runtimeSupervisor) stop(channelID string) {
 	s.mu.Lock()
 	worker, ok := s.workers[channelID]

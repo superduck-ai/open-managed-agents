@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -79,6 +80,7 @@ type fakeChannel struct {
 	sends     []string
 	inputs    []*channeltypes.SendInput
 	downloads map[string][]byte
+	startErr  error
 }
 
 func (f *fakeChannel) Send(_ context.Context, input *channeltypes.SendInput) (*channeltypes.SendResult, error) {
@@ -104,7 +106,7 @@ func (f *fakeChannel) OnError(func(error))                    {}
 func (f *fakeChannel) OnReconnecting(func())                  {}
 func (f *fakeChannel) OnReconnected(func())                   {}
 func (f *fakeChannel) OnDisconnected(func())                  {}
-func (f *fakeChannel) Start(context.Context) error            { return nil }
+func (f *fakeChannel) Start(context.Context) error            { return f.startErr }
 func (f *fakeChannel) UpdatePolicy(channeltypes.PolicyConfig) {}
 func (f *fakeChannel) GetPolicy() channeltypes.PolicyConfig {
 	return channeltypes.PolicyConfig{}
@@ -308,6 +310,34 @@ func TestBuildAnswersSupportsMultiSelectAndCustom(t *testing.T) {
 	text := string(encoded)
 	if !strings.Contains(text, `"id":"q1"`) || !strings.Contains(text, `"main"`) || !strings.Contains(text, `"custom":"自定义"`) {
 		t.Fatalf("问卷答案不完整: %s", text)
+	}
+}
+
+func TestFeishuWSClientRegistersEventDispatcher(t *testing.T) {
+	client := newFeishuWSClient("cli_test", "secret")
+	if client.EventHandler() == nil {
+		t.Fatal("飞书长连接必须配置事件分发器，否则 OnMessage / OnCardAction 注册的处理器永远不会被调用")
+	}
+}
+
+func TestFailedStartReleasesWorkerForRetry(t *testing.T) {
+	store := &fakeRuntimeStore{}
+	supervisor := newRuntimeSupervisor(store, nil, nil, nil)
+	worker := &channelWorker{
+		supervisor: supervisor,
+		record:     db.ChannelRecord{ExternalID: "chnl_1"},
+		channel:    &fakeChannel{startErr: errors.New("websocket dial failed")},
+		replies:    make(map[string][]*channelReplyTask),
+		asked:      make(map[string]struct{}),
+	}
+	supervisor.workers["chnl_1"] = worker
+	worker.start()
+	deadline := time.Now().Add(2 * time.Second)
+	for supervisor.running("chnl_1") {
+		if time.Now().After(deadline) {
+			t.Fatal("长连接启动失败后应释放 worker，让对账重新拉起")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

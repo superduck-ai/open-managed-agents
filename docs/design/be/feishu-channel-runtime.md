@@ -55,6 +55,8 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 
 - 开放模式直接放行；配对模式要求单聊用户或群聊分别获批，未获批时只登记一条待审批申请并回复提示。
 - 群聊必须 @ 机器人，由飞书 Channel SDK 的策略网关拦截未 @ 消息。
+- 每条渠道的长连接都显式配置官方 SDK 的事件分发器（`event/dispatcher`）：`OnMessage`、`OnCardAction` 依赖它注册 `im.message.receive_v1` 与卡片回调；缺少分发器时连接会建立成功（页面显示已连通），但所有入站事件被 SDK 静默丢弃。
+- 长连接退出（握手失败、鉴权失败或不再重连）会释放该渠道的 worker，下一次 30 秒对账重新拉起；`connected` 只反映当前 worker 的连接状态，因此启动失败不会永久卡在“已连通但无回复”。
 - 作用域统一用 `scopeKey`：话题消息按 `chat:<chat_id>:thread:<thread_id|root_id>` 隔离，普通聊天按 `chat:<chat_id>`；会话映射、回复任务和卡片交互都挂在同一作用域上。会话归档后自动新建。
 - 会话 metadata 写入 `source=feishu`、`channel_id`、`app_id`、`scope_id`、`chat_type`、`open_id`、`actor_id`，控制台按既有渠道来源识别会话。
 - 回复使用飞书流式卡片，结束条件为 `session.status_idle` 且 `stop_reason` 为 `end_turn`/`interrupted`/`retries_exhausted`，或会话错误、30 分钟超时。

@@ -61,6 +61,8 @@ func (f *fakeLocalStore) CreateChannelRecord(_ context.Context, input db.Channel
 		Enabled:          input.Enabled,
 		BindingStatus:    input.BindingStatus,
 		AppID:            input.AppID,
+		Mounts:           input.Mounts,
+		GitTokenEnvelope: input.GitTokenEnvelope,
 		CreatedAt:        time.Now(),
 	}, nil
 }
@@ -579,6 +581,40 @@ func TestApplyChannelMountsPersistsAndHidesToken(t *testing.T) {
 	}
 	if _, leaked := gitView["authorization_token"]; leaked {
 		t.Fatal("视图不能回显 token")
+	}
+}
+
+func TestCreateSavesGitMountFromWizard(t *testing.T) {
+	store := &fakeLocalStore{agent: db.Agent{ExternalID: "agent_1", Name: "agent"}}
+	service := newLocalService(store, testCipher(t), nil, nil)
+	body := `{"name":"渠道","mode":"open","memory_store_id":null,"vault_id":null,` +
+		`"git_repository":{"type":"github_repository","url":"https://github.com/octocat/Hello-World.git","mount_path":"/workspace/demo","checkout":{"type":"branch","name":"master"},"authorization_token":"ghp_secret"},` +
+		`"include_thinking":false,"include_tool_calls":false,"reply_in_thread":false}`
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	input, err := decodeChannelMutation(httptest.NewRecorder(), request)
+	if err != nil {
+		t.Fatalf("decodeChannelMutation: %v", err)
+	}
+	view, err := service.create(context.Background(), auth.Principal{OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"}, "agent_1", input)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	mounts := parseChannelMounts(store.created.Mounts)
+	if mounts.GitRepository == nil || mounts.GitRepository.URL != "https://github.com/octocat/Hello-World.git" || mounts.GitRepository.MountPath != "/workspace/demo" {
+		t.Fatalf("git 挂载未保存: %s", store.created.Mounts)
+	}
+	if store.created.GitTokenEnvelope == nil {
+		t.Fatal("git 令牌应信封加密保存")
+	}
+	gitView, ok := view["git_repository"].(map[string]any)
+	if !ok || gitView["url"] != "https://github.com/octocat/Hello-World.git" || gitView["mount_path"] != "/workspace/demo" {
+		t.Fatalf("响应应回显 git 挂载: %v", view["git_repository"])
+	}
+	if gitView["tokenConfigured"] != true {
+		t.Fatalf("响应应标记 tokenConfigured: %v", gitView)
+	}
+	if _, leaked := gitView["authorization_token"]; leaked {
+		t.Fatal("响应不能回显 git 令牌")
 	}
 }
 

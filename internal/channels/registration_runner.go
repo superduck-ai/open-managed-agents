@@ -142,7 +142,7 @@ func channelAppAddons() *registration.AppAddons {
 			Tenant: []string{"im:message", "im:message:send_as_bot", "im:chat:readonly"},
 		},
 		Events: registration.AppAddonsEvents{
-			Items: registration.AppAddonsEventItems{Tenant: []string{"im.message.receive_v1"}},
+			Items: registration.AppAddonsEventItems{Tenant: []string{"im.message.receive_v1", "card.action.trigger"}},
 		},
 	}
 }

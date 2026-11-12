@@ -16,14 +16,17 @@ import (
 const omaManagedAgentsBeta = "managed-agents-2026-04-01"
 
 type omaEvent struct {
-	ID         string          `json:"id"`
-	Type       string          `json:"type"`
-	Name       string          `json:"name"`
-	Input      json.RawMessage `json:"input"`
-	Permission string          `json:"evaluated_permission"`
-	Content    json.RawMessage `json:"content"`
-	StopReason json.RawMessage `json:"stop_reason"`
-	CreatedAt  string          `json:"created_at"`
+	ID              string          `json:"id"`
+	Type            string          `json:"type"`
+	Name            string          `json:"name"`
+	Input           json.RawMessage `json:"input"`
+	Permission      string          `json:"evaluated_permission"`
+	ToolUseID       string          `json:"tool_use_id"`
+	CustomToolUseID string          `json:"custom_tool_use_id"`
+	SessionThreadID string          `json:"session_thread_id"`
+	Content         json.RawMessage `json:"content"`
+	StopReason      json.RawMessage `json:"stop_reason"`
+	CreatedAt       string          `json:"created_at"`
 }
 
 type omaContentBlock struct {
@@ -82,17 +85,30 @@ func (c *omaClient) getSession(ctx context.Context, apiKey, sessionID string) (o
 }
 
 func (c *omaClient) sendUserMessage(ctx context.Context, apiKey, sessionID, text string) error {
-	return c.sendContent(ctx, apiKey, sessionID, []map[string]any{{"type": "text", "text": text}})
+	_, err := c.sendContent(ctx, apiKey, sessionID, []map[string]any{{"type": "text", "text": text}})
+	return err
 }
 
-func (c *omaClient) sendContent(ctx context.Context, apiKey, sessionID string, content []map[string]any) error {
+func (c *omaClient) sendContent(ctx context.Context, apiKey, sessionID string, content []map[string]any) ([]string, error) {
 	body := map[string]any{
 		"events": []map[string]any{{
 			"type":    "user.message",
 			"content": content,
 		}},
 	}
-	return c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", body, nil)
+	var response struct {
+		Data []omaEvent `json:"data"`
+	}
+	if err := c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", body, &response); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(response.Data))
+	for _, event := range response.Data {
+		if event.ID != "" {
+			ids = append(ids, event.ID)
+		}
+	}
+	return ids, nil
 }
 
 func (c *omaClient) interrupt(ctx context.Context, apiKey, sessionID string) error {

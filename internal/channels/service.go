@@ -23,14 +23,6 @@ type Service struct {
 
 func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *secrets.Service) *Service {
 	logger = logging.LoggerOrDefault(logger)
-	if !localRuntimeEnabled(cfg) {
-		return &Service{
-			agent:     NewHandler(cfg.ChannelBridge, store, logger, cipher),
-			workspace: NewWorkspaceHandler(cfg.ChannelBridge, store, logger, cipher),
-			store:     store,
-			logger:    logger,
-		}
-	}
 	oma := newOMAClient(omaBaseURL(cfg))
 	supervisor := newRuntimeSupervisor(store, cipher, oma, logger)
 	service := newLocalService(store, cipher, supervisor, logger)
@@ -76,17 +68,6 @@ func (s *Service) Stop() {
 	}
 	if s.supervisor != nil {
 		s.supervisor.stopAll()
-	}
-}
-
-func localRuntimeEnabled(cfg config.Config) bool {
-	switch strings.ToLower(strings.TrimSpace(cfg.Channels.Runtime)) {
-	case "local":
-		return true
-	case "bridge":
-		return false
-	default:
-		return cfg.ChannelBridge.URL == "" || cfg.ChannelBridge.Token == ""
 	}
 }
 

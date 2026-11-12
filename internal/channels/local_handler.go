@@ -277,8 +277,3 @@ func decodeChannelMutation(w http.ResponseWriter, r *http.Request) (channelMutat
 	}
 	return input, nil
 }
-
-func mountRequested(value json.RawMessage) bool {
-	trimmed := strings.TrimSpace(string(value))
-	return trimmed != "" && trimmed != "null"
-}

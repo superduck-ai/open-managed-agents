@@ -4,15 +4,11 @@
 
 Agent 渠道不再依赖独立的 `lark-channel` 服务。OMA 自己保存渠道与配对状态、持有飞书应用凭据、维持飞书长连接，并在收到消息后直接驱动 OMA 会话。
 
-`channels.runtime` 取值：
-
-- `auto`（默认）：未配置 `channel_bridge.url`/`token` 时启用原生运行时，否则继续走桥接。
-- `local`：强制原生运行时。
-- `bridge`：继续转发到 `lark-channel`，供灰度回退。
+渠道运行时只有一套：`NewService` 始终创建原生运行时。`channel_bridge`、`channels.runtime` 仍可解析，避免旧配置启动失败，但不再参与运行决策，也不会再转发到 `lark-channel`。
 
 `channels.oma_url` 是原生运行时调用自身公开 API 的地址，留空时按 `server.addr` 回退到 `http://127.0.0.1:<port>`。
 
-`channels` 整段配置都可以缺省：没有飞书应用、没有渠道记录时服务照常启动，运行时不建立任何连接，渠道页返回空列表；只有真正绑定并启用渠道后才会建立长连接。配置了 `channel_bridge` 的部署继续走桥接，行为不变。
+`channels` 整段配置都可以缺省：没有飞书应用、没有渠道记录时服务照常启动，运行时不建立任何连接，渠道页返回空列表；只有真正绑定并启用渠道后才会建立长连接。旧 `channel_bridge` 配置仅保留解析兼容。
 
 ## 服务边界
 
@@ -59,7 +55,7 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 
 - 开放模式直接放行；配对模式要求单聊用户或群聊分别获批，未获批时只登记一条待审批申请并回复提示。
 - 群聊必须 @ 机器人，由飞书 Channel SDK 的策略网关拦截未 @ 消息。
-- 单聊固定复用 `chat:<chat_id>` 会话；同一聊天连续对话继续落在同一个会话，会话归档后自动新建。
+- 作用域统一用 `scopeKey`：话题消息按 `chat:<chat_id>:thread:<thread_id|root_id>` 隔离，普通聊天按 `chat:<chat_id>`；会话映射、回复任务和卡片交互都挂在同一作用域上。会话归档后自动新建。
 - 会话 metadata 写入 `source=feishu`、`channel_id`、`app_id`、`scope_id`、`chat_type`、`open_id`、`actor_id`，控制台按既有渠道来源识别会话。
 - 回复使用飞书流式卡片，结束条件为 `session.status_idle` 且 `stop_reason` 为 `end_turn`/`interrupted`/`retries_exhausted`，或会话错误、30 分钟超时。
 - 展示开关在原生运行时生效：
@@ -69,14 +65,19 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 - 多实例部署：每个实例启动时加载全部可运行渠道并每 30 秒对账一次，配置或启停变化会重建/停止本地 worker；飞书长连接按应用维度分发事件，会话映射与配对状态都在 Postgres 共享。禁用或删除后在下次对账前旧 worker 仍可能收到消息，因此每条消息都会重新校验渠道记录，非 `enabled` 或已删除的渠道直接丢弃，不再回复。
 - 删除渠道停止运行、清除会话映射并软删除记录，历史 OMA 会话保留。
 
+## 消息执行
+
+- 入站处理只做校验、鉴权、会话解析，随后登记回复任务并立即返回；回复监听在独立 goroutine 中轮询事件，因此 `/stop`、`/new` 不会被上一轮的流式回复阻塞。
+- 回复按本次输入事件 ID 对齐：发送 `user.message` 后取响应里的事件 ID 作为基线，只消费其后的事件；取不到时退回发送前最后一条事件 ID。
+- `/stop` 向当前作用域映射的会话发送 `user.interrupt`，保留映射；`/new` 先取消该作用域所有回复任务、中断当前轮次，再删除映射，旧回复任务不会再写入消息。
+- 附件：图片、PDF、纯文本以 base64/text 内容块进入 `user.message`；单个附件上限 20 MB、单条消息上限 10 个，下载或体积失败时明确回复原因，不静默丢弃。
+- 挂载：渠道保存 `memory_store_id`、`vault_id`、`git_repository`（token 单独信封加密，响应只返回 `tokenConfigured`）。创建会话时 Memory/Git 写入 `resources`，Vault 写入 `vault_ids`；修改挂载后重建 worker，后续新建会话采用新配置，已有会话保持原资源，需要同步时走既有会话资源接口。
+
 ## 会话内交互
 
-- 审批：`agent.tool_use` 的 `evaluated_permission` 为 `ask` 时发送允许/拒绝卡片，卡片回调写入 `user.tool_confirmation`（`tool_use_id` + `allow|deny`）。
-- 问卷：`agent.custom_tool_use` 且工具名为 `AskUserQuestion` 时按选项生成卡片，回调以 `user.custom_tool_result` 回传 `{answers:[{id,selected}]}`。
-- 附件：图片、PDF、纯文本以 base64/text 内容块进入 `user.message`，其它格式回复提示后跳过；单个会话按消息逐条推送。
-- 话题隔离：飞书话题消息（`thread_id`）使用 `thread:<id>` 作用域，独立 OMA 会话；普通群聊使用 `chat:<id>`。
-- 指令：`/new` 删除当前作用域的会话绑定，`/stop` 向当前会话发送 `user.interrupt`。
-- 挂载：渠道保存 `memory_store_id`、`vault_id`、`git_repository`（token 单独信封加密），创建会话时转成 `resources` 与 `vault_ids`。
+- 审批：`agent.tool_use` 的 `evaluated_permission` 为 `ask` 时发送允许/拒绝卡片，回调写入 `user.tool_confirmation`（`tool_use_id` + `allow|deny`）。
+- 问卷：`agent.custom_tool_use` 且工具名为 `AskUserQuestion` 时生成表单卡片，支持多题、多选与自定义文本，回调以 `user.custom_tool_result` 回传 `{answers:[{id,selected,custom}]}`。
+- 卡片值携带 `channel_id`、`scopeKey`、`session_id`、`tool_use_id` 和发起人 `open_id`；点击时校验渠道、会话、聊天和操作人，并按 OMA 事件里已有的 `user.tool_confirmation` / `user.custom_tool_result` 去重，重复点击、控制台已处理和进程重启后都不会重复提交。
 
 ## 本阶段未覆盖
 

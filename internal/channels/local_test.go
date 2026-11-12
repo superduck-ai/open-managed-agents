@@ -38,6 +38,7 @@ type fakeLocalStore struct {
 	pairings    []db.ChannelPairingRecord
 	environment string
 	envErr      error
+	mountErr    error
 }
 
 func (f *fakeLocalStore) GetAgent(context.Context, string, string) (db.Agent, error) {
@@ -64,6 +65,14 @@ func (f *fakeLocalStore) CreateChannelRecord(_ context.Context, input db.Channel
 	}, nil
 }
 
+func (f *fakeLocalStore) GetMemoryStore(context.Context, string, string) (db.MemoryStore, error) {
+	return db.MemoryStore{}, f.mountErr
+}
+
+func (f *fakeLocalStore) GetVault(context.Context, string, string) (db.Vault, error) {
+	return db.Vault{}, f.mountErr
+}
+
 func (f *fakeLocalStore) ListAgentChannelRecords(context.Context, string, string, string) ([]db.ChannelRecord, error) {
 	return f.records, nil
 }
@@ -76,23 +85,11 @@ func (f *fakeLocalStore) GetChannelAgentEnvironment(context.Context, string, str
 	return f.environment, f.envErr
 }
 
-func TestLocalRuntimeEnabled(t *testing.T) {
-	cases := []struct {
-		name   string
-		cfg    config.Config
-		expect bool
-	}{
-		{name: "默认无桥接时使用原生运行时", cfg: config.Config{}, expect: true},
-		{name: "配置桥接时保持桥接", cfg: config.Config{ChannelBridge: config.ChannelBridgeConfig{URL: "http://bridge", Token: "token"}}, expect: false},
-		{name: "显式原生覆盖桥接", cfg: config.Config{Channels: config.ChannelsConfig{Runtime: "local"}, ChannelBridge: config.ChannelBridgeConfig{URL: "http://bridge", Token: "token"}}, expect: true},
-		{name: "显式桥接", cfg: config.Config{Channels: config.ChannelsConfig{Runtime: "bridge"}}, expect: false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := localRuntimeEnabled(tc.cfg); got != tc.expect {
-				t.Fatalf("localRuntimeEnabled = %v, want %v", got, tc.expect)
-			}
-		})
+func TestServiceAlwaysUsesNativeRuntime(t *testing.T) {
+	cfg := config.Config{ChannelBridge: config.ChannelBridgeConfig{URL: "http://bridge", Token: "token"}, Channels: config.ChannelsConfig{Runtime: "bridge"}}
+	service := NewService(cfg, nil, nil, nil)
+	if service.local == nil || service.supervisor == nil {
+		t.Fatal("即使配置了旧桥接参数也必须创建原生运行时")
 	}
 }
 
@@ -557,5 +554,40 @@ func TestReplyMessageRequestsThreadReply(t *testing.T) {
 	}
 	if replyBody["reply_in_thread"] != true {
 		t.Fatalf("回复请求必须带 reply_in_thread=true，实际 %v", replyBody)
+	}
+}
+
+func TestApplyChannelMountsPersistsAndHidesToken(t *testing.T) {
+	store := &fakeLocalStore{}
+	service := newLocalService(store, testCipher(t), nil, nil)
+	record := db.ChannelRecord{ExternalID: "chnl_1", OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"}
+	git := json.RawMessage(`{"url":"https://example.com/repo.git","mount_path":"/repo","checkout":{"type":"branch","name":"main"},"authorization_token":"ghp_secret"}`)
+	input := channelMutation{MemoryStoreID: json.RawMessage(`"mem_1"`), VaultID: json.RawMessage(`"vlt_1"`), GitRepository: git}
+	if err := service.applyChannelMounts(context.Background(), auth.Principal{WorkspaceUUID: "ws_1"}, &record, input); err != nil {
+		t.Fatalf("applyChannelMounts: %v", err)
+	}
+	if record.GitTokenEnvelope == nil {
+		t.Fatal("git token 应该被加密保存")
+	}
+	if strings.Contains(record.Mounts, "ghp_secret") {
+		t.Fatalf("挂载 JSON 不能包含明文 token: %s", record.Mounts)
+	}
+	view := channelMountView(record)
+	gitView, ok := view["git_repository"].(map[string]any)
+	if !ok || gitView["tokenConfigured"] != true {
+		t.Fatalf("视图应标记 tokenConfigured: %v", view)
+	}
+	if _, leaked := gitView["authorization_token"]; leaked {
+		t.Fatal("视图不能回显 token")
+	}
+}
+
+func TestApplyChannelMountsRejectsInvalidGit(t *testing.T) {
+	store := &fakeLocalStore{}
+	service := newLocalService(store, testCipher(t), nil, nil)
+	record := db.ChannelRecord{ExternalID: "chnl_1", OrganizationUUID: "org_1", WorkspaceUUID: "ws_1"}
+	input := channelMutation{GitRepository: json.RawMessage(`{"url":"file:///tmp/repo"}`)}
+	if err := service.applyChannelMounts(context.Background(), auth.Principal{WorkspaceUUID: "ws_1"}, &record, input); err == nil {
+		t.Fatal("非 http(s) 仓库地址应被拒绝")
 	}
 }

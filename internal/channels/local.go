@@ -596,10 +596,6 @@ func pairingNotFound() error {
 	return apperr.New(apperr.NotFound, "配对申请不存在", nil)
 }
 
-func channelMountsUnsupported() error {
-	return apperr.New(apperr.InvalidArgument, "当前 OMA 原生渠道暂不支持挂载 Memory、Vault 或 Git 仓库，请先在飞书渠道中取消这些挂载", nil)
-}
-
 func registrationUnavailable(cause error) error {
 	return apperr.New(apperr.Unavailable, "无法连接飞书生成授权二维码，请稍后重试", cause)
 }

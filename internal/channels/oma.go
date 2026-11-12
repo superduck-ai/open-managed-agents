@@ -211,24 +211,6 @@ func eventText(event omaEvent) string {
 	return strings.Join(parts, "\n")
 }
 
-func eventThinking(event omaEvent) string {
-	var blocks []omaContentBlock
-	if err := json.Unmarshal(event.Content, &blocks); err != nil {
-		return ""
-	}
-	parts := make([]string, 0, len(blocks))
-	for _, block := range blocks {
-		if block.Thinking != "" {
-			parts = append(parts, block.Thinking)
-			continue
-		}
-		if block.Type == "text" && block.Text != "" {
-			parts = append(parts, block.Text)
-		}
-	}
-	return strings.Join(parts, "\n")
-}
-
 func eventToolName(event omaEvent) string {
 	if event.Name != "" {
 		return event.Name

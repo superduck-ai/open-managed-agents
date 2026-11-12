@@ -139,18 +139,6 @@ func channelMountView(record db.ChannelRecord) map[string]any {
 	return view
 }
 
-func (s *localService) openGitToken(ctx context.Context, record db.ChannelRecord) string {
-	if record.GitTokenEnvelope == nil || s.cipher == nil {
-		return ""
-	}
-	token, err := openSealedSecret(ctx, s.cipher, record, *record.GitTokenEnvelope)
-	if err != nil {
-		s.logger.WarnContext(ctx, "open channel git token", "channel_id", record.ExternalID, "error", err)
-		return ""
-	}
-	return token
-}
-
 func validateGitMount(mount channelGitMount) error {
 	parsed, err := url.Parse(mount.URL)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {

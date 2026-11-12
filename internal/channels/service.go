@@ -52,7 +52,7 @@ func (s *Service) Start(ctx context.Context) {
 	go func() {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				s.logger.Error("restore channel runtimes", "panic", recovered)
+				s.logger.ErrorContext(ctx, "restore channel runtimes", "panic", recovered)
 			}
 		}()
 		s.supervisor.restore(ctx)

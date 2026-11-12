@@ -20,7 +20,7 @@ export function useUsageReport(cost: boolean) {
       apiKey: params.get('api_key_id') || '',
     };
   });
-  const scopeKey = `${scope.orgUuid}:${scope.activeWorkspaceId}:${routeWorkspace}`;
+  const scopeKey = `${scope.orgUuid}:${routeWorkspace}`;
   const previousScope = useRef(scopeKey);
   useEffect(() => {
     if (previousScope.current === scopeKey) return;

@@ -49,11 +49,20 @@ function CommandDialog({
   );
 }
 
-function CommandInput({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.Input>) {
+function CommandInput({
+  className,
+  variant = 'default',
+  ...props
+}: React.ComponentProps<typeof CommandPrimitive.Input> & { variant?: 'default' | 'palette' }) {
   return (
     <div
       data-slot="command-input-wrapper"
-      className="m-1 flex h-8 shrink-0 items-center gap-2 rounded-md border-[0.5px] border-input px-2 has-[[data-slot=command-input]:focus-visible]:ring-[0.5px] has-[[data-slot=command-input]:focus-visible]:ring-inset has-[[data-slot=command-input]:focus-visible]:ring-foreground"
+      className={cn(
+        'flex shrink-0 items-center gap-3',
+        variant === 'palette'
+          ? 'h-16 min-w-0 flex-1 px-5'
+          : 'm-1 h-8 gap-2 rounded-md border-[0.5px] border-input px-2 has-[[data-slot=command-input]:focus-visible]:ring-[0.5px] has-[[data-slot=command-input]:focus-visible]:ring-inset has-[[data-slot=command-input]:focus-visible]:ring-foreground',
+      )}
     >
       <SearchIcon className="size-4 shrink-0 opacity-50" />
       <CommandPrimitive.Input

@@ -1,5 +1,5 @@
 import { Activity, KeyRound, Plus, Tags, TerminalSquare } from 'lucide-react';
-import { placeholderIcons } from '../../app/layout/navigation';
+import { placeholderIcons } from '../../shared/navigation/navigation';
 import { useAuth } from '../../shared/auth/context';
 import { useI18n } from '../../shared/i18n';
 import { Button, ButtonLink } from '@/shared/ui/button';

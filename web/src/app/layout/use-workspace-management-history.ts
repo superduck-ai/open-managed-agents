@@ -1,39 +1,8 @@
 import { z } from 'zod';
+import { isSettingsPath } from '../../shared/navigation/settings-navigation';
 import { normalizeReturnTo } from '../../shared/auth/redirects';
-import { useEffect } from 'react';
 import { quickstartModelSetupReturn } from '../../shared/workspaces/model-setup-navigation';
 import { workspaceIdFromPath, workspaceSwitchPath } from '../../shared/workspaces/presentation';
-import { workspaceManagementNavigation } from './navigation';
-
-const availablePages = new Set(
-  workspaceManagementNavigation.children.filter((item) => !item.hidden).map((item) => item.href),
-);
-
-export function useWorkspaceManagementHistory(
-  accountId: string | undefined,
-  organizationId: string | undefined,
-  workspaceId: string,
-  currentPage: string | undefined,
-) {
-  const key =
-    accountId && organizationId && workspaceId
-      ? `oma.workspace-management.last-page:${JSON.stringify([accountId, organizationId, workspaceId])}`
-      : null;
-
-  useEffect(() => {
-    if (!key || !currentPage || !availablePages.has(currentPage)) return;
-    try {
-      window.localStorage.setItem(key, currentPage);
-    } catch {}
-  }, [key, currentPage]);
-
-  try {
-    const page = key ? window.localStorage.getItem(key) : null;
-    return page && availablePages.has(page) ? page : '/llm-models';
-  } catch {
-    return '/llm-models';
-  }
-}
 
 const managementOriginSchema = z.object({ href: z.string(), workspaceId: z.string() });
 
@@ -49,8 +18,15 @@ export function readWorkspaceManagementOrigin(accountId: string | undefined, org
     const stored = managementOriginSchema.safeParse(
       JSON.parse(key ? (window.sessionStorage.getItem(key) ?? 'null') : 'null'),
     );
-    if (stored.success && normalizeReturnTo(stored.data.href) === stored.data.href) return stored.data;
-  } catch {}
+    if (
+      stored.success &&
+      normalizeReturnTo(stored.data.href) === stored.data.href &&
+      !isSettingsPath(new URL(stored.data.href, window.location.origin).pathname)
+    )
+      return stored.data;
+  } catch {
+    return null;
+  }
   return null;
 }
 
@@ -63,7 +39,9 @@ export function saveWorkspaceManagementOrigin(
   if (!key) return;
   try {
     window.sessionStorage.setItem(key, JSON.stringify(origin));
-  } catch {}
+  } catch {
+    return;
+  }
 }
 
 export function initialWorkspaceManagementOrigin(

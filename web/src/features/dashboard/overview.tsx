@@ -15,6 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/shared/ui/tooltip';
 import { useI18n } from '@/shared/i18n';
+import { documentationHref } from '@/shared/documentation';
 import { localizedWorkspaceName } from '@/shared/workspaces/display-name';
 import { quickstartModelSetupHref } from '@/shared/workspaces/model-setup-navigation';
 import { OverviewOperations } from './overview-operations';
@@ -134,7 +135,6 @@ export function OverviewPage() {
     useOverview(workspaceId);
   const zh = locale === 'zh-CN';
   const text = (chinese: string, english: string) => (zh ? chinese : english);
-  const docsRoot = `https://oma.mintlifysite.com/docs/${text('zh', 'en')}`;
 
   return (
     <TooltipProvider>
@@ -337,7 +337,7 @@ export function OverviewPage() {
             ].map(({ title, text, path, icon: Icon }) => (
               <a
                 key={path}
-                href={`${docsRoot}/${path}`}
+                href={documentationHref(path, locale)}
                 target="_blank"
                 rel="noreferrer"
                 className="group flex items-start gap-3 rounded p-1 outline-none focus-visible:ring-[0.5px] focus-visible:ring-foreground"

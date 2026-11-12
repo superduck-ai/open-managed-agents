@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { accountRoleLabel } from '../../shared/permissions/roles';
+import { currentOrganizationName } from '../../shared/navigation/settings-navigation';
 import { useAuth } from '../../shared/auth/context';
 import type { AuthAccount, OrganizationAccess } from '../../shared/auth/api';
 import { useI18n, useLocale, localeLabels, type Locale } from '../../shared/i18n';
@@ -37,7 +38,7 @@ export function ProfileSettingsPage() {
   const { name: organizationName, role } = profileOrganization(account, organizationAccess, msg);
 
   return (
-    <section className="mx-auto w-full max-w-3xl" data-testid="settings-profile-page">
+    <section className="w-full max-w-3xl" data-testid="settings-profile-page">
       <ResourcePageHeader title={msg('nav.profile', 'Profile')} contentGap="content" />
       <div className="grid gap-6 sm:grid-cols-2">
         <ReadonlyField label={msg('settings.profile.displayName', 'Display name')} value={displayName} />
@@ -61,9 +62,7 @@ function profileOrganization(
   const membership = account?.memberships?.[0];
   return {
     name:
-      access?.organization.name ||
-      membership?.organization?.name ||
-      msg('settings.profile.unknownOrganization', 'Unknown organization'),
+      currentOrganizationName(account, access) || msg('settings.profile.unknownOrganization', 'Unknown organization'),
     role: accountRoleLabel(access?.organization_role ?? membership?.role, msg),
   };
 }
@@ -91,7 +90,7 @@ export function AppearanceSettingsPage() {
   );
 
   return (
-    <section className="mx-auto w-full max-w-3xl" data-testid="settings-appearance-page">
+    <section className="w-full max-w-3xl" data-testid="settings-appearance-page">
       <ResourcePageHeader title={msg('nav.appearance', 'Appearance')} contentGap="content" />
       <div className="max-w-md space-y-6">
         <Field className="gap-2">

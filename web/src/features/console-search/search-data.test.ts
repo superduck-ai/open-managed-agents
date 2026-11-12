@@ -34,8 +34,8 @@ test('search handles names, IDs, multiple terms and nonmatching terms', () => {
 });
 
 test('page results retain module icons and single-line scope context', () => {
-  const pages = navigationSearchRecords(undefined, undefined, 'research', (_id, text) => text, 'Research');
-  expect(pages.find((record) => record.id === '/agents')?.context).toBe('Research');
+  const pages = navigationSearchRecords(undefined, undefined, 'research', (_id, text) => text);
+  expect(pages.find((record) => record.id === '/agents')?.context).toBe('');
   expect(pages.find((record) => record.id === '/files')?.context).toBe('Resources');
   expect(pages.find((record) => record.id === '/settings/llm')?.context).toBe('Models and access');
   expect(pages.find((record) => record.id === '/agents')?.icon).toBeTruthy();

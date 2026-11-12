@@ -33,11 +33,10 @@ export function navigationSearchRecords(
   orgUuid: string | undefined,
   workspaceId: string,
   msg: I18nContextValue['msg'],
-  workspaceName = '',
 ): SearchRecord[] {
   const main = consoleNavigation.flatMap((item) =>
     item.type === 'link'
-      ? [{ ...item, context: workspaceName }]
+      ? [{ ...item, context: '' }]
       : item.children.map((child) => ({ ...child, context: msg(item.labelId, item.label) })),
   );
   const settings = visibleSettingsGroups(account, orgUuid).flatMap((group) =>

@@ -43,7 +43,7 @@ export function useSearchData(query: string) {
     : localizedWorkspaceName(activeWorkspace.name, msg);
   const pages = platform
     ? platformNavigationSearchRecords(platform.bootstrap.platform_access.permissions, msg)
-    : navigationSearchRecords(auth?.account, orgUuid, activeWorkspaceId, msg, scopeName);
+    : navigationSearchRecords(auth?.account, orgUuid, activeWorkspaceId, msg);
   const rawResources = debounced === query.trim() ? resources.data?.pages.flatMap((page) => page.records) || [] : [];
   const resourceRecords = [...new Map(rawResources.map((record) => [record.id, record])).values()]
     .filter((record) => searchMatches(record, query))

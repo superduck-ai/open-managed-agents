@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { useMemo, type ReactNode } from 'react';
-import { SettingsShell } from '../../app/layout/ConsoleLayout';
+import { ConsoleShell } from '../../app/layout/ConsoleLayout';
 import { AuthContext, type AuthContextValue } from '../../shared/auth/context';
 import { type Organization, type OrganizationProfile } from '../../shared/organization/api';
 import { defaultWorkspace } from '../../shared/workspaces/api';
@@ -41,13 +41,19 @@ describe('Organization settings', () => {
 
     render(
       <OrganizationSettingsHarness>
-        <SettingsShell
+        <ConsoleShell
           currentPath="/settings/organization"
-          account={{ uuid: 'acct_test', email_address: 'test@example.com', display_name: 'test' }}
+          account={{
+            uuid: 'acct_test',
+            email_address: 'test@example.com',
+            display_name: 'test',
+            effectiveOrganizationUuid: 'org_test',
+            permissions: ['organization:manage', 'members:manage'],
+          }}
           onLogout={() => undefined}
         >
           <OrganizationSettingsContent />
-        </SettingsShell>
+        </ConsoleShell>
       </OrganizationSettingsHarness>,
     );
 
@@ -57,7 +63,7 @@ describe('Organization settings', () => {
         .some((button) => button.getAttribute('aria-label') === 'Default'),
     ).toBe(true);
     expect(screen.getByText('Back to app')).toBeTruthy();
-    expect(screen.getByText('Organization settings')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Organization management' })).toBeTruthy();
     expect(screen.queryByText('Workload identity')).toBeNull();
 
     const organizationName = (await screen.findByLabelText('Organization name')) as HTMLInputElement;

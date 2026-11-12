@@ -1,10 +1,10 @@
 import { useI18n } from '../../shared/i18n';
 import type { CSSProperties } from 'react';
-import { BrandLogo } from '../../shared/brand/BrandLogo';
-import { productIcons } from '../../shared/icons/product-icons';
-import '../../app/layout/console-navigation.css';
-import { ArrowLeft, Blocks, Building2, ShieldCheck } from 'lucide-react';
-import { Link, Outlet, useLocation, useParams, useSearch } from '@tanstack/react-router';
+import { ConsoleTopbar } from '../console-topbar/ConsoleTopbar';
+import { useResponsiveSidebar } from '../../shared/hooks/use-responsive-sidebar';
+import '../../shared/ui/console-navigation.css';
+import { ArrowLeft, Blocks, Building2, Shield, ShieldCheck } from 'lucide-react';
+import { Link, Outlet, useLocation, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { organizationSection, organizationSections } from './organizationNavigation';
 import {
   Sidebar,
@@ -19,29 +19,24 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarRail,
-  SidebarTrigger,
   useSidebar,
 } from '../../shared/ui/sidebar';
 
 export function PlatformAdminShell({ email }: { email: string }) {
-  const { msg } = useI18n();
-
+  const expanded = useResponsiveSidebar();
+  const location = useLocation();
+  const navigate = useNavigate();
   return (
     <SidebarProvider
-      defaultOpen
-      className="console-shell"
+      open={expanded}
+      onOpenChange={() => undefined}
+      className="console-shell unified-console"
       style={{ '--sidebar-width': 'var(--console-sidebar-width)', '--sidebar-width-icon': '64px' } as CSSProperties}
     >
+      <ConsoleTopbar currentPath={location.pathname} onNavigate={(href) => navigate({ href })} />
       <AdminSidebar email={email} />
-      <SidebarInset className="min-h-screen min-w-0 text-foreground">
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b-[0.5px] bg-background/95 px-4 backdrop-blur-sm md:hidden">
-          <SidebarTrigger aria-label={msg('platformAdmin.toggleAdministrationMenu', 'Toggle administration menu')} />
-          <span className="text-sm font-semibold">
-            {msg('platformAdmin.platformAdministration', 'Platform administration')}
-          </span>
-        </header>
-        <div className="w-full min-w-0 px-6 py-6 lg:px-8">
+      <SidebarInset className="subtle-scrollbar min-w-0 text-foreground">
+        <div className="console-page w-full min-w-0 px-6 py-6 lg:px-8">
           <Outlet />
         </div>
       </SidebarInset>
@@ -64,15 +59,10 @@ function AdminSidebar({ email }: { email: string }) {
   const view = organizationSection(search.view);
   const closeMenu = () => setOpenMobile(false);
   return (
-    <Sidebar collapsible="icon" className="border-r-[0.5px] border-sidebar-border">
-      <AdminSidebarHeader closeMenu={closeMenu} />
+    <Sidebar collapsible="icon">
+      <AdminSidebarHeader />
       <SidebarContent className="console-sidebar-content scrollbar-none px-2 py-2" data-sidebar-scroll-area="true">
         <SidebarGroup className="p-0">
-          {!organizationUuid && (
-            <SidebarGroupLabel className="console-navigation-section-label">
-              {msg('platformAdmin.globalAdministration', 'Global administration')}
-            </SidebarGroupLabel>
-          )}
           <SidebarGroupContent>
             <nav
               data-sidebar-navigation="platform"
@@ -221,54 +211,24 @@ function AdminSidebar({ email }: { email: string }) {
           )}
         </div>
       </SidebarFooter>
-      <SidebarRail
-        aria-label={msg('common.toggleSidebar', 'Toggle Sidebar')}
-        title={msg('common.toggleSidebar', 'Toggle Sidebar')}
-      />
     </Sidebar>
   );
 }
 
-function AdminSidebarHeader({ closeMenu }: { closeMenu: () => void }) {
+function AdminSidebarHeader() {
   const { msg } = useI18n();
   const { state, isMobile } = useSidebar();
   const collapsed = state === 'collapsed' && !isMobile;
-  const title = msg('platformAdmin.platformAdministration', 'Platform administration');
-  const toggleLabel = collapsed ? msg('common.expand', 'Expand') : msg('common.collapse', 'Collapse');
+  const title = msg('platformAdmin.platformAdministration', 'Super admin console');
   return (
     <SidebarHeader className="console-sidebar-header" data-console-compact={collapsed ? 'true' : undefined}>
-      <div className={`flex h-12 items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
-        {!collapsed && (
-          <Link
-            to="/platform-admin"
-            onClick={closeMenu}
-            aria-label="Open Managed Agents"
-            className="flex h-12 min-w-0 flex-1 items-center rounded-md px-2 outline-none focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            <BrandLogo decorative className="h-7 w-[83px]" />
-          </Link>
-        )}
-        {!isMobile && (
-          <SidebarTrigger aria-label={toggleLabel} aria-expanded={!collapsed} title={toggleLabel}>
-            <productIcons.sidebar className="size-4" aria-hidden />
-          </SidebarTrigger>
-        )}
+      <div
+        className={`flex h-14 items-center gap-2.5 px-3 text-sidebar-foreground ${collapsed ? 'justify-center' : ''}`}
+        title={title}
+      >
+        <Shield className="size-[18px] shrink-0" strokeWidth={1.5} aria-hidden />
+        {!collapsed && <span className="truncate text-sm font-semibold">{title}</span>}
       </div>
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="lg"
-            tooltip={title}
-            render={<Link to="/platform-admin" onClick={closeMenu} />}
-            aria-label={collapsed ? title : undefined}
-          >
-            <span className="grid size-8 shrink-0 place-items-center text-sidebar-foreground">
-              <ShieldCheck className="size-4" strokeWidth={1.5} aria-hidden />
-            </span>
-            {!collapsed && <span className="truncate text-sm font-semibold">{title}</span>}
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
     </SidebarHeader>
   );
 }

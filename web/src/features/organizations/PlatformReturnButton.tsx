@@ -31,14 +31,14 @@ function ConnectedPlatformReturnButton({ collapsed }: { collapsed: boolean }) {
       <Button
         variant="secondary"
         className={`h-10 w-full gap-3 rounded-xl bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent ${collapsed ? 'justify-center px-2' : 'justify-start px-3'}`}
-        aria-label={msg('platformScope.exit', 'Return to platform administration')}
-        title={msg('platformScope.exit', 'Return to platform administration')}
+        aria-label={msg('platformScope.exit', 'Return to super admin console')}
+        title={msg('platformScope.exit', 'Return to super admin console')}
         disabled={organizations.switching}
         onClick={() => confirmation.request(() => void exit())}
       >
         <ArrowLeft className="size-4 shrink-0" aria-hidden />
         {collapsed ? null : (
-          <span className="min-w-0 truncate">{msg('platformScope.exit', 'Return to platform administration')}</span>
+          <span className="min-w-0 truncate">{msg('platformScope.exit', 'Return to super admin console')}</span>
         )}
       </Button>
       {confirmation.dialog}

@@ -1,0 +1,102 @@
+.console-search-dialog {
+  top: min(15dvh, 128px);
+  width: min(672px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: 80dvh;
+  translate: -50% 0;
+}
+.console-search-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  border-bottom: 0.5px solid var(--border);
+}
+.console-search-header [data-slot='command-input'] {
+  min-width: 0;
+  font-size: 17px;
+}
+.console-search-results {
+  height: min(400px, 50dvh);
+  max-height: none;
+  padding: 8px;
+  scroll-padding: 8px;
+  overflow-anchor: none;
+}
+.console-search-results [data-slot='command-group'] {
+  padding: 0 0 7px;
+}
+.console-search-results [cmdk-group-heading] {
+  padding: 12px 12px 7px;
+  font-weight: 400;
+}
+.console-search-result {
+  padding-inline: 12px;
+  border-radius: 8px;
+}
+.console-search-result-action {
+  opacity: 0;
+}
+.console-search-result[data-selected='true'] .console-search-result-action {
+  opacity: 0.8;
+}
+.console-search-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-top: 0.5px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.console-search-footer > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.console-search-footer kbd {
+  display: grid;
+  min-width: 20px;
+  height: 22px;
+  padding-inline: 4px;
+  place-items: center;
+  border: 0.5px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+}
+@media (max-width: 1100px) {
+  .console-search-dialog {
+    width: min(600px, calc(100vw - 32px));
+  }
+  .console-search-results {
+    height: min(352px, 46dvh);
+  }
+}
+@media (max-width: 767px) {
+  .console-search-dialog {
+    top: 8dvh;
+    width: calc(100vw - 24px);
+    max-width: 560px;
+    max-height: 82dvh;
+  }
+  .console-search-header [data-slot='command-input-wrapper'] {
+    height: 56px;
+    padding-inline: 14px;
+  }
+  .console-search-header [data-slot='command-input'] {
+    font-size: 16px;
+  }
+  .console-search-results {
+    height: min(320px, 45dvh);
+  }
+  .console-search-footer {
+    gap: 8px;
+    padding-inline: 12px;
+  }
+  .console-search-footer kbd {
+    min-width: 16px;
+    padding-inline: 3px;
+  }
+}

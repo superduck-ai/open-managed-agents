@@ -40,6 +40,11 @@ func (d *DB) GetChannelRecord(ctx context.Context, organizationUUID, workspaceUU
 	return record, mapNoRows(err)
 }
 
+func (d *DB) GetChannelRecordByID(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (ChannelRecord, error) {
+	record, err := NewChannelRecordMapper(d.mapperDB).FindChannelByID(ctx, organizationUUID, workspaceUUID, externalID)
+	return record, mapNoRows(err)
+}
+
 func (d *DB) ListAgentChannelRecords(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID string) ([]ChannelRecord, error) {
 	return NewChannelRecordMapper(d.mapperDB).ListChannels(ctx, organizationUUID, workspaceUUID, agentExternalID)
 }

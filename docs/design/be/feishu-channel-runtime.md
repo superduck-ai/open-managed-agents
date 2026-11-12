@@ -43,6 +43,17 @@ sequenceDiagram
 
 App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工作区移动密文无法解密；列表与更新响应不回显密钥，编辑时留空保留原值。
 
+## 飞书应用授权自动化
+
+扫码授权和跳转授权共用同一条设备码流程，前端既能把 `url` 渲染成二维码，也能直接打开该链接：
+
+1. `POST /v1/channels/authorizations` 向 `https://accounts.feishu.cn/oauth/v1/app/registration` 发起 `action=begin`，拿到一次性 `device_code` 与飞书确认地址，附带 `from/sdk source/open-managed-agents tp/sdk name`，落库时设备码加密。
+2. `GET /v1/channels/authorizations/{id}` 按记录里的 `next_poll_at` 惰性轮询 `action=poll`：`authorization_pending` 保持等待、`slow_down` 抬高间隔、`access_denied`/`expired_token` 置为失败、Lark 租户自动切到 `accounts.larksuite.com`；拿到 `client_id`/`client_secret` 后先校验凭据再落库，状态变为 `bound`。
+3. 渠道向导里的扫码入口用 `GET /v1/agents/{agent}/channels/{id}/qr`，同样惰性轮询，授权成功后直接把应用凭据绑定到该渠道并启动运行时；过期或拒绝后再次请求会重新发起。
+4. 创建/更新渠道时携带 `authorization_id` 表示复用已完成的工作区授权，OMA 直接从授权记录里取应用凭据绑定渠道。
+
+所有轮询都由前端请求驱动，服务端没有后台轮询循环；同一个设备码只会被消费一次，请求结果未知时状态停在 `unknown`，避免重复领取凭据。
+
 ## 行为
 
 - 开放模式直接放行；配对模式要求单聊用户或群聊分别获批，未获批时只登记一条待审批申请并回复提示。
@@ -54,12 +65,11 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 
 ## 本阶段未覆盖
 
-以下能力仍由 `lark-channel` 提供，原生运行时暂不实现，对应接口返回 `InvalidState`：
+以下能力原生运行时暂不实现：
 
-- 扫码创建/绑定应用与工作区级设备码授权（`/qr`、`/authorizations`）。
 - 卡片按钮交互、工具审批、问卷作答。
 - 图片、文件、音频等附件与产物回传。
-- Memory、Vault、Git 仓库挂载与话题（thread）隔离。
+- Memory、Vault、Git 仓库挂载（提交时返回 `InvalidArgument`）与话题（thread）隔离。
 - 多人并发的队列与打断命令（`/stop`、`/new`）。
 
 迁移这些能力时按同一服务边界补齐，不需要改动前端。

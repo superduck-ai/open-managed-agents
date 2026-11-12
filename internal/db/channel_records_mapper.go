@@ -80,6 +80,7 @@ type ChannelRecordMapper interface {
 	LockAgent(ctx context.Context, workspaceUUID, agentExternalID string) (string, error)
 	InsertChannel(ctx context.Context, params insertChannelRecordParams) (ChannelRecord, error)
 	FindChannel(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID, externalID string) (ChannelRecord, error)
+	FindChannelByID(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (ChannelRecord, error)
 	ListChannels(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID string) ([]ChannelRecord, error)
 	ListWorkspaceChannels(ctx context.Context, organizationUUID, workspaceUUID string) ([]ChannelRecord, error)
 	ListRunnableChannels(ctx context.Context) ([]ChannelRecord, error)

@@ -55,6 +55,15 @@
         AND deleted_at IS NULL
     </select>
 
+    <select id="FindChannelByID" resultType="ChannelRecord">
+        SELECT <include refid="channelColumns"/>
+        FROM channels
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+        AND deleted_at IS NULL
+    </select>
+
     <select id="ListChannels" resultType="ChannelRecord">
         SELECT <include refid="channelColumns"/>
         FROM channels

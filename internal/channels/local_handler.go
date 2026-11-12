@@ -25,8 +25,8 @@ func (h *localHandler) agentRouter() http.Handler {
 	router.Post("/settings", wrap(h.saveSettings))
 	router.Post("/{channel_id}", wrap(h.update))
 	router.Delete("/{channel_id}", wrap(h.remove))
-	router.Get("/{channel_id}/qr", wrap(h.unsupported))
-	router.Post("/{channel_id}/qr", wrap(h.unsupported))
+	router.Get("/{channel_id}/qr", wrap(h.qr))
+	router.Post("/{channel_id}/qr", wrap(h.qr))
 	router.Get("/{channel_id}/pairings", wrap(h.pairings))
 	router.Post("/{channel_id}/pairings/{pairing_id}", wrap(h.decidePairing))
 	return router
@@ -37,8 +37,8 @@ func (h *localHandler) workspaceRouter() http.Handler {
 	wrap := httpapi.NewErrorAdapter(h.logger).Wrap
 	router.Get("/", wrap(h.listWorkspace))
 	router.Post("/credentials/check", wrap(h.checkAppCredentials))
-	router.Post("/authorizations", wrap(h.unsupported))
-	router.Get("/authorizations/{authorization_id}", wrap(h.unsupported))
+	router.Post("/authorizations", wrap(h.beginAuthorization))
+	router.Get("/authorizations/{authorization_id}", wrap(h.authorizationStatus))
 	return router
 }
 
@@ -219,6 +219,51 @@ func (h *localHandler) checkAppCredentials(w http.ResponseWriter, r *http.Reques
 	return nil
 }
 
+func (h *localHandler) qr(w http.ResponseWriter, r *http.Request) error {
+	principal, err := h.principal(r, r.Method != http.MethodGet)
+	if err != nil {
+		return err
+	}
+	view, err := h.service.qrStatus(r.Context(), principal, chi.URLParam(r, "agent_id"), chi.URLParam(r, "channel_id"))
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, view)
+	return nil
+}
+
+func (h *localHandler) beginAuthorization(w http.ResponseWriter, r *http.Request) error {
+	principal, err := h.principal(r, true)
+	if err != nil {
+		return err
+	}
+	var input struct {
+		Name string `json:"name"`
+	}
+	if err := decodeStrictJSON(w, r, 8<<10, &input); err != nil {
+		return invalidChannelName()
+	}
+	view, err := h.service.beginAuthorization(r.Context(), principal, input.Name)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, view)
+	return nil
+}
+
+func (h *localHandler) authorizationStatus(w http.ResponseWriter, r *http.Request) error {
+	principal, err := h.principal(r, false)
+	if err != nil {
+		return err
+	}
+	view, err := h.service.authorizationStatus(r.Context(), principal, chi.URLParam(r, "authorization_id"))
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, view)
+	return nil
+}
+
 func (h *localHandler) unsupported(w http.ResponseWriter, r *http.Request) error {
 	if _, err := h.principal(r, r.Method != http.MethodGet); err != nil {
 		return err
@@ -236,9 +281,6 @@ func decodeChannelMutation(w http.ResponseWriter, r *http.Request) (channelMutat
 	var input channelMutation
 	if err := decodeStrictJSON(w, r, 32<<10, &input); err != nil {
 		return channelMutation{}, invalidChannelUpdate(err)
-	}
-	if input.AuthorizationID != nil {
-		return channelMutation{}, channelCapabilityUnsupported()
 	}
 	if mountRequested(input.MemoryStoreID) || mountRequested(input.VaultID) || mountRequested(input.GitRepository) {
 		return channelMutation{}, channelMountsUnsupported()

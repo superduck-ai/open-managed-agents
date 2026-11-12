@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="ChannelRegistrationMapper">
+    <sql id="registrationColumns">
+        external_id,
+        kind,
+        organization_uuid,
+        workspace_uuid,
+        channel_external_id,
+        name,
+        phase,
+        url,
+        expires_at,
+        next_poll_at,
+        interval_seconds,
+        domain,
+        device_code_envelope::text AS device_code_envelope,
+        app_id,
+        app_secret_envelope::text AS app_secret_envelope,
+        created_at,
+        updated_at
+    </sql>
+
+    <insert id="InsertRegistration" result="returning" resultType="ChannelRegistrationRecord">
+        INSERT INTO channel_registrations (
+            external_id, kind, organization_uuid, workspace_uuid, channel_external_id, name,
+            phase, url, expires_at, next_poll_at, interval_seconds, domain,
+            device_code_envelope, app_id, app_secret_envelope
+        ) VALUES (
+            #{params.ExternalID}, #{params.Kind}, #{params.OrganizationUUID}, #{params.WorkspaceUUID},
+            #{params.ChannelExternalID}, #{params.Name}, #{params.Phase}, #{params.URL}, #{params.ExpiresAt},
+            #{params.NextPollAt}, #{params.IntervalSeconds}, #{params.Domain},
+            CAST(#{params.DeviceCodeEnvelope} AS jsonb), #{params.AppID}, CAST(#{params.AppSecretEnvelope} AS jsonb)
+        )
+        RETURNING <include refid="registrationColumns"/>
+    </insert>
+
+    <select id="FindRegistration" resultType="ChannelRegistrationRecord">
+        SELECT <include refid="registrationColumns"/>
+        FROM channel_registrations
+        WHERE organization_uuid = #{organizationUUID}
+        AND workspace_uuid = #{workspaceUUID}
+        AND external_id = #{externalID}
+    </select>
+
+    <select id="FindChannelQrRegistration" resultType="ChannelRegistrationRecord">
+        SELECT <include refid="registrationColumns"/>
+        FROM channel_registrations
+        WHERE channel_external_id = #{channelExternalID}
+        AND kind = 'qr'
+    </select>
+
+    <update id="UpdateRegistration" result="returning" resultType="ChannelRegistrationRecord">
+        UPDATE channel_registrations
+        SET phase = #{params.Phase},
+            url = #{params.URL},
+            expires_at = #{params.ExpiresAt},
+            next_poll_at = #{params.NextPollAt},
+            interval_seconds = #{params.IntervalSeconds},
+            domain = #{params.Domain},
+            device_code_envelope = CAST(#{params.DeviceCodeEnvelope} AS jsonb),
+            app_id = #{params.AppID},
+            app_secret_envelope = CAST(#{params.AppSecretEnvelope} AS jsonb),
+            updated_at = now()
+        WHERE external_id = #{params.ExternalID}
+        RETURNING <include refid="registrationColumns"/>
+    </update>
+
+    <delete id="DeleteRegistration">
+        DELETE FROM channel_registrations WHERE external_id = #{externalID}
+    </delete>
+</mapper>

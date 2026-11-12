@@ -33,15 +33,22 @@ type localStore interface {
 	GetChannelAgentEnvironment(context.Context, string, string, string) (string, error)
 	SetChannelAgentEnvironment(context.Context, string, string, string, string) error
 	ClearChannelSessionBindings(context.Context, string) error
+	CreateChannelRegistration(context.Context, db.ChannelRegistrationInput) (db.ChannelRegistrationRecord, error)
+	GetChannelRecordByID(context.Context, string, string, string) (db.ChannelRecord, error)
+	GetChannelRegistration(context.Context, string, string, string) (db.ChannelRegistrationRecord, error)
+	GetChannelQrRegistration(context.Context, string) (db.ChannelRegistrationRecord, error)
+	UpdateChannelRegistration(context.Context, db.ChannelRegistrationUpdate) (db.ChannelRegistrationRecord, error)
+	DeleteChannelRegistration(context.Context, string) error
 }
 
 type localService struct {
-	store    localStore
-	cipher   *secrets.Service
-	runtime  *runtimeSupervisor
-	logger   *slog.Logger
-	client   *http.Client
-	tokenURL string
+	store        localStore
+	cipher       *secrets.Service
+	runtime      *runtimeSupervisor
+	logger       *slog.Logger
+	client       *http.Client
+	tokenURL     string
+	registration *registrationClient
 }
 
 type channelMutation struct {
@@ -54,7 +61,7 @@ type channelMutation struct {
 	IncludeToolCalls *bool           `json:"include_tool_calls"`
 	ReplyInThread    *bool           `json:"reply_in_thread"`
 	Status           *string         `json:"status"`
-	AuthorizationID  json.RawMessage `json:"authorization_id"`
+	AuthorizationID  *string         `json:"authorization_id"`
 	MemoryStoreID    json.RawMessage `json:"memory_store_id"`
 	VaultID          json.RawMessage `json:"vault_id"`
 	GitRepository    json.RawMessage `json:"git_repository"`
@@ -67,12 +74,13 @@ type localHandler struct {
 
 func newLocalService(store localStore, cipher *secrets.Service, runtime *runtimeSupervisor, logger *slog.Logger) *localService {
 	return &localService{
-		store:    store,
-		cipher:   cipher,
-		runtime:  runtime,
-		logger:   logging.LoggerOrDefault(logger),
-		client:   &http.Client{Timeout: 10 * time.Second},
-		tokenURL: feishuTokenURL,
+		store:        store,
+		cipher:       cipher,
+		runtime:      runtime,
+		logger:       logging.LoggerOrDefault(logger),
+		client:       &http.Client{Timeout: 10 * time.Second},
+		tokenURL:     feishuTokenURL,
+		registration: newRegistrationClient(),
 	}
 }
 
@@ -177,6 +185,11 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 		BindingStatus:    "unbound",
 	}
 	applyChannelFlags(&record, input)
+	if input.AuthorizationID != nil {
+		if err := s.applyAuthorization(ctx, principal, &record, *input.AuthorizationID); err != nil {
+			return nil, err
+		}
+	}
 	if input.AppID != nil || input.AppSecret != nil {
 		if err := s.bindCredentials(ctx, &record, input); err != nil {
 			return nil, err
@@ -227,6 +240,11 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 		record.Name = name
 	}
 	applyChannelFlags(&record, input)
+	if input.AuthorizationID != nil {
+		if err := s.applyAuthorization(ctx, principal, &record, *input.AuthorizationID); err != nil {
+			return nil, err
+		}
+	}
 	if input.AppID != nil || input.AppSecret != nil {
 		if err := s.bindCredentials(ctx, &record, input); err != nil {
 			return nil, err
@@ -263,6 +281,11 @@ func (s *localService) remove(ctx context.Context, principal auth.Principal, age
 	}
 	if s.runtime != nil {
 		s.runtime.stop(channelID)
+	}
+	if record, err := s.store.GetChannelQrRegistration(ctx, channelID); err == nil {
+		if err := s.store.DeleteChannelRegistration(ctx, record.ExternalID); err != nil {
+			return unavailable(err)
+		}
 	}
 	if err := s.store.ClearChannelSessionBindings(ctx, channelID); err != nil {
 		return unavailable(err)
@@ -476,11 +499,15 @@ func applyChannelFlags(record *db.ChannelRecord, input channelMutation) {
 }
 
 func sealChannelSecret(ctx context.Context, cipher *secrets.Service, record db.ChannelRecord, plaintext string) (*string, error) {
+	return sealRuntimeSecret(ctx, cipher, record.OrganizationUUID, record.WorkspaceUUID, "channel-runtime", record.ExternalID, plaintext)
+}
+
+func sealRuntimeSecret(ctx context.Context, cipher *secrets.Service, organizationUUID, workspaceUUID, vault, key, plaintext string) (*string, error) {
 	envelope, err := cipher.Seal(ctx, secrets.Binding{
-		OrganizationUUID:     record.OrganizationUUID,
-		WorkspaceUUID:        record.WorkspaceUUID,
-		VaultExternalID:      "channel-runtime",
-		CredentialExternalID: record.ExternalID,
+		OrganizationUUID:     organizationUUID,
+		WorkspaceUUID:        workspaceUUID,
+		VaultExternalID:      vault,
+		CredentialExternalID: key,
 	}, []byte(plaintext))
 	if err != nil {
 		return nil, err
@@ -494,15 +521,19 @@ func sealChannelSecret(ctx context.Context, cipher *secrets.Service, record db.C
 }
 
 func openSealedSecret(ctx context.Context, cipher *secrets.Service, record db.ChannelRecord, encoded string) (string, error) {
+	return openRuntimeSecret(ctx, cipher, record.OrganizationUUID, record.WorkspaceUUID, "channel-runtime", record.ExternalID, encoded)
+}
+
+func openRuntimeSecret(ctx context.Context, cipher *secrets.Service, organizationUUID, workspaceUUID, vault, key, encoded string) (string, error) {
 	var envelope secrets.Envelope
 	if err := json.Unmarshal([]byte(encoded), &envelope); err != nil {
 		return "", err
 	}
 	plaintext, err := cipher.Open(ctx, secrets.Binding{
-		OrganizationUUID:     record.OrganizationUUID,
-		WorkspaceUUID:        record.WorkspaceUUID,
-		VaultExternalID:      "channel-runtime",
-		CredentialExternalID: record.ExternalID,
+		OrganizationUUID:     organizationUUID,
+		WorkspaceUUID:        workspaceUUID,
+		VaultExternalID:      vault,
+		CredentialExternalID: key,
 	}, envelope)
 	if err != nil {
 		return "", err
@@ -540,6 +571,18 @@ func pairingNotFound() error {
 
 func channelMountsUnsupported() error {
 	return apperr.New(apperr.InvalidArgument, "当前 OMA 原生渠道暂不支持挂载 Memory、Vault 或 Git 仓库，请先在飞书渠道中取消这些挂载", nil)
+}
+
+func registrationUnavailable(cause error) error {
+	return apperr.New(apperr.Unavailable, "无法连接飞书生成授权二维码，请稍后重试", cause)
+}
+
+func authorizationNotFound() error {
+	return apperr.New(apperr.NotFound, "飞书授权不存在或已过期", nil)
+}
+
+func authorizationPending() error {
+	return apperr.New(apperr.Conflict, "请先完成飞书授权", nil)
 }
 
 func channelCapabilityUnsupported() error {

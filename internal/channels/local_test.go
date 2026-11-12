@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -124,7 +125,7 @@ func TestDecodeChannelMutationMounts(t *testing.T) {
 		{name: "挂载 Memory", body: `{"name":"渠道","mode":"open","memory_store_id":"mem_1"}`, wantErr: true},
 		{name: "挂载 Vault", body: `{"name":"渠道","mode":"open","vault_id":"vlt_1"}`, wantErr: true},
 		{name: "挂载 Git", body: `{"name":"渠道","mode":"open","git_repository":{"url":"https://example.com/repo.git"}}`, wantErr: true},
-		{name: "扫码授权", body: `{"name":"渠道","mode":"open","authorization_id":"auth_1"}`, wantErr: true},
+		{name: "扫码授权", body: `{"name":"渠道","mode":"open","authorization_id":"chra_1"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,6 +148,175 @@ func TestServiceWithoutChannelConfig(t *testing.T) {
 	var nilService *Service
 	nilService.Start(context.Background())
 	nilService.Stop()
+}
+
+type fakeRegistrationStore struct {
+	localStore
+	records map[string]db.ChannelRegistrationRecord
+}
+
+func (f *fakeRegistrationStore) CreateChannelRegistration(_ context.Context, input db.ChannelRegistrationInput) (db.ChannelRegistrationRecord, error) {
+	record := db.ChannelRegistrationRecord{
+		ExternalID: input.ExternalID, Kind: input.Kind, OrganizationUUID: input.OrganizationUUID,
+		WorkspaceUUID: input.WorkspaceUUID, ChannelExternalID: input.ChannelExternalID, Name: input.Name,
+		Phase: input.Phase, URL: input.URL, ExpiresAt: input.ExpiresAt, NextPollAt: input.NextPollAt,
+		IntervalSeconds: input.IntervalSeconds, Domain: input.Domain, DeviceCodeEnvelope: input.DeviceCodeEnvelope,
+	}
+	f.records[record.ExternalID] = record
+	return record, nil
+}
+
+func (f *fakeRegistrationStore) GetChannelRegistration(_ context.Context, organizationUUID, workspaceUUID, externalID string) (db.ChannelRegistrationRecord, error) {
+	record, ok := f.records[externalID]
+	if !ok || record.OrganizationUUID != organizationUUID || record.WorkspaceUUID != workspaceUUID {
+		return db.ChannelRegistrationRecord{}, db.ErrNotFound
+	}
+	return record, nil
+}
+
+func (f *fakeRegistrationStore) GetChannelQrRegistration(context.Context, string) (db.ChannelRegistrationRecord, error) {
+	return db.ChannelRegistrationRecord{}, db.ErrNotFound
+}
+
+func (f *fakeRegistrationStore) UpdateChannelRegistration(_ context.Context, update db.ChannelRegistrationUpdate) (db.ChannelRegistrationRecord, error) {
+	record, ok := f.records[update.ExternalID]
+	if !ok {
+		return db.ChannelRegistrationRecord{}, db.ErrNotFound
+	}
+	record.Phase = update.Phase
+	record.URL = update.URL
+	record.ExpiresAt = update.ExpiresAt
+	record.NextPollAt = update.NextPollAt
+	record.IntervalSeconds = update.IntervalSeconds
+	record.Domain = update.Domain
+	record.DeviceCodeEnvelope = update.DeviceCodeEnvelope
+	record.AppID = update.AppID
+	record.AppSecretEnvelope = update.AppSecretEnvelope
+	f.records[record.ExternalID] = record
+	return record, nil
+}
+
+func (f *fakeRegistrationStore) DeleteChannelRegistration(_ context.Context, externalID string) error {
+	delete(f.records, externalID)
+	return nil
+}
+
+func TestAuthorizationPolling(t *testing.T) {
+	beginServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		switch r.PostForm.Get("action") {
+		case "begin":
+			_, _ = w.Write([]byte(`{"device_code":"dev_1","verification_uri_complete":"https://accounts.feishu.cn/page/qr","expires_in":600,"interval":5}`))
+		default:
+			_, _ = w.Write([]byte(`{"client_id":"cli_new","client_secret":"secret"}`))
+		}
+	}))
+	defer beginServer.Close()
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	defer tokenServer.Close()
+	store := &fakeRegistrationStore{records: map[string]db.ChannelRegistrationRecord{}}
+	service := newLocalService(store, testCipher(t), nil, nil)
+	service.registration = &registrationClient{client: beginServer.Client(), baseURL: map[string]string{"feishu": beginServer.URL}}
+	service.client = tokenServer.Client()
+	service.tokenURL = tokenServer.URL
+	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
+	view, err := service.beginAuthorization(context.Background(), principal, "我的机器人")
+	if err != nil {
+		t.Fatalf("beginAuthorization: %v", err)
+	}
+	if view["status"] != "pending" || view["url"] == "" || view["id"] == "" {
+		t.Fatalf("授权视图 = %v", view)
+	}
+	record := store.records[view["id"].(string)]
+	if record.DeviceCodeEnvelope == nil {
+		t.Fatal("设备码必须加密存储")
+	}
+	deviceCode, err := service.openRegistrationSecret(context.Background(), record, record.DeviceCodeEnvelope)
+	if err != nil || deviceCode != "dev_1" {
+		t.Fatalf("设备码 = %q, %v", deviceCode, err)
+	}
+	pending, err := service.authorizationStatus(context.Background(), principal, record.ExternalID)
+	if err != nil || pending["status"] != "pending" {
+		t.Fatalf("未到轮询时间的状态 = %v, %v", pending, err)
+	}
+	record.NextPollAt = time.Now().Add(-time.Second)
+	store.records[record.ExternalID] = record
+	bound, err := service.authorizationStatus(context.Background(), principal, record.ExternalID)
+	if err != nil {
+		t.Fatalf("authorizationStatus: %v", err)
+	}
+	if bound["status"] != "bound" || bound["app_id"] != "cli_new" {
+		t.Fatalf("授权完成状态 = %v", bound)
+	}
+	stored := store.records[record.ExternalID]
+	if stored.AppSecretEnvelope == nil || stored.DeviceCodeEnvelope != nil {
+		t.Fatalf("授权完成后应保存密钥并清除设备码: %+v", stored)
+	}
+	appID, secret, err := service.authorizationCredentials(context.Background(), principal, record.ExternalID)
+	if err != nil || appID != "cli_new" || secret != "secret" {
+		t.Fatalf("授权凭据 = %q, %q, %v", appID, secret, err)
+	}
+}
+
+func TestRegistrationClient(t *testing.T) {
+	var calls []url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("解析表单: %v", err)
+		}
+		calls = append(calls, r.PostForm)
+		switch r.PostForm.Get("action") {
+		case "begin":
+			_, _ = w.Write([]byte(`{"device_code":"dev_1","verification_uri_complete":"https://accounts.feishu.cn/page/qr?x=1","expires_in":600,"interval":5}`))
+		case "poll":
+			if r.PostForm.Get("device_code") != "dev_1" {
+				t.Errorf("设备码 = %q", r.PostForm.Get("device_code"))
+			}
+			_, _ = w.Write([]byte(`{"client_id":"cli_new","client_secret":"secret"}`))
+		}
+	}))
+	defer server.Close()
+	client := &registrationClient{client: server.Client(), baseURL: map[string]string{"feishu": server.URL}}
+	challenge, err := client.begin(context.Background(), "我的机器人")
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	parsed, err := url.Parse(challenge.URL)
+	if err != nil || challenge.DeviceCode != "dev_1" || challenge.Interval.String() != "5s" {
+		t.Fatalf("challenge = %+v, %v", challenge, err)
+	}
+	if parsed.Query().Get("source") != "open-managed-agents" || parsed.Query().Get("name") != "我的机器人" || parsed.Query().Get("from") != "sdk" {
+		t.Fatalf("确认地址 = %s", challenge.URL)
+	}
+	poll, err := client.poll(context.Background(), "feishu", challenge.DeviceCode)
+	if err != nil || poll.Status != "authorized" || poll.AppID != "cli_new" || poll.AppSecret != "secret" {
+		t.Fatalf("poll = %+v, %v", poll, err)
+	}
+	if len(calls) != 2 || calls[0].Get("archetype") != "PersonalAgent" {
+		t.Fatalf("请求 = %v", calls)
+	}
+}
+
+func TestRegistrationClientRejectsForeignHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"device_code":"dev_1","verification_uri_complete":"https://evil.example/qr"}`))
+	}))
+	defer server.Close()
+	client := &registrationClient{client: server.Client(), baseURL: map[string]string{"feishu": server.URL}}
+	if _, err := client.begin(context.Background(), "机器人"); err == nil {
+		t.Fatal("非飞书域名必须被拒绝")
+	}
+}
+
+func TestRegistrationStatusMapping(t *testing.T) {
+	cases := map[string]string{"waiting": "pending", "bound": "bound", "expired": "expired", "denied": "error", "unknown": "unknown", "other": "unknown"}
+	for phase, expect := range cases {
+		if got := registrationStatus(phase); got != expect {
+			t.Fatalf("registrationStatus(%s) = %s", phase, got)
+		}
+	}
 }
 
 func TestChannelSecretRoundTrip(t *testing.T) {

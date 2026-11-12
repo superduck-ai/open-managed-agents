@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
@@ -42,13 +43,15 @@ type localStore interface {
 }
 
 type localService struct {
-	store        localStore
-	cipher       *secrets.Service
-	runtime      *runtimeSupervisor
-	logger       *slog.Logger
-	client       *http.Client
-	tokenURL     string
-	registration *registrationClient
+	store     localStore
+	cipher    *secrets.Service
+	runtime   *runtimeSupervisor
+	logger    *slog.Logger
+	client    *http.Client
+	tokenURL  string
+	registrar appRegistrar
+	runMu     sync.Mutex
+	runs      map[string]*registrationRun
 }
 
 type channelMutation struct {
@@ -74,14 +77,19 @@ type localHandler struct {
 
 func newLocalService(store localStore, cipher *secrets.Service, runtime *runtimeSupervisor, logger *slog.Logger) *localService {
 	return &localService{
-		store:        store,
-		cipher:       cipher,
-		runtime:      runtime,
-		logger:       logging.LoggerOrDefault(logger),
-		client:       &http.Client{Timeout: 10 * time.Second},
-		tokenURL:     feishuTokenURL,
-		registration: newRegistrationClient(),
+		store:     store,
+		cipher:    cipher,
+		runtime:   runtime,
+		logger:    logging.LoggerOrDefault(logger),
+		client:    &http.Client{Timeout: 10 * time.Second},
+		tokenURL:  feishuTokenURL,
+		registrar: sdkRegistrar{},
+		runs:      make(map[string]*registrationRun),
 	}
+}
+
+func (s *localService) Stop() {
+	s.stopRegistrations()
 }
 
 func (s *localService) agent(ctx context.Context, workspaceUUID, agentID string) (db.Agent, error) {
@@ -282,8 +290,9 @@ func (s *localService) remove(ctx context.Context, principal auth.Principal, age
 	if s.runtime != nil {
 		s.runtime.stop(channelID)
 	}
-	if record, err := s.store.GetChannelQrRegistration(ctx, channelID); err == nil {
-		if err := s.store.DeleteChannelRegistration(ctx, record.ExternalID); err != nil {
+	if registration, err := s.store.GetChannelQrRegistration(ctx, channelID); err == nil {
+		s.cancelRun(registration.ExternalID)
+		if err := s.store.DeleteChannelRegistration(ctx, registration.ExternalID); err != nil {
 			return unavailable(err)
 		}
 	}
@@ -583,8 +592,4 @@ func authorizationNotFound() error {
 
 func authorizationPending() error {
 	return apperr.New(apperr.Conflict, "请先完成飞书授权", nil)
-}
-
-func channelCapabilityUnsupported() error {
-	return apperr.New(apperr.InvalidState, "当前 OMA 原生渠道暂不支持该操作", nil)
 }

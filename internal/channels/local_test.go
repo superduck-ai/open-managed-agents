@@ -6,11 +6,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/larksuite/oapi-sdk-go/v3/scene/registration"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -201,26 +201,50 @@ func (f *fakeRegistrationStore) DeleteChannelRegistration(_ context.Context, ext
 	return nil
 }
 
-func TestAuthorizationPolling(t *testing.T) {
-	beginServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		switch r.PostForm.Get("action") {
-		case "begin":
-			_, _ = w.Write([]byte(`{"device_code":"dev_1","verification_uri_complete":"https://accounts.feishu.cn/page/qr","expires_in":600,"interval":5}`))
-		default:
-			_, _ = w.Write([]byte(`{"client_id":"cli_new","client_secret":"secret"}`))
+type fakeRegistrar struct {
+	result *registration.RegisterAppResult
+	err    error
+	delay  time.Duration
+	opts   *registration.Options
+}
+
+func (f *fakeRegistrar) RegisterApp(ctx context.Context, opts *registration.Options) (*registration.RegisterAppResult, error) {
+	f.opts = opts
+	opts.OnQRCode(&registration.QRCodeInfo{URL: "https://accounts.feishu.cn/page/qr?tp=sdk", ExpireIn: 600})
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
-	}))
-	defer beginServer.Close()
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.result == nil {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return f.result, nil
+}
+
+func newAuthorizationService(t *testing.T, registrar appRegistrar) (*localService, *fakeRegistrationStore) {
+	t.Helper()
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"code":0}`))
 	}))
-	defer tokenServer.Close()
+	t.Cleanup(tokenServer.Close)
 	store := &fakeRegistrationStore{records: map[string]db.ChannelRegistrationRecord{}}
 	service := newLocalService(store, testCipher(t), nil, nil)
-	service.registration = &registrationClient{client: beginServer.Client(), baseURL: map[string]string{"feishu": beginServer.URL}}
+	service.registrar = registrar
 	service.client = tokenServer.Client()
 	service.tokenURL = tokenServer.URL
+	return service, store
+}
+
+func TestAuthorizationUsesSDKRegistration(t *testing.T) {
+	registrar := &fakeRegistrar{result: &registration.RegisterAppResult{ClientID: "cli_new", ClientSecret: "secret"}, delay: 20 * time.Millisecond}
+	service, store := newAuthorizationService(t, registrar)
 	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
 	view, err := service.beginAuthorization(context.Background(), principal, "我的机器人")
 	if err != nil {
@@ -229,84 +253,81 @@ func TestAuthorizationPolling(t *testing.T) {
 	if view["status"] != "pending" || view["url"] == "" || view["id"] == "" {
 		t.Fatalf("授权视图 = %v", view)
 	}
-	record := store.records[view["id"].(string)]
-	if record.DeviceCodeEnvelope == nil {
-		t.Fatal("设备码必须加密存储")
+	if registrar.opts == nil || registrar.opts.AppPreset == nil || registrar.opts.AppPreset.Name != "我的机器人" {
+		t.Fatalf("SDK 选项 = %+v", registrar.opts)
 	}
-	deviceCode, err := service.openRegistrationSecret(context.Background(), record, record.DeviceCodeEnvelope)
-	if err != nil || deviceCode != "dev_1" {
-		t.Fatalf("设备码 = %q, %v", deviceCode, err)
+	if registrar.opts.Addons == nil || len(registrar.opts.Addons.Scopes.Tenant) == 0 || len(registrar.opts.Addons.Events.Items.Tenant) == 0 {
+		t.Fatalf("SDK 权限预置缺失: %+v", registrar.opts.Addons)
 	}
-	pending, err := service.authorizationStatus(context.Background(), principal, record.ExternalID)
-	if err != nil || pending["status"] != "pending" {
-		t.Fatalf("未到轮询时间的状态 = %v, %v", pending, err)
+	if registrar.opts.Source != "open-managed-agents" {
+		t.Fatalf("SDK Source = %q", registrar.opts.Source)
 	}
-	record.NextPollAt = time.Now().Add(-time.Second)
-	store.records[record.ExternalID] = record
-	bound, err := service.authorizationStatus(context.Background(), principal, record.ExternalID)
-	if err != nil {
-		t.Fatalf("authorizationStatus: %v", err)
+	stored := store.records[view["id"].(string)]
+	if stored.URL == "" {
+		t.Fatal("二维码地址必须落库")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	var bound map[string]any
+	for time.Now().Before(deadline) {
+		bound, err = service.authorizationStatus(context.Background(), principal, stored.ExternalID)
+		if err != nil {
+			t.Fatalf("authorizationStatus: %v", err)
+		}
+		if bound["status"] == "bound" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if bound["status"] != "bound" || bound["app_id"] != "cli_new" {
 		t.Fatalf("授权完成状态 = %v", bound)
 	}
-	stored := store.records[record.ExternalID]
-	if stored.AppSecretEnvelope == nil || stored.DeviceCodeEnvelope != nil {
-		t.Fatalf("授权完成后应保存密钥并清除设备码: %+v", stored)
-	}
-	appID, secret, err := service.authorizationCredentials(context.Background(), principal, record.ExternalID)
+	appID, secret, err := service.authorizationCredentials(context.Background(), principal, stored.ExternalID)
 	if err != nil || appID != "cli_new" || secret != "secret" {
 		t.Fatalf("授权凭据 = %q, %q, %v", appID, secret, err)
 	}
 }
 
-func TestRegistrationClient(t *testing.T) {
-	var calls []url.Values
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
-			t.Errorf("解析表单: %v", err)
-		}
-		calls = append(calls, r.PostForm)
-		switch r.PostForm.Get("action") {
-		case "begin":
-			_, _ = w.Write([]byte(`{"device_code":"dev_1","verification_uri_complete":"https://accounts.feishu.cn/page/qr?x=1","expires_in":600,"interval":5}`))
-		case "poll":
-			if r.PostForm.Get("device_code") != "dev_1" {
-				t.Errorf("设备码 = %q", r.PostForm.Get("device_code"))
-			}
-			_, _ = w.Write([]byte(`{"client_id":"cli_new","client_secret":"secret"}`))
-		}
-	}))
-	defer server.Close()
-	client := &registrationClient{client: server.Client(), baseURL: map[string]string{"feishu": server.URL}}
-	challenge, err := client.begin(context.Background(), "我的机器人")
+func TestAuthorizationDeniedByUser(t *testing.T) {
+	registrar := &fakeRegistrar{err: &registration.AccessDeniedError{RegisterAppError: &registration.RegisterAppError{Code: "access_denied"}}, delay: 10 * time.Millisecond}
+	service, store := newAuthorizationService(t, registrar)
+	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
+	view, err := service.beginAuthorization(context.Background(), principal, "机器人")
 	if err != nil {
-		t.Fatalf("begin: %v", err)
+		t.Fatalf("beginAuthorization: %v", err)
 	}
-	parsed, err := url.Parse(challenge.URL)
-	if err != nil || challenge.DeviceCode != "dev_1" || challenge.Interval.String() != "5s" {
-		t.Fatalf("challenge = %+v, %v", challenge, err)
+	deadline := time.Now().Add(2 * time.Second)
+	var status map[string]any
+	for time.Now().Before(deadline) {
+		status, err = service.authorizationStatus(context.Background(), principal, view["id"].(string))
+		if err != nil {
+			t.Fatalf("authorizationStatus: %v", err)
+		}
+		if status["status"] == "error" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if parsed.Query().Get("source") != "open-managed-agents" || parsed.Query().Get("name") != "我的机器人" || parsed.Query().Get("from") != "sdk" {
-		t.Fatalf("确认地址 = %s", challenge.URL)
-	}
-	poll, err := client.poll(context.Background(), "feishu", challenge.DeviceCode)
-	if err != nil || poll.Status != "authorized" || poll.AppID != "cli_new" || poll.AppSecret != "secret" {
-		t.Fatalf("poll = %+v, %v", poll, err)
-	}
-	if len(calls) != 2 || calls[0].Get("archetype") != "PersonalAgent" {
-		t.Fatalf("请求 = %v", calls)
+	if status["status"] != "error" {
+		t.Fatalf("拒绝后的状态 = %v，记录 %+v", status, store.records)
 	}
 }
 
-func TestRegistrationClientRejectsForeignHost(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"device_code":"dev_1","verification_uri_complete":"https://evil.example/qr"}`))
-	}))
-	defer server.Close()
-	client := &registrationClient{client: server.Client(), baseURL: map[string]string{"feishu": server.URL}}
-	if _, err := client.begin(context.Background(), "机器人"); err == nil {
-		t.Fatal("非飞书域名必须被拒绝")
+func TestAuthorizationWithoutRunnerBecomesUnknown(t *testing.T) {
+	service, store := newAuthorizationService(t, &fakeRegistrar{})
+	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws"}
+	record, err := store.CreateChannelRegistration(context.Background(), db.ChannelRegistrationInput{
+		ExternalID: "chra_x", Kind: registrationKindAuth, OrganizationUUID: "org", WorkspaceUUID: "ws",
+		Phase: registrationPhaseWaiting, ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	view, err := service.authorizationStatus(context.Background(), principal, record.ExternalID)
+	if err != nil {
+		t.Fatalf("authorizationStatus: %v", err)
+	}
+	if view["status"] != "unknown" {
+		t.Fatalf("进程重启后无执行器应为 unknown，实际 %v", view)
 	}
 }
 

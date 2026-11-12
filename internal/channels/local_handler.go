@@ -264,13 +264,6 @@ func (h *localHandler) authorizationStatus(w http.ResponseWriter, r *http.Reques
 	return nil
 }
 
-func (h *localHandler) unsupported(w http.ResponseWriter, r *http.Request) error {
-	if _, err := h.principal(r, r.Method != http.MethodGet); err != nil {
-		return err
-	}
-	return channelCapabilityUnsupported()
-}
-
 func decodeStrictJSON(w http.ResponseWriter, r *http.Request, limit int64, target any) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	decoder.DisallowUnknownFields()

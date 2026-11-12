@@ -16,6 +16,7 @@ type Service struct {
 	agent      http.Handler
 	workspace  http.Handler
 	supervisor *runtimeSupervisor
+	local      *localService
 	store      *db.DB
 	logger     *slog.Logger
 }
@@ -38,6 +39,7 @@ func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *se
 		agent:      handler.agentRouter(),
 		workspace:  handler.workspaceRouter(),
 		supervisor: supervisor,
+		local:      service,
 		store:      store,
 		logger:     logger,
 	}
@@ -66,10 +68,15 @@ func (s *Service) Start(ctx context.Context) {
 }
 
 func (s *Service) Stop() {
-	if s == nil || s.supervisor == nil {
+	if s == nil {
 		return
 	}
-	s.supervisor.stopAll()
+	if s.local != nil {
+		s.local.Stop()
+	}
+	if s.supervisor != nil {
+		s.supervisor.stopAll()
+	}
 }
 
 func localRuntimeEnabled(cfg config.Config) bool {

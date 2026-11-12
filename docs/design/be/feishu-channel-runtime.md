@@ -45,14 +45,15 @@ App Secret 使用 `secrets.Service` 以渠道为 AAD 封装，跨渠道或跨工
 
 ## 飞书应用授权自动化
 
-扫码授权和跳转授权共用同一条设备码流程，前端既能把 `url` 渲染成二维码，也能直接打开该链接：
+扫码授权和跳转授权共用飞书官方 Go SDK（`scene/registration`）的同一条设备码流程，前端既能把 `url` 渲染成二维码，也能直接打开该链接：
 
-1. `POST /v1/channels/authorizations` 向 `https://accounts.feishu.cn/oauth/v1/app/registration` 发起 `action=begin`，拿到一次性 `device_code` 与飞书确认地址，附带 `from/sdk source/open-managed-agents tp/sdk name`，落库时设备码加密。
-2. `GET /v1/channels/authorizations/{id}` 按记录里的 `next_poll_at` 惰性轮询 `action=poll`：`authorization_pending` 保持等待、`slow_down` 抬高间隔、`access_denied`/`expired_token` 置为失败、Lark 租户自动切到 `accounts.larksuite.com`；拿到 `client_id`/`client_secret` 后先校验凭据再落库，状态变为 `bound`。
-3. 渠道向导里的扫码入口用 `GET /v1/agents/{agent}/channels/{id}/qr`，同样惰性轮询，授权成功后直接把应用凭据绑定到该渠道并启动运行时；过期或拒绝后再次请求会重新发起。
-4. 创建/更新渠道时携带 `authorization_id` 表示复用已完成的工作区授权，OMA 直接从授权记录里取应用凭据绑定渠道。
+1. `POST /v1/channels/authorizations` 先落库一条 `channel_registrations` 记录，再在后台调用 SDK `RegisterApp`：传入 `Source=open-managed-agents`、`AppPreset.Name=渠道名`，并用 `Addons` 预置机器人所需权限（`im:message`、`im:message:send_as_bot`、`im:chat:readonly`）与事件（`im.message.receive_v1`），创建完的应用不需要再手工勾选。
+2. SDK 的 `OnQRCode` 回调把确认地址与过期时间写回记录并唤醒请求，HTTP 响应因此能同步拿到 `url`；`OnStatusChange` 同步 `slow_down` 后的轮询间隔。
+3. SDK 在本进程内完成后续轮询与 Lark 域名切换；成功、拒绝（`access_denied`）、过期（`expired_token`）分别落为 `bound` / `denied` / `expired`，其他失败落 `unknown`。
+4. 渠道向导里的扫码入口用 `GET /v1/agents/{agent}/channels/{id}/qr`（沿用渠道资源本身的 agent 作用域），授权成功后直接把应用凭据绑定到该渠道并启动运行时；过期或拒绝后再次请求会重新发起。
+5. 创建/更新渠道时携带 `authorization_id` 表示复用已完成的工作区授权，OMA 直接从授权记录里取应用凭据绑定渠道。
 
-所有轮询都由前端请求驱动，服务端没有后台轮询循环；同一个设备码只会被消费一次，请求结果未知时状态停在 `unknown`，避免重复领取凭据。
+轮询状态保存在 SDK 所在的进程内，所以进程重启时未完成的授权会停在 `unknown`（不会重复领取一次性凭据），需要重新发起。渠道删除会取消对应的扫码任务。
 
 ## 行为
 

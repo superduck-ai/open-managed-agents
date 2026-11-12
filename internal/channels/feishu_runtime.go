@@ -19,6 +19,9 @@ const (
 	channelReplyTimeout      = 30 * time.Minute
 	channelPairingLimit      = 1000
 	channelTitleLimit        = 30
+	channelAskAttempts       = 5
+	channelAskRetryBase      = time.Second
+	channelListenerIdle      = 2 * time.Minute
 )
 
 type runtimeStore interface {

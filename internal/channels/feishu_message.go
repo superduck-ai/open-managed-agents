@@ -21,31 +21,57 @@ func (w *channelWorker) handleMessage(ctx context.Context, msg *channeltypes.Nor
 	if text == "" && len(msg.Resources) == 0 {
 		return w.replyText(ctx, msg, "请发送文本、图片或 PDF 附件。")
 	}
-	scopeKey := channelScopeKey(msg)
+	ticket := w.enqueueScope(channelScopeKey(msg))
+	if text == "/new" || text == "/stop" {
+		w.interruptScope(ticket.scopeKey)
+	}
+	go w.runScoped(w.baseContext(), ticket, msg, text)
+	return nil
+}
+
+func (w *channelWorker) interruptScope(scopeKey string) {
+	w.mu.Lock()
+	tasks := append([]*channelReplyTask{}, w.replies[scopeKey]...)
+	w.mu.Unlock()
+	for _, task := range tasks {
+		task.cancel()
+	}
+}
+
+func (w *channelWorker) runScoped(ctx context.Context, ticket *scopeTicket, msg *channeltypes.NormalizedMessage, text string) {
+	if err := w.waitScope(ctx, ticket); err != nil {
+		return
+	}
+	defer w.releaseScope(ticket)
+	if ctx.Err() != nil {
+		return
+	}
 	allowed, err := w.authorize(ctx, msg)
 	if err != nil || !allowed {
-		return err
+		return
 	}
 	switch text {
 	case "/new", "/stop":
-		go w.runCommand(w.baseContext(), scopeKey, msg, text)
-		return nil
+		w.runCommand(ctx, ticket.scopeKey, msg, text)
+		return
 	}
-	sessionID, err := w.sessionFor(ctx, msg, scopeKey)
+	sessionID, err := w.sessionFor(ctx, msg, ticket.scopeKey)
 	if err != nil {
 		w.supervisor.logger.WarnContext(ctx, "open channel session", "channel_id", w.record.ExternalID, "error", err)
 		if errors.Is(err, db.ErrNotFound) {
-			return w.replyText(ctx, msg, "当前渠道尚未配置执行环境，请在 OMA 渠道设置中完成配置。")
+			_ = w.replyText(ctx, msg, "当前渠道尚未配置执行环境，请在 OMA 渠道设置中完成配置。")
+			return
 		}
-		return w.replyText(ctx, msg, "OMA 会话创建失败，请稍后重试。")
+		_ = w.replyText(ctx, msg, "OMA 会话创建失败，请稍后重试。")
+		return
 	}
 	apiKey, err := w.supervisor.apiKey(ctx, w.record)
 	if err != nil {
-		return err
+		return
 	}
-	task := w.startReplyTask(w.baseContext(), scopeKey, sessionID)
-	go w.deliver(task, msg, apiKey)
-	return nil
+	w.stopListeners(ticket.scopeKey, sessionID)
+	task := w.startReplyTask(ctx, ticket.scopeKey, sessionID)
+	w.deliver(task, msg, apiKey)
 }
 
 func (w *channelWorker) baseContext() context.Context {
@@ -69,6 +95,32 @@ func (w *channelWorker) startReplyTask(ctx context.Context, scopeKey, sessionID 
 	w.mu.Lock()
 	w.replies[scopeKey] = append(w.replies[scopeKey], task)
 	w.mu.Unlock()
+	return task
+}
+
+func (w *channelWorker) startListener(scopeKey, sessionID string) *channelReplyTask {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, task := range w.replies[scopeKey] {
+		if task.sessionID == sessionID {
+			return nil
+		}
+	}
+	parent := w.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	taskCtx, cancel := context.WithCancel(parent)
+	task := &channelReplyTask{
+		scopeKey:  scopeKey,
+		sessionID: sessionID,
+		listener:  true,
+		idle:      channelListenerIdle,
+		cancel:    cancel,
+		done:      make(chan struct{}),
+	}
+	task.ctx = taskCtx
+	w.replies[scopeKey] = append(w.replies[scopeKey], task)
 	return task
 }
 
@@ -121,12 +173,37 @@ func (w *channelWorker) cancelReplies(scopeKey string) {
 	}
 }
 
+func (w *channelWorker) stopListeners(scopeKey, sessionID string) {
+	w.mu.Lock()
+	tasks := make([]*channelReplyTask, 0, 1)
+	for _, task := range w.replies[scopeKey] {
+		if task.listener && task.sessionID == sessionID {
+			tasks = append(tasks, task)
+		}
+	}
+	w.mu.Unlock()
+	if len(tasks) == 0 {
+		return
+	}
+	for _, task := range tasks {
+		task.cancel()
+	}
+	deadline := time.After(3 * time.Second)
+	for _, task := range tasks {
+		select {
+		case <-task.done:
+		case <-deadline:
+			return
+		}
+	}
+}
+
 func (w *channelWorker) deliver(task *channelReplyTask, msg *channeltypes.NormalizedMessage, apiKey string) {
 	defer w.finishReply(task)
 	if !w.sessionBound(task.ctx, task) {
 		return
 	}
-	baseline := w.resourceBaseline(task.ctx, apiKey, task.sessionID)
+	baseline, ok := w.baselineFor(task.ctx, msg, task, apiKey)
 	content, skipped, mounted, err := w.messageContent(task.ctx, apiKey, task.sessionID, msg, strings.TrimSpace(msg.Content))
 	if err != nil {
 		_ = w.replyText(task.ctx, msg, "附件准备失败，请重新发送："+err.Error())
@@ -143,21 +220,60 @@ func (w *channelWorker) deliver(task *channelReplyTask, msg *channeltypes.Normal
 	if len(skipped) > 0 {
 		_, _ = w.channel.Send(task.ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Markdown: "以下附件暂不支持，已跳过：" + strings.Join(skipped, "、")})
 	}
+	task.inputEventID = w.sessionTail(task.sessionID)
+	if task.inputEventID == "" {
+		if events, listErr := w.supervisor.oma.listEvents(task.ctx, apiKey, task.sessionID); listErr == nil {
+			task.inputEventID = lastEventID(eventIDs(events))
+		} else {
+			w.supervisor.logger.WarnContext(task.ctx, "load channel event tail", "channel_id", w.record.ExternalID, "error", listErr)
+		}
+	}
 	ids, err := w.supervisor.oma.sendContent(task.ctx, apiKey, task.sessionID, content)
 	if err != nil {
+		if task.ctx.Err() != nil {
+			return
+		}
 		w.supervisor.logger.WarnContext(task.ctx, "send channel message", "channel_id", w.record.ExternalID, "error", err)
 		_ = w.replyText(task.ctx, msg, "消息发送失败，请稍后重试。")
 		return
 	}
-	task.inputEventID = lastEventID(ids)
-	if task.inputEventID == "" {
-		events, listErr := w.supervisor.oma.listEvents(task.ctx, apiKey, task.sessionID)
-		if listErr == nil {
-			task.inputEventID = lastEventID(eventIDs(events))
-		}
+	if inputEventID := lastEventID(ids); inputEventID != "" {
+		task.inputEventID = inputEventID
+	}
+	w.streamTask(task, msg, apiKey)
+	w.sendArtifactsIfIdle(task, msg, apiKey, baseline, ok)
+}
+
+func (w *channelWorker) listen(task *channelReplyTask, msg *channeltypes.NormalizedMessage, apiKey string) {
+	defer w.finishReply(task)
+	if task.ctx.Err() != nil {
+		return
+	}
+	baseline, ok := w.baselineFor(task.ctx, msg, task, apiKey)
+	tail, err := w.supervisor.oma.listEvents(task.ctx, apiKey, task.sessionID)
+	if err != nil {
+		w.supervisor.logger.WarnContext(task.ctx, "resume channel listener", "channel_id", w.record.ExternalID, "error", err)
+		return
+	}
+	if len(tail) > 0 && terminalEvent(tail[len(tail)-1]) {
+		return
+	}
+	task.inputEventID = lastEventID(eventIDs(tail))
+	w.streamTask(task, msg, apiKey)
+	w.sendArtifactsIfIdle(task, msg, apiKey, baseline, ok)
+}
+
+func (w *channelWorker) streamTask(task *channelReplyTask, msg *channeltypes.NormalizedMessage, apiKey string) {
+	if task.ctx.Err() != nil {
+		return
 	}
 	if err := w.streamReply(task.ctx, task, msg, apiKey); err != nil && task.ctx.Err() == nil {
 		w.supervisor.logger.WarnContext(task.ctx, "stream channel reply", "channel_id", w.record.ExternalID, "error", err)
+	}
+}
+
+func (w *channelWorker) sendArtifactsIfIdle(task *channelReplyTask, msg *channeltypes.NormalizedMessage, apiKey string, baseline artifactBaseline, ok bool) {
+	if task.ctx.Err() != nil || !ok {
 		return
 	}
 	if w.sessionBound(task.ctx, task) {
@@ -197,6 +313,21 @@ func (w *channelWorker) runCommand(ctx context.Context, scopeKey string, msg *ch
 		return
 	}
 	_ = w.replyText(ctx, msg, "已请求停止当前任务。")
+}
+
+func (w *channelWorker) sessionTail(sessionID string) string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.tails[sessionID]
+}
+
+func (w *channelWorker) setSessionTail(sessionID, eventID string) {
+	if eventID == "" {
+		return
+	}
+	w.mu.Lock()
+	w.tails[sessionID] = eventID
+	w.mu.Unlock()
 }
 
 func lastEventID(ids []string) string {

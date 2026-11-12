@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	channeltypes "github.com/larksuite/oapi-sdk-go/v3/channel/types"
 )
@@ -20,46 +21,101 @@ type channelActionValue struct {
 	Selected  []string `json:"selected,omitempty"`
 	Multi     []string `json:"multi,omitempty"`
 	OpenID    string   `json:"open_id"`
+	ChatType  string   `json:"chat_type,omitempty"`
 	ThreadID  string   `json:"session_thread_id,omitempty"`
+}
+
+type askedCard struct {
+	attempts int
+	nextTry  time.Time
+	sent     bool
+	failed   bool
 }
 
 func (w *channelWorker) askIfNeeded(ctx context.Context, msg *channeltypes.NormalizedMessage, task *channelReplyTask, event omaEvent, answered map[string]struct{}) error {
 	if event.ID == "" {
 		return nil
 	}
-	if _, done := answered[event.ID]; done {
+	answeredID := eventToolUseID(event)
+	if answeredID == "" {
+		answeredID = event.ID
+	}
+	if _, done := answered[answeredID]; done {
 		return nil
 	}
-	if id := eventToolUseID(event); id != "" {
-		if _, done := answered[id]; done {
-			return nil
-		}
-	}
+	var key, card string
 	switch event.Type {
 	case "agent.tool_use", "agent.mcp_tool_use":
-		if event.Permission != "ask" || !w.markAsked("confirm:"+task.sessionID+":"+event.ID) {
+		if event.Permission != "ask" {
 			return nil
 		}
-		card := approvalCard(w.cardValue(task, event.ID, "confirm", msg.UserID, event.SessionThreadID), eventToolName(event), strings.TrimSpace(string(event.Input)))
-		_, err := w.channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Card: card})
-		return err
+		key = "confirm:" + task.sessionID + ":" + event.ID
+		card = approvalCard(w.cardValue(task, event.ID, "confirm", msg.UserID, event.SessionThreadID, msg.ChatType), eventToolName(event), strings.TrimSpace(string(event.Input)))
 	case "agent.custom_tool_use":
 		if !isQuestionTool(event.Name) {
 			return nil
 		}
 		questions := parseQuestions(event.Input)
-		if len(questions) == 0 || !w.markAsked("answer:"+task.sessionID+":"+event.ID) {
+		if len(questions) == 0 {
 			return nil
 		}
-		card := questionCard(w.cardValue(task, event.ID, "answer", msg.UserID, event.SessionThreadID), questions)
-		_, err := w.channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Card: card})
-		return err
+		key = "answer:" + task.sessionID + ":" + event.ID
+		card = questionCard(w.cardValue(task, event.ID, "answer", msg.UserID, event.SessionThreadID, msg.ChatType), questions)
 	default:
 		return nil
 	}
+	if !w.beginAsk(key) {
+		return nil
+	}
+	if _, err := w.channel.Send(ctx, &channeltypes.SendInput{ChatID: msg.ChatID, Card: card}); err != nil {
+		if w.askFailed(key) {
+			w.notify(ctx, msg, "审批卡片发送失败，请在 OMA 会话中处理，或发送 /new 后重试。")
+		}
+		return err
+	}
+	w.askSent(key)
+	return nil
 }
 
-func (w *channelWorker) cardValue(task *channelReplyTask, toolUseID, kind, openID, threadID string) channelActionValue {
+func (w *channelWorker) beginAsk(key string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	state := w.asked[key]
+	if state == nil {
+		state = &askedCard{}
+		w.asked[key] = state
+	}
+	if state.sent || state.failed || time.Now().Before(state.nextTry) {
+		return false
+	}
+	state.attempts++
+	state.nextTry = time.Now().Add(time.Duration(1<<uint(state.attempts-1)) * channelAskRetryBase)
+	return true
+}
+
+func (w *channelWorker) askSent(key string) {
+	w.mu.Lock()
+	if state := w.asked[key]; state != nil {
+		state.sent = true
+	}
+	w.mu.Unlock()
+}
+
+func (w *channelWorker) askFailed(key string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	state := w.asked[key]
+	if state == nil {
+		return false
+	}
+	if state.attempts >= channelAskAttempts {
+		state.failed = true
+		return true
+	}
+	return false
+}
+
+func (w *channelWorker) cardValue(task *channelReplyTask, toolUseID, kind, openID, threadID, chatType string) channelActionValue {
 	return channelActionValue{
 		Kind:      kind,
 		ChannelID: w.record.ExternalID,
@@ -67,18 +123,9 @@ func (w *channelWorker) cardValue(task *channelReplyTask, toolUseID, kind, openI
 		SessionID: task.sessionID,
 		ToolUseID: toolUseID,
 		OpenID:    openID,
+		ChatType:  chatType,
 		ThreadID:  threadID,
 	}
-}
-
-func (w *channelWorker) markAsked(key string) bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if _, ok := w.asked[key]; ok {
-		return false
-	}
-	w.asked[key] = struct{}{}
-	return true
 }
 
 func answeredToolIDs(events []omaEvent) map[string]struct{} {
@@ -128,6 +175,14 @@ func (w *channelWorker) handleCardAction(ctx context.Context, event *channeltype
 	if event.ChatID != "" && !scopeMatchesChat(value.ScopeKey, event.ChatID) {
 		return fmt.Errorf("渠道卡片不属于当前会话")
 	}
+	allowed, err := w.cardAuthorized(ctx, value, operator, event.ChatID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		w.notifyChat(ctx, event.ChatID, "当前会话未获授权，操作已拒绝。")
+		return fmt.Errorf("当前会话未获授权")
+	}
 	if w.currentSession(ctx, value.ScopeKey) != value.SessionID {
 		return fmt.Errorf("该操作已失效，请重新发起")
 	}
@@ -155,7 +210,11 @@ func (w *channelWorker) handleCardAction(ctx context.Context, event *channeltype
 		if value.ThreadID != "" {
 			confirmation["session_thread_id"] = value.ThreadID
 		}
-		return w.supervisor.oma.sendEvent(ctx, apiKey, value.SessionID, confirmation)
+		if err := w.supervisor.oma.sendEvent(ctx, apiKey, value.SessionID, confirmation); err != nil {
+			return err
+		}
+		w.resumeListener(value, event)
+		return nil
 	case "answer":
 		answers := buildAnswers(value, event.Action.FormValue)
 		content, err := json.Marshal(map[string]any{"answers": answers})
@@ -170,9 +229,39 @@ func (w *channelWorker) handleCardAction(ctx context.Context, event *channeltype
 		if value.ThreadID != "" {
 			resultEvent["session_thread_id"] = value.ThreadID
 		}
-		return w.supervisor.oma.sendEvent(ctx, apiKey, value.SessionID, resultEvent)
+		if err := w.supervisor.oma.sendEvent(ctx, apiKey, value.SessionID, resultEvent); err != nil {
+			return err
+		}
+		w.resumeListener(value, event)
+		return nil
 	default:
 		return nil
+	}
+}
+
+func (w *channelWorker) resumeListener(value channelActionValue, event *channeltypes.CardActionEvent) {
+	if event.ChatID == "" || value.ScopeKey == "" || value.SessionID == "" {
+		return
+	}
+	task := w.startListener(value.ScopeKey, value.SessionID)
+	if task == nil {
+		return
+	}
+	apiKey, err := w.supervisor.apiKey(task.ctx, w.record)
+	if err != nil {
+		w.finishReply(task)
+		return
+	}
+	msg := &channeltypes.NormalizedMessage{ChatID: event.ChatID, MessageID: event.MessageID, ChatType: value.ChatType}
+	go w.listen(task, msg, apiKey)
+}
+
+func (w *channelWorker) notifyChat(ctx context.Context, chatID, text string) {
+	if chatID == "" {
+		return
+	}
+	if _, err := w.channel.Send(ctx, &channeltypes.SendInput{ChatID: chatID, Text: text}); err != nil {
+		w.supervisor.logger.DebugContext(ctx, "send channel notice", "channel_id", w.record.ExternalID, "error", err)
 	}
 }
 

@@ -28,9 +28,11 @@ type channelWorker struct {
 	online     atomic.Bool
 
 	mu        sync.Mutex
+	scopes    map[string]*scopeQueue
 	replies   map[string][]*channelReplyTask
-	asked     map[string]struct{}
+	asked     map[string]*askedCard
 	artifacts map[string]struct{}
+	tails     map[string]string
 	ctx       context.Context
 }
 
@@ -40,6 +42,8 @@ type channelReplyTask struct {
 	sessionID    string
 	inputEventID string
 	inbound      map[string]struct{}
+	listener     bool
+	idle         time.Duration
 	cancel       context.CancelFunc
 	done         chan struct{}
 }
@@ -67,9 +71,11 @@ func newChannelWorker(supervisor *runtimeSupervisor, record db.ChannelRecord, se
 		secret:     secret,
 		client:     client,
 		channel:    bot,
+		scopes:     make(map[string]*scopeQueue),
 		replies:    make(map[string][]*channelReplyTask),
-		asked:      make(map[string]struct{}),
+		asked:      make(map[string]*askedCard),
 		artifacts:  make(map[string]struct{}),
+		tails:      make(map[string]string),
 	}
 	bot.OnReady(func() { worker.online.Store(true) })
 	bot.OnReconnecting(func() { worker.online.Store(false) })
@@ -172,30 +178,69 @@ func (w *channelWorker) sessionBound(ctx context.Context, task *channelReplyTask
 	return w.currentSession(ctx, task.scopeKey) == task.sessionID
 }
 
+type pairingDecision int
+
+const (
+	pairingApproved pairingDecision = iota
+	pairingAwaiting
+	pairingMissing
+)
+
+func channelPairTarget(chatType, chatID, openID string) (string, string) {
+	if chatType == "p2p" {
+		return "user", openID
+	}
+	return "chat", chatID
+}
+
+func (w *channelWorker) pairingFor(ctx context.Context, kind, target string) (pairingDecision, error) {
+	pairings, err := w.supervisor.store.ListChannelPairingRecords(ctx, w.record.ExternalID)
+	if err != nil {
+		return pairingMissing, err
+	}
+	for _, pairing := range pairings {
+		if pairing.Kind != kind || pairing.Target != target {
+			continue
+		}
+		if pairing.Status == "approved" {
+			return pairingApproved, nil
+		}
+		return pairingAwaiting, nil
+	}
+	return pairingMissing, nil
+}
+
 func (w *channelWorker) authorize(ctx context.Context, msg *channeltypes.NormalizedMessage) (bool, error) {
 	if w.record.Mode != "pairing" {
 		return true, nil
 	}
-	kind, target := "chat", msg.ChatID
-	if msg.ChatType == "p2p" {
-		kind, target = "user", msg.UserID
-	}
-	pairings, err := w.supervisor.store.ListChannelPairingRecords(ctx, w.record.ExternalID)
+	kind, target := channelPairTarget(msg.ChatType, msg.ChatID, msg.UserID)
+	decision, err := w.pairingFor(ctx, kind, target)
 	if err != nil {
 		return false, err
 	}
-	for _, pairing := range pairings {
-		if pairing.Kind == kind && pairing.Target == target && pairing.Status == "approved" {
-			return true, nil
-		}
-		if pairing.Kind == kind && pairing.Target == target {
-			return false, w.replyText(ctx, msg, "配对申请正在等待管理员批准。")
-		}
+	switch decision {
+	case pairingApproved:
+		return true, nil
+	case pairingAwaiting:
+		return false, w.replyText(ctx, msg, "配对申请正在等待管理员批准。")
 	}
 	if err := w.recordPairing(ctx, kind, target, msg.UserID); err != nil {
 		return false, err
 	}
 	return false, w.replyText(ctx, msg, "已提交配对申请，请等待管理员在 OMA 渠道页面批准。")
+}
+
+func (w *channelWorker) cardAuthorized(ctx context.Context, value channelActionValue, operator, chatID string) (bool, error) {
+	if w.record.Mode != "pairing" {
+		return true, nil
+	}
+	kind, target := channelPairTarget(value.ChatType, chatID, operator)
+	decision, err := w.pairingFor(ctx, kind, target)
+	if err != nil {
+		return false, err
+	}
+	return decision == pairingApproved, nil
 }
 
 func (w *channelWorker) recordPairing(ctx context.Context, kind, target, displayName string) error {

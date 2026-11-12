@@ -28,7 +28,14 @@ func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID st
 	skipped := make([]string, 0)
 	mounted := make(map[string]struct{})
 	names := make([]string, 0)
-	existing := w.existingFileMounts(ctx, apiKey, sessionID)
+	existing := map[string]struct{}{}
+	if len(msg.Resources) > 0 {
+		var err error
+		existing, err = w.existingFileMounts(ctx, apiKey, sessionID)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
 	for index, resource := range msg.Resources {
 		if index >= channelAttachmentLimit {
 			return nil, nil, nil, fmt.Errorf("一次最多发送 %d 个附件", channelAttachmentLimit)
@@ -109,34 +116,46 @@ func (w *channelWorker) downloadAttachment(ctx context.Context, messageID string
 	}
 }
 
-func (w *channelWorker) existingFileMounts(ctx context.Context, apiKey, sessionID string) map[string]struct{} {
+func (w *channelWorker) existingFileMounts(ctx context.Context, apiKey, sessionID string) (map[string]struct{}, error) {
 	mounts := make(map[string]struct{})
 	resources, err := w.supervisor.oma.listResources(ctx, apiKey, sessionID)
 	if err != nil {
-		return mounts
+		return nil, fmt.Errorf("读取会话附件失败: %w", err)
 	}
 	for _, resource := range resources {
 		if resource.Type == "file" && resource.FileID != "" {
 			mounts[resource.FileID] = struct{}{}
 		}
 	}
-	return mounts
+	return mounts, nil
 }
 
 type artifactBaseline map[string]struct{}
 
-func (w *channelWorker) resourceBaseline(ctx context.Context, apiKey, sessionID string) artifactBaseline {
+func (w *channelWorker) resourceBaseline(ctx context.Context, apiKey, sessionID string) (artifactBaseline, error) {
 	baseline := make(artifactBaseline)
 	resources, err := w.supervisor.oma.listResources(ctx, apiKey, sessionID)
 	if err != nil {
-		return baseline
+		return nil, err
 	}
 	for _, resource := range resources {
 		if resource.ID != "" {
 			baseline[resource.ID] = struct{}{}
 		}
 	}
-	return baseline
+	return baseline, nil
+}
+
+func (w *channelWorker) baselineFor(ctx context.Context, msg *channeltypes.NormalizedMessage, task *channelReplyTask, apiKey string) (artifactBaseline, bool) {
+	baseline, err := w.resourceBaseline(ctx, apiKey, task.sessionID)
+	if err != nil {
+		w.supervisor.logger.WarnContext(ctx, "load channel artifact baseline", "channel_id", w.record.ExternalID, "error", err)
+		if !task.listener {
+			w.notify(ctx, msg, "本轮产物暂不回传（读取会话资源失败），请在 OMA 会话中查看。")
+		}
+		return nil, false
+	}
+	return baseline, true
 }
 
 func (w *channelWorker) sendArtifacts(ctx context.Context, task *channelReplyTask, msg *channeltypes.NormalizedMessage, apiKey string, baseline artifactBaseline) {

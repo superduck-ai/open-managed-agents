@@ -15,21 +15,39 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func (w *channelWorker) streamReply(ctx context.Context, task *channelReplyTask, msg *channeltypes.NormalizedMessage, apiKey string) error {
-	stream, err := w.openStream(ctx, msg)
-	if err != nil {
-		return err
+type replyRunner struct {
+	worker    *channelWorker
+	task      *channelReplyTask
+	msg       *channeltypes.NormalizedMessage
+	reply     channelReply
+	stream    channeltypes.StreamController
+	seen      map[string]struct{}
+	started   bool
+	cursor    int
+	turnStart int
+	progress  time.Time
+}
+
+func newReplyRunner(worker *channelWorker, task *channelReplyTask, msg *channeltypes.NormalizedMessage) *replyRunner {
+	return &replyRunner{
+		worker:   worker,
+		task:     task,
+		msg:      msg,
+		reply:    channelReply{card: worker.record.IncludeThinking, thinking: worker.record.IncludeThinking},
+		seen:     make(map[string]struct{}),
+		started:  task.inputEventID == "",
+		progress: time.Now(),
 	}
-	defer stream.Close(context.WithoutCancel(ctx))
-	reply := channelReply{card: w.record.IncludeThinking, thinking: w.record.IncludeThinking}
-	if reply.card {
-		if err := stream.UpdateCard(ctx, reply.render()); err != nil {
+}
+
+func (w *channelWorker) streamReply(ctx context.Context, task *channelReplyTask, msg *channeltypes.NormalizedMessage, apiKey string) error {
+	runner := newReplyRunner(w, task, msg)
+	defer runner.close(ctx)
+	if !task.listener {
+		if err := runner.open(ctx); err != nil {
 			return err
 		}
 	}
-	seen := make(map[string]struct{})
-	started := false
-	cursor := 0
 	deadline := time.Now().Add(channelReplyTimeout)
 	ticker := time.NewTicker(channelReplyPollInterval)
 	defer ticker.Stop()
@@ -39,53 +57,20 @@ func (w *channelWorker) streamReply(ctx context.Context, task *channelReplyTask,
 		}
 		events, err := w.supervisor.oma.listEvents(ctx, apiKey, task.sessionID)
 		if err == nil {
-			if !started {
-				for index, event := range events {
-					if event.ID == task.inputEventID {
-						started = true
-						cursor = index + 1
-						break
-					}
-				}
+			done, err := runner.consume(ctx, events)
+			if err != nil {
+				return err
 			}
-			done := false
-			answered := answeredToolIDs(events)
-			if started {
-				if cursor > len(events) {
-					cursor = 0
-				}
-				for ; cursor < len(events); cursor++ {
-					event := events[cursor]
-					if _, ok := seen[event.ID]; ok {
-						continue
-					}
-					seen[event.ID] = struct{}{}
-					text, changed := reply.consume(w.record, event)
-					if changed {
-						if reply.card {
-							if err := stream.UpdateCard(ctx, reply.render()); err != nil {
-								return err
-							}
-						} else if text != "" {
-							if err := stream.Append(ctx, text); err != nil {
-								return err
-							}
-						}
-					}
-					if err := w.askIfNeeded(ctx, msg, task, event, answered); err != nil {
-						w.supervisor.logger.WarnContext(ctx, "send channel action card", "channel_id", w.record.ExternalID, "error", err)
-					}
-					if terminalEvent(event) {
-						done = true
-					}
-				}
+			if done {
+				return runner.close(ctx)
 			}
-			if done && started {
-				return stream.Close(ctx)
-			}
+			runner.askPending(ctx, events)
+		}
+		if task.idle > 0 && time.Since(runner.progress) > task.idle {
+			return runner.close(ctx)
 		}
 		if time.Now().After(deadline) {
-			return stream.Close(ctx)
+			return runner.close(ctx)
 		}
 		select {
 		case <-ctx.Done():
@@ -93,6 +78,101 @@ func (w *channelWorker) streamReply(ctx context.Context, task *channelReplyTask,
 		case <-w.supervisor.shutdown:
 			return nil
 		case <-ticker.C:
+		}
+	}
+}
+
+func (r *replyRunner) open(ctx context.Context) error {
+	if r.stream != nil {
+		return nil
+	}
+	opened, err := r.worker.openStream(ctx, r.msg)
+	if err != nil {
+		return err
+	}
+	r.stream = opened
+	if r.reply.card {
+		return r.stream.UpdateCard(ctx, r.reply.render())
+	}
+	return nil
+}
+
+func (r *replyRunner) close(ctx context.Context) error {
+	if r.stream == nil {
+		return nil
+	}
+	closing := r.stream
+	r.stream = nil
+	return closing.Close(context.WithoutCancel(ctx))
+}
+
+func (r *replyRunner) seek(events []omaEvent) {
+	if r.started {
+		return
+	}
+	for index, event := range events {
+		if event.ID == r.task.inputEventID {
+			r.started = true
+			r.cursor = index + 1
+			r.turnStart = index + 1
+			return
+		}
+	}
+}
+
+func (r *replyRunner) consume(ctx context.Context, events []omaEvent) (bool, error) {
+	r.seek(events)
+	if !r.started {
+		return false, nil
+	}
+	if r.cursor > len(events) {
+		r.cursor = 0
+	}
+	done := false
+	for ; r.cursor < len(events); r.cursor++ {
+		event := events[r.cursor]
+		if _, ok := r.seen[event.ID]; ok {
+			continue
+		}
+		r.seen[event.ID] = struct{}{}
+		r.progress = time.Now()
+		r.worker.setSessionTail(r.task.sessionID, event.ID)
+		if err := r.write(ctx, event); err != nil {
+			return false, err
+		}
+		if terminalEvent(event) {
+			done = true
+		}
+	}
+	return done, nil
+}
+
+func (r *replyRunner) write(ctx context.Context, event omaEvent) error {
+	text, changed := r.reply.consume(r.worker.record, event)
+	if !changed {
+		return nil
+	}
+	if err := r.open(ctx); err != nil {
+		return err
+	}
+	if r.reply.card {
+		return r.stream.UpdateCard(ctx, r.reply.render())
+	}
+	if text == "" {
+		return nil
+	}
+	return r.stream.Append(ctx, text)
+}
+
+func (r *replyRunner) askPending(ctx context.Context, events []omaEvent) {
+	if r.turnStart > len(events) {
+		r.turnStart = len(events)
+	}
+	pending := events[r.turnStart:]
+	answered := answeredToolIDs(pending)
+	for _, event := range pending {
+		if err := r.worker.askIfNeeded(ctx, r.msg, r.task, event, answered); err != nil {
+			r.worker.supervisor.logger.WarnContext(ctx, "send channel action card", "channel_id", r.worker.record.ExternalID, "error", err)
 		}
 	}
 }

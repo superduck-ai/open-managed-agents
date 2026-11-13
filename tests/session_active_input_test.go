@@ -12,6 +12,9 @@ import (
 func TestSessionRejectsInputAtBudgetPause(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("budget-input"))
 	worker, epoch := newPayloadIntegrationSession(t, app)
+	if _, err := app.pool.Exec(t.Context(), `UPDATE sessions SET budget='{"type":"limit","max_list_cost":{"amount":"1","currency":"USD"}}', budget_reached_at=now() WHERE external_id=$1`, worker.SessionExternalID); err != nil {
+		t.Fatal(err)
+	}
 	postCodeSessionWorkerEvents(t, app, worker.ExternalID, internalPayloadRequest(epoch, `{"id":"budget-idle","uuid":"budget-idle","type":"session.status_idle","stop_reason":{"type":"budget_reached"}}`))
 	response := doSessionRequest(t, app, http.MethodPost, "/v1/sessions/"+worker.SessionExternalID+"/events", strings.NewReader(`{"events":[{"type":"user.message","content":[{"type":"text","text":"blocked"}]}]}`), defaultTestKey, true)
 	assertError(t, response, http.StatusBadRequest, "invalid_request_error")

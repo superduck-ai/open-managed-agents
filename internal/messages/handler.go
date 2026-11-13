@@ -147,6 +147,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 		}
 		path = "/v1/chat/completions"
 	}
+	if backend == llmproviders.Responses {
+		path = "/v1/responses"
+	}
 	body, err = llmproviders.ReplaceRequestModel(body, upstream.ModelID)
 	if err != nil {
 		httpapi.WriteError(w, r, invalidRequestError(err))
@@ -169,17 +172,21 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	upstreamRequest.ContentLength = int64(len(body))
 	// 先清除客户端鉴权和租户 header，再注入只存在于 OMA 服务端的真实上游 key。
 	upstreamRequest.Header = sanitizedRequestHeaders(r.Header)
-	if backend == llmproviders.ChatCompletions {
+	if backend == llmproviders.ChatCompletions || backend == llmproviders.Responses {
 		upstream.ApplyHeaders(upstreamRequest.Header)
 	} else {
 		llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)
 	}
 	request, err := h.beginModelRequest(r, principal, upstream.QualifiedModelID)
 	if err != nil {
-		if errors.Is(err, db.ErrSessionBudgetReached) {
+		switch {
+		case errors.Is(err, db.ErrSessionBudgetReached):
 			call.failBeforeProxy("budget_reached")
 			w.Header().Set("X-Should-Retry", "false")
-		} else {
+		case errors.Is(err, codesessions.ErrModelPriceUnavailable):
+			call.failBeforeProxy("model_price_unavailable")
+			w.Header().Set("X-Should-Retry", "false")
+		default:
 			call.failBeforeProxy("begin_model_request")
 			h.logger.ErrorContext(r.Context(), "start model request", "error", err)
 		}

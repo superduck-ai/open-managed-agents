@@ -1,11 +1,12 @@
 import { useI18n } from '../../shared/i18n';
-import { Field, FieldDescription, FieldLabel } from '../../shared/ui/field';
+import { Field, FieldLabel } from '../../shared/ui/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../shared/ui/select';
 import type { APIBackend } from './api';
 
 const backends = [
   { value: 'messages', label: 'Anthropic Messages' },
   { value: 'chat_completions', label: 'OpenAI Chat Completions' },
+  { value: 'responses', label: 'OpenAI Responses' },
 ];
 
 export function ProviderBackendField({
@@ -23,7 +24,7 @@ export function ProviderBackendField({
         value={value}
         items={backends}
         onValueChange={(next) => {
-          if (next === 'messages' || next === 'chat_completions') onChange(next);
+          if (next === 'messages' || next === 'chat_completions' || next === 'responses') onChange(next);
         }}
       >
         <SelectTrigger id="llm-provider-backend" className="w-full">
@@ -37,11 +38,6 @@ export function ProviderBackendField({
           ))}
         </SelectContent>
       </Select>
-      {value === 'chat_completions' ? (
-        <FieldDescription>
-          {msg('llmModels.chatBrainOnly', 'Chat Completions is supported in brain mode only.')}
-        </FieldDescription>
-      ) : null}
     </Field>
   );
 }

@@ -50,7 +50,7 @@ export class AiSdkStream {
     return [
       ...(this.usage ? [{ type: "usage" as const, usage: this.usage }] : []),
       { type: "finish", reason, replayState: {
-        response: { format: this.replayFormat, stopReason: this.finishReason?.raw,
+        response: { format: this.replayFormat, ...(this.finishReason?.raw !== undefined ? { stopReason: this.finishReason.raw } : {}),
           ...(this.messageID ? { messageID: this.messageID } : {}), ...(this.requestID ? { requestID: this.requestID } : {}) },
         blocks: states.map((state) => ({ index: state.index,
           ...(state.signature ? { signature: state.signature } : {}), ...(state.redactedData ? { redactedData: state.redactedData } : {}) })),
@@ -122,7 +122,8 @@ export function modelError(error: unknown, signal?: AbortSignal): unknown {
   if (signal?.aborted || error instanceof LlmError) return error;
   if (APICallError.isInstance(error)) {
     const message = apiErrorMessage(error);
-    return providerError(message, error.statusCode, retryAfterMs(error.responseHeaders), inputRangeOverflow(error, message));
+    return billingError(error.responseBody, error.statusCode)
+      ?? providerError(message, error.statusCode, retryAfterMs(error.responseHeaders), inputRangeOverflow(error, message));
   }
   if (error instanceof Error) return providerError(error.message);
   const message = typeof error === "object" && error && "message" in error ? String(error.message) : String(error);
@@ -184,4 +185,13 @@ function tokenUsage(usage: LanguageModelV4Usage): TokenUsage | undefined {
   return { inputTokens: uncached, outputTokens: usage.outputTokens.total ?? 0,
     ...(input.cacheRead !== undefined ? { cacheReadTokens: input.cacheRead } : {}),
     ...(input.cacheWrite !== undefined ? { cacheWriteTokens: input.cacheWrite } : {}) };
+}
+
+export function billingError(body: string | undefined, status?: number): LlmError | undefined {
+  try {
+    const error = JSON.parse(body ?? "").error;
+    if (error?.code === "session_budget_reached" || error?.code === "model_price_unavailable")
+      return new LlmError(typeof error.message === "string" ? error.message : error.code, error.code.toUpperCase(), { status });
+  } catch {}
+  return undefined;
 }

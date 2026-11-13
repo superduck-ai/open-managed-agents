@@ -1,6 +1,7 @@
 import { postJsonSseStream } from '../../../../shared/api/streaming';
 import { postQuickstartProxyStream, quickstartStreamError } from '../../api';
 import { toRecord } from '../../utils';
+import type { APIBackend } from '../../../llm-providers/api';
 import { builderToolSchema, type BuilderMessage, type BuilderTool } from './model';
 
 export type BuilderTurn = { message: BuilderMessage; tools: BuilderTool[] };
@@ -8,7 +9,7 @@ type TurnInput = {
   orgUuid: string;
   workspaceId: string;
   model: string;
-  backend: 'messages' | 'chat_completions';
+  backend: APIBackend;
   system: Array<{ type: string; text: string }>;
   tools: Array<Record<string, unknown>>;
   messages: BuilderMessage[];
@@ -17,6 +18,7 @@ type TurnInput = {
 };
 
 export async function streamBuilderTurn(input: TurnInput): Promise<BuilderTurn> {
+  if (input.backend === 'responses') throw new Error('Agent builder requires a Messages or Chat Completions model.');
   return input.backend === 'chat_completions' ? streamChatTurn(input) : streamMessagesTurn(input);
 }
 async function streamMessagesTurn(input: TurnInput): Promise<BuilderTurn> {

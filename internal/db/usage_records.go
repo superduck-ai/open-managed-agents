@@ -9,6 +9,7 @@ import (
 )
 
 type UsageRecord struct {
+	ProviderCost       json.RawMessage
 	PriceSnapshot      json.RawMessage
 	Finalized          bool
 	OrganizationUUID   string

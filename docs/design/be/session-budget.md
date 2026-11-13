@@ -2,17 +2,17 @@
 
 会话和部署可以在创建时设置 USD 预算，金额使用整数字符串表示美分。部署创建的会话继承预算；会话预算修改必须高于累计费用，移除后不能重新添加。带预算的最终 Agent 快照中的 `model.id`（兼容字符串 `model`）必须引用已配置价格的模型；metadata 和工具配置中的同名字段不参与校验。
 
-模型费用由模型代理完成每次请求时生成预算费用，写入 `span.model_request_end.billing`；不再从 Worker 的回合汇总结果合成计费事件，避免重复计费。预算查询优先读取主分支的 `model_usage` 协议，同时兼容旧事件的 `usage`；外置事件摘要保留计量字段。计费入口只接收固定的四项整数 Token 计数，不解析 Worker 汇总格式。输入、输出、缓存读写分别按请求开始时固定的价格目录快照计算，使用十进制有理数汇总，每次请求按半分向上舍入到美分，避免二进制浮点导致少计。上游流式和非流式响应中的 `server_tool_use.web_search_requests` 保留到 `model_usage`，由费用聚合计入搜索费用。活跃时间与 Token/请求费用分别聚合：`usage.active_seconds` 使用自有线程 running/idle 状态区间的并集，Session 包含 primary 与全部 child，单线程按自己的区间计算；`stats.active_seconds` 保留各线程区间之和。单会话和单线程 GET 刷新用量时使用同一活动时长函数，不用并发模型请求时长之和覆盖公开活动时长。未初始化 usage 的线程 GET 保留 null，与 List 和 SDK presence 一致，不把空聚合伪装为真实零值。
+模型费用由模型代理完成每次请求时生成预算费用，写入 `span.model_request_end.billing`；不再从 Worker 的回合汇总结果合成计费事件，避免重复计费。预算查询优先读取主分支的 `model_usage` 协议，同时兼容旧事件的 `usage`；外置事件摘要保留计量字段。计费入口只接收固定的四项整数 Token 计数，不解析 Worker 汇总格式。输入、输出、缓存读写分别按请求开始时固定的文件目录价格快照计算，使用十进制有理数汇总，每次请求按半分向上舍入到美分，避免二进制浮点导致少计。上游流式和非流式响应中的 `server_tool_use.web_search_requests` 保留到 `model_usage`，由费用聚合计入搜索费用。活跃时间与 Token/请求费用分别聚合：`usage.active_seconds` 使用自有线程 running/idle 状态区间的并集，Session 包含 primary 与全部 child，单线程按自己的区间计算；`stats.active_seconds` 保留各线程区间之和。单会话和单线程 GET 刷新用量时使用同一活动时长函数，不用并发模型请求时长之和覆盖公开活动时长。未初始化 usage 的线程 GET 保留 null，与 List 和 SDK presence 一致，不把空聚合伪装为真实零值。
 
 `ModelRequestCents` 在任一非零用量缺少对应单价时保持未知，不把缺价写成 0，分析账本仍据此把请求标为未定价。会话预算使用 `BudgetRequestCents`：模型已有输入和输出单价时，非零缓存读取若缺少读取单价，按输入单价计入 `list_cost`；非零缓存写入若缺少对应单价，优先沿用已有的 5 分钟写入价（Anthropic 目录把通用写入价挪到 5 分钟后会留下空的通用写入价），否则按输入单价计入。因此这类请求不会从预算汇总中消失，达到上限后仍停止新的模型请求。思考输出、图像输出等仍无法区分的类别继续保持未知，不按普通单价猜测。
 
 事件持久化后汇总费用，达到预算时，在同一数据库事务内锁定会话、核对预算仍与计量时一致，记录 `budget_reached_at` 并追加 `session.usage` 和带 `budget_reached` 原因的空闲事件。写入失败会整体回滚并向上返回错误，允许事件桥重试；已提交的触顶转换不重复生成事件。提交后同时发布 SSE 并将生成事件交给 Webhook 队列。单会话与单线程读取在汇总费用失败时返回错误，不再以缓存费用伪装最新结果。输入边界仅接受工具结算和中断事件。此机制为请求完成后的检查，不保证当前请求费用不超过预算。
 
-迁移 `00096_session_budget.sql` 添加预算字段；`00097_usage_records.sql`、`00098_llm_model_prices.sql`、`00099_model_price_catalog.sql` 添加计费表。四个迁移均位于 main 的 `00095_unified_llm_models.sql` 之后，避免已升级 main 的数据库因缺失较低编号迁移而启动失败。预算字段参与 `session.updated`、会话 SQL 更新和部署执行配置的变化检测，确保仅修改预算时不会被无变化保护跳过；会话用量与统计沿用主分支的活动时间投影，预算列与投影列一起扫描。
+迁移 `00096_session_budget.sql` 添加预算字段；`00097_usage_records.sql`、`00098_llm_model_prices.sql`、`00099_model_price_catalog.sql` 添加计费表。随后 `00117_remove_model_price_catalog.sql` 删除当前价格目录表，保留账本及历史请求快照。前四个迁移均位于 main 的 `00095_unified_llm_models.sql` 之后，避免已升级 main 的数据库因缺失较低编号迁移而启动失败。预算字段参与 `session.updated`、会话 SQL 更新和部署执行配置的变化检测，确保仅修改预算时不会被无变化保护跳过；会话用量与统计沿用主分支的活动时间投影，预算列与投影列一起扫描。
 
 ## 数据库升级与旧分支开发库
 
-从 main 升级可直接执行正常启动迁移，不需要允许乱序迁移或修改 Goose 历史。`TestBudgetMigrationsUpgradeFromMainPostgres` 在隔离 PostgreSQL schema 中执行不含本 PR 四个迁移的 main 历史至版本 95，再调用生产迁移入口两次，验证四个新迁移仅执行一次、预算字段与计费表齐全、原会话保留，以及主分支的 Worker Claims、Provider Backend 和 Provider Slug、组织级 Provider 和统一 `models` 字段仍然存在。
+从 main 升级可直接执行正常启动迁移，不需要允许乱序迁移或修改 Goose 历史。`TestBudgetMigrationsUpgradeFromMainPostgres` 在隔离 PostgreSQL schema 中分别准备版本 95 与当前 main 版本 99 的基线，再调用生产迁移入口两次，验证各自缺少的迁移仅执行一次并升级至版本 119、预算字段与历史计费表齐全、当前目录表已删除、原会话保留，以及主分支的 Worker Claims、Provider Backend 和 Provider Slug、组织级 Provider 和统一 `models` 字段仍然存在。
 
 曾运行本 PR 旧版本的开发数据库不属于这条升级路径：旧预算与计费迁移曾使用 77–79，价格目录曾使用 80、83 或 84，随后又占用过与 main 冲突的 87–90。Goose 只记录版本号，不识别文件改名；这类库可能重复建表，也可能因旧编号占用了主分支版本而跳过线程指标、活动投影、文件实例或 Provider Slug 等迁移。仅为建表增加 `IF NOT EXISTS` 不能修复迁移历史。
 
@@ -46,4 +46,20 @@
 
 `span.model_request_end.billing` 继续用于预算兜底；分析账本从事件保存的 `_model_price` 和实际用量独立执行严格计价，缺少任一非零用量对应的单价时保持未定价。旧事件没有价格快照时仅保留已记录的历史费用，不查询当前价格回填。大事件外置摘要保留模型 ID、价格快照、错误标记、用量和预算费用，避免账本丢失模型身份或价格来源。计量 JSON 解析失败会返回错误，使事件与账本事务回滚，不能静默保存为已结算行。
 
-回归覆盖 main 版本 95 到 99 的正常升级与重复启动、组织模型与工作区优先级、跨组织价格隔离，以及缓存缺价、免费、已知单价下预算和分析账本的不同语义。
+回归覆盖 main 版本 95 到 119 及 99 到 119 的正常升级与重复启动、组织模型与工作区优先级、跨组织价格隔离，以及缓存缺价、免费、已知单价下预算和分析账本的不同语义。
+
+Brain 从 `session_context.billing` 读取共享会话预算和当前模型价格；`narrows` 与兼容 slug `default` 读取 Narrows 源，工作区其他 slug 使用 OpenRouter 参考价。固定 slug 为 `organization` 的组织 Provider，仅在 BaseURL 主机名精确等于 `narrows-gateway.test.seewo.com` 时兼容使用 Narrows；其余组织 Provider 使用 OpenRouter。Narrows 缺价不跨来源回退。有预算且缺价的请求在上游调用前拒绝，预算触顶仍由开始事件事务做最终门禁。协议和文件部署说明见 [标价文件缓存](model-price-file-cache.md)。
+
+预算触顶后，状态写入事务忽略迟到的会话／主线程 running、rescheduling 和非 budget_reached 的 idle，避免 Worker 报告覆盖公开暂停原因。子线程状态、在途请求结算以及终止／删除仍允许写入。提高或移除预算清除触顶标记后，普通运行与结束状态恢复接收。
+
+### 供应商实际费用
+
+`response_costs` 支持 Messages、Chat Completions 和 Responses，流式与非流式均适用。普通 API 调用及 Brain 会话代理共用实际费用优先的结算规则，写入用量账本并累计会话预算。
+
+部署可通过 `pricing.response_costs` 按供应商 slug 配置响应费用，配置包含 `amount_pointer`（JSON 对象字段路径）、可选的 `stream_event: message_stop`（兼容已有 Messages 配置）、`currency`（USD 或 CNY）和 `exchange_rate`（每美元对应的原币金额，USD 为 `"1"`）。路径、内网供应商标识和地址由私有部署配置管理，公共示例不包含供应商私有字段。
+
+非流式从完整响应读取。Messages 流式从最终 `message_stop` 读取；Chat Completions 从 `choices: []` 的用量尾块读取，包括 `include_usage` 省略、true、false；Responses 从 `response.completed`、`response.incomplete` 或 `response.failed` 的 `response` 对象读取。`amount_pointer` 相对于这些最终响应对象，协议决定结束位置，不依赖私有字段名。失败响应若携带有效金额仍记账，incomplete 不视作成功完成，重复终态不重复结算。金额必须为非负十进制字符串，最多 12 位小数；明确的零费用有效。缺失、非法或未收到最终事件时使用请求开始时固定的标价估算，不把缺失视为零。费用从可信上游响应提取，不采纳客户端提交的费用。
+
+普通 API 和会话代理共用解析和精确有理数换算。实际费用优先于标价计算，按现有合同四舍五入至美元美分；`usage_records.provider_cost` 保留原币小数金额、币种、汇率和换算后的美分，避免丢失小额请求原值。无实际费用时该字段为空。会话结束事件的 `billing.list_cost` 使用换算值，`billing.source` 为 `provider`，现有预算累计、触顶暂停和预算调整恢复因此使用同一金额。原值保存在事件 `_provider_cost` 中并写入账本；事件超过内联阈值转存对象存储时，数据库摘要也保留该字段，使账本和预算使用相同金额。请求仍只结算一次，实际费用不与标价估算相加。
+
+模型标价继续用于请求前的预算可用性校验和 Brain 价格上下文；配置响应费用不能绕过缺价门禁。当前按请求取整的预算精度不变，低于半美分的实际费用可能折算为零美分，原币金额可用于后续对账；此变更不引入跨请求小数累加。

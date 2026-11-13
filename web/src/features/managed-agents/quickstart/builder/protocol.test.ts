@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
+import type { APIBackend } from '../../../llm-providers/api';
 import { streamBuilderTurn, chatMessages } from './protocol';
 import { setConsoleRequestContext } from '../../../../shared/api/client';
 
@@ -12,7 +13,7 @@ function stream(events: unknown[]) {
     headers: { 'Content-Type': 'text/event-stream' },
   });
 }
-function input(backend: 'messages' | 'chat_completions' = 'messages') {
+function input(backend: APIBackend = 'messages') {
   return {
     orgUuid: 'org_test',
     workspaceId: 'workspace_test',
@@ -218,4 +219,16 @@ test('text-only optimization requests omit tool configuration for both backends'
     expect(body).not.toHaveProperty('tool_choice');
     expect(result.tools).toEqual([]);
   }
+});
+
+test('Responses builder requests fail before sending another protocol', async () => {
+  let called = false;
+  globalThis.fetch = (() => {
+    called = true;
+    throw new Error('unexpected request');
+  }) as typeof fetch;
+  await expect(streamBuilderTurn(input('responses'))).rejects.toThrow(
+    'Agent builder requires a Messages or Chat Completions model.',
+  );
+  expect(called).toBe(false);
 });

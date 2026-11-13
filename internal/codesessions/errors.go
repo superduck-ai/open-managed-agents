@@ -96,6 +96,10 @@ func sessionModelBackendsFailure(cause error) error {
 	return internalError("Could not resolve model API backends", cause)
 }
 
+func sessionBillingContextFailure(cause error) error {
+	return internalError("Could not build session billing context", cause)
+}
+
 func sessionMCPConfigFailure(cause error) error {
 	return internalError("Could not build session MCP configuration", cause)
 }
@@ -193,6 +197,8 @@ func workerIngressAuthorizationFailure(cause error) error {
 	}
 	return internalError("Could not authorize code session worker", cause)
 }
+
+var ErrModelPriceUnavailable = errors.New("model price unavailable for budgeted session")
 
 var errRuntimeSkillsUnavailable = errors.New("session skill reader is unavailable")
 var errRuntimeSkillFrontmatter = errors.New("unterminated skill frontmatter")

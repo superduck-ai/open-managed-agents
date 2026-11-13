@@ -129,6 +129,9 @@ func validate(cfg Config) error {
 	if err := validatePositiveValues(cfg); err != nil {
 		return err
 	}
+	if err := validatePricing(cfg.Pricing); err != nil {
+		return err
+	}
 	if err := ValidateTranscriptArchive(cfg.TranscriptArchive); err != nil {
 		return err
 	}

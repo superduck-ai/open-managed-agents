@@ -23,6 +23,7 @@ func RegisterOrganizationProxyRoutes(r chi.Router, database *db.DB, secretServic
 	client.Transport = &metering.Transport{Base: client.Transport, Store: database, Calculator: calculator, Source: "api", Logger: logger}
 	r.Post("/proxy/v1/messages", handleProxyMessages(database, secretService, client))
 	r.Post("/proxy/v1/chat/completions", handleProxyModel(database, secretService, client, llmproviders.ChatCompletions))
+	r.Post("/proxy/v1/responses", handleProxyModel(database, secretService, client, llmproviders.Responses))
 }
 
 func handleProxyMessages(database *db.DB, secretService *secrets.Service, client *http.Client) http.HandlerFunc {
@@ -84,6 +85,9 @@ func handleProxyModel(database *db.DB, secretService *secrets.Service, client *h
 		if backend == llmproviders.ChatCompletions {
 			endpoint = "/v1/chat/completions"
 		}
+		if backend == llmproviders.Responses {
+			endpoint = "/v1/responses"
+		}
 		targetURL, err := llmproviders.Endpoint(upstream.BaseURL, endpoint, "")
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "proxy_error", "message": "LLM provider is unavailable"})
@@ -141,7 +145,7 @@ func writeProxyRequestTooLarge(w http.ResponseWriter) {
 
 func proxyModelHeaders(source http.Header, upstream llmproviders.Upstream) http.Header {
 	headers := proxyMessagesHeaders(source, upstream.APIKey)
-	if upstream.APIBackend == llmproviders.ChatCompletions {
+	if upstream.APIBackend == llmproviders.ChatCompletions || upstream.APIBackend == llmproviders.Responses {
 		upstream.ApplyHeaders(headers)
 	}
 	return headers

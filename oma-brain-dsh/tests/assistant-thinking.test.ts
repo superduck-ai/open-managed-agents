@@ -17,7 +17,7 @@ test("reasoning deltas without a block start do not publish content", () => {
   expect(stream.record(chunk({ type: "reasoning-delta", index: 0, text: "private" }), "input")).toEqual([]);
 });
 
-test.each(["oma-messages-v1", "oma-chat-completions-v1"])("proxied %s responses retain idempotent Brain fallback blocks, including replay", format => {
+test.each(["oma-messages-v1", "oma-chat-completions-v1", "oma-responses-v1"])("proxied %s responses retain idempotent Brain fallback blocks, including replay", format => {
   const stream = new CcrAssistantStream("cse_proxy", () => "msg_proxy", () => "request_proxy");
   stream.record(start(), "input");
   const preview = stream.record(chunk({ type: "text-delta", index: 0, text: "answer" }), "input");

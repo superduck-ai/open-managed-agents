@@ -1,6 +1,6 @@
 import { consoleApi } from '../../shared/api/client';
 
-export type APIBackend = 'messages' | 'chat_completions';
+export type APIBackend = 'messages' | 'chat_completions' | 'responses';
 
 export type ImageInput = {
   max_images?: number;

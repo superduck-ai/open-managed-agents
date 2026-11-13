@@ -220,3 +220,30 @@ func TestNULMetadataIsOmittedOnlyFromStorageSummary(t *testing.T) {
 		t.Fatal("preview or original payload corrupted")
 	}
 }
+
+func TestLargeSummaryPreservesProviderCost(t *testing.T) {
+	payload := []byte(`{"type":"span.model_request_end","_provider_cost":{"amount":"7.2","currency":"CNY","exchange_rate":"7.2","usd_cents":100},"billing":{"list_cost":"100","currency":"USD"},"padding":"` + strings.Repeat("x", Threshold) + `"}`)
+	if !needsBlobStorage(payload) {
+		t.Fatal("未触发外置")
+	}
+	summary, _, err := Summarize(payload, "span.model_request_end")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		ProviderCost *struct {
+			Amount string `json:"amount"`
+			Cents  int64  `json:"usd_cents"`
+		} `json:"_provider_cost"`
+	}
+	if err := json.Unmarshal(encoded, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.ProviderCost == nil || record.ProviderCost.Amount != "7.2" || record.ProviderCost.Cents != 100 {
+		t.Fatal("外置摘要丢失实际费用")
+	}
+}

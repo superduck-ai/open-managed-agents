@@ -40,6 +40,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 	"github.com/superduck-ai/open-managed-agents/internal/riverjobs"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
@@ -56,6 +57,7 @@ const defaultTestKey = config.DefaultAPIKey
 const onePixelGIFBase64 = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
 
 type testApp struct {
+	prices               *pricing.Store
 	webhookQueue         *webhooks.Queue
 	webhookStream        jetstream.Stream
 	cfg                  config.Config
@@ -1204,7 +1206,9 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 	if err != nil {
 		t.Fatal(err)
 	}
+	prices := pricing.NewStore(config.PricingConfig{SnapshotFile: t.TempDir() + "/prices.json"}, logger)
 	server := httptest.NewServer(api.NewServer(api.ServerDeps{
+		Prices:                 prices,
 		Config:                 cfg,
 		DB:                     database,
 		Deployments:            deploymentStore,
@@ -1221,6 +1225,7 @@ func newTestAppWithSecrets(t *testing.T, override *config.Config, store storage.
 		VaultSecrets:           vaultSecrets,
 	}))
 	app := &testApp{
+		prices:       prices,
 		webhookQueue: webhookQueue, webhookStream: webhookStream,
 		cfg:                  cfg,
 		db:                   database,

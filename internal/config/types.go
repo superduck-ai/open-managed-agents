@@ -17,6 +17,7 @@ type ChannelBridgeConfig struct {
 }
 
 type Config struct {
+	Pricing                PricingConfig              `yaml:"pricing"`
 	BrainImageAttachments  BrainImageAttachmentConfig `yaml:"brain_image_attachments"`
 	ChannelBridge          ChannelBridgeConfig        `yaml:"channel_bridge"`
 	LLMProviderPresetsFile string                     `yaml:"llm_provider_presets_file"`

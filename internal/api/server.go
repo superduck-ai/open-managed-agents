@@ -15,6 +15,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/agents"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/batches"
+	"github.com/superduck-ai/open-managed-agents/internal/billing"
 	"github.com/superduck-ai/open-managed-agents/internal/channels"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -26,6 +27,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/invitations"
+	"github.com/superduck-ai/open-managed-agents/internal/llmproviders"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpcatalogs"
 	"github.com/superduck-ai/open-managed-agents/internal/mcpservers"
@@ -38,6 +40,7 @@ import (
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/pricing"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
@@ -58,6 +61,7 @@ import (
 )
 
 type Server struct {
+	billing              *billing.Calculator
 	platformAccess       *platformadmin.Service
 	invitationJobs       *river.Client[*sql.Tx]
 	workspaceAccess      *workspaceaccess.Service
@@ -98,6 +102,7 @@ type Server struct {
 // ObjectStore 由应用启动层从共享 storage.Client 派生，绑定默认 bucket，供对象资源与 Filestore 共用。
 // Logger 是进程根 logger；nil 时统一回落到 slog.Default，生产组装应显式传入。
 type ServerDeps struct {
+	Prices                 *pricing.Store
 	InvitationJobs         *river.Client[*sql.Tx]
 	SandboxProvisioner     codesessions.SandboxProvisioner
 	Prebuilds              *environments.Prebuilds
@@ -148,7 +153,10 @@ func NewServer(deps ServerDeps) *Server {
 	if workerEventAcks == nil {
 		workerEventAcks = workerevents.NewMemoryAcknowledgementStore()
 	}
-	billingCalculator := deps.DB.BillingCalculator()
+	billingCalculator := llmproviders.BillingCalculator(func(ctx context.Context, org, workspace string) (llmproviders.Catalog, error) {
+		return llmproviders.LoadCatalog(ctx, deps.DB, org, workspace)
+	}, deps.Prices)
+	billingCalculator.ResponseCosts = deps.Config.Pricing.ResponseCosts
 	codeSessionService := codesessions.NewServiceWithCredentials(deps.DB, deps.CodeSessionCredentials, codeSessionLogger).
 		WithSandboxProvisioner(deps.SandboxProvisioner).
 		WithWorkerEventBroker(deps.WorkerEventBroker).
@@ -179,6 +187,7 @@ func NewServer(deps ServerDeps) *Server {
 		oauthRefreshLease = lease
 	}
 	s := &Server{
+		billing:              billingCalculator,
 		platformAccess:       platformadmin.New(deps.DB, componentLogger("platform_access")),
 		invitationJobs:       deps.InvitationJobs,
 		workspaceAccess:      workspaceaccess.New(deps.DB),
@@ -342,8 +351,8 @@ func (s *Server) registerPlatformConsoleRoutes(
 			platformapi.RegisterOrganizationBillingRoutes(r)
 			platformapi.RegisterOrganizationUsageRoutes(r, s.db)
 			platformapi.RegisterWorkspaceOverviewRoute(r, s.db)
-			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets, s.db.BillingCalculator(), s.logger.With("component", "console_metering"))
-			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.db.BillingCalculator())
+			platformapi.RegisterOrganizationProxyRoutes(r, s.db, s.vaultSecrets, s.billing, s.logger.With("component", "console_metering"))
+			workbenchapi.RegisterOrgWorkbenchRoutes(r, s.db, s.vaultSecrets, workbenchLogger, s.billing)
 			r.Post("/mcp/vault-auth/start", s.handlePlatformMCPVaultAuthStart)
 			if s.cfg.Observability.Enabled {
 				obsLogger := s.logger.With("component", "observability")
@@ -410,6 +419,7 @@ func (s *Server) registerAuthenticatedV1Routes(r chi.Router) {
 	}
 	r.Post("/messages", s.messages.Create)
 	r.Post("/chat/completions", s.messages.ChatCompletions)
+	r.Post("/responses", s.messages.Responses)
 	r.Mount("/messages/batches", s.batch)
 	r.Mount("/models", s.models)
 	r.Mount("/organizations", s.admin)

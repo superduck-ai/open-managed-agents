@@ -23,6 +23,7 @@ import (
 
 type responseObservation struct {
 	chat            *chatObservation
+	responses       *responsesObservation
 	firstTokenAt    time.Time
 	publishThinking func(string, int) bool
 	thinkingStarted map[int]bool
@@ -81,12 +82,15 @@ func (h *Handler) beginModelRequest(r *http.Request, principal auth.Principal, m
 func (h *Handler) proxyModelRequest(w http.ResponseWriter, r, upstream *http.Request, request *codesessions.ModelRequest, call *modelCall) {
 	observation := &responseObservation{request: request}
 	call.observation = observation
+	if r.URL.Path == "/v1/responses" {
+		observation.responses = &responsesObservation{}
+	}
 	if r.URL.Path == "/v1/chat/completions" {
 		observation.chat = &chatObservation{}
 	}
 	if request != nil {
 		purpose := strings.TrimSpace(r.Header.Get("X-OMA-Model-Purpose"))
-		request.SuppressPublicOutput = purpose == "compaction" || purpose == "session-title"
+		request.SuppressPublicOutput = request.SuppressPublicOutput || purpose == "compaction" || purpose == "session-title"
 		// Claude Code copies this header to assistant.request_id, including HTTP errors.
 		w.Header().Set("Request-Id", request.StartID)
 		// A forwarded Accept-Encoding disables Transport decompression and hides the frames from the observer.
@@ -213,6 +217,10 @@ func (o *responseObservation) Write(data []byte) (int, error) {
 }
 
 func (o *responseObservation) observeFrame(data []byte) {
+	if o.responses != nil {
+		o.responses.observe(o, data)
+		return
+	}
 	if o.chat != nil {
 		o.chat.observe(o, data)
 		return
@@ -258,6 +266,9 @@ func (o *responseObservation) observeFrame(data []byte) {
 			o.stopReason = event.Delta.StopReason
 		}
 	case "message_stop":
+		if o.request != nil && o.request.ResponseCost != nil && (o.request.ResponseCost.StreamEvent == "" || o.request.ResponseCost.StreamEvent == event.Type) {
+			o.result.ProviderCost = o.request.ResponseCost.Extract(data)
+		}
 		if o.messageID == "" {
 			o.malformed = true
 		}
@@ -272,6 +283,9 @@ func (o *responseObservation) observeFrame(data []byte) {
 			o.onComplete()
 		}
 	case "error":
+		if o.request != nil {
+			o.result.ProviderCost = o.request.ResponseCost.Extract(data)
+		}
 		o.result.ErrorType = "provider_error"
 		if o.onComplete != nil {
 			o.onComplete()
@@ -324,14 +338,21 @@ func (o *responseObservation) addEventID(index int, blockType string) {
 }
 
 func (o *responseObservation) finish() {
+	if o.request != nil && o.result.ErrorType == "http_error" && !o.streaming {
+		o.result.ProviderCost = o.request.ResponseCost.Extract(o.buffer)
+	}
+	o.finishOpenAI()
 	if o.chat != nil && !o.complete && !o.malformed && o.result.ErrorType == "" && o.chat.finishReason != "" {
 		o.chat.complete(o)
 	}
-	if !o.streaming && !o.complete && !o.malformed && (o.result.ErrorType == "" || o.result.ErrorType == "stream_error") {
+	if o.chat == nil && o.responses == nil && !o.streaming && !o.complete && !o.malformed && (o.result.ErrorType == "" || o.result.ErrorType == "stream_error") {
 		var message responseMessage
 		if err := json.Unmarshal(o.buffer, &message); err != nil || message.ID == "" || message.Type != "message" {
 			o.malformed = true
 		} else {
+			if o.request != nil {
+				o.result.ProviderCost = o.request.ResponseCost.Extract(o.buffer)
+			}
 			o.messageID = message.ID
 			o.result.Usage = message.Usage
 			o.stopReason = message.StopReason
@@ -354,6 +375,16 @@ func (o *responseObservation) finish() {
 			o.result.ErrorType = "invalid_response"
 		case !o.complete:
 			o.result.ErrorType = "incomplete_response"
+		}
+	}
+}
+
+func (o *responseObservation) finishOpenAI() {
+	if !o.streaming && !o.complete && !o.malformed && o.result.ErrorType == "" {
+		if o.responses != nil {
+			o.responses.observe(o, o.buffer)
+		} else if o.chat != nil {
+			o.chat.nonStream(o, o.buffer)
 		}
 	}
 }

@@ -49,14 +49,14 @@ flowchart LR
 
 ## API backend
 
-Provider 表单使用共享 shadcn Select 选择 `messages` 或 `chat_completions`。已有配置默认为
-Messages，编辑时保留当前值；Responses 暂不展示也不接受保存。选择 Chat Completions 时显示仅支持
-Brain 模式，并显示服务端追加的 `/v1/chat/completions` 路径，Messages 显示 `/v1/messages`。
+Provider 表单使用共享 shadcn Select 选择 `messages`、`chat_completions` 或 `responses`。已有配置默认为
+Messages，编辑时保留当前值。三个协议分别显示服务端追加的 `/v1/messages`、
+`/v1/chat/completions`、`/v1/responses` 路径。
 Base URL 仍填写 API 根地址，允许路径前缀，不重复填写 `/v1`。
 
 创建、编辑和模型预览请求均携带 `api_backend`；模型同步由后端使用已保存的 backend。
 模型增删等局部操作的完整 Provider 更新也必须保留该字段，避免将 Chat Completions 配置重置为 Messages。
-组件测试覆盖选择 backend、模型发现、创建与编辑保留，并断言 Responses 选项不可用。
+组件测试覆盖选择 backend、模型发现、创建与编辑保留，包括 Responses 的模型发现、创建、编辑保留及完整请求地址归一化。
 
 ## 组织 LLM 配置
 
@@ -105,7 +105,7 @@ Brain 的 `session_context.models` 为派生的模型路由索引，值包含同
 
 ## 请求地址预览
 
-Provider 表单在 Base URL 下用简短的“请求地址：”展示当前 URL 与协议路径的组合预览，避免说明句挤压实际路径。Messages 与 Chat Completions 的路径仍分别为 `/v1/messages` 和 `/v1/chat/completions`，输入允许基础地址、以 `/v1` 结尾的地址或完整 `/v1/messages`、`/v1/chat/completions` 请求地址；预览、保存和模型发现去除这些标准后缀后再拼接目标路径，保留 `/anthropic` 等供应商前缀。空地址显示缺省符号。后端 URL 校验和 Endpoint 同样归一化，覆盖直接 API 写入及已有完整地址配置。DeepSeek 官方 `https://api.deepseek.com/anthropic` 是有效 Messages 基础地址；模型发现仅对该官方主机的 `/anthropic` 路径使用 `https://api.deepseek.com/models`，其他网关继续在保留前缀的地址下请求 `/v1/models`。窄屏检查短路径保持连续，长 URL 在表单宽度内换行。
+Provider 表单在 Base URL 下用简短的“请求地址：”展示当前 URL 与协议路径的组合预览，避免说明句挤压实际路径。Messages 与 Chat Completions 的路径仍分别为 `/v1/messages` 和 `/v1/chat/completions`，输入允许基础地址、以 `/v1` 结尾的地址或完整 `/v1/messages`、`/v1/chat/completions`、`/v1/responses` 请求地址；预览、保存和模型发现去除这些标准后缀后再拼接目标路径，保留 `/anthropic` 等供应商前缀。空地址显示缺省符号。后端 URL 校验和 Endpoint 同样归一化，覆盖直接 API 写入及已有完整地址配置。DeepSeek 官方 `https://api.deepseek.com/anthropic` 是有效 Messages 基础地址；模型发现仅对该官方主机的 `/anthropic` 路径使用 `https://api.deepseek.com/models`，其他网关继续在保留前缀的地址下请求 `/v1/models`。窄屏检查短路径保持连续，长 URL 在表单宽度内换行。
 
 ## 供应商目录与添加入口
 
@@ -125,3 +125,5 @@ Provider 表单在 Base URL 下用简短的“请求地址：”展示当前 URL
 供应商未选时仅展示选择器占位，不添加重复操作说明。自定义 API 中，Provider ID 使用 `deepseek` 示例，模型 ID 使用 `kimi-k3` 占位。显示名称可选：创建时尚未自定义的名称随 Provider ID 显示，手动填写后不再随 ID 改变；清空名称恢复使用 ID。编辑已有连接保留其名称，清空后使用该连接 ID。提交与 Console API 在名称为空或仅含空白时均使用最终 Provider ID，API 自动生成 ID 时也使用生成后的值。显示名称长度校验保留。
 
 API 地址下仅保留实际请求地址预览，去除协议路径的说明段落；完整地址归一化和 DeepSeek 模型发现行为保持不变。中英文保持相同信息密度。
+
+Responses 可用于 API 调用及 Brain 会话；Agent Builder 当前仅支持 Messages 和 Chat Completions，选择 Responses 时明确报错，不转发为其他协议。

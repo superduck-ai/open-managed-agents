@@ -246,6 +246,7 @@ func resolveConfigPaths(cfg *Config, configDir string) error {
 		name  string
 		value *string
 	}{
+		{name: "pricing.snapshot_file", value: &cfg.Pricing.SnapshotFile},
 		{name: "llm_provider_presets_file", value: &cfg.LLMProviderPresetsFile},
 		{name: "environment_runner.manager_path", value: &cfg.EnvironmentRunner.ManagerPath},
 		{name: "environment_runner.claude_path", value: &cfg.EnvironmentRunner.ClaudePath},

@@ -101,7 +101,8 @@ func run(bootstrap *slog.Logger) (err error) {
 	if err := initializeDatabase(ctx, cfg, database, logger); err != nil {
 		return err
 	}
-	syncModelPrices(ctx, database, logger)
+	prices, stopPrices := startPricing(ctx, cfg, logger)
+	defer stopPrices()
 	redisClient, err := redisclient.Open(ctx, cfg.Redis.URL)
 	if err != nil {
 		return fmt.Errorf("open redis client: %w", err)
@@ -260,6 +261,7 @@ func run(bootstrap *slog.Logger) (err error) {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			Prices:                 prices,
 			InvitationJobs:         jobClient,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,
@@ -370,6 +372,14 @@ func shutdownTelemetry(telemetryRuntime *telemetry.Runtime, bootstrap *slog.Logg
 	}
 }
 
+func startPricing(ctx context.Context, cfg config.Config, logger *slog.Logger) (*pricing.Store, func()) {
+	prices := pricing.NewStore(cfg.Pricing, logger.With("component", "pricing"))
+	if err := prices.Reload(); err != nil {
+		logger.WarnContext(ctx, "load model prices failed", "snapshot_file", cfg.Pricing.SnapshotFile, "error", err)
+	}
+	return prices, prices.Start(ctx)
+}
+
 func startStateMetrics(ctx context.Context, cfg config.Config, database *db.DB, natsConnection *nats.Conn, logger *slog.Logger) (func(), error) {
 	if !cfg.Telemetry.StateMetricsActive() {
 		return func() {}, nil
@@ -405,15 +415,6 @@ func initializeDatabase(ctx context.Context, cfg config.Config, database *db.DB,
 		return fmt.Errorf("seed database: %w", err)
 	}
 	return nil
-}
-
-func syncModelPrices(ctx context.Context, database *db.DB, logger *slog.Logger) {
-	if err := pricing.Sync(ctx, database); err != nil {
-		logger.Warn("sync model prices", "source", "openrouter", "error", err)
-	}
-	if err := pricing.SyncNarrows(ctx, database); err != nil {
-		logger.Warn("sync model prices", "source", "narrows", "error", err)
-	}
 }
 
 func shutdownHTTP(ctx context.Context, server *http.Server) error {

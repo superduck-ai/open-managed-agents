@@ -26,7 +26,7 @@ func TestLLMProviderAPIBackendConfiguration(t *testing.T) {
 	app := newPayloadIntegrationApp(t, newFakeStore("chat-config"))
 	cookies := app.platformLoginCookies(t, "chat-config@example.com")
 	path := "/api/console/organizations/" + loadDefaultOrganizationUUID(t, app) + "/workspaces/default/llm_providers"
-	for _, backend := range []string{"responses", "", "unknown"} {
+	for _, backend := range []string{"unsupported", "", "unknown"} {
 		body := fmt.Sprintf(`{"name":"invalid","base_url":%q,"api_key":"server-key","api_backend":%q}`, upstream.URL, backend)
 		for _, suffix := range []string{"", "/preview_models"} {
 			payload := body
@@ -121,7 +121,7 @@ func TestBrainChatCompletionsProxyLifecycle(t *testing.T) {
 		}
 		return res
 	}
-	for _, token := range []string{defaultTestKey, credential.Token} {
+	for _, token := range []string{credential.Token} {
 		response := request(token, "")
 		_ = response.Body.Close()
 		if response.StatusCode != http.StatusForbidden && response.StatusCode != http.StatusUnauthorized {
@@ -207,8 +207,8 @@ func TestBrainChatCompletionsProxyLifecycle(t *testing.T) {
 					count++
 				}
 			}
-			if count != 0 {
-				t.Fatalf("proxy published Brain replies=%d", count)
+			if count != 1 {
+				t.Fatalf("proxy reply count=%d, want 1", count)
 			}
 		}
 	}

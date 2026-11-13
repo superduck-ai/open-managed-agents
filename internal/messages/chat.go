@@ -10,9 +10,17 @@ import (
 )
 
 func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
+	h.openAI(w, r, llmproviders.ChatCompletions)
+}
+
+func (h *Handler) openAI(w http.ResponseWriter, r *http.Request, backend string) {
 	principal, ok := auth.PrincipalFromContext(r.Context())
-	if !ok || principal.CodeSessionExternalID == "" {
+	if !ok {
 		httpapi.WriteError(w, r, brainRequiredError())
+		return
+	}
+	if principal.CodeSessionExternalID == "" {
+		h.create(w, r, backend)
 		return
 	}
 	transport, err := h.database.GetCodeSessionWorkerTransport(r.Context(), principal.CodeSessionExternalID)
@@ -24,19 +32,23 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, r, brainRequiredError())
 		return
 	}
-	h.create(w, r, llmproviders.ChatCompletions)
+	h.create(w, r, backend)
 }
 
 func validateChatRequest(body []byte) error {
 	var request struct {
-		Stream bool `json:"stream"`
-		N      *int `json:"n"`
+		Stream *bool `json:"stream"`
+		N      *int  `json:"n"`
 	}
 	if json.Unmarshal(body, &request) != nil {
-		return errChatStreamRequired
+		return errChatChoiceCount
 	}
-	if !request.Stream || (request.N != nil && *request.N != 1) {
-		return errChatStreamRequired
+	if request.N != nil && *request.N != 1 {
+		return errChatChoiceCount
 	}
 	return nil
+}
+
+func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
+	h.openAI(w, r, llmproviders.Responses)
 }

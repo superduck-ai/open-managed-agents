@@ -35,6 +35,7 @@ func (o optional[T]) valueOr(fallback T) T {
 }
 
 type yamlConfig struct {
+	Pricing                PricingConfig              `yaml:"pricing"`
 	BrainImageAttachments  BrainImageAttachmentConfig `yaml:"brain_image_attachments"`
 	ChannelBridge          ChannelBridgeConfig        `yaml:"channel_bridge"`
 	LLMProviderPresetsFile string                     `yaml:"llm_provider_presets_file"`
@@ -160,6 +161,7 @@ func newYAMLConfig() yamlConfig {
 			ConnectTimeout:        defaults.NATS.ConnectTimeout,
 			DrainTimeout:          defaults.NATS.DrainTimeout,
 		},
+		Pricing:               defaults.Pricing,
 		WebTools:              defaults.WebTools,
 		Auth:                  defaults.Auth,
 		Tunnel:                defaults.Tunnel,
@@ -225,6 +227,7 @@ func (input yamlConfig) resolve() Config {
 			ConnectTimeout:        input.NATS.ConnectTimeout,
 			DrainTimeout:          input.NATS.DrainTimeout,
 		},
+		Pricing:               input.Pricing,
 		WebTools:              input.WebTools,
 		Auth:                  input.Auth,
 		Tunnel:                input.Tunnel,

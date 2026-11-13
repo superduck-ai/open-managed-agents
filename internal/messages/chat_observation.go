@@ -25,6 +25,7 @@ type chatChunk struct {
 type chatChoice struct {
 	Index        int       `json:"index"`
 	Delta        chatDelta `json:"delta"`
+	Message      chatDelta `json:"message"`
 	FinishReason string    `json:"finish_reason"`
 }
 
@@ -72,6 +73,9 @@ func (c *chatObservation) observe(o *responseObservation, data []byte) {
 		return
 	}
 	if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+		if o.request != nil {
+			o.result.ProviderCost = o.request.ResponseCost.Extract(data)
+		}
 		o.result.ErrorType = "provider_error"
 		o.malformed = true
 		return
@@ -82,6 +86,11 @@ func (c *chatObservation) observe(o *responseObservation, data []byte) {
 			return
 		}
 		o.messageID = chunk.ID
+	}
+	if len(chunk.Choices) == 0 && o.request != nil {
+		if cost := o.request.ResponseCost.Extract(data); cost != nil {
+			o.result.ProviderCost = cost
+		}
 	}
 	if chunk.Usage != nil {
 		o.mergeChatUsage(chunk.Usage)
@@ -211,7 +220,7 @@ func (c *chatObservation) index(key string) int {
 }
 
 func (c *chatObservation) complete(o *responseObservation) {
-	if o.messageID == "" || len(o.blocks) == 0 || len(c.pendingTools) > 0 || !validChatFinish(c.finishReason, o.blocks) {
+	if o.messageID == "" || len(c.pendingTools) > 0 || !validChatFinish(c.finishReason, o.blocks) {
 		o.malformed = true
 		return
 	}
@@ -256,4 +265,28 @@ func firstChatReasoning(delta chatDelta) string {
 		}
 	}
 	return ""
+}
+
+func (c *chatObservation) nonStream(o *responseObservation, data []byte) {
+	var chunk chatChunk
+	if json.Unmarshal(data, &chunk) != nil || len(chunk.Choices) != 1 {
+		o.malformed = true
+		return
+	}
+	for i := range chunk.Choices[0].Message.ToolCalls {
+		chunk.Choices[0].Message.ToolCalls[i].Index = i
+	}
+	chunk.Choices[0].Delta = chunk.Choices[0].Message
+	raw, err := json.Marshal(chunk)
+	if err != nil {
+		o.malformed = true
+		return
+	}
+	c.observe(o, raw)
+	if o.request != nil {
+		o.result.ProviderCost = o.request.ResponseCost.Extract(data)
+	}
+	if !o.malformed {
+		c.complete(o)
+	}
 }

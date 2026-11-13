@@ -395,7 +395,7 @@ func resolveProvider(path string, provider rawProvider) (ProviderSpec, error) {
 		backend = llmproviders.Messages
 	}
 	if !llmproviders.ValidBackend(backend) {
-		return ProviderSpec{}, fmt.Errorf("api_backend must be %q or %q", llmproviders.Messages, llmproviders.ChatCompletions)
+		return ProviderSpec{}, fmt.Errorf("api_backend must be %q, %q or %q", llmproviders.Messages, llmproviders.ChatCompletions, llmproviders.Responses)
 	}
 	baseURL, err := llmproviders.ValidateBaseURL(provider.BaseURL)
 	if err != nil {

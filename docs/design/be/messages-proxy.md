@@ -7,7 +7,7 @@ LLM 上游不是进程级 YAML。每个组织及其 workspace 均可以配置多
 - `name`：可修改的展示名称，不要求唯一；省略、空字符串或仅空白时使用本次连接的最终 `slug`，更新省略 `slug` 时使用已有 ID；
 - `slug`：模型命名空间，在组织与该组织下所有 workspace 之间唯一，创建后不可修改；
 - `base_url`
-- `api_backend`：`messages` 或 `chat_completions`；已有 Provider 通过迁移 86 回填为 `messages`。创建省略时默认 `messages`，更新省略时保留当前值，其他值包括 `responses` 返回 `api_backend_invalid`。
+- `api_backend`：`messages`、`chat_completions` 或 `responses`；已有 Provider 通过迁移 86 回填为 `messages`。创建省略时默认 `messages`，更新省略时保留当前值，其他值返回 `api_backend_invalid`。
 - Vault 信封加密的 `api_key`
 - 零个或多个真实 `model_ids`
 
@@ -240,21 +240,20 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 - `tests/environments_full_e2b_bridge_integration_test.go`：真实 E2B 中验证 Files API 上传、只读 uploads 挂载、Agent 生成 outputs、session 文件 Catalog 和 Files API 下载闭环。
 - `tests/environments_memory_sandbox_e2e_test.go`：真实 E2B 中验证 initialize `appendSystemPrompt` 不含记忆策略，记忆说明只出现在沙箱 `/mnt/memory/MEMORY.md`。
 
-## Brain Chat Completions
+## OpenAI 协议代理
 
-`POST /v1/chat/completions` 只接受有效的 code-session model token，且对应会话的
-`metadata.config.worker_transport` 必须为 `claim`。workspace API key、平台会话、Sandbox 模式
-code session 和过期 worker lease 均不能使用该入口。复用现有 token hash、租户与 active session
-校验，不向 Worker 下发 Provider Key。鉴权通过后若会话已删除，transport 查询返回 not found 时仍返回
-401 `authentication_error` / `Invalid API key`；其他 transport 查询故障保持 500。Responses 暂不支持，也不注册对应路由。
+`POST /v1/chat/completions` 与 `POST /v1/responses` 接受 workspace API key，或有效的
+code-session model token。会话 token 要求 `metadata.config.worker_transport=claim`，旧 Sandbox
+transport 不可使用；复用既有租户、active session 与 worker lease 校验，不向 Worker 下发 Provider Key。
+平台登录态不能代替 API key。鉴权后的会话不存在仍返回 401，其他 transport 查询故障保持 500。
 
-入口只支持 Brain 所需的 `stream=true` 和 `n=1`，省略 `n` 等价于 1。它不是完整的公共 OpenAI API。
+两个入口均支持流式与非流式；Chat Completions 限制 `n=1`（省略等价于 1）。
 请求仍执行唯一顶层 model 校验与 32 MiB 上限，并按模型所属 Provider 的 `api_backend` 校验路由。
 `messages` 模型不能调用 Chat Completions；Chat Completions 模型也不能调用 Messages、Batches、
 Workbench 或管理后台 Messages 代理。未支持入口显式拒绝，不进行协议转换或自动回退。
 Workbench 的 backend mismatch 返回 400 `invalid_request_error`，公开文案说明入口协议限制与重新加载会话要求。
 
-Base URL 保持 API 根地址合同。最终地址为 `{base_url}/v1/chat/completions`，保留已有路径前缀；
+Base URL 保持 API 根地址合同。最终地址为 `{base_url}/v1/chat/completions` 或 `{base_url}/v1/responses`，保留已有路径前缀；
 调用方不要在 Base URL 中再添加 `/v1`。上游只使用服务端 Bearer Key，删除 Anthropic 专属请求头。
 响应原始 SSE 字节流透传，保持取消、flush、无代理缓冲和禁止重定向。OMA `Request-Id` 仍等于模型
 请求 start ID，上游 `Request-Id` 或 `X-Request-Id` 单独记录。
@@ -339,3 +338,7 @@ DSH 普通请求由 Go 模型代理发布完整 `agent.message`、无正文 `age
 非 Brain 代理路径在 Messages thinking / redacted_thinking 块开始或 Chat Completions 首个 reasoning delta 到达时，仅发布流式 `event_start`。该预览不持久化，也不携带思考正文。模型响应成功完成时，随缓冲消息发布同 ID 的 `agent.thinking`，随后发布 `span.model_request_end`；开始时不能提前发布完成事件，以免关闭预览。失败或中断时不补发成功的 thinking 完成事件，由请求结束事件清理未完成预览。预览仍按连接的 `event_deltas[]` 订阅过滤，历史中只包含完成事件。
 
 普通回归由 `TestModelThinkingPreviewPrecedesBufferedRetirement` 和 `TestThinkingStatusPublishesBeforeAnswerWithoutBody` 覆盖起始时不持久化、完成 ID 对齐及思考正文不公开。
+
+### OpenAI 实际费用与终态
+
+三种协议均按私有部署的费用路径提取实际金额，配置与结算语义见 [会话预算](session-budget.md)。Responses 流式终态解析 `response` 内的用量、费用与输出；非流式在响应结束时结算，避免结束回调重入。输入用量扣除缓存命中后单独记录 cache read，避免标价回退时重复计费。原始 HTTP/SSE 字节保持透传。Responses 的 reasoning summary 与 message 各内容块使用与原生 SDK 一致的索引，同一 response ID 下沿用稳定事件 ID 去重；代理与 Brain 的公开回复发布职责保持不变。

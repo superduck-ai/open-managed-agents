@@ -56,7 +56,7 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	}
 	request = request.Clone(request.Context())
 	request.Header.Del("Accept-Encoding")
-	observer := &observation{rule: calculator.ResponseCost(record.Model)}
+	observer := &observation{responses: strings.HasSuffix(request.URL.Path, "/responses"), rule: calculator.ResponseCost(record.Model)}
 	if strings.HasSuffix(request.URL.Path, "/chat/completions") {
 		observer.chat = &chatObservation{}
 	}
@@ -67,7 +67,8 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	observer.streaming = strings.Contains(response.Header.Get("Content-Type"), "text/event-stream")
-	observer.failed = response.StatusCode < 200 || response.StatusCode >= 300
+	observer.httpError = response.StatusCode < 200 || response.StatusCode >= 300
+	observer.failed = observer.httpError
 	response.Body = &observedBody{ReadCloser: response.Body, observer: observer, finish: finish}
 	return response, nil
 }

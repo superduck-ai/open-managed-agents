@@ -11,7 +11,7 @@ import type { ImageInput } from "./llm-ai-sdk/images.ts";
 export type ModelConfig = {
   image_input?: ImageInput;
   id: string;
-  api_backend: "messages" | "chat_completions";
+  api_backend: "messages" | "chat_completions" | "responses";
   context_window?: number;
   max_output_tokens?: number;
   input_modalities?: ("text" | "image")[];
@@ -110,7 +110,7 @@ export function validateModels(value: unknown): asserts value is Record<string, 
       Array.isArray(model) ||
       typeof model.id !== "string" ||
       !model.id ||
-      !["messages", "chat_completions"].includes(model.api_backend)
+      !["messages", "chat_completions", "responses"].includes(model.api_backend)
     )
       throw new Error("Invalid model catalog");
     for (const capacity of [model.context_window, model.max_output_tokens]) {

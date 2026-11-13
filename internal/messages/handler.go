@@ -147,6 +147,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 		}
 		path = "/v1/chat/completions"
 	}
+	if backend == llmproviders.Responses {
+		path = "/v1/responses"
+	}
 	body, err = llmproviders.ReplaceRequestModel(body, upstream.ModelID)
 	if err != nil {
 		httpapi.WriteError(w, r, invalidRequestError(err))
@@ -169,7 +172,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, backend string)
 	upstreamRequest.ContentLength = int64(len(body))
 	// 先清除客户端鉴权和租户 header，再注入只存在于 OMA 服务端的真实上游 key。
 	upstreamRequest.Header = sanitizedRequestHeaders(r.Header)
-	if backend == llmproviders.ChatCompletions {
+	if backend == llmproviders.ChatCompletions || backend == llmproviders.Responses {
 		upstream.ApplyHeaders(upstreamRequest.Header)
 	} else {
 		llmproviders.ApplyAPIKey(upstreamRequest.Header, upstream.APIKey)

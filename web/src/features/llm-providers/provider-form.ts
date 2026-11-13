@@ -136,10 +136,12 @@ export function providerBaseURL(value: string): string {
   return value
     .trim()
     .replace(/\/+$/, '')
-    .replace(/\/v1(?:\/messages|\/chat\/completions)?$/, '');
+    .replace(/\/v1(?:\/messages|\/chat\/completions|\/responses)?$/, '');
 }
 
 export function providerRequestURL(value: string, backend: APIBackend): string {
   const base = providerBaseURL(value);
-  return base ? `${base}${backend === 'messages' ? '/v1/messages' : '/v1/chat/completions'}` : '';
+  return base
+    ? `${base}${backend === 'messages' ? '/v1/messages' : backend === 'responses' ? '/v1/responses' : '/v1/chat/completions'}`
+    : '';
 }

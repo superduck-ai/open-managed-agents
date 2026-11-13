@@ -209,7 +209,7 @@ func ValidateBaseURL(rawURL string) (string, error) {
 		return "", ErrUnsafeBaseURL
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
-	for _, suffix := range []string{"/v1/messages", "/v1/chat/completions", "/v1"} {
+	for _, suffix := range []string{"/v1/messages", "/v1/chat/completions", "/v1/responses", "/v1"} {
 		if prefix, found := strings.CutSuffix(parsed.Path, suffix); found {
 			parsed.Path = prefix
 			parsed.RawPath = ""

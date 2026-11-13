@@ -50,7 +50,7 @@ export class AiSdkStream {
     return [
       ...(this.usage ? [{ type: "usage" as const, usage: this.usage }] : []),
       { type: "finish", reason, replayState: {
-        response: { format: this.replayFormat, stopReason: this.finishReason?.raw,
+        response: { format: this.replayFormat, ...(this.finishReason?.raw !== undefined ? { stopReason: this.finishReason.raw } : {}),
           ...(this.messageID ? { messageID: this.messageID } : {}), ...(this.requestID ? { requestID: this.requestID } : {}) },
         blocks: states.map((state) => ({ index: state.index,
           ...(state.signature ? { signature: state.signature } : {}), ...(state.redactedData ? { redactedData: state.redactedData } : {}) })),

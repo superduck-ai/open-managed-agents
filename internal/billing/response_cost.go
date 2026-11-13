@@ -25,8 +25,8 @@ type ProviderCost struct {
 }
 
 func (r ResponseCostRule) Validate() error {
-	if r.AmountPointer == "" || !jsontext.Pointer(r.AmountPointer).IsValid() || r.StreamEvent != "message_stop" {
-		return errors.New("响应费用需要有效的 JSON Pointer 和 message_stop 结束事件")
+	if r.AmountPointer == "" || !jsontext.Pointer(r.AmountPointer).IsValid() || (r.StreamEvent != "" && r.StreamEvent != "message_stop") {
+		return errors.New("响应费用需要有效的 JSON Pointer；stream_event 仅兼容 message_stop，结束位置由协议确定")
 	}
 	if r.Currency != "USD" && r.Currency != "CNY" {
 		return errors.New("响应费用币种必须为 USD 或 CNY")

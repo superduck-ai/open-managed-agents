@@ -476,7 +476,7 @@ Brain sandbox startup forwards the server-resolved Git source URL, checkout ref 
 
 统一模型配置使用 `session_context.models`，替换旧 `model_backends`。Server 与 Brain 必须成对更新：先停止接收新会话并等待现有任务结束，停止旧 Brain 与所有旧 Server，再执行数据库迁移并启动新版 Server、Brain。不能按混合版本滚动发布；旧 Brain 读取不到 `model_backends` 时可能按 Messages 路由，新 Brain 读取旧 Server 时同样可能回退。回滚也须同步恢复 Server、Brain 和数据库结构，迁移前需备份模型参数。
 
-Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages` 和 `chat_completions`。
+Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages`、`chat_completions` 和 `responses`。
 `GET /v2/sessions/{id}` 为 claim transport 在 `session_context.models` 返回当前 workspace 的
 模型路由索引，每项包含模型参数和 Provider 的 api_backend，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
 公开文案为 `Could not resolve model API backends`；MCP 配置构建失败保留独立的 MCP 错误文案。
@@ -500,10 +500,10 @@ DSH 仍使用 provider `oma`，它表示平台模型适配器，不是用户配�
 可能使旧映射失效，此时明确报错并要求重新加载会话配置，不静默切换协议或自动重发。
 
 Brain 只依赖 Vercel AI SDK 的 provider 层：`@ai-sdk/anthropic` 处理 Messages，
-`@ai-sdk/openai-compatible` 处理 Chat Completions，二者都输出同一种 `LanguageModelV4`
+`@ai-sdk/openai-compatible` 处理 Chat Completions，`@ai-sdk/openai` 处理 Responses，三者都输出同一种 `LanguageModelV4`
 stream part，并精确锁定版本。Brain 不引入 `ai` 核心包，也不使用其 `streamText`、重试或
 工具执行循环；只调用 `doStream`，SSE 解析、协议字段编码和分片工具参数累积由 SDK 负责。
-两种 provider 都以字符串追加累积工具参数，大参数流保持线性耗时，
+三种 provider 都以字符串追加累积工具参数，大参数流保持线性耗时，
 `chat-completions.test.ts` 用 400 KB 参数守住该性质。
 
 ### 通用 adapter 与 OMA 配置的边界
@@ -603,3 +603,7 @@ Brain 保持运行而沙箱已被 Provider 删除时，下一次 MCP 调用先�
 ## 供应商限流与重试
 
 供应商 HTTP429 的明确 `concurrency allocated quota exceeded. please try again later.` 并发限流信息按 `RATE_LIMIT` 处理，复用每步最多4次的现有有限退避和 Retry-After 上限。其他真实账户余额、credit 或 insufficient_quota 耗尽继续为不可重试 `QUOTA`，400工具输入错误和 context overflow 也不变。回归使用同一真实供应商文字通过实际 HTTP适配器及完整 Brain 重试流程验证，原失败及尝试不会改判或重置。
+
+### Responses 适配
+
+Provider backend 支持 `responses`，通过原生 OpenAI provider 调用 `/v1/responses`，显式 `store=false`。重放格式为 `oma-responses-v1`；工具结果通过 `function_call_output` 续接，未提供的 finish reason 不写入重放对象。原生运行时回归覆盖实际工具执行及下一轮响应。代理解析终态用量与费用并结算会话预算，公开输出使用与 Brain 一致的响应 ID 与内容块索引，沿用稳定 ID 去重。

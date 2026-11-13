@@ -10,10 +10,11 @@ import (
 const (
 	Messages        = "messages"
 	ChatCompletions = "chat_completions"
+	Responses       = "responses"
 )
 
 func ValidBackend(backend string) bool {
-	return backend == Messages || backend == ChatCompletions
+	return backend == Messages || backend == ChatCompletions || backend == Responses
 }
 
 func (u Upstream) RequireBackend(backend string) error {
@@ -32,7 +33,7 @@ func (u Upstream) ApplyHeaders(headers http.Header) {
 	headers.Del("Anthropic-Beta")
 	headers.Del("X-Api-Key")
 	headers.Set("Authorization", "Bearer "+u.APIKey)
-	if u.APIBackend != ChatCompletions {
+	if u.APIBackend == "" || u.APIBackend == Messages {
 		ApplyAPIKey(headers, u.APIKey)
 		headers.Set("Anthropic-Version", anthropicVersion)
 	}

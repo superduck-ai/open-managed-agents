@@ -20,7 +20,7 @@ Brain 的现状：
 
 | 能力 | PR #384 最新代码 |
 | --- | --- |
-| Brain 模型调用纳入会话预算 | 已接入后端路径。Messages 和 Chat Completions 共用模型请求开始、结束及预算门禁 |
+| Brain 模型调用纳入会话预算 | 已接入后端路径。Messages、Chat Completions 和 Responses 共用模型请求开始、结束及预算门禁 |
 | 预算触顶后阻止后续模型调用 | 后端已有；开始事件写入处检查 `budget_reached_at` |
 | Brain 主动读取预算、已用金额、剩余额度 | 未看到相应运行时字段或读取逻辑 |
 | Brain 读取模型标价 | 未实现；`resolveModel` 只返回 provider、id、name |
@@ -164,7 +164,7 @@ Brain 在调用前读到的价格是当前参考快照，不保证和随后请�
 - Brain 的 Messages 和 Chat Completions 分别验证触顶、无自动重试、在途完成、并发共享预算及提高／移除预算后的恢复；确认公开暂停原因不被普通完成事件覆盖。
 - Go 单测、Brain 协议／运行时测试及相关静态门禁按实际改动执行。真实模型和真实部署验证仅在获得明确要求后运行，不能以源码审查或模拟测试声称已通过。
 
-PR 的 `Pricing validation` 工作流使用固定的 Bun 1.4.4 执行 Brain 类型检查、全量测试与构建，并使用临时 PostgreSQL 17 执行 `TestBudgetMigrationsUpgradeFromMainPostgres` 的版本 95、99 到 118 升级及重复启动回归。Docker 配置由既有 Go 配置单测检查；这些检查不代表真实模型扣费或生产部署验收。
+PR 的 `Pricing validation` 工作流使用固定的 Bun 1.4.4 执行 Brain 类型检查、全量测试与构建，并使用临时 PostgreSQL 17 执行 `TestBudgetMigrationsUpgradeFromMainPostgres` 的版本 95、99 到 119 升级及重复启动回归。Docker 配置由既有 Go 配置单测检查；这些检查不代表真实模型扣费或生产部署验收。
 
 ## 源码依据
 

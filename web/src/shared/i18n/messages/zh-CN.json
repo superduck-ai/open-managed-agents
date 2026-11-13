@@ -3636,5 +3636,9 @@
   "common.download": "下载",
   "common.unknown": "未知",
   "managedAgents.memoryStores.attach.mountPath": "挂载路径",
-  "managedAgents.memoryStores.attach.mountPathHelp": "由服务端分配，保存时无需提交此值。"
+  "managedAgents.memoryStores.attach.mountPathHelp": "由服务端分配，保存时无需提交此值。",
+  "llmModels.scope": "模型范围",
+  "llmModels.workspaceScope": "工作区模型",
+  "llmModels.organizationScope": "组织共享模型",
+  "llmModels.manageOrganization": "管理组织模型"
 }

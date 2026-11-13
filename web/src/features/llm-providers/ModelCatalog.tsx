@@ -1,3 +1,4 @@
+import { Link, useLocation } from '@tanstack/react-router';
 import { Check, Copy, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { copyText } from '@/shared/lib/clipboard';
@@ -209,6 +210,7 @@ function ProviderIdentity({
   organizationReadOnly: boolean;
 }) {
   const { msg } = useI18n();
+  const location = useLocation();
   return (
     <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
       <div className="min-w-0">
@@ -232,7 +234,13 @@ function ProviderIdentity({
             {msg(
               'llmModels.organizationReadOnly',
               'Organization models are read-only here. Manage them in organization LLM configuration.',
-            )}
+            )}{' '}
+            <Link
+              className="underline underline-offset-4"
+              to={'/settings/llm/organization' + location.searchStr + (location.hash ? `#${location.hash}` : '')}
+            >
+              {msg('llmModels.manageOrganization', 'Manage organization models')}
+            </Link>
           </p>
         ) : null}
       </div>

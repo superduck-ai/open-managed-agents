@@ -14,7 +14,7 @@ export const settingsGroups: (NavGroupItem & { id: string })[] = [
     labelId: 'nav.modelsAndAccess',
     icon: productIcons.modelsAndAccess,
     children: [
-      { href: '/settings/llm', label: 'LLM models', labelId: 'nav.llmModels', icon: productIcons.models },
+      { href: '/llm-models', label: 'LLM models', labelId: 'nav.llmModels', icon: productIcons.models },
       { href: '/api-keys', label: 'API keys', labelId: 'nav.apiKeys', icon: productIcons.keys },
     ],
   },
@@ -113,6 +113,7 @@ export function isSettingsPath(path: string) {
 }
 
 export function settingScope(path: string) {
+  if (path === '/settings/llm') return 'workspace';
   if (path === '/billing' || isActivePath(path, '/telemetry')) return 'organization';
   if (path === '/usage' || path === '/cost' || /^\/workspaces\/[^/]+\/cost/.test(path)) return 'organization';
   if (path === '/settings/profile' || path === '/settings/appearance') return 'personal';

@@ -18,6 +18,10 @@ export function workspaceColor(workspace?: Pick<Workspace, 'display_color' | 'co
   return workspaceColors.find((color) => color.value === value)?.displayValue ?? 'var(--violet-9)';
 }
 
+export function workspaceLLMModelsPath(workspaceId: string) {
+  return `/settings/workspaces/${encodeURIComponent(workspaceId || 'default')}/llm`;
+}
+
 export function workspaceApiKeysPath(workspaceId: string) {
   return `/settings/workspaces/${encodeURIComponent(workspaceId || 'default')}/keys`;
 }
@@ -64,7 +68,7 @@ export function buildCreateWorkspaceInput(name: string, displayColor: string): C
 export function workspaceSwitchPath(currentPath: string, workspaceId: string) {
   const path = currentPath.split(/[?#]/)[0];
   const scope = `/workspaces/${encodeURIComponent(workspaceId || 'default')}`;
-  const settings = path.match(/^\/settings\/workspaces\/[^/]+\/(keys|webhooks|telemetry|mcp-tunnels)(?:\/|$)/);
+  const settings = path.match(/^\/settings\/workspaces\/[^/]+\/(keys|webhooks|telemetry|mcp-tunnels|llm)(?:\/|$)/);
   if (settings) return `/settings${scope}/${settings[1]}`;
   const scoped = path.match(/^\/workspaces\/[^/]+\/([^/]+)/);
   if (scoped) return `${scope}/${scoped[1]}`;

@@ -1,3 +1,4 @@
+import { LLMSettingsPage } from '../features/settings/LLMSettingsPage';
 import { FileDetailsPage } from '../features/dashboard/FileDetailsPage';
 import { SystemSkillsPage } from '../features/platform-admin/skills/SystemSkillsPage';
 import { createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router';
@@ -20,7 +21,7 @@ import { ChannelsPage } from '../features/managed-agents/channels/ChannelsPage';
 import { ChannelWizardPage } from '../features/managed-agents/channels/ChannelWizardPage';
 import { ChannelDetailPage } from '../features/managed-agents/channels/ChannelDetailPage';
 import { channelSessionsReturnTo } from '../features/managed-agents/sessions/sessionReturn';
-import { LegacySettingsRedirect } from './layout/LegacySettingsRedirect';
+import { LegacyLLMSettingsRedirect, LegacySettingsRedirect } from './layout/LegacySettingsRedirect';
 import { CreateMCPServerPage, MCPServerDetailPage, MCPServersPage } from '../features/mcp-servers/MCPServersPage';
 import { McpTunnelsPage } from '../features/mcp-tunnels/McpTunnelsPage';
 import { McpTunnelDetailPage } from '../features/mcp-tunnels/McpTunnelDetailPage';
@@ -151,7 +152,7 @@ const workspaceFileDetailRoute = createRoute({
 const llmModelsAliasRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'llm-models',
-  component: () => <LegacySettingsRedirect to="/settings/llm" />,
+  component: LegacyLLMSettingsRedirect,
 });
 
 const skillsRoute = createRoute({
@@ -235,7 +236,7 @@ const apiKeysRoute = createRoute({
 const workspaceLLMModelsRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'workspaces/$workspaceId/llm-models',
-  component: () => <LegacySettingsRedirect to="/settings/llm" />,
+  component: LegacyLLMSettingsRedirect,
 });
 
 const quickstartRoute = createRoute({
@@ -603,6 +604,24 @@ const tagsRoute = createRoute({
   component: () => <DashboardPage section="tags" />,
 });
 
+const settingsWorkspaceLLMRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'settings/workspaces/$workspaceId/llm',
+  component: () => <LLMSettingsPage scope="workspace" />,
+});
+
+const settingsLLMRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'settings/llm',
+  component: LegacyLLMSettingsRedirect,
+});
+
+const settingsOrganizationLLMRoute = createRoute({
+  getParentRoute: () => consoleRoute,
+  path: 'settings/llm/organization',
+  component: () => <LLMSettingsPage scope="organization" />,
+});
+
 const settingsWorkspaceKeysRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'settings/workspaces/$workspaceId/keys',
@@ -750,6 +769,9 @@ const routeTree = rootRoute.addChildren([
       settingsWorkspaceMcpTunnelDetailRoute,
       tagsRoute,
       settingsWorkspaceKeysRoute,
+      settingsWorkspaceLLMRoute,
+      settingsLLMRoute,
+      settingsOrganizationLLMRoute,
       settingsWorkspaceWebhooksRoute,
       settingsWorkspaceTelemetryRoute,
       settingsFallbackRoute,

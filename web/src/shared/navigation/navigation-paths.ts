@@ -1,5 +1,6 @@
 import {
   workspaceSwitchPath,
+  workspaceLLMModelsPath,
   workspaceApiKeysPath,
   workspaceWebhooksPath,
   workspaceTelemetryPath,
@@ -16,7 +17,6 @@ const workspacePathByHref: Record<string, string> = {
   '/credential-vaults': 'vaults',
   '/memory-stores': 'memory-stores',
   '/dreams': 'dreams',
-  '/llm-models': 'llm-models',
   '/playground': 'playground',
   '/files': 'files',
   '/skills': 'skills',
@@ -32,6 +32,7 @@ const workspaceSettingsResourceByHref: Record<string, string> = {
 };
 
 export function navigationHref(href: string, workspaceId: string) {
+  if (href === '/llm-models' || href === '/settings/llm') return workspaceLLMModelsPath(workspaceId);
   if (href === '/logs') {
     return workspaceSwitchPath(href, workspaceId);
   }
@@ -57,6 +58,9 @@ export function navigationHref(href: string, workspaceId: string) {
 }
 
 export function isActivePath(currentPath: string, href: string) {
+  if (href === '/llm-models' || href === '/settings/llm') {
+    return isLLMModelsPath(currentPath);
+  }
   if (href === '/dashboard') {
     return currentPath === '/' || currentPath === '/dashboard';
   }
@@ -88,6 +92,7 @@ export function isActivePath(currentPath: string, href: string) {
 
 export function isWideConsolePath(currentPath: string) {
   return (
+    isActivePath(currentPath, '/llm-models') ||
     ['/api-keys', '/members', '/settings/members'].includes(currentPath) ||
     /^\/settings\/workspaces\/[^/]+\/keys/.test(currentPath) ||
     currentPath === '/webhooks' ||
@@ -96,6 +101,14 @@ export function isWideConsolePath(currentPath: string) {
     isBuildPath(currentPath) ||
     isAnalyticsPath(currentPath) ||
     isManagedAgentsPath(currentPath)
+  );
+}
+
+function isLLMModelsPath(path: string) {
+  return (
+    ['/llm-models', '/settings/llm', '/settings/llm/organization'].includes(path) ||
+    /^\/settings\/workspaces\/[^/]+\/llm(\/|$)/.test(path) ||
+    /^\/workspaces\/[^/]+\/llm-models(\/|$)/.test(path)
   );
 }
 

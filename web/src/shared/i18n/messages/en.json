@@ -3636,5 +3636,9 @@
   "common.download": "Download",
   "common.unknown": "Unknown",
   "managedAgents.memoryStores.attach.mountPath": "Mount path",
-  "managedAgents.memoryStores.attach.mountPathHelp": "Assigned by the server. This value is not sent when saving."
+  "managedAgents.memoryStores.attach.mountPathHelp": "Assigned by the server. This value is not sent when saving.",
+  "llmModels.scope": "Model scope",
+  "llmModels.workspaceScope": "Workspace models",
+  "llmModels.organizationScope": "Organization shared models",
+  "llmModels.manageOrganization": "Manage organization models"
 }

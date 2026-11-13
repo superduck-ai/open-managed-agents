@@ -29,14 +29,15 @@ import (
 )
 
 var (
-	errRcloneConfigWrite       = errors.New("rclone-filestore config write failed")
-	errRcloneConfigPermissions = errors.New("rclone-filestore config permission update failed")
-	errRcloneProcessStart      = errors.New("rclone-filestore process start failed")
-	errRcloneReadiness         = errors.New("rclone-filestore readiness check failed")
-	errMemoryRootCreate        = errors.New("local memory mount root create failed")
-	errMemoryRootProtect       = errors.New("memory mount root protection failed")
-	errMemoryMarkdownWrite     = errors.New("memory markdown write failed")
-	errEnvironmentManagerStart = errors.New("environment manager process start failed")
+	errRcloneConfigWrite         = errors.New("rclone-filestore config write failed")
+	errRcloneConfigPermissions   = errors.New("rclone-filestore config permission update failed")
+	errRcloneProcessStart        = errors.New("rclone-filestore process start failed")
+	errRcloneReadiness           = errors.New("rclone-filestore readiness check failed")
+	errMemoryRootCreate          = errors.New("local memory mount root create failed")
+	errMemoryRootProtect         = errors.New("memory mount root protection failed")
+	errMemoryMarkdownWrite       = errors.New("memory markdown write failed")
+	errEnvironmentManagerStart   = errors.New("environment manager process start failed")
+	errEnvironmentManagerInstall = errors.New("environment manager artifact install failed")
 )
 
 // CodeSessionRuntime exposes the managed-agent Code Session operations needed
@@ -76,13 +77,14 @@ type RunnerDependencies struct {
 }
 
 type Runner struct {
-	db              *db.DB
-	provider        e2bruntime.Provider
-	cfg             config.Config
-	codeSessions    CodeSessionRuntime
-	skills          RuntimeSkillResolver
-	filestoreTokens FilestoreTokenIssuer
-	logger          *slog.Logger
+	db               *db.DB
+	provider         e2bruntime.Provider
+	cfg              config.Config
+	codeSessions     CodeSessionRuntime
+	skills           RuntimeSkillResolver
+	filestoreTokens  FilestoreTokenIssuer
+	managerArtifacts *managerArtifactSource
+	logger           *slog.Logger
 }
 
 type managedAgentLaunchPreparation struct {
@@ -125,13 +127,14 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 	}
 
 	return &Runner{
-		db:              deps.DB,
-		provider:        deps.Provider,
-		cfg:             deps.Config,
-		codeSessions:    deps.CodeSessions,
-		skills:          deps.Skills,
-		filestoreTokens: deps.FilestoreTokens,
-		logger:          logging.LoggerOrDefault(deps.Logger),
+		db:               deps.DB,
+		provider:         deps.Provider,
+		cfg:              deps.Config,
+		codeSessions:     deps.CodeSessions,
+		skills:           deps.Skills,
+		filestoreTokens:  deps.FilestoreTokens,
+		managerArtifacts: newManagerArtifactSource(deps.Config.EnvironmentRunner.ManagerArtifact, nil),
+		logger:           logging.LoggerOrDefault(deps.Logger),
 	}, nil
 }
 
@@ -341,21 +344,12 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 		*work = updatedWork
 	}
 
-	ctx = run.begin(ctx, "packages")
-	manifest, provision, err := buildPackageManifest(env.Config)
+	managerCfg, proceed, err := r.prepareSandboxManagerAndPackages(ctx, run, env, record, work, providerSandboxID, preinstalled, preparation != nil)
 	if err != nil {
-		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return true, err
 	}
-	r.persistPackageSources(ctx, providerSandboxID, preinstalled)
-	if provision && !preinstalled {
-		proceed, err := r.provisionCreatedSandboxPackages(ctx, record, work, providerSandboxID, manifest)
-		if err != nil {
-			return true, err
-		}
-		if !proceed {
-			return true, nil
-		}
+	if !proceed {
+		return true, nil
 	}
 
 	// Cloud Session Managed Agent 使用五个固定 Filestore 挂载，外加本次
@@ -398,7 +392,8 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 		}
 		ctx = run.begin(ctx, "manager_start")
 		managerCtx := trace.ContextWithSpan(runtimeCtx, trace.SpanFromContext(ctx))
-		if err := r.provider.StartBackgroundCommand(managerCtx, providerSandboxID, launch.Manager.ShellCommand, launch.Manager.Payload); err != nil {
+		manager := buildEnvironmentManagerCommand(launch.CodeSessionID, managerCfg, launch.Manager.Payload)
+		if err := r.provider.StartBackgroundCommand(managerCtx, providerSandboxID, manager.ShellCommand, manager.Payload); err != nil {
 			publicError := r.logManagedAgentRuntimeStageFailure(
 				ctx,
 				"environment_manager_start",
@@ -430,6 +425,41 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 	})
 }
 
+func (r *Runner) prepareSandboxManagerAndPackages(
+	ctx context.Context,
+	run *runnerRun,
+	env db.Environment,
+	record db.EnvironmentSandbox,
+	work *db.EnvironmentWork,
+	providerSandboxID string,
+	preinstalled bool,
+	managed bool,
+) (config.Config, bool, error) {
+	manifest, provision, err := buildPackageManifest(env.Config)
+	if err != nil {
+		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+		return config.Config{}, false, err
+	}
+	provisionPackages := provision && !preinstalled
+	managerCfg := r.cfg
+	if managed || provisionPackages {
+		ctx = run.begin(ctx, "manager_install")
+		managerPath, err := r.installEnvironmentManager(ctx, providerSandboxID)
+		if err != nil {
+			r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
+			return config.Config{}, false, err
+		}
+		managerCfg = r.environmentManagerConfig(managerPath)
+	}
+	ctx = run.begin(ctx, "packages")
+	r.persistPackageSources(ctx, providerSandboxID, preinstalled)
+	if !provisionPackages {
+		return managerCfg, true, nil
+	}
+	proceed, err := r.provisionCreatedSandboxPackages(ctx, record, work, providerSandboxID, manifest, managerCfg)
+	return managerCfg, proceed, err
+}
+
 func (r *Runner) markSandboxRunningAfterFilesystem(ctx context.Context, record db.EnvironmentSandbox, providerSandboxID string, managed bool) error {
 	if managed && r.cfg.EnvironmentRunner.AgentMode == "brain" {
 		return r.db.UpdateEnvironmentSandboxState(ctx, record.WorkspaceUUID, record.ExternalID, "creating", &providerSandboxID, nil, nil)
@@ -458,6 +488,7 @@ func (r *Runner) provisionCreatedSandboxPackages(
 	work *db.EnvironmentWork,
 	providerSandboxID string,
 	manifest []byte,
+	managerCfg config.Config,
 ) (bool, error) {
 	if collections.IsBlank(providerSandboxID) {
 		err := errors.New("provider returned an empty sandbox id for package provisioning")
@@ -470,7 +501,7 @@ func (r *Runner) provisionCreatedSandboxPackages(
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return false, err
 	}
-	if err := r.provisionPackages(ctx, providerSandboxID, manifest); err != nil {
+	if err := r.provisionPackages(ctx, providerSandboxID, manifest, managerCfg); err != nil {
 		if r.failCreatedSandbox(ctx, record, work, providerSandboxID, err) {
 			return false, nil
 		}
@@ -488,9 +519,9 @@ func (r *Runner) provisionCreatedSandboxPackages(
 	return false, nil
 }
 
-func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manifest []byte) error {
+func (r *Runner) provisionPackages(ctx context.Context, sandboxID string, manifest []byte, managerCfg config.Config) error {
 	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
-		Command: buildPackageProvisionCommand(r.cfg),
+		Command: buildPackageProvisionCommand(managerCfg),
 		Stdin:   manifest,
 		Timeout: r.cfg.EnvironmentRunner.PackageProvisionTimeout,
 	})

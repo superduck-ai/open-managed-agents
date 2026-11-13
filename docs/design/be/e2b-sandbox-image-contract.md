@@ -10,7 +10,8 @@
 
 - `/opt/rclone/rclone-filestore` 存在、是 Linux 可执行文件，并支持 `multimount --config <path>`。
 - Sandbox 具有 rclone-filestore 创建五个固定 FUSE mount、以及最多 8 个 `/mnt/memory/{slug}` 附加 mount 所需的设备、capability 和 mount namespace 权限。
-- `/usr/local/bin/environment-manager` 与 `/opt/claude-code/bin/claude` 默认可执行；这两个路径仍可通过既有 Environment Runner 配置覆盖。
+- `/usr/local/bin/environment-manager` 与 `/opt/claude-code/bin/claude` 默认可执行；这两个路径仍可通过既有 Environment Runner 配置覆盖。配置 `environment_runner.manager_artifact` 后，镜像内的 Manager 只作为未配置制品时的回退，见下文“Environment Manager 独立升级”。
+- 配置 Manager 制品时，镜像必须提供 `sh`、`sha256sum`、`cut`、`chmod`、`mv`，并允许 Runner 写入和执行 `/tmp/oma/environment-manager/`。
 - `rclone-filestore multimount` 可以创建 `/mnt/user-data/outputs`、`/mnt/session/uploads`、`/mnt/transcripts`、`/mnt/user-data/tool_results` 和 `/root/.claude/skills` 的挂载点，并能在配置包含 memory store 时创建 `/mnt/memory/{slug}`；同时必须能写入 `/tmp`，且允许 Runner 在本地盘创建 `/mnt/memory`。
 - Runner 必须能创建 `/mnt/session`，并将 `/mnt/session/outputs` 软链到 `/mnt/user-data/outputs`。标准输出路径若已存在，只接受目标一致的软链或空目录；其他内容停止启动并保留数据。
 - 镜像和 Environment Manager 不能重新创建 `/root/.claude/skills` 软链，也不能依赖 `/mnt/skills` 或 `/workspace/skills` 解压目录。
@@ -24,6 +25,43 @@ Claude Code 随镜像发布，Environment 使用其绑定模板中的版本。Ru
 `current` 模式读取二进制的 `--version`，使用并记录实际版本；无法识别版本时初始化失败，不尝试下载安装。
 
 升级 Claude Code 通过发布新镜像完成，构建时固定版本并校验产物。已有 Environment 继续使用绑定模板，不在会话启动时升级。
+
+## Environment Manager 独立升级
+
+Environment Manager 可以独立于镜像发布。部署在 `environment_runner.manager_artifact` 中配置一个 Linux 可执行制品，二选一：
+
+- `path`：API 服务所在主机的本地文件，例如 environment-manager 发布流程产出的 `dist/environment-manager_linux_arm64`。Runner 每次启动前比较文件大小与修改时间，变化后重新读取并计算 SHA-256，因此原子替换（同目录写临时文件后 `mv`）即可让后续 Sandbox 使用新版本，无需重启服务。可选的 `sha256` 用于固定预期版本，不一致时拒绝启动。
+- `url`：HTTP(S) 下载地址，必须同时提供 `sha256`。由 API 服务下载并校验，按进程缓存；更换版本时同时修改 `url`/`sha256` 并重启服务。Sandbox 不需要访问该地址。
+
+制品上限为 512 MiB，必须与 Sandbox 架构匹配。未配置时 Runner 行为不变，直接使用 `manager_path`（默认镜像内 `/usr/local/bin/environment-manager`）。
+
+```mermaid
+flowchart TD
+    W["work_metadata"] --> N{"Needs Manager? (Cloud Session or package provisioning)"}
+    N -->|no| P["packages"]
+    N -->|yes| C{"manager_artifact configured?"}
+    C -->|no| I["Use manager_path from image"]
+    C -->|yes| L["Load artifact on API host and verify sha256"]
+    L --> Q{"Sandbox already has /tmp/oma/environment-manager/<sha>/environment-manager with same sha?"}
+    Q -->|yes| U["Use installed artifact"]
+    Q -->|no| S["Files API upload to <path>.partial"]
+    S --> A["chmod 0755, sha256sum check, --version smoke test, mv -f"]
+    A -->|fail| F["Fail work and kill Sandbox"]
+    A -->|ok| U
+    L -->|fail| F
+    I --> P
+    U --> P
+    P --> R["filestore ... manager_start (provision-packages and task-run use the same path)"]
+```
+
+安装发生在 Runner 的 `manager_install` 阶段，位于 `work_metadata` 之后、`packages` 之前，所以包安装的 `provision-packages` 与启动会话的 `task-run` 使用同一个 Manager。新建 Session 与恢复（resume，Runner 为已有 Code Session 创建 replacement Sandbox 并以 `--session-mode resume-cached` 启动 Manager）共用这一入口，Brain 模式按需创建的 Sandbox 也一样；因此已有 Session 在下一次恢复时就会切换到当前配置的 Manager，旧镜像无需重新打包。
+
+约束与失败语义：
+
+- 配置了制品就 fail-closed：读取、下载、校验、上传、`--version` 冒烟或激活任一步失败都会以 `environment manager artifact install failed` 结束本次 Work 并终止 Sandbox，不静默回退到镜像内版本，避免同一部署混跑未知版本。
+- 安装路径按 SHA-256 区分，激活使用同目录 `mv -f`，Manager 不会看到半写入文件；Sandbox 中已存在同 SHA 的可执行文件时跳过上传。
+- E2B 暂停后自动恢复的 Sandbox 会恢复原进程内存，正在运行的 Manager 不会被替换；新版本在该 Session 下一次创建 replacement Sandbox 时生效。
+- 日志只记录 `sandbox_id`、`manager_sha256` 与大小，不记录制品 URL 中可能存在的查询参数。
 
 ## Runner 创建的临时状态
 
@@ -113,6 +151,6 @@ Token 当前固定一小时有效且不刷新；长生命周期 Sandbox 的续�
 
 Git 资源 URL 必须以 `.git` 结尾（不接受 `.git/`），由 OMA 统一校验后原样下发。该规则也适用于已存储资源的运行时校验；旧资源需更新为以 `.git` 结尾的克隆地址，不自动补全。Environment Manager 复用既有 sources 编排，在启动 Claude 前准备 Git 工作树。OMA 下发 `git_info.ref` 和 `mount_path`，默认分支省略 ref，指定分支使用 `refs/heads/<name>`，提交仅接受完整的 40 或 64 位十六进制 SHA；Git 凭据由已有 OMA 代理注入，不进入启动参数。
 
-Git 准备失败沿用既有初始化失败流程，不下发继续启动开关，不改写 Claude settings 或注入资源告警 hook。源码变更需构建匹配的 Manager artifact 才会进入新 Sandbox；本轮未更新运行镜像。
+Git 准备失败沿用既有初始化失败流程，不下发继续启动开关，不改写 Claude settings 或注入资源告警 hook。源码变更需构建匹配的 Manager artifact 才会进入新 Sandbox；可通过 `environment_runner.manager_artifact` 下发，无需更新运行镜像。
 
 Memory 沙箱 E2E 在 Environment Manager 启动前从 Worker 事件队列记录初始化提示词；Worker 确认后的消息不再依赖旧的数据库 inbound-event 查询。

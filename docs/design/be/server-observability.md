@@ -345,7 +345,7 @@ E2B 单次调用等更细的子 span 不要求带会话属性，在时间线里�
 | `oma.sandbox.provider.duration` | Float64Histogram | latency | `oma.operation`=`create`、`kill`、`set_timeout`、`write_file`、`file_exists`、`run_command`、`start_background_command`、`service_endpoint`；`oma.outcome`=`ok`、`not_found`、`error`、`canceled`、`timeout` | `E2BProvider` 各方法 |
 | `oma.code_session.activation.duration` | Float64Histogram | latency | `oma.outcome` | `ActivateManagedAgentCodeSession` |
 
-Runner 阶段名固定为：`claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`packages`、
+Runner 阶段名固定为：`claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`manager_install`、`packages`、
 `filestore`、`mark_running`、`code_session`、`manager_start`、`sandbox_mcp_ready`、`publish_runtime`、
 `sandbox_prewarm`、`brain_dispatch`。各触发方式实际经过的阶段见 P8.2。
 
@@ -1042,10 +1042,10 @@ sequenceDiagram
 
 | 触发 | 根/子 | 经过的阶段 |
 | --- | --- | --- |
-| `queue`，沙箱模式 | 根 span，link 到 `environment_work.trace_parent` | `claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`packages`、`filestore`、`mark_running`、`code_session`、`manager_start`、`publish_runtime` |
+| `queue`，沙箱模式 | 根 span，link 到 `environment_work.trace_parent` | `claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`manager_install`、`packages`、`filestore`、`mark_running`、`code_session`、`manager_start`、`publish_runtime` |
 | `queue`，brain 模式 | 同上 | `claim`、`prepare`、`code_session`、`mark_running`、[`sandbox_prewarm`]、`publish_runtime`、`brain_dispatch` |
 | `stale_recovery` | 根 span，link 到 Work 上保存的旧 `trace_parent` | 同 brain 模式；不记录 `oma.runner.queue_wait`，span 带 `oma.runner.trigger=stale_recovery`，同时输出恢复 Warn 日志 |
-| `lazy_mcp`、`prewarm` | 当前 span 的子 span（MCP 网关或 `sandbox_prewarm` 阶段） | `prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`packages`、`filestore`、`mark_running`、`manager_start`、`sandbox_mcp_ready` |
+| `lazy_mcp`、`prewarm` | 当前 span 的子 span（MCP 网关或 `sandbox_prewarm` 阶段） | `prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`manager_install`、`packages`、`filestore`、`mark_running`、`manager_start`、`sandbox_mcp_ready` |
 
 `queue_wait` 只对 `queue` 有意义：恢复领取的 Work 保留最初的 `queued_at`，直接计算会得到数小时的假值。
 预热在外层 run 的 `sandbox_prewarm` 阶段内产生一个 `prewarm` 子 run，两者按 `oma.runner.trigger`

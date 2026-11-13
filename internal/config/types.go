@@ -238,20 +238,31 @@ type E2BConfig struct {
 }
 
 type EnvironmentRunnerConfig struct {
-	BrainSandboxPrewarm     bool          `yaml:"brain_sandbox_prewarm"`
-	AgentMode               string        `yaml:"agent_mode"`
-	SandboxMCPPort          int           `yaml:"sandbox_mcp_port"`
-	SandboxMCPPath          string        `yaml:"sandbox_mcp_path"`
-	Enabled                 bool          `yaml:"enabled"`
-	Concurrency             int           `yaml:"concurrency"`
-	PackageProvisionTimeout time.Duration `yaml:"package_provision_timeout"`
-	ManagerPath             string        `yaml:"manager_path"`
-	ClaudePath              string        `yaml:"claude_path"`
+	BrainSandboxPrewarm     bool                             `yaml:"brain_sandbox_prewarm"`
+	AgentMode               string                           `yaml:"agent_mode"`
+	SandboxMCPPort          int                              `yaml:"sandbox_mcp_port"`
+	SandboxMCPPath          string                           `yaml:"sandbox_mcp_path"`
+	Enabled                 bool                             `yaml:"enabled"`
+	Concurrency             int                              `yaml:"concurrency"`
+	PackageProvisionTimeout time.Duration                    `yaml:"package_provision_timeout"`
+	ManagerPath             string                           `yaml:"manager_path"`
+	ManagerArtifact         EnvironmentManagerArtifactConfig `yaml:"manager_artifact"`
+	ClaudePath              string                           `yaml:"claude_path"`
 	// GitSSHtoHTTPSHosts lists extra hosts whose SSH remotes are rewritten to
 	// HTTPS via GIT_CONFIG insteadOf (scp-like git@host: and ssh://git@host/).
 	// github.com is always included by the environment-manager launcher.
 	// After config Load/validate, entries are trimmed and lower-cased in place.
 	GitSSHtoHTTPSHosts []string `yaml:"git_ssh_to_https_hosts"`
+}
+
+type EnvironmentManagerArtifactConfig struct {
+	Path   string `yaml:"path"`
+	URL    string `yaml:"url"`
+	SHA256 string `yaml:"sha256"`
+}
+
+func (c EnvironmentManagerArtifactConfig) Enabled() bool {
+	return c.Path != "" || c.URL != ""
 }
 
 type CodeSessionConfig struct {

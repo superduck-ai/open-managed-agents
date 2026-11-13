@@ -133,6 +133,7 @@ Docker Compose 同样只挂载一份完整 YAML，不再通过 `.env` 插值业�
 以下 YAML 字段属于本地路径：
 
 - `environment_runner.manager_path`
+- `environment_runner.manager_artifact.path`
 - `environment_runner.claude_path`
 - `code_session.jwt_signing_private_key_file`
 - `code_session.upstream_proxy_ca_key_file`

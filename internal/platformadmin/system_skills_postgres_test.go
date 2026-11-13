@@ -288,7 +288,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 	requireStatus(consolePreview(secondVersion, ""), 200)
 	requireStatus(consolePreview(secondVersion, "?download=1"), 200)
 	preloadedCount, err := skills.SyncBundledSkills(t.Context(), database, store, catalog.Files)
-	if err != nil || preloadedCount != 5 {
+	if err != nil || preloadedCount != 4 {
 		t.Fatalf("startup preload: count=%d error=%v", preloadedCount, err)
 	}
 	preloaded, err := database.GetSystemSkill(t.Context(), "xlsx")
@@ -316,7 +316,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		t.Fatalf("DELETE removed bundled skill instead of restoring: %+v %v", restored, err)
 	}
 	requireStatus(send("DELETE", "/skills/xlsx", nil, "", true), 403)
-	for _, id := range []string{"xlsx", "pptx", "pdf", "docx", "guizang-ppt-skill"} {
+	for _, id := range []string{"xlsx", "pptx", "pdf", "docx"} {
 		loaded, err := database.GetSystemSkill(t.Context(), id)
 		if err != nil || loaded.LatestVersion == nil || !loaded.Bundled {
 			t.Fatalf("missing bundled skill %s: %v", id, err)

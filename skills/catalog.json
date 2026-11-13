@@ -23,12 +23,6 @@
       "title": "Word 文档",
       "icon_key": "file-text",
       "directory": "docx"
-    },
-    {
-      "id": "guizang-ppt-skill",
-      "title": "归藏网页 PPT",
-      "icon_key": "clapperboard",
-      "directory": "guizang-ppt-skill"
     }
   ]
 }

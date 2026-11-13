@@ -7,7 +7,7 @@ Skills 资源现在分成两类：
 - `source: "anthropic"`：全局只读 builtin skill，由管理员导入到数据库 catalog，并把 `.skill` archive 存在对象存储。
 - `source: "custom"`：workspace 自定义 skill，继续使用现有 `skills` / `skill_versions` 表和对象存储。
 
-项目公共技能维护在仓库根目录 `skills/`，包括源码、`catalog.json`、嵌入入口和上游来源说明。服务启动时在数据库迁移与对象存储就绪后通过 `skills.SyncBundledSkills` 自动加载，默认提供 `xlsx`、`pptx`、`pdf`、`docx` 和 `guizang-ppt-skill`。源码随程序嵌入，运行时不依赖本地源码目录或独立离线 seed CLI。
+项目公共技能维护在仓库根目录 `skills/`，包括源码、`catalog.json`、嵌入入口和上游来源说明。服务启动时在数据库迁移与对象存储就绪后通过 `skills.SyncBundledSkills` 自动加载，默认提供 `xlsx`、`pptx`、`pdf` 和 `docx` 四个技能。源码随程序嵌入，运行时不依赖本地源码目录或独立离线 seed CLI。清单移除技能不自动删除已有数据库记录或历史版本；需要停止目录展示时由超管下架。
 
 项目预置记录使用 `builtin_skills.bundled=true`，`bundled_version` 保存项目当前底本版本；超管可在管理后台上传覆盖、换图标、切换默认版本和上下架，技能本身不可删除。初次注册上架，重启保留图标、上下架与上传覆盖，相同包不增加版本。项目更新时推进底本；当前使用底本的技能同步切换，上传覆盖继续生效。恢复预置时切回最新底本，保留历史版本和对象。手动上传的系统技能可由超管软删除，删除不回收历史包；权限与修订边界见 [系统 Skill 管理](system-skills-administration.md)。
 

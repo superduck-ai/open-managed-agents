@@ -27,7 +27,7 @@ func TestBundledCatalogPackages(t *testing.T) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Skills) != 5 {
+	if len(manifest.Skills) != 4 {
 		t.Fatalf("bundled count=%d", len(manifest.Skills))
 	}
 	for _, entry := range manifest.Skills {
@@ -47,8 +47,5 @@ func TestBundledCatalogPackages(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
-	}
-	if _, err := fs.ReadFile(catalog.Files, "guizang-ppt-skill/LICENSE"); err != nil {
-		t.Fatal("upstream license missing from embedded files")
 	}
 }

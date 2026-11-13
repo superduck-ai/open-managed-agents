@@ -20,8 +20,6 @@ type memoryToolVersion struct {
 }
 
 type memoryToolCommit struct {
-	StoreID        string
-	MemoryPath     string
 	BeforeID       string
 	ExpectedSHA256 string
 	SessionID      string
@@ -58,7 +56,7 @@ func isMemoryToolMutation(call sandboxToolRequest) bool {
 	return call.Method == "tools/call" && (name == "write" || name == "edit") && strings.HasPrefix(target, sessionresource.MemoryMountRoot+"/")
 }
 
-func (h *Handler) prepareMemoryToolCommit(ctx context.Context, session db.CodeSession, call sandboxToolRequest) (*memoryToolCommit, error) {
+func (h *Handler) prepareMemoryToolCallState(ctx context.Context, session db.CodeSession, call sandboxToolRequest) (*memoryToolCallState, error) {
 	if !isMemoryToolMutation(call) || session.SessionExternalID == "" {
 		return nil, nil
 	}
@@ -74,20 +72,17 @@ func (h *Handler) prepareMemoryToolCommit(ctx context.Context, session db.CodeSe
 		if !strings.HasPrefix(target, mount.MountPath+"/") {
 			continue
 		}
-		storeID, memoryPath := mount.MemoryStoreExternalID, strings.TrimPrefix(target, mount.MountPath)
-		load := func(ctx context.Context) (memoryToolVersion, error) {
-			return h.loadMemoryToolVersion(ctx, session, storeID, memoryPath)
-		}
-		before, err := load(ctx)
+		state := &memoryToolCallState{StoreID: mount.MemoryStoreExternalID, MemoryPath: strings.TrimPrefix(target, mount.MountPath), SessionID: session.SessionExternalID}
+		before, err := h.loadMemoryToolVersion(ctx, session, state.StoreID, state.MemoryPath)
 		if err != nil {
 			return nil, err
 		}
-		commit := &memoryToolCommit{StoreID: storeID, MemoryPath: memoryPath, BeforeID: before.ID, SessionID: session.SessionExternalID, Load: load}
+		state.BeforeID = before.ID
 		if strings.EqualFold(call.Params.Name, "write") && call.Params.Arguments.Content != nil {
 			digest := sha256.Sum256([]byte(*call.Params.Arguments.Content))
-			commit.ExpectedSHA256 = hex.EncodeToString(digest[:])
+			state.ExpectedSHA256 = hex.EncodeToString(digest[:])
 		}
-		return commit, nil
+		return state, nil
 	}
 	return nil, fmt.Errorf("Memory mutation target has no file path")
 }

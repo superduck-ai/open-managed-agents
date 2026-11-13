@@ -80,12 +80,12 @@ func TestMemoryToolCommitPreparationUsesAuthenticatedMount(t *testing.T) {
 	call := memoryCommitTestCall("Write", "/mnt/memory/project/nested/note")
 	content := "abc"
 	call.Params.Arguments.Content = &content
-	commit, err := h.prepareMemoryToolCommit(context.Background(), session, call)
-	if err != nil || commit == nil || commit.BeforeID != "seed" || commit.SessionID != "owned-session" || commit.ExpectedSHA256 != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
+	commit, err := h.prepareMemoryToolCallState(context.Background(), session, call)
+	if err != nil || commit == nil || commit.BeforeID != "seed" || commit.SessionID != "owned-session" || commit.ExpectedSHA256 != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" || commit.StoreID != "store-id" || commit.MemoryPath != "/nested/note" {
 		t.Fatalf("invalid checkpoint %+v %v", commit, err)
 	}
 	for _, other := range []sandboxToolRequest{memoryCommitTestCall("Read", call.Params.Arguments.FilePath), memoryCommitTestCall("Write", "/tmp/file"), memoryCommitTestCall("Write", "/mnt/memory-other/file"), memoryCommitTestCall("Bash", call.Params.Arguments.FilePath)} {
-		if commit, err := h.prepareMemoryToolCommit(context.Background(), session, other); err != nil || commit != nil {
+		if commit, err := h.prepareMemoryToolCallState(context.Background(), session, other); err != nil || commit != nil {
 			t.Fatal("changed unrelated operation")
 		}
 	}

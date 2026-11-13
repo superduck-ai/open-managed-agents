@@ -42,11 +42,11 @@ func (h *Handler) prepareToolCallMemory(r *http.Request, session db.CodeSession,
 			return failure, nil, nil, err
 		}
 	}
-	commit, err := h.prepareMemoryToolCommit(r.Context(), session, call)
-	if err != nil || commit == nil {
+	checkpoint, err := h.prepareMemoryToolCallState(r.Context(), session, call)
+	if err != nil || checkpoint == nil {
 		return nil, nil, nil, err
 	}
-	state, err := json.Marshal(memoryToolCallState{BeforeID: commit.BeforeID, ExpectedSHA256: commit.ExpectedSHA256, SessionID: commit.SessionID, StoreID: commit.StoreID, MemoryPath: commit.MemoryPath})
+	state, err := json.Marshal(checkpoint)
 	name := "memory_version"
 	return nil, &name, state, err
 }

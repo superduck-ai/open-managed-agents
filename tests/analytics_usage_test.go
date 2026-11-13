@@ -36,6 +36,7 @@ func TestAnalyticsMeteredRequests(t *testing.T) {
 	app := newTestAppWithStore(t, &cfg, newFakeStore("analytics-requests"))
 	defer app.close()
 	provider := seedTestLLMProvider(t, app, "Analytics", upstream.URL, "analytics-key", model)
+	workspaceUUID := getDefaultDBIDs(t, app.pool).WorkspaceUUID
 	qualifiedModel := llmproviders.QualifiedModelID(provider.Slug, model)
 	if err := app.db.ReplaceModelPriceCatalog(t.Context(), "openrouter", []db.CatalogPrice{{Model: model, Original: []byte(`{}`), Price: billing.ModelPrice{Source: "openrouter", SourceModel: model, Rates: &billing.Rates{Input: new("10"), Output: new("10"), CacheRead: new("10"), CacheWrite: new("10")}}}}); err != nil {
 		t.Fatal(err)
@@ -66,11 +67,11 @@ func TestAnalyticsMeteredRequests(t *testing.T) {
 	}
 	legacyModel := "legacy-" + model
 	now := time.Now().UTC()
-	if err := app.db.InsertUsageRecord(t.Context(), db.UsageRecord{Finalized: true, OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: provider.WorkspaceUUID, AttemptID: uuid.NewV4().String(), Source: "api", Model: legacyModel, StartedAt: now, EndedAt: now, ModelCents: new(int64(0)), Complete: true, Version: "request_cents_v1"}); err != nil {
+	if err := app.db.InsertUsageRecord(t.Context(), db.UsageRecord{Finalized: true, OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: workspaceUUID, AttemptID: uuid.NewV4().String(), Source: "api", Model: legacyModel, StartedAt: now, EndedAt: now, ModelCents: new(int64(0)), Complete: true, Version: "request_cents_v1"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, endpoint := range []string{"/usage_cost", "/usage_activities"} {
-		response := app.platformRequest(t, http.MethodGet, prefix+endpoint+"?workspace_id="+provider.WorkspaceUUID, nil, cookies)
+		response := app.platformRequest(t, http.MethodGet, prefix+endpoint+"?workspace_id="+workspaceUUID, nil, cookies)
 		var report struct {
 			Options struct {
 				Models []string `json:"models"`

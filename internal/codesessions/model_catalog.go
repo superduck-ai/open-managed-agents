@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Service) modelCatalog(ctx context.Context, session db.CodeSession) (map[string]llmproviders.RuntimeModel, error) {
-	catalog, err := llmproviders.LoadCatalog(ctx, s.db, session.OrganizationUUID, session.WorkspaceUUID)
+	catalog, err := llmproviders.LoadCatalog(ctx, s.db, session.OrganizationUUID)
 	if err != nil {
 		return nil, err
 	}

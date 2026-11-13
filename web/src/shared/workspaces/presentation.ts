@@ -63,8 +63,14 @@ export function buildCreateWorkspaceInput(name: string, displayColor: string): C
 // 切换作用域时丢弃旧资源 ID、筛选条件和详情标签，避免请求其他工作区的资源。
 export function workspaceSwitchPath(currentPath: string, workspaceId: string) {
   const path = currentPath.split(/[?#]/)[0];
+  if (
+    path === '/llm-models' ||
+    path === '/settings/llm/organization' ||
+    /^\/(?:settings\/)?workspaces\/[^/]+\/(?:llm|llm-models)$/.test(path)
+  )
+    return '/settings/llm';
   const scope = `/workspaces/${encodeURIComponent(workspaceId || 'default')}`;
-  const settings = path.match(/^\/settings\/workspaces\/[^/]+\/(keys|webhooks|telemetry|mcp-tunnels)(?:\/|$)/);
+  const settings = path.match(/^\/settings\/workspaces\/[^/]+\/(keys|webhooks|telemetry|mcp-tunnels|llm)(?:\/|$)/);
   if (settings) return `/settings${scope}/${settings[1]}`;
   const scoped = path.match(/^\/workspaces\/[^/]+\/([^/]+)/);
   if (scoped) return `${scope}/${scoped[1]}`;

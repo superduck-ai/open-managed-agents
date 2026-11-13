@@ -19,7 +19,7 @@ afterEach(() => {
 
 describe('Settings feature pages', () => {
   test('keeps only working organization and personal settings routes', () => {
-    for (const section of ['profile', 'appearance', 'organization', 'llm', 'members', 'workspaces', 'api-keys']) {
+    for (const section of ['profile', 'appearance', 'organization', 'members', 'workspaces', 'api-keys']) {
       expect(settingsSectionFromPath(`/settings/${section}`)).toBe(section);
     }
     for (const section of [

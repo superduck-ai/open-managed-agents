@@ -33,7 +33,7 @@ test.each(['chat', 'api'])('missing models route %s quickstart to workspace setu
     renderManagedAgentsPage('quickstart');
     fireEvent.click(await screen.findByRole('button', { name: 'Configure models' }));
     expect(assign).toHaveBeenCalledWith(
-      `/workspaces/default/llm-models?returnTo=${encodeURIComponent(`/workspaces/default/agent-quickstart?mode=${mode}`)}`,
+      `/settings/llm?returnTo=${encodeURIComponent(`/workspaces/default/agent-quickstart?mode=${mode}`)}`,
     );
     expect(screen.queryByRole('heading', { name: 'What would you like to build?' })).toBeNull();
   } finally {

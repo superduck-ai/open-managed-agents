@@ -8,7 +8,7 @@
 
 | 分组 | 页面 | 作用范围 |
 | --- | --- | --- |
-| 模型与访问 | LLM 模型、API 密钥 | 模型属于组织；密钥属于当前工作区 |
+| 模型与访问 | LLM 模型、API 密钥 | 模型默认展示当前工作区目录，可切换组织共享配置；密钥属于当前工作区 |
 | 用量与运行 | 用量、成本、可观测、OpenTelemetry | 用量和成本是组织报表，可筛选工作区；可观测属于当前工作区；遥测目标属于组织 |
 | 组织管理 | 成员、工作区目录、组织资料 | 当前组织 |
 | 个人设置 | 个人资料、外观与语言 | 当前账号 |
@@ -27,7 +27,7 @@
 
 页面目录集中在 `shared/navigation/`（`navigation.ts`、`navigation-paths.ts`、`settings-navigation.ts`），供侧栏、搜索和页面访问判断共用；顶栏位于 `features/console-topbar/`，外壳样式位于 `shared/ui/console-navigation.css`，响应式折叠位于 `shared/hooks/use-responsive-sidebar.ts`，文档链接统一由 `shared/documentation.ts` 生成。共享目录不反向依赖功能页面或应用外壳。权限谓词位于 `shared/permissions/`，导航目录负责路由到权限的映射。组织资料和工作区目录需要当前组织的 `organization:manage`，成员需要 `members:manage`；用量和成本分别需要 `usage:view`、`cost:view`。无可访问子页的分组不显示。直达受限页面展示无权限状态，后端鉴权继续作为最终边界。
 
-LLM 模型使用现有组织模型接口，组织与工作区作用域共用“LLM 模型”标题，组织作用域以描述说明共享范围。旧工作区模型链接跳转到组织模型配置，保存后仍按快速开始的合法返回参数回到对应工作区的快速开始；返回参数只接受指向该工作区 `agent-quickstart` 的站内相对路径，其余一律忽略。旧成员链接跳到组织成员；旧工作区遥测链接跳到组织遥测目标，跳转前也使用组织遥测对应的设置分组、面包屑和作用范围。旧链接重定向保留查询参数及 URL hash；hash 按路由器解析后的原值透传，不再二次编码，避免 `%25`、`%5C` 等被保留的转义序列被重复编码。MCP 隧道、Webhooks 和 API 密钥保持现有 URL 与 API，不能因为 URL 以 `/settings/workspaces/` 开头就将它们视为组织工作区目录。
+LLM 模型只有 `/settings/llm` 一个规范设置入口，展示组织全部 Provider，不提供工作区或组织范围切换。所有组织成员可查看、使用和创建；每条连接由后端 `can_manage` 决定管理按钮，创建者用户名在目录中展示。旧 `/llm-models`、`/settings/llm/organization`、`/settings/workspaces/{workspaceId}/llm` 和 `/workspaces/{workspaceId}/llm-models` 替换跳转到规范地址，保留查询及 hash；旧工作区地址先选择指定工作区。切换工作区保留模型目录与草稿，切换组织重置。快速开始只接受当前工作区 `agent-quickstart` 的站内返回地址。旧成员链接跳到组织成员；旧工作区遥测链接跳到组织遥测目标，跳转前也使用组织遥测对应的设置分组、面包屑和作用范围。旧链接重定向保留查询参数及 URL hash；hash 按路由器解析后的原值透传，不再二次编码，避免 `%25`、`%5C` 等被保留的转义序列被重复编码。MCP 隧道、Webhooks 和 API 密钥保持现有 URL 与 API，不能因为 URL 以 `/settings/workspaces/` 开头就将它们视为组织工作区目录。
 
 组织遥测维护目标与工作区覆盖范围。编辑说明明确共享目标修改会影响覆盖范围内的工作区。没有新增第二套工作区遥测管理入口；旧后端资源合同不变。
 

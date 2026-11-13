@@ -38,7 +38,7 @@ const moonshotRow = {
 describe('LLM model catalog helpers', () => {
   test('keeps organization and workspace models with the same raw ID separately addressable', () => {
     const organization = provider('llmprov_org', 'Organization', 'organization', ['shared-model', 'org-only']);
-    organization.scope = 'organization';
+
     const workspace = provider('llmprov_ws', 'Workspace', 'workspace', ['shared-model']);
     expect(catalogModels([organization, workspace])).toEqual([
       {
@@ -152,6 +152,8 @@ function englishMessage(_id: string, defaultMessage: string, values?: Record<str
 function provider(id: string, name: string, slug: string, modelIds: string[]): LLMProvider {
   return {
     type: 'llm_provider',
+    created_by: { account_uuid: 'acct_test', name: 'Test creator' },
+    can_manage: true,
     id,
     name,
     slug,

@@ -100,3 +100,11 @@ func trajectoryWorkspaceRequired() error {
 func invalidOverviewQuery(w http.ResponseWriter) {
 	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_overview_query", "message": "days must be 7 or 30 and timezone must be a valid IANA timezone"})
 }
+
+func writeLLMProviderManagementDenied(w http.ResponseWriter) {
+	writeLLMProviderError(w, http.StatusForbidden, "llm_provider_management_denied", "Only the creator or an organization administrator can manage this LLM provider.")
+}
+
+func writeLLMProviderCreatorRequired(w http.ResponseWriter) {
+	writeLLMProviderError(w, http.StatusForbidden, "llm_provider_creator_required", "An authenticated account is required to create an LLM provider.")
+}

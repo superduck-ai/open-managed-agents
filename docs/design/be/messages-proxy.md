@@ -1,17 +1,17 @@
-# Workspace BYOK 与 Messages 代理
+# 组织 BYOK 与 Messages 代理
 
 ## 配置模型
 
-LLM 上游不是进程级 YAML。每个组织及其 workspace 均可以配置多个 Provider；每个 Provider 保存：
+LLM 上游不是进程级 YAML。每个组织可以配置多个 Provider，所有组织成员共享完整模型目录；每个 Provider 保存：
 
 - `name`：可修改的展示名称，不要求唯一；省略、空字符串或仅空白时使用本次连接的最终 `slug`，更新省略 `slug` 时使用已有 ID；
-- `slug`：模型命名空间，在组织与该组织下所有 workspace 之间唯一，创建后不可修改；
+- `slug`：模型命名空间，在组织内唯一，创建后不可修改；
 - `base_url`
 - `api_backend`：`messages` 或 `chat_completions`；已有 Provider 通过迁移 86 回填为 `messages`。创建省略时默认 `messages`，更新省略时保留当前值，其他值包括 `responses` 返回 `api_backend_invalid`。
 - Vault 信封加密的 `api_key`
 - 零个或多个真实 `model_ids`
 
-`model_ids` 保存上游真实 ID。同一 workspace 内不同 Provider 可以配置同名模型；对外暴露的模型 ID 是带 Provider 前缀的 `{slug}/{upstream_model_id}`，详见下文「模型命名与解析」。OMA 不提供 `claude-*` 别名或默认 Anthropic 回退。
+`model_ids` 保存上游真实 ID。同一组织内不同 Provider 可以配置同名模型；对外暴露的模型 ID 是带 Provider 前缀的 `{slug}/{upstream_model_id}`，详见下文「模型命名与解析」。OMA 不提供 `claude-*` 别名或默认 Anthropic 回退。
 
 ## 模型命名与解析
 
@@ -40,7 +40,7 @@ flowchart TD
 ```
 
 - 带前缀的匹配优先。即使某个 slug 恰好等于历史裸 ID 的第一段，例如 slug `deepseek-ai` 与 `deepseek-ai/xxx`，也按「slug + 上游 ID」解析。
-- 历史裸 ID 长期兼容：外部 SDK 和脚本仍可使用 `kimi-k2.5`，只要它在 workspace 内只属于一个 Provider。被多个 Provider 配置时返回 `400 invalid_request_error`，消息列出可用的完整 ID，引导调用方迁移。Batch 在提交校验时把顶层 `params.model` 规范化为完整 ID 后入队，后续新增同名模型不会改变已接受请求的 Provider 归属；其他参数保留原始 JSON 字节。
+- 历史裸 ID 长期兼容：外部 SDK 和脚本仍可使用 `kimi-k2.5`，只要它在组织内只属于一个 Provider。被多个 Provider 配置时返回 `400 invalid_request_error`，消息列出可用的完整 ID，引导调用方迁移。Batch 在提交校验时把顶层 `params.model` 规范化为完整 ID 后入队，后续新增同名模型不会改变已接受请求的 Provider 归属；其他参数保留原始 JSON 字节。
 - `GET /v1/models`、Workbench 模型列表和控制台目录只展示完整 ID。
 - Agent 创建/更新与 Session 模型覆盖在写入时把能唯一解析的裸 ID 规范化为完整 ID 后保存，新数据不再出现裸 ID。
 - Brain `models` 以完整 ID 为键；为兼容旧运行时配置，能唯一解析到同一上游 ID 的裸 ID 也作为键保留。
@@ -55,7 +55,7 @@ flowchart TD
 
 迁移与新代码需要一起发布：旧版本服务无法解析带前缀的 ID。Down 迁移只删除 `slug` 列与约束，不回滚已改写的模型引用。
 
-进程 YAML 不再包含 `anthropic_upstream`。上游地址和 Key 来自当前工作区 Provider 或组织共享 Provider。
+进程 YAML 不再包含 `anthropic_upstream`。上游地址和 Key 来自当前组织 Provider。
 
 控制台入口为「LLM 模型」，API 为：
 
@@ -66,7 +66,7 @@ PUT    /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_provide
 DELETE /api/console/organizations/{orgUuid}/workspaces/{workspaceId}/llm_providers/{providerId}
 ```
 
-工作区成员可读取、新增、更新、删除、预览和同步工作区 Provider。读取接口只返回 `has_api_key` 与 `api_key_last4`，不返回明文 Key。更新时省略或留空 `api_key` 表示保留原 Key。
+组织成员可读取和新增 Provider。更新、删除、已保存密钥预览与同步要求创建者或组织管理员权限。读取接口只返回 `has_api_key` 与 `api_key_last4`，不返回明文 Key。更新时省略或留空 `api_key` 表示保留原 Key。
 
 控制台在「获取模型列表」时可通过下列接口向该网关请求模型列表，而不会把 Key 回写到响应里：
 
@@ -91,21 +91,19 @@ Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 
 }
 ```
 
-`base_url` 必须是绝对 HTTP 或 HTTPS URL，且不得包含 userinfo、query 或 fragment。允许 localhost、私网地址和自定义端口，因为这是 workspace 成员配置的网关，不是沙箱选择的任意目标。Code-session CONNECT 代理仍使用独立的公网 SSRF 边界。代理客户端不跟随重定向，避免把 Provider Key 发到另一个主机。
+`base_url` 必须是绝对 HTTP 或 HTTPS URL，且不得包含 userinfo、query 或 fragment。允许 localhost、私网地址和自定义端口，因为这是组织成员配置的网关，不是沙箱选择的任意目标。Code-session CONNECT 代理仍使用独立的公网 SSRF 边界。代理客户端不跟随重定向，避免把 Provider Key 发到另一个主机。
 
-## 组织与工作区的 Provider 范围
+## 组织 Provider 与创建者权限
 
-组织 Provider 的 `workspace_uuid` 为 NULL，当前工作区 Provider 则保存对应 workspace UUID。新组织集合 API 为 `/api/console/organizations/{orgUuid}/llm_providers`，支持 GET/POST，`/{providerId}` 支持 PUT/DELETE，模型预览及同步路径与工作区集合保持一致。组织成员可新增、更新、删除、预览和同步；操作均校验组织可见性。每个查询和写入都绑定组织及对应 workspace（含 NULL），工作区 API 无法操作组织连接或其他工作区连接。
+所有 Provider 以 `organization_uuid` 归属组织。集合 API 为 `/api/console/organizations/{orgUuid}/llm_providers`。工作区路径验证原有 workspace 访问权限后转发到同一组织集合。新建连接记录稳定登录身份 `Principal.AccountUUID` 为 `created_by_account_uuid`，更新保持创建者不可变。成员可使用全部模型、创建连接和管理本人创建的连接。组织管理员可管理全部连接，包括创建者为 NULL 的历史或系统连接。已保存密钥预览和同步同样检查管理权限。返回 `created_by` 和 `can_manage`，创建者姓名按账户 UUID 查询。
 
-运行时只加载当前组织共享连接和当前 workspace 的连接，不加载其他 workspace。完整模型引用使用 `<slug>/<upstream-model-id>`，上游 ID 允许包含 `/`。裸 ID 先在当前工作区匹配：一个匹配则使用，多个匹配则拒绝；无匹配时在组织连接中执行同样的唯一匹配规则。歧义返回可选完整引用；Brain 派生索引不导出有歧义的裸 ID。计费目录使用相同优先级，组织连接的请求仍归属实际工作区。
+运行时只查询一次组织目录，完整引用优先精确匹配。裸 ID 在整个组织恰好匹配一个 Provider 才可解析，多条匹配返回完整引用候选。上游 ID 允许包含 `/`。Brain 模型目录和计费目录均省略歧义裸 ID，计费仍归属发起请求的实际工作区。
 
-迁移 `00107_multiple_organization_llm_providers.sql` 移除组织单连接和固定 slug 约束，增加 `(organization_uuid, slug)` 唯一约束，并移除显示名称唯一约束。历史组织连接保留 `organization` ID。对跨工作区重复的 slug，按 workspace/创建时间/UUID 确定保留者，其他连接选择组织内未占用的 `原ID-2` 等 ID，长度保持 32 字符以内。迁移事务内更新已保存的模型引用，包括 Agent/版本、multiagent、Session/线程/部署/运行快照、Code Session 与恢复元数据、queued/in_flight Batch；其他工作区和孤儿引用不改写。Provider UUID 和密钥信封不变。外部脚本中被重命名的连接引用需要同步更新。
+迁移 `00118_organization_owned_llm_providers.sql` 在旧工作区优先规则下规范化唯一可解析的裸引用，覆盖 Agent、版本、嵌套 multiagent、Session、线程、部署和运行快照、Code Session 模型与恢复元数据、queued/in_flight Batch。现有完整引用优先保留，歧义和未知引用保持原值。
 
-旧单数 `/llm_provider` 路由保留为历史 `organization` 连接的兼容入口，不返回或覆盖其他组织连接；新集合接口保留该 ID，避免被新连接重用。数据库竞争创建统一返回 `409 llm_provider_slug_conflict`，不返回占用者的归属信息。先完成所有 Server 实例的升级，再启用多个组织连接；旧 Server 的单连接查询不兼容多个组织连接。Brain 的 `models` payload 结构保持不变。
+迁移 `00118_organization_owned_llm_providers.sql` 将 `workspace_uuid` 重命名为 `secret_workspace_uuid`，保留历史密钥 AAD。NULL 使用 `organization` 绑定，新连接采用 NULL。该字段仅参与密钥解密与轮换 CAS。Provider UUID、external ID、slug、信封和全部记录保留，历史创建者为 NULL。组织统一后无法可靠还原工作区可见性和创建者归属，Down 明确拒绝回滚；需要恢复迁移前备份并同时恢复对应应用版本。
 
-Down 保留迁移后的 ID 和引用，不恢复重复 ID；若存在无法表示为旧组织单连接的记录，明确拒绝回滚，不删除连接或密钥。清理新增组织连接后才能回滚；若已有同名显示名称导致旧唯一约束无法恢复，也会在事务中失败并保持当前数据。
-
-验收包括 `TestMultipleOrganizationLLMProvidersMigrationAndScope` 的隔离 PostgreSQL 升级、引用迁移、nullable 查询、唯一约束和安全回滚；`TestMultipleOrganizationAndWorkspaceProviders` 验证组织/工作区 CRUD、跨工作区隔离、跨范围 ID 冲突和成员只读；并发创建验证由 `TestLLMProviderSlugIsUniqueAcrossScopesUnderConcurrentCreates` 覆盖。前端覆盖多个组织连接的创建、编辑、删除及工作区只读展示。
+`TestLLMProviderMapperTenantScope` 检查组织查询与写入绑定，`TestLLMProviderSecretMigrationBindings` 检查历史 UUID 和组织哨兵绑定。组织目录单测覆盖完整引用、带斜杠上游 ID 和歧义别名。迁移与真实密钥解密通过隔离 PostgreSQL 回归验证。
 
 ## HTTP 契约
 
@@ -136,7 +134,7 @@ handler 通过 `http.MaxBytesReader` 把请求体限制为 32 MiB，并在转发
 
 管理后台继续使用原平台路径 `POST /api/organizations/{orgUuid}/proxy/v1/messages`。该路由及其独立代理实现不作为 `/v1/messages` 的兼容别名，也不承载 Claude Code 的 session-scoped token。它与公共 Messages 入口走同一条 Provider 解析、唯一顶层 `model` 校验、顶层 `model` 替换和 32 MiB 请求上限。Batches 在逐条发送时、Workbench 在构造上游请求时执行相同替换。该路由转发 `messages` backend 请求时透传调用方的 `anthropic-version`，调用方未提供时补默认值 `2023-06-01`，避免 Anthropic 官方 API 拒绝缺少该 header 的请求。
 
-`GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容是当前工作区和组织默认配置的完整模型 ID `{slug}/{upstream_model_id}`；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标；未配置 Provider 时返回 `503` 与英文消息 `This workspace has no LLM provider configured`；配置读取失败时返回 `500` 与英文消息 `Workspace model configuration is unavailable`。不额外返回机器可读 `error.code`。
+`GET /v1/models` 保留 Anthropic 列表信封的 `data`、`has_more`、`first_id` 与 `last_id`。列表内容是当前组织全部 Provider 的完整模型 ID `{slug}/{upstream_model_id}`；由于 Provider 配置不维护能力目录，`display_name` 使用模型 ID，`created_at` 使用 Unix epoch，token 上限与 `capabilities` 显式返回 `null`。已有 Provider 但尚无模型时返回 `200`、`data: []` 和空游标；未配置 Provider 时返回 `503` 与英文消息 `This workspace has no LLM provider configured`；配置读取失败时返回 `500` 与英文消息 `Workspace model configuration is unavailable`。不额外返回机器可读 `error.code`。
 
 服务端不提供 `/v1/code/sessions/{code_session_id}/bridge`。managed-agent 在创建 code session 时直接获得 OAuth FD、WebSocket FD 和初始 worker epoch；后续 worker 所有权切换统一使用 `/worker/register`。
 
@@ -191,7 +189,7 @@ sequenceDiagram
     Sandbox->>API: POST /worker/register<br/>创建首个 60s lease
     Sandbox->>API: POST /v1/messages + lifecycle-bound token
     API->>DB: 校验 session、worker lease 与 token hash
-    API->>DB: 按 workspace 与顶层 model 解析 Provider
+    API->>DB: 按 organization 与顶层 model 解析 Provider
     API->>Upstream: 注入解密后的 Provider Key 并流式转发
     Upstream-->>API: JSON 或 SSE
     API-->>Sandbox: 透明返回
@@ -203,7 +201,7 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 
 ## 失败语义
 
-- workspace 和组织均没有 Provider：`503 api_error`，英文消息 `This workspace has no LLM provider configured`；
+- 组织没有 Provider：`503 api_error`，英文消息 `This workspace has no LLM provider configured`；
 - 请求模型未配置：`400 invalid_request_error`；
 - 历史裸 ID 被多个 Provider 配置：`400 invalid_request_error`，消息列出可选完整 ID；
 - Key 解密失败、Provider 数据损坏或配置读取失败：`500 api_error`，英文消息 `Workspace model configuration is unavailable`；失败关闭，不回退；
@@ -218,7 +216,7 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 ## 最小实现边界
 
 - 不建独立 Model 表；`model_ids` 直接存 Provider JSON 数组，只保存上游 ID，不带前缀。同名模型可分属不同 Provider，因此写入不再需要跨 Provider 的归属检查或 advisory lock；slug 唯一性由数据库唯一约束保证，并发冲突返回 `409 llm_provider_slug_conflict`。
-- 工作区 Provider 的读写同时绑定 `organization_uuid` 和 `workspace_uuid`；组织默认 Provider 的读写绑定 `organization_uuid` 并限定 `workspace_uuid IS NULL`。两种范围分别查询，不能省略组织过滤。
+- Provider 的读写绑定 `organization_uuid`。历史密钥绑定只参与加密操作。
 - 不加缓存；删除或修改 Provider 立即生效。
 - 不建立只有单实现的 Resolver 接口；调用方直接使用 `internal/llmproviders`。
 
@@ -294,39 +292,21 @@ Base URL 保持 API 根地址合同。最终地址为 `{base_url}/v1/chat/comple
 Brain 凭据限制、协议拒绝、错误与断流收尾、稳定消息 ID、缓存用量和 lease 失效。
 真实 Worker/上游集成需另行明确授权后按 verify-be 工作流执行，普通测试不代表该验收通过。
 
-## 组织默认 Provider
+## 组织默认 Provider 兼容入口
 
-组织成员可在组织设置的「LLM 配置」中管理一个跨工作区共享的默认 Provider。它与工作区 Provider 使用同一张 `llm_providers` 表，`workspace_uuid` 为 NULL，slug 固定为 `organization`；组织级部分唯一索引保证每个组织最多一条。支持 `messages` 与 `chat_completions`，复用现有密钥加密、URL 校验和模型同步。
+`/api/console/organizations/{orgUuid}/llm_provider` 按保留 slug `organization` 选择连接。GET 要求组织成员身份。PUT 首次创建记录当前账户，已有连接的 PUT、DELETE、保存密钥预览和同步均要求创建者或组织管理员。所有连接同时出现在组织集合与工作区兼容集合中。
 
 ```mermaid
 flowchart TD
   Input[模型引用] --> Qualified{完整 ID 命中?}
   Qualified -- 是 --> Provider[选定 Provider]
-  Qualified -- 否 --> Workspace{工作区裸 ID 匹配数}
-  Workspace -- 一个 --> Provider
-  Workspace -- 多个 --> Ambiguous[返回歧义错误]
-  Workspace -- 零个 --> Organization{组织默认包含该裸 ID?}
-  Organization -- 是 --> Provider
-  Organization -- 否 --> Missing[返回未配置错误]
+  Qualified -- 否 --> Organization{组织裸 ID 匹配数}
+  Organization -- 一个 --> Provider
+  Organization -- 多个 --> Ambiguous[返回歧义错误]
+  Organization -- 零个 --> Missing[返回未配置错误]
 ```
 
-显式 `organization/{model}` 选择组织默认；裸模型 ID 优先使用工作区 Provider，组织默认不增加工作区歧义计数。`/v1/models`、Workbench、Agent、Session、Batches 和 Brain backend 目录使用相同的合并目录。两个来源的同名模型以不同完整 ID 保留；组织配置读取失败时调用链失败关闭，不静默跳过组织 Provider。
-
-Console API（相对 `/api/console/organizations/{orgUuid}`）：
-
-| 方法 | 路径 | 权限 |
-| --- | --- | --- |
-| GET | `/llm_provider` | 当前组织成员只读 |
-| PUT | `/llm_provider` | 组织成员 |
-| DELETE | `/llm_provider` | 组织成员 |
-| POST | `/llm_provider/preview_models` | 组织成员 |
-| POST | `/llm_provider/models/sync` | 组织成员 |
-
-组织模型预览不依赖工作区。读取只返回 Key 是否存在及末四位，PUT 省略或留空 Key 保留旧密钥；首次创建返回 201，更新返回 200，不存在返回 404。组织 Provider 不混入工作区 Provider 管理 API 的列表。
-
-迁移 `00094_organization_llm_provider.sql` 从主干版本 91 追加升级，不修改已有迁移。已有工作区 slug `organization` 改为当前空间中第一个未占用的 `organization-N`，同步改写 `agents.model`、`agent_versions.model`，以及 `sessions`、`session_threads`、`deployments`、`deployment_runs` 的 `agent_snapshot` 顶层模型；同时改写 Agent、版本的 `multiagent` 列与上述快照中的 `multiagent.advisor.model`，并递归处理展开 roster（`multiagent.agents`、`multiagent.subagents.predefined_agents`、`multiagent.workflows.predefined_agents`）内嵌的模型引用。Code Session 模型与恢复元数据、queued / in_flight Batch 的对应完整引用也同步改写。改写仅作用于发生 slug 变更的组织和工作区，支持字符串及对象模型，保留模型的其他字段、roster 顺序和其他 JSON 内容；`metadata.model`、无关引用、其他租户数据与已完成 Batch 不改写。外部调用方若使用旧 `organization/{model}`，需改用迁移后的工作区 slug。Down 删除组织 Provider 及索引并恢复 workspace 非空，不回退已经改名的工作区 slug 和引用；回退前需备份组织配置。
-
-组织 Provider 的通用 API 和配置不包含任何公司网关预设、公司控制台链接或专属域名。
+显式 `organization/{model}` 选择该兼容连接。`/v1/models`、Workbench、Agent、Session、Batches 和 Brain 采用同一组织目录。读取返回 Key 是否存在及末四位，更新省略或留空 Key 保留原密钥。初次创建返回 201，更新返回 200，缺失返回 404。
 
 ## DSH 公开回复来源
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/superduck-ai/yourbatis"
@@ -89,31 +90,25 @@ func TestMultipleOrganizationLLMProvidersMigrationAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	organizations, err := store.ListLLMProviders(ctx, org, "")
-	if err != nil || len(organizations) != 2 {
+	organizations, err := store.ListLLMProviders(ctx, org)
+	if err != nil || len(organizations) != 4 {
 		t.Fatalf("organization list=%v %v", organizations, err)
 	}
-	if _, err := store.GetLLMProvider(ctx, org, "aa000000-0000-4000-8000-000000000002", created.ExternalID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("workspace lookup leaked organization provider: %v", err)
-	}
-	if _, err := store.GetLLMProvider(ctx, "aa000000-0000-4000-8000-000000000099", "", created.ExternalID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetLLMProvider(ctx, "aa000000-0000-4000-8000-000000000099", created.ExternalID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("organization lookup leaked tenant: %v", err)
 	}
 	created.Name = "Updated organization"
 	if _, err := store.UpdateLLMProvider(ctx, created); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := store.GetLLMProvider(ctx, org, "", created.ExternalID)
+	updated, err := store.GetLLMProvider(ctx, org, created.ExternalID)
 	if err != nil || updated.Name != created.Name {
 		t.Fatalf("organization update=%v %v", updated, err)
 	}
-	if _, err := migrations.Down(ctx); err == nil {
-		t.Fatal("rollback must reject data that cannot fit the old singleton contract")
-	}
-	if err := store.DeleteLLMProvider(ctx, org, "", created.ExternalID); err != nil {
+	if err := store.DeleteLLMProvider(ctx, org, created.ExternalID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := migrations.Down(ctx); err != nil {
-		t.Fatalf("rollback after removing new organization providers: %v", err)
+	if _, err := migrations.Down(ctx); err == nil || !strings.Contains(err.Error(), "cannot restore workspace visibility") {
+		t.Fatalf("unsafe organization ownership rollback was not rejected: %v", err)
 	}
 }

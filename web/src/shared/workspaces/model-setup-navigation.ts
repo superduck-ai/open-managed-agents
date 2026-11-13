@@ -1,7 +1,7 @@
 export function quickstartModelSetupHref(workspaceId: string, search: string) {
   const workspacePath = `/workspaces/${encodeURIComponent(workspaceId)}`;
   const mode = new URLSearchParams(search).get('mode') === 'api' ? 'api' : 'chat';
-  return `${workspacePath}/llm-models?returnTo=${encodeURIComponent(`${workspacePath}/agent-quickstart?mode=${mode}`)}`;
+  return `/settings/llm?returnTo=${encodeURIComponent(`${workspacePath}/agent-quickstart?mode=${mode}`)}`;
 }
 
 export function quickstartModelSetupReturn(search: string, workspaceId: string) {

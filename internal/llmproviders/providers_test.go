@@ -17,7 +17,7 @@ func TestOrganizationProviderSecretBindingUsesStableWorkspace(t *testing.T) {
 	if binding.CredentialExternalID != "llmprov_org" || binding.OrganizationUUID != "org" {
 		t.Fatalf("organization binding identity = %#v", binding)
 	}
-	workspace := SecretBinding(db.LLMProvider{OrganizationUUID: "org", WorkspaceUUID: "workspace", ExternalID: "llmprov_ws"})
+	workspace := SecretBinding(db.LLMProvider{OrganizationUUID: "org", SecretWorkspaceUUID: "workspace", ExternalID: "llmprov_ws"})
 	if workspace.WorkspaceUUID != "workspace" {
 		t.Fatalf("workspace binding = %#v", workspace)
 	}

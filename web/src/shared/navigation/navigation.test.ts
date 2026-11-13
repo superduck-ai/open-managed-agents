@@ -59,6 +59,8 @@ test('settings use the confirmed four groups and organization-level model and te
 
 test('scope labels reflect actual ownership', () => {
   expect(settingScope('/settings/llm')).toBe('organization');
+  expect(settingScope('/settings/llm/organization')).toBe('organization');
+  expect(settingScope('/settings/workspaces/team/llm')).toBe('organization');
   expect(settingScope('/settings/telemetry')).toBe('organization');
   expect(settingScope('/usage')).toBe('organization');
   expect(settingScope('/settings/profile')).toBe('personal');
@@ -109,4 +111,12 @@ test.each(['en', 'zh-CN'])('channels follows skills in the %s resource navigatio
   const skills = items.findIndex((item) => item.href === '/skills');
   expect(items[skills + 1].href).toBe('/channels');
   expect(items[skills + 1].icon).toBe(productIcons.channels);
+});
+
+test('legacy model routes select the organization settings entry', () => {
+  for (const path of ['/settings/workspaces/team/llm', '/settings/llm/organization', '/settings/llm']) {
+    expect(settingsItem(path)?.href).toBe('/settings/llm');
+    expect(isActivePath(path, '/llm-models')).toBe(true);
+  }
+  expect(navigationHref('/llm-models', 'team')).toBe('/settings/llm');
 });

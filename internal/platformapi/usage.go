@@ -109,16 +109,14 @@ func (h usageHandler) options(r *http.Request, query db.UsageQuery, workspaces [
 			options.FirstSeen = new(dimension.FirstSeen)
 		}
 	}
-	for _, workspace := range query.WorkspaceUUIDs {
-		catalog, err := llmproviders.LoadCatalog(r.Context(), h.database, query.OrganizationUUID, workspace)
-		if errors.Is(err, llmproviders.ErrNotConfigured) {
-			continue
-		}
-		if err != nil {
-			return options, err
-		}
+	catalog, err := llmproviders.LoadCatalog(r.Context(), h.database, query.OrganizationUUID)
+	if err != nil && !errors.Is(err, llmproviders.ErrNotConfigured) {
+		return options, err
+	}
+	if err == nil {
 		options.Models = append(options.Models, catalog.ModelIDs()...)
 	}
+
 	slices.Sort(options.Models)
 	options.Models = slices.Compact(options.Models)
 	slices.Sort(options.APIKeys)

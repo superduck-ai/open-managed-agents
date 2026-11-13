@@ -37,20 +37,20 @@ func TestLLMProviderSlugIsUniqueAcrossScopesUnderConcurrentCreates(t *testing.T)
 		}
 		now := time.Now().UTC()
 		provider := db.LLMProvider{
-			UUID:             uuid.NewString(),
-			ExternalID:       externalID,
-			OrganizationUUID: databaseIDs.OrganizationUUID,
-			WorkspaceUUID:    databaseIDs.WorkspaceUUID,
-			Name:             name,
-			Slug:             "shared",
-			BaseURL:          fmt.Sprintf("https://concurrent-%d.example.com", index),
-			APIKeyLast4:      fmt.Sprintf("key%d", index),
-			Models:           db.LLMModels{{ID: "shared-model"}},
-			CreatedAt:        now,
-			UpdatedAt:        now,
+			UUID:                uuid.NewString(),
+			ExternalID:          externalID,
+			OrganizationUUID:    databaseIDs.OrganizationUUID,
+			SecretWorkspaceUUID: databaseIDs.WorkspaceUUID,
+			Name:                name,
+			Slug:                "shared",
+			BaseURL:             fmt.Sprintf("https://concurrent-%d.example.com", index),
+			APIKeyLast4:         fmt.Sprintf("key%d", index),
+			Models:              db.LLMModels{{ID: "shared-model"}},
+			CreatedAt:           now,
+			UpdatedAt:           now,
 		}
 		if index == 0 {
-			provider.WorkspaceUUID = ""
+			provider.SecretWorkspaceUUID = ""
 		}
 		key := []byte(fmt.Sprintf("concurrent-provider-key-%d", index))
 		envelope, err := app.vaultSecrets.Seal(context.Background(), llmproviders.SecretBinding(provider), key)
@@ -95,7 +95,6 @@ func TestWorkspaceLLMProvidersBYOKLifecycle(t *testing.T) {
 	clearTestLLMProviders(t, app)
 
 	orgUUID := loadDefaultOrganizationUUID(t, app)
-	workspaceUUID := getDefaultDBIDs(t, app.pool).WorkspaceUUID
 	cookies := app.platformLoginCookies(t, "llm-providers@example.com")
 	path := "/api/console/organizations/" + orgUUID + "/workspaces/default/llm_providers"
 
@@ -188,7 +187,7 @@ func TestWorkspaceLLMProvidersBYOKLifecycle(t *testing.T) {
 	}
 
 	firstUpstream, err := llmproviders.Resolve(
-		context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "dashscope/kimi-k2.5",
+		context.Background(), app.db, app.vaultSecrets, orgUUID, "dashscope/kimi-k2.5",
 	)
 	if err != nil {
 		t.Fatalf("resolve first Provider: %v", err)
@@ -198,7 +197,7 @@ func TestWorkspaceLLMProvidersBYOKLifecycle(t *testing.T) {
 		t.Fatalf("first Provider resolution = %#v", firstUpstream)
 	}
 	secondUpstream, err := llmproviders.Resolve(
-		context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "default/deepseek-ai/deepseek-v3",
+		context.Background(), app.db, app.vaultSecrets, orgUUID, "default/deepseek-ai/deepseek-v3",
 	)
 	if err != nil {
 		t.Fatalf("resolve second Provider: %v", err)
@@ -208,18 +207,18 @@ func TestWorkspaceLLMProvidersBYOKLifecycle(t *testing.T) {
 		t.Fatalf("second Provider resolution = %#v", secondUpstream)
 	}
 	legacyUpstream, err := llmproviders.Resolve(
-		context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "qwen-max",
+		context.Background(), app.db, app.vaultSecrets, orgUUID, "qwen-max",
 	)
 	if err != nil || legacyUpstream.QualifiedModelID != "default/qwen-max" {
 		t.Fatalf("legacy model resolution = (%#v, %v)", legacyUpstream, err)
 	}
 	if _, err := llmproviders.Resolve(
-		context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "kimi-k2.5",
+		context.Background(), app.db, app.vaultSecrets, orgUUID, "kimi-k2.5",
 	); !errors.Is(err, llmproviders.ErrAmbiguousModel) {
 		t.Fatalf("ambiguous legacy model error = %v, want ErrAmbiguousModel", err)
 	}
 	if _, err := llmproviders.ListModelIDs(
-		context.Background(), app.db, "00000000-0000-4000-8000-000000000099", workspaceUUID,
+		context.Background(), app.db, "00000000-0000-4000-8000-000000000099",
 	); !errors.Is(err, llmproviders.ErrNotConfigured) {
 		t.Fatalf("cross-organization model list error = %v, want ErrNotConfigured", err)
 	}
@@ -259,7 +258,7 @@ func TestWorkspaceLLMProvidersBYOKLifecycle(t *testing.T) {
 		t.Fatalf("update Provider status = %d, want 200: %s", updated.StatusCode, readAll(t, updated.Body))
 	}
 	retained, err := llmproviders.Resolve(
-		context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "dashscope/kimi-k2.5",
+		context.Background(), app.db, app.vaultSecrets, orgUUID, "dashscope/kimi-k2.5",
 	)
 	if err != nil || retained.APIKey != firstKey {
 		t.Fatalf("update did not retain Provider key: (%#v, %v)", retained, err)
@@ -271,12 +270,12 @@ func TestWorkspaceLLMProvidersBYOKLifecycle(t *testing.T) {
 		t.Fatalf("delete Provider status = %d, want 204: %s", deleted.StatusCode, readAll(t, deleted.Body))
 	}
 	if _, err := llmproviders.Resolve(
-		context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "dashscope/kimi-k2.5",
+		context.Background(), app.db, app.vaultSecrets, orgUUID, "dashscope/kimi-k2.5",
 	); !errors.Is(err, llmproviders.ErrModelNotConfigured) {
 		t.Fatalf("resolve deleted model error = %v, want ErrModelNotConfigured", err)
 	}
 	remaining, err := llmproviders.Resolve(
-		context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "kimi-k2.5",
+		context.Background(), app.db, app.vaultSecrets, orgUUID, "kimi-k2.5",
 	)
 	if err != nil || remaining.QualifiedModelID != "default/kimi-k2.5" {
 		t.Fatalf("legacy model after delete = (%#v, %v)", remaining, err)
@@ -383,7 +382,6 @@ func TestWorkspaceLLMProviderEmptyModelsLifecycle(t *testing.T) {
 
 	const providerKey = "empty-models-provider-key"
 	orgUUID := loadDefaultOrganizationUUID(t, app)
-	workspaceUUID := getDefaultDBIDs(t, app.pool).WorkspaceUUID
 	cookies := app.platformLoginCookies(t, "llm-providers-empty@example.com")
 	path := "/api/console/organizations/" + orgUUID + "/workspaces/default/llm_providers"
 
@@ -416,7 +414,7 @@ func TestWorkspaceLLMProviderEmptyModelsLifecycle(t *testing.T) {
 	if updated.StatusCode != http.StatusOK {
 		t.Fatalf("add model status = %d, want 200: %s", updated.StatusCode, readAll(t, updated.Body))
 	}
-	upstream, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "default/glm-4.7")
+	upstream, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, "default/glm-4.7")
 	if err != nil || upstream.APIKey != providerKey {
 		t.Fatalf("updated empty Provider key retention = (%#v, %v)", upstream, err)
 	}
@@ -518,7 +516,7 @@ func TestWorkspaceLLMProviderModelDiscovery(t *testing.T) {
 		if ids, ok := availableBody["model_ids"].([]any); !ok || len(ids) != 2 {
 			t.Fatalf("preview: %#v", availableBody)
 		}
-		saved, err := app.db.GetLLMProvider(t.Context(), orgUUID, getDefaultDBIDs(t, app.pool).WorkspaceUUID, providerID)
+		saved, err := app.db.GetLLMProvider(t.Context(), orgUUID, providerID)
 		if err != nil || !slices.Equal(saved.Models.IDs(), []string{"kimi-k2.5"}) {
 			t.Fatalf("preview changed model IDs: %v %v", saved.Models.IDs(), err)
 		}
@@ -591,20 +589,19 @@ func TestWorkspaceLLMProviderSameModelResolvesByProviderSlug(t *testing.T) {
 	seedTestLLMProvider(t, app, "First", "https://first.example.com", "first-test-key", "same-model")
 	seedTestLLMProvider(t, app, "Second", "https://second.example.com", "second-test-key", "same-model")
 
-	workspaceUUID := getDefaultDBIDs(t, app.pool).WorkspaceUUID
 	orgUUID := loadDefaultOrganizationUUID(t, app)
-	_, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "same-model")
+	_, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, "same-model")
 	if !errors.Is(err, llmproviders.ErrAmbiguousModel) ||
 		!strings.Contains(err.Error(), "default/same-model, default-2/same-model") {
 		t.Fatalf("Resolve() error = %v, want ambiguous candidates", err)
 	}
 	second, err := llmproviders.Resolve(
-		context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "default-2/same-model",
+		context.Background(), app.db, app.vaultSecrets, orgUUID, "default-2/same-model",
 	)
 	if err != nil || second.BaseURL != "https://second.example.com" || second.ModelID != "same-model" {
 		t.Fatalf("Resolve(default-2/same-model) = (%#v, %v)", second, err)
 	}
-	modelIDs, err := llmproviders.ListModelIDs(context.Background(), app.db, orgUUID, workspaceUUID)
+	modelIDs, err := llmproviders.ListModelIDs(context.Background(), app.db, orgUUID)
 	if err != nil || !slices.Equal(modelIDs, []string{"default/same-model", "default-2/same-model"}) {
 		t.Fatalf("ListModelIDs() = (%#v, %v)", modelIDs, err)
 	}
@@ -692,13 +689,12 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 	clearTestLLMProviders(t, app)
 
 	orgUUID := loadDefaultOrganizationUUID(t, app)
-	workspaceUUID := getDefaultDBIDs(t, app.pool).WorkspaceUUID
 	cookies := app.platformLoginCookies(t, "llm-providers-organization@example.com")
 	path := "/api/console/organizations/" + orgUUID + "/llm_provider"
 	workspacePath := "/api/console/organizations/" + orgUUID + "/workspaces/default/llm_providers"
 	const orgKey = "organization-provider-secret"
 
-	if _, err := llmproviders.ListModelIDs(context.Background(), app.db, orgUUID, workspaceUUID); !errors.Is(err, llmproviders.ErrNotConfigured) {
+	if _, err := llmproviders.ListModelIDs(context.Background(), app.db, orgUUID); !errors.Is(err, llmproviders.ErrNotConfigured) {
 		t.Fatalf("empty model list error = %v, want ErrNotConfigured", err)
 	}
 	missing := app.platformRequest(t, http.MethodGet, path, nil, cookies)
@@ -745,7 +741,7 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 
 	var storedWorkspace *string
 	if err := app.pool.QueryRow(context.Background(), `
-		select workspace_uuid from llm_providers where external_id = $1
+		select secret_workspace_uuid from llm_providers where external_id = $1
 	`, createdID).Scan(&storedWorkspace); err != nil {
 		t.Fatalf("load organization provider workspace: %v", err)
 	}
@@ -756,16 +752,15 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 	workspaceList := app.platformRequest(t, http.MethodGet, workspacePath, nil, cookies)
 	defer workspaceList.Body.Close()
 	workspaceBody := readAll(t, workspaceList.Body)
-	if workspaceList.StatusCode != http.StatusOK || bytes.Contains(workspaceBody, []byte(createdID)) {
+	if workspaceList.StatusCode != http.StatusOK || !bytes.Contains(workspaceBody, []byte(createdID)) {
 		t.Fatalf("workspace provider list = %d %s", workspaceList.StatusCode, workspaceBody)
 	}
 
-	orgUpstream, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "org-only")
+	orgUpstream, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, "org-only")
 	if err != nil || orgUpstream.BaseURL != "https://organization.example.com/anthropic" || orgUpstream.APIKey != orgKey {
 		t.Fatalf("organization resolution = %#v, %v", orgUpstream, err)
 	}
-	otherWorkspace := "00000000-0000-4000-8000-000000000077"
-	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, otherWorkspace, "org-only"); err != nil {
+	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, "org-only"); err != nil {
 		t.Fatalf("other workspace organization resolution: %v", err)
 	}
 
@@ -776,22 +771,22 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 		"model_ids":["shared-model","workspace-only"]
 	}`)
 	assertJSONDoesNotContain(t, workspaceProvider, "workspace-provider-secret")
-	shared, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "shared-model")
-	if err != nil || shared.BaseURL != "https://workspace.example.com" || shared.APIKey != "workspace-provider-secret" {
-		t.Fatalf("workspace override = %#v, %v", shared, err)
+	shared, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, "shared-model")
+	if !errors.Is(err, llmproviders.ErrAmbiguousModel) {
+		t.Fatalf("shared model must be ambiguous = %#v, %v", shared, err)
 	}
-	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "org-only"); err != nil {
+	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, "org-only"); err != nil {
 		t.Fatalf("organization-only model after workspace override: %v", err)
 	}
-	qualified, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "organization/shared-model")
+	qualified, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, "organization/shared-model")
 	if err != nil || qualified.BaseURL != orgUpstream.BaseURL || qualified.QualifiedModelID != "organization/shared-model" || qualified.ModelID != "shared-model" {
 		t.Fatalf("explicit organization model resolution = %#v, %v", qualified, err)
 	}
-	modelIDs, err := llmproviders.ListModelIDs(context.Background(), app.db, orgUUID, workspaceUUID)
+	modelIDs, err := llmproviders.ListModelIDs(context.Background(), app.db, orgUUID)
 	if err != nil {
 		t.Fatalf("list merged models: %v", err)
 	}
-	if !slices.Equal(modelIDs, []string{"default/shared-model", "default/workspace-only", "organization/org-only", "organization/shared-model"}) {
+	if !slices.Equal(modelIDs, []string{"organization/org-only", "organization/shared-model", "default/shared-model", "default/workspace-only"}) {
 		t.Fatalf("merged models = %#v", modelIDs)
 	}
 
@@ -834,7 +829,7 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 	if updated.StatusCode != http.StatusOK {
 		t.Fatalf("update organization provider status = %d, want 200: %s", updated.StatusCode, readAll(t, updated.Body))
 	}
-	retained, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, otherWorkspace, "org-only")
+	retained, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, "org-only")
 	if err != nil || retained.APIKey != orgKey || retained.APIBackend != llmproviders.ChatCompletions {
 		t.Fatalf("updated organization key = %#v, %v", retained, err)
 	}
@@ -844,7 +839,7 @@ func TestOrganizationLLMProviderFillsWorkspaceGaps(t *testing.T) {
 	if deleted.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete organization provider status = %d, want 204: %s", deleted.StatusCode, readAll(t, deleted.Body))
 	}
-	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, workspaceUUID, "org-only"); !errors.Is(err, llmproviders.ErrModelNotConfigured) {
+	if _, err := llmproviders.Resolve(context.Background(), app.db, app.vaultSecrets, orgUUID, "org-only"); !errors.Is(err, llmproviders.ErrModelNotConfigured) {
 		t.Fatalf("deleted organization model error = %v, want ErrModelNotConfigured", err)
 	}
 }
@@ -916,11 +911,14 @@ func TestOrganizationLLMProviderPreviewAndSync(t *testing.T) {
 	if _, err := app.pool.Exec(t.Context(), `UPDATE users SET role='user' WHERE organization_uuid=$1 AND email='organization-preview@example.com'`, orgUUID); err != nil {
 		t.Fatal(err)
 	}
-	for _, operation := range []struct{ method, suffix string }{{http.MethodPost, "/preview_models"}, {http.MethodPost, "/models/preview"}, {http.MethodPost, "/models/sync"}, {http.MethodDelete, ""}} {
+	for _, operation := range []struct {
+		method, suffix string
+		status         int
+	}{{http.MethodPost, "/preview_models", http.StatusBadRequest}, {http.MethodPost, "/models/preview", http.StatusOK}, {http.MethodPost, "/models/sync", http.StatusOK}, {http.MethodDelete, "", http.StatusNoContent}} {
 		response := app.platformRequest(t, operation.method, path+operation.suffix, strings.NewReader(`{}`), cookies)
 		response.Body.Close()
-		if response.StatusCode != http.StatusForbidden {
-			t.Fatalf("member %s %s status = %d", operation.method, operation.suffix, response.StatusCode)
+		if response.StatusCode != operation.status {
+			t.Fatalf("owner %s %s status = %d", operation.method, operation.suffix, response.StatusCode)
 		}
 	}
 }

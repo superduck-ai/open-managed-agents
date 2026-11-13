@@ -282,12 +282,11 @@ test('creating and recovering an additional vault preserves prior selections wit
   expect(recovered.operation).toBeNull();
 });
 
-test('catalog includes organization models and resolves workspace precedence like the backend', async () => {
+test('catalog loads one organization collection and rejects ambiguous bare IDs', async () => {
   const workspace = { id: 'workspace_provider', slug: 'shared', api_backend: 'messages', models: [{ id: 'common' }] };
   const organization = {
     id: 'organization_provider',
-    slug: 'shared',
-    scope: 'organization',
+    slug: 'other',
     api_backend: 'chat_completions',
     models: [{ id: 'common' }, { id: 'org-only' }],
   };
@@ -296,15 +295,16 @@ test('catalog includes organization models and resolves workspace precedence lik
     const url = String(input);
     urls.push(url);
     if (url.endsWith('/workspaces/workspace/llm_providers')) return json([workspace]);
-    if (url.endsWith('/organizations/org/llm_providers')) return json([organization]);
+    if (url.endsWith('/organizations/org/llm_providers')) return json([workspace, organization]);
     return json({ data: [], servers: [], skills: [], next_page: null });
   }) as typeof fetch;
   const loaded = await loadBuilderCatalog('org', 'workspace');
   expect(urls).toContain('/api/console/organizations/org/llm_providers');
   expect(urls.some((url) => url.includes('/directory/servers'))).toBe(false);
-  expect(builderBackend('shared/org-only', loaded)).toBe('chat_completions');
+  expect(builderBackend('other/org-only', loaded)).toBe('chat_completions');
   expect(builderBackend('shared/common', loaded)).toBe('messages');
-  expect(builderBackend('common', loaded)).toBe('messages');
+  expect(() => builderBackend('common', loaded)).toThrow('Unable to resolve');
+  expect(urls.some((url) => url.endsWith('/workspaces/workspace/llm_providers'))).toBe(false);
   expect(builderBackend('org-only', loaded)).toBe('chat_completions');
   expect(builderBackend('organization_provider/org-only', loaded)).toBe('chat_completions');
   expect(() => builderBackend('missing', loaded)).toThrow('Unable to resolve');

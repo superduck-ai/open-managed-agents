@@ -53,28 +53,16 @@ func (d *DB) ReplaceModelPriceCatalog(ctx context.Context, source string, prices
 
 func (d *DB) BillingCalculator() *billing.Calculator {
 	return billing.NewDatabaseCalculator(func(ctx context.Context, org, workspace string, requested []string) (map[string]billing.ModelPrice, error) {
-		providers, err := d.ListLLMProviders(ctx, org, workspace)
+		providers, err := d.ListLLMProviders(ctx, org)
 		if err != nil {
 			return nil, err
 		}
-		organization, err := d.ListLLMProviders(ctx, org, "")
-		if err != nil {
-			return nil, err
-		}
-		providers = append(providers, organization...)
 		models := make(map[string]billing.ModelPrice)
 		aliases := make(map[string]string)
-		workspaceModels := make(map[string]bool)
 		for _, provider := range providers {
 			for _, model := range provider.Models.IDs() {
-				if provider.WorkspaceUUID != "" {
-					workspaceModels[model] = true
-				}
 				qualified := provider.Slug + "/" + model
 				if _, exists := aliases[model]; exists {
-					if provider.WorkspaceUUID == "" && workspaceModels[model] {
-						continue
-					}
 					aliases[model] = ""
 				} else {
 					aliases[model] = qualified

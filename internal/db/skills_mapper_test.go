@@ -59,7 +59,7 @@ func TestSkillMapperBuilderContracts(t *testing.T) {
 				wantKind:  yourbatis.StatementInsert,
 				wantArgumentNames: []string{
 					"params.UUID", "params.ExternalID", "params.WorkspaceUUID",
-					"params.CreatedByAPIKeyUUID", "params.DisplayTitle", "params.LatestVersion",
+					"params.CreatedByAPIKeyUUID", "params.DisplayTitle", "params.IconKey", "params.LatestVersion",
 					"params.CreatedAt", "params.CreatedAt",
 				},
 				wantSQLFragments: []string{"INSERT INTO skills", "'custom'", "RETURNING"},
@@ -73,6 +73,17 @@ func TestSkillMapperBuilderContracts(t *testing.T) {
 				wantID:    "SkillMapper.FindByExternalID", wantKind: yourbatis.StatementSelect,
 				wantArgumentNames: []string{"workspaceUUID", "externalID"},
 				wantSQLFragments:  []string{"FROM skills", "workspace_uuid = $1", "external_id = $2"},
+			},
+		},
+		{
+			name: "list referencing active agents",
+			contract: mapperBuilderContract{
+				statement:         skillMapperListReferencingActiveAgentsStatement,
+				bound:             buildSkillMapperListReferencingActiveAgents(yourbatis.DialectPostgres, workspaceUUID, externalID),
+				wantID:            "SkillMapper.ListReferencingActiveAgents",
+				wantKind:          yourbatis.StatementSelect,
+				wantArgumentNames: []string{"workspaceUUID", "externalID", "externalID"},
+				wantSQLFragments:  []string{"FROM agents", "workspace_uuid = $1", "deleted_at IS NULL", "archived_at IS NULL", "JOIN agent_versions av", "av.workspace_uuid = agents.workspace_uuid", "av.version = CAST(ref->>'version' AS integer)"},
 			},
 		},
 		{
@@ -112,9 +123,9 @@ func TestSkillMapperBuilderContracts(t *testing.T) {
 				bound:     buildSkillMapperUpdateLatestVersionByExternalID(yourbatis.DialectPostgres, updateParams),
 				wantID:    "SkillMapper.UpdateLatestVersionByExternalID", wantKind: yourbatis.StatementUpdate,
 				wantArgumentNames: []string{
-					"params.LatestVersion", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID",
+					"params.LatestVersion", "params.IconKey", "params.UpdatedAt", "params.WorkspaceUUID", "params.ExternalID",
 				},
-				wantSQLFragments: []string{"UPDATE skills", "latest_version = $1", "workspace_uuid = $3", "RETURNING"},
+				wantSQLFragments: []string{"UPDATE skills", "latest_version = $1", "workspace_uuid = $4", "RETURNING"},
 			},
 		},
 		{

@@ -713,15 +713,22 @@ function AgentSkillsList({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="truncate text-sm font-semibold text-foreground">{skill.displayTitle}</span>
-                        <span className="hidden text-xs text-muted-foreground sm:inline">
-                          (<code className="truncate font-mono">{skill.idLabel}</code>)
-                        </span>
+                        {skill.displayTitle !== skill.idLabel ? (
+                          <span className="hidden text-xs text-muted-foreground sm:inline">
+                            (<code className="truncate font-mono">{skill.idLabel}</code>)
+                          </span>
+                        ) : null}
                         <Badge
                           variant="secondary"
                           className="h-auto rounded-md px-1.5 py-0.5 text-xs font-normal text-muted-foreground bg-secondary/80"
                         >
                           {formatAgentSkillSource(skill.source, msg)}
                         </Badge>
+                        {skill.metadataUnavailable ? (
+                          <Badge variant="destructive" className="h-auto rounded-md px-1.5 py-0.5 text-xs font-normal">
+                            {msg('managedAgents.agents.detail.skillUnavailableBadge', 'Unavailable')}
+                          </Badge>
+                        ) : null}
                       </div>
                       <SkillVersionBadges requestedVersion={skill.requestedVersion} msg={msg} />
                     </div>

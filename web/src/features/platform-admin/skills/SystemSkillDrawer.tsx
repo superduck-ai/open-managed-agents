@@ -1,20 +1,18 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import type { SkillFilePreview } from '@/features/skills/api';
+import { SkillContent } from '@/features/skills/SkillContent';
 import { Upload } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
-import { Badge } from '@/shared/ui/badge';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
+import { Sheet, SheetContent } from '@/shared/ui/sheet';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
-import { CopyIdCell } from '@/shared/ui/data-table-interactions';
 import { usePlatformAdmin } from '../context';
-import { SystemSkillError, SystemSkillStatus, systemSkillErrorMessage } from './feedback';
-import { SystemSkillVersions } from './SystemSkillVersions';
-import { SystemSkillEvents } from './SystemSkillEvents';
+import { SystemSkillError, systemSkillErrorMessage } from './feedback';
+import { SystemSkillDrawerHeader } from './SystemSkillDrawerHeader';
 import { systemSkillsKey, type SystemSkill, type SystemAction, type SystemPackage } from './types';
 
-type Confirmation = { action: SystemAction; version: string; revision: number };
+type Confirmation = { action: SystemAction };
 
 export function SystemSkillDrawer({
   skillID,
@@ -29,8 +27,7 @@ export function SystemSkillDrawer({
 }) {
   const { client } = usePlatformAdmin();
   const { msg } = useI18n();
-  const [tab, setTab] = useState('overview');
-  const [contentVersion, setContentVersion] = useState<string | null>(null);
+  const [open, setOpen] = useState(true);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -39,10 +36,11 @@ export function SystemSkillDrawer({
     queryFn: ({ signal }) => client.request<SystemSkill>(`/skills/${encodeURIComponent(skillID)}`, { signal }),
   });
   const skill = query.data;
-  const confirm = (action: SystemAction, version = '') => {
+  const previewVersion = skill?.default_version ?? null;
+  const confirm = (action: SystemAction) => {
     if (!skill) return;
     setError('');
-    setConfirmation({ action, version, revision: skill.revision });
+    setConfirmation({ action });
   };
   const change = async () => {
     if (!confirmation || pending) return;
@@ -62,28 +60,19 @@ export function SystemSkillDrawer({
   return (
     <>
       <Sheet
-        open
-        onOpenChange={(open) => {
-          if (!open && !pending) onClose();
+        open={open}
+        modal={false}
+        onOpenChange={(nextOpen) => {
+          if (!pending) setOpen(nextOpen);
         }}
+        onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}
       >
-        <SheetContent showCloseButton={!pending} showOverlay={false} className="gap-0">
-          <SheetHeader className="shrink-0 border-b-[0.5px] border-border px-4 py-4 pr-12">
-            <SheetTitle>{skill?.display_title || msg('skills.detail.title', 'Skill details')}</SheetTitle>
-            <SheetDescription className="text-xs">
-              {msg('systemSkills.scope', 'System-wide, available to all workspaces')}
-            </SheetDescription>
-            {skill && (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Badge variant="secondary">{msg('systemSkills.builtin', 'System built-in')}</Badge>
-                <SystemSkillStatus skill={skill} />
-                <CopyIdCell
-                  value={skill.id}
-                  ariaLabel={msg('skills.copyAria', 'Copy {skillId}', { skillId: skill.id })}
-                />
-              </div>
-            )}
-          </SheetHeader>
+        <SheetContent
+          showCloseButton={false}
+          showOverlay={false}
+          className="inset-y-2 right-2 h-auto w-[calc(100%-1rem)] max-w-[480px] min-h-0 gap-0 overflow-hidden rounded-xl border-[0.5px] p-0 sm:max-w-[480px]"
+        >
+          <SystemSkillDrawerHeader skill={skill} version={previewVersion} pending={pending} onChanged={onChanged} />
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {query.isPending ? (
               <p role="status">{msg('common.loading', 'Loading...')}</p>
@@ -105,33 +94,7 @@ export function SystemSkillDrawer({
                       </Button>
                     )}
                   </div>
-                  <Tabs value={tab} onValueChange={setTab}>
-                    <TabsList variant="line" className="mb-4">
-                      <TabsTrigger value="overview">{msg('systemSkills.overview', 'Overview')}</TabsTrigger>
-                      <TabsTrigger value="versions">{msg('systemSkills.versions', 'Versions')}</TabsTrigger>
-                      <TabsTrigger value="content">{msg('systemSkills.content', 'Package contents')}</TabsTrigger>
-                      <TabsTrigger value="events">{msg('systemSkills.events', 'Activity')}</TabsTrigger>
-                    </TabsList>
-                    <TabsContent value="overview">
-                      <SystemSkillOverview skill={skill} />
-                    </TabsContent>
-                    <TabsContent value="versions">
-                      <SystemSkillVersions
-                        skill={skill}
-                        onAction={confirm}
-                        onContent={(version) => {
-                          setContentVersion(version);
-                          setTab('content');
-                        }}
-                      />
-                    </TabsContent>
-                    <TabsContent value="content">
-                      <SystemSkillContent skillID={skillID} version={contentVersion ?? skill.default_version} />
-                    </TabsContent>
-                    <TabsContent value="events">
-                      <SystemSkillEvents skillID={skillID} />
-                    </TabsContent>
-                  </Tabs>
+                  <SystemSkillContent skillID={skillID} version={previewVersion} />
                 </>
               )
             )}
@@ -147,10 +110,7 @@ export function SystemSkillDrawer({
         <DialogContent closeButtonDisabled={pending}>
           <DialogHeader>
             <DialogTitle>{msg('systemSkills.confirmAction', 'Confirm system skill change')}</DialogTitle>
-            <DialogDescription>
-              {skillID}
-              {confirmation?.version ? ` / ${confirmation.version}` : ''}
-            </DialogDescription>
+            <DialogDescription>{skillID}</DialogDescription>
           </DialogHeader>
           {confirmation && <SystemSkillImpact action={confirmation.action} />}{' '}
           {error && (
@@ -164,7 +124,7 @@ export function SystemSkillDrawer({
             </Button>
             <Button
               variant={confirmation?.action === 'unlist' ? 'destructive' : 'default'}
-              disabled={pending || !!error}
+              disabled={pending}
               onClick={() => void change()}
             >
               {pending ? msg('common.saving', 'Saving...') : msg('common.confirm', 'Confirm')}
@@ -187,26 +147,8 @@ function SystemSkillImpact({ action }: { action: SystemAction }) {
       'systemSkills.listImpact',
       'Make this skill selectable in all workspaces. It will not be added to Agents automatically.',
     ),
-    publish: msg(
-      'systemSkills.publishImpact',
-      'Published content cannot be overwritten. Keep the current default; the first published version becomes the default and is listed.',
-    ),
-    set_default: msg(
-      'systemSkills.defaultImpact',
-      'Use this version when a future new session first resolves latest. Pinned Agent versions and existing sessions will not change.',
-    ),
   };
   return <p className="text-sm leading-6 text-muted-foreground">{messages[action]}</p>;
-}
-
-function SystemSkillOverview({ skill }: { skill: SystemSkill }) {
-  const { msg } = useI18n();
-  return (
-    <dl>
-      <dt className="mb-1 text-xs text-muted-foreground">{msg('systemSkills.defaultVersion', 'Default version')}</dt>
-      <dd className="text-sm">{skill.default_version || '—'}</dd>
-    </dl>
-  );
 }
 
 function SystemSkillContent({ skillID, version }: { skillID: string; version: string | null }) {
@@ -231,15 +173,18 @@ function SystemSkillContent({ skillID, version }: { skillID: string; version: st
   if (query.isError) return <SystemSkillError error={query.error} retry={() => void query.refetch()} />;
   return (
     <div className="space-y-4">
-      <p className="text-xs text-muted-foreground">{version}</p>
       <p className="text-sm">{query.data.description}</p>
-      <pre className="max-h-48 overflow-auto rounded-lg border-[0.5px] border-border p-3 text-xs">
-        {query.data.files.join('\n')}
-      </pre>
-      <h3 className="text-sm font-medium">SKILL.md</h3>
-      <pre className="overflow-auto rounded-lg bg-muted p-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words">
-        {query.data.skill_md}
-      </pre>
+      <SkillContent
+        key={`${skillID}/${version}`}
+        content={query.data}
+        contentKey={`platform-admin/${skillID}/${version}`}
+        loadFile={(path, signal) =>
+          client.request<SkillFilePreview>(
+            `/skills/${encodeURIComponent(skillID)}/versions/${encodeURIComponent(version)}/content?path=${encodeURIComponent(path)}`,
+            { signal },
+          )
+        }
+      />
     </div>
   );
 }

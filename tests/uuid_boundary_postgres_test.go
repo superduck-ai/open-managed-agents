@@ -420,6 +420,7 @@ func TestTypedUUIDResourceFamiliesPostgres(t *testing.T) {
 			CreatedByAPIKeyUUID: ids.APIKeyUUID,
 			CreatedAt:           now.Add(time.Second),
 		},
+		nil,
 	)
 	if err != nil || updatedSkill.LatestVersion == nil || *updatedSkill.LatestVersion != secondSkillVersion.Version {
 		t.Fatalf("create second Skill version = (%+v, %+v, %v)", updatedSkill, secondSkillVersion, err)
@@ -900,11 +901,13 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		t.Fatalf("create MCP OAuth flow with nullable typed user UUID = (%+v, %v)", flow, err)
 	}
 
-	builtin, builtinVersion, err := app.db.UpsertBuiltinSkillWithVersion(ctx, db.BuiltinSkill{
+	if err := app.db.SyncBundledSkill(ctx, db.SystemSkill{
+		UUID:         uuid.NewV4().String(),
 		ExternalID:   "builtin_typed_uuid_" + suffix,
 		DisplayTitle: "typed UUID",
-		CreatedAt:    now,
-	}, db.BuiltinSkillVersion{
+		IconKey:      "blocks",
+	}, db.SystemSkillVersion{
+		UUID:        uuid.NewV4().String(),
 		ExternalID:  "builtinver_typed_uuid_" + suffix,
 		Version:     "1.0.0",
 		Name:        "typed-uuid",
@@ -915,9 +918,16 @@ func TestTypedUUIDSessionsAndRuntimePostgres(t *testing.T) {
 		SizeBytes:   1,
 		SHA256:      strings.Repeat("d", 64),
 		CreatedAt:   now,
-	})
-	if err != nil || !isValidUUID(builtin.UUID) || !isValidUUID(builtinVersion.UUID) {
-		t.Fatalf("upsert builtin Skill through typed UUID rows = (%+v, %+v, %v)", builtin, builtinVersion, err)
+	}); err != nil {
+		t.Fatalf("sync builtin Skill: %v", err)
+	}
+	builtin, err := app.db.GetAvailableSystemSkill(ctx, "builtin_typed_uuid_"+suffix)
+	if err != nil || !isValidUUID(builtin.UUID) {
+		t.Fatalf("get builtin Skill through typed UUID rows = (%+v, %v)", builtin, err)
+	}
+	builtinVersion, err := app.db.GetSystemSkillVersion(ctx, builtin.ExternalID, "1.0.0")
+	if err != nil || !isValidUUID(builtinVersion.UUID) {
+		t.Fatalf("get builtin Skill version through typed UUID rows = (%+v, %v)", builtinVersion, err)
 	}
 }
 

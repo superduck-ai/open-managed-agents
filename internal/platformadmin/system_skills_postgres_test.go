@@ -12,10 +12,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"sync"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -23,6 +21,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
 	"github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
+	"github.com/superduck-ai/open-managed-agents/skills"
 )
 
 type systemSkillTestStore struct {
@@ -76,7 +75,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 			return err
 		}
 		for _, id := range []string{actor, backup} {
-			if _, err := tx.InsertUser(t.Context(), db.PlatformAuthUserInput{UUID: id, ExternalID: "user_" + id, OrganizationUUID: org.UUID, Email: id + "@example.com", Role: "admin"}); err != nil {
+			if _, err := tx.InsertUser(t.Context(), db.PlatformAuthUserInput{UUID: id, ExternalID: "user_" + id, OrganizationUUID: org.UUID, Email: id + "@example.com", Name: "Skill Administrator", Role: "admin"}); err != nil {
 				return err
 			}
 		}
@@ -126,7 +125,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		}
 		return buffer.Bytes()
 	}
-	uploadTo := func(target, version string, revision int64, publish bool, data []byte) *httptest.ResponseRecorder {
+	uploadTo := func(target string, data []byte) *httptest.ResponseRecorder {
 		t.Helper()
 		var body bytes.Buffer
 		form := multipart.NewWriter(&body)
@@ -137,18 +136,16 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		if _, err := file.Write(data); err != nil {
 			t.Fatal(err)
 		}
-		for key, value := range map[string]string{"skill_id": target, "version": version, "revision": strconv.FormatInt(revision, 10), "publish": strconv.FormatBool(publish)} {
-			if err := form.WriteField(key, value); err != nil {
-				t.Fatal(err)
-			}
+		if err := form.WriteField("skill_id", target); err != nil {
+			t.Fatal(err)
 		}
 		if err := form.Close(); err != nil {
 			t.Fatal(err)
 		}
 		return send("POST", "/skills/", &body, form.FormDataContentType(), true)
 	}
-	upload := func(version string, revision int64, publish bool, data []byte) *httptest.ResponseRecorder {
-		return uploadTo("", version, revision, publish, data)
+	upload := func(data []byte) *httptest.ResponseRecorder {
+		return uploadTo("", data)
 	}
 
 	requireStatus := func(response *httptest.ResponseRecorder, status int) {
@@ -167,13 +164,11 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		}
 		return result
 	}
-	action := func(kind, version string, revision int64) *httptest.ResponseRecorder {
+	action := func(kind string) *httptest.ResponseRecorder {
 		t.Helper()
 		data, err := json.Marshal(struct {
-			Action   string `json:"action"`
-			Version  string `json:"version"`
-			Revision int64  `json:"revision"`
-		}{kind, version, revision})
+			Action string `json:"action"`
+		}{kind})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -181,7 +176,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 	}
 
 	requireStatus(send("POST", "/skills/inspect", nil, "", false), 403)
-	requireStatus(upload("1.0.0", 0, false, []byte("invalid zip")), 400)
+	requireStatus(upload([]byte("invalid zip")), 400)
 	if store.count() != 0 {
 		t.Fatal("invalid import created storage object")
 	}
@@ -217,47 +212,61 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 	if preview.Name != "fixture-system-skill" || len(preview.Files) != 1 || store.count() != 0 {
 		t.Fatal("inspection must parse the package without storing it")
 	}
-	requireStatus(upload("1.0.0", 0, false, initial), 200)
+	requireStatus(upload(initial), 200)
 	skill := get()
-	if skill.DefaultVersion != nil || skill.Listed {
-		t.Fatal("draft became visible")
+	if skill.Listed || skill.DefaultVersion == nil {
+		t.Fatalf("new import must set default and stay unlisted: %+v", skill)
 	}
-	if _, err := database.GetBuiltinSkill(t.Context(), skill.ID); !errors.Is(err, db.ErrNotFound) {
-		t.Fatalf("draft leaked to public lookup: %v", err)
-	}
-	if _, err := database.GetBuiltinSkillVersion(t.Context(), skill.ID, "1.0.0"); !errors.Is(err, db.ErrNotFound) {
-		t.Fatalf("draft version leaked: %v", err)
-	}
-	requireStatus(send("GET", "/skills/fixture-system-skill/versions/1.0.0/content", nil, "", false), 200)
-	requireStatus(upload("1.0.0", skill.Revision, false, archive("fixture-system-skill", "changed content")), 409)
-	requireStatus(upload("1.0.0", 0, false, initial), 200)
-	if store.count() != 1 {
-		t.Fatalf("failed/duplicate uploads leaked: %d", store.count())
-	}
-	requireStatus(action("publish", "1.0.0", skill.Revision-1), 409)
-	requireStatus(action("publish", "1.0.0", skill.Revision), 200)
-	skill = get()
-	if !skill.Listed || skill.DefaultVersion == nil || *skill.DefaultVersion != "1.0.0" {
-		t.Fatal("first publish did not set default and list")
-	}
-	{
-		before := send("GET", "/skills/fixture-system-skill/events", nil, "", false).Body.String()
-		requireStatus(action("publish", "missing", skill.Revision), 404)
-		requireStatus(action("publish", "1.0.0", skill.Revision), 200)
-		if got := get(); got.Revision != skill.Revision || !got.Listed || *got.DefaultVersion != *skill.DefaultVersion {
-			t.Errorf("repeated publish changed skill: before=%+v after=%+v", skill, got)
+	firstVersion := *skill.DefaultVersion
+	for range 2 {
+		objects := store.count()
+		response := upload(initial)
+		requireStatus(response, 200)
+		var result struct {
+			Skill     systemSkillTestResource `json:"skill"`
+			Duplicate bool                    `json:"duplicate"`
 		}
-		if after := send("GET", "/skills/fixture-system-skill/events", nil, "", false).Body.String(); after != before {
-			t.Error("repeated publish created audit events")
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if !result.Duplicate || result.Skill.DefaultVersion == nil || *result.Skill.DefaultVersion != firstVersion || store.count() != objects {
+			t.Fatalf("duplicate import changed default or retained another object: %s, objects=%d", response.Body.String(), store.count())
 		}
 	}
+	stored, err := database.GetSystemSkill(t.Context(), skill.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importedVersions, err := database.SystemSkillVersions(t.Context(), stored.UUID, 10, 0)
+	if err != nil || len(importedVersions) != 1 {
+		t.Fatalf("duplicate imports created versions: %+v %v", importedVersions, err)
+	}
+	consoleRoutes := handler.ConsoleRoutes()
+	consolePreview := func(version, query string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "/fixture-system-skill/versions/"+version+"/preview"+query, nil)
+		request = request.WithContext(auth.WithPrincipal(request.Context(), auth.Principal{
+			CredentialType: auth.CredentialTypePlatformSession,
+			UserUUID:       actor,
+			WorkspaceUUID:  uuid.NewV4().String(),
+		}))
+		recorder := httptest.NewRecorder()
+		consoleRoutes.ServeHTTP(recorder, request)
+		return recorder
+	}
+	requireStatus(consolePreview(firstVersion, ""), 404)
+	requireStatus(consolePreview(firstVersion, "?download=1"), 404)
+	requireStatus(send("GET", "/skills/fixture-system-skill/versions/"+firstVersion+"/content", nil, "", false), 200)
+	requireStatus(action("list"), 200)
 	skill = get()
+	if !skill.Listed || skill.DefaultVersion == nil || *skill.DefaultVersion != firstVersion {
+		t.Fatal("list did not expose default version")
+	}
+	requireStatus(consolePreview(firstVersion, ""), 200)
 	{
-		before := send("GET", "/skills/fixture-system-skill/events", nil, "", false).Body.String()
 		objects := store.count()
 		wrongName := archive("different-skill", "wrong target")
 		requireStatus(inspect(skill.ID, wrongName), 200)
-		response := uploadTo(skill.ID, "9.0.0", skill.Revision, false, wrongName)
+		response := uploadTo(skill.ID, wrongName)
 		requireStatus(response, 400)
 		var result struct {
 			Error struct {
@@ -267,115 +276,89 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.Error.Code != "skill_name_mismatch" {
 			t.Fatalf("name mismatch response: %s error=%v", response.Body.String(), err)
 		}
-		if get().Revision != skill.Revision || store.count() != objects || send("GET", "/skills/fixture-system-skill/events", nil, "", false).Body.String() != before {
+		if store.count() != objects {
 			t.Fatal("rejected name mismatch left side effects")
 		}
 	}
 
-	versions, _, err := database.ListBuiltinSkillVersionsPage(t.Context(), db.ListBuiltinSkillVersionsPageParams{SkillExternalID: skill.ID, Limit: 20})
+	versions, _, err := database.ListSystemSkillVersionsPage(t.Context(), db.ListSystemSkillVersionsPageParams{SkillExternalID: skill.ID, Limit: 20})
 	if err != nil || len(versions) != 1 {
 		t.Fatalf("legacy version feed: %v %+v", err, versions)
 	}
-	requireStatus(upload("2.0.0", skill.Revision, false, archive("fixture-system-skill", "second version")), 200)
+	requireStatus(uploadTo(skill.ID, archive("fixture-system-skill", "second version")), 200)
 	skill = get()
-	requireStatus(action("set_default", "2.0.0", skill.Revision), 409)
-	requireStatus(action("publish", "2.0.0", skill.Revision), 200)
-	skill = get()
-	if *skill.DefaultVersion != "1.0.0" {
-		t.Fatal("new publish changed existing default")
+	if !skill.Listed || skill.DefaultVersion == nil || *skill.DefaultVersion == firstVersion {
+		t.Fatalf("update did not switch active default while keeping listed: %+v", skill)
 	}
-	requireStatus(action("set_default", "2.0.0", skill.Revision), 200)
-	skill = get()
-	resolved, err := database.GetBuiltinSkillVersion(t.Context(), skill.ID, "latest")
-	if err != nil || resolved.Version != "2.0.0" {
+	secondVersion := *skill.DefaultVersion
+	objects := store.count()
+	requireStatus(upload(initial), 200)
+	if current := get(); current.DefaultVersion == nil || *current.DefaultVersion != secondVersion || !current.Listed || store.count() != objects {
+		t.Fatal("reimporting historical content changed default, listing, or object count")
+	}
+	resolved, err := database.GetSystemSkillVersion(t.Context(), skill.ID, "latest")
+	if err != nil || resolved.Version != secondVersion {
 		t.Fatalf("latest resolve: %+v %v", resolved, err)
 	}
-	requireStatus(action("unlist", "", skill.Revision), 200)
-	count, err := database.CountBuiltinSkills(t.Context())
+	requireStatus(action("unlist"), 200)
+	requireStatus(consolePreview(secondVersion, ""), 404)
+	requireStatus(consolePreview(secondVersion, "?download=1"), 404)
+	count, err := database.CountListedSystemSkills(t.Context())
 	if err != nil || count != 0 {
 		t.Fatalf("unlisted catalog count=%d error=%v", count, err)
 	}
-	resolved, err = database.GetBuiltinSkillVersion(t.Context(), skill.ID, "latest")
-	if err != nil || resolved.Version != "2.0.0" {
+	resolved, err = database.GetSystemSkillVersion(t.Context(), skill.ID, "latest")
+	if err != nil || resolved.Version != secondVersion {
 		t.Fatal("unlisting broke existing reference")
 	}
-	{
-		before := get()
-		events := send("GET", "/skills/fixture-system-skill/events", nil, "", false).Body.String()
-		requireStatus(action("publish", "1.0.0", before.Revision), 200)
-		after := get()
-		if after.Listed || after.Revision != before.Revision || *after.DefaultVersion != *before.DefaultVersion || events != send("GET", "/skills/fixture-system-skill/events", nil, "", false).Body.String() {
-			t.Fatal("repeated publish changed unlisted skill")
-		}
-	}
 
-	requireStatus(action("list", "", get().Revision), 200)
-	skill = get()
-	var wg sync.WaitGroup
-	statuses := make(chan int, 2)
-	for _, version := range []string{"3.0.0", "4.0.0"} {
-		wg.Go(func() { statuses <- upload(version, skill.Revision, false, initial).Code })
+	requireStatus(action("list"), 200)
+	requireStatus(consolePreview(secondVersion, ""), 200)
+	requireStatus(consolePreview(secondVersion, "?download=1"), 200)
+	preloadedCount, err := skills.SyncBundledSkills(t.Context(), database, store, catalog.Files)
+	if err != nil || preloadedCount != 4 {
+		t.Fatalf("startup preload: count=%d error=%v", preloadedCount, err)
 	}
-	wg.Wait()
-	close(statuses)
-	successes, conflicts := 0, 0
-	for status := range statuses {
-		if status == 200 {
-			successes++
+	preloaded, err := database.GetSystemSkill(t.Context(), "xlsx")
+	if err != nil || !preloaded.Bundled || !preloaded.Listed {
+		t.Fatalf("preloaded skill: %+v %v", preloaded, err)
+	}
+	requireStatus(send("DELETE", "/skills/xlsx", nil, "", true), 403)
+	requireStatus(inspect("xlsx", archive("xlsx", "replace bundled")), 200)
+	requireStatus(uploadTo("xlsx", archive("xlsx", "replace bundled")), 200)
+	overridden, err := database.GetSystemSkill(t.Context(), "xlsx")
+	if err != nil || *overridden.LatestVersion == *preloaded.LatestVersion {
+		t.Fatalf("bundled override inactive: %+v %v", overridden, err)
+	}
+	requireStatus(send("DELETE", "/skills/xlsx", nil, "", false), 403)
+	if _, err := skills.SyncBundledSkills(t.Context(), database, store, catalog.Files); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := database.GetSystemSkill(t.Context(), "xlsx")
+	if err != nil || *restarted.LatestVersion != *overridden.LatestVersion {
+		t.Fatalf("startup clobbered uploaded override: %+v %v", restarted, err)
+	}
+	requireStatus(send("DELETE", "/skills/xlsx", nil, "", true), 204)
+	restored, err := database.GetSystemSkill(t.Context(), "xlsx")
+	if err != nil || *restored.LatestVersion != *preloaded.LatestVersion || !restored.Bundled {
+		t.Fatalf("DELETE removed bundled skill instead of restoring: %+v %v", restored, err)
+	}
+	requireStatus(send("DELETE", "/skills/xlsx", nil, "", true), 403)
+	for _, id := range []string{"xlsx", "pptx", "pdf", "docx"} {
+		loaded, err := database.GetSystemSkill(t.Context(), id)
+		if err != nil || loaded.LatestVersion == nil || !loaded.Bundled {
+			t.Fatalf("missing bundled skill %s: %v", id, err)
 		}
-		if status == 409 {
-			conflicts++
-		}
+		requireStatus(send("GET", "/skills/"+id+"/versions/"+*loaded.LatestVersion+"/content?download=1", nil, "", false), 200)
 	}
-	if successes != 1 || conflicts != 1 {
-		t.Fatalf("concurrent writes: success=%d conflict=%d", successes, conflicts)
+	requireStatus(upload(archive("delete-me", "uploaded skill")), 200)
+	beforeDelete := store.count()
+	requireStatus(send("DELETE", "/skills/delete-me", nil, "", false), 403)
+	requireStatus(send("DELETE", "/skills/delete-me", nil, "", true), 204)
+	requireStatus(send("GET", "/skills/delete-me", nil, "", false), 404)
+	if store.count() != beforeDelete {
+		t.Fatal("catalog deletion removed historical archive")
 	}
-	if store.count() != 3 {
-		t.Fatalf("concurrent rejection leaked object: %d", store.count())
-	}
-	requireStatus(upload("5.0.0", get().Revision, true, archive("fixture-system-skill", "published import")), 200)
-	if got := get(); *got.DefaultVersion != "2.0.0" {
-		t.Fatal("published import changed existing default")
-	}
-	requireStatus(uploadTo("", "1.0.0", 0, true, archive("immediate-publish", "first published import")), 200)
-	imported, err := database.GetSystemSkill(t.Context(), "immediate-publish")
-	if err != nil || !imported.Listed || imported.LatestVersion == nil || *imported.LatestVersion != "1.0.0" {
-		t.Fatalf("first published import: %+v %v", imported, err)
-	}
-	events, err := database.SystemSkillEvents(t.Context(), imported.UUID, 10, 0)
-	if err != nil || len(events) != 2 || events[0].Action != "publish" || events[1].Action != "import_draft" {
-		t.Fatalf("published import audit order: %+v %v", events, err)
-	}
-
-	requireStatus(upload("6.0.0", get().Revision, false, archive("fixture-system-skill", "seed collision")), 200)
-	existing, err := database.GetSystemSkill(t.Context(), "fixture-system-skill")
-	if err != nil {
-		t.Fatal(err)
-	}
-	draft, err := database.SystemSkillVersion(t.Context(), existing.UUID, "6.0.0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = database.UpsertBuiltinSkillWithVersion(t.Context(), db.BuiltinSkill{ExternalID: existing.ExternalID, DisplayTitle: existing.DisplayTitle}, db.BuiltinSkillVersion{
-		ExternalID: draft.ExternalID, Version: draft.Version, Name: draft.Name, Description: draft.Description, Directory: draft.Directory, S3Bucket: draft.S3Bucket, S3Key: draft.S3Key, SizeBytes: draft.SizeBytes, SHA256: draft.SHA256, CreatedAt: draft.CreatedAt,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	seeded, err := database.GetBuiltinSkillVersion(t.Context(), existing.ExternalID, "latest")
-	if err != nil || seeded.Version != "6.0.0" {
-		t.Fatalf("seeded draft must resolve: %+v %v", seeded, err)
-	}
-	if _, err := database.SoftDeleteMissingBuiltinSkills(t.Context(), []string{existing.ExternalID}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	objects := store.count()
-	requireStatus(uploadTo("", "2.0.0", 0, true, archive("immediate-publish", "pruned name")), 409)
-	if store.count() != objects {
-		t.Fatal("pruned name rejection leaked archive")
-	}
-
-	requireStatus(send("GET", "/skills/fixture-system-skill/events", nil, "", false), 200)
 	if err := service.SetAdministrator(t.Context(), actor, "fixture operator", "", false); err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +369,7 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 	staleAuthorization.verify = func(context.Context, string) (db.PlatformAdminAccount, error) {
 		return db.PlatformAdminAccount{UUID: actor, Granted: true}, nil
 	}
-	request := httptest.NewRequest("POST", "/skills/fixture-system-skill/actions", bytes.NewBufferString(`{"action":"unlist","revision":1}`))
+	request := httptest.NewRequest("POST", "/skills/fixture-system-skill/actions", bytes.NewBufferString(`{"action":"unlist"}`))
 	request.AddCookie(&http.Cookie{Name: "sessionKey", Value: actor})
 	request.Header.Set("X-CSRF-Token", auth.PlatformCSRFToken(actor))
 	response := httptest.NewRecorder()

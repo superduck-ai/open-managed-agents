@@ -47,6 +47,7 @@ type skillResponse struct {
 	ID            string `json:"id"`
 	CreatedAt     string `json:"created_at"`
 	DisplayTitle  string `json:"display_title"`
+	IconKey       string `json:"icon_key,omitempty"`
 	LatestVersion string `json:"latest_version"`
 	Source        string `json:"source"`
 	Type          string `json:"type"`
@@ -135,6 +136,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 	versionValue := newVersionString()
 	objectKey := fmt.Sprintf("workspaces/%s/skills/%s/versions/%s/%s.zip", principal.WorkspaceUUID, skillUUID, versionValue, sanitizeForKey(pkg.Directory))
 
+	iconKey, err := skillIconKey(r.FormValue("icon_key"))
+	if err != nil {
+		return err
+	}
 	displayTitle, err := skillDisplayLabel(r, pkg)
 	if err != nil {
 		return err
@@ -150,6 +155,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		WorkspaceUUID:       principal.WorkspaceUUID,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		DisplayTitle:        &displayTitle,
+		IconKey:             iconKey,
 		CreatedAt:           now,
 	}, db.SkillVersion{
 		UUID:                versionUUID,
@@ -165,7 +171,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) error {
 		SHA256:              pkg.SHA256,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		CreatedAt:           now,
-	}, !hasSkillsBeta(r))
+	}, !hasSkillsBeta(r) && !isConsoleSkillRequest(r))
 	if err != nil {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceUUID, h.store.Name(), objectKey, versionID)
 		var displayTitleConflict *db.SkillDisplayTitleConflictError
@@ -204,14 +210,14 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 	var hasMore bool
 	switch source {
 	case "anthropic":
-		builtins, more, err := h.db.ListBuiltinSkillsPage(r.Context(), db.ListBuiltinSkillsPageParams{
+		builtins, more, err := h.db.ListListedSystemSkillsPage(r.Context(), db.ListSystemSkillsPageParams{
 			Limit:  limit,
 			Offset: offset,
 		})
 		if err != nil {
 			return internalError("Could not list skills", fmt.Errorf("list built-in skills: %w", err))
 		}
-		data = responsesFromBuiltinSkills(builtins)
+		data = responsesFromSystemSkills(builtins)
 		hasMore = more
 	case "custom":
 		records, more, err := h.db.ListSkillsPage(r.Context(), db.ListSkillsPageParams{
@@ -241,7 +247,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offset, limit int) ([]skillResponse, bool, error) {
-	builtinCount, err := h.db.CountBuiltinSkills(r.Context())
+	builtinCount, err := h.db.CountListedSystemSkills(r.Context())
 	if err != nil {
 		return nil, false, err
 	}
@@ -249,14 +255,14 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 		// The combined feed is ordered as all builtin skills first, followed by
 		// workspace custom skills. Offsets inside the builtin range page through
 		// builtin rows before spilling into custom rows.
-		builtins, builtinMore, err := h.db.ListBuiltinSkillsPage(r.Context(), db.ListBuiltinSkillsPageParams{
+		builtins, builtinMore, err := h.db.ListListedSystemSkillsPage(r.Context(), db.ListSystemSkillsPageParams{
 			Limit:  limit,
 			Offset: offset,
 		})
 		if err != nil {
 			return nil, false, err
 		}
-		data := responsesFromBuiltinSkills(builtins)
+		data := responsesFromSystemSkills(builtins)
 		if len(data) == limit {
 			hasMore := builtinMore || builtinCount > offset+len(data)
 			if !hasMore && offset+len(data) >= builtinCount {
@@ -305,13 +311,13 @@ func (h *Handler) listAllSkills(r *http.Request, principal auth.Principal, offse
 	return responsesFromSkills(records), hasMore, nil
 }
 
-func (h *Handler) getBuiltinSkill(ctx context.Context, skillID string) (db.BuiltinSkill, bool, error) {
-	skill, err := h.db.GetBuiltinSkill(ctx, skillID)
+func (h *Handler) getAvailableSystemSkill(ctx context.Context, skillID string) (db.SystemSkill, bool, error) {
+	skill, err := h.db.GetAvailableSystemSkill(ctx, skillID)
 	if errors.Is(err, db.ErrNotFound) {
-		return db.BuiltinSkill{}, false, nil
+		return db.SystemSkill{}, false, nil
 	}
 	if err != nil {
-		return db.BuiltinSkill{}, false, err
+		return db.SystemSkill{}, false, err
 	}
 	return skill, true, nil
 }
@@ -322,10 +328,10 @@ func (h *Handler) retrieveRoute(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request, skillID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if skill, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+	if skill, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		return internalError("Could not retrieve skill", fmt.Errorf("retrieve built-in skill %q: %w", skillID, err))
 	} else if ok {
-		return h.writeSkill(w, r, responseFromBuiltinSkill(skill))
+		return h.writeSkill(w, r, responseFromSystemSkill(skill))
 	}
 	record, err := h.db.GetSkill(r.Context(), principal.WorkspaceUUID, skillID)
 	if err != nil {
@@ -349,7 +355,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, skillID string)
 	if err := requireWorkspaceCredential(principal); err != nil {
 		return err
 	}
-	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		if mapped := mapSkillDeleteError(err); mapped != err {
 			return mapped
 		}
@@ -381,7 +387,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 	if err := requireWorkspaceCredential(principal); err != nil {
 		return err
 	}
-	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		return internalError("Could not create skill version", fmt.Errorf("retrieve built-in skill %q before version create: %w", skillID, err))
 	} else if ok {
 		return readOnlyBuiltinError()
@@ -400,7 +406,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		return internalError("Could not create skill version", fmt.Errorf("retrieve skill %q before version create: %w", skillID, err))
 	}
 
-	if !hasSkillsBeta(r) && skill.LatestVersion != nil {
+	if (!hasSkillsBeta(r) || isConsoleSkillRequest(r)) && skill.LatestVersion != nil {
 		previous, lookupErr := h.db.GetLatestSkillVersion(r.Context(), principal.WorkspaceUUID, skillID)
 		if lookupErr != nil {
 			return internalError("Could not load skill name", lookupErr)
@@ -408,6 +414,14 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		if previous.Name != pkg.Name {
 			return skillNameImmutable()
 		}
+	}
+	var iconKey *string
+	if r.FormValue("icon_key") != "" {
+		key, iconErr := skillIconKey(r.FormValue("icon_key"))
+		if iconErr != nil {
+			return iconErr
+		}
+		iconKey = new(key)
 	}
 	versionID, err := ids.New("skver_")
 	if err != nil {
@@ -434,7 +448,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, skillID 
 		SHA256:              pkg.SHA256,
 		CreatedByAPIKeyUUID: principal.APIKeyUUID,
 		CreatedAt:           now,
-	})
+	}, iconKey)
 	if err != nil {
 		h.cleanupUploadedObjectAfterMetadataFailure(r.Context(), principal.WorkspaceUUID, h.store.Name(), objectKey, versionID)
 		if errors.Is(err, db.ErrNotFound) {
@@ -452,7 +466,7 @@ func (h *Handler) listVersionsRoute(w http.ResponseWriter, r *http.Request) erro
 
 func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		return internalError("Could not list skill versions", fmt.Errorf("retrieve built-in skill %q before version list: %w", skillID, err))
 	} else if ok {
 		limit, err := parseLimitParam(r, defaultSkillVersionsLimit, maxSkillVersionsLimit)
@@ -463,7 +477,7 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 		if err != nil {
 			return invalidRequest(err)
 		}
-		versions, hasMore, err := h.db.ListBuiltinSkillVersionsPage(r.Context(), db.ListBuiltinSkillVersionsPageParams{
+		versions, hasMore, err := h.db.ListSystemSkillVersionsPage(r.Context(), db.ListSystemSkillVersionsPageParams{
 			OldestFirst:     hasSkillsBeta(r),
 			SkillExternalID: skillID,
 			Limit:           limit,
@@ -481,7 +495,7 @@ func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, skillID s
 			nextPage = &value
 		}
 		writeVersionsPage(w, r, pageResponse[skillVersionResponse]{
-			Data:     responsesFromBuiltinSkillVersions(versions),
+			Data:     responsesFromSystemVersions(versions),
 			HasMore:  hasMore,
 			NextPage: nextPage,
 		})
@@ -528,17 +542,17 @@ func (h *Handler) retrieveVersionRoute(w http.ResponseWriter, r *http.Request) e
 
 func (h *Handler) retrieveVersion(w http.ResponseWriter, r *http.Request, skillID, version string) error {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		return internalError("Could not retrieve skill version", fmt.Errorf("retrieve built-in skill %q before version retrieve: %w", skillID, err))
 	} else if ok {
-		record, err := h.db.GetBuiltinSkillVersion(r.Context(), skillID, version)
+		record, err := h.db.GetSystemSkillVersion(r.Context(), skillID, version)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				return skillVersionNotFound(version, err)
 			}
 			return internalError("Could not retrieve skill version", fmt.Errorf("retrieve built-in skill %q version %q: %w", skillID, version, err))
 		}
-		writeVersion(w, r, responseFromBuiltinVersion(record))
+		writeVersion(w, r, responseFromSystemVersion(record))
 		return nil
 	}
 
@@ -566,7 +580,7 @@ func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, skillID,
 	if err := requireWorkspaceCredential(principal); err != nil {
 		return err
 	}
-	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		if mapped := mapSkillDeleteError(err); mapped != err {
 			return mapped
 		}
@@ -603,11 +617,11 @@ func (h *Handler) downloadVersionRoute(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) downloadVersion(w http.ResponseWriter, r *http.Request, skillID, version string) {
 	principal, _ := auth.PrincipalFromContext(r.Context())
-	if _, ok, err := h.getBuiltinSkill(r.Context(), skillID); err != nil {
+	if _, ok, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		h.errorAdapter.Write(w, r, skillDownloadError(fmt.Errorf("get builtin skill %q before download: %w", skillID, err)))
 		return
 	} else if ok {
-		record, err := h.db.GetBuiltinSkillVersion(r.Context(), skillID, version)
+		record, err := h.db.GetSystemSkillVersion(r.Context(), skillID, version)
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				h.errorAdapter.Write(w, r, skillVersionNotFound(version, err))
@@ -616,7 +630,7 @@ func (h *Handler) downloadVersion(w http.ResponseWriter, r *http.Request, skillI
 			h.errorAdapter.Write(w, r, skillDownloadError(fmt.Errorf("get builtin skill %q version %q before download: %w", skillID, version, err)))
 			return
 		}
-		h.downloadBuiltinSkill(w, r, record)
+		h.downloadSystemSkill(w, r, record)
 		return
 	}
 
@@ -673,7 +687,7 @@ func (h *Handler) resolveVersion(ctx context.Context, workspaceUUID string, skil
 	return *skill.LatestVersion, nil
 }
 
-func (h *Handler) downloadBuiltinSkill(w http.ResponseWriter, r *http.Request, version db.BuiltinSkillVersion) {
+func (h *Handler) downloadSystemSkill(w http.ResponseWriter, r *http.Request, version db.SystemSkillVersion) {
 	object, err := h.store.Open(r.Context(), version.S3Key, nil)
 	if err != nil {
 		h.errorAdapter.Write(w, r, skillDownloadError(fmt.Errorf("open builtin skill %q version %q object %q: %w", version.SkillExternalID, version.Version, version.S3Key, err)))
@@ -711,6 +725,7 @@ func responseFromSkill(skill db.Skill) skillResponse {
 		ID:            skill.ExternalID,
 		CreatedAt:     formatTime(skill.CreatedAt),
 		DisplayTitle:  valueOrEmpty(skill.DisplayTitle),
+		IconKey:       skill.IconKey,
 		LatestVersion: valueOrEmpty(skill.LatestVersion),
 		Source:        skill.Source,
 		Type:          "skill",
@@ -726,11 +741,12 @@ func responsesFromSkills(skills []db.Skill) []skillResponse {
 	return out
 }
 
-func responseFromBuiltinSkill(skill db.BuiltinSkill) skillResponse {
+func responseFromSystemSkill(skill db.SystemSkill) skillResponse {
 	return skillResponse{
 		ID:            skill.ExternalID,
 		CreatedAt:     formatTime(skill.CreatedAt),
 		DisplayTitle:  firstNonEmpty(skill.DisplayTitle, skill.ExternalID),
+		IconKey:       skill.IconKey,
 		LatestVersion: valueOrEmpty(skill.LatestVersion),
 		Source:        "anthropic",
 		Type:          "skill",
@@ -738,10 +754,10 @@ func responseFromBuiltinSkill(skill db.BuiltinSkill) skillResponse {
 	}
 }
 
-func responsesFromBuiltinSkills(skills []db.BuiltinSkill) []skillResponse {
+func responsesFromSystemSkills(skills []db.SystemSkill) []skillResponse {
 	out := make([]skillResponse, 0, len(skills))
 	for _, skill := range skills {
-		out = append(out, responseFromBuiltinSkill(skill))
+		out = append(out, responseFromSystemSkill(skill))
 	}
 	return out
 }
@@ -767,7 +783,7 @@ func responsesFromSkillVersions(versions []db.SkillVersion) []skillVersionRespon
 	return out
 }
 
-func responseFromBuiltinVersion(version db.BuiltinSkillVersion) skillVersionResponse {
+func responseFromSystemVersion(version db.SystemSkillVersion) skillVersionResponse {
 	return skillVersionResponse{
 		ID:          version.ExternalID,
 		CreatedAt:   formatTime(version.CreatedAt),
@@ -780,10 +796,10 @@ func responseFromBuiltinVersion(version db.BuiltinSkillVersion) skillVersionResp
 	}
 }
 
-func responsesFromBuiltinSkillVersions(versions []db.BuiltinSkillVersion) []skillVersionResponse {
+func responsesFromSystemVersions(versions []db.SystemSkillVersion) []skillVersionResponse {
 	out := make([]skillVersionResponse, 0, len(versions))
 	for _, version := range versions {
-		out = append(out, responseFromBuiltinVersion(version))
+		out = append(out, responseFromSystemVersion(version))
 	}
 	return out
 }
@@ -833,6 +849,9 @@ func encodePageOffset(offset int, legacy bool) string {
 }
 
 func hasSkillsBeta(r *http.Request) bool {
+	if isConsoleSkillRequest(r) {
+		return false
+	}
 	for _, value := range r.Header.Values("anthropic-beta") {
 		for _, part := range strings.Split(value, ",") {
 			if strings.TrimSpace(part) == skillsBeta {

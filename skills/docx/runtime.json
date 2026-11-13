@@ -1,0 +1,10 @@
+{
+  "commands": [
+    "soffice",
+    "pdftoppm"
+  ],
+  "modules": [
+    "docx"
+  ],
+  "scope": "DOCX 创建、渲染；中文字体需视觉检查"
+}

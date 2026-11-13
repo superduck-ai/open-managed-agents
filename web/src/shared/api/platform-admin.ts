@@ -39,6 +39,7 @@ export class PlatformAdminClient {
     });
     const body = await response.json().catch(() => null);
     scope.throwIfAborted();
+    if (response.status === 204) return undefined as T;
     if (!response.ok) {
       const error = platformError(response.status, body);
       if (

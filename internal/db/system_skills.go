@@ -4,31 +4,60 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
+
+	"github.com/superduck-ai/yourbatis"
 )
 
-var (
-	ErrSystemSkillRevision     = errors.New("system skill revision changed")
-	ErrSystemSkillNameMismatch = errors.New("system skill name does not match")
-)
+var ErrSystemSkillNameMismatch = errors.New("system skill name does not match")
 
 type SystemSkillImport struct {
-	ActorUUID        string
-	Skill            SystemSkill
-	Version          SystemSkillVersion
-	ExpectedRevision int64
-	Publish          bool
+	Skill   SystemSkill
+	Version SystemSkillVersion
 }
 
 type SystemSkillChange struct {
-	ActorUUID string
-	SkillID   string
-	Revision  int64
-	Action    string
-	Version   string
+	IconKey string
+	SkillID string
+	Action  string
+}
+
+type ListSystemSkillsPageParams struct {
+	Limit  int
+	Offset int
+}
+
+type ListSystemSkillVersionsPageParams struct {
+	OldestFirst     bool
+	SkillExternalID string
+	Limit           int
+	Offset          int
 }
 
 func (d *DB) ListSystemSkills(ctx context.Context, query SystemSkillQuery) ([]SystemSkill, error) {
 	return NewSystemSkillMapper(d.mapperDB).List(ctx, query)
+}
+
+func (d *DB) ListListedSystemSkillsPage(ctx context.Context, params ListSystemSkillsPageParams) ([]SystemSkill, bool, error) {
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+	if params.Offset < 0 {
+		params.Offset = 0
+	}
+	rows, err := NewSystemSkillMapper(d.mapperDB).ListListed(ctx, params.Limit+1, params.Offset)
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(rows) > params.Limit
+	if hasMore {
+		rows = rows[:params.Limit]
+	}
+	return rows, hasMore, nil
+}
+
+func (d *DB) CountListedSystemSkills(ctx context.Context) (int, error) {
+	return NewSystemSkillMapper(d.mapperDB).CountListed(ctx)
 }
 
 func (d *DB) GetSystemSkill(ctx context.Context, id string) (SystemSkill, error) {
@@ -36,17 +65,51 @@ func (d *DB) GetSystemSkill(ctx context.Context, id string) (SystemSkill, error)
 	return skill, mapNoRows(err)
 }
 
+func (d *DB) GetAvailableSystemSkill(ctx context.Context, externalID string) (SystemSkill, error) {
+	skill, err := NewSystemSkillMapper(d.mapperDB).FindAvailable(ctx, externalID)
+	return skill, mapNoRows(err)
+}
+
+func (d *DB) ListSystemSkillVersionsPage(ctx context.Context, params ListSystemSkillVersionsPageParams) ([]SystemSkillVersion, bool, error) {
+	if params.Limit <= 0 {
+		params.Limit = 20
+	}
+	if params.Offset < 0 {
+		params.Offset = 0
+	}
+	mapper := NewSystemSkillMapper(d.mapperDB)
+	skillUUID, err := mapper.FindUUIDByExternalID(ctx, params.SkillExternalID)
+	if err != nil {
+		return nil, false, mapNoRows(err)
+	}
+	rows, err := mapper.Versions(ctx, skillUUID, params.Limit+1, params.Offset, params.OldestFirst)
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(rows) > params.Limit
+	if hasMore {
+		rows = rows[:params.Limit]
+	}
+	return rows, hasMore, nil
+}
+
 func (d *DB) SystemSkillVersions(ctx context.Context, skillUUID string, limit, offset int) ([]SystemSkillVersion, error) {
-	return NewSystemSkillMapper(d.mapperDB).Versions(ctx, skillUUID, limit, offset)
+	return NewSystemSkillMapper(d.mapperDB).Versions(ctx, skillUUID, limit, offset, false)
 }
 
-func (d *DB) SystemSkillVersion(ctx context.Context, skillUUID, version string) (SystemSkillVersion, error) {
-	row, err := NewSystemSkillMapper(d.mapperDB).Version(ctx, skillUUID, version)
+func (d *DB) GetSystemSkillVersion(ctx context.Context, skillExternalID, version string) (SystemSkillVersion, error) {
+	if version == "latest" {
+		skill, err := d.GetAvailableSystemSkill(ctx, skillExternalID)
+		if err != nil {
+			return SystemSkillVersion{}, err
+		}
+		if skill.LatestVersion == nil || strings.TrimSpace(*skill.LatestVersion) == "" {
+			return SystemSkillVersion{}, ErrNotFound
+		}
+		version = *skill.LatestVersion
+	}
+	row, err := NewSystemSkillMapper(d.mapperDB).FindVersionByExternalID(ctx, skillExternalID, version)
 	return row, mapNoRows(err)
-}
-
-func (d *DB) SystemSkillEvents(ctx context.Context, skillUUID string, limit, offset int) ([]SystemSkillEvent, error) {
-	return NewSystemSkillMapper(d.mapperDB).Events(ctx, skillUUID, limit, offset)
 }
 
 func (d *DB) HasSystemSkillArchive(ctx context.Context, key string) (bool, error) {
@@ -67,20 +130,23 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 		return SystemSkill{}, false, err
 	}
 	previous, err := mapper.Version(ctx, skill.UUID, input.Version.Version)
+	if errors.Is(err, sql.ErrNoRows) {
+		previous, err = mapper.VersionBySHA256(ctx, skill.UUID, input.Version.SHA256)
+	}
+	duplicate := err == nil
 	if err == nil {
 		if previous.SHA256 != input.Version.SHA256 {
 			return SystemSkill{}, false, ErrVersionConflict
 		}
-		return skill, true, nil
+		if inserted == 0 {
+			return skill, true, nil
+		}
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SystemSkill{}, false, err
 	}
-	if (inserted == 0 && skill.Revision != input.ExpectedRevision) || (inserted == 1 && input.ExpectedRevision != 0) {
-		return SystemSkill{}, false, ErrSystemSkillRevision
-	}
 	if inserted == 0 {
-		versions, err := mapper.Versions(ctx, skill.UUID, 1, 0)
+		versions, err := mapper.Versions(ctx, skill.UUID, 1, 0, false)
 		if err != nil {
 			return SystemSkill{}, false, err
 		}
@@ -89,38 +155,23 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 		}
 	}
 	version := input.Version
-	version.SkillUUID, version.SkillExternalID = skill.UUID, skill.ExternalID
-	if err := mapper.InsertVersion(ctx, version); err != nil {
-		return SystemSkill{}, false, err
-	}
-	published := false
-	if input.Publish {
-		published, err = publishSystemSkill(ctx, mapper, &skill, version.Version)
-		if err != nil {
+	if duplicate {
+		version = previous
+	} else {
+		version.SkillUUID, version.SkillExternalID = skill.UUID, skill.ExternalID
+		if err := mapper.InsertVersion(ctx, version); err != nil {
 			return SystemSkill{}, false, err
 		}
 	}
-	if err := saveSystemSkill(ctx, mapper, skill, input.ActorUUID, "import_draft", version.Version); err != nil {
-		return SystemSkill{}, false, err
+	skill.LatestVersion = new(version.Version)
+	if input.Skill.IconKey != "" {
+		skill.IconKey = input.Skill.IconKey
 	}
-	if published {
-		if err := mapper.Record(ctx, SystemSkillEvent{SkillUUID: skill.UUID, ActorUUID: input.ActorUUID, Action: "publish", Version: version.Version}); err != nil {
-			return SystemSkill{}, false, err
-		}
+	if _, err := mapper.UpdateSkill(ctx, skill); err != nil {
+		return SystemSkill{}, false, err
 	}
 	result, err := mapper.Find(ctx, skill.ExternalID, false)
-	return result, false, err
-}
-
-func saveSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill SystemSkill, actor, action, version string) error {
-	changed, err := mapper.UpdateSkill(ctx, skill)
-	if err != nil {
-		return err
-	}
-	if changed != 1 {
-		return ErrSystemSkillRevision
-	}
-	return mapper.Record(ctx, SystemSkillEvent{SkillUUID: skill.UUID, ActorUUID: actor, Action: action, Version: version})
+	return result, duplicate, err
 }
 
 func (tx *PlatformAdminTx) ChangeSystemSkill(ctx context.Context, input SystemSkillChange) (SystemSkill, error) {
@@ -129,75 +180,59 @@ func (tx *PlatformAdminTx) ChangeSystemSkill(ctx context.Context, input SystemSk
 	if err != nil {
 		return SystemSkill{}, mapNoRows(err)
 	}
-	if skill.Revision != input.Revision {
-		return SystemSkill{}, ErrSystemSkillRevision
-	}
-	changed, err := changeSystemSkill(ctx, mapper, &skill, input)
-	if err != nil {
-		return SystemSkill{}, err
-	}
-	if !changed {
-		return skill, nil
-	}
-	if err := saveSystemSkill(ctx, mapper, skill, input.ActorUUID, input.Action, input.Version); err != nil {
-		return SystemSkill{}, err
-	}
-	return mapper.Find(ctx, skill.ExternalID, false)
-}
-
-func publishSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill *SystemSkill, version string) (bool, error) {
-	current, err := mapper.Version(ctx, skill.UUID, version)
-	if err != nil {
-		return false, mapNoRows(err)
-	}
-	if current.State == "published" {
-		return false, nil
-	}
-	changed, err := mapper.Publish(ctx, skill.UUID, version)
-	if err != nil {
-		return false, err
-	}
-	if changed != 1 {
-		return false, ErrInvalidState
-	}
-	if skill.LatestVersion == nil {
-		skill.LatestVersion, skill.Listed = new(version), true
-	}
-	return true, nil
-}
-
-func changeSystemSkill(ctx context.Context, mapper SystemSkillMapper, skill *SystemSkill, input SystemSkillChange) (bool, error) {
 	switch input.Action {
-	case "publish":
-		return publishSystemSkill(ctx, mapper, skill, input.Version)
-	case "set_default":
-		version, err := mapper.Version(ctx, skill.UUID, input.Version)
-		if err != nil {
-			return false, mapNoRows(err)
+	case "delete":
+		if skill.Bundled {
+			if skill.BundledVersion == nil || (skill.LatestVersion != nil && *skill.LatestVersion == *skill.BundledVersion) {
+				return SystemSkill{}, ErrBundledSkillReadOnly
+			}
+			skill.LatestVersion = new(*skill.BundledVersion)
+			if _, err := mapper.UpdateSkill(ctx, skill); err != nil {
+				return SystemSkill{}, err
+			}
+			return mapper.Find(ctx, skill.ExternalID, false)
 		}
-		if version.State != "published" {
-			return false, ErrInvalidState
+		if _, err := mapper.DeleteSkill(ctx, skill); err != nil {
+			return SystemSkill{}, err
 		}
-		if skill.LatestVersion == nil {
-			skill.Listed = true
-		}
-		skill.LatestVersion = new(version.Version)
+		return skill, nil
+	case "set_icon":
+		skill.IconKey = input.IconKey
 	case "list":
 		if skill.LatestVersion == nil {
-			return false, ErrInvalidState
-		}
-		version, err := mapper.Version(ctx, skill.UUID, *skill.LatestVersion)
-		if err != nil {
-			return false, err
-		}
-		if version.State != "published" {
-			return false, ErrInvalidState
+			return SystemSkill{}, ErrInvalidState
 		}
 		skill.Listed = true
 	case "unlist":
 		skill.Listed = false
 	default:
-		return false, ErrInvalidState
+		return SystemSkill{}, ErrInvalidState
 	}
-	return true, nil
+	if _, err := mapper.UpdateSkill(ctx, skill); err != nil {
+		return SystemSkill{}, err
+	}
+	return mapper.Find(ctx, skill.ExternalID, false)
+}
+
+func (d *DB) SyncBundledSkill(ctx context.Context, skill SystemSkill, version SystemSkillVersion) error {
+	return d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewSystemSkillMapper(executor)
+		skill.LatestVersion = new(version.Version)
+		stored, err := mapper.RegisterBundled(ctx, skill)
+		if err != nil {
+			return err
+		}
+		previous, err := mapper.Version(ctx, stored.UUID, version.Version)
+		if err == nil {
+			if previous.SHA256 != version.SHA256 {
+				return ErrVersionConflict
+			}
+		} else if errors.Is(err, sql.ErrNoRows) {
+			version.SkillUUID, version.SkillExternalID = stored.UUID, stored.ExternalID
+			return mapper.InsertVersion(ctx, version)
+		} else {
+			return err
+		}
+		return nil
+	})
 }

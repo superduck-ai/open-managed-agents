@@ -1,0 +1,28 @@
+{
+  "skills": [
+    {
+      "id": "xlsx",
+      "title": "Excel 表格",
+      "icon_key": "chart-no-axes-combined",
+      "directory": "xlsx"
+    },
+    {
+      "id": "pptx",
+      "title": "PowerPoint 演示",
+      "icon_key": "file-type-2",
+      "directory": "pptx"
+    },
+    {
+      "id": "pdf",
+      "title": "PDF 文档",
+      "icon_key": "file-text",
+      "directory": "pdf"
+    },
+    {
+      "id": "docx",
+      "title": "Word 文档",
+      "icon_key": "file-text",
+      "directory": "docx"
+    }
+  ]
+}

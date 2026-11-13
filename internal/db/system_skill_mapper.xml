@@ -1,52 +1,98 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="SystemSkillMapper">
-    <sql id="skillColumns">uuid, external_id, display_title, latest_version, listed, revision, created_at, updated_at</sql>
-    <sql id="versionColumns">uuid, external_id, skill_uuid, skill_external_id, version, name, description, directory, state, s3_bucket, s3_key, size_bytes, sha256, created_at</sql>
+    <sql id="skillColumns">id, uuid, external_id, display_title, icon_key, latest_version, listed, created_at, updated_at, deleted_at, bundled, bundled_version</sql>
+    <sql id="versionColumns">id, uuid, external_id, skill_uuid, skill_external_id, version, name, description, directory, state, s3_bucket, s3_key, size_bytes, sha256, created_at, deleted_at</sql>
     <select id="List" resultType="SystemSkill">
         SELECT <include refid="skillColumns"/> FROM builtin_skills s
         WHERE s.deleted_at IS NULL
         <if test="query.Query != &quot;&quot;">AND (strpos(lower(display_title), lower(#{query.Query})) &gt; 0 OR strpos(lower(external_id), lower(#{query.Query})) &gt; 0)</if>
         <choose>
             <when test="query.Status == &quot;listed&quot;">AND listed</when>
-            <when test="query.Status == &quot;unlisted&quot;">AND NOT listed AND latest_version IS NOT NULL</when>
-            <when test="query.Status == &quot;draft&quot;">AND latest_version IS NULL</when>
+            <when test="query.Status == &quot;unlisted&quot;">AND NOT listed</when>
         </choose>
         ORDER BY created_at DESC, uuid DESC LIMIT #{query.Limit} OFFSET #{query.Offset}
+    </select>
+    <select id="ListListed" resultType="SystemSkill">
+        SELECT <include refid="skillColumns"/> FROM builtin_skills
+        WHERE deleted_at IS NULL AND listed AND latest_version IS NOT NULL
+        ORDER BY created_at DESC, id DESC LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="CountListed" result="scalar">
+        SELECT COUNT(*) FROM builtin_skills
+        WHERE deleted_at IS NULL AND listed AND latest_version IS NOT NULL
     </select>
     <select id="Find" resultType="SystemSkill">
         SELECT <include refid="skillColumns"/> FROM builtin_skills WHERE external_id = #{externalID} AND deleted_at IS NULL
         <if test="lock">FOR UPDATE</if>
     </select>
+    <select id="FindAvailable" resultType="SystemSkill">
+        SELECT <include refid="skillColumns"/> FROM builtin_skills
+        WHERE external_id = #{externalID} AND latest_version IS NOT NULL AND deleted_at IS NULL
+    </select>
+    <select id="FindUUIDByExternalID" result="scalar">
+        SELECT uuid FROM builtin_skills WHERE external_id = #{externalID} AND deleted_at IS NULL
+    </select>
     <insert id="InsertSkill" result="rows">
-        INSERT INTO builtin_skills (uuid, external_id, display_title, listed)
-        VALUES (#{skill.UUID}, #{skill.ExternalID}, #{skill.DisplayTitle}, false)
-        ON CONFLICT (external_id) DO NOTHING
+        INSERT INTO builtin_skills (uuid, external_id, display_title, icon_key, listed)
+        VALUES (#{skill.UUID}, #{skill.ExternalID}, #{skill.DisplayTitle}, COALESCE(NULLIF(#{skill.IconKey}, ''), 'blocks'), false)
+        ON CONFLICT (external_id) DO UPDATE SET
+            deleted_at = NULL, latest_version = NULL, listed = false,
+            display_title = EXCLUDED.display_title,
+            icon_key = CASE WHEN #{skill.IconKey} = '' THEN builtin_skills.icon_key ELSE EXCLUDED.icon_key END,
+            updated_at = now()
+        WHERE builtin_skills.deleted_at IS NOT NULL AND NOT builtin_skills.bundled
+    </insert>
+    <insert id="RegisterBundled" result="returning" resultType="SystemSkill">
+        INSERT INTO builtin_skills (uuid, external_id, display_title, icon_key, latest_version, bundled_version, bundled, listed)
+        VALUES (#{skill.UUID}, #{skill.ExternalID}, #{skill.DisplayTitle}, #{skill.IconKey}, #{skill.LatestVersion}, #{skill.LatestVersion}, true, true)
+        ON CONFLICT (external_id) DO UPDATE SET
+            bundled = true, display_title = EXCLUDED.display_title,
+            bundled_version = EXCLUDED.bundled_version, deleted_at = NULL,
+            listed = CASE WHEN builtin_skills.deleted_at IS NOT NULL THEN true ELSE builtin_skills.listed END,
+            latest_version = CASE WHEN builtin_skills.latest_version IS NULL
+                OR builtin_skills.latest_version = builtin_skills.bundled_version
+                OR builtin_skills.deleted_at IS NOT NULL
+                THEN EXCLUDED.latest_version ELSE builtin_skills.latest_version END,
+            updated_at = CASE WHEN
+                (builtin_skills.bundled, builtin_skills.display_title, builtin_skills.bundled_version, builtin_skills.deleted_at)
+                IS DISTINCT FROM (true, EXCLUDED.display_title, EXCLUDED.bundled_version, NULL)
+                THEN now() ELSE builtin_skills.updated_at END
+        RETURNING <include refid="skillColumns"/>
     </insert>
     <update id="UpdateSkill" result="rows">
-        UPDATE builtin_skills SET latest_version = #{skill.LatestVersion}, listed = #{skill.Listed}, revision = revision + 1, updated_at = now()
-        WHERE uuid = #{skill.UUID} AND revision = #{skill.Revision} AND deleted_at IS NULL
+        UPDATE builtin_skills SET icon_key = #{skill.IconKey}, latest_version = #{skill.LatestVersion}, listed = #{skill.Listed}, updated_at = now()
+        WHERE uuid = #{skill.UUID} AND deleted_at IS NULL
+    </update>
+    <update id="DeleteSkill" result="rows">
+        UPDATE builtin_skills SET deleted_at = now(), listed = false, updated_at = now()
+        WHERE uuid = #{skill.UUID} AND NOT bundled AND deleted_at IS NULL
     </update>
     <select id="Versions" resultType="SystemSkillVersion">
         SELECT <include refid="versionColumns"/> FROM builtin_skill_versions
-        WHERE skill_uuid = #{skillUUID} AND deleted_at IS NULL ORDER BY created_at DESC, uuid DESC LIMIT #{limit} OFFSET #{offset}
+        WHERE skill_uuid = #{skillUUID} AND state = 'published' AND deleted_at IS NULL
+        ORDER BY <choose><when test="oldestFirst">created_at ASC, id ASC</when><otherwise>created_at DESC, id DESC</otherwise></choose>
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="VersionBySHA256" resultType="SystemSkillVersion">
+        SELECT <include refid="versionColumns"/> FROM builtin_skill_versions
+        WHERE skill_uuid = #{skillUUID} AND sha256 = #{sha256}
+        AND state = 'published' AND deleted_at IS NULL
+        ORDER BY created_at ASC, id ASC LIMIT 1
     </select>
     <select id="Version" resultType="SystemSkillVersion">
         SELECT <include refid="versionColumns"/> FROM builtin_skill_versions
         WHERE skill_uuid = #{skillUUID} AND version = #{version} AND deleted_at IS NULL
     </select>
+    <select id="FindVersionByExternalID" resultType="SystemSkillVersion">
+        SELECT <include refid="versionColumns"/> FROM builtin_skill_versions
+        WHERE skill_external_id = #{skillExternalID}
+        AND state = 'published'
+        AND (version = #{version} OR external_id = #{version} OR external_id = replace(#{version}, 'skill_version_', 'skver_'))
+        AND deleted_at IS NULL
+    </select>
     <insert id="InsertVersion" result="exec">
         INSERT INTO builtin_skill_versions (uuid, external_id, skill_uuid, skill_external_id, version, name, description, directory, state, s3_bucket, s3_key, size_bytes, sha256, created_at)
-        VALUES (#{version.UUID}, #{version.ExternalID}, #{version.SkillUUID}, #{version.SkillExternalID}, #{version.Version}, #{version.Name}, #{version.Description}, #{version.Directory}, 'draft', #{version.S3Bucket}, #{version.S3Key}, #{version.SizeBytes}, #{version.SHA256}, #{version.CreatedAt})
-    </insert>
-    <update id="Publish" result="rows">
-        UPDATE builtin_skill_versions SET state = 'published' WHERE skill_uuid = #{skillUUID} AND version = #{version} AND state = 'draft' AND deleted_at IS NULL
-    </update>
-    <select id="Events" resultType="SystemSkillEvent">
-        SELECT uuid, skill_uuid, actor_uuid, action, version, created_at FROM system_skill_events
-        WHERE skill_uuid = #{skillUUID} ORDER BY created_at DESC, id DESC LIMIT #{limit} OFFSET #{offset}
-    </select>
-    <insert id="Record" result="exec">
-        INSERT INTO system_skill_events (skill_uuid, actor_uuid, action, version) VALUES (#{event.SkillUUID}, #{event.ActorUUID}, #{event.Action}, #{event.Version})
+        VALUES (#{version.UUID}, #{version.ExternalID}, #{version.SkillUUID}, #{version.SkillExternalID}, #{version.Version}, #{version.Name}, #{version.Description}, #{version.Directory}, 'published', #{version.S3Bucket}, #{version.S3Key}, #{version.SizeBytes}, #{version.SHA256}, #{version.CreatedAt})
     </insert>
     <select id="HasArchive" result="scalar">
         SELECT EXISTS(SELECT 1 FROM builtin_skill_versions WHERE s3_key = #{key})

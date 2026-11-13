@@ -42,7 +42,7 @@ func (h *Handler) stableSkill(r *http.Request, skill skillResponse) (stableSkill
 	}
 	var versionID string
 	if skill.Source == "anthropic" {
-		version, err := h.db.GetBuiltinSkillVersion(r.Context(), skill.ID, skill.LatestVersion)
+		version, err := h.db.GetSystemSkillVersion(r.Context(), skill.ID, skill.LatestVersion)
 		if err != nil {
 			return stableSkillResponse{}, internalError("Could not load latest skill version", err)
 		}
@@ -132,6 +132,10 @@ func skillDisplayLabel(r *http.Request, pkg skillPackage) (string, error) {
 }
 
 func mapSkillDeleteError(err error) error {
+	var inUse *db.SkillInUseError
+	if errors.As(err, &inUse) {
+		return skillInUseByAgents(inUse)
+	}
 	if errors.Is(err, db.ErrSkillHasVersions) {
 		return skillVersionsMustBeDeleted()
 	}

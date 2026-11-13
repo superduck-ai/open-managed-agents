@@ -189,7 +189,27 @@ export function SessionCreateDialog({
             ) : null}
             {submitError ? (
               <Alert variant="destructive">
-                <AlertDescription>{budgetErrorMessage(submitError, msg)}</AlertDescription>
+                <AlertDescription className="space-y-2 [overflow-wrap:anywhere]">
+                  <p>{budgetErrorMessage(submitError, msg)}</p>
+                  {/invalid\s+skill\s+reference/i.test(submitError) ? (
+                    <div className="space-y-2 text-xs">
+                      <p>
+                        {msg(
+                          'managedAgents.sessions.invalidSkillReferenceHint',
+                          'This agent references a deleted or unavailable skill. Edit the agent to remove or replace it before starting a session.',
+                        )}
+                      </p>
+                      {lockedAgent?.id || values.agentId ? (
+                        <a
+                          href={`/workspaces/${encodeURIComponent(workspaceId || 'default')}/agents/${encodeURIComponent(lockedAgent?.id || values.agentId)}`}
+                          className="inline-flex items-center font-medium underline underline-offset-4 hover:opacity-80"
+                        >
+                          {msg('managedAgents.sessions.editAgent', 'Edit agent')}
+                        </a>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </AlertDescription>
               </Alert>
             ) : null}
           </div>

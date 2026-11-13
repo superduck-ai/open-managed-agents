@@ -1,48 +1,51 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
 import { FileArchive, Plus, Search } from 'lucide-react';
 import { useI18n } from '@/shared/i18n';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/shared/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/shared/ui/alert-dialog';
 import { ResourcePageHeader } from '@/shared/ui/resource-page-header';
 import { ResourceListState } from '@/shared/ui/resource-list-state';
-import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
-import {
-  CopyIdCell,
-  DataTableCell,
-  DataTableRow,
-  dataTableClassName,
-  dataTableHeaderCellClassName,
-  dataTableHeaderRowClassName,
-} from '@/shared/ui/data-table-interactions';
+import { SkillCard } from '@/features/skills/SkillCard';
 import { usePlatformAdmin } from '../context';
-import { SystemSkillError, SystemSkillPager, SystemSkillStatus } from './feedback';
+import { SystemSkillError, SystemSkillPager, SystemSkillStatus, systemSkillErrorMessage } from './feedback';
 import { SystemSkillDrawer } from './SystemSkillDrawer';
 import { SystemSkillImportDialog } from './SystemSkillImportDialog';
+import { SystemSkillActions } from './SystemSkillActions';
+import { SystemSkillDeleteDialog } from './SystemSkillDeleteDialog';
 import { systemSkillsKey, systemSkillPageSize, type SystemSkill, type SystemPage } from './types';
-
-const emptySkills: SystemSkill[] = [];
 
 export function SystemSkillsPage() {
   const { msg, locale } = useI18n();
   const { client } = usePlatformAdmin();
-  const queryClient = useQueryClient();
+  const queries = useQueryClient();
   const navigate = useNavigate();
   const selected = useSearch({ strict: false }).skill;
   const [upload, setUpload] = useState<{ target?: SystemSkill } | null>(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('');
   const [status, setStatus] = useState('all');
-  const statusLabels: Record<string, string> = {
+  const [offset, setOffset] = useState(0);
+  const [deleteTarget, setDeleteTarget] = useState<SystemSkill | null>(null);
+  const [toggleTarget, setToggleTarget] = useState<SystemSkill | null>(null);
+  const [toggleBusy, setToggleBusy] = useState(false);
+  const [toggleError, setToggleError] = useState('');
+  const statuses = {
     all: msg('systemSkills.allStatuses', 'All statuses'),
     listed: msg('systemSkills.listed', 'Listed'),
     unlisted: msg('systemSkills.unlisted', 'Unlisted'),
-    draft: msg('systemSkills.draft', 'Draft'),
   };
-  const [offset, setOffset] = useState(0);
   const query = useQuery({
     queryKey: [...systemSkillsKey, 'list', filter, status, offset],
     queryFn: ({ signal }) =>
@@ -51,75 +54,68 @@ export function SystemSkillsPage() {
         { signal },
       ),
   });
-  const openSkill = useCallback(
-    (id?: string) => {
-      void navigate({ to: '/platform-admin/skills', search: { skill: id } });
-    },
-    [navigate],
-  );
-  const columns = useMemo<ColumnDef<SystemSkill>[]>(
-    () => [
-      {
-        header: msg('skills.table.id', 'ID'),
-        accessorKey: 'id',
-        cell: ({ row }) => (
-          <CopyIdCell
-            value={row.original.id}
-            ariaLabel={msg('skills.copyAria', 'Copy {skillId}', { skillId: row.original.id })}
-            stopPropagation
-          />
-        ),
-      },
-      {
-        header: msg('common.name', 'Name'),
-        accessorKey: 'display_title',
-        cell: ({ row }) => (
-          <Button
-            variant="link"
-            className="h-auto max-w-full justify-start p-0 text-left whitespace-normal break-words font-medium text-foreground"
-            onClick={(event) => {
-              event.stopPropagation();
-              openSkill(row.original.id);
-            }}
-          >
-            {row.original.display_title}
-          </Button>
-        ),
-      },
-      { header: msg('systemSkills.status', 'Status'), cell: ({ row }) => <SystemSkillStatus skill={row.original} /> },
-      {
-        header: msg('systemSkills.defaultVersion', 'Default version'),
-        accessorKey: 'default_version',
-        cell: ({ row }) => row.original.default_version || '—',
-      },
-      {
-        header: msg('common.updated', 'Updated'),
-        cell: ({ row }) => new Date(row.original.updated_at).toLocaleDateString(locale),
-      },
-    ],
-    [msg, locale, openSkill],
-  );
-  const table = useReactTable({ data: query.data?.data ?? emptySkills, columns, getCoreRowModel: getCoreRowModel() });
+  const openSkill = (id?: string) => void navigate({ to: '/platform-admin/skills', search: { skill: id } });
   const changed = async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: systemSkillsKey }),
-      queryClient.invalidateQueries({ queryKey: ['skills'] }),
+      queries.invalidateQueries({ queryKey: systemSkillsKey }),
+      queries.invalidateQueries({ queryKey: ['skills'] }),
+      queries.invalidateQueries({ queryKey: ['skill'] }),
     ]);
   };
+  const toggleListing = async () => {
+    if (!toggleTarget || toggleBusy) return;
+    setToggleBusy(true);
+    setToggleError('');
+    try {
+      await client.request(`/skills/${encodeURIComponent(toggleTarget.id)}/actions`, {
+        method: 'POST',
+        body: { action: toggleTarget.listed ? 'unlist' : 'list' },
+      });
+      setToggleTarget(null);
+      await changed();
+    } catch (cause) {
+      setToggleError(systemSkillErrorMessage(cause));
+      void changed();
+    } finally {
+      setToggleBusy(false);
+    }
+  };
   return (
-    <section>
+    <section className="skills-page">
       <ResourcePageHeader
+        contentGap="content"
         title={msg('systemSkills.title', 'System skills')}
-        description={msg('systemSkills.description', 'Manage skills and versions available to all workspaces.')}
         actions={
           <Button size="lg" onClick={() => setUpload({})}>
-            <Plus aria-hidden className="size-4" />
-            {msg('systemSkills.import', 'Import skills')}
+            <Plus size={16} aria-hidden />
+            {msg('skills.import.title', 'Import skills')}
           </Button>
         }
       />
+      <Tabs
+        value={status}
+        onValueChange={(value) => {
+          setStatus(value);
+          setOffset(0);
+        }}
+      >
+        <TabsList
+          variant="line"
+          className="mb-5 max-w-full items-stretch group-data-[orientation=horizontal]/tabs:h-auto"
+        >
+          {Object.entries(statuses).map(([value, label]) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              className="h-auto min-h-8 min-w-0 whitespace-normal sm:min-w-fit sm:whitespace-nowrap"
+            >
+              {label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
       <form
-        className="mb-5 flex flex-wrap items-center gap-2"
+        className="mb-6 flex flex-wrap items-center gap-2"
         onSubmit={(event) => {
           event.preventDefault();
           setOffset(0);
@@ -127,86 +123,71 @@ export function SystemSkillsPage() {
         }}
       >
         <Input
-          className="w-full sm:w-64"
+          className="w-full sm:w-80"
           aria-label={msg('systemSkills.search', 'Search name or ID')}
           placeholder={msg('systemSkills.search', 'Search name or ID')}
+          maxLength={256}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
-        <Select
-          value={status}
-          onValueChange={(value) => {
-            setStatus(value ?? 'all');
-            setOffset(0);
-          }}
-        >
-          <SelectTrigger aria-label={msg('systemSkills.status', 'Status')}>
-            <SelectValue>{statusLabels[status]}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(statusLabels).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         <Button type="submit" variant="outline">
-          <Search className="size-4" aria-hidden />
+          <Search size={16} aria-hidden />
           {msg('platformAdmin.search', 'Search')}
         </Button>
       </form>
       {query.isPending ? (
-        <p role="status">{msg('common.loading', 'Loading...')}</p>
+        <p role="status" className="py-8 text-sm text-muted-foreground">
+          {msg('common.loading', 'Loading...')}
+        </p>
       ) : query.isError ? (
         <SystemSkillError error={query.error} retry={() => void query.refetch()} />
       ) : query.data.data.length === 0 ? (
-        <ResourceListState
-          icon={FileArchive}
-          title={msg('systemSkills.empty', 'No matching system skills')}
-          body={msg('systemSkills.emptyBody', 'Import a ZIP package or change the filters.')}
-        />
+        <ResourceListState icon={FileArchive} title={msg('systemSkills.empty', 'No matching system skills')} />
       ) : (
-        <Table className={`${dataTableClassName} min-w-[780px]`}>
-          <TableHeader>
-            {table.getHeaderGroups().map((group) => (
-              <TableRow key={group.id} className={dataTableHeaderRowClassName}>
-                {group.headers.map((header) => (
-                  <TableHead key={header.id} className={dataTableHeaderCellClassName}>
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows.map((row) => (
-              <DataTableRow
-                key={row.original.id}
-                clickable
-                selected={selected === row.original.id}
-                onClick={() => openSkill(row.original.id)}
-              >
-                {row.getVisibleCells().map((cell, index) => (
-                  <DataTableCell
-                    key={cell.id}
-                    edge={index === 0 ? 'start' : index === row.getVisibleCells().length - 1 ? 'end' : undefined}
-                    className="text-sm break-words whitespace-normal"
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </DataTableCell>
-                ))}
-              </DataTableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div className="skill-grid">
+          {query.data.data.map((record) => (
+            <SkillCard
+              key={record.id}
+              name={record.display_title}
+              iconKey={record.icon_key}
+              onOpen={() => openSkill(record.id)}
+              metadata={
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <code className="min-w-0 truncate" title={record.id}>
+                    {record.id}
+                  </code>
+                </div>
+              }
+              footer={
+                <>
+                  <SystemSkillStatus skill={record} />
+                  <time dateTime={record.updated_at}>{new Date(record.updated_at).toLocaleDateString(locale)}</time>
+                </>
+              }
+              actions={
+                <SystemSkillActions
+                  skill={record}
+                  onUpdate={() => setUpload({ target: record })}
+                  onDelete={() => setDeleteTarget(record)}
+                  onToggle={() => {
+                    setToggleError('');
+                    setToggleTarget(record);
+                  }}
+                  onChanged={changed}
+                />
+              }
+            />
+          ))}
+        </div>
       )}
-      <SystemSkillPager
-        offset={offset}
-        more={query.data?.has_more ?? false}
-        busy={query.isFetching}
-        onOffset={setOffset}
-      />
+      {(offset > 0 || query.data?.has_more) && (
+        <SystemSkillPager
+          offset={offset}
+          more={query.data?.has_more ?? false}
+          busy={query.isFetching}
+          onOffset={setOffset}
+        />
+      )}
       {selected && (
         <SystemSkillDrawer
           key={selected}
@@ -226,6 +207,63 @@ export function SystemSkillsPage() {
           }}
         />
       )}
+      {deleteTarget && (
+        <SystemSkillDeleteDialog
+          skill={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={async () => {
+            if (selected === deleteTarget.id) openSkill();
+            await changed();
+          }}
+        />
+      )}
+      <AlertDialog
+        open={!!toggleTarget}
+        onOpenChange={(open, details) => {
+          if (!open && toggleBusy) {
+            details.cancel();
+            return;
+          }
+          if (!open) setToggleTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle>
+            {toggleTarget?.listed
+              ? msg('skills.unlistConfirm', 'Unlist skill?')
+              : msg('skills.listConfirm', 'List skill?')}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            <strong className="block break-words">{toggleTarget?.display_title}</strong>
+            {toggleTarget?.listed
+              ? msg(
+                  'systemSkills.unlistImpact',
+                  'Hide this skill from the workspace catalog. Existing Agent references and sessions remain usable. This does not revoke execution.',
+                )
+              : msg(
+                  'systemSkills.listImpact',
+                  'Make this skill selectable in all workspaces. It will not be added to Agents automatically.',
+                )}
+          </AlertDialogDescription>
+          {toggleError && (
+            <p role="alert" className="text-sm text-destructive">
+              {toggleError}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={toggleBusy}>{msg('common.cancel', 'Cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={toggleBusy}
+              onClick={(event) => {
+                event.preventDefault();
+                void toggleListing();
+              }}
+            >
+              {toggleBusy ? msg('common.saving', 'Saving...') : msg('common.confirm', 'Confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

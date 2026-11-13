@@ -79,10 +79,10 @@ func backendMismatchError() *httpapi.Error {
 }
 
 func brainRequiredError() *httpapi.Error {
-	return httpapi.NewError(http.StatusForbidden, "permission_error", "Chat Completions is only available to brain model credentials")
+	return httpapi.NewError(http.StatusForbidden, "permission_error", "OpenAI protocol session calls require brain model credentials")
 }
 
-var errChatStreamRequired = errors.New("brain Chat Completions requires stream=true and n=1")
+var errChatChoiceCount = errors.New("Chat Completions requires n=1")
 
 func chatSessionLookupError(cause error) *httpapi.Error {
 	if errors.Is(cause, db.ErrNotFound) {

@@ -21,7 +21,7 @@ database:
   auto_migrate: true
 
 pricing:
-  # Provider-slug keyed rules that read the actual Anthropic Messages response cost.
+  # 按供应商 slug 配置 Messages、Chat Completions 和 Responses 的实际费用提取规则。
   response_costs: {}
   # Relative paths resolve from the config file directory. The process user must be able
   # to create and atomically replace this file; otherwise prices are never published and

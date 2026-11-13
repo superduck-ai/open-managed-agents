@@ -33,6 +33,33 @@ Environment Manager 可以独立于镜像发布。部署在 `environment_runner.
 - `path`：API 服务所在主机的本地文件，例如 environment-manager 发布流程产出的 `dist/environment-manager_linux_arm64`。Runner 每次启动前比较文件大小与修改时间，变化后重新读取并计算 SHA-256，因此原子替换（同目录写临时文件后 `mv`）即可让后续 Sandbox 使用新版本，无需重启服务。可选的 `sha256` 用于固定预期版本，不一致时拒绝启动。
 - `url`：HTTP(S) 下载地址，必须同时提供 `sha256`。由 API 服务下载并校验，按进程缓存；更换版本时同时修改 `url`/`sha256` 并重启服务。Sandbox 不需要访问该地址。
 
+`url` 模式的下载时机：
+
+- 服务启动时 `Runner.Start` 立即在后台预加载，不阻塞启动；即使 `environment_runner.enabled=false`，处理按需创建 Sandbox 的实例也会预加载。
+- 同一进程任意时刻最多一个下载在进行。第一次需要 Manager 的 Sandbox 若遇到预加载尚未完成，就等待同一次下载的结果，不重复发起请求；等待受该 Sandbox 启动上下文约束，等待方超时或取消不会中断下载本身。
+- 下载成功后缓存于进程内存，后续新建与恢复直接复用。失败不缓存：记录 `environment manager artifact download failed` 告警，正在等待的 Sandbox 启动失败，下一次需要 Manager 时重新下载。
+- 服务关闭时取消预加载请求。
+
+```mermaid
+sequenceDiagram
+    participant S as Runner.Start
+    participant A as managerArtifactSource
+    participant U as Artifact URL
+    participant W as Sandbox launch
+    S->>A: Preload (background)
+    A->>U: GET (single in-flight fetch)
+    W->>A: Load
+    alt cached
+        A-->>W: artifact
+    else fetch in flight
+        A-->>W: wait for same fetch (bounded by launch ctx)
+    else no cache and no fetch (previous failure)
+        A->>U: GET again
+    end
+    U-->>A: bytes, verify sha256
+    A-->>W: artifact or error (errors are not cached)
+```
+
 制品上限为 512 MiB，必须与 Sandbox 架构匹配。未配置时 Runner 行为不变，直接使用 `manager_path`（默认镜像内 `/usr/local/bin/environment-manager`）。
 
 ```mermaid

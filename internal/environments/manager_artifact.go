@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
@@ -40,37 +42,86 @@ type managerArtifactFileStamp struct {
 type managerArtifactSource struct {
 	cfg    config.EnvironmentManagerArtifactConfig
 	client *http.Client
+	logger *slog.Logger
 
-	mu     sync.Mutex
-	cached *managerArtifact
-	stamp  managerArtifactFileStamp
+	mu       sync.Mutex
+	cached   *managerArtifact
+	stamp    managerArtifactFileStamp
+	inflight *managerArtifactFetch
 }
 
-func newManagerArtifactSource(cfg config.EnvironmentManagerArtifactConfig, client *http.Client) *managerArtifactSource {
+type managerArtifactFetch struct {
+	done     chan struct{}
+	artifact managerArtifact
+	err      error
+}
+
+func newManagerArtifactSource(cfg config.EnvironmentManagerArtifactConfig, client *http.Client, logger *slog.Logger) *managerArtifactSource {
 	if !cfg.Enabled() {
 		return nil
 	}
 	if client == nil {
 		client = &http.Client{Timeout: managerArtifactFetchTimeout}
 	}
-	return &managerArtifactSource{cfg: cfg, client: client}
+	return &managerArtifactSource{cfg: cfg, client: client, logger: logging.LoggerOrDefault(logger)}
+}
+
+func (s *managerArtifactSource) Preload(ctx context.Context) {
+	if s == nil || s.cfg.URL == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cached == nil {
+		s.startFetchLocked(ctx)
+	}
 }
 
 func (s *managerArtifactSource) Load(ctx context.Context) (managerArtifact, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.cfg.Path != "" {
+		defer s.mu.Unlock()
 		return s.loadFile()
 	}
 	if s.cached != nil {
-		return *s.cached, nil
+		artifact := *s.cached
+		s.mu.Unlock()
+		return artifact, nil
 	}
-	artifact, err := s.fetch(ctx)
-	if err != nil {
-		return managerArtifact{}, err
+	fetch := s.startFetchLocked(context.WithoutCancel(ctx))
+	s.mu.Unlock()
+	select {
+	case <-fetch.done:
+		return fetch.artifact, fetch.err
+	case <-ctx.Done():
+		return managerArtifact{}, ctx.Err()
 	}
-	s.cached = &artifact
-	return artifact, nil
+}
+
+func (s *managerArtifactSource) startFetchLocked(ctx context.Context) *managerArtifactFetch {
+	if s.inflight != nil {
+		return s.inflight
+	}
+	fetch := &managerArtifactFetch{done: make(chan struct{})}
+	s.inflight = fetch
+	go func() {
+		startedAt := time.Now()
+		artifact, err := s.fetch(ctx)
+		s.mu.Lock()
+		if err == nil {
+			s.cached = &artifact
+		}
+		s.inflight = nil
+		fetch.artifact, fetch.err = artifact, err
+		s.mu.Unlock()
+		close(fetch.done)
+		if err != nil {
+			s.logger.WarnContext(ctx, "environment manager artifact download failed", "error", err)
+			return
+		}
+		s.logger.InfoContext(ctx, "environment manager artifact downloaded", "manager_sha256", artifact.SHA256, "size_bytes", len(artifact.Data), "duration_ms", time.Since(startedAt).Milliseconds())
+	}()
+	return fetch
 }
 
 func (s *managerArtifactSource) loadFile() (managerArtifact, error) {

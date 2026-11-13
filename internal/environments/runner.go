@@ -126,6 +126,7 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 		return nil, errors.New("environment runner filestore token issuer is required")
 	}
 
+	logger := logging.LoggerOrDefault(deps.Logger)
 	return &Runner{
 		db:               deps.DB,
 		provider:         deps.Provider,
@@ -133,12 +134,13 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 		codeSessions:     deps.CodeSessions,
 		skills:           deps.Skills,
 		filestoreTokens:  deps.FilestoreTokens,
-		managerArtifacts: newManagerArtifactSource(deps.Config.EnvironmentRunner.ManagerArtifact, nil),
-		logger:           logging.LoggerOrDefault(deps.Logger),
+		managerArtifacts: newManagerArtifactSource(deps.Config.EnvironmentRunner.ManagerArtifact, nil, logger),
+		logger:           logger,
 	}, nil
 }
 
 func (r *Runner) Start(ctx context.Context) func() {
+	r.managerArtifacts.Preload(ctx)
 	if !r.cfg.EnvironmentRunner.Enabled {
 		return func() {}
 	}

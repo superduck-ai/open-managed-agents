@@ -131,6 +131,8 @@ environment_runner:
   # Optional environment-manager build installed into every new or resumed sandbox
   # before packages and task-run, so Manager upgrades do not require a new image.
   # Set either path (file on the API host, re-read when replaced) or url (sha256 required).
+  # url is preloaded in the background at startup; launches wait for that download if
+  # it is still running, and a failed download is retried by the next launch.
   # The binary is uploaded to /tmp/oma/environment-manager/<sha256>/environment-manager,
   # verified, and used instead of manager_path. Leave both empty to use the image binary.
   manager_artifact:

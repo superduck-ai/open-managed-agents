@@ -80,7 +80,7 @@ func managerArtifactTestRunner(t *testing.T, provider e2bruntime.Provider, artif
 	t.Helper()
 	return &Runner{
 		provider:         provider,
-		managerArtifacts: newManagerArtifactSource(artifact, nil),
+		managerArtifacts: newManagerArtifactSource(artifact, nil, nil),
 		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
@@ -116,17 +116,17 @@ func TestReadManagerArtifactComputesChecksum(t *testing.T) {
 }
 
 func TestNewManagerArtifactSourceDisabledWithoutLocation(t *testing.T) {
-	if source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{}, nil); source != nil {
+	if source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{}, nil, nil); source != nil {
 		t.Fatalf("source = %+v, want nil", source)
 	}
 }
 
 func TestManagerArtifactSourceFileFailures(t *testing.T) {
-	missing := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{Path: filepath.Join(t.TempDir(), "missing")}, nil)
+	missing := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{Path: filepath.Join(t.TempDir(), "missing")}, nil, nil)
 	if _, err := missing.Load(context.Background()); err == nil {
 		t.Fatal("missing artifact accepted")
 	}
-	directory := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{Path: t.TempDir()}, nil)
+	directory := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{Path: t.TempDir()}, nil, nil)
 	if _, err := directory.Load(context.Background()); err == nil {
 		t.Fatal("directory artifact accepted")
 	}
@@ -134,7 +134,7 @@ func TestManagerArtifactSourceFileFailures(t *testing.T) {
 
 func TestManagerArtifactSourceReloadsReplacedFile(t *testing.T) {
 	path := writeManagerArtifactFile(t, []byte("v1"))
-	source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{Path: path}, nil)
+	source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{Path: path}, nil, nil)
 	first, err := source.Load(context.Background())
 	if err != nil {
 		t.Fatalf("first Load() error = %v", err)
@@ -163,7 +163,7 @@ func TestManagerArtifactSourceURLFailures(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
-	source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{URL: server.URL, SHA256: strings.Repeat("a", 64)}, server.Client())
+	source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{URL: server.URL, SHA256: strings.Repeat("a", 64)}, server.Client(), nil)
 	if _, err := source.Load(context.Background()); err == nil || !strings.Contains(err.Error(), "404") {
 		t.Fatalf("Load() error = %v, want status failure", err)
 	}
@@ -177,7 +177,7 @@ func TestManagerArtifactSourceURLCachesVerifiedDownload(t *testing.T) {
 		_, _ = w.Write(data)
 	}))
 	defer server.Close()
-	source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{URL: server.URL, SHA256: testArtifactSHA256(data)}, server.Client())
+	source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{URL: server.URL, SHA256: testArtifactSHA256(data)}, server.Client(), nil)
 	for range 2 {
 		artifact, err := source.Load(context.Background())
 		if err != nil {
@@ -335,5 +335,119 @@ func TestManagerArtifactShellCommandsInstallAndProbe(t *testing.T) {
 	}
 	if err := runManagerArtifactShell(t, managerArtifactProbeCommand(target, strings.Repeat("d", 64))); err == nil {
 		t.Fatal("probe accepted binary with different checksum")
+	}
+}
+
+func TestManagerArtifactPreloadFailureRetriesOnLoad(t *testing.T) {
+	data := []byte("remote-binary")
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{URL: server.URL, SHA256: testArtifactSHA256(data)}, server.Client(), nil)
+	source.Preload(context.Background())
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		source.mu.Lock()
+		settled := source.inflight == nil && requests.Load() == 1
+		source.mu.Unlock()
+		if settled {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("preload did not finish")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	artifact, err := source.Load(context.Background())
+	if err != nil || string(artifact.Data) != string(data) {
+		t.Fatalf("Load() = %q, %v; want retried download", artifact.Data, err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("download requests = %d, want 2", got)
+	}
+}
+
+func TestManagerArtifactLoadCancelWhileWaitingKeepsDownload(t *testing.T) {
+	data := []byte("remote-binary")
+	release := make(chan struct{})
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		<-release
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{URL: server.URL, SHA256: testArtifactSHA256(data)}, server.Client(), nil)
+	source.Preload(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := source.Load(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Load() error = %v, want deadline exceeded while waiting", err)
+	}
+	close(release)
+	artifact, err := source.Load(context.Background())
+	if err != nil || string(artifact.Data) != string(data) {
+		t.Fatalf("Load() = %q, %v", artifact.Data, err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("download requests = %d, want 1", got)
+	}
+}
+
+func TestManagerArtifactLoadWaitsForPreload(t *testing.T) {
+	data := []byte("remote-binary")
+	release := make(chan struct{})
+	started := make(chan struct{})
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			close(started)
+		}
+		<-release
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{URL: server.URL, SHA256: testArtifactSHA256(data)}, server.Client(), nil)
+	source.Preload(context.Background())
+	<-started
+	results := make(chan error, 3)
+	for range 3 {
+		go func() {
+			artifact, err := source.Load(context.Background())
+			if err == nil && string(artifact.Data) != string(data) {
+				err = errors.New("unexpected artifact data")
+			}
+			results <- err
+		}()
+	}
+	select {
+	case err := <-results:
+		t.Fatalf("Load returned before preload finished: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	for range 3 {
+		if err := <-results; err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("download requests = %d, want 1", got)
+	}
+}
+
+func TestManagerArtifactPreloadSkipsDisabledAndFileSources(t *testing.T) {
+	var disabled *managerArtifactSource
+	disabled.Preload(context.Background())
+	source := newManagerArtifactSource(config.EnvironmentManagerArtifactConfig{Path: writeManagerArtifactFile(t, []byte("v1"))}, nil, nil)
+	source.Preload(context.Background())
+	if source.inflight != nil || source.cached != nil {
+		t.Fatalf("file source preloaded: inflight=%v cached=%v", source.inflight, source.cached)
 	}
 }

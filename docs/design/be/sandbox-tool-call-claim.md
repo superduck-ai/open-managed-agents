@@ -222,10 +222,10 @@ started 是一次比较并交换：只有 `dispatched`、代次与沙箱都匹�
 ### 沙箱侧（`role=sandbox` JWT，绑定 `sandbox_uuid`）
 
 - `POST /v1/code/sandbox/tool-calls/claims?block_ms=25000&max=N`：领取最多 `N` 个调用，`N` 为沙箱空闲执行槽位，响应总字节不超过 8 MiB，超出时少返回调用。无可领取调用时阻塞到超时或收到唤醒。沙箱仍在创建时同样挂起，并在 `tool_call_ready_at` 为空时登记一次就绪；沙箱状态为 stopping、stopped、failed、沙箱记录缺失或 Code Session 不存在时返回 410，Manager 停止领取并进入排空；沙箱仍为 running 但 Work、会话等锁定条件暂时不满足时按创建中处理，挂起等待而不返回 410。停止请求只经 heartbeat 响应下发，不随领取返回。
-领取与等待两个长轮询通过 `httpapi.StreamContext` 接入进程退出通知：实例开始优雅退出时立即结束等待，领取返回空列表、等待返回当前状态，客户端随即重新发起请求并由其他实例承接，不占用 HTTP 排空预算，也不会在强制关闭连接时产生错误。
-
 - `POST /v1/code/sandbox/tool-calls/{call_uuid}/events`：请求带 `attempt`，事件为 `started`、`heartbeat`、`reject`。响应携带停止请求与原因。
 - `PUT /v1/code/sandbox/tool-calls/{call_uuid}/result`：上报结果，可重复调用，格式见 [结果上报](#结果上报)。
+
+领取与等待两个长轮询通过 `httpapi.StreamContext` 接入进程退出通知：实例开始优雅退出时立即结束等待，领取返回空列表、等待返回当前状态，客户端随即重新发起请求并由其他实例承接，不占用 HTTP 排空预算，也不会在强制关闭连接时产生错误。
 
 每个请求都通过 Yourbatis 校验 Code Session active、公共 Session 未删除或终止、租户及父子 UUID 一致，以及指定沙箱有 Provider ID 且状态为 running。sandbox JWT 仅用于沙箱侧入口，Brain 侧入口要求 worker JWT。
 

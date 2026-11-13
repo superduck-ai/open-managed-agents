@@ -17,39 +17,39 @@ import (
 )
 
 const (
-	SlugLength = 26
-	keyBytes   = 32
+	LabelLength = 26
+	keyBytes    = 32
 )
 
-var slugEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
+var labelEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
-type SlugCodec struct {
+type LabelCodec struct {
 	masterKey []byte
 }
 
-func NewSlugCodec(key []byte) (*SlugCodec, error) {
+func NewLabelCodec(key []byte) (*LabelCodec, error) {
 	if len(key) != keyBytes {
 		return nil, errInvalidKey
 	}
-	return &SlugCodec{masterKey: append([]byte(nil), key...)}, nil
+	return &LabelCodec{masterKey: append([]byte(nil), key...)}, nil
 }
 
-func (c *SlugCodec) portCipher(port int) (cipher.Block, error) {
+func (c *LabelCodec) portCipher(port int) (cipher.Block, error) {
 	mac := hmac.New(sha256.New, c.masterKey)
 	mac.Write([]byte("session-port:" + strconv.Itoa(port)))
 	return aes.NewCipher(mac.Sum(nil))
 }
 
-func (c *SlugCodec) ForwardKey() []byte {
+func (c *LabelCodec) ForwardKey() []byte {
 	mac := hmac.New(sha256.New, c.masterKey)
 	mac.Write([]byte("session-port-internal-forward"))
 	return mac.Sum(nil)
 }
 
-func LoadSlugKey(path string) ([]byte, error) {
+func LoadLabelKey(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read session port slug key: %w", err)
+		return nil, fmt.Errorf("read session port label key: %w", err)
 	}
 	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
 	if err != nil || len(key) != keyBytes {
@@ -58,7 +58,7 @@ func LoadSlugKey(path string) ([]byte, error) {
 	return key, nil
 }
 
-func ephemeralSlugKey() ([]byte, error) {
+func ephemeralLabelKey() ([]byte, error) {
 	key := make([]byte, keyBytes)
 	if _, err := rand.Read(key); err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func ephemeralSlugKey() ([]byte, error) {
 	return key, nil
 }
 
-func (c *SlugCodec) Encode(sessionUUID string, port int) (string, error) {
+func (c *LabelCodec) Encode(sessionUUID string, port int) (string, error) {
 	parsed, err := uuid.Parse(sessionUUID)
 	if err != nil {
 		return "", errInvalidUUID
@@ -77,19 +77,19 @@ func (c *SlugCodec) Encode(sessionUUID string, port int) (string, error) {
 	}
 	var sealed [aes.BlockSize]byte
 	block.Encrypt(sealed[:], parsed[:])
-	return strings.ToLower(slugEncoding.EncodeToString(sealed[:])), nil
+	return strings.ToLower(labelEncoding.EncodeToString(sealed[:])), nil
 }
 
-func (c *SlugCodec) Decode(slug string, port int) (string, error) {
-	if len(slug) != SlugLength || slug != strings.ToLower(slug) {
-		return "", ErrInvalidSlug
+func (c *LabelCodec) Decode(label string, port int) (string, error) {
+	if len(label) != LabelLength || label != strings.ToLower(label) {
+		return "", ErrInvalidLabel
 	}
-	sealed, err := slugEncoding.DecodeString(strings.ToUpper(slug))
+	sealed, err := labelEncoding.DecodeString(strings.ToUpper(label))
 	if err != nil || len(sealed) != aes.BlockSize {
-		return "", ErrInvalidSlug
+		return "", ErrInvalidLabel
 	}
-	if strings.ToLower(slugEncoding.EncodeToString(sealed)) != slug {
-		return "", ErrInvalidSlug
+	if strings.ToLower(labelEncoding.EncodeToString(sealed)) != label {
+		return "", ErrInvalidLabel
 	}
 	block, err := c.portCipher(port)
 	if err != nil {

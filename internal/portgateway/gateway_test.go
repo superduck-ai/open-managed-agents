@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -156,7 +157,7 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	codec, err := sessionports.NewSlugCodec(bytes.Repeat([]byte{3}, 32))
+	codec, err := sessionports.NewLabelCodec(bytes.Repeat([]byte{3}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +258,9 @@ func TestGatewayMapsTunnelFailures(t *testing.T) {
 	}{
 		"too many":       {porttunnel.ErrTooManyRequests, http.StatusTooManyRequests, codeTooMany},
 		"disconnected":   {porttunnel.ErrTunnelDisconnected, http.StatusBadGateway, codeDisconnected},
-		"refused":        {&porttunnel.UpstreamError{Message: "request failed: connect to localhost:4000: refused"}, http.StatusBadGateway, codeDisconnected},
+		"refused":        {&porttunnel.UpstreamError{Message: "request failed: connect to localhost:4000: refused"}, http.StatusBadGateway, codeUnreachable},
+		"forwarded":      {fmt.Errorf("%w: forward disconnected", porttunnel.ErrTunnelDisconnected), http.StatusBadGateway, codeDisconnected},
+		"protocol":       {errors.New("unexpected session port tunnel frame"), http.StatusBadGateway, codeDisconnected},
 		"header timeout": {&porttunnel.UpstreamError{Message: "request failed: response header timeout"}, http.StatusGatewayTimeout, codeUpstreamTimeout},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -106,6 +106,7 @@ func roundTripFailure(err error) *gatewayError {
 	if errors.As(err, &failure) {
 		return failure
 	}
+	var upstream *porttunnel.UpstreamError
 	switch {
 	case errors.Is(err, porttunnel.ErrTunnelGone):
 		return waking(err)
@@ -113,6 +114,8 @@ func roundTripFailure(err error) *gatewayError {
 		return tooManyRequests(err)
 	case porttunnel.IsHeaderTimeout(err), errors.Is(err, context.DeadlineExceeded):
 		return upstreamTimeout(err)
+	case errors.As(err, &upstream):
+		return upstreamUnreachable(err)
 	default:
 		return tunnelDisconnected(err)
 	}

@@ -9,7 +9,7 @@ import (
 
 type SessionPortsConfig struct {
 	DomainSuffix          string        `yaml:"domain_suffix"`
-	SlugKeyFile           string        `yaml:"slug_key_file"`
+	LabelKeyFile          string        `yaml:"label_key_file"`
 	URLScheme             string        `yaml:"url_scheme"`
 	URLPort               int           `yaml:"url_port"`
 	InternalListenAddr    string        `yaml:"internal_listen_addr"`
@@ -50,8 +50,8 @@ func validateSessionPorts(environment string, cfg SessionPortsConfig) error {
 		if err := validateLowercaseDNSName("session_ports.domain_suffix", cfg.DomainSuffix); err != nil {
 			return err
 		}
-		if environment == EnvironmentProd && cfg.SlugKeyFile == "" {
-			return errors.New("session_ports.slug_key_file is required in production when domain_suffix is set")
+		if environment == EnvironmentProd && cfg.LabelKeyFile == "" {
+			return errors.New("session_ports.label_key_file is required in production when domain_suffix is set")
 		}
 	}
 	if cfg.URLScheme != "http" && cfg.URLScheme != "https" {
@@ -101,8 +101,8 @@ func validateSessionPortForwarding(cfg SessionPortsConfig) error {
 	if err != nil || host == "" || port == "" {
 		return errors.New("session_ports.internal_advertise_addr must be a reachable host:port")
 	}
-	if cfg.Enabled() && cfg.SlugKeyFile == "" {
-		return errors.New("session_ports.slug_key_file is required when cross-instance forwarding is enabled")
+	if cfg.Enabled() && cfg.LabelKeyFile == "" {
+		return errors.New("session_ports.label_key_file is required when cross-instance forwarding is enabled")
 	}
 	return nil
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/porttunnel"
 )
 
-func (s *Server) configureSessionPorts(deps ServerDeps, codeSessionService *codesessions.Service, logger *slog.Logger) *portgateway.Gateway {
+func (s *Server) configureSessionPorts(deps ServerDeps, codeSessionService *codesessions.Service, tunnelLogger, gatewayLogger *slog.Logger) *portgateway.Gateway {
 	s.sessions.WithSessionPorts(deps.SessionPorts)
 	s.codeSessions.WithSessionPorts(deps.SessionPorts)
 	if !deps.SessionPorts.Enabled() || deps.SessionPortRegistry == nil {
@@ -19,7 +19,7 @@ func (s *Server) configureSessionPorts(deps ServerDeps, codeSessionService *code
 		KeepaliveInterval:     ports.KeepaliveInterval,
 		MaxConcurrentRequests: ports.MaxConcurrentRequests,
 		MaxWebSockets:         ports.MaxWebSockets,
-	}, logger)
+	}, tunnelLogger)
 	return portgateway.New(portgateway.Deps{
 		Settings:       deps.SessionPorts,
 		Config:         ports,
@@ -27,7 +27,7 @@ func (s *Server) configureSessionPorts(deps ServerDeps, codeSessionService *code
 		Store:          deps.DB,
 		Router:         sessionPortRouter(deps),
 		Sandboxes:      deps.SandboxTimeoutExtender,
-		Logger:         logger,
+		Logger:         gatewayLogger,
 	})
 }
 

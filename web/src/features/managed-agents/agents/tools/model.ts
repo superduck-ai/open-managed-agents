@@ -66,7 +66,7 @@ export const BUILT_IN_AGENT_TOOLSETS: Record<string, BuiltInAgentTool[]> = {
     { name: 'web_fetch', description: 'Fetch URL content' },
     { name: 'web_search', description: 'Search the web and return sources' },
     { name: 'ask_user_question', description: 'Ask the user a structured question' },
-    { name: 'get_port_url', description: 'Get the preview URL for a sandbox port' },
+    { name: 'get_port_url', description: 'Get the session port URL for a sandbox port' },
   ],
 };
 

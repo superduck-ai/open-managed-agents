@@ -28,7 +28,7 @@ func sessionPortServer(t *testing.T, enabled bool) *Server {
 	}
 	deps := ServerDeps{CodeSessionCredentials: credentials, FilestoreCredentials: filestoreCredentials}
 	if enabled {
-		codec, err := sessionports.NewSlugCodec(bytes.Repeat([]byte{3}, 32))
+		codec, err := sessionports.NewLabelCodec(bytes.Repeat([]byte{3}, 32))
 		if err != nil {
 			t.Fatal(err)
 		}

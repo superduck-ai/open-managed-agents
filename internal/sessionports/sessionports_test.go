@@ -16,7 +16,7 @@ const testSessionUUID = "0b8f4c4e-6a1d-4f3e-9a0b-2f4d5c6e7a81"
 
 func testSettings(t *testing.T, key byte, mutate func(*config.SessionPortsConfig)) *Settings {
 	t.Helper()
-	codec, err := NewSlugCodec(bytes.Repeat([]byte{key}, keyBytes))
+	codec, err := NewLabelCodec(bytes.Repeat([]byte{key}, keyBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,31 +27,31 @@ func testSettings(t *testing.T, key byte, mutate func(*config.SessionPortsConfig
 	return NewWithCodec(ports, 3001, codec)
 }
 
-func TestSlugCodecRejectsForgedSlugs(t *testing.T) {
-	codec, err := NewSlugCodec(bytes.Repeat([]byte{1}, keyBytes))
+func TestLabelCodecRejectsForgedLabels(t *testing.T) {
+	codec, err := NewLabelCodec(bytes.Repeat([]byte{1}, keyBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
-	slug, err := codec.Encode(testSessionUUID, 4000)
+	label, err := codec.Encode(testSessionUUID, 4000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := slug[len(slug)-1]
-	nonCanonical := slug[:len(slug)-1] + string(rune(last+1))
+	last := label[len(label)-1]
+	nonCanonical := label[:len(label)-1] + string(rune(last+1))
 	for name, value := range map[string]string{
-		"short":         slug[:25],
-		"long":          slug + "a",
-		"uppercase":     strings.ToUpper(slug),
-		"not base32":    "0" + slug[1:],
+		"short":         label[:25],
+		"long":          label + "a",
+		"uppercase":     strings.ToUpper(label),
+		"not base32":    "0" + label[1:],
 		"trailing bits": nonCanonical,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := codec.Decode(value, 4000); !errors.Is(err, ErrInvalidSlug) {
-				t.Fatalf("Decode(%q) error = %v, want ErrInvalidSlug", value, err)
+			if _, err := codec.Decode(value, 4000); !errors.Is(err, ErrInvalidLabel) {
+				t.Fatalf("Decode(%q) error = %v, want ErrInvalidLabel", value, err)
 			}
 		})
 	}
-	if _, err := NewSlugCodec([]byte("short")); err == nil {
+	if _, err := NewLabelCodec([]byte("short")); err == nil {
 		t.Fatal("accepted short key")
 	}
 	if _, err := codec.Encode("not-a-uuid", 4000); err == nil {
@@ -59,14 +59,14 @@ func TestSlugCodecRejectsForgedSlugs(t *testing.T) {
 	}
 }
 
-func TestSlugCodecRoundTripIsDeterministicPerKey(t *testing.T) {
+func TestLabelCodecRoundTripIsDeterministicPerKey(t *testing.T) {
 	first := testSettings(t, 1, nil)
 	second := testSettings(t, 2, nil)
 	a, _ := first.codec.Encode(testSessionUUID, 4000)
 	b, _ := first.codec.Encode(testSessionUUID, 4000)
 	c, _ := second.codec.Encode(testSessionUUID, 4000)
-	if a != b || a == c || len(a) != SlugLength || a != strings.ToLower(a) {
-		t.Fatalf("slugs = %q %q %q", a, b, c)
+	if a != b || a == c || len(a) != LabelLength || a != strings.ToLower(a) {
+		t.Fatalf("labels = %q %q %q", a, b, c)
 	}
 	decoded, err := first.codec.Decode(a, 4000)
 	if err != nil || decoded != testSessionUUID {
@@ -78,16 +78,16 @@ func TestSlugCodecRoundTripIsDeterministicPerKey(t *testing.T) {
 	}
 }
 
-func TestSlugIsBoundToPort(t *testing.T) {
+func TestLabelIsBoundToPort(t *testing.T) {
 	settings := testSettings(t, 1, nil)
 	first, _ := settings.codec.Encode(testSessionUUID, 4000)
 	second, _ := settings.codec.Encode(testSessionUUID, 8888)
 	if first == second {
-		t.Fatal("different ports produced the same slug")
+		t.Fatal("different ports produced the same label")
 	}
 	address, err := settings.ParseHost("8888-" + first + ".preview.example.com")
 	if err == nil && address.SessionUUID == testSessionUUID {
-		t.Fatal("slug for port 4000 resolved the session on port 8888")
+		t.Fatal("label for port 4000 resolved the session on port 8888")
 	}
 	address, err = settings.ParseHost("8888-" + second + ".preview.example.com")
 	if err != nil || address.SessionUUID != testSessionUUID || address.Port != 8888 {
@@ -112,16 +112,16 @@ func TestSettingsRejectsBlockedAndInvalidPorts(t *testing.T) {
 
 func TestSettingsParseHostRejectsMalformedAddresses(t *testing.T) {
 	settings := testSettings(t, 1, nil)
-	slug, _ := settings.codec.Encode(testSessionUUID, 4000)
+	label, _ := settings.codec.Encode(testSessionUUID, 4000)
 	for _, host := range []string{
 		"oma.example.com",
 		"preview.example.com",
-		"4000" + slug + ".preview.example.com",
-		"04000-" + slug + ".preview.example.com",
-		"x-" + slug + ".preview.example.com",
-		"a.4000-" + slug + ".preview.example.com",
-		"49983-" + slug + ".preview.example.com",
-		"4000-" + slug[:20] + ".preview.example.com",
+		"4000" + label + ".preview.example.com",
+		"04000-" + label + ".preview.example.com",
+		"x-" + label + ".preview.example.com",
+		"a.4000-" + label + ".preview.example.com",
+		"49983-" + label + ".preview.example.com",
+		"4000-" + label[:20] + ".preview.example.com",
 	} {
 		if _, err := settings.ParseHost(host); err == nil {
 			t.Fatalf("ParseHost(%q) accepted", host)
@@ -139,16 +139,16 @@ func TestSettingsURLRoundTripsThroughHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	slug, _ := settings.codec.Encode(testSessionUUID, 4000)
-	want := "http://4000-" + slug + ".preview.localhost:38080/"
+	label, _ := settings.codec.Encode(testSessionUUID, 4000)
+	want := "http://4000-" + label + ".preview.localhost:38080/"
 	if got != want {
 		t.Fatalf("URL = %q, want %q", got, want)
 	}
-	label := "4000-" + slug
-	if len(label) > 63 {
-		t.Fatalf("label length %d", len(label))
+	hostLabel := "4000-" + label
+	if len(hostLabel) > 63 {
+		t.Fatalf("host label length %d", len(hostLabel))
 	}
-	address, err := settings.ParseHost(strings.ToUpper(label) + ".Preview.Localhost:38080")
+	address, err := settings.ParseHost(strings.ToUpper(hostLabel) + ".Preview.Localhost:38080")
 	if err != nil || address.Port != 4000 || address.SessionUUID != testSessionUUID {
 		t.Fatalf("ParseHost = %+v, %v", address, err)
 	}
@@ -157,13 +157,13 @@ func TestSettingsURLRoundTripsThroughHost(t *testing.T) {
 	}
 }
 
-func TestNewLoadsSlugKeyFile(t *testing.T) {
+func TestNewLoadsLabelKeyFile(t *testing.T) {
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "bad")
 	if err := os.WriteFile(bad, []byte("c2hvcnQ="), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{SessionPorts: config.SessionPortsConfig{DomainSuffix: "preview.localhost", URLScheme: "https", SlugKeyFile: bad}}
+	cfg := config.Config{SessionPorts: config.SessionPortsConfig{DomainSuffix: "preview.localhost", URLScheme: "https", LabelKeyFile: bad}}
 	if _, err := New(cfg, nil); err == nil {
 		t.Fatal("accepted short key file")
 	}
@@ -172,7 +172,7 @@ func TestNewLoadsSlugKeyFile(t *testing.T) {
 	if err := os.WriteFile(good, []byte(encoded), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg.SessionPorts.SlugKeyFile = good
+	cfg.SessionPorts.LabelKeyFile = good
 	first, err := New(cfg, nil)
 	if err != nil || !first.Enabled() {
 		t.Fatalf("New = %v", err)

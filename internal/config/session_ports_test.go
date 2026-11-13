@@ -22,7 +22,7 @@ func TestValidateSessionPortsRejectsInvalidSettings(t *testing.T) {
 		"max websockets":           func(c *SessionPortsConfig) { c.MaxWebSockets = 0 },
 		"concurrency":              func(c *SessionPortsConfig) { c.MaxConcurrentRequests = 0 },
 		"response idle":            func(c *SessionPortsConfig) { c.ResponseIdleTimeout = 0 },
-		"prod without slugkey":     func(c *SessionPortsConfig) { c.DomainSuffix = "preview.example.com"; c.SlugKeyFile = "" },
+		"prod without labelkey":    func(c *SessionPortsConfig) { c.DomainSuffix = "preview.example.com"; c.LabelKeyFile = "" },
 		"listen without advertise": func(c *SessionPortsConfig) { c.InternalListenAddr = ":38090" },
 		"advertise without listen": func(c *SessionPortsConfig) { c.InternalAdvertiseAddr = "10.0.0.1:38090" },
 		"advertise without host": func(c *SessionPortsConfig) {
@@ -33,16 +33,16 @@ func TestValidateSessionPortsRejectsInvalidSettings(t *testing.T) {
 			c.InternalListenAddr = "0.0.0.0"
 			c.InternalAdvertiseAddr = "10.0.0.1:38090"
 		},
-		"forwarding without slug key": func(c *SessionPortsConfig) {
+		"forwarding without label key": func(c *SessionPortsConfig) {
 			c.DomainSuffix = "preview.example.com"
-			c.SlugKeyFile = ""
+			c.LabelKeyFile = ""
 			c.InternalListenAddr = ":38090"
 			c.InternalAdvertiseAddr = "10.0.0.1:38090"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := defaultSessionPortsConfig()
-			cfg.SlugKeyFile = "/run/secrets/slug"
+			cfg.LabelKeyFile = "/run/secrets/label"
 			mutate(&cfg)
 			if err := validateSessionPorts(EnvironmentProd, cfg); err == nil {
 				t.Fatalf("accepted %+v", cfg)
@@ -71,41 +71,41 @@ func TestSessionPortsDefaultsAndYAMLOverrides(t *testing.T) {
 		t.Fatalf("overrides = %+v", got)
 	}
 	if err := validateSessionPorts(EnvironmentDev, got); err != nil {
-		t.Fatalf("dev config without slug key rejected: %v", err)
+		t.Fatalf("dev config without label key rejected: %v", err)
 	}
 }
 
-func TestSlugKeyFileResolvesLikeOtherFileSettings(t *testing.T) {
+func TestLabelKeyFileResolvesLikeOtherFileSettings(t *testing.T) {
 	configDir := filepath.Join(t.TempDir(), "run")
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for input, want := range map[string]string{
-		"secrets/slug.key":   filepath.Join(configDir, "secrets", "slug.key"),
-		"./secrets/slug.key": filepath.Join(configDir, "secrets", "slug.key"),
-		"/etc/oma/slug.key":  "/etc/oma/slug.key",
-		"~/slug.key":         filepath.Join(home, "slug.key"),
+		"secrets/label.key":   filepath.Join(configDir, "secrets", "label.key"),
+		"./secrets/label.key": filepath.Join(configDir, "secrets", "label.key"),
+		"/etc/oma/label.key":  "/etc/oma/label.key",
+		"~/label.key":         filepath.Join(home, "label.key"),
 	} {
-		cfg := Config{SessionPorts: SessionPortsConfig{SlugKeyFile: input}}
+		cfg := Config{SessionPorts: SessionPortsConfig{LabelKeyFile: input}}
 		if err := resolveConfigPaths(&cfg, configDir); err != nil {
 			t.Fatal(err)
 		}
-		if cfg.SessionPorts.SlugKeyFile != want {
-			t.Fatalf("slug_key_file %q resolved to %q, want %q", input, cfg.SessionPorts.SlugKeyFile, want)
+		if cfg.SessionPorts.LabelKeyFile != want {
+			t.Fatalf("label_key_file %q resolved to %q, want %q", input, cfg.SessionPorts.LabelKeyFile, want)
 		}
 	}
 }
 
-func TestSessionPortForwardingDevRequiresSlugKey(t *testing.T) {
+func TestSessionPortForwardingDevRequiresLabelKey(t *testing.T) {
 	cfg := defaultSessionPortsConfig()
 	cfg.DomainSuffix = "preview.localhost"
 	cfg.InternalListenAddr = ":38090"
 	cfg.InternalAdvertiseAddr = "10.0.0.1:38090"
 	if err := validateSessionPorts(EnvironmentDev, cfg); err == nil {
-		t.Fatal("dev forwarding without a shared slug key accepted")
+		t.Fatal("dev forwarding without a shared label key accepted")
 	}
-	cfg.SlugKeyFile = "/run/secrets/slug"
+	cfg.LabelKeyFile = "/run/secrets/label"
 	if err := validateSessionPorts(EnvironmentDev, cfg); err != nil || !cfg.ForwardingEnabled() {
 		t.Fatalf("forwarding config rejected: %v", err)
 	}

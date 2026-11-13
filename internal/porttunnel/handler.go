@@ -19,7 +19,7 @@ const (
 	Path                   = "/v2/sandbox/tunnel"
 	defaultRevalidateEvery = 30 * time.Second
 	revalidateJitter       = 0.2
-	sessionIDHeader        = "X-Session-ID"
+	codeSessionIDHeader    = "X-Session-ID"
 )
 
 type Authenticator interface {
@@ -55,7 +55,7 @@ func NewHandler(authenticator Authenticator, registry *Registry, limits Limits, 
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token := auth.ExtractBearerToken(r)
-	codeSessionID := strings.TrimSpace(r.Header.Get(sessionIDHeader))
+	codeSessionID := strings.TrimSpace(r.Header.Get(codeSessionIDHeader))
 	if token == "" || codeSessionID == "" {
 		httpapi.WriteError(w, r, tunnelCredentialMissing())
 		return

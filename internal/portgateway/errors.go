@@ -14,6 +14,7 @@ const (
 	codeTooLarge        = "request_too_large"
 	codeTooMany         = "too_many_requests"
 	codeDisconnected    = "tunnel_disconnected"
+	codeUnreachable     = "upstream_unreachable"
 	codeWaking          = "waking"
 	codeUpstreamTimeout = "upstream_timeout"
 	codeInternal        = "internal_error"
@@ -55,7 +56,11 @@ func tooManyRequests(cause error) *gatewayError {
 }
 
 func tunnelDisconnected(cause error) *gatewayError {
-	return &gatewayError{status: http.StatusBadGateway, code: codeDisconnected, message: "Session port is unreachable", cause: cause}
+	return &gatewayError{status: http.StatusBadGateway, code: codeDisconnected, message: "Session port tunnel disconnected; retry the request", cause: cause}
+}
+
+func upstreamUnreachable(cause error) *gatewayError {
+	return &gatewayError{status: http.StatusBadGateway, code: codeUnreachable, message: "No service in the sandbox answered on this session port", cause: cause}
 }
 
 func waking(cause error) *gatewayError {

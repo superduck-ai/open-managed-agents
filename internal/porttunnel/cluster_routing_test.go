@@ -37,7 +37,7 @@ type clusterInstance struct {
 	forward  *httptest.Server
 	owner    string
 	router   *porttunnel.ClusterRouter
-	sandbox  *e2eSandboxes
+	sandbox  *gatewaySandboxes
 	settings *sessionports.Settings
 	hits     atomic.Int64
 }
@@ -60,7 +60,7 @@ func startCluster(t *testing.T, limits porttunnel.Limits) *cluster {
 	t.Helper()
 	redisClient := porttunnel.StartTestRedis(t)
 	connection := porttunnel.StartTestNATS(t)
-	codec, err := sessionports.NewSlugCodec(bytes.Repeat([]byte{5}, 32))
+	codec, err := sessionports.NewLabelCodec(bytes.Repeat([]byte{5}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func startCluster(t *testing.T, limits porttunnel.Limits) *cluster {
 	c := &cluster{redis: redisClient, app: app}
 	c.a = startClusterInstance(t, "a", settings, ports, redisClient, connection, limits)
 	c.b = startClusterInstance(t, "b", settings, ports, redisClient, connection, limits)
-	address, err := settings.URL(e2eSessionUUID, porttunnel.LocalPort(t, app.server))
+	address, err := settings.URL(gatewaySessionUUID, porttunnel.LocalPort(t, app.server))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func startCluster(t *testing.T, limits porttunnel.Limits) *cluster {
 func startClusterInstance(t *testing.T, name string, settings *sessionports.Settings, ports config.SessionPortsConfig, redisClient *redis.Client, connection *nats.Conn, limits porttunnel.Limits) *clusterInstance {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	instance := &clusterInstance{name: name, sandbox: &e2eSandboxes{}, settings: settings}
+	instance := &clusterInstance{name: name, sandbox: &gatewaySandboxes{}, settings: settings}
 	instance.forward = httptest.NewUnstartedServer(http.NotFoundHandler())
 	t.Cleanup(instance.forward.Close)
 	instance.owner = instance.forward.Listener.Addr().String() + "#" + name
@@ -111,7 +111,7 @@ func startClusterInstance(t *testing.T, name string, settings *sessionports.Sett
 	instance.router = porttunnel.NewClusterRouter(instance.public.Registry, owners, porttunnel.NewForwardClient(signer), logger)
 	gateway = portgateway.New(portgateway.Deps{
 		Settings: settings, Config: ports, SandboxTimeout: 30 * time.Second,
-		Store: &e2eStore{}, Router: instance.router, Sandboxes: instance.sandbox, Logger: logger,
+		Store: &gatewayStore{}, Router: instance.router, Sandboxes: instance.sandbox, Logger: logger,
 	})
 	return instance
 }

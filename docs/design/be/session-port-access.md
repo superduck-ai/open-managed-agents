@@ -4,7 +4,7 @@
 
 ## 范围
 
-开发者用 workspace API key，为某个 Session 沙箱内的 HTTP 端口取得一个外部可访问的地址。
+开发者用 workspace API key，为某个 Session 沙箱内的 HTTP 端口取得一个外部可访问的端口地址（session port URL）。
 平台只提供这一个原子能力，不提供预览界面、分享、公开发布或格式转换；这些由基于 OMA 的上层产品实现。
 
 不在范围内：
@@ -28,8 +28,8 @@
 
 ```mermaid
 flowchart LR
-    U[调用方<br/>浏览器或服务端] -->|"https://{port}-{slug}.{domain_suffix}"| G[端口网关]
-    D[开发者后端] -->|"POST /v1/sessions/{id}/ports/{port}/access"| A[access 接口]
+    U[调用方<br/>浏览器或服务端] -->|"https://{port}-{label}.{domain_suffix}"| G[端口网关]
+    D[开发者后端] -->|"GET /v1/sessions/{id}/ports/{port}"| A[取地址接口]
     subgraph OMA[oma-server]
         A
         G --> R[隧道路由]
@@ -65,13 +65,13 @@ flowchart LR
 
 ### 地址
 
-`{port}-{slug}.{domain_suffix}`。整段是一个 DNS label，长度不超过 63。
+`{port}-{label}.{domain_suffix}`。`{port}-{label}` 整段是一个 DNS label，长度不超过 63；下文的 label 专指其中 `-` 之后的加密部分。
 
-`slug` 是公开 Session 的 `sessions.uuid` 用按端口派生的密钥做确定性加密后的 26 位小写 base32 串：`portKey = HMAC-SHA256(masterKey, "session-port:" + port)`，用 `portKey` 做 AES-256 单块加密 16 字节 UUID（单块 AES 是伪随机置换），无填充 base32 编码后转小写。解码要求长度 26、全小写、末 2 bit 为 0（编码唯一），否则视为无效地址。
-网关用主机名里的端口派生密钥解密即可得到 Session UUID，不需要映射表；没有密钥的人无法从 Session ID 推出地址，伪造的串解出随机 UUID，查不到 Session 时返回 404。地址绑定端口：同一 Session 不同端口的 slug 不同，把 `4000-<slug>` 改成 `8888-<slug>` 会用 8888 的密钥解出随机 UUID，同样返回 404。
-密钥通过 `slug_key_file` 配置，文件内容是 32 字节随机数的 base64；生产环境必填，dev 留空时使用进程内临时密钥（重启后地址失效）并输出 Warn。相对路径与其他 `*_file` 配置一致，按配置文件所在目录解析，支持 `~`。轮换密钥会使所有已发出的地址失效。
+`label` 是公开 Session 的 `sessions.uuid` 用按端口派生的密钥做确定性加密后的 26 位小写 base32 串：`portKey = HMAC-SHA256(masterKey, "session-port:" + port)`，用 `portKey` 做 AES-256 单块加密 16 字节 UUID（单块 AES 是伪随机置换），无填充 base32 编码后转小写。解码要求长度 26、全小写、末 2 bit 为 0（编码唯一），否则视为无效地址。
+网关用主机名里的端口派生密钥解密即可得到 Session UUID，不需要映射表；没有密钥的人无法从 Session ID 推出地址，伪造的串解出随机 UUID，查不到 Session 时返回 404。地址绑定端口：同一 Session 不同端口的 label 不同，把 `4000-<label>` 改成 `8888-<label>` 会用 8888 的密钥解出随机 UUID，同样返回 404。
+密钥通过 `label_key_file` 配置，文件内容是 32 字节随机数的 base64；生产环境必填，dev 留空时使用进程内临时密钥（重启后地址失效）并输出 Warn。相对路径与其他 `*_file` 配置一致，按配置文件所在目录解析，支持 `~`。轮换密钥会使所有已发出的地址失效。
 
-26 位 slug 只能容纳 128 bit，所以地址里没有租户信息。网关按 `sessions.uuid` 做一次不带租户条件的查询，这是“查询必须带租户范围”规则的有意例外：地址本身就是由密钥保护的能力凭证。查到的 organization/workspace 随后用于所有读写（例如 `port_last_access_at`）。
+26 位 label 只能容纳 128 bit，所以地址里没有租户信息。网关按 `sessions.uuid` 做一次不带租户条件的查询，这是“查询必须带租户范围”规则的有意例外：地址本身就是由密钥保护的能力凭证。查到的 organization/workspace 随后用于所有读写（例如 `port_last_access_at`）。
 
 使用通配子域而不是路径前缀，原因有两点：
 
@@ -80,7 +80,7 @@ flowchart LR
 
 ## Agent 内置工具 `get_port_url`
 
-Agent 在对话中需要给出预览地址时调用该工具。上面的公开 API 拒绝沙箱内的凭据，所以工具由平台侧执行：brain 用现有 session ingress 凭据回调 `oma-server`，服务端算出地址。沙箱内不增加凭据或环境变量，`environment-manager-rs` 不变。
+Agent 在对话中需要给出端口地址时调用该工具。上面的公开 API 拒绝沙箱内的凭据，所以工具由平台侧执行：brain 用现有 session ingress 凭据回调 `oma-server`，服务端算出地址。沙箱内不增加凭据或环境变量，`environment-manager-rs` 不变。
 
 ```mermaid
 sequenceDiagram
@@ -101,7 +101,7 @@ sequenceDiagram
 - 未配置时按禁用处理（与 `ask_user_question` 共用同一套运行时判断），规范化时不补任何条目。未配置该工具的 Agent，创建、读取返回的 `tools` 和模型收到的工具列表都与引入该工具前一致。
 - 配置了但没写 `permission_policy` 时取 `always_allow`，不继承 `default_config` 的策略；显式写 `always_ask` 时照常走确认。
 - 子线程（delegation）沿用 web 工具的规则：工具列表按线程快照计算；服务端要求根快照及每一级祖先线程快照都开启了该工具。
-- `session_ports.domain_suffix` 为空（功能未启用）时工具仍按配置提供给模型，调用返回“未启用”错误。这样模型看到的工具列表只取决于 Agent 配置，不随部署配置变化，Agent 也能如实告诉用户该部署未开启端口预览。
+- `session_ports.domain_suffix` 为空（功能未启用）时工具仍按配置提供给模型，调用返回“未启用”错误。这样模型看到的工具列表只取决于 Agent 配置，不随部署配置变化，Agent 也能如实告诉用户该部署未启用端口地址功能。
 
 ### 合同
 
@@ -117,8 +117,8 @@ sequenceDiagram
 | 情况 | 状态 | message |
 | --- | --- | --- |
 | 端口不是 1–65535 的整数，或带了其他字段 | 400 | `port must be an integer between 1 and 65535`（brain 先在本地拦截，不发请求） |
-| 屏蔽端口（49983、生效的沙箱 MCP 端口、`blocked_ports`） | 400 | `port N is reserved by the sandbox and has no preview URL` |
-| 功能未启用 | 409 | `Session port preview URLs are not enabled on this server` |
+| 屏蔽端口（49983、生效的沙箱 MCP 端口、`blocked_ports`） | 400 | `port N is reserved by the sandbox and has no session port URL` |
+| 功能未启用 | 409 | `Session port URLs are not enabled on this server` |
 | Agent 或祖先线程未开启该工具 | 403 | `get_port_url is not enabled for this Agent` |
 | 凭据无效 / worker epoch 过期 | 401 / 409 | 与 web 工具相同 |
 | `oma-server` 不可达或超时（10s） | — | `OMA port URL service unavailable or timed out` |
@@ -267,7 +267,7 @@ sequenceDiagram
     participant R as Redis
     participant B as 实例 B（持有隧道）
     participant E as environment-manager
-    C->>A: GET /app.js（Host 4000-slug.preview…）
+    C->>A: GET /app.js（Host 4000-label.preview…）
     A->>A: 解析地址、过滤头、剥离 cookie、续期
     A->>R: GET owner
     R-->>A: 10.0.1.7:38090#inst-b
@@ -315,7 +315,7 @@ sequenceDiagram
 
 ### 鉴权
 
-签名密钥由 slug 主密钥派生：`HMAC-SHA256(slugMaster, "session-port-internal-forward")`。多副本本来就必须共享 slug 密钥，否则地址只能在一个实例上解码，因此不新增配置；启用转发时必须配置 `slug_key_file`。
+签名密钥由 label 主密钥派生：`HMAC-SHA256(labelMaster, "session-port-internal-forward")`。多副本本来就必须共享 label 密钥，否则地址只能在一个实例上解码，因此不新增配置；启用转发时必须配置 `label_key_file`。
 
 签名头 `X-OMA-Port-Signature: v1.<unix_ms>.<base64url(HMAC)>`，覆盖：
 
@@ -377,7 +377,7 @@ environment-manager 收到断开后约 1s 重连，经入口落到其它实例�
 
 `oma-server` 在进入现有路由前按 Host 分流：Host（去掉端口、转小写、去掉末尾点）以 `.{domain_suffix}` 结尾的请求进入端口网关，其余不变。分流中间件位于 request ID、请求观测和 panic recovery 之后。
 
-1. 解析 Host 得到 `port` 和 `slug`，解密 `slug` 得到 Session；解密失败、端口被禁止、Session 不存在或已归档返回 404。没有 Code Session、没有带 provider ID 的沙箱，或沙箱状态不是 `running`/`creating` 时返回 409。
+1. 解析 Host 得到 `port` 和 `label`，解密 `label` 得到 Session；解密失败、端口被禁止、Session 不存在或已归档返回 404。没有 Code Session、没有带 provider ID 的沙箱，或沙箱状态不是 `running`/`creating` 时返回 409。
 2. 查注册表。无隧道时进入唤醒流程。
 3. 给沙箱续期。
 4. 组装请求并写入隧道，流式回传响应。调用方断开时发送 `http_cancel`。
@@ -426,7 +426,8 @@ sequenceDiagram
 | 409 | `sandbox_unavailable` | 沙箱已回收或从未启动 |
 | 413 | `request_too_large` | 请求体超限 |
 | 429 | `too_many_requests` | 并发请求或 WebSocket 数超限 |
-| 502 | `tunnel_disconnected` | 请求在途时隧道断开，或本地端口拒绝连接 |
+| 502 | `tunnel_disconnected` | 收到响应头前隧道断开、被新连接替换、实例停机、跨实例转发链路中断，或隧道客户端协议错误 |
+| 502 | `upstream_unreachable` | 隧道正常，但沙箱内该端口无服务监听、拒绝连接或本地请求失败（客户端回 `http_error` / `ws_error`） |
 | 503 | `waking` | 唤醒超时，带 `Retry-After` |
 | 504 | `upstream_timeout` | 本地服务未在 30s 内返回响应头 |
 
@@ -442,10 +443,10 @@ sequenceDiagram
   - 页面脚本仍能通过 `document.cookie` 读到 `.example.com` 上非 HttpOnly 的 cookie，网关无法阻止。
   - 页面脚本能往 `.example.com` 写 cookie。主站的 `sessionKey` 目前不设 `Domain` 但没有 `__Host-` 前缀，可被同名的上级域 cookie 干扰。上线前把主站登录 cookie 改为 `__Host-` 前缀。
 - **生产使用独立注册域名**，上述三点不存在。保留这一段是为了说明为什么不能图方便改用主站的同级子域。
-- **地址即访问权**：平台不认识开发者的终端用户，无法校验访问者身份；地址由密钥加密生成、不可猜测，拿到地址的任何人都能访问该端口并唤醒沙箱，直到 Session 归档或删除。谁能拿到地址由开发者控制。地址只授权该端口：slug 由端口派生的密钥加密，改主机名里的端口号不能访问同一沙箱的其他端口。
+- **地址即访问权**：平台不认识开发者的终端用户，无法校验访问者身份；地址由密钥加密生成、不可猜测，拿到地址的任何人都能访问该端口并唤醒沙箱，直到 Session 归档或删除。谁能拿到地址由开发者控制。地址只授权该端口：label 由端口派生的密钥加密，改主机名里的端口号不能访问同一沙箱的其他端口。
 - **地址泄露的途径**：浏览器历史、`Referer`、代理和 DNS 日志。网关对经网关处理的响应追加 `Referrer-Policy: no-referrer`（`net/http` 在进入任何 handler 前直接拒绝的畸形请求，例如重复 Host，其 400 响应不含该头，也不含沙箱内容）。泄露后目前只能归档 Session 止损。
 - **访问端口可能等于控制沙箱**：沙箱内的服务通常没有自己的登录；如果它带代码执行能力（Notebook、调试接口），拿到地址就能在沙箱内执行代码并读到其中的凭据。开发者应把地址当作密钥对待。
-- **Agent 不能自行得到地址**：地址只能由持有 API key 的开发者通过 API 取得，沙箱内没有 `slug` 密钥。
+- **Agent 不能自行得到地址**：地址只能由持有 API key 的开发者通过 API 取得，沙箱内没有 label 密钥。
 - **隧道只能访问 `localhost`**：客户端把目标固定为 `http://localhost:<port>`，不能借隧道访问沙箱网络内的其他主机。
 
 ### 后续方向
@@ -462,16 +463,16 @@ sequenceDiagram
 
 ```yaml
 session_ports:
-  # 为空时整个能力关闭：access 接口返回 404，不向沙箱下发 TUNNEL_ENABLED。
+  # 为空时整个能力关闭：取地址接口返回 404，不向沙箱下发 TUNNEL_ENABLED。
   domain_suffix: ""
-  slug_key_file: ""
+  label_key_file: ""
   # 写入返回地址的 scheme 与端口；url_port 为 0 时省略端口。
   url_scheme: https
   url_port: 0
   # 跨实例转发：两项同时为空（单实例）或同时配置。internal_listen_addr 是内部端点的监听地址，
   # 不经入口暴露；internal_advertise_addr 写入 Redis owner 记录，供其它实例直连，支持 ${ENV}
   # 展开，例如 "${POD_IP}:38090"（POD_IP 由 K8s downward API status.podIP 注入）。
-  # 启用转发时必须配置 slug_key_file。
+  # 启用转发时必须配置 label_key_file。
   internal_listen_addr: ""
   internal_advertise_addr: ""
   wake_timeout: 30s
@@ -513,7 +514,7 @@ session_ports:
 ## 测试计划
 
 - **协议一致性**：服务端测试直接使用 `tunnel.proto` 生成的类型；另有一条集成测试启动真实的 `environment-manager` 隧道客户端对接服务端，覆盖 HTTP、流式响应、取消、WebSocket、保活 60s 以上不掉线。
-- **网关**：`slug` 加解密与伪造地址、端口禁止列表、头与 cookie 过滤、各错误码。
+- **网关**：label 加解密与伪造地址、端口禁止列表、头与 cookie 过滤、各错误码。
 - **多副本**：两个实例，连接在 B、请求到 A；持有者下线；内部端点拒绝未签名请求；大响应与慢调用方下完整到达。
 - **唤醒**：暂停后的首个请求、并发请求共用一次唤醒、唤醒超时、沙箱已回收。分别在 `e2b-local` 的 Docker backend 和 CubeSandbox 上测量从请求到首字节的时间。
 - **生命周期**：端口流量续期、无请求后沙箱按原策略暂停、有端口访问的 Session 不被 idle 回收、worker epoch 变化后旧连接被关闭。
@@ -523,13 +524,13 @@ session_ports:
 
 | 包 | 覆盖 |
 | --- | --- |
-| `internal/sessionports` | slug 往返与确定性、换密钥、按端口绑定、伪造/长度/大小写/末位、端口禁止列表、地址格式与 Host 解析、密钥文件 |
-| `internal/porttunnel` | wire golden 与双拼写解码；鉴权拒绝；凭据撤销后关闭；复查间隔抖动范围；90s 失效判定与 ping 续期；空 payload 保活；新连接替换旧连接且在途请求失败；并发与 WS 上限；504/502 区分；慢调用方无进展 5s 后只取消该流、后续请求立即可用；大于缓冲的响应完整且发送端被背压；WebSocket 关闭码规范化；响应空闲超时；Redis owner；NATS 上线通知 |
-| `internal/porttunnel`（`gateway_e2e_test.go`） | 进程内按 wire 协议实现的隧道客户端 + 真实网关与隧道端点：流式 HTTP 逐块到达、头与 cookie 过滤、WebSocket 文本/二进制往返与关闭、唤醒后等待隧道、伪造地址与换端口 404、停止读取的调用方在写超时后释放 HTTP 与 WebSocket 名额；一个调用方停止读取时同 Session 另一端口的请求 6s 内成功且隧道不重连（测试客户端模拟 Rust 的 10s 写超时）；限速读取的调用方完整下载 24 MiB；调用方或上游异常断开时对端收到 1001 |
+| `internal/sessionports` | label 往返与确定性、换密钥、按端口绑定、伪造/长度/大小写/末位、端口禁止列表、地址格式与 Host 解析、密钥文件 |
+| `internal/porttunnel` | wire golden 与双拼写解码；鉴权拒绝；凭据撤销后关闭；复查间隔抖动范围；90s 失效判定与 ping 续期；空 payload 保活；新连接替换旧连接且在途请求失败；并发与 WS 上限；504 与两种 502 区分；慢调用方无进展 5s 后只取消该流、后续请求立即可用；大于缓冲的响应完整且发送端被背压；WebSocket 关闭码规范化；响应空闲超时；Redis owner；NATS 上线通知 |
+| `internal/porttunnel`（`gateway_proxy_test.go`） | 进程内按 wire 协议实现的隧道客户端 + 真实网关与隧道端点：流式 HTTP 逐块到达、头与 cookie 过滤、WebSocket 文本/二进制往返与关闭、唤醒后等待隧道、伪造地址与换端口 404、端口无监听时 HTTP 与 WebSocket 返回 502 `upstream_unreachable`、响应头前隧道断开返回 502 `tunnel_disconnected`、停止读取的调用方在写超时后释放 HTTP 与 WebSocket 名额；一个调用方停止读取时同 Session 另一端口的请求 6s 内成功且隧道不重连（测试客户端模拟 Rust 的 10s 写超时）；限速读取的调用方完整下载 24 MiB；调用方或上游异常断开时对端收到 1001 |
 | `internal/porttunnel`（流控） | 能力协商与旧客户端回退；未读的流不影响同隧道其他请求（毫秒级）且客户端发送量不超过窗口；按消费回 `window_update`；超发判为协议错误只取消该流；零长度帧洪泛按帧成本判超发；小分块合并保序且记账正确；WebSocket 服务端 → 沙箱方向的额度等待；出站队列按字节限界、满时等待不丢帧；`window_update` golden |
-| `internal/porttunnel`（`gateway_e2e_test.go`，流控） | 不读的调用方只在 30s（测试中注入 3s）写超时后被取消，期间另一端口请求不受影响、隧道不断；限速读取的大下载期间另一端口延迟不上升；2 万 / 5 万个 8 字节小分块的响应在慢读者下经网关完整到达 |
-| `internal/portgateway` | Host 分流、404/409/413/429/502/503/504、并发请求共用一次唤醒、头与 cookie、续期与访问时间节流、调用方断开取消 |
-| `internal/porttunnel`（`cluster_e2e_test.go`，多副本） | 进程内两个实例共享 miniredis 与嵌入式 NATS，隧道连 B、请求打 A：HTTP 往返（经 B 内部端点一次，头与 cookie 规则与单实例一致，续期只在 A）、8 MiB 下载在慢读者下完整、SSE 逐条到达、调用方取消传到沙箱服务、WebSocket 子协议/文本/二进制/关闭码、B 侧配额满时 A 返回 429、B 内部端点不可达时 2s 级别进入等待后返回 503 且清除 owner、owner 指向无隧道的 B 时等到隧道连上 A 后成功；所有失败响应不含内部地址 |
+| `internal/porttunnel`（`gateway_proxy_test.go`，流控） | 不读的调用方只在 30s（测试中注入 3s）写超时后被取消，期间另一端口请求不受影响、隧道不断；限速读取的大下载期间另一端口延迟不上升；2 万 / 5 万个 8 字节小分块的响应在慢读者下经网关完整到达 |
+| `internal/portgateway` | Host 分流、404/409/413/429/502（`tunnel_disconnected` / `upstream_unreachable`）/503/504、并发请求共用一次唤醒、头与 cookie、续期与访问时间节流、调用方断开取消 |
+| `internal/porttunnel`（`cluster_routing_test.go`，多副本） | 进程内两个实例共享 miniredis 与嵌入式 NATS，隧道连 B、请求打 A：HTTP 往返（经 B 内部端点一次，头与 cookie 规则与单实例一致，续期只在 A）、8 MiB 下载在慢读者下完整、SSE 逐条到达、调用方取消传到沙箱服务、WebSocket 子协议/文本/二进制/关闭码、B 侧配额满时 A 返回 429、B 内部端点不可达时 2s 级别进入等待后返回 503 且清除 owner、owner 指向无隧道的 B 时等到隧道连上 A 后成功；所有失败响应不含内部地址 |
 | `internal/porttunnel`（转发单测） | 伪造密钥、缺失/格式错误、过期、未来时间、改路径/端口/Session、篡改请求头、目标 owner 不符均 401；有效签名进入查找；客户端不用代理且响应头/握手超时大于持有者侧；错误码往返；`WaitOnline` 在 owner 已在别处时立即返回；停机时隧道收到 1012 且 owner 释放 |
 | `internal/api` | 公开 router 上 `/internal/session-ports/...` 404；隧道路径只走隧道鉴权 |
 | `internal/sessions` | 取地址接口的 404/403/400 |

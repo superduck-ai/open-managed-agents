@@ -27,7 +27,7 @@ Open Managed Agents 还支持自定义的用户定义工具。您的应用程序
 | Web fetch  | `web_fetch`  | 从 URL 获取内容            |
 | Web search | `web_search` | 在网络上搜索信息              |
 | 用户提问 | `ask_user_question` | 向用户提问并等待回答后继续执行 |
-| 端口预览地址 | `get_port_url` | 获取会话沙箱内某个 HTTP 端口的预览地址 |
+| 端口地址 | `get_port_url` | 获取会话沙箱内某个 HTTP 端口的地址 |
 
 `ask_user_question` 默认关闭，因为等待回答可能阻塞会话中的问答流程。如需使用，请在控制台的智能体工具设置中显式开启，或在工具集的 `configs` 中添加：
 
@@ -37,13 +37,13 @@ Open Managed Agents 还支持自定义的用户定义工具。您的应用程序
 
 启用后，智能体可以请求用户补充信息或作出选择，并等待回答。Web 搜索还需要部署配置搜索服务。
 
-`get_port_url` 同样默认关闭，因为任何拿到预览地址的人都能访问。开启方式：
+`get_port_url` 同样默认关闭，因为任何拿到端口地址的人都能访问。开启方式：
 
 ```json
 {"name": "get_port_url", "enabled": true}
 ```
 
-未写 `permission_policy` 时默认 `always_allow`。工具只接受一个 `port`（1–65535），返回当前会话沙箱内该端口的预览地址，与 `GET /v1/sessions/{session_id}/ports/{port}` 返回的地址相同。地址固定，与服务是否已在监听无关。只监听 127.0.0.1 的服务也能通过该地址访问，不需要改成 0.0.0.0。屏蔽端口或未开启端口预览的部署返回错误，不返回地址。
+未写 `permission_policy` 时默认 `always_allow`。工具只接受一个 `port`（1–65535），返回当前会话沙箱内该端口的端口地址，与 `GET /v1/sessions/{session_id}/ports/{port}` 返回的地址相同。地址固定，与服务是否已在监听无关。只监听 127.0.0.1 的服务也能通过该地址访问，不需要改成 0.0.0.0。屏蔽端口或未启用端口地址功能的部署返回错误，不返回地址。
 
 ## 配置工具集
 

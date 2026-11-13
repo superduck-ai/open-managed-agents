@@ -23,7 +23,7 @@ const portToolEnabled = `[{"type":"agent_toolset_20260401","configs":[{"name":"g
 
 func portToolSettings(t *testing.T) *sessionports.Settings {
 	t.Helper()
-	codec, err := sessionports.NewSlugCodec(bytes.Repeat([]byte{9}, 32))
+	codec, err := sessionports.NewLabelCodec(bytes.Repeat([]byte{9}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}

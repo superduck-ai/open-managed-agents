@@ -27,7 +27,7 @@ func sessionPortRequest(t *testing.T, credentialType, port string) *http.Request
 }
 
 func TestRetrievePortRouteRejectsBeforeLoadingSession(t *testing.T) {
-	codec, err := sessionports.NewSlugCodec(bytes.Repeat([]byte{1}, 32))
+	codec, err := sessionports.NewLabelCodec(bytes.Repeat([]byte{1}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}

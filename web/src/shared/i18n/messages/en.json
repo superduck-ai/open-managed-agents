@@ -1567,7 +1567,7 @@
   "managedAgents.agents.createDialog.builtInTool.enterWorktree": "Enter an isolated worktree",
   "managedAgents.agents.createDialog.builtInTool.exitPlanMode": "Exit planning mode",
   "managedAgents.agents.createDialog.builtInTool.exitWorktree": "Exit an isolated worktree",
-  "managedAgents.agents.createDialog.builtInTool.getPortUrl": "Get the preview URL for a sandbox port",
+  "managedAgents.agents.createDialog.builtInTool.getPortUrl": "Get the session port URL for a sandbox port",
   "managedAgents.agents.createDialog.builtInTool.glob": "File pattern matching",
   "managedAgents.agents.createDialog.builtInTool.grep": "Text search with regex",
   "managedAgents.agents.createDialog.builtInTool.notebookEdit": "Edit Jupyter notebooks",

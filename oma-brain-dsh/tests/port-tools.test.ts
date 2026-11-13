@@ -10,7 +10,7 @@ import { PortUrlClient } from "../src/port-tools/client.ts";
 import { portToolDefinition } from "../src/port-tools/definitions.ts";
 
 const legacyTools = ["Bash", "Read", "Write", "Edit", "Grep", "Glob", "web_search", "web_fetch", "ask_user_question"];
-const previewURL = "https://4000-abcdefghijklmnopqrstuvwxyz.preview.example.com/";
+const portURL = "https://4000-abcdefghijklmnopqrstuvwxyz.preview.example.com/";
 
 function callEvents(name: string, args: Payload, id: string): Payload[] {
   const events = toolEvents("unused", id);
@@ -90,13 +90,13 @@ test("server errors become tool errors and invalid ports never reach OMA", async
     textEvents("done"),
   ];
   const calls: Request[] = [];
-  const fetcher = portFetcher(calls, () => Response.json({ type: "error", error: { type: "invalid_request_error", message: "port 49983 is reserved by the sandbox and has no preview URL" } }, { status: 400 }));
+  const fetcher = portFetcher(calls, () => Response.json({ type: "error", error: { type: "invalid_request_error", message: "port 49983 is reserved by the sandbox and has no session port URL" } }, { status: 400 }));
   try {
     await runSession(backend, fetcher, [{ id: "errors", content: { content: "links" } }]);
     const results = toolResults(backend);
     expect(results).toHaveLength(3);
     expect(results.every((block) => block.is_error)).toBe(true);
-    expect(resultText(results[0]!)).toBe("Error: OMA port URL HTTP 400: port 49983 is reserved by the sandbox and has no preview URL");
+    expect(resultText(results[0]!)).toBe("Error: OMA port URL HTTP 400: port 49983 is reserved by the sandbox and has no session port URL");
     expect(results.some((block) => resultText(block).includes("preview.example.com"))).toBe(false);
     expect(resultText(results[1]!)).toBe("Error: port must be an integer between 1 and 65535");
     expect(resultText(results[2]!)).toContain("must be an integer");
@@ -112,13 +112,13 @@ test("disabled feature and unavailable OMA are reported without an address", asy
   backend.modelScript = [callEvents("get_port_url", { port: 4000 }, "disabled"), callEvents("get_port_url", { port: 4000 }, "down"), textEvents("done")];
   const calls: Request[] = [];
   const fetcher = portFetcher(calls, () => calls.length === 1
-    ? Response.json({ type: "error", error: { type: "invalid_request_error", message: "Session port preview URLs are not enabled on this server" } }, { status: 409 })
+    ? Response.json({ type: "error", error: { type: "invalid_request_error", message: "Session port URLs are not enabled on this server" } }, { status: 409 })
     : new Response("bad gateway", { status: 502 }));
   try {
     await runSession(backend, fetcher, [{ id: "disabled", content: { content: "link" } }]);
     const results = toolResults(backend);
     expect(results.map(resultText)).toEqual([
-      "Error: OMA port URL HTTP 409: Session port preview URLs are not enabled on this server",
+      "Error: OMA port URL HTTP 409: Session port URLs are not enabled on this server",
       "Error: OMA port URL service unavailable or timed out",
     ]);
     expect(results.every((block) => block.is_error)).toBe(true);
@@ -130,12 +130,12 @@ test("enabled get_port_url returns the server URL as text without approval", asy
   await backend.ready;
   backend.a.launch.tools = [...legacyTools, "get_port_url"];
   backend.a.launch.tool_permissions = { get_port_url: "allow" };
-  backend.modelScript = [callEvents("get_port_url", { port: 4000 }, "port_1"), textEvents(`Preview: ${previewURL}`)];
+  backend.modelScript = [callEvents("get_port_url", { port: 4000 }, "port_1"), textEvents(`Port URL: ${portURL}`)];
   const calls: Request[] = [];
   let approvals = 0;
-  const fetcher = portFetcher(calls, () => Response.json({ type: "session_port", port: 4000, url: previewURL }));
+  const fetcher = portFetcher(calls, () => Response.json({ type: "session_port", port: 4000, url: portURL }));
   try {
-    await runSession(backend, fetcher, [{ id: "port", content: { content: "Give me the preview link for port 4000" } }], () => approvals++);
+    await runSession(backend, fetcher, [{ id: "port", content: { content: "Give me the URL for port 4000" } }], () => approvals++);
     const tool = backend.requests[0].tools.find((entry: Payload) => entry.name === "get_port_url");
     expect(tool.input_schema).toEqual({ type: "object", additionalProperties: false, required: ["port"], properties: { port: { type: "integer", minimum: 1, maximum: 65535 } } });
     expect(tool.description).toContain("whether or not a service is already listening");
@@ -148,9 +148,9 @@ test("enabled get_port_url returns the server URL as text without approval", asy
     const results = toolResults(backend);
     expect(results).toHaveLength(1);
     expect(results[0]!.is_error).toBeFalsy();
-    expect(resultText(results[0]!)).toBe(previewURL);
+    expect(resultText(results[0]!)).toBe(portURL);
     expect(approvals).toBe(0);
-    expect(JSON.stringify(backend.requests[1])).toContain(previewURL);
+    expect(JSON.stringify(backend.requests[1])).toContain(portURL);
   } finally { await backend.stop(); }
 });
 
@@ -184,9 +184,9 @@ test("tool refresh adds and removes get_port_url", async () => {
 test("child thread calls forward the thread scope", async () => {
   const a = assignment();
   const calls: Request[] = [];
-  const api = new OmaApi("http://oma.test", portFetcher(calls, () => Response.json({ type: "session_port", port: 5173, url: previewURL })));
+  const api = new OmaApi("http://oma.test", portFetcher(calls, () => Response.json({ type: "session_port", port: 5173, url: portURL })));
   api.assignments.set(a.session_id, a);
   const result = await new PortUrlClient(api, a.session_id, "child-thread").call(portToolDefinition(), { port: 5173 }, new AbortController().signal);
-  expect(result).toEqual({ content: [{ type: "text", text: previewURL }] });
+  expect(result).toEqual({ content: [{ type: "text", text: portURL }] });
   expect(calls[0]!.headers.get("X-OMA-Session-Thread-ID")).toBe("child-thread");
 });

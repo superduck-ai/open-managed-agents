@@ -299,7 +299,8 @@ sandbox_lifecycle:
   idle_timeout: 24h
 
 # External access to HTTP ports inside cloud Session sandboxes via
-# {port}-{slug}.{domain_suffix}. Empty domain_suffix disables the feature:
+# session port URLs {port}-{label}.{domain_suffix}, where {port}-{label} is one DNS label.
+# Empty domain_suffix disables the feature:
 # GET /v1/sessions/{id}/ports/{port} returns 404 and sandboxes do not receive TUNNEL_ENABLED.
 # domain_suffix must be a hostname separate from the console (local: preview.localhost).
 session_ports:
@@ -307,7 +308,7 @@ session_ports:
   # File holding 32 random bytes in base64. Required in prod; dev uses an
   # ephemeral key when empty. Rotating it invalidates every issued address.
   # Relative paths resolve against this config file's directory; ~ expands.
-  slug_key_file: ""
+  label_key_file: ""
   # Scheme and port written into returned URLs; url_port 0 omits the port.
   url_scheme: https
   url_port: 0
@@ -315,7 +316,7 @@ session_ports:
   # internal_listen_addr serves the signed internal forwarding endpoint and must not be
   # exposed through the ingress. internal_advertise_addr is written into the Redis owner
   # record so other replicas can dial it; ${ENV} expands, e.g. "${POD_IP}:38090" with
-  # POD_IP from the Kubernetes downward API (status.podIP). Requires slug_key_file.
+  # POD_IP from the Kubernetes downward API (status.podIP). Requires label_key_file.
   internal_listen_addr: ""
   internal_advertise_addr: ""
   wake_timeout: 30s

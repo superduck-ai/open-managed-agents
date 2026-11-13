@@ -252,7 +252,7 @@ func resolveConfigPaths(cfg *Config, configDir string) error {
 		{name: "code_session.jwt_signing_private_key_file", value: &cfg.CodeSession.JWTSigningPrivateKeyFile},
 		{name: "code_session.upstream_proxy_ca_key_file", value: &cfg.CodeSession.UpstreamProxyCAKeyFile},
 		{name: "code_session.brain_claim_token_file", value: &cfg.CodeSession.BrainClaimTokenFile},
-		{name: "session_ports.slug_key_file", value: &cfg.SessionPorts.SlugKeyFile},
+		{name: "session_ports.label_key_file", value: &cfg.SessionPorts.LabelKeyFile},
 	}
 	if v := cfg.Vault.MasterKey.HashicorpVault; v != nil {
 		paths = append(paths, struct {

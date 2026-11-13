@@ -59,7 +59,7 @@ func portToolContextFailure(cause error) error {
 }
 
 func sessionPortsDisabled() error {
-	return apperr.New(apperr.Conflict, "Session port preview URLs are not enabled on this server", nil)
+	return apperr.New(apperr.Conflict, "Session port URLs are not enabled on this server", nil)
 }
 
 func invalidSessionPort() error {
@@ -67,7 +67,7 @@ func invalidSessionPort() error {
 }
 
 func sessionPortBlocked(port int) error {
-	return apperr.New(apperr.InvalidArgument, fmt.Sprintf("port %d is reserved by the sandbox and has no preview URL", port), nil)
+	return apperr.New(apperr.InvalidArgument, fmt.Sprintf("port %d is reserved by the sandbox and has no session port URL", port), nil)
 }
 
 func sandboxInvalidRequest(cause error) error {

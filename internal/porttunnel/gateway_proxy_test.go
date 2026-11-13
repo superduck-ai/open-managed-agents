@@ -26,65 +26,65 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 )
 
-const e2eSessionUUID = "3d9a7a52-1f0c-4c7e-8a55-0c6f2b9d4e11"
+const gatewaySessionUUID = "3d9a7a52-1f0c-4c7e-8a55-0c6f2b9d4e11"
 
-type e2eStore struct {
+type gatewayStore struct {
 	touches atomic.Int64
 }
 
-func (s *e2eStore) FindSessionPortTarget(_ context.Context, sessionUUID string) (db.SessionPortTarget, error) {
-	if sessionUUID != e2eSessionUUID {
+func (s *gatewayStore) FindSessionPortTarget(_ context.Context, sessionUUID string) (db.SessionPortTarget, error) {
+	if sessionUUID != gatewaySessionUUID {
 		return db.SessionPortTarget{}, db.ErrNotFound
 	}
 	return db.SessionPortTarget{
-		SessionUUID: sessionUUID, SessionExternalID: "sesn_e2e", OrganizationUUID: "org", WorkspaceUUID: "workspace",
+		SessionUUID: sessionUUID, SessionExternalID: "sesn_gateway", OrganizationUUID: "org", WorkspaceUUID: "workspace",
 		CodeSessionUUID: porttunnel.TestCodeSessionUUID, CodeSessionExternalID: porttunnel.TestCodeSessionID,
-		ProviderSandboxID: "sbx_e2e", SandboxState: "running",
+		ProviderSandboxID: "sbx_gateway", SandboxState: "running",
 	}, nil
 }
 
-func (s *e2eStore) TouchCodeSessionPortAccess(context.Context, string, string, string, time.Time, time.Duration) error {
+func (s *gatewayStore) TouchCodeSessionPortAccess(context.Context, string, string, string, time.Time, time.Duration) error {
 	s.touches.Add(1)
 	return nil
 }
 
-type e2eSandboxes struct {
+type gatewaySandboxes struct {
 	calls atomic.Int64
 }
 
-func (s *e2eSandboxes) SetTimeout(context.Context, string, time.Duration) error {
+func (s *gatewaySandboxes) SetTimeout(context.Context, string, time.Duration) error {
 	s.calls.Add(1)
 	return nil
 }
 
-type e2eEnvironment struct {
+type gatewayEnvironment struct {
 	server     *porttunnel.TunnelServer
 	settings   *sessionports.Settings
 	closeCodes chan int
 	host       string
-	store      *e2eStore
-	sandboxes  *e2eSandboxes
+	store      *gatewayStore
+	sandboxes  *gatewaySandboxes
 	release    chan struct{}
 }
 
-type e2eOptions struct {
+type gatewayOptions struct {
 	limits           porttunnel.Limits
 	writeTimeout     time.Duration
 	flowWriteTimeout time.Duration
 }
 
-func startE2E(t *testing.T) *e2eEnvironment {
+func startGateway(t *testing.T) *gatewayEnvironment {
 	t.Helper()
-	return startE2EWithOptions(t, e2eOptions{})
+	return startGatewayWithOptions(t, gatewayOptions{})
 }
 
-func startE2EWithOptions(t *testing.T, options e2eOptions) *e2eEnvironment {
+func startGatewayWithOptions(t *testing.T, options gatewayOptions) *gatewayEnvironment {
 	t.Helper()
 	release := make(chan struct{})
 	closeCodes := make(chan int, 4)
-	app := httptest.NewServer(e2eApp(release, closeCodes))
+	app := httptest.NewServer(gatewayApp(release, closeCodes))
 	t.Cleanup(app.Close)
-	codec, err := sessionports.NewSlugCodec(bytes.Repeat([]byte{9}, 32))
+	codec, err := sessionports.NewLabelCodec(bytes.Repeat([]byte{9}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func startE2EWithOptions(t *testing.T, options e2eOptions) *e2eEnvironment {
 		ResponseIdleTimeout: 5 * time.Second, MaxRequestBodyBytes: 1 << 20, StripCookieNames: []string{"sessionKey"},
 	}
 	settings := sessionports.NewWithCodec(ports, 0, codec)
-	environment := &e2eEnvironment{store: &e2eStore{}, sandboxes: &e2eSandboxes{}, release: release, settings: settings, closeCodes: closeCodes}
+	environment := &gatewayEnvironment{store: &gatewayStore{}, sandboxes: &gatewaySandboxes{}, release: release, settings: settings, closeCodes: closeCodes}
 	var gateway *portgateway.Gateway
 	environment.server = porttunnel.StartTunnelServer(t, porttunnel.TunnelServerOptions{
 		Limits: options.limits,
@@ -108,7 +108,7 @@ func startE2EWithOptions(t *testing.T, options e2eOptions) *e2eEnvironment {
 		CallerWriteTimeout:            options.writeTimeout,
 		FlowControlCallerWriteTimeout: options.flowWriteTimeout,
 	})
-	address, err := settings.URL(e2eSessionUUID, porttunnel.LocalPort(t, app))
+	address, err := settings.URL(gatewaySessionUUID, porttunnel.LocalPort(t, app))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func startE2EWithOptions(t *testing.T, options e2eOptions) *e2eEnvironment {
 	return environment
 }
 
-func e2eApp(release <-chan struct{}, closeCodes chan<- int) http.Handler {
+func gatewayApp(release <-chan struct{}, closeCodes chan<- int) http.Handler {
 	upgrader := websocket.Upgrader{Subprotocols: []string{"echo.v1"}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
@@ -186,16 +186,16 @@ func e2eApp(release <-chan struct{}, closeCodes chan<- int) http.Handler {
 	return mux
 }
 
-func (e *e2eEnvironment) hostFor(t *testing.T, port int) string {
+func (e *gatewayEnvironment) hostFor(t *testing.T, port int) string {
 	t.Helper()
-	address, err := e.settings.URL(e2eSessionUUID, port)
+	address, err := e.settings.URL(gatewaySessionUUID, port)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return strings.TrimSuffix(strings.TrimPrefix(address, "http://"), "/")
 }
 
-func (e *e2eEnvironment) get(host, path string) (*http.Response, error) {
+func (e *gatewayEnvironment) get(host, path string) (*http.Response, error) {
 	request, err := http.NewRequest(http.MethodGet, e.server.URL+path, nil)
 	if err != nil {
 		return nil, err
@@ -204,7 +204,7 @@ func (e *e2eEnvironment) get(host, path string) (*http.Response, error) {
 	return http.DefaultClient.Do(request)
 }
 
-func (e *e2eEnvironment) stallCaller(t *testing.T, path string) net.Conn {
+func (e *gatewayEnvironment) stallCaller(t *testing.T, path string) net.Conn {
 	t.Helper()
 	dialer := net.Dialer{Control: func(_, _ string, raw syscall.RawConn) error {
 		var controlErr error
@@ -226,7 +226,7 @@ func (e *e2eEnvironment) stallCaller(t *testing.T, path string) net.Conn {
 	return conn
 }
 
-func (e *e2eEnvironment) dialer() *websocket.Dialer {
+func (e *gatewayEnvironment) dialer() *websocket.Dialer {
 	serverAddress := strings.TrimPrefix(e.server.URL, "http://")
 	return &websocket.Dialer{
 		Subprotocols:     []string{"echo.v1"},
@@ -237,12 +237,12 @@ func (e *e2eEnvironment) dialer() *websocket.Dialer {
 	}
 }
 
-func TestGatewayEndToEndRejectsForgedAddress(t *testing.T) {
-	environment := startE2E(t)
+func TestGatewayRejectsForgedAddress(t *testing.T) {
+	environment := startGateway(t)
 	environment.server.Connect(t)
-	label, _, _ := strings.Cut(environment.host, ".")
-	port, slug, _ := strings.Cut(label, "-")
-	forged := []byte(slug)
+	hostLabel, _, _ := strings.Cut(environment.host, ".")
+	port, label, _ := strings.Cut(hostLabel, "-")
+	forged := []byte(label)
 	forged[0] = map[bool]byte{true: 'b', false: 'a'}[forged[0] == 'a']
 	request, _ := http.NewRequest(http.MethodGet, environment.server.URL+"/stream", nil)
 	request.Host = port + "-" + string(forged) + ".preview.localhost:" + strconv.Itoa(80)
@@ -256,7 +256,7 @@ func TestGatewayEndToEndRejectsForgedAddress(t *testing.T) {
 	}
 	portNumber, _ := strconv.Atoi(port)
 	swapped, _ := http.NewRequest(http.MethodGet, environment.server.URL+"/stream", nil)
-	swapped.Host = strconv.Itoa(portNumber+1) + "-" + slug + ".preview.localhost"
+	swapped.Host = strconv.Itoa(portNumber+1) + "-" + label + ".preview.localhost"
 	swappedResponse, err := http.DefaultClient.Do(swapped)
 	if err != nil {
 		t.Fatal(err)
@@ -267,8 +267,8 @@ func TestGatewayEndToEndRejectsForgedAddress(t *testing.T) {
 	}
 }
 
-func TestGatewayEndToEndStreamsHTTPResponseThroughTunnel(t *testing.T) {
-	environment := startE2E(t)
+func TestGatewayStreamsHTTPResponseThroughTunnel(t *testing.T) {
+	environment := startGateway(t)
 	environment.server.Connect(t)
 	request, err := http.NewRequest(http.MethodGet, environment.server.URL+"/stream?x=1", nil)
 	if err != nil {
@@ -312,8 +312,8 @@ func TestGatewayEndToEndStreamsHTTPResponseThroughTunnel(t *testing.T) {
 	}
 }
 
-func TestGatewayEndToEndRelaysWebSocketThroughTunnel(t *testing.T) {
-	environment := startE2E(t)
+func TestGatewayRelaysWebSocketThroughTunnel(t *testing.T) {
+	environment := startGateway(t)
 	environment.server.Connect(t)
 	socket, response, err := environment.dialer().Dial("ws://"+environment.host+"/ws", nil)
 	if err != nil {
@@ -345,8 +345,8 @@ func TestGatewayEndToEndRelaysWebSocketThroughTunnel(t *testing.T) {
 	}
 }
 
-func TestGatewayEndToEndWakesSandboxAndWaitsForTunnel(t *testing.T) {
-	environment := startE2E(t)
+func TestGatewayWakesSandboxAndWaitsForTunnel(t *testing.T) {
+	environment := startGateway(t)
 	close(environment.release)
 	result := make(chan *http.Response, 1)
 	go func() {
@@ -372,8 +372,8 @@ func TestGatewayEndToEndWakesSandboxAndWaitsForTunnel(t *testing.T) {
 	}
 }
 
-func TestGatewayEndToEndReleasesSlotWhenCallerStopsReading(t *testing.T) {
-	environment := startE2EWithOptions(t, e2eOptions{
+func TestGatewayReleasesSlotWhenCallerStopsReading(t *testing.T) {
+	environment := startGatewayWithOptions(t, gatewayOptions{
 		limits:       porttunnel.Limits{MaxConcurrentRequests: 1, MaxWebSockets: 1},
 		writeTimeout: 200 * time.Millisecond,
 	})
@@ -415,8 +415,8 @@ func TestGatewayEndToEndReleasesSlotWhenCallerStopsReading(t *testing.T) {
 	})
 }
 
-func TestGatewayEndToEndStalledCallerDoesNotBlockOtherPorts(t *testing.T) {
-	environment := startE2E(t)
+func TestGatewayStalledCallerDoesNotBlockOtherPorts(t *testing.T) {
+	environment := startGateway(t)
 	client := environment.server.Connect(t)
 	tunnel := environment.server.Tunnel(t)
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -455,8 +455,8 @@ func TestGatewayEndToEndStalledCallerDoesNotBlockOtherPorts(t *testing.T) {
 	}
 }
 
-func TestGatewayEndToEndSlowReaderReceivesWholeResponse(t *testing.T) {
-	environment := startE2E(t)
+func TestGatewaySlowReaderReceivesWholeResponse(t *testing.T) {
+	environment := startGateway(t)
 	environment.server.Connect(t)
 	const total = 24 << 20
 	big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -491,8 +491,8 @@ func TestGatewayEndToEndSlowReaderReceivesWholeResponse(t *testing.T) {
 	}
 }
 
-func TestGatewayEndToEndAbnormalCallerCloseSendsValidCode(t *testing.T) {
-	environment := startE2E(t)
+func TestGatewayAbnormalCallerCloseSendsValidCode(t *testing.T) {
+	environment := startGateway(t)
 	environment.server.Connect(t)
 	socket, response, err := environment.dialer().Dial("ws://"+environment.host+"/ws", nil)
 	if err != nil {
@@ -515,8 +515,8 @@ func TestGatewayEndToEndAbnormalCallerCloseSendsValidCode(t *testing.T) {
 	}
 }
 
-func TestGatewayEndToEndAbnormalUpstreamCloseSendsValidCode(t *testing.T) {
-	environment := startE2E(t)
+func TestGatewayAbnormalUpstreamCloseSendsValidCode(t *testing.T) {
+	environment := startGateway(t)
 	environment.server.Connect(t)
 	socket, response, err := environment.dialer().Dial("ws://"+environment.host+"/ws-drop", nil)
 	if err != nil {
@@ -533,7 +533,7 @@ func TestGatewayEndToEndAbnormalUpstreamCloseSendsValidCode(t *testing.T) {
 	}
 }
 
-func timedGet(t *testing.T, environment *e2eEnvironment, host string) time.Duration {
+func timedGet(t *testing.T, environment *gatewayEnvironment, host string) time.Duration {
 	t.Helper()
 	started := time.Now()
 	response, err := environment.get(host, "/")
@@ -548,7 +548,7 @@ func timedGet(t *testing.T, environment *e2eEnvironment, host string) time.Durat
 	return time.Since(started)
 }
 
-func otherPortHost(t *testing.T, environment *e2eEnvironment) string {
+func otherPortHost(t *testing.T, environment *gatewayEnvironment) string {
 	t.Helper()
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "other")
@@ -558,7 +558,7 @@ func otherPortHost(t *testing.T, environment *e2eEnvironment) string {
 }
 
 func TestGatewayFlowControlUnreadCallerOnlyHitsItsOwnWriteTimeout(t *testing.T) {
-	environment := startE2EWithOptions(t, e2eOptions{flowWriteTimeout: 3 * time.Second})
+	environment := startGatewayWithOptions(t, gatewayOptions{flowWriteTimeout: 3 * time.Second})
 	client := environment.server.ConnectWithOptions(t, porttunnel.FakeClientOptions{FlowControl: true})
 	otherHost := otherPortHost(t, environment)
 	started := time.Now()
@@ -598,7 +598,7 @@ func TestGatewayFlowControlUnreadCallerOnlyHitsItsOwnWriteTimeout(t *testing.T) 
 }
 
 func TestGatewayFlowControlSlowReaderDoesNotSlowOtherPorts(t *testing.T) {
-	environment := startE2E(t)
+	environment := startGateway(t)
 	environment.server.ConnectWithOptions(t, porttunnel.FakeClientOptions{FlowControl: true})
 	otherHost := otherPortHost(t, environment)
 	baseline := timedGet(t, environment, otherHost)
@@ -650,7 +650,7 @@ func TestGatewayFlowControlSlowReaderDoesNotSlowOtherPorts(t *testing.T) {
 func TestGatewayFlowControlDeliversManyTinyChunksToSlowReader(t *testing.T) {
 	for _, chunks := range []int{20000, 50000} {
 		t.Run(strconv.Itoa(chunks), func(t *testing.T) {
-			environment := startE2E(t)
+			environment := startGateway(t)
 			environment.server.ConnectWithOptions(t, porttunnel.FakeClientOptions{FlowControl: true, MaxChunkBytes: 8})
 			var expected strings.Builder
 			for index := range chunks {
@@ -683,4 +683,71 @@ func TestGatewayFlowControlDeliversManyTinyChunksToSlowReader(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGatewayReportsUpstreamUnreachableWhenNothingListens(t *testing.T) {
+	environment := startGateway(t)
+	environment.server.Connect(t)
+	host := environment.hostFor(t, closedLocalPort(t))
+	response, err := environment.get(host, "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadGateway || response.Header.Get("X-OMA-Port-Error") != "upstream_unreachable" {
+		t.Fatalf("http status = %d header = %q", response.StatusCode, response.Header.Get("X-OMA-Port-Error"))
+	}
+	_, wsResponse, err := environment.dialer().Dial("ws://"+host+"/ws", nil)
+	if err == nil || wsResponse == nil {
+		t.Fatalf("websocket dial = %v (%+v), want handshake rejection", err, wsResponse)
+	}
+	if wsResponse.StatusCode != http.StatusBadGateway || wsResponse.Header.Get("X-OMA-Port-Error") != "upstream_unreachable" {
+		t.Fatalf("websocket status = %d header = %q", wsResponse.StatusCode, wsResponse.Header.Get("X-OMA-Port-Error"))
+	}
+}
+
+func TestGatewayReportsTunnelDisconnectedWhenTunnelDropsBeforeHeaders(t *testing.T) {
+	environment := startGateway(t)
+	client := environment.server.Connect(t)
+	entered := make(chan struct{})
+	hold := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(hold.Close)
+	host := environment.hostFor(t, porttunnel.LocalPort(t, hold))
+	type result struct {
+		response *http.Response
+		err      error
+	}
+	results := make(chan result, 1)
+	go func() {
+		response, err := environment.get(host, "/")
+		results <- result{response, err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not reach the sandbox service")
+	}
+	client.Close()
+	got := <-results
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	_ = got.response.Body.Close()
+	if got.response.StatusCode != http.StatusBadGateway || got.response.Header.Get("X-OMA-Port-Error") != "tunnel_disconnected" {
+		t.Fatalf("status = %d header = %q", got.response.StatusCode, got.response.Header.Get("X-OMA-Port-Error"))
+	}
+}
+
+func closedLocalPort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	return port
 }

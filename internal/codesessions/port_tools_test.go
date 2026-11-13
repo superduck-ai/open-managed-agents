@@ -16,7 +16,7 @@ const portToolSessionUUID = "6f1c3f7e-0d1b-4f53-9d39-1b1e4f0e9a10"
 
 func portToolSettings(t *testing.T) *sessionports.Settings {
 	t.Helper()
-	codec, err := sessionports.NewSlugCodec(bytes.Repeat([]byte{7}, 32))
+	codec, err := sessionports.NewLabelCodec(bytes.Repeat([]byte{7}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,12 +30,12 @@ func TestSessionPortAddressRejectsUnavailablePorts(t *testing.T) {
 		kind     apperr.Kind
 		message  string
 	}{
-		"disabled":         {nil, 4000, apperr.Conflict, "Session port preview URLs are not enabled on this server"},
+		"disabled":         {nil, 4000, apperr.Conflict, "Session port URLs are not enabled on this server"},
 		"zero":             {portToolSettings(t), 0, apperr.InvalidArgument, "port must be an integer between 1 and 65535"},
 		"too large":        {portToolSettings(t), 65536, apperr.InvalidArgument, "port must be an integer between 1 and 65535"},
-		"envd":             {portToolSettings(t), 49983, apperr.InvalidArgument, "port 49983 is reserved by the sandbox and has no preview URL"},
-		"sandbox mcp":      {portToolSettings(t), 3001, apperr.InvalidArgument, "port 3001 is reserved by the sandbox and has no preview URL"},
-		"configured block": {portToolSettings(t), 9229, apperr.InvalidArgument, "port 9229 is reserved by the sandbox and has no preview URL"},
+		"envd":             {portToolSettings(t), 49983, apperr.InvalidArgument, "port 49983 is reserved by the sandbox and has no session port URL"},
+		"sandbox mcp":      {portToolSettings(t), 3001, apperr.InvalidArgument, "port 3001 is reserved by the sandbox and has no session port URL"},
+		"configured block": {portToolSettings(t), 9229, apperr.InvalidArgument, "port 9229 is reserved by the sandbox and has no session port URL"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			address, err := sessionPortAddress(testCase.settings, portToolSessionUUID, testCase.port)

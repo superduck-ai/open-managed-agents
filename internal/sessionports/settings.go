@@ -26,7 +26,7 @@ type Settings struct {
 	urlScheme    string
 	urlPort      int
 	blocked      map[int]struct{}
-	codec        *SlugCodec
+	codec        *LabelCodec
 }
 
 func New(cfg config.Config, logger *slog.Logger) (*Settings, error) {
@@ -34,18 +34,18 @@ func New(cfg config.Config, logger *slog.Logger) (*Settings, error) {
 	if !ports.Enabled() {
 		return &Settings{}, nil
 	}
-	key, err := slugKey(cfg, logging.LoggerOrDefault(logger))
+	key, err := labelKey(cfg, logging.LoggerOrDefault(logger))
 	if err != nil {
 		return nil, err
 	}
-	codec, err := NewSlugCodec(key)
+	codec, err := NewLabelCodec(key)
 	if err != nil {
 		return nil, err
 	}
 	return NewWithCodec(ports, cfg.EnvironmentRunner.EffectiveSandboxMCPPort(), codec), nil
 }
 
-func NewWithCodec(ports config.SessionPortsConfig, sandboxMCPPort int, codec *SlugCodec) *Settings {
+func NewWithCodec(ports config.SessionPortsConfig, sandboxMCPPort int, codec *LabelCodec) *Settings {
 	blocked := map[int]struct{}{envdPort: {}}
 	if sandboxMCPPort > 0 {
 		blocked[sandboxMCPPort] = struct{}{}
@@ -62,12 +62,12 @@ func NewWithCodec(ports config.SessionPortsConfig, sandboxMCPPort int, codec *Sl
 	}
 }
 
-func slugKey(cfg config.Config, logger *slog.Logger) ([]byte, error) {
-	if path := strings.TrimSpace(cfg.SessionPorts.SlugKeyFile); path != "" {
-		return LoadSlugKey(path)
+func labelKey(cfg config.Config, logger *slog.Logger) ([]byte, error) {
+	if path := strings.TrimSpace(cfg.SessionPorts.LabelKeyFile); path != "" {
+		return LoadLabelKey(path)
 	}
-	logger.Warn("session port slug key file is empty; using an ephemeral key that changes on restart")
-	return ephemeralSlugKey()
+	logger.Warn("session port label key file is empty; using an ephemeral key that changes on restart")
+	return ephemeralLabelKey()
 }
 
 func (s *Settings) Enabled() bool {
@@ -96,11 +96,11 @@ func (s *Settings) URL(sessionUUID string, port int) (string, error) {
 	if !s.PortAllowed(port) {
 		return "", ErrPortBlocked
 	}
-	slug, err := s.codec.Encode(sessionUUID, port)
+	label, err := s.codec.Encode(sessionUUID, port)
 	if err != nil {
 		return "", err
 	}
-	host := strconv.Itoa(port) + "-" + slug + "." + s.domainSuffix
+	host := strconv.Itoa(port) + "-" + label + "." + s.domainSuffix
 	if s.urlPort > 0 {
 		host = net.JoinHostPort(host, strconv.Itoa(s.urlPort))
 	}
@@ -118,11 +118,11 @@ func (s *Settings) ParseHost(host string) (Address, error) {
 	if !s.MatchesHost(host) {
 		return Address{}, ErrInvalidHost
 	}
-	label, ok := strings.CutSuffix(normalizeHost(host), "."+s.domainSuffix)
-	if !ok || strings.Contains(label, ".") {
+	hostLabel, ok := strings.CutSuffix(normalizeHost(host), "."+s.domainSuffix)
+	if !ok || strings.Contains(hostLabel, ".") {
 		return Address{}, ErrInvalidHost
 	}
-	portText, slug, ok := strings.Cut(label, "-")
+	portText, label, ok := strings.Cut(hostLabel, "-")
 	if !ok {
 		return Address{}, ErrInvalidHost
 	}
@@ -133,7 +133,7 @@ func (s *Settings) ParseHost(host string) (Address, error) {
 	if !s.PortAllowed(port) {
 		return Address{}, ErrPortBlocked
 	}
-	sessionUUID, err := s.codec.Decode(slug, port)
+	sessionUUID, err := s.codec.Decode(label, port)
 	if err != nil {
 		return Address{}, err
 	}

@@ -225,7 +225,7 @@ func NewServer(deps ServerDeps) *Server {
 	router.Use(s.requestIDMiddleware)
 	router.Use(observeRequests(componentLogger("http"), router))
 	router.Use(s.recoverMiddleware)
-	if gateway := s.configureSessionPorts(deps, codeSessionService, componentLogger("session_ports")); gateway != nil {
+	if gateway := s.configureSessionPorts(deps, codeSessionService, componentLogger("session_port_tunnel"), componentLogger("session_port_gateway")); gateway != nil {
 		router.Use(gateway.Middleware)
 		router.Get(porttunnel.Path, s.sessionPortTunnel.ServeHTTP)
 	}

@@ -26,19 +26,19 @@ type sessionPortRuntime struct {
 }
 
 func openSessionPorts(ctx context.Context, cfg config.Config, redisClient *redis.Client, natsConnection *nats.Conn, logger *slog.Logger) (sessionPortRuntime, error) {
-	logger = logger.With("component", "session_ports")
-	settings, err := sessionports.New(cfg, logger)
+	settings, err := sessionports.New(cfg, logger.With("component", "session_port_gateway"))
 	if err != nil || !settings.Enabled() {
 		return sessionPortRuntime{settings: settings}, err
 	}
 	owner := cfg.SessionPorts.InternalAdvertiseAddr + "#" + uuid.NewString()
 	owners := porttunnel.NewRedisOwnerStore(redisClient)
-	registry := porttunnel.NewRegistry(owner, owners, porttunnel.NewNATSOnlineNotifier(natsConnection), logger)
+	registry := porttunnel.NewRegistry(owner, owners, porttunnel.NewNATSOnlineNotifier(natsConnection), logger.With("component", "session_port_tunnel"))
 	go registry.Run(ctx)
 	runtime := sessionPortRuntime{settings: settings, registry: registry}
 	if !cfg.SessionPorts.ForwardingEnabled() {
 		return runtime, nil
 	}
+	logger = logger.With("component", "session_port_forwarding")
 	signer := porttunnel.NewForwardSigner(settings.ForwardKey())
 	listener, err := net.Listen("tcp", cfg.SessionPorts.InternalListenAddr)
 	if err != nil {

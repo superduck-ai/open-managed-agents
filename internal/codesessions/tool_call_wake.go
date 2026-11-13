@@ -80,7 +80,7 @@ func (h *Handler) RunToolCallMaintenance(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			calls, err := h.db.DueSandboxToolCallFinalizations(ctx)
+			calls, err := h.db.ClaimDueSandboxToolCallFinalizations(ctx)
 			if err != nil {
 				h.logger.ErrorContext(ctx, "tool call finalization scan failed", "error", err)
 			}

@@ -123,7 +123,7 @@ func TestBrainPendingToolCallPreventsIdleReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope := db.SandboxToolCallScope{OrganizationUUID: worker.OrganizationUUID, WorkspaceUUID: worker.WorkspaceUUID, CodeSessionID: worker.ExternalID, WorkerEpoch: epoch, ThreadID: "root", CallID: "pending-blocks-idle"}
-	if _, err := app.db.SubmitSandboxToolCall(t.Context(), db.SandboxToolCallSubmission{Scope: scope, Tool: "bash", Input: []byte(`{"command":"true"}`), Deadline: time.Now().Add(time.Minute)}); err != nil {
+	if _, err := app.db.SubmitSandboxToolCall(t.Context(), db.SandboxToolCallSubmission{Scope: scope, Tool: "bash", Input: []byte(`{"command":"true"}`), QueueTimeout: time.Minute}); err != nil {
 		t.Fatal(err)
 	}
 	candidates, err := app.db.ListSandboxReclaimCandidates(t.Context(), time.Now(), "", 100, true)

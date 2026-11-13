@@ -53,6 +53,8 @@ type SandboxToolCallMapper interface {
 	Lock(ctx context.Context, organizationUUID, workspaceUUID, callUUID string) (sandboxToolCallRow, bool, error)
 	Insert(ctx context.Context, row sandboxToolCallRow) error
 	Update(ctx context.Context, row sandboxToolCallRow) error
-	Claim(ctx context.Context, scope SandboxToolCallScope, codeSessionUUID string, limit int) ([]sandboxToolCallRow, error)
-	Due(ctx context.Context, limit int) ([]sandboxToolCallRow, error)
+	Now(ctx context.Context) (time.Time, error)
+	Claim(ctx context.Context, scope SandboxToolCallScope, codeSessionUUID string, now time.Time, limit int) ([]sandboxToolCallRow, error)
+	ClaimDue(ctx context.Context, now time.Time, limit int) ([]sandboxToolCallRow, error)
+	ClaimDueFinalizations(ctx context.Context, now time.Time, limit int) ([]sandboxToolCallRow, error)
 }

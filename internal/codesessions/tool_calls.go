@@ -124,8 +124,8 @@ func (h *Handler) handleToolCallSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope.CallID = request.CallID
-	if existing, err := h.db.GetSandboxToolCall(r.Context(), scope); err == nil {
-		call, err := h.db.SubmitSandboxToolCall(r.Context(), db.SandboxToolCallSubmission{Scope: scope, Tool: request.Tool, Input: request.Input, Deadline: existing.DeadlineAt})
+	if _, err := h.db.GetSandboxToolCall(r.Context(), scope); err == nil {
+		call, err := h.db.SubmitSandboxToolCall(r.Context(), db.SandboxToolCallSubmission{Scope: scope, Tool: request.Tool, Input: request.Input})
 		if err == nil {
 			h.notifyToolCall(call)
 		}
@@ -169,7 +169,7 @@ func (h *Handler) handleToolCallSubmit(w http.ResponseWriter, r *http.Request) {
 	if timeout > 630000 {
 		timeout = 630000
 	}
-	call, err := h.db.SubmitSandboxToolCall(r.Context(), db.SandboxToolCallSubmission{Scope: scope, Tool: request.Tool, Input: request.Input, Deadline: time.Now().UTC().Add(toolCallQueueTimeout), Timeout: time.Duration(timeout) * time.Millisecond, Validate: func(ctx context.Context) (db.SandboxToolCallValidation, error) {
+	call, err := h.db.SubmitSandboxToolCall(r.Context(), db.SandboxToolCallSubmission{Scope: scope, Tool: request.Tool, Input: request.Input, QueueTimeout: toolCallQueueTimeout, Timeout: time.Duration(timeout) * time.Millisecond, Validate: func(ctx context.Context) (db.SandboxToolCallValidation, error) {
 		failure, finalizer, state, err := h.prepareToolCallMemory(r.WithContext(ctx), session, request)
 		return db.SandboxToolCallValidation{Failure: failure, Finalizer: finalizer, FinalizerState: state, FinalizeAfter: 30 * time.Second}, err
 	}})

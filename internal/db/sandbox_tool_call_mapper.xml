@@ -155,15 +155,31 @@
  WHERE uuid = #{row.UUID} AND organization_uuid = #{row.OrganizationUUID} AND workspace_uuid = #{row.WorkspaceUUID}
  </update>
  <select id="Claim" resultType="sandboxToolCallRow">
- SELECT <include refid="columns"/> FROM sandbox_tool_calls WHERE <include refid="scope"/> AND code_session_uuid = #{codeSessionUUID} AND state = 'pending' AND deadline_at &gt; NOW() ORDER BY id LIMIT #{limit} FOR UPDATE SKIP LOCKED
+ SELECT <include refid="columns"/> FROM sandbox_tool_calls WHERE <include refid="scope"/> AND code_session_uuid = #{codeSessionUUID} AND state = 'pending' AND deadline_at &gt; #{now} ORDER BY id LIMIT #{limit} FOR UPDATE SKIP LOCKED
  </select>
- <select id="Due" resultType="sandboxToolCallRow">
+ <select id="Now" result="scalar" resultType="time.Time">
+ SELECT NOW() AS now
+ </select>
+ <select id="ClaimDue" resultType="sandboxToolCallRow">
  SELECT <include refid="columns"/> FROM sandbox_tool_calls
- WHERE (state = 'pending' AND deadline_at &lt;= NOW())
- OR (state = 'dispatched' AND (deadline_at &lt;= NOW() OR lease_expires_at &lt;= NOW()))
- OR (state IN ('running','cancel_requested') AND (deadline_at &lt;= NOW() OR lease_expires_at + INTERVAL '30 seconds' &lt;= NOW() OR stop_grace_until &lt;= NOW()))
- OR (state = 'finalizing' AND finalize_until &lt;= NOW())
- ORDER BY id LIMIT #{limit}
+ WHERE (state IN ('pending','dispatched') AND deadline_at &lt;= #{now})
+ OR (state = 'dispatched' AND lease_expires_at &lt;= #{now})
+ OR (state = 'running' AND (deadline_at &lt;= #{now} OR lease_expires_at + INTERVAL '30 seconds' &lt;= #{now}))
+ OR (state = 'cancel_requested' AND (lease_expires_at + INTERVAL '30 seconds' &lt;= #{now} OR stop_grace_until &lt;= #{now}))
+ ORDER BY LEAST(
+    deadline_at,
+    COALESCE(CASE WHEN state = 'dispatched' THEN lease_expires_at ELSE lease_expires_at + INTERVAL '30 seconds' END, deadline_at),
+    COALESCE(stop_grace_until, deadline_at)
+ ), id
+ LIMIT #{limit}
+ FOR UPDATE SKIP LOCKED
+ </select>
+ <select id="ClaimDueFinalizations" resultType="sandboxToolCallRow">
+ SELECT <include refid="columns"/> FROM sandbox_tool_calls
+ WHERE state = 'finalizing' AND finalize_until &lt;= #{now}
+ ORDER BY finalize_until, id
+ LIMIT #{limit}
+ FOR UPDATE SKIP LOCKED
  </select>
  <update id="MarkReady" result="rows">
  UPDATE environment_sandboxes SET tool_call_ready_at=NOW()

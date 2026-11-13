@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func TestSandboxToolCallsPostgres(t *testing.T) {
 	execClaimTest(t, ctx, database, `INSERT INTO environment_work(uuid,external_id,organization_uuid,workspace_uuid,environment_uuid,environment_external_id,session_uuid,state) SELECT $1,'work_tool_claim',organization_uuid,workspace_uuid,environment_uuid,environment_external_id,session_uuid,'active' FROM code_sessions WHERE external_id=$2`, work, codeID)
 	execClaimTest(t, ctx, database, `INSERT INTO environment_sandboxes(uuid,external_id,organization_uuid,workspace_uuid,environment_uuid,environment_external_id,work_uuid,work_external_id,provider,template,provider_sandbox_id,state) SELECT $1,'sandbox_tool_claim',organization_uuid,workspace_uuid,environment_uuid,environment_external_id,$2,'work_tool_claim','e2b','test','provider-tool-claim','running' FROM code_sessions WHERE external_id=$3`, sandbox, work, codeID)
 	scope := SandboxToolCallScope{OrganizationUUID: claimTestOrganization, WorkspaceUUID: claimTestWorkspace, CodeSessionID: codeID, WorkerEpoch: 1, ThreadID: "root", CallID: "call", SandboxUUID: sandbox}
-	call, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: scope, Tool: "bash", Input: []byte(`{"command":"true"}`), Deadline: time.Now().Add(time.Minute), Timeout: 10 * time.Minute})
+	call, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: scope, Tool: "bash", Input: []byte(`{"command":"true"}`), QueueTimeout: time.Minute, Timeout: 10 * time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +77,7 @@ func TestSandboxToolCallsPostgres(t *testing.T) {
 	}
 	child := scope
 	child.ThreadID = "child"
-	if _, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: child, Tool: "read", Input: []byte(`{"file_path":"/tmp/a"}`), Deadline: time.Now().Add(time.Minute)}); err != nil {
+	if _, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: child, Tool: "read", Input: []byte(`{"file_path":"/tmp/a"}`), QueueTimeout: time.Minute}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := store.CancelSandboxToolCall(ctx, child); err != nil || got.State != "cancelled" {
@@ -87,12 +88,12 @@ func TestSandboxToolCallsPostgres(t *testing.T) {
 	if _, err := store.CancelSandboxToolCall(ctx, tombstone); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: tombstone, Tool: "bash", Input: []byte(`{"command":"never"}`), Deadline: time.Now().Add(time.Minute)}); err != nil || got.State != "cancelled" {
+	if got, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: tombstone, Tool: "bash", Input: []byte(`{"command":"never"}`), QueueTimeout: time.Minute}); err != nil || got.State != "cancelled" {
 		t.Fatalf("late submit: %+v %v", got, err)
 	}
 	expired := scope
 	expired.CallID = "expired"
-	if _, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: expired, Tool: "bash", Input: []byte(`{}`), Deadline: time.Now().Add(-time.Second)}); err != nil {
+	if _, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: expired, Tool: "bash", Input: []byte(`{}`), QueueTimeout: -time.Second}); err != nil {
 		t.Fatal(err)
 	}
 	if claimed, err := store.ClaimSandboxToolCalls(ctx, scope, 1); err != nil || len(claimed) != 0 {
@@ -105,7 +106,7 @@ func TestSandboxToolCallsPostgres(t *testing.T) {
 		t.Fatalf("expiry: %+v %v", got, err)
 	}
 	execClaimTest(t, ctx, database, `UPDATE code_sessions SET current_worker_epoch=2 WHERE external_id=$1`, codeID)
-	if _, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: scope, Tool: "bash", Input: []byte(`{}`), Deadline: time.Now().Add(time.Minute)}); !errors.Is(err, ErrWorkerEpochMismatch) {
+	if _, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: scope, Tool: "bash", Input: []byte(`{}`), QueueTimeout: time.Minute}); !errors.Is(err, ErrWorkerEpochMismatch) {
 		t.Fatalf("stale owner: %v", err)
 	}
 	scope.WorkerEpoch = 2
@@ -114,7 +115,7 @@ func TestSandboxToolCallsPostgres(t *testing.T) {
 	validationScope.CallID = "single-connection-validation"
 	validationCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	if _, err := store.SubmitSandboxToolCall(validationCtx, SandboxToolCallSubmission{Scope: validationScope, Tool: "read", Input: []byte(`{}`), Deadline: time.Now().Add(time.Minute), Validate: func(ctx context.Context) (SandboxToolCallValidation, error) {
+	if _, err := store.SubmitSandboxToolCall(validationCtx, SandboxToolCallSubmission{Scope: validationScope, Tool: "read", Input: []byte(`{}`), QueueTimeout: time.Minute, Validate: func(ctx context.Context) (SandboxToolCallValidation, error) {
 		_, _, err := store.GetMemoryByPath(ctx, claimTestWorkspace, "missing", "/missing")
 		return SandboxToolCallValidation{}, err
 	}}); err != nil {
@@ -122,7 +123,7 @@ func TestSandboxToolCallsPostgres(t *testing.T) {
 	}
 	uncommitted := scope
 	uncommitted.CallID = "dispatched-at-retirement"
-	if _, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: uncommitted, Tool: "read", Input: []byte(`{"file_path":"/tmp/a"}`), Deadline: time.Now().Add(time.Minute)}); err != nil {
+	if _, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: uncommitted, Tool: "read", Input: []byte(`{"file_path":"/tmp/a"}`), QueueTimeout: time.Minute}); err != nil {
 		t.Fatal(err)
 	}
 	claimed, err := store.ClaimSandboxToolCalls(ctx, scope, 7)
@@ -192,5 +193,66 @@ func TestSandboxToolCallClaimsDistinguishPreparingAndRetiredSandboxes(t *testing
 	execClaimTest(t, ctx, database, `UPDATE environment_sandboxes SET state='stopping' WHERE uuid=$1`, sandbox)
 	if _, err := store.ClaimSandboxToolCalls(ctx, scope, 1); !errors.Is(err, ErrToolCallSandboxRetired) {
 		t.Fatalf("retired claim: %v", err)
+	}
+}
+
+func TestSandboxToolCallMaintenanceSplitsWorkAcrossInstances(t *testing.T) {
+	ctx, database, store := newCodeSessionClaimTestStore(t)
+	codeID := seedClaimCodeSession(t, ctx, database, 93, "claim", "idle")
+	scope := SandboxToolCallScope{OrganizationUUID: claimTestOrganization, WorkspaceUUID: claimTestWorkspace, CodeSessionID: codeID, WorkerEpoch: 1, ThreadID: "root"}
+	const expired = 150
+	for index := range expired {
+		call := scope
+		call.CallID = "expired-" + strconv.Itoa(index)
+		if _, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: call, Tool: "bash", Input: []byte(`{}`), QueueTimeout: -time.Second}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	finalizing := scope
+	finalizing.CallID = "finalizing"
+	if _, err := store.SubmitSandboxToolCall(ctx, SandboxToolCallSubmission{Scope: finalizing, Tool: "write", Input: []byte(`{}`), QueueTimeout: time.Minute}); err != nil {
+		t.Fatal(err)
+	}
+	execClaimTest(t, ctx, database, `UPDATE sandbox_tool_calls SET state='finalizing', finalizer='memory_version', finalize_until=NOW() - INTERVAL '1 second' WHERE external_id='finalizing'`)
+
+	var group sync.WaitGroup
+	var lock sync.Mutex
+	swept := map[string]int{}
+	finalized := 0
+	for range 3 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			changes, err := store.SweepSandboxToolCalls(ctx)
+			calls, finalizeErr := store.ClaimDueSandboxToolCallFinalizations(ctx)
+			lock.Lock()
+			defer lock.Unlock()
+			if err != nil || finalizeErr != nil {
+				t.Error(err, finalizeErr)
+			}
+			for _, change := range changes {
+				swept[change.ExternalID]++
+			}
+			finalized += len(calls)
+		}()
+	}
+	group.Wait()
+	if len(swept) != expired {
+		t.Fatalf("swept %d distinct calls, want %d", len(swept), expired)
+	}
+	for id, count := range swept {
+		if count != 1 {
+			t.Fatalf("call %s swept %d times", id, count)
+		}
+	}
+	if finalized != 1 {
+		t.Fatalf("finalization claimed %d times", finalized)
+	}
+	var pending, extended int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE state <> 'expired' AND external_id LIKE 'expired-%'), count(*) FILTER (WHERE external_id = 'finalizing' AND finalize_until > NOW() + INTERVAL '30 seconds') FROM sandbox_tool_calls`).Scan(&pending, &extended); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 || extended != 1 {
+		t.Fatalf("unexpired=%d finalize lease extended=%d", pending, extended)
 	}
 }

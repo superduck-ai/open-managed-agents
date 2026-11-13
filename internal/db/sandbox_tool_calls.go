@@ -11,12 +11,12 @@ import (
 )
 
 type SandboxToolCallSubmission struct {
-	Scope    SandboxToolCallScope
-	Tool     string
-	Input    []byte
-	Deadline time.Time
-	Timeout  time.Duration
-	Validate func(context.Context) (SandboxToolCallValidation, error)
+	Scope        SandboxToolCallScope
+	Tool         string
+	Input        []byte
+	QueueTimeout time.Duration
+	Timeout      time.Duration
+	Validate     func(context.Context) (SandboxToolCallValidation, error)
 }
 
 func (d *DB) SubmitSandboxToolCall(ctx context.Context, submission SandboxToolCallSubmission) (SandboxToolCall, error) {
@@ -31,7 +31,10 @@ func (d *DB) SubmitSandboxToolCall(ctx context.Context, submission SandboxToolCa
 		if !found {
 			return ErrWorkerEpochMismatch
 		}
-		now := time.Now().UTC()
+		now, err := mapper.Now(ctx)
+		if err != nil {
+			return err
+		}
 		row := sandboxToolCallRow{
 			UUID:             uuid.NewString(),
 			OrganizationUUID: scope.OrganizationUUID,
@@ -43,7 +46,7 @@ func (d *DB) SubmitSandboxToolCall(ctx context.Context, submission SandboxToolCa
 			ToolName:         submission.Tool,
 			Input:            submission.Input,
 			State:            "pending",
-			DeadlineAt:       submission.Deadline,
+			DeadlineAt:       now.Add(submission.QueueTimeout),
 			TimeoutMS:        positiveMilliseconds(submission.Timeout),
 			CreatedAt:        now,
 			UpdatedAt:        now,
@@ -127,15 +130,19 @@ func (d *DB) ClaimSandboxToolCalls(ctx context.Context, scope SandboxToolCallSco
 			}
 			return err
 		}
-		rows, err := mapper.Claim(ctx, scope, sessionUUID, limit)
+		now, err := mapper.Now(ctx)
+		if err != nil {
+			return err
+		}
+		rows, err := mapper.Claim(ctx, scope, sessionUUID, now, limit)
 		if err != nil {
 			return err
 		}
 		for _, row := range rows {
-			lease := time.Now().UTC().Add(sandboxToolCallDispatchLease)
+			lease := now.Add(sandboxToolCallDispatchLease)
 			row.State, row.SandboxUUID, row.LeaseExpiresAt = "dispatched", &scope.SandboxUUID, &lease
 			row.Attempt++
-			row.UpdatedAt = time.Now().UTC()
+			row.UpdatedAt = now
 			if err := mapper.Update(ctx, row); err != nil {
 				return err
 			}
@@ -222,7 +229,10 @@ func (d *DB) CancelSandboxToolCall(ctx context.Context, scope SandboxToolCallSco
 		if !found {
 			return ErrWorkerEpochMismatch
 		}
-		now := time.Now().UTC()
+		now, err := mapper.Now(ctx)
+		if err != nil {
+			return err
+		}
 		tombstone := sandboxToolCallRow{
 			UUID:              uuid.NewString(),
 			OrganizationUUID:  scope.OrganizationUUID,
@@ -303,7 +313,11 @@ func (d *DB) ReportSandboxToolCall(ctx context.Context, report SandboxToolCallRe
 		if row.SandboxUUID == nil || *row.SandboxUUID != report.Scope.SandboxUUID || row.Attempt != report.Attempt {
 			return ErrToolCallConflict
 		}
-		if err := applySandboxToolCallReport(&row, report, time.Now().UTC()); err != nil {
+		now, err := mapper.Now(ctx)
+		if err != nil {
+			return err
+		}
+		if err := applySandboxToolCallReport(&row, report, now); err != nil {
 			return err
 		}
 		if report.ResultBlobUUID != nil && row.ResultObjectKey != nil && report.ResultObjectKey != nil && *row.ResultObjectKey == *report.ResultObjectKey {
@@ -387,55 +401,75 @@ func reportedSandboxToolCallState(row *sandboxToolCallRow, report SandboxToolCal
 	return "", ErrToolCallConflict
 }
 
+const (
+	sandboxToolCallSweepBatch      = 64
+	sandboxToolCallSweepMaxBatches = 16
+	sandboxToolCallFinalizeLease   = 35 * time.Second
+)
+
 func (d *DB) SweepSandboxToolCalls(ctx context.Context) ([]SandboxToolCall, error) {
-	mapper := NewSandboxToolCallMapper(d.mapperDB)
-	rows, err := mapper.Due(ctx, 256)
-	if err != nil {
-		return nil, err
-	}
 	var changes []SandboxToolCall
-	for _, candidate := range rows {
-		var changed *SandboxToolCall
-		if err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-			m := NewSandboxToolCallMapper(executor)
-			row, found, err := m.Lock(ctx, candidate.OrganizationUUID, candidate.WorkspaceUUID, candidate.UUID)
-			if err != nil || !found {
+	for range sandboxToolCallSweepMaxBatches {
+		claimed := 0
+		var batch []SandboxToolCall
+		err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+			mapper := NewSandboxToolCallMapper(executor)
+			now, err := mapper.Now(ctx)
+			if err != nil {
 				return err
 			}
-			now := time.Now().UTC()
-			if sandboxToolCallTerminal(row.State) || row.State == "finalizing" {
-				return nil
-			}
-			prior := row.State
-			expireSandboxToolCall(&row, now)
-			if row.State == prior {
-				return nil
-			}
-			row.UpdatedAt = now
-			if err := m.Update(ctx, row); err != nil {
+			rows, err := mapper.ClaimDue(ctx, now, sandboxToolCallSweepBatch)
+			if err != nil {
 				return err
 			}
-			model := row.model()
-			changed = &model
+			claimed = len(rows)
+			for _, row := range rows {
+				prior := row.State
+				expireSandboxToolCall(&row, now)
+				if row.State == prior {
+					continue
+				}
+				row.UpdatedAt = now
+				if err := mapper.Update(ctx, row); err != nil {
+					return err
+				}
+				batch = append(batch, row.model())
+			}
 			return nil
-		}); err != nil {
+		})
+		if err != nil {
 			return changes, err
 		}
-		if changed != nil {
-			changes = append(changes, *changed)
+		changes = append(changes, batch...)
+		if claimed < sandboxToolCallSweepBatch {
+			break
 		}
 	}
 	return changes, nil
 }
 
-func (d *DB) DueSandboxToolCallFinalizations(ctx context.Context) ([]SandboxToolCall, error) {
-	rows, err := NewSandboxToolCallMapper(d.mapperDB).Due(ctx, 256)
+func (d *DB) ClaimDueSandboxToolCallFinalizations(ctx context.Context) ([]SandboxToolCall, error) {
 	var calls []SandboxToolCall
-	for _, row := range rows {
-		if row.State == "finalizing" {
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewSandboxToolCallMapper(executor)
+		now, err := mapper.Now(ctx)
+		if err != nil {
+			return err
+		}
+		rows, err := mapper.ClaimDueFinalizations(ctx, now, sandboxToolCallSweepBatch)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			until := now.Add(sandboxToolCallFinalizeLease)
+			row.FinalizeUntil, row.UpdatedAt = &until, now
+			if err := mapper.Update(ctx, row); err != nil {
+				return err
+			}
 			calls = append(calls, row.model())
 		}
-	}
+		return nil
+	})
 	return calls, err
 }
 
@@ -455,7 +489,10 @@ func (d *DB) FinalizeSandboxToolCall(ctx context.Context, call SandboxToolCall, 
 			if failure != nil {
 				row.State, row.Result, row.ResultObjectKey = "failed", failure, nil
 			}
-			now := time.Now().UTC()
+			now, err := mapper.Now(ctx)
+			if err != nil {
+				return err
+			}
 			row.FinishedAt, row.UpdatedAt = &now, now
 			if err := mapper.Update(ctx, row); err != nil {
 				return err

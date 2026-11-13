@@ -23,6 +23,7 @@ describe('agent tool display model', () => {
       'web_fetch',
       'web_search',
       'ask_user_question',
+      'get_port_url',
     ]);
     expect(
       builtInAgentToolDescription(
@@ -200,6 +201,33 @@ describe('agent tool display model', () => {
 
     expect(card.tools.find((tool) => tool.name === 'ask_user_question')?.permission).toBe('always_allow');
     expect(configuredAgentToolPermission(agent, 'AskUserQuestion')).toBe('always_allow');
+  });
+
+  test('shows get_port_url as disabled unless it is configured', () => {
+    const missing = agentFixture({
+      tools: [
+        {
+          type: 'agent_toolset_20260401',
+          default_config: { enabled: true, permission_policy: { type: 'always_allow' } },
+        },
+      ],
+    });
+    const [missingCard] = buildAgentToolDisplayCards(missing);
+    expect(missingCard.tools.find((tool) => tool.name === 'get_port_url')?.permission).toBe('always_deny');
+    expect(configuredAgentToolPermission(missing, 'get_port_url')).toBe('always_deny');
+
+    const enabled = agentFixture({
+      tools: [
+        {
+          type: 'agent_toolset_20260401',
+          default_config: { enabled: false },
+          configs: [{ name: 'get_port_url', enabled: true, permission_policy: { type: 'always_allow' } }],
+        },
+      ],
+    });
+    const [enabledCard] = buildAgentToolDisplayCards(enabled);
+    expect(enabledCard.tools.find((tool) => tool.name === 'get_port_url')?.permission).toBe('always_allow');
+    expect(configuredAgentToolPermission(enabled, 'get_port_url')).toBe('always_allow');
   });
 
   test('uses the MCP runtime default when directory tools have no matching toolset', () => {

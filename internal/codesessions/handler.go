@@ -13,6 +13,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	"github.com/superduck-ai/open-managed-agents/internal/telemetryexport"
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
@@ -45,6 +46,7 @@ type Handler struct {
 	traceAdmission            *otlpAdmission
 	brainClaims               BrainClaimAuthenticator
 	webTools                  *webtools.Client
+	sessionPorts              *sessionports.Settings
 	imageAttachments          *brainattachments.Handler
 }
 

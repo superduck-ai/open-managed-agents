@@ -66,6 +66,7 @@ export const BUILT_IN_AGENT_TOOLSETS: Record<string, BuiltInAgentTool[]> = {
     { name: 'web_fetch', description: 'Fetch URL content' },
     { name: 'web_search', description: 'Search the web and return sources' },
     { name: 'ask_user_question', description: 'Ask the user a structured question' },
+    { name: 'get_port_url', description: 'Get the preview URL for a sandbox port' },
   ],
 };
 
@@ -78,6 +79,7 @@ const BUILT_IN_TOOL_DESCRIPTION_KEYS: Record<string, string> = {
   ask_user_question: 'managedAgents.agents.createDialog.builtInTool.askUserQuestion',
   bash: 'managedAgents.agents.createDialog.builtInTool.bash',
   edit: 'managedAgents.agents.createDialog.builtInTool.edit',
+  get_port_url: 'managedAgents.agents.createDialog.builtInTool.getPortUrl',
   glob: 'managedAgents.agents.createDialog.builtInTool.glob',
   grep: 'managedAgents.agents.createDialog.builtInTool.grep',
   read: 'managedAgents.agents.createDialog.builtInTool.read',
@@ -87,6 +89,12 @@ const BUILT_IN_TOOL_DESCRIPTION_KEYS: Record<string, string> = {
 };
 
 const CURRENT_BUILT_IN_TOOLSET = 'agent_toolset_20260401';
+
+const EXPLICIT_ONLY_BUILT_IN_TOOLS = new Set(['ask_user_question', 'get_port_url']);
+
+export function isExplicitOnlyBuiltInTool(name: string) {
+  return EXPLICIT_ONLY_BUILT_IN_TOOLS.has(name);
+}
 
 const FALLBACK_MCP_SERVERS: McpDirectoryServer[] = [
   {
@@ -403,14 +411,14 @@ function toolPermissionForName(
     return fallback;
   }
   // 与运行时保持 first-wins：按配置顺序取首个同名项。内置工具兼容 legacy tool_name，
-  // MCP 只匹配 name。内置 ask_user_question 未配置时与运行时一样 deny，不回落 default_config。
+  // MCP 只匹配 name。内置 ask_user_question 与 get_port_url 未配置时与运行时一样 deny，不回落 default_config。
   const override = arrayRecords(toolset.configs).find(
     (config) => (stringValue(config.name) || (allowLegacyToolName ? stringValue(config.tool_name) : '')) === toolName,
   );
   if (override) {
     return effectiveToolPermission(override, fallback);
   }
-  if (allowLegacyToolName && toolName === 'ask_user_question') {
+  if (allowLegacyToolName && isExplicitOnlyBuiltInTool(toolName)) {
     return 'always_deny';
   }
   return effectiveToolPermission(optionalRecordValue(toolset.default_config), fallback);

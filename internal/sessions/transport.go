@@ -56,6 +56,7 @@ func NewHandler(cfg config.Config, database *db.DB, codeSessionService *codesess
 		r.Post("/", wrap(h.updateRoute))
 		r.Delete("/", wrap(h.deleteRoute))
 		r.Post("/archive", wrap(h.archiveRoute))
+		r.Get("/ports/{port}", wrap(h.retrievePortRoute))
 		r.Route("/events", func(r chi.Router) {
 			r.Get("/", wrap(h.listEventsRoute))
 			r.Post("/", wrap(h.sendEventsRoute))

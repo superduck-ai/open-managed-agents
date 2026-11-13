@@ -860,7 +860,7 @@ export function registerManagedAgentsResourceTests() {
     expect(bashToolCells[2]?.textContent).toBe('2');
     expect(bashToolCells[3]?.textContent).toBe('0');
     expect(bashToolCells[4]?.textContent).toBe('4.0s');
-    expect(inspector.textContent).toContain('10 tools, 5 used, 6 calls');
+    expect(inspector.textContent).toContain('11 tools, 5 used, 6 calls');
     expect(within(inspector).getByText('Overview')).toBeTruthy();
     expect(within(inspector).getByText('Total time in tools')).toBeTruthy();
 

@@ -12,6 +12,7 @@ import {
   toggleSkill,
   toggleSubagent,
   toolsetPermission,
+  toolsetToolPermission,
   updateCustomTool,
   updateDraftModelID,
   updateMcpServer,
@@ -495,11 +496,43 @@ describe('create agent draft model', () => {
     expect(normalizeCreateAgentDraft(allowed)).toEqual(allowed);
   });
 
+  test('treats a missing get_port_url config as disabled and never adds it implicitly', () => {
+    const normalizedDraft = normalizeCreateAgentDraft(baseDraft);
+    const toolset = normalizedDraft.tools[0];
+    expect(toolset.configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+    expect(toolsetToolPermission(toolset, 'get_port_url', 'always_allow')).toBe('always_deny');
+    expect(toolsetToolPermission({ type: 'mcp_toolset' }, 'get_port_url', 'always_ask')).toBe('always_ask');
+    const groupAllowed = setToolsetPermission(normalizedDraft, () => true, 'always_allow');
+    expect(groupAllowed.tools[0].configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+  });
+
+  test('writes get_port_url only while it is enabled', () => {
+    const normalizedDraft = normalizeCreateAgentDraft(baseDraft);
+    const enabled = setToolPermission(normalizedDraft, () => true, 'get_port_url', 'always_allow', 'always_allow');
+    expect(enabled.tools[0].configs).toContainEqual({
+      name: 'get_port_url',
+      enabled: true,
+      permission_policy: { type: 'always_allow' },
+    });
+    expect(toolsetToolPermission(enabled.tools[0], 'get_port_url', 'always_allow')).toBe('always_allow');
+    const asked = setToolsetPermission(enabled, () => true, 'always_ask');
+    expect(asked.tools[0].configs).toContainEqual({
+      name: 'get_port_url',
+      enabled: true,
+      permission_policy: { type: 'always_ask' },
+    });
+    const disabled = setToolPermission(enabled, () => true, 'get_port_url', 'always_deny', 'always_allow');
+    expect(disabled.tools[0]).toEqual(normalizedDraft.tools[0]);
+    const groupDenied = setToolsetPermission(enabled, () => true, 'always_deny');
+    expect(groupDenied.tools[0].configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+  });
+
   test('accepts the built-in tool permission surface and rejects unknown tools', () => {
     const configs = [
       'ask_user_question',
       'bash',
       'edit',
+      'get_port_url',
       'glob',
       'grep',
       'read',

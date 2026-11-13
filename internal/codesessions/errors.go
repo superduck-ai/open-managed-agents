@@ -8,6 +8,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
+	"github.com/superduck-ai/open-managed-agents/internal/porttunnel"
 )
 
 var errMessageImageRejected = errors.New("message image source rejected")
@@ -21,6 +22,8 @@ var errSandboxCredentialUnbound = errors.New("sandbox credential requires a sand
 var errSandboxCredentialScope = errors.New("invalid session ingress credential scope")
 var errSandboxCredentialPath = errors.New("sandbox credential does not match request path")
 var errSandboxCredentialLifecycle = errors.New("sandbox credential requires persistent lifecycle validation")
+var errRuntimeCredentialInvalid = errors.New("invalid runtime credential")
+var errRuntimeCredentialUnavailable = errors.New("runtime credential validation unavailable")
 
 var ErrWorkerEventUnavailable = errors.New("worker event transport unavailable")
 
@@ -42,6 +45,29 @@ func webToolContextFailure(cause error) error {
 		return app
 	}
 	return apperr.New(apperr.Internal, "Could not load web tool session or network policy", cause)
+}
+
+func portToolDenied() error {
+	return apperr.New(apperr.PermissionDenied, "get_port_url is not enabled for this Agent", nil)
+}
+
+func portToolContextFailure(cause error) error {
+	if errors.Is(cause, db.ErrNotFound) {
+		return apperr.New(apperr.PermissionDenied, "Could not authorize port URL session", cause)
+	}
+	return apperr.New(apperr.Internal, "Could not load port URL session", cause)
+}
+
+func sessionPortsDisabled() error {
+	return apperr.New(apperr.Conflict, "Session port preview URLs are not enabled on this server", nil)
+}
+
+func invalidSessionPort() error {
+	return apperr.New(apperr.InvalidArgument, "port must be an integer between 1 and 65535", nil)
+}
+
+func sessionPortBlocked(port int) error {
+	return apperr.New(apperr.InvalidArgument, fmt.Sprintf("port %d is reserved by the sandbox and has no preview URL", port), nil)
 }
 
 func sandboxInvalidRequest(cause error) error {
@@ -203,4 +229,12 @@ func runtimeSkillsFailure(cause error) error {
 		return codeSessionNotFound(cause)
 	}
 	return internalError("Could not load session skills", cause)
+}
+
+func tunnelCredentialFailure(cause error) error {
+	if errors.Is(cause, errRuntimeCredentialInvalid) || errors.Is(cause, errSessionIngressIdentity) ||
+		errors.Is(cause, db.ErrWorkerEpochMismatch) || errors.Is(cause, db.ErrNotFound) {
+		return fmt.Errorf("%w: %w", porttunnel.ErrUnauthorized, cause)
+	}
+	return cause
 }

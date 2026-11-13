@@ -50,6 +50,7 @@ import {
   setToolPermission,
   setToolsetPermission,
   toolsetPermission,
+  toolsetToolPermission,
   updateCustomTool,
   updateMcpServer,
 } from './create-dialog-model';
@@ -969,10 +970,7 @@ function ToolsetCard({
           ) : tools.length ? (
             <div className="min-w-0">
               {tools.map((tool) => {
-                const override = Array.isArray(toolset.configs)
-                  ? toolset.configs.map(toRecord).find((config) => config?.name === tool.name)
-                  : undefined;
-                const permission = effectiveToolPermission(override ?? undefined, defaultPermission);
+                const permission = toolsetToolPermission(toolset, tool.name, defaultPermission);
                 return (
                   <div
                     key={tool.name}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 )
 
 type RuntimeSubagentConfig struct {
@@ -170,7 +171,7 @@ type runtimeDelegation struct {
 	PredefinedAgents []runtimeAgentReference `json:"predefined_agents"`
 }
 
-var sandboxToolNames = []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob", "web_search", "web_fetch", "ask_user_question"}
+var sandboxToolNames = []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob", "web_search", "web_fetch", "ask_user_question", sessionports.ToolName}
 
 func enabledSandboxTools(tools []toolPermissionToolset) []string {
 	enabled := make([]string, 0, len(sandboxToolNames))

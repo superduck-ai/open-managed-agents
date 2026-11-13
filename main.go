@@ -113,12 +113,7 @@ func run(bootstrap *slog.Logger) (err error) {
 	if err != nil {
 		return fmt.Errorf("open nats client: %w", err)
 	}
-	defer func() {
-		if err := natsConnection.Drain(); err != nil {
-			logger.Warn("drain nats connection", "error", err)
-			natsConnection.Close()
-		}
-	}()
+	defer drainNATS(natsConnection, logger)
 	sessionEventBus, err := sessionfanout.NewNATS(ctx, natsConnection, logger.With("component", "session_event_bus"))
 	if err != nil {
 		return fmt.Errorf("open session event fanout: %w", err)
@@ -146,6 +141,11 @@ func run(bootstrap *slog.Logger) (err error) {
 		return fmt.Errorf("open tunnel broker: %w", err)
 	}
 	defer tunnelBroker.Close()
+
+	sessionPorts, err := openSessionPorts(ctx, cfg, redisClient, natsConnection, logger)
+	if err != nil {
+		return fmt.Errorf("configure session ports: %w", err)
+	}
 
 	workerEventAcks := workerevents.NewRedisAckStore(redisClient)
 	// 启动时只构造一套 code-session 签发器，并同时注入 HTTP server 与 environment runner。
@@ -286,6 +286,9 @@ func run(bootstrap *slog.Logger) (err error) {
 			TunnelBroker:           tunnelBroker,
 			TunnelPresence:         tunnels.NewConnectorPresence(redisClient, cfg.Tunnel.PresenceTTL),
 			WorkerEventAcks:        workerEventAcks,
+			SessionPorts:           sessionPorts.settings,
+			SessionPortRegistry:    sessionPorts.registry,
+			SessionPortRouter:      sessionPorts.router,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Minute,
@@ -457,4 +460,11 @@ func startTelemetryExport(ctx context.Context, conn *nats.Conn, database *db.DB,
 		return nil, nil, fmt.Errorf("start telemetry export worker: %w", err)
 	}
 	return telemetryexport.NewExporter(database, queue), stop, nil
+}
+
+func drainNATS(connection *nats.Conn, logger *slog.Logger) {
+	if err := connection.Drain(); err != nil {
+		logger.Warn("drain nats connection", "error", err)
+		connection.Close()
+	}
 }

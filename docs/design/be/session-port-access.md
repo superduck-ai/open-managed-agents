@@ -135,7 +135,7 @@ sequenceDiagram
 | --- | --- | --- |
 | code_sessions | port_last_access_at | 最近一次经网关的请求时间，节流写入，至多每分钟一次 |
 
-migration `00117_add_code_session_port_last_access.sql`。Mapper 为 `internal/db/session_port_mapper.{go,xml}`：
+migration `00118_add_code_session_port_last_access.sql`。Mapper 为 `internal/db/session_port_mapper.{go,xml}`：
 
 - `FindTarget(sessionUUID)`：返回 Session 是否归档/删除、租户、最新 active Code Session，以及该 Session 活跃 Work 下最新的、带 provider ID 的沙箱及其状态。
 - `TouchPortLastAccess`：带租户条件，并以 `port_last_access_at < now - 1m` 兜底节流；进程内另有每 Code Session 每分钟一次的节流。

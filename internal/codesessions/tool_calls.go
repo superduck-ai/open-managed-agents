@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 type toolCallSubmission struct {
@@ -218,7 +219,9 @@ func (h *Handler) handleToolCallWait(w http.ResponseWriter, r *http.Request) {
 		h.finishToolCall(w, r, call, err)
 		return
 	}
-	next, closeWait := h.toolCallWake(r.Context(), []string{"oma.tc." + call.UUID + ".done"}, toolCallWait(r, "wait_ms"))
+	streamCtx, stopStream := httpapi.StreamContext(r.Context())
+	defer stopStream()
+	next, closeWait := h.toolCallWake(streamCtx, []string{"oma.tc." + call.UUID + ".done"}, toolCallWait(r, "wait_ms"))
 	defer closeWait()
 	for {
 		call, err = h.db.GetSandboxToolCall(r.Context(), scope)
@@ -274,7 +277,9 @@ func (h *Handler) handleToolCallClaims(w http.ResponseWriter, r *http.Request) {
 		h.errorAdapter.Write(w, r, toolCallOperationError(err))
 		return
 	}
-	next, closeWait := h.toolCallWake(r.Context(), []string{"oma.cs." + session.UUID + ".calls"}, toolCallWait(r, "block_ms"))
+	streamCtx, stopStream := httpapi.StreamContext(r.Context())
+	defer stopStream()
+	next, closeWait := h.toolCallWake(streamCtx, []string{"oma.cs." + session.UUID + ".calls"}, toolCallWait(r, "block_ms"))
 	defer closeWait()
 	expired := false
 	for {

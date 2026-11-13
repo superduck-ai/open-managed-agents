@@ -3,9 +3,11 @@
 package tests
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 )
 
 func newBrainToolCallApp(t *testing.T, agentJSON string) (*testApp, db.CodeSession, int64, string) {
@@ -361,5 +364,75 @@ func TestBrainToolCallCancellationBeforeCommitNeverRuns(t *testing.T) {
 	response.Body.Close()
 	if state.State != "cancelled" {
 		t.Fatalf("late started state=%s", state.State)
+	}
+}
+
+func TestBrainToolCallLongPollsReturnOnServerShutdown(t *testing.T) {
+	app, worker, _, workerToken := newBrainToolCallApp(t, `{"model":"claude-opus-4-6","name":"claim-shutdown"}`)
+	sandbox, err := app.db.GetResumableEnvironmentSandboxForCodeSession(t.Context(), worker.ExternalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sandboxToken, err := newCodeSessionService(app, nil, nil).SandboxIngressToken(t.Context(), db.Session{OrganizationUUID: worker.OrganizationUUID, WorkspaceUUID: worker.WorkspaceUUID}, worker.ExternalID, sandbox.UUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "/v2/ccr-sessions/" + worker.ExternalID + "/threads/root/tool-calls"
+	response := doSessionRequest(t, app, http.MethodPost, endpoint, strings.NewReader(`{"call_id":"draining","tool":"bash","input":{"command":"true"}}`), workerToken, false)
+	response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("submit status=%d", response.StatusCode)
+	}
+	shutdown, stop := context.WithCancel(t.Context())
+	server := httptest.NewServer(httpapi.WithStreamShutdown(shutdown, app.server.Config.Handler))
+	t.Cleanup(server.Close)
+	type outcome struct {
+		status int
+		body   string
+		err    error
+	}
+	poll := func(method, path, token string) <-chan outcome {
+		done := make(chan outcome, 1)
+		go func() {
+			request, err := http.NewRequestWithContext(t.Context(), method, server.URL+path, nil)
+			if err != nil {
+				done <- outcome{err: err}
+				return
+			}
+			request.Header.Set("X-Api-Key", token)
+			response, err := server.Client().Do(request)
+			if err != nil {
+				done <- outcome{err: err}
+				return
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			done <- outcome{status: response.StatusCode, body: string(body), err: err}
+		}()
+		return done
+	}
+	wait := poll(http.MethodGet, endpoint+"/draining?wait_ms=25000", workerToken)
+	claims := poll(http.MethodPost, "/v1/code/sandbox/tool-calls/claims?block_ms=25000&max=0", sandboxToken)
+	time.Sleep(300 * time.Millisecond)
+	started := time.Now()
+	stop()
+	for name, result := range map[string]<-chan outcome{"wait": wait, "claims": claims} {
+		select {
+		case got := <-result:
+			if got.err != nil || got.status != http.StatusOK {
+				t.Fatalf("%s status=%d err=%v body=%s", name, got.status, got.err, got.body)
+			}
+			if name == "wait" && !strings.Contains(got.body, `"state":"pending"`) {
+				t.Fatalf("wait body=%s", got.body)
+			}
+			if name == "claims" && !strings.Contains(got.body, `"calls":[]`) {
+				t.Fatalf("claims body=%s", got.body)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s long poll kept running after shutdown", name)
+		}
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("long polls took %s to return after shutdown", elapsed)
 	}
 }

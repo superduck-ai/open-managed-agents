@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/http/httputil"
 	"net/url"
 	"strings"
@@ -519,4 +520,9 @@ func newMCPProxyTransport(disableSSRFProtection bool) http.RoundTripper {
 		return dialer.DialContext(ctx, "tcp", resolved)
 	}
 	return transport
+}
+
+func traceConnection(request *http.Request, connected *atomic.Bool) *http.Request {
+	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connected.Store(true) }}
+	return request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
 }

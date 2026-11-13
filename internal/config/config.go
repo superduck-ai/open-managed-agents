@@ -50,6 +50,7 @@ func Load() (Config, error) {
 	cfg.Telemetry.OTLP.LogsStream = strings.TrimSpace(cfg.Telemetry.OTLP.LogsStream)
 
 	normalizeEnvironmentPrebuildConfig(&cfg.EnvironmentPrebuilds)
+	normalizeEnvironmentManagerArtifact(&cfg.EnvironmentRunner.ManagerArtifact)
 
 	if err := resolveConfigPaths(&cfg, configFileDirectory(configPath)); err != nil {
 		return Config{}, err
@@ -154,6 +155,9 @@ func validate(cfg Config) error {
 		return err
 	}
 	if err := validateGitSSHtoHTTPSHosts(cfg.EnvironmentRunner.GitSSHtoHTTPSHosts); err != nil {
+		return err
+	}
+	if err := validateEnvironmentManagerArtifact(cfg.EnvironmentRunner.ManagerArtifact); err != nil {
 		return err
 	}
 	return validateCodeSessionUpstreamProxyMITMConfig(cfg.CodeSession)

@@ -79,34 +79,51 @@ func TestSoftDeleteSkillChecksActiveAgentReferences(t *testing.T) {
 		t.Fatalf("SoftDeleteSkill with direct agent ref = %v, want SkillInUseError for agent_direct", err)
 	}
 
-	if _, err := database.ExecContext(ctx, `UPDATE agents SET archived_at = NOW() WHERE uuid = $1`, directAgentUUID); err != nil {
+	if _, err := database.ExecContext(ctx, `UPDATE agents SET skills = '[]'::jsonb, current_version = 2 WHERE uuid = $1`, directAgentUUID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO agent_versions (uuid, external_id, agent_external_id, version, name, model, skills, agent_created_at, agent_updated_at, workspace_uuid, agent_uuid)
+		VALUES ($1, 'agent_ver_old', 'agent_direct', 1, 'Direct Agent', '{"id":"deepseek-flash"}', $2::jsonb, NOW(), NOW(), $3, $4)
+	`, uuid.New().String(), `[{"type":"custom","skill_id":"skill_ref_check","version":"latest"}]`, workspaceUUID, directAgentUUID); err != nil {
 		t.Fatal(err)
 	}
 
 	multiAgentUUID := uuid.New().String()
 	if _, err := database.ExecContext(ctx, `
-		INSERT INTO agents (uuid, external_id, workspace_uuid, current_version, name, model, skills, multiagent)
-		VALUES ($1, 'agent_multi', $2, 1, 'Multi Agent', '{"id":"deepseek-flash"}', '[]'::jsonb, $3::jsonb)
-	`, multiAgentUUID, workspaceUUID, `{"type":"predefined_agents","predefined_agents":[{"skills":[{"type":"custom","skill_id":"skill_ref_check","version":"latest"}]}]}`); err != nil {
+		INSERT INTO agents (uuid, external_id, workspace_uuid, current_version, name, model, skills)
+		VALUES ($1, 'agent_multi', $2, 1, 'Multi Agent', '{"id":"deepseek-flash"}', '[]'::jsonb)
+	`, multiAgentUUID, workspaceUUID); err != nil {
 		t.Fatal(err)
 	}
-
-	_, _, err = store.SoftDeleteSkill(ctx, workspaceUUID, skillExternalID, true)
-	inUse = nil
-	if !errors.As(err, &inUse) || len(inUse.Agents) != 1 || inUse.Agents[0].ExternalID != "agent_multi" {
-		t.Fatalf("SoftDeleteSkill with multiagent ref = %v, want SkillInUseError for agent_multi", err)
+	for _, roster := range []string{
+		`{"type":"coordinator","agents":[{"type":"agent","id":"agent_direct","version":1}]}`,
+		`{"type":"multiagent_20261001","subagents":{"type":"enabled","predefined_agents":[{"type":"agent","id":"agent_direct","version":1}]}}`,
+		`{"type":"multiagent_20261001","workflows":{"type":"enabled","predefined_agents":[{"type":"agent","id":"agent_direct","version":1}]}}`,
+	} {
+		if _, err := database.ExecContext(ctx, `UPDATE agents SET multiagent = $1::jsonb WHERE uuid = $2`, roster, multiAgentUUID); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = store.SoftDeleteSkill(ctx, workspaceUUID, skillExternalID, true)
+		inUse, ok := errors.AsType[*SkillInUseError](err)
+		if !ok || len(inUse.Agents) != 1 || inUse.Agents[0].ExternalID != "agent_multi" {
+			t.Fatalf("SoftDeleteSkill with pinned child = %v, want SkillInUseError for parent; roster=%s", err, roster)
+		}
 	}
-
-	if _, err := database.ExecContext(ctx, `UPDATE agents SET multiagent = NULL, current_version = 2 WHERE uuid = $1`, multiAgentUUID); err != nil {
-		t.Fatal(err)
+	for _, roster := range []string{
+		`{"type":"multiagent_20261001","subagents":{"type":"disabled","predefined_agents":[{"type":"agent","id":"agent_direct","version":1}]}}`,
+		`{"type":"coordinator","agents":[{"type":"agent","id":"agent_direct","version":2}]}`,
+		`null`,
+	} {
+		if _, err := database.ExecContext(ctx, `UPDATE agents SET multiagent = $1::jsonb WHERE uuid = $2`, roster, multiAgentUUID); err != nil {
+			t.Fatal(err)
+		}
+		refs, err := NewSkillMapper(store.mapperDB).ListReferencingActiveAgents(ctx, workspaceUUID, skillExternalID)
+		if err != nil || len(refs) != 0 {
+			t.Fatalf("inactive or removed child reference must not block: %+v, %v", refs, err)
+		}
 	}
-	if _, err := database.ExecContext(ctx, `
-		INSERT INTO agent_versions (uuid, external_id, agent_external_id, version, name, model, skills, agent_created_at, agent_updated_at, workspace_uuid, agent_uuid)
-		VALUES ($1, 'agent_ver_old', 'agent_multi', 1, 'Multi Agent', '{"id":"deepseek-flash"}', $2::jsonb, NOW(), NOW(), $3, $4)
-	`, uuid.New().String(), `[{"type":"custom","skill_id":"skill_ref_check","version":"latest"}]`, workspaceUUID, multiAgentUUID); err != nil {
-		t.Fatal(err)
-	}
-
 	if _, _, err := store.SoftDeleteSkill(ctx, workspaceUUID, skillExternalID, true); err != nil {
 		t.Fatalf("SoftDeleteSkill after removing active ref failed: %v", err)
 	}

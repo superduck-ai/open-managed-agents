@@ -60,6 +60,7 @@ type SystemSkillMapper interface {
 	UpdateSkill(ctx context.Context, skill SystemSkill) (int64, error)
 	DeleteSkill(ctx context.Context, skill SystemSkill) (int64, error)
 	Versions(ctx context.Context, skillUUID string, limit, offset int, oldestFirst bool) ([]SystemSkillVersion, error)
+	VersionBySHA256(ctx context.Context, skillUUID, sha256 string) (SystemSkillVersion, error)
 	Version(ctx context.Context, skillUUID, version string) (SystemSkillVersion, error)
 	FindVersionByExternalID(ctx context.Context, skillExternalID, version string) (SystemSkillVersion, error)
 	InsertVersion(ctx context.Context, version SystemSkillVersion) error

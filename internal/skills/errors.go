@@ -87,7 +87,7 @@ func skillVersionsMustBeDeleted() error {
 func skillInUseByAgents(inUse *db.SkillInUseError) error {
 	labels := make([]string, 0, len(inUse.Agents))
 	for _, agent := range inUse.Agents {
-		name := strings.TrimSpace(agent.Name)
+		name := agent.Name
 		if name != "" {
 			labels = append(labels, fmt.Sprintf("%s (%s)", name, agent.ExternalID))
 		} else {
@@ -96,7 +96,7 @@ func skillInUseByAgents(inUse *db.SkillInUseError) error {
 	}
 	return apperr.New(
 		apperr.Conflict,
-		fmt.Sprintf("Skill is in use by active agent(s): %s. Remove it from those agents before deleting.", strings.Join(labels, ", ")),
+		fmt.Sprintf("Skill is in use by active agent(s): %s. Remove it from those agents before deleting. If used by a subagent, remove that subagent reference or select a version without this skill.", strings.Join(labels, ", ")),
 		inUse,
 	)
 }

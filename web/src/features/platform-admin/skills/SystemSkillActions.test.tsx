@@ -116,8 +116,8 @@ for (const locale of ['zh-CN', 'en'] as const) {
     fireEvent.click(screen.getByRole('button', { name: locale === 'zh-CN' ? '删除' : 'Delete', exact: true }));
     const expected =
       locale === 'zh-CN'
-        ? '该技能正在被以下智能体使用：Alpha (agent_1)。请先从这些智能体中移除该技能，再删除。'
-        : 'Skill is in use by active agent(s): Alpha (agent_1). Remove it from those agents before deleting.';
+        ? '该技能正在被以下智能体使用：Alpha (agent_1)。请先从这些智能体中移除该技能，再删除。如果由子智能体使用，请移除对应子智能体引用，或改用不含该技能的子智能体版本。'
+        : 'Skill is in use by active agent(s): Alpha (agent_1). Remove it from those agents before deleting. If used by a subagent, remove that subagent reference or select a version without this skill.';
     expect(await screen.findByText(expected)).toBeTruthy();
     expect(closed).not.toHaveBeenCalled();
     expect(deleted).not.toHaveBeenCalled();

@@ -83,7 +83,7 @@ func TestSkillMapperBuilderContracts(t *testing.T) {
 				wantID:            "SkillMapper.ListReferencingActiveAgents",
 				wantKind:          yourbatis.StatementSelect,
 				wantArgumentNames: []string{"workspaceUUID", "externalID", "externalID"},
-				wantSQLFragments:  []string{"FROM agents", "workspace_uuid = $1", "deleted_at IS NULL", "archived_at IS NULL"},
+				wantSQLFragments:  []string{"FROM agents", "workspace_uuid = $1", "deleted_at IS NULL", "archived_at IS NULL", "JOIN agent_versions av", "av.workspace_uuid = agents.workspace_uuid", "av.version = CAST(ref->>'version' AS integer)"},
 			},
 		},
 		{

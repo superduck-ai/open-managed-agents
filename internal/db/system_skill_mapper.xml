@@ -73,6 +73,12 @@
         ORDER BY <choose><when test="oldestFirst">created_at ASC, id ASC</when><otherwise>created_at DESC, id DESC</otherwise></choose>
         LIMIT #{limit} OFFSET #{offset}
     </select>
+    <select id="VersionBySHA256" resultType="SystemSkillVersion">
+        SELECT <include refid="versionColumns"/> FROM builtin_skill_versions
+        WHERE skill_uuid = #{skillUUID} AND sha256 = #{sha256}
+        AND state = 'published' AND deleted_at IS NULL
+        ORDER BY created_at ASC, id ASC LIMIT 1
+    </select>
     <select id="Version" resultType="SystemSkillVersion">
         SELECT <include refid="versionColumns"/> FROM builtin_skill_versions
         WHERE skill_uuid = #{skillUUID} AND version = #{version} AND deleted_at IS NULL

@@ -90,6 +90,7 @@ func TestSystemSkillMapperStatementContracts(t *testing.T) {
 		{systemSkillMapperDeleteSkillStatement, "DeleteSkill", yourbatis.StatementUpdate},
 		{systemSkillMapperVersionsStatement, "Versions", yourbatis.StatementSelect},
 		{systemSkillMapperVersionStatement, "Version", yourbatis.StatementSelect},
+		{systemSkillMapperVersionBySHA256Statement, "VersionBySHA256", yourbatis.StatementSelect},
 		{systemSkillMapperFindVersionByExternalIDStatement, "FindVersionByExternalID", yourbatis.StatementSelect},
 		{systemSkillMapperInsertVersionStatement, "InsertVersion", yourbatis.StatementInsert},
 		{systemSkillMapperHasArchiveStatement, "HasArchive", yourbatis.StatementSelect},
@@ -113,5 +114,18 @@ func TestBundledSkillMapperGuards(t *testing.T) {
 	remove := buildSystemSkillMapperDeleteSkill(yourbatis.DialectPostgres, skill)
 	if !strings.Contains(remove.SQL, "NOT bundled") || !reflect.DeepEqual(remove.Values(), []any{skill.UUID}) {
 		t.Fatalf("delete lost ownership guard: %s %v", remove.SQL, remove.Values())
+	}
+}
+
+func TestSystemSkillVersionDigestBinding(t *testing.T) {
+	bound := buildSystemSkillMapperVersionBySHA256(yourbatis.DialectPostgres, "skill-uuid", "digest")
+	assertMapperBuilderContract(t, mapperBuilderContract{
+		statement: systemSkillMapperVersionBySHA256Statement, bound: bound,
+		wantID: "SystemSkillMapper.VersionBySHA256", wantKind: yourbatis.StatementSelect,
+		wantArgumentNames: []string{"skillUUID", "sha256"},
+		wantSQLFragments:  []string{"skill_uuid = $1", "sha256 = $2", "state = 'published'", "deleted_at IS NULL", "LIMIT 1"},
+	})
+	if !reflect.DeepEqual(bound.Values(), []any{"skill-uuid", "digest"}) {
+		t.Fatalf("digest lookup bindings: %v", bound.Values())
 	}
 }

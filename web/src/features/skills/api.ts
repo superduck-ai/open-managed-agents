@@ -117,13 +117,14 @@ export function skillErrorMessage(error: unknown, msg: ReturnType<typeof useI18n
       'A skill with this name already exists. Change the name or use Update skill.',
     );
   }
-  const inUse = /^Skill is in use by active agent\(s\): (.+)\. Remove it from those agents before deleting\.$/s.exec(
-    message,
-  );
+  const inUse =
+    /^Skill is in use by active agent\(s\): (.+)\. Remove it from those agents before deleting\.(?: If used by a subagent, .+)?$/s.exec(
+      message,
+    );
   if (inUse) {
     return msg(
       'skills.delete.inUseByAgents',
-      'Skill is in use by active agent(s): {agents}. Remove it from those agents before deleting.',
+      'Skill is in use by active agent(s): {agents}. Remove it from those agents before deleting. If used by a subagent, remove that subagent reference or select a version without this skill.',
       { agents: inUse[1] },
     );
   }

@@ -92,9 +92,13 @@ for (const locale of ['zh-CN', 'en'] as const) {
       intl.formatMessage({ id, defaultMessage: fallback }, values);
     const agents = '未命名 Agent (agent_1), Alpha (agent_2), agent_3';
     const message = `Skill is in use by active agent(s): ${agents}. Remove it from those agents before deleting.`;
-    for (const error of [new Error(message), { status: 409, code: 'conflict', message }]) {
+    const subagentHint =
+      ' If used by a subagent, remove that subagent reference or select a version without this skill.';
+    for (const error of [new Error(message), { status: 409, code: 'conflict', message: message + subagentHint }]) {
       expect(skillErrorMessage(error, msg)).toBe(
-        locale === 'zh-CN' ? `该技能正在被以下智能体使用：${agents}。请先从这些智能体中移除该技能，再删除。` : message,
+        locale === 'zh-CN'
+          ? `该技能正在被以下智能体使用：${agents}。请先从这些智能体中移除该技能，再删除。如果由子智能体使用，请移除对应子智能体引用，或改用不含该技能的子智能体版本。`
+          : message + subagentHint,
       );
     }
     expect(skillErrorMessage({ status: 409, code: 'conflict', message: 'Other conflict' }, msg)).toBe('Other conflict');

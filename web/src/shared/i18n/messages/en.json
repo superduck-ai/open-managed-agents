@@ -1534,7 +1534,7 @@
   "skills.source.workspace": "Custom",
   "skills.title": "Skills",
   "skills.delete.error": "Skill could not be deleted.",
-  "skills.delete.inUseByAgents": "Skill is in use by active agent(s): {agents}. Remove it from those agents before deleting.",
+  "skills.delete.inUseByAgents": "Skill is in use by active agent(s): {agents}. Remove it from those agents before deleting. If used by a subagent, remove that subagent reference or select a version without this skill.",
   "skills.deleteVersion.error": "Version could not be deleted.",
   "skills.upload.chooseFile": "Choose file",
   "skills.upload.chooseDirectory": "Choose directory",

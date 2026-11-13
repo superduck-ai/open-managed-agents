@@ -1534,7 +1534,7 @@
   "skills.source.workspace": "自定义",
   "skills.title": "技能",
   "skills.delete.error": "无法删除技能。",
-  "skills.delete.inUseByAgents": "该技能正在被以下智能体使用：{agents}。请先从这些智能体中移除该技能，再删除。",
+  "skills.delete.inUseByAgents": "该技能正在被以下智能体使用：{agents}。请先从这些智能体中移除该技能，再删除。如果由子智能体使用，请移除对应子智能体引用，或改用不含该技能的子智能体版本。",
   "skills.deleteVersion.error": "无法删除版本。",
   "skills.upload.chooseFile": "选择文件",
   "skills.upload.chooseDirectory": "选择目录",

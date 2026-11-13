@@ -130,6 +130,9 @@ func (tx *PlatformAdminTx) ImportSystemSkill(ctx context.Context, input SystemSk
 		return SystemSkill{}, false, err
 	}
 	previous, err := mapper.Version(ctx, skill.UUID, input.Version.Version)
+	if errors.Is(err, sql.ErrNoRows) {
+		previous, err = mapper.VersionBySHA256(ctx, skill.UUID, input.Version.SHA256)
+	}
 	duplicate := err == nil
 	if err == nil {
 		if previous.SHA256 != input.Version.SHA256 {

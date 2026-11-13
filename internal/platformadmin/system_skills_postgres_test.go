@@ -218,6 +218,29 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		t.Fatalf("new import must set default and stay unlisted: %+v", skill)
 	}
 	firstVersion := *skill.DefaultVersion
+	for range 2 {
+		objects := store.count()
+		response := upload(initial)
+		requireStatus(response, 200)
+		var result struct {
+			Skill     systemSkillTestResource `json:"skill"`
+			Duplicate bool                    `json:"duplicate"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if !result.Duplicate || result.Skill.DefaultVersion == nil || *result.Skill.DefaultVersion != firstVersion || store.count() != objects {
+			t.Fatalf("duplicate import changed default or retained another object: %s, objects=%d", response.Body.String(), store.count())
+		}
+	}
+	stored, err := database.GetSystemSkill(t.Context(), skill.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importedVersions, err := database.SystemSkillVersions(t.Context(), stored.UUID, 10, 0)
+	if err != nil || len(importedVersions) != 1 {
+		t.Fatalf("duplicate imports created versions: %+v %v", importedVersions, err)
+	}
 	consoleRoutes := handler.ConsoleRoutes()
 	consolePreview := func(version, query string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodGet, "/fixture-system-skill/versions/"+version+"/preview"+query, nil)
@@ -230,8 +253,8 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		consoleRoutes.ServeHTTP(recorder, request)
 		return recorder
 	}
-	requireStatus(consolePreview(firstVersion, ""), 404)
-	requireStatus(consolePreview(firstVersion, "?download=1"), 404)
+	requireStatus(consolePreview(firstVersion, ""), 200)
+	requireStatus(consolePreview(firstVersion, "?download=1"), 200)
 	requireStatus(send("GET", "/skills/fixture-system-skill/versions/"+firstVersion+"/content", nil, "", false), 200)
 	requireStatus(action("list"), 200)
 	skill = get()
@@ -268,13 +291,18 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		t.Fatalf("update did not switch active default while keeping listed: %+v", skill)
 	}
 	secondVersion := *skill.DefaultVersion
+	objects := store.count()
+	requireStatus(upload(initial), 200)
+	if current := get(); current.DefaultVersion == nil || *current.DefaultVersion != secondVersion || !current.Listed || store.count() != objects {
+		t.Fatal("reimporting historical content changed default, listing, or object count")
+	}
 	resolved, err := database.GetSystemSkillVersion(t.Context(), skill.ID, "latest")
 	if err != nil || resolved.Version != secondVersion {
 		t.Fatalf("latest resolve: %+v %v", resolved, err)
 	}
 	requireStatus(action("unlist"), 200)
-	requireStatus(consolePreview(secondVersion, ""), 404)
-	requireStatus(consolePreview(secondVersion, "?download=1"), 404)
+	requireStatus(consolePreview(secondVersion, ""), 200)
+	requireStatus(consolePreview(secondVersion, "?download=1"), 200)
 	count, err := database.CountListedSystemSkills(t.Context())
 	if err != nil || count != 0 {
 		t.Fatalf("unlisted catalog count=%d error=%v", count, err)

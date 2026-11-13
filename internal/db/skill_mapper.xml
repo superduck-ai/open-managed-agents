@@ -87,20 +87,28 @@
                 WHERE s->>'type' = 'custom'
                 AND s->>'skill_id' = #{externalID}
             )
-            OR (
-                multiagent IS NOT NULL
-                AND jsonb_typeof(multiagent->'predefined_agents') = 'array'
-                AND EXISTS (
-                    SELECT 1
-                    FROM jsonb_array_elements(multiagent->'predefined_agents') AS pa
-                    WHERE jsonb_typeof(pa->'skills') = 'array'
-                    AND EXISTS (
-                        SELECT 1
-                        FROM jsonb_array_elements(pa->'skills') AS pas
-                        WHERE pas->>'type' = 'custom'
-                        AND pas->>'skill_id' = #{externalID}
-                    )
-                )
+            OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(
+                    CASE multiagent->>'type'
+                        WHEN 'coordinator' THEN multiagent->'agents'
+                        WHEN 'multiagent_20261001' THEN
+                            CASE WHEN multiagent->'subagents'->>'type' = 'enabled'
+                                THEN COALESCE(multiagent->'subagents'->'predefined_agents', '[]')
+                                ELSE '[]' END
+                            || CASE WHEN multiagent->'workflows'->>'type' = 'enabled'
+                                THEN COALESCE(multiagent->'workflows'->'predefined_agents', '[]')
+                                ELSE '[]' END
+                        ELSE '[]'
+                    END
+                ) AS ref
+                JOIN agent_versions av
+                    ON av.workspace_uuid = agents.workspace_uuid
+                    AND av.agent_external_id = ref->>'id'
+                    AND av.version = CAST(ref->>'version' AS integer)
+                CROSS JOIN LATERAL jsonb_array_elements(av.skills) AS s
+                WHERE s->>'type' = 'custom'
+                AND s->>'skill_id' = #{externalID}
             )
         )
         ORDER BY updated_at DESC, uuid DESC

@@ -90,7 +90,7 @@ func TestMapSkillDeleteError(t *testing.T) {
 		t,
 		mapSkillDeleteError(inUse),
 		apperr.Conflict,
-		"Skill is in use by active agent(s): Alpha (agent_1), agent_2. Remove it from those agents before deleting.",
+		"Skill is in use by active agent(s): Alpha (agent_1), agent_2. Remove it from those agents before deleting. If used by a subagent, remove that subagent reference or select a version without this skill.",
 	)
 	assertSkillAppError(
 		t,

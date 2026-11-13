@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { DeleteSkillDialog } from '@/features/skills/SkillDetail';
+import { skillErrorMessage } from '@/features/skills/api';
 import { useI18n } from '@/shared/i18n';
 import { usePlatformAdmin } from '../context';
-import { systemSkillErrorMessage } from './feedback';
 import type { SystemSkill } from './types';
 
 export function SystemSkillDeleteDialog({
@@ -29,7 +29,7 @@ export function SystemSkillDeleteDialog({
       await onDeleted();
       onClose();
     } catch (cause) {
-      setError(systemSkillErrorMessage(cause));
+      setError(skillErrorMessage(cause, msg));
     } finally {
       setBusy(false);
     }

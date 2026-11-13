@@ -1,5 +1,8 @@
 import { afterEach, expect, mock, test } from 'bun:test';
+import { createIntl, createIntlCache } from 'react-intl';
 import '../../test/setup';
+import enMessages from '@/shared/i18n/messages/en.json';
+import zhCnMessages from '@/shared/i18n/messages/zh-CN.json';
 import { cancelScopeRequests, setConsoleRequestContext } from '@/shared/api/client';
 import { downloadSkillPackage, skillErrorMessage, workspaceSkillContentUrl } from './api';
 
@@ -81,3 +84,19 @@ test('重复名称的接口错误转换为操作提示，不展示内部字段�
   }
   expect(skillErrorMessage(new Error('Storage unavailable'), msg)).toBe('Storage unavailable');
 });
+
+for (const locale of ['zh-CN', 'en'] as const) {
+  test(`技能被智能体使用的错误按界面语言展示并保留名称和 ID ${locale}`, () => {
+    const intl = createIntl({ locale, messages: locale === 'zh-CN' ? zhCnMessages : enMessages }, createIntlCache());
+    const msg: Parameters<typeof skillErrorMessage>[1] = (id, fallback, values) =>
+      intl.formatMessage({ id, defaultMessage: fallback }, values);
+    const agents = '未命名 Agent (agent_1), Alpha (agent_2), agent_3';
+    const message = `Skill is in use by active agent(s): ${agents}. Remove it from those agents before deleting.`;
+    for (const error of [new Error(message), { status: 409, code: 'conflict', message }]) {
+      expect(skillErrorMessage(error, msg)).toBe(
+        locale === 'zh-CN' ? `该技能正在被以下智能体使用：${agents}。请先从这些智能体中移除该技能，再删除。` : message,
+      );
+    }
+    expect(skillErrorMessage({ status: 409, code: 'conflict', message: 'Other conflict' }, msg)).toBe('Other conflict');
+  });
+}

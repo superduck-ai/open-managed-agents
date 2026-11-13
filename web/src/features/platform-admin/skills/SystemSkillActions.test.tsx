@@ -1,5 +1,6 @@
 import { afterEach, expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';
+import type { Locale } from '@/shared/i18n';
 import { renderPlatformAdmin } from '../../../test/platform-admin';
 import { PlatformAdminClient } from '../../../shared/api/platform-admin';
 import { PlatformAdminContext } from '../context';
@@ -23,7 +24,7 @@ const skill: SystemSkill = {
   updated_at: '2026-11-01',
 };
 
-function renderActions(ui: ReactNode) {
+function renderActions(ui: ReactNode, locale: Locale = 'zh-CN') {
   return renderPlatformAdmin(
     <PlatformAdminContext.Provider
       value={{
@@ -37,6 +38,7 @@ function renderActions(ui: ReactNode) {
     >
       {ui}
     </PlatformAdminContext.Provider>,
+    locale,
   );
 }
 
@@ -93,6 +95,34 @@ test('删除失败保留弹窗与错误', async () => {
   expect(closed).not.toHaveBeenCalled();
   expect(deleted).not.toHaveBeenCalled();
 });
+
+for (const locale of ['zh-CN', 'en'] as const) {
+  test(`智能体引用阻止系统技能删除时展示本地化原因 ${locale}`, async () => {
+    const closed = mock(() => {});
+    const deleted = mock(async () => {});
+    globalThis.fetch = mock(async () =>
+      Response.json(
+        {
+          error: {
+            code: 'conflict',
+            message:
+              'Skill is in use by active agent(s): Alpha (agent_1). Remove it from those agents before deleting.',
+          },
+        },
+        { status: 409 },
+      ),
+    ) as typeof fetch;
+    renderActions(<SystemSkillDeleteDialog skill={skill} onClose={closed} onDeleted={deleted} />, locale);
+    fireEvent.click(screen.getByRole('button', { name: locale === 'zh-CN' ? '删除' : 'Delete', exact: true }));
+    const expected =
+      locale === 'zh-CN'
+        ? '该技能正在被以下智能体使用：Alpha (agent_1)。请先从这些智能体中移除该技能，再删除。'
+        : 'Skill is in use by active agent(s): Alpha (agent_1). Remove it from those agents before deleting.';
+    expect(await screen.findByText(expected)).toBeTruthy();
+    expect(closed).not.toHaveBeenCalled();
+    expect(deleted).not.toHaveBeenCalled();
+  });
+}
 
 test('删除成功后刷新列表并关闭确认', async () => {
   const closed = mock(() => {});

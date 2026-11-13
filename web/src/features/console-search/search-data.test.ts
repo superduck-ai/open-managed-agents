@@ -37,7 +37,7 @@ test('page results retain module icons and single-line scope context', () => {
   const pages = navigationSearchRecords(undefined, undefined, 'research', (_id, text) => text);
   expect(pages.find((record) => record.id === '/agents')?.context).toBe('');
   expect(pages.find((record) => record.id === '/files')?.context).toBe('Resources');
-  expect(pages.find((record) => record.id === '/settings/llm')?.context).toBe('Models and access');
+  expect(pages.find((record) => record.id === '/llm-models')?.context).toBe('Models and access');
   expect(pages.find((record) => record.id === '/agents')?.icon).toBeTruthy();
   expect(pages.find((record) => record.id === '/files')?.icon).not.toBe(
     pages.find((record) => record.id === '/agents')?.icon,

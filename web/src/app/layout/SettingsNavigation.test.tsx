@@ -85,10 +85,10 @@ test('entering settings and returning to the app use matching navigation animati
 test('accordion expands without navigating and preserves the selected page and return path', async () => {
   render(<Harness />);
   fireEvent.click(screen.getByRole('link', { name: 'Settings', exact: true }));
-  expect(screen.getByTestId('page').textContent).toBe('/settings/llm');
+  expect(screen.getByTestId('page').textContent).toBe('/settings/workspaces/default/llm');
   expect(screen.getByRole('button', { name: 'Models and access' }).getAttribute('aria-expanded')).toBe('true');
   fireEvent.click(screen.getByRole('button', { name: 'Organization management' }));
-  expect(screen.getByTestId('page').textContent).toBe('/settings/llm');
+  expect(screen.getByTestId('page').textContent).toBe('/settings/workspaces/default/llm');
   expect(screen.getByRole('button', { name: 'Models and access' }).hasAttribute('data-active')).toBe(true);
   fireEvent.click(screen.getByRole('link', { name: 'Members', exact: true }));
   expect(screen.getByTestId('page').textContent).toBe('/settings/members');
@@ -119,10 +119,10 @@ test('switching settings subpages keeps the settings navigation mounted and foll
 });
 
 test('workspace switch preserves organization page and updates workspace-scoped keys', async () => {
-  render(<Harness initial="/settings/llm" />);
+  render(<Harness initial="/settings/llm/organization" />);
   fireEvent.click(screen.getByRole('button', { name: 'Default' }));
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Other', exact: true }));
-  expect(screen.getByTestId('page').textContent).toBe('/settings/llm');
+  expect(screen.getByTestId('page').textContent).toBe('/settings/llm/organization');
   await waitFor(() =>
     expect(screen.getByRole('link', { name: 'API keys' }).getAttribute('href')).toBe('/settings/workspaces/other/keys'),
   );
@@ -176,4 +176,12 @@ test('modifier clicks on settings links and brand link preserve native browser t
   expect(screen.getByTestId('page').textContent).toBe('/settings/llm');
   fireEvent.click(screen.getByRole('link', { name: 'Open Managed Agents' }), { ctrlKey: true });
   expect(screen.getByTestId('page').textContent).toBe('/settings/llm');
+});
+
+test('workspace switch follows the workspace model catalog', async () => {
+  render(<Harness initial="/settings/workspaces/default/llm" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Default' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Other', exact: true }));
+  expect(screen.getByTestId('page').textContent).toBe('/settings/workspaces/other/llm');
+  expect(screen.getByRole('link', { name: 'LLM models', exact: true }).getAttribute('aria-current')).toBe('page');
 });

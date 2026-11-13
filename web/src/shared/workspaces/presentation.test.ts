@@ -41,3 +41,10 @@ test.each(['/settings/workspaces/default/mcp-tunnels', '/settings/workspaces/def
     expect(workspaceSwitchPath(path, 'other')).toBe('/settings/workspaces/other/mcp-tunnels');
   },
 );
+
+test('switching workspace model settings retains scope and discards old resource query', () => {
+  expect(workspaceSwitchPath('/settings/workspaces/first/llm?returnTo=old#models', 'other')).toBe(
+    '/settings/workspaces/other/llm',
+  );
+  expect(workspaceSwitchPath('/settings/llm/organization', 'other')).toBe('/settings/llm/organization');
+});

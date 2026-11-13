@@ -253,8 +253,8 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		consoleRoutes.ServeHTTP(recorder, request)
 		return recorder
 	}
-	requireStatus(consolePreview(firstVersion, ""), 200)
-	requireStatus(consolePreview(firstVersion, "?download=1"), 200)
+	requireStatus(consolePreview(firstVersion, ""), 404)
+	requireStatus(consolePreview(firstVersion, "?download=1"), 404)
 	requireStatus(send("GET", "/skills/fixture-system-skill/versions/"+firstVersion+"/content", nil, "", false), 200)
 	requireStatus(action("list"), 200)
 	skill = get()
@@ -301,8 +301,8 @@ func TestSystemSkillsAdministrationPostgres(t *testing.T) {
 		t.Fatalf("latest resolve: %+v %v", resolved, err)
 	}
 	requireStatus(action("unlist"), 200)
-	requireStatus(consolePreview(secondVersion, ""), 200)
-	requireStatus(consolePreview(secondVersion, "?download=1"), 200)
+	requireStatus(consolePreview(secondVersion, ""), 404)
+	requireStatus(consolePreview(secondVersion, "?download=1"), 404)
 	count, err := database.CountListedSystemSkills(t.Context())
 	if err != nil || count != 0 {
 		t.Fatalf("unlisted catalog count=%d error=%v", count, err)

@@ -66,6 +66,9 @@ func (h *Handler) consoleContent(w http.ResponseWriter, r *http.Request) error {
 	if systemSkill, isSystem, err := h.getAvailableSystemSkill(r.Context(), skillID); err != nil {
 		return err
 	} else if isSystem {
+		if !systemSkill.Listed {
+			return skillNotFound(skillID, nil)
+		}
 		record, err := h.db.GetSystemSkillVersion(r.Context(), skillID, version)
 		if err != nil {
 			return err

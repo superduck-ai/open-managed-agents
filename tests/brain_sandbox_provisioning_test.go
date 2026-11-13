@@ -8,7 +8,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,11 +34,36 @@ func (s *provisioningCodeSessions) DispatchWorker(ctx context.Context, session d
 
 type provisioningTestProvider struct {
 	*recordingRunnerProvider
-	endpoint string
+	app *testApp
 }
 
-func (p *provisioningTestProvider) ServiceEndpoint(context.Context, string, int, string) (string, error) {
-	return p.endpoint, nil
+func (p *provisioningTestProvider) StartBackgroundCommand(ctx context.Context, sandboxID, command string, stdin []byte) error {
+	if err := p.recordingRunnerProvider.StartBackgroundCommand(ctx, sandboxID, command, stdin); err != nil {
+		return err
+	}
+	if len(stdin) == 0 {
+		return nil
+	}
+	var payload struct {
+		Auth []struct {
+			Token string `json:"token"`
+		} `json:"auth"`
+	}
+	if err := json.Unmarshal(stdin, &payload); err != nil {
+		return err
+	}
+	if len(payload.Auth) == 0 {
+		return errors.New("sandbox auth missing")
+	}
+	claims, err := p.app.credentials.VerifySandbox(payload.Auth[0].Token)
+	if err != nil {
+		return err
+	}
+	_, err = p.app.db.ClaimSandboxToolCalls(ctx, db.SandboxToolCallScope{OrganizationUUID: claims.OrganizationUUID, WorkspaceUUID: claims.WorkspaceUUID, CodeSessionID: claims.SessionID, SandboxUUID: claims.SandboxUUID}, 0)
+	if errors.Is(err, db.ErrToolCallSandboxPreparing) {
+		return nil
+	}
+	return err
 }
 
 func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
@@ -75,16 +99,6 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			}
 			session := createSession(t, app, `{"agent":`+quoteJSON(agent.ID)+`,"environment_id":`+quoteJSON(env.ID)+vaultBinding+`}`)
 			sendSessionEvents(t, app, session.ID, `{"events":[{"type":"user.message","content":[{"type":"text","text":"hello"}]}]}`, defaultTestKey)
-			var discoveries atomic.Int32
-			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Mcp-Method") != "server/discover" {
-					t.Errorf("unexpected MCP method: %q", r.Header.Get("Mcp-Method"))
-				}
-				discoveries.Add(1)
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"resultType\":\"complete\",\"supportedVersions\":[\"2026-07-28\"],\"capabilities\":{\"tools\":{}}}}\n\n"))
-			}))
-			defer endpoint.Close()
 			service := &provisioningCodeSessions{Service: codesessions.NewServiceWithCredentials(app.db, app.credentials, slog.Default()).WithWorkerEventBroker(workerevents.NewMemory())}
 			var creates atomic.Int32
 			providers := make([]*provisioningTestProvider, 2)
@@ -99,7 +113,7 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 					if service.dispatches.Load() != wantDispatches {
 						t.Error("unexpected worker dispatch order")
 					}
-				}}, endpoint: endpoint.URL}
+				}}, app: app}
 				if scenario.fail {
 					providers[i].resolveErr = errors.New("prewarm unavailable")
 				}
@@ -139,18 +153,18 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			urls := make([]string, 2)
+			sandboxes := make([]db.EnvironmentSandbox, 2)
 			failures := make([]error, 2)
 			var calls sync.WaitGroup
 			for i := range 2 {
-				calls.Go(func() { urls[i], _, failures[i] = runners[i].EnsureSessionSandbox(ctx, code) })
+				calls.Go(func() { sandboxes[i], failures[i] = runners[i].EnsureSessionSandbox(ctx, code) })
 			}
 			calls.Wait()
-			if failures[0] != nil || failures[1] != nil || urls[0] != endpoint.URL || urls[1] != endpoint.URL || creates.Load() != 1 {
-				t.Fatalf("concurrent sandbox preparation: %v %v creates=%d", urls, failures, creates.Load())
+			if failures[0] != nil || failures[1] != nil || sandboxes[0].UUID == "" || sandboxes[0].UUID != sandboxes[1].UUID || sandboxes[0].State != "running" || creates.Load() != 1 {
+				t.Fatalf("concurrent sandbox preparation: %v %v creates=%d", sandboxes, failures, creates.Load())
 			}
 			if len(providers[0].launches)+len(providers[1].launches) != 1 {
-				t.Fatal("MCP started more than once")
+				t.Fatal("Manager started more than once")
 			}
 			if scenario.vault {
 				for _, provider := range providers {
@@ -172,12 +186,9 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 					}
 				}
 			}
-			_, _, err = runners[1].EnsureSessionSandbox(ctx, code)
+			_, err = runners[1].EnsureSessionSandbox(ctx, code)
 			if err != nil || creates.Load() != 1 {
 				t.Fatalf("warm reuse: %v creates=%d", err, creates.Load())
-			}
-			if discoveries.Load() != 1 {
-				t.Fatalf("MCP discovery calls = %d, want one startup check", discoveries.Load())
 			}
 			assertBrainSandboxCredentialLifecycle(t, app, service.Service, code, providers)
 			response := doSessionRequest(t, app, http.MethodDelete, "/v1/sessions/"+session.ID, nil, defaultTestKey, true)
@@ -185,7 +196,7 @@ func TestBrainSandboxUsesEnvironmentLifecycle(t *testing.T) {
 			if response.StatusCode != http.StatusOK {
 				t.Fatalf("delete session: %d", response.StatusCode)
 			}
-			if _, _, err := runners[0].EnsureSessionSandbox(ctx, code); err == nil {
+			if _, err := runners[0].EnsureSessionSandbox(ctx, code); err == nil {
 				t.Fatal("deleted session provisioned sandbox")
 			}
 		})

@@ -130,8 +130,8 @@ toolStreamDrained:
 		requireOK(t, err)
 		return state.CurrentWorkerEpoch > before.CurrentWorkerEpoch
 	})
-	endpointPath := "/v2/ccr-sessions/" + scope.ExternalID + "/sandbox/mcp"
-	e.request(t, "POST", endpointPath, previousToken, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, http.StatusConflict)
+	endpointPath := "/v2/ccr-sessions/" + scope.ExternalID + "/threads/root/tool-calls"
+	e.request(t, "POST", endpointPath, previousToken, map[string]any{"call_id": "stale-owner-probe", "tool": "bash", "input": map[string]string{"command": "true"}}, http.StatusConflict)
 	receiveChatAnswer(t, ctx, events, func() { previewSeen <- struct{}{} })
 	waitChatIdle(t, f, 3)
 	if calls.Load() != 2 {
@@ -144,7 +144,7 @@ toolStreamDrained:
 	requireOK(t, err)
 	requireOK(t, e.service.TerminateManagedAgentCodeSession(t.Context(), f.session, f.code.ExternalID))
 	for _, method := range []string{"initialize", "tools/call"} {
-		e.request(t, "POST", endpointPath, currentToken, map[string]any{"jsonrpc": "2.0", "id": 1, "method": method}, http.StatusUnauthorized)
+		e.request(t, "POST", endpointPath, currentToken, map[string]any{"call_id": "retired-owner-" + method, "tool": "bash", "input": map[string]string{"command": "true"}}, http.StatusUnauthorized)
 	}
 	chatProof(t, started, "brain_retirement")
 	replacement.stop(t)
@@ -255,8 +255,8 @@ func verifyBrainTaskFencing(t *testing.T, f *liveSession) {
 	staleToken, err := e.credentials.Issue(identity)
 	requireOK(t, err)
 	e.request(t, "POST", claimPath, staleToken, worker, http.StatusConflict)
-	e.request(t, "POST", "/v2/ccr-sessions/"+f.code.ExternalID+"/sandbox/mcp", staleToken,
-		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, http.StatusConflict)
+	e.request(t, "POST", "/v2/ccr-sessions/"+f.code.ExternalID+"/threads/root/tool-calls", staleToken,
+		map[string]any{"call_id": "stale-owner-probe", "tool": "bash", "input": map[string]string{"command": "true"}}, http.StatusConflict)
 }
 
 var toolModelCalls atomic.Int32
@@ -304,7 +304,7 @@ func brainToolCallModel(t *testing.T, toolName, arguments string, checkResult fu
 				names = append(names, tool.Name)
 			}
 			slices.Sort(names)
-			want := []string{"Bash", "Edit", "Glob", "Grep", "Read", "Write", "interrupt_agent", "list_agents", "send_message", "subagent", "web_fetch", "web_search"}
+			want := []string{"Bash", "Edit", "Glob", "Grep", "Read", "Write", "skill", "web_fetch", "web_search"}
 			if len(expectedTools) != 0 {
 				want = expectedTools[0]
 			}
@@ -312,7 +312,7 @@ func brainToolCallModel(t *testing.T, toolName, arguments string, checkResult fu
 				t.Errorf("unexpected Brain model tools: %v", names)
 			}
 
-			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": "call_brain_write", "name": toolName, "input": map[string]any{}}})
+			write("content_block_start", map[string]any{"index": 0, "content_block": map[string]any{"type": "tool_use", "id": messagePrefix + "_call", "name": toolName, "input": map[string]any{}}})
 			write("content_block_delta", map[string]any{"index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": arguments}})
 			stop = "tool_use"
 		} else {

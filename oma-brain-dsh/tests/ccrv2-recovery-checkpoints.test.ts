@@ -55,7 +55,7 @@ for (const phase of ["requested", "dispatch"] as const) {
     const recovered = await mount(backend);
     const results = recovered.session.agent.session.snapshotEvents().filter(event => event.type === "tool/result");
     expect(results).toHaveLength(1);
-    expect(results[0]?.data.error?.code).toBe(phase === "dispatch" ? "TOOL_OUTCOME_UNKNOWN" : "TOOL_NOT_STARTED");
+    expect(results[0]?.data.error?.code).toBe("TOOL_NOT_STARTED");
     expect(completedInputs(recovered.session)).toContain("interrupted-input");
     const publicResult = [...backend.publicLog.values()].flatMap(event => event.message?.content ?? [])
       .find(block => block.type === "tool_result" && block.tool_use_id === callId);

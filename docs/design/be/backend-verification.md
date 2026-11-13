@@ -182,3 +182,5 @@ flowchart LR
 `chat brain-images` 使用显式的 `VERIFY_BE_VISION_PROVIDERS` 私有配置路径与 `VERIFY_BE_VISION_MODEL`，doctor 校验配置和唯一模型归属。其他场景仍清除继承的模型环境，不改变其脚本上游。凭据只在本次隔离 workspace 中保存，报告只记录模型 ID 与 backend，不记录 API key。
 
 该场景验证随机颜色消息图片、真实 Worker/FUSE Read 第二张不同图片，以及原生引用与 MinIO 字节完整性。三个 proof 为 message_image_seen、read_image_seen、native_images_persisted。使用真实模型的次数与耗时不构成质量、价格或性能基准；源代码指纹和清理要求不变。
+
+`chat brain-tools` 使用显式 `VERIFY_BE_MODEL_PROVIDERS` 与 `VERIFY_BE_MODEL`，由真实文本模型、DSH、Linux ARM64 Manager、生产 Runner 和 FUSE 执行六个内置工具。doctor 校验私有配置和唯一模型归属。公开工具事件、容器文件字节和 PostgreSQL 调用终态必须同时匹配；随后在同一真实 Manager 上检查幂等提交、对象结果、用户取消和 deadline 的进程退出与部分输出；报告不把此场景标为脚本模型。详见 [Brain 验证](../../../.agents/skills/verify-be/features/brain.md#真实模型的六个内置工具)。

@@ -22,7 +22,6 @@ type codeSessionInstruments struct {
 	workerEventRedeliveries metric.Int64Counter
 	workerEventProcessed    metric.Float64Histogram
 	workerEventUpdates      metric.Int64Counter
-	sandboxMCP              metric.Float64Histogram
 	toolPermissionDecisions metric.Int64Counter
 	toolPermissionResponses metric.Int64Counter
 	toolPermissionWait      metric.Float64Histogram
@@ -38,7 +37,6 @@ var codeSessionMetrics = telemetry.NewInstruments(func(meter metric.Meter) codeS
 		workerEventRedeliveries: telemetry.Counter(meter, "oma.worker_event.redeliveries", "{event}", "Worker event redeliveries"),
 		workerEventProcessed:    telemetry.Histogram(meter, "oma.worker_event.processed.latency", "s", "Worker event processing latency", telemetry.LongWaitBuckets()),
 		workerEventUpdates:      telemetry.Counter(meter, "oma.worker_event.updates", "{update}", "Worker event updates"),
-		sandboxMCP:              telemetry.Histogram(meter, "oma.sandbox_mcp.duration", "s", "Sandbox MCP gateway call duration", telemetry.LatencyBuckets()),
 		toolPermissionDecisions: telemetry.Counter(meter, "oma.tool_permission.decisions", "{decision}", "Tool permission decisions"),
 		toolPermissionResponses: telemetry.Counter(meter, "oma.tool_permission.responses", "{response}", "Tool permission responses"),
 		toolPermissionWait:      telemetry.Histogram(meter, "oma.tool_permission.wait", "s", "Tool permission wait", telemetry.LongWaitBuckets()),

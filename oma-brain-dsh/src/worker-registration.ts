@@ -53,10 +53,7 @@ export async function registerWorkerTask(api: OmaApi, claimed: BrainTask, signal
       tools: context.runtime_tools ?? [],
       tool_permissions: context.runtime_tool_permissions ?? undefined,
     },
-    mcp_config: { mcpServers: { sandbox: {
-      type: "http", url: `${api.base.replace(/\/$/, "")}/v2/ccr-sessions/${id}/sandbox/mcp`,
-      headers: { Authorization: `Bearer ${task.ingress_token}`, ...trace },
-    } } },
+    mcp_config: {},
   };
   try {
     validateAssignment(assignment);

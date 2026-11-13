@@ -10,6 +10,7 @@ import (
 
 // RegisterV1Routes 在已经挂载到 /v1 的 chi router 中注册 code-session 资源。
 func (h *Handler) RegisterV1Routes(router chi.Router) {
+	h.registerToolCallRoutes(router)
 	h.registerRuntimeRoutes(router)
 	h.registerCodeSessionRoutes(router)
 	h.registerBrainClaimRoutes(router)
@@ -24,7 +25,11 @@ func (h *Handler) RegisterV2Routes(router chi.Router) {
 	router.Get("/sessions/{code_session_id}", h.handleSessionContext)
 	router.Get("/sessions/{code_session_id}/skills", h.handleSessionSkills)
 	router.Handle("/ccr-sessions/{code_session_id}/mcp", http.HandlerFunc(h.handleMCPProxy))
-	router.Post("/ccr-sessions/{code_session_id}/sandbox/mcp", h.handleSandboxMCP)
+	router.Route("/ccr-sessions/{code_session_id}/threads/{thread_id}/tool-calls", func(r chi.Router) {
+		r.Post("/", h.handleToolCallSubmit)
+		r.Get("/{call_id}", h.handleToolCallWait)
+		r.Post("/{call_id}/cancel", h.handleToolCallCancel)
+	})
 	router.Post("/ccr-sessions/{code_session_id}/web/search", h.handleWebSearch)
 	router.Post("/ccr-sessions/{code_session_id}/web/fetch", h.handleWebFetch)
 	router.Handle("/ccr-sessions/{code_session_id}/mcp/*", http.HandlerFunc(h.handleNamedMCPProxy))

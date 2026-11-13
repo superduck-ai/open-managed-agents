@@ -105,6 +105,7 @@ func TestErrorAdapterMapsApplicationErrors(t *testing.T) {
 		{name: "timeout", kind: apperr.Timeout, status: http.StatusGatewayTimeout, errorType: "timeout_error", publicText: "Request timed out", wantErrorLog: true},
 		{name: "internal", kind: apperr.Internal, status: http.StatusInternalServerError, errorType: "api_error", publicText: "Internal error", wantErrorLog: true},
 		{name: "unavailable", kind: apperr.Unavailable, status: http.StatusServiceUnavailable, errorType: "api_error", publicText: "Temporarily unavailable", wantErrorLog: true},
+		{name: "gone", kind: apperr.Gone, status: http.StatusGone, errorType: "invalid_request_error", publicText: "Resource is gone"},
 		{name: "overloaded", kind: apperr.Overloaded, status: 529, errorType: "overloaded_error", publicText: "Overloaded", wantErrorLog: true},
 	}
 	for _, tt := range tests {

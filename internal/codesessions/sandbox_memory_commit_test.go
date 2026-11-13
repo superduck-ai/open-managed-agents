@@ -1,13 +1,9 @@
 package codesessions
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -59,8 +55,8 @@ func TestMemoryToolCommitPropagatesStorageFailure(t *testing.T) {
 	}
 }
 
-func memoryCommitTestCall(name, target string) sandboxRPCRequest {
-	call := sandboxRPCRequest{JSONRPC: "2.0", ID: json.RawMessage(`7`), Method: "tools/call"}
+func memoryCommitTestCall(name, target string) sandboxToolRequest {
+	call := sandboxToolRequest{Method: "tools/call"}
 	call.Params.Name = name
 	call.Params.Arguments.FilePath = target
 	return call
@@ -88,76 +84,12 @@ func TestMemoryToolCommitPreparationUsesAuthenticatedMount(t *testing.T) {
 	if err != nil || commit == nil || commit.BeforeID != "seed" || commit.SessionID != "owned-session" || commit.ExpectedSHA256 != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
 		t.Fatalf("invalid checkpoint %+v %v", commit, err)
 	}
-	for _, other := range []sandboxRPCRequest{memoryCommitTestCall("Read", call.Params.Arguments.FilePath), memoryCommitTestCall("Write", "/tmp/file"), memoryCommitTestCall("Write", "/mnt/memory-other/file"), memoryCommitTestCall("Bash", call.Params.Arguments.FilePath)} {
+	for _, other := range []sandboxToolRequest{memoryCommitTestCall("Read", call.Params.Arguments.FilePath), memoryCommitTestCall("Write", "/tmp/file"), memoryCommitTestCall("Write", "/mnt/memory-other/file"), memoryCommitTestCall("Bash", call.Params.Arguments.FilePath)} {
 		if commit, err := h.prepareMemoryToolCommit(context.Background(), session, other); err != nil || commit != nil {
 			t.Fatal("changed unrelated operation")
 		}
 	}
 	if loads != 1 {
 		t.Fatal("loaded versions for unrelated operations")
-	}
-}
-
-func TestMemoryToolCommitConfirmsOnlySuccessfulMatchingResult(t *testing.T) {
-	calls := 0
-	commit := &memoryToolCommit{BeforeID: "seed", SessionID: "owned", Load: func(context.Context) (memoryToolVersion, error) {
-		calls++
-		return memoryToolVersion{ID: "new", SessionID: "owned"}, nil
-	}}
-	call := memoryCommitTestCall("Edit", "/mnt/memory/project/file")
-	for _, payload := range []string{`{"jsonrpc":"2.0","id":8,"result":{}}`, `{"jsonrpc":"2.0","id":7,"error":{"code":-1}}`, `{"jsonrpc":"2.0","id":7,"result":{"isError":true}}`, `{"jsonrpc":"2.0","method":"notifications/progress"}`, `{"jsonrpc":"2.0","id":7,"result":{"resultType":"task"}}`} {
-		got, err := commit.confirm(context.Background(), call, []byte(payload))
-		if err != nil || string(got) != payload || calls != 0 {
-			t.Fatal("waited for a failed, unrelated, or incomplete result")
-		}
-	}
-	payload := []byte(`{"jsonrpc":"2.0","id":7,"result":{"resultType":"complete","content":[{"type":"text","text":"done"}]}}`)
-	got, err := commit.confirm(context.Background(), call, payload)
-	if err != nil || !bytes.Equal(got, payload) || calls != 1 {
-		t.Fatal("changed successful response or failed to confirm")
-	}
-}
-
-func TestMemoryToolCommitFailureCannotReportSuccess(t *testing.T) {
-	commit := &memoryToolCommit{Load: func(context.Context) (memoryToolVersion, error) {
-		return memoryToolVersion{}, errors.New("internal-secret-must-not-leak")
-	}}
-	call := memoryCommitTestCall("Write", "/mnt/memory/project/file")
-	payload := []byte(`{"jsonrpc":"2.0","id":7,"result":{"resultType":"complete","content":[]}}`)
-	got, err := commit.confirm(context.Background(), call, payload)
-	var result sandboxMemoryToolResult
-	if err == nil || json.Unmarshal(got, &result) != nil || !result.Result.IsError || result.Result.ResultType != "complete" || string(result.ID) != "7" || bytes.Contains(got, []byte("internal-secret")) {
-		t.Fatalf("unsafe completion: %s %v", got, err)
-	}
-}
-
-func TestMemoryToolStreamPreservesEventsAndWaitsBeforeCompletion(t *testing.T) {
-	for _, newline := range []string{"\n", "\r\n"} {
-		writer := httptest.NewRecorder()
-		progress := strings.ReplaceAll("event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\n", "\n", newline)
-		complete := strings.ReplaceAll("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"content\":[]}}\n\n", "\n", newline)
-		calls := 0
-		commit := &memoryToolCommit{BeforeID: "seed", SessionID: "owned", Load: func(context.Context) (memoryToolVersion, error) {
-			calls++
-			if writer.Body.String() != progress {
-				t.Fatalf("completion forwarded before commit: %q", writer.Body.String())
-			}
-			return memoryToolVersion{ID: "new", SessionID: "owned"}, nil
-		}}
-		if confirmErr, err := streamMemoryToolResponse(context.Background(), writer, strings.NewReader(progress+complete), memoryCommitTestCall("Edit", "/mnt/memory/project/file"), commit); confirmErr != nil || err != nil || calls != 1 || writer.Body.String() != progress+complete {
-			t.Fatalf("stream changed: %q calls%d err%v", writer.Body.String(), calls, err)
-		}
-	}
-}
-
-func TestMemoryToolStreamSeparatesConfirmationFailure(t *testing.T) {
-	writer := httptest.NewRecorder()
-	commit := &memoryToolCommit{Load: func(context.Context) (memoryToolVersion, error) {
-		return memoryToolVersion{}, errors.New("memory store race")
-	}}
-	complete := "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"content\":[]}}\n\n"
-	confirmErr, err := streamMemoryToolResponse(context.Background(), writer, strings.NewReader(complete), memoryCommitTestCall("Write", "/mnt/memory/project/file"), commit)
-	if confirmErr == nil || err != nil {
-		t.Fatalf("confirmErr=%v err=%v", confirmErr, err)
 	}
 }

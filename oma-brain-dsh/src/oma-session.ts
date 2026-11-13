@@ -8,6 +8,8 @@ import { childSystemPrompt, rootSystemPrompt } from "./prompt/assemble.ts";
 import * as LlmAiSdk from "./llm-ai-sdk/index.ts";
 import { omaModelOptions } from "./model.ts";
 import { configureOmaModel } from "./model-configs.ts";
+import { SandboxCalls } from "./oma-sandbox/client.ts";
+import { recoverSandboxCalls } from "./oma-sandbox/recovery.ts";
 import { WebClient } from "./web-tools/client.ts";
 import * as Skills from "./skills/index.ts";
 import * as WebTools from "./web-tools/index.ts";
@@ -24,6 +26,7 @@ export function createOmaSession(
   return ctx.ccrv2.createSession({
     id: assignment.session_id,
     provider,
+    recoverSandboxCalls: (id,signal,threadId,recovery) => recoverSandboxCalls(ctx,new SandboxCalls(api,assignment.session_id),id,signal,threadId,recovery),
     configureModel: call => configureOmaModel(assignment, provider, call),
     model: assignment.launch.model,
     workDir: assignment.launch.work_dir,

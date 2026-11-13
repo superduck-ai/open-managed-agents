@@ -32,3 +32,16 @@ func TestVisionDoctorRequiresExplicitModelConfiguration(t *testing.T) {
 		t.Fatalf("resolved vision doctor result=%+v error=%v", result, err)
 	}
 }
+
+func TestRealToolDoctorRequiresExplicitModelConfiguration(t *testing.T) {
+	t.Setenv("VERIFY_BE_MODEL_PROVIDERS", "")
+	t.Setenv("VERIFY_BE_MODEL", "real-model")
+	_, err := doctor(context.Background(), t.TempDir(), "", "chat.brain-tools", 18080)
+	if err == nil || !strings.Contains(err.Error(), "explicit valid") {
+		t.Fatalf("missing configuration accepted: %v", err)
+	}
+	selected := scenarios["chat.brain-tools"]
+	if !usesBrain("chat.brain-tools") || len(selected.Stages) != 5 {
+		t.Fatal("real tool scenario lost its required evidence")
+	}
+}

@@ -257,6 +257,7 @@ test("a worker killed mid-turn leaves its turn to the next worker, which exports
     await exited;
     const request = (backend.traceSpans as OtlpSpan[]).find((span) => span.name === "oma.model_request")!;
     expect((backend.traceSpans as OtlpSpan[]).some((span) => span.name === "oma.session.turn")).toBe(false);
+    backend.loseToolCalls();
     backend.a.worker_epoch++;
     backend.a.registered_at = Date.now();
     await mountOma(ctx, api);

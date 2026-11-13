@@ -279,7 +279,7 @@ func (d *DB) GetFilestoreFilesystem(ctx context.Context, workspaceUUID string, e
 // GetFilestoreFilesystemBySession 返回 public session 唯一拥有的活动文件系统。
 // Code session 是可重建的执行实例，不参与文件系统归属判断。
 func (d *DB) GetFilestoreFilesystemBySession(ctx context.Context, workspaceUUID string, sessionExternalID string) (FilestoreFilesystem, error) {
-	mapper := NewFilestoreFilesystemMapper(d.mapperDB)
+	mapper := NewFilestoreFilesystemMapper(d.readExecutor(ctx))
 	row, found, err := mapper.FindFilesystemBySessionExternalID(
 		ctx,
 		workspaceUUID,

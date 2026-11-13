@@ -1,0 +1,12 @@
+diff --git a/lib/index.js b/lib/index.js
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -771 +771 @@
+-							for (const event of toolRecovery.results()) this.session.append("tool/result", event.data, {
++							for (const event of signal.reason?.deferToolResults ? [] : toolRecovery.results()) this.session.append("tool/result", event.data, {
+@@ -781 +781 @@
+-						this.session.append("step/end", {
++						if (!signal.reason?.deferToolResults) this.session.append("step/end", {
+@@ -819 +819 @@
+-				this.session.append("turn/end", {
++				if (!signal.reason?.deferToolResults) this.session.append("turn/end", {

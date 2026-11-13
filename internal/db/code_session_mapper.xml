@@ -181,6 +181,16 @@
           AND deleted_at IS NULL
     </select>
 
+    <select id="FindScopedByExternalID" resultType="codeSessionRow">
+        SELECT
+        <include refid="columns"/>
+        FROM code_sessions
+        WHERE organization_uuid = #{organizationUUID}
+          AND workspace_uuid = #{workspaceUUID}
+          AND external_id = #{codeSessionExternalID}
+          AND deleted_at IS NULL
+    </select>
+
     <select id="FindActiveForEnvironmentWork" resultType="codeSessionRow">
         SELECT
         <include refid="columns"/>
@@ -356,6 +366,7 @@
             connection_status = 'connected',
             last_worker_connected_at = #{params.Now},
             last_worker_activity_at = #{params.Now},
+            worker_claim_attempts = 0,
             updated_at = #{params.Now}
         WHERE uuid = #{params.UUID}
         RETURNING
@@ -408,7 +419,6 @@
         SET connection_status = #{params.Status},
             <if test="params.Connected">
                 last_worker_connected_at = #{params.Now},
-                worker_claim_attempts = 0,
             </if>
             last_worker_activity_at = #{params.Now},
             updated_at = #{params.Now}

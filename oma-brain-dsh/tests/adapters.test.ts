@@ -4,7 +4,7 @@ import { MessageId, ToolCallId, type GenerateOptions, type StreamChunk } from "@
 import { OmaApi } from "../src/api.ts";
 import { AiSdkAdapter } from "../src/llm-ai-sdk/index.ts";
 import { omaModelOptions } from "../src/model.ts";
-import { SandboxMcp } from "../src/oma-sandbox/client.ts";
+import { SandboxCalls } from "../src/oma-sandbox/client.ts";
 import { assignment, textEvents, toolEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
 
@@ -160,130 +160,6 @@ test("OMA Messages adapter rejects HTTP, in-stream and empty response errors", a
     const a = assignment(); api.assignments.set(a.session_id, a);
     await expect(collect(new AiSdkAdapter(omaModelOptions(api)).stream(options(a.session_id)))).rejects.toMatchObject({ code });
   }
-});
-
-test("MCP SDK correlates SSE responses, negotiates sessions,", async () => {
-  const calls: Payload[] = [];
-  let dispatched = 0;
-  const api = new OmaApi("http://sandbox.test", (async (input, init) => {
-    const request = new Request(input, init);
-    if (request.method === "GET") return new Response(null, { status: 405 });
-    expect(request.headers.get("Authorization")).toBe("Bearer test-mcp");
-    expect(request.headers.has("X-Brain-Epoch")).toBe(false);
-    const body = await request.json() as Payload; calls.push(body);
-    if (body.method === "server/discover") return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }, { status: 404 });
-    if (body.method.startsWith("notifications/")) return new Response(null, { status: 202 });
-    if (body.method === "initialize") return Response.json({ jsonrpc: "2.0", id: body.id, result: {
-      protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "sandbox", version: "1" },
-    } }, { headers: { "Mcp-Session-Id": "session-1" } });
-    dispatched++;
-    expect(request.headers.get("Mcp-Session-Id")).toBe("session-1");
-    if (body.params.arguments.command === "hang") return new Promise<Response>((_resolve, reject) => {
-      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
-    });
-    return new Response(`data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "stdout" }] } })}\n\n`,
-      { headers: { "Content-Type": "text/event-stream" } });
-  }) as typeof fetch);
-  const a = assignment(); api.assignments.set(a.session_id, a);
-  const executor = new SandboxMcp(api, a.session_id);
-  const tool = { name: "Bash", remoteName: "Bash", description: "", inputSchema: {} };
-  try {
-    expect(calls).toHaveLength(0);
-    await executor.provision(new AbortController().signal);
-    expect(await executor.call(tool, { command: "pwd" }, new AbortController().signal)).toEqual({ content: [{ type: "text", text: "stdout" }] });
-    expect(dispatched).toBe(1);
-    expect(calls.filter((call) => call.method === "initialize")).toHaveLength(1);
-  } finally { await executor.close(); }
-});
-
-test("tool interruption retains the correlated remote cancellation result", async () => {
-  const started = Promise.withResolvers<void>();
-  const result = Promise.withResolvers<Response>();
-  let requestId: string | number;
-  let cancellations = 0;
-  const api = new OmaApi("http://sandbox.test", (async (input, init) => {
-    const request = new Request(input, init);
-    if (request.method === "GET") return new Response(null, { status: 405 });
-    const body = await request.json() as Payload;
-    if (body.method === "server/discover") return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }, { status: 404 });
-    if (body.method === "initialize") return Response.json({ jsonrpc: "2.0", id: body.id, result: {
-      protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "sandbox", version: "1" },
-    } });
-    if (body.method === "notifications/cancelled") {
-      expect(body.params.requestId).toBe(requestId);
-      cancellations++;
-      result.resolve(Response.json({ jsonrpc: "2.0", id: requestId, result: {
-        isError: true, content: [{ type: "text", text: "cancelled" }], structuredContent: { status: "cancelled", cancelled: true },
-      } }));
-      return new Response(null, { status: 202 });
-    }
-    if (body.method !== "tools/call") return new Response(null, { status: 202 });
-    requestId = body.id;
-    started.resolve();
-    return result.promise;
-  }) as typeof fetch);
-  const a = assignment(); api.assignments.set(a.session_id, a);
-  const executor = new SandboxMcp(api, a.session_id);
-  const abort = new AbortController();
-  const pending = executor.call({ name: "Bash", remoteName: "bash", description: "", inputSchema: {} }, { command: "sleep 120" }, abort.signal);
-  const outcome = pending.then((value) => value, (error) => error);
-  try {
-    await started.promise;
-    abort.abort(new Error("user interrupt"));
-    expect(await outcome).toEqual({ isError: true, content: [{ type: "text", text: "cancelled" }], structuredContent: { status: "cancelled", cancelled: true } });
-    expect(cancellations).toBe(1);
-  } finally { result.resolve(new Response(null, { status: 500 })); await executor.close(); }
-});
-
-test("modern MCP tool interruption closes the original request", async () => {
-  const started = Promise.withResolvers<void>();
-  const cancelled = Promise.withResolvers<void>();
-  let cancellationNotifications = 0;
-  let toolCalls = 0;
-  const api = new OmaApi("http://sandbox.test", (async (input, init) => {
-    const request = new Request(input, init);
-    const body = await request.json() as Payload;
-    if (body.method === "server/discover") return Response.json({ jsonrpc: "2.0", id: body.id, result: {
-      resultType: "complete", ttlMs: 0, cacheScope: "private", supportedVersions: ["2026-07-28"],
-      capabilities: { tools: {} }, _meta: { "io.modelcontextprotocol/serverInfo": { name: "sandbox", version: "1" } },
-    } });
-    if (body.method === "notifications/cancelled") {
-      cancellationNotifications++;
-      return new Response(null, { status: 202 });
-    }
-    if (body.method === "tools/list") return Response.json({ jsonrpc: "2.0", id: body.id, result: {
-      resultType: "complete", ttlMs: 0, cacheScope: "private", tools: [{ name: "bash", inputSchema: { type: "object" } }],
-    } });
-    if (body.method === "tools/call") {
-      expect(request.headers.get("Mcp-Method")).toBe("tools/call");
-      expect(request.headers.get("Mcp-Name")).toBe("bash");
-      if (++toolCalls === 1) return Response.json({ jsonrpc: "2.0", id: body.id, result: {
-        resultType: "complete", content: [{ type: "text", text: "stdout" }],
-      } });
-      started.resolve();
-      return new Promise<Response>((_resolve, reject) => {
-        request.signal.addEventListener("abort", () => {
-          cancelled.resolve();
-          reject(request.signal.reason);
-        }, { once: true });
-      });
-    }
-    throw new Error(`Unexpected MCP method ${body.method}`);
-  }) as typeof fetch);
-  const a = assignment(); api.assignments.set(a.session_id, a);
-  const executor = new SandboxMcp(api, a.session_id);
-  const tool = { name: "Bash", remoteName: "bash", description: "", inputSchema: {} };
-  const abort = new AbortController();
-  try {
-    expect(await executor.call(tool, { command: "pwd" }, new AbortController().signal)).toEqual({ content: [{ type: "text", text: "stdout" }] });
-    const pending = executor.call(tool, { command: "sleep 120" }, abort.signal);
-    const outcome = pending.then((value) => value, (error) => error);
-    await Promise.race([started.promise, outcome.then((value) => { throw new Error(`MCP call ended before dispatch: ${value}`); })]);
-    abort.abort(new Error("user interrupt"));
-    await Promise.race([cancelled.promise, Bun.sleep(1000).then(() => { throw new Error("Original MCP request remained open"); })]);
-    expect(await outcome).toBeInstanceOf(Error);
-    expect(cancellationNotifications).toBe(0);
-  } finally { await executor.close(); }
 });
 
 test("model context lookup isolates concurrent sessions and child sessions", async () => {

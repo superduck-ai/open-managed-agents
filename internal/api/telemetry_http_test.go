@@ -71,12 +71,12 @@ func TestHTTPTraceMiddleware(t *testing.T) {
 		handler := observeRequests(slog.New(slog.DiscardHandler), nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 		for path, links := range map[string]int{
 			"/v1/agents": 0,
-			"/v1/code/sessions/cse_a/worker/register": 1,
-			"/v1/code/sessions/cse_a/worker":          0,
-			"/v2/ccr-sessions/cse_a/sandbox/mcp":      1,
-			"/v2/sessions/cse_a":                      1,
-			"/v1/messages":                            1,
-			"/v1/chat/completions":                    1,
+			"/v1/code/sessions/cse_a/worker/register":        1,
+			"/v1/code/sessions/cse_a/worker":                 0,
+			"/v2/ccr-sessions/cse_a/threads/root/tool-calls": 1,
+			"/v2/sessions/cse_a":                             1,
+			"/v1/messages":                                   1,
+			"/v1/chat/completions":                           1,
 		} {
 			request := httptest.NewRequest(http.MethodPost, path, nil)
 			if path != "/v1/code/sessions/cse_a/worker" {

@@ -109,6 +109,8 @@ func errorMappingFor(err *apperr.Error) (errorMapping, bool) {
 		return errorMapping{http.StatusInternalServerError, "api_error", "internal"}, true
 	case apperr.Unavailable:
 		return errorMapping{http.StatusServiceUnavailable, "api_error", "unavailable"}, true
+	case apperr.Gone:
+		return errorMapping{http.StatusGone, "invalid_request_error", "gone"}, true
 	case apperr.Overloaded:
 		return errorMapping{529, "overloaded_error", "overloaded"}, true
 	default:

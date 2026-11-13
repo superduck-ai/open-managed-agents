@@ -62,7 +62,7 @@ sequenceDiagram
     D->>API: worker/register（epoch 与 JWT 一致）
     API->>DB: 设置租约，清除 requested 标记
     D->>API: GET /v2/sessions/{id}、恢复私有事件、连接 worker 事件流
-    API->>DB: 事件流连接时重置领取失败计数
+    API->>DB: 首次上报 worker 状态时重置领取失败计数
     loop 运行中
         D->>API: worker/heartbeat 续约
     end
@@ -105,7 +105,7 @@ stateDiagram-v2
     Requested --> Claimed: claim（epoch+1，签发凭据）
     Claimed --> Requested: 领取期限过期 / release（带退避）
     Claimed --> Registered: worker/register 成功
-    Registered --> Connected: worker 事件流连接（attempts 归零）
+    Registered --> Connected: worker 事件流连接；首次上报 worker 状态时 attempts 归零
     Registered --> Requested: 租约过期且公共 Session running
     Connected --> Requested: 租约过期且公共 Session running
     Connected --> Idle: 租约过期且公共 Session 非 running
@@ -239,7 +239,7 @@ sequenceDiagram
 ### 现有接口的变化
 
 - `worker/register`：在 `RegisterCodeSessionWorkerAtEpoch` 的同一事务内清空 `worker_claim_requested_at` 与 `worker_claim_expires_at`。其余行为不变；旧 epoch 仍按现有 fence 拒绝。
-- worker 事件流连接：`MarkCodeSessionWorkerConnectedForEpoch` 同时将 `worker_claim_attempts` 归零，作为“准入完成”的信号。
+- worker 状态上报：`UpdateCodeSessionWorkerState` 同时将 `worker_claim_attempts` 归零，作为“准入完成”的信号。DSH 在会话打开的最后一步上报状态；事件流连接不再归零，因为恢复遗留工具调用时会提前连接事件流，若以连接作为信号，打开在此之后失败的会话会无限重新领取。
 - `codesessions.Service.DispatchWorker(ctx, session, codeSessionID)`：由发布 JetStream 改为置位 `worker_claim_requested_at` 并发布无数据的 Core NATS 通知；Runner 在 `finishManagedAgentRuntime` 中传入公共 Session 与 Code Session ID。
 - `EnvironmentWorkMapper.ClaimNext`：nats 恢复分支删除，只领取 queued Work；`claim` transport 的崩溃恢复完全由领取条件覆盖。
 - 公共输入入队后的 `resumeSandboxForCodeSession` 对 `claim` transport 直接返回，不再用 sandbox 续期延长 Brain worker 租约，也不安排 Work 恢复；沙箱由惰性沙箱网关按需准备。

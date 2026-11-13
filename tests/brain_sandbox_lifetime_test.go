@@ -5,15 +5,10 @@ package tests
 import (
 	"context"
 	"errors"
-	"log/slog"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
 func TestBrainSandboxStartupFailureIsNotLeaseConflict(t *testing.T) {
@@ -24,8 +19,8 @@ func TestBrainSandboxStartupFailureIsNotLeaseConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := codeSessionIngressToken(t, app, worker.ExternalID)
-	response := doSessionRequest(t, app, http.MethodPost, "/v2/ccr-sessions/"+worker.ExternalID+"/sandbox/mcp",
-		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`), token, false)
+	response := doSessionRequest(t, app, http.MethodPost, "/v2/ccr-sessions/"+worker.ExternalID+"/threads/root/tool-calls",
+		strings.NewReader(`{"call_id":"startup","tool":"bash","input":{"command":"true"}}`), token, false)
 	body := readAll(t, response.Body)
 	response.Body.Close()
 	if response.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(body), "Sandbox is unavailable") {
@@ -36,73 +31,34 @@ func TestBrainSandboxStartupFailureIsNotLeaseConflict(t *testing.T) {
 	}
 }
 
-func TestBrainSandboxMCPResumesBeforeDispatch(t *testing.T) {
-	app := newPayloadIntegrationApp(t, newFakeStore("brain-sandbox-lifetime"))
-	worker, _ := newPayloadIntegrationSession(t, app)
-	calls := 0
-	sandbox := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if len(app.sandboxTimeouts.snapshotCalls()) < 2 {
-			t.Error("dispatch preceded sandbox renewal")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"resumed"}]}}`))
-	}))
-	defer sandbox.Close()
-	if _, err := registerTaskTestWorker(t, app, worker); err != nil {
-		t.Fatal(err)
-	}
-	service := codesessions.NewServiceWithCredentials(app.db, app.credentials, slog.Default()).WithSandboxProvisioner(fixedSandboxProvisioner{endpoint: sandbox.URL, db: app.db})
-	handler := codesessions.NewHandler(app.cfg, service, app.sandboxTimeouts, slog.Default())
-	router := chi.NewRouter()
-	router.Route("/v2", handler.RegisterV2Routes)
-	gateway := httptest.NewServer(router)
-	t.Cleanup(gateway.Close)
-	app.baseURL = gateway.URL
-	token := codeSessionIngressToken(t, app, worker.ExternalID)
-	endpoint := "/v2/ccr-sessions/" + worker.ExternalID + "/sandbox/mcp"
+func TestBrainToolSubmissionResumesBeforeEnqueue(t *testing.T) {
+	app, worker, _, token := newBrainToolCallApp(t, `{"model":"claude-opus-4-6","name":"renewal"}`)
+	endpoint := "/v2/ccr-sessions/" + worker.ExternalID + "/threads/root/tool-calls"
 	app.sandboxTimeouts.setError(errors.New("resume unavailable"))
-	request := func(body string) *http.Response {
-		return doSessionRequest(t, app, http.MethodPost, endpoint, strings.NewReader(body), token, false)
+	request := func() *http.Response {
+		return doSessionRequest(t, app, http.MethodPost, endpoint, strings.NewReader(`{"call_id":"resume","tool":"bash","input":{"command":"true"}}`), token, false)
 	}
-	response := request(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`)
+	response := request()
 	response.Body.Close()
-	if response.StatusCode != http.StatusInternalServerError || calls != 0 {
-		t.Fatalf("failed resume status=%d dispatches=%d", response.StatusCode, calls)
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("failed resume status=%d", response.StatusCode)
 	}
 	app.sandboxTimeouts.setError(nil)
-	response = request(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`)
+	response = request()
 	response.Body.Close()
-	if response.StatusCode != http.StatusOK || calls != 1 {
-		t.Fatalf("initialize status=%d dispatches=%d", response.StatusCode, calls)
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("resumed status=%d", response.StatusCode)
 	}
-	response = request(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"bash","arguments":{"command":"printf resumed"}}}`)
-	response.Body.Close()
-	if response.StatusCode != http.StatusOK || calls != 2 {
-		t.Fatalf("resumed dispatch status=%d calls=%d", response.StatusCode, calls)
-	}
-	response = request(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`)
-	response.Body.Close()
-	if response.StatusCode != http.StatusOK || calls != 3 {
-		t.Fatalf("notification status=%d calls=%d", response.StatusCode, calls)
-	}
-	renewals := app.sandboxTimeouts.snapshotCalls()
-	if len(renewals) != 2 {
-		t.Fatalf("renewals=%d want failed attempt plus one renewal reused within its window", len(renewals))
-	}
-	for _, call := range renewals {
-		if call.sandboxID == "" || call.timeout != app.cfg.E2B.SandboxTimeout {
-			t.Fatalf("invalid renewal: %+v", call)
-		}
+	if len(app.sandboxTimeouts.snapshotCalls()) < 2 {
+		t.Fatal("submission did not retry provider renewal")
 	}
 }
 
 type fixedSandboxProvisioner struct {
-	endpoint string
-	db       *db.DB
+	db *db.DB
 }
 
-func (p fixedSandboxProvisioner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (string, db.EnvironmentSandbox, error) {
+func (p fixedSandboxProvisioner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (db.EnvironmentSandbox, error) {
 	sandbox, err := p.db.GetResumableEnvironmentSandboxForCodeSession(ctx, code.ExternalID)
-	return p.endpoint, sandbox, err
+	return sandbox, err
 }

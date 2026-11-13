@@ -1,3 +1,4 @@
+import { SHUTDOWN_CANCEL } from "./contracts.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import Loader from "@deepseek-ai/cordis-plugin-loader";
 import AgentPresets from "@deepseek-ai/dsh-agent-preset-registry";
@@ -225,12 +226,13 @@ export class DshSubagents {
 
   settleEvents(): Promise<void> { return this.pending; }
 
-  interrupt(id?: string): void {
+  interrupt(id?: string, shutdown = false): void {
     if (!this.parent.handle) return;
     const agent = this.parent.agent;
     if (this.parent.ctx.agents.get(agent.id) !== agent) return;
     for (const thread of this.bridge.threads()) if (!id || thread.id === id)
-      this.manager.interrupt(SessionId(thread.id), { kind: "ancestor", agent });
+      if (shutdown) this.parent.ctx.agents.get(SessionId(thread.id))?.cancel(SHUTDOWN_CANCEL);
+      else this.manager.interrupt(SessionId(thread.id), { kind: "ancestor", agent });
   }
 
   async close(): Promise<void> {

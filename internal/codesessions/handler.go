@@ -2,6 +2,7 @@ package codesessions
 
 import (
 	"context"
+	"github.com/nats-io/nats.go"
 	"github.com/superduck-ai/open-managed-agents/internal/brainattachments"
 	"log/slog"
 	"net/http"
@@ -17,11 +18,13 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 	"github.com/superduck-ai/open-managed-agents/internal/webhooks"
 	"github.com/superduck-ai/open-managed-agents/internal/webtools"
+	"golang.org/x/sync/singleflight"
 )
 
 // Handler 是 code-session 的 HTTP transport 边界。
 // 它持有协议相关的鉴权、代理连接和日志状态；业务状态与业务编排统一委托给 Service。
 type Handler struct {
+	toolCallNotifications  *nats.Conn
 	cfg                    config.Config
 	db                     *db.DB
 	service                *Service
@@ -29,6 +32,7 @@ type Handler struct {
 	errorAdapter           *httpapi.ErrorAdapter
 	sandboxTimeoutExtender SandboxTimeoutExtender
 	sandboxRenewals        sandboxRenewals
+	sandboxEnsures         singleflight.Group
 	upstreamProxy          upstreamProxyRuntime
 	mcpProxyTransport      http.RoundTripper
 	wrapMCPVaultTransport  mcpProxyTransportWrapper

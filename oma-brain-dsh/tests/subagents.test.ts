@@ -250,7 +250,7 @@ test("a child read approved during drain still executes and persists its result"
   } finally { f.session.stop(); await settled; }
 });
 
-test("lost child tool outcome blocks parent recovery until new input and never replays the command", async () => {
+test("child shutdown recovers the persisted result without replaying the command", async () => {
   const f = await fixture();
   const lostResponse = Promise.withResolvers<Payload>();
   f.b.onTool = () => lostResponse.promise;
@@ -265,7 +265,8 @@ test("lost child tool outcome blocks parent recovery until new input and never r
   await eventually(() => f.b.executions.length === 1);
   f.session.stop();
   await turn;
-  expect((await nativeOutcomes(f.session, f.session.subagents.threads[0]!.id)).child_tool?.failed).toBe(true);
+  expect((await nativeOutcomes(f.session, f.session.subagents.threads[0]!.id)).child_tool).toBeUndefined();
+  lostResponse.resolve({content:[{type:"text",text:"confirmed child result"}]});
   await f.close();
   cleanups.pop();
   f.b.onTool = undefined;
@@ -478,10 +479,11 @@ test("specialist sandbox calls carry child identity and root calls remain unscop
   b.route = async request => {
     if (request.method === "POST") {
       const body = await request.clone().json();
-      if (body.method === "tools/call") {
-        const thread = request.headers.get("X-OMA-Session-Thread-ID");
-        calls.push({ tool: body.params.name, thread });
-        const permitted = body.params.name === "write" ? thread === f.session.subagents.threads[0]?.id : thread === null;
+      if (new URL(request.url).pathname.endsWith("/tool-calls")) {
+        const scope = new URL(request.url).pathname.match(/\/threads\/([^/]+)\//)?.[1];
+        const thread = scope === "root" ? null : scope ?? null;
+        calls.push({ tool: body.tool, thread });
+        const permitted = body.tool === "write" ? thread === f.session.subagents.threads[0]?.id : thread === null;
         if (!permitted) return Response.json({ error: { message: "wrong tool execution scope" } },
           { status: 403, headers: { "X-Oma-Sandbox-Not-Forwarded": "true" } });
       }

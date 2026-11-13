@@ -1,131 +1,84 @@
-import { isConnectFailure, notForwardedDetail } from "../ccrv2/tool-transport.ts";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { OmaApi } from "../api.ts";
+import { HttpError, OmaApi } from "../api.ts";
 import { object, type Payload } from "../json.ts";
 import { normalizeSandboxResult } from "./output.ts";
-import { sandboxEndpoint } from "./config.ts";
-import { ToolNotForwardedError, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
-import { workerDiagnostic } from "../ccrv2/diagnostics.ts";
-import { abortable } from "../ccrv2/retry.ts";
+import { isShutdownCancel, UnknownSandboxOutcomeError, ToolNotForwardedError, type SandboxExecutor, type RemoteTool } from "../runtime/contracts.ts";
+import { sleep } from "../ccrv2/retry.ts";
 
-/** Use the same MCP SDK as DSH, with initialization gated by the approval checkpoint. */
-export class SandboxMcp implements SandboxExecutor {
-  private client = createClient();
-  private transport: StreamableHTTPClientTransport;
-  private initialization?: Promise<void>;
-  private readonly endpoint: ReturnType<typeof sandboxEndpoint>;
-  private readonly calls = new Map<string, { signal: AbortSignal; timeoutMs: number; threadId?: string; cleanup?: () => void; rejection?: string }>();
+export const CANCELLATION_UNCONFIRMED = "Cancellation could not be confirmed. Verify external state before repeating operations with side effects.";
 
-  constructor(readonly api: OmaApi, readonly sessionId: string) {
-    this.endpoint = sandboxEndpoint(api.assignment(sessionId).mcp_config, api.base);
-    this.transport = this.createTransport();
+export class SandboxCalls implements SandboxExecutor {
+  constructor(readonly api: OmaApi, readonly sessionId: string) {}
+
+  async provision(signal: AbortSignal): Promise<void> { signal.throwIfAborted(); }
+
+  private path(callId: string, threadId = "root"): string {
+    return `/v2/ccr-sessions/${encodeURIComponent(this.sessionId)}/threads/${encodeURIComponent(threadId)}/tool-calls${callId ? `/${encodeURIComponent(callId)}` : ""}`;
   }
 
-  private createTransport(): StreamableHTTPClientTransport {
-    const api = this.api;
-    return new StreamableHTTPClientTransport(new URL(this.endpoint.url), {
-      requestInit: { headers: this.endpoint.headers, redirect: "error" },
-      fetch: async (input, init) => {
-        const request = new Request(input, init);
-        if (request.method === "POST") {
-          const body = await request.clone().json() as Payload;
-          const call = body.method === "tools/call" ? this.calls.get(body.params?._meta?.progressToken) : undefined;
-          if (call) {
-            call.signal.throwIfAborted();
-            if (call.threadId) request.headers.set("X-OMA-Session-Thread-ID", call.threadId);
-            if (this.transport.protocolVersion !== "2026-07-28") {
-              const cancel = () => {
-                void this.client.notification({ method: "notifications/cancelled", params: { requestId: body.id, reason: "User interrupted" } }).catch(() => {});
-              };
-              call.signal.addEventListener("abort", cancel, { once: true });
-              call.cleanup = () => call.signal.removeEventListener("abort", cancel);
-            }
-            delete body.params._meta.progressToken;
-            if (!Object.keys(body.params._meta).length) delete body.params._meta;
-            let response: Response;
-            try {
-              const deadline = AbortSignal.timeout(call.timeoutMs + CALL_DEADLINE_MARGIN_MS);
-              response = await api.fetcher(new Request(request, { body: JSON.stringify(body) }),
-                { timeout: false, signal: AbortSignal.any([request.signal, deadline]) });
-            } catch (error) {
-              if (isConnectFailure(error)) call.rejection = "Sandbox tool call was not executed: OMA sandbox gateway is unreachable";
-              throw error;
-            }
-            if (response.headers.get("X-Oma-Sandbox-Not-Forwarded") === "true")
-              call.rejection = `Sandbox tool call was not executed: ${await notForwardedDetail(response.clone())}`;
-            return response;
-          }
-        }
-        return api.fetcher(request);
-      },
-    });
-  }
-
-  private initialize(): Promise<void> {
-    const client = this.client;
-    const initialization: Promise<void> = client.connect(this.transport, { timeout: SANDBOX_CALL_TIMEOUT_MS }).catch(async (error: unknown) => {
-      if (this.initialization === initialization) {
-        this.initialization = undefined;
-        this.client = createClient();
-        this.transport = this.createTransport();
+  private async request(path: string, method: string, body: unknown, signal?: AbortSignal): Promise<Payload> {
+    for (;;) {
+      try {
+        return await this.api.request(path, this.api.assignment(this.sessionId).ingress_token, method, body, this.api.traceHeaders(this.sessionId), signal, 35_000);
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (error instanceof HttpError && error.status < 500) throw error;
+        await sleep(500, signal);
       }
-      await client.close().catch(() => {});
-      throw error;
-    });
-    return initialization;
-  }
-
-  async provision(signal: AbortSignal): Promise<void> {
-    signal.throwIfAborted();
-    const start = Date.now();
-    const initializing = !this.initialization;
-    await abortable(this.initialization ??= this.initialize(), signal);
-    signal.throwIfAborted();
-    if (initializing && process.env.OMA_DEBUG_TIMING === "1") workerDiagnostic("info", "oma_sandbox_initialized", {
-      session_id: this.sessionId, timestamp: new Date().toISOString(), duration_ms: Date.now() - start,
-    });
-  }
-
-  async call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string): Promise<Payload> {
-    await this.provision(signal);
-    const start = Date.now();
-    const token = crypto.randomUUID();
-    const timeoutMs = sandboxCallTimeoutMs(tool, args);
-    const call = { signal, timeoutMs, threadId, cleanup: undefined as (() => void) | undefined, rejection: undefined as string | undefined };
-    this.calls.set(token, call);
-    let result: Payload;
-    try {
-      result = object(await this.client.callTool({ name: tool.remoteName, arguments: args, _meta: { progressToken: token } },
-        { timeout: timeoutMs, ...(this.transport.protocolVersion === "2026-07-28" ? { signal } : {}) }));
-    } catch (error) {
-      if (call.rejection !== undefined) throw new ToolNotForwardedError(call.rejection);
-      throw error;
-    } finally {
-      call.cleanup?.();
-      this.calls.delete(token);
     }
-    if (process.env.OMA_DEBUG_TIMING === "1") workerDiagnostic("info", "oma_sandbox_tool_finished", {
-      session_id: this.sessionId, tool_name: tool.name, timestamp: new Date().toISOString(), duration_ms: Date.now() - start,
-    });
-    return normalizeSandboxResult(result, tool.name);
   }
 
-  async close(): Promise<void> { await this.client.close(); }
-}
+  async wait(callId: string, signal: AbortSignal, threadId?: string, pending?: () => void): Promise<Payload> {
+    for (;;) {
+      const call = await this.request(`${this.path(callId, threadId)}?wait_ms=25000`, "GET", undefined, signal);
+      if (["pending", "dispatched", "running", "cancel_requested", "finalizing"].includes(call.state)) {
+        pending?.();
+        pending = undefined;
+        continue;
+      }
+      if (call.result) return { ...object(call.result), isError: call.state !== "succeeded" };
+      const text = call.state === "cancelled" ? "Tool call interrupted."
+        : call.state === "expired" ? "Tool call expired before execution."
+        : "Remote tool outcome is unknown. Do not retry blindly; verify external state before repeating operations with side effects.";
+      return { isError: true, errorCode: call.state === "lost" ? "TOOL_OUTCOME_UNKNOWN" : undefined, content: [{ type: "text", text }] };
+    }
+  }
 
-function createClient(): Client {
-  return new Client({ name: "oma-brain-dsh", version: "0.1.0" }, { versionNegotiation: { mode: "auto" } });
-}
+  async call(tool: RemoteTool, args: Payload, signal: AbortSignal, threadId?: string, callId?: string): Promise<Payload> {
+    if (!callId) throw new Error("Sandbox call requires a native call ID");
+    signal.throwIfAborted();
+    try {
+      await this.request(this.path("", threadId), "POST", { call_id: callId, tool: tool.remoteName, input: args, timeout_ms: sandboxCallTimeoutMs(tool, args) }, signal);
+      return normalizeSandboxResult(await this.wait(callId, signal, threadId), tool.name);
+    } catch (error) {
+      if (signal.aborted && signal.reason?.kind === "user") {
+        try {
+          return normalizeSandboxResult(await this.cancel(callId, threadId), tool.name);
+        } catch (cause) {
+          throw new UnknownSandboxOutcomeError(CANCELLATION_UNCONFIRMED,{cause});
+        }
+      }
+      if (signal.aborted && isShutdownCancel(signal.reason)) throw error;
+      if (error instanceof HttpError && [400, 403, 413].includes(error.status))
+        throw new ToolNotForwardedError(`Sandbox tool call rejected with HTTP ${error.status}`);
+      throw error;
+    }
+  }
 
-const SANDBOX_CALL_TIMEOUT_MS = 185_000;
-const CALL_DEADLINE_MARGIN_MS = 15_000;
-const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
-const BASH_MAX_TIMEOUT_SECONDS = 600;
-const BASH_RESPONSE_MARGIN_MS = 65_000;
+  async peek(callId: string, signal: AbortSignal, threadId?: string): Promise<Payload> {
+    return await this.request(`${this.path(callId, threadId)}?wait_ms=0`, "GET", undefined, signal);
+  }
+
+  async cancel(callId: string, threadId?: string, shutdown?: AbortSignal): Promise<Payload> {
+    const cancellation = shutdown ? AbortSignal.any([shutdown, AbortSignal.timeout(90_000)]) : AbortSignal.timeout(90_000);
+    await this.request(`${this.path(callId, threadId)}/cancel`, "POST", {}, cancellation);
+    return await this.wait(callId, cancellation, threadId);
+  }
+
+  async close(): Promise<void> {}
+}
 
 export function sandboxCallTimeoutMs(tool: RemoteTool, args: Payload): number {
-  if (tool.remoteName !== "bash") return SANDBOX_CALL_TIMEOUT_MS;
-  const requested = Number.isFinite(args.timeout) && args.timeout > 0 ? args.timeout : BASH_DEFAULT_TIMEOUT_SECONDS;
-  const seconds = Math.min(requested, BASH_MAX_TIMEOUT_SECONDS);
-  return Math.max(SANDBOX_CALL_TIMEOUT_MS, seconds * 1000 + BASH_RESPONSE_MARGIN_MS);
+  if (tool.remoteName !== "bash") return 180_000;
+  const requested = Number.isFinite(args.timeout) && args.timeout > 0 ? args.timeout : 120;
+  return Math.min(requested, 600) * 1000 + 30_000;
 }

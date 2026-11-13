@@ -161,4 +161,6 @@ CLI migration: `verify-chat run chat.roundtrip` is replaced by `verify-be chat r
 
 ## Explicit vision scenario
 
-`chat brain-images` is the exception to scripted upstream models. Set `VERIFY_BE_VISION_PROVIDERS` to an explicit private model-providers.yaml file and `VERIFY_BE_VISION_MODEL` to a model declared by exactly one provider in that file. Run `chat doctor brain-images` first. It verifies message images and real Worker Read with a real vision model; see [Brain image coverage](features/brain.md#真实视觉模型与图片). Other scenarios never use these credentials. Include `chat roundtrip` as the chat smoke regression.
+`chat brain-images` and `chat brain-tools` are the exceptions to scripted upstream models. Set `VERIFY_BE_VISION_PROVIDERS` to an explicit private model-providers.yaml file and `VERIFY_BE_VISION_MODEL` to a model declared by exactly one provider in that file. Run `chat doctor brain-images` first. It verifies message images and real Worker Read with a real vision model; see [Brain image coverage](features/brain.md#真实视觉模型与图片). Other scenarios never use these credentials. Include `chat roundtrip` as the chat smoke regression.
+
+`chat brain-tools` uses a real text model for Write/Edit/Read/Grep/Glob/Bash. Set `VERIFY_BE_MODEL_PROVIDERS` and `VERIFY_BE_MODEL`, then run `chat doctor brain-tools` and `chat brain-tools`. Read the Brain feature map. Other scenarios continue using scripted upstream models. Never treat the model answer alone as proof; this scenario also checks sandbox bytes and persisted call states.

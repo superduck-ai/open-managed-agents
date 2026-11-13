@@ -178,6 +178,7 @@ type CodeSessionMapper interface {
 	FindNetworkPolicyContext(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionNetworkPolicyContextRow, error)
 	FindVaultIDs(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionVaultIDsRow, bool, error)
 	FindByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionRow, bool, error)
+	FindScopedByExternalID(ctx context.Context, organizationUUID, workspaceUUID, codeSessionExternalID string) (codeSessionRow, bool, error)
 	FindActiveForEnvironmentWork(ctx context.Context, organizationUUID, workspaceUUID, environmentUUID, sessionUUID string) ([]codeSessionRow, error)
 	FindLatestBySessionExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) (codeSessionRow, error)
 	ListSegmentsBySessionExternalID(ctx context.Context, workspaceUUID, sessionExternalID string) ([]codeSessionSegmentRow, error)

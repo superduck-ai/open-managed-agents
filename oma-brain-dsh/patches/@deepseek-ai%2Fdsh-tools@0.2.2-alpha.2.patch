@@ -1,0 +1,6 @@
+diff --git a/lib/pipeline.js b/lib/pipeline.js
+--- a/lib/pipeline.js
++++ b/lib/pipeline.js
+@@ -197 +197 @@
+-		if (this.input.log !== void 0) {
++		if (this.input.log !== void 0 && !(this.input.signal?.reason?.deferToolResults && result.isError)) {

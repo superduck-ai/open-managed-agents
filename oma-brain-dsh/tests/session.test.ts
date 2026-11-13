@@ -268,14 +268,13 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.publicLog.get("stdout_result")?.is_error).toBe(false);
   });
 
-  test("an unreachable sandbox gateway records a known Bash failure without blocking the session", async () => {
+  test("a denied tool submission records a known Bash failure and allows another turn", async () => {
     const b = backend();
     b.modelScript = [toolEvents(), textEvents("gateway unavailable"), textEvents("next turn")];
     const { session } = await open(b, (async (input, init) => {
       const request = new Request(input, init);
-      if (request.method === "POST" && new URL(request.url).pathname.endsWith("/sandbox/mcp")
-        && ((await request.clone().json()) as Payload).method === "tools/call")
-        return fetch("http://127.0.0.1:1/mcp", { method: "POST", body: "{}" });
+      if (request.method === "POST" && new URL(request.url).pathname.endsWith("/tool-calls"))
+        return Response.json({error:{message:"Tool denied"}},{status:403});
       return fetch(request);
     }) as typeof fetch);
     b.onApproval = async (p) => {
@@ -289,7 +288,7 @@ describe("original dsh loop over CCRv2", () => {
     const result = b.requests[1]!.messages.flatMap((m: Payload) => m.content)
       .find((block: Payload) => block.type === "tool_result");
     expect(result.is_error).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("OMA sandbox gateway is unreachable");
+    expect(JSON.stringify(result.content)).toContain("Sandbox tool call rejected with HTTP 403");
     await session.receive("after_gateway_down", { message: { content: "continue" } });
     expect(b.requests).toHaveLength(3);
   });
@@ -854,7 +853,7 @@ describe("original dsh loop over CCRv2", () => {
     expect(b.executions).toEqual([
       { name: "bash", arguments: { command: "approved" } },
     ]);
-    expect(b.mcpMethods).toEqual(["initialize", "notifications/initialized", "tools/call"]);
+    expect(b.executions).toHaveLength(1);
     expect(JSON.stringify(b.requests[1]!.messages)).toContain("approved");
     expect([...b.publicLog.values()].filter((event) => event.type === "system.message"))
       .toMatchObject([{ content: [{ text: 'Approved Bash arguments: {"command":"approved"}' }] }]);

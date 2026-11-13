@@ -8,7 +8,7 @@ import { mountOma } from "../src/plugin.ts";
 import { createOmaSession } from "../src/oma-session.ts";
 import { assignment, Backend, toolEvents, textEvents } from "./backend.ts";
 import type { Payload } from "../src/json.ts";
-import { SandboxMcp } from "../src/oma-sandbox/client.ts";
+import { SandboxCalls } from "../src/oma-sandbox/client.ts";
 
 function callEvents(name: string, args: Payload, id: string): Payload[] {
   const events = toolEvents("unused", id);
@@ -229,18 +229,16 @@ test("parallel root and child Fetch persistence uses each caller's Write policy"
  const api = new OmaApi("http://oma.test", Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
   const request = new Request(input, init);
   if (request.url.includes("/web/fetch")) return Response.json({ url: "https://example.com", content: "preview", full_content: "full", truncated: true });
-  if (request.method === "DELETE") return new Response(null, { status: 200 });
-  const rpc = await request.json();
-  if (rpc.method.startsWith("notifications/")) return new Response(null, { status: 202 });
-  if (rpc.method === "tools/call") {
-   const thread = request.headers.get("X-OMA-Session-Thread-ID");
-   writes.push(thread);
-   if (thread === "child-denied") return Response.json({ error: { message: "Write denied" } }, { status: 403, headers: { "X-Oma-Sandbox-Not-Forwarded": "true" } });
-  }
-  return Response.json({ jsonrpc: "2.0", id: rpc.id, result: rpc.method === "initialize" ? { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "test", version: "1" } } : { content: [{ type: "text", text: "saved" }] } });
+  if (request.method === "GET") return Response.json({state:"succeeded",result:{content:[{type:"text",text:"saved"}]}});
+  const body=await request.json();
+  const scope=new URL(request.url).pathname.match(/\/threads\/([^/]+)\//)?.[1];
+  const thread=scope==="root"?null:scope??null;
+  writes.push(thread);
+  if(thread==="child-denied")return Response.json({error:{message:"Write denied"}},{status:403});
+  return Response.json({state:"pending"});
  }, { preconnect: fetch.preconnect }));
  api.assignments.set(a.session_id, a);
- const sandbox = new SandboxMcp(api, a.session_id);
+ const sandbox = new SandboxCalls(api, a.session_id);
  try {
   const [child, root] = await Promise.all(["child-denied", undefined].map(thread => new WebClient(api, a.session_id, sandbox, thread).call(webToolDefinitions()[1]!, { url: "https://example.com" }, new AbortController().signal)));
   const childPage = JSON.parse(child!.content[0].text);

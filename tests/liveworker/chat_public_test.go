@@ -30,7 +30,6 @@ type chatDockerProvider struct {
 	created            atomic.Int32
 	failNext           atomic.Bool
 	failMemoryMarkdown atomic.Bool
-	publishMCP         bool
 }
 
 func (p *chatDockerProvider) Resolve(env db.Environment, work *db.EnvironmentWork) (e2bruntime.Resolution, error) {
@@ -47,9 +46,6 @@ func (p *chatDockerProvider) Create(ctx context.Context, _ db.Environment, _ *db
 		_ = p.Kill(cleanupCtx, name)
 	})
 	args := []string{"run", "-d", "--rm", "--pull=never", "--name", name, "--label", "oma.verify-be.run=" + os.Getenv("VERIFY_BE_RUN_ID"), "--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor=unconfined", "--add-host", "host.docker.internal:host-gateway"}
-	if p.publishMCP {
-		args = append(args, "-p", "127.0.0.1::3001")
-	}
 	args = append(args, "--entrypoint", "sleep", p.image, "infinity")
 	err := exec.CommandContext(ctx, "docker", args...).Run()
 	return e2bruntime.Sandbox{ID: name}, err

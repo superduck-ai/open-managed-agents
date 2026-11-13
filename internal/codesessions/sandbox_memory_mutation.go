@@ -2,39 +2,21 @@ package codesessions
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"path"
 	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
-type sandboxRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Method  string          `json:"method"`
-	Params  struct {
-		Name string `json:"name"`
-		Meta struct {
-			ProtocolVersion string `json:"io.modelcontextprotocol/protocolVersion"`
-		} `json:"_meta"`
+type sandboxToolRequest struct {
+	Method string `json:"method"`
+	Params struct {
+		Name      string `json:"name"`
 		Arguments struct {
 			FilePath string  `json:"file_path"`
 			Content  *string `json:"content"`
 		} `json:"arguments"`
 	} `json:"params"`
-}
-
-type sandboxMemoryToolResult struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Result  struct {
-		ResultType string                   `json:"resultType,omitempty"`
-		IsError    bool                     `json:"isError"`
-		Content    []sandboxMemoryErrorText `json:"content"`
-	} `json:"result"`
 }
 
 type sandboxMemoryErrorText struct {
@@ -72,33 +54,4 @@ func memoryMutationDenial(mounts []db.SessionMemoryMount, target string) string 
 		return "Memory mount is read-only"
 	}
 	return ""
-}
-
-func (h *Handler) rejectMemoryToolMutation(w http.ResponseWriter, r *http.Request, session db.CodeSession, call sandboxRPCRequest) bool {
-	name := strings.ToLower(call.Params.Name)
-	if call.Method != "tools/call" || (name != "write" && name != "edit") || session.SessionExternalID == "" {
-		return false
-	}
-	target := path.Clean(call.Params.Arguments.FilePath)
-	if target != sessionresource.MemoryMountRoot && !strings.HasPrefix(target, sessionresource.MemoryMountRoot+"/") {
-		return false
-	}
-	mounts, err := h.loadMemoryToolMounts(r.Context(), session)
-	if err != nil {
-		h.errorAdapter.Write(w, r, sandboxOperationError(err))
-		return true
-	}
-	reason := memoryMutationDenial(mounts, target)
-	if reason == "" {
-		return false
-	}
-	response := sandboxMemoryToolResult{JSONRPC: "2.0", ID: call.ID}
-	if call.Params.Meta.ProtocolVersion == "2026-07-28" || r.Header.Get("Mcp-Protocol-Version") == "2026-07-28" {
-		response.Result.ResultType = "complete"
-	}
-	response.Result.IsError = true
-	response.Result.Content = []sandboxMemoryErrorText{{Type: "text", Text: reason}}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(response)
-	return true
 }

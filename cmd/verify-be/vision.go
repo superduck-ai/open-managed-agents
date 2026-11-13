@@ -10,10 +10,14 @@ import (
 )
 
 func configuredVisionModel() (string, error) {
-	model := strings.TrimSpace(os.Getenv("VERIFY_BE_VISION_MODEL"))
-	providers, err := devinit.LoadModelProviders(strings.TrimSpace(os.Getenv("VERIFY_BE_VISION_PROVIDERS")))
+	return configuredRealModel("VERIFY_BE_VISION_PROVIDERS", "VERIFY_BE_VISION_MODEL")
+}
+
+func configuredRealModel(providersVariable, modelVariable string) (string, error) {
+	model := strings.TrimSpace(os.Getenv(modelVariable))
+	providers, err := devinit.LoadModelProviders(strings.TrimSpace(os.Getenv(providersVariable)))
 	if err != nil {
-		return "", errors.New("vision verification requires an explicit valid VERIFY_BE_VISION_PROVIDERS file")
+		return "", errors.New("model verification requires an explicit valid providers file")
 	}
 	matches := 0
 	for _, provider := range providers.Providers {
@@ -22,7 +26,7 @@ func configuredVisionModel() (string, error) {
 		}
 	}
 	if model == "" || matches != 1 {
-		return "", errors.New("VERIFY_BE_VISION_MODEL must identify a model in exactly one configured provider")
+		return "", errors.New("configured model must identify a model in exactly one configured provider")
 	}
 	return model, nil
 }

@@ -119,6 +119,7 @@ func run(bootstrap *slog.Logger) (err error) {
 			natsConnection.Close()
 		}
 	}()
+
 	sessionEventBus, err := sessionfanout.NewNATS(ctx, natsConnection, logger.With("component", "session_event_bus"))
 	if err != nil {
 		return fmt.Errorf("open session event fanout: %w", err)
@@ -260,6 +261,8 @@ func run(bootstrap *slog.Logger) (err error) {
 	server := &http.Server{
 		Addr: cfg.Server.Addr,
 		Handler: api.NewServer(api.ServerDeps{
+			ToolCallNotifications:  natsConnection,
+			ToolCallContext:        ctx,
 			InvitationJobs:         jobClient,
 			Prebuilds:              prebuilds,
 			SandboxLifecycle:       lifecycle,

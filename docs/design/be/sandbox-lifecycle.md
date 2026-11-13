@@ -44,7 +44,7 @@ stateDiagram-v2
 1. 扫描候选，仅作为提示，不授权删除。
 2. 按 organization UUID、workspace UUID、sandbox UUID 定位不可变的沙箱记录。
 3. 事务按 Session → Code Session → Work / Sandbox 锁定，复查 idle 时间、cloud 类型、
-   活跃且未归档的父 Session和 Work 状态；不查询 JetStream backlog 或 PostgreSQL 事件表。
+   活跃且未归档的父 Session和 Work 状态，并排除存在 pending、dispatched、running 或 cancel_requested 工具调用的会话。
 4. 条件领取成功后保留 `idle_since` 作为并发输入 fence，递增 worker epoch、撤销旧 lease 和 OAuth hash，
    沙箱改为 stopping。
 5. 提交后执行 Provider DELETE，不在数据库事务中调用网络。
@@ -229,3 +229,10 @@ flowchart LR
 ```
 
 replacement 回归明确构造旧行仍为 creating 的场景，不先将其标为 failed，并分别检查不同和共享 Provider ID。回归用隔离 PostgreSQL schema 驱动真实 Runner 准备路径，验证短 TTL 下超过 TTL 的准备过程实际续期；虚拟时间测试原30秒 TTL 下准备75秒、续租错误、取消、截止与 handoff。普通回归使用对 context 敏感的 Provider 覆盖 rclone 真实文件系统启动链和 Manager 后台启动合同：成功交接后停止续租并跨越准备 deadline 不终止后台命令，父取消仍终止；准备过程中父取消、续租失败和 deadline 到期打断阻塞启动；后续准备失败及已取消 owner 拒绝交接并终止已启动命令。CI Docker Provider 保留原 `CommandContext` 行为，不通过修改 fixture 隐藏失败。终止、归档、替换、取消清理和超龄 attempt 退役单独检查。受控准备测试不证明真实包源、pandas 安装或 import 成功，后者仍由新 SHA 的独立黑盒验收。
+
+
+## 工具调用衔接
+
+Manager 首次领取登记 tool_call_ready_at，Runner 据此完成准备。沙箱进入 stopping、stopped 或 failed 时，数据库触发器在同一事务把执行中的工具调用写为 lost。已保存结果的 finalizing 继续执行后处理。状态和租约规则见 [沙箱工具调用领取](sandbox-tool-call-claim.md)。
+
+工具调用提交触发的按需准备由提交入口在进程内按 Code Session 合并，传给 Runner 的父 context 脱离单个 HTTP 请求的取消，但保留 Runner 的 150 秒准备上限、续租失败、owner 失效与 deadline 取消。上文“父上下文取消始终有效”中的父上下文在该入口指这次合并后的准备调用，而非某次提交请求；否则准备耗时超过 DSH 35 秒请求超时时，每次重试都会取消并清理上一次准备，沙箱永远无法就绪。回归 `TestEnsureSessionSandboxSurvivesCallerCancellation` 验证调用方取消后准备继续、重试加入同一次准备。

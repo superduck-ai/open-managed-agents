@@ -1,14 +1,10 @@
 package environments
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
@@ -43,18 +39,18 @@ func (r *Runner) startExternalWorker(ctx context.Context, run *runnerRun, env db
 		if !found {
 			return db.ErrNotFound
 		}
-		if _, _, err := r.ensureSessionSandbox(ctx, code, runnerTriggerPrewarm); err != nil {
+		if _, err := r.ensureSessionSandbox(ctx, code, runnerTriggerPrewarm); err != nil {
 			return err
 		}
 	}
 	return r.finishManagedAgentRuntime(ctx, run, preparation.Session, *work, launch)
 }
 
-func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (string, db.EnvironmentSandbox, error) {
+func (r *Runner) EnsureSessionSandbox(ctx context.Context, code db.CodeSession) (db.EnvironmentSandbox, error) {
 	return r.ensureSessionSandbox(ctx, code, runnerTriggerLazyMCP)
 }
 
-func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, trigger string) (endpoint string, _ db.EnvironmentSandbox, err error) {
+func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, trigger string) (_ db.EnvironmentSandbox, err error) {
 	startedAt := time.Now()
 	ensureOutcome := "reused"
 	defer func() {
@@ -67,46 +63,46 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 	defer cancel()
 	work, err := r.db.GetLatestEnvironmentWorkForSession(ctx, code.WorkspaceUUID, code.EnvironmentExternalID, code.SessionUUID)
 	if err != nil {
-		return "", db.EnvironmentSandbox{}, err
+		return db.EnvironmentSandbox{}, err
 	}
 	if work.OrganizationUUID != code.OrganizationUUID || work.State != "active" {
-		return "", db.EnvironmentSandbox{}, db.ErrInvalidState
+		return db.EnvironmentSandbox{}, db.ErrInvalidState
 	}
 	if sandbox, err := r.db.GetResumableEnvironmentSandboxForCodeSession(ctx, code.ExternalID); err == nil && sandbox.ProviderSandboxID != nil {
-		endpoint, _, err := r.sessionSandboxEndpoint(ctx, sandbox)
+		err := r.renewSessionSandbox(ctx, sandbox)
 		if !errors.Is(err, sandboxruntime.ErrSandboxNotFound) {
-			return endpoint, sandbox, err
+			return sandbox, err
 		}
 		now := time.Now().UTC()
 		message := "provider sandbox not found"
 		if err := r.db.UpdateEnvironmentSandboxState(ctx, sandbox.WorkspaceUUID, sandbox.ExternalID, "failed", sandbox.ProviderSandboxID, &message, &now); err != nil {
-			return "", db.EnvironmentSandbox{}, err
+			return db.EnvironmentSandbox{}, err
 		}
 	} else if err != nil && !errors.Is(err, db.ErrNotFound) {
-		return "", db.EnvironmentSandbox{}, err
+		return db.EnvironmentSandbox{}, err
 	}
 	env, err := r.db.GetEnvironmentByUUID(ctx, work.WorkspaceUUID, work.EnvironmentUUID)
 	if err != nil {
-		return "", db.EnvironmentSandbox{}, err
+		return db.EnvironmentSandbox{}, err
 	}
 	resources, err := r.db.ListSessionResources(ctx, work.WorkspaceUUID, work.SessionExternalID)
 	if err != nil {
-		return "", db.EnvironmentSandbox{}, err
+		return db.EnvironmentSandbox{}, err
 	}
 	resolved, err := resolveManagedAgentRuntimeResources(resources)
 	if err != nil {
-		return "", db.EnvironmentSandbox{}, err
+		return db.EnvironmentSandbox{}, err
 	}
 	manager, err := brainSandboxManagerCommand(code.ExternalID, code.WorkDir, r.cfg, nil, "", resolved.sources)
 	if err != nil {
-		return "", db.EnvironmentSandbox{}, err
+		return db.EnvironmentSandbox{}, err
 	}
 	launch := managedAgentRuntimeLaunch{CodeSessionID: code.ExternalID, Recovered: true, Manager: manager}
 	runCtx, run := startSandboxRun(ctx, work, trigger)
 	created, err := r.createEnvironmentSandbox(runCtx, run, env, &work, &launch)
 	run.end(runCtx, err)
 	if err != nil {
-		return "", db.EnvironmentSandbox{}, err
+		return db.EnvironmentSandbox{}, err
 	}
 	ensureOutcome = "joined"
 	if created {
@@ -117,13 +113,13 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 	for {
 		sandbox, found, err := r.db.GetPendingEnvironmentSandboxForWork(ctx, work)
 		if err != nil {
-			return "", db.EnvironmentSandbox{}, err
+			return db.EnvironmentSandbox{}, err
 		}
 		if !found || sandbox.State == "stopping" {
-			return "", db.EnvironmentSandbox{}, db.ErrInvalidState
+			return db.EnvironmentSandbox{}, db.ErrInvalidState
 		}
 		if sandbox.State == "running" && sandbox.ProviderSandboxID != nil {
-			return r.sessionSandboxEndpoint(ctx, sandbox)
+			return sandbox, r.renewSessionSandbox(ctx, sandbox)
 		}
 		if sandbox.CreatedAt.Add(sandboxPreparationMaxAge).Before(time.Now()) {
 			providerID := ""
@@ -131,22 +127,22 @@ func (r *Runner) ensureSessionSandbox(ctx context.Context, code db.CodeSession, 
 				providerID = *sandbox.ProviderSandboxID
 			}
 			r.failCreatedSandbox(ctx, sandbox, &work, providerID, fmt.Errorf("sandbox preparation expired: %w", context.DeadlineExceeded))
-			return "", db.EnvironmentSandbox{}, db.ErrInvalidState
+			return db.EnvironmentSandbox{}, db.ErrInvalidState
 		}
 		select {
 		case <-ctx.Done():
-			return "", db.EnvironmentSandbox{}, ctx.Err()
+			return db.EnvironmentSandbox{}, ctx.Err()
 		case <-ticker.C:
 		}
 	}
 }
 
-func (r *Runner) sessionSandboxEndpoint(ctx context.Context, sandbox db.EnvironmentSandbox) (string, db.EnvironmentSandbox, error) {
-	endpoint, err := r.sandboxMCPEndpoint(ctx, *sandbox.ProviderSandboxID)
-	if err != nil {
-		return "", db.EnvironmentSandbox{}, err
+func (r *Runner) renewSessionSandbox(ctx context.Context, sandbox db.EnvironmentSandbox) error {
+	timeout := r.cfg.E2B.SandboxTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
 	}
-	return endpoint, sandbox, nil
+	return r.provider.SetTimeout(ctx, *sandbox.ProviderSandboxID, timeout)
 }
 
 type brainSandboxManagerPayload struct {
@@ -187,95 +183,4 @@ func brainSandboxManagerCommand(codeSessionID, workDir string, cfg config.Config
 		return environmentManagerCommand{}, err
 	}
 	return buildEnvironmentManagerCommand(codeSessionID, cfg, payload), nil
-}
-
-func waitSandboxMCPReady(ctx context.Context, endpoint string) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		probeCtx, stop := context.WithTimeout(ctx, 3*time.Second)
-		err := probeSandboxMCPReady(probeCtx, endpoint)
-		stop()
-		if err == nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-func probeSandboxMCPReady(ctx context.Context, endpoint string) error {
-	const requestBody = `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(requestBody))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json, text/event-stream")
-	request.Header.Set("Mcp-Protocol-Version", "2026-07-28")
-	request.Header.Set("Mcp-Method", "server/discover")
-	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("sandbox MCP discovery returned HTTP %d", response.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
-	if err != nil {
-		return err
-	}
-	if len(body) > 1<<20 {
-		return errors.New("sandbox MCP discovery response is too large")
-	}
-	contentType := response.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/event-stream") {
-		for _, line := range bytes.Split(body, []byte{'\n'}) {
-			if data, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
-				if err := validateSandboxMCPDiscovery(data); err == nil {
-					return nil
-				}
-			}
-		}
-		return errors.New("sandbox MCP discovery did not advertise 2026-07-28")
-	}
-	if strings.HasPrefix(contentType, "application/json") {
-		return validateSandboxMCPDiscovery(body)
-	}
-	return fmt.Errorf("sandbox MCP discovery returned content type %q", contentType)
-}
-
-func validateSandboxMCPDiscovery(body []byte) error {
-	var response struct {
-		ID     int `json:"id"`
-		Result struct {
-			ResultType        string   `json:"resultType"`
-			SupportedVersions []string `json:"supportedVersions"`
-			Capabilities      struct {
-				Tools map[string]json.RawMessage `json:"tools"`
-			} `json:"capabilities"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return err
-	}
-	if response.ID != 1 {
-		return errors.New("sandbox MCP discovery response ID mismatch")
-	}
-	if response.Result.ResultType != "complete" || response.Result.Capabilities.Tools == nil {
-		return errors.New("sandbox MCP discovery has no tool capability")
-	}
-	for _, version := range response.Result.SupportedVersions {
-		if version == "2026-07-28" {
-			return nil
-		}
-	}
-	return errors.New("sandbox MCP discovery did not advertise 2026-07-28")
 }

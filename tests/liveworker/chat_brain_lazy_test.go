@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/nats-io/nats.go"
 	"github.com/superduck-ai/open-managed-agents/internal/codesessions"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/environments"
@@ -27,18 +27,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/runtime/sandboxruntime"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
-
-func (p *chatDockerProvider) ServiceEndpoint(ctx context.Context, sandbox string, port int, path string) (string, error) {
-	output, err := exec.CommandContext(ctx, "docker", "port", sandbox, strconv.Itoa(port)+"/tcp").Output()
-	if err != nil {
-		inspection, inspectErr := exec.CommandContext(ctx, "docker", "inspect", sandbox).CombinedOutput()
-		if inspectErr != nil && strings.Contains(string(inspection), "No such") {
-			return "", sandboxruntime.ErrSandboxNotFound
-		}
-		return "", err
-	}
-	return "http://" + strings.TrimSpace(string(output)) + path, nil
-}
 
 func verifyLazyBrain(t *testing.T, started time.Time) {
 	t.Helper()
@@ -71,7 +59,7 @@ func verifyLazyBrain(t *testing.T, started time.Time) {
 	requireOK(t, err)
 	denied := createPublicChat(t, e)
 	sessions = append(sessions, denied.session.UUID)
-	deniedModel := brainToolCallModel(t, "Write", `{"file_path":"/tmp/oma-brain-proof.txt","content":"native grok loop"}`, nil, []string{"interrupt_agent", "list_agents", "send_message", "subagent"})
+	deniedModel := brainToolCallModel(t, "Write", `{"file_path":"/tmp/oma-brain-proof.txt","content":"native grok loop"}`, nil, []string{"skill"})
 	configureChatModel(t, e, deniedModel.URL)
 	submitChat(t, denied, "Try Write, then reply done even if denied.")
 	waitRealWorker(t, "denied tool finished without allocating a sandbox", func() bool {
@@ -160,7 +148,7 @@ func startLazyBrainRunner(t *testing.T, e *liveEnv, cfg config.Config) (*chatDoc
 	cfg.EnvironmentRunner.Concurrency = 2
 	credentials, err := filestore.NewTokenCredentials(cfg)
 	requireOK(t, err)
-	provider := &chatDockerProvider{name: "oma-public-" + os.Getenv("VERIFY_BE_RUN_ID") + "-brain-" + uuid.NewString()[:8], image: os.Getenv("OMA_WORKER_CONTROL_IMAGE"), t: t, publishMCP: true}
+	provider := &chatDockerProvider{name: "oma-public-" + os.Getenv("VERIFY_BE_RUN_ID") + "-brain-" + uuid.NewString()[:8], image: os.Getenv("OMA_WORKER_CONTROL_IMAGE"), t: t}
 	var stops []func()
 	var provisioner *environments.Runner
 	for range 2 {
@@ -172,13 +160,16 @@ func startLazyBrainRunner(t *testing.T, e *liveEnv, cfg config.Config) (*chatDoc
 		stops = append(stops, runner.Start(t.Context()))
 	}
 	originalURL := e.url
-	service := codesessions.NewServiceWithCredentials(e.database, e.credentials, slog.Default()).WithSandboxProvisioner(provisioner)
-	handler := codesessions.NewHandler(cfg, service, provider, slog.Default())
+	service := codesessions.NewServiceWithCredentials(e.database, e.credentials, slog.Default()).WithSandboxProvisioner(provisioner).WithWorkerEventState(e.acks, e.objects)
+	connection, err := nats.Connect(cfg.NATS.URL)
+	requireOK(t, err)
+	t.Cleanup(connection.Close)
+	handler := codesessions.NewHandler(cfg, service, provider, slog.Default()).WithToolCallNotifications(connection)
 	router := chi.NewRouter()
 	router.Route("/v2", handler.RegisterV2Routes)
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v2/ccr-sessions/") && strings.HasSuffix(r.URL.Path, "/sandbox/mcp") {
+		if strings.HasPrefix(r.URL.Path, "/v2/ccr-sessions/") && strings.Contains(r.URL.Path, "/threads/") && strings.Contains(r.URL.Path, "/tool-calls") {
 			router.ServeHTTP(w, r)
 			return
 		}
@@ -195,4 +186,16 @@ func startLazyBrainRunner(t *testing.T, e *liveEnv, cfg config.Config) (*chatDoc
 	}
 }
 
-func (p *chatDockerProvider) SetTimeout(context.Context, string, time.Duration) error { return nil }
+func (p *chatDockerProvider) SetTimeout(ctx context.Context, sandbox string, _ time.Duration) error {
+	output, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Running}}", sandbox).CombinedOutput()
+	if err != nil {
+		if strings.Contains(strings.ToLower(string(output)), "no such") {
+			return sandboxruntime.ErrSandboxNotFound
+		}
+		return err
+	}
+	if strings.TrimSpace(string(output)) != "true" {
+		return sandboxruntime.ErrSandboxNotFound
+	}
+	return nil
+}

@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="SandboxToolCallMapper">
+ <sql id="columns">
+    uuid,
+    organization_uuid,
+    workspace_uuid,
+    code_session_uuid,
+    external_id,
+    thread_id,
+    worker_epoch,
+    sandbox_uuid,
+    attempt,
+    tool_name,
+    input,
+    state,
+    deadline_at,
+    timeout_ms,
+    lease_expires_at,
+    cancel_requested_at,
+    cancel_reason,
+    stop_grace_until,
+    result,
+    result_object_key,
+    result_bytes,
+    result_sha256,
+    finalizer,
+    finalizer_state,
+    finalize_timeout_ms,
+    finalize_until,
+    error_code,
+    late_result,
+    created_at,
+    updated_at,
+    finished_at
+ </sql>
+ <sql id="scope">organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID}</sql>
+ <select id="LockWorker" result="optional" resultType="string">
+ SELECT cs.uuid AS uuid FROM code_sessions cs
+ JOIN sessions s ON s.uuid = cs.session_uuid AND s.organization_uuid = cs.organization_uuid AND s.workspace_uuid = cs.workspace_uuid
+ WHERE cs.organization_uuid = #{scope.OrganizationUUID} AND cs.workspace_uuid = #{scope.WorkspaceUUID}
+ AND cs.external_id = #{scope.CodeSessionID} AND cs.current_worker_epoch = #{scope.WorkerEpoch}
+ AND cs.status = 'active' AND cs.deleted_at IS NULL AND s.deleted_at IS NULL AND s.status &lt;&gt; 'terminated'
+ FOR SHARE OF cs
+ </select>
+ <select id="LockSandbox" result="optional" resultType="string">
+ SELECT cs.uuid AS uuid FROM code_sessions cs
+ JOIN sessions s ON s.uuid = cs.session_uuid AND s.organization_uuid = cs.organization_uuid AND s.workspace_uuid = cs.workspace_uuid
+ JOIN environment_work work ON work.session_uuid = s.uuid AND work.organization_uuid = cs.organization_uuid AND work.workspace_uuid = cs.workspace_uuid AND work.environment_uuid = cs.environment_uuid AND work.state = 'active' AND work.deleted_at IS NULL
+ JOIN environment_sandboxes sandbox ON sandbox.work_uuid = work.uuid AND sandbox.organization_uuid = cs.organization_uuid AND sandbox.workspace_uuid = cs.workspace_uuid AND sandbox.environment_uuid = cs.environment_uuid
+ WHERE cs.organization_uuid = #{scope.OrganizationUUID} AND cs.workspace_uuid = #{scope.WorkspaceUUID}
+ AND cs.external_id = #{scope.CodeSessionID} AND sandbox.uuid = #{scope.SandboxUUID}
+ AND cs.status = 'active' AND cs.deleted_at IS NULL AND s.deleted_at IS NULL AND s.status &lt;&gt; 'terminated'
+ AND sandbox.state = 'running' AND sandbox.provider_sandbox_id IS NOT NULL
+ FOR SHARE OF work, sandbox
+ </select>
+ <select id="Find" result="optional" resultType="sandboxToolCallRow">
+ SELECT <include refid="columns"/> FROM sandbox_tool_calls
+ WHERE <include refid="scope"/> AND code_session_uuid = (SELECT uuid FROM code_sessions WHERE external_id = #{scope.CodeSessionID} AND organization_uuid = #{scope.OrganizationUUID} AND workspace_uuid = #{scope.WorkspaceUUID})
+ AND thread_id = #{scope.ThreadID} AND external_id = #{scope.CallID}
+ </select>
+ <select id="Lock" result="optional" resultType="sandboxToolCallRow">
+ SELECT <include refid="columns"/> FROM sandbox_tool_calls WHERE organization_uuid = #{organizationUUID} AND workspace_uuid = #{workspaceUUID} AND uuid = #{callUUID} FOR UPDATE
+ </select>
+ <insert id="Insert" result="exec">
+ INSERT INTO sandbox_tool_calls (
+    uuid,
+    organization_uuid,
+    workspace_uuid,
+    code_session_uuid,
+    external_id,
+    thread_id,
+    worker_epoch,
+    sandbox_uuid,
+    attempt,
+    tool_name,
+    input,
+    state,
+    deadline_at,
+    timeout_ms,
+    lease_expires_at,
+    cancel_requested_at,
+    cancel_reason,
+    stop_grace_until,
+    result,
+    result_object_key,
+    result_bytes,
+    result_sha256,
+    finalizer,
+    finalizer_state,
+    finalize_timeout_ms,
+    finalize_until,
+    error_code,
+    late_result,
+    created_at,
+    updated_at,
+    finished_at
+ ) VALUES (
+    #{row.UUID},
+    #{row.OrganizationUUID},
+    #{row.WorkspaceUUID},
+    #{row.CodeSessionUUID},
+    #{row.ExternalID},
+    #{row.ThreadID},
+    #{row.WorkerEpoch},
+    #{row.SandboxUUID},
+    #{row.Attempt},
+    #{row.ToolName},
+    #{row.Input, sensitive=true},
+    #{row.State},
+    #{row.DeadlineAt},
+    #{row.TimeoutMS},
+    #{row.LeaseExpiresAt},
+    #{row.CancelRequestedAt},
+    #{row.CancelReason},
+    #{row.StopGraceUntil},
+    #{row.Result, sensitive=true},
+    #{row.ResultObjectKey},
+    #{row.ResultBytes},
+    #{row.ResultSHA256},
+    #{row.Finalizer},
+    #{row.FinalizerState, sensitive=true},
+    #{row.FinalizeTimeoutMS},
+    #{row.FinalizeUntil},
+    #{row.ErrorCode},
+    #{row.LateResult, sensitive=true},
+    #{row.CreatedAt},
+    #{row.UpdatedAt},
+    #{row.FinishedAt}
+ ) ON CONFLICT (code_session_uuid, thread_id, external_id) DO NOTHING
+ </insert>
+ <update id="Update" result="exec">
+ UPDATE sandbox_tool_calls SET
+    sandbox_uuid = #{row.SandboxUUID},
+    attempt = #{row.Attempt},
+    state = #{row.State},
+    deadline_at = #{row.DeadlineAt},
+    lease_expires_at = #{row.LeaseExpiresAt},
+    cancel_requested_at = #{row.CancelRequestedAt},
+    cancel_reason = #{row.CancelReason},
+    stop_grace_until = #{row.StopGraceUntil},
+    result = #{row.Result,
+    sensitive=true},
+    result_object_key = #{row.ResultObjectKey},
+    result_bytes = #{row.ResultBytes}, result_sha256 = #{row.ResultSHA256},
+    finalizer = #{row.Finalizer},
+    finalizer_state = #{row.FinalizerState,
+    sensitive=true},
+    finalize_timeout_ms=#{row.FinalizeTimeoutMS},
+    finalize_until = #{row.FinalizeUntil},
+    error_code = #{row.ErrorCode},
+    late_result = #{row.LateResult,
+    sensitive=true},
+    updated_at = #{row.UpdatedAt},
+    finished_at = #{row.FinishedAt}
+ WHERE uuid = #{row.UUID} AND organization_uuid = #{row.OrganizationUUID} AND workspace_uuid = #{row.WorkspaceUUID}
+ </update>
+ <select id="Claim" resultType="sandboxToolCallRow">
+ SELECT <include refid="columns"/> FROM sandbox_tool_calls WHERE <include refid="scope"/> AND code_session_uuid = #{codeSessionUUID} AND state = 'pending' AND deadline_at &gt; NOW() ORDER BY id LIMIT #{limit} FOR UPDATE SKIP LOCKED
+ </select>
+ <select id="Due" resultType="sandboxToolCallRow">
+ SELECT <include refid="columns"/> FROM sandbox_tool_calls
+ WHERE (state = 'pending' AND deadline_at &lt;= NOW())
+ OR (state = 'dispatched' AND (deadline_at &lt;= NOW() OR lease_expires_at &lt;= NOW()))
+ OR (state IN ('running','cancel_requested') AND (deadline_at &lt;= NOW() OR lease_expires_at + INTERVAL '30 seconds' &lt;= NOW() OR stop_grace_until &lt;= NOW()))
+ OR (state = 'finalizing' AND finalize_until &lt;= NOW())
+ ORDER BY id LIMIT #{limit}
+ </select>
+ <update id="MarkReady" result="rows">
+ UPDATE environment_sandboxes SET tool_call_ready_at=NOW()
+ WHERE organization_uuid=#{scope.OrganizationUUID} AND workspace_uuid=#{scope.WorkspaceUUID} AND uuid=#{scope.SandboxUUID} AND state = 'creating' AND provider_sandbox_id IS NOT NULL AND tool_call_ready_at IS NULL
+ </update>
+ <select id="SandboxState" result="optional" resultType="string">
+ SELECT state FROM environment_sandboxes
+ WHERE organization_uuid=#{scope.OrganizationUUID} AND workspace_uuid=#{scope.WorkspaceUUID} AND uuid=#{scope.SandboxUUID} AND provider_sandbox_id IS NOT NULL
+ </select>
+ <select id="IsReady" result="scalar" resultType="bool">
+ SELECT EXISTS(SELECT 1 FROM environment_sandboxes WHERE organization_uuid=#{organizationUUID} AND workspace_uuid=#{workspaceUUID} AND uuid=#{sandboxUUID} AND tool_call_ready_at IS NOT NULL AND state IN ('creating','running')) AS ready
+ </select>
+ <select id="LockParent" result="optional" resultType="string">
+ SELECT s.uuid AS uuid FROM sessions s JOIN code_sessions cs ON cs.session_uuid=s.uuid AND cs.organization_uuid=s.organization_uuid AND cs.workspace_uuid=s.workspace_uuid
+ WHERE cs.organization_uuid=#{scope.OrganizationUUID} AND cs.workspace_uuid=#{scope.WorkspaceUUID} AND cs.external_id=#{scope.CodeSessionID} AND s.deleted_at IS NULL AND s.status &lt;&gt; 'terminated'
+ FOR SHARE OF s
+ </select>
+ <select id="LockCode" result="optional" resultType="string">
+ SELECT uuid FROM code_sessions WHERE organization_uuid=#{scope.OrganizationUUID} AND workspace_uuid=#{scope.WorkspaceUUID} AND external_id=#{scope.CodeSessionID} AND status='active' AND deleted_at IS NULL
+ FOR SHARE
+ </select>
+</mapper>

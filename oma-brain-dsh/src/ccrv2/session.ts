@@ -61,6 +61,12 @@ export class CcrSession {
   private readonly interruptedApprovals = new Set<string>();
   private restoredTraceTurns: TurnTrace[] | undefined;
   private reportedTraceTurns: string | undefined;
+  private recoveryBlocked?: () => void;
+  private readonly recoveryInterrupts = new Map<string, AbortController>();
+  private recoveryInterruptedAll = false;
+  private recoveryRootInterrupted = false;
+  private readonly opened = Promise.withResolvers<void>();
+  private ready = false;
   readonly approvals = new Map<
     string,
     { phase: "policy" | "confirmation" | "resolved"; resolve: (decision: Payload) => void; reject: (error: Error) => void; threadId: string; details: import("./wire.ts").RequiresActionDetails }
@@ -85,7 +91,15 @@ export class CcrSession {
       (id, tokens, sequence) => this.contextCompacted(tokens, sequence, id === this.id ? undefined : id));
     this.defaultModel = config.model;
     this.assistantStream = new CcrAssistantStream(config.id, config.modelMessageID, config.modelRequestID);
-    this.runtime = new SessionRuntime(ctx, { ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); } }, {
+    this.opened.promise.catch(() => {});
+    const recoverSandboxCalls = config.recoverSandboxCalls;
+    this.runtime = new SessionRuntime(ctx, {
+      ...config, subagents: runtimeSubagentConfig(config.subagents), setup: async scope => { await config.setup?.(scope); },
+      recoverSandboxCalls: recoverSandboxCalls && ((id, signal, threadId) => recoverSandboxCalls(id, signal, threadId, {
+        interrupt: this.recoveryInterrupt(threadId ?? this.id),
+        blocking: () => this.recoveryBlocked?.(),
+      })),
+    }, {
       onDiagnostic: diagnostic => recordRuntimeDiagnostic(this.id, diagnostic),
       onExternalMcpConnectionFailure: (serverName) => this.reportError({
         type: "session.error", uuid: crypto.randomUUID(), processed_at: new Date().toISOString(),
@@ -128,6 +142,28 @@ export class CcrSession {
     if (heartbeat) this.heartbeat = new CcrHeartbeat(heartbeat, this.abort.signal);
   }
   get restoring(): boolean { return this.opening; }
+  onRecoveryBlocked(start: () => void): void {
+    this.recoveryBlocked = start;
+  }
+  private recoveryInterrupt(threadId: string): AbortSignal {
+    let controller = this.recoveryInterrupts.get(threadId);
+    if (!controller) {
+      controller = new AbortController();
+      this.recoveryInterrupts.set(threadId, controller);
+      if (this.recoveryInterruptedAll) controller.abort({ kind: "user" });
+    }
+    return controller.signal;
+  }
+  private interruptRecovery(threadId?: string): void {
+    if (!threadId) {
+      this.recoveryInterruptedAll = true;
+      for (const controller of this.recoveryInterrupts.values()) controller.abort({ kind: "user" });
+    } else {
+      this.recoveryInterrupt(threadId);
+      this.recoveryInterrupts.get(threadId)!.abort({ kind: "user" });
+    }
+    if (!threadId || threadId === this.id) this.recoveryRootInterrupted = true;
+  }
   get id() {
     return this.config.id;
   }
@@ -158,6 +194,8 @@ export class CcrSession {
       this.restoredTraceTurns = traceTurnsOf(metadata?.[TRACE_TURNS_METADATA]);
       await this.openState((next) => { stage = next; });
       this.abort.signal.throwIfAborted();
+      this.ready = true;
+      this.opened.resolve();
       workerDiagnostic("info", "ccrv2_worker_lifecycle_initialized", {
         session_id: this.id, duration_ms: Date.now() - startMs,
       });
@@ -171,6 +209,7 @@ export class CcrSession {
         reason: this.abort.signal.aborted ? "cancelled" : "initialization_failed",
         stage, ...failureDiagnostic(error),
       });
+      this.opened.reject(error);
       this.stop();
       throw error;
     }
@@ -313,7 +352,7 @@ export class CcrSession {
       this.pendingEvents.push(...sessionEventOutput(this.id, inputId, event, tools.record(event, threadId ?? this.id), threadId));
     }
     for (const inputId of unfinished) {
-      const outcome = turnOutcome({ kind: "interrupted" });
+      const outcome = turnOutcome(this.recoveryRootInterrupted ? { kind: "aborted", reason: { kind: "user" } } : { kind: "interrupted" });
       appendPluginRecord(this.agent.session, "plugin:oma/input-completion", { version: 1, inputId, outcome });
       completions.push(...completionOutput(inputId, outcome));
     }
@@ -517,7 +556,7 @@ export class CcrSession {
     }
   }
 
-  async control(payload: Payload): Promise<boolean> {
+  async control(payload: Payload, interruptConsumed = false): Promise<boolean> {
     if (payload.type === "control_response") {
       const response = object(payload.response);
       const approval = this.approvals.get(response.request_id);
@@ -528,8 +567,8 @@ export class CcrSession {
       }
       return true;
     }
-    if (["interrupt", "user.interrupt"].includes(payload.type)) {
-      this.interrupt(payload.session_thread_id);
+    if (payload.type !== "control_request" && isInterruptInput(payload)) {
+      if (!interruptConsumed) this.interrupt(payload.session_thread_id);
       return true;
     }
     if (payload.type === "control_request") {
@@ -545,7 +584,7 @@ export class CcrSession {
           this.applyModel(model);
         }
       }
-      if (subtype === "interrupt") this.interrupt(payload.session_thread_id);
+      if (isInterruptInput(payload) && !interruptConsumed) this.interrupt(payload.session_thread_id);
       const supported = !controlError && ["initialize", "interrupt", "set_model"].includes(subtype);
       await this.checkpoint();
       await this.backend.events(this.id, [
@@ -569,8 +608,13 @@ export class CcrSession {
 
   async receive(inputId: string, input: unknown): Promise<void> {
     const payload = object(input);
+    const interruptConsumed = !this.ready && isInterruptInput(payload);
+    if (!this.ready) {
+      if (interruptConsumed) this.interruptRecovery(payload.session_thread_id);
+      await this.opened.promise;
+    }
     const repeatedControl = isControlInput(payload.type) && this.handledControls.has(inputId);
-    if (repeatedControl || await this.control(payload)) {
+    if (repeatedControl || await this.control(payload, interruptConsumed)) {
       this.rememberControl(inputId);
       const receipt = this.updateStatus().then(() => this.checkpoint())
         .then(() => this.backend.acknowledge(this.id, inputId, this.abort.signal))
@@ -733,4 +777,9 @@ function validatedExternalToolResult(value: unknown): {content:{type:"text";text
  const result=object(value);
  if (typeof result.isError!=="boolean" || !Array.isArray(result.content) || !result.content.length || result.content.some((block:Payload)=>!block || block.type!=="text" || typeof block.text!=="string")) throw new Error("Invalid external tool result");
  return {content:result.content,isError:result.isError};
+}
+
+function isInterruptInput(payload: Payload): boolean {
+  return ["interrupt", "user.interrupt"].includes(payload.type)
+    || payload.type === "control_request" && object(payload.request).subtype === "interrupt";
 }

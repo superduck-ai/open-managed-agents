@@ -431,7 +431,7 @@ func (d *DB) GetMemory(ctx context.Context, workspaceUUID, memoryStoreExternalID
 }
 
 func (d *DB) GetMemoryByPath(ctx context.Context, workspaceUUID, memoryStoreExternalID, path string) (Memory, bool, error) {
-	mapper := NewMemoryMapper(d.mapperDB)
+	mapper := NewMemoryMapper(d.readExecutor(ctx))
 	row, found, err := mapper.FindByPath(ctx, workspaceUUID, memoryStoreExternalID, path)
 	if err != nil || !found {
 		return Memory{}, found, err
@@ -440,7 +440,7 @@ func (d *DB) GetMemoryByPath(ctx context.Context, workspaceUUID, memoryStoreExte
 }
 
 func (d *DB) ListSessionMemoryMounts(ctx context.Context, workspaceUUID, filesystemUUID string) ([]SessionMemoryMount, error) {
-	mapper := NewSessionResourceMapper(d.mapperDB)
+	mapper := NewSessionResourceMapper(d.readExecutor(ctx))
 	rows, err := mapper.ListMemoryMountsByFilesystem(ctx, workspaceUUID, filesystemUUID)
 	if err != nil {
 		return nil, err
@@ -649,7 +649,7 @@ func (d *DB) ListMemoriesForDepth(ctx context.Context, params ListMemoriesPagePa
 }
 
 func (d *DB) GetMemoryVersion(ctx context.Context, workspaceUUID, memoryStoreExternalID, versionExternalID string) (MemoryVersion, error) {
-	mapper := NewMemoryVersionMapper(d.mapperDB)
+	mapper := NewMemoryVersionMapper(d.readExecutor(ctx))
 	row, err := mapper.FindByExternalID(ctx, workspaceUUID, memoryStoreExternalID, versionExternalID)
 	return memoryVersionFromMapperRow(row, err)
 }

@@ -20,6 +20,7 @@
  WHERE b.state IN ('pending', 'attached') AND b.updated_at &lt; now() - interval '24 hours'
  AND NOT EXISTS (SELECT 1 FROM session_events e WHERE e.workspace_uuid = b.workspace_uuid AND e.payload_blob_uuid = b.uuid AND e.deleted_at IS NULL)
  AND NOT EXISTS (SELECT 1 FROM code_session_internal_events e WHERE e.workspace_uuid = b.workspace_uuid AND e.payload_blob_uuid = b.uuid AND e.deleted_at IS NULL)
+ AND NOT EXISTS (SELECT 1 FROM sandbox_tool_calls tc JOIN code_sessions cs ON cs.uuid=tc.code_session_uuid AND cs.workspace_uuid=tc.workspace_uuid AND cs.organization_uuid=tc.organization_uuid JOIN sessions s ON s.uuid=cs.session_uuid AND s.workspace_uuid=cs.workspace_uuid AND s.organization_uuid=cs.organization_uuid WHERE tc.workspace_uuid=b.workspace_uuid AND tc.organization_uuid=b.organization_uuid AND (tc.result_object_key=b.object_key OR tc.late_result-&gt;&gt;'object_key'=b.object_key) AND s.deleted_at IS NULL AND s.archived_at IS NULL)
  ORDER BY b.updated_at, b.uuid LIMIT #{limit} FOR UPDATE OF b SKIP LOCKED
  )
  UPDATE event_payload_blobs SET state = 'deleting', updated_at = now()

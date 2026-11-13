@@ -198,6 +198,7 @@ test("SIGKILL during parallel reads interrupts the turn without blocking or repl
   try {
     await eventually(() => b.executions.length === 2);
     child.kill("SIGKILL"); await exited;
+    b.loseToolCalls();
     b.a.worker_epoch++;
     const api = new OmaApi(b.url);
     await mountOma(ctx, api);
@@ -305,33 +306,28 @@ test("always_allow tools skip approval while immediately approved ask tools keep
   expect(completedInputs(session)).toContain(session.inputId);
 });
 
-test("a failed read-only call is retried once without blocking", async () => {
-  const { session, b } = await fixture();
-  let attempts = 0;
-  b.onTool = async () => {
-    if (++attempts === 1) throw new Error("transient sandbox failure");
-    return result("read after retry");
-  };
-  b.modelScript = [batch([read]), textEvents("done")];
-  await session.receive("retry-read", { content: "Read it" });
-  expect(attempts).toBe(2);
-  expect(session.abort.signal.aborted).toBe(false);
-  expect((await nativeOutcomes(session, session.id)).call_0).toEqual({ text: "read after retry", failed: false });
-  expect(JSON.stringify(b.requests.at(-1)!.messages)).toContain("read after retry");
+test("a lost read-only call returns its result without executing a second attempt", async () => {
+  const {session,b}=await fixture();let attempts=0;
+  b.onTool=async()=>{attempts++;throw new Error("sandbox lost");};
+  b.modelScript=[batch([read]),textEvents("done")];
+  await session.receive("lost-read",{content:"Read it"});
+  expect(attempts).toBe(1);
+  expect((await nativeOutcomes(session,session.id)).call_0?.failed).toBe(true);
+  expect(JSON.stringify(b.requests.at(-1)!.messages)).toContain("Do not retry blindly");
 });
 
-test("a read-only call that fails twice returns an error result to the model without blocking", async () => {
+test("a lost read-only call allows the model to continue", async () => {
   const { session, b } = await fixture();
   b.onTool = async () => { throw new Error("sandbox unavailable"); };
   b.modelScript = [batch([read]), textEvents("recovered")];
   await session.receive("failed-read", { content: "Read it" });
-  expect(b.executions).toHaveLength(2);
+  expect(b.executions).toHaveLength(1);
   expect(session.abort.signal.aborted).toBe(false);
   expect(completedInputs(session)).toContain(session.inputId);
-  expect((await nativeOutcomes(session, session.id)).call_0).toEqual({ text: "Error: Read-only tool outcome is unknown", failed: true });
+  expect((await nativeOutcomes(session, session.id)).call_0).toEqual({ text: "Error: Remote tool outcome is unknown. Do not retry blindly; verify external state before repeating operations with side effects.", failed: true });
   const toolResult = JSON.stringify(b.requests.at(-1)!.messages);
   expect(toolResult).toContain('"is_error":true');
-  expect(toolResult).toContain("Read-only tool outcome is unknown");
+  expect(toolResult).toContain("Do not retry blindly");
 });
 
 test("a gateway rejection before forwarding becomes a failed result instead of an unknown outcome", async () => {
@@ -343,11 +339,11 @@ test("a gateway rejection before forwarding becomes a failed result instead of a
   expect(session.abort.signal.aborted).toBe(false);
   expect(completedInputs(session)).toContain(session.inputId);
   expect((await nativeOutcomes(session, session.id)).call_bash).toEqual({
-    text: "Error: Sandbox tool call was not executed: Sandbox MCP request exceeds 1 MiB", failed: true,
+    text: "Error: Sandbox tool call rejected with HTTP 413", failed: true,
   });
   const messages = JSON.stringify(b.requests.at(-1)!.messages);
   expect(messages).toContain('"is_error":true');
-  expect(messages).toContain("exceeds 1 MiB");
+  expect(messages).toContain("HTTP 413");
 });
 
 test("an executed call with unsupported content becomes a failed result instead of an unknown outcome", async () => {

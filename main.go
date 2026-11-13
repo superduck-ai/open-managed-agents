@@ -181,7 +181,8 @@ func run(bootstrap *slog.Logger) (err error) {
 	runnerCodeSessions := codesessions.NewServiceWithCredentials(database, codeRuntime.credentials, environmentLogger).
 		WithWorkerEventBroker(workerEventBroker).
 		WithWorkerEventState(workerEventAcks, objectStore).
-		WithSessionAttachments(filestoreService, cfg.Storage.MaxFileBytes)
+		WithSessionAttachments(filestoreService, cfg.Storage.MaxFileBytes).
+		WithSessionPorts(sessionPorts.settings)
 	codesessions.NewWorkerEventExpiryWorker(runnerCodeSessions, logger.With("component", "worker_event_expiry")).Start(ctx)
 	environmentRunner, err := environments.NewRunner(environments.RunnerDependencies{
 		DB:              database,

@@ -449,14 +449,9 @@ export function setToolsetPermission(
           ),
         )
         .map(({ enabled, permission_policy, ...settings }) => ({ ...settings, ...permissionConfig(permission) }));
-      const portConfig =
-        permission !== 'always_deny' &&
-        (Array.isArray(tool.configs) ? tool.configs : []).some((config) => toRecord(config)?.name === 'get_port_url')
-          ? [{ name: 'get_port_url', ...permissionConfig(permission) }]
-          : [];
       const configs =
         tool.type === 'agent_toolset_20260401'
-          ? [...webConfigs, { name: 'ask_user_question', ...permissionConfig(permission) }, ...portConfig]
+          ? [...webConfigs, { name: 'ask_user_question', ...permissionConfig(permission) }]
           : [];
       return { ...tool, default_config: permissionConfig(permission), configs };
     }),
@@ -481,12 +476,6 @@ export function setToolPermission(
         ? tool.configs.map(toRecord).filter((config): config is Record<string, unknown> => Boolean(config))
         : [];
       const others = existing.filter((config) => config.name !== name);
-      if (tool.type === 'agent_toolset_20260401' && name === 'get_port_url') {
-        return {
-          ...tool,
-          configs: permission === 'always_deny' ? others : [...others, { name, ...permissionConfig(permission) }],
-        };
-      }
       const requiresExplicitPermission =
         tool.type === 'agent_toolset_20260401' &&
         (name === 'ask_user_question' ||

@@ -131,6 +131,9 @@ func toolPermissionRequestFromWorkerEvent(payload *workerControlRequestPayload, 
 }
 
 func (s *Service) resolveToolPermission(ctx context.Context, codeSessionID string, claudeToolName string, threadID string) (resolvedToolPermission, toolIdentity, error) {
+	if !s.builtinTools().available(claudeToolName) {
+		return resolvedToolPermissionDeny, parseClaudeToolIdentity(claudeToolName), nil
+	}
 	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
 	if err != nil {
 		return resolvedToolPermissionAsk, parseClaudeToolIdentity(claudeToolName), err
@@ -320,7 +323,7 @@ func resolveAgentToolPermission(tools []toolPermissionToolset, toolName string) 
 }
 
 func explicitOnlyAgentTool(toolName string) bool {
-	return toolName == "ask_user_question" || toolName == sessionports.ToolName
+	return toolName == "ask_user_question"
 }
 
 func permissionFromToolConfig(config mcpToolDeclaration, fallbackPolicy string) resolvedToolPermission {

@@ -10,7 +10,7 @@ import (
 
 func (s *Server) configureSessionPorts(deps ServerDeps, codeSessionService *codesessions.Service, tunnelLogger, gatewayLogger *slog.Logger) *portgateway.Gateway {
 	s.sessions.WithSessionPorts(deps.SessionPorts)
-	s.codeSessions.WithSessionPorts(deps.SessionPorts)
+	codeSessionService.WithSessionPorts(deps.SessionPorts)
 	if !deps.SessionPorts.Enabled() || deps.SessionPortRegistry == nil {
 		return nil
 	}

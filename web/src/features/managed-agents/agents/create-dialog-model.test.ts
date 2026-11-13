@@ -496,35 +496,39 @@ describe('create agent draft model', () => {
     expect(normalizeCreateAgentDraft(allowed)).toEqual(allowed);
   });
 
-  test('treats a missing get_port_url config as disabled and never adds it implicitly', () => {
+  test('lets a missing get_port_url config follow the toolset default', () => {
     const normalizedDraft = normalizeCreateAgentDraft(baseDraft);
     const toolset = normalizedDraft.tools[0];
     expect(toolset.configs?.some((config) => config.name === 'get_port_url')).toBe(false);
-    expect(toolsetToolPermission(toolset, 'get_port_url', 'always_allow')).toBe('always_deny');
-    expect(toolsetToolPermission({ type: 'mcp_toolset' }, 'get_port_url', 'always_ask')).toBe('always_ask');
-    const groupAllowed = setToolsetPermission(normalizedDraft, () => true, 'always_allow');
-    expect(groupAllowed.tools[0].configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+    expect(toolsetToolPermission(toolset, 'get_port_url', 'always_allow')).toBe('always_allow');
+    expect(toolsetToolPermission(toolset, 'get_port_url', 'always_ask')).toBe('always_ask');
+    const groupAsked = setToolsetPermission(normalizedDraft, () => true, 'always_ask');
+    expect(groupAsked.tools[0].configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+    expect(groupAsked.tools[0].default_config).toEqual({ enabled: true, permission_policy: { type: 'always_ask' } });
   });
 
-  test('writes get_port_url only while it is enabled', () => {
+  test('writes get_port_url like web_fetch only when it differs from the default', () => {
     const normalizedDraft = normalizeCreateAgentDraft(baseDraft);
-    const enabled = setToolPermission(normalizedDraft, () => true, 'get_port_url', 'always_allow', 'always_allow');
-    expect(enabled.tools[0].configs).toContainEqual({
+    const disabled = setToolPermission(normalizedDraft, () => true, 'get_port_url', 'always_deny', 'always_allow');
+    expect(disabled.tools[0].configs).toContainEqual({
       name: 'get_port_url',
-      enabled: true,
+      enabled: false,
       permission_policy: { type: 'always_allow' },
     });
-    expect(toolsetToolPermission(enabled.tools[0], 'get_port_url', 'always_allow')).toBe('always_allow');
-    const asked = setToolsetPermission(enabled, () => true, 'always_ask');
-    expect(asked.tools[0].configs).toContainEqual({
-      name: 'get_port_url',
-      enabled: true,
-      permission_policy: { type: 'always_ask' },
-    });
-    const disabled = setToolPermission(enabled, () => true, 'get_port_url', 'always_deny', 'always_allow');
-    expect(disabled.tools[0]).toEqual(normalizedDraft.tools[0]);
-    const groupDenied = setToolsetPermission(enabled, () => true, 'always_deny');
-    expect(groupDenied.tools[0].configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+    expect(toolsetToolPermission(disabled.tools[0], 'get_port_url', 'always_allow')).toBe('always_deny');
+    const restored = setToolPermission(disabled, () => true, 'get_port_url', 'always_allow', 'always_allow');
+    expect(restored.tools[0].configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+    const groupAllowed = setToolsetPermission(disabled, () => true, 'always_allow');
+    expect(groupAllowed.tools[0].configs?.some((config) => config.name === 'get_port_url')).toBe(false);
+    for (const name of ['get_port_url', 'web_fetch']) {
+      expect(
+        setToolPermission(normalizedDraft, () => true, name, 'always_ask', 'always_allow').tools[0].configs,
+      ).toContainEqual({
+        name,
+        enabled: true,
+        permission_policy: { type: 'always_ask' },
+      });
+    }
   });
 
   test('accepts the built-in tool permission surface and rejects unknown tools', () => {

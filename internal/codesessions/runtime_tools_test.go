@@ -24,7 +24,7 @@ func TestSessionContextRuntimeTools(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			record := db.CodeSession{Metadata: json.RawMessage(`{"config":{"tools":` + test.tools + `}}`)}
-			context, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{}, config.Config{})
+			context, err := sessionContextFromCodeSession(record, MCPRuntimeIdentity{}, config.Config{}, builtinToolCatalog{})
 			if err != nil {
 				t.Fatal(err)
 			}

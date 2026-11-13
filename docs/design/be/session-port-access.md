@@ -89,19 +89,30 @@ sequenceDiagram
     participant S as oma-server
     M->>B: get_port_url {"port": 4000}
     B->>S: POST /v2/ccr-sessions/{cse}/port-url（ingress token）
-    S->>S: 校验 token 与 worker epoch、工具已开启、功能已启用、端口可用
+    S->>S: 校验 token 与 worker epoch、功能已启用、工具已开启、端口可用
     S-->>B: {"type":"session_port","port":4000,"url":"..."}
     B-->>M: 纯文本 URL
 ```
 
 ### 开启方式
 
-属于 `agent_toolset_20260401`，只能显式开启：`configs` 中有 `{"name": "get_port_url", "enabled": true}` 才会提供给模型。`default_config.enabled: true` 不会带上它。
+属于 `agent_toolset_20260401`，是否提供给模型由部署开关和 Agent 配置共同决定：
 
-- 未配置时按禁用处理（与 `ask_user_question` 共用同一套运行时判断），规范化时不补任何条目。未配置该工具的 Agent，创建、读取返回的 `tools` 和模型收到的工具列表都与引入该工具前一致。
-- 配置了但没写 `permission_policy` 时取 `always_allow`，不继承 `default_config` 的策略；显式写 `always_ask` 时照常走确认。
-- 子线程（delegation）沿用 web 工具的规则：工具列表按线程快照计算；服务端要求根快照及每一级祖先线程快照都开启了该工具。
-- `session_ports.domain_suffix` 为空（功能未启用）时工具仍按配置提供给模型，调用返回“未启用”错误。这样模型看到的工具列表只取决于 Agent 配置，不随部署配置变化，Agent 也能如实告诉用户该部署未启用端口地址功能。
+```mermaid
+flowchart TD
+    A[计算 launch tools / 权限] --> B{服务端 session_ports 已启用?}
+    B -- 否 --> X[不进入 launch tools，不下发权限，权限判定为 deny]
+    B -- 是 --> C{configs 中有 get_port_url?}
+    C -- 有 --> D[按该条目的 enabled 与 permission_policy]
+    C -- 没有 --> E[跟随 default_config，与 web_fetch 相同]
+```
+
+- 服务端启用（`sessionports.Settings.Enabled()`，即 `session_ports.domain_suffix` 非空）时，与 `web_fetch` / `web_search` 同规则：默认随 `default_config` 开启；`configs` 中写 `{"name": "get_port_url", "enabled": false}` 关闭；`default_config.enabled: false` 时除非单独写 `enabled: true`，否则不提供。
+- 权限策略也与 `web_fetch` 一致：条目未写 `permission_policy` 时规范化为 `default_config` 的策略；没有条目时运行时取 `default_config` 的策略；`default_config` 未写策略时为 `always_allow`。因此未做任何配置的 Agent 默认 `always_allow`，调用不需要确认。
+- 服务端未启用时，无论 Agent 怎么配置（包括显式 `enabled: true`），主线程与子线程的 `runtime_tools` / `launch.tools`、`runtime_tool_permissions` 都不含该工具，与引入该工具前逐项一致；模型侧调用的权限判定为 deny。端点仍保留 409“未启用”作为兜底，且先于工具开启校验返回。
+- 规范化不再为它补任何条目；未配置的 Agent 创建、读取返回的 `tools` 与引入该工具前一致。本功能发布前若已保存过带 `{"enabled": false, "name": "get_port_url", ...}` 的 Agent 版本，该条目是显式关闭，这些 Agent 会保持关闭，需要时在控制台或 API 中改为开启。
+- 子线程（delegation）沿用 web 工具的规则：子 Agent 的工具列表按其快照和同一部署开关计算；服务端要求根快照及每一级祖先线程快照都开启了该工具。
+- `oma-server` API 进程与 environment runner 进程中的 code-session Service 都通过 `WithSessionPorts` 注入同一份 `sessionports.Settings`，launch tools、子 Agent 定义、session context、权限判定与端点校验共用它判断是否启用。
 
 ### 合同
 
@@ -125,7 +136,7 @@ sequenceDiagram
 
 ### 部署顺序
 
-开启该工具的 Agent 会在 `launch.tools` 中下发 `get_port_url`，旧 brain 校验时报 `Invalid launch tools`。先部署新 brain，再给 Agent 开启该工具；未开启的 Agent 不受影响。
+服务端启用 `session_ports` 后，默认配置的 Agent 都会在 `launch.tools` 中下发 `get_port_url`，旧 brain 校验时报 `Invalid launch tools`，几乎所有 Session 都无法启动。必须先部署新 brain，再在服务端启用 `session_ports`；未启用 `session_ports` 的部署下发内容不变，可以先升级服务端。
 
 ## 数据模型
 
@@ -534,6 +545,8 @@ session_ports:
 | `internal/porttunnel`（转发单测） | 伪造密钥、缺失/格式错误、过期、未来时间、改路径/端口/Session、篡改请求头、目标 owner 不符均 401；有效签名进入查找；客户端不用代理且响应头/握手超时大于持有者侧；错误码往返；`WaitOnline` 在 owner 已在别处时立即返回；停机时隧道收到 1012 且 owner 释放 |
 | `internal/api` | 公开 router 上 `/internal/session-ports/...` 404；隧道路径只走隧道鉴权 |
 | `internal/sessions` | 取地址接口的 404/403/400 |
+| `internal/codesessions`（`port_tools_test.go`） | `get_port_url` 工具：服务端未启用时任何 Agent 配置下主线程 launch tools、子 Agent 工具、session context 与权限表都不含该工具且与旧列表逐项一致，权限判定为 deny；启用时随 `default_config` 开启、`enabled:false` 或 `default_config.enabled:false` 时关闭、默认策略随 `default_config`；端点的 409/400 |
+| `internal/agents`（`port_tool_test.go`） | 规范化不补 `get_port_url` 条目；条目未写策略时取 `default_config` 的策略 |
 | `internal/db` | Mapper SQL 与参数绑定；`session_port_mapper_postgres_test.go`（`integration` tag）覆盖真实 PostgreSQL 的可空列扫描与节流 |
 
 `environment-manager-rs` 侧：额度等待与取消、`window_update` 处理、本地 WebSocket 写队列不阻塞读循环、帧成本（零长度帧也耗额度）、本地写阻塞未超限时数据完整有序、超限时服务端收到 `ws_close` 1011 且本地连接关闭、能力头协商（服务端不回头时不等额度）、退避上限、注入时钟的时间跳变探测（连接已死时立即重连、连接存活时不重连）。

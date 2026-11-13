@@ -103,7 +103,7 @@ func (h *Handler) threadSnapshotChain(ctx context.Context, codeSession db.CodeSe
 }
 
 func (h *Handler) addWebToolScope(policy *webtools.Policy, snapshot []byte, name string) error {
-	enabled, err := builtinToolEnabled(snapshot, name)
+	enabled, err := h.service.builtinTools().toolEnabled(snapshot, name)
 	if err != nil {
 		return err
 	}
@@ -116,15 +116,6 @@ func (h *Handler) addWebToolScope(policy *webtools.Policy, snapshot []byte, name
 	}
 	policy.Tools = append(policy.Tools, config)
 	return nil
-}
-
-func builtinToolEnabled(snapshot []byte, name string) (bool, error) {
-	tools, err := runtimeRootToolsets(snapshot)
-	if err != nil {
-		return false, err
-	}
-	permission, _ := resolveToolPermissionFromAgentSnapshot(snapshot, name)
-	return permission != resolvedToolPermissionDeny && slices.Contains(runtimeBuiltinTools(tools), name), nil
 }
 
 func (h *Handler) handleWebSearch(w http.ResponseWriter, r *http.Request) {

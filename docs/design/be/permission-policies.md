@@ -904,6 +904,6 @@ MCP 工具集默认为 `always_ask`。这可确保添加到 MCP 服务器的新�
 
 Agent 内置工具配置规范化后，每个 `configs` 条目均保存与 `name` 一致的 `type` 判别字段，包括自动补入的禁用 `ask_user_question`。该字段用于正式 SDK 响应联合类型，不改变 `enabled` 或权限策略。
 
-`ask_user_question` 与 `get_port_url` 只能显式开启：`configs` 中没有对应条目时运行时按 deny 处理，不回落 `default_config`。规范化只为 `ask_user_question` 补禁用条目，`get_port_url` 未配置时不补任何条目；配置了 `get_port_url` 但未写 `permission_policy` 时取 `always_allow`。详见 [Session 端口访问](session-port-access.md#agent-内置工具-get_port_url)。
+`ask_user_question` 只能显式开启：`configs` 中没有对应条目时运行时按 deny 处理，不回落 `default_config`，规范化为它补禁用条目。`get_port_url` 与 `web_fetch` 同规则：未配置时跟随 `default_config` 的开启状态与策略，条目未写 `permission_policy` 时取 `default_config` 的策略，规范化不补条目；但服务端未启用 `session_ports` 时它不进入运行时工具列表，权限判定为 deny。详见 [Session 端口访问](session-port-access.md#agent-内置工具-get_port_url)。
 
 公开内置/MCP 调用由固定 `always_ask` 策略暂停时，事件同时给出 `evaluated_permission: "ask"` 与 `evaluation.type: "always_ask"`。`auto` 的不确定 ask 保留其 `auto` 评估，未启用或未知工具的 deny 不伪造策略评估。

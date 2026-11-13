@@ -7,7 +7,6 @@ import (
 
 	"github.com/superduck-ai/open-managed-agents/internal/agentsnapshot"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
-	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 )
 
 type RuntimeSubagentConfig struct {
@@ -46,7 +45,7 @@ type runtimeAgentSnapshot struct {
 	} `json:"multiagent"`
 }
 
-func resolveRuntimeSubagents(ctx context.Context, store *db.DB, session db.Session) (*RuntimeSubagentConfig, error) {
+func resolveRuntimeSubagents(ctx context.Context, store *db.DB, session db.Session, catalog builtinToolCatalog) (*RuntimeSubagentConfig, error) {
 	if len(session.AgentSnapshot) == 0 {
 		return nil, nil
 	}
@@ -90,7 +89,7 @@ func resolveRuntimeSubagents(ctx context.Context, store *db.DB, session db.Sessi
 		if err != nil {
 			return nil, err
 		}
-		definition, err := runtimeSubagentDefinition(child)
+		definition, err := runtimeSubagentDefinition(child, catalog)
 		if err != nil {
 			return nil, err
 		}
@@ -127,7 +126,7 @@ func resolveRuntimeAgent(ctx context.Context, store *db.DB, workspaceUUID string
 	return snapshot, err
 }
 
-func runtimeSubagentDefinition(snapshot runtimeAgentSnapshot) (RuntimeSubagentDefinition, error) {
+func runtimeSubagentDefinition(snapshot runtimeAgentSnapshot, catalog builtinToolCatalog) (RuntimeSubagentDefinition, error) {
 	definition := RuntimeSubagentDefinition{
 		Name: snapshot.Name, Description: snapshot.Description, SystemPrompt: snapshot.System,
 		Tools: make([]string, 0),
@@ -146,7 +145,7 @@ func runtimeSubagentDefinition(snapshot runtimeAgentSnapshot) (RuntimeSubagentDe
 			definition.Model = model.ID
 		}
 	}
-	definition.Tools = runtimeBuiltinTools(snapshot.Tools)
+	definition.Tools = catalog.runtimeTools(snapshot.Tools)
 	if len(snapshot.publicSnapshot) > 0 {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(snapshot.publicSnapshot, &fields); err != nil {
@@ -169,16 +168,4 @@ type runtimeDelegation struct {
 		Type string `json:"type"`
 	} `json:"inline_agents"`
 	PredefinedAgents []runtimeAgentReference `json:"predefined_agents"`
-}
-
-var sandboxToolNames = []string{"Bash", "Read", "Write", "Edit", "Grep", "Glob", "web_search", "web_fetch", "ask_user_question", sessionports.ToolName}
-
-func enabledSandboxTools(tools []toolPermissionToolset) []string {
-	enabled := make([]string, 0, len(sandboxToolNames))
-	for _, name := range sandboxToolNames {
-		if resolveAgentToolPermission(tools, managedAgentToolName(name)) != resolvedToolPermissionDeny {
-			enabled = append(enabled, name)
-		}
-	}
-	return enabled
 }

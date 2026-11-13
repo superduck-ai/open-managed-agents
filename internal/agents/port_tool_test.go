@@ -42,18 +42,22 @@ func TestToolsWithoutPortToolNormalizeAsBefore(t *testing.T) {
 	}
 }
 
-func TestPortToolConfigDefaultsToAlwaysAllow(t *testing.T) {
-	tools := `[{"type":"agent_toolset_20260401","default_config":{"permission_policy":{"type":"always_ask"}},"configs":[{"name":"get_port_url"}]}]`
+func TestPortToolConfigFollowsToolsetDefaultPolicy(t *testing.T) {
+	for defaultConfig, want := range map[string]string{
+		`{"permission_policy":{"type":"always_ask"}}`: `{"enabled":true,"name":"get_port_url","permission_policy":{"type":"always_ask"},"type":"get_port_url"}`,
+		`{}`: `{"enabled":true,"name":"get_port_url","permission_policy":{"type":"always_allow"},"type":"get_port_url"}`,
+	} {
+		tools := `[{"type":"agent_toolset_20260401","default_config":` + defaultConfig + `,"configs":[{"name":"get_port_url"}]}]`
+		normalized, err := normalizeTools(json.RawMessage(tools), json.RawMessage(`[]`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(normalized), want) {
+			t.Fatalf("get_port_url config = %s", normalized)
+		}
+	}
+	tools := `[{"type":"agent_toolset_20260401","configs":[{"name":"get_port_url","permission_policy":{"type":"always_ask"}}]}]`
 	normalized, err := normalizeTools(json.RawMessage(tools), json.RawMessage(`[]`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := `{"enabled":true,"name":"get_port_url","permission_policy":{"type":"always_allow"},"type":"get_port_url"}`
-	if !strings.Contains(string(normalized), want) {
-		t.Fatalf("get_port_url config = %s", normalized)
-	}
-	tools = `[{"type":"agent_toolset_20260401","configs":[{"name":"get_port_url","permission_policy":{"type":"always_ask"}}]}]`
-	normalized, err = normalizeTools(json.RawMessage(tools), json.RawMessage(`[]`))
 	if err != nil {
 		t.Fatal(err)
 	}

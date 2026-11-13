@@ -583,8 +583,8 @@ Brain 保持运行而沙箱已被 Provider 删除时，下一次 MCP 调用先�
 
 ## 端口地址工具
 
-`launch.tools` 含 `get_port_url` 时，Brain 注册同名工具，经 `POST /v2/ccr-sessions/{id}/port-url` 用 ingress token 取地址，不访问沙箱，子线程调用带 `X-OMA-Session-Thread-ID`。
-该工具与 web 工具同在 host-tools 插件中注册，工具列表刷新时一起增删。端口范围在本地先校验，成功结果是纯文本 URL。工具描述说明只监听 127.0.0.1 的服务可直接访问，避免模型建议改成 0.0.0.0。合同、开启方式与错误见 [Session 端口访问](session-port-access.md#agent-内置工具-get_port_url)。
+`launch.tools` 含 `get_port_url` 时，Brain 注册同名工具；服务端只在启用 `session_ports` 时下发它，Brain 不需要知道部署开关，经 `POST /v2/ccr-sessions/{id}/port-url` 用 ingress token 取地址，不访问沙箱，子线程调用带 `X-OMA-Session-Thread-ID`。
+该工具与 web 工具同在 host-tools 插件中注册，工具列表刷新时一起增删。端口范围在本地先校验，成功结果是纯文本 URL。工具描述说明只监听 127.0.0.1 的服务可直接访问，避免模型建议改成 0.0.0.0。合同、开启方式与错误见 [Session 端口访问](session-port-access.md#agent-内置工具-get_port_url)。服务端启用 `session_ports` 前必须先部署包含该工具的 Brain，否则默认配置的 Agent 的 `launch.tools` 会被旧 Brain 以 `Invalid launch tools` 拒绝。
 
 ## DSH 自定义问卷工具
 

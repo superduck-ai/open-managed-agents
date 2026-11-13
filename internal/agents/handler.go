@@ -1076,7 +1076,7 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		if err != nil {
 			return nil, err
 		}
-		policy, err := normalizePermissionPolicy(config["permission_policy"], agentToolDefaultPolicy(name, defaultPolicy))
+		policy, err := normalizePermissionPolicy(config["permission_policy"], defaultPolicy)
 		if err != nil {
 			return nil, err
 		}
@@ -1106,13 +1106,6 @@ func normalizeAgentToolConfigs(value any, defaultPolicy string) ([]map[string]an
 		})
 	}
 	return normalized, nil
-}
-
-func agentToolDefaultPolicy(name, defaultPolicy string) string {
-	if name == sessionports.ToolName {
-		return "always_allow"
-	}
-	return defaultPolicy
 }
 
 func normalizeMCPToolConfigs(value any, defaultPolicy string) ([]map[string]any, error) {

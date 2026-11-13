@@ -62,7 +62,7 @@ func TestRuntimeRootToolsMatchPermissionEnforcement(t *testing.T) {
 		`{"tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"web_search","enabled":true},{"name":"web_fetch","enabled":true}]}]}`:                {"web_search", "web_fetch"},
 	} {
 		tools, err := runtimeRootToolsets(json.RawMessage(snapshot))
-		if got := enabledSandboxTools(tools); err != nil || !slices.Equal(got, want) {
+		if got := (builtinToolCatalog{}).enabledSandboxTools(tools); err != nil || !slices.Equal(got, want) {
 			t.Errorf("enabledSandboxTools(%s) = %v, %v; want %v", snapshot, got, err, want)
 		}
 	}
@@ -82,7 +82,7 @@ func TestManagedAgentRuntimeConfigPublishesRootTools(t *testing.T) {
 	if string(fields["runtime_tools"]) != `["Read"]` {
 		t.Fatalf("runtime_tools = %s", fields["runtime_tools"])
 	}
-	want := `{"ask_user_question":"deny","bash":"deny","edit":"deny","get_port_url":"deny","glob":"deny","grep":"deny","read":"allow","web_fetch":"deny","web_search":"deny","write":"deny"}`
+	want := `{"ask_user_question":"deny","bash":"deny","edit":"deny","glob":"deny","grep":"deny","read":"allow","web_fetch":"deny","web_search":"deny","write":"deny"}`
 	if string(fields["runtime_tool_permissions"]) != want {
 		t.Fatalf("runtime_tool_permissions = %s", fields["runtime_tool_permissions"])
 	}
@@ -94,8 +94,9 @@ func TestRuntimeToolPoliciesMatchPermissionEnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policies := runtimeToolPolicies(tools)
-	for _, name := range sandboxToolNames {
+	catalog := builtinToolCatalog{portURL: true}
+	policies := catalog.toolPolicies(tools)
+	for _, name := range catalog.names() {
 		permission, _ := resolveToolPermissionFromAgentSnapshot(snapshot, name)
 		if remoteName := managedAgentToolName(name); policies[remoteName] != string(permission) {
 			t.Errorf("%s policy = %q, enforcement = %q", remoteName, policies[remoteName], permission)
@@ -112,7 +113,7 @@ func TestRuntimeAutoPolicyDefersToAuthoritativeServerEvaluation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policies := runtimeToolPolicies(tools)
+	policies := builtinToolCatalog{}.toolPolicies(tools)
 	if policies["write"] != "ask" || policies["read"] != "allow" || policies["bash"] != "deny" {
 		t.Fatalf("invalid Brain boundary or local auto grant: %v", policies)
 	}

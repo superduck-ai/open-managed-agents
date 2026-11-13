@@ -21,9 +21,13 @@ type portURLResponse struct {
 	URL  string `json:"url"`
 }
 
-func (h *Handler) WithSessionPorts(settings *sessionports.Settings) *Handler {
-	h.sessionPorts = settings
-	return h
+func (s *Service) WithSessionPorts(settings *sessionports.Settings) *Service {
+	s.sessionPorts = settings
+	return s
+}
+
+func (s *Service) builtinTools() builtinToolCatalog {
+	return builtinToolCatalogFor(s.sessionPorts)
 }
 
 func (h *Handler) handlePortURL(w http.ResponseWriter, r *http.Request) {
@@ -64,10 +68,14 @@ func (h *Handler) sessionPortURL(ctx context.Context, claims SessionCredentialCl
 	if !found || session.ArchivedAt != nil {
 		return "", portToolContextFailure(db.ErrNotFound)
 	}
+	settings := h.service.sessionPorts
+	if !settings.Enabled() {
+		return "", sessionPortsDisabled()
+	}
 	if err := h.requirePortTool(ctx, codeSession, session.AgentSnapshot, threadID); err != nil {
 		return "", err
 	}
-	return sessionPortAddress(h.sessionPorts, session.UUID, port)
+	return sessionPortAddress(settings, session.UUID, port)
 }
 
 func sessionPortAddress(settings *sessionports.Settings, sessionUUID string, port int) (string, error) {
@@ -97,7 +105,7 @@ func (h *Handler) requirePortTool(ctx context.Context, codeSession db.CodeSessio
 		snapshots = append(snapshots, chain...)
 	}
 	for _, snapshot := range snapshots {
-		enabled, err := builtinToolEnabled(snapshot, sessionports.ToolName)
+		enabled, err := h.service.builtinTools().toolEnabled(snapshot, sessionports.ToolName)
 		if err != nil {
 			return portToolContextFailure(err)
 		}

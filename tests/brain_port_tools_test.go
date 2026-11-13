@@ -19,7 +19,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 )
 
-const portToolEnabled = `[{"type":"agent_toolset_20260401","configs":[{"name":"get_port_url","enabled":true}]}]`
+const portToolEnabled = `[{"type":"agent_toolset_20260401"}]`
 
 func portToolSettings(t *testing.T) *sessionports.Settings {
 	t.Helper()
@@ -42,7 +42,7 @@ func newPortToolApp(t *testing.T, tools string, settings *sessionports.Settings)
 	if err != nil || !found {
 		t.Fatalf("worker: %v", err)
 	}
-	handler := codesessions.NewHandler(app.cfg, codesessions.NewServiceWithCredentials(app.db, app.credentials, nil), app.sandboxTimeouts, nil).WithSessionPorts(settings)
+	handler := codesessions.NewHandler(app.cfg, codesessions.NewServiceWithCredentials(app.db, app.credentials, nil).WithSessionPorts(settings), app.sandboxTimeouts, nil)
 	router := chi.NewRouter()
 	router.Route("/v2", handler.RegisterV2Routes)
 	gateway := httptest.NewServer(router)
@@ -65,7 +65,7 @@ func TestBrainPortToolRejectsUnavailableRequests(t *testing.T) {
 		disabled                   bool
 		status                     int
 	}{
-		{"not configured", `[{"type":"agent_toolset_20260401","default_config":{"enabled":true}}]`, `{"port":4000}`, "get_port_url is not enabled", false, 403},
+		{"default disabled", `[{"type":"agent_toolset_20260401","default_config":{"enabled":false}}]`, `{"port":4000}`, "get_port_url is not enabled", false, 403},
 		{"configured disabled", `[{"type":"agent_toolset_20260401","configs":[{"name":"get_port_url","enabled":false}]}]`, `{"port":4000}`, "get_port_url is not enabled", false, 403},
 		{"feature disabled", portToolEnabled, `{"port":4000}`, "not enabled on this server", true, 409},
 		{"string port", portToolEnabled, `{"port":"4000"}`, "between 1 and 65535", false, 400},
@@ -131,7 +131,8 @@ func TestBrainPortToolFollowsThreadSnapshots(t *testing.T) {
 		id, snapshot string
 		status       int
 	}{
-		{"sthr_port_denied", `{"tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":true}}]}`, 403},
+		{"sthr_port_denied", `{"tools":[{"type":"agent_toolset_20260401","configs":[{"name":"get_port_url","enabled":false}]}]}`, 403},
+		{"sthr_port_default", `{"tools":[{"type":"agent_toolset_20260401"}]}`, 200},
 		{"sthr_port_allowed", `{"tools":` + portToolEnabled + `}`, 200},
 	} {
 		child := primary

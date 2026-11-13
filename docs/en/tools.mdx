@@ -14,7 +14,7 @@ Open Managed Agents also supports custom, user-defined tools. Your application e
 
 ## Available tools
 
-The agent toolset includes the following tools. All listed tools except `ask_user_question` and `get_port_url` are enabled by default when you include the toolset. Use the values in the Name column to reference tools in the `configs` array.
+The agent toolset includes the following tools. All listed tools except `ask_user_question` are enabled by default when you include the toolset. `get_port_url` is only available on deployments with session port URLs enabled. Use the values in the Name column to reference tools in the `configs` array.
 
 | Tool       | Name         | Description                                    |
 | ---------- | ------------ | ---------------------------------------------- |
@@ -37,13 +37,13 @@ The agent toolset includes the following tools. All listed tools except `ask_use
 
 Once enabled, the agent can ask the user for information or a choice and wait for their answer. Web search also requires a search provider configured by the deployment.
 
-`get_port_url` is also disabled by default, because anyone who has a session port URL can open it. Enable it with:
+On deployments with session port URLs enabled, `get_port_url` follows the same rules as `web_fetch`: it is enabled with the toolset's `default_config` and uses its `permission_policy` (`always_allow` unless you change it). Anyone who has a session port URL can open it. To turn the tool off, add:
 
 ```json
-{"name": "get_port_url", "enabled": true}
+{"name": "get_port_url", "enabled": false}
 ```
 
-When `permission_policy` is omitted, it defaults to `always_allow`. The tool takes a single `port` (1–65535) and returns the session port URL for that port in the current session's sandbox, the same URL returned by `GET /v1/sessions/{session_id}/ports/{port}`. The URL is fixed and does not depend on whether a service is already listening. A service that listens only on 127.0.0.1 is reachable through the URL; it does not need to bind 0.0.0.0. Reserved ports and deployments without session port URLs return an error instead of a URL.
+On deployments without session port URLs, the tool is never offered to the agent, whatever the configuration. The tool takes a single `port` (1–65535) and returns the session port URL for that port in the current session's sandbox, the same URL returned by `GET /v1/sessions/{session_id}/ports/{port}`. The URL is fixed and does not depend on whether a service is already listening. A service that listens only on 127.0.0.1 is reachable through the URL; it does not need to bind 0.0.0.0. Reserved ports return an error instead of a URL.
 
 ## Configuring the toolset
 

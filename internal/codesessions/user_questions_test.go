@@ -42,8 +42,8 @@ func TestUserQuestionRuntimeRequiresExplicitEnablement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if slices.Contains(enabledSandboxTools(tools), "ask_user_question") != enabled {
-			t.Fatalf("question enablement = %v", enabledSandboxTools(tools))
+		if slices.Contains((builtinToolCatalog{}).enabledSandboxTools(tools), "ask_user_question") != enabled {
+			t.Fatalf("question enablement = %v", (builtinToolCatalog{}).enabledSandboxTools(tools))
 		}
 	}
 }

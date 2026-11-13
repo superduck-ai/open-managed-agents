@@ -90,7 +90,7 @@ const BUILT_IN_TOOL_DESCRIPTION_KEYS: Record<string, string> = {
 
 const CURRENT_BUILT_IN_TOOLSET = 'agent_toolset_20260401';
 
-const EXPLICIT_ONLY_BUILT_IN_TOOLS = new Set(['ask_user_question', 'get_port_url']);
+const EXPLICIT_ONLY_BUILT_IN_TOOLS = new Set(['ask_user_question']);
 
 export function isExplicitOnlyBuiltInTool(name: string) {
   return EXPLICIT_ONLY_BUILT_IN_TOOLS.has(name);
@@ -411,7 +411,7 @@ function toolPermissionForName(
     return fallback;
   }
   // 与运行时保持 first-wins：按配置顺序取首个同名项。内置工具兼容 legacy tool_name，
-  // MCP 只匹配 name。内置 ask_user_question 与 get_port_url 未配置时与运行时一样 deny，不回落 default_config。
+  // MCP 只匹配 name。内置 ask_user_question 未配置时与运行时一样 deny，不回落 default_config。
   const override = arrayRecords(toolset.configs).find(
     (config) => (stringValue(config.name) || (allowLegacyToolName ? stringValue(config.tool_name) : '')) === toolName,
   );

@@ -12,26 +12,28 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
-	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
 const (
 	managerArtifactInstallRoot   = "/tmp/oma/environment-manager"
 	managerArtifactBinaryName    = "environment-manager"
 	managerArtifactMaxBytes      = 512 << 20
-	managerArtifactFetchTimeout  = 5 * time.Minute
-	managerArtifactProbeTimeout  = 30 * time.Second
+	managerArtifactIdleTimeout   = time.Minute
 	managerArtifactActivateLimit = 60 * time.Second
 )
 
+var errManagerArtifactIdle = errors.New("environment manager artifact download stalled")
+
 type managerArtifact struct {
 	SHA256 string
-	Data   []byte
+	Size   int64
+	File   *os.File
 }
 
 type managerArtifactFileStamp struct {
@@ -39,21 +41,30 @@ type managerArtifactFileStamp struct {
 	modTime time.Time
 }
 
+type managerArtifactCache struct {
+	sha256 string
+	size   int64
+	path   string
+}
+
 type managerArtifactSource struct {
-	cfg    config.EnvironmentManagerArtifactConfig
-	client *http.Client
-	logger *slog.Logger
+	cfg         config.EnvironmentManagerArtifactConfig
+	client      *http.Client
+	logger      *slog.Logger
+	idleTimeout time.Duration
 
 	mu       sync.Mutex
-	cached   *managerArtifact
+	baseCtx  context.Context
+	cacheDir string
+	cached   *managerArtifactCache
 	stamp    managerArtifactFileStamp
 	inflight *managerArtifactFetch
+	fetches  sync.WaitGroup
 }
 
 type managerArtifactFetch struct {
-	done     chan struct{}
-	artifact managerArtifact
-	err      error
+	done chan struct{}
+	err  error
 }
 
 func newManagerArtifactSource(cfg config.EnvironmentManagerArtifactConfig, client *http.Client, logger *slog.Logger) *managerArtifactSource {
@@ -61,141 +72,247 @@ func newManagerArtifactSource(cfg config.EnvironmentManagerArtifactConfig, clien
 		return nil
 	}
 	if client == nil {
-		client = &http.Client{Timeout: managerArtifactFetchTimeout}
+		client = &http.Client{}
 	}
-	return &managerArtifactSource{cfg: cfg, client: client, logger: logging.LoggerOrDefault(logger)}
+	return &managerArtifactSource{cfg: cfg, client: client, logger: logging.LoggerOrDefault(logger), idleTimeout: managerArtifactIdleTimeout}
 }
 
 func (s *managerArtifactSource) Preload(ctx context.Context) {
-	if s == nil || s.cfg.URL == "" {
+	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cached == nil {
-		s.startFetchLocked(ctx)
+	s.baseCtx = ctx
+	if s.cfg.URL != "" && s.cached == nil {
+		s.startFetchLocked(managerArtifactFileStamp{})
 	}
+}
+
+func (s *managerArtifactSource) Wait() {
+	if s == nil {
+		return
+	}
+	s.fetches.Wait()
 }
 
 func (s *managerArtifactSource) Load(ctx context.Context) (managerArtifact, error) {
-	s.mu.Lock()
-	if s.cfg.Path != "" {
-		defer s.mu.Unlock()
-		return s.loadFile()
-	}
-	if s.cached != nil {
-		artifact := *s.cached
+	for {
+		s.mu.Lock()
+		stamp, err := s.currentStamp()
+		if err != nil {
+			s.mu.Unlock()
+			return managerArtifact{}, err
+		}
+		if s.cached != nil && s.stamp == stamp {
+			artifact, err := s.openCachedLocked()
+			s.mu.Unlock()
+			return artifact, err
+		}
+		fetch := s.startFetchLocked(stamp)
 		s.mu.Unlock()
-		return artifact, nil
-	}
-	fetch := s.startFetchLocked(context.WithoutCancel(ctx))
-	s.mu.Unlock()
-	select {
-	case <-fetch.done:
-		return fetch.artifact, fetch.err
-	case <-ctx.Done():
-		return managerArtifact{}, ctx.Err()
+		select {
+		case <-fetch.done:
+			if fetch.err != nil {
+				return managerArtifact{}, fetch.err
+			}
+		case <-ctx.Done():
+			return managerArtifact{}, ctx.Err()
+		}
 	}
 }
 
-func (s *managerArtifactSource) startFetchLocked(ctx context.Context) *managerArtifactFetch {
+func (s *managerArtifactSource) currentStamp() (managerArtifactFileStamp, error) {
+	if s.cfg.Path == "" {
+		return managerArtifactFileStamp{}, nil
+	}
+	info, err := os.Stat(s.cfg.Path)
+	if err != nil {
+		return managerArtifactFileStamp{}, fmt.Errorf("stat environment manager artifact: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return managerArtifactFileStamp{}, fmt.Errorf("environment manager artifact %s is not a regular file", s.cfg.Path)
+	}
+	return managerArtifactFileStamp{size: info.Size(), modTime: info.ModTime()}, nil
+}
+
+func (s *managerArtifactSource) openCachedLocked() (managerArtifact, error) {
+	file, err := os.Open(s.cached.path)
+	if err != nil {
+		return managerArtifact{}, fmt.Errorf("open cached environment manager artifact: %w", err)
+	}
+	return managerArtifact{SHA256: s.cached.sha256, Size: s.cached.size, File: file}, nil
+}
+
+func (s *managerArtifactSource) startFetchLocked(stamp managerArtifactFileStamp) *managerArtifactFetch {
 	if s.inflight != nil {
 		return s.inflight
 	}
 	fetch := &managerArtifactFetch{done: make(chan struct{})}
 	s.inflight = fetch
+	ctx := s.baseCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dir, dirErr := s.cacheDirLocked()
+	s.fetches.Add(1)
 	go func() {
+		defer s.fetches.Done()
 		startedAt := time.Now()
-		artifact, err := s.fetch(ctx)
-		s.mu.Lock()
+		populated, err := managerArtifactCache{}, dirErr
 		if err == nil {
-			s.cached = &artifact
+			populated, err = s.populate(ctx, dir, stamp)
 		}
-		s.inflight = nil
-		fetch.artifact, fetch.err = artifact, err
-		s.mu.Unlock()
-		close(fetch.done)
+		s.finishFetch(fetch, populated, stamp, err)
 		if err != nil {
-			s.logger.WarnContext(ctx, "environment manager artifact download failed", "error", err)
+			s.logger.WarnContext(ctx, "environment manager artifact load failed", "error", err)
 			return
 		}
-		s.logger.InfoContext(ctx, "environment manager artifact downloaded", "manager_sha256", artifact.SHA256, "size_bytes", len(artifact.Data), "duration_ms", time.Since(startedAt).Milliseconds())
+		s.logger.InfoContext(ctx, "environment manager artifact loaded", "manager_sha256", populated.sha256, "size_bytes", populated.size, "duration_ms", time.Since(startedAt).Milliseconds())
 	}()
 	return fetch
 }
 
-func (s *managerArtifactSource) loadFile() (managerArtifact, error) {
-	info, err := os.Stat(s.cfg.Path)
+func (s *managerArtifactSource) finishFetch(fetch *managerArtifactFetch, populated managerArtifactCache, stamp managerArtifactFileStamp, err error) {
+	s.mu.Lock()
+	if err == nil {
+		if s.cached != nil && s.cached.path != populated.path {
+			_ = os.Remove(s.cached.path)
+		}
+		s.cached = &populated
+		s.stamp = stamp
+	}
+	s.inflight = nil
+	fetch.err = err
+	s.mu.Unlock()
+	close(fetch.done)
+}
+
+func (s *managerArtifactSource) cacheDirLocked() (string, error) {
+	if s.cacheDir != "" {
+		return s.cacheDir, nil
+	}
+	dir, err := os.MkdirTemp("", "oma-environment-manager-")
 	if err != nil {
-		return managerArtifact{}, fmt.Errorf("stat environment manager artifact: %w", err)
+		return "", fmt.Errorf("create environment manager artifact cache: %w", err)
 	}
-	if !info.Mode().IsRegular() {
-		return managerArtifact{}, fmt.Errorf("environment manager artifact %s is not a regular file", s.cfg.Path)
+	s.cacheDir = dir
+	return dir, nil
+}
+
+func (s *managerArtifactSource) populate(ctx context.Context, dir string, stamp managerArtifactFileStamp) (managerArtifactCache, error) {
+	staging, err := os.CreateTemp(dir, "staging-*")
+	if err != nil {
+		return managerArtifactCache{}, fmt.Errorf("create environment manager artifact staging file: %w", err)
 	}
-	stamp := managerArtifactFileStamp{size: info.Size(), modTime: info.ModTime()}
-	if s.cached != nil && s.stamp == stamp {
-		return *s.cached, nil
+	defer func() { _ = os.Remove(staging.Name()) }()
+	sha, size, err := s.copySource(ctx, staging, stamp)
+	if closeErr := staging.Close(); err == nil && closeErr != nil {
+		err = fmt.Errorf("close environment manager artifact staging file: %w", closeErr)
+	}
+	if err != nil {
+		return managerArtifactCache{}, err
+	}
+	target := filepath.Join(dir, sha)
+	if err := os.Rename(staging.Name(), target); err != nil {
+		return managerArtifactCache{}, fmt.Errorf("store environment manager artifact: %w", err)
+	}
+	return managerArtifactCache{sha256: sha, size: size, path: target}, nil
+}
+
+func (s *managerArtifactSource) copySource(ctx context.Context, writer io.Writer, stamp managerArtifactFileStamp) (string, int64, error) {
+	if s.cfg.Path == "" {
+		return s.download(ctx, writer)
 	}
 	file, err := os.Open(s.cfg.Path)
 	if err != nil {
-		return managerArtifact{}, fmt.Errorf("open environment manager artifact: %w", err)
+		return "", 0, fmt.Errorf("open environment manager artifact: %w", err)
 	}
 	defer file.Close()
-	artifact, err := readManagerArtifact(file, s.cfg.SHA256)
+	sha, size, err := copyManagerArtifact(writer, file, s.cfg.SHA256)
 	if err != nil {
-		return managerArtifact{}, err
+		return "", 0, err
 	}
-	s.cached = &artifact
-	s.stamp = stamp
-	return artifact, nil
+	after, err := s.currentStamp()
+	if err != nil {
+		return "", 0, err
+	}
+	if after != stamp || size != stamp.size {
+		return "", 0, errors.New("environment manager artifact changed while reading; replace it atomically")
+	}
+	return sha, size, nil
 }
 
-func (s *managerArtifactSource) fetch(ctx context.Context) (managerArtifact, error) {
+func (s *managerArtifactSource) download(ctx context.Context, writer io.Writer) (string, int64, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	timer := time.AfterFunc(s.idleTimeout, func() { cancel(errManagerArtifactIdle) })
+	defer timer.Stop()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.URL, nil)
 	if err != nil {
-		return managerArtifact{}, fmt.Errorf("build environment manager artifact request: %w", err)
+		return "", 0, fmt.Errorf("build environment manager artifact request: %w", err)
 	}
 	response, err := s.client.Do(request)
 	if err != nil {
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
-			err = urlErr.Err
-		}
-		return managerArtifact{}, fmt.Errorf("download environment manager artifact: %w", err)
+		return "", 0, fmt.Errorf("download environment manager artifact: %w", managerArtifactDownloadCause(ctx, err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return managerArtifact{}, fmt.Errorf("download environment manager artifact: unexpected status %d", response.StatusCode)
+		return "", 0, fmt.Errorf("download environment manager artifact: unexpected status %d", response.StatusCode)
 	}
-	return readManagerArtifact(response.Body, s.cfg.SHA256)
+	sha, size, err := copyManagerArtifact(writer, &idleTimeoutReader{reader: response.Body, timer: timer, timeout: s.idleTimeout}, s.cfg.SHA256)
+	if err != nil {
+		return "", 0, managerArtifactDownloadCause(ctx, err)
+	}
+	return sha, size, nil
 }
 
-func readManagerArtifact(reader io.Reader, wantSHA256 string) (managerArtifact, error) {
-	data, err := io.ReadAll(io.LimitReader(reader, managerArtifactMaxBytes+1))
+func managerArtifactDownloadCause(ctx context.Context, err error) error {
+	if cause := context.Cause(ctx); errors.Is(cause, errManagerArtifactIdle) {
+		return cause
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
+}
+
+type idleTimeoutReader struct {
+	reader  io.Reader
+	timer   *time.Timer
+	timeout time.Duration
+}
+
+func (r *idleTimeoutReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.timer.Reset(r.timeout)
+	}
+	return n, err
+}
+
+func copyManagerArtifact(writer io.Writer, reader io.Reader, wantSHA256 string) (string, int64, error) {
+	hasher := sha256.New()
+	size, err := io.Copy(io.MultiWriter(writer, hasher), io.LimitReader(reader, managerArtifactMaxBytes+1))
 	if err != nil {
-		return managerArtifact{}, fmt.Errorf("read environment manager artifact: %w", err)
+		return "", 0, fmt.Errorf("read environment manager artifact: %w", err)
 	}
-	if len(data) == 0 {
-		return managerArtifact{}, errors.New("environment manager artifact is empty")
+	if size == 0 {
+		return "", 0, errors.New("environment manager artifact is empty")
 	}
-	if len(data) > managerArtifactMaxBytes {
-		return managerArtifact{}, fmt.Errorf("environment manager artifact exceeds %d bytes", managerArtifactMaxBytes)
+	if size > managerArtifactMaxBytes {
+		return "", 0, fmt.Errorf("environment manager artifact exceeds %d bytes", managerArtifactMaxBytes)
 	}
-	sum := sha256.Sum256(data)
-	actual := hex.EncodeToString(sum[:])
+	actual := hex.EncodeToString(hasher.Sum(nil))
 	if wantSHA256 != "" && actual != wantSHA256 {
-		return managerArtifact{}, fmt.Errorf("environment manager artifact sha256 = %s, want %s", actual, wantSHA256)
+		return "", 0, fmt.Errorf("environment manager artifact sha256 = %s, want %s", actual, wantSHA256)
 	}
-	return managerArtifact{SHA256: actual, Data: data}, nil
+	return actual, size, nil
 }
 
 func managerArtifactInstallPath(sha string) string {
 	return path.Join(managerArtifactInstallRoot, sha, managerArtifactBinaryName)
-}
-
-func managerArtifactProbeCommand(target, sha string) string {
-	quoted := shellQuote(target)
-	return "[ -x " + quoted + " ] && [ \"$(sha256sum -- " + quoted + " | cut -d ' ' -f 1)\" = " + shellQuote(sha) + " ]"
 }
 
 func managerArtifactActivateCommand(target, sha string) string {
@@ -217,25 +334,15 @@ func (r *Runner) installEnvironmentManager(ctx context.Context, sandboxID string
 	if err != nil {
 		return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_load", errEnvironmentManagerInstall, err)
 	}
+	defer artifact.File.Close()
 	target := managerArtifactInstallPath(artifact.SHA256)
-	probe, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{
-		Command: managerArtifactProbeCommand(target, artifact.SHA256),
-		Timeout: managerArtifactProbeTimeout,
-	})
-	if err != nil {
-		return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_probe", errEnvironmentManagerInstall, err)
-	}
-	if probe.ExitCode == 0 {
-		r.logger.InfoContext(ctx, "environment manager artifact reused", "sandbox_id", sandboxID, "manager_sha256", artifact.SHA256)
-		return target, nil
-	}
-	if err := r.provider.WriteFile(ctx, sandboxID, target+".partial", artifact.Data); err != nil {
+	if err := r.provider.WriteFileFrom(ctx, sandboxID, target+".partial", artifact.File); err != nil {
 		return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_upload", errEnvironmentManagerInstall, err)
 	}
 	if err := r.runSandboxCommand(ctx, sandboxID, managerArtifactActivateCommand(target, artifact.SHA256), managerArtifactActivateLimit); err != nil {
 		return "", r.logManagedAgentRuntimeStageFailure(ctx, "environment_manager_artifact_activate", errEnvironmentManagerInstall, err)
 	}
-	r.logger.InfoContext(ctx, "environment manager artifact installed", "sandbox_id", sandboxID, "manager_sha256", artifact.SHA256, "size_bytes", len(artifact.Data))
+	r.logger.InfoContext(ctx, "environment manager artifact installed", "sandbox_id", sandboxID, "manager_sha256", artifact.SHA256, "size_bytes", artifact.Size)
 	return target, nil
 }
 

@@ -345,7 +345,7 @@ E2B 单次调用等更细的子 span 不要求带会话属性，在时间线里�
 | `oma.sandbox.provider.duration` | Float64Histogram | latency | `oma.operation`=`create`、`kill`、`set_timeout`、`write_file`、`file_exists`、`run_command`、`start_background_command`、`service_endpoint`；`oma.outcome`=`ok`、`not_found`、`error`、`canceled`、`timeout` | `E2BProvider` 各方法 |
 | `oma.code_session.activation.duration` | Float64Histogram | latency | `oma.outcome` | `ActivateManagedAgentCodeSession` |
 
-Runner 阶段名固定为：`claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`manager_install`、`packages`、
+Runner 阶段名固定为：`claim`、`prepare`、`sandbox_record`、`e2b_create`、`work_metadata`、`manager_install`（仅配置 Manager 制品时）、`packages`、
 `filestore`、`mark_running`、`code_session`、`manager_start`、`sandbox_mcp_ready`、`publish_runtime`、
 `sandbox_prewarm`、`brain_dispatch`。各触发方式实际经过的阶段见 P8.2。
 

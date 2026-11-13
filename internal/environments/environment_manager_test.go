@@ -279,11 +279,7 @@ func TestBuildEnvironmentManagerPayloadAndCommand(t *testing.T) {
 		t.Fatalf("environment leaked upstream model credentials: %#v", environment)
 	}
 
-	command := buildEnvironmentManagerCommand("cse_session with 'quote'/and/slash", cfg, payload)
-	if !reflect.DeepEqual(command.Payload, payload) {
-		t.Fatalf("command payload = %q, want %q", command.Payload, payload)
-	}
-	allCommands := command.ShellCommand
+	allCommands := environmentManagerShellCommand("cse_session with 'quote'/and/slash", cfg)
 	for _, want := range []string{
 		"environment-manager binary missing or not executable: /opt/env manager/bin/environment-manager",
 		"Claude binary missing or not executable: /opt/claude path/bin/claude",

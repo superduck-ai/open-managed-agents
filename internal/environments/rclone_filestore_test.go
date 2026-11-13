@@ -321,6 +321,14 @@ func (*rcloneTestProvider) Resolve(db.Environment, *db.EnvironmentWork) (e2brunt
 	panic("unexpected Resolve call")
 }
 
+func (p *rcloneTestProvider) WriteFileFrom(ctx context.Context, sandboxID, path string, reader io.Reader) error {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	return p.WriteFile(ctx, sandboxID, path, data)
+}
+
 func (p *rcloneTestProvider) WriteFile(_ context.Context, _ string, path string, data []byte) error {
 	p.writePath = path
 	p.writeData = append([]byte(nil), data...)

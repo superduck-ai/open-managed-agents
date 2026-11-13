@@ -231,7 +231,7 @@ func codeSessionSandboxAPIBaseURL(cfg config.Config) string {
 	return strings.TrimRight(strings.TrimSpace(cfg.CodeSession.SandboxAPIBaseURL), "/")
 }
 
-func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, payload []byte) environmentManagerCommand {
+func environmentManagerShellCommand(codeSessionID string, cfg config.Config) string {
 	safeSessionID := strings.NewReplacer("/", "_", "\\", "_", " ", "_").Replace(codeSessionID)
 	baseDir := path.Join("/tmp/claude-code-sessions", safeSessionID)
 	logPath := path.Join(baseDir, "environment-manager.log")
@@ -276,10 +276,7 @@ func buildEnvironmentManagerCommand(codeSessionID string, cfg config.Config, pay
 			" --claude-path "+shellQuote(claudePath)+
 			" > "+shellQuote(logPath)+" 2>&1",
 	)
-	return environmentManagerCommand{
-		Payload:      append([]byte(nil), payload...),
-		ShellCommand: strings.Join(commandParts, "\n"),
-	}
+	return strings.Join(commandParts, "\n")
 }
 
 func stringFromMap(values map[string]any, key string) string {

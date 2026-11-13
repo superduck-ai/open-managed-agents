@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http/httputil"
 	"net/url"
 	"os"
@@ -57,6 +58,14 @@ func (p *chatDockerProvider) Create(ctx context.Context, _ db.Environment, _ *db
 func (p *chatDockerProvider) Kill(ctx context.Context, id string) error {
 	return exec.CommandContext(ctx, "docker", "rm", "-f", id).Run()
 }
+func (p *chatDockerProvider) WriteFileFrom(ctx context.Context, sandboxID, path string, reader io.Reader) error {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	return p.WriteFile(ctx, sandboxID, path, data)
+}
+
 func (p *chatDockerProvider) WriteFile(ctx context.Context, id, path string, data []byte) error {
 	if path == "/mnt/memory/MEMORY.md" && p.failMemoryMarkdown.Swap(false) {
 		return errors.New("injected memory mount setup failure")

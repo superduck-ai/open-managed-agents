@@ -21,11 +21,12 @@ func TestBrainSandboxManagerStartsEmbeddedMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(launch.ShellCommand, "export ENVRUNNER_SKIP_CLAUDE_CODE=true") ||
-		!strings.Contains(launch.ShellCommand, "export MCP_ALLOWED_HOSTS=") ||
-		!strings.Contains(launch.ShellCommand, "'/usr/local/bin/environment-manager' task-run") ||
-		strings.Contains(launch.ShellCommand, "mcp-server") {
-		t.Fatalf("unexpected launch command: %q", launch.ShellCommand)
+	shellCommand := environmentManagerShellCommand("cse_test", cfg)
+	if !strings.Contains(shellCommand, "export ENVRUNNER_SKIP_CLAUDE_CODE=true") ||
+		!strings.Contains(shellCommand, "export MCP_ALLOWED_HOSTS=") ||
+		!strings.Contains(shellCommand, "'/usr/local/bin/environment-manager' task-run") ||
+		strings.Contains(shellCommand, "mcp-server") {
+		t.Fatalf("unexpected launch command: %q", shellCommand)
 	}
 	var payload struct {
 		Auth           []AuthConfig `json:"auth"`

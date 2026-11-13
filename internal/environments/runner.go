@@ -140,11 +140,11 @@ func NewRunner(deps RunnerDependencies) (*Runner, error) {
 }
 
 func (r *Runner) Start(ctx context.Context) func() {
+	ctx, cancel := context.WithCancel(ctx)
 	r.managerArtifacts.Preload(ctx)
 	if !r.cfg.EnvironmentRunner.Enabled {
-		return func() {}
+		return func() { cancel(); r.managerArtifacts.Wait() }
 	}
-	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	concurrency := r.cfg.EnvironmentRunner.Concurrency
 	if concurrency <= 0 {
@@ -154,7 +154,7 @@ func (r *Runner) Start(ctx context.Context) func() {
 		workerID := fmt.Sprintf("environment-runner-%d", i+1)
 		workers.Go(func() { r.loop(ctx, workerID) })
 	}
-	return func() { cancel(); workers.Wait() }
+	return func() { cancel(); workers.Wait(); r.managerArtifacts.Wait() }
 }
 
 // loop 持续领取并处理排队中的 Environment Work，直到服务通过 ctx 通知它退出。
@@ -394,8 +394,8 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 		}
 		ctx = run.begin(ctx, "manager_start")
 		managerCtx := trace.ContextWithSpan(runtimeCtx, trace.SpanFromContext(ctx))
-		manager := buildEnvironmentManagerCommand(launch.CodeSessionID, managerCfg, launch.Manager.Payload)
-		if err := r.provider.StartBackgroundCommand(managerCtx, providerSandboxID, manager.ShellCommand, manager.Payload); err != nil {
+		managerCommand := environmentManagerShellCommand(launch.CodeSessionID, managerCfg)
+		if err := r.provider.StartBackgroundCommand(managerCtx, providerSandboxID, managerCommand, launch.Manager.Payload); err != nil {
 			publicError := r.logManagedAgentRuntimeStageFailure(
 				ctx,
 				"environment_manager_start",
@@ -439,12 +439,13 @@ func (r *Runner) prepareSandboxManagerAndPackages(
 ) (config.Config, bool, error) {
 	manifest, provision, err := buildPackageManifest(env.Config)
 	if err != nil {
+		ctx = run.begin(ctx, "packages")
 		r.failCreatedSandbox(ctx, record, work, providerSandboxID, err)
 		return config.Config{}, false, err
 	}
 	provisionPackages := provision && !preinstalled
 	managerCfg := r.cfg
-	if managed || provisionPackages {
+	if r.managerArtifacts != nil && (managed || provisionPackages) {
 		ctx = run.begin(ctx, "manager_install")
 		managerPath, err := r.installEnvironmentManager(ctx, providerSandboxID)
 		if err != nil {
@@ -861,7 +862,7 @@ func (r *Runner) createManagedAgentRuntimeLaunch(
 		CodeSessionID:   local.CodeSessionID,
 		PublicSessionID: local.PublicSessionID,
 		SDKURLPath:      local.SDKURLPath,
-		Manager:         buildEnvironmentManagerCommand(local.CodeSessionID, r.cfg, payload),
+		Manager:         environmentManagerCommand{Payload: payload},
 		Recovered:       preparation.RecoveryCodeSessionID != "",
 	}, nil
 }

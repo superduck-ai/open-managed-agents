@@ -30,15 +30,17 @@ Claude Code 随镜像发布，Environment 使用其绑定模板中的版本。Ru
 
 Environment Manager 可以独立于镜像发布。部署在 `environment_runner.manager_artifact` 中配置一个 Linux 可执行制品，二选一：
 
-- `path`：API 服务所在主机的本地文件，例如 environment-manager 发布流程产出的 `dist/environment-manager_linux_arm64`。Runner 每次启动前比较文件大小与修改时间，变化后重新读取并计算 SHA-256，因此原子替换（同目录写临时文件后 `mv`）即可让后续 Sandbox 使用新版本，无需重启服务。可选的 `sha256` 用于固定预期版本，不一致时拒绝启动。
-- `url`：HTTP(S) 下载地址，必须同时提供 `sha256`。由 API 服务下载并校验，按进程缓存；更换版本时同时修改 `url`/`sha256` 并重启服务。Sandbox 不需要访问该地址。
+- `path`：API 服务所在主机的本地文件，例如 environment-manager 发布流程产出的 `dist/environment-manager_linux_arm64`。Runner 每次启动前比较文件大小与修改时间，变化后重新读取并计算 SHA-256，因此原子替换（同目录写临时文件后 `mv`）即可让后续 Sandbox 使用新版本，无需重启服务。读取完成后再次检查大小与修改时间，读取期间被原地改写（如 `cp` 覆盖）则本次加载失败且不缓存，下一次启动重新读取。可选的 `sha256` 用于固定预期版本，不一致时拒绝启动。
+- `url`：HTTP(S) 下载地址，必须同时提供 `sha256`。由 API 服务下载并校验，按进程缓存；下载不设总时长上限，连续 `60s` 未收到数据视为卡住并失败；更换版本时同时修改 `url`/`sha256` 并重启服务。Sandbox 不需要访问该地址。
+
+两种模式的制品都以 `<sha256>` 命名缓存在 API 主机临时目录（`os.TempDir()` 下的 `oma-environment-manager-*`）中，而不是常驻进程内存；上传时从该文件流式写入 Sandbox（E2B envd 支持时使用 octet-stream，不在内存中整体缓冲）。新版本生效后删除旧缓存文件，已打开该文件的上传不受影响。同一进程任意时刻最多一次加载在进行，`path` 模式的重新读取同样不在锁内执行，并发启动等待同一次结果。
 
 `url` 模式的下载时机：
 
 - 服务启动时 `Runner.Start` 立即在后台预加载，不阻塞启动；即使 `environment_runner.enabled=false`，处理按需创建 Sandbox 的实例也会预加载。
 - 同一进程任意时刻最多一个下载在进行。第一次需要 Manager 的 Sandbox 若遇到预加载尚未完成，就等待同一次下载的结果，不重复发起请求；等待受该 Sandbox 启动上下文约束，等待方超时或取消不会中断下载本身。
-- 下载成功后缓存于进程内存，后续新建与恢复直接复用。失败不缓存：记录 `environment manager artifact download failed` 告警，正在等待的 Sandbox 启动失败，下一次需要 Manager 时重新下载。
-- 服务关闭时取消预加载请求。
+- 下载成功后缓存为本地文件，后续新建与恢复直接复用。失败不缓存：记录 `environment manager artifact load failed` 告警，正在等待的 Sandbox 启动失败，下一次需要 Manager 时重新下载。
+- 无论下载由预加载还是某次启动触发，都使用 Runner 生命周期上下文：服务关闭时取消下载，Runner 的停止函数等待下载 goroutine 退出。
 
 ```mermaid
 sequenceDiagram
@@ -56,7 +58,7 @@ sequenceDiagram
     else no cache and no fetch (previous failure)
         A->>U: GET again
     end
-    U-->>A: bytes, verify sha256
+    U-->>A: stream to local cache file, verify sha256
     A-->>W: artifact or error (errors are not cached)
 ```
 
@@ -68,10 +70,8 @@ flowchart TD
     N -->|no| P["packages"]
     N -->|yes| C{"manager_artifact configured?"}
     C -->|no| I["Use manager_path from image"]
-    C -->|yes| L["Load artifact on API host and verify sha256"]
-    L --> Q{"Sandbox already has /tmp/oma/environment-manager/<sha>/environment-manager with same sha?"}
-    Q -->|yes| U["Use installed artifact"]
-    Q -->|no| S["Files API upload to <path>.partial"]
+    C -->|yes| L["Load cached artifact file on API host (sha256 verified)"]
+    L --> S["Stream via Files API to /tmp/oma/environment-manager/<sha>/environment-manager.partial"]
     S --> A["chmod 0755, sha256sum check, --version smoke test, mv -f"]
     A -->|fail| F["Fail work and kill Sandbox"]
     A -->|ok| U
@@ -81,12 +81,12 @@ flowchart TD
     P --> R["filestore ... manager_start (provision-packages and task-run use the same path)"]
 ```
 
-安装发生在 Runner 的 `manager_install` 阶段，位于 `work_metadata` 之后、`packages` 之前，所以包安装的 `provision-packages` 与启动会话的 `task-run` 使用同一个 Manager。新建 Session 与恢复（resume，Runner 为已有 Code Session 创建 replacement Sandbox 并以 `--session-mode resume-cached` 启动 Manager）共用这一入口，Brain 模式按需创建的 Sandbox 也一样；因此已有 Session 在下一次恢复时就会切换到当前配置的 Manager，旧镜像无需重新打包。
+安装发生在 Runner 的 `manager_install` 阶段（仅在配置了制品时出现），位于 `work_metadata` 之后、`packages` 之前，所以包安装的 `provision-packages` 与启动会话的 `task-run` 使用同一个 Manager。新建 Session 与恢复（resume，Runner 为已有 Code Session 创建 replacement Sandbox 并以 `--session-mode resume-cached` 启动 Manager）共用这一入口，Brain 模式按需创建的 Sandbox 也一样；因此已有 Session 在下一次恢复时就会切换到当前配置的 Manager，旧镜像无需重新打包。
 
 约束与失败语义：
 
 - 配置了制品就 fail-closed：读取、下载、校验、上传、`--version` 冒烟或激活任一步失败都会以 `environment manager artifact install failed` 结束本次 Work 并终止 Sandbox，不静默回退到镜像内版本，避免同一部署混跑未知版本。
-- 安装路径按 SHA-256 区分，激活使用同目录 `mv -f`，Manager 不会看到半写入文件；Sandbox 中已存在同 SHA 的可执行文件时跳过上传。
+- 安装路径按 SHA-256 区分，激活使用同目录 `mv -f`，Manager 不会看到半写入文件。新 Sandbox 的 `/tmp` 不含该文件，因此每次都直接上传，不做预先探测。
 - E2B 暂停后自动恢复的 Sandbox 会恢复原进程内存，正在运行的 Manager 不会被替换；新版本在该 Session 下一次创建 replacement Sandbox 时生效。
 - 日志只记录 `sandbox_id`、`manager_sha256` 与大小，不记录制品 URL 中可能存在的查询参数。
 

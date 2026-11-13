@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	pathpkg "path"
 	"strings"
 	"time"
@@ -50,6 +51,7 @@ type Provider interface {
 	Kill(ctx context.Context, sandboxID string) error
 	Resolve(env db.Environment, work *db.EnvironmentWork) (Resolution, error)
 	WriteFile(ctx context.Context, sandboxID string, path string, data []byte) error
+	WriteFileFrom(ctx context.Context, sandboxID string, path string, reader io.Reader) error
 	FileExists(ctx context.Context, sandboxID string, path string) (bool, error)
 	RunCommand(ctx context.Context, sandboxID string, request CommandRequest) (CommandResult, error)
 	StartBackgroundCommand(ctx context.Context, sandboxID string, command string, stdin []byte) error
@@ -198,7 +200,15 @@ func classifySandboxError(err error) error {
 	return err
 }
 
-func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) (err error) {
+func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath string, data []byte) error {
+	return p.writeFile(ctx, sandboxID, filePath, bytes.NewReader(data), nil)
+}
+
+func (p *E2BProvider) WriteFileFrom(ctx context.Context, sandboxID string, filePath string, reader io.Reader) error {
+	return p.writeFile(ctx, sandboxID, filePath, reader, &e2b.FilesystemWriteOpts{UseOctetStream: true})
+}
+
+func (p *E2BProvider) writeFile(ctx context.Context, sandboxID string, filePath string, reader io.Reader, opts *e2b.FilesystemWriteOpts) (err error) {
 	ctx, finish := observeProviderCall(ctx, "write_file", sandboxID)
 	defer func() { finish(err) }()
 	if strings.TrimSpace(sandboxID) == "" {
@@ -216,7 +226,7 @@ func (p *E2BProvider) WriteFile(ctx context.Context, sandboxID string, filePath 
 			return err
 		}
 	}
-	_, err = sandbox.Files.Write(ctx, filePath, bytes.NewReader(data), nil)
+	_, err = sandbox.Files.Write(ctx, filePath, reader, opts)
 	return err
 }
 

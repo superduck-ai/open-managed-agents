@@ -186,7 +186,7 @@ func brainSandboxManagerCommand(codeSessionID, workDir string, cfg config.Config
 	if err != nil {
 		return environmentManagerCommand{}, err
 	}
-	return buildEnvironmentManagerCommand(codeSessionID, cfg, payload), nil
+	return environmentManagerCommand{Payload: payload}, nil
 }
 
 func waitSandboxMCPReady(ctx context.Context, endpoint string) error {

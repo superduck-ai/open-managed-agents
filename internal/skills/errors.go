@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -82,6 +83,22 @@ func skillHasNoVersions() error {
 }
 func skillVersionsMustBeDeleted() error {
 	return apperr.New(apperr.InvalidArgument, "Delete all skill versions before deleting the skill", nil)
+}
+func skillInUseByAgents(inUse *db.SkillInUseError) error {
+	labels := make([]string, 0, len(inUse.Agents))
+	for _, agent := range inUse.Agents {
+		name := strings.TrimSpace(agent.Name)
+		if name != "" {
+			labels = append(labels, fmt.Sprintf("%s (%s)", name, agent.ExternalID))
+		} else {
+			labels = append(labels, agent.ExternalID)
+		}
+	}
+	return apperr.New(
+		apperr.Conflict,
+		fmt.Sprintf("Skill is in use by active agent(s): %s. Remove it from those agents before deleting.", strings.Join(labels, ", ")),
+		inUse,
+	)
 }
 func skillLastVersionRequired() error {
 	return apperr.New(apperr.InvalidArgument, "Cannot delete the only skill version; upload a replacement or delete the skill", nil)

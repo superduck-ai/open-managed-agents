@@ -132,6 +132,10 @@ func skillDisplayLabel(r *http.Request, pkg skillPackage) (string, error) {
 }
 
 func mapSkillDeleteError(err error) error {
+	var inUse *db.SkillInUseError
+	if errors.As(err, &inUse) {
+		return skillInUseByAgents(inUse)
+	}
 	if errors.Is(err, db.ErrSkillHasVersions) {
 		return skillVersionsMustBeDeleted()
 	}

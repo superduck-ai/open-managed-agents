@@ -79,6 +79,27 @@ func TestMapConsoleSkillError(t *testing.T) {
 	}
 }
 
+func TestMapSkillDeleteError(t *testing.T) {
+	inUse := &db.SkillInUseError{
+		Agents: []db.SkillReferencingAgent{
+			{ExternalID: "agent_1", Name: "Alpha"},
+			{ExternalID: "agent_2", Name: ""},
+		},
+	}
+	assertSkillAppError(
+		t,
+		mapSkillDeleteError(inUse),
+		apperr.Conflict,
+		"Skill is in use by active agent(s): Alpha (agent_1), agent_2. Remove it from those agents before deleting.",
+	)
+	assertSkillAppError(
+		t,
+		mapSkillDeleteError(db.ErrSkillHasVersions),
+		apperr.InvalidArgument,
+		"Delete all skill versions before deleting the skill",
+	)
+}
+
 func assertSkillAppError(t *testing.T, err error, kind apperr.Kind, message string) {
 	t.Helper()
 	appErr, ok := errors.AsType[*apperr.Error](err)

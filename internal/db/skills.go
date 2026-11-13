@@ -11,6 +11,19 @@ import (
 var ErrSkillHasVersions = errors.New("skill has versions")
 var ErrSkillLastVersion = errors.New("cannot delete the only skill version")
 
+type SkillReferencingAgent struct {
+	ExternalID string
+	Name       string
+}
+
+type SkillInUseError struct {
+	Agents []SkillReferencingAgent
+}
+
+func (e *SkillInUseError) Error() string {
+	return "skill is referenced by active agents"
+}
+
 type Skill struct {
 	IconKey             string
 	UUID                string
@@ -219,6 +232,18 @@ func (d *DB) SoftDeleteSkill(ctx context.Context, workspaceUUID string, external
 		skill, txErr := skillFromMapperRow(row, txErr)
 		if txErr != nil {
 			return txErr
+		}
+
+		referencingRows, txErr := skillMapper.ListReferencingActiveAgents(ctx, workspaceUUID, externalID)
+		if txErr != nil {
+			return txErr
+		}
+		if len(referencingRows) > 0 {
+			agents := make([]SkillReferencingAgent, 0, len(referencingRows))
+			for _, ref := range referencingRows {
+				agents = append(agents, SkillReferencingAgent(ref))
+			}
+			return &SkillInUseError{Agents: agents}
 		}
 
 		versionRows, txErr := versionMapper.ListBySkillUUID(ctx, workspaceUUID, skill.UUID)

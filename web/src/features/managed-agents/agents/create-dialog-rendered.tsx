@@ -195,7 +195,12 @@ export function AgentConfigRenderedEditor({
         <SelectedPills
           items={selectedSkills.map((reference) => {
             const skill = skillOptions.find((candidate) => candidate.id === reference.skill_id);
-            return { id: reference.skill_id, label: skill?.displayTitle || reference.skill_id };
+            const label = skill?.displayTitle
+              ? skill.displayTitle
+              : skillsQuery.isSuccess
+                ? `${reference.skill_id} (${msg('managedAgents.agents.detail.skillUnavailableBadge', 'Unavailable')})`
+                : reference.skill_id;
+            return { id: reference.skill_id, label };
           })}
           onRemove={(id) => {
             const skill = skillOptions.find((candidate) => candidate.id === id);

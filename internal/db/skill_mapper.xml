@@ -74,6 +74,38 @@
         FOR UPDATE
     </select>
 
+    <select id="ListReferencingActiveAgents" resultType="skillReferencingAgentRow">
+        SELECT external_id, name
+        FROM agents
+        WHERE workspace_uuid = #{workspaceUUID}
+        AND deleted_at IS NULL
+        AND archived_at IS NULL
+        AND (
+            EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(skills) AS s
+                WHERE s->>'type' = 'custom'
+                AND s->>'skill_id' = #{externalID}
+            )
+            OR (
+                multiagent IS NOT NULL
+                AND jsonb_typeof(multiagent->'predefined_agents') = 'array'
+                AND EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements(multiagent->'predefined_agents') AS pa
+                    WHERE jsonb_typeof(pa->'skills') = 'array'
+                    AND EXISTS (
+                        SELECT 1
+                        FROM jsonb_array_elements(pa->'skills') AS pas
+                        WHERE pas->>'type' = 'custom'
+                        AND pas->>'skill_id' = #{externalID}
+                    )
+                )
+            )
+        )
+        ORDER BY updated_at DESC, uuid DESC
+    </select>
+
     <select id="ListPage" resultType="skillRow">
         SELECT
         <include refid="columns"/>

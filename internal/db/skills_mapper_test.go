@@ -76,6 +76,17 @@ func TestSkillMapperBuilderContracts(t *testing.T) {
 			},
 		},
 		{
+			name: "list referencing active agents",
+			contract: mapperBuilderContract{
+				statement:         skillMapperListReferencingActiveAgentsStatement,
+				bound:             buildSkillMapperListReferencingActiveAgents(yourbatis.DialectPostgres, workspaceUUID, externalID),
+				wantID:            "SkillMapper.ListReferencingActiveAgents",
+				wantKind:          yourbatis.StatementSelect,
+				wantArgumentNames: []string{"workspaceUUID", "externalID", "externalID"},
+				wantSQLFragments:  []string{"FROM agents", "workspace_uuid = $1", "deleted_at IS NULL", "archived_at IS NULL"},
+			},
+		},
+		{
 			name: "lock",
 			contract: mapperBuilderContract{
 				statement: skillMapperFindForUpdateByExternalIDStatement,

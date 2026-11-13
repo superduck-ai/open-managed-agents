@@ -40,6 +40,11 @@ type updateSkillLatestVersionParams struct {
 	UpdatedAt     time.Time
 }
 
+type skillReferencingAgentRow struct {
+	ExternalID string `db:"external_id"`
+	Name       string `db:"name"`
+}
+
 type SkillMapper interface {
 	UpdateIcon(ctx context.Context, workspaceUUID, externalID, iconKey string) (skillRow, error)
 	LockWorkspace(ctx context.Context, workspaceUUID string) error
@@ -47,6 +52,7 @@ type SkillMapper interface {
 	Insert(ctx context.Context, params insertSkillParams) (skillRow, error)
 	FindByExternalID(ctx context.Context, workspaceUUID, externalID string) (skillRow, error)
 	FindForUpdateByExternalID(ctx context.Context, workspaceUUID, externalID string) (skillRow, error)
+	ListReferencingActiveAgents(ctx context.Context, workspaceUUID, externalID string) ([]skillReferencingAgentRow, error)
 	ListPage(ctx context.Context, workspaceUUID string, limit, offset int, onlyVersioned bool) ([]skillRow, error)
 	FindUUIDByExternalID(ctx context.Context, workspaceUUID, externalID string) (string, error)
 	UpdateLatestVersionByExternalID(ctx context.Context, params updateSkillLatestVersionParams) (skillRow, error)

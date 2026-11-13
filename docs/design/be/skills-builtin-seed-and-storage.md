@@ -102,7 +102,7 @@ Skill。版本删除和新增沿用 Skill 行锁，最后版本保护和删除�
 回滚该迁移要求先处理正式版产生的重名数据，不能静默删除或重命名已有 Skill。
 
 旧版删除完全部版本后，正式 retrieve 返回 400，正式列表不包含该 Skill；可继续上传新版本或直接
-删除 Skill。分页游标带契约标记，不允许跨新旧契约使用。软删除不立即删除 archive，以保证已经
+删除 Skill。分页游标带契约标记，不允许跨新旧契约使用。删除自定义 Skill 时，事务内先检查当前工作区未删除且未归档 Agent 的最新版本（含 `skills` 与 `multiagent.predefined_agents[].skills`）是否引用该 Skill；若存在活跃引用则返回 `409 Conflict` 阻止删除，历史版本或已归档 Agent 不拦截。软删除不立即删除 archive，以保证已经
 启动的 Session 仍能读取钉住版本。
 
 契约来源：[官方迁移说明](https://platform.claude.com/docs/en/build-with-claude/skills-guide#migrate-from-skills-2025-10-02)。

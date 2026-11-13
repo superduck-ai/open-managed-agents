@@ -37,6 +37,10 @@ func queueCodeSessionEventsError(cause error) error {
 	return internalError("Could not queue events for the code session worker", cause)
 }
 
+func invalidSessionPort(port string) error {
+	return apperr.New(apperr.InvalidArgument, "port must be an integer between 1 and 65535 that is not reserved: "+port, nil)
+}
+
 func sessionRouteNotFound() error {
 	return apperr.New(apperr.NotFound, "Not found", nil)
 }

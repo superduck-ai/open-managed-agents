@@ -14,7 +14,7 @@ func TestCurrentToolSnapshotReplacesFrozenMCPContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := sessionContextFromCodeSession(updated, MCPRuntimeIdentity{}, config.Config{})
+	result, err := sessionContextFromCodeSession(updated, MCPRuntimeIdentity{}, config.Config{}, builtinToolCatalog{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestCurrentToolSnapshotClearsRemovedServersAndRejectsInvalidJSON(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := sessionContextFromCodeSession(updated, MCPRuntimeIdentity{}, config.Config{})
+	result, err := sessionContextFromCodeSession(updated, MCPRuntimeIdentity{}, config.Config{}, builtinToolCatalog{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestCurrentToolSnapshotScopesLocalPermissionCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := sessionContextFromCodeSession(scoped, MCPRuntimeIdentity{}, config.Config{})
+	result, err := sessionContextFromCodeSession(scoped, MCPRuntimeIdentity{}, config.Config{}, builtinToolCatalog{})
 	if err != nil {
 		t.Fatal(err)
 	}

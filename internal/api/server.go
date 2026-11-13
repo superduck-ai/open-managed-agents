@@ -38,8 +38,10 @@ import (
 	platformapi "github.com/superduck-ai/open-managed-agents/internal/platformapi"
 	"github.com/superduck-ai/open-managed-agents/internal/platformauth"
 	"github.com/superduck-ai/open-managed-agents/internal/platformsession"
+	"github.com/superduck-ai/open-managed-agents/internal/porttunnel"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionfanout"
+	"github.com/superduck-ai/open-managed-agents/internal/sessionports"
 	sessionsapi "github.com/superduck-ai/open-managed-agents/internal/sessions"
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
@@ -91,6 +93,7 @@ type Server struct {
 	tunnelBroker         *tunnelsapi.Broker
 	vaults               *vaultsapi.Handler
 	webhooks             *webhooksapi.Handler
+	sessionPortTunnel    *porttunnel.Handler
 }
 
 // ServerDeps 汇总组装 HTTP API Server 所需依赖。
@@ -124,6 +127,9 @@ type ServerDeps struct {
 	TunnelBroker           *tunnelsapi.Broker
 	TunnelPresence         *tunnelsapi.ConnectorPresence
 	WorkerEventAcks        workerevents.AckStore
+	SessionPorts           *sessionports.Settings
+	SessionPortRegistry    *porttunnel.Registry
+	SessionPortRouter      porttunnel.Router
 }
 
 // NewServer 用显式依赖组装 HTTP API Server。
@@ -219,6 +225,10 @@ func NewServer(deps ServerDeps) *Server {
 	router.Use(s.requestIDMiddleware)
 	router.Use(observeRequests(componentLogger("http"), router))
 	router.Use(s.recoverMiddleware)
+	if gateway := s.configureSessionPorts(deps, codeSessionService, componentLogger("session_port_tunnel"), componentLogger("session_port_gateway")); gateway != nil {
+		router.Use(gateway.Middleware)
+		router.Get(porttunnel.Path, s.sessionPortTunnel.ServeHTTP)
+	}
 	router.NotFound(notFound)
 	router.MethodNotAllowed(notFound)
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -443,6 +453,9 @@ func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				if abort, ok := recovered.(error); ok && errors.Is(abort, http.ErrAbortHandler) {
+					panic(recovered)
+				}
 				requestID := httpapi.RequestID(r.Context())
 				s.logger.ErrorContext(
 					r.Context(),

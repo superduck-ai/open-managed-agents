@@ -2,7 +2,8 @@ package codesessions
 
 import (
 	"context"
-	"encoding/json/v2"
+	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"io"
 	"net/http"
 	"slices"
@@ -59,8 +60,23 @@ func (h *Handler) ancestorWebScopes(ctx context.Context, id, threadID, name stri
 	if !found {
 		return nil, db.ErrNotFound
 	}
-	seen := map[string]bool{}
+	snapshots, err := h.threadSnapshotChain(ctx, codeSession, threadID)
+	if err != nil {
+		return nil, err
+	}
 	var scopes webtools.Policy
+	for _, snapshot := range snapshots {
+		if err := h.addWebToolScope(&scopes, snapshot, name); err != nil {
+			return nil, err
+		}
+	}
+	slices.Reverse(scopes.Tools)
+	return scopes.Tools, nil
+}
+
+func (h *Handler) threadSnapshotChain(ctx context.Context, codeSession db.CodeSession, threadID string) ([]json.RawMessage, error) {
+	seen := map[string]bool{}
+	var snapshots []json.RawMessage
 	for threadID != "" {
 		if len(seen) >= 32 || seen[threadID] {
 			return nil, db.ErrNotFound
@@ -80,22 +96,18 @@ func (h *Handler) ancestorWebScopes(ctx context.Context, id, threadID, name stri
 		if err != nil {
 			return nil, err
 		}
-		if err := h.addWebToolScope(&scopes, snapshot, name); err != nil {
-			return nil, err
-		}
+		snapshots = append(snapshots, snapshot)
 		threadID = *thread.ParentThreadExternalID
 	}
-	slices.Reverse(scopes.Tools)
-	return scopes.Tools, nil
+	return snapshots, nil
 }
 
 func (h *Handler) addWebToolScope(policy *webtools.Policy, snapshot []byte, name string) error {
-	tools, err := runtimeRootToolsets(snapshot)
+	enabled, err := h.service.builtinTools().toolEnabled(snapshot, name)
 	if err != nil {
 		return err
 	}
-	permission, _ := resolveToolPermissionFromAgentSnapshot(snapshot, name)
-	if permission == resolvedToolPermissionDeny || !slices.Contains(runtimeBuiltinTools(tools), name) {
+	if !enabled {
 		return webToolDenied()
 	}
 	config, err := webtools.ConfigFromSnapshot(snapshot, name)
@@ -144,5 +156,5 @@ func (h *Handler) handleWebFetch(w http.ResponseWriter, r *http.Request) {
 
 func decodeWebInput(w http.ResponseWriter, r *http.Request, input any) bool {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<10))
-	return err == nil && json.Unmarshal(raw, input, json.RejectUnknownMembers(true)) == nil
+	return err == nil && jsonv2.Unmarshal(raw, input, jsonv2.RejectUnknownMembers(true)) == nil
 }

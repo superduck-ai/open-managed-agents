@@ -19,3 +19,12 @@ func validateBrainRuntimeConfig(cfg EnvironmentRunnerConfig, codeSession CodeSes
 	}
 	return nil
 }
+
+const DefaultSandboxMCPPort = 3001
+
+func (c EnvironmentRunnerConfig) EffectiveSandboxMCPPort() int {
+	if c.SandboxMCPPort == 0 {
+		return DefaultSandboxMCPPort
+	}
+	return c.SandboxMCPPort
+}

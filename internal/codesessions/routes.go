@@ -27,6 +27,7 @@ func (h *Handler) RegisterV2Routes(router chi.Router) {
 	router.Post("/ccr-sessions/{code_session_id}/sandbox/mcp", h.handleSandboxMCP)
 	router.Post("/ccr-sessions/{code_session_id}/web/search", h.handleWebSearch)
 	router.Post("/ccr-sessions/{code_session_id}/web/fetch", h.handleWebFetch)
+	router.Post("/ccr-sessions/{code_session_id}/port-url", h.handlePortURL)
 	router.Handle("/ccr-sessions/{code_session_id}/mcp/*", http.HandlerFunc(h.handleNamedMCPProxy))
 }
 

@@ -62,7 +62,7 @@ func TestRuntimeRootToolsMatchPermissionEnforcement(t *testing.T) {
 		`{"tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":false},"configs":[{"name":"web_search","enabled":true},{"name":"web_fetch","enabled":true}]}]}`:                {"web_search", "web_fetch"},
 	} {
 		tools, err := runtimeRootToolsets(json.RawMessage(snapshot))
-		if got := enabledSandboxTools(tools); err != nil || !slices.Equal(got, want) {
+		if got := (builtinToolCatalog{}).enabledSandboxTools(tools); err != nil || !slices.Equal(got, want) {
 			t.Errorf("enabledSandboxTools(%s) = %v, %v; want %v", snapshot, got, err, want)
 		}
 	}
@@ -94,8 +94,9 @@ func TestRuntimeToolPoliciesMatchPermissionEnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policies := runtimeToolPolicies(tools)
-	for _, name := range sandboxToolNames {
+	catalog := builtinToolCatalog{portURL: true}
+	policies := catalog.toolPolicies(tools)
+	for _, name := range catalog.names() {
 		permission, _ := resolveToolPermissionFromAgentSnapshot(snapshot, name)
 		if remoteName := managedAgentToolName(name); policies[remoteName] != string(permission) {
 			t.Errorf("%s policy = %q, enforcement = %q", remoteName, policies[remoteName], permission)
@@ -112,7 +113,7 @@ func TestRuntimeAutoPolicyDefersToAuthoritativeServerEvaluation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policies := runtimeToolPolicies(tools)
+	policies := builtinToolCatalog{}.toolPolicies(tools)
 	if policies["write"] != "ask" || policies["read"] != "allow" || policies["bash"] != "deny" {
 		t.Fatalf("invalid Brain boundary or local auto grant: %v", policies)
 	}

@@ -12,6 +12,7 @@ import {
   BUILT_IN_AGENT_TOOLSETS,
   aggregateToolPermissions,
   effectiveToolPermission,
+  isExplicitOnlyBuiltInTool,
   type McpDirectoryServer,
   type ToolPermissionState,
 } from './tools/model';
@@ -89,6 +90,7 @@ const builtInToolNameSchema = z.enum([
   'ask_user_question',
   'bash',
   'edit',
+  'get_port_url',
   'glob',
   'grep',
   'read',
@@ -407,12 +409,21 @@ export function toolsetPermission(
   fallback: EditablePermission,
 ): ToolPermissionState {
   const defaultPermission = effectiveToolPermission(toRecord(toolset.default_config) ?? undefined, fallback);
-  const configs = Array.isArray(toolset.configs) ? toolset.configs : [];
-  const permissions = names.map((name) => {
-    const override = configs.map(toRecord).find((config) => config?.name === name);
-    return effectiveToolPermission(override ?? undefined, defaultPermission);
-  });
+  const permissions = names.map((name) => toolsetToolPermission(toolset, name, defaultPermission));
   return aggregateToolPermissions(permissions, defaultPermission);
+}
+
+export function toolsetToolPermission(
+  toolset: Record<string, unknown>,
+  name: string,
+  defaultPermission: EditablePermission,
+): EditablePermission {
+  const configs = Array.isArray(toolset.configs) ? toolset.configs : [];
+  const override = configs.map(toRecord).find((config) => config?.name === name);
+  if (!override && toolset.type === 'agent_toolset_20260401' && isExplicitOnlyBuiltInTool(name)) {
+    return 'always_deny';
+  }
+  return effectiveToolPermission(override ?? undefined, defaultPermission);
 }
 
 export function setToolsetPermission(

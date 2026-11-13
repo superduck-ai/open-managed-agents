@@ -13,8 +13,12 @@ test.each(['agents', 'sessions', 'deployments', 'environments', 'vaults', 'memor
 test.each(['files', 'batches', 'llm-models', 'playground', 'observability', 'dreams', 'cost', 'logs', 'mcp-servers'])(
   '切换 %s 列表进入目标工作区',
   (section) => {
-    expect(workspaceSwitchPath(`/workspaces/default/${section}`, 'other')).toBe(`/workspaces/other/${section}`);
-    expect(workspaceSwitchPath(`/${section}`, 'other')).toBe(`/workspaces/other/${section}`);
+    expect(workspaceSwitchPath(`/workspaces/default/${section}`, 'other')).toBe(
+      section === 'llm-models' ? '/settings/llm' : `/workspaces/other/${section}`,
+    );
+    expect(workspaceSwitchPath(`/${section}`, 'other')).toBe(
+      section === 'llm-models' ? '/settings/llm' : `/workspaces/other/${section}`,
+    );
   },
 );
 
@@ -43,8 +47,6 @@ test.each(['/settings/workspaces/default/mcp-tunnels', '/settings/workspaces/def
 );
 
 test('switching workspace model settings retains scope and discards old resource query', () => {
-  expect(workspaceSwitchPath('/settings/workspaces/first/llm?returnTo=old#models', 'other')).toBe(
-    '/settings/workspaces/other/llm',
-  );
-  expect(workspaceSwitchPath('/settings/llm/organization', 'other')).toBe('/settings/llm/organization');
+  expect(workspaceSwitchPath('/settings/workspaces/first/llm?returnTo=old#models', 'other')).toBe('/settings/llm');
+  expect(workspaceSwitchPath('/settings/llm/organization', 'other')).toBe('/settings/llm');
 });

@@ -20,7 +20,7 @@ func testProviderRecovery(t *testing.T, database *db.DB, vault *secrets.Service,
 	}}
 	partial := providers.Providers[0]
 	partial.Slug = "default"
-	committed, err := createProvider(t.Context(), database, vault, state.Organization.UUID, state.Workspaces[0], partial)
+	committed, err := createProvider(t.Context(), database, vault, state.Organization.UUID, partial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,26 +40,31 @@ func testProviderRecovery(t *testing.T, database *db.DB, vault *secrets.Service,
 		t.Fatal(err)
 	}
 	*state = reloaded
-	original, err := database.ListOrganizationLLMProviders(t.Context(), state.Organization.UUID)
-	if err != nil || len(original) != 4 {
+	original, err := database.ListLLMProviders(t.Context(), state.Organization.UUID)
+	if err != nil || len(original) != 2 {
 		t.Fatalf("organization providers: %d, %v", len(original), err)
 	}
-	for index, workspace := range state.Workspaces {
-		items, err := database.ListLLMProviders(t.Context(), state.Organization.UUID, workspace.UUID)
-		if err != nil || len(items) != 2 {
-			t.Fatalf("workspace providers: %d, %v", len(items), err)
+	byName := map[string]string{}
+	for _, item := range original {
+		byName[item.Name] = item.Slug
+	}
+	if byName["first"] != "default" || byName["second"] != "compatible" {
+		t.Fatalf("provider slugs: %v", byName)
+	}
+	for i, spec := range providers.Providers {
+		spec.Slug = original[i].Slug + "-legacy"
+		legacy, err := createProvider(t.Context(), database, vault, state.Organization.UUID, spec)
+		if err != nil {
+			t.Fatal(err)
 		}
-		suffix := ""
-		if index == 1 {
-			suffix = "-2"
-		}
-		byName := map[string]string{}
-		for _, item := range items {
-			byName[item.Name] = item.Slug
-		}
-		if byName["first"] != "default"+suffix || byName["second"] != "compatible"+suffix {
-			t.Fatalf("provider slugs: %v", byName)
-		}
+		state.Providers = append(state.Providers, ProviderState{Name: spec.Name, ExternalID: legacy.ExternalID})
+	}
+	if err := reconcileProviders(t.Context(), database, vault, providers, state, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	original, err = database.ListLLMProviders(t.Context(), state.Organization.UUID)
+	if err != nil || len(original) != 4 || len(state.Providers) != 4 {
+		t.Fatalf("legacy registrations lost: %d/%d, %v", len(original), len(state.Providers), err)
 	}
 	changedSlug := ModelProvidersSpec{Providers: append([]ProviderSpec(nil), providers.Providers...)}
 	changedSlug.Providers[1].Slug = "renamed"
@@ -80,7 +85,7 @@ func testProviderRecovery(t *testing.T, database *db.DB, vault *secrets.Service,
 	if err := reconcileProviders(t.Context(), database, vault, providers, state, Options{}); err != nil {
 		t.Fatalf("legacy state with migration-assigned slugs: %v", err)
 	}
-	unchanged, err := database.ListOrganizationLLMProviders(t.Context(), state.Organization.UUID)
+	unchanged, err := database.ListLLMProviders(t.Context(), state.Organization.UUID)
 	if err != nil || !reflect.DeepEqual(original, unchanged) {
 		t.Fatalf("legacy retry changed providers: %v", err)
 	}
@@ -97,12 +102,12 @@ func testProviderRecovery(t *testing.T, database *db.DB, vault *secrets.Service,
 		}
 	}
 	for i, previous := range original {
-		current, err := database.GetLLMProvider(t.Context(), state.Organization.UUID, previous.WorkspaceUUID, previous.ExternalID)
+		current, err := database.GetLLMProvider(t.Context(), state.Organization.UUID, previous.ExternalID)
 		if err != nil || current.UUID != previous.UUID || current.Slug != previous.Slug {
 			t.Fatalf("provider identity changed: %+v, %v", current, err)
 		}
 		qualified := llmproviders.QualifiedModelID(previous.Slug, "shared-model")
-		upstream, err := llmproviders.Resolve(t.Context(), database, vault, state.Organization.UUID, previous.WorkspaceUUID, qualified)
+		upstream, err := llmproviders.Resolve(t.Context(), database, vault, state.Organization.UUID, qualified)
 		if err != nil || upstream.QualifiedModelID != qualified || upstream.ModelID != "shared-model" {
 			t.Fatalf("model reference changed: %+v, %v", upstream, err)
 		}
@@ -112,7 +117,7 @@ func testProviderRecovery(t *testing.T, database *db.DB, vault *secrets.Service,
 	}
 	duplicate := providers.Providers[0]
 	duplicate.Slug = "duplicate-name"
-	if _, err := createProvider(t.Context(), database, vault, state.Organization.UUID, state.Workspaces[0], duplicate); err != nil {
+	if _, err := createProvider(t.Context(), database, vault, state.Organization.UUID, duplicate); err != nil {
 		t.Fatal(err)
 	}
 	if err := reconcileProviders(t.Context(), database, vault, providers, state, Options{}); err != nil {
@@ -124,13 +129,13 @@ func testProviderRecovery(t *testing.T, database *db.DB, vault *secrets.Service,
 		t.Fatal("ambiguous name recovery was accepted")
 	}
 	registered := state.Providers[0]
-	if err := database.DeleteLLMProvider(t.Context(), state.Organization.UUID, state.Workspaces[0].UUID, registered.ExternalID); err != nil {
+	if err := database.DeleteLLMProvider(t.Context(), state.Organization.UUID, registered.ExternalID); err != nil {
 		t.Fatal(err)
 	}
 	if err := reconcileProviders(t.Context(), database, vault, providers, state, Options{Update: true}); err == nil {
 		t.Fatal("deleted registered provider was replaced by a same-name provider")
 	}
-	if _, err := database.GetLLMProvider(t.Context(), state.Organization.UUID, state.Workspaces[0].UUID, registered.ExternalID); !errors.Is(err, db.ErrNotFound) {
+	if _, err := database.GetLLMProvider(t.Context(), state.Organization.UUID, registered.ExternalID); !errors.Is(err, db.ErrNotFound) {
 		t.Fatalf("deleted provider was recreated: %v", err)
 	}
 }

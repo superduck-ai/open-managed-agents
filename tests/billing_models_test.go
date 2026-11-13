@@ -63,7 +63,8 @@ func TestModelPriceReconciliation(t *testing.T) {
 			seen[tc.Model] = true
 		}
 	}
-	provider := seedTestLLMProviderForWorkspace(t, app, uuid.NewV4().String(), uuid.NewV4().String(), "多模型计费对账", "https://example.test", "fixture-key", models...)
+	workspaceUUID := uuid.NewV4().String()
+	provider := seedTestLLMProviderForWorkspace(t, app, uuid.NewV4().String(), workspaceUUID, "多模型计费对账", "https://example.test", "fixture-key", models...)
 	if err := app.db.ReplaceModelPriceCatalog(t.Context(), "openrouter", prices); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestModelPriceReconciliation(t *testing.T) {
 				t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
 					store := &billingRecordedStore{database: app.db}
 					transport := &metering.Transport{Base: http.DefaultTransport, Store: store, Calculator: app.db.BillingCalculator(), Source: "api"}
-					ctx := auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: provider.WorkspaceUUID})
+					ctx := auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUID: workspaceUUID})
 					request, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s?stream=%t", upstream.URL, stream), strings.NewReader(fmt.Sprintf(`{"model":%q}`, tc.Model)))
 					if err != nil {
 						t.Fatal(err)
@@ -133,7 +134,7 @@ func TestModelPriceReconciliation(t *testing.T) {
 					if err := app.db.SQLDB().QueryRowContext(t.Context(), "SELECT CURRENT_TIMESTAMP").Scan(&databaseNow); err != nil {
 						t.Fatal(err)
 					}
-					query := db.UsageQuery{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUIDs: []string{provider.WorkspaceUUID}, Model: tc.Model, Start: last.StartedAt, End: time.Now().UTC().Add(time.Second), AsOf: databaseNow, Timezone: "UTC"}
+					query := db.UsageQuery{OrganizationUUID: provider.OrganizationUUID, WorkspaceUUIDs: []string{workspaceUUID}, Model: tc.Model, Start: last.StartedAt, End: time.Now().UTC().Add(time.Second), AsOf: databaseNow, Timezone: "UTC"}
 					rows, err := app.db.AggregateUsage(t.Context(), query)
 					if err != nil {
 						t.Fatal(err)

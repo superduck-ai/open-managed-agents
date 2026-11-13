@@ -86,10 +86,9 @@ type APIKeyState struct {
 }
 
 type ProviderState struct {
-	InputSlug    *string `json:"input_slug,omitempty"`
-	WorkspaceRef string  `json:"workspace_ref"`
-	Name         string  `json:"name"`
-	ExternalID   string  `json:"external_id"`
+	InputSlug  *string `json:"input_slug,omitempty"`
+	Name       string  `json:"name"`
+	ExternalID string  `json:"external_id"`
 }
 
 // Credentials stores plaintext client keys. Losing it prevents key recovery

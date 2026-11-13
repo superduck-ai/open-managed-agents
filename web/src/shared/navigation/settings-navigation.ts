@@ -14,7 +14,7 @@ export const settingsGroups: (NavGroupItem & { id: string })[] = [
     labelId: 'nav.modelsAndAccess',
     icon: productIcons.modelsAndAccess,
     children: [
-      { href: '/llm-models', label: 'LLM models', labelId: 'nav.llmModels', icon: productIcons.models },
+      { href: '/settings/llm', label: 'LLM models', labelId: 'nav.llmModels', icon: productIcons.models },
       { href: '/api-keys', label: 'API keys', labelId: 'nav.apiKeys', icon: productIcons.keys },
     ],
   },
@@ -94,7 +94,11 @@ export function visibleSettingsGroups(account: AuthAccount | null | undefined, o
 }
 
 export function settingsItem(path: string) {
-  const canonicalPath = isActivePath(path, '/telemetry') ? '/settings/telemetry' : path;
+  const canonicalPath = isActivePath(path, '/settings/llm')
+    ? '/settings/llm'
+    : isActivePath(path, '/telemetry')
+      ? '/settings/telemetry'
+      : path;
   return settingsGroups
     .flatMap((group) => group.children.map((item) => ({ ...item, group })))
     .find((item) =>
@@ -113,7 +117,7 @@ export function isSettingsPath(path: string) {
 }
 
 export function settingScope(path: string) {
-  if (path === '/settings/llm') return 'workspace';
+  if (isActivePath(path, '/settings/llm')) return 'organization';
   if (path === '/billing' || isActivePath(path, '/telemetry')) return 'organization';
   if (path === '/usage' || path === '/cost' || /^\/workspaces\/[^/]+\/cost/.test(path)) return 'organization';
   if (path === '/settings/profile' || path === '/settings/appearance') return 'personal';

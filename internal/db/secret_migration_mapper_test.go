@@ -48,3 +48,25 @@ func TestSecretMigrationMapper(t *testing.T) {
 		})
 	}
 }
+
+func TestLLMProviderSecretMigrationBindings(t *testing.T) {
+	for _, binding := range []string{"organization", "00000000-0000-4000-8000-000000000002"} {
+		expected := SecretMigrationRecord{OrganizationUUID: "00000000-0000-4000-8000-000000000001", WorkspaceUUID: binding}
+		bound := buildSecretMigrationMapperReplace(yourbatis.DialectPostgres, "llm_providers", expected, nil)
+		if !strings.Contains(bound.SQL, "COALESCE(CAST(m.secret_workspace_uuid AS text), 'organization')") {
+			t.Fatal("missing immutable encryption binding")
+		}
+		found := false
+		for _, arg := range bound.Args {
+			if arg.Name == "expected.WorkspaceUUID" {
+				found = true
+				if arg.Value != binding {
+					t.Fatalf("binding = %v", arg.Value)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("binding not compared")
+		}
+	}
+}

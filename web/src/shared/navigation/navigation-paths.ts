@@ -1,6 +1,5 @@
 import {
   workspaceSwitchPath,
-  workspaceLLMModelsPath,
   workspaceApiKeysPath,
   workspaceWebhooksPath,
   workspaceTelemetryPath,
@@ -32,7 +31,7 @@ const workspaceSettingsResourceByHref: Record<string, string> = {
 };
 
 export function navigationHref(href: string, workspaceId: string) {
-  if (href === '/llm-models' || href === '/settings/llm') return workspaceLLMModelsPath(workspaceId);
+  if (href === '/llm-models' || href === '/settings/llm') return '/settings/llm';
   if (href === '/logs') {
     return workspaceSwitchPath(href, workspaceId);
   }

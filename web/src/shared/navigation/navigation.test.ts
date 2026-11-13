@@ -38,7 +38,7 @@ test('workspace resources do not match the organization workspace directory', ()
 test('settings use the confirmed four groups and organization-level model and telemetry entries', () => {
   const groups = visibleSettingsGroups(account, 'org');
   expect(groups.map((group) => group.id)).toEqual(['access', 'activity', 'organization', 'personal']);
-  expect(groups[0].children.map((item) => item.href)).toEqual(['/llm-models', '/api-keys']);
+  expect(groups[0].children.map((item) => item.href)).toEqual(['/settings/llm', '/api-keys']);
   expect(groups[2].children.map((item) => item.href)).toEqual([
     '/settings/members',
     '/settings/workspaces',
@@ -58,9 +58,9 @@ test('settings use the confirmed four groups and organization-level model and te
 });
 
 test('scope labels reflect actual ownership', () => {
-  expect(settingScope('/settings/llm')).toBe('workspace');
+  expect(settingScope('/settings/llm')).toBe('organization');
   expect(settingScope('/settings/llm/organization')).toBe('organization');
-  expect(settingScope('/settings/workspaces/team/llm')).toBe('workspace');
+  expect(settingScope('/settings/workspaces/team/llm')).toBe('organization');
   expect(settingScope('/settings/telemetry')).toBe('organization');
   expect(settingScope('/usage')).toBe('organization');
   expect(settingScope('/settings/profile')).toBe('personal');
@@ -113,10 +113,10 @@ test.each(['en', 'zh-CN'])('channels follows skills in the %s resource navigatio
   expect(items[skills + 1].icon).toBe(productIcons.channels);
 });
 
-test('both model scopes select the single workspace-addressed settings entry', () => {
+test('legacy model routes select the organization settings entry', () => {
   for (const path of ['/settings/workspaces/team/llm', '/settings/llm/organization', '/settings/llm']) {
-    expect(settingsItem(path)?.href).toBe('/llm-models');
+    expect(settingsItem(path)?.href).toBe('/settings/llm');
     expect(isActivePath(path, '/llm-models')).toBe(true);
   }
-  expect(navigationHref('/llm-models', 'team')).toBe('/settings/workspaces/team/llm');
+  expect(navigationHref('/llm-models', 'team')).toBe('/settings/llm');
 });

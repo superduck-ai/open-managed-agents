@@ -206,7 +206,7 @@ func (h *Handler) normalizeConfiguredModels(
 	body *createRequest,
 	requestModels []string,
 ) error {
-	catalog, err := llmproviders.LoadCatalog(ctx, h.db, organizationUUID, workspaceUUID)
+	catalog, err := llmproviders.LoadCatalog(ctx, h.db, organizationUUID)
 	if err != nil {
 		return configuredModelError(err)
 	}

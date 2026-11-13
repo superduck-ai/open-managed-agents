@@ -8,7 +8,7 @@ import { loadBuilderCapabilities, builderCapabilityDirectory } from './capabilit
 import { loadMcpDirectoryServers } from '../../agents/tools/api';
 import { errorMessage } from '../../utils';
 import { anthropicBetaApi } from '../../../../shared/api/anthropic';
-import { listLLMProviders, listOrganizationLLMProviders } from '../../../llm-providers/api';
+import { listOrganizationLLMProviders } from '../../../llm-providers/api';
 import { listCreateAgentSkills } from '../../agents/create-dialog-api';
 import { createAgentDraftSchema, normalizeCreateAgentDraft } from '../../agents/create-dialog-model';
 import { buildAgentUpdateInput } from '../../agentConfig';
@@ -26,34 +26,24 @@ import { environmentInputSchema, validatedDeployment } from './tools';
 import { invalidateBuilderTest, builderTestBinding, type BuilderState, type BuilderTool } from './model';
 
 export async function loadBuilderCatalog(orgUuid: string, workspaceId: string) {
-  const [resources, skills, providers, organizationProviders] = await Promise.all([
+  const [resources, skills, providers] = await Promise.all([
     loadQuickstartResources(workspaceId),
     listCreateAgentSkills(workspaceId),
-    listLLMProviders(orgUuid, workspaceId),
     listOrganizationLLMProviders(orgUuid),
   ]);
   const capabilities = await loadBuilderCapabilities(orgUuid, workspaceId, resources.agents);
   const metadata = capabilities.length ? await loadMcpDirectoryServers().catch(() => []) : [];
   const directory = builderCapabilityDirectory(capabilities, metadata);
-  return { ...resources, capabilities, directory, skills, providers: [...providers, ...organizationProviders] };
+  return { ...resources, capabilities, directory, skills, providers };
 }
 export type BuilderCatalog = Awaited<ReturnType<typeof loadBuilderCatalog>>;
 export function builderBackend(model: string, catalog: BuilderCatalog) {
-  const scopes = [
-    catalog.providers.filter((provider) => provider.scope !== 'organization'),
-    catalog.providers.filter((provider) => provider.scope === 'organization'),
-  ];
-  for (const providers of scopes) {
-    const qualified = providers.find((provider) =>
-      provider.models.some((item) => model === `${provider.id}/${item.id}` || model === `${provider.slug}/${item.id}`),
-    );
-    if (qualified) return qualified.api_backend;
-  }
-  for (const providers of scopes) {
-    const candidates = providers.filter((provider) => provider.models.some((item) => model === item.id));
-    if (candidates.length === 1) return candidates[0].api_backend;
-    if (candidates.length > 1) break;
-  }
+  const qualified = catalog.providers.find((provider) =>
+    provider.models.some((item) => model === `${provider.id}/${item.id}` || model === `${provider.slug}/${item.id}`),
+  );
+  if (qualified) return qualified.api_backend;
+  const candidates = catalog.providers.filter((provider) => provider.models.some((item) => model === item.id));
+  if (candidates.length === 1) return candidates[0].api_backend;
   throw new Error('Unable to resolve the builder model provider. Refresh the model catalog.');
 }
 const mcpSchema = z.object({ name: z.string(), url: z.string() });

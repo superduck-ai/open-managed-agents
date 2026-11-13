@@ -30,20 +30,27 @@ type llmProviderRequest struct {
 	ModelIDs   []string     `json:"model_ids"`
 }
 
+type llmProviderCreatorResponse struct {
+	AccountUUID string `json:"account_uuid"`
+	Name        string `json:"name"`
+}
+
 type llmProviderResponse struct {
-	Models      db.LLMModels `json:"models"`
-	APIBackend  string       `json:"api_backend"`
-	Type        string       `json:"type"`
-	ID          string       `json:"id"`
-	Name        string       `json:"name"`
-	Slug        string       `json:"slug"`
-	BaseURL     string       `json:"base_url"`
-	HasAPIKey   bool         `json:"has_api_key"`
-	APIKeyLast4 string       `json:"api_key_last4"`
-	ModelIDs    []string     `json:"model_ids"`
-	CreatedAt   string       `json:"created_at"`
-	UpdatedAt   string       `json:"updated_at"`
-	Scope       string       `json:"scope,omitempty"`
+	CreatedBy   *llmProviderCreatorResponse `json:"created_by"`
+	CanManage   bool                        `json:"can_manage"`
+	Models      db.LLMModels                `json:"models"`
+	APIBackend  string                      `json:"api_backend"`
+	Type        string                      `json:"type"`
+	ID          string                      `json:"id"`
+	Name        string                      `json:"name"`
+	Slug        string                      `json:"slug"`
+	BaseURL     string                      `json:"base_url"`
+	HasAPIKey   bool                        `json:"has_api_key"`
+	APIKeyLast4 string                      `json:"api_key_last4"`
+	ModelIDs    []string                    `json:"model_ids"`
+	CreatedAt   string                      `json:"created_at"`
+	UpdatedAt   string                      `json:"updated_at"`
+	Scope       string                      `json:"scope,omitempty"`
 }
 
 func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretService *secrets.Service, presetsFile string) {
@@ -53,7 +60,7 @@ func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretServi
 		r.Get("/", getConsoleOrganizationLLMProvider(database))
 		r.Put("/", putConsoleOrganizationLLMProvider(database, secretService))
 		r.Delete("/", deleteConsoleOrganizationLLMProvider(database))
-		r.Post("/preview_models", previewConsoleOrganizationLLMProviderModels(client))
+		r.Post("/preview_models", previewConsoleOrganizationLLMProviderModels(database, client))
 		r.Post("/models/sync", syncConsoleOrganizationLLMProviderModels(database, secretService, client, true))
 		r.Post("/models/preview", syncConsoleOrganizationLLMProviderModels(database, secretService, client, false))
 	})
@@ -79,18 +86,18 @@ func RegisterConsoleLLMProviderRoutes(r chi.Router, database *db.DB, secretServi
 
 func listConsoleLLMProviders(database *db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, scope, ok := llmProviderScope(w, r, database)
+		orgUUID, actor, ok := llmProviderScope(w, r, database)
 		if !ok {
 			return
 		}
-		providers, err := database.ListLLMProviders(r.Context(), orgUUID, scope.UUID)
+		providers, err := database.ListLLMProviders(r.Context(), orgUUID)
 		if err != nil {
 			internalError(w, "failed to list LLM providers")
 			return
 		}
 		response := make([]llmProviderResponse, 0, len(providers))
 		for _, provider := range providers {
-			response = append(response, formatLLMProvider(provider))
+			response = append(response, formatLLMProvider(provider, actor))
 		}
 		writeJSON(w, http.StatusOK, response)
 	}
@@ -98,8 +105,11 @@ func listConsoleLLMProviders(database *db.DB) http.HandlerFunc {
 
 func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, scope, ok := llmProviderScope(w, r, database)
+		orgUUID, actor, ok := llmProviderScope(w, r, database)
 		if !ok {
+			return
+		}
+		if !authorizeLLMProviderCreation(w, actor) {
 			return
 		}
 		body, ok := decodeLLMProviderRequest(w, r)
@@ -126,18 +136,18 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 		}
 		now := time.Now().UTC()
 		provider := db.LLMProvider{
-			UUID:             uuid.New().String(),
-			ExternalID:       externalID,
-			OrganizationUUID: orgUUID,
-			WorkspaceUUID:    scope.UUID,
-			APIBackend:       llmProviderBackend(body.APIBackend, llmproviders.Messages),
-			Name:             name,
-			Slug:             slug,
-			BaseURL:          baseURL,
-			APIKeyLast4:      lastFour(apiKey),
-			Models:           models,
-			CreatedAt:        now,
-			UpdatedAt:        now,
+			UUID:                 uuid.New().String(),
+			ExternalID:           externalID,
+			OrganizationUUID:     orgUUID,
+			CreatedByAccountUUID: actor.accountUUID,
+			APIBackend:           llmProviderBackend(body.APIBackend, llmproviders.Messages),
+			Name:                 name,
+			Slug:                 slug,
+			BaseURL:              baseURL,
+			APIKeyLast4:          lastFour(apiKey),
+			Models:               models,
+			CreatedAt:            now,
+			UpdatedAt:            now,
 		}
 		if !sealLLMProviderAPIKey(w, r, secretService, &provider, apiKey) {
 			return
@@ -155,24 +165,27 @@ func createConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			internalError(w, "failed to create LLM provider")
 			return
 		}
-		writeJSON(w, http.StatusCreated, formatLLMProvider(created))
+		writeJSON(w, http.StatusCreated, formatLLMProvider(created, actor))
 	}
 }
 
 func updateConsoleLLMProvider(database *db.DB, secretService *secrets.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, scope, ok := llmProviderScope(w, r, database)
+		orgUUID, actor, ok := llmProviderScope(w, r, database)
 		if !ok {
 			return
 		}
 		externalID := strings.TrimSpace(chi.URLParam(r, "providerId"))
-		current, err := database.GetLLMProvider(r.Context(), orgUUID, scope.UUID, externalID)
+		current, err := database.GetLLMProvider(r.Context(), orgUUID, externalID)
 		if errors.Is(err, db.ErrNotFound) {
 			writeLLMProviderError(w, http.StatusNotFound, llmProviderCodeNotFound, "LLM provider not found")
 			return
 		}
 		if err != nil {
 			internalError(w, "failed to load LLM provider")
+			return
+		}
+		if !authorizeLLMProviderManagement(w, actor, current) {
 			return
 		}
 		body, ok := decodeLLMProviderRequest(w, r)
@@ -211,22 +224,29 @@ func updateConsoleLLMProvider(database *db.DB, secretService *secrets.Service) h
 			internalError(w, "failed to update LLM provider")
 			return
 		}
-		writeJSON(w, http.StatusOK, formatLLMProvider(updated))
+		writeJSON(w, http.StatusOK, formatLLMProvider(updated, actor))
 	}
 }
 
 func deleteConsoleLLMProvider(database *db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, scope, ok := llmProviderScope(w, r, database)
+		orgUUID, actor, ok := llmProviderScope(w, r, database)
 		if !ok {
 			return
 		}
-		err := database.DeleteLLMProvider(
-			r.Context(),
-			orgUUID,
-			scope.UUID,
-			strings.TrimSpace(chi.URLParam(r, "providerId")),
-		)
+		provider, err := database.GetLLMProvider(r.Context(), orgUUID, strings.TrimSpace(chi.URLParam(r, "providerId")))
+		if errors.Is(err, db.ErrNotFound) {
+			writeLLMProviderError(w, http.StatusNotFound, llmProviderCodeNotFound, "LLM provider not found")
+			return
+		}
+		if err != nil {
+			internalError(w, "failed to load LLM provider")
+			return
+		}
+		if !authorizeLLMProviderManagement(w, actor, provider) {
+			return
+		}
+		err = database.DeleteLLMProvider(r.Context(), orgUUID, provider.ExternalID)
 		if errors.Is(err, db.ErrNotFound) {
 			writeLLMProviderError(w, http.StatusNotFound, llmProviderCodeNotFound, "LLM provider not found")
 			return
@@ -237,18 +257,6 @@ func deleteConsoleLLMProvider(database *db.DB) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
-}
-
-func llmProviderScope(w http.ResponseWriter, r *http.Request, database *db.DB) (string, WorkspaceScope, bool) {
-	orgUUID, ok := visibleOrgUUID(w, r)
-	if !ok {
-		return "", WorkspaceScope{}, false
-	}
-	if chi.URLParam(r, "workspaceId") == "" {
-		return orgUUID, WorkspaceScope{}, true
-	}
-	scope, ok := consoleWorkspaceScopeFromRequest(w, r, database, orgUUID)
-	return orgUUID, scope, ok
 }
 
 func decodeLLMProviderRequest(w http.ResponseWriter, r *http.Request) (llmProviderRequest, bool) {
@@ -363,7 +371,7 @@ func newLLMProviderSlug(
 		}
 		return slug, true
 	}
-	providers, err := database.ListOrganizationLLMProviders(r.Context(), organizationUUID)
+	providers, err := database.ListLLMProviders(r.Context(), organizationUUID)
 	if err != nil {
 		internalError(w, "failed to list LLM providers")
 		return "", false
@@ -391,7 +399,7 @@ func sealLLMProviderAPIKey(w http.ResponseWriter, r *http.Request, secretService
 	return true
 }
 
-func formatLLMProvider(provider db.LLMProvider) llmProviderResponse {
+func formatLLMProvider(provider db.LLMProvider, actor consoleLLMProviderActor) llmProviderResponse {
 	response := llmProviderResponse{
 		APIBackend:  provider.APIBackend,
 		Type:        "llm_provider",
@@ -406,8 +414,10 @@ func formatLLMProvider(provider db.LLMProvider) llmProviderResponse {
 		CreatedAt:   provider.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:   provider.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
-	if provider.WorkspaceUUID == "" {
-		response.Scope = "organization"
+	response.Scope = "organization"
+	response.CanManage = actor.canManage(provider)
+	if provider.CreatedByAccountUUID != "" {
+		response.CreatedBy = &llmProviderCreatorResponse{AccountUUID: provider.CreatedByAccountUUID, Name: provider.CreatedByName}
 	}
 	return response
 }

@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
+import { useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router';
 import { AuthContext } from '../shared/auth/context';
@@ -29,25 +30,25 @@ afterEach(() => {
 test.each([
   {
     path: '/llm-models?from=notice#model-config',
-    destination: '/settings/workspaces/default/llm',
+    destination: '/settings/llm',
     heading: 'LLM models',
     hash: 'model-config',
   },
   {
     path: '/llm-models?from=notice#model%20config',
-    destination: '/settings/workspaces/default/llm',
+    destination: '/settings/llm',
     heading: 'LLM models',
     hash: 'model config',
   },
   {
     path: '/llm-models?from=notice#model%25config',
-    destination: '/settings/workspaces/default/llm',
+    destination: '/settings/llm',
     heading: 'LLM models',
     hash: 'model%25config',
   },
   {
     path: '/workspaces/default/llm-models?from=notice#model-config',
-    destination: '/settings/workspaces/default/llm',
+    destination: '/settings/llm',
     heading: 'LLM models',
     hash: 'model-config',
   },
@@ -63,15 +64,21 @@ test.each([
     heading: 'Members',
     hash: 'member-list',
   },
-  { path: '/settings/llm/organization', destination: '/settings/llm/organization', heading: 'LLM models', hash: '' },
+  { path: '/settings/llm/organization', destination: '/settings/llm', heading: 'LLM models', hash: '' },
+  {
+    path: '/workspaces/missing/llm-models?from=old-link#model-config',
+    destination: '/settings/llm',
+    heading: 'LLM models',
+    hash: 'model-config',
+  },
   {
     path: '/workspaces/other/llm-models?returnTo=%2Fworkspaces%2Fother%2Fagent-quickstart%3Fmode%3Dapi#model%25config',
-    destination: '/settings/workspaces/other/llm',
+    destination: '/settings/llm',
     heading: 'LLM models',
     hash: 'model%25config',
   },
   { path: '/settings/billing', destination: '/billing', heading: 'Billing', hash: '' },
-  { path: '/settings/llm', destination: '/settings/workspaces/default/llm', heading: 'LLM models', hash: '' },
+  { path: '/settings/llm', destination: '/settings/llm', heading: 'LLM models', hash: '' },
 ])('settings route $path reaches $destination', async ({ path, destination, heading, hash }) => {
   const { router, history, requested, applicationOrigin } = await renderSettingsRoute(path);
 
@@ -88,12 +95,16 @@ test.each([
   expect(router.state.location.searchStr).toBe(original.search);
   expect(readWorkspaceManagementOrigin('acct_test', 'org_test')?.href).toBe(applicationOrigin);
   fireEvent.click(screen.getByRole('button', { name: 'Back to app' }));
-  await waitFor(() => expect(router.state.location.href).toBe(applicationOrigin));
+  await waitFor(() =>
+    expect(router.state.location.href).toBe(original.searchParams.get('returnTo') || applicationOrigin),
+  );
 });
 
 const workspaceProvider: LLMProvider = {
   id: 'provider_workspace',
   type: 'llm_provider',
+  created_by: { account_uuid: 'acct_test', name: 'Test creator' },
+  can_manage: true,
   api_backend: 'messages',
   name: 'Seeded workspace gateway',
   slug: 'primary',
@@ -114,8 +125,8 @@ async function renderSettingsRoute(path: string, organizationProviders: LLMProvi
   const requested: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     requested.push(String(input));
-    if (/\/workspaces\/[^/]+\/llm_providers$/.test(String(input))) return Response.json([workspaceProvider]);
-    if (/\/organizations\/[^/]+\/llm_providers$/.test(String(input))) return Response.json(organizationProviders);
+    if (/\/organizations\/[^/]+\/llm_providers$/.test(String(input)))
+      return Response.json([workspaceProvider, ...organizationProviders]);
     return /\/(llm_providers|members|invites)(\?|$)/.test(String(input))
       ? Response.json([])
       : Response.json({ data: [] });
@@ -141,21 +152,9 @@ async function renderSettingsRoute(path: string, organizationProviders: LLMProvi
           logout: async () => undefined,
         }}
       >
-        <WorkspaceContext.Provider
-          value={{
-            orgUuid: 'org_test',
-            activeWorkspace: defaultWorkspace,
-            activeWorkspaceId: defaultWorkspace.id,
-            workspaces: [defaultWorkspace],
-            isLoading: false,
-            error: null,
-            selectWorkspace: () => undefined,
-            createWorkspace: async () => defaultWorkspace,
-            refreshWorkspaces: async () => undefined,
-          }}
-        >
+        <SettingsWorkspace>
           <RouterProvider router={router} />
-        </WorkspaceContext.Provider>
+        </SettingsWorkspace>
       </AuthContext.Provider>
     </QueryClientProvider>,
   );
@@ -163,53 +162,57 @@ async function renderSettingsRoute(path: string, organizationProviders: LLMProvi
   return { router, history, requested, applicationOrigin };
 }
 
-test('direct model settings shows seeded workspace models when organization has no providers', async () => {
-  const { router } = await renderSettingsRoute('/settings/llm');
+function SettingsWorkspace({ children }: { children: ReactNode }) {
+  const [workspaceId, setWorkspaceId] = useState(defaultWorkspace.id);
+  const workspaces = [defaultWorkspace, { ...defaultWorkspace, id: 'other' }];
+  const selectWorkspace = (id: string) => {
+    if (workspaces.some((workspace) => workspace.id === id)) setWorkspaceId(id);
+  };
+  return (
+    <WorkspaceContext.Provider
+      value={{
+        orgUuid: 'org_test',
+        activeWorkspace: { ...defaultWorkspace, id: workspaceId },
+        activeWorkspaceId: workspaceId,
+        workspaces,
+        isLoading: false,
+        error: null,
+        selectWorkspace,
+        createWorkspace: async () => defaultWorkspace,
+        refreshWorkspaces: async () => undefined,
+      }}
+    >
+      {children}
+    </WorkspaceContext.Provider>
+  );
+}
+
+test('canonical model settings loads one organization collection with no scope control', async () => {
+  const { router, requested } = await renderSettingsRoute('/settings/llm');
   expect(await screen.findAllByText('Seeded workspace gateway')).toBeTruthy();
-  await waitFor(() => expect(router.state.location.pathname).toBe('/settings/workspaces/default/llm'));
+  expect(router.state.location.pathname).toBe('/settings/llm');
+  expect(requested.filter((url) => url.endsWith('/llm_providers'))).toEqual([
+    '/api/console/organizations/org_test/llm_providers',
+  ]);
+  expect(screen.queryByRole('navigation', { name: 'Model scope' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Seeded workspace gateway models' }));
   expect(await screen.findByText('primary/seeded-model')).toBeTruthy();
 });
 
-test('scope navigation preserves setup return and clears unsaved provider drafts', async () => {
-  const query = '?returnTo=%2Fworkspaces%2Fdefault%2Fagent-quickstart%3Fmode%3Dapi';
-  const { router } = await renderSettingsRoute('/settings/llm' + query);
-  await screen.findAllByText('Seeded workspace gateway');
-  fireEvent.click(screen.getByRole('button', { name: 'Add provider', exact: true }));
-  expect(await screen.findByRole('dialog')).toBeTruthy();
-  await act(async () => {
-    await router.navigate({ href: '/settings/llm/organization' + query });
-  });
-  expect(await screen.findByText('No providers yet')).toBeTruthy();
-  expect(screen.queryByRole('dialog')).toBeNull();
-  const workspaceLink = screen.getByRole('link', { name: 'Workspace models', exact: true });
-  expect(workspaceLink.getAttribute('href')).toBe('/settings/workspaces/default/llm' + query);
-  fireEvent.click(workspaceLink);
-  expect(await screen.findAllByText('Seeded workspace gateway')).toBeTruthy();
-  expect(screen.queryByRole('dialog')).toBeNull();
-});
-
-test('inherited provider edit link opens explicit organization scope', async () => {
-  const { router } = await renderSettingsRoute('/settings/workspaces/default/llm', [
-    { ...workspaceProvider, id: 'provider_org', name: 'Shared gateway', slug: 'shared', scope: 'organization' },
+test('organization catalog includes all connections with creator permissions', async () => {
+  await renderSettingsRoute('/settings/llm', [
+    {
+      ...workspaceProvider,
+      id: 'other',
+      name: 'Shared gateway',
+      slug: 'shared',
+      created_by: { account_uuid: 'alice', name: 'Alice' },
+      can_manage: false,
+    },
   ]);
-  const link = await screen.findByRole('link', { name: 'Manage organization models' });
-  expect(link.getAttribute('href')).toBe('/settings/llm/organization');
-  fireEvent.click(link);
-  await waitFor(() => expect(router.state.location.pathname).toBe('/settings/llm/organization'));
   expect(await screen.findAllByText('Shared gateway')).toBeTruthy();
-  expect(screen.queryByText('Seeded workspace gateway')).toBeNull();
-});
-
-test('changing workspace catalog discards the open provider draft', async () => {
-  const { router, requested } = await renderSettingsRoute('/settings/workspaces/default/llm');
-  await screen.findAllByText('Seeded workspace gateway');
-  fireEvent.click(screen.getByRole('button', { name: 'Add provider', exact: true }));
-  expect(await screen.findByRole('dialog')).toBeTruthy();
-  await act(async () => {
-    await router.navigate({ href: '/settings/workspaces/other/llm' });
-  });
-  await screen.findAllByText('Seeded workspace gateway');
-  expect(screen.queryByRole('dialog')).toBeNull();
-  expect(requested.some((url) => url.includes('/workspaces/other/llm_providers'))).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Shared gateway', exact: true }));
+  expect(screen.getByText('Created by Alice')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Manage organization models' })).toBeNull();
 });

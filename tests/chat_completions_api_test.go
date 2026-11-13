@@ -46,7 +46,7 @@ func TestLLMProviderAPIBackendConfiguration(t *testing.T) {
 	if created["api_backend"] != llmproviders.ChatCompletions {
 		t.Fatalf("created=%v", created)
 	}
-	provider, err := app.db.GetLLMProvider(t.Context(), loadDefaultOrganizationUUID(t, app), getDefaultDBIDs(t, app.pool).WorkspaceUUID, created["id"].(string))
+	provider, err := app.db.GetLLMProvider(t.Context(), loadDefaultOrganizationUUID(t, app), created["id"].(string))
 	if err != nil || provider.APIBackend != llmproviders.ChatCompletions {
 		t.Fatalf("stored backend=%q err=%v", provider.APIBackend, err)
 	}
@@ -63,11 +63,11 @@ func TestLLMProviderAPIBackendConfiguration(t *testing.T) {
 	if response.StatusCode != http.StatusOK || updated["api_backend"] != llmproviders.ChatCompletions {
 		t.Fatalf("update=%v", updated)
 	}
-	resolved, err := llmproviders.Resolve(t.Context(), app.db, app.vaultSecrets, provider.OrganizationUUID, provider.WorkspaceUUID, "chat-model")
+	resolved, err := llmproviders.Resolve(t.Context(), app.db, app.vaultSecrets, provider.OrganizationUUID, "chat-model")
 	if err != nil || resolved.APIBackend != llmproviders.ChatCompletions {
 		t.Fatalf("resolved backend=%q err=%v", resolved.APIBackend, err)
 	}
-	defaults, err := app.db.ListLLMProviders(t.Context(), provider.OrganizationUUID, provider.WorkspaceUUID)
+	defaults, err := app.db.ListLLMProviders(t.Context(), provider.OrganizationUUID)
 	if err != nil || defaults[0].APIBackend != llmproviders.Messages {
 		t.Fatalf("legacy backend default missing: %v", err)
 	}

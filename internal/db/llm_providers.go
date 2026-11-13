@@ -63,19 +63,21 @@ func (models LLMModels) WithIDs(ids []string) LLMModels {
 }
 
 type LLMProvider struct {
-	Models           LLMModels
-	UUID             string
-	ExternalID       string
-	OrganizationUUID string
-	WorkspaceUUID    string
-	Name             string
-	Slug             string
-	APIBackend       string
-	BaseURL          string
-	APIKeyLast4      string
-	SecretEnvelope   *secrets.Envelope
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	Models               LLMModels
+	UUID                 string
+	ExternalID           string
+	OrganizationUUID     string
+	SecretWorkspaceUUID  string
+	CreatedByAccountUUID string
+	CreatedByName        string
+	Name                 string
+	Slug                 string
+	APIBackend           string
+	BaseURL              string
+	APIKeyLast4          string
+	SecretEnvelope       *secrets.Envelope
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 func (d *DB) CreateLLMProvider(ctx context.Context, provider LLMProvider) (LLMProvider, error) {
@@ -90,8 +92,8 @@ func (d *DB) CreateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 	return row.provider()
 }
 
-func (d *DB) ListLLMProviders(ctx context.Context, organizationUUID, workspaceUUID string) ([]LLMProvider, error) {
-	rows, err := NewLLMProviderMapper(d.mapperDB).ListByWorkspace(ctx, organizationUUID, nullableString(workspaceUUID))
+func (d *DB) ListLLMProviders(ctx context.Context, organizationUUID string) ([]LLMProvider, error) {
+	rows, err := NewLLMProviderMapper(d.mapperDB).ListByOrganization(ctx, organizationUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -110,16 +112,8 @@ func llmProviderRows(rows []llmProviderRow) ([]LLMProvider, error) {
 	return providers, nil
 }
 
-func (d *DB) ListOrganizationLLMProviders(ctx context.Context, organizationUUID string) ([]LLMProvider, error) {
-	rows, err := NewLLMProviderMapper(d.mapperDB).ListByOrganization(ctx, organizationUUID)
-	if err != nil {
-		return nil, err
-	}
-	return llmProviderRows(rows)
-}
-
-func (d *DB) GetLLMProvider(ctx context.Context, organizationUUID, workspaceUUID, externalID string) (LLMProvider, error) {
-	row, err := NewLLMProviderMapper(d.mapperDB).FindByExternalID(ctx, organizationUUID, nullableString(workspaceUUID), externalID)
+func (d *DB) GetLLMProvider(ctx context.Context, organizationUUID, externalID string) (LLMProvider, error) {
+	row, err := NewLLMProviderMapper(d.mapperDB).FindByExternalID(ctx, organizationUUID, externalID)
 	if err != nil {
 		return LLMProvider{}, mapNoRows(err)
 	}
@@ -140,12 +134,7 @@ func (d *DB) UpdateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 		return LLMProvider{}, err
 	}
 	mapper := NewLLMProviderMapper(d.mapperDB)
-	var row llmProviderRow
-	if provider.WorkspaceUUID == "" {
-		row, err = mapper.UpdateOrganizationDefault(ctx, params)
-	} else {
-		row, err = mapper.UpdateByExternalID(ctx, params)
-	}
+	row, err := mapper.UpdateByExternalID(ctx, params)
 	err = mapLLMProviderWriteError(err)
 	if err != nil {
 		return LLMProvider{}, mapNoRows(err)
@@ -153,15 +142,9 @@ func (d *DB) UpdateLLMProvider(ctx context.Context, provider LLMProvider) (LLMPr
 	return row.provider()
 }
 
-func (d *DB) DeleteLLMProvider(ctx context.Context, organizationUUID, workspaceUUID, externalID string) error {
+func (d *DB) DeleteLLMProvider(ctx context.Context, organizationUUID, externalID string) error {
 	mapper := NewLLMProviderMapper(d.mapperDB)
-	var rows int64
-	var err error
-	if workspaceUUID == "" {
-		rows, err = mapper.DeleteOrganizationDefault(ctx, organizationUUID, externalID)
-	} else {
-		rows, err = mapper.DeleteByExternalID(ctx, organizationUUID, workspaceUUID, externalID)
-	}
+	rows, err := mapper.DeleteByExternalID(ctx, organizationUUID, externalID)
 	if err != nil {
 		return err
 	}
@@ -184,24 +167,25 @@ func llmProviderParams(provider LLMProvider) (llmProviderWriteParams, error) {
 	}
 	envelope := provider.SecretEnvelope
 	return llmProviderWriteParams{
-		Models:           models,
-		UUID:             provider.UUID,
-		ExternalID:       provider.ExternalID,
-		OrganizationUUID: provider.OrganizationUUID,
-		WorkspaceUUID:    nullableString(provider.WorkspaceUUID),
-		Name:             provider.Name,
-		Slug:             provider.Slug,
-		APIBackend:       provider.APIBackend,
-		BaseURL:          provider.BaseURL,
-		APIKeyLast4:      provider.APIKeyLast4,
-		Ciphertext:       envelope.Ciphertext,
-		Nonce:            envelope.Nonce,
-		WrappedDEK:       envelope.WrappedDEK,
-		FormatVersion:    envelope.FormatVersion,
-		KeyProvider:      envelope.KeyProvider,
-		KeyVersion:       envelope.KeyVersion,
-		CreatedAt:        provider.CreatedAt,
-		UpdatedAt:        provider.UpdatedAt,
+		Models:               models,
+		UUID:                 provider.UUID,
+		ExternalID:           provider.ExternalID,
+		OrganizationUUID:     provider.OrganizationUUID,
+		SecretWorkspaceUUID:  nullableString(provider.SecretWorkspaceUUID),
+		CreatedByAccountUUID: nullableString(provider.CreatedByAccountUUID),
+		Name:                 provider.Name,
+		Slug:                 provider.Slug,
+		APIBackend:           provider.APIBackend,
+		BaseURL:              provider.BaseURL,
+		APIKeyLast4:          provider.APIKeyLast4,
+		Ciphertext:           envelope.Ciphertext,
+		Nonce:                envelope.Nonce,
+		WrappedDEK:           envelope.WrappedDEK,
+		FormatVersion:        envelope.FormatVersion,
+		KeyProvider:          envelope.KeyProvider,
+		KeyVersion:           envelope.KeyVersion,
+		CreatedAt:            provider.CreatedAt,
+		UpdatedAt:            provider.UpdatedAt,
 	}, nil
 }
 
@@ -211,16 +195,18 @@ func (r llmProviderRow) provider() (LLMProvider, error) {
 		return LLMProvider{}, fmt.Errorf("decode provider models: %w", err)
 	}
 	return LLMProvider{
-		Models:           models,
-		UUID:             r.UUID,
-		ExternalID:       r.ExternalID,
-		OrganizationUUID: r.OrganizationUUID,
-		WorkspaceUUID:    stringFromNullable(r.WorkspaceUUID),
-		Name:             r.Name,
-		Slug:             r.Slug,
-		APIBackend:       r.APIBackend,
-		BaseURL:          r.BaseURL,
-		APIKeyLast4:      r.APIKeyLast4,
+		Models:               models,
+		UUID:                 r.UUID,
+		ExternalID:           r.ExternalID,
+		OrganizationUUID:     r.OrganizationUUID,
+		SecretWorkspaceUUID:  stringFromNullable(r.SecretWorkspaceUUID),
+		CreatedByAccountUUID: stringFromNullable(r.CreatedByAccountUUID),
+		CreatedByName:        stringFromNullable(r.CreatedByName),
+		Name:                 r.Name,
+		Slug:                 r.Slug,
+		APIBackend:           r.APIBackend,
+		BaseURL:              r.BaseURL,
+		APIKeyLast4:          r.APIKeyLast4,
 		SecretEnvelope: &secrets.Envelope{
 			Ciphertext:    r.Ciphertext,
 			Nonce:         r.Nonce,

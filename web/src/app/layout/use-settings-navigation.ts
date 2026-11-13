@@ -40,9 +40,10 @@ export function useSettingsHistory(
   const itemHref = settingsItem(path)?.href;
   const settingsHref = useMemo(() => {
     const pages = visibleSettingsGroups(account, orgUuid).flatMap((group) => group.children);
-    const defaultPage = '/llm-models';
+    const defaultPage = '/settings/llm';
     const stored = readStoredPage(key, defaultPage);
-    const remembered = itemHref || (stored === '/settings/llm' ? defaultPage : stored);
+    const remembered =
+      itemHref || (stored === '/llm-models' || stored === '/settings/llm/organization' ? defaultPage : stored);
     return navigationHref(pages.some((page) => page.href === remembered) ? remembered : defaultPage, workspaceId);
   }, [account, orgUuid, key, itemHref, workspaceId]);
   useEffect(() => {

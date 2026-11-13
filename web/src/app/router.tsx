@@ -1,4 +1,4 @@
-import { LLMSettingsPage } from '../features/settings/LLMSettingsPage';
+import { LLMModelsPage } from '../features/llm-providers/LLMModelsPage';
 import { FileDetailsPage } from '../features/dashboard/FileDetailsPage';
 import { SystemSkillsPage } from '../features/platform-admin/skills/SystemSkillsPage';
 import { createRootRoute, createRoute, createRouter, Navigate } from '@tanstack/react-router';
@@ -607,19 +607,19 @@ const tagsRoute = createRoute({
 const settingsWorkspaceLLMRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'settings/workspaces/$workspaceId/llm',
-  component: () => <LLMSettingsPage scope="workspace" />,
+  component: LegacyLLMSettingsRedirect,
 });
 
 const settingsLLMRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'settings/llm',
-  component: LegacyLLMSettingsRedirect,
+  component: LLMModelsPage,
 });
 
 const settingsOrganizationLLMRoute = createRoute({
   getParentRoute: () => consoleRoute,
   path: 'settings/llm/organization',
-  component: () => <LLMSettingsPage scope="organization" />,
+  component: LegacyLLMSettingsRedirect,
 });
 
 const settingsWorkspaceKeysRoute = createRoute({

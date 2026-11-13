@@ -1,4 +1,3 @@
-import { Link, useLocation } from '@tanstack/react-router';
 import { Check, Copy, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { copyText } from '@/shared/lib/clipboard';
@@ -21,8 +20,6 @@ import {
 } from './catalog';
 
 type ModelCatalogProps = {
-  canManage: boolean;
-  organizationEditable: boolean;
   providers: LLMProvider[];
   models: CatalogModel[];
   selectedProviderId: string;
@@ -38,8 +35,6 @@ type ModelCatalogProps = {
 };
 
 export function ModelCatalog({
-  canManage,
-  organizationEditable,
   providers,
   models,
   selectedProviderId,
@@ -57,7 +52,7 @@ export function ModelCatalog({
   const [openProviders, setOpenProviders] = useState<string[]>([]);
   const selected = providers.find((provider) => provider.id === selectedProviderId);
   const visibleModels = modelsForProvider(filterCatalogModels(models, query), selectedProviderId);
-  const canEditSelected = canManage && (organizationEditable || selected?.scope !== 'organization');
+  const canEditSelected = selected?.can_manage === true;
   const candidateId = addableModelId(query, modelsForProvider(models, selectedProviderId));
 
   return (
@@ -94,7 +89,6 @@ export function ModelCatalog({
         </div>
 
         <ProviderModelGroups
-          organizationEditable={organizationEditable}
           groups={groupCatalogModels(
             visibleModels,
             selected ? [selected] : providers,
@@ -104,7 +98,7 @@ export function ModelCatalog({
           query={query}
           openProviders={openProviders}
           onOpenChange={setOpenProviders}
-          editableProviderId={canEditSelected ? selected?.id : undefined}
+          editableProviderId={selected?.id}
           onEditProvider={onEditProvider}
           onDeleteProvider={onDeleteProvider}
         />
@@ -200,17 +194,8 @@ function ProviderRailButton({
   );
 }
 
-function ProviderIdentity({
-  provider,
-  modelCount,
-  organizationReadOnly,
-}: {
-  provider: LLMProvider;
-  modelCount: number;
-  organizationReadOnly: boolean;
-}) {
+function ProviderIdentity({ provider, modelCount }: { provider: LLMProvider; modelCount: number }) {
   const { msg } = useI18n();
-  const location = useLocation();
   return (
     <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
       <div className="min-w-0">
@@ -229,20 +214,12 @@ function ProviderIdentity({
             •••• {provider.api_key_last4}
           </span>
         </div>
-        {provider.scope === 'organization' && organizationReadOnly ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            {msg(
-              'llmModels.organizationReadOnly',
-              'Organization models are read-only here. Manage them in organization LLM configuration.',
-            )}{' '}
-            <Link
-              className="underline underline-offset-4"
-              to={'/settings/llm/organization' + location.searchStr + (location.hash ? `#${location.hash}` : '')}
-            >
-              {msg('llmModels.manageOrganization', 'Manage organization models')}
-            </Link>
-          </p>
-        ) : null}
+        <p className="mt-2 text-xs text-muted-foreground">
+          {msg('llmModels.createdBy', 'Created by')}{' '}
+          {provider.created_by
+            ? provider.created_by.name || msg('llmModels.unavailableUser', 'Unavailable user')
+            : msg('llmModels.legacyCreator', 'Legacy / system configuration')}
+        </p>
       </div>
       <span className="shrink-0 text-xs font-normal text-muted-foreground tabular-nums">{modelCount}</span>
     </div>
@@ -250,23 +227,21 @@ function ProviderIdentity({
 }
 
 function ProviderModelGroups({
-  organizationEditable,
   groups,
   providers,
   query,
   openProviders,
-  onOpenChange,
   editableProviderId,
+  onOpenChange,
   onEditProvider,
   onDeleteProvider,
 }: {
-  organizationEditable: boolean;
   groups: CatalogGroup[];
   providers: LLMProvider[];
   query: string;
   openProviders: string[];
-  onOpenChange: (ids: string[]) => void;
   editableProviderId?: string;
+  onOpenChange: (ids: string[]) => void;
   onEditProvider: (provider: LLMProvider) => void;
   onDeleteProvider: (provider: LLMProvider) => void;
 }) {
@@ -298,8 +273,7 @@ function ProviderModelGroups({
             group={group}
             provider={provider}
             query={query}
-            organizationEditable={organizationEditable}
-            canManage={provider.id === editableProviderId}
+            canManage={provider.can_manage && provider.id === editableProviderId}
             onEdit={() => onEditProvider(provider)}
             onDelete={() => onDeleteProvider(provider)}
           />
@@ -313,16 +287,14 @@ function ProviderModelGroup({
   group,
   provider,
   query,
-  organizationEditable,
   canManage,
   onEdit,
   onDelete,
 }: {
   group: CatalogGroup;
   provider: LLMProvider;
-  query: string;
-  organizationEditable: boolean;
   canManage: boolean;
+  query: string;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -335,11 +307,7 @@ function ProviderModelGroup({
             aria-label={msg('llmModels.providerGroup', '{provider} models', { provider: group.providerName })}
             className="min-h-16 min-w-0 gap-3 rounded-lg px-3 py-3 hover:bg-accent hover:no-underline"
           >
-            <ProviderIdentity
-              provider={provider}
-              modelCount={provider.models.length}
-              organizationReadOnly={!organizationEditable}
-            />
+            <ProviderIdentity provider={provider} modelCount={provider.models.length} />
           </AccordionTrigger>
         </div>
         {canManage ? (

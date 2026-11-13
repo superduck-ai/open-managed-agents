@@ -35,11 +35,6 @@ func TestMultipleOrganizationAndWorkspaceProviders(t *testing.T) {
 		}
 		response.Body.Close()
 	}
-	denied := app.platformRequest(t, http.MethodDelete, workspacePath+"/"+stringValue(first["id"]), nil, cookies)
-	if denied.StatusCode != http.StatusNotFound {
-		t.Fatalf("workspace must not mutate organization provider: %d", denied.StatusCode)
-	}
-	denied.Body.Close()
 	workspaceResponse := app.platformRequest(t, http.MethodPost, root+"/workspaces", strings.NewReader(fmt.Sprintf(`{"name":%q}`, "Second provider workspace-"+uniqueAdminSuffix())), cookies)
 	var workspace map[string]any
 	decodeJSON(t, workspaceResponse.Body, &workspace)
@@ -57,22 +52,34 @@ func TestMultipleOrganizationAndWorkspaceProviders(t *testing.T) {
 		t.Fatalf("cross-workspace duplicate=%d", conflict.StatusCode)
 	}
 	conflict.Body.Close()
-	for _, workspaceUUID := range []string{ids.WorkspaceUUID, otherWorkspace.UUID} {
-		for _, id := range []string{"kimi/shared", "deepseek/shared"} {
-			if _, err := llmproviders.Resolve(t.Context(), app.db, app.vaultSecrets, ids.OrganizationUUID, workspaceUUID, id); err != nil {
-				t.Fatalf("shared model %s: %v", id, err)
-			}
+	for _, id := range []string{"kimi/shared", "deepseek/shared", "local/shared"} {
+		if _, err := llmproviders.Resolve(t.Context(), app.db, app.vaultSecrets, ids.OrganizationUUID, id); err != nil {
+			t.Fatalf("shared model %s: %v", id, err)
 		}
 	}
-	if _, err := llmproviders.Resolve(t.Context(), app.db, app.vaultSecrets, ids.OrganizationUUID, otherWorkspace.UUID, "local/shared"); !errors.Is(err, llmproviders.ErrModelNotConfigured) {
-		t.Fatalf("workspace model escaped scope: %v", err)
+	if _, err := llmproviders.Resolve(t.Context(), app.db, app.vaultSecrets, ids.OrganizationUUID, "shared"); !errors.Is(err, llmproviders.ErrAmbiguousModel) {
+		t.Fatalf("bare shared model must be ambiguous: %v", err)
 	}
 	read := app.platformRequest(t, http.MethodGet, orgPath, nil, cookies)
 	var list []map[string]any
 	decodeJSON(t, read.Body, &list)
 	read.Body.Close()
-	if len(list) != 2 {
+	if len(list) != 4 {
 		t.Fatalf("organization list=%#v", list)
+	}
+	for _, path := range []string{workspacePath, otherPath} {
+		response := app.platformRequest(t, http.MethodGet, path, nil, cookies)
+		var shared []map[string]any
+		decodeJSON(t, response.Body, &shared)
+		response.Body.Close()
+		if len(shared) != len(list) {
+			t.Fatalf("workspace catalogue differs: %#v", shared)
+		}
+		for index := range shared {
+			if shared[index]["id"] != list[index]["id"] {
+				t.Fatalf("workspace catalogue differs: %#v", shared)
+			}
+		}
 	}
 	for _, item := range list {
 		if item["scope"] != "organization" {
@@ -90,10 +97,10 @@ func TestMultipleOrganizationAndWorkspaceProviders(t *testing.T) {
 		t.Fatalf("delete organization=%d", remove.StatusCode)
 	}
 	remove.Body.Close()
-	if _, err := llmproviders.Resolve(t.Context(), app.db, app.vaultSecrets, ids.OrganizationUUID, ids.WorkspaceUUID, "deepseek/shared"); !errors.Is(err, llmproviders.ErrModelNotConfigured) {
+	if _, err := llmproviders.Resolve(t.Context(), app.db, app.vaultSecrets, ids.OrganizationUUID, "deepseek/shared"); !errors.Is(err, llmproviders.ErrModelNotConfigured) {
 		t.Fatalf("deleted provider still resolved: %v", err)
 	}
-	if _, err := app.db.GetLLMProvider(t.Context(), ids.OrganizationUUID, ids.WorkspaceUUID, stringValue(local["id"])); err != nil {
+	if _, err := app.db.GetLLMProvider(t.Context(), ids.OrganizationUUID, stringValue(local["id"])); err != nil {
 		t.Fatal(err)
 	}
 	memberEmail := "multiple-provider-member@example.com"

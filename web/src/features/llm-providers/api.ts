@@ -30,7 +30,8 @@ export type LLMProvider = {
   has_api_key: boolean;
   api_key_last4: string;
   models: LLMModel[];
-  scope?: 'organization';
+  created_by: { account_uuid: string; name: string } | null;
+  can_manage: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -43,10 +44,6 @@ export type LLMProviderInput = {
   api_key?: string;
   models: LLMModel[];
 };
-
-function providersPath(orgUuid: string, workspaceId: string) {
-  return `/api/console/organizations/${encodeURIComponent(orgUuid)}/workspaces/${encodeURIComponent(workspaceId)}/llm_providers`;
-}
 
 function organizationLLMProviderPath(orgUuid: string) {
   return `/api/console/organizations/${encodeURIComponent(orgUuid)}/llm_providers`;
@@ -87,75 +84,6 @@ export function syncOrganizationLLMProvider(orgUuid: string, providerId: string,
   );
 }
 
-export function persistLLMProvider(
-  orgUuid: string,
-  workspaceId: string,
-  editing: LLMProvider | null,
-  input: LLMProviderInput,
-  csrfToken?: string,
-) {
-  if (editing) {
-    return updateLLMProvider(orgUuid, workspaceId, editing.id, input, csrfToken);
-  }
-  return createLLMProvider(orgUuid, workspaceId, input, csrfToken);
-}
-
-export function listLLMProviders(orgUuid: string, workspaceId: string) {
-  return consoleApi<LLMProvider[]>(providersPath(orgUuid, workspaceId));
-}
-
-export function createLLMProvider(orgUuid: string, workspaceId: string, input: LLMProviderInput, csrfToken?: string) {
-  return consoleApi<LLMProvider>(providersPath(orgUuid, workspaceId), {
-    method: 'POST',
-    body: JSON.stringify(input),
-    csrfToken,
-  });
-}
-
-export function updateLLMProvider(
-  orgUuid: string,
-  workspaceId: string,
-  providerId: string,
-  input: LLMProviderInput,
-  csrfToken?: string,
-) {
-  return consoleApi<LLMProvider>(`${providersPath(orgUuid, workspaceId)}/${encodeURIComponent(providerId)}`, {
-    method: 'PUT',
-    body: JSON.stringify(input),
-    csrfToken,
-  });
-}
-
-export function deleteLLMProvider(orgUuid: string, workspaceId: string, providerId: string, csrfToken?: string) {
-  return consoleApi<void>(`${providersPath(orgUuid, workspaceId)}/${encodeURIComponent(providerId)}`, {
-    method: 'DELETE',
-    csrfToken,
-  });
-}
-
-export function previewProviderModels(
-  orgUuid: string,
-  workspaceId: string,
-  input: { base_url: string; api_key: string; api_backend: APIBackend },
-  csrfToken?: string,
-) {
-  return consoleApi<{ models: LLMModel[] }>(`${providersPath(orgUuid, workspaceId)}/preview_models`, {
-    method: 'POST',
-    body: JSON.stringify(input),
-    csrfToken,
-  });
-}
-
-export function syncProviderModels(orgUuid: string, workspaceId: string, providerId: string, csrfToken?: string) {
-  return consoleApi<LLMProvider>(
-    `${providersPath(orgUuid, workspaceId)}/${encodeURIComponent(providerId)}/models/sync`,
-    {
-      method: 'POST',
-      csrfToken,
-    },
-  );
-}
-
 export function previewOrganizationProviderModels(
   orgUuid: string,
   input: { base_url: string; api_key: string; api_backend: APIBackend },
@@ -168,16 +96,8 @@ export function previewOrganizationProviderModels(
   });
 }
 
-export function previewSavedProviderModels(
-  orgUuid: string,
-  workspaceId: string,
-  provider: LLMProvider,
-  csrfToken?: string,
-) {
-  const path =
-    provider.scope === 'organization'
-      ? `${organizationLLMProviderPath(orgUuid)}/${encodeURIComponent(provider.id)}`
-      : `${providersPath(orgUuid, workspaceId)}/${encodeURIComponent(provider.id)}`;
+export function previewSavedProviderModels(orgUuid: string, provider: LLMProvider, csrfToken?: string) {
+  const path = `${organizationLLMProviderPath(orgUuid)}/${encodeURIComponent(provider.id)}`;
   return consoleApi<{ models: LLMModel[] }>(`${path}/models/preview`, { method: 'POST', csrfToken });
 }
 

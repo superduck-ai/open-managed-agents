@@ -46,7 +46,7 @@ func TestLLMProviderModelsPersistAndLegacyIDsPreserveParameters(t *testing.T) {
 				var provider db.LLMProvider
 				var err error
 				if scope == "workspace" {
-					provider, err = app.db.GetLLMProvider(t.Context(), org, getDefaultDBIDs(t, app.pool).WorkspaceUUID, created.ID)
+					provider, err = app.db.GetLLMProvider(t.Context(), org, created.ID)
 				} else {
 					provider, err = app.db.GetOrganizationLLMProvider(t.Context(), org)
 				}

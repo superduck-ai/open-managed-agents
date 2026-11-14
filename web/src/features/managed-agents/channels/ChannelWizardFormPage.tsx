@@ -308,7 +308,7 @@ export function ChannelWizardFormPage({
               <AlertDescription>{visibleError}</AlertDescription>
             </Alert>
           ) : null}
-          <div className="sticky bottom-0 z-10 flex shrink-0 items-center justify-between gap-3 border-t-[0.5px] border-border bg-background py-3">
+          <div className="mt-6 flex shrink-0 items-center justify-between gap-3 border-t-[0.5px] border-border bg-background py-3">
             <div>
               {step < 3 ? (
                 <Button

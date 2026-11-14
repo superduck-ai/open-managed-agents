@@ -5,7 +5,7 @@ import { useEffect } from 'react';
 import { useI18n } from '../../../shared/i18n';
 import { useWorkspace } from '../../../shared/workspaces/context';
 import { workspaceIdFromPath } from '../../../shared/workspaces/presentation';
-import { channelApi, type Channel } from './api';
+import { channelApi, channelVaultIds, channelResourceValues, type Channel } from './api';
 import { type WizardValue } from './ChannelWizardForm';
 import { ChannelWizardFormPage } from './ChannelWizardFormPage';
 
@@ -105,7 +105,6 @@ async function loadChannelForEdit(agentId: string, workspaceId: string, channelI
 }
 
 function buildInitialWizardValue(channel: Channel | null, initialAgentId: string, environmentId: string): WizardValue {
-  const gitRepository = channel?.git_repository ?? null;
   return {
     name: channel?.name ?? '',
     mode: channel?.mode ?? 'open',
@@ -114,12 +113,18 @@ function buildInitialWizardValue(channel: Channel | null, initialAgentId: string
     reply_in_thread: channel?.reply_in_thread ?? true,
     app_id: channel?.app_id ?? '',
     app_secret: '',
-    memory_store_id: channel?.memory_store_id ?? null,
-    vault_id: channel?.vault_id ?? null,
-    git_repository: gitRepository,
-    gitResource: resourceFormValues([gitRepository]).gitResources[0] ?? null,
+    ...channelExecutionValues(channel),
     channelType: 'feishu',
     agentId: initialAgentId,
     environmentId,
+  };
+}
+
+function channelExecutionValues(channel: Channel | null) {
+  return {
+    agent_version: channel?.agent_version ?? null,
+    memory_store_id: channel?.memory_store_id ?? null,
+    vault_ids: channelVaultIds(channel ?? {}),
+    ...resourceFormValues(channelResourceValues(channel ?? {})),
   };
 }

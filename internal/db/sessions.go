@@ -764,7 +764,11 @@ func (d *DB) AppendSessionEvents(
 	events []SessionEvent,
 	outcomeEvaluations json.RawMessage,
 ) (SessionEventChanges, error) {
-	return d.appendSessionEvents(ctx, workspaceUUID, sessionExternalID, events, outcomeEvaluations, nil)
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionExternalID, events, outcomeEvaluations, nil, nil)
+}
+
+func (d *DB) AppendSessionInputRequest(ctx context.Context, workspaceUUID, sessionID string, events []SessionEvent, outcomeEvaluations json.RawMessage, request SessionInputRequest) (SessionEventChanges, error) {
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionID, events, outcomeEvaluations, nil, &request)
 }
 
 type SessionBudgetTransition struct {
@@ -773,16 +777,23 @@ type SessionBudgetTransition struct {
 }
 
 func (d *DB) AppendSessionBudgetReachedEvents(ctx context.Context, workspaceUUID, sessionID string, events []SessionEvent, transition SessionBudgetTransition) (SessionEventChanges, error) {
-	return d.appendSessionEvents(ctx, workspaceUUID, sessionID, events, nil, &transition)
+	return d.appendSessionEvents(ctx, workspaceUUID, sessionID, events, nil, &transition, nil)
 }
 
-func (d *DB) appendSessionEvents(ctx context.Context, workspaceUUID, sessionExternalID string, events []SessionEvent, outcomeEvaluations json.RawMessage, transition *SessionBudgetTransition) (SessionEventChanges, error) {
+func (d *DB) appendSessionEvents(ctx context.Context, workspaceUUID, sessionExternalID string, events []SessionEvent, outcomeEvaluations json.RawMessage, transition *SessionBudgetTransition, request *SessionInputRequest) (SessionEventChanges, error) {
 	var changes SessionEventChanges
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
 		sessionMapper := NewSessionMapper(executor)
 		session, txErr := lockSessionForEvents(ctx, sessionMapper, workspaceUUID, sessionExternalID)
 		if txErr != nil {
 			return txErr
+		}
+		if request != nil {
+			var found bool
+			changes, found, txErr = findSessionInputRequest(ctx, executor, session, *request)
+			if txErr != nil || found {
+				return txErr
+			}
 		}
 		if session.ArchivedAt != nil {
 			return ErrInvalidState
@@ -808,11 +819,16 @@ func (d *DB) appendSessionEvents(ctx context.Context, workspaceUUID, sessionExte
 			}
 			changes.RetiredCodeSessionIDs = removal.CodeSessionIDs
 		}
-		if len(outcomeEvaluations) == 0 {
-			return nil
+		if len(outcomeEvaluations) != 0 {
+			_, txErr = sessionMapper.SetOutcomeEvaluations(ctx, session.WorkspaceUUID, session.ExternalID, agentJSONArg(outcomeEvaluations))
+			if txErr != nil {
+				return mapNoRows(txErr)
+			}
 		}
-		_, txErr = sessionMapper.SetOutcomeEvaluations(ctx, session.WorkspaceUUID, session.ExternalID, agentJSONArg(outcomeEvaluations))
-		return mapNoRows(txErr)
+		if request != nil {
+			return saveSessionInputRequest(ctx, executor, session, *request, changes)
+		}
+		return nil
 	})
 	if err != nil {
 		return SessionEventChanges{}, err

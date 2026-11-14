@@ -83,7 +83,7 @@ test('keeps provider edits after failure and disables dismiss controls while sav
   expect(screen.getByText('Closed 0')).toBeTruthy();
   rejectSave(new Error('Sample save failed'));
   expect(await within(dialog).findByText('Sample save failed')).toBeTruthy();
-  expect(document.activeElement).toBe(within(dialog).getByRole('alert'));
+  await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole('alert')));
   expect(within(dialog).getByLabelText('Display name')).toHaveProperty('value', 'Updated research');
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

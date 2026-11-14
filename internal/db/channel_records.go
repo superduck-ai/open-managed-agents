@@ -32,7 +32,13 @@ func (d *DB) CreateChannelRecord(ctx context.Context, params ChannelRecordInput)
 			GitTokenEnvelope:  params.GitTokenEnvelope,
 		})
 		record = inserted
-		return err
+		if err != nil {
+			return err
+		}
+		if params.EnvironmentID != nil {
+			return mapper.UpsertChannelAgentEnvironment(ctx, params.OrganizationUUID, params.WorkspaceUUID, params.AgentExternalID, *params.EnvironmentID)
+		}
+		return nil
 	})
 	return record, err
 }
@@ -60,19 +66,31 @@ func (d *DB) ListRunnableChannelRecords(ctx context.Context) ([]ChannelRecord, e
 }
 
 func (d *DB) UpdateChannelRecord(ctx context.Context, params ChannelRecordUpdate) (ChannelRecord, error) {
-	record, err := NewChannelRecordMapper(d.mapperDB).UpdateChannel(ctx, updateChannelRecordParams{
-		ExternalID:        params.ExternalID,
-		WorkspaceUUID:     params.WorkspaceUUID,
-		Name:              params.Name,
-		Enabled:           params.Enabled,
-		BindingStatus:     params.BindingStatus,
-		AppID:             params.AppID,
-		AppSecretEnvelope: params.AppSecretEnvelope,
-		IncludeThinking:   params.IncludeThinking,
-		IncludeToolCalls:  params.IncludeToolCalls,
-		ReplyInThread:     params.ReplyInThread,
-		Mounts:            params.Mounts,
-		GitTokenEnvelope:  params.GitTokenEnvelope,
+	var record ChannelRecord
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		mapper := NewChannelRecordMapper(executor)
+		updated, err := mapper.UpdateChannel(ctx, updateChannelRecordParams{
+			ExternalID:        params.ExternalID,
+			WorkspaceUUID:     params.WorkspaceUUID,
+			Name:              params.Name,
+			Enabled:           params.Enabled,
+			BindingStatus:     params.BindingStatus,
+			AppID:             params.AppID,
+			AppSecretEnvelope: params.AppSecretEnvelope,
+			IncludeThinking:   params.IncludeThinking,
+			IncludeToolCalls:  params.IncludeToolCalls,
+			ReplyInThread:     params.ReplyInThread,
+			Mounts:            params.Mounts,
+			GitTokenEnvelope:  params.GitTokenEnvelope,
+		})
+		if err != nil {
+			return err
+		}
+		record = updated
+		if params.EnvironmentID != nil {
+			return mapper.UpsertChannelAgentEnvironment(ctx, record.OrganizationUUID, record.WorkspaceUUID, record.AgentExternalID, *params.EnvironmentID)
+		}
+		return nil
 	})
 	return record, mapNoRows(err)
 }
@@ -130,6 +148,7 @@ func (d *DB) SetChannelAgentEnvironment(ctx context.Context, organizationUUID, w
 }
 
 type ChannelRecordInput struct {
+	EnvironmentID     *string
 	ExternalID        string
 	OrganizationUUID  string
 	WorkspaceUUID     string
@@ -149,6 +168,7 @@ type ChannelRecordInput struct {
 }
 
 type ChannelRecordUpdate struct {
+	EnvironmentID     *string
 	ExternalID        string
 	WorkspaceUUID     string
 	Name              string

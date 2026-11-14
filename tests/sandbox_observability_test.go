@@ -68,7 +68,7 @@ func TestEnvironmentWorkTelemetryPostgres(t *testing.T) {
 			if _, err := f.app.db.AckEnvironmentWork(t.Context(), work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID); err != nil {
 				t.Fatal(err)
 			}
-			if changed, err := f.app.db.RequeueEnvironmentWorkIfRecoverable(t.Context(), recovered, time.Now().Add(time.Second)); err != nil || !changed {
+			if changed, err := f.app.db.RequeueEnvironmentWorkIfRecoverable(t.Context(), recovered, time.Now().Add(time.Second), false); err != nil || !changed {
 				t.Fatalf("retry: %t, %v", changed, err)
 			}
 			retried, err := f.app.db.GetEnvironmentWork(t.Context(), work.WorkspaceUUID, work.EnvironmentExternalID, work.ExternalID)

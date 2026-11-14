@@ -336,7 +336,7 @@ function ChannelListRow({
         <div className="min-w-0">
           <div className="truncate">{row.agentName}</div>
           <div className="mt-1 truncate text-xs text-muted-foreground">
-            {msg('managedAgents.channels.latestVersion', '默认最新版本')}
+            {row.agent_version ? `v${row.agent_version}` : msg('managedAgents.channels.latestVersion', '默认最新版本')}
           </div>
         </div>
       </DataTableCell>

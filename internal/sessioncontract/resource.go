@@ -3,6 +3,7 @@
 package sessioncontract
 
 const (
+	MaxCreateBodyBytes      = 32 << 20
 	FileResourceType        = "file"
 	MemoryStoreResourceType = "memory_store"
 

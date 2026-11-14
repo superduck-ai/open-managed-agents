@@ -284,6 +284,8 @@ workspaces:
 model_providers_file: /home/you/.oma-dev/model-providers.yaml
 ```
 
+调试独立的本地沙箱提供方时，可在 `dev-init.yaml` 显式填写 `local_e2b_api_url`，例如 `http://127.0.0.1:43268`。生成配置和标准重启会把 E2B 的 `api_url`、`sandbox_url` 同时指向该地址，保留本地端口查询协议以及其他服务的端口。独立提供方由使用者启动和维护，开发环境仍保留原 Compose 基础设施。未设置时继续使用本环境 Compose 的 E2B 端口；地址在初始化文件入口校验，不接受凭据、查询参数或片段。
+
 `ref` 是初始化配置内的稳定引用，与显示名称分开。API key 的引用在所属 workspace 内唯一。数据库资源继续使用 UUID 和现有 external ID 机制，引用与实际 ID 的映射保存在环境状态中。
 
 组织初始化不假设现有数据库具备组织 external ID 字段，也不按名称自动接管无归属记录。新环境创建后登记组织 UUID；已有默认组织只能经过明确的归属校验后复用。

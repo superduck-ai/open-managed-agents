@@ -9,7 +9,7 @@ import (
 
 func TestChannelCredentialMapper(t *testing.T) {
 	t.Run("跨工作区或不存在时没有记录", func(t *testing.T) {
-		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"external_id", "envelope", "status"}})
+		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"external_id", "envelope", "status", "runtime_user_uuid"}})
 		_, found, err := NewChannelCredentialMapper(executor).Find(t.Context(), "org", "other")
 		if err != nil || found {
 			t.Fatalf("Find = %v, %v", found, err)
@@ -25,9 +25,9 @@ func TestChannelCredentialMapper(t *testing.T) {
 		assertMapperTestExecution(t, executor, "ChannelCredentialMapper.LockWorkspace", yourbatis.StatementSelect, []any{"org", "workspace"}, "organization_uuid = $1 AND uuid = $2", "archived_at IS NULL FOR UPDATE")
 	})
 	t.Run("读取密文及停用状态", func(t *testing.T) {
-		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"external_id", "envelope", "status"}, rows: [][]driver.Value{{"apikey_a", "{}", "inactive"}}})
+		executor := newMapperTestExecutor(t, mapperTestResponse{columns: []string{"external_id", "envelope", "status", "runtime_user_uuid"}, rows: [][]driver.Value{{"apikey_a", "{}", "inactive", "runtime-user"}}})
 		row, found, err := NewChannelCredentialMapper(executor).Find(t.Context(), "org", "workspace")
-		if err != nil || !found || row.Status != "inactive" || row.Envelope != "{}" {
+		if err != nil || !found || row.Status != "inactive" || row.Envelope != "{}" || row.RuntimeUserUUID != "runtime-user" {
 			t.Fatalf("Find = %+v, %v, %v", row, found, err)
 		}
 	})

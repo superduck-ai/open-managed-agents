@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -27,6 +28,7 @@ const (
 
 // Spec is the strict dev-init.yaml contract.
 type Spec struct {
+	LocalE2BAPIURL   string
 	LocalOpenObserve bool
 	Version          int
 	FixedSecretsDir  string
@@ -194,6 +196,7 @@ func rejectUnknownNestedYAMLFields(node *yaml.Node, fieldType reflect.Type, path
 }
 
 type rawSpec struct {
+	LocalE2BAPIURL   string `yaml:"local_e2b_api_url"`
 	LocalOpenObserve bool   `yaml:"local_openobserve"`
 	Version          int    `yaml:"version"`
 	FixedSecretsDir  string `yaml:"fixed_secrets_dir"`
@@ -227,6 +230,7 @@ func LoadSpec(path string) (Spec, error) {
 		return Spec{}, err
 	}
 	spec := Spec{
+		LocalE2BAPIURL:   strings.TrimSpace(raw.LocalE2BAPIURL),
 		LocalOpenObserve: raw.LocalOpenObserve,
 		Version:          raw.Version,
 		FixedSecretsDir:  raw.FixedSecretsDir,
@@ -263,6 +267,12 @@ func LoadSpec(path string) (Spec, error) {
 func (s Spec) validate() error {
 	if s.Version != specVersion {
 		return fmt.Errorf("version must be %d", specVersion)
+	}
+	if s.LocalE2BAPIURL != "" {
+		endpoint, err := url.Parse(s.LocalE2BAPIURL)
+		if err != nil || endpoint.Hostname() == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			return errors.New("local_e2b_api_url 必须是不含凭据、查询参数或片段的 HTTP(S) 完整地址")
+		}
 	}
 	if strings.TrimSpace(s.FixedSecretsDir) == "" {
 		return errors.New("fixed_secrets_dir is required")

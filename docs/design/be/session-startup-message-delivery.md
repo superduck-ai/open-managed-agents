@@ -71,6 +71,12 @@ PubAck 等待发生在最终事务内，因此发布期间会持有两条行锁�
 initialize 的 ID、request ID 以及每条历史消息的 `Nats-Msg-Id` 都由稳定输入派生。activation 重试在
 24 小时 duplicate window 内不会制造第二条消息；窗口外仍依赖 worker 对稳定 `event_id` 幂等。
 
+## 初次启动的传输故障恢复
+
+初次创建 Code Session 时，activation 的 JetStream 发布失败会撤销未完成的 Code Session，但原 Session 输入仍保留在 session_events。Environment Runner 将这类明确的 worker event transport unavailable 视为可重试启动失败，复用原 Environment Work 的五秒延迟重试；下一次启动从原会话历史重建入站，不重新提交公开输入。会话终止、归档、删除或 Work 已停止时不重新排队。永久配置错误沿用既有失败处理；已有 active Code Session 的恢复重试保持原规则。
+
+该重试只覆盖 Environment Work 的启动失败，不新增 PostgreSQL 入站队列、待发布表或后台 publisher，不改变下文 active realtime 发布失败由调用方按原请求标识重试的合同。
+
 ## Realtime cutover
 
 Send Events 与 activation 都锁定同一条 Session：
@@ -79,8 +85,9 @@ Send Events 与 activation 都锁定同一条 Session：
 - activation 先持锁，Send 等其提交，随后看到 active 并直接发布；
 - active 发布额外锁定 Code Session 行，和终止、清理操作串行，获得 PubAck 后才返回成功。
 
-普通 realtime Publish 失败返回 503。系统没有待发布表或后台 publisher，调用方必须用稳定事件 ID
-重试。多个 active 请求的发布会被 Code Session 行锁串行，但获得锁的顺序不承诺与并发
+普通 realtime Publish 失败返回 503。系统没有待发布表或后台 publisher，公开输入调用方可使用
+[稳定请求标识](session-input-idempotency.md)重试并取回原事件ID，内部传输继续沿用这些稳定事件ID。
+多个 active 请求的发布会被 Code Session 行锁串行，但获得锁的顺序不承诺与并发
 `session_events` 的提交顺序一致；consumer 只保证按 JetStream 已接受的顺序逐条处理。
 
 归档唯一主 Thread 若同时产生 `session.status_terminated`，必须在同一事务内终止对应的

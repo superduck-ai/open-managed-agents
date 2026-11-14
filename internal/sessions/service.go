@@ -664,12 +664,32 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
+	request, err := sessionInputRequest(r.Header.Get("Idempotency-Key"), body.Events)
+	if err != nil {
+		return invalidRequest(err)
+	}
+	if request != nil {
+		changes, found, err := h.eventPayloads.FindSessionInputRequest(r.Context(), session, *request)
+		if err != nil {
+			return mapSessionLoadError(err, sessionID)
+		}
+		if found {
+			return h.deliverSessionInputChanges(w, r, session, changes, request)
+		}
+	}
 	if session.BudgetReachedAt != nil {
 		inputs, err = filterEventsAtBudgetCap(inputs)
 		if err != nil {
 			return err
 		}
 		if len(inputs) == 0 {
+			if request != nil {
+				changes, err := h.eventPayloads.AppendSessionInputRequest(r.Context(), session.WorkspaceUUID, session.ExternalID, nil, nil, *request)
+				if err != nil {
+					return mapSessionLoadError(err, sessionID)
+				}
+				return h.deliverSessionInputChanges(w, r, session, changes, request)
+			}
 			httpapi.WriteJSON(w, http.StatusOK, sendEventsResponse{Data: []json.RawMessage{}})
 			return nil
 		}
@@ -699,7 +719,12 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 	if outcomesChanged {
 		outcomeEvaluations = normalizedSession.OutcomeEvaluations
 	}
-	changes, err := h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
+	var changes db.SessionEventChanges
+	if request != nil {
+		changes, err = h.eventPayloads.AppendSessionInputRequest(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations, *request)
+	} else {
+		changes, err = h.eventPayloads.AppendSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, events, outcomeEvaluations)
+	}
 	if err != nil {
 		recordSessionEventsRejected(r.Context(), sessionEventRejectionReason(err))
 		if errors.Is(err, db.ErrInvalidState) {
@@ -707,27 +732,7 @@ func (h *Handler) sendEventsRoute(w http.ResponseWriter, r *http.Request) error 
 		}
 		return mapSessionLoadError(err, sessionID)
 	}
-	h.codeSessions.PurgeWorkerEvents(r.Context(), changes.RetiredCodeSessionIDs)
-	created := changes.Events
-	recordAcceptedSessionEvents(r.Context(), created)
-	h.publishSessionEvents(r.Context(), created)
-	h.enqueueWebhooksForSessionEvents(r.Context(), session.WorkspaceUUID, session.ExternalID, created)
-	if h.codeSessions != nil {
-		if err := h.codeSessions.QueuePublicSessionEvents(r.Context(), session, changes.WorkerInputEvents()); err != nil {
-			h.logger.ErrorContext(r.Context(), "queue session events for code session", "session_id", session.ExternalID, "error", err)
-			recordSessionHandoffFailure(r.Context(), err)
-			return queueCodeSessionEventsError(err)
-		}
-	}
-
-	data := make([]json.RawMessage, 0, len(created))
-	for _, event := range created {
-		if allowedPublicEventType(event.EventType) {
-			data = append(data, sessionEventPayload(event))
-		}
-	}
-	httpapi.WriteJSON(w, http.StatusOK, sendEventsResponse{Data: data})
-	return nil
+	return h.deliverSessionInputChanges(w, r, session, changes, request)
 }
 
 func (h *Handler) addResourceRoute(w http.ResponseWriter, r *http.Request) error {

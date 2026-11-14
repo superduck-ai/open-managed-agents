@@ -3,13 +3,11 @@ package channels
 import (
 	"bytes"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/platformapi"
 )
@@ -21,17 +19,8 @@ func (h *handler) syncWorkspaceCredentials(upstream *http.Request, principal aut
 	}
 	input := platform.CreateConsoleAPIKeyInput{OrgUUID: principal.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID, CreatedByUserUUID: createdByUserUUID, RuntimeUserUUID: principal.RuntimeUserUUID()}
 	key, err := h.store.EnsureChannelWorkspaceCredential(upstream.Context(), input, h.cipher)
-	if errors.Is(err, db.ErrChannelCredentialInactive) {
-		return credentialInactive(err)
-	}
-	if errors.Is(err, db.ErrChannelCredentialUnreadable) {
-		return credentialUnreadable(err)
-	}
-	if errors.Is(err, db.ErrNotFound) {
-		return credentialWorkspaceNotFound(err)
-	}
 	if err != nil {
-		return credentialProvisionFailed(err)
+		return channelCredentialError(err)
 	}
 	body, err := json.Marshal(struct {
 		APIKey string `json:"api_key"`

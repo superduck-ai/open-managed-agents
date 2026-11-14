@@ -48,7 +48,7 @@ func TestShutdownHTTPDeadlineClosesActiveRequests(t *testing.T) {
 	waitForShutdownEvent(t, requestDone)
 }
 
-func TestServeHTTPStopsStreamsAndDrainsRequests(t *testing.T) {
+func TestServeHTTPStopsChannelsBeforeClosingListener(t *testing.T) {
 	addr, file, err := listeners.Reserve()
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +64,10 @@ func TestServeHTTPStopsStreamsAndDrainsRequests(t *testing.T) {
 	server := &http.Server{
 		Addr: addr,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/channel-cleanup" {
+				_, _ = io.WriteString(w, "lease_released")
+				return
+			}
 			if r.URL.Path == "/stream" {
 				streamCtx, cancel := httpapi.StreamContext(r.Context())
 				defer cancel()
@@ -93,7 +97,23 @@ func TestServeHTTPStopsStreamsAndDrainsRequests(t *testing.T) {
 		_ = server.Close()
 	}()
 	served := make(chan error, 1)
-	go func() { served <- serveHTTP(ctx, server, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
+	cleaned := make(chan error, 1)
+	go func() {
+		served <- serveHTTP(ctx, server, slog.New(slog.NewTextHandler(io.Discard, nil)), func() {
+			client := &http.Client{Timeout: time.Second}
+			defer client.CloseIdleConnections()
+			response, err := client.Get("http://" + addr + "/channel-cleanup")
+			if err == nil {
+				defer response.Body.Close()
+				body, readErr := io.ReadAll(response.Body)
+				err = readErr
+				if err == nil && string(body) != "lease_released" {
+					err = fmt.Errorf("渠道收尾时HTTP响应异常: %q", body)
+				}
+			}
+			cleaned <- err
+		})
+	}()
 	client := &http.Client{Timeout: 3 * time.Second}
 	defer client.CloseIdleConnections()
 	response, err := client.Get("http://" + addr + "/stream")
@@ -118,7 +138,7 @@ func TestServeHTTPStopsStreamsAndDrainsRequests(t *testing.T) {
 	waitForShutdownEvent(t, requestStarted)
 	stop()
 	waitForShutdownEvent(t, streamFinished)
-	for _, result := range []<-chan error{requestDone, served} {
+	for _, result := range []<-chan error{cleaned, requestDone, served} {
 		select {
 		case err := <-result:
 			if err != nil {

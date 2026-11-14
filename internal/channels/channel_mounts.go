@@ -5,10 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"maps"
 	"strings"
 
-	"github.com/superduck-ai/open-managed-agents/internal/apperr"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
@@ -22,17 +21,27 @@ type channelGitMount struct {
 }
 
 type channelMounts struct {
-	MemoryStoreID string           `json:"memory_store_id,omitempty"`
-	VaultID       string           `json:"vault_id,omitempty"`
-	GitRepository *channelGitMount `json:"git_repository,omitempty"`
+	LegacyResourceFingerprint string                 `json:"legacy_resource_fingerprint,omitempty"`
+	Resources                 []channelResourceMount `json:"resources,omitempty"`
+	AgentVersion              int                    `json:"agent_version,omitzero"`
+	MemoryStoreID             string                 `json:"memory_store_id,omitempty"`
+	VaultID                   string                 `json:"vault_id,omitempty"`
+	VaultIDs                  []string               `json:"vault_ids,omitempty"`
+	GitRepository             *channelGitMount       `json:"git_repository,omitempty"`
 }
 
 func parseChannelMounts(raw string) channelMounts {
-	var mounts channelMounts
+	mounts := channelMounts{VaultIDs: []string{}}
 	if strings.TrimSpace(raw) == "" {
 		return mounts
 	}
 	_ = json.Unmarshal([]byte(raw), &mounts)
+	if len(mounts.VaultIDs) == 0 && mounts.VaultID != "" {
+		mounts.VaultIDs = []string{mounts.VaultID}
+	}
+	if mounts.VaultIDs == nil {
+		mounts.VaultIDs = []string{}
+	}
 	return mounts
 }
 
@@ -56,42 +65,23 @@ func gitMountWithoutToken(mount *channelGitMount) *channelGitMount {
 
 func (s *localService) applyChannelMounts(ctx context.Context, principal auth.Principal, record *db.ChannelRecord, input channelMutation) error {
 	mounts := parseChannelMounts(record.Mounts)
-	if value, present := rawStringValue(input.MemoryStoreID); present {
+	version, err := s.channelAgentVersion(ctx, principal, record.AgentExternalID, mounts.AgentVersion, input.AgentVersion)
+	if err != nil {
+		return err
+	}
+	mounts.AgentVersion = version
+	value, present, err := rawStringValue(input.MemoryStoreID)
+	if err != nil {
+		return invalidChannelMounts(err)
+	}
+	if present {
 		mounts.MemoryStoreID = value
 	}
-	if value, present := rawStringValue(input.VaultID); present {
-		mounts.VaultID = value
+	mounts.VaultIDs, err = s.channelVaultIDs(ctx, principal, mounts.VaultIDs, input)
+	if err != nil {
+		return err
 	}
-	if input.GitRepository != nil {
-		trimmed := strings.TrimSpace(string(input.GitRepository))
-		if trimmed == "" || trimmed == "null" {
-			mounts.GitRepository = nil
-			record.GitTokenEnvelope = nil
-		} else {
-			var mount channelGitMount
-			if err := json.Unmarshal(input.GitRepository, &mount); err != nil {
-				return invalidChannelMounts(err)
-			}
-			mount.URL = strings.TrimSpace(mount.URL)
-			if err := validateGitMount(mount); err != nil {
-				return invalidChannelMounts(err)
-			}
-			token := strings.TrimSpace(mount.Token)
-			if token == "" {
-				previous := mounts.GitRepository
-				if record.GitTokenEnvelope == nil || previous == nil || previous.URL != mount.URL {
-					record.GitTokenEnvelope = nil
-				}
-			} else {
-				envelope, err := sealChannelSecret(ctx, s.cipher, *record, token)
-				if err != nil {
-					return unavailable(err)
-				}
-				record.GitTokenEnvelope = envelope
-			}
-			mounts.GitRepository = &mount
-		}
-	}
+	mounts.VaultID = ""
 	if mounts.MemoryStoreID != "" {
 		store, err := s.store.GetMemoryStore(ctx, principal.WorkspaceUUID, mounts.MemoryStoreID)
 		if errors.Is(err, db.ErrNotFound) || (err == nil && (store.ArchivedAt != nil || store.DeletedAt != nil)) {
@@ -101,14 +91,8 @@ func (s *localService) applyChannelMounts(ctx context.Context, principal auth.Pr
 			return unavailable(err)
 		}
 	}
-	if mounts.VaultID != "" {
-		vault, err := s.store.GetVault(ctx, principal.WorkspaceUUID, mounts.VaultID)
-		if errors.Is(err, db.ErrNotFound) || (err == nil && (vault.ArchivedAt != nil || vault.DeletedAt != nil)) {
-			return invalidVaultMount(err)
-		}
-		if err != nil {
-			return unavailable(err)
-		}
+	if err := s.applyChannelResources(ctx, principal, record, &mounts, input); err != nil {
+		return err
 	}
 	record.Mounts = mounts.encode()
 	return nil
@@ -117,15 +101,20 @@ func (s *localService) applyChannelMounts(ctx context.Context, principal auth.Pr
 func channelMountView(record db.ChannelRecord) map[string]any {
 	mounts := parseChannelMounts(record.Mounts)
 	view := map[string]any{
+		"agent_version":   nil,
 		"memory_store_id": nil,
 		"vault_id":        nil,
+		"vault_ids":       mounts.VaultIDs,
 		"git_repository":  nil,
+	}
+	if mounts.AgentVersion > 0 {
+		view["agent_version"] = mounts.AgentVersion
 	}
 	if mounts.MemoryStoreID != "" {
 		view["memory_store_id"] = mounts.MemoryStoreID
 	}
-	if mounts.VaultID != "" {
-		view["vault_id"] = mounts.VaultID
+	if len(mounts.VaultIDs) == 1 {
+		view["vault_id"] = mounts.VaultIDs[0]
 	}
 	if mounts.GitRepository != nil {
 		git := map[string]any{"url": mounts.GitRepository.URL}
@@ -138,43 +127,62 @@ func channelMountView(record db.ChannelRecord) map[string]any {
 		git["tokenConfigured"] = record.GitTokenEnvelope != nil
 		view["git_repository"] = git
 	}
+	resources := []map[string]any{}
+	if mounts.Resources != nil {
+		gitCount := 0
+		for _, resource := range mounts.Resources {
+			value := resource.payload()
+			if resource.Git != nil {
+				value["tokenConfigured"] = resource.TokenEnvelope != nil
+				gitCount++
+				alias := maps.Clone(value)
+				delete(alias, "type")
+				view["git_repository"] = alias
+			}
+			resources = append(resources, value)
+		}
+		if gitCount != 1 {
+			view["git_repository"] = nil
+		}
+	} else if git, ok := view["git_repository"].(map[string]any); ok {
+		resource := maps.Clone(git)
+		resource["type"] = sessionresource.GitRepositoryType
+		resources = append(resources, resource)
+	}
+	view["resources"] = resources
 	return view
 }
 
-func validateGitMount(mount channelGitMount) error {
+func normalizeChannelGitMount(mount channelGitMount) (sessionresource.GitRepositorySpec, error) {
 	urlRaw, err := json.Marshal(mount.URL)
 	if err != nil {
-		return err
+		return sessionresource.GitRepositorySpec{}, err
 	}
-	mountRaw, err := json.Marshal(mount.MountPath)
-	if err != nil {
-		return err
+	var mountRaw []byte
+	if mount.MountPath != "" {
+		mountRaw, err = json.Marshal(mount.MountPath)
+		if err != nil {
+			return sessionresource.GitRepositorySpec{}, err
+		}
 	}
 	checkout := mount.Checkout
 	if len(bytes.TrimSpace(checkout)) == 0 {
 		checkout = json.RawMessage("null")
 	}
-	if _, err := sessionresource.NormalizeGitRepositorySpec(urlRaw, mountRaw, checkout); err != nil {
-		return fmt.Errorf("git_repository 配置无效: %w", err)
-	}
-	return nil
+	return sessionresource.NormalizeGitRepositorySpec(urlRaw, mountRaw, checkout)
 }
 
-func rawStringValue(raw json.RawMessage) (string, bool) {
+func rawStringValue(raw json.RawMessage) (string, bool, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" {
-		return "", false
+		return "", false, nil
 	}
 	if trimmed == "null" {
-		return "", true
+		return "", true, nil
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return "", false
+		return "", true, err
 	}
-	return strings.TrimSpace(value), true
-}
-
-func invalidChannelMounts(err error) error {
-	return apperr.New(apperr.InvalidArgument, "渠道挂载配置无效", err)
+	return strings.TrimSpace(value), true, nil
 }

@@ -14,17 +14,33 @@ import (
 )
 
 const (
-	channelReplyPollInterval = time.Second
-	channelReconcileInterval = 30 * time.Second
-	channelReplyTimeout      = 30 * time.Minute
-	channelPairingLimit      = 1000
-	channelTitleLimit        = 30
-	channelAskAttempts       = 5
-	channelAskRetryBase      = time.Second
-	channelListenerIdle      = 2 * time.Minute
+	channelReplyMaintenanceInterval = time.Second
+	channelReconcileInterval        = 30 * time.Second
+	channelPairingLimit             = 1000
+	channelTitleLimit               = 30
+	channelAskAttempts              = 5
+	channelAskRetryBase             = time.Second
 )
 
 type runtimeStore interface {
+	ReceiveChannelInput(context.Context, db.ChannelInputScope, db.ChannelInput) (db.ChannelInput, bool, error)
+	ClaimChannelInput(context.Context, db.ChannelInputScope, string, string) (db.ChannelInput, bool, error)
+	ListRecoverableChannelInputs(context.Context, db.ChannelInputScope) ([]db.ChannelInput, error)
+	PrepareChannelInputBatch(context.Context, db.ChannelInputScope, string, db.ChannelInputBatch) (db.ChannelInput, error)
+	AdvanceChannelInput(context.Context, db.ChannelInputScope, string, string, db.ChannelInputAdvance) (db.ChannelInput, error)
+	CompleteChannelInput(context.Context, db.ChannelInputScope, string, string) error
+	ReleaseChannelInput(context.Context, db.ChannelInputScope, string, string) error
+	RenewChannelInputs(context.Context, db.ChannelInputScope, string) error
+	GetChannelReplyDeliveryByReceipt(context.Context, db.ChannelDeliveryScope, string) (db.ChannelReplyDelivery, error)
+	PrepareChannelReplyDelivery(context.Context, db.ChannelDeliveryScope, db.ChannelReplyDelivery) (db.ChannelReplyDelivery, error)
+	ClaimChannelReplyDelivery(context.Context, db.ChannelDeliveryScope, string, string) (db.ChannelReplyDelivery, bool, error)
+	SaveChannelReplyReceipt(context.Context, db.ChannelDeliveryScope, string, string, string) error
+	SaveChannelArtifactDelivery(context.Context, db.ChannelDeliveryScope, string, string, string) error
+	RenewChannelReplyDelivery(context.Context, db.ChannelDeliveryScope, string, string) error
+	ReleaseChannelReplyDelivery(context.Context, db.ChannelDeliveryScope, string, string) error
+	CompleteChannelReplyDelivery(context.Context, db.ChannelDeliveryScope, string, string) error
+	NextChannelReplyRecovery(context.Context, db.ChannelDeliveryScope, string) (time.Time, bool, error)
+	ListChannelReplyDeliveries(context.Context, db.ChannelDeliveryScope) ([]db.ChannelReplyDelivery, error)
 	GetChannelRecord(context.Context, string, string, string, string) (db.ChannelRecord, error)
 	GetChannelSessionBinding(context.Context, string, string) (string, error)
 	SetChannelSessionBinding(context.Context, string, string, string) error
@@ -37,18 +53,22 @@ type runtimeStore interface {
 }
 
 type runtimeSupervisor struct {
-	store    runtimeStore
-	cipher   *secrets.Service
-	oma      *omaClient
-	logger   *slog.Logger
-	mu       sync.Mutex
-	workers  map[string]*channelWorker
-	apiKeys  map[string]string
-	shutdown chan struct{}
+	fileMaxBytes    int64
+	subscribeEvents SessionEventSubscriber
+	adapters        map[string]channelAdapterFactory
+	store           runtimeStore
+	cipher          *secrets.Service
+	oma             *omaClient
+	logger          *slog.Logger
+	mu              sync.Mutex
+	workers         map[string]*channelWorker
+	apiKeys         map[string]string
+	shutdown        chan struct{}
 }
 
 func newRuntimeSupervisor(store runtimeStore, cipher *secrets.Service, oma *omaClient, logger *slog.Logger) *runtimeSupervisor {
 	return &runtimeSupervisor{
+		adapters: map[string]channelAdapterFactory{"feishu": newFeishuChannel},
 		store:    store,
 		cipher:   cipher,
 		oma:      oma,
@@ -102,6 +122,12 @@ func (s *runtimeSupervisor) reconcile(ctx context.Context) {
 	}
 	for _, record := range records {
 		if s.running(record.ExternalID) {
+			s.mu.Lock()
+			worker := s.workers[record.ExternalID]
+			s.mu.Unlock()
+			if worker != nil {
+				worker.restoreReplies(ctx)
+			}
 			continue
 		}
 		if err := s.apply(ctx, record); err != nil {
@@ -127,7 +153,7 @@ func (s *runtimeSupervisor) apply(ctx context.Context, record db.ChannelRecord) 
 	}
 	if s.oma == nil || s.oma.baseURL == "" {
 		s.stop(record.ExternalID)
-		return errors.New("未配置 channels.oma_url，无法启动飞书渠道")
+		return errors.New("未配置 channels.oma_url，无法启动渠道")
 	}
 	secret, err := openChannelSecret(ctx, s.cipher, record)
 	if err != nil {
@@ -192,18 +218,6 @@ func (s *runtimeSupervisor) online(channelID string) bool {
 	worker, ok := s.workers[channelID]
 	s.mu.Unlock()
 	return ok && worker.online.Load()
-}
-
-func (s *runtimeSupervisor) openGitToken(ctx context.Context, record db.ChannelRecord) string {
-	if record.GitTokenEnvelope == nil || s.cipher == nil {
-		return ""
-	}
-	token, err := openSealedSecret(ctx, s.cipher, record, *record.GitTokenEnvelope)
-	if err != nil {
-		s.logger.WarnContext(ctx, "open channel git token", "channel_id", record.ExternalID, "error", err)
-		return ""
-	}
-	return token
 }
 
 func (s *runtimeSupervisor) apiKey(ctx context.Context, record db.ChannelRecord) (string, error) {

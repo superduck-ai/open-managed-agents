@@ -16,15 +16,19 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/ids"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 )
 
 const channelNameLimit = 40
 
 type localStore interface {
+	EnsureChannelWorkspaceCredential(context.Context, platform.CreateConsoleAPIKeyInput, *secrets.Service) (string, error)
 	GetAgent(context.Context, string, string) (db.Agent, error)
+	GetAgentVersion(context.Context, string, string, int) (db.Agent, error)
 	GetMemoryStore(context.Context, string, string) (db.MemoryStore, error)
 	GetVault(context.Context, string, string) (db.Vault, error)
+	GetFile(context.Context, string, string) (db.FileRecord, error)
 	DeleteChannelSessionBinding(context.Context, string, string) error
 	GetEnvironment(context.Context, string, string) (db.Environment, error)
 	CreateChannelRecord(context.Context, db.ChannelRecordInput) (db.ChannelRecord, error)
@@ -61,6 +65,8 @@ type localService struct {
 }
 
 type channelMutation struct {
+	AgentVersion     json.RawMessage `json:"agent_version"`
+	EnvironmentID    *string         `json:"environment_id"`
 	Name             *string         `json:"name"`
 	Mode             *string         `json:"mode"`
 	AppID            *string         `json:"app_id"`
@@ -73,7 +79,9 @@ type channelMutation struct {
 	AuthorizationID  *string         `json:"authorization_id"`
 	MemoryStoreID    json.RawMessage `json:"memory_store_id"`
 	VaultID          json.RawMessage `json:"vault_id"`
+	VaultIDs         json.RawMessage `json:"vault_ids"`
 	GitRepository    json.RawMessage `json:"git_repository"`
+	Resources        json.RawMessage `json:"resources"`
 }
 
 type localHandler struct {
@@ -167,6 +175,13 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 	if agent.ArchivedAt != nil {
 		return nil, archivedAgent()
 	}
+	if input.EnvironmentID != nil {
+		id, err := s.validatedEnvironment(ctx, principal.WorkspaceUUID, *input.EnvironmentID)
+		if err != nil {
+			return nil, err
+		}
+		input.EnvironmentID = new(id)
+	}
 	mode := "open"
 	if input.Mode != nil {
 		mode = *input.Mode
@@ -214,7 +229,11 @@ func (s *localService) create(ctx context.Context, principal auth.Principal, age
 			return nil, err
 		}
 	}
+	if err := s.prepareCredential(ctx, principal); err != nil {
+		return nil, err
+	}
 	created, err := s.store.CreateChannelRecord(ctx, db.ChannelRecordInput{
+		EnvironmentID:     input.EnvironmentID,
 		ExternalID:        record.ExternalID,
 		OrganizationUUID:  record.OrganizationUUID,
 		WorkspaceUUID:     record.WorkspaceUUID,
@@ -250,6 +269,13 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 	if err != nil {
 		return nil, unavailable(err)
 	}
+	if input.EnvironmentID != nil {
+		id, err := s.validatedEnvironment(ctx, principal.WorkspaceUUID, *input.EnvironmentID)
+		if err != nil {
+			return nil, err
+		}
+		input.EnvironmentID = new(id)
+	}
 	if input.Mode != nil && *input.Mode != record.Mode {
 		return nil, immutableChannelMode()
 	}
@@ -274,7 +300,11 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 			return nil, err
 		}
 	}
+	if err := s.prepareCredential(ctx, principal); err != nil {
+		return nil, err
+	}
 	updated, err := s.store.UpdateChannelRecord(ctx, db.ChannelRecordUpdate{
+		EnvironmentID:     input.EnvironmentID,
 		ExternalID:        record.ExternalID,
 		WorkspaceUUID:     record.WorkspaceUUID,
 		Name:              record.Name,
@@ -296,6 +326,18 @@ func (s *localService) update(ctx context.Context, principal auth.Principal, age
 	}
 	s.reconcile(ctx, updated)
 	return s.view(ctx, updated)
+}
+
+func (s *localService) prepareCredential(ctx context.Context, principal auth.Principal) error {
+	var creator *string
+	if principal.UserUUID != "" {
+		creator = new(principal.UserUUID)
+	}
+	_, err := s.store.EnsureChannelWorkspaceCredential(ctx, platform.CreateConsoleAPIKeyInput{
+		OrgUUID: principal.OrganizationUUID, WorkspaceUUID: principal.WorkspaceUUID,
+		CreatedByUserUUID: creator, RuntimeUserUUID: principal.RuntimeUserUUID(),
+	}, s.cipher)
+	return channelCredentialError(err)
 }
 
 func (s *localService) remove(ctx context.Context, principal auth.Principal, agentID, channelID string) error {
@@ -405,16 +447,9 @@ func (s *localService) saveEnvironment(ctx context.Context, principal auth.Princ
 	if _, err := s.agent(ctx, principal.WorkspaceUUID, agentID); err != nil {
 		return nil, err
 	}
-	environmentID = strings.TrimSpace(environmentID)
-	if environmentID == "" {
-		return nil, environmentRequired()
-	}
-	env, err := s.store.GetEnvironment(ctx, principal.WorkspaceUUID, environmentID)
-	if errors.Is(err, db.ErrNotFound) || (err == nil && env.ArchivedAt != nil) {
-		return nil, invalidEnvironment(err)
-	}
+	environmentID, err := s.validatedEnvironment(ctx, principal.WorkspaceUUID, environmentID)
 	if err != nil {
-		return nil, unavailable(err)
+		return nil, err
 	}
 	if err := s.store.SetChannelAgentEnvironment(ctx, principal.OrganizationUUID, principal.WorkspaceUUID, agentID, environmentID); err != nil {
 		return nil, unavailable(err)
@@ -606,4 +641,19 @@ func authorizationNotFound() error {
 
 func authorizationPending() error {
 	return apperr.New(apperr.Conflict, "请先完成飞书授权", nil)
+}
+
+func (s *localService) validatedEnvironment(ctx context.Context, workspaceUUID, raw string) (string, error) {
+	environmentID := strings.TrimSpace(raw)
+	if environmentID == "" {
+		return "", environmentRequired()
+	}
+	env, err := s.store.GetEnvironment(ctx, workspaceUUID, environmentID)
+	if errors.Is(err, db.ErrNotFound) || (err == nil && env.ArchivedAt != nil) {
+		return "", invalidEnvironment(err)
+	}
+	if err != nil {
+		return "", unavailable(err)
+	}
+	return environmentID, nil
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
+	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
 func newLocalHandler(service *localService, logger *slog.Logger) *localHandler {
@@ -24,6 +25,7 @@ func (h *localHandler) agentRouter() http.Handler {
 	router.Get("/settings", wrap(h.settings))
 	router.Post("/settings", wrap(h.saveSettings))
 	router.Post("/{channel_id}", wrap(h.update))
+	router.Get("/{channel_id}/check", wrap(h.check))
 	router.Delete("/{channel_id}", wrap(h.remove))
 	router.Get("/{channel_id}/pairings", wrap(h.pairings))
 	router.Post("/{channel_id}/pairings/{pairing_id}", wrap(h.decidePairing))
@@ -272,7 +274,7 @@ func decodeStrictJSON(w http.ResponseWriter, r *http.Request, limit int64, targe
 
 func decodeChannelMutation(w http.ResponseWriter, r *http.Request) (channelMutation, error) {
 	var input channelMutation
-	if err := decodeStrictJSON(w, r, 32<<10, &input); err != nil {
+	if err := decodeStrictJSON(w, r, sessioncontract.MaxCreateBodyBytes, &input); err != nil {
 		return channelMutation{}, invalidChannelUpdate(err)
 	}
 	return input, nil

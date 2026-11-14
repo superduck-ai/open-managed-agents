@@ -83,6 +83,17 @@ type insertChannelPairingParams struct {
 }
 
 type ChannelRecordMapper interface {
+	InsertReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, input ChannelReplyDelivery) (ChannelReplyDelivery, bool, error)
+	FindReplyDeliveryByReceipt(ctx context.Context, scope ChannelDeliveryScope, receipt string) (ChannelReplyDelivery, bool, error)
+	FindReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID string) (ChannelReplyDelivery, error)
+	ClaimReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner string) (ChannelReplyDelivery, bool, error)
+	SaveReplyReceipt(ctx context.Context, scope ChannelDeliveryScope, inputID, owner, receipt string) (string, bool, error)
+	SaveArtifactDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner, receipt string) (string, bool, error)
+	RenewReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner string) (string, bool, error)
+	ReleaseReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner string) (string, bool, error)
+	CompleteReplyDelivery(ctx context.Context, scope ChannelDeliveryScope, inputID, owner string) (string, bool, error)
+	NextReplyRecovery(ctx context.Context, scope ChannelDeliveryScope, owner string) (time.Time, bool, error)
+	ListReplyDeliveries(ctx context.Context, scope ChannelDeliveryScope) ([]ChannelReplyDelivery, error)
 	LockAgent(ctx context.Context, workspaceUUID, agentExternalID string) (string, error)
 	InsertChannel(ctx context.Context, params insertChannelRecordParams) (ChannelRecord, error)
 	FindChannel(ctx context.Context, organizationUUID, workspaceUUID, agentExternalID, externalID string) (ChannelRecord, error)

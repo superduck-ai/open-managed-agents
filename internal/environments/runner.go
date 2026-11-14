@@ -239,7 +239,7 @@ func (r *Runner) runClaimedWork(ctx context.Context, run *runnerRun, work *db.En
 	if r.cfg.EnvironmentRunner.AgentMode == "brain" && cloudEnvironment(env) {
 		err := r.startExternalWorker(ctx, run, env, work)
 		if err != nil {
-			r.failWorkBeforeSandbox(ctx, *work)
+			r.failWorkBeforeSandbox(ctx, *work, err)
 		}
 		return true, err
 	}
@@ -249,19 +249,19 @@ func (r *Runner) runClaimedWork(ctx context.Context, run *runnerRun, work *db.En
 func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, env db.Environment, work *db.EnvironmentWork, existingLaunch *managedAgentRuntimeLaunch) (bool, error) {
 	sandboxID, err := ids.New("envsbx_")
 	if err != nil {
-		r.failWorkBeforeSandbox(ctx, *work)
+		r.failWorkBeforeSandbox(ctx, *work, err)
 		return true, err
 	}
 
 	// 在 Provider 解析之前固化 Managed Agent 的网络 metadata。这样 Resolve 和
 	// 后续 Create 使用的是同一份 MCP allowlist，避免创建时网络策略发生漂移。
 	if err := r.prepareManagedAgentNetworkMetadata(ctx, env, work); err != nil {
-		r.failWorkBeforeSandbox(ctx, *work)
+		r.failWorkBeforeSandbox(ctx, *work, err)
 		return true, err
 	}
 	resolution, preinstalled, err := r.resolveEnvironmentSandbox(env, work)
 	if err != nil {
-		r.failWorkBeforeSandbox(ctx, *work)
+		r.failWorkBeforeSandbox(ctx, *work, err)
 		return true, err
 	}
 
@@ -270,7 +270,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 	// Managed Agent runtime 分支。
 	preparation, err := r.prepareManagedAgentLaunch(ctx, env, work)
 	if err != nil {
-		r.failWorkBeforeSandbox(ctx, *work)
+		r.failWorkBeforeSandbox(ctx, *work, err)
 		return true, err
 	}
 
@@ -295,7 +295,7 @@ func (r *Runner) createEnvironmentSandbox(ctx context.Context, run *runnerRun, e
 		CreatedAt:             time.Now().UTC(),
 	})
 	if err != nil {
-		r.failWorkBeforeSandbox(ctx, *work)
+		r.failWorkBeforeSandbox(ctx, *work, err)
 		return true, err
 	}
 
@@ -572,11 +572,12 @@ func (r *Runner) terminateFailedManagedAgentRuntime(work db.EnvironmentWork, ses
 	}
 }
 
-func (r *Runner) failWorkBeforeSandbox(ctx context.Context, work db.EnvironmentWork) {
+func (r *Runner) failWorkBeforeSandbox(ctx context.Context, work db.EnvironmentWork, cause error) {
 	requeued, err := r.db.RequeueEnvironmentWorkIfRecoverable(
 		ctx,
 		work,
 		time.Now().UTC().Add(managedAgentRecoveryRetryDelay),
+		errors.Is(cause, codesessions.ErrWorkerEventUnavailable),
 	)
 	if err == nil && requeued {
 		return

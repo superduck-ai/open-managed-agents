@@ -229,6 +229,7 @@ func NewServer(deps ServerDeps) *Server {
 		webhooks:          webhooksapi.NewHandler(deps.Config.Webhook, deps.DB, webhookLogger),
 		tunnelBroker:      deps.TunnelBroker,
 	}
+	channelService.WithSessionEvents(s.subscribeChannelEvents)
 	if deps.SandboxLifecycle != nil {
 		s.sessions.WithSandboxReclaimer(deps.SandboxLifecycle)
 	}

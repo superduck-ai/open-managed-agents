@@ -5,11 +5,13 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/sessions"
 )
 
 type Service struct {
@@ -25,6 +27,7 @@ func NewService(cfg config.Config, store *db.DB, logger *slog.Logger, cipher *se
 	logger = logging.LoggerOrDefault(logger)
 	oma := newOMAClient(omaBaseURL(cfg))
 	supervisor := newRuntimeSupervisor(store, cipher, oma, logger)
+	supervisor.fileMaxBytes = cfg.Storage.MaxFileBytes
 	service := newLocalService(store, cipher, supervisor, logger)
 	handler := newLocalHandler(service, logger)
 	return &Service{
@@ -83,4 +86,16 @@ func omaBaseURL(cfg config.Config) string {
 		addr = "127.0.0.1" + addr
 	}
 	return "http://" + addr
+}
+
+type SessionEventSubscription interface {
+	ReceiveUntil(context.Context, <-chan time.Time) (sessions.StreamEvent, error)
+	Close()
+}
+
+type SessionEventSubscriber func(context.Context, string, string, sessions.StreamOptions) (SessionEventSubscription, error)
+
+func (s *Service) WithSessionEvents(subscribe SessionEventSubscriber) *Service {
+	s.supervisor.subscribeEvents = subscribe
+	return s
 }

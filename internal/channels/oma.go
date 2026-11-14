@@ -12,11 +12,16 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/superduck-ai/open-managed-agents/internal/sessionresource"
 )
 
 const omaManagedAgentsBeta = "managed-agents-2026-04-01"
 
 type omaEvent struct {
+	ProcessedAt     json.RawMessage `json:"processed_at,omitempty"`
+	Metadata        json.RawMessage `json:"metadata"`
+	IsError         bool            `json:"is_error"`
 	ID              string          `json:"id"`
 	Type            string          `json:"type"`
 	Name            string          `json:"name"`
@@ -38,11 +43,27 @@ type omaContentBlock struct {
 	Name     string `json:"name"`
 }
 
+type omaSessionAgent struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+}
+
+type omaSessionResource struct {
+	FileID        string `json:"file_id"`
+	Type          string `json:"type"`
+	MemoryStoreID string `json:"memory_store_id"`
+	sessionresource.GitRepositorySpec
+}
+
 type omaSession struct {
-	ID         string            `json:"id"`
-	Status     string            `json:"status"`
-	ArchivedAt *string           `json:"archived_at"`
-	Metadata   map[string]string `json:"metadata"`
+	Resources     []omaSessionResource `json:"resources"`
+	VaultIDs      []string             `json:"vault_ids"`
+	Agent         omaSessionAgent      `json:"agent"`
+	EnvironmentID string               `json:"environment_id"`
+	ID            string               `json:"id"`
+	Status        string               `json:"status"`
+	ArchivedAt    *string              `json:"archived_at"`
+	Metadata      map[string]string    `json:"metadata"`
 }
 
 type omaClient struct {
@@ -57,12 +78,15 @@ func newOMAClient(baseURL string) *omaClient {
 	}
 }
 
-func (c *omaClient) createSession(ctx context.Context, apiKey, agentID, environmentID, title string, metadata map[string]string, resources []map[string]any, vaultIDs []string) (string, error) {
+func (c *omaClient) createSession(ctx context.Context, apiKey, agentID string, agentVersion int, environmentID, title string, metadata map[string]string, resources []map[string]any, vaultIDs []string) (string, error) {
 	body := map[string]any{
 		"agent":          agentID,
 		"environment_id": environmentID,
 		"title":          title,
 		"metadata":       metadata,
+	}
+	if agentVersion > 0 {
+		body["agent"] = omaSessionAgent{ID: agentID, Version: agentVersion}
 	}
 	if len(resources) > 0 {
 		body["resources"] = resources
@@ -86,31 +110,76 @@ func (c *omaClient) getSession(ctx context.Context, apiKey, sessionID string) (o
 	return session, err
 }
 
+func (c *omaClient) interruptAndWait(ctx context.Context, apiKey, sessionID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := c.interrupt(ctx, apiKey, sessionID); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		session, err := c.getSession(ctx, apiKey, sessionID)
+		if err != nil {
+			return err
+		}
+		if session.Status == "idle" || session.Status == "terminated" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (c *omaClient) sendUserMessage(ctx context.Context, apiKey, sessionID, text string) error {
-	_, err := c.sendContent(ctx, apiKey, sessionID, []map[string]any{{"type": "text", "text": text}})
+	_, err := c.sendContent(ctx, apiKey, sessionID, []map[string]any{{"type": "text", "text": text}}, nil)
 	return err
 }
 
-func (c *omaClient) sendContent(ctx context.Context, apiKey, sessionID string, content []map[string]any) ([]string, error) {
+func (c *omaClient) sendContent(ctx context.Context, apiKey, sessionID string, content []map[string]any, metadata *channelInputMetadata) ([]string, error) {
+	input := map[string]any{"type": "user.message", "content": content}
+	if metadata != nil {
+		input["metadata"] = metadata
+	}
 	body := map[string]any{
-		"events": []map[string]any{{
-			"type":    "user.message",
-			"content": content,
-		}},
+		"events": []map[string]any{input},
 	}
 	var response struct {
 		Data []omaEvent `json:"data"`
 	}
-	if err := c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", body, &response); err != nil {
-		return nil, err
+	requestKey := ""
+	if metadata != nil {
+		requestKey = metadata.requestKey()
 	}
+	requestErr := c.requestWithIdempotency(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", body, &response, requestKey)
 	ids := make([]string, 0, len(response.Data))
 	for _, event := range response.Data {
 		if event.ID != "" {
 			ids = append(ids, event.ID)
 		}
 	}
-	return ids, nil
+	if requestErr == nil && len(ids) > 0 || metadata == nil {
+		return ids, requestErr
+	}
+	events, lookupErr := c.listEvents(ctx, apiKey, sessionID)
+	var acceptedID string
+	for _, event := range events {
+		var association channelInputMetadata
+		if event.Type != "user.message" || event.ID == "" || json.Unmarshal(event.Metadata, &association) != nil || !association.matches(*metadata) {
+			continue
+		}
+		if acceptedID != "" {
+			return nil, errors.Join(errChannelInputUnconfirmed, requestErr)
+		}
+		acceptedID = event.ID
+	}
+	if lookupErr != nil || acceptedID == "" {
+		return nil, errors.Join(errChannelInputUnconfirmed, requestErr, lookupErr)
+	}
+	return []string{acceptedID}, nil
 }
 
 func (c *omaClient) interrupt(ctx context.Context, apiKey, sessionID string) error {
@@ -118,13 +187,14 @@ func (c *omaClient) interrupt(ctx context.Context, apiKey, sessionID string) err
 	return c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", body, nil)
 }
 
-func (c *omaClient) sendEvent(ctx context.Context, apiKey, sessionID string, event map[string]any) error {
+func (c *omaClient) sendEvent(ctx context.Context, apiKey, sessionID string, event map[string]any, requestKey string) error {
 	body := map[string]any{"events": []map[string]any{event}}
-	return c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", body, nil)
+	return c.requestWithIdempotency(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", body, nil, requestKey)
 }
 
 func (c *omaClient) listEvents(ctx context.Context, apiKey, sessionID string) ([]omaEvent, error) {
 	var events []omaEvent
+	pages := make(map[string]struct{})
 	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/events?order=asc&limit=1000"
 	for {
 		var current struct {
@@ -138,11 +208,19 @@ func (c *omaClient) listEvents(ctx context.Context, apiKey, sessionID string) ([
 		if current.NextPage == "" || len(current.Data) == 0 {
 			return events, nil
 		}
+		if _, seen := pages[current.NextPage]; seen {
+			return nil, errOMAPaginationCycle
+		}
+		pages[current.NextPage] = struct{}{}
 		path = "/v1/sessions/" + url.PathEscape(sessionID) + "/events?order=asc&limit=1000&page=" + url.QueryEscape(current.NextPage)
 	}
 }
 
 func (c *omaClient) request(ctx context.Context, apiKey, method, path string, body any, out any) error {
+	return c.requestWithIdempotency(ctx, apiKey, method, path, body, out, "")
+}
+
+func (c *omaClient) requestWithIdempotency(ctx context.Context, apiKey, method, path string, body any, out any, requestKey string) error {
 	if c.baseURL == "" {
 		return errors.New("未配置 OMA 渠道内部地址")
 	}
@@ -167,6 +245,9 @@ func (c *omaClient) request(ctx context.Context, apiKey, method, path string, bo
 	request.Header.Set("X-Api-Key", apiKey)
 	request.Header.Set("anthropic-version", "2023-06-01")
 	request.Header.Set("anthropic-beta", omaManagedAgentsBeta)
+	if requestKey != "" {
+		request.Header.Set("Idempotency-Key", requestKey)
+	}
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -180,7 +261,7 @@ func (c *omaClient) request(ctx context.Context, apiKey, method, path string, bo
 		return err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("OMA 请求返回 HTTP %d", response.StatusCode)
+		return omaResponseError(response.StatusCode)
 	}
 	if out == nil || len(data) == 0 {
 		return nil
@@ -259,6 +340,7 @@ type omaResource struct {
 	Filename  string `json:"filename"`
 	MimeType  string `json:"mime_type"`
 	MountPath string `json:"mount_path"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 func (c *omaClient) uploadFile(ctx context.Context, apiKey, filename, mediaType string, data []byte) (omaFile, error) {
@@ -295,7 +377,7 @@ func (c *omaClient) uploadFile(ctx context.Context, apiKey, filename, mediaType 
 		return omaFile{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return omaFile{}, fmt.Errorf("OMA 上传文件返回 HTTP %d", response.StatusCode)
+		return omaFile{}, omaResponseError(response.StatusCode)
 	}
 	var file omaFile
 	if err := json.Unmarshal(payload, &file); err != nil {
@@ -310,7 +392,7 @@ func (c *omaClient) uploadFile(ctx context.Context, apiKey, filename, mediaType 
 	return file, nil
 }
 
-func (c *omaClient) downloadFile(ctx context.Context, apiKey, fileID string) ([]byte, string, error) {
+func (c *omaClient) downloadFile(ctx context.Context, apiKey, fileID string, expectedSize int64) ([]byte, string, error) {
 	if c.baseURL == "" {
 		return nil, "", errors.New("未配置 OMA 渠道内部地址")
 	}
@@ -329,7 +411,7 @@ func (c *omaClient) downloadFile(ctx context.Context, apiKey, fileID string) ([]
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, "", fmt.Errorf("OMA 下载文件返回 HTTP %d", response.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, 64<<20))
+	data, err := io.ReadAll(io.LimitReader(response.Body, expectedSize+1))
 	if err != nil {
 		return nil, "", err
 	}
@@ -354,8 +436,8 @@ func (c *omaClient) listResources(ctx context.Context, apiKey, sessionID string)
 	return response.Data, nil
 }
 
-func (c *omaClient) attachFileResource(ctx context.Context, apiKey, sessionID, fileID string) (omaResource, error) {
-	body := map[string]any{"type": "file", "file_id": fileID}
+func (c *omaClient) attachFileResource(ctx context.Context, apiKey, sessionID, fileID, filename string) (omaResource, error) {
+	body := map[string]any{"type": "file", "file_id": fileID, "mount_path": "/uploads/" + fileID + "/" + filename}
 	var resource omaResource
 	if err := c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/resources", body, &resource); err != nil {
 		return omaResource{}, err

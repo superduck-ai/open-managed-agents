@@ -16,6 +16,7 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/platform"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets/local"
 )
@@ -31,15 +32,22 @@ func testCipher(t *testing.T) *secrets.Service {
 
 type fakeLocalStore struct {
 	localStore
-	agent       db.Agent
-	agentErr    error
-	created     db.ChannelRecordInput
-	createErr   error
-	records     []db.ChannelRecord
-	pairings    []db.ChannelPairingRecord
-	environment string
-	envErr      error
-	mountErr    error
+	agent           db.Agent
+	agentErr        error
+	created         db.ChannelRecordInput
+	createErr       error
+	records         []db.ChannelRecord
+	pairings        []db.ChannelPairingRecord
+	environment     string
+	envErr          error
+	mountErr        error
+	credentialInput platform.CreateConsoleAPIKeyInput
+	credentialErr   error
+}
+
+func (f *fakeLocalStore) EnsureChannelWorkspaceCredential(_ context.Context, input platform.CreateConsoleAPIKeyInput, _ *secrets.Service) (string, error) {
+	f.credentialInput = input
+	return "key", f.credentialErr
 }
 
 func (f *fakeLocalStore) GetAgent(context.Context, string, string) (db.Agent, error) {
@@ -66,6 +74,16 @@ func (f *fakeLocalStore) CreateChannelRecord(_ context.Context, input db.Channel
 		GitTokenEnvelope: input.GitTokenEnvelope,
 		CreatedAt:        time.Now(),
 	}, nil
+}
+
+func (f *fakeLocalStore) GetChannelRecord(context.Context, string, string, string, string) (db.ChannelRecord, error) {
+	return f.records[0], nil
+}
+
+func (f *fakeLocalStore) UpdateChannelRecord(_ context.Context, input db.ChannelRecordUpdate) (db.ChannelRecord, error) {
+	record := f.records[0]
+	record.Name = input.Name
+	return record, nil
 }
 
 func (f *fakeLocalStore) GetMemoryStore(context.Context, string, string) (db.MemoryStore, error) {
@@ -155,6 +173,10 @@ type fakeRegistrationStore struct {
 	localStore
 	mu      sync.Mutex
 	records map[string]db.ChannelRegistrationRecord
+}
+
+func (*fakeRegistrationStore) EnsureChannelWorkspaceCredential(context.Context, platform.CreateConsoleAPIKeyInput, *secrets.Service) (string, error) {
+	return "key", nil
 }
 
 func (f *fakeRegistrationStore) CreateChannelRegistration(_ context.Context, input db.ChannelRegistrationInput) (db.ChannelRegistrationRecord, error) {
@@ -430,6 +452,54 @@ func TestLocalServiceCreateRequiresValidModeAndName(t *testing.T) {
 	}
 }
 
+func TestNativeChannelCreationBindsRuntimeUser(t *testing.T) {
+	for _, apiKey := range []bool{false, true} {
+		store := &fakeLocalStore{agent: db.Agent{ExternalID: "agent_a"}}
+		service := newLocalService(store, testCipher(t), nil, nil)
+		principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws", UserUUID: "member", AccountUUID: "account"}
+		want := "member"
+		if apiKey {
+			principal.CredentialType = auth.CredentialTypeAPIKey
+			want = "account"
+		}
+		if _, err := service.create(t.Context(), principal, "agent_a", channelMutation{Name: new("身份验收")}); err != nil {
+			t.Fatal(err)
+		}
+		if store.credentialInput.RuntimeUserUUID != want || store.credentialInput.OrgUUID != "org" || store.credentialInput.WorkspaceUUID != "ws" {
+			t.Fatalf("渠道必须在用户请求阶段绑定运行身份: %+v", store.credentialInput)
+		}
+	}
+}
+
+func TestNativeChannelCredentialFailureDoesNotCreateChannel(t *testing.T) {
+	store := &fakeLocalStore{agent: db.Agent{ExternalID: "agent_a"}, credentialErr: db.ErrChannelCredentialInactive}
+	service := newLocalService(store, testCipher(t), nil, nil)
+	if _, err := service.create(t.Context(), auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws", UserUUID: "member"}, "agent_a", channelMutation{Name: new("身份验收")}); err == nil || store.created.ExternalID != "" {
+		t.Fatalf("凭据不可用时不得创建并启动渠道: %v / %+v", err, store.created)
+	}
+}
+
+func TestNativeChannelSaveRepairsRuntimeUser(t *testing.T) {
+	store := &fakeLocalStore{records: []db.ChannelRecord{{ExternalID: "chnl_a", OrganizationUUID: "org", WorkspaceUUID: "ws", AgentExternalID: "agent_a", Mode: "open"}}}
+	service := newLocalService(store, testCipher(t), nil, nil)
+	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws", UserUUID: "member"}
+	if _, err := service.update(t.Context(), principal, "agent_a", "chnl_a", channelMutation{Name: new("重新保存")}); err != nil {
+		t.Fatal(err)
+	}
+	if store.credentialInput.RuntimeUserUUID != "member" {
+		t.Fatalf("保存旧渠道必须携带用户以补齐身份: %+v", store.credentialInput)
+	}
+}
+
+func TestAuthorizationStopsWhenCredentialCannotBePrepared(t *testing.T) {
+	store := &fakeLocalStore{credentialErr: db.ErrChannelCredentialInactive}
+	service := newLocalService(store, testCipher(t), nil, nil)
+	principal := auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws", UserUUID: "member"}
+	if _, err := service.beginAuthorization(t.Context(), principal, "身份验收"); err == nil || store.credentialInput.RuntimeUserUUID != "member" {
+		t.Fatalf("扫码前必须准备用户身份，失败时不得调用飞书注册: %v / %+v", err, store.credentialInput)
+	}
+}
+
 func TestOMAClientSendsWorkspaceScopedRequests(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -457,7 +527,7 @@ func TestOMAClientSendsWorkspaceScopedRequests(t *testing.T) {
 	}))
 	defer server.Close()
 	client := newOMAClient(server.URL)
-	sessionID, err := client.createSession(context.Background(), "key", "agent_a", "env_a", "标题", map[string]string{"source": "feishu"}, nil, nil)
+	sessionID, err := client.createSession(context.Background(), "key", "agent_a", 0, "env_a", "标题", map[string]string{"source": "feishu"}, nil, nil)
 	if err != nil || sessionID != "sesn_1" {
 		t.Fatalf("createSession = %q, %v", sessionID, err)
 	}
@@ -474,6 +544,7 @@ func TestTerminalEvent(t *testing.T) {
 		event  omaEvent
 		expect bool
 	}{
+		{event: omaEvent{Type: "session.thread_status_idle", StopReason: json.RawMessage(`"end_turn"`)}, expect: false},
 		{event: omaEvent{Type: "session.status_idle", StopReason: json.RawMessage(`"end_turn"`)}, expect: true},
 		{event: omaEvent{Type: "session.status_idle", StopReason: json.RawMessage(`{"type":"interrupted"}`)}, expect: true},
 		{event: omaEvent{Type: "session.status_idle", StopReason: json.RawMessage(`""`)}, expect: false},
@@ -484,6 +555,38 @@ func TestTerminalEvent(t *testing.T) {
 		if got := terminalEvent(tc.event); got != tc.expect {
 			t.Fatalf("terminalEvent(%s, %s) = %v", tc.event.Type, tc.event.StopReason, got)
 		}
+	}
+}
+
+func TestChannelReplyClearsThinkingOnTerminalStates(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		event omaEvent
+		text  string
+	}{
+		{name: "执行失败", event: omaEvent{Type: "session.error"}, text: "执行失败"},
+		{name: "会话终止", event: omaEvent{Type: "session.status_terminated"}, text: "会话已结束"},
+		{name: "主动中断", event: omaEvent{Type: "session.status_idle", StopReason: json.RawMessage(`{"type":"interrupted"}`)}, text: "已停止"},
+		{name: "重试耗尽", event: omaEvent{Type: "session.status_idle", StopReason: json.RawMessage(`{"type":"retries_exhausted"}`)}, text: "执行失败"},
+		{name: "无正文完成", event: omaEvent{Type: "session.status_idle", StopReason: json.RawMessage(`{"type":"end_turn"}`)}, text: "本轮已结束"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reply := channelReply{thinking: true}
+			text, changed := reply.consume(db.ChannelRecord{IncludeThinking: true}, tc.event)
+			if !changed || reply.thinking || !strings.Contains(text, tc.text) || strings.Contains(reply.render(), "正在思考") {
+				t.Fatalf("终态必须明确显示结果并清除思考状态: text=%q card=%s", text, reply.render())
+			}
+		})
+	}
+}
+
+func TestChannelReplyDoesNotRepeatFailureAtIdle(t *testing.T) {
+	reply := channelReply{thinking: true}
+	record := db.ChannelRecord{IncludeThinking: true}
+	reply.consume(record, omaEvent{Type: "session.error"})
+	_, changed := reply.consume(record, omaEvent{Type: "session.status_idle", StopReason: json.RawMessage(`{"type":"retries_exhausted"}`)})
+	if changed || strings.Count(reply.text.String(), "执行失败") != 1 {
+		t.Fatalf("同轮 error 和 idle 只能展示一次失败: %s", reply.render())
 	}
 }
 
@@ -521,7 +624,7 @@ func TestChannelReplyHonorsDisplayOptions(t *testing.T) {
 	if _, changed := (&channelReply{}).consume(db.ChannelRecord{}, tool); changed {
 		t.Fatal("未开启工具调用时不应产生更新")
 	}
-	loud := &channelReply{card: true}
+	loud := &channelReply{}
 	if _, changed := loud.consume(db.ChannelRecord{IncludeThinking: true}, thinking); !changed || !loud.thinking {
 		t.Fatal("开启思考后应进入思考状态")
 	}
@@ -555,11 +658,8 @@ func TestReplyMessageRequestsThreadReply(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	worker := &channelWorker{
-		client: lark.NewClient("cli_test", "secret", lark.WithOpenBaseUrl(server.URL)),
-		record: db.ChannelRecord{ReplyInThread: true},
-	}
-	messageID, err := worker.replyMessage(context.Background(), "om_1", "text", `{"text":"好的"}`)
+	adapter := &feishuChannel{client: lark.NewClient("cli_test", "secret", lark.WithOpenBaseUrl(server.URL)), worker: &channelWorker{record: db.ChannelRecord{ReplyInThread: true}}}
+	messageID, err := adapter.replyMessage(context.Background(), "om_1", "text", `{"text":"好的"}`)
 	if err != nil {
 		t.Fatalf("replyMessage: %v", err)
 	}
@@ -580,7 +680,7 @@ func TestApplyChannelMountsPersistsAndHidesToken(t *testing.T) {
 	if err := service.applyChannelMounts(context.Background(), auth.Principal{WorkspaceUUID: "ws_1"}, &record, input); err != nil {
 		t.Fatalf("applyChannelMounts: %v", err)
 	}
-	if record.GitTokenEnvelope == nil {
+	if mounts := parseChannelMounts(record.Mounts); len(mounts.Resources) != 1 || mounts.Resources[0].TokenEnvelope == nil {
 		t.Fatal("git token 应该被加密保存")
 	}
 	if strings.Contains(record.Mounts, "ghp_secret") {
@@ -593,6 +693,27 @@ func TestApplyChannelMountsPersistsAndHidesToken(t *testing.T) {
 	}
 	if _, leaked := gitView["authorization_token"]; leaked {
 		t.Fatal("视图不能回显 token")
+	}
+}
+
+func TestApplyChannelMountsRejectsInvalidFieldTypes(t *testing.T) {
+	for _, field := range []string{"memory_store_id", "vault_id"} {
+		for _, value := range []string{"42", "true", `{}`, `[]`} {
+			t.Run(field+"/"+value, func(t *testing.T) {
+				var input channelMutation
+				if err := json.Unmarshal([]byte(`{"`+field+`":`+value+`}`), &input); err != nil {
+					t.Fatal(err)
+				}
+				service := newLocalService(&fakeLocalStore{}, testCipher(t), nil, nil)
+				record := db.ChannelRecord{Mounts: `{}`}
+				if err := service.applyChannelMounts(t.Context(), auth.Principal{}, &record, input); err == nil {
+					t.Fatal("错误的挂载字段类型必须被拒绝")
+				}
+				if record.Mounts != `{}` {
+					t.Fatalf("无效请求不能修改原挂载: %s", record.Mounts)
+				}
+			})
+		}
 	}
 }
 
@@ -612,10 +733,10 @@ func TestCreateSavesGitMountFromWizard(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	mounts := parseChannelMounts(store.created.Mounts)
-	if mounts.GitRepository == nil || mounts.GitRepository.URL != "https://github.com/octocat/Hello-World.git" || mounts.GitRepository.MountPath != "/workspace/demo" {
+	if len(mounts.Resources) != 1 || mounts.Resources[0].Git == nil || mounts.Resources[0].Git.URL != "https://github.com/octocat/Hello-World.git" || mounts.Resources[0].Git.MountPath != "/workspace/demo" {
 		t.Fatalf("git 挂载未保存: %s", store.created.Mounts)
 	}
-	if store.created.GitTokenEnvelope == nil {
+	if mounts.Resources[0].TokenEnvelope == nil {
 		t.Fatal("git 令牌应信封加密保存")
 	}
 	gitView, ok := view["git_repository"].(map[string]any)
@@ -641,5 +762,14 @@ func TestApplyChannelMountsRejectsInvalidGit(t *testing.T) {
 	input = channelMutation{GitRepository: json.RawMessage(`{"url":"https://example.com/repo","mount_path":"/tmp/repo"}`)}
 	if err := service.applyChannelMounts(context.Background(), auth.Principal{WorkspaceUUID: "ws_1"}, &record, input); err == nil {
 		t.Fatal("挂载路径必须在 /workspace 下")
+	}
+}
+
+func TestChannelFileLimitComesFromNativeStorage(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Storage.MaxFileBytes = 123
+	service := NewService(cfg, nil, nil, nil)
+	if service.supervisor.fileMaxBytes != cfg.Storage.MaxFileBytes {
+		t.Fatal("渠道必须复用OMA已有文件大小配置")
 	}
 }

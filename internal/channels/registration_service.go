@@ -94,6 +94,9 @@ func (s *localService) qrStatus(ctx context.Context, principal auth.Principal, c
 }
 
 func (s *localService) launchRegistration(ctx context.Context, principal auth.Principal, kind, channelID, name string) (db.ChannelRegistrationRecord, string, error) {
+	if err := s.prepareCredential(ctx, principal); err != nil {
+		return db.ChannelRegistrationRecord{}, "", err
+	}
 	prefix := "chra_"
 	if kind == registrationKindQR {
 		prefix = "chrq_"

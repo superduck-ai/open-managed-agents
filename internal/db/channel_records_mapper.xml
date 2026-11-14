@@ -180,4 +180,101 @@
         ON CONFLICT (organization_uuid, workspace_uuid, agent_external_id)
         DO UPDATE SET environment_external_id = EXCLUDED.environment_external_id, updated_at = now()
     </insert>
+
+    <sql id="replyDeliveryColumns">
+        d.channel_external_id, d.channel_type, d.account_id, d.input_event_id, d.session_external_id, d.scope_key,
+        d.message_id, d.chat_id, d.chat_type, d.actor_id, d.root_id, d.thread_id,
+        d.reply_message_id, d.include_thinking, d.include_tool_calls, d.state,
+        d.lease_owner, d.lease_until, CAST(d.artifact_delivery AS text) AS artifact_delivery
+    </sql>
+    <sql id="replyDeliveryScope">
+        d.channel_external_id = #{scope.ChannelExternalID}
+        AND EXISTS (SELECT 1 FROM channels c WHERE c.external_id = d.channel_external_id
+          AND c.organization_uuid = #{scope.OrganizationUUID} AND c.workspace_uuid = #{scope.WorkspaceUUID}
+          AND c.deleted_at IS NULL)
+    </sql>
+    <select id="InsertReplyDelivery" result="optional" resultType="ChannelReplyDelivery">
+ WITH changed AS (
+        INSERT INTO channel_reply_deliveries AS d (channel_external_id, channel_type, account_id, input_event_id, session_external_id,
+          scope_key, message_id, chat_id, chat_type, actor_id, root_id, thread_id, include_thinking, include_tool_calls, artifact_delivery)
+        SELECT c.external_id, #{input.ChannelType}, #{input.AccountID}, #{input.InputEventID}, #{input.SessionExternalID}, #{input.ScopeKey},
+          #{input.MessageID}, #{input.ChatID}, #{input.ChatType}, #{input.ActorID}, #{input.RootID}, #{input.ThreadID},
+          #{input.IncludeThinking}, #{input.IncludeToolCalls}, COALESCE(CAST(NULLIF(#{input.ArtifactDelivery,sensitive=true}, '') AS jsonb), CAST('{}' AS jsonb))
+        FROM channels c WHERE c.external_id = #{scope.ChannelExternalID}
+          AND c.organization_uuid = #{scope.OrganizationUUID} AND c.workspace_uuid = #{scope.WorkspaceUUID}
+          AND c.deleted_at IS NULL
+        ON CONFLICT (channel_external_id, input_event_id) DO NOTHING
+        RETURNING channel_external_id, channel_type, account_id, input_event_id, session_external_id, scope_key, message_id, chat_id, chat_type, actor_id, root_id, thread_id, reply_message_id, include_thinking, include_tool_calls, state, lease_owner, lease_until, artifact_delivery
+    ) SELECT <include refid="replyDeliveryColumns"/> FROM changed d
+ </select>
+    <select id="FindReplyDelivery" resultType="ChannelReplyDelivery">
+        SELECT <include refid="replyDeliveryColumns"/> FROM channel_reply_deliveries d
+        WHERE <include refid="replyDeliveryScope"/> AND d.input_event_id = #{inputID}
+    </select>
+    <select id="FindReplyDeliveryByReceipt" result="optional" resultType="ChannelReplyDelivery">
+        SELECT <include refid="replyDeliveryColumns"/> FROM channel_reply_deliveries d
+        WHERE <include refid="replyDeliveryScope"/> AND d.reply_message_id = #{receipt}
+        LIMIT 1
+    </select>
+    <select id="ClaimReplyDelivery" result="optional" resultType="ChannelReplyDelivery">
+ WITH changed AS (
+        UPDATE channel_reply_deliveries d SET lease_owner = #{owner}, lease_until = now() + interval '30 seconds',
+          state = CASE WHEN state = 'pending' THEN 'sending' ELSE state END, updated_at = now()
+        WHERE <include refid="replyDeliveryScope"/> AND d.input_event_id = #{inputID}
+          AND (d.state = 'pending' OR d.state = 'sent' AND d.lease_until &lt; now())
+        RETURNING channel_external_id, channel_type, account_id, input_event_id, session_external_id, scope_key, message_id, chat_id, chat_type, actor_id, root_id, thread_id, reply_message_id, include_thinking, include_tool_calls, state, lease_owner, lease_until, artifact_delivery
+    ) SELECT <include refid="replyDeliveryColumns"/> FROM changed d
+ </select>
+    <select id="SaveReplyReceipt" result="optional" resultType="string">
+ WITH changed AS (
+        UPDATE channel_reply_deliveries d SET reply_message_id = #{receipt}, state = 'sent',
+          lease_until = now() + interval '30 seconds', updated_at = now()
+        WHERE <include refid="replyDeliveryScope"/> AND d.input_event_id = #{inputID}
+          AND d.lease_owner = #{owner} AND d.state = 'sending' AND d.lease_until &gt; now()
+        RETURNING input_event_id
+    ) SELECT input_event_id FROM changed
+ </select>
+    <select id="RenewReplyDelivery" result="optional" resultType="string">
+ WITH changed AS (
+        UPDATE channel_reply_deliveries d SET lease_until = now() + interval '30 seconds', updated_at = now()
+        WHERE <include refid="replyDeliveryScope"/> AND d.input_event_id = #{inputID}
+          AND d.lease_owner = #{owner} AND d.state IN ('sent', 'completed') AND d.lease_until &gt; now()
+        RETURNING input_event_id
+    ) SELECT input_event_id FROM changed
+ </select>
+    <select id="SaveArtifactDelivery" result="optional" resultType="string">
+ WITH changed AS (
+        UPDATE channel_reply_deliveries d SET artifact_delivery = CAST(#{receipt,sensitive=true} AS jsonb),
+          lease_until = now() + interval '30 seconds', updated_at = now()
+        WHERE <include refid="replyDeliveryScope"/> AND d.input_event_id = #{inputID}
+          AND d.lease_owner = #{owner} AND d.state = 'sent' AND d.lease_until &gt; now()
+        RETURNING input_event_id
+    ) SELECT input_event_id FROM changed
+ </select>
+    <select id="ReleaseReplyDelivery" result="optional" resultType="string">
+ WITH changed AS (
+        UPDATE channel_reply_deliveries d SET lease_until = now() - interval '1 millisecond', updated_at = now()
+        WHERE <include refid="replyDeliveryScope"/> AND d.input_event_id = #{inputID}
+          AND d.lease_owner = #{owner} AND d.state = 'sent'
+        RETURNING input_event_id
+    ) SELECT input_event_id FROM changed
+ </select>
+    <select id="CompleteReplyDelivery" result="optional" resultType="string">
+ WITH changed AS (
+        UPDATE channel_reply_deliveries d SET state = 'completed', updated_at = now()
+        WHERE <include refid="replyDeliveryScope"/> AND d.input_event_id = #{inputID}
+          AND d.lease_owner = #{owner} AND d.state IN ('sent', 'completed') AND d.lease_until &gt; now()
+        RETURNING input_event_id
+    ) SELECT input_event_id FROM changed
+ </select>
+    <select id="NextReplyRecovery" result="optional" resultType="time.Time">
+        SELECT d.lease_until FROM channel_reply_deliveries d
+        WHERE <include refid="replyDeliveryScope"/> AND d.state = 'sent' AND d.lease_owner &lt;&gt; #{owner}
+        ORDER BY d.lease_until LIMIT 1
+    </select>
+    <select id="ListReplyDeliveries" resultType="ChannelReplyDelivery">
+        SELECT <include refid="replyDeliveryColumns"/> FROM channel_reply_deliveries d
+        WHERE <include refid="replyDeliveryScope"/> AND d.state = 'sent' AND d.lease_until &lt; now()
+        ORDER BY d.created_at LIMIT 100
+    </select>
 </mapper>

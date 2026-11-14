@@ -187,6 +187,18 @@ func TestGenerateConfigProducesLoadableEnvironmentConfig(t *testing.T) {
 		t.Fatal("generated config lost explicit sandbox credentials or template")
 	}
 
+	spec.LocalE2BAPIURL = "http://127.0.0.1:43268"
+	if err := GenerateConfig(baseConfigPath, layout, base, spec, state, runtime); err != nil {
+		t.Fatal(err)
+	}
+	overridden, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overridden.E2B.APIURL != spec.LocalE2BAPIURL || overridden.E2B.SandboxURL != spec.LocalE2BAPIURL || overridden.Server.Addr != cfg.Server.Addr {
+		t.Fatalf("独立提供方地址必须覆盖两个 E2B 端点并保留后端端口: api=%s sandbox=%s server=%s", overridden.E2B.APIURL, overridden.E2B.SandboxURL, overridden.Server.Addr)
+	}
+
 	state.Runtime = &runtime
 	result, err := finalizeRun(t.Context(), preparedRun{repoRoot: repoRoot, binding: binding, layout: layout, base: base, spec: spec, state: state})
 	if err != nil {

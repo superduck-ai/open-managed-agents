@@ -17,3 +17,4 @@ var ErrToolCallConflict = errors.New("tool call conflicts with persisted state")
 var ErrToolCallSandboxPreparing = errors.New("tool call sandbox is still being prepared")
 
 var ErrToolCallSandboxRetired = errors.New("tool call sandbox no longer accepts calls")
+var ErrChannelCredentialUserRequired = errors.New("channel workspace credential requires a runtime user")

@@ -149,6 +149,17 @@
         LIMIT #{params.FetchLimit}
     </select>
 
+    <select id="HasAcceptedToolControl" resultType="bool">
+        SELECT EXISTS (
+            SELECT 1 FROM session_events
+            WHERE workspace_uuid = #{workspaceUUID}
+            AND session_external_id = #{sessionExternalID}
+            AND deleted_at IS NULL
+            AND event_type IN ('user.tool_confirmation', 'user.custom_tool_result')
+            AND tool_use_id IN (#{publicID}, #{historyID})
+        )
+    </select>
+
     <select id="ChildSessionToolUseIDs" resultType="string">
         SELECT DISTINCT COALESCE(e.tool_use_id, CASE WHEN e.payload_blob_uuid IS NULL THEN COALESCE(e.payload-&gt;&gt;'tool_use_id', e.payload-&gt;&gt;'mcp_tool_use_id', e.payload-&gt;&gt;'custom_tool_use_id', e.payload-&gt;&gt;'id') END) AS tool_use_id
         FROM session_events e

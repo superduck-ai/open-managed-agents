@@ -8,8 +8,9 @@ type scopeQueue struct {
 }
 
 type scopeTicket struct {
-	scopeKey string
-	ready    chan struct{}
+	scopeKey    string
+	ready       chan struct{}
+	interrupted []*channelReplyTask
 }
 
 func (w *channelWorker) enqueueScope(scopeKey string) *scopeTicket {
@@ -60,7 +61,6 @@ func (w *channelWorker) dropScope(ticket *scopeTicket) bool {
 		}
 	}
 	w.mu.Unlock()
-	w.releaseScope(ticket)
 	return false
 }
 

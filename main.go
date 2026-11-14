@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -292,7 +293,8 @@ func run(bootstrap *slog.Logger) (err error) {
 		WorkerEventAcks:        workerEventAcks,
 	})
 	apiServer.StartChannels(ctx)
-	defer apiServer.StopChannels()
+	stopChannels := sync.OnceFunc(apiServer.StopChannels)
+	defer stopChannels()
 	server := &http.Server{
 		Addr:              cfg.Server.Addr,
 		Handler:           apiServer,
@@ -302,7 +304,7 @@ func run(bootstrap *slog.Logger) (err error) {
 		IdleTimeout:       2 * time.Minute,
 	}
 
-	return serveHTTP(ctx, server, logger)
+	return serveHTTP(ctx, server, logger, stopChannels)
 }
 
 type periodicJobConfigurer interface {
@@ -338,7 +340,7 @@ func jobQueues(workers *river.Workers, database *db.DB, cfg config.Config, logge
 	return queues
 }
 
-func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) error {
+func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger, stopChannels func()) error {
 	listener, err := listeners.Open(server.Addr, os.Getenv("OMA_HTTP_LISTENER_FD"))
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
@@ -353,6 +355,7 @@ func serveHTTP(ctx context.Context, server *http.Server, logger *slog.Logger) er
 
 	select {
 	case <-ctx.Done():
+		stopChannels()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return shutdownHTTP(shutdownCtx, server)

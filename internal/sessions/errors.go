@@ -12,6 +12,9 @@ import (
 	skillsapi "github.com/superduck-ai/open-managed-agents/internal/skills"
 )
 
+var ErrStreamReset = errors.New("session stream interrupted; replay required")
+var ErrStreamHeartbeat = errors.New("session stream heartbeat due")
+
 var errSessionAgentUpdateObjectRequired = errors.New("agent update must be an object")
 var errSessionAgentUpdateUnsupportedFields = errors.New("only tools and mcp_servers can be updated in an existing session")
 var errStoredSessionAgentInvalid = errors.New("stored session agent is invalid")
@@ -125,6 +128,9 @@ func mapSessionLoadError(err error, sessionID string) error {
 	}
 	if errors.Is(err, db.ErrSessionInputConflict) {
 		return apperr.New(apperr.Conflict, "Session cannot accept this input now", err)
+	}
+	if errors.Is(err, db.ErrSessionInputRequestConflict) {
+		return apperr.New(apperr.Conflict, "Idempotency-Key was already used with different events", err)
 	}
 	return internalError("Session operation failed", fmt.Errorf("session %q operation: %w", sessionID, err))
 }

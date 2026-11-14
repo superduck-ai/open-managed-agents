@@ -331,6 +331,8 @@ handler 只调用这些函数；DB 层返回 `ErrPreconditionFailed`、`ErrNotFo
 - `tests/brain_worker_claim_test.go`（真实 PostgreSQL 与 HTTP 服务）：鉴权与参数错误；长轮询在派发后被唤醒、第二个 worker 领不到、注册成功且心跳返回约 20 秒租约；宽限期边界接管与旧 worker fence；release 冲突、失败退避、5 次后发布 `session.error` 与 `retries_exhausted` 并保持 idle；耗尽与 `permanent` 后旧凭据注册被拒；`permanent` release 立即发布同样的事件，新输入后可重新领取；`idle` release 后无新输入不可领取，会话回到 running 后立即可领取；公共会话已删除时不会被领取（epoch 与 attempts 不变）。`tests/brain_sandbox_provisioning_test.go` 改为统计 `DispatchWorker` 调用。
 - DSH：`tests/capacity.test.ts` 复现评审中的并发准入场景（上限 2、空闲 A/B、并发准入 C/D 最终只保留 C/D）及预留释放；`tests/claim-loop.test.ts` 覆盖 401 启动失败、启动探测的临时错误重试、运行中 401 只报告一次并继续重试、准入失败按原因（`admission_failed`/`permanent`/`shutdown`）release 且不阻塞后续领取、容量为零时停止领取、准入中停机 release、临时错误退避恢复；`tests/claim-process.test.ts` 用独立进程覆盖错误或缺失 token 的启动失败、领取到 SSE 审批的完整回合，以及 SIGTERM 时忙碌会话以 `shutdown`、空闲会话以 `idle` 交还；`tests/oma-heartbeat.test.ts` 覆盖心跳与租约约束和领取配置。
 
+形式化模型：`oma-brain-dsh/verification/tla/` 用 TLA+ 描述领取、租约、释放、耗尽与 epoch fence 的行状态机，DSH 心跳与准入时序，以及 DSH 进程内并发准入，结果与已发现的问题见该目录 README。模型确认凭据唯一、心跳接受与可领取互斥、耗尽 fence 和最多连续 2 次心跳失败不丢租约，同时给出三个反例：同一进程并发准入同一会话留下孤儿会话（register 后到首次心跳前的准入窗口可能超过租约加宽限），沙箱 MCP 转发的 epoch 校验不持锁，以及上文“已知边界”在 `permanent` 路径同样成立。
+
 `verify-be` 生成的配置写入 `code_session.brain_claim_token_file`，清理阶段与其他密钥一起删除；`tests/liveworker` 启动 Brain 时传入 `OMA_BRAIN_CLAIM_TOKEN`。真实 Brain、模型与 Docker 沙箱的 chat 场景未在本次改动中运行，仅在用户明确要求时执行。
 
 `tests/ccrv2-inbound.test.ts` 偶发的 `CCRv2 session stopped` 未处理拒绝与领取逻辑无关，排查记录见 superduck-ai/open-managed-agents#457。

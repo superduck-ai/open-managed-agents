@@ -97,9 +97,9 @@ if [ -z "$oma_npmrc" ] && command -v npm > /dev/null 2>&1; then oma_npmrc=$(npm 
 	return script.String()
 }
 
-func (r *Runner) persistPackageSources(ctx context.Context, sandboxID string, preinstalled bool) {
+func (r *Runner) persistPackageSources(ctx context.Context, sandboxID string) {
 	script := packageSourcePersistScript(r.cfg.EnvironmentPackages)
-	if preinstalled || script == "" {
+	if script == "" {
 		return
 	}
 	result, err := r.provider.RunCommand(ctx, sandboxID, e2bruntime.CommandRequest{

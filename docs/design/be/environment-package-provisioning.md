@@ -66,7 +66,7 @@ Cargo 不改变镜像的 `registry.default`，不自动查找私有源或回退�
 | cargo | `${CARGO_HOME:-$HOME/.cargo}/config.toml` | 追加带标记的 `[registries.<name>]` 块 |
 | gem | `GEMRC` 的最后一项，否则 `~/.gemrc` | 替换 `:sources:` |
 
-写入脚本以标记块实现幂等，重复执行只替换 OMA 写入的部分。预构建在软件包安装之后、`init_script` 之前执行该脚本，因此初始化脚本同样使用这些源；未使用预构建模板的 Sandbox 由 Runner 在安装软件包前执行一次，失败只记录告警，不阻止 Session 启动。已完成的预构建模板保留构建时的源配置，修改 `environment_packages` 后需重新预构建才会更新。缺少 `python3` 或 `ruby` 时跳过对应管理器并输出提示。部署 YAML 不包含认证；认证由镜像原配置或流水线私密配置提供。整份 `environment_packages` 计入预构建 provider key，源变更会改变标识；已完成模板仍按既有合同复用。
+写入脚本以标记块实现幂等，重复执行只替换 OMA 写入的部分。预构建在软件包安装之后、`init_script` 之前执行该脚本，因此初始化脚本同样使用这些源。每次创建 Sandbox 时，Runner 都按当前部署配置在安装软件包前执行一次，包括使用已完成预构建模板的 Sandbox；失败只记录告警，不阻止 Session 启动，此时沿用镜像或模板中的旧值。运行期以平台配置为准：模板内构建时写入的源只服务于构建与 `init_script`，修改 `environment_packages` 后新建的 Sandbox 立即使用新源，无需重新预构建；平台源会覆盖 `init_script` 对 npm `registry` / `@scope:registry`、pip `index-url`、gem `:sources:` 等同名项的设置。这样运行期配置文件与按当前配置计算的 `RegistryHosts()` 出站授权保持一致。缺少 `python3` 或 `ruby` 时跳过对应管理器并输出提示。部署 YAML 不包含认证；认证由镜像原配置或流水线私密配置提供。整份 `environment_packages` 计入预构建 provider key，源变更会改变标识；已完成模板仍按既有合同复用。
 
 所有管理器的 URL 抽取并规范化 host，经 `RegistryHosts()` 去重后，在 Environment 的 `allow_package_managers: true` 下纳入 Sandbox AllowOut 与 CONNECT host 策略；关闭时仍需显式 `allowed_hosts`。完成 Environment 授权后，只有配置过的精确 host、443 端口、RFC1918 / ULA / CGNAT 地址可获得自动私网例外。loopback、link-local、metadata 地址仍拒绝，包括 CGNAT 与 ULA 内的已知 metadata 地址。DNS 只解析一次，随后拨号已校验 IP。MCP proxy 与其他使用 `PublicAddress` 的服务不继承此例外。
 

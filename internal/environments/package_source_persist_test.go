@@ -1,6 +1,9 @@
 package environments
 
 import (
+	"context"
+	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/runtime/e2bruntime"
 )
 
 func TestPackageSourcePersistScriptEmptyWithoutSources(t *testing.T) {
@@ -83,6 +87,65 @@ func TestTemplateDockerfilePersistsSourcesBeforeInitScript(t *testing.T) {
 	}
 	if strings.Contains(templateDockerfile("registry.example.com/base:1", spec, config.EnvironmentPackageConfig{}), `RUN ["sh","-c"`) {
 		t.Fatal("persist step added without configured sources")
+	}
+}
+
+func TestPersistPackageSourcesWarnsWithoutFailingSandbox(t *testing.T) {
+	sources := config.EnvironmentPackageConfig{NPM: config.NPMRegistryConfig{Registry: "https://packages.example.internal/npm/"}}
+	for _, tc := range []struct {
+		name     string
+		provider *rcloneTestProvider
+		wantErr  string
+	}{
+		{name: "command error", provider: &rcloneTestProvider{runErrors: []error{errors.New("sandbox unavailable")}}, wantErr: "sandbox unavailable"},
+		{name: "non-zero exit", provider: &rcloneTestProvider{runResult: e2bruntime.CommandResult{ExitCode: 3}}, wantErr: "exit code 3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &prebuildLogRecorder{}
+			runner := &Runner{provider: tc.provider, cfg: config.Config{EnvironmentPackages: sources}, logger: slog.New(recorder)}
+			runner.persistPackageSources(context.Background(), "sbx-1")
+			if len(tc.provider.runCommands) != 1 {
+				t.Fatalf("RunCommand calls = %d, want 1", len(tc.provider.runCommands))
+			}
+			if len(recorder.records) != 1 {
+				t.Fatalf("log records = %+v", recorder.records)
+			}
+			record := recorder.records[0]
+			if record.level != slog.LevelWarn || record.message != "persist package sources failed" || record.attrs["sandbox_id"] != "sbx-1" {
+				t.Fatalf("log record = %+v", record)
+			}
+			if err, ok := record.attrs["error"].(error); !ok || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("logged error = %v, want %q", record.attrs["error"], tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestPersistPackageSourcesSkipsWithoutConfiguredSources(t *testing.T) {
+	provider := &rcloneTestProvider{}
+	runner := &Runner{provider: provider, logger: slog.New(&prebuildLogRecorder{})}
+	runner.persistPackageSources(context.Background(), "sbx-1")
+	if len(provider.runCommands) != 0 {
+		t.Fatalf("RunCommand calls = %d, want 0", len(provider.runCommands))
+	}
+}
+
+func TestPersistPackageSourcesWritesCurrentConfiguration(t *testing.T) {
+	provider := &rcloneTestProvider{}
+	recorder := &prebuildLogRecorder{}
+	runner := &Runner{provider: provider, logger: slog.New(recorder), cfg: config.Config{EnvironmentPackages: config.EnvironmentPackageConfig{
+		NPM: config.NPMRegistryConfig{Registry: "https://packages.example.internal/npm/"},
+		PIP: config.PIPRegistryConfig{IndexURL: "https://packages.example.internal/pypi/simple/"},
+	}}}
+	runner.persistPackageSources(context.Background(), "sbx-1")
+	if len(provider.runCommands) != 1 || len(recorder.records) != 0 {
+		t.Fatalf("RunCommand calls = %d, log records = %+v", len(provider.runCommands), recorder.records)
+	}
+	command := provider.runCommands[0]
+	for _, want := range []string{"https://packages.example.internal/npm/", "https://packages.example.internal/pypi/simple/"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("persist command does not contain %q:\n%s", want, command)
+		}
 	}
 }
 

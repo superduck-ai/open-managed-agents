@@ -4,109 +4,13 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
-	"net/http"
+	"io"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
-
-func TestAttachmentPreparationResumesPerFileReceipts(t *testing.T) {
-	for _, failure := range []string{"upload_rejected", "attach_rejected", "attach_unknown", "upload_unknown"} {
-		t.Run(failure, func(t *testing.T) {
-			uploads, attaches := 0, 0
-			resources := []omaResource{}
-			uploadedNames := map[string]int{}
-			failed := false
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch {
-				case r.Method == http.MethodGet:
-					_ = json.MarshalWrite(w, map[string]any{"data": resources})
-				case r.URL.Path == "/v1/files":
-					file, header, err := r.FormFile("file")
-					if err != nil {
-						t.Error(err)
-						w.WriteHeader(http.StatusBadRequest)
-						return
-					}
-					_ = file.Close()
-					if header.Filename == "second.csv" && !failed && failure == "upload_rejected" {
-						failed = true
-						w.WriteHeader(http.StatusTooManyRequests)
-						return
-					}
-					uploads++
-					uploadedNames[header.Filename]++
-					if header.Filename == "second.csv" && !failed && failure == "upload_unknown" {
-						failed = true
-						_, _ = w.Write([]byte(`{`))
-						return
-					}
-					_ = json.MarshalWrite(w, omaFile{ID: fmt.Sprintf("file_up_%d", uploads), Filename: header.Filename, MimeType: "text/csv"})
-				default:
-					var input struct {
-						FileID    string `json:"file_id"`
-						MountPath string `json:"mount_path"`
-					}
-					if err := json.UnmarshalRead(r.Body, &input); err != nil {
-						t.Error(err)
-					}
-					if strings.HasSuffix(input.MountPath, "/second.csv") && !failed && failure == "attach_rejected" {
-						failed = true
-						w.WriteHeader(http.StatusTooManyRequests)
-						return
-					}
-					attaches++
-					resource := omaResource{ID: fmt.Sprintf("resource_%d", attaches), Type: "file", FileID: "clone_" + input.FileID, MountPath: "/mnt/session" + input.MountPath}
-					resources = append(resources, resource)
-					if strings.HasSuffix(input.MountPath, "/second.csv") && !failed && failure == "attach_unknown" {
-						failed = true
-						_, _ = w.Write([]byte(`{`))
-						return
-					}
-					_ = json.MarshalWrite(w, resource)
-				}
-			}))
-			defer server.Close()
-			store := &fakeRuntimeStore{}
-			worker, _ := testWorker(t, store, server.URL)
-			row := db.ChannelInput{UUID: "input", State: "prepared", LeaseOwner: worker.deliveryOwner, LeaseUntil: time.Now().Add(time.Hour)}
-			store.inputs = map[string]db.ChannelInput{row.UUID: row}
-			worker.adapter = &attachmentBatchAdapter{channelAdapter: worker.adapter, data: []byte("name,value\nmarker,real")}
-			msg := &channelMessage{MessageID: "message", Content: "完整读取本轮附件", input: &row, Resources: []channelAttachment{
-				{Type: "file", FileKey: "first", FileName: "first.csv"}, {Type: "file", FileKey: "second", FileName: "second.csv"},
-			}}
-			content, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg)
-			if err == nil || content != nil {
-				t.Fatalf("第二个附件失败时不得提交部分内容: content=%v err=%v", content, err)
-			}
-			persisted := store.inputs[row.UUID]
-			if persisted.PreparedContent == "" || persisted.SessionExternalID != "sesn_1" {
-				t.Fatal("第一个附件成功后未保存逐项交接回执")
-			}
-			msg.input = &persisted
-			content, mounted, err := worker.inputContent(t.Context(), "key", "sesn_1", msg)
-			if failure == "upload_unknown" {
-				if err == nil || content != nil || uploads != 2 || attaches != 1 {
-					t.Fatalf("上传结果未知不得盲目重传或提交: uploads=%d attaches=%d err=%v", uploads, attaches, err)
-				}
-				return
-			}
-			if err != nil || len(content) != 2 || len(mounted) != 2 || uploads != 2 || attaches != 2 || uploadedNames["first.csv"] != 1 {
-				t.Fatalf("恢复必须复用已成功上传和原生副本挂载: uploads=%d attaches=%d content=%v err=%v", uploads, attaches, content, err)
-			}
-			final := store.inputs[row.UUID]
-			msg.input = &final
-			if _, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg); err != nil || uploads != 2 || attaches != 2 {
-				t.Fatalf("完整准备记录不得再上传挂载: %v", err)
-			}
-		})
-	}
-}
 
 type failingPreparationStore struct {
 	*fakeRuntimeStore
@@ -122,38 +26,85 @@ func (s *failingPreparationStore) AdvanceChannelInput(ctx context.Context, scope
 	return s.fakeRuntimeStore.AdvanceChannelInput(ctx, scope, inputUUID, owner, change)
 }
 
-func TestAttachmentCheckpointFailureDoesNotRepeatSideEffects(t *testing.T) {
-	for checkpoint := 1; checkpoint <= 5; checkpoint++ {
-		t.Run(fmt.Sprintf("checkpoint_%d", checkpoint), func(t *testing.T) {
+func TestAttachmentPreparationUsesNativePathAfterLostReceipt(t *testing.T) {
+	for _, failure := range []string{"rejected", "lost_reply", "checkpoint"} {
+		t.Run(failure, func(t *testing.T) {
 			files := &filesServer{}
 			server := httptest.NewServer(files.handler(t))
 			defer server.Close()
 			base := &fakeRuntimeStore{}
 			worker, _ := testWorker(t, base, server.URL)
-			store := &failingPreparationStore{fakeRuntimeStore: base, failAt: checkpoint}
-			worker.supervisor.store = store
+			if failure == "checkpoint" {
+				worker.supervisor.store = &failingPreparationStore{fakeRuntimeStore: base, failAt: 2}
+			}
+			calls := 0
+			worker.supervisor.putAttachment = func(ctx context.Context, key, session, path, media string, body io.Reader) (db.FileRecord, error) {
+				calls++
+				if calls == 2 && failure == "rejected" {
+					return db.FileRecord{}, errors.New("原生存储拒绝")
+				}
+				file, err := files.putAttachment(ctx, key, session, path, media, body)
+				if calls == 2 && failure == "lost_reply" {
+					return db.FileRecord{}, errors.New("写入成功但回执丢失")
+				}
+				return file, err
+			}
 			row := db.ChannelInput{UUID: "input", State: "prepared", LeaseOwner: worker.deliveryOwner, LeaseUntil: time.Now().Add(time.Hour)}
 			base.inputs = map[string]db.ChannelInput{row.UUID: row}
-			worker.adapter = &attachmentBatchAdapter{channelAdapter: worker.adapter, data: []byte("data")}
-			msg := &channelMessage{MessageID: "message", input: &row, Resources: []channelAttachment{{Type: "file", FileKey: "first", FileName: "data.csv"}}}
-			if _, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg); err == nil {
-				t.Fatal("回执落库失败不得返回可提交的成功结果")
-			}
-			if checkpoint == 1 && files.uploads != 0 {
-				t.Fatal("上传意图落库失败仍执行了上传")
+			worker.adapter = &attachmentBatchAdapter{channelAdapter: worker.adapter, data: []byte("完整附件")}
+			msg := &channelMessage{MessageID: "message", Content: "完整读取", input: &row, Resources: []channelAttachment{
+				{Type: "file", FileKey: "first", FileName: "same.csv"}, {Type: "file", FileKey: "second", FileName: "same.csv"},
+			}}
+			content, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg)
+			if err == nil || content != nil {
+				t.Fatalf("失败不能提交部分内容: %v %v", content, err)
 			}
 			persisted := base.inputs[row.UUID]
 			msg.input = &persisted
-			_, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg)
-			if checkpoint == 2 {
-				if err == nil || files.uploads != 1 || files.attached != 0 {
-					t.Fatalf("上传回执未知不得重传: uploads=%d attached=%d err=%v", files.uploads, files.attached, err)
-				}
-				return
+			content, mounted, err := worker.inputContent(t.Context(), "key", "sesn_1", msg)
+			if err != nil || len(content) != 2 || len(mounted) != 2 || files.writes != 2 {
+				t.Fatalf("恢复应复用原生稳定路径: writes=%d mounted=%v err=%v", files.writes, mounted, err)
 			}
-			if err != nil || files.uploads != 1 || files.attached != 1 {
-				t.Fatalf("恢复应复用已确认副作用: uploads=%d attached=%d err=%v", files.uploads, files.attached, err)
+			if files.mountPaths[0] == files.mountPaths[1] {
+				t.Fatal("同名附件覆盖")
+			}
+			persisted = base.inputs[row.UUID]
+			msg.input = &persisted
+			if _, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg); err != nil || files.writes != 2 {
+				t.Fatal("完整准备内容被重复写入")
 			}
 		})
+	}
+}
+
+func TestLegacyAttachmentReceiptDoesNotRepeatUnknownUpload(t *testing.T) {
+	worker, _ := testWorker(t, &fakeRuntimeStore{}, "http://unused")
+	for _, receipt := range []channelAttachmentReceipt{{Uploading: true}, {Mounting: true}} {
+		prepared, _ := json.Marshal(channelPreparedInput{Preparing: true, Attachments: []channelAttachmentReceipt{receipt}})
+		msg := &channelMessage{MessageID: "message", input: &db.ChannelInput{PreparedContent: string(prepared)}, Resources: []channelAttachment{{Type: "file", FileKey: "first"}}}
+		worker.adapter = &attachmentBatchAdapter{channelAdapter: worker.adapter, data: []byte("data")}
+		if content, _, err := worker.inputContent(t.Context(), "key", "sesn_1", msg); err == nil || content != nil {
+			t.Fatal("旧未知回执不能盲目重放")
+		}
+	}
+}
+
+func TestLegacyConfirmedUploadContinuesThroughNativeAttachment(t *testing.T) {
+	worker, _ := testWorker(t, &fakeRuntimeStore{}, "http://unused")
+	worker.adapter = &attachmentBatchAdapter{channelAdapter: worker.adapter, data: []byte("data")}
+	writes := 0
+	worker.supervisor.putAttachment = func(_ context.Context, _, _, _, _ string, body io.Reader) (db.FileRecord, error) {
+		writes++
+		data, err := io.ReadAll(body)
+		if string(data) != "data" {
+			t.Fatal("旧附件内容改变")
+		}
+		return db.FileRecord{ExternalID: "native-file"}, err
+	}
+	prepared := channelPreparedInput{Preparing: true, Attachments: []channelAttachmentReceipt{{File: omaFile{ID: "confirmed-old-file"}}}}
+	msg := &channelMessage{MessageID: "legacy-message", Resources: []channelAttachment{{Type: "file", FileKey: "first", FileName: "data.bin"}}}
+	content, mounted, err := worker.messageContent(t.Context(), "key", "sesn_1", msg, "", &prepared)
+	if err != nil || writes != 1 || len(content) != 1 || len(mounted) != 1 {
+		t.Fatalf("已确认上传不应按未知结果阻断: writes=%d err=%v", writes, err)
 	}
 }

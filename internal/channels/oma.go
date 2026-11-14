@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -199,31 +198,42 @@ func (c *omaClient) listEvents(ctx context.Context, apiKey, sessionID string) ([
 
 func (c *omaClient) listEventPages(ctx context.Context, apiKey, sessionID string, filter url.Values) ([]omaEvent, error) {
 	var events []omaEvent
+	err := visitOMAEventPages(ctx, c, apiKey, sessionID, filter, func(page []omaEvent) error {
+		events = append(events, page...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func visitOMAEventPages[T any](ctx context.Context, c *omaClient, apiKey, sessionID string, filter url.Values, visit func([]T) error) error {
 	pages := make(map[string]struct{})
 	query := url.Values{"order": {"asc"}, "limit": {"1000"}}
 	for key, values := range filter {
 		query[key] = values
 	}
 	basePath := "/v1/sessions/" + url.PathEscape(sessionID) + "/events"
-	path := basePath + "?" + query.Encode()
 	for {
 		var current struct {
-			Data     []omaEvent `json:"data"`
-			NextPage string     `json:"next_page"`
+			Data     []T    `json:"data"`
+			NextPage string `json:"next_page"`
 		}
-		if err := c.request(ctx, apiKey, http.MethodGet, path, nil, &current); err != nil {
-			return nil, err
+		if err := c.request(ctx, apiKey, http.MethodGet, basePath+"?"+query.Encode(), nil, &current); err != nil {
+			return err
 		}
-		events = append(events, current.Data...)
+		if err := visit(current.Data); err != nil {
+			return err
+		}
 		if current.NextPage == "" || len(current.Data) == 0 {
-			return events, nil
+			return nil
 		}
 		if _, seen := pages[current.NextPage]; seen {
-			return nil, errOMAPaginationCycle
+			return errOMAPaginationCycle
 		}
 		pages[current.NextPage] = struct{}{}
 		query.Set("page", current.NextPage)
-		path = basePath + "?" + query.Encode()
 	}
 }
 
@@ -350,58 +360,6 @@ type omaResource struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
-func (c *omaClient) uploadFile(ctx context.Context, apiKey, filename, mediaType string, data io.Reader) (omaFile, error) {
-	if c.baseURL == "" {
-		return omaFile{}, errors.New("未配置 OMA 渠道内部地址")
-	}
-	reader, writer := io.Pipe()
-	multipartWriter := multipart.NewWriter(writer)
-	finished := make(chan error, 1)
-	go func() {
-		part, err := multipartWriter.CreateFormFile("file", filename)
-		if err == nil {
-			_, err = io.Copy(part, data)
-		}
-		if err == nil {
-			err = multipartWriter.Close()
-		}
-		_ = writer.CloseWithError(err)
-		finished <- err
-	}()
-	defer func() { _ = reader.Close(); <-finished }()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/files?beta=true", reader)
-	if err != nil {
-		return omaFile{}, err
-	}
-	request.Header.Set("X-Api-Key", apiKey)
-	request.Header.Set("anthropic-version", "2023-06-01")
-	request.Header.Set("anthropic-beta", omaManagedAgentsBeta)
-	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
-	response, err := c.http.Do(request)
-	if err != nil {
-		return omaFile{}, fmt.Errorf("OMA 上传文件失败: %w", err)
-	}
-	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return omaFile{}, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return omaFile{}, omaResponseError(response.StatusCode)
-	}
-	var file omaFile
-	if err := json.Unmarshal(payload, &file); err != nil {
-		return omaFile{}, fmt.Errorf("OMA 文件响应解析失败: %w", err)
-	}
-	if file.ID == "" {
-		return omaFile{}, errors.New("OMA 文件响应缺少 id")
-	}
-	if file.MimeType == "" {
-		file.MimeType = mediaType
-	}
-	return file, nil
-}
-
 func (c *omaClient) downloadFile(ctx context.Context, apiKey, fileID string, expectedSize int64) ([]byte, string, error) {
 	if c.baseURL == "" {
 		return nil, "", errors.New("未配置 OMA 渠道内部地址")
@@ -444,13 +402,4 @@ func (c *omaClient) listResources(ctx context.Context, apiKey, sessionID string)
 		return nil, err
 	}
 	return response.Data, nil
-}
-
-func (c *omaClient) attachFileResource(ctx context.Context, apiKey, sessionID, fileID, filename string) (omaResource, error) {
-	body := map[string]any{"type": "file", "file_id": fileID, "mount_path": "/uploads/" + fileID + "/" + filename}
-	var resource omaResource
-	if err := c.request(ctx, apiKey, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/resources", body, &resource); err != nil {
-		return omaResource{}, err
-	}
-	return resource, nil
 }

@@ -97,7 +97,7 @@ func TestUnknownChannelTypeDoesNotFallBackToFeishu(t *testing.T) {
 func TestIndependentAdapterUsesSharedConversationAndFiles(t *testing.T) {
 	var mu sync.Mutex
 	sequence := 0
-	uploadCount, attachCount := 0, 0
+	writes := 0
 	var events []omaEvent
 	var resources []omaResource
 	var metadata []map[string]string
@@ -141,25 +141,6 @@ func TestIndependentAdapterUsesSharedConversationAndFiles(t *testing.T) {
 				return
 			}
 			_, _ = w.Write([]byte(`{}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/files":
-			uploadCount++
-			if err := r.ParseMultipartForm(1 << 20); err != nil {
-				t.Error(err)
-			}
-			file, _, err := r.FormFile("file")
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			defer file.Close()
-			data, _ := io.ReadAll(file)
-			if string(data) != "channel_attachment" {
-				t.Errorf("附件内容未经过共享上传: %s", data)
-			}
-			_, _ = w.Write([]byte(`{"id":"file_input","filename":"input.txt","mime_type":"text/plain"}`))
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/resources"):
-			attachCount++
-			_, _ = w.Write([]byte(`{"id":"input_mount","type":"file","file_id":"file_mounted","mount_path":"/uploads/input.txt"}`))
 		case strings.HasSuffix(r.URL.Path, "/resources"):
 			_ = json.MarshalWrite(w, map[string]any{"data": resources})
 		case strings.HasSuffix(r.URL.Path, "/events"):
@@ -177,6 +158,16 @@ func TestIndependentAdapterUsesSharedConversationAndFiles(t *testing.T) {
 	record := db.ChannelRecord{ExternalID: "other_channel", OrganizationUUID: "org", WorkspaceUUID: "workspace", AgentExternalID: "agent", ChannelType: "test-channel", AppID: "account", Enabled: true, BindingStatus: "bound", Mode: "open"}
 	store := &fakeRuntimeStore{record: record, bindings: map[string]string{}, env: "environment"}
 	supervisor := newRuntimeSupervisor(store, nil, newOMAClient(server.URL), nil)
+	supervisor.putAttachment = func(_ context.Context, _, _, attachmentPath, _ string, body io.Reader) (db.FileRecord, error) {
+		data, err := io.ReadAll(body)
+		if err != nil || string(data) != "channel_attachment" {
+			t.Errorf("原生附件内容错误: %q %v", data, err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		writes++
+		return db.FileRecord{ExternalID: "file_mounted"}, err
+	}
 	supervisor.subscribeEvents = testEventSubscriber(t, func() []omaEvent { mu.Lock(); defer mu.Unlock(); return append([]omaEvent(nil), events...) })
 	adapter := &independentAdapter{started: make(chan struct{}), stopped: make(chan struct{})}
 	supervisor.adapters[record.ChannelType] = func(worker *channelWorker, _ string) (channelAdapter, error) {
@@ -214,7 +205,7 @@ func TestIndependentAdapterUsesSharedConversationAndFiles(t *testing.T) {
 	if sequence != 2 || !strings.Contains(strings.Join(adapter.replies, ""), "来自其他渠道：读取附件") || len(adapter.texts) != 1 {
 		t.Fatalf("其他适配器必须复用普通对话和本地命令: runs=%d replies=%v notices=%v", sequence, adapter.replies, adapter.texts)
 	}
-	if uploadCount != 1 || attachCount != 1 || len(adapter.downloads) != 1 || len(adapter.artifacts) != 1 || !strings.Contains(adapter.artifacts[0], "result.csv:a,b") {
-		t.Fatalf("其他适配器必须复用附件挂载、产物基线与交付: uploads=%d mounts=%d downloads=%v artifacts=%v", uploadCount, attachCount, adapter.downloads, adapter.artifacts)
+	if writes != 1 || len(adapter.downloads) != 1 || len(adapter.artifacts) != 1 || !strings.Contains(adapter.artifacts[0], "result.csv:a,b") {
+		t.Fatalf("其他适配器必须复用附件挂载、产物基线与交付: writes=%d downloads=%v artifacts=%v", writes, adapter.downloads, adapter.artifacts)
 	}
 }

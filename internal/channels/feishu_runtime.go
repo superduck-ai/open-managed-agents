@@ -54,6 +54,7 @@ type runtimeStore interface {
 
 type runtimeSupervisor struct {
 	fileMaxBytes    int64
+	putAttachment   SessionAttachmentWriter
 	subscribeEvents SessionEventSubscriber
 	adapters        map[string]channelAdapterFactory
 	store           runtimeStore
@@ -62,7 +63,6 @@ type runtimeSupervisor struct {
 	logger          *slog.Logger
 	mu              sync.Mutex
 	workers         map[string]*channelWorker
-	apiKeys         map[string]string
 	shutdown        chan struct{}
 }
 
@@ -74,7 +74,6 @@ func newRuntimeSupervisor(store runtimeStore, cipher *secrets.Service, oma *omaC
 		oma:      oma,
 		logger:   logging.LoggerOrDefault(logger),
 		workers:  make(map[string]*channelWorker),
-		apiKeys:  make(map[string]string),
 		shutdown: make(chan struct{}),
 	}
 }
@@ -221,21 +220,8 @@ func (s *runtimeSupervisor) online(channelID string) bool {
 }
 
 func (s *runtimeSupervisor) apiKey(ctx context.Context, record db.ChannelRecord) (string, error) {
-	s.mu.Lock()
-	key, ok := s.apiKeys[record.WorkspaceUUID]
-	s.mu.Unlock()
-	if ok && key != "" {
-		return key, nil
-	}
-	key, err := s.store.EnsureChannelWorkspaceCredential(ctx, platform.CreateConsoleAPIKeyInput{
+	return s.store.EnsureChannelWorkspaceCredential(ctx, platform.CreateConsoleAPIKeyInput{
 		OrgUUID:       record.OrganizationUUID,
 		WorkspaceUUID: record.WorkspaceUUID,
 	}, s.cipher)
-	if err != nil {
-		return "", err
-	}
-	s.mu.Lock()
-	s.apiKeys[record.WorkspaceUUID] = key
-	s.mu.Unlock()
-	return key, nil
 }

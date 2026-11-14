@@ -23,6 +23,7 @@ const maxSessionBodySize = 4 << 20
 const maxSessionCreateBodySize = sessioncontract.MaxCreateBodyBytes
 
 type Handler struct {
+	attachments     codesessions.SessionAttachmentStore
 	secretService   *secrets.Service
 	eventPayloads   *eventpayload.Store
 	cfg             config.Config

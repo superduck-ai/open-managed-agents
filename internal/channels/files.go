@@ -11,8 +11,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
 )
 
 func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID string, msg *channelMessage, text string, prepared *channelPreparedInput) ([]map[string]any, map[string]struct{}, error) {
@@ -45,14 +43,6 @@ func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID st
 	}()
 	mounted := make(map[string]struct{})
 	paths := make([]string, 0)
-	existing := map[string]omaResource{}
-	if len(msg.Resources) > 0 {
-		var err error
-		existing, err = w.existingFileMounts(ctx, apiKey, sessionID)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
 	encodedText, _ := json.Marshal(text)
 	imageBudget := (4 << 20) - len(encodedText) - (64 << 10)
 	if prepared == nil {
@@ -79,7 +69,7 @@ func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID st
 			imageBudget -= encodedSize
 			continue
 		}
-		resource, err := w.prepareAttachment(ctx, apiKey, sessionID, attachment, &prepared.Attachments[i], existing, save)
+		resource, err := w.prepareAttachment(ctx, apiKey, sessionID, msg.MessageID, i, attachment, &prepared.Attachments[i], save)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -147,20 +137,6 @@ func attachmentName(resource channelAttachment) string {
 		return "image-" + resource.FileKey
 	}
 	return "file-" + resource.FileKey
-}
-
-func (w *channelWorker) existingFileMounts(ctx context.Context, apiKey, sessionID string) (map[string]omaResource, error) {
-	mounts := make(map[string]omaResource)
-	resources, err := w.supervisor.oma.listResources(ctx, apiKey, sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("读取会话附件失败: %w", err)
-	}
-	for _, resource := range resources {
-		if resource.Type == "file" && resource.FileID != "" && strings.HasPrefix(resource.MountPath, sandboxmount.SandboxUploadsMount+"/") {
-			mounts[resource.FileID] = resource
-		}
-	}
-	return mounts, nil
 }
 
 type artifactBaseline map[string]string

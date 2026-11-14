@@ -45,6 +45,7 @@ func TestAttachmentBatchRejectsBeforeAnyUpload(t *testing.T) {
 			server := httptest.NewServer(files.handler(t))
 			defer server.Close()
 			worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
+			worker.supervisor.putAttachment = files.putAttachment
 			adapter := &attachmentBatchAdapter{channelAdapter: worker.adapter, data: []byte("附件内容"), fail: failure}
 			worker.adapter = adapter
 			resources := []channelAttachment{{Type: "file", FileKey: "first", FileName: "first.bin"}, {Type: "file", FileKey: "second", FileName: "second.bin"}}
@@ -55,8 +56,8 @@ func TestAttachmentBatchRejectsBeforeAnyUpload(t *testing.T) {
 				resources[1].Type = "video"
 			}
 			content, _, err := worker.messageContent(t.Context(), "key", "sesn_1", &channelMessage{MessageID: "message", Resources: resources}, "必须完整读取两份附件", nil)
-			if err == nil || len(content) != 0 || files.uploads != 0 || files.attached != 0 {
-				t.Fatalf("整批校验失败不得部分上传、挂载或提交内容: err=%v content=%v uploads=%d attached=%d", err, content, files.uploads, files.attached)
+			if err == nil || len(content) != 0 || files.writes != 0 {
+				t.Fatalf("整批校验失败不得部分上传、挂载或提交内容: err=%v content=%v writes=%d", err, content, files.writes)
 			}
 			entries, readErr := os.ReadDir(directory)
 			if readErr != nil || len(entries) != 0 {
@@ -104,11 +105,12 @@ func TestInboundBinaryAndEmptyFilesMount(t *testing.T) {
 		files := &filesServer{}
 		server := httptest.NewServer(files.handler(t))
 		worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
+		worker.supervisor.putAttachment = files.putAttachment
 		stub := attachFeishuStub(t, worker)
 		stub.attachment = payload
 		content, mounted, err := worker.messageContent(t.Context(), "key", "sesn_1", &channelMessage{MessageID: "message", Resources: []channelAttachment{{Type: "file", FileKey: "data", FileName: "data.bin"}}}, "", nil)
 		server.Close()
-		if err != nil || len(content) != 1 || len(mounted) != 1 || files.uploads != 1 || files.attached != 1 {
+		if err != nil || len(content) != 1 || len(mounted) != 1 || files.writes != 1 {
 			t.Fatalf("普通二进制和空文件应挂载，不得按嗅探类型丢弃: size=%d err=%v content=%v mounted=%v", len(payload), err, content, mounted)
 		}
 	}

@@ -2,18 +2,19 @@ package channels
 
 import (
 	"context"
-	"encoding/json/v2"
-	"github.com/superduck-ai/open-managed-agents/internal/sessions"
+	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"net/url"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sessions"
 )
 
 const channelForeignInputMessage = "OMA 会话出现外部输入，已暂停渠道派发；请在 OMA 中核对，并使用 /new 或 /reset 新建会话。"
 
 func channelOwnsInput(record db.ChannelRecord, chatID string, event omaEvent) bool {
 	var source channelInputMetadata
-	if err := json.Unmarshal(event.Metadata, &source); err != nil {
+	if err := jsonv2.Unmarshal(event.Metadata, &source); err != nil {
 		return false
 	}
 	return source.ChannelID == record.ExternalID && source.Type == record.ChannelType && source.AccountID == record.AppID && source.ChatID == chatID && source.MessageID != "" && source.ActorID != ""
@@ -43,20 +44,32 @@ func (w *channelWorker) checkInputHistory(ctx context.Context, apiKey, sessionID
 	if after != "" {
 		filter.Set("page", sessions.EncodeEventCursor(after, "asc"))
 	}
-	events, err := w.supervisor.oma.listEventPages(ctx, apiKey, sessionID, filter)
-	if err != nil {
-		return false, err
-	}
-	if channelHistoryHasForeignInput(w.record, chatID, events, after != "") {
-		return true, nil
-	}
-	if len(events) > 0 {
-		last := events[len(events)-1]
-		if last.ID != "" && len(last.ProcessedAt) > 0 && string(last.ProcessedAt) != "null" && channelOwnsInput(w.record, chatID, last) {
-			w.mu.Lock()
-			w.checkedInputs[sessionID] = last.ID
-			w.mu.Unlock()
+	owned, foreign, lastID := after != "", false, ""
+	err := visitOMAEventPages(ctx, w.supervisor.oma, apiKey, sessionID, filter, func(events []struct {
+		ID          string          `json:"id"`
+		Type        string          `json:"type"`
+		Metadata    json.RawMessage `json:"metadata"`
+		ProcessedAt json.RawMessage `json:"processed_at"`
+	}) error {
+		for _, event := range events {
+			input := omaEvent{ID: event.ID, Type: event.Type, Metadata: event.Metadata}
+			foreign = foreign || channelHistoryHasForeignInput(w.record, chatID, []omaEvent{input}, owned)
+			if event.Type == "user.message" && channelOwnsInput(w.record, chatID, input) {
+				owned = true
+				if len(event.ProcessedAt) > 0 && string(event.ProcessedAt) != "null" {
+					lastID = event.ID
+				}
+			}
 		}
+		return nil
+	})
+	if err != nil || foreign {
+		return foreign, err
+	}
+	if lastID != "" {
+		w.mu.Lock()
+		w.checkedInputs[sessionID] = lastID
+		w.mu.Unlock()
 	}
 	return false, nil
 }

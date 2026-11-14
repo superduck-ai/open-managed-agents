@@ -4,8 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/sandboxmount"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,8 +26,7 @@ import (
 type filesServer struct {
 	mu         sync.Mutex
 	resources  []omaResource
-	uploads    int
-	attached   int
+	writes     int
 	downloaded []string
 	mountPaths []string
 }
@@ -32,17 +36,6 @@ func (f *filesServer) handler(t *testing.T) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/files":
-			upload, header, err := r.FormFile("file")
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			defer upload.Close()
-			f.mu.Lock()
-			f.uploads++
-			f.mu.Unlock()
-			_ = json.NewEncoder(w).Encode(omaFile{ID: "file_up_1", Filename: header.Filename, MimeType: "image/png", Size: 4})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/files/") && strings.HasSuffix(r.URL.Path, "/content"):
 			f.mu.Lock()
 			f.downloaded = append(f.downloaded, r.URL.Path)
@@ -62,22 +55,6 @@ func (f *filesServer) handler(t *testing.T) http.Handler {
 			}
 			f.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(metadata)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/resources"):
-			var input struct {
-				MountPath string `json:"mount_path"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			f.mu.Lock()
-			f.attached++
-			f.mountPaths = append(f.mountPaths, input.MountPath)
-			resource := omaResource{ID: "sres_1", Type: "file", FileID: "file_session_1", Filename: "photo.png", MountPath: "/mnt/session" + input.MountPath}
-			f.resources = append(f.resources, resource)
-			f.mu.Unlock()
-			payload, _ := json.Marshal(resource)
-			_, _ = w.Write(payload)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/resources"):
 			f.mu.Lock()
 			payload, _ := json.Marshal(map[string]any{"data": f.resources})
@@ -89,12 +66,31 @@ func (f *filesServer) handler(t *testing.T) http.Handler {
 	})
 }
 
-func TestInboundAttachmentUploadsToFilesAndMountsResource(t *testing.T) {
+func (f *filesServer) putAttachment(_ context.Context, _, _, attachmentPath, _ string, body io.Reader) (db.FileRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, resource := range f.resources {
+		if resource.MountPath == sandboxmount.SandboxPath(attachmentPath) {
+			return db.FileRecord{ExternalID: resource.FileID}, nil
+		}
+	}
+	if _, err := io.Copy(io.Discard, body); err != nil {
+		return db.FileRecord{}, err
+	}
+	f.writes++
+	id := fmt.Sprintf("file_session_%d", f.writes)
+	f.mountPaths = append(f.mountPaths, attachmentPath)
+	f.resources = append(f.resources, omaResource{ID: fmt.Sprintf("sres_%d", f.writes), Type: "file", FileID: id, Filename: path.Base(attachmentPath), MountPath: sandboxmount.SandboxPath(attachmentPath)})
+	return db.FileRecord{ExternalID: id}, nil
+}
+
+func TestInboundAttachmentUsesNativeSessionStore(t *testing.T) {
 	files := &filesServer{}
 	server := httptest.NewServer(files.handler(t))
 	t.Cleanup(server.Close)
 	store := &fakeRuntimeStore{}
 	worker, _ := testWorker(t, store, server.URL)
+	worker.supervisor.putAttachment = files.putAttachment
 	stub := attachFeishuStub(t, worker)
 	stub.attachment = []byte("%PDF-1.7\n附件验收")
 	msg := &channeltypes.NormalizedMessage{
@@ -108,13 +104,13 @@ func TestInboundAttachmentUploadsToFilesAndMountsResource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("messageContent: %v", err)
 	}
-	if files.uploads != 1 || files.attached != 1 {
-		t.Fatalf("uploads=%d attached=%d", files.uploads, files.attached)
+	if files.writes != 1 {
+		t.Fatalf("writes=%d", files.writes)
 	}
 	if _, ok := mounted["file_session_1"]; !ok {
 		t.Fatalf("mounted = %v", mounted)
 	}
-	if len(files.mountPaths) != 1 || files.mountPaths[0] != "/uploads/file_up_1/document.pdf" {
+	if len(files.mountPaths) != 1 || !strings.HasSuffix(files.mountPaths[0], "/document.pdf") {
 		t.Fatalf("挂载必须保留文件名: %v", files.mountPaths)
 	}
 	sendTestArtifacts(t, worker, &channelReplyTask{sessionID: "sesn_1", inbound: mounted}, feishuMessage(msg), artifactBaseline{})
@@ -130,7 +126,7 @@ func TestInboundAttachmentUploadsToFilesAndMountsResource(t *testing.T) {
 		t.Fatalf("附件正文不应再拼接挂载路径: %s", text)
 	}
 	var blocks []map[string]any
-	if err := json.Unmarshal([]byte(text), &blocks); err != nil || len(blocks) != 2 || blocks[0]["text"] != "看下这份文档" || !strings.Contains(blocks[1]["text"].(string), "/mnt/session/uploads/file_up_1/document.pdf") {
+	if err := json.Unmarshal([]byte(text), &blocks); err != nil || len(blocks) != 2 || blocks[0]["text"] != "看下这份文档" || !strings.Contains(blocks[1]["text"].(string), sandboxmount.SandboxPath(files.mountPaths[0])) {
 		t.Fatalf("应保留原文并追加实际挂载路径: %s", text)
 	}
 	stub.mu.Lock()
@@ -145,7 +141,7 @@ func TestInboundAttachmentUploadsToFilesAndMountsResource(t *testing.T) {
 		t.Fatalf("messageContent: %v", err)
 	}
 	encoded, _ = json.Marshal(content)
-	if len(content) != 1 || !strings.Contains(content[0]["text"].(string), "/mnt/session/uploads/file_up_1/document.pdf") {
+	if len(content) != 1 || !strings.Contains(content[0]["text"].(string), sandboxmount.SandboxPath(files.mountPaths[0])) {
 		t.Fatalf("纯附件消息应包含本轮实际路径: %s", encoded)
 	}
 }
@@ -155,6 +151,7 @@ func TestInboundImageUsesNativeContent(t *testing.T) {
 	server := httptest.NewServer(files.handler(t))
 	t.Cleanup(server.Close)
 	worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
+	worker.supervisor.putAttachment = files.putAttachment
 	stub := attachFeishuStub(t, worker)
 	stub.attachment = []byte("\x89PNG\r\n\x1a\n")
 	msg := &channeltypes.NormalizedMessage{MessageID: "om_image", RawContentType: "image", Content: "![image](image_key)", Resources: []channeltypes.Resource{{Type: "image", FileKey: "image_key", FileName: "vision.png"}}}
@@ -162,8 +159,8 @@ func TestInboundImageUsesNativeContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(content) != 1 || content[0]["type"] != "image" || len(mounted) != 0 || files.uploads != 0 {
-		t.Fatalf("图片必须作为原生内容交给模型，不能伪造文字或挂载: content=%v uploads=%d", content, files.uploads)
+	if len(content) != 1 || content[0]["type"] != "image" || len(mounted) != 0 || files.writes != 0 {
+		t.Fatalf("图片必须作为原生内容交给模型，不能伪造文字或挂载: content=%v uploads=%d", content, files.writes)
 	}
 	source := content[0]["source"].(map[string]any)
 	if source["type"] != "base64" || source["media_type"] != "image/png" || source["data"] != base64.StdEncoding.EncodeToString(stub.attachment) {
@@ -176,6 +173,7 @@ func TestInboundImagesRespectRequestBudget(t *testing.T) {
 	server := httptest.NewServer(files.handler(t))
 	t.Cleanup(server.Close)
 	worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
+	worker.supervisor.putAttachment = files.putAttachment
 	stub := attachFeishuStub(t, worker)
 	stub.attachment = make([]byte, 2<<20)
 	copy(stub.attachment, "\x89PNG\r\n\x1a\n")
@@ -197,8 +195,8 @@ func TestInboundImagesRespectRequestBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if images != 1 || files.uploads != 1 || len(mounted) != 1 || len(encoded) >= 4<<20 {
-		t.Fatalf("超出图片预算时必须回退文件，images=%d uploads=%d mounted=%v bytes=%d", images, files.uploads, mounted, len(encoded))
+	if images != 1 || files.writes != 1 || len(mounted) != 1 || len(encoded) >= 4<<20 {
+		t.Fatalf("超出图片预算时必须回退文件，images=%d uploads=%d mounted=%v bytes=%d", images, files.writes, mounted, len(encoded))
 	}
 }
 
@@ -207,6 +205,7 @@ func TestRichTextImagePreservesUserText(t *testing.T) {
 	server := httptest.NewServer(files.handler(t))
 	t.Cleanup(server.Close)
 	worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
+	worker.supervisor.putAttachment = files.putAttachment
 	stub := attachFeishuStub(t, worker)
 	stub.attachment = []byte("\x89PNG\r\n\x1a\n")
 	msg := &channeltypes.NormalizedMessage{MessageID: "om_post", RawContentType: "post", Content: "请描述图片\n![image](image_key)\n保留这句原文", Resources: []channeltypes.Resource{{Type: "image", FileKey: "image_key"}}}
@@ -262,13 +261,14 @@ func TestInboundAttachmentRespectsNativeFileLimit(t *testing.T) {
 			server := httptest.NewServer(files.handler(t))
 			t.Cleanup(server.Close)
 			worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
+			worker.supervisor.putAttachment = files.putAttachment
 			worker.supervisor.fileMaxBytes = 4
 			stub := attachFeishuStub(t, worker)
 			stub.attachment = make([]byte, size)
 			msg := &channeltypes.NormalizedMessage{MessageID: "om_1", ChatID: "oc_1", UserID: "ou_1", Resources: []channeltypes.Resource{{Type: "file", FileKey: "data", FileName: "data.bin"}}}
 			_, _, err := worker.messageContent(t.Context(), "key", "sesn_1", feishuMessage(msg), "", nil)
-			if (err != nil) != (size > 4) || size > 4 && files.uploads != 0 || size == 4 && files.uploads != 1 {
-				t.Fatalf("飞书入站应沿用OMA原生文件上限: size=%d err=%v uploads=%d", size, err, files.uploads)
+			if (err != nil) != (size > 4) || size > 4 && files.writes != 0 || size == 4 && files.writes != 1 {
+				t.Fatalf("飞书入站应沿用OMA原生文件上限: size=%d err=%v uploads=%d", size, err, files.writes)
 			}
 		})
 	}
@@ -344,6 +344,7 @@ func TestBurstAttachmentsKeepSourceMessage(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
+	worker.supervisor.putAttachment = files.putAttachment
 	stub := attachFeishuStub(t, worker)
 	stub.byMessage = map[string][]byte{
 		"/open-apis/im/v1/messages/om_first/resources/file_first":   []byte("第一份附件"),

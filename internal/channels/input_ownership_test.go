@@ -2,6 +2,7 @@ package channels
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"github.com/superduck-ai/open-managed-agents/internal/sessions"
 	"net/http"
 	"net/http/httptest"
@@ -123,5 +124,46 @@ func TestInputHistoryReusesNativeEventCursorAndChecksForeignInput(t *testing.T) 
 	restarted, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
 	if conflict, err := restarted.checkInputHistory(t.Context(), "key", "session", "oc_1"); err != nil || conflict {
 		t.Fatalf("重启后原生补读: %v %v", conflict, err)
+	}
+}
+
+func TestInputHistoryKeepsOwnershipAcrossPagesAndDoesNotAdvanceOnFailure(t *testing.T) {
+	for _, failure := range []string{"foreign", "request"} {
+		t.Run(failure, func(t *testing.T) {
+			own := channelInputMetadata{Type: "feishu", ChannelID: "chnl_1", AccountID: "app_1", ChatID: "oc_1", MessageID: "message", ActorID: "actor"}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("page") == "" {
+					_ = json.MarshalWrite(w, map[string]any{"data": []omaEvent{{ID: "own", Type: "user.message", Metadata: metadataJSON(t, own), ProcessedAt: []byte(`"2026-11-14T00:00:00Z"`)}}, "next_page": "second"})
+					return
+				}
+				if failure == "request" {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				_, _ = w.Write([]byte(`{"data":[{"id":"foreign","type":"user.message"}]}`))
+			}))
+			defer server.Close()
+			worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
+			foreign, err := worker.checkInputHistory(t.Context(), "key", "session", "oc_1")
+			if failure == "foreign" && (!foreign || err != nil) || failure == "request" && err == nil || worker.checkedInputs["session"] != "" {
+				t.Fatalf("分页边界或失败推进游标: foreign=%v err=%v cursor=%q", foreign, err, worker.checkedInputs["session"])
+			}
+		})
+	}
+}
+
+func TestRuntimeCredentialUsesNativeRenewalAndRevocation(t *testing.T) {
+	store := &fakeRuntimeStore{credential: "old"}
+	worker, _ := testWorker(t, store, "http://unused")
+	if key, err := worker.supervisor.apiKey(t.Context(), worker.record); err != nil || key != "old" {
+		t.Fatal(key, err)
+	}
+	store.credential = "replacement"
+	if key, err := worker.supervisor.apiKey(t.Context(), worker.record); err != nil || key != "replacement" {
+		t.Fatal("仍返回旧凭据", err)
+	}
+	store.credentialErr = errors.New("原生凭据已停用")
+	if key, err := worker.supervisor.apiKey(t.Context(), worker.record); err == nil || key != "" {
+		t.Fatal("停用后仍复用缓存")
 	}
 }

@@ -31,6 +31,8 @@ type fakeRuntimeStore struct {
 	inputKeys       map[string]string
 	receiveInputErr error
 	inputOrder      []string
+	credential      string
+	credentialErr   error
 	env             string
 }
 
@@ -86,6 +88,12 @@ func (f *fakeRuntimeStore) InsertChannelPairingRecord(context.Context, string, d
 }
 
 func (f *fakeRuntimeStore) EnsureChannelWorkspaceCredential(context.Context, platform.CreateConsoleAPIKeyInput, *secrets.Service) (string, error) {
+	if f.credentialErr != nil {
+		return "", f.credentialErr
+	}
+	if f.credential != "" {
+		return f.credential, nil
+	}
 	return "key", nil
 }
 

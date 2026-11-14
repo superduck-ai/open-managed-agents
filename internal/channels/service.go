@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -97,5 +98,12 @@ type SessionEventSubscriber func(context.Context, string, string, sessions.Strea
 
 func (s *Service) WithSessionEvents(subscribe SessionEventSubscriber) *Service {
 	s.supervisor.subscribeEvents = subscribe
+	return s
+}
+
+type SessionAttachmentWriter func(context.Context, string, string, string, string, io.Reader) (db.FileRecord, error)
+
+func (s *Service) WithSessionAttachments(put SessionAttachmentWriter) *Service {
+	s.supervisor.putAttachment = put
 	return s
 }

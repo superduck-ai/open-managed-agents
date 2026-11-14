@@ -261,7 +261,7 @@ DSH 的工具执行屏障直接建立在原生日志上：在工具体执行前�
 
 控制输入的 processed 回执先显式排入当前状态发布队列，等待该 HTTP 发布确认及原生日志检查点后再发送，避免审批解除时运行状态已落库、却被后发确认回执越过。回执链独立于控制输入接收；状态或回执等待不能阻止后续审批和中断。本屏障约束 Brain 自身的因果发布，不提供所有 API 并发写入的全局 outbox 顺序保证。
 
-带代理请求身份的文本块在 block-end 时立即写入原生 assistant-block 日志，待该次模型流的 end 帧后发布持久 fallback。文本增量继续实时发送，thinking 完成及无代理身份的输出保持原有时点。此顺序使 Messages 代理已有的 message_stop 完成屏障先发布消息和结束 span，避免 Brain 的 block-end 抢存消息后，代理按更早 EndedAt 写入结束 span 导致历史与实时顺序反转。缓存按线程和 attempt 隔离；日志恢复与同身份幂等规则不变。父、子线程的延迟终态回归同时检查实时增量、提前落盘、终态前未发布最终文本及终态后恰一次来源正确的最终文本。
+带代理请求身份的文本块与 thinking 状态在 block-end 时立即写入原生 assistant-block 日志，待该次模型流的 end 帧后发布持久 fallback。文本增量与 thinking 起始预览继续实时发送，无代理身份的输出保持原有时点。此顺序使 Messages 代理已有的 message_stop 完成屏障先发布消息、thinking 状态和结束 span，避免 Brain 的 block-end 抢存输出后，代理按更早 EndedAt 写入结束 span，导致历史中 thinking 晚于 end。缓存按线程和 attempt 隔离；日志恢复与同身份幂等规则不变。父、子线程的延迟终态回归同时检查实时预览、提前落盘、终态前未发布完成块及终态后恰一次来源正确的完成块。
 
 ### 原生日志恢复与协议输出
 
@@ -335,7 +335,7 @@ Session 创建在解析实际 Agent 版本快照和 Environment 后、生成 Ses
 
 Brain 在 `block-start` 生成 `event_start`，普通文本生成 `event_delta`，思考正文与签名不公开。预览经过串行检查点和 CCRv2 FIFO 上传队列。代理和 Brain 使用 code session ID、上游 message ID、原始 block index 与事件类型生成一致的事件 ID；end 保留本请求的 `event_ids`。SSE 收到完整消息或 end 后丢弃相关的迟到预览，其他并行请求和子线程的预览不受影响。
 
-Brain 在 `block-end` 或完整 `assistant/message` 路径保留带 `model_request_start_id` 的完成块回传，并在恢复时重放完成块日志。代理观察超过 4 MiB 的帧、响应或累计内容时，会保留转发并记录 `observation_limit`；Brain 的完整块因此仍能进入公开 transcript。代理成功观察时，现有稳定事件 ID 和 Session 事务内的 Worker/proxy echo 去重避免重复消息。该回传可能晚于 end，end 仅退休预览，不禁止随后持久化完整消息。思考块仍不携带正文。无代理请求 ID 的独立模型沿用原有完成块路径。
+Brain 在 `block-end` 或完整 `assistant/message` 路径保留带 `model_request_start_id` 的完成块回传，并在恢复时重放完成块日志。流式文本和 thinking 的完成块均等待模型流 end 帧后才回传，避免在代理完成批次前抢先落库；起始预览与文本增量不等待该屏障。代理观察超过 4 MiB 的帧、响应或累计内容时，会保留转发并记录 `observation_limit`；Brain 的完整块因此仍能进入公开 transcript。代理成功观察时，现有稳定事件 ID 和 Session 事务内的 Worker/proxy echo 去重避免重复消息。该回传可能晚于 end，end 仅退休预览，不禁止随后持久化完整消息。思考块仍不携带正文。无代理请求 ID 的独立模型沿用原有完成块路径。
 
 DSH 的 `compaction` 和 `session-title` 内部调用通过 `X-OMA-Model-Purpose` 声明用途。代理在请求边界读取并移除该 header，不转发给模型供应商；这些调用保留 span、usage 和计费，不生成完整消息、thinking 预览、工具投影或公开消息关联 ID。内部调用不覆盖 Brain 的业务响应 ID。普通调用不发送用途 header。
 

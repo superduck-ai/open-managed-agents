@@ -51,7 +51,7 @@ export class CcrSession {
   private readonly controlReceipts = new Set<Promise<void>>();
   private readonly handledControls = new Set<string>();
   private readonly assistantStream: CcrAssistantStream;
-  private readonly proxyTextCompletions = new Map<string, Payload[]>();
+  private readonly proxyCompletions = new Map<string, Payload[]>();
   private readonly toolResults = new CcrToolResults();
   private turnErrorMessage?: string;
   private interrupted = false;
@@ -283,15 +283,15 @@ export class CcrSession {
           if (!owner) throw new Error("Missing assistant block journal owner");
           appendPluginRecord(owner, "plugin:oma/assistant-block", { output: payload as AssistantBlockOutput });
         }
-        if (payload.type === "agent.message" && payload.model_request_start_id) {
-          const pending = this.proxyTextCompletions.get(attempt) ?? [];
+        if ((payload.type === "agent.message" || payload.type === "agent.thinking") && payload.model_request_start_id) {
+          const pending = this.proxyCompletions.get(attempt) ?? [];
           pending.push(payload);
-          this.proxyTextCompletions.set(attempt, pending);
+          this.proxyCompletions.set(attempt, pending);
         } else ready.push(payload);
       }
       if (frame.type === "end") {
-        ready.push(...(this.proxyTextCompletions.get(attempt) ?? []));
-        this.proxyTextCompletions.delete(attempt);
+        ready.push(...(this.proxyCompletions.get(attempt) ?? []));
+        this.proxyCompletions.delete(attempt);
       }
       if (ready.length) this.previews = Promise.all([this.previews, this.publishPreview(ready)]).then(() => {});
     }

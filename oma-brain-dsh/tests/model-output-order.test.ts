@@ -46,7 +46,7 @@ test("block ends advance at upstream boundaries, including interleaved text, thi
   expect(stream.finish().map(chunk => chunk.type)).toEqual(["usage", "finish"]);
 });
 
-test.each([false, true])("proxied model blocks retain durable fallback after previews (child=%s)", async child => {
+test.each([false, true])("proxied thinking waits for the model terminal after its durable checkpoint and live preview (child=%s)", async child => {
   const backend = new Backend();
   await backend.ready;
   const ctx = new Context();
@@ -85,8 +85,9 @@ test.each([false, true])("proxied model blocks retain durable fallback after pre
     turn.catch(() => {});
     await sentReasoning.promise;
     await eventually(() => backend.timeline.some(event => event.type === "event_start" && event.event.type === "agent.thinking"));
+    await eventually(() => confirmed);
     expect(confirmed).toBe(true);
-    expect([...backend.publicLog.values()].filter(event => event.type === "agent.thinking")).toHaveLength(1);
+    expect([...backend.publicLog.values()].filter(event => event.type === "agent.thinking")).toHaveLength(0);
     expect(backend.timeline.some(event => event.type === "event_delta")).toBe(false);
     release.resolve();
     await turn;

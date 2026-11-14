@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -14,38 +15,41 @@ import (
 	"strings"
 )
 
-func (w *feishuChannel) downloadAttachment(ctx context.Context, messageID string, resource channelAttachment) ([]byte, string, error) {
+func (w *feishuChannel) downloadAttachment(ctx context.Context, messageID string, resource channelAttachment, destination io.Writer) (string, error) {
 	if resource.FileKey == "" || messageID == "" {
-		return nil, "", fmt.Errorf("附件缺少原消息或文件标识")
+		return "", fmt.Errorf("附件缺少原消息或文件标识")
 	}
 	kind := "file"
 	if resource.Type == "image" {
 		kind = "image"
 	}
-	request := larkim.NewGetMessageResourceReqBuilder().
-		MessageId(messageID).
-		FileKey(resource.FileKey).
-		Type(kind).
-		Build()
-	response, err := w.client.Im.V1.MessageResource.Get(ctx, request)
+	response, err := w.client.Im.V1.MessageResource.Get(ctx, larkim.NewGetMessageResourceReqBuilder().MessageId(messageID).FileKey(resource.FileKey).Type(kind).Build())
 	if err != nil {
-		return nil, "", fmt.Errorf("下载附件失败: %w", err)
+		return "", fmt.Errorf("下载附件失败: %w", err)
 	}
 	if !response.Success() || response.File == nil {
-		return nil, "", fmt.Errorf("下载附件失败: %d %s", response.Code, response.Msg)
+		return "", fmt.Errorf("下载附件失败: %d %s", response.Code, response.Msg)
 	}
-	data, err := io.ReadAll(io.LimitReader(response.File, w.worker.supervisor.fileMaxBytes+1))
-	if err != nil {
-		return nil, "", fmt.Errorf("读取附件失败: %w", err)
+	if closer, ok := response.File.(io.Closer); ok {
+		defer closer.Close()
 	}
-	if int64(len(data)) > w.worker.supervisor.fileMaxBytes {
-		return nil, "", fmt.Errorf("附件超过 OMA 文件大小限制")
+	reader := bufio.NewReader(response.File)
+	header, err := reader.Peek(512)
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("读取附件失败: %w", err)
 	}
-	mediaType := http.DetectContentType(data)
+	mediaType := http.DetectContentType(header)
 	if resource.Type == "image" && !slices.Contains([]string{"image/png", "image/jpeg", "image/gif", "image/webp"}, mediaType) {
-		return nil, "", fmt.Errorf("图片格式暂不支持，仅支持 PNG、JPEG、GIF 和 WebP")
+		return "", fmt.Errorf("图片格式暂不支持，仅支持 PNG、JPEG、GIF 和 WebP")
 	}
-	return data, mediaType, nil
+	size, err := io.Copy(destination, io.LimitReader(reader, w.worker.supervisor.fileMaxBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("读取附件失败: %w", err)
+	}
+	if size > w.worker.supervisor.fileMaxBytes {
+		return "", fmt.Errorf("附件超过 OMA 文件大小限制")
+	}
+	return mediaType, nil
 }
 
 func (w *feishuChannel) sendMedia(ctx context.Context, msg *channelMessage, resource omaResource, contentType string, data []byte) (string, error) {

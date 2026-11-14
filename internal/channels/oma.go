@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -193,9 +194,18 @@ func (c *omaClient) sendEvent(ctx context.Context, apiKey, sessionID string, eve
 }
 
 func (c *omaClient) listEvents(ctx context.Context, apiKey, sessionID string) ([]omaEvent, error) {
+	return c.listEventPages(ctx, apiKey, sessionID, nil)
+}
+
+func (c *omaClient) listEventPages(ctx context.Context, apiKey, sessionID string, filter url.Values) ([]omaEvent, error) {
 	var events []omaEvent
 	pages := make(map[string]struct{})
-	path := "/v1/sessions/" + url.PathEscape(sessionID) + "/events?order=asc&limit=1000"
+	query := url.Values{"order": {"asc"}, "limit": {"1000"}}
+	for key, values := range filter {
+		query[key] = values
+	}
+	basePath := "/v1/sessions/" + url.PathEscape(sessionID) + "/events"
+	path := basePath + "?" + query.Encode()
 	for {
 		var current struct {
 			Data     []omaEvent `json:"data"`
@@ -212,7 +222,8 @@ func (c *omaClient) listEvents(ctx context.Context, apiKey, sessionID string) ([
 			return nil, errOMAPaginationCycle
 		}
 		pages[current.NextPage] = struct{}{}
-		path = "/v1/sessions/" + url.PathEscape(sessionID) + "/events?order=asc&limit=1000&page=" + url.QueryEscape(current.NextPage)
+		query.Set("page", current.NextPage)
+		path = basePath + "?" + query.Encode()
 	}
 }
 
@@ -256,17 +267,13 @@ func (c *omaClient) requestWithIdempotency(ctx context.Context, apiKey, method, 
 		return fmt.Errorf("OMA 请求失败: %w", err)
 	}
 	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if err != nil {
-		return err
-	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return omaResponseError(response.StatusCode)
 	}
-	if out == nil || len(data) == 0 {
+	if out == nil {
 		return nil
 	}
-	if err := json.Unmarshal(data, out); err != nil {
+	if err := jsonv2.UnmarshalRead(response.Body, out); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("OMA 响应解析失败: %w", err)
 	}
 	return nil
@@ -343,30 +350,33 @@ type omaResource struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
-func (c *omaClient) uploadFile(ctx context.Context, apiKey, filename, mediaType string, data []byte) (omaFile, error) {
+func (c *omaClient) uploadFile(ctx context.Context, apiKey, filename, mediaType string, data io.Reader) (omaFile, error) {
 	if c.baseURL == "" {
 		return omaFile{}, errors.New("未配置 OMA 渠道内部地址")
 	}
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", filename)
-	if err != nil {
-		return omaFile{}, err
-	}
-	if _, err := part.Write(data); err != nil {
-		return omaFile{}, err
-	}
-	if err := writer.Close(); err != nil {
-		return omaFile{}, err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/files?beta=true", &body)
+	reader, writer := io.Pipe()
+	multipartWriter := multipart.NewWriter(writer)
+	finished := make(chan error, 1)
+	go func() {
+		part, err := multipartWriter.CreateFormFile("file", filename)
+		if err == nil {
+			_, err = io.Copy(part, data)
+		}
+		if err == nil {
+			err = multipartWriter.Close()
+		}
+		_ = writer.CloseWithError(err)
+		finished <- err
+	}()
+	defer func() { _ = reader.Close(); <-finished }()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/files?beta=true", reader)
 	if err != nil {
 		return omaFile{}, err
 	}
 	request.Header.Set("X-Api-Key", apiKey)
 	request.Header.Set("anthropic-version", "2023-06-01")
 	request.Header.Set("anthropic-beta", omaManagedAgentsBeta)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	response, err := c.http.Do(request)
 	if err != nil {
 		return omaFile{}, fmt.Errorf("OMA 上传文件失败: %w", err)

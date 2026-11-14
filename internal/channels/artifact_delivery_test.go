@@ -63,13 +63,13 @@ func decodeArtifactDelivery(t *testing.T, row db.ChannelReplyDelivery) channelAr
 func TestArtifactUploadRejectionResumesFrozenPlan(t *testing.T) {
 	worker, store, files, adapter, task, msg := artifactDeliveryFixture(t)
 	adapter.rejected = true
-	worker.sendArtifacts(t.Context(), task, msg, "key", nil)
+	worker.sendArtifacts(t.Context(), task, msg, "key")
 	row := store.deliveries["chnl_1:input"]
 	state := decodeArtifactDelivery(t, row)
 	if row.State != "sent" || len(state.Files) != 1 || state.Files[0].State != "pending" || adapter.attempts != 1 {
 		t.Fatalf("上传被拒绝后须保留原文件计划: %+v attempts=%d", state, adapter.attempts)
 	}
-	worker.sendArtifacts(t.Context(), task, msg, "key", nil)
+	worker.sendArtifacts(t.Context(), task, msg, "key")
 	if adapter.attempts != 1 {
 		t.Fatal("重试时间未到，不得重复上传")
 	}
@@ -84,7 +84,7 @@ func TestArtifactUploadRejectionResumesFrozenPlan(t *testing.T) {
 	}
 	task.delivery = &claimed
 	files.resources = nil
-	worker.sendArtifacts(t.Context(), task, msg, "key", nil)
+	worker.sendArtifacts(t.Context(), task, msg, "key")
 	final := store.deliveries["chnl_1:input"]
 	state = decodeArtifactDelivery(t, final)
 	if adapter.attempts != 2 || final.State != "completed" || state.Files[0].State != "sent" || state.Files[0].MessageID != "om_file_2" {
@@ -115,7 +115,7 @@ func TestArtifactSendIntentAndReceiptFailureWindows(t *testing.T) {
 		t.Run(failedState, func(t *testing.T) {
 			worker, store, files, adapter, task, msg := artifactDeliveryFixture(t)
 			worker.supervisor.store = &artifactCheckpointFailure{fakeRuntimeStore: store, failState: failedState}
-			worker.sendArtifacts(t.Context(), task, msg, "key", nil)
+			worker.sendArtifacts(t.Context(), task, msg, "key")
 			want := 0
 			if failedState == "sent" {
 				want = 1
@@ -133,7 +133,7 @@ func TestArtifactSendIntentAndReceiptFailureWindows(t *testing.T) {
 			}
 			task.delivery = &claimed
 			files.resources = nil
-			worker.sendArtifacts(t.Context(), task, msg, "key", nil)
+			worker.sendArtifacts(t.Context(), task, msg, "key")
 			state := decodeArtifactDelivery(t, store.deliveries["chnl_1:input"])
 			if adapter.attempts != 1 || failedState == "sent" && state.Files[0].State != "unknown" || failedState == "sending" && state.Files[0].State != "sent" {
 				t.Fatalf("已知未发送可继续，回执未知不得重放: attempts=%d state=%+v", adapter.attempts, state)
@@ -145,14 +145,14 @@ func TestArtifactSendIntentAndReceiptFailureWindows(t *testing.T) {
 func TestArtifactMissingMessageReceiptCannotReplay(t *testing.T) {
 	worker, store, _, adapter, task, msg := artifactDeliveryFixture(t)
 	adapter.empty = true
-	worker.sendArtifacts(t.Context(), task, msg, "key", nil)
+	worker.sendArtifacts(t.Context(), task, msg, "key")
 	row := store.deliveries["chnl_1:input"]
 	state := decodeArtifactDelivery(t, row)
 	if adapter.attempts != 1 || state.Files[0].State != "unknown" {
 		t.Fatalf("缺少平台消息ID必须记为未知: %+v", state)
 	}
 	task.delivery = &row
-	worker.sendArtifacts(t.Context(), task, msg, "key", nil)
+	worker.sendArtifacts(t.Context(), task, msg, "key")
 	if adapter.attempts != 1 {
 		t.Fatal("未知文件消息被重复发送")
 	}
@@ -173,7 +173,7 @@ func TestReplyCardCloseWaitsForArtifactDelivery(t *testing.T) {
 	if store.deliveries["chnl_1:input"].State != "sent" || adapter.attempts != 0 {
 		t.Fatal("卡片关闭不能提前把文件标为已交付")
 	}
-	worker.sendArtifacts(t.Context(), task, msg, "key", nil)
+	worker.sendArtifacts(t.Context(), task, msg, "key")
 	if store.deliveries["chnl_1:input"].State != "completed" || adapter.attempts != 1 {
 		t.Fatal("文件回执保存后才允许完成交付")
 	}
@@ -211,4 +211,24 @@ func TestMissingArtifactBaselineDoesNotBecomeKnownEmpty(t *testing.T) {
 	if state.Baseline != nil {
 		t.Fatal("未知旧基线不能被JSON编码变成已知空基线")
 	}
+}
+
+func sendTestArtifacts(t *testing.T, worker *channelWorker, task *channelReplyTask, msg *channelMessage, baseline artifactBaseline) {
+	t.Helper()
+	if task.delivery == nil {
+		store := worker.supervisor.store.(*fakeRuntimeStore)
+		if store.deliveries == nil {
+			store.deliveries = map[string]db.ChannelReplyDelivery{}
+		}
+		task.ctx = t.Context()
+		task.inputEventID = fmt.Sprintf("input_%d", len(store.deliveries))
+		state, err := json.Marshal(channelArtifactDelivery{Baseline: baseline})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := db.ChannelReplyDelivery{InputEventID: task.inputEventID, State: "sent", ReplyMessageID: "card", ArtifactDelivery: string(state), LeaseOwner: worker.deliveryOwner, LeaseUntil: time.Now().Add(time.Hour)}
+		store.deliveries[worker.record.ExternalID+":"+task.inputEventID] = row
+		task.delivery = &row
+	}
+	worker.sendArtifacts(t.Context(), task, msg, "key")
 }

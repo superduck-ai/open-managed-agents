@@ -48,7 +48,7 @@ func TestArtifactSelectionOnlyIncludesNativeOutputs(t *testing.T) {
 	worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
 	adapter := &artifactPolicyAdapter{channelAdapter: worker.adapter}
 	worker.adapter = adapter
-	worker.sendArtifacts(t.Context(), &channelReplyTask{sessionID: "sesn_1"}, &channelMessage{ChatID: "chat"}, "key", artifactBaseline{})
+	sendTestArtifacts(t, worker, &channelReplyTask{sessionID: "sesn_1"}, &channelMessage{ChatID: "chat"}, artifactBaseline{})
 	if len(downloaded) != 1 || downloaded[0] != "/v1/files/file_output/content" || len(adapter.sent) != 1 || adapter.sent[0] != "file_output" {
 		t.Fatalf("只能回传原生outputs，不能把新上传或相似前缀当产物: downloaded=%v sent=%v", downloaded, adapter.sent)
 	}
@@ -103,7 +103,7 @@ func TestArtifactNativeBudgetsAndDownloadIntegrity(t *testing.T) {
 			worker, _ := testWorker(t, &fakeRuntimeStore{}, server.URL)
 			adapter := &artifactPolicyAdapter{channelAdapter: worker.adapter, failSend: tc.failSend}
 			worker.adapter = adapter
-			worker.sendArtifacts(t.Context(), &channelReplyTask{sessionID: "sesn_1"}, &channelMessage{ChatID: "chat"}, "key", artifactBaseline{})
+			sendTestArtifacts(t, worker, &channelReplyTask{sessionID: "sesn_1"}, &channelMessage{ChatID: "chat"}, artifactBaseline{})
 			if downloads != tc.wantDownloads || len(adapter.sent) != tc.wantSendAttempts {
 				t.Fatalf("原生产物数量或长度验证不符: downloads=%d/%d sends=%d/%d", downloads, tc.wantDownloads, len(adapter.sent), tc.wantSendAttempts)
 			}

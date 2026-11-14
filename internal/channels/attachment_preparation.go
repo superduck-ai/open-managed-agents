@@ -27,7 +27,7 @@ func (w *channelWorker) prepareAttachment(ctx context.Context, apiKey, sessionID
 		if err := save(); err != nil {
 			return omaResource{}, err
 		}
-		file, err := w.supervisor.oma.uploadFile(ctx, apiKey, attachment.name, attachment.mediaType, attachment.data)
+		file, err := w.supervisor.oma.uploadFile(ctx, apiKey, attachment.name, attachment.mediaType, attachment.file)
 		if err != nil {
 			if errors.Is(err, errOMARequestRejected) {
 				receipt.Uploading = false

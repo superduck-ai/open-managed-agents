@@ -27,9 +27,6 @@ type channelArtifactFile struct {
 }
 
 func (w *channelWorker) keepArtifactLease(ctx context.Context, task *channelReplyTask) (context.Context, func()) {
-	if task.delivery == nil {
-		return ctx, func() {}
-	}
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -67,9 +64,6 @@ func (w *channelWorker) captureArtifactBaseline(ctx context.Context, msg *channe
 }
 
 func (w *channelWorker) saveArtifactDelivery(ctx context.Context, task *channelReplyTask, state *channelArtifactDelivery) error {
-	if task.delivery == nil {
-		return nil
-	}
 	payload, err := json.Marshal(state, json.FormatNilMapAsNull(true))
 	if err != nil {
 		return err
@@ -105,9 +99,6 @@ func (w *channelWorker) planArtifactDelivery(ctx context.Context, task *channelR
 			continue
 		}
 		file := channelArtifactFile{Resource: resource, State: "pending"}
-		if task.delivery == nil && w.artifactSent(task.sessionID, resource.ID+":"+artifactVersion(resource)) {
-			file.State = "sent"
-		}
 		state.Files = append(state.Files, file)
 	}
 	state.Planned = true
@@ -166,7 +157,6 @@ func (w *channelWorker) deliverArtifactFile(ctx context.Context, task *channelRe
 	if err := w.saveArtifactDelivery(ctx, task, state); err != nil {
 		return err
 	}
-	w.markArtifact(task.sessionID, file.Resource.ID+":"+artifactVersion(file.Resource))
 	return nil
 }
 
@@ -206,8 +196,5 @@ func (w *channelWorker) deliverArtifactPlan(ctx context.Context, task *channelRe
 			return nil
 		}
 	}
-	if task.delivery != nil {
-		return w.supervisor.store.CompleteChannelReplyDelivery(ctx, w.deliveryScope(), task.inputEventID, w.deliveryOwner)
-	}
-	return nil
+	return w.supervisor.store.CompleteChannelReplyDelivery(ctx, w.deliveryScope(), task.inputEventID, w.deliveryOwner)
 }

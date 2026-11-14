@@ -639,7 +639,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, sessionID, 
 	}
 	var nextPage *string
 	if hasMore && len(records) > 0 {
-		value := encodeEventCursor(records[len(records)-1], order)
+		value := EncodeEventCursor(records[len(records)-1].ExternalID, order)
 		nextPage = &value
 	}
 	httpapi.WriteJSON(w, http.StatusOK, pageResponse[json.RawMessage]{Data: data, NextPage: nextPage})

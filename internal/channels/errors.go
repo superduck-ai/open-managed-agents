@@ -62,15 +62,11 @@ func questionInteractionUnavailable() error {
 }
 
 func unavailable(cause error) error {
-	return apperr.New(apperr.Unavailable, "飞书渠道服务不可用，请检查桥接服务配置", cause)
+	return apperr.New(apperr.Unavailable, "渠道服务暂不可用，请稍后重试", cause)
 }
 
 func unauthenticated() error {
 	return apperr.New(apperr.Unauthenticated, "请先登录", nil)
-}
-
-func agentScopeRequired() error {
-	return apperr.New(apperr.InvalidArgument, "桥接模式下扫码需要 agent_id 参数", nil)
 }
 
 func agentNotFound() error {
@@ -101,14 +97,6 @@ func credentialProvisionFailed(cause error) error {
 	return apperr.New(apperr.Unavailable, "创建渠道工作区凭据失败，请联系管理员", cause)
 }
 
-func credentialSyncUnavailable(cause error) error {
-	return apperr.New(apperr.Unavailable, "同步渠道工作区凭据失败，请检查桥接服务", cause)
-}
-
-func credentialSyncRejected(cause error) error {
-	return apperr.New(apperr.Unavailable, "同步渠道工作区凭据失败，请检查桥接版本与配置", cause)
-}
-
 func credentialUnreadable(cause error) error {
 	return apperr.New(apperr.Unavailable, "渠道工作区凭据无法解密，请联系管理员检查主密钥或恢复备份", cause)
 }
@@ -131,10 +119,6 @@ func invalidCredentialCheckBody(cause error) error {
 
 func credentialCheckUnavailable(cause error) error {
 	return apperr.New(apperr.Unavailable, "无法连接飞书校验应用密钥", cause)
-}
-
-func invalidAuthorizationID() error {
-	return apperr.New(apperr.InvalidArgument, "渠道授权编号无效", nil)
 }
 
 func invalidMemoryMount(cause error) error {

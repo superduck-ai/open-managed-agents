@@ -22,11 +22,11 @@ type channelWorker struct {
 	cancel        context.CancelFunc
 	online        atomic.Bool
 
-	mu        sync.Mutex
-	scopes    map[string]*scopeQueue
-	replies   map[string][]*channelReplyTask
-	artifacts map[string]struct{}
-	ctx       context.Context
+	mu            sync.Mutex
+	checkedInputs map[string]string
+	scopes        map[string]*scopeQueue
+	replies       map[string][]*channelReplyTask
+	ctx           context.Context
 }
 
 type channelReplyTask struct {
@@ -315,7 +315,7 @@ func newChannelWorker(supervisor *runtimeSupervisor, record db.ChannelRecord, se
 	if !ok {
 		return nil, unsupportedChannelType(record.ChannelType)
 	}
-	worker := &channelWorker{deliveryOwner: uuid.NewV4().String(), supervisor: supervisor, record: record, scopes: make(map[string]*scopeQueue), replies: make(map[string][]*channelReplyTask), artifacts: make(map[string]struct{})}
+	worker := &channelWorker{checkedInputs: make(map[string]string), deliveryOwner: uuid.NewV4().String(), supervisor: supervisor, record: record, scopes: make(map[string]*scopeQueue), replies: make(map[string][]*channelReplyTask)}
 	adapter, err := factory(worker, secret)
 	if err != nil {
 		return nil, err

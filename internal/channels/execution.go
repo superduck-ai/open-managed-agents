@@ -169,17 +169,16 @@ func (w *channelWorker) deliver(task *channelReplyTask, msg *channelMessage, api
 		}
 		return
 	}
-	events, err := w.supervisor.oma.listEvents(task.ctx, apiKey, task.sessionID)
+	foreign, err := w.checkInputHistory(task.ctx, apiKey, task.sessionID, msg.ChatID)
 	if err != nil {
 		_ = w.replyText(task.ctx, msg, "读取会话事件失败，本轮尚未提交，请稍后重试。")
 		return
 	}
-	if channelHistoryHasForeignInput(w.record, msg.ChatID, events) {
+	if foreign {
 		_ = w.replyText(task.ctx, msg, channelForeignInputMessage)
 		_ = w.completeInput(task.ctx, msg)
 		return
 	}
-	task.inputEventID = lastEventID(eventIDs(events))
 	baseline, err := w.resourceBaseline(task.ctx, apiKey, task.sessionID)
 	if err != nil {
 		w.supervisor.logger.WarnContext(task.ctx, "snapshot channel resources", "channel_id", w.record.ExternalID, "session_id", task.sessionID, "error", err)
@@ -236,7 +235,7 @@ func (w *channelWorker) deliver(task *channelReplyTask, msg *channelMessage, api
 		return
 	}
 	if task.normalEnd && w.sessionBound(task.ctx, task) {
-		w.sendArtifacts(task.ctx, task, msg, apiKey, baseline)
+		w.sendArtifacts(task.ctx, task, msg, apiKey)
 	}
 }
 
@@ -245,14 +244,6 @@ func lastEventID(ids []string) string {
 		return ""
 	}
 	return ids[len(ids)-1]
-}
-
-func eventIDs(events []omaEvent) []string {
-	ids := make([]string, 0, len(events))
-	for _, event := range events {
-		ids = append(ids, event.ID)
-	}
-	return ids
 }
 
 func (w *channelWorker) interruptScope(scopeKey string) []*channelReplyTask {

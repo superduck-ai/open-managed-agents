@@ -146,7 +146,7 @@ func (w *channelWorker) resumeReplyDelivery(row db.ChannelReplyDelivery) {
 			return
 		}
 		if task.normalEnd && w.sessionBound(task.ctx, task) {
-			w.sendArtifacts(task.ctx, task, msg, key, nil)
+			w.sendArtifacts(task.ctx, task, msg, key)
 		}
 	}()
 }

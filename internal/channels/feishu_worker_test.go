@@ -208,12 +208,12 @@ func testWorker(t *testing.T, store *fakeRuntimeStore, baseURL string) (*channel
 	store.env = "env_1"
 	fake := &fakeChannel{}
 	worker := &channelWorker{
+		checkedInputs: make(map[string]string),
 		deliveryOwner: uuid.NewV4().String(),
 		supervisor:    newRuntimeSupervisor(store, nil, newOMAClient(baseURL), nil),
 		record:        store.record,
 		scopes:        make(map[string]*scopeQueue),
 		replies:       make(map[string][]*channelReplyTask),
-		artifacts:     make(map[string]struct{}),
 		ctx:           t.Context(),
 	}
 	worker.supervisor.fileMaxBytes = 500 << 20

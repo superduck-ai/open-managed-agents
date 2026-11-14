@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"io"
 
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
@@ -38,7 +39,7 @@ type channelAdapter interface {
 	replyText(context.Context, *channelMessage, string) error
 	openReply(context.Context, *channelMessage) (channelReplyStream, error)
 	resumeReply(string) channelReplyStream
-	downloadAttachment(context.Context, string, channelAttachment) ([]byte, string, error)
+	downloadAttachment(context.Context, string, channelAttachment, io.Writer) (string, error)
 	sendMedia(context.Context, *channelMessage, omaResource, string, []byte) (string, error)
 }
 

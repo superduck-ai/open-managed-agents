@@ -117,7 +117,7 @@ func TestInboundAttachmentUploadsToFilesAndMountsResource(t *testing.T) {
 	if len(files.mountPaths) != 1 || files.mountPaths[0] != "/uploads/file_up_1/document.pdf" {
 		t.Fatalf("挂载必须保留文件名: %v", files.mountPaths)
 	}
-	worker.sendArtifacts(t.Context(), &channelReplyTask{sessionID: "sesn_1", inbound: mounted}, feishuMessage(msg), "key", artifactBaseline{})
+	sendTestArtifacts(t, worker, &channelReplyTask{sessionID: "sesn_1", inbound: mounted}, feishuMessage(msg), artifactBaseline{})
 	if len(files.downloaded) != 0 {
 		t.Fatalf("挂载复制后的用户附件不应作为产物下载: %v", files.downloaded)
 	}
@@ -380,11 +380,12 @@ func TestOutboundArtifactsSendNewResourcesOnly(t *testing.T) {
 	attachFeishuStub(t, worker)
 	task := &channelReplyTask{ctx: context.Background(), sessionID: "sesn_1", scopeKey: "chat:oc_1", inbound: map[string]struct{}{}}
 	msg := &channeltypes.NormalizedMessage{ChatID: "oc_1", UserID: "ou_1"}
-	worker.sendArtifacts(context.Background(), task, feishuMessage(msg), "key", artifactBaseline{"sres_old": "file_old:", "sres_new": "file_new:"})
+	sendTestArtifacts(t, worker, task, feishuMessage(msg), artifactBaseline{"sres_old": "file_old:", "sres_new": "file_new:"})
 	if inputs := channel.sentInputs(); len(inputs) != 0 {
 		t.Fatalf("历史资源不应重发: %d", len(inputs))
 	}
-	worker.sendArtifacts(context.Background(), task, feishuMessage(msg), "key", artifactBaseline{"sres_old": "file_old:"})
+	task.delivery = nil
+	sendTestArtifacts(t, worker, task, feishuMessage(msg), artifactBaseline{"sres_old": "file_old:"})
 	inputs := channel.sentInputs()
 	if len(inputs) != 1 || inputs[0].FileKey != "file_key_1" {
 		t.Fatalf("应发送 1 个产物: %+v", inputs)
@@ -397,7 +398,7 @@ func TestOutboundSkipsInboundAttachments(t *testing.T) {
 	t.Cleanup(server.Close)
 	worker, channel := testWorker(t, &fakeRuntimeStore{}, server.URL)
 	task := &channelReplyTask{ctx: context.Background(), sessionID: "sesn_1", inbound: map[string]struct{}{"file_up_1": {}}}
-	worker.sendArtifacts(context.Background(), task, feishuMessage(&channeltypes.NormalizedMessage{ChatID: "oc_1"}), "key", artifactBaseline{})
+	sendTestArtifacts(t, worker, task, feishuMessage(&channeltypes.NormalizedMessage{ChatID: "oc_1"}), artifactBaseline{})
 	if inputs := channel.sentInputs(); len(inputs) != 0 {
 		t.Fatalf("用户上传的附件不应回传: %d", len(inputs))
 	}
@@ -411,7 +412,7 @@ func TestOutboundArtifactsResendsUpdatedResource(t *testing.T) {
 	attachFeishuStub(t, worker)
 	task := &channelReplyTask{sessionID: "sesn_1"}
 	msg := &channeltypes.NormalizedMessage{ChatID: "oc_1"}
-	worker.sendArtifacts(t.Context(), task, feishuMessage(msg), "key", artifactBaseline{})
+	sendTestArtifacts(t, worker, task, feishuMessage(msg), artifactBaseline{})
 	baseline, err := worker.resourceBaseline(t.Context(), "key", "sesn_1")
 	if err != nil {
 		t.Fatal(err)
@@ -419,11 +420,12 @@ func TestOutboundArtifactsResendsUpdatedResource(t *testing.T) {
 	files.mu.Lock()
 	files.resources[0].FileID = "file_updated"
 	files.mu.Unlock()
-	worker.sendArtifacts(t.Context(), task, feishuMessage(msg), "key", baseline)
+	task.delivery = nil
+	sendTestArtifacts(t, worker, task, feishuMessage(msg), baseline)
 	if inputs := channel.sentInputs(); len(inputs) != 2 {
 		t.Fatalf("同一资源更新后应再次发送，实际 %d 次", len(inputs))
 	}
-	worker.sendArtifacts(t.Context(), task, feishuMessage(msg), "key", baseline)
+	sendTestArtifacts(t, worker, task, feishuMessage(msg), baseline)
 	if inputs := channel.sentInputs(); len(inputs) != 2 {
 		t.Fatalf("同一版本产物不应重复发送，实际 %d 次", len(inputs))
 	}

@@ -70,15 +70,14 @@ func (a *independentAdapter) update(_ context.Context, reply *channelReply) erro
 	a.statuses = append(a.statuses, reply.status)
 	return nil
 }
-func (a *independentAdapter) downloadAttachment(_ context.Context, _ string, file channelAttachment) ([]byte, string, error) {
+func (a *independentAdapter) downloadAttachment(_ context.Context, _ string, file channelAttachment, destination io.Writer) (string, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.downloads = append(a.downloads, file.FileKey)
-	if file.FileKey != "input-key" {
-		return nil, "", fmt.Errorf("未知附件 %s", file.FileKey)
-	}
-	return []byte("channel_attachment"), "text/plain", nil
+	a.mu.Unlock()
+	_, err := io.WriteString(destination, "channel_attachment")
+	return "application/octet-stream", err
 }
+
 func (a *independentAdapter) sendMedia(_ context.Context, _ *channelMessage, file omaResource, _ string, data []byte) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

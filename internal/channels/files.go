@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
+	"io"
 	"maps"
+	"os"
 	"strings"
 	"time"
 
@@ -36,6 +38,11 @@ func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID st
 	if err != nil {
 		return nil, nil, err
 	}
+	defer func() {
+		for _, attachment := range attachments {
+			attachment.close()
+		}
+	}()
 	mounted := make(map[string]struct{})
 	paths := make([]string, 0)
 	existing := map[string]omaResource{}
@@ -56,9 +63,13 @@ func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID st
 	}
 	save := func() error { return w.savePreparedInput(ctx, msg, sessionID, *prepared) }
 	for i, attachment := range attachments {
-		name, data, mediaType := attachment.name, attachment.data, attachment.mediaType
-		encodedSize := base64.StdEncoding.EncodedLen(len(data))
+		name, mediaType := attachment.name, attachment.mediaType
+		encodedSize := base64.StdEncoding.EncodedLen(int(attachment.size))
 		if attachment.kind == "image" && encodedSize <= imageBudget {
+			data, err := io.ReadAll(attachment.file)
+			if err != nil {
+				return nil, nil, err
+			}
 			content = append(content, map[string]any{
 				"type": "image",
 				"source": map[string]any{
@@ -84,27 +95,46 @@ func (w *channelWorker) messageContent(ctx context.Context, apiKey, sessionID st
 type channelDownloadedAttachment struct {
 	kind      string
 	name      string
-	data      []byte
+	file      *os.File
+	size      int64
 	mediaType string
 }
 
-func (w *channelWorker) downloadMessageAttachments(ctx context.Context, msg *channelMessage) ([]channelDownloadedAttachment, error) {
+func (a channelDownloadedAttachment) close() { _ = a.file.Close(); _ = os.Remove(a.file.Name()) }
+
+func (w *channelWorker) downloadMessageAttachments(ctx context.Context, msg *channelMessage) (attachments []channelDownloadedAttachment, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			for _, attachment := range attachments {
+				attachment.close()
+			}
+			attachments = nil
+		}
+	}()
 	for _, resource := range msg.Resources {
 		if resource.Type != "file" && resource.Type != "image" {
-			return nil, fmt.Errorf("附件 %s 的类型暂不支持，本轮未提交", attachmentName(resource))
+			return attachments, fmt.Errorf("附件 %s 的类型暂不支持，本轮未提交", attachmentName(resource))
 		}
 	}
-	attachments := make([]channelDownloadedAttachment, 0, len(msg.Resources))
 	for _, resource := range msg.Resources {
-		name := attachmentName(resource)
-		data, mediaType, err := w.adapter.downloadAttachment(ctx, msg.MessageID, resource)
+		file, err := os.CreateTemp("", "oma-channel-attachment-*")
 		if err != nil {
-			return nil, fmt.Errorf("下载附件 %s 失败: %w", name, err)
+			return attachments, err
 		}
-		if data == nil {
-			return nil, fmt.Errorf("未取得附件 %s 的内容，本轮未提交", name)
+		attachment := channelDownloadedAttachment{kind: resource.Type, name: attachmentName(resource), file: file}
+		attachments = append(attachments, attachment)
+		mediaType, err := w.adapter.downloadAttachment(ctx, msg.MessageID, resource, file)
+		if err != nil {
+			return attachments, fmt.Errorf("下载附件 %s 失败: %w", attachment.name, err)
 		}
-		attachments = append(attachments, channelDownloadedAttachment{kind: resource.Type, name: name, data: data, mediaType: mediaType})
+		size, err := file.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return attachments, err
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return attachments, err
+		}
+		attachments[len(attachments)-1].size, attachments[len(attachments)-1].mediaType = size, mediaType
 	}
 	return attachments, nil
 }
@@ -187,25 +217,23 @@ func (w *channelWorker) stableArtifactResources(ctx context.Context, apiKey, ses
 	}
 }
 
-func (w *channelWorker) sendArtifacts(ctx context.Context, task *channelReplyTask, msg *channelMessage, apiKey string, baseline artifactBaseline) {
+func (w *channelWorker) sendArtifacts(ctx context.Context, task *channelReplyTask, msg *channelMessage, apiKey string) {
 	allowed, err := w.cardAuthorized(ctx, channelActionValue{ChatType: msg.ChatType}, msg.UserID, msg.ChatID)
 	if err != nil || !allowed {
 		return
 	}
 	ctx, finish := w.keepArtifactLease(ctx, task)
 	defer finish()
-	state := channelArtifactDelivery{Baseline: baseline}
-	if task.delivery != nil {
-		if task.delivery.ArtifactDelivery == "" {
-			return
-		}
-		if err := jsonv2.Unmarshal([]byte(task.delivery.ArtifactDelivery), &state); err != nil {
-			w.supervisor.logger.WarnContext(ctx, "decode channel artifact delivery", "channel_id", w.record.ExternalID, "error", err)
-			return
-		}
-		if state.Baseline == nil {
-			return
-		}
+	if task.delivery == nil || task.delivery.ArtifactDelivery == "" {
+		return
+	}
+	var state channelArtifactDelivery
+	if err := jsonv2.Unmarshal([]byte(task.delivery.ArtifactDelivery), &state); err != nil {
+		w.supervisor.logger.WarnContext(ctx, "decode channel artifact delivery", "channel_id", w.record.ExternalID, "error", err)
+		return
+	}
+	if state.Baseline == nil {
+		return
 	}
 	if !state.Planned {
 		if err := w.planArtifactDelivery(ctx, task, apiKey, &state); err != nil {
@@ -216,19 +244,6 @@ func (w *channelWorker) sendArtifacts(ctx context.Context, task *channelReplyTas
 	if err := w.deliverArtifactPlan(ctx, task, msg, apiKey, &state); err != nil {
 		w.supervisor.logger.WarnContext(ctx, "deliver channel artifacts", "channel_id", w.record.ExternalID, "error", err)
 	}
-}
-
-func (w *channelWorker) artifactSent(sessionID, resourceID string) bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	_, ok := w.artifacts[sessionID+":"+resourceID]
-	return ok
-}
-
-func (w *channelWorker) markArtifact(sessionID, resourceID string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.artifacts[sessionID+":"+resourceID] = struct{}{}
 }
 
 func (w *channelWorker) notify(ctx context.Context, msg *channelMessage, text string) {

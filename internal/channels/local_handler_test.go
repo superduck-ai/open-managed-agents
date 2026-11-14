@@ -1,8 +1,12 @@
 package channels
 
 import (
+	"github.com/superduck-ai/open-managed-agents/internal/auth"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
@@ -35,5 +39,52 @@ func TestAgentRouterNoLongerServesChannelQr(t *testing.T) {
 	patterns := routePatterns(t, handler.agentRouter())
 	if _, ok := patterns["GET /{channel_id}/qr"]; ok {
 		t.Fatalf("扫码不应再挂在 agent 路由：%v", patterns)
+	}
+}
+
+func TestNativeChannelMutationRejectsMissingScopeAndCSRF(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		principal auth.Principal
+		want      int
+	}{
+		{name: "无身份", want: http.StatusUnauthorized},
+		{name: "缺少工作区", principal: auth.Principal{OrganizationUUID: "org"}, want: http.StatusUnauthorized},
+		{name: "浏览器缺少CSRF", principal: auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws", CredentialType: auth.CredentialTypePlatformSession}, want: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := newLocalHandler(newLocalService(&fakeLocalStore{}, nil, nil, nil), nil)
+			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"渠道"}`))
+			request = request.WithContext(auth.WithPrincipal(t.Context(), tc.principal))
+			response := httptest.NewRecorder()
+			handler.agentRouter().ServeHTTP(response, request)
+			if response.Code != tc.want {
+				t.Fatalf("status=%d want=%d", response.Code, tc.want)
+			}
+		})
+	}
+}
+
+func TestNativeChannelRoutesRejectForeignOrArchivedAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		store *fakeLocalStore
+		want  int
+	}{
+		{"其他工作区智能体", &fakeLocalStore{agentErr: db.ErrNotFound}, http.StatusNotFound},
+		{"归档智能体", &fakeLocalStore{agent: db.Agent{ArchivedAt: new(time.Now())}}, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := newLocalHandler(newLocalService(tc.store, nil, nil, nil), nil)
+			router := chi.NewRouter()
+			router.Mount("/agents/{agent_id}/channels", handler.agentRouter())
+			request := httptest.NewRequest(http.MethodPost, "/agents/agent/channels", strings.NewReader(`{"name":"渠道"}`))
+			request = request.WithContext(auth.WithPrincipal(t.Context(), auth.Principal{OrganizationUUID: "org", WorkspaceUUID: "ws", CredentialType: auth.CredentialTypeAPIKey}))
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != tc.want {
+				t.Fatalf("status=%d want=%d", response.Code, tc.want)
+			}
+		})
 	}
 }

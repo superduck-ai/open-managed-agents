@@ -13,6 +13,16 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/sessioncontract"
 )
 
+type workspaceChannelPage struct {
+	Data       []map[string]any `json:"data"`
+	Incomplete bool             `json:"incomplete"`
+	Truncated  bool             `json:"truncated"`
+}
+
+type environmentSettings struct {
+	EnvironmentID *string `json:"environment_id"`
+}
+
 func newLocalHandler(service *localService, logger *slog.Logger) *localHandler {
 	return &localHandler{service: service, logger: logging.LoggerOrDefault(logger)}
 }

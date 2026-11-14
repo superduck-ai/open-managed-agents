@@ -19,7 +19,7 @@ java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers auto -confi
 | `BrainClaimLateInput.cfg` | `BrainClaim` | 违反 `LateInputNotStranded`（设计文档已知边界） | 违反，7 步反例 |
 | `BrainLeaseTimingSteady.cfg` | `BrainLeaseTiming` | 通过 | 通过，9,017,236 个不同状态 |
 | `BrainLeaseTimingSteadyThreeFailures.cfg` | `BrainLeaseTiming` | 违反 `LeaseNeverClaimable` | 违反 |
-| `BrainLeaseTimingAdmission.cfg` | `BrainLeaseTiming` | 违反 `LeaseNeverClaimable` | 尚未完成 |
+| `BrainLeaseTimingAdmission.cfg` | `BrainLeaseTiming` | 违反 `LeaseNeverClaimable` | 违反，深度 151（30.2 秒）时持有者仍未心跳 |
 | `BrainAdmission.cfg` | `BrainAdmission` | 违反 `NoOrphanSession` | 违反，14 步反例 |
 | `BrainAdmissionCapacity.cfg` | `BrainAdmission` | 通过 | 通过，92,097 个不同状态 |
 

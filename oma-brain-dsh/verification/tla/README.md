@@ -14,7 +14,7 @@ java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers auto -confi
 
 | 配置 | 模块 | 预期 | 2026-11-14 结果 |
 | --- | --- | --- | --- |
-| `BrainClaim.cfg` | `BrainClaim` | 通过 | 尚未完成 |
+| `BrainClaim.cfg` | `BrainClaim` | 通过 | 通过，12,462,216 个不同状态，深度 45 |
 | `BrainClaimStaleTool.cfg` | `BrainClaim` | 违反 `NoStaleSandboxForward` | 违反，11 步反例 |
 | `BrainClaimLateInput.cfg` | `BrainClaim` | 违反 `LateInputNotStranded`（设计文档已知边界） | 违反，7 步反例 |
 | `BrainLeaseTimingSteady.cfg` | `BrainLeaseTiming` | 通过 | 通过，9,017,236 个不同状态 |

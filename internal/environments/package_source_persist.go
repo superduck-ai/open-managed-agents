@@ -107,7 +107,11 @@ func (r *Runner) persistPackageSources(ctx context.Context, sandboxID string) {
 		Timeout: packageSourcePersistTimeout,
 	})
 	if err == nil && result.ExitCode != 0 {
-		err = fmt.Errorf("exit code %d", result.ExitCode)
+		if stderr := truncateSandboxCommandOutput(result.Stderr); stderr != "" {
+			err = fmt.Errorf("exit code %d: %s", result.ExitCode, stderr)
+		} else {
+			err = fmt.Errorf("exit code %d", result.ExitCode)
+		}
 	}
 	if err != nil {
 		r.logger.WarnContext(ctx, "persist package sources failed", "sandbox_id", sandboxID, "error", err)

@@ -99,6 +99,7 @@ func TestPersistPackageSourcesWarnsWithoutFailingSandbox(t *testing.T) {
 	}{
 		{name: "command error", provider: &rcloneTestProvider{runErrors: []error{errors.New("sandbox unavailable")}}, wantErr: "sandbox unavailable"},
 		{name: "non-zero exit", provider: &rcloneTestProvider{runResult: e2bruntime.CommandResult{ExitCode: 3}}, wantErr: "exit code 3"},
+		{name: "non-zero exit with stderr", provider: &rcloneTestProvider{runResult: e2bruntime.CommandResult{ExitCode: 3, Stderr: []byte("npm not found\n")}}, wantErr: "exit code 3: npm not found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := &prebuildLogRecorder{}

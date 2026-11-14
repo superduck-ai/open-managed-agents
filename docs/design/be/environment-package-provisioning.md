@@ -56,7 +56,7 @@ Cargo 不改变镜像的 `registry.default`，不自动查找私有源或回退�
 
 临时目录由 `mktemp -d` 创建，npmrc、Cargo TOML、Cargo 包装命令与 gemrc 在同一安装进程中使用，通过 EXIT 和信号 trap 清理；成功、失败与信号退出均保留 Manager 的 stdin、stdout、stderr 和退出码合同。原 npm 配置依次读取非空的 `NPM_CONFIG_USERCONFIG`、`npm_config_userconfig`，仅在 `HOME` 非空时回退到 `$HOME/.npmrc`；均未指定时直接使用临时配置。安装命令中的 ENV 与临时配置仅作用于对应进程，不写 Dockerfile ENV，也不留下包装命令。
 
-安装完成后，同一份软件源还会写入 Sandbox 内各管理器的生效配置，使 Agent 在会话中自行执行的 `npm install`、`pip install` 等也走部署配置的源（例如私有制品仓库的代理源）：
+同一份软件源还会写入 Sandbox 内各管理器的生效配置，使 Agent 在会话中自行执行的 `npm install`、`pip install` 等也走部署配置的源（例如私有制品仓库的代理源）：
 
 | 管理器 | 写入位置 | 方式 |
 | --- | --- | --- |
@@ -66,7 +66,7 @@ Cargo 不改变镜像的 `registry.default`，不自动查找私有源或回退�
 | cargo | `${CARGO_HOME:-$HOME/.cargo}/config.toml` | 追加带标记的 `[registries.<name>]` 块 |
 | gem | `GEMRC` 的最后一项，否则 `~/.gemrc` | 替换 `:sources:` |
 
-写入脚本以标记块实现幂等，重复执行只替换 OMA 写入的部分。预构建在软件包安装之后、`init_script` 之前执行该脚本，因此初始化脚本同样使用这些源。每次创建 Sandbox 时，Runner 都按当前部署配置在安装软件包前执行一次，包括使用已完成预构建模板的 Sandbox；失败只记录告警，不阻止 Session 启动，此时沿用镜像或模板中的旧值。运行期以平台配置为准：模板内构建时写入的源只服务于构建与 `init_script`，修改 `environment_packages` 后新建的 Sandbox 立即使用新源，无需重新预构建；平台源会覆盖 `init_script` 对 npm `registry` / `@scope:registry`、pip `index-url`、gem `:sources:` 等同名项的设置。这样运行期配置文件与按当前配置计算的 `RegistryHosts()` 出站授权保持一致。缺少 `python3` 或 `ruby` 时跳过对应管理器并输出提示。部署 YAML 不包含认证；认证由镜像原配置或流水线私密配置提供。整份 `environment_packages` 计入预构建 provider key，源变更会改变标识；已完成模板仍按既有合同复用。
+写入脚本以标记块实现幂等，重复执行只替换 OMA 写入的部分。预构建在软件包安装之后、`init_script` 之前执行该脚本，因此初始化脚本同样使用这些源。每次创建 Sandbox 时，Runner 都按当前部署配置在安装软件包前执行一次，包括使用已完成预构建模板的 Sandbox；失败只记录告警，不阻止 Session 启动，此时沿用镜像或模板中的旧值。写入脚本按 `set -eu` 执行，中途失败时前面的管理器可能已经写入，后面的没有写入。运行期以平台配置为准：模板内构建时写入的源只服务于构建与 `init_script`，修改 `environment_packages` 后新建的 Sandbox 立即使用新源，无需重新预构建；平台源只覆盖 OMA 写入的这些文件中的同名项，会话里设置的环境变量（如 `NPM_CONFIG_REGISTRY`、`PIP_INDEX_URL`）、项目级 `.npmrc` 以及指向其他文件的 `GEMRC` 仍优先于平台源。对仍在配置中的管理器，运行期配置文件与按当前配置计算的 `RegistryHosts()` 出站授权保持一致。该写入不会清除旧值：从 `environment_packages` 删除某个管理器的源或清空全部源后，新建的 Sandbox 仍保留模板或镜像中以前写入的值，此时运行期配置可能与 `RegistryHosts()` 不一致。已成功的模板不提供强制重建，需修改该环境的软件包触发新构建，或新建环境；基础镜像自带的源不会因重新构建而清除。恢复已暂停的 Sandbox 时也不会重新写入，沿用暂停前的值。缺少 `python3` 或 `ruby` 时跳过对应管理器并输出提示。部署 YAML 不包含认证；认证由镜像原配置或流水线私密配置提供。整份 `environment_packages` 计入预构建 provider key，源变更会改变标识；已完成模板仍按既有合同复用。
 
 所有管理器的 URL 抽取并规范化 host，经 `RegistryHosts()` 去重后，在 Environment 的 `allow_package_managers: true` 下纳入 Sandbox AllowOut 与 CONNECT host 策略；关闭时仍需显式 `allowed_hosts`。完成 Environment 授权后，只有配置过的精确 host、443 端口、RFC1918 / ULA / CGNAT 地址可获得自动私网例外。loopback、link-local、metadata 地址仍拒绝，包括 CGNAT 与 ULA 内的已知 metadata 地址。DNS 只解析一次，随后拨号已校验 IP。MCP proxy 与其他使用 `PublicAddress` 的服务不继承此例外。
 
@@ -201,7 +201,7 @@ API 沿用 `/v1/environments` 的鉴权和 `beta=true` 要求，返回 `build` �
 ### 验证
 
 ```bash
-go test ./internal/config ./internal/environments ./internal/db -run 'Test(BuildHTTP|LoadEnvironmentPrebuild|Prebuild|EnvironmentMapper|BuildPackage|NormalizePackages|ValidatePackage|ProvisionPackages)' -count=1
+go test ./internal/config ./internal/environments ./internal/db -run 'Test(BuildHTTP|LoadEnvironmentPrebuild|Prebuild|EnvironmentMapper|BuildPackage|NormalizePackages|ValidatePackage|ProvisionPackages|PersistPackageSources)' -count=1
 go test ./internal/runtime/e2bruntime -count=1
 go test ./internal/environments -run TestRegistryProvisioningInstallsFromLocalRegistry -count=1 -v
 ```

@@ -67,7 +67,9 @@ java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers auto -confi
 
 `BrainLeaseTiming` 的准入配置说明前提可以达成：register 提交后立即开始计算 20 秒租约，而 register 响应与 `GET /v2/sessions` 各自最多 20 秒，首次心跳还要再等约 6 秒，最坏情况超过 30 秒的租约加宽限。`/v2/sessions` 不在 epoch fence 内，旧 epoch 的读取仍会成功。
 
-epoch fence 保证不会出现双写，这是资源泄漏和可用性问题。可考虑的修复：`admit` 按 session id 串行化；或在 `createOmaSession` 前比较 `sessions` 与 `api.assignments` 中已有的 epoch，只允许更高 epoch 覆盖并退役被覆盖者；同时让会话在 register 返回后立即开始心跳。
+epoch fence 保证不会出现双写，这是资源泄漏和可用性问题。
+
+`oma-brain-dsh/tests/admission-race.test.ts` 在真实的 `startWorkers` 上复现了这个反例（假后端按 epoch fence 拒绝旧凭据），5 次运行均稳定失败，观察到三个症状：仍在运行的当前 epoch 会话被删掉了 `api.assignments` 中的凭据；停机时 `effect` 一直等待这个不在 `sessions` 中的会话的 inbound 任务，只能依赖 `main.ts` 的强制退出超时；该会话直到最后都没有被 `close()`。测试用 `test.failing` 标记为已知缺陷，修复后需要改回 `test`。可考虑的修复：`admit` 按 session id 串行化；或在 `createOmaSession` 前比较 `sessions` 与 `api.assignments` 中已有的 epoch，只允许更高 epoch 覆盖并退役被覆盖者；同时让会话在 register 返回后立即开始心跳。
 
 ### 2. 沙箱 MCP 转发的 epoch 校验是先检查后执行（`BrainClaim`）
 

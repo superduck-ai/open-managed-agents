@@ -151,6 +151,11 @@ type codeSessionWorkerLeaseRow struct {
 	WorkerTransport      string       `db:"worker_transport"`
 }
 
+type subagentPublicationProgressRow struct {
+	PublishedSequenceNum    int64 `db:"subagent_published_sequence_num"`
+	LastInternalSequenceNum int64 `db:"last_internal_sequence_num"`
+}
+
 type codeSessionWorkerExpiryRow struct {
 	WorkerLeaseExpiresAt time.Time `db:"worker_lease_expires_at"`
 }
@@ -185,6 +190,8 @@ type CodeSessionMapper interface {
 	LockInitializingCodeSession(ctx context.Context, workspaceUUID, codeSessionUUID string) (codeSessionRow, bool, error)
 	LockWorkerLeaseByExternalID(ctx context.Context, codeSessionExternalID string) (codeSessionWorkerLeaseRow, error)
 	FindCurrentWorkerEpochByExternalID(ctx context.Context, codeSessionExternalID string) (int64, error)
+	FindSubagentPublicationProgress(ctx context.Context, workspaceUUID, codeSessionExternalID string) (subagentPublicationProgressRow, error)
+	AdvanceSubagentPublishedSequence(ctx context.Context, workspaceUUID, codeSessionExternalID string, sequenceNum int64) (int64, error)
 	RegisterWorker(ctx context.Context, params registerCodeSessionWorkerParams) (int64, error)
 	HeartbeatWorkerByExternalID(ctx context.Context, params heartbeatCodeSessionWorkerParams) (codeSessionWorkerExpiryRow, error)
 	HeartbeatWorkerByUUID(ctx context.Context, params heartbeatCodeSessionWorkerParams) (codeSessionWorkerExpiryRow, error)

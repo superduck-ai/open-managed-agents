@@ -120,7 +120,7 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 			}
 			annotateWorkerEventBatch(r.Context(), len(events), internalTypes)
 		}
-		created, err := h.service.eventPayloads.AppendInternal(r.Context(), record, epoch, events)
+		_, err = h.service.eventPayloads.AppendInternal(r.Context(), record, epoch, events)
 		if err != nil {
 			if errors.Is(err, db.ErrWorkerEpochMismatch) || errors.Is(err, db.ErrNotFound) {
 				h.writeWorkerEpochDBError(w, r, codeSessionID, err, "Could not append code session worker internal events")
@@ -130,10 +130,8 @@ func (h *Handler) handleCodeSessionWorkerInternalEvents(w http.ResponseWriter, r
 			httpapi.WriteError(w, r, httpapi.NewError(http.StatusInternalServerError, "api_error", "Could not append code session worker internal events"))
 			return
 		}
-		if len(created) > 0 {
-			if err := h.service.publishSubagentInternalEvents(r.Context(), record); err != nil {
-				httpapi.LogFailure(h.logger, r, "publish subagent internal events after append", "code_session_id", codeSessionID, "session_id", record.SessionExternalID, "error", err)
-			}
+		if err := h.service.reconcileSubagentInternalEvents(r.Context(), record); err != nil {
+			httpapi.LogFailure(h.logger, r, "publish subagent internal events after append", "code_session_id", codeSessionID, "session_id", record.SessionExternalID, "error", err)
 		}
 		httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return

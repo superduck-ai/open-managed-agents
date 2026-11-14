@@ -407,6 +407,24 @@ func (d *DB) GetCodeSession(ctx context.Context, externalID string) (CodeSession
 	return row.session(), true, nil
 }
 
+type SubagentPublicationProgress struct {
+	PublishedSequenceNum int64
+	CommittedSequenceNum int64
+}
+
+func (d *DB) SubagentPublicationProgress(ctx context.Context, workspaceUUID, codeSessionExternalID string) (SubagentPublicationProgress, error) {
+	row, err := NewCodeSessionMapper(d.mapperDB).FindSubagentPublicationProgress(ctx, workspaceUUID, codeSessionExternalID)
+	if err != nil {
+		return SubagentPublicationProgress{}, mapNoRows(err)
+	}
+	return SubagentPublicationProgress{PublishedSequenceNum: row.PublishedSequenceNum, CommittedSequenceNum: row.LastInternalSequenceNum}, nil
+}
+
+func (d *DB) AdvanceSubagentPublishedSequence(ctx context.Context, workspaceUUID, codeSessionExternalID string, sequenceNum int64) error {
+	_, err := NewCodeSessionMapper(d.mapperDB).AdvanceSubagentPublishedSequence(ctx, workspaceUUID, codeSessionExternalID, sequenceNum)
+	return err
+}
+
 func (d *DB) GetCodeSessionBySessionExternalID(ctx context.Context, workspaceUUID string, sessionExternalID string) (CodeSession, error) {
 	mapper := NewCodeSessionMapper(d.mapperDB)
 	row, err := mapper.FindLatestBySessionExternalID(ctx, workspaceUUID, sessionExternalID)

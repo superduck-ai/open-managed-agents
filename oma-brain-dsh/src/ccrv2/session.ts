@@ -38,6 +38,7 @@ export class CcrSession {
   readonly receivedInputIds = new Set<string>();
   pendingEvents: Payload[] = [];
   private opening = true;
+  private initializedAt?: number;
   private inputFinished = false;
   private rootTurnReason?: Extract<SessionEvent, { type: "turn/end" }>["data"]["reason"];
   restoredFromRemote = false;
@@ -144,7 +145,10 @@ export class CcrSession {
     return this.runtime.busy || this.subagents.busy;
   }
   get lastIdle() {
-    return this.subagents.lastIdle;
+    return Math.max(this.subagents.lastIdle, this.initializedAt ?? 0);
+  }
+  get initializing(): boolean {
+    return this.initializedAt === undefined;
   }
 
   async open(): Promise<void> {
@@ -158,6 +162,7 @@ export class CcrSession {
       this.restoredTraceTurns = traceTurnsOf(metadata?.[TRACE_TURNS_METADATA]);
       await this.openState((next) => { stage = next; });
       this.abort.signal.throwIfAborted();
+      this.initializedAt = Date.now();
       workerDiagnostic("info", "ccrv2_worker_lifecycle_initialized", {
         session_id: this.id, duration_ms: Date.now() - startMs,
       });

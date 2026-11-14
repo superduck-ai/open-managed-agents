@@ -347,6 +347,9 @@ and e.code_session_external_id = :code_session_external_id
 | invalid cursor | 返回 400 |
 | unsupported method | 返回 405 |
 | schema guard | no-FK 测试包含 `code_session_internal_events` |
+| subagent 投影游标 | 发布失败不推进游标；未映射事件在窗口内挡住游标、映射到达后补发；超窗放弃后不再重读；陈旧映射快照不越过高水位之后已映射的事件；升级后单次调用从 0 逐页追平并补齐未投影尾部；积压超过一页时单次调用追平；取消后保留已提交页的进度并续跑；历史 100 与 1000 条时增量工作量相同；`thread_created` 结束所在合并发布（`internal/codesessions/subagent_publication_test.go`） |
+| 游标持久化 | 迁移后旧行从 0 起步、读取进度含提交高水位、单调推进、workspace 隔离与回滚（`internal/db/code_session_subagent_cursor_postgres_test.go`，integration） |
+| 投影失败补偿与同批归属 | 内部事件投影失败（payload 读取故障）后仅靠后续普通 public 事件补齐子线程；同一 `/worker/events` 请求内 `thread_created` 后接 agent-only `agent.message` 进入子线程而非主线程（`tests/subagent_publication_integration_test.go`，integration） |
 
 ---
 
@@ -364,3 +367,51 @@ and e.code_session_external_id = :code_session_external_id
 模式 B 仅处理 archived_at/deleted_at 已满静置期、同一父 session 下所有 code session 均 idle 且无有效 lease 的会话。terminated 可以翻回 running，沙箱 idle_timeout 回收后仍可唤醒，两者都不能触发整份归档。archive/delete API 写事务不执行归档，独立 River sweep 同时覆盖上线前已删除但遗留的私有 transcript。
 
 归档按 pending → 上传 → 回读校验 → attached → 分批软删除执行，观察期后由独立开关控制物理删除。原 payload_hash 仅保留为 worker 审计与幂等元数据，不能与 JSONB 读回字节重新计算比较。维护人员可用 CLI 导出完整历史或还原回 PG；不新增 /v1 路由，不修改公开 session_events、SSE 或 NATS。
+
+## 12. Subagent 内部事件的公开投影
+
+subagent 内部事件（`agent_id` 非空）需要先有 `session.thread_created` 建立 agent → thread 映射，才能投影为子线程的公开事件。两类事件经不同端点上传，映射可能晚于内部事件到达，因此投影由 reconcile 完成。
+
+### 12.1 增量游标
+
+`code_sessions.subagent_published_sequence_num`（migration 00118）记录“该序号及之前的 subagent 内部事件已完成投影”。迁移不回填，所有已有行从 0 起步：`last_internal_sequence_num` 只证明内部追加成功，旧实现投影失败时只记日志并返回 200，若以它为水位会越过从未公开的尾部。旧会话由下文的逐页追平补齐，已公开的部分被去重。
+
+```mermaid
+flowchart TD
+    A["POST /worker/internal-events<br/>追加成功（含重复重试）"] --> R
+    B["/worker/events 批次<br/>连续 public 事件合并发布<br/>thread_created 结束所在合并"] --> R
+    R["读取进度：游标 c + 提交高水位 h<br/>（同一行 last_internal_sequence_num）"] --> Q{"h ≤ c ?"}
+    Q -- 是 --> E["结束（1 次查询）"]
+    Q -- 否 --> M["读取 agent→thread 映射（晚于 h）"]
+    M --> L["读取一页（≤500）c < seq ≤ h 的 subagent 事件"]
+    L --> P["已映射事件 → 公开 payload<br/>一次 sink 发布（AppendIfAbsent 去重）"]
+    P -- 发布失败 --> X["返回错误，游标停在上一页末"]
+    P -- 成功 --> V["立即推进游标到本页末<br/>（单调，带 workspace 条件）"]
+    V --> K{"已到 h，或被窗口内<br/>未映射事件挡住，或 ctx 已取消?"}
+    K -- 否 --> L
+    K -- 是 --> E2["结束"]
+```
+
+触发时机：
+
+- `/worker/internal-events` 追加后总是执行，包括没有新事件的重复重试，用来修复上次崩溃或超时的遗留。
+- 每次 public 发布（`publishWorkerPublicPayloads`：`/worker/events` 批次、状态、工具确认）成功后都执行。投影失败时 internal 请求仍返回 200，后续任何普通 public 事件都会重试补齐；游标追平时只有一次进度查询，代价与历史无关。
+- `/worker/events` 把连续的 public action 合并为一次发布；control/stream action 与含 `session.thread_created` 的 action 结束当前合并。后者保证线程映射先提交，同批后续只带 `agent_id` 的事件才能推断出子线程归属。
+
+正确性：
+
+- 逐页追平：单次调用按页（`internalEventsPageSize`，500 条）循环直到追平 h，或被窗口内未映射事件挡住。每页发布成功后立即持久化推进游标；推进使用脱离取消的 ctx，确保已提交的发布不因请求取消而丢失进度；同时套用独立的固定超时（`subagentCursorAdvanceTimeout`，5 秒），推进卡住时返回错误并保留旧游标，下一次调用重新发布该页（去重）后再推进。请求超时或取消时，在下一页开始前返回，下一次从已保存的进度继续，不从 0 重来。因此积压超过一页时不依赖后续请求，也不会退回 #636 的“每次从头”。一次性追平只在升级后或长时间失败后发生一次；稳态下游标已追平，只有 1 次进度查询。不引入后台任务，也不恢复从 0 的全量重建。
+- 高水位快照：`last_internal_sequence_num` 与内部事件在同一事务、code session 行锁下写入，读到 h 时序号不大于 h 的事件均已提交且可见。reconcile 先读 h 再读映射，扫描上界为 h，因此用于判定“未映射”的映射快照不早于被扫描的任何事件；之后提交的映射与事件留给下一次 reconcile。扫描到 h 且没有更多事件时游标直接推进到 h，跳过中间的 foreground 序号，使追平判断只需一次查询。
+- 幂等仍由 `stablePublicEventID` 与 `AppendSessionEventsIfAbsent` 保证；游标只减少重复工作。
+- 游标在 sink 发布成功后才推进。请求超时、ctx 取消或进程崩溃时，下一次 reconcile 从旧游标重做，不丢事件。并发 reconcile 只会重复发布（被去重），游标单调。
+
+### 12.2 等待映射窗口
+
+未映射事件不发布，并把游标挡在其前一位，映射到达后的下一次 reconcile 补发。为避免永远无法映射的 agent 让每次请求重新读取和发布其后的事件，等待有界：未映射事件落后提交高水位 h 达到 `subagentMappingGraceSequences`（200）时视为放弃，游标越过它并记录一次 `Warn`（`skipped_count`、`published_through`）。由于映射快照晚于 h（12.1），被放弃的事件在其 agent 映射已提交的情况下不会被误判。
+
+取舍：
+
+- Brain 在子线程开始运行前就等待 `thread_created` 发布完成，正常情况下映射先于内部事件；乱序只出现在两条上传队列重试交错时，窗口远大于这种乱序跨度。
+- 窗口以内部事件序号计，与 Brain 上传参数是不同的量：内部事件单次请求最多 100 条（`maxBatchSize`），本地队列容量 200（`maxQueueSize`）。200 的窗口覆盖两个满批次，或一次排满的队列。
+- 等待期间，每次 reconcile 会重新读取并发布被挡住事件之后、到本页末为止的已映射事件（去重）；挡住后本次调用即停止，最坏额外开销为一页，不随历史增长。
+- 超窗放弃的事件仍保留在内部事件表中。`GET /v1/sessions/{id}/threads/{thread_id}/events` 发现子线程公开事件为空时，`PublishSubagentInternalEvents` 从序号 0 全量重建该会话的子线程投影（不读写游标），作为读路径兜底；子线程已有部分事件时不会触发该兜底，这是接受的残余风险（只发生在映射晚于事件 200 个序号以上时）。

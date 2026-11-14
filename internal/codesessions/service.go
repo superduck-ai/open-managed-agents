@@ -469,7 +469,7 @@ func prepareWorkerControlAction(payload json.RawMessage, meta EventMetadata) (pr
 }
 
 func (s *Service) applyWorkerOutputEvents(ctx context.Context, route CodeSessionStreamRoute, workerEpoch int64, workerOutputEvents []preparedWorkerOutputEvent) error {
-	for _, workerOutputEvent := range workerOutputEvents {
+	for _, workerOutputEvent := range coalescePublicActions(workerOutputEvents) {
 		if stream, ok := workerOutputEvent.(preparedStreamAction); ok {
 			// Publish previews independently so an ingress batch cannot become one
 			// oversized broker message or cause unrelated previews to fail together.
@@ -481,6 +481,30 @@ func (s *Service) applyWorkerOutputEvents(ctx context.Context, route CodeSession
 		}
 	}
 	return nil
+}
+
+func coalescePublicActions(workerOutputEvents []preparedWorkerOutputEvent) []preparedWorkerOutputEvent {
+	coalesced := make([]preparedWorkerOutputEvent, 0, len(workerOutputEvents))
+	extendable := false
+	for _, workerOutputEvent := range workerOutputEvents {
+		switch prepared := workerOutputEvent.(type) {
+		case preparedNoopAction, preparedKeepAliveAction:
+			continue
+		case preparedPublicAction:
+			if extendable {
+				last := len(coalesced) - 1
+				previous := coalesced[last].(preparedPublicAction)
+				coalesced[last] = preparedPublicAction{payloads: append(previous.payloads, prepared.payloads...)}
+			} else {
+				coalesced = append(coalesced, preparedPublicAction{payloads: append([]json.RawMessage(nil), prepared.payloads...)})
+			}
+			extendable = !containsThreadCreated(prepared.payloads)
+		default:
+			coalesced = append(coalesced, workerOutputEvent)
+			extendable = false
+		}
+	}
+	return coalesced
 }
 
 func (s *Service) applyNonStreamWorkerOutputEvent(ctx context.Context, codeSessionID string, workerEpoch int64, workerOutputEvent preparedWorkerOutputEvent) error {
@@ -564,10 +588,19 @@ func (s *Service) publishPreparedInboundEvent(ctx context.Context, prepared prep
 }
 
 func (s *Service) publishWorkerPublicPayloads(ctx context.Context, codeSessionID string, payloads []json.RawMessage) error {
-	if err := s.publishPublicPayloads(ctx, codeSessionID, payloads); err != nil {
+	if len(payloads) == 0 {
+		return nil
+	}
+	codeSession, err := s.publicationCodeSession(ctx, codeSessionID)
+	if err != nil {
 		return err
 	}
-	s.reconcileSubagentEvents(ctx, codeSessionID)
+	if err := s.publishCodeSessionPayloads(ctx, codeSession, payloads); err != nil {
+		return err
+	}
+	if err := s.reconcileSubagentInternalEvents(ctx, codeSession); err != nil {
+		s.logger.ErrorContext(ctx, "publish subagent internal events", "code_session_id", codeSessionID, "error", err)
+	}
 	return nil
 }
 
@@ -575,83 +608,33 @@ func (s *Service) publishPublicPayloads(ctx context.Context, codeSessionID strin
 	if len(payloads) == 0 {
 		return nil
 	}
-	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
+	codeSession, err := s.publicationCodeSession(ctx, codeSessionID)
 	if err != nil {
 		return err
 	}
-	if !found {
-		return db.ErrNotFound
+	return s.publishCodeSessionPayloads(ctx, codeSession, payloads)
+}
+
+func (s *Service) publicationCodeSession(ctx context.Context, codeSessionID string) (db.CodeSession, error) {
+	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
+	if err != nil {
+		return db.CodeSession{}, err
 	}
-	if s.sink == nil {
+	if !found {
+		return db.CodeSession{}, db.ErrNotFound
+	}
+	return codeSession, nil
+}
+
+func (s *Service) publishCodeSessionPayloads(ctx context.Context, codeSession db.CodeSession, payloads []json.RawMessage) error {
+	if s.sink == nil || len(payloads) == 0 {
 		return nil
 	}
-	payloads, err = s.enrichSubagentLifecycle(ctx, codeSession, payloads)
+	payloads, err := s.enrichSubagentLifecycle(ctx, codeSession, payloads)
 	if err != nil {
 		return err
 	}
 	return s.sink.PublishCodeSessionEvents(ctx, codeSession, payloads)
-}
-
-func (s *Service) reconcileSubagentEvents(ctx context.Context, codeSessionID string) {
-	codeSession, found, err := s.db.GetCodeSession(ctx, codeSessionID)
-	if err == nil && found {
-		err = s.publishSubagentInternalEvents(ctx, codeSession)
-	}
-	if err != nil {
-		s.logger.ErrorContext(ctx, "publish subagent internal events", "code_session_id", codeSessionID, "error", err)
-	}
-}
-
-func (s *Service) publishSubagentInternalEvents(ctx context.Context, codeSession db.CodeSession) error {
-	threadByAgent, err := s.subagentThreadMappings(ctx, codeSession)
-	if err != nil || len(threadByAgent) == 0 {
-		return err
-	}
-	payloads := make([]json.RawMessage, 0, 32)
-	afterSequence := int64(0)
-	for {
-		events, hasMore, err := s.eventPayloads.ListCodeSessionInternalEventsPage(ctx, db.ListCodeSessionInternalEventsPageParams{
-			WorkspaceUUID:         codeSession.WorkspaceUUID,
-			CodeSessionExternalID: codeSession.ExternalID,
-			Subagents:             true,
-			AfterSequence:         afterSequence,
-			Limit:                 internalEventsPageSize,
-		})
-		if err != nil {
-			return err
-		}
-		for _, event := range events {
-			if event.AgentID == nil {
-				continue
-			}
-			threadID := threadByAgent[strings.TrimSpace(*event.AgentID)]
-			if threadID == "" {
-				continue
-			}
-			eventPayloads, err := publicPayloadsFromInternalSubagentEvent(codeSession.ExternalID, event, threadID)
-			if err != nil {
-				return err
-			}
-			payloads = append(payloads, eventPayloads...)
-		}
-		if len(events) > 0 {
-			afterSequence = events[len(events)-1].SequenceNum
-		}
-		if !hasMore {
-			break
-		}
-	}
-	if len(payloads) == 0 {
-		return nil
-	}
-	return s.publishPublicPayloads(ctx, codeSession.ExternalID, payloads)
-}
-
-func (s *Service) PublishSubagentInternalEvents(ctx context.Context, codeSession db.CodeSession) error {
-	if s == nil {
-		return nil
-	}
-	return s.publishSubagentInternalEvents(ctx, codeSession)
 }
 
 func isPublicWorkerOutputEvent(eventType string) bool {

@@ -122,7 +122,14 @@ type payloadFaultStore struct {
 	mu              sync.Mutex
 	afterUpload     func(string) error
 	wrongUploadSize bool
+	openErr         error
 	deleteOptions   []storage.DeleteOptions
+}
+
+func (s *payloadFaultStore) setOpenErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.openErr = err
 }
 
 func (s *payloadFaultStore) Upload(ctx context.Context, key string, body io.Reader, opts storage.UploadOptions) (storage.UploadResult, error) {
@@ -140,6 +147,9 @@ func (s *payloadFaultStore) Upload(ctx context.Context, key string, body io.Read
 func (s *payloadFaultStore) Open(ctx context.Context, key string, byteRange *storage.ByteRange) (storage.Object, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.openErr != nil {
+		return storage.Object{}, s.openErr
+	}
 	return s.fakeStore.Open(ctx, key, byteRange)
 }
 func (s *payloadFaultStore) Delete(ctx context.Context, key string, opts storage.DeleteOptions) error {

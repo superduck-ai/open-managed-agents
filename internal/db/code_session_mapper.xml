@@ -261,6 +261,23 @@
           AND deleted_at IS NULL
     </select>
 
+    <select id="FindSubagentPublicationProgress" resultType="subagentPublicationProgressRow">
+        SELECT subagent_published_sequence_num, last_internal_sequence_num
+        FROM code_sessions
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND external_id = #{codeSessionExternalID}
+          AND deleted_at IS NULL
+    </select>
+
+    <update id="AdvanceSubagentPublishedSequence" result="rows">
+        UPDATE code_sessions
+        SET subagent_published_sequence_num = #{sequenceNum}
+        WHERE workspace_uuid = #{workspaceUUID}
+          AND external_id = #{codeSessionExternalID}
+          AND deleted_at IS NULL
+          AND subagent_published_sequence_num &lt; #{sequenceNum}
+    </update>
+
     <update id="RegisterWorker" result="returning" resultType="int64">
         UPDATE code_sessions
         SET current_worker_epoch = #{params.Epoch},

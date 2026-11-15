@@ -829,7 +829,7 @@ func (h *Handler) normalizeConfiguredModel(
 	if err != nil {
 		return normalizedAgentModel{}, err
 	}
-	canonicalID, err := llmproviders.CanonicalModelID(ctx, h.db, organizationUUID, workspaceUUID, model.ID)
+	canonicalID, err := llmproviders.CanonicalModelID(ctx, h.db, organizationUUID, model.ID)
 	if errors.Is(err, llmproviders.ErrModelNotConfigured) {
 		return normalizedAgentModel{}, fmt.Errorf("model %q is not configured for this workspace", model.ID)
 	}

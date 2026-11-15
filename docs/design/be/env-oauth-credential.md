@@ -10,7 +10,7 @@
 
 ## 数据模型
 
-迁移 `internal/db/migrations/00118_env_oauth.sql`：
+迁移 `internal/db/migrations/00119_env_oauth.sql`：
 
 - `vault_credentials.auth_type` CHECK 扩展 `env_oauth`。
 - `platform_oauth_providers`：全局 OAuth 客户端注册表，`client_secret_envelope` 保存 `secrets.Service`
@@ -29,13 +29,13 @@ erDiagram
 
 Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 
-远程迁移 `00119_env_oauth_builtin_client_id.sql` 清除了飞书 flow 的客户端 ID；自定义快照保持不变，回滚只移除约束，不恢复清除值。增量 `00120_builtin_oauth_provider.sql` 增加受保护身份、默认值、版本和可空信封字段，seed 飞书元数据行；`00121_seal_oauth_client_ids.sql` 在断言全部历史自定义 ID 已回填后删除两表明文列。不得修改旧迁移。当前启动按迁移顺序完成最终 schema，不提供历史中间版本的数据回填工具。Down 拒绝重建明文；恢复旧二进制必须恢复升级前配套数据库与密钥备份。
+远程迁移 `00120_env_oauth_builtin_client_id.sql` 清除了飞书 flow 的客户端 ID；自定义快照保持不变，回滚只移除约束，不恢复清除值。增量 `00121_builtin_oauth_provider.sql` 增加受保护身份、默认值、版本和可空信封字段，seed 飞书元数据行；`00122_seal_oauth_client_ids.sql` 在断言全部历史自定义 ID 已回填后删除两表明文列。不得修改旧迁移。当前启动按迁移顺序完成最终 schema，不提供历史中间版本的数据回填工具。Down 拒绝重建明文；恢复旧二进制必须恢复升级前配套数据库与密钥备份。
 
 飞书永久使用 `external_id=poap_FeishuBuiltinOAuthClient`、`builtin_key=feishu`、`protected=true`，UUID 由数据库生成并保留。自定义行 builtin_key 为空、protected 为 false、创建人非空。CHECK 约束保护身份映射及信封成对状态，身份字段仅用于稳定 provider_key 与协议解析，平台管理不按该字段限制编辑或删除。自定义名称部分唯一索引允许历史自定义 `Feishu` 与 seed 并存；保留 external_id 冲突使迁移失败，不收编或覆盖既有记录。`version>0`，管理更新和密钥重新包装均 CAS 递增。
 
-`00123_require_custom_oauth_client_envelopes.sql` 恢复双信封 CHECK 内置分支的 `builtin_key IS NOT NULL` 守卫，避免 PostgreSQL 的 NULL 语义放行自定义双空信封。自定义行必须同时具有两个通过结构校验的信封；飞书与 Friday 仍允许双空未配置状态，均不允许单空。合法存量行无须改写即可升级；若 00122 已写入双空自定义行，00123 原子失败并保留版本及记录，须在停机维护期间补齐有效加密凭据后重试，不自动删除或伪造凭据。真实 PostgreSQL 回归覆盖插入、更新、存量升级失败与修复后重试，以及既有身份、保护、信封结构和版本约束。
+`00124_require_custom_oauth_client_envelopes.sql` 恢复双信封 CHECK 内置分支的 `builtin_key IS NOT NULL` 守卫，避免 PostgreSQL 的 NULL 语义放行自定义双空信封。自定义行必须同时具有两个通过结构校验的信封；飞书与 Friday 仍允许双空未配置状态，均不允许单空。合法存量行无须改写即可升级；若 00123 已写入双空自定义行，00124 原子失败并保留版本及记录，须在停机维护期间补齐有效加密凭据后重试，不自动删除或伪造凭据。真实 PostgreSQL 回归覆盖插入、更新、存量升级失败与修复后重试，以及既有身份、保护、信封结构和版本约束。
 
-`00124_env_oauth_flows_processing_status.sql` 把 `env_oauth_flows_status_check` 扩展为 `pending/processing/completed/failed/expired`，支撑回调认领状态；该迁移由常规启动迁移应用。Down 移除 `processing`，因此降级前必须确认没有进行中的认领。
+`00125_env_oauth_flows_processing_status.sql` 把 `env_oauth_flows_status_check` 扩展为 `pending/processing/completed/failed/expired`，支撑回调认领状态；该迁移由常规启动迁移应用。Down 移除 `processing`，因此降级前必须确认没有进行中的认领。
 
 两个客户端字段分别使用现有 `secrets.Service.Seal/Open`，随机 DEK 与 nonce 各自独立。secret 的 AAD 为 `platform/platform/platform_oauth_providers/<external_id>`；ID 的最后一项为 `<external_id>:client_id`。flow ID 绑定实际组织 UUID、工作区 UUID、`env_oauth_flows`、flow external_id。绑定集中在 `internal/platformoauth`；换字段、复制到另一行或凭证均无法解密。KMS 调用在数据库事务之外执行，双信封用同一次 CAS 原子写入。
 
@@ -209,7 +209,7 @@ ENV OAuth 表单的「已有 Token？手动填写」折叠区只提供 Access to
 
 ## Friday 内置服务方增量
 
-`00122_builtin_friday_oauth_provider.sql` 扩展受保护身份与双信封约束，新增 `builtin_key=friday`、`external_id=poap_FridayBuiltinOAuthClient` 的独立行，保留飞书和自定义行。新行默认未配置，客户端 ID 与 secret 均为 NULL；不得在 SQL seed 中填写明文客户端。UUID 保留，名称可以与历史自定义 Friday 并存。删除其中一行后其余客户端仍可查询和使用。
+`00123_builtin_friday_oauth_provider.sql` 扩展受保护身份与双信封约束，新增 `builtin_key=friday`、`external_id=poap_FridayBuiltinOAuthClient` 的独立行，保留飞书和自定义行。新行默认未配置，客户端 ID 与 secret 均为 NULL；不得在 SQL seed 中填写明文客户端。UUID 保留，名称可以与历史自定义 Friday 并存。删除其中一行后其余客户端仍可查询和使用。
 
 Friday 授权端点为 `https://friday-tx.seewo.com/open/api/oauth/authorize`，令牌端点为 `https://friday-tx.seewo.com/open/api/oauth/token`，初始 scope 为上游支持的 `read`，采用 `client_secret_basic` 与 `application/x-www-form-urlencoded`，使用 S256。默认网络白名单为 `friday-tx.seewo.com`；默认变量名为 `FRIDAY_4A_TOKEN`，管理员可修改。Friday 与飞书各自读取 DB 端点及客户端，不共享飞书端点、scope 或应用凭据。
 
@@ -217,17 +217,17 @@ Friday 授权端点为 `https://friday-tx.seewo.com/open/api/oauth/authorize`，
 
 Friday 客户端通过 OAuth 管理页配置；密钥轮换覆盖飞书、Friday、自定义客户端及 PKCE verifier。
 
-回调继续使用 OMA 的 `/oauth/vault/env-success`。在上游 `friday.oauth.clients.redirectUris` 精确登记实际 OMA HTTPS 回调地址，禁止用户信息及片段；文档中的桥接示例回调不作为 OMA 回调。Friday flow 与飞书一致不保存客户端 ID 信封，回调读取当前 Friday 客户端；Friday 独有的随机 PKCE verifier 存在 `code_verifier_envelope` 中，AAD 为 flow 的租户/UUID 身份加 `:code_verifier` 后缀，回调解密提交 verifier，绝不把 verifier 放入 URL 或响应。00122 约束仅 Friday flow 必须携带该信封，其余 flow 为空；重新包装扫描同时覆盖自定义 ID 快照与 Friday verifier，并保持 NULL 与整行 CAS。已有自定义 flow 仍保留 ID 快照。管理页和 Vault 表单分别显示两个内置名称、标识和配置状态；未配置可保存手工 token，授权仍拒绝。Friday 与其他平台客户端使用相同的编辑、删除、启停及超级管理员权限。
+回调继续使用 OMA 的 `/oauth/vault/env-success`。在上游 `friday.oauth.clients.redirectUris` 精确登记实际 OMA HTTPS 回调地址，禁止用户信息及片段；文档中的桥接示例回调不作为 OMA 回调。Friday flow 与飞书一致不保存客户端 ID 信封，回调读取当前 Friday 客户端；Friday 独有的随机 PKCE verifier 存在 `code_verifier_envelope` 中，AAD 为 flow 的租户/UUID 身份加 `:code_verifier` 后缀，回调解密提交 verifier，绝不把 verifier 放入 URL 或响应。00123 约束仅 Friday flow 必须携带该信封，其余 flow 为空；重新包装扫描同时覆盖自定义 ID 快照与 Friday verifier，并保持 NULL 与整行 CAS。已有自定义 flow 仍保留 ID 快照。管理页和 Vault 表单分别显示两个内置名称、标识和配置状态；未配置可保存手工 token，授权仍拒绝。Friday 与其他平台客户端使用相同的编辑、删除、启停及超级管理员权限。
 
-验收覆盖 Friday seed、旧库 00121→00122、保留 ID 冲突、成对信封/身份约束、独立端点/Basic/form/S256、真实 PostgreSQL callback 凭证落库、拒绝删除、secret 不回显、AAD 隔离、跨版本重新包装、中文英文名称和前端首配。真实 PostgreSQL 集成使用 `integration` 标签与隔离临时 schema，上游换票由本地 HTTP fixture 驱动，不代表连接真实 Friday。
+验收覆盖 Friday seed、旧库 00122→00123、保留 ID 冲突、成对信封/身份约束、独立端点/Basic/form/S256、真实 PostgreSQL callback 凭证落库、拒绝删除、secret 不回显、AAD 隔离、跨版本重新包装、中文英文名称和前端首配。真实 PostgreSQL 集成使用 `integration` 标签与隔离临时 schema，上游换票由本地 HTTP fixture 驱动，不代表连接真实 Friday。
 
 ## 分支合并迁移编号
 
-main 的 00117 为技能管理迁移。ENV OAuth 的九个迁移整体顺延为 00118–00126，SQL 内容保持不变；约束测试使用对应编号。原编号的开发数据库不能直接继续升级，不得修改迁移记录伪装为新编号。
+main 的 00118 为组织级模型服务方迁移。ENV OAuth 的迁移整体顺延为 00119–00129，SQL 内容保持不变；约束测试使用对应编号。原编号的开发数据库不能直接继续升级，不得修改迁移记录伪装为新编号。
 
 ## 可选客户端配置与 Logo
 
-迁移 `00125_oauth_provider_logo_optional_clients.sql` 为服务方新增默认空串的 `logo_url`，并允许自定义服务方与内置服务方均以双空客户端信封保存为未配置状态；仍禁止只有一个客户端信封。既有身份保护、信封结构与 CAS 版本约束保持不变。降级到旧约束前须先补齐未配置自定义客户端，否则 Down 事务失败并保留数据。
+迁移 `00126_oauth_provider_logo_optional_clients.sql` 为服务方新增默认空串的 `logo_url`，并允许自定义服务方与内置服务方均以双空客户端信封保存为未配置状态；仍禁止只有一个客户端信封。既有身份保护、信封结构与 CAS 版本约束保持不变。降级到旧约束前须先补齐未配置自定义客户端，否则 Down 事务失败并保留数据。
 
 平台注册与编辑支持可选 `logo_url`；只接受无 userinfo 的 HTTP(S) 地址，首尾空白在管理入口清理。创建缺省为空，PATCH 缺省保留、空串清除。客户端 ID／Secret 可以同时不填，首次设置或更换 ID 必须同时提供 Secret；已配置客户端更新时 Secret 缺省保留。Logo 与 Scope 可在未配置状态独立更新，不触发客户端配置成功审计。未配置客户端继续显示在组织服务方列表，但不能启动 OAuth 授权。
 
@@ -243,7 +243,7 @@ main 的 00117 为技能管理迁移。ENV OAuth 的九个迁移整体顺延为 
 
 ## 回调一致性
 
-迁移 00126 为授权流程增加 provider_version。授权开始时记录服务方版本；回调检测到版本变化或旧流程缺少版本时，不请求 Token 端点，返回 invalid_request 并要求重新发起授权。无需保存客户端 Secret 历史或增加在途配置兼容分支。
+迁移 00127 为授权流程增加 provider_version。授权开始时记录服务方版本；回调检测到版本变化或旧流程缺少版本时，不请求 Token 端点，返回 invalid_request 并要求重新发起授权。无需保存客户端 Secret 历史或增加在途配置兼容分支。
 
 重新授权只替换令牌与到期信息，保留凭证当前的网络范围、占位符和元数据；网络修改单独保存。编辑弹窗检测到网络草稿变化时拒绝发起重新授权，提示先保存网络配置；仅空白分隔变化不阻止授权。创建／更新凭证和 flow 的 processing → completed 转换使用同一 Yourbatis 事务，任意一步失败都回滚。上游换票与密封仍在事务外，避免长时间持有数据库锁。
 
@@ -260,6 +260,6 @@ OAuth 管理的创建／更新响应复用本次已验证的客户端 ID，写�
 
 客户端默认启用。停用前确认：“从工作区可选服务方中隐藏。已有凭证和会话继续可用；停用不会撤销授权或自动刷新能力。”新建凭证的选择器隐藏停用服务方，编辑已有凭证仍显示原服务方。服务端拒绝停用服务方的新建授权和手工新建凭证；同保险库、同变量名及同服务方的已有凭证仍可重新授权，已有请求替换及自动刷新继续使用当前客户端配置。启停复用客户端更新接口和版本并发检查，不删除客户端或凭证。状态与默认变量名更新均进入既有字段审计。
 
-SQL 迁移 `00127` 仅增加客户端启用状态，并为尚未设置默认变量名的 Friday 记录填入 `FRIDAY_4A_TOKEN`；不覆盖已配置的变量名。
+SQL 迁移 `00128` 仅增加客户端启用状态，并为尚未设置默认变量名的 Friday 记录填入 `FRIDAY_4A_TOKEN`；不覆盖已配置的变量名。
 
 OAuth 管理支持归档和恢复：归档保留客户端配置及归档前的启停状态，已有凭证和自动刷新继续可用，但服务方不再可用于新建授权。管理列表默认显示“活跃”（未归档）项，支持按启用、停用、归档及全部筛选；状态独立成列，名称旁不再展示配置完整性标签。

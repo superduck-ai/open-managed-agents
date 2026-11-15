@@ -52,7 +52,6 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) error {
 		r.Context(),
 		h.database,
 		principal.OrganizationUUID,
-		principal.WorkspaceUUID,
 	)
 	if err != nil {
 		return modelUnavailable(err)

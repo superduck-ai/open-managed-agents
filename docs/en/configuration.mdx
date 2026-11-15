@@ -11,7 +11,7 @@ OMA uses a strictly validated YAML configuration. The service searches upward fo
 Code defaults < YAML configuration
 ```
 
-Business environment variables do not override YAML. `CONFIG_FILE` only selects a file. Unknown fields, misspelled names, and invalid enum values prevent startup. Process YAML no longer includes `anthropic_upstream`; upstream credentials come from workspace Providers.
+Business environment variables do not override YAML. `CONFIG_FILE` only selects a file. Unknown fields, misspelled names, and invalid enum values prevent startup. Process YAML no longer includes `anthropic_upstream`; upstream credentials come from organization Providers.
 
 ## Minimal development configuration
 
@@ -42,7 +42,7 @@ storage:
 
 ```
 
-LLM Providers are workspace data, not process configuration. Add one or more Providers from **LLM models** in the console after startup.
+LLM Providers belong to the organization, not process configuration. Add one or more Providers from **LLM models** at `/settings/llm` in the console after startup. All workspaces in the organization share this catalog. Members can manage providers they created; organization administrators can manage all providers.
 
 ## Main configuration groups
 
@@ -92,7 +92,7 @@ Set `llm_provider_presets_file: ./model-provider-presets.json` in the server YAM
 
 The JSON schema is `{"version":1,"providers":[{"id":"gateway","name":"Gateway","api_backend":"chat_completions","base_url":"https://gateway.example.com","models":[]}]}`. Supported backends are `messages` and `chat_completions`. Models may be empty and support `id`, optional `name`, `context_window`, `max_output_tokens`, and `input_modalities`. Array order is the default display order. Credentials and unknown fields are rejected.
 
-The Console only reads this deployment configuration. Discovered or edited models are saved to the current organization default connection or workspace connection; saving a connection never writes to the supplier JSON. Saved connections retain independent database snapshots. The catalog requires no write permission. A missing or invalid explicit file fails startup; omitting the path uses the built-in catalog. Do not put organization-private data in this shared deployment catalog.
+The Console only reads this deployment configuration. Discovered or edited models are saved to a connection in the current organization; saving a connection never writes to the supplier JSON. Saved connections retain independent database snapshots. The catalog requires no write permission. A missing or invalid explicit file fails startup; omitting the path uses the built-in catalog. Do not put organization-private data in this shared deployment catalog.
 
 ### Initialize known suppliers
 

@@ -31,7 +31,7 @@
   - 服务 service API 和 platform `/v1`；不替代管理后台的 organization-scoped platform proxy，也不负责入口鉴权。
 - `internal/workbench`
   - 承载 Workbench HTTP route registration、prompt/revision/evaluation/KV 业务流，以及上游 Anthropic 代理调用。
-  - 只通过 `RegisterOrgWorkbenchRoutes` 暴露路由挂载入口给 `internal/api`；入口接收数据库和 Vault service，按请求 workspace 与真实模型 ID 解析 Provider。
+  - 只通过 `RegisterOrgWorkbenchRoutes` 暴露路由挂载入口给 `internal/api`；入口接收数据库和 Vault service，按请求组织与真实模型 ID 解析 Provider，工作区继续限定资源和客户端鉴权范围。
 - `internal/codesessions`
   - `Handler` 是 code-session 的 HTTP/协议边界，负责 chi 路由注册、请求鉴权、CCR worker ingress、upstream proxy、MITM CA 生命周期与 OTLP 文件日志锁。
   - `Service` 是可跨入口复用的业务边界，只依赖数据库并负责编排 code-session 创建、事件队列、worker 输出映射、tool permission 与公开 session 事件发布。
@@ -97,7 +97,7 @@ flowchart LR
 
 若全量测试失败，应先区分是否来自既有 platform-host 分流/会话恢复问题，避免把行为修复混入包边界迁移。
 
-Workbench 上游测试必须覆盖 workspace Provider 解析、真实模型 ID 原样使用，以及未配置 Provider 时失败关闭。
+Workbench 上游测试必须覆盖 organization Provider 解析、真实模型 ID 原样使用，以及未配置 Provider 时失败关闭。
 
 ## 平台管理员目标组织访问（2026-10-28）
 

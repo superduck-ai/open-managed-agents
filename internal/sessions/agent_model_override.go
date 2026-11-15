@@ -40,7 +40,6 @@ func (h *Handler) applySessionModelOverride(r *http.Request, principal auth.Prin
 			r.Context(),
 			h.db,
 			principal.OrganizationUUID,
-			principal.WorkspaceUUID,
 			modelID,
 		)
 		switch {

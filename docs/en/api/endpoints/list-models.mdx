@@ -1,10 +1,10 @@
 ---
 title: "List models"
-description: "Inspect model IDs exposed by this workspace."
+description: "Inspect model IDs exposed by this organization."
 api: "GET /v1/models"
 ---
 
-Returns the model IDs configured for the current workspace in the form `{provider_slug}/{upstream_model_id}`, for example `oma/kimi-k2.5` or `oma/deepseek-ai/deepseek-v4.1-flash`. Use these IDs in API calls; OMA forwards the upstream model ID to the Provider. A legacy ID without the Provider prefix is still accepted when exactly one Provider in the workspace configures it.
+Returns the model IDs configured for the current organization in the form `{provider_slug}/{upstream_model_id}`, for example `oma/kimi-k2.5` or `oma/deepseek-ai/deepseek-v4.1-flash`. Use these IDs in API calls; OMA forwards the upstream model ID to the Provider. A legacy ID without the Provider prefix is still accepted when exactly one Provider in the organization configures it. The catalog is shared by all workspaces in that organization; API key authentication remains workspace-scoped.
 
 ## Response
 
@@ -25,7 +25,7 @@ Returns the model IDs configured for the current workspace in the form `{provide
 </ResponseField>
 
 <ResponseField name="has_more" type="boolean">
-  Always `false`; the configured workspace catalog is returned as one page.
+  Always `false`; the configured organization catalog is returned as one page.
 </ResponseField>
 
 <ResponseField name="first_id" type="string | null">
@@ -55,7 +55,7 @@ Returns the model IDs configured for the current workspace in the form `{provide
 }
 ```
 
-Returns `503` when the workspace has no configured LLM Provider:
+Returns `503` when the organization has no configured LLM Provider. The error message retains its historical workspace wording for API compatibility:
 
 ```json 503 Response
 {

@@ -17,19 +17,21 @@ import (
 )
 
 func reconcileProviders(ctx context.Context, database *db.DB, vaultSecrets *secrets.Service, providers ModelProvidersSpec, state *State, opts Options) error {
-	result := make([]ProviderState, 0, len(providers.Providers)*len(state.Workspaces))
-	for _, workspace := range state.Workspaces {
-		for _, provider := range providers.Providers {
-			var registered *ProviderState
-			for i := range state.Providers {
-				if state.Providers[i].WorkspaceRef == workspace.Ref && state.Providers[i].Name == provider.Name {
-					registered = &state.Providers[i]
-					break
-				}
+	result := make([]ProviderState, 0, len(state.Providers)+len(providers.Providers))
+	for _, provider := range providers.Providers {
+		registrations := make([]*ProviderState, 0)
+		for i := range state.Providers {
+			if state.Providers[i].Name == provider.Name {
+				registrations = append(registrations, &state.Providers[i])
 			}
-			record, err := reconcileProvider(ctx, database, vaultSecrets, state.Organization.UUID, workspace, provider, registered, opts)
+		}
+		if len(registrations) == 0 {
+			registrations = append(registrations, nil)
+		}
+		for _, registered := range registrations {
+			record, err := reconcileProvider(ctx, database, vaultSecrets, state.Organization.UUID, provider, registered, opts)
 			if err != nil {
-				return fmt.Errorf("workspace %q provider %q: %w", workspace.Ref, provider.Name, err)
+				return fmt.Errorf("provider %q: %w", provider.Name, err)
 			}
 			result = append(result, record)
 		}
@@ -38,8 +40,8 @@ func reconcileProviders(ctx context.Context, database *db.DB, vaultSecrets *secr
 	return nil
 }
 
-func reconcileProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.Service, organizationUUID string, workspace WorkspaceState, spec ProviderSpec, registered *ProviderState, opts Options) (ProviderState, error) {
-	existingList, err := database.ListLLMProviders(ctx, organizationUUID, workspace.UUID)
+func reconcileProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.Service, organizationUUID string, spec ProviderSpec, registered *ProviderState, opts Options) (ProviderState, error) {
+	existingList, err := database.ListLLMProviders(ctx, organizationUUID)
 	if err != nil {
 		return ProviderState{}, err
 	}
@@ -60,26 +62,22 @@ func reconcileProvider(ctx context.Context, database *db.DB, vaultSecrets *secre
 		}
 	}
 	if existing != nil {
-		return updateProvider(ctx, database, vaultSecrets, *existing, workspace.Ref, spec, opts)
+		return updateProvider(ctx, database, vaultSecrets, *existing, spec, opts)
 	}
 	if registered != nil {
 		return ProviderState{}, fmt.Errorf("registered provider %s was deleted; refusing to recreate it", registered.ExternalID)
 	}
-	organizationProviders, err := database.ListOrganizationLLMProviders(ctx, organizationUUID)
-	if err != nil {
-		return ProviderState{}, err
-	}
-	slugs := make([]string, 0, len(organizationProviders))
-	for _, provider := range organizationProviders {
+	slugs := make([]string, 0, len(existingList))
+	for _, provider := range existingList {
 		slugs = append(slugs, provider.Slug)
 	}
 	inputSlug := spec.Slug
 	spec.Slug = nextProviderSlug(spec.Slug, slugs)
-	provider, err := createProvider(ctx, database, vaultSecrets, organizationUUID, workspace, spec)
+	provider, err := createProvider(ctx, database, vaultSecrets, organizationUUID, spec)
 	if err != nil {
 		return ProviderState{}, err
 	}
-	return ProviderState{WorkspaceRef: workspace.Ref, Name: spec.Name, ExternalID: provider.ExternalID, InputSlug: new(inputSlug)}, nil
+	return ProviderState{Name: spec.Name, ExternalID: provider.ExternalID, InputSlug: new(inputSlug)}, nil
 }
 
 func nextProviderSlug(base string, taken []string) string {
@@ -94,7 +92,7 @@ func nextProviderSlug(base string, taken []string) string {
 	return candidate
 }
 
-func createProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.Service, organizationUUID string, workspace WorkspaceState, spec ProviderSpec) (db.LLMProvider, error) {
+func createProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.Service, organizationUUID string, spec ProviderSpec) (db.LLMProvider, error) {
 	externalID, err := ids.New("llmprov_")
 	if err != nil {
 		return db.LLMProvider{}, err
@@ -103,7 +101,6 @@ func createProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 		UUID:             uuid.NewV4().String(),
 		ExternalID:       externalID,
 		OrganizationUUID: organizationUUID,
-		WorkspaceUUID:    workspace.UUID,
 		Name:             spec.Name,
 		Slug:             spec.Slug,
 		APIBackend:       spec.APIBackend,
@@ -122,7 +119,7 @@ func createProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 	return created, err
 }
 
-func updateProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.Service, existing db.LLMProvider, workspaceRef string, spec ProviderSpec, opts Options) (ProviderState, error) {
+func updateProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.Service, existing db.LLMProvider, spec ProviderSpec, opts Options) (ProviderState, error) {
 	changed := existing.BaseURL != spec.BaseURL || existing.APIBackend != spec.APIBackend || !equalStrings(existing.Models.IDs(), spec.ModelIDs)
 	keyChanged, err := providerKeyChanged(ctx, vaultSecrets, existing, spec.APIKey)
 	if err != nil {
@@ -130,7 +127,7 @@ func updateProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 	}
 	changed = changed || keyChanged
 	if !changed {
-		return ProviderState{WorkspaceRef: workspaceRef, Name: spec.Name, ExternalID: existing.ExternalID, InputSlug: new(spec.Slug)}, nil
+		return ProviderState{Name: spec.Name, ExternalID: existing.ExternalID, InputSlug: new(spec.Slug)}, nil
 	}
 	if !opts.Update {
 		return ProviderState{}, fmt.Errorf("provider differs from the init file; rerun with --update to apply base_url/backend/model/key changes")
@@ -149,7 +146,7 @@ func updateProvider(ctx context.Context, database *db.DB, vaultSecrets *secrets.
 	if err != nil {
 		return ProviderState{}, err
 	}
-	return ProviderState{WorkspaceRef: workspaceRef, Name: spec.Name, ExternalID: updated.ExternalID, InputSlug: new(spec.Slug)}, nil
+	return ProviderState{Name: spec.Name, ExternalID: updated.ExternalID, InputSlug: new(spec.Slug)}, nil
 }
 
 func providerKeyChanged(ctx context.Context, vaultSecrets *secrets.Service, existing db.LLMProvider, apiKey string) (bool, error) {

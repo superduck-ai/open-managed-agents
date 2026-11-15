@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	ErrNotConfigured      = errors.New("workspace has no LLM provider configured")
-	ErrModelNotConfigured = errors.New("model is not configured for this workspace")
+	ErrNotConfigured      = errors.New("organization has no LLM provider configured")
+	ErrModelNotConfigured = errors.New("model is not configured for this organization")
 	ErrAmbiguousModel     = errors.New("model is configured by more than one provider")
 	ErrInvalidBaseURL     = errors.New("base_url must be an absolute HTTP or HTTPS URL")
 	ErrUnsafeBaseURL      = errors.New("base_url must not contain credentials, query, or fragment")
@@ -50,8 +50,7 @@ func (e *AmbiguousModelError) Is(target error) bool {
 }
 
 type Catalog struct {
-	providers    []db.LLMProvider
-	organization []db.LLMProvider
+	providers []db.LLMProvider
 }
 
 type CatalogModel struct {
@@ -67,20 +66,16 @@ func NewCatalog(providers []db.LLMProvider) Catalog {
 	return Catalog{providers: providers}
 }
 
-func LoadCatalog(ctx context.Context, database *db.DB, organizationUUID, workspaceUUID string) (Catalog, error) {
+func LoadCatalog(ctx context.Context, database *db.DB, organizationUUID string) (Catalog, error) {
 	if database == nil {
 		return Catalog{}, ErrNotConfigured
 	}
-	providers, err := database.ListLLMProviders(ctx, organizationUUID, workspaceUUID)
+	providers, err := database.ListLLMProviders(ctx, organizationUUID)
 	if err != nil {
 		return Catalog{}, err
 	}
-	organization, err := database.ListLLMProviders(ctx, organizationUUID, "")
-	if err != nil {
-		return Catalog{}, err
-	}
-	catalog := Catalog{providers: providers, organization: organization}
-	if len(providers) == 0 && len(organization) == 0 {
+	catalog := Catalog{providers: providers}
+	if len(providers) == 0 {
 		return Catalog{}, ErrNotConfigured
 	}
 	return catalog, nil
@@ -93,41 +88,32 @@ func (c Catalog) ModelIDs() []string {
 			models = append(models, QualifiedModelID(provider.Slug, modelID))
 		}
 	}
-	for _, provider := range c.organization {
-		for _, modelID := range provider.Models.IDs() {
-			models = append(models, QualifiedModelID(provider.Slug, modelID))
-		}
-	}
 	return models
 }
 
 func (c Catalog) Lookup(modelID string) (CatalogModel, error) {
 	if slug, upstreamModelID, ok := ParseModelRef(modelID); ok {
-		for _, providers := range [][]db.LLMProvider{c.providers, c.organization} {
-			for _, provider := range providers {
-				if provider.Slug == slug && slices.Contains(provider.Models.IDs(), upstreamModelID) {
-					return CatalogModel{Provider: provider, UpstreamModelID: upstreamModelID}, nil
-				}
+		for _, provider := range c.providers {
+			if provider.Slug == slug && slices.Contains(provider.Models.IDs(), upstreamModelID) {
+				return CatalogModel{Provider: provider, UpstreamModelID: upstreamModelID}, nil
 			}
 		}
 	}
-	for _, providers := range [][]db.LLMProvider{c.providers, c.organization} {
-		matches := []CatalogModel{}
-		for _, provider := range providers {
-			if slices.Contains(provider.Models.IDs(), modelID) {
-				matches = append(matches, CatalogModel{Provider: provider, UpstreamModelID: modelID})
-			}
+	matches := []CatalogModel{}
+	for _, provider := range c.providers {
+		if slices.Contains(provider.Models.IDs(), modelID) {
+			matches = append(matches, CatalogModel{Provider: provider, UpstreamModelID: modelID})
 		}
-		if len(matches) == 1 {
-			return matches[0], nil
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		candidates := make([]string, 0, len(matches))
+		for _, match := range matches {
+			candidates = append(candidates, match.QualifiedModelID())
 		}
-		if len(matches) > 1 {
-			candidates := make([]string, 0, len(matches))
-			for _, match := range matches {
-				candidates = append(candidates, match.QualifiedModelID())
-			}
-			return CatalogModel{}, &AmbiguousModelError{ModelID: modelID, Candidates: candidates}
-		}
+		return CatalogModel{}, &AmbiguousModelError{ModelID: modelID, Candidates: candidates}
 	}
 	return CatalogModel{}, ErrModelNotConfigured
 }
@@ -136,12 +122,12 @@ func Resolve(
 	ctx context.Context,
 	database *db.DB,
 	secretService *secrets.Service,
-	organizationUUID, workspaceUUID, modelID string,
+	organizationUUID, modelID string,
 ) (Upstream, error) {
 	if secretService == nil {
 		return Upstream{}, ErrNotConfigured
 	}
-	catalog, err := LoadCatalog(ctx, database, organizationUUID, workspaceUUID)
+	catalog, err := LoadCatalog(ctx, database, organizationUUID)
 	if err != nil {
 		return Upstream{}, err
 	}
@@ -167,16 +153,16 @@ func Resolve(
 	}, nil
 }
 
-func ListModelIDs(ctx context.Context, database *db.DB, organizationUUID, workspaceUUID string) ([]string, error) {
-	catalog, err := LoadCatalog(ctx, database, organizationUUID, workspaceUUID)
+func ListModelIDs(ctx context.Context, database *db.DB, organizationUUID string) ([]string, error) {
+	catalog, err := LoadCatalog(ctx, database, organizationUUID)
 	if err != nil {
 		return nil, err
 	}
 	return catalog.ModelIDs(), nil
 }
 
-func CanonicalModelID(ctx context.Context, database *db.DB, organizationUUID, workspaceUUID, modelID string) (string, error) {
-	catalog, err := LoadCatalog(ctx, database, organizationUUID, workspaceUUID)
+func CanonicalModelID(ctx context.Context, database *db.DB, organizationUUID, modelID string) (string, error) {
+	catalog, err := LoadCatalog(ctx, database, organizationUUID)
 	if err != nil {
 		return "", err
 	}
@@ -188,7 +174,7 @@ func CanonicalModelID(ctx context.Context, database *db.DB, organizationUUID, wo
 }
 
 func SecretBinding(provider db.LLMProvider) secrets.Binding {
-	workspaceUUID := provider.WorkspaceUUID
+	workspaceUUID := provider.SecretWorkspaceUUID
 	if workspaceUUID == "" {
 		workspaceUUID = db.OrganizationLLMProviderSecretWorkspace
 	}

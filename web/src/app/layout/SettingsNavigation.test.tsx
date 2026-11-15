@@ -177,3 +177,11 @@ test('modifier clicks on settings links and brand link preserve native browser t
   fireEvent.click(screen.getByRole('link', { name: 'Open Managed Agents' }), { ctrlKey: true });
   expect(screen.getByTestId('page').textContent).toBe('/settings/llm');
 });
+
+test('workspace switch preserves the organization model catalog', async () => {
+  render(<Harness initial="/settings/llm" />);
+  fireEvent.click(screen.getByRole('button', { name: 'Default' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Other', exact: true }));
+  expect(screen.getByTestId('page').textContent).toBe('/settings/llm');
+  expect(screen.getByRole('link', { name: 'LLM models', exact: true }).getAttribute('aria-current')).toBe('page');
+});

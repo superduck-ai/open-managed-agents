@@ -72,7 +72,7 @@ curl --fail http://localhost:38080/v1/models \
   -H 'X-Api-Key: sk-ant-local-default'
 ```
 
-打开[控制台](http://localhost:28080)。首次调用模型前，在工作区的 **LLM 模型**页面配置 Provider 与模型 ID。客户端应使用同一工作区的 API key；`sk-ant-local-default` 属于默认 seed 创建的开发工作区。配置 Provider 前，模型列表可能为空。
+打开[控制台](http://localhost:28080)。首次调用模型前，在组织的 **LLM 模型**页面（`/settings/llm`）配置 Provider 与模型 ID，组织内所有工作区共享此目录。客户端应使用发起请求的工作区 API key；`sk-ant-local-default` 属于默认 seed 创建的开发工作区。配置 Provider 前，模型列表可能为空。
 
 将 `provider-slug/model-id` 替换为 `/v1/models` 返回的模型 ID，即可创建 Agent：
 
@@ -93,7 +93,7 @@ curl --fail-with-body http://localhost:38080/v1/agents \
 
 将 Anthropic SDK 的 Base URL 指向 OMA，并使用工作区 API key。以下示例创建 Agent；任务执行使用 Session 及其 Events API。请安装包含 Managed Agents beta 资源的 SDK 版本。
 
-先设置工作区中的模型 ID：
+先设置组织目录中的模型 ID：
 
 ```bash
 export OMA_MODEL_ID="provider-slug/model-id"
@@ -171,7 +171,7 @@ just restart
 
 | 资源          | 端点                                        | 用途                   |
 | ------------- | ------------------------------------------- | ---------------------- |
-| Models        | `GET /v1/models`                            | 列出工作区已配置的模型 |
+| Models        | `GET /v1/models`                            | 列出组织已配置的模型 |
 | Agents        | `/v1/agents`、`POST /v1/agents:search`      | 定义和查找 Agent       |
 | Sessions      | `/v1/sessions`                              | 执行任务与交换事件     |
 | Environments  | `/v1/environments`                          | 配置执行环境           |

@@ -16,13 +16,13 @@ func TestOAuthProviderAvailabilityMigrationPostgres(t *testing.T) {
 		t.Run(previous, func(t *testing.T) {
 			database := newIsolatedSessionResourceMigrationTestDatabase(t, t.Context(), address)
 			provider := newMigrationTestProvider(t, database)
-			if _, err := provider.UpTo(t.Context(), 126); err != nil {
+			if _, err := provider.UpTo(t.Context(), 127); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := database.ExecContext(t.Context(), `UPDATE platform_oauth_providers SET default_secret_name=$1 WHERE builtin_key='friday'`, previous); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := provider.UpTo(t.Context(), 127); err != nil {
+			if _, err := provider.UpTo(t.Context(), 128); err != nil {
 				t.Fatal(err)
 			}
 			var enabled bool
@@ -51,7 +51,7 @@ func TestOAuthProviderArchiveMigrationPostgres(t *testing.T) {
 	}
 	database := newIsolatedSessionResourceMigrationTestDatabase(t, t.Context(), address)
 	provider := newMigrationTestProvider(t, database)
-	if _, err := provider.UpTo(t.Context(), 128); err != nil {
+	if _, err := provider.UpTo(t.Context(), 129); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(t.Context(), `UPDATE platform_oauth_providers SET archived=NULL WHERE builtin_key='friday'`); err == nil {

@@ -50,7 +50,6 @@ var (
 type DB struct {
 	pool     *pgxpool.Pool
 	mapperDB *yourbatis.DB
-	logger   *slog.Logger
 }
 
 type APIKey struct {
@@ -120,7 +119,6 @@ func newDB(pool *pgxpool.Pool, logger *slog.Logger) *DB {
 	return &DB{
 		pool:     pool,
 		mapperDB: mapperDB,
-		logger:   logging.LoggerOrDefault(logger),
 	}
 }
 
@@ -391,12 +389,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	oauthVersion, err := d.schemaVersion(ctx)
-	if err != nil {
-		return err
-	}
-	migrationErr := runGooseMigrations(ctx, standardDB)
-	if err := errors.Join(migrationErr, d.auditOAuthSeedAfterMigrations(ctx, oauthVersion)); err != nil {
+	if err := runGooseMigrations(ctx, standardDB); err != nil {
 		return err
 	}
 	if err := dropForeignKeyConstraints(ctx, standardDB); err != nil {

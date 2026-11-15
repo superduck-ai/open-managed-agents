@@ -40,16 +40,3 @@ func runGooseMigrations(ctx context.Context, standardDB *sql.DB) error {
 	}
 	return nil
 }
-
-func (d *DB) schemaVersion(ctx context.Context) (int64, error) {
-	var exists bool
-	if err := d.SQLDB().QueryRowContext(ctx, "SELECT to_regclass('goose_db_version') IS NOT NULL").Scan(&exists); err != nil {
-		return 0, err
-	}
-	if !exists {
-		return 0, nil
-	}
-	var version int64
-	err := d.SQLDB().QueryRowContext(ctx, "SELECT COALESCE(max(version_id), 0) FROM goose_db_version WHERE is_applied").Scan(&version)
-	return version, err
-}

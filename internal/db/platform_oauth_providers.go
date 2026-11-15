@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -213,30 +212,4 @@ func decodeOAuthEnvelope(value sql.NullString) (*secrets.Envelope, error) {
 		return nil, err
 	}
 	return &envelope, nil
-}
-
-func auditBuiltinOAuthSeed(ctx context.Context, logger *slog.Logger, provider PlatformOAuthProvider) {
-	logger.InfoContext(ctx, "platform oauth provider audit", "actor_type", "system", "provider_uuid", provider.UUID,
-		"provider_key", "builtin:"+provider.BuiltinKey, "action", "seed", "changed_fields", []string{"builtin_key", "protected"}, "result", "success")
-}
-
-func (d *DB) auditOAuthSeedAfterMigrations(ctx context.Context, before int64) error {
-	after, err := d.schemaVersion(ctx)
-	if err != nil {
-		return err
-	}
-	for _, seed := range []struct {
-		key     string
-		version int64
-	}{{"feishu", 120}, {"friday", 122}} {
-		if before >= seed.version || after < seed.version {
-			continue
-		}
-		provider, err := d.GetPlatformOAuthProviderByBuiltinKey(ctx, seed.key)
-		if err != nil {
-			return err
-		}
-		auditBuiltinOAuthSeed(ctx, d.logger, provider)
-	}
-	return nil
 }

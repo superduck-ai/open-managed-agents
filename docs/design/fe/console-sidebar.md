@@ -58,9 +58,9 @@ flowchart LR
 
 平台管理员进入组织时，下层显示目标组织名，不显示平台标识或角色。组织名可收缩截断，折叠账号区保留建筑图标与用户名可访问名称。
 
-仅 platformScope 存在时，SidebarFooter 在账号区正上方显示独立的全宽圆角“返回平台管理”按钮，带 ArrowLeft 图标，与账号区宽度对齐；折叠时只显示图标，保留完整可访问名称与提示。点击先确认未保存内容，再调用 exitOrganization；成功后导航 `/platform-admin/organizations/{targetOrganizationUuid}`，目标缺失时回退 `/platform-admin`，失败不导航。清除平台与 Console scope 的合同见 [平台超级管理员设计](../platform-super-admin.md)。
+仅 platformScope 存在时，SidebarFooter 在账号区正上方显示独立的全宽圆角“返回超管后台”按钮，带 ArrowLeft 图标，与账号区宽度对齐；折叠时只显示图标，保留完整可访问名称与提示。点击先确认未保存内容，再调用 exitOrganization；成功后导航 `/platform-admin/organizations/{targetOrganizationUuid}`，目标缺失时回退 `/platform-admin`，失败不导航。清除平台与 Console scope 的合同见 [平台超级管理员设计](../platform-super-admin.md)。
 
-账号菜单内只保留带 Shield 图标、直接导航 `/platform-admin` 的“平台管理”一级入口，仍由 `platform:access` 控制可见性；不显示平台进入状态说明或返回项，也不增加弹出子菜单、折叠层级或额外分隔。中英文、明暗主题、窄屏、键盘操作和未保存内容确认均复用现有共享组件。
+账号菜单内只保留带 Shield 图标、直接导航 `/platform-admin` 的“超管后台”一级入口，仍由 `platform:access` 控制可见性；不显示平台进入状态说明或返回项，也不增加弹出子菜单、折叠层级或额外分隔。中英文、明暗主题、窄屏、键盘操作和未保存内容确认均复用现有共享组件。
 
 ## 下线页面和兼容入口
 

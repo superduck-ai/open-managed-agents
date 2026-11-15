@@ -3,8 +3,9 @@ import type { Locale } from '../../../shared/i18n';
 import { quickstartAgentBody, quickstartDraft } from './model';
 
 export const quickstartTemplateCard =
-  'relative flex h-auto min-h-[150px] w-full min-w-0 flex-col items-start justify-start gap-3 rounded-xl border-[0.5px] border-border p-5 text-left text-sm font-normal whitespace-normal';
-export const quickstartTemplateGrid = 'grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3';
+  'relative flex h-auto min-h-[clamp(7rem,18dvh,9.375rem)] w-full min-w-0 flex-col items-start justify-start gap-3 rounded-xl border-[0.5px] border-border p-5 text-left text-sm font-normal whitespace-normal';
+export const quickstartTemplateGrid =
+  'grid w-full grid-cols-1 gap-[clamp(0.5rem,1.5dvh,0.75rem)] sm:grid-cols-2 lg:grid-cols-3';
 
 export function quickstartTemplates(locale: Locale, modelId: string) {
   const zh = locale === 'zh-CN';

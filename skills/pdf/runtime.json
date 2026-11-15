@@ -1,0 +1,22 @@
+{
+  "commands": [
+    "qpdf",
+    "pdfinfo",
+    "pdftotext",
+    "pdftoppm"
+  ],
+  "modules": [
+    "pypdf",
+    "pdfplumber",
+    "reportlab"
+  ],
+  "optional_commands": [
+    "tesseract",
+    "pandoc",
+    "soffice"
+  ],
+  "scope": "PDF 读写检查；转换和 OCR 按任务检查可选依赖",
+  "files": [
+    "/usr/share/poppler/cMap/Adobe-GB1/UniGB-UCS2-H"
+  ]
+}

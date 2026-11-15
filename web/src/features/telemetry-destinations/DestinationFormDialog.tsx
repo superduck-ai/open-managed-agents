@@ -409,6 +409,10 @@ export function DestinationFormDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {msg(
+              'telemetry.sharedScope',
+              'This destination is shared across its covered workspaces. Changes affect every workspace in that scope.',
+            )}{' '}
+            {msg(
               'telemetry.dialogDescription',
               'After you add a telemetry destination, traces of agent activity in this organization are sent to the OTLP/HTTP endpoint you specify. Once delivered, the data is held by that service and subject to its retention and access controls.',
             )}

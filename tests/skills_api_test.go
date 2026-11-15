@@ -18,7 +18,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/storage"
 )
@@ -868,12 +870,13 @@ func seedBuiltinSkill(t *testing.T, app *testApp, store *fakeStore, skillID, ver
 	if _, err := store.Upload(context.Background(), key, bytes.NewReader(archive), storage.UploadOptions{Size: int64(len(archive)), ContentType: "application/zip"}); err != nil {
 		t.Fatalf("seed builtin object: %v", err)
 	}
-	now := time.Now().UTC()
-	if _, _, err := app.db.UpsertBuiltinSkillWithVersion(context.Background(), db.BuiltinSkill{
+	if err := app.db.SyncBundledSkill(context.Background(), db.SystemSkill{
+		UUID:         uuid.NewV4().String(),
 		ExternalID:   skillID,
 		DisplayTitle: skillID,
-		CreatedAt:    now,
-	}, db.BuiltinSkillVersion{
+		IconKey:      "blocks",
+	}, db.SystemSkillVersion{
+		UUID:        uuid.NewV4().String(),
 		ExternalID:  "skillver_" + skillID + "_" + version,
 		Version:     version,
 		Name:        skillID,
@@ -883,7 +886,7 @@ func seedBuiltinSkill(t *testing.T, app *testApp, store *fakeStore, skillID, ver
 		S3Key:       key,
 		SizeBytes:   int64(len(archive)),
 		SHA256:      shaHex,
-		CreatedAt:   now,
+		CreatedAt:   time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("seed builtin db: %v", err)
 	}
@@ -918,4 +921,14 @@ func assertZipContains(t *testing.T, data []byte, name string) {
 		}
 	}
 	t.Fatalf("zip did not contain %s", name)
+}
+
+func cleanupBuiltinSkillRows(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `delete from builtin_skill_versions`); err != nil {
+		t.Fatalf("cleanup builtin skill versions: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `delete from builtin_skills`); err != nil {
+		t.Fatalf("cleanup builtin skills: %v", err)
+	}
 }

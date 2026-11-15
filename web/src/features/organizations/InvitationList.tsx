@@ -12,6 +12,7 @@ export function InvitationList({
   retry,
   onResolved,
   standalone = false,
+  onProcessingChange,
 }: {
   invitations?: Invitation[];
   error: unknown;
@@ -19,6 +20,7 @@ export function InvitationList({
   retry: () => void;
   onResolved?: (action: 'accept' | 'decline' | null, remaining: number) => Promise<void>;
   standalone?: boolean;
+  onProcessingChange?: (processing: boolean) => void;
 }) {
   const { msg } = useI18n();
   const formatters = useFormatters();
@@ -68,6 +70,7 @@ export function InvitationList({
   const respond = async (invitation: Invitation, action: 'accept' | 'decline') => {
     if (pending || refreshFailed) return;
     setPending(invitation.id);
+    onProcessingChange?.(true);
     setActionError(null);
     try {
       const result = await respondToInvitation(invitation.id, action);
@@ -81,6 +84,7 @@ export function InvitationList({
       setActionError(invitationErrorMessage(cause, undefined, msg));
     } finally {
       setPending(null);
+      onProcessingChange?.(false);
     }
   };
   return (

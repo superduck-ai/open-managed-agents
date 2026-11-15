@@ -47,8 +47,6 @@ COPY --from=go-builder /oma-server /usr/local/bin/oma-server
 COPY --from=web-builder /web/dist /web-dist
 
 # 运行时资产说明：
-# - assets/skills/public: 当前仓库无内置 skills，服务启动时会优雅降级（log "disabled"）。
-#   后续若添加 skills，需在 Dockerfile 中增加 COPY assets/skills/public 。
 # - environment-manager: 默认路径 /usr/local/bin/environment-manager，本镜像未包含。
 #   在 docker-compose 部署中由 e2b-local 提供；如不使用 e2b-local，
 #   请通过 YAML 的 environment_runner.manager_path 指向外部二进制。

@@ -15,11 +15,11 @@ type validationCatalog struct {
 	failure  error
 }
 
-func (c *validationCatalog) GetBuiltinSkillVersion(context.Context, string, string) (db.BuiltinSkillVersion, error) {
+func (c *validationCatalog) GetSystemSkillVersion(context.Context, string, string) (db.SystemSkillVersion, error) {
 	if c.failure != nil {
-		return db.BuiltinSkillVersion{}, c.failure
+		return db.SystemSkillVersion{}, c.failure
 	}
-	return db.BuiltinSkillVersion{}, db.ErrNotFound
+	return db.SystemSkillVersion{}, db.ErrNotFound
 }
 func (c *validationCatalog) GetLatestSkillVersion(_ context.Context, workspace, skill string) (db.SkillVersion, error) {
 	if c.failure != nil {

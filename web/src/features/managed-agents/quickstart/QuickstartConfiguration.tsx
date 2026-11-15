@@ -33,7 +33,7 @@ export function QuickstartStart({ wizard, onStart }: { wizard: QuickstartWizard;
   const templates = quickstartTemplates(locale, wizard.draft.modelID);
   const disabled = wizard.busy || Boolean(wizard.progress.pending);
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto pb-12">
+    <div className="min-h-0 flex-1 overflow-y-auto pb-[clamp(0.5rem,3dvh,3rem)]">
       <div className="mx-auto w-full max-w-[880px]">
         <RadioGroup
           value={wizard.progress.scenarioID}
@@ -72,7 +72,7 @@ export function QuickstartStart({ wizard, onStart }: { wizard: QuickstartWizard;
               />
             </Label>
           </QuickstartEntrySlot>
-          <div className={`mt-10 ${quickstartTemplateGrid}`}>
+          <div className={`mt-[clamp(1.5rem,4dvh,2.5rem)] ${quickstartTemplateGrid}`}>
             {templates.map(({ id, icon, config: { name }, description }) => (
               <Label
                 key={id}
@@ -85,7 +85,7 @@ export function QuickstartStart({ wizard, onStart }: { wizard: QuickstartWizard;
             ))}
           </div>
         </RadioGroup>
-        <div className="mt-6 flex justify-end">
+        <div className="mt-[clamp(1rem,2.5dvh,1.5rem)] flex justify-end">
           <Button disabled={disabled} onClick={onStart}>
             {text.start}
             <ArrowRight />

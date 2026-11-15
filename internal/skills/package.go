@@ -39,11 +39,21 @@ type skillPackage struct {
 }
 
 func readSkillPackage(w http.ResponseWriter, r *http.Request, maxBytes int64) (skillPackage, error) {
-	allowRoot := !hasSkillsBeta(r)
-	if allowRoot {
+	allowRoot := !hasSkillsBeta(r) || isConsoleSkillRequest(r)
+	if allowRoot && !isConsoleSkillRequest(r) {
 		maxBytes = 30 * 1024 * 1024
 	}
-	return readSkillPackageOptions(w, r, maxBytes, allowRoot)
+	pkg, err := readSkillPackageOptions(w, r, maxBytes, allowRoot)
+	if err != nil || !isConsoleSkillRequest(r) {
+		return pkg, err
+	}
+	if _, err := systemPackageDTO(pkg); err != nil {
+		if errors.Is(err, errSkillPreviewTooLarge) {
+			return skillPackage{}, packageError{Status: http.StatusRequestEntityTooLarge, Message: "SKILL.md exceeds 256 KiB preview limit"}
+		}
+		return skillPackage{}, err
+	}
+	return pkg, nil
 }
 
 func readSkillPackageOptions(w http.ResponseWriter, r *http.Request, maxBytes int64, allowRoot bool) (skillPackage, error) {

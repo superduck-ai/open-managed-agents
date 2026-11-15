@@ -3,12 +3,20 @@ package aliyunkms
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -210,7 +218,11 @@ func TestHTTPClientRejectsRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := (&httpClient{}).Call(request, http.DefaultTransport.(*http.Transport).Clone())
+	client, err := newHTTPClient("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Call(request, http.DefaultTransport.(*http.Transport).Clone())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,4 +261,251 @@ func TestWorkloadIdentitySelection(t *testing.T) {
 			t.Fatal("explicit credential selection failed")
 		}
 	}
+}
+
+func TestInvokeStopsWithoutRetry(t *testing.T) {
+	transient := &url.Error{Op: "Post", URL: "https://kms.example", Err: &net.DNSError{Err: "no such host", Name: "kms.example"}}
+	for _, tc := range []struct {
+		name    string
+		failure error
+		calls   int
+	}{
+		{"service rejection", &dara.SDKError{Code: dara.String("Forbidden.NoPermission"), StatusCode: dara.Int(403)}, 1},
+		{"certificate", &url.Error{Op: "Post", URL: "https://kms.example", Err: x509UnknownAuthority()}, 1},
+		{"attempts exhausted", transient, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeClient{decrypt: func(context.Context, *kms.DecryptRequest) (*kms.DecryptResponse, error) { return nil, tc.failure }}
+			p := retryingProvider(fake, 0)
+			_, err := p.UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+			var failure *KMSError
+			if !errors.As(err, &failure) || failure.Attempts != tc.calls || fake.calls != tc.calls {
+				t.Fatalf("calls = %d, err = %v", fake.calls, err)
+			}
+		})
+	}
+	t.Run("attempt timeout", func(t *testing.T) {
+		fake := &fakeClient{}
+		fake.decrypt = func(context.Context, *kms.DecryptRequest) (*kms.DecryptResponse, error) {
+			if fake.calls == 1 {
+				return nil, transient
+			}
+			return nil, &url.Error{Op: "Post", URL: "https://kms.example", Err: timeoutError{}}
+		}
+		_, err := retryingProvider(fake, 0).UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+		var failure *KMSError
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &failure) || failure.Code != "NetworkError.Timeout" || failure.Attempts != 2 || fake.calls != 2 {
+			t.Fatalf("calls = %d, err = %v", fake.calls, err)
+		}
+	})
+	t.Run("unexpected key", func(t *testing.T) {
+		fake := &fakeClient{decrypt: func(context.Context, *kms.DecryptRequest) (*kms.DecryptResponse, error) {
+			return &kms.DecryptResponse{Body: &kms.DecryptResponseBody{KeyId: dara.String("other-key")}}, nil
+		}}
+		if _, err := retryingProvider(fake, 0).UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")}); err == nil || fake.calls != 1 {
+			t.Fatalf("calls = %d, err = %v", fake.calls, err)
+		}
+	})
+	t.Run("budget too short", func(t *testing.T) {
+		fake := &fakeClient{decrypt: func(context.Context, *kms.DecryptRequest) (*kms.DecryptResponse, error) { return nil, transient }}
+		ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+		defer cancel()
+		if _, err := retryingProvider(fake, 0).UnwrapDEK(ctx, secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")}); err == nil || fake.calls != 1 {
+			t.Fatalf("calls = %d, err = %v", fake.calls, err)
+		}
+	})
+	t.Run("parent cancelled during backoff", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		fake := &fakeClient{decrypt: func(context.Context, *kms.DecryptRequest) (*kms.DecryptResponse, error) {
+			time.AfterFunc(20*time.Millisecond, cancel)
+			return nil, transient
+		}}
+		_, err := retryingProvider(fake, time.Second).UnwrapDEK(ctx, secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+		if !errors.Is(err, context.Canceled) || fake.calls != 1 {
+			t.Fatalf("calls = %d, err = %v", fake.calls, err)
+		}
+	})
+	t.Run("budget exhausted", func(t *testing.T) {
+		fake := &fakeClient{decrypt: func(ctx context.Context, _ *kms.DecryptRequest) (*kms.DecryptResponse, error) {
+			<-ctx.Done()
+			return nil, transient
+		}}
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		defer cancel()
+		if _, err := retryingProvider(fake, 0).UnwrapDEK(ctx, secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")}); !errors.Is(err, context.DeadlineExceeded) || fake.calls != 1 {
+			t.Fatalf("calls = %d, err = %v", fake.calls, err)
+		}
+	})
+}
+
+func TestInvokeRetriesTransientFailure(t *testing.T) {
+	failures := []error{
+		&url.Error{Op: "Post", URL: "https://kms.example", Err: &net.DNSError{Err: "no such host", Name: "kms.example"}},
+		&dara.SDKError{Code: dara.String("Rejected.Throttling"), StatusCode: dara.Int(400)},
+	}
+	dek := bytes.Repeat([]byte{9}, 32)
+	decrypts := &fakeClient{}
+	decrypts.decrypt = func(context.Context, *kms.DecryptRequest) (*kms.DecryptResponse, error) {
+		if decrypts.calls <= len(failures) {
+			return nil, failures[decrypts.calls-1]
+		}
+		return &kms.DecryptResponse{Body: &kms.DecryptResponseBody{KeyId: dara.String("test-key"), Plaintext: dara.String(base64.StdEncoding.EncodeToString(dek))}}, nil
+	}
+	got, err := retryingProvider(decrypts, 0).UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+	if err != nil || !bytes.Equal(got, dek) || decrypts.calls != 3 {
+		t.Fatalf("calls = %d, err = %v", decrypts.calls, err)
+	}
+	encrypts := &fakeClient{}
+	encrypts.encrypt = func(context.Context, *kms.EncryptRequest) (*kms.EncryptResponse, error) {
+		if encrypts.calls == 1 {
+			return &kms.EncryptResponse{Body: &kms.EncryptResponseBody{KeyId: dara.String("test-key"), CiphertextBlob: dara.String(base64.StdEncoding.EncodeToString([]byte("first")))}}, io.ErrUnexpectedEOF
+		}
+		return &kms.EncryptResponse{Body: &kms.EncryptResponseBody{KeyId: dara.String("test-key"), CiphertextBlob: dara.String(base64.StdEncoding.EncodeToString([]byte("second")))}}, nil
+	}
+	wrapped, err := retryingProvider(encrypts, 0).WrapDEK(t.Context(), dek)
+	if err != nil || string(wrapped.Ciphertext) != "second" || encrypts.calls != 2 {
+		t.Fatalf("calls = %d, err = %v", encrypts.calls, err)
+	}
+}
+
+func TestProviderRetriesNonJSONServerError(t *testing.T) {
+	dek := bytes.Repeat([]byte{6}, 32)
+	var requests, failures atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) <= failures.Load() {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("<html>Bad Gateway</html>"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"KeyId": "test-key", "Plaintext": base64.StdEncoding.EncodeToString(dek), "RequestId": "request-1"})
+	}))
+	defer server.Close()
+	t.Setenv("DEBUG", "")
+	provider, err := New(Config{Endpoint: server.Listener.Addr().String(), KeyID: "test-key", AccessKeyID: "offline", AccessKeySecret: "offline", CA: serverCA(server)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.retryDelays = []time.Duration{0, 0}
+	failures.Store(3)
+	_, err = provider.UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+	var failure *KMSError
+	if !errors.As(err, &failure) || failure.Code != "UnexpectedResponse" || failure.StatusCode != http.StatusBadGateway || failure.Attempts != 3 {
+		t.Fatalf("persistent 502 reported as %v", err)
+	}
+	requests.Store(0)
+	failures.Store(1)
+	got, err := provider.UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+	if err != nil || !bytes.Equal(got, dek) || requests.Load() != 2 {
+		t.Fatalf("requests = %d, err = %v", requests.Load(), err)
+	}
+}
+
+func TestProviderRetriesResponseTruncatedByTLSServer(t *testing.T) {
+	dek := bytes.Repeat([]byte{5}, 32)
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if requests.Add(1) == 1 {
+			w.Header().Set("Content-Length", "1024")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"KeyId":`))
+			w.(http.Flusher).Flush()
+			panic(http.ErrAbortHandler)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"KeyId": "test-key", "Plaintext": base64.StdEncoding.EncodeToString(dek), "RequestId": "request-1"})
+	}))
+	defer server.Close()
+	t.Setenv("DEBUG", "")
+	provider, err := New(Config{Endpoint: server.Listener.Addr().String(), KeyID: "test-key", AccessKeyID: "offline", AccessKeySecret: "offline", CA: serverCA(server)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.retryDelays = nil
+	_, err = provider.UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+	var failure *KMSError
+	if !errors.As(err, &failure) || failure.Code != "NetworkError.ConnectionReset" {
+		t.Fatalf("truncated response classified as %v", err)
+	}
+	provider.retryDelays = []time.Duration{0}
+	requests.Store(0)
+	got, err := provider.UnwrapDEK(t.Context(), secrets.WrappedKey{KeyVersion: 1, Ciphertext: []byte("opaque")})
+	if err != nil || !bytes.Equal(got, dek) || requests.Load() != 2 {
+		t.Fatalf("requests = %d, err = %v", requests.Load(), err)
+	}
+}
+
+func TestHTTPClientRejectsUntrustedCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("request reached untrusted server") }))
+	defer server.Close()
+	client, err := newHTTPClient("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, strings.NewReader("sensitive"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Call(request, nil)
+	if err == nil {
+		response.Body.Close()
+		t.Fatal("untrusted certificate accepted")
+	}
+	if failure, retryable := classifyFailure(err); failure.Code != "NetworkError.TLSCertificate" || retryable {
+		t.Fatalf("classified as %q, %t", failure.Code, retryable)
+	}
+}
+
+func TestNewRejectsInvalidCA(t *testing.T) {
+	t.Setenv("DEBUG", "")
+	if _, err := New(Config{Endpoint: "kms.example", KeyID: "key", AccessKeyID: "offline", AccessKeySecret: "offline", CA: "not a certificate"}); err == nil {
+		t.Fatal("accepted invalid CA")
+	}
+}
+
+func TestHTTPClientReusesConnection(t *testing.T) {
+	var connections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	server.StartTLS()
+	defer server.Close()
+	client, err := newHTTPClient(serverCA(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.client.Transport.(*http.Transport).Proxy != nil {
+		t.Fatal("KMS transport must not use a proxy")
+	}
+	for range 2 {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, strings.NewReader("payload"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := client.Call(request, http.DefaultTransport.(*http.Transport).Clone())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+	}
+	if connections.Load() != 1 {
+		t.Fatalf("connections = %d", connections.Load())
+	}
+}
+
+func retryingProvider(fake *fakeClient, delay time.Duration) *Provider {
+	return &Provider{client: fake, keyID: "test-key", canonicalKeyID: "test-key", retryDelays: []time.Duration{delay, delay}}
+}
+
+func serverCA(server *httptest.Server) string {
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
+}
+
+func x509UnknownAuthority() error {
+	return &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}
 }

@@ -27,10 +27,16 @@ export function BuilderStart({
   const model = builder.state.config.model;
   const templates = quickstartTemplates(locale, typeof model === 'string' ? model : model.id);
   return (
-    <section aria-labelledby="quickstart-start-title" className="min-h-0 min-w-0 flex-1 overflow-y-auto pb-12">
+    <section
+      aria-labelledby="quickstart-start-title"
+      className="min-h-0 min-w-0 flex-1 overflow-y-auto pb-[clamp(0.5rem,3dvh,3rem)]"
+    >
       <div className="mx-auto flex w-full max-w-[880px] flex-col items-center">
         <QuickstartEntrySlot accessory={resume}>{composer}</QuickstartEntrySlot>
-        <div aria-label={zh ? '快速开始模板' : 'Quickstart templates'} className={`mt-10 ${quickstartTemplateGrid}`}>
+        <div
+          aria-label={zh ? '快速开始模板' : 'Quickstart templates'}
+          className={`mt-[clamp(1.5rem,4dvh,2.5rem)] ${quickstartTemplateGrid}`}
+        >
           {templates.map(({ id, icon: Icon, config, description }) => (
             <Button
               key={id}
@@ -46,7 +52,7 @@ export function BuilderStart({
         </div>
         <Button
           variant="link"
-          className="mt-7 font-normal text-muted-foreground"
+          className="mt-[clamp(0.75rem,2.5dvh,1.75rem)] font-normal text-muted-foreground"
           disabled={builder.busy || Boolean(builder.state.operation) || Boolean(builder.state.unconfirmedMessage)}
           onClick={() =>
             onStart(

@@ -1,0 +1,206 @@
+[
+  {
+    "id": "overview",
+    "slug": "overview",
+    "zh": {
+      "title": "概述",
+      "description": "预构建、可配置的智能体框架，运行在你控制的基础设施中。最适合长时间运行的任务和异步工作。"
+    },
+    "en": {
+      "title": "overview",
+      "description": "A pre-built, configurable agent harness that runs on infrastructure you control. Best for long-running tasks and asynchronous work."
+    }
+  },
+  {
+    "id": "quickstart",
+    "slug": "quickstart",
+    "zh": {
+      "title": "入门",
+      "description": "创建您的第一个自主智能体。"
+    },
+    "en": {
+      "title": "Get started with Open Managed Agents",
+      "description": "Create your first autonomous agent."
+    }
+  },
+  {
+    "id": "agent-setup",
+    "slug": "agent-setup",
+    "zh": {
+      "title": "定义您的智能体",
+      "description": "创建可复用、带版本控制的智能体配置。"
+    },
+    "en": {
+      "title": "Define your agent",
+      "description": "Create a reusable, versioned agent configuration."
+    }
+  },
+  {
+    "id": "sessions",
+    "slug": "sessions",
+    "zh": {
+      "title": "启动会话",
+      "description": "创建会话以运行您的智能体并开始执行任务。"
+    },
+    "en": {
+      "title": "Start a session",
+      "description": "Create a session to run your agent and begin executing tasks."
+    }
+  },
+  {
+    "id": "session-operations",
+    "slug": "session-operations",
+    "zh": {
+      "title": "会话操作",
+      "description": "检索、列出、更新、归档和删除 Open Managed Agents会话。"
+    },
+    "en": {
+      "title": "Session operations",
+      "description": "Retrieve, list, update, archive, and delete Open Managed Agents sessions."
+    }
+  },
+  {
+    "id": "skills",
+    "slug": "skills",
+    "zh": {
+      "title": "技能",
+      "description": "为您的智能体附加可复用的、基于文件系统的专业知识，以支持特定领域的工作流。"
+    },
+    "en": {
+      "title": "Skills",
+      "description": "Attach reusable, filesystem-based expertise to your agent for domain-specific workflows."
+    }
+  },
+  {
+    "id": "files",
+    "slug": "files",
+    "zh": {
+      "title": "添加文件",
+      "description": "上传文件并将其挂载到您的沙盒中以进行读取和处理。"
+    },
+    "en": {
+      "title": "Adding files",
+      "description": "Upload files and mount them in your sandbox for reading and processing."
+    }
+  },
+  {
+    "id": "memory",
+    "slug": "memory",
+    "zh": {
+      "title": "使用智能体记忆",
+      "description": "使用记忆存储为您的智能体提供可跨会话持久保存的记忆。"
+    },
+    "en": {
+      "title": "Using agent memory",
+      "description": "Give your agents persistent memory that survives across sessions using memory stores."
+    }
+  },
+  {
+    "id": "vaults",
+    "slug": "vaults",
+    "zh": {
+      "title": "使用密钥库进行身份验证",
+      "description": "在创建会话时注册每个用户的凭据。"
+    },
+    "en": {
+      "title": "Authenticate with vaults",
+      "description": "Register per-user credentials when creating sessions."
+    }
+  },
+  {
+    "id": "environments",
+    "slug": "environments",
+    "zh": {
+      "title": "云环境设置",
+      "description": "为您的会话自定义云沙盒。"
+    },
+    "en": {
+      "title": "Cloud environment setup",
+      "description": "Customize cloud sandboxes for your sessions."
+    }
+  },
+  {
+    "id": "mcp-connector",
+    "slug": "mcp-connector",
+    "zh": {
+      "title": "MCP 连接器",
+      "description": "将 MCP 服务器连接到您的智能体，以访问外部工具和数据源。"
+    },
+    "en": {
+      "title": "MCP connector",
+      "description": "Connect MCP servers to your agents for access to external tools and data sources."
+    }
+  },
+  {
+    "id": "mcp-connectors",
+    "slug": "mcp-connectors",
+    "zh": {
+      "title": "连接 MCP 服务器",
+      "description": "在智能体上声明远程 MCP 服务器，并通过密钥库提供认证。"
+    },
+    "en": {
+      "title": "Connect MCP servers",
+      "description": "Declare remote MCP servers on an agent and authenticate through vaults."
+    }
+  },
+  {
+    "id": "webhooks",
+    "slug": "webhooks",
+    "zh": {
+      "title": "订阅 Webhook",
+      "description": "无需轮询即可在重大事件发生时获得通知。"
+    },
+    "en": {
+      "title": "Subscribe to webhooks",
+      "description": "Get notified when major events happen without polling."
+    }
+  },
+  {
+    "id": "scheduled-deployments",
+    "slug": "scheduled-deployments",
+    "zh": {
+      "title": "计划部署",
+      "description": "使用 OMA API 创建和管理部署：按照定期的 cron 计划运行智能体并查看其运行历史记录。"
+    },
+    "en": {
+      "title": "Scheduled deployments",
+      "description": "Create and manage deployments with the OMA API: run an agent on a recurring cron schedule and inspect its run history."
+    }
+  },
+  {
+    "id": "observability",
+    "slug": "observability",
+    "zh": {
+      "title": "可观测性与故障排查",
+      "description": "使用 request ID、结构化日志、事件、队列统计和指标定位问题。"
+    },
+    "en": {
+      "title": "Observability and troubleshooting",
+      "description": "Use request IDs, structured logs, events, queue statistics, and metrics to diagnose failures."
+    }
+  },
+  {
+    "id": "configuration",
+    "slug": "configuration",
+    "zh": {
+      "title": "配置",
+      "description": "配置 OMA Server、存储、沙箱和安全密钥。"
+    },
+    "en": {
+      "title": "Configuration",
+      "description": "Configure the OMA server, storage, sandboxes, and security keys."
+    }
+  },
+  {
+    "id": "permission-policies",
+    "slug": "permission-policies",
+    "zh": {
+      "title": "权限策略",
+      "description": "控制智能体和 MCP 工具何时执行。"
+    },
+    "en": {
+      "title": "Permission policies",
+      "description": "Control when agent and MCP tools execute."
+    }
+  }
+]

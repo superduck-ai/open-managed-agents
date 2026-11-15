@@ -45,11 +45,7 @@ export function AgentQuickView({
   });
   return (
     <Sheet open={open} modal={false} onOpenChange={setOpen} onOpenChangeComplete={(nextOpen) => !nextOpen && onClose()}>
-      <SheetContent
-        showOverlay={false}
-        showCloseButton={false}
-        className="gap-0 sm:inset-y-2 sm:right-2 sm:h-auto sm:max-w-[480px] sm:rounded-xl sm:border-[0.5px]"
-      >
+      <SheetContent showOverlay={false} showCloseButton={false} className="gap-0 sm:max-w-[480px] sm:border-[0.5px]">
         <SheetHeader className="flex-row items-center gap-2 border-b-[0.5px] px-4 py-3">
           <div className="min-w-0 flex-1">
             <SheetTitle className="text-xs text-muted-foreground">

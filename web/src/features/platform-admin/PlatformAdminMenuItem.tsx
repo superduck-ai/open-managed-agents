@@ -13,7 +13,7 @@ export function PlatformAdminMenuItem({ onNavigate }: { onNavigate: (path: strin
     <DropdownMenuItem className="h-8 gap-3 px-3" onClick={() => void onNavigate('/platform-admin')}>
       <Shield className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       <span className="min-w-0 flex-1 truncate">
-        {msg('platformAdmin.platformAdministration', 'Platform administration')}
+        {msg('platformAdmin.platformAdministration', 'Super admin console')}
       </span>
     </DropdownMenuItem>
   );

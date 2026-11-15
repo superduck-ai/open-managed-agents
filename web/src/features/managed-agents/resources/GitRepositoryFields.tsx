@@ -33,11 +33,13 @@ function GitInputField({ label, error, ...props }: ComponentProps<typeof Input> 
 export function GitRepositoryFields({
   resource,
   index,
+  tokenConfigured = false,
   onChange,
   onRemove,
 }: {
   resource: GitRepositoryResourceFormValue;
   index: number;
+  tokenConfigured?: boolean;
   onChange: (resource: GitRepositoryResourceFormValue) => void;
   onRemove: () => void;
 }) {
@@ -90,7 +92,9 @@ export function GitRepositoryFields({
           type="password"
           autoComplete="new-password"
           value={resource.authorizationToken}
-          placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+          placeholder={
+            tokenConfigured ? msg('managedAgents.git.keepToken', '已配置，留空保持不变') : 'ghp_xxxxxxxxxxxxxxxxxxxx'
+          }
           maxLength={8192}
           onChange={(event) => patch({ authorizationToken: event.target.value })}
         />

@@ -3449,6 +3449,7 @@
   "platformAdmin.oauthManagement.clientId": "Client ID",
   "platformAdmin.oauthManagement.clientSecret": "Client secret",
   "platformAdmin.oauthManagement.secretKeepHint": "Leave blank to keep the current secret.",
+  "platformAdmin.oauthManagement.advanced": "Advanced configuration",
   "platformAdmin.oauthManagement.authMethod": "Token endpoint auth",
   "platformAdmin.oauthManagement.encoding": "Token encoding",
   "platformAdmin.oauthManagement.updatedAt": "Updated",

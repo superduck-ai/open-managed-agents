@@ -3449,6 +3449,7 @@
   "platformAdmin.oauthManagement.clientId": "客户端 ID",
   "platformAdmin.oauthManagement.clientSecret": "客户端密钥",
   "platformAdmin.oauthManagement.secretKeepHint": "留空表示保留当前密钥。",
+  "platformAdmin.oauthManagement.advanced": "高级配置",
   "platformAdmin.oauthManagement.authMethod": "令牌端点认证",
   "platformAdmin.oauthManagement.encoding": "令牌编码",
   "platformAdmin.oauthManagement.updatedAt": "更新时间",

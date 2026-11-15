@@ -1,4 +1,6 @@
 import { useState, type ReactNode } from 'react';
+import { ChevronRight } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import { useMutation } from '@tanstack/react-query';
 import { useI18n } from '../../../shared/i18n';
 import { Button } from '../../../shared/ui/button';
@@ -40,6 +42,7 @@ export function OAuthProviderDialog({
   const { client } = usePlatformAdmin();
   const errorMessage = usePlatformAdminError();
   const [values, setValues] = useState<OAuthProviderFormValues>(() => initialOAuthProviderFormValues(provider));
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const patch = (next: Partial<OAuthProviderFormValues>) => setValues((current) => ({ ...current, ...next }));
   const mutation = useMutation({
@@ -209,36 +212,54 @@ export function OAuthProviderDialog({
                   onChange={(event) => patch({ scope: event.target.value })}
                 />
               </Field>
-              <Field
-                id="oauth-provider-auth-method"
-                label={msg('platformAdmin.oauthManagement.authMethod', 'Token endpoint auth')}
-              >
-                <Select value={values.authMethod} onValueChange={(value) => value && patch({ authMethod: value })}>
-                  <SelectTrigger id="oauth-provider-auth-method">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="client_secret_post">client_secret_post</SelectItem>
-                    <SelectItem value="client_secret_basic">client_secret_basic</SelectItem>
-                    <SelectItem value="none">none</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field
-                id="oauth-provider-encoding"
-                label={msg('platformAdmin.oauthManagement.encoding', 'Token encoding')}
-              >
-                <Select value={values.encoding} onValueChange={(value) => value && patch({ encoding: value })}>
-                  <SelectTrigger id="oauth-provider-encoding">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="form">form</SelectItem>
-                    <SelectItem value="json">json</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
             </div>
+            <Collapsible
+              open={advancedOpen}
+              onOpenChange={setAdvancedOpen}
+              className="border-t-[0.5px] border-border pt-3"
+            >
+              <CollapsibleTrigger
+                type="button"
+                className="flex min-h-9 w-full items-center gap-2 text-left text-sm font-medium outline-none focus-visible:ring-[0.5px] focus-visible:ring-foreground"
+              >
+                <ChevronRight
+                  className={`size-4 transition-transform ${advancedOpen ? 'rotate-90' : ''}`}
+                  aria-hidden
+                />
+                {msg('platformAdmin.oauthManagement.advanced', 'Advanced configuration')}
+              </CollapsibleTrigger>
+              <CollapsibleContent className="grid gap-4 pt-3 sm:grid-cols-2">
+                <Field
+                  id="oauth-provider-auth-method"
+                  label={msg('platformAdmin.oauthManagement.authMethod', 'Token endpoint auth')}
+                >
+                  <Select value={values.authMethod} onValueChange={(value) => value && patch({ authMethod: value })}>
+                    <SelectTrigger id="oauth-provider-auth-method">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="client_secret_post">client_secret_post</SelectItem>
+                      <SelectItem value="client_secret_basic">client_secret_basic</SelectItem>
+                      <SelectItem value="none">none</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field
+                  id="oauth-provider-encoding"
+                  label={msg('platformAdmin.oauthManagement.encoding', 'Token encoding')}
+                >
+                  <Select value={values.encoding} onValueChange={(value) => value && patch({ encoding: value })}>
+                    <SelectTrigger id="oauth-provider-encoding">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="form">form</SelectItem>
+                      <SelectItem value="json">json</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </CollapsibleContent>
+            </Collapsible>
             {provider && values.clientId.trim() !== provider.client_id ? (
               <FieldDescription>
                 {msg(

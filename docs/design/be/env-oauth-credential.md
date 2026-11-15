@@ -160,6 +160,8 @@ stateDiagram-v2
 
 名称上限按 Unicode 字符计数（200 字符），不是字节数。`prod` 环境拒绝 `http` 端点，其他环境仍允许本地联调使用 `http`。
 
+客户端表单将令牌端点认证方式和请求编码放在默认折叠的“高级配置”中。新建沿用 `client_secret_post` / `form` 默认值，编辑沿用已存配置；折叠和展开不改变字段值，管理员需要时可展开修改。
+
 平台客户端仅由超级管理员统一登记和管理，不按内置或自定义设置编辑、删除或启停差异；普通用户创建凭证时填写的客户端覆盖配置仅属于该凭证或授权流程，不写入平台目录。保留已有 provider_key 身份，避免改变凭证绑定与授权协议。
 
 所有平台客户端都可编辑名称、Logo、端点、scope、认证方式、编码、默认变量名及客户端配置。secret 省略保持，空串/null 拒绝；首次配置及修改 ID 必须同时提交新 secret；仅换 secret 不重封 ID。PATCH/DELETE 必须提交 `expected_version`，过期为 409 `oauth_provider_version_conflict`，名称冲突仍是 `oauth_provider_name_conflict`。删除任一客户端不影响其他客户端的列表查询。

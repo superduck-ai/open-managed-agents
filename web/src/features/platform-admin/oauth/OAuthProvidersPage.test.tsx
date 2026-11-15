@@ -122,6 +122,44 @@ const builtin = {
   default_allowed_hosts: ['open.feishu.cn', 'accounts.feishu.cn'],
 };
 
+test.each([
+  { record: undefined, method: 'client_secret_post', encoding: 'form' },
+  { record: { ...builtin, token_endpoint_encoding: 'json' }, method: 'client_secret_post', encoding: 'json' },
+  {
+    record: { ...builtin, name: 'Friday', token_endpoint_auth_method: 'client_secret_basic' },
+    method: 'client_secret_basic',
+    encoding: 'form',
+  },
+])('高级配置默认折叠且保留新建或已存协议配置：%s', async ({ record, method, encoding }) => {
+  const writes: Record<string, unknown>[] = [];
+  globalThis.fetch = mock(async (_input, options) => {
+    if (options?.method === 'POST' || options?.method === 'PATCH') {
+      writes.push(JSON.parse(String(options.body)));
+      return Response.json(record ?? provider);
+    }
+    return Response.json(record ? [record] : []);
+  }) as typeof fetch;
+  mount();
+  if (record) fireEvent.click(await screen.findByText(record.name));
+  else {
+    await screen.findByText('暂无 OAuth 客户端');
+    fireEvent.click(screen.getByRole('button', { name: '注册 OAuth 客户端' }));
+    fireEvent.change(await screen.findByLabelText('名称'), { target: { value: 'New OAuth' } });
+    fireEvent.change(screen.getByLabelText('授权端点'), { target: { value: provider.authorize_endpoint } });
+    fireEvent.change(screen.getByLabelText('令牌端点'), { target: { value: provider.token_endpoint } });
+  }
+  const advanced = await screen.findByRole('button', { name: '高级配置' });
+  expect(advanced.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByRole('combobox', { name: '令牌端点认证' })).toBeNull();
+  fireEvent.click(advanced);
+  expect((await screen.findByRole('combobox', { name: '令牌端点认证' })).textContent).toContain(method);
+  expect(screen.getByRole('combobox', { name: '令牌编码' }).textContent).toContain(encoding);
+  fireEvent.click(advanced);
+  fireEvent.click(screen.getByRole('button', { name: '保存' }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(writes[0]).toMatchObject({ token_endpoint_auth_method: method, token_endpoint_encoding: encoding });
+});
+
 test('飞书客户端通过更多操作统一提供停用和删除', async () => {
   globalThis.fetch = mock(async () => Response.json([builtin])) as typeof fetch;
   mount();

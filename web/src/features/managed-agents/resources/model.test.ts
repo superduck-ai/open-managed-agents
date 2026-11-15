@@ -775,6 +775,7 @@ describe('env_oauth credentials', () => {
       type: 'env_oauth',
       networking: { type: 'unrestricted' },
       access_token: 'u-new',
+      expires_at: null,
     });
   });
 

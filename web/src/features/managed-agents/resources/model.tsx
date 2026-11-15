@@ -1005,6 +1005,7 @@ export function credentialAuthBody(values: CredentialFormValues, mode: 'create' 
     }
     if (accessToken) {
       body.access_token = accessToken;
+      if (mode === 'update') body.expires_at = null;
     }
     return body;
   }

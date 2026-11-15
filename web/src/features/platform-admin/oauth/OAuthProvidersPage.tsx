@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, ArchiveRestore, KeyRound, MoreVertical, Plus, Power, PowerOff, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, KeyRound, Pencil, MoreVertical, Plus, Power, PowerOff, Trash2 } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { OAuthProviderAvatar } from '../../../shared/icons/oauth-provider-avatar';
 import {
@@ -292,6 +292,10 @@ function OAuthProvidersTable({
                   <MoreVertical className="size-4" strokeWidth={1.5} aria-hidden />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-44" onClick={(event) => event.stopPropagation()}>
+                  <DropdownMenuItem onClick={() => onEdit(provider)}>
+                    <Pencil size={15} aria-hidden />
+                    {msg('common.edit', 'Edit')}
+                  </DropdownMenuItem>
                   {!provider.archived ? (
                     <DropdownMenuItem onClick={() => onStatusChange(provider, provider.enabled ? 'disable' : 'enable')}>
                       {provider.enabled ? <PowerOff size={15} aria-hidden /> : <Power size={15} aria-hidden />}

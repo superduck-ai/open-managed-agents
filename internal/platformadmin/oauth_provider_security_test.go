@@ -195,3 +195,33 @@ func TestOAuthProviderFridayProtectedConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestOAuthProviderOptionalClientsAndLogo(t *testing.T) {
+	service, store, _ := oauthServiceFixture(t)
+	input := OAuthProviderCreateInput{Name: "Custom", AuthorizeEndpoint: "https://auth.test/authorize", TokenEndpoint: "https://auth.test/token"}
+	for _, invalidInput := range []OAuthProviderCreateInput{
+		{Name: input.Name, AuthorizeEndpoint: input.AuthorizeEndpoint, TokenEndpoint: input.TokenEndpoint, ClientID: "client"},
+		{Name: input.Name, AuthorizeEndpoint: input.AuthorizeEndpoint, TokenEndpoint: input.TokenEndpoint, ClientSecret: "secret"},
+		{Name: input.Name, AuthorizeEndpoint: input.AuthorizeEndpoint, TokenEndpoint: input.TokenEndpoint, LogoURL: "javascript:alert(1)"},
+	} {
+		if _, err := service.Create(t.Context(), Actor{}, invalidInput); err == nil {
+			t.Fatal("非法客户端配置被接受")
+		}
+	}
+	if store.writes != 0 {
+		t.Fatal("非法配置写入了数据库")
+	}
+	input.LogoURL = " https://example.test/logo.png "
+	created, err := service.Create(t.Context(), Actor{}, input)
+	if err != nil || created.Configured || created.HasClientID || created.HasClientSecret || created.LogoURL != "https://example.test/logo.png" {
+		t.Fatalf("未配置客户端创建失败：%+v，%v", created, err)
+	}
+	updated, err := service.Update(t.Context(), Actor{}, created.ID, OAuthProviderUpdateInput{ExpectedVersion: created.Version, LogoURL: new("")})
+	if err != nil || updated.LogoURL != "" || updated.Configured {
+		t.Fatalf("清除 Logo 失败：%+v，%v", updated, err)
+	}
+	configured, err := service.Update(t.Context(), Actor{}, created.ID, OAuthProviderUpdateInput{ExpectedVersion: updated.Version, ClientID: new("client"), ClientSecret: new("secret")})
+	if err != nil || !configured.Configured {
+		t.Fatalf("后续补充凭据失败：%+v，%v", configured, err)
+	}
+}

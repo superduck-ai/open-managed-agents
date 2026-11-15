@@ -1931,7 +1931,7 @@ export function registerManagedAgentsResourceTests() {
     expect(screen.getByRole('link', { name: '凭据保险库' })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: '添加凭据' }).length).toBeGreaterThan(0);
     await screen.findByText('Vault credential one');
-    expect(screen.getByPlaceholderText('按 ID 查找凭据')).toBeTruthy();
+    expect(screen.getByPlaceholderText('按名称或 ID 查找凭据')).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '认证' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '概览' })).toBeNull();
     expect(screen.queryByText('供关联此保险库的 Agent 使用的凭据。')).toBeNull();
@@ -1949,7 +1949,7 @@ export function registerManagedAgentsResourceTests() {
     expect(within(header).getByRole('button', { name: 'Add credential' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Overview' })).toBeNull();
     await screen.findByText('Vault credential one');
-    expect(screen.getByPlaceholderText('Find credential by ID')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Find credential by name or ID')).toBeTruthy();
     expect(screen.queryByRole('combobox', { name: 'Status All' })).toBeNull();
     expect(screen.getByRole('columnheader', { name: 'Auth' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Updated' })).toBeTruthy();

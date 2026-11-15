@@ -12,6 +12,7 @@ type platformOAuthProviderRow struct {
 	UUID                       string         `db:"uuid"`
 	ExternalID                 string         `db:"external_id"`
 	Name                       string         `db:"name"`
+	LogoURL                    string         `db:"logo_url"`
 	AuthorizeEndpoint          string         `db:"authorize_endpoint"`
 	TokenEndpoint              string         `db:"token_endpoint"`
 	Scope                      string         `db:"scope"`
@@ -33,6 +34,7 @@ type upsertPlatformOAuthProviderParams struct {
 	UUID                       string
 	ExternalID                 string
 	Name                       string
+	LogoURL                    string
 	AuthorizeEndpoint          string
 	TokenEndpoint              string
 	Scope                      string
@@ -53,5 +55,6 @@ type PlatformOAuthProviderMapper interface {
 	FindByBuiltinKey(ctx context.Context, builtinKey string) (platformOAuthProviderRow, error)
 	FindByUUID(ctx context.Context, providerUUID string) (platformOAuthProviderRow, error)
 	UpdateByUUID(ctx context.Context, params upsertPlatformOAuthProviderParams) (platformOAuthProviderRow, error)
+	UpdateClientEnvelopesByUUID(ctx context.Context, params upsertPlatformOAuthProviderParams) (platformOAuthProviderRow, error)
 	DeleteByUUID(ctx context.Context, providerUUID string, expectedVersion int64) (int64, error)
 }

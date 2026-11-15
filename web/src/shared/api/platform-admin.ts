@@ -75,6 +75,7 @@ export type OAuthProviderRecord = {
   version: number;
   id: string;
   name: string;
+  logo_url?: string;
   authorize_endpoint: string;
   token_endpoint: string;
   scope: string;
@@ -88,6 +89,7 @@ export type OAuthProviderRecord = {
 
 export type OAuthProviderInput = {
   name: string;
+  logo_url?: string;
   authorize_endpoint: string;
   token_endpoint: string;
   scope: string;

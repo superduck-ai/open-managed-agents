@@ -5,20 +5,9 @@ import { useAuth } from '../../../shared/auth/context';
 import { listAllWorkspaceMCPServers, type WorkspaceMCPServer } from '../../../shared/api/workspaceMCPServers';
 import { Button } from '../../../shared/ui/button';
 import { Checkbox } from '../../../shared/ui/checkbox';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../shared/ui/collapsible';
 import { Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../../../shared/ui/dialog';
 import { Label } from '../../../shared/ui/label';
-import { ChevronDown } from 'lucide-react';
-import {
-  type ComponentProps,
-  type FormEvent,
-  type RefObject,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { type ComponentProps, type FormEvent, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { loadMcpDirectoryServers } from '../agents/tools/api';
 import { type McpDirectoryServer } from '../agents/tools/model';
 import { listEnvOAuthProviders, startEnvOAuthVaultAuth, startMCPVaultAuth } from '../api';
@@ -39,6 +28,8 @@ import {
 } from '../types';
 import { errorMessage } from '../utils';
 import { EnvironmentVariableCredentialFields } from './credential-environment-fields';
+import { CredentialDialogActions } from './credential-dialog-actions';
+import { OptionalCredentialFields } from './optional-credential-fields';
 import { EnvOAuthCredentialFields } from './credential-env-oauth-fields';
 import { managedEntityDialogCanSubmit } from './entity-dialog-ready';
 import {
@@ -72,37 +63,6 @@ type VaultOAuthCompleteMessage = {
 
 function isVaultOAuthCompleteMessage(value: unknown): value is VaultOAuthCompleteMessage {
   return Boolean(value && typeof value === 'object' && (value as { type?: unknown }).type === 'vault_oauth_complete');
-}
-
-function OptionalCredentialFields({
-  title,
-  defaultOpen = false,
-  children,
-}: {
-  title: string;
-  defaultOpen?: boolean;
-  children: ReactNode;
-}) {
-  const { msg } = useI18n();
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0 border-t-[0.5px] border-border pt-3">
-      <CollapsibleTrigger
-        type="button"
-        className="flex min-h-9 w-full items-center gap-2 text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[0.5px] focus-visible:ring-inset focus-visible:ring-foreground"
-      >
-        <ChevronDown
-          className={`size-4 shrink-0 transition-transform duration-200 ease-out motion-reduce:transition-none ${open ? '' : '-rotate-90'}`}
-          aria-hidden
-        />
-        <span className="min-w-0 flex-1 font-medium text-foreground">{title}</span>
-        <span className="text-xs text-muted-foreground">
-          {msg('managedAgents.credentialVaults.credentialDialog.optional', 'Optional')}
-        </span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-3 pt-3">{children}</CollapsibleContent>
-    </Collapsible>
-  );
 }
 
 function credentialDialogTypeSteps(values: CredentialFormValues, mode: 'create' | 'edit') {
@@ -212,6 +172,7 @@ export function CredentialDialog({
     ...(!credential && initialMcpServerUrl ? { mcpServerUrl: initialMcpServerUrl } : {}),
   }));
   const [submitting, setSubmitting] = useState(false);
+  const [reauthorizing, setReauthorizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [directoryServers, setDirectoryServers] = useState<McpDirectoryServer[]>([]);
@@ -228,7 +189,10 @@ export function CredentialDialog({
     mode === 'create' &&
     ((values.authType === 'mcp_oauth' && !values.token.trim()) ||
       (values.authType === 'env_oauth' && !values.envOAuthManualToken.trim()));
-  const waitingForOAuth = needsOAuthConnect && submitting;
+  const waitingForOAuth = (needsOAuthConnect || reauthorizing) && submitting;
+  const envOAuthConfigured = Boolean(
+    envOAuthProviders?.find((provider) => provider.id === values.envOAuthProviderId)?.configured,
+  );
   const { showMcpUrl, showDirectoryPicker, showBearerToken, showOAuthFields, showCredentialCommitment } =
     credentialDialogTypeSteps(values, mode);
   const patchValues = (patch: Partial<CredentialFormValues>) => {
@@ -245,6 +209,7 @@ export function CredentialDialog({
       setError(message);
     }
     setSubmitting(false);
+    setReauthorizing(false);
   };
   const dismissDialog = () => {
     if (waitingForOAuth) {
@@ -351,6 +316,7 @@ export function CredentialDialog({
       pendingOAuthFlowIdRef.current = null;
       oauthPopupRef.current = null;
       if (message.error_code) {
+        setReauthorizing(false);
         setError(vaultOAuthErrorMessage(message.error_code, msg));
         setSubmitting(false);
         return;
@@ -415,8 +381,8 @@ export function CredentialDialog({
     }
   };
 
-  const connectOAuth = async () => {
-    if (!canSubmit || !needsOAuthConnect || !orgUuid) {
+  const connectOAuth = async (reauthorize = false) => {
+    if (!canSubmit || (!needsOAuthConnect && !reauthorize) || !orgUuid) {
       setError(
         orgUuid
           ? msg('managedAgents.credentialVaults.credentialDialog.completeRequired', 'Complete the required fields.')
@@ -443,6 +409,7 @@ export function CredentialDialog({
       return;
     }
     oauthPopupRef.current = popup;
+    setReauthorizing(reauthorize);
     setSubmitting(true);
     setError(null);
     pendingOAuthFlowIdRef.current = null;
@@ -720,41 +687,18 @@ export function CredentialDialog({
             </fieldset>
           </div>
           {error ? <p className="mt-4 shrink-0 text-sm text-destructive">{error}</p> : null}
-          <DialogFooter className="mt-5 shrink-0">
-            {firstCredential ? (
-              <Button type="button" variant="ghost" disabled={submitting && !waitingForOAuth} onClick={dismissDialog}>
-                {msg('managedAgents.quickstart.skip', 'Skip')}
-              </Button>
-            ) : (
-              <Button type="button" variant="outline" disabled={submitting && !waitingForOAuth} onClick={dismissDialog}>
-                {msg('common.cancel', 'Cancel')}
-              </Button>
-            )}
-            {needsOAuthConnect ? (
-              <Button
-                type="button"
-                disabled={
-                  !canSubmit ||
-                  submitting ||
-                  (values.authType === 'env_oauth' &&
-                    !envOAuthProviders?.find((provider) => provider.id === values.envOAuthProviderId)?.configured)
-                }
-                onClick={() => void connectOAuth()}
-              >
-                {submitting
-                  ? msg('managedAgents.credentialVaults.credentialDialog.connecting', 'Connecting...')
-                  : msg('managedAgents.credentialVaults.credentialDialog.connect', 'Connect')}
-              </Button>
-            ) : (
-              <Button type="submit" disabled={!canSubmit || submitting}>
-                {submitting
-                  ? msg('common.saving', 'Saving...')
-                  : credential
-                    ? msg('common.saveChanges', 'Save changes')
-                    : msg('managedAgents.credentialVaults.credentialDialog.add', 'Add credential')}
-              </Button>
-            )}
-          </DialogFooter>
+          <CredentialDialogActions
+            firstCredential={firstCredential}
+            editing={mode === 'edit'}
+            envOAuth={values.authType === 'env_oauth'}
+            envOAuthConfigured={envOAuthConfigured}
+            needsOAuthConnect={needsOAuthConnect}
+            canSubmit={canSubmit}
+            submitting={submitting}
+            waitingForOAuth={waitingForOAuth}
+            onDismiss={dismissDialog}
+            onConnect={connectOAuth}
+          />
         </form>
       </DialogContent>
     </Dialog>

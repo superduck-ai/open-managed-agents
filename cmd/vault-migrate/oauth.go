@@ -25,7 +25,7 @@ func migrateOAuthDocument(ctx context.Context, service *secrets.Service, kind st
 	if err := json.Unmarshal(row.Document, &document); err != nil || document.ExternalID == "" {
 		return nil, 0, errors.New("invalid OAuth migration document")
 	}
-	if kind == "platform_oauth_providers" && ((document.ClientIDEnvelope == nil) != (document.ClientSecretEnvelope == nil) || (document.ClientIDEnvelope == nil && document.ExternalID != "poap_FeishuBuiltinOAuthClient" && document.ExternalID != "poap_FridayBuiltinOAuthClient")) {
+	if kind == "platform_oauth_providers" && ((document.ClientIDEnvelope == nil) != (document.ClientSecretEnvelope == nil)) {
 		return nil, 0, errors.New("incomplete OAuth client")
 	}
 	binding := platformoauth.ProviderClientIDBinding(document.ExternalID)

@@ -16,6 +16,7 @@ type PlatformOAuthProvider struct {
 	UUID                       string
 	ExternalID                 string
 	Name                       string
+	LogoURL                    string
 	AuthorizeEndpoint          string
 	TokenEndpoint              string
 	Scope                      string
@@ -122,9 +123,6 @@ func (d *DB) DeletePlatformOAuthProvider(ctx context.Context, providerUUID strin
 }
 
 func platformOAuthProviderUpsertParams(provider PlatformOAuthProvider) (upsertPlatformOAuthProviderParams, error) {
-	if (provider.ClientIDEnvelope == nil || provider.ClientSecretEnvelope == nil) && !provider.Protected {
-		return upsertPlatformOAuthProviderParams{}, ErrIncompleteSecretEnvelope
-	}
 	if (provider.ClientIDEnvelope == nil) != (provider.ClientSecretEnvelope == nil) {
 		return upsertPlatformOAuthProviderParams{}, ErrIncompleteSecretEnvelope
 	}
@@ -140,6 +138,7 @@ func platformOAuthProviderUpsertParams(provider PlatformOAuthProvider) (upsertPl
 		UUID:                       provider.UUID,
 		ExternalID:                 provider.ExternalID,
 		Name:                       provider.Name,
+		LogoURL:                    provider.LogoURL,
 		AuthorizeEndpoint:          provider.AuthorizeEndpoint,
 		TokenEndpoint:              provider.TokenEndpoint,
 		Scope:                      provider.Scope,
@@ -159,6 +158,7 @@ func (r platformOAuthProviderRow) provider() (PlatformOAuthProvider, error) {
 		UUID:                       r.UUID,
 		ExternalID:                 r.ExternalID,
 		Name:                       r.Name,
+		LogoURL:                    r.LogoURL,
 		AuthorizeEndpoint:          r.AuthorizeEndpoint,
 		TokenEndpoint:              r.TokenEndpoint,
 		Scope:                      r.Scope,
@@ -239,4 +239,19 @@ func (d *DB) auditOAuthSeedAfterMigrations(ctx context.Context, before int64) er
 		auditBuiltinOAuthSeed(ctx, d.logger, provider)
 	}
 	return nil
+}
+
+func (d *DB) UpdatePlatformOAuthProviderClientEnvelopes(ctx context.Context, provider PlatformOAuthProvider) (PlatformOAuthProvider, error) {
+	params, err := platformOAuthProviderUpsertParams(provider)
+	if err != nil {
+		return PlatformOAuthProvider{}, err
+	}
+	row, err := NewPlatformOAuthProviderMapper(d.mapperDB).UpdateClientEnvelopesByUUID(ctx, params)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PlatformOAuthProvider{}, ErrVersionConflict
+	}
+	if err != nil {
+		return PlatformOAuthProvider{}, err
+	}
+	return row.provider()
 }

@@ -229,11 +229,22 @@ func (s *EgressSubstitutor) planEnvOAuthSubstitutions(
 			)
 			return nil, substitutionRejected(err)
 		}
+		latest, err := decodeEnvOAuthCredentialAuth(item.row.Auth)
+		if err != nil {
+			return nil, substitutionRejected(err)
+		}
+		covers, err = credentialNetworkingCoversHost(latest.Networking, host, port)
+		if err != nil {
+			return nil, substitutionRejected(err)
+		}
+		if !covers {
+			continue
+		}
 		out = append(out, egressSubstitution{
-			placeholder: item.value.Placeholder,
+			placeholder: latest.Placeholder,
 			secretValue: token,
-			header:      item.value.InjectionLocation.Header,
-			body:        item.value.InjectionLocation.Body,
+			header:      latest.InjectionLocation.Header,
+			body:        latest.InjectionLocation.Body,
 		})
 	}
 	return out, nil

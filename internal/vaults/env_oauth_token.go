@@ -78,6 +78,7 @@ func (r *envOAuthTokenResolver) resolve(ctx context.Context, credential *db.Vaul
 		return "", substitutionRejected(errEnvOAuthRefreshUnavailable)
 	}
 	current := *credential
+	defer func() { *credential = current }()
 	now := r.clock()
 	token, usable, err := r.usableToken(ctx, current, now)
 	if err != nil {
@@ -173,6 +174,7 @@ func (r *envOAuthTokenResolver) refreshAndPersist(ctx context.Context, current *
 	case provider.Scope != "":
 		form.Set("scope", provider.Scope)
 	}
+	exchangedCredential := *current
 	token, err := ExchangeOAuthTokenEndpoint(ctx, r.httpClient(), OAuthTokenEndpointExchange{
 		TokenEndpoint:           provider.TokenEndpoint,
 		ClientID:                provider.ClientID,
@@ -211,7 +213,14 @@ func (r *envOAuthTokenResolver) refreshAndPersist(ctx context.Context, current *
 	if err != nil {
 		return "", err
 	}
-	return r.persist(ctx, current, secret, nextAuth, nextSecretJSON, token.AccessToken, now)
+	accessToken, err := r.persist(ctx, current, secret, nextAuth, nextSecretJSON, token.AccessToken, now)
+	if err == nil {
+		return accessToken, nil
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	clearErr := r.store.ClearVaultCredentialSecret(cleanupCtx, exchangedCredential)
+	return "", errors.Join(ErrEnvOAuthReauthorizationRequired, err, clearErr)
 }
 
 func (r *envOAuthTokenResolver) persist(
@@ -250,6 +259,7 @@ func (r *envOAuthTokenResolver) persist(
 		}
 		_, err = r.store.UpdateVaultCredential(ctx, updated.WorkspaceUUID, updated.VaultExternalID, updated.ExternalID, updated)
 		if err == nil {
+			*current = updated
 			return accessToken, nil
 		}
 		if !errors.Is(err, db.ErrVersionConflict) {

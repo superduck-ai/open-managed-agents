@@ -639,7 +639,10 @@ export function ManagedSelectField({
       >
         <SelectTrigger id={id} className="mt-2 h-10 w-full min-w-0">
           <SelectValue className={value ? 'text-foreground' : 'text-muted-foreground'}>
-            {selected?.label ?? placeholder}
+            <span className="flex min-w-0 items-center gap-2">
+              {selected?.icon}
+              <span className="truncate">{selected?.label ?? placeholder}</span>
+            </span>
           </SelectValue>
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
@@ -648,7 +651,8 @@ export function ManagedSelectField({
           </SelectItem>
           {options.map((option) => (
             <SelectItem key={option.id} value={option.id} label={option.label}>
-              {option.label}
+              {option.icon}
+              <span className="truncate">{option.label}</span>
             </SelectItem>
           ))}
         </SelectContent>

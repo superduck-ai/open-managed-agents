@@ -58,3 +58,11 @@ func mapOAuthProviderError(err error) error {
 	}
 	return ErrOAuthProviderUnavailable
 }
+
+func invalidOAuthProviderLogoURL() error {
+	return invalid("Logo URL 必须是有效的 HTTP(S) 地址")
+}
+
+func invalidOAuthProviderClients() error {
+	return invalid("客户端 ID 和客户端密钥须同时填写，或同时留空")
+}

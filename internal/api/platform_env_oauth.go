@@ -67,6 +67,7 @@ type envOAuthVaultAuthStartResponse struct {
 type envOAuthProviderResponse struct {
 	ID                  string   `json:"id"`
 	Name                string   `json:"name"`
+	LogoURL             string   `json:"logo_url"`
 	Builtin             bool     `json:"builtin"`
 	Configured          bool     `json:"configured"`
 	AuthorizeEndpoint   string   `json:"authorize_endpoint"`
@@ -106,6 +107,7 @@ func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request)
 		response = append(response, envOAuthProviderResponse{
 			ID:                  provider.ProviderKey,
 			Name:                provider.Name,
+			LogoURL:             provider.LogoURL,
 			Builtin:             provider.Builtin,
 			Configured:          provider.Configured,
 			AuthorizeEndpoint:   provider.AuthorizeEndpoint,

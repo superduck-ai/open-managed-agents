@@ -115,6 +115,19 @@ func TestPlatformOAuthProviderClientConstraintMigrationPostgres(t *testing.T) {
 			assertOAuthClientConstraintViolation(t, err, invalid.constraint)
 		})
 	}
+	if _, err := provider.UpTo(ctx, 124); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, insert, "poap_optional_client", nil, nil); err != nil {
+		t.Fatalf("新迁移不允许未配置客户端：%v", err)
+	}
+	_, err = database.ExecContext(ctx, `UPDATE platform_oauth_providers SET client_id_envelope=$1 WHERE external_id='poap_optional_client'`, envelope)
+	assertOAuthClientConstraintViolation(t, err, "platform_oauth_providers_clients_check")
+	var logoURL string
+	if err := database.QueryRowContext(ctx, `SELECT logo_url FROM platform_oauth_providers WHERE external_id='poap_optional_client'`).Scan(&logoURL); err != nil || logoURL != "" {
+		t.Fatalf("Logo 默认值不正确：%q，%v", logoURL, err)
+	}
+
 }
 
 func assertOAuthClientConstraintViolation(t *testing.T, err error, constraint string) {

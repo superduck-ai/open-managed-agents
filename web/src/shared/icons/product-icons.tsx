@@ -53,6 +53,7 @@ export const productIcons = {
   memory: productIcon(Brain),
   vaults: productIcon(Vault),
   mcp: productIcon(Plug),
+  oauth: productIcon(Plug),
   models: productIcon(Cpu),
   observability: productIcon(Activity),
   usage: productIcon(ChartNoAxesColumnIncreasing),

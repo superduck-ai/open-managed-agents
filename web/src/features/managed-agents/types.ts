@@ -250,6 +250,7 @@ export type VaultCredentialApiResponse = {
 };
 
 export type EnvOAuthProviderApiResponse = {
+  logo_url?: string;
   configured: boolean;
   id: string;
   name: string;
@@ -621,6 +622,7 @@ export type SessionFileResourceFormValue = {
 export type EntityOption = {
   id: string;
   label: string;
+  icon?: ReactNode;
   secondary?: string;
   /** Absolute created timestamp for vault pickers (CMA-aligned). */
   createdAt?: string;

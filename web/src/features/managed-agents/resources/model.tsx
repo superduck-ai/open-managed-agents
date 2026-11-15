@@ -1016,6 +1016,8 @@ export function credentialAuthBody(values: CredentialFormValues, mode: 'create' 
     }
     if (expiresAt) {
       body.expires_at = expiresAt;
+    } else if (mode === 'update') {
+      body.expires_at = null;
     }
     return body;
   }

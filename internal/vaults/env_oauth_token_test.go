@@ -374,3 +374,35 @@ func TestEnvOAuthTokenResolverResamplesClockAfterRefreshLease(t *testing.T) {
 		t.Fatalf("exchanges = %d, writes = %d", exchanges, store.updateCalls)
 	}
 }
+
+func TestEnvOAuthSubstitutionUsesReloadedNetworking(t *testing.T) {
+	svc := newTestSecretsService(t)
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+	old := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_probe", "old.example", "old", "refresh", &past)
+	latest := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_probe", "new.example", "fresh-secret", "refresh", nil)
+	store := &fakeCredentialStore{vaultIDs: []string{"vlt_TOKEN"}, credentials: []db.VaultCredential{old}, get: latest}
+	s := newEgressSubstitutor(store, svc, nil)
+	s.setEnvOAuthTokens(newEnvOAuthTokenResolver(store, svc, nil, nil))
+	req := httptest.NewRequest(http.MethodGet, "https://old.example/", nil)
+	req.Header.Set("Authorization", "Bearer oma_ph_probe")
+	err := s.SubstituteEnvSecrets(t.Context(), "session", old.OrganizationUUID, old.WorkspaceUUID, req, "old.example", "443")
+	if req.Header.Get("Authorization") != "Bearer oma_ph_probe" {
+		t.Fatalf("已收紧到 new.example，old.example 仍收到新令牌：header=%q err=%v", req.Header.Get("Authorization"), err)
+	}
+}
+
+func TestEnvOAuthRefreshRetiresConsumedTokenAfterSaveFailure(t *testing.T) {
+	svc := newTestSecretsService(t)
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+	old := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_probe", "old.example", "old", "refresh-1", &past)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"access_token":"fresh","refresh_token":"refresh-2","expires_in":3600}`))
+	}))
+	defer server.Close()
+	store := &fakeCredentialStore{get: old, updateErr: errors.New("模拟换票后的存储故障")}
+	resolver := newEnvOAuthTokenResolver(store, svc, nil, nil).withHTTPClient(server.Client()).withProviders(fakeEnvOAuthProviderResolver{snapshot: EnvOAuthProviderSnapshot{ProviderKey: EnvOAuthProviderBuiltinFeishu, TokenEndpoint: server.URL, ClientID: "client", ClientSecret: "secret", TokenEndpointAuthMethod: "client_secret_post"}})
+	_, err := resolver.resolve(t.Context(), &old)
+	if store.clearCalls != 1 || !errors.Is(err, ErrEnvOAuthReauthorizationRequired) {
+		t.Fatalf("已消费的 refresh-1 未作废：clearCalls=%d err=%v", store.clearCalls, err)
+	}
+}

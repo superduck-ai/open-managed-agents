@@ -24,6 +24,7 @@ import (
 
 type OAuthProviderCreateInput struct {
 	Name                    string  `json:"name"`
+	LogoURL                 string  `json:"logo_url"`
 	AuthorizeEndpoint       string  `json:"authorize_endpoint"`
 	TokenEndpoint           string  `json:"token_endpoint"`
 	Scope                   string  `json:"scope"`
@@ -37,6 +38,7 @@ type OAuthProviderUpdateInput struct {
 	fixedFields             bool
 	ExpectedVersion         int64   `json:"expected_version"`
 	Name                    *string `json:"name"`
+	LogoURL                 *string `json:"logo_url"`
 	AuthorizeEndpoint       *string `json:"authorize_endpoint"`
 	TokenEndpoint           *string `json:"token_endpoint"`
 	Scope                   *string `json:"scope"`
@@ -57,6 +59,7 @@ type OAuthProviderView struct {
 	Version                 int64     `json:"version"`
 	ID                      string    `json:"id"`
 	Name                    string    `json:"name"`
+	LogoURL                 string    `json:"logo_url"`
 	AuthorizeEndpoint       string    `json:"authorize_endpoint"`
 	TokenEndpoint           string    `json:"token_endpoint"`
 	Scope                   string    `json:"scope"`
@@ -128,11 +131,15 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 	tokenEndpoint := strings.TrimSpace(input.TokenEndpoint)
 	clientID := strings.TrimSpace(input.ClientID)
 	clientSecret := strings.TrimSpace(input.ClientSecret)
-	if err := validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, clientID, s.environment); err != nil {
+	if err := validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, s.environment); err != nil {
 		return OAuthProviderView{}, err
 	}
-	if clientSecret == "" {
-		return OAuthProviderView{}, invalid("必须填写 client_secret")
+	if (clientID == "") != (clientSecret == "") {
+		return OAuthProviderView{}, invalidOAuthProviderClients()
+	}
+	logoURL, err := normalizeOAuthProviderLogoURL(input.LogoURL)
+	if err != nil {
+		return OAuthProviderView{}, err
 	}
 	authMethod, err := oauthProviderAuthMethod(input.TokenEndpointAuthMethod, "client_secret_post")
 	if err != nil {
@@ -151,6 +158,7 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 		UUID:              uuid.NewV4().String(),
 		ExternalID:        externalID,
 		Name:              name,
+		LogoURL:           logoURL,
 		AuthorizeEndpoint: authorizeEndpoint,
 		TokenEndpoint:     tokenEndpoint,
 		Scope:             strings.TrimSpace(input.Scope),
@@ -162,8 +170,10 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 		UpdatedAt:                  now,
 	}
 	auditProvider = provider
-	if err := s.sealClient(ctx, &provider, clientID, clientSecret); err != nil {
-		return OAuthProviderView{}, err
+	if clientID != "" {
+		if err := s.sealClient(ctx, &provider, clientID, clientSecret); err != nil {
+			return OAuthProviderView{}, err
+		}
 	}
 	created, err := s.db.CreatePlatformOAuthProvider(ctx, provider)
 	if err != nil {
@@ -172,7 +182,7 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 		}
 		return OAuthProviderView{}, err
 	}
-	s.audit(ctx, actor, created, "create", []string{"name", "authorize_endpoint", "token_endpoint", "scope", "client_id", "client_secret", "token_endpoint_auth_method", "token_endpoint_encoding"}, nil)
+	s.audit(ctx, actor, created, "create", []string{"name", "logo_url", "authorize_endpoint", "token_endpoint", "scope", "client_id", "client_secret", "token_endpoint_auth_method", "token_endpoint_encoding"}, nil)
 	return s.view(ctx, created)
 }
 
@@ -206,6 +216,12 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 			return OAuthProviderView{}, ErrOAuthProviderUnavailable
 		}
 	}
+	if input.LogoURL != nil {
+		current.LogoURL, err = normalizeOAuthProviderLogoURL(*input.LogoURL)
+		if err != nil {
+			return OAuthProviderView{}, err
+		}
+	}
 	if err := applyOAuthProviderFields(&current, input); err != nil {
 		return OAuthProviderView{}, err
 	}
@@ -230,7 +246,7 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 		return OAuthProviderView{}, mapOAuthProviderError(err)
 	}
 	action := "update"
-	if initialConfiguration {
+	if initialConfiguration && updated.ClientIDEnvelope != nil {
 		action = "configure"
 	}
 	if input.ClientSecret != nil && action != "configure" {
@@ -281,8 +297,18 @@ func (s *OAuthProviderService) updateClient(ctx context.Context, provider *db.Pl
 	if input.ClientID != nil {
 		clientID = strings.TrimSpace(*input.ClientID)
 	}
-	if err := validateOAuthProviderFields(provider.Name, provider.AuthorizeEndpoint, provider.TokenEndpoint, clientID, s.environment); err != nil {
+	if err := validateOAuthProviderFields(provider.Name, provider.AuthorizeEndpoint, provider.TokenEndpoint, s.environment); err != nil {
 		return err
+	}
+	secret := ""
+	if input.ClientSecret != nil {
+		secret = strings.TrimSpace(*input.ClientSecret)
+	}
+	if clientID == "" {
+		if oldID == "" && secret == "" {
+			return nil
+		}
+		return invalidOAuthProviderClients()
 	}
 	if (clientID != oldID || provider.ClientSecretEnvelope == nil) && input.ClientSecret == nil {
 		return invalid("更换或首次配置 client_id 时必须同时填写 client_secret")
@@ -290,7 +316,6 @@ func (s *OAuthProviderService) updateClient(ctx context.Context, provider *db.Pl
 	if input.ClientSecret == nil {
 		return nil
 	}
-	secret := strings.TrimSpace(*input.ClientSecret)
 	if secret == "" {
 		return invalid("client_secret 不能为空")
 	}
@@ -321,7 +346,7 @@ func (s *OAuthProviderService) view(ctx context.Context, provider db.PlatformOAu
 		ID: provider.ExternalID, ProviderKey: platformoauth.ProviderKey(provider), Builtin: provider.BuiltinKey != "", Protected: provider.Protected,
 		HasClientID: provider.ClientIDEnvelope != nil, HasClientSecret: provider.ClientSecretEnvelope != nil,
 		Configured: provider.ClientIDEnvelope != nil && provider.ClientSecretEnvelope != nil, Version: provider.Version,
-		Name: provider.Name, AuthorizeEndpoint: provider.AuthorizeEndpoint, TokenEndpoint: provider.TokenEndpoint,
+		Name: provider.Name, LogoURL: provider.LogoURL, AuthorizeEndpoint: provider.AuthorizeEndpoint, TokenEndpoint: provider.TokenEndpoint,
 		Scope: provider.Scope, ClientID: clientID, DefaultSecretName: provider.DefaultSecretName, DefaultAllowedHosts: provider.DefaultAllowedHosts, TokenEndpointAuthMethod: provider.TokenEndpointAuthMethod,
 		TokenEndpointEncoding: provider.TokenEndpointEncoding, CreatedAt: provider.CreatedAt, UpdatedAt: provider.UpdatedAt,
 	}, nil
@@ -358,7 +383,7 @@ func (i OAuthProviderUpdateInput) changedFields() []string {
 		name  string
 		value *string
 	}{
-		{"name", i.Name}, {"authorize_endpoint", i.AuthorizeEndpoint}, {"token_endpoint", i.TokenEndpoint}, {"scope", i.Scope},
+		{"name", i.Name}, {"logo_url", i.LogoURL}, {"authorize_endpoint", i.AuthorizeEndpoint}, {"token_endpoint", i.TokenEndpoint}, {"scope", i.Scope},
 		{"client_id", i.ClientID}, {"client_secret", i.ClientSecret}, {"token_endpoint_auth_method", i.TokenEndpointAuthMethod}, {"token_endpoint_encoding", i.TokenEndpointEncoding},
 	} {
 		if field.value != nil {
@@ -409,7 +434,7 @@ func applyOAuthProviderFields(provider *db.PlatformOAuthProvider, input OAuthPro
 	return err
 }
 
-func validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, clientID, environment string) error {
+func validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, environment string) error {
 	if name == "" {
 		return invalid("必须填写名称")
 	}
@@ -421,9 +446,6 @@ func validateOAuthProviderFields(name, authorizeEndpoint, tokenEndpoint, clientI
 	}
 	if err := validateOAuthProviderURL(tokenEndpoint, environment); err != nil {
 		return invalid("Token Endpoint 必须是有效的 HTTP(S) 地址")
-	}
-	if clientID == "" {
-		return invalid("必须填写 client_id")
 	}
 	return nil
 }
@@ -476,4 +498,16 @@ func oauthProviderEncoding(value *string, fallback string) (string, error) {
 
 func isOAuthProviderNameConflict(err error) bool {
 	return errors.Is(err, db.ErrDuplicate)
+}
+
+func normalizeOAuthProviderLogoURL(value string) (string, error) {
+	logoURL := strings.TrimSpace(value)
+	if logoURL == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(logoURL)
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return "", invalidOAuthProviderLogoURL()
+	}
+	return logoURL, nil
 }

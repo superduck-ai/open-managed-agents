@@ -9,18 +9,17 @@ import (
 
 func TestValidateOAuthProviderFields(t *testing.T) {
 	t.Parallel()
-	if err := validateOAuthProviderFields("Example", "https://auth.example.test/authorize", "https://auth.example.test/token", "client", config.EnvironmentDev); err != nil {
+	if err := validateOAuthProviderFields("Example", "https://auth.example.test/authorize", "https://auth.example.test/token", config.EnvironmentDev); err != nil {
 		t.Fatalf("valid provider rejected: %v", err)
 	}
 	for _, test := range []struct {
-		name, authorize, token, clientID string
+		name, authorize, token string
 	}{
-		{"", "https://auth.example.test/authorize", "https://auth.example.test/token", "client"},
-		{"Example", "not-a-url", "https://auth.example.test/token", "client"},
-		{"Example", "https://auth.example.test/authorize", "ftp://auth.example.test/token", "client"},
-		{"Example", "https://auth.example.test/authorize", "https://auth.example.test/token", ""},
+		{"", "https://auth.example.test/authorize", "https://auth.example.test/token"},
+		{"Example", "not-a-url", "https://auth.example.test/token"},
+		{"Example", "https://auth.example.test/authorize", "ftp://auth.example.test/token"},
 	} {
-		if err := validateOAuthProviderFields(test.name, test.authorize, test.token, test.clientID, config.EnvironmentDev); err == nil {
+		if err := validateOAuthProviderFields(test.name, test.authorize, test.token, config.EnvironmentDev); err == nil {
 			t.Fatalf("invalid provider accepted: %+v", test)
 		}
 	}
@@ -28,20 +27,20 @@ func TestValidateOAuthProviderFields(t *testing.T) {
 
 func TestValidateOAuthProviderFieldsCountsRunes(t *testing.T) {
 	t.Parallel()
-	if err := validateOAuthProviderFields(strings.Repeat("客", 200), "https://auth.example.test/authorize", "https://auth.example.test/token", "client", config.EnvironmentDev); err != nil {
+	if err := validateOAuthProviderFields(strings.Repeat("客", 200), "https://auth.example.test/authorize", "https://auth.example.test/token", config.EnvironmentDev); err != nil {
 		t.Fatalf("200-character name rejected: %v", err)
 	}
-	if err := validateOAuthProviderFields(strings.Repeat("客", 201), "https://auth.example.test/authorize", "https://auth.example.test/token", "client", config.EnvironmentDev); err == nil {
+	if err := validateOAuthProviderFields(strings.Repeat("客", 201), "https://auth.example.test/authorize", "https://auth.example.test/token", config.EnvironmentDev); err == nil {
 		t.Fatal("over-long name accepted")
 	}
 }
 
 func TestValidateOAuthProviderFieldsRejectsHTTPInProduction(t *testing.T) {
 	t.Parallel()
-	if err := validateOAuthProviderFields("Example", "https://auth.example.test/authorize", "http://auth.example.test/token", "client", config.EnvironmentDev); err != nil {
+	if err := validateOAuthProviderFields("Example", "https://auth.example.test/authorize", "http://auth.example.test/token", config.EnvironmentDev); err != nil {
 		t.Fatalf("dev provider rejected: %v", err)
 	}
-	if err := validateOAuthProviderFields("Example", "https://auth.example.test/authorize", "http://auth.example.test/token", "client", config.EnvironmentProd); err == nil {
+	if err := validateOAuthProviderFields("Example", "https://auth.example.test/authorize", "http://auth.example.test/token", config.EnvironmentProd); err == nil {
 		t.Fatal("production provider accepted http token endpoint")
 	}
 }
@@ -73,5 +72,18 @@ func TestOAuthProviderAuthMethodAndEncoding(t *testing.T) {
 	invalidEncoding := "msgpack"
 	if _, err := oauthProviderEncoding(&invalidEncoding, ""); err == nil {
 		t.Fatal("invalid encoding accepted")
+	}
+}
+
+func TestNormalizeOAuthProviderLogoURL(t *testing.T) {
+	for _, value := range []string{"/logo.png", "javascript:alert(1)", "data:image/png;base64,AAA", "https://user:password@example.test/logo.png"} {
+		if _, err := normalizeOAuthProviderLogoURL(value); err == nil {
+			t.Fatalf("非法 Logo URL 被接受：%q", value)
+		}
+	}
+	for _, value := range []string{"", "https://example.test/logo.svg", "http://localhost/logo.png"} {
+		if normalized, err := normalizeOAuthProviderLogoURL(" " + value + " "); err != nil || normalized != value {
+			t.Fatalf("可选 Logo URL 被拒绝：%q，%v", value, err)
+		}
 	}
 }

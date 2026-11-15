@@ -42,7 +42,8 @@ export function OAuthProviderDialog({
     mutationFn: () => {
       const editable = {
         scope: values.scope.trim(),
-        client_id: values.clientId.trim(),
+        logo_url: values.logoUrl.trim(),
+        ...(values.clientId.trim() ? { client_id: values.clientId.trim() } : {}),
         ...(values.clientSecret.trim() ? { client_secret: values.clientSecret.trim() } : {}),
       };
       const input = {
@@ -58,7 +59,7 @@ export function OAuthProviderDialog({
             ...(provider.builtin ? editable : input),
             expected_version: provider.version,
           })
-        : createOAuthProvider(client, { ...input, client_secret: values.clientSecret.trim() });
+        : createOAuthProvider(client, { ...input, client_id: values.clientId.trim() });
     },
     onSuccess: () => {
       void onSaved();
@@ -98,7 +99,11 @@ export function OAuthProviderDialog({
         >
           <div className="min-h-0 space-y-4 overflow-y-auto [overflow-wrap:anywhere]">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field id="oauth-provider-name" label={msg('platformAdmin.oauthManagement.name', 'Name')}>
+              <Field
+                id="oauth-provider-name"
+                label={msg('platformAdmin.oauthManagement.name', 'Name')}
+                className="sm:col-span-2"
+              >
                 <Input
                   id="oauth-provider-name"
                   readOnly={builtin}
@@ -108,13 +113,6 @@ export function OAuthProviderDialog({
                       : values.name
                   }
                   onChange={(event) => patch({ name: event.target.value })}
-                />
-              </Field>
-              <Field id="oauth-provider-client-id" label={msg('platformAdmin.oauthManagement.clientId', 'Client ID')}>
-                <Input
-                  id="oauth-provider-client-id"
-                  value={values.clientId}
-                  onChange={(event) => patch({ clientId: event.target.value })}
                 />
               </Field>
               <Field
@@ -143,11 +141,24 @@ export function OAuthProviderDialog({
                   onChange={(event) => patch({ tokenEndpoint: event.target.value })}
                 />
               </Field>
-              <Field id="oauth-provider-scope" label={msg('platformAdmin.oauthManagement.scope', 'Scope')}>
+              <Field
+                id="oauth-provider-logo"
+                label={msg('platformAdmin.oauthManagement.logoUrl', 'Logo URL')}
+                className="sm:col-span-2"
+              >
                 <Input
-                  id="oauth-provider-scope"
-                  value={values.scope}
-                  onChange={(event) => patch({ scope: event.target.value })}
+                  id="oauth-provider-logo"
+                  type="url"
+                  value={values.logoUrl}
+                  placeholder="https://example.com/logo.png"
+                  onChange={(event) => patch({ logoUrl: event.target.value })}
+                />
+              </Field>
+              <Field id="oauth-provider-client-id" label={msg('platformAdmin.oauthManagement.clientId', 'Client ID')}>
+                <Input
+                  id="oauth-provider-client-id"
+                  value={values.clientId}
+                  onChange={(event) => patch({ clientId: event.target.value })}
                 />
               </Field>
               <Field
@@ -164,6 +175,17 @@ export function OAuthProviderDialog({
                   type="password"
                   value={values.clientSecret}
                   onChange={(event) => patch({ clientSecret: event.target.value })}
+                />
+              </Field>
+              <Field
+                id="oauth-provider-scope"
+                label={msg('platformAdmin.oauthManagement.scope', 'Scope')}
+                className="sm:col-span-2"
+              >
+                <Input
+                  id="oauth-provider-scope"
+                  value={values.scope}
+                  onChange={(event) => patch({ scope: event.target.value })}
                 />
               </Field>
               <Field

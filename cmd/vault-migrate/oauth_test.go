@@ -87,12 +87,18 @@ func testOAuthLocalVersionRotation(t *testing.T, externalID string) {
 
 func TestOAuthMigrationRejectsMalformedClients(t *testing.T) {
 	for _, raw := range []string{
-		`{"external_id":"poap_custom"}`,
 		`{"external_id":"poap_custom","client_id_envelope":{},"client_secret_envelope":{}}`,
 		`{"external_id":"poap_custom","client_id_envelope":{}}`,
 	} {
 		if _, _, err := migrateOAuthDocument(t.Context(), nil, "platform_oauth_providers", db.SecretMigrationRecord{Document: json.RawMessage(raw)}, "local", 0, false); err == nil {
 			t.Fatal("无效客户端未失败关闭")
 		}
+	}
+}
+
+func TestOAuthMigrationSkipsUnconfiguredClient(t *testing.T) {
+	row := db.SecretMigrationRecord{Document: json.RawMessage(`{"external_id":"poap_custom"}`)}
+	if next, count, err := migrateOAuthDocument(t.Context(), nil, "platform_oauth_providers", row, "local", 0, true); err != nil || count != 0 || !bytes.Equal(next, row.Document) {
+		t.Fatalf("未配置客户端迁移失败：%d，%v", count, err)
 	}
 }

@@ -355,7 +355,7 @@ test('creates an ENV OAuth credential through the authorization popup', async ()
   fireEvent.click(within(dialog).getByRole('combobox', { name: 'Type' }));
   fireEvent.click(await screen.findByText('ENV OAuth'));
   fireEvent.click(await within(dialog).findByRole('combobox', { name: 'OAuth provider' }));
-  fireEvent.click(await screen.findByText('Built-in: Feishu'));
+  fireEvent.click(await screen.findByText('Feishu'));
   expect((within(dialog).getByLabelText('Variable name') as HTMLInputElement).value).toBe(
     'LARKSUITE_CLI_USER_ACCESS_TOKEN',
   );
@@ -463,7 +463,7 @@ test.each(['Feishu', 'Friday'])('未配置内置 %s 禁用授权但保留手工�
   fireEvent.click(within(dialog).getByRole('combobox', { name: 'Type' }));
   fireEvent.click(await screen.findByText('ENV OAuth'));
   fireEvent.click(await within(dialog).findByRole('combobox', { name: 'OAuth provider' }));
-  fireEvent.click(await screen.findByText(`Built-in: ${name}`));
+  fireEvent.click(await screen.findByText(name));
   if (name === 'Friday')
     expect((within(dialog).getByLabelText('Variable name') as HTMLInputElement).placeholder).toBe('ACCESS_TOKEN');
   fireEvent.click(within(dialog).getByRole('checkbox'));
@@ -472,9 +472,82 @@ test.each(['Feishu', 'Friday'])('未配置内置 %s 禁用授权但保留手工�
     screen.getByText('Not configured. Contact a platform administrator. You can still save a manually supplied token.'),
   ).toBeTruthy();
   expect(screen.queryByRole('link', { name: 'Configure provider' })).toBeNull();
+  fireEvent.click(within(dialog).getByRole('button', { name: /Use an existing token/ }));
   fireEvent.change(within(dialog).getByLabelText('Access token (optional)'), { target: { value: 'manual-token' } });
   await act(async () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add credential' }));
   });
   await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+});
+
+test('ENV OAuth 编辑授权失败后可重试，回调完成后刷新且不提交手工令牌', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
+  const popup = { closed: false, location: { href: '' }, close: mock(() => {}) };
+  window.open = mock(() => popup as unknown as Window);
+  let attempts = 0;
+  const writes: Record<string, unknown>[] = [];
+  globalThis.fetch = mock(async (input, init) => {
+    if (String(input).includes('/env-oauth/providers')) {
+      return Response.json([{ id: 'builtin:feishu', name: 'Feishu', builtin: true, configured: true }]);
+    }
+    writes.push(JSON.parse(String(init?.body)));
+    attempts += 1;
+    return attempts === 1
+      ? Response.json({ error: { message: '授权服务暂不可用' } }, { status: 503 })
+      : Response.json({ oauth_flow_id: 'flow_reauth', authorize_url: 'https://accounts.feishu.cn/authorize' });
+  }) as typeof fetch;
+  const onSubmit = mock(async () => {});
+  const onOAuthComplete = mock(() => {});
+  render(
+    <AuthHarness>
+      <CredentialDialog
+        credential={{
+          ...credential,
+          auth: {
+            type: 'env_oauth',
+            provider: 'builtin:feishu',
+            secret_name: 'TEAM_TOKEN',
+            networking: { type: 'limited', allowed_hosts: ['open.feishu.cn'] },
+          },
+        }}
+        vaultId="vlt_fixture"
+        workspaceId="default"
+        orgUuid="org_fixture"
+        onClose={() => {}}
+        onSubmit={onSubmit}
+        onOAuthComplete={onOAuthComplete}
+      />
+    </AuthHarness>,
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Edit credential' });
+  const reconnect = within(dialog).getByRole('button', { name: 'Reauthorize' });
+  expect(reconnect.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(within(dialog).getByRole('checkbox'));
+  await waitFor(() => expect(reconnect.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(reconnect);
+  await within(dialog).findByText('授权服务暂不可用');
+  expect(popup.close).toHaveBeenCalledTimes(1);
+  fireEvent.click(reconnect);
+  await waitFor(() => expect(popup.location.href).toBe('https://accounts.feishu.cn/authorize'));
+  expect(writes[1]).toMatchObject({
+    provider_id: 'builtin:feishu',
+    secret_name: 'TEAM_TOKEN',
+    vault_id: 'vlt_fixture',
+  });
+  await act(async () => {
+    window.dispatchEvent(
+      new window.MessageEvent('message', {
+        origin: window.location.origin,
+        data: {
+          type: 'vault_oauth_complete',
+          flow_id: 'flow_reauth',
+          vault_id: 'vlt_fixture',
+          credential_id: 'cred_fixture',
+        },
+      }),
+    );
+  });
+  expect(onOAuthComplete).toHaveBeenCalledTimes(1);
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(dialog.hasAttribute('data-closed')).toBe(true);
 });

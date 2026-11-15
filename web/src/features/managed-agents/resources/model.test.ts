@@ -748,6 +748,12 @@ describe('env_oauth credentials', () => {
     ...patch,
   });
 
+  test('清空 ENV OAuth 过期时间会提交清除，而不是保留旧时间', () => {
+    const values = envOAuthValues({ envOAuthExpiresAt: '' });
+    expect(credentialAuthBody(values, 'update')).toMatchObject({ expires_at: null });
+    expect(credentialAuthBody(values, 'create')).not.toHaveProperty('expires_at');
+  });
+
   test('credentialAuthBody builds create and update payloads', () => {
     expect(credentialAuthBody(envOAuthValues({ envOAuthManualToken: 'u-token' }), 'create')).toEqual({
       type: 'env_oauth',

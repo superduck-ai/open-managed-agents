@@ -23,6 +23,7 @@ var errEnvOAuthProviderKeyInvalid = errors.New("env_oauth provider is invalid")
 type EnvOAuthProviderSnapshot struct {
 	ProviderKey             string
 	Name                    string
+	LogoURL                 string
 	Builtin                 bool
 	Configured              bool
 	AuthorizeEndpoint       string

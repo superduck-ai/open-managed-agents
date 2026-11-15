@@ -62,7 +62,7 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 		return errors.New("schema_unavailable")
 	}
 	fmt.Fprintf(out, "schema_version=%d\n", version)
-	if version > 123 {
+	if version > 124 {
 		return errors.New("schema_unsupported")
 	}
 	if !apply && version < 118 {
@@ -146,6 +146,11 @@ func scanClientRows(ctx context.Context, database *db.DB, service *secrets.Servi
 			return nil
 		}
 		for _, row := range rows {
+			after = row.UUID
+			if version >= 124 && kind == "platform_oauth_providers" && row.ClientIDEnvelope == nil && row.ClientSecretEnvelope == nil {
+				counts[migrationUnchanged]++
+				continue
+			}
 			if err := ctx.Err(); err != nil {
 				return errors.New("canceled")
 			}
@@ -155,7 +160,6 @@ func scanClientRows(ctx context.Context, database *db.DB, service *secrets.Servi
 				return errors.New("client_migration_failed")
 			}
 			counts[result]++
-			after = row.UUID
 		}
 	}
 }
@@ -226,7 +230,7 @@ func importBuiltin(ctx context.Context, database *db.DB, service *secrets.Servic
 	}
 	provider.ClientIDEnvelope, provider.ClientSecretEnvelope = id, secret
 	provider.UpdatedAt = time.Now().UTC()
-	if _, err := database.UpdatePlatformOAuthProvider(ctx, provider); err != nil {
+	if _, err := database.UpdatePlatformOAuthProviderClientEnvelopes(ctx, provider); err != nil {
 		return migrationUnchanged, errors.New("builtin_save_failed")
 	}
 	logger.InfoContext(ctx, "platform oauth provider audit", "actor_type", "maintenance", "provider_uuid", provider.UUID,
@@ -245,7 +249,7 @@ func verifyFinalClients(ctx context.Context, database *db.DB, service *secrets.S
 		if err != nil {
 			return errors.New("final_read_failed")
 		}
-		if provider.ClientIDEnvelope == nil && provider.Protected {
+		if provider.ClientIDEnvelope == nil && provider.ClientSecretEnvelope == nil {
 			continue
 		}
 		if _, err := resolver.ResolveEnvOAuthProvider(ctx, platformoauth.ProviderKey(provider)); err != nil {

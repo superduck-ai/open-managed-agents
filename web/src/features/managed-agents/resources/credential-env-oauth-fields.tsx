@@ -2,11 +2,13 @@ import { useContext } from 'react';
 import { Link } from '@tanstack/react-router';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
+import { productIcons } from '../../../shared/icons/product-icons';
 import { Button } from '../../../shared/ui/button';
 import { FieldDescription } from '../../../shared/ui/field';
 import { ManagedSelectField, ManagedTextField } from '../components/common';
 import { type CredentialFormValues, type EnvOAuthProviderApiResponse } from '../types';
 import { CredentialNetworkingFields } from './credential-networking-fields';
+import { OptionalCredentialFields } from './optional-credential-fields';
 import { credentialEnvHostsMissing, envOAuthProviderDefaults } from './model';
 
 type EnvOAuthCredentialFieldsProps = {
@@ -35,11 +37,21 @@ export function EnvOAuthCredentialFields({
   const options = providers.map((provider) => ({
     id: provider.id,
     label: provider.builtin
-      ? msg('managedAgents.credentialVaults.credentialDialog.envOAuthBuiltinProvider', 'Built-in: {name}', {
-          name: msg(`platformAdmin.oauthManagement.${provider.id.slice(8)}`, provider.name),
-        })
+      ? msg(`platformAdmin.oauthManagement.${provider.id.slice(8)}`, provider.name)
       : provider.name,
-    secondary: provider.scope || undefined,
+    icon: provider.logo_url ? (
+      <img
+        src={provider.logo_url}
+        alt=""
+        referrerPolicy="no-referrer"
+        className="size-6 shrink-0 rounded-md object-contain"
+      />
+    ) : (
+      <productIcons.oauth
+        aria-hidden
+        className="size-6 shrink-0 rounded-md border border-border p-1 text-muted-foreground"
+      />
+    ),
   }));
   const selectableOptions =
     secretNameLocked && selected ? options.filter((option) => option.id === selected.id) : options;
@@ -114,33 +126,48 @@ export function EnvOAuthCredentialFields({
         hostsMissing={hostsMissing}
         onChange={onChange}
       />
-      <div className="grid gap-4 sm:grid-cols-2">
+      <OptionalCredentialFields
+        title={msg('managedAgents.credentialVaults.credentialDialog.envOAuthManual', 'Use an existing token')}
+        defaultOpen={Boolean(values.envOAuthManualToken || values.envOAuthRefreshToken)}
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          <ManagedTextField
+            label={msg(
+              'managedAgents.credentialVaults.credentialDialog.envOAuthManualToken',
+              'Access token (optional)',
+            )}
+            type="password"
+            value={values.envOAuthManualToken}
+            placeholder={
+              secretNameLocked
+                ? msg(
+                    'managedAgents.credentialVaults.credentialDialog.keepToken',
+                    'Leave blank to keep the current token',
+                  )
+                : msg(
+                    'managedAgents.credentialVaults.credentialDialog.envOAuthManualTokenPlaceholder',
+                    'Paste a token to skip authorization',
+                  )
+            }
+            onChange={(envOAuthManualToken) => onChange({ envOAuthManualToken })}
+          />
+          <ManagedTextField
+            label={msg(
+              'managedAgents.credentialVaults.credentialDialog.envOAuthRefreshToken',
+              'Refresh token (optional)',
+            )}
+            type="password"
+            value={values.envOAuthRefreshToken}
+            onChange={(envOAuthRefreshToken) => onChange({ envOAuthRefreshToken })}
+          />
+        </div>
         <ManagedTextField
-          label={msg('managedAgents.credentialVaults.credentialDialog.envOAuthManualToken', 'Access token (optional)')}
-          type="password"
-          value={values.envOAuthManualToken}
-          placeholder={msg(
-            'managedAgents.credentialVaults.credentialDialog.envOAuthManualTokenPlaceholder',
-            'Paste a token to skip authorization',
-          )}
-          onChange={(envOAuthManualToken) => onChange({ envOAuthManualToken })}
+          label={msg('managedAgents.credentialVaults.credentialDialog.envOAuthExpiresAt', 'Expires at (optional)')}
+          value={values.envOAuthExpiresAt}
+          placeholder="2026-11-06T10:00:00Z"
+          onChange={(envOAuthExpiresAt) => onChange({ envOAuthExpiresAt })}
         />
-        <ManagedTextField
-          label={msg(
-            'managedAgents.credentialVaults.credentialDialog.envOAuthRefreshToken',
-            'Refresh token (optional)',
-          )}
-          type="password"
-          value={values.envOAuthRefreshToken}
-          onChange={(envOAuthRefreshToken) => onChange({ envOAuthRefreshToken })}
-        />
-      </div>
-      <ManagedTextField
-        label={msg('managedAgents.credentialVaults.credentialDialog.envOAuthExpiresAt', 'Expires at (optional)')}
-        value={values.envOAuthExpiresAt}
-        placeholder="2026-11-06T10:00:00Z"
-        onChange={(envOAuthExpiresAt) => onChange({ envOAuthExpiresAt })}
-      />
+      </OptionalCredentialFields>
       <FieldDescription>
         {msg(
           'managedAgents.credentialVaults.credentialDialog.envOAuthHint',

@@ -19,6 +19,7 @@ import (
 	"github.com/pressly/goose/v3"
 	"github.com/superduck-ai/open-managed-agents/internal/config"
 	"github.com/superduck-ai/open-managed-agents/internal/db"
+	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	"github.com/superduck-ai/open-managed-agents/internal/platformoauth"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
 	localkeys "github.com/superduck-ai/open-managed-agents/internal/secrets/local"
@@ -359,4 +360,27 @@ func TestOAuthProviderFridayImportPostgres(t *testing.T) {
 		t.Fatal("Friday 只读预检未统计两个内置行", err)
 	}
 
+}
+
+func TestOAuthProviderMigrationUnconfiguredLogoPostgres(t *testing.T) {
+	database, service, _ := migrationDatabase(t)
+	if err := database.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	created, err := platformadmin.NewOAuthProviderService(database, service, nil).Create(t.Context(), platformadmin.Actor{AccountUUID: uuid.NewV4().String()}, platformadmin.OAuthProviderCreateInput{
+		Name: "Unconfigured", LogoURL: "https://example.test/logo.png", AuthorizeEndpoint: "https://example.test/authorize", TokenEndpoint: "https://example.test/token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, apply := range []bool{false, true} {
+		var output bytes.Buffer
+		if err := migrate(t.Context(), database, service, legacyClient{}, legacyClient{}, apply, &output, slog.Default()); err != nil {
+			t.Fatalf("最新 schema 双空客户端无法预检或重入：%v", err)
+		}
+	}
+	preserved, err := database.GetPlatformOAuthProviderByExternalID(t.Context(), created.ID)
+	if err != nil || preserved.LogoURL != created.LogoURL || preserved.ClientIDEnvelope != nil || preserved.ClientSecretEnvelope != nil {
+		t.Fatalf("重入修改了未配置客户端：%v", err)
+	}
 }

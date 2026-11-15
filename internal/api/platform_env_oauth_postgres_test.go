@@ -683,3 +683,31 @@ func TestEnvOAuthCustomEncryptedSnapshotPostgres(t *testing.T) {
 		t.Fatal(result.Body.String())
 	}
 }
+
+func TestOAuthProviderOptionalClientLogoPostgres(t *testing.T) {
+	f := newEnvOAuthFixture(t)
+	service := platformadmin.NewOAuthProviderService(f.database, f.secretSvc, nil)
+	actor := platformadmin.Actor{AccountUUID: uuid.NewV4().String()}
+	created, err := service.Create(t.Context(), actor, platformadmin.OAuthProviderCreateInput{
+		Name: "Optional client", LogoURL: "https://example.test/logo.png",
+		AuthorizeEndpoint: "https://example.test/authorize", TokenEndpoint: "https://example.test/token",
+	})
+	if err != nil || created.Configured {
+		t.Fatalf("保存未配置客户端失败：%+v，%v", created, err)
+	}
+	row, err := f.database.GetPlatformOAuthProviderByExternalID(t.Context(), created.ID)
+	if err != nil || row.LogoURL != created.LogoURL || row.ClientIDEnvelope != nil || row.ClientSecretEnvelope != nil {
+		t.Fatalf("持久化结果错误：%+v，%v", row, err)
+	}
+	if _, err := f.server.envOAuthProviders.ResolveEnvOAuthProvider(t.Context(), created.ProviderKey); err == nil {
+		t.Fatal("未配置客户端允许发起授权")
+	}
+	cleared, err := service.Update(t.Context(), actor, created.ID, platformadmin.OAuthProviderUpdateInput{ExpectedVersion: created.Version, LogoURL: new("")})
+	if err != nil || cleared.LogoURL != "" || cleared.Configured {
+		t.Fatalf("清除 Logo 失败：%+v，%v", cleared, err)
+	}
+	configured, err := service.Update(t.Context(), actor, created.ID, platformadmin.OAuthProviderUpdateInput{ExpectedVersion: cleared.Version, ClientID: new("client"), ClientSecret: new("secret")})
+	if err != nil || !configured.Configured {
+		t.Fatalf("后续配置失败：%+v，%v", configured, err)
+	}
+}

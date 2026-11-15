@@ -18,7 +18,7 @@ import { channelConnectionStatus, channelConnectionStatusNotice } from './status
 import { ChannelSessionsPanel } from './ChannelSessionsPanel';
 import { listChannelEnvironments } from './channelEnvironments';
 import { useChannelResources } from './channelResources';
-import feishuLogo from './feishu.ico';
+import feishuLogo from '../../../shared/icons/assets/feishu.ico';
 
 export function ChannelDetailPage() {
   const location = useLocation();

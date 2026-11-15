@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
-import { productIcons } from '../../../shared/icons/product-icons';
+import { OAuthProviderAvatar } from '../../../shared/icons/oauth-provider-avatar';
 import { Button } from '../../../shared/ui/button';
 import { ResourcePageHeader } from '../../../shared/ui/resource-page-header';
 import { ResourceListState } from '../../../shared/ui/resource-list-state';
@@ -117,19 +117,7 @@ export function OAuthProvidersPage() {
               <DataTableRow key={provider.id} clickable onClick={() => setEditing(provider)}>
                 <DataTableCell edge="start" className="font-medium">
                   <span className="flex items-center gap-2">
-                    {provider.logo_url ? (
-                      <img
-                        src={provider.logo_url}
-                        alt=""
-                        referrerPolicy="no-referrer"
-                        className="size-6 shrink-0 rounded-md object-contain"
-                      />
-                    ) : (
-                      <productIcons.oauth
-                        aria-hidden
-                        className="size-6 shrink-0 rounded-md border border-border p-1 text-muted-foreground"
-                      />
-                    )}
+                    <OAuthProviderAvatar providerKey={provider.provider_key} logoUrl={provider.logo_url} />
                     <span>
                       {provider.builtin
                         ? msg(`platformAdmin.oauthManagement.${provider?.provider_key.slice(8)}`, provider?.name ?? '')

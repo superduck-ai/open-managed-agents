@@ -2,7 +2,7 @@ import { useContext } from 'react';
 import { Link } from '@tanstack/react-router';
 import { AuthContext } from '../../../shared/auth/context';
 import { useI18n } from '../../../shared/i18n';
-import { productIcons } from '../../../shared/icons/product-icons';
+import { OAuthProviderAvatar } from '../../../shared/icons/oauth-provider-avatar';
 import { Button } from '../../../shared/ui/button';
 import { FieldDescription } from '../../../shared/ui/field';
 import { ManagedSelectField, ManagedTextField } from '../components/common';
@@ -39,19 +39,7 @@ export function EnvOAuthCredentialFields({
     label: provider.builtin
       ? msg(`platformAdmin.oauthManagement.${provider.id.slice(8)}`, provider.name)
       : provider.name,
-    icon: provider.logo_url ? (
-      <img
-        src={provider.logo_url}
-        alt=""
-        referrerPolicy="no-referrer"
-        className="size-6 shrink-0 rounded-md object-contain"
-      />
-    ) : (
-      <productIcons.oauth
-        aria-hidden
-        className="size-6 shrink-0 rounded-md border border-border p-1 text-muted-foreground"
-      />
-    ),
+    icon: <OAuthProviderAvatar providerKey={provider.id} logoUrl={provider.logo_url} />,
   }));
   const selectableOptions =
     secretNameLocked && selected ? options.filter((option) => option.id === selected.id) : options;

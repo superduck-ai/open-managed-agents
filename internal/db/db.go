@@ -391,7 +391,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	oauthVersion, err := d.OAuthMigrationVersion(ctx)
+	oauthVersion, err := d.schemaVersion(ctx)
 	if err != nil {
 		return err
 	}

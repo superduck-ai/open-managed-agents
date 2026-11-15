@@ -73,15 +73,3 @@ func TestPlatformOAuthProviderMapperBuilders(t *testing.T) {
 		wantSQLFragments:  []string{"protected = false", "version = $2", "DELETE FROM platform_oauth_providers"},
 	})
 }
-
-func TestPlatformOAuthProviderClientEnvelopeMapper(t *testing.T) {
-	params := upsertPlatformOAuthProviderParams{UUID: "provider-uuid", Version: 2, ClientIDEnvelope: new("id-envelope"), ClientSecretEnvelope: new("secret-envelope")}
-	assertMapperBuilderContract(t, mapperBuilderContract{
-		statement: platformOAuthProviderMapperUpdateClientEnvelopesByUUIDStatement,
-		bound:     buildPlatformOAuthProviderMapperUpdateClientEnvelopesByUUID(yourbatis.DialectPostgres, params),
-		wantID:    "PlatformOAuthProviderMapper.UpdateClientEnvelopesByUUID", wantKind: yourbatis.StatementUpdate,
-		wantArgumentNames:          []string{"params.ClientIDEnvelope", "params.ClientSecretEnvelope", "params.UpdatedAt", "params.UUID", "params.Version"},
-		wantSensitiveArgumentNames: []string{"params.ClientIDEnvelope", "params.ClientSecretEnvelope"},
-		wantSQLFragments:           []string{"UPDATE platform_oauth_providers", "version = version + 1", "RETURNING"},
-	})
-}

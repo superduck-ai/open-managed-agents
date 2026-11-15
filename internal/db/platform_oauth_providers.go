@@ -221,7 +221,7 @@ func auditBuiltinOAuthSeed(ctx context.Context, logger *slog.Logger, provider Pl
 }
 
 func (d *DB) auditOAuthSeedAfterMigrations(ctx context.Context, before int64) error {
-	after, err := d.OAuthMigrationVersion(ctx)
+	after, err := d.schemaVersion(ctx)
 	if err != nil {
 		return err
 	}
@@ -239,19 +239,4 @@ func (d *DB) auditOAuthSeedAfterMigrations(ctx context.Context, before int64) er
 		auditBuiltinOAuthSeed(ctx, d.logger, provider)
 	}
 	return nil
-}
-
-func (d *DB) UpdatePlatformOAuthProviderClientEnvelopes(ctx context.Context, provider PlatformOAuthProvider) (PlatformOAuthProvider, error) {
-	params, err := platformOAuthProviderUpsertParams(provider)
-	if err != nil {
-		return PlatformOAuthProvider{}, err
-	}
-	row, err := NewPlatformOAuthProviderMapper(d.mapperDB).UpdateClientEnvelopesByUUID(ctx, params)
-	if errors.Is(err, sql.ErrNoRows) {
-		return PlatformOAuthProvider{}, ErrVersionConflict
-	}
-	if err != nil {
-		return PlatformOAuthProvider{}, err
-	}
-	return row.provider()
 }

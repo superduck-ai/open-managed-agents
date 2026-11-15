@@ -29,13 +29,13 @@ erDiagram
 
 Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 
-远程迁移 `00118_env_oauth_builtin_client_id.sql` 清除了飞书 flow 的客户端 ID；自定义快照保持不变，回滚只移除约束，不恢复清除值。增量 `00119_builtin_oauth_provider.sql` 增加受保护身份、默认值、版本和可空信封字段，seed 飞书元数据行；`00120_seal_oauth_client_ids.sql` 在断言全部历史自定义 ID 已回填后删除两表明文列。不得修改旧迁移。两个阶段之间只能停机维护，不允许运行普通业务进程。Down 拒绝重建明文；恢复旧二进制必须恢复升级前配套数据库与密钥备份。
+远程迁移 `00118_env_oauth_builtin_client_id.sql` 清除了飞书 flow 的客户端 ID；自定义快照保持不变，回滚只移除约束，不恢复清除值。增量 `00119_builtin_oauth_provider.sql` 增加受保护身份、默认值、版本和可空信封字段，seed 飞书元数据行；`00120_seal_oauth_client_ids.sql` 在断言全部历史自定义 ID 已回填后删除两表明文列。不得修改旧迁移。当前启动按迁移顺序完成最终 schema，不提供历史中间版本的数据回填工具。Down 拒绝重建明文；恢复旧二进制必须恢复升级前配套数据库与密钥备份。
 
-飞书永久使用 `external_id=poap_FeishuBuiltinOAuthClient`、`builtin_key=feishu`、`protected=true`，UUID 由数据库生成并保留。自定义行 builtin_key 为空、protected 为 false、创建人非空。CHECK 约束保护身份映射及信封成对状态，Mapper 删除额外要求 `protected=false`。自定义名称部分唯一索引允许历史自定义 `Feishu` 与 seed 并存；保留 external_id 冲突使迁移失败，不收编或覆盖既有记录。`version>0`，管理更新、导入和密钥重新包装均 CAS 递增。
+飞书永久使用 `external_id=poap_FeishuBuiltinOAuthClient`、`builtin_key=feishu`、`protected=true`，UUID 由数据库生成并保留。自定义行 builtin_key 为空、protected 为 false、创建人非空。CHECK 约束保护身份映射及信封成对状态，Mapper 删除额外要求 `protected=false`。自定义名称部分唯一索引允许历史自定义 `Feishu` 与 seed 并存；保留 external_id 冲突使迁移失败，不收编或覆盖既有记录。`version>0`，管理更新和密钥重新包装均 CAS 递增。
 
 `00122_require_custom_oauth_client_envelopes.sql` 恢复双信封 CHECK 内置分支的 `builtin_key IS NOT NULL` 守卫，避免 PostgreSQL 的 NULL 语义放行自定义双空信封。自定义行必须同时具有两个通过结构校验的信封；飞书与 Friday 仍允许双空未配置状态，均不允许单空。合法存量行无须改写即可升级；若 00121 已写入双空自定义行，00122 原子失败并保留版本及记录，须在停机维护期间补齐有效加密凭据后重试，不自动删除或伪造凭据。真实 PostgreSQL 回归覆盖插入、更新、存量升级失败与修复后重试，以及既有身份、保护、信封结构和版本约束。
 
-`00123_env_oauth_flows_processing_status.sql` 把 `env_oauth_flows_status_check` 扩展为 `pending/processing/completed/failed/expired`，支撑回调认领状态；该迁移由常规启动迁移应用，离线维护工具仍以 00122 为停机窗口终点，可接受已到 00123 的数据库。Down 移除 `processing`，因此降级前必须确认没有进行中的认领。
+`00123_env_oauth_flows_processing_status.sql` 把 `env_oauth_flows_status_check` 扩展为 `pending/processing/completed/failed/expired`，支撑回调认领状态；该迁移由常规启动迁移应用。Down 移除 `processing`，因此降级前必须确认没有进行中的认领。
 
 两个客户端字段分别使用现有 `secrets.Service.Seal/Open`，随机 DEK 与 nonce 各自独立。secret 的 AAD 为 `platform/platform/platform_oauth_providers/<external_id>`；ID 的最后一项为 `<external_id>:client_id`。flow ID 绑定实际组织 UUID、工作区 UUID、`env_oauth_flows`、flow external_id。绑定集中在 `internal/platformoauth`；换字段、复制到另一行或凭证均无法解密。KMS 调用在数据库事务之外执行，双信封用同一次 CAS 原子写入。
 
@@ -175,26 +175,11 @@ ENV OAuth 表单将手工 access token、refresh token 与过期时间收在「�
 
 编辑弹窗提供独立「重新授权」入口，复用 start 接口及同名同服务方原地更新合同。入口要求共享确认、合法网络配置及服务方已配置；保存元数据与授权是独立操作。授权等待期间允许取消并关闭弹窗；授权失败保留草稿供重试，匹配 flow 的成功回调刷新凭证列表并关闭编辑弹窗。回归覆盖启动失败重试、目标变量保持、成功回调和不调用手工保存。
 
-## 离线升级与部署
+## 初始化与部署
 
-旧部署块 `vault.feishu_oauth_client` 已从普通 Config 删除；出现该键时明确要求导入后移除，运行时没有配置回退、自动导入、双读或双写。门户 SSO、飞书消息渠道和 `vault.platform_oauth_clients` 保持各自原有来源。
+本功能没有旧部署兼容需求。应用启动通过现有 goose 入口执行 SQL 迁移并初始化服务方记录；客户端在 OAuth 管理页配置。提供可用的信封加密配置后即可启用授权。
 
-1. 备份数据库、旧配置和匹配的主密钥；准备不含旧飞书块的当前 CONFIG_FILE。旧文件通过受控路径单独传入，不接受命令行 secret。
-2. 默认只读预检：`CONFIG_FILE=/etc/oma/config.yaml go run ./cmd/oauth-provider-migrate --legacy-config /secure/legacy.yaml`。旧飞书块均缺失可保持未配置，半配置失败；预检不会执行 schema 或数据写入，输出 `success=<已回填> pending=<待回填> skipped=<无需处理> failed=0`，`pending` 是 `--apply` 前判断是否真有数据要迁移的依据。预检被信号取消时以 `canceled` 非零退出，不计入数据失败。
-3. 停止共享该数据库的 API、worker 和其他写入方，再加 `--apply`。命令获取 goose 会话维护锁，仅前进到 00119；分页对全部状态的自定义 provider/flow ID Seal/Open 往返验证并按 UUID/旧值 CAS 回填，校验原 secret 可解密；重入验证已有信封并跳过，不重新生成密文。
-4. 飞书两信封均空才原子导入旧配置；已有 DB 配置仅校验并跳过，绝不覆盖管理员最新值。KMS、坏信封、半配置或 CAS 冲突非零退出，保留可续跑状态。
-5. 全部回填完成再前进到 00120，断言并删除明文列，真实读取解密验证。随后前进到 00121 seed Friday，再应用 00122 收紧自定义凭据约束；已到 00122 只校验或补齐未配置内置行，绝不降级。输出仅含版本、行 UUID、计数和白名单错误码。
-6. 从部署源、人工配置、初始化模板及生成来源移除旧块，再按环境正常生成并启动；不能只修改生成配置。旧配置与备份按既有敏感文件策略清理或隔离。
-
-```mermaid
-flowchart LR
-  P[只读预检与备份] --> S[停止写入方并取得维护锁]
-  S --> E[00119 扩展与 seed]
-  E --> B[加密回填历史 ID 并校验旧 secret]
-  B --> I[仅未配置时导入旧飞书客户端]
-  I --> C[00120 断言并删除明文列]
-  C --> R[移除旧配置并启动 DB 单一来源服务]
-```
+不提供旧飞书配置导入、历史明文客户端分页回填、分阶段 schema 升级或相应维护 CLI。已有 SQL 迁移文件及其约束回归测试保留，当前版本的密钥轮换仍使用 `cmd/vault-migrate`。
 
 保留 `builtin:feishu`、已有 credential auth、占位符、host 范围及 refresh lease/CAS 合同。飞书 callback 使用当前 DB 客户端，自定义 callback 校验授权开始时的 provider_version 后，使用同一版本的 ID 快照与 secret，refresh 使用当前客户端。更换应用可能使旧 token/refresh token 需要重新授权；不新增旧 secret 历史或在途兼容分支。维护超过 flow 的 15 分钟 TTL 时重新发起授权。
 
@@ -209,8 +194,6 @@ flowchart LR
   `processing` 认领与完成失败的响应。
 - `internal/db`：`Claim` 的 SQL 与敏感绑定标记；`Complete` 只接受 `processing`，`Fail` 接受 `pending`/`processing`。
 - `internal/platformadmin`：名称按字符计数、`prod` 拒绝 `http` 端点。
-- `internal/config`：普通服务拒绝遗留飞书块并给出离线导入指引。
-- `cmd/oauth-provider-migrate`（`integration`）：真实 00118 升级、空库、四状态回填、名称/保留 ID 冲突、阻断与续跑、无明文列/外键、重入和已有配置保护。
 - `cmd/vault-migrate`：平台双信封/flow 单信封 CAS、跨 provider 和 local 版本选择、失败整行不变，轮换后 Open 与本地 stub OAuth 刷新。
 - 前端：内置表格行、固定字段只读、最小 PATCH、空 secret 保留、首配/换 ID 校验、并发提示、Vault 未配置禁授权与手工保存、中英文键一致。
 
@@ -225,15 +208,15 @@ Friday 授权端点为 `https://friday-tx.seewo.com/open/api/oauth/authorize`，
 
 上游依据是 Friday 仓库 `OAuthDiscoveryController.kt`、`OAuthController.kt`、`OAuthService.kt` 和 `docs/oauth-configuration.md`：公网 origin 可由 `friday.oauth.public-url` 覆盖，客户端在上游通过配置中心或环境注入的 `friday.oauth.clients` JSON 数组注册，字段为 `id`、`secret`、`name`、`redirectUris`。仓库文档的 `friday-bridge` 是示例 ID，不是已确认生产应用，不能直接 seed。`friday.oauth.signing-secret` 是上游签名密钥，不是 OAuth 客户端 secret，禁止作为客户端导入。
 
-Friday 客户端只通过 OAuth 管理页配置，不提供独立的配置文件导入入口。离线维护命令继续负责旧飞书配置导入及历史明文客户端回填；密钥轮换覆盖飞书、Friday、自定义客户端及 PKCE verifier。
+Friday 客户端通过 OAuth 管理页配置；密钥轮换覆盖飞书、Friday、自定义客户端及 PKCE verifier。
 
 回调继续使用 OMA 的 `/oauth/vault/env-success`。在上游 `friday.oauth.clients.redirectUris` 精确登记实际 OMA HTTPS 回调地址，禁止用户信息及片段；文档中的桥接示例回调不作为 OMA 回调。Friday flow 与飞书一致不保存客户端 ID 信封，回调读取当前 Friday 客户端；Friday 独有的随机 PKCE verifier 存在 `code_verifier_envelope` 中，AAD 为 flow 的租户/UUID 身份加 `:code_verifier` 后缀，回调解密提交 verifier，绝不把 verifier 放入 URL 或响应。00121 约束仅 Friday flow 必须携带该信封，其余 flow 为空；重新包装扫描同时覆盖自定义 ID 快照与 Friday verifier，并保持 NULL 与整行 CAS。已有自定义 flow 仍保留 ID 快照。管理页和 Vault 表单分别显示两个内置名称、标识和配置状态；未配置可保存手工 token，授权仍拒绝。Friday 的名称、端点、认证和编码不可编辑，scope 仅接受 `read`，客户端编辑、轮换、删除保护及权限沿用内置合同。
 
-验收覆盖 Friday seed、旧库 00120→00121、保留 ID 冲突、加密导入与重入、成对信封/身份约束、独立端点/Basic/form/S256、真实 PostgreSQL callback 凭证落库、拒绝删除、secret 不回显、AAD 隔离、跨版本重新包装、中文英文名称和前端首配。真实 PostgreSQL 集成使用 `integration` 标签与隔离临时 schema，上游换票由本地 HTTP fixture 驱动，不代表连接真实 Friday。
+验收覆盖 Friday seed、旧库 00120→00121、保留 ID 冲突、成对信封/身份约束、独立端点/Basic/form/S256、真实 PostgreSQL callback 凭证落库、拒绝删除、secret 不回显、AAD 隔离、跨版本重新包装、中文英文名称和前端首配。真实 PostgreSQL 集成使用 `integration` 标签与隔离临时 schema，上游换票由本地 HTTP fixture 驱动，不代表连接真实 Friday。
 
 ## 分支合并迁移编号
 
-保留远程已发布的 00116（API Key 运行身份）、00117（ENV OAuth）与 00118（内置飞书明文清理），SQL 内容不变。本地独有的四个增量迁移由 00118–00121 顺延至 00119–00122，SQL 内容不变；离线维护工具与测试同步使用新编号。旧本地编号的开发数据库不能直接继续迁移，须保留配套备份并在隔离数据库验证；不得修改已应用迁移记录来伪装升级。
+保留远程已发布的 00116（API Key 运行身份）、00117（ENV OAuth）与 00118（内置飞书明文清理），SQL 内容不变。本地独有的四个增量迁移由 00118–00121 顺延至 00119–00122，SQL 内容不变；约束测试使用对应编号。旧本地编号的开发数据库不能直接继续迁移，须保留配套备份并在隔离数据库验证；不得修改已应用迁移记录来伪装升级。
 
 ## 可选客户端配置与 Logo
 
@@ -243,7 +226,7 @@ Friday 客户端只通过 OAuth 管理页配置，不提供独立的配置文件
 
 管理表单将客户端 ID 和 Secret 同行放在令牌端点下方，Logo URL 可选。管理列表及 Vault 服务方选择器展示配置的 Logo；没有 URL 时使用现有图标。图片由浏览器直接加载且不发送 Referrer，后端不代理或抓取图片。
 
-离线客户端导入工具兼容 00124：历史 schema 读取 Logo 为空，导入只更新客户端信封并保留 Logo；最新 schema 的双空自定义客户端计为无需迁移，不尝试解密。密钥迁移同样跳过双空客户端。维护工具仍停在 00122 完成历史密文收口，普通应用启动继续应用后续迁移。
+查询直接读取当前 schema 的 Logo 字段，不保留旧 schema 回退；密钥轮换跳过双空客户端。
 
 ## ENV OAuth 刷新失败与请求策略
 

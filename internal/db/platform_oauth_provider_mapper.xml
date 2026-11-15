@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mapper namespace="PlatformOAuthProviderMapper">
     <sql id="columns">
-        uuid, external_id, name, COALESCE(to_jsonb(platform_oauth_providers)->>'logo_url', '') AS logo_url, authorize_endpoint, token_endpoint, scope, client_id_envelope,
+        uuid, external_id, name, logo_url, authorize_endpoint, token_endpoint, scope, client_id_envelope,
         client_secret_envelope, token_endpoint_auth_method, token_endpoint_encoding,
         created_by_platform_admin_uuid, created_at, updated_at, builtin_key, protected, version, default_secret_name, default_allowed_hosts
     </sql>
@@ -50,15 +50,6 @@
             client_secret_envelope = #{params.ClientSecretEnvelope,sensitive=true},
             token_endpoint_auth_method = #{params.TokenEndpointAuthMethod},
             token_endpoint_encoding = #{params.TokenEndpointEncoding},
-            updated_at = #{params.UpdatedAt}, version = version + 1
-        WHERE uuid = #{params.UUID} AND version = #{params.Version}
-        RETURNING <include refid="columns"/>
-    </update>
-
-    <update id="UpdateClientEnvelopesByUUID" result="returning" resultType="platformOAuthProviderRow">
-        UPDATE platform_oauth_providers
-        SET client_id_envelope = #{params.ClientIDEnvelope,sensitive=true},
-            client_secret_envelope = #{params.ClientSecretEnvelope,sensitive=true},
             updated_at = #{params.UpdatedAt}, version = version + 1
         WHERE uuid = #{params.UUID} AND version = #{params.Version}
         RETURNING <include refid="columns"/>

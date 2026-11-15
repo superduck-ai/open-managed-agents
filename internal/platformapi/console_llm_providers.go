@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"errors"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -264,27 +263,8 @@ func decodeLLMProviderRequest(w http.ResponseWriter, r *http.Request) (llmProvid
 	for index := range body.Models {
 		model := &body.Models[index]
 		model.Name = strings.TrimSpace(model.Name)
-		if utf8.RuneCountInString(model.Name) > 100 {
-			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "model name must contain at most 100 characters")
-			return llmProviderRequest{}, false
-		}
-		for _, value := range []*int{model.ContextWindow, model.MaxOutputTokens} {
-			if value != nil && (*value <= 0 || *value > 9007199254740991) {
-				writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "model capacities must be positive safe integers")
-				return llmProviderRequest{}, false
-			}
-		}
-		if model.ImageInput != nil {
-			image := model.ImageInput
-			for _, value := range []int{image.MaxImages, image.MaxRequestImageBytes, image.MaxImageBytes, image.MaxLongEdge, image.MaxPixels, image.TokensPerMegapixel} {
-				if value < 0 || int64(value) > llmproviders.MaxMessagesRequestBodyBytes {
-					writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "image input limits must be nonnegative integers within the proxy request limit")
-					return llmProviderRequest{}, false
-				}
-			}
-		}
-		if !validModelModalities(model.InputModalities) {
-			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, "model inputs must be a nonempty set of text/image")
+		if err := llmproviders.ValidateModelMetadata(*model); err != nil {
+			writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeConfigurationInvalid, err.Error())
 			return llmProviderRequest{}, false
 		}
 	}
@@ -425,19 +405,4 @@ func llmProviderBackend(value *string, fallback string) string {
 		return *value
 	}
 	return fallback
-}
-
-func validModelModalities(values []string) bool {
-	if values == nil {
-		return true
-	}
-	if len(values) == 0 || len(values) > 2 {
-		return false
-	}
-	for i, value := range values {
-		if (value != "text" && value != "image") || slices.Contains(values[:i], value) {
-			return false
-		}
-	}
-	return true
 }

@@ -58,7 +58,6 @@ func (c *HTTPUpstreamClient) Send(ctx context.Context, batch db.MessageBatch, re
 		c.database,
 		c.secrets,
 		batch.OrganizationUUID,
-		req.WorkspaceUUID,
 		modelID,
 	)
 	if errors.Is(err, llmproviders.ErrModelNotConfigured) || errors.Is(err, llmproviders.ErrAmbiguousModel) {

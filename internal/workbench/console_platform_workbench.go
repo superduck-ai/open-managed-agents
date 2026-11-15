@@ -495,7 +495,6 @@ func (h *workbenchHandler) handleWorkbenchModels(w http.ResponseWriter, r *http.
 		r.Context(),
 		h.database,
 		principal.OrganizationUUID,
-		principal.WorkspaceUUID,
 	)
 	if err != nil {
 		writeWorkbenchModelsError(w, err)
@@ -738,7 +737,6 @@ func (h *workbenchHandler) resolveWorkbenchUpstream(r *http.Request, modelID str
 		h.database,
 		h.secrets,
 		principal.OrganizationUUID,
-		principal.WorkspaceUUID,
 		modelID,
 	)
 	if err != nil {

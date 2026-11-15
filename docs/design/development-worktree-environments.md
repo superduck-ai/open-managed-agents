@@ -223,15 +223,14 @@ Compose 的 init-envd 与 e2b-local 使用生成的 `stack.env` 中的 `OMA_E2B_
 
 ```text
 组织：OMA Local
+├── model providers
 └── 用户：test@oma.ai，组织管理员
     ├── default，默认 workspace
     │   ├── default-key-1
-    │   ├── default-key-2
-    │   └── model providers
+    │   └── default-key-2
     └── secondary，普通 workspace
         ├── secondary-key-1
-        ├── secondary-key-2
-        └── model providers
+        └── secondary-key-2
 ```
 
 - `test@oma.ai` 可以访问两个 workspace，并作为四个 API key 的创建人。
@@ -320,16 +319,17 @@ providers:
 
 - 支持现有 `messages` 和 `chat_completions` backend。
 - 默认开发配置直接使用 `api_key`。解析器仍支持 `api_key_env` 和 `api_key_file`，三者必须三选一。
-- 两个 workspace 分别创建 provider 记录，使用同一组文件定义；作用域保持 workspace 专属。
-- 文件中的 `slug` 是新建记录的候选值，省略时使用 `default`。分配时检查整个组织（含组织级及其他 workspace 的连接），冲突时依次尝试 `-2`、`-3` 等后缀，并将结果限制在 32 字符内。例如同一个 `compatible` 定义在两个 workspace 中可以分别得到 `compatible` 和 `compatible-2`；模型引用使用数据库中的实际 slug。
+- 每个文件定义在组织中创建一条 provider，两个 workspace 使用同一组织模型目录。新连接的 `created_by_account_uuid` 为 NULL，表示系统创建。
+- 文件中的 `slug` 是新建记录的候选值，省略时使用 `default`。分配时检查整个组织，冲突时依次尝试 `-2`、`-3` 等后缀，并将结果限制在 32 字符内。模型引用使用数据库中的实际 slug。
 - 重跑优先按状态登记的 external ID 查找，保留实际 slug，不重分配或改写模型引用。旧状态没有 `input_slug` 时，首次重跑沿用数据库身份和迁移后的 slug，并登记当前文件的候选值；之后修改该值会报错，包括 `--update`。已登记记录删除后报错，不按同名连接替换。
-- 创建已提交但 provider 阶段状态尚未保存时，仅按所属 workspace 内唯一的名称恢复身份；同名多条记录时报错，避免接管错误连接。已有登记不受同名显示名称影响。
-- `--update` 继续更新原记录的地址、协议、模型列表与密钥，保留 UUID、external ID、slug 和 workspace；未指定时拒绝覆盖差异。
+- 创建已提交但 provider 阶段状态尚未保存时，仅按组织内唯一的名称恢复身份；同名多条记录时报错，避免接管错误连接。已有登记不受同名显示名称影响。
+- `--update` 继续更新原记录的地址、协议、模型列表与密钥，保留 UUID、external ID、slug 和密钥绑定；未指定时拒绝覆盖差异。
+- 旧状态中的多个 workspace 登记按每条 external ID 继续管理，同一文件定义的全部登记在 `--update` 时一起更新。重新保存的 provider 状态只包含名称、external ID 和 input_slug。历史密钥绑定随原记录保留。
 - provider 密钥经现有 secrets 服务加密后写入当前环境数据库。
 - 模型列表以文件为准，初始化时不自动访问上游同步模型。
 - 保留现有 URL 校验和模型数量限制；不同 provider 可使用相同上游模型 ID，通过 `<slug>/<model_id>` 区分。
 - 显式 `slug` 遵守现有格式校验且在文件内唯一。
-- 文件中的 provider 名称作为所属 workspace 内的初始化引用；修改名称视为新增，旧记录不自动删除。
+- 文件中的 provider 名称作为所属组织内的初始化引用；修改名称视为新增，旧记录不自动删除。
 - 密钥是否一致不能通过 last4 判断，应通过现有 secrets 服务解密后在内存比较。
 
 现有 HTTP handler 中的校验和密钥封装应整理到共享业务层，由页面操作和初始化共同调用，避免维护两套业务规则。
@@ -411,13 +411,13 @@ flowchart TD
     Migration --> Identity[创建组织 用户 workspace 和成员关系]
     Identity --> Keys[创建四个客户端 API key]
     Keys --> Environments[按 workspace 初始化无限制网络的 default 环境]
-    Environments --> Providers[按 workspace 初始化 model providers]
+    Environments --> Providers[按组织初始化 model providers]
     Providers --> Complete[保存映射与完成状态 输出地址和凭据路径]
 ```
 
 使用小型 Go CLI 负责配置解析、初始化和状态查询，Shell 脚本只作为入口及进程管理层。不额外要求安装 `yq`、`psql` 或 `mc`。
 
-组织、用户、workspace、成员关系和 API key 的关联数据库写入保持事务一致。provider 按 workspace 逐个写入，沿用现有 slug 唯一约束。整个初始化跨数据库、文件和对象存储，采用可恢复阶段，不宣称全局事务。
+组织、用户、workspace、成员关系和 API key 的关联数据库写入保持事务一致。provider 按组织输入定义逐个写入，旧状态的多条登记分别恢复，沿用组织内 slug 唯一约束。整个初始化跨数据库、文件和对象存储，采用可恢复阶段，不宣称全局事务。
 
 API key 创建必须同时维护 Console 展示记录和实际鉴权记录，复用现有业务语义。不能只插入鉴权表导致页面不可见，或只插入展示表导致 key 无法使用。
 
@@ -596,7 +596,7 @@ flowchart TD
 
 后端绑定环境在停止旧实例前完成二进制构建；`start-locked` 使用机器本地 flock，从端口探测、配置写入、alias 注册一直保护到 lsof 确认该后端 PID 实际监听。通过继承的 FD 3 通知锁持有者释放锁，随后继续等待前台服务退出。不同 worktree 可以并行编译，但端口分配与开始监听串行执行。Herdr panel 与后台监听进程的归属均以 Git worktree 顶层目录精确匹配，嵌套 linked worktree 不作为当前仓库处理。Brain token 读取失败或为空时在启动前报错。
 
-Provider 回归通过 `TestAPIKeyRecoveryPostgreSQL` 在隔离 PostgreSQL 上验证双 workspace 的组织内唯一 slug、部分创建已提交后的重试、状态重载、旧状态及迁移后 slug 保留、显式更新与模型引用解析，以及同名歧义和已登记记录删除时的拒绝。`TestNextProviderSlug` 覆盖候选分配和长度边界。
+Provider 回归通过 `TestAPIKeyRecoveryPostgreSQL` 在隔离 PostgreSQL 上验证双 workspace 共享的组织目录、旧多条登记全部保留、部分创建已提交后的重试、状态重载、旧状态及迁移后 slug 保留、显式更新与模型引用解析，以及同名歧义和已登记记录删除时的拒绝。`TestNextProviderSlug` 覆盖候选分配和长度边界。
 
 ## 本地 OpenObserve
 

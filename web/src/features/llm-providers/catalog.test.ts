@@ -36,9 +36,18 @@ const moonshotRow = {
 };
 
 describe('LLM model catalog helpers', () => {
+  test('explains server ownership and creator authentication failures', () => {
+    expect(readableError({ code: 'llm_provider_management_denied' }, englishMessage)).toBe(
+      'Only the creator or an organization administrator can manage this provider.',
+    );
+    expect(readableError({ code: 'llm_provider_creator_required' }, englishMessage)).toBe(
+      'An authenticated account is required to create an LLM provider.',
+    );
+  });
+
   test('keeps organization and workspace models with the same raw ID separately addressable', () => {
     const organization = provider('llmprov_org', 'Organization', 'organization', ['shared-model', 'org-only']);
-    organization.scope = 'organization';
+
     const workspace = provider('llmprov_ws', 'Workspace', 'workspace', ['shared-model']);
     expect(catalogModels([organization, workspace])).toEqual([
       {
@@ -152,6 +161,8 @@ function englishMessage(_id: string, defaultMessage: string, values?: Record<str
 function provider(id: string, name: string, slug: string, modelIds: string[]): LLMProvider {
   return {
     type: 'llm_provider',
+    created_by: { account_uuid: 'acct_test', name: 'Test creator' },
+    can_manage: true,
     id,
     name,
     slug,

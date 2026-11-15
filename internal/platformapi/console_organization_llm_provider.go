@@ -15,7 +15,7 @@ import (
 
 func getConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, ok := visibleOrgUUID(w, r)
+		orgUUID, actor, ok := llmProviderScope(w, r, database)
 		if !ok {
 			return
 		}
@@ -28,14 +28,22 @@ func getConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 			internalError(w, "failed to load LLM provider")
 			return
 		}
-		writeJSON(w, http.StatusOK, formatLLMProvider(provider))
+		writeJSON(w, http.StatusOK, formatLLMProvider(provider, actor))
 	}
 }
 
 func putConsoleOrganizationLLMProvider(database *db.DB, secretService *secrets.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, ok := visibleOrgUUID(w, r)
+		orgUUID, actor, ok := llmProviderScope(w, r, database)
 		if !ok {
+			return
+		}
+		current, err := database.GetOrganizationLLMProvider(r.Context(), orgUUID)
+		if err != nil && !errors.Is(err, db.ErrNotFound) {
+			internalError(w, "failed to load LLM provider")
+			return
+		}
+		if err == nil && !authorizeLLMProviderManagement(w, actor, current) {
 			return
 		}
 		body, ok := decodeLLMProviderRequest(w, r)
@@ -50,16 +58,11 @@ func putConsoleOrganizationLLMProvider(database *db.DB, secretService *secrets.S
 		if !ok {
 			return
 		}
-		current, err := database.GetOrganizationLLMProvider(r.Context(), orgUUID)
 		if errors.Is(err, db.ErrNotFound) {
-			createConsoleOrganizationLLMProvider(w, r, database, secretService, orgUUID, body, name, baseURL, models)
+			createConsoleOrganizationLLMProvider(w, r, database, secretService, orgUUID, actor, body, name, baseURL, models)
 			return
 		}
-		if err != nil {
-			internalError(w, "failed to load LLM provider")
-			return
-		}
-		updateConsoleOrganizationLLMProvider(w, r, database, secretService, current, body, name, baseURL, models)
+		updateConsoleOrganizationLLMProvider(w, r, database, secretService, current, actor, body, name, baseURL, models)
 	}
 }
 
@@ -69,10 +72,14 @@ func createConsoleOrganizationLLMProvider(
 	database *db.DB,
 	secretService *secrets.Service,
 	orgUUID string,
+	actor consoleLLMProviderActor,
 	body llmProviderRequest,
 	name, baseURL string,
 	models db.LLMModels,
 ) {
+	if !authorizeLLMProviderCreation(w, actor) {
+		return
+	}
 	if body.APIKey == nil || strings.TrimSpace(*body.APIKey) == "" {
 		writeLLMProviderError(w, http.StatusBadRequest, llmProviderCodeAPIKeyRequired, "api_key is required")
 		return
@@ -85,17 +92,18 @@ func createConsoleOrganizationLLMProvider(
 	}
 	now := time.Now().UTC()
 	provider := db.LLMProvider{
-		UUID:             uuid.New().String(),
-		ExternalID:       externalID,
-		OrganizationUUID: orgUUID,
-		Name:             name,
-		Slug:             llmproviders.OrganizationSlug,
-		APIBackend:       llmProviderBackend(body.APIBackend, llmproviders.Messages),
-		BaseURL:          baseURL,
-		APIKeyLast4:      lastFour(apiKey),
-		Models:           models,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		UUID:                 uuid.New().String(),
+		ExternalID:           externalID,
+		OrganizationUUID:     orgUUID,
+		CreatedByAccountUUID: actor.accountUUID,
+		Name:                 name,
+		Slug:                 llmproviders.OrganizationSlug,
+		APIBackend:           llmProviderBackend(body.APIBackend, llmproviders.Messages),
+		BaseURL:              baseURL,
+		APIKeyLast4:          lastFour(apiKey),
+		Models:               models,
+		CreatedAt:            now,
+		UpdatedAt:            now,
 	}
 	if !sealLLMProviderAPIKey(w, r, secretService, &provider, apiKey) {
 		return
@@ -109,7 +117,7 @@ func createConsoleOrganizationLLMProvider(
 		internalError(w, "failed to create LLM provider")
 		return
 	}
-	writeJSON(w, http.StatusCreated, formatLLMProvider(created))
+	writeJSON(w, http.StatusCreated, formatLLMProvider(created, actor))
 }
 
 func updateConsoleOrganizationLLMProvider(
@@ -118,6 +126,7 @@ func updateConsoleOrganizationLLMProvider(
 	database *db.DB,
 	secretService *secrets.Service,
 	current db.LLMProvider,
+	actor consoleLLMProviderActor,
 	body llmProviderRequest,
 	name, baseURL string,
 	models db.LLMModels,
@@ -146,12 +155,12 @@ func updateConsoleOrganizationLLMProvider(
 		internalError(w, "failed to update LLM provider")
 		return
 	}
-	writeJSON(w, http.StatusOK, formatLLMProvider(updated))
+	writeJSON(w, http.StatusOK, formatLLMProvider(updated, actor))
 }
 
 func deleteConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, ok := visibleOrgUUID(w, r)
+		orgUUID, actor, ok := llmProviderScope(w, r, database)
 		if !ok {
 			return
 		}
@@ -164,7 +173,10 @@ func deleteConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 			internalError(w, "failed to load LLM provider")
 			return
 		}
-		err = database.DeleteLLMProvider(r.Context(), orgUUID, "", provider.ExternalID)
+		if !authorizeLLMProviderManagement(w, actor, provider) {
+			return
+		}
+		err = database.DeleteLLMProvider(r.Context(), orgUUID, provider.ExternalID)
 		if errors.Is(err, db.ErrNotFound) {
 			writeLLMProviderError(w, http.StatusNotFound, llmProviderCodeNotFound, "LLM provider not found")
 			return
@@ -179,7 +191,7 @@ func deleteConsoleOrganizationLLMProvider(database *db.DB) http.HandlerFunc {
 
 func syncConsoleOrganizationLLMProviderModels(database *db.DB, secretService *secrets.Service, client *http.Client, persist bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgUUID, ok := visibleOrgUUID(w, r)
+		orgUUID, actor, ok := llmProviderScope(w, r, database)
 		if !ok {
 			return
 		}
@@ -192,6 +204,6 @@ func syncConsoleOrganizationLLMProviderModels(database *db.DB, secretService *se
 			internalError(w, "failed to load LLM provider")
 			return
 		}
-		syncProviderFromUpstream(w, r, database, secretService, client, provider, persist)
+		syncProviderFromUpstream(w, r, database, secretService, client, provider, actor, persist)
 	}
 }

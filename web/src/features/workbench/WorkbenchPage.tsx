@@ -2147,7 +2147,7 @@ export function WorkbenchPage() {
     );
   }
 
-  const unavailable = workbenchUnavailable(loadError, models.length === 0, activeWorkspaceId, loadWorkbench);
+  const unavailable = workbenchUnavailable(loadError, models.length === 0, loadWorkbench);
   if (unavailable) {
     return unavailable;
   }
@@ -2862,22 +2862,14 @@ export function WorkbenchPage() {
   );
 }
 
-function workbenchUnavailable(loadError: unknown, noModels: boolean, workspaceId: string, retry: () => Promise<void>) {
+function workbenchUnavailable(loadError: unknown, noModels: boolean, retry: () => Promise<void>) {
   if (!loadError && !noModels) {
     return null;
   }
-  return <WorkbenchUnavailable loadError={loadError} workspaceId={workspaceId} retry={retry} />;
+  return <WorkbenchUnavailable loadError={loadError} retry={retry} />;
 }
 
-function WorkbenchUnavailable({
-  loadError,
-  workspaceId,
-  retry,
-}: {
-  loadError: unknown;
-  workspaceId: string;
-  retry: () => Promise<void>;
-}) {
+function WorkbenchUnavailable({ loadError, retry }: { loadError: unknown; retry: () => Promise<void> }) {
   const { msg } = useI18n();
   if (loadError && !isModelConfigurationUnavailable(loadError)) {
     return (
@@ -2900,9 +2892,7 @@ function WorkbenchUnavailable({
   return (
     <WorkbenchShell>
       <div className="flex h-full items-center justify-center px-6">
-        <LLMProviderRequired
-          onConfigure={() => window.location.assign(`/workspaces/${encodeURIComponent(workspaceId)}/llm-models`)}
-        />
+        <LLMProviderRequired onConfigure={() => window.location.assign('/settings/llm')} />
       </div>
     </WorkbenchShell>
   );

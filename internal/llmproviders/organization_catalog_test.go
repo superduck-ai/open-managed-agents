@@ -9,36 +9,35 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/db"
 )
 
-func TestOrganizationCatalogPreservesWorkspaceAmbiguity(t *testing.T) {
+func TestOrganizationCatalogRejectsOrganizationAmbiguity(t *testing.T) {
 	catalog := NewCatalog([]db.LLMProvider{
 		{Slug: "first", Models: db.LLMModels{{ID: "shared"}}},
 		{Slug: "second", Models: db.LLMModels{{ID: "shared"}}},
 	})
-	catalog.organization = []db.LLMProvider{{Slug: OrganizationSlug, Models: db.LLMModels{{ID: "shared"}}}}
+	catalog.providers = append(catalog.providers, []db.LLMProvider{{Slug: OrganizationSlug, Models: db.LLMModels{{ID: "shared"}}}}...)
 	_, err := catalog.Lookup("shared")
 	ambiguous, ok := errors.AsType[*AmbiguousModelError](err)
-	if !ok || !slices.Equal(ambiguous.Candidates, []string{"first/shared", "second/shared"}) {
-		t.Fatalf("Lookup(shared) = %v, want workspace ambiguity", err)
+	if !ok || !slices.Equal(ambiguous.Candidates, []string{"first/shared", "second/shared", "organization/shared"}) {
+		t.Fatalf("Lookup(shared) = %v, want organization ambiguity", err)
 	}
 	if _, err := catalog.Lookup("organization/missing"); !errors.Is(err, ErrModelNotConfigured) {
 		t.Fatalf("Lookup(organization/missing) = %v", err)
 	}
 }
 
-func TestOrganizationCatalogResolvesFallbackAndExplicitReferences(t *testing.T) {
+func TestOrganizationCatalogResolvesUniqueAndExplicitReferences(t *testing.T) {
 	catalog := NewCatalog([]db.LLMProvider{
 		{Slug: "first", APIBackend: "messages", Models: db.LLMModels{{ID: "shared"}, {ID: "workspace-only"}}},
 	})
-	catalog.organization = []db.LLMProvider{{
+	catalog.providers = append(catalog.providers, []db.LLMProvider{{
 		Slug: OrganizationSlug, APIBackend: "chat_completions", Models: db.LLMModels{{ID: "shared"}, {ID: "org-only"}, {ID: "vendor/model"}},
-	}}
+	}}...)
 	for _, test := range []struct {
 		modelID string
 		slug    string
 		model   string
 		backend string
 	}{
-		{"shared", "first", "shared", "messages"},
 		{"first/shared", "first", "shared", "messages"},
 		{"organization/shared", OrganizationSlug, "shared", "chat_completions"},
 		{"org-only", OrganizationSlug, "org-only", "chat_completions"},
@@ -58,21 +57,21 @@ func TestOrganizationCatalogResolvesFallbackAndExplicitReferences(t *testing.T) 
 	}
 }
 
-func TestOrganizationCatalogWorksWithoutWorkspaceProvider(t *testing.T) {
+func TestOrganizationCatalogWorksWithSingleProvider(t *testing.T) {
 	catalog := NewCatalog(nil)
-	catalog.organization = []db.LLMProvider{{Slug: OrganizationSlug, Models: db.LLMModels{{ID: "org-only"}}}}
+	catalog.providers = append(catalog.providers, []db.LLMProvider{{Slug: OrganizationSlug, Models: db.LLMModels{{ID: "org-only"}}}}...)
 	got, err := catalog.Lookup("org-only")
 	if err != nil || got.QualifiedModelID() != "organization/org-only" {
 		t.Fatalf("Lookup(org-only) = (%+v, %v)", got, err)
 	}
 }
 
-func TestOrganizationCatalogBackendsPreserveWorkspacePriority(t *testing.T) {
+func TestOrganizationCatalogBackendsOmitAmbiguousAliases(t *testing.T) {
 	catalog := NewCatalog([]db.LLMProvider{
 		{Slug: "first", APIBackend: Messages, Models: db.LLMModels{{ID: "shared"}, {ID: "ambiguous"}}},
 		{Slug: "second", APIBackend: ChatCompletions, Models: db.LLMModels{{ID: "ambiguous"}}},
 	})
-	catalog.organization = []db.LLMProvider{{Slug: OrganizationSlug, APIBackend: ChatCompletions, Models: db.LLMModels{{ID: "shared"}, {ID: "org-only"}, {ID: "ambiguous"}, {ID: "first/shared"}}}}
+	catalog.providers = append(catalog.providers, []db.LLMProvider{{Slug: OrganizationSlug, APIBackend: ChatCompletions, Models: db.LLMModels{{ID: "shared"}, {ID: "org-only"}, {ID: "ambiguous"}, {ID: "first/shared"}}}}...)
 	backends, err := catalog.RuntimeModels()
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +80,6 @@ func TestOrganizationCatalogBackendsPreserveWorkspacePriority(t *testing.T) {
 		"first/shared":              Messages,
 		"first/ambiguous":           Messages,
 		"second/ambiguous":          ChatCompletions,
-		"shared":                    Messages,
 		"organization/shared":       ChatCompletions,
 		"organization/org-only":     ChatCompletions,
 		"org-only":                  ChatCompletions,
@@ -95,10 +93,10 @@ func TestOrganizationCatalogBackendsPreserveWorkspacePriority(t *testing.T) {
 
 func TestMultipleOrganizationProvidersRejectAmbiguousBareModels(t *testing.T) {
 	catalog := NewCatalog(nil)
-	catalog.organization = []db.LLMProvider{
+	catalog.providers = append(catalog.providers, []db.LLMProvider{
 		{Slug: "kimi", APIBackend: Messages, Models: db.LLMModels{{ID: "shared"}, {ID: "kimi-only"}}},
 		{Slug: "deepseek", APIBackend: ChatCompletions, Models: db.LLMModels{{ID: "shared"}, {ID: "deepseek-only"}}},
-	}
+	}...)
 	if _, err := catalog.Lookup("shared"); !errors.Is(err, ErrAmbiguousModel) {
 		t.Fatalf("ambiguous model=%v", err)
 	}

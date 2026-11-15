@@ -18,6 +18,8 @@ test('editing a provider retains image budgets on its model', () => {
   const provider: LLMProvider = {
     api_backend: 'messages',
     type: 'llm_provider',
+    created_by: { account_uuid: 'acct_test', name: 'Test creator' },
+    can_manage: true,
     id: 'provider',
     name: 'Vision',
     slug: 'vision',

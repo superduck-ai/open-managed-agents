@@ -45,6 +45,9 @@ func TestCommandReadOnlyDefaultsAndHelp(t *testing.T) {
 	if err := run([]string{"--help"}, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
+	if err := run([]string{"--friday-config", "friday.yaml"}, io.Discard, io.Discard); err == nil {
+		t.Fatal("已删除的 Friday 导入参数仍可用")
+	}
 	if err := run([]string{"--client-secret", "private-secret"}, io.Discard, io.Discard); err == nil {
 		t.Fatal("CLI secret accepted")
 	}

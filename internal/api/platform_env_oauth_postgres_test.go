@@ -129,11 +129,15 @@ func newEnvOAuthFixtureWithFeishu(t *testing.T, clientID, clientSecret string) e
 func (f envOAuthFixture) createFlow(t *testing.T, tokenEndpoint, secretName string, expiresAt time.Time) db.EnvOAuthFlow {
 	t.Helper()
 	now := time.Now().UTC()
+	provider, err := f.database.GetPlatformOAuthProviderByBuiltinKey(t.Context(), "feishu")
+	if err != nil {
+		t.Fatal(err)
+	}
 	flow, err := f.database.CreateEnvOAuthFlow(t.Context(), db.EnvOAuthFlow{
 		UUID: uuid.NewV4().String(), ExternalID: uuid.NewV4().String(),
 		OrganizationUUID: f.organization, WorkspaceUUID: f.workspace.UUID,
 		VaultUUID: f.vault.UUID, VaultExternalID: f.vault.ExternalID,
-		ProviderKey: vaultsapi.EnvOAuthProviderBuiltinFeishu, SecretName: secretName,
+		ProviderVersion: provider.Version, ProviderKey: vaultsapi.EnvOAuthProviderBuiltinFeishu, SecretName: secretName,
 		DisplayName: "Feishu CLI", RedirectURL: "https://app.example.test/oauth/vault/env-success",
 		AuthorizeEndpoint: "https://accounts.feishu.cn/open-apis/authen/v1/authorize",
 		TokenEndpoint:     tokenEndpoint, Scope: "offline_access",
@@ -511,6 +515,7 @@ func TestEnvOAuthCallbackRejectsDifferentProviderPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	second.ProviderVersion = provider.Version
 	second.NetworkingType, second.AllowedHosts = "unrestricted", nil
 	second, err = f.database.CreateEnvOAuthFlow(t.Context(), second)
 	if err != nil {
@@ -638,12 +643,14 @@ func TestEnvOAuthBuiltinConcurrentConfigurationPostgres(t *testing.T) {
 
 func TestEnvOAuthCustomEncryptedSnapshotPostgres(t *testing.T) {
 	f := newEnvOAuthFixture(t)
+	requests := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		if err := r.ParseForm(); err != nil {
 			t.Error(err)
 		}
-		if r.Form.Get("client_id") != "old-client" || r.Form.Get("client_secret") != "new-secret" {
-			t.Error("回调未使用历史 ID 快照和当前 secret")
+		if r.Form.Get("client_id") != "new-client" || r.Form.Get("client_secret") != "new-secret" {
+			t.Error("回调混用了不同版本的客户端配置")
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "custom-access", "refresh_token": "custom-refresh", "expires_in": 3600})
 	}))
@@ -655,20 +662,24 @@ func TestEnvOAuthCustomEncryptedSnapshotPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"provider_id":"` + provider.ProviderKey + `","vault_id":"` + f.vault.ExternalID + `","workspace_id":"default","secret_name":"CUSTOM_TOKEN","networking":{"type":"unrestricted"},"redirect_url":"https://app.test/oauth/vault/env-success"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/organizations/"+f.organization+"/env-oauth/vault-auth/start", strings.NewReader(body))
-	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{UserExternalID: f.userID, OrganizationUUID: f.organization, WorkspaceExternalID: f.workspace.ExternalID}))
-	routeCtx := chi.NewRouteContext()
-	routeCtx.URLParams.Add("orgUuid", f.organization)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
-	recorder := httptest.NewRecorder()
-	f.server.handleEnvOAuthVaultAuthStart(recorder, req)
-	if recorder.Code != http.StatusOK {
-		t.Fatal(recorder.Body.String())
+	start := func() envOAuthVaultAuthStartResponse {
+		req := httptest.NewRequest(http.MethodPost, "/api/organizations/"+f.organization+"/env-oauth/vault-auth/start", strings.NewReader(body))
+		req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{UserExternalID: f.userID, OrganizationUUID: f.organization, WorkspaceExternalID: f.workspace.ExternalID}))
+		routeCtx := chi.NewRouteContext()
+		routeCtx.URLParams.Add("orgUuid", f.organization)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+		recorder := httptest.NewRecorder()
+		f.server.handleEnvOAuthVaultAuthStart(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatal(recorder.Body.String())
+		}
+		var started envOAuthVaultAuthStartResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &started); err != nil {
+			t.Fatal(err)
+		}
+		return started
 	}
-	var started envOAuthVaultAuthStartResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &started); err != nil {
-		t.Fatal(err)
-	}
+	started := start()
 	flow, err := f.database.GetEnvOAuthFlow(t.Context(), started.OAuthFlowID)
 	if err != nil || flow.ClientIDEnvelope == nil {
 		t.Fatal("start 未密封自定义客户端 ID")
@@ -679,8 +690,12 @@ func TestEnvOAuthCustomEncryptedSnapshotPostgres(t *testing.T) {
 	if _, err := service.Update(t.Context(), actor, provider.ID, platformadmin.OAuthProviderUpdateInput{ExpectedVersion: provider.Version, ClientID: new("new-client"), ClientSecret: new("new-secret")}); err != nil {
 		t.Fatal(err)
 	}
-	if result := f.callback(t, flow.ExternalID, "fixture-code"); !strings.Contains(result.Body.String(), `"status":"ok"`) {
-		t.Fatal(result.Body.String())
+	if result := f.callback(t, flow.ExternalID, "fixture-code"); !strings.Contains(result.Body.String(), `"error_code":"invalid_request"`) || requests != 0 {
+		t.Fatalf("配置已变化仍进行换票：%s requests=%d", result.Body.String(), requests)
+	}
+	restarted := start()
+	if result := f.callback(t, restarted.OAuthFlowID, "new-code"); !strings.Contains(result.Body.String(), `"status":"ok"`) || requests != 1 {
+		t.Fatalf("新配置无法完成授权：%s requests=%d", result.Body.String(), requests)
 	}
 }
 
@@ -709,5 +724,77 @@ func TestOAuthProviderOptionalClientLogoPostgres(t *testing.T) {
 	configured, err := service.Update(t.Context(), actor, created.ID, platformadmin.OAuthProviderUpdateInput{ExpectedVersion: cleared.Version, ClientID: new("client"), ClientSecret: new("secret")})
 	if err != nil || !configured.Configured {
 		t.Fatalf("后续配置失败：%+v，%v", configured, err)
+	}
+}
+
+func TestEnvOAuthReauthorizationPreservesNetworkingPostgres(t *testing.T) {
+	f := newEnvOAuthFixture(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"access_token":"synthetic-token","refresh_token":"synthetic-refresh","expires_in":3600}`))
+	}))
+	defer upstream.Close()
+	initial := f.createFlow(t, upstream.URL, "TOKEN", time.Now().Add(time.Minute))
+	if response := f.callback(t, initial.ExternalID, "first"); !strings.Contains(response.Body.String(), `"status":"ok"`) {
+		t.Fatal(response.Body.String())
+	}
+	completed, err := f.database.GetEnvOAuthFlow(t.Context(), initial.ExternalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := f.createFlow(t, upstream.URL, "TOKEN", time.Now().Add(time.Minute))
+	current, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, completed.CredentialExternalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(current.Auth, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["networking"] = json.RawMessage(`{"type":"limited","allowed_hosts":["restricted.example"]}`)
+	current.Auth, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.UpdateVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, current.ExternalID, current); err != nil {
+		t.Fatal(err)
+	}
+	if response := f.callback(t, pending.ExternalID, "second"); !strings.Contains(response.Body.String(), `"status":"ok"`) {
+		t.Fatal(response.Body.String())
+	}
+	saved, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, current.ExternalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(saved.Auth, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(fields["networking"]), "restricted.example") {
+		t.Fatalf("重新授权覆盖出网策略：%s", fields["networking"])
+	}
+}
+
+func TestEnvOAuthCompletionRollsBackPostgres(t *testing.T) {
+	f := newEnvOAuthFixture(t)
+	pending := f.createFlow(t, "https://token.test", "TOKEN", time.Now().Add(time.Minute))
+	now := time.Now().UTC()
+	credential := db.VaultCredential{UUID: uuid.NewV4().String(), ExternalID: "vcrd_atomic", OrganizationUUID: f.organization, WorkspaceUUID: f.workspace.UUID, VaultExternalID: f.vault.ExternalID, AuthType: "env_oauth", CredentialKey: "TOKEN", CreatedAt: now, UpdatedAt: now, Auth: json.RawMessage(`{"type":"env_oauth"}`), Metadata: json.RawMessage(`{}`), SecretPayload: json.RawMessage(`{"type":"env_oauth","access_token":"synthetic-token"}`)}
+	if err := vaultsapi.SealCredentialSecret(t.Context(), f.secretSvc, &credential); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.database.SaveEnvOAuthCredential(t.Context(), pending.ExternalID, credential, false); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("未认领 flow 被完成：%v", err)
+	}
+	if _, err := f.database.GetVaultCredential(t.Context(), f.workspace.UUID, f.vault.ExternalID, credential.ExternalID); !errors.Is(err, db.ErrNotFound) {
+		t.Fatalf("完成失败残留凭证：%v", err)
+	}
+	if claimed, err := f.database.ClaimEnvOAuthFlow(t.Context(), pending.ExternalID, now); err != nil || !claimed {
+		t.Fatal(err)
+	}
+	if _, err := f.database.SaveEnvOAuthCredential(t.Context(), pending.ExternalID, credential, true); !errors.Is(err, db.ErrVersionConflict) {
+		t.Fatalf("不存在的凭证更新成功：%v", err)
+	}
+	current, err := f.database.GetEnvOAuthFlow(t.Context(), pending.ExternalID)
+	if err != nil || current.Status != "processing" || current.CredentialExternalID != "" {
+		t.Fatalf("凭证失败未回滚 flow：%+v err=%v", current, err)
 	}
 }

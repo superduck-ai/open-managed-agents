@@ -2,9 +2,12 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/yourbatis"
 	"time"
 )
 
@@ -15,6 +18,7 @@ type EnvOAuthFlow struct {
 	WorkspaceUUID           string
 	VaultUUID               string
 	VaultExternalID         string
+	ProviderVersion         int64
 	ProviderKey             string
 	SecretName              string
 	DisplayName             string
@@ -59,6 +63,7 @@ func (d *DB) CreateEnvOAuthFlow(ctx context.Context, flow EnvOAuthFlow) (EnvOAut
 		WorkspaceUUID:           flow.WorkspaceUUID,
 		VaultUUID:               flow.VaultUUID,
 		VaultExternalID:         flow.VaultExternalID,
+		ProviderVersion:         flow.ProviderVersion,
 		ProviderKey:             flow.ProviderKey,
 		SecretName:              flow.SecretName,
 		DisplayName:             flow.DisplayName,
@@ -101,16 +106,34 @@ func (d *DB) ClaimEnvOAuthFlow(ctx context.Context, externalID string, claimedAt
 	return rowsAffected > 0, nil
 }
 
-func (d *DB) CompleteEnvOAuthFlow(ctx context.Context, externalID, credentialExternalID string, completedAt time.Time) error {
-	mapper := NewEnvOAuthFlowMapper(d.mapperDB)
-	rowsAffected, err := mapper.Complete(ctx, externalID, credentialExternalID, completedAt)
-	if err != nil {
-		return err
-	}
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+func (d *DB) SaveEnvOAuthCredential(ctx context.Context, flowID string, credential VaultCredential, existing bool) (VaultCredential, error) {
+	var saved VaultCredential
+	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
+		affected, err := NewEnvOAuthFlowMapper(executor).Complete(ctx, flowID, credential.ExternalID, credential.UpdatedAt)
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return ErrNotFound
+		}
+		if !existing {
+			saved, err = createVaultCredential(ctx, executor, credential)
+			return err
+		}
+		if err := requireCompleteSecretEnvelope(credential.SecretEnvelope); err != nil {
+			return err
+		}
+		row, err := NewVaultCredentialMapper(executor).UpdateByExternalID(ctx, vaultCredentialUpdateParams(credential.WorkspaceUUID, credential.VaultExternalID, credential.ExternalID, credential))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrVersionConflict
+		}
+		if err != nil {
+			return err
+		}
+		saved = row.credential()
+		return nil
+	})
+	return saved, err
 }
 
 func (d *DB) FailEnvOAuthFlow(ctx context.Context, externalID, errorCode string, failedAt time.Time) error {
@@ -151,6 +174,7 @@ func (r envOAuthFlowRow) flow() (EnvOAuthFlow, error) {
 		WorkspaceUUID:           r.WorkspaceUUID,
 		VaultUUID:               r.VaultUUID,
 		VaultExternalID:         r.VaultExternalID,
+		ProviderVersion:         r.ProviderVersion,
 		ProviderKey:             r.ProviderKey,
 		SecretName:              r.SecretName,
 		DisplayName:             r.DisplayName,

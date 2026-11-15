@@ -27,7 +27,7 @@ func TestEnvOAuthFlowMapperBuilders(t *testing.T) {
 		wantKind:  yourbatis.StatementInsert,
 		wantArgumentNames: []string{
 			"params.UUID", "params.ExternalID", "params.OrganizationUUID", "params.WorkspaceUUID",
-			"params.VaultUUID", "params.VaultExternalID", "params.ProviderKey", "params.SecretName",
+			"params.VaultUUID", "params.VaultExternalID", "params.ProviderVersion", "params.ProviderKey", "params.SecretName",
 			"params.DisplayName", "params.RedirectURL", "params.AuthorizeEndpoint", "params.TokenEndpoint",
 			"params.ClientIDEnvelope", "params.CodeVerifierEnvelope", "params.Scope", "params.TokenEndpointAuthMethod", "params.TokenEndpointEncoding",
 			"params.NetworkingType", "params.AllowedHosts", "params.Status", "params.CreatedByAPIKeyUUID",

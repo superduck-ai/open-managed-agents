@@ -21,6 +21,7 @@ const (
 var errEnvOAuthProviderKeyInvalid = errors.New("env_oauth provider is invalid")
 
 type EnvOAuthProviderSnapshot struct {
+	Version                 int64
 	ProviderKey             string
 	Name                    string
 	LogoURL                 string

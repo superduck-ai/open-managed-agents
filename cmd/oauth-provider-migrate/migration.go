@@ -56,13 +56,13 @@ func readLegacyClient(path string) (legacyClient, error) {
 	return client, nil
 }
 
-func migrate(ctx context.Context, database *db.DB, service *secrets.Service, legacy, friday legacyClient, apply bool, out io.Writer, logger *slog.Logger) error {
+func migrate(ctx context.Context, database *db.DB, service *secrets.Service, legacy legacyClient, apply bool, out io.Writer, logger *slog.Logger) error {
 	version, err := database.OAuthMigrationVersion(ctx)
 	if err != nil {
 		return errors.New("schema_unavailable")
 	}
 	fmt.Fprintf(out, "schema_version=%d\n", version)
-	if version > 124 {
+	if version > 125 {
 		return errors.New("schema_unsupported")
 	}
 	if !apply && version < 118 {
@@ -91,7 +91,7 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 		}
 	}
 	if version >= 119 {
-		result, err := importBuiltin(ctx, database, service, "feishu", legacy, apply, logger)
+		result, err := importFeishu(ctx, database, service, legacy, apply, logger)
 		if err != nil {
 			return err
 		}
@@ -103,11 +103,6 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 		if err := finalizeSchema(ctx, database, version, logger); err != nil {
 			return err
 		}
-		result, err := importBuiltin(ctx, database, service, "friday", friday, true, logger)
-		if err != nil {
-			return err
-		}
-		counts[result]++
 		if err := verifyFinalClients(ctx, database, service, logger); err != nil {
 			return err
 		}
@@ -116,15 +111,8 @@ func migrate(ctx context.Context, database *db.DB, service *secrets.Service, leg
 			return errors.New("schema_unavailable")
 		}
 		fmt.Fprintf(out, "schema_version=%d\n", finalVersion)
-	} else if version >= 121 {
-		result, err := importBuiltin(ctx, database, service, "friday", friday, false, logger)
-		if err != nil {
-			return err
-		}
-		counts[result]++
-	} else if friday.ClientID != "" {
-		counts[migrationPending]++
 	}
+
 	if err := ctx.Err(); err != nil {
 		return errors.New("canceled")
 	}
@@ -200,8 +188,8 @@ func migrateClient(ctx context.Context, database *db.DB, service *secrets.Servic
 	return migrationApplied, nil
 }
 
-func importBuiltin(ctx context.Context, database *db.DB, service *secrets.Service, builtinKey string, legacy legacyClient, apply bool, logger *slog.Logger) (migrationResult, error) {
-	provider, err := database.GetPlatformOAuthProviderByBuiltinKey(ctx, builtinKey)
+func importFeishu(ctx context.Context, database *db.DB, service *secrets.Service, legacy legacyClient, apply bool, logger *slog.Logger) (migrationResult, error) {
+	provider, err := database.GetPlatformOAuthProviderByBuiltinKey(ctx, "feishu")
 	if err != nil {
 		return migrationUnchanged, errors.New("builtin_missing")
 	}
@@ -209,7 +197,7 @@ func importBuiltin(ctx context.Context, database *db.DB, service *secrets.Servic
 		return migrationUnchanged, errors.New("builtin_client_incomplete")
 	}
 	if provider.ClientIDEnvelope != nil {
-		if _, err := platformoauth.NewResolver(database, service, logger).ResolveEnvOAuthProvider(ctx, "builtin:"+builtinKey); err != nil {
+		if _, err := platformoauth.NewResolver(database, service, logger).ResolveEnvOAuthProvider(ctx, "builtin:feishu"); err != nil {
 			return migrationUnchanged, errors.New("builtin_decryption_failed")
 		}
 		return migrationUnchanged, nil
@@ -234,7 +222,7 @@ func importBuiltin(ctx context.Context, database *db.DB, service *secrets.Servic
 		return migrationUnchanged, errors.New("builtin_save_failed")
 	}
 	logger.InfoContext(ctx, "platform oauth provider audit", "actor_type", "maintenance", "provider_uuid", provider.UUID,
-		"provider_key", "builtin:"+builtinKey, "action", "import", "changed_fields", []string{"client_id", "client_secret"}, "result", "success")
+		"provider_key", "builtin:feishu", "action", "import", "changed_fields", []string{"client_id", "client_secret"}, "result", "success")
 	return migrationApplied, nil
 }
 

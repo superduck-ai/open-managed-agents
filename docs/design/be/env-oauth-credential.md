@@ -112,8 +112,8 @@ sequenceDiagram
     A->>D: load flow
     A->>D: claim flow (pending -> processing)
     A->>P: token exchange(snapshot + client secret)
-    A->>D: seal credential / update same-name credential
-    A->>D: complete flow (processing -> completed)
+    A->>A: seal credential
+    A->>D: transaction: save credential + complete flow (processing -> completed)
     A-->>U: HTML postMessage(vault_oauth_complete, channel env-oauth)
 ```
 
@@ -196,7 +196,7 @@ flowchart LR
   C --> R[移除旧配置并启动 DB 单一来源服务]
 ```
 
-保留 `builtin:feishu`、已有 credential auth、占位符、host 范围及 refresh lease/CAS 合同。飞书 callback 使用当前 DB 客户端，自定义 callback 使用历史 ID 快照与当前 secret，refresh 使用当前客户端。更换应用可能使旧 token/refresh token 需要重新授权；不新增旧 secret 历史或在途兼容分支。维护超过 flow 的 15 分钟 TTL 时重新发起授权。
+保留 `builtin:feishu`、已有 credential auth、占位符、host 范围及 refresh lease/CAS 合同。飞书 callback 使用当前 DB 客户端，自定义 callback 校验授权开始时的 provider_version 后，使用同一版本的 ID 快照与 secret，refresh 使用当前客户端。更换应用可能使旧 token/refresh token 需要重新授权；不新增旧 secret 历史或在途兼容分支。维护超过 flow 的 15 分钟 TTL 时重新发起授权。
 
 ## 测试与验收
 
@@ -225,7 +225,7 @@ Friday 授权端点为 `https://friday-tx.seewo.com/open/api/oauth/authorize`，
 
 上游依据是 Friday 仓库 `OAuthDiscoveryController.kt`、`OAuthController.kt`、`OAuthService.kt` 和 `docs/oauth-configuration.md`：公网 origin 可由 `friday.oauth.public-url` 覆盖，客户端在上游通过配置中心或环境注入的 `friday.oauth.clients` JSON 数组注册，字段为 `id`、`secret`、`name`、`redirectUris`。仓库文档的 `friday-bridge` 是示例 ID，不是已确认生产应用，不能直接 seed。`friday.oauth.signing-secret` 是上游签名密钥，不是 OAuth 客户端 secret，禁止作为客户端导入。
 
-离线命令新增 `--friday-config /secure/friday.yaml`。文件只包含顶层 `client_id` 与 `client_secret`，均须填写，拒绝未知字段；应由受控配置源注入并限制为 0600，不将真实值提交仓库。默认只读预检，停机后 `--apply` 持维护锁前进至 00122，双信封同时为空才 Seal/Open 校验并 CAS 写入，已配置仅验证不覆盖。与 `--legacy-config` 可以同时使用，旧飞书导入语义保持。重新包装自动覆盖 Friday 两个字段，仍使用独立 AAD、整行 CAS、版本递增和安全审计。
+Friday 客户端只通过 OAuth 管理页配置，不提供独立的配置文件导入入口。离线维护命令继续负责旧飞书配置导入及历史明文客户端回填；密钥轮换覆盖飞书、Friday、自定义客户端及 PKCE verifier。
 
 回调继续使用 OMA 的 `/oauth/vault/env-success`。在上游 `friday.oauth.clients.redirectUris` 精确登记实际 OMA HTTPS 回调地址，禁止用户信息及片段；文档中的桥接示例回调不作为 OMA 回调。Friday flow 与飞书一致不保存客户端 ID 信封，回调读取当前 Friday 客户端；Friday 独有的随机 PKCE verifier 存在 `code_verifier_envelope` 中，AAD 为 flow 的租户/UUID 身份加 `:code_verifier` 后缀，回调解密提交 verifier，绝不把 verifier 放入 URL 或响应。00121 约束仅 Friday flow 必须携带该信封，其余 flow 为空；重新包装扫描同时覆盖自定义 ID 快照与 Friday verifier，并保持 NULL 与整行 CAS。已有自定义 flow 仍保留 ID 快照。管理页和 Vault 表单分别显示两个内置名称、标识和配置状态；未配置可保存手工 token，授权仍拒绝。Friday 的名称、端点、认证和编码不可编辑，scope 仅接受 `read`，客户端编辑、轮换、删除保护及权限沿用内置合同。
 
@@ -250,3 +250,9 @@ Friday 授权端点为 `https://friday-tx.seewo.com/open/api/oauth/authorize`，
 令牌解析器将刷新锁内重载及 CAS 重试得到的凭证状态返回给出网替换调用方。返回令牌后，以该状态重新检查当前目标主机，避免把新令牌按刷新前的旧域名范围注入；未覆盖的请求保留占位符。
 
 上游刷新成功但本地密封或保存失败时，使用原换票信封作条件清理，在脱离请求取消的短超时上下文内作废已消费的旧秘密，并返回需要重新授权。清理沿用数据库已有信封 CAS，不删除并发写入的新秘密。
+
+## 回调一致性
+
+迁移 00125 为授权流程增加 provider_version。授权开始时记录服务方版本；回调检测到版本变化或旧流程缺少版本时，不请求 Token 端点，返回 invalid_request 并要求重新发起授权。无需保存客户端 Secret 历史或增加在途配置兼容分支。
+
+重新授权只替换令牌与到期信息，保留凭证当前的网络范围、占位符和元数据；网络修改单独保存。创建／更新凭证和 flow 的 processing → completed 转换使用同一 Yourbatis 事务，任意一步失败都回滚。上游换票与密封仍在事务外，避免长时间持有数据库锁。

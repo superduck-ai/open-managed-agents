@@ -200,35 +200,39 @@ func (d *DB) ListVaultsPage(ctx context.Context, params ListVaultsPageParams) ([
 func (d *DB) CreateVaultCredential(ctx context.Context, credential VaultCredential) (VaultCredential, error) {
 	var created VaultCredential
 	err := d.mapperDB.Transaction(ctx, func(executor yourbatis.Executor) error {
-		vaultMapper := NewVaultMapper(executor)
-		vaultUUID, err := vaultMapper.FindActiveUUIDForUpdate(ctx, credential.WorkspaceUUID, credential.VaultExternalID)
-		if err != nil {
-			return mapNoRows(err)
-		}
-		credentialMapper := NewVaultCredentialMapper(executor)
-		activeCount, err := credentialMapper.CountActive(ctx, credential.WorkspaceUUID, vaultUUID)
-		if err != nil {
-			return err
-		}
-		if activeCount >= 20 {
-			return ErrLimitExceeded
-		}
-		credential.VaultUUID = vaultUUID
-		params, paramsErr := vaultCredentialInsertParams(credential)
-		if paramsErr != nil {
-			return paramsErr
-		}
-		row, err := credentialMapper.Insert(ctx, params)
-		if isUniqueViolation(err) {
-			return ErrDuplicate
-		}
-		if err != nil {
-			return err
-		}
-		created = row.credential()
-		return nil
+		var err error
+		created, err = createVaultCredential(ctx, executor, credential)
+		return err
 	})
 	return created, err
+}
+
+func createVaultCredential(ctx context.Context, executor yourbatis.Executor, credential VaultCredential) (VaultCredential, error) {
+	vaultUUID, err := NewVaultMapper(executor).FindActiveUUIDForUpdate(ctx, credential.WorkspaceUUID, credential.VaultExternalID)
+	if err != nil {
+		return VaultCredential{}, mapNoRows(err)
+	}
+	mapper := NewVaultCredentialMapper(executor)
+	activeCount, err := mapper.CountActive(ctx, credential.WorkspaceUUID, vaultUUID)
+	if err != nil {
+		return VaultCredential{}, err
+	}
+	if activeCount >= 20 {
+		return VaultCredential{}, ErrLimitExceeded
+	}
+	credential.VaultUUID = vaultUUID
+	params, err := vaultCredentialInsertParams(credential)
+	if err != nil {
+		return VaultCredential{}, err
+	}
+	row, err := mapper.Insert(ctx, params)
+	if isUniqueViolation(err) {
+		return VaultCredential{}, ErrDuplicate
+	}
+	if err != nil {
+		return VaultCredential{}, err
+	}
+	return row.credential(), nil
 }
 
 func (d *DB) GetVaultCredential(ctx context.Context, workspaceUUID, vaultExternalID, credentialExternalID string) (VaultCredential, error) {

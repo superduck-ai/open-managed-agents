@@ -87,7 +87,7 @@ func (r *Resolver) ResolveEnvOAuthProvider(ctx context.Context, providerKey stri
 
 func ProviderSnapshot(provider db.PlatformOAuthProvider) vaults.EnvOAuthProviderSnapshot {
 	return vaults.EnvOAuthProviderSnapshot{
-		ProviderKey: ProviderKey(provider), Name: provider.Name, LogoURL: provider.LogoURL, Builtin: provider.BuiltinKey != "",
+		Version: provider.Version, ProviderKey: ProviderKey(provider), Name: provider.Name, LogoURL: provider.LogoURL, Builtin: provider.BuiltinKey != "",
 		Configured:        provider.ClientIDEnvelope != nil && provider.ClientSecretEnvelope != nil,
 		AuthorizeEndpoint: provider.AuthorizeEndpoint, TokenEndpoint: provider.TokenEndpoint, Scope: provider.Scope,
 		TokenEndpointAuthMethod: provider.TokenEndpointAuthMethod, TokenEndpointEncoding: provider.TokenEndpointEncoding,

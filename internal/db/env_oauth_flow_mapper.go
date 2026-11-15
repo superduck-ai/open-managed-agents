@@ -15,6 +15,7 @@ type envOAuthFlowRow struct {
 	WorkspaceUUID           string         `db:"workspace_uuid"`
 	VaultUUID               string         `db:"vault_uuid"`
 	VaultExternalID         string         `db:"vault_external_id"`
+	ProviderVersion         int64          `db:"provider_version"`
 	ProviderKey             string         `db:"provider_key"`
 	SecretName              string         `db:"secret_name"`
 	DisplayName             string         `db:"display_name"`
@@ -45,6 +46,7 @@ type insertEnvOAuthFlowParams struct {
 	WorkspaceUUID           string
 	VaultUUID               string
 	VaultExternalID         string
+	ProviderVersion         int64
 	ProviderKey             string
 	SecretName              string
 	DisplayName             string

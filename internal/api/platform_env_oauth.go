@@ -208,6 +208,7 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 		WorkspaceUUID:           workspace.UUID,
 		VaultUUID:               vault.UUID,
 		VaultExternalID:         vault.ExternalID,
+		ProviderVersion:         provider.Version,
 		ProviderKey:             provider.ProviderKey,
 		SecretName:              secretName,
 		DisplayName:             displayName,
@@ -321,6 +322,11 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		})
 		return
 	}
+	if flow.ProviderVersion != provider.Version || flow.ProviderVersion == 0 {
+		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorInvalidRequest, now)
+		writeEnvOAuthCallback(w, envOAuthCallbackPayload{Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID, VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorInvalidRequest})
+		return
+	}
 	clientID := provider.ClientID
 	if !vaultsapi.IsBuiltinEnvOAuthProviderKey(flow.ProviderKey) {
 		clientID, err = platformoauth.OpenClientField(r.Context(), s.vaultSecrets, platformoauth.FlowClientIDBinding(flow), flow.ClientIDEnvelope)
@@ -367,15 +373,6 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
 			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
 			VaultID: flow.VaultExternalID, ErrorCode: errorCode,
-		})
-		return
-	}
-	if err := s.db.CompleteEnvOAuthFlow(r.Context(), flow.ExternalID, credentialID, now); err != nil {
-		s.logger.ErrorContext(r.Context(), "complete env oauth flow", "flow_uuid", flow.UUID, "error", err)
-		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, envOAuthErrorInvalidRequest, now)
-		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
-			Type: "vault_oauth_complete", Status: "error", FlowID: flow.ExternalID,
-			VaultID: flow.VaultExternalID, ErrorCode: envOAuthErrorInvalidRequest,
 		})
 		return
 	}
@@ -430,6 +427,14 @@ func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlo
 		if !ok {
 			return "", errors.New("existing env_oauth credential is invalid")
 		}
+		var publicAuth struct {
+			Networking envOAuthNetworkingInput `json:"networking"`
+		}
+		if err := json.Unmarshal(current.Auth, &publicAuth); err != nil {
+			return "", err
+		}
+		flow.NetworkingType = publicAuth.Networking.Type
+		flow.AllowedHosts = publicAuth.Networking.AllowedHosts
 		placeholder = existingPlaceholder
 		credential.UUID = current.UUID
 		credential.ExternalID = current.ExternalID
@@ -461,18 +466,11 @@ func (s *Server) saveEnvOAuthCredential(ctx context.Context, flow db.EnvOAuthFlo
 	if err := vaultsapi.SealCredentialSecret(ctx, s.vaultSecrets, &credential); err != nil {
 		return "", err
 	}
-	if existing {
-		updated, err := s.db.UpdateVaultCredential(ctx, credential.WorkspaceUUID, credential.VaultExternalID, credential.ExternalID, credential)
-		if err != nil {
-			return "", err
-		}
-		return updated.ExternalID, nil
-	}
-	created, err := s.db.CreateVaultCredential(ctx, credential)
+	saved, err := s.db.SaveEnvOAuthCredential(ctx, flow.ExternalID, credential, existing)
 	if err != nil {
 		return "", err
 	}
-	return created.ExternalID, nil
+	return saved.ExternalID, nil
 }
 
 func (s *Server) authorizeEnvOAuthOrganization(w http.ResponseWriter, r *http.Request) (auth.Principal, bool) {

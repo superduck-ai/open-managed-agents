@@ -53,7 +53,6 @@ type PlatformOAuthProviderMapper interface {
 	List(ctx context.Context) ([]platformOAuthProviderRow, error)
 	FindByExternalID(ctx context.Context, externalID string) (platformOAuthProviderRow, error)
 	FindByBuiltinKey(ctx context.Context, builtinKey string) (platformOAuthProviderRow, error)
-	FindByUUID(ctx context.Context, providerUUID string) (platformOAuthProviderRow, error)
 	UpdateByUUID(ctx context.Context, params upsertPlatformOAuthProviderParams) (platformOAuthProviderRow, error)
 	DeleteByUUID(ctx context.Context, providerUUID string, expectedVersion int64) (int64, error)
 }

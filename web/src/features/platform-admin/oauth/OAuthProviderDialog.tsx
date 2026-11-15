@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { createOAuthProvider, updateOAuthProvider, type OAuthProviderRecord } from '../../../shared/api/platform-admin';
 import { usePlatformAdmin } from '../context';
 import { usePlatformAdminError } from '../usePlatformAdminError';
+import type { ApiError } from '../../../shared/api/client';
 import {
   initialOAuthProviderFormValues,
   oauthProviderFormReady,
@@ -27,10 +28,12 @@ export function OAuthProviderDialog({
   provider,
   onClose,
   onSaved,
+  onConflict,
 }: {
   provider?: OAuthProviderRecord;
   onClose: () => void;
   onSaved: () => Promise<void>;
+  onConflict: () => Promise<void>;
 }) {
   const { msg } = useI18n();
   const { client } = usePlatformAdmin();
@@ -64,7 +67,10 @@ export function OAuthProviderDialog({
     onSuccess: () => {
       void onSaved();
     },
-    onError: (submitError) => setError(errorMessage(submitError)),
+    onError: async (submitError: unknown) => {
+      setError(errorMessage(submitError));
+      if ((submitError as ApiError).code === 'oauth_provider_version_conflict') await onConflict();
+    },
   });
   const canSubmit = oauthProviderFormReady(values, provider);
   const builtin = provider?.builtin ?? false;
@@ -247,7 +253,11 @@ export function OAuthProviderDialog({
                 )}
               </FieldDescription>
             ) : null}
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
           </div>
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" disabled={mutation.isPending} />}>

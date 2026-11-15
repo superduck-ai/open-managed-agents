@@ -194,12 +194,19 @@ test('飞书保留旧密钥且更换应用时要求新密钥', async () => {
   });
 });
 
-test('并发版本冲突显示本地化提示', async () => {
-  globalThis.fetch = mock(async (input, options) =>
-    options?.method === 'PATCH'
-      ? Response.json({ error: { code: 'oauth_provider_version_conflict' } }, { status: 409 })
-      : Response.json([builtin]),
-  ) as typeof fetch;
+test('并发版本冲突后重新打开使用最新版本并可保存', async () => {
+  let version = 1;
+  const writes: number[] = [];
+  globalThis.fetch = mock(async (input, options) => {
+    if (options?.method === 'PATCH') {
+      writes.push(JSON.parse(String(options.body)).expected_version);
+      version = 2;
+      return writes.length === 1
+        ? Response.json({ error: { code: 'oauth_provider_version_conflict' } }, { status: 409 })
+        : Response.json({ ...builtin, version });
+    }
+    return Response.json([{ ...builtin, version }]);
+  }) as typeof fetch;
   mount();
   fireEvent.click(await screen.findByText('飞书'));
   await screen.findByLabelText('客户端 ID');
@@ -207,6 +214,13 @@ test('并发版本冲突显示本地化提示', async () => {
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
   });
   expect(await screen.findByText('服务方已被修改，请关闭并重新打开表单。')).toBeTruthy();
+  await waitFor(() => expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(false));
+  fireEvent.click(screen.getByRole('button', { name: '取消' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: '编辑 OAuth 客户端' }));
+  await screen.findByLabelText('客户端 ID');
+  fireEvent.click(screen.getByRole('button', { name: '保存' }));
+  await waitFor(() => expect(writes).toEqual([1, 2]));
 });
 
 test('历史同名自定义 Feishu 与飞书仍按各自权限展示', async () => {

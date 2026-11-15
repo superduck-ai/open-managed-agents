@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
@@ -29,12 +30,6 @@ const (
 	envOAuthHTTPTimeout = 15 * time.Second
 
 	envOAuthRedirectPath = "/oauth/vault/env-success"
-
-	envOAuthErrorInvalidRequest        = "invalid_request"
-	envOAuthErrorProviderUnavailable   = "platform_oauth_provider_unavailable"
-	envOAuthErrorCredentialKeyConflict = "credential_key_conflict"
-	envOAuthErrorTokenExchangeFailed   = "token_exchange_failed"
-	envOAuthErrorFlowInProgress        = "flow_in_progress"
 )
 
 var envOAuthTokenHTTPClient = &http.Client{
@@ -362,12 +357,9 @@ func (s *Server) handleEnvOAuthVaultAuthCallback(w http.ResponseWriter, r *http.
 		})
 		return
 	}
-	credentialID, err := s.saveEnvOAuthCredential(r.Context(), flow, token, now)
+	credentialID, err := s.saveEnvOAuthCredential(r.Context(), flow, token, time.Now().UTC())
 	if err != nil {
-		errorCode := envOAuthErrorTokenExchangeFailed
-		if errors.Is(err, db.ErrDuplicate) {
-			errorCode = envOAuthErrorCredentialKeyConflict
-		}
+		errorCode := envOAuthCredentialSaveErrorCode(err)
 		s.logger.ErrorContext(r.Context(), "save env oauth credential", "flow_uuid", flow.UUID, "error", err)
 		s.failEnvOAuthFlow(r.Context(), flow.ExternalID, errorCode, now)
 		writeEnvOAuthCallback(w, envOAuthCallbackPayload{
@@ -502,7 +494,7 @@ func (s *Server) decodeEnvOAuthStartRequest(
 	req.SecretName = strings.TrimSpace(req.SecretName)
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
 	req.RedirectURL = strings.TrimSpace(req.RedirectURL)
-	if req.ProviderID == "" || req.VaultID == "" || req.WorkspaceID == "" || req.SecretName == "" || req.RedirectURL == "" || req.Networking == nil {
+	if req.ProviderID == "" || req.VaultID == "" || req.WorkspaceID == "" || req.SecretName == "" || req.RedirectURL == "" || req.Networking == nil || utf8.RuneCountInString(req.DisplayName) > 255 {
 		writeEnvOAuthStartError(w, http.StatusBadRequest, envOAuthErrorInvalidRequest, "")
 		return req, "", "", false
 	}

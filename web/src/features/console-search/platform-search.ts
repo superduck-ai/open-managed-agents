@@ -1,4 +1,4 @@
-import { Blocks, Building2, ShieldCheck } from 'lucide-react';
+import { Blocks, Building2, KeyRound, ShieldCheck } from 'lucide-react';
 import type { PlatformAdminClient } from '../../shared/api/platform-admin';
 import type { I18nContextValue } from '../../shared/i18n/context';
 import type { Organization, Page } from '../platform-admin/types';
@@ -7,6 +7,13 @@ import type { SearchRecord } from './search-data';
 
 export function platformNavigationSearchRecords(permissions: string[], msg: I18nContextValue['msg']): SearchRecord[] {
   const pages = [
+    {
+      href: '/platform-admin/oauth',
+      labelId: 'platformAdmin.oauthManagement.title',
+      label: 'OAuth management',
+      icon: KeyRound,
+      permission: 'platform:access',
+    },
     {
       href: '/platform-admin',
       labelId: 'platformAdmin.organizations',

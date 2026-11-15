@@ -566,3 +566,25 @@ test('ENV OAuth 编辑授权失败后可重试，回调完成后刷新且不提�
   expect(onSubmit).not.toHaveBeenCalled();
   expect(dialog.hasAttribute('data-closed')).toBe(true);
 });
+
+test('MCP 凭据门禁只展示调用方允许的认证类型', async () => {
+  resetTestDom('https://oma.duck.ai/workspaces/default/vaults/example');
+  globalThis.fetch = mock(async () => Response.json({ data: [], next_page: null })) as typeof fetch;
+  render(
+    <AuthHarness>
+      <CredentialDialog
+        vaultId="vlt_fixture"
+        workspaceId="default"
+        initialMcpServerUrl="https://mcp.example.com/mcp"
+        allowedAuthTypes={['static_bearer', 'mcp_oauth']}
+        onClose={() => {}}
+        onSubmit={async () => {}}
+      />
+    </AuthHarness>,
+  );
+  fireEvent.click(screen.getByRole('combobox', { name: 'Type' }));
+  expect(screen.queryByText('ENV OAuth')).toBeNull();
+  expect(screen.queryByText('Environment variable')).toBeNull();
+  expect(screen.getByRole('option', { name: 'MCP OAuth' })).toBeTruthy();
+  expect(screen.getByRole('option', { name: 'Bearer token' })).toBeTruthy();
+});

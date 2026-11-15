@@ -1292,6 +1292,26 @@ export function vaultOAuthErrorMessage(errorCode: string, msg: I18nMsg): string 
         'managedAgents.credentialVaults.credentialDialog.oauthError.tokenExchangeFailed',
         'OAuth token exchange failed. Try connecting again.',
       );
+    case 'credential_save_failed':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.envOAuthError.saveFailed',
+        'Could not save the credential. Start authorization again.',
+      );
+    case 'credential_limit_exceeded':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.envOAuthError.limitExceeded',
+        'The vault credential limit has been reached. Remove a credential and authorize again.',
+      );
+    case 'credential_version_conflict':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.envOAuthError.versionConflict',
+        'The credential changed. Refresh the list and authorize again.',
+      );
+    case 'credential_unavailable':
+      return msg(
+        'managedAgents.credentialVaults.credentialDialog.envOAuthError.unavailable',
+        'The vault or credential is no longer available. Refresh the list.',
+      );
     case 'verification_request_failed':
       return msg(
         'managedAgents.credentialVaults.credentialDialog.oauthError.verificationFailed',

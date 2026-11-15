@@ -36,9 +36,6 @@
     <select id="FindByBuiltinKey" resultType="platformOAuthProviderRow">
         SELECT <include refid="columns"/> FROM platform_oauth_providers WHERE builtin_key = #{builtinKey}
     </select>
-    <select id="FindByUUID" resultType="platformOAuthProviderRow">
-        SELECT <include refid="columns"/> FROM platform_oauth_providers WHERE uuid = #{providerUUID}
-    </select>
     <update id="UpdateByUUID" result="returning" resultType="platformOAuthProviderRow">
         UPDATE platform_oauth_providers
         SET name = #{params.Name},

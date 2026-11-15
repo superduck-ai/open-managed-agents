@@ -406,3 +406,64 @@ func TestEnvOAuthRefreshRetiresConsumedTokenAfterSaveFailure(t *testing.T) {
 		t.Fatalf("已消费的 refresh-1 未作废：clearCalls=%d err=%v", store.clearCalls, err)
 	}
 }
+
+func TestEnvOAuthRefreshDoesNotInventScope(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+	credential := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "open.feishu.cn", "old", "refresh", &past)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		if r.Form.Has("scope") {
+			t.Error("未知授权范围时发送了 scope")
+		}
+		_, _ = w.Write([]byte(`{"access_token":"fresh","expires_in":3600}`))
+	}))
+	defer server.Close()
+	store := &fakeCredentialStore{get: credential}
+	resolver := newEnvOAuthTokenResolver(store, svc, nil, nil).withHTTPClient(server.Client()).withProviders(fakeEnvOAuthProviderResolver{snapshot: EnvOAuthProviderSnapshot{
+		TokenEndpoint: server.URL, ClientID: "client", Scope: "read write", TokenEndpointAuthMethod: "none", TokenEndpointEncoding: "form",
+	}})
+	if token, err := resolver.resolve(t.Context(), &credential); err != nil || token != "fresh" {
+		t.Fatalf("刷新：%q，%v", token, err)
+	}
+	auth, err := decodeEnvOAuthCredentialAuth(store.lastUpdate.Auth)
+	if err != nil || auth.Scope != nil {
+		t.Fatalf("持久化了未知授权范围：%+v，%v", auth, err)
+	}
+}
+
+func TestEnvOAuthRefreshReusesConcurrentWinner(t *testing.T) {
+	t.Parallel()
+	svc := newTestSecretsService(t)
+	past := time.Now().Add(-time.Hour).Format(time.RFC3339)
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+	for _, changed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "材料未变化", true: "并发胜出"}[changed], func(t *testing.T) {
+			original := sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "open.feishu.cn", "old", "refresh", &past)
+			latest := original
+			if changed {
+				latest = sealedEnvOAuthCredential(t, svc, "TOKEN", "oma_ph_token", "open.feishu.cn", "winner", "new-refresh", &future)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+			}))
+			defer server.Close()
+			store := &fakeCredentialStore{getResults: []db.VaultCredential{original, latest}}
+			resolver := newEnvOAuthTokenResolver(store, svc, nil, nil).withHTTPClient(server.Client()).withProviders(fakeEnvOAuthProviderResolver{snapshot: EnvOAuthProviderSnapshot{TokenEndpoint: server.URL, ClientID: "client"}})
+			token, err := resolver.resolve(t.Context(), &original)
+			if changed {
+				if err != nil || token != "winner" {
+					t.Fatalf("未复用胜出方令牌：%q，%v", token, err)
+				}
+			} else if !errors.Is(err, ErrEnvOAuthReauthorizationRequired) {
+				t.Fatalf("未保留原刷新失败：%v", err)
+			}
+			if store.updateCalls != 0 || store.clearCalls != 0 {
+				t.Fatal("失败方写入或清除了胜出方材料")
+			}
+		})
+	}
+}

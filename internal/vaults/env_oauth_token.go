@@ -168,11 +168,8 @@ func (r *envOAuthTokenResolver) refreshAndPersist(ctx context.Context, current *
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", secret.RefreshToken)
 	form.Set("client_id", provider.ClientID)
-	switch {
-	case publicAuth.Scope != nil && *publicAuth.Scope != "":
+	if publicAuth.Scope != nil && *publicAuth.Scope != "" {
 		form.Set("scope", *publicAuth.Scope)
-	case provider.Scope != "":
-		form.Set("scope", provider.Scope)
 	}
 	exchangedCredential := *current
 	token, err := ExchangeOAuthTokenEndpoint(ctx, r.httpClient(), OAuthTokenEndpointExchange{
@@ -184,11 +181,21 @@ func (r *envOAuthTokenResolver) refreshAndPersist(ctx context.Context, current *
 		Form:                    form,
 	})
 	if err != nil {
+		if reloadErr := reloadCredential(ctx, r.store, current); reloadErr == nil {
+			latestAuth, latestSecret, openErr := r.openMaterial(ctx, *current)
+			if openErr == nil && (latestSecret.AccessToken != secret.AccessToken || latestSecret.RefreshToken != secret.RefreshToken) {
+				expired, expiryErr := accessTokenExpired(latestAuth.ExpiresAt, r.clock())
+				if expiryErr == nil && !expired && latestSecret.AccessToken != "" {
+					return latestSecret.AccessToken, nil
+				}
+			}
+		}
 		if permanentOAuthRefreshFailure(err) {
 			return "", errors.Join(ErrEnvOAuthReauthorizationRequired, err)
 		}
 		return "", err
 	}
+	now = r.clock()
 
 	refreshToken := token.RefreshToken
 	if refreshToken == "" {
@@ -198,9 +205,6 @@ func (r *envOAuthTokenResolver) refreshAndPersist(ctx context.Context, current *
 	nextAuth.ExpiresAt = resolveExpiresAtAfterRefresh(now, publicAuth.ExpiresAt, token.ExpiresIn)
 	if token.Scope != "" {
 		scope := token.Scope
-		nextAuth.Scope = &scope
-	} else if nextAuth.Scope == nil && provider.Scope != "" {
-		scope := provider.Scope
 		nextAuth.Scope = &scope
 	}
 	nextAuth.HasRefreshToken = refreshToken != ""

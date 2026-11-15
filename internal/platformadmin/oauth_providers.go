@@ -183,7 +183,7 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 		return OAuthProviderView{}, err
 	}
 	s.audit(ctx, actor, created, "create", []string{"name", "logo_url", "authorize_endpoint", "token_endpoint", "scope", "client_id", "client_secret", "token_endpoint_auth_method", "token_endpoint_encoding"}, nil)
-	return s.view(ctx, created)
+	return oauthProviderView(created, clientID), nil
 }
 
 func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, externalID string, input OAuthProviderUpdateInput) (view OAuthProviderView, failure error) {
@@ -201,6 +201,9 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 	}
 	if input.ExpectedVersion < 1 {
 		return OAuthProviderView{}, invalid("必须提供 expected_version")
+	}
+	if err := platformoauth.ValidateProviderDefaults(current); err != nil {
+		return OAuthProviderView{}, ErrOAuthProviderUnavailable
 	}
 	if input.ExpectedVersion != current.Version {
 		return OAuthProviderView{}, ErrOAuthProviderVersion
@@ -231,7 +234,11 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 	if current.BuiltinKey == "friday" && current.Scope != "read" {
 		return OAuthProviderView{}, invalid("Friday scope 必须为 read")
 	}
-	if err := s.updateClient(ctx, &current, clientID, input); err != nil {
+	nextClientID := clientID
+	if input.ClientID != nil {
+		nextClientID = strings.TrimSpace(*input.ClientID)
+	}
+	if err := s.updateClient(ctx, &current, clientID, nextClientID, input); err != nil {
 		return OAuthProviderView{}, err
 	}
 	current.UpdatedAt = time.Now().UTC()
@@ -253,7 +260,7 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 		action = "rotate"
 	}
 	s.audit(ctx, actor, updated, action, input.changedFields(), nil)
-	return s.view(ctx, updated)
+	return oauthProviderView(updated, nextClientID), nil
 }
 
 func (s *OAuthProviderService) Delete(ctx context.Context, actor Actor, externalID string, expectedVersion int64) (failure error) {
@@ -292,11 +299,7 @@ func (s *OAuthProviderService) sealClient(ctx context.Context, provider *db.Plat
 	return nil
 }
 
-func (s *OAuthProviderService) updateClient(ctx context.Context, provider *db.PlatformOAuthProvider, oldID string, input OAuthProviderUpdateInput) error {
-	clientID := oldID
-	if input.ClientID != nil {
-		clientID = strings.TrimSpace(*input.ClientID)
-	}
+func (s *OAuthProviderService) updateClient(ctx context.Context, provider *db.PlatformOAuthProvider, oldID, clientID string, input OAuthProviderUpdateInput) error {
 	if err := validateOAuthProviderFields(provider.Name, provider.AuthorizeEndpoint, provider.TokenEndpoint, s.environment); err != nil {
 		return err
 	}
@@ -342,6 +345,10 @@ func (s *OAuthProviderService) view(ctx context.Context, provider db.PlatformOAu
 			return OAuthProviderView{}, ErrOAuthProviderUnavailable
 		}
 	}
+	return oauthProviderView(provider, clientID), nil
+}
+
+func oauthProviderView(provider db.PlatformOAuthProvider, clientID string) OAuthProviderView {
 	return OAuthProviderView{
 		ID: provider.ExternalID, ProviderKey: platformoauth.ProviderKey(provider), Builtin: provider.BuiltinKey != "", Protected: provider.Protected,
 		HasClientID: provider.ClientIDEnvelope != nil, HasClientSecret: provider.ClientSecretEnvelope != nil,
@@ -349,7 +356,7 @@ func (s *OAuthProviderService) view(ctx context.Context, provider db.PlatformOAu
 		Name: provider.Name, LogoURL: provider.LogoURL, AuthorizeEndpoint: provider.AuthorizeEndpoint, TokenEndpoint: provider.TokenEndpoint,
 		Scope: provider.Scope, ClientID: clientID, DefaultSecretName: provider.DefaultSecretName, DefaultAllowedHosts: provider.DefaultAllowedHosts, TokenEndpointAuthMethod: provider.TokenEndpointAuthMethod,
 		TokenEndpointEncoding: provider.TokenEndpointEncoding, CreatedAt: provider.CreatedAt, UpdatedAt: provider.UpdatedAt,
-	}, nil
+	}
 }
 
 func (s *OAuthProviderService) audit(ctx context.Context, actor Actor, provider db.PlatformOAuthProvider, action string, fields []string, failure error) {

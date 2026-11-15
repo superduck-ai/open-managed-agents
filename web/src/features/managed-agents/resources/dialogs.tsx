@@ -148,6 +148,7 @@ export function CredentialDialog({
   orgUuid,
   firstCredential = false,
   initialMcpServerUrl,
+  allowedAuthTypes,
   returnFocus,
   onClose,
   onSubmit,
@@ -159,6 +160,7 @@ export function CredentialDialog({
   orgUuid?: string;
   firstCredential?: boolean;
   initialMcpServerUrl?: string;
+  allowedAuthTypes?: readonly CredentialFormValues['authType'][];
   returnFocus?: RefObject<HTMLElement | null>;
   onClose: () => void;
   onSubmit: (values: CredentialFormValues) => Promise<void>;
@@ -229,8 +231,8 @@ export function CredentialDialog({
       { id: 'static_bearer', label: credentialAuthTypeLabel('static_bearer', msg) },
       { id: 'environment_variable', label: credentialAuthTypeLabel('environment_variable', msg) },
       { id: 'env_oauth', label: credentialAuthTypeLabel('env_oauth', msg) },
-    ];
-  }, [credential, values.authType, msg]);
+    ].filter((option) => !allowedAuthTypes || allowedAuthTypes.includes(parseCredentialAuthType(option.id)));
+  }, [credential, values.authType, allowedAuthTypes, msg]);
 
   const directoryOptions = useMemo<EntityOption[]>(
     () => credentialMcpServerOptions(workspaceServers, directoryServers),

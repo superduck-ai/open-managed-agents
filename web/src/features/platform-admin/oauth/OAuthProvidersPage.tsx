@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Plus, Trash2 } from 'lucide-react';
+import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useI18n } from '../../../shared/i18n';
 import { productIcons } from '../../../shared/icons/product-icons';
 import { Button } from '../../../shared/ui/button';
@@ -27,6 +27,7 @@ import { deleteOAuthProvider, listOAuthProviders, type OAuthProviderRecord } fro
 import { usePlatformAdmin } from '../context';
 import { usePlatformAdminError } from '../usePlatformAdminError';
 import { OAuthProviderDialog } from './OAuthProviderDialog';
+import type { ApiError } from '../../../shared/api/client';
 
 const oauthProvidersKey = ['platform-oauth-providers'] as const;
 
@@ -48,7 +49,11 @@ export function OAuthProvidersPage() {
       setDeleting(null);
       await queryClient.invalidateQueries({ queryKey: oauthProvidersKey });
     },
-    onError: (mutationError) => setError(errorMessage(mutationError)),
+    onError: async (mutationError: unknown) => {
+      setError(errorMessage(mutationError));
+      if ((mutationError as ApiError).code === 'oauth_provider_version_conflict')
+        await queryClient.invalidateQueries({ queryKey: oauthProvidersKey });
+    },
   });
   const reload = async () => {
     setEditing(undefined);
@@ -73,7 +78,9 @@ export function OAuthProvidersPage() {
       {query.isPending ? (
         <p role="status">{msg('common.loading', 'Loading...')}</p>
       ) : query.isError ? (
-        <p className="text-sm text-destructive">{errorMessage(query.error)}</p>
+        <p role="alert" className="text-sm text-destructive">
+          {errorMessage(query.error)}
+        </p>
       ) : providers.length === 0 ? (
         <ResourceListState
           icon={KeyRound}
@@ -144,6 +151,18 @@ export function OAuthProvidersPage() {
                 <DataTableCell className="font-mono text-xs">{provider.client_id}</DataTableCell>
                 <DataTableCell>{new Date(provider.updated_at).toLocaleDateString(locale)}</DataTableCell>
                 <DataTableCell edge="end">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={msg('platformAdmin.oauthManagement.editTitle', 'Edit OAuth client')}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setEditing(provider);
+                    }}
+                  >
+                    <Pencil aria-hidden className="size-4" />
+                  </Button>
                   {!provider.protected ? (
                     <Button
                       type="button"
@@ -166,7 +185,12 @@ export function OAuthProvidersPage() {
         </Table>
       )}
       {editing !== undefined ? (
-        <OAuthProviderDialog provider={editing ?? undefined} onClose={() => setEditing(undefined)} onSaved={reload} />
+        <OAuthProviderDialog
+          provider={editing ?? undefined}
+          onClose={() => setEditing(undefined)}
+          onSaved={reload}
+          onConflict={() => queryClient.invalidateQueries({ queryKey: oauthProvidersKey })}
+        />
       ) : null}
       {deleting ? (
         <Dialog open onOpenChange={(open) => !open && !remove.isPending && setDeleting(null)}>
@@ -181,7 +205,11 @@ export function OAuthProvidersPage() {
                 )}
               </DialogDescription>
             </DialogHeader>
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
             <DialogFooter>
               <DialogClose render={<Button type="button" variant="outline" disabled={remove.isPending} />}>
                 {msg('common.cancel', 'Cancel')}

@@ -344,27 +344,44 @@ func TestEnvOAuthVaultAuthCallbackFailuresPostgres(t *testing.T) {
 
 func TestEnvOAuthVaultAuthCallbackClaimsFlowOncePostgres(t *testing.T) {
 	f := newEnvOAuthFixture(t)
-	var exchanges int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&exchanges, 1)
-		time.Sleep(50 * time.Millisecond)
+	var exchanges atomic.Int32
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	releaseExchange := sync.OnceFunc(func() { close(release) })
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanges.Add(1)
+		entered <- struct{}{}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token": "u-access", "refresh_token": "ur-refresh", "expires_in": 3600, "scope": "offline_access",
 		})
 	}))
 	defer upstream.Close()
+	defer releaseExchange()
 	flow := f.createFlow(t, upstream.URL, "CONCURRENT_TOKEN", time.Now().UTC().Add(time.Minute))
 
-	bodies := make([]string, 2)
-	var wg sync.WaitGroup
-	for index := range bodies {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			bodies[index] = f.callback(t, flow.ExternalID, "auth-code").Body.String()
-		}(index)
+	first := make(chan string, 1)
+	go func() { first <- f.callback(t, flow.ExternalID, "auth-code").Body.String() }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("首个回调未进入换票端点")
 	}
-	wg.Wait()
+	second := make(chan string, 1)
+	go func() { second <- f.callback(t, flow.ExternalID, "auth-code").Body.String() }()
+	var secondBody string
+	select {
+	case secondBody = <-second:
+	case <-time.After(5 * time.Second):
+		t.Fatal("第二个回调未在首个换票请求完成前返回")
+	}
+	releaseExchange()
+	firstBody := <-first
+	bodies := []string{firstBody, secondBody}
 
 	succeeded, inProgress := 0, 0
 	for _, body := range bodies {
@@ -378,8 +395,8 @@ func TestEnvOAuthVaultAuthCallbackClaimsFlowOncePostgres(t *testing.T) {
 	if succeeded != 1 || inProgress != 1 {
 		t.Fatalf("callbacks = %v", bodies)
 	}
-	if exchanges != 1 {
-		t.Fatalf("token exchanges = %d, want 1", exchanges)
+	if exchanges.Load() != 1 {
+		t.Fatalf("token exchanges = %d, want 1", exchanges.Load())
 	}
 	completed, err := f.database.GetEnvOAuthFlow(t.Context(), flow.ExternalID)
 	if err != nil || completed.Status != "completed" || completed.CredentialExternalID == "" {
@@ -796,5 +813,21 @@ func TestEnvOAuthCompletionRollsBackPostgres(t *testing.T) {
 	current, err := f.database.GetEnvOAuthFlow(t.Context(), pending.ExternalID)
 	if err != nil || current.Status != "processing" || current.CredentialExternalID != "" {
 		t.Fatalf("凭证失败未回滚 flow：%+v err=%v", current, err)
+	}
+}
+
+func TestEnvOAuthUnrestrictedHostsStoredAsArrayPostgres(t *testing.T) {
+	f := newEnvOAuthFixture(t)
+	flow := f.createFlow(t, "https://auth.test/token", "TOKEN", time.Now().Add(time.Minute))
+	flow.UUID = uuid.NewV4().String()
+	flow.ExternalID += "_unrestricted"
+	flow.NetworkingType = "unrestricted"
+	flow.AllowedHosts = nil
+	saved, err := f.database.CreateEnvOAuthFlow(t.Context(), flow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.AllowedHosts == nil || len(saved.AllowedHosts) != 0 {
+		t.Fatalf("无限制网络主机列表不是空数组：%v", saved.AllowedHosts)
 	}
 }

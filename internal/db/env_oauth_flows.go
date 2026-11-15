@@ -43,6 +43,9 @@ type EnvOAuthFlow struct {
 }
 
 func (d *DB) CreateEnvOAuthFlow(ctx context.Context, flow EnvOAuthFlow) (EnvOAuthFlow, error) {
+	if flow.AllowedHosts == nil {
+		flow.AllowedHosts = []string{}
+	}
 	allowedHosts, err := json.Marshal(flow.AllowedHosts)
 	if err != nil {
 		return EnvOAuthFlow{}, fmt.Errorf("encode env oauth allowed hosts: %w", err)

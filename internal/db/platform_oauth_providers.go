@@ -102,14 +102,6 @@ func (d *DB) GetPlatformOAuthProviderByBuiltinKey(ctx context.Context, builtinKe
 	return row.provider()
 }
 
-func (d *DB) GetPlatformOAuthProviderByUUID(ctx context.Context, providerUUID string) (PlatformOAuthProvider, error) {
-	row, err := NewPlatformOAuthProviderMapper(d.mapperDB).FindByUUID(ctx, providerUUID)
-	if err != nil {
-		return PlatformOAuthProvider{}, mapNoRows(err)
-	}
-	return row.provider()
-}
-
 func (d *DB) DeletePlatformOAuthProvider(ctx context.Context, providerUUID string, expectedVersion int64) error {
 	rowsAffected, err := NewPlatformOAuthProviderMapper(d.mapperDB).DeleteByUUID(ctx, providerUUID, expectedVersion)
 	if err != nil {

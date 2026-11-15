@@ -88,13 +88,15 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 | GET | `/oauth/vault/env-success?code&state` | 公共回调；换票、落库、完成 flow，返回 postMessage HTML |
 
 `start` 校验：org 与 principal 一致，按 body 目标工作区重新解析成员权限并要求资源使用权限（保留组织管理员和平台管理员授权语义），workspace/vault 存在且未归档、provider 可用、secret_name 合法、
-limited 必须有 allowed_hosts；同 vault 同名活动凭证若为同一 provider 的 `env_oauth` 允许重新授权，否则 409。
+display_name 最多 255 个字符，limited 必须有 allowed_hosts；unrestricted 省略主机时持久化空数组。同 vault 同名活动凭证若为同一 provider 的 `env_oauth` 允许重新授权，否则 409。
 `redirect_url` 只接受固定回调路径 `/oauth/vault/env-success`：不允许 userinfo、query、fragment 或其他路径；
 非 `dev` 环境必须 HTTPS；配置了 `auth.console_url` 时 scheme 与 host 必须与之一致，避免授权码被送往其他站点。
 
 已完成 state 的顺序重放返回 `status=error`、`error_code=invalid_request`，不再次换票、不返回 credential_id、不修改 flow 或凭证；并发回调由 `processing` 认领互斥，未认领到的一方返回 `flow_in_progress`。换票 HTTP 客户端拒绝跟随 3xx，避免携带 `client_secret`、`code`、`refresh_token` 的请求体被重发到其他 origin。
 
 回调保存前再次检查同名凭证的 provider；不同 provider 返回 `credential_key_conflict`，保留既有凭证及秘密。同 provider 允许原地重新授权。
+
+回调保存错误按原因返回 `credential_limit_exceeded`、`credential_version_conflict`、`credential_unavailable` 或 `credential_save_failed`，不冒充换票失败。到期时间从收到换票响应后采样的时间计算。
 
 回调流程：
 
@@ -130,6 +132,7 @@ sequenceDiagram
 - token 未过期直接复用；过期后按 credential 级 refresh lease + CAS 单飞刷新，`expires_in > 0` 时更新
   `expires_at`，否则沿用未过期旧值或清空。刷新使用 provider 当前配置；失败 fail-closed（不替换、返回
   `ErrSubstitutionRejected`），永久失败（4xx 非 408/429、缺 refresh token）标记需重新授权。
+- 刷新只发送凭据已知的 scope，响应未返回 scope 时保留原值，不把服务方默认值当成授权结果。换票失败后重载凭据，若并发胜出方已写入可用的新令牌则复用，材料未变化时仍返回原错误。
 - refresh CAS 冲突后仅把刷新负责的到期时间、scope 和 refresh token 标记合并到最新 auth，保留最新 networking、provider、placeholder。若 access token 或 refresh token 来源已变更，复用未过期的最新 token；最新 token 不可用时拒绝覆盖，等待后续请求重新解析。
 - 读取信封缺失时 `openCredentialSecret` 返回 `ErrEnvOAuthReauthorizationRequired`。
 
@@ -241,3 +244,7 @@ main 的 00117 为技能管理迁移。ENV OAuth 的九个迁移整体顺延为 
 重新授权只替换令牌与到期信息，保留凭证当前的网络范围、占位符和元数据；网络修改单独保存。编辑弹窗检测到网络草稿变化时拒绝发起重新授权，提示先保存网络配置；仅空白分隔变化不阻止授权。创建／更新凭证和 flow 的 processing → completed 转换使用同一 Yourbatis 事务，任意一步失败都回滚。上游换票与密封仍在事务外，避免长时间持有数据库锁。
 
 初始化服务方仍由 SQL seed 完成，不额外读取迁移版本或记录启动 seed 审计。运行时管理、重新包装及完整性错误的安全审计保持原合同。OAuth 密钥迁移复用 secrets.Service 的信封校验，不维护重复的结构规则；通用存储回归运行一次，服务方及 PKCE 由 OAuth 专项测试覆盖。
+
+## 本轮评审回归
+
+OAuth 管理的创建／更新响应复用本次已验证的客户端 ID，写入成功后不再解密；列表读取仍校验并解密。版本冲突刷新列表，关闭并重开时使用最新版本。表格提供键盘可达的编辑按钮，并加入控制台页面搜索；错误使用 alert 语义。Quickstart 的 MCP 凭据门禁只提供 MCP OAuth 与 Bearer 类型，ENV OAuth 不参与该门禁。

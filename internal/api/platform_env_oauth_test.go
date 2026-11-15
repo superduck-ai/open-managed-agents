@@ -2,13 +2,17 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/config"
+	"github.com/superduck-ai/open-managed-agents/internal/db"
 	vaultsapi "github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
 
@@ -81,5 +85,42 @@ func TestEnvOAuthTokenHTTPClientDoesNotFollowRedirects(t *testing.T) {
 	}
 	if replayed.Load() {
 		t.Fatal("token endpoint body was replayed to the redirect target")
+	}
+}
+
+func TestEnvOAuthCredentialSaveErrors(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code string
+	}{
+		{db.ErrDuplicate, envOAuthErrorCredentialKeyConflict},
+		{db.ErrLimitExceeded, envOAuthErrorCredentialLimit},
+		{db.ErrVersionConflict, envOAuthErrorCredentialVersion},
+		{db.ErrNotFound, envOAuthErrorCredentialUnavailable},
+		{errors.New("存储故障"), envOAuthErrorCredentialSaveFailed},
+	} {
+		if got := envOAuthCredentialSaveErrorCode(test.err); got != test.code {
+			t.Fatalf("错误码 = %s，期望 %s", got, test.code)
+		}
+	}
+}
+
+func TestEnvOAuthStartValidatesDisplayName(t *testing.T) {
+	server := &Server{cfg: config.Config{Env: config.EnvironmentDev}}
+	for _, length := range []int{255, 256} {
+		body, err := json.Marshal(envOAuthVaultAuthStartRequest{
+			ProviderID: "builtin:feishu", VaultID: "vlt_test", WorkspaceID: "default", SecretName: "TOKEN",
+			DisplayName: strings.Repeat("名", length), RedirectURL: "http://oma.test/oauth/vault/env-success",
+			Networking: &envOAuthNetworkingInput{Type: "unrestricted"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
+		recorder := httptest.NewRecorder()
+		_, _, _, ok := server.decodeEnvOAuthStartRequest(recorder, request)
+		if ok != (length == 255) {
+			t.Fatalf("名称长度 %d，校验结果 %v", length, ok)
+		}
 	}
 }

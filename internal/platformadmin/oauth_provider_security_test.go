@@ -15,8 +15,9 @@ import (
 )
 
 type oauthProviderStoreStub struct {
-	provider db.PlatformOAuthProvider
-	writes   int
+	provider   db.PlatformOAuthProvider
+	writes     int
+	afterWrite func()
 }
 
 func (s *oauthProviderStoreStub) ListPlatformOAuthProviders(context.Context) ([]db.PlatformOAuthProvider, error) {
@@ -33,12 +34,18 @@ func (s *oauthProviderStoreStub) CreatePlatformOAuthProvider(_ context.Context, 
 	s.writes++
 	s.provider = provider
 	s.provider.Version = 1
+	if s.afterWrite != nil {
+		s.afterWrite()
+	}
 	return s.provider, nil
 }
 func (s *oauthProviderStoreStub) UpdatePlatformOAuthProvider(_ context.Context, provider db.PlatformOAuthProvider) (db.PlatformOAuthProvider, error) {
 	s.writes++
 	s.provider = provider
 	s.provider.Version++
+	if s.afterWrite != nil {
+		s.afterWrite()
+	}
 	return s.provider, nil
 }
 func (s *oauthProviderStoreStub) DeletePlatformOAuthProvider(context.Context, string, int64) error {
@@ -223,5 +230,49 @@ func TestOAuthProviderOptionalClientsAndLogo(t *testing.T) {
 	configured, err := service.Update(t.Context(), Actor{}, created.ID, OAuthProviderUpdateInput{ExpectedVersion: updated.Version, ClientID: new("client"), ClientSecret: new("secret")})
 	if err != nil || !configured.Configured {
 		t.Fatalf("后续补充凭据失败：%+v，%v", configured, err)
+	}
+}
+
+type oauthResponseReader struct {
+	secrets.KeyProvider
+	unavailable bool
+}
+
+func (p *oauthResponseReader) UnwrapDEK(ctx context.Context, wrapped secrets.WrappedKey) ([]byte, error) {
+	if p.unavailable {
+		return nil, errors.New("测试：写入后解密不可用")
+	}
+	return p.KeyProvider.UnwrapDEK(ctx, wrapped)
+}
+
+func TestOAuthProviderResponseDoesNotDecryptAfterWrite(t *testing.T) {
+	for _, operation := range []string{"create", "update"} {
+		t.Run(operation, func(t *testing.T) {
+			service, store, records := oauthServiceFixture(t)
+			key, err := localkeys.New(localkeys.KeyMaterial{KEK: bytes.Repeat([]byte{4}, 32)}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := &oauthResponseReader{KeyProvider: key}
+			service.secretSvc = secrets.NewService(reader)
+			if operation == "update" {
+				if err := service.sealClient(t.Context(), &store.provider, "client", "secret"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			store.afterWrite = func() { reader.unavailable = true }
+			var view OAuthProviderView
+			if operation == "create" {
+				view, err = service.Create(t.Context(), Actor{}, OAuthProviderCreateInput{Name: "Custom", AuthorizeEndpoint: "https://auth.test/authorize", TokenEndpoint: "https://auth.test/token", ClientID: "client", ClientSecret: "secret"})
+			} else {
+				view, err = service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1, ClientSecret: new("rotated")})
+			}
+			if err != nil || view.ClientID != "client" || !view.Configured || store.writes != 1 {
+				t.Fatalf("已提交操作响应错误：%+v，%v", view, err)
+			}
+			if len(*records) != 1 {
+				t.Fatalf("审计数量 = %d", len(*records))
+			}
+		})
 	}
 }

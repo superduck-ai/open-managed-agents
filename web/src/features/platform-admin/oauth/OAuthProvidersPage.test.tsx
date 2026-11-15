@@ -491,3 +491,16 @@ test('归档确认后隐藏客户端，恢复保留启用状态且仅提交归�
   await screen.findByText('Example OAuth');
   expect(screen.getByText('启用')).toBeTruthy();
 });
+
+test('更多操作保留可聚焦的编辑入口', async () => {
+  globalThis.fetch = mock(async () => Response.json([provider])) as typeof fetch;
+  mount();
+  const trigger = await screen.findByRole('button', { name: 'Example OAuth的更多操作' });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+  const edit = await screen.findByRole('menuitem', { name: '编辑' });
+  edit.focus();
+  expect(document.activeElement).toBe(edit);
+  fireEvent.keyDown(edit, { key: 'Enter' });
+  expect(await screen.findByRole('dialog', { name: '编辑 OAuth 客户端' })).toBeTruthy();
+});

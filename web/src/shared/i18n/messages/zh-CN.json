@@ -3416,7 +3416,7 @@
   "managedAgents.credentialVaults.credentialDialog.envOAuthManual": "已有 Token？手动填写",
   "managedAgents.credentialVaults.credentialDialog.reauthorize": "重新授权",
   "managedAgents.credentialVaults.credentialDialog.saveNetworkingFirst": "请先保存网络配置，再重新授权。",
-  "managedAgents.credentialVaults.credentialDialog.envOAuthManualToken": "Access token",
+  "managedAgents.credentialVaults.credentialDialog.envOAuthManualToken": "访问令牌",
   "managedAgents.credentialVaults.credentialDialog.envOAuthManualTokenPlaceholder": "粘贴令牌以跳过授权",
   "managedAgents.credentialVaults.credentialDialog.envOAuthHint": "访问令牌会以 Authorization 请求头注入到允许的主机，并在过期后自动刷新。",
   "managedAgents.credentialVaults.credentialDialog.envOAuthError.saveFailed": "保存凭据失败，请重新发起授权。",

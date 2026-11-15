@@ -3415,6 +3415,7 @@
   "managedAgents.credentialVaults.credentialDialog.envOAuthSecretNamePlaceholder": "LARKSUITE_CLI_USER_ACCESS_TOKEN",
   "managedAgents.credentialVaults.credentialDialog.envOAuthManual": "已有 Token？手动填写",
   "managedAgents.credentialVaults.credentialDialog.reauthorize": "重新授权",
+  "managedAgents.credentialVaults.credentialDialog.saveNetworkingFirst": "请先保存网络配置，再重新授权。",
   "managedAgents.credentialVaults.credentialDialog.envOAuthManualToken": "访问令牌（可选）",
   "managedAgents.credentialVaults.credentialDialog.envOAuthManualTokenPlaceholder": "粘贴令牌以跳过授权",
   "managedAgents.credentialVaults.credentialDialog.envOAuthRefreshToken": "刷新令牌（可选）",

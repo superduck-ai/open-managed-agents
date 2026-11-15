@@ -524,6 +524,21 @@ test('ENV OAuth 编辑授权失败后可重试，回调完成后刷新且不提�
   expect(reconnect.hasAttribute('disabled')).toBe(true);
   fireEvent.click(within(dialog).getByRole('checkbox'));
   await waitFor(() => expect(reconnect.hasAttribute('disabled')).toBe(false));
+  fireEvent.change(within(dialog).getByLabelText('Allowed hosts'), {
+    target: { value: 'api.example.com' },
+  });
+  fireEvent.click(reconnect);
+  expect(within(dialog).getByText('Save network changes before reauthorizing.')).toBeTruthy();
+  fireEvent.change(within(dialog).getByLabelText('Allowed hosts'), {
+    target: { value: '  open.feishu.cn\n' },
+  });
+  fireEvent.click(within(dialog).getByRole('radio', { name: 'Unrestricted' }));
+  fireEvent.click(reconnect);
+  expect(within(dialog).getByText('Save network changes before reauthorizing.')).toBeTruthy();
+  expect(window.open).not.toHaveBeenCalled();
+  expect(writes).toHaveLength(0);
+  expect(within(dialog).getByRole('button', { name: 'Save changes' }).hasAttribute('disabled')).toBe(false);
+  fireEvent.click(within(dialog).getByRole('radio', { name: 'Limited' }));
   fireEvent.click(reconnect);
   await within(dialog).findByText('授权服务暂不可用');
   expect(popup.close).toHaveBeenCalledTimes(1);

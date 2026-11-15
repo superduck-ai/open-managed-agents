@@ -3415,6 +3415,7 @@
   "managedAgents.credentialVaults.credentialDialog.envOAuthSecretNamePlaceholder": "LARKSUITE_CLI_USER_ACCESS_TOKEN",
   "managedAgents.credentialVaults.credentialDialog.envOAuthManual": "Use an existing token",
   "managedAgents.credentialVaults.credentialDialog.reauthorize": "Reauthorize",
+  "managedAgents.credentialVaults.credentialDialog.saveNetworkingFirst": "Save network changes before reauthorizing.",
   "managedAgents.credentialVaults.credentialDialog.envOAuthManualToken": "Access token (optional)",
   "managedAgents.credentialVaults.credentialDialog.envOAuthManualTokenPlaceholder": "Paste a token to skip authorization",
   "managedAgents.credentialVaults.credentialDialog.envOAuthRefreshToken": "Refresh token (optional)",

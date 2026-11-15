@@ -382,6 +382,19 @@ export function CredentialDialog({
   };
 
   const connectOAuth = async (reauthorize = false) => {
+    if (
+      reauthorize &&
+      JSON.stringify(credentialNetworkingBody(values)) !==
+        JSON.stringify(credentialNetworkingBody(credentialFormValues(credential)))
+    ) {
+      setError(
+        msg(
+          'managedAgents.credentialVaults.credentialDialog.saveNetworkingFirst',
+          'Save network changes before reauthorizing.',
+        ),
+      );
+      return;
+    }
     if (!canSubmit || (!needsOAuthConnect && !reauthorize) || !orgUuid) {
       setError(
         orgUuid

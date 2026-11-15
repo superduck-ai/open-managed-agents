@@ -323,6 +323,7 @@ test('creates an ENV OAuth credential through the authorization popup', async ()
           id: 'builtin:feishu',
           name: 'Feishu',
           builtin: true,
+          enabled: true,
           configured: true,
           authorize_endpoint: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize',
           token_endpoint: 'https://open.feishu.cn/open-apis/authen/v2/oauth/token',
@@ -389,6 +390,7 @@ test('选择无默认域名的自定义 OAuth 服务方并使用无限制网络'
           id: 'custom:example',
           name: 'Example',
           builtin: false,
+          enabled: true,
           configured: true,
           default_secret_name: '',
           default_allowed_hosts: null,
@@ -441,6 +443,7 @@ test.each(['Feishu', 'Friday'])('未配置内置 %s 禁用授权但保留手工�
         id: `builtin:${name.toLowerCase()}`,
         name,
         builtin: true,
+        enabled: true,
         configured: false,
         default_secret_name: 'TOKEN',
         default_allowed_hosts: [name === 'Friday' ? 'friday-tx.seewo.com' : 'open.feishu.cn'],
@@ -488,7 +491,7 @@ test('ENV OAuth 编辑授权失败后可重试，回调完成后刷新且不提�
   const writes: Record<string, unknown>[] = [];
   globalThis.fetch = mock(async (input, init) => {
     if (String(input).includes('/env-oauth/providers')) {
-      return Response.json([{ id: 'builtin:feishu', name: 'Feishu', builtin: true, configured: true }]);
+      return Response.json([{ id: 'builtin:feishu', name: 'Feishu', builtin: true, configured: true, enabled: true }]);
     }
     writes.push(JSON.parse(String(init?.body)));
     attempts += 1;

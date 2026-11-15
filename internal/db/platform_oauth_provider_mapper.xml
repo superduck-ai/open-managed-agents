@@ -3,20 +3,20 @@
     <sql id="columns">
         uuid, external_id, name, logo_url, authorize_endpoint, token_endpoint, scope, client_id_envelope,
         client_secret_envelope, token_endpoint_auth_method, token_endpoint_encoding,
-        created_by_platform_admin_uuid, created_at, updated_at, builtin_key, protected, version, default_secret_name, default_allowed_hosts
+        created_by_platform_admin_uuid, created_at, updated_at, builtin_key, protected, enabled, version, default_secret_name, default_allowed_hosts
     </sql>
 
     <insert id="Insert" result="returning" resultType="platformOAuthProviderRow">
         INSERT INTO platform_oauth_providers (
             uuid, external_id, name, logo_url, authorize_endpoint, token_endpoint, scope, client_id_envelope,
             client_secret_envelope, token_endpoint_auth_method, token_endpoint_encoding,
-            created_by_platform_admin_uuid, created_at, updated_at
+            created_by_platform_admin_uuid, created_at, updated_at, default_secret_name, enabled
         ) VALUES (
             #{params.UUID}, #{params.ExternalID}, #{params.Name}, #{params.LogoURL}, #{params.AuthorizeEndpoint},
             #{params.TokenEndpoint}, #{params.Scope}, #{params.ClientIDEnvelope,sensitive=true},
             #{params.ClientSecretEnvelope,sensitive=true}, #{params.TokenEndpointAuthMethod},
             #{params.TokenEndpointEncoding}, #{params.CreatedByPlatformAdminUUID},
-            #{params.CreatedAt}, #{params.UpdatedAt}
+            #{params.CreatedAt}, #{params.UpdatedAt}, #{params.DefaultSecretName}, #{params.Enabled}
         )
         RETURNING <include refid="columns"/>
     </insert>
@@ -24,7 +24,7 @@
     <select id="List" resultType="platformOAuthProviderRow">
         SELECT <include refid="columns"/>
         FROM platform_oauth_providers
-        ORDER BY protected DESC, created_at DESC, id DESC
+        ORDER BY created_at DESC, id DESC
     </select>
 
     <select id="FindByExternalID" resultType="platformOAuthProviderRow">
@@ -43,6 +43,8 @@
             authorize_endpoint = #{params.AuthorizeEndpoint},
             token_endpoint = #{params.TokenEndpoint},
             scope = #{params.Scope},
+            default_secret_name = #{params.DefaultSecretName},
+            enabled = #{params.Enabled},
             client_id_envelope = #{params.ClientIDEnvelope,sensitive=true},
             client_secret_envelope = #{params.ClientSecretEnvelope,sensitive=true},
             token_endpoint_auth_method = #{params.TokenEndpointAuthMethod},
@@ -54,6 +56,6 @@
 
     <delete id="DeleteByUUID" result="rows">
         DELETE FROM platform_oauth_providers
-        WHERE uuid = #{providerUUID} AND version = #{expectedVersion} AND protected = false
+        WHERE uuid = #{providerUUID} AND version = #{expectedVersion}
     </delete>
 </mapper>

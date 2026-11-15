@@ -21,6 +21,7 @@ import type { ApiError } from '../../../shared/api/client';
 import {
   initialOAuthProviderFormValues,
   oauthProviderFormReady,
+  oauthProviderOptionalFields,
   type OAuthProviderFormValues,
 } from './oauthProviderForm';
 
@@ -45,6 +46,7 @@ export function OAuthProviderDialog({
     mutationFn: () => {
       const editable = {
         scope: values.scope.trim(),
+        default_secret_name: values.defaultSecretName.trim(),
         logo_url: values.logoUrl.trim(),
         ...(values.clientId.trim() ? { client_id: values.clientId.trim() } : {}),
         ...(values.clientSecret.trim() ? { client_secret: values.clientSecret.trim() } : {}),
@@ -59,7 +61,7 @@ export function OAuthProviderDialog({
       };
       return provider
         ? updateOAuthProvider(client, provider.id, {
-            ...(provider.builtin ? editable : input),
+            ...input,
             expected_version: provider.version,
           })
         : createOAuthProvider(client, { ...input, client_id: values.clientId.trim() });
@@ -73,7 +75,7 @@ export function OAuthProviderDialog({
     },
   });
   const canSubmit = oauthProviderFormReady(values, provider);
-  const builtin = provider?.builtin ?? false;
+  const optionalFields = oauthProviderOptionalFields(values, provider);
   return (
     <Dialog open onOpenChange={(open) => !open && !mutation.isPending && onClose()}>
       <DialogContent
@@ -112,12 +114,7 @@ export function OAuthProviderDialog({
               >
                 <Input
                   id="oauth-provider-name"
-                  readOnly={builtin}
-                  value={
-                    builtin
-                      ? msg(`platformAdmin.oauthManagement.${provider?.provider_key.slice(8)}`, provider?.name ?? '')
-                      : values.name
-                  }
+                  value={values.name}
                   onChange={(event) => patch({ name: event.target.value })}
                 />
               </Field>
@@ -128,7 +125,6 @@ export function OAuthProviderDialog({
               >
                 <Input
                   id="oauth-provider-authorize"
-                  readOnly={builtin}
                   value={values.authorizeEndpoint}
                   placeholder="https://example.com/oauth/authorize"
                   onChange={(event) => patch({ authorizeEndpoint: event.target.value })}
@@ -141,7 +137,6 @@ export function OAuthProviderDialog({
               >
                 <Input
                   id="oauth-provider-token"
-                  readOnly={builtin}
                   value={values.tokenEndpoint}
                   placeholder="https://example.com/oauth/token"
                   onChange={(event) => patch({ tokenEndpoint: event.target.value })}
@@ -149,6 +144,7 @@ export function OAuthProviderDialog({
               </Field>
               <Field
                 id="oauth-provider-logo"
+                optional
                 label={msg('platformAdmin.oauthManagement.logoUrl', 'Logo URL')}
                 className="sm:col-span-2"
               >
@@ -160,7 +156,24 @@ export function OAuthProviderDialog({
                   onChange={(event) => patch({ logoUrl: event.target.value })}
                 />
               </Field>
-              <Field id="oauth-provider-client-id" label={msg('platformAdmin.oauthManagement.clientId', 'Client ID')}>
+              <Field
+                id="oauth-provider-default-secret-name"
+                optional
+                label={msg('platformAdmin.oauthManagement.defaultSecretName', 'Default variable name')}
+                className="sm:col-span-2"
+              >
+                <Input
+                  id="oauth-provider-default-secret-name"
+                  value={values.defaultSecretName}
+                  placeholder="ACCESS_TOKEN"
+                  onChange={(event) => patch({ defaultSecretName: event.target.value })}
+                />
+              </Field>
+              <Field
+                id="oauth-provider-client-id"
+                label={msg('platformAdmin.oauthManagement.clientId', 'Client ID')}
+                optional={optionalFields.clientId}
+              >
                 <Input
                   id="oauth-provider-client-id"
                   value={values.clientId}
@@ -169,6 +182,7 @@ export function OAuthProviderDialog({
               </Field>
               <Field
                 id="oauth-provider-secret"
+                optional={optionalFields.clientSecret}
                 label={msg('platformAdmin.oauthManagement.clientSecret', 'Client secret')}
                 hint={
                   provider?.configured
@@ -185,6 +199,7 @@ export function OAuthProviderDialog({
               </Field>
               <Field
                 id="oauth-provider-scope"
+                optional={optionalFields.scope}
                 label={msg('platformAdmin.oauthManagement.scope', 'Scope')}
                 className="sm:col-span-2"
               >
@@ -198,11 +213,7 @@ export function OAuthProviderDialog({
                 id="oauth-provider-auth-method"
                 label={msg('platformAdmin.oauthManagement.authMethod', 'Token endpoint auth')}
               >
-                <Select
-                  disabled={builtin}
-                  value={values.authMethod}
-                  onValueChange={(value) => value && patch({ authMethod: value })}
-                >
+                <Select value={values.authMethod} onValueChange={(value) => value && patch({ authMethod: value })}>
                   <SelectTrigger id="oauth-provider-auth-method">
                     <SelectValue />
                   </SelectTrigger>
@@ -217,11 +228,7 @@ export function OAuthProviderDialog({
                 id="oauth-provider-encoding"
                 label={msg('platformAdmin.oauthManagement.encoding', 'Token encoding')}
               >
-                <Select
-                  disabled={builtin}
-                  value={values.encoding}
-                  onValueChange={(value) => value && patch({ encoding: value })}
-                >
+                <Select value={values.encoding} onValueChange={(value) => value && patch({ encoding: value })}>
                   <SelectTrigger id="oauth-provider-encoding">
                     <SelectValue />
                   </SelectTrigger>
@@ -232,11 +239,6 @@ export function OAuthProviderDialog({
                 </Select>
               </Field>
             </div>
-            {provider && builtin ? (
-              <FieldDescription>
-                {provider.default_secret_name} · {provider.default_allowed_hosts.join(', ')}
-              </FieldDescription>
-            ) : null}
             {provider && values.clientId.trim() !== provider.client_id ? (
               <FieldDescription>
                 {msg(
@@ -276,19 +278,29 @@ export function OAuthProviderDialog({
 function Field({
   id,
   label,
+  optional = false,
   hint,
   className,
   children,
 }: {
   id: string;
   label: string;
+  optional?: boolean;
   hint?: string;
   className?: string;
   children: ReactNode;
 }) {
+  const { msg } = useI18n();
   return (
     <FormField className={className}>
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <FieldLabel htmlFor={id}>
+        {label}
+        {optional ? (
+          <span className="font-normal text-muted-foreground">
+            {msg('managedAgents.common.optionalParen', '(optional)')}
+          </span>
+        ) : null}
+      </FieldLabel>
       {children}
       {hint ? <FieldDescription>{hint}</FieldDescription> : null}
     </FormField>

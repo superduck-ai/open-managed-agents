@@ -21,6 +21,7 @@ type PlatformOAuthProvider struct {
 	Scope                      string
 	BuiltinKey                 string
 	Protected                  bool
+	Enabled                    bool
 	Version                    int64
 	DefaultSecretName          string
 	DefaultAllowedHosts        []string
@@ -133,6 +134,8 @@ func platformOAuthProviderUpsertParams(provider PlatformOAuthProvider) (upsertPl
 		AuthorizeEndpoint:          provider.AuthorizeEndpoint,
 		TokenEndpoint:              provider.TokenEndpoint,
 		Scope:                      provider.Scope,
+		DefaultSecretName:          provider.DefaultSecretName,
+		Enabled:                    provider.Enabled,
 		ClientIDEnvelope:           idEnvelope,
 		Version:                    provider.Version,
 		ClientSecretEnvelope:       secretEnvelope,
@@ -155,6 +158,7 @@ func (r platformOAuthProviderRow) provider() (PlatformOAuthProvider, error) {
 		Scope:                      r.Scope,
 		BuiltinKey:                 r.BuiltinKey.String,
 		Protected:                  r.Protected,
+		Enabled:                    r.Enabled,
 		Version:                    r.Version,
 		DefaultSecretName:          r.DefaultSecretName,
 		TokenEndpointAuthMethod:    r.TokenEndpointAuthMethod,

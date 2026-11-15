@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -60,6 +61,7 @@ type envOAuthVaultAuthStartResponse struct {
 }
 
 type envOAuthProviderResponse struct {
+	Enabled             bool     `json:"enabled"`
 	ID                  string   `json:"id"`
 	Name                string   `json:"name"`
 	LogoURL             string   `json:"logo_url"`
@@ -100,6 +102,7 @@ func (s *Server) handleEnvOAuthProviders(w http.ResponseWriter, r *http.Request)
 	response := make([]envOAuthProviderResponse, 0, len(providers))
 	for _, provider := range providers {
 		response = append(response, envOAuthProviderResponse{
+			Enabled:             provider.Enabled,
 			ID:                  provider.ProviderKey,
 			Name:                provider.Name,
 			LogoURL:             provider.LogoURL,
@@ -181,6 +184,10 @@ func (s *Server) handleEnvOAuthVaultAuthStart(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if !provider.Enabled && !slices.ContainsFunc(credentials, func(credential db.VaultCredential) bool { return credential.CredentialKey == secretName }) {
+		writeEnvOAuthStartError(w, http.StatusConflict, envOAuthErrorProviderUnavailable, "")
+		return
+	}
 	flowID, err := ids.New("eof_")
 	if err != nil {
 		writeEnvOAuthStartError(w, http.StatusInternalServerError, envOAuthErrorInvalidRequest, "")

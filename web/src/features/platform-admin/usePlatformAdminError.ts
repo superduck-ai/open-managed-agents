@@ -26,10 +26,6 @@ export function usePlatformAdminError() {
       'platformAdmin.errors.oauthProviderNameConflict',
       'An OAuth client with this name already exists.',
     ),
-    oauth_provider_protected: msg(
-      'platformAdmin.errors.oauthProviderProtected',
-      'Built-in OAuth providers cannot be deleted.',
-    ),
     oauth_provider_version_conflict: msg(
       'platformAdmin.errors.oauthProviderVersionConflict',
       'The provider changed. Close and reopen this form.',

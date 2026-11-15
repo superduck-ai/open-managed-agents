@@ -42,6 +42,7 @@ function mount() {
 }
 
 const provider = {
+  enabled: true,
   id: 'poap_test',
   provider_key: 'custom:poap_test',
   builtin: false,
@@ -85,10 +86,10 @@ test('注册客户端提交完整字段', async () => {
   await screen.findByText('暂无 OAuth 客户端');
   fireEvent.click(screen.getByRole('button', { name: '注册 OAuth 客户端' }));
   fireEvent.change(await screen.findByLabelText('名称'), { target: { value: 'Example OAuth' } });
-  fireEvent.change(screen.getByLabelText('客户端 ID'), { target: { value: 'client' } });
+  fireEvent.change(screen.getByLabelText(/^客户端 ID/), { target: { value: 'client' } });
   fireEvent.change(screen.getByLabelText('授权端点'), { target: { value: 'https://auth.example.test/authorize' } });
   fireEvent.change(screen.getByLabelText('令牌端点'), { target: { value: 'https://auth.example.test/token' } });
-  fireEvent.change(screen.getByLabelText('客户端密钥'), { target: { value: 'secret' } });
+  fireEvent.change(screen.getByLabelText(/^客户端密钥/), { target: { value: 'secret' } });
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
   });
@@ -100,6 +101,7 @@ test('注册客户端提交完整字段', async () => {
     authorize_endpoint: 'https://auth.example.test/authorize',
     token_endpoint: 'https://auth.example.test/token',
     scope: '',
+    default_secret_name: '',
     client_id: 'client',
     token_endpoint_auth_method: 'client_secret_post',
     token_endpoint_encoding: 'form',
@@ -113,13 +115,13 @@ const builtin = {
   provider_key: 'builtin:feishu',
   builtin: true,
   protected: true,
-  name: 'Feishu',
+  name: '飞书',
   scope: 'offline_access',
   default_secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
   default_allowed_hosts: ['open.feishu.cn', 'accounts.feishu.cn'],
 };
 
-test('飞书作为列表行展示服务方图标且不提供删除按钮', async () => {
+test('飞书客户端通过更多操作统一提供停用和删除', async () => {
   globalThis.fetch = mock(async () => Response.json([builtin])) as typeof fetch;
   mount();
   expect(await screen.findByText('飞书')).toBeTruthy();
@@ -127,9 +129,13 @@ test('飞书作为列表行展示服务方图标且不提供删除按钮', async
   expect(screen.getByText('已配置')).toBeTruthy();
   expect(screen.queryByRole('button', { name: '删除' })).toBeNull();
   expect(screen.queryByText('暂无 OAuth 客户端')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '飞书的更多操作' }));
+  expect(await screen.findByRole('menuitem', { name: '删除' })).toBeTruthy();
+  expect(screen.queryByRole('menuitem', { name: '编辑 OAuth 客户端' })).toBeNull();
+  expect(screen.queryByRole('dialog')).toBeNull();
 });
 
-test('飞书首次配置固定字段只读并按最小字段提交', async () => {
+test('飞书首次配置字段可编辑并提交完整配置', async () => {
   const writes: RequestInit[] = [];
   globalThis.fetch = mock(async (input, options) => {
     if (options?.method === 'PATCH') {
@@ -143,22 +149,27 @@ test('飞书首次配置固定字段只读并按最小字段提交', async () =>
   mount();
   fireEvent.click(await screen.findByText('飞书'));
   const name = (await screen.findByLabelText('名称')) as HTMLInputElement;
-  expect(name.readOnly).toBe(true);
-  expect((screen.getByLabelText('授权端点') as HTMLInputElement).readOnly).toBe(true);
-  expect((screen.getByLabelText('令牌端点') as HTMLInputElement).readOnly).toBe(true);
+  expect(name.readOnly).toBe(false);
+  expect((screen.getByLabelText('授权端点') as HTMLInputElement).readOnly).toBe(false);
+  expect((screen.getByLabelText('令牌端点') as HTMLInputElement).readOnly).toBe(false);
   expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(false);
-  fireEvent.change(screen.getByLabelText('客户端 ID'), { target: { value: 'new-client' } });
+  fireEvent.change(screen.getByLabelText(/^客户端 ID/), { target: { value: 'new-client' } });
   expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(true);
-  fireEvent.change(screen.getByLabelText('客户端密钥'), { target: { value: 'new-secret' } });
+  fireEvent.change(screen.getByLabelText(/^客户端密钥/), { target: { value: 'new-secret' } });
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
   });
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(JSON.parse(String(writes[0].body))).toEqual({
     expected_version: 1,
+    default_secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
     logo_url: '',
     scope: 'offline_access',
-    logo_url: '',
+    name: builtin.name,
+    authorize_endpoint: builtin.authorize_endpoint,
+    token_endpoint: builtin.token_endpoint,
+    token_endpoint_auth_method: builtin.token_endpoint_auth_method,
+    token_endpoint_encoding: builtin.token_endpoint_encoding,
     client_id: 'new-client',
     client_secret: 'new-secret',
   });
@@ -175,8 +186,8 @@ test('飞书保留旧密钥且更换应用时要求新密钥', async () => {
   }) as typeof fetch;
   mount();
   fireEvent.click(await screen.findByText('飞书'));
-  const client = await screen.findByLabelText('客户端 ID');
-  expect((screen.getByLabelText('客户端密钥') as HTMLInputElement).value).toBe('');
+  const client = await screen.findByLabelText(/^客户端 ID/);
+  expect((screen.getByLabelText(/^客户端密钥/) as HTMLInputElement).value).toBe('');
   fireEvent.change(client, { target: { value: 'different' } });
   expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(true);
   expect(screen.getByText('修改客户端 ID 必须同时填写新密钥，已有令牌可能需要重新授权。')).toBeTruthy();
@@ -187,9 +198,14 @@ test('飞书保留旧密钥且更换应用时要求新密钥', async () => {
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(JSON.parse(String(writes[0].body))).toEqual({
     expected_version: 1,
+    default_secret_name: 'LARKSUITE_CLI_USER_ACCESS_TOKEN',
     logo_url: '',
     scope: 'offline_access',
-    logo_url: '',
+    name: builtin.name,
+    authorize_endpoint: builtin.authorize_endpoint,
+    token_endpoint: builtin.token_endpoint,
+    token_endpoint_auth_method: builtin.token_endpoint_auth_method,
+    token_endpoint_encoding: builtin.token_endpoint_encoding,
     client_id: 'client',
   });
 });
@@ -209,7 +225,7 @@ test('并发版本冲突后重新打开使用最新版本并可保存', async ()
   }) as typeof fetch;
   mount();
   fireEvent.click(await screen.findByText('飞书'));
-  await screen.findByLabelText('客户端 ID');
+  await screen.findByLabelText(/^客户端 ID/);
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
   });
@@ -217,28 +233,29 @@ test('并发版本冲突后重新打开使用最新版本并可保存', async ()
   await waitFor(() => expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(false));
   fireEvent.click(screen.getByRole('button', { name: '取消' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  fireEvent.click(screen.getByRole('button', { name: '编辑 OAuth 客户端' }));
-  await screen.findByLabelText('客户端 ID');
+  fireEvent.click(await screen.findByText('飞书'));
+  await screen.findByLabelText(/^客户端 ID/);
   fireEvent.click(screen.getByRole('button', { name: '保存' }));
   await waitFor(() => expect(writes).toEqual([1, 2]));
 });
 
-test('历史同名自定义 Feishu 与飞书仍按各自权限展示', async () => {
+test('所有平台客户端统一提供更多操作', async () => {
   globalThis.fetch = mock(async () => Response.json([builtin, { ...provider, name: 'Feishu' }])) as typeof fetch;
   mount();
   expect(await screen.findByText('飞书')).toBeTruthy();
   expect(screen.getByText('Feishu')).toBeTruthy();
   expect(screen.queryByText('内置')).toBeNull();
   expect(screen.queryByText('自定义')).toBeNull();
-  expect(screen.getAllByRole('button', { name: '删除' })).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: /的更多操作$/ })).toHaveLength(2);
 });
 
-test('Friday 与飞书分别展示，内置 Friday 使用独立端点和 read scope 首配', async () => {
+test('Friday 与飞书分别展示，Friday 使用独立端点首配', async () => {
   const friday = {
     ...builtin,
     id: 'poap_FridayBuiltinOAuthClient',
     provider_key: 'builtin:friday',
     name: 'Friday',
+    default_secret_name: 'FRIDAY_4A_TOKEN',
     authorize_endpoint: 'https://friday-tx.seewo.com/open/api/oauth/authorize',
     token_endpoint: 'https://friday-tx.seewo.com/open/api/oauth/token',
     token_endpoint_auth_method: 'client_secret_basic',
@@ -263,20 +280,25 @@ test('Friday 与飞书分别展示，内置 Friday 使用独立端点和 read sc
   fireEvent.click(await screen.findByText('Friday'));
   expect(((await screen.findByLabelText('名称')) as HTMLInputElement).value).toBe('Friday');
   expect((screen.getByLabelText('授权端点') as HTMLInputElement).value).toBe(friday.authorize_endpoint);
-  expect((screen.getByLabelText('令牌端点') as HTMLInputElement).readOnly).toBe(true);
+  expect((screen.getByLabelText('令牌端点') as HTMLInputElement).readOnly).toBe(false);
   expect(screen.queryByRole('button', { name: '删除' })).toBeNull();
-  fireEvent.change(screen.getByLabelText('客户端 ID'), { target: { value: 'synthetic-friday-id' } });
-  fireEvent.change(screen.getByLabelText('客户端密钥'), { target: { value: 'synthetic-friday-secret' } });
-  fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'offline_access' } });
-  expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(true);
-  fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'read' } });
+  fireEvent.change(screen.getByLabelText(/^客户端 ID/), { target: { value: 'synthetic-friday-id' } });
+  fireEvent.change(screen.getByLabelText(/^客户端密钥/), { target: { value: 'synthetic-friday-secret' } });
+  fireEvent.change(screen.getByLabelText(/^Scope/), { target: { value: 'offline_access' } });
+  expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(false);
+  fireEvent.change(screen.getByLabelText(/^Scope/), { target: { value: 'read' } });
   await act(async () => fireEvent.click(screen.getByRole('button', { name: '保存' })));
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(JSON.parse(String(writes[0].body))).toEqual({
     expected_version: 1,
+    default_secret_name: 'FRIDAY_4A_TOKEN',
     logo_url: '',
     scope: 'read',
-    logo_url: '',
+    name: friday.name,
+    authorize_endpoint: friday.authorize_endpoint,
+    token_endpoint: friday.token_endpoint,
+    token_endpoint_auth_method: friday.token_endpoint_auth_method,
+    token_endpoint_encoding: friday.token_endpoint_encoding,
     client_id: 'synthetic-friday-id',
     client_secret: 'synthetic-friday-secret',
   });
@@ -307,20 +329,63 @@ test('Logo 可选且客户端凭据可先留空，支持编辑清除 Logo', asyn
   fireEvent.change(await screen.findByLabelText('名称'), { target: { value: 'Logo client' } });
   fireEvent.change(screen.getByLabelText('授权端点'), { target: { value: provider.authorize_endpoint } });
   fireEvent.change(screen.getByLabelText('令牌端点'), { target: { value: provider.token_endpoint } });
-  fireEvent.change(screen.getByLabelText('客户端 ID'), { target: { value: 'half-client' } });
+  fireEvent.change(screen.getByLabelText(/^客户端 ID/), { target: { value: 'half-client' } });
   expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(true);
-  fireEvent.change(screen.getByLabelText('客户端 ID'), { target: { value: '' } });
+  fireEvent.change(screen.getByLabelText(/^客户端 ID/), { target: { value: '' } });
   expect(screen.getByRole('button', { name: '保存' }).hasAttribute('disabled')).toBe(false);
-  fireEvent.change(screen.getByLabelText('Logo URL'), { target: { value: 'https://example.test/logo.png' } });
+  fireEvent.change(screen.getByLabelText(/^Logo URL/), { target: { value: 'https://example.test/logo.png' } });
   fireEvent.click(screen.getByRole('button', { name: '保存' }));
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(writes[0]).toMatchObject({ client_id: '', logo_url: 'https://example.test/logo.png' });
   expect(writes[0]).not.toHaveProperty('client_secret');
   fireEvent.click(await screen.findByText('Logo client'));
-  expect(((await screen.findByLabelText('Logo URL')) as HTMLInputElement).value).toBe('https://example.test/logo.png');
-  fireEvent.change(screen.getByLabelText('Logo URL'), { target: { value: '' } });
+  expect(((await screen.findByLabelText(/^Logo URL/)) as HTMLInputElement).value).toBe('https://example.test/logo.png');
+  fireEvent.change(screen.getByLabelText(/^Logo URL/), { target: { value: '' } });
   fireEvent.click(screen.getByRole('button', { name: '保存' }));
   await waitFor(() => expect(writes).toHaveLength(2));
   expect(writes[1].logo_url).toBe('');
   expect(writes[1]).not.toHaveProperty('client_id');
+});
+
+test('默认变量名可编辑并保存', async () => {
+  const writes: RequestInit[] = [];
+  globalThis.fetch = mock(async (_input, options) => {
+    if (options?.method === 'PATCH') {
+      writes.push(options);
+      return Response.json(builtin);
+    }
+    return Response.json([builtin]);
+  }) as typeof fetch;
+  mount();
+  fireEvent.click(await screen.findByText('飞书'));
+  const input = await screen.findByLabelText(/^默认变量名/);
+  expect((input as HTMLInputElement).readOnly).toBe(false);
+  fireEvent.change(input, { target: { value: 'TEAM_FEISHU_TOKEN' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存' }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(JSON.parse(String(writes[0].body)).default_secret_name).toBe('TEAM_FEISHU_TOKEN');
+});
+
+test.each([true, false])('客户端启停确认并仅提交状态和版本：%s', async (enabled) => {
+  const writes: RequestInit[] = [];
+  globalThis.fetch = mock(async (_input, options) => {
+    if (options?.method === 'PATCH') {
+      writes.push(options);
+      return Response.json({ ...provider, enabled: !enabled });
+    }
+    return Response.json([{ ...provider, enabled }]);
+  }) as typeof fetch;
+  mount();
+  await screen.findByText('Example OAuth');
+  expect(screen.queryByRole('button', { name: enabled ? '停用' : '启用' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Example OAuth的更多操作' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: enabled ? '停用' : '启用' }));
+  if (enabled)
+    expect(
+      screen.getByText('从工作区可选服务方中隐藏。已有凭证和会话继续可用；停用不会撤销授权或自动刷新能力。'),
+    ).toBeTruthy();
+  expect(writes).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: '确认' }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(JSON.parse(String(writes[0].body))).toEqual({ enabled: !enabled, expected_version: provider.version });
 });

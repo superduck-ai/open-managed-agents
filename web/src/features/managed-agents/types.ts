@@ -250,6 +250,7 @@ export type VaultCredentialApiResponse = {
 };
 
 export type EnvOAuthProviderApiResponse = {
+  enabled: boolean;
   logo_url?: string;
   configured: boolean;
   id: string;

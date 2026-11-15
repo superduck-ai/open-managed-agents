@@ -17,6 +17,7 @@ type platformOAuthProviderRow struct {
 	TokenEndpoint              string         `db:"token_endpoint"`
 	Scope                      string         `db:"scope"`
 	BuiltinKey                 sql.NullString `db:"builtin_key"`
+	Enabled                    bool           `db:"enabled"`
 	Protected                  bool           `db:"protected"`
 	Version                    int64          `db:"version"`
 	DefaultSecretName          string         `db:"default_secret_name"`
@@ -38,6 +39,8 @@ type upsertPlatformOAuthProviderParams struct {
 	AuthorizeEndpoint          string
 	TokenEndpoint              string
 	Scope                      string
+	DefaultSecretName          string
+	Enabled                    bool
 	ClientIDEnvelope           *string
 	Version                    int64
 	ClientSecretEnvelope       *string

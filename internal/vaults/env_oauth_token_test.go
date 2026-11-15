@@ -120,7 +120,7 @@ func TestSubstituteEnvOAuthSecretsPrefersEnvironmentVariable(t *testing.T) {
 	}
 }
 
-func TestEnvOAuthTokenResolverRefreshesExpiredToken(t *testing.T) {
+func TestEnvOAuthTokenResolverRefreshesExpiredTokenFromDisabledProvider(t *testing.T) {
 	t.Parallel()
 	svc := newTestSecretsService(t)
 	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
@@ -142,6 +142,7 @@ func TestEnvOAuthTokenResolverRefreshesExpiredToken(t *testing.T) {
 	resolver := newEnvOAuthTokenResolver(store, svc, nil, nil).
 		withHTTPClient(server.Client()).
 		withProviders(fakeEnvOAuthProviderResolver{snapshot: EnvOAuthProviderSnapshot{
+			Enabled:                 false,
 			ProviderKey:             EnvOAuthProviderBuiltinFeishu,
 			TokenEndpoint:           server.URL,
 			ClientID:                "client",

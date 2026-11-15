@@ -8,6 +8,7 @@ const providers: EnvOAuthProviderApiResponse[] = [
     id: 'builtin:feishu',
     name: 'Feishu',
     builtin: true,
+    enabled: true,
     configured: true,
     authorize_endpoint: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize',
     token_endpoint: 'https://open.feishu.cn/open-apis/authen/v2/oauth/token',
@@ -19,6 +20,7 @@ const providers: EnvOAuthProviderApiResponse[] = [
     id: 'custom:example',
     name: 'Example',
     builtin: false,
+    enabled: true,
     configured: true,
     authorize_endpoint: 'https://example.test/authorize',
     token_endpoint: 'https://example.test/token',
@@ -128,7 +130,7 @@ test('shows the provider loading error and retries', () => {
 
 test.each([
   ['builtin:feishu', 'Feishu', 'LARKSUITE_CLI_USER_ACCESS_TOKEN'],
-  ['builtin:friday', 'Friday', 'ACCESS_TOKEN'],
+  ['builtin:friday', 'Friday', 'FRIDAY_4A_TOKEN'],
   ['custom:example', 'Example', ''],
 ])('未选服务方时提示通用变量名，选择 %s 后使用对应默认值', (id, name, secretName) => {
   const onChange = mock(() => {});
@@ -137,7 +139,7 @@ test.each([
       values={{ ...values, envOAuthProviderId: '', secretName: '' }}
       providers={[
         ...providers,
-        { ...providers[0], id: 'builtin:friday', name: 'Friday', default_secret_name: 'ACCESS_TOKEN' },
+        { ...providers[0], id: 'builtin:friday', name: 'Friday', default_secret_name: 'FRIDAY_4A_TOKEN' },
       ]}
       providersLoading={false}
       providersError={null}
@@ -185,4 +187,20 @@ test('手填区只提供 Access token', () => {
   expect(screen.queryByLabelText('Expires at (optional)')).toBeNull();
   fireEvent.change(tokenInput, { target: { value: 'new-token' } });
   expect(onChange).toHaveBeenCalledWith({ envOAuthManualToken: 'new-token' });
+});
+
+test.each([false, true])('停用服务方仅对编辑已有凭证可见：%s', (editing) => {
+  render(
+    <EnvOAuthCredentialFields
+      values={values}
+      providers={providers.map((p) => ({ ...p, enabled: false }))}
+      providersLoading={false}
+      providersError={null}
+      onRetryProviders={() => {}}
+      secretNameLocked={editing}
+      onChange={() => {}}
+    />,
+  );
+  fireEvent.click(screen.getByRole('combobox', { name: 'OAuth provider' }));
+  expect(screen.queryAllByRole('option').some((option) => option.textContent?.includes('Example'))).toBe(editing);
 });

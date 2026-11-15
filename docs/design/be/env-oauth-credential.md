@@ -31,7 +31,7 @@ Provider 与 flow 均不建外键；引用以 UUID/外部 ID 表达。
 
 远程迁移 `00119_env_oauth_builtin_client_id.sql` 清除了飞书 flow 的客户端 ID；自定义快照保持不变，回滚只移除约束，不恢复清除值。增量 `00120_builtin_oauth_provider.sql` 增加受保护身份、默认值、版本和可空信封字段，seed 飞书元数据行；`00121_seal_oauth_client_ids.sql` 在断言全部历史自定义 ID 已回填后删除两表明文列。不得修改旧迁移。当前启动按迁移顺序完成最终 schema，不提供历史中间版本的数据回填工具。Down 拒绝重建明文；恢复旧二进制必须恢复升级前配套数据库与密钥备份。
 
-飞书永久使用 `external_id=poap_FeishuBuiltinOAuthClient`、`builtin_key=feishu`、`protected=true`，UUID 由数据库生成并保留。自定义行 builtin_key 为空、protected 为 false、创建人非空。CHECK 约束保护身份映射及信封成对状态，Mapper 删除额外要求 `protected=false`。自定义名称部分唯一索引允许历史自定义 `Feishu` 与 seed 并存；保留 external_id 冲突使迁移失败，不收编或覆盖既有记录。`version>0`，管理更新和密钥重新包装均 CAS 递增。
+飞书永久使用 `external_id=poap_FeishuBuiltinOAuthClient`、`builtin_key=feishu`、`protected=true`，UUID 由数据库生成并保留。自定义行 builtin_key 为空、protected 为 false、创建人非空。CHECK 约束保护身份映射及信封成对状态，身份字段仅用于稳定 provider_key 与协议解析，平台管理不按该字段限制编辑或删除。自定义名称部分唯一索引允许历史自定义 `Feishu` 与 seed 并存；保留 external_id 冲突使迁移失败，不收编或覆盖既有记录。`version>0`，管理更新和密钥重新包装均 CAS 递增。
 
 `00123_require_custom_oauth_client_envelopes.sql` 恢复双信封 CHECK 内置分支的 `builtin_key IS NOT NULL` 守卫，避免 PostgreSQL 的 NULL 语义放行自定义双空信封。自定义行必须同时具有两个通过结构校验的信封；飞书与 Friday 仍允许双空未配置状态，均不允许单空。合法存量行无须改写即可升级；若 00122 已写入双空自定义行，00123 原子失败并保留版本及记录，须在停机维护期间补齐有效加密凭据后重试，不自动删除或伪造凭据。真实 PostgreSQL 回归覆盖插入、更新、存量升级失败与修复后重试，以及既有身份、保护、信封结构和版本约束。
 
@@ -156,15 +156,17 @@ stateDiagram-v2
 | PATCH | `/oauth-providers/{id}` | 部分更新；`client_secret` 缺省表示不改 |
 | DELETE | `/oauth-providers/{id}` | 删除；不影响已存 flow 快照与已建凭证的可读性 |
 
-响应保留 `id`（external_id）、名称、端点、scope、client_id、has_client_secret、认证方式、编码与时间，新增 `provider_key`、`builtin`、`protected`、`has_client_id`、`configured`、`version` 和只读默认值。client_id 仅在超管授权后解密，客户端列表不解密 secret；所有平台客户端响应使用 `Cache-Control: no-store`。未配置 ID 返回空串，解密失败返回 503 `platform_oauth_provider_unavailable`，不能冒充未配置。API、日志和审计永不回显 secret 或信封。
+响应保留 `id`（external_id）、名称、端点、scope、client_id、has_client_secret、认证方式、编码与时间，新增 `provider_key`、`builtin`、`protected`、`has_client_id`、`configured`、`version` 、`enabled` 和可编辑的默认变量名。client_id 仅在超管授权后解密，客户端列表不解密 secret；所有平台客户端响应使用 `Cache-Control: no-store`。未配置 ID 返回空串，解密失败返回 503 `platform_oauth_provider_unavailable`，不能冒充未配置。API、日志和审计永不回显 secret 或信封。
 
 名称上限按 Unicode 字符计数（200 字符），不是字节数。`prod` 环境拒绝 `http` 端点，其他环境仍允许本地联调使用 `http`。
 
-POST 仅创建自定义，拒绝 builtin_key/protected/uuid 等未知系统字段。PATCH 内置仅允许 scope、client_id、client_secret（另需 expected_version）；禁止字段即使同值或 null 也拒绝。secret 省略保持，空串/null 拒绝；首次配置及修改 ID 必须同时提交新 secret；仅换 secret 不重封 ID。DELETE 内置返回 409 `oauth_provider_protected`；自定义删除仍是 204/404。PATCH/DELETE 必须提交 `expected_version`，过期为 409 `oauth_provider_version_conflict`，名称冲突仍是 `oauth_provider_name_conflict`。
+平台客户端仅由超级管理员统一登记和管理，不按内置或自定义设置编辑、删除或启停差异；普通用户创建凭证时填写的客户端覆盖配置仅属于该凭证或授权流程，不写入平台目录。保留已有 provider_key 身份，避免改变凭证绑定与授权协议。
 
-平台页将飞书与 Friday 内置行排在同一表格前部，显示服务方图标、本地化名称及配置状态，不展示「内置」文字；保留共享 shadcn 组件与现有路由。内置名称、端点、认证方式、编码和默认值只读，不显示删除和重置操作。编辑弹窗只发送允许字段，提示更换应用可能需要重新授权。Vault 表单使用组织 API 元数据，未配置禁用授权按钮，保留手工令牌保存；普通用户仅看到联系管理员，具有 platform:access 的用户可进入平台配置页。
+所有平台客户端都可编辑名称、Logo、端点、scope、认证方式、编码、默认变量名及客户端配置。secret 省略保持，空串/null 拒绝；首次配置及修改 ID 必须同时提交新 secret；仅换 secret 不重封 ID。PATCH/DELETE 必须提交 `expected_version`，过期为 409 `oauth_provider_version_conflict`，名称冲突仍是 `oauth_provider_name_conflict`。删除任一客户端不影响其他客户端的列表查询。
 
-结构化安全审计复用注入的 slog logger：create/update/delete、首次 configure、rewrap、保护拒绝和内置缺失完整性故障。只记录 actor UUID 或 maintenance/system、provider UUID/key、action、changed_fields、result、request_id/错误码与事件时间；不记录客户端值、scope 内容、信封或上游 body。成功在提交后记录，失败在资源最终处理处记录；日志与数据库不承诺原子持久化。中英文文案按稳定错误码翻译。
+平台列表展示管理员设置的名称、头像和状态，最右侧统一使用三点“更多操作”菜单，提供启用/停用和删除，点击整行进入编辑。Vault 表单使用组织 API 元数据，未配置禁用授权按钮，保留手工令牌保存；普通用户仅看到联系管理员，具有 platform:access 的超级管理员可进入平台配置页。
+
+结构化安全审计复用注入的 slog logger：create/update/delete、首次 configure、rewrap和解析不可用故障。只记录 actor UUID 或 maintenance/system、provider UUID/key、action、changed_fields、result、request_id/错误码与事件时间；不记录客户端值、scope 内容、信封或上游 body。成功在提交后记录，失败在资源最终处理处记录；日志与数据库不承诺原子持久化。中英文文案按稳定错误码翻译。
 
 ### 凭证列表
 
@@ -198,22 +200,22 @@ ENV OAuth 表单的「已有 Token？手动填写」折叠区只提供 Access to
 - `internal/db`：`Claim` 的 SQL 与敏感绑定标记；`Complete` 只接受 `processing`，`Fail` 接受 `pending`/`processing`。
 - `internal/platformadmin`：名称按字符计数、`prod` 拒绝 `http` 端点。
 - `cmd/vault-migrate`：平台双信封/flow 单信封 CAS、跨 provider 迁移、失败整行不变，轮换后 Open 与本地 stub OAuth 刷新。
-- 前端：内置表格行、固定字段只读、最小 PATCH、空 secret 保留、首配/换 ID 校验、并发提示、Vault 未配置禁授权与手工保存、中英文键一致。
+- 前端：统一平台表格行、字段可编辑、完整配置 PATCH、空 secret 保留、首配/换 ID 校验、并发提示、Vault 未配置禁授权与手工保存、中英文键一致。
 
 定向真实 PostgreSQL 使用 `just test-integration`，通过 TEST_MIGRATION_DATABASE_URL 指向隔离数据库。普通单测不连接外部服务。stub 结果不代表真实飞书扫码或上游兼容验收；不自动运行 verify-be，既有 D1/C7 真实验收报告仅作历史基线。
 
 
 ## Friday 内置服务方增量
 
-`00122_builtin_friday_oauth_provider.sql` 扩展受保护身份与双信封约束，新增 `builtin_key=friday`、`external_id=poap_FridayBuiltinOAuthClient` 的独立行，保留飞书和自定义行。新行默认未配置，客户端 ID 与 secret 均为 NULL；不得在 SQL seed 中填写明文客户端。UUID 保留，名称可以与历史自定义 Friday 并存。两个内置行缺失均使列表拒绝服务并按实际 provider_key 记录完整性审计。
+`00122_builtin_friday_oauth_provider.sql` 扩展受保护身份与双信封约束，新增 `builtin_key=friday`、`external_id=poap_FridayBuiltinOAuthClient` 的独立行，保留飞书和自定义行。新行默认未配置，客户端 ID 与 secret 均为 NULL；不得在 SQL seed 中填写明文客户端。UUID 保留，名称可以与历史自定义 Friday 并存。删除其中一行后其余客户端仍可查询和使用。
 
-Friday 授权端点为 `https://friday-tx.seewo.com/open/api/oauth/authorize`，令牌端点为 `https://friday-tx.seewo.com/open/api/oauth/token`，scope 固定为上游支持的 `read`，采用 `client_secret_basic` 与 `application/x-www-form-urlencoded`，使用 S256。默认网络白名单为 `friday-tx.seewo.com`；没有已确认的 CLI 变量合同，因此默认变量名为空，由 Vault 用户填写。Friday 与飞书各自读取 DB 端点及客户端，不共享飞书端点、scope 或应用凭据。
+Friday 授权端点为 `https://friday-tx.seewo.com/open/api/oauth/authorize`，令牌端点为 `https://friday-tx.seewo.com/open/api/oauth/token`，初始 scope 为上游支持的 `read`，采用 `client_secret_basic` 与 `application/x-www-form-urlencoded`，使用 S256。默认网络白名单为 `friday-tx.seewo.com`；默认变量名为 `FRIDAY_4A_TOKEN`，管理员可修改。Friday 与飞书各自读取 DB 端点及客户端，不共享飞书端点、scope 或应用凭据。
 
 上游依据是 Friday 仓库 `OAuthDiscoveryController.kt`、`OAuthController.kt`、`OAuthService.kt` 和 `docs/oauth-configuration.md`：公网 origin 可由 `friday.oauth.public-url` 覆盖，客户端在上游通过配置中心或环境注入的 `friday.oauth.clients` JSON 数组注册，字段为 `id`、`secret`、`name`、`redirectUris`。仓库文档的 `friday-bridge` 是示例 ID，不是已确认生产应用，不能直接 seed。`friday.oauth.signing-secret` 是上游签名密钥，不是 OAuth 客户端 secret，禁止作为客户端导入。
 
 Friday 客户端通过 OAuth 管理页配置；密钥轮换覆盖飞书、Friday、自定义客户端及 PKCE verifier。
 
-回调继续使用 OMA 的 `/oauth/vault/env-success`。在上游 `friday.oauth.clients.redirectUris` 精确登记实际 OMA HTTPS 回调地址，禁止用户信息及片段；文档中的桥接示例回调不作为 OMA 回调。Friday flow 与飞书一致不保存客户端 ID 信封，回调读取当前 Friday 客户端；Friday 独有的随机 PKCE verifier 存在 `code_verifier_envelope` 中，AAD 为 flow 的租户/UUID 身份加 `:code_verifier` 后缀，回调解密提交 verifier，绝不把 verifier 放入 URL 或响应。00122 约束仅 Friday flow 必须携带该信封，其余 flow 为空；重新包装扫描同时覆盖自定义 ID 快照与 Friday verifier，并保持 NULL 与整行 CAS。已有自定义 flow 仍保留 ID 快照。管理页和 Vault 表单分别显示两个内置名称、标识和配置状态；未配置可保存手工 token，授权仍拒绝。Friday 的名称、端点、认证和编码不可编辑，scope 仅接受 `read`，客户端编辑、轮换、删除保护及权限沿用内置合同。
+回调继续使用 OMA 的 `/oauth/vault/env-success`。在上游 `friday.oauth.clients.redirectUris` 精确登记实际 OMA HTTPS 回调地址，禁止用户信息及片段；文档中的桥接示例回调不作为 OMA 回调。Friday flow 与飞书一致不保存客户端 ID 信封，回调读取当前 Friday 客户端；Friday 独有的随机 PKCE verifier 存在 `code_verifier_envelope` 中，AAD 为 flow 的租户/UUID 身份加 `:code_verifier` 后缀，回调解密提交 verifier，绝不把 verifier 放入 URL 或响应。00122 约束仅 Friday flow 必须携带该信封，其余 flow 为空；重新包装扫描同时覆盖自定义 ID 快照与 Friday verifier，并保持 NULL 与整行 CAS。已有自定义 flow 仍保留 ID 快照。管理页和 Vault 表单分别显示两个内置名称、标识和配置状态；未配置可保存手工 token，授权仍拒绝。Friday 与其他平台客户端使用相同的编辑、删除、启停及超级管理员权限。
 
 验收覆盖 Friday seed、旧库 00121→00122、保留 ID 冲突、成对信封/身份约束、独立端点/Basic/form/S256、真实 PostgreSQL callback 凭证落库、拒绝删除、secret 不回显、AAD 隔离、跨版本重新包装、中文英文名称和前端首配。真实 PostgreSQL 集成使用 `integration` 标签与隔离临时 schema，上游换票由本地 HTTP fixture 驱动，不代表连接真实 Friday。
 
@@ -248,3 +250,12 @@ main 的 00117 为技能管理迁移。ENV OAuth 的九个迁移整体顺延为 
 ## 本轮评审回归
 
 OAuth 管理的创建／更新响应复用本次已验证的客户端 ID，写入成功后不再解密；列表读取仍校验并解密。版本冲突刷新列表，关闭并重开时使用最新版本。表格提供键盘可达的编辑按钮，并加入控制台页面搜索；错误使用 alert 语义。Quickstart 的 MCP 凭据门禁只提供 MCP OAuth 与 Bearer 类型，ENV OAuth 不参与该门禁。
+
+
+### 客户端默认变量名与启停
+
+注册和编辑 OAuth 客户端均可设置默认变量名，所有平台客户端统一管理；名称在入口按现有环境变量规则校验。Friday 的初始默认变量名为 `FRIDAY_4A_TOKEN`。创建凭证选择服务方时自动带出默认值，保留用户已自行填写的变量名，修改默认值不重命名已有凭证。
+
+客户端默认启用。停用前确认：“从工作区可选服务方中隐藏。已有凭证和会话继续可用；停用不会撤销授权或自动刷新能力。”新建凭证的选择器隐藏停用服务方，编辑已有凭证仍显示原服务方。服务端拒绝停用服务方的新建授权和手工新建凭证；同保险库、同变量名及同服务方的已有凭证仍可重新授权，已有请求替换及自动刷新继续使用当前客户端配置。启停复用客户端更新接口和版本并发检查，不删除客户端或凭证。状态与默认变量名更新均进入既有字段审计。
+
+SQL 迁移 `00127` 仅增加客户端启用状态，并为尚未设置默认变量名的 Friday 记录填入 `FRIDAY_4A_TOKEN`；不覆盖已配置的变量名。

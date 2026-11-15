@@ -34,13 +34,13 @@ export function EnvOAuthCredentialFields({
   const platformAccess = useContext(AuthContext)?.platformAccess;
   const selected = providers.find((provider) => provider.id === values.envOAuthProviderId);
   const hostsMissing = credentialEnvHostsMissing(values);
-  const options = providers.map((provider) => ({
-    id: provider.id,
-    label: provider.builtin
-      ? msg(`platformAdmin.oauthManagement.${provider.id.slice(8)}`, provider.name)
-      : provider.name,
-    icon: <OAuthProviderAvatar providerKey={provider.id} logoUrl={provider.logo_url} />,
-  }));
+  const options = providers
+    .filter((provider) => provider.enabled || (secretNameLocked && provider.id === values.envOAuthProviderId))
+    .map((provider) => ({
+      id: provider.id,
+      label: provider.name,
+      icon: <OAuthProviderAvatar providerKey={provider.id} logoUrl={provider.logo_url} />,
+    }));
   const selectableOptions =
     secretNameLocked && selected ? options.filter((option) => option.id === selected.id) : options;
   return (

@@ -63,6 +63,7 @@ export class PlatformAdminClient {
 }
 
 export type OAuthProviderRecord = {
+  enabled: boolean;
   provider_key: string;
   default_secret_name: string;
   default_allowed_hosts: string[];
@@ -86,6 +87,8 @@ export type OAuthProviderRecord = {
 };
 
 export type OAuthProviderInput = {
+  default_secret_name?: string;
+  enabled?: boolean;
   name: string;
   logo_url?: string;
   authorize_endpoint: string;

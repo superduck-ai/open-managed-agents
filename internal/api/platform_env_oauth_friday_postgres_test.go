@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/superduck-ai/open-managed-agents/internal/auth"
-	"github.com/superduck-ai/open-managed-agents/internal/db"
 	"github.com/superduck-ai/open-managed-agents/internal/platformadmin"
 	"github.com/superduck-ai/open-managed-agents/internal/platformoauth"
 )
@@ -30,9 +28,6 @@ func TestEnvOAuthFridayPostgres(t *testing.T) {
 	}
 	if _, err := f.server.envOAuthProviders.ResolveEnvOAuthProvider(t.Context(), "builtin:friday"); err == nil {
 		t.Fatal("未配置 Friday 可以解析")
-	}
-	if err := service.Delete(t.Context(), platformadmin.Actor{}, friday.ExternalID, friday.Version); !errors.Is(err, platformadmin.ErrOAuthProviderProtected) {
-		t.Fatal("Friday 可以删除")
 	}
 	view, err := service.Update(t.Context(), platformadmin.Actor{}, friday.ExternalID, platformadmin.OAuthProviderUpdateInput{ExpectedVersion: friday.Version, ClientID: new("synthetic-friday-client"), ClientSecret: new("synthetic-friday-secret")})
 	if err != nil || !view.Configured {
@@ -115,7 +110,7 @@ func TestEnvOAuthFridayPostgres(t *testing.T) {
 	if err != nil || feishu.ClientID != "feishu-client" || feishu.Scope != "offline_access" {
 		t.Fatal("Friday 改变飞书行为", err)
 	}
-	if err := f.database.DeletePlatformOAuthProvider(t.Context(), friday.UUID, friday.Version+1); !errors.Is(err, db.ErrVersionConflict) {
-		t.Fatal("Mapper 允许删除 Friday")
+	if err := f.database.DeletePlatformOAuthProvider(t.Context(), friday.UUID, friday.Version+1); err != nil {
+		t.Fatal("Friday 删除失败")
 	}
 }

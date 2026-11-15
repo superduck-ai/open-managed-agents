@@ -414,6 +414,22 @@ func (h *Handler) createCredentialRoute(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return invalidRequest(err)
 	}
+	if authState.AuthType == "env_oauth" {
+		key, _ := EnvOAuthCredentialProvider(authState.PublicAuth)
+		custom, id, _ := ParseEnvOAuthProviderKey(key)
+		var provider db.PlatformOAuthProvider
+		if custom {
+			provider, err = h.db.GetPlatformOAuthProviderByExternalID(r.Context(), id)
+		} else {
+			provider, err = h.db.GetPlatformOAuthProviderByBuiltinKey(r.Context(), strings.TrimPrefix(id, "builtin:"))
+		}
+		if err != nil {
+			return internalError("Could not load OAuth provider", err)
+		}
+		if !provider.Enabled {
+			return disabledOAuthProvider()
+		}
+	}
 	credentialID, err := ids.New("vcrd_")
 	if err != nil {
 		return internalError("Could not generate credential ID", fmt.Errorf("generate credential ID: %w", err))

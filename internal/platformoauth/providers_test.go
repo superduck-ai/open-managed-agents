@@ -172,9 +172,7 @@ func TestResolverFridayUsesIndependentDatabaseRow(t *testing.T) {
 	if err != nil || lookup != "friday" || snapshot.ProviderKey != "builtin:friday" || snapshot.Scope != "read" || snapshot.AuthorizeEndpoint != provider.AuthorizeEndpoint || snapshot.TokenEndpoint != provider.TokenEndpoint || snapshot.TokenEndpointAuthMethod != "client_secret_basic" || snapshot.TokenEndpointEncoding != "form" {
 		t.Fatal("Friday 数据库解析错误", err)
 	}
-	if key := MissingBuiltinProviderKey([]db.PlatformOAuthProvider{{BuiltinKey: "feishu"}}); key != "builtin:friday" {
-		t.Fatal("未检测 Friday 缺失")
-	}
+
 }
 
 func TestFlowCodeVerifierBindingIsolation(t *testing.T) {
@@ -188,5 +186,14 @@ func TestFlowCodeVerifierBindingIsolation(t *testing.T) {
 		if _, err := OpenClientField(t.Context(), service, binding, envelope); err == nil {
 			t.Fatal("PKCE verifier AAD 隔离失效")
 		}
+	}
+}
+
+func TestDisabledProviderRemainsResolvableForExistingCredentials(t *testing.T) {
+	service, provider := providerFixture(t)
+	provider.Enabled = false
+	snapshot, err := NewResolver(providerStoreStub{provider: provider}, service, nil).ResolveEnvOAuthProvider(t.Context(), "builtin:feishu")
+	if err != nil || snapshot.Enabled || snapshot.ClientSecret == "" {
+		t.Fatal("停用错误撤销了已有凭证的刷新客户端", err)
 	}
 }

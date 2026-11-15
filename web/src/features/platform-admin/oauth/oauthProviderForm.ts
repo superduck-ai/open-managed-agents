@@ -2,6 +2,7 @@ import type { OAuthProviderRecord } from '../../../shared/api/platform-admin';
 
 export type OAuthProviderFormValues = {
   name: string;
+  defaultSecretName: string;
   logoUrl: string;
   authorizeEndpoint: string;
   tokenEndpoint: string;
@@ -15,6 +16,7 @@ export type OAuthProviderFormValues = {
 export function initialOAuthProviderFormValues(provider?: OAuthProviderRecord): OAuthProviderFormValues {
   return {
     name: provider?.name ?? '',
+    defaultSecretName: provider?.default_secret_name ?? '',
     logoUrl: provider?.logo_url ?? '',
     authorizeEndpoint: provider?.authorize_endpoint ?? '',
     tokenEndpoint: provider?.token_endpoint ?? '',
@@ -33,6 +35,13 @@ export function oauthProviderFormReady(values: OAuthProviderFormValues, provider
   if (provider?.configured) {
     if (!clientId || (clientId !== provider.client_id && !clientSecret)) return false;
   } else if (Boolean(clientId) !== Boolean(clientSecret)) return false;
-  if (provider?.provider_key === 'builtin:feishu') return values.scope.split(/\s+/).includes('offline_access');
-  return provider?.provider_key !== 'builtin:friday' || values.scope.trim() === 'read';
+  return true;
+}
+
+export function oauthProviderOptionalFields(values: OAuthProviderFormValues, provider?: OAuthProviderRecord) {
+  return {
+    clientId: !provider?.configured && !values.clientSecret.trim(),
+    clientSecret: provider?.configured ? values.clientId.trim() === provider.client_id : !values.clientId.trim(),
+    scope: true,
+  };
 }

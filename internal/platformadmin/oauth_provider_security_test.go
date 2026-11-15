@@ -75,11 +75,10 @@ func oauthServiceFixture(t *testing.T) (*OAuthProviderService, *oauthProviderSto
 	return NewOAuthProviderService(store, secrets.NewService(key), slog.New(oauthAuditHandler{records: records})), store, records
 }
 
-func TestOAuthProviderRejectsProtectedChangesAndIncompleteClients(t *testing.T) {
+func TestOAuthProviderRejectsIncompleteClients(t *testing.T) {
 	service, store, records := oauthServiceFixture(t)
 	for _, payload := range []string{
-		`{"expected_version":1,"name":"Feishu"}`, `{"expected_version":1,"authorize_endpoint":null}`,
-		`{"expected_version":1,"scope":"read"}`, `{"expected_version":1,"client_id":"client"}`,
+		`{"expected_version":1,"client_id":"client"}`,
 		`{"expected_version":1,"client_secret":"secret"}`, `{"expected_version":1,"client_id":"","client_secret":"secret"}`,
 		`{"expected_version":1,"client_id":"client","client_secret":""}`, `{"expected_version":2,"client_id":"client","client_secret":"secret"}`,
 	} {
@@ -97,14 +96,11 @@ func TestOAuthProviderRejectsProtectedChangesAndIncompleteClients(t *testing.T) 
 			t.Fatal("invalid client or protection field accepted")
 		}
 	}
-	if err := service.Delete(t.Context(), Actor{AccountUUID: "actor"}, store.provider.ExternalID, 1); !errors.Is(err, ErrOAuthProviderProtected) {
-		t.Fatal("protected deletion allowed")
-	}
 	if store.writes != 0 {
 		t.Fatal("rejected operation wrote data")
 	}
 	if len(*records) == 0 {
-		t.Fatal("protected refusal missing audit")
+		t.Fatal("invalid operation missing audit")
 	}
 }
 
@@ -164,22 +160,10 @@ func TestOAuthProviderListDoesNotCacheOrExposeSecret(t *testing.T) {
 	}
 }
 
-func TestOAuthProviderFridayProtectedConfiguration(t *testing.T) {
+func TestOAuthProviderFridayConfiguration(t *testing.T) {
 	service, store, records := oauthServiceFixture(t)
 	store.provider.ExternalID, store.provider.BuiltinKey, store.provider.Name = "poap_FridayBuiltinOAuthClient", "friday", "Friday"
 	store.provider.Scope, store.provider.TokenEndpointAuthMethod, store.provider.TokenEndpointEncoding = "read", "client_secret_basic", "form"
-	for _, input := range []OAuthProviderUpdateInput{
-		{ExpectedVersion: 1, Scope: new("offline_access")},
-		{ExpectedVersion: 1, TokenEndpoint: new("https://changed.test/token")},
-		{ExpectedVersion: 1, ClientID: new("synthetic-client")},
-	} {
-		if _, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, input); err == nil {
-			t.Fatal("Friday 接受不合法配置")
-		}
-	}
-	if err := service.Delete(t.Context(), Actor{}, store.provider.ExternalID, 1); !errors.Is(err, ErrOAuthProviderProtected) {
-		t.Fatal("Friday 允许删除")
-	}
 	view, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1, ClientID: new("synthetic-friday-client"), ClientSecret: new("synthetic-friday-secret")})
 	if err != nil || view.ProviderKey != "builtin:friday" || !view.Configured {
 		t.Fatal("Friday 首配失败", err)
@@ -274,5 +258,40 @@ func TestOAuthProviderResponseDoesNotDecryptAfterWrite(t *testing.T) {
 				t.Fatalf("审计数量 = %d", len(*records))
 			}
 		})
+	}
+}
+
+func TestOAuthProviderDefaultVariableAndAvailability(t *testing.T) {
+	service, store, _ := oauthServiceFixture(t)
+	for _, name := range []string{"bad name", "1TOKEN"} {
+		if _, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1, DefaultSecretName: new(name)}); err == nil {
+			t.Fatal("非法默认变量名被接受")
+		}
+	}
+	if store.writes != 0 {
+		t.Fatal("非法默认值写入数据库")
+	}
+	view, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1, DefaultSecretName: new(" CUSTOM_ACCESS_TOKEN "), Enabled: new(false)})
+	if err != nil || view.Enabled || view.DefaultSecretName != "CUSTOM_ACCESS_TOKEN" {
+		t.Fatal("内置客户端默认值或停用配置失败", err)
+	}
+	view, err = service.Update(t.Context(), Actor{}, view.ID, OAuthProviderUpdateInput{ExpectedVersion: view.Version, Enabled: new(true)})
+	if err != nil || !view.Enabled || view.DefaultSecretName != "CUSTOM_ACCESS_TOKEN" {
+		t.Fatal("重新启用丢失默认值", err)
+	}
+	created, err := service.Create(t.Context(), Actor{}, OAuthProviderCreateInput{Name: "Custom", AuthorizeEndpoint: "https://auth.test/authorize", TokenEndpoint: "https://auth.test/token", DefaultSecretName: "CUSTOM_TOKEN"})
+	if err != nil || !created.Enabled || created.DefaultSecretName != "CUSTOM_TOKEN" {
+		t.Fatal("自定义客户端默认值失败", err)
+	}
+}
+
+func TestOAuthProviderPlatformManagementIsUniform(t *testing.T) {
+	service, store, _ := oauthServiceFixture(t)
+	view, err := service.Update(t.Context(), Actor{}, store.provider.ExternalID, OAuthProviderUpdateInput{ExpectedVersion: 1, Name: new("Team OAuth"), AuthorizeEndpoint: new("https://changed.test/authorize"), TokenEndpoint: new("https://changed.test/token"), Scope: new("read")})
+	if err != nil || view.Name != "Team OAuth" || view.Scope != "read" {
+		t.Fatal("平台客户端不可编辑", err)
+	}
+	if err := service.Delete(t.Context(), Actor{}, view.ID, view.Version); err != nil {
+		t.Fatal("平台客户端不可删除", err)
 	}
 }

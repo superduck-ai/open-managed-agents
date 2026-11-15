@@ -250,3 +250,7 @@ func immutableCredentialServerURL() error {
 func invalidVaultCreateMetadata() error {
 	return errors.New("metadata must be an object with string values")
 }
+
+func disabledOAuthProvider() error {
+	return apperr.New(apperr.InvalidArgument, "OAuth provider is disabled for new credentials", nil)
+}

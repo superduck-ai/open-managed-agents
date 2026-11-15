@@ -8,7 +8,6 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/httpapi"
 	"log/slog"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,9 +19,12 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/logging"
 	"github.com/superduck-ai/open-managed-agents/internal/platformoauth"
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
+	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
 
 type OAuthProviderCreateInput struct {
+	DefaultSecretName       string  `json:"default_secret_name"`
+	Enabled                 *bool   `json:"enabled"`
 	Name                    string  `json:"name"`
 	LogoURL                 string  `json:"logo_url"`
 	AuthorizeEndpoint       string  `json:"authorize_endpoint"`
@@ -35,7 +37,8 @@ type OAuthProviderCreateInput struct {
 }
 
 type OAuthProviderUpdateInput struct {
-	fixedFields             bool
+	DefaultSecretName       *string `json:"default_secret_name"`
+	Enabled                 *bool   `json:"enabled"`
 	ExpectedVersion         int64   `json:"expected_version"`
 	Name                    *string `json:"name"`
 	LogoURL                 *string `json:"logo_url"`
@@ -49,6 +52,7 @@ type OAuthProviderUpdateInput struct {
 }
 
 type OAuthProviderView struct {
+	Enabled                 bool      `json:"enabled"`
 	ProviderKey             string    `json:"provider_key"`
 	Builtin                 bool      `json:"builtin"`
 	Protected               bool      `json:"protected"`
@@ -112,10 +116,6 @@ func (s *OAuthProviderService) List(ctx context.Context) ([]OAuthProviderView, e
 		}
 		views = append(views, view)
 	}
-	if missing := platformoauth.MissingBuiltinProviderKey(providers); missing != "" {
-		s.audit(ctx, Actor{}, db.PlatformOAuthProvider{BuiltinKey: strings.TrimPrefix(missing, "builtin:")}, "integrity", nil, ErrOAuthProviderUnavailable)
-		return nil, ErrOAuthProviderUnavailable
-	}
 	return views, nil
 }
 
@@ -149,6 +149,14 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 	if err != nil {
 		return OAuthProviderView{}, err
 	}
+	secretName, err := normalizeOAuthProviderSecretName(input.DefaultSecretName)
+	if err != nil {
+		return OAuthProviderView{}, err
+	}
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
 	externalID, err := ids.New("poap_")
 	if err != nil {
 		return OAuthProviderView{}, err
@@ -156,6 +164,8 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 	now := time.Now().UTC()
 	provider := db.PlatformOAuthProvider{
 		UUID:              uuid.NewV4().String(),
+		DefaultSecretName: secretName,
+		Enabled:           enabled,
 		ExternalID:        externalID,
 		Name:              name,
 		LogoURL:           logoURL,
@@ -182,7 +192,7 @@ func (s *OAuthProviderService) Create(ctx context.Context, actor Actor, input OA
 		}
 		return OAuthProviderView{}, err
 	}
-	s.audit(ctx, actor, created, "create", []string{"name", "logo_url", "authorize_endpoint", "token_endpoint", "scope", "client_id", "client_secret", "token_endpoint_auth_method", "token_endpoint_encoding"}, nil)
+	s.audit(ctx, actor, created, "create", []string{"default_secret_name", "enabled", "name", "logo_url", "authorize_endpoint", "token_endpoint", "scope", "client_id", "client_secret", "token_endpoint_auth_method", "token_endpoint_encoding"}, nil)
 	return oauthProviderView(created, clientID), nil
 }
 
@@ -208,9 +218,6 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 	if input.ExpectedVersion != current.Version {
 		return OAuthProviderView{}, ErrOAuthProviderVersion
 	}
-	if current.Protected && input.fixedFieldsPresent() {
-		return OAuthProviderView{}, invalid("内置服务方固定字段不可编辑")
-	}
 	initialConfiguration := current.ClientIDEnvelope == nil
 	clientID := ""
 	if current.ClientIDEnvelope != nil {
@@ -227,12 +234,6 @@ func (s *OAuthProviderService) Update(ctx context.Context, actor Actor, external
 	}
 	if err := applyOAuthProviderFields(&current, input); err != nil {
 		return OAuthProviderView{}, err
-	}
-	if current.BuiltinKey == "feishu" && !slices.Contains(strings.Fields(current.Scope), "offline_access") {
-		return OAuthProviderView{}, invalid("飞书 scope 必须包含 offline_access")
-	}
-	if current.BuiltinKey == "friday" && current.Scope != "read" {
-		return OAuthProviderView{}, invalid("Friday scope 必须为 read")
 	}
 	nextClientID := clientID
 	if input.ClientID != nil {
@@ -272,9 +273,6 @@ func (s *OAuthProviderService) Delete(ctx context.Context, actor Actor, external
 	}()
 	if err != nil {
 		return mapOAuthProviderError(err)
-	}
-	if current.Protected {
-		return ErrOAuthProviderProtected
 	}
 	if expectedVersion < 1 {
 		return invalid("必须提供 expected_version")
@@ -350,7 +348,7 @@ func (s *OAuthProviderService) view(ctx context.Context, provider db.PlatformOAu
 
 func oauthProviderView(provider db.PlatformOAuthProvider, clientID string) OAuthProviderView {
 	return OAuthProviderView{
-		ID: provider.ExternalID, ProviderKey: platformoauth.ProviderKey(provider), Builtin: provider.BuiltinKey != "", Protected: provider.Protected,
+		Enabled: provider.Enabled, ID: provider.ExternalID, ProviderKey: platformoauth.ProviderKey(provider), Builtin: provider.BuiltinKey != "", Protected: provider.Protected,
 		HasClientID: provider.ClientIDEnvelope != nil, HasClientSecret: provider.ClientSecretEnvelope != nil,
 		Configured: provider.ClientIDEnvelope != nil && provider.ClientSecretEnvelope != nil, Version: provider.Version,
 		Name: provider.Name, LogoURL: provider.LogoURL, AuthorizeEndpoint: provider.AuthorizeEndpoint, TokenEndpoint: provider.TokenEndpoint,
@@ -380,22 +378,21 @@ func (s *OAuthProviderService) audit(ctx context.Context, actor Actor, provider 
 		"changed_fields", fields, "result", result, "error_code", code, "request_id", httpapi.RequestID(ctx))
 }
 
-func (i OAuthProviderUpdateInput) fixedFieldsPresent() bool {
-	return i.fixedFields || i.Name != nil || i.AuthorizeEndpoint != nil || i.TokenEndpoint != nil || i.TokenEndpointAuthMethod != nil || i.TokenEndpointEncoding != nil
-}
-
 func (i OAuthProviderUpdateInput) changedFields() []string {
 	fields := make([]string, 0)
 	for _, field := range []struct {
 		name  string
 		value *string
 	}{
-		{"name", i.Name}, {"logo_url", i.LogoURL}, {"authorize_endpoint", i.AuthorizeEndpoint}, {"token_endpoint", i.TokenEndpoint}, {"scope", i.Scope},
+		{"default_secret_name", i.DefaultSecretName}, {"name", i.Name}, {"logo_url", i.LogoURL}, {"authorize_endpoint", i.AuthorizeEndpoint}, {"token_endpoint", i.TokenEndpoint}, {"scope", i.Scope},
 		{"client_id", i.ClientID}, {"client_secret", i.ClientSecret}, {"token_endpoint_auth_method", i.TokenEndpointAuthMethod}, {"token_endpoint_encoding", i.TokenEndpointEncoding},
 	} {
 		if field.value != nil {
 			fields = append(fields, field.name)
 		}
+	}
+	if i.Enabled != nil {
+		fields = append(fields, "enabled")
 	}
 	return fields
 }
@@ -406,14 +403,9 @@ func (i *OAuthProviderUpdateInput) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return invalid("请求 JSON 无效")
 	}
-	for _, key := range []string{"client_id", "client_secret"} {
+	for _, key := range []string{"client_id", "client_secret", "default_secret_name", "enabled"} {
 		if value, exists := fields[key]; exists && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return invalid("客户端字段不能为 null")
-		}
-	}
-	for _, key := range []string{"name", "authorize_endpoint", "token_endpoint", "token_endpoint_auth_method", "token_endpoint_encoding"} {
-		if _, exists := fields[key]; exists {
-			i.fixedFields = true
+			return invalid("配置字段不能为 null")
 		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -422,6 +414,16 @@ func (i *OAuthProviderUpdateInput) UnmarshalJSON(data []byte) error {
 }
 
 func applyOAuthProviderFields(provider *db.PlatformOAuthProvider, input OAuthProviderUpdateInput) error {
+	if input.DefaultSecretName != nil {
+		name, err := normalizeOAuthProviderSecretName(*input.DefaultSecretName)
+		if err != nil {
+			return err
+		}
+		provider.DefaultSecretName = name
+	}
+	if input.Enabled != nil {
+		provider.Enabled = *input.Enabled
+	}
 	for _, field := range []struct {
 		source *string
 		target *string
@@ -517,4 +519,14 @@ func normalizeOAuthProviderLogoURL(value string) (string, error) {
 		return "", invalidOAuthProviderLogoURL()
 	}
 	return logoURL, nil
+}
+
+func normalizeOAuthProviderSecretName(value string) (string, error) {
+	name := strings.TrimSpace(value)
+	if name != "" {
+		if _, err := vaults.ParseEnvOAuthSecretName(name); err != nil {
+			return "", invalid("默认变量名必须是有效的环境变量名称")
+		}
+	}
+	return name, nil
 }

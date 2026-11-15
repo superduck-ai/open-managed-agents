@@ -14,8 +14,9 @@ func TestCommandRejectsInvalidOptions(t *testing.T) {
 		args []string
 		want string
 	}{
+		{[]string{"--from-key-version", "1"}, "flag provided but not defined"},
 		{nil, "--from and --to are required"},
-		{[]string{"--from", "local", "--to", "local"}, "same-provider rotation"},
+		{[]string{"--from", "local", "--to", "local"}, "must be different providers"},
 		{[]string{"--from", "typo", "--to", "hashicorp_vault"}, "choose local"},
 		{[]string{"--from", "local", "--to", "hashicorp_vault", "unexpected"}, "unexpected positional arguments"},
 	} {
@@ -53,7 +54,7 @@ func TestMigrationDocumentFormats(t *testing.T) {
 		{"empty deployment entries", "deployments", `{"0":{},"1":null}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, count, err := migrateDocument(t.Context(), nil, tc.kind, db.SecretMigrationRecord{Document: json.RawMessage(tc.raw)}, "local", 0, false)
+			_, count, err := migrateDocument(t.Context(), nil, tc.kind, db.SecretMigrationRecord{Document: json.RawMessage(tc.raw)}, "local", false)
 			if tc.wantError == "" {
 				if err != nil || count != 0 {
 					t.Fatalf("empty document: count=%d err=%v", count, err)

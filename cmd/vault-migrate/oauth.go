@@ -20,7 +20,7 @@ type oauthMigrationDocument struct {
 	Version              int64             `json:"version,omitempty"`
 }
 
-func migrateOAuthDocument(ctx context.Context, service *secrets.Service, kind string, row db.SecretMigrationRecord, from string, fromVersion int64, apply bool) (json.RawMessage, int, error) {
+func migrateOAuthDocument(ctx context.Context, service *secrets.Service, kind string, row db.SecretMigrationRecord, from string, apply bool) (json.RawMessage, int, error) {
 	var document oauthMigrationDocument
 	if err := json.Unmarshal(row.Document, &document); err != nil || document.ExternalID == "" {
 		return nil, 0, errors.New("invalid OAuth migration document")
@@ -50,7 +50,7 @@ func migrateOAuthDocument(ctx context.Context, service *secrets.Service, kind st
 		if !validOAuthMigrationEnvelope(*envelope) {
 			return nil, 0, errors.New("invalid OAuth envelope")
 		}
-		if envelope.KeyProvider != from || (fromVersion != 0 && envelope.KeyVersion != fromVersion) {
+		if envelope.KeyProvider != from {
 			continue
 		}
 		if !apply {

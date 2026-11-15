@@ -25,13 +25,13 @@ import (
 	"github.com/superduck-ai/open-managed-agents/internal/vaults"
 )
 
-func TestOAuthLocalVersionRotationPostgres(t *testing.T) {
+func TestOAuthCrossProviderMigrationPostgres(t *testing.T) {
 	for _, builtinKey := range []string{"feishu", "friday"} {
-		t.Run(builtinKey, func(t *testing.T) { testOAuthLocalVersionRotationPostgres(t, builtinKey) })
+		t.Run(builtinKey, func(t *testing.T) { testOAuthCrossProviderMigrationPostgres(t, builtinKey) })
 	}
 }
 
-func testOAuthLocalVersionRotationPostgres(t *testing.T, builtinKey string) {
+func testOAuthCrossProviderMigrationPostgres(t *testing.T, builtinKey string) {
 	t.Helper()
 	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
 	if address == "" {
@@ -60,9 +60,9 @@ func testOAuthLocalVersionRotationPostgres(t *testing.T, builtinKey string) {
 		t.Fatal(err)
 	}
 	oldBytes := bytes.Repeat([]byte{1}, 32)
-	source, _ := localkeys.New(localkeys.KeyMaterial{Version: 1, KEK: oldBytes}, nil)
-	target, _ := localkeys.New(localkeys.KeyMaterial{Version: 2, KEK: bytes.Repeat([]byte{2}, 32)}, []localkeys.KeyMaterial{{Version: 1, KEK: oldBytes}})
-	oldService, service := secrets.NewService(source), secrets.NewService(target)
+	source, _ := localkeys.New(localkeys.KeyMaterial{KEK: oldBytes}, nil)
+	target, _ := localkeys.New(localkeys.KeyMaterial{KEK: bytes.Repeat([]byte{2}, 32)}, nil)
+	oldService, service := secrets.NewService(source), secrets.NewService(&targetProvider{KeyProvider: target}, source)
 	provider, err := database.GetPlatformOAuthProviderByBuiltinKey(t.Context(), builtinKey)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func testOAuthLocalVersionRotationPostgres(t *testing.T, builtinKey string) {
 			stale = row
 		}
 	}
-	next, _, err := migrateDocument(t.Context(), service, "platform_oauth_providers", stale, "local", 1, true)
+	next, _, err := migrateDocument(t.Context(), service, "platform_oauth_providers", stale, "local", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +105,8 @@ func testOAuthLocalVersionRotationPostgres(t *testing.T, builtinKey string) {
 		t.Fatal("旧双信封 CAS 未拒绝")
 	}
 	current, err := database.GetPlatformOAuthProviderByBuiltinKey(t.Context(), builtinKey)
-	if err != nil || current.Version != provider.Version+1 || current.ClientIDEnvelope.KeyVersion != 2 || current.ClientSecretEnvelope.KeyVersion != 2 || !bytes.Equal(current.ClientIDEnvelope.Ciphertext, provider.ClientIDEnvelope.Ciphertext) {
-		t.Fatal("双信封版本轮换失败")
+	if err != nil || current.Version != provider.Version+1 || current.ClientIDEnvelope.KeyProvider != "hashicorp_vault" || current.ClientSecretEnvelope.KeyProvider != "hashicorp_vault" || !bytes.Equal(current.ClientIDEnvelope.Ciphertext, provider.ClientIDEnvelope.Ciphertext) {
+		t.Fatal("双信封跨提供方迁移失败")
 	}
 	testFridayVerifierRotation(t, database, oldService, service)
 	resolver := platformoauth.NewResolver(database, service, slog.New(slog.DiscardHandler))
@@ -155,7 +155,7 @@ func testFridayVerifierRotation(t *testing.T, database *db.DB, original, target 
 	if err != nil || len(rows) != 1 {
 		t.Fatal("Friday verifier 没有进入轮换扫描", err)
 	}
-	next, count, err := migrateOAuthDocument(t.Context(), target, "env_oauth_flows", rows[0], "local", 1, true)
+	next, count, err := migrateOAuthDocument(t.Context(), target, "env_oauth_flows", rows[0], "local", true)
 	if err != nil || count != 1 {
 		t.Fatal("Friday verifier 轮换失败", err)
 	}
@@ -166,7 +166,7 @@ func testFridayVerifierRotation(t *testing.T, database *db.DB, original, target 
 		t.Fatal("Friday verifier 轮换未校验 CAS")
 	}
 	stored, err := database.GetEnvOAuthFlow(t.Context(), flow.ExternalID)
-	if err != nil || stored.ClientIDEnvelope != nil || stored.CodeVerifierEnvelope.KeyVersion != 2 {
+	if err != nil || stored.ClientIDEnvelope != nil || stored.CodeVerifierEnvelope.KeyProvider != "hashicorp_vault" {
 		t.Fatal("Friday verifier 扫描/NULL 错误", err)
 	}
 	verifier, err := platformoauth.OpenClientField(t.Context(), target, platformoauth.FlowCodeVerifierBinding(stored), stored.CodeVerifierEnvelope)

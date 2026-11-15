@@ -194,7 +194,7 @@ ENV OAuth 表单将手工 access token、refresh token 与过期时间收在「�
   `processing` 认领与完成失败的响应。
 - `internal/db`：`Claim` 的 SQL 与敏感绑定标记；`Complete` 只接受 `processing`，`Fail` 接受 `pending`/`processing`。
 - `internal/platformadmin`：名称按字符计数、`prod` 拒绝 `http` 端点。
-- `cmd/vault-migrate`：平台双信封/flow 单信封 CAS、跨 provider 和 local 版本选择、失败整行不变，轮换后 Open 与本地 stub OAuth 刷新。
+- `cmd/vault-migrate`：平台双信封/flow 单信封 CAS、跨 provider 迁移、失败整行不变，轮换后 Open 与本地 stub OAuth 刷新。
 - 前端：内置表格行、固定字段只读、最小 PATCH、空 secret 保留、首配/换 ID 校验、并发提示、Vault 未配置禁授权与手工保存、中英文键一致。
 
 定向真实 PostgreSQL 使用 `just test-integration`，通过 TEST_MIGRATION_DATABASE_URL 指向隔离数据库。普通单测不连接外部服务。stub 结果不代表真实飞书扫码或上游兼容验收；不自动运行 verify-be，既有 D1/C7 真实验收报告仅作历史基线。

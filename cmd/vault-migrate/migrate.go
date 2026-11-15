@@ -42,7 +42,7 @@ func printFailureReasons(out io.Writer, reasons map[string]int) {
 	}
 }
 
-func migrate(ctx context.Context, store *db.DB, service *secrets.Service, from, to string, fromVersion int64, apply bool, out io.Writer, logger *slog.Logger) error {
+func migrate(ctx context.Context, store *db.DB, service *secrets.Service, from, to string, apply bool, out io.Writer, logger *slog.Logger) error {
 	reasons := make(map[string]int)
 	var failedRecords []string
 	defer func() {
@@ -70,7 +70,7 @@ func migrate(ctx context.Context, store *db.DB, service *secrets.Service, from, 
 	fmt.Fprintf(out, "\n%-28s %10s %10s %10s\n", "Storage", success, "Skipped", "Failed")
 	total := migrationCounts{}
 	for _, kind := range db.SecretMigrationKinds() {
-		count, err := migrateKind(ctx, store, service, kind, from, fromVersion, apply, reportFailure, logger)
+		count, err := migrateKind(ctx, store, service, kind, from, apply, reportFailure, logger)
 		printMigrationCounts(out, kind, count)
 		total.add(count)
 		if err != nil {
@@ -89,16 +89,12 @@ func migrate(ctx context.Context, store *db.DB, service *secrets.Service, from, 
 	} else {
 		fmt.Fprintln(out, "\nSource DEKs verified. Target access and business ciphertext were not checked.")
 		fmt.Fprintln(out, "Next: back up the database and stop OMA/workers, then use the same CONFIG_FILE:")
-		if fromVersion != 0 {
-			fmt.Fprintf(out, "  go run ./cmd/vault-migrate --from %s --to %s --from-key-version %d --apply\n", from, to, fromVersion)
-		} else {
-			fmt.Fprintf(out, "  go run ./cmd/vault-migrate --from %s --to %s --apply\n", from, to)
-		}
+		fmt.Fprintf(out, "  go run ./cmd/vault-migrate --from %s --to %s --apply\n", from, to)
 	}
 	return nil
 }
 
-func migrateKind(ctx context.Context, store *db.DB, service *secrets.Service, kind, from string, fromVersion int64, apply bool, reportFailure func(string, string, error), logger *slog.Logger) (migrationCounts, error) {
+func migrateKind(ctx context.Context, store *db.DB, service *secrets.Service, kind, from string, apply bool, reportFailure func(string, string, error), logger *slog.Logger) (migrationCounts, error) {
 	total := migrationCounts{}
 	after := ""
 	for {
@@ -113,7 +109,7 @@ func migrateKind(ctx context.Context, store *db.DB, service *secrets.Service, ki
 			if err := ctx.Err(); err != nil {
 				return total, err
 			}
-			next, count, err := migrateDocument(ctx, service, kind, row, from, fromVersion, apply)
+			next, count, err := migrateDocument(ctx, service, kind, row, from, apply)
 			fatal := errors.Is(err, secrets.ErrMigrationTarget)
 			if err == nil && apply && count > 0 {
 				err = store.SaveMigratedSecret(ctx, kind, row, next)
@@ -141,16 +137,16 @@ func migrateKind(ctx context.Context, store *db.DB, service *secrets.Service, ki
 	}
 }
 
-func migrateDocument(ctx context.Context, service *secrets.Service, kind string, row db.SecretMigrationRecord, from string, fromVersion int64, apply bool) (json.RawMessage, int, error) {
+func migrateDocument(ctx context.Context, service *secrets.Service, kind string, row db.SecretMigrationRecord, from string, apply bool) (json.RawMessage, int, error) {
 	raw := row.Document
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return raw, 0, nil
 	}
 	switch kind {
 	case "platform_oauth_providers", "env_oauth_flows":
-		return migrateOAuthDocument(ctx, service, kind, row, from, fromVersion, apply)
+		return migrateOAuthDocument(ctx, service, kind, row, from, apply)
 	case "session_resources":
-		return migrateGitToken(ctx, service, raw, from, fromVersion, apply)
+		return migrateGitToken(ctx, service, raw, from, apply)
 	case "deployments":
 		var emptyArray []json.RawMessage
 		if json.Unmarshal(raw, &emptyArray) == nil && len(emptyArray) == 0 {
@@ -167,7 +163,7 @@ func migrateDocument(ctx context.Context, service *secrets.Service, kind string,
 		sort.Strings(keys)
 		total := 0
 		for _, key := range keys {
-			next, count, err := migrateGitToken(ctx, service, fields[key], from, fromVersion, apply)
+			next, count, err := migrateGitToken(ctx, service, fields[key], from, apply)
 			if err != nil {
 				return nil, 0, fmt.Errorf("resource index %s: %w", key, err)
 			}
@@ -177,11 +173,11 @@ func migrateDocument(ctx context.Context, service *secrets.Service, kind string,
 		next, err := json.Marshal(fields)
 		return next, total, err
 	default:
-		return migrateEnvelope(ctx, service, raw, from, fromVersion, apply)
+		return migrateEnvelope(ctx, service, raw, from, apply)
 	}
 }
 
-func migrateGitToken(ctx context.Context, service *secrets.Service, raw json.RawMessage, from string, fromVersion int64, apply bool) (json.RawMessage, int, error) {
+func migrateGitToken(ctx context.Context, service *secrets.Service, raw json.RawMessage, from string, apply bool) (json.RawMessage, int, error) {
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return raw, 0, nil
 	}
@@ -198,7 +194,7 @@ func migrateGitToken(ctx context.Context, service *secrets.Service, raw json.Raw
 	if len(fields["envelope"]) == 0 {
 		return nil, 0, errors.New("invalid Git token envelope: missing envelope")
 	}
-	next, count, err := migrateEnvelope(ctx, service, fields["envelope"], from, fromVersion, apply)
+	next, count, err := migrateEnvelope(ctx, service, fields["envelope"], from, apply)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -207,7 +203,7 @@ func migrateGitToken(ctx context.Context, service *secrets.Service, raw json.Raw
 	return result, count, err
 }
 
-func migrateEnvelope(ctx context.Context, service *secrets.Service, raw json.RawMessage, from string, fromVersion int64, apply bool) (json.RawMessage, int, error) {
+func migrateEnvelope(ctx context.Context, service *secrets.Service, raw json.RawMessage, from string, apply bool) (json.RawMessage, int, error) {
 	envelope, err := decodeEnvelope(raw, from)
 	if err != nil {
 		return nil, 0, err
@@ -215,7 +211,7 @@ func migrateEnvelope(ctx context.Context, service *secrets.Service, raw json.Raw
 	if envelope.KeyProvider == "" {
 		return nil, 0, errors.New("invalid secret envelope: missing key_provider")
 	}
-	if envelope.KeyProvider != from || (fromVersion != 0 && envelope.KeyVersion != fromVersion) {
+	if envelope.KeyProvider != from {
 		return raw, 0, nil
 	}
 	if !apply {

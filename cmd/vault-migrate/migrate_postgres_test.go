@@ -196,7 +196,7 @@ func testMigrationAllStoragePostgres(t *testing.T, platformExternalID string) {
 	exec("INSERT INTO vault_credentials (uuid,organization_uuid,workspace_uuid,ciphertext,nonce,wrapped_dek,format_version,key_provider,key_version) VALUES ($1,$2,$3,$4,$5,$6,1,'local',1)", badUUIDs[0], org, workspace, original.Ciphertext, original.Nonce, []byte("invalid-wrapped"))
 	exec("INSERT INTO vault_credentials (uuid,organization_uuid,workspace_uuid,nonce) VALUES ($1,$2,$3,$4)", badUUIDs[1], org, workspace, original.Nonce)
 	var output bytes.Buffer
-	if err = migrate(t.Context(), isolated, service, "local", "hashicorp_vault", 0, false, &output, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "3 records failed") {
+	if err = migrate(t.Context(), isolated, service, "local", "hashicorp_vault", false, &output, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "3 records failed") {
 		t.Fatalf("preview failed to report invalid records: %v", err)
 	}
 	if target.calls != 0 || !regexp.MustCompile(`(?m)^Total\s+114\s+4\s+3$`).MatchString(output.String()) || !strings.Contains(output.String(), "missing key_provider") || !strings.Contains(output.String(), "legacy plaintext") || strings.Contains(output.String(), "test-secret") {
@@ -207,7 +207,7 @@ func testMigrationAllStoragePostgres(t *testing.T, platformExternalID string) {
 	}
 	target.failAt = 2
 	output.Reset()
-	if err = migrate(t.Context(), isolated, service, "local", "hashicorp_vault", 0, true, &output, slog.New(slog.DiscardHandler)); err == nil || !errors.Is(err, secrets.ErrMigrationTarget) || !regexp.MustCompile(`(?m)^Total \(partial\)\s+1\s+0\s+3$`).MatchString(output.String()) || strings.Count(output.String(), "FAILED ") != 3 {
+	if err = migrate(t.Context(), isolated, service, "local", "hashicorp_vault", true, &output, slog.New(slog.DiscardHandler)); err == nil || !errors.Is(err, secrets.ErrMigrationTarget) || !regexp.MustCompile(`(?m)^Total \(partial\)\s+1\s+0\s+3$`).MatchString(output.String()) || strings.Count(output.String(), "FAILED ") != 3 {
 		t.Fatal("provider failure lost completed progress")
 	}
 	rows, err := isolated.ListSecretMigrationPage(t.Context(), "vault_credentials", "")
@@ -222,7 +222,7 @@ func testMigrationAllStoragePostgres(t *testing.T, platformExternalID string) {
 	}
 	target.failAt = 0
 	output.Reset()
-	if err = migrate(t.Context(), isolated, service, "local", "hashicorp_vault", 0, true, &output, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "3 records failed") {
+	if err = migrate(t.Context(), isolated, service, "local", "hashicorp_vault", true, &output, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "3 records failed") {
 		t.Fatalf("apply failed to report invalid rows: %v", err)
 	}
 	if !regexp.MustCompile(`(?m)^Total\s+113\s+5\s+3$`).MatchString(output.String()) {
@@ -246,7 +246,7 @@ func testMigrationAllStoragePostgres(t *testing.T, platformExternalID string) {
 		t.Fatalf("wrap attempts=%d; want 113 envelopes and one failure", calls)
 	}
 	output.Reset()
-	if err = migrate(t.Context(), isolated, service, "local", "hashicorp_vault", 0, true, &output, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "3 records failed") || target.calls != calls || !regexp.MustCompile(`(?m)^Total\s+0\s+118\s+3$`).MatchString(output.String()) {
+	if err = migrate(t.Context(), isolated, service, "local", "hashicorp_vault", true, &output, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "3 records failed") || target.calls != calls || !regexp.MustCompile(`(?m)^Total\s+0\s+118\s+3$`).MatchString(output.String()) {
 		t.Fatalf("rerun is not idempotent: %v", err)
 	}
 	var unchanged bool
@@ -258,7 +258,7 @@ func testMigrationAllStoragePostgres(t *testing.T, platformExternalID string) {
 	}
 	exec("DELETE FROM session_resources WHERE uuid=$1", "ffffffff-ffff-ffff-ffff-000000000005")
 	output.Reset()
-	if err := migrate(t.Context(), isolated, service, "local", "hashicorp_vault", 0, true, &output, slog.New(slog.DiscardHandler)); err != nil || !strings.Contains(output.String(), "Nothing to migrate") || strings.Contains(output.String(), "Failed records:") || target.calls != calls {
+	if err := migrate(t.Context(), isolated, service, "local", "hashicorp_vault", true, &output, slog.New(slog.DiscardHandler)); err != nil || !strings.Contains(output.String(), "Nothing to migrate") || strings.Contains(output.String(), "Failed records:") || target.calls != calls {
 		t.Fatal("zero-match run changed data")
 	}
 	for _, kind := range db.SecretMigrationKinds() {
@@ -307,7 +307,7 @@ func testMigrationAllStoragePostgres(t *testing.T, platformExternalID string) {
 		if err = isolated.SaveMigratedSecret(t.Context(), kind, wrong, rows[0].Document); !errors.Is(err, db.ErrVersionConflict) {
 			t.Fatalf("%s tenant CAS: %v", kind, err)
 		}
-		changed, _, err := migrateDocument(t.Context(), service, kind, rows[0], "hashicorp_vault", 0, true)
+		changed, _, err := migrateDocument(t.Context(), service, kind, rows[0], "hashicorp_vault", true)
 		if err != nil {
 			t.Fatal(err)
 		}

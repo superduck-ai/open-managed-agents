@@ -38,13 +38,7 @@ func (p *targetProvider) WrapDEK(ctx context.Context, dek []byte) (secrets.Wrapp
 }
 
 func TestMigrationAllStoragePostgres(t *testing.T) {
-	for _, externalID := range []string{"poap_fixture", "poap_FridayBuiltinOAuthClient"} {
-		t.Run(externalID, func(t *testing.T) { testMigrationAllStoragePostgres(t, externalID) })
-	}
-}
-
-func testMigrationAllStoragePostgres(t *testing.T, platformExternalID string) {
-	t.Helper()
+	const platformExternalID = "poap_fixture"
 	address := os.Getenv("TEST_MIGRATION_DATABASE_URL")
 	if address == "" {
 		t.Skip("需要隔离 PostgreSQL，跳过不代表通过")

@@ -47,8 +47,8 @@ func migrateOAuthDocument(ctx context.Context, service *secrets.Service, kind st
 		if envelope == nil {
 			continue
 		}
-		if !validOAuthMigrationEnvelope(*envelope) {
-			return nil, 0, errors.New("invalid OAuth envelope")
+		if envelope.KeyProvider == "" {
+			return nil, 0, errors.New("missing OAuth key provider")
 		}
 		if envelope.KeyProvider != from {
 			continue
@@ -100,8 +100,4 @@ func auditOAuthRewrap(ctx context.Context, logger *slog.Logger, row db.SecretMig
 	}
 	logger.InfoContext(ctx, "platform oauth provider audit", "actor_type", "maintenance", "provider_uuid", row.UUID,
 		"provider_key", key, "action", "rewrap", "changed_fields", []string{"client_id", "client_secret"}, "result", result, "error_code", code)
-}
-
-func validOAuthMigrationEnvelope(envelope secrets.Envelope) bool {
-	return envelope.KeyProvider != "" && envelope.KeyVersion > 0 && envelope.FormatVersion == 1 && len(envelope.Nonce) == 12 && len(envelope.Ciphertext) >= 16 && len(envelope.WrappedDEK) > 0
 }

@@ -88,11 +88,17 @@ func testOAuthCrossProviderMigration(t *testing.T, externalID string) {
 }
 
 func TestOAuthMigrationRejectsMalformedClients(t *testing.T) {
+	key, err := localkeys.New(localkeys.KeyMaterial{KEK: bytes.Repeat([]byte{1}, 32)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := secrets.NewService(key)
 	for _, raw := range []string{
 		`{"external_id":"poap_custom","client_id_envelope":{},"client_secret_envelope":{}}`,
 		`{"external_id":"poap_custom","client_id_envelope":{}}`,
+		`{"external_id":"poap_custom","client_id_envelope":{"key_provider":"local"},"client_secret_envelope":{"key_provider":"local"}}`,
 	} {
-		if _, _, err := migrateOAuthDocument(t.Context(), nil, "platform_oauth_providers", db.SecretMigrationRecord{Document: json.RawMessage(raw)}, "local", false); err == nil {
+		if _, _, err := migrateOAuthDocument(t.Context(), service, "platform_oauth_providers", db.SecretMigrationRecord{Document: json.RawMessage(raw)}, "local", false); err == nil {
 			t.Fatal("无效客户端未失败关闭")
 		}
 	}

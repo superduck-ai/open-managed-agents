@@ -161,7 +161,7 @@ POST 仅创建自定义，拒绝 builtin_key/protected/uuid 等未知系统字�
 
 平台页将飞书与 Friday 内置行排在同一表格前部，显示服务方图标、本地化名称及配置状态，不展示「内置」文字；保留共享 shadcn 组件与现有路由。内置名称、端点、认证方式、编码和默认值只读，不显示删除和重置操作。编辑弹窗只发送允许字段，提示更换应用可能需要重新授权。Vault 表单使用组织 API 元数据，未配置禁用授权按钮，保留手工令牌保存；普通用户仅看到联系管理员，具有 platform:access 的用户可进入平台配置页。
 
-结构化安全审计复用注入的 slog logger：create/update/delete、首次 configure、import、rewrap、保护拒绝和内置缺失完整性故障。只记录 actor UUID 或 maintenance/system、provider UUID/key、action、changed_fields、result、request_id/错误码与事件时间；不记录客户端值、scope 内容、信封或上游 body。成功在提交后记录，失败在资源最终处理处记录；日志与数据库不承诺原子持久化。中英文文案按稳定错误码翻译。
+结构化安全审计复用注入的 slog logger：create/update/delete、首次 configure、rewrap、保护拒绝和内置缺失完整性故障。只记录 actor UUID 或 maintenance/system、provider UUID/key、action、changed_fields、result、request_id/错误码与事件时间；不记录客户端值、scope 内容、信封或上游 body。成功在提交后记录，失败在资源最终处理处记录；日志与数据库不承诺原子持久化。中英文文案按稳定错误码翻译。
 
 ### 凭证列表
 
@@ -239,3 +239,5 @@ Friday 客户端通过 OAuth 管理页配置；密钥轮换覆盖飞书、Friday
 迁移 00125 为授权流程增加 provider_version。授权开始时记录服务方版本；回调检测到版本变化或旧流程缺少版本时，不请求 Token 端点，返回 invalid_request 并要求重新发起授权。无需保存客户端 Secret 历史或增加在途配置兼容分支。
 
 重新授权只替换令牌与到期信息，保留凭证当前的网络范围、占位符和元数据；网络修改单独保存。创建／更新凭证和 flow 的 processing → completed 转换使用同一 Yourbatis 事务，任意一步失败都回滚。上游换票与密封仍在事务外，避免长时间持有数据库锁。
+
+初始化服务方仍由 SQL seed 完成，不额外读取迁移版本或记录启动 seed 审计。运行时管理、重新包装及完整性错误的安全审计保持原合同。OAuth 密钥迁移复用 secrets.Service 的信封校验，不维护重复的结构规则；通用存储回归运行一次，服务方及 PKCE 由 OAuth 专项测试覆盖。

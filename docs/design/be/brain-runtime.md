@@ -477,7 +477,7 @@ Brain sandbox startup forwards the server-resolved Git source URL, checkout ref 
 统一模型配置使用 `session_context.models`，替换旧 `model_backends`。Server 与 Brain 必须成对更新：先停止接收新会话并等待现有任务结束，停止旧 Brain 与所有旧 Server，再执行数据库迁移并启动新版 Server、Brain。不能按混合版本滚动发布；旧 Brain 读取不到 `model_backends` 时可能按 Messages 路由，新 Brain 读取旧 Server 时同样可能回退。回滚也须同步恢复 Server、Brain 和数据库结构，迁移前需备份模型参数。
 
 Provider 的 `api_backend` 决定 Brain 模型适配器，当前支持 `messages` 和 `chat_completions`。
-`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.models` 返回当前 workspace 的
+`GET /v2/sessions/{id}` 为 claim transport 在 `session_context.models` 返回当前组织的
 模型路由索引，每项包含模型参数和 Provider 的 api_backend，不包含上游 URL 或 Key。映射构建失败返回 500 `api_error`，
 公开文案为 `Could not resolve model API backends`；MCP 配置构建失败保留独立的 MCP 错误文案。
 子 Agent 继承与覆盖模型、运行时切换模型均按实际
@@ -492,7 +492,7 @@ flowchart LR
     SDK --> Transport[OMA fetch transport]
     Transport --> Proxy[Go 模型代理]
     Proxy --> Lifecycle[请求 span / 公开事件 / 用量]
-    Proxy --> Provider[Workspace Provider]
+    Proxy --> Provider[Organization Provider]
 ```
 
 DSH 仍使用 provider `oma`，它表示平台模型适配器，不是用户配置的 Provider。路由映射在会话注册与

@@ -1,10 +1,10 @@
 ---
 title: "列出模型"
-description: "查询当前工作区公开的模型 ID。"
+description: "查询当前组织公开的模型 ID。"
 api: "GET /v1/models"
 ---
 
-返回当前工作区配置的模型 ID，格式为 `{provider_slug}/{upstream_model_id}`，例如 `oma/kimi-k2.5` 或 `oma/deepseek-ai/deepseek-v4.1-flash`。调用 API 时使用这些 ID，OMA 会把上游模型 ID 转发给 Provider。不带 Provider 前缀的历史 ID 仍可使用，前提是工作区内只有一个 Provider 配置了该模型。
+返回当前组织配置的模型 ID，格式为 `{provider_slug}/{upstream_model_id}`，例如 `oma/kimi-k2.5` 或 `oma/deepseek-ai/deepseek-v4.1-flash`。调用 API 时使用这些 ID，OMA 会把上游模型 ID 转发给 Provider。不带 Provider 前缀的历史 ID 仍可使用，前提是组织内只有一个 Provider 配置了该模型。该目录由组织内所有工作区共享，API key 鉴权仍限定于工作区。
 
 ## 响应
 
@@ -25,7 +25,7 @@ api: "GET /v1/models"
 </ResponseField>
 
 <ResponseField name="has_more" type="boolean">
-  始终为 `false`；当前工作区配置的模型在一页中完整返回。
+  始终为 `false`；当前组织配置的模型在一页中完整返回。
 </ResponseField>
 
 <ResponseField name="first_id" type="string | null">
@@ -55,7 +55,7 @@ api: "GET /v1/models"
 }
 ```
 
-工作区未配置 LLM Provider 时返回 `503`：
+组织未配置 LLM Provider 时返回 `503`；错误消息为保持 API 兼容保留历史工作区措辞：
 
 ```json 503 响应
 {

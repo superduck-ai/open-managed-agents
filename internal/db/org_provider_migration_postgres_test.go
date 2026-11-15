@@ -7,7 +7,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/superduck-ai/open-managed-agents/internal/secrets"
@@ -86,6 +89,7 @@ func TestOrganizationOwnedLLMProvidersMigration(t *testing.T) {
 		t.Fatalf("organization provider count = %d, %v", len(providers), err)
 	}
 	assertProviderMigrationReferences(t, ctx, database)
+	assertProviderMigrationNoop(t, ctx, database)
 	assertProviderMigrationCreator(t, ctx, store, service, providers[0])
 	assertProviderMigrationInventory(t, ctx, store)
 	if _, err := migrations.UpTo(ctx, 118); err != nil {
@@ -249,6 +253,47 @@ func assertProviderMigrationInventory(t *testing.T, ctx context.Context, store *
 		}
 		if err := store.SaveMigratedSecret(ctx, "llm_providers", entry, entry.Document); err != nil {
 			t.Fatalf("secret CAS cannot match migrated binding: %v", err)
+		}
+	}
+}
+
+func assertProviderMigrationNoop(t *testing.T, ctx context.Context, database *sql.DB) {
+	t.Helper()
+	transaction, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if _, err := transaction.ExecContext(ctx, "ALTER TABLE llm_providers RENAME COLUMN secret_workspace_uuid TO workspace_uuid"); err != nil {
+		t.Fatal(err)
+	}
+	tables := []string{"agents", "agent_versions", "sessions", "session_threads", "deployments", "deployment_runs", "code_sessions", "message_batch_requests"}
+	selections := make([]string, 0, len(tables))
+	for _, table := range tables {
+		selections = append(selections, fmt.Sprintf("SELECT '%s' AS table_name, uuid, ctid::text AS tuple_id FROM %s", table, table))
+	}
+	if _, err := transaction.ExecContext(ctx, "CREATE TEMP TABLE provider_migration_rows AS "+strings.Join(selections, " UNION ALL ")); err != nil {
+		t.Fatal(err)
+	}
+	migration, err := fs.ReadFile(embeddedMigrations, "migrations/00118_organization_owned_llm_providers.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalization, _, found := strings.Cut(string(migration), "DROP INDEX llm_providers_organization_workspace_created_idx;")
+	if !found {
+		t.Fatal("migration normalization boundary missing")
+	}
+	if _, err := transaction.ExecContext(ctx, normalization); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range tables {
+		var changed int
+		query := fmt.Sprintf("SELECT count(*) FROM %s record JOIN provider_migration_rows original ON original.table_name='%s' AND original.uuid=record.uuid WHERE original.tuple_id <> record.ctid::text", table, table)
+		if err := transaction.QueryRowContext(ctx, query).Scan(&changed); err != nil {
+			t.Fatal(err)
+		}
+		if changed != 0 {
+			t.Errorf("%s rewrote %d already normalized rows", table, changed)
 		}
 	}
 }

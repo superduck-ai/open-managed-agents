@@ -36,6 +36,15 @@ const moonshotRow = {
 };
 
 describe('LLM model catalog helpers', () => {
+  test('explains server ownership and creator authentication failures', () => {
+    expect(readableError({ code: 'llm_provider_management_denied' }, englishMessage)).toBe(
+      'Only the creator or an organization administrator can manage this provider.',
+    );
+    expect(readableError({ code: 'llm_provider_creator_required' }, englishMessage)).toBe(
+      'An authenticated account is required to create an LLM provider.',
+    );
+  });
+
   test('keeps organization and workspace models with the same raw ID separately addressable', () => {
     const organization = provider('llmprov_org', 'Organization', 'organization', ['shared-model', 'org-only']);
 

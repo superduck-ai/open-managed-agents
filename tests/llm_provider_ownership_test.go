@@ -71,7 +71,12 @@ func TestLLMProviderCreatorAuthorizationAcrossRoutes(t *testing.T) {
 	}
 	for _, provider := range list {
 		creator, ok := provider["created_by"].(map[string]any)
-		if !ok || creator["account_uuid"] == "" || creator["name"] == "" || provider["can_manage"] != false {
+		if !ok {
+			t.Fatalf("creator metadata = %#v", provider)
+		}
+		accountUUID, accountOK := creator["account_uuid"].(string)
+		name, nameOK := creator["name"].(string)
+		if !accountOK || accountUUID == "" || !nameOK || name == "" || provider["can_manage"] != false {
 			t.Fatalf("creator metadata = %#v", provider)
 		}
 	}

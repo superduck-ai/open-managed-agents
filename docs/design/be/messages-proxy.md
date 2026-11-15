@@ -99,7 +99,7 @@ Provider 控制台错误响应包含稳定的 `code`，前端不得依赖英文 
 
 运行时只查询一次组织目录，完整引用优先精确匹配。裸 ID 在整个组织恰好匹配一个 Provider 才可解析，多条匹配返回完整引用候选。上游 ID 允许包含 `/`。Brain 模型目录和计费目录均省略歧义裸 ID，计费仍归属发起请求的实际工作区。
 
-迁移 `00118_organization_owned_llm_providers.sql` 在旧工作区优先规则下规范化唯一可解析的裸引用，覆盖 Agent、版本、嵌套 multiagent、Session、线程、部署和运行快照、Code Session 模型与恢复元数据、queued/in_flight Batch。现有完整引用优先保留，歧义和未知引用保持原值。
+迁移 `00118_organization_owned_llm_providers.sql` 在旧工作区优先规则下规范化唯一可解析的裸引用，覆盖 Agent、版本、嵌套 multiagent、Session、线程、部署和运行快照、Code Session 模型与恢复元数据、queued/in_flight Batch。现有完整引用优先保留，歧义和未知引用保持原值。规范化结果只计算一次，并通过 `IS DISTINCT FROM` 仅更新实际变化的行；已限定、歧义、未知引用及其他不变数据不产生额外行版本。
 
 迁移 `00118_organization_owned_llm_providers.sql` 将 `workspace_uuid` 重命名为 `secret_workspace_uuid`，保留历史密钥 AAD。NULL 使用 `organization` 绑定，新连接采用 NULL。该字段仅参与密钥解密与轮换 CAS。Provider UUID、external ID、slug、信封和全部记录保留，历史创建者为 NULL。组织统一后无法可靠还原工作区可见性和创建者归属，Down 明确拒绝回滚；需要恢复迁移前备份并同时恢复对应应用版本。
 
@@ -230,7 +230,7 @@ Managed Agent 的 initialize 控制事件把 Agent snapshot 中的 `system` 原�
 - `tests/messages_upstream_auth_test.go`：三种上游 401 body 的 Worker 错误转换、不可重试 header、模型 span，以及普通 API key 调用的原始响应；
 - `tests/liveworker/chat_upstream_errors_test.go`：公开 Runner 通过 environment-manager 的真实 OAuth FD 启动 Worker，两种持续上游 401 在 90 秒内产生 `session.error`、以 `retries_exhausted` 自然 idle 并清空队列，不生成助手回复；
 - `tests/session_worker_error_status_test.go`：失败结果不提前结束 Session、API 错误消息不公开、失败 idle 原因和重复报告幂等，以及下一轮成功恢复 `end_turn`；
-- `tests/llm_providers_api_test.go`：workspace Provider CRUD、slug 默认值/冲突/不可变、并发 slug 唯一、同名模型按 slug 解析、空模型转换、Key 加密、模型发现与同步；
+- `tests/llm_providers_api_test.go`：组织 Provider CRUD 与工作区兼容入口、slug 默认值/冲突/不可变、并发 slug 唯一、同名模型按 slug 解析、空模型转换、Key 加密、模型发现与同步；
 - `tests/models_api_test.go`：`GET /v1/models` 返回完整模型 ID，并区分空 Provider 列表与空模型列表；
 - `tests/platform_proxy_directory_api_test.go`：管理后台原有独立路径的 JSON 与 SSE 转发；
 - `internal/environments/environment_manager_test.go`：沙箱 payload 不含上游 key 或 Claude 凭证环境变量，api base URL 和 lifecycle-bound token auth 正确，启动 payload 会被删除；

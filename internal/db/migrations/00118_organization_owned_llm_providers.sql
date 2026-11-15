@@ -116,44 +116,63 @@ DECLARE
 BEGIN
     FOREACH table_name IN ARRAY ARRAY['agents', 'agent_versions'] LOOP
         EXECUTE format($query$
-            UPDATE %I record
-            SET model = pg_temp.organization_llm_model_value(record.model, workspace.organization_uuid, record.workspace_uuid),
-                multiagent = CASE WHEN record.multiagent IS NULL THEN NULL ELSE
-                    pg_temp.organization_llm_snapshot(jsonb_build_object('multiagent', record.multiagent),
-                        workspace.organization_uuid, record.workspace_uuid)->'multiagent' END
-            FROM workspaces workspace
-            WHERE workspace.uuid = record.workspace_uuid
+            WITH candidates AS MATERIALIZED (
+                SELECT record.uuid,
+                    pg_temp.organization_llm_model_value(record.model, workspace.organization_uuid, record.workspace_uuid) AS model,
+                    CASE WHEN record.multiagent IS NULL THEN NULL ELSE
+                        pg_temp.organization_llm_snapshot(jsonb_build_object('multiagent', record.multiagent),
+                            workspace.organization_uuid, record.workspace_uuid)->'multiagent' END AS multiagent
+                FROM %1$I record JOIN workspaces workspace ON workspace.uuid = record.workspace_uuid
+            )
+            UPDATE %1$I record SET model = candidates.model, multiagent = candidates.multiagent
+            FROM candidates WHERE record.uuid = candidates.uuid
+            AND (record.model, record.multiagent) IS DISTINCT FROM (candidates.model, candidates.multiagent)
         $query$, table_name);
     END LOOP;
     FOREACH table_name IN ARRAY ARRAY['sessions', 'session_threads', 'deployments', 'deployment_runs'] LOOP
         EXECUTE format($query$
-            UPDATE %I record
-            SET agent_snapshot = pg_temp.organization_llm_snapshot(
-                record.agent_snapshot, record.organization_uuid, record.workspace_uuid)
-            WHERE record.agent_snapshot IS NOT NULL
+            WITH candidates AS MATERIALIZED (
+                SELECT uuid, pg_temp.organization_llm_snapshot(
+                    agent_snapshot, organization_uuid, workspace_uuid) AS agent_snapshot
+                FROM %1$I
+            )
+            UPDATE %1$I record SET agent_snapshot = candidates.agent_snapshot
+            FROM candidates WHERE record.uuid = candidates.uuid
+            AND record.agent_snapshot IS DISTINCT FROM candidates.agent_snapshot
         $query$, table_name);
     END LOOP;
 END;
 $$;
 -- +goose StatementEnd
 
+WITH candidates AS MATERIALIZED (
+    SELECT uuid,
+        pg_temp.organization_llm_model(organization_uuid, workspace_uuid, model) AS model,
+        CASE WHEN jsonb_typeof(worker_external_metadata) = 'object'
+            AND worker_external_metadata ? 'model' THEN
+                jsonb_set(worker_external_metadata, '{model}',
+                    pg_temp.organization_llm_model_value(worker_external_metadata->'model', organization_uuid, workspace_uuid))
+            ELSE worker_external_metadata END AS worker_external_metadata
+    FROM code_sessions
+)
 UPDATE code_sessions record
-SET model = pg_temp.organization_llm_model(record.organization_uuid, record.workspace_uuid, record.model),
-    worker_external_metadata = CASE WHEN jsonb_typeof(record.worker_external_metadata) = 'object'
-        AND record.worker_external_metadata ? 'model' THEN
-            jsonb_set(record.worker_external_metadata, '{model}',
-                pg_temp.organization_llm_model_value(record.worker_external_metadata->'model', record.organization_uuid, record.workspace_uuid))
-        ELSE record.worker_external_metadata END;
+SET model = candidates.model, worker_external_metadata = candidates.worker_external_metadata
+FROM candidates WHERE record.uuid = candidates.uuid
+AND (record.model, record.worker_external_metadata) IS DISTINCT FROM (candidates.model, candidates.worker_external_metadata);
 
-UPDATE message_batch_requests request
-SET params = jsonb_set(request.params, '{model}',
-    pg_temp.organization_llm_model_value(request.params->'model', batch.organization_uuid, request.workspace_uuid))
-FROM message_batches batch
-WHERE batch.uuid = request.message_batch_uuid
-AND batch.workspace_uuid = request.workspace_uuid
-AND request.status IN ('queued', 'in_flight')
-AND jsonb_typeof(request.params) = 'object'
-AND request.params ? 'model';
+WITH candidates AS MATERIALIZED (
+    SELECT request.uuid, jsonb_set(request.params, '{model}',
+        pg_temp.organization_llm_model_value(request.params->'model', batch.organization_uuid, request.workspace_uuid)) AS params
+    FROM message_batch_requests request
+    JOIN message_batches batch ON batch.uuid = request.message_batch_uuid
+        AND batch.workspace_uuid = request.workspace_uuid
+    WHERE request.status IN ('queued', 'in_flight')
+    AND jsonb_typeof(request.params) = 'object'
+    AND request.params ? 'model'
+)
+UPDATE message_batch_requests request SET params = candidates.params
+FROM candidates WHERE request.uuid = candidates.uuid
+AND request.params IS DISTINCT FROM candidates.params;
 
 DROP FUNCTION pg_temp.organization_llm_snapshot(jsonb, uuid, uuid);
 DROP FUNCTION pg_temp.organization_llm_model_value(jsonb, uuid, uuid);

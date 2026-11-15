@@ -97,14 +97,10 @@ export function EnvOAuthCredentialFields({
       <ManagedTextField
         label={msg('managedAgents.credentialVaults.credentialDialog.variableName', 'Variable name')}
         value={values.secretName}
-        placeholder={
-          selected?.id === 'builtin:friday'
-            ? 'ACCESS_TOKEN'
-            : msg(
-                'managedAgents.credentialVaults.credentialDialog.envOAuthSecretNamePlaceholder',
-                'LARKSUITE_CLI_USER_ACCESS_TOKEN',
-              )
-        }
+        placeholder={msg(
+          'managedAgents.credentialVaults.credentialDialog.envOAuthSecretNamePlaceholder',
+          'ACCESS_TOKEN',
+        )}
         disabled={secretNameLocked}
         onChange={(secretName) => onChange({ secretName })}
       />

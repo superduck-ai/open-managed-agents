@@ -125,3 +125,43 @@ test('shows the provider loading error and retries', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(onRetryProviders).toHaveBeenCalledTimes(1);
 });
+
+test.each([
+  ['builtin:feishu', 'Feishu', 'LARKSUITE_CLI_USER_ACCESS_TOKEN'],
+  ['builtin:friday', 'Friday', 'ACCESS_TOKEN'],
+  ['custom:example', 'Example', ''],
+])('未选服务方时提示通用变量名，选择 %s 后使用对应默认值', (id, name, secretName) => {
+  const onChange = mock(() => {});
+  const { rerender } = render(
+    <EnvOAuthCredentialFields
+      values={{ ...values, envOAuthProviderId: '', secretName: '' }}
+      providers={[
+        ...providers,
+        { ...providers[0], id: 'builtin:friday', name: 'Friday', default_secret_name: 'ACCESS_TOKEN' },
+      ]}
+      providersLoading={false}
+      providersError={null}
+      onRetryProviders={() => {}}
+      secretNameLocked={false}
+      onChange={onChange}
+    />,
+  );
+  const input = screen.getByLabelText('Variable name') as HTMLInputElement;
+  expect(input.value).toBe('');
+  expect(input.placeholder).toBe('ACCESS_TOKEN');
+  fireEvent.click(screen.getByRole('combobox', { name: 'OAuth provider' }));
+  fireEvent.click(screen.getAllByRole('option').find((option) => option.textContent?.includes(name))!);
+  expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ envOAuthProviderId: id, secretName }));
+  rerender(
+    <EnvOAuthCredentialFields
+      values={{ ...values, envOAuthProviderId: id, secretName }}
+      providers={providers}
+      providersLoading={false}
+      providersError={null}
+      onRetryProviders={() => {}}
+      secretNameLocked={false}
+      onChange={onChange}
+    />,
+  );
+  expect(input.value).toBe(secretName);
+});

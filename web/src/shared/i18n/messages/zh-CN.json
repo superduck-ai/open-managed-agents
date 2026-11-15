@@ -3412,7 +3412,7 @@
   "managedAgents.credentialVaults.credentialDialog.envOAuthProvidersLoading": "正在加载服务方...",
   "managedAgents.credentialVaults.credentialDialog.envOAuthProvidersLoadFailed": "无法加载 OAuth 服务方。",
   "managedAgents.credentialVaults.credentialDialog.envOAuthProvidersRetry": "重试",
-  "managedAgents.credentialVaults.credentialDialog.envOAuthSecretNamePlaceholder": "LARKSUITE_CLI_USER_ACCESS_TOKEN",
+  "managedAgents.credentialVaults.credentialDialog.envOAuthSecretNamePlaceholder": "ACCESS_TOKEN",
   "managedAgents.credentialVaults.credentialDialog.envOAuthManual": "已有 Token？手动填写",
   "managedAgents.credentialVaults.credentialDialog.reauthorize": "重新授权",
   "managedAgents.credentialVaults.credentialDialog.saveNetworkingFirst": "请先保存网络配置，再重新授权。",

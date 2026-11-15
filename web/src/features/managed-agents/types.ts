@@ -708,8 +708,6 @@ export type CredentialFormValues = {
   oauthClientSecret: string;
   envOAuthProviderId: string;
   envOAuthManualToken: string;
-  envOAuthRefreshToken: string;
-  envOAuthExpiresAt: string;
 };
 
 export type MemoryFormValues = {

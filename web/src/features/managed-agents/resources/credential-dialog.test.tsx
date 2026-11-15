@@ -473,7 +473,7 @@ test.each(['Feishu', 'Friday'])('未配置内置 %s 禁用授权但保留手工�
   ).toBeTruthy();
   expect(screen.queryByRole('link', { name: 'Configure provider' })).toBeNull();
   fireEvent.click(within(dialog).getByRole('button', { name: /Use an existing token/ }));
-  fireEvent.change(within(dialog).getByLabelText('Access token (optional)'), { target: { value: 'manual-token' } });
+  fireEvent.change(within(dialog).getByLabelText('Access token'), { target: { value: 'manual-token' } });
   await act(async () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add credential' }));
   });

@@ -748,10 +748,11 @@ describe('env_oauth credentials', () => {
     ...patch,
   });
 
-  test('清空 ENV OAuth 过期时间会提交清除，而不是保留旧时间', () => {
-    const values = envOAuthValues({ envOAuthExpiresAt: '' });
-    expect(credentialAuthBody(values, 'update')).toMatchObject({ expires_at: null });
-    expect(credentialAuthBody(values, 'create')).not.toHaveProperty('expires_at');
+  test('编辑 ENV OAuth 不提交刷新令牌或过期时间，保留授权后的自动刷新元数据', () => {
+    const body = credentialAuthBody(envOAuthValues({}), 'update');
+    expect(body).not.toHaveProperty('access_token');
+    expect(body).not.toHaveProperty('refresh_token');
+    expect(body).not.toHaveProperty('expires_at');
   });
 
   test('credentialAuthBody builds create and update payloads', () => {
@@ -766,8 +767,6 @@ describe('env_oauth credentials', () => {
       credentialAuthBody(
         envOAuthValues({
           envOAuthManualToken: 'u-new',
-          envOAuthRefreshToken: 'ur-new',
-          envOAuthExpiresAt: '2099-12-31T23:59:59Z',
           networkType: 'unrestricted',
         }),
         'update',
@@ -776,8 +775,6 @@ describe('env_oauth credentials', () => {
       type: 'env_oauth',
       networking: { type: 'unrestricted' },
       access_token: 'u-new',
-      refresh_token: 'ur-new',
-      expires_at: '2099-12-31T23:59:59Z',
     });
   });
 
@@ -813,10 +810,11 @@ describe('env_oauth credentials', () => {
     });
     expect(values.authType).toBe('env_oauth');
     expect(values.envOAuthProviderId).toBe('builtin:feishu');
-    expect(values.envOAuthExpiresAt).toBe('2099-12-31T23:59:59Z');
     expect(values.networkType).toBe('limited');
     expect(values.allowedHostsText).toBe('open.feishu.cn');
     expect(values.envOAuthManualToken).toBe('');
+    expect(credentialAuthBody(values, 'update')).not.toHaveProperty('expires_at');
+    expect(credentialAuthBody(values, 'update')).not.toHaveProperty('refresh_token');
   });
 
   test('credentialAuthTypeLabel and vaultOAuthErrorMessage cover env oauth', () => {

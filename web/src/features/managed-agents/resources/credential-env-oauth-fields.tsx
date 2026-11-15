@@ -112,44 +112,24 @@ export function EnvOAuthCredentialFields({
       />
       <OptionalCredentialFields
         title={msg('managedAgents.credentialVaults.credentialDialog.envOAuthManual', 'Use an existing token')}
-        defaultOpen={Boolean(values.envOAuthManualToken || values.envOAuthRefreshToken)}
+        defaultOpen={Boolean(values.envOAuthManualToken)}
       >
-        <div className="grid gap-4 sm:grid-cols-2">
-          <ManagedTextField
-            label={msg(
-              'managedAgents.credentialVaults.credentialDialog.envOAuthManualToken',
-              'Access token (optional)',
-            )}
-            type="password"
-            value={values.envOAuthManualToken}
-            placeholder={
-              secretNameLocked
-                ? msg(
-                    'managedAgents.credentialVaults.credentialDialog.keepToken',
-                    'Leave blank to keep the current token',
-                  )
-                : msg(
-                    'managedAgents.credentialVaults.credentialDialog.envOAuthManualTokenPlaceholder',
-                    'Paste a token to skip authorization',
-                  )
-            }
-            onChange={(envOAuthManualToken) => onChange({ envOAuthManualToken })}
-          />
-          <ManagedTextField
-            label={msg(
-              'managedAgents.credentialVaults.credentialDialog.envOAuthRefreshToken',
-              'Refresh token (optional)',
-            )}
-            type="password"
-            value={values.envOAuthRefreshToken}
-            onChange={(envOAuthRefreshToken) => onChange({ envOAuthRefreshToken })}
-          />
-        </div>
         <ManagedTextField
-          label={msg('managedAgents.credentialVaults.credentialDialog.envOAuthExpiresAt', 'Expires at (optional)')}
-          value={values.envOAuthExpiresAt}
-          placeholder="2026-11-06T10:00:00Z"
-          onChange={(envOAuthExpiresAt) => onChange({ envOAuthExpiresAt })}
+          label={msg('managedAgents.credentialVaults.credentialDialog.envOAuthManualToken', 'Access token')}
+          type="password"
+          value={values.envOAuthManualToken}
+          placeholder={
+            secretNameLocked
+              ? msg(
+                  'managedAgents.credentialVaults.credentialDialog.keepToken',
+                  'Leave blank to keep the current token',
+                )
+              : msg(
+                  'managedAgents.credentialVaults.credentialDialog.envOAuthManualTokenPlaceholder',
+                  'Paste a token to skip authorization',
+                )
+          }
+          onChange={(envOAuthManualToken) => onChange({ envOAuthManualToken })}
         />
       </OptionalCredentialFields>
       <FieldDescription>

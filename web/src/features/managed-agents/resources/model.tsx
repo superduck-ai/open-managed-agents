@@ -857,8 +857,6 @@ export function emptyCredentialFormValues(): CredentialFormValues {
     oauthClientSecret: '',
     envOAuthProviderId: '',
     envOAuthManualToken: '',
-    envOAuthRefreshToken: '',
-    envOAuthExpiresAt: '',
   };
 }
 
@@ -941,7 +939,6 @@ export function credentialFormValues(credential?: VaultCredentialApiResponse): C
     mcpServerUrl: typeof auth.mcp_server_url === 'string' ? auth.mcp_server_url : '',
     secretName: typeof auth.secret_name === 'string' ? auth.secret_name : '',
     envOAuthProviderId: typeof auth.provider === 'string' ? auth.provider : '',
-    envOAuthExpiresAt: typeof auth.expires_at === 'string' ? auth.expires_at : '',
     ...(networking ?? {}),
     ...(injection ?? {}),
   };
@@ -998,8 +995,6 @@ export function credentialAuthBody(values: CredentialFormValues, mode: 'create' 
   }
   if (values.authType === 'env_oauth') {
     const accessToken = values.envOAuthManualToken.trim();
-    const refreshToken = values.envOAuthRefreshToken.trim();
-    const expiresAt = values.envOAuthExpiresAt.trim();
     const body: Record<string, unknown> = {
       type: 'env_oauth',
       networking: credentialNetworkingBody(values),
@@ -1010,14 +1005,6 @@ export function credentialAuthBody(values: CredentialFormValues, mode: 'create' 
     }
     if (accessToken) {
       body.access_token = accessToken;
-    }
-    if (refreshToken) {
-      body.refresh_token = refreshToken;
-    }
-    if (expiresAt) {
-      body.expires_at = expiresAt;
-    } else if (mode === 'update') {
-      body.expires_at = null;
     }
     return body;
   }

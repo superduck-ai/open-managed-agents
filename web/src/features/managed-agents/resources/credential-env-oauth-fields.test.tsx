@@ -165,3 +165,24 @@ test.each([
   );
   expect(input.value).toBe(secretName);
 });
+
+test('手填区只提供 Access token', () => {
+  const onChange = mock(() => {});
+  const { container } = render(
+    <EnvOAuthCredentialFields
+      values={{ ...values, envOAuthManualToken: 'existing-token' }}
+      providers={providers}
+      providersLoading={false}
+      providersError={null}
+      onRetryProviders={() => {}}
+      secretNameLocked
+      onChange={onChange}
+    />,
+  );
+  const tokenInput = screen.getByLabelText('Access token');
+  expect(container.querySelectorAll('input[type="password"]')).toHaveLength(1);
+  expect(screen.queryByLabelText('Refresh token (optional)')).toBeNull();
+  expect(screen.queryByLabelText('Expires at (optional)')).toBeNull();
+  fireEvent.change(tokenInput, { target: { value: 'new-token' } });
+  expect(onChange).toHaveBeenCalledWith({ envOAuthManualToken: 'new-token' });
+});
